@@ -11,6 +11,7 @@ class Project;
 class Selection;
 class Editor;
 class MediaPool;
+class EffectsLibrary;
 class Viewer;
 class Inspector;
 class Mixer;
@@ -45,6 +46,7 @@ private:
     void buildLayout();
     QWidget* buildTopBar();
     QWidget* buildPageBar();
+    void updateLeftColumn(); // linke Spalte nur zeigen, wenn Media Pool oder Effects an ist
     void onDrop(const QStringList& paths, int frame, int track);
     MediaInfo probeCached(const QString& path);
     void buildActions();
@@ -78,6 +80,7 @@ private:
     Editor* m_editor;
 
     MediaPool* m_mediaPool = nullptr;
+    EffectsLibrary* m_effects = nullptr;
     Viewer* m_viewer = nullptr;
     Inspector* m_inspector = nullptr;
     Mixer* m_mixer = nullptr;
@@ -86,6 +89,7 @@ private:
 
     QStackedWidget* m_pages = nullptr;
     QSplitter* m_editTop = nullptr;
+    QSplitter* m_editLeft = nullptr;   // Media Pool über Effects Library (wie DaVinci)
     QSplitter* m_editMain = nullptr;
     QSplitter* m_editBottom = nullptr; // Timeline | Mixer
     QSplitter* m_mediaPage = nullptr;
@@ -93,6 +97,7 @@ private:
     QSplitter* m_deliverRight = nullptr;
     QButtonGroup* m_pageButtons = nullptr;
     QToolButton* m_poolToggle = nullptr;
+    QToolButton* m_effectsToggle = nullptr;
     QToolButton* m_inspectorToggle = nullptr;
     QToolButton* m_mixerToggle = nullptr;
     Page m_page = Page::Edit;

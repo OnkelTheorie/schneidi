@@ -10,6 +10,7 @@
 #include "engine/Engine.h"
 #include "engine/MediaCache.h"
 #include "ui/DeliverPanel.h"
+#include "ui/EffectsLibrary.h"
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
@@ -72,6 +73,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_mediaPool, &MediaPool::sourceRequested, m_engine, &Engine::showSource);
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
+    // Effects Library: Doppelklick = wie Strg+T bzw. "Titel einfügen", nur mit der gewählten Art
+    connect(m_effects, &EffectsLibrary::transitionRequested, this, [this, tv](TrackKind kind, const TransitionStyle& style) {
+        m_editor->addTransitions(tv->playhead(), style, kind);
+    });
+    connect(m_effects, &EffectsLibrary::titleRequested, this, [this, tv] { m_editor->addTitle(tv->playhead()); });
     tv->setProbe([this](const QString& path) { return probeCached(path); });
     tv->setMediaCache(new MediaCache(this));
 
@@ -116,6 +122,7 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
 void MainWindow::buildLayout()
 {
     m_mediaPool = new MediaPool(m_project, m_engine);
+    m_effects = new EffectsLibrary;
     m_viewer = new Viewer(m_engine);
     m_inspector = new Inspector(m_editor);
     m_inspector->setFrameSize(m_engine->frameSize());
@@ -126,6 +133,8 @@ void MainWindow::buildLayout()
 
     // Seiten; die gemeinsamen Panels (Pool, Viewer, Timeline) wandern beim Umschalten mit
     m_editTop = new QSplitter(Qt::Horizontal);
+    m_editLeft = new QSplitter(Qt::Vertical);
+    m_editLeft->addWidget(m_effects);
     m_editMain = new QSplitter(Qt::Vertical);
     m_editMain->addWidget(m_editTop);
     m_editBottom = new QSplitter(Qt::Horizontal); // Mixer rechts neben der Timeline wie in DaVinci
@@ -159,20 +168,25 @@ void MainWindow::buildLayout()
 QWidget* MainWindow::buildTopBar()
 {
     // Obere Leiste wie in DaVinci: Panels links/rechts ein- und ausblenden, Projektname mittig
-    auto makeToggle = [](const QString& text) {
+    // Sichtbarkeit wird gespeichert (panels/<key>); Testläufe ändern die Einstellung nicht
+    auto makeToggle = [this](const QString& text, const QString& key, bool def, QWidget* panel) {
         auto* b = new QToolButton;
         b->setText(text);
         b->setCheckable(true);
-        b->setChecked(true);
+        b->setChecked(QSettings().value("panels/" + key, def).toBool());
+        // Noch nicht eingehängte Panels nur verstecken (show() ohne Eltern öffnete ein eigenes Fenster)
+        if (panel->parentWidget() || !b->isChecked()) panel->setVisible(b->isChecked());
+        connect(b, &QToolButton::toggled, this, [this, key, panel](bool on) {
+            panel->setVisible(on);
+            updateLeftColumn();
+            if (!m_autosaveDisabled) QSettings().setValue("panels/" + key, on);
+        });
         return b;
     };
-    m_poolToggle = makeToggle("▦ Media Pool");
-    m_inspectorToggle = makeToggle("☰ Inspector");
-    connect(m_poolToggle, &QToolButton::toggled, m_mediaPool, &QWidget::setVisible);
-    connect(m_inspectorToggle, &QToolButton::toggled, m_inspector, &QWidget::setVisible);
-    m_mixerToggle = makeToggle("▥ Mixer");
-    m_mixerToggle->setChecked(false);
-    connect(m_mixerToggle, &QToolButton::toggled, m_mixer, &QWidget::setVisible);
+    m_poolToggle = makeToggle("▦ Media Pool", "mediaPool", true, m_mediaPool);
+    m_effectsToggle = makeToggle("✦ Effects", "effects", false, m_effects);
+    m_inspectorToggle = makeToggle("☰ Inspector", "inspector", true, m_inspector);
+    m_mixerToggle = makeToggle("▥ Mixer", "mixer", false, m_mixer);
 
     auto* title = m_titleLabel = new QLabel;
     title->setStyleSheet("font-weight: 600;");
@@ -184,6 +198,7 @@ QWidget* MainWindow::buildTopBar()
     auto* lay = new QHBoxLayout(bar);
     lay->setContentsMargins(6, 2, 6, 2);
     lay->addWidget(m_poolToggle);
+    lay->addWidget(m_effectsToggle);
     lay->addStretch(1);
     lay->addWidget(title);
     lay->addStretch(1);
@@ -245,7 +260,8 @@ void MainWindow::showPage(Page page)
         m_pages->setCurrentWidget(m_mediaPage);
         break;
     case Page::Edit:
-        m_editTop->insertWidget(0, m_mediaPool);
+        m_editLeft->insertWidget(0, m_mediaPool);
+        m_editTop->insertWidget(0, m_editLeft);
         m_editTop->insertWidget(1, m_viewer);
         m_editTop->insertWidget(2, m_inspector);
         m_editBottom->insertWidget(0, m_timeline);
@@ -255,6 +271,7 @@ void MainWindow::showPage(Page page)
         m_editTop->setSizes({360, 880, 360});
         m_editMain->setSizes({480, 420});
         m_mediaPool->setVisible(m_poolToggle->isChecked());
+        updateLeftColumn();
         m_pages->setCurrentWidget(m_editMain);
         break;
     case Page::Deliver:
@@ -269,8 +286,14 @@ void MainWindow::showPage(Page page)
     if (auto* b = m_pageButtons->button(int(page))) b->setChecked(true);
     const bool edit = page == Page::Edit;
     m_poolToggle->setEnabled(edit);
+    m_effectsToggle->setEnabled(edit);
     m_inspectorToggle->setEnabled(edit);
     m_mixerToggle->setEnabled(edit);
+}
+
+void MainWindow::updateLeftColumn()
+{
+    if (m_page == Page::Edit) m_editLeft->setVisible(m_poolToggle->isChecked() || m_effectsToggle->isChecked());
 }
 
 QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
@@ -409,6 +432,8 @@ void MainWindow::buildActions()
     makeAction(workspace, "page_media", T("Media-Seite"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
     makeAction(workspace, "page_edit", T("Edit-Seite"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
     makeAction(workspace, "page_deliver", T("Deliver-Seite"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
+    makeAction(workspace, "toggle_effects", T("Effects Library ein/aus"), QKeySequence(),
+               [this] { if (m_effectsToggle->isEnabled()) m_effectsToggle->toggle(); });
     makeAction(workspace, "toggle_mixer", T("Mixer ein/aus"), QKeySequence(),
                [this] { if (m_mixerToggle->isEnabled()) m_mixerToggle->toggle(); });
     workspace->addSeparator();
