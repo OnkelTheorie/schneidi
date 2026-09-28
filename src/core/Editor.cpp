@@ -1,5 +1,6 @@
 #include "core/Editor.h"
 
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
@@ -32,8 +33,8 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
         if (const MediaInfo* info = p->mediaInfo(path); info && info->length > 0) infos << info;
     if (infos.isEmpty()) return;
 
-    const QString text = infos.size() == 1 ? QString("Einfügen: %1").arg(infos.first()->name)
-                                           : QString("%1 Clips einfügen").arg(infos.size());
+    const QString text = infos.size() == 1 ? T("Einfügen: %1").arg(infos.first()->name)
+                                           : T("%1 Clips einfügen").arg(infos.size());
     p->edit(text, [&](Timeline& tl) {
         auto newId = [p] { return p->newClipId(); };
         const int idx = std::max(0, track);
@@ -68,6 +69,7 @@ void Editor::addTitle(int frame, int track)
     const Timeline& cur = p->timeline();
     Clip c;
     c.kind = ClipKind::Title;
+    c.title.text = T("Titel");
     c.start = std::max(0, frame);
     c.in = 0;
     c.out = 5 * p->fps() - 1;
@@ -78,7 +80,7 @@ void Editor::addTitle(int frame, int track)
                 if (x.start < c.end() && x.end() > c.start) track = i + 1;
     }
     c.id = p->newClipId();
-    p->edit("Titel einfügen", [&](Timeline& tl) {
+    p->edit(T("Titel einfügen"), [&](Timeline& tl) {
         TimelineOps::ensureTracks(tl, TrackKind::Video, track + 1);
         TimelineOps::placeClip(tl.video[track], c, [p] { return p->newClipId(); });
     });
@@ -87,19 +89,19 @@ void Editor::addTitle(int frame, int track)
 
 void Editor::toggleTrackMute(TrackRef ref)
 {
-    m_project->edit("Spur stumm", [&](Timeline& tl) { tl.track(ref).muted = !tl.track(ref).muted; });
+    m_project->edit(T("Spur stumm"), [&](Timeline& tl) { tl.track(ref).muted = !tl.track(ref).muted; });
 }
 
 void Editor::toggleTrackHidden(TrackRef ref)
 {
-    m_project->edit("Spur ausblenden", [&](Timeline& tl) { tl.track(ref).hidden = !tl.track(ref).hidden; });
+    m_project->edit(T("Spur ausblenden"), [&](Timeline& tl) { tl.track(ref).hidden = !tl.track(ref).hidden; });
 }
 
 void Editor::moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta)
 {
     if (ids.isEmpty() || (deltaFrames == 0 && trackDelta == 0)) return;
     Project* p = m_project;
-    p->edit("Clips verschieben", [&](Timeline& tl) {
+    p->edit(T("Clips verschieben"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
         TimelineOps::moveClips(tl, ids, deltaFrames, kind, trackDelta,
                                [p] { return p->newClipId(); });
@@ -123,7 +125,7 @@ void Editor::trimClip(int clipId, TimelineOps::Edge edge, int delta)
 {
     const QVector<int> ids = withLinked({clipId});
     if (TimelineOps::clampTrim(m_project->timeline(), ids, edge, delta, sourceLength()) == 0) return;
-    m_project->edit("Trimmen", [&](Timeline& tl) { TimelineOps::trimClips(tl, ids, edge, delta, sourceLength()); });
+    m_project->edit(T("Trimmen"), [&](Timeline& tl) { TimelineOps::trimClips(tl, ids, edge, delta, sourceLength()); });
 }
 
 void Editor::setClipVolume(int clipId, double db)
@@ -131,7 +133,7 @@ void Editor::setClipVolume(int clipId, double db)
     db = std::clamp(db, kMinVolumeDb, kMaxVolumeDb);
     const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
     if (!c || c->volumeDb == db) return;
-    m_project->edit("Lautstärke", [&](Timeline& tl) {
+    m_project->edit(T("Lautstärke"), [&](Timeline& tl) {
         if (Clip* clip = TimelineOps::findClip(tl, clipId)) clip->volumeDb = db;
     });
 }
@@ -140,7 +142,7 @@ void Editor::bladeAt(int clipId, int frame)
 {
     Project* p = m_project;
     const QVector<int> ids = withLinked({clipId});
-    p->edit("Schnitt", [&](Timeline& tl) {
+    p->edit(T("Schnitt"), [&](Timeline& tl) {
         TimelineOps::splitAt(tl, ids, frame, [p] { return p->newClipId(); },
                              [p] { return p->newLinkId(); });
     });
@@ -180,7 +182,7 @@ void Editor::splitAtPlayhead(int frame)
     }
     if (ids.isEmpty()) return;
     Project* p = m_project;
-    p->edit("Schnitt am Playhead", [&](Timeline& tl) {
+    p->edit(T("Schnitt am Playhead"), [&](Timeline& tl) {
         TimelineOps::splitAt(tl, ids, frame, [p] { return p->newClipId(); },
                              [p] { return p->newLinkId(); });
     });
@@ -193,7 +195,7 @@ void Editor::setClipFade(int clipId, TimelineOps::Edge edge, int frames, const Q
     const bool in = edge == TimelineOps::Edge::Start;
     frames = std::clamp(frames, 0, c->length() - (in ? c->fadeOut : c->fadeIn));
     if (frames == (in ? c->fadeIn : c->fadeOut)) return;
-    m_project->edit(in ? "Einblenden" : "Ausblenden", [&](Timeline& tl) {
+    m_project->edit(in ? T("Einblenden") : T("Ausblenden"), [&](Timeline& tl) {
         if (Clip* x = TimelineOps::findClip(tl, clipId)) (in ? x->fadeIn : x->fadeOut) = frames;
     }, mergeKey);
 }
@@ -212,7 +214,7 @@ void Editor::rippleDeleteSelection()
 {
     if (m_selection->isEmpty()) return;
     const QVector<int> ids = m_selection->ids().values().toVector();
-    m_project->edit("Löschen mit Ripple", [&](Timeline& tl) {
+    m_project->edit(T("Löschen mit Ripple"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
         TimelineOps::rippleDelete(tl, ids);
     });
@@ -253,7 +255,7 @@ void Editor::trimToPlayhead(TimelineOps::Edge edge, int frame)
         if (const Clip* c = TimelineOps::findClip(cur, id); c && frame > c->start && frame < c->end()) ids << id;
     if (ids.isEmpty()) return;
     const auto len = sourceLength();
-    m_project->edit(edge == TimelineOps::Edge::Start ? "Anfang trimmen" : "Ende trimmen", [&](Timeline& tl) {
+    m_project->edit(edge == TimelineOps::Edge::Start ? T("Anfang trimmen") : T("Ende trimmen"), [&](Timeline& tl) {
         for (int id : ids) {
             const Clip* c = TimelineOps::findClip(tl, id);
             if (!c) continue;
@@ -271,7 +273,7 @@ void Editor::toggleSelectionEnabled()
     bool anyEnabled = false;
     for (int id : ids)
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id)) anyEnabled |= c->enabled;
-    modifyClips(ids, anyEnabled ? "Clip deaktivieren" : "Clip aktivieren",
+    modifyClips(ids, anyEnabled ? T("Clip deaktivieren") : T("Clip aktivieren"),
                 [anyEnabled](Clip& c) { c.enabled = !anyEnabled; });
 }
 
@@ -284,7 +286,7 @@ void Editor::toggleLinkSelection()
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id)) anyLinked |= c->linkId != 0;
     if (!anyLinked && ids.size() < 2) return;
     const int link = anyLinked ? 0 : m_project->newLinkId();
-    modifyClips(ids, anyLinked ? "Verknüpfung lösen" : "Clips verknüpfen", [link](Clip& c) { c.linkId = link; });
+    modifyClips(ids, anyLinked ? T("Verknüpfung lösen") : T("Clips verknüpfen"), [link](Clip& c) { c.linkId = link; });
 }
 
 void Editor::toggleMarker(int frame)
@@ -302,7 +304,7 @@ void Editor::toggleMarker(int frame)
 void Editor::setMarkIn(int frame)
 {
     if (frame == m_project->timeline().markIn) return;
-    m_project->edit(frame < 0 ? "In-Punkt entfernen" : "In-Punkt setzen", [&](Timeline& tl) {
+    m_project->edit(frame < 0 ? T("In-Punkt entfernen") : T("In-Punkt setzen"), [&](Timeline& tl) {
         tl.markIn = frame;
         if (frame >= 0 && tl.markOut >= 0 && tl.markOut < frame) tl.markOut = -1;
     });
@@ -311,7 +313,7 @@ void Editor::setMarkIn(int frame)
 void Editor::setMarkOut(int frame)
 {
     if (frame == m_project->timeline().markOut) return;
-    m_project->edit(frame < 0 ? "Out-Punkt entfernen" : "Out-Punkt setzen", [&](Timeline& tl) {
+    m_project->edit(frame < 0 ? T("Out-Punkt entfernen") : T("Out-Punkt setzen"), [&](Timeline& tl) {
         tl.markOut = frame;
         if (frame >= 0 && tl.markIn > frame) tl.markIn = -1;
     });
@@ -321,7 +323,7 @@ void Editor::clearMarks()
 {
     const Timeline& t = m_project->timeline();
     if (t.markIn < 0 && t.markOut < 0) return;
-    m_project->edit("In/Out entfernen", [](Timeline& tl) { tl.markIn = tl.markOut = -1; });
+    m_project->edit(T("In/Out entfernen"), [](Timeline& tl) { tl.markIn = tl.markOut = -1; });
 }
 
 void Editor::copySelection()
@@ -352,7 +354,7 @@ void Editor::paste(int frame)
     if (m_clipboard.isEmpty()) return;
     Project* p = m_project;
     QSet<int> pasted;
-    p->edit("Einfügen", [&](Timeline& tl) {
+    p->edit(T("Einfügen"), [&](Timeline& tl) {
         QHash<int, int> linkMap; // Kopie bekommt eigene Verknüpfung
         for (const auto& it : m_clipboard) {
             Clip c = it.clip;
@@ -380,7 +382,7 @@ void Editor::deleteSelection()
     if (m_selection->isEmpty()) return;
     const QVector<int> ids = m_selection->ids().values().toVector();
     // Löschen ohne Ripple: es bleibt eine Lücke, nichts rutscht nach
-    m_project->edit("Löschen", [&](Timeline& tl) {
+    m_project->edit(T("Löschen"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
         for (int id : ids) TimelineOps::removeClip(tl, id);
     });
@@ -480,7 +482,7 @@ void Editor::addTransitions(int frame)
     }
     fitTransitions(tl, touched, sourceLength());
     if (sameTransitions(cur, tl)) return;
-    m_project->edit("Übergang hinzufügen", [&](Timeline& t) { t = tl; });
+    m_project->edit(T("Übergang hinzufügen"), [&](Timeline& t) { t = tl; });
 }
 
 void Editor::removeTransition(int leftId, int rightId)
@@ -488,7 +490,7 @@ void Editor::removeTransition(int leftId, int rightId)
     const Clip* l = TimelineOps::findClip(m_project->timeline(), leftId);
     const Clip* r = TimelineOps::findClip(m_project->timeline(), rightId);
     if (!(l && l->transOut) && !(r && r->transIn)) return;
-    m_project->edit("Übergang löschen", [&](Timeline& tl) {
+    m_project->edit(T("Übergang löschen"), [&](Timeline& tl) {
         if (Clip* l = TimelineOps::findClip(tl, leftId)) l->transOut = 0, l->transOutStyle = {};
         if (Clip* r = TimelineOps::findClip(tl, rightId)) r->transIn = 0, r->transInStyle = {};
     });
@@ -505,7 +507,7 @@ void Editor::setTransitionStyle(int leftId, int rightId, const TransitionStyle& 
     // Andere Ausrichtung braucht andere Handles -> Länge ggf. kürzen
     fitTransitions(tl, {leftId, rightId}, sourceLength());
     if (sameTransitions(m_project->timeline(), tl)) return;
-    m_project->edit("Übergang ändern", [&](Timeline& t) { t = tl; });
+    m_project->edit(T("Übergang ändern"), [&](Timeline& t) { t = tl; });
 }
 
 void Editor::setTransitionLength(int leftId, int rightId, int length, const QString& mergeKey)
@@ -519,7 +521,7 @@ void Editor::setTransitionLength(int leftId, int rightId, int length, const QStr
     if (r) r->transIn = length;
     fitTransitions(tl, {leftId, rightId}, sourceLength());
     if (sameTransitions(m_project->timeline(), tl)) return;
-    m_project->edit("Übergangslänge", [&](Timeline& t) { t = tl; }, mergeKey);
+    m_project->edit(T("Übergangslänge"), [&](Timeline& t) { t = tl; }, mergeKey);
 }
 
 QVector<TimelineOps::TransitionSpan> Editor::transitions(TrackRef ref) const

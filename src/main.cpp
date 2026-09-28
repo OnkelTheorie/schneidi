@@ -2,6 +2,7 @@
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
 #include "app/Theme.h"
+#include "core/I18n.h"
 #include "engine/Engine.h"
 
 #include <QApplication>
@@ -17,9 +18,11 @@ int main(int argc, char* argv[])
     // löst --actions aus, speichert das Fensterbild und beendet sich
     QString screenshot;
     int screenshotWait = 4000;
+    QString langOverride;
     for (int i = 1; i + 1 < argc; ++i) {
         if (qstrcmp(argv[i], "--screenshot") == 0) screenshot = QString::fromLocal8Bit(argv[i + 1]);
         if (qstrcmp(argv[i], "--wait") == 0) screenshotWait = QByteArray(argv[i + 1]).toInt();
+        if (qstrcmp(argv[i], "--lang") == 0) langOverride = QString::fromLocal8Bit(argv[i + 1]);
     }
     if (!screenshot.isEmpty()) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -28,6 +31,8 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     QApplication::setApplicationName("schneidi");
     QApplication::setApplicationVersion("0.1.0");
+    // Testhilfe: --lang en|de gilt nur für diesen Lauf (Einstellung bleibt unverändert)
+    I18n::install(langOverride);
 
     // MLT liest Kommazahlen mit Punkt – deutsches Locale würde "0.5" als 0 lesen
     std::setlocale(LC_NUMERIC, "C");
@@ -53,7 +58,7 @@ int main(int argc, char* argv[])
     QStringList files = app.arguments().mid(1);
     const bool demo = files.removeAll("--demo") > 0; // Testhilfe: zusätzlich auf die Timeline legen
     // Testhilfe: --actions select_all,toggle_enabled löst Aktionen (IDs aus keybindings.json) nach dem Start aus
-    for (const char* opt : {"--screenshot", "--wait"})
+    for (const char* opt : {"--screenshot", "--wait", "--lang"})
         if (const int i = files.indexOf(opt); i >= 0) files.remove(i, std::min<qsizetype>(2, files.size() - i));
     QStringList actions;
     if (const int i = files.indexOf("--actions"); i >= 0 && i + 1 < files.size()) {

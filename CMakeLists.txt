@@ -15,6 +15,7 @@ add_executable(schneidi
     src/main.cpp
 
     src/core/Types.h
+    src/core/I18n.h               src/core/I18n.cpp
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
     src/core/Project.h            src/core/Project.cpp
@@ -43,6 +44,8 @@ add_executable(schneidi
     src/ui/timeline/TimelineView.h    src/ui/timeline/TimelineView.cpp
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp
 )
+
+qt_add_resources(schneidi "i18n" PREFIX "/" FILES i18n/en.json)
 
 target_include_directories(schneidi PRIVATE src)
 target_link_libraries(schneidi PRIVATE Qt6::Widgets PkgConfig::MLT)

@@ -2,6 +2,7 @@
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
+#include "core/I18n.h"
 
 #include <QHBoxLayout>
 #include <QHash>
@@ -25,10 +26,10 @@ class MouseCapture : public QLabel {
 public:
     explicit MouseCapture(std::function<void(int)> done) : m_done(std::move(done))
     {
-        setText("Maustaste drücken …");
+        setText(T("Maustaste drücken …"));
         setFocusPolicy(Qt::StrongFocus);
         setStyleSheet(QString("color: %1; padding-left: 4px;").arg(Theme::accent.name()));
-        setToolTip("Seitentaste drücken. Entf = entfernen, Esc = abbrechen");
+        setToolTip(T("Seitentaste drücken. Entf = entfernen, Esc = abbrechen"));
     }
 
 protected:
@@ -36,7 +37,7 @@ protected:
     {
         e->accept();
         if (InputBindings::bindableMouseButtons().contains(e->button())) finish(int(e->button()));
-        else if (e->button() != Qt::LeftButton) setText("Nur Seitentasten/Zusatztasten");
+        else if (e->button() != Qt::LeftButton) setText(T("Nur Seitentasten/Zusatztasten"));
     }
     void mouseDoubleClickEvent(QMouseEvent* e) override { mousePressEvent(e); }
     void keyPressEvent(QKeyEvent* e) override
@@ -60,16 +61,16 @@ private:
 
 KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
 {
-    setWindowTitle("Tastenbelegung");
+    setWindowTitle(T("Tastenbelegung"));
     resize(780, 640);
 
     m_filter = new QLineEdit;
-    m_filter->setPlaceholderText("Suchen (Funktion oder Taste) …");
+    m_filter->setPlaceholderText(T("Suchen (Funktion oder Taste) …"));
     m_filter->setClearButtonEnabled(true);
     connect(m_filter, &QLineEdit::textChanged, this, &KeyBindingsDialog::applyFilter);
 
     m_table = new QTableWidget(0, ColCount);
-    m_table->setHorizontalHeaderLabels({"Bereich", "Funktion", "Taste", "Maustaste"});
+    m_table->setHorizontalHeaderLabels({T("Bereich"), T("Funktion"), T("Taste"), T("Maustaste")});
     m_table->verticalHeader()->hide();
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -81,17 +82,17 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     connect(m_table, &QTableWidget::cellDoubleClicked, this,
             [this](int row, int col) { col == ColMouse ? editMouse(row) : editRow(row); });
 
-    auto* hint = new QLabel("Doppelklick auf eine Zeile, dann die neue Taste drücken. "
+    auto* hint = new QLabel(T("Doppelklick auf eine Zeile, dann die neue Taste drücken. "
                             "Doppelklick in der Spalte Maustaste, dann die Seitentaste der Maus drücken. "
-                            "Fett = eigene Belegung, rot = doppelt belegt.");
+                            "Fett = eigene Belegung, rot = doppelt belegt."));
     hint->setWordWrap(true);
     hint->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
 
-    auto* resetOne = new QPushButton("Standard");
-    resetOne->setToolTip("Gewählte Zeile auf Standard zurücksetzen");
+    auto* resetOne = new QPushButton(T("Standard"));
+    resetOne->setToolTip(T("Gewählte Zeile auf Standard zurücksetzen"));
     connect(resetOne, &QPushButton::clicked, this, [this] { resetRow(m_table->currentRow()); });
-    auto* clearOne = new QPushButton("Entfernen");
-    clearOne->setToolTip("Taste und Maustaste der gewählten Zeile entfernen");
+    auto* clearOne = new QPushButton(T("Entfernen"));
+    clearOne->setToolTip(T("Taste und Maustaste der gewählten Zeile entfernen"));
     connect(clearOne, &QPushButton::clicked, this, [this] {
         const int row = m_table->currentRow();
         if (row < 0) return;
@@ -100,12 +101,12 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
         InputBindings::instance().setMouseButton(id, Qt::NoButton);
         fill();
     });
-    auto* resetAll = new QPushButton("Alle zurücksetzen");
+    auto* resetAll = new QPushButton(T("Alle zurücksetzen"));
     connect(resetAll, &QPushButton::clicked, this, [this] {
         InputBindings::instance().resetAll();
         fill();
     });
-    auto* close = new QPushButton("Schließen");
+    auto* close = new QPushButton(T("Schließen"));
     close->setDefault(true);
     connect(close, &QPushButton::clicked, this, &QDialog::accept);
 
@@ -156,7 +157,7 @@ void KeyBindingsDialog::fill()
         }
         if (uses.value(key.toString(QKeySequence::PortableText)) > 1) {
             keyItem->setForeground(QColor(0xe8, 0x41, 0x4a));
-            keyItem->setToolTip("Diese Taste ist mehrfach belegt");
+            keyItem->setToolTip(T("Diese Taste ist mehrfach belegt"));
         }
         m_table->setItem(i, ColCategory, cat);
         m_table->setItem(i, ColText, text);

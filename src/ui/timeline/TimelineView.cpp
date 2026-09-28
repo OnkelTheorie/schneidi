@@ -3,6 +3,7 @@
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/Timecode.h"
@@ -615,7 +616,7 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
             f.setPointSizeF(7);
             p.setFont(f);
             p.setPen(QColor(0x10, 0x10, 0x10));
-            const QString name = row.ref.kind == TrackKind::Video ? QString(transitionTypeInfo(s.style.type).name)
+            const QString name = row.ref.kind == TrackKind::Video ? T(transitionTypeInfo(s.style.type).name)
                                                                   : QStringLiteral("Cross Fade +3 dB");
             const QRect tr = r.adjusted(4, 0, -4, 0);
             p.drawText(tr, Qt::AlignTop | Qt::AlignHCenter, p.fontMetrics().elidedText(name, Qt::ElideRight, tr.width()));
@@ -836,7 +837,7 @@ void TimelineView::drawHeaders(QPainter& p)
         p.setFont(f);
         p.setPen(Theme::textDim);
         p.drawText(r.adjusted(10, 0, -6, -6), Qt::AlignBottom | Qt::AlignLeft,
-                   QString("%1 Clip%2").arg(t.clips.size()).arg(t.clips.size() == 1 ? "" : "s"));
+                   (t.clips.size() == 1 ? T("1 Clip") : T("%1 Clips").arg(t.clips.size())));
 
         // Knopf: Video = Auge (ausblenden), Audio = M (stumm)
         const QRect b = headerButton(row);
@@ -900,7 +901,7 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
     QMenu menu(this);
     if (t->ref.kind == TrackKind::Video) {
         for (const auto& i : kTransitionTypes) {
-            QAction* a = menu.addAction(i.name);
+            QAction* a = menu.addAction(T(i.name));
             a->setCheckable(true);
             a->setChecked(s.style.type == i.type);
             connect(a, &QAction::triggered, this, [this, s, type = i.type] {
@@ -912,8 +913,8 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
         menu.addSeparator();
     }
     if (s.isDissolve()) {
-        QMenu* align = menu.addMenu("Ausrichtung");
-        const char* names[] = {"Mitte auf Schnitt", "Beginn am Schnitt", "Ende am Schnitt"}; // Index = TransitionAlign
+        QMenu* align = menu.addMenu(T("Ausrichtung"));
+        const QString names[] = {T("Mitte auf Schnitt"), T("Beginn am Schnitt"), T("Ende am Schnitt")}; // Index = TransitionAlign
         for (int i = 0; i < 3; ++i) {
             QAction* a = align->addAction(names[i]);
             a->setCheckable(true);
@@ -925,7 +926,7 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
             });
         }
     }
-    connect(menu.addAction("Löschen"), &QAction::triggered, this,
+    connect(menu.addAction(T("Löschen")), &QAction::triggered, this,
             [this, s] { m_editor->removeTransition(s.leftId, s.rightId); });
     menu.exec(e->globalPos());
 }

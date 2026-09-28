@@ -1,5 +1,7 @@
 #include "app/InputBindings.h"
 
+#include "core/I18n.h"
+
 #include <QAction>
 #include <QDir>
 #include <QFile>
@@ -184,11 +186,11 @@ const QVector<Qt::MouseButton>& InputBindings::bindableMouseButtons()
 QString InputBindings::mouseButtonText(Qt::MouseButton b)
 {
     switch (b) {
-    case Qt::BackButton: return "Seitentaste hinten";
-    case Qt::ForwardButton: return "Seitentaste vorne";
-    case Qt::TaskButton: return "Maustaste 6";
-    case Qt::ExtraButton4: return "Maustaste 7";
-    case Qt::ExtraButton5: return "Maustaste 8";
+    case Qt::BackButton: return T("Seitentaste hinten");
+    case Qt::ForwardButton: return T("Seitentaste vorne");
+    case Qt::TaskButton: return T("Maustaste 6");
+    case Qt::ExtraButton4: return T("Maustaste 7");
+    case Qt::ExtraButton5: return T("Maustaste 8");
     default: return {};
     }
 }

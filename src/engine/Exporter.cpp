@@ -1,5 +1,6 @@
 #include "engine/Exporter.h"
 
+#include "core/I18n.h"
 #include "core/TimelineOps.h"
 #include "engine/TimelineBuilder.h"
 
@@ -25,7 +26,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     const int to = s.to < 0 ? end - 1 : std::min(s.to, end - 1);
     m_length = to - m_from + 1;
     if (end <= 0 || m_length <= 0) {
-        if (error) *error = end <= 0 ? "Die Timeline ist leer." : "Der In/Out-Bereich enthält nichts.";
+        if (error) *error = end <= 0 ? T("Die Timeline ist leer.") : T("Der In/Out-Bereich enthält nichts.");
         return false;
     }
 
@@ -36,7 +37,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
 
     m_consumer = std::make_unique<Mlt::Consumer>(*m_profile, "avformat", s.path.toUtf8().constData());
     if (!m_consumer->is_valid()) {
-        if (error) *error = "FFmpeg-Ausgabe (avformat) nicht verfügbar.";
+        if (error) *error = T("FFmpeg-Ausgabe (avformat) nicht verfügbar.");
         cleanup();
         return false;
     }
@@ -55,7 +56,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_tractor->set_speed(1);
     m_tractor->seek(m_from);
     if (m_consumer->start() != 0) {
-        if (error) *error = "Export konnte nicht gestartet werden.";
+        if (error) *error = T("Export konnte nicht gestartet werden.");
         cleanup();
         return false;
     }
@@ -71,7 +72,7 @@ void Exporter::poll()
         const QString path = m_path;
         cleanup();
         emit progress(100);
-        emit finished(true, QString("Export fertig: %1").arg(path));
+        emit finished(true, T("Export fertig: %1").arg(path));
         return;
     }
     const int pos = m_tractor->position() - m_from;
@@ -85,7 +86,7 @@ void Exporter::cancel()
     const QString path = m_path;
     cleanup();
     QFile::remove(path); // halbfertige Datei weg
-    emit finished(false, "Export abgebrochen.");
+    emit finished(false, T("Export abgebrochen."));
 }
 
 void Exporter::cleanup()

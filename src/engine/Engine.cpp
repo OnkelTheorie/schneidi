@@ -1,5 +1,6 @@
 #include "engine/Engine.h"
 
+#include "core/I18n.h"
 #include "engine/TimelineBuilder.h"
 
 #include <Mlt.h>
@@ -40,7 +41,7 @@ bool Engine::init(QString* error)
 #else
     if (!Mlt::Factory::init()) {
 #endif
-        if (error) *error = "MLT konnte nicht initialisiert werden.";
+        if (error) *error = T("MLT konnte nicht initialisiert werden.");
         return false;
     }
 
@@ -53,7 +54,7 @@ bool Engine::init(QString* error)
         if (m_consumer->is_valid()) break;
     }
     if (!m_consumer || !m_consumer->is_valid()) {
-        if (error) *error = "Kein MLT-Audio-Consumer (sdl2_audio/rtaudio) gefunden.";
+        if (error) *error = T("Kein MLT-Audio-Consumer (sdl2_audio/rtaudio) gefunden.");
         return false;
     }
     m_consumer->set("terminate_on_pause", 0);

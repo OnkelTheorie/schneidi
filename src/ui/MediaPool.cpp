@@ -1,6 +1,7 @@
 #include "ui/MediaPool.h"
 
 #include "app/Theme.h"
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "engine/Engine.h"
@@ -57,7 +58,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     auto* title = new QLabel("Media Pool");
     title->setObjectName("PanelTitle");
     auto* importBtn = new QToolButton;
-    importBtn->setText("Importieren…");
+    importBtn->setText(T("Importieren…"));
     connect(importBtn, &QToolButton::clicked, this, &MediaPool::importDialog);
 
     auto* header = new QHBoxLayout;
@@ -92,9 +93,9 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
 void MediaPool::importDialog()
 {
     const QStringList files = QFileDialog::getOpenFileNames(
-        this, "Medien importieren", QString(),
-        "Medien (*.mp4 *.mov *.mkv *.avi *.webm *.mts *.m4v *.mp3 *.wav *.flac *.ogg *.m4a *.aac "
-        "*.png *.jpg *.jpeg *.webp *.bmp);;Alle Dateien (*)");
+        this, T("Medien importieren"), QString(),
+        T("Medien (*.mp4 *.mov *.mkv *.avi *.webm *.mts *.m4v *.mp3 *.wav *.flac *.ogg *.m4a *.aac "
+        "*.png *.jpg *.jpeg *.webp *.bmp);;Alle Dateien (*)"));
     importFiles(files);
 }
 
@@ -110,7 +111,7 @@ void MediaPool::importFiles(const QStringList& paths)
         m_project->addMedia(info);
     }
     if (!failed.isEmpty())
-        QMessageBox::warning(this, "Import", "Nicht lesbar:\n" + failed.join('\n'));
+        QMessageBox::warning(this, "Import", T("Nicht lesbar:") + "\n" + failed.join('\n'));
 }
 
 void MediaPool::rebuild()
@@ -128,9 +129,9 @@ void MediaPool::rebuild()
         p.setPen(QColor(0xf0, 0xf0, 0xf0));
         p.drawText(titleThumb.rect(), Qt::AlignCenter, "T");
     }
-    auto* titleItem = new QListWidgetItem(QIcon(titleThumb), "Text\nTitel");
+    auto* titleItem = new QListWidgetItem(QIcon(titleThumb), T("Text\nTitel"));
     titleItem->setData(Qt::UserRole, QString(TitleItem));
-    titleItem->setToolTip("Titel – in die Timeline ziehen");
+    titleItem->setToolTip(T("Titel – in die Timeline ziehen"));
     m_list->addItem(titleItem);
 
     for (const MediaInfo& m : m_project->media()) {
@@ -141,7 +142,7 @@ void MediaPool::rebuild()
             const QImage img = m_engine->thumbnail(m.path, m.isImage ? 0 : m.length / 3, kThumb);
             if (!img.isNull()) thumb = QPixmap::fromImage(img);
         }
-        if (thumb.isNull()) thumb = placeholderThumb(m.hasAudio ? "♪ Audio" : "?");
+        if (thumb.isNull()) thumb = placeholderThumb(m.hasAudio ? T("♪ Audio") : "?");
 
         auto* item = new QListWidgetItem(QIcon(thumb),
                                          m.name + "\n" + Timecode::format(m.length, m_project->fps()));

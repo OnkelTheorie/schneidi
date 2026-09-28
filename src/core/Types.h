@@ -1,6 +1,9 @@
 #pragma once
+
 // Reines Datenmodell der Timeline – ohne Qt-Widgets und ohne MLT,
 // damit Engine und UI unabhängig davon austauschbar bleiben.
+
+#include "core/I18n.h"
 
 #include <QColor>
 #include <QFileInfo>
@@ -84,12 +87,12 @@ struct TransitionStyle {
 struct TransitionTypeInfo { TransitionType type; const char* id; const char* name; };
 inline constexpr TransitionTypeInfo kTransitionTypes[] = {
     {TransitionType::CrossDissolve, "cross_dissolve", "Cross Dissolve"},
-    {TransitionType::DipToBlack, "dip_black", "Abblende über Schwarz"},
-    {TransitionType::DipToWhite, "dip_white", "Abblende über Weiß"},
-    {TransitionType::WipeRight, "wipe_right", "Wischblende nach rechts"},
-    {TransitionType::WipeLeft, "wipe_left", "Wischblende nach links"},
-    {TransitionType::WipeDown, "wipe_down", "Wischblende nach unten"},
-    {TransitionType::WipeUp, "wipe_up", "Wischblende nach oben"},
+    {TransitionType::DipToBlack, "dip_black", N_("Abblende über Schwarz")},
+    {TransitionType::DipToWhite, "dip_white", N_("Abblende über Weiß")},
+    {TransitionType::WipeRight, "wipe_right", N_("Wischblende nach rechts")},
+    {TransitionType::WipeLeft, "wipe_left", N_("Wischblende nach links")},
+    {TransitionType::WipeDown, "wipe_down", N_("Wischblende nach unten")},
+    {TransitionType::WipeUp, "wipe_up", N_("Wischblende nach oben")},
 };
 inline const TransitionTypeInfo& transitionTypeInfo(TransitionType t)
 {

@@ -236,11 +236,11 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     const QJsonDocument doc = QJsonDocument::fromJson(json, &pe);
     const QJsonObject root = doc.object();
     if (pe.error != QJsonParseError::NoError || root.value("app").toString() != "schneidi") {
-        if (error) *error = "Keine gültige schneidi-Projektdatei.";
+        if (error) *error = T("Keine gültige schneidi-Projektdatei.");
         return false;
     }
     if (root.value("version").toInt() > kFormatVersion) {
-        if (error) *error = "Die Projektdatei stammt aus einer neueren schneidi-Version.";
+        if (error) *error = T("Die Projektdatei stammt aus einer neueren schneidi-Version.");
         return false;
     }
 

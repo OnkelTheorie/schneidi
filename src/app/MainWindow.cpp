@@ -3,6 +3,7 @@
 #include "app/InputBindings.h"
 #include "app/KeyBindingsDialog.h"
 #include "core/Editor.h"
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
@@ -17,6 +18,7 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QMouseEvent>
 #include <QButtonGroup>
@@ -288,90 +290,90 @@ void MainWindow::buildActions()
     QUndoStack* undo = m_project->undoStack();
 
     // Belegung nach DaVinci Resolve (Defaults), überschreibbar in keybindings.json
-    QMenu* file = menuBar()->addMenu("&Datei");
-    makeAction(file, "project_new", "Neues Projekt", QKeySequence("Ctrl+N"), [this] { newProject(); });
-    makeAction(file, "project_open", "Projekt öffnen…", QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
-    m_recentMenu = file->addMenu("Zuletzt geöffnet");
+    QMenu* file = menuBar()->addMenu(T("&Datei"));
+    makeAction(file, "project_new", T("Neues Projekt"), QKeySequence("Ctrl+N"), [this] { newProject(); });
+    makeAction(file, "project_open", T("Projekt öffnen…"), QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
+    m_recentMenu = file->addMenu(T("Zuletzt geöffnet"));
     rebuildRecentMenu();
-    makeAction(file, "project_save", "Projekt speichern", QKeySequence("Ctrl+S"), [this] { save(); });
-    makeAction(file, "project_save_as", "Projekt speichern unter…", QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
+    makeAction(file, "project_save", T("Projekt speichern"), QKeySequence("Ctrl+S"), [this] { save(); });
+    makeAction(file, "project_save_as", T("Projekt speichern unter…"), QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
     file->addSeparator();
-    makeAction(file, "import", "Medien importieren…", QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
+    makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
     file->addSeparator();
-    makeAction(file, "quit", "Beenden", QKeySequence("Ctrl+Q"), [this] { close(); });
+    makeAction(file, "quit", T("Beenden"), QKeySequence("Ctrl+Q"), [this] { close(); });
 
-    QMenu* edit = menuBar()->addMenu("&Bearbeiten");
-    QAction* undoAct = makeAction(edit, "undo", "Rückgängig", QKeySequence("Ctrl+Z"), [undo] { undo->undo(); });
-    QAction* redoAct = makeAction(edit, "redo", "Wiederholen", QKeySequence("Ctrl+Shift+Z"), [undo] { undo->redo(); });
+    QMenu* edit = menuBar()->addMenu(T("&Bearbeiten"));
+    QAction* undoAct = makeAction(edit, "undo", T("Rückgängig"), QKeySequence("Ctrl+Z"), [undo] { undo->undo(); });
+    QAction* redoAct = makeAction(edit, "redo", T("Wiederholen"), QKeySequence("Ctrl+Shift+Z"), [undo] { undo->redo(); });
     connect(undo, &QUndoStack::canUndoChanged, undoAct, &QAction::setEnabled);
     connect(undo, &QUndoStack::canRedoChanged, redoAct, &QAction::setEnabled);
     undoAct->setEnabled(false);
     redoAct->setEnabled(false);
     edit->addSeparator();
-    makeAction(edit, "cut", "Ausschneiden", QKeySequence("Ctrl+X"), [this] { m_editor->cutSelection(); });
-    makeAction(edit, "copy", "Kopieren", QKeySequence("Ctrl+C"), [this] { m_editor->copySelection(); });
-    makeAction(edit, "paste", "Einfügen am Playhead", QKeySequence("Ctrl+V"), [this, tv] { m_editor->paste(tv->playhead()); });
+    makeAction(edit, "cut", T("Ausschneiden"), QKeySequence("Ctrl+X"), [this] { m_editor->cutSelection(); });
+    makeAction(edit, "copy", T("Kopieren"), QKeySequence("Ctrl+C"), [this] { m_editor->copySelection(); });
+    makeAction(edit, "paste", T("Einfügen am Playhead"), QKeySequence("Ctrl+V"), [this, tv] { m_editor->paste(tv->playhead()); });
     edit->addSeparator();
-    makeAction(edit, "delete", "Löschen (Lücke bleibt)", QKeySequence(Qt::Key_Backspace), [this] { m_editor->deleteSelection(); });
-    makeAction(edit, "delete_alt", "Löschen (Entf)", QKeySequence(Qt::Key_Delete), [this] { m_editor->deleteSelection(); });
-    makeAction(edit, "ripple_delete", "Löschen mit Ripple", QKeySequence("Shift+Del"), [this] { m_editor->rippleDeleteSelection(); });
-    makeAction(edit, "ripple_delete_alt", "Löschen mit Ripple (Rücktaste)", QKeySequence("Shift+Backspace"),
+    makeAction(edit, "delete", T("Löschen (Lücke bleibt)"), QKeySequence(Qt::Key_Backspace), [this] { m_editor->deleteSelection(); });
+    makeAction(edit, "delete_alt", T("Löschen (Entf)"), QKeySequence(Qt::Key_Delete), [this] { m_editor->deleteSelection(); });
+    makeAction(edit, "ripple_delete", T("Löschen mit Ripple"), QKeySequence("Shift+Del"), [this] { m_editor->rippleDeleteSelection(); });
+    makeAction(edit, "ripple_delete_alt", T("Löschen mit Ripple (Rücktaste)"), QKeySequence("Shift+Backspace"),
                [this] { m_editor->rippleDeleteSelection(); });
     edit->addSeparator();
-    makeAction(edit, "select_all", "Alles auswählen", QKeySequence("Ctrl+A"), [this] { m_editor->selectAll(); });
-    makeAction(edit, "deselect", "Auswahl aufheben", QKeySequence("Ctrl+Shift+A"), [this] { m_selection->clear(); });
+    makeAction(edit, "select_all", T("Alles auswählen"), QKeySequence("Ctrl+A"), [this] { m_editor->selectAll(); });
+    makeAction(edit, "deselect", T("Auswahl aufheben"), QKeySequence("Ctrl+Shift+A"), [this] { m_selection->clear(); });
     edit->addSeparator();
-    makeAction(edit, "edit_keybindings", "Tastenbelegung…", QKeySequence("Ctrl+Alt+K"), [this] {
+    makeAction(edit, "edit_keybindings", T("Tastenbelegung…"), QKeySequence("Ctrl+Alt+K"), [this] {
         KeyBindingsDialog dlg(this);
         dlg.exec();
     });
 
     QMenu* timeline = menuBar()->addMenu("&Timeline");
-    makeAction(timeline, "tool_select", "Auswahl-Werkzeug", QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
-    makeAction(timeline, "tool_blade", "Klingen-Werkzeug", QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
-    makeAction(timeline, "snapping", "Snapping an/aus", QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
+    makeAction(timeline, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
+    makeAction(timeline, "tool_blade", T("Klingen-Werkzeug"), QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
+    makeAction(timeline, "snapping", T("Snapping an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
     timeline->addSeparator();
-    makeAction(timeline, "split", "Clip am Playhead teilen", QKeySequence("Ctrl+B"),
+    makeAction(timeline, "split", T("Clip am Playhead teilen"), QKeySequence("Ctrl+B"),
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
-    makeAction(timeline, "split_alt", "Clip teilen (alternativ)", QKeySequence("Ctrl+\\"),
+    makeAction(timeline, "split_alt", T("Clip teilen (alternativ)"), QKeySequence("Ctrl+\\"),
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
-    makeAction(timeline, "add_transition", "Übergang hinzufügen (Cross Dissolve)", QKeySequence("Ctrl+T"),
+    makeAction(timeline, "add_transition", T("Übergang hinzufügen (Cross Dissolve)"), QKeySequence("Ctrl+T"),
                [this, tv] { m_editor->addTransitions(tv->playhead()); });
-    makeAction(timeline, "add_title", "Titel einfügen", QKeySequence(), [this, tv] { m_editor->addTitle(tv->playhead()); });
-    makeAction(timeline, "trim_start", "Anfang bis Playhead trimmen", QKeySequence("Shift+["),
+    makeAction(timeline, "add_title", T("Titel einfügen"), QKeySequence(), [this, tv] { m_editor->addTitle(tv->playhead()); });
+    makeAction(timeline, "trim_start", T("Anfang bis Playhead trimmen"), QKeySequence("Shift+["),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
-    makeAction(timeline, "trim_end", "Ende bis Playhead trimmen", QKeySequence("Shift+]"),
+    makeAction(timeline, "trim_end", T("Ende bis Playhead trimmen"), QKeySequence("Shift+]"),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
-    makeAction(timeline, "nudge_left", "1 Frame nach links schieben", QKeySequence(","), [this] { m_editor->nudgeSelection(-1); });
-    makeAction(timeline, "nudge_right", "1 Frame nach rechts schieben", QKeySequence("."), [this] { m_editor->nudgeSelection(1); });
-    makeAction(timeline, "nudge_left_multi", "5 Frames nach links schieben", QKeySequence("Shift+,"),
+    makeAction(timeline, "nudge_left", T("1 Frame nach links schieben"), QKeySequence(","), [this] { m_editor->nudgeSelection(-1); });
+    makeAction(timeline, "nudge_right", T("1 Frame nach rechts schieben"), QKeySequence("."), [this] { m_editor->nudgeSelection(1); });
+    makeAction(timeline, "nudge_left_multi", T("5 Frames nach links schieben"), QKeySequence("Shift+,"),
                [this] { m_editor->nudgeSelection(-5); });
-    makeAction(timeline, "nudge_right_multi", "5 Frames nach rechts schieben", QKeySequence("Shift+."),
+    makeAction(timeline, "nudge_right_multi", T("5 Frames nach rechts schieben"), QKeySequence("Shift+."),
                [this] { m_editor->nudgeSelection(5); });
-    makeAction(timeline, "toggle_enabled", "Clip aktivieren/deaktivieren", QKeySequence("D"),
+    makeAction(timeline, "toggle_enabled", T("Clip aktivieren/deaktivieren"), QKeySequence("D"),
                [this] { m_editor->toggleSelectionEnabled(); });
-    makeAction(timeline, "link_clips", "Clips verknüpfen/trennen", QKeySequence("Ctrl+Alt+L"),
+    makeAction(timeline, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
                [this] { m_editor->toggleLinkSelection(); });
     timeline->addSeparator();
-    makeAction(timeline, "add_marker", "Marker setzen/entfernen", QKeySequence("M"),
+    makeAction(timeline, "add_marker", T("Marker setzen/entfernen"), QKeySequence("M"),
                [this, tv] { m_editor->toggleMarker(tv->playhead()); });
-    makeAction(timeline, "mark_in", "In-Punkt setzen", QKeySequence("I"), [this, tv] { m_editor->setMarkIn(tv->playhead()); });
-    makeAction(timeline, "mark_out", "Out-Punkt setzen", QKeySequence("O"), [this, tv] { m_editor->setMarkOut(tv->playhead()); });
-    makeAction(timeline, "clear_in", "In-Punkt entfernen", QKeySequence("Alt+I"), [this] { m_editor->setMarkIn(-1); });
-    makeAction(timeline, "clear_out", "Out-Punkt entfernen", QKeySequence("Alt+O"), [this] { m_editor->setMarkOut(-1); });
-    makeAction(timeline, "clear_in_out", "In und Out entfernen", QKeySequence("Alt+X"), [this] { m_editor->clearMarks(); });
-    makeAction(timeline, "goto_in", "Zum In-Punkt", QKeySequence("Shift+I"), [this] { jumpToFrame(m_project->timeline().markIn); });
-    makeAction(timeline, "goto_out", "Zum Out-Punkt", QKeySequence("Shift+O"), [this] { jumpToFrame(m_project->timeline().markOut); });
-    makeAction(timeline, "marker_prev", "Vorheriger Marker", QKeySequence("Shift+Up"), [this] { jumpToMarker(-1); });
-    makeAction(timeline, "marker_next", "Nächster Marker", QKeySequence("Shift+Down"), [this] { jumpToMarker(1); });
-    auto* linked = makeAction(timeline, "linked_selection", "Verknüpfte Auswahl", QKeySequence("Ctrl+Shift+L"), [] {});
+    makeAction(timeline, "mark_in", T("In-Punkt setzen"), QKeySequence("I"), [this, tv] { m_editor->setMarkIn(tv->playhead()); });
+    makeAction(timeline, "mark_out", T("Out-Punkt setzen"), QKeySequence("O"), [this, tv] { m_editor->setMarkOut(tv->playhead()); });
+    makeAction(timeline, "clear_in", T("In-Punkt entfernen"), QKeySequence("Alt+I"), [this] { m_editor->setMarkIn(-1); });
+    makeAction(timeline, "clear_out", T("Out-Punkt entfernen"), QKeySequence("Alt+O"), [this] { m_editor->setMarkOut(-1); });
+    makeAction(timeline, "clear_in_out", T("In und Out entfernen"), QKeySequence("Alt+X"), [this] { m_editor->clearMarks(); });
+    makeAction(timeline, "goto_in", T("Zum In-Punkt"), QKeySequence("Shift+I"), [this] { jumpToFrame(m_project->timeline().markIn); });
+    makeAction(timeline, "goto_out", T("Zum Out-Punkt"), QKeySequence("Shift+O"), [this] { jumpToFrame(m_project->timeline().markOut); });
+    makeAction(timeline, "marker_prev", T("Vorheriger Marker"), QKeySequence("Shift+Up"), [this] { jumpToMarker(-1); });
+    makeAction(timeline, "marker_next", T("Nächster Marker"), QKeySequence("Shift+Down"), [this] { jumpToMarker(1); });
+    auto* linked = makeAction(timeline, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
     linked->setCheckable(true);
     linked->setChecked(m_editor->linkedSelection());
     connect(linked, &QAction::toggled, this, [this](bool on) { m_editor->setLinkedSelection(on); });
-    auto* splitTracks = makeAction(timeline, "split_on_tracks", "Teilen auf ganzer Spur der Auswahl", QKeySequence(), [] {});
+    auto* splitTracks = makeAction(timeline, "split_on_tracks", T("Teilen auf ganzer Spur der Auswahl"), QKeySequence(), [] {});
     splitTracks->setCheckable(true);
-    splitTracks->setToolTip("An: Strg+B/Maustaste teilt auch den Nachbarclip auf der Spur des ausgewählten Clips. "
-                            "Aus: nur ausgewählte Clips.");
+    splitTracks->setToolTip(T("An: Strg+B/Maustaste teilt auch den Nachbarclip auf der Spur des ausgewählten Clips. "
+                            "Aus: nur ausgewählte Clips."));
     splitTracks->setChecked(QSettings().value("edit/splitOnSelectedTracks", true).toBool());
     m_editor->setSplitOnSelectedTracks(splitTracks->isChecked());
     connect(splitTracks, &QAction::toggled, this, [this](bool on) {
@@ -379,36 +381,52 @@ void MainWindow::buildActions()
         QSettings().setValue("edit/splitOnSelectedTracks", on);
     });
     timeline->addSeparator();
-    makeAction(timeline, "zoom_in", "Hineinzoomen", QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
-    makeAction(timeline, "zoom_out", "Herauszoomen", QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
-    makeAction(timeline, "zoom_fit", "Ganze Timeline zeigen", QKeySequence("Shift+Z"), [tv] { tv->zoomToFit(); });
+    makeAction(timeline, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
+    makeAction(timeline, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
+    makeAction(timeline, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [tv] { tv->zoomToFit(); });
 
-    QMenu* play = menuBar()->addMenu("&Wiedergabe");
+    QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
     makeAction(play, "play_pause", "Play/Pause", QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
-    makeAction(play, "shuttle_back", "Rückwärts (J)", QKeySequence("J"), [this] { shuttle(-1); });
-    makeAction(play, "stop", "Stopp (K)", QKeySequence("K"), [this] { m_engine->pause(); });
-    makeAction(play, "shuttle_fwd", "Vorwärts (L)", QKeySequence("L"), [this] { shuttle(1); });
+    makeAction(play, "shuttle_back", T("Rückwärts (J)"), QKeySequence("J"), [this] { shuttle(-1); });
+    makeAction(play, "stop", T("Stopp (K)"), QKeySequence("K"), [this] { m_engine->pause(); });
+    makeAction(play, "shuttle_fwd", T("Vorwärts (L)"), QKeySequence("L"), [this] { shuttle(1); });
     play->addSeparator();
-    makeAction(play, "frame_prev", "1 Frame zurück", QKeySequence(Qt::Key_Left), [this] { stepFrames(-1); });
-    makeAction(play, "frame_next", "1 Frame vor", QKeySequence(Qt::Key_Right), [this] { stepFrames(1); });
-    makeAction(play, "second_prev", "1 Sekunde zurück", QKeySequence("Shift+Left"), [this] { stepFrames(-m_project->fps()); });
-    makeAction(play, "second_next", "1 Sekunde vor", QKeySequence("Shift+Right"), [this] { stepFrames(m_project->fps()); });
-    makeAction(play, "edit_prev", "Vorheriger Schnittpunkt", QKeySequence(Qt::Key_Up), [this] { jumpToEdit(-1); });
-    makeAction(play, "edit_next", "Nächster Schnittpunkt", QKeySequence(Qt::Key_Down), [this] { jumpToEdit(1); });
-    makeAction(play, "go_start", "Zum Anfang", QKeySequence(Qt::Key_Home), [this] { m_engine->pause(); m_engine->seek(0); });
-    makeAction(play, "go_end", "Zum Ende", QKeySequence(Qt::Key_End), [this] {
+    makeAction(play, "frame_prev", T("1 Frame zurück"), QKeySequence(Qt::Key_Left), [this] { stepFrames(-1); });
+    makeAction(play, "frame_next", T("1 Frame vor"), QKeySequence(Qt::Key_Right), [this] { stepFrames(1); });
+    makeAction(play, "second_prev", T("1 Sekunde zurück"), QKeySequence("Shift+Left"), [this] { stepFrames(-m_project->fps()); });
+    makeAction(play, "second_next", T("1 Sekunde vor"), QKeySequence("Shift+Right"), [this] { stepFrames(m_project->fps()); });
+    makeAction(play, "edit_prev", T("Vorheriger Schnittpunkt"), QKeySequence(Qt::Key_Up), [this] { jumpToEdit(-1); });
+    makeAction(play, "edit_next", T("Nächster Schnittpunkt"), QKeySequence(Qt::Key_Down), [this] { jumpToEdit(1); });
+    makeAction(play, "go_start", T("Zum Anfang"), QKeySequence(Qt::Key_Home), [this] { m_engine->pause(); m_engine->seek(0); });
+    makeAction(play, "go_end", T("Zum Ende"), QKeySequence(Qt::Key_End), [this] {
         m_engine->pause();
         m_engine->seek(TimelineOps::endFrame(m_project->timeline()));
     });
-    makeAction(play, "show_timeline", "Timeline im Viewer zeigen", QKeySequence("Q"),
+    makeAction(play, "show_timeline", T("Timeline im Viewer zeigen"), QKeySequence("Q"),
               [this, tv] { m_engine->showTimeline(tv->playhead()); });
 
-    QMenu* workspace = menuBar()->addMenu("&Arbeitsbereich");
-    makeAction(workspace, "page_media", "Media-Seite", QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
-    makeAction(workspace, "page_edit", "Edit-Seite", QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
-    makeAction(workspace, "page_deliver", "Deliver-Seite", QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
-    makeAction(workspace, "toggle_mixer", "Mixer ein/aus", QKeySequence(),
+    QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
+    makeAction(workspace, "page_media", T("Media-Seite"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
+    makeAction(workspace, "page_edit", T("Edit-Seite"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
+    makeAction(workspace, "page_deliver", T("Deliver-Seite"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
+    makeAction(workspace, "toggle_mixer", T("Mixer ein/aus"), QKeySequence(),
                [this] { if (m_mixerToggle->isEnabled()) m_mixerToggle->toggle(); });
+    workspace->addSeparator();
+    // Sprache wie in DaVinci (Preferences → User → UI Settings): wirkt nach dem Neustart
+    QMenu* langMenu = workspace->addMenu(T("Sprache"));
+    auto* langGroup = new QActionGroup(langMenu);
+    for (const auto& [code, name] : {std::pair{"de", "Deutsch"}, std::pair{"en", "English"}}) {
+        QAction* a = langMenu->addAction(name);
+        a->setCheckable(true);
+        a->setChecked(I18n::language() == code);
+        langGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, lang = QString(code)] {
+            if (lang == I18n::language()) return;
+            I18n::setLanguage(lang);
+            QMessageBox::information(this, "schneidi", lang == "en" ? "The language changes after restarting schneidi."
+                                                                    : "Die Sprache ändert sich nach dem Neustart von schneidi.");
+        });
+    }
 
     InputBindings::instance().saveIfIncomplete();
 }
@@ -416,7 +434,7 @@ void MainWindow::buildActions()
 // ---- Projektdatei ---------------------------------------------------------------
 
 namespace {
-const QString kFileFilter = QString("schneidi-Projekt (*.%1)").arg(ProjectFile::Extension);
+const QString kFileFilter = T("schneidi-Projekt (*.%1)").arg(ProjectFile::Extension);
 }
 
 QString MainWindow::autosavePath()
@@ -427,7 +445,7 @@ QString MainWindow::autosavePath()
 
 void MainWindow::updateTitle()
 {
-    const QString name = m_projectPath.isEmpty() ? "Unbenannt" : QFileInfo(m_projectPath).completeBaseName();
+    const QString name = m_projectPath.isEmpty() ? T("Unbenannt") : QFileInfo(m_projectPath).completeBaseName();
     const QString shown = name + (m_project->isModified() ? " *" : "");
     setWindowTitle(shown + " – schneidi");
     if (m_titleLabel) m_titleLabel->setText(shown);
@@ -443,7 +461,7 @@ void MainWindow::setProjectPath(const QString& path)
 bool MainWindow::maybeSave()
 {
     if (!m_project->isModified() || m_autosaveDisabled) return true; // Testlauf: nie nachfragen
-    const auto answer = QMessageBox::question(this, "schneidi", "Änderungen am Projekt speichern?",
+    const auto answer = QMessageBox::question(this, "schneidi", T("Änderungen am Projekt speichern?"),
                                               QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
                                               QMessageBox::Save);
     if (answer == QMessageBox::Save) return save();
@@ -465,7 +483,7 @@ void MainWindow::openProjectDialog()
 {
     if (!maybeSave()) return;
     const QString dir = m_projectPath.isEmpty() ? QDir::homePath() : QFileInfo(m_projectPath).absolutePath();
-    const QString path = QFileDialog::getOpenFileName(this, "Projekt öffnen", dir, kFileFilter);
+    const QString path = QFileDialog::getOpenFileName(this, T("Projekt öffnen"), dir, kFileFilter);
     if (!path.isEmpty()) openProject(path);
 }
 
@@ -474,7 +492,7 @@ bool MainWindow::openProject(const QString& path)
     ProjectData data;
     QString error;
     if (!ProjectFile::load(path, &data, &error)) {
-        QMessageBox::warning(this, "Projekt öffnen", QString("%1 konnte nicht geöffnet werden:\n%2").arg(path, error));
+        QMessageBox::warning(this, T("Projekt öffnen"), T("%1 konnte nicht geöffnet werden:\n%2").arg(path, error));
         return false;
     }
     if (!applyLoaded(std::move(data), path)) return false;
@@ -487,22 +505,22 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path)
     // Fehlende Medien wie DaVinci "Media Offline": Ordner durchsuchen lassen oder offline lassen
     for (QStringList missing = ProjectFile::missingMedia(data); !missing.isEmpty();
          missing = ProjectFile::missingMedia(data)) {
-        QMessageBox box(QMessageBox::Warning, "Medien fehlen",
-                        QString("%1 Datei(en) nicht gefunden (verschoben oder umbenannt?):").arg(missing.size()),
+        QMessageBox box(QMessageBox::Warning, T("Medien fehlen"),
+                        T("%1 Datei(en) nicht gefunden (verschoben oder umbenannt?):").arg(missing.size()),
                         QMessageBox::NoButton, this);
         QStringList names;
         for (const QString& p : missing.mid(0, 15)) names << p;
         if (missing.size() > 15) names << "…";
         box.setInformativeText(names.join('\n'));
-        QPushButton* search = box.addButton("Ordner durchsuchen…", QMessageBox::AcceptRole);
-        box.addButton("Offline lassen", QMessageBox::RejectRole);
+        QPushButton* search = box.addButton(T("Ordner durchsuchen…"), QMessageBox::AcceptRole);
+        box.addButton(T("Offline lassen"), QMessageBox::RejectRole);
         box.exec();
         if (box.clickedButton() != search) break;
-        const QString dir = QFileDialog::getExistingDirectory(this, "Ordner mit den Medien wählen",
+        const QString dir = QFileDialog::getExistingDirectory(this, T("Ordner mit den Medien wählen"),
                                                               QFileInfo(path).absolutePath());
         if (dir.isEmpty()) break;
         if (ProjectFile::relink(&data, dir) == 0)
-            QMessageBox::information(this, "Medien fehlen", "In diesem Ordner wurden keine der Dateien gefunden.");
+            QMessageBox::information(this, T("Medien fehlen"), T("In diesem Ordner wurden keine der Dateien gefunden."));
     }
 
     m_engine->pause();
@@ -523,8 +541,8 @@ bool MainWindow::save()
 bool MainWindow::saveAs()
 {
     QString path = QFileDialog::getSaveFileName(
-        this, "Projekt speichern unter",
-        m_projectPath.isEmpty() ? QDir::home().filePath(QString("Unbenannt.%1").arg(ProjectFile::Extension)) : m_projectPath,
+        this, T("Projekt speichern unter"),
+        m_projectPath.isEmpty() ? QDir::home().filePath(T("Unbenannt.%1").arg(ProjectFile::Extension)) : m_projectPath,
         kFileFilter);
     if (path.isEmpty()) return false;
     if (QFileInfo(path).suffix() != ProjectFile::Extension) path += QString(".%1").arg(ProjectFile::Extension);
@@ -537,7 +555,7 @@ bool MainWindow::saveTo(const QString& path)
     data.playhead = m_timeline->view()->playhead();
     QString error;
     if (!ProjectFile::save(data, path, &error)) {
-        QMessageBox::warning(this, "Projekt speichern", QString("Speichern fehlgeschlagen:\n%1").arg(error));
+        QMessageBox::warning(this, T("Projekt speichern"), T("Speichern fehlgeschlagen:\n%1").arg(error));
         return false;
     }
     m_project->markSaved();
@@ -574,10 +592,10 @@ void MainWindow::offerAutosaveRestore()
 {
     if (!QFileInfo::exists(autosavePath())) return;
     const QString original = QSettings().value("autosave/projectPath").toString();
-    const QString name = original.isEmpty() ? "Unbenannt" : QFileInfo(original).fileName();
+    const QString name = original.isEmpty() ? T("Unbenannt") : QFileInfo(original).fileName();
     const auto answer = QMessageBox::question(
-        this, "Wiederherstellen",
-        QString("schneidi wurde nicht normal beendet.\nNicht gespeicherte Änderungen von „%1“ wiederherstellen?")
+        this, T("Wiederherstellen"),
+        T("schneidi wurde nicht normal beendet.\nNicht gespeicherte Änderungen von „%1“ wiederherstellen?")
             .arg(name),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
     if (answer != QMessageBox::Yes) {

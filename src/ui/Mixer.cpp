@@ -1,6 +1,7 @@
 #include "ui/Mixer.h"
 
 #include "app/Theme.h"
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "engine/Engine.h"
 
@@ -236,7 +237,7 @@ public:
     {
         if (v == m_value) return;
         m_value = v;
-        setToolTip("Pan: " + panText(v));
+        setToolTip(QStringLiteral("Pan: ") + panText(v));
         update();
     }
 
@@ -339,7 +340,7 @@ public:
             ms->addWidget(b);
             return b;
         };
-        mute = makeButton("M", "#e8414a", "Stumm (Mute)");
+        mute = makeButton("M", "#e8414a", T("Stumm (Mute)"));
         solo = makeButton("S", "#e0c03a", "Solo");
         lay->addLayout(ms);
 
@@ -418,7 +419,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     m_master->fader->onChange = [this](double db) {
         m_master->setVolume(db);
         m_engine->mixerOnlyNext();
-        m_project->edit("Master-Lautstärke", [db](Timeline& tl) { tl.masterVolumeDb = db; }, "mixer-master");
+        m_project->edit(T("Master-Lautstärke"), [db](Timeline& tl) { tl.masterVolumeDb = db; }, "mixer-master");
     };
     m_master->fader->onFinish = [this] { m_project->closeMerge(); };
     row->addWidget(m_master);
@@ -446,25 +447,25 @@ void Mixer::rebuildStrips(int count)
         s->fader->onChange = [this, i, s](double db) {
             s->setVolume(db);
             m_engine->mixerOnlyNext();
-            m_project->edit("Spurlautstärke", [i, db](Timeline& tl) {
+            m_project->edit(T("Spurlautstärke"), [i, db](Timeline& tl) {
                 if (i < tl.audio.size()) tl.audio[i].volumeDb = db;
             }, "mixer-vol-" + QString::number(i));
         };
         s->pan->onChange = [this, i, s](double v) {
             s->setPan(v);
             m_engine->mixerOnlyNext();
-            m_project->edit("Spur-Pan", [i, v](Timeline& tl) {
+            m_project->edit(T("Spur-Pan"), [i, v](Timeline& tl) {
                 if (i < tl.audio.size()) tl.audio[i].pan = v;
             }, "mixer-pan-" + QString::number(i));
         };
         s->fader->onFinish = s->pan->onFinish = [this] { m_project->closeMerge(); };
         connect(s->mute, &QToolButton::clicked, this, [this, i] {
-            m_project->edit("Spur stumm", [i](Timeline& tl) {
+            m_project->edit(T("Spur stumm"), [i](Timeline& tl) {
                 if (i < tl.audio.size()) tl.audio[i].muted = !tl.audio[i].muted;
             });
         });
         connect(s->solo, &QToolButton::clicked, this, [this, i] {
-            m_project->edit("Spur solo", [i](Timeline& tl) {
+            m_project->edit(T("Spur solo"), [i](Timeline& tl) {
                 if (i < tl.audio.size()) tl.audio[i].solo = !tl.audio[i].solo;
             });
         });

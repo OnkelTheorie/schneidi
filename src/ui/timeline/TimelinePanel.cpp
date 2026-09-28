@@ -1,5 +1,6 @@
 #include "ui/timeline/TimelinePanel.h"
 
+#include "core/I18n.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QButtonGroup>
@@ -23,9 +24,9 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
         b->setCheckable(true);
         return b;
     };
-    auto* selectBtn = makeTool("⮝ Auswahl", "Auswahl-Werkzeug (A)");
-    auto* bladeBtn = makeTool("✂ Klinge", "Klingen-Werkzeug (B)");
-    auto* snapBtn = makeTool("⊸ Snapping", "Snapping an/aus (N)");
+    auto* selectBtn = makeTool(T("⮝ Auswahl"), T("Auswahl-Werkzeug (A)"));
+    auto* bladeBtn = makeTool(T("✂ Klinge"), T("Klingen-Werkzeug (B)"));
+    auto* snapBtn = makeTool(T("⊸ Snapping"), T("Snapping an/aus (N)"));
     selectBtn->setChecked(true);
     snapBtn->setChecked(m_view->snapping());
 
@@ -42,10 +43,10 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
 
     auto* zoomOut = new QToolButton;
     zoomOut->setText("−");
-    zoomOut->setToolTip("Herauszoomen (Strg+-)");
+    zoomOut->setToolTip(T("Herauszoomen (Strg+-)"));
     auto* zoomIn = new QToolButton;
     zoomIn->setText("+");
-    zoomIn->setToolTip("Hineinzoomen (Strg+=)");
+    zoomIn->setToolTip(T("Hineinzoomen (Strg+=)"));
     connect(zoomOut, &QToolButton::clicked, m_view, [this] { m_view->zoomBy(1 / 1.5); });
     connect(zoomIn, &QToolButton::clicked, m_view, [this] { m_view->zoomBy(1.5); });
 

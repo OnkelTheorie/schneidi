@@ -1,6 +1,7 @@
 #include "ui/Viewer.h"
 
 #include "app/Theme.h"
+#include "core/I18n.h"
 #include "core/Timecode.h"
 #include "engine/Engine.h"
 
@@ -58,10 +59,10 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
         b->setStyleSheet("font-size: 14px; min-width: 28px;");
         return b;
     };
-    auto* startBtn = makeBtn("⏮", "Zum Anfang (Home)");
-    auto* backBtn = makeBtn("◀◀", "Rückwärts (J)");
-    m_playBtn = makeBtn("▶", "Play/Pause (Leertaste)");
-    auto* fwdBtn = makeBtn("▶▶", "Vorwärts (L)");
+    auto* startBtn = makeBtn("⏮", T("Zum Anfang (Home)"));
+    auto* backBtn = makeBtn("◀◀", T("Rückwärts (J)"));
+    m_playBtn = makeBtn("▶", T("Play/Pause (Leertaste)"));
+    auto* fwdBtn = makeBtn("▶▶", T("Vorwärts (L)"));
 
     connect(startBtn, &QToolButton::clicked, this, [this] { m_engine->pause(); m_engine->seek(0); });
     connect(backBtn, &QToolButton::clicked, this, [this] { m_engine->setSpeed(-1.0); });
@@ -91,7 +92,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     connect(m_engine, &Engine::speedChanged, this,
             [this](double s) { m_playBtn->setText(s == 0.0 ? "▶" : "⏸"); });
     connect(m_engine, &Engine::modeChanged, this, [this](Engine::Mode m) {
-        m_mode->setText(m == Engine::Mode::Timeline ? "Timeline" : "Quelle");
+        m_mode->setText(m == Engine::Mode::Timeline ? "Timeline" : T("Quelle"));
     });
     updateTimecode(0);
 }

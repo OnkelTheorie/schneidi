@@ -1,5 +1,6 @@
 #include "ui/DeliverPanel.h"
 
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "engine/Exporter.h"
 #include <algorithm>
@@ -30,10 +31,10 @@ struct Preset {
     int quality;    // Index in m_quality
 };
 const Preset kPresets[] = {
-    {"Eigene Einstellungen", 0, 1, 1},
+    {N_("Eigene Einstellungen"), 0, 1, 1},
     {"YouTube 1080p", 0, 1, 0},
     {"YouTube 4K", 0, 3, 0},
-    {"Klein (zum Verschicken)", 0, 0, 2},
+    {N_("Klein (zum Verschicken)"), 0, 0, 2},
     {"H.265 Master 1080p", 1, 1, 0},
 };
 
@@ -45,16 +46,16 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     setObjectName("Panel");
     setMinimumWidth(300);
 
-    auto* title = new QLabel("Render-Einstellungen");
+    auto* title = new QLabel(T("Render-Einstellungen"));
     title->setObjectName("PanelTitle");
 
     m_preset = new QComboBox;
-    for (const auto& p : kPresets) m_preset->addItem(p.name);
+    for (const auto& p : kPresets) m_preset->addItem(T(p.name));
 
     m_name = new QLineEdit("Timeline 1");
     m_folder = new QLineEdit(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation));
     auto* browseBtn = new QToolButton;
-    browseBtn->setText("Durchsuchen…");
+    browseBtn->setText(T("Durchsuchen…"));
     connect(browseBtn, &QToolButton::clicked, this, &DeliverPanel::browse);
     auto* folderRow = new QHBoxLayout;
     folderRow->addWidget(m_folder, 1);
@@ -71,30 +72,30 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_resolution->addItem("3840 × 2160", "uhd_2160p_25");
 
     m_quality = new QComboBox;
-    m_quality->addItem("Hoch", 18);
-    m_quality->addItem("Mittel", 22);
-    m_quality->addItem("Klein", 28);
+    m_quality->addItem(T("Hoch"), 18);
+    m_quality->addItem(T("Mittel"), 22);
+    m_quality->addItem(T("Klein"), 28);
 
     // Wie DaVinci: "Render: Entire Timeline / In/Out Range"
     m_range = new QComboBox;
-    m_range->addItem("Ganze Timeline");
-    m_range->addItem("In/Out-Bereich");
+    m_range->addItem(T("Ganze Timeline"));
+    m_range->addItem(T("In/Out-Bereich"));
     connect(project, &Project::timelineChanged, this, &DeliverPanel::updateRange);
     updateRange();
 
     auto* form = new QFormLayout;
     form->setContentsMargins(12, 12, 12, 12);
     form->setVerticalSpacing(8);
-    form->addRow("Vorlage", m_preset);
-    form->addRow("Dateiname", m_name);
-    form->addRow("Ort", folderRow);
-    form->addRow("Codec", m_codec);
-    form->addRow("Auflösung", m_resolution);
-    form->addRow("Bildrate", new QLabel(QString("%1 fps").arg(project->fps())));
-    form->addRow("Qualität", m_quality);
-    form->addRow("Bereich", m_range);
+    form->addRow(T("Vorlage"), m_preset);
+    form->addRow(T("Dateiname"), m_name);
+    form->addRow(T("Ort"), folderRow);
+    form->addRow(T("Codec"), m_codec);
+    form->addRow(T("Auflösung"), m_resolution);
+    form->addRow(T("Bildrate"), new QLabel(QString("%1 fps").arg(project->fps())));
+    form->addRow(T("Qualität"), m_quality);
+    form->addRow(T("Bereich"), m_range);
 
-    m_renderBtn = new QPushButton("Rendern");
+    m_renderBtn = new QPushButton(T("Rendern"));
     m_renderBtn->setMinimumHeight(30);
     m_renderBtn->setStyleSheet("QPushButton { background: #e87a3a; color: black; font-weight: 600; border-radius: 3px; }"
                                "QPushButton:disabled { background: #5a4030; }");
@@ -123,7 +124,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     connect(m_renderBtn, &QPushButton::clicked, this, &DeliverPanel::startRender);
     connect(m_exporter, &Exporter::progress, m_progress, &QProgressBar::setValue);
     connect(m_exporter, &Exporter::finished, this, [this](bool ok, const QString& msg) {
-        m_renderBtn->setText("Rendern");
+        m_renderBtn->setText(T("Rendern"));
         m_status->setText(msg);
         if (!ok) m_progress->setValue(0);
     });
@@ -137,11 +138,11 @@ void DeliverPanel::updateRange()
     const Timeline& tl = m_project->timeline();
     const bool has = tl.markIn >= 0 || tl.markOut >= 0;
     const int fps = m_project->fps();
-    m_range->setItemText(1, has ? "In/Out-Bereich" : "In/Out-Bereich (nicht gesetzt)");
+    m_range->setItemText(1, has ? T("In/Out-Bereich") : T("In/Out-Bereich (nicht gesetzt)"));
     m_range->setToolTip(has ? QString("%1 – %2")
-                                  .arg(tl.markIn >= 0 ? Timecode::format(tl.markIn, fps) : "Anfang",
-                                       tl.markOut >= 0 ? Timecode::format(tl.markOut, fps) : "Ende")
-                            : "In/Out mit I und O in der Timeline setzen");
+                                  .arg(tl.markIn >= 0 ? Timecode::format(tl.markIn, fps) : T("Anfang"),
+                                       tl.markOut >= 0 ? Timecode::format(tl.markOut, fps) : T("Ende"))
+                            : T("In/Out mit I und O in der Timeline setzen"));
     auto* model = qobject_cast<QStandardItemModel*>(m_range->model());
     if (auto* item = model ? model->item(1) : nullptr) item->setEnabled(has);
     if (has != m_hadRange || (!has && m_range->currentIndex() == 1)) m_range->setCurrentIndex(has ? 1 : 0);
@@ -158,7 +159,7 @@ void DeliverPanel::applyPreset(int index)
 
 void DeliverPanel::browse()
 {
-    const QString dir = QFileDialog::getExistingDirectory(this, "Speicherort wählen", m_folder->text());
+    const QString dir = QFileDialog::getExistingDirectory(this, T("Speicherort wählen"), m_folder->text());
     if (!dir.isEmpty()) m_folder->setText(dir);
 }
 
@@ -174,7 +175,7 @@ void DeliverPanel::startRender()
     const QString path = QDir(m_folder->text()).filePath(name);
 
     if (QFileInfo::exists(path) &&
-        QMessageBox::question(this, "Rendern", QString("%1 existiert schon. Überschreiben?").arg(name)) != QMessageBox::Yes)
+        QMessageBox::question(this, T("Rendern"), T("%1 existiert schon. Überschreiben?").arg(name)) != QMessageBox::Yes)
         return;
 
     ExportSettings s;
@@ -192,6 +193,6 @@ void DeliverPanel::startRender()
         m_status->setText(error);
         return;
     }
-    m_renderBtn->setText("Abbrechen");
-    m_status->setText(QString("Rendere nach %1 …").arg(path));
+    m_renderBtn->setText(T("Abbrechen"));
+    m_status->setText(T("Rendere nach %1 …").arg(path));
 }
