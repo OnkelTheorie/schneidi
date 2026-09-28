@@ -133,6 +133,37 @@ void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKin
     }
 }
 
+// Fade-Griffe des Clips auf den Ausschnitt [from, to) (Timeline-Frames) anwenden. Keyframes nur in den
+// Fade-Bereichen und an ihren Grenzen, damit lange Clips nicht tausende Keyframes bekommen.
+void applyClipFades(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKind kind, int from, int to)
+{
+    const int length = c.length();
+    const int fi = std::min(c.fadeIn, length);
+    const int fo = std::min(c.fadeOut, length - fi);
+    const int a = from - c.start, b = to - c.start; // clip-lokal, b exklusiv
+    const int len = b - a;
+    if ((fi <= 0 || a >= fi) && (fo <= 0 || b <= length - fo)) return; // Ausschnitt berührt keinen Fade
+    auto gain = [&](int t) {
+        double g = 1.0;
+        if (fi > 0 && t < fi) g = std::min(g, double(t) / fi);
+        if (fo > 0 && t >= length - fo) g = std::min(g, double(length - 1 - t) / fo);
+        return std::clamp(g, 0.0, 1.0);
+    };
+    auto isKey = [&](int t) { return t == a || t == b - 1 || t <= fi || t >= length - fo - 1; };
+    const bool video = kind == TrackKind::Video;
+    Mlt::Filter f(profile, video ? "brightness" : "volume");
+    if (!f.is_valid()) return;
+    if (video) f.set("level", 1.0);
+    for (int t = a; t < b; ++t) {
+        if (!isKey(t)) continue;
+        const double g = gain(t);
+        if (video) f.anim_set("alpha", g, t - a, len);
+        else f.anim_set("level", g > 0.001 ? 20.0 * std::log10(std::sin(g * M_PI / 2)) : -200.0, t - a, len);
+    }
+    f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
+    cut.attach(f);
+}
+
 // Ein-/Ausblenden über `len` Frames: Video über den Alphakanal (auf V1 = aus Schwarz, darüber = zur
 // Spur darunter, wie DaVinci), Audio als Keyframe in dB pro Frame. equalPower: Kurve für den
 // Audio-Crossfade (+3 dB wie DaVinci-Standard, Lautheit bleibt in der Mitte gleich).
@@ -241,6 +272,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             if (in < 0) return nullptr;
             Mlt::Producer* cut = src->cut(in, in + (to - from) - 1);
             decorate(m_profile, *cut, c, kind);
+            applyClipFades(m_profile, *cut, c, kind, from, to);
             return cut;
         };
 

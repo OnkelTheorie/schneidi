@@ -163,6 +163,18 @@ void Editor::splitAtPlayhead(int frame)
     });
 }
 
+void Editor::setClipFade(int clipId, TimelineOps::Edge edge, int frames, const QString& mergeKey)
+{
+    const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
+    if (!c) return;
+    const bool in = edge == TimelineOps::Edge::Start;
+    frames = std::clamp(frames, 0, c->length() - (in ? c->fadeOut : c->fadeIn));
+    if (frames == (in ? c->fadeIn : c->fadeOut)) return;
+    m_project->edit(in ? "Einblenden" : "Ausblenden", [&](Timeline& tl) {
+        if (Clip* x = TimelineOps::findClip(tl, clipId)) (in ? x->fadeIn : x->fadeOut) = frames;
+    }, mergeKey);
+}
+
 void Editor::modifyClips(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
                          const QString& mergeKey)
 {

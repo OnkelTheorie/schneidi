@@ -54,6 +54,8 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex)
     if (!c.enabled) o["enabled"] = false;
     if (c.transIn > 0) o["transIn"] = c.transIn; // Übergänge (Frames); fehlend = keiner
     if (c.transOut > 0) o["transOut"] = c.transOut;
+    if (c.fadeIn > 0) o["fadeIn"] = c.fadeIn; // Fade-Griffe (Frames)
+    if (c.fadeOut > 0) o["fadeOut"] = c.fadeOut;
     if (!c.transform.isIdentity() || !c.transform.transformOn || !c.transform.cropOn || !c.transform.compositeOn)
         o["transform"] = transformToJson(c.transform);
     if (!c.effects.isEmpty()) {
@@ -79,6 +81,8 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media)
     c.enabled = o.value("enabled").toBool(true);
     c.transIn = std::max(0, o.value("transIn").toInt());
     c.transOut = std::max(0, o.value("transOut").toInt());
+    c.fadeIn = std::max(0, o.value("fadeIn").toInt());
+    c.fadeOut = std::max(0, o.value("fadeOut").toInt());
     if (o.contains("transform")) c.transform = transformFromJson(o.value("transform").toObject());
     for (const QJsonValue& v : o.value("effects").toArray()) {
         const QJsonObject e = v.toObject();

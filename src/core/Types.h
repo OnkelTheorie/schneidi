@@ -62,6 +62,9 @@ struct Clip {
     // Gegenkante auch einen: Cross Dissolve zentriert auf dem Schnitt (braucht Handles),
     // sonst Ein-/Ausblenden aus Schwarz bzw. Stille. Wirksame Länge: TimelineOps::transitions().
     int transIn = 0, transOut = 0;
+    // Fade-Griffe oben am Clip (Frames, wie DaVinci): Video blendet über Transparenz zur Spur darunter,
+    // Audio über die Lautstärke. Unabhängig von Übergängen; beim Rendern auf die Cliplänge begrenzt.
+    int fadeIn = 0, fadeOut = 0;
 
     int length() const { return out - in + 1; }
     int end() const { return start + length(); } // exklusiv

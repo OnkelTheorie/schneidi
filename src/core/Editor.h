@@ -44,6 +44,8 @@ public:
     void modifyClips(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
                      const QString& mergeKey = {});
     void bladeAt(int clipId, int frame);
+    // Fade-Griff ziehen (nur dieser Clip, wie DaVinci); frames wird auf die Cliplänge begrenzt
+    void setClipFade(int clipId, TimelineOps::Edge edge, int frames, const QString& mergeKey = {});
     void splitAtPlayhead(int frame);
     void deleteSelection();
     void rippleDeleteSelection();

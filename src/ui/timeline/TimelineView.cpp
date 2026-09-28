@@ -201,6 +201,32 @@ std::optional<TimelineView::TransitionHit> TimelineView::transitionAt(const QPoi
     return std::nullopt;
 }
 
+QRect TimelineView::fadeHandleRect(const QRect& r, const Clip& c, TimelineOps::Edge edge) const
+{
+    constexpr int w = 7, h = 9;
+    if (edge == TimelineOps::Edge::Start) {
+        const int x = int(r.left() + c.fadeIn * m_view.pxPerFrame);
+        return QRect(std::clamp(x - w / 2, r.left() + 1, std::max(r.left() + 1, r.right() - w)), r.top() + 1, w, h);
+    }
+    const int x = int(r.right() - c.fadeOut * m_view.pxPerFrame);
+    return QRect(std::clamp(x - w / 2, r.left() + 1, std::max(r.left() + 1, r.right() - w)), r.top() + 1, w, h);
+}
+
+std::optional<TimelineView::EdgeHit> TimelineView::fadeHandleAt(const QPoint& pos) const
+{
+    if (m_tool != Tool::Select || !m_hoverClip || pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
+    const auto row = rowAt(pos.y());
+    if (!row) return std::nullopt;
+    for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
+        if (c.id != m_hoverClip) continue;
+        const QRect r = clipRect(*row, c);
+        if (r.width() < 24) return std::nullopt; // zu schmal: Griffe würden das Trimmen verdecken
+        for (auto edge : {TimelineOps::Edge::Start, TimelineOps::Edge::End})
+            if (fadeHandleRect(r, c, edge).adjusted(-3, -2, 3, 3).contains(pos)) return EdgeHit{c.id, edge};
+    }
+    return std::nullopt;
+}
+
 int TimelineView::volumeLineAt(const QPoint& pos) const
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return 0;
@@ -218,6 +244,15 @@ int TimelineView::volumeLineAt(const QPoint& pos) const
 
 void TimelineView::updateHoverCursor(const QPoint& pos)
 {
+    const int hover = m_tool == Tool::Select && pos.x() >= kHeaderW && pos.y() >= kRulerH ? clipAt(pos) : 0;
+    if (hover != m_hoverClip) {
+        m_hoverClip = hover;
+        update();
+    }
+    if (fadeHandleAt(pos)) {
+        setCursor(Qt::SizeHorCursor);
+        return;
+    }
     if (m_tool == Tool::Select) {
         if (const auto t = transitionAt(pos)) {
             if (m_hoverVolClip) {
@@ -624,6 +659,25 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         p.drawLine(bodyRect.left(), y, bodyRect.right(), y);
         p.setRenderHint(QPainter::Antialiasing);
     }
+    // Fade-Bereiche wie DaVinci: Fläche über der Rampe abgedunkelt, Linie von unten nach oben
+    if (!ghost && (c.fadeIn > 0 || c.fadeOut > 0)) {
+        const int top = r.top() + barH, bottom = r.bottom();
+        const int fi = std::min(c.fadeIn, c.length()), fo = std::min(c.fadeOut, c.length() - fi);
+        auto ramp = [&](double x0, double x1, bool in) {
+            QPolygonF shade;
+            if (in) shade << QPointF(x0, top) << QPointF(x1, top) << QPointF(x0, bottom);
+            else shade << QPointF(x0, top) << QPointF(x1, top) << QPointF(x1, bottom);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, 150));
+            p.drawPolygon(shade);
+            p.setPen(QPen(QColor(0xff, 0xff, 0xff, 170), 1));
+            if (in) p.drawLine(QPointF(x0, bottom), QPointF(x1, top));
+            else p.drawLine(QPointF(x0, top), QPointF(x1, bottom));
+        };
+        if (fi > 0) ramp(r.left(), r.left() + fi * m_view.pxPerFrame, true);
+        if (fo > 0) ramp(r.right() + 1 - fo * m_view.pxPerFrame, r.right() + 1, false);
+        p.setBrush(Qt::NoBrush);
+    }
     p.restore();
 
     if (r.width() > 24) {
@@ -638,6 +692,22 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
 
     p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
     p.drawPath(path);
+
+    // Fade-Griffe (weiße Anfasser oben an den Ecken), nur unter der Maus bzw. beim Ziehen
+    const bool fading = m_drag == Drag::Fade && m_fade.clipId == c.id;
+    if (!ghost && r.width() >= 24 && m_tool == Tool::Select && (c.id == m_hoverClip || fading)) {
+        p.setPen(QPen(QColor(0, 0, 0, 160), 1));
+        p.setBrush(QColor(0xf4, 0xf4, 0xf4));
+        for (auto edge : {TimelineOps::Edge::Start, TimelineOps::Edge::End})
+            p.drawRoundedRect(QRectF(fadeHandleRect(r, c, edge)).adjusted(0.5, 0.5, -0.5, -0.5), 1.5, 1.5);
+        if (fading) {
+            const int frames = m_fade.edge == TimelineOps::Edge::Start ? c.fadeIn : c.fadeOut;
+            const QRect hr = fadeHandleRect(r, c, m_fade.edge);
+            p.restore();
+            drawLabel(p, QPoint(hr.left(), r.top() + 14), Timecode::format(frames, m_editor->project()->fps()));
+            return;
+        }
+    }
     p.restore();
 }
 
@@ -837,6 +907,14 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     }
 
     Selection* sel = m_editor->selection();
+    if (const auto f = fadeHandleAt(pos)) {
+        const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), f->clipId);
+        m_fade = *f;
+        m_fadeStart = f->edge == TimelineOps::Edge::Start ? c->fadeIn : c->fadeOut;
+        m_editor->project()->closeMerge(); // ganzes Ziehen = ein Undo-Schritt
+        m_drag = Drag::Fade;
+        return;
+    }
     if (const auto t = transitionAt(pos)) {
         sel->setTransition({t->span.leftId, t->span.rightId});
         if (t->edge) {
@@ -936,6 +1014,13 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         update();
         return;
     }
+    case Drag::Fade: {
+        const int dx = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
+        const int frames = m_fadeStart + (m_fade.edge == TimelineOps::Edge::Start ? dx : -dx);
+        m_editor->setClipFade(m_fade.clipId, m_fade.edge, std::max(0, frames), QStringLiteral("clip-fade"));
+        update();
+        return;
+    }
     case Drag::TransitionLength: {
         const int dx = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
         const int grow = m_transEdge > 0 ? dx : -dx;
@@ -997,7 +1082,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         m_editor->moveClips(m_dragIds, m_dragDelta, m_anchorRef.kind, m_dragTrackDelta);
     const bool trimmed = m_drag == Drag::Trim;
     const bool volume = m_drag == Drag::Volume;
-    if (m_drag == Drag::TransitionLength) m_editor->project()->closeMerge();
+    if (m_drag == Drag::TransitionLength || m_drag == Drag::Fade) m_editor->project()->closeMerge();
     m_drag = Drag::None; // vor trimClip, damit die Vorschau nicht doppelt angewendet wird
     if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta);
     if (volume) m_editor->setClipVolume(m_volClipId, m_volDb);
@@ -1010,6 +1095,10 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 
 void TimelineView::leaveEvent(QEvent*)
 {
+    if (m_hoverClip && m_drag == Drag::None) {
+        m_hoverClip = 0;
+        update();
+    }
     if (m_hoverVolClip && m_drag == Drag::None) {
         m_hoverVolClip = 0;
         update();

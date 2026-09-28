@@ -69,23 +69,27 @@ void clearRange(Track& track, int start, int end, const IdGen& newId)
             Clip left = c;
             left.out = c.in + (start - c.start) - 1;
             left.transOut = 0;
+            left.fadeOut = 0;
             Clip right = c;
             right.id = newId();
             right.linkId = 0;
             right.in = c.in + (end - c.start);
             right.start = end;
             right.transIn = 0;
+            right.fadeIn = 0;
             result << left << right;
         } else if (c.start < start) { // Ende abschneiden
             Clip left = c;
             left.out = c.in + (start - c.start) - 1;
             left.transOut = 0;
+            left.fadeOut = 0;
             result << left;
         } else if (c.end() > end) { // Anfang abschneiden
             Clip right = c;
             right.in = c.in + (end - c.start);
             right.start = end;
             right.transIn = 0;
+            right.fadeIn = 0;
             result << right;
         }
         // sonst: komplett überdeckt -> weg
@@ -129,8 +133,10 @@ QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
         right.id = newClipId();
         right.in = c->in + (frame - c->start);
         right.start = frame;
-        right.transIn = 0; // neuer Schnitt ohne Übergang
+        right.transIn = 0; // neuer Schnitt ohne Übergang/Fade
+        right.fadeIn = 0;
         c->transOut = 0;
+        c->fadeOut = 0;
         if (c->linkId) {
             if (!linkMap.contains(c->linkId)) linkMap[c->linkId] = newLinkId();
             right.linkId = linkMap[c->linkId];

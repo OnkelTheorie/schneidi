@@ -78,7 +78,7 @@ private:
         int y; // Widget-Koordinate (Scroll bereits eingerechnet)
         int h;
     };
-    enum class Drag { None, Scrub, MaybeMove, Move, Trim, Volume, TransitionLength };
+    enum class Drag { None, Scrub, MaybeMove, Move, Trim, Volume, TransitionLength, Fade };
     // Übergang unter der Maus; edge: -1/+1 = linke/rechte Kante (Länge ziehen), 0 = Mitte
     struct TransitionHit {
         TrackRef ref;
@@ -98,6 +98,9 @@ private:
     QRect clipRect(const Row& row, const Clip& c) const;
     std::optional<TransitionHit> transitionAt(const QPoint& pos) const;
     QRect transitionRect(const Row& row, const TimelineOps::TransitionSpan& s) const;
+    // Fade-Griffe oben an den Clip-Ecken (wie DaVinci), nur sichtbar/greifbar, wenn die Maus über dem Clip ist
+    QRect fadeHandleRect(const QRect& clip, const Clip& c, TimelineOps::Edge edge) const;
+    std::optional<EdgeHit> fadeHandleAt(const QPoint& pos) const;
     // Audioclip, dessen Lautstärkelinie unter der Maus liegt (0 = keiner)
     int volumeLineAt(const QPoint& pos) const;
     void updateHoverCursor(const QPoint& pos);
@@ -150,6 +153,11 @@ private:
     int m_transEdge = 0;
 
     int m_hoverFrame = -1; // Klingen-Vorschau
+
+    // Fade-Griff ziehen
+    int m_hoverClip = 0; // Clip unter der Maus (zeigt die Fade-Griffe)
+    EdgeHit m_fade{0, TimelineOps::Edge::Start};
+    int m_fadeStart = 0;
 
     // Vorschau beim Reinziehen (Media Pool oder Dateimanager)
     struct DropItem {
