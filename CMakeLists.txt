@@ -30,6 +30,7 @@ add_executable(schneidi
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
     src/app/MainWindow.h          src/app/MainWindow.cpp
+    src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp

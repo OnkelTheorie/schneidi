@@ -1,5 +1,6 @@
 #include "app/InputBindings.h"
 
+#include <QAction>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
@@ -72,21 +73,54 @@ void InputBindings::load()
         m_shortcuts[it.key()] = it.value().toString();
 }
 
-QKeySequence InputBindings::shortcut(const QString& actionId, const QKeySequence& fallback)
+void InputBindings::registerAction(QAction* action, const QString& id, const QString& category,
+                                   const QKeySequence& defaultKey)
 {
-    m_defaults[actionId] = fallback.toString();
-    if (m_shortcuts.contains(actionId)) return QKeySequence(m_shortcuts.value(actionId));
-    return fallback;
+    m_entries.append({id, category, action->text(), defaultKey, action});
+    action->setShortcut(current(id));
 }
 
-void InputBindings::saveIfMissing()
+QKeySequence InputBindings::current(const QString& id) const
 {
-    if (m_fileExisted) return;
+    if (m_shortcuts.contains(id)) return QKeySequence(m_shortcuts.value(id));
+    for (const Entry& e : m_entries)
+        if (e.id == id) return e.defaultKey;
+    return {};
+}
+
+void InputBindings::setShortcut(const QString& id, const QKeySequence& key)
+{
+    m_shortcuts[id] = key.toString(QKeySequence::PortableText);
+    for (const Entry& e : m_entries)
+        if (e.id == id && e.action) e.action->setShortcut(key);
+    save();
+}
+
+void InputBindings::resetAll()
+{
+    m_shortcuts.clear();
+    for (const Entry& e : m_entries)
+        if (e.action) e.action->setShortcut(e.defaultKey);
+    save();
+}
+
+void InputBindings::saveIfIncomplete()
+{
+    bool complete = m_fileExisted;
+    for (const Entry& e : m_entries) complete &= m_shortcuts.contains(e.id);
+    if (!complete) save();
+}
+
+void InputBindings::save()
+{
     QJsonObject wheel;
     for (auto it = m_wheel.begin(); it != m_wheel.end(); ++it) wheel[it.key()] = wheelName(it.value());
     QJsonObject keys;
-    for (auto it = m_defaults.begin(); it != m_defaults.end(); ++it) keys[it.key()] = it.value();
-    for (auto it = m_shortcuts.begin(); it != m_shortcuts.end(); ++it) keys[it.key()] = it.value(); // eigene Änderungen behalten
+    for (auto it = m_shortcuts.begin(); it != m_shortcuts.end(); ++it) keys[it.key()] = it.value(); // auch unbekannte behalten
+    for (const Entry& e : m_entries) {
+        keys[e.id] = current(e.id).toString(QKeySequence::PortableText);
+        m_shortcuts[e.id] = keys[e.id].toString();
+    }
     QJsonObject root{{"version", kVersion}, {"wheel", wheel}, {"shortcuts", keys}};
 
     QDir().mkpath(QFileInfo(filePath()).absolutePath());

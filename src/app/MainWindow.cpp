@@ -1,6 +1,7 @@
 #include "app/MainWindow.h"
 
 #include "app/InputBindings.h"
+#include "app/KeyBindingsDialog.h"
 #include "core/Editor.h"
 #include "core/Project.h"
 #include "core/Selection.h"
@@ -91,6 +92,7 @@ void MainWindow::buildLayout()
     m_mediaPool = new MediaPool(m_project, m_engine);
     m_viewer = new Viewer(m_engine);
     m_inspector = new Inspector(m_editor);
+    m_inspector->setFrameSize(m_engine->frameSize());
     m_timeline = new TimelinePanel(m_editor);
     m_deliver = new DeliverPanel(m_project);
 
@@ -236,7 +238,7 @@ QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& t
                                const std::function<void()>& fn)
 {
     auto* a = new QAction(text, this);
-    a->setShortcut(InputBindings::instance().shortcut(id, key));
+    InputBindings::instance().registerAction(a, id, menu->title().remove('&'), key);
     a->setShortcutContext(Qt::WindowShortcut);
     connect(a, &QAction::triggered, this, fn);
     menu->addAction(a);
@@ -262,20 +264,52 @@ void MainWindow::buildActions()
     undoAct->setEnabled(false);
     redoAct->setEnabled(false);
     edit->addSeparator();
+    makeAction(edit, "cut", "Ausschneiden", QKeySequence("Ctrl+X"), [this] { m_editor->cutSelection(); });
+    makeAction(edit, "copy", "Kopieren", QKeySequence("Ctrl+C"), [this] { m_editor->copySelection(); });
+    makeAction(edit, "paste", "Einfügen am Playhead", QKeySequence("Ctrl+V"), [this, tv] { m_editor->paste(tv->playhead()); });
+    edit->addSeparator();
     makeAction(edit, "delete", "Löschen (Lücke bleibt)", QKeySequence(Qt::Key_Backspace), [this] { m_editor->deleteSelection(); });
     makeAction(edit, "delete_alt", "Löschen (Entf)", QKeySequence(Qt::Key_Delete), [this] { m_editor->deleteSelection(); });
-    makeAction(edit, "split", "Clip am Playhead teilen", QKeySequence("Ctrl+B"),
-              [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
+    makeAction(edit, "ripple_delete", "Löschen mit Ripple", QKeySequence("Shift+Del"), [this] { m_editor->rippleDeleteSelection(); });
+    makeAction(edit, "ripple_delete_alt", "Löschen mit Ripple (Rücktaste)", QKeySequence("Shift+Backspace"),
+               [this] { m_editor->rippleDeleteSelection(); });
+    edit->addSeparator();
+    makeAction(edit, "select_all", "Alles auswählen", QKeySequence("Ctrl+A"), [this] { m_editor->selectAll(); });
     makeAction(edit, "deselect", "Auswahl aufheben", QKeySequence("Ctrl+Shift+A"), [this] { m_selection->clear(); });
     edit->addSeparator();
-    makeAction(edit, "edit_keybindings", "Tastenbelegung bearbeiten… (Neustart nötig)", QKeySequence(), [] {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(InputBindings::instance().filePath()));
+    makeAction(edit, "edit_keybindings", "Tastenbelegung…", QKeySequence("Ctrl+Alt+K"), [this] {
+        KeyBindingsDialog dlg(this);
+        dlg.exec();
     });
 
     QMenu* timeline = menuBar()->addMenu("&Timeline");
     makeAction(timeline, "tool_select", "Auswahl-Werkzeug", QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
     makeAction(timeline, "tool_blade", "Klingen-Werkzeug", QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
     makeAction(timeline, "snapping", "Snapping an/aus", QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
+    timeline->addSeparator();
+    makeAction(timeline, "split", "Clip am Playhead teilen", QKeySequence("Ctrl+B"),
+               [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
+    makeAction(timeline, "split_alt", "Clip teilen (alternativ)", QKeySequence("Ctrl+\\"),
+               [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
+    makeAction(timeline, "trim_start", "Anfang bis Playhead trimmen", QKeySequence("Shift+["),
+               [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
+    makeAction(timeline, "trim_end", "Ende bis Playhead trimmen", QKeySequence("Shift+]"),
+               [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
+    makeAction(timeline, "nudge_left", "1 Frame nach links schieben", QKeySequence(","), [this] { m_editor->nudgeSelection(-1); });
+    makeAction(timeline, "nudge_right", "1 Frame nach rechts schieben", QKeySequence("."), [this] { m_editor->nudgeSelection(1); });
+    makeAction(timeline, "nudge_left_multi", "5 Frames nach links schieben", QKeySequence("Shift+,"),
+               [this] { m_editor->nudgeSelection(-5); });
+    makeAction(timeline, "nudge_right_multi", "5 Frames nach rechts schieben", QKeySequence("Shift+."),
+               [this] { m_editor->nudgeSelection(5); });
+    makeAction(timeline, "toggle_enabled", "Clip aktivieren/deaktivieren", QKeySequence("D"),
+               [this] { m_editor->toggleSelectionEnabled(); });
+    makeAction(timeline, "link_clips", "Clips verknüpfen/trennen", QKeySequence("Ctrl+Alt+L"),
+               [this] { m_editor->toggleLinkSelection(); });
+    timeline->addSeparator();
+    makeAction(timeline, "add_marker", "Marker setzen/entfernen", QKeySequence("M"),
+               [this, tv] { m_editor->toggleMarker(tv->playhead()); });
+    makeAction(timeline, "marker_prev", "Vorheriger Marker", QKeySequence("Shift+Up"), [this] { jumpToMarker(-1); });
+    makeAction(timeline, "marker_next", "Nächster Marker", QKeySequence("Shift+Down"), [this] { jumpToMarker(1); });
     auto* linked = makeAction(timeline, "linked_selection", "Verknüpfte Auswahl", QKeySequence("Ctrl+Shift+L"), [] {});
     linked->setCheckable(true);
     linked->setChecked(m_editor->linkedSelection());
@@ -310,7 +344,7 @@ void MainWindow::buildActions()
     makeAction(workspace, "page_edit", "Edit-Seite", QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
     makeAction(workspace, "page_deliver", "Deliver-Seite", QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
 
-    InputBindings::instance().saveIfMissing();
+    InputBindings::instance().saveIfIncomplete();
 }
 
 void MainWindow::shuttle(int direction)
@@ -329,16 +363,27 @@ void MainWindow::stepFrames(int frames)
 
 void MainWindow::jumpToEdit(int direction)
 {
-    const int pos = m_timeline->view()->playhead();
-    int best = direction > 0 ? INT_MAX : -1;
+    QVector<int> points;
     const Timeline& tl = m_project->timeline();
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
         for (const auto& t : tl.tracks(k))
-            for (const auto& c : t.clips)
-                for (int e : {c.start, c.end()}) {
-                    if (direction > 0 && e > pos) best = std::min(best, e);
-                    if (direction < 0 && e < pos) best = std::max(best, e);
-                }
+            for (const auto& c : t.clips) points << c.start << c.end();
+    jumpTo(points, direction);
+}
+
+void MainWindow::jumpToMarker(int direction)
+{
+    jumpTo(m_project->timeline().markers, direction);
+}
+
+void MainWindow::jumpTo(const QVector<int>& points, int direction)
+{
+    const int pos = m_timeline->view()->playhead();
+    int best = direction > 0 ? INT_MAX : -1;
+    for (int e : points) {
+        if (direction > 0 && e > pos) best = std::min(best, e);
+        if (direction < 0 && e < pos) best = std::max(best, e);
+    }
     if (best == INT_MAX || best < 0) return;
     m_engine->pause();
     if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(best);

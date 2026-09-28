@@ -40,6 +40,8 @@ private:
     QAction* makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
                        const std::function<void()>& fn);
     void jumpToEdit(int direction);
+    void jumpToMarker(int direction);
+    void jumpTo(const QVector<int>& points, int direction);
     void stepFrames(int frames);
     void shuttle(int direction);
 
