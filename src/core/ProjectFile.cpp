@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <algorithm>
 
 namespace {
 
@@ -44,10 +45,49 @@ ClipTransform transformFromJson(const QJsonObject& o)
     return t;
 }
 
+QJsonObject titleToJson(const TitleStyle& t)
+{
+    return {
+        {"text", t.text},     {"font", t.font},       {"size", t.size},
+        {"color", t.color.name(QColor::HexArgb)},     {"bold", t.bold},
+        {"italic", t.italic}, {"align", t.align},     {"posX", t.posX},
+        {"posY", t.posY},     {"outlineOn", t.outlineOn},
+        {"outlineColor", t.outlineColor.name(QColor::HexArgb)}, {"outlineWidth", t.outlineWidth},
+        {"boxOn", t.boxOn},   {"boxColor", t.boxColor.name(QColor::HexArgb)}, {"boxPad", t.boxPad},
+    };
+}
+
+TitleStyle titleFromJson(const QJsonObject& o)
+{
+    TitleStyle t;
+    auto color = [&](const char* key, const QColor& def) {
+        const QColor c(o.value(key).toString());
+        return c.isValid() ? c : def;
+    };
+    t.text = o.value("text").toString(t.text);
+    t.font = o.value("font").toString(t.font);
+    t.size = o.value("size").toDouble(t.size);
+    t.color = color("color", t.color);
+    t.bold = o.value("bold").toBool(t.bold);
+    t.italic = o.value("italic").toBool(t.italic);
+    t.align = std::clamp(o.value("align").toInt(t.align), 0, 2);
+    t.posX = o.value("posX").toDouble(t.posX);
+    t.posY = o.value("posY").toDouble(t.posY);
+    t.outlineOn = o.value("outlineOn").toBool(t.outlineOn);
+    t.outlineColor = color("outlineColor", t.outlineColor);
+    t.outlineWidth = o.value("outlineWidth").toDouble(t.outlineWidth);
+    t.boxOn = o.value("boxOn").toBool(t.boxOn);
+    t.boxColor = color("boxColor", t.boxColor);
+    t.boxPad = o.value("boxPad").toDouble(t.boxPad);
+    return t;
+}
+
 // Clips verweisen per Index auf die Medienliste -> Pfad steht nur einmal in der Datei
 QJsonObject clipToJson(const Clip& c, int mediaIndex)
 {
-    QJsonObject o{{"id", c.id}, {"media", mediaIndex}, {"start", c.start}, {"in", c.in}, {"out", c.out}};
+    QJsonObject o{{"id", c.id}, {"start", c.start}, {"in", c.in}, {"out", c.out}};
+    if (c.isTitle()) o["title"] = titleToJson(c.title); // Titel haben keinen Medienverweis
+    else o["media"] = mediaIndex;
     if (c.linkId) o["link"] = c.linkId;
     if (c.volumeDb != 0.0) o["volumeDb"] = c.volumeDb;
     if (c.pan != 0.0) o["pan"] = c.pan;
@@ -71,7 +111,12 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media)
 {
     Clip c;
     c.id = o.value("id").toInt();
-    c.mediaPath = media.value(o.value("media").toInt(-1)).path;
+    if (o.contains("title")) {
+        c.kind = ClipKind::Title;
+        c.title = titleFromJson(o.value("title").toObject());
+    } else {
+        c.mediaPath = media.value(o.value("media").toInt(-1)).path;
+    }
     c.start = o.value("start").toInt();
     c.in = o.value("in").toInt();
     c.out = o.value("out").toInt();
@@ -125,6 +170,10 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         for (const Track& t : list) {
             QJsonArray clips;
             for (const Clip& c : t.clips) {
+                if (c.isTitle()) {
+                    clips << clipToJson(c, -1);
+                    continue;
+                }
                 if (!index.contains(c.mediaPath)) { // sollte nicht vorkommen, aber nichts verlieren
                     index[c.mediaPath] = media.size();
                     media << QJsonObject{{"path", c.mediaPath}, {"relPath", projectDir.relativeFilePath(c.mediaPath)},

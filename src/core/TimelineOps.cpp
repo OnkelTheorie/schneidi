@@ -229,7 +229,7 @@ int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int de
         const int idx = int(c - clips.constData());
         if (edge == Edge::Start) {
             const int prevEnd = idx > 0 ? clips[idx - 1].end() : 0;
-            delta = std::max(delta, -c->in);              // nicht vor den Anfang des Materials
+            if (!c->isTitle()) delta = std::max(delta, -c->in); // nicht vor den Anfang des Materials
             delta = std::max(delta, prevEnd - c->start);  // nicht in den linken Nachbarn
             delta = std::min(delta, c->length() - 1);     // mind. 1 Frame
         } else {

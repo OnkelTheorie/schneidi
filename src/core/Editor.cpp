@@ -62,6 +62,29 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
     });
 }
 
+void Editor::addTitle(int frame, int track)
+{
+    Project* p = m_project;
+    const Timeline& cur = p->timeline();
+    Clip c;
+    c.kind = ClipKind::Title;
+    c.start = std::max(0, frame);
+    c.in = 0;
+    c.out = 5 * p->fps() - 1;
+    if (track < 0) {
+        track = 0;
+        for (int i = 0; i < cur.video.size(); ++i)
+            for (const Clip& x : cur.video[i].clips)
+                if (x.start < c.end() && x.end() > c.start) track = i + 1;
+    }
+    c.id = p->newClipId();
+    p->edit("Titel einfügen", [&](Timeline& tl) {
+        TimelineOps::ensureTracks(tl, TrackKind::Video, track + 1);
+        TimelineOps::placeClip(tl.video[track], c, [p] { return p->newClipId(); });
+    });
+    m_selection->set({c.id});
+}
+
 void Editor::toggleTrackMute(TrackRef ref)
 {
     m_project->edit("Spur stumm", [&](Timeline& tl) { tl.track(ref).muted = !tl.track(ref).muted; });

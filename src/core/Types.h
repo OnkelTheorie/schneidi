@@ -2,6 +2,8 @@
 // Reines Datenmodell der Timeline – ohne Qt-Widgets und ohne MLT,
 // damit Engine und UI unabhängig davon austauschbar bleiben.
 
+#include <QColor>
+#include <QFileInfo>
 #include <QString>
 #include <QVariantMap>
 #include <QVector>
@@ -46,9 +48,36 @@ struct ClipTransform {
     bool isIdentity() const { return !hasTransform() && !hasCrop() && !hasOpacity(); }
 };
 
+// Titel (Text-Generator wie in DaVinci): Werte in Pixeln des Projektformats
+struct TitleStyle {
+    QString text = QStringLiteral("Titel");
+    QString font = QStringLiteral("Sans");
+    double size = 80;          // Schriftgröße (Pixel)
+    QColor color = Qt::white;
+    bool bold = false, italic = false;
+    int align = 1;             // 0 = links, 1 = Mitte, 2 = rechts (Zeilen innerhalb des Textblocks)
+    double posX = 0, posY = 0; // Mitte des Textblocks ab Bildmitte, Y nach oben positiv (wie Transform)
+    bool outlineOn = false;    // Umrandung
+    QColor outlineColor = Qt::black;
+    double outlineWidth = 4;
+    bool boxOn = false;        // Hintergrundbox hinter dem Text
+    QColor boxColor{0, 0, 0, 160};
+    double boxPad = 20;
+
+    QString firstLine() const
+    {
+        const QString line = text.section('\n', 0, 0).trimmed();
+        return line.isEmpty() ? QStringLiteral("Text") : line;
+    }
+};
+
+enum class ClipKind { Media, Title };
+
 struct Clip {
     int id = 0;
-    QString mediaPath;
+    ClipKind kind = ClipKind::Media;
+    QString mediaPath; // leer bei Titeln (kein Medienverweis)
+    TitleStyle title;  // nur bei kind == Title
     int start = 0;  // Position in der Timeline (Frames)
     int in = 0;     // erstes Frame im Quellmaterial
     int out = 0;    // letztes Frame im Quellmaterial (inklusive, wie bei MLT)
@@ -68,6 +97,10 @@ struct Clip {
 
     int length() const { return out - in + 1; }
     int end() const { return start + length(); } // exklusiv
+    // Titel: jedes Frame gleich, beliebig lang trimmbar (in darf auch negativ werden)
+    bool isTitle() const { return kind == ClipKind::Title; }
+    // Name in Timeline/Inspector: Dateiname bzw. erste Textzeile
+    QString displayName() const { return isTitle() ? title.firstLine() : QFileInfo(mediaPath).fileName(); }
 };
 
 struct Track {
