@@ -198,6 +198,9 @@ std::optional<TimelineView::TransitionHit> TimelineView::transitionAt(const QPoi
         // Nur die freie Kante ist ziehbar: Einblenden rechts, Ausblenden links, Überblendung beide
         if (s.leftId && pos.x() <= r.left() + grab) edge = -1;
         else if (s.rightId && pos.x() >= r.right() - grab) edge = 1;
+        // Klickfläche teilen: an einer Clipkante gehört die untere Hälfte dem Trimmen,
+        // eine nicht ziehbare Übergangskante (Clip-Seite beim Ein-/Ausblenden) ganz
+        if (edgeAt(pos) && (!edge || pos.y() >= row->y + row->h / 2)) return std::nullopt;
         return TransitionHit{row->ref, s, edge};
     }
     return std::nullopt;
@@ -601,6 +604,12 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
         p.setPen(QPen(QColor(0xff, 0xff, 0xff, 170), 1));
         if (s.rightId) p.drawLine(r.bottomLeft(), r.topRight());  // einblenden
         if (s.leftId) p.drawLine(r.topLeft(), r.bottomRight());   // ausblenden
+        // Schnitt in der unteren Hälfte andeuten: dort wird getrimmt statt der Übergang gewählt
+        if (s.isDissolve()) {
+            const int cx = int(frameToX(s.cut));
+            p.setPen(QPen(QColor(0x10, 0x10, 0x10, 160), 1, Qt::DashLine));
+            p.drawLine(cx, r.top() + r.height() / 2, cx, r.bottom());
+        }
         if (r.width() > 80 && r.height() > 14) {
             QFont f = font();
             f.setPointSizeF(7);
