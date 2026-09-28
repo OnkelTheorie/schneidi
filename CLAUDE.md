@@ -5,6 +5,7 @@ Im Zweifel: verhalten wie DaVinci.
 
 - Anforderungen: `videoeditor-anforderungen.md`
 - Plan/Architektur/Meilensteine: `docs/plan.md`
+- Entwickler-Notizen (Testen, Screenshots, gelöste Stolperfallen): `docs/dev-notes.md`
 - Kernregel: Timeline-Zoom/Scroll ändern sich nur durch Nutzereingabe (siehe Plan).
 
 ## Stack
