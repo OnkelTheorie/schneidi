@@ -8,6 +8,8 @@
 
 namespace {
 
+constexpr int kVersion = 2; // erhöhen, wenn sich Defaults ändern
+
 const QHash<QString, WheelAction>& wheelNames()
 {
     static const QHash<QString, WheelAction> names = {
@@ -35,14 +37,12 @@ InputBindings& InputBindings::instance()
 
 InputBindings::InputBindings()
 {
-    // Standard: wie vermutet aus DaVinci. Ctrl als Alternative zu Alt, weil KWin
-    // Alt+Maus unter KDE teils selbst abfängt.
+    // Standard wie DaVinci Resolve. (KWin kann Alt+Mausrad abfangen -> in der Datei umbelegbar)
     m_wheel = {
         {"none", WheelAction::ScrollVertical},
-        {"shift", WheelAction::ScrollHorizontal},
+        {"ctrl", WheelAction::ScrollHorizontal},
         {"alt", WheelAction::Zoom},
-        {"ctrl", WheelAction::Zoom},
-        {"ctrl+shift", WheelAction::TrackHeight},
+        {"shift", WheelAction::TrackHeight},
     };
 }
 
@@ -59,8 +59,12 @@ void InputBindings::load()
     if (!f.open(QIODevice::ReadOnly)) return;
     const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
 
+    // Ältere Datei mit überholten Defaults -> Mausrad-Defaults neu schreiben, Tasten behalten
+    const bool outdated = root.value("version").toInt() < kVersion;
+    if (outdated) m_fileExisted = false;
+
     const QJsonObject wheel = root.value("wheel").toObject();
-    for (auto it = wheel.begin(); it != wheel.end(); ++it)
+    for (auto it = wheel.begin(); it != wheel.end() && !outdated; ++it)
         m_wheel[it.key().toLower()] = wheelNames().value(it.value().toString(), WheelAction::None);
 
     const QJsonObject keys = root.value("shortcuts").toObject();
@@ -82,7 +86,8 @@ void InputBindings::saveIfMissing()
     for (auto it = m_wheel.begin(); it != m_wheel.end(); ++it) wheel[it.key()] = wheelName(it.value());
     QJsonObject keys;
     for (auto it = m_defaults.begin(); it != m_defaults.end(); ++it) keys[it.key()] = it.value();
-    QJsonObject root{{"wheel", wheel}, {"shortcuts", keys}};
+    for (auto it = m_shortcuts.begin(); it != m_shortcuts.end(); ++it) keys[it.key()] = it.value(); // eigene Änderungen behalten
+    QJsonObject root{{"version", kVersion}, {"wheel", wheel}, {"shortcuts", keys}};
 
     QDir().mkpath(QFileInfo(filePath()).absolutePath());
     QFile f(filePath());
