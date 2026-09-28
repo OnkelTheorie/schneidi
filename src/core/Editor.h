@@ -36,14 +36,41 @@ public:
     int clampTrim(int clipId, TimelineOps::Edge edge, int delta) const;
     // Lautstärke eines Audioclips (dB, wird auf kMinVolumeDb..kMaxVolumeDb begrenzt)
     void setClipVolume(int clipId, double db);
+    // Beliebige Clip-Eigenschaft ändern (Inspector). Gleicher mergeKey = ein Undo-Schritt.
+    void modifyClips(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
+                     const QString& mergeKey = {});
     void bladeAt(int clipId, int frame);
     void splitAtPlayhead(int frame);
     void deleteSelection();
+    void rippleDeleteSelection();
+    void selectAll();
+    // Auswahl um `frames` verschieben (Nudge, wie , und . in DaVinci)
+    void nudgeSelection(int frames);
+    // Anfang/Ende bis zum Playhead trimmen (Shift+[ / Shift+]); Auswahl oder Clips unter dem Playhead
+    void trimToPlayhead(TimelineOps::Edge edge, int frame);
+    void toggleSelectionEnabled();
+    // Ausgewählte Clips verknüpfen, bzw. trennen, wenn sie schon verknüpft sind
+    void toggleLinkSelection();
+    void toggleMarker(int frame);
+
+    // Zwischenablage (Strg+C/X/V): Einfügen am Playhead auf denselben Spuren, überschreibt
+    void copySelection();
+    void cutSelection();
+    void paste(int frame);
 
 private:
     TimelineOps::SourceLength sourceLength() const;
 
+    // Clips unter dem Playhead bzw. die Auswahl (mit Partnern), wie DaVinci bei Strg+B
+    QVector<int> targetIds(int frame) const;
+
+    struct ClipboardItem {
+        Clip clip;
+        TrackRef ref;
+    };
+
     Project* m_project;
     Selection* m_selection;
     bool m_linkedSelection = true;
+    QVector<ClipboardItem> m_clipboard; // Starts relativ zum frühesten Clip
 };

@@ -17,7 +17,10 @@ public:
     const Timeline& timeline() const { return m_timeline; }
     QUndoStack* undoStack() { return &m_undo; }
 
-    void edit(const QString& text, const std::function<void(Timeline&)>& fn);
+    // mergeKey: aufeinanderfolgende Edits mit gleichem Schlüssel werden ein Undo-Schritt
+    // (z. B. Regler im Inspector ziehen). closeMerge() beendet die Serie.
+    void edit(const QString& text, const std::function<void(Timeline&)>& fn, const QString& mergeKey = {});
+    void closeMerge() { ++m_mergeSession; }
     void setTimeline(const Timeline& tl); // nur für Undo/Laden
 
     const QVector<MediaInfo>& media() const { return m_media; }
@@ -38,4 +41,5 @@ private:
     QUndoStack m_undo;
     int m_lastClipId = 0;
     int m_lastLinkId = 0;
+    int m_mergeSession = 0;
 };

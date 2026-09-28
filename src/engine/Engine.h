@@ -28,6 +28,7 @@ public:
 
     bool init(QString* error);
     int fps() const;
+    QSize frameSize() const; // Projektformat in Pixeln
 
     MediaInfo probe(const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);

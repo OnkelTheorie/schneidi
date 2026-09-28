@@ -345,6 +345,20 @@ void TimelineView::drawRuler(QPainter& p)
             p.drawText(x + 3, 12, Timecode::format(fr, fps));
         }
     }
+    // Marker (M) als kleine blaue Fähnchen wie in DaVinci
+    p.setRenderHint(QPainter::Antialiasing);
+    for (int m : m_editor->project()->timeline().markers) {
+        const double x = frameToX(m);
+        if (x < kHeaderW - 8 || x > width() + 8) continue;
+        QPainterPath flag;
+        flag.moveTo(x - 5, kRulerH - 14);
+        flag.lineTo(x + 5, kRulerH - 14);
+        flag.lineTo(x + 5, kRulerH - 7);
+        flag.lineTo(x, kRulerH - 2);
+        flag.lineTo(x - 5, kRulerH - 7);
+        flag.closeSubpath();
+        p.fillPath(flag, QColor(0x3d, 0x8e, 0xe0));
+    }
     p.restore();
 
     // Ecke links oben: aktueller Timecode wie in DaVinci
@@ -404,9 +418,13 @@ void TimelineView::drawTracks(QPainter& p)
             TrackRef ref;
             const Clip* c = TimelineOps::findClip(tl, id, &ref);
             if (!c) continue;
-            if (ref.kind == m_anchorRef.kind)
-                ref.index = std::clamp(ref.index + m_dragTrackDelta, 0, int(tl.tracks(ref.kind).size()) - 1);
-            const auto row = rowFor(ref);
+            ref.index += m_dragTrackDelta;
+            auto row = rowFor(ref);
+            if (!row && ref.kind == TrackKind::Audio && !allRows.isEmpty()) { // Spur entsteht beim Loslassen
+                const Row& last = allRows.last();
+                const int extra = ref.index - int(tl.audio.size());
+                row = Row{ref, last.y + last.h + extra * m_view.audioTrackHeight, m_view.audioTrackHeight};
+            }
             if (!row) continue;
             Clip moved = *c;
             moved.start = c->start + m_dragDelta;
@@ -477,6 +495,7 @@ void TimelineView::drawTracks(QPainter& p)
 void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost)
 {
     QColor base = kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip;
+    if (!c.enabled) base = QColor(0x55, 0x55, 0x5c); // deaktiviert (D) wie DaVinci: grau
     if (ghost) base.setAlpha(200);
     const QColor body = base.darker(135);
 
@@ -795,7 +814,8 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
 
         m_dragTrackDelta = 0;
         if (const auto row = rowAt(pos.y()); row && row->ref.kind == m_anchorRef.kind)
-            m_dragTrackDelta = row->ref.index - m_anchorRef.index;
+            m_dragTrackDelta = TimelineOps::clampTrackDelta(tl, m_dragIds, m_anchorRef.kind,
+                                                            row->ref.index - m_anchorRef.index);
         update();
         return;
     }

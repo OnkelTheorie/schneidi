@@ -74,6 +74,11 @@ int Engine::fps() const
     return m_profile ? qRound(m_profile->fps()) : 25;
 }
 
+QSize Engine::frameSize() const
+{
+    return m_profile ? QSize(m_profile->width(), m_profile->height()) : QSize(1920, 1080);
+}
+
 MediaInfo Engine::probe(const QString& path)
 {
     MediaInfo info;

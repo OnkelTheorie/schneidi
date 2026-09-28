@@ -6,14 +6,24 @@ namespace {
 
 class SnapshotCommand : public QUndoCommand {
 public:
-    SnapshotCommand(Project* p, const QString& text, Timeline before, Timeline after)
-        : QUndoCommand(text), m_project(p), m_before(std::move(before)), m_after(std::move(after)) {}
+    SnapshotCommand(Project* p, const QString& text, Timeline before, Timeline after, QString mergeKey)
+        : QUndoCommand(text), m_project(p), m_before(std::move(before)), m_after(std::move(after)),
+          m_mergeKey(std::move(mergeKey)) {}
     void undo() override { m_project->setTimeline(m_before); }
     void redo() override { m_project->setTimeline(m_after); }
+    int id() const override { return m_mergeKey.isEmpty() ? -1 : 1; }
+    bool mergeWith(const QUndoCommand* other) override
+    {
+        const auto* o = static_cast<const SnapshotCommand*>(other);
+        if (o->m_mergeKey != m_mergeKey) return false;
+        m_after = o->m_after;
+        return true;
+    }
 
 private:
     Project* m_project;
     Timeline m_before, m_after;
+    QString m_mergeKey;
 };
 
 Track makeTrack(TrackKind kind, const QString& name)
@@ -33,11 +43,12 @@ Project::Project(QObject* parent) : QObject(parent)
     m_timeline.audio << makeTrack(TrackKind::Audio, "A1") << makeTrack(TrackKind::Audio, "A2");
 }
 
-void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn)
+void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn, const QString& mergeKey)
 {
     Timeline after = m_timeline;
     fn(after);
-    m_undo.push(new SnapshotCommand(this, text, m_timeline, after)); // push ruft redo()
+    const QString key = mergeKey.isEmpty() ? QString() : QString("%1#%2").arg(mergeKey).arg(m_mergeSession);
+    m_undo.push(new SnapshotCommand(this, text, m_timeline, after, key)); // push ruft redo()
 }
 
 void Project::setTimeline(const Timeline& tl)

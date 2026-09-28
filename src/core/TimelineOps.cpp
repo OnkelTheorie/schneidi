@@ -137,9 +137,55 @@ QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
     return created;
 }
 
-void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
-               TrackKind trackDeltaKind, int trackDelta, const IdGen& newId)
+void ensureTracks(Timeline& tl, TrackKind kind, int count)
 {
+    auto& tracks = tl.tracks(kind);
+    while (tracks.size() < count) {
+        Track t;
+        t.kind = kind;
+        t.name = QString("%1%2").arg(kind == TrackKind::Video ? "V" : "A").arg(tracks.size() + 1);
+        tracks << t;
+    }
+}
+
+void rippleDelete(Timeline& tl, const QVector<int>& clipIds)
+{
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        for (auto& t : tl.tracks(k)) {
+            QVector<QPair<int, int>> gaps; // gelöschte Bereiche [start, end)
+            QVector<Clip> kept;
+            for (const Clip& c : t.clips) {
+                if (clipIds.contains(c.id)) gaps << qMakePair(c.start, c.end());
+                else kept << c;
+            }
+            if (gaps.isEmpty()) continue;
+            for (Clip& c : kept) {
+                int shift = 0;
+                for (const auto& g : gaps)
+                    if (g.second <= c.start) shift += g.second - g.first;
+                c.start -= shift;
+            }
+            t.clips = kept;
+            sortTrack(t);
+        }
+    }
+}
+
+int clampTrackDelta(const Timeline& tl, const QVector<int>& clipIds, TrackKind anchorKind, int trackDelta)
+{
+    for (int id : clipIds) {
+        TrackRef ref;
+        if (!findClip(tl, id, &ref)) continue;
+        trackDelta = std::max(trackDelta, -ref.index);
+        if (ref.kind == anchorKind) trackDelta = std::min(trackDelta, int(tl.tracks(ref.kind).size()) - 1 - ref.index);
+    }
+    return trackDelta;
+}
+
+void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
+               TrackKind anchorKind, int trackDelta, const IdGen& newId)
+{
+    trackDelta = clampTrackDelta(tl, clipIds, anchorKind, trackDelta);
     struct Moving { Clip clip; TrackRef target; };
     QVector<Moving> moving;
     for (int id : clipIds) {
@@ -148,14 +194,14 @@ void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
         if (!c) continue;
         Moving m{*c, ref};
         m.clip.start = std::max(0, c->start + deltaFrames);
-        if (ref.kind == trackDeltaKind) {
-            const int count = tl.tracks(ref.kind).size();
-            m.target.index = std::clamp(ref.index + trackDelta, 0, count - 1);
-        }
+        m.target.index = ref.index + trackDelta;
         moving << m;
     }
     // erst alle entfernen, dann neu platzieren -> Clips der Auswahl überschreiben sich nicht
-    for (const auto& m : moving) removeClip(tl, m.clip.id);
+    for (const auto& m : moving) {
+        removeClip(tl, m.clip.id);
+        ensureTracks(tl, m.target.kind, m.target.index + 1);
+    }
     for (const auto& m : moving) placeClip(tl.track(m.target), m.clip, newId);
 }
 

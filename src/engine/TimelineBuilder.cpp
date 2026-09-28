@@ -5,6 +5,8 @@
 
 #include <Mlt.h>
 #include <QColor>
+#include <QString>
+#include <algorithm>
 
 namespace {
 
@@ -36,6 +38,53 @@ void applyVolume(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
     Mlt::Filter f(profile, "volume");
     if (!f.is_valid()) return;
     f.set("level", c.volumeDb <= kMinVolumeDb ? -200.0 : c.volumeDb); // dB
+    clip.attach(f);
+}
+
+void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
+{
+    const ClipTransform& t = c.transform;
+    if (t.isIdentity()) return;
+    const double W = profile.width(), H = profile.height();
+    if (t.hasCrop()) {
+        // Beschneiden = Rand transparent machen, Bild bleibt an seinem Platz (wie DaVinci)
+        Mlt::Filter crop(profile, "qtcrop");
+        if (crop.is_valid()) {
+            const double w = std::max(1.0, W - t.cropLeft - t.cropRight);
+            const double h = std::max(1.0, H - t.cropTop - t.cropBottom);
+            crop.set("rect", QString("%1 %2 %3 %4").arg(t.cropLeft).arg(t.cropTop).arg(w).arg(h).toUtf8().constData());
+            crop.set("color", "#00000000");
+            clip.attach(crop);
+        }
+    }
+    if (t.opacity != 100) {
+        // Deckkraft über den Alphakanal (wie Shotcut); die qtblend-Opacity lieferte nur Schwarz
+        Mlt::Filter op(profile, "brightness");
+        if (op.is_valid()) {
+            op.set("level", 1.0);
+            op.set("alpha", t.opacity / 100.0);
+            clip.attach(op);
+        }
+    }
+    if (t.zoomX == 1.0 && t.zoomY == 1.0 && t.posX == 0 && t.posY == 0 && t.rotation == 0) return;
+    Mlt::Filter f(profile, "qtblend");
+    if (!f.is_valid()) return;
+    const double w = W * t.zoomX, h = H * t.zoomY;
+    const double x = (W - w) / 2 + t.posX, y = (H - h) / 2 - t.posY;
+    // 5. Wert (Deckkraft) muss dabei sein, sonst wird das Bild unsichtbar
+    f.set("rect", QString("%1 %2 %3 %4 1").arg(x).arg(y).arg(w).arg(h).toUtf8().constData());
+    f.set("rotation", -t.rotation); // DaVinci: positiv = gegen den Uhrzeigersinn
+    f.set("rotate_center", 1);
+    clip.attach(f);
+}
+
+void applyPan(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
+{
+    if (c.pan == 0.0) return;
+    Mlt::Filter f(profile, "panner");
+    if (!f.is_valid()) return;
+    f.set("channel", -1); // Balance (Stereo)
+    f.set("split", (c.pan + 100.0) / 200.0);
     clip.attach(f);
 }
 
@@ -84,16 +133,20 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl)
         int cursor = 0;
         for (const Clip& c : track.clips) {
             if (c.start > cursor) pl.blank(c.start - cursor - 1);
-            Mlt::Producer* src = producerFor(c.mediaPath, kind, trackIndex);
+            Mlt::Producer* src = c.enabled ? producerFor(c.mediaPath, kind, trackIndex) : nullptr;
             if (src) {
                 pl.append(*src, c.in, c.out);
                 std::unique_ptr<Mlt::Producer> cut(pl.get_clip(pl.count() - 1));
                 if (cut) {
                     applyEffects(m_profile, *cut, c);
-                    if (kind == TrackKind::Audio) applyVolume(m_profile, *cut, c);
+                    if (kind == TrackKind::Video) applyTransform(m_profile, *cut, c);
+                    if (kind == TrackKind::Audio) {
+                        applyVolume(m_profile, *cut, c);
+                        applyPan(m_profile, *cut, c);
+                    }
                 }
             } else {
-                pl.blank(c.length() - 1); // Datei fehlt -> Lücke statt Absturz
+                pl.blank(c.length() - 1); // deaktiviert oder Datei fehlt -> Lücke
             }
             cursor = c.end();
         }

@@ -24,6 +24,22 @@ inline QString formatVolumeDb(double db)
     return QString("%1%2 dB").arg(db > 0.05 ? "+" : "").arg(db, 0, 'f', 1);
 }
 
+// Transform/Crop/Composite wie im DaVinci-Inspector (Pixelwerte beziehen sich aufs Projektformat)
+struct ClipTransform {
+    double zoomX = 1.0, zoomY = 1.0;
+    double posX = 0, posY = 0;  // Pixel, Y nach oben positiv (wie DaVinci)
+    double rotation = 0;        // Grad
+    double cropLeft = 0, cropRight = 0, cropTop = 0, cropBottom = 0; // Pixel
+    double opacity = 100;       // Prozent
+
+    bool isIdentity() const
+    {
+        return zoomX == 1.0 && zoomY == 1.0 && posX == 0 && posY == 0 && rotation == 0 && opacity == 100
+            && !hasCrop();
+    }
+    bool hasCrop() const { return cropLeft != 0 || cropRight != 0 || cropTop != 0 || cropBottom != 0; }
+};
+
 struct Clip {
     int id = 0;
     QString mediaPath;
@@ -32,6 +48,9 @@ struct Clip {
     int out = 0;    // letztes Frame im Quellmaterial (inklusive, wie bei MLT)
     int linkId = 0; // 0 = frei; gleiche linkId = verknüpftes Video+Audio
     double volumeDb = 0.0; // Clip-Lautstärke (nur Audio); <= kMinVolumeDb = stumm
+    double pan = 0.0;      // Nur Audio: -100 = links, 0 = Mitte, +100 = rechts
+    bool enabled = true;   // deaktiviert (Taste D) = unsichtbar/stumm, bleibt aber liegen
+    ClipTransform transform; // nur Video
     QVector<EffectInstance> effects;
 
     int length() const { return out - in + 1; }
@@ -55,6 +74,7 @@ struct TrackRef {
 struct Timeline {
     QVector<Track> video; // [0] = V1 (unterste Spur)
     QVector<Track> audio; // [0] = A1
+    QVector<int> markers; // Timeline-Marker (Frames, sortiert)
 
     QVector<Track>& tracks(TrackKind k) { return k == TrackKind::Video ? video : audio; }
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }

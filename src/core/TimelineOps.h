@@ -26,16 +26,26 @@ void placeClip(Track& track, const Clip& clip, const IdGen& newId);
 
 bool removeClip(Timeline& tl, int clipId);
 
+// Legt fehlende Spuren an, bis es `count` Spuren der Art gibt (Namen V3, A3, …).
+void ensureTracks(Timeline& tl, TrackKind kind, int count);
+
+// Löscht Clips mit Ripple: auf den betroffenen Spuren rückt alles Folgende nach (wie Shift+Entf in DaVinci).
+void rippleDelete(Timeline& tl, const QVector<int>& clipIds);
+
 // Teilt die Clips an Frame `frame`. Rechte Hälften bekommen neue IDs; verknüpfte
 // Paare bleiben verknüpft (neue gemeinsame linkId für die rechten Teile).
 // Gibt die IDs der neuen rechten Teile zurück.
 QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
                      const IdGen& newClipId, const IdGen& newLinkId);
 
-// Verschiebt Clips um deltaFrames. trackDelta gilt nur für Clips der Art `trackDeltaKind`
-// (so wandert beim Ziehen eines Videoclips das verknüpfte Audio nur zeitlich mit).
+// Begrenzt den Spurversatz, sodass alle Clips gleich weit wandern (wie DaVinci: V1->V2 nimmt A1->A2 mit):
+// keine Spur unter V1/A1, Spuren der Art `anchorKind` bleiben im vorhandenen Bereich,
+// die andere Art darf neue Spuren brauchen (werden beim Verschieben angelegt).
+int clampTrackDelta(const Timeline& tl, const QVector<int>& clipIds, TrackKind anchorKind, int trackDelta);
+
+// Verschiebt Clips um deltaFrames und trackDelta Spuren (siehe clampTrackDelta).
 void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
-               TrackKind trackDeltaKind, int trackDelta, const IdGen& newId);
+               TrackKind anchorKind, int trackDelta, const IdGen& newId);
 
 enum class Edge { Start, End };
 // Länge des Quellmaterials in Frames (<= 0 = unbegrenzt, z. B. Standbilder)
