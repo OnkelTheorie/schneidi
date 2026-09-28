@@ -170,4 +170,17 @@ private:
     QVector<DropItem> m_dropItems;
     int m_dropFrame = -1;
     int m_dropTrack = 0;
+
+    // Übergang aus der Effects Library reinziehen (wie DaVinci): Schnitt unter der Maus hervorheben
+    struct TransitionDrop {
+        TrackRef ref;
+        int leftId = 0, rightId = 0; // 0 = keiner (Ein-/Ausblenden)
+        TransitionStyle style;       // Ausrichtung je nach Mausposition zum Schnitt
+        TimelineOps::TransitionSpan span;
+    };
+    std::optional<TransitionDrop> transitionDropAt(const QPoint& pos) const;
+    bool m_transDragging = false;
+    TrackKind m_transDragKind = TrackKind::Video;
+    TransitionStyle m_transDragStyle;
+    std::optional<TransitionDrop> m_transDrop;
 };
