@@ -674,7 +674,7 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
             {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
             {KeyEase::EaseInOut, "Ease In and Out"}};
         for (const auto& e : eases) {
-            QAction* a = menu.addAction(T(e.name));
+            QAction* a = menu.addAction(e.name); // wie DaVinci auch deutsch englisch
             a->setCheckable(true);
             a->setChecked(k && k->ease == e.ease);
             connect(a, &QAction::triggered, this, [=, ease = e.ease] {

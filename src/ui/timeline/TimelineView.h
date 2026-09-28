@@ -78,8 +78,9 @@ private:
         TrackRef ref;
         int y; // Widget-Koordinate (Scroll bereits eingerechnet)
         int h;
+        int lane = 0; // Höhe der aufgeklappten Keyframe-Spur unten in der Zeile (0 = keine)
     };
-    enum class Drag { None, Scrub, MaybeMove, Move, Trim, Volume, TransitionLength, Fade };
+    enum class Drag { None, Scrub, MaybeMove, Move, Trim, Volume, TransitionLength, Fade, Keyframe };
     // Übergang unter der Maus; edge: -1/+1 = linke/rechte Kante (Länge ziehen), 0 = Mitte
     struct TransitionHit {
         TrackRef ref;
@@ -102,6 +103,17 @@ private:
     // Fade-Griffe oben an den Clip-Ecken (wie DaVinci), nur sichtbar/greifbar, wenn die Maus über dem Clip ist
     QRect fadeHandleRect(const QRect& clip, const Clip& c, TimelineOps::Edge edge) const;
     std::optional<EdgeHit> fadeHandleAt(const QPoint& pos) const;
+    // Keyframes: Symbol unten rechts im Clip (klappt die Keyframe-Spur auf) und die Spur darunter (wie DaVinci)
+    QRect keyIconRect(const QRect& clip) const;
+    int keyIconAt(const QPoint& pos) const; // Clip-ID oder 0
+    QRect laneRect(const Row& row, const Clip& c) const;
+    struct KeyHit {
+        int clipId;
+        int t; // Clip-Frame
+    };
+    std::optional<KeyHit> keyframeAt(const QPoint& pos) const;
+    bool inLane(const QPoint& pos) const; // Maus in einer aufgeklappten Keyframe-Spur
+    void drawKeyLane(QPainter& p, const Row& row, const Clip& c);
     // Audioclip, dessen Lautstärkelinie unter der Maus liegt (0 = keiner)
     int volumeLineAt(const QPoint& pos) const;
     void updateHoverCursor(const QPoint& pos);
@@ -156,6 +168,11 @@ private:
     int m_transEdge = 0;
 
     int m_hoverFrame = -1; // Klingen-Vorschau
+
+    // Keyframe-Spuren: aufgeklappte Clips (Ansichtszustand, nicht im Projekt) und Rauten ziehen
+    QSet<int> m_keyLanes;
+    int m_keyDragClip = 0;
+    int m_keyDelta = 0;
 
     // Fade-Griff ziehen
     int m_hoverClip = 0; // Clip unter der Maus (zeigt die Fade-Griffe)

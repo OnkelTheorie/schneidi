@@ -4,6 +4,7 @@
 #include "app/Theme.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
+#include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/Timecode.h"
@@ -30,6 +31,8 @@ constexpr int kDragStartPx = 4;
 constexpr int kEdgeGrabPx = 6; // so nah an der Clipkante wird getrimmt statt verschoben
 constexpr int kVolumeGrabPx = 4;
 constexpr int kClipBarH = 16;  // Titelleiste im Clip
+constexpr int kLaneH = 16;     // aufgeklappte Keyframe-Spur unter dem Clip
+constexpr int kKeyGrabPx = 5;  // so nah an einer Raute wird sie gegriffen
 
 // Lautstärke <-> Höhe im Clip (0 = unten, 1 = oben), stückweise linear wie ein Fader:
 // unteres Viertel -∞..-20 dB, Mitte -20..0 dB, oberes Viertel 0..+12 dB
@@ -58,6 +61,19 @@ QRect clipBodyRect(const QRect& r)
 int volumeLineY(const QRect& body, double db)
 {
     return body.bottom() - int(std::lround(volumeToPos(db) * (body.height() - 1)));
+}
+
+// Clip-Lautstärke an Clip-Frame t (mit Keyframes)
+double volumeAt(const Clip& c, double t)
+{
+    return Keys::valueAt(c, AnimParam::Volume, std::clamp(t, 0.0, double(c.length() - 1)));
+}
+
+// Raute (Keyframe) um (x, y)
+void drawDiamond(QPainter& p, double x, double y, double r)
+{
+    const QPointF pts[] = {{x, y - r}, {x + r, y}, {x, y + r}, {x - r, y}};
+    p.drawPolygon(pts, 4);
 }
 } // namespace
 
@@ -111,8 +127,10 @@ int TimelineView::scrollRangeFrames() const
 
 int TimelineView::contentHeight() const
 {
-    const Timeline& tl = m_editor->project()->timeline();
-    return tl.video.size() * m_view.videoTrackHeight + kSeparator + tl.audio.size() * m_view.audioTrackHeight;
+    // aus den Zeilen, damit aufgeklappte Keyframe-Spuren mitzählen
+    const auto all = rows();
+    if (all.isEmpty()) return 0;
+    return all.last().y + all.last().h - (kRulerH - m_view.scrollY);
 }
 
 QVector<TimelineView::Row> TimelineView::rows() const
@@ -120,14 +138,22 @@ QVector<TimelineView::Row> TimelineView::rows() const
     const Timeline& tl = m_editor->project()->timeline();
     QVector<Row> out;
     int y = kRulerH - m_view.scrollY;
+    // Spur wird höher, solange ein Clip darauf seine Keyframe-Spur aufgeklappt hat
+    auto lane = [&](const Track& t) {
+        for (const Clip& c : t.clips)
+            if (m_keyLanes.contains(c.id) && Keys::hasKeys(c)) return kLaneH;
+        return 0;
+    };
     for (int i = tl.video.size() - 1; i >= 0; --i) { // V1 unten, wie in DaVinci
-        out << Row{{TrackKind::Video, i}, y, m_view.videoTrackHeight};
-        y += m_view.videoTrackHeight;
+        const int l = lane(tl.video[i]);
+        out << Row{{TrackKind::Video, i}, y, m_view.videoTrackHeight + l, l};
+        y += out.last().h;
     }
     y += kSeparator;
     for (int i = 0; i < tl.audio.size(); ++i) {
-        out << Row{{TrackKind::Audio, i}, y, m_view.audioTrackHeight};
-        y += m_view.audioTrackHeight;
+        const int l = lane(tl.audio[i]);
+        out << Row{{TrackKind::Audio, i}, y, m_view.audioTrackHeight + l, l};
+        y += out.last().h;
     }
     return out;
 }
@@ -177,12 +203,14 @@ std::optional<TimelineView::EdgeHit> TimelineView::edgeAt(const QPoint& pos) con
 
 QRect TimelineView::clipRect(const Row& row, const Clip& c) const
 {
-    return QRect(QPoint(int(frameToX(c.start)), row.y + 1), QPoint(int(frameToX(c.end())) - 1, row.y + row.h - 3));
+    return QRect(QPoint(int(frameToX(c.start)), row.y + 1),
+                 QPoint(int(frameToX(c.end())) - 1, row.y + row.h - row.lane - 3));
 }
 
 QRect TimelineView::transitionRect(const Row& row, const TimelineOps::TransitionSpan& s) const
 {
-    return QRect(QPoint(int(frameToX(s.start)), row.y + 1), QPoint(int(frameToX(s.end)) - 1, row.y + row.h - 3));
+    return QRect(QPoint(int(frameToX(s.start)), row.y + 1),
+                 QPoint(int(frameToX(s.end)) - 1, row.y + row.h - row.lane - 3));
 }
 
 // Übergänge liegen über den Clipkanten und gehen beim Klicken vor (wie DaVinci)
@@ -233,6 +261,56 @@ std::optional<TimelineView::EdgeHit> TimelineView::fadeHandleAt(const QPoint& po
     return std::nullopt;
 }
 
+QRect TimelineView::keyIconRect(const QRect& r) const
+{
+    return QRect(r.right() - 13, r.bottom() - 12, 11, 11);
+}
+
+int TimelineView::keyIconAt(const QPoint& pos) const
+{
+    if (pos.x() < kHeaderW || pos.y() < kRulerH) return 0;
+    const auto row = rowAt(pos.y());
+    if (!row) return 0;
+    for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
+        const QRect r = clipRect(*row, c);
+        if (r.width() >= 40 && r.height() >= 24 && Keys::hasKeys(c) && keyIconRect(r).adjusted(-2, -2, 2, 2).contains(pos))
+            return c.id;
+    }
+    return 0;
+}
+
+QRect TimelineView::laneRect(const Row& row, const Clip& c) const
+{
+    return QRect(QPoint(int(frameToX(c.start)), row.y + row.h - row.lane - 2),
+                 QPoint(int(frameToX(c.end())) - 1, row.y + row.h - 3));
+}
+
+bool TimelineView::inLane(const QPoint& pos) const
+{
+    const auto row = rowAt(pos.y());
+    return row && row->lane > 0 && pos.y() >= row->y + row->h - row->lane - 2;
+}
+
+std::optional<TimelineView::KeyHit> TimelineView::keyframeAt(const QPoint& pos) const
+{
+    if (pos.x() < kHeaderW || !inLane(pos)) return std::nullopt;
+    const auto row = rowAt(pos.y());
+    std::optional<KeyHit> best;
+    double bestDist = kKeyGrabPx + 1;
+    for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
+        if (!m_keyLanes.contains(c.id)) continue;
+        for (int t : Keys::keyTimes(c)) {
+            if (t < 0 || t >= c.length()) continue; // außerhalb des Clips (nach Trimmen) nicht greifbar
+            const double d = std::abs(frameToX(c.start + t) - pos.x());
+            if (d < bestDist) {
+                bestDist = d;
+                best = KeyHit{c.id, t};
+            }
+        }
+    }
+    return best;
+}
+
 int TimelineView::volumeLineAt(const QPoint& pos) const
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return 0;
@@ -243,7 +321,8 @@ int TimelineView::volumeLineAt(const QPoint& pos) const
         if (pos.x() < r.left() || pos.x() > r.right()) continue;
         const QRect body = clipBodyRect(r);
         if (body.height() < 6) return 0;
-        return std::abs(pos.y() - volumeLineY(body, c.volumeDb)) <= kVolumeGrabPx ? c.id : 0;
+        const double db = volumeAt(c, (pos.x() - frameToX(c.start)) / m_view.pxPerFrame);
+        return std::abs(pos.y() - volumeLineY(body, db)) <= kVolumeGrabPx ? c.id : 0;
     }
     return 0;
 }
@@ -255,8 +334,12 @@ void TimelineView::updateHoverCursor(const QPoint& pos)
         m_hoverClip = hover;
         update();
     }
-    if (fadeHandleAt(pos)) {
+    if (fadeHandleAt(pos) || (m_tool == Tool::Select && keyframeAt(pos))) {
         setCursor(Qt::SizeHorCursor);
+        return;
+    }
+    if (m_tool == Tool::Select && keyIconAt(pos)) {
+        setCursor(Qt::PointingHandCursor);
         return;
     }
     if (m_tool == Tool::Select) {
@@ -501,10 +584,17 @@ void TimelineView::drawTracks(QPainter& p)
                     c.out += m_trimDelta;
                 }
             }
-            if (m_drag == Drag::Volume && c.id == m_volClipId) c.volumeDb = m_volDb;
+            if (m_drag == Drag::Volume && c.id == m_volClipId) {
+                c.volumeDb = m_volDb;
+                // animiert: ganze Kurve verschieben (Vorschau wie beim Loslassen)
+                for (Keyframe& k : c.keys[AnimParam::Volume])
+                    k.value = std::clamp(k.value + m_volDb - m_volStartDb, kMinVolumeDb, kMaxVolumeDb);
+                if (c.keys.value(AnimParam::Volume).isEmpty()) c.keys.remove(AnimParam::Volume);
+            }
             const QRect r = clipRect(row, c);
             if (r.right() < kHeaderW || r.left() > width()) continue;
             drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false, audioSpans);
+            if (row.lane && m_keyLanes.contains(c.id)) drawKeyLane(p, row, c);
         }
         drawTransitions(p, row, hidden);
     }
@@ -528,7 +618,7 @@ void TimelineView::drawTracks(QPainter& p)
             Clip moved = *c;
             moved.start = c->start + m_dragDelta;
             const QRect r(QPoint(int(frameToX(moved.start)), row->y + 1),
-                          QPoint(int(frameToX(moved.end())) - 1, row->y + row->h - 3));
+                          QPoint(int(frameToX(moved.end())) - 1, row->y + row->h - row->lane - 3));
             drawClip(p, r, moved, ref.kind, true, true);
         }
     }
@@ -641,6 +731,40 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
     }
 }
 
+// Keyframe-Spur unter dem Clip: eine Raute pro Keyframe-Zeit (alle Parameter zusammen, wie DaVincis
+// zusammengefasste Spur); ausgewählte orange, beim Ziehen an der neuen Stelle
+void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
+{
+    const QRect lane = laneRect(row, c);
+    if (lane.right() < kHeaderW || lane.left() > width()) return;
+    const Selection* sel = m_editor->selection();
+    const bool mine = sel->keyClip() == c.id;
+    p.save();
+    p.fillRect(lane, QColor(0x1d, 0x1d, 0x21));
+    p.setPen(QColor(0x3a, 0x3a, 0x42));
+    p.drawRect(lane.adjusted(0, 0, -1, -1));
+    p.setClipRect(lane.adjusted(-6, 0, 6, 0), Qt::IntersectClip);
+    p.setRenderHint(QPainter::Antialiasing);
+    const double y = lane.center().y() + 0.5;
+    // ausgewählte zuletzt, damit sie beim Ziehen über anderen liegen
+    for (bool pass : {false, true})
+        for (int t : Keys::keyTimes(c)) {
+            if (t < 0 || t >= c.length()) continue;
+            const bool selected = mine && sel->keyTimes().contains(t);
+            if (selected != pass) continue;
+            const int shown = t + (selected && m_drag == Drag::Keyframe ? m_keyDelta : 0);
+            p.setPen(QPen(QColor(0, 0, 0, 180), 1));
+            p.setBrush(selected ? Theme::accent : QColor(0xe0, 0xe0, 0xe0));
+            drawDiamond(p, frameToX(c.start + shown), y, 4.5);
+        }
+    p.restore();
+    if (m_drag == Drag::Keyframe && m_keyDragClip == c.id && m_keyDelta != 0 && !sel->keyTimes().isEmpty()) {
+        const int t = *std::min_element(sel->keyTimes().begin(), sel->keyTimes().end()) + m_keyDelta;
+        drawLabel(p, QPoint(int(frameToX(c.start + t)) + 8, lane.top() - 22),
+                  (m_keyDelta > 0 ? "+" : "") + Timecode::format(m_keyDelta, m_editor->project()->fps()));
+    }
+}
+
 void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,
                             const QVector<TimelineOps::TransitionSpan>& spans)
 {
@@ -670,12 +794,28 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     // Lautstärkelinie wie in DaVinci (zum Hoch-/Runterziehen)
     if (!ghost && kind == TrackKind::Audio && bodyRect.height() >= 6) {
         const bool active = c.id == m_hoverVolClip || (m_drag == Drag::Volume && c.id == m_volClipId);
-        const int y = volumeLineY(bodyRect, c.volumeDb);
         p.setRenderHint(QPainter::Antialiasing, false);
-        p.setPen(QPen(QColor(0, 0, 0, 140), 1)); // Schatten, damit die Linie auf der Wellenform lesbar bleibt
-        p.drawLine(bodyRect.left(), y + (active ? 2 : 1), bodyRect.right(), y + (active ? 2 : 1));
-        p.setPen(QPen(active ? QColor(0xff, 0xff, 0xff) : QColor(0xff, 0xff, 0xff, 190), active ? 2 : 1));
-        p.drawLine(bodyRect.left(), y, bodyRect.right(), y);
+        if (Keys::animated(c, AnimParam::Volume)) {
+            // Keyframes: Linie folgt der Kurve (nur sichtbarer Teil, alle 2 px)
+            QPolygonF curve;
+            const int x0 = std::max(bodyRect.left(), kHeaderW), x1 = std::min(bodyRect.right(), width());
+            const double clipX = frameToX(c.start);
+            for (int x = x0; x <= x1 + 1; x += 2) {
+                const int xx = std::min(x, x1);
+                curve << QPointF(xx, volumeLineY(bodyRect, volumeAt(c, (xx - clipX) / m_view.pxPerFrame)));
+            }
+            p.setRenderHint(QPainter::Antialiasing);
+            p.setPen(QPen(QColor(0, 0, 0, 140), 1));
+            p.drawPolyline(curve.translated(0, active ? 2 : 1));
+            p.setPen(QPen(active ? QColor(0xff, 0xff, 0xff) : QColor(0xff, 0xff, 0xff, 190), active ? 2 : 1));
+            p.drawPolyline(curve);
+        } else {
+            const int y = volumeLineY(bodyRect, c.volumeDb);
+            p.setPen(QPen(QColor(0, 0, 0, 140), 1)); // Schatten, damit die Linie auf der Wellenform lesbar bleibt
+            p.drawLine(bodyRect.left(), y + (active ? 2 : 1), bodyRect.right(), y + (active ? 2 : 1));
+            p.setPen(QPen(active ? QColor(0xff, 0xff, 0xff) : QColor(0xff, 0xff, 0xff, 190), active ? 2 : 1));
+            p.drawLine(bodyRect.left(), y, bodyRect.right(), y);
+        }
         p.setRenderHint(QPainter::Antialiasing);
     }
     // Fade-Bereiche wie DaVinci: Fläche über der Kurve abgedunkelt, Kurve von unten zum Pegel.
@@ -695,7 +835,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
                     const double t = in ? (x - clipX) / m_view.pxPerFrame
                                         : c.length() - (x1 - x) / m_view.pxPerFrame;
                     const double g = TimelineOps::audioFadeGain(c, std::clamp(t, 0.0, double(c.length())));
-                    const double db = g > 0.001 ? c.volumeDb + 20.0 * std::log10(g) : kMinVolumeDb;
+                    const double db = g > 0.001 ? volumeAt(c, t) + 20.0 * std::log10(g) : kMinVolumeDb;
                     curve << QPointF(x, volumeLineY(bodyRect, db));
                 }
             } else if (in) {
@@ -731,6 +871,17 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
 
     p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
     p.drawPath(path);
+
+    // Keyframe-Symbol unten rechts (wie DaVinci): Klick klappt die Keyframe-Spur auf
+    if (!ghost && r.width() >= 40 && r.height() >= 24 && Keys::hasKeys(c)) {
+        const QRectF k = keyIconRect(r);
+        const bool open = m_keyLanes.contains(c.id);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(QColor(0, 0, 0, 170), 1));
+        p.setBrush(open ? Theme::accent : QColor(0xf0, 0xf0, 0xf0));
+        drawDiamond(p, k.center().x(), k.center().y(), k.width() / 2);
+        p.setBrush(Qt::NoBrush);
+    }
 
     // Fade-Griffe (weiße Anfasser oben an den Ecken), nur unter der Maus bzw. beim Ziehen
     const bool fading = m_drag == Drag::Fade && m_fade.clipId == c.id;
@@ -807,7 +958,8 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
     const int available = int(std::min<double>(lv.size(), std::ceil(wave->frames * scale)));
     const int clipEnd = int(std::min<double>(available, (c.out + 1) * scale));
 
-    if (c.volumeDb <= kMinVolumeDb) return; // stumm -> flach
+    const bool volAnim = Keys::animated(c, AnimParam::Volume);
+    if (c.volumeDb <= kMinVolumeDb && !volAnim) return; // stumm -> flach
     // Übergänge, die diesen Clip betreffen (Crossfade/Ein-/Ausblenden)
     QVector<TimelineOps::TransitionSpan> own;
     for (const auto& s : spans)
@@ -836,7 +988,8 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
         for (int b = std::max(0, b0); b < b1; ++b) peak = std::max<int>(peak, lv[b]);
         if (peak == 0) continue;
         // Wellenform folgt Clip-Lautstärke, Fade-Griffen und Übergängen (dB-Skala unten)
-        double db = c.volumeDb;
+        double db = volAnim ? volumeAt(c, (x + 0.5 - clipX) / m_view.pxPerFrame) : c.volumeDb;
+        if (db <= kMinVolumeDb) continue;
         if (fades) {
             const double t = (x + 0.5 - clipX) / m_view.pxPerFrame; // Mitte des Pixels, ab Clipanfang
             double g = TimelineOps::audioFadeGain(c, t);
@@ -933,6 +1086,35 @@ void TimelineView::drawPlayhead(QPainter& p)
 // Rechtsklick auf einen Übergang: Art, Ausrichtung, Löschen (wie DaVinci)
 void TimelineView::contextMenuEvent(QContextMenuEvent* e)
 {
+    // Rechtsklick auf eine Keyframe-Raute: Verlauf (wie DaVinci) oder Löschen, gilt für die ausgewählten Rauten
+    if (const auto k = keyframeAt(e->pos())) {
+        Selection* sel = m_editor->selection();
+        if (sel->keyClip() != k->clipId || !sel->keyTimes().contains(k->t)) sel->setKeyframes(k->clipId, {k->t});
+        const QVector<int> times = sel->keyTimes().values().toVector();
+        const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), k->clipId);
+        if (!c) return;
+        std::optional<KeyEase> current;
+        for (const KeyTrack& track : c->keys)
+            for (const Keyframe& kf : track)
+                if (kf.frame == c->in + k->t) current = kf.ease;
+        QMenu menu(this);
+        const struct { KeyEase ease; const char* name; } eases[] = {
+            {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
+            {KeyEase::EaseInOut, "Ease In and Out"}};
+        for (const auto& it : eases) {
+            QAction* a = menu.addAction(it.name); // wie DaVinci auch deutsch englisch
+            a->setCheckable(true);
+            a->setChecked(current == it.ease);
+            connect(a, &QAction::triggered, this, [this, id = k->clipId, times, ease = it.ease] {
+                m_editor->modifyClips({id}, T("Keyframe-Verlauf"), [&](Clip& clip) { Keys::setEase(clip, times, ease); });
+            });
+        }
+        menu.addSeparator();
+        connect(menu.addAction(T("Löschen")), &QAction::triggered, this,
+                [this, id = k->clipId, times] { m_editor->removeKeyframes(id, times); });
+        menu.exec(e->globalPos());
+        return;
+    }
     const auto t = transitionAt(e->pos());
     if (!t) return;
     const TimelineOps::TransitionSpan s = t->span;
@@ -1012,6 +1194,40 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     }
 
     Selection* sel = m_editor->selection();
+    // Keyframes: Symbol klappt die Spur auf/zu, Rauten auswählen (Strg = dazu) und ziehen
+    if (const int kid = keyIconAt(pos)) {
+        if (m_keyLanes.contains(kid)) m_keyLanes.remove(kid);
+        else m_keyLanes.insert(kid);
+        if (sel->keyClip() == kid) sel->setKeyframes(0, {});
+        setScrollY(m_view.scrollY); // Höhe hat sich geändert (Scrollbar anpassen, zeichnet neu)
+        return;
+    }
+    if (const auto k = keyframeAt(pos)) {
+        const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), k->clipId);
+        if (!sel->contains(k->clipId)) {
+            const QVector<int> group = m_editor->withLinked({k->clipId});
+            sel->set(QSet<int>(group.begin(), group.end()));
+        }
+        QSet<int> times = sel->keyClip() == k->clipId ? sel->keyTimes() : QSet<int>{};
+        const bool ctrl = e->modifiers() & Qt::ControlModifier;
+        if (ctrl && times.contains(k->t)) times.remove(k->t);
+        else if (ctrl) times.insert(k->t);
+        else if (!times.contains(k->t)) times = {k->t};
+        sel->setKeyframes(k->clipId, times);
+        if (!ctrl && c) {
+            emit seekRequested(c->start + k->t); // Inspector zeigt die Werte an diesem Keyframe
+            m_keyDragClip = k->clipId;
+            m_keyDelta = 0;
+            m_drag = Drag::Keyframe;
+        }
+        update();
+        return;
+    }
+    if (inLane(pos)) { // leere Stelle in der Keyframe-Spur: Rauten abwählen
+        sel->setKeyframes(0, {});
+        update();
+        return;
+    }
     if (const auto f = fadeHandleAt(pos)) {
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), f->clipId);
         m_fade = *f;
@@ -1044,7 +1260,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         const QVector<int> group = m_editor->withLinked({vid});
         if (!sel->ids().contains(vid)) sel->set(QSet<int>(group.begin(), group.end()));
         m_volClipId = vid;
-        m_volStartDb = m_volDb = TimelineOps::findClip(m_editor->project()->timeline(), vid)->volumeDb;
+        const Clip* vc = TimelineOps::findClip(m_editor->project()->timeline(), vid);
+        m_volStartDb = m_volDb = volumeAt(*vc, (pos.x() - frameToX(vc->start)) / m_view.pxPerFrame); // mit Keyframes
         m_volFine = e->modifiers() & Qt::ShiftModifier;
         m_drag = Drag::Volume;
         update();
@@ -1119,6 +1336,21 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         update();
         return;
     }
+    case Drag::Keyframe: {
+        const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_keyDragClip);
+        const QSet<int>& times = m_editor->selection()->keyTimes();
+        if (!c || times.isEmpty()) return;
+        int delta = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
+        // alle ausgewählten Rauten bleiben im Clip
+        const int lo = *std::min_element(times.begin(), times.end());
+        const int hi = *std::max_element(times.begin(), times.end());
+        delta = std::clamp(delta, -lo, c->length() - 1 - hi);
+        if (delta != m_keyDelta) {
+            m_keyDelta = delta;
+            update();
+        }
+        return;
+    }
     case Drag::Fade: {
         const int dx = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
         const int frames = m_fadeStart + (m_fade.edge == TimelineOps::Edge::Start ? dx : -dx);
@@ -1187,10 +1419,30 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         m_editor->moveClips(m_dragIds, m_dragDelta, m_anchorRef.kind, m_dragTrackDelta);
     const bool trimmed = m_drag == Drag::Trim;
     const bool volume = m_drag == Drag::Volume;
+    const bool keys = m_drag == Drag::Keyframe;
     if (m_drag == Drag::TransitionLength || m_drag == Drag::Fade) m_editor->project()->closeMerge();
     m_drag = Drag::None; // vor trimClip, damit die Vorschau nicht doppelt angewendet wird
     if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta);
-    if (volume) m_editor->setClipVolume(m_volClipId, m_volDb);
+    if (keys && m_keyDelta != 0) { // ein Undo-Schritt pro Ziehen
+        const QVector<int> times = m_editor->selection()->keyTimes().values().toVector();
+        const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_keyDragClip);
+        const int seek = c && !times.isEmpty() ? c->start + *std::min_element(times.begin(), times.end()) + m_keyDelta : -1;
+        m_editor->moveKeyframes(m_keyDragClip, times, m_keyDelta); // ersetzt die Timeline -> c ungültig
+        if (seek >= 0) emit seekRequested(seek); // Playhead auf die verschobene Raute
+    }
+    m_keyDelta = 0;
+    const Clip* volClip = volume ? TimelineOps::findClip(m_editor->project()->timeline(), m_volClipId) : nullptr;
+    if (volClip && Keys::animated(*volClip, AnimParam::Volume)) {
+        // Keyframes: ganze Kurve um den gezogenen Betrag verschieben
+        const double delta = m_volDb - m_volStartDb;
+        if (delta != 0)
+            m_editor->modifyClips({m_volClipId}, T("Lautstärke"), [delta](Clip& c) {
+                for (Keyframe& k : c.keys[AnimParam::Volume])
+                    k.value = std::clamp(k.value + delta, kMinVolumeDb, kMaxVolumeDb);
+            });
+    } else if (volume) {
+        m_editor->setClipVolume(m_volClipId, m_volDb);
+    }
     m_trimIds.clear();
     m_trimDelta = 0;
     m_dragIds.clear();
