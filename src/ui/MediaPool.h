@@ -11,6 +11,8 @@ class MediaPool : public QWidget {
     Q_OBJECT
 public:
     static constexpr const char* MimeType = "application/x-schneidi-media";
+    // Eintrag "Text" (Titel-Generator) zum Reinziehen; steht statt eines Pfads in den Drag-Daten
+    static constexpr const char* TitleItem = "schneidi:title";
 
     MediaPool(Project* project, Engine* engine, QWidget* parent = nullptr);
 

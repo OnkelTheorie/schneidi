@@ -31,6 +31,7 @@ private:
 
     struct Param {
         TrackKind kind;
+        bool title; // nur Titelclips (Tab "Titel")
         Field field;
         ScrubField* edit;
         QSlider* slider = nullptr;
@@ -40,11 +41,13 @@ private:
         QGridLayout* grid;
         TrackKind kind;
         int rows = 0;
+        bool title = false;
     };
 
     // Bereich mit Kopfzeile; `enabled` = roter Punkt (optional)
+    // titleOnly: Bereich wirkt nur auf Titelclips
     Section addSection(QVBoxLayout* page, TrackKind kind, const QString& title, const std::function<void(Clip&)>& reset,
-                       const Flag& enabled = {});
+                       const Flag& enabled = {}, bool titleOnly = false);
     // Zeile mit Schieberegler + Zahlenfeld
     Param* addSlider(Section& s, const QString& key, const QString& label, double min, double max, double def,
                      double step, int decimals, const Field& field);
@@ -52,14 +55,20 @@ private:
     QPair<Param*, Param*> addXY(Section& s, const QString& key, const QString& label, double min, double max,
                                 double def, double step, int decimals, const Field& x, const Field& y,
                                 QToolButton* link = nullptr);
-    Param* makeParam(TrackKind kind, const QString& key, const QString& text, double min, double max, double def,
+    Param* makeParam(const Section& s, const QString& key, const QString& text, double min, double max, double def,
                      double step, int decimals, const Field& field);
     QToolButton* resetButton(const std::function<void()>& fn);
     QLabel* rowLabel(const QString& text);
 
-    QVector<int> selectedIds(TrackKind kind) const;
-    const Clip* primary(TrackKind kind) const;
-    void apply(TrackKind kind, const QString& key, const QString& text, const std::function<void(Clip&)>& fn);
+    // Zeile mit Farbfeld (QColorDialog); alpha = Deckkraft wählbar, also = zusätzlich beim Übernehmen
+    void addColor(Section& s, const QString& label, const QString& text, const std::function<QColor&(Clip&)>& color,
+                  bool alpha, const std::function<void(Clip&)>& also = {});
+    void buildTitlePage(QVBoxLayout* page);
+
+    QVector<int> selectedIds(TrackKind kind, bool title = false) const;
+    const Clip* primary(TrackKind kind, bool title = false) const;
+    void apply(TrackKind kind, const QString& key, const QString& text, const std::function<void(Clip&)>& fn,
+               bool title = false);
     void refresh();
 
     Editor* m_editor;
@@ -72,5 +81,6 @@ private:
     QVector<Param*> m_params;
     QVector<std::function<void()>> m_refreshers; // weitere Anzeigen (Punkte, Farbe)
     bool m_zoomLinked = true;
+    int m_lastShownId = 0; // Auswahl gewechselt -> bei Titeln den Tab "Titel" zeigen
     Param* m_crop[4] = {};
 };

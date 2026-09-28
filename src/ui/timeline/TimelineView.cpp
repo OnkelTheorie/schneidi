@@ -625,7 +625,7 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
 
 void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost)
 {
-    QColor base = kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip;
+    QColor base = c.isTitle() ? Theme::titleClip : kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip;
     if (!c.enabled) base = QColor(0x55, 0x55, 0x5c); // deaktiviert (D) wie DaVinci: grau
     if (ghost) base.setAlpha(200);
     const QColor body = base.darker(135);
@@ -644,8 +644,8 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     const QRect bodyRect = clipBodyRect(r);
     if (!ghost && bodyRect.height() > 4) {
         p.setRenderHint(QPainter::Antialiasing, false);
-        if (kind == TrackKind::Video) drawFilmstrip(p, bodyRect, c);
-        else drawWaveform(p, bodyRect, c);
+        if (kind == TrackKind::Video && !c.isTitle()) drawFilmstrip(p, bodyRect, c); // Titel: nur Farbe
+        else if (kind == TrackKind::Audio) drawWaveform(p, bodyRect, c);
         p.setRenderHint(QPainter::Antialiasing);
     }
     // Lautstärkelinie wie in DaVinci (zum Hoch-/Runterziehen)
@@ -687,7 +687,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         p.setPen(QColor(0xf0, 0xf0, 0xf0));
         const QRect textRect(std::max(r.left(), kHeaderW) + 5, r.top(), r.width() - 8, barH);
         p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
-                   QFontMetrics(f).elidedText(QFileInfo(c.mediaPath).fileName(), Qt::ElideRight, textRect.width()));
+                   QFontMetrics(f).elidedText(c.displayName(), Qt::ElideRight, textRect.width()));
     }
 
     p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
@@ -1175,6 +1175,10 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
     if (paths.isEmpty()) return;
     m_dropItems.clear();
     for (const QString& path : paths) {
+        if (path == MediaPool::TitleItem) { // Titel aus dem Media Pool: 5 s, nur Video
+            m_dropItems << DropItem{5 * m_editor->project()->fps(), true, false};
+            continue;
+        }
         MediaInfo info;
         if (const MediaInfo* known = m_editor->project()->mediaInfo(path)) info = *known;
         else if (m_probe) info = m_probe(path);
