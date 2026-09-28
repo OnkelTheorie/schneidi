@@ -1,5 +1,6 @@
 #include "ui/MediaPool.h"
 
+#include "app/Theme.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "engine/Engine.h"
@@ -73,8 +74,10 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
     m_list->setWordWrap(true);
-    connect(m_list, &QListWidget::itemDoubleClicked, this,
-            [this](QListWidgetItem* it) { emit sourceRequested(it->data(Qt::UserRole).toString()); });
+    connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
+        const QString path = it->data(Qt::UserRole).toString();
+        if (path != TitleItem) emit sourceRequested(path);
+    });
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -83,6 +86,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     lay->addWidget(m_list, 1);
 
     connect(m_project, &Project::mediaChanged, this, &MediaPool::rebuild);
+    rebuild();
 }
 
 void MediaPool::importDialog()
@@ -112,6 +116,23 @@ void MediaPool::importFiles(const QStringList& paths)
 void MediaPool::rebuild()
 {
     m_list->clear();
+    // Titel-Generator vorne (in DaVinci unter Effects > Titles > "Text"); ziehen = 5-s-Titel
+    QPixmap titleThumb(kThumb);
+    titleThumb.fill(Theme::titleClip.darker(135));
+    {
+        QPainter p(&titleThumb);
+        QFont f = p.font();
+        f.setPixelSize(34);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(QColor(0xf0, 0xf0, 0xf0));
+        p.drawText(titleThumb.rect(), Qt::AlignCenter, "T");
+    }
+    auto* titleItem = new QListWidgetItem(QIcon(titleThumb), "Text\nTitel");
+    titleItem->setData(Qt::UserRole, QString(TitleItem));
+    titleItem->setToolTip("Titel – in die Timeline ziehen");
+    m_list->addItem(titleItem);
+
     for (const MediaInfo& m : m_project->media()) {
         QPixmap thumb;
         const bool offline = !QFileInfo::exists(m.path); // wie DaVinci "Media Offline"

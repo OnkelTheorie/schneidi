@@ -99,6 +99,10 @@ MediaInfo MainWindow::probeCached(const QString& path)
 
 void MainWindow::onDrop(const QStringList& paths, int frame, int track)
 {
+    if (paths == QStringList{MediaPool::TitleItem}) {
+        m_editor->addTitle(frame, track);
+        return;
+    }
     // Direkt aus dem Dateimanager: erst in den Media Pool, dann auf die Timeline (wie DaVinci)
     QStringList unknown;
     for (const QString& p : paths)
@@ -333,6 +337,7 @@ void MainWindow::buildActions()
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
     makeAction(timeline, "add_transition", "Übergang hinzufügen (Cross Dissolve)", QKeySequence("Ctrl+T"),
                [this, tv] { m_editor->addTransitions(tv->playhead()); });
+    makeAction(timeline, "add_title", "Titel einfügen", QKeySequence(), [this, tv] { m_editor->addTitle(tv->playhead()); });
     makeAction(timeline, "trim_start", "Anfang bis Playhead trimmen", QKeySequence("Shift+["),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
     makeAction(timeline, "trim_end", "Ende bis Playhead trimmen", QKeySequence("Shift+]"),

@@ -10,6 +10,7 @@
 
 #include <QButtonGroup>
 #include <QColorDialog>
+#include <QFontComboBox>
 #include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -17,6 +18,7 @@
 #include <QLabel>
 #include <QPainter>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSlider>
@@ -28,6 +30,7 @@
 namespace {
 
 constexpr int kSliderSteps = 1000;
+constexpr int kTitlePage = 2;
 
 EffectInstance* findEffect(Clip& c, const QString& id)
 {
@@ -99,6 +102,42 @@ QIcon chainIcon()
     return icon;
 }
 
+// Ausrichtungs-Symbol: Zeilen unterschiedlicher Länge, links/mittig/rechts
+QIcon alignIcon(int align)
+{
+    auto draw = [align](const QColor& col) {
+        QPixmap pm(32, 32);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setPen(QPen(col, 3));
+        const int widths[] = {24, 16, 24, 12};
+        for (int i = 0; i < 4; ++i) {
+            const int w = widths[i];
+            const int x = align == 0 ? 4 : align == 2 ? 28 - w : 16 - w / 2;
+            p.drawLine(x, 6 + i * 7, x + w, 6 + i * 7);
+        }
+        return pm;
+    };
+    QIcon icon;
+    icon.addPixmap(draw(Theme::textDim), QIcon::Normal, QIcon::Off);
+    icon.addPixmap(draw(Theme::text), QIcon::Normal, QIcon::On);
+    return icon;
+}
+
+// Umschaltknopf (Fett, Kursiv, Ausrichtung)
+QToolButton* toggleButton()
+{
+    auto* b = new QToolButton;
+    b->setCheckable(true);
+    b->setFixedSize(26, 22);
+    b->setIconSize(QSize(16, 16));
+    b->setFocusPolicy(Qt::NoFocus);
+    b->setStyleSheet(QString("QToolButton { color: %1; border: 1px solid %2; border-radius: 2px; background: transparent; }"
+                             "QToolButton:checked { color: %3; background: %4; }")
+                         .arg(Theme::textDim.name(), Theme::border.name(), Theme::text.name(), Theme::panelHeader.name()));
+    return b;
+}
+
 int sliderPos(double v, double min, double max)
 {
     return int(std::lround((v - min) / std::max(1e-9, max - min) * kSliderSteps));
@@ -129,13 +168,15 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     tabLay->setSpacing(0);
     m_tabs = new QButtonGroup(this);
     m_pages = new QStackedWidget;
-    const struct { const char* icon; const char* text; } tabs[] = {{"▣", "Video"}, {"♫", "Audio"}};
-    for (int i = 0; i < 2; ++i) {
+    // Seiten-Index = Button-ID; "Titel" (nur bei Titelclips, wie DaVinci) steht vorne
+    const struct { int id; const char* icon; const char* text; } tabs[] = {
+        {kTitlePage, "T", "Titel"}, {0, "▣", "Video"}, {1, "♫", "Audio"}};
+    for (const auto& t : tabs) {
         auto* b = new QToolButton;
-        b->setText(QString("%1\n%2").arg(tabs[i].icon, tabs[i].text));
+        b->setText(QString("%1\n%2").arg(t.icon, t.text));
         b->setCheckable(true);
         b->setFocusPolicy(Qt::NoFocus);
-        m_tabs->addButton(b, i);
+        m_tabs->addButton(b, t.id);
         tabLay->addWidget(b);
     }
     tabLay->addStretch(1);
@@ -155,6 +196,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     };
     QVBoxLayout* videoLay = makePage();
     QVBoxLayout* audioLay = makePage();
+    buildTitlePage(makePage());
 
     const TrackKind V = TrackKind::Video;
 
@@ -309,6 +351,190 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     refresh();
 }
 
+void Inspector::buildTitlePage(QVBoxLayout* page)
+{
+    const TrackKind V = TrackKind::Video;
+    auto current = [this]() -> const Clip* { return primary(TrackKind::Video, true); };
+
+    // ---- Text (wie DaVinci "Text": Textfeld, Schrift, Größe, Farbe, Stil, Ausrichtung, Position) ----
+    Section txt = addSection(page, V, "Text", [](Clip& c) {
+        const TitleStyle d;
+        TitleStyle& t = c.title; // der Text selbst bleibt
+        t.font = d.font;
+        t.size = d.size;
+        t.color = d.color;
+        t.bold = d.bold;
+        t.italic = d.italic;
+        t.align = d.align;
+        t.posX = d.posX;
+        t.posY = d.posY;
+    }, {}, true);
+
+    auto* edit = new QPlainTextEdit;
+    edit->setFixedHeight(76);
+    edit->setPlaceholderText("Text");
+    edit->setTabChangesFocus(true);
+    // Live: jede Änderung sofort in die Vorschau, Tippen = ein Undo-Schritt
+    connect(edit, &QPlainTextEdit::textChanged, this, [this, edit, V] {
+        const QString text = edit->toPlainText();
+        apply(V, "titleText", "Titeltext", [text](Clip& c) { c.title.text = text; }, true);
+    });
+    m_refreshers << [edit, current] {
+        const Clip* c = current();
+        if (c && edit->toPlainText() != c->title.text) {
+            const QSignalBlocker b(edit);
+            edit->setPlainText(c->title.text);
+        }
+    };
+    txt.grid->addWidget(edit, txt.rows++, 0, 1, 3);
+
+    auto* fontBox = new QFontComboBox;
+    fontBox->setFocusPolicy(Qt::ClickFocus);
+    fontBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); // sonst sprengt die Liste die Breite
+    fontBox->setMinimumContentsLength(8);
+    fontBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    connect(fontBox, &QFontComboBox::currentFontChanged, this, [this, V](const QFont& f) {
+        const QString family = f.family();
+        apply(V, {}, "Schriftart", [family](Clip& c) { c.title.font = family; }, true);
+    });
+    m_refreshers << [fontBox, current] {
+        if (const Clip* c = current(); c && fontBox->currentFont().family() != c->title.font) {
+            const QSignalBlocker b(fontBox);
+            fontBox->setCurrentFont(QFont(c->title.font));
+        }
+    };
+    txt.grid->addWidget(rowLabel("Schriftart"), txt.rows, 0);
+    txt.grid->addWidget(fontBox, txt.rows++, 1);
+
+    addSlider(txt, "titleSize", "Größe", 1, 400, TitleStyle().size, 0.5, 1,
+              [](Clip& c) -> double& { return c.title.size; });
+    addColor(txt, "Farbe", "Textfarbe", [](Clip& c) -> QColor& { return c.title.color; }, true);
+
+    // Stil + Ausrichtung in einer Zeile
+    auto* bold = toggleButton();
+    bold->setText("F");
+    bold->setToolTip("Fett");
+    QFont bf = bold->font();
+    bf.setBold(true);
+    bold->setFont(bf);
+    auto* italic = toggleButton();
+    italic->setText("K");
+    italic->setToolTip("Kursiv");
+    QFont itf = italic->font();
+    itf.setItalic(true);
+    italic->setFont(itf);
+    connect(bold, &QToolButton::clicked, this, [this, V](bool on) {
+        apply(V, {}, on ? "Fett an" : "Fett aus", [on](Clip& c) { c.title.bold = on; }, true);
+    });
+    connect(italic, &QToolButton::clicked, this, [this, V](bool on) {
+        apply(V, {}, on ? "Kursiv an" : "Kursiv aus", [on](Clip& c) { c.title.italic = on; }, true);
+    });
+    auto* styleBox = new QHBoxLayout;
+    styleBox->setContentsMargins(0, 0, 0, 0);
+    styleBox->setSpacing(2);
+    styleBox->addWidget(bold);
+    styleBox->addWidget(italic);
+    styleBox->addSpacing(12);
+    auto* alignGroup = new QButtonGroup(this);
+    const char* alignTips[] = {"Linksbündig", "Zentriert", "Rechtsbündig"};
+    for (int i = 0; i < 3; ++i) {
+        auto* b = toggleButton();
+        b->setIcon(alignIcon(i));
+        b->setToolTip(alignTips[i]);
+        alignGroup->addButton(b, i);
+        styleBox->addWidget(b);
+    }
+    styleBox->addStretch(1);
+    connect(alignGroup, &QButtonGroup::idClicked, this, [this, V](int id) {
+        apply(V, {}, "Ausrichtung", [id](Clip& c) { c.title.align = id; }, true);
+    });
+    m_refreshers << [bold, italic, alignGroup, current] {
+        if (const Clip* c = current()) {
+            bold->setChecked(c->title.bold);
+            italic->setChecked(c->title.italic);
+            if (auto* b = alignGroup->button(c->title.align)) b->setChecked(true);
+        }
+    };
+    txt.grid->addWidget(rowLabel("Stil"), txt.rows, 0);
+    txt.grid->addLayout(styleBox, txt.rows++, 1);
+
+    addXY(txt, "titlePos", "Position", -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
+          [](Clip& c) -> double& { return c.title.posY; });
+
+    // ---- Umrandung / Hintergrund (roter Punkt; Wert ändern schaltet ein) ----
+    auto autoOn = [this, V](Param* p, const QString& key, const QString& text, const Flag& on) {
+        p->edit->onChange = [this, p, key, text, on, V](double v) {
+            const QSignalBlocker b(p->slider);
+            p->slider->setValue(sliderPos(v, p->min, p->max));
+            apply(V, key, text, [p, v, on](Clip& c) {
+                p->field(c) = v;
+                on(c) = true;
+            }, true);
+        };
+    };
+    const Flag outlineOn = [](Clip& c) -> bool& { return c.title.outlineOn; };
+    Section ol = addSection(page, V, "Umrandung", [](Clip& c) {
+        const TitleStyle d;
+        c.title.outlineColor = d.outlineColor;
+        c.title.outlineWidth = d.outlineWidth;
+    }, outlineOn, true);
+    addColor(ol, "Farbe", "Umrandungsfarbe", [](Clip& c) -> QColor& { return c.title.outlineColor; }, true,
+             [](Clip& c) { c.title.outlineOn = true; });
+    autoOn(addSlider(ol, "titleOutline", "Breite", 0, 40, TitleStyle().outlineWidth, 0.1, 1,
+                     [](Clip& c) -> double& { return c.title.outlineWidth; }),
+           "titleOutline", "Umrandung", outlineOn);
+
+    const Flag boxOn = [](Clip& c) -> bool& { return c.title.boxOn; };
+    Section box = addSection(page, V, "Hintergrund", [](Clip& c) {
+        const TitleStyle d;
+        c.title.boxColor = d.boxColor;
+        c.title.boxPad = d.boxPad;
+    }, boxOn, true);
+    addColor(box, "Farbe", "Hintergrundfarbe", [](Clip& c) -> QColor& { return c.title.boxColor; }, true,
+             [](Clip& c) { c.title.boxOn = true; });
+    autoOn(addSlider(box, "titleBoxPad", "Abstand", 0, 200, TitleStyle().boxPad, 0.5, 1,
+                     [](Clip& c) -> double& { return c.title.boxPad; }),
+           "titleBoxPad", "Hintergrund", boxOn);
+    page->addStretch(1);
+}
+
+void Inspector::addColor(Section& s, const QString& label, const QString& text,
+                         const std::function<QColor&(Clip&)>& color, bool alpha, const std::function<void(Clip&)>& also)
+{
+    auto* swatch = new QToolButton;
+    swatch->setFixedSize(46, 18);
+    swatch->setFocusPolicy(Qt::NoFocus);
+    swatch->setToolTip(text + " wählen");
+    const TrackKind kind = s.kind;
+    const bool title = s.title;
+    connect(swatch, &QToolButton::clicked, this, [=] {
+        const Clip* c = primary(kind, title);
+        if (!c) return;
+        Clip copy = *c;
+        const QColor col = QColorDialog::getColor(color(copy), this, text + " wählen",
+                                                  alpha ? QColorDialog::ShowAlphaChannel : QColorDialog::ColorDialogOptions());
+        if (!col.isValid()) return;
+        apply(kind, {}, text, [color, col, also](Clip& clip) {
+            color(clip) = col;
+            if (also) also(clip);
+        }, title);
+    });
+    m_refreshers << [=] {
+        if (const Clip* c = primary(kind, title)) {
+            Clip copy = *c;
+            swatch->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid #141417; border-radius: 2px; }")
+                                      .arg(color(copy).name(QColor::HexArgb)));
+        }
+    };
+    auto* row = new QHBoxLayout;
+    row->setContentsMargins(0, 0, 0, 0);
+    row->addStretch(1);
+    row->addWidget(swatch);
+    s.grid->addWidget(rowLabel(label), s.rows, 0);
+    s.grid->addLayout(row, s.rows, 1);
+    ++s.rows;
+}
+
 Inspector::~Inspector()
 {
     qDeleteAll(m_params);
@@ -346,7 +572,7 @@ QLabel* Inspector::rowLabel(const QString& text)
 }
 
 Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, const QString& title,
-                                         const std::function<void(Clip&)>& reset, const Flag& enabled)
+                                         const std::function<void(Clip&)>& reset, const Flag& enabled, bool titleOnly)
 {
     auto* header = new QWidget;
     header->setObjectName("InspectorSection");
@@ -358,11 +584,11 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
 
     if (enabled) {
         QToolButton* dot = makeDot();
-        connect(dot, &QToolButton::clicked, this, [this, kind, title, enabled](bool on) {
-            apply(kind, {}, title + (on ? " an" : " aus"), [enabled, on](Clip& c) { enabled(c) = on; });
+        connect(dot, &QToolButton::clicked, this, [this, kind, title, enabled, titleOnly](bool on) {
+            apply(kind, {}, title + (on ? " an" : " aus"), [enabled, on](Clip& c) { enabled(c) = on; }, titleOnly);
         });
-        m_refreshers << [this, dot, kind, enabled] {
-            if (const Clip* c = primary(kind)) {
+        m_refreshers << [this, dot, kind, enabled, titleOnly] {
+            if (const Clip* c = primary(kind, titleOnly)) {
                 Clip copy = *c;
                 const QSignalBlocker b(dot);
                 dot->setChecked(enabled(copy));
@@ -383,7 +609,9 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
                               .arg(Theme::text.name()));
     hl->addWidget(toggle);
     hl->addStretch(1);
-    hl->addWidget(resetButton([this, kind, title, reset] { apply(kind, {}, title + " zurücksetzen", reset); }));
+    hl->addWidget(resetButton([this, kind, title, reset, titleOnly] {
+        apply(kind, {}, title + " zurücksetzen", reset, titleOnly);
+    }));
 
     auto* body = new QWidget;
     auto* grid = new QGridLayout(body);
@@ -396,20 +624,20 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
 
     page->addWidget(header);
     page->addWidget(body);
-    return {grid, kind, 0};
+    return {grid, kind, 0, titleOnly};
 }
 
-Inspector::Param* Inspector::makeParam(TrackKind kind, const QString& key, const QString& text, double min,
+Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, const QString& text, double min,
                                        double max, double def, double step, int decimals, const Field& field)
 {
-    auto* p = new Param{kind, field, new ScrubField(min, max, step, decimals), nullptr, min, max};
+    auto* p = new Param{s.kind, s.title, field, new ScrubField(min, max, step, decimals), nullptr, min, max};
     p->edit->setValue(def);
-    p->edit->onChange = [this, p, kind, key, text, field](double v) {
+    p->edit->onChange = [this, p, key, text, field](double v) {
         if (p->slider) {
             const QSignalBlocker b(p->slider);
             p->slider->setValue(sliderPos(v, p->min, p->max));
         }
-        apply(kind, key, text, [field, v](Clip& c) { field(c) = v; });
+        apply(p->kind, key, text, [field, v](Clip& c) { field(c) = v; }, p->title);
     };
     p->edit->onFinish = [this] { m_editor->project()->closeMerge(); };
     m_params << p;
@@ -419,7 +647,7 @@ Inspector::Param* Inspector::makeParam(TrackKind kind, const QString& key, const
 Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QString& label, double min, double max,
                                        double def, double step, int decimals, const Field& field)
 {
-    Param* p = makeParam(s.kind, key, label, min, max, def, step, decimals, field);
+    Param* p = makeParam(s, key, label, min, max, def, step, decimals, field);
     auto* slider = new QSlider(Qt::Horizontal);
     slider->setRange(0, kSliderSteps);
     slider->setFocusPolicy(Qt::NoFocus); // Pfeiltasten bleiben bei der Timeline
@@ -453,8 +681,8 @@ QPair<Inspector::Param*, Inspector::Param*> Inspector::addXY(Section& s, const Q
                                                              int decimals, const Field& x, const Field& y,
                                                              QToolButton* link)
 {
-    Param* px = makeParam(s.kind, key + "X", label + " X", min, max, def, step, decimals, x);
-    Param* py = makeParam(s.kind, key + "Y", label + " Y", min, max, def, step, decimals, y);
+    Param* px = makeParam(s, key + "X", label + " X", min, max, def, step, decimals, x);
+    Param* py = makeParam(s, key + "Y", label + " Y", min, max, def, step, decimals, y);
     auto* box = new QHBoxLayout;
     box->setContentsMargins(0, 0, 0, 0);
     box->setSpacing(4);
@@ -467,43 +695,45 @@ QPair<Inspector::Param*, Inspector::Param*> Inspector::addXY(Section& s, const Q
     box->addWidget(py->edit);
     s.grid->addWidget(rowLabel(label), s.rows, 0);
     s.grid->addLayout(box, s.rows, 1);
-    s.grid->addWidget(resetButton([this, kind = s.kind, label, x, y, def] {
+    s.grid->addWidget(resetButton([this, kind = s.kind, title = s.title, label, x, y, def] {
         apply(kind, {}, label + " zurücksetzen", [x, y, def](Clip& c) {
             x(c) = def;
             y(c) = def;
-        });
+        }, title);
     }), s.rows, 2);
     ++s.rows;
     return {px, py};
 }
 
-QVector<int> Inspector::selectedIds(TrackKind kind) const
+QVector<int> Inspector::selectedIds(TrackKind kind, bool title) const
 {
     QVector<int> ids;
     const Timeline& tl = m_editor->project()->timeline();
     for (int id : m_editor->selection()->ids()) {
         TrackRef ref;
-        if (TimelineOps::findClip(tl, id, &ref) && ref.kind == kind) ids << id;
+        const Clip* c = TimelineOps::findClip(tl, id, &ref);
+        if (c && ref.kind == kind && (!title || c->isTitle())) ids << id;
     }
     return ids;
 }
 
-const Clip* Inspector::primary(TrackKind kind) const
+const Clip* Inspector::primary(TrackKind kind, bool title) const
 {
     // Angezeigt wird der früheste ausgewählte Clip der Art
     const Clip* best = nullptr;
     const Timeline& tl = m_editor->project()->timeline();
-    for (int id : selectedIds(kind)) {
+    for (int id : selectedIds(kind, title)) {
         const Clip* c = TimelineOps::findClip(tl, id);
         if (c && (!best || c->start < best->start)) best = c;
     }
     return best;
 }
 
-void Inspector::apply(TrackKind kind, const QString& key, const QString& text, const std::function<void(Clip&)>& fn)
+void Inspector::apply(TrackKind kind, const QString& key, const QString& text, const std::function<void(Clip&)>& fn,
+                      bool title)
 {
     // key leer = eigener Undo-Schritt, sonst werden Ziehbewegungen zusammengefasst
-    m_editor->modifyClips(selectedIds(kind), text, fn, key.isEmpty() ? QString() : "inspector:" + key);
+    m_editor->modifyClips(selectedIds(kind, title), text, fn, key.isEmpty() ? QString() : "inspector:" + key);
 }
 
 void Inspector::refresh()
@@ -517,21 +747,26 @@ void Inspector::refresh()
 
     const Clip* shown = v ? v : a;
     const int count = m_editor->selection()->ids().size();
-    QString name = QFileInfo(shown->mediaPath).fileName();
+    QString name = shown->displayName();
     if (count > (v && a ? 2 : 1)) name += QString("  (+%1)").arg(count - 1);
     m_clipName->setText(name);
     m_clipName->setToolTip(shown->mediaPath);
 
-    // Tabs ohne passenden Clip ausgrauen wie in DaVinci
+    // Tabs ohne passenden Clip ausgrauen wie in DaVinci; Titel-Tab nur bei Titelclips
+    const Clip* t = primary(TrackKind::Video, true);
     m_tabs->button(0)->setEnabled(v);
     m_tabs->button(1)->setEnabled(a);
+    m_tabs->button(kTitlePage)->setEnabled(t);
+    m_tabs->button(kTitlePage)->setVisible(t);
     int page = m_pages->currentIndex();
-    if ((page == 0 && !v) || (page == 1 && !a)) page = v ? 0 : 1;
+    if (t && shown->id != m_lastShownId) page = kTitlePage; // neu ausgewählter Titel -> Tab "Titel"
+    m_lastShownId = shown->id;
+    if ((page == 0 && !v) || (page == 1 && !a) || (page == kTitlePage && !t)) page = v ? 0 : 1;
     m_tabs->button(page)->setChecked(true);
     m_pages->setCurrentIndex(page);
 
     for (Param* p : m_params) {
-        const Clip* c = p->kind == TrackKind::Video ? v : a;
+        const Clip* c = p->title ? t : p->kind == TrackKind::Video ? v : a;
         if (!c) continue;
         Clip copy = *c;
         const double val = p->field(copy);

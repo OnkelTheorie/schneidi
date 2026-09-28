@@ -31,6 +31,9 @@ public:
     // Legt Media ab: Video auf V[track], Audio auf A[track] (wie DaVinci, V2 <-> A2).
     // Fehlende Spuren werden angelegt. Mehrere Dateien landen hintereinander.
     void addMediaAt(const QStringList& paths, int frame, int track = 0);
+    // Titel (5 s, wie DaVinci "Text") am Frame auf die unterste Videospur, die dort über allen Clips frei ist
+    // (fehlende Spur wird angelegt); track >= 0 = feste Spur (Drag aus dem Media Pool). Neuer Clip wird ausgewählt.
+    void addTitle(int frame, int track = -1);
     void toggleTrackMute(TrackRef ref);
     void toggleTrackHidden(TrackRef ref);
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);

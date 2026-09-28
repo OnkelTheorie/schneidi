@@ -22,6 +22,7 @@ inline const QColor ruler{0x26, 0x26, 0x2b};
 inline const QColor playhead{0xe8, 0x41, 0x4a};
 inline const QColor videoClip{0x3b, 0x6a, 0xa0};
 inline const QColor audioClip{0x3c, 0x86, 0x4c};
+inline const QColor titleClip{0x86, 0x5c, 0xa8};   // Titel lila wie Resolve
 inline const QColor clipSelected{0xf0, 0x8a, 0x3c};
 
 void apply(QApplication& app);

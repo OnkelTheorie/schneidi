@@ -5,6 +5,8 @@
 
 #include <Mlt.h>
 #include <QColor>
+#include <QFont>
+#include <QFontMetricsF>
 #include <QHash>
 #include <QString>
 #include <algorithm>
@@ -127,10 +129,60 @@ void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKin
 {
     applyEffects(profile, cut, c);
     if (kind == TrackKind::Video) applyTransform(profile, cut, c);
+    if (c.isTitle() && !c.transform.hasTransform()) {
+        // qtext zeichnet in der angeforderten Größe, skaliert aber die Umrandung nicht mit (Vorschau 960 px:
+        // Rand dreimal so dick). qtblend mit distort=1 holt das Bild immer in voller Projektgröße.
+        Mlt::Filter f(profile, "qtblend");
+        if (f.is_valid()) {
+            f.set("rect", mlt_rect{0, 0, double(profile.width()), double(profile.height()), 1.0});
+            f.set("distort", 1);
+            cut.attach(f);
+        }
+    }
     if (kind == TrackKind::Audio) {
         applyVolume(profile, cut, c);
         applyPan(profile, cut, c);
     }
+}
+
+// Titel: transparentes Vollbild ("color" mit Alpha) + qtext-Filter (Qt: Schrift, Farbe, Umrandung, Box).
+// Das Rechteck des Filters wird auf die Breite des Textblocks gesetzt und um dessen Mitte positioniert,
+// dann richtet halign nur die Zeilen im Block aus (wie DaVinci) statt den Block an den Bildrand zu schieben.
+Mlt::Producer* titleCut(Mlt::Profile& profile, const TitleStyle& t, int len)
+{
+    Mlt::Producer src(profile, "color:#00000000");
+    src.set("length", len);
+    src.set("out", len - 1);
+    Mlt::Producer* cut = src.cut(0, len - 1); // Cut hält eine Referenz auf src
+    const double W = profile.width(), H = profile.height();
+
+    QFont font(t.font);
+    font.setPixelSize(std::max(1, int(std::lround(t.size))));
+    font.setBold(t.bold);
+    font.setItalic(t.italic);
+    const QFontMetricsF fm(font);
+    double w = 1;
+    for (const QString& line : t.text.split('\n')) w = std::max(w, fm.horizontalAdvance(line));
+
+    Mlt::Filter f(profile, "qtext");
+    if (!f.is_valid()) return cut;
+    f.set("argument", t.text.toUtf8().constData());
+    // Rechteck als mlt_rect (Zahlenformat, siehe applyTransform)
+    f.set("geometry", mlt_rect{(W - w) / 2 + t.posX, -t.posY, w, H, 1.0});
+    f.set("family", t.font.toUtf8().constData());
+    f.set("size", std::max(1.0, t.size));
+    f.set("weight", t.bold ? 700 : 400);
+    f.set("style", t.italic ? "italic" : "normal");
+    f.set("halign", t.align == 0 ? "left" : t.align == 2 ? "right" : "center");
+    f.set("valign", "middle");
+    // Farben als "#aarrggbb"; bgcolour hat sonst ein leichtes Grau als Standard
+    f.set("fgcolour", t.color.name(QColor::HexArgb).toUtf8().constData());
+    f.set("bgcolour", t.boxOn ? t.boxColor.name(QColor::HexArgb).toUtf8().constData() : "#00000000");
+    f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
+    f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
+    f.set("outline", t.outlineOn ? std::max(0.0, t.outlineWidth) : 0.0);
+    cut->attach(f);
+    return cut;
 }
 
 // Fade-Griffe des Clips auf den Ausschnitt [from, to) (Timeline-Frames) anwenden. Keyframes nur in den
@@ -256,7 +308,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             return svc == "qimage" || svc == "pixbuf";
         };
         const TimelineOps::SourceLength srcLen = [&](const QString& path) {
-            Mlt::Producer* p = producerFor(path, kind, trackIndex);
+            Mlt::Producer* p = path.isEmpty() ? nullptr : producerFor(path, kind, trackIndex); // leer = Titel
             return p && !isStill(p) ? p->get_length() : 0;
         };
         const QVector<TimelineOps::TransitionSpan> spans = TimelineOps::transitions(track, srcLen);
@@ -265,6 +317,13 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
 
         // Ausschnitt [from, to) der Timeline aus Clip c (darf über In/Out hinaus in die Handles reichen)
         auto cutOf = [&](const Clip& c, int from, int to, bool second) -> Mlt::Producer* {
+            if (c.isTitle()) {
+                if (!c.enabled || kind != TrackKind::Video) return nullptr;
+                Mlt::Producer* cut = titleCut(m_profile, c.title, to - from);
+                decorate(m_profile, *cut, c, kind);
+                applyClipFades(m_profile, *cut, c, kind, from, to);
+                return cut;
+            }
             Mlt::Producer* src = c.enabled ? producerFor(c.mediaPath, kind, trackIndex, second) : nullptr;
             if (!src) return nullptr;
             int in = c.in + (from - c.start);
