@@ -48,8 +48,9 @@ void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
                TrackKind anchorKind, int trackDelta, const IdGen& newId);
 
 enum class Edge { Start, End };
-// Länge des Quellmaterials in Frames (<= 0 = unbegrenzt, z. B. Standbilder)
-using SourceLength = std::function<int(const QString& mediaPath)>;
+// Länge des Quellmaterials eines Clips in Frames, mit Geschwindigkeit umgerechnet (Clip::retimedLength;
+// <= 0 = unbegrenzt, z. B. Standbilder)
+using SourceLength = std::function<int(const Clip& clip)>;
 
 // Begrenzt ein Trim-Delta so, dass für alle Clips gilt: nicht über das Quellmaterial hinaus,
 // mind. 1 Frame lang, nicht vor Frame 0 und nicht in den Nachbarclip hinein (kein Überschreiben).

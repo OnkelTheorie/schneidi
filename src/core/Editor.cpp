@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QSet>
 #include <climits>
+#include <cmath>
 #include <cstdlib>
 #include <algorithm>
 
@@ -111,9 +112,9 @@ void Editor::moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind,
 
 TimelineOps::SourceLength Editor::sourceLength() const
 {
-    return [p = m_project](const QString& path) {
-        const MediaInfo* m = p->mediaInfo(path);
-        return m && !m->isImage ? m->length : 0; // Standbilder beliebig lang ziehbar
+    return [p = m_project](const Clip& c) {
+        const MediaInfo* m = p->mediaInfo(c.mediaPath);
+        return m && !m->isImage ? c.retimedLength(m->length) : 0; // Standbilder beliebig lang ziehbar
     };
 }
 
@@ -460,6 +461,16 @@ void fitTransitions(Timeline& tl, const QSet<int>& clipIds, const TimelineOps::S
         }
 }
 
+// Umgerechnetes Frame w (Clip::in/out/Keyframes) <-> Frame der Datei (Länge fileLen) bei Geschwindigkeit/Richtung
+double toFileFrame(double w, double speed, bool reverse, int fileLen)
+{
+    return reverse ? fileLen - 1 - w * speed : w * speed;
+}
+double fromFileFrame(double f, double speed, bool reverse, int fileLen)
+{
+    return reverse ? (fileLen - 1 - f) / speed : f / speed;
+}
+
 bool sameTransitions(const Timeline& a, const Timeline& b)
 {
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
@@ -640,4 +651,65 @@ QVector<TimelineOps::TransitionSpan> Editor::transitions(TrackRef ref) const
     const Timeline& tl = m_project->timeline();
     if (ref.index < 0 || ref.index >= tl.tracks(ref.kind).size()) return {};
     return TimelineOps::transitions(tl.track(ref), sourceLength());
+}
+
+void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
+{
+    const QVector<int> all = withLinked(ids);
+    if (all.isEmpty() || r.speed <= 0) return;
+    m_project->edit(T("Geschwindigkeit ändern"), [&](Timeline& tl) {
+        QSet<int> touched;
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (Track& t : tl.tracks(k)) {
+                // von hinten, damit Ripple-Verschiebungen sich nicht gegenseitig verfälschen
+                for (int i = t.clips.size() - 1; i >= 0; --i) {
+                    Clip& c = t.clips[i];
+                    if (!all.contains(c.id) || c.isTitle()) continue;
+                    const MediaInfo* m = m_project->mediaInfo(c.mediaPath);
+                    if (!m || m->isImage || m->length <= 0) continue;
+                    const int L = m->length;
+                    // Ausschnitt in Datei-Frames (a = Anfang des Clips, b = Ende, bei rückwärts a > b)
+                    const double a = toFileFrame(c.in, c.speed, c.reverse, L);
+                    const double b = toFileFrame(c.out, c.speed, c.reverse, L);
+                    const bool flip = r.reverse != c.reverse;
+                    // Neuer Anfang: gleiches Datei-Frame; bei Richtungswechsel dasselbe Stück umgekehrt
+                    const double startFile = flip ? b : a;
+                    const int avail = std::max(1, int(L / r.speed));
+                    const int newIn = std::clamp(int(std::lround(fromFileFrame(startFile, r.speed, r.reverse, L))),
+                                                 0, avail - 1);
+                    const int oldLen = c.length();
+                    int newLen = oldLen;
+                    if (ripple && !r.freeze && !c.freeze)
+                        newLen = std::max(1, int(std::lround(oldLen * c.speed / r.speed)));
+                    if (!r.freeze) newLen = std::min(newLen, avail - newIn);
+                    // Keyframes über die Datei-Frames umrechnen
+                    for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
+                        KeyTrack moved;
+                        for (Keyframe kf : it.value()) {
+                            const double f = toFileFrame(kf.frame, c.speed, c.reverse, L);
+                            kf.frame = int(std::lround(fromFileFrame(f, r.speed, r.reverse, L)));
+                            if (std::none_of(moved.begin(), moved.end(), [&](const Keyframe& o) { return o.frame == kf.frame; }))
+                                moved << kf;
+                        }
+                        std::sort(moved.begin(), moved.end(),
+                                  [](const Keyframe& x, const Keyframe& y) { return x.frame < y.frame; });
+                        it.value() = moved;
+                    }
+                    const int oldEnd = c.end();
+                    c.in = newIn;
+                    c.out = newIn + newLen - 1;
+                    c.speed = r.speed;
+                    c.reverse = r.reverse;
+                    c.freeze = r.freeze;
+                    c.keepPitch = r.keepPitch;
+                    c.fadeIn = std::min(c.fadeIn, newLen);
+                    c.fadeOut = std::min(c.fadeOut, newLen);
+                    touched.insert(c.id);
+                    if (const int delta = newLen - oldLen; ripple && delta != 0)
+                        for (int j = i + 1; j < t.clips.size(); ++j)
+                            if (t.clips[j].start >= oldEnd) t.clips[j].start += delta;
+                }
+            }
+        fitTransitions(tl, touched, sourceLength());
+    });
 }

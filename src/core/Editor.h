@@ -94,6 +94,15 @@ public:
     void moveKeyframes(int clipId, const QVector<int>& times, int delta);
     void removeKeyframes(int clipId, const QVector<int>& times);
 
+    // Geschwindigkeit wie DaVinci „Change Clip Speed“ (Strg+R) für die Clips (mit Partnern). Titel/Standbilder bleiben.
+    // ripple = Cliplänge folgt der Geschwindigkeit, spätere Clips derselben Spuren rücken nach; sonst bleibt die Länge
+    // (begrenzt aufs vorhandene Material). Rückwärts zeigt denselben Ausschnitt umgekehrt; Keyframes wandern mit.
+    struct Retime {
+        double speed = 1.0;
+        bool reverse = false, freeze = false, keepPitch = true;
+    };
+    void setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple);
+
     // Zwischenablage (Strg+C/X/V): Einfügen am Playhead auf denselben Spuren, überschreibt
     void copySelection();
     void cutSelection();

@@ -180,6 +180,10 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex)
     if (c.transOut > 0 && c.transOutStyle != TransitionStyle{}) o["transOutStyle"] = transitionStyleToJson(c.transOutStyle);
     if (c.fadeIn > 0) o["fadeIn"] = c.fadeIn; // Fade-Griffe (Frames)
     if (c.fadeOut > 0) o["fadeOut"] = c.fadeOut;
+    if (c.speed != 1.0) o["speed"] = c.speed;
+    if (c.reverse) o["reverse"] = true;
+    if (c.freeze) o["freeze"] = true;
+    if (!c.keepPitch) o["keepPitch"] = false;
     if (!c.transform.isIdentity() || !c.transform.transformOn || !c.transform.cropOn || !c.transform.compositeOn)
         o["transform"] = transformToJson(c.transform);
     if (!c.effects.isEmpty()) {
@@ -215,6 +219,11 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media)
     c.transOutStyle = transitionStyleFromJson(o.value("transOutStyle").toObject());
     c.fadeIn = std::max(0, o.value("fadeIn").toInt());
     c.fadeOut = std::max(0, o.value("fadeOut").toInt());
+    c.speed = o.value("speed").toDouble(1.0);
+    if (c.speed <= 0) c.speed = 1.0;
+    c.reverse = o.value("reverse").toBool();
+    c.freeze = o.value("freeze").toBool();
+    c.keepPitch = o.value("keepPitch").toBool(true);
     if (o.contains("transform")) c.transform = transformFromJson(o.value("transform").toObject());
     for (const QJsonValue& v : o.value("effects").toArray()) {
         const QJsonObject e = v.toObject();

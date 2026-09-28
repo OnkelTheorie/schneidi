@@ -12,6 +12,8 @@
 #include <QVariantMap>
 #include <QVector>
 
+#include <algorithm>
+
 enum class TrackKind { Video, Audio };
 
 struct EffectInstance {
@@ -176,6 +178,20 @@ struct Clip {
     int fadeIn = 0, fadeOut = 0;
     // Keyframes je Parameter (leer = statischer Wert), siehe core/Keyframes.h
     QMap<AnimParam, KeyTrack> keys;
+    // Geschwindigkeit wie DaVinci „Change Clip Speed“ (Strg+R). in/out/Keyframes zählen in Frames des umgerechneten
+    // Materials (MLT timewarp): bei 50 % ist die Quelle doppelt so lang, rückwärts beginnt Frame 0 am Dateiende.
+    double speed = 1.0;     // 1.0 = 100 %, immer > 0
+    bool reverse = false;   // rückwärts abspielen
+    bool freeze = false;    // Standbild: jedes Frame zeigt Frame `in` (Ton stumm), beliebig lang ziehbar
+    bool keepPitch = true;  // Tonhöhe halten (Pitch Correction)
+
+    bool isRetimed() const { return speed != 1.0 || reverse || freeze; }
+    // Länge des umgerechneten Materials aus der Länge der Datei (<= 0 = unbegrenzt)
+    int retimedLength(int fileLength) const
+    {
+        if (fileLength <= 0 || freeze) return 0;
+        return std::max(1, int(fileLength / speed));
+    }
 
     int length() const { return out - in + 1; }
     int end() const { return start + length(); } // exklusiv

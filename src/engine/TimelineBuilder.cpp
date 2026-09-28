@@ -15,6 +15,7 @@
 #include <QImage>
 #include <QString>
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
 #include <functional>
 
@@ -537,18 +538,34 @@ std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Produ
 TimelineBuilder::TimelineBuilder(Mlt::Profile& profile) : m_profile(profile) {}
 TimelineBuilder::~TimelineBuilder() = default;
 
-Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex, bool second)
+Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex, bool second,
+                                            const Clip* retime)
 {
     // Proxy (nur Vorschau): Schlüssel mit der tatsächlich gelesenen Datei, damit Umschalten neu öffnet
     const QString file = m_resolver ? m_resolver(path, kind) : path;
-    const QString key = QString("%1%2|%3|%4").arg(kind == TrackKind::Video ? "v" : "a").arg(second ? "x" : "")
-                            .arg(trackIndex).arg(file);
+    // Geschwindigkeit: MLT timewarp (negativ = rückwärts); Standbild: wiederholtes Einzelframe (s. u.)
+    const bool freeze = retime && retime->freeze;
+    const double warp = retime && !freeze ? (retime->reverse ? -retime->speed : retime->speed) : 1.0;
+    const bool pitch = retime && retime->keepPitch;
+    QString resource = file;
+    QString tag;
+    if (warp != 1.0) {
+        // timewarp liest die Zahl per atof -> im gerade gültigen C-Locale schreiben (Komma/Punkt, siehe dev-notes)
+        char num[32];
+        std::snprintf(num, sizeof num, "%.10g", warp);
+        resource = QString("timewarp:%1:%2").arg(QString::fromLatin1(num), file);
+        tag = QString("|w%1%2").arg(warp).arg(pitch ? "p" : "");
+    }
+    if (freeze) tag = QString("|f%1|%2%3").arg(retime->in).arg(retime->speed).arg(retime->reverse ? "r" : "");
+    const QString key = QString("%1%2|%3|%4%5").arg(kind == TrackKind::Video ? "v" : "a").arg(second ? "x" : "")
+                            .arg(trackIndex).arg(file, tag);
     m_used.insert(key);
     auto it = m_cache.find(key);
     if (it != m_cache.end()) return it->second.get();
 
-    auto p = std::make_unique<Mlt::Producer>(m_profile, file.toUtf8().constData());
+    auto p = std::make_unique<Mlt::Producer>(m_profile, resource.toUtf8().constData());
     if (!p->is_valid()) return nullptr;
+    if (warp != 1.0 && kind == TrackKind::Audio) p->set("warp_pitch", pitch ? 1 : 0);
     // Nicht benötigten Stream gar nicht erst dekodieren
     if (kind == TrackKind::Video) p->set("audio_index", -1);
     else p->set("video_index", -1);
@@ -557,6 +574,24 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
         const int len = 24 * 3600 * qRound(m_profile.fps());
         p->set("length", len);
         p->set("out", len - 1);
+    }
+    if (freeze) {
+        // Standbild: Frame `in` (in Datei-Frames umgerechnet) als 1-Frame-Ausschnitt, in einer Playlist
+        // beliebig oft wiederholt. (MLT hold skaliert im Tractor falsch, der kdenlive-Filter freeze stürzte ab.)
+        const int fileLen = p->get_length();
+        const double at = retime->in * retime->speed;
+        const int frame = std::clamp(int(retime->reverse ? fileLen - 1 - at : at), 0, std::max(0, fileLen - 1));
+        auto hold = std::make_unique<Mlt::Playlist>(m_profile);
+        std::unique_ptr<Mlt::Producer> one(p->cut(frame, frame)); // Cut hält eine Referenz auf p
+        hold->append(*one);
+        hold->repeat(0, 24 * 3600 * qRound(m_profile.fps()));
+        // Für sourceAspect (Transform seitenverhältnis-treu)
+        const int vi = p->get_int("video_index");
+        const QByteArray rotate = QString("meta.media.%1.codec.rotate").arg(vi).toUtf8();
+        for (const char* name : {"width", "height", "aspect_ratio", "video_index", "meta.media.width",
+                                 "meta.media.height", rotate.constData()})
+            if (const char* v = p->get(name)) hold->set(name, v);
+        p = std::move(hold);
     }
     Mlt::Producer* raw = p.get();
     m_cache.emplace(key, std::move(p));
@@ -599,9 +634,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             const QByteArray svc = p->get("mlt_service");
             return svc == "qimage" || svc == "pixbuf";
         };
-        const TimelineOps::SourceLength srcLen = [&](const QString& path) {
-            Mlt::Producer* p = path.isEmpty() ? nullptr : producerFor(path, kind, trackIndex); // leer = Titel
-            return p && !isStill(p) ? p->get_length() : 0;
+        const TimelineOps::SourceLength srcLen = [&](const Clip& c) {
+            Mlt::Producer* p = c.mediaPath.isEmpty() ? nullptr : producerFor(c.mediaPath, kind, trackIndex); // leer = Titel
+            return p && !isStill(p) ? c.retimedLength(p->get_length()) : 0;
         };
         const QVector<TimelineOps::TransitionSpan> spans = TimelineOps::transitions(track, srcLen);
         QHash<int, const Clip*> byId;
@@ -616,7 +651,8 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
                 applyClipFades(m_profile, *cut, c, kind, from, to);
                 return cut;
             }
-            Mlt::Producer* src = c.enabled ? producerFor(c.mediaPath, kind, trackIndex, second) : nullptr;
+            if (c.freeze && kind == TrackKind::Audio) return nullptr; // Standbild ist stumm (wie DaVinci)
+            Mlt::Producer* src = c.enabled ? producerFor(c.mediaPath, kind, trackIndex, second, &c) : nullptr;
             if (!src) return nullptr;
             int in = c.in + (from - c.start);
             if (in < 0 && isStill(src)) in = 0; // Standbild: jedes Frame gleich

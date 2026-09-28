@@ -238,7 +238,7 @@ int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int de
             delta = std::max(delta, prevEnd - c->start);  // nicht in den linken Nachbarn
             delta = std::min(delta, c->length() - 1);     // mind. 1 Frame
         } else {
-            const int len = sourceLength ? sourceLength(c->mediaPath) : 0;
+            const int len = sourceLength ? sourceLength(*c) : 0;
             if (len > 0) delta = std::min(delta, len - 1 - c->out);
             if (idx + 1 < clips.size()) delta = std::min(delta, clips[idx + 1].start - c->end());
             delta = std::max(delta, 1 - c->length());
@@ -284,9 +284,9 @@ QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sour
         const int room = c.length() - usedIn;
         if (next && next->start == c.end() && next->transIn > 0) {
             // Überblendung um den Schnitt
-            const int srcLen = sourceLength ? sourceLength(c.mediaPath) : 0;
+            const int srcLen = sourceLength ? sourceLength(c) : 0;
             const int handleOut = srcLen > 0 ? srcLen - 1 - c.out : INT_MAX / 2;
-            const int nextSrcLen = sourceLength ? sourceLength(next->mediaPath) : 0;
+            const int nextSrcLen = sourceLength ? sourceLength(*next) : 0;
             const int handleIn = nextSrcLen > 0 ? next->in : INT_MAX / 2; // Standbild: beliebig
             // l1 Frames vor dem Schnitt (braucht Material vor next->in), l2 danach (braucht Material hinter c.out)
             const TransitionAlign align = c.transOutStyle.align;
