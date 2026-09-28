@@ -2,6 +2,7 @@
 
 #include "app/InputBindings.h"
 #include "app/KeyBindingsDialog.h"
+#include "app/ClipSpeedDialog.h"
 #include "app/ProjectSettingsDialog.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -194,6 +195,21 @@ void MainWindow::projectSettingsDialog()
 {
     ProjectSettingsDialog dlg(m_project->format(), m_project->frameRateLocked(), this);
     if (dlg.exec() == QDialog::Accepted) m_project->setFormat(dlg.format());
+}
+
+void MainWindow::clipSpeedDialog()
+{
+    // Vorgabe vom ersten ausgewählten Medienclip (Titel haben keine Geschwindigkeit)
+    const Clip* first = nullptr;
+    for (int id : m_editor->selection()->ids())
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && !c->isTitle()
+            && (!first || c->start < first->start))
+            first = c;
+    if (!first) return;
+    const Editor::Retime cur{first->speed, first->reverse, first->freeze, first->keepPitch};
+    ClipSpeedDialog dlg(cur, first->length(), m_project->format().rate.fps(), this);
+    if (dlg.exec() == QDialog::Accepted)
+        m_editor->setClipSpeed(m_editor->selection()->ids().values().toVector(), dlg.retime(), dlg.ripple());
 }
 
 void MainWindow::onFormatChanged()
@@ -473,6 +489,10 @@ void MainWindow::buildActions()
                [this] { m_editor->nudgeSelection(5); });
     makeAction(timeline, "toggle_enabled", T("Clip aktivieren/deaktivieren"), QKeySequence("D"),
                [this] { m_editor->toggleSelectionEnabled(); });
+    makeAction(timeline, "clip_speed", T("Clip-Geschwindigkeit ändern…"), QKeySequence("Ctrl+R"), [this] { clipSpeedDialog(); });
+    makeAction(timeline, "clip_speed_reset", T("Geschwindigkeit zurücksetzen"), QKeySequence("Ctrl+Alt+R"), [this] {
+        m_editor->setClipSpeed(m_editor->selection()->ids().values().toVector(), {}, true);
+    });
     makeAction(timeline, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
                [this] { m_editor->toggleLinkSelection(); });
     timeline->addSeparator();

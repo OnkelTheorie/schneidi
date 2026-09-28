@@ -57,6 +57,7 @@ private:
     void offerClipFormat(const QStringList& paths, bool ask);
     void onFormatChanged();
     void projectSettingsDialog();
+    void clipSpeedDialog();
     void buildActions();
     QAction* makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
                        const std::function<void()>& fn);

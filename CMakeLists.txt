@@ -38,6 +38,7 @@ add_executable(schneidi
     src/app/MainWindow.h          src/app/MainWindow.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
+    src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp

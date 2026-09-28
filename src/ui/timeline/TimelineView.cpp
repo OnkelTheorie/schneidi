@@ -28,6 +28,16 @@
 #include <cmath>
 
 namespace {
+
+// Clipname, bei geänderter Geschwindigkeit mit Angabe wie DaVinci (z. B. „clip.mp4 (50 %)“)
+QString clipLabel(const Clip& c)
+{
+    if (!c.isRetimed()) return c.displayName();
+    const QString speed = c.freeze ? T("Standbild")
+                                   : QString("%1%2 %").arg(c.reverse ? "-" : "").arg(QLocale().toString(c.speed * 100, 'g', 4));
+    return QString("%1 (%2)").arg(c.displayName(), speed);
+}
+
 constexpr int kSnapPx = 8;
 constexpr int kDragStartPx = 4;
 constexpr int kEdgeGrabPx = 6; // so nah an der Clipkante wird getrimmt statt verschoben
@@ -882,7 +892,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         p.setPen(QColor(0xf0, 0xf0, 0xf0));
         const QRect textRect(std::max(r.left(), kHeaderW) + 5, r.top(), r.width() - 8, barH);
         p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
-                   QFontMetrics(f).elidedText(c.displayName(), Qt::ElideRight, textRect.width()));
+                   QFontMetrics(f).elidedText(clipLabel(c), Qt::ElideRight, textRect.width()));
     }
 
     p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
