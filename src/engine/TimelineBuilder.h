@@ -38,7 +38,9 @@ public:
     static bool applyMixer(const Timeline& tl, const MixerHooks& hooks);
 
 private:
-    Mlt::Producer* producerFor(const QString& path, TrackKind kind, int trackIndex);
+    // second: eigener Producer für die einblendende Seite eines Übergangs (sonst spult ein Decoder
+    // bei zwei Stellen derselben Datei hin und her)
+    Mlt::Producer* producerFor(const QString& path, TrackKind kind, int trackIndex, bool second = false);
 
     Mlt::Profile& m_profile;
     // Pro Datei *und* Spur ein eigener Producer, damit sich Video- und Audiospur

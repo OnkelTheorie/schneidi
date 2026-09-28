@@ -5,8 +5,10 @@
 
 #include <Mlt.h>
 #include <QColor>
+#include <QHash>
 #include <QString>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 
@@ -121,14 +123,53 @@ void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, 
     s.attach(*hook->meter);
 }
 
+void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKind kind)
+{
+    applyEffects(profile, cut, c);
+    if (kind == TrackKind::Video) applyTransform(profile, cut, c);
+    if (kind == TrackKind::Audio) {
+        applyVolume(profile, cut, c);
+        applyPan(profile, cut, c);
+    }
+}
+
+// Ein-/Ausblenden über `len` Frames: Video über den Alphakanal (auf V1 = aus Schwarz, darüber = zur
+// Spur darunter, wie DaVinci), Audio als Keyframe in dB pro Frame. equalPower: Kurve für den
+// Audio-Crossfade (+3 dB wie DaVinci-Standard, Lautheit bleibt in der Mitte gleich).
+// Keyframes per anim_set statt als Text: "0.5" würde sonst je nach LC_NUMERIC als 0 gelesen.
+void applyFade(Mlt::Profile& profile, Mlt::Producer& cut, TrackKind kind, int len, bool fadeIn,
+               bool equalPower = false)
+{
+    auto value = [&](int i) {
+        const double t = fadeIn ? double(i) / len : double(len - 1 - i) / len;
+        return equalPower ? std::sin(t * M_PI / 2) : t;
+    };
+    const bool video = kind == TrackKind::Video;
+    Mlt::Filter f(profile, video ? "brightness" : "volume");
+    if (!f.is_valid()) return;
+    if (video) {
+        f.set("level", 1.0);
+        f.anim_set("alpha", value(0), 0, len);
+        f.anim_set("alpha", value(len - 1), len - 1, len);
+    } else {
+        for (int i = 0; i < len; ++i) {
+            const double v = value(i);
+            f.anim_set("level", v > 0.001 ? 20.0 * std::log10(v) : -200.0, i, len);
+        }
+    }
+    f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
+    cut.attach(f);
+}
+
 } // namespace
 
 TimelineBuilder::TimelineBuilder(Mlt::Profile& profile) : m_profile(profile) {}
 TimelineBuilder::~TimelineBuilder() = default;
 
-Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex)
+Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex, bool second)
 {
-    const QString key = QString("%1|%2|%3").arg(kind == TrackKind::Video ? "v" : "a").arg(trackIndex).arg(path);
+    const QString key = QString("%1%2|%3|%4").arg(kind == TrackKind::Video ? "v" : "a").arg(second ? "x" : "")
+                            .arg(trackIndex).arg(path);
     auto it = m_cache.find(key);
     if (it != m_cache.end()) return it->second.get();
 
@@ -179,25 +220,87 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     int mltIndex = 1;
     auto fill = [&](const Track& track, TrackKind kind, int trackIndex) {
         Mlt::Playlist pl(m_profile);
+        auto isStill = [](Mlt::Producer* p) {
+            const QByteArray svc = p->get("mlt_service");
+            return svc == "qimage" || svc == "pixbuf";
+        };
+        const TimelineOps::SourceLength srcLen = [&](const QString& path) {
+            Mlt::Producer* p = producerFor(path, kind, trackIndex);
+            return p && !isStill(p) ? p->get_length() : 0;
+        };
+        const QVector<TimelineOps::TransitionSpan> spans = TimelineOps::transitions(track, srcLen);
+        QHash<int, const Clip*> byId;
+        for (const Clip& c : track.clips) byId.insert(c.id, &c);
+
+        // Ausschnitt [from, to) der Timeline aus Clip c (darf über In/Out hinaus in die Handles reichen)
+        auto cutOf = [&](const Clip& c, int from, int to, bool second) -> Mlt::Producer* {
+            Mlt::Producer* src = c.enabled ? producerFor(c.mediaPath, kind, trackIndex, second) : nullptr;
+            if (!src) return nullptr;
+            int in = c.in + (from - c.start);
+            if (in < 0 && isStill(src)) in = 0; // Standbild: jedes Frame gleich
+            if (in < 0) return nullptr;
+            Mlt::Producer* cut = src->cut(in, in + (to - from) - 1);
+            decorate(m_profile, *cut, c, kind);
+            return cut;
+        };
+
         int cursor = 0;
-        for (const Clip& c : track.clips) {
-            if (c.start > cursor) pl.blank(c.start - cursor - 1);
-            Mlt::Producer* src = c.enabled ? producerFor(c.mediaPath, kind, trackIndex) : nullptr;
-            if (src) {
-                pl.append(*src, c.in, c.out);
-                std::unique_ptr<Mlt::Producer> cut(pl.get_clip(pl.count() - 1));
-                if (cut) {
-                    applyEffects(m_profile, *cut, c);
-                    if (kind == TrackKind::Video) applyTransform(m_profile, *cut, c);
-                    if (kind == TrackKind::Audio) {
-                        applyVolume(m_profile, *cut, c);
-                        applyPan(m_profile, *cut, c);
-                    }
+        auto blankTo = [&](int frame) {
+            if (frame > cursor) pl.blank(frame - cursor - 1);
+            cursor = std::max(cursor, frame);
+        };
+        auto appendSpan = [&](const TimelineOps::TransitionSpan& s) {
+            blankTo(s.start);
+            const Clip* a = byId.value(s.leftId);
+            const Clip* b = byId.value(s.rightId);
+            std::unique_ptr<Mlt::Producer> ca(a ? cutOf(*a, s.start, s.end, false) : nullptr);
+            std::unique_ptr<Mlt::Producer> cb(b ? cutOf(*b, s.start, s.end, true) : nullptr);
+            const int len = s.length();
+            if (ca && cb) {
+                // Cross Dissolve: beide Seiten in einem kleinen Tractor, Überblendung von a nach b
+                Mlt::Tractor mix(m_profile);
+                mix.set_track(*ca, 0);
+                mix.set_track(*cb, 1);
+                Mlt::Transition t(m_profile, kind == TrackKind::Video ? "luma" : "mix");
+                if (kind == TrackKind::Audio) {
+                    // Crossfade +3 dB: beide Seiten mit eigener Kurve, dann einfach addieren
+                    applyFade(m_profile, *ca, kind, len, false, true);
+                    applyFade(m_profile, *cb, kind, len, true, true);
+                    t.set("start", 1.0);
+                    t.set("sum", 1);
                 }
+                t.set_in_and_out(0, len - 1);
+                mix.plant_transition(t, 0, 1);
+                pl.append(mix);
+            } else if (ca || cb) {
+                // Nur eine Seite (Schnitt zum Leeren oder anderer Clip deaktiviert/offline): Aus-/Einblenden
+                Mlt::Producer& one = ca ? *ca : *cb;
+                applyFade(m_profile, one, kind, len, !ca);
+                pl.append(one);
             } else {
-                pl.blank(c.length() - 1); // deaktiviert oder Datei fehlt -> Lücke
+                pl.blank(len - 1);
             }
-            cursor = c.end();
+            cursor = s.end;
+        };
+
+        for (const Clip& c : track.clips) {
+            int bodyStart = c.start, bodyEnd = c.end();
+            for (const auto& s : spans) {
+                if (s.rightId == c.id) bodyStart = std::max(bodyStart, s.end);
+                if (s.leftId == c.id) bodyEnd = std::min(bodyEnd, s.start);
+            }
+            // Einblenden (Übergang, der in diesem Clip beginnt und keinen linken Clip hat)
+            for (const auto& s : spans)
+                if (s.rightId == c.id && !s.leftId) appendSpan(s);
+            if (bodyEnd > bodyStart) {
+                blankTo(bodyStart);
+                if (std::unique_ptr<Mlt::Producer> body(cutOf(c, bodyStart, bodyEnd, false)); body) pl.append(*body);
+                else pl.blank(bodyEnd - bodyStart - 1); // deaktiviert oder Datei fehlt -> Lücke
+                cursor = bodyEnd;
+            }
+            // Ausblenden bzw. Überblendung zum nächsten Clip
+            for (const auto& s : spans)
+                if (s.leftId == c.id) appendSpan(s);
         }
         // hide: 1 = kein Bild, 2 = kein Ton
         int hide = (kind == TrackKind::Video) ? 2 : 1;

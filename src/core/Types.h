@@ -58,6 +58,10 @@ struct Clip {
     bool enabled = true;   // deaktiviert (Taste D) = unsichtbar/stumm, bleibt aber liegen
     ClipTransform transform; // nur Video
     QVector<EffectInstance> effects;
+    // Übergang an Anfang/Ende (Frames, 0 = keiner). Liegt der Nachbar direkt an und hat an der
+    // Gegenkante auch einen: Cross Dissolve zentriert auf dem Schnitt (braucht Handles),
+    // sonst Ein-/Ausblenden aus Schwarz bzw. Stille. Wirksame Länge: TimelineOps::transitions().
+    int transIn = 0, transOut = 0;
 
     int length() const { return out - in + 1; }
     int end() const { return start + length(); } // exklusiv

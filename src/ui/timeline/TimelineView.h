@@ -78,7 +78,13 @@ private:
         int y; // Widget-Koordinate (Scroll bereits eingerechnet)
         int h;
     };
-    enum class Drag { None, Scrub, MaybeMove, Move, Trim, Volume };
+    enum class Drag { None, Scrub, MaybeMove, Move, Trim, Volume, TransitionLength };
+    // Übergang unter der Maus; edge: -1/+1 = linke/rechte Kante (Länge ziehen), 0 = Mitte
+    struct TransitionHit {
+        TrackRef ref;
+        TimelineOps::TransitionSpan span;
+        int edge = 0;
+    };
     struct EdgeHit {
         int clipId;
         TimelineOps::Edge edge;
@@ -90,6 +96,8 @@ private:
     int clipAt(const QPoint& pos) const;
     std::optional<EdgeHit> edgeAt(const QPoint& pos) const;
     QRect clipRect(const Row& row, const Clip& c) const;
+    std::optional<TransitionHit> transitionAt(const QPoint& pos) const;
+    QRect transitionRect(const Row& row, const TimelineOps::TransitionSpan& s) const;
     // Audioclip, dessen Lautstärkelinie unter der Maus liegt (0 = keiner)
     int volumeLineAt(const QPoint& pos) const;
     void updateHoverCursor(const QPoint& pos);
@@ -101,6 +109,7 @@ private:
     void drawRuler(QPainter& p);
     void drawTracks(QPainter& p);
     void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost);
+    void drawTransitions(QPainter& p, const Row& row, const QSet<int>& hiddenClips);
     void drawFilmstrip(QPainter& p, const QRect& body, const Clip& c);
     void drawWaveform(QPainter& p, const QRect& body, const Clip& c);
     void drawHeaders(QPainter& p);
@@ -135,6 +144,10 @@ private:
     double m_volDb = 0;
     bool m_volFine = false;
     int m_hoverVolClip = 0;
+
+    // Übergangslänge ziehen (zentrierte Überblendung wächst an beiden Seiten)
+    TimelineOps::TransitionSpan m_transSpan;
+    int m_transEdge = 0;
 
     int m_hoverFrame = -1; // Klingen-Vorschau
 
