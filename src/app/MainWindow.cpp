@@ -6,6 +6,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "ui/DeliverPanel.h"
 #include "ui/Inspector.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
@@ -13,9 +14,16 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QButtonGroup>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QStackedWidget>
+#include <QToolButton>
+#include <QVBoxLayout>
 #include <QMenuBar>
 #include <QSplitter>
-#include <QStatusBar>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QUndoStack>
 
 MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m_engine(engine)
@@ -46,8 +54,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         else m_engine->seek(f);
     });
     connect(m_mediaPool, &MediaPool::sourceRequested, m_engine, &Engine::showSource);
+    connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
+    tv->setProbe([this](const QString& path) { return probeCached(path); });
 
-    statusBar()->showMessage(QString("Tastenbelegung anpassbar: %1").arg(InputBindings::instance().filePath()));
 }
 
 void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline)
@@ -55,7 +64,24 @@ void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline)
     m_mediaPool->importFiles(paths);
     if (!placeOnTimeline) return;
     // Testhilfe (--demo): Dateien hintereinander auf V1/A1 legen
-    for (const QString& path : paths) m_editor->addMediaAt(path, TimelineOps::endFrame(m_project->timeline()));
+    m_editor->addMediaAt(paths, TimelineOps::endFrame(m_project->timeline()));
+}
+
+MediaInfo MainWindow::probeCached(const QString& path)
+{
+    auto it = m_probeCache.find(path);
+    if (it == m_probeCache.end()) it = m_probeCache.insert(path, m_engine->probe(path));
+    return *it;
+}
+
+void MainWindow::onDrop(const QStringList& paths, int frame, int track)
+{
+    // Direkt aus dem Dateimanager: erst in den Media Pool, dann auf die Timeline (wie DaVinci)
+    QStringList unknown;
+    for (const QString& p : paths)
+        if (!m_project->mediaInfo(p)) unknown << p;
+    if (!unknown.isEmpty()) m_mediaPool->importFiles(unknown);
+    m_editor->addMediaAt(paths, frame, track);
 }
 
 void MainWindow::buildLayout()
@@ -64,23 +90,144 @@ void MainWindow::buildLayout()
     m_viewer = new Viewer(m_engine);
     m_inspector = new Inspector(m_editor);
     m_timeline = new TimelinePanel(m_editor);
+    m_deliver = new DeliverPanel(m_project);
 
-    auto* top = new QSplitter(Qt::Horizontal);
-    top->addWidget(m_mediaPool);
-    top->addWidget(m_viewer);
-    top->addWidget(m_inspector);
-    top->setStretchFactor(0, 0);
-    top->setStretchFactor(1, 1);
-    top->setStretchFactor(2, 0);
-    top->setSizes({360, 880, 360});
+    // Seiten; die gemeinsamen Panels (Pool, Viewer, Timeline) wandern beim Umschalten mit
+    m_editTop = new QSplitter(Qt::Horizontal);
+    m_editMain = new QSplitter(Qt::Vertical);
+    m_editMain->addWidget(m_editTop);
+    m_mediaPage = new QSplitter(Qt::Horizontal);
+    m_deliverPage = new QSplitter(Qt::Horizontal);
+    m_deliverRight = new QSplitter(Qt::Vertical);
+    m_deliverPage->addWidget(m_deliver);
+    m_deliverPage->addWidget(m_deliverRight);
 
-    auto* main = new QSplitter(Qt::Vertical);
-    main->addWidget(top);
-    main->addWidget(m_timeline);
-    main->setStretchFactor(0, 1);
-    main->setStretchFactor(1, 1);
-    main->setSizes({480, 420});
-    setCentralWidget(main);
+    m_pages = new QStackedWidget;
+    m_pages->addWidget(m_mediaPage);
+    m_pages->addWidget(m_editMain);
+    m_pages->addWidget(m_deliverPage);
+
+    auto* root = new QWidget;
+    root->setObjectName("Root");
+    auto* lay = new QVBoxLayout(root);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(0);
+    lay->addWidget(buildTopBar());
+    lay->addWidget(m_pages, 1);
+    lay->addWidget(buildPageBar());
+    setCentralWidget(root);
+
+    showPage(Page::Edit);
+}
+
+QWidget* MainWindow::buildTopBar()
+{
+    // Obere Leiste wie in DaVinci: Panels links/rechts ein- und ausblenden, Projektname mittig
+    auto makeToggle = [](const QString& text) {
+        auto* b = new QToolButton;
+        b->setText(text);
+        b->setCheckable(true);
+        b->setChecked(true);
+        return b;
+    };
+    m_poolToggle = makeToggle("▦ Media Pool");
+    m_inspectorToggle = makeToggle("☰ Inspector");
+    connect(m_poolToggle, &QToolButton::toggled, m_mediaPool, &QWidget::setVisible);
+    connect(m_inspectorToggle, &QToolButton::toggled, m_inspector, &QWidget::setVisible);
+
+    auto* title = new QLabel("Unbenanntes Projekt");
+    title->setStyleSheet("font-weight: 600;");
+    title->setAlignment(Qt::AlignCenter);
+
+    auto* bar = new QWidget;
+    bar->setObjectName("TopBar");
+    bar->setStyleSheet("QWidget#TopBar { background: #2a2a30; border-bottom: 1px solid #141417; }");
+    auto* lay = new QHBoxLayout(bar);
+    lay->setContentsMargins(6, 2, 6, 2);
+    lay->addWidget(m_poolToggle);
+    lay->addStretch(1);
+    lay->addWidget(title);
+    lay->addStretch(1);
+    lay->addWidget(m_inspectorToggle);
+    return bar;
+}
+
+QWidget* MainWindow::buildPageBar()
+{
+    // Seitenleiste unten wie in DaVinci (Media | Edit | Deliver)
+    auto* bar = new QWidget;
+    bar->setObjectName("PageBar");
+    bar->setStyleSheet(
+        "QWidget#PageBar { background: #1f1f23; border-top: 1px solid #141417; }"
+        "QToolButton { color: #8c8c94; padding: 4px 18px; border-radius: 0; }"
+        "QToolButton:checked { color: #e87a3a; background: transparent; border-bottom: 2px solid #e87a3a; }"
+        "QToolButton:hover { color: #d2d2d6; }");
+    auto* lay = new QHBoxLayout(bar);
+    lay->setContentsMargins(10, 0, 10, 0);
+    lay->setSpacing(4);
+
+    auto* brand = new QLabel("schneidi");
+    brand->setStyleSheet("color: #8c8c94; font-weight: 600;");
+    lay->addWidget(brand);
+    lay->addStretch(1);
+
+    m_pageButtons = new QButtonGroup(this);
+    const struct { const char* icon; const char* name; Page page; } pages[] = {
+        {"▤", "Media", Page::Media},
+        {"✂", "Edit", Page::Edit},
+        {"⇪", "Deliver", Page::Deliver},
+    };
+    for (const auto& pg : pages) {
+        auto* b = new QToolButton;
+        b->setText(QString("%1\n%2").arg(pg.icon, pg.name));
+        b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        b->setCheckable(true);
+        b->setChecked(pg.page == m_page);
+        const Page page = pg.page;
+        connect(b, &QToolButton::clicked, this, [this, page] { showPage(page); });
+        m_pageButtons->addButton(b, int(pg.page));
+        lay->addWidget(b);
+    }
+    lay->addStretch(1);
+    lay->addSpacing(brand->sizeHint().width());
+    return bar;
+}
+
+void MainWindow::showPage(Page page)
+{
+    m_page = page;
+    switch (page) {
+    case Page::Media:
+        m_mediaPage->insertWidget(0, m_mediaPool);
+        m_mediaPage->insertWidget(1, m_viewer);
+        m_mediaPage->setSizes({900, 700});
+        m_mediaPool->setVisible(true);
+        m_pages->setCurrentWidget(m_mediaPage);
+        break;
+    case Page::Edit:
+        m_editTop->insertWidget(0, m_mediaPool);
+        m_editTop->insertWidget(1, m_viewer);
+        m_editTop->insertWidget(2, m_inspector);
+        m_editMain->insertWidget(1, m_timeline);
+        m_editTop->setStretchFactor(1, 1);
+        m_editTop->setSizes({360, 880, 360});
+        m_editMain->setSizes({480, 420});
+        m_mediaPool->setVisible(m_poolToggle->isChecked());
+        m_pages->setCurrentWidget(m_editMain);
+        break;
+    case Page::Deliver:
+        m_deliverRight->insertWidget(0, m_viewer);
+        m_deliverRight->insertWidget(1, m_timeline);
+        m_deliverRight->setSizes({480, 380});
+        m_deliverPage->setStretchFactor(1, 1);
+        m_deliverPage->setSizes({340, 1260});
+        m_pages->setCurrentWidget(m_deliverPage);
+        break;
+    }
+    if (auto* b = m_pageButtons->button(int(page))) b->setChecked(true);
+    const bool edit = page == Page::Edit;
+    m_poolToggle->setEnabled(edit);
+    m_inspectorToggle->setEnabled(edit);
 }
 
 QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
@@ -118,6 +265,10 @@ void MainWindow::buildActions()
     makeAction(edit, "split", "Clip am Playhead teilen", QKeySequence("Ctrl+B"),
               [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
     makeAction(edit, "deselect", "Auswahl aufheben", QKeySequence("Ctrl+Shift+A"), [this] { m_selection->clear(); });
+    edit->addSeparator();
+    makeAction(edit, "edit_keybindings", "Tastenbelegung bearbeiten… (Neustart nötig)", QKeySequence(), [] {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(InputBindings::instance().filePath()));
+    });
 
     QMenu* timeline = menuBar()->addMenu("&Timeline");
     makeAction(timeline, "tool_select", "Auswahl-Werkzeug", QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
@@ -151,6 +302,11 @@ void MainWindow::buildActions()
     });
     makeAction(play, "show_timeline", "Timeline im Viewer zeigen", QKeySequence("Q"),
               [this, tv] { m_engine->showTimeline(tv->playhead()); });
+
+    QMenu* workspace = menuBar()->addMenu("&Arbeitsbereich");
+    makeAction(workspace, "page_media", "Media-Seite", QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
+    makeAction(workspace, "page_edit", "Edit-Seite", QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
+    makeAction(workspace, "page_deliver", "Deliver-Seite", QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
 
     InputBindings::instance().saveIfMissing();
 }
