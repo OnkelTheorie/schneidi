@@ -93,7 +93,7 @@ private:
     // Tab "Übergang"
     TransitionKey m_transKey;
     QComboBox* m_transType = nullptr;
-    QLabel* m_transAudioType = nullptr;
+    QComboBox* m_transAudioType = nullptr; // Audio: Cross Fade +3/0/-3 dB
     QComboBox* m_transAlign = nullptr;
     ScrubField* m_transLen = nullptr;
     QToolButton* m_transColor = nullptr;       // Abblende-Farbe

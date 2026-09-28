@@ -332,8 +332,13 @@ double audioTransitionGain(const TransitionSpan& s, int clipId, double frame)
     const double i = frame - s.start;
     // wie die Engine: einblenden i/len, ausblenden (len-1-i)/len
     const double t = std::clamp(clipId == s.rightId ? i / len : (len - 1 - i) / len, 0.0, 1.0);
-    // Überblendung: Crossfade +3 dB (Sinus), Ein-/Ausblenden zur Stille: linear
-    return s.isDissolve() ? std::sin(t * M_PI / 2) : t;
+    // Kurve wie DaVinci (gilt auch fürs Ein-/Ausblenden zur Stille): +3 dB = gleiche Leistung (Sinus),
+    // 0 dB = linear (Pegel addiert sich zu 1), -3 dB = t^1,5 (Mitte je Seite -9 dB)
+    switch (s.style.audio) {
+    case AudioCurve::Zero: return t;
+    case AudioCurve::Minus3dB: return t * std::sqrt(t);
+    default: return std::sin(t * M_PI / 2);
+    }
 }
 
 void detachTransitions(Timeline& tl, const QVector<int>& clipIds)

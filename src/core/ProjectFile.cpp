@@ -91,6 +91,7 @@ QJsonObject transitionStyleToJson(const TransitionStyle& s)
     if (s.softness != d.softness) o["softness"] = s.softness;
     if (s.border != d.border) o["border"] = s.border;
     if (s.borderColor != d.borderColor) o["borderColor"] = s.borderColor.name(QColor::HexRgb);
+    if (s.audio != d.audio) o["audioCurve"] = audioCurveInfo(s.audio).id;
     return o;
 }
 
@@ -116,6 +117,9 @@ TransitionStyle transitionStyleFromJson(const QJsonObject& o)
     s.softness = std::clamp(o.value("softness").toDouble(s.softness), 0.0, 100.0);
     s.border = std::max(0.0, o.value("border").toDouble(s.border));
     s.borderColor = color("borderColor", s.borderColor);
+    const QString curve = o.value("audioCurve").toString();
+    for (const auto& i : kAudioCurves)
+        if (curve == i.id) s.audio = i.curve;
     return s;
 }
 

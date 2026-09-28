@@ -791,7 +791,8 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
 
     m_transType = combo();
     for (const auto& i : kTransitionTypes) m_transType->addItem(T(i.name), int(i.type));
-    m_transAudioType = new QLabel("Cross Fade +3 dB"); // Audio kennt nur den Crossfade
+    m_transAudioType = combo(); // Audio: Pegelkurve des Crossfades
+    for (const auto& i : kAudioCurves) m_transAudioType->addItem(i.name, int(i.curve));
     auto* typeBox = new QWidget;
     auto* typeLay = new QHBoxLayout(typeBox);
     typeLay->setContentsMargins(0, 0, 0, 0);
@@ -842,6 +843,10 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
         const auto type = TransitionType(m_transType->currentData().toInt());
         changeTransition([type](TransitionStyle& st) { st.type = type; });
     });
+    connect(m_transAudioType, &QComboBox::activated, this, [this] {
+        const auto curve = AudioCurve(m_transAudioType->currentData().toInt());
+        changeTransition([curve](TransitionStyle& st) { st.audio = curve; });
+    });
     connect(m_transAlign, &QComboBox::activated, this, [this](int i) {
         changeTransition([i](TransitionStyle& st) { st.align = TransitionAlign(i); });
     });
@@ -877,7 +882,7 @@ bool Inspector::refreshTransition()
     m_content->setVisible(true);
     m_empty->setVisible(false);
     const bool video = kind == TrackKind::Video;
-    m_clipName->setText(video ? T(transitionTypeInfo(span.style.type).name) : QStringLiteral("Cross Fade +3 dB"));
+    m_clipName->setText(video ? T(transitionTypeInfo(span.style.type).name) : QString(audioCurveInfo(span.style.audio).name));
     m_clipName->setToolTip({});
     m_tabs->button(kTransitionPage)->setChecked(true);
     m_pages->setCurrentIndex(kTransitionPage);
@@ -885,6 +890,7 @@ bool Inspector::refreshTransition()
     m_transType->setVisible(video);
     m_transAudioType->setVisible(!video);
     m_transType->setCurrentIndex(m_transType->findData(int(span.style.type)));
+    m_transAudioType->setCurrentIndex(m_transAudioType->findData(int(span.style.audio)));
     m_transAlign->setCurrentIndex(int(span.style.align));
     // Felder nur für die passende Art (wie DaVinci je nach Übergang andere Parameter zeigt)
     for (QWidget* w : m_dipRows) w->setVisible(video && span.style.type == TransitionType::DipToColor);

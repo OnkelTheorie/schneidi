@@ -77,6 +77,8 @@ struct TitleStyle {
 // Übergangsart (nur Video; Audio ist immer ein Crossfade) und Lage zum Schnitt wie im DaVinci-Inspector
 enum class TransitionType { CrossDissolve, DipToColor, WipeRight, WipeLeft, WipeDown, WipeUp };
 enum class TransitionAlign { Center, Start, End }; // Center on Edit / Start on Edit / End on Edit
+// Audio-Übergang wie DaVinci: Pegelkurve beider Seiten (in der Mitte -3 / -6 / -9 dB je Seite)
+enum class AudioCurve { Plus3dB, Zero, Minus3dB };
 struct TransitionStyle {
     TransitionType type = TransitionType::CrossDissolve;
     TransitionAlign align = TransitionAlign::Center;
@@ -84,12 +86,13 @@ struct TransitionStyle {
     double softness = 0;            // Wischblende: Weichheit der Kante (0..100 %)
     double border = 0;              // Wischblende: Randbreite (Pixel im Projektformat, 0 = kein Rand)
     QColor borderColor = Qt::white; // Wischblende: Randfarbe
+    AudioCurve audio = AudioCurve::Plus3dB; // nur Audiospuren
 
     bool isWipe() const { return type >= TransitionType::WipeRight; }
     bool operator==(const TransitionStyle& o) const
     {
         return type == o.type && align == o.align && color == o.color && softness == o.softness
-               && border == o.border && borderColor == o.borderColor;
+               && border == o.border && borderColor == o.borderColor && audio == o.audio;
     }
     bool operator!=(const TransitionStyle& o) const { return !(*this == o); }
 };
@@ -103,6 +106,20 @@ inline constexpr TransitionTypeInfo kTransitionTypes[] = {
     {TransitionType::WipeDown, "wipe_down", N_("Wischblende nach unten")},
     {TransitionType::WipeUp, "wipe_up", N_("Wischblende nach oben")},
 };
+// Audio-Übergangsarten (Namen wie im DaVinci-Inspector, auch im deutschen DaVinci englisch)
+struct AudioCurveInfo { AudioCurve curve; const char* id; const char* name; };
+inline constexpr AudioCurveInfo kAudioCurves[] = {
+    {AudioCurve::Plus3dB, "plus3", "Cross Fade +3 dB"},
+    {AudioCurve::Zero, "zero", "Cross Fade 0 dB"},
+    {AudioCurve::Minus3dB, "minus3", "Cross Fade -3 dB"},
+};
+inline const AudioCurveInfo& audioCurveInfo(AudioCurve c)
+{
+    for (const auto& i : kAudioCurves)
+        if (i.curve == c) return i;
+    return kAudioCurves[0];
+}
+
 inline const TransitionTypeInfo& transitionTypeInfo(TransitionType t)
 {
     for (const auto& i : kTransitionTypes)

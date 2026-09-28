@@ -621,7 +621,7 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
             p.setFont(f);
             p.setPen(QColor(0x10, 0x10, 0x10));
             const QString name = row.ref.kind == TrackKind::Video ? T(transitionTypeInfo(s.style.type).name)
-                                                                  : QStringLiteral("Cross Fade +3 dB");
+                                                                  : QString(audioCurveInfo(s.style.audio).name);
             const QRect tr = r.adjusted(4, 0, -4, 0);
             p.drawText(tr, Qt::AlignTop | Qt::AlignHCenter, p.fontMetrics().elidedText(name, Qt::ElideRight, tr.width()));
         }
@@ -946,6 +946,18 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
             connect(a, &QAction::triggered, this, [this, s, type = i.type] {
                 TransitionStyle st = s.style;
                 st.type = type;
+                m_editor->setTransitionStyle(s.leftId, s.rightId, st);
+            });
+        }
+        menu.addSeparator();
+    } else {
+        for (const auto& i : kAudioCurves) {
+            QAction* a = menu.addAction(i.name);
+            a->setCheckable(true);
+            a->setChecked(s.style.audio == i.curve);
+            connect(a, &QAction::triggered, this, [this, s, curve = i.curve] {
+                TransitionStyle st = s.style;
+                st.audio = curve;
                 m_editor->setTransitionStyle(s.leftId, s.rightId, st);
             });
         }
