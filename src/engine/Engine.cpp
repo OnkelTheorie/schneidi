@@ -1,6 +1,7 @@
 #include "engine/Engine.h"
 
 #include "core/I18n.h"
+#include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "engine/TimelineBuilder.h"
 
@@ -8,6 +9,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QPainter>
 #include <cstring>
 #include <utility>
 
@@ -46,13 +48,25 @@ bool Engine::init(QString* error)
         return false;
     }
 
-    // Projektformat vorerst fest: 1080p, 25 fps (später Projekteinstellung)
-    m_profile = std::make_unique<Mlt::Profile>("atsc_1080p_25");
+    m_format = ProjectFormat{};
+    if (!createConsumer(error)) return false;
+    updateTimeline(Timeline{});
+    showTimeline(0);
+    return true;
+}
+
+// Profil, Builder und Vorschau-Consumer zum aktuellen Projektformat anlegen
+bool Engine::createConsumer(QString* error)
+{
+    m_profile = makeProfile(m_format);
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
     // Nur das Bild vom Proxy: Ton dekodiert billig und bleibt so exakt wie im Export
     m_builder->setResolver([this](const QString& path, TrackKind kind) {
         return kind == TrackKind::Video ? m_proxies->resolve(path) : path;
     });
+    // Vorschaubild im Seitenverhältnis des Projekts (sonst wird Hochformat verzerrt), gerade Maße
+    const QSize fit = m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
+    m_previewSize = QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
 
     for (const char* id : {"sdl2_audio", "rtaudio"}) {
         m_consumer = std::make_unique<Mlt::Consumer>(*m_profile, id);
@@ -70,20 +84,34 @@ bool Engine::init(QString* error)
     m_consumer->set("prefill", 1);
     m_consumer->set("audio_buffer", 1024);
     m_consumer->listen("consumer-frame-show", this, (mlt_listener)EngineCallbacks::onFrameShow);
-
-    updateTimeline(Timeline{});
-    showTimeline(0);
     return true;
 }
 
-int Engine::fps() const
+void Engine::setFormat(const ProjectFormat& format)
 {
-    return m_profile ? qRound(m_profile->fps()) : 25;
-}
+    if (format == m_format && m_profile) return;
+    // Alles, was am alten Profil hängt, in dieser Reihenfolge abbauen: Consumer zuerst (liest die Producer)
+    if (m_consumer) m_consumer->stop();
+    m_current = nullptr;
+    m_consumer.reset();
+    {
+        std::lock_guard<std::mutex> lock(m_mixerMutex);
+        m_mixer.reset();
+        m_timeline.reset();
+    }
+    m_source.reset();
+    m_builder.reset();
+    m_profile.reset();
 
-QSize Engine::frameSize() const
-{
-    return m_profile ? QSize(m_profile->width(), m_profile->height()) : QSize(1920, 1080);
+    m_format = format;
+    m_speed = 0;
+    QString error;
+    if (!createConsumer(&error)) qWarning("%s", qPrintable(error));
+    if (m_mode != Mode::Timeline) {
+        m_mode = Mode::Timeline; // Quellansicht hing am alten Profil
+        emit modeChanged(m_mode);
+    }
+    emit speedChanged(m_speed);
 }
 
 MediaInfo Engine::probe(const QString& path)
@@ -117,13 +145,21 @@ QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
     p.seek(frame);
     std::unique_ptr<Mlt::Frame> f(p.get_frame());
     if (!f) return {};
+    // Im Seitenverhältnis des Projekts holen und mittig auf die gewünschte Größe setzen (schwarze Ränder)
+    const QSize fit = m_format.size().scaled(size, Qt::KeepAspectRatio);
     mlt_image_format fmt = mlt_image_rgba;
-    int w = size.width(), h = size.height();
+    int w = std::max(2, fit.width()), h = std::max(2, fit.height());
     const uint8_t* data = f->get_image(fmt, w, h);
     if (!data || w <= 0 || h <= 0) return {};
     QImage img(w, h, QImage::Format_RGBA8888);
     std::memcpy(img.bits(), data, size_t(w) * h * 4);
-    return img;
+    if (img.size() == size) return img;
+    QImage out(size, QImage::Format_RGBA8888);
+    out.fill(Qt::black);
+    QPainter painter(&out);
+    painter.drawImage(QPoint((size.width() - w) / 2, (size.height() - h) / 2), img);
+    painter.end();
+    return out;
 }
 
 void Engine::updateTimeline(const Timeline& tl)
@@ -146,7 +182,7 @@ void Engine::updateTimeline(const Timeline& tl)
         m_mixer = std::move(hooks);
         m_timeline = std::move(tractor);
     }
-    if (active) connectProducer(m_timeline.get(), pos);
+    if (active && m_consumer) connectProducer(m_timeline.get(), pos);
 }
 
 void Engine::showTimeline(int position)

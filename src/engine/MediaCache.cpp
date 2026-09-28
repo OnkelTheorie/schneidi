@@ -1,5 +1,7 @@
 #include "engine/MediaCache.h"
 
+#include "engine/Profiles.h"
+
 #include <Mlt.h>
 #include <QCryptographicHash>
 #include <QDataStream>
@@ -15,8 +17,6 @@
 
 namespace {
 
-// Gleiches Projektformat wie in Engine::init (dort fest 1080p/25)
-constexpr const char* kProfile = "atsc_1080p_25";
 constexpr size_t kMaxThumbJobs = 96;
 constexpr int kThumbCacheKB = 160 * 1024;
 
@@ -38,14 +38,14 @@ QVector<QVector<quint8>> buildLevels(QVector<quint8> base)
 }
 
 // Platten-Cache für Wellenformen: Schlüssel aus Pfad, Größe und Änderungszeit
-QString waveCacheFile(const QString& path)
+QString waveCacheFile(const QString& path, const FrameRate& rate)
 {
     const QFileInfo fi(path);
     const QString id = QString("%1|%2|%3|%4|%5")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())
-                           .arg(kProfile)
+                           .arg(QString("%1/%2").arg(rate.num).arg(rate.den))
                            .arg(Waveform::kBucketsPerFrame);
     const QString hash = QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex();
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/peaks";
@@ -136,6 +136,23 @@ QImage MediaCache::thumbnail(const QString& path, int frame)
     return {};
 }
 
+void MediaCache::setFormat(const ProjectFormat& format)
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        if (format == m_format) return;
+        m_format = format;
+        ++m_generation;
+        m_thumbs.clear();
+        m_thumbJobs.clear();
+        m_thumbPending.clear();
+        m_waves.clear();
+        m_waveJobs.clear();
+        m_waveRequested.clear();
+    }
+    emit updated();
+}
+
 std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path)
 {
     QMutexLocker lock(&m_mutex);
@@ -149,24 +166,34 @@ std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path)
 
 void MediaCache::thumbLoop()
 {
-    Mlt::Profile profile(kProfile);
+    std::unique_ptr<Mlt::Profile> profile;
+    int generation = -1;
     // Offene Producer wiederverwenden (Datei öffnen ist teurer als Suchen)
     QHash<QString, std::shared_ptr<Mlt::Producer>> producers;
 
     for (;;) {
         ThumbJob job;
+        ProjectFormat format;
+        int gen = 0;
         {
             QMutexLocker lock(&m_mutex);
             while (!m_quit && m_thumbJobs.empty()) m_thumbCond.wait(&m_mutex);
             if (m_quit) return;
             job = m_thumbJobs.front();
             m_thumbJobs.pop_front();
+            format = m_format;
+            gen = m_generation;
+        }
+        if (gen != generation) { // neues Projektformat: Producer hängen am alten Profil
+            producers.clear();
+            profile = makeProfile(format);
+            generation = gen;
         }
 
         std::shared_ptr<Mlt::Producer> prod = producers.value(job.path);
         if (!prod) {
             if (producers.size() >= 8) producers.clear();
-            prod = std::make_shared<Mlt::Producer>(profile, job.path.toUtf8().constData());
+            prod = std::make_shared<Mlt::Producer>(*profile, job.path.toUtf8().constData());
             producers.insert(job.path, prod);
         }
 
@@ -175,13 +202,17 @@ void MediaCache::thumbLoop()
             prod->seek(job.frame);
             std::unique_ptr<Mlt::Frame> f(prod->get_frame());
             if (f) {
+                // Im Seitenverhältnis des Projekts, mindestens so groß wie eine 16:9-Kachel
+                // (die Timeline schneidet die Mitte aus; Hochformat also etwas höher)
                 mlt_image_format fmt = mlt_image_rgba;
-                int w = kThumbHeight * 16 / 9, h = kThumbHeight;
+                const QSize want = format.size().scaled(kThumbHeight * 16 / 9, kThumbHeight, Qt::KeepAspectRatioByExpanding);
+                int w = std::max(2, want.width()), h = std::max(2, want.height());
+                const int reqW = w, reqH = h;
                 const uint8_t* data = f->get_image(fmt, w, h);
                 if (data && w > 0 && h > 0) {
                     QImage raw(w, h, QImage::Format_RGBA8888);
                     std::memcpy(raw.bits(), data, size_t(w) * h * 4);
-                    img = h == kThumbHeight ? raw : raw.scaledToHeight(kThumbHeight, Qt::SmoothTransformation);
+                    img = (w == reqW && h == reqH) ? raw : raw.scaled(reqW, reqH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
                     img = img.convertToFormat(QImage::Format_RGB32); // schneller zu zeichnen
                 }
             }
@@ -189,6 +220,7 @@ void MediaCache::thumbLoop()
 
         {
             QMutexLocker lock(&m_mutex);
+            if (gen != m_generation) continue; // inzwischen neues Format
             const QString key = thumbKey(job.path, job.frame);
             m_thumbPending.remove(key);
             if (!img.isNull()) m_thumbs.insert(key, new QImage(img), int(img.sizeInBytes() / 1024) + 1);
@@ -199,29 +231,35 @@ void MediaCache::thumbLoop()
 
 void MediaCache::waveLoop()
 {
-    Mlt::Profile profile(kProfile);
-    const double fps = profile.fps();
     constexpr int N = Waveform::kBucketsPerFrame;
 
     for (;;) {
         QString path;
+        ProjectFormat format;
+        int gen = 0;
         {
             QMutexLocker lock(&m_mutex);
             while (!m_quit && m_waveJobs.empty()) m_waveCond.wait(&m_mutex);
             if (m_quit) return;
             path = m_waveJobs.front();
             m_waveJobs.pop_front();
+            format = m_format;
+            gen = m_generation;
         }
+        // Wellenform zählt Frames in der Projekt-Framerate
+        const std::unique_ptr<Mlt::Profile> profile = makeProfile(format);
+        const double fps = profile->fps();
 
         auto publish = [&](std::shared_ptr<const Waveform> w) {
             {
                 QMutexLocker lock(&m_mutex);
+                if (gen != m_generation) return; // inzwischen neues Format
                 m_waves.insert(path, std::move(w));
             }
             emit updated();
         };
 
-        const QString cacheFile = waveCacheFile(path);
+        const QString cacheFile = waveCacheFile(path, format.rate);
         {
             auto w = std::make_shared<Waveform>();
             if (loadWave(cacheFile, *w)) {
@@ -230,7 +268,7 @@ void MediaCache::waveLoop()
             }
         }
 
-        Mlt::Producer p(profile, path.toUtf8().constData());
+        Mlt::Producer p(*profile, path.toUtf8().constData());
         const int length = p.is_valid() ? p.get_length() : 0;
         if (length <= 0) {
             auto w = std::make_shared<Waveform>();
@@ -246,7 +284,7 @@ void MediaCache::waveLoop()
         for (int i = 0; i < length; ++i) {
             if (i % 256 == 0) {
                 QMutexLocker lock(&m_mutex);
-                if (m_quit) {
+                if (m_quit || gen != m_generation) {
                     aborted = true;
                     break;
                 }
@@ -276,7 +314,11 @@ void MediaCache::waveLoop()
                 sincePublish.restart();
             }
         }
-        if (aborted) return;
+        if (aborted) {
+            QMutexLocker lock(&m_mutex);
+            if (m_quit) return;
+            continue; // Formatwechsel: Ergebnis gilt nicht mehr
+        }
 
         auto w = std::make_shared<Waveform>();
         w->levels = buildLevels(base);

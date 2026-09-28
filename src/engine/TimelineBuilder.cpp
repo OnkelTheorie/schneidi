@@ -49,6 +49,22 @@ void applyVolume(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c)
     clip.attach(f);
 }
 
+// Seitenverhältnis des Quellbilds wie angezeigt (Pixel-Seitenverhältnis und Drehung aus den Metadaten), 0 = unbekannt
+double sourceAspect(Mlt::Producer& cut)
+{
+    Mlt::Producer& p = cut.is_cut() ? cut.parent() : cut;
+    double w = p.get_int("width"), h = p.get_int("height");
+    if (w <= 0 || h <= 0) {
+        w = p.get_int("meta.media.width");
+        h = p.get_int("meta.media.height");
+    }
+    if (w <= 0 || h <= 0) return 0;
+    if (const double sar = p.get_double("aspect_ratio"); sar > 0) w *= sar;
+    const int vi = p.get_int("video_index");
+    const int rotate = std::abs(p.get_int(QString("meta.media.%1.codec.rotate").arg(vi).toUtf8().constData())) % 180;
+    return rotate == 90 ? h / w : w / h;
+}
+
 void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
 {
     const ClipTransform& t = c.transform;
@@ -77,7 +93,14 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
     if (!t.hasTransform()) return;
     Mlt::Filter f(profile, "qtblend");
     if (!f.is_valid()) return;
-    const double w = W * t.zoomX, h = H * t.zoomY;
+    // distort=1 (unten) zieht die Quelle aufs Rechteck -> Rechteck selbst seitenverhältnis-treu ins Bild einpassen
+    // (Hochformat-Clip im Querformat-Projekt bekommt seitlich Platz, wie ohne Transform und wie in DaVinci)
+    double fitW = W, fitH = H;
+    if (const double a = c.isTitle() ? 0.0 : sourceAspect(clip); a > 0) {
+        if (a > W / H) fitH = W / a;
+        else fitW = H * a;
+    }
+    const double w = fitW * t.zoomX, h = fitH * t.zoomY;
     const double x = (W - w) / 2 + t.posX, y = (H - h) / 2 - t.posY;
     // Als mlt_rect statt Text setzen: MLT liest Text-Rechtecke mit dem System-Zahlenformat
     // (deutsch: "940.8" -> 940 und ".8" rutscht ins nächste Feld). 5. Wert (Deckkraft) muss 1 sein.

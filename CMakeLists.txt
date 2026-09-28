@@ -26,6 +26,7 @@ add_executable(schneidi
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
+    src/engine/Profiles.h         src/engine/Profiles.cpp
     src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
