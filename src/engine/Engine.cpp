@@ -1,6 +1,7 @@
 #include "engine/Engine.h"
 
 #include "core/I18n.h"
+#include "engine/ProxyManager.h"
 #include "engine/TimelineBuilder.h"
 
 #include <Mlt.h>
@@ -18,7 +19,7 @@ struct EngineCallbacks {
     }
 };
 
-Engine::Engine(QObject* parent) : QObject(parent) {}
+Engine::Engine(QObject* parent) : QObject(parent), m_proxies(new ProxyManager(this)) {}
 
 Engine::~Engine()
 {
@@ -48,6 +49,10 @@ bool Engine::init(QString* error)
     // Projektformat vorerst fest: 1080p, 25 fps (später Projekteinstellung)
     m_profile = std::make_unique<Mlt::Profile>("atsc_1080p_25");
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
+    // Nur das Bild vom Proxy: Ton dekodiert billig und bleibt so exakt wie im Export
+    m_builder->setResolver([this](const QString& path, TrackKind kind) {
+        return kind == TrackKind::Video ? m_proxies->resolve(path) : path;
+    });
 
     for (const char* id : {"sdl2_audio", "rtaudio"}) {
         m_consumer = std::make_unique<Mlt::Consumer>(*m_profile, id);
@@ -155,7 +160,7 @@ void Engine::showTimeline(int position)
 
 void Engine::showSource(const QString& path)
 {
-    auto p = std::make_unique<Mlt::Producer>(*m_profile, path.toUtf8().constData());
+    auto p = std::make_unique<Mlt::Producer>(*m_profile, m_proxies->resolve(path).toUtf8().constData());
     if (!p->is_valid()) return;
     m_consumer->stop();
     m_source = std::move(p);
