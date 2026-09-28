@@ -1,0 +1,45 @@
+cmake_minimum_required(VERSION 3.21)
+project(schneidi VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(PkgConfig REQUIRED)
+# MLT liefert unter Linux und MSYS2 (Windows) eine .pc-Datei
+pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
+
+add_executable(schneidi
+    src/main.cpp
+
+    src/core/Types.h
+    src/core/Timecode.h
+    src/core/TimelineOps.h        src/core/TimelineOps.cpp
+    src/core/Project.h            src/core/Project.cpp
+    src/core/Selection.h
+    src/core/Editor.h             src/core/Editor.cpp
+    src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
+
+    src/engine/Engine.h           src/engine/Engine.cpp
+    src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp
+
+    src/app/Theme.h               src/app/Theme.cpp
+    src/app/InputBindings.h       src/app/InputBindings.cpp
+    src/app/MainWindow.h          src/app/MainWindow.cpp
+
+    src/ui/MediaPool.h            src/ui/MediaPool.cpp
+    src/ui/Viewer.h               src/ui/Viewer.cpp
+    src/ui/Inspector.h            src/ui/Inspector.cpp
+    src/ui/timeline/ViewState.h
+    src/ui/timeline/TimelineView.h    src/ui/timeline/TimelineView.cpp
+    src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp
+)
+
+target_include_directories(schneidi PRIVATE src)
+target_link_libraries(schneidi PRIVATE Qt6::Widgets PkgConfig::MLT)
+
+if(WIN32)
+    set_target_properties(schneidi PROPERTIES WIN32_EXECUTABLE ON)
+endif()
