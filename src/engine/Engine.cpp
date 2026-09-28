@@ -58,6 +58,10 @@ bool Engine::init(QString* error)
     m_consumer->set("terminate_on_pause", 0);
     m_consumer->set("real_time", 1);
     m_consumer->set("scrub_audio", 1);
+    // Kleiner Vorlauf-Puffer: sonst läuft der Ton nach Pause/Seek noch ~1 s weiter
+    m_consumer->set("buffer", 2);
+    m_consumer->set("prefill", 1);
+    m_consumer->set("audio_buffer", 1024);
     m_consumer->listen("consumer-frame-show", this, (mlt_listener)EngineCallbacks::onFrameShow);
 
     updateTimeline(Timeline{});
@@ -84,7 +88,10 @@ MediaInfo Engine::probe(const QString& path)
         info.hasVideo = true;
         info.length = 5 * fps(); // Standbild: 5 Sekunden wie in DaVinci
     } else {
-        info.hasVideo = p.get_int("video_index") >= 0;
+        // Audiodateien mit eingebettetem Cover gelten nicht als Video
+        static const QStringList audioExt{"mp3", "wav", "flac", "ogg", "opus", "m4a", "aac", "wma", "aiff"};
+        const bool audioFile = audioExt.contains(QFileInfo(path).suffix().toLower());
+        info.hasVideo = !audioFile && p.get_int("video_index") >= 0;
         info.hasAudio = p.get_int("audio_index") >= 0;
         info.length = p.get_length();
     }
@@ -165,7 +172,10 @@ void Engine::setSpeed(double speed)
     if (!m_current) return;
     m_speed = speed;
     m_current->set_speed(speed);
-    if (speed == 0.0) m_current->seek(m_position); // exakt auf dem angezeigten Frame stehen bleiben
+    if (speed == 0.0) {
+        m_current->seek(m_position); // exakt auf dem angezeigten Frame stehen bleiben
+        m_consumer->purge();         // gepufferten Ton sofort verwerfen
+    }
     refresh();
     emit speedChanged(speed);
 }
