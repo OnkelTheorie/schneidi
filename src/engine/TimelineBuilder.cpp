@@ -21,7 +21,7 @@ void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
             const QByteArray prop = p.mltProperty.toUtf8();
             if (p.type == EffectParam::Color) {
                 const QColor col = v.value<QColor>();
-                f.set(prop.constData(), QString("0x%1").arg(col.rgb() & 0xffffff, 6, 16, QChar('0')).toUtf8().constData());
+                f.set(prop.constData(), col.name(QColor::HexRgb).toUtf8().constData()); // "#rrggbb"
             } else {
                 f.set(prop.constData(), v.toDouble());
             }

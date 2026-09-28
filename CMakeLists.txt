@@ -24,6 +24,7 @@ add_executable(schneidi
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp
+    src/engine/Exporter.h         src/engine/Exporter.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
@@ -32,6 +33,7 @@ add_executable(schneidi
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
+    src/ui/DeliverPanel.h         src/ui/DeliverPanel.cpp
     src/ui/timeline/ViewState.h
     src/ui/timeline/TimelineView.h    src/ui/timeline/TimelineView.cpp
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp

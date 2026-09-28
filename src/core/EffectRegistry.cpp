@@ -7,11 +7,11 @@ namespace EffectRegistry {
 const QVector<EffectDescriptor>& all()
 {
     static const QVector<EffectDescriptor> effects = {
-        {"chromakey", "Green Screen", "avfilter.chromakey", true,
+        // frei0r statt avfilter.chromakey: liefert echte Transparenz und stürzt beim Beenden nicht ab
+        {"chromakey", "Green Screen", "frei0r.bluescreen0r", true,
          {
-             {"color", "Farbe", "av.color", EffectParam::Color, QColor(0, 255, 0), 0, 0},
-             {"similarity", "Toleranz", "av.similarity", EffectParam::Double, 0.15, 0.01, 1.0},
-             {"blend", "Weichheit", "av.blend", EffectParam::Double, 0.05, 0.0, 1.0},
+             {"color", "Farbe", "0", EffectParam::Color, QColor(0, 255, 0), 0, 0},
+             {"distance", "Toleranz", "1", EffectParam::Double, 0.3, 0.0, 1.0},
          }},
         {"volume", "Lautstärke", "volume", false,
          {
