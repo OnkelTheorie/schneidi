@@ -16,7 +16,17 @@ public:
     // Beim Abbau meldet der Undo-Stack noch "cleanChanged" -> nicht mehr weiterreichen (Hauptfenster ist schon weg)
     ~Project() override { blockSignals(true); }
 
-    int fps() const { return m_fps; }
+    // Projekteinstellungen (Timeline-Auflösung und -Framerate)
+    const ProjectFormat& format() const { return m_format; }
+    // Ganze Frames pro Timecode-Sekunde (29,97 -> 30) – für Timecode und Standardlängen ("1 s")
+    int fps() const { return m_format.rate.timebase(); }
+    double frameRate() const { return m_format.rate.fps(); }
+    // Wie DaVinci: Framerate nur änderbar, solange keine Clips in der Timeline liegen
+    bool frameRateLocked() const;
+    // Ein Undo-Schritt; neue Auflösung rechnet Positionen/Größen im Schnitt mit um (scaleTimeline).
+    // Eine gesperrte Framerate bleibt unverändert.
+    void setFormat(const ProjectFormat& format);
+    void applyFormat(const ProjectFormat& format, const Timeline& tl); // nur für Undo
     const Timeline& timeline() const { return m_timeline; }
     QUndoStack* undoStack() { return &m_undo; }
 
@@ -29,6 +39,8 @@ public:
     const QVector<MediaInfo>& media() const { return m_media; }
     const MediaInfo* mediaInfo(const QString& path) const;
     void addMedia(const MediaInfo& info);
+    // Medieninfos ersetzen (z. B. Längen nach einer neuen Framerate), gilt nicht als Änderung
+    void replaceMedia(const QVector<MediaInfo>& media);
 
     // Speichern/Laden (.schneidi). load() leert den Undo-Verlauf wie ein frisch geöffnetes Projekt.
     ProjectData data() const;
@@ -43,11 +55,12 @@ public:
 
 signals:
     void timelineChanged();
+    void formatChanged(); // kommt vor dem zugehörigen timelineChanged()
     void mediaChanged();
     void modifiedChanged(bool modified);
 
 private:
-    int m_fps = 25;
+    ProjectFormat m_format;
     Timeline m_timeline;
     QVector<MediaInfo> m_media;
     QUndoStack m_undo;

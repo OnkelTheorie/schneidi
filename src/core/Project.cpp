@@ -1,5 +1,7 @@
 #include "core/Project.h"
 
+#include "core/I18n.h"
+
 #include <QUndoCommand>
 
 namespace {
@@ -24,6 +26,21 @@ private:
     Project* m_project;
     Timeline m_before, m_after;
     QString m_mergeKey;
+};
+
+// Projekteinstellungen ändern: Format und (umgerechneter) Schnitt zusammen, damit Undo beides zurücknimmt
+class FormatCommand : public QUndoCommand {
+public:
+    FormatCommand(Project* p, ProjectFormat before, ProjectFormat after, Timeline tlBefore, Timeline tlAfter)
+        : QUndoCommand(T("Projekteinstellungen")), m_project(p), m_before(before), m_after(after),
+          m_tlBefore(std::move(tlBefore)), m_tlAfter(std::move(tlAfter)) {}
+    void undo() override { m_project->applyFormat(m_before, m_tlBefore); }
+    void redo() override { m_project->applyFormat(m_after, m_tlAfter); }
+
+private:
+    Project* m_project;
+    ProjectFormat m_before, m_after;
+    Timeline m_tlBefore, m_tlAfter;
 };
 
 Track makeTrack(TrackKind kind, const QString& name)
@@ -54,7 +71,7 @@ Project::Project(QObject* parent) : QObject(parent)
 ProjectData Project::data() const
 {
     ProjectData d;
-    d.fps = m_fps;
+    d.format = m_format;
     d.media = m_media;
     d.timeline = m_timeline;
     d.lastClipId = m_lastClipId;
@@ -65,6 +82,7 @@ ProjectData Project::data() const
 void Project::load(const ProjectData& d)
 {
     m_undo.clear();
+    m_format = d.format;
     m_media = d.media;
     m_timeline = d.timeline;
     if (m_timeline.video.isEmpty()) m_timeline.video << makeTrack(TrackKind::Video, "V1");
@@ -72,6 +90,7 @@ void Project::load(const ProjectData& d)
     m_lastClipId = d.lastClipId;
     m_lastLinkId = d.lastLinkId;
     markSaved();
+    emit formatChanged();
     emit mediaChanged();
     emit timelineChanged();
 }
@@ -98,6 +117,32 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
     m_undo.push(new SnapshotCommand(this, text, m_timeline, after, key)); // push ruft redo()
 }
 
+bool Project::frameRateLocked() const
+{
+    for (const auto* tracks : {&m_timeline.video, &m_timeline.audio})
+        for (const Track& t : *tracks)
+            if (!t.clips.isEmpty()) return true;
+    return false;
+}
+
+void Project::setFormat(const ProjectFormat& format)
+{
+    ProjectFormat f = format;
+    if (frameRateLocked()) f.rate = m_format.rate;
+    if (f == m_format) return;
+    Timeline after = m_timeline;
+    scaleTimeline(after, m_format.size(), f.size());
+    m_undo.push(new FormatCommand(this, m_format, f, m_timeline, after)); // push ruft redo()
+}
+
+void Project::applyFormat(const ProjectFormat& format, const Timeline& tl)
+{
+    m_format = format;
+    m_timeline = tl;
+    emit formatChanged();
+    emit timelineChanged();
+}
+
 void Project::setTimeline(const Timeline& tl)
 {
     m_timeline = tl;
@@ -118,6 +163,12 @@ void Project::addMedia(const MediaInfo& info)
     m_mediaDirty = true;
     emit mediaChanged();
     emit modifiedChanged(true);
+}
+
+void Project::replaceMedia(const QVector<MediaInfo>& media)
+{
+    m_media = media;
+    emit mediaChanged();
 }
 
 void Project::markModified()
