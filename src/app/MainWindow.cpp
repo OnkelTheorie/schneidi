@@ -79,6 +79,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(f);
         else m_engine->seek(f);
     });
+    // Keyframes: Inspector zeigt Werte am Playhead, Pfeile ◀ ▶ springen wie ein Klick ins Lineal
+    connect(m_engine, &Engine::positionChanged, this, [this](int f) {
+        if (m_engine->mode() == Engine::Mode::Timeline) m_inspector->setPlayhead(f);
+    });
+    connect(m_inspector, &Inspector::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_mediaPool, &MediaPool::sourceRequested, m_engine, &Engine::showSource);
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
     // Effects Library: Doppelklick = wie Strg+T bzw. "Titel einfügen", nur mit der gewählten Art

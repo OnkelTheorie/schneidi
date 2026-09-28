@@ -4,6 +4,7 @@
 #include "core/EffectRegistry.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
+#include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
@@ -18,6 +19,7 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
+#include <QMenu>
 #include <QPainter>
 #include <QPixmap>
 #include <QPlainTextEdit>
@@ -213,6 +215,8 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         c.transform.posY = d.posY;
         c.transform.rotation = d.rotation;
         c.transform.transformOn = true;
+        for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation})
+            Keys::clear(c, p);
     }, [](Clip& c) -> bool& { return c.transform.transformOn; });
 
     auto* link = new QToolButton;
@@ -228,42 +232,52 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     connect(link, &QToolButton::toggled, this, [this](bool on) { m_zoomLinked = on; });
     const auto zoom = addXY(tr, "zoom", "Zoom", 0.0, 100.0, 1.0, 0.005, 3,
                             [](Clip& c) -> double& { return c.transform.zoomX; },
-                            [](Clip& c) -> double& { return c.transform.zoomY; }, link);
-    // gekoppelt: X und Y gemeinsam ändern
+                            [](Clip& c) -> double& { return c.transform.zoomY; }, link, AnimParam::ZoomX,
+                            AnimParam::ZoomY);
+    // gekoppelt: X und Y gemeinsam ändern (animiert: Keyframe am Playhead, wie DaVinci)
     zoom.first->edit->onChange = [this, zy = zoom.second](double v) {
         if (m_zoomLinked) zy->edit->setValue(v);
         apply(TrackKind::Video, "zoom", "Zoom", [this, v](Clip& c) {
-            c.transform.zoomX = v;
-            if (m_zoomLinked) c.transform.zoomY = v;
+            Keys::setValue(c, AnimParam::ZoomX, localFrame(c), v);
+            if (m_zoomLinked) Keys::setValue(c, AnimParam::ZoomY, localFrame(c), v);
         });
     };
     zoom.second->edit->onChange = [this, zx = zoom.first](double v) {
         if (m_zoomLinked) zx->edit->setValue(v);
         apply(TrackKind::Video, "zoom", "Zoom", [this, v](Clip& c) {
-            c.transform.zoomY = v;
-            if (m_zoomLinked) c.transform.zoomX = v;
+            Keys::setValue(c, AnimParam::ZoomY, localFrame(c), v);
+            if (m_zoomLinked) Keys::setValue(c, AnimParam::ZoomX, localFrame(c), v);
         });
     };
     addXY(tr, "pos", "Position", -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.transform.posX; },
-          [](Clip& c) -> double& { return c.transform.posY; });
-    addSlider(tr, "rotation", "Rotation", -360, 360, 0, 0.2, 3, [](Clip& c) -> double& { return c.transform.rotation; });
+          [](Clip& c) -> double& { return c.transform.posY; }, nullptr, AnimParam::PosX, AnimParam::PosY);
+    addSlider(tr, "rotation", "Rotation", -360, 360, 0, 0.2, 3, [](Clip& c) -> double& { return c.transform.rotation; },
+              AnimParam::Rotation);
 
     // ---- Beschneiden ----
     Section crop = addSection(videoLay, V, T("Beschneiden"), [](Clip& c) {
         c.transform.cropLeft = c.transform.cropRight = c.transform.cropTop = c.transform.cropBottom = 0;
         c.transform.cropOn = true;
+        for (AnimParam p : {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom})
+            Keys::clear(c, p);
     }, [](Clip& c) -> bool& { return c.transform.cropOn; });
-    m_crop[0] = addSlider(crop, "cropLeft", T("Links"), 0, 960, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropLeft; });
-    m_crop[1] = addSlider(crop, "cropRight", T("Rechts"), 0, 960, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropRight; });
-    m_crop[2] = addSlider(crop, "cropTop", T("Oben"), 0, 540, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropTop; });
-    m_crop[3] = addSlider(crop, "cropBottom", T("Unten"), 0, 540, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropBottom; });
+    m_crop[0] = addSlider(crop, "cropLeft", T("Links"), 0, 960, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropLeft; },
+                          AnimParam::CropLeft);
+    m_crop[1] = addSlider(crop, "cropRight", T("Rechts"), 0, 960, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropRight; },
+                          AnimParam::CropRight);
+    m_crop[2] = addSlider(crop, "cropTop", T("Oben"), 0, 540, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropTop; },
+                          AnimParam::CropTop);
+    m_crop[3] = addSlider(crop, "cropBottom", T("Unten"), 0, 540, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropBottom; },
+                          AnimParam::CropBottom);
 
     // ---- Composite ----
     Section comp = addSection(videoLay, V, "Composite", [](Clip& c) {
         c.transform.opacity = 100;
         c.transform.compositeOn = true;
+        Keys::clear(c, AnimParam::Opacity);
     }, [](Clip& c) -> bool& { return c.transform.compositeOn; });
-    addSlider(comp, "opacity", T("Deckkraft"), 0, 100, 100, 0.5, 2, [](Clip& c) -> double& { return c.transform.opacity; });
+    addSlider(comp, "opacity", T("Deckkraft"), 0, 100, 100, 0.5, 2, [](Clip& c) -> double& { return c.transform.opacity; },
+              AnimParam::Opacity);
 
     // ---- Green Screen (Effekt aus der EffectRegistry) ----
     Section key = addSection(videoLay, V, "Green Screen", [](Clip& c) {
@@ -321,11 +335,13 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     Section vol = addSection(audioLay, A, T("Lautstärke"), [](Clip& c) {
         c.volumeDb = 0;
         c.pan = 0;
+        Keys::clear(c, AnimParam::Volume);
+        Keys::clear(c, AnimParam::Pan);
     });
     Param* volume = addSlider(vol, "volume", T("Lautstärke"), kMinVolumeDb, kMaxVolumeDb, 0, 0.1, 2,
-                              [](Clip& c) -> double& { return c.volumeDb; });
+                              [](Clip& c) -> double& { return c.volumeDb; }, AnimParam::Volume);
     volume->edit->setMinimumText("-∞");
-    addSlider(vol, "pan", "Pan", -100, 100, 0, 1, 2, [](Clip& c) -> double& { return c.pan; });
+    addSlider(vol, "pan", "Pan", -100, 100, 0, 1, 2, [](Clip& c) -> double& { return c.pan; }, AnimParam::Pan);
     audioLay->addStretch(1);
 
     // ---- Gesamtaufbau ----
@@ -372,6 +388,8 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
         t.align = d.align;
         t.posX = d.posX;
         t.posY = d.posY;
+        for (AnimParam p : {AnimParam::TitleSize, AnimParam::TitleColor, AnimParam::TitlePosX, AnimParam::TitlePosY})
+            Keys::clear(c, p);
     }, {}, true);
 
     auto* edit = new QPlainTextEdit;
@@ -411,8 +429,9 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     txt.grid->addWidget(fontBox, txt.rows++, 1);
 
     addSlider(txt, "titleSize", T("Größe"), 1, 400, TitleStyle().size, 0.5, 1,
-              [](Clip& c) -> double& { return c.title.size; });
-    addColor(txt, T("Farbe"), T("Textfarbe"), [](Clip& c) -> QColor& { return c.title.color; }, true);
+              [](Clip& c) -> double& { return c.title.size; }, AnimParam::TitleSize);
+    addColor(txt, T("Farbe"), T("Textfarbe"), [](Clip& c) -> QColor& { return c.title.color; }, true, {},
+             AnimParam::TitleColor);
 
     // Stil + Ausrichtung in einer Zeile
     auto* bold = toggleButton();
@@ -463,7 +482,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     txt.grid->addLayout(styleBox, txt.rows++, 1);
 
     addXY(txt, "titlePos", "Position", -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
-          [](Clip& c) -> double& { return c.title.posY; });
+          [](Clip& c) -> double& { return c.title.posY; }, nullptr, AnimParam::TitlePosX, AnimParam::TitlePosY);
 
     // ---- Umrandung / Hintergrund (roter Punkt; Wert ändern schaltet ein) ----
     auto autoOn = [this, V](Param* p, const QString& key, const QString& text, const Flag& on) {
@@ -503,7 +522,8 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
 }
 
 void Inspector::addColor(Section& s, const QString& label, const QString& text,
-                         const std::function<QColor&(Clip&)>& color, bool alpha, const std::function<void(Clip&)>& also)
+                         const std::function<QColor&(Clip&)>& color, bool alpha, const std::function<void(Clip&)>& also,
+                         std::optional<AnimParam> anim)
 {
     auto* swatch = new QToolButton;
     swatch->setFixedSize(46, 18);
@@ -515,19 +535,23 @@ void Inspector::addColor(Section& s, const QString& label, const QString& text,
         const Clip* c = primary(kind, title);
         if (!c) return;
         Clip copy = *c;
-        const QColor col = QColorDialog::getColor(color(copy), this, T("%1 wählen").arg(text),
+        const QColor cur = anim ? Keys::toColor(Keys::valueAt(copy, *anim, localFrame(copy))) : color(copy);
+        const QColor col = QColorDialog::getColor(cur, this, T("%1 wählen").arg(text),
                                                   alpha ? QColorDialog::ShowAlphaChannel : QColorDialog::ColorDialogOptions());
         if (!col.isValid()) return;
-        apply(kind, {}, text, [color, col, also](Clip& clip) {
-            color(clip) = col;
+        apply(kind, {}, text, [this, color, col, also, anim](Clip& clip) {
+            if (anim) Keys::setValue(clip, *anim, localFrame(clip), Keys::fromColor(col)); // animiert -> Keyframe
+            else color(clip) = col;
             if (also) also(clip);
         }, title);
     });
     m_refreshers << [=] {
         if (const Clip* c = primary(kind, title)) {
             Clip copy = *c;
-            swatch->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid #141417; border-radius: 2px; }")
-                                      .arg(color(copy).name(QColor::HexArgb)));
+            const QColor col = anim ? Keys::toColor(Keys::valueAt(copy, *anim, localFrame(copy))) : color(copy);
+            const QString css = QString("QToolButton { background: %1; border: 1px solid #141417; border-radius: 2px; }")
+                                    .arg(col.name(QColor::HexArgb));
+            if (swatch->styleSheet() != css) swatch->setStyleSheet(css); // beim Abspielen nur bei Änderung
         }
     };
     auto* row = new QHBoxLayout;
@@ -536,6 +560,7 @@ void Inspector::addColor(Section& s, const QString& label, const QString& text,
     row->addWidget(swatch);
     s.grid->addWidget(rowLabel(label), s.rows, 0);
     s.grid->addLayout(row, s.rows, 1);
+    if (anim) s.grid->addWidget(keyButtons(kind, title, {*anim}), s.rows, 3);
     ++s.rows;
 }
 
@@ -573,6 +598,114 @@ QLabel* Inspector::rowLabel(const QString& text)
     l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     l->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
     return l;
+}
+
+int Inspector::localFrame(const Clip& c) const
+{
+    return std::clamp(m_playhead - c.start, 0, std::max(0, c.length() - 1));
+}
+
+void Inspector::setPlayhead(int frame)
+{
+    if (frame == m_playhead) return;
+    m_playhead = frame;
+    // Nur neu anzeigen, wenn sich etwas ändern kann (beim Abspielen jedes Frame)
+    const Clip* shown[] = {primary(TrackKind::Video), primary(TrackKind::Audio)};
+    if (std::any_of(std::begin(shown), std::end(shown), [](const Clip* c) { return c && Keys::hasKeys(*c); })) refresh();
+}
+
+QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimParam>& params)
+{
+    auto* box = new QWidget;
+    auto* lay = new QHBoxLayout(box);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(0);
+    auto button = [&](const QString& text, const QString& tip) {
+        auto* b = new QToolButton;
+        b->setText(text);
+        b->setToolTip(tip);
+        b->setAutoRaise(true);
+        b->setFocusPolicy(Qt::NoFocus);
+        b->setFixedSize(10, 18);
+        lay->addWidget(b);
+        return b;
+    };
+    QToolButton* prev = button("◀", T("Voriger Keyframe"));
+    QToolButton* diamond = button("◆", T("Keyframe setzen/entfernen (Rechtsklick: Verlauf)"));
+    QToolButton* next = button("▶", T("Nächster Keyframe"));
+    diamond->setFixedSize(14, 18);
+    const QString arrowCss = QString("QToolButton { color: %1; border: none; padding: 0px; font-size: 6pt; }"
+                                     "QToolButton:disabled { color: transparent; }").arg(Theme::textDim.name());
+    prev->setStyleSheet(arrowCss);
+    next->setStyleSheet(arrowCss);
+
+    // Keyframe am Playhead für alle Parameter der Zeile?
+    auto onKey = [this, params](const Clip& c) {
+        return std::all_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::keyAt(c, p, localFrame(c)); });
+    };
+    connect(diamond, &QToolButton::clicked, this, [=] {
+        const Clip* c = primary(kind, title);
+        if (!c) return;
+        m_editor->setKeyframes(selectedIds(kind, title), params, m_playhead, !onKey(*c));
+    });
+    // Springen: nur Keyframes innerhalb des Clips (nach Trimmen können welche außerhalb liegen)
+    auto jump = [=](bool forward) {
+        const Clip* c = primary(kind, title);
+        if (!c) return;
+        const int t = localFrame(*c);
+        std::optional<int> best;
+        for (int k : Keys::keyTimes(*c, params)) {
+            if (k < 0 || k >= c->length()) continue;
+            if (forward ? k > t && (!best || k < *best) : k < t && (!best || k > *best)) best = k;
+        }
+        if (best) emit seekRequested(c->start + *best);
+    };
+    connect(prev, &QToolButton::clicked, this, [jump] { jump(false); });
+    connect(next, &QToolButton::clicked, this, [jump] { jump(true); });
+
+    // Rechtsklick auf die Raute: Verlauf wie DaVinci
+    diamond->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(diamond, &QWidget::customContextMenuRequested, this, [=](const QPoint& pos) {
+        const Clip* c = primary(kind, title);
+        if (!c || !onKey(*c)) return;
+        const Keyframe* k = Keys::keyAt(*c, params.first(), localFrame(*c));
+        QMenu menu(this);
+        const struct { KeyEase ease; const char* name; } eases[] = {
+            {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
+            {KeyEase::EaseInOut, "Ease In and Out"}};
+        for (const auto& e : eases) {
+            QAction* a = menu.addAction(e.name); // wie DaVinci auch deutsch englisch
+            a->setCheckable(true);
+            a->setChecked(k && k->ease == e.ease);
+            connect(a, &QAction::triggered, this, [=, ease = e.ease] {
+                m_editor->setKeyframeEase(selectedIds(kind, title), params, m_playhead, ease);
+            });
+        }
+        menu.exec(diamond->mapToGlobal(pos));
+    });
+
+    m_refreshers << [=] {
+        const Clip* c = primary(kind, title);
+        if (!c) return;
+        const bool animated = std::any_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::animated(*c, p); });
+        const bool here = animated && onKey(*c);
+        // Raute: leer = kein Keyframe hier, rot gefüllt = Keyframe am Playhead (wie DaVinci)
+        const QString text = here ? "◆" : "◇";
+        const QString css = QString("QToolButton { color: %1; border: none; padding: 0px; font-size: 10pt; }")
+                                .arg(here ? "#e8414a" : animated ? Theme::text.name() : Theme::textDim.name());
+        if (diamond->text() != text) diamond->setText(text);
+        if (diamond->styleSheet() != css) diamond->setStyleSheet(css);
+        const int t = localFrame(*c);
+        bool before = false, after = false;
+        for (int k : Keys::keyTimes(*c, params)) {
+            if (k < 0 || k >= c->length()) continue;
+            before |= k < t;
+            after |= k > t;
+        }
+        prev->setEnabled(before);
+        next->setEnabled(after);
+    };
+    return box;
 }
 
 Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, const QString& title,
@@ -621,9 +754,9 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
     auto* body = new QWidget;
     auto* grid = new QGridLayout(body);
     grid->setContentsMargins(10, 6, 4, 8);
-    grid->setHorizontalSpacing(8);
+    grid->setHorizontalSpacing(6);
     grid->setVerticalSpacing(4);
-    grid->setColumnMinimumWidth(0, 90);
+    grid->setColumnMinimumWidth(0, 72);
     grid->setColumnStretch(1, 1);
     connect(toggle, &QToolButton::toggled, body, &QWidget::setVisible);
 
@@ -633,16 +766,21 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
 }
 
 Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, const QString& text, double min,
-                                       double max, double def, double step, int decimals, const Field& field)
+                                       double max, double def, double step, int decimals, const Field& field,
+                                       std::optional<AnimParam> anim)
 {
-    auto* p = new Param{s.kind, s.title, field, new ScrubField(min, max, step, decimals), nullptr, min, max};
+    auto* p = new Param{s.kind, s.title, field, new ScrubField(min, max, step, decimals), nullptr, min, max, anim};
     p->edit->setValue(def);
     p->edit->onChange = [this, p, key, text, field](double v) {
         if (p->slider) {
             const QSignalBlocker b(p->slider);
             p->slider->setValue(sliderPos(v, p->min, p->max));
         }
-        apply(p->kind, key, text, [field, v](Clip& c) { field(c) = v; }, p->title);
+        apply(p->kind, key, text, [this, p, field, v](Clip& c) {
+            // animiert: Wert ändern setzt einen Keyframe am Playhead (wie DaVinci)
+            if (p->anim) Keys::setValue(c, *p->anim, localFrame(c), v);
+            else field(c) = v;
+        }, p->title);
     };
     p->edit->onFinish = [this] { m_editor->project()->closeMerge(); };
     m_params << p;
@@ -650,9 +788,10 @@ Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, con
 }
 
 Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QString& label, double min, double max,
-                                       double def, double step, int decimals, const Field& field)
+                                       double def, double step, int decimals, const Field& field,
+                                       std::optional<AnimParam> anim)
 {
-    Param* p = makeParam(s, key, label, min, max, def, step, decimals, field);
+    Param* p = makeParam(s, key, label, min, max, def, step, decimals, field, anim);
     auto* slider = new QSlider(Qt::Horizontal);
     slider->setRange(0, kSliderSteps);
     slider->setFocusPolicy(Qt::NoFocus); // Pfeiltasten bleiben bei der Timeline
@@ -677,6 +816,7 @@ Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QSt
         if (p->edit->onChange) p->edit->onChange(def);
         if (p->edit->onFinish) p->edit->onFinish();
     }), s.rows, 2);
+    if (anim) s.grid->addWidget(keyButtons(s.kind, s.title, {*anim}), s.rows, 3);
     ++s.rows;
     return p;
 }
@@ -684,10 +824,11 @@ Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QSt
 QPair<Inspector::Param*, Inspector::Param*> Inspector::addXY(Section& s, const QString& key, const QString& label,
                                                              double min, double max, double def, double step,
                                                              int decimals, const Field& x, const Field& y,
-                                                             QToolButton* link)
+                                                             QToolButton* link, std::optional<AnimParam> ax,
+                                                             std::optional<AnimParam> ay)
 {
-    Param* px = makeParam(s, key + "X", label + " X", min, max, def, step, decimals, x);
-    Param* py = makeParam(s, key + "Y", label + " Y", min, max, def, step, decimals, y);
+    Param* px = makeParam(s, key + "X", label + " X", min, max, def, step, decimals, x, ax);
+    Param* py = makeParam(s, key + "Y", label + " Y", min, max, def, step, decimals, y, ay);
     auto* box = new QHBoxLayout;
     box->setContentsMargins(0, 0, 0, 0);
     box->setSpacing(4);
@@ -700,12 +841,15 @@ QPair<Inspector::Param*, Inspector::Param*> Inspector::addXY(Section& s, const Q
     box->addWidget(py->edit);
     s.grid->addWidget(rowLabel(label), s.rows, 0);
     s.grid->addLayout(box, s.rows, 1);
-    s.grid->addWidget(resetButton([this, kind = s.kind, title = s.title, label, x, y, def] {
-        apply(kind, {}, T("%1 zurücksetzen").arg(label), [x, y, def](Clip& c) {
-            x(c) = def;
-            y(c) = def;
+    s.grid->addWidget(resetButton([this, kind = s.kind, title = s.title, label, x, y, def, ax, ay] {
+        apply(kind, {}, T("%1 zurücksetzen").arg(label), [this, x, y, def, ax, ay](Clip& c) {
+            if (ax) Keys::setValue(c, *ax, localFrame(c), def);
+            else x(c) = def;
+            if (ay) Keys::setValue(c, *ay, localFrame(c), def);
+            else y(c) = def;
         }, title);
     }), s.rows, 2);
+    if (ax && ay) s.grid->addWidget(keyButtons(s.kind, s.title, {*ax, *ay}), s.rows, 3);
     ++s.rows;
     return {px, py};
 }
@@ -942,7 +1086,7 @@ void Inspector::refresh()
         const Clip* c = p->title ? t : p->kind == TrackKind::Video ? v : a;
         if (!c) continue;
         Clip copy = *c;
-        const double val = p->field(copy);
+        const double val = p->anim ? Keys::valueAt(copy, *p->anim, localFrame(copy)) : p->field(copy);
         p->edit->setValue(val);
         if (p->slider) {
             const QSignalBlocker b(p->slider);

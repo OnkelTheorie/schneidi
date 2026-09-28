@@ -18,6 +18,7 @@ add_executable(schneidi
     src/core/I18n.h               src/core/I18n.cpp
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
+    src/core/Keyframes.h          src/core/Keyframes.cpp
     src/core/Project.h            src/core/Project.cpp
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/Selection.h

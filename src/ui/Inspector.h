@@ -6,6 +6,7 @@
 #include <QSize>
 #include <QWidget>
 #include <functional>
+#include <optional>
 
 class Editor;
 class QButtonGroup;
@@ -28,6 +29,14 @@ public:
     ~Inspector() override;
     void setFrameSize(const QSize& size);
 
+public slots:
+    // Playhead (Timeline-Frame): Werte zeigen den interpolierten Wert dort, Keyframes werden dort gesetzt
+    void setPlayhead(int frame);
+
+signals:
+    // Keyframe-Pfeile ◀ ▶: zum vorigen/nächsten Keyframe springen
+    void seekRequested(int frame);
+
 private:
     using Field = std::function<double&(Clip&)>;
     using Flag = std::function<bool&(Clip&)>;
@@ -39,6 +48,7 @@ private:
         ScrubField* edit;
         QSlider* slider = nullptr;
         double min, max;
+        std::optional<AnimParam> anim; // animierbar: Wert kommt aus Keys::valueAt, Ändern setzt ggf. Keyframe
     };
     struct Section {
         QGridLayout* grid;
@@ -52,20 +62,28 @@ private:
     Section addSection(QVBoxLayout* page, TrackKind kind, const QString& title, const std::function<void(Clip&)>& reset,
                        const Flag& enabled = {}, bool titleOnly = false);
     // Zeile mit Schieberegler + Zahlenfeld
+    // anim: animierbarer Parameter -> Keyframe-Rauten rechts (field bleibt für nicht animierbare Werte)
     Param* addSlider(Section& s, const QString& key, const QString& label, double min, double max, double def,
-                     double step, int decimals, const Field& field);
+                     double step, int decimals, const Field& field, std::optional<AnimParam> anim = {});
     // Zeile mit X/Y-Feldern (wie Zoom/Position in DaVinci); link = Kettensymbol dazwischen
     QPair<Param*, Param*> addXY(Section& s, const QString& key, const QString& label, double min, double max,
                                 double def, double step, int decimals, const Field& x, const Field& y,
-                                QToolButton* link = nullptr);
+                                QToolButton* link = nullptr, std::optional<AnimParam> ax = {},
+                                std::optional<AnimParam> ay = {});
     Param* makeParam(const Section& s, const QString& key, const QString& text, double min, double max, double def,
-                     double step, int decimals, const Field& field);
+                     double step, int decimals, const Field& field, std::optional<AnimParam> anim = {});
+    // Keyframe-Knöpfe wie DaVinci: ◀ Raute ▶ (Raute rot = Keyframe am Playhead; Klick setzt/entfernt,
+    // Rechtsklick = Verlauf); gilt für alle Parameter der Zeile
+    QWidget* keyButtons(TrackKind kind, bool title, const QVector<AnimParam>& params);
+    // Clip-Frame unter dem Playhead (auf den Clip begrenzt)
+    int localFrame(const Clip& c) const;
     QToolButton* resetButton(const std::function<void()>& fn);
     QLabel* rowLabel(const QString& text);
 
     // Zeile mit Farbfeld (QColorDialog); alpha = Deckkraft wählbar, also = zusätzlich beim Übernehmen
+    // anim: animierbare Farbe (Titelfarbe)
     void addColor(Section& s, const QString& label, const QString& text, const std::function<QColor&(Clip&)>& color,
-                  bool alpha, const std::function<void(Clip&)>& also = {});
+                  bool alpha, const std::function<void(Clip&)>& also = {}, std::optional<AnimParam> anim = {});
     void buildTitlePage(QVBoxLayout* page);
     void buildTransitionPage(QVBoxLayout* page);
     // Ausgewählter Übergang (Spurart + wirksame Lage), sonst false
@@ -80,6 +98,7 @@ private:
 
     Editor* m_editor;
     QSize m_frameSize{1920, 1080};
+    int m_playhead = 0;
     QLabel* m_clipName;
     QLabel* m_empty;
     QWidget* m_content;
