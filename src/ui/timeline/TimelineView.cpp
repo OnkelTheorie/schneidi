@@ -345,6 +345,22 @@ void TimelineView::drawRuler(QPainter& p)
             p.drawText(x + 3, 12, Timecode::format(fr, fps));
         }
     }
+    // In/Out-Bereich (I/O): heller Balken im Lineal mit Klammern an den Enden
+    const Timeline& tlm = m_editor->project()->timeline();
+    if (tlm.markIn >= 0 || tlm.markOut >= 0) {
+        const double xIn = tlm.markIn >= 0 ? frameToX(tlm.markIn) : kHeaderW - 1;
+        const double xOut = tlm.markOut >= 0 ? frameToX(tlm.markOut + 1) : width() + 1;
+        p.fillRect(QRectF(xIn, kRulerH - 16, xOut - xIn, 16), QColor(255, 255, 255, 40));
+        p.setPen(QPen(Theme::text, 2));
+        if (tlm.markIn >= 0) {
+            p.drawLine(QPointF(xIn + 1, kRulerH - 16), QPointF(xIn + 1, kRulerH - 1));
+            p.drawLine(QPointF(xIn + 1, kRulerH - 15), QPointF(xIn + 5, kRulerH - 15));
+        }
+        if (tlm.markOut >= 0) {
+            p.drawLine(QPointF(xOut - 1, kRulerH - 16), QPointF(xOut - 1, kRulerH - 1));
+            p.drawLine(QPointF(xOut - 1, kRulerH - 15), QPointF(xOut - 5, kRulerH - 15));
+        }
+    }
     // Marker (M) als kleine blaue Fähnchen wie in DaVinci
     p.setRenderHint(QPainter::Antialiasing);
     for (int m : m_editor->project()->timeline().markers) {

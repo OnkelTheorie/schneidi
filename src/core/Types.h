@@ -81,6 +81,8 @@ struct Timeline {
     QVector<Track> video; // [0] = V1 (unterste Spur)
     QVector<Track> audio; // [0] = A1
     QVector<int> markers; // Timeline-Marker (Frames, sortiert)
+    int markIn = -1;      // In-/Out-Punkt (I/O), -1 = nicht gesetzt; Out ist das letzte Frame im Bereich
+    int markOut = -1;
 
     QVector<Track>& tracks(TrackKind k) { return k == TrackKind::Video ? video : audio; }
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }

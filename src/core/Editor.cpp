@@ -258,6 +258,31 @@ void Editor::toggleMarker(int frame)
     });
 }
 
+void Editor::setMarkIn(int frame)
+{
+    if (frame == m_project->timeline().markIn) return;
+    m_project->edit(frame < 0 ? "In-Punkt entfernen" : "In-Punkt setzen", [&](Timeline& tl) {
+        tl.markIn = frame;
+        if (frame >= 0 && tl.markOut >= 0 && tl.markOut < frame) tl.markOut = -1;
+    });
+}
+
+void Editor::setMarkOut(int frame)
+{
+    if (frame == m_project->timeline().markOut) return;
+    m_project->edit(frame < 0 ? "Out-Punkt entfernen" : "Out-Punkt setzen", [&](Timeline& tl) {
+        tl.markOut = frame;
+        if (frame >= 0 && tl.markIn > frame) tl.markIn = -1;
+    });
+}
+
+void Editor::clearMarks()
+{
+    const Timeline& t = m_project->timeline();
+    if (t.markIn < 0 && t.markOut < 0) return;
+    m_project->edit("In/Out entfernen", [](Timeline& tl) { tl.markIn = tl.markOut = -1; });
+}
+
 void Editor::copySelection()
 {
     const Timeline& tl = m_project->timeline();

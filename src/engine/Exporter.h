@@ -20,6 +20,7 @@ struct ExportSettings {
     int crf = 20;             // Qualität: kleiner = besser
     QString preset = "medium"; // Geschwindigkeit vs. Dateigröße
     int audioBitrateK = 192;
+    int from = 0, to = -1; // Bereich (Frames, inklusive); to < 0 = bis zum Ende der Timeline
 };
 
 // Rendert die Timeline in eine Datei. Eigene Producer-Instanzen,
@@ -48,5 +49,6 @@ private:
     std::unique_ptr<Mlt::Consumer> m_consumer;
     QTimer m_timer;
     int m_length = 0;
+    int m_from = 0;
     QString m_path;
 };

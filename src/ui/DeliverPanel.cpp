@@ -2,6 +2,9 @@
 
 #include "core/Project.h"
 #include "engine/Exporter.h"
+#include <algorithm>
+#include <QStandardItemModel>
+#include "core/Timecode.h"
 
 #include <QComboBox>
 #include <QDir>
@@ -72,6 +75,13 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_quality->addItem("Mittel", 22);
     m_quality->addItem("Klein", 28);
 
+    // Wie DaVinci: "Render: Entire Timeline / In/Out Range"
+    m_range = new QComboBox;
+    m_range->addItem("Ganze Timeline");
+    m_range->addItem("In/Out-Bereich");
+    connect(project, &Project::timelineChanged, this, &DeliverPanel::updateRange);
+    updateRange();
+
     auto* form = new QFormLayout;
     form->setContentsMargins(12, 12, 12, 12);
     form->setVerticalSpacing(8);
@@ -82,6 +92,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow("Auflösung", m_resolution);
     form->addRow("Bildrate", new QLabel(QString("%1 fps").arg(project->fps())));
     form->addRow("Qualität", m_quality);
+    form->addRow("Bereich", m_range);
 
     m_renderBtn = new QPushButton("Rendern");
     m_renderBtn->setMinimumHeight(30);
@@ -120,6 +131,23 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_preset->setCurrentIndex(1);
 }
 
+void DeliverPanel::updateRange()
+{
+    // Bereich nur wählbar, wenn In oder Out gesetzt ist; dann automatisch vorgewählt
+    const Timeline& tl = m_project->timeline();
+    const bool has = tl.markIn >= 0 || tl.markOut >= 0;
+    const int fps = m_project->fps();
+    m_range->setItemText(1, has ? "In/Out-Bereich" : "In/Out-Bereich (nicht gesetzt)");
+    m_range->setToolTip(has ? QString("%1 – %2")
+                                  .arg(tl.markIn >= 0 ? Timecode::format(tl.markIn, fps) : "Anfang",
+                                       tl.markOut >= 0 ? Timecode::format(tl.markOut, fps) : "Ende")
+                            : "In/Out mit I und O in der Timeline setzen");
+    auto* model = qobject_cast<QStandardItemModel*>(m_range->model());
+    if (auto* item = model ? model->item(1) : nullptr) item->setEnabled(has);
+    if (has != m_hadRange || (!has && m_range->currentIndex() == 1)) m_range->setCurrentIndex(has ? 1 : 0);
+    m_hadRange = has;
+}
+
 void DeliverPanel::applyPreset(int index)
 {
     const Preset& p = kPresets[index];
@@ -154,6 +182,11 @@ void DeliverPanel::startRender()
     s.videoCodec = m_codec->currentData().toString();
     s.profile = m_resolution->currentData().toString();
     s.crf = m_quality->currentData().toInt();
+    if (m_range->currentIndex() == 1) {
+        const Timeline& tl = m_project->timeline();
+        s.from = std::max(0, tl.markIn);
+        s.to = tl.markOut;
+    }
     QString error;
     if (!m_exporter->start(m_project->timeline(), s, &error)) {
         m_status->setText(error);

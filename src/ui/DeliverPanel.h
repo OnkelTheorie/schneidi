@@ -16,6 +16,7 @@ public:
     DeliverPanel(Project* project, QWidget* parent = nullptr);
 
 private:
+    void updateRange();
     void applyPreset(int index);
     void startRender();
     void browse();
@@ -28,6 +29,8 @@ private:
     QComboBox* m_codec;
     QComboBox* m_resolution;
     QComboBox* m_quality;
+    QComboBox* m_range; // ganze Timeline / In-Out-Bereich
+    bool m_hadRange = false;
     QPushButton* m_renderBtn;
     QProgressBar* m_progress;
     QLabel* m_status;

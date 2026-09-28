@@ -51,6 +51,7 @@ private:
                        const std::function<void()>& fn);
     void jumpToEdit(int direction);
     void jumpToMarker(int direction);
+    void jumpToFrame(int frame);
     void jumpTo(const QVector<int>& points, int direction);
     void stepFrames(int frames);
     void shuttle(int direction);

@@ -334,6 +334,13 @@ void MainWindow::buildActions()
     timeline->addSeparator();
     makeAction(timeline, "add_marker", "Marker setzen/entfernen", QKeySequence("M"),
                [this, tv] { m_editor->toggleMarker(tv->playhead()); });
+    makeAction(timeline, "mark_in", "In-Punkt setzen", QKeySequence("I"), [this, tv] { m_editor->setMarkIn(tv->playhead()); });
+    makeAction(timeline, "mark_out", "Out-Punkt setzen", QKeySequence("O"), [this, tv] { m_editor->setMarkOut(tv->playhead()); });
+    makeAction(timeline, "clear_in", "In-Punkt entfernen", QKeySequence("Alt+I"), [this] { m_editor->setMarkIn(-1); });
+    makeAction(timeline, "clear_out", "Out-Punkt entfernen", QKeySequence("Alt+O"), [this] { m_editor->setMarkOut(-1); });
+    makeAction(timeline, "clear_in_out", "In und Out entfernen", QKeySequence("Alt+X"), [this] { m_editor->clearMarks(); });
+    makeAction(timeline, "goto_in", "Zum In-Punkt", QKeySequence("Shift+I"), [this] { jumpToFrame(m_project->timeline().markIn); });
+    makeAction(timeline, "goto_out", "Zum Out-Punkt", QKeySequence("Shift+O"), [this] { jumpToFrame(m_project->timeline().markOut); });
     makeAction(timeline, "marker_prev", "Vorheriger Marker", QKeySequence("Shift+Up"), [this] { jumpToMarker(-1); });
     makeAction(timeline, "marker_next", "Nächster Marker", QKeySequence("Shift+Down"), [this] { jumpToMarker(1); });
     auto* linked = makeAction(timeline, "linked_selection", "Verknüpfte Auswahl", QKeySequence("Ctrl+Shift+L"), [] {});
@@ -650,7 +657,13 @@ void MainWindow::jumpTo(const QVector<int>& points, int direction)
         if (direction < 0 && e < pos) best = std::max(best, e);
     }
     if (best == INT_MAX || best < 0) return;
+    jumpToFrame(best);
+}
+
+void MainWindow::jumpToFrame(int frame)
+{
+    if (frame < 0) return;
     m_engine->pause();
-    if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(best);
-    else m_engine->seek(best);
+    if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(frame);
+    else m_engine->seek(frame);
 }

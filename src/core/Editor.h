@@ -56,6 +56,10 @@ public:
     // Ausgewählte Clips verknüpfen, bzw. trennen, wenn sie schon verknüpft sind
     void toggleLinkSelection();
     void toggleMarker(int frame);
+    // In-/Out-Punkt (I/O wie DaVinci); -1 = entfernen. Liegt Out vor In, wird der andere Punkt verworfen.
+    void setMarkIn(int frame);
+    void setMarkOut(int frame);
+    void clearMarks();
 
     // Zwischenablage (Strg+C/X/V): Einfügen am Playhead auf denselben Spuren, überschreibt
     void copySelection();

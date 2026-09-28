@@ -141,7 +141,8 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         {"app", "schneidi"},       {"version", kFormatVersion}, {"fps", data.fps},
         {"playhead", data.playhead}, {"lastClipId", data.lastClipId}, {"lastLinkId", data.lastLinkId},
         {"media", media},
-        {"timeline", QJsonObject{{"video", video}, {"audio", audio}, {"markers", markers}}},
+        {"timeline", QJsonObject{{"video", video}, {"audio", audio}, {"markers", markers},
+                                 {"markIn", data.timeline.markIn}, {"markOut", data.timeline.markOut}}},
     };
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
@@ -203,6 +204,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.timeline.audio = tracks(tl.value("audio").toArray(), TrackKind::Audio);
     for (const QJsonValue& v : tl.value("markers").toArray()) d.timeline.markers << v.toInt();
     std::sort(d.timeline.markers.begin(), d.timeline.markers.end());
+    d.timeline.markIn = tl.value("markIn").toInt(-1);
+    d.timeline.markOut = tl.value("markOut").toInt(-1);
 
     *data = d;
     return true;

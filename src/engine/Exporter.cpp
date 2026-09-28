@@ -20,16 +20,19 @@ Exporter::~Exporter()
 bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error)
 {
     if (isRunning()) return false;
-    m_length = TimelineOps::endFrame(tl);
-    if (m_length <= 0) {
-        if (error) *error = "Die Timeline ist leer.";
+    const int end = TimelineOps::endFrame(tl);
+    m_from = std::clamp(s.from, 0, std::max(0, end - 1));
+    const int to = s.to < 0 ? end - 1 : std::min(s.to, end - 1);
+    m_length = to - m_from + 1;
+    if (end <= 0 || m_length <= 0) {
+        if (error) *error = end <= 0 ? "Die Timeline ist leer." : "Der In/Out-Bereich enthält nichts.";
         return false;
     }
 
     m_profile = std::make_unique<Mlt::Profile>(s.profile.toUtf8().constData());
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
     m_tractor = m_builder->build(tl);
-    m_tractor->set_in_and_out(0, m_length - 1);
+    m_tractor->set_in_and_out(m_from, m_from + m_length - 1);
 
     m_consumer = std::make_unique<Mlt::Consumer>(*m_profile, "avformat", s.path.toUtf8().constData());
     if (!m_consumer->is_valid()) {
@@ -50,7 +53,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
 
     m_path = s.path;
     m_tractor->set_speed(1);
-    m_tractor->seek(0);
+    m_tractor->seek(m_from);
     if (m_consumer->start() != 0) {
         if (error) *error = "Export konnte nicht gestartet werden.";
         cleanup();
@@ -71,7 +74,7 @@ void Exporter::poll()
         emit finished(true, QString("Export fertig: %1").arg(path));
         return;
     }
-    const int pos = m_tractor->position();
+    const int pos = m_tractor->position() - m_from;
     emit progress(std::clamp(pos * 100 / std::max(1, m_length), 0, 99));
 }
 
