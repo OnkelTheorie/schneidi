@@ -20,6 +20,10 @@ public:
 
     bool linkedSelection() const { return m_linkedSelection; }
     void setLinkedSelection(bool on) { m_linkedSelection = on; }
+    // Schnitt am Playhead: an = auf allen Spuren der Auswahl (auch der nächste Clip daneben),
+    // aus = nur die ausgewählten Clips. Ohne Auswahl immer alle Clips unter dem Playhead.
+    bool splitOnSelectedTracks() const { return m_splitOnSelectedTracks; }
+    void setSplitOnSelectedTracks(bool on) { m_splitOnSelectedTracks = on; }
 
     // Clip + verknüpfte Partner (falls "Linked Selection" an ist)
     QVector<int> withLinked(const QVector<int>& ids) const;
@@ -72,5 +76,6 @@ private:
     Project* m_project;
     Selection* m_selection;
     bool m_linkedSelection = true;
+    bool m_splitOnSelectedTracks = true;
     QVector<ClipboardItem> m_clipboard; // Starts relativ zum frühesten Clip
 };

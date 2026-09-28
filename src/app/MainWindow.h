@@ -34,6 +34,7 @@ public:
     // Projektdatei (.schneidi): nur Verweise auf die Originalmedien + Schnitt
     bool openProject(const QString& path);
     void offerAutosaveRestore(); // nach Absturz: letzte automatische Sicherung anbieten
+    void disableAutosave();      // Testläufe: keine Sicherung schreiben/löschen
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -96,4 +97,6 @@ private:
     QString m_projectPath; // leer = noch nie gespeichert
     QMenu* m_recentMenu = nullptr;
     class QLabel* m_titleLabel = nullptr;
+    class QTimer* m_autosaveTimer = nullptr;
+    bool m_autosaveDisabled = false;
 };

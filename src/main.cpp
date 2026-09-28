@@ -51,8 +51,11 @@ int main(int argc, char* argv[])
     for (const QString& f : files)
         if (f.endsWith(QString(".%1").arg(ProjectFile::Extension))) projectFile = f;
     files.removeAll(projectFile);
+    // Testläufe (--demo/--actions) lassen die automatische Sicherung des Nutzers in Ruhe
+    const bool testRun = demo || !actions.isEmpty();
+    if (testRun) w.disableAutosave();
     if (!projectFile.isEmpty()) w.openProject(QFileInfo(projectFile).absoluteFilePath());
-    else w.offerAutosaveRestore();
+    else if (!testRun) w.offerAutosaveRestore();
     if (!files.isEmpty()) w.importFiles(files, demo);
     QTimer::singleShot(1500, &w, [actions] {
         for (const QString& id : actions)

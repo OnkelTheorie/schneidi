@@ -135,8 +135,24 @@ QVector<int> Editor::targetIds(int frame) const
 
 void Editor::splitAtPlayhead(int frame)
 {
-    // Wie DaVinci: mit Auswahl nur die ausgewählten Clips, sonst alle unter dem Playhead
-    const QVector<int> ids = targetIds(frame);
+    // Wie DaVinci: mit Auswahl nur die ausgewählten Clips, sonst alle unter dem Playhead.
+    // Optional: alle Clips auf den Spuren der Auswahl (Playhead steht schon auf dem Nachbarclip).
+    QVector<int> ids;
+    if (m_splitOnSelectedTracks && !m_selection->isEmpty()) {
+        const Timeline& tl = m_project->timeline();
+        const QVector<int> selected = withLinked(m_selection->ids().values().toVector());
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const auto& t : tl.tracks(k)) {
+                const bool hasSelected = std::any_of(t.clips.begin(), t.clips.end(),
+                                                     [&](const Clip& c) { return selected.contains(c.id); });
+                if (!hasSelected) continue;
+                for (const auto& c : t.clips)
+                    if (frame > c.start && frame < c.end()) ids << c.id;
+            }
+        ids = withLinked(ids);
+    } else {
+        ids = targetIds(frame);
+    }
     if (ids.isEmpty()) return;
     Project* p = m_project;
     p->edit("Schnitt am Playhead", [&](Timeline& tl) {

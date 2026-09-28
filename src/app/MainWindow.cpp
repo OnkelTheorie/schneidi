@@ -75,9 +75,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_project, &Project::modifiedChanged, this, &MainWindow::updateTitle);
     updateTitle();
     // Automatische Sicherung jede Minute (nur bei Änderungen), getrennt von der Projektdatei
-    auto* autosaveTimer = new QTimer(this);
-    connect(autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
-    autosaveTimer->start(60 * 1000);
+    m_autosaveTimer = new QTimer(this);
+    connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
+    m_autosaveTimer->start(60 * 1000);
 
 }
 
@@ -340,6 +340,16 @@ void MainWindow::buildActions()
     linked->setCheckable(true);
     linked->setChecked(m_editor->linkedSelection());
     connect(linked, &QAction::toggled, this, [this](bool on) { m_editor->setLinkedSelection(on); });
+    auto* splitTracks = makeAction(timeline, "split_on_tracks", "Teilen auf ganzer Spur der Auswahl", QKeySequence(), [] {});
+    splitTracks->setCheckable(true);
+    splitTracks->setToolTip("An: Strg+B/Maustaste teilt auch den Nachbarclip auf der Spur des ausgewählten Clips. "
+                            "Aus: nur ausgewählte Clips.");
+    splitTracks->setChecked(QSettings().value("edit/splitOnSelectedTracks", true).toBool());
+    m_editor->setSplitOnSelectedTracks(splitTracks->isChecked());
+    connect(splitTracks, &QAction::toggled, this, [this](bool on) {
+        m_editor->setSplitOnSelectedTracks(on);
+        QSettings().setValue("edit/splitOnSelectedTracks", on);
+    });
     timeline->addSeparator();
     makeAction(timeline, "zoom_in", "Hineinzoomen", QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
     makeAction(timeline, "zoom_out", "Herauszoomen", QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
@@ -516,8 +526,16 @@ void MainWindow::autosave()
         QSettings().setValue("autosave/projectPath", m_projectPath); // wohin die Sicherung gehört
 }
 
+void MainWindow::disableAutosave()
+{
+    m_autosaveTimer->stop();
+    m_autosaveDisabled = true;
+}
+
 void MainWindow::removeAutosave()
 {
+    if (m_autosaveDisabled) return; // Testlauf: echte Sicherung des Nutzers nicht anfassen
+
     QFile::remove(autosavePath());
     QSettings().remove("autosave/projectPath");
 }

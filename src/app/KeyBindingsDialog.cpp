@@ -3,11 +3,13 @@
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 
-#include <QComboBox>
 #include <QHBoxLayout>
 #include <QHash>
 #include <QHeaderView>
+#include <QKeyEvent>
 #include <QKeySequenceEdit>
+#include <QMouseEvent>
+#include <functional>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -16,6 +18,44 @@
 
 namespace {
 enum Column { ColCategory, ColText, ColKey, ColMouse, ColCount };
+
+// Maustaste einfach drücken statt aus einer Liste wählen (wie die Tasten-Spalte).
+// Entf/Rücktaste = entfernen, Esc oder Wegklicken = abbrechen.
+class MouseCapture : public QLabel {
+public:
+    explicit MouseCapture(std::function<void(int)> done) : m_done(std::move(done))
+    {
+        setText("Maustaste drücken …");
+        setFocusPolicy(Qt::StrongFocus);
+        setStyleSheet(QString("color: %1; padding-left: 4px;").arg(Theme::accent.name()));
+        setToolTip("Seitentaste drücken. Entf = entfernen, Esc = abbrechen");
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        e->accept();
+        if (InputBindings::bindableMouseButtons().contains(e->button())) finish(int(e->button()));
+        else if (e->button() != Qt::LeftButton) setText("Nur Seitentasten/Zusatztasten");
+    }
+    void mouseDoubleClickEvent(QMouseEvent* e) override { mousePressEvent(e); }
+    void keyPressEvent(QKeyEvent* e) override
+    {
+        if (e->key() == Qt::Key_Escape) finish(-1);
+        else if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) finish(int(Qt::NoButton));
+    }
+    void focusOutEvent(QFocusEvent*) override { finish(-1); }
+
+private:
+    void finish(int button)
+    {
+        if (!m_done) return;
+        auto done = std::move(m_done);
+        m_done = nullptr;
+        done(button); // -1 = nichts ändern
+    }
+    std::function<void(int)> m_done;
+};
 }
 
 KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
@@ -42,7 +82,7 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
             [this](int row, int col) { col == ColMouse ? editMouse(row) : editRow(row); });
 
     auto* hint = new QLabel("Doppelklick auf eine Zeile, dann die neue Taste drücken. "
-                            "Doppelklick in der Spalte Maustaste: Seitentaste der Maus wählen. "
+                            "Doppelklick in der Spalte Maustaste, dann die Seitentaste der Maus drücken. "
                             "Fett = eigene Belegung, rot = doppelt belegt.");
     hint->setWordWrap(true);
     hint->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
@@ -172,23 +212,11 @@ void KeyBindingsDialog::resetRow(int row)
 void KeyBindingsDialog::editMouse(int row)
 {
     if (row < 0) return;
-    auto& bindings = InputBindings::instance();
     const QString id = m_table->item(row, ColText)->data(Qt::UserRole).toString();
-    auto* combo = new QComboBox;
-    combo->addItem("—", int(Qt::NoButton));
-    for (Qt::MouseButton b : InputBindings::bindableMouseButtons()) {
-        QString label = InputBindings::mouseButtonText(b);
-        const QString other = bindings.mouseAction(b);
-        if (!other.isEmpty() && other != id)
-            if (QAction* a = bindings.action(other)) label += "  (" + a->text() + ")"; // wird umgelegt
-        combo->addItem(label, int(b));
-    }
-    combo->setCurrentIndex(combo->findData(int(bindings.mouseButtonFor(id))));
-    m_table->setCellWidget(row, ColMouse, combo);
-    combo->setFocus();
-    combo->showPopup();
-    connect(combo, &QComboBox::activated, this, [this, combo, id] {
-        InputBindings::instance().setMouseButton(id, Qt::MouseButton(combo->currentData().toInt()));
-        QMetaObject::invokeMethod(this, [this] { fill(); }, Qt::QueuedConnection);
+    auto* capture = new MouseCapture([this, id](int b) {
+        if (b >= 0) InputBindings::instance().setMouseButton(id, Qt::MouseButton(b));
+        QMetaObject::invokeMethod(this, [this] { fill(); }, Qt::QueuedConnection); // Editor erst danach entfernen
     });
+    m_table->setCellWidget(row, ColMouse, capture);
+    capture->setFocus();
 }
