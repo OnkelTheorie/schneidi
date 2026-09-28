@@ -13,6 +13,8 @@ class Project : public QObject {
     Q_OBJECT
 public:
     explicit Project(QObject* parent = nullptr);
+    // Beim Abbau meldet der Undo-Stack noch "cleanChanged" -> nicht mehr weiterreichen (Hauptfenster ist schon weg)
+    ~Project() override { blockSignals(true); }
 
     int fps() const { return m_fps; }
     const Timeline& timeline() const { return m_timeline; }

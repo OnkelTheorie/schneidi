@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=schneidi
+Comment=Videoschnitt
+Exec="@DIR@/build/schneidi" %f
+Icon=@DIR@/assets/schneidi.svg
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=application/x-schneidi;

@@ -442,7 +442,7 @@ void MainWindow::setProjectPath(const QString& path)
 
 bool MainWindow::maybeSave()
 {
-    if (!m_project->isModified()) return true;
+    if (!m_project->isModified() || m_autosaveDisabled) return true; // Testlauf: nie nachfragen
     const auto answer = QMessageBox::question(this, "schneidi", "Änderungen am Projekt speichern?",
                                               QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
                                               QMessageBox::Save);
