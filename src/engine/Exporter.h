@@ -1,4 +1,5 @@
 #pragma once
+#include "core/ProjectFormat.h"
 #include "core/Types.h"
 
 #include <QObject>
@@ -14,7 +15,8 @@ class TimelineBuilder;
 
 struct ExportSettings {
     QString path;
-    QString profile = "atsc_1080p_25"; // MLT-Profil (Auflösung + fps)
+    ProjectFormat format; // Projekteinstellungen (Framerate, Bezugsgröße für Pixelwerte im Schnitt)
+    QSize size;           // Ausgabegröße; leer = Timeline-Auflösung
     QString videoCodec = "libx264";
     QString audioCodec = "aac";
     int crf = 20;             // Qualität: kleiner = besser

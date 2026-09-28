@@ -286,7 +286,10 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
     for (int m : data.timeline.markers) markers << m;
 
     const QJsonObject root{
-        {"app", "schneidi"},       {"version", kFormatVersion}, {"fps", data.fps},
+        {"app", "schneidi"},       {"version", kFormatVersion},
+        {"fps", data.format.rate.timebase()}, // für ältere Versionen
+        {"format", QJsonObject{{"width", data.format.width}, {"height", data.format.height},
+                               {"fpsNum", data.format.rate.num}, {"fpsDen", data.format.rate.den}}},
         {"playhead", data.playhead}, {"lastClipId", data.lastClipId}, {"lastLinkId", data.lastLinkId},
         {"media", media},
         {"timeline", QJsonObject{{"video", video}, {"audio", audio}, {"markers", markers},
@@ -312,7 +315,12 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
 
     const QDir projectDir = QFileInfo(projectPath).absoluteDir();
     ProjectData d;
-    d.fps = root.value("fps").toInt(25);
+    // Projekteinstellungen; ältere Dateien kennen nur "fps" (ganzzahlig) und waren immer 1920 × 1080
+    const QJsonObject fmt = root.value("format").toObject();
+    d.format.width = std::max(16, fmt.value("width").toInt(1920));
+    d.format.height = std::max(16, fmt.value("height").toInt(1080));
+    d.format.rate.num = std::max(1, fmt.value("fpsNum").toInt(root.value("fps").toInt(25)));
+    d.format.rate.den = std::max(1, fmt.value("fpsDen").toInt(1));
     d.playhead = root.value("playhead").toInt();
     d.lastClipId = root.value("lastClipId").toInt();
     d.lastLinkId = root.value("lastLinkId").toInt();

@@ -2,6 +2,7 @@
 // Einzige Stelle, die MLT kennt (zusammen mit TimelineBuilder).
 // UI spricht nur über diese Klasse -> Engine wäre austauschbar.
 
+#include "core/ProjectFormat.h"
 #include "core/Types.h"
 
 #include <QImage>
@@ -31,8 +32,12 @@ public:
     ~Engine() override;
 
     bool init(QString* error);
-    int fps() const;
-    QSize frameSize() const; // Projektformat in Pixeln
+    // Projekteinstellungen: baut Profil, Vorschau-Consumer und alle Producer neu auf (Viewer zeigt danach
+    // die Timeline). Die Timeline selbst kommt mit dem nächsten updateTimeline().
+    void setFormat(const ProjectFormat& format);
+    const ProjectFormat& format() const { return m_format; }
+    int fps() const { return m_format.rate.timebase(); } // Timecode-Frames pro Sekunde (29,97 -> 30)
+    QSize frameSize() const { return m_format.size(); }  // Projektformat in Pixeln
 
     // Proxy-Medien: Vorschau (Timeline-Videospuren, Quellansicht) liest den Proxy, falls vorhanden und
     // eingeschaltet; Ton und Export immer vom Original. Nach Änderungen updateTimeline() aufrufen.
@@ -66,12 +71,14 @@ signals:
     void audioLevels(const QVector<float>& db);
 
 private:
+    bool createConsumer(QString* error);
     void connectProducer(Mlt::Producer* producer, int position);
     void refresh();
     void onFrameShown(void* mltFrame);
     void emitLevels();
 
     ProxyManager* m_proxies;
+    ProjectFormat m_format;
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<TimelineBuilder> m_builder;
@@ -85,7 +92,7 @@ private:
     Mode m_mode = Mode::Timeline;
     double m_speed = 0.0;
     std::atomic<int> m_position{0};
-    QSize m_previewSize{960, 540};
+    QSize m_previewSize{960, 540}; // Projektformat verkleinert (längere Kante 960)
 
     friend struct EngineCallbacks;
 };

@@ -19,6 +19,7 @@ add_executable(schneidi
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
+    src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
     src/core/Project.h            src/core/Project.cpp
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/Selection.h
@@ -26,6 +27,7 @@ add_executable(schneidi
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
+    src/engine/Profiles.h         src/engine/Profiles.cpp
     src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
@@ -35,6 +37,7 @@ add_executable(schneidi
     src/app/InputBindings.h       src/app/InputBindings.cpp
     src/app/MainWindow.h          src/app/MainWindow.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
+    src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp

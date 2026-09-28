@@ -94,6 +94,22 @@ void applyVolume(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a
     else clip.attach(f);
 }
 
+// Seitenverhältnis des Quellbilds wie angezeigt (Pixel-Seitenverhältnis und Drehung aus den Metadaten), 0 = unbekannt
+double sourceAspect(Mlt::Producer& cut)
+{
+    Mlt::Producer& p = cut.is_cut() ? cut.parent() : cut;
+    double w = p.get_int("width"), h = p.get_int("height");
+    if (w <= 0 || h <= 0) {
+        w = p.get_int("meta.media.width");
+        h = p.get_int("meta.media.height");
+    }
+    if (w <= 0 || h <= 0) return 0;
+    if (const double sar = p.get_double("aspect_ratio"); sar > 0) w *= sar;
+    const int vi = p.get_int("video_index");
+    const int rotate = std::abs(p.get_int(QString("meta.media.%1.codec.rotate").arg(vi).toUtf8().constData())) % 180;
+    return rotate == 90 ? h / w : w / h;
+}
+
 void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, int a, int len)
 {
     const double W = profile.width(), H = profile.height();
@@ -128,8 +144,15 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, i
     if (!Keys::hasTransform(c)) return;
     Mlt::Filter f(profile, "qtblend");
     if (!f.is_valid()) return;
+    // distort=1 (unten) zieht die Quelle aufs Rechteck -> Rechteck selbst seitenverhältnis-treu ins Bild einpassen
+    // (Hochformat-Clip im Querformat-Projekt bekommt seitlich Platz, wie ohne Transform und wie in DaVinci)
+    double fitW = W, fitH = H;
+    if (const double asp = c.isTitle() ? 0.0 : sourceAspect(clip); asp > 0) {
+        if (asp > W / H) fitH = W / asp;
+        else fitW = H * asp;
+    }
     auto rect = [&](double t) {
-        const double w = W * val(AnimParam::ZoomX, t), h = H * val(AnimParam::ZoomY, t);
+        const double w = fitW * val(AnimParam::ZoomX, t), h = fitH * val(AnimParam::ZoomY, t);
         return mlt_rect{(W - w) / 2 + val(AnimParam::PosX, t), (H - h) / 2 - val(AnimParam::PosY, t), w, h, 1.0};
     };
     // Als mlt_rect statt Text setzen: MLT liest Text-Rechtecke mit dem System-Zahlenformat

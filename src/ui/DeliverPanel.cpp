@@ -4,6 +4,7 @@
 #include "core/Project.h"
 #include "engine/Exporter.h"
 #include <algorithm>
+#include <cmath>
 #include <QStandardItemModel>
 #include "core/Timecode.h"
 
@@ -26,17 +27,25 @@ namespace {
 
 struct Preset {
     const char* name;
-    int codec;      // Index in m_codec
-    int resolution; // Index in m_resolution
-    int quality;    // Index in m_quality
+    int codec;     // Index in m_codec
+    int shortSide; // kürzere Bildkante (1080 = 1920 × 1080 bzw. Hochformat 1080 × 1920); 0 = Timeline-Auflösung
+    int quality;   // Index in m_quality
 };
 const Preset kPresets[] = {
-    {N_("Eigene Einstellungen"), 0, 1, 1},
-    {"YouTube 1080p", 0, 1, 0},
-    {"YouTube 4K", 0, 3, 0},
-    {N_("Klein (zum Verschicken)"), 0, 0, 2},
-    {"H.265 Master 1080p", 1, 1, 0},
+    {N_("Eigene Einstellungen"), 0, 0, 1},
+    {"YouTube 1080p", 0, 1080, 0},
+    {"YouTube 4K", 0, 2160, 0},
+    {N_("Klein (zum Verschicken)"), 0, 720, 2},
+    {"H.265 Master 1080p", 1, 1080, 0},
 };
+
+// Ausgabegröße mit dem Seitenverhältnis der Timeline und gegebener kürzerer Kante (gerade Maße)
+QSize sizeForShortSide(QSize timeline, int shortSide)
+{
+    const int w = timeline.width(), h = timeline.height();
+    if (w >= h) return {int(std::lround(double(shortSide) * w / h)) & ~1, shortSide};
+    return {shortSide, int(std::lround(double(shortSide) * h / w)) & ~1};
+}
 
 } // namespace
 
@@ -66,10 +75,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_codec->addItem("H.265 (MP4)", "libx265");
 
     m_resolution = new QComboBox;
-    m_resolution->addItem("1280 × 720", "atsc_720p_25");
-    m_resolution->addItem("1920 × 1080", "atsc_1080p_25");
-    m_resolution->addItem("2560 × 1440", "qhd_1440p_25");
-    m_resolution->addItem("3840 × 2160", "uhd_2160p_25");
+    m_rate = new QLabel;
 
     m_quality = new QComboBox;
     m_quality->addItem(T("Hoch"), 18);
@@ -82,6 +88,8 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_range->addItem(T("In/Out-Bereich"));
     connect(project, &Project::timelineChanged, this, &DeliverPanel::updateRange);
     updateRange();
+    connect(project, &Project::formatChanged, this, &DeliverPanel::updateFormat);
+    updateFormat();
 
     auto* form = new QFormLayout;
     form->setContentsMargins(12, 12, 12, 12);
@@ -91,7 +99,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Ort"), folderRow);
     form->addRow(T("Codec"), m_codec);
     form->addRow(T("Auflösung"), m_resolution);
-    form->addRow(T("Bildrate"), new QLabel(QString("%1 fps").arg(project->fps())));
+    form->addRow(T("Bildrate"), m_rate);
     form->addRow(T("Qualität"), m_quality);
     form->addRow(T("Bereich"), m_range);
 
@@ -149,11 +157,39 @@ void DeliverPanel::updateRange()
     m_hadRange = has;
 }
 
+void DeliverPanel::updateFormat()
+{
+    // Wie DaVinci: Standard ist die Timeline-Auflösung; dazu gängige Größen im selben Seitenverhältnis
+    // (Hochformat-Projekt -> 720 × 1280, 1080 × 1920 …)
+    const ProjectFormat& f = m_project->format();
+    const QSize timeline = f.size();
+    const QSize previous = m_resolution->currentData().toSize();
+    QVector<QSize> sizes{timeline};
+    for (int side : {720, 1080, 1440, 2160}) {
+        const QSize s = sizeForShortSide(timeline, side);
+        if (!sizes.contains(s)) sizes << s;
+    }
+    std::sort(sizes.begin(), sizes.end(), [](QSize a, QSize b) { return a.width() * a.height() < b.width() * b.height(); });
+    m_resolution->clear();
+    for (const QSize& s : sizes) {
+        QString label = resolutionLabel(s.width(), s.height());
+        if (s == timeline) label += " " + T("(Timeline)");
+        m_resolution->addItem(label, s);
+    }
+    // War die Timeline-Auflösung gewählt, bleibt es die (neue) Timeline-Auflösung
+    const int keep = previous.isValid() && previous != m_timelineSize ? m_resolution->findData(previous) : -1;
+    m_timelineSize = timeline;
+    m_resolution->setCurrentIndex(keep >= 0 ? keep : m_resolution->findData(timeline));
+    m_rate->setText(QString("%1 fps").arg(f.rate.label()));
+}
+
 void DeliverPanel::applyPreset(int index)
 {
     const Preset& p = kPresets[index];
     m_codec->setCurrentIndex(p.codec);
-    m_resolution->setCurrentIndex(p.resolution);
+    const QSize timeline = m_project->format().size();
+    const int i = m_resolution->findData(p.shortSide ? sizeForShortSide(timeline, p.shortSide) : timeline);
+    m_resolution->setCurrentIndex(i >= 0 ? i : m_resolution->findData(timeline));
     m_quality->setCurrentIndex(p.quality);
 }
 
@@ -181,7 +217,8 @@ void DeliverPanel::startRender()
     ExportSettings s;
     s.path = path;
     s.videoCodec = m_codec->currentData().toString();
-    s.profile = m_resolution->currentData().toString();
+    s.format = m_project->format();
+    s.size = m_resolution->currentData().toSize();
     s.crf = m_quality->currentData().toInt();
     if (m_range->currentIndex() == 1) {
         const Timeline& tl = m_project->timeline();

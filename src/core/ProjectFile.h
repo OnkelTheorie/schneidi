@@ -2,12 +2,13 @@
 // Projektdatei (.schneidi, JSON): speichert nur Verweise auf die Originaldateien und den Schnitt
 // (Spuren, Clips, Effekte, Marker) – die Medien selbst werden nie verändert (wie DaVinci).
 
+#include "core/ProjectFormat.h"
 #include "core/Types.h"
 
 #include <QString>
 
 struct ProjectData {
-    int fps = 25;
+    ProjectFormat format; // alte Dateien ohne Angabe: 1920 × 1080, 25 fps
     int playhead = 0;
     QVector<MediaInfo> media;
     Timeline timeline;

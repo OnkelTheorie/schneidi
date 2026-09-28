@@ -3,6 +3,8 @@
 // Berechnet asynchron in zwei eigenen Threads, die UI fragt nur ab und
 // bekommt über updated() Bescheid, wenn etwas Neues fertig ist.
 
+#include "core/ProjectFormat.h"
+
 #include <QCache>
 #include <QHash>
 #include <QImage>
@@ -42,6 +44,10 @@ public:
     // Wellenform (evtl. noch unvollständig) oder nullptr; fordert sie ggf. an.
     std::shared_ptr<const Waveform> waveform(const QString& path);
 
+    // Projekteinstellungen geändert: Frames zählen in der neuen Framerate, Bilder im neuen Seitenverhältnis
+    // -> alles Berechnete verwerfen (Wellenformen auf der Platte sind nach Framerate getrennt)
+    void setFormat(const ProjectFormat& format);
+
 signals:
     void updated(); // queued aus den Worker-Threads
 
@@ -58,6 +64,8 @@ private:
     QWaitCondition m_thumbCond;
     QWaitCondition m_waveCond;
     bool m_quit = false;
+    ProjectFormat m_format;
+    int m_generation = 0; // zählt Formatwechsel; ältere Ergebnisse der Threads werden verworfen
 
     QCache<QString, QImage> m_thumbs;
     std::deque<ThumbJob> m_thumbJobs; // vorne = neueste Anfrage (wird zuerst bearbeitet)
