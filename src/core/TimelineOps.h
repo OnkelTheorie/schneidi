@@ -88,5 +88,7 @@ double audioTransitionGain(const TransitionSpan& s, int clipId, double frame);
 void detachTransitions(Timeline& tl, const QVector<int>& clipIds);
 
 int endFrame(const Timeline& tl);
+// Liegt die Datei irgendwo auf einer Videospur? (z. B. Vorschau nur neu bauen, wenn ein Proxy dazu gehört)
+bool usesMediaOnVideo(const Timeline& tl, const QString& path);
 
 } // namespace TimelineOps

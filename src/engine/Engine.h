@@ -19,6 +19,7 @@ class Consumer;
 class Tractor;
 } // namespace Mlt
 class TimelineBuilder;
+class ProxyManager;
 struct MixerHooks;
 
 class Engine : public QObject {
@@ -32,6 +33,10 @@ public:
     bool init(QString* error);
     int fps() const;
     QSize frameSize() const; // Projektformat in Pixeln
+
+    // Proxy-Medien: Vorschau (Timeline-Videospuren, Quellansicht) liest den Proxy, falls vorhanden und
+    // eingeschaltet; Ton und Export immer vom Original. Nach Änderungen updateTimeline() aufrufen.
+    ProxyManager* proxies() const { return m_proxies; }
 
     MediaInfo probe(const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);
@@ -66,6 +71,7 @@ private:
     void onFrameShown(void* mltFrame);
     void emitLevels();
 
+    ProxyManager* m_proxies;
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<TimelineBuilder> m_builder;

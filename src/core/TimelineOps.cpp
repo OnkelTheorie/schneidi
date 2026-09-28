@@ -364,4 +364,12 @@ int endFrame(const Timeline& tl)
     return end;
 }
 
+bool usesMediaOnVideo(const Timeline& tl, const QString& path)
+{
+    for (const auto& t : tl.video)
+        for (const Clip& c : t.clips)
+            if (c.mediaPath == path) return true;
+    return false;
+}
+
 } // namespace TimelineOps

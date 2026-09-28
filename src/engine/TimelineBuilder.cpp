@@ -411,12 +411,15 @@ TimelineBuilder::~TimelineBuilder() = default;
 
 Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex, bool second)
 {
+    // Proxy (nur Vorschau): Schlüssel mit der tatsächlich gelesenen Datei, damit Umschalten neu öffnet
+    const QString file = m_resolver ? m_resolver(path, kind) : path;
     const QString key = QString("%1%2|%3|%4").arg(kind == TrackKind::Video ? "v" : "a").arg(second ? "x" : "")
-                            .arg(trackIndex).arg(path);
+                            .arg(trackIndex).arg(file);
+    m_used.insert(key);
     auto it = m_cache.find(key);
     if (it != m_cache.end()) return it->second.get();
 
-    auto p = std::make_unique<Mlt::Producer>(m_profile, path.toUtf8().constData());
+    auto p = std::make_unique<Mlt::Producer>(m_profile, file.toUtf8().constData());
     if (!p->is_valid()) return nullptr;
     // Nicht benötigten Stream gar nicht erst dekodieren
     if (kind == TrackKind::Video) p->set("audio_index", -1);
@@ -450,6 +453,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     // Solo wie DaVinci: sobald eine Spur Solo hat, sind alle anderen Audiospuren stumm
     const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
     if (hooks) *hooks = {};
+    m_used.clear();
     auto tractor = std::make_unique<Mlt::Tractor>(m_profile);
     const int end = std::max(1, TimelineOps::endFrame(tl));
 
@@ -589,5 +593,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
 
     // Master-Fader auf dem Tractor (gilt damit auch für den Export)
     attachStrip(m_profile, *tractor, tl.masterVolumeDb, 0.0, hooks ? &hooks->master : nullptr);
+    // Nicht mehr benutzte Producer schließen (z. B. Original nach Umschalten auf den Proxy oder gelöschter Clip);
+    // Cuts im alten Tractor halten ihre Quelle per MLT-Referenzzählung selbst am Leben
+    for (auto it = m_cache.begin(); it != m_cache.end();)
+        it = m_used.count(it->first) ? std::next(it) : m_cache.erase(it);
     return tractor;
 }

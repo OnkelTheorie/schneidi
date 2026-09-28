@@ -9,6 +9,7 @@
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "engine/MediaCache.h"
+#include "engine/ProxyManager.h"
 #include "ui/DeliverPanel.h"
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
@@ -60,6 +61,13 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         m_engine->updateTimeline(m_project->timeline());
     });
     m_engine->updateTimeline(m_project->timeline());
+    // Proxy fertig/gelöscht oder "Proxy-Medien verwenden" umgeschaltet -> Vorschau neu aufbauen
+    ProxyManager* proxies = m_engine->proxies();
+    auto proxiesChanged = [this] { m_engine->updateTimeline(m_project->timeline()); };
+    connect(proxies, &ProxyManager::proxyChanged, this, [this, proxiesChanged](const QString& path) {
+        if (TimelineOps::usesMediaOnVideo(m_project->timeline(), path)) proxiesChanged();
+    });
+    connect(proxies, &ProxyManager::enabledChanged, this, proxiesChanged);
 
     // Engine -> Playhead (nur im Timeline-Modus; im Quellmodus bleibt der Playhead stehen)
     TimelineView* tv = m_timeline->view();
@@ -404,6 +412,12 @@ void MainWindow::buildActions()
     });
     makeAction(play, "show_timeline", T("Timeline im Viewer zeigen"), QKeySequence("Q"),
               [this, tv] { m_engine->showTimeline(tv->playhead()); });
+    play->addSeparator();
+    // Wie DaVinci (Playback → Use Proxy Media if Available); Export nutzt immer die Originale
+    auto* useProxy = makeAction(play, "use_proxy", T("Proxy-Medien verwenden, falls vorhanden"), QKeySequence(), [] {});
+    useProxy->setCheckable(true);
+    useProxy->setChecked(m_engine->proxies()->enabled());
+    connect(useProxy, &QAction::toggled, m_engine->proxies(), &ProxyManager::setEnabled);
 
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
     makeAction(workspace, "page_media", T("Media-Seite"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
