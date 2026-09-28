@@ -1,4 +1,5 @@
 #include "app/InputBindings.h"
+#include "core/ProjectFile.h"
 #include "app/MainWindow.h"
 #include "app/Theme.h"
 #include "engine/Engine.h"
@@ -6,6 +7,7 @@
 #include <QApplication>
 #include <QAction>
 #include <QMessageBox>
+#include <QFileInfo>
 #include <QTimer>
 #include <clocale>
 
@@ -44,6 +46,13 @@ int main(int argc, char* argv[])
         actions = files.at(i + 1).split(',', Qt::SkipEmptyParts);
         files.remove(i, 2);
     }
+    // .schneidi-Datei als Argument = Projekt öffnen (z. B. Doppelklick im Dateimanager)
+    QString projectFile;
+    for (const QString& f : files)
+        if (f.endsWith(QString(".%1").arg(ProjectFile::Extension))) projectFile = f;
+    files.removeAll(projectFile);
+    if (!projectFile.isEmpty()) w.openProject(QFileInfo(projectFile).absoluteFilePath());
+    else w.offerAutosaveRestore();
     if (!files.isEmpty()) w.importFiles(files, demo);
     QTimer::singleShot(1500, &w, [actions] {
         for (const QString& id : actions)

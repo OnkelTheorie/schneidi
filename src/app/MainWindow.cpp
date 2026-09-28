@@ -29,6 +29,15 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QUndoStack>
+#include <QCloseEvent>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QTimer>
 
 MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m_engine(engine)
 {
@@ -62,6 +71,13 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
     tv->setProbe([this](const QString& path) { return probeCached(path); });
     tv->setMediaCache(new MediaCache(this));
+
+    connect(m_project, &Project::modifiedChanged, this, &MainWindow::updateTitle);
+    updateTitle();
+    // Automatische Sicherung jede Minute (nur bei Änderungen), getrennt von der Projektdatei
+    auto* autosaveTimer = new QTimer(this);
+    connect(autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
+    autosaveTimer->start(60 * 1000);
 
 }
 
@@ -142,7 +158,7 @@ QWidget* MainWindow::buildTopBar()
     connect(m_poolToggle, &QToolButton::toggled, m_mediaPool, &QWidget::setVisible);
     connect(m_inspectorToggle, &QToolButton::toggled, m_inspector, &QWidget::setVisible);
 
-    auto* title = new QLabel("Unbenanntes Projekt");
+    auto* title = m_titleLabel = new QLabel;
     title->setStyleSheet("font-weight: 600;");
     title->setAlignment(Qt::AlignCenter);
 
@@ -255,6 +271,13 @@ void MainWindow::buildActions()
 
     // Belegung nach DaVinci Resolve (Defaults), überschreibbar in keybindings.json
     QMenu* file = menuBar()->addMenu("&Datei");
+    makeAction(file, "project_new", "Neues Projekt", QKeySequence("Ctrl+N"), [this] { newProject(); });
+    makeAction(file, "project_open", "Projekt öffnen…", QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
+    m_recentMenu = file->addMenu("Zuletzt geöffnet");
+    rebuildRecentMenu();
+    makeAction(file, "project_save", "Projekt speichern", QKeySequence("Ctrl+S"), [this] { save(); });
+    makeAction(file, "project_save_as", "Projekt speichern unter…", QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
+    file->addSeparator();
     makeAction(file, "import", "Medien importieren…", QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
     file->addSeparator();
     makeAction(file, "quit", "Beenden", QKeySequence("Ctrl+Q"), [this] { close(); });
@@ -348,6 +371,210 @@ void MainWindow::buildActions()
     makeAction(workspace, "page_deliver", "Deliver-Seite", QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
 
     InputBindings::instance().saveIfIncomplete();
+}
+
+// ---- Projektdatei ---------------------------------------------------------------
+
+namespace {
+const QString kFileFilter = QString("schneidi-Projekt (*.%1)").arg(ProjectFile::Extension);
+}
+
+QString MainWindow::autosavePath()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return QDir(dir).filePath(QString("autosave.%1").arg(ProjectFile::Extension));
+}
+
+void MainWindow::updateTitle()
+{
+    const QString name = m_projectPath.isEmpty() ? "Unbenannt" : QFileInfo(m_projectPath).completeBaseName();
+    const QString shown = name + (m_project->isModified() ? " *" : "");
+    setWindowTitle(shown + " – schneidi");
+    if (m_titleLabel) m_titleLabel->setText(shown);
+}
+
+void MainWindow::setProjectPath(const QString& path)
+{
+    m_projectPath = path;
+    if (!path.isEmpty()) addRecent(path);
+    updateTitle();
+}
+
+bool MainWindow::maybeSave()
+{
+    if (!m_project->isModified()) return true;
+    const auto answer = QMessageBox::question(this, "schneidi", "Änderungen am Projekt speichern?",
+                                              QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+                                              QMessageBox::Save);
+    if (answer == QMessageBox::Save) return save();
+    return answer == QMessageBox::Discard;
+}
+
+void MainWindow::newProject()
+{
+    if (!maybeSave()) return;
+    m_engine->pause();
+    m_selection->clear();
+    m_project->reset();
+    m_engine->showTimeline(0);
+    setProjectPath({});
+    removeAutosave();
+}
+
+void MainWindow::openProjectDialog()
+{
+    if (!maybeSave()) return;
+    const QString dir = m_projectPath.isEmpty() ? QDir::homePath() : QFileInfo(m_projectPath).absolutePath();
+    const QString path = QFileDialog::getOpenFileName(this, "Projekt öffnen", dir, kFileFilter);
+    if (!path.isEmpty()) openProject(path);
+}
+
+bool MainWindow::openProject(const QString& path)
+{
+    ProjectData data;
+    QString error;
+    if (!ProjectFile::load(path, &data, &error)) {
+        QMessageBox::warning(this, "Projekt öffnen", QString("%1 konnte nicht geöffnet werden:\n%2").arg(path, error));
+        return false;
+    }
+    if (!applyLoaded(std::move(data), path)) return false;
+    removeAutosave();
+    return true;
+}
+
+bool MainWindow::applyLoaded(ProjectData data, const QString& path)
+{
+    // Fehlende Medien wie DaVinci "Media Offline": Ordner durchsuchen lassen oder offline lassen
+    for (QStringList missing = ProjectFile::missingMedia(data); !missing.isEmpty();
+         missing = ProjectFile::missingMedia(data)) {
+        QMessageBox box(QMessageBox::Warning, "Medien fehlen",
+                        QString("%1 Datei(en) nicht gefunden (verschoben oder umbenannt?):").arg(missing.size()),
+                        QMessageBox::NoButton, this);
+        QStringList names;
+        for (const QString& p : missing.mid(0, 15)) names << p;
+        if (missing.size() > 15) names << "…";
+        box.setInformativeText(names.join('\n'));
+        QPushButton* search = box.addButton("Ordner durchsuchen…", QMessageBox::AcceptRole);
+        box.addButton("Offline lassen", QMessageBox::RejectRole);
+        box.exec();
+        if (box.clickedButton() != search) break;
+        const QString dir = QFileDialog::getExistingDirectory(this, "Ordner mit den Medien wählen",
+                                                              QFileInfo(path).absolutePath());
+        if (dir.isEmpty()) break;
+        if (ProjectFile::relink(&data, dir) == 0)
+            QMessageBox::information(this, "Medien fehlen", "In diesem Ordner wurden keine der Dateien gefunden.");
+    }
+
+    m_engine->pause();
+    m_selection->clear();
+    m_probeCache.clear();
+    m_project->load(data);
+    m_engine->showTimeline(data.playhead);
+    m_timeline->view()->setPlayhead(data.playhead);
+    setProjectPath(path);
+    return true;
+}
+
+bool MainWindow::save()
+{
+    return m_projectPath.isEmpty() ? saveAs() : saveTo(m_projectPath);
+}
+
+bool MainWindow::saveAs()
+{
+    QString path = QFileDialog::getSaveFileName(
+        this, "Projekt speichern unter",
+        m_projectPath.isEmpty() ? QDir::home().filePath(QString("Unbenannt.%1").arg(ProjectFile::Extension)) : m_projectPath,
+        kFileFilter);
+    if (path.isEmpty()) return false;
+    if (QFileInfo(path).suffix() != ProjectFile::Extension) path += QString(".%1").arg(ProjectFile::Extension);
+    return saveTo(path);
+}
+
+bool MainWindow::saveTo(const QString& path)
+{
+    ProjectData data = m_project->data();
+    data.playhead = m_timeline->view()->playhead();
+    QString error;
+    if (!ProjectFile::save(data, path, &error)) {
+        QMessageBox::warning(this, "Projekt speichern", QString("Speichern fehlgeschlagen:\n%1").arg(error));
+        return false;
+    }
+    m_project->markSaved();
+    setProjectPath(path);
+    removeAutosave();
+    return true;
+}
+
+void MainWindow::autosave()
+{
+    if (!m_project->isModified()) return;
+    ProjectData data = m_project->data();
+    data.playhead = m_timeline->view()->playhead();
+    QDir().mkpath(QFileInfo(autosavePath()).absolutePath());
+    if (ProjectFile::save(data, autosavePath(), nullptr))
+        QSettings().setValue("autosave/projectPath", m_projectPath); // wohin die Sicherung gehört
+}
+
+void MainWindow::removeAutosave()
+{
+    QFile::remove(autosavePath());
+    QSettings().remove("autosave/projectPath");
+}
+
+void MainWindow::offerAutosaveRestore()
+{
+    if (!QFileInfo::exists(autosavePath())) return;
+    const QString original = QSettings().value("autosave/projectPath").toString();
+    const QString name = original.isEmpty() ? "Unbenannt" : QFileInfo(original).fileName();
+    const auto answer = QMessageBox::question(
+        this, "Wiederherstellen",
+        QString("schneidi wurde nicht normal beendet.\nNicht gespeicherte Änderungen von „%1“ wiederherstellen?")
+            .arg(name),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    if (answer != QMessageBox::Yes) {
+        removeAutosave();
+        return;
+    }
+    ProjectData data;
+    if (!ProjectFile::load(autosavePath(), &data, nullptr)) return;
+    applyLoaded(std::move(data), original);
+    m_project->markModified(); // wiederhergestellt, aber noch nicht in die Projektdatei gespeichert
+}
+
+void MainWindow::addRecent(const QString& path)
+{
+    QSettings settings;
+    QStringList recent = settings.value("recentProjects").toStringList();
+    recent.removeAll(path);
+    recent.prepend(path);
+    settings.setValue("recentProjects", recent.mid(0, 10));
+    rebuildRecentMenu();
+}
+
+void MainWindow::rebuildRecentMenu()
+{
+    if (!m_recentMenu) return;
+    m_recentMenu->clear();
+    const QStringList recent = QSettings().value("recentProjects").toStringList();
+    for (const QString& path : recent) {
+        QAction* a = m_recentMenu->addAction(QFileInfo(path).fileName(), this, [this, path] {
+            if (maybeSave()) openProject(path);
+        });
+        a->setToolTip(path);
+        a->setEnabled(QFileInfo::exists(path));
+    }
+    m_recentMenu->setEnabled(!recent.isEmpty());
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    if (!maybeSave()) {
+        event->ignore();
+        return;
+    }
+    removeAutosave(); // normal beendet -> nichts wiederherzustellen
+    event->accept();
 }
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)

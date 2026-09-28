@@ -1,4 +1,5 @@
 #pragma once
+#include "core/ProjectFile.h"
 #include "core/Types.h"
 
 #include <QHash>
@@ -30,8 +31,13 @@ public:
     enum class Page { Media, Edit, Deliver };
     void showPage(Page page);
 
+    // Projektdatei (.schneidi): nur Verweise auf die Originalmedien + Schnitt
+    bool openProject(const QString& path);
+    void offerAutosaveRestore(); // nach Absturz: letzte automatische Sicherung anbieten
+
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
 
 private:
     void buildLayout();
@@ -47,6 +53,21 @@ private:
     void jumpTo(const QVector<int>& points, int direction);
     void stepFrames(int frames);
     void shuttle(int direction);
+
+    void newProject();
+    void openProjectDialog();
+    bool save();
+    bool saveAs();
+    bool saveTo(const QString& path);
+    bool maybeSave(); // false = Abbrechen
+    bool applyLoaded(ProjectData data, const QString& path);
+    void setProjectPath(const QString& path);
+    void updateTitle();
+    void addRecent(const QString& path);
+    void rebuildRecentMenu();
+    void autosave();
+    void removeAutosave();
+    static QString autosavePath();
 
     Engine* m_engine;
     Project* m_project;
@@ -71,4 +92,8 @@ private:
     Page m_page = Page::Edit;
 
     QHash<QString, MediaInfo> m_probeCache;
+
+    QString m_projectPath; // leer = noch nie gespeichert
+    QMenu* m_recentMenu = nullptr;
+    class QLabel* m_titleLabel = nullptr;
 };

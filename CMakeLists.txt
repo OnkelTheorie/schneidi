@@ -18,6 +18,7 @@ add_executable(schneidi
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
     src/core/Project.h            src/core/Project.cpp
+    src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/Selection.h
     src/core/Editor.h             src/core/Editor.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp

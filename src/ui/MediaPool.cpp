@@ -6,6 +6,7 @@
 
 #include <QDragEnterEvent>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -113,7 +114,9 @@ void MediaPool::rebuild()
     m_list->clear();
     for (const MediaInfo& m : m_project->media()) {
         QPixmap thumb;
-        if (m.hasVideo) {
+        const bool offline = !QFileInfo::exists(m.path); // wie DaVinci "Media Offline"
+        if (offline) thumb = placeholderThumb("Media Offline");
+        else if (m.hasVideo) {
             const QImage img = m_engine->thumbnail(m.path, m.isImage ? 0 : m.length / 3, kThumb);
             if (!img.isNull()) thumb = QPixmap::fromImage(img);
         }

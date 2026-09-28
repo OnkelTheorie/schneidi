@@ -36,11 +36,58 @@ Track makeTrack(TrackKind kind, const QString& name)
 
 } // namespace
 
-Project::Project(QObject* parent) : QObject(parent)
+Timeline emptyTimeline()
 {
     // Standard wie ein leeres DaVinci-Projekt, nur mit je einer Spur mehr
-    m_timeline.video << makeTrack(TrackKind::Video, "V1") << makeTrack(TrackKind::Video, "V2");
-    m_timeline.audio << makeTrack(TrackKind::Audio, "A1") << makeTrack(TrackKind::Audio, "A2");
+    Timeline tl;
+    tl.video << makeTrack(TrackKind::Video, "V1") << makeTrack(TrackKind::Video, "V2");
+    tl.audio << makeTrack(TrackKind::Audio, "A1") << makeTrack(TrackKind::Audio, "A2");
+    return tl;
+}
+
+Project::Project(QObject* parent) : QObject(parent)
+{
+    m_timeline = emptyTimeline();
+    connect(&m_undo, &QUndoStack::cleanChanged, this, [this] { emit modifiedChanged(isModified()); });
+}
+
+ProjectData Project::data() const
+{
+    ProjectData d;
+    d.fps = m_fps;
+    d.media = m_media;
+    d.timeline = m_timeline;
+    d.lastClipId = m_lastClipId;
+    d.lastLinkId = m_lastLinkId;
+    return d;
+}
+
+void Project::load(const ProjectData& d)
+{
+    m_undo.clear();
+    m_media = d.media;
+    m_timeline = d.timeline;
+    if (m_timeline.video.isEmpty()) m_timeline.video << makeTrack(TrackKind::Video, "V1");
+    if (m_timeline.audio.isEmpty()) m_timeline.audio << makeTrack(TrackKind::Audio, "A1");
+    m_lastClipId = d.lastClipId;
+    m_lastLinkId = d.lastLinkId;
+    markSaved();
+    emit mediaChanged();
+    emit timelineChanged();
+}
+
+void Project::reset()
+{
+    ProjectData d;
+    d.timeline = emptyTimeline();
+    load(d);
+}
+
+void Project::markSaved()
+{
+    m_mediaDirty = false;
+    m_undo.setClean();
+    emit modifiedChanged(false);
 }
 
 void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn, const QString& mergeKey)
@@ -68,5 +115,13 @@ void Project::addMedia(const MediaInfo& info)
 {
     if (mediaInfo(info.path)) return;
     m_media << info;
+    m_mediaDirty = true;
     emit mediaChanged();
+    emit modifiedChanged(true);
+}
+
+void Project::markModified()
+{
+    m_mediaDirty = true;
+    emit modifiedChanged(true);
 }
