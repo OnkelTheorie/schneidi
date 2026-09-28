@@ -199,12 +199,6 @@ void applyClipFades(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, Tr
     const int a = from - c.start, b = to - c.start; // clip-lokal, b exklusiv
     const int len = b - a;
     if ((fi <= 0 || a >= fi) && (fo <= 0 || b <= length - fo)) return; // Ausschnitt berührt keinen Fade
-    auto gain = [&](int t) {
-        double g = 1.0;
-        if (fi > 0 && t < fi) g = std::min(g, double(t) / fi);
-        if (fo > 0 && t >= length - fo) g = std::min(g, double(length - 1 - t) / fo);
-        return std::clamp(g, 0.0, 1.0);
-    };
     auto isKey = [&](int t) { return t == a || t == b - 1 || t <= fi || t >= length - fo - 1; };
     const bool video = kind == TrackKind::Video;
     Mlt::Filter f(profile, video ? "brightness" : "volume");
@@ -212,37 +206,42 @@ void applyClipFades(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, Tr
     if (video) f.set("level", 1.0);
     for (int t = a; t < b; ++t) {
         if (!isKey(t)) continue;
-        const double g = gain(t);
-        if (video) f.anim_set("alpha", g, t - a, len);
-        else f.anim_set("level", g > 0.001 ? 20.0 * std::log10(std::sin(g * M_PI / 2)) : -200.0, t - a, len);
+        // dieselbe Kurve zeichnet die Timeline (Wellenform, Fade-Linie)
+        if (video) {
+            f.anim_set("alpha", TimelineOps::fadeRamp(c, t), t - a, len);
+        } else {
+            const double g = TimelineOps::audioFadeGain(c, t);
+            f.anim_set("level", g > 0.001 ? 20.0 * std::log10(g) : -200.0, t - a, len);
+        }
     }
     f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
     cut.attach(f);
 }
 
-// Ein-/Ausblenden über `len` Frames: Video über den Alphakanal (auf V1 = aus Schwarz, darüber = zur
-// Spur darunter, wie DaVinci), Audio als Keyframe in dB pro Frame. equalPower: Kurve für den
-// Audio-Crossfade (+3 dB wie DaVinci-Standard, Lautheit bleibt in der Mitte gleich).
-// Keyframes per anim_set statt als Text: "0.5" würde sonst je nach LC_NUMERIC als 0 gelesen.
-void applyFade(Mlt::Profile& profile, Mlt::Producer& cut, TrackKind kind, int len, bool fadeIn,
-               bool equalPower = false)
+// Video ein-/ausblenden über `len` Frames über den Alphakanal (auf V1 = aus Schwarz, darüber = zur
+// Spur darunter, wie DaVinci). Keyframes per anim_set statt als Text: "0.5" würde sonst je nach LC_NUMERIC als 0 gelesen.
+void applyFade(Mlt::Profile& profile, Mlt::Producer& cut, int len, bool fadeIn)
 {
-    auto value = [&](int i) {
-        const double t = fadeIn ? double(i) / len : double(len - 1 - i) / len;
-        return equalPower ? std::sin(t * M_PI / 2) : t;
-    };
-    const bool video = kind == TrackKind::Video;
-    Mlt::Filter f(profile, video ? "brightness" : "volume");
+    auto value = [&](int i) { return fadeIn ? double(i) / len : double(len - 1 - i) / len; };
+    Mlt::Filter f(profile, "brightness");
     if (!f.is_valid()) return;
-    if (video) {
-        f.set("level", 1.0);
-        f.anim_set("alpha", value(0), 0, len);
-        f.anim_set("alpha", value(len - 1), len - 1, len);
-    } else {
-        for (int i = 0; i < len; ++i) {
-            const double v = value(i);
-            f.anim_set("level", v > 0.001 ? 20.0 * std::log10(v) : -200.0, i, len);
-        }
+    f.set("level", 1.0);
+    f.anim_set("alpha", value(0), 0, len);
+    f.anim_set("alpha", value(len - 1), len - 1, len);
+    f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
+    cut.attach(f);
+}
+
+// Audio-Übergang: Pegel von Clip clipId im Ausschnitt des Übergangs als Keyframe in dB pro Frame
+// (Kurve aus TimelineOps, dieselbe zeichnet die Wellenform)
+void applyAudioTransition(Mlt::Profile& profile, Mlt::Producer& cut, const TimelineOps::TransitionSpan& s, int clipId)
+{
+    Mlt::Filter f(profile, "volume");
+    if (!f.is_valid()) return;
+    const int len = s.length();
+    for (int i = 0; i < len; ++i) {
+        const double v = TimelineOps::audioTransitionGain(s, clipId, s.start + i);
+        f.anim_set("level", v > 0.001 ? 20.0 * std::log10(v) : -200.0, i, len);
     }
     f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
     cut.attach(f);
@@ -471,9 +470,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
                 mix.set_track(*cb, 1);
                 Mlt::Transition t(m_profile, kind == TrackKind::Video ? "luma" : "mix");
                 if (kind == TrackKind::Audio) {
-                    // Crossfade +3 dB: beide Seiten mit eigener Kurve, dann einfach addieren
-                    applyFade(m_profile, *ca, kind, len, false, true);
-                    applyFade(m_profile, *cb, kind, len, true, true);
+                    // Crossfade: beide Seiten mit eigener Kurve, dann einfach addieren
+                    applyAudioTransition(m_profile, *ca, s, a->id);
+                    applyAudioTransition(m_profile, *cb, s, b->id);
                     t.set("start", 1.0);
                     t.set("sum", 1);
                 }
@@ -483,7 +482,8 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             } else if (ca || cb) {
                 // Nur eine Seite (Schnitt zum Leeren oder anderer Clip deaktiviert/offline): Aus-/Einblenden
                 Mlt::Producer& one = ca ? *ca : *cb;
-                applyFade(m_profile, one, kind, len, !ca);
+                if (kind == TrackKind::Video) applyFade(m_profile, one, len, !ca);
+                else applyAudioTransition(m_profile, one, s, ca ? a->id : b->id);
                 pl.append(one);
             } else {
                 pl.blank(len - 1);

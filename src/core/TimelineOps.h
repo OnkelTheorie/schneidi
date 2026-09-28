@@ -75,6 +75,14 @@ struct TransitionSpan {
 // gekürzt, wenn Handles (Material über In/Out hinaus) oder Cliplänge nicht reichen; Länge 0 fällt weg.
 QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sourceLength);
 
+// Fade-Griff-Rampe (0..1, linear) an Clip-Frame t (ab Clipanfang); Fades auf die Cliplänge begrenzt.
+// Video nutzt den Wert als Deckkraft, Audio als Sinus-Kurve (audioFadeGain).
+double fadeRamp(const Clip& c, double t);
+// Pegel (linear, 0..1) eines Audioclips durch seine Fade-Griffe an Clip-Frame t
+double audioFadeGain(const Clip& c, double t);
+// Pegel (linear, 0..1) von Clip clipId im Audio-Übergang s an Timeline-Frame frame (1 außerhalb)
+double audioTransitionGain(const TransitionSpan& s, int clipId, double frame);
+
 // Überblendungen lösen, bei denen nur einer der beiden Clips in `clipIds` liegt
 // (vor Löschen/Verschieben, damit der Übrige nicht plötzlich ausblendet).
 void detachTransitions(Timeline& tl, const QVector<int>& clipIds);

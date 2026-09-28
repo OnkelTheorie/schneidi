@@ -484,6 +484,13 @@ void TimelineView::drawTracks(QPainter& p)
 
         const Track& track = tl.track(row.ref);
         p.setOpacity(track.muted || track.hidden ? 0.4 : 1.0);
+        QSet<int> hidden; // Übergänge von Clips, die gerade gezogen/getrimmt werden, ausblenden
+        if (moving) hidden = dragSet;
+        if (m_drag == Drag::Trim) hidden = QSet<int>(m_trimIds.begin(), m_trimIds.end());
+        QVector<TimelineOps::TransitionSpan> audioSpans; // Wellenform folgt den Crossfades
+        if (row.ref.kind == TrackKind::Audio)
+            for (const auto& s : m_editor->transitions(row.ref))
+                if (!hidden.contains(s.leftId) && !hidden.contains(s.rightId)) audioSpans << s;
         for (Clip c : track.clips) {
             if (moving && dragSet.contains(c.id)) continue; // wird unten verschoben gezeichnet
             if (m_drag == Drag::Trim && m_trimIds.contains(c.id)) {
@@ -497,11 +504,8 @@ void TimelineView::drawTracks(QPainter& p)
             if (m_drag == Drag::Volume && c.id == m_volClipId) c.volumeDb = m_volDb;
             const QRect r = clipRect(row, c);
             if (r.right() < kHeaderW || r.left() > width()) continue;
-            drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false);
+            drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false, audioSpans);
         }
-        QSet<int> hidden; // Übergänge von Clips, die gerade gezogen/getrimmt werden, ausblenden
-        if (moving) hidden = dragSet;
-        if (m_drag == Drag::Trim) hidden = QSet<int>(m_trimIds.begin(), m_trimIds.end());
         drawTransitions(p, row, hidden);
     }
 
@@ -637,7 +641,8 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
     }
 }
 
-void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost)
+void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,
+                            const QVector<TimelineOps::TransitionSpan>& spans)
 {
     QColor base = c.isTitle() ? Theme::titleClip : kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip;
     if (!c.enabled) base = QColor(0x55, 0x55, 0x5c); // deaktiviert (D) wie DaVinci: grau
@@ -659,7 +664,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     if (!ghost && bodyRect.height() > 4) {
         p.setRenderHint(QPainter::Antialiasing, false);
         if (kind == TrackKind::Video && !c.isTitle()) drawFilmstrip(p, bodyRect, c); // Titel: nur Farbe
-        else if (kind == TrackKind::Audio) drawWaveform(p, bodyRect, c);
+        else if (kind == TrackKind::Audio) drawWaveform(p, bodyRect, c, spans);
         p.setRenderHint(QPainter::Antialiasing);
     }
     // Lautstärkelinie wie in DaVinci (zum Hoch-/Runterziehen)
@@ -673,20 +678,40 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         p.drawLine(bodyRect.left(), y, bodyRect.right(), y);
         p.setRenderHint(QPainter::Antialiasing);
     }
-    // Fade-Bereiche wie DaVinci: Fläche über der Rampe abgedunkelt, Linie von unten nach oben
+    // Fade-Bereiche wie DaVinci: Fläche über der Kurve abgedunkelt, Kurve von unten zum Pegel.
+    // Video: gerade Rampe (Deckkraft linear), Audio: Sinus-Kurve auf der Lautstärkelinie (wie die Engine)
     if (!ghost && (c.fadeIn > 0 || c.fadeOut > 0)) {
         const int top = r.top() + barH, bottom = r.bottom();
         const int fi = std::min(c.fadeIn, c.length()), fo = std::min(c.fadeOut, c.length() - fi);
+        const bool audio = kind == TrackKind::Audio && bodyRect.height() >= 6;
         auto ramp = [&](double x0, double x1, bool in) {
+            QPolygonF curve; // von links nach rechts
+            if (audio) {
+                const double clipX = frameToX(c.start);
+                const int steps = std::clamp(int(x1 - x0) / 2, 2, 64);
+                for (int i = 0; i <= steps; ++i) {
+                    const double x = x0 + (x1 - x0) * i / steps;
+                    // Randpixel liegen genau auf 0 bzw. 1, damit die Kurve unten ansetzt
+                    const double t = in ? (x - clipX) / m_view.pxPerFrame
+                                        : c.length() - (x1 - x) / m_view.pxPerFrame;
+                    const double g = TimelineOps::audioFadeGain(c, std::clamp(t, 0.0, double(c.length())));
+                    const double db = g > 0.001 ? c.volumeDb + 20.0 * std::log10(g) : kMinVolumeDb;
+                    curve << QPointF(x, volumeLineY(bodyRect, db));
+                }
+            } else if (in) {
+                curve << QPointF(x0, bottom) << QPointF(x1, top);
+            } else {
+                curve << QPointF(x0, top) << QPointF(x1, bottom);
+            }
             QPolygonF shade;
-            if (in) shade << QPointF(x0, top) << QPointF(x1, top) << QPointF(x0, bottom);
-            else shade << QPointF(x0, top) << QPointF(x1, top) << QPointF(x1, bottom);
+            shade << QPointF(x0, top) << QPointF(x1, top);
+            for (int i = curve.size() - 1; i >= 0; --i) shade << curve[i];
             p.setPen(Qt::NoPen);
             p.setBrush(QColor(0, 0, 0, 150));
             p.drawPolygon(shade);
-            p.setPen(QPen(QColor(0xff, 0xff, 0xff, 170), 1));
-            if (in) p.drawLine(QPointF(x0, bottom), QPointF(x1, top));
-            else p.drawLine(QPointF(x0, top), QPointF(x1, bottom));
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(QColor(0xff, 0xff, 0xff, audio ? 220 : 170), 1));
+            p.drawPolyline(curve);
         };
         if (fi > 0) ramp(r.left(), r.left() + fi * m_view.pxPerFrame, true);
         if (fo > 0) ramp(r.right() + 1 - fo * m_view.pxPerFrame, r.right() + 1, false);
@@ -765,7 +790,8 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
     }
 }
 
-void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c)
+void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
+                                const QVector<TimelineOps::TransitionSpan>& spans)
 {
     if (!m_cache) return;
     const auto wave = m_cache->waveform(c.mediaPath);
@@ -782,7 +808,11 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c)
     const int clipEnd = int(std::min<double>(available, (c.out + 1) * scale));
 
     if (c.volumeDb <= kMinVolumeDb) return; // stumm -> flach
-    const double gain = c.volumeDb / 48.0; // Wellenform folgt der Clip-Lautstärke (dB-Skala unten)
+    // Übergänge, die diesen Clip betreffen (Crossfade/Ein-/Ausblenden)
+    QVector<TimelineOps::TransitionSpan> own;
+    for (const auto& s : spans)
+        if (s.leftId == c.id || s.rightId == c.id) own << s;
+    const bool fades = c.fadeIn > 0 || c.fadeOut > 0 || !own.isEmpty();
     const int mid = body.top() + body.height() / 2;
     const double half = body.height() / 2.0 - 1;
     const double clipX = frameToX(c.start);
@@ -805,7 +835,16 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c)
         int peak = 0;
         for (int b = std::max(0, b0); b < b1; ++b) peak = std::max<int>(peak, lv[b]);
         if (peak == 0) continue;
-        const double v = std::min(1.0, dbTable[peak] + gain);
+        // Wellenform folgt Clip-Lautstärke, Fade-Griffen und Übergängen (dB-Skala unten)
+        double db = c.volumeDb;
+        if (fades) {
+            const double t = (x + 0.5 - clipX) / m_view.pxPerFrame; // Mitte des Pixels, ab Clipanfang
+            double g = TimelineOps::audioFadeGain(c, t);
+            for (const auto& s : own) g *= TimelineOps::audioTransitionGain(s, c.id, c.start + t);
+            if (g <= 0.001) continue;
+            db += 20.0 * std::log10(g);
+        }
+        const double v = std::min(1.0, dbTable[peak] + db / 48.0);
         if (v <= 0) continue;
         const int h = std::max(1, int(v * half));
         lines << QLine(x, mid - h, x, mid + h);
