@@ -199,12 +199,6 @@ void applyClipFades(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, Tr
     const int a = from - c.start, b = to - c.start; // clip-lokal, b exklusiv
     const int len = b - a;
     if ((fi <= 0 || a >= fi) && (fo <= 0 || b <= length - fo)) return; // Ausschnitt berührt keinen Fade
-    auto gain = [&](int t) {
-        double g = 1.0;
-        if (fi > 0 && t < fi) g = std::min(g, double(t) / fi);
-        if (fo > 0 && t >= length - fo) g = std::min(g, double(length - 1 - t) / fo);
-        return std::clamp(g, 0.0, 1.0);
-    };
     auto isKey = [&](int t) { return t == a || t == b - 1 || t <= fi || t >= length - fo - 1; };
     const bool video = kind == TrackKind::Video;
     Mlt::Filter f(profile, video ? "brightness" : "volume");
@@ -212,37 +206,42 @@ void applyClipFades(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, Tr
     if (video) f.set("level", 1.0);
     for (int t = a; t < b; ++t) {
         if (!isKey(t)) continue;
-        const double g = gain(t);
-        if (video) f.anim_set("alpha", g, t - a, len);
-        else f.anim_set("level", g > 0.001 ? 20.0 * std::log10(std::sin(g * M_PI / 2)) : -200.0, t - a, len);
+        // dieselbe Kurve zeichnet die Timeline (Wellenform, Fade-Linie)
+        if (video) {
+            f.anim_set("alpha", TimelineOps::fadeRamp(c, t), t - a, len);
+        } else {
+            const double g = TimelineOps::audioFadeGain(c, t);
+            f.anim_set("level", g > 0.001 ? 20.0 * std::log10(g) : -200.0, t - a, len);
+        }
     }
     f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
     cut.attach(f);
 }
 
-// Ein-/Ausblenden über `len` Frames: Video über den Alphakanal (auf V1 = aus Schwarz, darüber = zur
-// Spur darunter, wie DaVinci), Audio als Keyframe in dB pro Frame. equalPower: Kurve für den
-// Audio-Crossfade (+3 dB wie DaVinci-Standard, Lautheit bleibt in der Mitte gleich).
-// Keyframes per anim_set statt als Text: "0.5" würde sonst je nach LC_NUMERIC als 0 gelesen.
-void applyFade(Mlt::Profile& profile, Mlt::Producer& cut, TrackKind kind, int len, bool fadeIn,
-               bool equalPower = false)
+// Video ein-/ausblenden über `len` Frames über den Alphakanal (auf V1 = aus Schwarz, darüber = zur
+// Spur darunter, wie DaVinci). Keyframes per anim_set statt als Text: "0.5" würde sonst je nach LC_NUMERIC als 0 gelesen.
+void applyFade(Mlt::Profile& profile, Mlt::Producer& cut, int len, bool fadeIn)
 {
-    auto value = [&](int i) {
-        const double t = fadeIn ? double(i) / len : double(len - 1 - i) / len;
-        return equalPower ? std::sin(t * M_PI / 2) : t;
-    };
-    const bool video = kind == TrackKind::Video;
-    Mlt::Filter f(profile, video ? "brightness" : "volume");
+    auto value = [&](int i) { return fadeIn ? double(i) / len : double(len - 1 - i) / len; };
+    Mlt::Filter f(profile, "brightness");
     if (!f.is_valid()) return;
-    if (video) {
-        f.set("level", 1.0);
-        f.anim_set("alpha", value(0), 0, len);
-        f.anim_set("alpha", value(len - 1), len - 1, len);
-    } else {
-        for (int i = 0; i < len; ++i) {
-            const double v = value(i);
-            f.anim_set("level", v > 0.001 ? 20.0 * std::log10(v) : -200.0, i, len);
-        }
+    f.set("level", 1.0);
+    f.anim_set("alpha", value(0), 0, len);
+    f.anim_set("alpha", value(len - 1), len - 1, len);
+    f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
+    cut.attach(f);
+}
+
+// Audio-Übergang: Pegel von Clip clipId im Ausschnitt des Übergangs als Keyframe in dB pro Frame
+// (Kurve aus TimelineOps, dieselbe zeichnet die Wellenform)
+void applyAudioTransition(Mlt::Profile& profile, Mlt::Producer& cut, const TimelineOps::TransitionSpan& s, int clipId)
+{
+    Mlt::Filter f(profile, "volume");
+    if (!f.is_valid()) return;
+    const int len = s.length();
+    for (int i = 0; i < len; ++i) {
+        const double v = TimelineOps::audioTransitionGain(s, clipId, s.start + i);
+        f.anim_set("level", v > 0.001 ? 20.0 * std::log10(v) : -200.0, i, len);
     }
     f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
     cut.attach(f);
@@ -290,21 +289,54 @@ QString wipeLuma(TransitionType type, int w, int h)
     return path;
 }
 
+// Rand einer Wischblende: Farbfläche, per animiertem qtcrop auf einen Streifen um die Kante begrenzt.
+// edge0/edge1 = Lage der Kante (Anteil 0..1 in Wischrichtung) im ersten/letzten Frame, dazwischen linear.
+void addWipeBorder(Mlt::Profile& profile, Mlt::Tractor& mix, int track, int len, const TransitionStyle& st,
+                   double edge0, double edge1)
+{
+    QColor c = st.borderColor;
+    c.setAlpha(255);
+    Mlt::Producer strip(profile, ("color:" + c.name(QColor::HexArgb)).toUtf8().constData());
+    if (!strip.is_valid()) return;
+    strip.set("length", len);
+    strip.set_in_and_out(0, len - 1);
+    Mlt::Filter crop(profile, "qtcrop");
+    if (!crop.is_valid()) return;
+    const double W = profile.width(), H = profile.height();
+    const bool horizontal = st.type == TransitionType::WipeRight || st.type == TransitionType::WipeLeft;
+    // nach links/oben: Kante läuft vom Ende zum Anfang
+    const bool reverse = st.type == TransitionType::WipeLeft || st.type == TransitionType::WipeUp;
+    const double full = horizontal ? W : H;
+    for (const auto& [i, e] : {std::pair{0, edge0}, std::pair{len - 1, edge1}}) {
+        const double pos = (reverse ? 1.0 - e : e) * full;
+        mlt_rect r{0, 0, W, H, 1.0};
+        (horizontal ? r.x : r.y) = pos - st.border / 2;
+        (horizontal ? r.w : r.h) = st.border;
+        crop.anim_set("rect", r, i, len);
+    }
+    crop.set("color", "#00000000");
+    crop.set_in_and_out(0, len - 1);
+    strip.attach(crop);
+    mix.set_track(strip, track);
+    Mlt::Transition t(profile, "qtblend");
+    t.set("always_active", 1);
+    mix.plant_transition(t, 0, track);
+}
+
 // Video-Übergang außer Cross Dissolve als kleiner Tractor: a geht, b kommt; fehlt eine Seite, ist dort Leere.
 std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Producer* a, Mlt::Producer* b, int len,
-                                               TransitionType type)
+                                               const TransitionStyle& st)
 {
+    const TransitionType type = st.type;
     auto mix = std::make_unique<Mlt::Tractor>(profile);
-    auto colorClip = [&](const char* resource) {
-        auto p = std::make_unique<Mlt::Producer>(profile, resource);
-        p->set("length", len);
-        p->set_in_and_out(0, len - 1);
-        return p;
-    };
-    if (type == TransitionType::DipToBlack || type == TransitionType::DipToWhite) {
+    if (type == TransitionType::DipToColor) {
         // Farbfläche unten, a blendet in der ersten Hälfte aus, b in der zweiten ein (ohne Gegenseite: ganze Länge)
-        auto color = colorClip(type == TransitionType::DipToBlack ? "color:#ff000000" : "color:#ffffffff");
-        mix->set_track(*color, 0);
+        QColor c = st.color;
+        c.setAlpha(255); // "#aarrggbb" wie beim Titel
+        Mlt::Producer color(profile, ("color:" + c.name(QColor::HexArgb)).toUtf8().constData());
+        color.set("length", len);
+        color.set_in_and_out(0, len - 1);
+        mix->set_track(color, 0);
         const int half = a && b ? len / 2 : 0;
         int track = 1;
         for (Mlt::Producer* p : {a, b}) {
@@ -319,32 +351,38 @@ std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Produ
         }
         return mix;
     }
+    const bool border = st.border >= 0.5;
     if (!a || !b) {
         // Wischblende ins/aus dem Leeren: luma ignoriert Transparenz -> sichtbaren Bereich per qtcrop animieren
+        // (harte Kante, Weichheit wirkt hier nicht)
         Mlt::Producer& one = a ? *a : *b;
+        // Die neue Seite kommt aus der Startrichtung: nach rechts = von links usw.
+        const bool fromStart = (type == TransitionType::WipeRight || type == TransitionType::WipeDown) == !a;
+        const bool horizontal = type == TransitionType::WipeRight || type == TransitionType::WipeLeft;
+        double edges[2] = {0, 0}; // Lage der Kante für den Rand (Anteil in Wischrichtung)
         Mlt::Filter crop(profile, "qtcrop");
         if (crop.is_valid()) {
             const double W = profile.width(), H = profile.height();
-            for (int i : {0, len - 1}) {
+            for (int k = 0; k < 2; ++k) {
+                const int i = k ? len - 1 : 0;
                 // p = Anteil, den die neue Seite schon einnimmt (Einblenden: der Clip selbst, Ausblenden: die Leere)
                 const double p = len > 1 ? double(i) / (len - 1) : 1.0;
                 const double shown = a ? 1.0 - p : p; // sichtbarer Anteil des Clips
                 mlt_rect r{0, 0, W, H, 1.0};
-                // Die neue Seite kommt aus der Startrichtung: nach rechts = von links usw.
-                const bool fromStart = (type == TransitionType::WipeRight || type == TransitionType::WipeDown) == !a;
-                const bool horizontal = type == TransitionType::WipeRight || type == TransitionType::WipeLeft;
                 double& pos = horizontal ? r.x : r.y;
                 double& size = horizontal ? r.w : r.h;
                 const double full = horizontal ? W : H;
                 size = full * shown;
                 pos = fromStart ? 0.0 : full - size;
                 crop.anim_set("rect", r, i, len);
+                edges[k] = p; // die Kante wandert in Wischrichtung von 0 nach 1
             }
             crop.set("color", "#00000000");
             crop.set_in_and_out(one.get_in(), one.get_out());
             one.attach(crop);
         }
         mix->set_track(one, 0);
+        if (border) addWipeBorder(profile, *mix, 1, len, st, edges[0], edges[1]);
         return mix;
     }
     // Wischblende zwischen zwei Clips: luma mit Verlaufsbild
@@ -353,9 +391,16 @@ std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Produ
     Mlt::Transition t(profile, "luma");
     const QString luma = wipeLuma(type, profile.width(), profile.height());
     if (!luma.isEmpty()) t.set("resource", luma.toUtf8().constData());
-    t.set("softness", 0.02);
+    // Weichheit: Anteil des Verlaufs, über den überblendet wird (etwas Weichheit immer, gegen Treppchen)
+    const double soft = 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0;
+    t.set("softness", soft);
     t.set_in_and_out(0, len - 1);
     mix->plant_transition(t, 0, 1);
+    if (border) {
+        // luma: Fortschritt p = i/len, Übergangszone endet bei p*(1+soft) -> Mitte der Zone als Kante
+        auto edge = [&](int i) { return double(i) / len * (1.0 + soft) - soft / 2; };
+        addWipeBorder(profile, *mix, 2, len, st, edge(0), edge(len - 1));
+    }
     return mix;
 }
 
@@ -463,7 +508,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             std::unique_ptr<Mlt::Producer> cb(b ? cutOf(*b, s.start, s.end, true) : nullptr);
             const int len = s.length();
             if (kind == TrackKind::Video && s.style.type != TransitionType::CrossDissolve && (ca || cb)) {
-                pl.append(*styledTransition(m_profile, ca.get(), cb.get(), len, s.style.type));
+                pl.append(*styledTransition(m_profile, ca.get(), cb.get(), len, s.style));
             } else if (ca && cb) {
                 // Cross Dissolve: beide Seiten in einem kleinen Tractor, Überblendung von a nach b
                 Mlt::Tractor mix(m_profile);
@@ -471,9 +516,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
                 mix.set_track(*cb, 1);
                 Mlt::Transition t(m_profile, kind == TrackKind::Video ? "luma" : "mix");
                 if (kind == TrackKind::Audio) {
-                    // Crossfade +3 dB: beide Seiten mit eigener Kurve, dann einfach addieren
-                    applyFade(m_profile, *ca, kind, len, false, true);
-                    applyFade(m_profile, *cb, kind, len, true, true);
+                    // Crossfade: beide Seiten mit eigener Kurve, dann einfach addieren
+                    applyAudioTransition(m_profile, *ca, s, a->id);
+                    applyAudioTransition(m_profile, *cb, s, b->id);
                     t.set("start", 1.0);
                     t.set("sum", 1);
                 }
@@ -483,7 +528,8 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             } else if (ca || cb) {
                 // Nur eine Seite (Schnitt zum Leeren oder anderer Clip deaktiviert/offline): Aus-/Einblenden
                 Mlt::Producer& one = ca ? *ca : *cb;
-                applyFade(m_profile, one, kind, len, !ca);
+                if (kind == TrackKind::Video) applyFade(m_profile, one, len, !ca);
+                else applyAudioTransition(m_profile, one, s, ca ? a->id : b->id);
                 pl.append(one);
             } else {
                 pl.blank(len - 1);

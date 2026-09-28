@@ -496,7 +496,7 @@ void Editor::removeTransition(int leftId, int rightId)
     });
 }
 
-void Editor::setTransitionStyle(int leftId, int rightId, const TransitionStyle& style)
+void Editor::setTransitionStyle(int leftId, int rightId, const TransitionStyle& style, const QString& mergeKey)
 {
     Timeline tl = m_project->timeline();
     Clip* l = TimelineOps::findClip(tl, leftId);
@@ -507,7 +507,7 @@ void Editor::setTransitionStyle(int leftId, int rightId, const TransitionStyle& 
     // Andere Ausrichtung braucht andere Handles -> Länge ggf. kürzen
     fitTransitions(tl, {leftId, rightId}, sourceLength());
     if (sameTransitions(m_project->timeline(), tl)) return;
-    m_project->edit(T("Übergang ändern"), [&](Timeline& t) { t = tl; });
+    m_project->edit(T("Übergang ändern"), [&](Timeline& t) { t = tl; }, mergeKey);
 }
 
 void Editor::setTransitionLength(int leftId, int rightId, int length, const QString& mergeKey)

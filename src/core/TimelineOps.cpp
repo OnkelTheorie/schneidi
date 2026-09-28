@@ -3,6 +3,7 @@
 #include <QHash>
 #include <algorithm>
 #include <climits>
+#include <cmath>
 
 namespace {
 
@@ -306,6 +307,38 @@ QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sour
         if (len > 0) spans << TransitionSpan{c.id, 0, c.end() - len, c.end(), c.end(), c.transOutStyle};
     }
     return spans;
+}
+
+double fadeRamp(const Clip& c, double t)
+{
+    const int length = c.length();
+    const int fi = std::min(c.fadeIn, length);
+    const int fo = std::min(c.fadeOut, length - fi);
+    double g = 1.0;
+    if (fi > 0 && t < fi) g = std::min(g, t / fi);
+    if (fo > 0 && t >= length - fo) g = std::min(g, (length - 1 - t) / fo);
+    return std::clamp(g, 0.0, 1.0);
+}
+
+double audioFadeGain(const Clip& c, double t)
+{
+    return std::sin(fadeRamp(c, t) * M_PI / 2);
+}
+
+double audioTransitionGain(const TransitionSpan& s, int clipId, double frame)
+{
+    if (frame < s.start || frame >= s.end || (clipId != s.leftId && clipId != s.rightId)) return 1.0;
+    const int len = std::max(1, s.length());
+    const double i = frame - s.start;
+    // wie die Engine: einblenden i/len, ausblenden (len-1-i)/len
+    const double t = std::clamp(clipId == s.rightId ? i / len : (len - 1 - i) / len, 0.0, 1.0);
+    // Kurve wie DaVinci (gilt auch fürs Ein-/Ausblenden zur Stille): +3 dB = gleiche Leistung (Sinus),
+    // 0 dB = linear (Pegel addiert sich zu 1), -3 dB = t^1,5 (Mitte je Seite -9 dB)
+    switch (s.style.audio) {
+    case AudioCurve::Zero: return t;
+    case AudioCurve::Minus3dB: return t * std::sqrt(t);
+    default: return std::sin(t * M_PI / 2);
+    }
 }
 
 void detachTransitions(Timeline& tl, const QVector<int>& clipIds)

@@ -454,7 +454,7 @@ void MainWindow::updateTitle()
 void MainWindow::setProjectPath(const QString& path)
 {
     m_projectPath = path;
-    if (!path.isEmpty()) addRecent(path);
+    if (!path.isEmpty() && !m_autosaveDisabled) addRecent(path); // Testlauf: Liste des Nutzers nicht anfassen
     updateTitle();
 }
 

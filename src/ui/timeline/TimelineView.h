@@ -112,10 +112,12 @@ private:
 
     void drawRuler(QPainter& p);
     void drawTracks(QPainter& p);
-    void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost);
+    // spans: Audio-Übergänge der Spur (Wellenform folgt dem Crossfade)
+    void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,
+                  const QVector<TimelineOps::TransitionSpan>& spans = {});
     void drawTransitions(QPainter& p, const Row& row, const QSet<int>& hiddenClips);
     void drawFilmstrip(QPainter& p, const QRect& body, const Clip& c);
-    void drawWaveform(QPainter& p, const QRect& body, const Clip& c);
+    void drawWaveform(QPainter& p, const QRect& body, const Clip& c, const QVector<TimelineOps::TransitionSpan>& spans);
     void drawHeaders(QPainter& p);
     void drawPlayhead(QPainter& p);
     void drawLabel(QPainter& p, const QPoint& topLeft, const QString& text);

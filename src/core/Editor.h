@@ -72,7 +72,7 @@ public:
     // Übergang zwischen leftId und rightId (0 = Schwarz/Stille) entfernen bzw. Länge ändern
     void removeTransition(int leftId, int rightId);
     void setTransitionLength(int leftId, int rightId, int length, const QString& mergeKey = {});
-    void setTransitionStyle(int leftId, int rightId, const TransitionStyle& style);
+    void setTransitionStyle(int leftId, int rightId, const TransitionStyle& style, const QString& mergeKey = {});
     // Wirksame Übergänge einer Spur (für Anzeige)
     QVector<TimelineOps::TransitionSpan> transitions(TrackRef ref) const;
 

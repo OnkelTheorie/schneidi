@@ -741,32 +741,64 @@ void Inspector::apply(TrackKind kind, const QString& key, const QString& text, c
     m_editor->modifyClips(selectedIds(kind, title), text, fn, key.isEmpty() ? QString() : "inspector:" + key);
 }
 
+void Inspector::changeTransition(const std::function<void(TransitionStyle&)>& fn, const QString& mergeKey)
+{
+    TrackKind kind;
+    TimelineOps::TransitionSpan span;
+    if (!selectedTransition(&kind, &span)) return;
+    TransitionStyle st = span.style;
+    fn(st);
+    m_editor->setTransitionStyle(span.leftId, span.rightId, st, mergeKey);
+}
+
 void Inspector::buildTransitionPage(QVBoxLayout* page)
 {
     Section s = addSection(page, TrackKind::Video, T("Übergang"), {});
-    auto styleFromUi = [this] {
-        TransitionStyle st;
-        st.type = TransitionType(m_transType->currentData().toInt());
-        st.align = TransitionAlign(m_transAlign->currentIndex());
-        return st;
-    };
     auto combo = [] {
         auto* c = new QComboBox;
         c->setFocusPolicy(Qt::ClickFocus);
         c->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         return c;
     };
+    // Zeile mit Beschriftung; rows sammelt beide Widgets, um sie je nach Art ein-/auszublenden
+    auto addRow = [&](const QString& label, QWidget* w, QVector<QWidget*>* rows = nullptr, int span = 2) {
+        QLabel* l = rowLabel(label);
+        s.grid->addWidget(l, s.rows, 0);
+        s.grid->addWidget(w, s.rows++, 1, 1, span);
+        if (rows) *rows << l << w;
+    };
+    // Farbfeld (QColorDialog) rechtsbündig in einem eigenen Widget
+    auto swatchRow = [&](QToolButton*& swatch, const QString& text,
+                         const std::function<QColor&(TransitionStyle&)>& field) {
+        swatch = new QToolButton;
+        swatch->setFixedSize(46, 18);
+        swatch->setFocusPolicy(Qt::NoFocus);
+        swatch->setToolTip(T("%1 wählen").arg(text));
+        connect(swatch, &QToolButton::clicked, this, [this, text, field] {
+            TrackKind kind;
+            TimelineOps::TransitionSpan span;
+            if (!selectedTransition(&kind, &span)) return;
+            const QColor col = QColorDialog::getColor(field(span.style), this, T("%1 wählen").arg(text));
+            if (col.isValid()) changeTransition([&](TransitionStyle& st) { field(st) = col; });
+        });
+        auto* box = new QWidget;
+        auto* lay = new QHBoxLayout(box);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->addStretch(1);
+        lay->addWidget(swatch);
+        return box;
+    };
 
     m_transType = combo();
     for (const auto& i : kTransitionTypes) m_transType->addItem(T(i.name), int(i.type));
-    m_transAudioType = new QLabel("Cross Fade +3 dB"); // Audio kennt nur den Crossfade
+    m_transAudioType = combo(); // Audio: Pegelkurve des Crossfades
+    for (const auto& i : kAudioCurves) m_transAudioType->addItem(i.name, int(i.curve));
     auto* typeBox = new QWidget;
     auto* typeLay = new QHBoxLayout(typeBox);
     typeLay->setContentsMargins(0, 0, 0, 0);
     typeLay->addWidget(m_transType);
     typeLay->addWidget(m_transAudioType);
-    s.grid->addWidget(rowLabel(T("Art")), s.rows, 0);
-    s.grid->addWidget(typeBox, s.rows++, 1, 1, 2);
+    addRow(T("Art"), typeBox);
 
     m_transLen = new ScrubField(0.04, 600, 0.04, 2);
     m_transLen->setSuffix(" s");
@@ -774,20 +806,50 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
         const int frames = std::max(1, int(std::lround(sec * m_editor->project()->fps())));
         m_editor->setTransitionLength(m_transKey.leftId, m_transKey.rightId, frames, "transLenInspector");
     };
-    s.grid->addWidget(rowLabel(T("Dauer")), s.rows, 0);
-    s.grid->addWidget(m_transLen, s.rows++, 1);
+    m_transLen->onFinish = [this] { m_editor->project()->closeMerge(); };
+    addRow(T("Dauer"), m_transLen, nullptr, 1);
 
     m_transAlign = combo();
     m_transAlign->addItems({T("Mitte auf Schnitt"), T("Beginn am Schnitt"), T("Ende am Schnitt")}); // Index = TransitionAlign
     m_transAlign->setToolTip(T("Lage zum Schnitt (nur bei Überblendung zwischen zwei Clips)"));
-    s.grid->addWidget(rowLabel(T("Ausrichtung")), s.rows, 0);
-    s.grid->addWidget(m_transAlign, s.rows++, 1, 1, 2);
+    addRow(T("Ausrichtung"), m_transAlign);
 
-    auto changed = [this, styleFromUi] {
-        m_editor->setTransitionStyle(m_transKey.leftId, m_transKey.rightId, styleFromUi());
+    // Abblende über Farbe ("Dip to Color Dissolve"): Farbe dazwischen
+    addRow(T("Farbe"), swatchRow(m_transColor, T("Abblende-Farbe"), [](TransitionStyle& st) -> QColor& { return st.color; }),
+           &m_dipRows);
+
+    // Wischblende: Weichheit der Kante, Rand (Breite + Farbe)
+    m_transSoft = new ScrubField(0, 100, 0.5, 0);
+    m_transSoft->setSuffix(" %");
+    m_transSoft->setToolTip(T("Weiche Kante (nur zwischen zwei Clips)"));
+    m_transSoft->onChange = [this](double v) {
+        changeTransition([v](TransitionStyle& st) { st.softness = v; }, "transSoftInspector");
     };
-    connect(m_transType, &QComboBox::activated, this, changed);
-    connect(m_transAlign, &QComboBox::activated, this, changed);
+    m_transSoft->onFinish = [this] { m_editor->project()->closeMerge(); };
+    addRow(T("Weichheit"), m_transSoft, &m_wipeRows, 1);
+
+    m_transBorder = new ScrubField(0, 200, 0.5, 0);
+    m_transBorder->setSuffix(" px");
+    m_transBorder->onChange = [this](double v) {
+        changeTransition([v](TransitionStyle& st) { st.border = v; }, "transBorderInspector");
+    };
+    m_transBorder->onFinish = [this] { m_editor->project()->closeMerge(); };
+    addRow(T("Rand"), m_transBorder, &m_wipeRows, 1);
+    addRow(T("Randfarbe"),
+           swatchRow(m_transBorderColor, T("Randfarbe"), [](TransitionStyle& st) -> QColor& { return st.borderColor; }),
+           &m_wipeRows);
+
+    connect(m_transType, &QComboBox::activated, this, [this] {
+        const auto type = TransitionType(m_transType->currentData().toInt());
+        changeTransition([type](TransitionStyle& st) { st.type = type; });
+    });
+    connect(m_transAudioType, &QComboBox::activated, this, [this] {
+        const auto curve = AudioCurve(m_transAudioType->currentData().toInt());
+        changeTransition([curve](TransitionStyle& st) { st.audio = curve; });
+    });
+    connect(m_transAlign, &QComboBox::activated, this, [this](int i) {
+        changeTransition([i](TransitionStyle& st) { st.align = TransitionAlign(i); });
+    });
     page->addStretch(1);
 }
 
@@ -820,7 +882,7 @@ bool Inspector::refreshTransition()
     m_content->setVisible(true);
     m_empty->setVisible(false);
     const bool video = kind == TrackKind::Video;
-    m_clipName->setText(video ? T(transitionTypeInfo(span.style.type).name) : QStringLiteral("Cross Fade +3 dB"));
+    m_clipName->setText(video ? T(transitionTypeInfo(span.style.type).name) : QString(audioCurveInfo(span.style.audio).name));
     m_clipName->setToolTip({});
     m_tabs->button(kTransitionPage)->setChecked(true);
     m_pages->setCurrentIndex(kTransitionPage);
@@ -828,7 +890,19 @@ bool Inspector::refreshTransition()
     m_transType->setVisible(video);
     m_transAudioType->setVisible(!video);
     m_transType->setCurrentIndex(m_transType->findData(int(span.style.type)));
+    m_transAudioType->setCurrentIndex(m_transAudioType->findData(int(span.style.audio)));
     m_transAlign->setCurrentIndex(int(span.style.align));
+    // Felder nur für die passende Art (wie DaVinci je nach Übergang andere Parameter zeigt)
+    for (QWidget* w : m_dipRows) w->setVisible(video && span.style.type == TransitionType::DipToColor);
+    for (QWidget* w : m_wipeRows) w->setVisible(video && span.style.isWipe());
+    auto swatchStyle = [](const QColor& c) {
+        return QString("QToolButton { background: %1; border: 1px solid #141417; border-radius: 2px; }").arg(c.name());
+    };
+    m_transColor->setStyleSheet(swatchStyle(span.style.color));
+    m_transBorderColor->setStyleSheet(swatchStyle(span.style.borderColor));
+    m_transSoft->setValue(span.style.softness);
+    m_transSoft->setEnabled(span.isDissolve()); // ins/aus dem Leeren: harte Kante
+    m_transBorder->setValue(span.style.border);
     m_transAlign->setEnabled(span.isDissolve()); // Ein-/Ausblenden liegt immer im Clip
     m_transLen->setValue(double(span.length()) / std::max(1, m_editor->project()->fps()));
     return true;
