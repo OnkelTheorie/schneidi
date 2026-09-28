@@ -52,7 +52,7 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
         if (crop.is_valid()) {
             const double w = std::max(1.0, W - t.cropLeft - t.cropRight);
             const double h = std::max(1.0, H - t.cropTop - t.cropBottom);
-            crop.set("rect", QString("%1 %2 %3 %4").arg(t.cropLeft).arg(t.cropTop).arg(w).arg(h).toUtf8().constData());
+            crop.set("rect", mlt_rect{t.cropLeft, t.cropTop, w, h, 1.0});
             crop.set("color", "#00000000");
             clip.attach(crop);
         }
@@ -71,10 +71,14 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
     if (!f.is_valid()) return;
     const double w = W * t.zoomX, h = H * t.zoomY;
     const double x = (W - w) / 2 + t.posX, y = (H - h) / 2 - t.posY;
-    // 5. Wert (Deckkraft) muss dabei sein, sonst wird das Bild unsichtbar
-    f.set("rect", QString("%1 %2 %3 %4 1").arg(x).arg(y).arg(w).arg(h).toUtf8().constData());
+    // Als mlt_rect statt Text setzen: MLT liest Text-Rechtecke mit dem System-Zahlenformat
+    // (deutsch: "940.8" -> 940 und ".8" rutscht ins nächste Feld). 5. Wert (Deckkraft) muss 1 sein.
+    f.set("rect", mlt_rect{x, y, w, h, 1.0});
     f.set("rotation", -t.rotation); // DaVinci: positiv = gegen den Uhrzeigersinn
     f.set("rotate_center", 1);
+    // distort=1: Quelle in voller Größe holen und erst beim Zeichnen skalieren. Sonst fordert qtblend das Bild
+    // in Zielhöhe an (bei kleinem Zoom nur ein paar Pixel -> Bildsalat) und hält X/Y-Zoom im Seitenverhältnis.
+    f.set("distort", 1);
     clip.attach(f);
 }
 
