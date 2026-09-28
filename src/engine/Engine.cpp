@@ -1,0 +1,198 @@
+#include "engine/Engine.h"
+
+#include "engine/TimelineBuilder.h"
+
+#include <Mlt.h>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <cstring>
+
+struct EngineCallbacks {
+    // Läuft im MLT-Consumer-Thread, sobald ein Frame angezeigt werden soll
+    static void onFrameShow(mlt_properties, void* self, mlt_event_data data)
+    {
+        static_cast<Engine*>(self)->onFrameShown(mlt_event_data_to_frame(data));
+    }
+};
+
+Engine::Engine(QObject* parent) : QObject(parent) {}
+
+Engine::~Engine()
+{
+    if (m_consumer) m_consumer->stop();
+    m_consumer.reset();
+    m_timeline.reset();
+    m_source.reset();
+    m_builder.reset();
+    m_profile.reset();
+}
+
+bool Engine::init(QString* error)
+{
+#ifdef Q_OS_WIN
+    // Unter Windows liegen die MLT-Plugins neben der .exe (portable Installation)
+    const QString appDir = QCoreApplication::applicationDirPath();
+    qputenv("MLT_DATA", QDir(appDir).filePath("share/mlt-7").toUtf8());
+    qputenv("MLT_PROFILES_PATH", QDir(appDir).filePath("share/mlt-7/profiles").toUtf8());
+    if (!Mlt::Factory::init(QDir(appDir).filePath("lib/mlt-7").toUtf8().constData())) {
+#else
+    if (!Mlt::Factory::init()) {
+#endif
+        if (error) *error = "MLT konnte nicht initialisiert werden.";
+        return false;
+    }
+
+    // Projektformat vorerst fest: 1080p, 25 fps (später Projekteinstellung)
+    m_profile = std::make_unique<Mlt::Profile>("atsc_1080p_25");
+    m_builder = std::make_unique<TimelineBuilder>(*m_profile);
+
+    for (const char* id : {"sdl2_audio", "rtaudio"}) {
+        m_consumer = std::make_unique<Mlt::Consumer>(*m_profile, id);
+        if (m_consumer->is_valid()) break;
+    }
+    if (!m_consumer || !m_consumer->is_valid()) {
+        if (error) *error = "Kein MLT-Audio-Consumer (sdl2_audio/rtaudio) gefunden.";
+        return false;
+    }
+    m_consumer->set("terminate_on_pause", 0);
+    m_consumer->set("real_time", 1);
+    m_consumer->set("scrub_audio", 1);
+    m_consumer->listen("consumer-frame-show", this, (mlt_listener)EngineCallbacks::onFrameShow);
+
+    updateTimeline(Timeline{});
+    showTimeline(0);
+    return true;
+}
+
+int Engine::fps() const
+{
+    return m_profile ? qRound(m_profile->fps()) : 25;
+}
+
+MediaInfo Engine::probe(const QString& path)
+{
+    MediaInfo info;
+    info.path = path;
+    info.name = QFileInfo(path).fileName();
+    Mlt::Producer p(*m_profile, path.toUtf8().constData());
+    if (!p.is_valid()) return info;
+
+    const QString service = p.get("mlt_service");
+    info.isImage = service == "qimage" || service == "pixbuf";
+    if (info.isImage) {
+        info.hasVideo = true;
+        info.length = 5 * fps(); // Standbild: 5 Sekunden wie in DaVinci
+    } else {
+        info.hasVideo = p.get_int("video_index") >= 0;
+        info.hasAudio = p.get_int("audio_index") >= 0;
+        info.length = p.get_length();
+    }
+    return info;
+}
+
+QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
+{
+    Mlt::Producer p(*m_profile, path.toUtf8().constData());
+    if (!p.is_valid()) return {};
+    p.seek(frame);
+    std::unique_ptr<Mlt::Frame> f(p.get_frame());
+    if (!f) return {};
+    mlt_image_format fmt = mlt_image_rgba;
+    int w = size.width(), h = size.height();
+    const uint8_t* data = f->get_image(fmt, w, h);
+    if (!data || w <= 0 || h <= 0) return {};
+    QImage img(w, h, QImage::Format_RGBA8888);
+    std::memcpy(img.bits(), data, size_t(w) * h * 4);
+    return img;
+}
+
+void Engine::updateTimeline(const Timeline& tl)
+{
+    const bool active = m_mode == Mode::Timeline;
+    const int pos = m_position;
+    if (active && m_consumer) m_consumer->stop(); // alten Tractor nicht mehr lesen lassen
+    m_timeline = m_builder->build(tl);
+    if (active) connectProducer(m_timeline.get(), pos);
+}
+
+void Engine::showTimeline(int position)
+{
+    if (!m_timeline) return;
+    m_speed = 0;
+    m_mode = Mode::Timeline;
+    connectProducer(m_timeline.get(), position);
+    emit modeChanged(m_mode);
+}
+
+void Engine::showSource(const QString& path)
+{
+    auto p = std::make_unique<Mlt::Producer>(*m_profile, path.toUtf8().constData());
+    if (!p->is_valid()) return;
+    m_consumer->stop();
+    m_source = std::move(p);
+    m_speed = 0;
+    m_mode = Mode::Source;
+    connectProducer(m_source.get(), 0);
+    emit modeChanged(m_mode);
+}
+
+void Engine::connectProducer(Mlt::Producer* producer, int position)
+{
+    m_consumer->stop();
+    m_current = producer;
+    m_current->set_speed(m_speed);
+    m_current->seek(position);
+    m_position = position;
+    m_consumer->connect(*m_current);
+    m_consumer->start();
+    refresh();
+    emit positionChanged(position);
+    emit speedChanged(m_speed);
+}
+
+void Engine::refresh()
+{
+    if (m_consumer) m_consumer->set("refresh", 1);
+}
+
+void Engine::play() { setSpeed(1.0); }
+void Engine::pause() { setSpeed(0.0); }
+void Engine::togglePlay() { setSpeed(m_speed == 0.0 ? 1.0 : 0.0); }
+
+void Engine::setSpeed(double speed)
+{
+    if (!m_current) return;
+    m_speed = speed;
+    m_current->set_speed(speed);
+    if (speed == 0.0) m_current->seek(m_position); // exakt auf dem angezeigten Frame stehen bleiben
+    refresh();
+    emit speedChanged(speed);
+}
+
+void Engine::seek(int frame)
+{
+    if (!m_current) return;
+    frame = std::max(0, frame);
+    m_current->seek(frame);
+    m_consumer->purge();
+    m_position = frame;
+    refresh();
+    emit positionChanged(frame);
+}
+
+void Engine::onFrameShown(void* mltFrame)
+{
+    if (!mltFrame) return;
+    Mlt::Frame frame(static_cast<mlt_frame>(mltFrame));
+    mlt_image_format fmt = mlt_image_rgba;
+    int w = m_previewSize.width(), h = m_previewSize.height();
+    const uint8_t* data = frame.get_image(fmt, w, h);
+    if (data && w > 0 && h > 0) {
+        QImage img(w, h, QImage::Format_RGBA8888);
+        std::memcpy(img.bits(), data, size_t(w) * h * 4);
+        emit frameReady(img); // queued -> UI-Thread
+    }
+    const int pos = frame.get_position();
+    if (m_speed != 0.0 && pos != m_position.exchange(pos)) emit positionChanged(pos);
+}
