@@ -60,6 +60,24 @@ int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int de
 void trimClips(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
                const SourceLength& sourceLength);
 
+// Wirksamer Übergang auf einer Spur (siehe Clip::transIn/transOut)
+struct TransitionSpan {
+    int leftId = 0;         // Clip, der ausblendet (0 = keiner -> Einblenden aus Schwarz/Stille)
+    int rightId = 0;        // Clip, der einblendet (0 = keiner -> Ausblenden)
+    int start = 0, end = 0; // Timeline-Frames [start, end)
+    int cut = 0;            // Schnitt (bei Einblenden = start, bei Ausblenden = end)
+    int length() const { return end - start; }
+    bool isDissolve() const { return leftId && rightId; }
+};
+
+// Übergänge einer Spur mit der Länge, die wirklich passt: Cross Dissolve zentriert auf dem Schnitt,
+// gekürzt, wenn Handles (Material über In/Out hinaus) oder Cliplänge nicht reichen; Länge 0 fällt weg.
+QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sourceLength);
+
+// Überblendungen lösen, bei denen nur einer der beiden Clips in `clipIds` liegt
+// (vor Löschen/Verschieben, damit der Übrige nicht plötzlich ausblendet).
+void detachTransitions(Timeline& tl, const QVector<int>& clipIds);
+
 int endFrame(const Timeline& tl);
 
 } // namespace TimelineOps

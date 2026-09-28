@@ -61,6 +61,15 @@ public:
     void setMarkOut(int frame);
     void clearMarks();
 
+    // Übergänge (Cross Dissolve, Strg+T) mit Standardlänge 1 s: an beiden Kanten der ausgewählten Clips,
+    // ohne Auswahl am Schnitt, der dem Playhead am nächsten liegt. Zu wenig Handles -> kürzer.
+    void addTransitions(int frame);
+    // Übergang zwischen leftId und rightId (0 = Schwarz/Stille) entfernen bzw. Länge ändern
+    void removeTransition(int leftId, int rightId);
+    void setTransitionLength(int leftId, int rightId, int length, const QString& mergeKey = {});
+    // Wirksame Übergänge einer Spur (für Anzeige)
+    QVector<TimelineOps::TransitionSpan> transitions(TrackRef ref) const;
+
     // Zwischenablage (Strg+C/X/V): Einfügen am Playhead auf denselben Spuren, überschreibt
     void copySelection();
     void cutSelection();
