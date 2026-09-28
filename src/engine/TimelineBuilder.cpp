@@ -1,6 +1,7 @@
 #include "engine/TimelineBuilder.h"
 
 #include "core/EffectRegistry.h"
+#include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 
 #include <Mlt.h>
@@ -15,6 +16,7 @@
 #include <QString>
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace {
 
@@ -40,70 +42,134 @@ void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
     }
 }
 
-void applyVolume(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c)
+// Keyframes (core/Keyframes.h) als MLT-Animation eines Filter-Werts über einen Ausschnitt: a = Clip-Frame am
+// Anfang des Ausschnitts, len = seine Länge. Gesetzt wird an den Ausschnitt-Grenzen und an allen Keyframes der
+// Parameter (MLT interpoliert linear dazwischen); Abschnitte mit Ease-Kurve (oder bake) Frame für Frame, damit
+// Vorschau, Export und Inspector exakt dieselben Werte haben. false = keiner der Parameter animiert.
+bool animate(const Clip& c, std::initializer_list<AnimParam> params, int a, int len,
+             const std::function<void(int pos, double t)>& set, bool bake = false)
 {
-    if (c.volumeDb == 0.0) return;
-    Mlt::Filter f(profile, "volume");
-    if (!f.is_valid()) return;
-    f.set("level", c.volumeDb <= kMinVolumeDb ? -200.0 : c.volumeDb); // dB
-    clip.attach(f);
+    if (len <= 0 || std::none_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::animated(c, p); }))
+        return false;
+    QVector<int> pos{0, len - 1};
+    for (int t : Keys::keyTimes(c, QVector<AnimParam>(params)))
+        if (t - a > 0 && t - a < len - 1) pos << t - a;
+    std::sort(pos.begin(), pos.end());
+    pos.erase(std::unique(pos.begin(), pos.end()), pos.end());
+    for (int i = 0; i < pos.size(); ++i) {
+        set(pos[i], a + pos[i]);
+        if (i + 1 == pos.size()) break;
+        bool linear = !bake;
+        for (AnimParam p : params) linear = linear && Keys::linearBetween(c, p, a + pos[i], a + pos[i + 1]);
+        if (!linear)
+            for (int q = pos[i] + 1; q < pos[i + 1]; ++q) set(q, a + q);
+    }
+    return true;
 }
 
-void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
+// Filter an einen Ausschnitt hängen; Keyframes zählen ab Filter-In (siehe dev-notes)
+void attachTo(Mlt::Producer& cut, Mlt::Filter& f)
 {
-    const ClipTransform& t = c.transform;
-    if (t.isIdentity()) return;
+    f.set_in_and_out(cut.get_in(), cut.get_out());
+    cut.attach(f);
+}
+
+double mltLevel(double db) { return db <= kMinVolumeDb ? -200.0 : db; }
+
+// a/len: Ausschnitt für Keyframes (len = 0: nur statischer Wert, z. B. Mixer)
+void applyVolume(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a = 0, int len = 0)
+{
+    const bool anim = len > 0 && Keys::animated(c, AnimParam::Volume);
+    if (c.volumeDb == 0.0 && !anim) return;
+    Mlt::Filter f(profile, "volume");
+    if (!f.is_valid()) return;
+    // -∞ ist in MLT -200 dB -> Abschnitte, die dort anfangen/enden, nicht linear -> Frame für Frame
+    const KeyTrack keys = c.keys.value(AnimParam::Volume);
+    const bool bake = std::any_of(keys.begin(), keys.end(), [](const Keyframe& k) { return k.value <= kMinVolumeDb; });
+    if (!anim || !animate(c, {AnimParam::Volume}, a, len, [&](int pos, double t) {
+            f.anim_set("level", mltLevel(Keys::valueAt(c, AnimParam::Volume, t)), pos, len);
+        }, bake))
+        f.set("level", mltLevel(c.volumeDb)); // dB
+    if (anim) attachTo(static_cast<Mlt::Producer&>(clip), f);
+    else clip.attach(f);
+}
+
+void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, int a, int len)
+{
     const double W = profile.width(), H = profile.height();
-    if (t.hasCrop()) {
+    auto val = [&](AnimParam p, double t) { return Keys::valueAt(c, p, t); };
+    if (Keys::hasCrop(c)) {
         // Beschneiden = Rand transparent machen, Bild bleibt an seinem Platz (wie DaVinci)
         Mlt::Filter crop(profile, "qtcrop");
         if (crop.is_valid()) {
-            const double w = std::max(1.0, W - t.cropLeft - t.cropRight);
-            const double h = std::max(1.0, H - t.cropTop - t.cropBottom);
-            crop.set("rect", mlt_rect{t.cropLeft, t.cropTop, w, h, 1.0});
+            auto rect = [&](double t) {
+                const double l = val(AnimParam::CropLeft, t), r = val(AnimParam::CropRight, t);
+                const double top = val(AnimParam::CropTop, t), b = val(AnimParam::CropBottom, t);
+                return mlt_rect{l, top, std::max(1.0, W - l - r), std::max(1.0, H - top - b), 1.0};
+            };
+            if (!animate(c, {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom}, a, len,
+                         [&](int pos, double t) { crop.anim_set("rect", rect(t), pos, len); }))
+                crop.set("rect", rect(a));
             crop.set("color", "#00000000");
-            clip.attach(crop);
+            attachTo(clip, crop);
         }
     }
-    if (t.hasOpacity()) {
+    if (Keys::hasOpacity(c)) {
         // Deckkraft über den Alphakanal (wie Shotcut); die qtblend-Opacity lieferte nur Schwarz
         Mlt::Filter op(profile, "brightness");
         if (op.is_valid()) {
             op.set("level", 1.0);
-            op.set("alpha", t.opacity / 100.0);
-            clip.attach(op);
+            if (!animate(c, {AnimParam::Opacity}, a, len,
+                         [&](int pos, double t) { op.anim_set("alpha", val(AnimParam::Opacity, t) / 100.0, pos, len); }))
+                op.set("alpha", c.transform.opacity / 100.0);
+            attachTo(clip, op);
         }
     }
-    if (!t.hasTransform()) return;
+    if (!Keys::hasTransform(c)) return;
     Mlt::Filter f(profile, "qtblend");
     if (!f.is_valid()) return;
-    const double w = W * t.zoomX, h = H * t.zoomY;
-    const double x = (W - w) / 2 + t.posX, y = (H - h) / 2 - t.posY;
+    auto rect = [&](double t) {
+        const double w = W * val(AnimParam::ZoomX, t), h = H * val(AnimParam::ZoomY, t);
+        return mlt_rect{(W - w) / 2 + val(AnimParam::PosX, t), (H - h) / 2 - val(AnimParam::PosY, t), w, h, 1.0};
+    };
     // Als mlt_rect statt Text setzen: MLT liest Text-Rechtecke mit dem System-Zahlenformat
     // (deutsch: "940.8" -> 940 und ".8" rutscht ins nächste Feld). 5. Wert (Deckkraft) muss 1 sein.
-    f.set("rect", mlt_rect{x, y, w, h, 1.0});
-    f.set("rotation", -t.rotation); // DaVinci: positiv = gegen den Uhrzeigersinn
+    if (!animate(c, {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY}, a, len,
+                 [&](int pos, double t) { f.anim_set("rect", rect(t), pos, len); }))
+        f.set("rect", rect(a));
+    // DaVinci: positiv = gegen den Uhrzeigersinn
+    if (!animate(c, {AnimParam::Rotation}, a, len,
+                 [&](int pos, double t) { f.anim_set("rotation", -val(AnimParam::Rotation, t), pos, len); }))
+        f.set("rotation", -c.transform.rotation);
     f.set("rotate_center", 1);
     // distort=1: Quelle in voller Größe holen und erst beim Zeichnen skalieren. Sonst fordert qtblend das Bild
     // in Zielhöhe an (bei kleinem Zoom nur ein paar Pixel -> Bildsalat) und hält X/Y-Zoom im Seitenverhältnis.
     f.set("distort", 1);
-    clip.attach(f);
+    attachTo(clip, f);
 }
 
-void applyPan(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c)
+void applyPan(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a = 0, int len = 0)
 {
-    if (c.pan == 0.0) return;
+    const bool anim = len > 0 && Keys::animated(c, AnimParam::Pan);
+    if (c.pan == 0.0 && !anim) return;
     Mlt::Filter f(profile, "panner");
     if (!f.is_valid()) return;
     f.set("channel", -1); // Balance (Stereo)
     // "start" statt "split": split wirkt in MLT 7 unabhängig vom Wert wie ein fester Versatz (getestet)
     f.set("start", (c.pan + 100.0) / 200.0);
-    clip.attach(f);
+    if (anim) {
+        // animiert über "split" (per anim_set als Zahl gesetzt, nicht als Text -> Zahlenformat egal)
+        animate(c, {AnimParam::Pan}, a, len, [&](int pos, double t) {
+            f.anim_set("split", (Keys::valueAt(c, AnimParam::Pan, t) + 100.0) / 200.0, pos, len);
+        });
+        attachTo(static_cast<Mlt::Producer&>(clip), f);
+    } else {
+        clip.attach(f);
+    }
 }
 
 // Mixer: Spur-/Master-Fader und -Pan als Filter auf Playlist bzw. Tractor.
 // Mit hooks werden die Filter immer angehängt (neutral bei 0 dB/Mitte), damit sie live verstellbar sind.
-double mltLevel(double db) { return db <= kMinVolumeDb ? -200.0 : db; }
 double mltPan(double pan) { return (pan + 100.0) / 200.0; }
 
 void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, MixerHooks::Strip* hook)
@@ -129,11 +195,12 @@ void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, 
     s.attach(*hook->meter);
 }
 
-void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKind kind)
+// a/len: Ausschnitt (Clip-Frame am Anfang, Länge) für Keyframes
+void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKind kind, int a, int len)
 {
     applyEffects(profile, cut, c);
-    if (kind == TrackKind::Video) applyTransform(profile, cut, c);
-    if (c.isTitle() && !c.transform.hasTransform()) {
+    if (kind == TrackKind::Video) applyTransform(profile, cut, c, a, len);
+    if (c.isTitle() && !Keys::hasTransform(c) && !Keys::animated(c, AnimParam::TitleSize)) {
         // qtext zeichnet in der angeforderten Größe, skaliert aber die Umrandung nicht mit (Vorschau 960 px:
         // Rand dreimal so dick). qtblend mit distort=1 holt das Bild immer in voller Projektgröße.
         Mlt::Filter f(profile, "qtblend");
@@ -144,24 +211,34 @@ void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKin
         }
     }
     if (kind == TrackKind::Audio) {
-        applyVolume(profile, cut, c);
-        applyPan(profile, cut, c);
+        applyVolume(profile, cut, c, a, len);
+        applyPan(profile, cut, c, a, len);
     }
 }
 
 // Titel: transparentes Vollbild ("color" mit Alpha) + qtext-Filter (Qt: Schrift, Farbe, Umrandung, Box).
 // Das Rechteck des Filters wird auf die Breite des Textblocks gesetzt und um dessen Mitte positioniert,
 // dann richtet halign nur die Zeilen im Block aus (wie DaVinci) statt den Block an den Bildrand zu schieben.
-Mlt::Producer* titleCut(Mlt::Profile& profile, const TitleStyle& t, int len)
+// a/len: Ausschnitt für Keyframes (Position, Farbe, Größe).
+Mlt::Producer* titleCut(Mlt::Profile& profile, const Clip& c, int a, int len)
 {
+    const TitleStyle& t = c.title;
     Mlt::Producer src(profile, "color:#00000000");
     src.set("length", len);
     src.set("out", len - 1);
     Mlt::Producer* cut = src.cut(0, len - 1); // Cut hält eine Referenz auf src
     const double W = profile.width(), H = profile.height();
 
+    // Größe animiert: qtext kann "size" nicht animieren -> in der größten Größe zeichnen (scharf)
+    // und per qtblend um die Textmitte verkleinern
+    const bool sizeAnim = Keys::animated(c, AnimParam::TitleSize);
+    double size = sizeAnim ? 0.0 : t.size;
+    if (sizeAnim) // Ease-Kurven bleiben zwischen den Keyframe-Werten -> größter Keyframe = größte Größe
+        for (const Keyframe& k : c.keys.value(AnimParam::TitleSize)) size = std::max(size, k.value);
+    size = std::max(1.0, size);
+
     QFont font(t.font);
-    font.setPixelSize(std::max(1, int(std::lround(t.size))));
+    font.setPixelSize(std::max(1, int(std::lround(size))));
     font.setBold(t.bold);
     font.setItalic(t.italic);
     const QFontMetricsF fm(font);
@@ -172,20 +249,48 @@ Mlt::Producer* titleCut(Mlt::Profile& profile, const TitleStyle& t, int len)
     if (!f.is_valid()) return cut;
     f.set("argument", t.text.toUtf8().constData());
     // Rechteck als mlt_rect (Zahlenformat, siehe applyTransform)
-    f.set("geometry", mlt_rect{(W - w) / 2 + t.posX, -t.posY, w, H, 1.0});
+    auto geometry = [&](double tt) {
+        return mlt_rect{(W - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, tt), -Keys::valueAt(c, AnimParam::TitlePosY, tt),
+                        w, H, 1.0};
+    };
+    if (!animate(c, {AnimParam::TitlePosX, AnimParam::TitlePosY}, a, len,
+                 [&](int pos, double tt) { f.anim_set("geometry", geometry(tt), pos, len); }))
+        f.set("geometry", geometry(a));
     f.set("family", t.font.toUtf8().constData());
-    f.set("size", std::max(1.0, t.size));
+    f.set("size", size);
     f.set("weight", t.bold ? 700 : 400);
     f.set("style", t.italic ? "italic" : "normal");
     f.set("halign", t.align == 0 ? "left" : t.align == 2 ? "right" : "center");
     f.set("valign", "middle");
     // Farben als "#aarrggbb"; bgcolour hat sonst ein leichtes Grau als Standard
-    f.set("fgcolour", t.color.name(QColor::HexArgb).toUtf8().constData());
+    auto mltColor = [](const QColor& col) {
+        return mlt_color{uint8_t(col.red()), uint8_t(col.green()), uint8_t(col.blue()), uint8_t(col.alpha())};
+    };
+    if (!animate(c, {AnimParam::TitleColor}, a, len, [&](int pos, double tt) {
+            f.anim_set("fgcolour", mltColor(Keys::toColor(Keys::valueAt(c, AnimParam::TitleColor, tt))), pos, len);
+        }))
+        f.set("fgcolour", t.color.name(QColor::HexArgb).toUtf8().constData());
     f.set("bgcolour", t.boxOn ? t.boxColor.name(QColor::HexArgb).toUtf8().constData() : "#00000000");
     f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
     f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
     f.set("outline", t.outlineOn ? std::max(0.0, t.outlineWidth) : 0.0);
-    cut->attach(f);
+    attachTo(*cut, f);
+
+    if (sizeAnim) {
+        // Maßstab s = Größe/größte Größe um die Textmitte; Produkt aus Größe und Position -> Frame für Frame.
+        // qtblend (distort=1) holt das Bild außerdem immer in Projektgröße (Umrandung, siehe decorate).
+        Mlt::Filter scale(profile, "qtblend");
+        if (scale.is_valid()) {
+            animate(c, {AnimParam::TitleSize, AnimParam::TitlePosX, AnimParam::TitlePosY}, a, len, [&](int pos, double tt) {
+                const double k = std::max(0.001, Keys::valueAt(c, AnimParam::TitleSize, tt) / size);
+                const double cx = W / 2 + Keys::valueAt(c, AnimParam::TitlePosX, tt);
+                const double cy = H / 2 - Keys::valueAt(c, AnimParam::TitlePosY, tt);
+                scale.anim_set("rect", mlt_rect{cx * (1 - k), cy * (1 - k), W * k, H * k, 1.0}, pos, len);
+            }, true);
+            scale.set("distort", 1);
+            attachTo(*cut, scale);
+        }
+    }
     return cut;
 }
 
@@ -479,8 +584,8 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
         auto cutOf = [&](const Clip& c, int from, int to, bool second) -> Mlt::Producer* {
             if (c.isTitle()) {
                 if (!c.enabled || kind != TrackKind::Video) return nullptr;
-                Mlt::Producer* cut = titleCut(m_profile, c.title, to - from);
-                decorate(m_profile, *cut, c, kind);
+                Mlt::Producer* cut = titleCut(m_profile, c, from - c.start, to - from);
+                decorate(m_profile, *cut, c, kind, from - c.start, to - from);
                 applyClipFades(m_profile, *cut, c, kind, from, to);
                 return cut;
             }
@@ -490,7 +595,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             if (in < 0 && isStill(src)) in = 0; // Standbild: jedes Frame gleich
             if (in < 0) return nullptr;
             Mlt::Producer* cut = src->cut(in, in + (to - from) - 1);
-            decorate(m_profile, *cut, c, kind);
+            decorate(m_profile, *cut, c, kind, from - c.start, to - from);
             applyClipFades(m_profile, *cut, c, kind, from, to);
             return cut;
         };
