@@ -5,6 +5,7 @@
 #include "core/TimelineOps.h"
 
 #include <QFileInfo>
+#include <algorithm>
 
 Editor::Editor(Project* project, Selection* selection, QObject* parent)
     : QObject(parent), m_project(project), m_selection(selection) {}
@@ -106,6 +107,16 @@ void Editor::trimClip(int clipId, TimelineOps::Edge edge, int delta)
     const QVector<int> ids = withLinked({clipId});
     if (TimelineOps::clampTrim(m_project->timeline(), ids, edge, delta, sourceLength()) == 0) return;
     m_project->edit("Trimmen", [&](Timeline& tl) { TimelineOps::trimClips(tl, ids, edge, delta, sourceLength()); });
+}
+
+void Editor::setClipVolume(int clipId, double db)
+{
+    db = std::clamp(db, kMinVolumeDb, kMaxVolumeDb);
+    const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
+    if (!c || c->volumeDb == db) return;
+    m_project->edit("Lautstärke", [&](Timeline& tl) {
+        if (Clip* clip = TimelineOps::findClip(tl, clipId)) clip->volumeDb = db;
+    });
 }
 
 void Editor::bladeAt(int clipId, int frame)

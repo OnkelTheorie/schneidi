@@ -25,6 +25,37 @@ namespace {
 constexpr int kSnapPx = 8;
 constexpr int kDragStartPx = 4;
 constexpr int kEdgeGrabPx = 6; // so nah an der Clipkante wird getrimmt statt verschoben
+constexpr int kVolumeGrabPx = 4;
+constexpr int kClipBarH = 16;  // Titelleiste im Clip
+
+// Lautstärke <-> Höhe im Clip (0 = unten, 1 = oben), stückweise linear wie ein Fader:
+// unteres Viertel -∞..-20 dB, Mitte -20..0 dB, oberes Viertel 0..+12 dB
+double volumeToPos(double db)
+{
+    db = std::clamp(db, kMinVolumeDb, kMaxVolumeDb);
+    if (db < -20) return 0.25 * (db - kMinVolumeDb) / (-20 - kMinVolumeDb);
+    if (db < 0) return 0.25 + 0.5 * (db + 20) / 20;
+    return 0.75 + 0.25 * db / kMaxVolumeDb;
+}
+
+double posToVolume(double t)
+{
+    t = std::clamp(t, 0.0, 1.0);
+    if (t < 0.25) return kMinVolumeDb + t / 0.25 * (-20 - kMinVolumeDb);
+    if (t < 0.75) return -20 + (t - 0.25) / 0.5 * 20;
+    return (t - 0.75) / 0.25 * kMaxVolumeDb;
+}
+
+QRect clipBodyRect(const QRect& r)
+{
+    const int barH = std::min(kClipBarH, r.height());
+    return QRect(r.left(), r.top() + barH, r.width(), r.height() - barH);
+}
+
+int volumeLineY(const QRect& body, double db)
+{
+    return body.bottom() - int(std::lround(volumeToPos(db) * (body.height() - 1)));
+}
 } // namespace
 
 TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
@@ -141,10 +172,35 @@ std::optional<TimelineView::EdgeHit> TimelineView::edgeAt(const QPoint& pos) con
     return std::nullopt;
 }
 
+QRect TimelineView::clipRect(const Row& row, const Clip& c) const
+{
+    return QRect(QPoint(int(frameToX(c.start)), row.y + 1), QPoint(int(frameToX(c.end())) - 1, row.y + row.h - 3));
+}
+
+int TimelineView::volumeLineAt(const QPoint& pos) const
+{
+    if (pos.x() < kHeaderW || pos.y() < kRulerH) return 0;
+    const auto row = rowAt(pos.y());
+    if (!row || row->ref.kind != TrackKind::Audio) return 0;
+    for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
+        const QRect r = clipRect(*row, c);
+        if (pos.x() < r.left() || pos.x() > r.right()) continue;
+        const QRect body = clipBodyRect(r);
+        if (body.height() < 6) return 0;
+        return std::abs(pos.y() - volumeLineY(body, c.volumeDb)) <= kVolumeGrabPx ? c.id : 0;
+    }
+    return 0;
+}
+
 void TimelineView::updateHoverCursor(const QPoint& pos)
 {
+    const int vol = m_tool == Tool::Select && !edgeAt(pos) ? volumeLineAt(pos) : 0;
+    if (vol != m_hoverVolClip) {
+        m_hoverVolClip = vol;
+        update();
+    }
     if (m_tool != Tool::Select) return;
-    setCursor(edgeAt(pos) ? Qt::SizeHorCursor : Qt::ArrowCursor);
+    setCursor(edgeAt(pos) ? Qt::SizeHorCursor : vol ? Qt::SizeVerCursor : Qt::ArrowCursor);
 }
 
 // ---------- Snapping ----------
@@ -333,7 +389,8 @@ void TimelineView::drawTracks(QPainter& p)
                     c.out += m_trimDelta;
                 }
             }
-            const QRect r(QPoint(int(frameToX(c.start)), row.y + 1), QPoint(int(frameToX(c.end())) - 1, row.y + row.h - 3));
+            if (m_drag == Drag::Volume && c.id == m_volClipId) c.volumeDb = m_volDb;
+            const QRect r = clipRect(row, c);
             if (r.right() < kHeaderW || r.left() > width()) continue;
             drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false);
         }
@@ -390,15 +447,21 @@ void TimelineView::drawTracks(QPainter& p)
             const int x = int(frameToX(edgeFrame));
             p.setPen(QPen(Theme::accent, 1));
             p.drawLine(x, kRulerH, x, height());
-            const QString label = (m_trimDelta >= 0 ? "+" : "") + Timecode::format(m_trimDelta, m_editor->project()->fps());
-            QFont f = font();
-            f.setPointSizeF(8);
-            p.setFont(f);
-            const QRect box = QFontMetrics(f).boundingRect(label).adjusted(-5, -3, 5, 3);
-            const QRect placed = box.translated(x + 8 - box.left(), kRulerH + 6 - box.top());
-            p.fillRect(placed, QColor(0, 0, 0, 190));
-            p.setPen(Theme::text);
-            p.drawText(placed, Qt::AlignCenter, label);
+            drawLabel(p, QPoint(x + 8, kRulerH + 6),
+                      (m_trimDelta >= 0 ? "+" : "") + Timecode::format(m_trimDelta, m_editor->project()->fps()));
+        }
+    }
+
+    // Lautstärke ziehen: aktuellen Wert an der Linie anzeigen
+    if (m_drag == Drag::Volume) {
+        TrackRef ref;
+        if (const Clip* c = TimelineOps::findClip(tl, m_volClipId, &ref)) {
+            if (const auto row = rowFor(ref)) {
+                const QRect body = clipBodyRect(clipRect(*row, *c));
+                const int y = volumeLineY(body, m_volDb);
+                const int x = std::max(body.left(), kHeaderW) + 6;
+                drawLabel(p, QPoint(x, y < body.top() + body.height() / 2 ? y + 4 : y - 22), formatVolumeDb(m_volDb));
+            }
         }
     }
 
@@ -424,15 +487,26 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     p.fillPath(path, body);
 
     // Titelleiste mit Dateiname
-    const int barH = std::min(16, r.height());
+    const int barH = std::min(kClipBarH, r.height());
     p.save();
     p.setClipPath(path);
     p.fillRect(QRect(r.left(), r.top(), r.width(), barH), base);
-    const QRect bodyRect(r.left(), r.top() + barH, r.width(), r.height() - barH);
+    const QRect bodyRect = clipBodyRect(r);
     if (!ghost && bodyRect.height() > 4) {
         p.setRenderHint(QPainter::Antialiasing, false);
         if (kind == TrackKind::Video) drawFilmstrip(p, bodyRect, c);
         else drawWaveform(p, bodyRect, c);
+        p.setRenderHint(QPainter::Antialiasing);
+    }
+    // Lautstärkelinie wie in DaVinci (zum Hoch-/Runterziehen)
+    if (!ghost && kind == TrackKind::Audio && bodyRect.height() >= 6) {
+        const bool active = c.id == m_hoverVolClip || (m_drag == Drag::Volume && c.id == m_volClipId);
+        const int y = volumeLineY(bodyRect, c.volumeDb);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.setPen(QPen(QColor(0, 0, 0, 140), 1)); // Schatten, damit die Linie auf der Wellenform lesbar bleibt
+        p.drawLine(bodyRect.left(), y + (active ? 2 : 1), bodyRect.right(), y + (active ? 2 : 1));
+        p.setPen(QPen(active ? QColor(0xff, 0xff, 0xff) : QColor(0xff, 0xff, 0xff, 190), active ? 2 : 1));
+        p.drawLine(bodyRect.left(), y, bodyRect.right(), y);
         p.setRenderHint(QPainter::Antialiasing);
     }
     p.restore();
@@ -508,6 +582,8 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c)
     const int available = int(std::min<double>(lv.size(), std::ceil(wave->frames * scale)));
     const int clipEnd = int(std::min<double>(available, (c.out + 1) * scale));
 
+    if (c.volumeDb <= kMinVolumeDb) return; // stumm -> flach
+    const double gain = c.volumeDb / 48.0; // Wellenform folgt der Clip-Lautstärke (dB-Skala unten)
     const int mid = body.top() + body.height() / 2;
     const double half = body.height() / 2.0 - 1;
     const double clipX = frameToX(c.start);
@@ -530,7 +606,9 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c)
         int peak = 0;
         for (int b = std::max(0, b0); b < b1; ++b) peak = std::max<int>(peak, lv[b]);
         if (peak == 0) continue;
-        const int h = std::max(1, int(dbTable[peak] * half));
+        const double v = std::min(1.0, dbTable[peak] + gain);
+        if (v <= 0) continue;
+        const int h = std::max(1, int(v * half));
         lines << QLine(x, mid - h, x, mid + h);
     }
     p.setPen(QColor(0xc8, 0xf0, 0xcf, 210));
@@ -577,6 +655,18 @@ void TimelineView::drawHeaders(QPainter& p)
         p.setRenderHint(QPainter::Antialiasing, false);
     }
     p.restore();
+}
+
+void TimelineView::drawLabel(QPainter& p, const QPoint& topLeft, const QString& text)
+{
+    QFont f = font();
+    f.setPointSizeF(8);
+    p.setFont(f);
+    const QRect box = QFontMetrics(f).boundingRect(text).adjusted(-5, -3, 5, 3);
+    const QRect placed = box.translated(topLeft.x() - box.left(), topLeft.y() - box.top());
+    p.fillRect(placed, QColor(0, 0, 0, 190));
+    p.setPen(Theme::text);
+    p.drawText(placed, Qt::AlignCenter, text);
 }
 
 QRect TimelineView::headerButton(const Row& row) const
@@ -639,6 +729,16 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         m_trimIds = group;
         m_trimDelta = 0;
         m_drag = Drag::Trim;
+        update();
+        return;
+    }
+    if (const int vid = volumeLineAt(pos)) {
+        const QVector<int> group = m_editor->withLinked({vid});
+        if (!sel->ids().contains(vid)) sel->set(QSet<int>(group.begin(), group.end()));
+        m_volClipId = vid;
+        m_volStartDb = m_volDb = TimelineOps::findClip(m_editor->project()->timeline(), vid)->volumeDb;
+        m_volFine = e->modifiers() & Qt::ShiftModifier;
+        m_drag = Drag::Volume;
         update();
         return;
     }
@@ -710,6 +810,34 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         update();
         return;
     }
+    case Drag::Volume: {
+        TrackRef ref;
+        const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_volClipId, &ref);
+        const auto row = c ? rowFor(ref) : std::nullopt;
+        if (!row) return;
+        // Shift umgeschaltet -> von der aktuellen Position aus weiter, damit nichts springt
+        const bool fine = e->modifiers() & Qt::ShiftModifier;
+        if (fine != m_volFine) {
+            m_volFine = fine;
+            m_volStartDb = m_volDb;
+            m_pressPos = pos;
+        }
+        const int dy = pos.y() - m_pressPos.y();
+        double db;
+        if (fine) {
+            db = m_volStartDb - dy * 0.1;
+        } else {
+            const QRect body = clipBodyRect(clipRect(*row, *c));
+            db = posToVolume(volumeToPos(m_volStartDb) - dy / double(std::max(1, body.height() - 1)));
+            if (std::abs(db) < 0.5) db = 0; // 0 dB rastet ein
+        }
+        db = std::clamp(std::round(db * 10) / 10, kMinVolumeDb, kMaxVolumeDb);
+        if (db != m_volDb) {
+            m_volDb = db;
+            update();
+        }
+        return;
+    }
     case Drag::None:
         break;
     }
@@ -733,8 +861,10 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if (m_drag == Drag::Move)
         m_editor->moveClips(m_dragIds, m_dragDelta, m_anchorRef.kind, m_dragTrackDelta);
     const bool trimmed = m_drag == Drag::Trim;
+    const bool volume = m_drag == Drag::Volume;
     m_drag = Drag::None; // vor trimClip, damit die Vorschau nicht doppelt angewendet wird
     if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta);
+    if (volume) m_editor->setClipVolume(m_volClipId, m_volDb);
     m_trimIds.clear();
     m_trimDelta = 0;
     m_dragIds.clear();
@@ -744,6 +874,10 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 
 void TimelineView::leaveEvent(QEvent*)
 {
+    if (m_hoverVolClip && m_drag == Drag::None) {
+        m_hoverVolClip = 0;
+        update();
+    }
     if (m_hoverFrame >= 0) {
         m_hoverFrame = -1;
         update();

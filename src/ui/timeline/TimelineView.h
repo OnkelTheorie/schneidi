@@ -78,7 +78,7 @@ private:
         int y; // Widget-Koordinate (Scroll bereits eingerechnet)
         int h;
     };
-    enum class Drag { None, Scrub, MaybeMove, Move, Trim };
+    enum class Drag { None, Scrub, MaybeMove, Move, Trim, Volume };
     struct EdgeHit {
         int clipId;
         TimelineOps::Edge edge;
@@ -89,6 +89,9 @@ private:
     std::optional<Row> rowFor(TrackRef ref) const;
     int clipAt(const QPoint& pos) const;
     std::optional<EdgeHit> edgeAt(const QPoint& pos) const;
+    QRect clipRect(const Row& row, const Clip& c) const;
+    // Audioclip, dessen Lautstärkelinie unter der Maus liegt (0 = keiner)
+    int volumeLineAt(const QPoint& pos) const;
     void updateHoverCursor(const QPoint& pos);
     double frameToX(double frame) const;
     double xToFrame(double x) const;
@@ -102,6 +105,7 @@ private:
     void drawWaveform(QPainter& p, const QRect& body, const Clip& c);
     void drawHeaders(QPainter& p);
     void drawPlayhead(QPainter& p);
+    void drawLabel(QPainter& p, const QPoint& topLeft, const QString& text);
     QRect headerButton(const Row& row) const;
     QStringList dropPaths(const QMimeData* mime) const;
     int dropTrackAt(int y) const;
@@ -124,6 +128,13 @@ private:
     EdgeHit m_trim{0, TimelineOps::Edge::Start};
     QVector<int> m_trimIds;
     int m_trimDelta = 0;
+
+    // Lautstärkelinie ziehen (wie DaVinci); Shift = fein
+    int m_volClipId = 0;
+    double m_volStartDb = 0;
+    double m_volDb = 0;
+    bool m_volFine = false;
+    int m_hoverVolClip = 0;
 
     int m_hoverFrame = -1; // Klingen-Vorschau
 

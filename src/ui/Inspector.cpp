@@ -48,11 +48,13 @@ void Inspector::refresh()
         const Clip* c = TimelineOps::findClip(tl, id, &ref);
         if (!c) continue;
         html += QString("<b>%1</b> <span style='color:#8c8c94'>(%2%3)</span><br>"
-                        "Start: %4<br>Dauer: %5<br>Quelle: %6 – %7<br><br>")
+                        "Start: %4<br>Dauer: %5<br>Quelle: %6 – %7<br>")
                     .arg(QFileInfo(c->mediaPath).fileName().toHtmlEscaped(),
                          ref.kind == TrackKind::Video ? "V" : "A", QString::number(ref.index + 1),
                          Timecode::format(c->start, fps), Timecode::format(c->length(), fps),
                          Timecode::format(c->in, fps), Timecode::format(c->out, fps));
+        if (ref.kind == TrackKind::Audio) html += "Lautstärke: " + formatVolumeDb(c->volumeDb) + "<br>";
+        html += "<br>";
     }
     m_body->setText(html);
 }

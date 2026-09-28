@@ -13,10 +13,6 @@ const QVector<EffectDescriptor>& all()
              {"color", "Farbe", "0", EffectParam::Color, QColor(0, 255, 0), 0, 0},
              {"distance", "Toleranz", "1", EffectParam::Double, 0.3, 0.0, 1.0},
          }},
-        {"volume", "Lautstärke", "volume", false,
-         {
-             {"gain", "Pegel (dB)", "level", EffectParam::Double, 0.0, -60.0, 12.0},
-         }},
     };
     return effects;
 }

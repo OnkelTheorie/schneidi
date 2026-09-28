@@ -34,6 +34,8 @@ public:
     void trimClip(int clipId, TimelineOps::Edge edge, int delta);
     // Wie weit sich die Kante tatsächlich bewegen lässt (für die Live-Vorschau)
     int clampTrim(int clipId, TimelineOps::Edge edge, int delta) const;
+    // Lautstärke eines Audioclips (dB, wird auf kMinVolumeDb..kMaxVolumeDb begrenzt)
+    void setClipVolume(int clipId, double db);
     void bladeAt(int clipId, int frame);
     void splitAtPlayhead(int frame);
     void deleteSelection();

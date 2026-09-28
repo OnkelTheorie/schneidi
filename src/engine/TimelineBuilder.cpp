@@ -30,6 +30,15 @@ void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
     }
 }
 
+void applyVolume(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
+{
+    if (c.volumeDb == 0.0) return;
+    Mlt::Filter f(profile, "volume");
+    if (!f.is_valid()) return;
+    f.set("level", c.volumeDb <= kMinVolumeDb ? -200.0 : c.volumeDb); // dB
+    clip.attach(f);
+}
+
 } // namespace
 
 TimelineBuilder::TimelineBuilder(Mlt::Profile& profile) : m_profile(profile) {}
@@ -79,7 +88,10 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl)
             if (src) {
                 pl.append(*src, c.in, c.out);
                 std::unique_ptr<Mlt::Producer> cut(pl.get_clip(pl.count() - 1));
-                if (cut) applyEffects(m_profile, *cut, c);
+                if (cut) {
+                    applyEffects(m_profile, *cut, c);
+                    if (kind == TrackKind::Audio) applyVolume(m_profile, *cut, c);
+                }
             } else {
                 pl.blank(c.length() - 1); // Datei fehlt -> Lücke statt Absturz
             }

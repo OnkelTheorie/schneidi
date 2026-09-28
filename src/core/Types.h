@@ -14,6 +14,16 @@ struct EffectInstance {
     bool enabled = true;
 };
 
+constexpr double kMinVolumeDb = -60.0; // ganz unten = -∞ (stumm)
+constexpr double kMaxVolumeDb = 12.0;
+
+// Anzeige wie in DaVinci: "+1.5 dB", "0.0 dB", "-∞ dB"
+inline QString formatVolumeDb(double db)
+{
+    if (db <= kMinVolumeDb) return QStringLiteral("-∞ dB");
+    return QString("%1%2 dB").arg(db > 0.05 ? "+" : "").arg(db, 0, 'f', 1);
+}
+
 struct Clip {
     int id = 0;
     QString mediaPath;
@@ -21,6 +31,7 @@ struct Clip {
     int in = 0;     // erstes Frame im Quellmaterial
     int out = 0;    // letztes Frame im Quellmaterial (inklusive, wie bei MLT)
     int linkId = 0; // 0 = frei; gleiche linkId = verknüpftes Video+Audio
+    double volumeDb = 0.0; // Clip-Lautstärke (nur Audio); <= kMinVolumeDb = stumm
     QVector<EffectInstance> effects;
 
     int length() const { return out - in + 1; }
