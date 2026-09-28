@@ -36,6 +36,7 @@ add_executable(schneidi
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
+    src/ui/Mixer.h                src/ui/Mixer.cpp
     src/ui/ScrubField.h           src/ui/ScrubField.cpp
     src/ui/DeliverPanel.h         src/ui/DeliverPanel.cpp
     src/ui/timeline/ViewState.h

@@ -10,6 +10,7 @@
 #include "engine/MediaCache.h"
 #include "ui/DeliverPanel.h"
 #include "ui/Inspector.h"
+#include "ui/Mixer.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
@@ -114,11 +115,17 @@ void MainWindow::buildLayout()
     m_inspector->setFrameSize(m_engine->frameSize());
     m_timeline = new TimelinePanel(m_editor);
     m_deliver = new DeliverPanel(m_project);
+    m_mixer = new Mixer(m_project, m_engine);
+    m_mixer->hide();
 
     // Seiten; die gemeinsamen Panels (Pool, Viewer, Timeline) wandern beim Umschalten mit
     m_editTop = new QSplitter(Qt::Horizontal);
     m_editMain = new QSplitter(Qt::Vertical);
     m_editMain->addWidget(m_editTop);
+    m_editBottom = new QSplitter(Qt::Horizontal); // Mixer rechts neben der Timeline wie in DaVinci
+    m_editBottom->addWidget(m_mixer);
+    m_editBottom->setStretchFactor(0, 1);
+    m_editMain->addWidget(m_editBottom);
     m_mediaPage = new QSplitter(Qt::Horizontal);
     m_deliverPage = new QSplitter(Qt::Horizontal);
     m_deliverRight = new QSplitter(Qt::Vertical);
@@ -157,6 +164,9 @@ QWidget* MainWindow::buildTopBar()
     m_inspectorToggle = makeToggle("☰ Inspector");
     connect(m_poolToggle, &QToolButton::toggled, m_mediaPool, &QWidget::setVisible);
     connect(m_inspectorToggle, &QToolButton::toggled, m_inspector, &QWidget::setVisible);
+    m_mixerToggle = makeToggle("▥ Mixer");
+    m_mixerToggle->setChecked(false);
+    connect(m_mixerToggle, &QToolButton::toggled, m_mixer, &QWidget::setVisible);
 
     auto* title = m_titleLabel = new QLabel;
     title->setStyleSheet("font-weight: 600;");
@@ -171,6 +181,7 @@ QWidget* MainWindow::buildTopBar()
     lay->addStretch(1);
     lay->addWidget(title);
     lay->addStretch(1);
+    lay->addWidget(m_mixerToggle);
     lay->addWidget(m_inspectorToggle);
     return bar;
 }
@@ -231,7 +242,9 @@ void MainWindow::showPage(Page page)
         m_editTop->insertWidget(0, m_mediaPool);
         m_editTop->insertWidget(1, m_viewer);
         m_editTop->insertWidget(2, m_inspector);
-        m_editMain->insertWidget(1, m_timeline);
+        m_editBottom->insertWidget(0, m_timeline);
+        m_editBottom->setStretchFactor(0, 1);
+        m_editBottom->setSizes({1300, 300});
         m_editTop->setStretchFactor(1, 1);
         m_editTop->setSizes({360, 880, 360});
         m_editMain->setSizes({480, 420});
@@ -251,6 +264,7 @@ void MainWindow::showPage(Page page)
     const bool edit = page == Page::Edit;
     m_poolToggle->setEnabled(edit);
     m_inspectorToggle->setEnabled(edit);
+    m_mixerToggle->setEnabled(edit);
 }
 
 QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
@@ -379,6 +393,8 @@ void MainWindow::buildActions()
     makeAction(workspace, "page_media", "Media-Seite", QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
     makeAction(workspace, "page_edit", "Edit-Seite", QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
     makeAction(workspace, "page_deliver", "Deliver-Seite", QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
+    makeAction(workspace, "toggle_mixer", "Mixer ein/aus", QKeySequence(),
+               [this] { if (m_mixerToggle->isEnabled()) m_mixerToggle->toggle(); });
 
     InputBindings::instance().saveIfIncomplete();
 }
