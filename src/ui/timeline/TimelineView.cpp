@@ -15,6 +15,8 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QUrl>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QWheelEvent>
@@ -604,8 +606,10 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
             f.setPointSizeF(7);
             p.setFont(f);
             p.setPen(QColor(0x10, 0x10, 0x10));
-            p.drawText(r.adjusted(4, 0, -4, 0), Qt::AlignTop | Qt::AlignHCenter,
-                       row.ref.kind == TrackKind::Video ? "Cross Dissolve" : "Cross Fade +3 dB");
+            const QString name = row.ref.kind == TrackKind::Video ? QString(transitionTypeInfo(s.style.type).name)
+                                                                  : QStringLiteral("Cross Fade +3 dB");
+            const QRect tr = r.adjusted(4, 0, -4, 0);
+            p.drawText(tr, Qt::AlignTop | Qt::AlignHCenter, p.fontMetrics().elidedText(name, Qt::ElideRight, tr.width()));
         }
         p.setClipping(false);
         p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0xff, 0xff, 0xff, 200), 1));
@@ -876,6 +880,46 @@ void TimelineView::drawPlayhead(QPainter& p)
 }
 
 // ---------- Maus ----------
+
+// Rechtsklick auf einen Übergang: Art, Ausrichtung, Löschen (wie DaVinci)
+void TimelineView::contextMenuEvent(QContextMenuEvent* e)
+{
+    const auto t = transitionAt(e->pos());
+    if (!t) return;
+    const TimelineOps::TransitionSpan s = t->span;
+    m_editor->selection()->setTransition({s.leftId, s.rightId});
+    QMenu menu(this);
+    if (t->ref.kind == TrackKind::Video) {
+        for (const auto& i : kTransitionTypes) {
+            QAction* a = menu.addAction(i.name);
+            a->setCheckable(true);
+            a->setChecked(s.style.type == i.type);
+            connect(a, &QAction::triggered, this, [this, s, type = i.type] {
+                TransitionStyle st = s.style;
+                st.type = type;
+                m_editor->setTransitionStyle(s.leftId, s.rightId, st);
+            });
+        }
+        menu.addSeparator();
+    }
+    if (s.isDissolve()) {
+        QMenu* align = menu.addMenu("Ausrichtung");
+        const char* names[] = {"Mitte auf Schnitt", "Beginn am Schnitt", "Ende am Schnitt"}; // Index = TransitionAlign
+        for (int i = 0; i < 3; ++i) {
+            QAction* a = align->addAction(names[i]);
+            a->setCheckable(true);
+            a->setChecked(int(s.style.align) == i);
+            connect(a, &QAction::triggered, this, [this, s, i] {
+                TransitionStyle st = s.style;
+                st.align = TransitionAlign(i);
+                m_editor->setTransitionStyle(s.leftId, s.rightId, st);
+            });
+        }
+    }
+    connect(menu.addAction("Löschen"), &QAction::triggered, this,
+            [this, s] { m_editor->removeTransition(s.leftId, s.rightId); });
+    menu.exec(e->globalPos());
+}
 
 void TimelineView::mousePressEvent(QMouseEvent* e)
 {

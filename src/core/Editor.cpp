@@ -414,7 +414,9 @@ bool sameTransitions(const Timeline& a, const Timeline& b)
             for (int j = 0; j < a.tracks(k)[i].clips.size(); ++j) {
                 const Clip& x = a.tracks(k)[i].clips[j];
                 const Clip& y = b.tracks(k)[i].clips[j];
-                if (x.transIn != y.transIn || x.transOut != y.transOut) return false;
+                if (x.transIn != y.transIn || x.transOut != y.transOut || x.transInStyle != y.transInStyle
+                    || x.transOutStyle != y.transOutStyle)
+                    return false;
             }
     return true;
 }
@@ -457,16 +459,21 @@ void Editor::addTransitions(int frame)
         auto& clips = tl.track(ref).clips;
         const int idx = int(c - clips.data());
         touched.insert(c->id);
+        // Neue Übergänge starten als Cross Dissolve, vorhandene behalten ihre Art
+        auto set = [](int& len, TransitionStyle& style, int value) {
+            if (len <= 0) style = {};
+            len = value;
+        };
         if (e.atEnd) {
-            c->transOut = length;
+            set(c->transOut, c->transOutStyle, length);
             if (idx + 1 < clips.size() && clips[idx + 1].start == c->end()) {
-                clips[idx + 1].transIn = length;
+                set(clips[idx + 1].transIn, clips[idx + 1].transInStyle, length);
                 touched.insert(clips[idx + 1].id);
             }
         } else {
-            c->transIn = length;
+            set(c->transIn, c->transInStyle, length);
             if (idx > 0 && clips[idx - 1].end() == c->start) {
-                clips[idx - 1].transOut = length;
+                set(clips[idx - 1].transOut, clips[idx - 1].transOutStyle, length);
                 touched.insert(clips[idx - 1].id);
             }
         }
@@ -482,9 +489,23 @@ void Editor::removeTransition(int leftId, int rightId)
     const Clip* r = TimelineOps::findClip(m_project->timeline(), rightId);
     if (!(l && l->transOut) && !(r && r->transIn)) return;
     m_project->edit("Übergang löschen", [&](Timeline& tl) {
-        if (Clip* l = TimelineOps::findClip(tl, leftId)) l->transOut = 0;
-        if (Clip* r = TimelineOps::findClip(tl, rightId)) r->transIn = 0;
+        if (Clip* l = TimelineOps::findClip(tl, leftId)) l->transOut = 0, l->transOutStyle = {};
+        if (Clip* r = TimelineOps::findClip(tl, rightId)) r->transIn = 0, r->transInStyle = {};
     });
+}
+
+void Editor::setTransitionStyle(int leftId, int rightId, const TransitionStyle& style)
+{
+    Timeline tl = m_project->timeline();
+    Clip* l = TimelineOps::findClip(tl, leftId);
+    Clip* r = TimelineOps::findClip(tl, rightId);
+    if (!l && !r) return;
+    if (l) l->transOutStyle = style;
+    if (r) r->transInStyle = style;
+    // Andere Ausrichtung braucht andere Handles -> Länge ggf. kürzen
+    fitTransitions(tl, {leftId, rightId}, sourceLength());
+    if (sameTransitions(m_project->timeline(), tl)) return;
+    m_project->edit("Übergang ändern", [&](Timeline& t) { t = tl; });
 }
 
 void Editor::setTransitionLength(int leftId, int rightId, int length, const QString& mergeKey)

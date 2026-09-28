@@ -71,6 +71,33 @@ struct TitleStyle {
     }
 };
 
+// Übergangsart (nur Video; Audio ist immer ein Crossfade) und Lage zum Schnitt wie im DaVinci-Inspector
+enum class TransitionType { CrossDissolve, DipToBlack, DipToWhite, WipeRight, WipeLeft, WipeDown, WipeUp };
+enum class TransitionAlign { Center, Start, End }; // Center on Edit / Start on Edit / End on Edit
+struct TransitionStyle {
+    TransitionType type = TransitionType::CrossDissolve;
+    TransitionAlign align = TransitionAlign::Center;
+    bool operator==(const TransitionStyle& o) const { return type == o.type && align == o.align; }
+    bool operator!=(const TransitionStyle& o) const { return !(*this == o); }
+};
+// Reihenfolge = Anzeige in Menüs/Inspector; id = Schlüssel in der Projektdatei
+struct TransitionTypeInfo { TransitionType type; const char* id; const char* name; };
+inline constexpr TransitionTypeInfo kTransitionTypes[] = {
+    {TransitionType::CrossDissolve, "cross_dissolve", "Cross Dissolve"},
+    {TransitionType::DipToBlack, "dip_black", "Abblende über Schwarz"},
+    {TransitionType::DipToWhite, "dip_white", "Abblende über Weiß"},
+    {TransitionType::WipeRight, "wipe_right", "Wischblende nach rechts"},
+    {TransitionType::WipeLeft, "wipe_left", "Wischblende nach links"},
+    {TransitionType::WipeDown, "wipe_down", "Wischblende nach unten"},
+    {TransitionType::WipeUp, "wipe_up", "Wischblende nach oben"},
+};
+inline const TransitionTypeInfo& transitionTypeInfo(TransitionType t)
+{
+    for (const auto& i : kTransitionTypes)
+        if (i.type == t) return i;
+    return kTransitionTypes[0];
+}
+
 enum class ClipKind { Media, Title };
 
 struct Clip {
@@ -91,6 +118,8 @@ struct Clip {
     // Gegenkante auch einen: Cross Dissolve zentriert auf dem Schnitt (braucht Handles),
     // sonst Ein-/Ausblenden aus Schwarz bzw. Stille. Wirksame Länge: TimelineOps::transitions().
     int transIn = 0, transOut = 0;
+    // Art/Ausrichtung dazu; bei einer Überblendung tragen beide Kanten (transOut links, transIn rechts) denselben Wert
+    TransitionStyle transInStyle, transOutStyle;
     // Fade-Griffe oben am Clip (Frames, wie DaVinci): Video blendet über Transparenz zur Spur darunter,
     // Audio über die Lautstärke. Unabhängig von Übergängen; beim Rendern auf die Cliplänge begrenzt.
     int fadeIn = 0, fadeOut = 0;

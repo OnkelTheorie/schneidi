@@ -82,6 +82,24 @@ TitleStyle titleFromJson(const QJsonObject& o)
     return t;
 }
 
+QJsonObject transitionStyleToJson(const TransitionStyle& s)
+{
+    static const char* aligns[] = {"center", "start", "end"};
+    return {{"type", transitionTypeInfo(s.type).id}, {"align", aligns[int(s.align)]}};
+}
+
+TransitionStyle transitionStyleFromJson(const QJsonObject& o)
+{
+    TransitionStyle s;
+    const QString type = o.value("type").toString();
+    for (const auto& i : kTransitionTypes)
+        if (type == i.id) s.type = i.type;
+    const QString align = o.value("align").toString();
+    if (align == "start") s.align = TransitionAlign::Start;
+    else if (align == "end") s.align = TransitionAlign::End;
+    return s;
+}
+
 // Clips verweisen per Index auf die Medienliste -> Pfad steht nur einmal in der Datei
 QJsonObject clipToJson(const Clip& c, int mediaIndex)
 {
@@ -94,6 +112,8 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex)
     if (!c.enabled) o["enabled"] = false;
     if (c.transIn > 0) o["transIn"] = c.transIn; // Übergänge (Frames); fehlend = keiner
     if (c.transOut > 0) o["transOut"] = c.transOut;
+    if (c.transIn > 0 && c.transInStyle != TransitionStyle{}) o["transInStyle"] = transitionStyleToJson(c.transInStyle);
+    if (c.transOut > 0 && c.transOutStyle != TransitionStyle{}) o["transOutStyle"] = transitionStyleToJson(c.transOutStyle);
     if (c.fadeIn > 0) o["fadeIn"] = c.fadeIn; // Fade-Griffe (Frames)
     if (c.fadeOut > 0) o["fadeOut"] = c.fadeOut;
     if (!c.transform.isIdentity() || !c.transform.transformOn || !c.transform.cropOn || !c.transform.compositeOn)
@@ -126,6 +146,8 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media)
     c.enabled = o.value("enabled").toBool(true);
     c.transIn = std::max(0, o.value("transIn").toInt());
     c.transOut = std::max(0, o.value("transOut").toInt());
+    c.transInStyle = transitionStyleFromJson(o.value("transInStyle").toObject());
+    c.transOutStyle = transitionStyleFromJson(o.value("transOutStyle").toObject());
     c.fadeIn = std::max(0, o.value("fadeIn").toInt());
     c.fadeOut = std::max(0, o.value("fadeOut").toInt());
     if (o.contains("transform")) c.transform = transformFromJson(o.value("transform").toObject());

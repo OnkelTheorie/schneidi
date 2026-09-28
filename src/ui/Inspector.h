@@ -1,4 +1,6 @@
 #pragma once
+#include "core/Selection.h"
+#include "core/TimelineOps.h"
 #include "core/Types.h"
 
 #include <QSize>
@@ -7,6 +9,7 @@
 
 class Editor;
 class QButtonGroup;
+class QComboBox;
 class QGridLayout;
 class QLabel;
 class QSlider;
@@ -64,6 +67,10 @@ private:
     void addColor(Section& s, const QString& label, const QString& text, const std::function<QColor&(Clip&)>& color,
                   bool alpha, const std::function<void(Clip&)>& also = {});
     void buildTitlePage(QVBoxLayout* page);
+    void buildTransitionPage(QVBoxLayout* page);
+    // Ausgewählter Übergang (Spurart + wirksame Lage), sonst false
+    bool selectedTransition(TrackKind* kind, TimelineOps::TransitionSpan* span) const;
+    bool refreshTransition(); // true = Übergang ausgewählt und angezeigt
 
     QVector<int> selectedIds(TrackKind kind, bool title = false) const;
     const Clip* primary(TrackKind kind, bool title = false) const;
@@ -83,4 +90,10 @@ private:
     bool m_zoomLinked = true;
     int m_lastShownId = 0; // Auswahl gewechselt -> bei Titeln den Tab "Titel" zeigen
     Param* m_crop[4] = {};
+    // Tab "Übergang"
+    TransitionKey m_transKey;
+    QComboBox* m_transType = nullptr;
+    QLabel* m_transAudioType = nullptr;
+    QComboBox* m_transAlign = nullptr;
+    ScrubField* m_transLen = nullptr;
 };

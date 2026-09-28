@@ -10,6 +10,7 @@
 
 #include <QButtonGroup>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QFontComboBox>
 #include <QFileInfo>
 #include <QGridLayout>
@@ -31,6 +32,7 @@ namespace {
 
 constexpr int kSliderSteps = 1000;
 constexpr int kTitlePage = 2;
+constexpr int kTransitionPage = 3; // nur bei ausgewähltem Übergang, dann einziger Tab
 
 EffectInstance* findEffect(Clip& c, const QString& id)
 {
@@ -170,7 +172,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     m_pages = new QStackedWidget;
     // Seiten-Index = Button-ID; "Titel" (nur bei Titelclips, wie DaVinci) steht vorne
     const struct { int id; const char* icon; const char* text; } tabs[] = {
-        {kTitlePage, "T", "Titel"}, {0, "▣", "Video"}, {1, "♫", "Audio"}};
+        {kTitlePage, "T", "Titel"}, {kTransitionPage, "⧓", "Übergang"}, {0, "▣", "Video"}, {1, "♫", "Audio"}};
     for (const auto& t : tabs) {
         auto* b = new QToolButton;
         b->setText(QString("%1\n%2").arg(t.icon, t.text));
@@ -197,6 +199,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     QVBoxLayout* videoLay = makePage();
     QVBoxLayout* audioLay = makePage();
     buildTitlePage(makePage());
+    buildTransitionPage(makePage());
 
     const TrackKind V = TrackKind::Video;
 
@@ -609,9 +612,10 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
                               .arg(Theme::text.name()));
     hl->addWidget(toggle);
     hl->addStretch(1);
-    hl->addWidget(resetButton([this, kind, title, reset, titleOnly] {
-        apply(kind, {}, title + " zurücksetzen", reset, titleOnly);
-    }));
+    if (reset)
+        hl->addWidget(resetButton([this, kind, title, reset, titleOnly] {
+            apply(kind, {}, title + " zurücksetzen", reset, titleOnly);
+        }));
 
     auto* body = new QWidget;
     auto* grid = new QGridLayout(body);
@@ -736,8 +740,102 @@ void Inspector::apply(TrackKind kind, const QString& key, const QString& text, c
     m_editor->modifyClips(selectedIds(kind, title), text, fn, key.isEmpty() ? QString() : "inspector:" + key);
 }
 
+void Inspector::buildTransitionPage(QVBoxLayout* page)
+{
+    Section s = addSection(page, TrackKind::Video, "Übergang", {});
+    auto styleFromUi = [this] {
+        TransitionStyle st;
+        st.type = TransitionType(m_transType->currentData().toInt());
+        st.align = TransitionAlign(m_transAlign->currentIndex());
+        return st;
+    };
+    auto combo = [] {
+        auto* c = new QComboBox;
+        c->setFocusPolicy(Qt::ClickFocus);
+        c->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        return c;
+    };
+
+    m_transType = combo();
+    for (const auto& i : kTransitionTypes) m_transType->addItem(i.name, int(i.type));
+    m_transAudioType = new QLabel("Cross Fade +3 dB"); // Audio kennt nur den Crossfade
+    auto* typeBox = new QWidget;
+    auto* typeLay = new QHBoxLayout(typeBox);
+    typeLay->setContentsMargins(0, 0, 0, 0);
+    typeLay->addWidget(m_transType);
+    typeLay->addWidget(m_transAudioType);
+    s.grid->addWidget(rowLabel("Art"), s.rows, 0);
+    s.grid->addWidget(typeBox, s.rows++, 1, 1, 2);
+
+    m_transLen = new ScrubField(0.04, 600, 0.04, 2);
+    m_transLen->setSuffix(" s");
+    m_transLen->onChange = [this](double sec) {
+        const int frames = std::max(1, int(std::lround(sec * m_editor->project()->fps())));
+        m_editor->setTransitionLength(m_transKey.leftId, m_transKey.rightId, frames, "transLenInspector");
+    };
+    s.grid->addWidget(rowLabel("Dauer"), s.rows, 0);
+    s.grid->addWidget(m_transLen, s.rows++, 1);
+
+    m_transAlign = combo();
+    m_transAlign->addItems({"Mitte auf Schnitt", "Beginn am Schnitt", "Ende am Schnitt"}); // Index = TransitionAlign
+    m_transAlign->setToolTip("Lage zum Schnitt (nur bei Überblendung zwischen zwei Clips)");
+    s.grid->addWidget(rowLabel("Ausrichtung"), s.rows, 0);
+    s.grid->addWidget(m_transAlign, s.rows++, 1, 1, 2);
+
+    auto changed = [this, styleFromUi] {
+        m_editor->setTransitionStyle(m_transKey.leftId, m_transKey.rightId, styleFromUi());
+    };
+    connect(m_transType, &QComboBox::activated, this, changed);
+    connect(m_transAlign, &QComboBox::activated, this, changed);
+    page->addStretch(1);
+}
+
+bool Inspector::selectedTransition(TrackKind* kind, TimelineOps::TransitionSpan* span) const
+{
+    const TransitionKey key = m_editor->selection()->transition();
+    if (key.isNull()) return false;
+    TrackRef ref;
+    if (!TimelineOps::findClip(m_editor->project()->timeline(), key.leftId ? key.leftId : key.rightId, &ref))
+        return false;
+    for (const auto& s : m_editor->transitions(ref))
+        if (s.leftId == key.leftId && s.rightId == key.rightId) {
+            *kind = ref.kind;
+            *span = s;
+            return true;
+        }
+    return false;
+}
+
+bool Inspector::refreshTransition()
+{
+    TrackKind kind;
+    TimelineOps::TransitionSpan span;
+    const bool on = selectedTransition(&kind, &span);
+    // Übergang ausgewählt: nur dieser Tab (wie DaVinci), sonst ist er ausgeblendet
+    for (int id : {0, 1, kTitlePage}) m_tabs->button(id)->setVisible(!on);
+    m_tabs->button(kTransitionPage)->setVisible(on);
+    if (!on) return false;
+    m_transKey = m_editor->selection()->transition();
+    m_content->setVisible(true);
+    m_empty->setVisible(false);
+    const bool video = kind == TrackKind::Video;
+    m_clipName->setText(video ? transitionTypeInfo(span.style.type).name : "Cross Fade +3 dB");
+    m_clipName->setToolTip({});
+    m_tabs->button(kTransitionPage)->setChecked(true);
+    m_pages->setCurrentIndex(kTransitionPage);
+
+    m_transType->setVisible(video);
+    m_transAudioType->setVisible(!video);
+    m_transType->setCurrentIndex(m_transType->findData(int(span.style.type)));
+    m_transAlign->setCurrentIndex(int(span.style.align));
+    m_transAlign->setEnabled(span.isDissolve()); // Ein-/Ausblenden liegt immer im Clip
+    m_transLen->setValue(double(span.length()) / std::max(1, m_editor->project()->fps()));
+    return true;
+}
+
 void Inspector::refresh()
 {
+    if (refreshTransition()) return;
     const Clip* v = primary(TrackKind::Video);
     const Clip* a = primary(TrackKind::Audio);
     const bool any = v || a;

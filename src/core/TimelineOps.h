@@ -66,6 +66,7 @@ struct TransitionSpan {
     int rightId = 0;        // Clip, der einblendet (0 = keiner -> Ausblenden)
     int start = 0, end = 0; // Timeline-Frames [start, end)
     int cut = 0;            // Schnitt (bei Einblenden = start, bei Ausblenden = end)
+    TransitionStyle style;  // vom linken Clip (transOutStyle), beim Einblenden vom rechten (transInStyle)
     int length() const { return end - start; }
     bool isDissolve() const { return leftId && rightId; }
 };

@@ -273,24 +273,29 @@ QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sour
         if (!dissolveIn) usedIn = 0; // sonst schon beim Vorgänger gesetzt
         if (c.transIn > 0 && !dissolveIn) { // Einblenden
             usedIn = std::min(c.transIn, c.length());
-            spans << TransitionSpan{0, c.id, c.start, c.start + usedIn, c.start};
+            spans << TransitionSpan{0, c.id, c.start, c.start + usedIn, c.start, c.transInStyle};
         }
         if (c.transOut <= 0) continue;
         const int room = c.length() - usedIn;
         if (next && next->start == c.end() && next->transIn > 0) {
-            // Cross Dissolve zentriert: l1 Frames vor dem Schnitt, l2 danach
+            // Überblendung um den Schnitt
             const int srcLen = sourceLength ? sourceLength(c.mediaPath) : 0;
             const int handleOut = srcLen > 0 ? srcLen - 1 - c.out : INT_MAX / 2;
             const int nextSrcLen = sourceLength ? sourceLength(next->mediaPath) : 0;
             const int handleIn = nextSrcLen > 0 ? next->in : INT_MAX / 2; // Standbild: beliebig
+            // l1 Frames vor dem Schnitt (braucht Material vor next->in), l2 danach (braucht Material hinter c.out)
+            const TransitionAlign align = c.transOutStyle.align;
+            auto before = [align](int len) {
+                return align == TransitionAlign::Start ? 0 : align == TransitionAlign::End ? len : len / 2;
+            };
             int len = std::min(c.transOut, next->transIn);
             for (; len > 0; --len) {
-                const int l1 = len / 2, l2 = len - l1;
+                const int l1 = before(len), l2 = len - l1;
                 if (l2 <= handleOut && l1 <= handleIn && l1 <= room && l2 <= next->length()) break;
             }
             if (len > 0) {
-                const int l1 = len / 2, l2 = len - l1;
-                spans << TransitionSpan{c.id, next->id, c.end() - l1, c.end() + l2, c.end()};
+                const int l1 = before(len), l2 = len - l1;
+                spans << TransitionSpan{c.id, next->id, c.end() - l1, c.end() + l2, c.end(), c.transOutStyle};
                 usedIn = l2;
             } else {
                 usedIn = 0;
@@ -298,7 +303,7 @@ QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sour
             continue; // Anfang des nächsten Clips ist damit erledigt (dissolveIn)
         }
         const int len = std::min(c.transOut, room); // Ausblenden
-        if (len > 0) spans << TransitionSpan{c.id, 0, c.end() - len, c.end(), c.end()};
+        if (len > 0) spans << TransitionSpan{c.id, 0, c.end() - len, c.end(), c.end(), c.transOutStyle};
     }
     return spans;
 }

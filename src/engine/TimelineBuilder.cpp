@@ -5,9 +5,13 @@
 
 #include <Mlt.h>
 #include <QColor>
+#include <QDir>
+#include <QFile>
+#include <QStandardPaths>
 #include <QFont>
 #include <QFontMetricsF>
 #include <QHash>
+#include <QImage>
 #include <QString>
 #include <algorithm>
 #include <cmath>
@@ -244,6 +248,117 @@ void applyFade(Mlt::Profile& profile, Mlt::Producer& cut, TrackKind kind, int le
     cut.attach(f);
 }
 
+// Deckkraft-Keyframes (brightness/alpha) über einen Ausschnitt der Länge len: (Frame, Wert)
+void applyAlphaKeys(Mlt::Profile& profile, Mlt::Producer& cut, int len, std::initializer_list<std::pair<int, double>> keys)
+{
+    Mlt::Filter f(profile, "brightness");
+    if (!f.is_valid()) return;
+    f.set("level", 1.0);
+    for (const auto& [pos, v] : keys) f.anim_set("alpha", v, std::clamp(pos, 0, len - 1), len);
+    f.set_in_and_out(cut.get_in(), cut.get_out());
+    cut.attach(f);
+}
+
+// Verlaufsbild für luma (Graustufen-PNG, einmal erzeugt): dunkle Stellen wechseln zuerst.
+// PNG statt PGM: luma lädt es über einen Bild-Producer und skaliert es sauber auf die Vorschaugröße.
+QString wipeLuma(TransitionType type, int w, int h)
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/lumas";
+    const QString path = QString("%1/%2_%3x%4.png").arg(dir, transitionTypeInfo(type).id).arg(w).arg(h);
+    if (QFile::exists(path)) return path;
+    QDir().mkpath(dir);
+    QImage img(w, h, QImage::Format_Grayscale8);
+    for (int y = 0; y < h; ++y) {
+        uchar* line = img.scanLine(y);
+        for (int x = 0; x < w; ++x) {
+            double t = 0;
+            switch (type) {
+            case TransitionType::WipeRight: t = double(x) / std::max(1, w - 1); break;
+            case TransitionType::WipeLeft: t = 1.0 - double(x) / std::max(1, w - 1); break;
+            case TransitionType::WipeDown: t = double(y) / std::max(1, h - 1); break;
+            case TransitionType::WipeUp: t = 1.0 - double(y) / std::max(1, h - 1); break;
+            default: break;
+            }
+            line[x] = uchar(std::lround(t * 255));
+        }
+    }
+    // Erst unter anderem Namen schreiben, damit eine zweite Instanz nie ein halbes Bild liest
+    const QString tmp = path + ".tmp.png";
+    if (!img.save(tmp)) return {};
+    QFile::remove(path);
+    QFile::rename(tmp, path);
+    return path;
+}
+
+// Video-Übergang außer Cross Dissolve als kleiner Tractor: a geht, b kommt; fehlt eine Seite, ist dort Leere.
+std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Producer* a, Mlt::Producer* b, int len,
+                                               TransitionType type)
+{
+    auto mix = std::make_unique<Mlt::Tractor>(profile);
+    auto colorClip = [&](const char* resource) {
+        auto p = std::make_unique<Mlt::Producer>(profile, resource);
+        p->set("length", len);
+        p->set_in_and_out(0, len - 1);
+        return p;
+    };
+    if (type == TransitionType::DipToBlack || type == TransitionType::DipToWhite) {
+        // Farbfläche unten, a blendet in der ersten Hälfte aus, b in der zweiten ein (ohne Gegenseite: ganze Länge)
+        auto color = colorClip(type == TransitionType::DipToBlack ? "color:#ff000000" : "color:#ffffffff");
+        mix->set_track(*color, 0);
+        const int half = a && b ? len / 2 : 0;
+        int track = 1;
+        for (Mlt::Producer* p : {a, b}) {
+            if (!p) continue;
+            if (p == a) applyAlphaKeys(profile, *p, len, {{0, 1.0}, {(b ? half : len) - 1, 0.0}, {len - 1, 0.0}});
+            else applyAlphaKeys(profile, *p, len, {{0, 0.0}, {half, 0.0}, {len - 1, 1.0}});
+            mix->set_track(*p, track);
+            Mlt::Transition t(profile, "qtblend");
+            t.set("always_active", 1);
+            mix->plant_transition(t, 0, track);
+            ++track;
+        }
+        return mix;
+    }
+    if (!a || !b) {
+        // Wischblende ins/aus dem Leeren: luma ignoriert Transparenz -> sichtbaren Bereich per qtcrop animieren
+        Mlt::Producer& one = a ? *a : *b;
+        Mlt::Filter crop(profile, "qtcrop");
+        if (crop.is_valid()) {
+            const double W = profile.width(), H = profile.height();
+            for (int i : {0, len - 1}) {
+                // p = Anteil, den die neue Seite schon einnimmt (Einblenden: der Clip selbst, Ausblenden: die Leere)
+                const double p = len > 1 ? double(i) / (len - 1) : 1.0;
+                const double shown = a ? 1.0 - p : p; // sichtbarer Anteil des Clips
+                mlt_rect r{0, 0, W, H, 1.0};
+                // Die neue Seite kommt aus der Startrichtung: nach rechts = von links usw.
+                const bool fromStart = (type == TransitionType::WipeRight || type == TransitionType::WipeDown) == !a;
+                const bool horizontal = type == TransitionType::WipeRight || type == TransitionType::WipeLeft;
+                double& pos = horizontal ? r.x : r.y;
+                double& size = horizontal ? r.w : r.h;
+                const double full = horizontal ? W : H;
+                size = full * shown;
+                pos = fromStart ? 0.0 : full - size;
+                crop.anim_set("rect", r, i, len);
+            }
+            crop.set("color", "#00000000");
+            crop.set_in_and_out(one.get_in(), one.get_out());
+            one.attach(crop);
+        }
+        mix->set_track(one, 0);
+        return mix;
+    }
+    // Wischblende zwischen zwei Clips: luma mit Verlaufsbild
+    mix->set_track(*a, 0);
+    mix->set_track(*b, 1);
+    Mlt::Transition t(profile, "luma");
+    const QString luma = wipeLuma(type, profile.width(), profile.height());
+    if (!luma.isEmpty()) t.set("resource", luma.toUtf8().constData());
+    t.set("softness", 0.02);
+    t.set_in_and_out(0, len - 1);
+    mix->plant_transition(t, 0, 1);
+    return mix;
+}
+
 } // namespace
 
 TimelineBuilder::TimelineBuilder(Mlt::Profile& profile) : m_profile(profile) {}
@@ -347,7 +462,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             std::unique_ptr<Mlt::Producer> ca(a ? cutOf(*a, s.start, s.end, false) : nullptr);
             std::unique_ptr<Mlt::Producer> cb(b ? cutOf(*b, s.start, s.end, true) : nullptr);
             const int len = s.length();
-            if (ca && cb) {
+            if (kind == TrackKind::Video && s.style.type != TransitionType::CrossDissolve && (ca || cb)) {
+                pl.append(*styledTransition(m_profile, ca.get(), cb.get(), len, s.style.type));
+            } else if (ca && cb) {
                 // Cross Dissolve: beide Seiten in einem kleinen Tractor, Überblendung von a nach b
                 Mlt::Tractor mix(m_profile);
                 mix.set_track(*ca, 0);
