@@ -177,6 +177,30 @@ QRect TimelineView::clipRect(const Row& row, const Clip& c) const
     return QRect(QPoint(int(frameToX(c.start)), row.y + 1), QPoint(int(frameToX(c.end())) - 1, row.y + row.h - 3));
 }
 
+QRect TimelineView::transitionRect(const Row& row, const TimelineOps::TransitionSpan& s) const
+{
+    return QRect(QPoint(int(frameToX(s.start)), row.y + 1), QPoint(int(frameToX(s.end)) - 1, row.y + row.h - 3));
+}
+
+// Übergänge liegen über den Clipkanten und gehen beim Klicken vor (wie DaVinci)
+std::optional<TimelineView::TransitionHit> TimelineView::transitionAt(const QPoint& pos) const
+{
+    if (pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
+    const auto row = rowAt(pos.y());
+    if (!row) return std::nullopt;
+    for (const auto& s : m_editor->transitions(row->ref)) {
+        const QRect r = transitionRect(*row, s);
+        if (pos.x() < r.left() || pos.x() > r.right()) continue;
+        const int grab = std::min(kEdgeGrabPx, r.width() / 3);
+        int edge = 0;
+        // Nur die freie Kante ist ziehbar: Einblenden rechts, Ausblenden links, Überblendung beide
+        if (s.leftId && pos.x() <= r.left() + grab) edge = -1;
+        else if (s.rightId && pos.x() >= r.right() - grab) edge = 1;
+        return TransitionHit{row->ref, s, edge};
+    }
+    return std::nullopt;
+}
+
 int TimelineView::volumeLineAt(const QPoint& pos) const
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return 0;
@@ -194,6 +218,16 @@ int TimelineView::volumeLineAt(const QPoint& pos) const
 
 void TimelineView::updateHoverCursor(const QPoint& pos)
 {
+    if (m_tool == Tool::Select) {
+        if (const auto t = transitionAt(pos)) {
+            if (m_hoverVolClip) {
+                m_hoverVolClip = 0;
+                update();
+            }
+            setCursor(t->edge ? Qt::SizeHorCursor : Qt::ArrowCursor);
+            return;
+        }
+    }
     const int vol = m_tool == Tool::Select && !edgeAt(pos) ? volumeLineAt(pos) : 0;
     if (vol != m_hoverVolClip) {
         m_hoverVolClip = vol;
@@ -424,6 +458,10 @@ void TimelineView::drawTracks(QPainter& p)
             if (r.right() < kHeaderW || r.left() > width()) continue;
             drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false);
         }
+        QSet<int> hidden; // Übergänge von Clips, die gerade gezogen/getrimmt werden, ausblenden
+        if (moving) hidden = dragSet;
+        if (m_drag == Drag::Trim) hidden = QSet<int>(m_trimIds.begin(), m_trimIds.end());
+        drawTransitions(p, row, hidden);
     }
 
     p.setOpacity(1.0);
@@ -506,6 +544,48 @@ void TimelineView::drawTracks(QPainter& p)
         p.drawLine(x, kRulerH, x, height());
     }
     p.restore();
+}
+
+// Übergang als halbtransparentes Kästchen über dem Schnitt (wie DaVinci), Diagonale zeigt die Richtung
+void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>& hiddenClips)
+{
+    const TransitionKey selKey = m_editor->selection()->transition();
+    for (const auto& s : m_editor->transitions(row.ref)) {
+        if (hiddenClips.contains(s.leftId) || hiddenClips.contains(s.rightId)) continue;
+        const QRect r = transitionRect(row, s);
+        if (r.right() < kHeaderW || r.left() > width() || r.width() < 2) continue;
+        const bool selected = selKey == TransitionKey{s.leftId, s.rightId};
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath path;
+        path.addRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+        p.fillPath(path, QColor(0xe6, 0xe6, 0xee, selected ? 130 : 95));
+        p.setClipPath(path);
+        p.setPen(QPen(QColor(0xff, 0xff, 0xff, 170), 1));
+        if (s.rightId) p.drawLine(r.bottomLeft(), r.topRight());  // einblenden
+        if (s.leftId) p.drawLine(r.topLeft(), r.bottomRight());   // ausblenden
+        if (r.width() > 80 && r.height() > 14) {
+            QFont f = font();
+            f.setPointSizeF(7);
+            p.setFont(f);
+            p.setPen(QColor(0x10, 0x10, 0x10));
+            p.drawText(r.adjusted(4, 0, -4, 0), Qt::AlignTop | Qt::AlignHCenter,
+                       row.ref.kind == TrackKind::Video ? "Cross Dissolve" : "Cross Fade +3 dB");
+        }
+        p.setClipping(false);
+        p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0xff, 0xff, 0xff, 200), 1));
+        p.drawPath(path);
+        p.restore();
+    }
+    // Länge ziehen: Wert anzeigen
+    if (m_drag == Drag::TransitionLength) {
+        for (const auto& s : m_editor->transitions(row.ref)) {
+            if (s.leftId != m_transSpan.leftId || s.rightId != m_transSpan.rightId) continue;
+            const QRect r = transitionRect(row, s);
+            drawLabel(p, QPoint(std::max(r.left(), kHeaderW) + 4, r.top() + 4),
+                      Timecode::format(s.length(), m_editor->project()->fps()));
+        }
+    }
 }
 
 void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost)
@@ -757,6 +837,16 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     }
 
     Selection* sel = m_editor->selection();
+    if (const auto t = transitionAt(pos)) {
+        sel->setTransition({t->span.leftId, t->span.rightId});
+        if (t->edge) {
+            m_transSpan = t->span;
+            m_transEdge = t->edge;
+            m_editor->project()->closeMerge(); // ganzes Ziehen = ein Undo-Schritt
+            m_drag = Drag::TransitionLength;
+        }
+        return;
+    }
     if (const auto hit = edgeAt(pos)) {
         const QVector<int> group = m_editor->withLinked({hit->clipId});
         if (!sel->ids().contains(hit->clipId)) sel->set(QSet<int>(group.begin(), group.end()));
@@ -846,6 +936,15 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         update();
         return;
     }
+    case Drag::TransitionLength: {
+        const int dx = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
+        const int grow = m_transEdge > 0 ? dx : -dx;
+        // Zentrierte Überblendung wächst an beiden Seiten, Ein-/Ausblenden nur an der freien Kante
+        const int len = m_transSpan.length() + (m_transSpan.isDissolve() ? 2 * grow : grow);
+        m_editor->setTransitionLength(m_transSpan.leftId, m_transSpan.rightId, std::max(1, len),
+                                      QStringLiteral("transition-length"));
+        return;
+    }
     case Drag::Volume: {
         TrackRef ref;
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_volClipId, &ref);
@@ -898,6 +997,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         m_editor->moveClips(m_dragIds, m_dragDelta, m_anchorRef.kind, m_dragTrackDelta);
     const bool trimmed = m_drag == Drag::Trim;
     const bool volume = m_drag == Drag::Volume;
+    if (m_drag == Drag::TransitionLength) m_editor->project()->closeMerge();
     m_drag = Drag::None; // vor trimClip, damit die Vorschau nicht doppelt angewendet wird
     if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta);
     if (volume) m_editor->setClipVolume(m_volClipId, m_volDb);

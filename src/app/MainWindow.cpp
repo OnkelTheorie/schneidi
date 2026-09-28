@@ -317,6 +317,8 @@ void MainWindow::buildActions()
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
     makeAction(timeline, "split_alt", "Clip teilen (alternativ)", QKeySequence("Ctrl+\\"),
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
+    makeAction(timeline, "add_transition", "Übergang hinzufügen (Cross Dissolve)", QKeySequence("Ctrl+T"),
+               [this, tv] { m_editor->addTransitions(tv->playhead()); });
     makeAction(timeline, "trim_start", "Anfang bis Playhead trimmen", QKeySequence("Shift+["),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
     makeAction(timeline, "trim_end", "Ende bis Playhead trimmen", QKeySequence("Shift+]"),
