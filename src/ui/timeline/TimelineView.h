@@ -8,6 +8,7 @@
 #include <functional>
 
 class Editor;
+class MediaCache;
 class QMimeData;
 
 // Selbst gezeichnete Timeline: Lineal, Spurköpfe, Clips, Playhead.
@@ -41,6 +42,8 @@ public:
 
     // Liefert Infos zu einer (evtl. noch nicht importierten) Datei für die Drop-Vorschau
     void setProbe(std::function<MediaInfo(const QString&)> probe) { m_probe = std::move(probe); }
+    // Quelle für Filmstreifen und Wellenformen (optional)
+    void setMediaCache(MediaCache* cache);
 
 public slots:
     void setPlayhead(int frame);
@@ -88,6 +91,8 @@ private:
     void drawRuler(QPainter& p);
     void drawTracks(QPainter& p);
     void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost);
+    void drawFilmstrip(QPainter& p, const QRect& body, const Clip& c);
+    void drawWaveform(QPainter& p, const QRect& body, const Clip& c);
     void drawHeaders(QPainter& p);
     void drawPlayhead(QPainter& p);
     QRect headerButton(const Row& row) const;
@@ -95,6 +100,7 @@ private:
     int dropTrackAt(int y) const;
 
     Editor* m_editor;
+    MediaCache* m_cache = nullptr;
     ViewState m_view;
     Tool m_tool = Tool::Select;
     bool m_snap = true;

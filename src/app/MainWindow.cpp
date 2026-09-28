@@ -6,6 +6,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "engine/MediaCache.h"
 #include "ui/DeliverPanel.h"
 #include "ui/Inspector.h"
 #include "ui/MediaPool.h"
@@ -56,6 +57,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_mediaPool, &MediaPool::sourceRequested, m_engine, &Engine::showSource);
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
     tv->setProbe([this](const QString& path) { return probeCached(path); });
+    tv->setMediaCache(new MediaCache(this));
 
 }
 

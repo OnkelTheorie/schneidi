@@ -7,6 +7,7 @@
 #include "core/Selection.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
+#include "engine/MediaCache.h"
 #include "ui/MediaPool.h"
 
 #include <QDragEnterEvent>
@@ -17,6 +18,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QWheelEvent>
+#include <array>
 #include <cmath>
 
 namespace {
@@ -37,6 +39,13 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
         emit viewChanged(); // nur damit die Scrollbar ggf. mehr Platz bekommt
     });
     connect(editor->selection(), &Selection::changed, this, qOverload<>(&QWidget::update));
+}
+
+void TimelineView::setMediaCache(MediaCache* cache)
+{
+    m_cache = cache;
+    // Neue Bilder/Wellenformen fertig -> neu zeichnen (Qt fasst mehrere update() zusammen)
+    connect(cache, &MediaCache::updated, this, qOverload<>(&QWidget::update));
 }
 
 // ---------- Geometrie ----------
@@ -367,10 +376,12 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     p.save();
     p.setClipPath(path);
     p.fillRect(QRect(r.left(), r.top(), r.width(), barH), base);
-    if (kind == TrackKind::Audio) { // Platzhalter bis Waveforms kommen
-        p.setPen(QColor(255, 255, 255, 50));
-        const int mid = r.top() + barH + (r.height() - barH) / 2;
-        p.drawLine(r.left(), mid, r.right(), mid);
+    const QRect bodyRect(r.left(), r.top() + barH, r.width(), r.height() - barH);
+    if (!ghost && bodyRect.height() > 4) {
+        p.setRenderHint(QPainter::Antialiasing, false);
+        if (kind == TrackKind::Video) drawFilmstrip(p, bodyRect, c);
+        else drawWaveform(p, bodyRect, c);
+        p.setRenderHint(QPainter::Antialiasing);
     }
     p.restore();
 
@@ -387,6 +398,91 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
     p.drawPath(path);
     p.restore();
+}
+
+// Filmstreifen wie in DaVinci: Kacheln ab Clip-Anfang, jede zeigt das Frame an ihrer Position.
+// Die Quell-Frames werden auf Zweierpotenzen gerundet, damit beim Zoomen Bilder wiederverwendet werden.
+void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
+{
+    if (!m_cache || body.height() < 10) return;
+    const MediaInfo* info = m_editor->project()->mediaInfo(c.mediaPath);
+    const bool still = info && info->isImage;
+
+    const int tileH = body.height();
+    const int tileW = std::max(12, tileH * 16 / 9);
+    const double clipX = frameToX(c.start);
+    const double framesPerTile = tileW / m_view.pxPerFrame;
+    int step = 1;
+    while (step * 2 <= framesPerTile) step *= 2;
+
+    const int first = std::max(0, int((kHeaderW - clipX) / tileW));
+    const int last = int((std::min(body.right(), width()) - clipX) / tileW);
+    for (int i = first; i <= last; ++i) {
+        const int src = still ? 0 : std::min(c.out, c.in + int(i * framesPerTile));
+        QImage img = m_cache->thumbnail(c.mediaPath, src / step * step);
+        // Noch nicht fertig -> übergangsweise ein Bild aus einer gröberen Stufe
+        for (int s = step * 2; img.isNull() && s <= step * 64; s *= 2)
+            img = m_cache->cachedThumbnail(c.mediaPath, src / s * s);
+        if (img.isNull()) continue;
+
+        const QRect target(int(clipX) + i * tileW, body.top(), tileW, tileH);
+        // Seitenverhältnis der Kachel mittig aus dem Bild ausschneiden
+        QRectF source(img.rect());
+        const double want = double(tileW) / tileH;
+        if (source.width() / source.height() > want) {
+            const double w = source.height() * want;
+            source.adjust((source.width() - w) / 2, 0, -(source.width() - w) / 2, 0);
+        } else {
+            const double h = source.width() / want;
+            source.adjust(0, (source.height() - h) / 2, 0, -(source.height() - h) / 2);
+        }
+        p.drawImage(target, img, source);
+    }
+}
+
+void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c)
+{
+    if (!m_cache) return;
+    const auto wave = m_cache->waveform(c.mediaPath);
+    if (!wave || wave->levels.isEmpty()) return;
+
+    constexpr int N = Waveform::kBucketsPerFrame;
+    // Stufe wählen, bei der pro Pixel nur 1-2 Werte zusammengefasst werden müssen
+    const double bucketsPerPx = N / m_view.pxPerFrame;
+    int level = 0;
+    while (level + 1 < wave->levels.size() && (1 << (level + 1)) <= bucketsPerPx) ++level;
+    const QVector<quint8>& lv = wave->levels[level];
+    const double scale = double(N) / (1 << level); // Buckets dieser Stufe pro Frame
+    const int available = int(std::min<double>(lv.size(), std::ceil(wave->frames * scale)));
+    const int clipEnd = int(std::min<double>(available, (c.out + 1) * scale));
+
+    const int mid = body.top() + body.height() / 2;
+    const double half = body.height() / 2.0 - 1;
+    const double clipX = frameToX(c.start);
+    const int x0 = std::max(body.left(), kHeaderW);
+    const int x1 = std::min(body.right(), width() - 1);
+
+    // Höhe in dB statt linear (-48 dB .. 0 dB), sonst sieht normales Material fast flach aus
+    static const auto dbTable = [] {
+        std::array<double, 256> t{};
+        for (int i = 1; i < 256; ++i) t[i] = std::max(0.0, 1.0 + 20.0 * std::log10(i / 255.0) / 48.0);
+        return t;
+    }();
+
+    QVector<QLine> lines;
+    lines.reserve(x1 - x0 + 1);
+    for (int x = x0; x <= x1; ++x) {
+        const double f0 = c.in + (x - clipX) / m_view.pxPerFrame;
+        const int b0 = int(std::floor(f0 * scale));
+        const int b1 = std::min(clipEnd, std::max(b0 + 1, int(std::ceil((f0 + 1 / m_view.pxPerFrame) * scale))));
+        int peak = 0;
+        for (int b = std::max(0, b0); b < b1; ++b) peak = std::max<int>(peak, lv[b]);
+        if (peak == 0) continue;
+        const int h = std::max(1, int(dbTable[peak] * half));
+        lines << QLine(x, mid - h, x, mid + h);
+    }
+    p.setPen(QColor(0xc8, 0xf0, 0xcf, 210));
+    p.drawLines(lines);
 }
 
 void TimelineView::drawHeaders(QPainter& p)

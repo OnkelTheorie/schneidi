@@ -25,6 +25,7 @@ add_executable(schneidi
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
+    src/engine/MediaCache.h       src/engine/MediaCache.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
