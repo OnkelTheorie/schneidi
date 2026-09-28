@@ -36,6 +36,7 @@ add_executable(schneidi
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
+    src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/Mixer.h                src/ui/Mixer.cpp

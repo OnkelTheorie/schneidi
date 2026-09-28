@@ -425,23 +425,42 @@ bool sameTransitions(const Timeline& a, const Timeline& b)
 
 } // namespace
 
-void Editor::addTransitions(int frame)
+void Editor::addTransitions(int frame, std::optional<TransitionStyle> style, std::optional<TrackKind> onlyKind)
 {
     const Timeline& cur = m_project->timeline();
+    // Ausgewählter Übergang: nur die Art tauschen (Ausrichtung bleibt)
+    if (const TransitionKey t = m_selection->transition(); style && !t.isNull()) {
+        TrackRef ref;
+        const Clip* c = TimelineOps::findClip(cur, t.leftId ? t.leftId : t.rightId, &ref);
+        if (c && (!onlyKind || ref.kind == *onlyKind)) {
+            TransitionStyle s = t.leftId ? c->transOutStyle : c->transInStyle;
+            s.type = style->type;
+            s.audio = style->audio;
+            setTransitionStyle(t.leftId, t.rightId, s);
+        }
+        return;
+    }
     struct EdgeRef { int clipId; bool atEnd; };
     QVector<EdgeRef> edges;
+    auto kindOk = [&](int clipId) {
+        TrackRef ref;
+        return !onlyKind || (TimelineOps::findClip(cur, clipId, &ref) && ref.kind == *onlyKind);
+    };
     if (!m_selection->isEmpty()) {
-        for (int id : withLinked(m_selection->ids().values().toVector())) edges << EdgeRef{id, false} << EdgeRef{id, true};
+        for (int id : withLinked(m_selection->ids().values().toVector()))
+            if (kindOk(id)) edges << EdgeRef{id, false} << EdgeRef{id, true};
     } else {
         // Nächster Schnitt zum Playhead; alle Spuren mit einer Kante genau dort
+        const QVector<TrackKind> kinds = onlyKind ? QVector<TrackKind>{*onlyKind}
+                                                  : QVector<TrackKind>{TrackKind::Video, TrackKind::Audio};
         int best = -1;
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (TrackKind k : kinds)
             for (const auto& t : cur.tracks(k))
                 for (const auto& c : t.clips)
                     for (int f : {c.start, c.end()})
                         if (best < 0 || std::abs(f - frame) < std::abs(best - frame)) best = f;
         if (best < 0) return;
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (TrackKind k : kinds)
             for (const auto& t : cur.tracks(k))
                 for (const auto& c : t.clips) {
                     if (c.start == best) edges << EdgeRef{c.id, false};
@@ -461,9 +480,13 @@ void Editor::addTransitions(int frame)
         auto& clips = tl.track(ref).clips;
         const int idx = int(c - clips.data());
         touched.insert(c->id);
-        // Neue Übergänge starten als Cross Dissolve, vorhandene behalten ihre Art
-        auto set = [](int& len, TransitionStyle& style, int value) {
-            if (len <= 0) style = {};
+        // Neue Übergänge starten als Cross Dissolve (bzw. mit der gewählten Art), vorhandene behalten ihre Art
+        auto set = [&style](int& len, TransitionStyle& s, int value) {
+            if (len <= 0) s = {};
+            if (style) {
+                s.type = style->type;
+                s.audio = style->audio;
+            }
             len = value;
         };
         if (e.atEnd) {
@@ -483,6 +506,43 @@ void Editor::addTransitions(int frame)
     fitTransitions(tl, touched, sourceLength());
     if (sameTransitions(cur, tl)) return;
     m_project->edit(T("Übergang hinzufügen"), [&](Timeline& t) { t = tl; });
+}
+
+std::optional<Timeline> Editor::withTransitionAt(int leftId, int rightId, const TransitionStyle& style,
+                                                 TrackRef* where) const
+{
+    Timeline tl = m_project->timeline();
+    TrackRef lRef, rRef;
+    Clip* l = leftId ? TimelineOps::findClip(tl, leftId, &lRef) : nullptr;
+    Clip* r = rightId ? TimelineOps::findClip(tl, rightId, &rRef) : nullptr;
+    if ((leftId && !l) || (rightId && !r) || (!l && !r)) return std::nullopt;
+    if (l && r && (!(lRef == rRef) || l->end() != r->start)) return std::nullopt; // kein gemeinsamer Schnitt
+    const int length = std::max(1, m_project->fps()); // Standard 1 s wie DaVinci
+    if (l) l->transOut = length, l->transOutStyle = style;
+    if (r) r->transIn = length, r->transInStyle = style;
+    if (where) *where = l ? lRef : rRef;
+    QSet<int> touched{leftId, rightId};
+    touched.remove(0);
+    fitTransitions(tl, touched, sourceLength());
+    return tl;
+}
+
+void Editor::addTransitionAt(int leftId, int rightId, const TransitionStyle& style)
+{
+    const auto tl = withTransitionAt(leftId, rightId, style);
+    if (!tl || sameTransitions(m_project->timeline(), *tl)) return;
+    m_project->edit(T("Übergang hinzufügen"), [&](Timeline& t) { t = *tl; });
+}
+
+std::optional<TimelineOps::TransitionSpan> Editor::previewTransitionAt(int leftId, int rightId,
+                                                                       const TransitionStyle& style) const
+{
+    TrackRef ref;
+    const auto tl = withTransitionAt(leftId, rightId, style, &ref);
+    if (!tl) return std::nullopt;
+    for (const auto& s : TimelineOps::transitions(tl->track(ref), sourceLength()))
+        if (s.leftId == leftId && s.rightId == rightId) return s;
+    return std::nullopt; // passt nicht (keine Handles)
 }
 
 void Editor::removeTransition(int leftId, int rightId)
