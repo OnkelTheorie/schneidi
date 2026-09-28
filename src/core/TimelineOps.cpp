@@ -1,5 +1,7 @@
 #include "core/TimelineOps.h"
 
+#include "core/Keyframes.h"
+
 #include <QHash>
 #include <algorithm>
 #include <climits>
@@ -130,6 +132,7 @@ QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
         TrackRef ref;
         Clip* c = findClip(tl, id, &ref);
         if (!c || frame <= c->start || frame >= c->end()) continue;
+        const Clip original = *c;
         Clip right = *c;
         right.id = newClipId();
         right.in = c->in + (frame - c->start);
@@ -143,6 +146,7 @@ QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
             right.linkId = linkMap[c->linkId];
         }
         c->out = c->in + (frame - c->start) - 1;
+        Keys::split(original, *c, right); // Keyframes aufteilen, an der Kante interpolierter Wert
         Track& t = tl.track(ref);
         t.clips << right;
         sortTrack(t);

@@ -1,5 +1,7 @@
 #include "core/ProjectFile.h"
 
+#include "core/Keyframes.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -123,6 +125,45 @@ TransitionStyle transitionStyleFromJson(const QJsonObject& o)
     return s;
 }
 
+// Keyframes: {"zoomX": [[Quell-Frame, Wert], [Frame, Wert, "easeIn"], …], …}; Verlauf nur, wenn nicht linear
+const char* const kEaseIds[] = {"linear", "easeIn", "easeOut", "easeInOut"}; // Index = KeyEase
+
+QJsonObject keysToJson(const Clip& c)
+{
+    QJsonObject o;
+    for (auto it = c.keys.cbegin(); it != c.keys.cend(); ++it) {
+        if (it->isEmpty()) continue;
+        QJsonArray list;
+        for (const Keyframe& k : *it) {
+            QJsonArray e{k.frame, k.value};
+            if (k.ease != KeyEase::Linear) e << kEaseIds[int(k.ease)];
+            list << e;
+        }
+        o[Keys::info(it.key()).id] = list;
+    }
+    return o;
+}
+
+void keysFromJson(Clip& c, const QJsonObject& o)
+{
+    for (auto it = o.begin(); it != o.end(); ++it) {
+        AnimParam p;
+        if (!Keys::fromId(it.key(), &p)) continue; // unbekannt (neuere Version) -> ignorieren
+        KeyTrack track;
+        for (const QJsonValue& v : it.value().toArray()) {
+            const QJsonArray e = v.toArray();
+            if (e.size() < 2) continue;
+            Keyframe k{e.at(0).toInt(), e.at(1).toDouble(), KeyEase::Linear};
+            const QString ease = e.at(2).toString();
+            for (int i = 0; i < 4; ++i)
+                if (ease == QLatin1String(kEaseIds[i])) k.ease = KeyEase(i);
+            track << k;
+        }
+        std::sort(track.begin(), track.end(), [](const Keyframe& a, const Keyframe& b) { return a.frame < b.frame; });
+        if (!track.isEmpty()) c.keys.insert(p, track);
+    }
+}
+
 // Clips verweisen per Index auf die Medienliste -> Pfad steht nur einmal in der Datei
 QJsonObject clipToJson(const Clip& c, int mediaIndex)
 {
@@ -147,6 +188,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex)
             fx << QJsonObject{{"id", e.effectId}, {"enabled", e.enabled}, {"params", QJsonObject::fromVariantMap(e.params)}};
         o["effects"] = fx;
     }
+    if (Keys::hasKeys(c)) o["keys"] = keysToJson(c);
     return o;
 }
 
@@ -179,6 +221,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media)
         c.effects << EffectInstance{e.value("id").toString(), e.value("params").toObject().toVariantMap(),
                                     e.value("enabled").toBool(true)};
     }
+    keysFromJson(c, o.value("keys").toObject()); // fehlt in älteren Dateien
     return c;
 }
 

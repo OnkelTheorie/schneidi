@@ -1,6 +1,7 @@
 #include "core/Editor.h"
 
 #include "core/I18n.h"
+#include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
@@ -372,8 +373,58 @@ void Editor::paste(int frame)
     m_selection->set(pasted);
 }
 
+void Editor::setKeyframes(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, bool on)
+{
+    if (ids.isEmpty() || params.isEmpty()) return;
+    m_project->edit(on ? T("Keyframe setzen") : T("Keyframe entfernen"), [&](Timeline& tl) {
+        for (int id : ids) {
+            Clip* c = TimelineOps::findClip(tl, id);
+            if (!c) continue;
+            const int t = std::clamp(frame - c->start, 0, c->length() - 1);
+            for (AnimParam p : params) {
+                if (on) Keys::setKey(*c, p, t, Keys::valueAt(*c, p, t));
+                else Keys::removeKey(*c, p, t);
+            }
+        }
+    });
+}
+
+void Editor::setKeyframeEase(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, KeyEase ease)
+{
+    if (ids.isEmpty()) return;
+    m_project->edit(T("Keyframe-Verlauf"), [&](Timeline& tl) {
+        for (int id : ids)
+            if (Clip* c = TimelineOps::findClip(tl, id))
+                Keys::setEase(*c, {std::clamp(frame - c->start, 0, c->length() - 1)}, ease, params);
+    });
+}
+
+void Editor::moveKeyframes(int clipId, const QVector<int>& times, int delta)
+{
+    if (times.isEmpty() || delta == 0) return;
+    m_project->edit(T("Keyframes verschieben"), [&](Timeline& tl) {
+        if (Clip* c = TimelineOps::findClip(tl, clipId)) Keys::move(*c, times, delta);
+    });
+    QSet<int> moved;
+    for (int t : times) moved.insert(t + delta);
+    m_selection->setKeyframes(clipId, moved);
+}
+
+void Editor::removeKeyframes(int clipId, const QVector<int>& times)
+{
+    if (times.isEmpty()) return;
+    m_project->edit(T("Keyframes löschen"), [&](Timeline& tl) {
+        if (Clip* c = TimelineOps::findClip(tl, clipId)) Keys::removeAt(*c, times);
+    });
+    m_selection->setKeyframes(0, {});
+}
+
 void Editor::deleteSelection()
 {
+    if (m_selection->keyClip()) { // ausgewählte Keyframe-Rauten gehen vor (wie DaVinci)
+        removeKeyframes(m_selection->keyClip(), m_selection->keyTimes().values().toVector());
+        return;
+    }
     if (const TransitionKey t = m_selection->transition(); !t.isNull()) {
         removeTransition(t.leftId, t.rightId);
         m_selection->clear();

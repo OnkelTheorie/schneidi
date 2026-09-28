@@ -22,9 +22,11 @@ public:
 
     void set(const QSet<int>& ids)
     {
-        if (ids == m_ids && m_transition.isNull()) return;
+        if (ids == m_ids && m_transition.isNull() && m_keyTimes.isEmpty()) return;
         m_ids = ids;
         m_transition = {};
+        m_keyClip = 0;
+        m_keyTimes.clear();
         emit changed();
     }
     void clear() { set({}); }
@@ -36,6 +38,19 @@ public:
         if (t == m_transition && m_ids.isEmpty()) return;
         m_ids.clear();
         m_transition = t;
+        m_keyClip = 0;
+        m_keyTimes.clear();
+        emit changed();
+    }
+
+    // Ausgewählte Keyframe-Rauten in der Keyframe-Spur eines Clips (Clip-Frames); Clip-Auswahl bleibt
+    int keyClip() const { return m_keyClip; }
+    const QSet<int>& keyTimes() const { return m_keyTimes; }
+    void setKeyframes(int clipId, const QSet<int>& times)
+    {
+        if (clipId == m_keyClip && times == m_keyTimes) return;
+        m_keyClip = times.isEmpty() ? 0 : clipId;
+        m_keyTimes = times;
         emit changed();
     }
 
@@ -45,4 +60,6 @@ signals:
 private:
     QSet<int> m_ids;
     TransitionKey m_transition;
+    int m_keyClip = 0;
+    QSet<int> m_keyTimes;
 };

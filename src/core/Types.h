@@ -7,6 +7,7 @@
 
 #include <QColor>
 #include <QFileInfo>
+#include <QMap>
 #include <QString>
 #include <QVariantMap>
 #include <QVector>
@@ -129,6 +130,27 @@ inline const TransitionTypeInfo& transitionTypeInfo(TransitionType t)
 
 enum class ClipKind { Media, Title };
 
+// Keyframes wie in DaVinci: pro Clip und animierbarem Parameter eine Liste. Ohne Keyframes gilt der statische Wert
+// (Clip::transform, Clip::title, Clip::volumeDb …). Funktionen dazu in core/Keyframes.h.
+enum class AnimParam {
+    ZoomX, ZoomY, PosX, PosY, Rotation,               // Transform
+    CropLeft, CropRight, CropTop, CropBottom,         // Beschneiden
+    Opacity,                                          // Composite
+    TitleSize, TitlePosX, TitlePosY, TitleColor,      // Titel (Farbe als ARGB-Zahl)
+    Volume, Pan,                                      // Audio
+    Count
+};
+// Verlauf an einem Keyframe (Rechtsklick auf die Raute wie in DaVinci):
+// Ease In = langsam ankommen, Ease Out = langsam losfahren
+enum class KeyEase { Linear, EaseIn, EaseOut, EaseInOut };
+struct Keyframe {
+    int frame = 0;      // Quell-Frame (wie Clip::in) -> Trimmen am Anfang lässt die Keyframes an der Quelle stehen
+    double value = 0;
+    KeyEase ease = KeyEase::Linear;
+    bool operator==(const Keyframe& o) const { return frame == o.frame && value == o.value && ease == o.ease; }
+};
+using KeyTrack = QVector<Keyframe>; // nach frame sortiert, jeder Frame höchstens einmal
+
 struct Clip {
     int id = 0;
     ClipKind kind = ClipKind::Media;
@@ -152,6 +174,8 @@ struct Clip {
     // Fade-Griffe oben am Clip (Frames, wie DaVinci): Video blendet über Transparenz zur Spur darunter,
     // Audio über die Lautstärke. Unabhängig von Übergängen; beim Rendern auf die Cliplänge begrenzt.
     int fadeIn = 0, fadeOut = 0;
+    // Keyframes je Parameter (leer = statischer Wert), siehe core/Keyframes.h
+    QMap<AnimParam, KeyTrack> keys;
 
     int length() const { return out - in + 1; }
     int end() const { return start + length(); } // exklusiv

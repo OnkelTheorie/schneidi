@@ -76,6 +76,15 @@ public:
     // Wirksame Übergänge einer Spur (für Anzeige)
     QVector<TimelineOps::TransitionSpan> transitions(TrackRef ref) const;
 
+    // Keyframes (Inspector-Rauten): an Timeline-Frame `frame` für die Parameter setzen (on) bzw. entfernen,
+    // jeweils im Clip-Frame unter dem Playhead (auf den Clip begrenzt)
+    void setKeyframes(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, bool on);
+    // Verlauf (Linear/Ease) an den Keyframes; params leer = alle Parameter (Keyframe-Spur der Timeline)
+    void setKeyframeEase(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, KeyEase ease);
+    // Keyframe-Spur der Timeline: Rauten an Clip-Frames `times` (alle Parameter) verschieben/löschen
+    void moveKeyframes(int clipId, const QVector<int>& times, int delta);
+    void removeKeyframes(int clipId, const QVector<int>& times);
+
     // Zwischenablage (Strg+C/X/V): Einfügen am Playhead auf denselben Spuren, überschreibt
     void copySelection();
     void cutSelection();
