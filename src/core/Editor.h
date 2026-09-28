@@ -3,6 +3,7 @@
 #include "core/Types.h"
 
 #include <QObject>
+#include <optional>
 
 class Project;
 class Selection;
@@ -68,7 +69,15 @@ public:
 
     // Übergänge (Cross Dissolve, Strg+T) mit Standardlänge 1 s: an beiden Kanten der ausgewählten Clips,
     // ohne Auswahl am Schnitt, der dem Playhead am nächsten liegt. Zu wenig Handles -> kürzer.
-    void addTransitions(int frame);
+    // style gesetzt (Doppelklick in der Effects Library): diese Art, vorhandene werden ersetzt;
+    // onlyKind = nur Kanten auf Video- bzw. Audiospuren. Ist ein Übergang ausgewählt, bekommt er die Art.
+    void addTransitions(int frame, std::optional<TransitionStyle> style = {}, std::optional<TrackKind> onlyKind = {});
+    // Übergang an einem Schnitt (Drop aus der Effects Library): leftId endet, rightId beginnt dort
+    // (0 = keiner -> Ein-/Ausblenden). Standardlänge 1 s, ersetzt einen vorhandenen; ein Undo-Schritt.
+    void addTransitionAt(int leftId, int rightId, const TransitionStyle& style);
+    // Wie addTransitionAt, ändert aber nichts: wirksamer Übergang (für die Vorschau beim Ziehen)
+    std::optional<TimelineOps::TransitionSpan> previewTransitionAt(int leftId, int rightId,
+                                                                   const TransitionStyle& style) const;
     // Übergang zwischen leftId und rightId (0 = Schwarz/Stille) entfernen bzw. Länge ändern
     void removeTransition(int leftId, int rightId);
     void setTransitionLength(int leftId, int rightId, int length, const QString& mergeKey = {});
@@ -83,6 +92,9 @@ public:
 
 private:
     TimelineOps::SourceLength sourceLength() const;
+    // Kopie der Timeline mit Übergang am Schnitt (siehe addTransitionAt); nullopt = Clips nicht gefunden
+    std::optional<Timeline> withTransitionAt(int leftId, int rightId, const TransitionStyle& style,
+                                             TrackRef* where = nullptr) const;
 
     // Clips unter dem Playhead bzw. die Auswahl (mit Partnern), wie DaVinci bei Strg+B
     QVector<int> targetIds(int frame) const;
