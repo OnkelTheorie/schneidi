@@ -57,7 +57,7 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
             clip.attach(crop);
         }
     }
-    if (t.opacity != 100) {
+    if (t.hasOpacity()) {
         // Deckkraft über den Alphakanal (wie Shotcut); die qtblend-Opacity lieferte nur Schwarz
         Mlt::Filter op(profile, "brightness");
         if (op.is_valid()) {
@@ -66,7 +66,7 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
             clip.attach(op);
         }
     }
-    if (t.zoomX == 1.0 && t.zoomY == 1.0 && t.posX == 0 && t.posY == 0 && t.rotation == 0) return;
+    if (!t.hasTransform()) return;
     Mlt::Filter f(profile, "qtblend");
     if (!f.is_valid()) return;
     const double w = W * t.zoomX, h = H * t.zoomY;

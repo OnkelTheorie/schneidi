@@ -6,51 +6,71 @@
 #include <functional>
 
 class Editor;
+class QButtonGroup;
+class QGridLayout;
 class QLabel;
-class QTabWidget;
-class QVBoxLayout;
-class QCheckBox;
+class QSlider;
+class QStackedWidget;
 class QToolButton;
-class ParamRow;
+class QVBoxLayout;
+class ScrubField;
 
-// Inspector (rechts oben wie in DaVinci): Eigenschaften des ausgewählten Clips bearbeiten.
-// Tabs Video/Audio; Änderungen gelten für alle ausgewählten Clips der Art.
-// Regler ziehen = ein Undo-Schritt (Project::edit mit mergeKey).
+// Inspector (rechts oben) im Stil von DaVinci: Tabs Video/Audio, aufklappbare Bereiche mit
+// rotem An/Aus-Punkt, Zahlenfelder zum Eintippen oder Links/Rechts-Ziehen.
+// Änderungen gelten für alle ausgewählten Clips der Art; Ziehen = ein Undo-Schritt.
 class Inspector : public QWidget {
     Q_OBJECT
 public:
     explicit Inspector(Editor* editor, QWidget* parent = nullptr);
+    ~Inspector() override;
     void setFrameSize(const QSize& size);
 
 private:
-    // Regler für ein double-Feld des Clips
-    ParamRow* addParam(QVBoxLayout* section, TrackKind kind, const QString& key, const QString& label, double min,
-                       double max, double def, int decimals, const std::function<double&(Clip&)>& field);
-    QVBoxLayout* addSection(QVBoxLayout* page, const QString& title, const std::function<void()>& reset,
-                            QCheckBox* enable = nullptr);
+    using Field = std::function<double&(Clip&)>;
+    using Flag = std::function<bool&(Clip&)>;
+
+    struct Param {
+        TrackKind kind;
+        Field field;
+        ScrubField* edit;
+        QSlider* slider = nullptr;
+        double min, max;
+    };
+    struct Section {
+        QGridLayout* grid;
+        TrackKind kind;
+        int rows = 0;
+    };
+
+    // Bereich mit Kopfzeile; `enabled` = roter Punkt (optional)
+    Section addSection(QVBoxLayout* page, TrackKind kind, const QString& title, const std::function<void(Clip&)>& reset,
+                       const Flag& enabled = {});
+    // Zeile mit Schieberegler + Zahlenfeld
+    Param* addSlider(Section& s, const QString& key, const QString& label, double min, double max, double def,
+                     double step, int decimals, const Field& field);
+    // Zeile mit X/Y-Feldern (wie Zoom/Position in DaVinci); link = Kettensymbol dazwischen
+    QPair<Param*, Param*> addXY(Section& s, const QString& key, const QString& label, double min, double max,
+                                double def, double step, int decimals, const Field& x, const Field& y,
+                                QToolButton* link = nullptr);
+    Param* makeParam(TrackKind kind, const QString& key, const QString& text, double min, double max, double def,
+                     double step, int decimals, const Field& field);
+    QToolButton* resetButton(const std::function<void()>& fn);
+    QLabel* rowLabel(const QString& text);
+
     QVector<int> selectedIds(TrackKind kind) const;
     const Clip* primary(TrackKind kind) const;
     void apply(TrackKind kind, const QString& key, const QString& text, const std::function<void(Clip&)>& fn);
     void refresh();
 
-    struct Binding {
-        TrackKind kind;
-        ParamRow* row;
-        std::function<double&(Clip&)> field;
-    };
-
     Editor* m_editor;
     QSize m_frameSize{1920, 1080};
     QLabel* m_clipName;
     QLabel* m_empty;
-    QTabWidget* m_tabs;
-    QWidget* m_videoPage;
-    QWidget* m_audioPage;
-    QVector<Binding> m_bindings;
+    QWidget* m_content;
+    QStackedWidget* m_pages;
+    QButtonGroup* m_tabs;
+    QVector<Param*> m_params;
+    QVector<std::function<void()>> m_refreshers; // weitere Anzeigen (Punkte, Farbe)
     bool m_zoomLinked = true;
-    QToolButton* m_zoomLink = nullptr;
-    QCheckBox* m_keyEnabled = nullptr;
-    QToolButton* m_keyColor = nullptr;
-    ParamRow* m_keyTolerance = nullptr;
-    ParamRow* m_cropRows[4] = {};
+    Param* m_crop[4] = {};
 };

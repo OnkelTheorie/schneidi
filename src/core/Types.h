@@ -31,13 +31,19 @@ struct ClipTransform {
     double rotation = 0;        // Grad
     double cropLeft = 0, cropRight = 0, cropTop = 0, cropBottom = 0; // Pixel
     double opacity = 100;       // Prozent
+    // Bereiche einzeln abschaltbar (roter Punkt im Inspector); Werte bleiben erhalten
+    bool transformOn = true, cropOn = true, compositeOn = true;
 
-    bool isIdentity() const
+    bool hasTransform() const
     {
-        return zoomX == 1.0 && zoomY == 1.0 && posX == 0 && posY == 0 && rotation == 0 && opacity == 100
-            && !hasCrop();
+        return transformOn && (zoomX != 1.0 || zoomY != 1.0 || posX != 0 || posY != 0 || rotation != 0);
     }
-    bool hasCrop() const { return cropLeft != 0 || cropRight != 0 || cropTop != 0 || cropBottom != 0; }
+    bool hasCrop() const
+    {
+        return cropOn && (cropLeft != 0 || cropRight != 0 || cropTop != 0 || cropBottom != 0);
+    }
+    bool hasOpacity() const { return compositeOn && opacity != 100; }
+    bool isIdentity() const { return !hasTransform() && !hasCrop() && !hasOpacity(); }
 };
 
 struct Clip {
