@@ -289,21 +289,54 @@ QString wipeLuma(TransitionType type, int w, int h)
     return path;
 }
 
+// Rand einer Wischblende: Farbfläche, per animiertem qtcrop auf einen Streifen um die Kante begrenzt.
+// edge0/edge1 = Lage der Kante (Anteil 0..1 in Wischrichtung) im ersten/letzten Frame, dazwischen linear.
+void addWipeBorder(Mlt::Profile& profile, Mlt::Tractor& mix, int track, int len, const TransitionStyle& st,
+                   double edge0, double edge1)
+{
+    QColor c = st.borderColor;
+    c.setAlpha(255);
+    Mlt::Producer strip(profile, ("color:" + c.name(QColor::HexArgb)).toUtf8().constData());
+    if (!strip.is_valid()) return;
+    strip.set("length", len);
+    strip.set_in_and_out(0, len - 1);
+    Mlt::Filter crop(profile, "qtcrop");
+    if (!crop.is_valid()) return;
+    const double W = profile.width(), H = profile.height();
+    const bool horizontal = st.type == TransitionType::WipeRight || st.type == TransitionType::WipeLeft;
+    // nach links/oben: Kante läuft vom Ende zum Anfang
+    const bool reverse = st.type == TransitionType::WipeLeft || st.type == TransitionType::WipeUp;
+    const double full = horizontal ? W : H;
+    for (const auto& [i, e] : {std::pair{0, edge0}, std::pair{len - 1, edge1}}) {
+        const double pos = (reverse ? 1.0 - e : e) * full;
+        mlt_rect r{0, 0, W, H, 1.0};
+        (horizontal ? r.x : r.y) = pos - st.border / 2;
+        (horizontal ? r.w : r.h) = st.border;
+        crop.anim_set("rect", r, i, len);
+    }
+    crop.set("color", "#00000000");
+    crop.set_in_and_out(0, len - 1);
+    strip.attach(crop);
+    mix.set_track(strip, track);
+    Mlt::Transition t(profile, "qtblend");
+    t.set("always_active", 1);
+    mix.plant_transition(t, 0, track);
+}
+
 // Video-Übergang außer Cross Dissolve als kleiner Tractor: a geht, b kommt; fehlt eine Seite, ist dort Leere.
 std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Producer* a, Mlt::Producer* b, int len,
-                                               TransitionType type)
+                                               const TransitionStyle& st)
 {
+    const TransitionType type = st.type;
     auto mix = std::make_unique<Mlt::Tractor>(profile);
-    auto colorClip = [&](const char* resource) {
-        auto p = std::make_unique<Mlt::Producer>(profile, resource);
-        p->set("length", len);
-        p->set_in_and_out(0, len - 1);
-        return p;
-    };
-    if (type == TransitionType::DipToBlack || type == TransitionType::DipToWhite) {
+    if (type == TransitionType::DipToColor) {
         // Farbfläche unten, a blendet in der ersten Hälfte aus, b in der zweiten ein (ohne Gegenseite: ganze Länge)
-        auto color = colorClip(type == TransitionType::DipToBlack ? "color:#ff000000" : "color:#ffffffff");
-        mix->set_track(*color, 0);
+        QColor c = st.color;
+        c.setAlpha(255); // "#aarrggbb" wie beim Titel
+        Mlt::Producer color(profile, ("color:" + c.name(QColor::HexArgb)).toUtf8().constData());
+        color.set("length", len);
+        color.set_in_and_out(0, len - 1);
+        mix->set_track(color, 0);
         const int half = a && b ? len / 2 : 0;
         int track = 1;
         for (Mlt::Producer* p : {a, b}) {
@@ -318,32 +351,38 @@ std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Produ
         }
         return mix;
     }
+    const bool border = st.border >= 0.5;
     if (!a || !b) {
         // Wischblende ins/aus dem Leeren: luma ignoriert Transparenz -> sichtbaren Bereich per qtcrop animieren
+        // (harte Kante, Weichheit wirkt hier nicht)
         Mlt::Producer& one = a ? *a : *b;
+        // Die neue Seite kommt aus der Startrichtung: nach rechts = von links usw.
+        const bool fromStart = (type == TransitionType::WipeRight || type == TransitionType::WipeDown) == !a;
+        const bool horizontal = type == TransitionType::WipeRight || type == TransitionType::WipeLeft;
+        double edges[2] = {0, 0}; // Lage der Kante für den Rand (Anteil in Wischrichtung)
         Mlt::Filter crop(profile, "qtcrop");
         if (crop.is_valid()) {
             const double W = profile.width(), H = profile.height();
-            for (int i : {0, len - 1}) {
+            for (int k = 0; k < 2; ++k) {
+                const int i = k ? len - 1 : 0;
                 // p = Anteil, den die neue Seite schon einnimmt (Einblenden: der Clip selbst, Ausblenden: die Leere)
                 const double p = len > 1 ? double(i) / (len - 1) : 1.0;
                 const double shown = a ? 1.0 - p : p; // sichtbarer Anteil des Clips
                 mlt_rect r{0, 0, W, H, 1.0};
-                // Die neue Seite kommt aus der Startrichtung: nach rechts = von links usw.
-                const bool fromStart = (type == TransitionType::WipeRight || type == TransitionType::WipeDown) == !a;
-                const bool horizontal = type == TransitionType::WipeRight || type == TransitionType::WipeLeft;
                 double& pos = horizontal ? r.x : r.y;
                 double& size = horizontal ? r.w : r.h;
                 const double full = horizontal ? W : H;
                 size = full * shown;
                 pos = fromStart ? 0.0 : full - size;
                 crop.anim_set("rect", r, i, len);
+                edges[k] = p; // die Kante wandert in Wischrichtung von 0 nach 1
             }
             crop.set("color", "#00000000");
             crop.set_in_and_out(one.get_in(), one.get_out());
             one.attach(crop);
         }
         mix->set_track(one, 0);
+        if (border) addWipeBorder(profile, *mix, 1, len, st, edges[0], edges[1]);
         return mix;
     }
     // Wischblende zwischen zwei Clips: luma mit Verlaufsbild
@@ -352,9 +391,16 @@ std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Produ
     Mlt::Transition t(profile, "luma");
     const QString luma = wipeLuma(type, profile.width(), profile.height());
     if (!luma.isEmpty()) t.set("resource", luma.toUtf8().constData());
-    t.set("softness", 0.02);
+    // Weichheit: Anteil des Verlaufs, über den überblendet wird (etwas Weichheit immer, gegen Treppchen)
+    const double soft = 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0;
+    t.set("softness", soft);
     t.set_in_and_out(0, len - 1);
     mix->plant_transition(t, 0, 1);
+    if (border) {
+        // luma: Fortschritt p = i/len, Übergangszone endet bei p*(1+soft) -> Mitte der Zone als Kante
+        auto edge = [&](int i) { return double(i) / len * (1.0 + soft) - soft / 2; };
+        addWipeBorder(profile, *mix, 2, len, st, edge(0), edge(len - 1));
+    }
     return mix;
 }
 
@@ -462,7 +508,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             std::unique_ptr<Mlt::Producer> cb(b ? cutOf(*b, s.start, s.end, true) : nullptr);
             const int len = s.length();
             if (kind == TrackKind::Video && s.style.type != TransitionType::CrossDissolve && (ca || cb)) {
-                pl.append(*styledTransition(m_profile, ca.get(), cb.get(), len, s.style.type));
+                pl.append(*styledTransition(m_profile, ca.get(), cb.get(), len, s.style));
             } else if (ca && cb) {
                 // Cross Dissolve: beide Seiten in einem kleinen Tractor, Überblendung von a nach b
                 Mlt::Tractor mix(m_profile);

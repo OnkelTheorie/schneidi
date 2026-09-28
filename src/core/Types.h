@@ -75,20 +75,29 @@ struct TitleStyle {
 };
 
 // Übergangsart (nur Video; Audio ist immer ein Crossfade) und Lage zum Schnitt wie im DaVinci-Inspector
-enum class TransitionType { CrossDissolve, DipToBlack, DipToWhite, WipeRight, WipeLeft, WipeDown, WipeUp };
+enum class TransitionType { CrossDissolve, DipToColor, WipeRight, WipeLeft, WipeDown, WipeUp };
 enum class TransitionAlign { Center, Start, End }; // Center on Edit / Start on Edit / End on Edit
 struct TransitionStyle {
     TransitionType type = TransitionType::CrossDissolve;
     TransitionAlign align = TransitionAlign::Center;
-    bool operator==(const TransitionStyle& o) const { return type == o.type && align == o.align; }
+    QColor color = Qt::black;       // Abblende: Farbe dazwischen ("Dip to Color Dissolve")
+    double softness = 0;            // Wischblende: Weichheit der Kante (0..100 %)
+    double border = 0;              // Wischblende: Randbreite (Pixel im Projektformat, 0 = kein Rand)
+    QColor borderColor = Qt::white; // Wischblende: Randfarbe
+
+    bool isWipe() const { return type >= TransitionType::WipeRight; }
+    bool operator==(const TransitionStyle& o) const
+    {
+        return type == o.type && align == o.align && color == o.color && softness == o.softness
+               && border == o.border && borderColor == o.borderColor;
+    }
     bool operator!=(const TransitionStyle& o) const { return !(*this == o); }
 };
 // Reihenfolge = Anzeige in Menüs/Inspector; id = Schlüssel in der Projektdatei
 struct TransitionTypeInfo { TransitionType type; const char* id; const char* name; };
 inline constexpr TransitionTypeInfo kTransitionTypes[] = {
     {TransitionType::CrossDissolve, "cross_dissolve", "Cross Dissolve"},
-    {TransitionType::DipToBlack, "dip_black", N_("Abblende über Schwarz")},
-    {TransitionType::DipToWhite, "dip_white", N_("Abblende über Weiß")},
+    {TransitionType::DipToColor, "dip_color", N_("Abblende über Farbe")},
     {TransitionType::WipeRight, "wipe_right", N_("Wischblende nach rechts")},
     {TransitionType::WipeLeft, "wipe_left", N_("Wischblende nach links")},
     {TransitionType::WipeDown, "wipe_down", N_("Wischblende nach unten")},

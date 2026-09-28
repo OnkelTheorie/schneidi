@@ -85,18 +85,37 @@ TitleStyle titleFromJson(const QJsonObject& o)
 QJsonObject transitionStyleToJson(const TransitionStyle& s)
 {
     static const char* aligns[] = {"center", "start", "end"};
-    return {{"type", transitionTypeInfo(s.type).id}, {"align", aligns[int(s.align)]}};
+    QJsonObject o{{"type", transitionTypeInfo(s.type).id}, {"align", aligns[int(s.align)]}};
+    const TransitionStyle d;
+    if (s.color != d.color) o["color"] = s.color.name(QColor::HexRgb);
+    if (s.softness != d.softness) o["softness"] = s.softness;
+    if (s.border != d.border) o["border"] = s.border;
+    if (s.borderColor != d.borderColor) o["borderColor"] = s.borderColor.name(QColor::HexRgb);
+    return o;
 }
 
 TransitionStyle transitionStyleFromJson(const QJsonObject& o)
 {
     TransitionStyle s;
+    auto color = [&](const char* key, const QColor& def) {
+        const QColor c(o.value(key).toString());
+        return c.isValid() ? c : def;
+    };
     const QString type = o.value("type").toString();
     for (const auto& i : kTransitionTypes)
         if (type == i.id) s.type = i.type;
+    s.color = color("color", s.color);
+    // ältere Dateien: Abblende über Schwarz/Weiß als eigene Arten
+    if (type == "dip_black" || type == "dip_white") {
+        s.type = TransitionType::DipToColor;
+        s.color = type == "dip_black" ? Qt::black : Qt::white;
+    }
     const QString align = o.value("align").toString();
     if (align == "start") s.align = TransitionAlign::Start;
     else if (align == "end") s.align = TransitionAlign::End;
+    s.softness = std::clamp(o.value("softness").toDouble(s.softness), 0.0, 100.0);
+    s.border = std::max(0.0, o.value("border").toDouble(s.border));
+    s.borderColor = color("borderColor", s.borderColor);
     return s;
 }
 
