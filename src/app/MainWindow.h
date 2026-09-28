@@ -27,7 +27,8 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(Engine* engine, QWidget* parent = nullptr);
-    void importFiles(const QStringList& paths, bool placeOnTimeline = false);
+    // placeOnTimeline (Testhilfe --demo): hintereinander auf V1/A1; adoptFormat = Projektformat vom ersten Clip
+    void importFiles(const QStringList& paths, bool placeOnTimeline = false, bool adoptFormat = true);
 
     // Seiten wie in DaVinci (unten umschaltbar). Neue Seite: hier + in showPage() ergänzen.
     enum class Page { Media, Edit, Deliver };
@@ -37,6 +38,8 @@ public:
     bool openProject(const QString& path);
     void offerAutosaveRestore(); // nach Absturz: letzte automatische Sicherung anbieten
     void disableAutosave();      // Testläufe: keine Sicherung schreiben/löschen
+    // Projekteinstellungen setzen (ein Undo-Schritt); Testhilfe --format
+    void setProjectFormat(const ProjectFormat& format);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -49,6 +52,11 @@ private:
     void updateLeftColumn(); // linke Spalte nur zeigen, wenn Media Pool oder Effects an ist
     void onDrop(const QStringList& paths, int frame, int track);
     MediaInfo probeCached(const QString& path);
+    // Wie DaVinci beim ersten Clip in leerer Timeline: Projekt an Auflösung/Framerate des Clips anpassen
+    // (ask = nachfragen, sonst direkt übernehmen)
+    void offerClipFormat(const QStringList& paths, bool ask);
+    void onFormatChanged();
+    void projectSettingsDialog();
     void buildActions();
     QAction* makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
                        const std::function<void()>& fn);
@@ -103,6 +111,7 @@ private:
     Page m_page = Page::Edit;
 
     QHash<QString, MediaInfo> m_probeCache;
+    class MediaCache* m_mediaCache = nullptr;
 
     QString m_projectPath; // leer = noch nie gespeichert
     QMenu* m_recentMenu = nullptr;

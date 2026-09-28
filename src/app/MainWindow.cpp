@@ -2,6 +2,7 @@
 
 #include "app/InputBindings.h"
 #include "app/KeyBindingsDialog.h"
+#include "app/ProjectSettingsDialog.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -9,6 +10,7 @@
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "engine/MediaCache.h"
+#include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "ui/DeliverPanel.h"
 #include "ui/EffectsLibrary.h"
@@ -87,7 +89,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_effects, &EffectsLibrary::titleRequested, this, [this, tv] { m_editor->addTitle(tv->playhead()); });
     tv->setProbe([this](const QString& path) { return probeCached(path); });
-    tv->setMediaCache(new MediaCache(this));
+    m_mediaCache = new MediaCache(this);
+    tv->setMediaCache(m_mediaCache);
+    // Projekteinstellungen -> Engine (Profil neu), Cache, Inspector; kommt vor timelineChanged
+    connect(m_project, &Project::formatChanged, this, &MainWindow::onFormatChanged);
 
     connect(m_project, &Project::modifiedChanged, this, &MainWindow::updateTitle);
     updateTitle();
@@ -98,11 +103,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 
 }
 
-void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline)
+void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, bool adoptFormat)
 {
     m_mediaPool->importFiles(paths);
     if (!placeOnTimeline) return;
-    // Testhilfe (--demo): Dateien hintereinander auf V1/A1 legen
+    // Testhilfe (--demo): Dateien hintereinander auf V1/A1 legen; Projektformat ohne Nachfrage vom ersten Clip
+    if (adoptFormat) offerClipFormat(paths, false);
     m_editor->addMediaAt(paths, TimelineOps::endFrame(m_project->timeline()));
 }
 
@@ -124,7 +130,84 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
     for (const QString& p : paths)
         if (!m_project->mediaInfo(p)) unknown << p;
     if (!unknown.isEmpty()) m_mediaPool->importFiles(unknown);
-    m_editor->addMediaAt(paths, frame, track);
+    if (m_project->frameRateLocked()) {
+        m_editor->addMediaAt(paths, frame, track);
+        return;
+    }
+    // Leere Timeline: evtl. Rückfrage zum Projektformat – erst nach dem Drop (keine modale Abfrage mitten
+    // im Drag & Drop, die Quelle, z. B. der Dateimanager, wartet sonst)
+    QTimer::singleShot(0, this, [this, paths, frame, track] {
+        offerClipFormat(paths, true);
+        m_editor->addMediaAt(paths, frame, track);
+    });
+}
+
+void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
+{
+    if (m_project->frameRateLocked()) return; // nur in leerer Timeline
+    // Der erste Clip mit Bild entscheidet (Standbilder und Ton haben kein eigenes Format)
+    for (const QString& path : paths) {
+        const MediaInfo* info = m_project->mediaInfo(path);
+        if (!info || !info->hasVideo || info->isImage) continue;
+        const ClipFormat cf = detectClipFormat(path);
+        if (!cf.ok) return;
+        const ProjectFormat cur = m_project->format();
+        ProjectFormat want;
+        want.width = cf.width;
+        want.height = cf.height;
+        want.rate = cf.suggested;
+        if (want == cur) return;
+        if (ask) {
+            // Wie DaVinci "Change project frame rate?", hier samt Auflösung
+            QString clipRate = cf.rate.label();
+            if (cf.variable)
+                clipRate = T("variabel, etwa %1").arg(QString::number(cf.averageFps, 'f', 2).replace('.', I18n::language() == "de" ? "," : "."));
+            QMessageBox box(QMessageBox::Question, T("Projekteinstellungen"),
+                            T("Das Format des Clips passt nicht zu den Projekteinstellungen. Projekt an den Clip anpassen?"),
+                            QMessageBox::NoButton, this);
+            box.setInformativeText(T("Clip: %1, %2 fps\nProjekt: %3, %4 fps\n\nNeu: %5, %6 fps")
+                                       .arg(resolutionLabel(cf.width, cf.height), clipRate,
+                                            resolutionLabel(cur.width, cur.height), cur.rate.label(),
+                                            resolutionLabel(want.width, want.height), want.rate.label()));
+            QPushButton* change = box.addButton(T("Ändern"), QMessageBox::AcceptRole);
+            box.addButton(T("Nicht ändern"), QMessageBox::RejectRole);
+            box.setDefaultButton(change);
+            box.exec();
+            if (box.clickedButton() != change) return;
+        }
+        m_project->setFormat(want);
+        return;
+    }
+}
+
+void MainWindow::setProjectFormat(const ProjectFormat& format)
+{
+    m_project->setFormat(format);
+}
+
+void MainWindow::projectSettingsDialog()
+{
+    ProjectSettingsDialog dlg(m_project->format(), m_project->frameRateLocked(), this);
+    if (dlg.exec() == QDialog::Accepted) m_project->setFormat(dlg.format());
+}
+
+void MainWindow::onFormatChanged()
+{
+    const ProjectFormat& f = m_project->format();
+    const FrameRate oldRate = m_engine->format().rate;
+    m_engine->setFormat(f); // Timeline baut das folgende timelineChanged() neu auf
+    m_mediaCache->setFormat(f);
+    m_inspector->setFrameSize(f.size());
+    m_probeCache.clear();
+    if (f.rate == oldRate) return;
+    // Längen im Media Pool zählen in Projekt-Frames -> neu einlesen (nur in leerer Timeline möglich,
+    // Undo/Redo eingeschlossen). Offline-Medien umrechnen.
+    QVector<MediaInfo> media = m_project->media();
+    for (MediaInfo& m : media) {
+        const MediaInfo fresh = QFileInfo::exists(m.path) ? m_engine->probe(m.path) : MediaInfo{};
+        m.length = fresh.length > 0 ? fresh.length : int(std::lround(m.length * f.rate.fps() / oldRate.fps()));
+    }
+    m_project->replaceMedia(media);
 }
 
 void MainWindow::buildLayout()
@@ -133,7 +216,7 @@ void MainWindow::buildLayout()
     m_effects = new EffectsLibrary;
     m_viewer = new Viewer(m_engine);
     m_inspector = new Inspector(m_editor);
-    m_inspector->setFrameSize(m_engine->frameSize());
+    m_inspector->setFrameSize(m_project->format().size());
     m_timeline = new TimelinePanel(m_editor);
     m_deliver = new DeliverPanel(m_project);
     m_mixer = new Mixer(m_project, m_engine);
@@ -331,6 +414,8 @@ void MainWindow::buildActions()
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
     file->addSeparator();
+    makeAction(file, "project_settings", T("Projekteinstellungen…"), QKeySequence("Shift+9"), [this] { projectSettingsDialog(); });
+    file->addSeparator();
     makeAction(file, "quit", T("Beenden"), QKeySequence("Ctrl+Q"), [this] { close(); });
 
     QMenu* edit = menuBar()->addMenu(T("&Bearbeiten"));
@@ -512,6 +597,7 @@ void MainWindow::newProject()
     if (!maybeSave()) return;
     m_engine->pause();
     m_selection->clear();
+    m_engine->setFormat(ProjectFormat{}); // Medienlängen passen schon (leer) -> nicht neu einlesen
     m_project->reset();
     m_engine->showTimeline(0);
     setProjectPath({});
@@ -565,6 +651,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path)
     m_engine->pause();
     m_selection->clear();
     m_probeCache.clear();
+    m_engine->setFormat(data.format); // Medienlängen in der Datei zählen schon in dieser Framerate
     m_project->load(data);
     m_engine->showTimeline(data.playhead);
     m_timeline->view()->setPlayhead(data.playhead);
