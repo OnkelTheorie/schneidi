@@ -13,6 +13,7 @@ class Editor;
 class MediaPool;
 class Viewer;
 class Inspector;
+class Mixer;
 class TimelinePanel;
 class QMenu;
 class QSplitter;
@@ -79,18 +80,21 @@ private:
     MediaPool* m_mediaPool = nullptr;
     Viewer* m_viewer = nullptr;
     Inspector* m_inspector = nullptr;
+    Mixer* m_mixer = nullptr;
     TimelinePanel* m_timeline = nullptr;
     DeliverPanel* m_deliver = nullptr;
 
     QStackedWidget* m_pages = nullptr;
     QSplitter* m_editTop = nullptr;
     QSplitter* m_editMain = nullptr;
+    QSplitter* m_editBottom = nullptr; // Timeline | Mixer
     QSplitter* m_mediaPage = nullptr;
     QSplitter* m_deliverPage = nullptr;
     QSplitter* m_deliverRight = nullptr;
     QButtonGroup* m_pageButtons = nullptr;
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_inspectorToggle = nullptr;
+    QToolButton* m_mixerToggle = nullptr;
     Page m_page = Page::Edit;
 
     QHash<QString, MediaInfo> m_probeCache;
