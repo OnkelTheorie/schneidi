@@ -1,4 +1,5 @@
 #pragma once
+#include <QSize>
 #include <QWidget>
 
 class Project;
@@ -17,6 +18,7 @@ public:
 
 private:
     void updateRange();
+    void updateFormat(); // Auflösungen passend zu den Projekteinstellungen
     void applyPreset(int index);
     void startRender();
     void browse();
@@ -27,7 +29,9 @@ private:
     QLineEdit* m_name;
     QLineEdit* m_folder;
     QComboBox* m_codec;
-    QComboBox* m_resolution;
+    QComboBox* m_resolution; // Daten: QSize
+    QLabel* m_rate;
+    QSize m_timelineSize; // zuletzt bekannte Timeline-Auflösung
     QComboBox* m_quality;
     QComboBox* m_range; // ganze Timeline / In-Out-Bereich
     bool m_hadRange = false;

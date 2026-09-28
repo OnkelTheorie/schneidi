@@ -2,6 +2,7 @@
 
 #include "core/I18n.h"
 #include "core/TimelineOps.h"
+#include "engine/Profiles.h"
 #include "engine/TimelineBuilder.h"
 
 #include <Mlt.h>
@@ -30,9 +31,17 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         return false;
     }
 
-    m_profile = std::make_unique<Mlt::Profile>(s.profile.toUtf8().constData());
+    // Andere Ausgabegröße als die Timeline: Pixelwerte (Position, Titel …) mitskalieren
+    ProjectFormat out = s.format;
+    Timeline scaled = tl;
+    if (!s.size.isEmpty() && s.size != s.format.size()) {
+        out.width = s.size.width() & ~1;
+        out.height = s.size.height() & ~1;
+        scaleTimeline(scaled, s.format.size(), out.size());
+    }
+    m_profile = makeProfile(out);
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
-    m_tractor = m_builder->build(tl);
+    m_tractor = m_builder->build(scaled);
     m_tractor->set_in_and_out(m_from, m_from + m_length - 1);
 
     m_consumer = std::make_unique<Mlt::Consumer>(*m_profile, "avformat", s.path.toUtf8().constData());
