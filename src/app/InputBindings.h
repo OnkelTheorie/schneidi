@@ -37,6 +37,15 @@ public:
     void setShortcut(const QString& id, const QKeySequence& key);
     void resetAll();
 
+    // Zusatz-Maustasten (Seitentasten) -> Aktion, z. B. hintere Seitentaste = Schneiden am Playhead
+    static const QVector<Qt::MouseButton>& bindableMouseButtons();
+    static QString mouseButtonText(Qt::MouseButton b);
+    QString mouseAction(Qt::MouseButton b) const;              // Aktions-ID oder leer
+    Qt::MouseButton mouseButtonFor(const QString& id) const;   // Qt::NoButton, wenn keine
+    Qt::MouseButton defaultMouseButtonFor(const QString& id) const;
+    void setMouseButton(const QString& id, Qt::MouseButton b); // NoButton = entfernen
+    QAction* action(const QString& id) const;
+
     WheelAction wheelAction(Qt::KeyboardModifiers mods) const;
     QString filePath() const;
 
@@ -48,6 +57,7 @@ private:
 
     QHash<QString, QString> m_shortcuts;       // actionId -> "Ctrl+B" (aus der Datei)
     QVector<Entry> m_entries;                  // angemeldete Aktionen in Menü-Reihenfolge
+    QHash<int, QString> m_mouse;               // Qt::MouseButton -> actionId
     QHash<QString, WheelAction> m_wheel;       // "none"/"shift"/"ctrl+alt" -> Aktion
     bool m_fileExisted = false;
 };

@@ -30,6 +30,9 @@ public:
     enum class Page { Media, Edit, Deliver };
     void showPage(Page page);
 
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override;
+
 private:
     void buildLayout();
     QWidget* buildTopBar();

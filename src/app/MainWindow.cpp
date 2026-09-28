@@ -16,6 +16,8 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QApplication>
+#include <QMouseEvent>
 #include <QButtonGroup>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -39,6 +41,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 
     buildLayout();
     buildActions();
+    qApp->installEventFilter(this); // Maus-Seitentasten -> Aktionen (keybindings.json, Abschnitt "mouse")
 
     // Modell -> Engine
     connect(m_project, &Project::timelineChanged, this, [this] {
@@ -345,6 +348,23 @@ void MainWindow::buildActions()
     makeAction(workspace, "page_deliver", "Deliver-Seite", QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
 
     InputBindings::instance().saveIfIncomplete();
+}
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* event)
+{
+    const QEvent::Type t = event->type();
+    if (t != QEvent::MouseButtonPress && t != QEvent::MouseButtonRelease && t != QEvent::MouseButtonDblClick)
+        return QMainWindow::eventFilter(obj, event);
+    // Nur im Hauptfenster, nicht in Dialogen (dort wird z. B. die Belegung gewählt)
+    auto* w = qobject_cast<QWidget*>(obj);
+    if (!w || w->window() != this || QApplication::activeModalWidget())
+        return QMainWindow::eventFilter(obj, event);
+    const auto* me = static_cast<QMouseEvent*>(event);
+    const QString id = InputBindings::instance().mouseAction(me->button());
+    if (id.isEmpty()) return QMainWindow::eventFilter(obj, event);
+    if (t == QEvent::MouseButtonPress)
+        if (QAction* a = InputBindings::instance().action(id); a && a->isEnabled()) a->trigger();
+    return true; // Loslassen/Doppelklick der belegten Taste ebenfalls schlucken
 }
 
 void MainWindow::shuttle(int direction)
