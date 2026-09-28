@@ -69,6 +69,10 @@ struct Track {
     QVector<Clip> clips; // immer nach start sortiert, ohne Überlappung
     bool muted = false;
     bool hidden = false;
+    // Mixer (nur Audio): Spur-Fader, Pan (-100..+100), Solo
+    double volumeDb = 0.0;
+    double pan = 0.0;
+    bool solo = false;
 };
 
 struct TrackRef {
@@ -81,6 +85,7 @@ struct Timeline {
     QVector<Track> video; // [0] = V1 (unterste Spur)
     QVector<Track> audio; // [0] = A1
     QVector<int> markers; // Timeline-Marker (Frames, sortiert)
+    double masterVolumeDb = 0.0; // Master-Fader im Mixer
 
     QVector<Track>& tracks(TrackKind k) { return k == TrackKind::Video ? video : audio; }
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }

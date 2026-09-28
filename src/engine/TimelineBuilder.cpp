@@ -32,7 +32,7 @@ void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
     }
 }
 
-void applyVolume(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
+void applyVolume(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c)
 {
     if (c.volumeDb == 0.0) return;
     Mlt::Filter f(profile, "volume");
@@ -78,14 +78,43 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
     clip.attach(f);
 }
 
-void applyPan(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
+void applyPan(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c)
 {
     if (c.pan == 0.0) return;
     Mlt::Filter f(profile, "panner");
     if (!f.is_valid()) return;
     f.set("channel", -1); // Balance (Stereo)
-    f.set("split", (c.pan + 100.0) / 200.0);
+    // "start" statt "split": split wirkt in MLT 7 unabhängig vom Wert wie ein fester Versatz (getestet)
+    f.set("start", (c.pan + 100.0) / 200.0);
     clip.attach(f);
+}
+
+// Mixer: Spur-/Master-Fader und -Pan als Filter auf Playlist bzw. Tractor.
+// Mit hooks werden die Filter immer angehängt (neutral bei 0 dB/Mitte), damit sie live verstellbar sind.
+double mltLevel(double db) { return db <= kMinVolumeDb ? -200.0 : db; }
+double mltPan(double pan) { return (pan + 100.0) / 200.0; }
+
+void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, MixerHooks::Strip* hook)
+{
+    if (!hook) { // Export: nur was nötig ist
+        Clip c; // gleiche Umrechnung wie bei Clips
+        c.volumeDb = db;
+        c.pan = pan;
+        applyVolume(profile, s, c);
+        applyPan(profile, s, c);
+        return;
+    }
+    hook->volume = std::make_shared<Mlt::Filter>(profile, "volume");
+    hook->volume->set("level", mltLevel(db));
+    s.attach(*hook->volume);
+    hook->pan = std::make_shared<Mlt::Filter>(profile, "panner");
+    hook->pan->set("channel", -1);
+    hook->pan->set("start", mltPan(pan));
+    s.attach(*hook->pan);
+    hook->meter = std::make_shared<Mlt::Filter>(profile, "audiolevel");
+    hook->meter->set("iec_scale", 0);
+    hook->meter->set("dbpeak", 1); // _audio_level.N = Spitzenpegel in dBFS
+    s.attach(*hook->meter);
 }
 
 } // namespace
@@ -115,8 +144,24 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     return raw;
 }
 
-std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl)
+bool TimelineBuilder::applyMixer(const Timeline& tl, const MixerHooks& hooks)
 {
+    if (int(hooks.tracks.size()) != tl.audio.size() || !hooks.master.volume) return false;
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        const MixerHooks::Strip& h = hooks.tracks[i];
+        if (!h.volume || !h.pan) return false;
+        h.volume->set("level", mltLevel(tl.audio[i].volumeDb));
+        h.pan->set("start", mltPan(tl.audio[i].pan));
+    }
+    hooks.master.volume->set("level", mltLevel(tl.masterVolumeDb));
+    return true;
+}
+
+std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHooks* hooks)
+{
+    // Solo wie DaVinci: sobald eine Spur Solo hat, sind alle anderen Audiospuren stumm
+    const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
+    if (hooks) *hooks = {};
     auto tractor = std::make_unique<Mlt::Tractor>(m_profile);
     const int end = std::max(1, TimelineOps::endFrame(tl));
 
@@ -153,8 +198,16 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl)
         // hide: 1 = kein Bild, 2 = kein Ton
         int hide = (kind == TrackKind::Video) ? 2 : 1;
         if (kind == TrackKind::Video && track.hidden) hide |= 1;
-        if (kind == TrackKind::Audio && track.muted) hide |= 2;
+        if (kind == TrackKind::Audio && (track.muted || (anySolo && !track.solo))) hide |= 2;
         pl.set("hide", hide);
+        if (kind == TrackKind::Audio) {
+            MixerHooks::Strip* h = nullptr;
+            if (hooks) {
+                h = &hooks->tracks.emplace_back();
+                h->audible = !(hide & 2);
+            }
+            attachStrip(m_profile, pl, track.volumeDb, track.pan, h);
+        }
         tractor->set_track(pl, mltIndex);
 
         if (kind == TrackKind::Video) {
@@ -172,5 +225,8 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl)
 
     for (int i = 0; i < tl.video.size(); ++i) fill(tl.video[i], TrackKind::Video, i);
     for (int i = 0; i < tl.audio.size(); ++i) fill(tl.audio[i], TrackKind::Audio, i);
+
+    // Master-Fader auf dem Tractor (gilt damit auch für den Export)
+    attachStrip(m_profile, *tractor, tl.masterVolumeDb, 0.0, hooks ? &hooks->master : nullptr);
     return tractor;
 }

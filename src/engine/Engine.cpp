@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <cstring>
+#include <utility>
 
 struct EngineCallbacks {
     // Läuft im MLT-Consumer-Thread, sobald ein Frame angezeigt werden soll
@@ -121,10 +122,24 @@ QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
 
 void Engine::updateTimeline(const Timeline& tl)
 {
+    const bool mixerOnly = std::exchange(m_mixerOnlyNext, false);
+    {
+        std::lock_guard<std::mutex> lock(m_mixerMutex);
+        if (mixerOnly && m_timeline && m_mixer && TimelineBuilder::applyMixer(tl, *m_mixer)) {
+            if (m_speed == 0.0) refresh();
+            return;
+        }
+    }
     const bool active = m_mode == Mode::Timeline;
     const int pos = m_position;
     if (active && m_consumer) m_consumer->stop(); // alten Tractor nicht mehr lesen lassen
-    m_timeline = m_builder->build(tl);
+    auto hooks = std::make_unique<MixerHooks>();
+    auto tractor = m_builder->build(tl, hooks.get());
+    {
+        std::lock_guard<std::mutex> lock(m_mixerMutex);
+        m_mixer = std::move(hooks);
+        m_timeline = std::move(tractor);
+    }
     if (active) connectProducer(m_timeline.get(), pos);
 }
 
@@ -210,4 +225,27 @@ void Engine::onFrameShown(void* mltFrame)
     }
     const int pos = frame.get_position();
     if (m_speed != 0.0 && pos != m_position.exchange(pos)) emit positionChanged(pos);
+    if (m_speed != 0.0 && m_mode == Mode::Timeline) emitLevels();
+}
+
+void Engine::emitLevels()
+{
+    // Die audiolevel-Filter merken sich den Pegel des zuletzt verarbeiteten Tons
+    // (läuft dem Bild wegen des kleinen Puffers minimal voraus – für Meter egal)
+    auto read = [](const MixerHooks::Strip& s, QVector<float>& out) {
+        float l = -200.f, r = -200.f;
+        if (s.audible && s.meter) {
+            if (s.meter->get("_audio_level.0")) l = s.meter->get_double("_audio_level.0");
+            r = s.meter->get("_audio_level.1") ? float(s.meter->get_double("_audio_level.1")) : l; // Mono
+        }
+        out << l << r;
+    };
+    QVector<float> levels;
+    {
+        std::lock_guard<std::mutex> lock(m_mixerMutex);
+        if (!m_mixer) return;
+        for (const auto& s : m_mixer->tracks) read(s, levels);
+        read(m_mixer->master, levels);
+    }
+    emit audioLevels(levels); // queued -> UI-Thread
 }

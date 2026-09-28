@@ -7,8 +7,10 @@
 #include <QImage>
 #include <QObject>
 #include <QSize>
+#include <QVector>
 #include <atomic>
 #include <memory>
+#include <mutex>
 
 namespace Mlt {
 class Profile;
@@ -17,6 +19,7 @@ class Consumer;
 class Tractor;
 } // namespace Mlt
 class TimelineBuilder;
+struct MixerHooks;
 
 class Engine : public QObject {
     Q_OBJECT
@@ -34,6 +37,9 @@ public:
     QImage thumbnail(const QString& path, int frame, const QSize& size);
 
     void updateTimeline(const Timeline& tl); // Modell geändert -> neu aufbauen
+    // Nächstes updateTimeline() ändert nur Fader/Pan -> live übernehmen statt neu aufbauen
+    // (sonst stockt die Wiedergabe beim Fader-Ziehen)
+    void mixerOnlyNext() { m_mixerOnlyNext = true; }
     void showTimeline(int position);
     void showSource(const QString& path);
     Mode mode() const { return m_mode; }
@@ -51,16 +57,22 @@ signals:
     void positionChanged(int frame);
     void speedChanged(double speed);
     void modeChanged(Engine::Mode mode);
+    // Nur während der Wiedergabe: Spitzenpegel in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R]
+    void audioLevels(const QVector<float>& db);
 
 private:
     void connectProducer(Mlt::Producer* producer, int position);
     void refresh();
     void onFrameShown(void* mltFrame);
+    void emitLevels();
 
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Tractor> m_timeline;
+    std::unique_ptr<MixerHooks> m_mixer;
+    std::mutex m_mixerMutex; // m_mixer wird im Consumer-Thread gelesen
+    bool m_mixerOnlyNext = false;
     std::unique_ptr<Mlt::Producer> m_source;
     Mlt::Producer* m_current = nullptr;
 

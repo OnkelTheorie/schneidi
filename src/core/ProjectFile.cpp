@@ -127,6 +127,9 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
             QJsonObject o{{"name", t.name}, {"clips", clips}};
             if (t.muted) o["muted"] = true;
             if (t.hidden) o["hidden"] = true;
+            if (t.volumeDb != 0.0) o["volumeDb"] = t.volumeDb;
+            if (t.pan != 0.0) o["pan"] = t.pan;
+            if (t.solo) o["solo"] = true;
             arr << o;
         }
         return arr;
@@ -141,7 +144,8 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         {"app", "schneidi"},       {"version", kFormatVersion}, {"fps", data.fps},
         {"playhead", data.playhead}, {"lastClipId", data.lastClipId}, {"lastLinkId", data.lastLinkId},
         {"media", media},
-        {"timeline", QJsonObject{{"video", video}, {"audio", audio}, {"markers", markers}}},
+        {"timeline", QJsonObject{{"video", video}, {"audio", audio}, {"markers", markers},
+                                 {"masterVolumeDb", data.timeline.masterVolumeDb}}},
     };
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
@@ -188,6 +192,9 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.name = o.value("name").toString();
             t.muted = o.value("muted").toBool();
             t.hidden = o.value("hidden").toBool();
+            t.volumeDb = o.value("volumeDb").toDouble(0.0);
+            t.pan = o.value("pan").toDouble(0.0);
+            t.solo = o.value("solo").toBool();
             for (const QJsonValue& cv : o.value("clips").toArray()) {
                 Clip c = clipFromJson(cv.toObject(), d.media);
                 d.lastClipId = std::max(d.lastClipId, c.id);
@@ -202,6 +209,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.timeline.video = tracks(tl.value("video").toArray(), TrackKind::Video);
     d.timeline.audio = tracks(tl.value("audio").toArray(), TrackKind::Audio);
     for (const QJsonValue& v : tl.value("markers").toArray()) d.timeline.markers << v.toInt();
+    d.timeline.masterVolumeDb = tl.value("masterVolumeDb").toDouble(0.0);
     std::sort(d.timeline.markers.begin(), d.timeline.markers.end());
 
     *data = d;
