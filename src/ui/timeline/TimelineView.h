@@ -5,8 +5,10 @@
 #include <QSet>
 #include <optional>
 #include <QWidget>
+#include <functional>
 
 class Editor;
+class QMimeData;
 
 // Selbst gezeichnete Timeline: Lineal, Spurköpfe, Clips, Playhead.
 // Scrollbars gehören dem TimelinePanel; diese Klasse hält den ViewState.
@@ -37,6 +39,9 @@ public:
     void zoomBy(double factor);
     void zoomToFit();
 
+    // Liefert Infos zu einer (evtl. noch nicht importierten) Datei für die Drop-Vorschau
+    void setProbe(std::function<MediaInfo(const QString&)> probe) { m_probe = std::move(probe); }
+
 public slots:
     void setPlayhead(int frame);
     void setTool(TimelineView::Tool tool);
@@ -47,6 +52,8 @@ signals:
     void viewChanged();
     void toolChanged(TimelineView::Tool tool);
     void snappingChanged(bool on);
+    // Dateien (aus Media Pool oder Dateimanager) wurden auf Spur-Index `track` abgelegt
+    void dropRequested(const QStringList& paths, int frame, int track);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -83,6 +90,9 @@ private:
     void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost);
     void drawHeaders(QPainter& p);
     void drawPlayhead(QPainter& p);
+    QRect headerButton(const Row& row) const;
+    QStringList dropPaths(const QMimeData* mime) const;
+    int dropTrackAt(int y) const;
 
     Editor* m_editor;
     ViewState m_view;
@@ -99,8 +109,14 @@ private:
 
     int m_hoverFrame = -1; // Klingen-Vorschau
 
-    // Vorschau beim Reinziehen aus dem Media Pool
+    // Vorschau beim Reinziehen (Media Pool oder Dateimanager)
+    struct DropItem {
+        int length;
+        bool video;
+        bool audio;
+    };
+    std::function<MediaInfo(const QString&)> m_probe;
+    QVector<DropItem> m_dropItems;
     int m_dropFrame = -1;
-    int m_dropLength = 0;
-    int m_dropVideoTrack = 0;
+    int m_dropTrack = 0;
 };

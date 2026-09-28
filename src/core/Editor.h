@@ -23,7 +23,11 @@ public:
     // Clip + verknüpfte Partner (falls "Linked Selection" an ist)
     QVector<int> withLinked(const QVector<int>& ids) const;
 
-    void addMediaAt(const QString& path, int frame, int videoTrack = 0);
+    // Legt Media ab: Video auf V[track], Audio auf A[track] (wie DaVinci, V2 <-> A2).
+    // Fehlende Spuren werden angelegt. Mehrere Dateien landen hintereinander.
+    void addMediaAt(const QStringList& paths, int frame, int track = 0);
+    void toggleTrackMute(TrackRef ref);
+    void toggleTrackHidden(TrackRef ref);
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);
     void bladeAt(int clipId, int frame);
     void splitAtPlayhead(int frame);

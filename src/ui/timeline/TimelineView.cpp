@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QUrl>
 #include <QPainter>
 #include <QPainterPath>
 #include <QWheelEvent>
@@ -286,13 +287,17 @@ void TimelineView::drawTracks(QPainter& p)
         p.setPen(Theme::border);
         p.drawLine(kHeaderW, row.y + row.h - 1, width(), row.y + row.h - 1);
 
-        for (const Clip& c : tl.track(row.ref).clips) {
+        const Track& track = tl.track(row.ref);
+        p.setOpacity(track.muted || track.hidden ? 0.4 : 1.0);
+        for (const Clip& c : track.clips) {
             if (moving && dragSet.contains(c.id)) continue; // wird unten verschoben gezeichnet
             const QRect r(QPoint(int(frameToX(c.start)), row.y + 1), QPoint(int(frameToX(c.end())) - 1, row.y + row.h - 3));
             if (r.right() < kHeaderW || r.left() > width()) continue;
             drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false);
         }
     }
+
+    p.setOpacity(1.0);
 
     // Verschobene Clips an der Zielposition
     if (moving) {
@@ -312,15 +317,28 @@ void TimelineView::drawTracks(QPainter& p)
         }
     }
 
-    // Vorschau beim Reinziehen aus dem Media Pool
-    if (m_dropFrame >= 0 && m_dropLength > 0) {
-        const auto row = rowFor({TrackKind::Video, m_dropVideoTrack});
-        const int x1 = int(frameToX(m_dropFrame)), x2 = int(frameToX(m_dropFrame + m_dropLength));
-        if (row) {
-            p.fillRect(QRect(x1, row->y + 1, x2 - x1, row->h - 3), QColor(255, 255, 255, 40));
+    // Vorschau beim Reinziehen: Video auf V[n], Audio auf A[n]
+    if (m_dropFrame >= 0 && !m_dropItems.isEmpty()) {
+        auto ghostRow = [&](TrackKind kind) -> std::optional<Row> {
+            if (auto r = rowFor({kind, m_dropTrack})) return r;
+            if (kind == TrackKind::Audio && !allRows.isEmpty()) { // neue Spur unter der letzten
+                const Row& last = allRows.last();
+                return Row{{kind, m_dropTrack}, last.y + last.h, m_view.audioTrackHeight};
+            }
+            return std::nullopt;
+        };
+        const auto vRow = ghostRow(TrackKind::Video);
+        const auto aRow = ghostRow(TrackKind::Audio);
+        int start = m_dropFrame;
+        for (const DropItem& it : m_dropItems) {
+            const int x1 = int(frameToX(start)), x2 = int(frameToX(start + it.length));
+            if (it.video && vRow) p.fillRect(QRect(x1, vRow->y + 1, x2 - x1, vRow->h - 3), QColor(0x3b, 0x6a, 0xa0, 150));
+            if (it.audio && aRow) p.fillRect(QRect(x1, aRow->y + 1, x2 - x1, aRow->h - 3), QColor(0x3c, 0x86, 0x4c, 150));
+            start += it.length;
         }
         p.setPen(QPen(Theme::accent, 1, Qt::DashLine));
-        p.drawLine(x1, kRulerH, x1, height());
+        const int x = int(frameToX(m_dropFrame));
+        p.drawLine(x, kRulerH, x, height());
     }
 
     // Klingen-Vorschau
@@ -395,8 +413,27 @@ void TimelineView::drawHeaders(QPainter& p)
         p.setPen(Theme::textDim);
         p.drawText(r.adjusted(10, 0, -6, -6), Qt::AlignBottom | Qt::AlignLeft,
                    QString("%1 Clip%2").arg(t.clips.size()).arg(t.clips.size() == 1 ? "" : "s"));
+
+        // Knopf: Video = Auge (ausblenden), Audio = M (stumm)
+        const QRect b = headerButton(row);
+        const bool active = row.ref.kind == TrackKind::Video ? t.hidden : t.muted;
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(active ? (row.ref.kind == TrackKind::Video ? Theme::accent : QColor(0xd6, 0x45, 0x45))
+                          : QColor(0x3a, 0x3a, 0x42));
+        p.drawRoundedRect(b, 3, 3);
+        p.setPen(active ? Qt::black : Theme::text);
+        f.setBold(true);
+        p.setFont(f);
+        p.drawText(b, Qt::AlignCenter, row.ref.kind == TrackKind::Video ? (t.hidden ? "⊘" : "◉") : "M");
+        p.setRenderHint(QPainter::Antialiasing, false);
     }
     p.restore();
+}
+
+QRect TimelineView::headerButton(const Row& row) const
+{
+    return QRect(kHeaderW - 30, row.y + 6, 20, 16);
 }
 
 void TimelineView::drawPlayhead(QPainter& p)
@@ -423,7 +460,13 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     const QPoint pos = e->position().toPoint();
     m_pressPos = pos;
 
-    if (pos.x() < kHeaderW) return; // Spurköpfe: später Mute/Solo/Lock
+    if (pos.x() < kHeaderW) { // Spurköpfe
+        if (const auto row = rowAt(pos.y()); row && headerButton(*row).contains(pos)) {
+            if (row->ref.kind == TrackKind::Video) m_editor->toggleTrackHidden(row->ref);
+            else m_editor->toggleTrackMute(row->ref);
+        }
+        return;
+    }
     if (pos.y() < kRulerH) {
         m_drag = Drag::Scrub;
         emit seekRequested(std::max(0, int(std::lround(xToFrame(pos.x())))));
@@ -554,11 +597,15 @@ void TimelineView::wheelEvent(QWheelEvent* e)
         emit viewChanged();
         break;
     }
-    case WheelAction::TrackHeight:
-        m_view.videoTrackHeight = std::clamp(m_view.videoTrackHeight + int(steps * 6), 28, 220);
-        m_view.audioTrackHeight = std::clamp(m_view.audioTrackHeight + int(steps * 6), 28, 220);
+    case WheelAction::TrackHeight: {
+        // nur die Spurart unter der Maus (Video- oder Audiospuren), wie in DaVinci
+        const auto row = rowAt(int(e->position().y()));
+        const bool audio = row && row->ref.kind == TrackKind::Audio;
+        int& h = audio ? m_view.audioTrackHeight : m_view.videoTrackHeight;
+        h = std::clamp(h + int(steps * 6), 28, 220);
         setScrollY(m_view.scrollY);
         break;
+    }
     case WheelAction::None:
         e->ignore();
         return;
@@ -566,25 +613,54 @@ void TimelineView::wheelEvent(QWheelEvent* e)
     e->accept();
 }
 
-// ---------- Drag & Drop aus dem Media Pool ----------
+// ---------- Drag & Drop (Media Pool oder direkt aus dem Dateimanager) ----------
+
+QStringList TimelineView::dropPaths(const QMimeData* mime) const
+{
+    if (mime->hasFormat(MediaPool::MimeType)) return {QString::fromUtf8(mime->data(MediaPool::MimeType))};
+    QStringList paths;
+    for (const QUrl& url : mime->urls())
+        if (url.isLocalFile()) paths << url.toLocalFile();
+    return paths;
+}
+
+int TimelineView::dropTrackAt(int y) const
+{
+    // V2 und A2 gehören zusammen -> Index der Spur unter der Maus, egal ob Video oder Audio
+    const auto all = rows();
+    for (const Row& r : all)
+        if (y >= r.y && y < r.y + r.h) return r.ref.index;
+    const Timeline& tl = m_editor->project()->timeline();
+    if (!all.isEmpty() && y >= all.last().y + all.last().h) return tl.audio.size(); // unterhalb: neue Spur
+    return 0;
+}
 
 void TimelineView::dragEnterEvent(QDragEnterEvent* e)
 {
-    if (e->mimeData()->hasFormat(MediaPool::MimeType)) e->acceptProposedAction();
+    const QStringList paths = dropPaths(e->mimeData());
+    if (paths.isEmpty()) return;
+    m_dropItems.clear();
+    for (const QString& path : paths) {
+        MediaInfo info;
+        if (const MediaInfo* known = m_editor->project()->mediaInfo(path)) info = *known;
+        else if (m_probe) info = m_probe(path);
+        if (info.length > 0 && (info.hasVideo || info.hasAudio))
+            m_dropItems << DropItem{info.length, info.hasVideo, info.hasAudio};
+    }
+    if (m_dropItems.isEmpty()) return;
+    e->acceptProposedAction();
 }
 
 void TimelineView::dragMoveEvent(QDragMoveEvent* e)
 {
-    const QString path = QString::fromUtf8(e->mimeData()->data(MediaPool::MimeType));
-    const MediaInfo* info = m_editor->project()->mediaInfo(path);
-    if (!info) return;
+    if (m_dropItems.isEmpty()) return;
+    int total = 0;
+    for (const DropItem& it : m_dropItems) total += it.length;
     const QPoint pos = e->position().toPoint();
     int frame = std::max(0, int(std::lround(xToFrame(pos.x()))));
-    frame += snapDelta({frame, frame + info->length}, {});
+    frame += snapDelta({frame, frame + total}, {});
     m_dropFrame = std::max(0, frame);
-    m_dropLength = info->length;
-    const auto row = rowAt(pos.y());
-    m_dropVideoTrack = (row && row->ref.kind == TrackKind::Video) ? row->ref.index : 0;
+    m_dropTrack = dropTrackAt(pos.y());
     e->acceptProposedAction();
     update();
 }
@@ -592,14 +668,15 @@ void TimelineView::dragMoveEvent(QDragMoveEvent* e)
 void TimelineView::dragLeaveEvent(QDragLeaveEvent*)
 {
     m_dropFrame = -1;
+    m_dropItems.clear();
     update();
 }
 
 void TimelineView::dropEvent(QDropEvent* e)
 {
-    const QString path = QString::fromUtf8(e->mimeData()->data(MediaPool::MimeType));
-    if (m_dropFrame >= 0) m_editor->addMediaAt(path, m_dropFrame, m_dropVideoTrack);
+    if (m_dropFrame >= 0) emit dropRequested(dropPaths(e->mimeData()), m_dropFrame, m_dropTrack);
     m_dropFrame = -1;
+    m_dropItems.clear();
     e->acceptProposedAction();
     update();
 }

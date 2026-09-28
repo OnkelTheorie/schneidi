@@ -19,36 +19,63 @@ QVector<int> Editor::withLinked(const QVector<int>& ids) const
     return out;
 }
 
-void Editor::addMediaAt(const QString& path, int frame, int videoTrack)
+static void ensureTracks(Timeline& tl, TrackKind kind, int count)
 {
-    const MediaInfo* info = m_project->mediaInfo(path);
-    if (!info || info->length <= 0) return;
+    auto& tracks = tl.tracks(kind);
+    while (tracks.size() < count) {
+        Track t;
+        t.kind = kind;
+        t.name = QString("%1%2").arg(kind == TrackKind::Video ? "V" : "A").arg(tracks.size() + 1);
+        tracks << t;
+    }
+}
 
+void Editor::addMediaAt(const QStringList& paths, int frame, int track)
+{
     Project* p = m_project;
-    const int start = std::max(0, frame);
-    const int linkId = (info->hasVideo && info->hasAudio) ? p->newLinkId() : 0;
-    const QString name = QFileInfo(path).fileName();
+    QVector<const MediaInfo*> infos;
+    for (const QString& path : paths)
+        if (const MediaInfo* info = p->mediaInfo(path); info && info->length > 0) infos << info;
+    if (infos.isEmpty()) return;
 
-    p->edit(QString("Einfügen: %1").arg(name), [&](Timeline& tl) {
+    const QString text = infos.size() == 1 ? QString("Einfügen: %1").arg(infos.first()->name)
+                                           : QString("%1 Clips einfügen").arg(infos.size());
+    p->edit(text, [&](Timeline& tl) {
         auto newId = [p] { return p->newClipId(); };
-        Clip c;
-        c.mediaPath = path;
-        c.start = start;
-        c.in = 0;
-        c.out = info->length - 1;
-        c.linkId = linkId;
-        if (info->hasVideo && !tl.video.isEmpty()) {
-            Clip v = c;
-            v.id = newId();
-            const int idx = std::clamp(videoTrack, 0, int(tl.video.size()) - 1);
-            TimelineOps::placeClip(tl.video[idx], v, newId);
-        }
-        if (info->hasAudio && !tl.audio.isEmpty()) {
-            Clip a = c;
-            a.id = newId();
-            TimelineOps::placeClip(tl.audio[0], a, newId);
+        const int idx = std::max(0, track);
+        int start = std::max(0, frame);
+        for (const MediaInfo* info : infos) {
+            Clip c;
+            c.mediaPath = info->path;
+            c.start = start;
+            c.in = 0;
+            c.out = info->length - 1;
+            c.linkId = (info->hasVideo && info->hasAudio) ? p->newLinkId() : 0;
+            if (info->hasVideo) {
+                ensureTracks(tl, TrackKind::Video, idx + 1);
+                Clip v = c;
+                v.id = newId();
+                TimelineOps::placeClip(tl.video[idx], v, newId);
+            }
+            if (info->hasAudio) {
+                ensureTracks(tl, TrackKind::Audio, idx + 1);
+                Clip a = c;
+                a.id = newId();
+                TimelineOps::placeClip(tl.audio[idx], a, newId);
+            }
+            start += info->length;
         }
     });
+}
+
+void Editor::toggleTrackMute(TrackRef ref)
+{
+    m_project->edit("Spur stumm", [&](Timeline& tl) { tl.track(ref).muted = !tl.track(ref).muted; });
+}
+
+void Editor::toggleTrackHidden(TrackRef ref)
+{
+    m_project->edit("Spur ausblenden", [&](Timeline& tl) { tl.track(ref).hidden = !tl.track(ref).hidden; });
 }
 
 void Editor::moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta)
