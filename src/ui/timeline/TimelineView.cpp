@@ -24,6 +24,7 @@
 namespace {
 constexpr int kSnapPx = 8;
 constexpr int kDragStartPx = 4;
+constexpr int kEdgeGrabPx = 6; // so nah an der Clipkante wird getrimmt statt verschoben
 } // namespace
 
 TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
@@ -120,6 +121,30 @@ int TimelineView::clipAt(const QPoint& pos) const
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips)
         if (f >= c.start && f < c.end()) return c.id;
     return 0;
+}
+
+// Kante unter der Maus (nur innerhalb des Clips, wie in DaVinci). Bei schmalen Clips
+// wird der Greifbereich kleiner, damit man den Clip noch verschieben kann.
+std::optional<TimelineView::EdgeHit> TimelineView::edgeAt(const QPoint& pos) const
+{
+    if (pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
+    const auto row = rowAt(pos.y());
+    if (!row) return std::nullopt;
+    for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
+        const double x1 = frameToX(c.start), x2 = frameToX(c.end());
+        if (pos.x() < x1 || pos.x() >= x2) continue;
+        const double grab = std::min<double>(kEdgeGrabPx, (x2 - x1) / 3);
+        if (pos.x() < x1 + grab) return EdgeHit{c.id, TimelineOps::Edge::Start};
+        if (pos.x() >= x2 - grab) return EdgeHit{c.id, TimelineOps::Edge::End};
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+void TimelineView::updateHoverCursor(const QPoint& pos)
+{
+    if (m_tool != Tool::Select) return;
+    setCursor(edgeAt(pos) ? Qt::SizeHorCursor : Qt::ArrowCursor);
 }
 
 // ---------- Snapping ----------
@@ -298,8 +323,16 @@ void TimelineView::drawTracks(QPainter& p)
 
         const Track& track = tl.track(row.ref);
         p.setOpacity(track.muted || track.hidden ? 0.4 : 1.0);
-        for (const Clip& c : track.clips) {
+        for (Clip c : track.clips) {
             if (moving && dragSet.contains(c.id)) continue; // wird unten verschoben gezeichnet
+            if (m_drag == Drag::Trim && m_trimIds.contains(c.id)) {
+                if (m_trim.edge == TimelineOps::Edge::Start) {
+                    c.start += m_trimDelta;
+                    c.in += m_trimDelta;
+                } else {
+                    c.out += m_trimDelta;
+                }
+            }
             const QRect r(QPoint(int(frameToX(c.start)), row.y + 1), QPoint(int(frameToX(c.end())) - 1, row.y + row.h - 3));
             if (r.right() < kHeaderW || r.left() > width()) continue;
             drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false);
@@ -348,6 +381,25 @@ void TimelineView::drawTracks(QPainter& p)
         p.setPen(QPen(Theme::accent, 1, Qt::DashLine));
         const int x = int(frameToX(m_dropFrame));
         p.drawLine(x, kRulerH, x, height());
+    }
+
+    // Trimmen: Kante markieren + Versatz anzeigen (wie DaVinci)
+    if (m_drag == Drag::Trim) {
+        if (const Clip* c = TimelineOps::findClip(tl, m_trim.clipId)) {
+            const int edgeFrame = m_trim.edge == TimelineOps::Edge::Start ? c->start + m_trimDelta : c->end() + m_trimDelta;
+            const int x = int(frameToX(edgeFrame));
+            p.setPen(QPen(Theme::accent, 1));
+            p.drawLine(x, kRulerH, x, height());
+            const QString label = (m_trimDelta >= 0 ? "+" : "") + Timecode::format(m_trimDelta, m_editor->project()->fps());
+            QFont f = font();
+            f.setPointSizeF(8);
+            p.setFont(f);
+            const QRect box = QFontMetrics(f).boundingRect(label).adjusted(-5, -3, 5, 3);
+            const QRect placed = box.translated(x + 8 - box.left(), kRulerH + 6 - box.top());
+            p.fillRect(placed, QColor(0, 0, 0, 190));
+            p.setPen(Theme::text);
+            p.drawText(placed, Qt::AlignCenter, label);
+        }
     }
 
     // Klingen-Vorschau
@@ -580,6 +632,16 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     }
 
     Selection* sel = m_editor->selection();
+    if (const auto hit = edgeAt(pos)) {
+        const QVector<int> group = m_editor->withLinked({hit->clipId});
+        if (!sel->ids().contains(hit->clipId)) sel->set(QSet<int>(group.begin(), group.end()));
+        m_trim = *hit;
+        m_trimIds = group;
+        m_trimDelta = 0;
+        m_drag = Drag::Trim;
+        update();
+        return;
+    }
     if (!id) {
         if (!(e->modifiers() & Qt::ControlModifier)) sel->clear();
         return;
@@ -637,9 +699,21 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         update();
         return;
     }
+    case Drag::Trim: {
+        const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_trim.clipId);
+        if (!c) return;
+        int delta = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
+        const int edgeFrame = m_trim.edge == TimelineOps::Edge::Start ? c->start : c->end();
+        const QSet<int> exclude(m_trimIds.begin(), m_trimIds.end());
+        delta += snapDelta({edgeFrame + delta}, exclude);
+        m_trimDelta = m_editor->clampTrim(m_trim.clipId, m_trim.edge, delta);
+        update();
+        return;
+    }
     case Drag::None:
         break;
     }
+    updateHoverCursor(pos);
 
     if (m_tool == Tool::Blade) {
         const int old = m_hoverFrame;
@@ -658,8 +732,13 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if (e->button() != Qt::LeftButton) return;
     if (m_drag == Drag::Move)
         m_editor->moveClips(m_dragIds, m_dragDelta, m_anchorRef.kind, m_dragTrackDelta);
-    m_drag = Drag::None;
+    const bool trimmed = m_drag == Drag::Trim;
+    m_drag = Drag::None; // vor trimClip, damit die Vorschau nicht doppelt angewendet wird
+    if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta);
+    m_trimIds.clear();
+    m_trimDelta = 0;
     m_dragIds.clear();
+    updateHoverCursor(e->position().toPoint());
     update();
 }
 

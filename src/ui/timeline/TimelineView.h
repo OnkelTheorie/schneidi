@@ -1,4 +1,5 @@
 #pragma once
+#include "core/TimelineOps.h"
 #include "core/Types.h"
 #include "ui/timeline/ViewState.h"
 
@@ -77,12 +78,18 @@ private:
         int y; // Widget-Koordinate (Scroll bereits eingerechnet)
         int h;
     };
-    enum class Drag { None, Scrub, MaybeMove, Move };
+    enum class Drag { None, Scrub, MaybeMove, Move, Trim };
+    struct EdgeHit {
+        int clipId;
+        TimelineOps::Edge edge;
+    };
 
     QVector<Row> rows() const;
     std::optional<Row> rowAt(int y) const;
     std::optional<Row> rowFor(TrackRef ref) const;
     int clipAt(const QPoint& pos) const;
+    std::optional<EdgeHit> edgeAt(const QPoint& pos) const;
+    void updateHoverCursor(const QPoint& pos);
     double frameToX(double frame) const;
     double xToFrame(double x) const;
     QVector<int> snapPoints(const QSet<int>& exclude) const;
@@ -112,6 +119,11 @@ private:
     QVector<int> m_dragIds;
     int m_dragDelta = 0;
     int m_dragTrackDelta = 0;
+
+    // Trimmen (Kante ziehen)
+    EdgeHit m_trim{0, TimelineOps::Edge::Start};
+    QVector<int> m_trimIds;
+    int m_trimDelta = 0;
 
     int m_hoverFrame = -1; // Klingen-Vorschau
 

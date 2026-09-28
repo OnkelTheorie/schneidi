@@ -159,6 +159,47 @@ void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
     for (const auto& m : moving) placeClip(tl.track(m.target), m.clip, newId);
 }
 
+int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
+              const SourceLength& sourceLength)
+{
+    for (int id : clipIds) {
+        TrackRef ref;
+        const Clip* c = findClip(tl, id, &ref);
+        if (!c) continue;
+        const auto& clips = tl.track(ref).clips;
+        const int idx = int(c - clips.constData());
+        if (edge == Edge::Start) {
+            const int prevEnd = idx > 0 ? clips[idx - 1].end() : 0;
+            delta = std::max(delta, -c->in);              // nicht vor den Anfang des Materials
+            delta = std::max(delta, prevEnd - c->start);  // nicht in den linken Nachbarn
+            delta = std::min(delta, c->length() - 1);     // mind. 1 Frame
+        } else {
+            const int len = sourceLength ? sourceLength(c->mediaPath) : 0;
+            if (len > 0) delta = std::min(delta, len - 1 - c->out);
+            if (idx + 1 < clips.size()) delta = std::min(delta, clips[idx + 1].start - c->end());
+            delta = std::max(delta, 1 - c->length());
+        }
+    }
+    return delta;
+}
+
+void trimClips(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
+               const SourceLength& sourceLength)
+{
+    delta = clampTrim(tl, clipIds, edge, delta, sourceLength);
+    if (delta == 0) return;
+    for (int id : clipIds) {
+        Clip* c = findClip(tl, id);
+        if (!c) continue;
+        if (edge == Edge::Start) {
+            c->start += delta;
+            c->in += delta;
+        } else {
+            c->out += delta;
+        }
+    }
+}
+
 int endFrame(const Timeline& tl)
 {
     int end = 0;

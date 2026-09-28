@@ -1,4 +1,5 @@
 #pragma once
+#include "core/TimelineOps.h"
 #include "core/Types.h"
 
 #include <QObject>
@@ -29,11 +30,17 @@ public:
     void toggleTrackMute(TrackRef ref);
     void toggleTrackHidden(TrackRef ref);
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);
+    // Kante eines Clips (und verknüpfter Partner) ziehen, ohne Ripple
+    void trimClip(int clipId, TimelineOps::Edge edge, int delta);
+    // Wie weit sich die Kante tatsächlich bewegen lässt (für die Live-Vorschau)
+    int clampTrim(int clipId, TimelineOps::Edge edge, int delta) const;
     void bladeAt(int clipId, int frame);
     void splitAtPlayhead(int frame);
     void deleteSelection();
 
 private:
+    TimelineOps::SourceLength sourceLength() const;
+
     Project* m_project;
     Selection* m_selection;
     bool m_linkedSelection = true;

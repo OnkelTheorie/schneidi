@@ -37,6 +37,19 @@ QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
 void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
                TrackKind trackDeltaKind, int trackDelta, const IdGen& newId);
 
+enum class Edge { Start, End };
+// Länge des Quellmaterials in Frames (<= 0 = unbegrenzt, z. B. Standbilder)
+using SourceLength = std::function<int(const QString& mediaPath)>;
+
+// Begrenzt ein Trim-Delta so, dass für alle Clips gilt: nicht über das Quellmaterial hinaus,
+// mind. 1 Frame lang, nicht vor Frame 0 und nicht in den Nachbarclip hinein (kein Überschreiben).
+int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
+              const SourceLength& sourceLength);
+
+// Verschiebt die Kante (Start oder Ende) der Clips um delta. Kein Ripple: nichts rückt nach.
+void trimClips(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
+               const SourceLength& sourceLength);
+
 int endFrame(const Timeline& tl);
 
 } // namespace TimelineOps

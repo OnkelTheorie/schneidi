@@ -88,6 +88,26 @@ void Editor::moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind,
     });
 }
 
+TimelineOps::SourceLength Editor::sourceLength() const
+{
+    return [p = m_project](const QString& path) {
+        const MediaInfo* m = p->mediaInfo(path);
+        return m && !m->isImage ? m->length : 0; // Standbilder beliebig lang ziehbar
+    };
+}
+
+int Editor::clampTrim(int clipId, TimelineOps::Edge edge, int delta) const
+{
+    return TimelineOps::clampTrim(m_project->timeline(), withLinked({clipId}), edge, delta, sourceLength());
+}
+
+void Editor::trimClip(int clipId, TimelineOps::Edge edge, int delta)
+{
+    const QVector<int> ids = withLinked({clipId});
+    if (TimelineOps::clampTrim(m_project->timeline(), ids, edge, delta, sourceLength()) == 0) return;
+    m_project->edit("Trimmen", [&](Timeline& tl) { TimelineOps::trimClips(tl, ids, edge, delta, sourceLength()); });
+}
+
 void Editor::bladeAt(int clipId, int frame)
 {
     Project* p = m_project;

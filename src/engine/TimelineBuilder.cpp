@@ -46,6 +46,12 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     // Nicht benötigten Stream gar nicht erst dekodieren
     if (kind == TrackKind::Video) p->set("audio_index", -1);
     else p->set("video_index", -1);
+    // Standbilder lassen sich beliebig lang ziehen (sonst begrenzt MLT auf die Standardlänge)
+    if (const QByteArray svc = p->get("mlt_service"); svc == "qimage" || svc == "pixbuf") {
+        const int len = 24 * 3600 * qRound(m_profile.fps());
+        p->set("length", len);
+        p->set("out", len - 1);
+    }
     Mlt::Producer* raw = p.get();
     m_cache.emplace(key, std::move(p));
     return raw;
