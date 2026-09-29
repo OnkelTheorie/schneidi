@@ -51,8 +51,10 @@ public:
     // (sonst stockt die Wiedergabe beim Fader-Ziehen)
     void mixerOnlyNext() { m_mixerOnlyNext = true; }
     void showTimeline(int position);
-    void showSource(const QString& path);
+    void showSource(const QString& path, int position = 0);
     Mode mode() const { return m_mode; }
+    // Zuletzt in der Quellansicht gezeigte Datei (bleibt nach Q/Timeline erhalten, leer = noch keine)
+    const QString& sourcePath() const { return m_sourcePath; }
 
     void play();
     void pause();
@@ -88,6 +90,7 @@ private:
     bool m_mixerOnlyNext = false;
     std::unique_ptr<Mlt::Producer> m_source;
     Mlt::Producer* m_current = nullptr;
+    QString m_sourcePath;
 
     Mode m_mode = Mode::Timeline;
     double m_speed = 0.0;

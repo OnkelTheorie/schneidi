@@ -194,15 +194,16 @@ void Engine::showTimeline(int position)
     emit modeChanged(m_mode);
 }
 
-void Engine::showSource(const QString& path)
+void Engine::showSource(const QString& path, int position)
 {
     auto p = std::make_unique<Mlt::Producer>(*m_profile, m_proxies->resolve(path).toUtf8().constData());
     if (!p->is_valid()) return;
     m_consumer->stop();
     m_source = std::move(p);
+    m_sourcePath = path;
     m_speed = 0;
     m_mode = Mode::Source;
-    connectProducer(m_source.get(), 0);
+    connectProducer(m_source.get(), std::max(0, position));
     emit modeChanged(m_mode);
 }
 

@@ -3,6 +3,7 @@
 #include "core/Types.h"
 
 #include <QObject>
+#include <algorithm>
 #include <optional>
 
 class Project;
@@ -111,6 +112,33 @@ public:
     };
     void setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple);
 
+    // Quell-In/Out (I/O im Quell-Viewer) eines Media-Pool-Clips, -1 = entfernen; Regeln wie setMarkIn/setMarkOut
+    void setSourceMarkIn(const QString& path, int frame);
+    void setSourceMarkOut(const QString& path, int frame);
+    void clearSourceMarks(const QString& path);
+
+    // Bearbeitungen aus dem Quell-Viewer wie DaVinci (Edit-Menü, F9–F12)
+    enum class SourceEditMode {
+        Insert,          // F9: am Timeline-In bzw. Playhead einfügen, spätere Clips der Zielspuren rücken nach
+        Overwrite,       // F10: überschreiben
+        Replace,         // F11: Clip unter dem Playhead ersetzen (Länge bleibt, Quell-Playhead/-In deckt sich mit dem Playhead)
+        PlaceOnTop,      // F12: auf die erste freie Spur über allen Clips im Bereich
+        RippleOverwrite, // Shift+F10: Clip unter dem Playhead ersetzen, Rest der Spur rückt um den Längenunterschied
+        AppendAtEnd,     // Shift+F12: ans Ende der Timeline
+    };
+    // 3-Punkt-Schnitt: Quellbereich = Quell-In/Out (fehlt einer: Clipanfang/-ende), Ziel = Timeline-In, sonst Playhead;
+    // Timeline-In+Out begrenzt die Länge, nur Timeline-Out = rückwärts ab Out. Benutzte Timeline-In/Out werden
+    // danach entfernt (wie DaVinci). srcPos = Quell-Playhead (für Replace ohne Quell-In).
+    // Video/Audio verknüpft auf die Zielspuren, ein Undo-Schritt. Rückgabe: Ende des neuen Clips (neuer Playhead),
+    // -1 = nichts passiert (kein Clip unter dem Playhead, zu wenig Material).
+    int sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int playhead);
+    // Quellbereich [in, out] an Frame `frame` auf Spur-Index `track` (V[n]/A[n]) überschreiben (Drag aus dem Viewer)
+    void placeSourceRange(const QString& path, int in, int out, int frame, int track);
+    // Zielspuren für F9/F10 … (wie DaVinci Destination Controls), Index 0 = V1/A1
+    int targetVideoTrack() const { return m_targetVideo; }
+    int targetAudioTrack() const { return m_targetAudio; }
+    void setTargetTracks(int video, int audio) { m_targetVideo = std::max(0, video); m_targetAudio = std::max(0, audio); }
+
     // Zwischenablage (Strg+C/X/V): Einfügen am Playhead auf denselben Spuren, überschreibt
     void copySelection();
     void cutSelection();
@@ -121,6 +149,9 @@ private:
     // Kopie der Timeline mit Übergang am Schnitt (siehe addTransitionAt); nullopt = Clips nicht gefunden
     std::optional<Timeline> withTransitionAt(int leftId, int rightId, const TransitionStyle& style,
                                              TrackRef* where = nullptr) const;
+
+    // Quellbereich ab Quell-Frame sIn (len Frames) an `start` auf V[vTrack]/A[aTrack] legen (überschreibt, verknüpft)
+    void placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack);
 
     // Clips unter dem Playhead bzw. die Auswahl (mit Partnern), wie DaVinci bei Strg+B
     QVector<int> targetIds(int frame) const;
@@ -134,5 +165,6 @@ private:
     Selection* m_selection;
     bool m_linkedSelection = true;
     bool m_splitOnSelectedTracks = true;
+    int m_targetVideo = 0, m_targetAudio = 0;
     QVector<ClipboardItem> m_clipboard; // Starts relativ zum frühesten Clip
 };

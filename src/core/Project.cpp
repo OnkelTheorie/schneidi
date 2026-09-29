@@ -165,6 +165,20 @@ void Project::addMedia(const MediaInfo& info)
     emit modifiedChanged(true);
 }
 
+void Project::setMediaMarks(const QString& path, int markIn, int markOut)
+{
+    for (MediaInfo& m : m_media) {
+        if (m.path != path) continue;
+        if (m.markIn == markIn && m.markOut == markOut) return;
+        m.markIn = markIn;
+        m.markOut = markOut;
+        m_mediaDirty = true;
+        emit mediaMarksChanged(path);
+        emit modifiedChanged(true);
+        return;
+    }
+}
+
 void Project::replaceMedia(const QVector<MediaInfo>& media)
 {
     m_media = media;

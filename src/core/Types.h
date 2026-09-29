@@ -240,4 +240,8 @@ struct MediaInfo {
     bool hasVideo = false;
     bool hasAudio = false;
     bool isImage = false;
+    // Quell-In/Out (I/O im Quell-Viewer, wie DaVinci pro Clip im Media Pool gemerkt), -1 = nicht gesetzt;
+    // Frames im Quellmaterial, Out ist das letzte Frame im Bereich
+    int markIn = -1;
+    int markOut = -1;
 };
