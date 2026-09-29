@@ -190,12 +190,16 @@ void KeyBindingsDialog::editRow(int row)
     if (row < 0) return;
     const QString id = m_table->item(row, ColText)->data(Qt::UserRole).toString();
     auto* edit = new QKeySequenceEdit(InputBindings::instance().current(id));
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     edit->setMaximumSequenceLength(1);
+#endif
     edit->setClearButtonEnabled(true);
     m_table->setCellWidget(row, ColKey, edit);
     edit->setFocus();
     connect(edit, &QKeySequenceEdit::editingFinished, this, [this, edit, id] {
-        InputBindings::instance().setShortcut(id, edit->keySequence());
+        QKeySequence seq = edit->keySequence();
+        if (seq.count() > 1) seq = QKeySequence(seq[0]); // Qt < 6.5: nur die erste Taste zählt
+        InputBindings::instance().setShortcut(id, seq);
         QMetaObject::invokeMethod(this, [this] { fill(); }, Qt::QueuedConnection); // Editor erst danach entfernen
     });
 }
