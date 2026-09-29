@@ -3,6 +3,7 @@
 #include "app/InputBindings.h"
 #include "app/KeyBindingsDialog.h"
 #include "app/ClipSpeedDialog.h"
+#include "app/NormalizeDialog.h"
 #include "app/ProjectSettingsDialog.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -10,6 +11,7 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
 #include "engine/MediaCache.h"
 #include "engine/Profiles.h"
@@ -38,6 +40,8 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QUndoStack>
+#include <QMenu>
+#include <QProgressDialog>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFileDialog>
@@ -97,6 +101,34 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_inspector, &Inspector::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
+    // Rechtsklick auf Clips: die passenden Aktionen (Tastenkürzel wie im Menü)
+    connect(tv, &TimelineView::clipMenuRequested, this, [this](const QPoint& pos) {
+        QMenu menu(this);
+        const bool audio = !m_editor->selectedAudioClips().isEmpty();
+        for (const char* id : {"clip_speed", "clip_speed_reset", "normalize_audio", "", "toggle_enabled", "link_clips", "",
+                               "delete", "ripple_delete"}) {
+            if (!*id) {
+                menu.addSeparator();
+                continue;
+            }
+            QAction* a = InputBindings::instance().action(id);
+            if (!a) continue;
+            if (QString(id) == "normalize_audio" && !audio) continue;
+            menu.addAction(a);
+        }
+        // Clipfarbe/Flags wie DaVinci: gelten für den Media-Pool-Clip (Titel haben keinen)
+        QStringList paths;
+        for (int cid : m_editor->selection()->ids())
+            if (const Clip* c = TimelineOps::findClip(m_project->timeline(), cid); c && !c->isTitle()
+                && !paths.contains(c->mediaPath))
+                paths << c->mediaPath;
+        if (!paths.isEmpty()) {
+            menu.addSeparator();
+            MediaPool::addClipColorMenu(&menu, m_project, paths);
+            MediaPool::addFlagsMenu(&menu, m_project, paths);
+        }
+        menu.exec(pos);
+    });
     // Quellbereich aus dem Viewer in die Timeline gezogen: dort überschreiben (wie DaVinci)
     connect(tv, &TimelineView::rangeDropRequested, this, [this](const QString& path, int in, int out, int frame, int track) {
         if (m_project->frameRateLocked()) {
@@ -320,6 +352,36 @@ void MainWindow::clipSpeedDialog()
     ClipSpeedDialog dlg(cur, first->length(), m_project->format().rate.fps(), this);
     if (dlg.exec() == QDialog::Accepted)
         m_editor->setClipSpeed(m_editor->selection()->ids().values().toVector(), dlg.retime(), dlg.ripple());
+}
+
+void MainWindow::normalizeAudioDialog()
+{
+    const QVector<int> ids = m_editor->selectedAudioClips();
+    if (ids.isEmpty()) {
+        QApplication::beep(); // keine Audioclips ausgewählt
+        return;
+    }
+    NormalizeDialog dlg(int(ids.size()), this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    // Spitzenpegel messen (dekodiert den Ton der Clips; Originale, nie Proxies)
+    QProgressDialog progress(T("Audiopegel werden gemessen…"), T("Abbrechen"), 0, 1000, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(300);
+    QHash<int, double> peaks;
+    const Timeline tl = m_project->timeline(); // Kopie: Zeiger bleiben gültig
+    for (int i = 0; i < ids.size(); ++i) {
+        const Clip* c = TimelineOps::findClip(tl, ids[i]);
+        if (!c) continue;
+        const auto peak = AudioAnalysis::clipPeakDb(m_project->format(), *c, [&](double f) {
+            progress.setValue(int((i + f) / ids.size() * 1000));
+            QApplication::processEvents();
+            return !progress.wasCanceled();
+        });
+        if (progress.wasCanceled()) return;
+        if (peak) peaks[c->id] = *peak;
+    }
+    progress.setValue(1000);
+    m_editor->normalizeAudio(peaks, dlg.targetDb(), dlg.relative());
 }
 
 void MainWindow::onFormatChanged()
@@ -626,6 +688,7 @@ void MainWindow::buildActions()
     makeAction(timeline, "clip_speed_reset", T("Geschwindigkeit zurücksetzen"), QKeySequence("Ctrl+Alt+R"), [this] {
         m_editor->setClipSpeed(m_editor->selection()->ids().values().toVector(), {}, true);
     });
+    makeAction(timeline, "normalize_audio", T("Audiopegel normalisieren…"), QKeySequence(), [this] { normalizeAudioDialog(); });
     makeAction(timeline, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
                [this] { m_editor->toggleLinkSelection(); });
     timeline->addSeparator();

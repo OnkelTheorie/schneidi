@@ -32,6 +32,7 @@ add_executable(schneidi
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
+    src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
@@ -39,6 +40,7 @@ add_executable(schneidi
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
+    src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp
@@ -59,4 +61,11 @@ target_link_libraries(schneidi PRIVATE Qt6::Widgets PkgConfig::MLT)
 
 if(WIN32)
     set_target_properties(schneidi PROPERTIES WIN32_EXECUTABLE ON)
+endif()
+
+# Automatische Tests (CTest): cmake -DSCHNEIDI_TESTS=ON, siehe docs/dev-notes.md
+option(SCHNEIDI_TESTS "Tests bauen" OFF)
+if(SCHNEIDI_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()

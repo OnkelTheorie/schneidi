@@ -60,6 +60,7 @@ private:
     void projectSettingsDialog();
     void grabStill();
     void clipSpeedDialog();
+    void normalizeAudioDialog();
     void buildActions();
     QAction* makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
                        const std::function<void()>& fn);

@@ -1508,24 +1508,15 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
     }
     const auto t = transitionAt(e->pos());
     if (!t) {
-        // Rechtsklick auf einen Clip: Clipfarbe/Flags wie DaVinci (gelten für den Media-Pool-Clip)
-        const int id = clipAt(e->pos());
-        if (!id) return;
-        Selection* sel = m_editor->selection();
-        if (!sel->contains(id)) {
-            const QVector<int> group = m_editor->withLinked({id});
-            sel->set(QSet<int>(group.begin(), group.end()));
+        // Rechtsklick auf einen Clip: auswählen (falls nicht schon), Menü baut das Hauptfenster (Aktionen)
+        if (const int id = clipAt(e->pos())) {
+            Selection* sel = m_editor->selection();
+            if (!sel->contains(id)) {
+                const QVector<int> group = m_editor->withLinked({id});
+                sel->set(QSet<int>(group.begin(), group.end()));
+            }
+            emit clipMenuRequested(e->globalPos());
         }
-        QStringList paths;
-        for (int cid : sel->ids())
-            if (const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), cid); c && !c->isTitle()
-                && !paths.contains(c->mediaPath))
-                paths << c->mediaPath;
-        if (paths.isEmpty()) return;
-        QMenu menu(this);
-        MediaPool::addClipColorMenu(&menu, m_editor->project(), paths);
-        MediaPool::addFlagsMenu(&menu, m_editor->project(), paths);
-        menu.exec(e->globalPos());
         return;
     }
     const TimelineOps::TransitionSpan s = t->span;

@@ -18,6 +18,8 @@
 #include <cstdio>
 #include <cmath>
 #include <functional>
+#include <optional>
+#include <utility>
 
 namespace {
 
@@ -318,7 +320,77 @@ void applyPan(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a = 
 // Mit hooks werden die Filter immer angehängt (neutral bei 0 dB/Mitte), damit sie live verstellbar sind.
 double mltPan(double pan) { return (pan + 100.0) / 200.0; }
 
-void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, MixerHooks::Strip* hook)
+// Pegelmesser (passiv): merkt sich den Spitzenpegel des zuletzt verarbeiteten Tons je Kanal in dBFS als
+// _audio_level.N (N = Kanal). Eigener Filter statt MLT "audiolevel": der wandelt den Ton nach s16 und schneidet
+// damit alles über 0 dBFS ab (Vorschau klang anders als der Export, Übersteuerung war nicht messbar).
+int meterGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int* frequency, int* channels, int* samples)
+{
+    auto filter = static_cast<mlt_filter>(mlt_frame_pop_audio(frame));
+    const int error = mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
+    if (error || !*buffer || *channels <= 0 || *samples <= 0) return error;
+    const int ch = std::min(*channels, 8), n = *samples;
+    float peak[8] = {};
+    auto sample = [&](int c, int i) -> float {
+        switch (*format) {
+        case mlt_audio_s16: return std::abs(static_cast<const int16_t*>(*buffer)[i * *channels + c] / 32768.f);
+        case mlt_audio_s32le: return std::abs(static_cast<const int32_t*>(*buffer)[i * *channels + c] / 2147483648.f);
+        case mlt_audio_s32: return std::abs(static_cast<const int32_t*>(*buffer)[c * n + i] / 2147483648.f);
+        case mlt_audio_f32le: return std::abs(static_cast<const float*>(*buffer)[i * *channels + c]);
+        case mlt_audio_float: return std::abs(static_cast<const float*>(*buffer)[c * n + i]);
+        default: return 0.f;
+        }
+    };
+    for (int c = 0; c < ch; ++c)
+        for (int i = 0; i < n; ++i) peak[c] = std::max(peak[c], sample(c, i));
+    mlt_properties props = MLT_FILTER_PROPERTIES(filter);
+    for (int c = 0; c < ch; ++c) {
+        char name[32];
+        std::snprintf(name, sizeof name, "_audio_level.%d", c);
+        mlt_properties_set_double(props, name, peak[c] > 1e-10f ? 20.0 * std::log10(peak[c]) : -200.0);
+    }
+    return 0;
+}
+
+mlt_frame meterProcess(mlt_filter filter, mlt_frame frame)
+{
+    mlt_frame_push_audio(frame, filter);
+    mlt_frame_push_audio(frame, reinterpret_cast<void*>(meterGetAudio));
+    return frame;
+}
+
+std::shared_ptr<Mlt::Filter> makeMeter()
+{
+    mlt_filter f = mlt_filter_new();
+    if (!f) return nullptr;
+    f->process = meterProcess;
+    auto meter = std::make_shared<Mlt::Filter>(f); // hält eine eigene Referenz
+    mlt_filter_close(f);
+    return meter;
+}
+
+// Limiter am Master: avfilter.alimiter (Lookahead, Sample-Peak). av.level (Auto-Level) ist in FFmpeg standardmäßig an
+// und würde alles auf die Ceiling hochziehen -> aus. Werte per anim_set (Zahlenformat, siehe dev-notes).
+void setLimiter(Mlt::Filter& f, bool on, double ceilingDb)
+{
+    f.set("disable", on ? 0 : 1);
+    f.anim_set("av.limit", std::clamp(std::pow(10.0, ceilingDb / 20.0), 0.0625, 1.0), 0);
+}
+
+std::shared_ptr<Mlt::Filter> makeLimiter(Mlt::Profile& profile, bool on, double ceilingDb)
+{
+    auto f = std::make_shared<Mlt::Filter>(profile, "avfilter.alimiter");
+    if (!f->is_valid()) return nullptr;
+    f->set("av.level", 0);
+    f->set("av.asc", 0);
+    f->anim_set("av.attack", 5.0, 0);
+    f->anim_set("av.release", 50.0, 0);
+    setLimiter(*f, on, ceilingDb);
+    return f;
+}
+
+// limiter: nur Master (Ceiling in dBFS, nullopt = keiner); sitzt nach Fader/Pan und vor dem Pegelmesser
+void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, MixerHooks::Strip* hook,
+                 std::optional<std::pair<bool, double>> limiter = {})
 {
     if (!hook) { // Export: nur was nötig ist
         Clip c; // gleiche Umrechnung wie bei Clips
@@ -326,6 +398,8 @@ void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, 
         c.pan = pan;
         applyVolume(profile, s, c);
         applyPan(profile, s, c);
+        if (limiter && limiter->first)
+            if (auto f = makeLimiter(profile, true, limiter->second)) s.attach(*f);
         return;
     }
     hook->volume = std::make_shared<Mlt::Filter>(profile, "volume");
@@ -335,9 +409,11 @@ void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, 
     hook->pan->set("channel", -1);
     hook->pan->set("start", mltPan(pan));
     s.attach(*hook->pan);
-    hook->meter = std::make_shared<Mlt::Filter>(profile, "audiolevel");
-    hook->meter->set("iec_scale", 0);
-    hook->meter->set("dbpeak", 1); // _audio_level.N = Spitzenpegel in dBFS
+    if (limiter) { // Vorschau: immer da, damit er sich live schalten lässt
+        hook->limiter = makeLimiter(profile, limiter->first, limiter->second);
+        if (hook->limiter) s.attach(*hook->limiter);
+    }
+    hook->meter = makeMeter();
     s.attach(*hook->meter);
 }
 
@@ -725,6 +801,16 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     return raw;
 }
 
+Mlt::Producer* TimelineBuilder::clipAudioSource(const Clip& c)
+{
+    if (c.isTitle() || c.freeze || c.mediaPath.isEmpty()) return nullptr;
+    m_used.clear(); // nur dieser eine Producer bleibt im Cache
+    Mlt::Producer* p = producerFor(c.mediaPath, TrackKind::Audio, 0, false, &c);
+    for (auto it = m_cache.begin(); it != m_cache.end();)
+        it = m_used.count(it->first) ? std::next(it) : m_cache.erase(it);
+    return p;
+}
+
 bool TimelineBuilder::applyMixer(const Timeline& tl, const MixerHooks& hooks)
 {
     if (int(hooks.tracks.size()) != tl.audio.size() || !hooks.master.volume) return false;
@@ -735,6 +821,7 @@ bool TimelineBuilder::applyMixer(const Timeline& tl, const MixerHooks& hooks)
         h.pan->set("start", mltPan(tl.audio[i].pan));
     }
     hooks.master.volume->set("level", mltLevel(tl.masterVolumeDb));
+    if (hooks.master.limiter) setLimiter(*hooks.master.limiter, tl.masterLimiter, tl.masterLimiterDb);
     return true;
 }
 
@@ -883,7 +970,8 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     for (int i = 0; i < tl.audio.size(); ++i) fill(tl.audio[i], TrackKind::Audio, i);
 
     // Master-Fader auf dem Tractor (gilt damit auch für den Export)
-    attachStrip(m_profile, *tractor, tl.masterVolumeDb, 0.0, hooks ? &hooks->master : nullptr);
+    attachStrip(m_profile, *tractor, tl.masterVolumeDb, 0.0, hooks ? &hooks->master : nullptr,
+                std::make_pair(tl.masterLimiter, tl.masterLimiterDb));
     // Nicht mehr benutzte Producer schließen (z. B. Original nach Umschalten auf den Proxy oder gelöschter Clip);
     // Cuts im alten Tractor halten ihre Quelle per MLT-Referenzzählung selbst am Leben
     for (auto it = m_cache.begin(); it != m_cache.end();)

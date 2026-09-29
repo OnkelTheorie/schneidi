@@ -30,6 +30,7 @@ struct EffectInstance {
 
 constexpr double kMinVolumeDb = -60.0; // ganz unten = -∞ (stumm)
 constexpr double kMaxVolumeDb = 12.0;
+constexpr double kDefaultLimiterDb = -1.0; // Ceiling des Master-Limiters (dBFS)
 
 // Anzeige wie in DaVinci: "+1.5 dB", "0.0 dB", "-∞ dB"
 inline QString formatVolumeDb(double db)
@@ -266,6 +267,10 @@ struct Timeline {
     int markIn = -1;      // In-/Out-Punkt (I/O), -1 = nicht gesetzt; Out ist das letzte Frame im Bereich
     int markOut = -1;
     double masterVolumeDb = 0.0; // Master-Fader im Mixer
+    // Limiter am Master (Mixer-Knopf „LIM“): hält Spitzen unter der Ceiling, Vorschau und Export gleich.
+    // Standard aus wie DaVinci (Bus-Dynamics sind dort aus; sonst verdeckt er die Übersteuerungswarnung).
+    bool masterLimiter = false;
+    double masterLimiterDb = kDefaultLimiterDb;
 
     QVector<Track>& tracks(TrackKind k) { return k == TrackKind::Video ? video : audio; }
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }
