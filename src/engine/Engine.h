@@ -55,6 +55,7 @@ public:
     // Nächstes updateTimeline() ändert nur Fader/Pan -> live übernehmen statt neu aufbauen
     // (sonst stockt die Wiedergabe beim Fader-Ziehen)
     void mixerOnlyNext() { m_mixerOnlyNext = true; }
+    bool mixerOnlyPending() const { return m_mixerOnlyNext; }
     void showTimeline(int position);
     void showSource(const QString& path);
     Mode mode() const { return m_mode; }
@@ -74,6 +75,8 @@ signals:
     void modeChanged(Engine::Mode mode);
     // Nur während der Wiedergabe: Spitzenpegel in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R]
     void audioLevels(const QVector<float>& db);
+    // intern: Position aus dem Consumer-Thread, epoch = Sprung-Zähler beim Anzeigen (ältere werden verworfen)
+    void framePosition(int frame, int epoch);
 
 private:
     bool createConsumer(QString* error);
@@ -98,6 +101,10 @@ private:
     Mode m_mode = Mode::Timeline;
     double m_speed = 0.0;
     std::atomic<int> m_position{0};
+    // Sprung während der Wiedergabe: Bilder aus dem Puffer von vor dem Sprung nicht mehr zeigen/melden
+    std::atomic<int> m_seekEpoch{0};
+    std::atomic<int> m_seekTarget{-1};
+    std::atomic<int> m_seekSkipped{0};
     QSize m_previewSize{960, 540}; // Projektformat verkleinert (längere Kante 960)
 
     friend struct EngineCallbacks;

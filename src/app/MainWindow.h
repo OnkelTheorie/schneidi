@@ -4,6 +4,7 @@
 
 #include <QHash>
 #include <QMainWindow>
+#include <QTimer>
 #include <functional>
 
 class Engine;
@@ -92,6 +93,7 @@ private:
     MediaPool* m_mediaPool = nullptr;
     EffectsLibrary* m_effects = nullptr;
     Viewer* m_viewer = nullptr;
+    QTimer m_engineTimer; // bündelt Modelländerungen -> Engine
     Inspector* m_inspector = nullptr;
     Mixer* m_mixer = nullptr;
     TimelinePanel* m_timeline = nullptr;

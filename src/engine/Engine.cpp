@@ -21,7 +21,13 @@ struct EngineCallbacks {
     }
 };
 
-Engine::Engine(QObject* parent) : QObject(parent), m_proxies(new ProxyManager(this)) {}
+Engine::Engine(QObject* parent) : QObject(parent), m_proxies(new ProxyManager(this))
+{
+    // Meldungen, die schon unterwegs waren, als gesprungen wurde, ließen den Playhead kurz zurückspringen
+    connect(this, &Engine::framePosition, this, [this](int frame, int epoch) {
+        if (epoch == m_seekEpoch) emit positionChanged(frame);
+    }, Qt::QueuedConnection);
+}
 
 Engine::~Engine()
 {
@@ -277,6 +283,9 @@ void Engine::seek(int frame)
 {
     if (!m_current) return;
     frame = std::max(0, frame);
+    ++m_seekEpoch;
+    m_seekSkipped = 0;
+    m_seekTarget = m_speed != 0.0 ? frame : -1;
     m_current->seek(frame);
     m_consumer->purge();
     m_position = frame;
@@ -288,6 +297,15 @@ void Engine::onFrameShown(void* mltFrame)
 {
     if (!mltFrame) return;
     Mlt::Frame frame(static_cast<mlt_frame>(mltFrame));
+    const int pos = frame.get_position();
+    const int target = m_seekTarget;
+    if (target >= 0) {
+        // Erst ab dem Sprungziel wieder anzeigen (Puffer enthält noch Bilder von vorher); Notbremse nach 50 Bildern
+        const double speed = m_speed;
+        const bool arrived = speed == 0.0 || (speed > 0 ? pos >= target && pos <= target + 60 : pos <= target && pos >= target - 60);
+        if (!arrived && ++m_seekSkipped < 50) return;
+        m_seekTarget = -1;
+    }
     mlt_image_format fmt = mlt_image_rgba;
     int w = m_previewSize.width(), h = m_previewSize.height();
     const uint8_t* data = frame.get_image(fmt, w, h);
@@ -296,8 +314,7 @@ void Engine::onFrameShown(void* mltFrame)
         std::memcpy(img.bits(), data, size_t(w) * h * 4);
         emit frameReady(img); // queued -> UI-Thread
     }
-    const int pos = frame.get_position();
-    if (m_speed != 0.0 && pos != m_position.exchange(pos)) emit positionChanged(pos);
+    if (m_speed != 0.0 && pos != m_position.exchange(pos)) emit framePosition(pos, m_seekEpoch);
     if (m_speed != 0.0 && m_mode == Mode::Timeline) emitLevels();
 }
 

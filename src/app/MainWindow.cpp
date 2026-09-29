@@ -62,8 +62,15 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     qApp->installEventFilter(this); // Maus-Seitentasten -> Aktionen (keybindings.json, Abschnitt "mouse")
 
     // Modell -> Engine
+    // Gebündelt: beim Ziehen (Fade-Griff, Lautstärkelinie, Inspector …) ändert jede Mausbewegung das Modell;
+    // die Vorschau jedes Mal sofort neu zu bauen blockierte die Timeline (Griff hing hinterher).
+    // Mixer-Änderungen sind billig (live gesetzt) und gehen weiter sofort durch.
+    m_engineTimer.setSingleShot(true);
+    m_engineTimer.setInterval(30);
+    connect(&m_engineTimer, &QTimer::timeout, this, [this] { m_engine->updateTimeline(m_project->timeline()); });
     connect(m_project, &Project::timelineChanged, this, [this] {
-        m_engine->updateTimeline(m_project->timeline());
+        if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(m_project->timeline());
+        else if (!m_engineTimer.isActive()) m_engineTimer.start();
     });
     m_engine->updateTimeline(m_project->timeline());
     // Proxy fertig/gelöscht oder "Proxy-Medien verwenden" umgeschaltet -> Vorschau neu aufbauen
