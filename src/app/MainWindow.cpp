@@ -7,6 +7,7 @@
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
 #include "core/Editor.h"
+#include "core/Keyframes.h"
 #include "core/I18n.h"
 #include "core/Timecode.h"
 #include "core/Project.h"
@@ -166,8 +167,15 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             TimelineView* tv = m_timeline->view();
             r->setEnabled(std::any_of(ids.begin(), ids.end(), [this](int id) { return m_editor->canRetime(id); }));
             r->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->retimeControlsShown(id); }));
+            QAction* k = InputBindings::instance().action("curve_editor");
+            k->setEnabled(std::any_of(ids.begin(), ids.end(), [this](int id) {
+                const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+                return c && Keys::hasKeys(*c);
+            }));
+            k->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); }));
         }
-        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "normalize_audio", "", "toggle_enabled", "link_clips",
+        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "normalize_audio", "",
+                               "toggle_enabled", "link_clips",
                                "render_cache_clip", "", "compound_create", "compound_open", "compound_decompose", "",
                                "delete", "ripple_delete"}) {
             if (!*id) {
@@ -883,6 +891,16 @@ void MainWindow::buildActions()
         tv->setRetimeControls(ids, on);
     });
     retime->setCheckable(true);
+    // Kurven-Editor wie DaVinci (Kurven-Symbol im Clip): Keyframe-Kurve unter den ausgewählten Clips
+    auto* curves = makeAction(timeline, "curve_editor", T("Kurven-Editor"), QKeySequence("Shift+C"), [this] {
+        const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
+        TimelineView* tv = m_timeline->view();
+        const bool on = std::none_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); });
+        tv->setCurveEditor(ids, on);
+        if (on && std::none_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); }))
+            QApplication::beep(); // keine Keyframes
+    });
+    curves->setCheckable(true);
     makeAction(timeline, "speed_point_add", T("Speed-Punkt hinzufügen"), QKeySequence(), [this] {
         // an der Playhead-Position in den ausgewählten Clips (bzw. dem Videoclip darunter), Steuerung einblenden
         const int frame = m_timeline->view()->playhead();

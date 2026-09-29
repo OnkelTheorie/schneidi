@@ -109,6 +109,7 @@ constexpr int kEdgeGrabPx = 6; // so nah an der Clipkante wird getrimmt statt ve
 constexpr int kVolumeGrabPx = 4;
 constexpr int kClipBarH = 16;  // Titelleiste im Clip
 constexpr int kLaneH = 16;     // aufgeklappte Keyframe-Spur unter dem Clip
+constexpr int kCurveH = 120;   // aufgeklappter Kurven-Editor unter dem Clip
 constexpr int kKeyGrabPx = 5;  // so nah an einer Raute wird sie gegriffen
 
 // Lautstärke <-> Höhe im Clip (0 = unten, 1 = oben), stückweise linear wie ein Fader:
@@ -280,21 +281,24 @@ QVector<TimelineView::Row> TimelineView::rows() const
     const Timeline& tl = m_editor->project()->timeline();
     QVector<Row> out;
     int y = kRulerH - m_view.scrollY + subtitlesHeight(); // Untertitelspuren liegen darüber
-    // Spur wird höher, solange ein Clip darauf seine Keyframe-Spur aufgeklappt hat
-    auto lane = [&](const Track& t) {
-        for (const Clip& c : t.clips)
-            if (m_keyLanes.contains(c.id) && Keys::hasKeys(c)) return kLaneH;
-        return 0;
+    // Spur wird höher, solange ein Clip darauf seine Keyframe-Spur bzw. seinen Kurven-Editor aufgeklappt hat
+    auto row = [&](TrackRef ref, int y, int h) {
+        Row r{ref, y, h};
+        for (const Clip& c : tl.track(ref).clips) {
+            if (m_keyLanes.contains(c.id) && Keys::hasKeys(c)) r.keyLane = kLaneH;
+            if (curveParam(c)) r.curve = kCurveH;
+        }
+        r.lane = r.keyLane + r.curve;
+        r.h += r.lane;
+        return r;
     };
     for (int i = tl.video.size() - 1; i >= 0; --i) { // V1 unten, wie in DaVinci
-        const int l = lane(tl.video[i]);
-        out << Row{{TrackKind::Video, i}, y, m_view.videoTrackHeight + l, l};
+        out << row({TrackKind::Video, i}, y, m_view.videoTrackHeight);
         y += out.last().h;
     }
     y += kSeparator;
     for (int i = 0; i < tl.audio.size(); ++i) {
-        const int l = lane(tl.audio[i]);
-        out << Row{{TrackKind::Audio, i}, y, m_view.audioTrackHeight + l, l};
+        out << row({TrackKind::Audio, i}, y, m_view.audioTrackHeight);
         y += out.last().h;
     }
     return out;
@@ -453,14 +457,14 @@ int TimelineView::keyIconAt(const QPoint& pos) const
 
 QRect TimelineView::laneRect(const Row& row, const Clip& c) const
 {
-    return QRect(QPoint(int(frameToX(c.start)), row.y + row.h - row.lane - 2),
-                 QPoint(int(frameToX(c.end())) - 1, row.y + row.h - 3));
+    const int top = keyLaneTop(row);
+    return QRect(QPoint(int(frameToX(c.start)), top), QPoint(int(frameToX(c.end())) - 1, top + row.keyLane - 2));
 }
 
 bool TimelineView::inLane(const QPoint& pos) const
 {
     const auto row = rowAt(pos.y());
-    return row && row->lane > 0 && pos.y() >= row->y + row->h - row->lane - 2;
+    return row && row->keyLane > 0 && pos.y() >= keyLaneTop(*row) && pos.y() < keyLaneTop(*row) + row->keyLane;
 }
 
 std::optional<TimelineView::KeyHit> TimelineView::keyframeAt(const QPoint& pos) const
@@ -508,6 +512,18 @@ void TimelineView::updateHoverCursor(const QPoint& pos)
             update();
         }
         setCursor(pos.x() >= kHeaderW && cueEdgeAt(pos) ? Qt::SizeHorCursor : Qt::ArrowCursor);
+        return;
+    }
+    if (curveIconAt(pos)) {
+        setCursor(Qt::PointingHandCursor);
+        return;
+    }
+    if (const auto h = curveHitAt(pos)) {
+        if (m_hoverClip) {
+            m_hoverClip = 0;
+            update();
+        }
+        setCursor(h->part == 2 ? Qt::PointingHandCursor : h->index >= 0 ? Qt::SizeAllCursor : Qt::ArrowCursor);
         return;
     }
     if (m_tool == Tool::Trim) {
@@ -849,7 +865,8 @@ void TimelineView::drawTracks(QPainter& p)
             const QRect r = clipRect(row, c);
             if (r.right() < kHeaderW || r.left() > width()) continue;
             drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false, audioSpans, clipColor(m_editor->project(), c, &track));
-            if (row.lane && m_keyLanes.contains(c.id)) drawKeyLane(p, row, c);
+            if (row.keyLane && m_keyLanes.contains(c.id)) drawKeyLane(p, row, c);
+            if (row.curve && curveParam(c)) drawCurveLane(p, row, c);
         }
         drawTransitions(p, row, hidden);
         if (track.locked) { // gesperrt: abgedunkelt und schraffiert wie DaVinci
@@ -1050,7 +1067,7 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
     const QRect lane = laneRect(row, c);
     if (lane.right() < kHeaderW || lane.left() > width()) return;
     const Selection* sel = m_editor->selection();
-    const bool mine = sel->keyClip() == c.id;
+    const bool mine = sel->keyClip() == c.id && sel->keyParam() < 0;
     p.save();
     p.fillRect(lane, QColor(0x1d, 0x1d, 0x21));
     p.setPen(QColor(0x3a, 0x3a, 0x42));
@@ -1251,6 +1268,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         p.setBrush(open ? Theme::accent : QColor(0xf0, 0xf0, 0xf0));
         drawDiamond(p, k.center().x(), k.center().y(), k.width() / 2);
         p.setBrush(Qt::NoBrush);
+        if (r.width() >= 56) drawCurveIcon(p, r, m_curves.contains(c.id));
     }
 
     // Fade-Griffe (weiße Anfasser oben an den Ecken), nur unter der Maus bzw. beim Ziehen
@@ -1617,10 +1635,12 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
         else segmentMenu(*h, int(std::lround(xToFrame(e->pos().x()))), e->globalPos());
         return;
     }
+    if (curveContextMenu(e->pos(), e->globalPos())) return;
     // Rechtsklick auf eine Keyframe-Raute: Verlauf (wie DaVinci) oder Löschen, gilt für die ausgewählten Rauten
     if (const auto k = keyframeAt(e->pos())) {
         Selection* sel = m_editor->selection();
-        if (sel->keyClip() != k->clipId || !sel->keyTimes().contains(k->t)) sel->setKeyframes(k->clipId, {k->t});
+        if (sel->keyClip() != k->clipId || sel->keyParam() >= 0 || !sel->keyTimes().contains(k->t))
+            sel->setKeyframes(k->clipId, {k->t});
         const QVector<int> times = sel->keyTimes().values().toVector();
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), k->clipId);
         if (!c) return;
@@ -1631,7 +1651,7 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
         QMenu menu(this);
         const struct { KeyEase ease; const char* name; } eases[] = {
             {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
-            {KeyEase::EaseInOut, "Ease In and Out"}};
+            {KeyEase::EaseInOut, "Ease In and Out"}, {KeyEase::Bezier, "Bezier"}};
         for (const auto& it : eases) {
             QAction* a = menu.addAction(it.name); // wie DaVinci auch deutsch englisch
             a->setCheckable(true);
@@ -1743,6 +1763,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     }
 
     Selection* sel = m_editor->selection();
+    if (curvePress(e, pos)) return;
     // Keyframes: Symbol klappt die Spur auf/zu, Rauten auswählen (Strg = dazu) und ziehen
     if (const int kid = keyIconAt(pos)) {
         if (m_keyLanes.contains(kid)) m_keyLanes.remove(kid);
@@ -1757,7 +1778,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
             const QVector<int> group = m_editor->withLinked({k->clipId});
             sel->set(QSet<int>(group.begin(), group.end()));
         }
-        QSet<int> times = sel->keyClip() == k->clipId ? sel->keyTimes() : QSet<int>{};
+        QSet<int> times = sel->keyClip() == k->clipId && sel->keyParam() < 0 ? sel->keyTimes() : QSet<int>{};
         const bool ctrl = e->modifiers() & Qt::ControlModifier;
         if (ctrl && times.contains(k->t)) times.remove(k->t);
         else if (ctrl) times.insert(k->t);
@@ -2010,11 +2031,20 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         }
         return;
     }
+    case Drag::CurvePoint:
+    case Drag::CurveHandle:
+        curveMove(pos, e->modifiers());
+        return;
     case Drag::Keyframe: {
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_keyDragClip);
         const QSet<int>& times = m_editor->selection()->keyTimes();
         if (!c || times.isEmpty()) return;
         int delta = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
+        { // Einrasten wie DaVinci: Playhead, Clipgrenzen, Keyframes der anderen Zeiten
+            QVector<int> moved;
+            for (int t : times) moved << t + delta;
+            delta += keySnapDelta(*c, moved, times);
+        }
         // alle ausgewählten Rauten bleiben im Clip
         const int lo = *std::min_element(times.begin(), times.end());
         const int hi = *std::max_element(times.begin(), times.end());
@@ -2107,6 +2137,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if (m_drag == Drag::TransitionLength || m_drag == Drag::Fade) m_editor->project()->closeMerge();
     const bool trimEdit = m_drag == Drag::TrimEdit;
     const bool ramp = m_drag == Drag::SpeedPoint;
+    if (m_drag == Drag::CurvePoint || m_drag == Drag::CurveHandle) curveRelease();
     m_drag = Drag::None; // vor trimClip, damit die Vorschau nicht doppelt angewendet wird
     if (ramp && m_rampDelta != 0) m_editor->moveSpeedPoint(m_rampDrag.clipId, m_rampDrag.point, m_rampDelta);
     m_rampDelta = 0;
@@ -2149,6 +2180,7 @@ void TimelineView::mouseDoubleClickEvent(QMouseEvent* e)
         else if (const int id = cueAt(pos)) emit subtitleEditRequested(id);
         return;
     }
+    if (e->button() == Qt::LeftButton && pos.x() >= kHeaderW && curveDoubleClick(pos)) return;
     // Doppelklick auf den Spurnamen: umbenennen (wie DaVinci)
     if (e->button() == Qt::LeftButton && pos.x() < kHeaderW && pos.y() >= kRulerH) {
         if (const auto row = rowAt(pos.y()); row && nameRect(*row).adjusted(-32, 0, 0, 0).contains(pos)) {

@@ -3,6 +3,7 @@
 #include "core/Types.h"
 #include "ui/timeline/ViewState.h"
 
+#include <QHash>
 #include <QSet>
 #include <optional>
 #include <QWidget>
@@ -58,6 +59,9 @@ public:
     // Retime-Steuerung wie DaVinci (Retime Controls): Leiste oben im Clip mit Tempo je Abschnitt und Speed-Punkten
     void setRetimeControls(const QVector<int>& ids, bool on);
     bool retimeControlsShown(int clipId) const { return m_retimeClips.contains(clipId); }
+    // Kurven-Editor unter dem Clip (nur Clips mit Keyframes); param = gezeigter Parameter (Count = erster animierter)
+    void setCurveEditor(const QVector<int>& ids, bool on, AnimParam param = AnimParam::Count);
+    bool curveEditorShown(int clipId) const;
 
 public slots:
     void setPlayhead(int frame);
@@ -102,10 +106,12 @@ private:
         TrackRef ref;
         int y; // Widget-Koordinate (Scroll bereits eingerechnet)
         int h;
-        int lane = 0; // Höhe der aufgeklappten Keyframe-Spur unten in der Zeile (0 = keine)
+        int lane = 0;    // Höhe unten in der Zeile für Keyframe-Spur + Kurven-Editor (0 = nichts aufgeklappt)
+        int keyLane = 0; // davon die Keyframe-Spur (oben), der Rest ist der Kurven-Editor
+        int curve = 0;
     };
     enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe,
-                      CueMaybeMove, CueMove, CueTrim, SpeedPoint };
+                      CueMaybeMove, CueMove, CueTrim, SpeedPoint, CurvePoint, CurveHandle };
     // Retime-Leiste: Speed-Punkt (point >= 0) oder Abschnitt (segment >= 0) unter der Maus
     struct RetimeHit {
         int clipId = 0;
@@ -179,6 +185,41 @@ private:
     std::optional<KeyHit> keyframeAt(const QPoint& pos) const;
     bool inLane(const QPoint& pos) const; // Maus in einer aufgeklappten Keyframe-Spur
     void drawKeyLane(QPainter& p, const Row& row, const Clip& c);
+    int keyLaneTop(const Row& row) const { return row.y + row.h - row.lane - 2; }
+
+    // Kurven-Editor wie DaVinci (Kurven-Symbol links neben der Raute): Bereich unter dem Clip mit der Kurve
+    // eines Parameters; Punkte ziehen (Zeit + Wert, Shift = eine Achse), Bezier-Griffe (Alt = getrennt),
+    // Doppelklick = Keyframe, Rechtsklick = Verlauf/Löschen. Umsetzung in TimelineCurves.cpp.
+    struct CurveHit {
+        int clipId = 0;
+        AnimParam param = AnimParam::Count;
+        int index = -1; // Keyframe im KeyTrack
+        int part = 0;   // 0 = Punkt, -1 = Griff ein, 1 = Griff aus, 2 = Parameter-Auswahl
+    };
+    struct CurveRange {
+        double lo = 0, hi = 1;
+    };
+    std::optional<AnimParam> curveParam(const Clip& c) const; // gezeigter Parameter (nullopt = zu)
+    QRect curveIconRect(const QRect& clip) const;
+    int curveIconAt(const QPoint& pos) const;
+    QRect curveRect(const Row& row, const Clip& c) const;
+    QRect curvePlotRect(const QRect& curve) const;
+    QRect curveChipRect(const QRect& curve, const Clip& c) const;
+    CurveRange curveRange(const Clip& c, AnimParam p) const;
+    double curveY(const QRect& plot, const CurveRange& r, double v) const;
+    double curveValue(const QRect& plot, const CurveRange& r, double y) const;
+    std::optional<CurveHit> curveHitAt(const QPoint& pos) const;
+    bool inCurve(const QPoint& pos, int* clipId = nullptr) const;
+    void drawCurveLane(QPainter& p, const Row& row, const Clip& c);
+    void drawCurveIcon(QPainter& p, const QRect& clip, bool open);
+    bool curvePress(QMouseEvent* e, const QPoint& pos);   // true = erledigt
+    void curveMove(const QPoint& pos, Qt::KeyboardModifiers mods);
+    void curveRelease();
+    bool curveContextMenu(const QPoint& pos, const QPoint& globalPos);
+    bool curveDoubleClick(const QPoint& pos);
+    void curveParamMenu(int clipId, const QPoint& globalPos);
+    // Einrasten für Keyframes (Clip-Frames): Playhead, Clipgrenzen, andere Keyframes; Korrektur oder 0
+    int keySnapDelta(const Clip& c, const QVector<int>& times, const QSet<int>& exclude) const;
     // Audioclip, dessen Lautstärkelinie unter der Maus liegt (0 = keiner)
     int volumeLineAt(const QPoint& pos) const;
     void updateHoverCursor(const QPoint& pos);
@@ -262,6 +303,16 @@ private:
     QSet<int> m_keyLanes;
     int m_keyDragClip = 0;
     int m_keyDelta = 0;
+
+    // Kurven-Editor: aufgeklappte Clips mit gewähltem Parameter; Ziehen (Stand beim Drücken, Bereich eingefroren)
+    QHash<int, AnimParam> m_curves;
+    CurveHit m_curveDrag;
+    KeyTrack m_curveOrig;
+    QSet<int> m_curveOrigTimes;
+    CurveRange m_curveFrozen;
+    bool m_curveFreeze = false;
+    int m_curveDragDt = 0;     // aktueller Versatz (Frames) für die Anzeige
+    double m_curveDragDv = 0;
 
     // Fade-Griff ziehen
     int m_hoverClip = 0; // Clip unter der Maus (zeigt die Fade-Griffe)

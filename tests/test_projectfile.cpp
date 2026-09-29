@@ -131,6 +131,10 @@ ProjectData fullProject(const QString& dir)
     Keys::setKey(v1, AnimParam::FxTemp, 120, 80);
     Keys::setEase(v1, {40}, KeyEase::EaseInOut);
     Keys::setEase(v1, {90}, KeyEase::EaseOut);
+    Keys::setKey(v1, AnimParam::ZoomX, 5, 1.0);
+    Keys::setKey(v1, AnimParam::ZoomX, 60, 2.5);
+    Keys::setEase(v1, {5}, KeyEase::Bezier, {AnimParam::ZoomX});
+    Keys::setHandle(v1.keys[AnimParam::ZoomX], 0, true, 12.25, 0.875, true); // Bezier-Griffe
     Clip v2 = mk(2, b, 200, 50, 149, 2);
     v2.transIn = 25;
     v2.transInStyle = v1.transOutStyle;

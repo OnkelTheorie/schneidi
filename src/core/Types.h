@@ -172,13 +172,20 @@ enum class AnimParam {
     Count
 };
 // Verlauf an einem Keyframe (Rechtsklick auf die Raute wie in DaVinci):
-// Ease In = langsam ankommen, Ease Out = langsam losfahren
-enum class KeyEase { Linear, EaseIn, EaseOut, EaseInOut };
+// Ease In = langsam ankommen, Ease Out = langsam losfahren, Bezier = frei mit Griffen (Kurven-Editor)
+enum class KeyEase { Linear, EaseIn, EaseOut, EaseInOut, Bezier };
 struct Keyframe {
     int frame = 0;      // Quell-Frame (wie Clip::in) -> Trimmen am Anfang lässt die Keyframes an der Quelle stehen
     double value = 0;
     KeyEase ease = KeyEase::Linear;
-    bool operator==(const Keyframe& o) const { return frame == o.frame && value == o.value && ease == o.ease; }
+    // Nur bei Bezier: Griffe relativ zum Keyframe (Frames, Wert); ein: dt <= 0, aus: dt >= 0.
+    // Beim Rechnen auf den Nachbarabschnitt gekürzt (Steigung bleibt), siehe core/Keyframes.cpp.
+    double inDt = 0, inDv = 0, outDt = 0, outDv = 0;
+    bool operator==(const Keyframe& o) const
+    {
+        return frame == o.frame && value == o.value && ease == o.ease && inDt == o.inDt && inDv == o.inDv &&
+               outDt == o.outDt && outDv == o.outDv;
+    }
 };
 using KeyTrack = QVector<Keyframe>; // nach frame sortiert, jeder Frame höchstens einmal
 

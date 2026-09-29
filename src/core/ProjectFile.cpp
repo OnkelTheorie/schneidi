@@ -128,8 +128,9 @@ TransitionStyle transitionStyleFromJson(const QJsonObject& o)
     return s;
 }
 
-// Keyframes: {"zoomX": [[Quell-Frame, Wert], [Frame, Wert, "easeIn"], …], …}; Verlauf nur, wenn nicht linear
-const char* const kEaseIds[] = {"linear", "easeIn", "easeOut", "easeInOut"}; // Index = KeyEase
+// Keyframes: {"zoomX": [[Quell-Frame, Wert], [Frame, Wert, "easeIn"], …], …}; Verlauf nur, wenn nicht linear.
+// Bezier: [Frame, Wert, "bezier", ein dt, ein dv, aus dt, aus dv] (ältere Versionen lesen das als linear)
+const char* const kEaseIds[] = {"linear", "easeIn", "easeOut", "easeInOut", "bezier"}; // Index = KeyEase
 
 QJsonObject keysToJson(const Clip& c)
 {
@@ -140,6 +141,7 @@ QJsonObject keysToJson(const Clip& c)
         for (const Keyframe& k : *it) {
             QJsonArray e{k.frame, k.value};
             if (k.ease != KeyEase::Linear) e << kEaseIds[int(k.ease)];
+            if (k.ease == KeyEase::Bezier) e << k.inDt << k.inDv << k.outDt << k.outDv;
             list << e;
         }
         o[Keys::info(it.key()).id] = list;
@@ -158,8 +160,14 @@ void keysFromJson(Clip& c, const QJsonObject& o)
             if (e.size() < 2) continue;
             Keyframe k{e.at(0).toInt(), e.at(1).toDouble(), KeyEase::Linear};
             const QString ease = e.at(2).toString();
-            for (int i = 0; i < 4; ++i)
+            for (int i = 0; i < 5; ++i)
                 if (ease == QLatin1String(kEaseIds[i])) k.ease = KeyEase(i);
+            if (k.ease == KeyEase::Bezier) {
+                k.inDt = std::min(0.0, e.at(3).toDouble());
+                k.inDv = e.at(4).toDouble();
+                k.outDt = std::max(0.0, e.at(5).toDouble());
+                k.outDv = e.at(6).toDouble();
+            }
             track << k;
         }
         std::sort(track.begin(), track.end(), [](const Keyframe& a, const Keyframe& b) { return a.frame < b.frame; });
