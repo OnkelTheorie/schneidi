@@ -1076,7 +1076,7 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
     const int last = int((std::min(body.right(), width()) - clipX) / tileW);
     for (int i = first; i <= last; ++i) {
         const int src = still ? 0 : std::min(c.out, c.in + int(i * framesPerTile));
-        QImage img = m_cache->thumbnail(c.mediaPath, src / step * step);
+        QImage img = m_cache->thumbnail(c.mediaPath, src / step * step, step);
         // Noch nicht fertig -> übergangsweise ein Bild aus einer gröberen Stufe
         for (int s = step * 2; img.isNull() && s <= step * 64; s *= 2)
             img = m_cache->cachedThumbnail(c.mediaPath, src / s * s);
