@@ -8,9 +8,10 @@ class Project;
 class QHBoxLayout;
 class QTimer;
 class ChannelStrip;
+class LoudnessStrip;
 
 // Mixer wie in DaVincis Edit-Page (abgespeckt): pro Audiospur ein Kanalzug mit Pegel,
-// Fader, Pan, Mute/Solo, rechts der Master. Fader ziehen = ein Undo-Schritt.
+// Fader, Pan, Mute/Solo, rechts der Master und ein Loudness-Meter (LUFS). Fader ziehen = ein Undo-Schritt.
 class Mixer : public QWidget {
     Q_OBJECT
 public:
@@ -27,6 +28,7 @@ private:
     QHBoxLayout* m_stripLayout = nullptr;
     QVector<ChannelStrip*> m_strips;
     ChannelStrip* m_master = nullptr;
+    LoudnessStrip* m_loudness = nullptr; // Loudness-Meter rechts neben dem Master
     QTimer* m_timer = nullptr;
     QElapsedTimer m_clock, m_lastLevels;
 };

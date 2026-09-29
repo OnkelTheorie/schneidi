@@ -3,6 +3,7 @@
 // (Spuren, Clips, Effekte, Marker) – die Medien selbst werden nie verändert (wie DaVinci).
 
 #include "core/ProjectFormat.h"
+#include "core/RenderJob.h"
 #include "core/Types.h"
 
 #include <QJsonObject>
@@ -16,6 +17,7 @@ struct ProjectData {
     Timeline timeline;
     int lastClipId = 0;
     int lastLinkId = 0;
+    QVector<RenderJob> renderQueue; // Deliver: Render-Warteschlange (optional)
 };
 
 namespace ProjectFile {

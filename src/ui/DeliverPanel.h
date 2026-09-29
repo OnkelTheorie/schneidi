@@ -1,41 +1,71 @@
 #pragma once
+#include "core/RenderJob.h"
+
 #include <QSize>
 #include <QWidget>
 
 class Project;
-class Exporter;
+class RenderQueue;
+class RenderQueuePanel;
 class QComboBox;
 class QLineEdit;
-class QProgressBar;
 class QPushButton;
 class QLabel;
+class QToolButton;
 
-// Render-Einstellungen links auf der Deliver-Seite (wie in DaVinci).
+// Deliver-Seite wie DaVinci: links die Render-Einstellungen mit Vorlagen (eingebaut + eigene) und
+// „Zur Render-Warteschlange hinzufügen“, rechts die Warteschlange (queuePanel(), vom Hauptfenster platziert).
 class DeliverPanel : public QWidget {
     Q_OBJECT
 public:
     DeliverPanel(Project* project, QWidget* parent = nullptr);
 
+    RenderQueuePanel* queuePanel() const { return m_queuePanel; }
+    RenderQueue* renderQueue() const { return m_queue; }
+
+    // Aktuelle Einstellungen (Auflösung als Timeline / kürzere Kante / feste Größe, je nach Wahl)
+    RenderSettings settings() const;
+    void setSettings(const RenderSettings& s);
+    // Auftrag aus den aktuellen Einstellungen (Pfad, Größe, Bereich); ohne Rückfrage
+    RenderJob makeJob() const;
+    // Mit Rückfrage bei vorhandener Datei / gleichem Ziel in der Warteschlange; false = nicht hinzugefügt
+    bool addToQueue(bool confirm = true);
+
+    // Vorlagen (Index in presets(), -1 = eigene Einstellungen): auswählen, eigene speichern/löschen
+    int currentPreset() const;
+    void selectPreset(int index);
+    bool savePreset(const QString& name); // gleicher Name = überschreiben; eingebaute nicht
+    bool deletePreset(int index);         // nur eigene
+    const QVector<RenderPreset>& presets() const { return m_presets; }
+
 private:
+    void applyPreset(int comboIndex);
     void updateRange();
     void updateFormat(); // Auflösungen passend zu den Projekteinstellungen
-    void applyPreset(int index);
-    void startRender();
+    void updateControls(); // Felder je nach Format (nur Audio, Qualität)
+    void reloadPresets(const QString& select = {});
+    void syncPresetToSettings(); // Einstellung geändert -> passende Vorlage oder „Eigene Einstellungen“
+    void presetMenu();
     void browse();
+    int selectSize(QSize s); // Auflösung wählen (ggf. hinzufügen)
 
     Project* m_project;
-    Exporter* m_exporter;
+    RenderQueue* m_queue;
+    RenderQueuePanel* m_queuePanel;
+    QVector<RenderPreset> m_presets; // eingebaute + eigene; Combo-Index = Listenindex + 1
     QComboBox* m_preset;
+    QToolButton* m_presetMenu;
     QLineEdit* m_name;
     QLineEdit* m_folder;
-    QComboBox* m_codec;
+    QComboBox* m_format;
     QComboBox* m_resolution; // Daten: QSize
     QLabel* m_rate;
     QSize m_timelineSize; // zuletzt bekannte Timeline-Auflösung
     QComboBox* m_quality;
+    QComboBox* m_audioBitrate;
     QComboBox* m_range; // ganze Timeline / In-Out-Bereich
     bool m_hadRange = false;
-    QPushButton* m_renderBtn;
-    QProgressBar* m_progress;
+    bool m_applying = false;
+    QPushButton* m_addBtn;
     QLabel* m_status;
 };

@@ -25,6 +25,8 @@ add_executable(schneidi
     src/core/Selection.h
     src/core/Editor.h             src/core/Editor.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
+    src/core/Loudness.h           src/core/Loudness.cpp
+    src/core/RenderJob.h          src/core/RenderJob.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Profiles.h         src/engine/Profiles.cpp
@@ -35,6 +37,7 @@ add_executable(schneidi
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
+    src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
@@ -54,6 +57,7 @@ add_executable(schneidi
     src/ui/Mixer.h                src/ui/Mixer.cpp
     src/ui/ScrubField.h           src/ui/ScrubField.cpp
     src/ui/DeliverPanel.h         src/ui/DeliverPanel.cpp
+    src/ui/RenderQueuePanel.h     src/ui/RenderQueuePanel.cpp
     src/ui/timeline/ViewState.h
     src/ui/timeline/TimelineView.h    src/ui/timeline/TimelineView.cpp
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp

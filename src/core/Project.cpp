@@ -89,6 +89,7 @@ ProjectData Project::data() const
     d.media = m_media;
     d.bins = m_bins;
     d.timeline = m_timeline;
+    d.renderQueue = m_renderQueue;
     d.lastClipId = m_lastClipId;
     d.lastLinkId = m_lastLinkId;
     return d;
@@ -108,11 +109,13 @@ void Project::load(const ProjectData& d)
     if (m_timeline.audio.isEmpty()) m_timeline.audio << makeTrack(TrackKind::Audio);
     m_lastClipId = d.lastClipId;
     m_lastLinkId = d.lastLinkId;
+    m_renderQueue = d.renderQueue;
     markSaved();
     emit formatChanged();
     emit mediaChanged();
     emit poolChanged();
     emit timelineChanged();
+    emit renderQueueChanged();
 }
 
 void Project::reset()
@@ -204,6 +207,14 @@ void Project::replaceMedia(const QVector<MediaInfo>& media)
 {
     m_media = media;
     emit mediaChanged();
+}
+
+void Project::setRenderQueue(const QVector<RenderJob>& jobs)
+{
+    if (jobs == m_renderQueue) return;
+    m_renderQueue = jobs;
+    emit renderQueueChanged();
+    markModified();
 }
 
 void Project::markModified()

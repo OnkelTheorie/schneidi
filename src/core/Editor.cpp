@@ -272,7 +272,8 @@ void Editor::setClipVolume(int clipId, double db)
     });
 }
 
-void Editor::normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative)
+void Editor::normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative,
+                            std::optional<double> relativeRef)
 {
     const Timeline& cur = m_project->timeline();
     QHash<int, double> gain; // neue Clip-Lautstärke (dB)
@@ -286,8 +287,9 @@ void Editor::normalizeAudio(const QHash<int, double>& peakDb, double targetDb, b
         loudest = std::max(loudest, it.value());
     }
     if (gain.isEmpty()) return;
+    if (relative && relativeRef && *relativeRef <= -100.0) return; // gemeinsam gemessen: Stille
     if (relative)
-        for (double& g : gain) g = targetDb - loudest;
+        for (double& g : gain) g = targetDb - (relativeRef ? *relativeRef : loudest);
     for (double& g : gain) g = std::clamp(g, kMinVolumeDb, kMaxVolumeDb);
     m_project->edit(T("Audiopegel normalisieren"), [&](Timeline& tl) {
         for (auto it = gain.begin(); it != gain.end(); ++it) {

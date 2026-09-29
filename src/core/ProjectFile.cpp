@@ -346,7 +346,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
     QJsonArray bins;
     for (const MediaBin& b : data.bins) bins << QJsonObject{{"id", b.id}, {"parent", b.parent}, {"name", b.name}};
 
-    const QJsonObject root{
+    QJsonObject root{
         {"app", "schneidi"},       {"version", kFormatVersion},
         {"fps", data.format.rate.timebase()}, // für ältere Versionen
         {"format", QJsonObject{{"width", data.format.width}, {"height", data.format.height},
@@ -359,6 +359,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                                  {"masterLimiter", data.timeline.masterLimiter},
                                  {"masterLimiterDb", data.timeline.masterLimiterDb}}},
     };
+    if (!data.renderQueue.isEmpty()) root["renderQueue"] = RenderQueueJson::toJson(data.renderQueue);
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
 
@@ -450,6 +451,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     std::sort(d.timeline.markers.begin(), d.timeline.markers.end());
     d.timeline.markIn = tl.value("markIn").toInt(-1);
     d.timeline.markOut = tl.value("markOut").toInt(-1);
+    d.renderQueue = RenderQueueJson::fromJson(root.value("renderQueue").toArray());
 
     *data = d;
     return true;

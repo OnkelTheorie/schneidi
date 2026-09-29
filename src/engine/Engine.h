@@ -24,6 +24,14 @@ class ProducerFactory;
 class ProxyManager;
 class RenderCache;
 struct MixerHooks;
+struct SharedLoudness;
+
+// Loudness-Meter (ITU-R BS.1770) der Vorschau: gemessen am Master, nur bei Wiedergabe mit normaler Geschwindigkeit
+struct LoudnessReading {
+    double momentary = -200, shortTerm = -200, integrated = -200; // LUFS (-200 = noch nichts)
+    double range = 0;   // LU
+    double seconds = 0; // gemessene Dauer
+};
 
 class Engine : public QObject {
     Q_OBJECT
@@ -76,6 +84,8 @@ public:
     // Vorher/Nachher (Color-Seite, wie DaVinci „Bypass Color Grades“): Vorschau ohne Farbkorrektur; Export unberührt
     void setColorBypass(bool on);
     bool colorBypass() const { return m_gradeBypass->load(); }
+    LoudnessReading loudness() const;
+    void resetLoudness(); // Integrated/LRA neu beginnen (wie der Reset-Knopf in DaVinci)
 
 signals:
     void frameReady(const QImage& image);
@@ -105,6 +115,7 @@ private:
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Tractor> m_timeline;
     std::unique_ptr<MixerHooks> m_mixer;
+    std::unique_ptr<SharedLoudness> m_loudness; // vom Master-Pegelmesser im Audio-Thread gefüttert
     std::mutex m_mixerMutex; // m_mixer wird im Consumer-Thread gelesen
     bool m_mixerOnlyNext = false;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass = std::make_shared<std::atomic<bool>>(false);

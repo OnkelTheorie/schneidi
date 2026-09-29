@@ -1,4 +1,5 @@
 #include "engine/TimelineBuilder.h"
+#include "core/Loudness.h"
 
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
@@ -350,6 +351,22 @@ int meterGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int*
     for (int c = 0; c < ch; ++c)
         for (int i = 0; i < n; ++i) peak[c] = std::max(peak[c], sample(c, i));
     mlt_properties props = MLT_FILTER_PROPERTIES(filter);
+    // Master in der Vorschau: Lautheit (Loudness-Meter im Mixer) mitmessen
+    if (auto* live = static_cast<SharedLoudness*>(mlt_properties_get_data(props, "_loudness", nullptr));
+        live && live->active) {
+        auto signedSample = [&](int c, int i) -> float {
+            switch (*format) {
+            case mlt_audio_s16: return static_cast<const int16_t*>(*buffer)[i * *channels + c] / 32768.f;
+            case mlt_audio_s32le: return static_cast<const int32_t*>(*buffer)[i * *channels + c] / 2147483648.f;
+            case mlt_audio_s32: return static_cast<const int32_t*>(*buffer)[c * n + i] / 2147483648.f;
+            case mlt_audio_f32le: return static_cast<const float*>(*buffer)[i * *channels + c];
+            case mlt_audio_float: return static_cast<const float*>(*buffer)[c * n + i];
+            default: return 0.f;
+            }
+        };
+        std::lock_guard<std::mutex> lock(live->mutex);
+        live->meter.add(n, *channels, *frequency, signedSample);
+    }
     for (int c = 0; c < ch; ++c) {
         char name[32];
         std::snprintf(name, sizeof name, "_audio_level.%d", c);

@@ -4,6 +4,7 @@
 #include "app/KeyBindingsDialog.h"
 #include "app/ClipSpeedDialog.h"
 #include "app/NormalizeDialog.h"
+#include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -18,6 +19,7 @@
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
 #include "ui/DeliverPanel.h"
+#include "ui/RenderQueuePanel.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
@@ -401,25 +403,38 @@ void MainWindow::normalizeAudioDialog()
     }
     NormalizeDialog dlg(int(ids.size()), this);
     if (dlg.exec() != QDialog::Accepted) return;
-    // Spitzenpegel messen (dekodiert den Ton der Clips; Originale, nie Proxies)
-    QProgressDialog progress(T("Audiopegel werden gemessen…"), T("Abbrechen"), 0, 1000, this);
+    // Spitzenpegel bzw. Lautheit messen (dekodiert den Ton der Clips; Originale, nie Proxies)
+    const bool loudness = dlg.mode() == NormalizeDialog::Mode::Loudness;
+    QProgressDialog progress(loudness ? T("Lautheit wird gemessen…") : T("Audiopegel werden gemessen…"), T("Abbrechen"),
+                             0, 1000, this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(300);
-    QHash<int, double> peaks;
+    QHash<int, double> levels;
+    std::vector<double> blocks; // Lautheit: 400-ms-Blöcke aller Clips -> gemeinsame Lautheit für "Relativ"
     const Timeline tl = m_project->timeline(); // Kopie: Zeiger bleiben gültig
     for (int i = 0; i < ids.size(); ++i) {
         const Clip* c = TimelineOps::findClip(tl, ids[i]);
         if (!c) continue;
-        const auto peak = AudioAnalysis::clipPeakDb(m_project->format(), *c, [&](double f) {
+        const auto step = [&](double f) {
             progress.setValue(int((i + f) / ids.size() * 1000));
             QApplication::processEvents();
             return !progress.wasCanceled();
-        });
+        };
+        if (loudness) {
+            const auto l = AudioAnalysis::clipLoudness(m_project->format(), *c, step);
+            if (l) {
+                levels[c->id] = l->integrated;
+                blocks.insert(blocks.end(), l->blocks.begin(), l->blocks.end());
+            }
+        } else if (const auto peak = AudioAnalysis::clipPeakDb(m_project->format(), *c, step)) {
+            levels[c->id] = *peak;
+        }
         if (progress.wasCanceled()) return;
-        if (peak) peaks[c->id] = *peak;
     }
     progress.setValue(1000);
-    m_editor->normalizeAudio(peaks, dlg.targetDb(), dlg.relative());
+    std::optional<double> ref;
+    if (loudness) ref = LoudnessMeter::integratedOf(blocks);
+    m_editor->normalizeAudio(levels, dlg.targetDb(), dlg.relative(), ref);
 }
 
 void MainWindow::onFormatChanged()
@@ -478,6 +493,7 @@ void MainWindow::buildLayout()
     m_deliverRight = new QSplitter(Qt::Vertical);
     m_deliverPage->addWidget(m_deliver);
     m_deliverPage->addWidget(m_deliverRight);
+    m_deliverPage->addWidget(m_deliver->queuePanel()); // Render-Warteschlange rechts wie in DaVinci
 
     m_pages = new QStackedWidget;
     m_pages->addWidget(m_mediaPage);
@@ -625,7 +641,7 @@ void MainWindow::showPage(Page page)
         m_deliverRight->insertWidget(1, m_timeline);
         m_deliverRight->setSizes({480, 380});
         m_deliverPage->setStretchFactor(1, 1);
-        m_deliverPage->setSizes({340, 1260});
+        m_deliverPage->setSizes({340, 940, 320});
         m_pages->setCurrentWidget(m_deliverPage);
         break;
     case Page::Color:

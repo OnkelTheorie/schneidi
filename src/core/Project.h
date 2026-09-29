@@ -77,6 +77,10 @@ public:
     PoolState poolState() const;
     void applyPool(const PoolState& state); // nur für Undo
 
+    // Deliver: Render-Warteschlange. Kein Undo (wie DaVinci), gilt aber als Änderung (im Projekt gespeichert).
+    const QVector<RenderJob>& renderQueue() const { return m_renderQueue; }
+    void setRenderQueue(const QVector<RenderJob>& jobs);
+
     // Speichern/Laden (.schneidi). load() leert den Undo-Verlauf wie ein frisch geöffnetes Projekt.
     ProjectData data() const;
     void load(const ProjectData& d);
@@ -95,12 +99,14 @@ signals:
     void poolChanged(); // Bins/Clipfarben/Flags geändert (Medienliste gleich)
     void mediaMarksChanged(const QString& path); // Quell-In/Out geändert (ohne mediaChanged)
     void modifiedChanged(bool modified);
+    void renderQueueChanged();
 
 private:
     ProjectFormat m_format;
     Timeline m_timeline;
     QVector<MediaInfo> m_media;
     QVector<MediaBin> m_bins;
+    QVector<RenderJob> m_renderQueue;
     int m_lastBinId = 0;
     QUndoStack m_undo;
     int m_lastClipId = 0;
