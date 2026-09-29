@@ -83,6 +83,7 @@ private:
     bool createConsumer(QString* error);
     void connectProducer(Mlt::Producer* producer, int position);
     void refresh();
+    void applyAudioState();
     void onFrameShown(void* mltFrame);
     void emitLevels();
 

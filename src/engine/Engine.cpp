@@ -84,9 +84,7 @@ bool Engine::createConsumer(QString* error)
     }
     m_consumer->set("terminate_on_pause", 0);
     m_consumer->set("real_time", 1);
-    // Ton bei Speed != 1 nur während echtem Scrubben/Spulen (setSpeed); im Stand schickte jeder
-    // Einzelbild-Refresh (Seek, Inspector) sonst ein Audio-Häppchen raus → Knacken
-    m_consumer->set("scrub_audio", 0);
+    applyAudioState(); // im Stand kein Audiogerät (siehe dort)
     // Kleiner Vorlauf-Puffer: sonst läuft der Ton nach Pause/Seek noch ~1 s weiter
     m_consumer->set("buffer", 2);
     m_consumer->set("prefill", 1);
@@ -250,7 +248,7 @@ void Engine::connectProducer(Mlt::Producer* producer, int position)
     m_consumer->stop();
     m_current = producer;
     m_current->set_speed(m_speed);
-    m_consumer->set("scrub_audio", m_speed != 0.0 ? 1 : 0);
+    applyAudioState();
     m_current->seek(position);
     m_position = position;
     m_consumer->connect(*m_current);
@@ -258,6 +256,17 @@ void Engine::connectProducer(Mlt::Producer* producer, int position)
     refresh();
     emit positionChanged(position);
     emit speedChanged(m_speed);
+}
+
+// Ton nur bei laufender Wiedergabe/Spulen. sdl2_audio schließt das Audiogerät bei jedem stop() und öffnet es
+// beim ersten Frame nach start() neu – das knackt. Timeline-Umbauten (Inspector) starten den Consumer neu, darum
+// im Stand audio_off: dann wird gar kein Gerät geöffnet. scrub_audio im Stand aus, sonst schickt jeder Refresh
+// ein Audio-Häppchen raus.
+void Engine::applyAudioState()
+{
+    const bool playing = m_speed != 0.0;
+    m_consumer->set("audio_off", playing ? 0 : 1);
+    m_consumer->set("scrub_audio", playing ? 1 : 0);
 }
 
 void Engine::refresh()
@@ -272,13 +281,21 @@ void Engine::togglePlay() { setSpeed(m_speed == 0.0 ? 1.0 : 0.0); }
 void Engine::setSpeed(double speed)
 {
     if (!m_current) return;
+    const bool wasPlaying = m_speed != 0.0;
     m_speed = speed;
-    m_consumer->set("scrub_audio", speed != 0.0 ? 1 : 0); // im Stand stumm (kein Knacken bei Refresh)
     m_current->set_speed(speed);
     if (speed == 0.0) {
         m_current->seek(m_position); // exakt auf dem angezeigten Frame stehen bleiben
         m_consumer->purge();         // gepufferten Ton sofort verwerfen
+        if (wasPlaying) {
+            // Audiogerät gleich beim Anhalten schließen (Neustart ohne Ton) statt erst beim nächsten
+            // Timeline-Umbau im Stand – das Schließen knackt, beim Anhalten fällt es nicht auf
+            m_consumer->stop();
+            applyAudioState();
+            m_consumer->start();
+        }
     }
+    applyAudioState();
     refresh();
     emit speedChanged(speed);
 }
