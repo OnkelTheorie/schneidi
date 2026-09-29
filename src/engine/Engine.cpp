@@ -1,6 +1,7 @@
 #include "engine/Engine.h"
 
 #include "core/I18n.h"
+#include "engine/Bundle.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "engine/TimelineBuilder.h"
@@ -42,15 +43,10 @@ Engine::~Engine()
 
 bool Engine::init(QString* error)
 {
-#ifdef Q_OS_WIN
-    // Unter Windows liegen die MLT-Plugins neben der .exe (portable Installation)
-    const QString appDir = QCoreApplication::applicationDirPath();
-    qputenv("MLT_DATA", QDir(appDir).filePath("share/mlt-7").toUtf8());
-    qputenv("MLT_PROFILES_PATH", QDir(appDir).filePath("share/mlt-7/profiles").toUtf8());
-    if (!Mlt::Factory::init(QDir(appDir).filePath("lib/mlt-7").toUtf8().constData())) {
-#else
-    if (!Mlt::Factory::init()) {
-#endif
+    // Mitgelieferte MLT-Module (AppImage/Windows-Programmordner), sonst die des Systems
+    Bundle::prepareMltEnvironment();
+    const QString modules = Bundle::mltModuleDir();
+    if (!(modules.isEmpty() ? Mlt::Factory::init() : Mlt::Factory::init(QDir::toNativeSeparators(modules).toUtf8().constData()))) {
         if (error) *error = T("MLT konnte nicht initialisiert werden.");
         return false;
     }

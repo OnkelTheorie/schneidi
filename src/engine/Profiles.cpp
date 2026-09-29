@@ -1,4 +1,5 @@
 #include "engine/Profiles.h"
+#include "engine/Bundle.h"
 
 #include <Mlt.h>
 #include <QByteArray>
@@ -66,7 +67,7 @@ double parseRate(const QByteArray& s)
 double averageFps(const QString& path)
 {
     QProcess proc;
-    proc.start("ffprobe", {"-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate",
+    proc.start(Bundle::tool("ffprobe"), {"-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate",
                            "-of", "default=noprint_wrappers=1:nokey=1", path});
     if (!proc.waitForFinished(5000)) {
         proc.kill();

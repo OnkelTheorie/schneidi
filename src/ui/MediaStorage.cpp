@@ -1,4 +1,5 @@
 #include "ui/MediaStorage.h"
+#include "engine/Bundle.h"
 
 #include "app/Theme.h"
 #include "core/I18n.h"
@@ -542,7 +543,7 @@ void MediaStorage::nextThumb()
             args << "-i" << path << "-frames:v" << "1" << "-vf"
                  << QString("scale=%1:%2:force_original_aspect_ratio=decrease").arg(kThumb.width()).arg(kThumb.height())
                  << "-f" << "image2pipe" << "-c:v" << "png" << "-";
-            m_ffmpeg->start("ffmpeg", args);
+            m_ffmpeg->start(Bundle::tool("ffmpeg"), args);
         };
         connect(m_ffmpeg, &QProcess::finished, this, [this, path, run] {
             QImage img;

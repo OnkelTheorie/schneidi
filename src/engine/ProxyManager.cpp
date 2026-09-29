@@ -1,4 +1,5 @@
 #include "engine/ProxyManager.h"
+#include "engine/Bundle.h"
 
 #include "core/I18n.h"
 
@@ -267,7 +268,8 @@ void ProxyManager::startNext()
 
 void ProxyManager::launch(const QString& original, const QStringList& args, double durationUs, const QString& error)
 {
-    const QString ffmpeg = QStandardPaths::findExecutable("ffmpeg");
+    QString ffmpeg = Bundle::tool("ffmpeg");
+    if (!QFileInfo(ffmpeg).isAbsolute()) ffmpeg.clear(); // weder mitgeliefert noch im PATH
     if (!error.isEmpty() || ffmpeg.isEmpty()) {
         m_current.clear();
         m_currentPart.clear();

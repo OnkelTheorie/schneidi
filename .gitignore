@@ -3,3 +3,5 @@ build-*/
 *.user
 .cache/
 compile_commands.json
+dist/
+packaging/linux/tools/

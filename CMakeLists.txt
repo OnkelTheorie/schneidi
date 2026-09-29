@@ -45,6 +45,7 @@ add_executable(schneidi
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
+    src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/Mixer.h                src/ui/Mixer.cpp
@@ -62,6 +63,14 @@ target_link_libraries(schneidi PRIVATE Qt6::Widgets PkgConfig::MLT)
 
 if(WIN32)
     set_target_properties(schneidi PROPERTIES WIN32_EXECUTABLE ON)
+endif()
+
+# Installation (Paketierung: AppImage unter Linux, später Programmordner unter Windows, siehe docs/dev-notes.md)
+include(GNUInstallDirs)
+install(TARGETS schneidi RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(UNIX AND NOT APPLE)
+    install(FILES packaging/linux/schneidi.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES assets/schneidi.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 endif()
 
 # Automatische Tests (CTest): cmake -DSCHNEIDI_TESTS=ON, siehe docs/dev-notes.md

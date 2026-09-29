@@ -1,4 +1,5 @@
 #include "engine/MediaCache.h"
+#include "engine/Bundle.h"
 
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
@@ -306,7 +307,7 @@ void MediaCache::stripLoop()
                                .arg(size.width())
                                .arg(size.height());
         QProcess ff;
-        ff.start("ffmpeg", {"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-skip_frame", "nokey", "-i",
+        ff.start(Bundle::tool("ffmpeg"), {"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-skip_frame", "nokey", "-i",
                             decodePath(path), "-map", "0:v:0", "-an", "-sn", "-vf", vf, "-fps_mode", "passthrough",
                             "-f", "rawvideo", "-pix_fmt", "rgba", "-"});
         const qint64 frameBytes = qint64(size.width()) * size.height() * 4;
