@@ -1,6 +1,7 @@
 #include "app/InputBindings.h"
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
+#include "ui/MediaStorage.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
@@ -21,11 +22,13 @@ int main(int argc, char* argv[])
     int screenshotWait = 4000;
     QString langOverride;
     QString formatArg; // Testhilfe: --format 1080x1920@30 (Projekteinstellungen für diesen Lauf)
+    QString storageArg; // Testhilfe: --storage <Ordner>
     for (int i = 1; i + 1 < argc; ++i) {
         if (qstrcmp(argv[i], "--format") == 0) formatArg = QString::fromLocal8Bit(argv[i + 1]);
         if (qstrcmp(argv[i], "--screenshot") == 0) screenshot = QString::fromLocal8Bit(argv[i + 1]);
         if (qstrcmp(argv[i], "--wait") == 0) screenshotWait = QByteArray(argv[i + 1]).toInt();
         if (qstrcmp(argv[i], "--lang") == 0) langOverride = QString::fromLocal8Bit(argv[i + 1]);
+        if (qstrcmp(argv[i], "--storage") == 0) storageArg = QString::fromLocal8Bit(argv[i + 1]);
     }
     if (!screenshot.isEmpty()) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -61,7 +64,7 @@ int main(int argc, char* argv[])
     QStringList files = app.arguments().mid(1);
     const bool demo = files.removeAll("--demo") > 0; // Testhilfe: zusätzlich auf die Timeline legen
     // Testhilfe: --actions select_all,toggle_enabled löst Aktionen (IDs aus keybindings.json) nach dem Start aus
-    for (const char* opt : {"--screenshot", "--wait", "--lang", "--format"})
+    for (const char* opt : {"--screenshot", "--wait", "--lang", "--format", "--storage"})
         if (const int i = files.indexOf(opt); i >= 0) files.remove(i, std::min<qsizetype>(2, files.size() - i));
     QStringList actions;
     if (const int i = files.indexOf("--actions"); i >= 0 && i + 1 < files.size()) {
@@ -87,6 +90,9 @@ int main(int argc, char* argv[])
         if (f.width >= 16 && f.height >= 16) w.setProjectFormat(f);
     }
     if (!files.isEmpty()) w.importFiles(files, demo, formatArg.isEmpty());
+    // Testhilfe: --storage <Ordner> öffnet den Ordner im Media Storage (wird nicht gespeichert)
+    if (!storageArg.isEmpty())
+        if (auto* storage = w.findChild<MediaStorage*>()) storage->setFolder(QFileInfo(storageArg).absoluteFilePath());
     QTimer::singleShot(1500, &w, [actions] {
         for (const QString& id : actions)
             for (const auto& e : InputBindings::instance().entries())

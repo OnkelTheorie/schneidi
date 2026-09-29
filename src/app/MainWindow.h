@@ -13,6 +13,7 @@ class Project;
 class Selection;
 class MediaPool;
 class EffectsLibrary;
+class MediaStorage;
 class Viewer;
 class Inspector;
 class Mixer;
@@ -99,6 +100,7 @@ private:
 
     MediaPool* m_mediaPool = nullptr;
     EffectsLibrary* m_effects = nullptr;
+    MediaStorage* m_storage = nullptr;
     Viewer* m_viewer = nullptr;
     QTimer m_engineTimer; // bündelt Modelländerungen -> Engine
     Inspector* m_inspector = nullptr;
@@ -112,11 +114,13 @@ private:
     QSplitter* m_editMain = nullptr;
     QSplitter* m_editBottom = nullptr; // Timeline | Mixer
     QSplitter* m_mediaPage = nullptr;
+    QSplitter* m_mediaTop = nullptr;
     QSplitter* m_deliverPage = nullptr;
     QSplitter* m_deliverRight = nullptr;
     QButtonGroup* m_pageButtons = nullptr;
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;
+    QToolButton* m_storageToggle = nullptr;
     QToolButton* m_inspectorToggle = nullptr;
     QToolButton* m_mixerToggle = nullptr;
     Page m_page = Page::Edit;

@@ -18,6 +18,7 @@
 #include "engine/ProxyManager.h"
 #include "ui/DeliverPanel.h"
 #include "ui/EffectsLibrary.h"
+#include "ui/MediaStorage.h"
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
@@ -149,6 +150,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (sourceActive()) m_sourcePos[m_engine->sourcePath()] = f;
     });
     updateViewer();
+    connect(m_storage, &MediaStorage::importRequested, m_mediaPool, &MediaPool::importFiles);
     // Effects Library: Doppelklick = wie Strg+T bzw. "Titel einfügen", nur mit der gewählten Art
     connect(m_effects, &EffectsLibrary::transitionRequested, this, [this, tv](TrackKind kind, const TransitionStyle& style) {
         m_editor->addTransitions(tv->playhead(), style, kind);
@@ -412,6 +414,7 @@ void MainWindow::buildLayout()
 {
     m_mediaPool = new MediaPool(m_project, m_engine);
     m_effects = new EffectsLibrary;
+    m_storage = new MediaStorage;
     m_viewer = new Viewer(m_engine);
     m_inspector = new Inspector(m_editor);
     m_inspector->setFrameSize(m_project->format().size());
@@ -430,7 +433,10 @@ void MainWindow::buildLayout()
     m_editBottom->addWidget(m_mixer);
     m_editBottom->setStretchFactor(0, 1);
     m_editMain->addWidget(m_editBottom);
-    m_mediaPage = new QSplitter(Qt::Horizontal);
+    // Media-Seite wie DaVinci: oben Media Storage | Viewer, unten der Media Pool
+    m_mediaPage = new QSplitter(Qt::Vertical);
+    m_mediaTop = new QSplitter(Qt::Horizontal);
+    m_mediaPage->addWidget(m_mediaTop);
     m_deliverPage = new QSplitter(Qt::Horizontal);
     m_deliverRight = new QSplitter(Qt::Vertical);
     m_deliverPage->addWidget(m_deliver);
@@ -474,6 +480,8 @@ QWidget* MainWindow::buildTopBar()
     };
     m_poolToggle = makeToggle("▦ Media Pool", "mediaPool", true, m_mediaPool);
     m_effectsToggle = makeToggle("✦ Effects", "effects", false, m_effects);
+    m_storageToggle = makeToggle("▤ Media Storage", "mediaStorage", false, m_storage);
+    m_storageToggle->setToolTip(T("Ordner durchsuchen und Clips direkt in Media Pool/Timeline ziehen"));
     m_inspectorToggle = makeToggle("☰ Inspector", "inspector", true, m_inspector);
     m_mixerToggle = makeToggle("▥ Mixer", "mixer", false, m_mixer);
 
@@ -486,6 +494,7 @@ QWidget* MainWindow::buildTopBar()
     bar->setStyleSheet("QWidget#TopBar { background: #2a2a30; border-bottom: 1px solid #141417; }");
     auto* lay = new QHBoxLayout(bar);
     lay->setContentsMargins(6, 2, 6, 2);
+    lay->addWidget(m_storageToggle);
     lay->addWidget(m_poolToggle);
     lay->addWidget(m_effectsToggle);
     lay->addStretch(1);
@@ -542,14 +551,19 @@ void MainWindow::showPage(Page page)
     m_page = page;
     switch (page) {
     case Page::Media:
-        m_mediaPage->insertWidget(0, m_mediaPool);
-        m_mediaPage->insertWidget(1, m_viewer);
-        m_mediaPage->setSizes({900, 700});
+        m_mediaTop->insertWidget(0, m_storage);
+        m_mediaTop->insertWidget(1, m_viewer);
+        m_mediaTop->setStretchFactor(1, 1);
+        m_mediaTop->setSizes({700, 900});
+        m_mediaPage->insertWidget(1, m_mediaPool);
+        m_mediaPage->setSizes({520, 380});
+        m_storage->setVisible(true);
         m_mediaPool->setVisible(true);
         m_pages->setCurrentWidget(m_mediaPage);
         break;
     case Page::Edit:
-        m_editLeft->insertWidget(0, m_mediaPool);
+        m_editLeft->insertWidget(0, m_storage);
+        m_editLeft->insertWidget(1, m_mediaPool);
         m_editTop->insertWidget(0, m_editLeft);
         m_editTop->insertWidget(1, m_viewer);
         m_editTop->insertWidget(2, m_inspector);
@@ -560,6 +574,7 @@ void MainWindow::showPage(Page page)
         m_editTop->setSizes({360, 880, 360});
         m_editMain->setSizes({480, 420});
         m_mediaPool->setVisible(m_poolToggle->isChecked());
+        m_storage->setVisible(m_storageToggle->isChecked());
         updateLeftColumn();
         m_pages->setCurrentWidget(m_editMain);
         break;
@@ -576,13 +591,15 @@ void MainWindow::showPage(Page page)
     const bool edit = page == Page::Edit;
     m_poolToggle->setEnabled(edit);
     m_effectsToggle->setEnabled(edit);
+    m_storageToggle->setEnabled(edit);
     m_inspectorToggle->setEnabled(edit);
     m_mixerToggle->setEnabled(edit);
 }
 
 void MainWindow::updateLeftColumn()
 {
-    if (m_page == Page::Edit) m_editLeft->setVisible(m_poolToggle->isChecked() || m_effectsToggle->isChecked());
+    if (m_page == Page::Edit) m_editLeft->setVisible(m_poolToggle->isChecked() || m_effectsToggle->isChecked()
+                                                  || m_storageToggle->isChecked());
 }
 
 QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
@@ -805,6 +822,8 @@ void MainWindow::buildActions()
     makeAction(workspace, "page_deliver", T("Deliver-Seite"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
     makeAction(workspace, "toggle_effects", T("Effects Library ein/aus"), QKeySequence(),
                [this] { if (m_effectsToggle->isEnabled()) m_effectsToggle->toggle(); });
+    makeAction(workspace, "toggle_media_storage", T("Media Storage ein/aus"), QKeySequence(),
+               [this] { if (m_storageToggle->isEnabled()) m_storageToggle->toggle(); });
     makeAction(workspace, "toggle_mixer", T("Mixer ein/aus"), QKeySequence(),
                [this] { if (m_mixerToggle->isEnabled()) m_mixerToggle->toggle(); });
     workspace->addSeparator();
@@ -979,6 +998,7 @@ void MainWindow::disableAutosave()
     m_autosaveTimer->stop();
     m_autosaveDisabled = true;
     m_mediaPool->setSaveSettings(false); // Testläufe: Media-Pool-Ansicht nicht speichern
+    m_storage->setPersistent(false);
 }
 
 void MainWindow::removeAutosave()
