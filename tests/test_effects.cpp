@@ -49,7 +49,7 @@ int main(int argc, char** argv)
     Clip a = c; // Audio-Clip: bekommt keine Effekte
     a.id = project.newClipId();
     tl.audio[0].clips << a;
-    project.load(ProjectData{ProjectFormat{}, 0, project.media(), tl, a.id, 0});
+    project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, a.id, 0});
     const int vid = c.id, aid = a.id;
 
     auto clip = [&](int id) { return TimelineOps::findClip(project.timeline(), id); };
