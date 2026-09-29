@@ -151,6 +151,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     updateViewer();
     connect(m_storage, &MediaStorage::importRequested, m_mediaPool, &MediaPool::importFiles);
+    connect(m_storage, &MediaStorage::folderImportRequested, m_mediaPool, &MediaPool::importFolder);
     // Effects Library: Doppelklick = wie Strg+T bzw. "Titel einfügen", nur mit der gewählten Art
     connect(m_effects, &EffectsLibrary::transitionRequested, this, [this, tv](TrackKind kind, const TransitionStyle& style) {
         m_editor->addTransitions(tv->playhead(), style, kind);

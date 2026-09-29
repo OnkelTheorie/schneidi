@@ -34,6 +34,7 @@ protected:
 
 signals:
     void importRequested(const QStringList& paths); // in den gewählten Bin des Media Pools
+    void folderImportRequested(const QString& dir);  // samt Unterordnern als Bins
 
 private:
     void addLocation();

@@ -6,9 +6,11 @@
 #include "core/Timecode.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
+#include "ui/MediaStorage.h"
 
 #include <QActionGroup>
 #include <QDateTime>
+#include <QDir>
 #include <QDragEnterEvent>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -398,7 +400,7 @@ void MediaPool::importDialog()
     importFiles(files);
 }
 
-void MediaPool::importFiles(const QStringList& paths)
+QStringList MediaPool::addFiles(const QStringList& paths, int bin)
 {
     QStringList failed;
     for (const QString& path : paths) {
@@ -407,11 +409,58 @@ void MediaPool::importFiles(const QStringList& paths)
             failed << info.name;
             continue;
         }
-        info.bin = m_currentBin; // wie DaVinci: Import landet im gewählten Bin
+        info.bin = bin;
         m_project->addMedia(info);
     }
+    return failed;
+}
+
+void MediaPool::importFiles(const QStringList& paths)
+{
+    // Ordner (z. B. aus dem Dateimanager gezogen) samt Unterordnern als Bins
+    QStringList files;
+    for (const QString& path : paths) {
+        if (QFileInfo(path).isDir()) importFolder(path);
+        else files << path;
+    }
+    const QStringList failed = addFiles(files, m_currentBin); // wie DaVinci: Import landet im gewählten Bin
     if (!failed.isEmpty())
         QMessageBox::warning(this, "Import", T("Nicht lesbar:") + "\n" + failed.join('\n'));
+}
+
+void MediaPool::importFolder(const QString& dir)
+{
+    QStringList failed;
+    QUndoStack* undo = m_project->undoStack();
+    undo->beginMacro(T("Ordner importieren"));
+    importFolderInto(dir, m_currentBin, 0, &failed);
+    undo->endMacro();
+    if (!failed.isEmpty())
+        QMessageBox::warning(this, "Import", T("Nicht lesbar:") + "\n" + failed.join('\n'));
+}
+
+// Legt den Bin nur an, wenn im Ordner (oder darunter) Medien liegen; liefert, ob etwas importiert wurde
+bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, QStringList* failed)
+{
+    if (depth > 8) return false; // Schutz vor sehr tiefen Bäumen
+    const QDir d(dir);
+    QStringList files;
+    for (const QFileInfo& fi : d.entryInfoList(QDir::Files, QDir::Name | QDir::IgnoreCase | QDir::LocaleAware))
+        if (MediaStorage::isMediaFile(fi.fileName())) files << fi.absoluteFilePath();
+    const QFileInfoList subdirs =
+        d.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks, QDir::Name | QDir::IgnoreCase | QDir::LocaleAware);
+    if (files.isEmpty() && subdirs.isEmpty()) return false;
+
+    const int bin = m_project->addBin(parentBin, d.dirName());
+    bool any = false;
+    if (!files.isEmpty()) {
+        const QStringList bad = addFiles(files, bin);
+        *failed << bad;
+        any = bad.size() < files.size();
+    }
+    for (const QFileInfo& sub : subdirs) any = importFolderInto(sub.absoluteFilePath(), bin, depth + 1, failed) || any;
+    if (!any) m_project->removeBin(bin); // nichts Brauchbares darin
+    return any;
 }
 
 void MediaPool::newBin()

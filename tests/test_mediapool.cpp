@@ -5,6 +5,9 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "engine/Engine.h"
+#include <QTemporaryDir>
+#include <QFile>
+#include <QDir>
 #include "ui/MediaPool.h"
 
 #include <QApplication>
@@ -194,6 +197,45 @@ int main(int argc, char** argv)
         app.processEvents();
         CHECK_EQ(pool.currentBin(), 0);
         CHECK(!pool.grab().isNull());
+    }
+
+    // --- Ordner samt Unterordnern als Bins (Media Storage/Drop): leere und medienlose Ordner ohne Bin, ein Undo-Schritt
+    if (Check::haveFfmpeg()) {
+        QTemporaryDir tmp;
+        QDir root(tmp.path());
+        root.mkpath("Dreh/Tag1");
+        root.mkpath("Dreh/Leer");
+        root.mkpath("Dreh/NurText");
+        QFile txt(root.filePath("Dreh/NurText/notiz.txt"));
+        txt.open(QIODevice::WriteOnly);
+        txt.write("x");
+        txt.close();
+        const QStringList clipArgs{"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=1", "-c:v", "libx264",
+                                   "-preset", "ultrafast", "-pix_fmt", "yuv420p"};
+        const QString a = Check::makeMedia(root.filePath("Dreh/a.mp4"), clipArgs);
+        const QString b = Check::makeMedia(root.filePath("Dreh/Tag1/b.mp4"), clipArgs);
+        if (CHECK(!a.isEmpty() && !b.isEmpty())) {
+            Project q;
+            Engine engine;
+            QString err;
+            if (!engine.init(&err)) return Check::skip(qPrintable("MLT: " + err));
+            MediaPool pool(&q, &engine);
+            pool.setSaveSettings(false);
+            const int before = q.undoStack()->count();
+            pool.importFolder(root.filePath("Dreh"));
+            CHECK_EQ(q.undoStack()->count(), before + 1);
+            CHECK_EQ(int(q.bins().size()), 2);
+            const MediaInfo* ma = q.mediaInfo(QFileInfo(a).absoluteFilePath());
+            const MediaInfo* mb = q.mediaInfo(QFileInfo(b).absoluteFilePath());
+            if (CHECK(ma && mb)) {
+                CHECK_EQ(q.binName(ma->bin), QString("Dreh"));
+                CHECK_EQ(q.binName(mb->bin), QString("Tag1"));
+                CHECK_EQ(q.bin(mb->bin)->parent, ma->bin);
+                CHECK_EQ(q.bin(ma->bin)->parent, 0);
+            }
+            q.undoStack()->undo();
+            CHECK(q.bins().isEmpty());
+        }
     }
     return Check::result();
 }

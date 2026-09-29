@@ -55,6 +55,9 @@ public:
 public slots:
     void importDialog();
     void importFiles(const QStringList& paths); // landet im gewählten Bin
+    // Wie DaVinci „Add Folder and SubFolders into Media Pool (Create Bins)“: Bin mit dem Ordnernamen im gewählten Bin,
+    // Unterordner mit Medien als Unter-Bins; ein Undo-Schritt für die Bins
+    void importFolder(const QString& dir);
     void newBin();                               // im gewählten Bin, Name gleich bearbeiten (Strg+Shift+N)
 
 signals:
@@ -72,6 +75,8 @@ private:
     void showContextMenu(const QPoint& pos);
     void showBinMenu(const QPoint& pos);
     void removeBin(int id); // mit Rückfrage, wenn Clips darin liegen
+    QStringList addFiles(const QStringList& paths, int bin); // liefert die nicht lesbaren Dateinamen
+    bool importFolderInto(const QString& dir, int parentBin, int depth, QStringList* failed);
     void updateItem(const QString& path); // Vorschaubild mit Clipfarbe, Flags, Proxy-Symbol bzw. Fortschritt
     void updateProxyStatus();
     void applyViewMode();

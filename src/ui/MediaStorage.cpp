@@ -468,6 +468,7 @@ void MediaStorage::showFileMenu(const QPoint& pos)
         const QStringList media = mediaIn(dir);
         QAction* a = menu.addAction(T("Ordnerinhalt in den Media Pool importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
+        menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this, [this, dir] { emit folderImportRequested(dir); });
         if (!m_locations.contains(dir))
             menu.addAction(T("Als Speicherort hinzufügen"), this, [this, dir] {
                 m_locations << dir;
@@ -479,6 +480,9 @@ void MediaStorage::showFileMenu(const QPoint& pos)
         const QStringList media = mediaIn(m_folder);
         QAction* a = menu.addAction(T("Alle Clips dieses Ordners importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
+        if (!m_folder.isEmpty())
+            menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this,
+                           [this, dir = m_folder] { emit folderImportRequested(dir); });
     }
     menu.addSeparator();
     menu.addAction(T("Aktualisieren"), this, &MediaStorage::rebuildFiles);
@@ -504,6 +508,7 @@ void MediaStorage::showLocationMenu(const QPoint& pos)
         const QStringList media = mediaIn(dir);
         QAction* a = menu.addAction(T("Ordnerinhalt in den Media Pool importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
+        menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this, [this, dir] { emit folderImportRequested(dir); });
     }
     menu.exec(m_tree->viewport()->mapToGlobal(pos));
 }
