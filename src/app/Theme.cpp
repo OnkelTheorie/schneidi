@@ -168,10 +168,22 @@ void activate(const Colors& colors)
     clipSelected = selectionFrom(primary);
 }
 
+static Colors& loadedColors()
+{
+    static Colors c;
+    return c;
+}
+
 void load(const QString& overrideDesign)
 {
     builtinValues(); // Vorgaben merken, bevor sie überschrieben werden
-    activate(saved(kOrder.contains(overrideDesign) ? overrideDesign : savedDesign()));
+    loadedColors() = saved(kOrder.contains(overrideDesign) ? overrideDesign : savedDesign());
+    activate(loadedColors());
+}
+
+bool restartNeeded()
+{
+    return saved(savedDesign()) != loadedColors();
 }
 
 QColor mix(const QColor& a, const QColor& b, double t)

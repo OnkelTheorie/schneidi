@@ -756,7 +756,10 @@ QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& t
                                const std::function<void()>& fn)
 {
     auto* a = new QAction(text, this);
-    InputBindings::instance().registerAction(a, id, menu->title().remove('&'), key);
+    // Kategorie in der Tastenbelegung = Hauptmenü (Untermenüs dienen nur der Übersicht)
+    QMenu* top = menu;
+    while (auto* parent = qobject_cast<QMenu*>(top->parent())) top = parent;
+    InputBindings::instance().registerAction(a, id, top->title().remove('&'), key);
     a->setShortcutContext(Qt::WindowShortcut);
     connect(a, &QAction::triggered, this, fn);
     menu->addAction(a);
@@ -838,58 +841,70 @@ void MainWindow::buildActions()
         dlg.exec();
     });
 
+    // Wie DaVinci gegliedert: oben die häufigsten Befehle, der Rest in Untermenüs (sonst füllt das Menü den Bildschirm).
+    // Tastenbelegung-Kategorie bleibt „Timeline“ (makeAction nimmt das oberste Menü).
     QMenu* timeline = menuBar()->addMenu("&Timeline");
-    makeAction(timeline, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
-    makeAction(timeline, "tool_trim", T("Trim-Modus"), QKeySequence("T"), [tv] { tv->setTool(TimelineView::Tool::Trim); });
-    makeAction(timeline, "tool_blade", T("Klingen-Werkzeug"), QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
-    makeAction(timeline, "snapping", T("Snapping an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
-    timeline->addSeparator();
     makeAction(timeline, "split", T("Clip am Playhead teilen"), QKeySequence("Ctrl+B"),
-               [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
-    makeAction(timeline, "split_alt", T("Clip teilen (alternativ)"), QKeySequence("Ctrl+\\"),
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
     makeAction(timeline, "add_transition", T("Übergang hinzufügen (Cross Dissolve)"), QKeySequence("Ctrl+T"),
                [this, tv] { m_editor->addTransitions(tv->playhead()); });
     makeAction(timeline, "add_title", T("Titel einfügen"), QKeySequence(), [this, tv] { m_editor->addTitle(tv->playhead()); });
-    makeAction(timeline, "add_subtitle", T("Untertitel hinzufügen"), QKeySequence(), [this, tv] {
-        if (const int id = m_editor->addSubtitle(tv->playhead())) {
-            m_inspectorToggle->setChecked(true);
-            m_inspector->editSubtitle(id);
-        }
+    makeAction(timeline, "add_marker", T("Marker setzen/entfernen"), QKeySequence("M"),
+               [this, tv] { m_editor->toggleMarker(tv->playhead()); });
+    timeline->addSeparator();
+    QMenu* toolsMenu = timeline->addMenu(T("Werkzeuge"));
+    makeAction(toolsMenu, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
+    makeAction(toolsMenu, "tool_trim", T("Trim-Modus"), QKeySequence("T"), [tv] { tv->setTool(TimelineView::Tool::Trim); });
+    makeAction(toolsMenu, "tool_blade", T("Klingen-Werkzeug"), QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
+    makeAction(toolsMenu, "snapping", T("Snapping an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
+    auto* linked = makeAction(toolsMenu, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
+    linked->setCheckable(true);
+    linked->setToolTip(T("Verknüpfte Auswahl (Strg+Shift+L): an = Video und Ton eines Clips bewegen sich zusammen, "
+                         "aus = einzeln auswählen, verschieben und trimmen"));
+    linked->setChecked(QSettings().value("edit/linkedSelection", true).toBool());
+    m_editor->setLinkedSelection(linked->isChecked());
+    connect(linked, &QAction::toggled, this, [this](bool on) {
+        m_editor->setLinkedSelection(on);
+        if (!m_autosaveDisabled) QSettings().setValue("edit/linkedSelection", on);
     });
-    makeAction(timeline, "add_subtitle_track", T("Untertitelspur hinzufügen"), QKeySequence(),
-               [this] { m_editor->addSubtitleTrack(); });
-    makeAction(timeline, "trim_start", T("Anfang bis Playhead trimmen"), QKeySequence("Shift+["),
+    m_timeline->addToolAction(linked, TimelinePanel::Icon::Link);
+    auto* splitTracks = makeAction(toolsMenu, "split_on_tracks", T("Teilen auf ganzer Spur der Auswahl"), QKeySequence(), [] {});
+    splitTracks->setCheckable(true);
+    splitTracks->setToolTip(T("An: Strg+B/Maustaste teilt auch den Nachbarclip auf der Spur des ausgewählten Clips. "
+                            "Aus: nur ausgewählte Clips."));
+    splitTracks->setChecked(QSettings().value("edit/splitOnSelectedTracks", true).toBool());
+    m_editor->setSplitOnSelectedTracks(splitTracks->isChecked());
+    connect(splitTracks, &QAction::toggled, this, [this](bool on) {
+        m_editor->setSplitOnSelectedTracks(on);
+        QSettings().setValue("edit/splitOnSelectedTracks", on);
+    });
+    QMenu* trimMenu = timeline->addMenu(T("Teilen, Trimmen und Verschieben"));
+    makeAction(trimMenu, "split_alt", T("Clip teilen (alternativ)"), QKeySequence("Ctrl+\\"),
+               [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
+    makeAction(trimMenu, "trim_start", T("Anfang bis Playhead trimmen"), QKeySequence("Shift+["),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
-    makeAction(timeline, "trim_end", T("Ende bis Playhead trimmen"), QKeySequence("Shift+]"),
+    makeAction(trimMenu, "trim_end", T("Ende bis Playhead trimmen"), QKeySequence("Shift+]"),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
     // Trim-Modus: , und . slippen die Auswahl (wie DaVinci), sonst verschieben
     auto nudge = [this, tv](int frames) {
         if (tv->tool() == TimelineView::Tool::Trim) m_editor->slipSelection(frames);
         else m_editor->nudgeSelection(frames);
     };
-    makeAction(timeline, "nudge_left", T("1 Frame nach links schieben"), QKeySequence(","), [nudge] { nudge(-1); });
-    makeAction(timeline, "nudge_right", T("1 Frame nach rechts schieben"), QKeySequence("."), [nudge] { nudge(1); });
-    makeAction(timeline, "nudge_left_multi", T("5 Frames nach links schieben"), QKeySequence("Shift+,"),
+    makeAction(trimMenu, "nudge_left", T("1 Frame nach links schieben"), QKeySequence(","), [nudge] { nudge(-1); });
+    makeAction(trimMenu, "nudge_right", T("1 Frame nach rechts schieben"), QKeySequence("."), [nudge] { nudge(1); });
+    makeAction(trimMenu, "nudge_left_multi", T("5 Frames nach links schieben"), QKeySequence("Shift+,"),
                [nudge] { nudge(-5); });
-    makeAction(timeline, "nudge_right_multi", T("5 Frames nach rechts schieben"), QKeySequence("Shift+."),
+    makeAction(trimMenu, "nudge_right_multi", T("5 Frames nach rechts schieben"), QKeySequence("Shift+."),
                [nudge] { nudge(5); });
-    makeAction(timeline, "toggle_enabled", T("Clip aktivieren/deaktivieren"), QKeySequence("D"),
+    QMenu* clipMenu = timeline->addMenu(T("Clip"));
+    makeAction(clipMenu, "toggle_enabled", T("Clip aktivieren/deaktivieren"), QKeySequence("D"),
                [this] { m_editor->toggleSelectionEnabled(); });
-    makeAction(timeline, "compound_create", T("Neuer Compound Clip…"), QKeySequence(), [this] { createCompoundClip(); });
-    makeAction(timeline, "compound_open", T("Compound Clip in Timeline öffnen"), QKeySequence(),
-               [this] { openSelectedCompound(); });
-    makeAction(timeline, "compound_decompose", T("Compound Clip auflösen"), QKeySequence(), [this] {
-        m_editor->decomposeCompoundClips(m_editor->clipIdsOf(m_selection->ids()));
-    });
-    makeAction(timeline, "timeline_back", T("Zurück zur übergeordneten Timeline"), QKeySequence(),
-               [this] { m_timeline->back(); });
-    makeAction(timeline, "clip_speed", T("Clip-Geschwindigkeit ändern…"), QKeySequence("Ctrl+R"), [this] { clipSpeedDialog(); });
-    makeAction(timeline, "clip_speed_reset", T("Geschwindigkeit zurücksetzen"), QKeySequence("Ctrl+Alt+R"), [this] {
+    makeAction(clipMenu, "clip_speed", T("Clip-Geschwindigkeit ändern…"), QKeySequence("Ctrl+R"), [this] { clipSpeedDialog(); });
+    makeAction(clipMenu, "clip_speed_reset", T("Geschwindigkeit zurücksetzen"), QKeySequence("Ctrl+Alt+R"), [this] {
         m_editor->setClipSpeed(m_editor->selection()->ids().values().toVector(), {}, true);
     });
     // Retime-Steuerung wie DaVinci (Retime Controls): Tempo je Abschnitt, Speed-Punkte auf dem Clip
-    auto* retime = makeAction(timeline, "retime_controls", T("Retime-Steuerung"), QKeySequence("Ctrl+Shift+R"), [this] {
+    auto* retime = makeAction(clipMenu, "retime_controls", T("Retime-Steuerung"), QKeySequence("Ctrl+Shift+R"), [this] {
         const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
         TimelineView* tv = m_timeline->view();
         const bool on = std::none_of(ids.begin(), ids.end(), [tv](int id) { return tv->retimeControlsShown(id); });
@@ -897,7 +912,7 @@ void MainWindow::buildActions()
     });
     retime->setCheckable(true);
     // Kurven-Editor wie DaVinci (Kurven-Symbol im Clip): Keyframe-Kurve unter den ausgewählten Clips
-    auto* curves = makeAction(timeline, "curve_editor", T("Kurven-Editor"), QKeySequence("Shift+C"), [this] {
+    auto* curves = makeAction(clipMenu, "curve_editor", T("Kurven-Editor"), QKeySequence("Shift+C"), [this] {
         const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
         TimelineView* tv = m_timeline->view();
         const bool on = std::none_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); });
@@ -906,7 +921,7 @@ void MainWindow::buildActions()
             QApplication::beep(); // keine Keyframes
     });
     curves->setCheckable(true);
-    makeAction(timeline, "speed_point_add", T("Speed-Punkt hinzufügen"), QKeySequence(), [this] {
+    makeAction(clipMenu, "speed_point_add", T("Speed-Punkt hinzufügen"), QKeySequence(), [this] {
         // an der Playhead-Position in den ausgewählten Clips (bzw. dem Videoclip darunter), Steuerung einblenden
         const int frame = m_timeline->view()->playhead();
         QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
@@ -925,27 +940,43 @@ void MainWindow::buildActions()
         }
         if (done.isEmpty()) QApplication::beep();
     });
-    makeAction(timeline, "normalize_audio", T("Audiopegel normalisieren…"), QKeySequence(), [this] { normalizeAudioDialog(); });
-    makeAction(timeline, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
+    makeAction(clipMenu, "normalize_audio", T("Audiopegel normalisieren…"), QKeySequence(), [this] { normalizeAudioDialog(); });
+    makeAction(clipMenu, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
                [this] { m_editor->toggleLinkSelection(); });
     // Wie DaVinci „Render Cache Clip Output“: Vorschau spielt die vorgerenderte Clip-Ausgabe (Wiedergabe > Render-Cache)
-    auto* cacheClip = makeAction(timeline, "render_cache_clip", T("Render-Cache Clip-Ausgabe"), QKeySequence(),
+    auto* cacheClip = makeAction(clipMenu, "render_cache_clip", T("Render-Cache Clip-Ausgabe"), QKeySequence(),
                                  [this] { m_editor->toggleSelectionRenderCache(); });
     cacheClip->setCheckable(true);
-    connect(timeline, &QMenu::aboutToShow, this, [this, retime] {
+    connect(clipMenu, &QMenu::aboutToShow, this, [this, retime] {
         const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
         TimelineView* tv = m_timeline->view();
         retime->setEnabled(std::any_of(ids.begin(), ids.end(), [this](int id) { return m_editor->canRetime(id); }));
         retime->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->retimeControlsShown(id); }));
     });
-    connect(timeline, &QMenu::aboutToShow, this, [this, cacheClip] {
+    connect(clipMenu, &QMenu::aboutToShow, this, [this, cacheClip] {
         const int state = m_editor->selectionRenderCacheState();
         cacheClip->setEnabled(state >= 0);
         cacheClip->setChecked(state == 1);
     });
-    timeline->addSeparator();
-    makeAction(timeline, "add_marker", T("Marker setzen/entfernen"), QKeySequence("M"),
-               [this, tv] { m_editor->toggleMarker(tv->playhead()); });
+    QMenu* compoundMenu = timeline->addMenu(T("Compound Clip"));
+    makeAction(compoundMenu, "compound_create", T("Neuer Compound Clip…"), QKeySequence(), [this] { createCompoundClip(); });
+    makeAction(compoundMenu, "compound_open", T("Compound Clip in Timeline öffnen"), QKeySequence(),
+               [this] { openSelectedCompound(); });
+    makeAction(compoundMenu, "compound_decompose", T("Compound Clip auflösen"), QKeySequence(), [this] {
+        m_editor->decomposeCompoundClips(m_editor->clipIdsOf(m_selection->ids()));
+    });
+    makeAction(compoundMenu, "timeline_back", T("Zurück zur übergeordneten Timeline"), QKeySequence(),
+               [this] { m_timeline->back(); });
+    QMenu* subtitleMenu = timeline->addMenu(T("Untertitel"));
+    makeAction(subtitleMenu, "add_subtitle", T("Untertitel hinzufügen"), QKeySequence(), [this, tv] {
+        if (const int id = m_editor->addSubtitle(tv->playhead())) {
+            m_inspectorToggle->setChecked(true);
+            m_inspector->editSubtitle(id);
+        }
+    });
+    makeAction(subtitleMenu, "add_subtitle_track", T("Untertitelspur hinzufügen"), QKeySequence(),
+               [this] { m_editor->addSubtitleTrack(); });
+    QMenu* markMenu = timeline->addMenu(T("In/Out und Marker"));
     // In/Out wie DaVinci: zeigt der Viewer die Quelle, gelten sie für den Quellclip (pro Media-Pool-Clip gemerkt)
     auto markIn = [this, tv](int frame) {
         if (sourceActive()) m_editor->setSourceMarkIn(m_engine->sourcePath(), frame < 0 ? -1 : m_engine->position());
@@ -966,40 +997,19 @@ void MainWindow::buildActions()
         }
         jumpToFrame(in ? m_project->timeline().markIn : m_project->timeline().markOut);
     };
-    makeAction(timeline, "mark_in", T("In-Punkt setzen"), QKeySequence("I"), [markIn] { markIn(0); });
-    makeAction(timeline, "mark_out", T("Out-Punkt setzen"), QKeySequence("O"), [markOut] { markOut(0); });
-    makeAction(timeline, "clear_in", T("In-Punkt entfernen"), QKeySequence("Alt+I"), [markIn] { markIn(-1); });
-    makeAction(timeline, "clear_out", T("Out-Punkt entfernen"), QKeySequence("Alt+O"), [markOut] { markOut(-1); });
-    makeAction(timeline, "clear_in_out", T("In und Out entfernen"), QKeySequence("Alt+X"), [this] {
+    makeAction(markMenu, "mark_in", T("In-Punkt setzen"), QKeySequence("I"), [markIn] { markIn(0); });
+    makeAction(markMenu, "mark_out", T("Out-Punkt setzen"), QKeySequence("O"), [markOut] { markOut(0); });
+    makeAction(markMenu, "clear_in", T("In-Punkt entfernen"), QKeySequence("Alt+I"), [markIn] { markIn(-1); });
+    makeAction(markMenu, "clear_out", T("Out-Punkt entfernen"), QKeySequence("Alt+O"), [markOut] { markOut(-1); });
+    makeAction(markMenu, "clear_in_out", T("In und Out entfernen"), QKeySequence("Alt+X"), [this] {
         if (sourceActive()) m_editor->clearSourceMarks(m_engine->sourcePath());
         else m_editor->clearMarks();
     });
-    makeAction(timeline, "goto_in", T("Zum In-Punkt"), QKeySequence("Shift+I"), [gotoMark] { gotoMark(true); });
-    makeAction(timeline, "goto_out", T("Zum Out-Punkt"), QKeySequence("Shift+O"), [gotoMark] { gotoMark(false); });
-    makeAction(timeline, "marker_prev", T("Vorheriger Marker"), QKeySequence("Shift+Up"), [this] { jumpToMarker(-1); });
-    makeAction(timeline, "marker_next", T("Nächster Marker"), QKeySequence("Shift+Down"), [this] { jumpToMarker(1); });
-    auto* linked = makeAction(timeline, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
-    linked->setCheckable(true);
-    linked->setToolTip(T("Verknüpfte Auswahl (Strg+Shift+L): an = Video und Ton eines Clips bewegen sich zusammen, "
-                         "aus = einzeln auswählen, verschieben und trimmen"));
-    linked->setChecked(QSettings().value("edit/linkedSelection", true).toBool());
-    m_editor->setLinkedSelection(linked->isChecked());
-    connect(linked, &QAction::toggled, this, [this](bool on) {
-        m_editor->setLinkedSelection(on);
-        if (!m_autosaveDisabled) QSettings().setValue("edit/linkedSelection", on);
-    });
-    m_timeline->addToolAction(linked, TimelinePanel::Icon::Link);
-    auto* splitTracks = makeAction(timeline, "split_on_tracks", T("Teilen auf ganzer Spur der Auswahl"), QKeySequence(), [] {});
-    splitTracks->setCheckable(true);
-    splitTracks->setToolTip(T("An: Strg+B/Maustaste teilt auch den Nachbarclip auf der Spur des ausgewählten Clips. "
-                            "Aus: nur ausgewählte Clips."));
-    splitTracks->setChecked(QSettings().value("edit/splitOnSelectedTracks", true).toBool());
-    m_editor->setSplitOnSelectedTracks(splitTracks->isChecked());
-    connect(splitTracks, &QAction::toggled, this, [this](bool on) {
-        m_editor->setSplitOnSelectedTracks(on);
-        QSettings().setValue("edit/splitOnSelectedTracks", on);
-    });
-    // Timeline-Ansicht: Clipnamen/Dauer ein-/ausblenden (gespeichert)
+    makeAction(markMenu, "goto_in", T("Zum In-Punkt"), QKeySequence("Shift+I"), [gotoMark] { gotoMark(true); });
+    makeAction(markMenu, "goto_out", T("Zum Out-Punkt"), QKeySequence("Shift+O"), [gotoMark] { gotoMark(false); });
+    makeAction(markMenu, "marker_prev", T("Vorheriger Marker"), QKeySequence("Shift+Up"), [this] { jumpToMarker(-1); });
+    makeAction(markMenu, "marker_next", T("Nächster Marker"), QKeySequence("Shift+Down"), [this] { jumpToMarker(1); });
+    // Timeline-Ansicht: Clipnamen/Dauer ein-/ausblenden (gespeichert), Zoom
     QMenu* viewOpts = timeline->addMenu(T("Timeline-Ansicht"));
     auto addViewOption = [this, viewOpts](const QString& id, const QString& text, const QString& key, bool def,
                                           std::function<void(bool)> apply) {
@@ -1016,10 +1026,10 @@ void MainWindow::buildActions()
                   [tv](bool on) { tv->setShowClipNames(on); });
     addViewOption("show_clip_durations", T("Clipdauer anzeigen"), "timeline/showClipDurations", false,
                   [tv](bool on) { tv->setShowClipDurations(on); });
-    timeline->addSeparator();
-    makeAction(timeline, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
-    makeAction(timeline, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
-    makeAction(timeline, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [tv] { tv->zoomToFit(); });
+    viewOpts->addSeparator();
+    makeAction(viewOpts, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
+    makeAction(viewOpts, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
+    makeAction(viewOpts, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [tv] { tv->zoomToFit(); });
 
     QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
     makeAction(play, "play_pause", "Play/Pause", QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
@@ -1101,12 +1111,16 @@ void MainWindow::buildActions()
         connect(a, &QAction::triggered, this, [this, lang = QString(code)] {
             if (lang == I18n::language()) return;
             I18n::setLanguage(lang);
-            QMessageBox::information(this, "schneidi", lang == "en" ? "The language changes after restarting schneidi."
-                                                                    : "Die Sprache ändert sich nach dem Neustart von schneidi.");
+            offerRestart(lang == "en" ? "The language changes after restarting schneidi."
+                                      : "Die Sprache ändert sich nach dem Neustart von schneidi.",
+                         lang == "en" ? "Restart Now" : "Jetzt neu starten", lang == "en" ? "Later" : "Später");
         });
     }
     // Design (Farben der Oberfläche): wirkt wie die Sprache nach dem Neustart
-    makeAction(workspace, "design", T("Design…"), QKeySequence(), [this] { DesignDialog(this).exec(); });
+    makeAction(workspace, "design", T("Design…"), QKeySequence(), [this] {
+        if (DesignDialog(this).exec() == QDialog::Accepted && Theme::restartNeeded())
+            offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
+    });
 
     InputBindings::instance().saveIfIncomplete();
 }
@@ -1136,6 +1150,23 @@ void MainWindow::setProjectPath(const QString& path)
     m_projectPath = path;
     if (!path.isEmpty() && !m_autosaveDisabled) addRecent(path); // Testlauf: Liste des Nutzers nicht anfassen
     updateTitle();
+}
+
+// Neustart jetzt oder später; „jetzt“ fragt wie beim Beenden nach dem Speichern und öffnet das Projekt danach wieder
+void MainWindow::offerRestart(const QString& message, const QString& now, const QString& later)
+{
+    QMessageBox box(QMessageBox::Question, "schneidi", message, QMessageBox::NoButton, this);
+    QPushButton* nowButton = box.addButton(now, QMessageBox::AcceptRole);
+    box.setDefaultButton(box.addButton(later, QMessageBox::RejectRole));
+    box.exec();
+    if (box.clickedButton() != nowButton) return;
+    m_restartRequested = true;
+    if (!close()) m_restartRequested = false; // Speichern abgebrochen -> weiterarbeiten
+}
+
+QStringList MainWindow::restartArguments() const
+{
+    return m_projectPath.isEmpty() ? QStringList{} : QStringList{m_projectPath};
 }
 
 bool MainWindow::maybeSave()
