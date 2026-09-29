@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QAction>
 #include <QMessageBox>
+#include <QProcess>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QTimer>
@@ -108,5 +109,8 @@ int main(int argc, char* argv[])
             QApplication::quit();
         });
     }
-    return app.exec();
+    const int rc = app.exec();
+    // Neustart nach Design-/Sprachwechsel: erst hier, wenn das Fenster zu ist und alles gespeichert wurde
+    if (w.restartRequested()) QProcess::startDetached(QCoreApplication::applicationFilePath(), w.restartArguments());
+    return rc;
 }

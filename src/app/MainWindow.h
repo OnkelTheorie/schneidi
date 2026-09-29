@@ -43,6 +43,9 @@ public:
     void disableAutosave();      // Testläufe: keine Sicherung schreiben/löschen
     // Projekteinstellungen setzen (ein Undo-Schritt); Testhilfe --format
     void setProjectFormat(const ProjectFormat& format);
+    // Neustart (Design/Sprache): main() startet schneidi nach dem Beenden mit diesen Argumenten neu
+    bool restartRequested() const { return m_restartRequested; }
+    QStringList restartArguments() const;
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -90,6 +93,7 @@ private:
     bool saveAs();
     bool saveTo(const QString& path);
     bool maybeSave(); // false = Abbrechen
+    void offerRestart(const QString& message, const QString& now, const QString& later);
     bool applyLoaded(ProjectData data, const QString& path);
     void setProjectPath(const QString& path);
     void updateTitle();
@@ -146,4 +150,5 @@ private:
     class QLabel* m_titleLabel = nullptr;
     class QTimer* m_autosaveTimer = nullptr;
     bool m_autosaveDisabled = false;
+    bool m_restartRequested = false;
 };

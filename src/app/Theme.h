@@ -74,6 +74,7 @@ void save(const QString& design, const Colors& chosen); // speichert Design + Ab
 
 void activate(const Colors& colors); // setzt die Farben oben (fehlende Schlüssel bleiben)
 void load(const QString& overrideDesign = {}); // beim Start vor apply(); override nur für diesen Lauf (--design)
+bool restartNeeded(); // gespeicherte Wahl weicht von den beim Start geladenen Farben ab
 void apply(QApplication& app);
 
 // Hilfen
