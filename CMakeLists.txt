@@ -60,3 +60,10 @@ target_link_libraries(schneidi PRIVATE Qt6::Widgets PkgConfig::MLT)
 if(WIN32)
     set_target_properties(schneidi PROPERTIES WIN32_EXECUTABLE ON)
 endif()
+
+# Automatische Tests (CTest): cmake -DSCHNEIDI_TESTS=ON, siehe docs/dev-notes.md
+option(SCHNEIDI_TESTS "Tests bauen" OFF)
+if(SCHNEIDI_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
