@@ -6,6 +6,7 @@
 class Project;
 class Engine;
 class QLabel;
+class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
 class QMenu;
@@ -40,6 +41,8 @@ public:
     void setCurrentBin(int id);
     void setViewMode(ViewMode mode);
     void setSort(SortKey key, bool ascending);
+    // Suche wie DaVinci (Lupe oben): zeigt passende Clips (Name enthält Text) im Bin und seinen Unter-Bins
+    void setSearch(const QString& text);
     // Ansicht/Sortierung nicht in den Einstellungen speichern (Testläufe)
     void setSaveSettings(bool on) { m_saveSettings = on; }
 
@@ -60,6 +63,7 @@ signals:
 protected:
     void dragEnterEvent(QDragEnterEvent* e) override;
     void dropEvent(QDropEvent* e) override;
+    bool eventFilter(QObject* obj, QEvent* e) override; // Esc im Suchfeld
 
 private:
     void rebuild();      // Medienliste geändert: Vorschaubilder neu, dann Ansicht
@@ -83,6 +87,8 @@ private:
     QToolButton* m_thumbView;
     QToolButton* m_listView;
     QToolButton* m_sortBtn;
+    QToolButton* m_searchBtn;
+    QLineEdit* m_search;
     QHash<QString, QListWidgetItem*> m_items; // Pfad -> Eintrag
     QHash<QString, QPixmap> m_thumbs;         // Vorschaubild ohne Anzeigen
     int m_currentBin = 0;

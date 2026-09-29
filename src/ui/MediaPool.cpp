@@ -15,6 +15,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
@@ -256,12 +257,33 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_proxyCancel->setToolTip(T("Proxy-Erzeugung abbrechen"));
     connect(m_proxyCancel, &QToolButton::clicked, m_engine->proxies(), &ProxyManager::cancelAll);
 
+    // Suche: Lupe blendet das Feld ein, Esc bzw. erneuter Klick leert und schließt es
+    m_search = new QLineEdit;
+    m_search->setPlaceholderText(T("Suchen…"));
+    m_search->setClearButtonEnabled(true);
+    m_search->setVisible(false);
+    m_search->setMinimumWidth(60);
+    m_search->installEventFilter(this);
+    connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildClips(); });
+    m_searchBtn = new QToolButton;
+    m_searchBtn->setText("🔍");
+    m_searchBtn->setToolTip(T("Clips suchen"));
+    m_searchBtn->setAutoRaise(true);
+    m_searchBtn->setCheckable(true);
+    connect(m_searchBtn, &QToolButton::toggled, this, [this](bool on) {
+        m_search->setVisible(on);
+        if (on) m_search->setFocus();
+        else m_search->clear();
+    });
+
     auto* header = new QHBoxLayout;
     header->setContentsMargins(0, 0, 4, 0);
     header->setSpacing(2);
     header->addWidget(title);
     header->addWidget(m_proxyStatus, 1);
     header->addWidget(m_proxyCancel);
+    header->addWidget(m_search, 1);
+    header->addWidget(m_searchBtn);
     header->addWidget(m_thumbView);
     header->addWidget(m_listView);
     header->addWidget(m_sortBtn);
@@ -421,6 +443,21 @@ void MediaPool::setSort(SortKey key, bool ascending)
     saveSettings();
 }
 
+void MediaPool::setSearch(const QString& text)
+{
+    m_searchBtn->setChecked(!text.isEmpty());
+    m_search->setText(text);
+}
+
+bool MediaPool::eventFilter(QObject* obj, QEvent* e)
+{
+    if (obj == m_search && e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {
+        m_searchBtn->setChecked(false); // leert und schließt
+        return true;
+    }
+    return QWidget::eventFilter(obj, e);
+}
+
 void MediaPool::saveSettings() const
 {
     if (!m_saveSettings) return;
@@ -513,10 +550,12 @@ void MediaPool::rebuildClips()
     const int scroll = m_list->verticalScrollBar()->value();
     m_list->clear();
     m_items.clear();
-    m_binTitle->setText(m_project->binName(m_currentBin));
+    const QString search = m_search->text().trimmed();
+    m_binTitle->setText(search.isEmpty() ? m_project->binName(m_currentBin)
+                                         : T("Suche in „%1“: %2").arg(m_project->binName(m_currentBin), search));
     const bool list = m_viewMode == ViewMode::List;
 
-    if (m_currentBin == 0) {
+    if (m_currentBin == 0 && search.isEmpty()) {
         // Titel-Generator vorne im Master (in DaVinci unter Effects > Titles > "Text"); ziehen = 5-s-Titel
         QPixmap titleThumb(kThumb);
         titleThumb.fill(Theme::titleClip.darker(135));
@@ -536,8 +575,11 @@ void MediaPool::rebuildClips()
     }
 
     QVector<const MediaInfo*> media;
-    for (const MediaInfo& m : m_project->media())
-        if (m.bin == m_currentBin) media << &m;
+    for (const MediaInfo& m : m_project->media()) {
+        if (search.isEmpty() ? m.bin == m_currentBin
+                             : m_project->binInside(m.bin, m_currentBin) && m.name.contains(search, Qt::CaseInsensitive))
+            media << &m;
+    }
     QHash<QString, QDateTime> dates;
     if (m_sortKey == SortKey::Date)
         for (const MediaInfo* m : media) dates.insert(m->path, QFileInfo(m->path).lastModified());

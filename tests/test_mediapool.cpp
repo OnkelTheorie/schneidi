@@ -174,6 +174,19 @@ int main(int argc, char** argv)
         undo->undo();
         app.processEvents();
         CHECK_EQ(list->count(), 2);
+        // Suche: im Master auch Unter-Bins, ohne Titel-Eintrag; groß/klein egal; leer = wieder normal
+        pool.setCurrentBin(0);
+        pool.setSearch("A.MP4");
+        CHECK_EQ(list->count(), 1);
+        CHECK_EQ(list->item(0)->data(Qt::UserRole).toString(), QString("/x/a.mp4"));
+        pool.setSearch(".mp4");
+        CHECK_EQ(list->count(), 4);
+        pool.setCurrentBin(sub);
+        CHECK_EQ(list->count(), 2);
+        pool.setSearch("zzz");
+        CHECK_EQ(list->count(), 0);
+        pool.setSearch("");
+        CHECK_EQ(list->count(), 2);
         // Aktueller Bin wird entfernt (Undo des Anlegens): Ansicht springt auf Master
         const int tmpBin = p.addBin(0, "Weg");
         pool.setCurrentBin(tmpBin);
