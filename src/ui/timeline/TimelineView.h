@@ -10,6 +10,7 @@
 
 class Editor;
 class MediaCache;
+class QLineEdit;
 class QMimeData;
 
 // Selbst gezeichnete Timeline: Lineal, Spurköpfe, Clips, Playhead.
@@ -19,7 +20,7 @@ class TimelineView : public QWidget {
 public:
     enum class Tool { Select, Trim, Blade };
 
-    static constexpr int kHeaderW = 150;
+    static constexpr int kHeaderW = 180;
     static constexpr int kRulerH = 30;
     static constexpr int kSeparator = 6;
 
@@ -64,6 +65,8 @@ protected:
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
+    void mouseDoubleClickEvent(QMouseEvent*) override;
+    bool eventFilter(QObject* obj, QEvent* e) override;
     void wheelEvent(QWheelEvent*) override;
     void contextMenuEvent(QContextMenuEvent*) override;
     void leaveEvent(QEvent*) override;
@@ -133,16 +136,24 @@ private:
 
     void drawRuler(QPainter& p);
     void drawTracks(QPainter& p);
-    // spans: Audio-Übergänge der Spur (Wellenform folgt dem Crossfade)
+    // spans: Audio-Übergänge der Spur (Wellenform folgt dem Crossfade); color: Spurfarbe (ungültig = Standard)
     void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,
-                  const QVector<TimelineOps::TransitionSpan>& spans = {});
+                  const QVector<TimelineOps::TransitionSpan>& spans = {}, const QColor& color = {});
     void drawTransitions(QPainter& p, const Row& row, const QSet<int>& hiddenClips);
     void drawFilmstrip(QPainter& p, const QRect& body, const Clip& c);
-    void drawWaveform(QPainter& p, const QRect& body, const Clip& c, const QVector<TimelineOps::TransitionSpan>& spans);
+    void drawWaveform(QPainter& p, const QRect& body, const Clip& c, const QVector<TimelineOps::TransitionSpan>& spans,
+                      const QColor& color);
     void drawHeaders(QPainter& p);
     void drawPlayhead(QPainter& p);
     void drawLabel(QPainter& p, const QPoint& topLeft, const QString& text);
     QRect headerButton(const Row& row) const;
+    // Spurkopf wie DaVinci: Kürzel „V1“, Name (Doppelklick = umbenennen), Schloss, Auge/M
+    QRect lockButton(const Row& row) const;
+    QRect nameRect(const Row& row) const;
+    bool isLocked(const Row& row) const; // gesperrte Spur: nichts darauf greifbar
+    void headerMenu(const Row& row, const QPoint& globalPos);
+    void startRename(TrackRef ref);
+    void finishRename(bool commit);
     QStringList dropPaths(const QMimeData* mime) const;
     int dropTrackAt(int y) const;
 
@@ -204,6 +215,11 @@ private:
     QVector<DropItem> m_dropItems;
     int m_dropFrame = -1;
     int m_dropTrack = 0;
+
+    // Spur umbenennen (Eingabefeld über dem Namen im Spurkopf)
+    QLineEdit* m_nameEdit = nullptr;
+    TrackRef m_nameRef;
+    bool m_renaming = false;
 
     // Übergang aus der Effects Library reinziehen (wie DaVinci): Schnitt unter der Maus hervorheben
     struct TransitionDrop {

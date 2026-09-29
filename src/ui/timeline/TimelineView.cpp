@@ -15,6 +15,7 @@
 
 #include <QDragEnterEvent>
 #include <QFileInfo>
+#include <QLineEdit>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QUrl>
@@ -37,6 +38,33 @@ QString clipLabel(const Clip& c)
     const QString speed = c.freeze ? T("Standbild")
                                    : QString("%1%2 %").arg(c.reverse ? "-" : "").arg(QLocale().toString(c.speed * 100, 'g', 4));
     return QString("%1 (%2)").arg(c.displayName(), speed);
+}
+
+// Clipfarbe der Spur: eigene Spurfarbe, sonst ungültig (= Standard je Clipart)
+QColor trackColor(const Track& t)
+{
+    const TrackColorInfo* info = trackColorInfo(t.color);
+    return info ? QColor::fromRgba(info->rgb) : QColor();
+}
+
+// Schloss-Symbol (Vorhängeschloss) mittig in r
+void drawLock(QPainter& p, const QRectF& r, const QColor& color)
+{
+    const double cx = r.center().x(), cy = r.center().y();
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(color, 1.4));
+    p.setBrush(Qt::NoBrush);
+    QPainterPath shackle;
+    shackle.moveTo(cx - 2.6, cy);
+    shackle.lineTo(cx - 2.6, cy - 2.2);
+    shackle.arcTo(QRectF(cx - 2.6, cy - 5.0, 5.2, 5.6), 180, -180);
+    shackle.lineTo(cx + 2.6, cy);
+    p.drawPath(shackle);
+    p.setPen(Qt::NoPen);
+    p.setBrush(color);
+    p.drawRoundedRect(QRectF(cx - 4, cy - 0.5, 8, 6), 1, 1);
+    p.restore();
 }
 
 constexpr int kSnapPx = 8;
@@ -251,7 +279,7 @@ int TimelineView::clipAt(const QPoint& pos) const
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return 0;
     const auto row = rowAt(pos.y());
-    if (!row) return 0;
+    if (!row || isLocked(*row)) return 0;
     const double f = xToFrame(pos.x());
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips)
         if (f >= c.start && f < c.end()) return c.id;
@@ -264,7 +292,7 @@ std::optional<TimelineView::EdgeHit> TimelineView::edgeAt(const QPoint& pos) con
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
     const auto row = rowAt(pos.y());
-    if (!row) return std::nullopt;
+    if (!row || isLocked(*row)) return std::nullopt;
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
         const double x1 = frameToX(c.start), x2 = frameToX(c.end());
         if (pos.x() < x1 || pos.x() >= x2) continue;
@@ -282,7 +310,7 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
     using TimelineOps::TrimKind;
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
     const auto row = rowAt(pos.y());
-    if (!row) return std::nullopt;
+    if (!row || isLocked(*row)) return std::nullopt;
     const auto& clips = m_editor->project()->timeline().track(row->ref).clips;
     for (int i = 0; i < clips.size(); ++i) {
         const Clip& c = clips[i];
@@ -323,7 +351,7 @@ std::optional<TimelineView::TransitionHit> TimelineView::transitionAt(const QPoi
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
     const auto row = rowAt(pos.y());
-    if (!row) return std::nullopt;
+    if (!row || isLocked(*row)) return std::nullopt;
     for (const auto& s : m_editor->transitions(row->ref)) {
         const QRect r = transitionRect(*row, s);
         if (pos.x() < r.left() || pos.x() > r.right()) continue;
@@ -355,7 +383,7 @@ std::optional<TimelineView::EdgeHit> TimelineView::fadeHandleAt(const QPoint& po
 {
     if (m_tool != Tool::Select || !m_hoverClip || pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
     const auto row = rowAt(pos.y());
-    if (!row) return std::nullopt;
+    if (!row || isLocked(*row)) return std::nullopt;
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
         if (c.id != m_hoverClip) continue;
         const QRect r = clipRect(*row, c);
@@ -400,6 +428,7 @@ std::optional<TimelineView::KeyHit> TimelineView::keyframeAt(const QPoint& pos) 
 {
     if (pos.x() < kHeaderW || !inLane(pos)) return std::nullopt;
     const auto row = rowAt(pos.y());
+    if (isLocked(*row)) return std::nullopt;
     std::optional<KeyHit> best;
     double bestDist = kKeyGrabPx + 1;
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
@@ -420,7 +449,7 @@ int TimelineView::volumeLineAt(const QPoint& pos) const
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return 0;
     const auto row = rowAt(pos.y());
-    if (!row || row->ref.kind != TrackKind::Audio) return 0;
+    if (!row || row->ref.kind != TrackKind::Audio || isLocked(*row)) return 0;
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
         const QRect r = clipRect(*row, c);
         if (pos.x() < r.left() || pos.x() > r.right()) continue;
@@ -571,6 +600,14 @@ void TimelineView::setSnapping(bool on)
 
 void TimelineView::paintEvent(QPaintEvent*)
 {
+    if (m_renaming) { // Namensfeld folgt der Zeile (Scrollen, Spurhöhe)
+        if (const auto row = rowFor(m_nameRef)) {
+            const QRect g = nameRect(*row).adjusted(-3, 0, 0, 0);
+            if (m_nameEdit->geometry() != g) m_nameEdit->setGeometry(g);
+        } else {
+            finishRename(false);
+        }
+    }
     QPainter p(this);
     p.fillRect(rect(), Theme::timelineBg);
     drawTracks(p);
@@ -685,12 +722,14 @@ void TimelineView::drawTracks(QPainter& p)
         QSet<int> hidden; // Übergänge von Clips, die gerade gezogen/getrimmt werden, ausblenden
         if (moving) hidden = dragSet;
         if (m_drag == Drag::Trim) hidden = QSet<int>(m_trimIds.begin(), m_trimIds.end());
-        if (trimEdit)
-            for (const Clip& c : track.clips) // Spur ändert sich evtl. -> Übergänge ausblenden
-                if (m_trimEdit.ids.contains(c.id) || m_trimEdit.rightIds.contains(c.id)) {
-                    for (const Clip& o : track.clips) hidden.insert(o.id);
-                    break;
-                }
+        if (trimEdit) {
+            // Spur ändert sich evtl. -> Übergänge ausblenden (Ripple rückt alle nicht gesperrten Spuren)
+            bool affected = m_trimEdit.kind == TimelineOps::TrimKind::Ripple && !track.locked;
+            for (const Clip& c : track.clips)
+                affected |= m_trimEdit.ids.contains(c.id) || m_trimEdit.rightIds.contains(c.id);
+            if (affected)
+                for (const Clip& o : track.clips) hidden.insert(o.id);
+        }
         QVector<TimelineOps::TransitionSpan> audioSpans; // Wellenform folgt den Crossfades
         if (row.ref.kind == TrackKind::Audio)
             for (const auto& s : m_editor->transitions(row.ref))
@@ -714,10 +753,16 @@ void TimelineView::drawTracks(QPainter& p)
             }
             const QRect r = clipRect(row, c);
             if (r.right() < kHeaderW || r.left() > width()) continue;
-            drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false, audioSpans);
+            drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false, audioSpans, trackColor(track));
             if (row.lane && m_keyLanes.contains(c.id)) drawKeyLane(p, row, c);
         }
         drawTransitions(p, row, hidden);
+        if (track.locked) { // gesperrt: abgedunkelt und schraffiert wie DaVinci
+            p.setOpacity(1.0);
+            const QRect area(kHeaderW, row.y, width() - kHeaderW, row.h - 1);
+            p.fillRect(area, QColor(0, 0, 0, 90));
+            p.fillRect(area, QBrush(QColor(255, 255, 255, 30), Qt::BDiagPattern));
+        }
     }
 
     p.setOpacity(1.0);
@@ -740,7 +785,8 @@ void TimelineView::drawTracks(QPainter& p)
             moved.start = c->start + m_dragDelta;
             const QRect r(QPoint(int(frameToX(moved.start)), row->y + 1),
                           QPoint(int(frameToX(moved.end())) - 1, row->y + row->h - row->lane - 3));
-            drawClip(p, r, moved, ref.kind, true, true);
+            const QColor col = ref.index < tl.tracks(ref.kind).size() ? trackColor(tl.track(ref)) : QColor();
+            drawClip(p, r, moved, ref.kind, true, true, {}, col);
         }
     }
 
@@ -754,8 +800,10 @@ void TimelineView::drawTracks(QPainter& p)
             }
             return std::nullopt;
         };
-        const auto vRow = ghostRow(TrackKind::Video);
-        const auto aRow = ghostRow(TrackKind::Audio);
+        auto vRow = ghostRow(TrackKind::Video);
+        auto aRow = ghostRow(TrackKind::Audio);
+        if (vRow && isLocked(*vRow)) vRow.reset(); // gesperrte Spur bekommt nichts
+        if (aRow && isLocked(*aRow)) aRow.reset();
         int start = m_dropFrame;
         for (const DropItem& it : m_dropItems) {
             const int x1 = int(frameToX(start)), x2 = int(frameToX(start + it.length));
@@ -922,9 +970,12 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
 }
 
 void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,
-                            const QVector<TimelineOps::TransitionSpan>& spans)
+                            const QVector<TimelineOps::TransitionSpan>& spans, const QColor& color)
 {
-    QColor base = c.isTitle() ? Theme::titleClip : kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip;
+    QColor base = color.isValid() ? color
+                  : c.isTitle()   ? Theme::titleClip
+                  : kind == TrackKind::Video ? Theme::videoClip
+                                             : Theme::audioClip;
     if (!c.enabled) base = QColor(0x55, 0x55, 0x5c); // deaktiviert (D) wie DaVinci: grau
     if (ghost) base.setAlpha(200);
     const QColor body = base.darker(135);
@@ -944,7 +995,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     if (!ghost && bodyRect.height() > 4) {
         p.setRenderHint(QPainter::Antialiasing, false);
         if (kind == TrackKind::Video && !c.isTitle()) drawFilmstrip(p, bodyRect, c); // Titel: nur Farbe
-        else if (kind == TrackKind::Audio) drawWaveform(p, bodyRect, c, spans);
+        else if (kind == TrackKind::Audio) drawWaveform(p, bodyRect, c, spans, color);
         p.setRenderHint(QPainter::Antialiasing);
     }
     // Lautstärkelinie wie in DaVinci (zum Hoch-/Runterziehen)
@@ -1098,7 +1149,7 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
 }
 
 void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
-                                const QVector<TimelineOps::TransitionSpan>& spans)
+                                const QVector<TimelineOps::TransitionSpan>& spans, const QColor& color)
 {
     if (!m_cache) return;
     const auto wave = m_cache->waveform(c.mediaPath);
@@ -1158,7 +1209,10 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
         const int h = std::max(1, int(v * half));
         lines << QLine(x, mid - h, x, mid + h);
     }
-    p.setPen(QColor(0xc8, 0xf0, 0xcf, 210));
+    // Standard hellgrün; bei eigener Spurfarbe ein heller Ton davon
+    QColor pen(0xc8, 0xf0, 0xcf, 210);
+    if (color.isValid()) pen = QColor::fromHsvF(color.hsvHueF(), color.hsvSaturationF() * 0.25f, 0.94, 210 / 255.0);
+    p.setPen(pen);
     p.drawLines(lines);
 }
 
@@ -1172,14 +1226,29 @@ void TimelineView::drawHeaders(QPainter& p)
         const Track& t = tl.track(row.ref);
         const QRect r(0, row.y, kHeaderW - 1, row.h - 1);
         p.fillRect(r, Theme::trackHeader);
-        // farbige Kennung links wie in DaVinci
+        // farbige Kennung links wie in DaVinci (Spurfarbe)
+        const QColor col = trackColor(t);
         p.fillRect(QRect(0, row.y, 3, row.h - 1),
-                   row.ref.kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip);
+                   col.isValid() ? col : row.ref.kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip);
+        // Kürzel im Kästchen, daneben der Name (wie DaVinci „V1  Video 1“)
         QFont f = font();
         f.setBold(true);
+        f.setPointSizeF(8);
         p.setFont(f);
+        const QRect shortBox(10, row.y + 6, 26, 16);
+        p.setPen(QColor(0x5a, 0x5a, 0x62));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(shortBox.adjusted(0, 0, -1, -1));
         p.setPen(Theme::text);
-        p.drawText(r.adjusted(10, 6, 0, 0), Qt::AlignTop | Qt::AlignLeft, t.name);
+        p.drawText(shortBox, Qt::AlignCenter, trackShortName(row.ref));
+        if (!(m_nameEdit && m_nameEdit->isVisible() && m_nameRef == row.ref)) {
+            f.setBold(false);
+            f.setPointSizeF(8.5);
+            p.setFont(f);
+            const QRect nr = nameRect(row);
+            p.drawText(nr, Qt::AlignVCenter | Qt::AlignLeft,
+                       QFontMetrics(f).elidedText(trackDisplayName(t, row.ref), Qt::ElideRight, nr.width()));
+        }
         f.setBold(false);
         f.setPointSizeF(7.5);
         p.setFont(f);
@@ -1199,6 +1268,12 @@ void TimelineView::drawHeaders(QPainter& p)
         f.setBold(true);
         p.setFont(f);
         p.drawText(b, Qt::AlignCenter, row.ref.kind == TrackKind::Video ? (t.hidden ? "⊘" : "◉") : "M");
+        // Schloss: gesperrt = hell auf Orange
+        const QRect lb = lockButton(row);
+        p.setPen(Qt::NoPen);
+        p.setBrush(t.locked ? Theme::accent : QColor(0x3a, 0x3a, 0x42));
+        p.drawRoundedRect(lb, 3, 3);
+        drawLock(p, lb, t.locked ? QColor(Qt::black) : Theme::textDim);
         p.setRenderHint(QPainter::Antialiasing, false);
     }
     p.restore();
@@ -1219,6 +1294,97 @@ void TimelineView::drawLabel(QPainter& p, const QPoint& topLeft, const QString& 
 QRect TimelineView::headerButton(const Row& row) const
 {
     return QRect(kHeaderW - 30, row.y + 6, 20, 16);
+}
+
+QRect TimelineView::lockButton(const Row& row) const
+{
+    return QRect(kHeaderW - 54, row.y + 6, 20, 16);
+}
+
+QRect TimelineView::nameRect(const Row& row) const
+{
+    const int left = 42;
+    return QRect(left, row.y + 5, lockButton(row).left() - 4 - left, 18);
+}
+
+bool TimelineView::isLocked(const Row& row) const
+{
+    return m_editor->isTrackLocked(row.ref);
+}
+
+// Rechtsklick auf den Spurkopf (wie DaVinci): sperren, umbenennen, Spurfarbe
+void TimelineView::headerMenu(const Row& row, const QPoint& globalPos)
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    const Track& t = tl.track(row.ref);
+    const TrackRef ref = row.ref;
+    QMenu menu(this);
+    QAction* lock = menu.addAction(T("Spur sperren"));
+    lock->setCheckable(true);
+    lock->setChecked(t.locked);
+    connect(lock, &QAction::triggered, this, [this, ref] { m_editor->toggleTrackLock(ref); });
+    connect(menu.addAction(T("Spur umbenennen")), &QAction::triggered, this, [this, ref] { startRename(ref); });
+    QMenu* colors = menu.addMenu(T("Spurfarbe ändern"));
+    auto addColor = [&](const QString& id, const QString& name, const QColor& c) {
+        QPixmap pm(12, 12);
+        pm.fill(c);
+        QAction* a = colors->addAction(QIcon(pm), name);
+        a->setCheckable(true);
+        a->setChecked(t.color == id);
+        connect(a, &QAction::triggered, this, [this, ref, id] { m_editor->setTrackColor(ref, id); });
+    };
+    addColor({}, T("Standard"), ref.kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip);
+    colors->addSeparator();
+    for (const auto& i : kTrackColors) addColor(QString::fromLatin1(i.id), T(i.name), QColor::fromRgba(i.rgb));
+    menu.exec(globalPos);
+}
+
+void TimelineView::startRename(TrackRef ref)
+{
+    const auto row = rowFor(ref);
+    if (!row) return;
+    if (!m_nameEdit) {
+        m_nameEdit = new QLineEdit(this);
+        m_nameEdit->setFrame(false);
+        m_nameEdit->setStyleSheet(QString("QLineEdit { background: %1; color: %2; border: 1px solid %3; padding: 0 2px; }")
+                                      .arg(Theme::panel.name(), Theme::text.name(), Theme::accent.name()));
+        m_nameEdit->installEventFilter(this);
+        connect(m_nameEdit, &QLineEdit::editingFinished, this, [this] { finishRename(true); });
+    }
+    m_nameRef = ref;
+    m_renaming = true;
+    QFont f = font();
+    f.setPointSizeF(8.5);
+    m_nameEdit->setFont(f);
+    m_nameEdit->setText(trackDisplayName(m_editor->project()->timeline().track(ref), ref));
+    m_nameEdit->setGeometry(nameRect(*row).adjusted(-3, 0, 0, 0));
+    m_nameEdit->show();
+    m_nameEdit->selectAll();
+    m_nameEdit->setFocus();
+    update();
+}
+
+void TimelineView::finishRename(bool commit)
+{
+    if (!m_renaming) return;
+    m_renaming = false; // vor hide(): Fokusverlust meldet sonst noch einmal editingFinished
+    const QString text = m_nameEdit->text();
+    m_nameEdit->hide();
+    setFocus();
+    if (commit) m_editor->renameTrack(m_nameRef, text);
+    update();
+}
+
+bool TimelineView::eventFilter(QObject* obj, QEvent* e)
+{
+    // Esc im Namensfeld bricht ab (vorher als ShortcutOverride annehmen, sonst greift ein Tastenkürzel)
+    if (obj == m_nameEdit && (e->type() == QEvent::ShortcutOverride || e->type() == QEvent::KeyPress)
+        && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {
+        e->accept();
+        if (e->type() == QEvent::KeyPress) finishRename(false);
+        return true;
+    }
+    return QWidget::eventFilter(obj, e);
 }
 
 void TimelineView::drawPlayhead(QPainter& p)
@@ -1242,6 +1408,10 @@ void TimelineView::drawPlayhead(QPainter& p)
 // Rechtsklick auf einen Übergang: Art, Ausrichtung, Löschen (wie DaVinci)
 void TimelineView::contextMenuEvent(QContextMenuEvent* e)
 {
+    if (e->pos().x() < kHeaderW && e->pos().y() >= kRulerH) {
+        if (const auto row = rowAt(e->pos().y())) headerMenu(*row, e->globalPos());
+        return;
+    }
     // Rechtsklick auf eine Keyframe-Raute: Verlauf (wie DaVinci) oder Löschen, gilt für die ausgewählten Rauten
     if (const auto k = keyframeAt(e->pos())) {
         Selection* sel = m_editor->selection();
@@ -1330,6 +1500,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         if (const auto row = rowAt(pos.y()); row && headerButton(*row).contains(pos)) {
             if (row->ref.kind == TrackKind::Video) m_editor->toggleTrackHidden(row->ref);
             else m_editor->toggleTrackMute(row->ref);
+        } else if (row && lockButton(*row).contains(pos)) {
+            m_editor->toggleTrackLock(row->ref);
         }
         return;
     }
@@ -1457,7 +1629,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     if (!ids.contains(id)) sel->set(QSet<int>(group.begin(), group.end()));
 
     TimelineOps::findClip(m_editor->project()->timeline(), id, &m_anchorRef);
-    m_dragIds = sel->ids().values().toVector();
+    m_dragIds = m_editor->editable(sel->ids().values().toVector());
     m_dragDelta = 0;
     m_dragTrackDelta = 0;
     m_drag = Drag::MaybeMove;
@@ -1494,6 +1666,8 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         if (const auto row = rowAt(pos.y()); row && row->ref.kind == m_anchorRef.kind)
             m_dragTrackDelta = TimelineOps::clampTrackDelta(tl, m_dragIds, m_anchorRef.kind,
                                                             row->ref.index - m_anchorRef.index);
+        for (TrackRef ref : TimelineOps::tracksOf(tl, m_dragIds)) // nie auf eine gesperrte Spur
+            if (m_editor->isTrackLocked({ref.kind, ref.index + m_dragTrackDelta})) m_dragTrackDelta = 0;
         update();
         return;
     }
@@ -1523,12 +1697,13 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         case TrimKind::Ripple:
             if (!start) {
                 edges << c->end() + delta;
-                for (int id : m_trimEdit.ids) { // was nachrückt, ist kein fester Punkt
-                    TrackRef ref;
-                    if (const Clip* t = TimelineOps::findClip(tl, id, &ref))
-                        for (const Clip& o : tl.track(ref).clips)
-                            if (o.start >= t->end()) exclude.insert(o.id);
-                }
+                for (int id : m_trimEdit.ids) // was nachrückt (alle nicht gesperrten Spuren), ist kein fester Punkt
+                    if (const Clip* t = TimelineOps::findClip(tl, id))
+                        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+                            for (const Track& tr : tl.tracks(k))
+                                if (!tr.locked)
+                                    for (const Clip& o : tr.clips)
+                                        if (o.start >= t->end()) exclude.insert(o.id);
             }
             break;
         case TrimKind::Roll: edges << (start ? c->start : c->end()) + delta; break;
@@ -1662,6 +1837,19 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     update();
 }
 
+void TimelineView::mouseDoubleClickEvent(QMouseEvent* e)
+{
+    const QPoint pos = e->position().toPoint();
+    // Doppelklick auf den Spurnamen: umbenennen (wie DaVinci)
+    if (e->button() == Qt::LeftButton && pos.x() < kHeaderW && pos.y() >= kRulerH) {
+        if (const auto row = rowAt(pos.y()); row && nameRect(*row).adjusted(-32, 0, 0, 0).contains(pos)) {
+            startRename(row->ref);
+            return;
+        }
+    }
+    QWidget::mouseDoubleClickEvent(e);
+}
+
 void TimelineView::leaveEvent(QEvent*)
 {
     if (m_hoverClip && m_drag == Drag::None) {
@@ -1744,7 +1932,7 @@ std::optional<TimelineView::TransitionDrop> TimelineView::transitionDropAt(const
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
     const auto row = rowAt(pos.y());
-    if (!row || row->ref.kind != m_transDragKind) return std::nullopt;
+    if (!row || row->ref.kind != m_transDragKind || isLocked(*row)) return std::nullopt;
     const auto& clips = m_editor->project()->timeline().track(row->ref).clips;
     const double f = xToFrame(pos.x());
     std::optional<TransitionDrop> best;
