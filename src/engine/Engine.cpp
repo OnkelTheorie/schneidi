@@ -4,6 +4,7 @@
 #include "engine/Bundle.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
+#include "engine/RenderCache.h"
 #include "engine/TimelineBuilder.h"
 
 #include <Mlt.h>
@@ -22,8 +23,11 @@ struct EngineCallbacks {
     }
 };
 
-Engine::Engine(QObject* parent) : QObject(parent), m_proxies(new ProxyManager(this))
+Engine::Engine(QObject* parent)
+    : QObject(parent), m_proxies(new ProxyManager(this)), m_renderCache(new RenderCache(this))
 {
+    // Render-Cache pausiert während der Wiedergabe
+    connect(this, &Engine::speedChanged, m_renderCache, [this](double s) { m_renderCache->setPlaying(s != 0.0); });
     // Meldungen, die schon unterwegs waren, als gesprungen wurde, ließen den Playhead kurz zurückspringen
     connect(this, &Engine::framePosition, this, [this](int frame, int epoch) {
         if (epoch == m_seekEpoch) emit positionChanged(frame);
@@ -68,6 +72,7 @@ bool Engine::createConsumer(QString* error)
     m_builder->setResolver([this](const QString& path, TrackKind kind) {
         return kind == TrackKind::Video ? m_proxies->resolve(path) : path;
     });
+    m_builder->setClipCache([this](const Clip& c) { return m_renderCache->resolve(c); });
     // Vorschaubild im Seitenverhältnis des Projekts (sonst wird Hochformat verzerrt), gerade Maße
     const QSize fit = m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
     m_previewSize = QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
@@ -109,6 +114,7 @@ void Engine::setFormat(const ProjectFormat& format)
     m_profile.reset();
 
     m_format = format;
+    m_renderCache->setFormat(format);
     m_speed = 0;
     QString error;
     if (!createConsumer(&error)) qWarning("%s", qPrintable(error));
@@ -210,6 +216,7 @@ void Engine::updateTimeline(const Timeline& tl)
             return;
         }
     }
+    m_renderCache->sync(tl); // fehlende Clip-Ausgaben einreihen, überholte verwerfen
     const bool active = m_mode == Mode::Timeline;
     const int pos = m_position;
     if (active && m_consumer) m_consumer->stop(); // alten Tractor nicht mehr lesen lassen

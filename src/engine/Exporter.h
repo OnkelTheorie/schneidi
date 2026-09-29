@@ -34,6 +34,8 @@ public:
     ~Exporter() override;
 
     bool isRunning() const { return m_consumer != nullptr; }
+    // Läuft gerade irgendein Export? (Render-Cache pausiert solange)
+    static bool anyRunning();
     bool start(const Timeline& tl, const ExportSettings& settings, QString* error);
     void cancel();
 
