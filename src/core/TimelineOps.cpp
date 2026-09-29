@@ -123,6 +123,39 @@ bool removeClip(Timeline& tl, int clipId)
     return false;
 }
 
+void insertGap(Timeline& tl, const QVector<TrackRef>& tracks, int frame, int length,
+               const IdGen& newClipId, const IdGen& newLinkId)
+{
+    if (length <= 0) return;
+    QVector<int> spanning;
+    for (const TrackRef& ref : tracks) {
+        Track& t = tl.track(ref);
+        for (Clip& c : t.clips) {
+            if (c.start < frame && c.end() > frame) spanning << c.id;
+            // Überblendung genau am Einfügepunkt fällt weg, dort liegt gleich der neue Clip
+            if (c.end() == frame) c.transOut = 0;
+            if (c.start == frame) c.transIn = 0;
+        }
+    }
+    splitAt(tl, spanning, frame, newClipId, newLinkId);
+    for (const TrackRef& ref : tracks) shiftFrom(tl.track(ref), frame, length);
+}
+
+void shiftFrom(Track& track, int frame, int delta)
+{
+    for (Clip& c : track.clips)
+        if (c.start >= frame) c.start += delta;
+    sortTrack(track);
+}
+
+void clearEdgeTransitions(Track& track, int start, int end)
+{
+    for (Clip& c : track.clips) {
+        if (c.end() == start) c.transOut = 0;
+        if (c.start == end) c.transIn = 0;
+    }
+}
+
 QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
                      const IdGen& newClipId, const IdGen& newLinkId)
 {

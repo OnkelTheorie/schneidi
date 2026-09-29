@@ -392,6 +392,201 @@ void Editor::clearMarks()
     m_project->edit(T("In/Out entfernen"), [](Timeline& tl) { tl.markIn = tl.markOut = -1; });
 }
 
+void Editor::setSourceMarkIn(const QString& path, int frame)
+{
+    const MediaInfo* m = m_project->mediaInfo(path);
+    if (!m) return;
+    const int out = frame >= 0 && m->markOut >= 0 && m->markOut < frame ? -1 : m->markOut;
+    m_project->setMediaMarks(path, frame, out);
+}
+
+void Editor::setSourceMarkOut(const QString& path, int frame)
+{
+    const MediaInfo* m = m_project->mediaInfo(path);
+    if (!m) return;
+    const int in = frame >= 0 && m->markIn > frame ? -1 : m->markIn;
+    m_project->setMediaMarks(path, in, frame);
+}
+
+void Editor::clearSourceMarks(const QString& path)
+{
+    m_project->setMediaMarks(path, -1, -1);
+}
+
+void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack)
+{
+    Project* p = m_project;
+    auto newId = [p] { return p->newClipId(); };
+    Clip c;
+    c.mediaPath = m.path;
+    c.start = start;
+    c.in = sIn;
+    c.out = sIn + len - 1;
+    c.linkId = m.hasVideo && m.hasAudio ? p->newLinkId() : 0;
+    const std::pair<TrackKind, int> targets[] = {{TrackKind::Video, m.hasVideo ? vTrack : -1},
+                                                 {TrackKind::Audio, m.hasAudio ? aTrack : -1}};
+    for (const auto& [kind, idx] : targets) {
+        if (idx < 0) continue;
+        TimelineOps::ensureTracks(tl, kind, idx + 1);
+        Track& t = tl.tracks(kind)[idx];
+        Clip x = c;
+        x.id = newId();
+        TimelineOps::placeClip(t, x, newId);
+        TimelineOps::clearEdgeTransitions(t, x.start, x.end());
+    }
+}
+
+int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int playhead)
+{
+    using M = SourceEditMode;
+    using namespace TimelineOps;
+    Project* p = m_project;
+    const MediaInfo* info = p->mediaInfo(path);
+    if (!info || info->length <= 0 || (!info->hasVideo && !info->hasAudio)) return -1;
+    const MediaInfo m = *info;
+    const Timeline& cur = p->timeline();
+
+    // Quellbereich: Quell-In/Out, fehlt einer -> Clipanfang bzw. -ende (wie DaVinci)
+    const int last = m.length - 1;
+    int sIn = std::clamp(m.markIn >= 0 ? m.markIn : 0, 0, last);
+    const int sOut = std::clamp(m.markOut >= 0 ? m.markOut : last, 0, last);
+    if (sOut < sIn) return -1;
+    int len = sOut - sIn + 1;
+    int start = std::max(0, playhead);
+    int vTrack = m_targetVideo, aTrack = m_targetAudio;
+    bool usedTimelineMarks = false;
+    QVector<TrackRef> rippleTracks; // Insert / Ripple Overwrite
+    int rippleFrom = 0, rippleDelta = 0;
+    int replaceEnd = 0;             // Ripple Overwrite: Ende des ersetzten Clips
+
+    // Clip unter dem Playhead auf der Zielspur (Video, bei reinem Ton Audio) samt Spuren seiner Partner
+    auto clipUnderPlayhead = [&]() -> const Clip* {
+        const TrackRef ref{m.hasVideo ? TrackKind::Video : TrackKind::Audio, m.hasVideo ? m_targetVideo : m_targetAudio};
+        if (ref.index >= cur.tracks(ref.kind).size()) return nullptr;
+        for (const Clip& c : cur.track(ref).clips)
+            if (c.start <= playhead && playhead < c.end()) return &c;
+        return nullptr;
+    };
+    auto partnerTracks = [&](const Clip& c) {
+        QVector<TrackRef> refs;
+        for (int id : linkedGroup(cur, c.id)) {
+            TrackRef r;
+            if (!findClip(cur, id, &r) || refs.contains(r)) continue;
+            refs << r;
+            if (r.kind == TrackKind::Video) vTrack = r.index;
+            else aTrack = r.index;
+        }
+        return refs;
+    };
+
+    switch (mode) {
+    case M::Insert:
+    case M::Overwrite:
+    case M::PlaceOnTop: {
+        // Timeline-In/Out: In = Ziel, In+Out begrenzt die Länge, nur Out = rückwärts ab Out
+        const int tIn = cur.markIn, tOut = cur.markOut;
+        if (tIn >= 0 && tOut >= tIn) {
+            start = tIn;
+            len = std::min(len, tOut - tIn + 1);
+        } else if (tIn >= 0) {
+            start = tIn;
+        } else if (tOut >= 0) {
+            start = tOut + 1 - len;
+            if (start < 0) { // vorne kürzen, das Ende bleibt am Out
+                sIn -= start;
+                len += start;
+                start = 0;
+            }
+        }
+        usedTimelineMarks = tIn >= 0 || tOut >= 0;
+        if (mode == M::PlaceOnTop) {
+            // Erste Spur über allen Clips im Bereich (fehlende Spur wird angelegt)
+            auto freeTrack = [&](TrackKind kind) {
+                int idx = 0;
+                const auto& tracks = cur.tracks(kind);
+                for (int i = 0; i < tracks.size(); ++i)
+                    for (const Clip& c : tracks[i].clips)
+                        if (c.start < start + len && c.end() > start) idx = i + 1;
+                return idx;
+            };
+            vTrack = freeTrack(TrackKind::Video);
+            aTrack = freeTrack(TrackKind::Audio);
+        }
+        if (mode == M::Insert) {
+            if (m.hasVideo) rippleTracks << TrackRef{TrackKind::Video, vTrack};
+            if (m.hasAudio) rippleTracks << TrackRef{TrackKind::Audio, aTrack};
+        }
+        break;
+    }
+    case M::AppendAtEnd:
+        start = endFrame(cur);
+        break;
+    case M::Replace: {
+        // Länge und Lage bleiben; Quell-In (sonst Quell-Playhead) deckt sich mit dem Timeline-Playhead
+        const Clip* c = clipUnderPlayhead();
+        if (!c) return -1;
+        partnerTracks(*c);
+        const int anchor = m.markIn >= 0 ? m.markIn : srcPos;
+        sIn = anchor - (playhead - c->start);
+        len = c->length();
+        if (sIn < 0 || sIn + len - 1 > last) return -1; // zu wenig Material
+        start = c->start;
+        break;
+    }
+    case M::RippleOverwrite: {
+        const Clip* c = clipUnderPlayhead();
+        if (!c) return -1;
+        rippleTracks = partnerTracks(*c);
+        start = c->start;
+        replaceEnd = c->end();
+        rippleFrom = c->end();
+        rippleDelta = len - c->length();
+        break;
+    }
+    }
+    if (len <= 0) return -1;
+    if (m.hasVideo && !rippleTracks.contains(TrackRef{TrackKind::Video, vTrack}) && mode == M::RippleOverwrite)
+        rippleTracks << TrackRef{TrackKind::Video, vTrack};
+    if (m.hasAudio && !rippleTracks.contains(TrackRef{TrackKind::Audio, aTrack}) && mode == M::RippleOverwrite)
+        rippleTracks << TrackRef{TrackKind::Audio, aTrack};
+
+    QString text;
+    switch (mode) {
+    case M::Insert: text = T("Clip einfügen: %1"); break;
+    case M::Overwrite: text = T("Clip überschreiben: %1"); break;
+    case M::Replace: text = T("Clip ersetzen: %1"); break;
+    case M::PlaceOnTop: text = T("Oben platzieren: %1"); break;
+    case M::RippleOverwrite: text = T("Ripple-Überschreiben: %1"); break;
+    case M::AppendAtEnd: text = T("Am Ende anhängen: %1"); break;
+    }
+    p->edit(text.arg(m.name), [&](Timeline& tl) {
+        auto newId = [p] { return p->newClipId(); };
+        for (const TrackRef& r : rippleTracks) ensureTracks(tl, r.kind, r.index + 1);
+        if (mode == M::Insert) insertGap(tl, rippleTracks, start, len, newId, [p] { return p->newLinkId(); });
+        if (mode == M::RippleOverwrite) {
+            for (const TrackRef& r : rippleTracks) {
+                clearRange(tl.track(r), start, replaceEnd, newId);
+                shiftFrom(tl.track(r), rippleFrom, rippleDelta);
+            }
+        }
+        placeSource(tl, m, sIn, len, start, vTrack, aTrack);
+        if (usedTimelineMarks) tl.markIn = tl.markOut = -1; // wie DaVinci: benutzte Marken sind verbraucht
+    });
+    return mode == M::Replace ? playhead : start + len;
+}
+
+void Editor::placeSourceRange(const QString& path, int in, int out, int frame, int track)
+{
+    const MediaInfo* info = m_project->mediaInfo(path);
+    if (!info || info->length <= 0) return;
+    const MediaInfo m = *info;
+    in = std::clamp(in, 0, m.length - 1);
+    out = std::clamp(out, in, m.length - 1);
+    m_project->edit(T("Clip überschreiben: %1").arg(m.name), [&](Timeline& tl) {
+        placeSource(tl, m, in, out - in + 1, std::max(0, frame), std::max(0, track), std::max(0, track));
+    });
+}
+
 void Editor::copySelection()
 {
     const Timeline& tl = m_project->timeline();

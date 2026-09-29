@@ -26,6 +26,16 @@ void placeClip(Track& track, const Clip& clip, const IdGen& newId);
 
 bool removeClip(Timeline& tl, int clipId);
 
+// Einfügen mit Ripple (Insert, F9): auf den Spuren wird der Clip über `frame` geteilt (verknüpfte Teile bleiben
+// verknüpft, siehe splitAt) und alles ab `frame` rückt um `length` nach rechts.
+void insertGap(Timeline& tl, const QVector<TrackRef>& tracks, int frame, int length,
+               const IdGen& newClipId, const IdGen& newLinkId);
+// Verschiebt auf der Spur alle Clips mit start >= frame um delta (Ripple; Aufrufer sorgt für Platz)
+void shiftFrom(Track& track, int frame, int delta);
+// Übergänge an den Kanten [start, end) eines neu gelegten Clips entfernen: der Nachbar davor verliert sein
+// Ausblenden/seine Überblendung, der danach sein Einblenden (dort liegt jetzt der neue Clip)
+void clearEdgeTransitions(Track& track, int start, int end);
+
 // Legt fehlende Spuren an, bis es `count` Spuren der Art gibt (Namen V3, A3, …).
 void ensureTracks(Timeline& tl, TrackKind kind, int count);
 

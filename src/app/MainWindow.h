@@ -1,4 +1,5 @@
 #pragma once
+#include "core/Editor.h"
 #include "core/ProjectFile.h"
 #include "core/Types.h"
 
@@ -10,7 +11,6 @@
 class Engine;
 class Project;
 class Selection;
-class Editor;
 class MediaPool;
 class EffectsLibrary;
 class Viewer;
@@ -63,6 +63,12 @@ private:
     void buildActions();
     QAction* makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
                        const std::function<void()>& fn);
+    // Quellansicht (Doppelklick im Media Pool): an der zuletzt gezeigten Stelle der Datei öffnen
+    void showSource(const QString& path);
+    bool sourceActive() const; // Viewer zeigt die Quelle -> I/O wirken auf die Quell-In/Out
+    QString editSource() const; // Quelle für F9/F10 …: Quellansicht, sonst Auswahl im Media Pool
+    void sourceEdit(Editor::SourceEditMode mode);
+    void updateViewer();        // Scrubber-Bereich, In/Out und Titel des Viewers
     void jumpToEdit(int direction);
     void jumpToMarker(int direction);
     void jumpToFrame(int frame);
@@ -115,6 +121,7 @@ private:
     Page m_page = Page::Edit;
 
     QHash<QString, MediaInfo> m_probeCache;
+    QHash<QString, int> m_sourcePos; // Quell-Playhead je Datei (nur in dieser Sitzung)
     class MediaCache* m_mediaCache = nullptr;
 
     QString m_projectPath; // leer = noch nie gespeichert

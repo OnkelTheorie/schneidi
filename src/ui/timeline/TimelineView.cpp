@@ -12,6 +12,7 @@
 #include "engine/MediaCache.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaPool.h"
+#include "ui/Viewer.h"
 
 #include <QDragEnterEvent>
 #include <QFileInfo>
@@ -1727,6 +1728,16 @@ QStringList TimelineView::dropPaths(const QMimeData* mime) const
     return paths;
 }
 
+bool TimelineView::dropRange(const QMimeData* mime, int* in, int* out)
+{
+    if (!mime->hasFormat(Viewer::RangeMimeType)) return false;
+    const QStringList parts = QString::fromUtf8(mime->data(Viewer::RangeMimeType)).split(' ');
+    if (parts.size() != 2) return false;
+    *in = parts[0].toInt();
+    *out = parts[1].toInt();
+    return *out >= *in;
+}
+
 int TimelineView::dropTrackAt(int y) const
 {
     // V2 und A2 gehören zusammen -> Index der Spur unter der Maus, egal ob Video oder Audio
@@ -1800,6 +1811,8 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
         MediaInfo info;
         if (const MediaInfo* known = m_editor->project()->mediaInfo(path)) info = *known;
         else if (m_probe) info = m_probe(path);
+        int in = 0, out = 0;
+        if (dropRange(e->mimeData(), &in, &out)) info.length = out - in + 1; // Quell-In/Out aus dem Viewer
         if (info.length > 0 && (info.hasVideo || info.hasAudio))
             m_dropItems << DropItem{info.length, info.hasVideo, info.hasAudio};
     }
@@ -1849,7 +1862,12 @@ void TimelineView::dropEvent(QDropEvent* e)
         update();
         return;
     }
-    if (m_dropFrame >= 0) emit dropRequested(dropPaths(e->mimeData()), m_dropFrame, m_dropTrack);
+    int in = 0, out = 0;
+    const QStringList paths = dropPaths(e->mimeData());
+    if (m_dropFrame >= 0 && paths.size() == 1 && dropRange(e->mimeData(), &in, &out))
+        emit rangeDropRequested(paths.first(), in, out, m_dropFrame, m_dropTrack);
+    else if (m_dropFrame >= 0)
+        emit dropRequested(paths, m_dropFrame, m_dropTrack);
     m_dropFrame = -1;
     m_dropItems.clear();
     e->acceptProposedAction();

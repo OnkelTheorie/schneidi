@@ -39,6 +39,8 @@ public:
     const QVector<MediaInfo>& media() const { return m_media; }
     const MediaInfo* mediaInfo(const QString& path) const;
     void addMedia(const MediaInfo& info);
+    // Quell-In/Out eines Media-Pool-Clips (-1 = keiner). Nicht im Undo (wie DaVinci), gilt aber als Änderung.
+    void setMediaMarks(const QString& path, int markIn, int markOut);
     // Medieninfos ersetzen (z. B. Längen nach einer neuen Framerate), gilt nicht als Änderung
     void replaceMedia(const QVector<MediaInfo>& media);
 
@@ -57,6 +59,7 @@ signals:
     void timelineChanged();
     void formatChanged(); // kommt vor dem zugehörigen timelineChanged()
     void mediaChanged();
+    void mediaMarksChanged(const QString& path); // Quell-In/Out geändert (ohne mediaChanged)
     void modifiedChanged(bool modified);
 
 private:

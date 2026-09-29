@@ -257,9 +257,12 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
     QJsonArray media;
     for (const MediaInfo& m : data.media) {
         index[m.path] = media.size();
-        media << QJsonObject{{"path", m.path}, {"relPath", projectDir.relativeFilePath(m.path)},
-                             {"name", m.name}, {"length", m.length}, {"hasVideo", m.hasVideo},
-                             {"hasAudio", m.hasAudio}, {"isImage", m.isImage}};
+        QJsonObject o{{"path", m.path}, {"relPath", projectDir.relativeFilePath(m.path)},
+                      {"name", m.name}, {"length", m.length}, {"hasVideo", m.hasVideo},
+                      {"hasAudio", m.hasAudio}, {"isImage", m.isImage}};
+        if (m.markIn >= 0) o["markIn"] = m.markIn; // Quell-In/Out (optional, alte Dateien ohne)
+        if (m.markOut >= 0) o["markOut"] = m.markOut;
+        media << o;
     }
 
     auto tracks = [&](const QVector<Track>& list) {
@@ -342,6 +345,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         m.hasVideo = o.value("hasVideo").toBool();
         m.hasAudio = o.value("hasAudio").toBool();
         m.isImage = o.value("isImage").toBool();
+        m.markIn = o.value("markIn").toInt(-1);
+        m.markOut = o.value("markOut").toInt(-1);
         d.media << m;
     }
 

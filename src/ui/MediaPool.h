@@ -22,6 +22,9 @@ public:
 
     MediaPool(Project* project, Engine* engine, QWidget* parent = nullptr);
 
+    // Ausgewählte Medien (ohne den Titel-Eintrag)
+    QStringList selectedMedia() const;
+
 public slots:
     void importDialog();
     void importFiles(const QStringList& paths);
@@ -36,7 +39,6 @@ protected:
 private:
     void rebuild();
     void showContextMenu(const QPoint& pos);
-    QStringList selectedMedia() const;
     void updateItem(const QString& path); // Vorschaubild mit Proxy-Symbol bzw. Fortschritt
     void updateProxyStatus();
 

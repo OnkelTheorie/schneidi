@@ -57,8 +57,10 @@ public:
     void mixerOnlyNext() { m_mixerOnlyNext = true; }
     bool mixerOnlyPending() const { return m_mixerOnlyNext; }
     void showTimeline(int position);
-    void showSource(const QString& path);
+    void showSource(const QString& path, int position = 0);
     Mode mode() const { return m_mode; }
+    // Zuletzt in der Quellansicht gezeigte Datei (bleibt nach Q/Timeline erhalten, leer = noch keine)
+    const QString& sourcePath() const { return m_sourcePath; }
 
     void play();
     void pause();
@@ -97,6 +99,7 @@ private:
     std::unique_ptr<Mlt::Producer> m_source;
     QString m_sourcePath;
     Mlt::Producer* m_current = nullptr;
+    QString m_sourcePath;
 
     Mode m_mode = Mode::Timeline;
     double m_speed = 0.0;
