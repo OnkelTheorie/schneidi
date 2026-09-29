@@ -549,6 +549,7 @@ void MainWindow::buildActions()
     makeAction(file, "project_save_as", T("Projekt speichern unter…"), QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
+    makeAction(file, "new_bin", T("Neuer Bin"), QKeySequence("Ctrl+Shift+N"), [this] { m_mediaPool->newBin(); });
     file->addSeparator();
     makeAction(file, "project_settings", T("Projekteinstellungen…"), QKeySequence("Shift+9"), [this] { projectSettingsDialog(); });
     file->addSeparator();
@@ -897,6 +898,7 @@ void MainWindow::disableAutosave()
 {
     m_autosaveTimer->stop();
     m_autosaveDisabled = true;
+    m_mediaPool->setSaveSettings(false); // Testläufe: Media-Pool-Ansicht nicht speichern
 }
 
 void MainWindow::removeAutosave()

@@ -2,9 +2,24 @@
 #include "core/ProjectFile.h"
 #include "core/Types.h"
 
+#include <QHash>
 #include <QObject>
 #include <QUndoStack>
 #include <functional>
+
+// Organisation eines Media-Pool-Clips (Teil von MediaInfo), für Undo getrennt gemerkt
+struct MediaOrg {
+    int bin = 0;
+    QString color;
+    QStringList flags;
+    bool operator==(const MediaOrg& o) const { return bin == o.bin && color == o.color && flags == o.flags; }
+};
+// Stand der Media-Pool-Organisation (Bins + Organisation je Pfad) – Undo-Schnappschuss
+struct PoolState {
+    QVector<MediaBin> bins;
+    QHash<QString, MediaOrg> media;
+    bool operator==(const PoolState& o) const { return bins == o.bins && media == o.media; }
+};
 
 // Hält das Projekt (Media + Timeline). Jede Änderung der Timeline läuft über edit()
 // und ist damit automatisch rückgängig machbar (Snapshot-Undo – einfach und robust;
@@ -44,6 +59,24 @@ public:
     // Medieninfos ersetzen (z. B. Längen nach einer neuen Framerate), gilt nicht als Änderung
     void replaceMedia(const QVector<MediaInfo>& media);
 
+    // Media Pool wie DaVinci: Bins (Master = 0), Clipfarben, Flags. Jede Änderung ist ein Undo-Schritt
+    // (betrifft nur die Organisation, nicht die Medienliste selbst).
+    const QVector<MediaBin>& bins() const { return m_bins; }
+    const MediaBin* bin(int id) const;
+    QString binName(int id) const;                // 0 = "Master"
+    QVector<int> childBins(int parent) const;     // nach Name sortiert (wie DaVinci)
+    bool binInside(int id, int ancestor) const;   // id == ancestor oder darunter
+    int addBin(int parent, const QString& name = {}); // Standardname "Bin 1", "Bin 2" …; liefert die id
+    void renameBin(int id, const QString& name);
+    void removeBin(int id);                       // Inhalt (Clips, Unter-Bins) wandert in den Eltern-Bin
+    void moveBin(int id, int parent);
+    void moveMediaToBin(const QStringList& paths, int bin);
+    void setClipColor(const QStringList& paths, const QString& colorId); // leer = keine Clipfarbe
+    void setFlag(const QStringList& paths, const QString& flagId, bool on);
+    void clearFlags(const QStringList& paths);
+    PoolState poolState() const;
+    void applyPool(const PoolState& state); // nur für Undo
+
     // Speichern/Laden (.schneidi). load() leert den Undo-Verlauf wie ein frisch geöffnetes Projekt.
     ProjectData data() const;
     void load(const ProjectData& d);
@@ -59,6 +92,7 @@ signals:
     void timelineChanged();
     void formatChanged(); // kommt vor dem zugehörigen timelineChanged()
     void mediaChanged();
+    void poolChanged(); // Bins/Clipfarben/Flags geändert (Medienliste gleich)
     void mediaMarksChanged(const QString& path); // Quell-In/Out geändert (ohne mediaChanged)
     void modifiedChanged(bool modified);
 
@@ -66,9 +100,13 @@ private:
     ProjectFormat m_format;
     Timeline m_timeline;
     QVector<MediaInfo> m_media;
+    QVector<MediaBin> m_bins;
+    int m_lastBinId = 0;
     QUndoStack m_undo;
     int m_lastClipId = 0;
     int m_lastLinkId = 0;
     int m_mergeSession = 0;
+    void editPool(const QString& text, const std::function<void(PoolState&)>& fn);
+    void sanitizePool(); // Verweise auf fehlende Bins -> Master, Eltern-Zyklen auflösen
     bool m_mediaDirty = false;
 };
