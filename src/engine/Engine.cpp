@@ -84,7 +84,9 @@ bool Engine::createConsumer(QString* error)
     }
     m_consumer->set("terminate_on_pause", 0);
     m_consumer->set("real_time", 1);
-    m_consumer->set("scrub_audio", 1);
+    // Ton bei Speed != 1 nur während echtem Scrubben/Spulen (setSpeed); im Stand schickte jeder
+    // Einzelbild-Refresh (Seek, Inspector) sonst ein Audio-Häppchen raus → Knacken
+    m_consumer->set("scrub_audio", 0);
     // Kleiner Vorlauf-Puffer: sonst läuft der Ton nach Pause/Seek noch ~1 s weiter
     m_consumer->set("buffer", 2);
     m_consumer->set("prefill", 1);
@@ -248,6 +250,7 @@ void Engine::connectProducer(Mlt::Producer* producer, int position)
     m_consumer->stop();
     m_current = producer;
     m_current->set_speed(m_speed);
+    m_consumer->set("scrub_audio", m_speed != 0.0 ? 1 : 0);
     m_current->seek(position);
     m_position = position;
     m_consumer->connect(*m_current);
@@ -270,6 +273,7 @@ void Engine::setSpeed(double speed)
 {
     if (!m_current) return;
     m_speed = speed;
+    m_consumer->set("scrub_audio", speed != 0.0 ? 1 : 0); // im Stand stumm (kein Knacken bei Refresh)
     m_current->set_speed(speed);
     if (speed == 0.0) {
         m_current->seek(m_position); // exakt auf dem angezeigten Frame stehen bleiben
