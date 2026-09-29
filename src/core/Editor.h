@@ -2,6 +2,7 @@
 #include "core/TimelineOps.h"
 #include "core/Types.h"
 
+#include <QHash>
 #include <QObject>
 #include <algorithm>
 #include <optional>
@@ -62,6 +63,13 @@ public:
     void slipSelection(int frames);
     // Lautstärke eines Audioclips (dB, wird auf kMinVolumeDb..kMaxVolumeDb begrenzt)
     void setClipVolume(int clipId, double db);
+    // Audiopegel normalisieren (DaVinci Normalize Audio Levels, Sample Peak): peakDb = gemessener Spitzenpegel je
+    // Audioclip (ohne Clip-Lautstärke). Clip-Lautstärke so setzen, dass die Spitze bei targetDb liegt; relative = alle
+    // Clips um denselben Betrag (lautester trifft das Ziel), sonst jeder einzeln. Lautstärke-Keyframes: Kurve so
+    // verschieben, dass ihr höchster Punkt den Wert bekommt. Stille/gesperrte Clips bleiben. Ein Undo-Schritt.
+    void normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative);
+    // Audioclips zum Normalisieren: Auswahl (mit verknüpften Partnern), nur Ton, nicht gesperrt
+    QVector<int> selectedAudioClips() const;
     // Beliebige Clip-Eigenschaft ändern (Inspector). Gleicher mergeKey = ein Undo-Schritt.
     void modifyClips(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
                      const QString& mergeKey = {});

@@ -19,10 +19,11 @@ class Tractor;
 // Das Modell bleibt die Wahrheit; der Tractor wird bei Änderungen neu gebaut.
 
 // Mixer-Anschlüsse für die Vorschau: Fader/Pan-Filter (live verstellbar, ohne Neuaufbau)
-// und Pegelmesser (MLT "audiolevel", nach Fader/Pan). Der Export braucht sie nicht.
+// und Pegelmesser (eigener Filter, nach Fader/Pan/Limiter). Der Export braucht sie nicht.
 struct MixerHooks {
     struct Strip {
         std::shared_ptr<Mlt::Filter> volume, pan, meter;
+        std::shared_ptr<Mlt::Filter> limiter; // nur Master: immer angehängt, per "disable" an/aus
         bool audible = true; // false = stumm/weggesoloed -> Pegel -∞
     };
     std::vector<Strip> tracks; // pro Audiospur
@@ -41,8 +42,12 @@ public:
 
     // hooks != nullptr: Mixer-Filter immer anhängen (auch bei 0 dB) und Pegelmesser einbauen
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);
-    // Fader/Pan live auf die Filter übertragen (Spuranzahl muss passen)
+    // Fader/Pan/Limiter live auf die Filter übertragen (Spuranzahl muss passen)
     static bool applyMixer(const Timeline& tl, const MixerHooks& hooks);
+    // Ton eines Clips so, wie ihn die Timeline liest (Geschwindigkeit/Rückwärts eingerechnet), ohne
+    // Clip-Lautstärke/Fades; Frames in..out des Clips. nullptr = Titel/Standbild/Datei fehlt.
+    // Gehört dem Builder (Cache), gilt bis zum nächsten Aufruf.
+    Mlt::Producer* clipAudioSource(const Clip& c);
 
 private:
     // second: eigener Producer für die einblendende Seite eines Übergangs (sonst spult ein Decoder

@@ -1480,7 +1480,18 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
         return;
     }
     const auto t = transitionAt(e->pos());
-    if (!t) return;
+    if (!t) {
+        // Rechtsklick auf einen Clip: auswählen (falls nicht schon), Menü baut das Hauptfenster (Aktionen)
+        if (const int id = clipAt(e->pos())) {
+            Selection* sel = m_editor->selection();
+            if (!sel->contains(id)) {
+                const QVector<int> group = m_editor->withLinked({id});
+                sel->set(QSet<int>(group.begin(), group.end()));
+            }
+            emit clipMenuRequested(e->globalPos());
+        }
+        return;
+    }
     const TimelineOps::TransitionSpan s = t->span;
     m_editor->selection()->setTransition({s.leftId, s.rightId});
     QMenu menu(this);

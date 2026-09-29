@@ -61,6 +61,8 @@ signals:
     void dropRequested(const QStringList& paths, int frame, int track);
     // Quellbereich [in, out] aus dem Viewer abgelegt (überschreiben wie DaVinci)
     void rangeDropRequested(const QString& path, int in, int out, int frame, int track);
+    // Rechtsklick auf einen Clip (ist dann ausgewählt)
+    void clipMenuRequested(const QPoint& globalPos);
 
 protected:
     void paintEvent(QPaintEvent*) override;
