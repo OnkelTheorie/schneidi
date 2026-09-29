@@ -5,6 +5,7 @@
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
 
+#include <QJsonObject>
 #include <QString>
 
 struct ProjectData {
@@ -25,6 +26,10 @@ inline constexpr const char* Extension = "schneidi";
 // zusammen verschobener Ordner (Projekt + Medien) ohne Neuverknüpfen weiter funktioniert.
 QByteArray toJson(const ProjectData& data, const QString& projectPath);
 bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* data, QString* error);
+
+// Ein Clip wie in der Projektdatei, Medienverweis als Pfad (z. B. für Cache-Schlüssel: neue Clip-Felder zählen
+// automatisch mit, sobald sie gespeichert werden)
+QJsonObject clipJson(const Clip& c);
 
 bool save(const ProjectData& data, const QString& path, QString* error);
 bool load(const QString& path, ProjectData* data, QString* error);
