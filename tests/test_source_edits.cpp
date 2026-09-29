@@ -9,6 +9,7 @@
 #include "check.h"
 
 #include <QCoreApplication>
+#include <cmath>
 
 using SE = Editor::SourceEditMode;
 using Check::dump;
@@ -147,6 +148,38 @@ int main(int argc, char** argv)
         f.ed.toggleTrackLock({TrackKind::Video, 0});
         const int r = f.ed.sourceEdit(SE::Overwrite, "/x/b.mp4", 0, 0);
         check("Beide gesperrt -> nichts", QString::number(r), "-1");
+    }
+    {
+        // Fit to Fill (Shift+F11): 20 Quell-Frames (10..29) auf 40 Timeline-Frames (40..79) = 50 %, überschreibt,
+        // in/out im umgerechneten Material, Marken verbraucht
+        Fixture f;
+        f.ed.setSourceMarkIn("/x/b.mp4", 10);
+        f.ed.setSourceMarkOut("/x/b.mp4", 29);
+        f.ed.setMarkIn(40);
+        f.ed.setMarkOut(79);
+        const int end = f.ed.sourceEdit(SE::FitToFill, "/x/b.mp4", 0, 0);
+        CHECK_EQ(end, 80);
+        const Timeline& tl = f.p.timeline();
+        check("FitToFill", dump(tl), "V1: a[0-40|0-39] b[40-80|20-59] a[80-100|80-99]  V2:  A1: a[0-40|0-39] b[40-80|20-59] a[80-100|80-99]  A2:");
+        for (const Track* t : {&tl.video[0], &tl.audio[0]})
+            CHECK(std::abs(t->clips[1].speed - 0.5) < 1e-9);
+        CHECK(tl.markIn < 0 && tl.markOut < 0);
+        f.p.undoStack()->undo();
+        CHECK_EQ(f.p.timeline().markIn, 40); // ein Undo-Schritt, Marken wieder da
+    }
+    {
+        // Schneller: 40 Quell-Frames auf 10 = 400 %; ohne Timeline-Out bzw. mit zu wenig Material nichts
+        Fixture f;
+        f.ed.setSourceMarkIn("/x/b.mp4", 0);
+        f.ed.setSourceMarkOut("/x/b.mp4", 39);
+        f.ed.setMarkIn(0);
+        CHECK_EQ(f.ed.sourceEdit(SE::FitToFill, "/x/b.mp4", 0, 0), -1);
+        f.ed.setMarkOut(9);
+        CHECK_EQ(f.ed.sourceEdit(SE::FitToFill, "/x/b.mp4", 0, 0), 10);
+        const Clip& c = f.p.timeline().video[0].clips[0];
+        CHECK(std::abs(c.speed - 4.0) < 1e-9);
+        CHECK_EQ(c.in, 0);
+        CHECK_EQ(c.length(), 10);
     }
     return Check::result();
 }

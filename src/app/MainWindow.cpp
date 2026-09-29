@@ -658,6 +658,7 @@ void MainWindow::buildActions()
     makeAction(edit, "insert_clip", T("Clip einfügen"), QKeySequence(Qt::Key_F9), [this] { sourceEdit(SE::Insert); });
     makeAction(edit, "overwrite_clip", T("Clip überschreiben"), QKeySequence(Qt::Key_F10), [this] { sourceEdit(SE::Overwrite); });
     makeAction(edit, "replace_clip", T("Clip ersetzen"), QKeySequence(Qt::Key_F11), [this] { sourceEdit(SE::Replace); });
+    makeAction(edit, "fit_to_fill", T("Einpassen (Fit to Fill)"), QKeySequence("Shift+F11"), [this] { sourceEdit(SE::FitToFill); });
     makeAction(edit, "place_on_top", T("Oben platzieren"), QKeySequence(Qt::Key_F12), [this] { sourceEdit(SE::PlaceOnTop); });
     makeAction(edit, "ripple_overwrite", T("Ripple-Überschreiben"), QKeySequence("Shift+F10"),
                [this] { sourceEdit(SE::RippleOverwrite); });

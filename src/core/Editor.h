@@ -142,6 +142,7 @@ public:
         PlaceOnTop,      // F12: auf die erste freie Spur über allen Clips im Bereich
         RippleOverwrite, // Shift+F10: Clip unter dem Playhead ersetzen, Rest der Spur rückt um den Längenunterschied
         AppendAtEnd,     // Shift+F12: ans Ende der Timeline
+        FitToFill,       // Shift+F11: Quell-In/Out per Geschwindigkeit genau zwischen Timeline-In und -Out (überschreibt)
     };
     // 3-Punkt-Schnitt: Quellbereich = Quell-In/Out (fehlt einer: Clipanfang/-ende), Ziel = Timeline-In, sonst Playhead;
     // Timeline-In+Out begrenzt die Länge, nur Timeline-Out = rückwärts ab Out. Benutzte Timeline-In/Out werden
@@ -174,7 +175,9 @@ private:
                                              TrackRef* where = nullptr) const;
 
     // Quellbereich ab Quell-Frame sIn (len Frames) an `start` auf V[vTrack]/A[aTrack] legen (überschreibt, verknüpft)
-    void placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack);
+    // sIn/len in Frames des umgerechneten Materials, wenn speed != 1 (siehe Clip::speed)
+    void placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack,
+                     double speed = 1.0);
 
     // Clips unter dem Playhead bzw. die Auswahl (mit Partnern), wie DaVinci bei Strg+B
     QVector<int> targetIds(int frame) const;

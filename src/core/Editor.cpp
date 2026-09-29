@@ -573,7 +573,8 @@ void Editor::clearSourceMarks(const QString& path)
     m_project->setMediaMarks(path, -1, -1);
 }
 
-void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack)
+void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack,
+                         double speed)
 {
     Project* p = m_project;
     auto newId = [p] { return p->newClipId(); };
@@ -582,6 +583,7 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
     c.start = start;
     c.in = sIn;
     c.out = sIn + len - 1;
+    c.speed = speed;
     c.linkId = m.hasVideo && m.hasAudio ? p->newLinkId() : 0;
     const std::pair<TrackKind, int> targets[] = {{TrackKind::Video, m.hasVideo ? vTrack : -1},
                                                  {TrackKind::Audio, m.hasAudio ? aTrack : -1}};
@@ -618,6 +620,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     QVector<TrackRef> rippleTracks; // Insert / Ripple Overwrite
     int rippleFrom = 0, rippleDelta = 0;
     int replaceEnd = 0;             // Ripple Overwrite: Ende des ersetzten Clips
+    double speed = 1.0;             // Fit to Fill
 
     // Clip unter dem Playhead auf der Zielspur (Video, bei reinem Ton Audio) samt Spuren seiner Partner
     auto clipUnderPlayhead = [&]() -> const Clip* {
@@ -686,6 +689,22 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     case M::AppendAtEnd:
         start = endFrame(cur);
         break;
+    case M::FitToFill: {
+        // 4-Punkt-Schnitt wie DaVinci: braucht Timeline-In und -Out; Geschwindigkeit = Quelllänge / Ziellänge
+        const int tIn = cur.markIn, tOut = cur.markOut;
+        if (tIn < 0 || tOut < tIn) return -1;
+        const int target = tOut - tIn + 1;
+        speed = double(len) / target;
+        if (std::abs(speed - 1.0) < 1e-9) speed = 1.0;
+        // in/out zählen im umgerechneten Material (Clip::speed)
+        const int avail = std::max(1, int(m.length / speed));
+        if (avail < target) return -1;
+        sIn = std::clamp(int(std::lround(sIn / speed)), 0, avail - target);
+        len = target;
+        start = tIn;
+        usedTimelineMarks = true;
+        break;
+    }
     case M::Replace: {
         // Länge und Lage bleiben; Quell-In (sonst Quell-Playhead) deckt sich mit dem Timeline-Playhead
         const Clip* c = clipUnderPlayhead();
@@ -730,6 +749,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     case M::PlaceOnTop: text = T("Oben platzieren: %1"); break;
     case M::RippleOverwrite: text = T("Ripple-Überschreiben: %1"); break;
     case M::AppendAtEnd: text = T("Am Ende anhängen: %1"); break;
+    case M::FitToFill: text = T("Einpassen: %1"); break;
     }
     p->edit(text.arg(m.name), [&](Timeline& tl) {
         auto newId = [p] { return p->newClipId(); };
@@ -743,7 +763,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
             // übrige nicht gesperrte Spuren bleiben synchron (bleiben stehen, falls sie überschreiben würden)
             TimelineOps::rippleTracks(tl, {{rippleFrom, rippleDelta}}, rippleTracks);
         }
-        placeSource(tl, m2, sIn, len, start, vTrack, aTrack);
+        placeSource(tl, m2, sIn, len, start, vTrack, aTrack, speed);
         if (usedTimelineMarks) tl.markIn = tl.markOut = -1; // wie DaVinci: benutzte Marken sind verbraucht
     });
     return mode == M::Replace ? playhead : start + len;
