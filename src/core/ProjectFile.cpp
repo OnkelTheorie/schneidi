@@ -277,7 +277,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                 if (!index.contains(c.mediaPath)) { // sollte nicht vorkommen, aber nichts verlieren
                     index[c.mediaPath] = media.size();
                     media << QJsonObject{{"path", c.mediaPath}, {"relPath", projectDir.relativeFilePath(c.mediaPath)},
-                                         {"name", QFileInfo(c.mediaPath).fileName()}};
+                                         {"name", QFileInfo(c.mediaPath).fileName()}, {"notInPool", true}};
                 }
                 clips << clipToJson(c, index.value(c.mediaPath));
             }
@@ -342,6 +342,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.playhead = root.value("playhead").toInt();
     d.lastClipId = root.value("lastClipId").toInt();
     d.lastLinkId = root.value("lastLinkId").toInt();
+    // Alle Einträge lösen die Clip-Verweise auf; "notInPool" (Datei nur in der Timeline) kommt nicht in den Media Pool
+    QVector<MediaInfo> allMedia;
     for (const QJsonValue& v : root.value("media").toArray()) {
         const QJsonObject o = v.toObject();
         MediaInfo m;
@@ -353,7 +355,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         m.isImage = o.value("isImage").toBool();
         m.markIn = o.value("markIn").toInt(-1);
         m.markOut = o.value("markOut").toInt(-1);
-        d.media << m;
+        allMedia << m;
+        if (!o.value("notInPool").toBool()) d.media << m;
     }
 
     const QJsonObject tl = root.value("timeline").toObject();
@@ -372,7 +375,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.pan = o.value("pan").toDouble(0.0);
             t.solo = o.value("solo").toBool();
             for (const QJsonValue& cv : o.value("clips").toArray()) {
-                Clip c = clipFromJson(cv.toObject(), d.media);
+                Clip c = clipFromJson(cv.toObject(), allMedia);
                 d.lastClipId = std::max(d.lastClipId, c.id);
                 d.lastLinkId = std::max(d.lastLinkId, c.linkId);
                 t.clips << c;
