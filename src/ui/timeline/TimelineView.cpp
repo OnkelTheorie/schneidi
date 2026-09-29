@@ -8,6 +8,7 @@
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "engine/MediaCache.h"
@@ -254,7 +255,7 @@ QVector<TimelineView::Row> TimelineView::rows() const
 {
     const Timeline& tl = m_editor->project()->timeline();
     QVector<Row> out;
-    int y = kRulerH - m_view.scrollY;
+    int y = kRulerH - m_view.scrollY + subtitlesHeight(); // Untertitelspuren liegen darüber
     // Spur wird höher, solange ein Clip darauf seine Keyframe-Spur aufgeklappt hat
     auto lane = [&](const Track& t) {
         for (const Clip& c : t.clips)
@@ -477,6 +478,14 @@ int TimelineView::volumeLineAt(const QPoint& pos) const
 
 void TimelineView::updateHoverCursor(const QPoint& pos)
 {
+    if (subRowAt(pos.y())) {
+        if (m_hoverClip || m_hoverVolClip) {
+            m_hoverClip = m_hoverVolClip = 0;
+            update();
+        }
+        setCursor(pos.x() >= kHeaderW && cueEdgeAt(pos) ? Qt::SizeHorCursor : Qt::ArrowCursor);
+        return;
+    }
     if (m_tool == Tool::Trim) {
         if (keyIconAt(pos)) setCursor(Qt::PointingHandCursor);
         else if (keyframeAt(pos)) setCursor(Qt::SizeHorCursor);
@@ -526,6 +535,9 @@ QVector<int> TimelineView::snapPoints(const QSet<int>& exclude) const
         for (const auto& t : tl.tracks(k))
             for (const auto& c : t.clips)
                 if (!exclude.contains(c.id)) pts << c.start << c.end();
+    for (const SubtitleTrack& t : tl.subtitles)
+        for (const SubtitleCue& c : t.cues)
+            if (!exclude.contains(c.id)) pts << c.start << c.end;
     return pts;
 }
 
@@ -634,7 +646,17 @@ void TimelineView::setRenderCacheSpans(const QVector<CacheSpan>& spans)
 
 void TimelineView::paintEvent(QPaintEvent*)
 {
-    if (m_renaming) { // Namensfeld folgt der Zeile (Scrollen, Spurhöhe)
+    if (m_renaming && m_nameSub >= 0) { // Untertitelspur
+        std::optional<SubRow> row;
+        for (const SubRow& r : subRows())
+            if (r.index == m_nameSub) row = r;
+        if (row) {
+            const QRect g = subNameRect(*row).adjusted(-3, 0, 0, 0);
+            if (m_nameEdit->geometry() != g) m_nameEdit->setGeometry(g);
+        } else {
+            finishRename(false);
+        }
+    } else if (m_renaming) { // Namensfeld folgt der Zeile (Scrollen, Spurhöhe)
         if (const auto row = rowFor(m_nameRef)) {
             const QRect g = nameRect(*row).adjusted(-3, 0, 0, 0);
             if (m_nameEdit->geometry() != g) m_nameEdit->setGeometry(g);
@@ -645,7 +667,9 @@ void TimelineView::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.fillRect(rect(), Theme::timelineBg);
     drawTracks(p);
+    drawSubtitleTracks(p);
     drawHeaders(p);
+    drawSubtitleHeaders(p);
     drawRuler(p);
     drawPlayhead(p);
 }
@@ -1460,8 +1484,6 @@ void TimelineView::headerMenu(const Row& row, const QPoint& globalPos)
 
 void TimelineView::startRename(TrackRef ref)
 {
-    const auto row = rowFor(ref);
-    if (!row) return;
     if (!m_nameEdit) {
         m_nameEdit = new QLineEdit(this);
         m_nameEdit->setFrame(false);
@@ -1470,6 +1492,9 @@ void TimelineView::startRename(TrackRef ref)
         m_nameEdit->installEventFilter(this);
         connect(m_nameEdit, &QLineEdit::editingFinished, this, [this] { finishRename(true); });
     }
+    const auto row = rowFor(ref);
+    if (!row) return;
+    m_nameSub = -1;
     m_nameRef = ref;
     m_renaming = true;
     QFont f = font();
@@ -1490,7 +1515,9 @@ void TimelineView::finishRename(bool commit)
     const QString text = m_nameEdit->text();
     m_nameEdit->hide();
     setFocus();
-    if (commit) m_editor->renameTrack(m_nameRef, text);
+    if (commit && m_nameSub >= 0) m_editor->renameSubtitleTrack(m_nameSub, text);
+    else if (commit) m_editor->renameTrack(m_nameRef, text);
+    m_nameSub = -1;
     update();
 }
 
@@ -1527,6 +1554,11 @@ void TimelineView::drawPlayhead(QPainter& p)
 // Rechtsklick auf einen Übergang: Art, Ausrichtung, Löschen (wie DaVinci)
 void TimelineView::contextMenuEvent(QContextMenuEvent* e)
 {
+    if (const auto sub = subRowAt(e->pos().y())) {
+        if (e->pos().x() < kHeaderW) subtitleHeaderMenu(sub->index, e->globalPos());
+        else subtitleTrackMenu(e->pos(), e->globalPos());
+        return;
+    }
     if (e->pos().x() < kHeaderW && e->pos().y() >= kRulerH) {
         if (const auto row = rowAt(e->pos().y())) headerMenu(*row, e->globalPos());
         return;
@@ -1625,6 +1657,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     if (e->button() != Qt::LeftButton) return;
     const QPoint pos = e->position().toPoint();
     m_pressPos = pos;
+    if (subtitlePress(e, pos)) return;
 
     if (pos.x() < kHeaderW) { // Spurköpfe
         if (const auto row = rowAt(pos.y()); row && headerButton(*row).contains(pos)) {
@@ -1804,6 +1837,44 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         update();
         return;
     }
+    case Drag::CueMaybeMove:
+        if ((pos - m_pressPos).manhattanLength() < kDragStartPx) return;
+        m_drag = Drag::CueMove;
+        [[fallthrough]];
+    case Drag::CueMove: {
+        const Timeline& tl = m_editor->project()->timeline();
+        int delta = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
+        QVector<int> edges;
+        int minStart = INT_MAX;
+        for (int id : m_cueIds)
+            if (const SubtitleCue* c = Subtitles::find(tl, id)) {
+                edges << c->start + delta << c->end + delta;
+                minStart = std::min(minStart, c->start);
+            }
+        delta += snapDelta(edges, QSet<int>(m_cueIds.begin(), m_cueIds.end()));
+        if (minStart != INT_MAX) delta = std::max(delta, -minStart);
+        m_cueDelta = delta;
+        m_cueTrackDelta = 0;
+        if (const auto row = subRowAt(pos.y())) {
+            m_cueTrackDelta = m_editor->clampSubtitleTrackDelta(m_cueIds, row->index - m_cueAnchor);
+            for (int id : m_cueIds) { // nie auf eine gesperrte Spur
+                int t = -1;
+                if (Subtitles::find(tl, id, &t) && m_editor->isSubtitleTrackLocked(t + m_cueTrackDelta)) m_cueTrackDelta = 0;
+            }
+        }
+        update();
+        return;
+    }
+    case Drag::CueTrim: {
+        const SubtitleCue* c = Subtitles::find(m_editor->project()->timeline(), m_cueTrim.clipId);
+        if (!c) return;
+        int delta = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
+        const int edgeFrame = m_cueTrim.edge == TimelineOps::Edge::Start ? c->start : c->end;
+        delta += snapDelta({edgeFrame + delta}, {c->id});
+        m_cueDelta = m_editor->clampSubtitleTrim(c->id, m_cueTrim.edge, delta);
+        update();
+        return;
+    }
     case Drag::Trim: {
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_trim.clipId);
         if (!c) return;
@@ -1933,6 +2004,16 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if (e->button() != Qt::LeftButton) return;
     if (m_drag == Drag::Move)
         m_editor->moveClips(m_dragIds, m_dragDelta, m_anchorRef.kind, m_dragTrackDelta);
+    if (m_drag == Drag::CueMove || m_drag == Drag::CueTrim) {
+        const Drag d = m_drag;
+        m_drag = Drag::None; // vor der Änderung, damit die Vorschau nicht doppelt gilt
+        if (d == Drag::CueMove) m_editor->moveSubtitles(m_cueIds, m_cueDelta, m_cueTrackDelta);
+        else m_editor->trimSubtitle(m_cueTrim.clipId, m_cueTrim.edge, m_cueDelta);
+    }
+    if (m_drag == Drag::CueMaybeMove) m_drag = Drag::None;
+    m_cueIds.clear();
+    m_cueDelta = 0;
+    m_cueTrackDelta = 0;
     const bool trimmed = m_drag == Drag::Trim;
     const bool volume = m_drag == Drag::Volume;
     const bool keys = m_drag == Drag::Keyframe;
@@ -1973,6 +2054,11 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 void TimelineView::mouseDoubleClickEvent(QMouseEvent* e)
 {
     const QPoint pos = e->position().toPoint();
+    if (const auto sub = e->button() == Qt::LeftButton ? subRowAt(pos.y()) : std::nullopt) {
+        if (pos.x() < kHeaderW && subNameRect(*sub).adjusted(-32, 0, 0, 0).contains(pos)) startSubtitleRename(sub->index);
+        else if (const int id = cueAt(pos)) emit subtitleEditRequested(id);
+        return;
+    }
     // Doppelklick auf den Spurnamen: umbenennen (wie DaVinci)
     if (e->button() == Qt::LeftButton && pos.x() < kHeaderW && pos.y() >= kRulerH) {
         if (const auto row = rowAt(pos.y()); row && nameRect(*row).adjusted(-32, 0, 0, 0).contains(pos)) {
@@ -2229,4 +2315,299 @@ void TimelineView::dropEvent(QDropEvent* e)
 void TimelineView::resizeEvent(QResizeEvent*)
 {
     emit viewChanged();
+}
+
+// ---------- Untertitelspuren ----------
+
+int TimelineView::subtitlesHeight() const
+{
+    const int n = m_editor->project()->timeline().subtitles.size();
+    return n ? n * kSubtitleTrackH + kSeparator : 0;
+}
+
+QVector<TimelineView::SubRow> TimelineView::subRows() const
+{
+    QVector<SubRow> out;
+    int y = kRulerH - m_view.scrollY;
+    for (int i = m_editor->project()->timeline().subtitles.size() - 1; i >= 0; --i) { // ST1 unten
+        out << SubRow{i, y, kSubtitleTrackH};
+        y += kSubtitleTrackH;
+    }
+    return out;
+}
+
+std::optional<TimelineView::SubRow> TimelineView::subRowAt(int y) const
+{
+    if (y < kRulerH) return std::nullopt;
+    for (const SubRow& r : subRows())
+        if (y >= r.y && y < r.y + r.h) return r;
+    return std::nullopt;
+}
+
+QRect TimelineView::cueRect(const SubRow& row, const SubtitleCue& c) const
+{
+    const int x0 = int(std::floor(frameToX(c.start))), x1 = int(std::floor(frameToX(c.end)));
+    return QRect(x0, row.y + 3, std::max(2, x1 - x0), row.h - 6);
+}
+
+int TimelineView::cueAt(const QPoint& pos) const
+{
+    if (pos.x() < kHeaderW) return 0;
+    const auto row = subRowAt(pos.y());
+    if (!row) return 0;
+    const SubtitleTrack& t = m_editor->project()->timeline().subtitles[row->index];
+    if (t.locked) return 0;
+    for (const SubtitleCue& c : t.cues)
+        if (cueRect(*row, c).contains(pos)) return c.id;
+    return 0;
+}
+
+std::optional<TimelineView::EdgeHit> TimelineView::cueEdgeAt(const QPoint& pos) const
+{
+    if (pos.x() < kHeaderW || m_tool == Tool::Blade) return std::nullopt;
+    const auto row = subRowAt(pos.y());
+    if (!row) return std::nullopt;
+    const SubtitleTrack& t = m_editor->project()->timeline().subtitles[row->index];
+    if (t.locked) return std::nullopt;
+    for (const SubtitleCue& c : t.cues) {
+        const QRect r = cueRect(*row, c);
+        const int grab = std::min(kEdgeGrabPx, std::max(1, r.width() / 3));
+        if (std::abs(pos.x() - r.left()) <= grab) return EdgeHit{c.id, TimelineOps::Edge::Start};
+        if (std::abs(pos.x() - r.right()) <= grab) return EdgeHit{c.id, TimelineOps::Edge::End};
+    }
+    return std::nullopt;
+}
+
+QRect TimelineView::subNameRect(const SubRow& row) const
+{
+    const int left = 42;
+    return QRect(left, row.y + (row.h - 18) / 2, kHeaderW - 54 - 4 - left, 18);
+}
+
+void TimelineView::drawSubtitleTracks(QPainter& p)
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    if (tl.subtitles.isEmpty()) return;
+    const auto& sel = m_editor->selection()->ids();
+    const QSet<int> dragging(m_cueIds.begin(), m_cueIds.end());
+    p.save();
+    p.setClipRect(kHeaderW, kRulerH, width() - kHeaderW, height() - kRulerH);
+    QFont f = font();
+    f.setPointSizeF(7.5);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+
+    auto drawCue = [&](const QRect& r, const SubtitleCue& c, bool selected, bool dim) {
+        if (r.right() < kHeaderW || r.left() > width()) return;
+        QColor base = Theme::subtitleClip;
+        if (dim) base = base.darker(150);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath path;
+        path.addRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+        p.fillPath(path, base);
+        if (r.width() > 12) {
+            const QRect text(std::max(r.left(), kHeaderW) + 5, r.top(), r.right() - std::max(r.left(), kHeaderW) - 8, r.height());
+            if (text.width() > 4) {
+                p.setPen(QColor(0xf0, 0xf0, 0xf0));
+                const QString line = QString(c.text).replace('\n', QLatin1String(" / "));
+                p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft, fm.elidedText(line, Qt::ElideRight, text.width()));
+            }
+        }
+        p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
+        p.drawPath(path);
+        p.setRenderHint(QPainter::Antialiasing, false);
+    };
+
+    const bool moving = m_drag == Drag::CueMove;
+    for (const SubRow& row : subRows()) {
+        const SubtitleTrack& t = tl.subtitles[row.index];
+        p.fillRect(QRect(kHeaderW, row.y, width() - kHeaderW, row.h), row.index % 2 ? Theme::trackBgAlt : Theme::trackBg);
+        p.setPen(Theme::border);
+        p.drawLine(kHeaderW, row.y + row.h - 1, width(), row.y + row.h - 1);
+        p.setOpacity(t.enabled ? 1.0 : 0.45);
+        for (SubtitleCue c : t.cues) {
+            if (moving && dragging.contains(c.id)) continue; // wird unten verschoben gezeichnet
+            if (m_drag == Drag::CueTrim && c.id == m_cueTrim.clipId)
+                (m_cueTrim.edge == TimelineOps::Edge::Start ? c.start : c.end) += m_cueDelta;
+            drawCue(cueRect(row, c), c, sel.contains(c.id), t.locked);
+        }
+        p.setOpacity(1.0);
+    }
+    if (moving) {
+        const auto all = subRows();
+        for (int id : m_cueIds) {
+            int ti = -1;
+            const SubtitleCue* c = Subtitles::find(tl, id, &ti);
+            if (!c) continue;
+            const int target = ti + m_cueTrackDelta;
+            for (const SubRow& row : all)
+                if (row.index == target) {
+                    SubtitleCue moved = *c;
+                    moved.start += m_cueDelta;
+                    moved.end += m_cueDelta;
+                    drawCue(cueRect(row, moved), moved, true, false);
+                }
+        }
+    }
+    // Trennfuge zu den Videospuren
+    const int sepY = kRulerH - m_view.scrollY + tl.subtitles.size() * kSubtitleTrackH;
+    p.fillRect(QRect(kHeaderW, sepY, width() - kHeaderW, kSeparator), Theme::timelineBg);
+    p.restore();
+}
+
+void TimelineView::drawSubtitleHeaders(QPainter& p)
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    if (tl.subtitles.isEmpty()) return;
+    p.save();
+    p.setClipRect(0, kRulerH, kHeaderW, height() - kRulerH);
+    for (const SubRow& row : subRows()) {
+        const SubtitleTrack& t = tl.subtitles[row.index];
+        const QRect r(0, row.y, kHeaderW - 1, row.h - 1);
+        p.fillRect(r, Theme::trackHeader);
+        p.fillRect(QRect(0, row.y, 3, row.h - 1), Theme::subtitleClip);
+        QFont f = font();
+        f.setBold(true);
+        f.setPointSizeF(8);
+        p.setFont(f);
+        const QRect shortBox(10, row.y + (row.h - 16) / 2, 26, 16);
+        p.setPen(QColor(0x5a, 0x5a, 0x62));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(shortBox.adjusted(0, 0, -1, -1));
+        p.setPen(Theme::text);
+        p.drawText(shortBox, Qt::AlignCenter, QString("ST%1").arg(row.index + 1));
+        if (!(m_nameEdit && m_nameEdit->isVisible() && m_nameSub == row.index)) {
+            f.setBold(false);
+            f.setPointSizeF(8.5);
+            p.setFont(f);
+            const QRect nr = subNameRect(row);
+            const QString name = subtitleTrackDisplayName(t, row.index);
+            p.drawText(nr, Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(f).elidedText(name, Qt::ElideRight, nr.width()));
+        }
+        // Auge (sichtbar) und Schloss wie bei den anderen Spuren; Auge an = orange
+        const QRect b(kHeaderW - 30, row.y + (row.h - 16) / 2, 20, 16);
+        const QRect lb(kHeaderW - 54, b.top(), 20, 16);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(t.enabled ? Theme::accent : QColor(0x3a, 0x3a, 0x42));
+        p.drawRoundedRect(b, 3, 3);
+        p.setPen(t.enabled ? Qt::black : Theme::text);
+        f.setBold(true);
+        f.setPointSizeF(7.5);
+        p.setFont(f);
+        p.drawText(b, Qt::AlignCenter, t.enabled ? "◉" : "⊘");
+        p.setPen(Qt::NoPen);
+        p.setBrush(t.locked ? Theme::accent : QColor(0x3a, 0x3a, 0x42));
+        p.drawRoundedRect(lb, 3, 3);
+        drawLock(p, lb, t.locked ? QColor(Qt::black) : Theme::textDim);
+        p.setRenderHint(QPainter::Antialiasing, false);
+    }
+    p.restore();
+}
+
+void TimelineView::subtitleHeaderMenu(int index, const QPoint& globalPos)
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    if (index < 0 || index >= tl.subtitles.size()) return;
+    const SubtitleTrack& t = tl.subtitles[index];
+    QMenu menu(this);
+    QAction* show = menu.addAction(T("Untertitelspur einblenden"));
+    show->setCheckable(true);
+    show->setChecked(t.enabled);
+    connect(show, &QAction::triggered, this, [this, index](bool on) { m_editor->setSubtitleTrackEnabled(index, on); });
+    QAction* lock = menu.addAction(T("Spur sperren"));
+    lock->setCheckable(true);
+    lock->setChecked(t.locked);
+    connect(lock, &QAction::triggered, this, [this, index] { m_editor->toggleSubtitleTrackLock(index); });
+    connect(menu.addAction(T("Spur umbenennen")), &QAction::triggered, this, [this, index] { startSubtitleRename(index); });
+    menu.addSeparator();
+    QAction* add = menu.addAction(T("Untertitel hinzufügen"));
+    add->setEnabled(!t.locked);
+    connect(add, &QAction::triggered, this, [this, index] { m_editor->addSubtitle(m_playhead, index); });
+    connect(menu.addAction(T("Untertitelspur hinzufügen")), &QAction::triggered, this, [this] { m_editor->addSubtitleTrack(); });
+    connect(menu.addAction(T("Spur löschen")), &QAction::triggered, this, [this, index] { m_editor->removeSubtitleTrack(index); });
+    menu.exec(globalPos);
+}
+
+void TimelineView::subtitleTrackMenu(const QPoint& pos, const QPoint& globalPos)
+{
+    const auto row = subRowAt(pos.y());
+    if (!row) return;
+    const int frame = std::max(0, int(std::floor(xToFrame(pos.x()))));
+    QMenu menu(this);
+    if (const int id = cueAt(pos)) {
+        Selection* sel = m_editor->selection();
+        if (!sel->contains(id)) sel->set({id});
+        connect(menu.addAction(T("Text bearbeiten")), &QAction::triggered, this, [this, id] { emit subtitleEditRequested(id); });
+        connect(menu.addAction(T("Löschen")), &QAction::triggered, this, [this] { m_editor->deleteSelection(); });
+    } else {
+        QAction* add = menu.addAction(T("Untertitel hier hinzufügen"));
+        add->setEnabled(!m_editor->isSubtitleTrackLocked(row->index));
+        connect(add, &QAction::triggered, this, [this, frame, index = row->index] { m_editor->addSubtitle(frame, index); });
+    }
+    menu.exec(globalPos);
+}
+
+void TimelineView::startSubtitleRename(int index)
+{
+    std::optional<SubRow> row;
+    for (const SubRow& r : subRows())
+        if (r.index == index) row = r;
+    if (!row) return;
+    startRename({TrackKind::Video, -1}); // Eingabefeld anlegen (ohne Zeile: tut sonst nichts)
+    if (!m_nameEdit) return;
+    m_nameSub = index;
+    m_renaming = true;
+    QFont f = font();
+    f.setPointSizeF(8.5);
+    m_nameEdit->setFont(f);
+    m_nameEdit->setText(subtitleTrackDisplayName(m_editor->project()->timeline().subtitles[index], index));
+    m_nameEdit->setGeometry(subNameRect(*row).adjusted(-3, 0, 0, 0));
+    m_nameEdit->show();
+    m_nameEdit->selectAll();
+    m_nameEdit->setFocus();
+    update();
+}
+
+bool TimelineView::subtitlePress(QMouseEvent* e, const QPoint& pos)
+{
+    const auto row = subRowAt(pos.y());
+    if (!row) return false;
+    if (pos.x() < kHeaderW) { // Spurkopf: Auge, Schloss
+        const QRect b(kHeaderW - 30, row->y + (row->h - 16) / 2, 20, 16);
+        const QRect lb(kHeaderW - 54, b.top(), 20, 16);
+        const SubtitleTrack& t = m_editor->project()->timeline().subtitles[row->index];
+        if (b.contains(pos)) m_editor->setSubtitleTrackEnabled(row->index, !t.enabled);
+        else if (lb.contains(pos)) m_editor->toggleSubtitleTrackLock(row->index);
+        return true;
+    }
+    Selection* sel = m_editor->selection();
+    if (m_tool == Tool::Blade) return true; // Untertitel lassen sich nicht teilen
+    if (const auto edge = cueEdgeAt(pos)) {
+        if (!sel->contains(edge->clipId)) sel->set({edge->clipId});
+        m_cueTrim = *edge;
+        m_cueDelta = 0;
+        m_drag = Drag::CueTrim;
+        update();
+        return true;
+    }
+    const int id = cueAt(pos);
+    if (!id) {
+        if (!(e->modifiers() & Qt::ControlModifier)) sel->clear();
+        return true;
+    }
+    QSet<int> ids = sel->ids();
+    if (e->modifiers() & Qt::ControlModifier) {
+        if (ids.contains(id)) ids.remove(id);
+        else ids.insert(id);
+        sel->set(ids);
+        return true;
+    }
+    if (!ids.contains(id)) sel->set({id});
+    m_cueIds = m_editor->selectedSubtitles();
+    m_cueAnchor = row->index;
+    m_cueDelta = 0;
+    m_cueTrackDelta = 0;
+    m_drag = Drag::CueMaybeMove;
+    return true;
 }

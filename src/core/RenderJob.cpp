@@ -69,6 +69,8 @@ QString RenderSettings::summary(QSize output) const
     if (!audioOnly()) parts << resolutionLabel(output.width(), output.height());
     if (f.hasQuality) parts << qualityLabel();
     if (QLatin1String(f.audioCodec) == QLatin1String("aac")) parts << QString("AAC %1 kbit/s").arg(audioBitrateK);
+    if (subtitles == BurnSubtitles && !audioOnly()) parts << T("Untertitel eingebrannt");
+    if (subtitles == SrtFile) parts << T("Untertitel als SRT");
     return parts.join(QStringLiteral(" · "));
 }
 
@@ -76,6 +78,8 @@ QJsonObject RenderSettings::toJson() const
 {
     QJsonObject o{{"format", format}, {"quality", quality}, {"audioBitrate", audioBitrateK}};
     if (shortSide > 0) o["shortSide"] = shortSide;
+    if (subtitles == BurnSubtitles) o["subtitles"] = "burn";
+    if (subtitles == SrtFile) o["subtitles"] = "srt";
     if (size.isValid() && !size.isEmpty()) {
         o["width"] = size.width();
         o["height"] = size.height();
@@ -92,6 +96,8 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
     s.shortSide = std::max(0, o.value("shortSide").toInt());
     const int w = o.value("width").toInt(), h = o.value("height").toInt();
     if (w > 0 && h > 0) s.size = QSize(w, h);
+    const QString sub = o.value("subtitles").toString();
+    s.subtitles = sub == "burn" ? BurnSubtitles : sub == "srt" ? SrtFile : NoSubtitles;
     return s;
 }
 
@@ -99,7 +105,7 @@ bool RenderSettings::operator==(const RenderSettings& o) const
 {
     const auto normSize = [](QSize s) { return s.isValid() && !s.isEmpty() ? s : QSize(); };
     return format == o.format && shortSide == o.shortSide && normSize(size) == normSize(o.size)
-           && quality == o.quality && audioBitrateK == o.audioBitrateK;
+           && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles;
 }
 
 // --- Vorlagen

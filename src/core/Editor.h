@@ -186,6 +186,37 @@ public:
     void cutSelection();
     void paste(int frame);
 
+    // ---- Untertitel (DaVinci Subtitle Tracks, core/Subtitles.h) ----
+    // Untertitel-Einträge teilen sich die Auswahl mit den Clips (eigene ids aus demselben Zähler)
+    bool isSubtitle(int id) const;
+    QVector<int> clipIdsOf(const QSet<int>& ids) const; // nur Clips (ohne Untertitel)
+    QVector<int> selectedSubtitles() const; // ausgewählte Einträge, nicht auf gesperrten Spuren
+    bool isSubtitleTrackLocked(int index) const;
+    // Neue Spur oben (ST1, ST2 …), Stil passend zum Projektformat; sichtbar, wenn keine andere sichtbar ist. Liefert den Index.
+    int addSubtitleTrack();
+    void removeSubtitleTrack(int index);
+    // Sichtbar im Viewer/beim Einbrennen; wie DaVinci immer nur eine Spur zugleich (an = andere aus)
+    void setSubtitleTrackEnabled(int index, bool on);
+    void toggleSubtitleTrackLock(int index);
+    void renameSubtitleTrack(int index, const QString& name);
+    // Spurstil (Schrift, Farbe, Umrandung, Hintergrund, Position); gleicher mergeKey = ein Undo-Schritt
+    void setSubtitleStyle(int index, const QString& text, const std::function<void(TitleStyle&)>& fn,
+                          const QString& mergeKey = {});
+    // Untertitel am Frame (Standard 3 s, vor dem nächsten Eintrag gekürzt) auf Spur `track`, < 0 = sichtbare Spur
+    // (keine vorhanden: ST1 anlegen). Wird ausgewählt; liefert die id, 0 = dort liegt schon einer / Spur gesperrt.
+    int addSubtitle(int frame, int track = -1, const QString& text = {});
+    void setSubtitleText(int id, const QString& text, const QString& mergeKey = {});
+    // Start/Ende (Inspector): begrenzt auf die Nachbarn, mindestens 1 Frame
+    void setSubtitleTiming(int id, int start, int end);
+    // Verschieben (auch auf andere Untertitelspuren); überschreibt, was dort liegt (wie Clips)
+    void moveSubtitles(const QVector<int>& ids, int delta, int trackDelta);
+    int clampSubtitleTrackDelta(const QVector<int>& ids, int trackDelta) const;
+    // Kante ziehen: begrenzt auf die Nachbarn und mindestens 1 Frame
+    int clampSubtitleTrim(int id, TimelineOps::Edge edge, int delta) const;
+    void trimSubtitle(int id, TimelineOps::Edge edge, int delta);
+    // Eingelesene Einträge (SRT) als neue Spur; name = Spurname (z. B. Dateiname). Liefert den Spur-Index, -1 = leer.
+    int importSubtitles(const QVector<SubtitleCue>& cues, const QString& name);
+
 signals:
     void targetTracksChanged(); // Zielspuren (Spurkopf-Markierung neu zeichnen)
 

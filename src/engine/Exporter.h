@@ -23,6 +23,8 @@ struct ExportSettings {
     int crf = 20;             // Qualität: kleiner = besser
     QString preset = "medium"; // Geschwindigkeit vs. Dateigröße
     int audioBitrateK = 192;
+    bool burnSubtitles = false; // sichtbare Untertitelspur ins Bild einbrennen
+    QString subtitlePath;       // sichtbare Untertitelspur zusätzlich als SRT hierhin schreiben (leer = nicht)
     int from = 0, to = -1; // Bereich (Frames, inklusive); to < 0 = bis zum Ende der Timeline
 };
 

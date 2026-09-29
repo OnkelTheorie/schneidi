@@ -23,6 +23,7 @@ public:
     static constexpr int kHeaderW = 180;
     static constexpr int kRulerH = 30;
     static constexpr int kSeparator = 6;
+    static constexpr int kSubtitleTrackH = 34; // Untertitelspur (fest, wie DaVinci schmal)
 
     explicit TimelineView(Editor* editor, QWidget* parent = nullptr);
 
@@ -73,6 +74,8 @@ signals:
     void rangeDropRequested(const QString& path, int in, int out, int frame, int track);
     // Rechtsklick auf einen Clip (ist dann ausgewählt)
     void clipMenuRequested(const QPoint& globalPos);
+    // Doppelklick auf einen Untertitel: Text im Inspector bearbeiten
+    void subtitleEditRequested(int cueId);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -97,7 +100,8 @@ private:
         int h;
         int lane = 0; // Höhe der aufgeklappten Keyframe-Spur unten in der Zeile (0 = keine)
     };
-    enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe };
+    enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe,
+                      CueMaybeMove, CueMove, CueTrim };
     // Übergang unter der Maus; edge: -1/+1 = linke/rechte Kante (Länge ziehen), 0 = Mitte
     struct TransitionHit {
         TrackRef ref;
@@ -117,6 +121,26 @@ private:
         TimelineOps::Edge edge;
     };
     std::optional<TrimHit> trimHitAt(const QPoint& pos) const;
+
+    // Untertitelspuren (oben, über den Videospuren; höchster Index oben wie bei Video)
+    struct SubRow {
+        int index;
+        int y;
+        int h;
+    };
+    QVector<SubRow> subRows() const;
+    int subtitlesHeight() const; // alle Untertitelspuren samt Trennfuge (0 = keine)
+    std::optional<SubRow> subRowAt(int y) const;
+    QRect cueRect(const SubRow& row, const SubtitleCue& c) const;
+    int cueAt(const QPoint& pos) const; // id oder 0 (gesperrte Spur: 0)
+    std::optional<EdgeHit> cueEdgeAt(const QPoint& pos) const;
+    QRect subNameRect(const SubRow& row) const;
+    void drawSubtitleTracks(QPainter& p);
+    void drawSubtitleHeaders(QPainter& p);
+    void subtitleHeaderMenu(int index, const QPoint& globalPos);
+    void subtitleTrackMenu(const QPoint& pos, const QPoint& globalPos); // Rechtsklick in eine Untertitelspur
+    bool subtitlePress(QMouseEvent* e, const QPoint& pos); // true = erledigt
+    void startSubtitleRename(int index);
 
     QVector<Row> rows() const;
     std::optional<Row> rowAt(int y) const;
@@ -236,9 +260,17 @@ private:
     int m_dropFrame = -1;
     int m_dropTrack = 0;
 
+    // Untertitel ziehen: Einträge, Spurversatz (Anker = gegriffene Spur), Kante
+    QVector<int> m_cueIds;
+    int m_cueAnchor = 0;
+    int m_cueTrackDelta = 0;
+    int m_cueDelta = 0;
+    EdgeHit m_cueTrim{0, TimelineOps::Edge::Start};
+
     // Spur umbenennen (Eingabefeld über dem Namen im Spurkopf)
     QLineEdit* m_nameEdit = nullptr;
     TrackRef m_nameRef;
+    int m_nameSub = -1; // >= 0: Untertitelspur wird umbenannt
     bool m_renaming = false;
 
     // Übergang aus der Effects Library reinziehen (wie DaVinci): Schnitt unter der Maus hervorheben

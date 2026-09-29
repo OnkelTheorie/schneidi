@@ -24,9 +24,11 @@ add_executable(schneidi
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/Selection.h
     src/core/Editor.h             src/core/Editor.cpp
+    src/core/EditorSubtitles.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
     src/core/Loudness.h           src/core/Loudness.cpp
     src/core/RenderJob.h          src/core/RenderJob.cpp
+    src/core/Subtitles.h          src/core/Subtitles.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Profiles.h         src/engine/Profiles.cpp

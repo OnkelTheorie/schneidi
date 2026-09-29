@@ -11,6 +11,7 @@
 #include "core/Timecode.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
@@ -51,6 +52,8 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
+#include <QSaveFile>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
@@ -126,6 +129,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
+    connect(m_mediaPool, &MediaPool::subtitleFilesImported, this, &MainWindow::importSubtitleFiles);
+    connect(tv, &TimelineView::subtitleEditRequested, this, [this](int id) {
+        m_inspectorToggle->setChecked(true);
+        m_inspector->editSubtitle(id);
+    });
     // Rechtsklick auf Clips: die passenden Aktionen (Tastenkürzel wie im Menü)
     connect(tv, &TimelineView::clipMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(this);
@@ -225,6 +233,16 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
 {
     if (paths == QStringList{MediaPool::TitleItem}) {
         m_editor->addTitle(frame, track);
+        return;
+    }
+    // Untertiteldateien werden Untertitelspuren (Zeiten aus der Datei, wie DaVinci)
+    QStringList media, subtitles;
+    for (const QString& p : paths)
+        (QFileInfo(p).suffix().compare("srt", Qt::CaseInsensitive) == 0 ? subtitles : media) << p;
+    if (!subtitles.isEmpty()) {
+        QTimer::singleShot(0, this, [this, subtitles] { importSubtitleFiles(subtitles); }); // Meldungen nicht im Drop
+        if (media.isEmpty()) return;
+        onDrop(media, frame, track);
         return;
     }
     // Direkt aus dem Dateimanager: erst in den Media Pool, dann auf die Timeline (wie DaVinci)
@@ -694,6 +712,8 @@ void MainWindow::buildActions()
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
     makeAction(file, "new_bin", T("Neuer Bin"), QKeySequence("Ctrl+Shift+N"), [this] { m_mediaPool->newBin(); });
+    makeAction(file, "import_subtitles", T("Untertitel importieren (SRT)…"), QKeySequence(), [this] { importSubtitlesDialog(); });
+    makeAction(file, "export_subtitles", T("Untertitel exportieren (SRT)…"), QKeySequence(), [this] { exportSubtitlesDialog(); });
     file->addSeparator();
     makeAction(file, "project_settings", T("Projekteinstellungen…"), QKeySequence("Shift+9"), [this] { projectSettingsDialog(); });
     file->addSeparator();
@@ -763,6 +783,14 @@ void MainWindow::buildActions()
     makeAction(timeline, "add_transition", T("Übergang hinzufügen (Cross Dissolve)"), QKeySequence("Ctrl+T"),
                [this, tv] { m_editor->addTransitions(tv->playhead()); });
     makeAction(timeline, "add_title", T("Titel einfügen"), QKeySequence(), [this, tv] { m_editor->addTitle(tv->playhead()); });
+    makeAction(timeline, "add_subtitle", T("Untertitel hinzufügen"), QKeySequence(), [this, tv] {
+        if (const int id = m_editor->addSubtitle(tv->playhead())) {
+            m_inspectorToggle->setChecked(true);
+            m_inspector->editSubtitle(id);
+        }
+    });
+    makeAction(timeline, "add_subtitle_track", T("Untertitelspur hinzufügen"), QKeySequence(),
+               [this] { m_editor->addSubtitleTrack(); });
     makeAction(timeline, "trim_start", T("Anfang bis Playhead trimmen"), QKeySequence("Shift+["),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
     makeAction(timeline, "trim_end", T("Ende bis Playhead trimmen"), QKeySequence("Shift+]"),
@@ -1244,4 +1272,57 @@ void MainWindow::jumpToFrame(int frame)
     m_engine->pause();
     if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(frame);
     else m_engine->seek(frame);
+}
+
+void MainWindow::importSubtitleFiles(const QStringList& paths)
+{
+    QStringList problems;
+    for (const QString& path : paths) {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) {
+            problems << T("%1: nicht lesbar").arg(QFileInfo(path).fileName());
+            continue;
+        }
+        int skipped = 0;
+        const QVector<SubtitleCue> cues = Subtitles::parseSrt(f.readAll(), m_project->frameRate(), &skipped);
+        if (cues.isEmpty()) {
+            problems << T("%1: keine Untertitel gefunden").arg(QFileInfo(path).fileName());
+            continue;
+        }
+        m_editor->importSubtitles(cues, QFileInfo(path).completeBaseName());
+        if (skipped) problems << T("%1: %2 fehlerhafte Einträge übersprungen").arg(QFileInfo(path).fileName()).arg(skipped);
+    }
+    if (!problems.isEmpty()) QMessageBox::warning(this, T("Untertitel importieren"), problems.join('\n'));
+}
+
+void MainWindow::importSubtitlesDialog()
+{
+    const QStringList files = QFileDialog::getOpenFileNames(this, T("Untertitel importieren"), m_projectPath.isEmpty() ? QString() : QFileInfo(m_projectPath).absolutePath(),
+                                                            T("Untertitel (*.srt);;Alle Dateien (*)"));
+    if (!files.isEmpty()) importSubtitleFiles(files);
+}
+
+void MainWindow::exportSubtitlesDialog()
+{
+    // Sichtbare Untertitelspur (wie DaVinci „Export Subtitle“), sonst die erste mit Einträgen
+    const Timeline& tl = m_project->timeline();
+    int index = -1;
+    for (int i = 0; i < tl.subtitles.size(); ++i)
+        if (tl.subtitles[i].enabled && !tl.subtitles[i].cues.isEmpty()) index = i;
+    for (int i = 0; i < tl.subtitles.size() && index < 0; ++i)
+        if (!tl.subtitles[i].cues.isEmpty()) index = i;
+    if (index < 0) {
+        QMessageBox::information(this, T("Untertitel exportieren"), T("Die Timeline enthält keine Untertitel."));
+        return;
+    }
+    const SubtitleTrack& t = tl.subtitles[index];
+    const QString base = m_projectPath.isEmpty() ? QString() : QFileInfo(m_projectPath).absolutePath();
+    const QString name = (t.name.isEmpty() ? (m_projectPath.isEmpty() ? QString("untertitel") : QFileInfo(m_projectPath).completeBaseName()) : t.name) + ".srt";
+    QString path = QFileDialog::getSaveFileName(this, T("Untertitel exportieren"), base.isEmpty() ? name : base + "/" + name,
+                                                T("Untertitel (*.srt)"));
+    if (path.isEmpty()) return;
+    if (QFileInfo(path).suffix().isEmpty()) path += ".srt";
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly) || f.write(Subtitles::toSrt(t.cues, m_project->frameRate())) < 0 || !f.commit())
+        QMessageBox::warning(this, T("Untertitel exportieren"), T("Untertiteldatei kann nicht geschrieben werden: %1").arg(path));
 }

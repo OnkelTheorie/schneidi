@@ -54,6 +54,10 @@ private:
     QWidget* buildPageBar();
     void updateLeftColumn(); // linke Spalte nur zeigen, wenn Media Pool oder Effects an ist
     void onDrop(const QStringList& paths, int frame, int track);
+    // Untertitel (SRT): jede Datei wird eine neue Untertitelspur; Export der sichtbaren Spur
+    void importSubtitleFiles(const QStringList& paths);
+    void importSubtitlesDialog();
+    void exportSubtitlesDialog();
     MediaInfo probeCached(const QString& path);
     // Wie DaVinci beim ersten Clip in leerer Timeline: Projekt an Auflösung/Framerate des Clips anpassen
     // (ask = nachfragen, sonst direkt übernehmen)

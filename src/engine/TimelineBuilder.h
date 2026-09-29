@@ -50,6 +50,9 @@ public:
     using ClipCache = std::function<QString(const Clip& clip)>;
     void setClipCache(ClipCache cache) { m_clipCache = std::move(cache); }
 
+    // Untertitel (sichtbare Untertitelspur) mit ins Bild; Standard an (Vorschau), Export nur beim Einbrennen
+    void setSubtitles(bool on) { m_subtitles = on; }
+
     // hooks != nullptr: Mixer-Filter immer anhängen (auch bei 0 dB) und Pegelmesser einbauen
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);
     // Fader/Pan/Limiter live auf die Filter übertragen (Spuranzahl muss passen)
@@ -74,6 +77,7 @@ private:
     MediaResolver m_resolver;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass;
     ClipCache m_clipCache;
+    bool m_subtitles = true;
     bool m_transparent = false; // Hintergrund durchsichtig statt schwarz (buildClipOutput)
     // Pro Datei *und* Spur ein eigener Producer, damit sich Video- und Audiospur
     // nicht gegenseitig im Decoder hin- und herspulen.

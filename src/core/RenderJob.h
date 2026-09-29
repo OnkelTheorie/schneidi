@@ -27,6 +27,9 @@ struct RenderSettings {
     QSize size;        // feste Ausgabegröße (z. B. Hochformat 1080 × 1920); hat Vorrang vor shortSide
     int quality = 0;   // 0 = Hoch, 1 = Mittel, 2 = Klein (nur H.264/H.265)
     int audioBitrateK = 320; // nur AAC
+    // Untertitel exportieren wie DaVinci (sichtbare Untertitelspur): keine, ins Bild einbrennen, als SRT-Datei daneben
+    enum Subtitles { NoSubtitles = 0, BurnSubtitles = 1, SrtFile = 2 };
+    int subtitles = NoSubtitles;
 
     bool audioOnly() const;
     QSize outputSize(QSize timeline) const; // gerade Maße

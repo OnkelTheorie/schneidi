@@ -77,6 +77,15 @@ struct TitleStyle {
     QColor boxColor{0, 0, 0, 160};
     double boxPad = 20;
 
+    bool operator==(const TitleStyle& o) const
+    {
+        return text == o.text && font == o.font && size == o.size && color == o.color && bold == o.bold
+               && italic == o.italic && align == o.align && posX == o.posX && posY == o.posY
+               && outlineOn == o.outlineOn && outlineColor == o.outlineColor && outlineWidth == o.outlineWidth
+               && boxOn == o.boxOn && boxColor == o.boxColor && boxPad == o.boxPad;
+    }
+    bool operator!=(const TitleStyle& o) const { return !(*this == o); }
+
     QString firstLine() const
     {
         const QString line = text.section('\n', 0, 0).trimmed();
@@ -253,6 +262,44 @@ struct Track {
     bool solo = false;
 };
 
+// Untertitel wie DaVinci: eigene Untertitelspuren (ST1, ST2 …) über den Videospuren. Ein Eintrag = Text von
+// start bis end (exklusiv, Timeline-Frames); Schrift/Farbe/Position gelten für die ganze Spur (DaVinci „Track Style“).
+struct SubtitleCue {
+    int id = 0; // aus demselben Zähler wie Clip-IDs (Auswahl unterscheidet so Clips und Untertitel)
+    int start = 0;
+    int end = 0; // exklusiv
+    QString text;
+    int length() const { return end - start; }
+    bool operator==(const SubtitleCue& o) const
+    {
+        return id == o.id && start == o.start && end == o.end && text == o.text;
+    }
+};
+
+// Stil einer Untertitelspur: wie ein Titel, aber posY = Abstand der Textunterkante vom unteren Bildrand
+// (Pixel im Projektformat), Zeilen werden auf 90 % der Bildbreite umbrochen. Standard für 1080 Pixel Bildhöhe,
+// neue Spuren rechnen ihn aufs Projektformat um (subtitleDefaultStyle in core/Subtitles.h).
+inline TitleStyle subtitleBaseStyle()
+{
+    TitleStyle s;
+    s.text.clear();
+    s.size = 48;
+    s.posY = 60;
+    s.outlineWidth = 3; // Umrandung aus: wirkt in der verkleinerten Vorschau schnell zu dick
+    s.boxOn = true;     // gut lesbar auf jedem Bild: halbtransparenter Kasten
+    s.boxColor = QColor(0, 0, 0, 170);
+    s.boxPad = 10;
+    return s;
+}
+
+struct SubtitleTrack {
+    QString name;          // leer = Standard „Untertitel 1“
+    bool enabled = true;   // sichtbar im Viewer/beim Einbrennen; wie DaVinci immer nur eine Spur zugleich
+    bool locked = false;
+    TitleStyle style = subtitleBaseStyle();
+    QVector<SubtitleCue> cues; // nach start sortiert, ohne Überlappung
+};
+
 struct TrackRef {
     TrackKind kind = TrackKind::Video;
     int index = 0; // V1 = Video/0, A1 = Audio/0
@@ -264,6 +311,10 @@ inline QString trackShortName(TrackRef r)
 {
     return QString("%1%2").arg(r.kind == TrackKind::Video ? "V" : "A").arg(r.index + 1);
 }
+inline QString subtitleTrackDisplayName(const SubtitleTrack& t, int index)
+{
+    return t.name.isEmpty() ? T("Untertitel %1").arg(index + 1) : t.name;
+}
 inline QString trackDisplayName(const Track& t, TrackRef r)
 {
     if (!t.name.isEmpty()) return t.name;
@@ -273,6 +324,7 @@ inline QString trackDisplayName(const Track& t, TrackRef r)
 struct Timeline {
     QVector<Track> video; // [0] = V1 (unterste Spur)
     QVector<Track> audio; // [0] = A1
+    QVector<SubtitleTrack> subtitles; // [0] = ST1 (unterste Untertitelspur, direkt über den Videospuren)
     QVector<int> markers; // Timeline-Marker (Frames, sortiert)
     int markIn = -1;      // In-/Out-Punkt (I/O), -1 = nicht gesetzt; Out ist das letzte Frame im Bereich
     int markOut = -1;

@@ -396,7 +396,7 @@ void MediaPool::importDialog()
     const QStringList files = QFileDialog::getOpenFileNames(
         this, T("Medien importieren"), QString(),
         T("Medien (*.mp4 *.mov *.mkv *.avi *.webm *.mts *.m4v *.mp3 *.wav *.flac *.ogg *.m4a *.aac "
-        "*.png *.jpg *.jpeg *.webp *.bmp);;Alle Dateien (*)"));
+        "*.png *.jpg *.jpeg *.webp *.bmp *.srt);;Alle Dateien (*)"));
     importFiles(files);
 }
 
@@ -418,11 +418,14 @@ QStringList MediaPool::addFiles(const QStringList& paths, int bin)
 void MediaPool::importFiles(const QStringList& paths)
 {
     // Ordner (z. B. aus dem Dateimanager gezogen) samt Unterordnern als Bins
-    QStringList files;
+    QStringList files, subtitles;
     for (const QString& path : paths) {
         if (QFileInfo(path).isDir()) importFolder(path);
+        else if (QFileInfo(path).suffix().compare("srt", Qt::CaseInsensitive) == 0) subtitles << path;
         else files << path;
     }
+    if (!subtitles.isEmpty()) emit subtitleFilesImported(subtitles);
+    if (files.isEmpty()) return;
     const QStringList failed = addFiles(files, m_currentBin); // wie DaVinci: Import landet im gewählten Bin
     if (!failed.isEmpty())
         QMessageBox::warning(this, "Import", T("Nicht lesbar:") + "\n" + failed.join('\n'));

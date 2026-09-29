@@ -41,6 +41,14 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
     const double sx = double(to.width()) / from.width();
     const double sy = double(to.height()) / from.height();
     const double s = std::min(sx, sy);
+    for (SubtitleTrack& t : tl.subtitles) {
+        TitleStyle& st = t.style;
+        st.posX *= sx;
+        st.posY *= sy;
+        st.size *= s;
+        st.outlineWidth *= s;
+        st.boxPad *= s;
+    }
     for (auto* tracks : {&tl.video, &tl.audio})
         for (Track& t : *tracks)
             for (Clip& c : t.clips) {

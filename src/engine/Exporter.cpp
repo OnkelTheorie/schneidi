@@ -1,6 +1,7 @@
 #include "engine/Exporter.h"
 
 #include "core/I18n.h"
+#include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "engine/Profiles.h"
 #include "engine/TimelineBuilder.h"
@@ -8,11 +9,33 @@
 #include <Mlt.h>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <atomic>
 
 namespace {
 std::atomic<int> g_running{0}; // laufende Exporte (m_timer läuft genau dann)
+
+// Sichtbare Untertitelspur (sonst die erste mit Einträgen) im Bereich [from, to) als SRT, Zeiten ab Bereichsanfang
+bool writeSubtitleFile(const Timeline& tl, double fps, int from, int to, const QString& path, QString* error)
+{
+    const SubtitleTrack* track = nullptr;
+    for (const SubtitleTrack& t : tl.subtitles)
+        if (t.enabled && !t.cues.isEmpty()) track = &t;
+    for (const SubtitleTrack& t : tl.subtitles)
+        if (!track && !t.cues.isEmpty()) track = &t;
+    if (!track) {
+        if (error) *error = T("Die Timeline enthält keine Untertitel.");
+        return false;
+    }
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly) || f.write(Subtitles::toSrt(track->cues, fps, from, to)) < 0 || !f.commit()) {
+        if (error) *error = T("Untertiteldatei kann nicht geschrieben werden: %1").arg(path);
+        return false;
+    }
+    return true;
 }
+
+} // namespace
 
 bool Exporter::anyRunning()
 {
@@ -53,10 +76,15 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     m_profile = makeProfile(out);
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
+    m_builder->setSubtitles(s.burnSubtitles && !s.videoCodec.isEmpty());
     m_tractor = m_builder->build(scaled);
     m_tractor->set_in_and_out(m_from, m_from + m_length - 1);
 
     QDir().mkpath(QFileInfo(s.path).absolutePath());
+    if (!s.subtitlePath.isEmpty() && !writeSubtitleFile(tl, s.format.rate.fps(), m_from, m_from + m_length, s.subtitlePath, error)) {
+        cleanup();
+        return false;
+    }
     m_consumer = std::make_unique<Mlt::Consumer>(*m_profile, "avformat", s.path.toUtf8().constData());
     if (!m_consumer->is_valid()) {
         if (error) *error = T("FFmpeg-Ausgabe (avformat) nicht verfügbar.");
