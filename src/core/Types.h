@@ -200,6 +200,9 @@ struct Clip {
     bool reverse = false;   // rückwärts abspielen
     bool freeze = false;    // Standbild: jedes Frame zeigt Frame `in` (Ton stumm), beliebig lang ziehbar
     bool keepPitch = true;  // Tonhöhe halten (Pitch Correction)
+    // Render-Cache Clip-Ausgabe (DaVinci „Render Cache Clip Output“): Vorschau spielt eine vorgerenderte Datei
+    // mit allen Effekten, siehe engine/RenderCache.h
+    bool renderCache = false;
 
     bool isRetimed() const { return speed != 1.0 || reverse || freeze; }
     // Länge des umgerechneten Materials aus der Länge der Datei (<= 0 = unbegrenzt)

@@ -32,6 +32,7 @@ add_executable(schneidi
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
+    src/engine/RenderCache.h      src/engine/RenderCache.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
 

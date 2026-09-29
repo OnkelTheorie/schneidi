@@ -208,6 +208,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (c.reverse) o["reverse"] = true;
     if (c.freeze) o["freeze"] = true;
     if (!c.keepPitch) o["keepPitch"] = false;
+    if (c.renderCache) o["renderCache"] = true;
     if (!c.transform.isIdentity() || !c.transform.transformOn || !c.transform.cropOn || !c.transform.compositeOn)
         o["transform"] = transformToJson(c.transform);
     if (!c.effects.isEmpty()) {
@@ -253,6 +254,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.reverse = o.value("reverse").toBool();
     c.freeze = o.value("freeze").toBool();
     c.keepPitch = o.value("keepPitch").toBool(true);
+    c.renderCache = o.value("renderCache").toBool();
     if (o.contains("transform")) c.transform = transformFromJson(o.value("transform").toObject());
     for (const QJsonValue& v : o.value("effects").toArray()) {
         const QJsonObject e = v.toObject();
@@ -280,6 +282,13 @@ QString resolvePath(const QJsonObject& m, const QDir& projectDir)
 } // namespace
 
 namespace ProjectFile {
+
+QJsonObject clipJson(const Clip& c)
+{
+    QJsonObject o = clipToJson(c, -1, QDir::root()); // fester Bezug -> relPaths stabil (Cache-Schlüssel)
+    if (!c.isTitle()) o["media"] = c.mediaPath;
+    return o;
+}
 
 QByteArray toJson(const ProjectData& data, const QString& projectPath)
 {

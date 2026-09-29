@@ -823,6 +823,23 @@ Mlt::Producer* TimelineBuilder::clipAudioSource(const Clip& c)
     return p;
 }
 
+std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildClipOutput(const Clip& clip)
+{
+    Clip c = clip;
+    c.start = 0;
+    c.enabled = true;
+    c.fadeIn = c.fadeOut = 0;
+    c.transIn = c.transOut = 0;
+    Timeline tl;
+    tl.video.resize(1);
+    tl.video[0].clips << c;
+    tl.masterLimiter = false;
+    m_transparent = true;
+    auto tractor = build(tl);
+    m_transparent = false;
+    return tractor;
+}
+
 bool TimelineBuilder::applyMixer(const Timeline& tl, const MixerHooks& hooks)
 {
     if (int(hooks.tracks.size()) != tl.audio.size() || !hooks.master.volume) return false;
@@ -852,7 +869,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
 
     // Spur 0: schwarzer Hintergrund über die ganze Länge
     Mlt::Playlist background(m_profile);
-    Mlt::Producer black(m_profile, "color:black");
+    Mlt::Producer black(m_profile, m_transparent ? "color:#00000000" : "color:black");
     black.set("length", end);
     background.append(black, 0, end - 1);
     tractor->set_track(background, 0);
@@ -882,6 +899,21 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
                 return cut;
             }
             if (c.freeze && kind == TrackKind::Audio) return nullptr; // Standbild ist stumm (wie DaVinci)
+            // Render-Cache (nur Vorschau): fertige Clip-Ausgabe statt Original + Effekte; Frame 0 = Clip-Anfang.
+            // Nur innerhalb des Clips (Übergänge mit Handles davor/danach kommen weiter aus dem Original).
+            // Bei Vorher/Nachher enthält der Cache die Farbkorrektur -> solche Clips dann aus dem Original.
+            const bool gradeBypassed = m_gradeBypass && m_gradeBypass->load()
+                && std::any_of(c.effects.begin(), c.effects.end(),
+                               [](const EffectInstance& e) { return e.enabled && e.effectId == QLatin1String("grade"); });
+            if (kind == TrackKind::Video && m_clipCache && c.enabled && !gradeBypassed && from >= c.start && to <= c.end()) {
+                if (const QString file = m_clipCache(c); !file.isEmpty()) {
+                    if (Mlt::Producer* cache = producerFor(file, kind, trackIndex, second)) {
+                        Mlt::Producer* cut = cache->cut(from - c.start, to - c.start - 1);
+                        applyClipFades(m_profile, *cut, c, kind, from, to); // Fades sind nicht im Cache
+                        return cut;
+                    }
+                }
+            }
             Mlt::Producer* src = c.enabled ? producerFor(c.mediaPath, kind, trackIndex, second, &c) : nullptr;
             if (!src) return nullptr;
             int in = c.in + (from - c.start);

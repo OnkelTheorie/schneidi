@@ -45,6 +45,10 @@ public:
     // Vorschau „Vorher/Nachher“ (Color-Seite): true = Farbkorrektur umgehen; wirkt live ohne Neuaufbau.
     // Ohne (Export, Standbild) wird immer korrigiert.
     void setGradeBypass(std::shared_ptr<std::atomic<bool>> flag) { m_gradeBypass = std::move(flag); }
+    // Render-Cache (nur Vorschau, engine/RenderCache.h): fertig gerenderte Ausgabe eines Videoclips (Datei) oder
+    // leer = normal aus dem Original mit Effekten. Ohne = nie (Export, Standbild).
+    using ClipCache = std::function<QString(const Clip& clip)>;
+    void setClipCache(ClipCache cache) { m_clipCache = std::move(cache); }
 
     // hooks != nullptr: Mixer-Filter immer anhängen (auch bei 0 dB) und Pegelmesser einbauen
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);
@@ -54,6 +58,9 @@ public:
     // Clip-Lautstärke/Fades; Frames in..out des Clips. nullptr = Titel/Standbild/Datei fehlt.
     // Gehört dem Builder (Cache), gilt bis zum nächsten Aufruf.
     Mlt::Producer* clipAudioSource(const Clip& c);
+    // Bild eines einzelnen Videoclips mit Effekten, Transform, Geschwindigkeit und Keyframes (ohne Fades und
+    // Übergänge) auf transparentem Grund; Frame 0 = erstes Clip-Frame. Für den Render-Cache.
+    std::unique_ptr<Mlt::Tractor> buildClipOutput(const Clip& c);
 
 private:
     // second: eigener Producer für die einblendende Seite eines Übergangs (sonst spult ein Decoder
@@ -66,6 +73,8 @@ private:
     std::unique_ptr<ProducerFactory> m_factory; // vor m_cache: muss die Producer überleben
     MediaResolver m_resolver;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass;
+    ClipCache m_clipCache;
+    bool m_transparent = false; // Hintergrund durchsichtig statt schwarz (buildClipOutput)
     // Pro Datei *und* Spur ein eigener Producer, damit sich Video- und Audiospur
     // nicht gegenseitig im Decoder hin- und herspulen.
     std::map<QString, std::unique_ptr<Mlt::Producer>> m_cache;

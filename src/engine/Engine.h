@@ -22,6 +22,7 @@ class Tractor;
 class TimelineBuilder;
 class ProducerFactory;
 class ProxyManager;
+class RenderCache;
 struct MixerHooks;
 
 class Engine : public QObject {
@@ -43,6 +44,8 @@ public:
     // Proxy-Medien: Vorschau (Timeline-Videospuren, Quellansicht) liest den Proxy, falls vorhanden und
     // eingeschaltet; Ton und Export immer vom Original. Nach Änderungen updateTimeline() aufrufen.
     ProxyManager* proxies() const { return m_proxies; }
+    // Render-Cache: Vorschau spielt vorgerenderte Clip-Ausgaben (Export nie); updateTimeline() reiht fehlende ein
+    RenderCache* renderCache() const { return m_renderCache; }
 
     MediaInfo probe(const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);
@@ -94,6 +97,7 @@ private:
     void emitLevels();
 
     ProxyManager* m_proxies;
+    RenderCache* m_renderCache;
     ProjectFormat m_format;
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<ProducerFactory> m_factory; // Quellansicht (BT.601-Umweg, Profiles.h); überlebt m_source

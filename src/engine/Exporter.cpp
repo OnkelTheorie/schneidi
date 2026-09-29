@@ -7,6 +7,16 @@
 
 #include <Mlt.h>
 #include <QFile>
+#include <atomic>
+
+namespace {
+std::atomic<int> g_running{0}; // laufende Exporte (m_timer läuft genau dann)
+}
+
+bool Exporter::anyRunning()
+{
+    return g_running > 0;
+}
 
 Exporter::Exporter(QObject* parent) : QObject(parent)
 {
@@ -69,6 +79,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         cleanup();
         return false;
     }
+    ++g_running;
     m_timer.start();
     emit progress(0);
     return true;
@@ -100,6 +111,7 @@ void Exporter::cancel()
 
 void Exporter::cleanup()
 {
+    if (m_timer.isActive()) --g_running;
     m_timer.stop();
     m_consumer.reset();
     m_tractor.reset();
