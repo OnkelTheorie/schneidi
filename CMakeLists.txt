@@ -49,6 +49,7 @@ add_executable(schneidi
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
+    src/ui/ColorPanel.h           src/ui/ColorPanel.cpp
     src/ui/Mixer.h                src/ui/Mixer.cpp
     src/ui/ScrubField.h           src/ui/ScrubField.cpp
     src/ui/DeliverPanel.h         src/ui/DeliverPanel.cpp

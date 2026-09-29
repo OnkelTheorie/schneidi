@@ -1105,10 +1105,10 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     }
     p.restore();
 
-    // "fx" rechts in der Titelleiste wie DaVinci, wenn der Clip Effekte hat
+    // "fx" rechts in der Titelleiste wie DaVinci, wenn der Clip Effekte hat (Farbkorrektur der Color-Seite zählt nicht)
     const bool hasFx = std::any_of(c.effects.begin(), c.effects.end(), [](const EffectInstance& e) {
         const EffectDescriptor* d = EffectRegistry::find(e.effectId);
-        return d && (d->library || e.enabled);
+        return d && e.effectId != QLatin1String("grade") && (d->library || e.enabled);
     });
     int fxW = 0;
     if (hasFx && r.width() > 44 && barH >= 10) {

@@ -13,6 +13,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QSignalBlocker>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -175,6 +176,22 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     connect(m_playBtn, &QToolButton::clicked, m_engine, &Engine::togglePlay);
     connect(fwdBtn, &QToolButton::clicked, this, [this] { m_engine->setSpeed(2.0); });
 
+    // Vorher/Nachher (Farbkorrektur umgehen, Shift+D) wie im DaVinci-Viewer; an = orange
+    auto* bypass = new QToolButton;
+    bypass->setText("◐");
+    bypass->setCheckable(true);
+    bypass->setFocusPolicy(Qt::NoFocus);
+    bypass->setToolTip(T("Vorher/Nachher: Farbkorrektur in der Vorschau umgehen (Shift+D)"));
+    bypass->setStyleSheet(QString("QToolButton { font-size: 14px; min-width: 24px; color: %1; }"
+                                  "QToolButton:checked { color: %2; }")
+                              .arg(Theme::textDim.name(), Theme::accent.name()));
+    connect(bypass, &QToolButton::toggled, m_engine, &Engine::setColorBypass);
+    connect(m_engine, &Engine::colorBypassChanged, this, [this, bypass](bool on) {
+        const QSignalBlocker b(bypass);
+        bypass->setChecked(on);
+        updateModeText();
+    });
+
     auto* transport = new QHBoxLayout;
     transport->setContentsMargins(4, 2, 4, 4);
     transport->addWidget(m_timecode);
@@ -184,7 +201,8 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     transport->addWidget(m_playBtn);
     transport->addWidget(fwdBtn);
     transport->addStretch(1);
-    transport->addSpacing(m_timecode->sizeHint().width());
+    transport->addSpacing(std::max(0, m_timecode->sizeHint().width() - bypass->sizeHint().width()));
+    transport->addWidget(bypass);
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -212,8 +230,16 @@ void Viewer::setRange(int length, int markIn, int markOut)
 void Viewer::setSource(const QString& path, const QString& name)
 {
     m_sourcePath = path;
-    m_mode->setText(path.isEmpty() ? QStringLiteral("Timeline") : T("Quelle – %1").arg(name));
+    m_sourceName = name;
+    updateModeText();
     m_screen->setCursor(path.isEmpty() ? Qt::ArrowCursor : Qt::OpenHandCursor);
+}
+
+void Viewer::updateModeText()
+{
+    QString text = m_sourcePath.isEmpty() ? QStringLiteral("Timeline") : T("Quelle – %1").arg(m_sourceName);
+    if (m_engine->colorBypass()) text += T("  (Farbkorrektur umgangen)");
+    m_mode->setText(text);
 }
 
 QMimeData* Viewer::dragData() const

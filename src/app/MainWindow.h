@@ -16,6 +16,7 @@ class EffectsLibrary;
 class MediaStorage;
 class Viewer;
 class Inspector;
+class ColorPanel;
 class Mixer;
 class TimelinePanel;
 class QMenu;
@@ -33,7 +34,7 @@ public:
     void importFiles(const QStringList& paths, bool placeOnTimeline = false, bool adoptFormat = true);
 
     // Seiten wie in DaVinci (unten umschaltbar). Neue Seite: hier + in showPage() ergänzen.
-    enum class Page { Media, Edit, Deliver };
+    enum class Page { Media, Edit, Deliver, Color };
     void showPage(Page page);
 
     // Projektdatei (.schneidi): nur Verweise auf die Originalmedien + Schnitt
@@ -104,6 +105,7 @@ private:
     Viewer* m_viewer = nullptr;
     QTimer m_engineTimer; // bündelt Modelländerungen -> Engine
     Inspector* m_inspector = nullptr;
+    ColorPanel* m_colorPanel = nullptr;
     Mixer* m_mixer = nullptr;
     TimelinePanel* m_timeline = nullptr;
     DeliverPanel* m_deliver = nullptr;
@@ -117,6 +119,7 @@ private:
     QSplitter* m_mediaTop = nullptr;
     QSplitter* m_deliverPage = nullptr;
     QSplitter* m_deliverRight = nullptr;
+    QSplitter* m_colorPage = nullptr; // Viewer, Timeline, Farbräder (wie DaVinci Color)
     QButtonGroup* m_pageButtons = nullptr;
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;

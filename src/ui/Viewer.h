@@ -25,6 +25,7 @@ public:
 
 private:
     void updateTimecode(int frame);
+    void updateModeText(); // "Timeline"/"Quelle – …", Hinweis bei umgangener Farbkorrektur
     QMimeData* dragData() const;
 
     Engine* m_engine;
@@ -33,6 +34,6 @@ private:
     QLabel* m_mode;
     QLabel* m_timecode;
     QToolButton* m_playBtn;
-    QString m_sourcePath;
+    QString m_sourcePath, m_sourceName;
     int m_length = 0, m_in = -1, m_out = -1;
 };

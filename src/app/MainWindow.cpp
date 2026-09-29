@@ -19,6 +19,7 @@
 #include "ui/DeliverPanel.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaStorage.h"
+#include "ui/ColorPanel.h"
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
@@ -100,6 +101,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (m_engine->mode() == Engine::Mode::Timeline) m_inspector->setPlayhead(f);
     });
     connect(m_inspector, &Inspector::seekRequested, tv, &TimelineView::seekRequested);
+    connect(m_engine, &Engine::positionChanged, this, [this](int f) {
+        if (m_engine->mode() == Engine::Mode::Timeline) m_colorPanel->setPlayhead(f);
+    });
+    connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
     // Rechtsklick auf Clips: die passenden Aktionen (Tastenkürzel wie im Menü)
@@ -423,6 +428,7 @@ void MainWindow::buildLayout()
     m_deliver = new DeliverPanel(m_project);
     m_mixer = new Mixer(m_project, m_engine);
     m_mixer->hide();
+    m_colorPanel = new ColorPanel(m_editor);
 
     // Seiten; die gemeinsamen Panels (Pool, Viewer, Timeline) wandern beim Umschalten mit
     m_editTop = new QSplitter(Qt::Horizontal);
@@ -447,6 +453,10 @@ void MainWindow::buildLayout()
     m_pages->addWidget(m_mediaPage);
     m_pages->addWidget(m_editMain);
     m_pages->addWidget(m_deliverPage);
+    // Color-Seite wie DaVinci (abgespeckt): oben Viewer, Mitte Timeline, unten die Farbräder
+    m_colorPage = new QSplitter(Qt::Vertical);
+    m_colorPage->addWidget(m_colorPanel);
+    m_pages->addWidget(m_colorPage);
 
     auto* root = new QWidget;
     root->setObjectName("Root");
@@ -529,6 +539,7 @@ QWidget* MainWindow::buildPageBar()
     const struct { const char* icon; const char* name; Page page; } pages[] = {
         {"▤", "Media", Page::Media},
         {"✂", "Edit", Page::Edit},
+        {"◐", "Color", Page::Color},
         {"⇪", "Deliver", Page::Deliver},
     };
     for (const auto& pg : pages) {
@@ -586,6 +597,13 @@ void MainWindow::showPage(Page page)
         m_deliverPage->setStretchFactor(1, 1);
         m_deliverPage->setSizes({340, 1260});
         m_pages->setCurrentWidget(m_deliverPage);
+        break;
+    case Page::Color:
+        m_colorPage->insertWidget(0, m_viewer);
+        m_colorPage->insertWidget(1, m_timeline);
+        m_colorPage->setStretchFactor(0, 1);
+        m_colorPage->setSizes({460, 200, 300});
+        m_pages->setCurrentWidget(m_colorPage);
         break;
     }
     if (auto* b = m_pageButtons->button(int(page))) b->setChecked(true);
@@ -830,10 +848,17 @@ void MainWindow::buildActions()
     useProxy->setCheckable(true);
     useProxy->setChecked(m_engine->proxies()->enabled());
     connect(useProxy, &QAction::toggled, m_engine->proxies(), &ProxyManager::setEnabled);
+    // Vorher/Nachher wie DaVinci (Shift+D, Bypass Color Grades): nur die Vorschau, Export immer mit Korrektur
+    auto* bypass = makeAction(play, "color_bypass", T("Farbkorrektur umgehen (Vorher/Nachher)"), QKeySequence("Shift+D"),
+                              [] {});
+    bypass->setCheckable(true);
+    connect(bypass, &QAction::toggled, m_engine, &Engine::setColorBypass);
+    connect(m_engine, &Engine::colorBypassChanged, bypass, &QAction::setChecked);
 
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
     makeAction(workspace, "page_media", T("Media-Seite"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
     makeAction(workspace, "page_edit", T("Edit-Seite"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
+    makeAction(workspace, "page_color", T("Color-Seite"), QKeySequence("Shift+5"), [this] { showPage(Page::Color); });
     makeAction(workspace, "page_deliver", T("Deliver-Seite"), QKeySequence("Shift+8"), [this] { showPage(Page::Deliver); });
     makeAction(workspace, "toggle_effects", T("Effects Library ein/aus"), QKeySequence(),
                [this] { if (m_effectsToggle->isEnabled()) m_effectsToggle->toggle(); });

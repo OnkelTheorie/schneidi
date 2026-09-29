@@ -14,6 +14,7 @@
 #include "engine/ColorGrade.h"
 #include "engine/Profiles.h"
 #include "engine/TimelineBuilder.h"
+#include "ui/ColorPanel.h"
 
 #include <Mlt.h>
 #include <QApplication>
@@ -397,6 +398,17 @@ void testEditorAndFile(const QString& dir)
     CHECK(ProjectFile::load(QDir(moved).filePath("film.schneidi"), &m, &err));
     CHECK_EQ(EffectRegistry::value(m.timeline.video[0].clips[0], "grade", "lut").toString(),
              QDir(moved).filePath("luts/look.cube"));
+
+    // Color-Seite (Widget) baut sich mit dem Clip auf und zeigt ihn (offscreen)
+    {
+        ColorPanel panel(&ed);
+        panel.resize(1400, 320);
+        panel.setPlayhead(10);
+        CHECK(!panel.grab().isNull());
+        sel.set({v});
+        CHECK(!panel.grab().isNull());
+        sel.clear();
+    }
 
     // Ganze Korrektur zurücksetzen = Effekt samt Keyframes weg, ein Undo-Schritt
     const int s1 = undo->index();
