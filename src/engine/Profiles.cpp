@@ -21,6 +21,36 @@ std::unique_ptr<Mlt::Profile> makeProfile(const ProjectFormat& f)
     return p;
 }
 
+ProducerFactory::ProducerFactory(Mlt::Profile& base) : m_base(base) {}
+ProducerFactory::~ProducerFactory() = default;
+
+std::unique_ptr<Mlt::Producer> ProducerFactory::open(const QString& resource)
+{
+    const QByteArray res = resource.toUtf8();
+    auto p = std::make_unique<Mlt::Producer>(m_base, res.constData());
+    if (!p->is_valid()) return p;
+    // Farbnorm des Videostroms steht schon nach dem Öffnen fest (meta.media.colorspace erst nach dem ersten Frame)
+    const int vi = p->get_int("video_index");
+    const int cs = vi >= 0 ? p->get_int(QString("meta.media.%1.codec.colorspace").arg(vi).toUtf8().constData()) : 0;
+    // Nur Normen, die MLT beim Skalieren kennt (601-Familie, 240); 2020 u. Ä. behandelt es ohnehin nicht
+    const bool known = cs == 601 || cs == 170 || cs == 470 || cs == 624 || cs == 240;
+    if (!known || cs == m_base.colorspace()) return p;
+    auto& prof = m_profiles[cs];
+    if (!prof) {
+        prof = std::make_unique<Mlt::Profile>();
+        prof->set_width(m_base.width());
+        prof->set_height(m_base.height());
+        prof->set_frame_rate(m_base.frame_rate_num(), m_base.frame_rate_den());
+        prof->set_sample_aspect(m_base.sample_aspect_num(), m_base.sample_aspect_den());
+        prof->set_display_aspect(m_base.display_aspect_num(), m_base.display_aspect_den());
+        prof->set_progressive(m_base.progressive());
+        prof->set_explicit(1);
+        prof->set_colorspace(cs);
+    }
+    auto own = std::make_unique<Mlt::Producer>(*prof, res.constData());
+    return own->is_valid() ? std::move(own) : std::move(p);
+}
+
 namespace {
 
 double parseRate(const QByteArray& s)

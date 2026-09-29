@@ -7,6 +7,8 @@
 #include <set>
 #include <vector>
 
+class ProducerFactory;
+
 namespace Mlt {
 class Filter;
 class Profile;
@@ -57,6 +59,7 @@ private:
                                const Clip* retime = nullptr);
 
     Mlt::Profile& m_profile;
+    std::unique_ptr<ProducerFactory> m_factory; // vor m_cache: muss die Producer überleben
     MediaResolver m_resolver;
     // Pro Datei *und* Spur ein eigener Producer, damit sich Video- und Audiospur
     // nicht gegenseitig im Decoder hin- und herspulen.

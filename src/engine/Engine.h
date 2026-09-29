@@ -20,6 +20,7 @@ class Consumer;
 class Tractor;
 } // namespace Mlt
 class TimelineBuilder;
+class ProducerFactory;
 class ProxyManager;
 struct MixerHooks;
 
@@ -90,6 +91,7 @@ private:
     ProxyManager* m_proxies;
     ProjectFormat m_format;
     std::unique_ptr<Mlt::Profile> m_profile;
+    std::unique_ptr<ProducerFactory> m_factory; // Quellansicht (BT.601-Umweg, Profiles.h); überlebt m_source
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Tractor> m_timeline;

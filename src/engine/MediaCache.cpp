@@ -217,6 +217,7 @@ std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path)
 void MediaCache::thumbLoop()
 {
     std::unique_ptr<Mlt::Profile> profile;
+    std::unique_ptr<ProducerFactory> factory; // BT.601-Umweg (Profiles.h), überlebt die Producer
     int generation = -1;
     // Offene Producer wiederverwenden (Datei öffnen ist teurer als Suchen)
     QHash<QString, std::shared_ptr<Mlt::Producer>> producers;
@@ -236,14 +237,16 @@ void MediaCache::thumbLoop()
         }
         if (gen != generation) { // neues Projektformat: Producer hängen am alten Profil
             producers.clear();
+            factory.reset();
             profile = makeProfile(format);
+            factory = std::make_unique<ProducerFactory>(*profile);
             generation = gen;
         }
 
         std::shared_ptr<Mlt::Producer> prod = producers.value(job.path);
         if (!prod) {
             if (producers.size() >= 8) producers.clear();
-            prod = std::make_shared<Mlt::Producer>(*profile, decodePath(job.path).toUtf8().constData());
+            prod = factory->open(decodePath(job.path));
             prod->set("audio_index", -1); // Ton wird hier nie gebraucht
             producers.insert(job.path, prod);
         }

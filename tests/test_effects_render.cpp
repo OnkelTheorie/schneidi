@@ -226,5 +226,23 @@ int main(int argc, char** argv)
     } else {
         std::printf("Hinweis: de_DE-Locale fehlt, Test mit deutschem Zahlenformat übersprungen\n");
     }
+
+    // BT.601-Quelle (ohne Farbangabe, wie ffmpeg sie schreibt): gleiche Farben in voller Größe, Vorschaugröße und
+    // 720p-Projekt (MLT-Skalierer färbte sie falsch, Umweg ProducerFactory)
+    const QString bars601 = Check::makeMedia(tmp.filePath("bars601.mp4"),
+                                             {"-f", "lavfi", "-i", "smptebars=size=1920x1080:rate=25:duration=2",
+                                              "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+    if (CHECK(!bars601.isEmpty())) {
+        g_media = bars601;
+        const Timeline plain = one([](Clip&) {});
+        ProjectFormat small601 = fmt;
+        small601.width = 1280;
+        small601.height = 720;
+        const QImage native = render(plain, fmt, 10);
+        const Rgb c = cyan(native);
+        CHECK(c.r < 10 && std::abs(c.g - 191) < 6 && std::abs(c.b - 191) < 6); // 75 %-Cyan
+        CHECK(diff(native, render(plain, fmt, 10, 960, 540)) < 1.0);
+        CHECK(diff(native, render(plain, small601, 10)) < 1.0);
+    }
     return Check::result();
 }

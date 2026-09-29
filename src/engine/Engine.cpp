@@ -36,6 +36,7 @@ Engine::~Engine()
     m_timeline.reset();
     m_source.reset();
     m_builder.reset();
+    m_factory.reset();
     m_profile.reset();
 }
 
@@ -65,6 +66,7 @@ bool Engine::init(QString* error)
 bool Engine::createConsumer(QString* error)
 {
     m_profile = makeProfile(m_format);
+    m_factory = std::make_unique<ProducerFactory>(*m_profile);
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
     // Nur das Bild vom Proxy: Ton dekodiert billig und bleibt so exakt wie im Export
     m_builder->setResolver([this](const QString& path, TrackKind kind) {
@@ -107,6 +109,7 @@ void Engine::setFormat(const ProjectFormat& format)
     }
     m_source.reset();
     m_builder.reset();
+    m_factory.reset();
     m_profile.reset();
 
     m_format = format;
@@ -146,7 +149,9 @@ MediaInfo Engine::probe(const QString& path)
 
 QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
 {
-    Mlt::Producer p(*m_profile, path.toUtf8().constData());
+    ProducerFactory factory(*m_profile);
+    const std::unique_ptr<Mlt::Producer> producer = factory.open(path);
+    Mlt::Producer& p = *producer;
     if (!p.is_valid()) return {};
     p.seek(frame);
     std::unique_ptr<Mlt::Frame> f(p.get_frame());
@@ -172,10 +177,11 @@ QImage Engine::grabStill(const Timeline& tl)
 {
     // Eigenes Profil und eigene Producer (wie der Export) -> Vorschau läuft ungestört weiter
     auto profile = makeProfile(m_format);
+    ProducerFactory factory(*profile);
     std::unique_ptr<TimelineBuilder> builder;
     std::unique_ptr<Mlt::Producer> producer;
     if (m_mode == Mode::Source && !m_sourcePath.isEmpty()) {
-        producer = std::make_unique<Mlt::Producer>(*profile, m_sourcePath.toUtf8().constData());
+        producer = factory.open(m_sourcePath);
     } else {
         builder = std::make_unique<TimelineBuilder>(*profile);
         producer = builder->build(tl);
@@ -232,7 +238,7 @@ void Engine::showTimeline(int position)
 
 void Engine::showSource(const QString& path, int position)
 {
-    auto p = std::make_unique<Mlt::Producer>(*m_profile, m_proxies->resolve(path).toUtf8().constData());
+    auto p = m_factory->open(m_proxies->resolve(path));
     if (!p->is_valid()) return;
     m_consumer->stop();
     m_source = std::move(p);

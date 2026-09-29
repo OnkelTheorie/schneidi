@@ -3,6 +3,7 @@
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
+#include "engine/Profiles.h"
 
 #include <Mlt.h>
 #include <QColor>
@@ -738,7 +739,10 @@ std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Produ
 
 } // namespace
 
-TimelineBuilder::TimelineBuilder(Mlt::Profile& profile) : m_profile(profile) {}
+TimelineBuilder::TimelineBuilder(Mlt::Profile& profile)
+    : m_profile(profile), m_factory(std::make_unique<ProducerFactory>(profile))
+{
+}
 TimelineBuilder::~TimelineBuilder() = default;
 
 Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex, bool second,
@@ -766,7 +770,9 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     auto it = m_cache.find(key);
     if (it != m_cache.end()) return it->second.get();
 
-    auto p = std::make_unique<Mlt::Producer>(m_profile, resource.toUtf8().constData());
+    // Video über die Fabrik (BT.601-Quellen, siehe Profiles.h); Ton braucht das nicht
+    auto p = kind == TrackKind::Video ? m_factory->open(resource)
+                                      : std::make_unique<Mlt::Producer>(m_profile, resource.toUtf8().constData());
     if (!p->is_valid()) return nullptr;
     if (warp != 1.0 && kind == TrackKind::Audio) p->set("warp_pitch", pitch ? 1 : 0);
     // Nicht benötigten Stream gar nicht erst dekodieren
