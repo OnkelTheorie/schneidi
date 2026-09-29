@@ -67,7 +67,10 @@ public:
     // Audioclip (ohne Clip-Lautstärke). Clip-Lautstärke so setzen, dass die Spitze bei targetDb liegt; relative = alle
     // Clips um denselben Betrag (lautester trifft das Ziel), sonst jeder einzeln. Lautstärke-Keyframes: Kurve so
     // verschieben, dass ihr höchster Punkt den Wert bekommt. Stille/gesperrte Clips bleiben. Ein Undo-Schritt.
-    void normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative);
+    // Lautheit (LUFS, BS.1770) genauso: peakDb = integrierte Lautheit je Clip; relativeRef = Bezugswert für
+    // relative (z. B. gemeinsame Lautheit aller Clips), ohne = lautester Clip.
+    void normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative,
+                        std::optional<double> relativeRef = std::nullopt);
     // Audioclips zum Normalisieren: Auswahl (mit verknüpften Partnern), nur Ton, nicht gesperrt
     QVector<int> selectedAudioClips() const;
     // Beliebige Clip-Eigenschaft ändern (Inspector). Gleicher mergeKey = ein Undo-Schritt.
