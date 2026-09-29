@@ -3,6 +3,7 @@
 #include "core/I18n.h"
 #include "ui/timeline/TimelineView.h"
 
+#include <QAction>
 #include <QButtonGroup>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -61,6 +62,8 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
     bar->addWidget(bladeBtn);
     bar->addSpacing(12);
     bar->addWidget(snapBtn);
+    m_bar = bar;
+    m_toolInsert = bar->count();
     bar->addStretch(1);
     bar->addWidget(zoomOut);
     bar->addWidget(zoomIn);
@@ -109,4 +112,14 @@ void TimelinePanel::syncScrollbars()
     m_vbar->setPageStep(vp);
     m_vbar->setSingleStep(20);
     m_vbar->setValue(v.scrollY);
+}
+
+void TimelinePanel::addToolAction(QAction* action, const QString& text)
+{
+    auto* b = new QToolButton;
+    b->setDefaultAction(action);
+    b->setText(text); // setDefaultAction übernimmt sonst den Menütext
+    b->setToolTip(action->toolTip());
+    connect(action, &QAction::changed, b, [b, text] { b->setText(text); });
+    m_bar->insertWidget(m_toolInsert++, b);
 }

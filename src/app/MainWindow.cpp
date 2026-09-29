@@ -515,8 +515,15 @@ void MainWindow::buildActions()
     makeAction(timeline, "marker_next", T("Nächster Marker"), QKeySequence("Shift+Down"), [this] { jumpToMarker(1); });
     auto* linked = makeAction(timeline, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
     linked->setCheckable(true);
-    linked->setChecked(m_editor->linkedSelection());
-    connect(linked, &QAction::toggled, this, [this](bool on) { m_editor->setLinkedSelection(on); });
+    linked->setToolTip(T("Verknüpfte Auswahl (Strg+Shift+L): an = Video und Ton eines Clips bewegen sich zusammen, "
+                         "aus = einzeln auswählen, verschieben und trimmen"));
+    linked->setChecked(QSettings().value("edit/linkedSelection", true).toBool());
+    m_editor->setLinkedSelection(linked->isChecked());
+    connect(linked, &QAction::toggled, this, [this](bool on) {
+        m_editor->setLinkedSelection(on);
+        if (!m_autosaveDisabled) QSettings().setValue("edit/linkedSelection", on);
+    });
+    m_timeline->addToolAction(linked, T("⛓ Verknüpft"));
     auto* splitTracks = makeAction(timeline, "split_on_tracks", T("Teilen auf ganzer Spur der Auswahl"), QKeySequence(), [] {});
     splitTracks->setCheckable(true);
     splitTracks->setToolTip(T("An: Strg+B/Maustaste teilt auch den Nachbarclip auf der Spur des ausgewählten Clips. "

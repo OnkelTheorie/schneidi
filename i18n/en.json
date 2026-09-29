@@ -276,6 +276,7 @@
  "Unbenannt.%1": "Untitled.%1",
  "Unten": "Bottom",
  "Verknüpfte Auswahl": "Linked Selection",
+ "Verknüpfte Auswahl (Strg+Shift+L): an = Video und Ton eines Clips bewegen sich zusammen, aus = einzeln auswählen, verschieben und trimmen": "Linked Selection (Ctrl+Shift+L): on = a clip's video and audio move together, off = select, move and trim them separately",
  "Verknüpfung lösen": "Unlink Clips",
  "Videoübergänge": "Video Transitions",
  "Vorheriger Marker": "Previous Marker",
@@ -315,6 +316,7 @@
  "⇹ Trimmen": "⇹ Trim",
  "⊸ Snapping": "⊸ Snapping",
  "♪ Audio": "♪ Audio",
+ "⛓ Verknüpft": "⛓ Linked",
  "✂ Klinge": "✂ Blade",
  "⮝ Auswahl": "⮝ Select"
 }
