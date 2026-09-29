@@ -155,7 +155,7 @@ public:
     // Zielspuren für F9/F10 … (wie DaVinci Destination Controls), Index 0 = V1/A1
     int targetVideoTrack() const { return m_targetVideo; }
     int targetAudioTrack() const { return m_targetAudio; }
-    void setTargetTracks(int video, int audio) { m_targetVideo = std::max(0, video); m_targetAudio = std::max(0, audio); }
+    void setTargetTracks(int video, int audio);
     // Effekte (Open FX aus der Effects Library): an Videoclips anhängen (Clips, die ihn schon haben, bleiben),
     // bzw. entfernen; je ein Undo-Schritt
     void addEffect(const QVector<int>& ids, const QString& effectId);
@@ -167,6 +167,9 @@ public:
     void copySelection();
     void cutSelection();
     void paste(int frame);
+
+signals:
+    void targetTracksChanged(); // Zielspuren (Spurkopf-Markierung neu zeichnen)
 
 private:
     TimelineOps::SourceLength sourceLength() const;

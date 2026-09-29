@@ -157,6 +157,7 @@ private:
     // Spurkopf wie DaVinci: Kürzel „V1“, Name (Doppelklick = umbenennen), Schloss, Auge/M
     QRect lockButton(const Row& row) const;
     QRect nameRect(const Row& row) const;
+    QRect shortNameRect(const Row& row) const; // Kürzel „V1“ = Zielspur-Knopf
     bool isLocked(const Row& row) const; // gesperrte Spur: nichts darauf greifbar
     void headerMenu(const Row& row, const QPoint& globalPos);
     void startRename(TrackRef ref);

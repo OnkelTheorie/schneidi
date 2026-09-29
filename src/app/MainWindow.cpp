@@ -658,6 +658,19 @@ void MainWindow::buildActions()
     makeAction(edit, "insert_clip", T("Clip einfügen"), QKeySequence(Qt::Key_F9), [this] { sourceEdit(SE::Insert); });
     makeAction(edit, "overwrite_clip", T("Clip überschreiben"), QKeySequence(Qt::Key_F10), [this] { sourceEdit(SE::Overwrite); });
     makeAction(edit, "replace_clip", T("Clip ersetzen"), QKeySequence(Qt::Key_F11), [this] { sourceEdit(SE::Replace); });
+    // Zielspuren wie DaVinci (Destination Controls): Alt+1…8 Video, Strg+Alt+1…8 Audio; auch Klick aufs Spurkürzel
+    QMenu* dest = edit->addMenu(T("Zielspur"));
+    for (int i = 0; i < 8; ++i) {
+        makeAction(dest, QString("target_video_%1").arg(i + 1), T("Video-Zielspur V%1").arg(i + 1),
+                   QKeySequence(QString("Alt+%1").arg(i + 1)),
+                   [this, i] { m_editor->setTargetTracks(i, m_editor->targetAudioTrack()); });
+    }
+    dest->addSeparator();
+    for (int i = 0; i < 8; ++i) {
+        makeAction(dest, QString("target_audio_%1").arg(i + 1), T("Audio-Zielspur A%1").arg(i + 1),
+                   QKeySequence(QString("Ctrl+Alt+%1").arg(i + 1)),
+                   [this, i] { m_editor->setTargetTracks(m_editor->targetVideoTrack(), i); });
+    }
     makeAction(edit, "fit_to_fill", T("Einpassen (Fit to Fill)"), QKeySequence("Shift+F11"), [this] { sourceEdit(SE::FitToFill); });
     makeAction(edit, "place_on_top", T("Oben platzieren"), QKeySequence(Qt::Key_F12), [this] { sourceEdit(SE::PlaceOnTop); });
     makeAction(edit, "ripple_overwrite", T("Ripple-Überschreiben"), QKeySequence("Shift+F10"),

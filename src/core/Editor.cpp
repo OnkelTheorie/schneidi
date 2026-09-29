@@ -552,6 +552,16 @@ void Editor::clearMarks()
     m_project->edit(T("In/Out entfernen"), [](Timeline& tl) { tl.markIn = tl.markOut = -1; });
 }
 
+void Editor::setTargetTracks(int video, int audio)
+{
+    video = std::max(0, video);
+    audio = std::max(0, audio);
+    if (video == m_targetVideo && audio == m_targetAudio) return;
+    m_targetVideo = video;
+    m_targetAudio = audio;
+    emit targetTracksChanged();
+}
+
 void Editor::setSourceMarkIn(const QString& path, int frame)
 {
     const MediaInfo* m = m_project->mediaInfo(path);

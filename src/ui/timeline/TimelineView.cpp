@@ -204,6 +204,7 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
         emit viewChanged(); // nur damit die Scrollbar ggf. mehr Platz bekommt
     });
     connect(editor->selection(), &Selection::changed, this, qOverload<>(&QWidget::update));
+    connect(editor, &Editor::targetTracksChanged, this, qOverload<>(&QWidget::update));
     // Clipfarbe/Flags im Media Pool geändert -> Clips neu zeichnen
     connect(editor->project(), &Project::poolChanged, this, qOverload<>(&QWidget::update));
 }
@@ -1324,11 +1325,19 @@ void TimelineView::drawHeaders(QPainter& p)
         f.setBold(true);
         f.setPointSizeF(8);
         p.setFont(f);
-        const QRect shortBox(10, row.y + 6, 26, 16);
-        p.setPen(QColor(0x5a, 0x5a, 0x62));
-        p.setBrush(Qt::NoBrush);
-        p.drawRect(shortBox.adjusted(0, 0, -1, -1));
-        p.setPen(Theme::text);
+        // Zielspur für F9/F10 … (DaVinci Destination Control): Kästchen orange gefüllt, Klick wählt die Spur
+        const QRect shortBox = shortNameRect(row);
+        const bool target = row.ref.index == (row.ref.kind == TrackKind::Video ? m_editor->targetVideoTrack()
+                                                                                 : m_editor->targetAudioTrack());
+        if (target) {
+            p.fillRect(shortBox.adjusted(0, 0, -1, -1), Theme::accent);
+            p.setPen(Qt::black);
+        } else {
+            p.setPen(QColor(0x5a, 0x5a, 0x62));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(shortBox.adjusted(0, 0, -1, -1));
+            p.setPen(Theme::text);
+        }
         p.drawText(shortBox, Qt::AlignCenter, trackShortName(row.ref));
         if (!(m_nameEdit && m_nameEdit->isVisible() && m_nameRef == row.ref)) {
             f.setBold(false);
@@ -1388,6 +1397,11 @@ QRect TimelineView::headerButton(const Row& row) const
 QRect TimelineView::lockButton(const Row& row) const
 {
     return QRect(kHeaderW - 54, row.y + 6, 20, 16);
+}
+
+QRect TimelineView::shortNameRect(const Row& row) const
+{
+    return QRect(10, row.y + 6, 26, 16);
 }
 
 QRect TimelineView::nameRect(const Row& row) const
@@ -1602,6 +1616,9 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
             else m_editor->toggleTrackMute(row->ref);
         } else if (row && lockButton(*row).contains(pos)) {
             m_editor->toggleTrackLock(row->ref);
+        } else if (row && shortNameRect(*row).contains(pos)) {
+            if (row->ref.kind == TrackKind::Video) m_editor->setTargetTracks(row->ref.index, m_editor->targetAudioTrack());
+            else m_editor->setTargetTracks(m_editor->targetVideoTrack(), row->ref.index);
         }
         return;
     }
