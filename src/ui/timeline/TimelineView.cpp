@@ -624,6 +624,14 @@ void TimelineView::setSnapping(bool on)
 
 // ---------- Zeichnen ----------
 
+void TimelineView::setRenderCacheSpans(const QVector<CacheSpan>& spans)
+{
+    auto same = [](const CacheSpan& a, const CacheSpan& b) { return a.start == b.start && a.end == b.end && a.done == b.done; };
+    if (spans.size() == m_cacheSpans.size() && std::equal(spans.begin(), spans.end(), m_cacheSpans.begin(), same)) return;
+    m_cacheSpans = spans;
+    update(0, 0, width(), kRulerH);
+}
+
 void TimelineView::paintEvent(QPaintEvent*)
 {
     if (m_renaming) { // Namensfeld folgt der Zeile (Scrollen, Spurhöhe)
@@ -678,6 +686,14 @@ void TimelineView::drawRuler(QPainter& p)
             p.setPen(Theme::textDim);
             p.drawText(x + 3, 12, Timecode::format(fr, fps));
         }
+    }
+    // Render-Cache (wie DaVinci): rot = muss noch gerendert werden, blau = fertig
+    for (const CacheSpan& c : m_cacheSpans) {
+        const double x0 = frameToX(c.start), x1 = frameToX(c.end);
+        if (x1 < kHeaderW || x0 > width()) continue;
+        const double xd = x0 + (x1 - x0) * std::clamp(c.done, 0.0, 1.0);
+        p.fillRect(QRectF(x0, 0, xd - x0, 3), QColor(0x3d, 0x8b, 0xe8));
+        p.fillRect(QRectF(xd, 0, x1 - xd, 3), QColor(0xd2, 0x3c, 0x3c));
     }
     // In/Out-Bereich (I/O): heller Balken im Lineal mit Klammern an den Enden
     const Timeline& tlm = m_editor->project()->timeline();

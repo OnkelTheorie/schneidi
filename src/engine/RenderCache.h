@@ -98,6 +98,7 @@ private:
     ProjectFormat m_format;
     QVector<Job> m_jobs;        // gewünscht und noch nicht fertig, in Timeline-Reihenfolge
     QHash<QString, bool> m_failed; // Schlüssel, deren Rendern scheiterte (nicht endlos neu versuchen)
+    QHash<QString, bool> m_reported; // schon gemeldete Fehlermeldungen (z. B. ffmpeg fehlt: nur einmal)
     QTimer m_idle;              // kurze Ruhe nach Änderungen, bevor gerendert wird
     QTimer m_poll;              // Fortschritt abfragen
     QThread* m_thread = nullptr;

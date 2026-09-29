@@ -3,9 +3,13 @@
 // liest die Cache-Datei nur mit ClipCache (Vorschau), Export und Standbild nie; Hintergrund-Rendern per sync().
 #include "check.h"
 
+#include "core/Editor.h"
 #include "core/EffectRegistry.h"
 #include "core/ProjectFile.h"
 #include "core/ProjectFormat.h"
+#include "core/Project.h"
+#include "core/Selection.h"
+#include "core/TimelineOps.h"
 #include "engine/Exporter.h"
 #include "engine/Profiles.h"
 #include "engine/RenderCache.h"
@@ -21,6 +25,7 @@
 #include <QImage>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QUndoStack>
 #include <clocale>
 #include <cstring>
 
@@ -177,6 +182,36 @@ void testKeys()
     CHECK(ProjectFile::fromJson(ProjectFile::toJson(data, {}), {}, &back, &error));
     CHECK(!back.timeline.video.isEmpty() && !back.timeline.video[0].clips.isEmpty()
           && back.timeline.video[0].clips[0].renderCache);
+}
+
+// Rechtsklick „Render-Cache Clip-Ausgabe“: nur Videoclips (keine Titel/Audio), ein Undo-Schritt, Umschalten
+void testEditor()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 250, true, true, false});
+    ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+    ed.addTitle(300);
+    const Timeline& tl = p.timeline();
+    if (!CHECK(tl.video.size() >= 1 && tl.video[0].clips.size() == 2 && tl.audio[0].clips.size() == 1)) return;
+    const int v = tl.video[0].clips[0].id, t = tl.video[0].clips[1].id, a = tl.audio[0].clips[0].id;
+    auto flag = [&](int id) { return TimelineOps::findClip(p.timeline(), id)->renderCache; };
+    sel.set({a});
+    CHECK_EQ(ed.selectionRenderCacheState(), -1);
+    sel.set({v, a, t});
+    CHECK_EQ(ed.selectionRenderCacheState(), 0);
+    const int before = p.undoStack()->index();
+    ed.toggleSelectionRenderCache();
+    CHECK_EQ(p.undoStack()->index(), before + 1);
+    CHECK(flag(v) && !flag(a) && !flag(t));
+    CHECK_EQ(ed.selectionRenderCacheState(), 1);
+    ed.toggleSelectionRenderCache();
+    CHECK(!flag(v));
+    p.undoStack()->undo();
+    CHECK(flag(v));
+    p.undoStack()->undo();
+    CHECK(!flag(v));
 }
 
 void testRender(const QString& dir)
@@ -409,6 +444,7 @@ int main(int argc, char** argv)
         if (!qt.is_valid()) return Check::skip("MLT-Qt-Modul nicht nutzbar (kein Display? z. B. xvfb-run -a ctest …)");
     }
     testKeys();
+    testEditor();
     testRender(tmp.path());
     testBuilderUsesCacheOnlyForPreview(red);
     testBackground();

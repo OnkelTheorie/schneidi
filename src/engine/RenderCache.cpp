@@ -314,7 +314,10 @@ void RenderCache::onFinished(bool ok, const QString& error)
     m_poll.stop();
     if (!ok) {
         m_failed.insert(key, true);
-        if (!error.isEmpty()) emit failed(error);
+        if (!error.isEmpty() && !m_reported.contains(error)) {
+            m_reported.insert(error, true);
+            emit failed(error);
+        }
     }
     emit cacheChanged();
     if (!m_jobs.isEmpty()) QTimer::singleShot(0, this, &RenderCache::startNext);

@@ -16,6 +16,7 @@
 #include "engine/MediaCache.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
+#include "engine/RenderCache.h"
 #include "ui/DeliverPanel.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaStorage.h"
@@ -72,7 +73,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     // Mixer-Änderungen sind billig (live gesetzt) und gehen weiter sofort durch.
     m_engineTimer.setSingleShot(true);
     m_engineTimer.setInterval(30);
-    connect(&m_engineTimer, &QTimer::timeout, this, [this] { m_engine->updateTimeline(m_project->timeline()); });
+    connect(&m_engineTimer, &QTimer::timeout, this, [this] {
+        m_engine->updateTimeline(m_project->timeline());
+        updateRenderCacheBar();
+    });
     connect(m_project, &Project::timelineChanged, this, [this] {
         if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(m_project->timeline());
         else if (!m_engineTimer.isActive()) m_engineTimer.start();
@@ -85,6 +89,15 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (TimelineOps::usesMediaOnVideo(m_project->timeline(), path)) proxiesChanged();
     });
     connect(proxies, &ProxyManager::enabledChanged, this, proxiesChanged);
+    // Render-Cache: Datei fertig/gelöscht oder Modus geändert -> Vorschau neu aufbauen, Balken über der Timeline
+    RenderCache* renderCache = m_engine->renderCache();
+    connect(renderCache, &RenderCache::cacheChanged, this, [this, proxiesChanged] {
+        proxiesChanged();
+        updateRenderCacheBar();
+    });
+    connect(renderCache, &RenderCache::progressChanged, this, &MainWindow::updateRenderCacheBar);
+    connect(renderCache, &RenderCache::failed, this,
+            [this](const QString& msg) { QMessageBox::warning(this, T("Render-Cache"), msg); });
 
     // Engine -> Playhead (nur im Timeline-Modus; im Quellmodus bleibt der Playhead stehen)
     TimelineView* tv = m_timeline->view();
@@ -106,8 +119,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(tv, &TimelineView::clipMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(this);
         const bool audio = !m_editor->selectedAudioClips().isEmpty();
-        for (const char* id : {"clip_speed", "clip_speed_reset", "normalize_audio", "", "toggle_enabled", "link_clips", "",
-                               "delete", "ripple_delete"}) {
+        const int cacheState = m_editor->selectionRenderCacheState();
+        for (const char* id : {"clip_speed", "clip_speed_reset", "normalize_audio", "", "toggle_enabled", "link_clips",
+                               "render_cache_clip", "", "delete", "ripple_delete"}) {
             if (!*id) {
                 menu.addSeparator();
                 continue;
@@ -115,6 +129,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             QAction* a = InputBindings::instance().action(id);
             if (!a) continue;
             if (QString(id) == "normalize_audio" && !audio) continue;
+            if (QString(id) == "render_cache_clip") {
+                if (cacheState < 0) continue; // nur Videoclips (keine Titel)
+                a->setChecked(cacheState == 1);
+            }
             menu.addAction(a);
         }
         // Clipfarbe/Flags wie DaVinci: gelten für den Media-Pool-Clip (Titel haben keinen)
@@ -310,6 +328,14 @@ void MainWindow::updateViewer()
 void MainWindow::setProjectFormat(const ProjectFormat& format)
 {
     m_project->setFormat(format);
+}
+
+void MainWindow::updateRenderCacheBar()
+{
+    QVector<TimelineView::CacheSpan> spans;
+    for (const RenderCache::Span& s : m_engine->renderCache()->spans(m_project->timeline()))
+        spans << TimelineView::CacheSpan{s.start, s.end, s.done};
+    m_timeline->view()->setRenderCacheSpans(spans);
 }
 
 void MainWindow::grabStill()
@@ -723,6 +749,15 @@ void MainWindow::buildActions()
     makeAction(timeline, "normalize_audio", T("Audiopegel normalisieren…"), QKeySequence(), [this] { normalizeAudioDialog(); });
     makeAction(timeline, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
                [this] { m_editor->toggleLinkSelection(); });
+    // Wie DaVinci „Render Cache Clip Output“: Vorschau spielt die vorgerenderte Clip-Ausgabe (Wiedergabe > Render-Cache)
+    auto* cacheClip = makeAction(timeline, "render_cache_clip", T("Render-Cache Clip-Ausgabe"), QKeySequence(),
+                                 [this] { m_editor->toggleSelectionRenderCache(); });
+    cacheClip->setCheckable(true);
+    connect(timeline, &QMenu::aboutToShow, this, [this, cacheClip] {
+        const int state = m_editor->selectionRenderCacheState();
+        cacheClip->setEnabled(state >= 0);
+        cacheClip->setChecked(state == 1);
+    });
     timeline->addSeparator();
     makeAction(timeline, "add_marker", T("Marker setzen/entfernen"), QKeySequence("M"),
                [this, tv] { m_editor->toggleMarker(tv->playhead()); });
@@ -830,6 +865,27 @@ void MainWindow::buildActions()
     useProxy->setCheckable(true);
     useProxy->setChecked(m_engine->proxies()->enabled());
     connect(useProxy, &QAction::toggled, m_engine->proxies(), &ProxyManager::setEnabled);
+    // Wie DaVinci (Playback → Render Cache: None/Smart/User); Export rendert immer aus den Originalen
+    QMenu* cacheMenu = play->addMenu(T("Render-Cache"));
+    auto* cacheGroup = new QActionGroup(cacheMenu);
+    for (const auto& [id, text, mode] : {std::tuple{"render_cache_off", N_("Aus"), RenderCache::Mode::Off},
+                                         std::tuple{"render_cache_smart", N_("Smart"), RenderCache::Mode::Smart},
+                                         std::tuple{"render_cache_user", N_("Benutzer"), RenderCache::Mode::User}}) {
+        const RenderCache::Mode m = mode;
+        QAction* a = makeAction(play, id, T("Render-Cache: %1").arg(T(text)), QKeySequence(),
+                                [this, m] { m_engine->renderCache()->setMode(m); });
+        play->removeAction(a); // Einstellungen-Kategorie „Wiedergabe“, angezeigt im Untermenü
+        a->setText(T(text));
+        a->setCheckable(true);
+        a->setChecked(m_engine->renderCache()->mode() == m);
+        cacheGroup->addAction(a);
+        cacheMenu->addAction(a);
+    }
+    cacheMenu->addSeparator();
+    QAction* clearCache = makeAction(play, "render_cache_clear", T("Render-Cache löschen"), QKeySequence(),
+                                     [this] { m_engine->renderCache()->clear(); });
+    play->removeAction(clearCache);
+    cacheMenu->addAction(clearCache);
 
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
     makeAction(workspace, "page_media", T("Media-Seite"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });

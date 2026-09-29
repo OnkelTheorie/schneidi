@@ -60,6 +60,7 @@ private:
     void onFormatChanged();
     void projectSettingsDialog();
     void grabStill();
+    void updateRenderCacheBar(); // Render-Cache-Balken über der Timeline
     void clipSpeedDialog();
     void normalizeAudioDialog();
     void buildActions();

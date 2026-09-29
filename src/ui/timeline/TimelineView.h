@@ -46,6 +46,13 @@ public:
     void setProbe(std::function<MediaInfo(const QString&)> probe) { m_probe = std::move(probe); }
     // Quelle für Filmstreifen und Wellenformen (optional)
     void setMediaCache(MediaCache* cache);
+    // Render-Cache wie DaVinci: dünner Balken oben im Lineal, rot = noch nicht gecacht, blau = gecacht
+    // (done = schon gerenderter Anteil vom Clip-Anfang)
+    struct CacheSpan {
+        int start = 0, end = 0; // Timeline-Frames, end exklusiv
+        double done = 0;
+    };
+    void setRenderCacheSpans(const QVector<CacheSpan>& spans);
 
 public slots:
     void setPlayhead(int frame);
@@ -169,6 +176,7 @@ private:
 
     Editor* m_editor;
     MediaCache* m_cache = nullptr;
+    QVector<CacheSpan> m_cacheSpans;
     ViewState m_view;
     Tool m_tool = Tool::Select;
     bool m_snap = true;

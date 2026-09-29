@@ -503,6 +503,38 @@ void Editor::toggleSelectionEnabled()
                 [anyEnabled](Clip& c) { c.enabled = !anyEnabled; });
 }
 
+namespace {
+// Videoclip mit Medium (Titel und Audioclips werden nicht gecacht)
+bool cacheable(const Timeline& tl, int id)
+{
+    TrackRef ref;
+    const Clip* c = TimelineOps::findClip(tl, id, &ref);
+    return c && ref.kind == TrackKind::Video && !c->isTitle() && !c->mediaPath.isEmpty();
+}
+} // namespace
+
+int Editor::selectionRenderCacheState() const
+{
+    int on = 0, n = 0;
+    for (int id : m_selection->ids())
+        if (cacheable(m_project->timeline(), id)) {
+            ++n;
+            on += TimelineOps::findClip(m_project->timeline(), id)->renderCache ? 1 : 0;
+        }
+    if (n == 0) return -1;
+    return on == n ? 1 : on == 0 ? 0 : 2;
+}
+
+void Editor::toggleSelectionRenderCache()
+{
+    QVector<int> ids;
+    for (int id : editable(m_selection->ids().values().toVector()))
+        if (cacheable(m_project->timeline(), id)) ids << id;
+    if (ids.isEmpty()) return;
+    const bool on = selectionRenderCacheState() != 1;
+    modifyClips(ids, on ? T("Render-Cache an") : T("Render-Cache aus"), [on](Clip& c) { c.renderCache = on; });
+}
+
 void Editor::toggleLinkSelection()
 {
     const QVector<int> ids = editable(m_selection->ids().values().toVector());

@@ -85,6 +85,10 @@ public:
     // Anfang/Ende bis zum Playhead trimmen (Shift+[ / Shift+]); Auswahl oder Clips unter dem Playhead
     void trimToPlayhead(TimelineOps::Edge edge, int frame);
     void toggleSelectionEnabled();
+    // Render-Cache Clip-Ausgabe (wie DaVinci) für die ausgewählten Videoclips: sind alle markiert, aus, sonst an.
+    // Titel werden nicht gecacht. State: 0 = keiner markiert, 1 = alle, 2 = gemischt, -1 = keine passenden Clips
+    void toggleSelectionRenderCache();
+    int selectionRenderCacheState() const;
     // Ausgewählte Clips verknüpfen, bzw. trennen, wenn sie schon verknüpft sind
     void toggleLinkSelection();
     void toggleMarker(int frame);
