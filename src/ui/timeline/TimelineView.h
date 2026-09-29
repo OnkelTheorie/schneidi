@@ -237,4 +237,8 @@ private:
     TrackKind m_transDragKind = TrackKind::Video;
     TransitionStyle m_transDragStyle;
     std::optional<TransitionDrop> m_transDrop;
+    // Filter (Open FX) aus der Effects Library auf einen Videoclip ziehen
+    QString m_fxDragging;  // Effekt-ID, leer = kein Filter-Drag
+    int m_fxDropClip = 0;  // Videoclip unter der Maus
+    int fxDropClipAt(const QPoint& pos) const;
 };

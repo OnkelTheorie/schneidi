@@ -1,5 +1,6 @@
 #include "core/Editor.h"
 
+#include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
@@ -343,6 +344,48 @@ void Editor::modifyClips(const QVector<int>& idsIn, const QString& text, const s
         for (int id : ids)
             if (Clip* c = TimelineOps::findClip(tl, id)) fn(*c);
     }, mergeKey);
+}
+
+void Editor::addEffect(const QVector<int>& ids, const QString& effectId)
+{
+    const EffectDescriptor* d = EffectRegistry::find(effectId);
+    if (!d) return;
+    const Timeline& tl = m_project->timeline();
+    QVector<int> targets;
+    for (int id : editable(ids)) {
+        TrackRef ref;
+        const Clip* c = TimelineOps::findClip(tl, id, &ref);
+        if (c && ref.kind == TrackKind::Video && !EffectRegistry::has(*c, effectId)) targets << id;
+    }
+    modifyClips(targets, T("%1 hinzufügen").arg(d->name), [&](Clip& c) { EffectRegistry::add(c, effectId); });
+}
+
+void Editor::removeEffect(const QVector<int>& ids, const QString& effectId)
+{
+    const EffectDescriptor* d = EffectRegistry::find(effectId);
+    if (!d) return;
+    QVector<int> targets;
+    for (int id : editable(ids))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && EffectRegistry::has(*c, effectId))
+            targets << id;
+    modifyClips(targets, T("%1 entfernen").arg(d->name), [&](Clip& c) { EffectRegistry::remove(c, effectId); });
+}
+
+QVector<int> Editor::effectTargets(int frame) const
+{
+    const Timeline& tl = m_project->timeline();
+    QVector<int> ids;
+    for (int id : m_selection->ids()) {
+        TrackRef ref;
+        if (TimelineOps::findClip(tl, id, &ref) && ref.kind == TrackKind::Video) ids << id;
+    }
+    if (!ids.isEmpty()) return ids;
+    // Ohne Auswahl: sichtbarer (oberster) Videoclip unter dem Playhead
+    for (int i = tl.video.size() - 1; i >= 0; --i)
+        if (!tl.video[i].locked)
+            for (const Clip& c : tl.video[i].clips)
+                if (frame >= c.start && frame < c.end()) return {c.id};
+    return {};
 }
 
 void Editor::rippleDeleteSelection()

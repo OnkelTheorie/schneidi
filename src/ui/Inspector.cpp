@@ -143,6 +143,32 @@ QToolButton* toggleButton()
     return b;
 }
 
+// Papierkorb (Effekt entfernen) wie im DaVinci-Inspector
+QIcon trashIcon()
+{
+    auto draw = [](const QColor& col) {
+        QPixmap pm(32, 32);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(col, 2.5));
+        p.drawLine(QPointF(7, 9), QPointF(25, 9));    // Deckel
+        p.drawLine(QPointF(13, 9), QPointF(13, 6));
+        p.drawLine(QPointF(13, 6), QPointF(19, 6));
+        p.drawLine(QPointF(19, 6), QPointF(19, 9));
+        p.drawLine(QPointF(9, 12), QPointF(10.5, 27)); // Eimer
+        p.drawLine(QPointF(10.5, 27), QPointF(21.5, 27));
+        p.drawLine(QPointF(21.5, 27), QPointF(23, 12));
+        p.drawLine(QPointF(14, 14), QPointF(14.3, 24));
+        p.drawLine(QPointF(18, 14), QPointF(17.7, 24));
+        return pm;
+    };
+    QIcon icon;
+    icon.addPixmap(draw(Theme::textDim), QIcon::Normal);
+    icon.addPixmap(draw(Theme::text), QIcon::Active);
+    return icon;
+}
+
 int sliderPos(double v, double min, double max)
 {
     return int(std::lround((v - min) / std::max(1e-9, max - min) * kSliderSteps));
@@ -328,6 +354,11 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
             e.enabled = true;
         });
     };
+    // ---- Effekte aus der Effects Library (Open FX), nur sichtbar, wenn der Clip sie hat ----
+    m_videoLay = videoLay;
+    m_fxIndex = videoLay->count();
+    for (const auto& d : EffectRegistry::all())
+        if (d.library && d.video) addEffectSection(videoLay, d);
     videoLay->addStretch(1);
 
     // ---- Audio ----
@@ -614,7 +645,7 @@ void Inspector::setPlayhead(int frame)
     if (std::any_of(std::begin(shown), std::end(shown), [](const Clip* c) { return c && Keys::hasKeys(*c); })) refresh();
 }
 
-QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimParam>& params)
+QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimParam>& params, const QString& effect)
 {
     auto* box = new QWidget;
     auto* lay = new QHBoxLayout(box);
@@ -644,13 +675,13 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
         return std::all_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::keyAt(c, p, localFrame(c)); });
     };
     connect(diamond, &QToolButton::clicked, this, [=] {
-        const Clip* c = primary(kind, title);
+        const Clip* c = primary(kind, title, effect);
         if (!c) return;
-        m_editor->setKeyframes(selectedIds(kind, title), params, m_playhead, !onKey(*c));
+        m_editor->setKeyframes(selectedIds(kind, title, effect), params, m_playhead, !onKey(*c));
     });
     // Springen: nur Keyframes innerhalb des Clips (nach Trimmen können welche außerhalb liegen)
     auto jump = [=](bool forward) {
-        const Clip* c = primary(kind, title);
+        const Clip* c = primary(kind, title, effect);
         if (!c) return;
         const int t = localFrame(*c);
         std::optional<int> best;
@@ -666,7 +697,7 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
     // Rechtsklick auf die Raute: Verlauf wie DaVinci
     diamond->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(diamond, &QWidget::customContextMenuRequested, this, [=](const QPoint& pos) {
-        const Clip* c = primary(kind, title);
+        const Clip* c = primary(kind, title, effect);
         if (!c || !onKey(*c)) return;
         const Keyframe* k = Keys::keyAt(*c, params.first(), localFrame(*c));
         QMenu menu(this);
@@ -678,14 +709,14 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
             a->setCheckable(true);
             a->setChecked(k && k->ease == e.ease);
             connect(a, &QAction::triggered, this, [=, ease = e.ease] {
-                m_editor->setKeyframeEase(selectedIds(kind, title), params, m_playhead, ease);
+                m_editor->setKeyframeEase(selectedIds(kind, title, effect), params, m_playhead, ease);
             });
         }
         menu.exec(diamond->mapToGlobal(pos));
     });
 
     m_refreshers << [=] {
-        const Clip* c = primary(kind, title);
+        const Clip* c = primary(kind, title, effect);
         if (!c) return;
         const bool animated = std::any_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::animated(*c, p); });
         const bool here = animated && onKey(*c);
@@ -709,7 +740,8 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
 }
 
 Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, const QString& title,
-                                         const std::function<void(Clip&)>& reset, const Flag& enabled, bool titleOnly)
+                                         const std::function<void(Clip&)>& reset, const Flag& enabled, bool titleOnly,
+                                         const QString& effect)
 {
     auto* header = new QWidget;
     header->setObjectName("InspectorSection");
@@ -721,11 +753,12 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
 
     if (enabled) {
         QToolButton* dot = makeDot();
-        connect(dot, &QToolButton::clicked, this, [this, kind, title, enabled, titleOnly](bool on) {
-            apply(kind, {}, (on ? T("%1 an") : T("%1 aus")).arg(title), [enabled, on](Clip& c) { enabled(c) = on; }, titleOnly);
+        connect(dot, &QToolButton::clicked, this, [this, kind, title, enabled, titleOnly, effect](bool on) {
+            apply(kind, {}, (on ? T("%1 an") : T("%1 aus")).arg(title), [enabled, on](Clip& c) { enabled(c) = on; },
+                  titleOnly, effect);
         });
-        m_refreshers << [this, dot, kind, enabled, titleOnly] {
-            if (const Clip* c = primary(kind, titleOnly)) {
+        m_refreshers << [this, dot, kind, enabled, titleOnly, effect] {
+            if (const Clip* c = primary(kind, titleOnly, effect)) {
                 Clip copy = *c;
                 const QSignalBlocker b(dot);
                 dot->setChecked(enabled(copy));
@@ -747,8 +780,8 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
     hl->addWidget(toggle);
     hl->addStretch(1);
     if (reset)
-        hl->addWidget(resetButton([this, kind, title, reset, titleOnly] {
-            apply(kind, {}, T("%1 zurücksetzen").arg(title), reset, titleOnly);
+        hl->addWidget(resetButton([this, kind, title, reset, titleOnly, effect] {
+            apply(kind, {}, T("%1 zurücksetzen").arg(title), reset, titleOnly, effect);
         }));
 
     auto* body = new QWidget;
@@ -758,18 +791,112 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
     grid->setVerticalSpacing(4);
     grid->setColumnMinimumWidth(0, 72);
     grid->setColumnStretch(1, 1);
-    connect(toggle, &QToolButton::toggled, body, &QWidget::setVisible);
+    connect(toggle, &QToolButton::toggled, body, [body](bool open) {
+        body->setProperty("collapsed", !open);
+        body->setVisible(open);
+    });
 
     page->addWidget(header);
     page->addWidget(body);
-    return {grid, kind, 0, titleOnly};
+    return {grid, kind, 0, titleOnly, effect, header, body, hl};
+}
+
+void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
+{
+    const QString id = d.id;
+    const TrackKind kind = d.video ? TrackKind::Video : TrackKind::Audio;
+    Section s = addSection(page, kind, d.name, [id](Clip& c) {
+        // Zurücksetzen: Default-Werte, Keyframes weg, eingeschaltet
+        EffectInstance* e = EffectRegistry::instance(c, id);
+        const EffectDescriptor* desc = EffectRegistry::find(id);
+        if (!e || !desc) return;
+        e->enabled = true;
+        for (const auto& p : desc->params) {
+            e->params[p.key] = p.defaultValue;
+            if (p.anim != AnimParam::Count) Keys::clear(c, p.anim);
+        }
+    }, [id](Clip& c) -> bool& {
+        static bool none;
+        EffectInstance* e = EffectRegistry::instance(c, id);
+        return e ? e->enabled : none;
+    }, false, id);
+
+    // Entfernen: Papierkorb in der Kopfzeile oder Rechtsklick auf die Kopfzeile
+    auto remove = [this, id, kind] { m_editor->removeEffect(selectedIds(kind, false, id), id); };
+    auto* trash = new QToolButton;
+    trash->setIcon(trashIcon());
+    trash->setIconSize(QSize(14, 14));
+    trash->setAutoRaise(true);
+    trash->setFocusPolicy(Qt::NoFocus);
+    trash->setToolTip(T("Effekt entfernen"));
+    trash->setStyleSheet("QToolButton { border: none; background: transparent; }");
+    connect(trash, &QToolButton::clicked, this, remove);
+    s.headerLayout->insertWidget(s.headerLayout->count() - 1, trash); // vor dem Zurücksetzen-Knopf
+    s.header->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(s.header, &QWidget::customContextMenuRequested, this, [this, header = s.header, remove](const QPoint& pos) {
+        QMenu menu(this);
+        connect(menu.addAction(T("Effekt entfernen")), &QAction::triggered, this, remove);
+        menu.exec(header->mapToGlobal(pos));
+    });
+
+    for (const EffectParam& p : d.params) {
+        if (p.type != EffectParam::Double) continue; // bisher nur Zahlen (Green Screen hat einen eigenen Bereich)
+        std::optional<AnimParam> anim;
+        if (p.anim != AnimParam::Count) anim = p.anim;
+        const QString key = p.key;
+        Param* param = addSlider(s, "fx:" + id + ":" + key, p.label, p.min, p.max, p.defaultValue.toDouble(), p.step,
+                                 p.decimals, [id, key](Clip& c) -> double& {
+                                     static double shown;
+                                     shown = EffectRegistry::value(c, id, key).toDouble();
+                                     return shown;
+                                 }, anim);
+        if (!anim) // nicht animierbar: direkt in die Instanz schreiben
+            param->edit->onChange = [this, param, id, key, kind, label = p.label](double v) {
+                const QSignalBlocker b(param->slider);
+                param->slider->setValue(sliderPos(v, param->min, param->max));
+                apply(kind, "fx:" + id + ":" + key, label, [id, key, v](Clip& c) {
+                    if (EffectInstance* e = EffectRegistry::instance(c, id)) e->params[key] = v;
+                }, false, id);
+            };
+    }
+
+    s.header->hide();
+    s.body->hide();
+    m_fxSections << FxSection{id, s.header, s.body};
+}
+
+void Inspector::arrangeEffectSections()
+{
+    // Sichtbar sind die Effekte des angezeigten (frühesten ausgewählten) Videoclips, in seiner Reihenfolge
+    const Clip* c = primary(TrackKind::Video);
+    QStringList order;
+    if (c)
+        for (const EffectInstance& e : c->effects)
+            if (std::any_of(m_fxSections.begin(), m_fxSections.end(), [&](const FxSection& f) { return f.id == e.effectId; }))
+                order << e.effectId;
+    if (order == m_fxOrder) return;
+    m_fxOrder = order;
+    int index = m_fxIndex;
+    for (const QString& id : order)
+        for (const FxSection& f : m_fxSections)
+            if (f.id == id) {
+                m_videoLay->removeWidget(f.header);
+                m_videoLay->removeWidget(f.body);
+                m_videoLay->insertWidget(index++, f.header);
+                m_videoLay->insertWidget(index++, f.body);
+            }
+    for (const FxSection& f : m_fxSections) {
+        const bool shown = order.contains(f.id);
+        f.header->setVisible(shown);
+        f.body->setVisible(shown && !f.body->property("collapsed").toBool());
+    }
 }
 
 Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, const QString& text, double min,
                                        double max, double def, double step, int decimals, const Field& field,
                                        std::optional<AnimParam> anim)
 {
-    auto* p = new Param{s.kind, s.title, field, new ScrubField(min, max, step, decimals), nullptr, min, max, anim};
+    auto* p = new Param{s.kind, s.title, field, new ScrubField(min, max, step, decimals), nullptr, min, max, anim, s.effect};
     p->edit->setValue(def);
     p->edit->onChange = [this, p, key, text, field](double v) {
         if (p->slider) {
@@ -780,7 +907,7 @@ Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, con
             // animiert: Wert ändern setzt einen Keyframe am Playhead (wie DaVinci)
             if (p->anim) Keys::setValue(c, *p->anim, localFrame(c), v);
             else field(c) = v;
-        }, p->title);
+        }, p->title, p->effect);
     };
     p->edit->onFinish = [this] { m_editor->project()->closeMerge(); };
     m_params << p;
@@ -816,7 +943,7 @@ Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QSt
         if (p->edit->onChange) p->edit->onChange(def);
         if (p->edit->onFinish) p->edit->onFinish();
     }), s.rows, 2);
-    if (anim) s.grid->addWidget(keyButtons(s.kind, s.title, {*anim}), s.rows, 3);
+    if (anim) s.grid->addWidget(keyButtons(s.kind, s.title, {*anim}, s.effect), s.rows, 3);
     ++s.rows;
     return p;
 }
@@ -854,24 +981,25 @@ QPair<Inspector::Param*, Inspector::Param*> Inspector::addXY(Section& s, const Q
     return {px, py};
 }
 
-QVector<int> Inspector::selectedIds(TrackKind kind, bool title) const
+QVector<int> Inspector::selectedIds(TrackKind kind, bool title, const QString& effect) const
 {
     QVector<int> ids;
     const Timeline& tl = m_editor->project()->timeline();
     for (int id : m_editor->selection()->ids()) {
         TrackRef ref;
         const Clip* c = TimelineOps::findClip(tl, id, &ref);
-        if (c && ref.kind == kind && (!title || c->isTitle())) ids << id;
+        if (c && ref.kind == kind && (!title || c->isTitle()) && (effect.isEmpty() || EffectRegistry::has(*c, effect)))
+            ids << id;
     }
     return ids;
 }
 
-const Clip* Inspector::primary(TrackKind kind, bool title) const
+const Clip* Inspector::primary(TrackKind kind, bool title, const QString& effect) const
 {
     // Angezeigt wird der früheste ausgewählte Clip der Art
     const Clip* best = nullptr;
     const Timeline& tl = m_editor->project()->timeline();
-    for (int id : selectedIds(kind, title)) {
+    for (int id : selectedIds(kind, title, effect)) {
         const Clip* c = TimelineOps::findClip(tl, id);
         if (c && (!best || c->start < best->start)) best = c;
     }
@@ -879,10 +1007,10 @@ const Clip* Inspector::primary(TrackKind kind, bool title) const
 }
 
 void Inspector::apply(TrackKind kind, const QString& key, const QString& text, const std::function<void(Clip&)>& fn,
-                      bool title)
+                      bool title, const QString& effect)
 {
     // key leer = eigener Undo-Schritt, sonst werden Ziehbewegungen zusammengefasst
-    m_editor->modifyClips(selectedIds(kind, title), text, fn, key.isEmpty() ? QString() : "inspector:" + key);
+    m_editor->modifyClips(selectedIds(kind, title, effect), text, fn, key.isEmpty() ? QString() : "inspector:" + key);
 }
 
 void Inspector::changeTransition(const std::function<void(TransitionStyle&)>& fn, const QString& mergeKey)
@@ -1082,8 +1210,10 @@ void Inspector::refresh()
     m_tabs->button(page)->setChecked(true);
     m_pages->setCurrentIndex(page);
 
+    arrangeEffectSections();
     for (Param* p : m_params) {
         const Clip* c = p->title ? t : p->kind == TrackKind::Video ? v : a;
+        if (c && !p->effect.isEmpty() && !EffectRegistry::has(*c, p->effect)) c = nullptr; // Bereich ausgeblendet
         if (!c) continue;
         Clip copy = *c;
         const double val = p->anim ? Keys::valueAt(copy, *p->anim, localFrame(copy)) : p->field(copy);

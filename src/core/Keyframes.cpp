@@ -1,5 +1,7 @@
 #include "core/Keyframes.h"
 
+#include "core/EffectRegistry.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -14,6 +16,9 @@ constexpr Keys::ParamInfo kParams[] = {
     {AnimParam::TitleSize, "titleSize", false}, {AnimParam::TitlePosX, "titlePosX", false},
     {AnimParam::TitlePosY, "titlePosY", false}, {AnimParam::TitleColor, "titleColor", true},
     {AnimParam::Volume, "volume", false},       {AnimParam::Pan, "pan", false},
+    {AnimParam::FxBrightness, "fxBrightness", false}, {AnimParam::FxContrast, "fxContrast", false},
+    {AnimParam::FxSaturation, "fxSaturation", false}, {AnimParam::FxTemp, "fxTemp", false},
+    {AnimParam::FxTint, "fxTint", false},       {AnimParam::FxBlur, "fxBlur", false},
 };
 
 // Verlauf zwischen zwei Keyframes (u = 0..1): Ease Out am ersten = langsam los, Ease In am zweiten = langsam an
@@ -84,8 +89,12 @@ double staticValue(const Clip& c, AnimParam p)
     case AnimParam::TitleColor: return fromColor(c.title.color);
     case AnimParam::Volume: return c.volumeDb;
     case AnimParam::Pan: return c.pan;
-    case AnimParam::Count: break;
+    default: break;
     }
+    // Effekt-Parameter: Wert steht in der Effekt-Instanz (fehlt der Effekt: Default)
+    const EffectDescriptor* e = nullptr;
+    const EffectParam* ep = nullptr;
+    if (EffectRegistry::paramFor(p, &e, &ep)) return EffectRegistry::value(c, e->id, ep->key).toDouble();
     return 0;
 }
 
@@ -109,7 +118,14 @@ void setStaticValue(Clip& c, AnimParam p, double v)
     case AnimParam::TitleColor: c.title.color = toColor(v); break;
     case AnimParam::Volume: c.volumeDb = v; break;
     case AnimParam::Pan: c.pan = v; break;
-    case AnimParam::Count: break;
+    default: {
+        // Effekt-Parameter: nur in eine vorhandene Instanz schreiben (fehlt der Effekt, gibt es nichts zu ändern)
+        const EffectDescriptor* e = nullptr;
+        const EffectParam* ep = nullptr;
+        if (EffectRegistry::paramFor(p, &e, &ep))
+            if (EffectInstance* inst = EffectRegistry::instance(c, e->id)) inst->params[ep->key] = v;
+        break;
+    }
     }
 }
 

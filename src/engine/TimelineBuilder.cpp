@@ -21,28 +21,6 @@
 
 namespace {
 
-void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
-{
-    for (const auto& inst : c.effects) {
-        if (!inst.enabled) continue;
-        const EffectDescriptor* d = EffectRegistry::find(inst.effectId);
-        if (!d) continue;
-        Mlt::Filter f(profile, d->mltService.toUtf8().constData());
-        if (!f.is_valid()) continue;
-        for (const auto& p : d->params) {
-            const QVariant v = inst.params.value(p.key, p.defaultValue);
-            const QByteArray prop = p.mltProperty.toUtf8();
-            if (p.type == EffectParam::Color) {
-                const QColor col = v.value<QColor>();
-                f.set(prop.constData(), col.name(QColor::HexRgb).toUtf8().constData()); // "#rrggbb"
-            } else {
-                f.set(prop.constData(), v.toDouble());
-            }
-        }
-        clip.attach(f);
-    }
-}
-
 // Keyframes (core/Keyframes.h) als MLT-Animation eines Filter-Werts über einen Ausschnitt: a = Clip-Frame am
 // Anfang des Ausschnitts, len = seine Länge. Gesetzt wird an den Ausschnitt-Grenzen und an allen Keyframes der
 // Parameter (MLT interpoliert linear dazwischen); Abschnitte mit Ease-Kurve (oder bake) Frame für Frame, damit
@@ -73,6 +51,150 @@ void attachTo(Mlt::Producer& cut, Mlt::Filter& f)
 {
     f.set_in_and_out(cut.get_in(), cut.get_out());
     cut.attach(f);
+}
+
+// ---- Effekte (Open FX) ----
+
+// Farbkorrektur als 3x3-Matrix (avfilter.colorchannelmixer): Weißabgleich wie DaVinci Temp/Tint als
+// Kanal-Verstärkung, auf gleiche Helligkeit (Rec. 709) normiert, danach Sättigung (Mischung mit der Helligkeit).
+// Temperatur +100 = warm (mehr Rot, weniger Blau), Tönung +100 = Magenta (weniger Grün), Sättigung -100 = grau.
+struct Matrix { double m[3][3]; };
+Matrix colorMatrix(double temp, double tint, double saturation)
+{
+    const double k = temp / 100.0 * 0.3, n = tint / 100.0 * 0.25;
+    double g[3] = {1.0 + k, 1.0 - n, 1.0 - k};
+    const double w[3] = {0.2126, 0.7152, 0.0722};
+    const double l = w[0] * g[0] + w[1] * g[1] + w[2] * g[2];
+    for (double& x : g) x /= l;
+    const double s = std::max(0.0, 1.0 + saturation / 100.0);
+    Matrix out;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            out.m[i][j] = std::clamp(((i == j ? s : 0.0) + (1.0 - s) * w[j]) * g[j], -2.0, 2.0);
+    return out;
+}
+
+// Helligkeit/Kontrast als Tonwertkorrektur (avfilter.colorlevels): out = 0,5 + (in - 0,5)·c + b, begrenzt auf 0..1.
+// colorlevels erlaubt Eingang -1..1 und Ausgang 0..1 -> Gerade dort anschneiden, wo sie 0 bzw. 1 erreicht.
+struct Levels { double imin, imax, omin, omax; };
+Levels levels(double brightness, double contrast)
+{
+    const double c = std::max(0.0, 1.0 + contrast / 100.0), b = brightness / 200.0;
+    const double d = 0.5 - 0.5 * c + b; // out = c·in + d
+    Levels lv{0.0, 1.0, d, c + d};
+    if (lv.omin < 0 && c > 0) {
+        lv.imin = std::min(-d / c, 1.0);
+        lv.omin = 0;
+    }
+    if (lv.omax > 1 && c > 0) {
+        lv.imax = std::max((1.0 - d) / c, -1.0);
+        lv.omax = 1;
+    }
+    if (lv.imax - lv.imin < 1e-4) lv.imin = lv.imax - 1e-4; // ganz dunkel/hell: Sprung statt Division durch 0
+    lv.omin = std::clamp(lv.omin, 0.0, 1.0);
+    lv.omax = std::clamp(lv.omax, 0.0, 1.0);
+    return lv;
+}
+
+// Wert eines Effekt-Parameters an Clip-Frame t (statisch aus der Instanz oder aus den Keyframes)
+double fxValue(const Clip& c, AnimParam p, double t) { return Keys::valueAt(c, p, t); }
+
+// Parameter nicht neutral bzw. animiert?
+bool fxActive(const Clip& c, std::initializer_list<AnimParam> params, double neutral = 0.0)
+{
+    return std::any_of(params.begin(), params.end(),
+                       [&](AnimParam p) { return Keys::animated(c, p) || Keys::staticValue(c, p) != neutral; });
+}
+
+// avfilter-Werte immer per anim_set (auch statisch: ein Wert am Anfang): als Zahl gesetzte Properties wandelt
+// MLT beim Weiterreichen an FFmpeg in Text um – mit dem aktuellen Zahlenformat. Nur Filter mit Zahl-Optionen
+// taugen (avfilter.eq hat Text-Optionen für Ausdrücke -> anim_set wirkt dort nicht).
+void fxSet(const Clip& c, std::initializer_list<AnimParam> params, int a, int len,
+           const std::function<void(int pos, double t)>& set)
+{
+    if (!animate(c, params, a, len, set)) set(0, a);
+}
+
+void applyColor(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, int a, int len)
+{
+    using P = AnimParam;
+    if (fxActive(c, {P::FxTemp, P::FxTint, P::FxSaturation})) {
+        Mlt::Filter f(profile, "avfilter.colorchannelmixer");
+        if (f.is_valid()) {
+            static const char* names[3][3] = {{"av.rr", "av.rg", "av.rb"}, {"av.gr", "av.gg", "av.gb"},
+                                              {"av.br", "av.bg", "av.bb"}};
+            fxSet(c, {P::FxTemp, P::FxTint, P::FxSaturation}, a, len, [&](int pos, double t) {
+                const Matrix m = colorMatrix(fxValue(c, P::FxTemp, t), fxValue(c, P::FxTint, t),
+                                             fxValue(c, P::FxSaturation, t));
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j) f.anim_set(names[i][j], m.m[i][j], pos, len);
+            });
+            attachTo(cut, f);
+        }
+    }
+    if (fxActive(c, {P::FxBrightness, P::FxContrast})) {
+        Mlt::Filter f(profile, "avfilter.colorlevels");
+        if (f.is_valid()) {
+            fxSet(c, {P::FxBrightness, P::FxContrast}, a, len, [&](int pos, double t) {
+                const Levels lv = levels(fxValue(c, P::FxBrightness, t), fxValue(c, P::FxContrast, t));
+                for (const char* ch : {"r", "g", "b"}) {
+                    f.anim_set(QByteArray("av.") + ch + "imin", lv.imin, pos, len);
+                    f.anim_set(QByteArray("av.") + ch + "imax", lv.imax, pos, len);
+                    f.anim_set(QByteArray("av.") + ch + "omin", lv.omin, pos, len);
+                    f.anim_set(QByteArray("av.") + ch + "omax", lv.omax, pos, len);
+                }
+            });
+            attachTo(cut, f);
+        }
+    }
+}
+
+void applyBlur(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, int a, int len)
+{
+    if (!fxActive(c, {AnimParam::FxBlur})) return;
+    Mlt::Filter f(profile, "avfilter.gblur");
+    if (!f.is_valid()) return;
+    // Sigma relativ zur Profilhöhe (Stärke 100 = 1/20 der Bildhöhe); kleinere Vorschau rechnet MLT selbst um
+    // (avformat/resolution_scale.yml), kleinerer Export hat ein kleineres Profil
+    const double scale = profile.height() / 2000.0;
+    fxSet(c, {AnimParam::FxBlur}, a, len, [&](int pos, double t) {
+        const double sigma = std::max(0.0, fxValue(c, AnimParam::FxBlur, t)) * scale;
+        f.anim_set("av.sigma", sigma, pos, len);
+        // sigmaV = -1 (wie sigma) löst gblur nur beim Anlegen auf -> sonst bliebe die Senkrechte fast scharf
+        f.anim_set("av.sigmaV", sigma, pos, len);
+    });
+    attachTo(cut, f);
+}
+
+// Effekte in der Reihenfolge am Clip; a/len: Ausschnitt für Keyframes
+void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, int a, int len)
+{
+    for (const auto& inst : c.effects) {
+        if (!inst.enabled) continue;
+        if (inst.effectId == "color") {
+            applyColor(profile, clip, c, a, len);
+            continue;
+        }
+        if (inst.effectId == "blur") {
+            applyBlur(profile, clip, c, a, len);
+            continue;
+        }
+        const EffectDescriptor* d = EffectRegistry::find(inst.effectId);
+        if (!d || d->mltService.isEmpty()) continue;
+        Mlt::Filter f(profile, d->mltService.toUtf8().constData());
+        if (!f.is_valid()) continue;
+        for (const auto& p : d->params) {
+            const QVariant v = inst.params.value(p.key, p.defaultValue);
+            const QByteArray prop = p.mltProperty.toUtf8();
+            if (p.type == EffectParam::Color) {
+                const QColor col = v.value<QColor>();
+                f.set(prop.constData(), col.name(QColor::HexRgb).toUtf8().constData()); // "#rrggbb"
+            } else {
+                f.set(prop.constData(), v.toDouble());
+            }
+        }
+        clip.attach(f);
+    }
 }
 
 double mltLevel(double db) { return db <= kMinVolumeDb ? -200.0 : db; }
@@ -222,7 +344,7 @@ void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, 
 // a/len: Ausschnitt (Clip-Frame am Anfang, Länge) für Keyframes
 void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKind kind, int a, int len)
 {
-    applyEffects(profile, cut, c);
+    if (kind == TrackKind::Video) applyEffects(profile, cut, c, a, len);
     if (kind == TrackKind::Video) applyTransform(profile, cut, c, a, len);
     if (c.isTitle() && !Keys::hasTransform(c) && !Keys::animated(c, AnimParam::TitleSize)) {
         // qtext zeichnet in der angeforderten Größe, skaliert aber die Umrandung nicht mit (Vorschau 960 px:
@@ -247,7 +369,12 @@ void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKin
 Mlt::Producer* titleCut(Mlt::Profile& profile, const Clip& c, int a, int len)
 {
     const TitleStyle& t = c.title;
-    Mlt::Producer src(profile, "color:#00000000");
+    // Mit Unschärfe: durchsichtige Fläche in Textfarbe statt Schwarz, sonst mischt gblur (nicht vormultipliziertes
+    // Alpha) die schwarzen Nachbarpixel ein und der Text wird dunkel und grau
+    QByteArray base = "color:#00000000";
+    if (const EffectInstance* fx = EffectRegistry::instance(c, "blur"); fx && fx->enabled)
+        base = "color:#00" + t.color.name(QColor::HexRgb).mid(1).toLatin1();
+    Mlt::Producer src(profile, base.constData());
     src.set("length", len);
     src.set("out", len - 1);
     Mlt::Producer* cut = src.cut(0, len - 1); // Cut hält eine Referenz auf src

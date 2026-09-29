@@ -16,10 +16,15 @@
 
 enum class TrackKind { Video, Audio };
 
+// Effekt an einem Clip (Open FX wie DaVinci); jede Art höchstens einmal pro Clip, Reihenfolge = Renderreihenfolge
 struct EffectInstance {
     QString effectId;   // Schlüssel in der EffectRegistry, z. B. "chromakey"
     QVariantMap params; // Parameter-Werte (fehlende = Default aus der Registry)
     bool enabled = true;
+    bool operator==(const EffectInstance& o) const
+    {
+        return effectId == o.effectId && params == o.params && enabled == o.enabled;
+    }
 };
 
 constexpr double kMinVolumeDb = -60.0; // ganz unten = -∞ (stumm)
@@ -140,6 +145,8 @@ enum class AnimParam {
     Opacity,                                          // Composite
     TitleSize, TitlePosX, TitlePosY, TitleColor,      // Titel (Farbe als ARGB-Zahl)
     Volume, Pan,                                      // Audio
+    FxBrightness, FxContrast, FxSaturation, FxTemp, FxTint, // Effekt Farbkorrektur (Werte in EffectInstance::params)
+    FxBlur,                                           // Effekt Gaußsche Unschärfe
     Count
 };
 // Verlauf an einem Keyframe (Rechtsklick auf die Raute wie in DaVinci):

@@ -147,6 +147,12 @@ public:
     int targetVideoTrack() const { return m_targetVideo; }
     int targetAudioTrack() const { return m_targetAudio; }
     void setTargetTracks(int video, int audio) { m_targetVideo = std::max(0, video); m_targetAudio = std::max(0, audio); }
+    // Effekte (Open FX aus der Effects Library): an Videoclips anhängen (Clips, die ihn schon haben, bleiben),
+    // bzw. entfernen; je ein Undo-Schritt
+    void addEffect(const QVector<int>& ids, const QString& effectId);
+    void removeEffect(const QVector<int>& ids, const QString& effectId);
+    // Ziel für Doppelklick in der Effects Library: ausgewählte Videoclips, sonst der oberste Videoclip am Playhead
+    QVector<int> effectTargets(int frame) const;
 
     // Zwischenablage (Strg+C/X/V): Einfügen am Playhead auf denselben Spuren, überschreibt
     void copySelection();
