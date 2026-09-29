@@ -130,6 +130,70 @@ void Editor::trimClip(int clipId, TimelineOps::Edge edge, int delta)
     m_project->edit(T("Trimmen"), [&](Timeline& tl) { TimelineOps::trimClips(tl, ids, edge, delta, sourceLength()); });
 }
 
+TimelineOps::TrimEdit Editor::trimEdit(TimelineOps::TrimKind kind, int clipId, TimelineOps::Edge edge) const
+{
+    using namespace TimelineOps;
+    const Timeline& tl = m_project->timeline();
+    TrimEdit e;
+    e.kind = kind;
+    e.edge = edge;
+    const Clip* c = findClip(tl, clipId);
+    if (!c) return e;
+    if (kind != TrimKind::Roll) {
+        e.ids = withLinked({clipId});
+        return e;
+    }
+    // Roll: auf jeder Spur der Partner den Clip, der am Schnitt endet, und den, der dort beginnt
+    const int cut = edge == Edge::Start ? c->start : c->end();
+    TrackRef ref;
+    findClip(tl, clipId, &ref);
+    QVector<int> seeds = withLinked({clipId});
+    for (const Clip& o : tl.track(ref).clips) // Nachbar auf der anderen Seite des Schnitts
+        if (o.id != clipId && (edge == Edge::Start ? o.end() == cut : o.start == cut)) seeds += withLinked({o.id});
+    QVector<TrackRef> done;
+    for (int id : seeds) {
+        if (!findClip(tl, id, &ref) || done.contains(ref)) continue;
+        done << ref;
+        for (const Clip& o : tl.track(ref).clips) {
+            if (o.end() == cut) e.ids << o.id;
+            if (o.start == cut) e.rightIds << o.id;
+        }
+    }
+    return e;
+}
+
+int Editor::clampTrimEdit(const TimelineOps::TrimEdit& e, int delta) const
+{
+    return TimelineOps::clampTrimEdit(m_project->timeline(), e, delta, sourceLength());
+}
+
+Timeline Editor::previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) const
+{
+    Timeline tl = m_project->timeline();
+    TimelineOps::applyTrimEdit(tl, e, delta, sourceLength());
+    return tl;
+}
+
+void Editor::applyTrimEdit(const TimelineOps::TrimEdit& e, int delta)
+{
+    using TimelineOps::TrimKind;
+    if (e.isNull() || clampTrimEdit(e, delta) == 0) return;
+    const QString text = e.kind == TrimKind::Ripple ? T("Ripple-Trimmen")
+                         : e.kind == TrimKind::Roll ? T("Schnitt verschieben (Roll)")
+                         : e.kind == TrimKind::Slip ? T("Inhalt verschieben (Slip)")
+                                                    : T("Clip verschieben (Slide)");
+    m_project->edit(text, [&](Timeline& tl) { TimelineOps::applyTrimEdit(tl, e, delta, sourceLength()); });
+}
+
+void Editor::slipSelection(int frames)
+{
+    if (m_selection->isEmpty()) return;
+    TimelineOps::TrimEdit e;
+    e.kind = TimelineOps::TrimKind::Slip;
+    e.ids = withLinked(m_selection->ids().values().toVector());
+    applyTrimEdit(e, frames);
+}
+
 void Editor::setClipVolume(int clipId, double db)
 {
     db = std::clamp(db, kMinVolumeDb, kMaxVolumeDb);

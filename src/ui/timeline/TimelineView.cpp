@@ -19,6 +19,7 @@
 #include <QMouseEvent>
 #include <QUrl>
 #include <QContextMenuEvent>
+#include <QHash>
 #include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
@@ -86,6 +87,68 @@ void drawDiamond(QPainter& p, double x, double y, double r)
 {
     const QPointF pts[] = {{x, y - r}, {x + r, y}, {x, y + r}, {x - r, y}};
     p.drawPolygon(pts, 4);
+}
+// Mauszeiger für den Trim-Modus (wie DaVinci): Klammer(n) für Ripple/Roll, Rahmen für Slip/Slide
+QCursor trimCursor(TimelineOps::TrimKind kind, TimelineOps::Edge edge)
+{
+    using TimelineOps::TrimKind;
+    static QHash<int, QCursor> cache;
+    const int key = int(kind) * 2 + (edge == TimelineOps::Edge::Start);
+    if (cache.contains(key)) return cache[key];
+    constexpr int S = 32, M = S / 2;
+    QPixmap pm(S, S);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPainterPath path;
+    auto arrow = [&](double x1, double x2, double y) { // Linie mit Pfeilspitze bei x2
+        path.moveTo(x1, y);
+        path.lineTo(x2, y);
+        const double d = x2 > x1 ? -4 : 4;
+        path.moveTo(x2 + d, y - 4);
+        path.lineTo(x2, y);
+        path.lineTo(x2 + d, y + 4);
+    };
+    auto bracket = [&](double x, bool open) { // "[" (open) bzw. "]"
+        const double w = open ? 4 : -4;
+        path.moveTo(x + w, M - 9);
+        path.lineTo(x, M - 9);
+        path.lineTo(x, M + 9);
+        path.lineTo(x + w, M + 9);
+    };
+    switch (kind) {
+    case TrimKind::Ripple: {
+        const bool start = edge == TimelineOps::Edge::Start;
+        bracket(start ? M - 2 : M + 2, start);
+        arrow(start ? M - 6 : M + 6, start ? 4 : S - 4, M);   // nach außen
+        arrow(start ? M + 1 : M - 1, start ? M + 10 : M - 10, M); // nach innen
+        break;
+    }
+    case TrimKind::Roll:
+        bracket(M - 3, false);
+        bracket(M + 3, true);
+        arrow(M - 6, 3, M);
+        arrow(M + 6, S - 3, M);
+        break;
+    case TrimKind::Slip: // Pfeile innerhalb des Rahmens
+    case TrimKind::Slide: // Pfeile außerhalb
+        path.addRect(M - 7, M - 8, 14, 16);
+        if (kind == TrimKind::Slip) {
+            arrow(M, M - 5, M);
+            arrow(M, M + 5, M);
+        } else {
+            arrow(M - 8, 2, M);
+            arrow(M + 8, S - 2, M);
+        }
+        break;
+    }
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(Qt::black, 3.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.drawPath(path);
+    p.setPen(QPen(Qt::white, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.drawPath(path);
+    p.end();
+    return cache[key] = QCursor(pm, M, M);
 }
 } // namespace
 
@@ -210,6 +273,36 @@ std::optional<TimelineView::EdgeHit> TimelineView::edgeAt(const QPoint& pos) con
         if (pos.x() >= x2 - grab) return EdgeHit{c.id, TimelineOps::Edge::End};
         return std::nullopt;
     }
+    return std::nullopt;
+}
+
+std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) const
+{
+    using TimelineOps::Edge;
+    using TimelineOps::TrimKind;
+    if (pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
+    const auto row = rowAt(pos.y());
+    if (!row) return std::nullopt;
+    const auto& clips = m_editor->project()->timeline().track(row->ref).clips;
+    for (int i = 0; i < clips.size(); ++i) {
+        const Clip& c = clips[i];
+        const QRect r = clipRect(*row, c);
+        const double x1 = frameToX(c.start), x2 = frameToX(c.end());
+        if (pos.x() < x1 || pos.x() >= x2 || pos.y() > r.bottom()) continue;
+        // genau am Schnitt zweier anliegender Clips: Roll
+        const bool prevAdj = i > 0 && clips[i - 1].end() == c.start;
+        const bool nextAdj = i + 1 < clips.size() && clips[i + 1].start == c.end();
+        constexpr double kRollPx = 3;
+        if (prevAdj && pos.x() < x1 + kRollPx) return TrimHit{TrimKind::Roll, c.id, Edge::Start};
+        if (nextAdj && pos.x() >= x2 - kRollPx) return TrimHit{TrimKind::Roll, c.id, Edge::End};
+        const double grab = std::min<double>(kEdgeGrabPx + (prevAdj || nextAdj ? kRollPx : 0), (x2 - x1) / 3);
+        if (pos.x() < x1 + grab) return TrimHit{TrimKind::Ripple, c.id, Edge::Start};
+        if (pos.x() >= x2 - grab) return TrimHit{TrimKind::Ripple, c.id, Edge::End};
+        const bool bar = pos.y() < r.top() + std::min(kClipBarH, r.height() / 2);
+        return TrimHit{bar ? TrimKind::Slide : TrimKind::Slip, c.id, Edge::End};
+    }
+    // knapp links neben einem Schnitt (Maus über dem Ende des linken Clips) ist oben schon erfasst;
+    // hier bleibt nur Leere
     return std::nullopt;
 }
 
@@ -341,6 +434,13 @@ int TimelineView::volumeLineAt(const QPoint& pos) const
 
 void TimelineView::updateHoverCursor(const QPoint& pos)
 {
+    if (m_tool == Tool::Trim) {
+        if (keyIconAt(pos)) setCursor(Qt::PointingHandCursor);
+        else if (keyframeAt(pos)) setCursor(Qt::SizeHorCursor);
+        else if (const auto h = trimHitAt(pos)) setCursor(trimCursor(h->kind, h->edge));
+        else setCursor(Qt::ArrowCursor);
+        return;
+    }
     const int hover = m_tool == Tool::Select && pos.x() >= kHeaderW && pos.y() >= kRulerH ? clipAt(pos) : 0;
     if (hover != m_hoverClip) {
         m_hoverClip = hover;
@@ -454,6 +554,7 @@ void TimelineView::setTool(Tool tool)
     if (tool == m_tool) return;
     m_tool = tool;
     setCursor(tool == Tool::Blade ? Qt::IBeamCursor : Qt::ArrowCursor);
+    if (m_hoverClip) m_hoverClip = 0; // Fade-Griffe nur im Auswahl-Werkzeug
     m_hoverFrame = -1;
     update();
     emit toolChanged(tool);
@@ -562,7 +663,9 @@ void TimelineView::drawRuler(QPainter& p)
 
 void TimelineView::drawTracks(QPainter& p)
 {
-    const Timeline& tl = m_editor->project()->timeline();
+    // Trim-Modus: Timeline so zeichnen, wie sie nach dem Loslassen aussieht
+    const bool trimEdit = m_drag == Drag::TrimEdit && m_trimPreview;
+    const Timeline& tl = trimEdit ? *m_trimPreview : m_editor->project()->timeline();
     const auto& sel = m_editor->selection()->ids();
     const QSet<int> dragSet(m_dragIds.begin(), m_dragIds.end());
     const bool moving = m_drag == Drag::Move;
@@ -582,6 +685,12 @@ void TimelineView::drawTracks(QPainter& p)
         QSet<int> hidden; // Übergänge von Clips, die gerade gezogen/getrimmt werden, ausblenden
         if (moving) hidden = dragSet;
         if (m_drag == Drag::Trim) hidden = QSet<int>(m_trimIds.begin(), m_trimIds.end());
+        if (trimEdit)
+            for (const Clip& c : track.clips) // Spur ändert sich evtl. -> Übergänge ausblenden
+                if (m_trimEdit.ids.contains(c.id) || m_trimEdit.rightIds.contains(c.id)) {
+                    for (const Clip& o : track.clips) hidden.insert(o.id);
+                    break;
+                }
         QVector<TimelineOps::TransitionSpan> audioSpans; // Wellenform folgt den Crossfades
         if (row.ref.kind == TrackKind::Audio)
             for (const auto& s : m_editor->transitions(row.ref))
@@ -682,6 +791,27 @@ void TimelineView::drawTracks(QPainter& p)
             p.drawLine(x, kRulerH, x, height());
             drawLabel(p, QPoint(x + 8, kRulerH + 6),
                       (m_trimDelta >= 0 ? "+" : "") + Timecode::format(m_trimDelta, m_editor->project()->fps()));
+        }
+    }
+
+    // Trim-Modus: bewegte Kante bzw. Clip markieren + Versatz anzeigen
+    if (trimEdit) {
+        using TimelineOps::TrimKind;
+        TrackRef ref;
+        if (const Clip* c = TimelineOps::findClip(tl, m_trimHit.clipId, &ref)) {
+            const bool start = m_trimHit.edge == TimelineOps::Edge::Start;
+            int frame = c->start;
+            if (m_trimHit.kind == TrimKind::Roll || (m_trimHit.kind == TrimKind::Ripple && !start))
+                frame = start ? c->start : c->end();
+            const int x = int(frameToX(frame));
+            p.setPen(QPen(Theme::accent, 1));
+            if (m_trimHit.kind == TrimKind::Slip || m_trimHit.kind == TrimKind::Slide) {
+                if (const auto row = rowFor(ref)) p.drawRect(clipRect(*row, *c).adjusted(0, 0, -1, -1));
+            } else {
+                p.drawLine(x, kRulerH, x, height());
+            }
+            drawLabel(p, QPoint(x + 8, kRulerH + 6),
+                      (m_trimEditDelta >= 0 ? "+" : "") + Timecode::format(m_trimEditDelta, m_editor->project()->fps()));
         }
     }
 
@@ -1254,6 +1384,22 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         update();
         return;
     }
+    if (m_tool == Tool::Trim) {
+        const auto hit = trimHitAt(pos);
+        if (!hit) {
+            if (!(e->modifiers() & Qt::ControlModifier)) sel->clear();
+            return;
+        }
+        const QVector<int> group = m_editor->withLinked({hit->clipId});
+        if (!sel->contains(hit->clipId)) sel->set(QSet<int>(group.begin(), group.end()));
+        m_trimHit = *hit;
+        m_trimEdit = m_editor->trimEdit(hit->kind, hit->clipId, hit->edge);
+        m_trimEditDelta = 0;
+        m_trimPreview = m_editor->project()->timeline();
+        m_drag = Drag::TrimEdit;
+        update();
+        return;
+    }
     if (const auto f = fadeHandleAt(pos)) {
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), f->clipId);
         m_fade = *f;
@@ -1362,6 +1508,42 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         update();
         return;
     }
+    case Drag::TrimEdit: {
+        using TimelineOps::TrimKind;
+        const Timeline& tl = m_editor->project()->timeline();
+        const Clip* c = TimelineOps::findClip(tl, m_trimHit.clipId);
+        if (!c) return;
+        int delta = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
+        // Snapping auf die Kanten, die sich sichtbar bewegen (Slip bewegt keine Kante)
+        QSet<int> exclude(m_trimEdit.ids.begin(), m_trimEdit.ids.end());
+        for (int id : m_trimEdit.rightIds) exclude.insert(id);
+        QVector<int> edges;
+        const bool start = m_trimHit.edge == TimelineOps::Edge::Start;
+        switch (m_trimHit.kind) {
+        case TrimKind::Ripple:
+            if (!start) {
+                edges << c->end() + delta;
+                for (int id : m_trimEdit.ids) { // was nachrückt, ist kein fester Punkt
+                    TrackRef ref;
+                    if (const Clip* t = TimelineOps::findClip(tl, id, &ref))
+                        for (const Clip& o : tl.track(ref).clips)
+                            if (o.start >= t->end()) exclude.insert(o.id);
+                }
+            }
+            break;
+        case TrimKind::Roll: edges << (start ? c->start : c->end()) + delta; break;
+        case TrimKind::Slide: edges << c->start + delta << c->end() + delta; break;
+        case TrimKind::Slip: break;
+        }
+        if (!edges.isEmpty()) delta += snapDelta(edges, exclude);
+        delta = m_editor->clampTrimEdit(m_trimEdit, delta);
+        if (delta != m_trimEditDelta || !m_trimPreview) {
+            m_trimEditDelta = delta;
+            m_trimPreview = m_editor->previewTrimEdit(m_trimEdit, delta);
+            update();
+        }
+        return;
+    }
     case Drag::Keyframe: {
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_keyDragClip);
         const QSet<int>& times = m_editor->selection()->keyTimes();
@@ -1447,8 +1629,12 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     const bool volume = m_drag == Drag::Volume;
     const bool keys = m_drag == Drag::Keyframe;
     if (m_drag == Drag::TransitionLength || m_drag == Drag::Fade) m_editor->project()->closeMerge();
+    const bool trimEdit = m_drag == Drag::TrimEdit;
     m_drag = Drag::None; // vor trimClip, damit die Vorschau nicht doppelt angewendet wird
     if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta);
+    if (trimEdit && m_trimEditDelta != 0) m_editor->applyTrimEdit(m_trimEdit, m_trimEditDelta);
+    m_trimPreview.reset();
+    m_trimEditDelta = 0;
     if (keys && m_keyDelta != 0) { // ein Undo-Schritt pro Ziehen
         const QVector<int> times = m_editor->selection()->keyTimes().values().toVector();
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_keyDragClip);

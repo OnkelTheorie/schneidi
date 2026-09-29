@@ -61,6 +61,24 @@ int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int de
 void trimClips(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
                const SourceLength& sourceLength);
 
+// Trim-Modus (T) wie DaVinci. Alle Varianten lassen die Ansicht in Ruhe und überschreiben nie einen Nachbarn.
+enum class TrimKind {
+    Ripple, // Kante ziehen, spätere Clips derselben Spur rücken nach (Anfang: Clip bleibt stehen, Inhalt wandert)
+    Roll,   // Schnitt zwischen zwei Clips verschieben: links Ende, rechts Anfang, Gesamtlänge bleibt
+    Slip,   // Inhalt im Clip verschieben (In/Out), Lage und Länge bleiben
+    Slide,  // Clip verschieben, linker Nachbar wird länger/kürzer, rechter umgekehrt
+};
+struct TrimEdit {
+    TrimKind kind = TrimKind::Ripple;
+    QVector<int> ids;      // Ripple: Clips der Kante; Roll: Clips links vom Schnitt; Slip/Slide: die Clips
+    QVector<int> rightIds; // nur Roll: Clips rechts vom Schnitt
+    Edge edge = Edge::End; // nur Ripple
+    bool isNull() const { return ids.isEmpty() && rightIds.isEmpty(); }
+};
+// Größtes erlaubtes Delta in Richtung von `delta` (Quellmaterial, mind. 1 Frame, Nachbarn, Frame 0)
+int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength);
+void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength);
+
 // Wirksamer Übergang auf einer Spur (siehe Clip::transIn/transOut)
 struct TransitionSpan {
     int leftId = 0;         // Clip, der ausblendet (0 = keiner -> Einblenden aus Schwarz/Stille)

@@ -25,6 +25,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
         return b;
     };
     auto* selectBtn = makeTool(T("⮝ Auswahl"), T("Auswahl-Werkzeug (A)"));
+    auto* trimBtn = makeTool(T("⇹ Trimmen"), T("Trim-Modus (T): Kante = Ripple, Schnitt = Roll, Clip = Slip, Titelleiste = Slide"));
     auto* bladeBtn = makeTool(T("✂ Klinge"), T("Klingen-Werkzeug (B)"));
     auto* snapBtn = makeTool(T("⊸ Snapping"), T("Snapping an/aus (N)"));
     selectBtn->setChecked(true);
@@ -32,11 +33,13 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
 
     auto* tools = new QButtonGroup(this);
     tools->addButton(selectBtn);
+    tools->addButton(trimBtn);
     tools->addButton(bladeBtn);
     connect(selectBtn, &QToolButton::clicked, m_view, [this] { m_view->setTool(TimelineView::Tool::Select); });
+    connect(trimBtn, &QToolButton::clicked, m_view, [this] { m_view->setTool(TimelineView::Tool::Trim); });
     connect(bladeBtn, &QToolButton::clicked, m_view, [this] { m_view->setTool(TimelineView::Tool::Blade); });
     connect(m_view, &TimelineView::toolChanged, this, [=](TimelineView::Tool t) {
-        (t == TimelineView::Tool::Blade ? bladeBtn : selectBtn)->setChecked(true);
+        (t == TimelineView::Tool::Blade ? bladeBtn : t == TimelineView::Tool::Trim ? trimBtn : selectBtn)->setChecked(true);
     });
     connect(snapBtn, &QToolButton::toggled, m_view, &TimelineView::setSnapping);
     connect(m_view, &TimelineView::snappingChanged, snapBtn, &QToolButton::setChecked);
@@ -54,6 +57,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
     bar->setContentsMargins(6, 3, 6, 3);
     bar->setSpacing(2);
     bar->addWidget(selectBtn);
+    bar->addWidget(trimBtn);
     bar->addWidget(bladeBtn);
     bar->addSpacing(12);
     bar->addWidget(snapBtn);

@@ -17,7 +17,7 @@ class QMimeData;
 class TimelineView : public QWidget {
     Q_OBJECT
 public:
-    enum class Tool { Select, Blade };
+    enum class Tool { Select, Trim, Blade };
 
     static constexpr int kHeaderW = 150;
     static constexpr int kRulerH = 30;
@@ -80,7 +80,7 @@ private:
         int h;
         int lane = 0; // Höhe der aufgeklappten Keyframe-Spur unten in der Zeile (0 = keine)
     };
-    enum class Drag { None, Scrub, MaybeMove, Move, Trim, Volume, TransitionLength, Fade, Keyframe };
+    enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe };
     // Übergang unter der Maus; edge: -1/+1 = linke/rechte Kante (Länge ziehen), 0 = Mitte
     struct TransitionHit {
         TrackRef ref;
@@ -91,6 +91,15 @@ private:
         int clipId;
         TimelineOps::Edge edge;
     };
+
+    // Trim-Modus (T) wie DaVinci: an der Kante Ripple, genau am Schnitt zweier Clips Roll,
+    // Titelleiste des Clips Slide, übriger Clip Slip
+    struct TrimHit {
+        TimelineOps::TrimKind kind;
+        int clipId;
+        TimelineOps::Edge edge;
+    };
+    std::optional<TrimHit> trimHitAt(const QPoint& pos) const;
 
     QVector<Row> rows() const;
     std::optional<Row> rowAt(int y) const;
@@ -155,6 +164,12 @@ private:
     EdgeHit m_trim{0, TimelineOps::Edge::Start};
     QVector<int> m_trimIds;
     int m_trimDelta = 0;
+
+    // Trim-Modus: laufende Bearbeitung, Delta und Vorschau der Timeline
+    TimelineOps::TrimEdit m_trimEdit;
+    TrimHit m_trimHit{TimelineOps::TrimKind::Ripple, 0, TimelineOps::Edge::End};
+    int m_trimEditDelta = 0;
+    std::optional<Timeline> m_trimPreview;
 
     // Lautstärkelinie ziehen (wie DaVinci); Shift = fein
     int m_volClipId = 0;

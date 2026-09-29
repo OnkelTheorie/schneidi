@@ -42,6 +42,14 @@ public:
     void trimClip(int clipId, TimelineOps::Edge edge, int delta);
     // Wie weit sich die Kante tatsächlich bewegen lässt (für die Live-Vorschau)
     int clampTrim(int clipId, TimelineOps::Edge edge, int delta) const;
+    // Trim-Modus (T): Bearbeitung zum gegriffenen Clip bauen (mit verknüpften Partnern).
+    // Ripple: Kante `edge`; Roll: Schnitt an dieser Kante (Clips beider Seiten auf den Spuren der Partner); Slip/Slide: Clip.
+    TimelineOps::TrimEdit trimEdit(TimelineOps::TrimKind kind, int clipId, TimelineOps::Edge edge = TimelineOps::Edge::End) const;
+    int clampTrimEdit(const TimelineOps::TrimEdit& e, int delta) const;
+    Timeline previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) const; // für die Live-Vorschau
+    void applyTrimEdit(const TimelineOps::TrimEdit& e, int delta);
+    // Trim-Modus + , / . wie DaVinci: ausgewählte Clips um `frames` slippen
+    void slipSelection(int frames);
     // Lautstärke eines Audioclips (dB, wird auf kMinVolumeDb..kMaxVolumeDb begrenzt)
     void setClipVolume(int clipId, double db);
     // Beliebige Clip-Eigenschaft ändern (Inspector). Gleicher mergeKey = ein Undo-Schritt.

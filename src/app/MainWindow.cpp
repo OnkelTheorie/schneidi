@@ -467,6 +467,7 @@ void MainWindow::buildActions()
 
     QMenu* timeline = menuBar()->addMenu("&Timeline");
     makeAction(timeline, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
+    makeAction(timeline, "tool_trim", T("Trim-Modus"), QKeySequence("T"), [tv] { tv->setTool(TimelineView::Tool::Trim); });
     makeAction(timeline, "tool_blade", T("Klingen-Werkzeug"), QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
     makeAction(timeline, "snapping", T("Snapping an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
     timeline->addSeparator();
@@ -481,12 +482,17 @@ void MainWindow::buildActions()
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
     makeAction(timeline, "trim_end", T("Ende bis Playhead trimmen"), QKeySequence("Shift+]"),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
-    makeAction(timeline, "nudge_left", T("1 Frame nach links schieben"), QKeySequence(","), [this] { m_editor->nudgeSelection(-1); });
-    makeAction(timeline, "nudge_right", T("1 Frame nach rechts schieben"), QKeySequence("."), [this] { m_editor->nudgeSelection(1); });
+    // Trim-Modus: , und . slippen die Auswahl (wie DaVinci), sonst verschieben
+    auto nudge = [this, tv](int frames) {
+        if (tv->tool() == TimelineView::Tool::Trim) m_editor->slipSelection(frames);
+        else m_editor->nudgeSelection(frames);
+    };
+    makeAction(timeline, "nudge_left", T("1 Frame nach links schieben"), QKeySequence(","), [nudge] { nudge(-1); });
+    makeAction(timeline, "nudge_right", T("1 Frame nach rechts schieben"), QKeySequence("."), [nudge] { nudge(1); });
     makeAction(timeline, "nudge_left_multi", T("5 Frames nach links schieben"), QKeySequence("Shift+,"),
-               [this] { m_editor->nudgeSelection(-5); });
+               [nudge] { nudge(-5); });
     makeAction(timeline, "nudge_right_multi", T("5 Frames nach rechts schieben"), QKeySequence("Shift+."),
-               [this] { m_editor->nudgeSelection(5); });
+               [nudge] { nudge(5); });
     makeAction(timeline, "toggle_enabled", T("Clip aktivieren/deaktivieren"), QKeySequence("D"),
                [this] { m_editor->toggleSelectionEnabled(); });
     makeAction(timeline, "clip_speed", T("Clip-Geschwindigkeit ändern…"), QKeySequence("Ctrl+R"), [this] { clipSpeedDialog(); });

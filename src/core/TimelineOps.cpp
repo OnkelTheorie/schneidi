@@ -264,6 +264,153 @@ void trimClips(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
     }
 }
 
+namespace {
+
+// Nachbarn eines Clips auf seiner Spur (nullptr = keiner)
+struct Neighbors {
+    const Clip* clip = nullptr;
+    const Clip* prev = nullptr;
+    const Clip* next = nullptr;
+};
+Neighbors neighbors(const Timeline& tl, int clipId)
+{
+    TrackRef ref;
+    const Clip* c = findClip(tl, clipId, &ref);
+    if (!c) return {};
+    const auto& clips = tl.track(ref).clips;
+    const int idx = int(c - clips.constData());
+    return {c, idx > 0 ? &clips[idx - 1] : nullptr, idx + 1 < clips.size() ? &clips[idx + 1] : nullptr};
+}
+
+// Grenzen für "Anfang um d verschieben" (start und in wandern mit) bzw. "Ende um d verschieben" (out wandert)
+void limitStart(const Clip& c, int& lo, int& hi)
+{
+    if (!c.isTitle()) lo = std::max(lo, -c.in);
+    hi = std::min(hi, c.length() - 1);
+}
+void limitEnd(const Clip& c, int& lo, int& hi, const SourceLength& sourceLength)
+{
+    const int len = sourceLength ? sourceLength(c) : 0;
+    if (len > 0 && !c.isTitle()) hi = std::min(hi, len - 1 - c.out);
+    lo = std::max(lo, 1 - c.length());
+}
+
+} // namespace
+
+int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength)
+{
+    int lo = INT_MIN / 2, hi = INT_MAX / 2;
+    switch (e.kind) {
+    case TrimKind::Ripple:
+        // Nachbarn begrenzen nicht: der Rest der Spur rückt mit
+        for (int id : e.ids)
+            if (const Clip* c = findClip(tl, id)) {
+                if (e.edge == Edge::Start) limitStart(*c, lo, hi);
+                else limitEnd(*c, lo, hi, sourceLength);
+            }
+        break;
+    case TrimKind::Roll:
+        for (int id : e.ids) {
+            const auto n = neighbors(tl, id);
+            if (!n.clip) continue;
+            limitEnd(*n.clip, lo, hi, sourceLength);
+            if (n.next && !e.rightIds.contains(n.next->id)) hi = std::min(hi, n.next->start - n.clip->end());
+        }
+        for (int id : e.rightIds) {
+            const auto n = neighbors(tl, id);
+            if (!n.clip) continue;
+            limitStart(*n.clip, lo, hi);
+            // linker Partner begrenzt über limitEnd, sonst Lücke bzw. Frame 0
+            if (!n.prev || !e.ids.contains(n.prev->id)) lo = std::max(lo, (n.prev ? n.prev->end() : 0) - n.clip->start);
+        }
+        break;
+    case TrimKind::Slip:
+        for (int id : e.ids)
+            if (const Clip* c = findClip(tl, id); c && !c->isTitle()) {
+                lo = std::max(lo, -c->in);
+                const int len = sourceLength ? sourceLength(*c) : 0;
+                if (len > 0) hi = std::min(hi, len - 1 - c->out);
+            }
+        break;
+    case TrimKind::Slide:
+        for (int id : e.ids) {
+            const auto n = neighbors(tl, id);
+            if (!n.clip) continue;
+            // anliegender Nachbar wird mitgetrimmt, sonst begrenzt die Lücke
+            if (n.prev && n.prev->end() == n.clip->start && !e.ids.contains(n.prev->id))
+                limitEnd(*n.prev, lo, hi, sourceLength);
+            else if (!n.prev || !e.ids.contains(n.prev->id))
+                lo = std::max(lo, (n.prev ? n.prev->end() : 0) - n.clip->start);
+            if (n.next && n.next->start == n.clip->end() && !e.ids.contains(n.next->id))
+                limitStart(*n.next, lo, hi);
+            else if (n.next && !e.ids.contains(n.next->id))
+                hi = std::min(hi, n.next->start - n.clip->end());
+        }
+        break;
+    }
+    if (lo > hi) return 0;
+    return std::clamp(delta, std::min(lo, 0), std::max(hi, 0));
+}
+
+void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLength& sourceLength)
+{
+    delta = clampTrimEdit(tl, e, delta, sourceLength);
+    if (delta == 0) return;
+    switch (e.kind) {
+    case TrimKind::Ripple: {
+        // pro Spur: Clips ab dem alten Ende des getrimmten Clips rücken um dessen Längenänderung
+        for (int id : e.ids) {
+            TrackRef ref;
+            Clip* c = findClip(tl, id, &ref);
+            if (!c) continue;
+            const int oldEnd = c->end();
+            const int shift = e.edge == Edge::Start ? -delta : delta;
+            if (e.edge == Edge::Start) c->in += delta;
+            else c->out += delta;
+            for (Clip& o : tl.track(ref).clips)
+                if (o.id != id && !e.ids.contains(o.id) && o.start >= oldEnd) o.start += shift;
+        }
+        break;
+    }
+    case TrimKind::Roll:
+        for (int id : e.ids)
+            if (Clip* c = findClip(tl, id)) c->out += delta;
+        for (int id : e.rightIds)
+            if (Clip* c = findClip(tl, id)) {
+                c->start += delta;
+                c->in += delta;
+            }
+        break;
+    case TrimKind::Slip:
+        for (int id : e.ids)
+            if (Clip* c = findClip(tl, id); c && !c->isTitle()) {
+                c->in += delta;
+                c->out += delta;
+            }
+        break;
+    case TrimKind::Slide: {
+        // erst Nachbarn merken (Zeiger bleiben gültig, es wird nichts eingefügt/entfernt)
+        QVector<int> prevs, nexts;
+        for (int id : e.ids) {
+            const auto n = neighbors(tl, id);
+            if (!n.clip) continue;
+            if (n.prev && n.prev->end() == n.clip->start && !e.ids.contains(n.prev->id)) prevs << n.prev->id;
+            if (n.next && n.next->start == n.clip->end() && !e.ids.contains(n.next->id)) nexts << n.next->id;
+        }
+        for (int id : prevs)
+            if (Clip* c = findClip(tl, id)) c->out += delta;
+        for (int id : nexts)
+            if (Clip* c = findClip(tl, id)) {
+                c->start += delta;
+                c->in += delta;
+            }
+        for (int id : e.ids)
+            if (Clip* c = findClip(tl, id)) c->start += delta;
+        break;
+    }
+    }
+}
+
 QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sourceLength)
 {
     QVector<TransitionSpan> spans;
