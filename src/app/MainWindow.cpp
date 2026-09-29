@@ -160,7 +160,14 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         const bool audio = !m_editor->selectedAudioClips().isEmpty();
         const int cacheState = m_editor->selectionRenderCacheState();
         const bool compound = m_editor->selectedCompoundSequence() != 0;
-        for (const char* id : {"clip_speed", "clip_speed_reset", "normalize_audio", "", "toggle_enabled", "link_clips",
+        {
+            QAction* r = InputBindings::instance().action("retime_controls");
+            const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
+            TimelineView* tv = m_timeline->view();
+            r->setEnabled(std::any_of(ids.begin(), ids.end(), [this](int id) { return m_editor->canRetime(id); }));
+            r->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->retimeControlsShown(id); }));
+        }
+        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "normalize_audio", "", "toggle_enabled", "link_clips",
                                "render_cache_clip", "", "compound_create", "compound_open", "compound_decompose", "",
                                "delete", "ripple_delete"}) {
             if (!*id) {
@@ -868,6 +875,33 @@ void MainWindow::buildActions()
     makeAction(timeline, "clip_speed_reset", T("Geschwindigkeit zurücksetzen"), QKeySequence("Ctrl+Alt+R"), [this] {
         m_editor->setClipSpeed(m_editor->selection()->ids().values().toVector(), {}, true);
     });
+    // Retime-Steuerung wie DaVinci (Retime Controls): Tempo je Abschnitt, Speed-Punkte auf dem Clip
+    auto* retime = makeAction(timeline, "retime_controls", T("Retime-Steuerung"), QKeySequence("Ctrl+Shift+R"), [this] {
+        const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
+        TimelineView* tv = m_timeline->view();
+        const bool on = std::none_of(ids.begin(), ids.end(), [tv](int id) { return tv->retimeControlsShown(id); });
+        tv->setRetimeControls(ids, on);
+    });
+    retime->setCheckable(true);
+    makeAction(timeline, "speed_point_add", T("Speed-Punkt hinzufügen"), QKeySequence(), [this] {
+        // an der Playhead-Position in den ausgewählten Clips (bzw. dem Videoclip darunter), Steuerung einblenden
+        const int frame = m_timeline->view()->playhead();
+        QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
+        if (ids.isEmpty())
+            for (const Track& t : m_project->timeline().video)
+                for (const Clip& c : t.clips)
+                    if (c.start < frame && frame < c.end()) ids << c.id;
+        QSet<int> done;
+        for (int id : ids) {
+            const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+            if (!c || done.contains(c->linkId ? -c->linkId : id) || !m_editor->canRetime(id)) continue;
+            if (!(c->start < frame && frame < c->end())) continue;
+            done.insert(c->linkId ? -c->linkId : id);
+            m_editor->addSpeedPoint(id, frame);
+            m_timeline->view()->setRetimeControls({id}, true);
+        }
+        if (done.isEmpty()) QApplication::beep();
+    });
     makeAction(timeline, "normalize_audio", T("Audiopegel normalisieren…"), QKeySequence(), [this] { normalizeAudioDialog(); });
     makeAction(timeline, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
                [this] { m_editor->toggleLinkSelection(); });
@@ -875,6 +909,12 @@ void MainWindow::buildActions()
     auto* cacheClip = makeAction(timeline, "render_cache_clip", T("Render-Cache Clip-Ausgabe"), QKeySequence(),
                                  [this] { m_editor->toggleSelectionRenderCache(); });
     cacheClip->setCheckable(true);
+    connect(timeline, &QMenu::aboutToShow, this, [this, retime] {
+        const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
+        TimelineView* tv = m_timeline->view();
+        retime->setEnabled(std::any_of(ids.begin(), ids.end(), [this](int id) { return m_editor->canRetime(id); }));
+        retime->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->retimeControlsShown(id); }));
+    });
     connect(timeline, &QMenu::aboutToShow, this, [this, cacheClip] {
         const int state = m_editor->selectionRenderCacheState();
         cacheClip->setEnabled(state >= 0);

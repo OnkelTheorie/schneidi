@@ -55,6 +55,10 @@ public:
     };
     void setRenderCacheSpans(const QVector<CacheSpan>& spans);
 
+    // Retime-Steuerung wie DaVinci (Retime Controls): Leiste oben im Clip mit Tempo je Abschnitt und Speed-Punkten
+    void setRetimeControls(const QVector<int>& ids, bool on);
+    bool retimeControlsShown(int clipId) const { return m_retimeClips.contains(clipId); }
+
 public slots:
     void setPlayhead(int frame);
     void setTool(TimelineView::Tool tool);
@@ -101,7 +105,18 @@ private:
         int lane = 0; // Höhe der aufgeklappten Keyframe-Spur unten in der Zeile (0 = keine)
     };
     enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe,
-                      CueMaybeMove, CueMove, CueTrim };
+                      CueMaybeMove, CueMove, CueTrim, SpeedPoint };
+    // Retime-Leiste: Speed-Punkt (point >= 0) oder Abschnitt (segment >= 0) unter der Maus
+    struct RetimeHit {
+        int clipId = 0;
+        int point = -1;
+        int segment = -1;
+    };
+    QRect retimeBarRect(const QRect& clipRect) const;
+    std::optional<RetimeHit> retimeHitAt(const QPoint& pos) const;
+    void drawRetime(QPainter& p, const QRect& r, const Clip& c);
+    void segmentMenu(const RetimeHit& hit, int frame, const QPoint& globalPos);
+    void speedPointMenu(const RetimeHit& hit, const QPoint& globalPos);
     // Übergang unter der Maus; edge: -1/+1 = linke/rechte Kante (Länge ziehen), 0 = Mitte
     struct TransitionHit {
         TrackRef ref;
@@ -209,6 +224,9 @@ private:
     int m_playhead = 0;
 
     Drag m_drag = Drag::None;
+    QSet<int> m_retimeClips; // Clips mit sichtbarer Retime-Steuerung
+    RetimeHit m_rampDrag;    // gezogener Speed-Punkt
+    int m_rampDelta = 0;     // Timeline-Frames beim Ziehen
     QPoint m_pressPos;
     int m_scrubFrame = -1; // letztes Sprungziel beim Ziehen im Lineal (gleiches Frame nicht erneut anspringen)
     TrackRef m_anchorRef;

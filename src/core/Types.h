@@ -182,6 +182,16 @@ struct Keyframe {
 };
 using KeyTrack = QVector<Keyframe>; // nach frame sortiert, jeder Frame höchstens einmal
 
+// Speed Ramp wie DaVinci „Retime Controls“: ein Speed-Punkt teilt den Clip, ab ihm gilt ein eigenes Tempo.
+// Die Position zählt in Datei-Frames der Quelle in Abspielrichtung (rückwärts: 0 = Dateiende) -> Trimmen/Teilen
+// lässt die Punkte an ihrer Quellstelle. Umrechnung Material <-> Quelle: RetimeMap (core/Retime.h).
+struct SpeedPoint {
+    double source = 0;  // Quell-Position (> 0)
+    double speed = 1.0; // Tempo ab hier bis zum nächsten Punkt (> 0)
+    int smooth = 0;     // weicher Übergang: Länge in Frames, mittig um den Punkt (0 = harter Wechsel)
+    bool operator==(const SpeedPoint& o) const { return source == o.source && speed == o.speed && smooth == o.smooth; }
+};
+
 struct Clip {
     int id = 0;
     ClipKind kind = ClipKind::Media;
@@ -214,17 +224,16 @@ struct Clip {
     bool reverse = false;   // rückwärts abspielen
     bool freeze = false;    // Standbild: jedes Frame zeigt Frame `in` (Ton stumm), beliebig lang ziehbar
     bool keepPitch = true;  // Tonhöhe halten (Pitch Correction)
+    // Speed Ramp: weitere Abschnitte (nach source sortiert); `speed` gilt bis zum ersten Punkt. Leer = konstant.
+    QVector<SpeedPoint> ramp;
     // Render-Cache Clip-Ausgabe (DaVinci „Render Cache Clip Output“): Vorschau spielt eine vorgerenderte Datei
     // mit allen Effekten, siehe engine/RenderCache.h
     bool renderCache = false;
 
-    bool isRetimed() const { return speed != 1.0 || reverse || freeze; }
-    // Länge des umgerechneten Materials aus der Länge der Datei (<= 0 = unbegrenzt)
-    int retimedLength(int fileLength) const
-    {
-        if (fileLength <= 0 || freeze) return 0;
-        return std::max(1, int(fileLength / speed));
-    }
+    bool isRetimed() const { return speed != 1.0 || reverse || freeze || !ramp.isEmpty(); }
+    bool hasRamp() const { return !ramp.isEmpty() && !freeze; }
+    // Länge des umgerechneten Materials aus der Länge der Datei (<= 0 = unbegrenzt), siehe core/Retime.cpp
+    int retimedLength(int fileLength) const;
 
     int length() const { return out - in + 1; }
     int end() const { return start + length(); } // exklusiv

@@ -138,7 +138,7 @@ void RenderCache::setFormat(const ProjectFormat& format)
 bool RenderCache::isExpensive(const Clip& c)
 {
     const bool fx = std::any_of(c.effects.begin(), c.effects.end(), [](const EffectInstance& e) { return e.enabled; });
-    return fx || (!c.freeze && (c.speed != 1.0 || c.reverse));
+    return fx || (!c.freeze && (c.speed != 1.0 || c.reverse || !c.ramp.isEmpty()));
 }
 
 bool RenderCache::wanted(const Clip& c, Mode mode)
