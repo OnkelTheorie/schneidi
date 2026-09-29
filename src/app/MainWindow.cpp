@@ -57,6 +57,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
+#include <QInputDialog>
 #include <QStandardPaths>
 #include <QTimer>
 
@@ -80,24 +81,28 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_engineTimer.setSingleShot(true);
     m_engineTimer.setInterval(30);
     connect(&m_engineTimer, &QTimer::timeout, this, [this] {
-        m_engine->updateTimeline(m_project->timeline());
+        m_engine->updateTimeline(m_project->renderTimeline());
         updateRenderCacheBar();
     });
     connect(m_project, &Project::timelineChanged, this, [this] {
-        if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(m_project->timeline());
+        if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(m_project->renderTimeline());
         else if (!m_engineTimer.isActive()) m_engineTimer.start();
     });
-    m_engine->updateTimeline(m_project->timeline());
+    m_engine->updateTimeline(m_project->renderTimeline());
     // Proxy fertig/gelöscht oder "Proxy-Medien verwenden" umgeschaltet -> Vorschau neu aufbauen
     ProxyManager* proxies = m_engine->proxies();
-    auto proxiesChanged = [this] { m_engine->updateTimeline(m_project->timeline()); };
+    auto proxiesChanged = [this] { m_engine->updateTimeline(m_project->renderTimeline()); };
     connect(proxies, &ProxyManager::proxyChanged, this, [this, proxiesChanged](const QString& path) {
-        if (TimelineOps::usesMediaOnVideo(m_project->timeline(), path)) proxiesChanged();
+        // auch Clips in Compound Clips (verschachtelte Sequenzen)
+        const auto& seqs = m_project->sequences();
+        if (std::any_of(seqs.begin(), seqs.end(),
+                        [&](const Sequence& s) { return TimelineOps::usesMediaOnVideo(s.timeline, path); }))
+            proxiesChanged();
     });
     connect(proxies, &ProxyManager::enabledChanged, this, proxiesChanged);
     // Vorher/Nachher: gecachte Clips enthalten die Korrektur -> Vorschau neu aufbauen, damit sie aus dem Original kommen
     connect(m_engine, &Engine::colorBypassChanged, this, [this] {
-        if (m_engine->renderCache()->mode() != RenderCache::Mode::Off) m_engine->updateTimeline(m_project->timeline());
+        if (m_engine->renderCache()->mode() != RenderCache::Mode::Off) m_engine->updateTimeline(m_project->renderTimeline());
     });
     // Render-Cache: Datei fertig/gelöscht oder Modus geändert -> Vorschau neu aufbauen, Balken über der Timeline
     RenderCache* renderCache = m_engine->renderCache();
@@ -128,6 +133,21 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
+    connect(m_mediaPool, &MediaPool::sequenceOpenRequested, m_timeline, &TimelinePanel::openSequence);
+    // Andere Timeline geöffnet: Auswahl weg, Playhead dort, wo er in dieser Timeline zuletzt stand (wie DaVinci)
+    m_shownSequence = m_project->currentSequence();
+    connect(m_project, &Project::currentSequenceChanged, this, [this, tv] {
+        const int id = m_project->currentSequence();
+        if (id == m_shownSequence) return;
+        m_sequencePos[m_shownSequence] = tv->playhead();
+        m_shownSequence = id;
+        m_selection->clear();
+        m_engine->pause();
+        const int pos = m_sequencePos.value(id, 0);
+        if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(pos);
+        else m_engine->seek(pos);
+        tv->setPlayhead(pos);
+    });
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
     connect(m_mediaPool, &MediaPool::subtitleFilesImported, this, &MainWindow::importSubtitleFiles);
     connect(tv, &TimelineView::subtitleEditRequested, this, [this](int id) {
@@ -139,8 +159,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         QMenu menu(this);
         const bool audio = !m_editor->selectedAudioClips().isEmpty();
         const int cacheState = m_editor->selectionRenderCacheState();
+        const bool compound = m_editor->selectedCompoundSequence() != 0;
         for (const char* id : {"clip_speed", "clip_speed_reset", "normalize_audio", "", "toggle_enabled", "link_clips",
-                               "render_cache_clip", "", "delete", "ripple_delete"}) {
+                               "render_cache_clip", "", "compound_create", "compound_open", "compound_decompose", "",
+                               "delete", "ripple_delete"}) {
             if (!*id) {
                 menu.addSeparator();
                 continue;
@@ -148,6 +170,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             QAction* a = InputBindings::instance().action(id);
             if (!a) continue;
             if (QString(id) == "normalize_audio" && !audio) continue;
+            if ((QString(id) == "compound_open" || QString(id) == "compound_decompose") && !compound) continue;
             if (QString(id) == "render_cache_clip") {
                 if (cacheState < 0) continue; // nur Videoclips (keine Titel)
                 a->setChecked(cacheState == 1);
@@ -235,6 +258,10 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
         m_editor->addTitle(frame, track);
         return;
     }
+    if (paths.size() == 1 && MediaPool::sequenceOfItem(paths.first())) { // Timeline/Compound Clip verschachteln
+        m_editor->addSequenceAt(MediaPool::sequenceOfItem(paths.first()), frame, track);
+        return;
+    }
     // Untertiteldateien werden Untertitelspuren (Zeiten aus der Datei, wie DaVinci)
     QStringList media, subtitles;
     for (const QString& p : paths)
@@ -298,6 +325,26 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
         m_project->setFormat(want);
         return;
     }
+}
+
+void MainWindow::createCompoundClip()
+{
+    if (m_editor->clipIdsOf(m_selection->ids()).isEmpty()) return;
+    QSet<QString> used;
+    for (const Sequence& s : m_project->sequences()) used.insert(s.name);
+    QString def;
+    for (int i = 1;; ++i) {
+        def = T("Compound Clip %1").arg(i);
+        if (!used.contains(def)) break;
+    }
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, T("Neuer Compound Clip"), T("Name:"), QLineEdit::Normal, def, &ok);
+    if (ok) m_editor->createCompoundClip(name);
+}
+
+void MainWindow::openSelectedCompound()
+{
+    if (const int id = m_editor->selectedCompoundSequence()) m_timeline->openSequence(id);
 }
 
 void MainWindow::showSource(const QString& path)
@@ -370,7 +417,7 @@ void MainWindow::updateRenderCacheBar()
 void MainWindow::grabStill()
 {
     m_engine->pause();
-    const QImage img = m_engine->grabStill(m_project->timeline());
+    const QImage img = m_engine->grabStill(m_project->renderTimeline());
     if (img.isNull()) {
         QMessageBox::warning(this, T("Standbild exportieren"), T("Das Bild konnte nicht erzeugt werden."));
         return;
@@ -712,6 +759,7 @@ void MainWindow::buildActions()
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
     makeAction(file, "new_bin", T("Neuer Bin"), QKeySequence("Ctrl+Shift+N"), [this] { m_mediaPool->newBin(); });
+    makeAction(file, "new_timeline", T("Neue Timeline"), QKeySequence("Ctrl+Alt+N"), [this] { m_mediaPool->newTimeline(); });
     makeAction(file, "import_subtitles", T("Untertitel importieren (SRT)…"), QKeySequence(), [this] { importSubtitlesDialog(); });
     makeAction(file, "export_subtitles", T("Untertitel exportieren (SRT)…"), QKeySequence(), [this] { exportSubtitlesDialog(); });
     file->addSeparator();
@@ -808,6 +856,14 @@ void MainWindow::buildActions()
                [nudge] { nudge(5); });
     makeAction(timeline, "toggle_enabled", T("Clip aktivieren/deaktivieren"), QKeySequence("D"),
                [this] { m_editor->toggleSelectionEnabled(); });
+    makeAction(timeline, "compound_create", T("Neuer Compound Clip…"), QKeySequence(), [this] { createCompoundClip(); });
+    makeAction(timeline, "compound_open", T("Compound Clip in Timeline öffnen"), QKeySequence(),
+               [this] { openSelectedCompound(); });
+    makeAction(timeline, "compound_decompose", T("Compound Clip auflösen"), QKeySequence(), [this] {
+        m_editor->decomposeCompoundClips(m_editor->clipIdsOf(m_selection->ids()));
+    });
+    makeAction(timeline, "timeline_back", T("Zurück zur übergeordneten Timeline"), QKeySequence(),
+               [this] { m_timeline->back(); });
     makeAction(timeline, "clip_speed", T("Clip-Geschwindigkeit ändern…"), QKeySequence("Ctrl+R"), [this] { clipSpeedDialog(); });
     makeAction(timeline, "clip_speed_reset", T("Geschwindigkeit zurücksetzen"), QKeySequence("Ctrl+Alt+R"), [this] {
         m_editor->setClipSpeed(m_editor->selection()->ids().values().toVector(), {}, true);

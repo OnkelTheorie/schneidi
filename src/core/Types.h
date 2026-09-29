@@ -6,6 +6,7 @@
 #include "core/I18n.h"
 
 #include <QColor>
+#include <QHash>
 #include <QFileInfo>
 #include <QMap>
 #include <QString>
@@ -14,6 +15,7 @@
 #include <QVector>
 
 #include <algorithm>
+#include <memory>
 
 enum class TrackKind { Video, Audio };
 
@@ -146,7 +148,9 @@ inline const TransitionTypeInfo& transitionTypeInfo(TransitionType t)
     return kTransitionTypes[0];
 }
 
-enum class ClipKind { Media, Title };
+// Compound: Clip, dessen Inhalt eine eigene Timeline (Sequenz) ist – Compound Clip bzw. verschachtelte Timeline
+// wie in DaVinci; in/out zählen in Frames dieser Timeline
+enum class ClipKind { Media, Title, Compound };
 
 // Keyframes wie in DaVinci: pro Clip und animierbarem Parameter eine Liste. Ohne Keyframes gilt der statische Wert
 // (Clip::transform, Clip::title, Clip::volumeDb …). Funktionen dazu in core/Keyframes.h.
@@ -183,6 +187,7 @@ struct Clip {
     ClipKind kind = ClipKind::Media;
     QString mediaPath; // leer bei Titeln (kein Medienverweis)
     TitleStyle title;  // nur bei kind == Title
+    int sequenceId = 0; // nur bei kind == Compound: Sequenz (Project::sequence), deren Inhalt der Clip zeigt
     int start = 0;  // Position in der Timeline (Frames)
     int in = 0;     // erstes Frame im Quellmaterial
     int out = 0;    // letztes Frame im Quellmaterial (inklusive, wie bei MLT)
@@ -225,8 +230,14 @@ struct Clip {
     int end() const { return start + length(); } // exklusiv
     // Titel: jedes Frame gleich, beliebig lang trimmbar (in darf auch negativ werden)
     bool isTitle() const { return kind == ClipKind::Title; }
-    // Name in Timeline/Inspector: Dateiname bzw. erste Textzeile
-    QString displayName() const { return isTitle() ? title.firstLine() : QFileInfo(mediaPath).fileName(); }
+    bool isCompound() const { return kind == ClipKind::Compound; }
+    // Name in Timeline/Inspector: Dateiname bzw. erste Textzeile; Compound Clips tragen den Namen ihrer Sequenz
+    // (Project::clipName liefert ihn, hier nur ein Platzhalter)
+    QString displayName() const
+    {
+        if (isCompound()) return T("Compound Clip");
+        return isTitle() ? title.firstLine() : QFileInfo(mediaPath).fileName();
+    }
 };
 
 // Spurfarben wie im DaVinci-Menü „Change Track Color“ (id = Schlüssel in der Projektdatei)
@@ -321,6 +332,10 @@ inline QString trackDisplayName(const Track& t, TrackRef r)
     return (r.kind == TrackKind::Video ? T("Video %1") : T("Audio %1")).arg(r.index + 1);
 }
 
+struct Timeline;
+// Inhalt der Sequenzen (id -> Timeline) für verschachtelte Clips beim Rendern
+using NestedTimelines = QHash<int, Timeline>;
+
 struct Timeline {
     QVector<Track> video; // [0] = V1 (unterste Spur)
     QVector<Track> audio; // [0] = A1
@@ -333,11 +348,24 @@ struct Timeline {
     // Standard aus wie DaVinci (Bus-Dynamics sind dort aus; sonst verdeckt er die Übersteuerungswarnung).
     bool masterLimiter = false;
     double masterLimiterDb = kDefaultLimiterDb;
+    // Nur zum Rendern (Project::renderTimeline): Inhalt aller Sequenzen, auf die Compound Clips verweisen.
+    // Wird nie gespeichert und steckt nicht im Undo; die Wahrheit sind die Sequenzen im Project.
+    std::shared_ptr<const NestedTimelines> nested;
 
     QVector<Track>& tracks(TrackKind k) { return k == TrackKind::Video ? video : audio; }
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }
     Track& track(TrackRef r) { return tracks(r.kind)[r.index]; }
     const Track& track(TrackRef r) const { return tracks(r.kind)[r.index]; }
+};
+
+// Sequenz wie in DaVinci: eigene Timeline im Projekt (im Media Pool sichtbar) oder Inhalt eines Compound Clips.
+// Alle teilen Projektformat, Medien und Clip-ids.
+struct Sequence {
+    int id = 0;
+    QString name;
+    bool compound = false; // Compound Clip (nicht in der Timeline-Auswahl, außer gerade geöffnet)
+    int bin = 0;           // Bin im Media Pool (0 = Master)
+    Timeline timeline;
 };
 
 struct MediaInfo {

@@ -411,6 +411,7 @@ RenderJob DeliverPanel::makeJob() const
     const int idx = currentPreset();
     if (idx >= 0 && idx < m_presets.size()) job.preset = m_presets[idx].name;
     if (!job.settings.audioOnly()) job.size = m_resolution->currentData().toSize();
+    job.sequence = m_project->currentSequence(); // gerendert wird diese Timeline, auch wenn später eine andere offen ist
     if (m_range->currentIndex() == 1) {
         const Timeline& tl = m_project->timeline();
         job.inOut = true;

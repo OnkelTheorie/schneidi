@@ -14,10 +14,14 @@ struct ProjectData {
     int playhead = 0;
     QVector<MediaInfo> media;
     QVector<MediaBin> bins; // Media-Pool-Bins (ohne Master)
-    Timeline timeline;
+    Timeline timeline; // geöffnete Timeline (Sequenz currentSequence)
     int lastClipId = 0;
     int lastLinkId = 0;
     QVector<RenderJob> renderQueue; // Deliver: Render-Warteschlange (optional)
+    // Alle Sequenzen (Timelines, Compound Clips); die geöffnete bekommt beim Laden `timeline`.
+    // Leer (alte Dateien) = nur `timeline` als „Timeline 1“.
+    QVector<Sequence> sequences;
+    int currentSequence = 0;
 };
 
 namespace ProjectFile {

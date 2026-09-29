@@ -98,6 +98,8 @@ private:
     void autosave();
     void removeAutosave();
     static QString autosavePath();
+    void createCompoundClip(); // Name abfragen wie DaVinci
+    void openSelectedCompound();
 
     Engine* m_engine;
     Project* m_project;
@@ -135,6 +137,8 @@ private:
 
     QHash<QString, MediaInfo> m_probeCache;
     QHash<QString, int> m_sourcePos; // Quell-Playhead je Datei (nur in dieser Sitzung)
+    QHash<int, int> m_sequencePos;   // Playhead je Timeline/Compound Clip (nur in dieser Sitzung)
+    int m_shownSequence = 0;         // zuletzt gezeigte Sequenz (für m_sequencePos)
     class MediaCache* m_mediaCache = nullptr;
 
     QString m_projectPath; // leer = noch nie gespeichert

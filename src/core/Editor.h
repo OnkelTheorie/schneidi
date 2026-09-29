@@ -217,6 +217,22 @@ public:
     // Eingelesene Einträge (SRT) als neue Spur; name = Spurname (z. B. Dateiname). Liefert den Spur-Index, -1 = leer.
     int importSubtitles(const QVector<SubtitleCue>& cues, const QString& name);
 
+    // ---- Compound Clips und verschachtelte Timelines (core/EditorCompound.cpp) ----
+    // Ausgewählte Clips (mit Partnern) zu einem Compound Clip zusammenfassen (DaVinci „New Compound Clip“): neue
+    // Sequenz mit diesen Clips (Spuren ab der untersten benutzten, Zeit ab dem frühesten Clip); in der Timeline
+    // ersetzt sie ein Compound Clip über die ganze Spanne auf der untersten Video- bzw. Audiospur ab der Auswahl, auf
+    // der die Spanne frei ist (Video + Audio verknüpft, überschreibt nie andere Clips). Ein Undo-Schritt; neuer
+    // Clip wird ausgewählt. Liefert die Sequenz-id, 0 = nichts ausgewählt.
+    int createCompoundClip(const QString& name = {});
+    // Compound Clips (mit Partnern) wieder in ihre Clips zerlegen (DaVinci „Decompose in Place“): Inhalt im
+    // benutzten Ausschnitt an dieselbe Stelle, Spuren ab der des Compound Clips. Die Sequenz bleibt im Media Pool.
+    bool decomposeCompoundClips(const QVector<int>& ids);
+    // Ausgewählter Compound Clip (für „In Timeline öffnen“), 0 = keiner
+    int selectedCompoundSequence() const;
+    // Timeline/Compound Clip aus dem Media Pool am Frame auf V[track]/A[track] legen (überschreibt, verknüpft).
+    // false = leer oder Schleife (Sequenz enthält die geöffnete Timeline).
+    bool addSequenceAt(int sequenceId, int frame, int track = 0);
+
 signals:
     void targetTracksChanged(); // Zielspuren (Spurkopf-Markierung neu zeichnen)
 

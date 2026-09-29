@@ -72,6 +72,11 @@ private:
     Mlt::Producer* producerFor(const QString& path, TrackKind kind, int trackIndex, bool second = false,
                                const Clip* retime = nullptr);
 
+    // Eine Timeline ohne Aufräumen des Producer-Caches (auch für verschachtelte Sequenzen)
+    std::unique_ptr<Mlt::Tractor> buildTimeline(const Timeline& tl, MixerHooks* hooks);
+    // Compound Clip: Inhalt der Sequenz (aus Timeline::nested) als Tractor; nullptr = fehlt/Schleife
+    Mlt::Producer* nestedProducer(int sequenceId, TrackKind kind, int trackIndex, bool second);
+
     Mlt::Profile& m_profile;
     std::unique_ptr<ProducerFactory> m_factory; // vor m_cache: muss die Producer überleben
     MediaResolver m_resolver;
@@ -83,4 +88,10 @@ private:
     // nicht gegenseitig im Decoder hin- und herspulen.
     std::map<QString, std::unique_ptr<Mlt::Producer>> m_cache;
     std::set<QString> m_used; // im aktuellen build() benutzte Schlüssel; der Rest fliegt danach raus
+    // Verschachtelte Timelines (Compound Clips) des laufenden build()
+    std::shared_ptr<const NestedTimelines> m_nested;
+    std::map<QString, std::unique_ptr<Mlt::Producer>> m_nestedCache;
+    std::set<int> m_nestStack; // gerade gebaute Sequenzen (Schleifenschutz)
+    bool m_inNested = false;
+    QString m_keyPrefix; // Cache-Schlüssel-Präfix innerhalb verschachtelter Sequenzen
 };

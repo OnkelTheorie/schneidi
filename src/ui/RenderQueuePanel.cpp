@@ -145,6 +145,7 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
             [this](QListWidgetItem* item) { emit loadJobRequested(item->data(kIdRole).toInt()); });
     connect(m_list, &QWidget::customContextMenuRequested, this, &RenderQueuePanel::contextMenu);
     connect(m_project, &Project::renderQueueChanged, this, &RenderQueuePanel::rebuild);
+    connect(m_project, &Project::sequencesChanged, this, &RenderQueuePanel::rebuild); // Timeline-Namen
     connect(m_queue, &RenderQueue::runningChanged, this, &RenderQueuePanel::updateButton);
     connect(m_queue, &RenderQueue::progress, this, [this](int id, int percent) {
         for (int i = 0; i < m_list->count(); ++i)
@@ -180,7 +181,12 @@ void RenderQueuePanel::rebuild()
         card->status->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(statusColor(j.status)));
         card->status->setToolTip(j.message);
         card->status->setMaximumWidth(140);
-        card->summary->setFullText(j.settings.summary(j.size));
+        // Welche Timeline (wie DaVinci in der Job-Karte); gelöschte Timeline bleibt als Hinweis stehen
+        const QString timeline = !j.sequence ? QString()
+                                 : m_project->sequence(j.sequence) ? m_project->sequenceName(j.sequence)
+                                                                   : T("(Timeline gelöscht)");
+        card->summary->setFullText(timeline.isEmpty() ? j.settings.summary(j.size)
+                                                      : timeline + QStringLiteral(" · ") + j.settings.summary(j.size));
         card->range->setFullText(j.inOut ? T("In/Out: %1 – %2")
                                            .arg(Timecode::format(j.from, fps),
                                                 j.to >= 0 ? Timecode::format(j.to, fps) : T("Ende"))

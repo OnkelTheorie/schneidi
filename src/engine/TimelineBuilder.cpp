@@ -851,7 +851,7 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
         tag = QString("|w%1%2").arg(warp).arg(pitch ? "p" : "");
     }
     if (freeze) tag = QString("|f%1|%2%3").arg(retime->in).arg(retime->speed).arg(retime->reverse ? "r" : "");
-    const QString key = QString("%1%2|%3|%4%5").arg(kind == TrackKind::Video ? "v" : "a").arg(second ? "x" : "")
+    const QString key = m_keyPrefix + QString("%1%2|%3|%4%5").arg(kind == TrackKind::Video ? "v" : "a").arg(second ? "x" : "")
                             .arg(trackIndex).arg(file, tag);
     m_used.insert(key);
     auto it = m_cache.find(key);
@@ -937,16 +937,60 @@ bool TimelineBuilder::applyMixer(const Timeline& tl, const MixerHooks& hooks)
 
 std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHooks* hooks)
 {
-    // Solo wie DaVinci: sobald eine Spur Solo hat, sind alle anderen Audiospuren stumm
-    const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
     if (hooks) *hooks = {};
     m_used.clear();
+    m_nestedCache.clear();
+    m_nested = tl.nested;
     struct BypassScope { // Filter der Farbkorrektur bekommen den Schalter dieses Builders
         explicit BypassScope(std::shared_ptr<std::atomic<bool>> f) { t_gradeBypass = std::move(f); }
         ~BypassScope() { t_gradeBypass.reset(); }
     } bypassScope(m_gradeBypass);
+    auto tractor = buildTimeline(tl, hooks);
+    m_nested.reset();
+    m_nestedCache.clear(); // Cuts halten ihre verschachtelten Tractoren selbst (MLT-Referenzzählung)
+    // Nicht mehr benutzte Producer schließen (z. B. Original nach Umschalten auf den Proxy oder gelöschter Clip);
+    // Cuts im alten Tractor halten ihre Quelle per MLT-Referenzzählung selbst am Leben
+    for (auto it = m_cache.begin(); it != m_cache.end();)
+        it = m_used.count(it->first) ? std::next(it) : m_cache.erase(it);
+    return tractor;
+}
+
+Mlt::Producer* TimelineBuilder::nestedProducer(int sequenceId, TrackKind kind, int trackIndex, bool second)
+{
+    if (!m_nested || m_nestStack.size() >= 16 || m_nestStack.count(sequenceId)) return nullptr; // Schleife/zu tief
+    const auto it = m_nested->constFind(sequenceId);
+    if (it == m_nested->cend()) return nullptr;
+    // Wie bei Dateien: je Spur und Seite eines Übergangs ein eigener Tractor (eigene Decoder)
+    const QString key = QString("%1|%2|%3|%4|%5").arg(sequenceId).arg(kind == TrackKind::Video ? "v" : "a")
+                            .arg(trackIndex).arg(second ? "x" : "").arg(m_nestStack.size());
+    if (auto c = m_nestedCache.find(key); c != m_nestedCache.end()) return c->second.get();
+    m_nestStack.insert(sequenceId);
+    const bool transparent = std::exchange(m_transparent, true); // leere Stellen zeigen die Spur darunter
+    const bool subtitles = std::exchange(m_subtitles, false);    // Untertitel gehören zur äußeren Timeline
+    const bool nested = std::exchange(m_inNested, true);
+    // Producer im Inneren getrennt von denen der äußeren Timeline (eigene Decoder, siehe producerFor)
+    const QString prefix = std::exchange(m_keyPrefix, m_keyPrefix + "n" + key + "/");
+    std::unique_ptr<Mlt::Producer> p = buildTimeline(*it, nullptr);
+    m_keyPrefix = prefix;
+    m_inNested = nested;
+    m_subtitles = subtitles;
+    m_transparent = transparent;
+    m_nestStack.erase(sequenceId);
+    if (!p || !p->is_valid()) return nullptr;
+    Mlt::Producer* raw = p.get();
+    m_nestedCache.emplace(key, std::move(p));
+    return raw;
+}
+
+std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl, MixerHooks* hooks)
+{
+    // Solo wie DaVinci: sobald eine Spur Solo hat, sind alle anderen Audiospuren stumm
+    const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
     auto tractor = std::make_unique<Mlt::Tractor>(m_profile);
-    const int end = std::max(1, TimelineOps::endFrame(tl));
+    // Verschachtelt: Hintergrund weit über das Ende hinaus, damit ein Compound Clip nach Kürzen seines Inhalts
+    // (Clip länger als die Sequenz) leere Frames statt Wiederholungen liefert
+    const int content = std::max(1, TimelineOps::endFrame(tl));
+    const int end = m_inNested ? content + 3600 * qRound(m_profile.fps()) : content;
 
     // Spur 0: schwarzer Hintergrund über die ganze Länge
     Mlt::Playlist background(m_profile);
@@ -963,6 +1007,11 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             return svc == "qimage" || svc == "pixbuf";
         };
         const TimelineOps::SourceLength srcLen = [&](const Clip& c) {
+            if (c.isCompound()) {
+                if (!m_nested) return 0;
+                const auto it = m_nested->constFind(c.sequenceId);
+                return it == m_nested->cend() ? 0 : TimelineOps::endFrame(*it);
+            }
             Mlt::Producer* p = c.mediaPath.isEmpty() ? nullptr : producerFor(c.mediaPath, kind, trackIndex); // leer = Titel
             return p && !isStill(p) ? c.retimedLength(p->get_length()) : 0;
         };
@@ -975,6 +1024,15 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
             if (c.isTitle()) {
                 if (!c.enabled || kind != TrackKind::Video) return nullptr;
                 Mlt::Producer* cut = titleCut(m_profile, c, from - c.start, to - from);
+                decorate(m_profile, *cut, c, kind, from - c.start, to - from);
+                applyClipFades(m_profile, *cut, c, kind, from, to);
+                return cut;
+            }
+            if (c.isCompound()) { // Inhalt der Sequenz als eigener Tractor (Frames zählen ab Sequenzanfang)
+                Mlt::Producer* src = c.enabled ? nestedProducer(c.sequenceId, kind, trackIndex, second) : nullptr;
+                const int in = c.in + (from - c.start);
+                if (!src || in < 0) return nullptr;
+                Mlt::Producer* cut = src->cut(in, in + (to - from) - 1);
                 decorate(m_profile, *cut, c, kind, from - c.start, to - from);
                 applyClipFades(m_profile, *cut, c, kind, from, to);
                 return cut;
@@ -1122,9 +1180,5 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     // Master-Fader auf dem Tractor (gilt damit auch für den Export)
     attachStrip(m_profile, *tractor, tl.masterVolumeDb, 0.0, hooks ? &hooks->master : nullptr,
                 std::make_pair(tl.masterLimiter, tl.masterLimiterDb));
-    // Nicht mehr benutzte Producer schließen (z. B. Original nach Umschalten auf den Proxy oder gelöschter Clip);
-    // Cuts im alten Tractor halten ihre Quelle per MLT-Referenzzählung selbst am Leben
-    for (auto it = m_cache.begin(); it != m_cache.end();)
-        it = m_used.count(it->first) ? std::next(it) : m_cache.erase(it);
     return tractor;
 }

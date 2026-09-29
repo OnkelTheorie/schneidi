@@ -81,4 +81,10 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                     for (Keyframe& k : it.value()) k.value *= f;
                 }
             }
+    // Inhalt der Compound Clips (nur beim Rendern angehängt) genauso
+    if (tl.nested) {
+        auto nested = std::make_shared<NestedTimelines>(*tl.nested);
+        for (Timeline& n : *nested) scaleTimeline(n, from, to);
+        tl.nested = std::move(nested);
+    }
 }

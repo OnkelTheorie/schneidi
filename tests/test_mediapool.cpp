@@ -166,7 +166,7 @@ int main(int argc, char** argv)
         int items = 0;
         for (QTreeWidgetItemIterator it(tree); *it; ++it) ++items;
         CHECK_EQ(items, 1 + int(p.bins().size()));
-        CHECK_EQ(list->count(), 1 + 2); // Master: Titel + c, d
+        CHECK_EQ(list->count(), 1 + 1 + 2); // Master: Titel + Timeline 1 + c, d
         pool.setCurrentBin(sub);
         app.processEvents();
         CHECK_EQ(list->count(), 2); // a, b

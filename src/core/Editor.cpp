@@ -200,6 +200,7 @@ void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kin
 TimelineOps::SourceLength Editor::sourceLength() const
 {
     return [p = m_project](const Clip& c) {
+        if (c.isCompound()) return p->sequenceLength(c.sequenceId); // Inhalt der Sequenz
         const MediaInfo* m = p->mediaInfo(c.mediaPath);
         return m && !m->isImage ? c.retimedLength(m->length) : 0; // Standbilder beliebig lang ziehbar
     };
@@ -969,7 +970,9 @@ void Editor::paste(int frame)
     // nicht auf gesperrte Spuren einfügen
     QVector<ClipboardItem> items;
     for (const auto& it : m_clipboard)
-        if (!isTrackLocked(it.ref)) items << it;
+        if (!isTrackLocked(it.ref)
+            && (!it.clip.isCompound() || m_project->canNest(it.clip.sequenceId, m_project->currentSequence())))
+            items << it; // Compound Clip nie in sich selbst (Schleife)
     if (items.isEmpty()) return;
     Project* p = m_project;
     QSet<int> pasted;

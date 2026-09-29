@@ -90,7 +90,9 @@ inline QString dump(const Timeline& tl)
             s += QString("%1%2:").arg(k == TrackKind::Video ? "V" : "A").arg(i + 1);
             for (const Clip& c : tracks[i].clips)
                 s += QString(" %1[%2-%3|%4-%5]")
-                         .arg(c.isTitle() ? QString("T") : QFileInfo(c.mediaPath).baseName())
+                         .arg(c.isTitle()      ? QString("T")
+                                      : c.isCompound() ? QString("C%1").arg(c.sequenceId)
+                                                       : QFileInfo(c.mediaPath).baseName())
                          .arg(c.start).arg(c.end()).arg(c.in).arg(c.out);
             s += "  ";
         }

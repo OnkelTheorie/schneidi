@@ -194,6 +194,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
 {
     QJsonObject o{{"id", c.id}, {"start", c.start}, {"in", c.in}, {"out", c.out}};
     if (c.isTitle()) o["title"] = titleToJson(c.title); // Titel haben keinen Medienverweis
+    else if (c.isCompound()) o["sequence"] = c.sequenceId; // Compound Clip: Verweis auf die Sequenz
     else o["media"] = mediaIndex;
     if (c.linkId) o["link"] = c.linkId;
     if (c.volumeDb != 0.0) o["volumeDb"] = c.volumeDb;
@@ -234,6 +235,9 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     if (o.contains("title")) {
         c.kind = ClipKind::Title;
         c.title = titleFromJson(o.value("title").toObject());
+    } else if (o.contains("sequence")) {
+        c.kind = ClipKind::Compound;
+        c.sequenceId = o.value("sequence").toInt();
     } else {
         c.mediaPath = media.value(o.value("media").toInt(-1)).path;
     }
@@ -287,7 +291,7 @@ namespace ProjectFile {
 QJsonObject clipJson(const Clip& c)
 {
     QJsonObject o = clipToJson(c, -1, QDir::root()); // fester Bezug -> relPaths stabil (Cache-Schlüssel)
-    if (!c.isTitle()) o["media"] = c.mediaPath;
+    if (!c.isTitle() && !c.isCompound()) o["media"] = c.mediaPath;
     return o;
 }
 
@@ -314,7 +318,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         for (const Track& t : list) {
             QJsonArray clips;
             for (const Clip& c : t.clips) {
-                if (c.isTitle()) {
+                if (c.isTitle() || c.isCompound()) {
                     clips << clipToJson(c, -1, projectDir);
                     continue;
                 }
@@ -339,25 +343,42 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         }
         return arr;
     };
-    const QJsonArray video = tracks(data.timeline.video, TrackKind::Video);
-    const QJsonArray audio = tracks(data.timeline.audio, TrackKind::Audio);
+    auto timelineJson = [&](const Timeline& timeline) {
+        QJsonArray subtitles; // Untertitelspuren (optional, alte Dateien ohne)
+        for (const SubtitleTrack& t : timeline.subtitles) {
+            QJsonArray cues;
+            for (const SubtitleCue& c : t.cues)
+                cues << QJsonObject{{"id", c.id}, {"start", c.start}, {"end", c.end}, {"text", c.text}};
+            QJsonObject style = titleToJson(t.style);
+            style.remove("text");
+            QJsonObject o{{"style", style}, {"cues", cues}};
+            if (!t.name.isEmpty()) o["label"] = t.name;
+            if (!t.enabled) o["enabled"] = false;
+            if (t.locked) o["locked"] = true;
+            subtitles << o;
+        }
+        QJsonArray markers;
+        for (int m : timeline.markers) markers << m;
+        QJsonObject o{{"video", tracks(timeline.video, TrackKind::Video)},
+                      {"audio", tracks(timeline.audio, TrackKind::Audio)}, {"markers", markers},
+                      {"markIn", timeline.markIn}, {"markOut", timeline.markOut},
+                      {"masterVolumeDb", timeline.masterVolumeDb}, {"masterLimiter", timeline.masterLimiter},
+                      {"masterLimiterDb", timeline.masterLimiterDb}};
+        if (!subtitles.isEmpty()) o["subtitles"] = subtitles;
+        return o;
+    };
 
-    QJsonArray subtitles; // Untertitelspuren (optional, alte Dateien ohne)
-    for (const SubtitleTrack& t : data.timeline.subtitles) {
-        QJsonArray cues;
-        for (const SubtitleCue& c : t.cues)
-            cues << QJsonObject{{"id", c.id}, {"start", c.start}, {"end", c.end}, {"text", c.text}};
-        QJsonObject style = titleToJson(t.style);
-        style.remove("text");
-        QJsonObject o{{"style", style}, {"cues", cues}};
-        if (!t.name.isEmpty()) o["label"] = t.name;
-        if (!t.enabled) o["enabled"] = false;
-        if (t.locked) o["locked"] = true;
-        subtitles << o;
+    // Erst alle Timelines schreiben: Clips mit Dateien außerhalb des Media Pools ergänzen dabei die Medienliste
+    const QJsonObject current = timelineJson(data.timeline);
+    // Weitere Timelines und Compound Clips (optional, alte Dateien ohne); die geöffnete steht in "timeline"
+    QJsonArray seqs;
+    for (const Sequence& s : data.sequences) {
+        QJsonObject o{{"id", s.id}, {"name", s.name}};
+        if (s.compound) o["compound"] = true;
+        if (s.bin != 0) o["bin"] = s.bin;
+        if (s.id != data.currentSequence) o["timeline"] = timelineJson(s.timeline);
+        seqs << o;
     }
-
-    QJsonArray markers;
-    for (int m : data.timeline.markers) markers << m;
     QJsonArray bins;
     for (const MediaBin& b : data.bins) bins << QJsonObject{{"id", b.id}, {"parent", b.parent}, {"name", b.name}};
 
@@ -368,16 +389,11 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                                {"fpsNum", data.format.rate.num}, {"fpsDen", data.format.rate.den}}},
         {"playhead", data.playhead}, {"lastClipId", data.lastClipId}, {"lastLinkId", data.lastLinkId},
         {"media", media},           {"bins", bins},
-        {"timeline", QJsonObject{{"video", video}, {"audio", audio}, {"markers", markers},
-                                 {"markIn", data.timeline.markIn}, {"markOut", data.timeline.markOut},
-                                 {"masterVolumeDb", data.timeline.masterVolumeDb},
-                                 {"masterLimiter", data.timeline.masterLimiter},
-                                 {"masterLimiterDb", data.timeline.masterLimiterDb}}},
+        {"timeline", current}, // geöffnete Timeline (ältere Versionen lesen nur diese)
     };
-    if (!subtitles.isEmpty()) {
-        QJsonObject tl = root.value("timeline").toObject();
-        tl["subtitles"] = subtitles;
-        root["timeline"] = tl;
+    if (!seqs.isEmpty()) {
+        root["sequences"] = seqs;
+        root["currentSequence"] = data.currentSequence;
     }
     if (!data.renderQueue.isEmpty()) root["renderQueue"] = RenderQueueJson::toJson(data.renderQueue);
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
@@ -436,7 +452,6 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         d.bins << b;
     }
 
-    const QJsonObject tl = root.value("timeline").toObject();
     auto tracks = [&](const QJsonArray& arr, TrackKind kind) {
         QVector<Track> list;
         for (const QJsonValue& v : arr) {
@@ -462,58 +477,75 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         }
         return list;
     };
-    d.timeline.video = tracks(tl.value("video").toArray(), TrackKind::Video);
-    d.timeline.audio = tracks(tl.value("audio").toArray(), TrackKind::Audio);
-    for (const QJsonValue& v : tl.value("subtitles").toArray()) {
-        const QJsonObject o = v.toObject();
-        SubtitleTrack t;
-        t.name = o.value("label").toString();
-        t.enabled = o.value("enabled").toBool(true);
-        t.locked = o.value("locked").toBool();
-        if (o.contains("style")) {
-            QJsonObject style = o.value("style").toObject();
-            style["text"] = QString(); // Stil ohne Text
-            // fehlende Werte: Untertitel-Standard statt Titel-Standard
-            const TitleStyle base = subtitleBaseStyle();
-            const QJsonObject def = titleToJson(base);
-            for (auto it = def.begin(); it != def.end(); ++it)
-                if (!style.contains(it.key())) style[it.key()] = it.value();
-            t.style = titleFromJson(style);
-        }
-        for (const QJsonValue& cv : o.value("cues").toArray()) {
-            const QJsonObject c = cv.toObject();
-            SubtitleCue cue{c.value("id").toInt(), c.value("start").toInt(), c.value("end").toInt(),
-                            c.value("text").toString()};
-            if (cue.end <= cue.start) continue;
-            t.cues << cue;
-        }
-        std::sort(t.cues.begin(), t.cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
-        d.timeline.subtitles << t;
-    }
-    // ids eindeutig über Clips und Untertitel; fehlende/doppelte (Hand-Änderungen) bekommen eine neue
-    QSet<int> usedIds;
-    for (const auto* list : {&d.timeline.video, &d.timeline.audio})
-        for (const Track& t : *list)
-            for (const Clip& c : t.clips) usedIds.insert(c.id);
-    for (SubtitleTrack& t : d.timeline.subtitles)
-        for (SubtitleCue& c : t.cues) {
-            if (c.id <= 0 || usedIds.contains(c.id)) {
-                c.id = -1;
-                continue;
+    auto readTimeline = [&](const QJsonObject& tl) {
+        Timeline timeline;
+        timeline.video = tracks(tl.value("video").toArray(), TrackKind::Video);
+        timeline.audio = tracks(tl.value("audio").toArray(), TrackKind::Audio);
+        for (const QJsonValue& v : tl.value("subtitles").toArray()) {
+            const QJsonObject o = v.toObject();
+            SubtitleTrack t;
+            t.name = o.value("label").toString();
+            t.enabled = o.value("enabled").toBool(true);
+            t.locked = o.value("locked").toBool();
+            if (o.contains("style")) {
+                QJsonObject style = o.value("style").toObject();
+                style["text"] = QString(); // Stil ohne Text
+                // fehlende Werte: Untertitel-Standard statt Titel-Standard
+                const TitleStyle base = subtitleBaseStyle();
+                const QJsonObject def = titleToJson(base);
+                for (auto it = def.begin(); it != def.end(); ++it)
+                    if (!style.contains(it.key())) style[it.key()] = it.value();
+                t.style = titleFromJson(style);
             }
-            usedIds.insert(c.id);
-            d.lastClipId = std::max(d.lastClipId, c.id);
+            for (const QJsonValue& cv : o.value("cues").toArray()) {
+                const QJsonObject c = cv.toObject();
+                SubtitleCue cue{c.value("id").toInt(), c.value("start").toInt(), c.value("end").toInt(),
+                                c.value("text").toString()};
+                if (cue.end <= cue.start) continue;
+                t.cues << cue;
+            }
+            std::sort(t.cues.begin(), t.cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
+            timeline.subtitles << t;
         }
-    for (SubtitleTrack& t : d.timeline.subtitles)
-        for (SubtitleCue& c : t.cues)
-            if (c.id < 0) c.id = ++d.lastClipId;
-    for (const QJsonValue& v : tl.value("markers").toArray()) d.timeline.markers << v.toInt();
-    d.timeline.masterVolumeDb = tl.value("masterVolumeDb").toDouble(0.0);
-    d.timeline.masterLimiter = tl.value("masterLimiter").toBool(false);
-    d.timeline.masterLimiterDb = std::clamp(tl.value("masterLimiterDb").toDouble(kDefaultLimiterDb), -24.0, 0.0);
-    std::sort(d.timeline.markers.begin(), d.timeline.markers.end());
-    d.timeline.markIn = tl.value("markIn").toInt(-1);
-    d.timeline.markOut = tl.value("markOut").toInt(-1);
+        // ids eindeutig über Clips und Untertitel; fehlende/doppelte (Hand-Änderungen) bekommen eine neue
+        QSet<int> usedIds;
+        for (const auto* list : {&timeline.video, &timeline.audio})
+            for (const Track& t : *list)
+                for (const Clip& c : t.clips) usedIds.insert(c.id);
+        for (SubtitleTrack& t : timeline.subtitles)
+            for (SubtitleCue& c : t.cues) {
+                if (c.id <= 0 || usedIds.contains(c.id)) {
+                    c.id = -1;
+                    continue;
+                }
+                usedIds.insert(c.id);
+                d.lastClipId = std::max(d.lastClipId, c.id);
+            }
+        for (SubtitleTrack& t : timeline.subtitles)
+            for (SubtitleCue& c : t.cues)
+                if (c.id < 0) c.id = ++d.lastClipId;
+        for (const QJsonValue& v : tl.value("markers").toArray()) timeline.markers << v.toInt();
+        timeline.masterVolumeDb = tl.value("masterVolumeDb").toDouble(0.0);
+        timeline.masterLimiter = tl.value("masterLimiter").toBool(false);
+        timeline.masterLimiterDb = std::clamp(tl.value("masterLimiterDb").toDouble(kDefaultLimiterDb), -24.0, 0.0);
+        std::sort(timeline.markers.begin(), timeline.markers.end());
+        timeline.markIn = tl.value("markIn").toInt(-1);
+        timeline.markOut = tl.value("markOut").toInt(-1);
+        return timeline;
+    };
+    d.timeline = readTimeline(root.value("timeline").toObject());
+    for (const QJsonValue& v : root.value("sequences").toArray()) {
+        const QJsonObject o = v.toObject();
+        Sequence seq;
+        seq.id = o.value("id").toInt();
+        seq.name = o.value("name").toString();
+        seq.compound = o.value("compound").toBool();
+        seq.bin = std::max(0, o.value("bin").toInt());
+        if (seq.id <= 0) continue;
+        if (o.contains("timeline")) seq.timeline = readTimeline(o.value("timeline").toObject());
+        d.sequences << seq;
+    }
+    d.currentSequence = root.value("currentSequence").toInt();
     d.renderQueue = RenderQueueJson::fromJson(root.value("renderQueue").toArray());
 
     *data = d;
@@ -565,10 +597,14 @@ int relink(ProjectData* data, const QString& searchDir)
 
     for (MediaInfo& m : data->media)
         if (moved.contains(m.path)) m.path = moved.value(m.path);
-    for (QVector<Track>* list : {&data->timeline.video, &data->timeline.audio})
-        for (Track& t : *list)
-            for (Clip& c : t.clips)
-                if (moved.contains(c.mediaPath)) c.mediaPath = moved.value(c.mediaPath);
+    auto relinkTimeline = [&](Timeline& tl) {
+        for (QVector<Track>* list : {&tl.video, &tl.audio})
+            for (Track& t : *list)
+                for (Clip& c : t.clips)
+                    if (moved.contains(c.mediaPath)) c.mediaPath = moved.value(c.mediaPath);
+    };
+    relinkTimeline(data->timeline);
+    for (Sequence& s : data->sequences) relinkTimeline(s.timeline);
     return moved.size();
 }
 
