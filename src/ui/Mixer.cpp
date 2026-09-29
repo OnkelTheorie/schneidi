@@ -3,6 +3,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/Loudness.h"
 #include "engine/Engine.h"
 
 #include <QHBoxLayout>
@@ -11,6 +12,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollArea>
+#include <QSettings>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -484,6 +486,151 @@ private:
     bool m_peakClip = false;
 };
 
+// Loudness-Meter wie in DaVinci (Fairlight): Balken für Momentary (M) und Short-term (S) in LUFS, darunter
+// Integrated, Short-term, Momentary und Loudness Range. Ziellinie orange (Rechtsklick = Ziel wählen),
+// Integrated grün im Zielbereich (±1 LU), gelb darunter, rot darüber. Reset beginnt die Messung neu.
+class LoudnessView : public QWidget {
+public:
+    static constexpr double kFloor = -48.0; // unterster Wert der Skala (LUFS)
+
+    LoudnessView()
+    {
+        setMinimumHeight(120);
+        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+        setFixedWidth(kStripW + 20);
+    }
+
+    void setReading(const LoudnessReading& r, bool live)
+    {
+        // Nur bei sichtbarer Änderung neu zeichnen
+        auto round1 = [](double v) { return std::lround(v * 10); };
+        const bool changed = live != m_live || round1(r.momentary) != round1(m_r.momentary)
+                             || round1(r.shortTerm) != round1(m_r.shortTerm)
+                             || round1(r.integrated) != round1(m_r.integrated) || round1(r.range) != round1(m_r.range);
+        m_r = r;
+        m_live = live;
+        if (changed) update();
+    }
+    void setTarget(double lufs)
+    {
+        m_target = lufs;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        QFont f = font();
+        f.setPointSizeF(7);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        const int rowH = fm.height() + 1;
+        const int textH = 4 * rowH + 4;
+        const int top = 14, bottom = height() - textH - 6, h = std::max(10, bottom - top);
+        const auto yOf = [&](double lufs) {
+            return bottom - int(std::lround(std::clamp((lufs - kFloor) / -kFloor, 0.0, 1.0) * h));
+        };
+        // Balken M und S
+        const int bw = 9, x0 = 6;
+        const double values[2] = {m_live ? m_r.momentary : LoudnessMeter::kSilence,
+                                  m_live ? m_r.shortTerm : LoudnessMeter::kSilence};
+        const char* names[2] = {"M", "S"};
+        for (int i = 0; i < 2; ++i) {
+            const QRect bar(x0 + i * (bw + 3), top, bw, h + 1);
+            p.fillRect(bar, QColor(0x14, 0x14, 0x17));
+            const int y = yOf(values[i]);
+            if (y < bottom) p.fillRect(bar.x(), y, bw, bottom - y + 1, levelColor(values[i]));
+            p.setPen(Theme::textDim);
+            p.drawText(QRect(bar.x() - 2, 0, bw + 4, top - 2), Qt::AlignCenter, names[i]);
+        }
+        // Skala (LUFS) und Ziellinie
+        const int sx = x0 + 2 * (bw + 3);
+        for (int v = 0; v >= int(kFloor); v -= 6) {
+            const int y = yOf(v);
+            p.fillRect(x0, y, sx - x0 - 3, 1, QColor(0x14, 0x14, 0x17, 160));
+            p.setPen(Theme::textDim);
+            p.drawText(QRect(sx + 2, y - 6, width() - sx - 4, 12), Qt::AlignLeft | Qt::AlignVCenter, QString::number(v));
+        }
+        const int ty = yOf(m_target);
+        p.fillRect(x0 - 2, ty, sx - x0 + 1, 2, Theme::accent);
+
+        // Werte
+        const int ly = bottom + 8;
+        auto row = [&](int i, const QString& label, const QString& value, const QColor& color) {
+            const QRect r(4, ly + i * rowH, width() - 8, rowH);
+            p.setPen(Theme::textDim);
+            p.drawText(r, Qt::AlignLeft | Qt::AlignVCenter, label);
+            p.setPen(color);
+            p.drawText(r, Qt::AlignRight | Qt::AlignVCenter, value);
+        };
+        const double I = m_r.integrated;
+        QColor ic = Theme::text;
+        if (I > LoudnessMeter::kSilence)
+            ic = std::abs(I - m_target) <= 1.0 ? QColor(0x3c, 0xc0, 0x5a)
+                 : I < m_target                ? QColor(0xe0, 0xc0, 0x3a)
+                                               : QColor(0xe8, 0x41, 0x4a);
+        row(0, "I", lufsText(I), ic);
+        row(1, "S", lufsText(values[1]), Theme::text);
+        row(2, "M", lufsText(values[0]), Theme::text);
+        row(3, "LRA", QString("%1 LU").arg(m_r.range, 0, 'f', 1), Theme::text);
+    }
+
+private:
+    QColor levelColor(double lufs) const
+    {
+        if (lufs > m_target + 1) return QColor(0xe8, 0x41, 0x4a);
+        if (lufs >= m_target - 1) return QColor(0x3c, 0xc0, 0x5a);
+        return QColor(0x3a, 0x8c, 0xc8);
+    }
+    static QString lufsText(double v)
+    {
+        if (v <= -99) return QStringLiteral("–");
+        return QString::number(v, 'f', 1);
+    }
+
+    LoudnessReading m_r;
+    bool m_live = false;
+    double m_target = -14.0;
+};
+
+// Kasten rechts neben dem Master: Titel, Anzeige, Reset
+class LoudnessStrip : public QWidget {
+public:
+    LoudnessStrip()
+    {
+        setAttribute(Qt::WA_StyledBackground);
+        setObjectName("Strip");
+        setStyleSheet(QString("QWidget#Strip { background: %1; border-left: 1px solid %2; }")
+                          .arg(Theme::panel.name(), Theme::border.name()));
+        auto* lay = new QVBoxLayout(this);
+        lay->setContentsMargins(3, 4, 3, 4);
+        lay->setSpacing(3);
+        auto* name = new QLabel(T("Lautheit"));
+        name->setAlignment(Qt::AlignCenter);
+        name->setStyleSheet(QString("color: %1; font-weight: 600; font-size: 8pt; background: %2; padding: 2px;")
+                                .arg(Theme::text.name(), Theme::panelHeader.name()));
+        name->setToolTip(T("Loudness-Meter (ITU-R BS.1770-4, LUFS) am Master\n"
+                           "Misst bei Wiedergabe der Timeline. Rechtsklick = Ziellautheit"));
+        lay->addWidget(name);
+        view = new LoudnessView;
+        view->setToolTip(name->toolTip());
+        lay->addWidget(view, 1, Qt::AlignHCenter);
+        reset = new QToolButton;
+        reset->setText(T("Reset"));
+        reset->setFocusPolicy(Qt::NoFocus);
+        reset->setToolTip(T("Messung neu beginnen (Integrated, LRA)"));
+        reset->setFixedHeight(18);
+        reset->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        reset->setStyleSheet(QString("QToolButton { background: #3a3a42; color: %1; font-size: 8pt; padding: 0; }")
+                                 .arg(Theme::text.name()));
+        lay->addWidget(reset);
+        setContextMenuPolicy(Qt::CustomContextMenu);
+    }
+    LoudnessView* view;
+    QToolButton* reset;
+};
+
 Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     : QWidget(parent), m_project(project), m_engine(engine)
 {
@@ -546,9 +693,35 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
         menu.exec(m_master->limiter->mapToGlobal(pos));
     });
     row->addWidget(m_master);
+
+    // Loudness-Meter (Ziel in den Einstellungen, Standard -14 LUFS wie YouTube)
+    m_loudness = new LoudnessStrip;
+    m_loudness->view->setTarget(QSettings().value("audio/loudnessTarget", -14.0).toDouble());
+    connect(m_loudness->reset, &QToolButton::clicked, this, [this] {
+        m_engine->resetLoudness();
+        m_loudness->view->setReading(m_engine->loudness(), false);
+    });
+    connect(m_loudness, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        QMenu menu(this);
+        menu.addSection(T("Ziellautheit"));
+        const double current = QSettings().value("audio/loudnessTarget", -14.0).toDouble();
+        const std::pair<double, const char*> targets[] = {{-14.0, "YouTube / Spotify"}, {-16.0, "Apple Music / Podcast"},
+                                                          {-23.0, "EBU R128"}, {-24.0, "ATSC A/85"}};
+        for (const auto& [lufs, name] : targets) {
+            QAction* a = menu.addAction(QString("%1 LUFS  (%2)").arg(lufs, 0, 'f', 0).arg(name));
+            a->setCheckable(true);
+            a->setChecked(std::abs(current - lufs) < 0.01);
+            connect(a, &QAction::triggered, this, [this, lufs = lufs] {
+                QSettings().setValue("audio/loudnessTarget", lufs);
+                m_loudness->view->setTarget(lufs);
+            });
+        }
+        menu.exec(m_loudness->mapToGlobal(pos));
+    });
+    row->addWidget(m_loudness);
     root->addLayout(row, 1);
 
-    setMinimumWidth(kStripW * 2 + 20);
+    setMinimumWidth(kStripW * 3 + 40);
 
     connect(m_project, &Project::timelineChanged, this, &Mixer::sync);
     connect(m_engine, &Engine::audioLevels, this, &Mixer::onLevels);
@@ -639,4 +812,5 @@ void Mixer::tick()
     step(m_master);
     for (ChannelStrip* s : m_strips) s->updatePeak();
     m_master->updatePeak();
+    m_loudness->view->setReading(m_engine->loudness(), !silent);
 }

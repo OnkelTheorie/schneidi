@@ -1,6 +1,7 @@
 #include "engine/Engine.h"
 
 #include "core/I18n.h"
+#include "core/Loudness.h"
 #include "engine/Bundle.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
@@ -22,7 +23,8 @@ struct EngineCallbacks {
     }
 };
 
-Engine::Engine(QObject* parent) : QObject(parent), m_proxies(new ProxyManager(this))
+Engine::Engine(QObject* parent)
+    : QObject(parent), m_proxies(new ProxyManager(this)), m_loudness(std::make_unique<SharedLoudness>())
 {
     // Meldungen, die schon unterwegs waren, als gesprungen wurde, ließen den Playhead kurz zurückspringen
     connect(this, &Engine::framePosition, this, [this](int frame, int epoch) {
@@ -215,6 +217,7 @@ void Engine::updateTimeline(const Timeline& tl)
     if (active && m_consumer) m_consumer->stop(); // alten Tractor nicht mehr lesen lassen
     auto hooks = std::make_unique<MixerHooks>();
     auto tractor = m_builder->build(tl, hooks.get());
+    if (hooks->master.meter) hooks->master.meter->set("_loudness", m_loudness.get(), 0);
     {
         std::lock_guard<std::mutex> lock(m_mixerMutex);
         m_mixer = std::move(hooks);
@@ -269,6 +272,27 @@ void Engine::applyAudioState()
     const bool playing = m_speed != 0.0;
     m_consumer->set("audio_off", playing ? 0 : 1);
     m_consumer->set("scrub_audio", playing ? 1 : 0);
+    // Lautheit nur bei normaler Wiedergabe der Timeline (Spulen/Rückwärts/Quelle verfälschen die Messung)
+    m_loudness->active = m_speed == 1.0 && m_mode == Mode::Timeline;
+}
+
+LoudnessReading Engine::loudness() const
+{
+    LoudnessReading r;
+    std::lock_guard<std::mutex> lock(m_loudness->mutex);
+    const LoudnessMeter& m = m_loudness->meter;
+    r.momentary = m.momentary();
+    r.shortTerm = m.shortTerm();
+    r.integrated = m.integrated();
+    r.range = m.range();
+    r.seconds = m.measuredSeconds();
+    return r;
+}
+
+void Engine::resetLoudness()
+{
+    std::lock_guard<std::mutex> lock(m_loudness->mutex);
+    m_loudness->meter.reset();
 }
 
 void Engine::refresh()

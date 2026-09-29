@@ -23,6 +23,14 @@ class TimelineBuilder;
 class ProducerFactory;
 class ProxyManager;
 struct MixerHooks;
+struct SharedLoudness;
+
+// Loudness-Meter (ITU-R BS.1770) der Vorschau: gemessen am Master, nur bei Wiedergabe mit normaler Geschwindigkeit
+struct LoudnessReading {
+    double momentary = -200, shortTerm = -200, integrated = -200; // LUFS (-200 = noch nichts)
+    double range = 0;   // LU
+    double seconds = 0; // gemessene Dauer
+};
 
 class Engine : public QObject {
     Q_OBJECT
@@ -70,6 +78,9 @@ public:
     void seek(int frame);
     int position() const { return m_position; }
 
+    LoudnessReading loudness() const;
+    void resetLoudness(); // Integrated/LRA neu beginnen (wie der Reset-Knopf in DaVinci)
+
 signals:
     void frameReady(const QImage& image);
     void positionChanged(int frame);
@@ -96,6 +107,7 @@ private:
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Tractor> m_timeline;
     std::unique_ptr<MixerHooks> m_mixer;
+    std::unique_ptr<SharedLoudness> m_loudness; // vom Master-Pegelmesser im Audio-Thread gefüttert
     std::mutex m_mixerMutex; // m_mixer wird im Consumer-Thread gelesen
     bool m_mixerOnlyNext = false;
     std::unique_ptr<Mlt::Producer> m_source;
