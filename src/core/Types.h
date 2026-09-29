@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QMap>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 #include <QVector>
 
@@ -288,4 +289,36 @@ struct MediaInfo {
     // Frames im Quellmaterial, Out ist das letzte Frame im Bereich
     int markIn = -1;
     int markOut = -1;
+    // Media-Pool-Organisation (wie DaVinci): Bin (0 = Master), Clipfarbe (id aus kTrackColors, leer = keine;
+    // gilt auch für die Clips in der Timeline) und Flags (ids aus kFlagColors, mehrere möglich)
+    int bin = 0;
+    QString clipColor;
+    QStringList flags;
 };
+
+// Bin (Ordner) im Media Pool; Master (id 0) steht nicht in der Liste, parent 0 = direkt unter Master
+struct MediaBin {
+    int id = 0;
+    int parent = 0;
+    QString name;
+    bool operator==(const MediaBin& o) const { return id == o.id && parent == o.parent && name == o.name; }
+};
+
+// Flag-Farben wie DaVinci (Media Pool/Timeline Rechtsklick → Flags)
+struct FlagColorInfo { const char* id; const char* name; QRgb rgb; };
+inline constexpr FlagColorInfo kFlagColors[] = {
+    {"blue", N_("Blau"), 0xff3f8fe8},        {"cyan", N_("Cyan"), 0xff2cc6d9},
+    {"green", N_("Grün"), 0xff4fb04a},       {"yellow", N_("Gelb"), 0xffe8c42a},
+    {"red", N_("Rot"), 0xffe23b3b},          {"pink", N_("Pink"), 0xffe86fb2},
+    {"purple", N_("Lila"), 0xff8e5bd0},      {"fuchsia", N_("Fuchsia"), 0xffc23ab4},
+    {"rose", N_("Rosé"), 0xffe89a9a},        {"lavender", N_("Lavendel"), 0xffa99be0},
+    {"sky", N_("Himmelblau"), 0xff8cc8f0},   {"mint", N_("Minze"), 0xff8ee0b0},
+    {"lemon", N_("Zitrone"), 0xffe8e87a},    {"sand", N_("Sand"), 0xffc8a878},
+    {"cocoa", N_("Kakao"), 0xff8a6448},      {"cream", N_("Creme"), 0xfff0e6c8},
+};
+inline const FlagColorInfo* flagColorInfo(const QString& id)
+{
+    for (const auto& i : kFlagColors)
+        if (id == QLatin1String(i.id)) return &i;
+    return nullptr;
+}

@@ -262,6 +262,9 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                       {"hasAudio", m.hasAudio}, {"isImage", m.isImage}};
         if (m.markIn >= 0) o["markIn"] = m.markIn; // Quell-In/Out (optional, alte Dateien ohne)
         if (m.markOut >= 0) o["markOut"] = m.markOut;
+        if (m.bin != 0) o["bin"] = m.bin; // Media-Pool-Organisation (optional, alte Dateien ohne)
+        if (!m.clipColor.isEmpty()) o["clipColor"] = m.clipColor;
+        if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
         media << o;
     }
 
@@ -300,6 +303,8 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
 
     QJsonArray markers;
     for (int m : data.timeline.markers) markers << m;
+    QJsonArray bins;
+    for (const MediaBin& b : data.bins) bins << QJsonObject{{"id", b.id}, {"parent", b.parent}, {"name", b.name}};
 
     const QJsonObject root{
         {"app", "schneidi"},       {"version", kFormatVersion},
@@ -307,7 +312,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         {"format", QJsonObject{{"width", data.format.width}, {"height", data.format.height},
                                {"fpsNum", data.format.rate.num}, {"fpsDen", data.format.rate.den}}},
         {"playhead", data.playhead}, {"lastClipId", data.lastClipId}, {"lastLinkId", data.lastLinkId},
-        {"media", media},
+        {"media", media},           {"bins", bins},
         {"timeline", QJsonObject{{"video", video}, {"audio", audio}, {"markers", markers},
                                  {"markIn", data.timeline.markIn}, {"markOut", data.timeline.markOut},
                                  {"masterVolumeDb", data.timeline.masterVolumeDb},
@@ -355,8 +360,19 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         m.isImage = o.value("isImage").toBool();
         m.markIn = o.value("markIn").toInt(-1);
         m.markOut = o.value("markOut").toInt(-1);
+        m.bin = std::max(0, o.value("bin").toInt()); // fehlende Bins setzt Project::load auf Master
+        if (trackColorInfo(o.value("clipColor").toString())) m.clipColor = o.value("clipColor").toString();
+        for (const QJsonValue& f : o.value("flags").toArray())
+            if (flagColorInfo(f.toString()) && !m.flags.contains(f.toString())) m.flags << f.toString();
         allMedia << m;
         if (!o.value("notInPool").toBool()) d.media << m;
+    }
+    for (const QJsonValue& v : root.value("bins").toArray()) {
+        const QJsonObject o = v.toObject();
+        const MediaBin b{o.value("id").toInt(), std::max(0, o.value("parent").toInt()), o.value("name").toString()};
+        if (b.id <= 0 || b.name.isEmpty()) continue;
+        if (std::any_of(d.bins.cbegin(), d.bins.cend(), [&](const MediaBin& x) { return x.id == b.id; })) continue;
+        d.bins << b;
     }
 
     const QJsonObject tl = root.value("timeline").toObject();

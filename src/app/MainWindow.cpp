@@ -116,6 +116,17 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             if (QString(id) == "normalize_audio" && !audio) continue;
             menu.addAction(a);
         }
+        // Clipfarbe/Flags wie DaVinci: gelten für den Media-Pool-Clip (Titel haben keinen)
+        QStringList paths;
+        for (int cid : m_editor->selection()->ids())
+            if (const Clip* c = TimelineOps::findClip(m_project->timeline(), cid); c && !c->isTitle()
+                && !paths.contains(c->mediaPath))
+                paths << c->mediaPath;
+        if (!paths.isEmpty()) {
+            menu.addSeparator();
+            MediaPool::addClipColorMenu(&menu, m_project, paths);
+            MediaPool::addFlagsMenu(&menu, m_project, paths);
+        }
         menu.exec(pos);
     });
     // Quellbereich aus dem Viewer in die Timeline gezogen: dort überschreiben (wie DaVinci)
@@ -600,6 +611,7 @@ void MainWindow::buildActions()
     makeAction(file, "project_save_as", T("Projekt speichern unter…"), QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
+    makeAction(file, "new_bin", T("Neuer Bin"), QKeySequence("Ctrl+Shift+N"), [this] { m_mediaPool->newBin(); });
     file->addSeparator();
     makeAction(file, "project_settings", T("Projekteinstellungen…"), QKeySequence("Shift+9"), [this] { projectSettingsDialog(); });
     file->addSeparator();
@@ -949,6 +961,7 @@ void MainWindow::disableAutosave()
 {
     m_autosaveTimer->stop();
     m_autosaveDisabled = true;
+    m_mediaPool->setSaveSettings(false); // Testläufe: Media-Pool-Ansicht nicht speichern
 }
 
 void MainWindow::removeAutosave()

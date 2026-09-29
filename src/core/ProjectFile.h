@@ -11,6 +11,7 @@ struct ProjectData {
     ProjectFormat format; // alte Dateien ohne Angabe: 1920 × 1080, 25 fps
     int playhead = 0;
     QVector<MediaInfo> media;
+    QVector<MediaBin> bins; // Media-Pool-Bins (ohne Master)
     Timeline timeline;
     int lastClipId = 0;
     int lastLinkId = 0;

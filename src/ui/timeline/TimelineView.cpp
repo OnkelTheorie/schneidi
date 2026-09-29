@@ -49,6 +49,15 @@ QColor trackColor(const Track& t)
     return info ? QColor::fromRgba(info->rgb) : QColor();
 }
 
+// Farbe eines Clips wie DaVinci: Clipfarbe des Media-Pool-Clips vor der Spurfarbe, sonst ungültig (= Standard)
+QColor clipColor(const Project* project, const Clip& c, const Track* t)
+{
+    if (!c.isTitle())
+        if (const MediaInfo* m = project->mediaInfo(c.mediaPath))
+            if (const TrackColorInfo* info = trackColorInfo(m->clipColor)) return QColor::fromRgba(info->rgb);
+    return t ? trackColor(*t) : QColor();
+}
+
 // Schloss-Symbol (Vorhängeschloss) mittig in r
 void drawLock(QPainter& p, const QRectF& r, const QColor& color)
 {
@@ -195,6 +204,8 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
         emit viewChanged(); // nur damit die Scrollbar ggf. mehr Platz bekommt
     });
     connect(editor->selection(), &Selection::changed, this, qOverload<>(&QWidget::update));
+    // Clipfarbe/Flags im Media Pool geändert -> Clips neu zeichnen
+    connect(editor->project(), &Project::poolChanged, this, qOverload<>(&QWidget::update));
 }
 
 void TimelineView::setMediaCache(MediaCache* cache)
@@ -755,7 +766,7 @@ void TimelineView::drawTracks(QPainter& p)
             }
             const QRect r = clipRect(row, c);
             if (r.right() < kHeaderW || r.left() > width()) continue;
-            drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false, audioSpans, trackColor(track));
+            drawClip(p, r, c, row.ref.kind, sel.contains(c.id), false, audioSpans, clipColor(m_editor->project(), c, &track));
             if (row.lane && m_keyLanes.contains(c.id)) drawKeyLane(p, row, c);
         }
         drawTransitions(p, row, hidden);
@@ -787,7 +798,7 @@ void TimelineView::drawTracks(QPainter& p)
             moved.start = c->start + m_dragDelta;
             const QRect r(QPoint(int(frameToX(moved.start)), row->y + 1),
                           QPoint(int(frameToX(moved.end())) - 1, row->y + row->h - row->lane - 3));
-            const QColor col = ref.index < tl.tracks(ref.kind).size() ? trackColor(tl.track(ref)) : QColor();
+            const QColor col = clipColor(m_editor->project(), *c, ref.index < tl.tracks(ref.kind).size() ? &tl.track(ref) : nullptr);
             drawClip(p, r, moved, ref.kind, true, true, {}, col);
         }
     }
@@ -1104,12 +1115,28 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         fxW += 4;
     }
 
+    // Flags des Media-Pool-Clips vorne in der Titelleiste (wie DaVinci)
+    int flagW = 0;
+    if (!c.isTitle() && r.width() > 40 && barH >= 10) {
+        if (const MediaInfo* m = m_editor->project()->mediaInfo(c.mediaPath)) {
+            const int fs = std::min(barH - 4, 11);
+            int x = std::max(r.left(), kHeaderW) + 4;
+            for (const QString& id : m->flags) {
+                const FlagColorInfo* fi = flagColorInfo(id);
+                if (!fi || x + fs > r.right() - fxW - 20) continue;
+                MediaPool::drawFlag(p, QRectF(x, r.top() + (barH - fs) / 2.0, fs, fs), QColor::fromRgba(fi->rgb));
+                x += fs + 1;
+                flagW += fs + 1;
+            }
+        }
+    }
+
     if (r.width() > 24) {
         QFont f = font();
         f.setPointSizeF(7.5);
         p.setFont(f);
         p.setPen(QColor(0xf0, 0xf0, 0xf0));
-        const QRect textRect(std::max(r.left(), kHeaderW) + 5, r.top(), r.width() - 8 - fxW, barH);
+        const QRect textRect(std::max(r.left(), kHeaderW) + 5 + flagW, r.top(), r.width() - 8 - fxW - flagW, barH);
         p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
                    QFontMetrics(f).elidedText(clipLabel(c), Qt::ElideRight, textRect.width()));
     }
