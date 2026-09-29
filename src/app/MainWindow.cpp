@@ -18,6 +18,7 @@
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "ui/DeliverPanel.h"
+#include "ui/RenderQueuePanel.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaStorage.h"
 #include "ui/Inspector.h"
@@ -456,6 +457,7 @@ void MainWindow::buildLayout()
     m_deliverRight = new QSplitter(Qt::Vertical);
     m_deliverPage->addWidget(m_deliver);
     m_deliverPage->addWidget(m_deliverRight);
+    m_deliverPage->addWidget(m_deliver->queuePanel()); // Render-Warteschlange rechts wie in DaVinci
 
     m_pages = new QStackedWidget;
     m_pages->addWidget(m_mediaPage);
@@ -598,7 +600,7 @@ void MainWindow::showPage(Page page)
         m_deliverRight->insertWidget(1, m_timeline);
         m_deliverRight->setSizes({480, 380});
         m_deliverPage->setStretchFactor(1, 1);
-        m_deliverPage->setSizes({340, 1260});
+        m_deliverPage->setSizes({340, 940, 320});
         m_pages->setCurrentWidget(m_deliverPage);
         break;
     }
