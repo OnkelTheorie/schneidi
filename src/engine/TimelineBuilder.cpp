@@ -6,6 +6,7 @@
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
 #include "engine/Profiles.h"
+#include "engine/RampProducer.h"
 
 #include <Mlt.h>
 #include <QColor>
@@ -839,10 +840,15 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     const QString file = m_resolver ? m_resolver(path, kind) : path;
     // Geschwindigkeit: MLT timewarp (negativ = rückwärts); Standbild: wiederholtes Einzelframe (s. u.)
     const bool freeze = retime && retime->freeze;
-    const double warp = retime && !freeze ? (retime->reverse ? -retime->speed : retime->speed) : 1.0;
+    const bool ramp = retime && retime->hasRamp(); // Speed Ramp: eigener Producer (engine/RampProducer)
+    const double warp = retime && !freeze && !ramp ? (retime->reverse ? -retime->speed : retime->speed) : 1.0;
     const bool pitch = retime && retime->keepPitch;
     QString resource = file;
     QString tag;
+    if (ramp) {
+        tag = QString("|r%1%2%3|%4").arg(retime->speed).arg(retime->reverse ? "r" : "").arg(pitch ? "p" : "");
+        for (const SpeedPoint& sp : retime->ramp) tag += QString("|%1:%2:%3").arg(sp.source).arg(sp.speed).arg(sp.smooth);
+    }
     if (warp != 1.0) {
         // timewarp liest die Zahl per atof -> im gerade gültigen C-Locale schreiben (Komma/Punkt, siehe dev-notes)
         char num[32];
@@ -857,6 +863,21 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     auto it = m_cache.find(key);
     if (it != m_cache.end()) return it->second.get();
 
+    if (ramp) {
+        std::unique_ptr<Mlt::Producer> r;
+        if (kind == TrackKind::Video) {
+            auto inner = m_factory->open(file);
+            if (!inner->is_valid()) return nullptr;
+            inner->set("audio_index", -1);
+            r = RampProducer::video(m_profile, std::move(inner), *retime);
+        } else {
+            r = RampProducer::audio(m_profile, file, *retime);
+        }
+        if (!r || !r->is_valid()) return nullptr;
+        Mlt::Producer* raw = r.get();
+        m_cache.emplace(key, std::move(r));
+        return raw;
+    }
     // Video über die Fabrik (BT.601-Quellen, siehe Profiles.h); Ton braucht das nicht
     auto p = kind == TrackKind::Video ? m_factory->open(resource)
                                       : std::make_unique<Mlt::Producer>(m_profile, resource.toUtf8().constData());

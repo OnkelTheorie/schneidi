@@ -5,10 +5,12 @@
 #include <QHash>
 #include <QObject>
 #include <algorithm>
+#include <functional>
 #include <optional>
 
 class Project;
 class Selection;
+class RetimeMap;
 
 // Bearbeitungs-Operationen auf Nutzerebene (was ein Klick/Shortcut auslöst).
 // UI ruft nur Editor-Methoden auf, nie direkt TimelineOps -> neue Werkzeuge
@@ -136,6 +138,16 @@ public:
     };
     void setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple);
 
+    // Speed Ramp wie DaVinci „Retime Controls“ am Clip (mit verknüpften Partnern derselben Datei), je ein Undo-Schritt.
+    // Anfang/Ende und Keyframes bleiben an ihrer Quellstelle, die Cliplänge folgt dem Tempo (spätere Clips derselben
+    // Spuren rücken nach). frame = Timeline-Frame im Clip; Abschnitt 0 liegt vor dem ersten Speed-Punkt.
+    bool canRetime(int clipId) const;
+    void addSpeedPoint(int clipId, int frame);
+    void removeSpeedPoint(int clipId, int index);
+    void moveSpeedPoint(int clipId, int index, int delta); // Punkt um delta Timeline-Frames, Tempo davor bleibt
+    void setSegmentSpeed(int clipId, int segment, double speed);
+    void setSpeedPointSmooth(int clipId, int index, int frames);
+
     // Quell-In/Out (I/O im Quell-Viewer) eines Media-Pool-Clips, -1 = entfernen; Regeln wie setMarkIn/setMarkOut
     void setSourceMarkIn(const QString& path, int frame);
     void setSourceMarkOut(const QString& path, int frame);
@@ -246,6 +258,10 @@ private:
     // sIn/len in Frames des umgerechneten Materials, wenn speed != 1 (siehe Clip::speed)
     void placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack,
                      double speed = 1.0);
+
+    // Gemeinsamer Ablauf der Speed-Ramp-Bearbeitungen (siehe addSpeedPoint); change bekommt den alten Verlauf
+    // und die Dateilänge und liefert false, wenn sich nichts ändert
+    void editRamp(const QString& text, int clipId, const std::function<bool(Clip&, const RetimeMap&, int)>& change);
 
     // Clips unter dem Playhead bzw. die Auswahl (mit Partnern), wie DaVinci bei Strg+B
     QVector<int> targetIds(int frame) const;

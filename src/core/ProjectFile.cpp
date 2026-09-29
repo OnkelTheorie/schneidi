@@ -2,6 +2,7 @@
 
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
+#include "core/Retime.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -210,6 +211,15 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (c.reverse) o["reverse"] = true;
     if (c.freeze) o["freeze"] = true;
     if (!c.keepPitch) o["keepPitch"] = false;
+    if (!c.ramp.isEmpty()) { // Speed Ramp: [{source, speed, smooth}]
+        QJsonArray ramp;
+        for (const SpeedPoint& p : c.ramp) {
+            QJsonObject j{{"source", p.source}, {"speed", p.speed}};
+            if (p.smooth > 0) j["smooth"] = p.smooth;
+            ramp.append(j);
+        }
+        o["ramp"] = ramp;
+    }
     if (c.renderCache) o["renderCache"] = true;
     if (!c.transform.isIdentity() || !c.transform.transformOn || !c.transform.cropOn || !c.transform.compositeOn)
         o["transform"] = transformToJson(c.transform);
@@ -259,6 +269,15 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.reverse = o.value("reverse").toBool();
     c.freeze = o.value("freeze").toBool();
     c.keepPitch = o.value("keepPitch").toBool(true);
+    for (const QJsonValue& v : o.value("ramp").toArray()) {
+        const QJsonObject j = v.toObject();
+        SpeedPoint p;
+        p.source = j.value("source").toDouble();
+        p.speed = j.value("speed").toDouble(1.0);
+        p.smooth = j.value("smooth").toInt();
+        c.ramp << p;
+    }
+    Retime::normalize(c.ramp, 0); // kaputte Werte verwerfen (Dateilänge hier unbekannt)
     c.renderCache = o.value("renderCache").toBool();
     if (o.contains("transform")) c.transform = transformFromJson(o.value("transform").toObject());
     for (const QJsonValue& v : o.value("effects").toArray()) {
