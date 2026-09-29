@@ -62,6 +62,8 @@ public slots:
 
 signals:
     void sourceRequested(const QString& path);
+    // Untertiteldateien (.srt) importiert/hineingezogen: werden zu Untertitelspuren, nicht zu Medien
+    void subtitleFilesImported(const QStringList& paths);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* e) override;

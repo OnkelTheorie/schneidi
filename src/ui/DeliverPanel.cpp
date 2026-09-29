@@ -7,6 +7,7 @@
 #include "ui/RenderQueuePanel.h"
 
 #include <QComboBox>
+#include <QStandardItemModel>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -34,7 +35,7 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     if (!a.audioOnly() && a.outputSize(timeline) != b.outputSize(timeline)) return false;
     if (f.hasQuality && a.quality != b.quality) return false;
     if (QLatin1String(f.audioCodec) == QLatin1String("aac") && a.audioBitrateK != b.audioBitrateK) return false;
-    return true;
+    return a.subtitles == b.subtitles;
 }
 
 } // namespace
@@ -85,6 +86,12 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     for (int k : {128, 192, 256, 320}) m_audioBitrate->addItem(QString("%1 kbit/s").arg(k), k);
 
     // Wie DaVinci: "Render: Entire Timeline / In/Out Range"
+    // Untertitel wie DaVinci „Subtitle Settings“: sichtbare Untertitelspur einbrennen oder als eigene Datei
+    m_subtitles = new QComboBox;
+    m_subtitles->addItem(T("Keine"), int(RenderSettings::NoSubtitles));
+    m_subtitles->addItem(T("Ins Bild einbrennen"), int(RenderSettings::BurnSubtitles));
+    m_subtitles->addItem(T("Als SRT-Datei daneben"), int(RenderSettings::SrtFile));
+    m_subtitles->setToolTip(T("Gilt für die sichtbare Untertitelspur"));
     m_range = new QComboBox;
     m_range->addItem(T("Ganze Timeline"));
     m_range->addItem(T("In/Out-Bereich"));
@@ -104,6 +111,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Bildrate"), m_rate);
     form->addRow(T("Qualität"), m_quality);
     form->addRow(T("Audio-Bitrate"), m_audioBitrate);
+    form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(T("Bereich"), m_range);
 
     m_addBtn = new QPushButton(T("Zur Render-Warteschlange hinzufügen"));
@@ -127,7 +135,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     lay->addWidget(m_status);
 
     connect(m_preset, qOverload<int>(&QComboBox::activated), this, &DeliverPanel::applyPreset);
-    for (QComboBox* c : {m_format, m_resolution, m_quality, m_audioBitrate})
+    for (QComboBox* c : {m_format, m_resolution, m_quality, m_audioBitrate, m_subtitles})
         connect(c, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
             updateControls();
             syncPresetToSettings();
@@ -272,6 +280,8 @@ RenderSettings DeliverPanel::settings() const
     s.format = m_format->currentData().toString();
     s.quality = m_quality->currentIndex();
     s.audioBitrateK = m_audioBitrate->currentData().toInt();
+    s.subtitles = m_subtitles->currentData().toInt();
+    if (s.audioOnly() && s.subtitles == RenderSettings::BurnSubtitles) s.subtitles = RenderSettings::NoSubtitles;
     const QSize size = m_resolution->currentData().toSize();
     const QSize tl = m_project->format().size();
     if (size.isValid() && size != tl) {
@@ -290,6 +300,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     m_quality->setCurrentIndex(std::clamp(s.quality, 0, 2));
     const int br = m_audioBitrate->findData(s.audioBitrateK);
     m_audioBitrate->setCurrentIndex(br >= 0 ? br : m_audioBitrate->count() - 1);
+    m_subtitles->setCurrentIndex(std::max(0, m_subtitles->findData(s.subtitles)));
     if (!s.audioOnly()) selectSize(s.outputSize(m_project->format().size()));
     m_applying = wasApplying;
     updateControls();
@@ -319,6 +330,10 @@ void DeliverPanel::updateControls()
     m_quality->setEnabled(f.hasQuality);
     m_quality->setToolTip(f.hasQuality ? QString() : T("Bei diesem Format fest"));
     m_audioBitrate->setEnabled(QLatin1String(f.audioCodec) == QLatin1String("aac"));
+    // Nur Audio: nichts einzubrennen (Eintrag ausgegraut, SRT daneben geht weiter)
+    if (auto* model = qobject_cast<QStandardItemModel*>(m_subtitles->model()))
+        if (QStandardItem* item = model->item(1)) item->setEnabled(video);
+    if (!video && m_subtitles->currentIndex() == 1) m_subtitles->setCurrentIndex(0);
 }
 
 void DeliverPanel::updateRange()

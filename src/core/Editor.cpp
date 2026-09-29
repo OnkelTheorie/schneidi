@@ -15,6 +15,25 @@
 #include <cstdlib>
 #include <algorithm>
 
+namespace {
+
+void removeCues(Timeline& tl, const QVector<int>& ids)
+{
+    for (SubtitleTrack& t : tl.subtitles)
+        t.cues.erase(std::remove_if(t.cues.begin(), t.cues.end(), [&](const SubtitleCue& c) { return ids.contains(c.id); }),
+                     t.cues.end());
+}
+
+} // namespace
+
+QVector<int> Editor::clipIdsOf(const QSet<int>& ids) const
+{
+    QVector<int> out;
+    for (int id : ids)
+        if (TimelineOps::findClip(m_project->timeline(), id)) out << id;
+    return out;
+}
+
 Editor::Editor(Project* project, Selection* selection, QObject* parent)
     : QObject(parent), m_project(project), m_selection(selection) {}
 
@@ -527,9 +546,12 @@ void Editor::setGradeKeyframe(const QVector<int>& ids, int frame, bool on)
 
 void Editor::rippleDeleteSelection()
 {
-    const QVector<int> ids = editable(m_selection->ids().values().toVector());
-    if (ids.isEmpty()) return;
+    const QVector<int> cues = selectedSubtitles();
+    const QVector<int> ids = editable(clipIdsOf(m_selection->ids()));
+    if (ids.isEmpty() && cues.isEmpty()) return;
     m_project->edit(T("Löschen mit Ripple"), [&](Timeline& tl) {
+        removeCues(tl, cues); // Untertitel: ohne Ripple (Lücke bleibt)
+        if (ids.isEmpty()) return;
         TimelineOps::detachTransitions(tl, ids);
         TimelineOps::rippleDelete(tl, ids);
     });
@@ -1028,10 +1050,12 @@ void Editor::deleteSelection()
         m_selection->clear();
         return;
     }
-    const QVector<int> ids = editable(m_selection->ids().values().toVector());
-    if (ids.isEmpty()) return;
+    const QVector<int> cues = selectedSubtitles();
+    const QVector<int> ids = editable(clipIdsOf(m_selection->ids()));
+    if (ids.isEmpty() && cues.isEmpty()) return;
     // Löschen ohne Ripple: es bleibt eine Lücke, nichts rutscht nach
     m_project->edit(T("Löschen"), [&](Timeline& tl) {
+        removeCues(tl, cues);
         TimelineOps::detachTransitions(tl, ids);
         for (int id : ids) TimelineOps::removeClip(tl, id);
     });

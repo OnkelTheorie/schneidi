@@ -3,6 +3,8 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QTimer>
 #include <algorithm>
 
@@ -31,6 +33,11 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     // Größe beim Hinzufügen festgehalten; ohne (nur Audio, alte Datei) nach den Einstellungen
     s.size = job.size.isEmpty() ? job.settings.outputSize(format.size()) : job.size;
     if (job.settings.audioOnly()) s.size = format.size(); // wird nicht gerendert, aber nichts umrechnen
+    s.burnSubtitles = job.settings.subtitles == RenderSettings::BurnSubtitles;
+    if (job.settings.subtitles == RenderSettings::SrtFile) {
+        const QFileInfo fi(job.path);
+        s.subtitlePath = fi.dir().filePath(fi.completeBaseName() + ".srt");
+    }
     if (job.inOut) {
         s.from = std::max(0, job.from);
         s.to = job.to;

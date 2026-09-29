@@ -64,6 +64,7 @@ private:
     QComboBox* m_quality;
     QComboBox* m_audioBitrate;
     QComboBox* m_range; // ganze Timeline / In-Out-Bereich
+    QComboBox* m_subtitles; // Untertitel: keine / einbrennen / SRT-Datei (Daten: RenderSettings::Subtitles)
     bool m_hadRange = false;
     bool m_applying = false;
     QPushButton* m_addBtn;

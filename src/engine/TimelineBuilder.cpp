@@ -760,6 +760,70 @@ std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Produ
     return mix;
 }
 
+// Untertitel: Zeilen auf maxWidth umbrechen (vorhandene Zeilenumbrüche bleiben), zu lange Wörter bleiben ganz
+QStringList wrapSubtitle(const QString& text, const QFontMetricsF& fm, double maxWidth)
+{
+    QStringList out;
+    for (const QString& para : text.split('\n')) {
+        QString line;
+        for (const QString& word : para.split(' ', Qt::SkipEmptyParts)) {
+            const QString candidate = line.isEmpty() ? word : line + ' ' + word;
+            if (!line.isEmpty() && fm.horizontalAdvance(candidate) > maxWidth) {
+                out << line;
+                line = word;
+            } else {
+                line = candidate;
+            }
+        }
+        out << line;
+    }
+    return out;
+}
+
+// Ein Untertitel (Spurstil wie ein Titel): Textblock unten, Unterkante posY Pixel über dem Bildrand,
+// Zeilen auf 90 % der Bildbreite umbrochen. len Frames lang.
+Mlt::Producer* subtitleCut(Mlt::Profile& profile, const TitleStyle& t, const QString& text, int len)
+{
+    Mlt::Producer src(profile, "color:#00000000");
+    src.set("length", len);
+    src.set("out", len - 1);
+    Mlt::Producer* cut = src.cut(0, len - 1);
+    const double W = profile.width(), H = profile.height();
+    QFont font(t.font);
+    font.setPixelSize(std::max(1, int(std::lround(t.size))));
+    font.setBold(t.bold);
+    font.setItalic(t.italic);
+    const QFontMetricsF fm(font);
+    const QStringList lines = wrapSubtitle(text.trimmed(), fm, W * 0.9);
+    double w = 1;
+    for (const QString& line : lines) w = std::max(w, fm.horizontalAdvance(line));
+    Mlt::Filter f(profile, "qtext");
+    if (!f.is_valid()) return cut;
+    f.set("argument", lines.join('\n').toUtf8().constData());
+    const double bottom = std::clamp(H - t.posY, 1.0, H);
+    f.set("geometry", mlt_rect{(W - w) / 2 + t.posX, 0, w, bottom, 1.0});
+    f.set("family", t.font.toUtf8().constData());
+    f.set("size", std::max(1.0, t.size));
+    f.set("weight", t.bold ? 700 : 400);
+    f.set("style", t.italic ? "italic" : "normal");
+    f.set("halign", t.align == 0 ? "left" : t.align == 2 ? "right" : "center");
+    f.set("valign", "bottom");
+    f.set("fgcolour", t.color.name(QColor::HexArgb).toUtf8().constData());
+    f.set("bgcolour", t.boxOn ? t.boxColor.name(QColor::HexArgb).toUtf8().constData() : "#00000000");
+    f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
+    f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
+    f.set("outline", t.outlineOn ? std::max(0.0, t.outlineWidth) : 0.0);
+    attachTo(*cut, f);
+    // wie bei Titeln: immer in voller Projektgröße zeichnen (Umrandung skaliert sonst in der Vorschau nicht mit)
+    Mlt::Filter full(profile, "qtblend");
+    if (full.is_valid()) {
+        full.set("rect", mlt_rect{0, 0, W, H, 1.0});
+        full.set("distort", 1);
+        attachTo(*cut, full);
+    }
+    return cut;
+}
+
 } // namespace
 
 TimelineBuilder::TimelineBuilder(Mlt::Profile& profile)
@@ -1032,6 +1096,27 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     };
 
     for (int i = 0; i < tl.video.size(); ++i) fill(tl.video[i], TrackKind::Video, i);
+    // Untertitel über allen Videospuren (sichtbare Spur; Export nur beim Einbrennen)
+    if (m_subtitles)
+        for (const SubtitleTrack& st : tl.subtitles) {
+            if (!st.enabled || st.cues.isEmpty()) continue;
+            Mlt::Playlist pl(m_profile);
+            int cursor = 0;
+            for (const SubtitleCue& c : st.cues) {
+                if (c.end <= cursor || c.text.trimmed().isEmpty()) continue;
+                const int from = std::max(cursor, c.start);
+                if (from > cursor) pl.blank(from - cursor - 1);
+                std::unique_ptr<Mlt::Producer> cut(subtitleCut(m_profile, st.style, c.text, c.end - from));
+                pl.append(*cut);
+                cursor = c.end;
+            }
+            pl.set("hide", 2); // kein Ton
+            tractor->set_track(pl, mltIndex);
+            Mlt::Transition t(m_profile, "qtblend");
+            t.set("always_active", 1);
+            tractor->plant_transition(t, 0, mltIndex);
+            ++mltIndex;
+        }
     for (int i = 0; i < tl.audio.size(); ++i) fill(tl.audio[i], TrackKind::Audio, i);
 
     // Master-Fader auf dem Tractor (gilt damit auch für den Export)

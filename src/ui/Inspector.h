@@ -12,6 +12,8 @@ class Editor;
 struct EffectDescriptor;
 class QButtonGroup;
 class QHBoxLayout;
+class QLineEdit;
+class QPlainTextEdit;
 class QComboBox;
 class QGridLayout;
 class QLabel;
@@ -34,6 +36,8 @@ public:
 public slots:
     // Playhead (Timeline-Frame): Werte zeigen den interpolierten Wert dort, Keyframes werden dort gesetzt
     void setPlayhead(int frame);
+    // Untertitel auswählen und seinen Text zum Tippen fokussieren (Doppelklick in der Timeline)
+    void editSubtitle(int cueId);
 
 signals:
     // Keyframe-Pfeile ◀ ▶: zum vorigen/nächsten Keyframe springen
@@ -137,6 +141,13 @@ private:
     ScrubField* m_transBorder = nullptr;       // Wischblende: Randbreite
     QToolButton* m_transBorderColor = nullptr; // Wischblende: Randfarbe
     QVector<QWidget*> m_dipRows, m_wipeRows;   // Zeilen nur für die jeweilige Art
+    // Tab "Untertitel": Text/Zeiten des Eintrags und Stil seiner Spur (wie DaVinci Caption + Track Style)
+    void buildSubtitlePage(QVBoxLayout* page);
+    bool refreshSubtitle(); // true = nur Untertitel ausgewählt und angezeigt
+    const SubtitleCue* selectedCue(int* track = nullptr) const;
+    void changeSubtitleStyle(const QString& text, const std::function<void(TitleStyle&)>& fn, const QString& mergeKey = {});
+    QPlainTextEdit* m_subText = nullptr;
+    QVector<std::function<void()>> m_subRefreshers;
     // Stil des ausgewählten Übergangs ändern (mergeKey: Ziehen = ein Undo-Schritt)
     void changeTransition(const std::function<void(TransitionStyle&)>& fn, const QString& mergeKey = {});
 };
