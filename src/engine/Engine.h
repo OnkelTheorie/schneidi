@@ -46,6 +46,11 @@ public:
     MediaInfo probe(const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);
 
+    // Standbild (Grab Still) des aktuell gezeigten Bilds (Timeline bzw. Quelle) in voller Projektauflösung,
+    // immer aus den Originalen (nicht aus Proxies)
+    QImage grabStill(const Timeline& tl);
+    QString sourcePath() const { return m_sourcePath; }
+
     void updateTimeline(const Timeline& tl); // Modell geändert -> neu aufbauen
     // Nächstes updateTimeline() ändert nur Fader/Pan -> live übernehmen statt neu aufbauen
     // (sonst stockt die Wiedergabe beim Fader-Ziehen)
@@ -87,6 +92,7 @@ private:
     std::mutex m_mixerMutex; // m_mixer wird im Consumer-Thread gelesen
     bool m_mixerOnlyNext = false;
     std::unique_ptr<Mlt::Producer> m_source;
+    QString m_sourcePath;
     Mlt::Producer* m_current = nullptr;
 
     Mode m_mode = Mode::Timeline;

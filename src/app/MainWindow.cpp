@@ -6,6 +6,7 @@
 #include "app/ProjectSettingsDialog.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
+#include "core/Timecode.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
@@ -189,6 +190,30 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
 void MainWindow::setProjectFormat(const ProjectFormat& format)
 {
     m_project->setFormat(format);
+}
+
+void MainWindow::grabStill()
+{
+    m_engine->pause();
+    const QImage img = m_engine->grabStill(m_project->timeline());
+    if (img.isNull()) {
+        QMessageBox::warning(this, T("Standbild exportieren"), T("Das Bild konnte nicht erzeugt werden."));
+        return;
+    }
+    // Vorschlag: Quellclip bzw. Projektname + Timecode (Doppelpunkte gehen nicht in Dateinamen)
+    const QString base = m_engine->mode() == Engine::Mode::Source
+        ? QFileInfo(m_engine->sourcePath()).completeBaseName()
+        : (m_projectPath.isEmpty() ? T("Unbenannt") : QFileInfo(m_projectPath).completeBaseName());
+    const QString tc = Timecode::format(m_engine->position(), m_project->fps()).replace(':', '-');
+    QSettings settings;
+    const QString dir = settings.value("still/dir", QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)).toString();
+    QString path = QFileDialog::getSaveFileName(this, T("Standbild exportieren"), QDir(dir).filePath(base + "_" + tc + ".png"),
+                                                T("Bilder (*.png *.jpg *.tif)"));
+    if (path.isEmpty()) return;
+    if (QFileInfo(path).suffix().isEmpty()) path += ".png";
+    settings.setValue("still/dir", QFileInfo(path).absolutePath());
+    if (!img.save(path, nullptr, 95))
+        QMessageBox::warning(this, T("Standbild exportieren"), T("Datei konnte nicht gespeichert werden:\n%1").arg(path));
 }
 
 void MainWindow::projectSettingsDialog()
@@ -558,6 +583,10 @@ void MainWindow::buildActions()
     });
     makeAction(play, "show_timeline", T("Timeline im Viewer zeigen"), QKeySequence("Q"),
               [this, tv] { m_engine->showTimeline(tv->playhead()); });
+    // Wie DaVinci „Grab Still“ (Strg+Alt+G), hier direkt als PNG speichern
+    auto* grab = makeAction(play, "grab_still", T("Standbild exportieren…"), QKeySequence("Ctrl+Alt+G"), [this] { grabStill(); });
+    m_viewer->addAction(grab);
+    m_viewer->setContextMenuPolicy(Qt::ActionsContextMenu);
     play->addSeparator();
     // Wie DaVinci (Playback → Use Proxy Media if Available); Export nutzt immer die Originale
     auto* useProxy = makeAction(play, "use_proxy", T("Proxy-Medien verwenden, falls vorhanden"), QKeySequence(), [] {});

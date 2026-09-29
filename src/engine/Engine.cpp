@@ -162,6 +162,36 @@ QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
     return out;
 }
 
+QImage Engine::grabStill(const Timeline& tl)
+{
+    // Eigenes Profil und eigene Producer (wie der Export) -> Vorschau läuft ungestört weiter
+    auto profile = makeProfile(m_format);
+    std::unique_ptr<TimelineBuilder> builder;
+    std::unique_ptr<Mlt::Producer> producer;
+    if (m_mode == Mode::Source && !m_sourcePath.isEmpty()) {
+        producer = std::make_unique<Mlt::Producer>(*profile, m_sourcePath.toUtf8().constData());
+    } else {
+        builder = std::make_unique<TimelineBuilder>(*profile);
+        producer = builder->build(tl);
+    }
+    if (!producer || !producer->is_valid()) return {};
+    producer->seek(m_position);
+    std::unique_ptr<Mlt::Frame> f(producer->get_frame());
+    if (!f) return {};
+    mlt_image_format fmt = mlt_image_rgba;
+    int w = profile->width(), h = profile->height();
+    const uint8_t* data = f->get_image(fmt, w, h);
+    if (!data || w <= 0 || h <= 0) return {};
+    QImage img(w, h, QImage::Format_RGBA8888);
+    std::memcpy(img.bits(), data, size_t(w) * h * 4);
+    // Transparente Stellen (leere Timeline, herausgezoomte Clips) wie im Viewer schwarz
+    QImage out(img.size(), QImage::Format_RGB32);
+    out.fill(Qt::black);
+    QPainter painter(&out);
+    painter.drawImage(0, 0, img);
+    return out;
+}
+
 void Engine::updateTimeline(const Timeline& tl)
 {
     const bool mixerOnly = std::exchange(m_mixerOnlyNext, false);
@@ -200,6 +230,7 @@ void Engine::showSource(const QString& path)
     if (!p->is_valid()) return;
     m_consumer->stop();
     m_source = std::move(p);
+    m_sourcePath = path;
     m_speed = 0;
     m_mode = Mode::Source;
     connectProducer(m_source.get(), 0);
