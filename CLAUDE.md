@@ -8,6 +8,8 @@ Im Zweifel: verhalten wie DaVinci.
 - Entwickler-Notizen (Testen, Screenshots, gelöste Stolperfallen): `docs/dev-notes.md`
 - Kernregel: Timeline-Zoom/Scroll ändern sich nur durch Nutzereingabe (siehe Plan).
 
+- **Windows-Portabilität (verbindlich):** Ab jetzt so entwickeln, dass ein Windows-Umzug später ohne Umbau geht: keine hartcodierten Linux-Pfade (`/usr`, `/tmp`, `~`), Pfade/Config nur über `QStandardPaths`/`QDir`/`QFileInfo`, keine POSIX-only-Header oder -Aufrufe (`unistd.h`, `fork`, …) ohne `#ifdef`, externe Programme nur über `QProcess` ohne Shell-Annahmen, keine Abhängigkeit von Linux-only-Bibliotheken/-Filtern ohne Fallback. Details/Plan: `docs/plan.md` (M5).
+
 ## Stack
 C++17, Qt 6 Widgets, MLT 7 (Vorschau/Mehrspur/Export über FFmpeg), CMake.
 
