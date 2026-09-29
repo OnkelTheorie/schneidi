@@ -110,8 +110,11 @@ int main(int argc, char** argv)
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     g_media = Check::makeMedia(tmp.filePath("bars.mp4"),
-                               {"-f", "lavfi", "-i", "smptebars=size=1920x1080:rate=25:duration=4", "-c:v", "libx264",
-                                "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+                               {"-f", "lavfi", "-i", "smptebars=size=1920x1080:rate=25:duration=4", "-vf",
+                                "scale=out_color_matrix=bt709", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
+                                "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"});
+    // BT.709 wie Handy-/Kameramaterial: BT.601-Quellen färbt MLT beim Skalieren anders (dev-notes), das würde die
+    // Größenvergleiche der Unschärfe verfälschen
     if (!CHECK(!g_media.isEmpty())) return Check::result();
 
     Mlt::Factory::init();
