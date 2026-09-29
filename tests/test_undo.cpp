@@ -70,14 +70,16 @@ int main(int argc, char** argv)
     step("Titel", [&] { ed.addTitle(50); });
     step("Klinge", [&] { ed.bladeAt(V(p, 0, 0), 100); });
     step("Teilen am Playhead", [&] { sel.clear(); ed.splitAtPlayhead(180); });
-    step("Übergang Strg+T", [&] { sel.clear(); ed.addTransitions(250); });
+    // Schnitt bei 100 (a|a, genug Material auf beiden Seiten); IDs merken, Indizes ändern sich später
+    const int transL = V(p, 0, 0), transR = V(p, 0, 1);
+    step("Übergang Strg+T", [&] { sel.clear(); ed.addTransitions(95); });
     step("Übergangsart", [&] {
         TransitionStyle s;
         s.type = TransitionType::WipeDown;
         s.softness = 20;
-        ed.setTransitionStyle(V(p, 0, 2), V(p, 0, 3), s);
+        ed.setTransitionStyle(transL, transR, s);
     });
-    step("Übergangslänge", [&] { ed.setTransitionLength(V(p, 0, 2), V(p, 0, 3), 10); });
+    step("Übergangslänge", [&] { ed.setTransitionLength(transL, transR, 10); });
     step("Fade", [&] { ed.setClipFade(V(p, 0, 0), Edge::Start, 12); });
     step("Lautstärke", [&] { ed.setClipVolume(A(p, 0, 0), -6.5); });
     step("Transform", [&] {
@@ -86,7 +88,8 @@ int main(int argc, char** argv)
             c.transform.rotation = 10;
         });
     });
-    step("Effekt", [&] { ed.addEffect({V(p, 0, 1)}, "color"); });
+    const int fxClip = V(p, 0, 1);
+    step("Effekt", [&] { ed.addEffect({fxClip}, "color"); });
     step("Effekt-Wert", [&] {
         ed.modifyClips({V(p, 0, 1)}, "Temp", [](Clip& c) { EffectRegistry::instance(c, "color")->params["tint"] = 12.0; });
     });
@@ -110,14 +113,15 @@ int main(int argc, char** argv)
     step("Deaktivieren", [&] { ed.toggleSelectionEnabled(); });
     step("Kopieren+Einfügen", [&] { ed.copySelection(); ed.paste(900); });
     step("Trim-Modus Roll", [&] {
-        const auto e = ed.trimEdit(TrimKind::Roll, V(p, 0, 2), Edge::End);
+        const auto e = ed.trimEdit(TrimKind::Roll, V(p, 0, 1), Edge::End);
         ed.applyTrimEdit(e, 8);
     });
     step("Trim-Modus Slip", [&] {
         const auto e = ed.trimEdit(TrimKind::Slip, V(p, 0, 0));
         ed.applyTrimEdit(e, 5);
     });
-    step("Quelle einfügen F9", [&] { ed.clearMarks(); ed.sourceEdit(Editor::SourceEditMode::Insert, "/x/b.mp4", 0, 20); });
+    step("Marken löschen", [&] { ed.clearMarks(); });
+    step("Quelle einfügen F9", [&] { ed.sourceEdit(Editor::SourceEditMode::Insert, "/x/b.mp4", 0, 20); });
     step("Quelle überschreiben F10", [&] { ed.sourceEdit(Editor::SourceEditMode::Overwrite, "/x/a.mp4", 0, 600); });
     step("Ripple-Löschen", [&] { sel.set({V(p, 0, 1)}); ed.rippleDeleteSelection(); });
     step("Löschen", [&] { sel.set({A(p, 1, 0)}); ed.deleteSelection(); });
@@ -129,8 +133,8 @@ int main(int argc, char** argv)
         f.height = 720;
         p.setFormat(f);
     });
-    step("Übergang entfernen", [&] { ed.removeTransition(V(p, 0, 2), V(p, 0, 3)); });
-    step("Effekt entfernen", [&] { ed.removeEffect({V(p, 0, 1)}, "color"); });
+    step("Übergang entfernen", [&] { ed.removeTransition(transL, transR); });
+    step("Effekt entfernen", [&] { ed.removeEffect({fxClip}, "color"); });
 
     // Alle Schritte haben etwas geändert
     for (int i = 1; i < states.size(); ++i)

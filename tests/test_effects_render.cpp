@@ -117,6 +117,12 @@ int main(int argc, char** argv)
     Mlt::Factory::init();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt; // 1920 × 1080 @ 25
+    {
+        // Das MLT-Qt-Modul (qtblend, qtext) verweigert sich je nach Build ohne X11/Wayland -> ohne Display überspringen
+        auto prof = makeProfile(fmt);
+        Mlt::Transition qt(*prof, "qtblend");
+        if (!qt.is_valid()) return Check::skip("MLT-Qt-Modul nicht nutzbar (kein Display? z. B. xvfb-run -a ctest …)");
+    }
 
     const QImage ref = render(one([](Clip&) {}), fmt, 10);
     if (!CHECK(!ref.isNull())) return Check::result();
@@ -177,7 +183,6 @@ int main(int argc, char** argv)
     big.width = 3840;
     big.height = 2160;
     CHECK(diff(ref, full) > 3.0);
-    std::printf("DBG %.2f %.2f %.2f %.2f\n", diff(ref, full), diff(full, render(blur, fmt, 10, 960, 540)), diff(full, render(blur, small, 10)), diff(full, render(blur, big, 10)));
     CHECK(diff(full, render(blur, fmt, 10, 960, 540)) < 1.5);
     CHECK(diff(full, render(blur, small, 10)) < 1.5);
     CHECK(diff(full, render(blur, big, 10)) < 1.5);
@@ -213,7 +218,7 @@ int main(int argc, char** argv)
     if (std::setlocale(LC_NUMERIC, "de_DE.UTF-8") || std::setlocale(LC_NUMERIC, "de_DE.utf8")) {
         CHECK(diff(render(mixed, fmt, 10), mixedC) < 0.5);
         CHECK(diff(render(keyed, fmt, 25), k25) < 0.5);
-            CHECK(diff(render(blur, fmt, 10), full) < 0.5);
+        CHECK(diff(render(blur, fmt, 10), full) < 0.5);
         std::setlocale(LC_NUMERIC, "C");
     } else {
         std::printf("Hinweis: de_DE-Locale fehlt, Test mit deutschem Zahlenformat übersprungen\n");
