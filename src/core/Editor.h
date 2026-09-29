@@ -27,8 +27,11 @@ public:
     bool splitOnSelectedTracks() const { return m_splitOnSelectedTracks; }
     void setSplitOnSelectedTracks(bool on) { m_splitOnSelectedTracks = on; }
 
-    // Clip + verknüpfte Partner (falls "Linked Selection" an ist)
+    // Clip + verknüpfte Partner (falls "Linked Selection" an ist); nie Clips auf gesperrten Spuren
     QVector<int> withLinked(const QVector<int>& ids) const;
+    // Nur Clips, die sich bearbeiten lassen (nicht auf gesperrten Spuren)
+    QVector<int> editable(const QVector<int>& ids) const;
+    bool isTrackLocked(TrackRef ref) const;
 
     // Legt Media ab: Video auf V[track], Audio auf A[track] (wie DaVinci, V2 <-> A2).
     // Fehlende Spuren werden angelegt. Mehrere Dateien landen hintereinander.
@@ -38,6 +41,12 @@ public:
     void addTitle(int frame, int track = -1);
     void toggleTrackMute(TrackRef ref);
     void toggleTrackHidden(TrackRef ref);
+    // Spur sperren (Schloss wie DaVinci): Clips darauf lassen sich nicht mehr auswählen oder ändern,
+    // Ripple lässt die Spur stehen. Ausgewählte Clips der Spur werden abgewählt.
+    void toggleTrackLock(TrackRef ref);
+    // Spurname (leer = Standard „Video 1“ usw.) und Spurfarbe (id aus kTrackColors, leer = Standard)
+    void renameTrack(TrackRef ref, const QString& name);
+    void setTrackColor(TrackRef ref, const QString& colorId);
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);
     // Kante eines Clips (und verknüpfter Partner) ziehen, ohne Ripple
     void trimClip(int clipId, TimelineOps::Edge edge, int delta);

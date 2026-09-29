@@ -19,12 +19,23 @@ Editor::Editor(Project* project, Selection* selection, QObject* parent)
 
 QVector<int> Editor::withLinked(const QVector<int>& ids) const
 {
-    if (!m_linkedSelection) return ids;
+    if (!m_linkedSelection) return editable(ids);
     QVector<int> out;
-    for (int id : ids)
+    for (int id : editable(ids)) // gesperrter Clip nimmt auch seine Partner nicht mit
         for (int g : TimelineOps::linkedGroup(m_project->timeline(), id))
             if (!out.contains(g)) out << g;
-    return out;
+    return editable(out); // Partner auf gesperrter Spur bleibt liegen (wie DaVinci)
+}
+
+QVector<int> Editor::editable(const QVector<int>& ids) const
+{
+    return TimelineOps::unlocked(m_project->timeline(), ids);
+}
+
+bool Editor::isTrackLocked(TrackRef ref) const
+{
+    const Timeline& tl = m_project->timeline();
+    return ref.index >= 0 && ref.index < tl.tracks(ref.kind).size() && tl.track(ref).locked;
 }
 
 void Editor::addMediaAt(const QStringList& paths, int frame, int track)
@@ -33,6 +44,14 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
     QVector<const MediaInfo*> infos;
     for (const QString& path : paths)
         if (const MediaInfo* info = p->mediaInfo(path); info && info->length > 0) infos << info;
+    if (infos.isEmpty()) return;
+    // gesperrte Zielspur bekommt nichts (wie DaVinci); fehlende Spuren entstehen ungesperrt
+    const int idx0 = std::max(0, track);
+    const bool videoOk = !isTrackLocked({TrackKind::Video, idx0});
+    const bool audioOk = !isTrackLocked({TrackKind::Audio, idx0});
+    infos.erase(std::remove_if(infos.begin(), infos.end(),
+                               [&](const MediaInfo* i) { return !(i->hasVideo && videoOk) && !(i->hasAudio && audioOk); }),
+                infos.end());
     if (infos.isEmpty()) return;
 
     const QString text = infos.size() == 1 ? T("Einfügen: %1").arg(infos.first()->name)
@@ -47,14 +66,15 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
             c.start = start;
             c.in = 0;
             c.out = info->length - 1;
-            c.linkId = (info->hasVideo && info->hasAudio) ? p->newLinkId() : 0;
-            if (info->hasVideo) {
+            const bool video = info->hasVideo && videoOk, audio = info->hasAudio && audioOk;
+            c.linkId = (video && audio) ? p->newLinkId() : 0;
+            if (video) {
                 TimelineOps::ensureTracks(tl, TrackKind::Video, idx + 1);
                 Clip v = c;
                 v.id = newId();
                 TimelineOps::placeClip(tl.video[idx], v, newId);
             }
-            if (info->hasAudio) {
+            if (audio) {
                 TimelineOps::ensureTracks(tl, TrackKind::Audio, idx + 1);
                 Clip a = c;
                 a.id = newId();
@@ -80,6 +100,9 @@ void Editor::addTitle(int frame, int track)
         for (int i = 0; i < cur.video.size(); ++i)
             for (const Clip& x : cur.video[i].clips)
                 if (x.start < c.end() && x.end() > c.start) track = i + 1;
+        while (isTrackLocked({TrackKind::Video, track})) ++track; // gesperrte Spur überspringen
+    } else if (isTrackLocked({TrackKind::Video, track})) {
+        return;
     }
     c.id = p->newClipId();
     p->edit(T("Titel einfügen"), [&](Timeline& tl) {
@@ -99,9 +122,53 @@ void Editor::toggleTrackHidden(TrackRef ref)
     m_project->edit(T("Spur ausblenden"), [&](Timeline& tl) { tl.track(ref).hidden = !tl.track(ref).hidden; });
 }
 
-void Editor::moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta)
+void Editor::toggleTrackLock(TrackRef ref)
 {
+    const Timeline& cur = m_project->timeline();
+    if (ref.index < 0 || ref.index >= cur.tracks(ref.kind).size()) return;
+    const bool lock = !cur.track(ref).locked;
+    // Auswahl auf der Spur aufheben (Clips, Übergang, Keyframe-Rauten), bevor sie gesperrt wird
+    if (lock) {
+        QSet<int> onTrack;
+        for (const Clip& c : cur.track(ref).clips) onTrack.insert(c.id);
+        const TransitionKey t = m_selection->transition();
+        if (onTrack.contains(t.leftId) || onTrack.contains(t.rightId) || onTrack.contains(m_selection->keyClip())) {
+            m_selection->clear();
+        } else if (m_selection->ids().intersects(onTrack)) {
+            m_selection->set(m_selection->ids() - onTrack);
+        }
+    }
+    m_project->edit(lock ? T("Spur sperren") : T("Spur entsperren"), [&](Timeline& tl) { tl.track(ref).locked = lock; });
+}
+
+void Editor::renameTrack(TrackRef ref, const QString& name)
+{
+    const Timeline& cur = m_project->timeline();
+    if (ref.index < 0 || ref.index >= cur.tracks(ref.kind).size()) return;
+    // Standardname eingegeben (oder leer) = wieder automatisch benennen
+    QString n = name.simplified();
+    if (n == trackDisplayName(Track{}, ref)) n.clear();
+    if (n == cur.track(ref).name) return;
+    m_project->edit(T("Spur umbenennen"), [&](Timeline& tl) { tl.track(ref).name = n; });
+}
+
+void Editor::setTrackColor(TrackRef ref, const QString& colorId)
+{
+    const Timeline& cur = m_project->timeline();
+    if (ref.index < 0 || ref.index >= cur.tracks(ref.kind).size() || cur.track(ref).color == colorId) return;
+    if (!colorId.isEmpty() && !trackColorInfo(colorId)) return;
+    m_project->edit(T("Spurfarbe ändern"), [&](Timeline& tl) { tl.track(ref).color = colorId; });
+}
+
+void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kind, int trackDelta)
+{
+    const QVector<int> ids = editable(idsIn);
     if (ids.isEmpty() || (deltaFrames == 0 && trackDelta == 0)) return;
+    // nie auf eine gesperrte Spur verschieben
+    const Timeline& cur = m_project->timeline();
+    const int dt = TimelineOps::clampTrackDelta(cur, ids, kind, trackDelta);
+    for (TrackRef ref : TimelineOps::tracksOf(cur, ids))
+        if (isTrackLocked({ref.kind, ref.index + dt})) return;
     Project* p = m_project;
     p->edit(T("Clips verschieben"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
@@ -198,7 +265,7 @@ void Editor::setClipVolume(int clipId, double db)
 {
     db = std::clamp(db, kMinVolumeDb, kMaxVolumeDb);
     const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
-    if (!c || c->volumeDb == db) return;
+    if (!c || c->volumeDb == db || TimelineOps::isLocked(m_project->timeline(), clipId)) return;
     m_project->edit(T("Lautstärke"), [&](Timeline& tl) {
         if (Clip* clip = TimelineOps::findClip(tl, clipId)) clip->volumeDb = db;
     });
@@ -208,6 +275,7 @@ void Editor::bladeAt(int clipId, int frame)
 {
     Project* p = m_project;
     const QVector<int> ids = withLinked({clipId});
+    if (ids.isEmpty()) return;
     p->edit(T("Schnitt"), [&](Timeline& tl) {
         TimelineOps::splitAt(tl, ids, frame, [p] { return p->newClipId(); },
                              [p] { return p->newLinkId(); });
@@ -223,7 +291,7 @@ QVector<int> Editor::targetIds(int frame) const
         for (const auto& t : tl.tracks(k))
             for (const auto& c : t.clips)
                 if (frame > c.start && frame < c.end()) ids << c.id;
-    return ids;
+    return editable(ids);
 }
 
 void Editor::splitAtPlayhead(int frame)
@@ -257,7 +325,7 @@ void Editor::splitAtPlayhead(int frame)
 void Editor::setClipFade(int clipId, TimelineOps::Edge edge, int frames, const QString& mergeKey)
 {
     const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
-    if (!c) return;
+    if (!c || TimelineOps::isLocked(m_project->timeline(), clipId)) return;
     const bool in = edge == TimelineOps::Edge::Start;
     frames = std::clamp(frames, 0, c->length() - (in ? c->fadeOut : c->fadeIn));
     if (frames == (in ? c->fadeIn : c->fadeOut)) return;
@@ -266,9 +334,10 @@ void Editor::setClipFade(int clipId, TimelineOps::Edge edge, int frames, const Q
     }, mergeKey);
 }
 
-void Editor::modifyClips(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
+void Editor::modifyClips(const QVector<int>& idsIn, const QString& text, const std::function<void(Clip&)>& fn,
                          const QString& mergeKey)
 {
+    const QVector<int> ids = editable(idsIn);
     if (ids.isEmpty()) return;
     m_project->edit(text, [&](Timeline& tl) {
         for (int id : ids)
@@ -278,8 +347,8 @@ void Editor::modifyClips(const QVector<int>& ids, const QString& text, const std
 
 void Editor::rippleDeleteSelection()
 {
-    if (m_selection->isEmpty()) return;
-    const QVector<int> ids = m_selection->ids().values().toVector();
+    const QVector<int> ids = editable(m_selection->ids().values().toVector());
+    if (ids.isEmpty()) return;
     m_project->edit(T("Löschen mit Ripple"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
         TimelineOps::rippleDelete(tl, ids);
@@ -293,14 +362,15 @@ void Editor::selectAll()
     const Timeline& tl = m_project->timeline();
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
         for (const auto& t : tl.tracks(k))
-            for (const auto& c : t.clips) ids.insert(c.id);
+            if (!t.locked) // gesperrte Spuren lassen sich nicht auswählen
+                for (const auto& c : t.clips) ids.insert(c.id);
     m_selection->set(ids);
 }
 
 void Editor::nudgeSelection(int frames)
 {
-    if (m_selection->isEmpty()) return;
-    const QVector<int> ids = m_selection->ids().values().toVector();
+    const QVector<int> ids = editable(m_selection->ids().values().toVector());
+    if (ids.isEmpty()) return;
     int minStart = INT_MAX;
     for (int id : ids)
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id)) minStart = std::min(minStart, c->start);
@@ -333,8 +403,8 @@ void Editor::trimToPlayhead(TimelineOps::Edge edge, int frame)
 
 void Editor::toggleSelectionEnabled()
 {
-    if (m_selection->isEmpty()) return;
-    const QVector<int> ids = m_selection->ids().values().toVector();
+    const QVector<int> ids = editable(m_selection->ids().values().toVector());
+    if (ids.isEmpty()) return;
     // Wie DaVinci: ist einer aktiv, werden alle deaktiviert
     bool anyEnabled = false;
     for (int id : ids)
@@ -345,7 +415,7 @@ void Editor::toggleSelectionEnabled()
 
 void Editor::toggleLinkSelection()
 {
-    const QVector<int> ids = m_selection->ids().values().toVector();
+    const QVector<int> ids = editable(m_selection->ids().values().toVector());
     if (ids.isEmpty()) return;
     bool anyLinked = false;
     for (int id : ids)
@@ -507,14 +577,19 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
                 for (int i = 0; i < tracks.size(); ++i)
                     for (const Clip& c : tracks[i].clips)
                         if (c.start < start + len && c.end() > start) idx = i + 1;
+                while (idx < tracks.size() && tracks[idx].locked) ++idx; // gesperrte Spur überspringen
                 return idx;
             };
             vTrack = freeTrack(TrackKind::Video);
             aTrack = freeTrack(TrackKind::Audio);
         }
         if (mode == M::Insert) {
+            // Wie DaVinci: alle nicht gesperrten Spuren rücken mit (bleiben synchron), die Zielspuren sowieso
             if (m.hasVideo) rippleTracks << TrackRef{TrackKind::Video, vTrack};
             if (m.hasAudio) rippleTracks << TrackRef{TrackKind::Audio, aTrack};
+            for (TrackKind kind : {TrackKind::Video, TrackKind::Audio})
+                for (int i = 0; i < cur.tracks(kind).size(); ++i)
+                    if (!cur.tracks(kind)[i].locked && !rippleTracks.contains(TrackRef{kind, i})) rippleTracks << TrackRef{kind, i};
         }
         break;
     }
@@ -545,9 +620,16 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     }
     }
     if (len <= 0) return -1;
-    if (m.hasVideo && !rippleTracks.contains(TrackRef{TrackKind::Video, vTrack}) && mode == M::RippleOverwrite)
+    // Gesperrte Zielspur: dieser Teil entfällt (wie beim Ablegen), gesperrte Spuren rücken nie
+    MediaInfo m2 = m;
+    if (m2.hasVideo && isTrackLocked(TrackRef{TrackKind::Video, vTrack})) m2.hasVideo = false;
+    if (m2.hasAudio && isTrackLocked(TrackRef{TrackKind::Audio, aTrack})) m2.hasAudio = false;
+    if (!m2.hasVideo && !m2.hasAudio) return -1;
+    rippleTracks.erase(std::remove_if(rippleTracks.begin(), rippleTracks.end(), [&](const TrackRef& r) { return isTrackLocked(r); }),
+                       rippleTracks.end());
+    if (m2.hasVideo && !rippleTracks.contains(TrackRef{TrackKind::Video, vTrack}) && mode == M::RippleOverwrite)
         rippleTracks << TrackRef{TrackKind::Video, vTrack};
-    if (m.hasAudio && !rippleTracks.contains(TrackRef{TrackKind::Audio, aTrack}) && mode == M::RippleOverwrite)
+    if (m2.hasAudio && !rippleTracks.contains(TrackRef{TrackKind::Audio, aTrack}) && mode == M::RippleOverwrite)
         rippleTracks << TrackRef{TrackKind::Audio, aTrack};
 
     QString text;
@@ -568,8 +650,10 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
                 clearRange(tl.track(r), start, replaceEnd, newId);
                 shiftFrom(tl.track(r), rippleFrom, rippleDelta);
             }
+            // übrige nicht gesperrte Spuren bleiben synchron (bleiben stehen, falls sie überschreiben würden)
+            TimelineOps::rippleTracks(tl, {{rippleFrom, rippleDelta}}, rippleTracks);
         }
-        placeSource(tl, m, sIn, len, start, vTrack, aTrack);
+        placeSource(tl, m2, sIn, len, start, vTrack, aTrack);
         if (usedTimelineMarks) tl.markIn = tl.markOut = -1; // wie DaVinci: benutzte Marken sind verbraucht
     });
     return mode == M::Replace ? playhead : start + len;
@@ -582,8 +666,13 @@ void Editor::placeSourceRange(const QString& path, int in, int out, int frame, i
     const MediaInfo m = *info;
     in = std::clamp(in, 0, m.length - 1);
     out = std::clamp(out, in, m.length - 1);
+    MediaInfo m2 = m; // gesperrte Spur: dieser Teil entfällt
+    track = std::max(0, track);
+    if (m2.hasVideo && isTrackLocked(TrackRef{TrackKind::Video, track})) m2.hasVideo = false;
+    if (m2.hasAudio && isTrackLocked(TrackRef{TrackKind::Audio, track})) m2.hasAudio = false;
+    if (!m2.hasVideo && !m2.hasAudio) return;
     m_project->edit(T("Clip überschreiben: %1").arg(m.name), [&](Timeline& tl) {
-        placeSource(tl, m, in, out - in + 1, std::max(0, frame), std::max(0, track), std::max(0, track));
+        placeSource(tl, m2, in, out - in + 1, std::max(0, frame), track, track);
     });
 }
 
@@ -613,11 +702,16 @@ void Editor::cutSelection()
 void Editor::paste(int frame)
 {
     if (m_clipboard.isEmpty()) return;
+    // nicht auf gesperrte Spuren einfügen
+    QVector<ClipboardItem> items;
+    for (const auto& it : m_clipboard)
+        if (!isTrackLocked(it.ref)) items << it;
+    if (items.isEmpty()) return;
     Project* p = m_project;
     QSet<int> pasted;
     p->edit(T("Einfügen"), [&](Timeline& tl) {
         QHash<int, int> linkMap; // Kopie bekommt eigene Verknüpfung
-        for (const auto& it : m_clipboard) {
+        for (const auto& it : items) {
             Clip c = it.clip;
             c.id = p->newClipId();
             c.start += frame;
@@ -633,8 +727,9 @@ void Editor::paste(int frame)
     m_selection->set(pasted);
 }
 
-void Editor::setKeyframes(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, bool on)
+void Editor::setKeyframes(const QVector<int>& idsIn, const QVector<AnimParam>& params, int frame, bool on)
 {
+    const QVector<int> ids = editable(idsIn);
     if (ids.isEmpty() || params.isEmpty()) return;
     m_project->edit(on ? T("Keyframe setzen") : T("Keyframe entfernen"), [&](Timeline& tl) {
         for (int id : ids) {
@@ -649,8 +744,9 @@ void Editor::setKeyframes(const QVector<int>& ids, const QVector<AnimParam>& par
     });
 }
 
-void Editor::setKeyframeEase(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, KeyEase ease)
+void Editor::setKeyframeEase(const QVector<int>& idsIn, const QVector<AnimParam>& params, int frame, KeyEase ease)
 {
+    const QVector<int> ids = editable(idsIn);
     if (ids.isEmpty()) return;
     m_project->edit(T("Keyframe-Verlauf"), [&](Timeline& tl) {
         for (int id : ids)
@@ -661,7 +757,7 @@ void Editor::setKeyframeEase(const QVector<int>& ids, const QVector<AnimParam>& 
 
 void Editor::moveKeyframes(int clipId, const QVector<int>& times, int delta)
 {
-    if (times.isEmpty() || delta == 0) return;
+    if (times.isEmpty() || delta == 0 || TimelineOps::isLocked(m_project->timeline(), clipId)) return;
     m_project->edit(T("Keyframes verschieben"), [&](Timeline& tl) {
         if (Clip* c = TimelineOps::findClip(tl, clipId)) Keys::move(*c, times, delta);
     });
@@ -672,7 +768,7 @@ void Editor::moveKeyframes(int clipId, const QVector<int>& times, int delta)
 
 void Editor::removeKeyframes(int clipId, const QVector<int>& times)
 {
-    if (times.isEmpty()) return;
+    if (times.isEmpty() || TimelineOps::isLocked(m_project->timeline(), clipId)) return;
     m_project->edit(T("Keyframes löschen"), [&](Timeline& tl) {
         if (Clip* c = TimelineOps::findClip(tl, clipId)) Keys::removeAt(*c, times);
     });
@@ -690,8 +786,8 @@ void Editor::deleteSelection()
         m_selection->clear();
         return;
     }
-    if (m_selection->isEmpty()) return;
-    const QVector<int> ids = m_selection->ids().values().toVector();
+    const QVector<int> ids = editable(m_selection->ids().values().toVector());
+    if (ids.isEmpty()) return;
     // Löschen ohne Ripple: es bleibt eine Lücke, nichts rutscht nach
     m_project->edit(T("Löschen"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
@@ -767,6 +863,7 @@ void Editor::addTransitions(int frame, std::optional<TransitionStyle> style, std
         TrackRef ref;
         return !onlyKind || (TimelineOps::findClip(cur, clipId, &ref) && ref.kind == *onlyKind);
     };
+    auto isLocked = [&](int clipId) { return TimelineOps::isLocked(cur, clipId); };
     if (!m_selection->isEmpty()) {
         for (int id : withLinked(m_selection->ids().values().toVector()))
             if (kindOk(id)) edges << EdgeRef{id, false} << EdgeRef{id, true};
@@ -779,11 +876,12 @@ void Editor::addTransitions(int frame, std::optional<TransitionStyle> style, std
             for (const auto& t : cur.tracks(k))
                 for (const auto& c : t.clips)
                     for (int f : {c.start, c.end()})
-                        if (best < 0 || std::abs(f - frame) < std::abs(best - frame)) best = f;
+                        if (!t.locked && (best < 0 || std::abs(f - frame) < std::abs(best - frame))) best = f;
         if (best < 0) return;
         for (TrackKind k : kinds)
             for (const auto& t : cur.tracks(k))
                 for (const auto& c : t.clips) {
+                    if (isLocked(c.id)) continue;
                     if (c.start == best) edges << EdgeRef{c.id, false};
                     if (c.end() == best) edges << EdgeRef{c.id, true};
                 }
@@ -837,6 +935,7 @@ std::optional<Timeline> Editor::withTransitionAt(int leftId, int rightId, const 
     Clip* l = leftId ? TimelineOps::findClip(tl, leftId, &lRef) : nullptr;
     Clip* r = rightId ? TimelineOps::findClip(tl, rightId, &rRef) : nullptr;
     if ((leftId && !l) || (rightId && !r) || (!l && !r)) return std::nullopt;
+    if ((l && tl.track(lRef).locked) || (r && tl.track(rRef).locked)) return std::nullopt; // gesperrte Spur
     if (l && r && (!(lRef == rRef) || l->end() != r->start)) return std::nullopt; // kein gemeinsamer Schnitt
     const int length = std::max(1, m_project->fps()); // Standard 1 s wie DaVinci
     if (l) l->transOut = length, l->transOutStyle = style;
@@ -871,6 +970,7 @@ void Editor::removeTransition(int leftId, int rightId)
     const Clip* l = TimelineOps::findClip(m_project->timeline(), leftId);
     const Clip* r = TimelineOps::findClip(m_project->timeline(), rightId);
     if (!(l && l->transOut) && !(r && r->transIn)) return;
+    if (TimelineOps::isLocked(m_project->timeline(), leftId ? leftId : rightId)) return;
     m_project->edit(T("Übergang löschen"), [&](Timeline& tl) {
         if (Clip* l = TimelineOps::findClip(tl, leftId)) l->transOut = 0, l->transOutStyle = {};
         if (Clip* r = TimelineOps::findClip(tl, rightId)) r->transIn = 0, r->transInStyle = {};
@@ -882,7 +982,7 @@ void Editor::setTransitionStyle(int leftId, int rightId, const TransitionStyle& 
     Timeline tl = m_project->timeline();
     Clip* l = TimelineOps::findClip(tl, leftId);
     Clip* r = TimelineOps::findClip(tl, rightId);
-    if (!l && !r) return;
+    if ((!l && !r) || TimelineOps::isLocked(tl, leftId ? leftId : rightId)) return;
     if (l) l->transOutStyle = style;
     if (r) r->transInStyle = style;
     // Andere Ausrichtung braucht andere Handles -> Länge ggf. kürzen
@@ -896,7 +996,7 @@ void Editor::setTransitionLength(int leftId, int rightId, int length, const QStr
     Timeline tl = m_project->timeline();
     Clip* l = TimelineOps::findClip(tl, leftId);
     Clip* r = TimelineOps::findClip(tl, rightId);
-    if (!l && !r) return;
+    if ((!l && !r) || TimelineOps::isLocked(tl, leftId ? leftId : rightId)) return;
     length = std::max(1, length);
     if (l) l->transOut = length;
     if (r) r->transIn = length;
@@ -918,6 +1018,8 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
     if (all.isEmpty() || r.speed <= 0) return;
     m_project->edit(T("Geschwindigkeit ändern"), [&](Timeline& tl) {
         QSet<int> touched;
+        const QVector<TrackRef> edited = TimelineOps::tracksOf(tl, all);
+        QVector<QPair<int, int>> shifts; // Ripple für die übrigen Spuren (ab altem Ende, Längenänderung)
         for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
             for (Track& t : tl.tracks(k)) {
                 // von hinten, damit Ripple-Verschiebungen sich nicht gegenseitig verfälschen
@@ -964,11 +1066,15 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                     c.fadeIn = std::min(c.fadeIn, newLen);
                     c.fadeOut = std::min(c.fadeOut, newLen);
                     touched.insert(c.id);
-                    if (const int delta = newLen - oldLen; ripple && delta != 0)
+                    if (const int delta = newLen - oldLen; ripple && delta != 0) {
                         for (int j = i + 1; j < t.clips.size(); ++j)
                             if (t.clips[j].start >= oldEnd) t.clips[j].start += delta;
+                        // verknüpfte Partner liefern denselben Versatz -> nur einmal
+                        if (!shifts.contains(qMakePair(oldEnd, delta))) shifts << qMakePair(oldEnd, delta);
+                    }
                 }
             }
+        TimelineOps::rippleTracks(tl, shifts, edited);
         fitTransitions(tl, touched, sourceLength());
     });
 }

@@ -481,7 +481,8 @@ void Mixer::sync()
     for (int i = 0; i < m_strips.size(); ++i) {
         const Track& t = tl.audio[i];
         ChannelStrip* s = m_strips[i];
-        s->name->setText(t.name);
+        s->name->setText(trackShortName({TrackKind::Audio, i})); // wie DaVinci „A1“, Name als Tooltip
+        s->name->setToolTip(trackDisplayName(t, {TrackKind::Audio, i}));
         s->setVolume(t.volumeDb);
         s->setPan(t.pan);
         s->mute->setChecked(t.muted); // setChecked löst kein clicked aus

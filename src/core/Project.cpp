@@ -43,11 +43,10 @@ private:
     Timeline m_tlBefore, m_tlAfter;
 };
 
-Track makeTrack(TrackKind kind, const QString& name)
+Track makeTrack(TrackKind kind)
 {
     Track t;
-    t.kind = kind;
-    t.name = name;
+    t.kind = kind; // Name bleibt leer = Standard „Video 1“ usw.
     return t;
 }
 
@@ -57,8 +56,8 @@ Timeline emptyTimeline()
 {
     // Standard wie ein leeres DaVinci-Projekt, nur mit je einer Spur mehr
     Timeline tl;
-    tl.video << makeTrack(TrackKind::Video, "V1") << makeTrack(TrackKind::Video, "V2");
-    tl.audio << makeTrack(TrackKind::Audio, "A1") << makeTrack(TrackKind::Audio, "A2");
+    tl.video << makeTrack(TrackKind::Video) << makeTrack(TrackKind::Video);
+    tl.audio << makeTrack(TrackKind::Audio) << makeTrack(TrackKind::Audio);
     return tl;
 }
 
@@ -85,8 +84,8 @@ void Project::load(const ProjectData& d)
     m_format = d.format;
     m_media = d.media;
     m_timeline = d.timeline;
-    if (m_timeline.video.isEmpty()) m_timeline.video << makeTrack(TrackKind::Video, "V1");
-    if (m_timeline.audio.isEmpty()) m_timeline.audio << makeTrack(TrackKind::Audio, "A1");
+    if (m_timeline.video.isEmpty()) m_timeline.video << makeTrack(TrackKind::Video);
+    if (m_timeline.audio.isEmpty()) m_timeline.audio << makeTrack(TrackKind::Audio);
     m_lastClipId = d.lastClipId;
     m_lastLinkId = d.lastLinkId;
     markSaved();
