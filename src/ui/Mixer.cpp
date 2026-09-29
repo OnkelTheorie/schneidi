@@ -7,6 +7,7 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollArea>
@@ -24,6 +25,7 @@ constexpr float kSilent = -200.f;
 constexpr double kMeterFloor = -60.0; // unterster Wert der Pegelanzeige (dBFS)
 constexpr double kMeterFall = 24.0;   // Abfall in dB/s (Anstieg sofort)
 constexpr double kPeakHold = 1.0;     // Peak-Hold in Sekunden
+constexpr double kClipDb = -0.001;    // ab hier Übersteuerung (0 dBFS; volle s16-Aussteuerung zählt mit)
 
 // Fader-Skala wie die Lautstärkelinie in der Timeline (0 = unten, 1 = oben):
 // unteres Viertel -∞..-20 dB, Mitte -20..0 dB, oberes Viertel 0..+12 dB
@@ -52,6 +54,13 @@ QColor meterColor(double db)
     return QColor(0x3c, 0xc0, 0x5a);                // grün
 }
 
+// Spitzenwert-Anzeige über dem Pegel: "-3.2", "+1.5", "-∞"
+QString peakText(double db)
+{
+    if (db <= -99) return QStringLiteral("-∞");
+    return QString("%1%2").arg(db > 0.05 ? "+" : "").arg(db, 0, 'f', 1);
+}
+
 QString panText(double pan)
 {
     const int v = int(std::lround(pan));
@@ -71,10 +80,12 @@ public:
         setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
         setFixedWidth(kStripW - 6);
         setCursor(Qt::SizeVerCursor);
+        setMouseTracking(true); // Zeiger über der Clip-Anzeige
     }
 
     std::function<void(double)> onChange;
     std::function<void()> onFinish;
+    std::function<void()> onResetPeak; // Klick auf die Clip-Anzeige
 
     void setValue(double db)
     {
@@ -86,6 +97,22 @@ public:
     {
         m_target[0] = l;
         m_target[1] = r;
+        for (int ch = 0; ch < 2; ++ch) {
+            m_max = std::max(m_max, m_target[ch]);
+            if (m_target[ch] >= kClipDb && !m_clip[ch]) {
+                m_clip[ch] = true; // bleibt stehen bis Klick (wie DaVinci)
+                update();
+            }
+        }
+    }
+    // Höchster Pegel seit dem letzten Zurücksetzen (dBFS) und ob übersteuert wurde
+    float maxPeak() const { return m_max; }
+    bool clipped() const { return m_clip[0] || m_clip[1]; }
+    void resetPeak()
+    {
+        m_max = kSilent;
+        m_clip[0] = m_clip[1] = false;
+        update();
     }
     // Anzeige nachführen; true = neu zeichnen nötig
     bool tick(double dt)
@@ -113,9 +140,10 @@ protected:
         p.setRenderHint(QPainter::Antialiasing, false);
         const int top = trackTop(), bottom = trackBottom(), h = bottom - top;
 
-        // Pegel: zwei Balken
+        // Pegel: zwei Balken, darüber je eine Clip-Anzeige (rot = übersteuert, bleibt bis Klick)
         const int mx = 3, bw = 5;
         for (int ch = 0; ch < 2; ++ch) {
+            p.fillRect(clipRect(ch), m_clip[ch] ? QColor(0xe8, 0x41, 0x4a) : QColor(0x14, 0x14, 0x17));
             const QRect bar(mx + ch * (bw + 1), top, bw, h + 1);
             p.fillRect(bar, QColor(0x14, 0x14, 0x17));
             const auto yOf = [&](double db) { return bottom - int(std::lround(meterPos(db) * h)); };
@@ -171,13 +199,22 @@ protected:
     void mousePressEvent(QMouseEvent* e) override
     {
         if (e->button() != Qt::LeftButton) return;
+        if (clipRect(0).united(clipRect(1)).adjusted(-2, -2, 2, 2).contains(e->position().toPoint())) {
+            if (onResetPeak) onResetPeak();
+            return;
+        }
         m_dragging = true;
         m_pressY = e->position().y();
         m_startDb = m_db;
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
-        if (!m_dragging) return;
+        if (!m_dragging) {
+            // Über der Clip-Anzeige Handzeiger (Klick setzt zurück), sonst Fader
+            const bool onClip = clipRect(0).united(clipRect(1)).adjusted(-2, -2, 2, 2).contains(e->position().toPoint());
+            setCursor(onClip ? Qt::PointingHandCursor : Qt::SizeVerCursor);
+            return;
+        }
         const double dy = e->position().y() - m_pressY;
         double db;
         if (e->modifiers() & Qt::ShiftModifier) {
@@ -197,8 +234,9 @@ protected:
         m_dragging = false;
         if (onFinish) onFinish();
     }
-    void mouseDoubleClickEvent(QMouseEvent*) override
+    void mouseDoubleClickEvent(QMouseEvent* e) override
     {
+        if (clipRect(0).united(clipRect(1)).adjusted(-2, -2, 2, 2).contains(e->position().toPoint())) return;
         m_dragging = false;
         setValue(0);
         if (onChange) onChange(0);
@@ -206,6 +244,7 @@ protected:
     }
 
 private:
+    QRect clipRect(int ch) const { return QRect(3 + ch * 6, 0, 5, 5); }
     int trackTop() const { return 8; }
     int trackBottom() const { return height() - 11; }
     int faderX() const { return width() - 12; }
@@ -217,6 +256,8 @@ private:
     double m_db = 0;
     float m_target[2] = {kSilent, kSilent}, m_disp[2] = {kSilent, kSilent}, m_hold[2] = {kSilent, kSilent};
     double m_holdAge[2] = {0, 0};
+    float m_max = kSilent;
+    bool m_clip[2] = {false, false};
     bool m_dragging = false;
     double m_pressY = 0, m_startDb = 0;
 };
@@ -298,7 +339,20 @@ private:
     double m_start = 0;
 };
 
-// Ein Kanalzug: Name, Pan, M/S, Pegel+Fader, Wert. Beim Master bleiben Pan/M/S leer (gleiche Höhe).
+// Anklickbare Spitzenwert-Anzeige (Klick = zurücksetzen)
+class PeakLabel : public QLabel {
+public:
+    std::function<void()> onClick;
+
+protected:
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        if (e->button() == Qt::LeftButton && onClick) onClick();
+    }
+};
+
+// Ein Kanalzug: Name, Pan, M/S, Spitzenwert, Pegel+Fader, Wert. Beim Master bleiben Pan/M/S leer (gleiche Höhe),
+// statt M/S sitzt dort der Limiter-Schalter.
 class ChannelStrip : public QWidget {
 public:
     explicit ChannelStrip(bool master)
@@ -342,7 +396,26 @@ public:
         };
         mute = makeButton("M", "#e8414a", T("Stumm (Mute)"));
         solo = makeButton("S", "#e0c03a", "Solo");
+        if (master) {
+            limiter = new QToolButton;
+            limiter->setText("LIM");
+            limiter->setCheckable(true);
+            limiter->setFocusPolicy(Qt::NoFocus);
+            limiter->setFixedSize(55, 18);
+            limiter->setContextMenuPolicy(Qt::CustomContextMenu);
+            limiter->setStyleSheet(QString("QToolButton { background: #3a3a42; color: %1; font-weight: 600; padding: 0; }"
+                                           "QToolButton:checked { background: #e89a3a; color: #141417; }")
+                                       .arg(Theme::text.name()));
+            ms->addWidget(limiter);
+        }
         lay->addLayout(ms);
+
+        // Spitzenwert seit dem letzten Zurücksetzen (rot hinterlegt = übersteuert); Klick setzt zurück
+        peak = new PeakLabel;
+        peak->setAlignment(Qt::AlignCenter);
+        peak->setCursor(Qt::PointingHandCursor);
+        peak->setToolTip(T("Spitzenpegel (dBFS) – Klick setzt zurück"));
+        lay->addWidget(peak);
 
         fader = new FaderMeter;
         lay->addWidget(fader, 1, Qt::AlignHCenter);
@@ -351,6 +424,10 @@ public:
         value->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::text.name()));
         lay->addWidget(value);
 
+        peak->onClick = fader->onResetPeak = [this] {
+            fader->resetPeak();
+            updatePeak();
+        };
         if (master) {
             for (QWidget* w : {static_cast<QWidget*>(pan), static_cast<QWidget*>(panLabel),
                                static_cast<QWidget*>(mute), static_cast<QWidget*>(solo)}) {
@@ -362,6 +439,20 @@ public:
         }
         setVolume(0);
         setPan(0);
+        updatePeak();
+    }
+
+    // Spitzenwert-Anzeige an den Pegelmesser angleichen (nur bei Änderung neu setzen)
+    void updatePeak()
+    {
+        const float db = fader->maxPeak();
+        const bool clip = fader->clipped();
+        const QString text = peakText(db);
+        if (text == peak->text() && clip == m_peakClip && !peak->styleSheet().isEmpty()) return;
+        m_peakClip = clip;
+        peak->setText(text);
+        peak->setStyleSheet(clip ? QString("color: #141417; background: #e8414a; font-size: 8pt; font-weight: 600;")
+                                 : QString("color: %1; background: #141417; font-size: 8pt;").arg(Theme::textDim.name()));
     }
 
     void setVolume(double db)
@@ -380,8 +471,13 @@ public:
     QLabel* panLabel;
     QToolButton* mute;
     QToolButton* solo;
+    QToolButton* limiter = nullptr; // nur Master
+    PeakLabel* peak;
     FaderMeter* fader;
     QLabel* value;
+
+private:
+    bool m_peakClip = false;
 };
 
 Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
@@ -422,6 +518,29 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
         m_project->edit(T("Master-Lautstärke"), [db](Timeline& tl) { tl.masterVolumeDb = db; }, "mixer-master");
     };
     m_master->fader->onFinish = [this] { m_project->closeMerge(); };
+    // Limiter am Master (wie ein Bus-Limiter in DaVinci Fairlight): Klick = an/aus, Rechtsklick = Ceiling
+    connect(m_master->limiter, &QToolButton::clicked, this, [this](bool on) {
+        m_engine->mixerOnlyNext();
+        m_project->edit(on ? T("Limiter an") : T("Limiter aus"), [on](Timeline& tl) { tl.masterLimiter = on; });
+    });
+    connect(m_master->limiter, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        QMenu menu(this);
+        menu.addSection(T("Limiter-Ceiling"));
+        const double current = m_project->timeline().masterLimiterDb;
+        for (double db : {0.0, -0.1, -0.3, -0.5, -1.0, -2.0, -3.0, -6.0}) {
+            QAction* a = menu.addAction(QString("%1 dBFS").arg(db, 0, 'f', 1));
+            a->setCheckable(true);
+            a->setChecked(std::abs(current - db) < 0.001);
+            connect(a, &QAction::triggered, this, [this, db] {
+                m_engine->mixerOnlyNext();
+                m_project->edit(T("Limiter-Ceiling"), [db](Timeline& tl) {
+                    tl.masterLimiterDb = db;
+                    tl.masterLimiter = true; // Ceiling wählen schaltet ein
+                });
+            });
+        }
+        menu.exec(m_master->limiter->mapToGlobal(pos));
+    });
     row->addWidget(m_master);
     root->addLayout(row, 1);
 
@@ -489,6 +608,9 @@ void Mixer::sync()
         s->solo->setChecked(t.solo);
     }
     m_master->setVolume(tl.masterVolumeDb);
+    m_master->limiter->setChecked(tl.masterLimiter);
+    m_master->limiter->setToolTip(T("Limiter am Master (Ceiling %1 dBFS)\nKlick = an/aus, Rechtsklick = Ceiling")
+                                      .arg(tl.masterLimiterDb, 0, 'f', 1));
 }
 
 void Mixer::onLevels(const QVector<float>& db)
@@ -511,4 +633,6 @@ void Mixer::tick()
     };
     for (ChannelStrip* s : m_strips) step(s);
     step(m_master);
+    for (ChannelStrip* s : m_strips) s->updatePeak();
+    m_master->updatePeak();
 }
