@@ -32,6 +32,7 @@ add_executable(schneidi
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
+    src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
@@ -39,6 +40,7 @@ add_executable(schneidi
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
+    src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp

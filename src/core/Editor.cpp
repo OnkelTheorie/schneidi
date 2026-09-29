@@ -272,6 +272,53 @@ void Editor::setClipVolume(int clipId, double db)
     });
 }
 
+void Editor::normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative)
+{
+    const Timeline& cur = m_project->timeline();
+    QHash<int, double> gain; // neue Clip-Lautstärke (dB)
+    double loudest = -1e9;
+    for (auto it = peakDb.begin(); it != peakDb.end(); ++it) {
+        TrackRef ref;
+        const Clip* c = TimelineOps::findClip(cur, it.key(), &ref);
+        if (!c || ref.kind != TrackKind::Audio || c->isTitle() || TimelineOps::isLocked(cur, c->id)) continue;
+        if (it.value() <= -100.0) continue; // Stille: nichts anzuheben
+        gain[c->id] = targetDb - it.value();
+        loudest = std::max(loudest, it.value());
+    }
+    if (gain.isEmpty()) return;
+    if (relative)
+        for (double& g : gain) g = targetDb - loudest;
+    for (double& g : gain) g = std::clamp(g, kMinVolumeDb, kMaxVolumeDb);
+    m_project->edit(T("Audiopegel normalisieren"), [&](Timeline& tl) {
+        for (auto it = gain.begin(); it != gain.end(); ++it) {
+            Clip* c = TimelineOps::findClip(tl, it.key());
+            if (!c) continue;
+            if (Keys::animated(*c, AnimParam::Volume)) {
+                KeyTrack& keys = c->keys[AnimParam::Volume];
+                double top = kMinVolumeDb;
+                for (const Keyframe& k : keys) top = std::max(top, k.value);
+                const double delta = it.value() - top;
+                for (Keyframe& k : keys) k.value = std::clamp(k.value + delta, kMinVolumeDb, kMaxVolumeDb);
+            } else {
+                c->volumeDb = it.value();
+            }
+        }
+    });
+}
+
+QVector<int> Editor::selectedAudioClips() const
+{
+    const Timeline& tl = m_project->timeline();
+    QVector<int> out;
+    for (int id : withLinked(m_selection->ids().values().toVector())) {
+        TrackRef ref;
+        const Clip* c = TimelineOps::findClip(tl, id, &ref);
+        if (c && ref.kind == TrackKind::Audio && !c->mediaPath.isEmpty() && !TimelineOps::isLocked(tl, id)) out << id;
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 void Editor::bladeAt(int clipId, int frame)
 {
     Project* p = m_project;

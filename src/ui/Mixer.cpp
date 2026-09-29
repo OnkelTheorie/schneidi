@@ -429,12 +429,16 @@ public:
             updatePeak();
         };
         if (master) {
-            for (QWidget* w : {static_cast<QWidget*>(pan), static_cast<QWidget*>(panLabel),
-                               static_cast<QWidget*>(mute), static_cast<QWidget*>(solo)}) {
+            for (QWidget* w : {static_cast<QWidget*>(pan), static_cast<QWidget*>(panLabel)}) {
                 QSizePolicy sp = w->sizePolicy();
                 sp.setRetainSizeWhenHidden(true);
                 w->setSizePolicy(sp);
                 w->hide();
+            }
+            // M/S gibt es am Master nicht; an ihrer Stelle (gleiche Höhe) sitzt der Limiter-Schalter
+            for (QToolButton* b : {mute, solo}) {
+                ms->removeWidget(b);
+                b->hide();
             }
         }
         setVolume(0);
