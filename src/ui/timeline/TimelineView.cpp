@@ -1385,19 +1385,15 @@ void TimelineView::drawHeaders(QPainter& p)
         f.setBold(true);
         f.setPointSizeF(8);
         p.setFont(f);
-        // Zielspur für F9/F10 … (DaVinci Destination Control): Kästchen orange gefüllt, Klick wählt die Spur
+        // Zielspur für F9/F10 … (DaVinci Destination Control): Kästchen orange umrandet (nicht gefüllt, wie in
+        // DaVinci), Klick wählt die Spur
         const QRect shortBox = shortNameRect(row);
         const bool target = row.ref.index == (row.ref.kind == TrackKind::Video ? m_editor->targetVideoTrack()
                                                                                  : m_editor->targetAudioTrack());
-        if (target) {
-            p.fillRect(shortBox.adjusted(0, 0, -1, -1), Theme::accent);
-            p.setPen(Qt::black);
-        } else {
-            p.setPen(QColor(0x5a, 0x5a, 0x62));
-            p.setBrush(Qt::NoBrush);
-            p.drawRect(shortBox.adjusted(0, 0, -1, -1));
-            p.setPen(Theme::text);
-        }
+        p.setBrush(Qt::NoBrush);
+        p.setPen(target ? Theme::accent : QColor(0x5a, 0x5a, 0x62));
+        p.drawRect(shortBox.adjusted(0, 0, -1, -1));
+        p.setPen(Theme::text);
         p.drawText(shortBox, Qt::AlignCenter, trackShortName(row.ref));
         if (!(m_nameEdit && m_nameEdit->isVisible() && m_nameRef == row.ref)) {
             f.setBold(false);
@@ -1693,7 +1689,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     }
     if (pos.y() < kRulerH) {
         m_drag = Drag::Scrub;
-        emit seekRequested(std::max(0, int(std::lround(xToFrame(pos.x())))));
+        m_scrubFrame = std::max(0, int(std::lround(xToFrame(pos.x()))));
+        emit seekRequested(m_scrubFrame);
         return;
     }
 
@@ -1825,9 +1822,16 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
 {
     const QPoint pos = e->position().toPoint();
     switch (m_drag) {
-    case Drag::Scrub:
-        emit seekRequested(std::max(0, int(std::lround(xToFrame(pos.x())))));
+    case Drag::Scrub: {
+        // Nur bei neuem Frame springen: jeder Sprung verwirft während der Wiedergabe den Puffer und dekodiert neu –
+        // beim Klicken (Maus zittert ein Pixel) ruckelte das
+        const int frame = std::max(0, int(std::lround(xToFrame(pos.x()))));
+        if (frame != m_scrubFrame) {
+            m_scrubFrame = frame;
+            emit seekRequested(frame);
+        }
         return;
+    }
     case Drag::MaybeMove:
         if ((pos - m_pressPos).manhattanLength() < kDragStartPx) return;
         m_drag = Drag::Move;

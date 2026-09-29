@@ -210,6 +210,7 @@ private:
 
     Drag m_drag = Drag::None;
     QPoint m_pressPos;
+    int m_scrubFrame = -1; // letztes Sprungziel beim Ziehen im Lineal (gleiches Frame nicht erneut anspringen)
     TrackRef m_anchorRef;
     QVector<int> m_dragIds;
     int m_dragDelta = 0;

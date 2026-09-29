@@ -345,13 +345,18 @@ void Engine::seek(int frame)
 {
     if (!m_current) return;
     frame = std::max(0, frame);
+    const bool playing = m_speed != 0.0;
+    // Während der Wiedergabe schon unterwegs zu diesem Frame: nicht noch einmal Puffer verwerfen und neu dekodieren
+    if (playing && m_seekTarget == frame) return;
     ++m_seekEpoch;
     m_seekSkipped = 0;
-    m_seekTarget = m_speed != 0.0 ? frame : -1;
+    m_seekTarget = playing ? frame : -1;
     m_current->seek(frame);
     m_consumer->purge();
     m_position = frame;
-    refresh();
+    // Nur im Stand neu zeichnen lassen: während der Wiedergabe kommt das nächste Bild ohnehin, und ein Refresh
+    // schickt mit scrub_audio zusätzlich ein Ton-Häppchen raus (hörbares Stottern nach dem Sprung)
+    if (!playing) refresh();
     emit positionChanged(frame);
 }
 
