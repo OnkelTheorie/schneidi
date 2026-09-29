@@ -7,10 +7,99 @@
 #include <QButtonGroup>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QPainter>
+#include <QPainterPath>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+namespace {
+// Zeichnet ein Symbol in ein 20×20-Feld (doppelt aufgelöst für scharfe Kanten)
+QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
+{
+    using I = TimelinePanel::Icon;
+    QPixmap pm(40, 40);
+    pm.setDevicePixelRatio(2);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(c, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    switch (icon) {
+    case I::Select: { // Mauspfeil
+        const QPointF pts[] = { { 6, 3 }, { 6, 16 }, { 9.3, 12.8 }, { 11.6, 17.6 }, { 13.6, 16.7 }, { 11.3, 12 }, { 15.8, 12 } };
+        p.setBrush(c);
+        p.setPen(QPen(c, 0.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.drawPolygon(pts, 7);
+        break;
+    }
+    case I::Trim: { // [◁|▷] – Kasten mit Schnitt und Pfeilen nach außen
+        p.drawRoundedRect(QRectF(2.5, 5, 15, 10), 1.5, 1.5);
+        p.drawLine(QPointF(10, 3), QPointF(10, 17));
+        p.setBrush(c);
+        p.setPen(Qt::NoPen);
+        const QPointF l[] = { { 5, 10 }, { 8, 7.5 }, { 8, 12.5 } };
+        const QPointF r[] = { { 15, 10 }, { 12, 7.5 }, { 12, 12.5 } };
+        p.drawPolygon(l, 3);
+        p.drawPolygon(r, 3);
+        break;
+    }
+    case I::Blade: { // Rasierklinge mit Schlitz
+        QPainterPath path;
+        path.addRoundedRect(QRectF(2.5, 5.5, 15, 9), 1.5, 1.5);
+        QPainterPath slot;
+        slot.addRoundedRect(QRectF(6, 9, 8, 2), 1, 1);
+        p.drawPath(path);
+        p.setBrush(c);
+        p.setPen(Qt::NoPen);
+        p.drawPath(slot);
+        p.drawRect(QRectF(9.2, 5.5, 1.6, 2.2));
+        p.drawRect(QRectF(9.2, 12.3, 1.6, 2.2));
+        break;
+    }
+    case I::Snap: { // Hufeisenmagnet, schräg
+        p.translate(10, 10);
+        p.rotate(45);
+        p.translate(-10, -10);
+        QPainterPath u;
+        u.moveTo(5.5, 8);
+        u.lineTo(5.5, 11);
+        u.arcTo(QRectF(5.5, 6.5, 9, 9), 180, 180);
+        u.lineTo(14.5, 8);
+        p.setPen(QPen(c, 2.6, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
+        p.drawPath(u);
+        p.drawLine(QPointF(5.5, 3.5), QPointF(5.5, 6.8)); // Pole mit kleiner Lücke
+        p.drawLine(QPointF(14.5, 3.5), QPointF(14.5, 6.8));
+        break;
+    }
+    case I::Link: { // zwei Kettenglieder, schräg
+        p.translate(10, 10);
+        p.rotate(-45);
+        p.translate(-10, -10);
+        p.setPen(QPen(c, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.drawRoundedRect(QRectF(1.5, 7.3, 9.5, 5.4), 2.7, 2.7);
+        p.drawRoundedRect(QRectF(9, 7.3, 9.5, 5.4), 2.7, 2.7);
+        break;
+    }
+    }
+    return pm;
+}
+} // namespace
+
+QIcon TimelinePanel::toolIcon(Icon icon)
+{
+    // DaVinci: aus = grau, an = weiß (Auswahl-Pfeil rot)
+    const QColor off("#8c8c94"), hover("#c4c4ca"), on(icon == Icon::Select ? "#e5484d" : "#ececf0");
+    QIcon ic;
+    ic.addPixmap(drawIcon(icon, off), QIcon::Normal, QIcon::Off);
+    ic.addPixmap(drawIcon(icon, hover), QIcon::Active, QIcon::Off);
+    ic.addPixmap(drawIcon(icon, on), QIcon::Normal, QIcon::On);
+    ic.addPixmap(drawIcon(icon, on), QIcon::Active, QIcon::On);
+    ic.addPixmap(drawIcon(icon, QColor("#55555c")), QIcon::Disabled, QIcon::Off);
+    return ic;
+}
 
 TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
 {
@@ -18,17 +107,18 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
     m_view = new TimelineView(editor);
 
     // --- Werkzeugleiste (wie die Leiste über der DaVinci-Timeline) ---
-    auto makeTool = [](const QString& text, const QString& tip) {
+    auto makeTool = [](Icon icon, const QString& tip) {
         auto* b = new QToolButton;
-        b->setText(text);
+        b->setIcon(toolIcon(icon));
+        b->setIconSize(QSize(20, 20));
         b->setToolTip(tip);
         b->setCheckable(true);
         return b;
     };
-    auto* selectBtn = makeTool(T("⮝ Auswahl"), T("Auswahl-Werkzeug (A)"));
-    auto* trimBtn = makeTool(T("⇹ Trimmen"), T("Trim-Modus (T): Kante = Ripple, Schnitt = Roll, Clip = Slip, Titelleiste = Slide"));
-    auto* bladeBtn = makeTool(T("✂ Klinge"), T("Klingen-Werkzeug (B)"));
-    auto* snapBtn = makeTool(T("⊸ Snapping"), T("Snapping an/aus (N)"));
+    auto* selectBtn = makeTool(Icon::Select, T("Auswahl-Werkzeug (A)"));
+    auto* trimBtn = makeTool(Icon::Trim, T("Trim-Modus (T): Kante = Ripple, Schnitt = Roll, Clip = Slip, Titelleiste = Slide"));
+    auto* bladeBtn = makeTool(Icon::Blade, T("Klingen-Werkzeug (B)"));
+    auto* snapBtn = makeTool(Icon::Snap, T("Snapping an/aus (N)"));
     selectBtn->setChecked(true);
     snapBtn->setChecked(m_view->snapping());
 
@@ -60,7 +150,12 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
     bar->addWidget(selectBtn);
     bar->addWidget(trimBtn);
     bar->addWidget(bladeBtn);
-    bar->addSpacing(12);
+    auto* sep = new QWidget; // dünne Trennlinie wie in DaVinci
+    sep->setFixedSize(1, 18);
+    sep->setStyleSheet("background: #45454d;");
+    bar->addSpacing(8);
+    bar->addWidget(sep);
+    bar->addSpacing(8);
     bar->addWidget(snapBtn);
     m_bar = bar;
     m_toolInsert = bar->count();
@@ -70,7 +165,11 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
 
     auto* barWidget = new QWidget;
     barWidget->setObjectName("Panel");
-    barWidget->setStyleSheet("QWidget#Panel { background: #2f2f35; }");
+    // Schalter zeigen ihren Zustand nur über die Symbolfarbe (kein Hintergrund wie in DaVinci)
+    barWidget->setStyleSheet("QWidget#Panel { background: #2f2f35; }"
+                             "QToolButton { padding: 3px 5px; }"
+                             "QToolButton:checked { background: transparent; }"
+                             "QToolButton:checked:hover, QToolButton:hover { background: #3a3a42; }");
     barWidget->setLayout(bar);
 
     // --- Timeline + Scrollbars ---
@@ -114,12 +213,15 @@ void TimelinePanel::syncScrollbars()
     m_vbar->setValue(v.scrollY);
 }
 
-void TimelinePanel::addToolAction(QAction* action, const QString& text)
+void TimelinePanel::addToolAction(QAction* action, Icon icon)
 {
     auto* b = new QToolButton;
     b->setDefaultAction(action);
-    b->setText(text); // setDefaultAction übernimmt sonst den Menütext
+    b->setIcon(toolIcon(icon)); // setDefaultAction übernimmt sonst Menütext/-symbol
+    b->setIconSize(QSize(20, 20));
+    b->setToolButtonStyle(Qt::ToolButtonIconOnly);
     b->setToolTip(action->toolTip());
-    connect(action, &QAction::changed, b, [b, text] { b->setText(text); });
+    const QIcon ic = b->icon();
+    connect(action, &QAction::changed, b, [b, ic] { b->setIcon(ic); });
     m_bar->insertWidget(m_toolInsert++, b);
 }

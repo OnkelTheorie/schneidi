@@ -523,7 +523,7 @@ void MainWindow::buildActions()
         m_editor->setLinkedSelection(on);
         if (!m_autosaveDisabled) QSettings().setValue("edit/linkedSelection", on);
     });
-    m_timeline->addToolAction(linked, T("⛓ Verknüpft"));
+    m_timeline->addToolAction(linked, TimelinePanel::Icon::Link);
     auto* splitTracks = makeAction(timeline, "split_on_tracks", T("Teilen auf ganzer Spur der Auswahl"), QKeySequence(), [] {});
     splitTracks->setCheckable(true);
     splitTracks->setToolTip(T("An: Strg+B/Maustaste teilt auch den Nachbarclip auf der Spur des ausgewählten Clips. "
