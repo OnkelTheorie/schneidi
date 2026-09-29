@@ -4,6 +4,7 @@
 #include "app/Theme.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
+#include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
@@ -782,6 +783,19 @@ void TimelineView::drawTracks(QPainter& p)
         }
     }
 
+    // Filter reinziehen: Ziel-Clip umranden
+    if (m_fxDropClip) {
+        TrackRef ref;
+        if (const Clip* c = TimelineOps::findClip(tl, m_fxDropClip, &ref))
+            if (const auto row = rowFor(ref)) {
+                const QRect r(int(frameToX(c->start)), row->y, int(frameToX(c->end()) - frameToX(c->start)),
+                              row->h - row->lane - 1);
+                p.setPen(QPen(Theme::accent, 2));
+                p.setBrush(Qt::NoBrush);
+                p.drawRect(r.adjusted(1, 1, -1, -1));
+            }
+    }
+
     // Trimmen: Kante markieren + Versatz anzeigen (wie DaVinci)
     if (m_drag == Drag::Trim) {
         if (const Clip* c = TimelineOps::findClip(tl, m_trim.clipId)) {
@@ -1015,12 +1029,35 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     }
     p.restore();
 
+    // "fx" rechts in der Titelleiste wie DaVinci, wenn der Clip Effekte hat
+    const bool hasFx = std::any_of(c.effects.begin(), c.effects.end(), [](const EffectInstance& e) {
+        const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+        return d && (d->library || e.enabled);
+    });
+    int fxW = 0;
+    if (hasFx && r.width() > 44 && barH >= 10) {
+        QFont f = font();
+        f.setPointSizeF(6.5);
+        f.setItalic(true);
+        f.setBold(true);
+        p.setFont(f);
+        fxW = QFontMetrics(f).horizontalAdvance("fx") + 6;
+        const QRect fx(r.right() - fxW - 2, r.top() + 2, fxW, std::max(8, barH - 4));
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 110));
+        p.drawRoundedRect(fx, 2, 2);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QColor(0xf0, 0xf0, 0xf0));
+        p.drawText(fx, Qt::AlignCenter, "fx");
+        fxW += 4;
+    }
+
     if (r.width() > 24) {
         QFont f = font();
         f.setPointSizeF(7.5);
         p.setFont(f);
         p.setPen(QColor(0xf0, 0xf0, 0xf0));
-        const QRect textRect(std::max(r.left(), kHeaderW) + 5, r.top(), r.width() - 8, barH);
+        const QRect textRect(std::max(r.left(), kHeaderW) + 5, r.top(), r.width() - 8 - fxW, barH);
         p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
                    QFontMetrics(f).elidedText(clipLabel(c), Qt::ElideRight, textRect.width()));
     }
@@ -1781,8 +1818,20 @@ std::optional<TimelineView::TransitionDrop> TimelineView::transitionDropAt(const
     return best;
 }
 
+int TimelineView::fxDropClipAt(const QPoint& pos) const
+{
+    const auto row = rowAt(pos.y());
+    return row && row->ref.kind == TrackKind::Video ? clipAt(pos) : 0;
+}
+
 void TimelineView::dragEnterEvent(QDragEnterEvent* e)
 {
+    if (e->mimeData()->hasFormat(EffectsLibrary::EffectMimeType)) {
+        m_fxDragging = QString::fromUtf8(e->mimeData()->data(EffectsLibrary::EffectMimeType));
+        m_fxDropClip = 0;
+        e->acceptProposedAction();
+        return;
+    }
     if (e->mimeData()->hasFormat(EffectsLibrary::MimeType)) {
         m_transDragging = EffectsLibrary::parseTransition(e->mimeData()->data(EffectsLibrary::MimeType),
                                                           &m_transDragKind, &m_transDragStyle);
@@ -1809,6 +1858,13 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
 
 void TimelineView::dragMoveEvent(QDragMoveEvent* e)
 {
+    if (!m_fxDragging.isEmpty()) {
+        m_fxDropClip = fxDropClipAt(e->position().toPoint());
+        if (m_fxDropClip) e->acceptProposedAction();
+        else e->ignore();
+        update();
+        return;
+    }
     if (m_transDragging) {
         m_transDrop = transitionDropAt(e->position().toPoint());
         if (m_transDrop) e->acceptProposedAction();
@@ -1834,11 +1890,24 @@ void TimelineView::dragLeaveEvent(QDragLeaveEvent*)
     m_dropItems.clear();
     m_transDragging = false;
     m_transDrop.reset();
+    m_fxDragging.clear();
+    m_fxDropClip = 0;
     update();
 }
 
 void TimelineView::dropEvent(QDropEvent* e)
 {
+    if (!m_fxDragging.isEmpty()) {
+        // Wie DaVinci: nur auf den Clip unter der Maus (auch wenn andere ausgewählt sind)
+        if (const int id = fxDropClipAt(e->position().toPoint())) {
+            m_editor->addEffect({id}, m_fxDragging);
+            e->acceptProposedAction();
+        }
+        m_fxDragging.clear();
+        m_fxDropClip = 0;
+        update();
+        return;
+    }
     if (m_transDragging) {
         if (const auto d = transitionDropAt(e->position().toPoint())) {
             m_editor->addTransitionAt(d->leftId, d->rightId, d->style);

@@ -1,6 +1,7 @@
 #include "ui/EffectsLibrary.h"
 
 #include "app/Theme.h"
+#include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "ui/MediaPool.h"
 
@@ -19,8 +20,9 @@ namespace {
 
 constexpr QSize kIcon{48, 27};
 
-enum Category { All, VideoTransitions, AudioTransitions, Titles };
+enum Category { All, VideoTransitions, AudioTransitions, Titles, OpenFx, Filters };
 constexpr const char* kTitleData = "title";
+constexpr const char* kEffectPrefix = "fx:"; // Listeneintrag eines Filters: "fx:<Effekt-ID>"
 
 class EffectList : public QListWidget {
 public:
@@ -33,10 +35,14 @@ protected:
         if (items.isEmpty()) return data;
         const QString d = items.first()->data(Qt::UserRole).toString();
         if (d == kTitleData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::TitleItem)); // wie "Text" im Pool
+        else if (d.startsWith(kEffectPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.mid(3).toUtf8());
         else data->setData(EffectsLibrary::MimeType, d.toUtf8());
         return data;
     }
-    QStringList mimeTypes() const override { return {EffectsLibrary::MimeType, MediaPool::MimeType}; }
+    QStringList mimeTypes() const override
+    {
+        return {EffectsLibrary::MimeType, EffectsLibrary::EffectMimeType, MediaPool::MimeType};
+    }
 };
 
 // Kleines Vorschausymbol: A (blau) geht in B (orange) über
@@ -116,6 +122,37 @@ QPixmap titleIcon()
     return pm;
 }
 
+// Filter-Symbole: Farbkorrektur = Farbverlauf mit Helligkeitskeil, Unschärfe = weicher Kreis
+QPixmap effectIcon(const QString& id)
+{
+    QPixmap pm(kIcon);
+    pm.fill(QColor(0x2a, 0x2a, 0x30));
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF r = pm.rect();
+    if (id == "color") {
+        QLinearGradient hue(r.topLeft(), r.topRight());
+        const QColor stops[] = {QColor(0x4a, 0x7a, 0xd0), QColor(0x60, 0xc0, 0x80), QColor(0xe0, 0xc0, 0x50),
+                                QColor(0xe0, 0x70, 0x40)};
+        for (int i = 0; i < 4; ++i) hue.setColorAt(i / 3.0, stops[i]);
+        p.fillRect(r, hue);
+        QLinearGradient shade(r.topLeft(), r.bottomLeft());
+        shade.setColorAt(0, QColor(255, 255, 255, 90));
+        shade.setColorAt(1, QColor(0, 0, 0, 150));
+        p.fillRect(r, shade);
+    } else if (id == "blur") {
+        QRadialGradient g(r.center(), r.height() * 0.55);
+        g.setColorAt(0, QColor(0xe8, 0xe8, 0xf0));
+        g.setColorAt(0.45, QColor(0xb0, 0xb8, 0xd0, 200));
+        g.setColorAt(1, QColor(0x2a, 0x2a, 0x30, 0));
+        p.fillRect(r, g);
+    }
+    p.setPen(QColor(0, 0, 0, 120));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(r.adjusted(0, 0, -1, -1));
+    return pm;
+}
+
 } // namespace
 
 bool EffectsLibrary::parseTransition(const QByteArray& data, TrackKind* kind, TransitionStyle* style)
@@ -170,6 +207,12 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
         it->setData(0, Qt::UserRole, int(cat));
     }
     toolbox->setExpanded(true);
+    // Open FX → Filter (wie DaVinci: dort liegen die ResolveFX-Filter)
+    auto* openFx = new QTreeWidgetItem(m_categories, {QStringLiteral("Open FX")});
+    openFx->setData(0, Qt::UserRole, int(OpenFx));
+    auto* filters = new QTreeWidgetItem(openFx, {T("Filter")});
+    filters->setData(0, Qt::UserRole, int(Filters));
+    openFx->setExpanded(true);
     m_categories->setCurrentItem(toolbox);
 
     m_list = new EffectList;
@@ -178,12 +221,17 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     m_list->setSpacing(1);
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
-    m_list->setToolTip(T("Auf einen Schnitt bzw. in die Timeline ziehen, Doppelklick = am Playhead anwenden"));
+    m_list->setToolTip(T("Auf einen Schnitt, einen Clip bzw. in die Timeline ziehen, Doppelklick = am Playhead bzw. "
+                         "auf die Auswahl anwenden"));
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString d = it->data(Qt::UserRole).toString();
         if (d.isEmpty()) return;
         if (d == kTitleData) {
             emit titleRequested();
+            return;
+        }
+        if (d.startsWith(kEffectPrefix)) {
+            emit effectRequested(d.mid(3));
             return;
         }
         TrackKind kind;
@@ -212,7 +260,8 @@ void EffectsLibrary::rebuild()
 {
     m_list->clear();
     const QTreeWidgetItem* cur = m_categories->currentItem();
-    const int shown = cur ? cur->data(0, Qt::UserRole).toInt() : int(All);
+    int shown = cur ? cur->data(0, Qt::UserRole).toInt() : int(All);
+    if (shown == OpenFx) shown = Filters; // bisher nur eine Unterkategorie
     const QString filter = m_search->text().trimmed();
 
     struct Entry { int cat; QString name; QString data; QPixmap icon; };
@@ -222,9 +271,12 @@ void EffectsLibrary::rebuild()
     for (const auto& i : kAudioCurves)
         entries << Entry{AudioTransitions, QString::fromLatin1(i.name), QString("audio:%1").arg(i.id), audioIcon()};
     entries << Entry{Titles, QStringLiteral("Text"), kTitleData, titleIcon()};
+    for (const auto& e : EffectRegistry::all())
+        if (e.library) entries << Entry{Filters, e.name, kEffectPrefix + e.id, effectIcon(e.id)};
 
-    const char* headers[] = {nullptr, N_("Videoübergänge"), N_("Audioübergänge"), N_("Titel-Vorlagen")};
-    for (int cat : {VideoTransitions, AudioTransitions, Titles}) {
+    const char* headers[] = {nullptr, N_("Videoübergänge"), N_("Audioübergänge"), N_("Titel-Vorlagen"), nullptr, "Filter"};
+    for (int cat : {VideoTransitions, AudioTransitions, Titles, Filters}) {
+        if (shown == All && cat == Filters) continue; // Toolbox zeigt nur ihre Gruppen
         if (shown != All && shown != cat) continue;
         QVector<const Entry*> hits;
         for (const Entry& e : entries)

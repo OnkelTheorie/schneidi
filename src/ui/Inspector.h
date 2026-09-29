@@ -9,7 +9,9 @@
 #include <optional>
 
 class Editor;
+struct EffectDescriptor;
 class QButtonGroup;
+class QHBoxLayout;
 class QComboBox;
 class QGridLayout;
 class QLabel;
@@ -49,18 +51,25 @@ private:
         QSlider* slider = nullptr;
         double min, max;
         std::optional<AnimParam> anim; // animierbar: Wert kommt aus Keys::valueAt, Ändern setzt ggf. Keyframe
+        QString effect;                // Effekt-Parameter: wirkt nur auf ausgewählte Clips mit diesem Effekt
     };
     struct Section {
         QGridLayout* grid;
         TrackKind kind;
         int rows = 0;
         bool title = false;
+        QString effect;              // Bereich eines Effekts (Open FX), sonst leer
+        QWidget* header = nullptr;   // Kopfzeile und Inhalt (zum Ein-/Ausblenden und Umsortieren)
+        QWidget* body = nullptr;
+        QHBoxLayout* headerLayout = nullptr;
     };
 
     // Bereich mit Kopfzeile; `enabled` = roter Punkt (optional)
-    // titleOnly: Bereich wirkt nur auf Titelclips
+    // titleOnly: Bereich wirkt nur auf Titelclips; effect: nur auf Clips mit diesem Effekt
     Section addSection(QVBoxLayout* page, TrackKind kind, const QString& title, const std::function<void(Clip&)>& reset,
-                       const Flag& enabled = {}, bool titleOnly = false);
+                       const Flag& enabled = {}, bool titleOnly = false, const QString& effect = {});
+    // Bereich eines Effekts aus der Effects Library (nur sichtbar, wenn der Clip ihn hat), mit Papierkorb
+    void addEffectSection(QVBoxLayout* page, const EffectDescriptor& d);
     // Zeile mit Schieberegler + Zahlenfeld
     // anim: animierbarer Parameter -> Keyframe-Rauten rechts (field bleibt für nicht animierbare Werte)
     Param* addSlider(Section& s, const QString& key, const QString& label, double min, double max, double def,
@@ -74,7 +83,7 @@ private:
                      double step, int decimals, const Field& field, std::optional<AnimParam> anim = {});
     // Keyframe-Knöpfe wie DaVinci: ◀ Raute ▶ (Raute rot = Keyframe am Playhead; Klick setzt/entfernt,
     // Rechtsklick = Verlauf); gilt für alle Parameter der Zeile
-    QWidget* keyButtons(TrackKind kind, bool title, const QVector<AnimParam>& params);
+    QWidget* keyButtons(TrackKind kind, bool title, const QVector<AnimParam>& params, const QString& effect = {});
     // Clip-Frame unter dem Playhead (auf den Clip begrenzt)
     int localFrame(const Clip& c) const;
     QToolButton* resetButton(const std::function<void()>& fn);
@@ -90,10 +99,12 @@ private:
     bool selectedTransition(TrackKind* kind, TimelineOps::TransitionSpan* span) const;
     bool refreshTransition(); // true = Übergang ausgewählt und angezeigt
 
-    QVector<int> selectedIds(TrackKind kind, bool title = false) const;
-    const Clip* primary(TrackKind kind, bool title = false) const;
+    QVector<int> selectedIds(TrackKind kind, bool title = false, const QString& effect = {}) const;
+    const Clip* primary(TrackKind kind, bool title = false, const QString& effect = {}) const;
     void apply(TrackKind kind, const QString& key, const QString& text, const std::function<void(Clip&)>& fn,
-               bool title = false);
+               bool title = false, const QString& effect = {});
+    // Effekt-Bereiche in der Reihenfolge des angezeigten Clips (= Renderreihenfolge) einsortieren
+    void arrangeEffectSections();
     void refresh();
 
     Editor* m_editor;
@@ -109,6 +120,12 @@ private:
     bool m_zoomLinked = true;
     int m_lastShownId = 0; // Auswahl gewechselt -> bei Titeln den Tab "Titel" zeigen
     Param* m_crop[4] = {};
+    // Effekt-Bereiche (Open FX) im Tab Video, ab m_fxIndex im Layout
+    struct FxSection { QString id; QWidget* header; QWidget* body; };
+    QVector<FxSection> m_fxSections;
+    QVBoxLayout* m_videoLay = nullptr;
+    int m_fxIndex = 0;
+    QStringList m_fxOrder; // zuletzt angezeigte Reihenfolge
     // Tab "Übergang"
     TransitionKey m_transKey;
     QComboBox* m_transType = nullptr;
