@@ -17,8 +17,9 @@ struct ExportSettings {
     QString path;
     ProjectFormat format; // Projekteinstellungen (Framerate, Bezugsgröße für Pixelwerte im Schnitt)
     QSize size;           // Ausgabegröße; leer = Timeline-Auflösung
-    QString videoCodec = "libx264";
+    QString videoCodec = "libx264"; // leer = nur Audio (kein Videostrom)
     QString audioCodec = "aac";
+    QString pixFmt = "yuv420p";
     int crf = 20;             // Qualität: kleiner = besser
     QString preset = "medium"; // Geschwindigkeit vs. Dateigröße
     int audioBitrateK = 192;
