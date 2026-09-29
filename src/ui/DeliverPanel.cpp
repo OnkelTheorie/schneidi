@@ -1,5 +1,6 @@
 #include "ui/DeliverPanel.h"
 
+#include "app/Theme.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
@@ -116,11 +117,10 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
 
     m_addBtn = new QPushButton(T("Zur Render-Warteschlange hinzufügen"));
     m_addBtn->setMinimumHeight(30);
-    m_addBtn->setStyleSheet("QPushButton { background: #e87a3a; color: black; font-weight: 600; border-radius: 3px; }"
-                            "QPushButton:disabled { background: #5a4030; }");
+    m_addBtn->setStyleSheet(Theme::primaryButtonStyle());
     m_status = new QLabel;
     m_status->setWordWrap(true);
-    m_status->setStyleSheet("color: #8c8c94; padding: 0 12px;");
+    m_status->setStyleSheet(QString("color: %1; padding: 0 12px;").arg(Theme::textDim.name()));
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 12);

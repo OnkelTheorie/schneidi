@@ -1,0 +1,29 @@
+{
+  "name": "Dark Orange",
+  "description": "Dunkel mit orangen Akzenten (Standard)",
+  "colors": {
+    "window": "#1f1f23",
+    "panel": "#28282e",
+    "panelHeader": "#2f2f35",
+    "topBar": "#2a2a30",
+    "border": "#141417",
+    "well": "#141417",
+    "field": "#1b1b1f",
+    "control": "#3a3a42",
+    "controlLight": "#45454d",
+    "controlOff": "#55555c",
+    "text": "#d2d2d6",
+    "textDim": "#8c8c94",
+    "textFaint": "#5a5a62",
+    "timelineBg": "#1a1a1d",
+    "trackBg": "#222227",
+    "trackBgAlt": "#1f1f24",
+    "trackHeader": "#2a2a30",
+    "ruler": "#26262b",
+    "lane": "#1d1d21",
+    "viewerBg": "#101012",
+    "thumbBg": "#18181b",
+    "primary": "#e87a3a",
+    "secondary": "#a8c8f0"
+  }
+}

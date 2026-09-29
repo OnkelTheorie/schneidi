@@ -1,0 +1,29 @@
+{
+  "name": "Hell",
+  "description": "Hellgrau mit blauen Akzenten",
+  "colors": {
+    "window": "#d9dade",
+    "panel": "#e6e7ea",
+    "panelHeader": "#d0d2d6",
+    "topBar": "#cdd0d4",
+    "border": "#a3a7ae",
+    "well": "#bfc2c8",
+    "field": "#f5f6f8",
+    "control": "#c3c6cc",
+    "controlLight": "#aeb2b9",
+    "controlOff": "#9da1a8",
+    "text": "#1c1e22",
+    "textDim": "#565a62",
+    "textFaint": "#8f949d",
+    "timelineBg": "#a8abb2",
+    "trackBg": "#bcbfc5",
+    "trackBgAlt": "#b5b8be",
+    "trackHeader": "#c9ccd1",
+    "ruler": "#c6c9ce",
+    "lane": "#b0b3b9",
+    "viewerBg": "#1b1c1f",
+    "thumbBg": "#c9ccd1",
+    "primary": "#2f6fdc",
+    "secondary": "#e0791f"
+  }
+}

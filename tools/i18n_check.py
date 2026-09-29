@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Wörterbuch i18n/en.json mit den Texten im Code abgleichen.
 
-Sammelt alle T("…")- und N_("…")-Texte aus src/ (auch über mehrere Zeilen verkettete Literale).
+Sammelt alle T("…")- und N_("…")-Texte aus src/ (auch über mehrere Zeilen verkettete Literale) sowie Name und
+Beschreibung der Designs (assets/themes/*.json).
   tools/i18n_check.py           fehlende und überflüssige Einträge anzeigen (Exit 1, wenn etwas fehlt)
   tools/i18n_check.py --update  fehlende Einträge mit leerem Wert ergänzen, überflüssige entfernen
 Leerer Wert = noch nicht übersetzt (Anzeige bleibt deutsch).
@@ -26,6 +27,9 @@ def sources():
         text = open(f, encoding='utf-8').read()
         for m in CALL.finditer(text):
             found.add(unescape(''.join(LIT.findall(m.group(1)))))
+    for f in glob.glob(os.path.join(ROOT, 'assets', 'themes', '*.json')):
+        design = json.load(open(f, encoding='utf-8'))
+        found.update(design[k] for k in ('name', 'description') if design.get(k))
     return found
 
 

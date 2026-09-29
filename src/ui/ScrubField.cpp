@@ -1,5 +1,7 @@
 #include "ui/ScrubField.h"
 
+#include "app/Theme.h"
+
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <algorithm>
@@ -13,8 +15,9 @@ ScrubField::ScrubField(double min, double max, double step, int decimals, QWidge
     setReadOnly(true);
     setCursor(Qt::SizeHorCursor);
     setFocusPolicy(Qt::ClickFocus);
-    setStyleSheet("QLineEdit { background: #1b1b1f; border: 1px solid #1b1b1f; border-radius: 2px; padding: 1px 4px; }"
-                  "QLineEdit:focus { border-color: #e87a3a; }");
+    setStyleSheet(QString("QLineEdit { background: %1; border: 1px solid %1; border-radius: 2px; padding: 1px 4px; }"
+                          "QLineEdit:focus { border-color: %2; }")
+                      .arg(Theme::field.name(), Theme::primary.name()));
     showValue();
 }
 

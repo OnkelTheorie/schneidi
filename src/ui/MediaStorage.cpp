@@ -74,16 +74,16 @@ QPixmap framed(const QImage& img)
 QPixmap placeholder(const QString& label, bool folder = false)
 {
     QPixmap pm(kThumb);
-    pm.fill(QColor(0x18, 0x18, 0x1b));
+    pm.fill(Theme::thumbBg);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
     if (folder) {
         // schlichtes Ordnersymbol
         const QRectF body(kThumb.width() / 2.0 - 30, 24, 60, 40);
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0x6b, 0x6b, 0x74));
+        p.setBrush(Theme::mix(Theme::textDim, Theme::thumbBg, 0.3));
         p.drawRoundedRect(QRectF(body.left(), body.top() - 7, 24, 12), 2, 2);
-        p.setBrush(QColor(0x8c, 0x8c, 0x94));
+        p.setBrush(Theme::textDim);
         p.drawRoundedRect(body, 3, 3);
         return pm;
     }

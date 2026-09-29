@@ -51,6 +51,7 @@ add_executable(schneidi
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
+    src/app/DesignDialog.h src/app/DesignDialog.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp
@@ -70,6 +71,8 @@ add_executable(schneidi
 )
 
 qt_add_resources(schneidi "i18n" PREFIX "/" FILES i18n/en.json)
+set(SCHNEIDI_THEMES assets/themes/dark-orange.json assets/themes/midnight.json assets/themes/graphit.json assets/themes/hell.json)
+qt_add_resources(schneidi "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_THEMES})
 
 target_include_directories(schneidi PRIVATE src)
 target_link_libraries(schneidi PRIVATE Qt6::Widgets PkgConfig::MLT)

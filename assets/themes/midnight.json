@@ -1,0 +1,29 @@
+{
+  "name": "Midnight",
+  "description": "Blauschwarz mit Cyan und Violett",
+  "colors": {
+    "window": "#12141c",
+    "panel": "#181b26",
+    "panelHeader": "#1e2230",
+    "topBar": "#1a1d29",
+    "border": "#0a0b10",
+    "well": "#0a0c12",
+    "field": "#0f1118",
+    "control": "#262b3c",
+    "controlLight": "#313750",
+    "controlOff": "#3e4560",
+    "text": "#d4dae8",
+    "textDim": "#7f89a3",
+    "textFaint": "#4a5270",
+    "timelineBg": "#0f111a",
+    "trackBg": "#161a26",
+    "trackBgAlt": "#131722",
+    "trackHeader": "#1a1e2c",
+    "ruler": "#171b27",
+    "lane": "#121520",
+    "viewerBg": "#07080c",
+    "thumbBg": "#10131b",
+    "primary": "#2ec8e6",
+    "secondary": "#a37cf0"
+  }
+}

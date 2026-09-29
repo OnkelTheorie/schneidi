@@ -1,8 +1,10 @@
 #include "app/MainWindow.h"
 
 #include "app/InputBindings.h"
+#include "app/Theme.h"
 #include "app/KeyBindingsDialog.h"
 #include "app/ClipSpeedDialog.h"
+#include "app/DesignDialog.h"
 #include "app/NormalizeDialog.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
@@ -628,7 +630,8 @@ QWidget* MainWindow::buildTopBar()
 
     auto* bar = new QWidget;
     bar->setObjectName("TopBar");
-    bar->setStyleSheet("QWidget#TopBar { background: #2a2a30; border-bottom: 1px solid #141417; }");
+    bar->setStyleSheet(QString("QWidget#TopBar { background: %1; border-bottom: 1px solid %2; }")
+                           .arg(Theme::topBar.name(), Theme::border.name()));
     auto* lay = new QHBoxLayout(bar);
     lay->setContentsMargins(6, 2, 6, 2);
     lay->addWidget(m_storageToggle);
@@ -648,16 +651,18 @@ QWidget* MainWindow::buildPageBar()
     auto* bar = new QWidget;
     bar->setObjectName("PageBar");
     bar->setStyleSheet(
-        "QWidget#PageBar { background: #1f1f23; border-top: 1px solid #141417; }"
-        "QToolButton { color: #8c8c94; padding: 4px 18px; border-radius: 0; }"
-        "QToolButton:checked { color: #e87a3a; background: transparent; border-bottom: 2px solid #e87a3a; }"
-        "QToolButton:hover { color: #d2d2d6; }");
+        QString("QWidget#PageBar { background: %1; border-top: 1px solid %2; }"
+                "QToolButton { color: %3; padding: 4px 18px; border-radius: 0; }"
+                "QToolButton:checked { color: %4; background: transparent; border-bottom: 2px solid %4; }"
+                "QToolButton:hover { color: %5; }")
+            .arg(Theme::window.name(), Theme::border.name(), Theme::textDim.name(), Theme::primary.name(),
+                 Theme::text.name()));
     auto* lay = new QHBoxLayout(bar);
     lay->setContentsMargins(10, 0, 10, 0);
     lay->setSpacing(4);
 
     auto* brand = new QLabel("schneidi");
-    brand->setStyleSheet("color: #8c8c94; font-weight: 600;");
+    brand->setStyleSheet(QString("color: %1; font-weight: 600;").arg(Theme::textDim.name()));
     lay->addWidget(brand);
     lay->addStretch(1);
 
@@ -1100,6 +1105,8 @@ void MainWindow::buildActions()
                                                                     : "Die Sprache ändert sich nach dem Neustart von schneidi.");
         });
     }
+    // Design (Farben der Oberfläche): wirkt wie die Sprache nach dem Neustart
+    makeAction(workspace, "design", T("Design…"), QKeySequence(), [this] { DesignDialog(this).exec(); });
 
     InputBindings::instance().saveIfIncomplete();
 }

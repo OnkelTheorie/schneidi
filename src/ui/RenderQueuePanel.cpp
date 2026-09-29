@@ -68,14 +68,14 @@ public:
             (*l)->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::textDim.name()));
             lay->addWidget(*l);
         }
-        message->setStyleSheet("color: #e8414a; font-size: 8pt;");
+        message->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::warning.name()));
         progress = new QProgressBar;
         progress->setRange(0, 100);
         progress->setTextVisible(false);
         progress->setFixedHeight(4);
-        progress->setStyleSheet(QString("QProgressBar { background: #141417; border: none; }"
+        progress->setStyleSheet(QString("QProgressBar { background: %2; border: none; }"
                                         "QProgressBar::chunk { background: %1; }")
-                                    .arg(Theme::accent.name()));
+                                    .arg(Theme::primary.name(), Theme::well.name()));
         lay->addWidget(progress);
         setAttribute(Qt::WA_TransparentForMouseEvents); // Auswahl/Kontextmenü macht die Liste
     }
@@ -87,9 +87,9 @@ public:
 QString statusColor(RenderStatus s)
 {
     switch (s) {
-    case RenderStatus::Done: return "#3cc05a";
-    case RenderStatus::Failed: return "#e8414a";
-    case RenderStatus::Rendering: return Theme::accent.name();
+    case RenderStatus::Done: return Theme::meterLow.name();
+    case RenderStatus::Failed: return Theme::warning.name();
+    case RenderStatus::Rendering: return Theme::primary.name();
     default: return Theme::textDim.name();
     }
 }
@@ -113,17 +113,16 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
     m_list->setSpacing(2);
     m_list->setStyleSheet(QString("QListWidget { background: %1; }"
                                   "QListWidget::item { background: %2; border: 1px solid %3; }"
-                                  "QListWidget::item:selected { background: #3a3a42; border: 1px solid %4; }")
+                                  "QListWidget::item:selected { background: %5; border: 1px solid %4; }")
                               .arg(Theme::panel.name(), Theme::panelHeader.name(), Theme::border.name(),
-                                   Theme::accent.name()));
+                                   Theme::primary.name(), Theme::control.name()));
     m_empty = new QLabel(T("Keine Aufträge.\nLinks „Zur Render-Warteschlange hinzufügen“."));
     m_empty->setAlignment(Qt::AlignCenter);
     m_empty->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
 
     m_renderBtn = new QPushButton;
     m_renderBtn->setMinimumHeight(30);
-    m_renderBtn->setStyleSheet("QPushButton { background: #e87a3a; color: black; font-weight: 600; border-radius: 3px; }"
-                               "QPushButton:disabled { background: #5a4030; }");
+    m_renderBtn->setStyleSheet(Theme::primaryButtonStyle());
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 12);

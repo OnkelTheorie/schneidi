@@ -36,7 +36,7 @@ protected:
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
-        p.fillRect(rect(), QColor(0x10, 0x10, 0x12));
+        p.fillRect(rect(), Theme::viewerBg);
         if (m_image.isNull()) return;
         QSize s = m_image.size().scaled(size(), Qt::KeepAspectRatio);
         QRect r(QPoint((width() - s.width()) / 2, (height() - s.height()) / 2), s);
@@ -105,12 +105,17 @@ protected:
         QPainter p(this);
         p.fillRect(rect(), Theme::panel);
         const int mid = height() / 2;
-        p.fillRect(QRectF(kMargin, mid - 2, width() - 2 * kMargin, 4), Theme::trackBg);
+        // eingelassene Schiene mit feiner Skala darunter (wie am Mixer)
+        p.fillRect(QRectF(kMargin, mid - 2, width() - 2 * kMargin, 4), Theme::well);
+        for (int i = 0; i <= 20; ++i) {
+            const double x = kMargin + i * (width() - 2 * kMargin - 1) / 20.0;
+            p.fillRect(QRectF(x, mid + 3, 1, i % 5 ? 1 : 2), Theme::textFaint);
+        }
         if (m_length <= 0) return;
         if (m_in >= 0 || m_out >= 0) {
             const double x1 = xOf(m_in >= 0 ? m_in : 0), x2 = xOf(m_out >= 0 ? m_out + 1 : m_length);
-            p.fillRect(QRectF(x1, 2, x2 - x1, height() - 4), QColor(255, 255, 255, 45));
-            p.setPen(QPen(Theme::text, 2));
+            p.fillRect(QRectF(x1, 2, x2 - x1, height() - 4), Theme::alpha(Theme::secondary, 50));
+            p.setPen(QPen(Theme::secondary, 2));
             if (m_in >= 0) {
                 p.drawLine(QPointF(x1 + 1, 2), QPointF(x1 + 1, height() - 2));
                 p.drawLine(QPointF(x1 + 1, 3), QPointF(x1 + 5, 3));
@@ -156,8 +161,10 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     };
 
     m_timecode = new QLabel;
-    m_timecode->setStyleSheet(QString("color: %1; font-family: monospace; font-size: 13px; padding: 0 8px;")
-                                  .arg(Theme::text.name()));
+    // Timecode im eingelassenen Feld (Formensprache des Mixers)
+    m_timecode->setStyleSheet(QString("color: %1; background: %2; border: 1px solid %3; border-radius: 2px;"
+                                      " font-family: monospace; font-size: 13px; padding: 1px 8px;")
+                                  .arg(Theme::text.name(), Theme::well.name(), Theme::border.name()));
 
     auto makeBtn = [](const QString& text, const QString& tip) {
         auto* b = new QToolButton;
@@ -184,7 +191,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     bypass->setToolTip(T("Vorher/Nachher: Farbkorrektur in der Vorschau umgehen (Shift+D)"));
     bypass->setStyleSheet(QString("QToolButton { font-size: 14px; min-width: 24px; color: %1; }"
                                   "QToolButton:checked { color: %2; }")
-                              .arg(Theme::textDim.name(), Theme::accent.name()));
+                              .arg(Theme::textDim.name(), Theme::primary.name()));
     connect(bypass, &QToolButton::toggled, m_engine, &Engine::setColorBypass);
     connect(m_engine, &Engine::colorBypassChanged, this, [this, bypass](bool on) {
         const QSignalBlocker b(bypass);
