@@ -747,6 +747,23 @@ void MainWindow::buildActions()
         m_editor->setSplitOnSelectedTracks(on);
         QSettings().setValue("edit/splitOnSelectedTracks", on);
     });
+    // Timeline-Ansicht: Clipnamen/Dauer ein-/ausblenden (gespeichert)
+    QMenu* viewOpts = timeline->addMenu(T("Timeline-Ansicht"));
+    auto addViewOption = [this, viewOpts](const QString& id, const QString& text, const QString& key, bool def,
+                                          std::function<void(bool)> apply) {
+        auto* a = makeAction(viewOpts, id, text, QKeySequence(), [] {});
+        a->setCheckable(true);
+        a->setChecked(QSettings().value(key, def).toBool());
+        apply(a->isChecked());
+        connect(a, &QAction::toggled, this, [this, key, apply](bool on) {
+            apply(on);
+            if (!m_autosaveDisabled) QSettings().setValue(key, on);
+        });
+    };
+    addViewOption("show_clip_names", T("Clipnamen anzeigen"), "timeline/showClipNames", true,
+                  [tv](bool on) { tv->setShowClipNames(on); });
+    addViewOption("show_clip_durations", T("Clipdauer anzeigen"), "timeline/showClipDurations", false,
+                  [tv](bool on) { tv->setShowClipDurations(on); });
     timeline->addSeparator();
     makeAction(timeline, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
     makeAction(timeline, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });

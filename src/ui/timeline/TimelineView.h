@@ -51,6 +51,9 @@ public slots:
     void setPlayhead(int frame);
     void setTool(TimelineView::Tool tool);
     void setSnapping(bool on);
+    // Ansicht wie DaVincis Timeline-Ansichtsoptionen: Clipname bzw. Dauer in der Titelleiste
+    void setShowClipNames(bool on);
+    void setShowClipDurations(bool on);
 
 signals:
     void seekRequested(int frame);
@@ -168,6 +171,8 @@ private:
     ViewState m_view;
     Tool m_tool = Tool::Select;
     bool m_snap = true;
+    bool m_showNames = true;
+    bool m_showDurations = false;
     int m_playhead = 0;
 
     Drag m_drag = Drag::None;

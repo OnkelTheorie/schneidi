@@ -602,6 +602,18 @@ void TimelineView::setTool(Tool tool)
     emit toolChanged(tool);
 }
 
+void TimelineView::setShowClipNames(bool on)
+{
+    m_showNames = on;
+    update();
+}
+
+void TimelineView::setShowClipDurations(bool on)
+{
+    m_showDurations = on;
+    update();
+}
+
 void TimelineView::setSnapping(bool on)
 {
     if (on == m_snap) return;
@@ -1131,14 +1143,26 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         }
     }
 
-    if (r.width() > 24) {
+    if (r.width() > 24 && (m_showNames || m_showDurations)) {
         QFont f = font();
         f.setPointSizeF(7.5);
         p.setFont(f);
-        p.setPen(QColor(0xf0, 0xf0, 0xf0));
-        const QRect textRect(std::max(r.left(), kHeaderW) + 5 + flagW, r.top(), r.width() - 8 - fxW - flagW, barH);
-        p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
-                   QFontMetrics(f).elidedText(clipLabel(c), Qt::ElideRight, textRect.width()));
+        const QFontMetrics fm(f);
+        QRect textRect(std::max(r.left(), kHeaderW) + 5 + flagW, r.top(), r.right() - 3 - fxW - std::max(r.left(), kHeaderW) - 5 - flagW, barH);
+        // Dauer rechts (vor „fx“), nur wenn sie ganz hineinpasst; der Name nimmt den Rest
+        if (m_showDurations) {
+            const QString dur = Timecode::format(c.length(), m_editor->project()->fps());
+            const int w = fm.horizontalAdvance(dur);
+            if (w + 6 <= textRect.width()) {
+                p.setPen(QColor(0xf0, 0xf0, 0xf0, 170));
+                p.drawText(textRect, Qt::AlignVCenter | Qt::AlignRight, dur);
+                textRect.setRight(textRect.right() - w - 8);
+            }
+        }
+        if (m_showNames && textRect.width() > 4) {
+            p.setPen(QColor(0xf0, 0xf0, 0xf0));
+            p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, fm.elidedText(clipLabel(c), Qt::ElideRight, textRect.width()));
+        }
     }
 
     p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
