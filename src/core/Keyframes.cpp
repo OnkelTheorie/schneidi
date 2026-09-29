@@ -19,6 +19,17 @@ constexpr Keys::ParamInfo kParams[] = {
     {AnimParam::FxBrightness, "fxBrightness", false}, {AnimParam::FxContrast, "fxContrast", false},
     {AnimParam::FxSaturation, "fxSaturation", false}, {AnimParam::FxTemp, "fxTemp", false},
     {AnimParam::FxTint, "fxTint", false},       {AnimParam::FxBlur, "fxBlur", false},
+    {AnimParam::GradeLiftY, "gradeLiftY", false},     {AnimParam::GradeLiftR, "gradeLiftR", false},
+    {AnimParam::GradeLiftG, "gradeLiftG", false},     {AnimParam::GradeLiftB, "gradeLiftB", false},
+    {AnimParam::GradeGammaY, "gradeGammaY", false},   {AnimParam::GradeGammaR, "gradeGammaR", false},
+    {AnimParam::GradeGammaG, "gradeGammaG", false},   {AnimParam::GradeGammaB, "gradeGammaB", false},
+    {AnimParam::GradeGainY, "gradeGainY", false},     {AnimParam::GradeGainR, "gradeGainR", false},
+    {AnimParam::GradeGainG, "gradeGainG", false},     {AnimParam::GradeGainB, "gradeGainB", false},
+    {AnimParam::GradeOffsetY, "gradeOffsetY", false}, {AnimParam::GradeOffsetR, "gradeOffsetR", false},
+    {AnimParam::GradeOffsetG, "gradeOffsetG", false}, {AnimParam::GradeOffsetB, "gradeOffsetB", false},
+    {AnimParam::GradeContrast, "gradeContrast", false}, {AnimParam::GradePivot, "gradePivot", false},
+    {AnimParam::GradeSaturation, "gradeSaturation", false}, {AnimParam::GradeTemp, "gradeTemp", false},
+    {AnimParam::GradeTint, "gradeTint", false},       {AnimParam::GradeExposure, "gradeExposure", false},
 };
 
 // Verlauf zwischen zwei Keyframes (u = 0..1): Ease Out am ersten = langsam los, Ease In am zweiten = langsam an

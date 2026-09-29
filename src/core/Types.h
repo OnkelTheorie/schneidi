@@ -149,6 +149,13 @@ enum class AnimParam {
     Volume, Pan,                                      // Audio
     FxBrightness, FxContrast, FxSaturation, FxTemp, FxTint, // Effekt Farbkorrektur (Werte in EffectInstance::params)
     FxBlur,                                           // Effekt Gaußsche Unschärfe
+    // Color-Seite (Effekt "grade", DaVinci Primaries): Räder Lift/Gamma/Gain/Offset je Master (Y) + R/G/B,
+    // dazu Kontrast, Pivot, Sättigung, Temperatur, Tönung, Belichtung
+    GradeLiftY, GradeLiftR, GradeLiftG, GradeLiftB,
+    GradeGammaY, GradeGammaR, GradeGammaG, GradeGammaB,
+    GradeGainY, GradeGainR, GradeGainG, GradeGainB,
+    GradeOffsetY, GradeOffsetR, GradeOffsetG, GradeOffsetB,
+    GradeContrast, GradePivot, GradeSaturation, GradeTemp, GradeTint, GradeExposure,
     Count
 };
 // Verlauf an einem Keyframe (Rechtsklick auf die Raute wie in DaVinci):

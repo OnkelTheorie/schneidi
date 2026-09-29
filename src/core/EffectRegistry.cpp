@@ -32,6 +32,35 @@ const QVector<EffectDescriptor>& all()
              {"strength", T("Stärke"), {}, EffectParam::Double, 25.0, 0, 100, AnimParam::FxBlur, 0.25, 2},
          },
          true},
+        // Color-Seite (DaVinci „Primaries – Color Wheels“, eigener Bereich statt Effects Library): Werte wie in DaVinci
+        // (Lift/Gamma 0 = neutral, Gain 1, Offset 25, Kontrast 1, Pivot 0,435, Sättigung 50), dazu LUT (.cube).
+        // Engine: eigener MLT-Filter (engine/ColorGrade), wird vor allen anderen Effekten angewendet.
+        {"grade", T("Farbkorrektur (Color)"), {}, true,
+         {
+             {"liftY", "Lift", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftY, 0.002, 2},
+             {"liftR", "Lift R", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftR, 0.002, 2},
+             {"liftG", "Lift G", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftG, 0.002, 2},
+             {"liftB", "Lift B", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftB, 0.002, 2},
+             {"gammaY", "Gamma", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaY, 0.002, 2},
+             {"gammaR", "Gamma R", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaR, 0.002, 2},
+             {"gammaG", "Gamma G", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaG, 0.002, 2},
+             {"gammaB", "Gamma B", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeGammaB, 0.002, 2},
+             {"gainY", "Gain", {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainY, 0.005, 2},
+             {"gainR", "Gain R", {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainR, 0.005, 2},
+             {"gainG", "Gain G", {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainG, 0.005, 2},
+             {"gainB", "Gain B", {}, EffectParam::Double, 1.0, 0, 4, AnimParam::GradeGainB, 0.005, 2},
+             {"offsetY", "Offset", {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetY, 0.1, 2},
+             {"offsetR", "Offset R", {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetR, 0.1, 2},
+             {"offsetG", "Offset G", {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetG, 0.1, 2},
+             {"offsetB", "Offset B", {}, EffectParam::Double, 25.0, 0, 100, AnimParam::GradeOffsetB, 0.1, 2},
+             {"contrast", T("Kontrast"), {}, EffectParam::Double, 1.0, 0, 2, AnimParam::GradeContrast, 0.002, 3},
+             {"pivot", "Pivot", {}, EffectParam::Double, 0.435, 0, 1, AnimParam::GradePivot, 0.001, 3},
+             {"saturation", T("Sättigung"), {}, EffectParam::Double, 50.0, 0, 100, AnimParam::GradeSaturation, 0.1, 2},
+             {"temperature", T("Temperatur"), {}, EffectParam::Double, 0.0, -4000, 4000, AnimParam::GradeTemp, 5, 1},
+             {"tint", T("Tönung"), {}, EffectParam::Double, 0.0, -100, 100, AnimParam::GradeTint, 0.1, 2},
+             {"exposure", T("Belichtung"), {}, EffectParam::Double, 0.0, -4, 4, AnimParam::GradeExposure, 0.01, 2},
+             {"lut", "LUT", {}, EffectParam::Path, QString(), 0, 0},
+         }},
     };
     return effects;
 }

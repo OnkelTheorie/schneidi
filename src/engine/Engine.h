@@ -70,10 +70,15 @@ public:
     void seek(int frame);
     int position() const { return m_position; }
 
+    // Vorher/Nachher (Color-Seite, wie DaVinci „Bypass Color Grades“): Vorschau ohne Farbkorrektur; Export unberührt
+    void setColorBypass(bool on);
+    bool colorBypass() const { return m_gradeBypass->load(); }
+
 signals:
     void frameReady(const QImage& image);
     void positionChanged(int frame);
     void speedChanged(double speed);
+    void colorBypassChanged(bool on);
     void modeChanged(Engine::Mode mode);
     // Nur während der Wiedergabe: Spitzenpegel in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R]
     void audioLevels(const QVector<float>& db);
@@ -98,6 +103,7 @@ private:
     std::unique_ptr<MixerHooks> m_mixer;
     std::mutex m_mixerMutex; // m_mixer wird im Consumer-Thread gelesen
     bool m_mixerOnlyNext = false;
+    std::shared_ptr<std::atomic<bool>> m_gradeBypass = std::make_shared<std::atomic<bool>>(false);
     std::unique_ptr<Mlt::Producer> m_source;
     QString m_sourcePath;
     Mlt::Producer* m_current = nullptr;

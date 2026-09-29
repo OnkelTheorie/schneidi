@@ -68,6 +68,7 @@ bool Engine::createConsumer(QString* error)
     m_builder->setResolver([this](const QString& path, TrackKind kind) {
         return kind == TrackKind::Video ? m_proxies->resolve(path) : path;
     });
+    m_builder->setGradeBypass(m_gradeBypass);
     // Vorschaubild im Seitenverhältnis des Projekts (sonst wird Hochformat verzerrt), gerade Maße
     const QSize fit = m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
     m_previewSize = QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
@@ -269,6 +270,13 @@ void Engine::applyAudioState()
     const bool playing = m_speed != 0.0;
     m_consumer->set("audio_off", playing ? 0 : 1);
     m_consumer->set("scrub_audio", playing ? 1 : 0);
+}
+
+void Engine::setColorBypass(bool on)
+{
+    if (m_gradeBypass->exchange(on) == on) return;
+    refresh(); // Filter lesen den Schalter beim nächsten Bild, kein Neuaufbau nötig
+    emit colorBypassChanged(on);
 }
 
 void Engine::refresh()

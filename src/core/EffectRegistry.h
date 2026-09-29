@@ -10,7 +10,7 @@
 #include <QVector>
 
 struct EffectParam {
-    enum Type { Double, Color };
+    enum Type { Double, Color, Path }; // Path = Dateipfad (Projektdatei speichert ihn auch relativ)
     QString key;         // Name in EffectInstance::params
     QString label;       // Anzeige im Inspector
     QString mltProperty; // Property am MLT-Filter (leer = Umrechnung im TimelineBuilder)

@@ -1,6 +1,7 @@
 #pragma once
 #include "core/Types.h"
 
+#include <atomic>
 #include <functional>
 #include <map>
 #include <memory>
@@ -41,6 +42,9 @@ public:
     ~TimelineBuilder();
 
     void setResolver(MediaResolver resolver) { m_resolver = std::move(resolver); }
+    // Vorschau „Vorher/Nachher“ (Color-Seite): true = Farbkorrektur umgehen; wirkt live ohne Neuaufbau.
+    // Ohne (Export, Standbild) wird immer korrigiert.
+    void setGradeBypass(std::shared_ptr<std::atomic<bool>> flag) { m_gradeBypass = std::move(flag); }
 
     // hooks != nullptr: Mixer-Filter immer anhängen (auch bei 0 dB) und Pegelmesser einbauen
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);
@@ -61,6 +65,7 @@ private:
     Mlt::Profile& m_profile;
     std::unique_ptr<ProducerFactory> m_factory; // vor m_cache: muss die Producer überleben
     MediaResolver m_resolver;
+    std::shared_ptr<std::atomic<bool>> m_gradeBypass;
     // Pro Datei *und* Spur ein eigener Producer, damit sich Video- und Audiospur
     // nicht gegenseitig im Decoder hin- und herspulen.
     std::map<QString, std::unique_ptr<Mlt::Producer>> m_cache;

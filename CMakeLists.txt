@@ -33,6 +33,7 @@ add_executable(schneidi
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
+    src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp

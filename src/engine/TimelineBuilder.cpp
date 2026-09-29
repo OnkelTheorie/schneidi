@@ -3,6 +3,7 @@
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
+#include "engine/ColorGrade.h"
 #include "engine/Profiles.h"
 
 #include <Mlt.h>
@@ -169,11 +170,16 @@ void applyBlur(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, int a, 
     attachTo(cut, f);
 }
 
-// Effekte in der Reihenfolge am Clip; a/len: Ausschnitt für Keyframes
+// Vorher/Nachher-Schalter des gerade bauenden Builders (nur Vorschau), siehe TimelineBuilder::setGradeBypass
+thread_local std::shared_ptr<std::atomic<bool>> t_gradeBypass;
+
+// Effekte in der Reihenfolge am Clip; a/len: Ausschnitt für Keyframes.
+// Farbkorrektur der Color-Seite zuerst (wie DaVinci: Grade vor den Edit-Effekten), unabhängig von der Position.
 void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, int a, int len)
 {
+    ColorGrade::attach(clip, c, a, t_gradeBypass);
     for (const auto& inst : c.effects) {
-        if (!inst.enabled) continue;
+        if (!inst.enabled || inst.effectId == ColorGrade::EffectId) continue;
         if (inst.effectId == "color") {
             applyColor(profile, clip, c, a, len);
             continue;
@@ -837,6 +843,10 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
     if (hooks) *hooks = {};
     m_used.clear();
+    struct BypassScope { // Filter der Farbkorrektur bekommen den Schalter dieses Builders
+        explicit BypassScope(std::shared_ptr<std::atomic<bool>> f) { t_gradeBypass = std::move(f); }
+        ~BypassScope() { t_gradeBypass.reset(); }
+    } bypassScope(m_gradeBypass);
     auto tractor = std::make_unique<Mlt::Tractor>(m_profile);
     const int end = std::max(1, TimelineOps::endFrame(tl));
 
