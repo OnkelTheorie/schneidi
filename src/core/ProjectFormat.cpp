@@ -78,7 +78,11 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                     case AnimParam::TitleSize: f = s; break;
                     default: continue;
                     }
-                    for (Keyframe& k : it.value()) k.value *= f;
+                    for (Keyframe& k : it.value()) {
+                        k.value *= f;
+                        k.inDv *= f; // Bezier-Griffe
+                        k.outDv *= f;
+                    }
                 }
             }
     // Inhalt der Compound Clips (nur beim Rendern angehängt) genauso

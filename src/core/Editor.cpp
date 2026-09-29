@@ -1034,11 +1034,11 @@ void Editor::moveKeyframes(int clipId, const QVector<int>& times, int delta)
     m_selection->setKeyframes(clipId, moved);
 }
 
-void Editor::removeKeyframes(int clipId, const QVector<int>& times)
+void Editor::removeKeyframes(int clipId, const QVector<int>& times, const QVector<AnimParam>& params)
 {
     if (times.isEmpty() || TimelineOps::isLocked(m_project->timeline(), clipId)) return;
     m_project->edit(T("Keyframes löschen"), [&](Timeline& tl) {
-        if (Clip* c = TimelineOps::findClip(tl, clipId)) Keys::removeAt(*c, times);
+        if (Clip* c = TimelineOps::findClip(tl, clipId)) Keys::removeAt(*c, times, params);
     });
     m_selection->setKeyframes(0, {});
 }
@@ -1046,7 +1046,9 @@ void Editor::removeKeyframes(int clipId, const QVector<int>& times)
 void Editor::deleteSelection()
 {
     if (m_selection->keyClip()) { // ausgewählte Keyframe-Rauten gehen vor (wie DaVinci)
-        removeKeyframes(m_selection->keyClip(), m_selection->keyTimes().values().toVector());
+        const int param = m_selection->keyParam();
+        removeKeyframes(m_selection->keyClip(), m_selection->keyTimes().values().toVector(),
+                        param < 0 ? QVector<AnimParam>{} : QVector<AnimParam>{AnimParam(param)});
         return;
     }
     if (const TransitionKey t = m_selection->transition(); !t.isNull()) {
@@ -1315,13 +1317,13 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                     if (!r.freeze) newLen = std::min(newLen, avail - newIn);
                     // Keyframes über die Datei-Frames umrechnen
                     for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
-                        KeyTrack moved;
-                        for (Keyframe kf : it.value()) {
-                            const double f = oldMap.fileFrameAt(kf.frame);
-                            kf.frame = int(std::lround(newMap.materialAtFile(f)));
+                        KeyTrack mapped = it.value(), moved;
+                        for (Keyframe& kf : mapped)
+                            kf.frame = int(std::lround(newMap.materialAtFile(oldMap.fileFrameAt(kf.frame))));
+                        Keys::rescaleHandles(it.value(), mapped);
+                        for (const Keyframe& kf : mapped)
                             if (std::none_of(moved.begin(), moved.end(), [&](const Keyframe& o) { return o.frame == kf.frame; }))
                                 moved << kf;
-                        }
                         std::sort(moved.begin(), moved.end(),
                                   [](const Keyframe& x, const Keyframe& y) { return x.frame < y.frame; });
                         it.value() = moved;
@@ -1400,13 +1402,13 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
                 const int len = std::clamp(int(std::lround(newMap.materialAt(sEnd))) - n.in, 1, avail - n.in);
                 n.out = n.in + len - 1;
                 for (auto it = n.keys.begin(); it != n.keys.end(); ++it) {
-                    KeyTrack moved;
+                    KeyTrack mapped = it.value(), moved;
                     const QVector<double>& src = keySrc[it.key()];
-                    for (int j = 0; j < it.value().size() && j < src.size(); ++j) {
-                        Keyframe kf = it.value()[j];
-                        kf.frame = int(std::lround(newMap.materialAt(src[j])));
+                    mapped.resize(std::min(mapped.size(), src.size()));
+                    for (int j = 0; j < mapped.size(); ++j) mapped[j].frame = int(std::lround(newMap.materialAt(src[j])));
+                    Keys::rescaleHandles(it.value(), mapped);
+                    for (const Keyframe& kf : mapped)
                         if (moved.isEmpty() || moved.last().frame != kf.frame) moved << kf;
-                    }
                     it.value() = moved;
                 }
                 n.fadeIn = std::min(n.fadeIn, len);

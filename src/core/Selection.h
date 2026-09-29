@@ -27,6 +27,7 @@ public:
         m_transition = {};
         m_keyClip = 0;
         m_keyTimes.clear();
+        m_keyParam = -1;
         emit changed();
     }
     void clear() { set({}); }
@@ -40,17 +41,21 @@ public:
         m_transition = t;
         m_keyClip = 0;
         m_keyTimes.clear();
+        m_keyParam = -1;
         emit changed();
     }
 
-    // Ausgewählte Keyframe-Rauten in der Keyframe-Spur eines Clips (Clip-Frames); Clip-Auswahl bleibt
+    // Ausgewählte Keyframe-Rauten in der Keyframe-Spur eines Clips (Clip-Frames); Clip-Auswahl bleibt.
+    // keyParam: -1 = alle Parameter (Keyframe-Spur), sonst int(AnimParam) = Punkte im Kurven-Editor
     int keyClip() const { return m_keyClip; }
     const QSet<int>& keyTimes() const { return m_keyTimes; }
-    void setKeyframes(int clipId, const QSet<int>& times)
+    int keyParam() const { return m_keyParam; }
+    void setKeyframes(int clipId, const QSet<int>& times, int param = -1)
     {
-        if (clipId == m_keyClip && times == m_keyTimes) return;
+        if (clipId == m_keyClip && times == m_keyTimes && param == m_keyParam) return;
         m_keyClip = times.isEmpty() ? 0 : clipId;
         m_keyTimes = times;
+        m_keyParam = times.isEmpty() ? -1 : param;
         emit changed();
     }
 
@@ -62,4 +67,5 @@ private:
     TransitionKey m_transition;
     int m_keyClip = 0;
     QSet<int> m_keyTimes;
+    int m_keyParam = -1;
 };

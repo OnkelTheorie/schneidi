@@ -710,7 +710,7 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
         QMenu menu(this);
         const struct { KeyEase ease; const char* name; } eases[] = {
             {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
-            {KeyEase::EaseInOut, "Ease In and Out"}};
+            {KeyEase::EaseInOut, "Ease In and Out"}, {KeyEase::Bezier, "Bezier"}};
         for (const auto& e : eases) {
             QAction* a = menu.addAction(e.name); // wie DaVinci auch deutsch englisch
             a->setCheckable(true);

@@ -65,6 +65,7 @@ add_executable(schneidi
     src/ui/RenderQueuePanel.h     src/ui/RenderQueuePanel.cpp
     src/ui/timeline/ViewState.h
     src/ui/timeline/TimelineView.h    src/ui/timeline/TimelineView.cpp
+    src/ui/timeline/TimelineCurves.cpp
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp
 )
 

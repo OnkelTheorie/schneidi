@@ -127,7 +127,8 @@ public:
     void setKeyframeEase(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, KeyEase ease);
     // Keyframe-Spur der Timeline: Rauten an Clip-Frames `times` (alle Parameter) verschieben/löschen
     void moveKeyframes(int clipId, const QVector<int>& times, int delta);
-    void removeKeyframes(int clipId, const QVector<int>& times);
+    // params leer = alle Parameter (Keyframe-Spur), sonst nur diese (Kurven-Editor)
+    void removeKeyframes(int clipId, const QVector<int>& times, const QVector<AnimParam>& params = {});
 
     // Geschwindigkeit wie DaVinci „Change Clip Speed“ (Strg+R) für die Clips (mit Partnern). Titel/Standbilder bleiben.
     // ripple = Cliplänge folgt der Geschwindigkeit, spätere Clips derselben Spuren rücken nach; sonst bleibt die Länge

@@ -14,6 +14,8 @@ struct ParamInfo {
     AnimParam param;
     const char* id; // Schlüssel in der Projektdatei
     bool color;     // Wert = ARGB-Zahl, Kanäle einzeln interpolieren
+    const char* name; // Anzeige (N_, nullptr = aus der EffectRegistry)
+    double min, max;  // sinnvoller Wertebereich (Kurven-Editor)
 };
 const ParamInfo& info(AnimParam p);
 bool fromId(const QString& id, AnimParam* p);
@@ -21,6 +23,9 @@ bool fromId(const QString& id, AnimParam* p);
 // Farbe <-> Keyframe-Wert (ARGB als Zahl, in double exakt darstellbar)
 inline double fromColor(const QColor& c) { return double(c.rgba()); }
 inline QColor toColor(double v) { return QColor::fromRgba(QRgb(quint32(v))); }
+
+QString label(AnimParam p);                     // übersetzter Name (Kurven-Editor)
+void range(AnimParam p, double* lo, double* hi); // erlaubter Wertebereich
 
 double staticValue(const Clip& c, AnimParam p);
 void setStaticValue(Clip& c, AnimParam p, double v);
@@ -42,6 +47,17 @@ void clear(Clip& c, AnimParam p);                    // alle Keyframes weg, stat
 QVector<int> keyTimes(const Clip& c, const QVector<AnimParam>& params = {});
 // Verläuft der Parameter zwischen t0 und t1 (benachbarte Keyframe-Zeiten) linear bzw. konstant?
 bool linearBetween(const Clip& c, AnimParam p, int t0, int t1);
+
+// Bezier (Kurven-Editor): Griffe relativ zum Keyframe k[i] in Frames/Wert. autoHandles setzt weiche Griffe
+// (Steigung aus den Nachbarn, an Spitzen und Enden flach). handle() liefert den wirksamen Griff (auf den Abschnitt
+// gekürzt, bei Keyframes ohne Bezier die abgeleitete Form); false = kein Nachbar auf dieser Seite.
+// setHandle macht den Keyframe zu Bezier; ohne broken bleibt der andere Griff auf einer Linie (gleiche Steigung).
+void autoHandles(KeyTrack& k, int i);
+bool handle(const KeyTrack& k, int i, bool out, double* dt, double* dv);
+void setHandle(KeyTrack& k, int i, bool out, double dt, double dv, bool broken = false);
+// Nach dem Umrechnen der Keyframe-Zeiten (Geschwindigkeit): Griffzeiten im Verhältnis der Abstände mitstrecken.
+// after = dieselben Keyframes in derselben Reihenfolge wie before (noch nicht sortiert); rückwärts tauscht ein/aus.
+void rescaleHandles(const KeyTrack& before, KeyTrack& after);
 
 // Timeline-Keyframe-Spur: alle Parameter an den Zeiten gemeinsam
 void setEase(Clip& c, const QVector<int>& times, KeyEase ease, const QVector<AnimParam>& params = {});
