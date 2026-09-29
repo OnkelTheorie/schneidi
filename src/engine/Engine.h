@@ -49,7 +49,6 @@ public:
     // Standbild (Grab Still) des aktuell gezeigten Bilds (Timeline bzw. Quelle) in voller Projektauflösung,
     // immer aus den Originalen (nicht aus Proxies)
     QImage grabStill(const Timeline& tl);
-    QString sourcePath() const { return m_sourcePath; }
 
     void updateTimeline(const Timeline& tl); // Modell geändert -> neu aufbauen
     // Nächstes updateTimeline() ändert nur Fader/Pan -> live übernehmen statt neu aufbauen
@@ -99,7 +98,6 @@ private:
     std::unique_ptr<Mlt::Producer> m_source;
     QString m_sourcePath;
     Mlt::Producer* m_current = nullptr;
-    QString m_sourcePath;
 
     Mode m_mode = Mode::Timeline;
     double m_speed = 0.0;
