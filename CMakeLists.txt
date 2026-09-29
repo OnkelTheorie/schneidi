@@ -26,6 +26,7 @@ add_executable(schneidi
     src/core/Editor.h             src/core/Editor.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
     src/core/Loudness.h           src/core/Loudness.cpp
+    src/core/RenderJob.h          src/core/RenderJob.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Profiles.h         src/engine/Profiles.cpp
