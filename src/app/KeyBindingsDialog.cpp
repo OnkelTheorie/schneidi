@@ -28,7 +28,7 @@ public:
     {
         setText(T("Maustaste drücken …"));
         setFocusPolicy(Qt::StrongFocus);
-        setStyleSheet(QString("color: %1; padding-left: 4px;").arg(Theme::accent.name()));
+        setStyleSheet(QString("color: %1; padding-left: 4px;").arg(Theme::primary.name()));
         setToolTip(T("Seitentaste drücken. Entf = entfernen, Esc = abbrechen"));
     }
 
@@ -156,7 +156,7 @@ void KeyBindingsDialog::fill()
             keyItem->setFont(f);
         }
         if (uses.value(key.toString(QKeySequence::PortableText)) > 1) {
-            keyItem->setForeground(QColor(0xe8, 0x41, 0x4a));
+            keyItem->setForeground(Theme::warning);
             keyItem->setToolTip(T("Diese Taste ist mehrfach belegt"));
         }
         m_table->setItem(i, ColCategory, cat);

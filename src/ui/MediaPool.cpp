@@ -161,7 +161,7 @@ private:
         if (it == m_hover) return;
         if (m_hover) m_hover->setBackground(0, QBrush());
         m_hover = it;
-        if (m_hover) m_hover->setBackground(0, QColor(Theme::accent.red(), Theme::accent.green(), Theme::accent.blue(), 90));
+        if (m_hover) m_hover->setBackground(0, Theme::alpha(Theme::secondary, 90));
     }
     QTreeWidgetItem* m_hover = nullptr; // Drop-Ziel (hervorgehoben)
 };
@@ -169,9 +169,9 @@ private:
 QPixmap placeholderThumb(const QString& label)
 {
     QPixmap pm(kThumb);
-    pm.fill(QColor(0x18, 0x18, 0x1b));
+    pm.fill(Theme::thumbBg);
     QPainter p(&pm);
-    p.setPen(QColor(0x8c, 0x8c, 0x94));
+    p.setPen(Theme::textDim);
     p.drawText(pm.rect(), Qt::AlignCenter, label);
     return pm;
 }
@@ -671,7 +671,7 @@ void MediaPool::rebuildClips()
                     p.setBrush(bars[i]);
                     p.drawRoundedRect(QRectF(x0[i], 18 + i * 16, w[i], 11), 2, 2);
                 }
-                p.setBrush(QColor(0xe5, 0x48, 0x4d));
+                p.setBrush(Theme::playhead);
                 p.drawRect(QRectF(72, 12, 2, 58)); // Playhead
             }
         }
@@ -769,7 +769,7 @@ void MediaPool::updateItem(const QString& path)
         p.drawText(pm.rect(), Qt::AlignCenter, running ? QString("Proxy %1 %").arg(pct) : T("Proxy wartet"));
         const QRect bar(6, pm.height() - 10, pm.width() - 12, 4);
         p.fillRect(bar, QColor(0x50, 0x50, 0x56));
-        p.fillRect(QRect(bar.left(), bar.top(), bar.width() * pct / 100, bar.height()), Theme::accent);
+        p.fillRect(QRect(bar.left(), bar.top(), bar.width() * pct / 100, bar.height()), Theme::primary);
         tip += "\n" + (running ? T("Proxy wird erzeugt: %1 %").arg(pct) : T("Proxy wartet auf Erzeugung"));
     } else if (proxies->hasProxy(path)) {
         // Kleines Proxy-Symbol oben rechts
@@ -781,7 +781,7 @@ void MediaPool::updateItem(const QString& path)
         f.setPixelSize(10);
         f.setBold(true);
         p.setFont(f);
-        p.setPen(Theme::accent);
+        p.setPen(Theme::primary);
         p.drawText(badge, Qt::AlignCenter, "P");
         tip += "\n" + T("Proxy vorhanden");
     }

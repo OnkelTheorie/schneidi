@@ -1,5 +1,6 @@
 #include "ui/timeline/TimelinePanel.h"
 
+#include "app/Theme.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -94,14 +95,15 @@ QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
 
 QIcon TimelinePanel::toolIcon(Icon icon)
 {
-    // DaVinci: aus = grau, an = weiß (Auswahl-Pfeil rot)
-    const QColor off("#8c8c94"), hover("#c4c4ca"), on(icon == Icon::Select ? "#e5484d" : "#ececf0");
+    // aus = grau, an = hell (Auswahl-Pfeil in der Primärfarbe)
+    const QColor off = Theme::textDim, hover = Theme::mix(Theme::textDim, Theme::text, 0.75);
+    const QColor on = icon == Icon::Select ? Theme::primary : Theme::mix(Theme::text, Theme::readableOn(Theme::panelHeader), 0.5);
     QIcon ic;
     ic.addPixmap(drawIcon(icon, off), QIcon::Normal, QIcon::Off);
     ic.addPixmap(drawIcon(icon, hover), QIcon::Active, QIcon::Off);
     ic.addPixmap(drawIcon(icon, on), QIcon::Normal, QIcon::On);
     ic.addPixmap(drawIcon(icon, on), QIcon::Active, QIcon::On);
-    ic.addPixmap(drawIcon(icon, QColor("#55555c")), QIcon::Disabled, QIcon::Off);
+    ic.addPixmap(drawIcon(icon, Theme::controlOff), QIcon::Disabled, QIcon::Off);
     return ic;
 }
 
@@ -156,7 +158,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     bar->addWidget(bladeBtn);
     auto* sep = new QWidget; // dünne Trennlinie wie in DaVinci
     sep->setFixedSize(1, 18);
-    sep->setStyleSheet("background: #45454d;");
+    sep->setStyleSheet(QString("background: %1;").arg(Theme::controlLight.name()));
     bar->addSpacing(8);
     bar->addWidget(sep);
     bar->addSpacing(8);
@@ -196,10 +198,11 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     auto* barWidget = new QWidget;
     barWidget->setObjectName("Panel");
     // Schalter zeigen ihren Zustand nur über die Symbolfarbe (kein Hintergrund wie in DaVinci)
-    barWidget->setStyleSheet("QWidget#Panel { background: #2f2f35; }"
-                             "QToolButton { padding: 3px 5px; }"
-                             "QToolButton:checked { background: transparent; }"
-                             "QToolButton:checked:hover, QToolButton:hover { background: #3a3a42; }");
+    barWidget->setStyleSheet(QString("QWidget#Panel { background: %1; }"
+                                     "QToolButton { padding: 3px 5px; }"
+                                     "QToolButton:checked { background: transparent; }"
+                                     "QToolButton:checked:hover, QToolButton:hover { background: %2; }")
+                                 .arg(Theme::panelHeader.name(), Theme::control.name()));
     barWidget->setLayout(bar);
 
     // --- Timeline + Scrollbars ---

@@ -93,13 +93,13 @@ protected:
             auto ch = [](double x) { return std::clamp(int(128 + x * 190), 0, 255); };
             hue.setColorAt(i / 12.0, QColor(ch(rgb[0]), ch(rgb[1]), ch(rgb[2])));
         }
-        p.setPen(QPen(QColor(0x10, 0x10, 0x12), 2));
+        p.setPen(QPen(Theme::well, 2));
         p.setBrush(hue);
         p.drawEllipse(r);
         QRadialGradient fade(c, r.width() / 2);
-        fade.setColorAt(0, QColor(0x2a, 0x2a, 0x30, 255));
-        fade.setColorAt(0.75, QColor(0x2a, 0x2a, 0x30, 120));
-        fade.setColorAt(1, QColor(0x2a, 0x2a, 0x30, 40));
+        fade.setColorAt(0, Theme::alpha(Theme::panel, 255));
+        fade.setColorAt(0.75, Theme::alpha(Theme::panel, 120));
+        fade.setColorAt(1, Theme::alpha(Theme::panel, 40));
         p.setPen(Qt::NoPen);
         p.setBrush(fade);
         p.drawEllipse(r.adjusted(2, 2, -2, -2));
@@ -110,7 +110,7 @@ protected:
         // Punkt
         const QPointF dot(c.x() + m_u * r.width() / 2, c.y() - m_v * r.height() / 2);
         const bool moved = std::abs(m_u) > 1e-6 || std::abs(m_v) > 1e-6;
-        p.setPen(QPen(moved ? Theme::accent : Theme::text, 1.5));
+        p.setPen(QPen(moved ? Theme::primary : Theme::text, 1.5));
         p.setBrush(Qt::NoBrush);
         p.drawEllipse(dot, 4, 4);
     }
@@ -176,8 +176,9 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     m_enabled->setFixedSize(10, 10);
     m_enabled->setFocusPolicy(Qt::NoFocus);
     m_enabled->setToolTip(T("Farbkorrektur des Clips an/aus"));
-    m_enabled->setStyleSheet("QToolButton { border: none; border-radius: 5px; background: #55555c; }"
-                             "QToolButton:checked { background: #e8414a; }");
+    m_enabled->setStyleSheet(QString("QToolButton { border: none; border-radius: 5px; background: %1; }"
+                                     "QToolButton:checked { background: %2; }")
+                                 .arg(Theme::controlOff.name(), Theme::warning.name()));
     connect(m_enabled, &QToolButton::clicked, this, [this](bool on) { m_editor->setGradeEnabled(targets(), on); });
     m_keyPrev = smallButton("◀", T("Voriger Keyframe"));
     m_keyDiamond = smallButton("◇", T("Keyframe für die ganze Korrektur setzen/entfernen"));
@@ -289,7 +290,7 @@ QToolButton* ColorPanel::smallButton(const QString& text, const QString& tip)
     b->setAutoRaise(true);
     b->setFocusPolicy(Qt::NoFocus);
     b->setStyleSheet(QString("QToolButton { color: %1; border: none; padding: 0 3px; }"
-                             "QToolButton:disabled { color: #4a4a50; }").arg(Theme::textDim.name()));
+                             "QToolButton:disabled { color: %2; }").arg(Theme::textDim.name(), Theme::textFaint.name()));
     return b;
 }
 
@@ -487,7 +488,7 @@ void ColorPanel::refresh()
     const bool lutOk = lut.isEmpty() || QFileInfo::exists(lut);
     m_lutName->setText(lut.isEmpty() ? T("keine") : QFileInfo(lut).fileName() + (lutOk ? QString() : T(" (fehlt)")));
     m_lutName->setToolTip(lut);
-    m_lutName->setStyleSheet(QString("color: %1;").arg(lutOk ? Theme::text.name() : "#e8414a"));
+    m_lutName->setStyleSheet(QString("color: %1;").arg((lutOk ? Theme::text : Theme::warning).name()));
     m_lutClear->setEnabled(!lut.isEmpty());
 
     // Keyframe-Raute: rot = Keyframe am Playhead, hell = Korrektur animiert
@@ -496,7 +497,7 @@ void ColorPanel::refresh()
     const bool here = animated && Keys::keyAt(*c, AnimParam::GradeLiftY, t);
     m_keyDiamond->setText(here ? "◆" : "◇");
     m_keyDiamond->setStyleSheet(QString("QToolButton { color: %1; border: none; padding: 0 3px; font-size: 11pt; }")
-                                    .arg(here ? "#e8414a" : animated ? Theme::text.name() : Theme::textDim.name()));
+                                    .arg((here ? Theme::warning : animated ? Theme::text : Theme::textDim).name()));
     bool before = false, after = false;
     for (int k : Keys::keyTimes(*c, params)) {
         if (k < 0 || k >= c->length()) continue;

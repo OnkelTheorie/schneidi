@@ -51,9 +51,9 @@ double meterPos(double db) { return std::clamp((db - kMeterFloor) / -kMeterFloor
 
 QColor meterColor(double db)
 {
-    if (db >= -3) return QColor(0xe8, 0x41, 0x4a);  // rot
-    if (db >= -12) return QColor(0xe0, 0xc0, 0x3a); // gelb
-    return QColor(0x3c, 0xc0, 0x5a);                // grün
+    if (db >= -3) return Theme::meterHigh;
+    if (db >= -12) return Theme::meterMid;
+    return Theme::meterLow;
 }
 
 // Spitzenwert-Anzeige über dem Pegel: "-3.2", "+1.5", "-∞"
@@ -145,9 +145,9 @@ protected:
         // Pegel: zwei Balken, darüber je eine Clip-Anzeige (rot = übersteuert, bleibt bis Klick)
         const int mx = 3, bw = 5;
         for (int ch = 0; ch < 2; ++ch) {
-            p.fillRect(clipRect(ch), m_clip[ch] ? QColor(0xe8, 0x41, 0x4a) : QColor(0x14, 0x14, 0x17));
+            p.fillRect(clipRect(ch), m_clip[ch] ? Theme::warning : Theme::well);
             const QRect bar(mx + ch * (bw + 1), top, bw, h + 1);
-            p.fillRect(bar, QColor(0x14, 0x14, 0x17));
+            p.fillRect(bar, Theme::well);
             const auto yOf = [&](double db) { return bottom - int(std::lround(meterPos(db) * h)); };
             const int y = yOf(m_disp[ch]);
             if (y < bottom) {
@@ -166,7 +166,7 @@ protected:
         // Segment-Linien über den Balken (alle 6 dB)
         for (int db = -6; db > kMeterFloor; db -= 6) {
             const int y = bottom - int(std::lround(meterPos(db) * h));
-            p.fillRect(mx, y, 2 * bw + 1, 1, QColor(0x14, 0x14, 0x17, 160));
+            p.fillRect(mx, y, 2 * bw + 1, 1, Theme::alpha(Theme::well, 160));
         }
 
         // Fader-Skala
@@ -184,18 +184,18 @@ protected:
         }
 
         // Fader: Schiene + Kappe
-        p.fillRect(fx - 1, top, 3, h + 1, QColor(0x14, 0x14, 0x17));
+        p.fillRect(fx - 1, top, 3, h + 1, Theme::well);
         const int ky = faderY(m_db);
         const QRect knob(fx - 9, ky - 6, 19, 12);
         p.setRenderHint(QPainter::Antialiasing, true);
         QLinearGradient g(knob.topLeft(), knob.bottomLeft());
-        g.setColorAt(0, QColor(0x7a, 0x7a, 0x82));
-        g.setColorAt(1, QColor(0x4a, 0x4a, 0x52));
-        p.setPen(QColor(0x14, 0x14, 0x17));
+        g.setColorAt(0, Theme::mix(Theme::controlLight, Theme::text, 0.37));
+        g.setColorAt(1, Theme::mix(Theme::controlLight, Theme::controlOff, 0.3));
+        p.setPen(Theme::well);
         p.setBrush(g);
         p.drawRoundedRect(knob, 2, 2);
         p.setRenderHint(QPainter::Antialiasing, false);
-        p.fillRect(knob.left() + 3, ky, knob.width() - 6, 1, QColor(0xe8, 0xe8, 0xec));
+        p.fillRect(knob.left() + 3, ky, knob.width() - 6, 1, Theme::mix(Theme::text, Qt::white, 0.5));
     }
 
     void mousePressEvent(QMouseEvent* e) override
@@ -291,11 +291,11 @@ protected:
         p.setRenderHint(QPainter::Antialiasing);
         const QRectF r = QRectF(rect()).adjusted(4, 4, -4, -4);
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0x3a, 0x3a, 0x42));
+        p.setBrush(Theme::control);
         p.drawEllipse(r);
         // Bogen von der Mitte (oben) bis zum Wert, ±135°
         const double angle = m_value / 100.0 * 135.0;
-        p.setPen(QPen(Theme::accent, 2.5, Qt::SolidLine, Qt::FlatCap));
+        p.setPen(QPen(Theme::primary, 2.5, Qt::SolidLine, Qt::FlatCap));
         p.setBrush(Qt::NoBrush);
         p.drawArc(QRectF(rect()).adjusted(1.5, 1.5, -1.5, -1.5), 90 * 16, int(-angle * 16));
         const double rad = (90 - angle) * M_PI / 180.0;
@@ -383,21 +383,21 @@ public:
 
         auto* ms = new QHBoxLayout;
         ms->setSpacing(3);
-        auto makeButton = [&](const QString& text, const QString& on, const QString& tip) {
+        auto makeButton = [&](const QString& text, const QColor& on, const QString& tip) {
             auto* b = new QToolButton;
             b->setText(text);
             b->setCheckable(true);
             b->setFocusPolicy(Qt::NoFocus);
             b->setToolTip(tip);
             b->setFixedSize(26, 18);
-            b->setStyleSheet(QString("QToolButton { background: #3a3a42; color: %1; font-weight: 600; padding: 0; }"
-                                     "QToolButton:checked { background: %2; color: #141417; }")
-                                 .arg(Theme::text.name(), on));
+            b->setStyleSheet(QString("QToolButton { background: %3; color: %1; font-weight: 600; padding: 0; }"
+                                     "QToolButton:checked { background: %2; color: %4; }")
+                                 .arg(Theme::text.name(), on.name(), Theme::control.name(), Theme::readableOn(on).name()));
             ms->addWidget(b);
             return b;
         };
-        mute = makeButton("M", "#e8414a", T("Stumm (Mute)"));
-        solo = makeButton("S", "#e0c03a", "Solo");
+        mute = makeButton("M", Theme::warning, T("Stumm (Mute)"));
+        solo = makeButton("S", Theme::meterMid, "Solo");
         if (master) {
             limiter = new QToolButton;
             limiter->setText("LIM");
@@ -405,9 +405,10 @@ public:
             limiter->setFocusPolicy(Qt::NoFocus);
             limiter->setFixedSize(55, 18);
             limiter->setContextMenuPolicy(Qt::CustomContextMenu);
-            limiter->setStyleSheet(QString("QToolButton { background: #3a3a42; color: %1; font-weight: 600; padding: 0; }"
-                                           "QToolButton:checked { background: #e89a3a; color: #141417; }")
-                                       .arg(Theme::text.name()));
+            limiter->setStyleSheet(QString("QToolButton { background: %2; color: %1; font-weight: 600; padding: 0; }"
+                                           "QToolButton:checked { background: %3; color: %4; }")
+                                       .arg(Theme::text.name(), Theme::control.name(), Theme::primary.name(),
+                                            Theme::onPrimary.name()));
             ms->addWidget(limiter);
         }
         lay->addLayout(ms);
@@ -457,8 +458,10 @@ public:
         if (text == peak->text() && clip == m_peakClip && !peak->styleSheet().isEmpty()) return;
         m_peakClip = clip;
         peak->setText(text);
-        peak->setStyleSheet(clip ? QString("color: #141417; background: #e8414a; font-size: 8pt; font-weight: 600;")
-                                 : QString("color: %1; background: #141417; font-size: 8pt;").arg(Theme::textDim.name()));
+        peak->setStyleSheet(clip ? QString("color: %1; background: %2; font-size: 8pt; font-weight: 600;")
+                                       .arg(Theme::readableOn(Theme::warning).name(), Theme::warning.name())
+                                 : QString("color: %1; background: %2; font-size: 8pt;")
+                                       .arg(Theme::textDim.name(), Theme::well.name()));
     }
 
     void setVolume(double db)
@@ -538,7 +541,7 @@ protected:
         const char* names[2] = {"M", "S"};
         for (int i = 0; i < 2; ++i) {
             const QRect bar(x0 + i * (bw + 3), top, bw, h + 1);
-            p.fillRect(bar, QColor(0x14, 0x14, 0x17));
+            p.fillRect(bar, Theme::well);
             const int y = yOf(values[i]);
             if (y < bottom) p.fillRect(bar.x(), y, bw, bottom - y + 1, levelColor(values[i]));
             p.setPen(Theme::textDim);
@@ -548,12 +551,12 @@ protected:
         const int sx = x0 + 2 * (bw + 3);
         for (int v = 0; v >= int(kFloor); v -= 6) {
             const int y = yOf(v);
-            p.fillRect(x0, y, sx - x0 - 3, 1, QColor(0x14, 0x14, 0x17, 160));
+            p.fillRect(x0, y, sx - x0 - 3, 1, Theme::alpha(Theme::well, 160));
             p.setPen(Theme::textDim);
             p.drawText(QRect(sx + 2, y - 6, width() - sx - 4, 12), Qt::AlignLeft | Qt::AlignVCenter, QString::number(v));
         }
         const int ty = yOf(m_target);
-        p.fillRect(x0 - 2, ty, sx - x0 + 1, 2, Theme::accent);
+        p.fillRect(x0 - 2, ty, sx - x0 + 1, 2, Theme::primary);
 
         // Werte
         const int ly = bottom + 8;
@@ -567,9 +570,9 @@ protected:
         const double I = m_r.integrated;
         QColor ic = Theme::text;
         if (I > LoudnessMeter::kSilence)
-            ic = std::abs(I - m_target) <= 1.0 ? QColor(0x3c, 0xc0, 0x5a)
-                 : I < m_target                ? QColor(0xe0, 0xc0, 0x3a)
-                                               : QColor(0xe8, 0x41, 0x4a);
+            ic = std::abs(I - m_target) <= 1.0 ? Theme::meterLow
+                 : I < m_target                ? Theme::meterMid
+                                               : Theme::meterHigh;
         row(0, "I", lufsText(I), ic);
         row(1, "S", lufsText(values[1]), Theme::text);
         row(2, "M", lufsText(values[0]), Theme::text);
@@ -579,9 +582,9 @@ protected:
 private:
     QColor levelColor(double lufs) const
     {
-        if (lufs > m_target + 1) return QColor(0xe8, 0x41, 0x4a);
-        if (lufs >= m_target - 1) return QColor(0x3c, 0xc0, 0x5a);
-        return QColor(0x3a, 0x8c, 0xc8);
+        if (lufs > m_target + 1) return Theme::meterHigh;
+        if (lufs >= m_target - 1) return Theme::meterLow;
+        return Theme::quiet;
     }
     static QString lufsText(double v)
     {
@@ -622,8 +625,8 @@ public:
         reset->setToolTip(T("Messung neu beginnen (Integrated, LRA)"));
         reset->setFixedHeight(18);
         reset->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        reset->setStyleSheet(QString("QToolButton { background: #3a3a42; color: %1; font-size: 8pt; padding: 0; }")
-                                 .arg(Theme::text.name()));
+        reset->setStyleSheet(QString("QToolButton { background: %2; color: %1; font-size: 8pt; padding: 0; }")
+                                 .arg(Theme::text.name(), Theme::control.name()));
         lay->addWidget(reset);
         setContextMenuPolicy(Qt::CustomContextMenu);
     }

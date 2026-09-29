@@ -1,0 +1,29 @@
+{
+  "name": "Graphit",
+  "description": "Neutrales Grau, kontrastreich",
+  "colors": {
+    "window": "#1b1b1b",
+    "panel": "#262626",
+    "panelHeader": "#313131",
+    "topBar": "#2b2b2b",
+    "border": "#0b0b0b",
+    "well": "#0d0d0d",
+    "field": "#151515",
+    "control": "#3d3d3d",
+    "controlLight": "#4b4b4b",
+    "controlOff": "#5d5d5d",
+    "text": "#f0f0f0",
+    "textDim": "#a0a0a0",
+    "textFaint": "#646464",
+    "timelineBg": "#141414",
+    "trackBg": "#212121",
+    "trackBgAlt": "#1c1c1c",
+    "trackHeader": "#2a2a2a",
+    "ruler": "#242424",
+    "lane": "#191919",
+    "viewerBg": "#080808",
+    "thumbBg": "#141414",
+    "primary": "#3fcf8e",
+    "secondary": "#f0c850"
+  }
+}

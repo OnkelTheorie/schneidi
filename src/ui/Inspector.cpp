@@ -79,8 +79,9 @@ QToolButton* makeDot()
     dot->setFixedSize(10, 10);
     dot->setFocusPolicy(Qt::NoFocus);
     dot->setToolTip(T("Bereich an/aus"));
-    dot->setStyleSheet("QToolButton { border: none; border-radius: 5px; background: #55555c; }"
-                       "QToolButton:checked { background: #e8414a; }");
+    dot->setStyleSheet(QString("QToolButton { border: none; border-radius: 5px; background: %1; }"
+                               "QToolButton:checked { background: %2; }")
+                           .arg(Theme::controlOff.name(), Theme::warning.name()));
     return dot;
 }
 
@@ -197,8 +198,9 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     tabBar->setStyleSheet(QString("QWidget#InspectorTabs { background: %1; border-bottom: 1px solid %2; }"
                                   "QToolButton { color: %3; border: none; background: transparent; padding: 4px 14px; }"
                                   "QToolButton:checked { color: %4; }"
-                                  "QToolButton:disabled { color: #4a4a52; }")
-                              .arg(Theme::panel.name(), Theme::border.name(), Theme::textDim.name(), Theme::text.name()));
+                                  "QToolButton:disabled { color: %5; }")
+                              .arg(Theme::panel.name(), Theme::border.name(), Theme::textDim.name(), Theme::text.name(),
+                                   Theme::textFaint.name()));
     auto* tabLay = new QHBoxLayout(tabBar);
     tabLay->setContentsMargins(4, 2, 4, 2);
     tabLay->setSpacing(0);
@@ -335,8 +337,8 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     m_refreshers << [this, swatch] {
         if (const Clip* c = primary(TrackKind::Video)) {
             const QColor col = effectParam(*c, "chromakey", "color").value<QColor>();
-            swatch->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid #141417; border-radius: 2px; }")
-                                      .arg(col.name()));
+            swatch->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid %2; border-radius: 2px; }")
+                                      .arg(col.name(), Theme::border.name()));
         }
     };
     auto* colorBox = new QHBoxLayout;
@@ -587,8 +589,8 @@ void Inspector::addColor(Section& s, const QString& label, const QString& text,
         if (const Clip* c = primary(kind, title)) {
             Clip copy = *c;
             const QColor col = anim ? Keys::toColor(Keys::valueAt(copy, *anim, localFrame(copy))) : color(copy);
-            const QString css = QString("QToolButton { background: %1; border: 1px solid #141417; border-radius: 2px; }")
-                                    .arg(col.name(QColor::HexArgb));
+            const QString css = QString("QToolButton { background: %1; border: 1px solid %2; border-radius: 2px; }")
+                                    .arg(col.name(QColor::HexArgb), Theme::border.name());
             if (swatch->styleSheet() != css) swatch->setStyleSheet(css); // beim Abspielen nur bei Änderung
         }
     };
@@ -730,7 +732,7 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
         // Raute: leer = kein Keyframe hier, rot gefüllt = Keyframe am Playhead (wie DaVinci)
         const QString text = here ? "◆" : "◇";
         const QString css = QString("QToolButton { color: %1; border: none; padding: 0px; font-size: 10pt; }")
-                                .arg(here ? "#e8414a" : animated ? Theme::text.name() : Theme::textDim.name());
+                                .arg((here ? Theme::warning : animated ? Theme::text : Theme::textDim).name());
         if (diamond->text() != text) diamond->setText(text);
         if (diamond->styleSheet() != css) diamond->setStyleSheet(css);
         const int t = localFrame(*c);
@@ -752,7 +754,8 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
 {
     auto* header = new QWidget;
     header->setObjectName("InspectorSection");
-    header->setStyleSheet(QString("QWidget#InspectorSection { background: %1; border-top: 1px solid %2; }")
+    header->setStyleSheet(QString("QWidget#InspectorSection { background: %1; border-top: 1px solid %2;"
+                                  " border-bottom: 1px solid %2; }")
                               .arg(Theme::panelHeader.name(), Theme::border.name()));
     auto* hl = new QHBoxLayout(header);
     hl->setContentsMargins(10, 3, 4, 3);
@@ -782,7 +785,8 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
     toggle->setChecked(true);
     toggle->setToolTip(T("Auf-/zuklappen"));
     toggle->setFocusPolicy(Qt::NoFocus);
-    toggle->setStyleSheet(QString("QToolButton, QToolButton:checked { color: %1; border: none; background: transparent; }")
+    toggle->setStyleSheet(QString("QToolButton, QToolButton:checked { color: %1; border: none; background: transparent;"
+                                  " font-weight: 600; }")
                               .arg(Theme::text.name()));
     hl->addWidget(toggle);
     hl->addStretch(1);
@@ -1175,7 +1179,8 @@ bool Inspector::refreshTransition()
     for (QWidget* w : m_dipRows) w->setVisible(video && span.style.type == TransitionType::DipToColor);
     for (QWidget* w : m_wipeRows) w->setVisible(video && span.style.isWipe());
     auto swatchStyle = [](const QColor& c) {
-        return QString("QToolButton { background: %1; border: 1px solid #141417; border-radius: 2px; }").arg(c.name());
+        return QString("QToolButton { background: %1; border: 1px solid %2; border-radius: 2px; }")
+            .arg(c.name(), Theme::border.name());
     };
     m_transColor->setStyleSheet(swatchStyle(span.style.color));
     m_transBorderColor->setStyleSheet(swatchStyle(span.style.borderColor));
@@ -1427,8 +1432,8 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
         });
         m_subRefreshers << [swatch, field, current] {
             if (auto t = current())
-                swatch->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid #141417; border-radius: 2px; }")
-                                          .arg(field(*t).name(QColor::HexRgb)));
+                swatch->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid %2; border-radius: 2px; }")
+                                          .arg(field(*t).name(QColor::HexRgb), Theme::border.name()));
         };
         s.grid->addWidget(rowLabel(label), s.rows, 0);
         s.grid->addWidget(swatch, s.rows++, 1, Qt::AlignLeft);

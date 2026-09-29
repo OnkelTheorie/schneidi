@@ -27,8 +27,6 @@ constexpr int kChipH = 15;      // Parameter-Auswahl oben links
 constexpr int kPlotTop = 21;    // Abstand der Kurvenfläche vom oberen Rand
 constexpr int kPlotBottom = 8;
 
-const QColor kCurveColor(0xe8, 0x9a, 0x3c);
-
 bool curveable(AnimParam p) { return !Keys::info(p).color; } // Farben haben keine Kurve
 
 // Erster Parameter mit Kurve (Reihenfolge wie im Inspector)
@@ -108,14 +106,14 @@ void TimelineView::drawCurveIcon(QPainter& p, const QRect& r, bool open)
     p.save();
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(QPen(QColor(0, 0, 0, 170), 1));
-    p.setBrush(open ? Theme::accent : QColor(0xf0, 0xf0, 0xf0));
+    p.setBrush(open ? Theme::primary : Theme::secondary);
     p.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), 2, 2);
     // kleine S-Kurve
     QPainterPath s;
     s.moveTo(box.left() + 2.5, box.bottom() - 2.5);
     s.cubicTo(box.center().x() + 1, box.bottom() - 2.5, box.center().x() - 1, box.top() + 2.5, box.right() - 2.5,
               box.top() + 2.5);
-    p.setPen(QPen(QColor(0x20, 0x20, 0x20), 1.3));
+    p.setPen(QPen(Theme::readableOn(open ? Theme::primary : Theme::secondary), 1.3));
     p.setBrush(Qt::NoBrush);
     p.drawPath(s);
     p.restore();
@@ -259,8 +257,8 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
     const KeyTrack k = c.keys.value(*param);
 
     p.save();
-    p.fillRect(R, QColor(0x17, 0x17, 0x1a));
-    p.setPen(QColor(0x3a, 0x3a, 0x42));
+    p.fillRect(R, Theme::lane);
+    p.setPen(Theme::control);
     p.drawRect(R.adjusted(0, 0, -1, -1));
     p.setClipRect(R.adjusted(-8, 0, 8, 0).intersected(QRect(kHeaderW, 0, width() - kHeaderW, height())),
                   Qt::IntersectClip);
@@ -273,7 +271,7 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
     for (double frac : {1.0, 0.5, 0.0}) {
         const double v = range.lo + (range.hi - range.lo) * frac;
         const int y = int(std::lround(curveY(plot, range, v)));
-        p.setPen(QPen(QColor(255, 255, 255, 24), 1, Qt::DashLine));
+        p.setPen(QPen(Theme::alpha(Theme::text, 28), 1, Qt::DashLine));
         p.drawLine(R.left() + 1, y, R.right() - 1, y);
         // Wert über der Linie, oben darunter (darüber liegt die Parameter-Auswahl)
         p.setPen(Theme::textDim);
@@ -292,7 +290,7 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
         if (x == x0) path.moveTo(pt); // nicht path.isEmpty(): ist nach moveTo noch true
         else path.lineTo(pt);
     }
-    p.setPen(QPen(kCurveColor, 1.6));
+    p.setPen(QPen(Theme::mix(Theme::primary, Theme::meterMid, 0.25), 1.6));
     p.setBrush(Qt::NoBrush);
     p.drawPath(path);
 
@@ -309,13 +307,13 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
                     double dt, dv;
                     if (!Keys::handle(k, i, out, &dt, &dv) || (dt == 0 && dv == 0)) continue;
                     const QPointF h(frameToX(c.start + t + dt), curveY(plot, range, k[i].value + dv));
-                    p.setPen(QPen(QColor(0xc8, 0xc8, 0xc8), 1));
+                    p.setPen(QPen(Theme::textDim, 1));
                     p.drawLine(pt, h);
-                    p.setBrush(k[i].ease == KeyEase::Bezier ? QColor(0xf0, 0xf0, 0xf0) : QColor(0x70, 0x70, 0x70));
+                    p.setBrush(k[i].ease == KeyEase::Bezier ? Theme::secondary : Theme::controlOff);
                     p.drawRect(QRectF(h.x() - 2.5, h.y() - 2.5, 5, 5));
                 }
             p.setPen(QPen(QColor(0, 0, 0, 180), 1));
-            p.setBrush(selected ? Theme::accent : QColor(0xe0, 0xe0, 0xe0));
+            p.setBrush(selected ? Theme::primary : Theme::secondary);
             p.drawEllipse(pt, 3.8, 3.8);
         }
 
@@ -323,8 +321,8 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
     const QRect chip = curveChipRect(R, c);
     f.setPointSizeF(8);
     p.setFont(f);
-    p.setPen(QColor(0x44, 0x44, 0x4c));
-    p.setBrush(QColor(0x26, 0x26, 0x2c));
+    p.setPen(Theme::controlLight);
+    p.setBrush(Theme::ruler);
     p.drawRoundedRect(QRectF(chip).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
     p.setPen(Theme::text);
     p.drawText(chip.adjusted(6, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, Keys::label(*param) + "  ▾");

@@ -749,7 +749,7 @@ void TimelineView::drawRuler(QPainter& p)
     for (int fr = first; fr <= last; fr += minor) {
         const int x = int(frameToX(fr));
         const bool isMajor = fr % major == 0;
-        p.setPen(isMajor ? Theme::textDim : QColor(0x4a, 0x4a, 0x52));
+        p.setPen(isMajor ? Theme::textDim : Theme::textFaint);
         p.drawLine(x, kRulerH - (isMajor ? 12 : 5), x, kRulerH - 1);
         if (isMajor) {
             p.setPen(Theme::textDim);
@@ -761,16 +761,16 @@ void TimelineView::drawRuler(QPainter& p)
         const double x0 = frameToX(c.start), x1 = frameToX(c.end);
         if (x1 < kHeaderW || x0 > width()) continue;
         const double xd = x0 + (x1 - x0) * std::clamp(c.done, 0.0, 1.0);
-        p.fillRect(QRectF(x0, 0, xd - x0, 3), QColor(0x3d, 0x8b, 0xe8));
-        p.fillRect(QRectF(xd, 0, x1 - xd, 3), QColor(0xd2, 0x3c, 0x3c));
+        p.fillRect(QRectF(x0, 0, xd - x0, 3), Theme::cacheReady);
+        p.fillRect(QRectF(xd, 0, x1 - xd, 3), Theme::cacheMissing);
     }
-    // In/Out-Bereich (I/O): heller Balken im Lineal mit Klammern an den Enden
+    // In/Out-Bereich (I/O): Balken in der Sekundärfarbe im Lineal mit Klammern an den Enden
     const Timeline& tlm = m_editor->project()->timeline();
     if (tlm.markIn >= 0 || tlm.markOut >= 0) {
         const double xIn = tlm.markIn >= 0 ? frameToX(tlm.markIn) : kHeaderW - 1;
         const double xOut = tlm.markOut >= 0 ? frameToX(tlm.markOut + 1) : width() + 1;
-        p.fillRect(QRectF(xIn, kRulerH - 16, xOut - xIn, 16), QColor(255, 255, 255, 40));
-        p.setPen(QPen(Theme::text, 2));
+        p.fillRect(QRectF(xIn, kRulerH - 16, xOut - xIn, 16), Theme::alpha(Theme::secondary, 45));
+        p.setPen(QPen(Theme::secondary, 2));
         if (tlm.markIn >= 0) {
             p.drawLine(QPointF(xIn + 1, kRulerH - 16), QPointF(xIn + 1, kRulerH - 1));
             p.drawLine(QPointF(xIn + 1, kRulerH - 15), QPointF(xIn + 5, kRulerH - 15));
@@ -780,7 +780,7 @@ void TimelineView::drawRuler(QPainter& p)
             p.drawLine(QPointF(xOut - 1, kRulerH - 15), QPointF(xOut - 5, kRulerH - 15));
         }
     }
-    // Marker (M) als kleine blaue Fähnchen wie in DaVinci
+    // Marker (M) als kleine Fähnchen wie in DaVinci (Sekundärfarbe)
     p.setRenderHint(QPainter::Antialiasing);
     for (int m : m_editor->project()->timeline().markers) {
         const double x = frameToX(m);
@@ -792,19 +792,22 @@ void TimelineView::drawRuler(QPainter& p)
         flag.lineTo(x, kRulerH - 2);
         flag.lineTo(x - 5, kRulerH - 7);
         flag.closeSubpath();
-        p.fillPath(flag, QColor(0x3d, 0x8e, 0xe0));
+        p.fillPath(flag, Theme::secondary);
     }
     p.restore();
 
-    // Ecke links oben: aktueller Timecode wie in DaVinci
+    // Ecke links oben: aktueller Timecode wie in DaVinci, im eingelassenen Feld
     p.fillRect(QRect(0, 0, kHeaderW, kRulerH), Theme::panelHeader);
+    const QRect tcBox(4, 4, kHeaderW - 9, kRulerH - 8);
+    p.fillRect(tcBox, Theme::well);
+    p.setPen(Theme::border);
+    p.drawRect(tcBox.adjusted(0, 0, -1, -1));
     QFont tf = font();
     tf.setPointSizeF(11);
     tf.setFamily("monospace");
     p.setFont(tf);
     p.setPen(Theme::text);
-    p.drawText(QRect(8, 0, kHeaderW - 8, kRulerH), Qt::AlignVCenter | Qt::AlignLeft,
-               Timecode::format(m_playhead, fps));
+    p.drawText(tcBox.adjusted(5, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, Timecode::format(m_playhead, fps));
     p.setPen(Theme::border);
     p.drawLine(kHeaderW - 1, 0, kHeaderW - 1, height());
 }
@@ -919,11 +922,11 @@ void TimelineView::drawTracks(QPainter& p)
         int start = m_dropFrame;
         for (const DropItem& it : m_dropItems) {
             const int x1 = int(frameToX(start)), x2 = int(frameToX(start + it.length));
-            if (it.video && vRow) p.fillRect(QRect(x1, vRow->y + 1, x2 - x1, vRow->h - 3), QColor(0x3b, 0x6a, 0xa0, 150));
-            if (it.audio && aRow) p.fillRect(QRect(x1, aRow->y + 1, x2 - x1, aRow->h - 3), QColor(0x3c, 0x86, 0x4c, 150));
+            if (it.video && vRow) p.fillRect(QRect(x1, vRow->y + 1, x2 - x1, vRow->h - 3), Theme::alpha(Theme::videoClip, 150));
+            if (it.audio && aRow) p.fillRect(QRect(x1, aRow->y + 1, x2 - x1, aRow->h - 3), Theme::alpha(Theme::audioClip, 150));
             start += it.length;
         }
-        p.setPen(QPen(Theme::accent, 1, Qt::DashLine));
+        p.setPen(QPen(Theme::primary, 1, Qt::DashLine));
         const int x = int(frameToX(m_dropFrame));
         p.drawLine(x, kRulerH, x, height());
     }
@@ -932,10 +935,10 @@ void TimelineView::drawTracks(QPainter& p)
     if (m_transDrop) {
         if (const auto row = rowFor(m_transDrop->ref)) {
             const QRect r = transitionRect(*row, m_transDrop->span);
-            QColor fill = Theme::accent;
+            QColor fill = Theme::primary;
             fill.setAlpha(110);
             p.fillRect(r, fill);
-            p.setPen(QPen(Theme::accent, 2));
+            p.setPen(QPen(Theme::primary, 2));
             p.drawRect(r.adjusted(1, 1, -1, -1));
             const int x = int(frameToX(m_transDrop->span.cut));
             p.drawLine(x, row->y, x, row->y + row->h - 2);
@@ -949,7 +952,7 @@ void TimelineView::drawTracks(QPainter& p)
             if (const auto row = rowFor(ref)) {
                 const QRect r(int(frameToX(c->start)), row->y, int(frameToX(c->end()) - frameToX(c->start)),
                               row->h - row->lane - 1);
-                p.setPen(QPen(Theme::accent, 2));
+                p.setPen(QPen(Theme::primary, 2));
                 p.setBrush(Qt::NoBrush);
                 p.drawRect(r.adjusted(1, 1, -1, -1));
             }
@@ -960,7 +963,7 @@ void TimelineView::drawTracks(QPainter& p)
         if (const Clip* c = TimelineOps::findClip(tl, m_trim.clipId)) {
             const int edgeFrame = m_trim.edge == TimelineOps::Edge::Start ? c->start + m_trimDelta : c->end() + m_trimDelta;
             const int x = int(frameToX(edgeFrame));
-            p.setPen(QPen(Theme::accent, 1));
+            p.setPen(QPen(Theme::primary, 1));
             p.drawLine(x, kRulerH, x, height());
             drawLabel(p, QPoint(x + 8, kRulerH + 6),
                       (m_trimDelta >= 0 ? "+" : "") + Timecode::format(m_trimDelta, m_editor->project()->fps()));
@@ -977,7 +980,7 @@ void TimelineView::drawTracks(QPainter& p)
             if (m_trimHit.kind == TrimKind::Roll || (m_trimHit.kind == TrimKind::Ripple && !start))
                 frame = start ? c->start : c->end();
             const int x = int(frameToX(frame));
-            p.setPen(QPen(Theme::accent, 1));
+            p.setPen(QPen(Theme::primary, 1));
             if (m_trimHit.kind == TrimKind::Slip || m_trimHit.kind == TrimKind::Slide) {
                 if (const auto row = rowFor(ref)) p.drawRect(clipRect(*row, *c).adjusted(0, 0, -1, -1));
             } else {
@@ -1004,7 +1007,7 @@ void TimelineView::drawTracks(QPainter& p)
     // Klingen-Vorschau
     if (m_tool == Tool::Blade && m_hoverFrame >= 0) {
         const int x = int(frameToX(m_hoverFrame));
-        p.setPen(QPen(Theme::accent, 1));
+        p.setPen(QPen(Theme::primary, 1));
         p.drawLine(x, kRulerH, x, height());
     }
     p.restore();
@@ -1069,8 +1072,8 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
     const Selection* sel = m_editor->selection();
     const bool mine = sel->keyClip() == c.id && sel->keyParam() < 0;
     p.save();
-    p.fillRect(lane, QColor(0x1d, 0x1d, 0x21));
-    p.setPen(QColor(0x3a, 0x3a, 0x42));
+    p.fillRect(lane, Theme::lane);
+    p.setPen(Theme::control);
     p.drawRect(lane.adjusted(0, 0, -1, -1));
     p.setClipRect(lane.adjusted(-6, 0, 6, 0), Qt::IntersectClip);
     p.setRenderHint(QPainter::Antialiasing);
@@ -1083,7 +1086,7 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
             if (selected != pass) continue;
             const int shown = t + (selected && m_drag == Drag::Keyframe ? m_keyDelta : 0);
             p.setPen(QPen(QColor(0, 0, 0, 180), 1));
-            p.setBrush(selected ? Theme::accent : QColor(0xe0, 0xe0, 0xe0));
+            p.setBrush(selected ? Theme::primary : Theme::secondary);
             drawDiamond(p, frameToX(c.start + shown), y, 4.5);
         }
     p.restore();
@@ -1102,7 +1105,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
                   : c.isCompound() ? Theme::compoundClip
                   : kind == TrackKind::Video ? Theme::videoClip
                                              : Theme::audioClip;
-    if (!c.enabled) base = QColor(0x55, 0x55, 0x5c); // deaktiviert (D) wie DaVinci: grau
+    if (!c.enabled) base = Theme::controlOff; // deaktiviert (D) wie DaVinci: grau
     if (ghost) base.setAlpha(200);
     const QColor body = base.darker(135);
 
@@ -1265,7 +1268,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         const bool open = m_keyLanes.contains(c.id);
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(QPen(QColor(0, 0, 0, 170), 1));
-        p.setBrush(open ? Theme::accent : QColor(0xf0, 0xf0, 0xf0));
+        p.setBrush(open ? Theme::primary : Theme::secondary);
         drawDiamond(p, k.center().x(), k.center().y(), k.width() / 2);
         p.setBrush(Qt::NoBrush);
         if (r.width() >= 56) drawCurveIcon(p, r, m_curves.contains(c.id));
@@ -1441,7 +1444,7 @@ void TimelineView::drawHeaders(QPainter& p)
         const bool target = row.ref.index == (row.ref.kind == TrackKind::Video ? m_editor->targetVideoTrack()
                                                                                  : m_editor->targetAudioTrack());
         p.setBrush(Qt::NoBrush);
-        p.setPen(target ? Theme::accent : QColor(0x5a, 0x5a, 0x62));
+        p.setPen(target ? Theme::primary : Theme::textFaint);
         p.drawRect(shortBox.adjusted(0, 0, -1, -1));
         p.setPen(Theme::text);
         p.drawText(shortBox, Qt::AlignCenter, trackShortName(row.ref));
@@ -1465,19 +1468,19 @@ void TimelineView::drawHeaders(QPainter& p)
         const bool active = row.ref.kind == TrackKind::Video ? t.hidden : t.muted;
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(Qt::NoPen);
-        p.setBrush(active ? (row.ref.kind == TrackKind::Video ? Theme::accent : QColor(0xd6, 0x45, 0x45))
-                          : QColor(0x3a, 0x3a, 0x42));
+        const QColor on = row.ref.kind == TrackKind::Video ? Theme::primary : Theme::warning;
+        p.setBrush(active ? on : Theme::control);
         p.drawRoundedRect(b, 3, 3);
-        p.setPen(active ? Qt::black : Theme::text);
+        p.setPen(active ? Theme::readableOn(on) : Theme::text);
         f.setBold(true);
         p.setFont(f);
         p.drawText(b, Qt::AlignCenter, row.ref.kind == TrackKind::Video ? (t.hidden ? "⊘" : "◉") : "M");
         // Schloss: gesperrt = hell auf Orange
         const QRect lb = lockButton(row);
         p.setPen(Qt::NoPen);
-        p.setBrush(t.locked ? Theme::accent : QColor(0x3a, 0x3a, 0x42));
+        p.setBrush(t.locked ? Theme::primary : Theme::control);
         p.drawRoundedRect(lb, 3, 3);
-        drawLock(p, lb, t.locked ? QColor(Qt::black) : Theme::textDim);
+        drawLock(p, lb, t.locked ? Theme::onPrimary : Theme::textDim);
         p.setRenderHint(QPainter::Antialiasing, false);
     }
     p.restore();
@@ -1490,7 +1493,7 @@ void TimelineView::drawLabel(QPainter& p, const QPoint& topLeft, const QString& 
     p.setFont(f);
     const QRect box = QFontMetrics(f).boundingRect(text).adjusted(-5, -3, 5, 3);
     const QRect placed = box.translated(topLeft.x() - box.left(), topLeft.y() - box.top());
-    p.fillRect(placed, QColor(0, 0, 0, 190));
+    p.fillRect(placed, Theme::alpha(Theme::well, 225));
     p.setPen(Theme::text);
     p.drawText(placed, Qt::AlignCenter, text);
 }
@@ -1554,7 +1557,7 @@ void TimelineView::startRename(TrackRef ref)
         m_nameEdit = new QLineEdit(this);
         m_nameEdit->setFrame(false);
         m_nameEdit->setStyleSheet(QString("QLineEdit { background: %1; color: %2; border: 1px solid %3; padding: 0 2px; }")
-                                      .arg(Theme::panel.name(), Theme::text.name(), Theme::accent.name()));
+                                      .arg(Theme::panel.name(), Theme::text.name(), Theme::primary.name()));
         m_nameEdit->installEventFilter(this);
         connect(m_nameEdit, &QLineEdit::editingFinished, this, [this] { finishRename(true); });
     }
@@ -2604,7 +2607,7 @@ void TimelineView::drawSubtitleHeaders(QPainter& p)
         f.setPointSizeF(8);
         p.setFont(f);
         const QRect shortBox(10, row.y + (row.h - 16) / 2, 26, 16);
-        p.setPen(QColor(0x5a, 0x5a, 0x62));
+        p.setPen(Theme::textFaint);
         p.setBrush(Qt::NoBrush);
         p.drawRect(shortBox.adjusted(0, 0, -1, -1));
         p.setPen(Theme::text);
@@ -2622,17 +2625,17 @@ void TimelineView::drawSubtitleHeaders(QPainter& p)
         const QRect lb(kHeaderW - 54, b.top(), 20, 16);
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(Qt::NoPen);
-        p.setBrush(t.enabled ? Theme::accent : QColor(0x3a, 0x3a, 0x42));
+        p.setBrush(t.enabled ? Theme::primary : Theme::control);
         p.drawRoundedRect(b, 3, 3);
-        p.setPen(t.enabled ? Qt::black : Theme::text);
+        p.setPen(t.enabled ? Theme::onPrimary : Theme::text);
         f.setBold(true);
         f.setPointSizeF(7.5);
         p.setFont(f);
         p.drawText(b, Qt::AlignCenter, t.enabled ? "◉" : "⊘");
         p.setPen(Qt::NoPen);
-        p.setBrush(t.locked ? Theme::accent : QColor(0x3a, 0x3a, 0x42));
+        p.setBrush(t.locked ? Theme::primary : Theme::control);
         p.drawRoundedRect(lb, 3, 3);
-        drawLock(p, lb, t.locked ? QColor(Qt::black) : Theme::textDim);
+        drawLock(p, lb, t.locked ? Theme::onPrimary : Theme::textDim);
         p.setRenderHint(QPainter::Antialiasing, false);
     }
     p.restore();
@@ -2850,7 +2853,7 @@ void TimelineView::drawRetime(QPainter& p, const QRect& r, const Clip& c)
         handle << QPointF(x - 4, bar.top() + 1) << QPointF(x + 4, bar.top() + 1) << QPointF(x + 4, bar.bottom() - 4)
                << QPointF(x, bar.bottom()) << QPointF(x - 4, bar.bottom() - 4);
         p.setPen(QPen(QColor(0, 0, 0, 180), 1));
-        p.setBrush(dragging && i == m_rampDrag.point ? Theme::accent : QColor(0xd8, 0xd8, 0xd8));
+        p.setBrush(dragging && i == m_rampDrag.point ? Theme::primary : Theme::secondary);
         p.drawPolygon(handle);
     }
     p.restore();
