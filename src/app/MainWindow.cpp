@@ -87,8 +87,28 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (m_engine->mode() == Engine::Mode::Timeline) m_inspector->setPlayhead(f);
     });
     connect(m_inspector, &Inspector::seekRequested, tv, &TimelineView::seekRequested);
-    connect(m_mediaPool, &MediaPool::sourceRequested, m_engine, &Engine::showSource);
+    connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
+    // Quellbereich aus dem Viewer in die Timeline gezogen: dort überschreiben (wie DaVinci)
+    connect(tv, &TimelineView::rangeDropRequested, this, [this](const QString& path, int in, int out, int frame, int track) {
+        if (m_project->frameRateLocked()) {
+            m_editor->placeSourceRange(path, in, out, frame, track);
+            return;
+        }
+        QTimer::singleShot(0, this, [this, path, in, out, frame, track] { // Rückfrage erst nach dem Drop (s. onDrop)
+            offerClipFormat({path}, true);
+            m_editor->placeSourceRange(path, in, out, frame, track);
+        });
+    });
+    // Viewer: Scrubber (Länge, In/Out) und Titel je nach Quelle/Timeline
+    connect(m_engine, &Engine::modeChanged, this, &MainWindow::updateViewer);
+    connect(m_project, &Project::timelineChanged, this, &MainWindow::updateViewer);
+    connect(m_project, &Project::mediaMarksChanged, this, &MainWindow::updateViewer);
+    connect(m_project, &Project::mediaChanged, this, &MainWindow::updateViewer);
+    connect(m_engine, &Engine::positionChanged, this, [this](int f) {
+        if (sourceActive()) m_sourcePos[m_engine->sourcePath()] = f;
+    });
+    updateViewer();
     // Effects Library: Doppelklick = wie Strg+T bzw. "Titel einfügen", nur mit der gewählten Art
     connect(m_effects, &EffectsLibrary::transitionRequested, this, [this, tv](TrackKind kind, const TransitionStyle& style) {
         m_editor->addTransitions(tv->playhead(), style, kind);
@@ -186,6 +206,60 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
     }
 }
 
+void MainWindow::showSource(const QString& path)
+{
+    const MediaInfo* m = m_project->mediaInfo(path);
+    if (!m) return;
+    m_engine->pause();
+    m_engine->showSource(path, m_sourcePos.value(path, m->markIn >= 0 ? m->markIn : 0));
+}
+
+bool MainWindow::sourceActive() const
+{
+    return m_engine->mode() == Engine::Mode::Source && m_project->mediaInfo(m_engine->sourcePath());
+}
+
+QString MainWindow::editSource() const
+{
+    if (m_project->mediaInfo(m_engine->sourcePath())) return m_engine->sourcePath();
+    const QStringList selected = m_mediaPool->selectedMedia(); // noch nichts in der Quellansicht
+    return selected.isEmpty() ? QString() : selected.first();
+}
+
+void MainWindow::sourceEdit(Editor::SourceEditMode mode)
+{
+    const QString path = editSource();
+    if (path.isEmpty()) return;
+    offerClipFormat({path}, true); // erster Clip in leerer Timeline: Projektformat anpassen?
+    TimelineView* tv = m_timeline->view();
+    const int srcPos = sourceActive() ? m_engine->position() : m_sourcePos.value(path, 0);
+    const int end = m_editor->sourceEdit(mode, path, srcPos, tv->playhead());
+    if (end < 0) {
+        QApplication::beep(); // kein Clip unter dem Playhead bzw. zu wenig Material
+        return;
+    }
+    // Playhead ans Ende des neuen Clips (wie DaVinci); die Quellansicht bleibt offen
+    if (m_engine->mode() == Engine::Mode::Timeline) {
+        m_engine->pause();
+        m_engine->seek(end);
+    } else {
+        tv->setPlayhead(end);
+    }
+}
+
+void MainWindow::updateViewer()
+{
+    if (sourceActive()) {
+        const MediaInfo* m = m_project->mediaInfo(m_engine->sourcePath());
+        m_viewer->setSource(m->path, m->name);
+        m_viewer->setRange(m->length, m->markIn, m->markOut);
+        return;
+    }
+    const Timeline& tl = m_project->timeline();
+    m_viewer->setSource({}, {});
+    m_viewer->setRange(TimelineOps::endFrame(tl), tl.markIn, tl.markOut);
+}
+
 void MainWindow::setProjectFormat(const ProjectFormat& format)
 {
     m_project->setFormat(format);
@@ -227,6 +301,11 @@ void MainWindow::onFormatChanged()
     for (MediaInfo& m : media) {
         const MediaInfo fresh = QFileInfo::exists(m.path) ? m_engine->probe(m.path) : MediaInfo{};
         m.length = fresh.length > 0 ? fresh.length : int(std::lround(m.length * f.rate.fps() / oldRate.fps()));
+        auto scaleMark = [&](int mark) {
+            return mark < 0 ? -1 : std::min(m.length - 1, int(std::lround(mark * f.rate.fps() / oldRate.fps())));
+        };
+        m.markIn = scaleMark(m.markIn);
+        m.markOut = scaleMark(m.markOut);
     }
     m_project->replaceMedia(media);
 }
@@ -457,6 +536,17 @@ void MainWindow::buildActions()
     makeAction(edit, "ripple_delete_alt", T("Löschen mit Ripple (Rücktaste)"), QKeySequence("Shift+Backspace"),
                [this] { m_editor->rippleDeleteSelection(); });
     edit->addSeparator();
+    // Bearbeitungen aus dem Quell-Viewer wie DaVinci (Edit → Insert/Overwrite/Replace/Place on Top …)
+    using SE = Editor::SourceEditMode;
+    makeAction(edit, "insert_clip", T("Clip einfügen"), QKeySequence(Qt::Key_F9), [this] { sourceEdit(SE::Insert); });
+    makeAction(edit, "overwrite_clip", T("Clip überschreiben"), QKeySequence(Qt::Key_F10), [this] { sourceEdit(SE::Overwrite); });
+    makeAction(edit, "replace_clip", T("Clip ersetzen"), QKeySequence(Qt::Key_F11), [this] { sourceEdit(SE::Replace); });
+    makeAction(edit, "place_on_top", T("Oben platzieren"), QKeySequence(Qt::Key_F12), [this] { sourceEdit(SE::PlaceOnTop); });
+    makeAction(edit, "ripple_overwrite", T("Ripple-Überschreiben"), QKeySequence("Shift+F10"),
+               [this] { sourceEdit(SE::RippleOverwrite); });
+    makeAction(edit, "append_at_end", T("Am Ende der Timeline anhängen"), QKeySequence("Shift+F12"),
+               [this] { sourceEdit(SE::AppendAtEnd); });
+    edit->addSeparator();
     makeAction(edit, "select_all", T("Alles auswählen"), QKeySequence("Ctrl+A"), [this] { m_editor->selectAll(); });
     makeAction(edit, "deselect", T("Auswahl aufheben"), QKeySequence("Ctrl+Shift+A"), [this] { m_selection->clear(); });
     edit->addSeparator();
@@ -504,13 +594,36 @@ void MainWindow::buildActions()
     timeline->addSeparator();
     makeAction(timeline, "add_marker", T("Marker setzen/entfernen"), QKeySequence("M"),
                [this, tv] { m_editor->toggleMarker(tv->playhead()); });
-    makeAction(timeline, "mark_in", T("In-Punkt setzen"), QKeySequence("I"), [this, tv] { m_editor->setMarkIn(tv->playhead()); });
-    makeAction(timeline, "mark_out", T("Out-Punkt setzen"), QKeySequence("O"), [this, tv] { m_editor->setMarkOut(tv->playhead()); });
-    makeAction(timeline, "clear_in", T("In-Punkt entfernen"), QKeySequence("Alt+I"), [this] { m_editor->setMarkIn(-1); });
-    makeAction(timeline, "clear_out", T("Out-Punkt entfernen"), QKeySequence("Alt+O"), [this] { m_editor->setMarkOut(-1); });
-    makeAction(timeline, "clear_in_out", T("In und Out entfernen"), QKeySequence("Alt+X"), [this] { m_editor->clearMarks(); });
-    makeAction(timeline, "goto_in", T("Zum In-Punkt"), QKeySequence("Shift+I"), [this] { jumpToFrame(m_project->timeline().markIn); });
-    makeAction(timeline, "goto_out", T("Zum Out-Punkt"), QKeySequence("Shift+O"), [this] { jumpToFrame(m_project->timeline().markOut); });
+    // In/Out wie DaVinci: zeigt der Viewer die Quelle, gelten sie für den Quellclip (pro Media-Pool-Clip gemerkt)
+    auto markIn = [this, tv](int frame) {
+        if (sourceActive()) m_editor->setSourceMarkIn(m_engine->sourcePath(), frame < 0 ? -1 : m_engine->position());
+        else m_editor->setMarkIn(frame < 0 ? -1 : tv->playhead());
+    };
+    auto markOut = [this, tv](int frame) {
+        if (sourceActive()) m_editor->setSourceMarkOut(m_engine->sourcePath(), frame < 0 ? -1 : m_engine->position());
+        else m_editor->setMarkOut(frame < 0 ? -1 : tv->playhead());
+    };
+    auto gotoMark = [this](bool in) {
+        if (sourceActive()) {
+            const MediaInfo* m = m_project->mediaInfo(m_engine->sourcePath());
+            const int f = in ? m->markIn : m->markOut;
+            if (f < 0) return;
+            m_engine->pause();
+            m_engine->seek(f);
+            return;
+        }
+        jumpToFrame(in ? m_project->timeline().markIn : m_project->timeline().markOut);
+    };
+    makeAction(timeline, "mark_in", T("In-Punkt setzen"), QKeySequence("I"), [markIn] { markIn(0); });
+    makeAction(timeline, "mark_out", T("Out-Punkt setzen"), QKeySequence("O"), [markOut] { markOut(0); });
+    makeAction(timeline, "clear_in", T("In-Punkt entfernen"), QKeySequence("Alt+I"), [markIn] { markIn(-1); });
+    makeAction(timeline, "clear_out", T("Out-Punkt entfernen"), QKeySequence("Alt+O"), [markOut] { markOut(-1); });
+    makeAction(timeline, "clear_in_out", T("In und Out entfernen"), QKeySequence("Alt+X"), [this] {
+        if (sourceActive()) m_editor->clearSourceMarks(m_engine->sourcePath());
+        else m_editor->clearMarks();
+    });
+    makeAction(timeline, "goto_in", T("Zum In-Punkt"), QKeySequence("Shift+I"), [gotoMark] { gotoMark(true); });
+    makeAction(timeline, "goto_out", T("Zum Out-Punkt"), QKeySequence("Shift+O"), [gotoMark] { gotoMark(false); });
     makeAction(timeline, "marker_prev", T("Vorheriger Marker"), QKeySequence("Shift+Up"), [this] { jumpToMarker(-1); });
     makeAction(timeline, "marker_next", T("Nächster Marker"), QKeySequence("Shift+Down"), [this] { jumpToMarker(1); });
     auto* linked = makeAction(timeline, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
@@ -637,6 +750,7 @@ void MainWindow::newProject()
     m_selection->clear();
     m_engine->setFormat(ProjectFormat{}); // Medienlängen passen schon (leer) -> nicht neu einlesen
     m_project->reset();
+    m_sourcePos.clear();
     m_engine->showTimeline(0);
     setProjectPath({});
     removeAutosave();
@@ -691,6 +805,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path)
     m_probeCache.clear();
     m_engine->setFormat(data.format); // Medienlängen in der Datei zählen schon in dieser Framerate
     m_project->load(data);
+    m_sourcePos.clear();
     m_engine->showTimeline(data.playhead);
     m_timeline->view()->setPlayhead(data.playhead);
     setProjectPath(path);

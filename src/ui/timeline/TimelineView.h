@@ -58,6 +58,8 @@ signals:
     void snappingChanged(bool on);
     // Dateien (aus Media Pool oder Dateimanager) wurden auf Spur-Index `track` abgelegt
     void dropRequested(const QStringList& paths, int frame, int track);
+    // Quellbereich [in, out] aus dem Viewer abgelegt (überschreiben wie DaVinci)
+    void rangeDropRequested(const QString& path, int in, int out, int frame, int track);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -144,6 +146,8 @@ private:
     void drawLabel(QPainter& p, const QPoint& topLeft, const QString& text);
     QRect headerButton(const Row& row) const;
     QStringList dropPaths(const QMimeData* mime) const;
+    // Quellbereich aus dem Viewer ("in out"), false = normaler Drag aus Media Pool/Dateimanager
+    static bool dropRange(const QMimeData* mime, int* in, int* out);
     int dropTrackAt(int y) const;
 
     Editor* m_editor;
