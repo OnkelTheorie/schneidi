@@ -262,7 +262,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                              {"hasAudio", m.hasAudio}, {"isImage", m.isImage}};
     }
 
-    auto tracks = [&](const QVector<Track>& list) {
+    auto tracks = [&](const QVector<Track>& list, TrackKind kind) {
         QJsonArray arr;
         for (const Track& t : list) {
             QJsonArray clips;
@@ -278,7 +278,11 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                 }
                 clips << clipToJson(c, index.value(c.mediaPath));
             }
-            QJsonObject o{{"name", t.name}, {"clips", clips}};
+            // "name" = Kürzel (ältere Versionen zeigen es an), eigener Name in "label"
+            QJsonObject o{{"name", trackShortName({kind, int(arr.size())})}, {"clips", clips}};
+            if (!t.name.isEmpty()) o["label"] = t.name;
+            if (!t.color.isEmpty()) o["color"] = t.color;
+            if (t.locked) o["locked"] = true;
             if (t.muted) o["muted"] = true;
             if (t.hidden) o["hidden"] = true;
             if (t.volumeDb != 0.0) o["volumeDb"] = t.volumeDb;
@@ -288,8 +292,8 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         }
         return arr;
     };
-    const QJsonArray video = tracks(data.timeline.video);
-    const QJsonArray audio = tracks(data.timeline.audio);
+    const QJsonArray video = tracks(data.timeline.video, TrackKind::Video);
+    const QJsonArray audio = tracks(data.timeline.audio, TrackKind::Audio);
 
     QJsonArray markers;
     for (int m : data.timeline.markers) markers << m;
@@ -352,7 +356,9 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             const QJsonObject o = v.toObject();
             Track t;
             t.kind = kind;
-            t.name = o.value("name").toString();
+            t.name = o.value("label").toString(); // ältere Dateien: nur Kürzel in "name" -> Standardname
+            if (trackColorInfo(o.value("color").toString())) t.color = o.value("color").toString();
+            t.locked = o.value("locked").toBool();
             t.muted = o.value("muted").toBool();
             t.hidden = o.value("hidden").toBool();
             t.volumeDb = o.value("volumeDb").toDouble(0.0);

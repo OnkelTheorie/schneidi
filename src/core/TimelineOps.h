@@ -14,6 +14,21 @@ namespace TimelineOps {
 Clip* findClip(Timeline& tl, int clipId, TrackRef* where = nullptr);
 const Clip* findClip(const Timeline& tl, int clipId, TrackRef* where = nullptr);
 
+// Liegt der Clip auf einer gesperrten Spur (Schloss im Spurkopf)? Unbekannte Clips gelten als nicht gesperrt.
+bool isLocked(const Timeline& tl, int clipId);
+// Nur die Clips, die nicht auf gesperrten Spuren liegen (Reihenfolge bleibt)
+QVector<int> unlocked(const Timeline& tl, const QVector<int>& clipIds);
+// Spuren, auf denen die Clips liegen (ohne Doppelte)
+QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds);
+
+// Ripple auf den übrigen Spuren wie DaVinci: alle nicht gesperrten Spuren außer `skip` bleiben synchron.
+// shifts: (ab Frame, Versatz) – ein Clip rückt um die Summe der Versätze, deren Frame <= seinem Start ist.
+// Würde eine Spur dabei einen stehenbleibenden Clip überschreiben (oder vor Frame 0 rutschen), bleibt sie
+// ganz stehen – nie überschreiben.
+void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip);
+// Wie weit (Frames nach links) die übrigen Spuren ab `from` nachrücken können, ohne zu überschreiben
+int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip);
+
 // Alle Clips mit gleicher linkId (inkl. des Clips selbst).
 QVector<int> linkedGroup(const Timeline& tl, int clipId);
 
@@ -29,7 +44,8 @@ bool removeClip(Timeline& tl, int clipId);
 // Legt fehlende Spuren an, bis es `count` Spuren der Art gibt (Namen V3, A3, …).
 void ensureTracks(Timeline& tl, TrackKind kind, int count);
 
-// Löscht Clips mit Ripple: auf den betroffenen Spuren rückt alles Folgende nach (wie Shift+Entf in DaVinci).
+// Löscht Clips mit Ripple: auf den betroffenen Spuren rückt alles Folgende nach (wie Shift+Entf in DaVinci),
+// die übrigen nicht gesperrten Spuren rücken um die gelöschten Bereiche mit (rippleTracks).
 void rippleDelete(Timeline& tl, const QVector<int>& clipIds);
 
 // Teilt die Clips an Frame `frame`. Rechte Hälften bekommen neue IDs; verknüpfte
@@ -63,7 +79,8 @@ void trimClips(Timeline& tl, const QVector<int>& clipIds, Edge edge, int delta,
 
 // Trim-Modus (T) wie DaVinci. Alle Varianten lassen die Ansicht in Ruhe und überschreiben nie einen Nachbarn.
 enum class TrimKind {
-    Ripple, // Kante ziehen, spätere Clips derselben Spur rücken nach (Anfang: Clip bleibt stehen, Inhalt wandert)
+    Ripple, // Kante ziehen, spätere Clips rücken nach (Anfang: Clip bleibt stehen, Inhalt wandert);
+            // wie DaVinci auf allen nicht gesperrten Spuren (Verkürzen nur so weit, wie alle nachrücken können)
     Roll,   // Schnitt zwischen zwei Clips verschieben: links Ende, rechts Anfang, Gesamtlänge bleibt
     Slip,   // Inhalt im Clip verschieben (In/Out), Lage und Länge bleiben
     Slide,  // Clip verschieben, linker Nachbar wird länger/kürzer, rechter umgekehrt

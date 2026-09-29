@@ -46,6 +46,83 @@ const Clip* findClip(const Timeline& tl, int clipId, TrackRef* where)
     return findIn<const Timeline, const Clip>(tl, clipId, where);
 }
 
+bool isLocked(const Timeline& tl, int clipId)
+{
+    TrackRef ref;
+    return findClip(tl, clipId, &ref) && tl.track(ref).locked;
+}
+
+QVector<int> unlocked(const Timeline& tl, const QVector<int>& clipIds)
+{
+    QVector<int> out;
+    for (int id : clipIds)
+        if (!isLocked(tl, id)) out << id;
+    return out;
+}
+
+QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds)
+{
+    QVector<TrackRef> refs;
+    for (int id : clipIds) {
+        TrackRef ref;
+        if (findClip(tl, id, &ref) && !refs.contains(ref)) refs << ref;
+    }
+    return refs;
+}
+
+void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip)
+{
+    if (shifts.isEmpty()) return;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        auto& tracks = tl.tracks(k);
+        for (int i = 0; i < tracks.size(); ++i) {
+            Track& t = tracks[i];
+            if (t.locked || skip.contains(TrackRef{k, i}) || t.clips.isEmpty()) continue;
+            QVector<Clip> moved = t.clips;
+            bool changed = false;
+            for (Clip& c : moved) {
+                int d = 0;
+                for (const auto& s : shifts)
+                    if (s.first <= c.start) d += s.second;
+                c.start += d;
+                changed |= d != 0;
+            }
+            if (!changed) continue;
+            // Reihenfolge bleibt; überschneidet sich etwas, bleibt die Spur wie sie ist
+            bool ok = moved.first().start >= 0;
+            for (int j = 1; ok && j < moved.size(); ++j) ok = moved[j].start >= moved[j - 1].end();
+            if (!ok) continue;
+            // auseinandergerückte Überblendung lösen (sonst würden daraus Aus- und Einblenden)
+            for (int j = 1; j < moved.size(); ++j)
+                if (t.clips[j - 1].end() == t.clips[j].start && moved[j - 1].end() != moved[j].start
+                    && moved[j - 1].transOut > 0 && moved[j].transIn > 0) {
+                    moved[j - 1].transOut = 0;
+                    moved[j].transIn = 0;
+                }
+            t.clips = moved;
+        }
+    }
+}
+
+int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip)
+{
+    int room = INT_MAX / 2;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        const auto& tracks = tl.tracks(k);
+        for (int i = 0; i < tracks.size(); ++i) {
+            const Track& t = tracks[i];
+            if (t.locked || skip.contains(TrackRef{k, i})) continue;
+            int standEnd = 0, firstMoving = -1; // Ende der stehenbleibenden Clips, Anfang des ersten rückenden
+            for (const Clip& c : t.clips) {
+                if (c.start < from) standEnd = std::max(standEnd, c.end());
+                else if (firstMoving < 0) firstMoving = c.start;
+            }
+            if (firstMoving >= 0) room = std::min(room, firstMoving - standEnd);
+        }
+    }
+    return std::max(0, room);
+}
+
 QVector<int> linkedGroup(const Timeline& tl, int clipId)
 {
     const Clip* c = findClip(tl, clipId);
@@ -160,14 +237,27 @@ void ensureTracks(Timeline& tl, TrackKind kind, int count)
     auto& tracks = tl.tracks(kind);
     while (tracks.size() < count) {
         Track t;
-        t.kind = kind;
-        t.name = QString("%1%2").arg(kind == TrackKind::Video ? "V" : "A").arg(tracks.size() + 1);
+        t.kind = kind; // Name leer = Standard („Video 3“ usw.)
         tracks << t;
     }
 }
 
 void rippleDelete(Timeline& tl, const QVector<int>& clipIds)
 {
+    // gelöschte Bereiche aller Spuren zusammengefasst -> Versatz für die übrigen Spuren
+    const QVector<TrackRef> edited = tracksOf(tl, clipIds);
+    QVector<QPair<int, int>> ranges;
+    for (int id : clipIds)
+        if (const Clip* c = findClip(tl, id)) ranges << qMakePair(c->start, c->end());
+    std::sort(ranges.begin(), ranges.end());
+    QVector<QPair<int, int>> merged;
+    for (const auto& r : ranges) {
+        if (!merged.isEmpty() && r.first <= merged.last().second) merged.last().second = std::max(merged.last().second, r.second);
+        else merged << r;
+    }
+    QVector<QPair<int, int>> shifts;
+    for (const auto& r : merged) shifts << qMakePair(r.second, r.first - r.second);
+
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
         for (auto& t : tl.tracks(k)) {
             QVector<QPair<int, int>> gaps; // gelöschte Bereiche [start, end)
@@ -187,6 +277,7 @@ void rippleDelete(Timeline& tl, const QVector<int>& clipIds)
             sortTrack(t);
         }
     }
+    rippleTracks(tl, shifts, edited);
 }
 
 int clampTrackDelta(const Timeline& tl, const QVector<int>& clipIds, TrackKind anchorKind, int trackDelta)
@@ -301,14 +392,23 @@ int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const Source
 {
     int lo = INT_MIN / 2, hi = INT_MAX / 2;
     switch (e.kind) {
-    case TrimKind::Ripple:
-        // Nachbarn begrenzen nicht: der Rest der Spur rückt mit
+    case TrimKind::Ripple: {
+        // Nachbarn begrenzen nicht: der Rest der Spur rückt mit. Die übrigen Spuren rücken ab dem
+        // (frühesten) alten Ende mit; Verkürzen nur so weit, wie sie Platz haben.
+        int from = INT_MAX;
         for (int id : e.ids)
             if (const Clip* c = findClip(tl, id)) {
                 if (e.edge == Edge::Start) limitStart(*c, lo, hi);
                 else limitEnd(*c, lo, hi, sourceLength);
+                from = std::min(from, c->end());
             }
+        if (from != INT_MAX) {
+            const int room = rippleRoom(tl, from, tracksOf(tl, e.ids));
+            if (e.edge == Edge::Start) hi = std::min(hi, room);
+            else lo = std::max(lo, -room);
+        }
         break;
+    }
     case TrimKind::Roll:
         for (int id : e.ids) {
             const auto n = neighbors(tl, id);
@@ -358,18 +458,24 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
     if (delta == 0) return;
     switch (e.kind) {
     case TrimKind::Ripple: {
-        // pro Spur: Clips ab dem alten Ende des getrimmten Clips rücken um dessen Längenänderung
+        // pro Spur: Clips ab dem alten Ende des getrimmten Clips rücken um dessen Längenänderung,
+        // die übrigen nicht gesperrten Spuren ab dem frühesten alten Ende ebenso
+        const QVector<TrackRef> edited = tracksOf(tl, e.ids);
+        int from = INT_MAX;
+        for (int id : e.ids)
+            if (const Clip* c = findClip(tl, id)) from = std::min(from, c->end());
+        const int shift = e.edge == Edge::Start ? -delta : delta;
         for (int id : e.ids) {
             TrackRef ref;
             Clip* c = findClip(tl, id, &ref);
             if (!c) continue;
             const int oldEnd = c->end();
-            const int shift = e.edge == Edge::Start ? -delta : delta;
             if (e.edge == Edge::Start) c->in += delta;
             else c->out += delta;
             for (Clip& o : tl.track(ref).clips)
                 if (o.id != id && !e.ids.contains(o.id) && o.start >= oldEnd) o.start += shift;
         }
+        if (from != INT_MAX) rippleTracks(tl, {qMakePair(from, shift)}, edited);
         break;
     }
     case TrimKind::Roll:

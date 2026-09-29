@@ -201,9 +201,30 @@ struct Clip {
     QString displayName() const { return isTitle() ? title.firstLine() : QFileInfo(mediaPath).fileName(); }
 };
 
+// Spurfarben wie im DaVinci-Menü „Change Track Color“ (id = Schlüssel in der Projektdatei)
+struct TrackColorInfo { const char* id; const char* name; QRgb rgb; };
+inline constexpr TrackColorInfo kTrackColors[] = {
+    {"orange", N_("Orange"), 0xffeb6e01},   {"apricot", N_("Aprikose"), 0xffffa833},
+    {"yellow", N_("Gelb"), 0xffe2a902},     {"lime", N_("Limette"), 0xff9fc613},
+    {"olive", N_("Oliv"), 0xff5f9a1f},      {"green", N_("Grün"), 0xff448f65},
+    {"teal", N_("Petrol"), 0xff00989a},     {"navy", N_("Marineblau"), 0xff15628e},
+    {"blue", N_("Blau"), 0xff4a83c8},       {"purple", N_("Lila"), 0xff9a71c7},
+    {"violet", N_("Violett"), 0xffd0569e},  {"pink", N_("Rosa"), 0xffe9a0c3},
+    {"tan", N_("Hellbraun"), 0xffb9af97},   {"beige", N_("Beige"), 0xffc4a06a},
+    {"brown", N_("Braun"), 0xff996633},     {"chocolate", N_("Schokolade"), 0xff8c5a3f},
+};
+inline const TrackColorInfo* trackColorInfo(const QString& id)
+{
+    for (const auto& i : kTrackColors)
+        if (id == QLatin1String(i.id)) return &i;
+    return nullptr;
+}
+
 struct Track {
     TrackKind kind = TrackKind::Video;
-    QString name;
+    QString name;  // vom Nutzer vergeben (Doppelklick im Spurkopf); leer = Standard „Video 1“/„Audio 1“
+    QString color; // Spurfarbe (id aus kTrackColors); leer = Standard (Video blau, Audio grün)
+    bool locked = false; // gesperrt (Schloss im Spurkopf): Clips darauf lassen sich nicht auswählen/ändern
     QVector<Clip> clips; // immer nach start sortiert, ohne Überlappung
     bool muted = false;
     bool hidden = false;
@@ -218,6 +239,17 @@ struct TrackRef {
     int index = 0; // V1 = Video/0, A1 = Audio/0
     bool operator==(const TrackRef& o) const { return kind == o.kind && index == o.index; }
 };
+
+// Kürzel wie im DaVinci-Spurkopf („V1“, „A2“) und angezeigter Spurname (eigener oder „Video 1“/„Audio 1“)
+inline QString trackShortName(TrackRef r)
+{
+    return QString("%1%2").arg(r.kind == TrackKind::Video ? "V" : "A").arg(r.index + 1);
+}
+inline QString trackDisplayName(const Track& t, TrackRef r)
+{
+    if (!t.name.isEmpty()) return t.name;
+    return (r.kind == TrackKind::Video ? T("Video %1") : T("Audio %1")).arg(r.index + 1);
+}
 
 struct Timeline {
     QVector<Track> video; // [0] = V1 (unterste Spur)
