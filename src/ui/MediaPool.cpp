@@ -4,6 +4,7 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
+#include "core/TimelineOps.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
 #include "ui/MediaStorage.h"
@@ -16,6 +17,7 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -57,7 +59,7 @@ protected:
         QStringList paths;
         for (QListWidgetItem* it : items) {
             const QString path = it->data(Qt::UserRole).toString();
-            if (path != MediaPool::TitleItem) paths << path;
+            if (path != MediaPool::TitleItem) paths << path; // Sequenzen mit: lassen sich in Bins verschieben
         }
         if (!paths.isEmpty()) data->setData(MediaPool::ListMimeType, paths.join('\n').toUtf8());
         return data;
@@ -302,7 +304,15 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_bins->setContextMenuPolicy(Qt::CustomContextMenu);
     m_bins->setMinimumWidth(70);
     m_bins->setStyleSheet(QString("QTreeWidget { background: %1; border: none; }").arg(Theme::panel.darker(112).name()));
-    bins->mediaDropped = [this](const QStringList& paths, int bin) { m_project->moveMediaToBin(paths, bin); };
+    bins->mediaDropped = [this](const QStringList& items, int bin) {
+        QStringList paths;
+        QVector<int> sequences;
+        for (const QString& it : items) {
+            if (const int id = sequenceOfItem(it)) sequences << id;
+            else paths << it;
+        }
+        m_project->moveMediaToBin(paths, bin, sequences);
+    };
     bins->binDropped = [this](int id, int parent) { m_project->moveBin(id, parent); };
     bins->canMoveBin = [this](int id, int target) {
         const MediaBin* b = m_project->bin(id);
@@ -344,7 +354,8 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     connect(m_list, &QListWidget::customContextMenuRequested, this, &MediaPool::showContextMenu);
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString path = it->data(Qt::UserRole).toString();
-        if (path != TitleItem) emit sourceRequested(path);
+        if (const int seq = sequenceOfItem(path)) emit sequenceOpenRequested(seq);
+        else if (path != TitleItem) emit sourceRequested(path);
     });
 
     auto* clipArea = new QWidget;
@@ -368,6 +379,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     lay->addWidget(split, 1);
 
     connect(m_project, &Project::mediaChanged, this, &MediaPool::rebuild);
+    connect(m_project, &Project::timelineChanged, this, &MediaPool::updateSequenceItems);
     // Organisation geändert: gesammelt nach dem aktuellen Ereignis neu aufbauen (kann aus itemChanged der
     // Bin-Liste kommen – das Element darf dort nicht gelöscht werden)
     connect(m_project, &Project::poolChanged, this, [this] {
@@ -626,6 +638,52 @@ void MediaPool::rebuildClips()
         m_list->addItem(titleItem);
     }
 
+    // Timelines und Compound Clips des Bins (wie DaVinci zwischen den Clips; hier vorne, nach Namen)
+    QVector<const Sequence*> seqs;
+    for (const Sequence& q : m_project->sequences())
+        if (search.isEmpty() ? q.bin == m_currentBin
+                             : m_project->binInside(q.bin, m_currentBin) && q.name.contains(search, Qt::CaseInsensitive))
+            seqs << &q;
+    std::stable_sort(seqs.begin(), seqs.end(), [&](const Sequence* a, const Sequence* b) {
+        const int c = QString::localeAwareCompare(a->name, b->name);
+        return m_sortAscending ? c < 0 : c > 0;
+    });
+    for (const Sequence* q : seqs) {
+        QPixmap thumb(kThumb);
+        thumb.fill((q->compound ? Theme::compoundClip : Theme::videoClip).darker(170));
+        {
+            QPainter p(&thumb);
+            p.setRenderHint(QPainter::Antialiasing);
+            // Symbol: Timeline = Spurbalken, Compound Clip = gestapelte Ebenen
+            const QColor fg(0xe8, 0xe8, 0xec);
+            if (q->compound) {
+                for (int i = 2; i >= 0; --i) {
+                    const QRectF r(46 + i * 8, 20 + (2 - i) * 8, 36, 24);
+                    p.setPen(QPen(fg, 1.2));
+                    p.setBrush(Theme::compoundClip.darker(100 + 25 * i));
+                    p.drawRoundedRect(r, 2, 2);
+                }
+            } else {
+                p.setPen(Qt::NoPen);
+                const QColor bars[] = {Theme::videoClip, Theme::videoClip.lighter(120), Theme::audioClip};
+                const int x0[] = {30, 50, 30}, w[] = {60, 70, 84};
+                for (int i = 0; i < 3; ++i) {
+                    p.setBrush(bars[i]);
+                    p.drawRoundedRect(QRectF(x0[i], 18 + i * 16, w[i], 11), 2, 2);
+                }
+                p.setBrush(QColor(0xe5, 0x48, 0x4d));
+                p.drawRect(QRectF(72, 12, 2, 58)); // Playhead
+            }
+        }
+        const QString item = sequenceItem(q->id);
+        auto* it = new QListWidgetItem(QIcon(thumb), QString());
+        it->setData(Qt::UserRole, item);
+        it->setToolTip(q->compound ? T("Compound Clip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
+                                   : T("Timeline – Doppelklick öffnet sie, in eine andere Timeline ziehen verschachtelt sie"));
+        m_list->addItem(it);
+    }
+    updateSequenceItems();
+
     QVector<const MediaInfo*> media;
     for (const MediaInfo& m : m_project->media()) {
         if (search.isEmpty() ? m.bin == m_currentBin
@@ -774,9 +832,60 @@ QStringList MediaPool::selectedMedia() const
     QStringList paths;
     for (QListWidgetItem* it : m_list->selectedItems()) {
         const QString path = it->data(Qt::UserRole).toString();
-        if (path != TitleItem) paths << path;
+        if (path != TitleItem && !sequenceOfItem(path)) paths << path;
     }
     return paths;
+}
+
+QVector<int> MediaPool::selectedSequences() const
+{
+    QVector<int> ids;
+    for (QListWidgetItem* it : m_list->selectedItems())
+        if (const int id = sequenceOfItem(it->data(Qt::UserRole).toString())) ids << id;
+    return ids;
+}
+
+QString MediaPool::sequenceItem(int id)
+{
+    return QStringLiteral("schneidi:seq:%1").arg(id);
+}
+
+int MediaPool::sequenceOfItem(const QString& item)
+{
+    static const QString prefix = QStringLiteral("schneidi:seq:");
+    return item.startsWith(prefix) ? item.mid(prefix.size()).toInt() : 0;
+}
+
+void MediaPool::updateSequenceItems()
+{
+    const bool list = m_viewMode == ViewMode::List;
+    for (int i = 0; i < m_list->count(); ++i) {
+        QListWidgetItem* it = m_list->item(i);
+        const int id = sequenceOfItem(it->data(Qt::UserRole).toString());
+        const Sequence* q = id ? m_project->sequence(id) : nullptr;
+        if (!q) continue;
+        const QString duration = Timecode::format(TimelineOps::endFrame(q->timeline), m_project->fps());
+        const QString text = list ? q->name + "    " + duration : q->name + "\n" + duration;
+        if (it->text() != text) it->setText(text);
+        QFont f = it->font();
+        f.setBold(id == m_project->currentSequence()); // geöffnete Timeline hervorheben
+        it->setFont(f);
+    }
+}
+
+void MediaPool::newTimeline()
+{
+    m_project->addTimeline({}, m_currentBin);
+}
+
+void MediaPool::renameSequence(int id)
+{
+    const Sequence* q = m_project->sequence(id);
+    if (!q) return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, q->compound ? T("Compound Clip umbenennen") : T("Timeline umbenennen"),
+                                               T("Name:"), QLineEdit::Normal, q->name, &ok);
+    if (ok) m_project->renameSequence(id, name);
 }
 
 void MediaPool::addClipColorMenu(QMenu* menu, Project* project, const QStringList& paths)
@@ -833,7 +942,22 @@ void MediaPool::showContextMenu(const QPoint& pos)
         it->setSelected(true);
     }
     const QStringList paths = selectedMedia();
+    const QVector<int> seqs = selectedSequences();
     QMenu menu(this);
+    if (seqs.size() == 1) { // Timeline/Compound Clip wie DaVinci
+        const int id = seqs.first();
+        menu.addAction(T("In Timeline öffnen"), this, [this, id] { emit sequenceOpenRequested(id); });
+        menu.addAction(T("Umbenennen…"), this, [this, id] { renameSequence(id); });
+        menu.addAction(T("Duplizieren"), this, [this, id] { m_project->duplicateSequence(id); });
+        QAction* del = menu.addAction(T("Löschen"), this, [this, id] { m_project->removeSequence(id); });
+        del->setEnabled(m_project->canRemoveSequence(id));
+        if (!del->isEnabled())
+            del->setToolTip(m_project->sequenceUsed(id) ? T("Wird noch als Clip in einer Timeline benutzt")
+                                                        : T("Die letzte Timeline bleibt"));
+        menu.setToolTipsVisible(true);
+        menu.addSeparator();
+    }
+    menu.addAction(T("Neue Timeline"), this, &MediaPool::newTimeline);
     menu.addAction(T("Neuer Bin"), this, &MediaPool::newBin);
     if (!paths.isEmpty()) {
         menu.addAction(T("Neuer Bin mit ausgewählten Clips"), this, [this, paths] {

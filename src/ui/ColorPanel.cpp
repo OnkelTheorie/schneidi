@@ -460,7 +460,10 @@ void ColorPanel::refresh()
         return;
     }
     const int n = targets().size();
-    m_clipName->setText(n > 1 ? T("%1 (+%2 weitere)").arg(c->displayName()).arg(n - 1) : c->displayName());
+    {
+        const QString cn = m_editor->project()->clipName(*c);
+        m_clipName->setText(n > 1 ? T("%1 (+%2 weitere)").arg(cn).arg(n - 1) : cn);
+    }
     const bool has = EffectRegistry::has(*c, ColorGrade::EffectId);
     const EffectInstance* inst = EffectRegistry::instance(*c, ColorGrade::EffectId);
     m_enabled->setChecked(!inst || inst->enabled);

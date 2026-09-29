@@ -1,10 +1,13 @@
 #include "ui/timeline/TimelinePanel.h"
 
+#include "core/Editor.h"
 #include "core/I18n.h"
+#include "core/Project.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QPainter>
@@ -13,6 +16,7 @@
 #include <QSignalBlocker>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace {
 // Zeichnet ein Symbol in ein 20×20-Feld (doppelt aufgelöst für scharfe Kanten)
@@ -101,7 +105,7 @@ QIcon TimelinePanel::toolIcon(Icon icon)
     return ic;
 }
 
-TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
+TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
 {
     setObjectName("Panel");
     m_view = new TimelineView(editor);
@@ -160,6 +164,32 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
     m_bar = bar;
     m_toolInsert = bar->count();
     bar->addStretch(1);
+    // Timeline-Auswahl (wie das Timeline-Menü über dem DaVinci-Viewer): alle Timelines, dazu ein geöffneter Compound Clip
+    m_back = new QToolButton;
+    m_back->setText(QStringLiteral("◂"));
+    m_back->setToolTip(T("Zurück zur übergeordneten Timeline"));
+    connect(m_back, &QToolButton::clicked, this, &TimelinePanel::back);
+    m_timelines = new QComboBox;
+    m_timelines->setToolTip(T("Timeline wechseln"));
+    m_timelines->setMinimumWidth(160);
+    m_timelines->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    connect(m_timelines, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
+        openSequence(m_timelines->itemData(i).toInt());
+    });
+    bar->addWidget(m_back);
+    bar->addWidget(m_timelines);
+    bar->addStretch(1);
+    Project* project = editor->project();
+    connect(project, &Project::sequencesChanged, this, &TimelinePanel::rebuildTimelines);
+    connect(project, &Project::currentSequenceChanged, this, [this] {
+        // Anders geöffnet (Undo, Laden, Löschen): Verlauf nur behalten, solange er noch passt
+        const Project* p = m_editor->project();
+        const Sequence* cur = p->sequence(p->currentSequence());
+        if (!cur || !cur->compound) m_history.clear();
+        m_history.erase(std::remove_if(m_history.begin(), m_history.end(), [p](int id) { return !p->sequence(id); }),
+                        m_history.end());
+        rebuildTimelines();
+    });
     bar->addWidget(zoomOut);
     bar->addWidget(zoomIn);
 
@@ -193,6 +223,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent)
     lay->addLayout(grid, 1);
 
     syncScrollbars();
+    rebuildTimelines();
 }
 
 void TimelinePanel::syncScrollbars()
@@ -211,6 +242,46 @@ void TimelinePanel::syncScrollbars()
     m_vbar->setPageStep(vp);
     m_vbar->setSingleStep(20);
     m_vbar->setValue(v.scrollY);
+}
+
+void TimelinePanel::rebuildTimelines()
+{
+    const Project* p = m_editor->project();
+    const QSignalBlocker block(m_timelines);
+    m_timelines->clear();
+    for (const Sequence& s : p->sequences())
+        if (!s.compound || s.id == p->currentSequence())
+            m_timelines->addItem(s.compound ? QStringLiteral("◆ ") + s.name : s.name, s.id);
+    m_timelines->setCurrentIndex(m_timelines->findData(p->currentSequence()));
+    m_back->setVisible(canGoBack());
+}
+
+void TimelinePanel::openSequence(int id)
+{
+    Project* p = m_editor->project();
+    const Sequence* s = p->sequence(id);
+    if (!s || id == p->currentSequence()) return;
+    if (s->compound) m_history << p->currentSequence(); // Compound Clip: Rückweg merken
+    else m_history.clear();
+    const QVector<int> history = m_history;
+    p->setCurrentSequence(id);
+    m_history = history; // currentSequenceChanged hat ihn ggf. geleert
+    rebuildTimelines();
+}
+
+void TimelinePanel::back()
+{
+    if (m_history.isEmpty()) return;
+    const int id = m_history.takeLast();
+    const QVector<int> history = m_history;
+    m_editor->project()->setCurrentSequence(id);
+    m_history = history;
+    rebuildTimelines();
+}
+
+bool TimelinePanel::canGoBack() const
+{
+    return !m_history.isEmpty();
 }
 
 void TimelinePanel::addToolAction(QAction* action, Icon icon)

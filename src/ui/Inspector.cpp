@@ -1201,7 +1201,7 @@ void Inspector::refresh()
 
     const Clip* shown = v ? v : a;
     const int count = m_editor->selection()->ids().size();
-    QString name = shown->displayName();
+    QString name = m_editor->project()->clipName(*shown); // Compound Clips: Name der Sequenz
     if (count > (v && a ? 2 : 1)) name += QString("  (+%1)").arg(count - 1);
     m_clipName->setText(name);
     m_clipName->setToolTip(shown->mediaPath);

@@ -35,12 +35,30 @@
 namespace {
 
 // Clipname, bei geänderter Geschwindigkeit mit Angabe wie DaVinci (z. B. „clip.mp4 (50 %)“)
-QString clipLabel(const Clip& c)
+QString clipLabel(const Project* project, const Clip& c)
 {
-    if (!c.isRetimed()) return c.displayName();
+    const QString name = project->clipName(c); // Compound Clips: Name der Sequenz
+    if (!c.isRetimed()) return name;
     const QString speed = c.freeze ? T("Standbild")
                                    : QString("%1%2 %").arg(c.reverse ? "-" : "").arg(QLocale().toString(c.speed * 100, 'g', 4));
-    return QString("%1 (%2)").arg(c.displayName(), speed);
+    return QString("%1 (%2)").arg(name, speed);
+}
+
+// Compound Clip im Clipkörper: gestapelte Ebenen (wie das DaVinci-Symbol) statt Filmstreifen/Wellenform
+void drawCompoundBody(QPainter& p, const QRect& body, const QColor& base)
+{
+    if (body.height() < 8 || body.width() < 12) return;
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    const double h = std::min(18.0, body.height() - 4.0), w = h * 1.4;
+    const double x = body.left() + 6, y = body.center().y() - h / 2;
+    for (int i = 2; i >= 0; --i) {
+        const QRectF r(x + i * h * 0.22, y + (2 - i) * h * 0.22, w * 0.7, h * 0.56);
+        p.setPen(QPen(base.lighter(170), 1));
+        p.setBrush(base.darker(110 + 20 * i));
+        p.drawRoundedRect(r, 1.5, 1.5);
+    }
+    p.restore();
 }
 
 // Clipfarbe der Spur: eigene Spurfarbe, sonst ungültig (= Standard je Clipart)
@@ -1053,6 +1071,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
 {
     QColor base = color.isValid() ? color
                   : c.isTitle()   ? Theme::titleClip
+                  : c.isCompound() ? Theme::compoundClip
                   : kind == TrackKind::Video ? Theme::videoClip
                                              : Theme::audioClip;
     if (!c.enabled) base = QColor(0x55, 0x55, 0x5c); // deaktiviert (D) wie DaVinci: grau
@@ -1073,7 +1092,8 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     const QRect bodyRect = clipBodyRect(r);
     if (!ghost && bodyRect.height() > 4) {
         p.setRenderHint(QPainter::Antialiasing, false);
-        if (kind == TrackKind::Video && !c.isTitle()) drawFilmstrip(p, bodyRect, c); // Titel: nur Farbe
+        if (c.isCompound()) drawCompoundBody(p, bodyRect, base);
+        else if (kind == TrackKind::Video && !c.isTitle()) drawFilmstrip(p, bodyRect, c); // Titel: nur Farbe
         else if (kind == TrackKind::Audio) drawWaveform(p, bodyRect, c, spans, color);
         p.setRenderHint(QPainter::Antialiasing);
     }
@@ -1202,7 +1222,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         }
         if (m_showNames && textRect.width() > 4) {
             p.setPen(QColor(0xf0, 0xf0, 0xf0));
-            p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, fm.elidedText(clipLabel(c), Qt::ElideRight, textRect.width()));
+            p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, fm.elidedText(clipLabel(m_editor->project(), c), Qt::ElideRight, textRect.width()));
         }
     }
 
@@ -1365,19 +1385,15 @@ void TimelineView::drawHeaders(QPainter& p)
         f.setBold(true);
         f.setPointSizeF(8);
         p.setFont(f);
-        // Zielspur für F9/F10 … (DaVinci Destination Control): Kästchen orange gefüllt, Klick wählt die Spur
+        // Zielspur für F9/F10 … (DaVinci Destination Control): Kästchen orange umrandet (nicht gefüllt, wie in
+        // DaVinci), Klick wählt die Spur
         const QRect shortBox = shortNameRect(row);
         const bool target = row.ref.index == (row.ref.kind == TrackKind::Video ? m_editor->targetVideoTrack()
                                                                                  : m_editor->targetAudioTrack());
-        if (target) {
-            p.fillRect(shortBox.adjusted(0, 0, -1, -1), Theme::accent);
-            p.setPen(Qt::black);
-        } else {
-            p.setPen(QColor(0x5a, 0x5a, 0x62));
-            p.setBrush(Qt::NoBrush);
-            p.drawRect(shortBox.adjusted(0, 0, -1, -1));
-            p.setPen(Theme::text);
-        }
+        p.setBrush(Qt::NoBrush);
+        p.setPen(target ? Theme::accent : QColor(0x5a, 0x5a, 0x62));
+        p.drawRect(shortBox.adjusted(0, 0, -1, -1));
+        p.setPen(Theme::text);
         p.drawText(shortBox, Qt::AlignCenter, trackShortName(row.ref));
         if (!(m_nameEdit && m_nameEdit->isVisible() && m_nameRef == row.ref)) {
             f.setBold(false);
@@ -1673,7 +1689,8 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     }
     if (pos.y() < kRulerH) {
         m_drag = Drag::Scrub;
-        emit seekRequested(std::max(0, int(std::lround(xToFrame(pos.x())))));
+        m_scrubFrame = std::max(0, int(std::lround(xToFrame(pos.x()))));
+        emit seekRequested(m_scrubFrame);
         return;
     }
 
@@ -1805,9 +1822,16 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
 {
     const QPoint pos = e->position().toPoint();
     switch (m_drag) {
-    case Drag::Scrub:
-        emit seekRequested(std::max(0, int(std::lround(xToFrame(pos.x())))));
+    case Drag::Scrub: {
+        // Nur bei neuem Frame springen: jeder Sprung verwirft während der Wiedergabe den Puffer und dekodiert neu –
+        // beim Klicken (Maus zittert ein Pixel) ruckelte das
+        const int frame = std::max(0, int(std::lround(xToFrame(pos.x()))));
+        if (frame != m_scrubFrame) {
+            m_scrubFrame = frame;
+            emit seekRequested(frame);
+        }
         return;
+    }
     case Drag::MaybeMove:
         if ((pos - m_pressPos).manhattanLength() < kDragStartPx) return;
         m_drag = Drag::Move;
@@ -2224,6 +2248,17 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
     for (const QString& path : paths) {
         if (path == MediaPool::TitleItem) { // Titel aus dem Media Pool: 5 s, nur Video
             m_dropItems << DropItem{5 * m_editor->project()->fps(), true, false};
+            continue;
+        }
+        if (const int seq = MediaPool::sequenceOfItem(path)) { // Timeline/Compound Clip aus dem Media Pool
+            const Project* project = m_editor->project();
+            const Sequence* s = project->sequence(seq);
+            if (!s || !project->canNest(seq, project->currentSequence())) continue; // nie in sich selbst
+            auto has = [](const QVector<Track>& tracks) {
+                return std::any_of(tracks.begin(), tracks.end(), [](const Track& t) { return !t.clips.isEmpty(); });
+            };
+            const int len = TimelineOps::endFrame(s->timeline);
+            if (len > 0) m_dropItems << DropItem{len, has(s->timeline.video), has(s->timeline.audio)};
             continue;
         }
         MediaInfo info;

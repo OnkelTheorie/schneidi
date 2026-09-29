@@ -29,14 +29,18 @@ public:
     static constexpr const char* BinMimeType = "application/x-schneidi-bin";
     // Eintrag "Text" (Titel-Generator) zum Reinziehen; steht statt eines Pfads in den Drag-Daten
     static constexpr const char* TitleItem = "schneidi:title";
+    // Timeline/Compound Clip (Sequenz) als Eintrag: "schneidi:seq:<id>" statt eines Pfads
+    static QString sequenceItem(int id);
+    static int sequenceOfItem(const QString& item); // 0 = kein Sequenz-Eintrag
 
     enum class ViewMode { Thumbnails, List };
     enum class SortKey { Name, Date, Duration };
 
     MediaPool(Project* project, Engine* engine, QWidget* parent = nullptr);
 
-    // Ausgewählte Medien (ohne den Titel-Eintrag)
+    // Ausgewählte Medien (ohne Titel- und Sequenz-Einträge)
     QStringList selectedMedia() const;
+    QVector<int> selectedSequences() const; // ausgewählte Timelines/Compound Clips
     int currentBin() const { return m_currentBin; }
     void setCurrentBin(int id);
     void setViewMode(ViewMode mode);
@@ -59,9 +63,13 @@ public slots:
     // Unterordner mit Medien als Unter-Bins; ein Undo-Schritt für die Bins
     void importFolder(const QString& dir);
     void newBin();                               // im gewählten Bin, Name gleich bearbeiten (Strg+Shift+N)
+    void newTimeline();                          // neue leere Timeline im gewählten Bin, wird geöffnet
+    void renameSequence(int id);                 // Namen abfragen
 
 signals:
     void sourceRequested(const QString& path);
+    // Doppelklick auf eine Timeline/einen Compound Clip: in der Timeline öffnen
+    void sequenceOpenRequested(int id);
     // Untertiteldateien (.srt) importiert/hineingezogen: werden zu Untertitelspuren, nicht zu Medien
     void subtitleFilesImported(const QStringList& paths);
 
@@ -79,7 +87,8 @@ private:
     void removeBin(int id); // mit Rückfrage, wenn Clips darin liegen
     QStringList addFiles(const QStringList& paths, int bin); // liefert die nicht lesbaren Dateinamen
     bool importFolderInto(const QString& dir, int parentBin, int depth, QStringList* failed);
-    void updateItem(const QString& path); // Vorschaubild mit Clipfarbe, Flags, Proxy-Symbol bzw. Fortschritt
+    void updateItem(const QString& path);
+    void updateSequenceItems(); // Dauer der Timeline-Einträge (nach Änderungen im Schnitt) // Vorschaubild mit Clipfarbe, Flags, Proxy-Symbol bzw. Fortschritt
     void updateProxyStatus();
     void applyViewMode();
     void saveSettings() const;

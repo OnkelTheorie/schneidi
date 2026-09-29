@@ -74,7 +74,10 @@ void RenderQueue::next()
         setStatus(id, RenderStatus::Rendering);
         m_clock.start();
         QString error;
-        if (m_exporter->start(m_project->timeline(), exportSettings(job, m_project->format()), &error)) {
+        if (job.sequence && !m_project->sequence(job.sequence)) {
+            error = T("Die Timeline gibt es nicht mehr.");
+        } else if (m_exporter->start(m_project->renderTimeline(job.sequence), exportSettings(job, m_project->format()),
+                                     &error)) {
             emit progress(id, 0);
             return; // weiter in onExportFinished
         }

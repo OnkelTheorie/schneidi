@@ -74,6 +74,7 @@ struct RenderJob {
     QSize size;          // Ausgabegröße (leer bei nur Audio)
     bool inOut = false;  // In/Out-Bereich statt ganzer Timeline
     int from = 0, to = -1; // Bereich (Frames, inklusive), to < 0 = bis zum Ende
+    int sequence = 0;    // Timeline (Sequenz-id) beim Hinzufügen, 0 = die gerade geöffnete (alte Dateien)
     RenderStatus status = RenderStatus::Queued;
     QString message;     // Fehlertext bzw. Hinweis
     qint64 renderMs = 0; // Dauer des letzten Renderns
