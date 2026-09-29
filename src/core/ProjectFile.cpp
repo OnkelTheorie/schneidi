@@ -310,7 +310,9 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         {"media", media},
         {"timeline", QJsonObject{{"video", video}, {"audio", audio}, {"markers", markers},
                                  {"markIn", data.timeline.markIn}, {"markOut", data.timeline.markOut},
-                                 {"masterVolumeDb", data.timeline.masterVolumeDb}}},
+                                 {"masterVolumeDb", data.timeline.masterVolumeDb},
+                                 {"masterLimiter", data.timeline.masterLimiter},
+                                 {"masterLimiterDb", data.timeline.masterLimiterDb}}},
     };
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
@@ -384,6 +386,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.timeline.audio = tracks(tl.value("audio").toArray(), TrackKind::Audio);
     for (const QJsonValue& v : tl.value("markers").toArray()) d.timeline.markers << v.toInt();
     d.timeline.masterVolumeDb = tl.value("masterVolumeDb").toDouble(0.0);
+    d.timeline.masterLimiter = tl.value("masterLimiter").toBool(false);
+    d.timeline.masterLimiterDb = std::clamp(tl.value("masterLimiterDb").toDouble(kDefaultLimiterDb), -24.0, 0.0);
     std::sort(d.timeline.markers.begin(), d.timeline.markers.end());
     d.timeline.markIn = tl.value("markIn").toInt(-1);
     d.timeline.markOut = tl.value("markOut").toInt(-1);

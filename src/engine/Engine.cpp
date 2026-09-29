@@ -320,7 +320,7 @@ void Engine::onFrameShown(void* mltFrame)
 
 void Engine::emitLevels()
 {
-    // Die audiolevel-Filter merken sich den Pegel des zuletzt verarbeiteten Tons
+    // Die Pegelmesser merken sich den Pegel des zuletzt verarbeiteten Tons
     // (läuft dem Bild wegen des kleinen Puffers minimal voraus – für Meter egal)
     auto read = [](const MixerHooks::Strip& s, QVector<float>& out) {
         float l = -200.f, r = -200.f;
