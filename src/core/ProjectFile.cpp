@@ -1,5 +1,6 @@
 #include "core/ProjectFile.h"
 
+#include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 
 #include <QDir>
@@ -164,8 +165,31 @@ void keysFromJson(Clip& c, const QJsonObject& o)
     }
 }
 
+// Pfad-Parameter eines Effekts (z. B. LUT der Color-Seite) relativ zur Projektdatei
+QJsonObject pathParamsRelative(const EffectInstance& e, const QDir& projectDir)
+{
+    QJsonObject rel;
+    if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))
+        for (const EffectParam& p : d->params) {
+            const QString path = e.params.value(p.key).toString();
+            if (p.type == EffectParam::Path && !path.isEmpty()) rel[p.key] = projectDir.relativeFilePath(path);
+        }
+    return rel;
+}
+
+// Wie bei Medien: absoluter Pfad fehlt -> relativ zur Projektdatei versuchen (Ordner verschoben)
+void resolvePathParams(EffectInstance& e, const QJsonObject& rel, const QDir& projectDir)
+{
+    for (auto it = rel.begin(); it != rel.end(); ++it) {
+        const QString abs = e.params.value(it.key()).toString();
+        if (abs.isEmpty() || QFileInfo::exists(abs)) continue;
+        const QString candidate = QDir::cleanPath(projectDir.absoluteFilePath(it.value().toString()));
+        if (QFileInfo::exists(candidate)) e.params[it.key()] = candidate;
+    }
+}
+
 // Clips verweisen per Index auf die Medienliste -> Pfad steht nur einmal in der Datei
-QJsonObject clipToJson(const Clip& c, int mediaIndex)
+QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
 {
     QJsonObject o{{"id", c.id}, {"start", c.start}, {"in", c.in}, {"out", c.out}};
     if (c.isTitle()) o["title"] = titleToJson(c.title); // Titel haben keinen Medienverweis
@@ -188,15 +212,20 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex)
         o["transform"] = transformToJson(c.transform);
     if (!c.effects.isEmpty()) {
         QJsonArray fx;
-        for (const EffectInstance& e : c.effects)
-            fx << QJsonObject{{"id", e.effectId}, {"enabled", e.enabled}, {"params", QJsonObject::fromVariantMap(e.params)}};
+        for (const EffectInstance& e : c.effects) {
+            QJsonObject eo{{"id", e.effectId}, {"enabled", e.enabled}, {"params", QJsonObject::fromVariantMap(e.params)}};
+            // Dateipfade (LUT) wie Medien zusätzlich relativ zur Projektdatei
+            const QJsonObject rel = pathParamsRelative(e, projectDir);
+            if (!rel.isEmpty()) eo["relPaths"] = rel;
+            fx << eo;
+        }
         o["effects"] = fx;
     }
     if (Keys::hasKeys(c)) o["keys"] = keysToJson(c);
     return o;
 }
 
-Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media)
+Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const QDir& projectDir)
 {
     Clip c;
     c.id = o.value("id").toInt();
@@ -227,8 +256,10 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media)
     if (o.contains("transform")) c.transform = transformFromJson(o.value("transform").toObject());
     for (const QJsonValue& v : o.value("effects").toArray()) {
         const QJsonObject e = v.toObject();
-        c.effects << EffectInstance{e.value("id").toString(), e.value("params").toObject().toVariantMap(),
-                                    e.value("enabled").toBool(true)};
+        EffectInstance inst{e.value("id").toString(), e.value("params").toObject().toVariantMap(),
+                            e.value("enabled").toBool(true)};
+        resolvePathParams(inst, e.value("relPaths").toObject(), projectDir);
+        c.effects << inst;
     }
     keysFromJson(c, o.value("keys").toObject()); // fehlt in älteren Dateien
     return c;
@@ -274,7 +305,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
             QJsonArray clips;
             for (const Clip& c : t.clips) {
                 if (c.isTitle()) {
-                    clips << clipToJson(c, -1);
+                    clips << clipToJson(c, -1, projectDir);
                     continue;
                 }
                 if (!index.contains(c.mediaPath)) { // sollte nicht vorkommen, aber nichts verlieren
@@ -282,7 +313,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                     media << QJsonObject{{"path", c.mediaPath}, {"relPath", projectDir.relativeFilePath(c.mediaPath)},
                                          {"name", QFileInfo(c.mediaPath).fileName()}, {"notInPool", true}};
                 }
-                clips << clipToJson(c, index.value(c.mediaPath));
+                clips << clipToJson(c, index.value(c.mediaPath), projectDir);
             }
             // "name" = Kürzel (ältere Versionen zeigen es an), eigener Name in "label"
             QJsonObject o{{"name", trackShortName({kind, int(arr.size())})}, {"clips", clips}};
@@ -391,7 +422,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.pan = o.value("pan").toDouble(0.0);
             t.solo = o.value("solo").toBool();
             for (const QJsonValue& cv : o.value("clips").toArray()) {
-                Clip c = clipFromJson(cv.toObject(), allMedia);
+                Clip c = clipFromJson(cv.toObject(), allMedia, projectDir);
                 d.lastClipId = std::max(d.lastClipId, c.id);
                 d.lastLinkId = std::max(d.lastLinkId, c.linkId);
                 t.clips << c;

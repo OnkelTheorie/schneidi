@@ -163,6 +163,17 @@ public:
     // Ziel für Doppelklick in der Effects Library: ausgewählte Videoclips, sonst der oberste Videoclip am Playhead
     QVector<int> effectTargets(int frame) const;
 
+    // Color-Seite (Effekt "grade", Ziel wie effectTargets): Werte am Timeline-Frame `frame` setzen; legt die Korrektur
+    // bei Bedarf an, animierte Werte bekommen dort einen Keyframe (wie im Inspector). Gleicher mergeKey = ein Undo-Schritt.
+    void setGradeValues(const QVector<int>& ids, const QVector<QPair<AnimParam, double>>& values, int frame,
+                        const QString& text, const QString& mergeKey = {});
+    // Zurücksetzen: params = diese Werte auf den Standard (am Frame), leer = ganze Korrektur samt LUT/Keyframes weg
+    void resetGrade(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, const QString& text);
+    void setGradeLut(const QVector<int>& ids, const QString& path); // leer = LUT entfernen
+    void setGradeEnabled(const QVector<int>& ids, bool on);
+    // Keyframe für die ganze Korrektur (wie ein DaVinci-Node): alle Werte am Frame setzen bzw. entfernen
+    void setGradeKeyframe(const QVector<int>& ids, int frame, bool on);
+
     // Zwischenablage (Strg+C/X/V): Einfügen am Playhead auf denselben Spuren, überschreibt
     void copySelection();
     void cutSelection();

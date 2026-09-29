@@ -435,6 +435,94 @@ QVector<int> Editor::effectTargets(int frame) const
     return {};
 }
 
+namespace {
+constexpr const char* kGrade = "grade"; // Effekt der Color-Seite (EffectRegistry)
+
+QVector<AnimParam> gradeParams()
+{
+    QVector<AnimParam> list;
+    if (const EffectDescriptor* d = EffectRegistry::find(kGrade))
+        for (const EffectParam& p : d->params)
+            if (p.anim != AnimParam::Count) list << p.anim;
+    return list;
+}
+
+// Standardwert eines Grade-Parameters
+double gradeDefault(AnimParam a)
+{
+    const EffectParam* p = nullptr;
+    return EffectRegistry::paramFor(a, nullptr, &p) ? p->defaultValue.toDouble() : 0.0;
+}
+
+// Nur Videoclips (Color-Seite wirkt aufs Bild)
+QVector<int> videoOnly(const Timeline& tl, const QVector<int>& ids)
+{
+    QVector<int> out;
+    for (int id : ids) {
+        TrackRef ref;
+        if (TimelineOps::findClip(tl, id, &ref) && ref.kind == TrackKind::Video) out << id;
+    }
+    return out;
+}
+
+int localFrame(const Clip& c, int frame) { return std::clamp(frame - c.start, 0, std::max(0, c.length() - 1)); }
+} // namespace
+
+void Editor::setGradeValues(const QVector<int>& ids, const QVector<QPair<AnimParam, double>>& values, int frame,
+                            const QString& text, const QString& mergeKey)
+{
+    modifyClips(videoOnly(m_project->timeline(), ids), text, [&](Clip& c) {
+        EffectRegistry::add(c, kGrade); // schon vorhanden: nichts
+        for (const auto& [p, v] : values) Keys::setValue(c, p, localFrame(c, frame), v);
+    }, mergeKey);
+}
+
+void Editor::resetGrade(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, const QString& text)
+{
+    QVector<int> targets;
+    for (int id : videoOnly(m_project->timeline(), ids))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && EffectRegistry::has(*c, kGrade))
+            targets << id;
+    modifyClips(targets, text, [&](Clip& c) {
+        if (params.isEmpty()) {
+            EffectRegistry::remove(c, kGrade);
+            return;
+        }
+        for (AnimParam p : params) Keys::setValue(c, p, localFrame(c, frame), gradeDefault(p));
+    });
+}
+
+void Editor::setGradeLut(const QVector<int>& ids, const QString& path)
+{
+    modifyClips(videoOnly(m_project->timeline(), ids), path.isEmpty() ? T("LUT entfernen") : T("LUT laden"),
+                [&](Clip& c) {
+                    EffectRegistry::add(c, kGrade);
+                    EffectRegistry::instance(c, kGrade)->params["lut"] = path;
+                });
+}
+
+void Editor::setGradeEnabled(const QVector<int>& ids, bool on)
+{
+    modifyClips(videoOnly(m_project->timeline(), ids), on ? T("Farbkorrektur an") : T("Farbkorrektur aus"),
+                [&](Clip& c) {
+                    if (EffectInstance* e = EffectRegistry::instance(c, kGrade)) e->enabled = on;
+                });
+}
+
+void Editor::setGradeKeyframe(const QVector<int>& ids, int frame, bool on)
+{
+    const QVector<AnimParam> params = gradeParams();
+    modifyClips(videoOnly(m_project->timeline(), ids), on ? T("Keyframe setzen") : T("Keyframe entfernen"),
+                [&](Clip& c) {
+                    EffectRegistry::add(c, kGrade);
+                    const int t = localFrame(c, frame);
+                    for (AnimParam p : params) {
+                        if (on) Keys::setKey(c, p, t, Keys::valueAt(c, p, t));
+                        else Keys::removeKey(c, p, t);
+                    }
+                });
+}
+
 void Editor::rippleDeleteSelection()
 {
     const QVector<int> ids = editable(m_selection->ids().values().toVector());
