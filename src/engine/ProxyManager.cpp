@@ -125,10 +125,10 @@ ProxyManager::~ProxyManager()
 {
     m_queue.clear();
     stopCurrent();
-    if (m_probeThread) {
-        m_probeThread->disconnect(this);
-        m_probeThread->wait();
-        delete m_probeThread;
+    // Auch Untersuchungen abgebrochener Aufträge können noch laufen (nicht nur m_probeThread)
+    for (QThread* t : findChildren<QThread*>(Qt::FindDirectChildrenOnly)) {
+        t->disconnect(this);
+        t->wait();
     }
 }
 
@@ -258,6 +258,7 @@ void ProxyManager::startNext()
     const int job = ++m_job;
     auto result = std::make_shared<ProxyJob>();
     m_probeThread = QThread::create([result, original, part = m_currentPart] { *result = prepareJob(original, part); });
+    m_probeThread->setParent(this); // Destruktor wartet auf alle noch laufenden
     connect(m_probeThread, &QThread::finished, this, [this, result, original, job, thread = m_probeThread] {
         thread->deleteLater();
         if (m_probeThread == thread) m_probeThread = nullptr;
