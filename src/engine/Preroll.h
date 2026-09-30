@@ -20,6 +20,7 @@ public:
     void setPoints(std::vector<PrerollPoint> points, int lookahead, QSize size);
     // Gezeigtes Frame (Consumer-Thread) und Tempo; speed <= 0 = nichts vorbereiten
     void update(int position, double speed);
+    // Alles vergessen und auf eine gerade laufende Dekodierung warten (vor dem Abbau von Profil/Producern)
     void clear();
 
 private:
@@ -27,6 +28,8 @@ private:
 
     std::mutex m_mutex;
     std::condition_variable m_wake;
+    std::condition_variable m_idle;
+    bool m_busy = false; // dekodiert gerade (ohne Sperre)
     std::vector<PrerollPoint> m_points;
     std::vector<bool> m_done;
     int m_lookahead = 0; // Frames

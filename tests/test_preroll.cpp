@@ -102,6 +102,29 @@ void testSameImages()
     }
 }
 
+// clear() wartet auf eine laufende Dekodierung und gibt alle Producer ab (Engine::setFormat baut danach das Profil ab)
+void testClearWaits()
+{
+    auto prof = makeProfile(kFmt);
+    auto builder = std::make_unique<TimelineBuilder>(*prof);
+    auto tractor = builder->build(scene());
+    const std::vector<PrerollPoint> pts = builder->prerollPoints();
+    if (!CHECK_EQ(int(pts.size()), 3)) return;
+    Preroll preroll;
+    for (int i = 0; i < 5; ++i) {
+        preroll.setPoints(builder->prerollPoints(), 50, QSize(kFmt.width, kFmt.height));
+        preroll.update(40, 1.0);
+        QThread::msleep(5 + 10 * i); // mitten in die Dekodierung
+        preroll.clear();
+        for (const auto& p : pts) CHECK_EQ(long(p.producer.use_count()), 2L); // pts und Builder, sonst niemand
+    }
+    tractor.reset();
+    builder.reset();
+    prof.reset();
+    preroll.update(60, 1.0); // nichts mehr zu tun, darf nichts Freigegebenes anfassen
+    QThread::msleep(50);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -126,5 +149,6 @@ int main(int argc, char** argv)
     }
     testPoints();
     testSameImages();
+    testClearWaits();
     return Check::result();
 }

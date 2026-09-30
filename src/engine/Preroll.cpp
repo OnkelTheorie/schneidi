@@ -36,7 +36,12 @@ void Preroll::setPoints(std::vector<PrerollPoint> points, int lookahead, QSize s
     m_wake.notify_all();
 }
 
-void Preroll::clear() { setPoints({}, 0, {}); }
+void Preroll::clear()
+{
+    setPoints({}, 0, {});
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_idle.wait(lock, [this] { return !m_busy; });
+}
 
 void Preroll::update(int position, double speed)
 {
@@ -71,7 +76,8 @@ void Preroll::run()
             continue;
         }
         m_done[next] = true;
-        const std::shared_ptr<Mlt::Producer> producer = m_points[next].producer;
+        m_busy = true;
+        std::shared_ptr<Mlt::Producer> producer = m_points[next].producer;
         const int source = m_points[next].source;
         const bool audio = m_points[next].audio;
         const QSize size = m_size;
@@ -90,6 +96,10 @@ void Preroll::run()
             int w = size.width(), h = size.height();
             frame->get_image(fmt, w, h);
         }
+        frame.reset(); // Referenzen vor dem Melden abgeben: danach darf die Engine Producer und Profil abbauen
+        producer.reset();
         lock.lock();
+        m_busy = false;
+        m_idle.notify_all();
     }
 }
