@@ -489,7 +489,7 @@ Mlt::Producer* titleCut(Mlt::Profile& profile, const Clip& c, int a, int len)
         for (const Keyframe& k : c.keys.value(AnimParam::TitleSize)) size = std::max(size, k.value);
     size = std::max(1.0, size);
 
-    QFont font(t.font);
+    QFont font(t.fontFamily());
     font.setPixelSize(std::max(1, int(std::lround(size))));
     font.setBold(t.bold);
     font.setItalic(t.italic);
@@ -508,7 +508,7 @@ Mlt::Producer* titleCut(Mlt::Profile& profile, const Clip& c, int a, int len)
     if (!animate(c, {AnimParam::TitlePosX, AnimParam::TitlePosY}, a, len,
                  [&](int pos, double tt) { f.anim_set("geometry", geometry(tt), pos, len); }))
         f.set("geometry", geometry(a));
-    f.set("family", t.font.toUtf8().constData());
+    f.set("family", t.fontFamily().toUtf8().constData());
     f.set("size", size);
     f.set("weight", t.bold ? 700 : 400);
     f.set("style", t.italic ? "italic" : "normal");
@@ -790,7 +790,7 @@ Mlt::Producer* subtitleCut(Mlt::Profile& profile, const TitleStyle& t, const QSt
     src.set("out", len - 1);
     Mlt::Producer* cut = src.cut(0, len - 1);
     const double W = profile.width(), H = profile.height();
-    QFont font(t.font);
+    QFont font(t.fontFamily());
     font.setPixelSize(std::max(1, int(std::lround(t.size))));
     font.setBold(t.bold);
     font.setItalic(t.italic);
@@ -803,7 +803,7 @@ Mlt::Producer* subtitleCut(Mlt::Profile& profile, const TitleStyle& t, const QSt
     f.set("argument", lines.join('\n').toUtf8().constData());
     const double bottom = std::clamp(H - t.posY, 1.0, H);
     f.set("geometry", mlt_rect{(W - w) / 2 + t.posX, 0, w, bottom, 1.0});
-    f.set("family", t.font.toUtf8().constData());
+    f.set("family", t.fontFamily().toUtf8().constData());
     f.set("size", std::max(1.0, t.size));
     f.set("weight", t.bold ? 700 : 400);
     f.set("style", t.italic ? "italic" : "normal");

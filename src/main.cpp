@@ -1,4 +1,5 @@
 #include "app/InputBindings.h"
+#include "app/Log.h"
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
 #include "ui/MediaStorage.h"
@@ -40,6 +41,7 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     QApplication::setApplicationName("schneidi");
     QApplication::setApplicationVersion("0.1.0");
+    Log::install();
     // Testhilfe: --lang en|de gilt nur für diesen Lauf (Einstellung bleibt unverändert)
     I18n::install(langOverride);
 
@@ -54,6 +56,7 @@ int main(int argc, char* argv[])
     Theme::apply(app);
     InputBindings::instance().load();
 
+    Log::installMlt(); // vor der MLT-Initialisierung: fehlende Module landen auch im Log
     Engine engine;
     QString error;
     if (!engine.init(&error)) {

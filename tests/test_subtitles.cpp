@@ -288,7 +288,7 @@ int testRender(const QString& dir)
     const QString black = Check::makeMedia(dir + "/black.mp4", {"-f", "lavfi", "-i", "color=black:size=640x360:rate=25:duration=4",
                                                                  "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (!CHECK(!black.isEmpty())) return 1;
-    Mlt::Factory::init();
+    Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt{640, 360, {25, 1}};
     {

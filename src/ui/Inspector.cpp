@@ -460,9 +460,9 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
         apply(V, {}, T("Schriftart"), [family](Clip& c) { c.title.font = family; }, true);
     });
     m_refreshers << [fontBox, current] {
-        if (const Clip* c = current(); c && fontBox->currentFont().family() != c->title.font) {
+        if (const Clip* c = current(); c && fontBox->currentFont().family() != c->title.fontFamily()) {
             const QSignalBlocker b(fontBox);
-            fontBox->setCurrentFont(QFont(c->title.font));
+            fontBox->setCurrentFont(QFont(c->title.fontFamily()));
         }
     };
     txt.grid->addWidget(rowLabel(T("Schriftart")), txt.rows, 0);
@@ -1363,9 +1363,9 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
         changeSubtitleStyle(T("Schriftart"), [family](TitleStyle& t) { t.font = family; });
     });
     m_subRefreshers << [fontBox, current] {
-        if (const auto t = current(); t && fontBox->currentFont().family() != t->font) {
+        if (const auto t = current(); t && fontBox->currentFont().family() != t->fontFamily()) {
             const QSignalBlocker b(fontBox);
-            fontBox->setCurrentFont(QFont(t->font));
+            fontBox->setCurrentFont(QFont(t->fontFamily()));
         }
     };
     st.grid->addWidget(rowLabel(T("Schriftart")), st.rows, 0);

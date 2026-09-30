@@ -117,7 +117,7 @@ int main(int argc, char** argv)
     // Größenvergleiche der Unschärfe verfälschen
     if (!CHECK(!g_media.isEmpty())) return Check::result();
 
-    Mlt::Factory::init();
+    Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt; // 1920 × 1080 @ 25
     {

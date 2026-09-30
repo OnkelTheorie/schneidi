@@ -457,7 +457,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         const QJsonObject o = v.toObject();
         MediaInfo m;
         m.path = resolvePath(o, projectDir);
-        m.name = o.value("name").toString(QFileInfo(m.path).fileName());
+        m.name = o.value("name").toString(fileNameAnyOs(m.path));
         m.length = o.value("length").toInt();
         m.hasVideo = o.value("hasVideo").toBool();
         m.hasAudio = o.value("hasAudio").toBool();
@@ -611,7 +611,7 @@ QStringList missingMedia(const ProjectData& data)
 int relink(ProjectData* data, const QString& searchDir)
 {
     QHash<QString, QString> wanted; // Dateiname -> alter Pfad
-    for (const QString& p : missingMedia(*data)) wanted.insert(QFileInfo(p).fileName(), p);
+    for (const QString& p : missingMedia(*data)) wanted.insert(fileNameAnyOs(p), p);
     if (wanted.isEmpty()) return 0;
 
     QHash<QString, QString> moved; // alter Pfad -> neuer Pfad
@@ -633,6 +633,12 @@ int relink(ProjectData* data, const QString& searchDir)
     relinkTimeline(data->timeline);
     for (Sequence& s : data->sequences) relinkTimeline(s.timeline);
     return moved.size();
+}
+
+QString fileNameAnyOs(const QString& path)
+{
+    const qsizetype sep = std::max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+    return path.mid(sep + 1);
 }
 
 } // namespace ProjectFile

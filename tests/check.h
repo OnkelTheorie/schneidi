@@ -3,9 +3,13 @@
 // Rückgabecode (0 = ok, 1 = Fehler, 77 = übersprungen). Ausgegeben werden nur Fehler und die Zusammenfassung.
 
 #include "core/Types.h"
+#include "engine/Bundle.h"
+
+#include <Mlt.h>
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDir>
 #include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
@@ -52,6 +56,15 @@ inline void initApp(const char* name)
     QCoreApplication::setOrganizationName("schneidi-tests");
     QCoreApplication::setApplicationName(QString("schneidi-test-%1").arg(name));
     QStandardPaths::setTestModeEnabled(true);
+}
+
+// MLT wie das Programm starten (mitgelieferte bzw. unter Windows die MSYS2-Module)
+inline void initMlt()
+{
+    Bundle::prepareMltEnvironment();
+    const QString modules = Bundle::mltModuleDir();
+    if (modules.isEmpty()) Mlt::Factory::init();
+    else Mlt::Factory::init(Bundle::pathForMlt(modules).constData());
 }
 
 inline bool haveFfmpeg() { return !QStandardPaths::findExecutable("ffmpeg").isEmpty(); }

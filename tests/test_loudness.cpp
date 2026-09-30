@@ -210,7 +210,7 @@ int main(int argc, char** argv)
     const double ref = ffmpegIntegrated(mix);
     CHECK(!std::isnan(ref));
 
-    Mlt::Factory::init();
+    Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt; // 25 fps
     const auto l = AudioAnalysis::clipLoudness(fmt, mk(1, mix, 0, 0, 199));

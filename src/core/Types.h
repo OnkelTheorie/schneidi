@@ -88,6 +88,15 @@ struct TitleStyle {
     }
     bool operator!=(const TitleStyle& o) const { return !(*this == o); }
 
+    // Schrift zum Zeichnen: "Sans" (Standard, so auch in Projekten gespeichert) gibt es unter Windows nicht
+    QString fontFamily() const
+    {
+#ifdef Q_OS_WIN
+        if (font.isEmpty() || font == QLatin1String("Sans")) return QStringLiteral("Segoe UI");
+#endif
+        return font;
+    }
+
     QString firstLine() const
     {
         const QString line = text.section('\n', 0, 0).trimmed();

@@ -1,0 +1,2 @@
+# Shell-Skripte immer mit LF (sonst bricht bash in MSYS2 bei core.autocrlf=true)
+*.sh text eol=lf

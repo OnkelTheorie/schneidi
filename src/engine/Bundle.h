@@ -4,6 +4,7 @@
 //   <prefix>/lib/mlt-7, <prefix>/share/mlt-7, <prefix>/lib/frei0r-1, Programme im Programmordner
 // mit <prefix> = Programmordner (Windows) bzw. dessen Elternordner (…/usr/bin -> …/usr, AppImage).
 
+#include <QByteArray>
 #include <QString>
 
 namespace Bundle {
@@ -12,6 +13,8 @@ namespace Bundle {
 QString mltModuleDir();
 // Setzt MLT_DATA, MLT_PROFILES_PATH und FREI0R_PATH auf die mitgelieferten Ordner (vor Mlt::Factory::init)
 void prepareMltEnvironment();
+// Pfad so, wie MLT ihn für den Modulordner/Umgebungsvariablen erwartet (Windows: ANSI-Codepage bzw. 8.3-Pfad)
+QByteArray pathForMlt(const QString& path);
 // Pfad eines externen Programms (z. B. "ffmpeg"): erst neben dem Programm, dann im PATH; sonst der bloße Name
 QString tool(const QString& name);
 

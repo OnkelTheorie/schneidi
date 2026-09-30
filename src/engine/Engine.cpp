@@ -52,7 +52,7 @@ bool Engine::init(QString* error)
     // Mitgelieferte MLT-Module (AppImage/Windows-Programmordner), sonst die des Systems
     Bundle::prepareMltEnvironment();
     const QString modules = Bundle::mltModuleDir();
-    if (!(modules.isEmpty() ? Mlt::Factory::init() : Mlt::Factory::init(QDir::toNativeSeparators(modules).toUtf8().constData()))) {
+    if (!(modules.isEmpty() ? Mlt::Factory::init() : Mlt::Factory::init(Bundle::pathForMlt(modules).constData()))) {
         if (error) *error = T("MLT konnte nicht initialisiert werden.");
         return false;
     }

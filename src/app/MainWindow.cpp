@@ -5,6 +5,7 @@
 #include "app/KeyBindingsDialog.h"
 #include "app/ClipSpeedDialog.h"
 #include "app/DesignDialog.h"
+#include "app/Log.h"
 #include "app/NormalizeDialog.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
@@ -1121,6 +1122,11 @@ void MainWindow::buildActions()
         if (DesignDialog(this).exec() == QDialog::Accepted && Theme::restartNeeded())
             offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
     });
+
+    // Hilfe: Log-Datei für Fehlermeldungen (unter Windows gibt es kein Terminal)
+    QMenu* help = menuBar()->addMenu(T("&Hilfe"));
+    makeAction(help, "open_log_folder", T("Log-Ordner öffnen"), QKeySequence(),
+               [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
 
     InputBindings::instance().saveIfIncomplete();
 }
