@@ -20,7 +20,7 @@ QString diffClip(const Clip& a, const Clip& b)
 {
 #define D(f) if (!(a.f == b.f)) return QString("Clip %1: " #f).arg(a.id)
     D(id); D(kind); D(mediaPath); D(start); D(in); D(out); D(linkId); D(volumeDb); D(pan); D(enabled);
-    D(transIn); D(transOut); D(fadeIn); D(fadeOut); D(effects); D(keys); D(speed); D(reverse); D(freeze); D(keepPitch);
+    D(transIn); D(transOut); D(fadeIn); D(fadeOut); D(effects); D(keys); D(speed); D(reverse); D(freeze); D(freezeFrame); D(keepPitch);
     if (a.transIn > 0) D(transInStyle);
     if (a.transOut > 0) D(transOutStyle);
     D(transform.zoomX); D(transform.zoomY); D(transform.posX); D(transform.posY); D(transform.rotation);
@@ -143,6 +143,7 @@ ProjectData fullProject(const QString& dir)
     v2.keepPitch = false;
     Clip frozen = mk(3, b, 400, 20, 79);
     frozen.freeze = true;
+    frozen.freezeFrame = 30;
     frozen.enabled = false;
     Clip rev = mk(4, a, 500, 0, 99);
     rev.reverse = true;
@@ -351,6 +352,36 @@ int main(int argc, char** argv)
         CHECK(ProjectFile::missingMedia(d).isEmpty());
         const Clip* c = TimelineOps::findClip(d.timeline, 1);
         CHECK(c && QFileInfo(c->mediaPath).fileName() == "b.mov");
+    }
+
+    // --- Gleichnamige Kameradateien (camA/C0001.MP4, camB/C0001.MP4): jede findet ihre eigene, nichts doppelt
+    {
+        const QString root = tmp.filePath("karte");
+        for (const char* cam : {"camA", "camB"}) {
+            QDir().mkpath(root + "/neu/" + cam);
+            QFile f(root + "/neu/" + cam + "/C0001.MP4");
+            CHECK(f.open(QIODevice::WriteOnly));
+        }
+        auto project = [&](const QString& a, const QString& b) {
+            ProjectData d;
+            QString e;
+            CHECK(ProjectFile::fromJson(QString(R"({"app":"schneidi","version":2,"media":[
+                {"path":"%1","length":10,"hasVideo":true},{"path":"%2","length":10,"hasVideo":true}],
+                "timeline":{"video":[],"audio":[]}})").arg(a, b).toUtf8(), tmp.filePath("k.schneidi"), &d, &e));
+            return d;
+        };
+        ProjectData d = project("/alt/camA/C0001.MP4", "/alt/camB/C0001.MP4");
+        CHECK_EQ(ProjectFile::relink(&d, root), 2);
+        CHECK_EQ(d.media.value(0).path, root + "/neu/camA/C0001.MP4");
+        CHECK_EQ(d.media.value(1).path, root + "/neu/camB/C0001.MP4");
+        // Ordnernamen passen nicht mehr: nicht raten, beide bleiben offline
+        d = project("/alt/x/C0001.MP4", "/alt/y/C0001.MP4");
+        CHECK_EQ(ProjectFile::relink(&d, root), 0);
+        CHECK_EQ(ProjectFile::missingMedia(d).size(), 2);
+        // nur eine Datei dieses Namens gesucht: beste Übereinstimmung, sonst die erste gefundene
+        d = project("/alt/camB/C0001.MP4", "/alt/andere.mp4");
+        CHECK_EQ(ProjectFile::relink(&d, root), 1);
+        CHECK_EQ(d.media.value(0).path, root + "/neu/camB/C0001.MP4");
     }
 
     // --- Ungültige Dateien

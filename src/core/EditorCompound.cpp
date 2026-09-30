@@ -177,7 +177,23 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                 for (TrackKind kind : kinds) {
                     const QVector<Track>& src = inner->tracks(kind);
                     const int base = kind == part.second.kind ? part.second.index : 0;
+                    int nextTrack = base; // innere Spuren behalten ihre Reihenfolge
                     for (int j = 0; j < src.size(); ++j) {
+                        if (std::none_of(src[j].clips.begin(), src[j].clips.end(),
+                                         [&](const Clip& n) { return n.end() > cc.in && n.start <= cc.out; }))
+                            continue;
+                        // Wie beim Erstellen: unterste Spur ab nextTrack, die im Bereich frei und nicht gesperrt ist
+                        // (Clips auf den Spuren darüber, z. B. Titel, nie überschreiben); sonst neue Spur
+                        int target = nextTrack;
+                        for (;; ++target) {
+                            if (target >= tl.tracks(kind).size()) break;
+                            const Track& t = tl.tracks(kind)[target];
+                            if (!t.locked && std::none_of(t.clips.begin(), t.clips.end(), [&](const Clip& x) {
+                                    return x.start < cc.end() && x.end() > cc.start;
+                                }))
+                                break;
+                        }
+                        nextTrack = target + 1;
                         for (const Clip& n : src[j].clips) {
                             if (n.end() <= cc.in || n.start > cc.out) continue;
                             Clip x = n;
@@ -201,8 +217,8 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                                 x.linkId = links.value(key);
                             }
                             if (!cc.enabled) x.enabled = false;
-                            TimelineOps::ensureTracks(tl, kind, base + j + 1);
-                            TimelineOps::placeClip(tl.tracks(kind)[base + j], x, newId);
+                            TimelineOps::ensureTracks(tl, kind, target + 1);
+                            TimelineOps::placeClip(tl.tracks(kind)[target], x, newId);
                             selectIds.insert(x.id);
                         }
                     }

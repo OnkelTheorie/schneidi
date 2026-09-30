@@ -16,6 +16,7 @@
 #include <QStandardPaths>
 #include <QDateTime>
 #include <QCryptographicHash>
+#include <QRegularExpression>
 #include <QSet>
 #include <algorithm>
 
@@ -224,6 +225,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (c.speed != 1.0) o["speed"] = c.speed;
     if (c.reverse) o["reverse"] = true;
     if (c.freeze) o["freeze"] = true;
+    if (c.freeze && c.freezeFrame >= 0) o["freezeFrame"] = c.freezeFrame;
     if (!c.keepPitch) o["keepPitch"] = false;
     if (!c.ramp.isEmpty()) { // Speed Ramp: [{source, speed, smooth}]
         QJsonArray ramp;
@@ -283,6 +285,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     if (c.speed <= 0) c.speed = 1.0;
     c.reverse = o.value("reverse").toBool();
     c.freeze = o.value("freeze").toBool();
+    c.freezeFrame = c.freeze ? o.value("freezeFrame").toInt(-1) : -1;
     c.keepPitch = o.value("keepPitch").toBool(true);
     for (const QJsonValue& v : o.value("ramp").toArray()) {
         const QJsonObject j = v.toObject();
@@ -665,16 +668,47 @@ QStringList missingMedia(const ProjectData& data)
 
 int relink(ProjectData* data, const QString& searchDir)
 {
-    QHash<QString, QString> wanted; // Dateiname -> alter Pfad
-    for (const QString& p : missingMedia(*data)) wanted.insert(fileNameAnyOs(p), p);
+    QHash<QString, QStringList> wanted; // Dateiname -> alte Pfade (Kamera-Namen wie C0001.MP4 wiederholen sich)
+    for (const QString& p : missingMedia(*data)) wanted[fileNameAnyOs(p)] << p;
     if (wanted.isEmpty()) return 0;
 
-    QHash<QString, QString> moved; // alter Pfad -> neuer Pfad
+    QHash<QString, QStringList> found; // Dateiname -> gefundene Dateien
     QDirIterator it(searchDir, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext() && moved.size() < wanted.size()) {
+    while (it.hasNext()) {
         const QString path = it.next();
-        const QString old = wanted.value(it.fileName());
-        if (!old.isEmpty() && !moved.contains(old)) moved.insert(old, path);
+        if (wanted.contains(it.fileName())) found[it.fileName()] << path;
+    }
+
+    // Wie viele Ordner am Ende beider Pfade übereinstimmen (camA/C0001.MP4 gehört zu …/camA/C0001.MP4)
+    auto score = [](const QString& a, const QString& b) {
+        static const QRegularExpression sep("[/\\\\]");
+        const QStringList x = a.split(sep, Qt::SkipEmptyParts), y = b.split(sep, Qt::SkipEmptyParts);
+        int n = 0;
+        while (n < x.size() && n < y.size() && x[x.size() - 1 - n] == y[y.size() - 1 - n]) ++n;
+        return n;
+    };
+    QHash<QString, QString> moved; // alter Pfad -> neuer Pfad
+    for (auto w = wanted.cbegin(); w != wanted.cend(); ++w) {
+        QStringList candidates = found.value(w.key());
+        // Paare mit der besten Übereinstimmung zuerst vergeben, jede Datei nur einmal
+        struct Pair { int score; QString old, now; };
+        QVector<Pair> pairs;
+        for (const QString& old : w.value())
+            for (const QString& now : candidates) pairs << Pair{score(old, now), old, now};
+        std::stable_sort(pairs.begin(), pairs.end(), [](const Pair& a, const Pair& b) { return a.score > b.score; });
+        QSet<QString> used;
+        for (const Pair& pr : pairs) {
+            if (moved.contains(pr.old) || used.contains(pr.now)) continue;
+            // Mehrdeutig (mehrere gleichnamige alte Dateien, andere Datei passt genauso gut): lieber offline lassen
+            // als falsches Material zu zeigen
+            const bool ambiguous = w.value().size() > 1 && std::any_of(pairs.begin(), pairs.end(), [&](const Pair& o) {
+                return o.score == pr.score && !moved.contains(o.old) && !used.contains(o.now)
+                       && ((o.old == pr.old) != (o.now == pr.now));
+            });
+            if (ambiguous) continue;
+            moved.insert(pr.old, pr.now);
+            used.insert(pr.now);
+        }
     }
 
     for (MediaInfo& m : data->media)

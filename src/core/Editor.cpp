@@ -1347,6 +1347,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                     c.speed = r.speed;
                     c.reverse = r.reverse;
                     c.freeze = r.freeze;
+                    c.freezeFrame = r.freeze ? newIn : -1; // Bild am Clipanfang (bleibt beim Teilen/Trimmen)
                     c.keepPitch = r.keepPitch;
                     c.ramp.clear();
                     c.fadeIn = std::min(c.fadeIn, newLen);

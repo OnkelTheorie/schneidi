@@ -856,7 +856,7 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
         resource = QString("timewarp:%1:%2").arg(QString::fromLatin1(num), file);
         tag = QString("|w%1%2").arg(warp).arg(pitch ? "p" : "");
     }
-    if (freeze) tag = QString("|f%1|%2%3").arg(retime->in).arg(retime->speed).arg(retime->reverse ? "r" : "");
+    if (freeze) tag = QString("|f%1|%2%3").arg(retime->stillFrame()).arg(retime->speed).arg(retime->reverse ? "r" : "");
     // Ton-Stream (OBS: mehrere pro Datei) gehört zum Schlüssel: jeder Stream braucht seinen eigenen Producer
     const int stream = kind == TrackKind::Audio && retime ? retime->audioStream : 0;
     if (stream != 0) tag += QString("|s%1").arg(stream);
@@ -903,7 +903,7 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
         // Standbild: Frame `in` (in Datei-Frames umgerechnet) als 1-Frame-Ausschnitt, in einer Playlist
         // beliebig oft wiederholt. (MLT hold skaliert im Tractor falsch, der kdenlive-Filter freeze stürzte ab.)
         const int fileLen = p->get_length();
-        const double at = retime->in * retime->speed;
+        const double at = retime->stillFrame() * retime->speed;
         const int frame = std::clamp(int(retime->reverse ? fileLen - 1 - at : at), 0, std::max(0, fileLen - 1));
         auto hold = std::make_unique<Mlt::Playlist>(m_profile);
         std::unique_ptr<Mlt::Producer> one(p->cut(frame, frame)); // Cut hält eine Referenz auf p

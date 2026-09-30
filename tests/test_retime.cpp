@@ -293,6 +293,38 @@ int testRender(const QString& dir)
     CHECK_EQ(frameAt(tl, fmt, 0), 99);
     CHECK_EQ(frameAt(tl, fmt, 30), 99 - 40);
 
+    // Standbild teilen/am Anfang trimmen: beide Teile zeigen weiter dasselbe Bild
+    {
+        Project q;
+        q.load([&] {
+            ProjectData d;
+            d.format = fmt;
+            d.timeline = emptyTimeline();
+            return d;
+        }());
+        Selection qs;
+        Editor qe(&q, &qs);
+        q.addMedia(media(file, 100));
+        qe.addMediaAt({file}, 0);
+        const int still = clipOn(q.timeline(), TrackKind::Video, 0, 0)->id;
+        qe.trimClip(still, TimelineOps::Edge::Start, 20); // Clip beginnt bei Quelle 20
+        qe.setClipSpeed({still}, Editor::Retime{1.0, false, true, true}, false);
+        const Clip* s0 = clipOn(q.timeline(), TrackKind::Video, 0, 0);
+        if (CHECK(s0 && s0->freeze)) {
+            const int start = s0->start;
+            CHECK_EQ(frameAt(q.renderTimeline(), fmt, start + 5), 20);
+            qs.set({s0->id});
+            qe.splitAtPlayhead(start + 30);
+            CHECK_EQ(frameAt(q.renderTimeline(), fmt, start + 10), 20);
+            CHECK_EQ(frameAt(q.renderTimeline(), fmt, start + 40), 20);
+            const Clip* right = clipOn(q.timeline(), TrackKind::Video, 0, 1);
+            if (CHECK(right)) {
+                qe.trimClip(right->id, TimelineOps::Edge::Start, 10);
+                CHECK_EQ(frameAt(q.renderTimeline(), fmt, clipOn(q.timeline(), TrackKind::Video, 0, 1)->start + 2), 20);
+            }
+        }
+    }
+
     // Ton: Playlist so lang wie das Material
     Clip a = *clipOn(p.timeline(), TrackKind::Audio, 0, 0);
     auto prof = makeProfile(fmt);

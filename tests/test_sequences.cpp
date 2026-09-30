@@ -213,6 +213,27 @@ void testCompound()
     CHECK(clipOn(p.timeline(), TrackKind::Video, 1, 0)->isCompound());
 }
 
+// Auflösen mit belegten Spuren darüber: Inhalt weicht auf freie Spuren aus, der Titel darüber bleibt
+void testDecomposeKeepsClipsAbove()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia(media("/x/a.mp4", 100, true, false));
+    p.addMedia(media("/x/b.mp4", 100, true, false));
+    ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+    ed.addMediaAt({"/x/b.mp4"}, 0, 1);
+    ed.selectAll();
+    const int seq = ed.createCompoundClip(); // zwei Videospuren innen, Compound Clip auf V1
+    CHECK(seq > 0);
+    ed.addTitle(10, 1); // Titel auf V2 über dem Compound Clip
+    CHECK_EQ(Check::dump(p.timeline()).count("T["), 1);
+    const Clip* cc = clipOn(p.timeline(), TrackKind::Video, 0, 0);
+    if (!CHECK(cc && cc->isCompound())) return;
+    CHECK(ed.decomposeCompoundClips({cc->id}));
+    CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99]  V2: T[10-135|0-124]  V3: b[0-100|0-99]  A1:  A2:"));
+}
+
 void testProjectFile()
 {
     Project p;
@@ -392,6 +413,7 @@ int main(int argc, char** argv)
     Check::initApp("sequences");
     testSequences();
     testCompound();
+    testDecomposeKeepsClipsAbove();
     testProjectFile();
     if (!Check::haveFfmpeg()) {
         Check::result();

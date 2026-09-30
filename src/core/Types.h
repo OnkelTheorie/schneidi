@@ -239,7 +239,11 @@ struct Clip {
     // Materials (MLT timewarp): bei 50 % ist die Quelle doppelt so lang, rückwärts beginnt Frame 0 am Dateiende.
     double speed = 1.0;     // 1.0 = 100 %, immer > 0
     bool reverse = false;   // rückwärts abspielen
-    bool freeze = false;    // Standbild: jedes Frame zeigt Frame `in` (Ton stumm), beliebig lang ziehbar
+    bool freeze = false;    // Standbild: jedes Frame zeigt stillFrame() (Ton stumm), beliebig lang ziehbar
+    // Standbild: gezeigtes Frame (umgerechnetes Material wie `in`), beim Einschalten festgelegt, damit Teilen/Trimmen
+    // (verschiebt `in`) das Bild nicht ändert. -1 = `in` (ältere Projektdateien)
+    int freezeFrame = -1;
+    int stillFrame() const { return freezeFrame >= 0 ? freezeFrame : in; }
     bool keepPitch = true;  // Tonhöhe halten (Pitch Correction)
     // Speed Ramp: weitere Abschnitte (nach source sortiert); `speed` gilt bis zum ersten Punkt. Leer = konstant.
     QVector<SpeedPoint> ramp;
