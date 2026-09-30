@@ -208,6 +208,12 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
     Timeline after = timeline();
     fn(after);
     TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // Reststücke aus clearRange
+    if (after == timeline()) {
+        // Nichts geändert (z. B. Strg+B neben der Auswahl): kein Undo-Schritt. Signal trotzdem, damit ein
+        // vorgemerktes Engine::mixerOnlyNext verbraucht wird und nicht an der nächsten echten Änderung hängt.
+        emit timelineChanged();
+        return;
+    }
     const QString key = mergeKey.isEmpty() ? QString() : QString("%1#%2").arg(mergeKey).arg(m_mergeSession);
     m_undo.push(new SnapshotCommand(this, text, m_current, timeline(), after, key)); // push ruft redo()
 }

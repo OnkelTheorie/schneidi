@@ -195,7 +195,16 @@ const SubtitleCue* find(const Timeline& tl, int id, int* trackIndex)
 
 SubtitleCue* find(Timeline& tl, int id, int* trackIndex)
 {
-    return const_cast<SubtitleCue*>(find(std::as_const(tl), id, trackIndex));
+    // Nicht über die const-Fassung + const_cast: die QVectors teilen sich die Daten mit anderen Kopien (Undo-Stände),
+    // erst der nicht-konstante Zugriff löst sie ab
+    int track = -1;
+    const SubtitleCue* c = find(std::as_const(tl), id, &track);
+    if (!c) return nullptr;
+    if (trackIndex) *trackIndex = track;
+    QVector<SubtitleCue>& cues = tl.subtitles[track].cues;
+    for (SubtitleCue& x : cues)
+        if (x.id == id) return &x;
+    return nullptr;
 }
 
 int cueAt(const SubtitleTrack& track, int frame)

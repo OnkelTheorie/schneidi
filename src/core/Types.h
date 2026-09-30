@@ -61,6 +61,13 @@ struct ClipTransform {
     }
     bool hasOpacity() const { return compositeOn && opacity != 100; }
     bool isIdentity() const { return !hasTransform() && !hasCrop() && !hasOpacity(); }
+    bool operator==(const ClipTransform& o) const
+    {
+        return zoomX == o.zoomX && zoomY == o.zoomY && posX == o.posX && posY == o.posY && rotation == o.rotation
+               && cropLeft == o.cropLeft && cropRight == o.cropRight && cropTop == o.cropTop
+               && cropBottom == o.cropBottom && opacity == o.opacity && transformOn == o.transformOn
+               && cropOn == o.cropOn && compositeOn == o.compositeOn;
+    }
 };
 
 // Titel (Text-Generator wie in DaVinci): Werte in Pixeln des Projektformats
@@ -208,6 +215,8 @@ struct SpeedPoint {
     bool operator==(const SpeedPoint& o) const { return source == o.source && speed == o.speed && smooth == o.smooth; }
 };
 
+// Neue Felder in Clip, Track, SubtitleTrack, Timeline auch in deren operator== eintragen (Project::edit erkennt
+// damit Bearbeitungen ohne Änderung – ein vergessenes Feld hieße: Änderung daran landet nicht im Undo)
 struct Clip {
     int id = 0;
     ClipKind kind = ClipKind::Media;
@@ -258,6 +267,17 @@ struct Clip {
 
     int length() const { return out - in + 1; }
     int end() const { return start + length(); } // exklusiv
+    bool operator==(const Clip& o) const
+    {
+        return id == o.id && kind == o.kind && mediaPath == o.mediaPath && title == o.title
+               && sequenceId == o.sequenceId && start == o.start && in == o.in && out == o.out && linkId == o.linkId
+               && volumeDb == o.volumeDb && pan == o.pan && audioStream == o.audioStream && enabled == o.enabled
+               && transform == o.transform && effects == o.effects && transIn == o.transIn
+               && transOut == o.transOut && transInStyle == o.transInStyle && transOutStyle == o.transOutStyle
+               && fadeIn == o.fadeIn && fadeOut == o.fadeOut && keys == o.keys && speed == o.speed
+               && reverse == o.reverse && freeze == o.freeze && freezeFrame == o.freezeFrame
+               && keepPitch == o.keepPitch && ramp == o.ramp && renderCache == o.renderCache;
+    }
     // Titel: jedes Frame gleich, beliebig lang trimmbar (in darf auch negativ werden)
     bool isTitle() const { return kind == ClipKind::Title; }
     bool isCompound() const { return kind == ClipKind::Compound; }
@@ -301,6 +321,11 @@ struct Track {
     double volumeDb = 0.0;
     double pan = 0.0;
     bool solo = false;
+    bool operator==(const Track& o) const
+    {
+        return kind == o.kind && name == o.name && color == o.color && locked == o.locked && clips == o.clips
+               && muted == o.muted && hidden == o.hidden && volumeDb == o.volumeDb && pan == o.pan && solo == o.solo;
+    }
 };
 
 // Untertitel wie DaVinci: eigene Untertitelspuren (ST1, ST2 …) über den Videospuren. Ein Eintrag = Text von
@@ -339,6 +364,10 @@ struct SubtitleTrack {
     bool locked = false;
     TitleStyle style = subtitleBaseStyle();
     QVector<SubtitleCue> cues; // nach start sortiert, ohne Überlappung
+    bool operator==(const SubtitleTrack& o) const
+    {
+        return name == o.name && enabled == o.enabled && locked == o.locked && style == o.style && cues == o.cues;
+    }
 };
 
 struct TrackRef {
@@ -386,6 +415,13 @@ struct Timeline {
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }
     Track& track(TrackRef r) { return tracks(r.kind)[r.index]; }
     const Track& track(TrackRef r) const { return tracks(r.kind)[r.index]; }
+    // Gleicher Schnitt (ohne `nested`, das nur zum Rendern dient)
+    bool operator==(const Timeline& o) const
+    {
+        return video == o.video && audio == o.audio && subtitles == o.subtitles && markers == o.markers
+               && markIn == o.markIn && markOut == o.markOut && masterVolumeDb == o.masterVolumeDb
+               && masterLimiter == o.masterLimiter && masterLimiterDb == o.masterLimiterDb;
+    }
 };
 
 // Sequenz wie in DaVinci: eigene Timeline im Projekt (im Media Pool sichtbar) oder Inhalt eines Compound Clips.

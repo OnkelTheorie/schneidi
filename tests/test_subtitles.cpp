@@ -125,6 +125,10 @@ void testEditor()
     ed.setSubtitleText(a, "Hallo Welt", "tippen");
     CHECK_EQ(undo->count(), 3); // Tippen = ein Schritt
     CHECK_EQ(track(p, 0), QString("50-100:Untertitel 100-175:Hallo Welt"));
+    undo->undo(); // Undo nimmt den Text wirklich zurück (Undo-Stand teilte sich früher die Daten)
+    CHECK_EQ(track(p, 0), QString("50-100:Untertitel 100-175:Untertitel"));
+    undo->redo();
+    CHECK_EQ(track(p, 0), QString("50-100:Untertitel 100-175:Hallo Welt"));
 
     // Kanten: begrenzt auf den Nachbarn und mindestens 1 Frame
     CHECK_EQ(ed.clampSubtitleTrim(a, TimelineOps::Edge::Start, -30), 0);

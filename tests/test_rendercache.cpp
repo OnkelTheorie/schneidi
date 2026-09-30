@@ -386,8 +386,8 @@ void testBackground()
     rc.sync(one(c));
     CHECK(rc.resolve(c).isEmpty());
     CHECK_EQ(rc.pendingCount(), 1);
-    CHECK(waitFor([&] { return !rc.resolve(c).isEmpty(); }, 60000));
-    CHECK(changed >= 1);
+    // Datei entsteht im Render-Thread, cacheChanged kommt danach im UI-Thread -> auf beides warten
+    CHECK(waitFor([&] { return !rc.resolve(c).isEmpty() && changed >= 1; }, 60000));
     CHECK_EQ(rc.pendingCount(), 0);
 
     // Pausiert während der Wiedergabe

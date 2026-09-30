@@ -177,5 +177,12 @@ int main(int argc, char** argv)
     CHECK_EQ(p.undoStack()->index(), before + 1);
     p.undoStack()->undo();
     CHECK(state(p) == unchanged);
+
+    // Bearbeitung ohne Änderung (Teilen, wo kein Clip liegt; gleicher Wert) legt keinen Undo-Schritt an
+    const int idle = p.undoStack()->index();
+    ed.splitAtPlayhead(100000);
+    ed.modifyClips({id}, "Deckkraft", [](Clip&) {});
+    CHECK_EQ(p.undoStack()->index(), idle);
+    CHECK(state(p) == unchanged);
     return Check::result();
 }
