@@ -455,6 +455,12 @@ void MainWindow::grabStill()
     if (path.isEmpty()) return;
     if (QFileInfo(path).suffix().isEmpty()) path += ".png";
     settings.setValue("still/dir", QFileInfo(path).absolutePath());
+    if (Exporter::sameFile(path, m_engine->sourcePath()) || Exporter::readsFile(m_project->renderTimeline(), path)) {
+        QMessageBox::warning(this, T("Standbild exportieren"),
+                             T("%1 wird in der Timeline verwendet und kann nicht überschrieben werden.")
+                                 .arg(QFileInfo(path).fileName()));
+        return;
+    }
     if (!img.save(path, nullptr, 95))
         QMessageBox::warning(this, T("Standbild exportieren"), T("Datei konnte nicht gespeichert werden:\n%1").arg(path));
 }

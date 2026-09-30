@@ -51,7 +51,9 @@ bool usesFrei0r(const Timeline& tl)
     return false;
 }
 
-bool sameFile(const QString& a, const QString& b)
+} // namespace
+
+bool Exporter::sameFile(const QString& a, const QString& b)
 {
     const QString ca = QFileInfo(a).canonicalFilePath(), cb = QFileInfo(b).canonicalFilePath();
     if (ca.isEmpty() || cb.isEmpty()) return false; // eine fehlt -> kann nicht dieselbe sein
@@ -62,12 +64,14 @@ bool sameFile(const QString& a, const QString& b)
 #endif
 }
 
+namespace {
+
 bool timelineReads(const Timeline& tl, const QString& path)
 {
     for (const auto* tracks : {&tl.video, &tl.audio})
         for (const Track& t : *tracks)
             for (const Clip& c : t.clips)
-                if (!c.mediaPath.isEmpty() && sameFile(c.mediaPath, path)) return true;
+                if (!c.mediaPath.isEmpty() && Exporter::sameFile(c.mediaPath, path)) return true;
     return false;
 }
 

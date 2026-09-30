@@ -50,6 +50,8 @@ public:
     // Liest die Timeline (auch verschachtelte Sequenzen) diese Datei? Dann darf der Export sie nicht überschreiben
     // (Quelle und Ausgabe zerstört) – wie DaVinci verweigern statt nachfragen.
     static bool readsFile(const Timeline& tl, const QString& path);
+    // Zeigen beide Pfade auf dieselbe vorhandene Datei? (Windows: Groß-/Kleinschreibung egal)
+    static bool sameFile(const QString& a, const QString& b);
     bool start(const Timeline& tl, const ExportSettings& settings, QString* error);
     void cancel();
 
