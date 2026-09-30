@@ -202,6 +202,9 @@ void Exporter::cleanup()
 {
     if (m_timer.isActive()) --g_running;
     m_timer.stop();
+    // Immer stop(): beendet sich der Consumer selbst (terminate_on_pause), laufen seine Worker-Threads (real_time < -1)
+    // sonst weiter – mlt_consumer_close stoppt sie nicht – und rechnen später auf freigegebenen Profilen/Producern
+    if (m_consumer) m_consumer->stop();
     m_consumer.reset();
     m_tractor.reset();
     m_builder.reset();
