@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
 project(schneidi VERSION 0.2.0 LANGUAGES CXX)
 
+# Ohne Angabe optimiert bauen (Debug-Builds ruckeln bei der Wiedergabe: eigene Filter laufen pro Frame)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build-Typ" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
