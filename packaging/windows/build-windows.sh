@@ -67,3 +67,19 @@ ZIP="$DIST/schneidi-windows-$VERSION.zip"
 rm -f "$ZIP"
 (cd "$BUILD" && zip -qr9 "$ZIP" schneidi)
 echo ">> fertig: $ZIP ($(du -h "$ZIP" | cut -f1))"
+
+# --- Installer (Inno Setup 6, einmalig: winget install JRSoftware.InnoSetup) ---
+ISCC="${ISCC:-}" # Pfad zur ISCC.exe lässt sich auch vorgeben
+LOCAL="$([ -n "${LOCALAPPDATA:-}" ] && cygpath -u "$LOCALAPPDATA" || echo "/c/Users/$(id -un)/AppData/Local")"
+for d in "$LOCAL/Programs/Inno Setup 6" "/c/Program Files/Inno Setup 6" "/c/Program Files (x86)/Inno Setup 6"; do
+    [ -z "$ISCC" ] && [ -f "$d/ISCC.exe" ] && ISCC="$d/ISCC.exe"
+done
+if [ -z "$ISCC" ]; then
+    echo "!! Inno Setup nicht gefunden – kein Installer (winget install JRSoftware.InnoSetup)" >&2
+    exit 0
+fi
+# MSYS2 würde /DName=… sonst für einen Pfad halten und umschreiben
+MSYS2_ARG_CONV_EXCL="*" "$ISCC" /Q "/DVersion=$VERSION" "/DSourceDir=$(cygpath -w "$OUT")" "/DOutputDir=$(cygpath -w "$DIST")" \
+    "$(cygpath -w "$ROOT/packaging/windows/schneidi.iss")"
+SETUP="$DIST/schneidi-setup-$VERSION.exe"
+echo ">> fertig: $SETUP ($(du -h "$SETUP" | cut -f1))"

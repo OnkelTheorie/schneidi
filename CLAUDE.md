@@ -19,4 +19,4 @@ cmake -S . -B build -G Ninja && cmake --build build && ./build/schneidi
 ```
 Abhängigkeiten (Debian): `build-essential cmake ninja-build pkg-config qt6-base-dev libmlt++-dev libmlt-dev`
 
-Windows (MSYS2 UCRT64, Details `docs/windows.md`): `packaging/windows/build-windows.sh` → `dist/schneidi-windows-<version>.zip`
+Windows (MSYS2 UCRT64, Details `docs/windows.md`): `packaging/windows/build-windows.sh` → `dist/schneidi-windows-<version>.zip` + `dist/schneidi-setup-<version>.exe` (Inno Setup)

@@ -1,0 +1,2 @@
+// Programmsymbol der schneidi.exe (Explorer, Taskleiste; Qt nimmt IDI_ICON1 auch als Fenstersymbol)
+IDI_ICON1 ICON "../../assets/schneidi.ico"

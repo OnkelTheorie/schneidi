@@ -85,6 +85,7 @@ target_link_libraries(schneidi PRIVATE Qt6::Widgets PkgConfig::MLT)
 
 if(WIN32)
     set_target_properties(schneidi PROPERTIES WIN32_EXECUTABLE ON)
+    target_sources(schneidi PRIVATE packaging/windows/schneidi.rc) # Programmsymbol
 endif()
 
 # Installation (Paketierung: AppImage unter Linux, später Programmordner unter Windows, siehe docs/dev-notes.md)
