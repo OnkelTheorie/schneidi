@@ -4,6 +4,7 @@
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
+#include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
 #include "ui/RenderQueuePanel.h"
 
@@ -101,6 +102,18 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     connect(project, &Project::formatChanged, this, &DeliverPanel::updateFormat);
     updateFormat();
 
+    // CPU-Kerne fürs Rendern: gilt pro Rechner (nicht in Vorlagen/Aufträgen), wirkt ab dem nächsten Auftrag
+    m_cores = new QComboBox;
+    m_cores->setObjectName("renderCores");
+    const int available = Exporter::availableCores();
+    m_cores->addItem(T("Alle (%1)").arg(available), 0);
+    for (int n = available - 1; n >= 1; --n) m_cores->addItem(QString::number(n), n);
+    m_cores->setCurrentIndex(std::max(0, m_cores->findData(Exporter::savedCores())));
+    m_cores->setToolTip(T("Wie viele Prozessorkerne beim Rendern arbeiten. Weniger = der Rechner bleibt nebenbei "
+                          "flüssiger. Mit Green Screen wird trotzdem nur ein Bild nach dem anderen berechnet."));
+    connect(m_cores, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this] { Exporter::setSavedCores(m_cores->currentData().toInt()); });
+
     auto* form = new QFormLayout;
     form->setContentsMargins(12, 12, 12, 12);
     form->setVerticalSpacing(8);
@@ -114,6 +127,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Audio-Bitrate"), m_audioBitrate);
     form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(T("Bereich"), m_range);
+    form->addRow(T("CPU-Kerne"), m_cores);
 
     m_addBtn = new QPushButton(T("Zur Render-Warteschlange hinzufügen"));
     m_addBtn->setMinimumHeight(30);

@@ -34,9 +34,12 @@ public:
     explicit ProducerFactory(Mlt::Profile& base);
     ~ProducerFactory();
     std::unique_ptr<Mlt::Producer> open(const QString& resource);
+    // Threads je Video-Decoder (MLT "threads"); 0 = MLT-Standard (Vorschau)
+    void setThreads(int threads) { m_threads = threads; }
 
 private:
     Mlt::Profile& m_base;
+    int m_threads = 0;
     std::map<int, std::unique_ptr<Mlt::Profile>> m_profiles; // Farbnorm -> Profil
 };
 

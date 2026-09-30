@@ -62,6 +62,7 @@ std::unique_ptr<Mlt::Producer> ProducerFactory::open(const QString& resource)
     const QByteArray res = resource.toUtf8();
     auto p = std::make_unique<Mlt::Producer>(m_base, res.constData());
     if (!p->is_valid()) return p;
+    if (m_threads > 0) p->set("threads", m_threads);
     // Farbnorm des Videostroms steht schon nach dem Öffnen fest (meta.media.colorspace erst nach dem ersten Frame)
     const int vi = p->get_int("video_index");
     const int cs = vi >= 0 ? p->get_int(QString("meta.media.%1.codec.colorspace").arg(vi).toUtf8().constData()) : 0;
@@ -81,6 +82,7 @@ std::unique_ptr<Mlt::Producer> ProducerFactory::open(const QString& resource)
         prof->set_colorspace(cs);
     }
     auto own = std::make_unique<Mlt::Producer>(*prof, res.constData());
+    if (m_threads > 0 && own->is_valid()) own->set("threads", m_threads);
     return own->is_valid() ? std::move(own) : std::move(p);
 }
 

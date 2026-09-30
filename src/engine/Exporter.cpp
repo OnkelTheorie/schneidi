@@ -1,5 +1,6 @@
 #include "engine/Exporter.h"
 
+#include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
@@ -10,6 +11,9 @@
 #include <QDir>
 #include <QFile>
 #include <QSaveFile>
+#include <QSettings>
+#include <QThread>
+#include <algorithm>
 #include <atomic>
 
 namespace {
@@ -35,11 +39,45 @@ bool writeSubtitleFile(const Timeline& tl, double fps, int from, int to, const Q
     return true;
 }
 
+bool usesFrei0r(const Timeline& tl)
+{
+    for (const Track& t : tl.video)
+        for (const Clip& c : t.clips)
+            for (const EffectInstance& e : c.effects) {
+                const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+                if (e.enabled && d && d->mltService.startsWith("frei0r.")) return true;
+            }
+    return false;
+}
+
 } // namespace
 
 bool Exporter::anyRunning()
 {
     return g_running > 0;
+}
+
+int Exporter::savedCores()
+{
+    return std::max(0, QSettings().value("render/cores", 0).toInt());
+}
+
+void Exporter::setSavedCores(int cores)
+{
+    QSettings().setValue("render/cores", std::max(0, cores));
+}
+
+int Exporter::availableCores()
+{
+    return std::max(1, QThread::idealThreadCount());
+}
+
+int Exporter::parallelFrames(const Timeline& tl, int cores)
+{
+    bool frei0r = usesFrei0r(tl);
+    if (tl.nested)
+        for (const Timeline& n : *tl.nested) frei0r = frei0r || usesFrei0r(n);
+    return frei0r ? 1 : (cores > 0 ? cores : availableCores());
 }
 #include <QFileInfo>
 
@@ -76,6 +114,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     m_profile = makeProfile(out);
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
+    const int cores = s.cores > 0 ? s.cores : availableCores();
+    m_builder->setDecoderThreads(cores);
     m_builder->setSubtitles(s.burnSubtitles && !s.videoCodec.isEmpty());
     m_tractor = m_builder->build(scaled);
     m_tractor->set_in_and_out(m_from, m_from + m_length - 1);
@@ -105,7 +145,12 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     if (!s.audioCodec.startsWith("pcm_")) m_consumer->set("ab", QString("%1k").arg(s.audioBitrateK).toUtf8().constData());
     const QString ext = QFileInfo(s.path).suffix().toLower();
     if (ext == "mp4" || ext == "mov" || ext == "m4a") m_consumer->set("movflags", "+faststart");
-    m_consumer->set("real_time", -1);         // jedes Frame rendern (1 Thread: Effekte wie frei0r sind nicht thread-sicher)
+    // Jedes Frame rendern (real_time < 0), mehrere Bilder gleichzeitig (außer mit frei0r, siehe parallelFrames);
+    // Decoder (oben) und Encoder bekommen dieselbe Kernzahl
+    const int frames = parallelFrames(tl, cores);
+    m_consumer->set("real_time", -frames);
+    m_consumer->set("threads", cores);
+    qInfo("Export: %d Kerne, %d Bilder gleichzeitig", cores, frames);
     m_consumer->set("terminate_on_pause", 1); // am Ende automatisch stoppen
     m_consumer->connect(*m_tractor);
 

@@ -54,6 +54,8 @@ public:
 
     // Untertitel (sichtbare Untertitelspur) mit ins Bild; Standard an (Vorschau), Export nur beim Einbrennen
     void setSubtitles(bool on) { m_subtitles = on; }
+    // Threads je Video-Decoder (Export); 0 = MLT-Standard. Vor build() setzen.
+    void setDecoderThreads(int threads);
 
     // hooks != nullptr: Mixer-Filter immer anhängen (auch bei 0 dB) und Pegelmesser einbauen
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);

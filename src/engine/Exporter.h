@@ -26,6 +26,7 @@ struct ExportSettings {
     bool burnSubtitles = false; // sichtbare Untertitelspur ins Bild einbrennen
     QString subtitlePath;       // sichtbare Untertitelspur zusätzlich als SRT hierhin schreiben (leer = nicht)
     int from = 0, to = -1; // Bereich (Frames, inklusive); to < 0 = bis zum Ende der Timeline
+    int cores = 0;         // CPU-Kerne fürs Rendern (Bilder parallel, Decoder, Encoder); 0 = alle
 };
 
 // Rendert die Timeline in eine Datei. Eigene Producer-Instanzen,
@@ -39,6 +40,13 @@ public:
     bool isRunning() const { return m_consumer != nullptr; }
     // Läuft gerade irgendein Export? (Render-Cache pausiert solange)
     static bool anyRunning();
+    // CPU-Kerne fürs Rendern (Deliver-Seite, gilt pro Rechner, QSettings "render/cores"): 0 = alle
+    static int savedCores();
+    static void setSavedCores(int cores);
+    static int availableCores(); // Threads des Prozessors (mindestens 1)
+    // Wie viele Bilder gleichzeitig gerendert werden: cores (0 = alle), aber 1, wenn die Timeline (auch verschachtelte
+    // Sequenzen) einen frei0r-Effekt nutzt (Green Screen) – die sind nicht thread-sicher
+    static int parallelFrames(const Timeline& tl, int cores);
     bool start(const Timeline& tl, const ExportSettings& settings, QString* error);
     void cancel();
 

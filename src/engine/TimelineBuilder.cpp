@@ -833,6 +833,11 @@ TimelineBuilder::TimelineBuilder(Mlt::Profile& profile)
 }
 TimelineBuilder::~TimelineBuilder() = default;
 
+void TimelineBuilder::setDecoderThreads(int threads)
+{
+    m_factory->setThreads(threads);
+}
+
 Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex, bool second,
                                             const Clip* retime)
 {
