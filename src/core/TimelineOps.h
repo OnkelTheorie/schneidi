@@ -136,6 +136,10 @@ double audioTransitionGain(const TransitionSpan& s, int clipId, double frame);
 // Überblendungen lösen, bei denen nur einer der beiden Clips in `clipIds` liegt
 // (vor Löschen/Verschieben, damit der Übrige nicht plötzlich ausblendet).
 void detachTransitions(Timeline& tl, const QVector<int>& clipIds);
+// Nach einer Bearbeitung: Clip-Seiten, die vorher Teil einer Überblendung waren und jetzt keinen Partner mehr haben
+// (auseinandergetrimmt, Partner hat keine Handles mehr, Tempo geändert …), verlieren ihren Übergang – sonst würde
+// aus der Überblendung stillschweigend ein Aus-/Einblenden über Schwarz. Neue Clips (andere ids) bleiben unberührt.
+void unpairBrokenDissolves(const Timeline& before, Timeline& after);
 
 int endFrame(const Timeline& tl);
 // Liegt die Datei irgendwo auf einer Videospur? (z. B. Vorschau nur neu bauen, wenn ein Proxy dazu gehört)

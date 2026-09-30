@@ -3,6 +3,7 @@
 #include "core/Keyframes.h"
 
 #include <QHash>
+#include <QSet>
 #include <algorithm>
 #include <climits>
 #include <cmath>
@@ -654,6 +655,36 @@ void detachTransitions(Timeline& tl, const QVector<int>& clipIds)
                 if (clipIds.contains(a.id) == clipIds.contains(b.id)) continue;
                 a.transOut = 0;
                 b.transIn = 0;
+            }
+}
+
+namespace {
+// ids der Clips, deren Ende (outSide) bzw. Anfang in einer Überblendung liegt
+void dissolveSides(const Timeline& tl, QSet<int>& outSide, QSet<int>& inSide)
+{
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : tl.tracks(k))
+            for (int i = 0; i + 1 < t.clips.size(); ++i) {
+                const Clip& a = t.clips[i];
+                const Clip& b = t.clips[i + 1];
+                if (a.end() != b.start || a.transOut <= 0 || b.transIn <= 0) continue;
+                outSide.insert(a.id);
+                inSide.insert(b.id);
+            }
+}
+} // namespace
+
+void unpairBrokenDissolves(const Timeline& before, Timeline& after)
+{
+    QSet<int> outBefore, inBefore, outAfter, inAfter;
+    dissolveSides(before, outBefore, inBefore);
+    if (outBefore.isEmpty()) return;
+    dissolveSides(after, outAfter, inAfter);
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (Track& t : after.tracks(k))
+            for (Clip& c : t.clips) {
+                if (c.transOut > 0 && outBefore.contains(c.id) && !outAfter.contains(c.id)) c.transOut = 0;
+                if (c.transIn > 0 && inBefore.contains(c.id) && !inAfter.contains(c.id)) c.transIn = 0;
             }
 }
 

@@ -32,6 +32,47 @@ int clipId(const Project& p, TrackKind k, int track, int index)
 int V(const Project& p, int track, int index) { return clipId(p, TrackKind::Video, track, index); }
 int A(const Project& p, int track, int index) { return clipId(p, TrackKind::Audio, track, index); }
 
+// Überblendung, die durch eine Bearbeitung ihren Partner verliert, wird gelöst statt stillschweigend zum
+// Aus-/Einblenden über Schwarz zu werden (Trimmen, Tempo)
+void testBrokenDissolves()
+{
+    int fileLen = 250;
+    auto len = [&](const Clip& c) { return c.retimedLength(fileLen); };
+    auto fades = [&](const Project& p) {
+        int n = 0;
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (const Track& t : p.timeline().tracks(k))
+                for (const auto& s : TimelineOps::transitions(t, len))
+                    if (!s.leftId || !s.rightId) ++n;
+        return n;
+    };
+    auto dissolves = [&](const Project& p) { return int(TimelineOps::transitions(p.timeline().video[0], len).size()); };
+    auto setup = [&](Project& p, Selection& sel, Editor& ed) {
+        p.addMedia({"/x/a.mp4", "a.mp4", fileLen, true, true, false});
+        ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+        ed.bladeAt(V(p, 0, 0), 100);
+        sel.clear();
+        ed.addTransitions(100);
+    };
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        fileLen = scenario == 2 ? 130 : 250; // rückwärts: A (0..99) hat danach kein Material mehr hinter sich
+        Project p;
+        Selection sel;
+        Editor ed(&p, &sel);
+        setup(p, sel, ed);
+        if (!CHECK_EQ(dissolves(p), 1)) return;
+        CHECK_EQ(fades(p), 0);
+        const int a = V(p, 0, 0), b = V(p, 0, 1);
+        if (scenario == 0) ed.trimClip(b, TimelineOps::Edge::Start, 5);  // auseinandertrimmen
+        if (scenario == 1) ed.trimClip(a, TimelineOps::Edge::End, -5);
+        if (scenario == 2) ed.setClipSpeed({a}, {1.0, true, false, true}, false); // rückwärts: A ohne Handles
+        CHECK_EQ(fades(p), 0);
+        CHECK_EQ(dissolves(p), 0);
+        p.undoStack()->undo(); // Undo bringt die Überblendung zurück
+        CHECK_EQ(dissolves(p), 1);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -80,6 +121,8 @@ int main(int argc, char** argv)
         ed.setTransitionStyle(transL, transR, s);
     });
     step("Übergangslänge", [&] { ed.setTransitionLength(transL, transR, 10); });
+    step("Übergang entfernen", [&] { ed.removeTransition(transL, transR); });
+    step("Übergang wieder Strg+T", [&] { sel.clear(); ed.addTransitions(95); });
     step("Fade", [&] { ed.setClipFade(V(p, 0, 0), Edge::Start, 12); });
     step("Lautstärke", [&] { ed.setClipVolume(A(p, 0, 0), -6.5); });
     step("Transform", [&] {
@@ -133,7 +176,6 @@ int main(int argc, char** argv)
         f.height = 720;
         p.setFormat(f);
     });
-    step("Übergang entfernen", [&] { ed.removeTransition(transL, transR); });
     step("Effekt entfernen", [&] { ed.removeEffect({fxClip}, "color"); });
 
     // Alle Schritte haben etwas geändert
@@ -184,5 +226,6 @@ int main(int argc, char** argv)
     ed.modifyClips({id}, "Deckkraft", [](Clip&) {});
     CHECK_EQ(p.undoStack()->index(), idle);
     CHECK(state(p) == unchanged);
+    testBrokenDissolves();
     return Check::result();
 }
