@@ -270,7 +270,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_search->installEventFilter(this);
     connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildClips(); });
     m_searchBtn = new QToolButton;
-    m_searchBtn->setText("🔍");
+    m_searchBtn->setText("🔍︎"); // U+FE0E: als Schrift, nicht als farbiges Emoji (Windows)
     m_searchBtn->setToolTip(T("Clips suchen"));
     m_searchBtn->setAutoRaise(true);
     m_searchBtn->setCheckable(true);

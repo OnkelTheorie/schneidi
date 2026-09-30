@@ -148,7 +148,7 @@ int main(int argc, char** argv)
                                            "aevalsrc=if(lt(t\\,2)\\,0.1\\,0.5)*sin(2*PI*440*t)|if(lt(t\\,2)\\,0.1\\,0.5)*sin(2*PI*440*t):s=48000:d=4",
                                            "-c:a", "pcm_f32le"});
     if (!CHECK(!tone.isEmpty())) return Check::result();
-    Mlt::Factory::init();
+    Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt; // 25 fps
 

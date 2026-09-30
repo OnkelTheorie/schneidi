@@ -247,6 +247,10 @@ void apply(QApplication& app)
 
     QFont f = app.font();
     f.setPointSizeF(9.0);
+#ifdef Q_OS_WIN
+    // Symbole wie ⏮ ⏸ ✂ hat Segoe UI nicht; ohne Segoe UI Symbol als Ersatz nimmt Windows die farbige Emoji-Schrift
+    f.setFamilies({f.family(), "Segoe UI Symbol"});
+#endif
     app.setFont(f);
 
     app.setStyleSheet(QString(R"(

@@ -325,6 +325,7 @@ void ProxyManager::onFinished(int exitCode, bool crashed)
         QFile::rename(part, target); // erst jetzt sichtbar -> nie halbfertige Proxies in der Vorschau
     } else {
         QFile::remove(part);
+        qWarning("Proxy fehlgeschlagen (%s, Code %d): %s", qPrintable(original), exitCode, qPrintable(tail));
         emit failed(original, T("Proxy konnte nicht erzeugt werden:\n%1").arg(tail.section('\n', -3)));
     }
     emit progress(original, -1);

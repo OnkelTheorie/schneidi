@@ -44,5 +44,8 @@ bool load(const QString& path, ProjectData* data, QString* error);
 // Liefert die Anzahl wiedergefundener Dateien.
 int relink(ProjectData* data, const QString& searchDir);
 QStringList missingMedia(const ProjectData& data);
+// Dateiname aus einem Pfad beider Systeme ("/home/…/a.mp4", "C:\…\a.mp4"): Backslash ist unter Linux kein
+// Trenner, QFileInfo::fileName() liefert dort für Windows-Pfade sonst den ganzen Pfad
+QString fileNameAnyOs(const QString& path);
 
 } // namespace ProjectFile

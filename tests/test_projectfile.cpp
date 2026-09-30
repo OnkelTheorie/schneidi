@@ -254,6 +254,8 @@ int main(int argc, char** argv)
     QFile f1(path), f2(path2);
     CHECK(f1.open(QIODevice::ReadOnly) && f2.open(QIODevice::ReadOnly));
     const QByteArray json1 = f1.readAll(), json2 = f2.readAll();
+    f1.close(); // Windows: Ordner mit offenen Dateien lässt sich unten nicht umbenennen
+    f2.close();
     CHECK(!json1.isEmpty() && json1 == json2);
     // Direkt über toJson/fromJson ebenso (dritte Runde)
     ProjectData again;
@@ -293,6 +295,26 @@ int main(int argc, char** argv)
         CHECK_EQ(ProjectFile::relink(&d, tmp.filePath("anderswo")), 4);
         c = TimelineOps::findClip(d.timeline, 1);
         CHECK(c && c->mediaPath == elsewhere + "/medien/a.mp4" && ProjectFile::missingMedia(d).isEmpty());
+    }
+
+    // --- Projekt vom anderen System (Linux <-> Windows): Dateiname aus fremden Pfaden, relink findet die Medien
+    {
+        CHECK_EQ(ProjectFile::fileNameAnyOs("/home/nutzer/Videos/a.mp4"), QString("a.mp4"));
+        CHECK_EQ(ProjectFile::fileNameAnyOs("C:\\Users\\nutzer\\Videos\\Clip 1.mov"), QString("Clip 1.mov"));
+        CHECK_EQ(ProjectFile::fileNameAnyOs("C:/Users/nutzer/Übung ä.mp4"), QString("Übung ä.mp4"));
+        CHECK_EQ(ProjectFile::fileNameAnyOs("a.mp4"), QString("a.mp4"));
+        ProjectData d;
+        CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[
+            {"path":"/home/nutzer/Videos/a.mp4","length":100,"hasVideo":true},
+            {"path":"C:\\Users\\nutzer\\Videos\\b.mov","length":100,"hasVideo":true}],
+            "timeline":{"video":[{"clips":[{"id":1,"media":1,"start":0,"in":0,"out":9}]}],"audio":[]}})",
+                                    tmp.filePath("fremd.schneidi"), &d, &err));
+        CHECK(d.media.size() == 2 && d.media[0].name == "a.mp4" && d.media[1].name == "b.mov");
+        CHECK_EQ(ProjectFile::missingMedia(d).size(), 2);
+        CHECK_EQ(ProjectFile::relink(&d, tmp.filePath("anderswo")), 2);
+        CHECK(ProjectFile::missingMedia(d).isEmpty());
+        const Clip* c = TimelineOps::findClip(d.timeline, 1);
+        CHECK(c && QFileInfo(c->mediaPath).fileName() == "b.mov");
     }
 
     // --- Ungültige Dateien

@@ -274,7 +274,7 @@ int main(int argc, char** argv)
                                            "-i", "sine=frequency=440:duration=2", "-c:v", "libx264", "-pix_fmt",
                                            "yuv420p", "-c:a", "aac", "-shortest"});
     if (!CHECK(!clip.isEmpty())) return Check::result();
-    Mlt::Factory::init();
+    Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
 
     Project p;

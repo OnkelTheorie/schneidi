@@ -436,7 +436,7 @@ int main(int argc, char** argv)
                                           "-c:v", "prores_ks", "-profile:v", "1"});
     if (!CHECK(!g_media.isEmpty() && !red.isEmpty())) return Check::result();
 
-    Mlt::Factory::init();
+    Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
     {
         auto prof = makeProfile(kFmt);

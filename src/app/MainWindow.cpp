@@ -5,6 +5,7 @@
 #include "app/KeyBindingsDialog.h"
 #include "app/ClipSpeedDialog.h"
 #include "app/DesignDialog.h"
+#include "app/Log.h"
 #include "app/NormalizeDialog.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
@@ -1088,6 +1089,36 @@ void MainWindow::buildActions()
     play->removeAction(clearCache);
     cacheMenu->addAction(clearCache);
 
+    // Audio-Ausgabe: Puffergröße (gegen Knacken, wirkt ab dem nächsten Play) und unter Windows der Treiber
+    QMenu* audioMenu = play->addMenu(T("Audio-Ausgabe"));
+    auto* bufferGroup = new QActionGroup(audioMenu);
+    for (const auto& [samples, text] : {std::pair{1024, N_("Puffer klein (1024, wenig Verzögerung)")},
+                                        std::pair{2048, N_("Puffer mittel (2048)")},
+                                        std::pair{4096, N_("Puffer groß (4096, gegen Knacken)")}}) {
+        QAction* a = audioMenu->addAction(T(text));
+        a->setCheckable(true);
+        a->setChecked(Engine::audioBuffer() == samples);
+        bufferGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, n = samples] { m_engine->setAudioBuffer(n); });
+    }
+#ifdef Q_OS_WIN
+    audioMenu->addSeparator();
+    auto* driverGroup = new QActionGroup(audioMenu);
+    for (const auto& [id, text] : {std::pair{"directsound", N_("Treiber: DirectSound (Standard)")},
+                                   std::pair{"wasapi", N_("Treiber: WASAPI")}}) {
+        QAction* a = audioMenu->addAction(T(text));
+        a->setCheckable(true);
+        a->setChecked(Engine::audioDriver() == id);
+        driverGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, driver = QString(id)] {
+            if (driver == Engine::audioDriver()) return;
+            Engine::setAudioDriver(driver);
+            offerRestart(T("Der Audiotreiber ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"),
+                         T("Später"));
+        });
+    }
+#endif
+
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
     makeAction(workspace, "page_media", T("Media-Seite"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
     makeAction(workspace, "page_edit", T("Edit-Seite"), QKeySequence("Shift+4"), [this] { showPage(Page::Edit); });
@@ -1121,6 +1152,11 @@ void MainWindow::buildActions()
         if (DesignDialog(this).exec() == QDialog::Accepted && Theme::restartNeeded())
             offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
     });
+
+    // Hilfe: Log-Datei für Fehlermeldungen (unter Windows gibt es kein Terminal)
+    QMenu* help = menuBar()->addMenu(T("&Hilfe"));
+    makeAction(help, "open_log_folder", T("Log-Ordner öffnen"), QKeySequence(),
+               [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
 
     InputBindings::instance().saveIfIncomplete();
 }

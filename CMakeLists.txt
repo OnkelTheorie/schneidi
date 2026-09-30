@@ -10,6 +10,11 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 find_package(PkgConfig REQUIRED)
 # MLT liefert unter Linux und MSYS2 (Windows) eine .pc-Datei
 pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
+if(WIN32)
+    # Nicht paketierter Build: MLT-Module/-Daten aus MSYS2 (siehe engine/Bundle.cpp)
+    pkg_get_variable(MLT_PREFIX mlt-framework-7 prefix)
+    add_compile_definitions(SCHNEIDI_MLT_DEV_PREFIX="${MLT_PREFIX}")
+endif()
 
 add_executable(schneidi
     src/main.cpp
@@ -52,6 +57,7 @@ add_executable(schneidi
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
     src/app/DesignDialog.h src/app/DesignDialog.cpp
+    src/app/Log.h                 src/app/Log.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp
@@ -79,6 +85,7 @@ target_link_libraries(schneidi PRIVATE Qt6::Widgets PkgConfig::MLT)
 
 if(WIN32)
     set_target_properties(schneidi PROPERTIES WIN32_EXECUTABLE ON)
+    target_sources(schneidi PRIVATE packaging/windows/schneidi.rc) # Programmsymbol
 endif()
 
 # Installation (Paketierung: AppImage unter Linux, später Programmordner unter Windows, siehe docs/dev-notes.md)

@@ -406,6 +406,7 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
     const QString log = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
     if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0 || QFileInfo(part).size() <= 0) {
         QFile::remove(part);
+        qWarning("Render-Cache fehlgeschlagen (Code %d): %s", proc.exitCode(), qPrintable(log.right(2000)));
         return fail(T("Render-Cache fehlgeschlagen:\n%1").arg(log.section('\n', -3)));
     }
     QFile::remove(file);

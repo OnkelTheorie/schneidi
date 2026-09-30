@@ -250,7 +250,7 @@ int testRender(const QString& dir)
                                            "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
                                            "-c:v", "ffv1", "-pix_fmt", "rgb24", "-c:a", "pcm_s16le", "-shortest"});
     if (!CHECK(!file.isEmpty())) return 1;
-    Mlt::Factory::init();
+    Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt{64, 64, {25, 1}};
     {

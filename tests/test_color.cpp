@@ -452,7 +452,7 @@ int main(int argc, char** argv)
                                 "scale=out_color_matrix=bt709", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
                                 "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"});
     if (!CHECK(!g_media.isEmpty())) return Check::result();
-    Mlt::Factory::init();
+    Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
     testRender(tmp.path());
     return Check::result();
