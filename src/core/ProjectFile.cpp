@@ -18,7 +18,9 @@
 
 namespace {
 
-constexpr int kFormatVersion = 1;
+// 2: Ton-Streams pro Datei (Clip "audioStream"). Ältere schneidi-Versionen würden dort still nur Stream 1 spielen
+// und die Zuordnung beim Speichern verlieren -> sie lehnen die Datei ab.
+constexpr int kFormatVersion = 2;
 
 QJsonObject transformToJson(const ClipTransform& t)
 {
@@ -208,6 +210,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (c.linkId) o["link"] = c.linkId;
     if (c.volumeDb != 0.0) o["volumeDb"] = c.volumeDb;
     if (c.pan != 0.0) o["pan"] = c.pan;
+    if (c.audioStream != 0) o["audioStream"] = c.audioStream;
     if (!c.enabled) o["enabled"] = false;
     if (c.transIn > 0) o["transIn"] = c.transIn; // Übergänge (Frames); fehlend = keiner
     if (c.transOut > 0) o["transOut"] = c.transOut;
@@ -265,6 +268,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.linkId = o.value("link").toInt();
     c.volumeDb = o.value("volumeDb").toDouble(0.0);
     c.pan = o.value("pan").toDouble(0.0);
+    c.audioStream = std::max(0, o.value("audioStream").toInt());
     c.enabled = o.value("enabled").toBool(true);
     c.transIn = std::max(0, o.value("transIn").toInt());
     c.transOut = std::max(0, o.value("transOut").toInt());
@@ -337,6 +341,15 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         if (m.bin != 0) o["bin"] = m.bin; // Media-Pool-Organisation (optional, alte Dateien ohne)
         if (!m.clipColor.isEmpty()) o["clipColor"] = m.clipColor;
         if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
+        if (!m.audioStreams.isEmpty()) {
+            QJsonArray streams;
+            for (const AudioStreamInfo& a : m.audioStreams) {
+                QJsonObject so{{"channels", a.channels}};
+                if (!a.title.isEmpty()) so["title"] = a.title;
+                streams << so;
+            }
+            o["audioStreams"] = streams;
+        }
         media << o;
     }
 
@@ -468,6 +481,10 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         if (trackColorInfo(o.value("clipColor").toString())) m.clipColor = o.value("clipColor").toString();
         for (const QJsonValue& f : o.value("flags").toArray())
             if (flagColorInfo(f.toString()) && !m.flags.contains(f.toString())) m.flags << f.toString();
+        if (m.hasAudio) // fehlt in älteren Dateien -> audioStreamCount() nimmt 1 Stream an
+            for (const QJsonValue& a : o.value("audioStreams").toArray())
+                m.audioStreams << AudioStreamInfo{std::max(1, a.toObject().value("channels").toInt(2)),
+                                                  a.toObject().value("title").toString()};
         allMedia << m;
         if (!o.value("notInPool").toBool()) d.media << m;
     }

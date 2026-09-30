@@ -43,10 +43,11 @@ QVector<QVector<quint8>> buildLevels(QVector<quint8> base)
 }
 
 // Platten-Cache für Wellenformen: Schlüssel aus Pfad, Größe und Änderungszeit
-QString waveCacheFile(const QString& path, const FrameRate& rate)
+QString waveCacheFile(const QString& path, int stream, const FrameRate& rate)
 {
     const QFileInfo fi(path);
-    const QString id = QString("%1|%2|%3|%4|%5")
+    // weitere Streams mit Zusatz, damit vorhandene Wellenformen (Stream 0) gültig bleiben
+    const QString id = (stream > 0 ? QString("s%1|").arg(stream) : QString()) + QString("%1|%2|%3|%4|%5")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())
@@ -204,15 +205,17 @@ void MediaCache::setFormat(const ProjectFormat& format)
     emit updated();
 }
 
-std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path)
+std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path, int stream)
 {
+    // Schlüssel: Pfad, bei weiteren Streams mit angehängter Nummer (\0 kommt in Pfaden nicht vor)
+    const QString key = stream > 0 ? path + QChar(0) + QString::number(stream) : path;
     QMutexLocker lock(&m_mutex);
-    if (!m_waveRequested.contains(path)) {
-        m_waveRequested.insert(path);
-        m_waveJobs.push_back(path);
+    if (!m_waveRequested.contains(key)) {
+        m_waveRequested.insert(key);
+        m_waveJobs.push_back(key);
         m_waveCond.wakeOne();
     }
-    return m_waves.value(path);
+    return m_waves.value(key);
 }
 
 void MediaCache::thumbLoop()
@@ -377,15 +380,20 @@ void MediaCache::waveLoop()
     constexpr int N = Waveform::kBucketsPerFrame;
 
     for (;;) {
-        QString path;
+        QString key, path;
+        int stream = 0;
         ProjectFormat format;
         int gen = 0;
         {
             QMutexLocker lock(&m_mutex);
             while (!m_quit && m_waveJobs.empty()) m_waveCond.wait(&m_mutex);
             if (m_quit) return;
-            path = m_waveJobs.front();
+            key = path = m_waveJobs.front();
             m_waveJobs.pop_front();
+            if (const int z = key.indexOf(QChar(0)); z >= 0) {
+                path = key.left(z);
+                stream = key.mid(z + 1).toInt();
+            }
             format = m_format;
             gen = m_generation;
         }
@@ -397,12 +405,12 @@ void MediaCache::waveLoop()
             {
                 QMutexLocker lock(&m_mutex);
                 if (gen != m_generation) return; // inzwischen neues Format
-                m_waves.insert(path, std::move(w));
+                m_waves.insert(key, std::move(w));
             }
             emit updated();
         };
 
-        const QString cacheFile = waveCacheFile(path, format.rate);
+        const QString cacheFile = waveCacheFile(path, stream, format.rate);
         {
             auto w = std::make_shared<Waveform>();
             if (loadWave(cacheFile, *w)) {
@@ -412,6 +420,7 @@ void MediaCache::waveLoop()
         }
 
         Mlt::Producer p(*profile, path.toUtf8().constData());
+        if (p.is_valid()) selectAudioStream(p, stream);
         const int length = p.is_valid() ? p.get_length() : 0;
         if (length <= 0) {
             auto w = std::make_shared<Waveform>();

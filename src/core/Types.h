@@ -220,6 +220,7 @@ struct Clip {
     int linkId = 0; // 0 = frei; gleiche linkId = verknüpftes Video+Audio
     double volumeDb = 0.0; // Clip-Lautstärke (nur Audio); <= kMinVolumeDb = stumm
     double pan = 0.0;      // Nur Audio: -100 = links, 0 = Mitte, +100 = rechts
+    int audioStream = 0;   // Nur Audio: welcher Ton-Stream der Datei (0 = erster, siehe MediaInfo::audioStreams)
     bool enabled = true;   // deaktiviert (Taste D) = unsichtbar/stumm, bleibt aber liegen
     ClipTransform transform; // nur Video
     QVector<EffectInstance> effects;
@@ -393,6 +394,13 @@ struct Sequence {
     Timeline timeline;
 };
 
+// Ein Ton-Stream einer Datei (OBS schreibt z. B. Desktop-Ton und Mikro getrennt in eine Datei)
+struct AudioStreamInfo {
+    int channels = 2;
+    QString title; // Stream-Titel aus der Datei (leer = keiner)
+    bool operator==(const AudioStreamInfo& o) const { return channels == o.channels && title == o.title; }
+};
+
 struct MediaInfo {
     QString path;
     QString name;
@@ -409,6 +417,15 @@ struct MediaInfo {
     int bin = 0;
     QString clipColor;
     QStringList flags;
+    // Ton-Streams in Dateireihenfolge (am Ende wegen Aggregat-Initialisierung; leer bei älteren Projektdateien: dann 1 Stream, falls hasAudio)
+    QVector<AudioStreamInfo> audioStreams;
+    int audioStreamCount() const { return hasAudio ? std::max<int>(1, audioStreams.size()) : 0; }
+    // Anzeigename eines Streams: Titel aus der Datei, sonst „Spur N“
+    QString audioStreamName(int stream) const
+    {
+        const QString t = stream < audioStreams.size() ? audioStreams[stream].title : QString();
+        return t.isEmpty() ? T("Spur %1").arg(stream + 1) : t;
+    }
 };
 
 // Bin (Ordner) im Media Pool; Master (id 0) steht nicht in der Liste, parent 0 = direkt unter Master

@@ -148,6 +148,7 @@ MediaInfo Engine::probe(const QString& path)
         const bool audioFile = audioExt.contains(QFileInfo(path).suffix().toLower());
         info.hasVideo = !audioFile && p.get_int("video_index") >= 0;
         info.hasAudio = p.get_int("audio_index") >= 0;
+        if (info.hasAudio) info.audioStreams = audioStreamsOf(p);
         info.length = p.get_length();
     }
     return info;

@@ -1,4 +1,5 @@
 #include "engine/RampProducer.h"
+#include "engine/Profiles.h"
 
 #include "core/Retime.h"
 
@@ -124,6 +125,7 @@ std::unique_ptr<Mlt::Producer> audio(Mlt::Profile& profile, const QString& file,
             if (!p->is_valid()) return nullptr;
             if (warp != 1.0) p->set("warp_pitch", pitch ? 1 : 0);
             p->set("video_index", -1);
+            selectAudioStream(*p, c.audioStream);
             it = byWarp.emplace(std::make_pair(warp, pitch), std::move(p)).first;
         }
         Mlt::Producer& p = *it->second;

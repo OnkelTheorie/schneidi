@@ -7,6 +7,38 @@
 #include <QProcess>
 #include <numeric>
 
+namespace {
+// Absolute Stream-Indizes (meta.media.N) der Ton-Streams
+QVector<int> audioIndices(Mlt::Producer& p)
+{
+    QVector<int> out;
+    const int n = p.get_int("meta.media.nb_streams");
+    for (int i = 0; i < n; ++i)
+        if (qstrcmp(p.get(QString("meta.media.%1.stream.type").arg(i).toUtf8().constData()), "audio") == 0) out << i;
+    return out;
+}
+} // namespace
+
+QVector<AudioStreamInfo> audioStreamsOf(Mlt::Producer& p)
+{
+    QVector<AudioStreamInfo> out;
+    for (int i : audioIndices(p)) {
+        AudioStreamInfo s;
+        s.channels = std::max(1, p.get_int(QString("meta.media.%1.codec.channels").arg(i).toUtf8().constData()));
+        s.title = QString::fromUtf8(p.get(QString("meta.attr.%1.stream.title.markup").arg(i).toUtf8().constData())).trimmed();
+        out << s;
+    }
+    return out;
+}
+
+void selectAudioStream(Mlt::Producer& p, int stream)
+{
+    if (stream <= 0 && p.get_int("audio_index") < 0) return; // kein Ton
+    const QVector<int> idx = audioIndices(p);
+    if (idx.isEmpty() && stream <= 0) return; // Metadaten fehlen: Standard-Stream lassen
+    p.set("audio_index", stream >= 0 && stream < idx.size() ? idx[stream] : -1);
+}
+
 std::unique_ptr<Mlt::Profile> makeProfile(const ProjectFormat& f)
 {
     auto p = std::make_unique<Mlt::Profile>("atsc_1080p_25"); // Grundlage, alle Werte werden überschrieben

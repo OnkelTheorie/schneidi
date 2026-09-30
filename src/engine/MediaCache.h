@@ -46,8 +46,8 @@ public:
     // Nur nachsehen, nichts anfordern (für Ersatzbilder aus gröberen Stufen)
     QImage cachedThumbnail(const QString& path, int frame);
 
-    // Wellenform (evtl. noch unvollständig) oder nullptr; fordert sie ggf. an.
-    std::shared_ptr<const Waveform> waveform(const QString& path);
+    // Wellenform (evtl. noch unvollständig) oder nullptr; fordert sie ggf. an. stream: Ton-Stream der Datei (0 = erster)
+    std::shared_ptr<const Waveform> waveform(const QString& path, int stream = 0);
 
     // Projekteinstellungen geändert: Frames zählen in der neuen Framerate, Bilder im neuen Seitenverhältnis
     // -> alles Berechnete verwerfen (Wellenformen auf der Platte sind nach Framerate getrennt)

@@ -382,6 +382,35 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
                               [](Clip& c) -> double& { return c.volumeDb; }, AnimParam::Volume);
     volume->edit->setMinimumText("-∞");
     addSlider(vol, "pan", "Pan", -100, 100, 0, 1, 2, [](Clip& c) -> double& { return c.pan; }, AnimParam::Pan);
+    // Ton-Stream der Datei (OBS: Desktop-Ton, Mikro … in einer Datei); nur sichtbar, wenn es mehrere gibt
+    auto* streamLabel = rowLabel(T("Quell-Tonspur"));
+    auto* streamBox = new QComboBox;
+    streamBox->setFocusPolicy(Qt::ClickFocus);
+    streamBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    streamBox->setMinimumContentsLength(8);
+    streamBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    connect(streamBox, &QComboBox::activated, this, [this, streamBox, A](int stream) {
+        const Project* project = m_editor->project();
+        apply(A, {}, T("Quell-Tonspur"), [project, stream](Clip& c) {
+            const MediaInfo* m = project->mediaInfo(c.mediaPath);
+            if (m && stream < m->audioStreamCount()) c.audioStream = stream; // andere Dateien ohne diesen Stream bleiben
+        });
+    });
+    m_refreshers << [this, streamBox, streamLabel] {
+        const Clip* c = primary(TrackKind::Audio);
+        const MediaInfo* m = c && !c->mediaPath.isEmpty() ? m_editor->project()->mediaInfo(c->mediaPath) : nullptr;
+        const int n = m ? m->audioStreamCount() : 0;
+        streamBox->setVisible(n > 1);
+        streamLabel->setVisible(n > 1);
+        if (n <= 1) return;
+        const QSignalBlocker b(streamBox);
+        streamBox->clear();
+        for (int k = 0; k < n; ++k)
+            streamBox->addItem(QString("%1: %2").arg(k + 1).arg(m->audioStreamName(k)));
+        streamBox->setCurrentIndex(std::clamp(c->audioStream, 0, n - 1));
+    };
+    vol.grid->addWidget(streamLabel, vol.rows, 0);
+    vol.grid->addWidget(streamBox, vol.rows++, 1, 1, 2);
     audioLay->addStretch(1);
 
     // ---- Gesamtaufbau ----

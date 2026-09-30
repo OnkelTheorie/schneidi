@@ -807,6 +807,25 @@ void MediaPool::updateItem(const QString& path)
             names << T(f->name);
         }
         if (!names.isEmpty()) tip += "\n" + T("Flags: %1").arg(names.join(", "));
+        // Mehrere Ton-Streams (OBS): Anzahl unten links, Namen im Tooltip
+        if (const int n = info->audioStreamCount(); n > 1) {
+            QFont f = p.font();
+            f.setPixelSize(m_viewMode == ViewMode::List ? 20 : 10);
+            f.setBold(true);
+            p.setFont(f);
+            const QString text = QString("\u266A %1").arg(n);
+            const QFontMetrics fm(f);
+            const int bh = fm.height() + 2, bottom = pm.height() - (m_viewMode == ViewMode::List ? kColorBarH * 2 : kColorBarH) - 3;
+            const QRectF badge(4, bottom - bh, fm.horizontalAdvance(text) + 8, bh);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0x18, 0x18, 0x1b, 220));
+            p.drawRoundedRect(badge, 3, 3);
+            p.setPen(Theme::audioClip.lighter(140));
+            p.drawText(badge, Qt::AlignCenter, text);
+            QStringList streams;
+            for (int k = 0; k < n; ++k) streams << info->audioStreamName(k);
+            tip += "\n" + T("%1 Audiospuren: %2").arg(n).arg(streams.join(", "));
+        }
     }
     p.end();
     item->setIcon(QIcon(pm));

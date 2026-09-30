@@ -36,10 +36,14 @@
 
 namespace {
 
-// Clipname, bei geänderter Geschwindigkeit mit Angabe wie DaVinci (z. B. „clip.mp4 (50 %)“)
-QString clipLabel(const Project* project, const Clip& c)
+// Clipname, bei geänderter Geschwindigkeit mit Angabe wie DaVinci (z. B. „clip.mp4 (50 %)“);
+// Audio aus Dateien mit mehreren Ton-Streams (OBS) mit Stream-Name („aufnahme.mkv · Mikro“)
+QString clipLabel(const Project* project, const Clip& c, TrackKind kind)
 {
-    const QString name = project->clipName(c); // Compound Clips: Name der Sequenz
+    QString name = project->clipName(c); // Compound Clips: Name der Sequenz
+    if (kind == TrackKind::Audio && !c.mediaPath.isEmpty())
+        if (const MediaInfo* m = project->mediaInfo(c.mediaPath); m && m->audioStreamCount() > 1)
+            name += QString(" · %1").arg(m->audioStreamName(c.audioStream));
     if (!c.isRetimed()) return name;
     if (!c.freeze && !c.reverse && c.speed == 1.0
         && std::all_of(c.ramp.begin(), c.ramp.end(), [](const SpeedPoint& p) { return p.speed == 1.0; }))
@@ -907,23 +911,25 @@ void TimelineView::drawTracks(QPainter& p)
 
     // Vorschau beim Reinziehen: Video auf V[n], Audio auf A[n]
     if (m_dropFrame >= 0 && !m_dropItems.isEmpty()) {
-        auto ghostRow = [&](TrackKind kind) -> std::optional<Row> {
-            if (auto r = rowFor({kind, m_dropTrack})) return r;
-            if (kind == TrackKind::Audio && !allRows.isEmpty()) { // neue Spur unter der letzten
+        // Spur k unter der Zielspur (weitere Ton-Streams); fehlende Audiospuren entstehen unter der letzten
+        auto ghostRow = [&](TrackKind kind, int k) -> std::optional<Row> {
+            const int idx = m_dropTrack + k;
+            if (auto r = rowFor({kind, idx})) return isLocked(*r) ? std::nullopt : r; // gesperrte Spur bekommt nichts
+            if (kind == TrackKind::Audio && !allRows.isEmpty()) {
                 const Row& last = allRows.last();
-                return Row{{kind, m_dropTrack}, last.y + last.h, m_view.audioTrackHeight};
+                const int missing = std::max(0, idx - int(tl.audio.size()));
+                return Row{{kind, idx}, last.y + last.h + missing * m_view.audioTrackHeight, m_view.audioTrackHeight};
             }
             return std::nullopt;
         };
-        auto vRow = ghostRow(TrackKind::Video);
-        auto aRow = ghostRow(TrackKind::Audio);
-        if (vRow && isLocked(*vRow)) vRow.reset(); // gesperrte Spur bekommt nichts
-        if (aRow && isLocked(*aRow)) aRow.reset();
+        const auto vRow = ghostRow(TrackKind::Video, 0);
         int start = m_dropFrame;
         for (const DropItem& it : m_dropItems) {
             const int x1 = int(frameToX(start)), x2 = int(frameToX(start + it.length));
             if (it.video && vRow) p.fillRect(QRect(x1, vRow->y + 1, x2 - x1, vRow->h - 3), Theme::alpha(Theme::videoClip, 150));
-            if (it.audio && aRow) p.fillRect(QRect(x1, aRow->y + 1, x2 - x1, aRow->h - 3), Theme::alpha(Theme::audioClip, 150));
+            for (int k = 0; k < it.audio; ++k)
+                if (const auto aRow = ghostRow(TrackKind::Audio, k))
+                    p.fillRect(QRect(x1, aRow->y + 1, x2 - x1, aRow->h - 3), Theme::alpha(Theme::audioClip, 150));
             start += it.length;
         }
         p.setPen(QPen(Theme::primary, 1, Qt::DashLine));
@@ -1253,7 +1259,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         }
         if (m_showNames && textRect.width() > 4) {
             p.setPen(QColor(0xf0, 0xf0, 0xf0));
-            p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, fm.elidedText(clipLabel(m_editor->project(), c), Qt::ElideRight, textRect.width()));
+            p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, fm.elidedText(clipLabel(m_editor->project(), c, kind), Qt::ElideRight, textRect.width()));
         }
     }
 
@@ -1342,7 +1348,7 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
                                 const QVector<TimelineOps::TransitionSpan>& spans, const QColor& color)
 {
     if (!m_cache) return;
-    const auto wave = m_cache->waveform(c.mediaPath);
+    const auto wave = m_cache->waveform(c.mediaPath, c.audioStream);
     if (!wave || wave->levels.isEmpty()) return;
 
     constexpr int N = Waveform::kBucketsPerFrame;
@@ -2348,7 +2354,7 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
     m_dropItems.clear();
     for (const QString& path : paths) {
         if (path == MediaPool::TitleItem) { // Titel aus dem Media Pool: 5 s, nur Video
-            m_dropItems << DropItem{5 * m_editor->project()->fps(), true, false};
+            m_dropItems << DropItem{5 * m_editor->project()->fps(), true, 0};
             continue;
         }
         if (const int seq = MediaPool::sequenceOfItem(path)) { // Timeline/Compound Clip aus dem Media Pool
@@ -2359,7 +2365,7 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
                 return std::any_of(tracks.begin(), tracks.end(), [](const Track& t) { return !t.clips.isEmpty(); });
             };
             const int len = TimelineOps::endFrame(s->timeline);
-            if (len > 0) m_dropItems << DropItem{len, has(s->timeline.video), has(s->timeline.audio)};
+            if (len > 0) m_dropItems << DropItem{len, has(s->timeline.video), has(s->timeline.audio) ? 1 : 0};
             continue;
         }
         MediaInfo info;
@@ -2368,7 +2374,7 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
         int in = 0, out = 0;
         if (dropRange(e->mimeData(), &in, &out)) info.length = out - in + 1; // Quell-In/Out aus dem Viewer
         if (info.length > 0 && (info.hasVideo || info.hasAudio))
-            m_dropItems << DropItem{info.length, info.hasVideo, info.hasAudio};
+            m_dropItems << DropItem{info.length, info.hasVideo, info.audioStreamCount()};
     }
     if (m_dropItems.isEmpty()) return;
     e->acceptProposedAction();

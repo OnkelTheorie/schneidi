@@ -3,6 +3,7 @@
 // (für "Projekt an den ersten Clip anpassen" wie DaVinci).
 
 #include "core/ProjectFormat.h"
+#include "core/Types.h"
 
 #include <QString>
 
@@ -13,6 +14,12 @@ namespace Mlt {
 class Producer;
 class Profile;
 }
+
+// Ton-Streams einer geöffneten Datei (aus den MLT-Metadaten, in Dateireihenfolge)
+QVector<AudioStreamInfo> audioStreamsOf(Mlt::Producer& p);
+// Spielt den n-ten Ton-Stream (0 = erster) statt des Standard-Streams; fehlt er (Datei ersetzt), bleibt es still.
+// Geht auch bei timewarp-Producern (reichen audio_index an die Datei weiter).
+void selectAudioStream(Mlt::Producer& p, int stream);
 
 // Quadratische Pixel, progressiv, BT.709
 std::unique_ptr<Mlt::Profile> makeProfile(const ProjectFormat& format);

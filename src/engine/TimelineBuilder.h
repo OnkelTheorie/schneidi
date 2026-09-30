@@ -68,7 +68,7 @@ public:
 private:
     // second: eigener Producer für die einblendende Seite eines Übergangs (sonst spult ein Decoder
     // bei zwei Stellen derselben Datei hin und her)
-    // retime: Clip, dessen Geschwindigkeit/Rückwärts/Standbild gilt (nullptr = Originaltempo)
+    // retime: Clip, dessen Geschwindigkeit/Rückwärts/Standbild und Ton-Stream gilt (nullptr = Originaltempo, Stream 0)
     Mlt::Producer* producerFor(const QString& path, TrackKind kind, int trackIndex, bool second = false,
                                const Clip* retime = nullptr);
 

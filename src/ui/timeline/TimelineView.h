@@ -323,7 +323,7 @@ private:
     struct DropItem {
         int length;
         bool video;
-        bool audio;
+        int audio; // Anzahl Ton-Streams (je eine Spur ab A[n])
     };
     std::function<MediaInfo(const QString&)> m_probe;
     QVector<DropItem> m_dropItems;

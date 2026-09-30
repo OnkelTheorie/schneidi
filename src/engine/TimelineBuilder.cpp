@@ -857,6 +857,9 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
         tag = QString("|w%1%2").arg(warp).arg(pitch ? "p" : "");
     }
     if (freeze) tag = QString("|f%1|%2%3").arg(retime->in).arg(retime->speed).arg(retime->reverse ? "r" : "");
+    // Ton-Stream (OBS: mehrere pro Datei) gehört zum Schlüssel: jeder Stream braucht seinen eigenen Producer
+    const int stream = kind == TrackKind::Audio && retime ? retime->audioStream : 0;
+    if (stream != 0) tag += QString("|s%1").arg(stream);
     const QString key = m_keyPrefix + QString("%1%2|%3|%4%5").arg(kind == TrackKind::Video ? "v" : "a").arg(second ? "x" : "")
                             .arg(trackIndex).arg(file, tag);
     m_used.insert(key);
@@ -884,8 +887,12 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     if (!p->is_valid()) return nullptr;
     if (warp != 1.0 && kind == TrackKind::Audio) p->set("warp_pitch", pitch ? 1 : 0);
     // Nicht benötigten Stream gar nicht erst dekodieren
-    if (kind == TrackKind::Video) p->set("audio_index", -1);
-    else p->set("video_index", -1);
+    if (kind == TrackKind::Video) {
+        p->set("audio_index", -1);
+    } else {
+        p->set("video_index", -1);
+        selectAudioStream(*p, stream);
+    }
     // Standbilder lassen sich beliebig lang ziehen (sonst begrenzt MLT auf die Standardlänge)
     if (const QByteArray svc = p->get("mlt_service"); svc == "qimage" || svc == "pixbuf") {
         const int len = 24 * 3600 * qRound(m_profile.fps());
