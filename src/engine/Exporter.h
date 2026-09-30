@@ -47,6 +47,9 @@ public:
     // Wie viele Bilder gleichzeitig gerendert werden: cores (0 = alle), aber 1, wenn die Timeline (auch verschachtelte
     // Sequenzen) einen frei0r-Effekt nutzt (Green Screen) – die sind nicht thread-sicher
     static int parallelFrames(const Timeline& tl, int cores);
+    // Liest die Timeline (auch verschachtelte Sequenzen) diese Datei? Dann darf der Export sie nicht überschreiben
+    // (Quelle und Ausgabe zerstört) – wie DaVinci verweigern statt nachfragen.
+    static bool readsFile(const Timeline& tl, const QString& path);
     bool start(const Timeline& tl, const ExportSettings& settings, QString* error);
     void cancel();
 

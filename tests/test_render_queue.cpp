@@ -6,6 +6,7 @@
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
 #include "core/TimelineOps.h"
+#include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
@@ -394,6 +395,24 @@ int main(int argc, char** argv)
         CHECK(job(p, 7)->status == RenderStatus::Queued);
         CHECK(!QFileInfo::exists(big.path));
         CHECK(!QFileInfo::exists(after.path));
+    }
+
+    // Ausgabe = Quelldatei der Timeline (auch über anderen Pfad dorthin): verweigert, Quelle bleibt unverändert
+    {
+        const QByteArray before = [&] { QFile f(clip); f.open(QIODevice::ReadOnly); return f.readAll(); }();
+        RenderJob self = mk(8, "clip.mp4", "h264");
+        RenderJob viaDir = mk(9, "unter/../clip.mp4", "h264");
+        CHECK(QDir(tmp.path()).mkpath("unter"));
+        p.setRenderQueue({self, viaDir});
+        order.clear();
+        CHECK(q.start());
+        CHECK(waitFor(q));
+        CHECK_EQ(order, (QVector<int>{8, 9}));
+        CHECK(job(p, 8)->status == RenderStatus::Failed && job(p, 8)->message.contains("clip.mp4"));
+        CHECK(job(p, 9)->status == RenderStatus::Failed);
+        QFile f(clip);
+        CHECK(f.open(QIODevice::ReadOnly) && f.readAll() == before);
+        CHECK(!Exporter::readsFile(p.renderTimeline(), tmp.filePath("anders.mp4")));
     }
     return Check::result();
 }

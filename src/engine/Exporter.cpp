@@ -10,6 +10,7 @@
 #include <Mlt.h>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSaveFile>
 #include <QSettings>
 #include <QThread>
@@ -50,7 +51,36 @@ bool usesFrei0r(const Timeline& tl)
     return false;
 }
 
+bool sameFile(const QString& a, const QString& b)
+{
+    const QString ca = QFileInfo(a).canonicalFilePath(), cb = QFileInfo(b).canonicalFilePath();
+    if (ca.isEmpty() || cb.isEmpty()) return false; // eine fehlt -> kann nicht dieselbe sein
+#ifdef Q_OS_WIN
+    return ca.compare(cb, Qt::CaseInsensitive) == 0;
+#else
+    return ca == cb;
+#endif
+}
+
+bool timelineReads(const Timeline& tl, const QString& path)
+{
+    for (const auto* tracks : {&tl.video, &tl.audio})
+        for (const Track& t : *tracks)
+            for (const Clip& c : t.clips)
+                if (!c.mediaPath.isEmpty() && sameFile(c.mediaPath, path)) return true;
+    return false;
+}
+
 } // namespace
+
+bool Exporter::readsFile(const Timeline& tl, const QString& path)
+{
+    if (timelineReads(tl, path)) return true;
+    if (tl.nested)
+        for (const Timeline& n : *tl.nested)
+            if (timelineReads(n, path)) return true;
+    return false;
+}
 
 bool Exporter::anyRunning()
 {
@@ -79,7 +109,6 @@ int Exporter::parallelFrames(const Timeline& tl, int cores)
         for (const Timeline& n : *tl.nested) frei0r = frei0r || usesFrei0r(n);
     return frei0r ? 1 : (cores > 0 ? cores : availableCores());
 }
-#include <QFileInfo>
 
 Exporter::Exporter(QObject* parent) : QObject(parent)
 {
@@ -103,6 +132,12 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         if (error) *error = end <= 0 ? T("Die Timeline ist leer.") : T("Der In/Out-Bereich enthält nichts.");
         return false;
     }
+    for (const QString& target : {s.path, s.subtitlePath})
+        if (!target.isEmpty() && readsFile(tl, target)) {
+            if (error) *error = T("%1 wird in der Timeline verwendet und kann nicht überschrieben werden.")
+                                    .arg(QFileInfo(target).fileName());
+            return false;
+        }
 
     // Andere Ausgabegröße als die Timeline: Pixelwerte (Position, Titel …) mitskalieren
     ProjectFormat out = s.format;

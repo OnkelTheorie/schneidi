@@ -442,6 +442,11 @@ bool DeliverPanel::addToQueue(bool confirm)
 {
     const RenderJob job = makeJob();
     const QString file = QFileInfo(job.path).fileName();
+    if (Exporter::readsFile(m_project->renderTimeline(job.sequence), job.path)) {
+        QMessageBox::warning(this, T("Zur Render-Warteschlange hinzufügen"),
+                             T("%1 wird in der Timeline verwendet und kann nicht überschrieben werden.").arg(file));
+        return false;
+    }
     QVector<RenderJob> q = m_project->renderQueue();
     const bool inQueue = std::any_of(q.cbegin(), q.cend(), [&](const RenderJob& j) {
         return j.path == job.path && j.status != RenderStatus::Done;
