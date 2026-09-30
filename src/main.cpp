@@ -134,7 +134,9 @@ int main(int argc, char* argv[])
     status(T("Öffne Fenster…"));
 
     MainWindow w(&engine);
-    w.show();
+    // Wie DaVinci maximiert starten; Screenshot-Testläufe (offscreen) behalten die feste Größe aus MainWindow
+    if (app.arguments().contains("--screenshot")) w.show();
+    else w.showMaximized();
     if (splash) splash->finish(&w);
     qInfo("Startzeit: MLT %lld ms, Fenster sichtbar nach %lld ms", afterMlt - beforeMlt, startTimer.elapsed());
 
