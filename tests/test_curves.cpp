@@ -147,6 +147,9 @@ void testSplit()
     Keys::setKey(m, AnimParam::Rotation, 60, 90);
     Keys::setHandle(m.keys[AnimParam::Rotation], 1, false, -30, 0, true);
     CHECK(checkSplit(m, 33, AnimParam::Rotation) < 1e-6);
+    // Schnitt hinter dem letzten Keyframe (stürzte ab) und vor dem ersten
+    CHECK(checkSplit(m, 70, AnimParam::Rotation) < 1e-6);
+    CHECK(checkSplit(m, 3, AnimParam::Rotation) < 1e-6);
 }
 
 void testProjectFile(const QString& dir)
