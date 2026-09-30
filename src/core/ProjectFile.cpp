@@ -285,7 +285,8 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     if (c.speed <= 0) c.speed = 1.0;
     c.reverse = o.value("reverse").toBool();
     c.freeze = o.value("freeze").toBool();
-    c.freezeFrame = c.freeze ? o.value("freezeFrame").toInt(-1) : -1;
+    // Ältere Dateien ohne freezeFrame: Bild = `in` beim Laden festhalten (Teilen/Trimmen verschiebt `in` später)
+    c.freezeFrame = c.freeze ? o.value("freezeFrame").toInt(c.in) : -1;
     c.keepPitch = o.value("keepPitch").toBool(true);
     for (const QJsonValue& v : o.value("ramp").toArray()) {
         const QJsonObject j = v.toObject();

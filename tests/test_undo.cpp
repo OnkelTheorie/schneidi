@@ -71,6 +71,28 @@ void testBrokenDissolves()
         p.undoStack()->undo(); // Undo bringt die Überblendung zurück
         CHECK_EQ(dissolves(p), 1);
     }
+
+    // Kopieren nur einer Seite einer Überblendung: Kopie blendet nicht über Schwarz aus
+    {
+        fileLen = 250;
+        Project p;
+        Selection sel;
+        Editor ed(&p, &sel);
+        setup(p, sel, ed);
+        sel.set({V(p, 0, 0)});
+        ed.copySelection();
+        ed.paste(1000);
+        CHECK_EQ(fades(p), 0);
+        CHECK_EQ(dissolves(p), 1); // Original unverändert
+
+        // Ausschneiden eines Untertitels: bleibt liegen (Zwischenablage kennt nur Clips), Zwischenablage unverändert
+        const int cue = ed.addSubtitle(2000);
+        sel.set({cue});
+        const int steps = p.undoStack()->index();
+        ed.cutSelection();
+        CHECK_EQ(p.undoStack()->index(), steps);
+        CHECK(ed.isSubtitle(cue));
+    }
 }
 
 } // namespace

@@ -368,6 +368,18 @@ int main(int argc, char** argv)
         CHECK(c && QFileInfo(c->mediaPath).fileName() == "b.mov");
     }
 
+    // --- Ältere Datei: Standbild ohne freezeFrame zeigt `in` – auch nach Teilen (verschiebt `in` des rechten Teils)
+    {
+        ProjectData d;
+        CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[{"path":"/x/a.mp4","length":100,"hasVideo":true}],
+            "timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":40,"out":79,"freeze":true}]}],"audio":[]}})",
+                                    tmp.filePath("alt.schneidi"), &d, &err));
+        int next = 1, link = 0;
+        const QVector<int> right = TimelineOps::splitAt(d.timeline, {1}, 20, [&] { return ++next; }, [&] { return ++link; });
+        const Clip* r = right.isEmpty() ? nullptr : TimelineOps::findClip(d.timeline, right[0]);
+        CHECK(r && r->stillFrame() == 40);
+    }
+
     // --- Gleichnamige Kameradateien (camA/C0001.MP4, camB/C0001.MP4): jede findet ihre eigene, nichts doppelt
     {
         const QString root = tmp.filePath("karte");

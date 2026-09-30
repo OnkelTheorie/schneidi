@@ -958,7 +958,9 @@ void Editor::placeSourceRange(const QString& path, int in, int out, int frame, i
 
 void Editor::copySelection()
 {
-    const Timeline& tl = m_project->timeline();
+    // Überblendung zu einem nicht mitkopierten Clip gehört nicht dazu (sonst blendet die Kopie über Schwarz aus)
+    Timeline tl = m_project->timeline();
+    TimelineOps::detachTransitions(tl, clipIdsOf(m_selection->ids()));
     QVector<ClipboardItem> items;
     int minStart = INT_MAX;
     for (int id : m_selection->ids()) {
@@ -975,8 +977,16 @@ void Editor::copySelection()
 
 void Editor::cutSelection()
 {
+    // Nur löschen, was auch in die Zwischenablage kommt (Clips): ausgewählte Untertitel/Keyframes/Übergänge gingen
+    // sonst verloren, und Einfügen brachte die alte Zwischenablage
+    const QVector<int> ids = editable(clipIdsOf(m_selection->ids()));
+    if (ids.isEmpty()) return;
     copySelection();
-    deleteSelection();
+    m_project->edit(T("Ausschneiden"), [&](Timeline& tl) {
+        TimelineOps::detachTransitions(tl, ids);
+        for (int id : ids) TimelineOps::removeClip(tl, id);
+    });
+    m_selection->clear();
 }
 
 void Editor::paste(int frame)
