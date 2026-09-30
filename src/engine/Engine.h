@@ -87,6 +87,16 @@ public:
     LoudnessReading loudness() const;
     void resetLoudness(); // Integrated/LRA neu beginnen (wie der Reset-Knopf in DaVinci)
 
+    // Audio-Ausgabe (Menü Wiedergabe → Audio-Ausgabe, gespeichert in QSettings). Größerer Puffer gegen Knacken/
+    // Aussetzer (Windows/WASAPI braucht mehr als PulseAudio), dafür etwas mehr Verzögerung. Wirkt ab dem nächsten Play.
+    static int audioBuffer();
+    void setAudioBuffer(int samples);
+    // Audiotreiber von SDL (leer = automatisch; Windows: "directsound" (Standard)/"wasapi"). Wirkt nach dem Neustart.
+    static QString audioDriver();
+    static void setAudioDriver(const QString& driver);
+    // Vor init() aufrufen: setzt den gewählten Treiber für SDL (eine gesetzte Umgebungsvariable hat Vorrang)
+    static void applyAudioSettings();
+
 signals:
     void frameReady(const QImage& image);
     void positionChanged(int frame);

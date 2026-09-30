@@ -13,6 +13,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QPainter>
+#include <QSettings>
 #include <cstring>
 #include <utility>
 
@@ -94,7 +95,7 @@ bool Engine::createConsumer(QString* error)
     // Kleiner Vorlauf-Puffer: sonst läuft der Ton nach Pause/Seek noch ~1 s weiter
     m_consumer->set("buffer", 2);
     m_consumer->set("prefill", 1);
-    m_consumer->set("audio_buffer", 1024);
+    m_consumer->set("audio_buffer", audioBuffer());
     m_consumer->listen("consumer-frame-show", this, (mlt_listener)EngineCallbacks::onFrameShow);
     return true;
 }
@@ -282,6 +283,51 @@ void Engine::applyAudioState()
     m_consumer->set("scrub_audio", playing ? 1 : 0);
     // Lautheit nur bei normaler Wiedergabe der Timeline (Spulen/Rückwärts/Quelle verfälschen die Messung)
     m_loudness->active = m_speed == 1.0 && m_mode == Mode::Timeline;
+}
+
+int Engine::audioBuffer()
+{
+#ifdef Q_OS_WIN
+    constexpr int fallback = 2048; // 1024 knackte unter Windows (Nutzer-Test 1)
+#else
+    constexpr int fallback = 1024;
+#endif
+    const int samples = QSettings().value("audio/buffer", fallback).toInt();
+    return samples >= 256 && samples <= 16384 ? samples : fallback;
+}
+
+void Engine::setAudioBuffer(int samples)
+{
+    QSettings().setValue("audio/buffer", samples);
+    // sdl2_audio öffnet das Gerät bei jedem Play neu (applyAudioState) und liest den Wert dann
+    if (m_consumer) m_consumer->set("audio_buffer", audioBuffer());
+    qInfo("Audio-Puffer: %d Samples", audioBuffer());
+}
+
+QString Engine::audioDriver()
+{
+#ifdef Q_OS_WIN
+    // SDL 2.32 über WASAPI knackte an jeder Bildgrenze und verfälschte den Pegel (7.1-Headset, 44,1 kHz);
+    // DirectSound lieferte im Mitschnitt denselben Ton sauber (Nutzer-Test 1, docs/windows.md)
+    constexpr const char* fallback = "directsound";
+#else
+    constexpr const char* fallback = "";
+#endif
+    return QSettings().value("audio/driver", fallback).toString();
+}
+
+void Engine::setAudioDriver(const QString& driver)
+{
+    QSettings().setValue("audio/driver", driver);
+}
+
+void Engine::applyAudioSettings()
+{
+    const QString driver = audioDriver();
+    if (!driver.isEmpty() && !qEnvironmentVariableIsSet("SDL_AUDIODRIVER"))
+        qputenv("SDL_AUDIODRIVER", driver.toUtf8());
+    const QString used = qEnvironmentVariable("SDL_AUDIODRIVER");
+    qInfo("Audio: Treiber %s, Puffer %d Samples", used.isEmpty() ? "automatisch" : qPrintable(used), audioBuffer());
 }
 
 LoudnessReading Engine::loudness() const

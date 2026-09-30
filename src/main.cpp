@@ -9,15 +9,65 @@
 
 #include <QApplication>
 #include <QAction>
+#include <QElapsedTimer>
 #include <QMessageBox>
+#include <QPainter>
+#include <QSplashScreen>
 #include <QProcess>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QTimer>
 #include <clocale>
 
+namespace {
+
+// Ladefenster: Logo (wie assets/schneidi.svg, von Hand gezeichnet – ohne QtSvg), Name und Version in den Designfarben
+QPixmap splashPixmap()
+{
+    const qreal dpr = qApp->devicePixelRatio();
+    QPixmap pm(QSize(460, 240) * dpr);
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Theme::panel);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(Theme::border, 1));
+    p.drawRect(QRectF(0.5, 0.5, 459, 239));
+    p.translate(36, 56);
+    p.scale(1.6, 1.6); // Logo 64 -> ~100 px
+    p.setPen(Qt::NoPen);
+    const auto box = [&p](qreal x, qreal y, qreal w, qreal h, qreal r, const char* color) {
+        p.setBrush(QColor(color));
+        p.drawRoundedRect(QRectF(x, y, w, h), r, r);
+    };
+    box(4, 4, 56, 56, 12, "#232327");
+    box(12, 18, 40, 6, 2, "#3d7fd6");
+    box(12, 29, 24, 6, 2, "#3d7fd6");
+    box(38, 29, 14, 6, 2, "#8a5cc7");
+    box(12, 40, 40, 6, 2, "#3f9a5a");
+    box(30, 12, 3, 40, 1, "#e8414a");
+    p.drawPolygon(QPolygonF{QPointF(26, 10), QPointF(37, 10), QPointF(31.5, 16)});
+    p.resetTransform();
+    QFont title = qApp->font();
+    title.setPixelSize(40);
+    title.setBold(true);
+    p.setFont(title);
+    p.setPen(Theme::text);
+    p.drawText(QRectF(160, 70, 280, 50), Qt::AlignLeft | Qt::AlignVCenter, "schneidi");
+    QFont small = qApp->font();
+    small.setPixelSize(13);
+    p.setFont(small);
+    p.setPen(Theme::textDim);
+    p.drawText(QRectF(162, 118, 280, 24), Qt::AlignLeft | Qt::AlignVCenter,
+               T("Version %1").arg(QCoreApplication::applicationVersion()));
+    return pm;
+}
+
+} // namespace
+
 int main(int argc, char* argv[])
 {
+    QElapsedTimer startTimer;
+    startTimer.start();
     // Testhilfe: --screenshot bild.png [--wait ms] läuft unsichtbar und stumm (kein Fenster auf dem Desktop),
     // löst --actions aus, speichert das Fensterbild und beendet sich
     QString screenshot;
@@ -56,16 +106,36 @@ int main(int argc, char* argv[])
     Theme::apply(app);
     InputBindings::instance().load();
 
+    // Ladefenster: das Laden der MLT-Module dauert (unter Windows beim ersten Start deutlich, Virenscanner)
+    std::unique_ptr<QSplashScreen> splash;
+    const auto status = [&splash](const QString& text) {
+        if (!splash) return;
+        splash->showMessage("  " + text + "\n", Qt::AlignLeft | Qt::AlignBottom, Theme::textDim);
+        QCoreApplication::processEvents();
+    };
+    if (screenshot.isEmpty()) {
+        splash = std::make_unique<QSplashScreen>(splashPixmap());
+        splash->show();
+        status(T("Lade Module…"));
+    }
+
     Log::installMlt(); // vor der MLT-Initialisierung: fehlende Module landen auch im Log
+    Engine::applyAudioSettings(); // vor der MLT-Initialisierung (SDL liest den Audiotreiber beim Start)
     Engine engine;
     QString error;
+    const qint64 beforeMlt = startTimer.elapsed();
     if (!engine.init(&error)) {
+        splash.reset();
         QMessageBox::critical(nullptr, "schneidi", error);
         return 1;
     }
+    const qint64 afterMlt = startTimer.elapsed();
+    status(T("Öffne Fenster…"));
 
     MainWindow w(&engine);
     w.show();
+    if (splash) splash->finish(&w);
+    qInfo("Startzeit: MLT %lld ms, Fenster sichtbar nach %lld ms", afterMlt - beforeMlt, startTimer.elapsed());
 
     // Dateien aus der Kommandozeile direkt in den Media Pool
     QStringList files = app.arguments().mid(1);
