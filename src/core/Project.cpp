@@ -207,6 +207,7 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
 {
     Timeline after = timeline();
     fn(after);
+    TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // Reststücke aus clearRange
     const QString key = mergeKey.isEmpty() ? QString() : QString("%1#%2").arg(mergeKey).arg(m_mergeSession);
     m_undo.push(new SnapshotCommand(this, text, m_current, timeline(), after, key)); // push ruft redo()
 }
@@ -285,6 +286,7 @@ void Project::editSequences(const QString& text, const std::function<void(QVecto
     int cur = m_current;
     fn(after, cur);
     if (after.isEmpty()) return;
+    for (Sequence& seq : after) TimelineOps::resolvePendingLinks(seq.timeline, [this] { return newLinkId(); });
     if (std::none_of(after.begin(), after.end(), [&](const Sequence& s) { return s.id == cur; })) cur = after[0].id;
     m_undo.push(new SequencesCommand(this, text, m_sequences, m_current, after, cur)); // push ruft redo()
 }

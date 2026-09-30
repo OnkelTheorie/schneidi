@@ -34,7 +34,11 @@ QVector<int> linkedGroup(const Timeline& tl, int clipId);
 
 // Überschreibt den Bereich [start, end) auf einer Spur (wie "Overwrite" in DaVinci):
 // Clips darin werden gekürzt, geteilt oder entfernt. Nichts rutscht nach.
+// Wird ein verknüpfter Clip geteilt, bekommt das rechte Stück vorläufig die linkId -alt (alle Spuren gleich);
+// resolvePendingLinks (ruft Project::edit auf) macht daraus eine neue gemeinsame Verknüpfung.
 void clearRange(Track& track, int start, int end, const IdGen& newId);
+// Vorläufige (negative) linkIds aus clearRange durch neue ersetzen: gleiche vorläufige Id -> gleiche neue Id
+void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId);
 
 // Legt einen Clip im Overwrite-Modus auf die Spur.
 void placeClip(Track& track, const Clip& clip, const IdGen& newId);

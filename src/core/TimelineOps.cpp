@@ -136,6 +136,18 @@ QVector<int> linkedGroup(const Timeline& tl, int clipId)
     return ids;
 }
 
+void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId)
+{
+    QHash<int, int> map;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (Track& t : tl.tracks(k))
+            for (Clip& c : t.clips)
+                if (c.linkId < 0) {
+                    if (!map.contains(c.linkId)) map[c.linkId] = newLinkId();
+                    c.linkId = map[c.linkId];
+                }
+}
+
 void clearRange(Track& track, int start, int end, const IdGen& newId)
 {
     if (end <= start) return;
@@ -152,7 +164,7 @@ void clearRange(Track& track, int start, int end, const IdGen& newId)
             left.fadeOut = 0;
             Clip right = c;
             right.id = newId();
-            right.linkId = 0;
+            right.linkId = c.linkId > 0 ? -c.linkId : c.linkId; // vorläufig, siehe resolvePendingLinks
             right.in = c.in + (end - c.start);
             right.start = end;
             right.transIn = 0;

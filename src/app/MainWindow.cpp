@@ -25,6 +25,7 @@
 #include "engine/RenderCache.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
+#include "engine/Exporter.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
@@ -57,6 +58,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFile>
+#include <QLockFile>
 #include <QSaveFile>
 #include <QMessageBox>
 #include <QPushButton>
@@ -1170,8 +1172,26 @@ const QString kFileFilter = T("schneidi-Projekt (*.%1)").arg(ProjectFile::Extens
 
 QString MainWindow::autosavePath()
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    return QDir(dir).filePath(QString("autosave.%1").arg(ProjectFile::Extension));
+    const QDir dir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+    if (m_autosaveSlot == 0) {
+        dir.mkpath(".");
+        // ersten freien Platz belegen; eine abgestürzte Instanz hinterlässt eine verwaiste Sperre, die QLockFile erkennt
+        for (int slot = 1; slot <= 9 && m_autosaveSlot == 0; ++slot) {
+            auto lock = std::make_unique<QLockFile>(dir.filePath(QString("autosave-%1.lock").arg(slot)));
+            if (lock->tryLock(0)) {
+                m_autosaveSlot = slot;
+                m_autosaveLock = std::move(lock);
+            }
+        }
+        if (m_autosaveSlot == 0) m_autosaveSlot = 10; // alles belegt: eigener Platz ohne Sperre
+    }
+    const QString name = m_autosaveSlot == 1 ? QString("autosave") : QString("autosave-%1").arg(m_autosaveSlot);
+    return dir.filePath(QString("%1.%2").arg(name, ProjectFile::Extension));
+}
+
+QString MainWindow::autosaveKey() const
+{
+    return m_autosaveSlot <= 1 ? QString("autosave/projectPath") : QString("autosave/projectPath-%1").arg(m_autosaveSlot);
 }
 
 void MainWindow::updateTitle()
@@ -1253,6 +1273,7 @@ bool MainWindow::openProject(const QString& path)
 bool MainWindow::applyLoaded(ProjectData data, const QString& path)
 {
     // Fehlende Medien wie DaVinci "Media Offline": Ordner durchsuchen lassen oder offline lassen
+    int relinked = 0;
     for (QStringList missing = ProjectFile::missingMedia(data); !missing.isEmpty();
          missing = ProjectFile::missingMedia(data)) {
         QMessageBox box(QMessageBox::Warning, T("Medien fehlen"),
@@ -1269,7 +1290,9 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path)
         const QString dir = QFileDialog::getExistingDirectory(this, T("Ordner mit den Medien wählen"),
                                                               QFileInfo(path).absolutePath());
         if (dir.isEmpty()) break;
-        if (ProjectFile::relink(&data, dir) == 0)
+        const int found = ProjectFile::relink(&data, dir);
+        relinked += found;
+        if (found == 0)
             QMessageBox::information(this, T("Medien fehlen"), T("In diesem Ordner wurden keine der Dateien gefunden."));
     }
 
@@ -1278,6 +1301,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path)
     m_probeCache.clear();
     m_engine->setFormat(data.format); // Medienlängen in der Datei zählen schon in dieser Framerate
     m_project->load(data);
+    if (relinked > 0) m_project->markModified(); // neue Pfade stehen erst nach dem Speichern in der Datei
     m_sourcePos.clear();
     m_engine->showTimeline(data.playhead);
     m_timeline->view()->setPlayhead(data.playhead);
@@ -1343,8 +1367,8 @@ void MainWindow::autosave()
     ProjectData data = m_project->data();
     data.playhead = m_timeline->view()->playhead();
     QDir().mkpath(QFileInfo(autosavePath()).absolutePath());
-    if (ProjectFile::save(data, autosavePath(), nullptr))
-        QSettings().setValue("autosave/projectPath", m_projectPath); // wohin die Sicherung gehört
+    if (const QString path = autosavePath(); ProjectFile::save(data, path, nullptr))
+        QSettings().setValue(autosaveKey(), m_projectPath); // wohin die Sicherung gehört
 }
 
 void MainWindow::disableAutosave()
@@ -1360,13 +1384,13 @@ void MainWindow::removeAutosave()
     if (m_autosaveDisabled) return; // Testlauf: echte Sicherung des Nutzers nicht anfassen
 
     QFile::remove(autosavePath());
-    QSettings().remove("autosave/projectPath");
+    QSettings().remove(autosaveKey());
 }
 
-void MainWindow::offerAutosaveRestore()
+bool MainWindow::offerAutosaveRestore()
 {
-    if (!QFileInfo::exists(autosavePath())) return;
-    const QString original = QSettings().value("autosave/projectPath").toString();
+    if (m_autosaveDisabled || !QFileInfo::exists(autosavePath())) return false;
+    const QString original = QSettings().value(autosaveKey()).toString();
     const QString name = original.isEmpty() ? T("Unbenannt") : QFileInfo(original).fileName();
     const auto answer = QMessageBox::question(
         this, T("Wiederherstellen"),
@@ -1375,12 +1399,12 @@ void MainWindow::offerAutosaveRestore()
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
     if (answer != QMessageBox::Yes) {
         removeAutosave();
-        return;
+        return false;
     }
     ProjectData data;
-    if (!ProjectFile::load(autosavePath(), &data, nullptr)) return;
-    applyLoaded(std::move(data), original);
+    if (!ProjectFile::load(autosavePath(), &data, nullptr) || !applyLoaded(std::move(data), original)) return false;
     m_project->markModified(); // wiederhergestellt, aber noch nicht in die Projektdatei gespeichert
+    return true;
 }
 
 void MainWindow::addRecent(const QString& path)
@@ -1410,6 +1434,13 @@ void MainWindow::rebuildRecentMenu()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    // Laufender Export würde beim Beenden abgebrochen und die halbe Datei gelöscht -> erst fragen
+    if (Exporter::anyRunning() && !m_autosaveDisabled
+        && QMessageBox::question(this, "schneidi", T("Es wird gerade gerendert. Beenden bricht das Rendern ab. Trotzdem beenden?"),
+                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+        event->ignore();
+        return;
+    }
     if (!maybeSave()) {
         event->ignore();
         return;

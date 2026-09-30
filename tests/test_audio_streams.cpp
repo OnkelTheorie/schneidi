@@ -116,6 +116,38 @@ void testEditor()
     CHECK_EQ(old.audioStreamCount(), 1);
 }
 
+// Überschreiben mitten in einen verknüpften Clip: die Reststücke rechts bleiben untereinander verknüpft
+// (eigene Gruppe), die linken behalten die alte Verknüpfung
+void testOverwriteKeepsLinks()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia(obsMedia("/x/lang.mkv", 200, 2));
+    p.addMedia(obsMedia("/x/kurz.mkv", 20, 2));
+    ed.addMediaAt({"/x/lang.mkv"}, 0);
+    ed.addMediaAt({"/x/kurz.mkv"}, 50);
+    const Timeline& tl = p.timeline();
+    auto piece = [&](TrackKind k, int track, int start) -> const Clip* {
+        for (const Clip& c : tl.tracks(k)[track].clips)
+            if (c.start == start) return &c;
+        return nullptr;
+    };
+    const Clip* vl = piece(TrackKind::Video, 0, 0);
+    const Clip* vr = piece(TrackKind::Video, 0, 70);
+    if (!CHECK(vl && vr)) return;
+    CHECK(vr->linkId > 0 && vr->linkId != vl->linkId);
+    for (int a = 0; a < 2; ++a) {
+        const Clip* l = piece(TrackKind::Audio, a, 0);
+        const Clip* r = piece(TrackKind::Audio, a, 70);
+        if (CHECK(l && r)) {
+            CHECK_EQ(l->linkId, vl->linkId);
+            CHECK_EQ(r->linkId, vr->linkId);
+        }
+    }
+    CHECK_EQ(TimelineOps::linkedGroup(tl, vr->id).size(), 3);
+}
+
 void testProjectFile()
 {
     QTemporaryDir tmp;
@@ -258,6 +290,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("audio-streams");
     testEditor();
+    testOverwriteKeepsLinks();
     testProjectFile();
     if (!Check::haveFfmpeg()) {
         Check::result();

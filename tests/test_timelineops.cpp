@@ -55,7 +55,8 @@ int main(int argc, char** argv)
         Track t;
         placeClip(t, mk(1, "a", 0, 100), ids.gen());
         CHECK_EQ(t.clips.size(), 1);
-        // mitten hinein: a wird geteilt, rechter Teil neue ID, ohne Verknüpfung, Übergang/Fade an den Schnittkanten weg
+        // mitten hinein: a wird geteilt, rechter Teil neue ID und vorläufige Verknüpfung (-alt, siehe resolvePendingLinks),
+        // Übergang/Fade an den Schnittkanten weg
         t.clips[0].linkId = 7;
         t.clips[0].transIn = t.clips[0].transOut = 10;
         t.clips[0].fadeIn = t.clips[0].fadeOut = 5;
@@ -63,7 +64,14 @@ int main(int argc, char** argv)
         Timeline tl = tracks(1, 0);
         tl.video[0] = t;
         CHECK_EQ(dump(tl), QString("V1: a[0-40|0-39] b[40-60|0-19] a[60-100|60-99]"));
-        CHECK(t.clips[0].id == 1 && t.clips[2].id == 101 && t.clips[2].linkId == 0 && t.clips[0].linkId == 7);
+        CHECK(t.clips[0].id == 1 && t.clips[2].id == 101 && t.clips[2].linkId == -7 && t.clips[0].linkId == 7);
+        {
+            Timeline pending = tl;
+            int next = 20;
+            resolvePendingLinks(pending, [&] { return next++; });
+            CHECK_EQ(pending.video[0].clips[2].linkId, 20);
+            CHECK_EQ(pending.video[0].clips[0].linkId, 7);
+        }
         CHECK(t.clips[0].transIn == 10 && t.clips[0].transOut == 0 && t.clips[0].fadeIn == 5 && t.clips[0].fadeOut == 0);
         CHECK(t.clips[2].transIn == 0 && t.clips[2].transOut == 10 && t.clips[2].fadeIn == 0 && t.clips[2].fadeOut == 5);
         // Ende und Anfang abschneiden, ganz überdeckten Clip entfernen

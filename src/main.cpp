@@ -157,8 +157,10 @@ int main(int argc, char* argv[])
     // Testläufe (--demo/--actions) lassen die automatische Sicherung des Nutzers in Ruhe
     const bool testRun = demo || !actions.isEmpty() || !screenshot.isEmpty();
     if (testRun) w.disableAutosave();
-    if (!projectFile.isEmpty()) w.openProject(QFileInfo(projectFile).absoluteFilePath());
-    else if (!testRun) w.offerAutosaveRestore();
+    // Erst die Sicherung nach einem Absturz anbieten – sonst löscht das Öffnen per Doppelklick sie ungefragt.
+    // Wiederhergestellt: dieses Projekt bleibt offen (die Datei lässt sich danach normal öffnen).
+    const bool restored = !testRun && w.offerAutosaveRestore();
+    if (!projectFile.isEmpty() && !restored) w.openProject(QFileInfo(projectFile).absoluteFilePath());
     if (!formatArg.isEmpty()) {
         const QStringList parts = formatArg.split(QRegularExpression("[x@]"));
         ProjectFormat f;

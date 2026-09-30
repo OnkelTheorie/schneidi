@@ -4,9 +4,11 @@
 #include "core/Types.h"
 
 #include <QHash>
+#include <QLockFile>
 #include <QMainWindow>
 #include <QTimer>
 #include <functional>
+#include <memory>
 
 class Engine;
 class Project;
@@ -39,7 +41,7 @@ public:
 
     // Projektdatei (.schneidi): nur Verweise auf die Originalmedien + Schnitt
     bool openProject(const QString& path);
-    void offerAutosaveRestore(); // nach Absturz: letzte automatische Sicherung anbieten
+    bool offerAutosaveRestore(); // nach Absturz: letzte automatische Sicherung anbieten (true = wiederhergestellt)
     void disableAutosave();      // Testläufe: keine Sicherung schreiben/löschen
     // Projekteinstellungen setzen (ein Undo-Schritt); Testhilfe --format
     void setProjectFormat(const ProjectFormat& format);
@@ -102,7 +104,10 @@ private:
     void rebuildRecentMenu();
     void autosave();
     void removeAutosave();
-    static QString autosavePath();
+    // Jede laufende Instanz hat einen eigenen Sicherungs-Platz (QLockFile), damit sich zwei Fenster nicht
+    // gegenseitig die Sicherung überschreiben oder löschen; Platz 1 = „autosave.schneidi“ wie bisher
+    QString autosavePath();
+    QString autosaveKey() const; // QSettings-Schlüssel: zu welchem Projekt die Sicherung gehört
     void createCompoundClip(); // Name abfragen wie DaVinci
     void openSelectedCompound();
 
@@ -151,5 +156,7 @@ private:
     class QLabel* m_titleLabel = nullptr;
     class QTimer* m_autosaveTimer = nullptr;
     bool m_autosaveDisabled = false;
+    int m_autosaveSlot = 0; // 0 = noch keiner belegt
+    std::unique_ptr<QLockFile> m_autosaveLock;
     bool m_restartRequested = false;
 };
