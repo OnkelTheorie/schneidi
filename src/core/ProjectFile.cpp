@@ -13,6 +13,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QStandardPaths>
+#include <QDateTime>
+#include <QCryptographicHash>
 #include <QSet>
 #include <algorithm>
 
@@ -605,6 +608,41 @@ bool save(const ProjectData& data, const QString& path, QString* error)
         return false;
     }
     return true;
+}
+
+QString backupDir(const QString& projectPath)
+{
+    const QString root = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("backups");
+    if (projectPath.isEmpty()) return root;
+    // Name + Kurz-Hash des Pfads: gleichnamige Projekte in verschiedenen Ordnern mischen sich nicht
+    const QFileInfo fi(projectPath);
+    const QString hash = QCryptographicHash::hash(fi.absoluteFilePath().toUtf8(), QCryptographicHash::Sha1).toHex().left(8);
+    return QDir(root).filePath(fi.completeBaseName() + "-" + hash);
+}
+
+QString backup(const QString& projectPath, int keep)
+{
+    QFile current(projectPath);
+    if (!current.open(QIODevice::ReadOnly)) return {}; // noch nie gespeichert
+    const QByteArray bytes = current.readAll();
+    const QDir dir(backupDir(projectPath));
+    if (!QDir().mkpath(dir.path())) return {};
+    const QString filter = QString("*.%1").arg(Extension);
+    QStringList existing = dir.entryList({filter}, QDir::Files, QDir::Name); // Zeitstempel im Namen -> sortiert
+    if (!existing.isEmpty()) {
+        QFile newest(dir.filePath(existing.last()));
+        if (newest.open(QIODevice::ReadOnly) && newest.readAll() == bytes) return {};
+    }
+    // Zeitstempel ohne Doppelpunkte (Windows), mit Millisekunden: Namen sortieren sich zeitlich
+    QString target;
+    for (QDateTime t = QDateTime::currentDateTime(); target.isEmpty() || QFileInfo::exists(target); t = t.addMSecs(1))
+        target = dir.filePath(QString("%1.%2").arg(t.toString("yyyy-MM-dd HH-mm-ss-zzz"), Extension));
+    QFile out(target);
+    if (!out.open(QIODevice::WriteOnly) || out.write(bytes) != bytes.size()) return {};
+    out.close();
+    existing = dir.entryList({filter}, QDir::Files, QDir::Name);
+    for (int i = 0; i + keep < existing.size(); ++i) QFile::remove(dir.filePath(existing[i]));
+    return target;
 }
 
 bool load(const QString& path, ProjectData* data, QString* error)

@@ -1,3 +1,4 @@
+#include "buildinfo.h"
 #include "app/InputBindings.h"
 #include "app/Log.h"
 #include "core/ProjectFile.h"
@@ -90,7 +91,7 @@ int main(int argc, char* argv[])
     }
     QApplication app(argc, argv);
     QApplication::setApplicationName("schneidi");
-    QApplication::setApplicationVersion("0.1.0");
+    QApplication::setApplicationVersion(QString("0.1.0 (%1)").arg(SCHNEIDI_BUILD)); // Git-Stand, siehe cmake/BuildInfo.cmake
     Log::install();
     // Testhilfe: --lang en|de gilt nur für diesen Lauf (Einstellung bleibt unverändert)
     I18n::install(langOverride);

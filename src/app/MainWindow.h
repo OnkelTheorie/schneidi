@@ -91,6 +91,7 @@ private:
     void openProjectDialog();
     bool save();
     bool saveAs();
+    void openBackupDialog();
     bool saveTo(const QString& path);
     bool maybeSave(); // false = Abbrechen
     void offerRestart(const QString& message, const QString& now, const QString& later);

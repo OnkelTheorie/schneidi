@@ -227,6 +227,40 @@ ProjectData fullProject(const QString& dir)
 
 } // namespace
 
+// Sicherungskopien: alter Stand landet im Backup-Ordner, gleicher Stand nicht doppelt, nur die neuesten bleiben
+void testBackups(const QString& dir)
+{
+    QDir(ProjectFile::backupDir({})).removeRecursively(); // Testmodus-Pfad, Reste früherer Läufe
+    const QString path = dir + "/backup-test.schneidi";
+    CHECK(ProjectFile::backup(path).isEmpty()); // noch nie gespeichert
+    ProjectData d;
+    QString err;
+    QStringList states;
+    for (int i = 0; i < 6; ++i) {
+        d.playhead = i;
+        const QString copy = ProjectFile::backup(path, 4);
+        CHECK_EQ(copy.isEmpty(), i == 0);
+        CHECK(ProjectFile::save(d, path, &err));
+        QFile f(path);
+        CHECK(f.open(QIODevice::ReadOnly));
+        states << f.readAll();
+    }
+    CHECK(ProjectFile::backup(path, 4).isEmpty() == false); // Stand 5 ist noch nicht gesichert
+    CHECK(ProjectFile::backup(path, 4).isEmpty());          // jetzt schon -> keine Doppelung
+    const QDir bdir(ProjectFile::backupDir(path));
+    const QStringList files = bdir.entryList({"*.schneidi"}, QDir::Files, QDir::Name);
+    CHECK_EQ(files.size(), 4);
+    // Die vier neuesten Stände 2..5 in zeitlicher Reihenfolge
+    for (int i = 0; i < files.size() && i < 4; ++i) {
+        QFile f(bdir.filePath(files[i]));
+        CHECK(f.open(QIODevice::ReadOnly));
+        CHECK(f.readAll() == states[2 + i].toUtf8());
+    }
+    // gleichnamiges Projekt in anderem Ordner: eigener Backup-Ordner
+    CHECK(ProjectFile::backupDir(path) != ProjectFile::backupDir(dir + "/medien/backup-test.schneidi"));
+    QDir(ProjectFile::backupDir({})).removeRecursively();
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -240,6 +274,8 @@ int main(int argc, char** argv)
         QFile file(dir + "/medien/" + f);
         CHECK(file.open(QIODevice::WriteOnly)); // leere Platzhalter: Projektdatei prüft nur, ob es sie gibt
     }
+
+    testBackups(dir);
 
     // --- Speichern -> Laden -> Speichern identisch, alle Werte gleich
     const ProjectData orig = fullProject(dir);

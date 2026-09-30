@@ -780,6 +780,7 @@ void MainWindow::buildActions()
     rebuildRecentMenu();
     makeAction(file, "project_save", T("Projekt speichern"), QKeySequence("Ctrl+S"), [this] { save(); });
     makeAction(file, "project_save_as", T("Projekt speichern unter…"), QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
+    makeAction(file, "project_backup_open", T("Sicherungskopie öffnen…"), QKeySequence(), [this] { openBackupDialog(); });
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
     makeAction(file, "new_bin", T("Neuer Bin"), QKeySequence("Ctrl+Shift+N"), [this] { m_mediaPool->newBin(); });
@@ -1284,6 +1285,26 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path)
     return true;
 }
 
+// Sicherungskopie laden (wie DaVinci „Project Backups“): öffnet als unbenanntes Projekt, damit sie nie
+// versehentlich in den Backup-Ordner gespeichert wird; Speichern fragt nach dem Ziel
+void MainWindow::openBackupDialog()
+{
+    if (!maybeSave()) return;
+    QString dir = ProjectFile::backupDir(m_projectPath);
+    if (!QFileInfo::exists(dir)) dir = ProjectFile::backupDir({});
+    QDir().mkpath(dir);
+    const QString path = QFileDialog::getOpenFileName(this, T("Sicherungskopie öffnen"), dir, kFileFilter);
+    if (path.isEmpty()) return;
+    ProjectData data;
+    QString error;
+    if (!ProjectFile::load(path, &data, &error)) {
+        QMessageBox::warning(this, T("Projekt öffnen"), T("%1 konnte nicht geöffnet werden:\n%2").arg(path, error));
+        return;
+    }
+    if (!applyLoaded(std::move(data), {})) return;
+    m_project->markModified();
+}
+
 bool MainWindow::save()
 {
     return m_projectPath.isEmpty() ? saveAs() : saveTo(m_projectPath);
@@ -1305,6 +1326,7 @@ bool MainWindow::saveTo(const QString& path)
     ProjectData data = m_project->data();
     data.playhead = m_timeline->view()->playhead();
     QString error;
+    if (!m_autosaveDisabled) ProjectFile::backup(path); // bisherigen Stand sichern (Testlauf: nichts ablegen)
     if (!ProjectFile::save(data, path, &error)) {
         QMessageBox::warning(this, T("Projekt speichern"), T("Speichern fehlgeschlagen:\n%1").arg(error));
         return false;

@@ -16,6 +16,15 @@ if(WIN32)
     add_compile_definitions(SCHNEIDI_MLT_DEV_PREFIX="${MLT_PREFIX}")
 endif()
 
+# Git-Stand fürs Log/„Über“ (buildinfo.h, bei jedem Build aktualisiert)
+find_package(Git QUIET)
+set(SCHNEIDI_BUILDINFO ${CMAKE_BINARY_DIR}/generated/buildinfo.h)
+add_custom_target(schneidi_buildinfo
+    COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR} -DOUT=${SCHNEIDI_BUILDINFO} -DGIT=${GIT_EXECUTABLE}
+            -P ${PROJECT_SOURCE_DIR}/cmake/BuildInfo.cmake
+    BYPRODUCTS ${SCHNEIDI_BUILDINFO}
+    COMMENT "Build-Kennung")
+
 add_executable(schneidi
     src/main.cpp
 
@@ -80,7 +89,8 @@ qt_add_resources(schneidi "i18n" PREFIX "/" FILES i18n/en.json)
 set(SCHNEIDI_THEMES assets/themes/dark-orange.json assets/themes/midnight.json assets/themes/graphit.json assets/themes/hell.json)
 qt_add_resources(schneidi "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_THEMES})
 
-target_include_directories(schneidi PRIVATE src)
+target_include_directories(schneidi PRIVATE src ${CMAKE_BINARY_DIR}/generated)
+add_dependencies(schneidi schneidi_buildinfo)
 target_link_libraries(schneidi PRIVATE Qt6::Widgets PkgConfig::MLT)
 
 if(WIN32)

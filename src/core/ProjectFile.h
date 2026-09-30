@@ -38,6 +38,12 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
 QJsonObject clipJson(const Clip& c);
 
 bool save(const ProjectData& data, const QString& path, QString* error);
+// Sicherungskopien wie DaVinci „Project Backups“: vor dem Überschreiben wandert der bisherige Stand in einen
+// eigenen Ordner je Projekt (unter AppDataLocation/backups), die neuesten `keep` bleiben. Unveränderter Stand
+// (gleich der neuesten Kopie) wird nicht doppelt abgelegt. Liefert den Pfad der neuen Kopie (leer = keine).
+QString backup(const QString& projectPath, int keep = 20);
+// Ordner der Sicherungskopien eines Projekts (leerer Pfad = Ordner aller Projekte)
+QString backupDir(const QString& projectPath);
 bool load(const QString& path, ProjectData* data, QString* error);
 
 // Fehlende Medien: gleichnamige Datei in einem Ordner (rekursiv) suchen und alle Verweise umbiegen.
