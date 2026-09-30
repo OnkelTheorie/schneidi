@@ -30,6 +30,7 @@ function(schneidi_test name)
 endfunction()
 
 schneidi_test(test_timelineops)
+schneidi_test(test_preroll)
 schneidi_test(test_projectfile)
 schneidi_test(test_undo)
 schneidi_test(test_tracks)

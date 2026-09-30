@@ -23,6 +23,7 @@ class TimelineBuilder;
 class ProducerFactory;
 class ProxyManager;
 class RenderCache;
+class Preroll;
 struct MixerHooks;
 struct SharedLoudness;
 
@@ -126,6 +127,7 @@ private:
     std::unique_ptr<Mlt::Tractor> m_timeline;
     std::unique_ptr<MixerHooks> m_mixer;
     std::unique_ptr<SharedLoudness> m_loudness; // vom Master-Pegelmesser im Audio-Thread gefüttert
+    std::unique_ptr<Preroll> m_preroll;         // Decoder vor Sprungstellen vorab positionieren
     std::mutex m_mixerMutex; // m_mixer wird im Consumer-Thread gelesen
     bool m_mixerOnlyNext = false;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass = std::make_shared<std::atomic<bool>>(false);

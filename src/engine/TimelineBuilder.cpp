@@ -927,6 +927,16 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     return raw;
 }
 
+void TimelineBuilder::noteUse(Mlt::Producer* p, TrackKind kind, int from, int to, int in)
+{
+    if (m_inNested || to <= from) return; // innen zählen die Frames der Sequenz, nicht der Timeline
+    LastUse& last = m_lastUse[p];
+    if (in != last.sourceEnd + 1)
+        m_preroll.push_back({from, last.timelineEnd, in, kind == TrackKind::Audio,
+                             std::make_shared<Mlt::Producer>(p->get_producer())});
+    last = {in + (to - from) - 1, to};
+}
+
 Mlt::Producer* TimelineBuilder::clipAudioSource(const Clip& c)
 {
     if (c.isTitle() || c.freeze || c.mediaPath.isEmpty()) return nullptr;
@@ -977,6 +987,8 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
 {
     if (hooks) *hooks = {};
     m_used.clear();
+    m_preroll.clear();
+    m_lastUse.clear();
     m_nestedCache.clear();
     m_nested = tl.nested;
     struct BypassScope { // Filter der Farbkorrektur bekommen den Schalter dieses Builders
@@ -985,6 +997,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     } bypassScope(m_gradeBypass);
     auto tractor = buildTimeline(tl, hooks);
     m_nested.reset();
+    m_lastUse.clear();
+    std::stable_sort(m_preroll.begin(), m_preroll.end(),
+                     [](const PrerollPoint& a, const PrerollPoint& b) { return a.frame < b.frame; });
     m_nestedCache.clear(); // Cuts halten ihre verschachtelten Tractoren selbst (MLT-Referenzzählung)
     // Nicht mehr benutzte Producer schließen (z. B. Original nach Umschalten auf den Proxy oder gelöschter Clip);
     // Cuts im alten Tractor halten ihre Quelle per MLT-Referenzzählung selbst am Leben
@@ -1056,6 +1071,20 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
         const QVector<TimelineOps::TransitionSpan> spans = TimelineOps::transitions(track, srcLen);
         QHash<int, const Clip*> byId;
         for (const Clip& c : track.clips) byId.insert(c.id, &c);
+        // Producer je Clip (erster/zweiter derselben Datei): ein Clip liest Übergang und Rumpf vom selben Decoder
+        // (kein Sprung am Übergangsende). Folgt ein Clip derselben Datei mit Überblendung oder anderer Quellstelle,
+        // nimmt er den anderen -> der ist vorher frei und kann vorab an die Stelle springen (PrerollPoint).
+        // Lückenlos weiterlaufendes Material (geteilter Clip) bleibt auf demselben und liest am Stück weiter.
+        QHash<int, bool> useSecond;
+        for (int i = 1; i < track.clips.size(); ++i) {
+            const Clip& prev = track.clips[i - 1];
+            const Clip& c = track.clips[i];
+            if (c.mediaPath.isEmpty() || c.mediaPath != prev.mediaPath) continue;
+            const bool dissolve = std::any_of(spans.begin(), spans.end(),
+                                              [&](const auto& s) { return s.leftId == prev.id && s.rightId == c.id; });
+            const bool seamless = !dissolve && c.start == prev.end() && c.in == prev.out + 1;
+            useSecond.insert(c.id, seamless ? useSecond.value(prev.id) : !useSecond.value(prev.id));
+        }
 
         // Ausschnitt [from, to) der Timeline aus Clip c (darf über In/Out hinaus in die Handles reichen)
         auto cutOf = [&](const Clip& c, int from, int to, bool second) -> Mlt::Producer* {
@@ -1086,6 +1115,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 if (const QString file = m_clipCache(c); !file.isEmpty()) {
                     if (Mlt::Producer* cache = producerFor(file, kind, trackIndex, second)) {
                         Mlt::Producer* cut = cache->cut(from - c.start, to - c.start - 1);
+                        noteUse(cache, kind, from, to, from - c.start);
                         applyClipFades(m_profile, *cut, c, kind, from, to); // Fades sind nicht im Cache
                         return cut;
                     }
@@ -1097,6 +1127,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             if (in < 0 && isStill(src)) in = 0; // Standbild: jedes Frame gleich
             if (in < 0) return nullptr;
             Mlt::Producer* cut = src->cut(in, in + (to - from) - 1);
+            noteUse(src, kind, from, to, in);
             decorate(m_profile, *cut, c, kind, from - c.start, to - from);
             applyClipFades(m_profile, *cut, c, kind, from, to);
             return cut;
@@ -1111,8 +1142,8 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             blankTo(s.start);
             const Clip* a = byId.value(s.leftId);
             const Clip* b = byId.value(s.rightId);
-            std::unique_ptr<Mlt::Producer> ca(a ? cutOf(*a, s.start, s.end, false) : nullptr);
-            std::unique_ptr<Mlt::Producer> cb(b ? cutOf(*b, s.start, s.end, true) : nullptr);
+            std::unique_ptr<Mlt::Producer> ca(a ? cutOf(*a, s.start, s.end, useSecond.value(a->id)) : nullptr);
+            std::unique_ptr<Mlt::Producer> cb(b ? cutOf(*b, s.start, s.end, useSecond.value(b->id)) : nullptr);
             const int len = s.length();
             if (kind == TrackKind::Video && s.style.type != TransitionType::CrossDissolve && (ca || cb)) {
                 pl.append(*styledTransition(m_profile, ca.get(), cb.get(), len, s.style));
@@ -1155,7 +1186,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 if (s.rightId == c.id && !s.leftId) appendSpan(s);
             if (bodyEnd > bodyStart) {
                 blankTo(bodyStart);
-                if (std::unique_ptr<Mlt::Producer> body(cutOf(c, bodyStart, bodyEnd, false)); body) pl.append(*body);
+                if (std::unique_ptr<Mlt::Producer> body(cutOf(c, bodyStart, bodyEnd, useSecond.value(c.id))); body) pl.append(*body);
                 else pl.blank(bodyEnd - bodyStart - 1); // deaktiviert oder Datei fehlt -> Lücke
                 cursor = bodyEnd;
             }

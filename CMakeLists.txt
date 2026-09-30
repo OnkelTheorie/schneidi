@@ -59,6 +59,7 @@ add_executable(schneidi
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
+    src/engine/Preroll.h          src/engine/Preroll.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp

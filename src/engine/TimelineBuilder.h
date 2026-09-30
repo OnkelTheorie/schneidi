@@ -35,6 +35,16 @@ struct MixerHooks {
     Strip master;
 };
 
+// Vorschau: Stelle, an der ein Decoder springen muss (Clip-Anfang, einblendende Seite eines Übergangs).
+// Bei langen GOPs dauert das bis zu ~1 s (Ton ~150 ms) -> Engine (engine/Preroll) dekodiert das Frame davor vorab.
+struct PrerollPoint {
+    int frame = 0;       // Timeline-Frame, ab dem der Producer gelesen wird
+    int freeFrom = 0;    // ab diesem Timeline-Frame liest ihn niemand mehr (vorher belegt; 0 = frei)
+    int source = 0;      // Frame im Producer bei `frame`
+    bool audio = false;
+    std::shared_ptr<Mlt::Producer> producer; // eigene MLT-Referenz
+};
+
 class TimelineBuilder {
 public:
     // Welche Datei für einen Clip gelesen wird (Vorschau: Proxy statt Original); ohne = immer das Original
@@ -60,6 +70,8 @@ public:
     // hooks != nullptr: Mixer-Filter immer anhängen (auch bei 0 dB) und Pegelmesser einbauen
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);
     // Fader/Pan/Limiter live auf die Filter übertragen (Spuranzahl muss passen)
+    // Sprungstellen der Decoder aus dem letzten build() (nur äußere Timeline), nach frame sortiert
+    const std::vector<PrerollPoint>& prerollPoints() const { return m_preroll; }
     static bool applyMixer(const Timeline& tl, MixerHooks& hooks);
     // Ton eines Clips so, wie ihn die Timeline liest (Geschwindigkeit/Rückwärts eingerechnet), ohne
     // Clip-Lautstärke/Fades; Frames in..out des Clips. nullptr = Titel/Standbild/Datei fehlt.
@@ -70,8 +82,8 @@ public:
     std::unique_ptr<Mlt::Tractor> buildClipOutput(const Clip& c);
 
 private:
-    // second: eigener Producer für die einblendende Seite eines Übergangs (sonst spult ein Decoder
-    // bei zwei Stellen derselben Datei hin und her)
+    // second: zweiter Producer derselben Datei. Clips an einer Überblendung wechseln sich ab (sonst spult ein
+    // Decoder bei zwei Stellen derselben Datei hin und her); ein Clip liest Übergang und Rumpf vom selben.
     // retime: Clip, dessen Geschwindigkeit/Rückwärts/Standbild und Ton-Stream gilt (nullptr = Originaltempo, Stream 0)
     Mlt::Producer* producerFor(const QString& path, TrackKind kind, int trackIndex, bool second = false,
                                const Clip* retime = nullptr);
@@ -80,6 +92,9 @@ private:
     std::unique_ptr<Mlt::Tractor> buildTimeline(const Timeline& tl, MixerHooks* hooks);
     // Compound Clip: Inhalt der Sequenz (aus Timeline::nested) als Tractor; nullptr = fehlt/Schleife
     Mlt::Producer* nestedProducer(int sequenceId, TrackKind kind, int trackIndex, bool second);
+
+    // Merkt, wo p gelesen wird; springt der Decoder dabei, wird eine PrerollPoint-Stelle notiert
+    void noteUse(Mlt::Producer* p, TrackKind kind, int from, int to, int in);
 
     Mlt::Profile& m_profile;
     std::unique_ptr<ProducerFactory> m_factory; // vor m_cache: muss die Producer überleben
@@ -98,4 +113,7 @@ private:
     std::set<int> m_nestStack; // gerade gebaute Sequenzen (Schleifenschutz)
     bool m_inNested = false;
     QString m_keyPrefix; // Cache-Schlüssel-Präfix innerhalb verschachtelter Sequenzen
+    std::vector<PrerollPoint> m_preroll;
+    struct LastUse { int sourceEnd = -2, timelineEnd = 0; };
+    std::map<Mlt::Producer*, LastUse> m_lastUse; // nur während build()
 };

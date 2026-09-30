@@ -3,6 +3,7 @@
 #include "core/I18n.h"
 #include "core/Loudness.h"
 #include "engine/Bundle.h"
+#include "engine/Preroll.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
@@ -27,7 +28,7 @@ struct EngineCallbacks {
 
 Engine::Engine(QObject* parent)
     : QObject(parent), m_proxies(new ProxyManager(this)), m_renderCache(new RenderCache(this)),
-      m_loudness(std::make_unique<SharedLoudness>())
+      m_loudness(std::make_unique<SharedLoudness>()), m_preroll(std::make_unique<Preroll>())
 {
     // Render-Cache pausiert während der Wiedergabe
     connect(this, &Engine::speedChanged, m_renderCache, [this](double s) { m_renderCache->setPlaying(s != 0.0); });
@@ -41,6 +42,7 @@ Engine::~Engine()
 {
     if (m_consumer) m_consumer->stop();
     m_consumer.reset();
+    m_preroll.reset(); // nach dem Consumer (meldet ihm jedes Frame), vor den Producern
     m_timeline.reset();
     m_source.reset();
     m_builder.reset();
@@ -91,6 +93,12 @@ bool Engine::createConsumer(QString* error)
     }
     m_consumer->set("terminate_on_pause", 0);
     m_consumer->set("real_time", 1);
+    // Gleich in Vorschaugröße rechnen (Überblendungen, Transform, Effekte) statt in Projektgröße und danach
+    // verkleinern – der Viewer zeigt ohnehin nur m_previewSize. MLT skaliert Rechtecke/Blur dabei mit.
+    if (!qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW")) {
+        m_consumer->set("width", m_previewSize.width());
+        m_consumer->set("height", m_previewSize.height());
+    }
     applyAudioState(); // im Stand kein Audiogerät (siehe dort)
     // Kleiner Vorlauf-Puffer: sonst läuft der Ton nach Pause/Seek noch ~1 s weiter
     m_consumer->set("buffer", 2);
@@ -105,6 +113,7 @@ void Engine::setFormat(const ProjectFormat& format)
     if (format == m_format && m_profile) return;
     // Alles, was am alten Profil hängt, in dieser Reihenfolge abbauen: Consumer zuerst (liest die Producer)
     if (m_consumer) m_consumer->stop();
+    m_preroll->clear();
     m_current = nullptr;
     m_consumer.reset();
     {
@@ -228,6 +237,7 @@ void Engine::updateTimeline(const Timeline& tl)
     auto hooks = std::make_unique<MixerHooks>();
     auto tractor = m_builder->build(tl, hooks.get());
     if (hooks->master.meter) hooks->master.meter->set("_loudness", m_loudness.get(), 0);
+    m_preroll->setPoints(m_builder->prerollPoints(), 3 * m_format.rate.timebase(), m_previewSize);
     {
         std::lock_guard<std::mutex> lock(m_mixerMutex);
         m_mixer = std::move(hooks);
@@ -428,6 +438,7 @@ void Engine::onFrameShown(void* mltFrame)
         std::memcpy(img.bits(), data, size_t(w) * h * 4);
         emit frameReady(img); // queued -> UI-Thread
     }
+    m_preroll->update(pos, m_mode == Mode::Timeline ? m_speed : 0.0);
     if (m_speed != 0.0 && pos != m_position.exchange(pos)) emit framePosition(pos, m_seekEpoch);
     if (m_speed != 0.0 && m_mode == Mode::Timeline) emitLevels();
 }
