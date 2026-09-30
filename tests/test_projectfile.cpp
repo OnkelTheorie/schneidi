@@ -257,6 +257,20 @@ void testBackups(const QString& dir)
         CHECK(f.open(QIODevice::ReadOnly));
         CHECK(f.readAll() == states[2 + i].toUtf8());
     }
+    // Zeitumstellung (Herbst: Uhr springt zurück) -> neue Kopie hat einen „früheren“ Namen; trotzdem bleibt sie,
+    // weggeräumt wird die älteste
+    {
+        QFile late(bdir.filePath("2099-01-01 00-00-00-000.schneidi")); // Name „aus der Zukunft“, Inhalt alt
+        CHECK(late.open(QIODevice::WriteOnly) && late.write("alt") == 3);
+        late.flush();
+        CHECK(late.setFileTime(QDateTime::currentDateTime().addDays(-1), QFileDevice::FileModificationTime));
+        late.close();
+        d.playhead = 99;
+        CHECK(ProjectFile::save(d, path, &err));
+        CHECK(!ProjectFile::backup(path, 4).isEmpty());
+        CHECK(!QFileInfo::exists(bdir.filePath("2099-01-01 00-00-00-000.schneidi"))); // älteste nach Zeit
+        CHECK_EQ(bdir.entryList({"*.schneidi"}, QDir::Files).size(), 4);
+    }
     // gleichnamiges Projekt in anderem Ordner: eigener Backup-Ordner
     CHECK(ProjectFile::backupDir(path) != ProjectFile::backupDir(dir + "/medien/backup-test.schneidi"));
     QDir(ProjectFile::backupDir({})).removeRecursively();

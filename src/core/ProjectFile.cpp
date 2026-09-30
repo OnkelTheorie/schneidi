@@ -623,6 +623,22 @@ QString backupDir(const QString& projectPath)
     return QDir(root).filePath(fi.completeBaseName() + "-" + hash);
 }
 
+namespace {
+// Sicherungskopien alt -> neu. Nach Änderungszeit, nicht nach Namen: der Name trägt die Ortszeit, und bei der
+// Zeitumstellung im Herbst (03:00 -> 02:00) sortierten sich neue Kopien vor die alten -> die neuesten wurden gelöscht
+QStringList backupsOldestFirst(const QDir& dir)
+{
+    QFileInfoList list = dir.entryInfoList({QString("*.%1").arg(Extension)}, QDir::Files);
+    std::sort(list.begin(), list.end(), [](const QFileInfo& a, const QFileInfo& b) {
+        const qint64 ta = a.lastModified().toMSecsSinceEpoch(), tb = b.lastModified().toMSecsSinceEpoch();
+        return ta != tb ? ta < tb : a.fileName() < b.fileName();
+    });
+    QStringList names;
+    for (const QFileInfo& fi : list) names << fi.fileName();
+    return names;
+}
+} // namespace
+
 QString backup(const QString& projectPath, int keep)
 {
     QFile current(projectPath);
@@ -630,8 +646,7 @@ QString backup(const QString& projectPath, int keep)
     const QByteArray bytes = current.readAll();
     const QDir dir(backupDir(projectPath));
     if (!QDir().mkpath(dir.path())) return {};
-    const QString filter = QString("*.%1").arg(Extension);
-    QStringList existing = dir.entryList({filter}, QDir::Files, QDir::Name); // Zeitstempel im Namen -> sortiert
+    QStringList existing = backupsOldestFirst(dir);
     if (!existing.isEmpty()) {
         QFile newest(dir.filePath(existing.last()));
         if (newest.open(QIODevice::ReadOnly) && newest.readAll() == bytes) return {};
@@ -643,7 +658,7 @@ QString backup(const QString& projectPath, int keep)
     QFile out(target);
     if (!out.open(QIODevice::WriteOnly) || out.write(bytes) != bytes.size()) return {};
     out.close();
-    existing = dir.entryList({filter}, QDir::Files, QDir::Name);
+    existing = backupsOldestFirst(dir);
     for (int i = 0; i + keep < existing.size(); ++i) QFile::remove(dir.filePath(existing[i]));
     return target;
 }
