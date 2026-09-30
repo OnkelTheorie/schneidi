@@ -4,11 +4,13 @@
 
 #include <QObject>
 #include <QTimer>
+#include <atomic>
 #include <memory>
 
 namespace Mlt {
 class Profile;
 class Consumer;
+class Event;
 class Tractor;
 } // namespace Mlt
 class TimelineBuilder;
@@ -67,6 +69,9 @@ private:
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Tractor> m_tractor;
     std::unique_ptr<Mlt::Consumer> m_consumer;
+    std::unique_ptr<Mlt::Event> m_stoppedEvent;
+    std::atomic<bool> m_threadDone{false}; // Encoder-Thread hat sich beendet ("consumer-stopped")
+    int m_restarts = 0;
     QTimer m_timer;
     int m_length = 0;
     int m_from = 0;

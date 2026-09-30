@@ -51,6 +51,12 @@ bool usesFrei0r(const Timeline& tl)
     return false;
 }
 
+// Läuft im Encoder-Thread von avformat, direkt bevor er sich beendet
+void onConsumerStopped(mlt_properties, void* done, mlt_event_data)
+{
+    static_cast<std::atomic<bool>*>(done)->store(true);
+}
+
 } // namespace
 
 bool Exporter::sameFile(const QString& a, const QString& b)
@@ -193,6 +199,13 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_consumer->set("terminate_on_pause", 1); // am Ende automatisch stoppen
     m_consumer->connect(*m_tractor);
 
+    // avformat setzt "running" erst NACH pthread_create: ist der Encoder-Thread schneller (kurze Audio-Exporte unter
+    // Last), sieht er running=0, beendet sich ohne ein Bild und danach bleibt running=1 -> is_stopped() nie wahr.
+    // Das Ende des Threads daher zusätzlich über das Ereignis erkennen (siehe poll).
+    m_threadDone = false;
+    m_restarts = 0;
+    m_stoppedEvent.reset(m_consumer->listen("consumer-stopped", &m_threadDone, (mlt_listener)onConsumerStopped));
+
     m_path = s.path;
     m_tractor->set_speed(1);
     m_tractor->seek(0); // Position zählt ab dem In-Punkt (seek(m_from) ließ bei In/Out die ersten m_from Frames weg)
@@ -210,6 +223,17 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
 void Exporter::poll()
 {
     if (!m_consumer) return;
+    if (m_threadDone && !m_consumer->is_stopped()) {
+        // Wettlauf beim Start (siehe start): Thread weg, nichts gerendert -> neu starten
+        if (++m_restarts <= 3) {
+            qWarning("Export: Encoder-Thread endete sofort, Neustart %d", m_restarts);
+            m_consumer->stop(); // setzt running=0, Thread ist schon beendet
+            m_threadDone = false;
+            m_tractor->seek(0);
+            if (m_consumer->start() == 0) return;
+        }
+        m_consumer->stop();
+    }
     if (m_consumer->is_stopped()) {
         const QString path = m_path;
         cleanup();
@@ -244,6 +268,7 @@ void Exporter::cleanup()
     // Immer stop(): beendet sich der Consumer selbst (terminate_on_pause), laufen seine Worker-Threads (real_time < -1)
     // sonst weiter – mlt_consumer_close stoppt sie nicht – und rechnen später auf freigegebenen Profilen/Producern
     if (m_consumer) m_consumer->stop();
+    m_stoppedEvent.reset();
     m_consumer.reset();
     m_tractor.reset();
     m_builder.reset();
