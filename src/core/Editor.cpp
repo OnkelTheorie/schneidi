@@ -140,6 +140,7 @@ void Editor::addTitle(int frame, int track)
 
 void Editor::toggleTrackMute(TrackRef ref)
 {
+    if (ref.kind == TrackKind::Audio) emit mixerOnlyEdit();
     m_project->edit(T("Spur stumm"), [&](Timeline& tl) { tl.track(ref).muted = !tl.track(ref).muted; });
 }
 

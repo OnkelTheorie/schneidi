@@ -63,7 +63,7 @@ public:
     QImage grabStill(const Timeline& tl);
 
     void updateTimeline(const Timeline& tl); // Modell geändert -> neu aufbauen
-    // Nächstes updateTimeline() ändert nur Fader/Pan -> live übernehmen statt neu aufbauen
+    // Nächstes updateTimeline() ändert nur Fader/Pan/Mute/Solo -> live übernehmen statt neu aufbauen
     // (sonst stockt die Wiedergabe beim Fader-Ziehen)
     void mixerOnlyNext() { m_mixerOnlyNext = true; }
     bool mixerOnlyPending() const { return m_mixerOnlyNext; }

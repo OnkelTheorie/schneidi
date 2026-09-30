@@ -90,6 +90,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         m_engine->updateTimeline(m_project->renderTimeline());
         updateRenderCacheBar();
     });
+    connect(m_editor, &Editor::mixerOnlyEdit, m_engine, &Engine::mixerOnlyNext);
     connect(m_project, &Project::timelineChanged, this, [this] {
         if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(m_project->renderTimeline());
         else if (!m_engineTimer.isActive()) m_engineTimer.start();

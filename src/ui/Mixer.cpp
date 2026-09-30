@@ -759,11 +759,13 @@ void Mixer::rebuildStrips(int count)
         };
         s->fader->onFinish = s->pan->onFinish = [this] { m_project->closeMerge(); };
         connect(s->mute, &QToolButton::clicked, this, [this, i] {
+            m_engine->mixerOnlyNext(); // live umschalten, kein Neuaufbau (sonst ruckelt die Wiedergabe)
             m_project->edit(T("Spur stumm"), [i](Timeline& tl) {
                 if (i < tl.audio.size()) tl.audio[i].muted = !tl.audio[i].muted;
             });
         });
         connect(s->solo, &QToolButton::clicked, this, [this, i] {
+            m_engine->mixerOnlyNext();
             m_project->edit(T("Spur solo"), [i](Timeline& tl) {
                 if (i < tl.audio.size()) tl.audio[i].solo = !tl.audio[i].solo;
             });

@@ -15,6 +15,7 @@ class Filter;
 class Profile;
 class Producer;
 class Tractor;
+class Playlist;
 } // namespace Mlt
 
 // Übersetzt das Timeline-Modell in einen MLT-Tractor:
@@ -28,6 +29,7 @@ struct MixerHooks {
         std::shared_ptr<Mlt::Filter> volume, pan, meter;
         std::shared_ptr<Mlt::Filter> limiter; // nur Master: immer angehängt, per "disable" an/aus
         bool audible = true; // false = stumm/weggesoloed -> Pegel -∞
+        std::shared_ptr<Mlt::Playlist> playlist; // nur Spuren: Mute/Solo live über "hide" (ohne Neuaufbau)
     };
     std::vector<Strip> tracks; // pro Audiospur
     Strip master;
@@ -56,7 +58,7 @@ public:
     // hooks != nullptr: Mixer-Filter immer anhängen (auch bei 0 dB) und Pegelmesser einbauen
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);
     // Fader/Pan/Limiter live auf die Filter übertragen (Spuranzahl muss passen)
-    static bool applyMixer(const Timeline& tl, const MixerHooks& hooks);
+    static bool applyMixer(const Timeline& tl, MixerHooks& hooks);
     // Ton eines Clips so, wie ihn die Timeline liest (Geschwindigkeit/Rückwärts eingerechnet), ohne
     // Clip-Lautstärke/Fades; Frames in..out des Clips. nullptr = Titel/Standbild/Datei fehlt.
     // Gehört dem Builder (Cache), gilt bis zum nächsten Aufruf.

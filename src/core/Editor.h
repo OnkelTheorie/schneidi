@@ -248,6 +248,7 @@ public:
 
 signals:
     void targetTracksChanged(); // Zielspuren (Spurkopf-Markierung neu zeichnen)
+    void mixerOnlyEdit();       // nächste Änderung betrifft nur den Mixer (Vorschau live, ohne Neuaufbau)
 
 private:
     TimelineOps::SourceLength sourceLength() const;

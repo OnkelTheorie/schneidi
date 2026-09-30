@@ -949,12 +949,17 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildClipOutput(const Clip& clip)
     return tractor;
 }
 
-bool TimelineBuilder::applyMixer(const Timeline& tl, const MixerHooks& hooks)
+bool TimelineBuilder::applyMixer(const Timeline& tl, MixerHooks& hooks)
 {
     if (int(hooks.tracks.size()) != tl.audio.size() || !hooks.master.volume) return false;
+    for (const MixerHooks::Strip& h : hooks.tracks)
+        if (!h.volume || !h.pan || !h.playlist) return false;
+    const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
     for (int i = 0; i < tl.audio.size(); ++i) {
-        const MixerHooks::Strip& h = hooks.tracks[i];
-        if (!h.volume || !h.pan) return false;
+        MixerHooks::Strip& h = hooks.tracks[i];
+        const bool audible = !tl.audio[i].muted && (!anySolo || tl.audio[i].solo);
+        h.playlist->set("hide", audible ? 1 : 3); // 1 = kein Bild, 2 = kein Ton (wie beim Aufbau)
+        h.audible = audible;
         h.volume->set("level", mltLevel(tl.audio[i].volumeDb));
         h.pan->set("start", mltPan(tl.audio[i].pan));
     }
@@ -1163,6 +1168,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             if (hooks) {
                 h = &hooks->tracks.emplace_back();
                 h->audible = !(hide & 2);
+                h->playlist = std::make_shared<Mlt::Playlist>(pl);
             }
             attachStrip(m_profile, pl, track.volumeDb, track.pan, h);
         }
