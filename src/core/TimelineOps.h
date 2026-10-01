@@ -51,9 +51,9 @@ void insertGap(Timeline& tl, const QVector<TrackRef>& tracks, int frame, int len
                const IdGen& newClipId, const IdGen& newLinkId);
 // Verschiebt auf der Spur alle Clips mit start >= frame um delta (Ripple; Aufrufer sorgt für Platz)
 void shiftFrom(Track& track, int frame, int delta);
-// Übergänge an den Kanten [start, end) eines neu gelegten Clips entfernen: der Nachbar davor verliert sein
-// Ausblenden/seine Überblendung, der danach sein Einblenden (dort liegt jetzt der neue Clip)
-void clearEdgeTransitions(Track& track, int start, int end);
+// Überblendung am Schnitt bei `frame` entfernen (dort kommt gleich ein neuer Clip hin). Eigenständiges Aus-/Einblenden
+// (zu Schwarz bzw. Stille, auch mit Nachbar) bleibt wie in DaVinci am Clip.
+void clearDissolveAt(Track& track, int frame);
 
 // Legt fehlende Spuren an, bis es `count` Spuren der Art gibt (Namen V3, A3, …).
 void ensureTracks(Timeline& tl, TrackKind kind, int count);

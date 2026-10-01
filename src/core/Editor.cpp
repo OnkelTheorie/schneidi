@@ -761,8 +761,9 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
         Clip x = c;
         x.id = newId();
         x.audioStream = tg.stream;
+        TimelineOps::clearDissolveAt(t, x.start);
+        TimelineOps::clearDissolveAt(t, x.end());
         TimelineOps::placeClip(t, x, newId);
-        TimelineOps::clearEdgeTransitions(t, x.start, x.end());
     }
 }
 

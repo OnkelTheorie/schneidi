@@ -118,7 +118,7 @@ int main(int argc, char** argv)
         CHECK_EQ(dump(tl), QString("V1: a[0-50|0-49] c[70-90|0-19]  V2: t[120-130|0-9]  A1: m[60-70|0-9]"));
     }
 
-    // --- insertGap / shiftFrom / clearEdgeTransitions
+    // --- insertGap / shiftFrom / clearDissolveAt
     {
         Ids ids;
         int link = 0;
@@ -134,8 +134,23 @@ int main(int argc, char** argv)
         CHECK_EQ(tl.video[0].clips[1].start, 60);
         tl.video[0].clips[0].transOut = 5;
         tl.video[0].clips[1].transIn = 5;
-        clearEdgeTransitions(tl.video[0], 40, 60);
-        CHECK(tl.video[0].clips[0].transOut == 0 && tl.video[0].clips[1].transIn == 0);
+        clearDissolveAt(tl.video[0], 60); // kein Schnitt dort: Aus-/Einblenden bleiben
+        CHECK(tl.video[0].clips[0].transOut == 5 && tl.video[0].clips[1].transIn == 5);
+    }
+    // Einfügen neben eigenständigem Aus-/Einblenden (zu Schwarz): bleibt, nur Überblendungen am Schnitt fallen weg
+    {
+        Ids ids;
+        Timeline tl = tracks(1, 0);
+        tl.video[0].clips << mk(1, "a", 0, 40) << mk(2, "b", 40, 60) << mk(3, "c", 100, 20);
+        tl.video[0].clips[0].transOut = 10;
+        tl.video[0].clips[1].transIn = 10;
+        tl.video[0].clips[0].transOutAlone = tl.video[0].clips[1].transInAlone = true;
+        tl.video[0].clips[1].transOut = 8; // Überblendung b -> c
+        tl.video[0].clips[2].transIn = 8;
+        insertGap(tl, {{TrackKind::Video, 0}}, 40, 25, ids.gen(), [] { return 0; });
+        CHECK(findClip(tl, 1)->transOut == 10 && findClip(tl, 2)->transIn == 10);
+        insertGap(tl, {{TrackKind::Video, 0}}, 125, 5, ids.gen(), [] { return 0; });
+        CHECK(findClip(tl, 2)->transOut == 0 && findClip(tl, 3)->transIn == 0);
     }
 
     // --- trimClips / clampTrim (kein Ripple): Quellmaterial, Nachbarn, Frame 0, mind. 1 Frame

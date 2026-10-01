@@ -181,5 +181,13 @@ int main(int argc, char** argv)
         CHECK_EQ(c.in, 0);
         CHECK_EQ(c.length(), 10);
     }
+    for (SE mode : {SE::Overwrite, SE::Insert}) {
+        Fixture f; // direkt hinter einem Clip mit Ausblenden zu Schwarz: das Ausblenden bleibt (wie DaVinci)
+        f.p.edit("fade", [](Timeline& tl) { tl.video[0].clips[0].transOut = tl.audio[0].clips[0].transOut = 10; });
+        f.ed.sourceEdit(mode, "/x/b.mp4", 0, 100);
+        const Timeline& tl = f.p.timeline();
+        check("Ausblenden bleibt neben neuem Clip", QString("%1/%2").arg(tl.video[0].clips[0].transOut).arg(tl.audio[0].clips[0].transOut),
+              "10/10");
+    }
     return Check::result();
 }
