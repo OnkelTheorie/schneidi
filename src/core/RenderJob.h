@@ -2,6 +2,8 @@
 // Deliver-Seite wie DaVinci: Render-Einstellungen, Vorlagen (eingebaut + eigene) und Render-Warteschlange.
 // Nur Daten + JSON; gerendert wird in engine/RenderQueue (über den Exporter).
 
+#include "core/ProjectFormat.h"
+
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSize>
@@ -14,7 +16,7 @@ struct RenderFormatInfo {
     const char* label;      // Anzeige (N_ markiert, wo übersetzt)
     const char* extension;  // Dateiendung
     const char* videoCodec; // "" = nur Audio
-    const char* audioCodec;
+    const char* audioCodec; // PCM: Bittiefe kommt aus RenderSettings::audioBits (Endung le/be bleibt)
     const char* pixFmt;     // Pixelformat des Videos
     bool hasQuality;        // CRF-Stufen (H.264/H.265); ProRes hat feste Qualität
 };
@@ -26,12 +28,19 @@ struct RenderSettings {
     int shortSide = 0; // Auflösung: 0 = Timeline, sonst kürzere Bildkante im Seitenverhältnis der Timeline
     QSize size;        // feste Ausgabegröße (z. B. Hochformat 1080 × 1920); hat Vorrang vor shortSide
     int quality = 0;   // 0 = Hoch, 1 = Mittel, 2 = Klein (nur H.264/H.265)
-    int audioBitrateK = 320; // nur AAC
+    int audioBitrateK = 320; // nur AAC/MP3
+    int audioBits = 24;      // Bittiefe bei PCM (16, 24, 32 = Float) und Apple Lossless (16, 24)
+    int rateNum = 0, rateDen = 1; // Bildrate der Ausgabe, 0 = wie die Timeline
     // Untertitel exportieren wie DaVinci (sichtbare Untertitelspur): keine, ins Bild einbrennen, als SRT-Datei daneben
     enum Subtitles { NoSubtitles = 0, BurnSubtitles = 1, SrtFile = 2 };
     int subtitles = NoSubtitles;
 
     bool audioOnly() const;
+    bool hasAudioBitrate() const;   // AAC/MP3
+    QVector<int> audioBitChoices() const; // wählbare Bittiefen (leer = nicht einstellbar)
+    QString audioCodec() const;     // FFmpeg-Codec mit gewählter Bittiefe, z. B. pcm_f32le
+    QString audioSampleFormat() const; // nur Apple Lossless: s16p/s32p, sonst leer
+    FrameRate outputRate(FrameRate timeline) const;
     QSize outputSize(QSize timeline) const; // gerade Maße
     int crf() const;
     QString qualityLabel() const;

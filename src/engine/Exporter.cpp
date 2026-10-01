@@ -13,9 +13,12 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QThread>
+#include <QUuid>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 
 namespace {
 std::atomic<int> g_running{0}; // laufende Exporte (m_timer läuft genau dann)
@@ -170,7 +173,47 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         cleanup();
         return false;
     }
-    m_consumer = std::make_unique<Mlt::Consumer>(*m_profile, "avformat", s.path.toUtf8().constData());
+    // Andere Bildrate: Timeline (mit In/Out) als XML schreiben und im Profil der Ausgabe wieder einlesen
+    const FrameRate rate = s.rate.num > 0 && s.rate.den > 0 ? s.rate : s.format.rate;
+    const bool convertRate = rate != s.format.rate && !s.videoCodec.isEmpty();
+    if (convertRate) {
+        m_xmlPath = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                        .filePath(QString("schneidi-export-%1.mlt").arg(QUuid::createUuid().toString(QUuid::Id128)));
+        Mlt::Consumer xml(*m_profile, "xml", m_xmlPath.toUtf8().constData());
+        xml.set("no_meta", 1);
+        xml.connect(*m_tractor);
+        xml.start(); // schreibt sofort
+        xml.stop();
+        ProjectFormat target = out;
+        target.rate = rate;
+        m_outProfile = makeProfile(target);
+        // über den Loader ("consumer:<datei>"): der hängt die Umwandler an (Tonformat, Farbraum), sonst kommt der Ton
+        // im falschen Sampleformat beim Encoder an
+        // Der Producer arbeitet intern mit einer Kopie dieses Profils; nur wenn es nicht „explicit“ ist, übernimmt er
+        // das Profil (Bildrate der Timeline) aus dem XML – sonst liefe die Timeline in der neuen Bildrate zu schnell
+        m_outProfile->set_explicit(0);
+        m_source = std::make_unique<Mlt::Producer>(*m_outProfile, ("consumer:" + m_xmlPath).toUtf8().constData());
+        m_outProfile->set_explicit(1);
+        if (!qFuzzyCompare(m_outProfile->fps(), rate.fps())) { // darf sich dabei nicht ändern
+            if (error) *error = T("Bildrate kann nicht umgerechnet werden.");
+            cleanup();
+            return false;
+        }
+        if (!m_source->is_valid()) {
+            if (error) *error = T("Bildrate kann nicht umgerechnet werden (MLT-Modul „consumer“ fehlt).");
+            cleanup();
+            return false;
+        }
+        // Der Producer kennt nur die Bildzahl der Timeline -> Länge in der neuen Bildrate selbst setzen
+        m_length = std::max(1, int(std::lround(m_length * rate.fps() / s.format.rate.fps())));
+        m_source->set("length", m_length);
+        m_source->set_in_and_out(0, m_length - 1);
+    } else {
+        m_source = std::make_unique<Mlt::Producer>(*m_tractor);
+    }
+    Mlt::Profile& outProfile = convertRate ? *m_outProfile : *m_profile;
+
+    m_consumer = std::make_unique<Mlt::Consumer>(outProfile, "avformat", s.path.toUtf8().constData());
     if (!m_consumer->is_valid()) {
         if (error) *error = T("FFmpeg-Ausgabe (avformat) nicht verfügbar.");
         cleanup();
@@ -187,17 +230,25 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         }
     }
     m_consumer->set("acodec", s.audioCodec.toUtf8().constData());
-    if (!s.audioCodec.startsWith("pcm_")) m_consumer->set("ab", QString("%1k").arg(s.audioBitrateK).toUtf8().constData());
+    if (!s.audioSampleFormat.isEmpty()) m_consumer->set("sample_fmt", s.audioSampleFormat.toUtf8().constData());
+    if (!s.audioCodec.startsWith("pcm_") && s.audioCodec != "alac") {
+        const int bitrate = s.audioCodec == "libmp3lame" ? std::min(s.audioBitrateK, 320) : s.audioBitrateK;
+        m_consumer->set("ab", QString("%1k").arg(bitrate).toUtf8().constData());
+    }
     const QString ext = QFileInfo(s.path).suffix().toLower();
     if (ext == "mp4" || ext == "mov" || ext == "m4a") m_consumer->set("movflags", "+faststart");
     // Jedes Frame rendern (real_time < 0), mehrere Bilder gleichzeitig (außer mit frei0r, siehe parallelFrames);
-    // Decoder (oben) und Encoder bekommen dieselbe Kernzahl
-    const int frames = parallelFrames(tl, cores);
-    m_consumer->set("real_time", -frames);
+    // Decoder (oben) und Encoder bekommen dieselbe Kernzahl. Beim Umrechnen der Bildrate holt der "consumer"-Producer
+    // die Bilder der Reihe nach -> dort nur eins nach dem anderen, und ohne Vorlese-Thread (real_time 0): Wiederholte
+    // Bilder liefern 0 Samples; der Vorlese-Thread holt den Ton vorab, und beim zweiten Abholen durch den Encoder
+    // füllt MLT die leeren Bilder mit Stille auf (Ton zu lang, mit Sprüngen).
+    const int frames = convertRate ? 1 : parallelFrames(tl, cores);
+    m_consumer->set("real_time", convertRate ? 0 : -frames);
     m_consumer->set("threads", cores);
-    qInfo("Export: %d Kerne, %d Bilder gleichzeitig", cores, frames);
+    qInfo("Export: %d Kerne, %d Bilder gleichzeitig%s", cores, frames,
+          convertRate ? qPrintable(QString(", Bildrate %1 -> %2").arg(s.format.rate.label(), rate.label())) : "");
     m_consumer->set("terminate_on_pause", 1); // am Ende automatisch stoppen
-    m_consumer->connect(*m_tractor);
+    m_consumer->connect(*m_source);
 
     // avformat setzt "running" erst NACH pthread_create: ist der Encoder-Thread schneller (kurze Audio-Exporte unter
     // Last), sieht er running=0, beendet sich ohne ein Bild und danach bleibt running=1 -> is_stopped() nie wahr.
@@ -207,8 +258,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_stoppedEvent.reset(m_consumer->listen("consumer-stopped", &m_threadDone, (mlt_listener)onConsumerStopped));
 
     m_path = s.path;
-    m_tractor->set_speed(1);
-    m_tractor->seek(0); // Position zählt ab dem In-Punkt (seek(m_from) ließ bei In/Out die ersten m_from Frames weg)
+    m_source->set_speed(1);
+    m_source->seek(0); // Position zählt ab dem In-Punkt (seek(m_from) ließ bei In/Out die ersten m_from Frames weg)
     if (m_consumer->start() != 0) {
         if (error) *error = T("Export konnte nicht gestartet werden.");
         cleanup();
@@ -229,7 +280,7 @@ void Exporter::poll()
             qWarning("Export: Encoder-Thread endete sofort, Neustart %d", m_restarts);
             m_consumer->stop(); // setzt running=0, Thread ist schon beendet
             m_threadDone = false;
-            m_tractor->seek(0);
+            m_source->seek(0);
             if (m_consumer->start() == 0) return;
         }
         m_consumer->stop();
@@ -247,7 +298,7 @@ void Exporter::poll()
         emit finished(true, T("Export fertig: %1").arg(path));
         return;
     }
-    const int pos = m_tractor->position(); // relativ zum In-Punkt
+    const int pos = m_source->position(); // relativ zum In-Punkt
     emit progress(std::clamp(pos * 100 / std::max(1, m_length), 0, 99));
 }
 
@@ -270,6 +321,10 @@ void Exporter::cleanup()
     if (m_consumer) m_consumer->stop();
     m_stoppedEvent.reset();
     m_consumer.reset();
+    m_source.reset();
+    m_outProfile.reset();
+    if (!m_xmlPath.isEmpty()) QFile::remove(m_xmlPath);
+    m_xmlPath.clear();
     m_tractor.reset();
     m_builder.reset();
     m_profile.reset();

@@ -19,7 +19,10 @@ const QVector<RenderFormatInfo>& renderFormats()
         {"h265", "H.265 (MP4)", "mp4", "libx265", "aac", "yuv420p", true},
         {"prores", "ProRes 422 HQ (MOV)", "mov", "prores_ks", "pcm_s24le", "yuv422p10le", false},
         {"aac", N_("Nur Audio – AAC (M4A)"), "m4a", "", "aac", "", false},
-        {"wav", N_("Nur Audio – WAV (24 Bit)"), "wav", "", "pcm_s24le", "", false},
+        {"mp3", N_("Nur Audio – MP3"), "mp3", "", "libmp3lame", "", false},
+        {"wav", N_("Nur Audio – WAV"), "wav", "", "pcm_s24le", "", false},
+        {"aiff", N_("Nur Audio – AIFF (Apple)"), "aiff", "", "pcm_s24be", "", false},
+        {"alac", N_("Nur Audio – Apple Lossless (M4A)"), "m4a", "", "alac", "", false},
     };
     return formats;
 }
@@ -33,6 +36,52 @@ const RenderFormatInfo& renderFormat(const QString& id)
 }
 
 bool RenderSettings::audioOnly() const { return !*renderFormat(format).videoCodec; }
+
+bool RenderSettings::hasAudioBitrate() const
+{
+    const QLatin1String c(renderFormat(format).audioCodec);
+    return c == QLatin1String("aac") || c == QLatin1String("libmp3lame");
+}
+
+QVector<int> RenderSettings::audioBitChoices() const
+{
+    // 64 Bit gibt es nicht: MLT mischt höchstens in 32-Bit-Float
+    const QLatin1String c(renderFormat(format).audioCodec);
+    if (c.startsWith(QLatin1String("pcm_"))) return {16, 24, 32};
+    if (c == QLatin1String("alac")) return {16, 24};
+    return {};
+}
+
+static int validBits(const RenderSettings& s)
+{
+    const QVector<int> choices = s.audioBitChoices();
+    if (choices.contains(s.audioBits)) return s.audioBits;
+    return choices.contains(24) ? 24 : 0;
+}
+
+QString RenderSettings::audioCodec() const
+{
+    const QString c = renderFormat(format).audioCodec;
+    if (!c.startsWith("pcm_")) return c;
+    const QString endian = c.right(2); // le/be
+    switch (validBits(*this)) {
+    case 16: return "pcm_s16" + endian;
+    case 32: return "pcm_f32" + endian;
+    default: return "pcm_s24" + endian;
+    }
+}
+
+QString RenderSettings::audioSampleFormat() const
+{
+    if (QLatin1String(renderFormat(format).audioCodec) != QLatin1String("alac")) return {};
+    return validBits(*this) == 16 ? "s16p" : "s32p"; // s32p = 24 Bit
+}
+
+FrameRate RenderSettings::outputRate(FrameRate timeline) const
+{
+    if (rateNum <= 0 || rateDen <= 0 || audioOnly()) return timeline;
+    return {rateNum, rateDen};
+}
 
 QSize sizeForShortSide(QSize timeline, int shortSide)
 {
@@ -68,7 +117,10 @@ QString RenderSettings::summary(QSize output) const
     QStringList parts{T(f.label)};
     if (!audioOnly()) parts << resolutionLabel(output.width(), output.height());
     if (f.hasQuality) parts << qualityLabel();
+    if (!audioOnly() && rateNum > 0) parts << QString("%1 fps").arg(FrameRate{rateNum, rateDen}.label());
     if (QLatin1String(f.audioCodec) == QLatin1String("aac")) parts << QString("AAC %1 kbit/s").arg(audioBitrateK);
+    else if (hasAudioBitrate()) parts << QString("%1 kbit/s").arg(audioBitrateK);
+    if (const int bits = validBits(*this)) parts << (bits == 32 ? T("32 Bit Float") : T("%1 Bit").arg(bits));
     if (subtitles == BurnSubtitles && !audioOnly()) parts << T("Untertitel eingebrannt");
     if (subtitles == SrtFile) parts << T("Untertitel als SRT");
     return parts.join(QStringLiteral(" · "));
@@ -78,6 +130,8 @@ QJsonObject RenderSettings::toJson() const
 {
     QJsonObject o{{"format", format}, {"quality", quality}, {"audioBitrate", audioBitrateK}};
     if (shortSide > 0) o["shortSide"] = shortSide;
+    if (audioBits != 24) o["audioBits"] = audioBits;
+    if (rateNum > 0) o["rate"] = QString("%1/%2").arg(rateNum).arg(rateDen);
     if (subtitles == BurnSubtitles) o["subtitles"] = "burn";
     if (subtitles == SrtFile) o["subtitles"] = "srt";
     if (size.isValid() && !size.isEmpty()) {
@@ -94,6 +148,12 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
     s.quality = std::clamp(o.value("quality").toInt(0), 0, 2);
     s.audioBitrateK = std::clamp(o.value("audioBitrate").toInt(320), 32, 512);
     s.shortSide = std::max(0, o.value("shortSide").toInt());
+    s.audioBits = o.value("audioBits").toInt(24);
+    const QStringList rate = o.value("rate").toString().split('/');
+    if (rate.size() == 2 && rate[0].toInt() > 0 && rate[1].toInt() > 0) {
+        s.rateNum = rate[0].toInt();
+        s.rateDen = rate[1].toInt();
+    }
     const int w = o.value("width").toInt(), h = o.value("height").toInt();
     if (w > 0 && h > 0) s.size = QSize(w, h);
     const QString sub = o.value("subtitles").toString();
@@ -105,7 +165,8 @@ bool RenderSettings::operator==(const RenderSettings& o) const
 {
     const auto normSize = [](QSize s) { return s.isValid() && !s.isEmpty() ? s : QSize(); };
     return format == o.format && shortSide == o.shortSide && normSize(size) == normSize(o.size)
-           && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles;
+           && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles
+           && audioBits == o.audioBits && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
 }
 
 // --- Vorlagen
@@ -133,6 +194,7 @@ QVector<RenderPreset> builtins()
         make(T("Hohe Qualität / Archiv (ProRes 422 HQ)"), "prores", 0, 0),
         make(T("Nur Audio (WAV)"), "wav", 0, 0),
         make(T("Nur Audio (AAC)"), "aac", 0, 0),
+        make(T("Nur Audio (MP3)"), "mp3", 0, 0),
     };
 }
 

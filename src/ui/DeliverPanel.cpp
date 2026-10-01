@@ -36,7 +36,11 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     const RenderFormatInfo& f = renderFormat(a.format);
     if (!a.audioOnly() && a.outputSize(timeline) != b.outputSize(timeline)) return false;
     if (f.hasQuality && a.quality != b.quality) return false;
-    if (QLatin1String(f.audioCodec) == QLatin1String("aac") && a.audioBitrateK != b.audioBitrateK) return false;
+    if (a.hasAudioBitrate() && a.audioBitrateK != b.audioBitrateK) return false;
+    if (!a.audioBitChoices().isEmpty() && a.audioCodec() != b.audioCodec()) return false;
+    if (a.audioSampleFormat() != b.audioSampleFormat()) return false;
+    const FrameRate none{0, 1};
+    if (!a.audioOnly() && a.outputRate(none) != b.outputRate(none)) return false;
     return a.subtitles == b.subtitles;
 }
 
@@ -77,7 +81,13 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     for (const RenderFormatInfo& f : renderFormats()) m_format->addItem(T(f.label), QString(f.id));
 
     m_resolution = new QComboBox;
-    m_rate = new QLabel;
+    // Wie DaVinci „Frame rate“ beim Rendern: Standard = Timeline, sonst wird beim Export umgerechnet
+    m_rate = new QComboBox;
+    m_rate->setObjectName("renderRate");
+    m_rate->addItem(QString(), QSize());
+    for (const FrameRate& r : kFrameRates) m_rate->addItem(QString("%1 fps").arg(r.label()), QSize(r.num, r.den));
+    m_rate->setToolTip(T("Weicht die Bildrate von der Timeline ab, werden Bilder beim Export ausgelassen oder "
+                         "wiederholt (der Ton bleibt unverändert)."));
 
     m_quality = new QComboBox;
     m_quality->addItem(T("Hoch"));
@@ -86,6 +96,12 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
 
     m_audioBitrate = new QComboBox;
     for (int k : {128, 192, 256, 320}) m_audioBitrate->addItem(QString("%1 kbit/s").arg(k), k);
+
+    // Bittiefe (WAV/AIFF/ProRes/Apple Lossless); Einträge je nach Format, siehe updateControls
+    m_audioBits = new QComboBox;
+    m_audioBits->setObjectName("renderAudioBits");
+    connect(m_audioBits, qOverload<int>(&QComboBox::activated), this,
+            [this] { m_wantedBits = m_audioBits->currentData().toInt(); });
 
     // Wie DaVinci: "Render: Entire Timeline / In/Out Range"
     // Untertitel wie DaVinci „Subtitle Settings“: sichtbare Untertitelspur einbrennen oder als eigene Datei
@@ -125,6 +141,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Bildrate"), m_rate);
     form->addRow(T("Qualität"), m_quality);
     form->addRow(T("Audio-Bitrate"), m_audioBitrate);
+    form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(T("Bereich"), m_range);
     form->addRow(T("CPU-Kerne"), m_cores);
@@ -149,7 +166,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     lay->addWidget(m_status);
 
     connect(m_preset, qOverload<int>(&QComboBox::activated), this, &DeliverPanel::applyPreset);
-    for (QComboBox* c : {m_format, m_resolution, m_quality, m_audioBitrate, m_subtitles})
+    for (QComboBox* c : {m_format, m_resolution, m_rate, m_quality, m_audioBitrate, m_audioBits, m_subtitles})
         connect(c, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
             updateControls();
             syncPresetToSettings();
@@ -299,6 +316,11 @@ RenderSettings DeliverPanel::settings() const
     s.format = m_format->currentData().toString();
     s.quality = m_quality->currentIndex();
     s.audioBitrateK = m_audioBitrate->currentData().toInt();
+    if (m_audioBits->currentIndex() >= 0) s.audioBits = m_audioBits->currentData().toInt();
+    if (const QSize r = m_rate->currentData().toSize(); r.isValid() && !s.audioOnly()) {
+        s.rateNum = r.width();
+        s.rateDen = r.height();
+    }
     s.subtitles = m_subtitles->currentData().toInt();
     if (s.audioOnly() && s.subtitles == RenderSettings::BurnSubtitles) s.subtitles = RenderSettings::NoSubtitles;
     const QSize size = m_resolution->currentData().toSize();
@@ -315,10 +337,14 @@ void DeliverPanel::setSettings(const RenderSettings& s)
 {
     const bool wasApplying = m_applying;
     m_applying = true;
+    m_wantedBits = s.audioBits;
     m_format->setCurrentIndex(std::max(0, m_format->findData(renderFormat(s.format).id)));
     m_quality->setCurrentIndex(std::clamp(s.quality, 0, 2));
     const int br = m_audioBitrate->findData(s.audioBitrateK);
     m_audioBitrate->setCurrentIndex(br >= 0 ? br : m_audioBitrate->count() - 1);
+    updateControls(); // Bittiefen des Formats
+    if (const int b = m_audioBits->findData(s.audioBits); b >= 0) m_audioBits->setCurrentIndex(b);
+    m_rate->setCurrentIndex(s.rateNum > 0 ? std::max(0, m_rate->findData(QSize(s.rateNum, s.rateDen))) : 0);
     m_subtitles->setCurrentIndex(std::max(0, m_subtitles->findData(s.subtitles)));
     if (!s.audioOnly()) selectSize(s.outputSize(m_project->format().size()));
     m_applying = wasApplying;
@@ -348,7 +374,23 @@ void DeliverPanel::updateControls()
     m_resolution->setEnabled(video);
     m_quality->setEnabled(f.hasQuality);
     m_quality->setToolTip(f.hasQuality ? QString() : T("Bei diesem Format fest"));
-    m_audioBitrate->setEnabled(QLatin1String(f.audioCodec) == QLatin1String("aac"));
+    RenderSettings probe;
+    probe.format = f.id;
+    m_audioBitrate->setEnabled(probe.hasAudioBitrate());
+    m_rate->setEnabled(video);
+    // Bittiefen des Formats; die gewünschte (Vorlage/letzte Wahl) bleibt, sonst 24 Bit
+    const QVector<int> bits = probe.audioBitChoices();
+    QVector<int> shown;
+    for (int i = 0; i < m_audioBits->count(); ++i) shown << m_audioBits->itemData(i).toInt();
+    if (shown != bits) {
+        const QSignalBlocker block(m_audioBits); // clear() meldet sonst einen Wechsel -> updateControls() verschachtelt
+        m_audioBits->clear();
+        for (int b : bits) m_audioBits->addItem(b == 32 ? T("32 Bit Float") : T("%1 Bit").arg(b), b);
+        const int want = m_audioBits->findData(m_wantedBits);
+        m_audioBits->setCurrentIndex(want >= 0 ? want : std::max(0, m_audioBits->findData(24)));
+    }
+    m_audioBits->setEnabled(!bits.isEmpty());
+    m_audioBits->setToolTip(bits.isEmpty() ? T("Bei diesem Format fest") : QString());
     // Nur Audio: nichts einzubrennen (Eintrag ausgegraut, SRT daneben geht weiter)
     if (auto* model = qobject_cast<QStandardItemModel*>(m_subtitles->model()))
         if (QStandardItem* item = model->item(1)) item->setEnabled(video);
@@ -401,7 +443,7 @@ void DeliverPanel::updateFormat()
     m_timelineSize = timeline;
     m_resolution->setCurrentIndex(keep >= 0 ? keep : m_resolution->findData(timeline));
     m_applying = applying;
-    m_rate->setText(QString("%1 fps").arg(f.rate.label()));
+    m_rate->setItemText(0, T("%1 fps (Timeline)").arg(f.rate.label()));
 }
 
 void DeliverPanel::browse()

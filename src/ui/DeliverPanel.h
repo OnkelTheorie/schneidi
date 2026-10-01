@@ -62,15 +62,17 @@ private:
     QLineEdit* m_folder;
     QComboBox* m_format;
     QComboBox* m_resolution; // Daten: QSize
-    QLabel* m_rate;
+    QComboBox* m_rate; // Bildrate der Ausgabe, Daten = QSize(num, den), leer = Timeline
     QSize m_timelineSize; // zuletzt bekannte Timeline-Auflösung
     QComboBox* m_quality;
     QComboBox* m_audioBitrate;
+    QComboBox* m_audioBits;
     QComboBox* m_cores; // CPU-Kerne fürs Rendern (Daten: Anzahl, 0 = alle)
     QComboBox* m_range; // ganze Timeline / In-Out-Bereich
     QComboBox* m_subtitles; // Untertitel: keine / einbrennen / SRT-Datei (Daten: RenderSettings::Subtitles)
     bool m_hadRange = false;
     bool m_applying = false;
+    int m_wantedBits = 24; // zuletzt gewählte Bittiefe (bleibt beim Formatwechsel, wenn möglich)
     QPushButton* m_addBtn;
     QLabel* m_status;
 };

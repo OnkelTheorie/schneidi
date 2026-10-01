@@ -26,7 +26,9 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     s.path = job.path;
     s.format = format;
     s.videoCodec = f.videoCodec;
-    s.audioCodec = f.audioCodec;
+    s.audioCodec = job.settings.audioCodec();
+    s.audioSampleFormat = job.settings.audioSampleFormat();
+    s.rate = job.settings.outputRate(format.rate);
     s.pixFmt = f.pixFmt;
     s.crf = job.settings.crf();
     s.audioBitrateK = job.settings.audioBitrateK;

@@ -12,6 +12,7 @@ class Profile;
 class Consumer;
 class Event;
 class Tractor;
+class Producer;
 } // namespace Mlt
 class TimelineBuilder;
 
@@ -25,6 +26,8 @@ struct ExportSettings {
     int crf = 20;             // Qualität: kleiner = besser
     QString preset = "medium"; // Geschwindigkeit vs. Dateigröße
     int audioBitrateK = 192;
+    QString audioSampleFormat; // leer = Vorgabe des Codecs (Apple Lossless: s16p/s32p für 16/24 Bit)
+    FrameRate rate{0, 1};      // Bildrate der Datei; num 0 = wie die Timeline (format.rate)
     bool burnSubtitles = false; // sichtbare Untertitelspur ins Bild einbrennen
     QString subtitlePath;       // sichtbare Untertitelspur zusätzlich als SRT hierhin schreiben (leer = nicht)
     int from = 0, to = -1; // Bereich (Frames, inklusive); to < 0 = bis zum Ende der Timeline
@@ -68,6 +71,11 @@ private:
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Tractor> m_tractor;
+    // Andere Bildrate als die Timeline: Timeline als MLT-XML, abgespielt über den "consumer"-Producer im Profil der
+    // Ausgabe (rechnet Bilder um, Ton bleibt lückenlos). Sonst zeigt m_source auf m_tractor.
+    std::unique_ptr<Mlt::Profile> m_outProfile;
+    std::unique_ptr<Mlt::Producer> m_source;
+    QString m_xmlPath;
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<Mlt::Event> m_stoppedEvent;
     std::atomic<bool> m_threadDone{false}; // Encoder-Thread hat sich beendet ("consumer-stopped")
