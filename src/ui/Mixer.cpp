@@ -659,7 +659,10 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    row->addWidget(scroll, 1);
+    // Streifen immer dicht an Master/Lautheit (feste Breite wie im kleinen Fenster), übriger Platz bleibt rechts leer;
+    // erst wenn der Platz nicht reicht, scrollen die Spuren (Breite setzt rebuildStrips)
+    m_stripScroll = scroll;
+    row->addWidget(scroll);
 
     // Master rechts, fest (wie der Bus in DaVinci)
     m_master = new ChannelStrip(true);
@@ -722,6 +725,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
         menu.exec(m_loudness->mapToGlobal(pos));
     });
     row->addWidget(m_loudness);
+    row->addStretch(1);
     root->addLayout(row, 1);
 
     setMinimumWidth(kStripW * 3 + 40);
@@ -773,6 +777,7 @@ void Mixer::rebuildStrips(int count)
         m_stripLayout->insertWidget(i, s);
         m_strips << s;
     }
+    m_stripScroll->setMaximumWidth(count * kStripW);
 }
 
 void Mixer::sync()

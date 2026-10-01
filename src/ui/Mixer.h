@@ -26,6 +26,7 @@ private:
     Project* m_project;
     Engine* m_engine;
     QHBoxLayout* m_stripLayout = nullptr;
+    class QScrollArea* m_stripScroll = nullptr;
     QVector<ChannelStrip*> m_strips;
     ChannelStrip* m_master = nullptr;
     LoudnessStrip* m_loudness = nullptr; // Loudness-Meter rechts neben dem Master

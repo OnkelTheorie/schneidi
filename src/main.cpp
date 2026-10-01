@@ -144,7 +144,7 @@ int main(int argc, char* argv[])
     QStringList files = app.arguments().mid(1);
     const bool demo = files.removeAll("--demo") > 0; // Testhilfe: zusätzlich auf die Timeline legen
     // Testhilfe: --actions select_all,toggle_enabled löst Aktionen (IDs aus keybindings.json) nach dem Start aus
-    for (const char* opt : {"--screenshot", "--wait", "--lang", "--format", "--storage", "--design"})
+    for (const char* opt : {"--screenshot", "--wait", "--lang", "--format", "--storage", "--design", "--size"})
         if (const int i = files.indexOf(opt); i >= 0) files.remove(i, std::min<qsizetype>(2, files.size() - i));
     QStringList actions;
     if (const int i = files.indexOf("--actions"); i >= 0 && i + 1 < files.size()) {
@@ -181,7 +181,13 @@ int main(int argc, char* argv[])
                 if (e.id == id && e.action) e.action->trigger();
     });
     if (!screenshot.isEmpty()) {
-        w.resize(1600, 950);
+        // --size 2560x1440: Fenstergröße im Testlauf (z. B. Layout im Vollbild prüfen)
+        QSize size(1600, 950);
+        if (const int i = app.arguments().indexOf("--size"); i >= 0 && i + 1 < app.arguments().size()) {
+            const QStringList wh = app.arguments()[i + 1].split('x');
+            if (wh.size() == 2 && wh[0].toInt() > 0 && wh[1].toInt() > 0) size = QSize(wh[0].toInt(), wh[1].toInt());
+        }
+        w.resize(size);
         QTimer::singleShot(1500 + screenshotWait, &w, [&w, screenshot] {
             w.grab().save(screenshot);
             QApplication::quit();
