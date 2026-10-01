@@ -401,6 +401,29 @@ int main(int argc, char** argv)
         CHECK(!QFileInfo::exists(after.path));
     }
 
+    // Abbrechen zwischen zwei Aufträgen (nächster startet erst per Timer): gilt noch als laufend, Rest startet nicht
+    {
+        p.setRenderQueue({mk(8, "eins.mp4", "h264"), mk(9, "zwei.mp4", "h264")});
+        CHECK(q.start());
+        bool between = false;
+        int finishedCount = 0;
+        const auto c1 = QObject::connect(&q, &RenderQueue::jobFinished, &q, [&](int id, RenderStatus) {
+            if (id != 8) return;
+            between = q.isRunning();
+            q.cancel();
+        });
+        const auto c2 = QObject::connect(&q, &RenderQueue::finished, &q, [&] { ++finishedCount; });
+        CHECK(waitFor(q));
+        QCoreApplication::processEvents(); // geplanter Folgeauftrag darf nicht mehr starten
+        QObject::disconnect(c1);
+        QObject::disconnect(c2);
+        CHECK(between);
+        CHECK(!q.isRunning());
+        CHECK_EQ(finishedCount, 1);
+        CHECK(job(p, 8)->status == RenderStatus::Done);
+        CHECK(job(p, 9)->status == RenderStatus::Queued);
+    }
+
     // Ausgabe = Quelldatei der Timeline (auch über anderen Pfad dorthin): verweigert, Quelle bleibt unverändert
     {
         const QByteArray before = [&] { QFile f(clip); f.open(QIODevice::ReadOnly); return f.readAll(); }();

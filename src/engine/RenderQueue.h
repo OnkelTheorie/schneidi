@@ -16,7 +16,8 @@ class RenderQueue : public QObject {
 public:
     explicit RenderQueue(Project* project, QObject* parent = nullptr);
 
-    bool isRunning() const { return m_current > 0; }
+    // auch zwischen zwei Aufträgen (nächster startet per Timer)
+    bool isRunning() const { return m_current > 0 || !m_pending.isEmpty(); }
     int currentJob() const { return m_current; } // id, 0 = keiner
     int currentProgress() const { return m_percent; }
 
@@ -43,6 +44,7 @@ private:
     Project* m_project;
     Exporter* m_exporter;
     QVector<int> m_pending;
+    int m_run = 0; // zählt Start/Abbruch hoch: ein noch geplanter Folgeauftrag eines alten Laufs startet nicht
     int m_current = 0;
     int m_percent = 0;
     int m_done = 0, m_failed = 0;

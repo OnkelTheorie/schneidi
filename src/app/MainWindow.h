@@ -96,6 +96,9 @@ private:
     void openBackupDialog();
     bool saveTo(const QString& path);
     bool maybeSave(); // false = Abbrechen
+    // Vor Neu/Öffnen: läuft die Render-Warteschlange, fragen und abbrechen (sonst schreibt sie ihren Status
+    // in die Warteschlange des nächsten Projekts), dann maybeSave(). false = Abbrechen
+    bool maybeLeaveProject();
     void offerRestart(const QString& message, const QString& now, const QString& later);
     bool applyLoaded(ProjectData data, const QString& path);
     void setProjectPath(const QString& path);

@@ -55,6 +55,7 @@ bool RenderQueue::start(const QVector<int>& ids)
         if (wanted) m_pending << j.id;
     }
     if (m_pending.isEmpty()) return false;
+    ++m_run;
     m_done = m_failed = 0;
     for (int id : m_pending) setStatus(id, RenderStatus::Queued);
     emit runningChanged(true);
@@ -96,6 +97,7 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
 {
     const int id = m_current;
     if (!id) return;
+    const int run = m_run; // cancel() aus jobFinished heraus beendet den Lauf schon selbst
     m_current = 0;
     RenderStatus status = RenderStatus::Done;
     if (m_canceling) {
@@ -117,12 +119,22 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
         return;
     }
     // Nächsten Auftrag erst nach dem Aufräumen des Exporters starten
-    QTimer::singleShot(0, this, &RenderQueue::next);
+    QTimer::singleShot(0, this, [this, run] {
+        if (run == m_run) next();
+    });
 }
 
 void RenderQueue::cancel()
 {
     if (!isRunning()) return;
+    if (!m_current) { // zwischen zwei Aufträgen: Rest nicht mehr starten
+        ++m_run;
+        for (int rest : std::as_const(m_pending)) setStatus(rest, RenderStatus::Queued);
+        m_pending.clear();
+        emit runningChanged(false);
+        emit finished(m_done, m_failed);
+        return;
+    }
     m_canceling = true;
     m_exporter->cancel(); // meldet finished() sofort
 }

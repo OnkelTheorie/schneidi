@@ -208,6 +208,7 @@
  "Ende trimmen": "Trim End",
  "Entfernen": "Remove",
  "Es wird gerade gerendert. Beenden bricht das Rendern ab. Trotzdem beenden?": "A render is in progress. Quitting cancels it. Quit anyway?",
+ "Es wird gerade gerendert. Ein anderes Projekt bricht das Rendern ab. Trotzdem fortfahren?": "A render is in progress. Switching projects cancels it. Continue anyway?",
  "Export abgebrochen.": "Render cancelled.",
  "Export fehlgeschlagen: %1": "Export failed: %1",
  "Export fertig: %1": "Render finished: %1",

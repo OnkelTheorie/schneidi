@@ -26,6 +26,7 @@
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
+#include "engine/RenderQueue.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
@@ -1243,9 +1244,22 @@ bool MainWindow::maybeSave()
     return answer == QMessageBox::Discard;
 }
 
+bool MainWindow::maybeLeaveProject()
+{
+    RenderQueue* queue = m_deliver->renderQueue();
+    if (queue->isRunning() && !m_autosaveDisabled) {
+        if (QMessageBox::question(this, "schneidi",
+                                  T("Es wird gerade gerendert. Ein anderes Projekt bricht das Rendern ab. Trotzdem fortfahren?"),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+            return false;
+        queue->cancel(); // synchron: Status landet noch in diesem Projekt
+    }
+    return maybeSave();
+}
+
 void MainWindow::newProject()
 {
-    if (!maybeSave()) return;
+    if (!maybeLeaveProject()) return;
     m_engine->pause();
     m_selection->clear();
     m_engine->setFormat(ProjectFormat{}); // Medienlängen passen schon (leer) -> nicht neu einlesen
@@ -1258,7 +1272,7 @@ void MainWindow::newProject()
 
 void MainWindow::openProjectDialog()
 {
-    if (!maybeSave()) return;
+    if (!maybeLeaveProject()) return;
     const QString dir = m_projectPath.isEmpty() ? QDir::homePath() : QFileInfo(m_projectPath).absolutePath();
     const QString path = QFileDialog::getOpenFileName(this, T("Projekt öffnen"), dir, kFileFilter);
     if (!path.isEmpty()) openProject(path);
@@ -1320,7 +1334,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path)
 // versehentlich in den Backup-Ordner gespeichert wird; Speichern fragt nach dem Ziel
 void MainWindow::openBackupDialog()
 {
-    if (!maybeSave()) return;
+    if (!maybeLeaveProject()) return;
     QString dir = ProjectFile::backupDir(m_projectPath);
     if (!QFileInfo::exists(dir)) dir = ProjectFile::backupDir({});
     QDir().mkpath(dir);
@@ -1431,7 +1445,7 @@ void MainWindow::rebuildRecentMenu()
     const QStringList recent = QSettings().value("recentProjects").toStringList();
     for (const QString& path : recent) {
         QAction* a = m_recentMenu->addAction(QFileInfo(path).fileName(), this, [this, path] {
-            if (maybeSave()) openProject(path);
+            if (maybeLeaveProject()) openProject(path);
         });
         a->setToolTip(path);
         a->setEnabled(QFileInfo::exists(path));
