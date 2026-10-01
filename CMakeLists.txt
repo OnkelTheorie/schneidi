@@ -93,7 +93,7 @@ add_executable(schneidi
 )
 
 qt_add_resources(schneidi "i18n" PREFIX "/" FILES i18n/en.json)
-set(SCHNEIDI_THEMES assets/themes/dark-orange.json assets/themes/midnight.json assets/themes/graphit.json assets/themes/hell.json)
+set(SCHNEIDI_THEMES assets/themes/dark-orange.json assets/themes/midnight.json assets/themes/graphit.json assets/themes/hell.json assets/themes/beige.json)
 qt_add_resources(schneidi "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_THEMES})
 
 target_include_directories(schneidi PRIVATE src ${CMAKE_BINARY_DIR}/generated)

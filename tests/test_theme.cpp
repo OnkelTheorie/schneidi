@@ -51,7 +51,7 @@ int main(int argc, char** argv)
 
     // --- Eingebaute Designs: vorhanden, alle Schlüssel gesetzt und gültig, keine Signalfarben in den Dateien
     const QList<Theme::Design> designs = Theme::designs();
-    CHECK_EQ(int(designs.size()), 4);
+    CHECK_EQ(int(designs.size()), 5);
     CHECK_EQ(Theme::defaultDesign(), QString("dark-orange"));
     const QStringList designKeys = designJson("dark-orange").value("colors").toObject().keys();
     CHECK_EQ(int(designKeys.size()), 23);

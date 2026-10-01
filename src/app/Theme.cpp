@@ -71,7 +71,7 @@ const Colors& builtinValues()
     return values;
 }
 
-const QStringList kOrder = {"dark-orange", "midnight", "graphit", "hell"};
+const QStringList kOrder = {"dark-orange", "midnight", "graphit", "hell", "beige"};
 
 QJsonObject readDesign(const QString& id)
 {

@@ -1,0 +1,29 @@
+{
+  "name": "Beige",
+  "description": "Warmes Sandbeige mit Terrakotta-Akzenten",
+  "colors": {
+    "window": "#e2d9c6",
+    "panel": "#ece4d3",
+    "panelHeader": "#d9cfb9",
+    "topBar": "#d4c8af",
+    "border": "#a99a7e",
+    "well": "#c8bba0",
+    "field": "#f8f3e8",
+    "control": "#cdc0a6",
+    "controlLight": "#b9aa8d",
+    "controlOff": "#a6967a",
+    "text": "#2b2318",
+    "textDim": "#5e5242",
+    "textFaint": "#958670",
+    "timelineBg": "#b3a58a",
+    "trackBg": "#c6b99f",
+    "trackBgAlt": "#bfb298",
+    "trackHeader": "#d2c6ae",
+    "ruler": "#cfc3ab",
+    "lane": "#baac91",
+    "viewerBg": "#1e1b16",
+    "thumbBg": "#d2c6ae",
+    "primary": "#b4532a",
+    "secondary": "#4f7d5c"
+  }
+}
