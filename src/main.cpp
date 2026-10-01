@@ -91,6 +91,11 @@ int main(int argc, char* argv[])
     }
     QApplication app(argc, argv);
     QApplication::setApplicationName("schneidi");
+#ifdef Q_OS_WIN
+    // Ohne Organisationsnamen kann QSettings unter Windows nicht in die Registry schreiben (unter Linux greift
+    // „Unknown Organization“ als Ersatz – dort bleibt es dabei, sonst wären vorhandene Einstellungen weg)
+    QApplication::setOrganizationName("schneidi");
+#endif
     QApplication::setApplicationVersion(QString("%1 (%2)").arg(SCHNEIDI_VERSION, SCHNEIDI_BUILD)); // Version aus CMakeLists, Git-Stand, siehe cmake/BuildInfo.cmake
     Log::install();
     // Testhilfe: --lang en|de gilt nur für diesen Lauf (Einstellung bleibt unverändert)

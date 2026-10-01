@@ -18,6 +18,8 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace {
 
 // Einzeilige Beschriftung, die sich der Kartenbreite anpasst (zu lang = „…“, voller Text im Tooltip)
@@ -290,7 +292,11 @@ void RenderQueuePanel::contextMenu(const QPoint& pos)
             }
         m_project->setRenderQueue(q);
     });
-    reset->setEnabled(!ids.isEmpty());
+    // nur sinnvoll, wenn ein gewählter Auftrag fertig/fehlgeschlagen/abgebrochen ist (nicht schon wartend oder laufend)
+    const QVector<RenderJob> queue = m_project->renderQueue();
+    reset->setEnabled(std::any_of(queue.begin(), queue.end(), [&](const RenderJob& j) {
+        return ids.contains(j.id) && j.status != RenderStatus::Queued && j.status != RenderStatus::Rendering;
+    }));
     menu.addSeparator();
     QAction* del = menu.addAction(T("Löschen"), this, [this, ids] { removeJobs(ids); });
     del->setShortcut(QKeySequence::Delete);
