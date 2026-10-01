@@ -47,6 +47,7 @@ add_executable(schneidi
     src/core/EditorSubtitles.cpp
     src/core/EditorCompound.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
+    src/core/EffectFolders.h      src/core/EffectFolders.cpp
     src/core/Loudness.h           src/core/Loudness.cpp
     src/core/RenderJob.h          src/core/RenderJob.cpp
     src/core/Subtitles.h          src/core/Subtitles.cpp
@@ -95,6 +96,8 @@ add_executable(schneidi
 qt_add_resources(schneidi "i18n" PREFIX "/" FILES i18n/en.json)
 set(SCHNEIDI_THEMES assets/themes/dark-orange.json assets/themes/midnight.json assets/themes/graphit.json assets/themes/hell.json assets/themes/beige.json)
 qt_add_resources(schneidi "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_THEMES})
+file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/luts/*.cube) # tools/gen_luts.py
+qt_add_resources(schneidi "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
 
 target_include_directories(schneidi PRIVATE src ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(schneidi schneidi_buildinfo)

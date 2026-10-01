@@ -2,6 +2,7 @@
 
 #include "app/Theme.h"
 #include "core/Editor.h"
+#include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -246,7 +247,7 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     m_lutName->setMinimumWidth(120);
     auto* lutLoad = new QToolButton;
     lutLoad->setText(T("Laden…"));
-    lutLoad->setToolTip(T("3D-LUT (.cube) für diesen Clip laden, wird nach der Korrektur angewendet"));
+    lutLoad->setToolTip(T("LUT (.cube, .3dl, .csp, Hald-CLUT) für diesen Clip laden, wird nach der Korrektur angewendet"));
     connect(lutLoad, &QToolButton::clicked, this, &ColorPanel::loadLut);
     m_lutClear = smallButton("✕", T("LUT entfernen"));
     connect(m_lutClear, &QToolButton::clicked, this, [this] { m_editor->setGradeLut(targets(), {}); });
@@ -413,12 +414,12 @@ void ColorPanel::loadLut()
     if (targets().isEmpty()) return;
     QSettings settings;
     QString dir = settings.value("color/lutDir").toString();
-    if (dir.isEmpty() || !QFileInfo(dir).isDir()) dir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    const QString path = QFileDialog::getOpenFileName(this, T("LUT laden"), dir, T("LUT-Dateien (*.cube)"));
+    if (dir.isEmpty() || !QFileInfo(dir).isDir()) dir = EffectFolders::lutDir(); // eigener LUTs-Ordner
+    const QString path = QFileDialog::getOpenFileName(this, T("LUT laden"), dir, EffectFolders::lutFileFilter());
     if (path.isEmpty()) return;
     settings.setValue("color/lutDir", QFileInfo(path).absolutePath());
     QString error;
-    if (!ColorGrade::loadCube(path, &error)) {
+    if (!ColorGrade::loadLut(path, &error)) {
         QMessageBox::warning(this, T("LUT laden"), T("Die LUT-Datei lässt sich nicht lesen:\n%1").arg(error));
         return;
     }
@@ -486,7 +487,7 @@ void ColorPanel::refresh()
 
     const QString lut = ColorGrade::lutPath(*c);
     const bool lutOk = lut.isEmpty() || QFileInfo::exists(lut);
-    m_lutName->setText(lut.isEmpty() ? T("keine") : QFileInfo(lut).fileName() + (lutOk ? QString() : T(" (fehlt)")));
+    m_lutName->setText(lut.isEmpty() ? T("keine") : EffectFolders::displayName(lut) + (lutOk ? QString() : T(" (fehlt)")));
     m_lutName->setToolTip(lut);
     m_lutName->setStyleSheet(QString("color: %1;").arg((lutOk ? Theme::text : Theme::warning).name()));
     m_lutClear->setEnabled(!lut.isEmpty());

@@ -3,8 +3,14 @@
 #include "app/Theme.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
+#include "engine/ColorGrade.h"
 #include "ui/MediaPool.h"
 
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QDir>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -13,14 +19,18 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QSplitter>
+#include <QTimer>
+#include <QToolButton>
 #include <QTreeWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace {
 
 constexpr QSize kIcon{48, 27};
 
-enum Category { All, VideoTransitions, AudioTransitions, Titles, OpenFx, Filters };
+enum Category { All, VideoTransitions, AudioTransitions, Titles, OpenFx, Filters, Schneidi, Luts, LutGroup };
+constexpr int kGroupRole = Qt::UserRole + 1; // LutGroup: Unterordner relativ zum LUTs-Ordner
 constexpr const char* kTitleData = "title";
 constexpr const char* kEffectPrefix = "fx:"; // Listeneintrag eines Filters: "fx:<Effekt-ID>"
 
@@ -36,6 +46,7 @@ protected:
         const QString d = items.first()->data(Qt::UserRole).toString();
         if (d == kTitleData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::TitleItem)); // wie "Text" im Pool
         else if (d.startsWith(kEffectPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.mid(3).toUtf8());
+        else if (d.startsWith(EffectFolders::LutPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.toUtf8());
         else data->setData(EffectsLibrary::MimeType, d.toUtf8());
         return data;
     }
@@ -153,6 +164,29 @@ QPixmap effectIcon(const QString& id)
     return pm;
 }
 
+// Vorlage für LUT-Symbole: Farbton von links nach rechts, oben hell, unten dunkel, unten ein Graukeil
+const QImage& lutSample()
+{
+    static const QImage img = [] {
+        QImage im(kIcon, QImage::Format_RGBA8888);
+        const int w = im.width(), h = im.height(), strip = 5;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                QColor c;
+                if (y >= h - strip) {
+                    const int g = x * 255 / (w - 1);
+                    c = QColor(g, g, g);
+                } else {
+                    const double t = double(y) / (h - strip - 1);
+                    c = QColor::fromHsvF(float(x) / w, 0.55f, float(0.95 - 0.6 * t));
+                }
+                im.setPixelColor(x, y, c);
+            }
+        return im;
+    }();
+    return img;
+}
+
 } // namespace
 
 bool EffectsLibrary::parseTransition(const QByteArray& data, TrackKind* kind, TransitionStyle* style)
@@ -189,9 +223,20 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     m_search->setPlaceholderText(T("Suchen"));
     m_search->setClearButtonEnabled(true);
     m_search->setMaximumWidth(180);
+    // Effekte importieren: öffnet den Effekte-Ordner (wie „Im Dateimanager zeigen“), Dateien dort erscheinen von selbst
+    auto* import = new QToolButton;
+    import->setText(T("Effekte importieren…"));
+    import->setToolTip(T("Öffnet den Effekte-Ordner. LUTs (.cube, .3dl, .csp, Hald-CLUT) in den Ordner „LUTs“ legen, "
+                         "Unterordner werden zu Kategorien.\n%1")
+                           .arg(QDir::toNativeSeparators(EffectFolders::root())));
+    connect(import, &QToolButton::clicked, this, [] {
+        EffectFolders::ensure();
+        QDesktopServices::openUrl(QUrl::fromLocalFile(EffectFolders::root()));
+    });
     auto* header = new QHBoxLayout;
     header->setContentsMargins(0, 0, 4, 0);
     header->addWidget(title, 1);
+    header->addWidget(import);
     header->addWidget(m_search);
 
     // Kategorien wie in DaVinci: Toolbox mit Unterpunkten
@@ -213,6 +258,12 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     auto* filters = new QTreeWidgetItem(openFx, {T("Filter")});
     filters->setData(0, Qt::UserRole, int(Filters));
     openFx->setExpanded(true);
+    // Mitgelieferte Looks und eigene LUTs (Effekte-Ordner)
+    auto* own = new QTreeWidgetItem(m_categories, {QStringLiteral("schneidi")});
+    own->setData(0, Qt::UserRole, int(Schneidi));
+    m_lutRoot = new QTreeWidgetItem(m_categories, {QStringLiteral("LUTs")});
+    m_lutRoot->setData(0, Qt::UserRole, int(Luts));
+    m_lutRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::lutDir()));
     m_categories->setCurrentItem(toolbox);
 
     m_list = new EffectList;
@@ -234,6 +285,10 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
             emit effectRequested(d.mid(3));
             return;
         }
+        if (d.startsWith(EffectFolders::LutPrefix)) {
+            emit effectRequested(d);
+            return;
+        }
         TrackKind kind;
         TransitionStyle style;
         if (parseTransition(d.toUtf8(), &kind, &style)) emit transitionRequested(kind, style);
@@ -251,9 +306,80 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     lay->addLayout(header);
     lay->addWidget(split, 1);
 
+    // Effekte-Ordner beobachten (Ordner + Unterordner); Änderungen gesammelt nach kurzer Pause einlesen
+    m_watcher = new QFileSystemWatcher(this);
+    m_rescan = new QTimer(this);
+    m_rescan->setSingleShot(true);
+    m_rescan->setInterval(300);
+    connect(m_rescan, &QTimer::timeout, this, &EffectsLibrary::rescanLuts);
+    connect(m_watcher, &QFileSystemWatcher::directoryChanged, m_rescan, qOverload<>(&QTimer::start));
+
     connect(m_categories, &QTreeWidget::currentItemChanged, this, &EffectsLibrary::rebuild);
     connect(m_search, &QLineEdit::textChanged, this, &EffectsLibrary::rebuild);
+    EffectFolders::ensure();
+    rescanLuts();
+}
+
+void EffectsLibrary::rescanLuts()
+{
+    if (!m_watcher->directories().isEmpty()) m_watcher->removePaths(m_watcher->directories());
+    m_watcher->addPaths(EffectFolders::userLutDirs());
+    m_userLuts = EffectFolders::userLuts();
+
+    // Unterkategorien = Unterordner mit LUTs (verschachtelt wie im Ordner); Auswahl bleibt, wenn es sie noch gibt
+    const QTreeWidgetItem* cur = m_categories->currentItem();
+    const QString curGroup = cur && cur->data(0, Qt::UserRole).toInt() == LutGroup ? cur->data(0, kGroupRole).toString()
+                                                                                   : QString();
+    const QSignalBlocker block(m_categories);
+    const bool wasCurrent = cur && cur->parent() && cur->data(0, Qt::UserRole).toInt() == LutGroup;
+    qDeleteAll(m_lutRoot->takeChildren());
+    QTreeWidgetItem* select = nullptr;
+    QHash<QString, QTreeWidgetItem*> groups;
+    for (const EffectFolders::LutEntry& e : m_userLuts) {
+        QString path;
+        QTreeWidgetItem* parent = m_lutRoot;
+        for (const QString& part : e.group.split('/', Qt::SkipEmptyParts)) {
+            path = path.isEmpty() ? part : path + '/' + part;
+            QTreeWidgetItem*& it = groups[path];
+            if (!it) {
+                it = new QTreeWidgetItem(parent, {part});
+                it->setData(0, Qt::UserRole, int(LutGroup));
+                it->setData(0, kGroupRole, path);
+                if (path == curGroup) select = it;
+            }
+            parent = it;
+        }
+    }
+    m_lutRoot->setExpanded(true);
+    if (wasCurrent) m_categories->setCurrentItem(select ? select : m_lutRoot);
     rebuild();
+}
+
+QPixmap EffectsLibrary::lutIcon(const QString& path, QString* error)
+{
+    const QFileInfo fi(path);
+    const qint64 stamp = fi.lastModified().toMSecsSinceEpoch() ^ (fi.size() << 20);
+    auto it = m_lutIcons.find(path);
+    if (it == m_lutIcons.end() || it->stamp != stamp) {
+        IconEntry e;
+        e.stamp = stamp;
+        // Ohne Zwischenspeicher lesen: große Ordner sollen nicht dauerhaft im Speicher bleiben
+        if (const auto lut = ColorGrade::parseLut(path, &e.error)) {
+            QImage img = lutSample().copy();
+            ColorGrade::apply(img.bits(), img.width(), img.height(), ColorGrade::Params(), lut.get());
+            e.icon = QPixmap::fromImage(img);
+        } else {
+            QPixmap pm(kIcon);
+            pm.fill(QColor(0x2a, 0x2a, 0x30));
+            QPainter p(&pm);
+            p.setPen(Theme::warning);
+            p.drawText(pm.rect(), Qt::AlignCenter, QStringLiteral("!"));
+            e.icon = pm;
+        }
+        it = m_lutIcons.insert(path, e);
+    }
+    if (error) *error = it->error;
+    return it->icon;
 }
 
 void EffectsLibrary::rebuild()
@@ -264,7 +390,7 @@ void EffectsLibrary::rebuild()
     if (shown == OpenFx) shown = Filters; // bisher nur eine Unterkategorie
     const QString filter = m_search->text().trimmed();
 
-    struct Entry { int cat; QString name; QString data; QPixmap icon; };
+    struct Entry { int cat; QString name; QString data; QPixmap icon; QString tip; bool ok = true; };
     QVector<Entry> entries;
     for (const auto& i : kTransitionTypes)
         entries << Entry{VideoTransitions, T(i.name), QString("video:%1").arg(i.id), transitionIcon(i.type)};
@@ -273,10 +399,26 @@ void EffectsLibrary::rebuild()
     entries << Entry{Titles, QStringLiteral("Text"), kTitleData, titleIcon()};
     for (const auto& e : EffectRegistry::all())
         if (e.library) entries << Entry{Filters, e.name, kEffectPrefix + e.id, effectIcon(e.id)};
+    // LUTs nur für die gewählte Kategorie (Symbole kosten das Einlesen der Datei)
+    const QString group = cur && shown == LutGroup ? cur->data(0, kGroupRole).toString() : QString();
+    if (shown == Schneidi)
+        for (const auto& l : EffectFolders::builtinLuts())
+            entries << Entry{Schneidi, l.name, EffectFolders::LutPrefix + l.path, lutIcon(l.path, nullptr),
+                             T("LUT (mitgeliefert)")};
+    if (shown == Luts || shown == LutGroup)
+        for (const auto& l : m_userLuts) {
+            // LUTs zeigt alles, eine Unterkategorie ihren Ordner samt Unterordnern
+            if (shown == LutGroup && l.group != group && !l.group.startsWith(group + '/')) continue;
+            QString error;
+            const QPixmap icon = lutIcon(l.path, &error);
+            const QString tip = QDir::toNativeSeparators(l.path) +
+                                (error.isEmpty() ? QString() : "\n" + T("Lässt sich nicht lesen: %1").arg(error));
+            entries << Entry{shown, l.name, EffectFolders::LutPrefix + l.path, icon, tip, error.isEmpty()};
+        }
 
     const char* headers[] = {nullptr, N_("Videoübergänge"), N_("Audioübergänge"), N_("Titel-Vorlagen"), nullptr, "Filter"};
-    for (int cat : {VideoTransitions, AudioTransitions, Titles, Filters}) {
-        if (shown == All && cat == Filters) continue; // Toolbox zeigt nur ihre Gruppen
+    for (int cat : {VideoTransitions, AudioTransitions, Titles, Filters, Schneidi, Luts, LutGroup}) {
+        if (shown == All && cat > Titles) continue; // Toolbox zeigt nur ihre Gruppen
         if (shown != All && shown != cat) continue;
         QVector<const Entry*> hits;
         for (const Entry& e : entries)
@@ -293,9 +435,17 @@ void EffectsLibrary::rebuild()
         }
         for (const Entry* e : hits) {
             auto* it = new QListWidgetItem(QIcon(e->icon), e->name);
-            it->setData(Qt::UserRole, e->data);
-            it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
+            it->setData(Qt::UserRole, e->ok ? e->data : QString()); // kaputte LUT: sichtbar, aber nicht anwendbar
+            it->setFlags(e->ok ? Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled : Qt::ItemIsEnabled);
+            if (!e->ok) it->setForeground(Theme::warning);
+            if (!e->tip.isEmpty()) it->setToolTip(e->tip);
             m_list->addItem(it);
         }
+    }
+    if (m_list->count() == 0 && filter.isEmpty() && (shown == Luts || shown == LutGroup)) {
+        auto* h = new QListWidgetItem(T("Noch keine LUTs – „Effekte importieren…“ öffnet den Ordner"));
+        h->setFlags(Qt::NoItemFlags);
+        h->setForeground(Theme::textDim);
+        m_list->addItem(h);
     }
 }

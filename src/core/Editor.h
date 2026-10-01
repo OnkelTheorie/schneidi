@@ -190,7 +190,7 @@ public:
     void setTargetTracks(int video, int audio);
     // Effekte (Open FX aus der Effects Library): an Videoclips anhängen (Clips, die ihn schon haben, bleiben),
     // bzw. entfernen; je ein Undo-Schritt
-    void addEffect(const QVector<int>& ids, const QString& effectId);
+    void addEffect(const QVector<int>& ids, const QString& effectId); // auch "lut:<Pfad>" (EffectFolders::LutPrefix)
     void removeEffect(const QVector<int>& ids, const QString& effectId);
     // Ziel für Doppelklick in der Effects Library: ausgewählte Videoclips, sonst der oberste Videoclip am Playhead
     QVector<int> effectTargets(int frame) const;

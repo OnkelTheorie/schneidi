@@ -42,15 +42,21 @@ Params at(const Clip& c, double t);
 bool active(const Clip& c);
 QString lutPath(const Clip& c); // leer = keine LUT
 
-// 3D-LUT (.cube, Adobe/Resolve-Format) bzw. 1D-LUT; Werte R schnellster Index
+// 3D-LUT bzw. 1D-LUT; Werte R schnellster Index
 struct Lut {
     int size = 0;
     bool is3d = true;
     float domainMin[3] = {0, 0, 0}, domainMax[3] = {1, 1, 1};
     QVector<float> data; // size^3 * 3 (3D) bzw. size * 3 (1D)
+    // Vorab-Kurve je Kanal (.csp „preLUT“): Stützstellen Eingang -> Ausgang 0..1, leer = keine
+    QVector<float> shaperIn[3], shaperOut[3];
 };
-// Liest eine .cube-Datei (zwischengespeichert nach Pfad + Änderungszeit); nullptr + error bei Fehlern
-std::shared_ptr<const Lut> loadCube(const QString& path, QString* error = nullptr);
+// Formate: .cube (Adobe/Resolve), .3dl (Lustre/Flame/Nuke), .csp (cineSpace), Hald-CLUT als Bild (.png/.tif/.bmp),
+// Endungen siehe EffectFolders::lutSuffixes.
+// Liest eine LUT-Datei (Format nach Endung, auch Qt-Ressourcen ":/…") ohne Zwischenspeicher; nullptr + error bei Fehlern
+std::shared_ptr<const Lut> parseLut(const QString& path, QString* error = nullptr);
+// Wie parseLut, aber zwischengespeichert nach Pfad + Änderungszeit (Vorschau/Export)
+std::shared_ptr<const Lut> loadLut(const QString& path, QString* error = nullptr);
 
 // Korrektur auf ein RGBA-Bild (8 Bit, Zeilen ohne Lücke) anwenden; Alpha bleibt. lut darf nullptr sein.
 void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut);

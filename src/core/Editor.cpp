@@ -1,5 +1,6 @@
 #include "core/Editor.h"
 
+#include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -513,6 +514,10 @@ void Editor::modifyClips(const QVector<int>& idsIn, const QString& text, const s
 
 void Editor::addEffect(const QVector<int>& ids, const QString& effectId)
 {
+    if (effectId.startsWith(EffectFolders::LutPrefix)) { // LUT aus der Effects Library -> Farbkorrektur des Clips
+        setGradeLut(ids, effectId.mid(int(qstrlen(EffectFolders::LutPrefix))));
+        return;
+    }
     const EffectDescriptor* d = EffectRegistry::find(effectId);
     if (!d) return;
     const Timeline& tl = m_project->timeline();

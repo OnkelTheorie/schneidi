@@ -211,8 +211,8 @@ void testPixels(const QString& dir)
     CHECK(writeFile(idPath, cube(17, [](double&, double&, double&) {})));
     CHECK(writeFile(invPath, cube(9, [](double& r, double& g, double& b) { r = 1 - r; g = 1 - g; b = 1 - b; })));
     QString err;
-    auto idLut = ColorGrade::loadCube(idPath, &err);
-    auto invLut = ColorGrade::loadCube(invPath, &err);
+    auto idLut = ColorGrade::loadLut(idPath, &err);
+    auto invLut = ColorGrade::loadLut(invPath, &err);
     if (CHECK(idLut && invLut)) {
         CHECK(idLut->size == 17 && idLut->is3d);
         o = graded(CP(), idLut.get());
@@ -222,17 +222,17 @@ void testPixels(const QString& dir)
         o = graded(CP(), invLut.get());
         CHECK(R(o, 0) == 255 && R(o, 255) == 0 && std::abs(R(o, 100) - 155) <= 1);
         CHECK(o[3] == 200); // Alpha
-        CHECK(ColorGrade::loadCube(idPath) == idLut); // zwischengespeichert
+        CHECK(ColorGrade::loadLut(idPath) == idLut); // zwischengespeichert
     }
     // 1D-LUT mit Domain und kaputte Dateien
     const QString oneD = QDir(dir).filePath("half.cube");
     CHECK(writeFile(oneD, "LUT_1D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n0 0 0\n0.5 0.5 0.5\n"));
-    if (auto l = ColorGrade::loadCube(oneD); CHECK(l && !l->is3d)) CHECK(std::abs(R(graded(CP(), l.get()), 255) - 128) <= 1);
+    if (auto l = ColorGrade::loadLut(oneD); CHECK(l && !l->is3d)) CHECK(std::abs(R(graded(CP(), l.get()), 255) - 128) <= 1);
     const QString bad = QDir(dir).filePath("bad.cube");
     CHECK(writeFile(bad, "LUT_3D_SIZE 2\n0 0 0\n1 1 1\n"));
     err.clear();
-    CHECK(!ColorGrade::loadCube(bad, &err) && !err.isEmpty());
-    CHECK(!ColorGrade::loadCube(QDir(dir).filePath("fehlt.cube")));
+    CHECK(!ColorGrade::loadLut(bad, &err) && !err.isEmpty());
+    CHECK(!ColorGrade::loadLut(QDir(dir).filePath("fehlt.cube")));
 }
 
 void testRender(const QString& dir)

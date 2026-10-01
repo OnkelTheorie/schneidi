@@ -1,5 +1,6 @@
 #include "core/ProjectFile.h"
 
+#include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "core/Retime.h"
@@ -188,19 +189,32 @@ QJsonObject pathParamsRelative(const EffectInstance& e, const QDir& projectDir)
     if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))
         for (const EffectParam& p : d->params) {
             const QString path = e.params.value(p.key).toString();
-            if (p.type == EffectParam::Path && !path.isEmpty()) rel[p.key] = projectDir.relativeFilePath(path);
+            if (p.type == EffectParam::Path && !path.isEmpty() && !EffectFolders::isBuiltin(path))
+                rel[p.key] = projectDir.relativeFilePath(path);
         }
     return rel;
 }
 
-// Wie bei Medien: absoluter Pfad fehlt -> relativ zur Projektdatei versuchen (Ordner verschoben)
+// Wie bei Medien: absoluter Pfad fehlt -> relativ zur Projektdatei versuchen (Ordner verschoben), bei LUTs danach
+// gleichnamig im eigenen LUTs-Ordner (Projekt von einem anderen Rechner, z. B. Linux <-> Windows)
 void resolvePathParams(EffectInstance& e, const QJsonObject& rel, const QDir& projectDir)
 {
-    for (auto it = rel.begin(); it != rel.end(); ++it) {
-        const QString abs = e.params.value(it.key()).toString();
-        if (abs.isEmpty() || QFileInfo::exists(abs)) continue;
-        const QString candidate = QDir::cleanPath(projectDir.absoluteFilePath(it.value().toString()));
-        if (QFileInfo::exists(candidate)) e.params[it.key()] = candidate;
+    const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+    if (!d) return;
+    for (const EffectParam& p : d->params) {
+        const QString abs = e.params.value(p.key).toString();
+        if (p.type != EffectParam::Path || abs.isEmpty() || QFileInfo::exists(abs)) continue;
+        if (rel.contains(p.key)) {
+            const QString candidate = QDir::cleanPath(projectDir.absoluteFilePath(rel.value(p.key).toString()));
+            if (QFileInfo::exists(candidate)) {
+                e.params[p.key] = candidate;
+                continue;
+            }
+        }
+        if (EffectFolders::isLutFile(abs)) // Dateiname auch aus Windows-Pfaden ("C:\…\look.cube")
+            if (const QString found = EffectFolders::findUserLut(QString(abs).replace('\\', '/').section('/', -1));
+                !found.isEmpty())
+                e.params[p.key] = found;
     }
 }
 

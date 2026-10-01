@@ -1,5 +1,6 @@
 #include "engine/ColorGrade.h"
 
+#include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 
@@ -8,6 +9,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QImage>
+#include <QRgba64>
 #include <QList>
 #include <algorithm>
 #include <cmath>
@@ -63,6 +66,19 @@ struct Curve {
     }
 };
 
+// Vorab-Kurve (.csp) stückweise linear, außerhalb festgehalten
+inline float shape(const Lut& lut, int c, float x)
+{
+    const QVector<float>& in = lut.shaperIn[c];
+    if (in.isEmpty()) return x;
+    const QVector<float>& out = lut.shaperOut[c];
+    if (x <= in.first()) return out.first();
+    if (x >= in.last()) return out.last();
+    const int i = int(std::upper_bound(in.cbegin(), in.cend(), x) - in.cbegin()); // in[i-1] <= x < in[i]
+    const float span = in[i] - in[i - 1];
+    return span > 0 ? out[i - 1] + (out[i] - out[i - 1]) * (x - in[i - 1]) / span : out[i];
+}
+
 // Trilineare Interpolation in der 3D-LUT (Eingang 0..1 nach Domain umgerechnet)
 inline void sample3d(const Lut& lut, float rgb[3])
 {
@@ -71,7 +87,8 @@ inline void sample3d(const Lut& lut, float rgb[3])
     int i0[3], i1[3];
     for (int c = 0; c < 3; ++c) {
         const float span = lut.domainMax[c] - lut.domainMin[c];
-        float v = span > 0 ? (rgb[c] - lut.domainMin[c]) / span : rgb[c];
+        const float x = shape(lut, c, rgb[c]);
+        float v = span > 0 ? (x - lut.domainMin[c]) / span : x;
         v = std::clamp(v, 0.0f, 1.0f) * float(n - 1);
         i0[c] = std::min(int(v), n - 1);
         i1[c] = std::min(i0[c] + 1, n - 1);
@@ -95,7 +112,8 @@ inline void sample1d(const Lut& lut, float rgb[3])
     const int n = lut.size;
     for (int c = 0; c < 3; ++c) {
         const float span = lut.domainMax[c] - lut.domainMin[c];
-        float v = span > 0 ? (rgb[c] - lut.domainMin[c]) / span : rgb[c];
+        const float x = shape(lut, c, rgb[c]);
+        float v = span > 0 ? (x - lut.domainMin[c]) / span : x;
         v = std::clamp(v, 0.0f, 1.0f) * float(n - 1);
         const int i0 = std::min(int(v), n - 1), i1 = std::min(i0 + 1, n - 1);
         const float f = v - float(i0);
@@ -185,7 +203,223 @@ bool active(const Clip& c)
     return !at(c, 0).isNeutral();
 }
 
-std::shared_ptr<const Lut> loadCube(const QString& path, QString* error)
+namespace {
+
+using LutPtr = std::shared_ptr<Lut>;
+
+LutPtr failLut(QString* error, const QString& msg)
+{
+    if (error) *error = msg;
+    return nullptr;
+}
+
+// Zahl einer Datenzeile (QByteArray::toDouble: immer mit Punkt, unabhängig vom Gebietsschema)
+bool isNumber(const QByteArray& w)
+{
+    bool ok = false;
+    w.toDouble(&ok);
+    return ok;
+}
+
+QList<QByteArray> words(const QByteArray& line) { return line.simplified().split(' '); }
+
+// .cube (Adobe/Resolve): LUT_3D_SIZE/LUT_1D_SIZE, DOMAIN_MIN/MAX bzw. LUT_*_INPUT_RANGE, Daten R schnellster Index
+LutPtr parseCube(QIODevice& f, QString* error)
+{
+    auto lut = std::make_shared<Lut>();
+    int expected = 0;
+    while (!f.atEnd()) {
+        const QByteArray line = f.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith('#')) continue;
+        const QList<QByteArray> w = words(line);
+        const QByteArray key = w.first().toUpper();
+        if (isNumber(w.first())) {
+            if (w.size() < 3 || !expected) return failLut(error, QStringLiteral("Datenzeile vor der Größenangabe"));
+            for (int c = 0; c < 3; ++c) {
+                bool okc = false;
+                lut->data << float(w.at(c).toDouble(&okc));
+                if (!okc) return failLut(error, QStringLiteral("ungültige Zahl"));
+            }
+            continue;
+        }
+        if (key == "LUT_3D_SIZE" || key == "LUT_1D_SIZE") {
+            lut->is3d = key == "LUT_3D_SIZE";
+            lut->size = w.value(1).toInt();
+            if (lut->size < 2 || lut->size > (lut->is3d ? 256 : 65536))
+                return failLut(error, QStringLiteral("ungültige Größe"));
+            expected = lut->is3d ? lut->size * lut->size * lut->size : lut->size;
+            lut->data.reserve(expected * 3);
+        } else if (key == "DOMAIN_MIN" || key == "DOMAIN_MAX") {
+            float* dst = key == "DOMAIN_MIN" ? lut->domainMin : lut->domainMax;
+            for (int c = 0; c < 3 && c + 1 < w.size(); ++c) dst[c] = float(w.at(c + 1).toDouble());
+        } else if (key == "LUT_3D_INPUT_RANGE" || key == "LUT_1D_INPUT_RANGE") { // Resolve-Variante
+            for (int c = 0; c < 3; ++c) {
+                lut->domainMin[c] = float(w.value(1).toDouble());
+                lut->domainMax[c] = float(w.value(2).toDouble());
+            }
+        } // TITLE und Unbekanntes überspringen
+    }
+    if (!expected || lut->data.size() != expected * 3)
+        return failLut(error, QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
+    return lut;
+}
+
+// .3dl (Lustre/Flame/Nuke): optionale Zeile mit dem Eingangsgitter (N Werte), danach N^3 ganzzahlige RGB-Tripel,
+// B schnellster Index. Ausgangs-Bittiefe aus „Mesh <ein> <aus>“ oder aus dem größten Wert (10/12/16 Bit).
+LutPtr parse3dl(QIODevice& f, QString* error)
+{
+    int size = 0;
+    double outMax = 0;
+    QVector<float> raw;
+    while (!f.atEnd()) {
+        const QByteArray line = f.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith('#')) continue;
+        const QList<QByteArray> w = words(line);
+        if (!isNumber(w.first())) {
+            if (w.first().compare("Mesh", Qt::CaseInsensitive) == 0 && w.size() >= 3)
+                outMax = std::pow(2.0, w.at(2).toInt()) - 1;
+            continue; // 3DMESH, LUT8, gamma … überspringen
+        }
+        if (w.size() != 3 && raw.isEmpty() && !size) { // Eingangsgitter: legt die Größe fest
+            size = int(w.size());
+            continue;
+        }
+        if (w.size() < 3) return failLut(error, QStringLiteral("ungültige Datenzeile"));
+        for (int c = 0; c < 3; ++c) {
+            bool ok = false;
+            raw << float(w.at(c).toDouble(&ok));
+            if (!ok) return failLut(error, QStringLiteral("ungültige Zahl"));
+        }
+    }
+    const int count = int(raw.size() / 3);
+    if (!size) size = int(std::lround(std::cbrt(double(count)))); // ohne Gitterzeile
+    if (size < 2 || size > 256 || count != size * size * size)
+        return failLut(error, QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
+    if (outMax <= 0) {
+        const float m = raw.isEmpty() ? 0 : *std::max_element(raw.cbegin(), raw.cend());
+        outMax = m <= 1.0f ? 1 : m <= 1023 ? 1023 : m <= 4095 ? 4095 : 65535;
+    }
+    auto lut = std::make_shared<Lut>();
+    lut->size = size;
+    lut->data.resize(raw.size());
+    // B schnellster Index -> R schnellster Index
+    for (int r = 0; r < size; ++r)
+        for (int g = 0; g < size; ++g)
+            for (int b = 0; b < size; ++b) {
+                const size_t from = (size_t(r) * size * size + size_t(g) * size + size_t(b)) * 3;
+                const size_t to = (size_t(b) * size * size + size_t(g) * size + size_t(r)) * 3;
+                for (int c = 0; c < 3; ++c) lut->data[to + c] = float(raw[from + c] / outMax);
+            }
+    return lut;
+}
+
+// .csp (cineSpace): „CSPLUTV100“, „3D“/„1D“, optional METADATA-Block, je Kanal eine Vorab-Kurve
+// (Anzahl, Eingänge, Ausgänge), dann 3D: „N N N“ + N^3 Tripel (R schnellster Index) bzw. 1D: Anzahl + Tripel
+LutPtr parseCsp(QIODevice& f, QString* error)
+{
+    if (!f.readLine().trimmed().startsWith("CSPLUTV100")) return failLut(error, QStringLiteral("kein cineSpace-LUT"));
+    const QByteArray kind = f.readLine().trimmed().toUpper();
+    if (kind != "3D" && kind != "1D") return failLut(error, QStringLiteral("unbekannte LUT-Art"));
+    QVector<double> nums;
+    bool meta = false;
+    while (!f.atEnd()) {
+        const QByteArray line = f.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith('#')) continue;
+        if (line.toUpper().startsWith("BEGIN METADATA")) meta = true;
+        if (meta) {
+            if (line.toUpper().startsWith("END METADATA")) meta = false;
+            continue;
+        }
+        for (const QByteArray& w : words(line)) {
+            bool ok = false;
+            nums << w.toDouble(&ok);
+            if (!ok) return failLut(error, QStringLiteral("ungültige Zahl"));
+        }
+    }
+    auto lut = std::make_shared<Lut>();
+    lut->is3d = kind == "3D";
+    qsizetype i = 0;
+    auto next = [&](double* v) {
+        if (i >= nums.size()) return false;
+        *v = nums[i++];
+        return true;
+    };
+    for (int c = 0; c < 3; ++c) { // Vorab-Kurven
+        double n = 0;
+        if (!next(&n) || n < 2 || n > 65536) return failLut(error, QStringLiteral("ungültige Vorab-Kurve"));
+        QVector<float> in, out;
+        for (int k = 0; k < int(n); ++k) {
+            double v;
+            if (!next(&v)) return failLut(error, QStringLiteral("Vorab-Kurve zu kurz"));
+            in << float(v);
+        }
+        for (int k = 0; k < int(n); ++k) {
+            double v;
+            if (!next(&v)) return failLut(error, QStringLiteral("Vorab-Kurve zu kurz"));
+            out << float(v);
+        }
+        if (!std::is_sorted(in.cbegin(), in.cend())) return failLut(error, QStringLiteral("ungültige Vorab-Kurve"));
+        const bool identity = n == 2 && in[0] == 0 && in[1] == 1 && out[0] == 0 && out[1] == 1;
+        if (!identity) {
+            lut->shaperIn[c] = in;
+            lut->shaperOut[c] = out;
+        }
+    }
+    double n = 0;
+    if (!next(&n)) return failLut(error, QStringLiteral("Größenangabe fehlt"));
+    if (lut->is3d) {
+        double n2 = 0, n3 = 0;
+        if (!next(&n2) || !next(&n3) || n != n2 || n != n3)
+            return failLut(error, QStringLiteral("nur gleich große Achsen unterstützt"));
+    }
+    lut->size = int(n);
+    if (lut->size < 2 || lut->size > (lut->is3d ? 256 : 65536)) return failLut(error, QStringLiteral("ungültige Größe"));
+    const qsizetype expected = (lut->is3d ? qsizetype(lut->size) * lut->size * lut->size : lut->size) * 3;
+    if (nums.size() - i != expected) return failLut(error, QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
+    lut->data.reserve(expected);
+    for (; i < nums.size(); ++i) lut->data << float(nums[i]);
+    return lut;
+}
+
+// Hald-CLUT: quadratisches Bild L^3 x L^3, Würfelgröße N = L^2, Pixel zeilenweise mit R schnellstem Index
+LutPtr parseHald(const QString& path, QString* error)
+{
+    QImage img(path);
+    if (img.isNull()) return failLut(error, QStringLiteral("Bild lässt sich nicht lesen"));
+    const int w = img.width();
+    const int level = int(std::lround(std::cbrt(double(w))));
+    if (img.height() != w || level * level * level != w || level < 2 || level > 16)
+        return failLut(error, QStringLiteral("kein Hald-CLUT (quadratisch, Kantenlänge L³)"));
+    img = img.convertToFormat(QImage::Format_RGBA64); // 16-Bit-PNGs ohne Verlust
+    auto lut = std::make_shared<Lut>();
+    lut->size = level * level;
+    lut->data.reserve(qsizetype(w) * w * 3);
+    for (int y = 0; y < w; ++y) {
+        const auto* px = reinterpret_cast<const QRgba64*>(img.constScanLine(y));
+        for (int x = 0; x < w; ++x)
+            lut->data << px[x].red() / 65535.0f << px[x].green() / 65535.0f << px[x].blue() / 65535.0f;
+    }
+    return lut;
+}
+
+} // namespace
+
+std::shared_ptr<const Lut> parseLut(const QString& path, QString* error)
+{
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (!EffectFolders::isLutFile(path)) return failLut(error, QStringLiteral("unbekanntes LUT-Format"));
+    if (suffix != "cube" && suffix != "3dl" && suffix != "csp") {
+        if (!QFileInfo::exists(path)) return failLut(error, QStringLiteral("Datei fehlt"));
+        return parseHald(path, error);
+    }
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return failLut(error, f.errorString());
+    if (suffix == "3dl") return parse3dl(f, error);
+    if (suffix == "csp") return parseCsp(f, error);
+    return parseCube(f, error);
+}
+
+std::shared_ptr<const Lut> loadLut(const QString& path, QString* error)
 {
     struct Entry {
         QDateTime mtime;
@@ -200,50 +434,8 @@ std::shared_ptr<const Lut> loadCube(const QString& path, QString* error)
         const auto it = cache.constFind(path);
         if (it != cache.cend() && it->mtime == fi.lastModified() && it->size == fi.size()) return it->lut;
     }
-    auto fail = [&](const QString& msg) -> std::shared_ptr<const Lut> {
-        if (error) *error = msg;
-        return nullptr;
-    };
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return fail(f.errorString());
-
-    auto lut = std::make_shared<Lut>();
-    int expected = 0;
-    while (!f.atEnd()) {
-        const QByteArray line = f.readLine().trimmed();
-        if (line.isEmpty() || line.startsWith('#')) continue;
-        const QList<QByteArray> w = line.simplified().split(' ');
-        const QByteArray key = w.first().toUpper();
-        bool ok = false;
-        w.first().toDouble(&ok); // Zahlen (QByteArray::toDouble: immer mit Punkt, unabhängig vom Gebietsschema)
-        if (ok) {
-            if (w.size() < 3 || !expected) return fail(QStringLiteral("Datenzeile vor der Größenangabe"));
-            for (int c = 0; c < 3; ++c) {
-                bool okc = false;
-                lut->data << float(w.at(c).toDouble(&okc));
-                if (!okc) return fail(QStringLiteral("ungültige Zahl"));
-            }
-            continue;
-        }
-        if (key == "LUT_3D_SIZE" || key == "LUT_1D_SIZE") {
-            lut->is3d = key == "LUT_3D_SIZE";
-            lut->size = w.value(1).toInt();
-            if (lut->size < 2 || lut->size > (lut->is3d ? 256 : 65536)) return fail(QStringLiteral("ungültige Größe"));
-            expected = lut->is3d ? lut->size * lut->size * lut->size : lut->size;
-            lut->data.reserve(expected * 3);
-        } else if (key == "DOMAIN_MIN" || key == "DOMAIN_MAX") {
-            float* dst = key == "DOMAIN_MIN" ? lut->domainMin : lut->domainMax;
-            for (int c = 0; c < 3 && c + 1 < w.size(); ++c) dst[c] = float(w.at(c + 1).toDouble());
-        } else if (key == "LUT_3D_INPUT_RANGE" || key == "LUT_1D_INPUT_RANGE") { // Resolve-Variante
-            for (int c = 0; c < 3; ++c) {
-                lut->domainMin[c] = float(w.value(1).toDouble());
-                lut->domainMax[c] = float(w.value(2).toDouble());
-            }
-        } // TITLE und Unbekanntes überspringen
-    }
-    if (!expected || lut->data.size() != expected * 3)
-        return fail(QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
-
+    std::shared_ptr<const Lut> lut = parseLut(path, error);
+    if (!lut) return nullptr;
     std::lock_guard<std::mutex> lock(mutex);
     cache.insert(path, Entry{fi.lastModified(), fi.size(), lut});
     return lut;
@@ -292,7 +484,7 @@ void attach(Mlt::Producer& cut, const Clip& c, int a, const std::shared_ptr<std:
     d->a = a;
     d->animated = std::any_of(kParams.begin(), kParams.end(), [&](AnimParam p) { return Keys::animated(c, p); });
     d->fixed = at(c, a);
-    if (const QString path = lutPath(c); !path.isEmpty()) d->lut = loadCube(path); // fehlt/kaputt: ohne LUT
+    if (const QString path = lutPath(c); !path.isEmpty()) d->lut = loadLut(path); // fehlt/kaputt: ohne LUT
     d->bypass = bypass;
     if (!d->animated && d->fixed.isNeutral() && !d->lut) {
         delete d;
