@@ -1,6 +1,6 @@
 #pragma once
 // Effekte importieren: Ordner im Nutzerverzeichnis (QStandardPaths::AppDataLocation/effects), in den man fremde
-// Effekte legt, plus die mitgelieferten (Kategorie „schneidi“). Bisher LUTs (Unterordner „LUTs“, mitgeliefert als
+// Effekte legt, plus die mitgelieferten (Effects Library: LUTs/Verlaufsblenden → Mitgeliefert/Eigene). Bisher LUTs (Unterordner „LUTs“, mitgeliefert als
 // Qt-Ressource ":/luts/<id>.cube") und Verlaufsblenden (Unterordner „Transitions“: Graustufenbilder wie in
 // Kdenlive/Shotcut/OpenShot, mitgeliefert als ":/lumas/<id>", erzeugt von engine/Lumas). Unterordner werden zu
 // Kategorien der Effects Library.

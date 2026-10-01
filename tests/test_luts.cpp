@@ -296,13 +296,15 @@ void testWidget()
     auto* list = lib.findChild<QListWidget*>();
     if (!CHECK(tree && list)) return;
 
-    QTreeWidgetItem* own = findCategory(tree, "schneidi");
-    QTreeWidgetItem* luts = findCategory(tree, "LUTs");
-    if (!CHECK(own && luts)) return;
-    tree->setCurrentItem(own); // schneidi: Übergänge + LUTs
+    QTreeWidgetItem* top = findCategory(tree, "LUTs");
+    if (!CHECK(top && top->childCount() == 2 && !findCategory(tree, "schneidi"))) return;
+    QTreeWidgetItem* builtin = top->child(0); // Mitgeliefert
+    QTreeWidgetItem* luts = top->child(1);    // Eigene
+    tree->setCurrentItem(top); // LUTs: Mitgeliefert + Eigene
     if (const QByteArray dump = qgetenv("LUTS_DUMP"); !dump.isEmpty()) // Bild der Kategorie: LUTS_DUMP=<datei.png>
         lib.grab().save(QString::fromLocal8Bit(dump));
-    tree->setCurrentItem(own->child(1)); // schneidi → LUTs
+    CHECK_EQ(realItems(list), int(EffectFolders::builtinLuts().size()) + 3);
+    tree->setCurrentItem(builtin);
     CHECK_EQ(realItems(list), int(EffectFolders::builtinLuts().size()));
     CHECK(!list->item(0)->icon().isNull());
 
@@ -317,7 +319,7 @@ void testWidget()
 
     // Doppelklick = Signal mit "lut:<Pfad>"
     QSignalSpy spy(&lib, &EffectsLibrary::effectRequested);
-    tree->setCurrentItem(own->child(1));
+    tree->setCurrentItem(builtin);
     emit list->itemDoubleClicked(list->item(0));
     if (CHECK_EQ(spy.size(), 1))
         CHECK(spy.first().first().toString().startsWith(EffectFolders::LutPrefix));
@@ -330,7 +332,7 @@ void testWidget()
     QTRY_COMPARE_WITH_TIMEOUT(realItems(list), 4, 5000);
     CHECK_EQ(list->count(), 5);
     CHECK(findCategory(tree, "Kaputt"));
-    CHECK(tree->currentItem() == findCategory(tree, "LUTs")); // Auswahl bleibt
+    CHECK(tree->currentItem() == luts); // Auswahl bleibt
     CHECK(QDir(dir.filePath("Kaputt")).removeRecursively());
     QTRY_VERIFY_WITH_TIMEOUT(!findCategory(tree, "Kaputt"), 5000);
     CHECK(!lib.grab().isNull());

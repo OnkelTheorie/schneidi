@@ -14,8 +14,8 @@ class QListWidget;
 class QTreeWidget;
 
 // Effects Library (Edit-Page wie DaVinci): links Kategorien (Toolbox → Video Transitions, Audio Transitions,
-// Titles; Open FX → Filters; schneidi → Übergänge, LUTs (mitgeliefert); LUTs und Übergänge = eigener Effekte-Ordner,
-// Unterordner als Unterkategorien), rechts die Einträge mit Vorschausymbol. Kategorien lassen sich zuklappen
+// Titles; Open FX → Filters; LUTs und Verlaufsblenden → jeweils Mitgeliefert/Eigene, Eigene = Effekte-Ordner,
+// dessen Unterordner als Unterkategorien), rechts die Einträge mit Vorschausymbol. Kategorien lassen sich zuklappen
 // (gespeichert). „Effekte importieren…“ öffnet den Effekte-Ordner, neue Dateien erscheinen von selbst. Ziehen auf einen Schnitt/eine Clipkante legt
 // den Übergang an, "Text" landet als Titel auf der Videospur, ein Filter auf einem Videoclip hängt den Effekt an;
 // Doppelklick wendet den Eintrag am Playhead/auf die Auswahl an.

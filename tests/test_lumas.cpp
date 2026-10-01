@@ -265,21 +265,27 @@ void testWidget()
             if (list->item(i)->flags() & Qt::ItemIsDragEnabled) ++n;
         return n;
     };
-    QTreeWidgetItem* own = top("schneidi");
-    QTreeWidgetItem* trans = top("Übergänge");
-    if (!CHECK(own && trans && own->childCount() == 2)) return;
+    QTreeWidgetItem* lumas = top("Verlaufsblenden");
+    if (!CHECK(lumas && lumas->childCount() == 2 && !top("schneidi") && !top("Übergänge"))) return;
+    QTreeWidgetItem* builtinItem = lumas->child(0);
+    QTreeWidgetItem* trans = lumas->child(1); // Eigene
 
-    // schneidi: Übergänge + LUTs mit Kopfzeilen; Unterpunkt nur Übergänge
-    tree->setCurrentItem(own);
-    const int builtin = int(EffectFolders::builtinTransitions().size()), luts = int(EffectFolders::builtinLuts().size());
-    CHECK_EQ(realItems(), builtin + luts);
-    CHECK_EQ(list->count(), builtin + luts + 2);
-    tree->setCurrentItem(own->child(0));
+    // Verlaufsblenden: Mitgeliefert + Eigene mit Kopfzeilen
+    tree->setCurrentItem(lumas);
+    const int builtin = int(EffectFolders::builtinTransitions().size());
+    CHECK_EQ(realItems(), builtin + 2);
+    CHECK_EQ(list->count(), builtin + 2 + 2);
+    tree->setCurrentItem(builtinItem);
     CHECK_EQ(realItems(), builtin);
     if (const auto d = list->item(0)->data(Qt::UserRole).toString(); CHECK(d.startsWith("luma:"))) {
         QSignalSpy spy(&lib, &EffectsLibrary::transitionRequested);
         emit list->itemDoubleClicked(list->item(0));
         CHECK_EQ(spy.size(), 1);
+    }
+    // LUTs: Mitgeliefert + Eigene
+    if (QTreeWidgetItem* luts = top("LUTs"); CHECK(luts && luts->childCount() == 2)) {
+        tree->setCurrentItem(luts->child(0));
+        CHECK_EQ(realItems(), int(EffectFolders::builtinLuts().size()));
     }
     // Toolbox → Videoübergänge enthält die mitgelieferten Verläufe, nicht die leere Art „Verlaufsblende“
     tree->setCurrentItem(top("Toolbox")->child(0));

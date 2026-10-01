@@ -34,8 +34,9 @@ constexpr QSize kIcon{48, 27};
 
 enum Category {
     All, VideoTransitions, AudioTransitions, Titles, OpenFx, Filters,
-    Schneidi, SchneidiTransitions, SchneidiLuts, // mitgeliefert
-    Luts, LutGroup, Transitions, TransitionGroup, // Effekte-Ordner (…Group = Unterordner)
+    LutsAll, BuiltinLuts, Luts, LutGroup,                         // LUTs: mitgeliefert + eigene
+    LumasAll, BuiltinTransitions, Transitions, TransitionGroup,   // Verlaufsblenden: mitgeliefert + eigene
+    // Luts/Transitions = eigener Effekte-Ordner, …Group = dessen Unterordner
 };
 constexpr int kGroupRole = Qt::UserRole + 1; // …Group: Unterordner relativ zum Ordner
 constexpr const char* kLumaPrefix = "luma:"; // Listeneintrag einer Verlaufsblende: "luma:<Bild>"
@@ -277,15 +278,16 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     // Open FX → Filter (wie DaVinci: dort liegen die ResolveFX-Filter)
     auto* openFx = add(m_categories, QStringLiteral("Open FX"), OpenFx);
     add(openFx, T("Filter"), Filters);
-    // Mitgeliefert und eigener Effekte-Ordner
-    auto* own = add(m_categories, QStringLiteral("schneidi"), Schneidi);
-    add(own, T("Übergänge"), SchneidiTransitions);
-    add(own, QStringLiteral("LUTs"), SchneidiLuts);
-    m_lutRoot = add(m_categories, QStringLiteral("LUTs"), Luts);
+    // Nach Art sortiert, darunter jeweils mitgeliefert und eigener Effekte-Ordner (Unterordner = Unterkategorien)
+    auto* luts = add(m_categories, QStringLiteral("LUTs"), LutsAll);
+    add(luts, T("Mitgeliefert"), BuiltinLuts);
+    m_lutRoot = add(luts, T("Eigene"), Luts);
     m_lutRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::lutDir()));
-    m_transRoot = add(m_categories, T("Übergänge"), Transitions);
+    auto* lumas = add(m_categories, T("Verlaufsblenden"), LumasAll);
+    add(lumas, T("Mitgeliefert"), BuiltinTransitions);
+    m_transRoot = add(lumas, T("Eigene"), Transitions);
     m_transRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::transitionDir()));
-    for (QTreeWidgetItem* it : {toolbox, openFx, own}) it->setExpanded(true);
+    for (QTreeWidgetItem* it : {toolbox, openFx, luts, lumas}) it->setExpanded(true);
     m_categories->setCurrentItem(toolbox);
     connect(m_categories, &QTreeWidget::itemExpanded, this, &EffectsLibrary::saveCollapsed);
     connect(m_categories, &QTreeWidget::itemCollapsed, this, &EffectsLibrary::saveCollapsed);
@@ -495,12 +497,16 @@ void EffectsLibrary::rebuild()
     case Titles: groups = {{{}, titles}}; break;
     case OpenFx:
     case Filters: groups = {{{}, filters()}}; break;
-    case Schneidi:
-        groups = {{T("Übergänge"), files(EffectFolders::builtinTransitions(), false, true)},
-                  {QStringLiteral("LUTs"), files(EffectFolders::builtinLuts(), true, true)}};
+    case LutsAll:
+        groups = {{T("Mitgeliefert"), files(EffectFolders::builtinLuts(), true, true)},
+                  {T("Eigene"), files(m_userLuts, true, false)}};
         break;
-    case SchneidiTransitions: groups = {{{}, files(EffectFolders::builtinTransitions(), false, true)}}; break;
-    case SchneidiLuts: groups = {{{}, files(EffectFolders::builtinLuts(), true, true)}}; break;
+    case LumasAll:
+        groups = {{T("Mitgeliefert"), files(EffectFolders::builtinTransitions(), false, true)},
+                  {T("Eigene"), files(m_userTransitions, false, false)}};
+        break;
+    case BuiltinLuts: groups = {{{}, files(EffectFolders::builtinLuts(), true, true)}}; break;
+    case BuiltinTransitions: groups = {{{}, files(EffectFolders::builtinTransitions(), false, true)}}; break;
     case Luts:
     case LutGroup: groups = {{{}, files(m_userLuts, true, false)}}; break;
     case Transitions:
@@ -534,7 +540,7 @@ void EffectsLibrary::rebuild()
         QString hint;
         if (shown == Luts || shown == LutGroup) hint = T("Noch keine LUTs – „Effekte importieren…“ öffnet den Ordner");
         if (shown == Transitions || shown == TransitionGroup)
-            hint = T("Noch keine Übergänge – „Effekte importieren…“ öffnet den Ordner");
+            hint = T("Noch keine Verlaufsblenden – „Effekte importieren…“ öffnet den Ordner");
         if (!hint.isEmpty()) {
             auto* h = new QListWidgetItem(hint);
             h->setFlags(Qt::NoItemFlags);
