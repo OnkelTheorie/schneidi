@@ -211,6 +211,13 @@ void testCompound()
     CHECK(p.sequence(seq)); // bleibt im Media Pool
     undo->undo();
     CHECK(clipOn(p.timeline(), TrackKind::Video, 1, 0)->isCompound());
+
+    // Verknüpfte Auswahl aus: nur der Videoteil wird aufgelöst, der Audioteil bleibt -> kein doppelter Ton
+    ed.setLinkedSelection(false);
+    CHECK(ed.decomposeCompoundClips({vid}));
+    CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[10-110|0-99]  V2: b[110-210|0-99]  V3: t[80-110|20-49]  "
+                                                "A1: a[10-110|0-99]  A2: C%1[80-210|20-149]").arg(seq));
+    ed.setLinkedSelection(true);
 }
 
 // Auflösen mit belegten Spuren darüber: Inhalt weicht auf freie Spuren aus, der Titel darüber bleibt

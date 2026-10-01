@@ -168,6 +168,15 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                 }
                 done.insert(g);
             }
+            // Nicht mit aufgelöster Partner derselben Sequenz (verknüpfte Auswahl aus) bleibt liegen und
+            // bringt seine Art selbst mit -> nicht doppelt
+            const Clip* first = TimelineOps::findClip(tl, group.first());
+            for (int g : TimelineOps::linkedGroup(tl, group.first())) {
+                TrackRef ref;
+                const Clip* c = TimelineOps::findClip(tl, g, &ref);
+                if (c && first && c->isCompound() && c->sequenceId == first->sequenceId)
+                    haveKind[ref.kind == TrackKind::Video ? 0 : 1] = true;
+            }
             for (const auto& part : parts) {
                 const Clip& cc = part.first;
                 const Timeline* inner = nullptr;
