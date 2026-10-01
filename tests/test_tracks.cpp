@@ -179,7 +179,7 @@ int main(int argc, char** argv)
         auto stripNames = [&] {
             QStringList out;
             for (QLabel* l : mixer.findChildren<QLabel*>())
-                if (QRegularExpression("^A\\d+$").match(l->text()).hasMatch()) out << l->text() + "=" + l->toolTip();
+                if (QRegularExpression("^A\\d+$").match(l->text()).hasMatch()) out << l->text() + "=" + l->toolTip().section(" – ", 0, 0); // ohne Solo-Hinweis
             out.sort(); // A1, A2, A3 (findChildren-Reihenfolge ist nicht festgelegt)
             return out;
         };
@@ -196,6 +196,8 @@ int main(int argc, char** argv)
         CHECK(t1.audio[2].name == "Musik" && t1.audio[2].volumeDb == -6 && t1.audio[2].solo);
         CHECK(ed.targetAudioTrack() == 2 && ed.targetVideoTrack() == 1);
         CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Audio 2", "A3=Musik"}));
+        for (QLabel* l : mixer.findChildren<QLabel*>()) // neue A1 ist durch das Solo von A3 stumm
+            if (l->text() == "A1") CHECK(l->toolTip().contains("Solo"));
         // ein Undo-Schritt
         p.undoStack()->undo();
         CHECK(p.timeline().audio.size() == 2 && p.timeline().audio[1].name == "Musik"
