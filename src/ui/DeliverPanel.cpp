@@ -172,6 +172,11 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     updateControls();
 }
 
+DeliverPanel::~DeliverPanel()
+{
+    delete m_queuePanel; // sonst bliebe es mit verwaister Warteschlange am Projekt hängen
+}
+
 // ---------- Vorlagen
 
 void DeliverPanel::reloadPresets(const QString& select)

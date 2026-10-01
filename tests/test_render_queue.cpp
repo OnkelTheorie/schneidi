@@ -237,6 +237,10 @@ int main(int argc, char** argv)
             CHECK_EQ(other.presets().size(), count);
             CHECK_EQ(other.presets().last().name, QString("Mein Export"));
         }
+        // Ihre Warteschlangen-Anzeige stirbt mit (hing sonst mit gelöschter RenderQueue am Projekt -> Absturz)
+        const QWidgetList widgets = QApplication::allWidgets();
+        CHECK_EQ(std::count_if(widgets.begin(), widgets.end(), [](QWidget* w) { return qobject_cast<RenderQueuePanel*>(w); }),
+                 1);
         mine.quality = 2;
         panel.setSettings(mine);
         CHECK(panel.savePreset("Mein Export"));

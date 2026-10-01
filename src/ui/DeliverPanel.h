@@ -1,6 +1,7 @@
 #pragma once
 #include "core/RenderJob.h"
 
+#include <QPointer>
 #include <QSize>
 #include <QWidget>
 
@@ -19,6 +20,7 @@ class DeliverPanel : public QWidget {
     Q_OBJECT
 public:
     DeliverPanel(Project* project, QWidget* parent = nullptr);
+    ~DeliverPanel() override;
 
     RenderQueuePanel* queuePanel() const { return m_queuePanel; }
     RenderQueue* renderQueue() const { return m_queue; }
@@ -51,7 +53,8 @@ private:
 
     Project* m_project;
     RenderQueue* m_queue;
-    RenderQueuePanel* m_queuePanel;
+    // Liegt woanders im Fenster (kein Kind), hängt aber an m_queue -> stirbt mit diesem Panel
+    QPointer<RenderQueuePanel> m_queuePanel;
     QVector<RenderPreset> m_presets; // eingebaute + eigene; Combo-Index = Listenindex + 1
     QComboBox* m_preset;
     QToolButton* m_presetMenu;
