@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(schneidi VERSION 0.2.0 LANGUAGES CXX)
+project(schneidi VERSION 0.3.0 LANGUAGES CXX)
 
 # Ohne Angabe optimiert bauen (Debug-Builds ruckeln bei der Wiedergabe: eigene Filter laufen pro Frame)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
