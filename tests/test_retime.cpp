@@ -242,6 +242,55 @@ int frameAt(const Timeline& tl, const ProjectFormat& fmt, int pos)
     return int(std::lround(g / 2.0)); // Quelle: Grau = 2 · Frame
 }
 
+// Rückwärts mit 100 %: Ton bleibt synchron zum Bild (Piep in Datei-Frame 100 von 200 -> Material-Frame ~98,5),
+// auch mit „Tonhöhe halten“ (Rubberband würde nur seine Verzögerung von ~3 Frames beitragen)
+void testReverseAudioSync(const QString& dir)
+{
+    const QString file = Check::makeMedia(dir + "/beep.mov",
+                                          {"-f", "lavfi", "-i", "aevalsrc='if(between(t,4,4.04),sin(2*PI*1000*t),0)':s=48000:d=8",
+                                           "-c:a", "pcm_s16le"});
+    if (!CHECK(!file.isEmpty())) return;
+    const ProjectFormat fmt{64, 64, {25, 1}};
+    auto prof = makeProfile(fmt);
+    auto loudest = [&](const Clip& c) {
+        TimelineBuilder b(*prof);
+        Mlt::Producer* src = b.clipAudioSource(c);
+        if (!src) return -1;
+        src->seek(0);
+        int best = -1;
+        double bestPeak = 0;
+        for (int pos = 0; pos <= c.out; ++pos) {
+            std::unique_ptr<Mlt::Frame> f(src->get_frame());
+            mlt_audio_format af = mlt_audio_float;
+            int freq = 48000, channels = 2, samples = mlt_audio_calculate_frame_samples(25, freq, pos);
+            const auto* pcm = static_cast<const float*>(f->get_audio(af, freq, channels, samples));
+            for (int i = 0; pcm && i < samples; ++i)
+                if (std::abs(pcm[i]) > bestPeak) {
+                    bestPeak = std::abs(pcm[i]);
+                    best = pos;
+                }
+        }
+        return best;
+    };
+    Clip c;
+    c.id = 1;
+    c.mediaPath = file;
+    c.reverse = true;
+    c.out = 199;
+    for (bool pitch : {false, true}) {
+        c.keepPitch = pitch;
+        c.ramp.clear();
+        const int got = loudest(c);
+        CHECK(std::abs(got - 98.5) <= 1.5);
+        // Speed Ramp rückwärts: Piep im Abschnitt mit 100 %
+        c.ramp = {SpeedPoint{150, 2.0, 0}};
+        c.out = RetimeMap(c, 200).length() - 1;
+        const int gotRamp = loudest(c);
+        CHECK(std::abs(gotRamp - 98.5) <= 1.5);
+        c.out = 199;
+    }
+}
+
 int testRender(const QString& dir)
 {
     // Frame n hat den Grauwert 2n (volle Range, verlustfrei)
@@ -387,5 +436,6 @@ int main(int argc, char** argv)
             Check::result();
             return r;
         }
+    if (tmp.isValid()) testReverseAudioSync(tmp.path());
     return Check::result();
 }

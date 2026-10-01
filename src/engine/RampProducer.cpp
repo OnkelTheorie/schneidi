@@ -117,7 +117,7 @@ std::unique_ptr<Mlt::Producer> audio(Mlt::Profile& profile, const QString& file,
     std::map<std::pair<double, bool>, std::unique_ptr<Mlt::Producer>> byWarp; // (Tempo mit Richtung, Tonhöhe)
     for (const AudioStep& st : audioSteps(c, fileLength)) {
         const double warp = c.reverse ? -st.speed : st.speed;
-        const bool pitch = c.keepPitch && !st.smooth && warp != 1.0;
+        const bool pitch = c.keepPitch && !st.smooth && std::abs(warp) != 1.0; // rückwärts 100 %: ohne Rubberband
         auto it = byWarp.find({warp, pitch});
         if (it == byWarp.end()) {
             const QString resource = warp == 1.0 ? file : warpResource(warp, file);

@@ -890,7 +890,9 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     auto p = kind == TrackKind::Video ? m_factory->open(resource)
                                       : std::make_unique<Mlt::Producer>(m_profile, resource.toUtf8().constData());
     if (!p->is_valid()) return nullptr;
-    if (warp != 1.0 && kind == TrackKind::Audio) p->set("warp_pitch", pitch ? 1 : 0);
+    // Tonhöhe nur bei echtem Tempowechsel halten: rückwärts mit 100 % braucht kein Rubberband, das brächte nur
+    // dessen Verzögerung (Ton ~3 Frames hinter dem Bild)
+    if (warp != 1.0 && kind == TrackKind::Audio) p->set("warp_pitch", pitch && std::abs(warp) != 1.0 ? 1 : 0);
     // Nicht benötigten Stream gar nicht erst dekodieren
     if (kind == TrackKind::Video) {
         p->set("audio_index", -1);
