@@ -238,6 +238,16 @@ int main(int argc, char** argv)
             }
             q.undoStack()->undo();
             CHECK(q.bins().isEmpty());
+            // Ordner ohne Brauchbares (nur Text, leere Unterordner): kein leerer Undo-Schritt, keine Änderung
+            const int idx = q.undoStack()->index();
+            for (const char* sub : {"Dreh/NurText", "Dreh/Leer"}) {
+                pool.importFolder(root.filePath(sub));
+                CHECK_EQ(q.undoStack()->index(), idx);
+            }
+            root.mkpath("Leer2/Unten");
+            pool.importFolder(root.filePath("Leer2"));
+            CHECK_EQ(q.undoStack()->index(), idx);
+            CHECK(q.bins().isEmpty());
         }
     }
 

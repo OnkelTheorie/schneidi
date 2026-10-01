@@ -443,8 +443,23 @@ void MediaPool::importFiles(const QStringList& paths)
         QMessageBox::warning(this, "Import", T("Nicht lesbar:") + "\n" + failed.join('\n'));
 }
 
+namespace {
+// Liegen im Ordner (oder darunter, Tiefe wie importFolderInto) Mediendateien?
+bool containsMedia(const QString& dir, int depth)
+{
+    if (depth > 8) return false;
+    const QDir d(dir);
+    for (const QFileInfo& fi : d.entryInfoList(QDir::Files))
+        if (MediaStorage::isMediaFile(fi.fileName())) return true;
+    for (const QFileInfo& sub : d.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks))
+        if (containsMedia(sub.absoluteFilePath(), depth + 1)) return true;
+    return false;
+}
+} // namespace
+
 void MediaPool::importFolder(const QString& dir)
 {
+    if (!containsMedia(dir, 0)) return; // sonst bliebe ein leerer Undo-Schritt und das Projekt gälte als geändert
     QStringList failed;
     QUndoStack* undo = m_project->undoStack();
     undo->beginMacro(T("Ordner importieren"));
