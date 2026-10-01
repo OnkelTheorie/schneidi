@@ -1,4 +1,5 @@
 #include "engine/RampProducer.h"
+#include "engine/PitchLatency.h"
 #include "engine/Profiles.h"
 
 #include "core/Retime.h"
@@ -126,15 +127,18 @@ std::unique_ptr<Mlt::Producer> audio(Mlt::Profile& profile, const QString& file,
             if (warp != 1.0) p->set("warp_pitch", pitch ? 1 : 0);
             p->set("video_index", -1);
             selectAudioStream(*p, c.audioStream);
+            if (pitch) PitchLatency::extend(*p, PitchLatency::frames(profile, warp, PitchLatency::sampleRateOf(*p)));
             it = byWarp.emplace(std::make_pair(warp, pitch), std::move(p)).first;
         }
         Mlt::Producer& p = *it->second;
-        const int plen = p.get_length();
+        const int lead = pitch ? PitchLatency::frames(profile, warp, PitchLatency::sampleRateOf(p)) : 0;
+        const int plen = p.get_length() - lead; // ohne die Verlängerung für den Vorlauf
         // timewarp-Frame k zeigt Quellstelle k·v; rückwärts zählt es vom Ende der gewarpten Datei
         int k = int(std::lround(st.s0 / st.speed));
         if (c.reverse) k = int(std::lround((plen - 1) - (fileLength - 1 - st.s0) / st.speed));
         const int len = st.m1 - st.m0;
         k = std::clamp(k, 0, std::max(0, plen - len));
+        k += lead; // Tonhöhe halten: Ton um die Rubberband-Verzögerung früher holen (siehe PitchLatency)
         pl->append(p, k, k + len - 1);
     }
     return pl;

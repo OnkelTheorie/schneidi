@@ -6,6 +6,7 @@
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
 #include "engine/Profiles.h"
+#include "engine/PitchLatency.h"
 #include "engine/RampProducer.h"
 
 #include <Mlt.h>
@@ -26,6 +27,9 @@
 #include <utility>
 
 namespace {
+
+// Producer-Eigenschaft: Frames, um die cutOf den Ton früher holt (Verzögerung von „Tonhöhe halten“, PitchLatency)
+constexpr const char* kPitchLead = "schneidi.pitch_lead";
 
 // Keyframes (core/Keyframes.h) als MLT-Animation eines Filter-Werts über einen Ausschnitt: a = Clip-Frame am
 // Anfang des Ausschnitts, len = seine Länge. Gesetzt wird an den Ausschnitt-Grenzen und an allen Keyframes der
@@ -892,13 +896,20 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     if (!p->is_valid()) return nullptr;
     // Tonhöhe nur bei echtem Tempowechsel halten: rückwärts mit 100 % braucht kein Rubberband, das brächte nur
     // dessen Verzögerung (Ton ~3 Frames hinter dem Bild)
-    if (warp != 1.0 && kind == TrackKind::Audio) p->set("warp_pitch", pitch && std::abs(warp) != 1.0 ? 1 : 0);
+    const bool warpPitch = warp != 1.0 && kind == TrackKind::Audio && pitch && std::abs(warp) != 1.0;
+    if (warp != 1.0 && kind == TrackKind::Audio) p->set("warp_pitch", warpPitch ? 1 : 0);
     // Nicht benötigten Stream gar nicht erst dekodieren
     if (kind == TrackKind::Video) {
         p->set("audio_index", -1);
     } else {
         p->set("video_index", -1);
         selectAudioStream(*p, stream);
+    }
+    // Verzögerung der Tonhöhenkorrektur: Cuts holen den Ton so viele Frames früher (cutOf)
+    if (warpPitch) {
+        const int lead = PitchLatency::frames(m_profile, warp, PitchLatency::sampleRateOf(*p));
+        p->set(kPitchLead, lead);
+        PitchLatency::extend(*p, lead);
     }
     // Standbilder lassen sich beliebig lang ziehen (sonst begrenzt MLT auf die Standardlänge)
     if (const QByteArray svc = p->get("mlt_service"); svc == "qimage" || svc == "pixbuf") {
@@ -1128,6 +1139,8 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             int in = c.in + (from - c.start);
             if (in < 0 && isStill(src)) in = 0; // Standbild: jedes Frame gleich
             if (in < 0) return nullptr;
+            // Tonhöhe halten: Ton um die Rubberband-Verzögerung früher holen
+            in += src->get_int(kPitchLead);
             Mlt::Producer* cut = src->cut(in, in + (to - from) - 1);
             noteUse(src, kind, from, to, in);
             decorate(m_profile, *cut, c, kind, from - c.start, to - from);

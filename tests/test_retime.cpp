@@ -291,6 +291,69 @@ void testReverseAudioSync(const QString& dir)
     }
 }
 
+// „Tonhöhe halten“ (Rubberband) verzögert den Ton um einige Frames; TimelineBuilder/RampProducer holen ihn um die
+// gemessene Verzögerung (PitchLatency) früher. Klick in der Timeline: mit Tonhöhe höchstens ~½ Frame neben ohne.
+void testPitchAudioSync(const QString& dir)
+{
+    const QString file = Check::makeMedia(dir + "/click.wav",
+                                          {"-f", "lavfi", "-i", "aevalsrc='if(between(t,4,4.002),0.9,0)':s=48000:d=12"});
+    if (!CHECK(!file.isEmpty())) return;
+    const ProjectFormat fmt{64, 64, {25, 1}};
+    auto prof = makeProfile(fmt);
+    // erster Klick-Sample in der Timeline-Ausgabe
+    auto clickAt = [&](const Clip& c) -> long {
+        Timeline tl = emptyTimeline();
+        tl.audio[0].clips << c;
+        TimelineBuilder b(*prof);
+        auto tr = b.build(tl);
+        long at = 0;
+        for (int pos = 0; pos < c.end(); ++pos) {
+            tr->seek(pos);
+            std::unique_ptr<Mlt::Frame> f(tr->get_frame());
+            mlt_audio_format af = mlt_audio_float;
+            int freq = 48000, channels = 2, samples = mlt_audio_calculate_frame_samples(25, freq, pos);
+            const auto* pcm = static_cast<const float*>(f->get_audio(af, freq, channels, samples));
+            for (int i = 0; pcm && i < samples; ++i)
+                if (std::abs(pcm[i]) > 0.2f) return at + i;
+            at += samples;
+        }
+        return -1;
+    };
+    Clip c;
+    c.id = 1;
+    c.mediaPath = file;
+    for (double speed : {0.5, 1.5, 2.0, 3.0}) {
+        c.speed = speed;
+        c.out = int(200 / speed) - 1; // Datei länger als der Clip: Platz für den Vorlauf
+        c.keepPitch = false;
+        const long plain = clickAt(c);
+        c.keepPitch = true;
+        const long pitched = clickAt(c);
+        CHECK(plain > 0 && std::abs(pitched - plain) <= 1100); // ~½ Frame bei 25 fps
+    }
+    // bis zum Dateiende (Vorlauf liest hinter dem Ende) und rückwärts (timewarp rechnet vom Ende aus)
+    for (bool reverse : {false, true}) {
+        c.speed = 2.0;
+        c.reverse = reverse;
+        c.out = 300 / 2 - 1;
+        c.keepPitch = false;
+        const long plain = clickAt(c);
+        c.keepPitch = true;
+        const long pitched = clickAt(c);
+        CHECK(plain > 0 && std::abs(pitched - plain) <= 1100);
+    }
+    c.reverse = false;
+    // Speed Ramp: Klick im Abschnitt mit 150 % (fest, mit Tonhöhe)
+    c.speed = 1.0;
+    c.ramp = {SpeedPoint{50, 1.5, 0}};
+    c.out = RetimeMap(c, 200).length() - 1;
+    c.keepPitch = false;
+    const long plain = clickAt(c);
+    c.keepPitch = true;
+    const long pitched = clickAt(c);
+    CHECK(plain > 0 && std::abs(pitched - plain) <= 1100);
+}
+
 int testRender(const QString& dir)
 {
     // Frame n hat den Grauwert 2n (volle Range, verlustfrei)
@@ -437,5 +500,6 @@ int main(int argc, char** argv)
             return r;
         }
     if (tmp.isValid()) testReverseAudioSync(tmp.path());
+    if (tmp.isValid()) testPitchAudioSync(tmp.path());
     return Check::result();
 }

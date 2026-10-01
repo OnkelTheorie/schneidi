@@ -55,6 +55,7 @@ add_executable(schneidi
     src/engine/Profiles.h         src/engine/Profiles.cpp
     src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp
     src/engine/RampProducer.h     src/engine/RampProducer.cpp
+    src/engine/PitchLatency.h     src/engine/PitchLatency.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
