@@ -1580,6 +1580,18 @@ void TimelineView::headerMenu(const Row& row, const QPoint& globalPos)
     menu.exec(globalPos);
 }
 
+// Rechtsklick auf die freie Fläche ohne Spur: neue Spur ans Ende (Video oben, Audio unten), wie DaVinci „Add Track“
+void TimelineView::emptyAreaMenu(const QPoint& globalPos)
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    QMenu menu(this);
+    connect(menu.addAction(T("Videospur hinzufügen")), &QAction::triggered, this,
+            [this, n = int(tl.video.size())] { m_editor->addTrack(TrackKind::Video, n); });
+    connect(menu.addAction(T("Audiospur hinzufügen")), &QAction::triggered, this,
+            [this, n = int(tl.audio.size())] { m_editor->addTrack(TrackKind::Audio, n); });
+    menu.exec(globalPos);
+}
+
 int TimelineView::trackDropIndex(int y, int* lineY) const
 {
     // Zeilen dieses Typs von oben nach unten (Video: höchster Index oben, Audio: A1 oben)
@@ -1706,6 +1718,7 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
     }
     if (e->pos().x() < kHeaderW && e->pos().y() >= kRulerH) {
         if (const auto row = rowAt(e->pos().y())) headerMenu(*row, e->globalPos());
+        else emptyAreaMenu(e->globalPos());
         return;
     }
     // Rechtsklick in der Retime-Leiste: Speed-Punkt (Übergang, Entfernen) bzw. Abschnitt (Tempo)
@@ -1755,6 +1768,8 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
                 sel->set(QSet<int>(group.begin(), group.end()));
             }
             emit clipMenuRequested(e->globalPos());
+        } else if (e->pos().y() >= kRulerH && !rowAt(e->pos().y())) {
+            emptyAreaMenu(e->globalPos()); // freie Fläche unter/zwischen den Spuren
         }
         return;
     }

@@ -374,6 +374,14 @@ int main(int argc, char** argv)
     CHECK(p.undoStack()->count() == steps);
     p.undoStack()->undo();
     CHECK(p.timeline().video[2].name == "Titel und Grafik");
+    // Freie Fläche unter den Spuren (Kopf und Spurbereich): neue Audio-/Videospur ans Ende
+    view.resize(1400, 900);
+    QApplication::processEvents();
+    const int bottom = view.height() - 30;
+    CHECK(headerMenu({60, bottom}, "Audiospur hinzufügen"));
+    CHECK(p.timeline().audio.size() == 4 && p.timeline().audio[3].clips.isEmpty());
+    CHECK(headerMenu({view.width() - 40, bottom}, "Videospur hinzufügen"));
+    CHECK(p.timeline().video.size() == 4 && p.timeline().video[3].clips.isEmpty());
 
     return Check::result();
 }

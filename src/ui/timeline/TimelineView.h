@@ -248,6 +248,7 @@ private:
     QRect shortNameRect(const Row& row) const; // Kürzel „V1“ = Zielspur-Knopf
     bool isLocked(const Row& row) const; // gesperrte Spur: nichts darauf greifbar
     void headerMenu(const Row& row, const QPoint& globalPos);
+    void emptyAreaMenu(const QPoint& globalPos);
     // Spur am Spurkopf ziehen (umsortieren innerhalb ihres Typs): Zielindex für Maus-y (-1 = keine Änderung)
     // und die y-Position der Einfügemarke
     int trackDropIndex(int y, int* lineY = nullptr) const;
