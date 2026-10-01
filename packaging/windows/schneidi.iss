@@ -4,7 +4,7 @@
 ; Deinstallieren erhalten.
 
 #ifndef Version
-  #define Version "0.3.1"
+  #define Version "0.3.2"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\..\build-win\schneidi"
