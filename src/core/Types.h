@@ -237,6 +237,10 @@ struct Clip {
     // Gegenkante auch einen: Cross Dissolve zentriert auf dem Schnitt (braucht Handles),
     // sonst Ein-/Ausblenden aus Schwarz bzw. Stille. Wirksame Länge: TimelineOps::transitions().
     int transIn = 0, transOut = 0;
+    // Aus-/Einblenden, das beim Schließen einer Lücke an den Nachbarn gerückt ist, bleibt eigenständig (wie DaVinci:
+    // zwei Übergänge am Schnitt statt Überblendung). Nur gesetzt, solange beide Kanten anliegen und einen Übergang haben
+    // (TimelineOps::keepFadesApart), sonst false. Siehe TimelineOps::isDissolve.
+    bool transInAlone = false, transOutAlone = false;
     // Art/Ausrichtung dazu; bei einer Überblendung tragen beide Kanten (transOut links, transIn rechts) denselben Wert
     TransitionStyle transInStyle, transOutStyle;
     // Fade-Griffe oben am Clip (Frames, wie DaVinci): Video blendet über Transparenz zur Spur darunter,
@@ -273,7 +277,8 @@ struct Clip {
                && sequenceId == o.sequenceId && start == o.start && in == o.in && out == o.out && linkId == o.linkId
                && volumeDb == o.volumeDb && pan == o.pan && audioStream == o.audioStream && enabled == o.enabled
                && transform == o.transform && effects == o.effects && transIn == o.transIn
-               && transOut == o.transOut && transInStyle == o.transInStyle && transOutStyle == o.transOutStyle
+               && transOut == o.transOut && transInAlone == o.transInAlone
+               && transOutAlone == o.transOutAlone && transInStyle == o.transInStyle && transOutStyle == o.transOutStyle
                && fadeIn == o.fadeIn && fadeOut == o.fadeOut && keys == o.keys && speed == o.speed
                && reverse == o.reverse && freeze == o.freeze && freezeFrame == o.freezeFrame
                && keepPitch == o.keepPitch && ramp == o.ramp && renderCache == o.renderCache;

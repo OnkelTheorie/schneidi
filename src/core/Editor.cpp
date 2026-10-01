@@ -1120,7 +1120,8 @@ bool sameTransitions(const Timeline& a, const Timeline& b)
                 const Clip& x = a.tracks(k)[i].clips[j];
                 const Clip& y = b.tracks(k)[i].clips[j];
                 if (x.transIn != y.transIn || x.transOut != y.transOut || x.transInStyle != y.transInStyle
-                    || x.transOutStyle != y.transOutStyle)
+                    || x.transOutStyle != y.transOutStyle || x.transInAlone != y.transInAlone
+                    || x.transOutAlone != y.transOutAlone)
                     return false;
             }
     return true;
@@ -1198,12 +1199,14 @@ void Editor::addTransitions(int frame, std::optional<TransitionStyle> style, std
             set(c->transOut, c->transOutStyle, length);
             if (idx + 1 < clips.size() && clips[idx + 1].start == c->end()) {
                 set(clips[idx + 1].transIn, clips[idx + 1].transInStyle, length);
+                c->transOutAlone = clips[idx + 1].transInAlone = false; // am Schnitt gewollt: Überblendung
                 touched.insert(clips[idx + 1].id);
             }
         } else {
             set(c->transIn, c->transInStyle, length);
             if (idx > 0 && clips[idx - 1].end() == c->start) {
                 set(clips[idx - 1].transOut, clips[idx - 1].transOutStyle, length);
+                c->transInAlone = clips[idx - 1].transOutAlone = false;
                 touched.insert(clips[idx - 1].id);
             }
         }
@@ -1226,6 +1229,7 @@ std::optional<Timeline> Editor::withTransitionAt(int leftId, int rightId, const 
     const int length = std::max(1, m_project->fps()); // Standard 1 s wie DaVinci
     if (l) l->transOut = length, l->transOutStyle = style;
     if (r) r->transIn = length, r->transInStyle = style;
+    if (l && r) l->transOutAlone = r->transInAlone = false; // auf den Schnitt gezogen: Überblendung
     if (where) *where = l ? lRef : rRef;
     QSet<int> touched{leftId, rightId};
     touched.remove(0);

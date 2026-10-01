@@ -162,6 +162,7 @@ Clip RenderCache::normalized(const Clip& c)
     n.pan = 0;
     n.enabled = true;
     n.transIn = n.transOut = 0;
+    n.transInAlone = n.transOutAlone = false;
     n.transInStyle = n.transOutStyle = TransitionStyle{};
     n.fadeIn = n.fadeOut = 0;
     n.keepPitch = true;

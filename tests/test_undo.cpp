@@ -95,6 +95,53 @@ void testBrokenDissolves()
     }
 }
 
+// Aus- und Einblenden, die durch Verschieben/Lücke schließen aneinanderstoßen, bleiben zwei Übergänge (wie DaVinci);
+// erst ein bewusst auf den Schnitt gesetzter Übergang macht daraus eine Überblendung
+void testFadesStayApart()
+{
+    auto len = [](const Clip& c) { return c.retimedLength(250); };
+    auto spans = [&](const Project& p) { return TimelineOps::transitions(p.timeline().video[0], len); };
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 250, true, false, false});
+    ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+    ed.bladeAt(V(p, 0, 0), 100);
+    const int a = V(p, 0, 0), b = V(p, 0, 1);
+    ed.moveClips({b}, 50, TrackKind::Video, 0); // Lücke 100..150
+    sel.set({a});
+    ed.addTransitions(0); // A: Ein- und Ausblenden
+    sel.set({b});
+    ed.addTransitions(0); // B: Ein- und Ausblenden
+    if (!CHECK_EQ(int(spans(p).size()), 4)) return;
+    ed.moveClips({b}, -50, TrackKind::Video, 0); // Lücke schließen
+    auto s = spans(p);
+    CHECK_EQ(int(s.size()), 4);
+    for (const auto& x : s) CHECK(!x.isDissolve());
+    // Speichern/Laden behält das
+    ProjectData d;
+    CHECK(ProjectFile::fromJson(ProjectFile::toJson(p.data(), "/x/p.schneidi"), "/x/p.schneidi", &d, nullptr));
+    CHECK(!TimelineOps::isDissolve(d.timeline.video[0].clips[0], d.timeline.video[0].clips[1]));
+    // wieder auseinander: Markierung fällt weg, Übergänge bleiben
+    ed.moveClips({b}, 20, TrackKind::Video, 0);
+    CHECK(!TimelineOps::findClip(p.timeline(), a)->transOutAlone && !TimelineOps::findClip(p.timeline(), b)->transInAlone);
+    CHECK_EQ(int(spans(p).size()), 4);
+    p.undoStack()->undo();
+    // Übergang bewusst auf den Schnitt: Überblendung
+    sel.clear();
+    ed.addTransitions(100);
+    s = spans(p);
+    CHECK_EQ(int(s.size()), 3);
+    CHECK(s.size() == 3 && s[1].isDissolve() && s[1].leftId == a && s[1].rightId == b);
+    // Undo: wieder zwei getrennte Übergänge
+    p.undoStack()->undo();
+    CHECK_EQ(int(spans(p).size()), 4);
+    // Überblendung bleibt beim gemeinsamen Verschieben eine Überblendung
+    p.undoStack()->redo();
+    ed.moveClips({a, b}, 10, TrackKind::Video, 0);
+    CHECK_EQ(int(spans(p).size()), 3);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -102,6 +149,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QCoreApplication app(argc, argv);
     Check::initApp("undo");
+    testFadesStayApart();
 
     Project p;
     Selection sel;

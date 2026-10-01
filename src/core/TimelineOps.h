@@ -133,6 +133,9 @@ double audioFadeGain(const Clip& c, double t);
 // Pegel (linear, 0..1) von Clip clipId im Audio-Übergang s an Timeline-Frame frame (1 außerhalb)
 double audioTransitionGain(const TransitionSpan& s, int clipId, double frame);
 
+// Bilden a (links) und b (rechts) eine Überblendung? Anliegend, beide Kanten mit Übergang, keiner eigenständig.
+bool isDissolve(const Clip& a, const Clip& b);
+
 // Überblendungen lösen, bei denen nur einer der beiden Clips in `clipIds` liegt
 // (vor Löschen/Verschieben, damit der Übrige nicht plötzlich ausblendet).
 void detachTransitions(Timeline& tl, const QVector<int>& clipIds);
@@ -140,6 +143,10 @@ void detachTransitions(Timeline& tl, const QVector<int>& clipIds);
 // (auseinandergetrimmt, Partner hat keine Handles mehr, Tempo geändert …), verlieren ihren Übergang – sonst würde
 // aus der Überblendung stillschweigend ein Aus-/Einblenden über Schwarz. Neue Clips (andere ids) bleiben unberührt.
 void unpairBrokenDissolves(const Timeline& before, Timeline& after);
+// Nach einer Bearbeitung: Aus- und Einblenden, die vorher nicht nebeneinander lagen und jetzt aneinanderstoßen
+// (Lücke geschlossen, Clip herangeschoben), bleiben zwei Übergänge statt einer Überblendung (wie DaVinci).
+// Räumt außerdem die Eigenständig-Markierung auf, wo die Kanten nicht mehr anliegen.
+void keepFadesApart(const Timeline& before, Timeline& after);
 
 int endFrame(const Timeline& tl);
 // Liegt die Datei irgendwo auf einer Videospur? (z. B. Vorschau nur neu bauen, wenn ein Proxy dazu gehört)

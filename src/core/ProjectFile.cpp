@@ -218,6 +218,8 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (!c.enabled) o["enabled"] = false;
     if (c.transIn > 0) o["transIn"] = c.transIn; // Übergänge (Frames); fehlend = keiner
     if (c.transOut > 0) o["transOut"] = c.transOut;
+    if (c.transInAlone) o["transInAlone"] = true;
+    if (c.transOutAlone) o["transOutAlone"] = true;
     if (c.transIn > 0 && c.transInStyle != TransitionStyle{}) o["transInStyle"] = transitionStyleToJson(c.transInStyle);
     if (c.transOut > 0 && c.transOutStyle != TransitionStyle{}) o["transOutStyle"] = transitionStyleToJson(c.transOutStyle);
     if (c.fadeIn > 0) o["fadeIn"] = c.fadeIn; // Fade-Griffe (Frames)
@@ -277,6 +279,8 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.enabled = o.value("enabled").toBool(true);
     c.transIn = std::max(0, o.value("transIn").toInt());
     c.transOut = std::max(0, o.value("transOut").toInt());
+    c.transInAlone = c.transIn > 0 && o.value("transInAlone").toBool();
+    c.transOutAlone = c.transOut > 0 && o.value("transOutAlone").toBool();
     c.transInStyle = transitionStyleFromJson(o.value("transInStyle").toObject());
     c.transOutStyle = transitionStyleFromJson(o.value("transOutStyle").toObject());
     c.fadeIn = std::max(0, o.value("fadeIn").toInt());

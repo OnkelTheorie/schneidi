@@ -209,6 +209,7 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
     fn(after);
     TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // Reststücke aus clearRange
     TimelineOps::unpairBrokenDissolves(timeline(), after);
+    TimelineOps::keepFadesApart(timeline(), after);
     if (after == timeline()) {
         // Nichts geändert (z. B. Strg+B neben der Auswahl): kein Undo-Schritt. Signal trotzdem, damit ein
         // vorgemerktes Engine::mixerOnlyNext verbraucht wird und nicht an der nächsten echten Änderung hängt.

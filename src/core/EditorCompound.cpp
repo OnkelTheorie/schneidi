@@ -202,11 +202,13 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                                 x.start += d;
                                 x.in += d;
                                 x.transIn = 0;
+                                x.transInAlone = false;
                                 x.fadeIn = 0;
                             }
                             if (x.end() > cc.out + 1) {
                                 x.out -= x.end() - (cc.out + 1);
                                 x.transOut = 0;
+                                x.transOutAlone = false;
                                 x.fadeOut = 0;
                             }
                             x.start += offset;

@@ -96,7 +96,7 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
             // auseinandergerückte Überblendung lösen (sonst würden daraus Aus- und Einblenden)
             for (int j = 1; j < moved.size(); ++j)
                 if (t.clips[j - 1].end() == t.clips[j].start && moved[j - 1].end() != moved[j].start
-                    && moved[j - 1].transOut > 0 && moved[j].transIn > 0) {
+                    && isDissolve(t.clips[j - 1], t.clips[j])) {
                     moved[j - 1].transOut = 0;
                     moved[j].transIn = 0;
                 }
@@ -573,7 +573,7 @@ QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sour
         const Clip& c = clips[i];
         const Clip* prev = i > 0 ? &clips[i - 1] : nullptr;
         const Clip* next = i + 1 < clips.size() ? &clips[i + 1] : nullptr;
-        const bool dissolveIn = prev && prev->end() == c.start && prev->transOut > 0 && c.transIn > 0;
+        const bool dissolveIn = prev && isDissolve(*prev, c);
         if (!dissolveIn) usedIn = 0; // sonst schon beim Vorgänger gesetzt
         if (c.transIn > 0 && !dissolveIn) { // Einblenden
             usedIn = std::min(c.transIn, c.length());
@@ -581,7 +581,7 @@ QVector<TransitionSpan> transitions(const Track& track, const SourceLength& sour
         }
         if (c.transOut <= 0) continue;
         const int room = c.length() - usedIn;
-        if (next && next->start == c.end() && next->transIn > 0) {
+        if (next && isDissolve(c, *next)) {
             // Überblendung um den Schnitt
             const int srcLen = sourceLength ? sourceLength(c) : 0;
             const int handleOut = srcLen > 0 ? srcLen - 1 - c.out : INT_MAX / 2;
@@ -644,6 +644,11 @@ double audioTransitionGain(const TransitionSpan& s, int clipId, double frame)
     }
 }
 
+bool isDissolve(const Clip& a, const Clip& b)
+{
+    return a.end() == b.start && a.transOut > 0 && b.transIn > 0 && !a.transOutAlone && !b.transInAlone;
+}
+
 void detachTransitions(Timeline& tl, const QVector<int>& clipIds)
 {
     for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
@@ -651,7 +656,7 @@ void detachTransitions(Timeline& tl, const QVector<int>& clipIds)
             for (int i = 0; i + 1 < t.clips.size(); ++i) {
                 Clip& a = t.clips[i];
                 Clip& b = t.clips[i + 1];
-                if (a.end() != b.start || a.transOut <= 0 || b.transIn <= 0) continue;
+                if (!isDissolve(a, b)) continue;
                 if (clipIds.contains(a.id) == clipIds.contains(b.id)) continue;
                 a.transOut = 0;
                 b.transIn = 0;
@@ -667,7 +672,7 @@ void dissolveSides(const Timeline& tl, QSet<int>& outSide, QSet<int>& inSide)
             for (int i = 0; i + 1 < t.clips.size(); ++i) {
                 const Clip& a = t.clips[i];
                 const Clip& b = t.clips[i + 1];
-                if (a.end() != b.start || a.transOut <= 0 || b.transIn <= 0) continue;
+                if (!isDissolve(a, b)) continue;
                 outSide.insert(a.id);
                 inSide.insert(b.id);
             }
@@ -686,6 +691,44 @@ void unpairBrokenDissolves(const Timeline& before, Timeline& after)
                 if (c.transOut > 0 && outBefore.contains(c.id) && !outAfter.contains(c.id)) c.transOut = 0;
                 if (c.transIn > 0 && inBefore.contains(c.id) && !inAfter.contains(c.id)) c.transIn = 0;
             }
+}
+
+void keepFadesApart(const Timeline& before, Timeline& after)
+{
+    // Clips, die vorher schon mit Übergang an derselben Kante aneinanderlagen (rechte Clip-id je linker)
+    QHash<int, int> touchedBefore;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : before.tracks(k))
+            for (int i = 0; i + 1 < t.clips.size(); ++i) {
+                const Clip& a = t.clips[i];
+                const Clip& b = t.clips[i + 1];
+                if (a.end() == b.start && a.transOut > 0 && b.transIn > 0) touchedBefore.insert(a.id, b.id);
+            }
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (Track& t : after.tracks(k))
+            for (int i = 0; i < t.clips.size(); ++i) {
+                Clip& a = t.clips[i];
+                Clip* b = i + 1 < t.clips.size() ? &t.clips[i + 1] : nullptr;
+                const bool touching = b && a.end() == b->start && a.transOut > 0 && b->transIn > 0;
+                if (!touching) {
+                    a.transOutAlone = false;
+                    if (b) b->transInAlone = false;
+                    continue;
+                }
+                if (a.transOutAlone || b->transInAlone) { // bleibt eigenständig (beide Seiten gleich markieren)
+                    a.transOutAlone = b->transInAlone = true;
+                    continue;
+                }
+                if (touchedBefore.value(a.id) == b->id) continue; // war schon Überblendung bzw. bewusst dazu gemacht
+                // Neu aneinandergestoßen: nur eigenständig lassen, wenn beide Übergänge schon vorher da waren
+                const Clip* a0 = findClip(before, a.id);
+                const Clip* b0 = findClip(before, b->id);
+                if (a0 && b0 && a0->transOut > 0 && b0->transIn > 0) a.transOutAlone = b->transInAlone = true;
+            }
+    // Erster Clip jeder Spur: Einblenden ohne Vorgänger ist nie eigenständig markiert
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (Track& t : after.tracks(k))
+            if (!t.clips.isEmpty()) t.clips.first().transInAlone = false;
 }
 
 int endFrame(const Timeline& tl)
