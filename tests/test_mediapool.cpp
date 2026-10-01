@@ -5,7 +5,10 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "engine/Engine.h"
+#include "engine/ProxyManager.h"
+#include <QEventLoop>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QFile>
 #include <QDir>
 #include "ui/MediaPool.h"
@@ -235,6 +238,43 @@ int main(int argc, char** argv)
             }
             q.undoStack()->undo();
             CHECK(q.bins().isEmpty());
+        }
+    }
+
+    // --- Proxy: startet ffmpeg nicht (kaputte Datei vorn im PATH), meldet das statt ewig zu warten
+    if (Check::haveFfmpeg()) {
+        QTemporaryDir tmp;
+        const QString a = Check::makeMedia(tmp.filePath("a.mp4"),
+                                           {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=1", "-c:v", "libx264"});
+        const QString bin = tmp.filePath("bin");
+        QDir().mkpath(bin);
+#ifdef Q_OS_WIN
+        QFile fake(QDir(bin).filePath("ffmpeg.exe"));
+#else
+        QFile fake(QDir(bin).filePath("ffmpeg"));
+#endif
+        if (CHECK(!a.isEmpty() && fake.open(QIODevice::WriteOnly))) {
+            fake.write("\x7f" "ELF kaputt");
+            fake.close();
+            fake.setPermissions(fake.permissions() | QFileDevice::ExeOwner);
+            const QByteArray path = qgetenv("PATH");
+            qputenv("PATH", QDir::toNativeSeparators(bin).toUtf8() + QDir::listSeparator().toLatin1() + path);
+            ProxyManager pm;
+            QString message;
+            QObject::connect(&pm, &ProxyManager::failed, [&](const QString&, const QString& m) { message = m; });
+            pm.generate({a});
+            QEventLoop loop;
+            QTimer poll;
+            QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+                if (!pm.isPending(a)) loop.quit();
+            });
+            poll.start(50);
+            QTimer::singleShot(20000, &loop, &QEventLoop::quit);
+            loop.exec();
+            CHECK(!pm.isPending(a));
+            CHECK(!message.isEmpty());
+            CHECK(!pm.hasProxy(a));
+            qputenv("PATH", path);
         }
     }
     return Check::result();

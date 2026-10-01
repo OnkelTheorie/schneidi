@@ -290,6 +290,12 @@ void ProxyManager::launch(const QString& original, const QStringList& args, doub
     });
     connect(m_process, &QProcess::finished, this,
             [this](int code, QProcess::ExitStatus st) { onFinished(code, st == QProcess::CrashExit); });
+    // Startet ffmpeg gar nicht (kaputt, gesperrt), kommt kein finished() -> sonst hinge die Warteschlange für immer
+    connect(m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart || !m_process) return;
+        m_errorTail = m_process->errorString();
+        onFinished(-1, true);
+    });
     m_process->start(ffmpeg, args);
 }
 
