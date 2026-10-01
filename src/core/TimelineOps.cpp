@@ -518,8 +518,10 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             const int oldEnd = c->end();
             if (e.edge == Edge::Start) c->in += delta;
             else c->out += delta;
+            // auch weitere getrimmte Clips derselben Spur rücken (sonst bleibt je nach Reihenfolge eine Lücke
+            // oder der Rest rutscht unter sie)
             for (Clip& o : tl.track(ref).clips)
-                if (o.id != id && !e.ids.contains(o.id) && o.start >= oldEnd) o.start += shift;
+                if (o.id != id && o.start >= oldEnd) o.start += shift;
         }
         if (from != INT_MAX) rippleTracks(tl, {qMakePair(from, shift)}, edited);
         break;
