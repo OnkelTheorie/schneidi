@@ -5,6 +5,7 @@
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
+#include "engine/Lumas.h"
 #include "engine/Profiles.h"
 #include "engine/PitchLatency.h"
 #include "engine/RampProducer.h"
@@ -791,6 +792,18 @@ std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Produ
         }
         return mix;
     }
+    if (st.isLuma() && a && b) {
+        // Verlaufsblende: luma mit dem Verlaufsbild (ins/aus dem Leeren blendet der Aufrufer stattdessen)
+        mix->set_track(*a, 0);
+        mix->set_track(*b, 1);
+        Mlt::Transition t(profile, "luma");
+        const QString luma = Lumas::file(st.luma, profile.width(), profile.height(), st.invert);
+        if (!luma.isEmpty()) t.set("resource", luma.toUtf8().constData()); // fehlt: Cross Dissolve
+        t.set("softness", 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0);
+        t.set_in_and_out(0, len - 1);
+        mix->plant_transition(t, 0, 1);
+        return mix;
+    }
     const bool border = st.border >= 0.5;
     if (!a || !b) {
         // Wischblende ins/aus dem Leeren: luma ignoriert Transparenz -> sichtbaren Bereich per qtcrop animieren
@@ -1251,7 +1264,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             std::unique_ptr<Mlt::Producer> ca(a ? cutOf(*a, s.start, s.end, useSecond.value(a->id)) : nullptr);
             std::unique_ptr<Mlt::Producer> cb(b ? cutOf(*b, s.start, s.end, useSecond.value(b->id)) : nullptr);
             const int len = s.length();
-            if (kind == TrackKind::Video && s.style.type != TransitionType::CrossDissolve && (ca || cb)) {
+            // Verlaufsblende ins/aus dem Leeren: luma kennt keine Transparenz -> wie Cross Dissolve aus-/einblenden
+            const bool styled = s.style.type != TransitionType::CrossDissolve && (!s.style.isLuma() || (ca && cb));
+            if (kind == TrackKind::Video && styled && (ca || cb)) {
                 pl.append(*styledTransition(m_profile, ca.get(), cb.get(), len, s.style));
             } else if (ca && cb) {
                 // Cross Dissolve: beide Seiten in einem kleinen Tractor, Überblendung von a nach b

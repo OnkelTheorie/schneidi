@@ -140,7 +140,9 @@ private:
     ScrubField* m_transSoft = nullptr;         // Wischblende: Weichheit
     ScrubField* m_transBorder = nullptr;       // Wischblende: Randbreite
     QToolButton* m_transBorderColor = nullptr; // Wischblende: Randfarbe
-    QVector<QWidget*> m_dipRows, m_wipeRows;   // Zeilen nur für die jeweilige Art
+    QComboBox* m_transLuma = nullptr;          // Verlaufsblende: Verlaufsbild (mitgeliefert + Effekte-Ordner)
+    class QCheckBox* m_transInvert = nullptr;  // Verlaufsblende: umkehren
+    QVector<QWidget*> m_dipRows, m_wipeRows, m_lumaRows, m_softRows; // Zeilen nur für die jeweilige Art
     // Tab "Untertitel": Text/Zeiten des Eintrags und Stil seiner Spur (wie DaVinci Caption + Track Style)
     void buildSubtitlePage(QVBoxLayout* page);
     bool refreshSubtitle(); // true = nur Untertitel ausgewählt und angezeigt

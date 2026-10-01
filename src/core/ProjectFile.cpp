@@ -94,7 +94,8 @@ TitleStyle titleFromJson(const QJsonObject& o)
     return t;
 }
 
-QJsonObject transitionStyleToJson(const TransitionStyle& s)
+// Verlaufsbild: absolut, eigene Dateien zusätzlich relativ zur Projektdatei (wie LUTs)
+QJsonObject transitionStyleToJson(const TransitionStyle& s, const QDir& projectDir)
 {
     static const char* aligns[] = {"center", "start", "end"};
     QJsonObject o{{"type", transitionTypeInfo(s.type).id}, {"align", aligns[int(s.align)]}};
@@ -104,10 +105,15 @@ QJsonObject transitionStyleToJson(const TransitionStyle& s)
     if (s.border != d.border) o["border"] = s.border;
     if (s.borderColor != d.borderColor) o["borderColor"] = s.borderColor.name(QColor::HexRgb);
     if (s.audio != d.audio) o["audioCurve"] = audioCurveInfo(s.audio).id;
+    if (!s.luma.isEmpty()) {
+        o["luma"] = s.luma;
+        if (!EffectFolders::isBuiltin(s.luma)) o["lumaRel"] = projectDir.relativeFilePath(s.luma);
+    }
+    if (s.invert) o["invert"] = true;
     return o;
 }
 
-TransitionStyle transitionStyleFromJson(const QJsonObject& o)
+TransitionStyle transitionStyleFromJson(const QJsonObject& o, const QDir& projectDir)
 {
     TransitionStyle s;
     auto color = [&](const char* key, const QColor& def) {
@@ -132,6 +138,18 @@ TransitionStyle transitionStyleFromJson(const QJsonObject& o)
     const QString curve = o.value("audioCurve").toString();
     for (const auto& i : kAudioCurves)
         if (curve == i.id) s.audio = i.curve;
+    s.luma = o.value("luma").toString();
+    s.invert = o.value("invert").toBool();
+    // Bild fehlt: relativ zur Projektdatei, dann gleichnamig im eigenen Transitions-Ordner suchen
+    if (!s.luma.isEmpty() && !EffectFolders::isBuiltin(s.luma) && !QFileInfo::exists(s.luma)) {
+        const QString rel = o.value("lumaRel").toString();
+        const QString candidate = rel.isEmpty() ? QString() : QDir::cleanPath(projectDir.absoluteFilePath(rel));
+        if (!candidate.isEmpty() && QFileInfo::exists(candidate)) s.luma = candidate;
+        else if (const QString found =
+                     EffectFolders::findUserTransition(QString(s.luma).replace('\\', '/').section('/', -1));
+                 !found.isEmpty())
+            s.luma = found;
+    }
     return s;
 }
 
@@ -235,8 +253,10 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (c.transOut > 0) o["transOut"] = c.transOut;
     if (c.transInAlone) o["transInAlone"] = true;
     if (c.transOutAlone) o["transOutAlone"] = true;
-    if (c.transIn > 0 && c.transInStyle != TransitionStyle{}) o["transInStyle"] = transitionStyleToJson(c.transInStyle);
-    if (c.transOut > 0 && c.transOutStyle != TransitionStyle{}) o["transOutStyle"] = transitionStyleToJson(c.transOutStyle);
+    if (c.transIn > 0 && c.transInStyle != TransitionStyle{})
+        o["transInStyle"] = transitionStyleToJson(c.transInStyle, projectDir);
+    if (c.transOut > 0 && c.transOutStyle != TransitionStyle{})
+        o["transOutStyle"] = transitionStyleToJson(c.transOutStyle, projectDir);
     if (c.fadeIn > 0) o["fadeIn"] = c.fadeIn; // Fade-Griffe (Frames)
     if (c.fadeOut > 0) o["fadeOut"] = c.fadeOut;
     if (c.speed != 1.0) o["speed"] = c.speed;
@@ -297,8 +317,8 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.transOut = std::max(0, o.value("transOut").toInt());
     c.transInAlone = c.transIn > 0 && o.value("transInAlone").toBool();
     c.transOutAlone = c.transOut > 0 && o.value("transOutAlone").toBool();
-    c.transInStyle = transitionStyleFromJson(o.value("transInStyle").toObject());
-    c.transOutStyle = transitionStyleFromJson(o.value("transOutStyle").toObject());
+    c.transInStyle = transitionStyleFromJson(o.value("transInStyle").toObject(), projectDir);
+    c.transOutStyle = transitionStyleFromJson(o.value("transOutStyle").toObject(), projectDir);
     c.fadeIn = std::max(0, o.value("fadeIn").toInt());
     c.fadeOut = std::max(0, o.value("fadeOut").toInt());
     c.speed = o.value("speed").toDouble(1.0);

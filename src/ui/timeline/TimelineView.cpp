@@ -3,6 +3,7 @@
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
+#include "core/EffectFolders.h"
 #include "core/I18n.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
@@ -1055,8 +1056,9 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
             f.setPointSizeF(7);
             p.setFont(f);
             p.setPen(QColor(0x10, 0x10, 0x10));
-            const QString name = row.ref.kind == TrackKind::Video ? T(transitionTypeInfo(s.style.type).name)
-                                                                  : QString(audioCurveInfo(s.style.audio).name);
+            const QString name = row.ref.kind != TrackKind::Video ? QString(audioCurveInfo(s.style.audio).name)
+                                 : s.style.isLuma()                 ? EffectFolders::displayName(s.style.luma)
+                                                                    : T(transitionTypeInfo(s.style.type).name);
             const QRect tr = r.adjusted(4, 0, -4, 0);
             p.drawText(tr, Qt::AlignTop | Qt::AlignHCenter, p.fontMetrics().elidedText(name, Qt::ElideRight, tr.width()));
         }

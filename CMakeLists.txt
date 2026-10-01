@@ -64,6 +64,7 @@ add_executable(schneidi
     src/engine/Preroll.h          src/engine/Preroll.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
+    src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
 
     src/app/Theme.h               src/app/Theme.cpp

@@ -1,6 +1,7 @@
 #include "ui/Inspector.h"
 
 #include "app/Theme.h"
+#include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -13,7 +14,9 @@
 #include "ui/ScrubField.h"
 
 #include <QButtonGroup>
+#include <QCheckBox>
 #include <QColorDialog>
+#include <QDir>
 #include <QComboBox>
 #include <QFontComboBox>
 #include <QFileInfo>
@@ -1112,6 +1115,23 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
     typeLay->addWidget(m_transAudioType);
     addRow(T("Art"), typeBox);
 
+    // Verlaufsblende: Verlaufsbild und Umkehren
+    m_transLuma = combo();
+    m_transLuma->setToolTip(T("Verlaufsbild: dunkle Stellen wechseln zuerst. Eigene Bilder in den Ordner "
+                              "„Transitions“ (Effects Library → „Effekte importieren…“)"));
+    addRow(T("Verlauf"), m_transLuma, &m_lumaRows);
+    connect(m_transLuma, &QComboBox::activated, this, [this] {
+        const QString path = m_transLuma->currentData().toString();
+        if (!path.isEmpty()) changeTransition([path](TransitionStyle& st) { st.luma = path; });
+    });
+    m_transInvert = new QCheckBox(T("Umkehren"));
+    m_transInvert->setFocusPolicy(Qt::ClickFocus);
+    m_transInvert->setToolTip(T("Helle Stellen wechseln zuerst"));
+    addRow({}, m_transInvert, &m_lumaRows);
+    connect(m_transInvert, &QCheckBox::clicked, this, [this](bool on) {
+        changeTransition([on](TransitionStyle& st) { st.invert = on; });
+    });
+
     m_transLen = new ScrubField(0.04, 600, 0.04, 2);
     m_transLen->setSuffix(" s");
     m_transLen->onChange = [this](double sec) {
@@ -1138,7 +1158,7 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
         changeTransition([v](TransitionStyle& st) { st.softness = v; }, "transSoftInspector");
     };
     m_transSoft->onFinish = [this] { m_editor->project()->closeMerge(); };
-    addRow(T("Weichheit"), m_transSoft, &m_wipeRows, 1);
+    addRow(T("Weichheit"), m_transSoft, &m_softRows, 1);
 
     m_transBorder = new ScrubField(0, 200, 0.5, 0);
     m_transBorder->setSuffix(" px");
@@ -1153,7 +1173,10 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
 
     connect(m_transType, &QComboBox::activated, this, [this] {
         const auto type = TransitionType(m_transType->currentData().toInt());
-        changeTransition([type](TransitionStyle& st) { st.type = type; });
+        changeTransition([type](TransitionStyle& st) {
+            st.type = type;
+            if (st.isLuma() && st.luma.isEmpty()) st.luma = EffectFolders::builtinTransitions().value(0).path;
+        });
     });
     connect(m_transAudioType, &QComboBox::activated, this, [this] {
         const auto curve = AudioCurve(m_transAudioType->currentData().toInt());
@@ -1194,7 +1217,9 @@ bool Inspector::refreshTransition()
     m_content->setVisible(true);
     m_empty->setVisible(false);
     const bool video = kind == TrackKind::Video;
-    m_clipName->setText(video ? T(transitionTypeInfo(span.style.type).name) : QString(audioCurveInfo(span.style.audio).name));
+    QString name = video ? T(transitionTypeInfo(span.style.type).name) : QString(audioCurveInfo(span.style.audio).name);
+    if (video && span.style.isLuma()) name = EffectFolders::displayName(span.style.luma);
+    m_clipName->setText(name);
     m_clipName->setToolTip({});
     m_tabs->button(kTransitionPage)->setChecked(true);
     m_pages->setCurrentIndex(kTransitionPage);
@@ -1207,6 +1232,30 @@ bool Inspector::refreshTransition()
     // Felder nur für die passende Art (wie DaVinci je nach Übergang andere Parameter zeigt)
     for (QWidget* w : m_dipRows) w->setVisible(video && span.style.type == TransitionType::DipToColor);
     for (QWidget* w : m_wipeRows) w->setVisible(video && span.style.isWipe());
+    for (QWidget* w : m_lumaRows) w->setVisible(video && span.style.isLuma());
+    for (QWidget* w : m_softRows) w->setVisible(video && (span.style.isWipe() || span.style.isLuma()));
+    if (video && span.style.isLuma()) {
+        // Auswahl: mitgeliefert, dann eigene Bilder (mit Unterordner); fehlendes Bild als eigener Eintrag
+        const QSignalBlocker block(m_transLuma);
+        m_transLuma->clear();
+        for (const auto& e : EffectFolders::builtinTransitions()) m_transLuma->addItem(e.name, e.path);
+        const auto user = EffectFolders::userTransitions();
+        if (!user.isEmpty()) m_transLuma->insertSeparator(m_transLuma->count());
+        for (const auto& e : user) m_transLuma->addItem(e.group.isEmpty() ? e.name : e.group + '/' + e.name, e.path);
+        int i = m_transLuma->findData(span.style.luma);
+        if (i < 0) {
+            const bool missing = !EffectFolders::isBuiltin(span.style.luma) && !QFileInfo::exists(span.style.luma);
+            m_transLuma->addItem(EffectFolders::displayName(span.style.luma) + (missing ? T(" (fehlt)") : QString()),
+                                 span.style.luma);
+            i = m_transLuma->count() - 1;
+        }
+        m_transLuma->setCurrentIndex(i);
+        m_transLuma->setToolTip(EffectFolders::isBuiltin(span.style.luma)
+                                    ? T("Verlaufsbild: dunkle Stellen wechseln zuerst. Eigene Bilder in den Ordner "
+                                        "„Transitions“ (Effects Library → „Effekte importieren…“)")
+                                    : QDir::toNativeSeparators(span.style.luma));
+        m_transInvert->setChecked(span.style.invert);
+    }
     auto swatchStyle = [](const QColor& c) {
         return QString("QToolButton { background: %1; border: 1px solid %2; border-radius: 2px; }")
             .arg(c.name(), Theme::border.name());

@@ -226,7 +226,7 @@ void testUserFolder(const QString& dir)
         CHECK_EQ(all[1].name, QString("Zeta"));
         CHECK_EQ(all[2].group, QString("Film/Kodak"));
     }
-    CHECK_EQ(EffectFolders::userLutDirs().size(), 3);
+    CHECK_EQ(EffectFolders::watchDirs().size(), 4); // LUTs + 2 Unterordner + Transitions
     CHECK_EQ(EffectFolders::findUserLut("k2.cube"), luts.filePath("Film/Kodak/k2.cube"));
     CHECK(EffectFolders::findUserLut("gibtsnicht.cube").isEmpty());
 
@@ -271,8 +271,11 @@ void testUserFolder(const QString& dir)
         CHECK_EQ(ColorGrade::lutPath(o.timeline.video[0].clips[0]), luts.filePath("Film/Kodak/k2.cube"));
 }
 
+// Oberste Kategorie mit diesem Namen, sonst die erste darunter („LUTs“ gibt es auch unter „schneidi“)
 QTreeWidgetItem* findCategory(QTreeWidget* tree, const QString& text)
 {
+    for (int i = 0; i < tree->topLevelItemCount(); ++i)
+        if (tree->topLevelItem(i)->text(0) == text) return tree->topLevelItem(i);
     const auto hits = tree->findItems(text, Qt::MatchExactly | Qt::MatchRecursive);
     return hits.isEmpty() ? nullptr : hits.first();
 }
@@ -296,11 +299,12 @@ void testWidget()
     QTreeWidgetItem* own = findCategory(tree, "schneidi");
     QTreeWidgetItem* luts = findCategory(tree, "LUTs");
     if (!CHECK(own && luts)) return;
-    tree->setCurrentItem(own);
-    CHECK_EQ(realItems(list), int(EffectFolders::builtinLuts().size()));
-    CHECK(!list->item(0)->icon().isNull());
+    tree->setCurrentItem(own); // schneidi: Übergänge + LUTs
     if (const QByteArray dump = qgetenv("LUTS_DUMP"); !dump.isEmpty()) // Bild der Kategorie: LUTS_DUMP=<datei.png>
         lib.grab().save(QString::fromLocal8Bit(dump));
+    tree->setCurrentItem(own->child(1)); // schneidi → LUTs
+    CHECK_EQ(realItems(list), int(EffectFolders::builtinLuts().size()));
+    CHECK(!list->item(0)->icon().isNull());
 
     tree->setCurrentItem(luts);
     CHECK_EQ(realItems(list), 3);
@@ -313,7 +317,7 @@ void testWidget()
 
     // Doppelklick = Signal mit "lut:<Pfad>"
     QSignalSpy spy(&lib, &EffectsLibrary::effectRequested);
-    tree->setCurrentItem(own);
+    tree->setCurrentItem(own->child(1));
     emit list->itemDoubleClicked(list->item(0));
     if (CHECK_EQ(spy.size(), 1))
         CHECK(spy.first().first().toString().startsWith(EffectFolders::LutPrefix));

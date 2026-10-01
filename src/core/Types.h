@@ -112,7 +112,8 @@ struct TitleStyle {
 };
 
 // Übergangsart (nur Video; Audio ist immer ein Crossfade) und Lage zum Schnitt wie im DaVinci-Inspector
-enum class TransitionType { CrossDissolve, DipToColor, WipeRight, WipeLeft, WipeDown, WipeUp };
+// Luma = Verlaufsblende mit Graustufenbild (mitgeliefert oder aus dem Effekte-Ordner, TransitionStyle::luma)
+enum class TransitionType { CrossDissolve, DipToColor, WipeRight, WipeLeft, WipeDown, WipeUp, Luma };
 enum class TransitionAlign { Center, Start, End }; // Center on Edit / Start on Edit / End on Edit
 // Audio-Übergang wie DaVinci: Pegelkurve beider Seiten (in der Mitte -3 / -6 / -9 dB je Seite)
 enum class AudioCurve { Plus3dB, Zero, Minus3dB };
@@ -120,16 +121,20 @@ struct TransitionStyle {
     TransitionType type = TransitionType::CrossDissolve;
     TransitionAlign align = TransitionAlign::Center;
     QColor color = Qt::black;       // Abblende: Farbe dazwischen ("Dip to Color Dissolve")
-    double softness = 0;            // Wischblende: Weichheit der Kante (0..100 %)
+    double softness = 0;            // Wisch-/Verlaufsblende: Weichheit der Kante (0..100 %)
     double border = 0;              // Wischblende: Randbreite (Pixel im Projektformat, 0 = kein Rand)
     QColor borderColor = Qt::white; // Wischblende: Randfarbe
     AudioCurve audio = AudioCurve::Plus3dB; // nur Audiospuren
+    QString luma;                   // Verlaufsblende: Bild (Datei bzw. mitgeliefert ":/lumas/<id>")
+    bool invert = false;            // Verlaufsblende: helle Stellen zuerst
 
-    bool isWipe() const { return type >= TransitionType::WipeRight; }
+    bool isWipe() const { return type >= TransitionType::WipeRight && type <= TransitionType::WipeUp; }
+    bool isLuma() const { return type == TransitionType::Luma; }
     bool operator==(const TransitionStyle& o) const
     {
         return type == o.type && align == o.align && color == o.color && softness == o.softness
-               && border == o.border && borderColor == o.borderColor && audio == o.audio;
+               && border == o.border && borderColor == o.borderColor && audio == o.audio && luma == o.luma
+               && invert == o.invert;
     }
     bool operator!=(const TransitionStyle& o) const { return !(*this == o); }
 };
@@ -142,6 +147,7 @@ inline constexpr TransitionTypeInfo kTransitionTypes[] = {
     {TransitionType::WipeLeft, "wipe_left", N_("Wischblende nach links")},
     {TransitionType::WipeDown, "wipe_down", N_("Wischblende nach unten")},
     {TransitionType::WipeUp, "wipe_up", N_("Wischblende nach oben")},
+    {TransitionType::Luma, "luma", N_("Verlaufsblende")},
 };
 // Audio-Übergangsarten (Namen wie im DaVinci-Inspector, auch im deutschen DaVinci englisch)
 struct AudioCurveInfo { AudioCurve curve; const char* id; const char* name; };
