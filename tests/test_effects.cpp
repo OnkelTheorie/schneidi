@@ -143,6 +143,27 @@ int main(int argc, char** argv)
     CHECK(project.undoStack()->count() == before + 1);
     CHECK(!EffectRegistry::has(*clip(aid), "blur"));
 
+    // Trim-Werkzeug: Spuren kommen während des Ziehens dazu (z. B. Tastenkürzel) -> Vorschau passt nicht mehr zu den
+    // Zeilen; Zeichnen darf nicht über die Spuren der alten Vorschau hinaus lesen
+    if (hitY >= 0) {
+        tv.setTool(TimelineView::Tool::Trim);
+        const QPoint at(TimelineView::kHeaderW + 150, hitY);
+        auto mouse = [&](QEvent::Type t, QPoint pt, Qt::MouseButtons buttons) {
+            QMouseEvent e(t, QPointF(pt), tv.mapToGlobal(QPointF(pt)), Qt::LeftButton, buttons, Qt::NoModifier);
+            QApplication::sendEvent(&tv, &e);
+        };
+        mouse(QEvent::MouseButtonPress, at, Qt::LeftButton);
+        mouse(QEvent::MouseMove, at + QPoint(20, 0), Qt::LeftButton);
+        CHECK(!tv.grab().isNull());
+        project.edit("Spuren", [](Timeline& t) { TimelineOps::ensureTracks(t, TrackKind::Video, 6); });
+        CHECK(!tv.grab().isNull());
+        mouse(QEvent::MouseMove, at + QPoint(24, 0), Qt::LeftButton);
+        CHECK(!tv.grab().isNull());
+        mouse(QEvent::MouseButtonRelease, at + QPoint(24, 0), Qt::NoButton);
+        CHECK(!tv.grab().isNull());
+        tv.setTool(TimelineView::Tool::Select);
+    }
+
     // Zahlenfeld ziehen: langsame Bewegung (1 px je Ereignis) und Shift (fein) ändern den Wert in beide Richtungen,
     // auch wenn ein Schritt kleiner ist als die angezeigte Genauigkeit (Rest wird gesammelt statt verworfen)
     {

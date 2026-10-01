@@ -230,6 +230,9 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
 
     // Projekt geändert -> nur neu zeichnen. Der ViewState bleibt unangetastet (Kernregel).
     connect(editor->project(), &Project::timelineChanged, this, [this] {
+        // Trim-Vorschau beruht auf der alten Timeline (andere Spuranzahl möglich, z. B. Strg+Z beim Ziehen):
+        // verwerfen, die nächste Mausbewegung rechnet sie neu
+        m_trimPreview.reset();
         update();
         emit viewChanged(); // nur damit die Scrollbar ggf. mehr Platz bekommt
     });
