@@ -108,6 +108,7 @@ void drawLock(QPainter& p, const QRectF& r, const QColor& color)
 }
 
 constexpr int kSnapPx = 8;
+constexpr double kFinePxPerFrame = 12; // ab hier verschieben Ton-Clips feiner als 1 Frame
 constexpr int kDragStartPx = 4;
 constexpr int kEdgeGrabPx = 6; // so nah an der Clipkante wird getrimmt statt verschoben
 constexpr int kVolumeGrabPx = 4;
@@ -344,7 +345,7 @@ std::optional<TimelineView::EdgeHit> TimelineView::edgeAt(const QPoint& pos) con
     const auto row = rowAt(pos.y());
     if (!row || isLocked(*row)) return std::nullopt;
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
-        const double x1 = frameToX(c.start), x2 = frameToX(c.end());
+        const double x1 = frameToX(c.pos()), x2 = frameToX(c.endPos());
         if (pos.x() < x1 || pos.x() >= x2) continue;
         const double grab = std::min<double>(kEdgeGrabPx, (x2 - x1) / 3);
         if (pos.x() < x1 + grab) return EdgeHit{c.id, TimelineOps::Edge::Start};
@@ -365,7 +366,7 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
     for (int i = 0; i < clips.size(); ++i) {
         const Clip& c = clips[i];
         const QRect r = clipRect(*row, c);
-        const double x1 = frameToX(c.start), x2 = frameToX(c.end());
+        const double x1 = frameToX(c.pos()), x2 = frameToX(c.endPos());
         if (pos.x() < x1 || pos.x() >= x2 || pos.y() > r.bottom()) continue;
         // genau am Schnitt zweier anliegender Clips: Roll
         const bool prevAdj = i > 0 && clips[i - 1].end() == c.start;
@@ -386,8 +387,8 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
 
 QRect TimelineView::clipRect(const Row& row, const Clip& c) const
 {
-    return QRect(QPoint(int(frameToX(c.start)), row.y + 1),
-                 QPoint(int(frameToX(c.end())) - 1, row.y + row.h - row.lane - 3));
+    return QRect(QPoint(int(frameToX(c.pos())), row.y + 1),
+                 QPoint(int(frameToX(c.endPos())) - 1, row.y + row.h - row.lane - 3));
 }
 
 QRect TimelineView::transitionRect(const Row& row, const TimelineOps::TransitionSpan& s) const
@@ -465,7 +466,7 @@ int TimelineView::keyIconAt(const QPoint& pos) const
 QRect TimelineView::laneRect(const Row& row, const Clip& c) const
 {
     const int top = keyLaneTop(row);
-    return QRect(QPoint(int(frameToX(c.start)), top), QPoint(int(frameToX(c.end())) - 1, top + row.keyLane - 2));
+    return QRect(QPoint(int(frameToX(c.pos())), top), QPoint(int(frameToX(c.endPos())) - 1, top + row.keyLane - 2));
 }
 
 bool TimelineView::inLane(const QPoint& pos) const
@@ -485,7 +486,7 @@ std::optional<TimelineView::KeyHit> TimelineView::keyframeAt(const QPoint& pos) 
         if (!m_keyLanes.contains(c.id)) continue;
         for (int t : Keys::keyTimes(c)) {
             if (t < 0 || t >= c.length()) continue; // außerhalb des Clips (nach Trimmen) nicht greifbar
-            const double d = std::abs(frameToX(c.start + t) - pos.x());
+            const double d = std::abs(frameToX(c.pos() + t) - pos.x());
             if (d < bestDist) {
                 bestDist = d;
                 best = KeyHit{c.id, t};
@@ -505,7 +506,7 @@ int TimelineView::volumeLineAt(const QPoint& pos) const
         if (pos.x() < r.left() || pos.x() > r.right()) continue;
         const QRect body = clipBodyRect(r);
         if (body.height() < 6) return 0;
-        const double db = volumeAt(c, (pos.x() - frameToX(c.start)) / m_view.pxPerFrame);
+        const double db = volumeAt(c, (pos.x() - frameToX(c.pos())) / m_view.pxPerFrame);
         return std::abs(pos.y() - volumeLineY(body, db)) <= kVolumeGrabPx ? c.id : 0;
     }
     return 0;
@@ -594,8 +595,9 @@ QVector<int> TimelineView::snapPoints(const QSet<int>& exclude) const
 }
 
 // Liefert die Korrektur, damit eine der Kanten auf einen Snap-Punkt fällt (0 = kein Snap)
-int TimelineView::snapDelta(const QVector<int>& edges, const QSet<int>& exclude) const
+int TimelineView::snapDelta(const QVector<int>& edges, const QSet<int>& exclude, bool* hit) const
 {
+    if (hit) *hit = false;
     if (!m_snap) return 0;
     const double maxFrames = kSnapPx / m_view.pxPerFrame;
     int best = 0;
@@ -606,6 +608,7 @@ int TimelineView::snapDelta(const QVector<int>& edges, const QSet<int>& exclude)
             if (d <= maxFrames && d < bestDist) {
                 bestDist = d;
                 best = p - e;
+                if (hit) *hit = true;
             }
         }
     }
@@ -904,9 +907,9 @@ void TimelineView::drawTracks(QPainter& p)
             }
             if (!row) continue;
             Clip moved = *c;
-            moved.start = c->start + m_dragDelta;
-            const QRect r(QPoint(int(frameToX(moved.start)), row->y + 1),
-                          QPoint(int(frameToX(moved.end())) - 1, row->y + row->h - row->lane - 3));
+            TimelineOps::shiftFine(moved, m_dragFine);
+            const QRect r(QPoint(int(frameToX(moved.pos())), row->y + 1),
+                          QPoint(int(frameToX(moved.endPos())) - 1, row->y + row->h - row->lane - 3));
             const QColor col = clipColor(m_editor->project(), *c, ref.index < tl.tracks(ref.kind).size() ? &tl.track(ref) : nullptr);
             drawClip(p, r, moved, ref.kind, true, true, {}, col);
         }
@@ -959,7 +962,7 @@ void TimelineView::drawTracks(QPainter& p)
         TrackRef ref;
         if (const Clip* c = TimelineOps::findClip(tl, m_fxDropClip, &ref))
             if (const auto row = rowFor(ref)) {
-                const QRect r(int(frameToX(c->start)), row->y, int(frameToX(c->end()) - frameToX(c->start)),
+                const QRect r(int(frameToX(c->pos())), row->y, int(frameToX(c->endPos()) - frameToX(c->pos())),
                               row->h - row->lane - 1);
                 p.setPen(QPen(Theme::primary, 2));
                 p.setBrush(Qt::NoBrush);
@@ -1096,12 +1099,12 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
             const int shown = t + (selected && m_drag == Drag::Keyframe ? m_keyDelta : 0);
             p.setPen(QPen(QColor(0, 0, 0, 180), 1));
             p.setBrush(selected ? Theme::primary : Theme::secondary);
-            drawDiamond(p, frameToX(c.start + shown), y, 4.5);
+            drawDiamond(p, frameToX(c.pos() + shown), y, 4.5);
         }
     p.restore();
     if (m_drag == Drag::Keyframe && m_keyDragClip == c.id && m_keyDelta != 0 && !sel->keyTimes().isEmpty()) {
         const int t = *std::min_element(sel->keyTimes().begin(), sel->keyTimes().end()) + m_keyDelta;
-        drawLabel(p, QPoint(int(frameToX(c.start + t)) + 8, lane.top() - 22),
+        drawLabel(p, QPoint(int(frameToX(c.pos() + t)) + 8, lane.top() - 22),
                   (m_keyDelta > 0 ? "+" : "") + Timecode::format(m_keyDelta, m_editor->project()->fps()));
     }
 }
@@ -1130,7 +1133,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     p.setClipPath(path);
     p.fillRect(QRect(r.left(), r.top(), r.width(), barH), base);
     const QRect bodyRect = clipBodyRect(r);
-    if (!ghost && bodyRect.height() > 4) {
+    if (bodyRect.height() > 4) { // auch beim Ziehen: Wellenform/Bilder wandern mit (wie DaVinci)
         p.setRenderHint(QPainter::Antialiasing, false);
         if (c.isCompound()) drawCompoundBody(p, bodyRect, base);
         else if (kind == TrackKind::Video && !c.isTitle()) drawFilmstrip(p, bodyRect, c); // Titel: nur Farbe
@@ -1145,7 +1148,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
             // Keyframes: Linie folgt der Kurve (nur sichtbarer Teil, alle 2 px)
             QPolygonF curve;
             const int x0 = std::max(bodyRect.left(), kHeaderW), x1 = std::min(bodyRect.right(), width());
-            const double clipX = frameToX(c.start);
+            const double clipX = frameToX(c.pos());
             for (int x = x0; x <= x1 + 1; x += 2) {
                 const int xx = std::min(x, x1);
                 curve << QPointF(xx, volumeLineY(bodyRect, volumeAt(c, (xx - clipX) / m_view.pxPerFrame)));
@@ -1173,7 +1176,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         auto ramp = [&](double x0, double x1, bool in) {
             QPolygonF curve; // von links nach rechts
             if (audio) {
-                const double clipX = frameToX(c.start);
+                const double clipX = frameToX(c.pos());
                 const int steps = std::clamp(int(x1 - x0) / 2, 2, 64);
                 for (int i = 0; i <= steps; ++i) {
                     const double x = x0 + (x1 - x0) * i / steps;
@@ -1311,7 +1314,7 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
 
     const int tileH = body.height();
     const int tileW = std::max(12, tileH * 16 / 9);
-    const double clipX = frameToX(c.start);
+    const double clipX = frameToX(c.pos());
     const double framesPerTile = tileW / m_view.pxPerFrame;
     int step = 1;
     while (step * 2 <= framesPerTile) step *= 2;
@@ -1377,7 +1380,7 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
     const bool fades = c.fadeIn > 0 || c.fadeOut > 0 || !own.isEmpty();
     const int mid = body.top() + body.height() / 2;
     const double half = body.height() / 2.0 - 1;
-    const double clipX = frameToX(c.start);
+    const double clipX = frameToX(c.pos());
     const int x0 = std::max(body.left(), kHeaderW);
     const int x1 = std::min(body.right(), width() - 1);
 
@@ -1886,7 +1889,9 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         if (!(e->modifiers() & Qt::ControlModifier)) sel->clear();
         return;
     }
-    const QVector<int> group = m_editor->withLinked({id});
+    // Alt-Klick: nur dieser Teil eines verknüpften Clips (wie DaVinci), z. B. den Ton allein verschieben
+    const bool alone = e->modifiers() & Qt::AltModifier;
+    const QVector<int> group = alone ? m_editor->editable({id}) : m_editor->withLinked({id});
     QSet<int> ids = sel->ids();
     if (e->modifiers() & Qt::ControlModifier) {
         const bool remove = ids.contains(id);
@@ -1897,11 +1902,13 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         sel->set(ids);
         return;
     }
-    if (!ids.contains(id)) sel->set(QSet<int>(group.begin(), group.end()));
+    if (!ids.contains(id) || alone) sel->set(QSet<int>(group.begin(), group.end()));
 
     TimelineOps::findClip(m_editor->project()->timeline(), id, &m_anchorRef);
     m_dragIds = m_editor->editable(sel->ids().values().toVector());
     m_dragDelta = 0;
+    m_dragFine = 0;
+    m_dragAnchorId = id;
     m_dragTrackDelta = 0;
     m_drag = Drag::MaybeMove;
 }
@@ -1934,19 +1941,34 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         [[fallthrough]];
     case Drag::Move: {
         const Timeline& tl = m_editor->project()->timeline();
-        int delta = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
+        const double exact = (pos.x() - m_pressPos.x()) / m_view.pxPerFrame;
+        int delta = int(std::lround(exact));
         QVector<int> edges;
         int minStart = INT_MAX;
+        // Feinposition (Sub-Frame wie DaVinci Fairlight): nur reine Ton-Clips mit gleicher Feinposition und erst,
+        // wenn ein Frame breit genug gezoomt ist; sonst ganze Frames
+        bool fine = m_view.pxPerFrame >= kFinePxPerFrame;
+        int sub = -1;
         for (int id : m_dragIds) {
-            if (const Clip* c = TimelineOps::findClip(tl, id)) {
+            TrackRef ref;
+            if (const Clip* c = TimelineOps::findClip(tl, id, &ref)) {
                 edges << c->start + delta << c->end() + delta;
                 minStart = std::min(minStart, c->start);
+                if (ref.kind != TrackKind::Audio || (sub >= 0 && sub != c->subframe)) fine = false;
+                sub = c->subframe;
             }
         }
         const QSet<int> exclude(m_dragIds.begin(), m_dragIds.end());
-        delta += snapDelta(edges, exclude);
+        bool snapped = false;
+        delta += snapDelta(edges, exclude, &snapped);
         if (minStart != INT_MAX) delta = std::max(delta, -minStart);
         m_dragDelta = delta;
+        m_dragFine = delta * 100;
+        if (fine && sub >= 0) {
+            // eingerastet: genau auf den Frame (Feinposition weg), sonst frei in 1/100 Frame
+            m_dragFine = snapped ? delta * 100 - sub : int(std::lround(exact * 100));
+            m_dragFine = std::max(m_dragFine, -(minStart * 100 + sub));
+        }
 
         m_dragTrackDelta = 0;
         if (const auto row = rowAt(pos.y()); row && row->ref.kind == m_anchorRef.kind)
@@ -2132,7 +2154,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 {
     if (e->button() != Qt::LeftButton) return;
     if (m_drag == Drag::Move)
-        m_editor->moveClips(m_dragIds, m_dragDelta, m_anchorRef.kind, m_dragTrackDelta);
+        m_editor->moveClipsFine(m_dragIds, m_dragFine, m_anchorRef.kind, m_dragTrackDelta);
     if (m_drag == Drag::CueMove || m_drag == Drag::CueTrim) {
         const Drag d = m_drag;
         m_drag = Drag::None; // vor der Änderung, damit die Vorschau nicht doppelt gilt
@@ -2802,7 +2824,7 @@ std::optional<TimelineView::RetimeHit> TimelineView::retimeHitAt(const QPoint& p
         double best = kSpeedPointGrabPx + 1;
         for (int i = 0; i < points.size(); ++i) {
             if (points[i] <= c.in || points[i] >= c.out + 1) continue; // außerhalb des Ausschnitts
-            const double d = std::abs(frameToX(c.start + points[i] - c.in) - pos.x());
+            const double d = std::abs(frameToX(c.pos() + points[i] - c.in) - pos.x());
             if (d < best) {
                 best = d;
                 hit.point = i;
@@ -2828,7 +2850,7 @@ void TimelineView::drawRetime(QPainter& p, const QRect& r, const Clip& c)
     p.save();
     p.setClipRect(r.intersected(QRect(kHeaderW, 0, width(), height())), Qt::IntersectClip);
     p.fillRect(bar, QColor(0, 0, 0, 150));
-    auto xOf = [&](double mat) { return frameToX(c.start + mat - c.in); };
+    auto xOf = [&](double mat) { return frameToX(c.pos() + mat - c.in); };
     // Weiche Übergänge: heller Bereich über die Clip-Höhe
     for (const RetimeMap::Piece& pc : map.pieces())
         if (pc.v0 != pc.v1)

@@ -204,6 +204,34 @@ void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kin
     });
 }
 
+void Editor::moveClipsFine(const QVector<int>& idsIn, int fine, TrackKind kind, int trackDelta)
+{
+    if (fine % 100 == 0) return moveClips(idsIn, fine / 100, kind, trackDelta);
+    const QVector<int> ids = editable(idsIn);
+    if (ids.isEmpty()) return;
+    const Timeline& cur = m_project->timeline();
+    const int dt = TimelineOps::clampTrackDelta(cur, ids, kind, trackDelta);
+    for (TrackRef ref : TimelineOps::tracksOf(cur, ids))
+        if (isTrackLocked({ref.kind, ref.index + dt})) return;
+    // Ziel je Clip; ganze Frames über moveClips (Überschreiben wie gewohnt), danach die Feinposition
+    QHash<int, Clip> target;
+    for (int id : ids)
+        if (const Clip* c = TimelineOps::findClip(cur, id)) {
+            Clip t = *c;
+            TimelineOps::shiftFine(t, fine);
+            target.insert(id, t);
+        }
+    if (target.isEmpty()) return;
+    const int frames = target.begin()->start - TimelineOps::findClip(cur, target.begin().key())->start;
+    Project* p = m_project;
+    p->edit(T("Clips verschieben"), [&](Timeline& tl) {
+        TimelineOps::detachTransitions(tl, ids);
+        TimelineOps::moveClips(tl, ids, frames, kind, trackDelta, [p] { return p->newClipId(); });
+        for (auto it = target.cbegin(); it != target.cend(); ++it)
+            if (Clip* c = TimelineOps::findClip(tl, it.key())) c->subframe = it->subframe;
+    });
+}
+
 TimelineOps::SourceLength Editor::sourceLength() const
 {
     return [p = m_project](const Clip& c) {

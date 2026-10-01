@@ -122,7 +122,7 @@ void TimelineView::drawCurveIcon(QPainter& p, const QRect& r, bool open)
 QRect TimelineView::curveRect(const Row& row, const Clip& c) const
 {
     const int top = keyLaneTop(row) + row.keyLane;
-    return QRect(QPoint(int(frameToX(c.start)), top), QPoint(int(frameToX(c.end())) - 1, row.y + row.h - 3));
+    return QRect(QPoint(int(frameToX(c.pos())), top), QPoint(int(frameToX(c.endPos())) - 1, row.y + row.h - 3));
 }
 
 QRect TimelineView::curvePlotRect(const QRect& curve) const
@@ -198,7 +198,7 @@ std::optional<TimelineView::CurveHit> TimelineView::curveHitAt(const QPoint& pos
             for (bool out : {false, true}) {
                 double dt, dv;
                 if (!Keys::handle(k, i, out, &dt, &dv) || (dt == 0 && dv == 0)) continue;
-                if (dist(frameToX(c.start + t + dt), curveY(plot, range, k[i].value + dv)) <= kGrabPx)
+                if (dist(frameToX(c.pos() + t + dt), curveY(plot, range, k[i].value + dv)) <= kGrabPx)
                     return CurveHit{c.id, *param, i, out ? 1 : -1};
             }
         }
@@ -207,7 +207,7 @@ std::optional<TimelineView::CurveHit> TimelineView::curveHitAt(const QPoint& pos
         for (int i = 0; i < k.size(); ++i) {
             const int t = k[i].frame - c.in;
             if (t < 0 || t >= c.length()) continue;
-            const double d = dist(frameToX(c.start + t), curveY(plot, range, k[i].value));
+            const double d = dist(frameToX(c.pos() + t), curveY(plot, range, k[i].value));
             if (d < bestDist) {
                 bestDist = d;
                 best = i;
@@ -284,7 +284,7 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
     const int x0 = std::max(R.left(), kHeaderW), x1 = std::min(R.right(), width());
     QPainterPath path;
     for (int x = x0; x <= x1 + 1; x += 2) {
-        const double t = std::clamp((std::min(x, x1) - frameToX(c.start)) / m_view.pxPerFrame, 0.0,
+        const double t = std::clamp((std::min(x, x1) - frameToX(c.pos())) / m_view.pxPerFrame, 0.0,
                                     double(c.length() - 1));
         const QPointF pt(std::min(x, x1), curveY(plot, range, Keys::valueAt(c, *param, t)));
         if (x == x0) path.moveTo(pt); // nicht path.isEmpty(): ist nach moveTo noch true
@@ -301,12 +301,12 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
             if (t < 0 || t >= c.length()) continue;
             const bool selected = mine && sel->keyTimes().contains(t);
             if (selected != (pass == 1)) continue;
-            const QPointF pt(frameToX(c.start + t), curveY(plot, range, k[i].value));
+            const QPointF pt(frameToX(c.pos() + t), curveY(plot, range, k[i].value));
             if (selected)
                 for (bool out : {false, true}) {
                     double dt, dv;
                     if (!Keys::handle(k, i, out, &dt, &dv) || (dt == 0 && dv == 0)) continue;
-                    const QPointF h(frameToX(c.start + t + dt), curveY(plot, range, k[i].value + dv));
+                    const QPointF h(frameToX(c.pos() + t + dt), curveY(plot, range, k[i].value + dv));
                     p.setPen(QPen(Theme::textDim, 1));
                     p.drawLine(pt, h);
                     p.setBrush(k[i].ease == KeyEase::Bezier ? Theme::secondary : Theme::controlOff);
@@ -338,7 +338,7 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
         if (m_curveDragDt != 0)
             text += "   " + QString(m_curveDragDt > 0 ? "+" : "") +
                     Timecode::format(m_curveDragDt, m_editor->project()->fps());
-        drawLabel(p, QPoint(int(frameToX(c.start + t)) + 10, int(curveY(plot, range, v)) - 24), text);
+        drawLabel(p, QPoint(int(frameToX(c.pos() + t)) + 10, int(curveY(plot, range, v)) - 24), text);
     }
 }
 

@@ -74,6 +74,8 @@ QVector<int> splitAt(Timeline& tl, const QVector<int>& clipIds, int frame,
 int clampTrackDelta(const Timeline& tl, const QVector<int>& clipIds, TrackKind anchorKind, int trackDelta);
 
 // Verschiebt Clips um deltaFrames und trackDelta Spuren (siehe clampTrackDelta).
+// Clip um `fine` 1/100 Frame verschieben (start + subframe, Übertrag auf ganze Frames)
+void shiftFine(Clip& c, int fine);
 void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
                TrackKind anchorKind, int trackDelta, const IdGen& newId);
 

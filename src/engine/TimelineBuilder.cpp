@@ -21,6 +21,9 @@
 #include <QString>
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
+#include <mutex>
+#include <vector>
 #include <cmath>
 #include <functional>
 #include <optional>
@@ -415,6 +418,82 @@ std::shared_ptr<Mlt::Filter> makeLimiter(Mlt::Profile& profile, bool on, double 
     f->anim_set("av.release", 50.0, 0);
     setLimiter(*f, on, ceilingDb);
     return f;
+}
+
+// Feinposition von Ton-Clips (Clip::subframe): verzögert den Ton um einen Bruchteil eines Frames. Die fehlenden
+// Samples am Frame-Anfang kommen aus dem Ende des vorigen Frames (gemerkt); nach einem Sprung (Suchen) ist dort
+// Stille – beim Export läuft alles am Stück. Ein Filter je Clip, an allen seinen Ausschnitten (Positionen der Quelle
+// laufen über die Ausschnitte weiter).
+struct SubframeState {
+    std::mutex mutex;
+    mlt_position last = -10;
+    int channels = 0;
+    std::vector<float> tail, prevTail; // planar: channels x Verzögerung
+};
+
+int subframeGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int* frequency, int* channels,
+                     int* samples)
+{
+    auto filter = static_cast<mlt_filter>(mlt_frame_pop_audio(frame));
+    *format = mlt_audio_float;
+    const int error = mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
+    if (error || !*buffer || *channels <= 0 || *samples <= 0) return error;
+    if (*format != mlt_audio_float) {
+        if (!frame->convert_audio || frame->convert_audio(frame, buffer, format, mlt_audio_float) || *format != mlt_audio_float)
+            return 0; // unbekanntes Format: unverändert durchreichen
+    }
+    mlt_properties props = MLT_FILTER_PROPERTIES(filter);
+    auto* st = static_cast<SubframeState*>(mlt_properties_get_data(props, "_state", nullptr));
+    const double fps = mlt_profile_fps(mlt_service_profile(MLT_FILTER_SERVICE(filter)));
+    if (!st || fps <= 0) return 0;
+    const int ch = *channels, n = *samples;
+    const int d = std::min(n, int(std::lround(mlt_properties_get_int(props, "subframe") / 100.0 * *frequency / fps)));
+    if (d <= 0) return 0;
+
+    const std::lock_guard<std::mutex> lock(st->mutex);
+    const mlt_position pos = mlt_frame_get_position(frame);
+    const size_t need = size_t(ch) * size_t(d);
+    std::vector<float> head(need, 0.f); // Anfang dieses Frames: Ende des vorigen
+    if (st->channels == ch) {
+        if (pos == st->last + 1 && st->tail.size() == need) head = st->tail;
+        else if (pos == st->last && st->prevTail.size() == need) head = st->prevTail; // gleiches Frame noch einmal
+    }
+    auto* pcm = static_cast<float*>(*buffer);
+    std::vector<float> tail(need);
+    for (int c = 0; c < ch; ++c) {
+        float* plane = pcm + size_t(c) * n;
+        std::copy(plane + (n - d), plane + n, tail.begin() + size_t(c) * d);
+        std::memmove(plane + d, plane, sizeof(float) * size_t(n - d));
+        std::copy(head.begin() + size_t(c) * d, head.begin() + size_t(c + 1) * d, plane);
+    }
+    if (pos != st->last) {
+        st->prevTail = std::move(head);
+        st->tail = std::move(tail);
+    }
+    st->last = pos;
+    st->channels = ch;
+    return 0;
+}
+
+mlt_frame subframeProcess(mlt_filter filter, mlt_frame frame)
+{
+    mlt_frame_push_audio(frame, filter);
+    mlt_frame_push_audio(frame, reinterpret_cast<void*>(subframeGetAudio));
+    return frame;
+}
+
+std::shared_ptr<Mlt::Filter> makeSubframeDelay(Mlt::Profile& profile, int subframe)
+{
+    mlt_filter f = mlt_filter_new();
+    if (!f) return nullptr;
+    mlt_service_set_profile(MLT_FILTER_SERVICE(f), profile.get_profile());
+    f->process = subframeProcess;
+    mlt_properties_set_int(MLT_FILTER_PROPERTIES(f), "subframe", subframe);
+    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), "_state", new SubframeState, 0,
+                            [](void* p) { delete static_cast<SubframeState*>(p); }, nullptr);
+    auto delay = std::make_shared<Mlt::Filter>(f);
+    mlt_filter_close(f);
+    return delay;
 }
 
 // limiter: nur Master (Ceiling in dBFS, nullopt = keiner); sitzt nach Fader/Pan und vor dem Pegelmesser
@@ -1099,8 +1178,17 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             useSecond.insert(c.id, seamless ? useSecond.value(prev.id) : !useSecond.value(prev.id));
         }
 
+        // Feinposition: ein Verzögerungsfilter je Clip, an allen seinen Ausschnitten
+        QHash<int, std::shared_ptr<Mlt::Filter>> delays;
+        auto delayed = [&](const Clip& c, Mlt::Producer* cut) {
+            if (!cut || kind != TrackKind::Audio || c.subframe <= 0) return cut;
+            auto& f = delays[c.id];
+            if (!f) f = makeSubframeDelay(m_profile, c.subframe);
+            if (f) cut->attach(*f);
+            return cut;
+        };
         // Ausschnitt [from, to) der Timeline aus Clip c (darf über In/Out hinaus in die Handles reichen)
-        auto cutOf = [&](const Clip& c, int from, int to, bool second) -> Mlt::Producer* {
+        auto rawCutOf = [&](const Clip& c, int from, int to, bool second) -> Mlt::Producer* {
             if (c.isTitle()) {
                 if (!c.enabled || kind != TrackKind::Video) return nullptr;
                 Mlt::Producer* cut = titleCut(m_profile, c, from - c.start, to - from);
@@ -1146,6 +1234,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             decorate(m_profile, *cut, c, kind, from - c.start, to - from);
             applyClipFades(m_profile, *cut, c, kind, from, to);
             return cut;
+        };
+        auto cutOf = [&](const Clip& c, int from, int to, bool second) {
+            return delayed(c, rawCutOf(c, from, to, second));
         };
 
         int cursor = 0;

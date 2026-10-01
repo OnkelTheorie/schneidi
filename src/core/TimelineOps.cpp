@@ -335,6 +335,13 @@ int clampTrackDelta(const Timeline& tl, const QVector<int>& clipIds, TrackKind a
     return trackDelta;
 }
 
+void shiftFine(Clip& c, int fine)
+{
+    const int total = std::max(0, c.start * 100 + c.subframe + fine);
+    c.start = total / 100;
+    c.subframe = total % 100;
+}
+
 void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
                TrackKind anchorKind, int trackDelta, const IdGen& newId)
 {

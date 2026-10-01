@@ -51,6 +51,8 @@ public:
     void renameTrack(TrackRef ref, const QString& name);
     void setTrackColor(TrackRef ref, const QString& colorId);
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);
+    // Verschieben in 1/100 Frame (Feinposition von Ton-Clips, Clip::subframe); ganze Frames wie moveClips
+    void moveClipsFine(const QVector<int>& ids, int fine, TrackKind kind, int trackDelta);
     // Kante eines Clips (und verknüpfter Partner) ziehen, ohne Ripple
     void trimClip(int clipId, TimelineOps::Edge edge, int delta);
     // Wie weit sich die Kante tatsächlich bewegen lässt (für die Live-Vorschau)

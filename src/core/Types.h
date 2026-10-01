@@ -227,6 +227,9 @@ struct Clip {
     int in = 0;     // erstes Frame im Quellmaterial
     int out = 0;    // letztes Frame im Quellmaterial (inklusive, wie bei MLT)
     int linkId = 0; // 0 = frei; gleiche linkId = verknüpftes Video+Audio
+    // Nur Audio: Feinposition hinter `start` in 1/100 Frame (0..99, wie Sub-Frame in DaVinci Fairlight). Schnitte und
+    // Kanten bleiben auf ganzen Frames, nur der Ton (und seine Darstellung) rutscht um den Bruchteil nach rechts.
+    int subframe = 0;
     double volumeDb = 0.0; // Clip-Lautstärke (nur Audio); <= kMinVolumeDb = stumm
     double pan = 0.0;      // Nur Audio: -100 = links, 0 = Mitte, +100 = rechts
     int audioStream = 0;   // Nur Audio: welcher Ton-Stream der Datei (0 = erster, siehe MediaInfo::audioStreams)
@@ -271,10 +274,13 @@ struct Clip {
 
     int length() const { return out - in + 1; }
     int end() const { return start + length(); } // exklusiv
+    double pos() const { return start + subframe / 100.0; } // mit Feinposition (Zeichnen)
+    double endPos() const { return end() + subframe / 100.0; }
     bool operator==(const Clip& o) const
     {
         return id == o.id && kind == o.kind && mediaPath == o.mediaPath && title == o.title
                && sequenceId == o.sequenceId && start == o.start && in == o.in && out == o.out && linkId == o.linkId
+               && subframe == o.subframe
                && volumeDb == o.volumeDb && pan == o.pan && audioStream == o.audioStream && enabled == o.enabled
                && transform == o.transform && effects == o.effects && transIn == o.transIn
                && transOut == o.transOut && transInAlone == o.transInAlone

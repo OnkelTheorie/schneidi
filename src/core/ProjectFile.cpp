@@ -215,6 +215,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (c.volumeDb != 0.0) o["volumeDb"] = c.volumeDb;
     if (c.pan != 0.0) o["pan"] = c.pan;
     if (c.audioStream != 0) o["audioStream"] = c.audioStream;
+    if (c.subframe != 0) o["subframe"] = c.subframe;
     if (!c.enabled) o["enabled"] = false;
     if (c.transIn > 0) o["transIn"] = c.transIn; // Übergänge (Frames); fehlend = keiner
     if (c.transOut > 0) o["transOut"] = c.transOut;
@@ -276,6 +277,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.volumeDb = o.value("volumeDb").toDouble(0.0);
     c.pan = o.value("pan").toDouble(0.0);
     c.audioStream = std::max(0, o.value("audioStream").toInt());
+    c.subframe = std::clamp(o.value("subframe").toInt(), 0, 99);
     c.enabled = o.value("enabled").toBool(true);
     c.transIn = std::max(0, o.value("transIn").toInt());
     c.transOut = std::max(0, o.value("transOut").toInt());

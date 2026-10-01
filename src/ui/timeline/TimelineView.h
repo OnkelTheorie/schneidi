@@ -226,7 +226,7 @@ private:
     double frameToX(double frame) const;
     double xToFrame(double x) const;
     QVector<int> snapPoints(const QSet<int>& exclude) const;
-    int snapDelta(const QVector<int>& edges, const QSet<int>& exclude) const;
+    int snapDelta(const QVector<int>& edges, const QSet<int>& exclude, bool* hit = nullptr) const;
 
     void drawRuler(QPainter& p);
     void drawTracks(QPainter& p);
@@ -273,6 +273,8 @@ private:
     TrackRef m_anchorRef;
     QVector<int> m_dragIds;
     int m_dragDelta = 0;
+    int m_dragFine = 0; // Verschiebung in 1/100 Frame (Ton-Clips fein, sonst m_dragDelta * 100)
+    int m_dragAnchorId = 0;
     int m_dragTrackDelta = 0;
 
     // Trimmen (Kante ziehen)

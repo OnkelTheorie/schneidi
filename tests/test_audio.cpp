@@ -59,6 +59,28 @@ double renderPeak(const Timeline& tl, int from, int to, double* meterDb = nullpt
     return peak > 1e-10f ? 20 * std::log10(peak) : -200;
 }
 
+// Erstes Sample (ab Frame 0) über 0.2 im gemischten Ton, -1 = keins
+long firstClick(const Timeline& tl, int frames)
+{
+    auto prof = makeProfile(ProjectFormat{});
+    TimelineBuilder b(*prof);
+    auto tr = b.build(tl, nullptr);
+    tr->seek(0);
+    long at = 0;
+    for (int pos = 0; pos < frames; ++pos) {
+        std::unique_ptr<Mlt::Frame> f(tr->get_frame());
+        mlt_audio_format fmt = mlt_audio_float;
+        int freq = 48000, channels = 2;
+        int samples = mlt_audio_calculate_frame_samples(float(prof->fps()), freq, pos);
+        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
+        if (pcm && fmt == mlt_audio_float)
+            for (int i = 0; i < samples; ++i)
+                if (std::abs(pcm[i]) > 0.2f) return at + i;
+        at += samples;
+    }
+    return -1;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -138,6 +160,47 @@ int main(int argc, char** argv)
         CHECK(!back.timeline.masterLimiter && back.timeline.masterLimiterDb == kDefaultLimiterDb);
     }
 
+    // --- Feinposition (Sub-Frame): Verschieben in 1/100 Frame, Übertrag, Projektdatei
+    {
+        Clip c = mk(1, "/x/m.wav", 10, 0, 49);
+        TimelineOps::shiftFine(c, 150);
+        CHECK(c.start == 11 && c.subframe == 50);
+        TimelineOps::shiftFine(c, -60);
+        CHECK(c.start == 10 && c.subframe == 90);
+        TimelineOps::shiftFine(c, -5000); // nicht vor 0
+        CHECK(c.start == 0 && c.subframe == 0);
+
+        Project p;
+        Selection sel;
+        Editor ed(&p, &sel);
+        p.addMedia({"/x/m.wav", "m.wav", 1000, false, true, false});
+        p.edit("setup", [](Timeline& tl) {
+            TimelineOps::ensureTracks(tl, TrackKind::Audio, 1);
+            tl.audio[0].clips = {mk(1, "/x/m.wav", 10, 0, 49)};
+        });
+        ed.moveClipsFine({1}, 230, TrackKind::Audio, 0);
+        const Clip* moved = TimelineOps::findClip(p.timeline(), 1);
+        CHECK(moved && moved->start == 12 && moved->subframe == 30);
+        ed.moveClipsFine({1}, 100, TrackKind::Audio, 0); // ganze Frames: Feinposition bleibt
+        moved = TimelineOps::findClip(p.timeline(), 1);
+        CHECK(moved && moved->start == 13 && moved->subframe == 30);
+        p.undoStack()->undo();
+        p.undoStack()->undo();
+        moved = TimelineOps::findClip(p.timeline(), 1);
+        CHECK(moved && moved->start == 10 && moved->subframe == 0);
+
+        ProjectData d;
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 1);
+        Clip f = mk(1, "/x/m.wav", 10, 0, 49);
+        f.subframe = 37;
+        d.timeline.audio[0].clips << f;
+        ProjectData back;
+        QString err;
+        CHECK(ProjectFile::fromJson(ProjectFile::toJson(d, "/x/p.schneidi"), "/x/p.schneidi", &back, &err));
+        CHECK(back.timeline.audio.size() == 1 && back.timeline.audio[0].clips.size() == 1
+              && back.timeline.audio[0].clips[0].subframe == 37);
+    }
+
     // --- Mit echten Medien (ffmpeg)
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
@@ -199,6 +262,29 @@ int main(int argc, char** argv)
             // Leiser Ton bleibt unverändert (Limiter hebt nicht an)
             tl.audio[0].clips[0].volumeDb = -10;
             CHECK(near(renderPeak(tl, 10, 40), loud - 10, 0.3));
+        }
+    }
+
+    // Feinposition (Sub-Frame): Ton um 1/100-Frames später, auch über Ausschnittgrenzen (Einblenden) hinweg
+    {
+        // Klick 4 ms vor 0,2 s (Frame 5): mit 0,5 Frames (20 ms) Verzögerung landet er hinter der Grenze
+        const QString click = Check::makeMedia(tmp.filePath("klick.wav"),
+                                               {"-f", "lavfi", "-i",
+                                                "aevalsrc=if(between(t\\,0.196\\,0.1965)\\,0.8\\,0)|if(between(t\\,0.196\\,0.1965)\\,0.8\\,0):s=48000:d=2",
+                                                "-c:a", "pcm_f32le"});
+        if (CHECK(!click.isEmpty())) {
+            Timeline tl;
+            tl.video.resize(1);
+            tl.audio.resize(1);
+            tl.audio[0].clips << mk(1, click, 10, 0, 40);
+            const long base = firstClick(tl, 30);
+            if (!CHECK(base > 0 && std::abs(base - (10 * 1920 + 9408)) < 48)) std::printf("       Klick: %ld\n", base);
+            tl.audio[0].clips[0].subframe = 50;
+            const long half = firstClick(tl, 30);
+            if (!CHECK(half - base == 960)) std::printf("       Sub-Frame 50: %ld (ohne %ld)\n", half, base);
+            tl.audio[0].clips[0].transIn = 5; // Ausschnitt Einblenden [10, 15), Klick fällt dahinter
+            const long faded = firstClick(tl, 30);
+            if (!CHECK(faded - base == 960)) std::printf("       mit Einblenden: %ld (ohne %ld)\n", faded, base);
         }
     }
     return Check::result();
