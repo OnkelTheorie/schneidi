@@ -155,6 +155,21 @@ void testFadesStayApart()
     CHECK_EQ(p.undoStack()->count(), steps);
 }
 
+// Fade länger als der (danach gekürzte) Clip: der andere Fade wird nie negativ
+void testFadeAfterTrim()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 250, true, false, false});
+    ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+    const int a = V(p, 0, 0);
+    ed.setClipFade(a, TimelineOps::Edge::End, 80);
+    ed.trimClip(a, TimelineOps::Edge::End, -210); // 40 Frames lang, Ausblenden 80
+    ed.setClipFade(a, TimelineOps::Edge::Start, 10);
+    CHECK(TimelineOps::findClip(p.timeline(), a)->fadeIn >= 0);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -163,6 +178,7 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     Check::initApp("undo");
     testFadesStayApart();
+    testFadeAfterTrim();
 
     Project p;
     Selection sel;

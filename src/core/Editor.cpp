@@ -404,7 +404,8 @@ void Editor::setClipFade(int clipId, TimelineOps::Edge edge, int frames, const Q
     const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
     if (!c || TimelineOps::isLocked(m_project->timeline(), clipId)) return;
     const bool in = edge == TimelineOps::Edge::Start;
-    frames = std::clamp(frames, 0, c->length() - (in ? c->fadeOut : c->fadeIn));
+    // Der andere Fade kann nach dem Kürzen länger als der Clip sein -> Obergrenze nie negativ
+    frames = std::clamp(frames, 0, std::max(0, c->length() - (in ? c->fadeOut : c->fadeIn)));
     if (frames == (in ? c->fadeIn : c->fadeOut)) return;
     m_project->edit(in ? T("Einblenden") : T("Ausblenden"), [&](Timeline& tl) {
         if (Clip* x = TimelineOps::findClip(tl, clipId)) (in ? x->fadeIn : x->fadeOut) = frames;
