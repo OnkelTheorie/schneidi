@@ -140,6 +140,19 @@ void testFadesStayApart()
     p.undoStack()->redo();
     ed.moveClips({a, b}, 10, TrackKind::Video, 0);
     CHECK_EQ(int(spans(p).size()), 3);
+
+    // Compound Clip aus B: A behält kein „eigenständig“ ohne Partner (sonst legte danach jede wirkungslose
+    // Bearbeitung einen leeren Undo-Schritt an)
+    p.undoStack()->undo();
+    p.undoStack()->undo(); // wieder zwei getrennte Übergänge
+    sel.set({b});
+    const int seq = ed.createCompoundClip();
+    CHECK(!TimelineOps::findClip(p.timeline(), a)->transOutAlone);
+    if (const Sequence* s = p.sequence(seq); CHECK(s && !s->timeline.video[0].clips.isEmpty()))
+        CHECK(!s->timeline.video[0].clips[0].transInAlone);
+    const int steps = p.undoStack()->count();
+    p.edit("nichts", [](Timeline&) {});
+    CHECK_EQ(p.undoStack()->count(), steps);
 }
 
 } // namespace

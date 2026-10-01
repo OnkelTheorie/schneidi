@@ -62,6 +62,7 @@ int Editor::createCompoundClip(const QString& name)
     p->editSequences(T("Compound Clip erstellen"), [&](QVector<Sequence>& list, int&) {
         Timeline* tl = timelineOf(list, parentId);
         if (!tl) return;
+        const Timeline before = *tl;
         TimelineOps::detachTransitions(*tl, ids); // Überblendung zu einem Clip außerhalb löst sich
         Timeline inner;
         for (int k = 0; k < 2; ++k) {
@@ -124,6 +125,9 @@ int Editor::createCompoundClip(const QString& name)
             TimelineOps::placeClip(tl->tracks(kind)[target], x, newId);
             selectIds.insert(x.id);
         }
+        // Nachbar eines entnommenen Clips (außen wie innen): „eigenständig“ fällt weg
+        TimelineOps::keepFadesApart(before, *tl);
+        TimelineOps::keepFadesApart(inner, inner);
         list << Sequence{seqId, n, true, 0, inner};
     });
     if (!p->sequence(seqId)) return 0;
