@@ -1560,6 +1560,22 @@ void TimelineView::headerMenu(const Row& row, const QPoint& globalPos)
     addColor({}, T("Standard"), ref.kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip);
     colors->addSeparator();
     for (const auto& i : kTrackColors) addColor(QString::fromLatin1(i.id), T(i.name), QColor::fromRgba(i.rgb));
+    // Spuren hinzufügen/löschen (DaVinci „Add Track“/„Delete Track“). Oberhalb/unterhalb wie angezeigt:
+    // Video zählt von unten (V1 unten), Audio von oben (A1 oben)
+    menu.addSeparator();
+    const int above = ref.kind == TrackKind::Video ? ref.index + 1 : ref.index;
+    const int below = ref.kind == TrackKind::Video ? ref.index : ref.index + 1;
+    connect(menu.addAction(T("Spur oberhalb hinzufügen")), &QAction::triggered, this,
+            [this, ref, above] { m_editor->addTrack(ref.kind, above); });
+    connect(menu.addAction(T("Spur unterhalb hinzufügen")), &QAction::triggered, this,
+            [this, ref, below] { m_editor->addTrack(ref.kind, below); });
+    QAction* del = menu.addAction(T("Spur löschen"));
+    del->setEnabled(m_editor->canRemoveTrack(ref));
+    if (!del->isEnabled())
+        del->setToolTip(t.locked ? T("Gesperrte Spuren lassen sich nicht löschen")
+                                 : T("Die letzte Spur eines Typs lässt sich nicht löschen"));
+    menu.setToolTipsVisible(true);
+    connect(del, &QAction::triggered, this, [this, ref] { m_editor->removeTrack(ref); });
     menu.exec(globalPos);
 }
 

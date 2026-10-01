@@ -1,4 +1,4 @@
-// Test Spuren: sperren, umbenennen, Farbe, Ripple über alle nicht gesperrten Spuren, Spurkopf-Bedienung (offscreen)
+// Test Spuren: hinzufügen/löschen, sperren, umbenennen, Farbe, Ripple über alle nicht gesperrten Spuren, Spurkopf-Bedienung (offscreen)
 #include "check.h"
 
 #include "core/Editor.h"
@@ -7,12 +7,19 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "app/Theme.h"
+#include "engine/Engine.h"
+#include "ui/Mixer.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QApplication>
+#include <QLabel>
+#include <QRegularExpression>
+#include <QContextMenuEvent>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QTest>
+#include <QTimer>
 
 static Clip mk(int id, int start, int len, int link = 0, const QString& path = "/x/a.mp4")
 {
@@ -164,6 +171,72 @@ int main(int argc, char** argv)
     old.replace("\"label\": \"Musik\",", "");
     CHECK(ProjectFile::fromJson(old, "/x/projekt.schneidi", &back, &err) && back.timeline.audio[1].name.isEmpty());
 
+    // --- Spuren hinzufügen/löschen (Rechtsklick auf den Spurkopf)
+    {
+        Engine engine;
+        Mixer mixer(&p, &engine);
+        // Mixer-Kanalzüge: Kürzel und Spurname (Tooltip) in Spurreihenfolge
+        auto stripNames = [&] {
+            QStringList out;
+            for (QLabel* l : mixer.findChildren<QLabel*>())
+                if (QRegularExpression("^A\\d+$").match(l->text()).hasMatch()) out << l->text() + "=" + l->toolTip();
+            out.sort(); // A1, A2, A3 (findChildren-Reihenfolge ist nicht festgelegt)
+            return out;
+        };
+        setup(p);
+        ed.renameTrack({TrackKind::Audio, 1}, "Musik");
+        p.edit("x", [](Timeline& tl) { tl.audio[1].volumeDb = -6; tl.audio[1].solo = true; tl.audio[0].muted = true; });
+        ed.setTargetTracks(1, 1);
+        CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Musik"}));
+        // Audio: oberhalb von A1 = Index 0 -> alte Spuren rücken eins weiter
+        ed.addTrack(TrackKind::Audio, 0);
+        const Timeline& t1 = p.timeline();
+        CHECK(t1.audio.size() == 3 && t1.audio[0].clips.isEmpty() && t1.audio[0].name.isEmpty() && !t1.audio[0].muted);
+        CHECK(t1.audio[1].muted && t1.audio[1].clips.size() == 3 && t1.audio[1].clips[0].id == 11);
+        CHECK(t1.audio[2].name == "Musik" && t1.audio[2].volumeDb == -6 && t1.audio[2].solo);
+        CHECK(ed.targetAudioTrack() == 2 && ed.targetVideoTrack() == 1);
+        CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Audio 2", "A3=Musik"}));
+        // ein Undo-Schritt
+        p.undoStack()->undo();
+        CHECK(p.timeline().audio.size() == 2 && p.timeline().audio[1].name == "Musik"
+              && p.timeline().audio[0].clips.size() == 3);
+        CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Musik"}));
+        p.undoStack()->redo();
+        CHECK(p.timeline().audio.size() == 3 && p.timeline().audio[2].name == "Musik");
+        // Video oberhalb von V2 = ganz oben (Index 2); Zielspur V2 bleibt
+        ed.addTrack(TrackKind::Video, 2);
+        CHECK(p.timeline().video.size() == 3 && p.timeline().video[0].clips.size() == 3 && ed.targetVideoTrack() == 1);
+        // Projektdatei-Rundlauf
+        ProjectData back2;
+        QString err2;
+        CHECK(ProjectFile::fromJson(ProjectFile::toJson(p.data(), "/x/p.schneidi"), "/x/p.schneidi", &back2, &err2));
+        CHECK(back2.timeline.video.size() == 3 && back2.timeline.audio.size() == 3);
+        CHECK(back2.timeline.audio[2].name == "Musik" && back2.timeline.audio[2].solo && back2.timeline.audio[1].muted);
+
+        // Löschen: Clips der Spur gehen mit, Auswahl darauf wird aufgehoben
+        sel.set({1, 11, 21});
+        ed.removeTrack({TrackKind::Audio, 1}); // die Spur mit 11,12,13
+        CHECK(p.timeline().audio.size() == 2 && !F(p, 11) && F(p, 1) && p.timeline().audio[1].name == "Musik");
+        CHECK(sel.ids() == QSet<int>({1, 21}));
+        CHECK(ed.targetAudioTrack() == 1); // folgt „Musik“
+        CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Musik"}));
+        p.undoStack()->undo();
+        CHECK(p.timeline().audio.size() == 3 && F(p, 11) && p.timeline().audio[1].muted);
+        p.undoStack()->redo();
+        CHECK(!F(p, 11));
+        // gesperrte Spur und letzte Spur eines Typs nicht löschbar
+        ed.toggleTrackLock({TrackKind::Audio, 1});
+        CHECK(!ed.canRemoveTrack({TrackKind::Audio, 1}));
+        ed.removeTrack({TrackKind::Audio, 1});
+        CHECK(p.timeline().audio.size() == 2);
+        ed.toggleTrackLock({TrackKind::Audio, 1});
+        ed.removeTrack({TrackKind::Audio, 1});
+        CHECK(p.timeline().audio.size() == 1 && !ed.canRemoveTrack({TrackKind::Audio, 0}));
+        ed.removeTrack({TrackKind::Audio, 0});
+        CHECK(p.timeline().audio.size() == 1 && ed.targetAudioTrack() == 0);
+        CHECK(!ed.canRemoveTrack({TrackKind::Video, 5}));
+    }
+
     // --- UI: Spurkopf, Klicks
     setup(p);
     ed.setTrackColor({TrackKind::Audio, 1}, "violet");
@@ -200,6 +273,37 @@ int main(int argc, char** argv)
     le->setText("Quatsch");
     QTest::keyClick(le, Qt::Key_Escape);
     CHECK(p.timeline().audio[0].name == "Dialog" && !le->isVisible());
+
+    // Rechtsklick auf den Spurkopf: Menüpunkt auslösen, sobald das Menü offen ist
+    auto headerMenu = [&](QPoint pt, const QString& text) {
+        bool found = false, enabled = false;
+        QTimer::singleShot(0, [&] {
+            if (auto* m = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+                for (QAction* a : m->actions())
+                    if (a->text() == text) {
+                        found = true;
+                        enabled = a->isEnabled();
+                        if (enabled) a->trigger();
+                    }
+                m->close();
+            }
+        });
+        QContextMenuEvent ce(QContextMenuEvent::Mouse, pt, view.mapToGlobal(pt));
+        QApplication::sendEvent(&view, &ce);
+        return found && enabled;
+    };
+    // A1 (y 164): unterhalb = neue A2, „Musik“ rückt auf A3 (Audio zählt von oben)
+    ed.renameTrack({TrackKind::Audio, 1}, "Musik");
+    CHECK(headerMenu({60, 170}, "Spur unterhalb hinzufügen"));
+    CHECK(p.timeline().audio.size() == 3 && p.timeline().audio[0].name == "Dialog" && p.timeline().audio[1].clips.isEmpty()
+          && p.timeline().audio[2].name == "Musik");
+    // V1 (y 94): oberhalb = neue V2, „Titel und Grafik“ rückt auf V3 (Video zählt von unten)
+    CHECK(headerMenu({60, 100}, "Spur oberhalb hinzufügen"));
+    CHECK(p.timeline().video.size() == 3 && p.timeline().video[1].clips.isEmpty()
+          && p.timeline().video[2].name == "Titel und Grafik");
+    // Spur löschen: V1 ist gesperrt -> Menüpunkt aus
+    CHECK(!headerMenu({60, 94 + 64 + 10}, "Spur löschen"));
+    CHECK(p.timeline().video.size() == 3);
 
     return Check::result();
 }

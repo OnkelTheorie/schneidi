@@ -50,6 +50,13 @@ public:
     // Spurname (leer = Standard „Video 1“ usw.) und Spurfarbe (id aus kTrackColors, leer = Standard)
     void renameTrack(TrackRef ref, const QString& name);
     void setTrackColor(TrackRef ref, const QString& colorId);
+    // Spuren hinzufügen/löschen (DaVinci „Add Track“/„Delete Track“), je ein Undo-Schritt. addTrack: neue leere
+    // Spur an Index `index` (0 = ganz unten bei Video bzw. A1 bei Audio), die übrigen rücken auf. Eigene Namen und
+    // Eigenschaften bleiben an ihrer Spur, Standardnamen („Video 2“) folgen der Position. Die letzte Spur eines Typs
+    // und gesperrte Spuren lassen sich nicht löschen; Clips darauf werden mitgelöscht. Zielspuren rücken mit.
+    void addTrack(TrackKind kind, int index);
+    bool canRemoveTrack(TrackRef ref) const;
+    void removeTrack(TrackRef ref);
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);
     // Verschieben in 1/100 Frame (Feinposition von Ton-Clips, Clip::subframe); ganze Frames wie moveClips
     void moveClipsFine(const QVector<int>& ids, int fine, TrackKind kind, int trackDelta);

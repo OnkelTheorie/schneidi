@@ -187,6 +187,50 @@ void Editor::setTrackColor(TrackRef ref, const QString& colorId)
     m_project->edit(T("Spurfarbe ändern"), [&](Timeline& tl) { tl.track(ref).color = colorId; });
 }
 
+void Editor::addTrack(TrackKind kind, int index)
+{
+    const int n = m_project->timeline().tracks(kind).size();
+    index = std::clamp(index, 0, n);
+    m_project->edit(kind == TrackKind::Video ? T("Videospur hinzufügen") : T("Audiospur hinzufügen"), [&](Timeline& tl) {
+        Track t;
+        t.kind = kind;
+        tl.tracks(kind).insert(index, t);
+    });
+    // Zielspur bleibt an „ihrer“ Spur
+    int& target = kind == TrackKind::Video ? m_targetVideo : m_targetAudio;
+    if (target >= index) {
+        ++target;
+        emit targetTracksChanged();
+    }
+}
+
+bool Editor::canRemoveTrack(TrackRef ref) const
+{
+    const auto& tracks = m_project->timeline().tracks(ref.kind);
+    return tracks.size() > 1 && ref.index >= 0 && ref.index < tracks.size() && !tracks[ref.index].locked;
+}
+
+void Editor::removeTrack(TrackRef ref)
+{
+    if (!canRemoveTrack(ref)) return;
+    const Timeline& cur = m_project->timeline();
+    // Auswahl auf der Spur aufheben (Clips, Übergang, Keyframe-Rauten)
+    QSet<int> onTrack;
+    for (const Clip& c : cur.track(ref).clips) onTrack.insert(c.id);
+    const TransitionKey t = m_selection->transition();
+    if (onTrack.contains(t.leftId) || onTrack.contains(t.rightId) || onTrack.contains(m_selection->keyClip()))
+        m_selection->clear();
+    else if (m_selection->ids().intersects(onTrack))
+        m_selection->set(m_selection->ids() - onTrack);
+    m_project->edit(ref.kind == TrackKind::Video ? T("Videospur löschen") : T("Audiospur löschen"),
+                    [&](Timeline& tl) { tl.tracks(ref.kind).removeAt(ref.index); });
+    int& target = ref.kind == TrackKind::Video ? m_targetVideo : m_targetAudio;
+    if (target > ref.index || target >= m_project->timeline().tracks(ref.kind).size()) {
+        target = std::max(0, target - 1);
+        emit targetTracksChanged();
+    }
+}
+
 void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kind, int trackDelta)
 {
     const QVector<int> ids = editable(idsIn);
