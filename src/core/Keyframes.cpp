@@ -152,60 +152,6 @@ void derivedHandle(const KeyTrack& k, int i, bool out, double* dt, double* dv)
 
 // Teilen in einem Bezier-Abschnitt: Kurve an den neuen Kanten zerlegen (de Casteljau), damit beide Teile
 // genau der alten Kurve folgen. l endet mit dem Keyframe an leftEnd, r beginnt mit dem an cut.
-void splitBezier(const KeyTrack& k, int cut, int leftEnd, KeyTrack& l, KeyTrack& r)
-{
-    int i = 1;
-    while (i < k.size() && k[i].frame < cut) ++i;
-    if (i <= 0 || i >= k.size()) return;
-    const Keyframe& a = k[i - 1];
-    const Keyframe& b = k[i];
-    if (!bezierSegment(a, b)) return;
-    const Controls c = controls(a, b);
-    const double D = b.frame - a.frame;
-    struct P {
-        double x, y;
-    };
-    auto lerp = [](P p, P q, double u) { return P{p.x + (q.x - p.x) * u, p.y + (q.y - p.y) * u}; };
-    const P p0{0, a.value}, p1{c.x1, c.y1}, p2{c.x2, c.y2}, p3{D, b.value};
-    // Seiten ohne Bezier werden Bezier mit ihrer bisherigen Form als Griff
-    auto toBezier = [&](Keyframe& key, int idx) {
-        if (key.ease == KeyEase::Bezier) return;
-        derivedHandle(k, idx, false, &key.inDt, &key.inDv);
-        derivedHandle(k, idx, true, &key.outDt, &key.outDv);
-        key.ease = KeyEase::Bezier;
-    };
-    if (l.size() >= 2 && l.last().frame == leftEnd && l[l.size() - 2].frame == a.frame) {
-        const double u = solveU(c, D, leftEnd - a.frame);
-        const P q1 = lerp(p0, p1, u), m = lerp(p1, p2, u), q2 = lerp(q1, m, u);
-        const P q3 = lerp(q2, lerp(m, lerp(p2, p3, u), u), u);
-        Keyframe& ka = l[l.size() - 2];
-        toBezier(ka, i - 1);
-        ka.outDt = q1.x;
-        ka.outDv = q1.y - a.value;
-        Keyframe& kl = l.last();
-        kl.ease = KeyEase::Bezier;
-        kl.inDt = q2.x - q3.x;
-        kl.inDv = q2.y - q3.y;
-        kl.outDt = -kl.inDt;
-        kl.outDv = -kl.inDv;
-    }
-    if (r.size() >= 2 && r.first().frame == cut && r[1].frame == b.frame) {
-        const double u = solveU(c, D, cut - a.frame);
-        const P m = lerp(p1, p2, u), r2 = lerp(p2, p3, u), r1 = lerp(m, r2, u);
-        const P r0 = lerp(lerp(lerp(p0, p1, u), m, u), r1, u);
-        Keyframe& kr = r.first();
-        kr.ease = KeyEase::Bezier;
-        kr.outDt = r1.x - r0.x;
-        kr.outDv = r1.y - r0.y;
-        kr.inDt = -kr.outDt;
-        kr.inDv = -kr.outDv;
-        Keyframe& kb = r[1];
-        toBezier(kb, i);
-        kb.inDt = r2.x - D;
-        kb.inDv = r2.y - b.value;
-    }
-}
-
 double mix(double a, double b, double w, bool color)
 {
     if (!color) return a + (b - a) * w;
@@ -576,26 +522,11 @@ void move(Clip& c, const QVector<int>& times, int delta)
 
 void split(const Clip& original, Clip& left, Clip& right)
 {
-    // Quell-Frames bleiben gleich; links alles vor dem Schnitt, rechts alles ab dem Schnitt,
-    // plus je ein Keyframe mit dem interpolierten Wert an der neuen Kante
-    const int cut = right.in; // erster Quell-Frame des rechten Teils
-    left.keys.clear();
-    right.keys.clear();
-    for (auto it = original.keys.cbegin(); it != original.keys.cend(); ++it) {
-        if (it->isEmpty()) continue;
-        KeyTrack l, r;
-        for (const Keyframe& k : *it) (k.frame < cut ? l : r) << k;
-        const bool keysBefore = !l.isEmpty(); // sonst gilt rechts vor dem ersten Keyframe schon dessen Wert
-        const double atLeftEnd = valueAt(original, it.key(), left.out - original.in);
-        const double atCut = valueAt(original, it.key(), cut - original.in);
-        if (!r.isEmpty() && (l.isEmpty() || l.last().frame != left.out)) l << Keyframe{left.out, atLeftEnd, KeyEase::Linear};
-        if (r.isEmpty()) r << Keyframe{cut, atCut, KeyEase::Linear}; // alle Keyframes vor dem Schnitt
-        else if (keysBefore && r.first().frame != cut) r.prepend(Keyframe{cut, atCut, KeyEase::Linear});
-        sortTrack(l);
-        if (!info(it.key()).color) splitBezier(*it, cut, left.out, l, r);
-        left.keys.insert(it.key(), l);
-        right.keys.insert(it.key(), r);
-    }
+    // Wie DaVinci: beide Teile behalten alle Keyframes (Quell-Frames bleiben gleich). Keys außerhalb eines Teils
+    // sind unsichtbar, bestimmen aber weiter den Verlauf -> Kurve jeder Form exakt wie vorher, und beim
+    // Zurückziehen eines Teils ist die Animation wieder da (wie nach dem Trimmen).
+    left.keys = original.keys;
+    right.keys = original.keys;
 }
 
 bool hasTransform(const Clip& c)

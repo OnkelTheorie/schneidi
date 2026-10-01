@@ -64,8 +64,8 @@ void setEase(Clip& c, const QVector<int>& times, KeyEase ease, const QVector<Ani
 void removeAt(Clip& c, const QVector<int>& times, const QVector<AnimParam>& params = {});
 void move(Clip& c, const QVector<int>& times, int delta);
 
-// Nach dem Teilen (left/right = Kopien mit neuem In/Out): Keyframes aufteilen, an der Schnittkante
-// den interpolierten Wert als Keyframe setzen, damit beide Teile genau wie vorher aussehen.
+// Nach dem Teilen (left/right = Kopien mit neuem In/Out): wie DaVinci behalten beide Teile alle Keyframes,
+// auch die außerhalb ihres Bereichs (unsichtbar) -> beide sehen genau wie vorher aus, egal welche Kurvenform.
 void split(const Clip& original, Clip& left, Clip& right);
 
 // Bereich aktiv und (statisch oder animiert) nicht neutral

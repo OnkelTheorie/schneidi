@@ -157,6 +157,21 @@ void testSplit()
     Keys::setEase(b, {30}, KeyEase::Bezier);
     Keys::setHandle(b.keys[AnimParam::PosX], 0, false, -10, -40, true);
     CHECK(checkSplit(b, 10, AnimParam::PosX) < 1e-6);
+    // Ease-In/Out (keine Bezier-Griffe): Kurve bleibt exakt (wurde vorher leicht verformt)
+    Clip e = clip(100);
+    Keys::setKey(e, AnimParam::Opacity, 10, 0.0);
+    Keys::setKey(e, AnimParam::Opacity, 50, 1.0);
+    Keys::setKey(e, AnimParam::Opacity, 90, 0.2);
+    Keys::setEase(e, {10}, KeyEase::EaseOut);
+    Keys::setEase(e, {50}, KeyEase::EaseInOut);
+    Keys::setEase(e, {90}, KeyEase::EaseIn);
+    for (int cut : {5, 23, 50, 67, 95}) CHECK(checkSplit(e, cut, AnimParam::Opacity) < 1e-9);
+    // beide Teile behalten alle Keys (unsichtbar außerhalb): rechten Teil nach links ziehen -> Animation wieder da
+    Clip l = e, r = e;
+    l.out = e.in + 29;
+    r.in = e.in + 30;
+    Keys::split(e, l, r);
+    CHECK(l.keys == e.keys && r.keys == e.keys);
 }
 
 void testProjectFile(const QString& dir)
