@@ -269,9 +269,9 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     } else {
         c.mediaPath = media.value(o.value("media").toInt(-1)).path;
     }
-    c.start = o.value("start").toInt();
+    c.start = std::max(0, o.value("start").toInt());
     c.in = o.value("in").toInt();
-    c.out = o.value("out").toInt();
+    c.out = std::max(c.in, o.value("out").toInt()); // von Hand geänderte Datei: mindestens 1 Frame lang
     c.linkId = o.value("link").toInt();
     c.volumeDb = o.value("volumeDb").toDouble(0.0);
     c.pan = o.value("pan").toDouble(0.0);

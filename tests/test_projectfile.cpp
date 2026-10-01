@@ -380,6 +380,16 @@ int main(int argc, char** argv)
         CHECK(r && r->stillFrame() == 40);
     }
 
+    // --- Von Hand kaputt geänderte Datei: out < in bzw. negativer Start werden korrigiert
+    {
+        ProjectData d;
+        CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[{"path":"/x/a.mp4","length":100,"hasVideo":true}],
+            "timeline":{"video":[{"clips":[{"id":1,"media":0,"start":-5,"in":40,"out":10}]}],"audio":[]}})",
+                                    tmp.filePath("kaputt.schneidi"), &d, &err));
+        const Clip* c = TimelineOps::findClip(d.timeline, 1);
+        CHECK(c && c->start == 0 && c->out >= c->in && c->length() >= 1);
+    }
+
     // --- Gleichnamige Kameradateien (camA/C0001.MP4, camB/C0001.MP4): jede findet ihre eigene, nichts doppelt
     {
         const QString root = tmp.filePath("karte");
