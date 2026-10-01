@@ -397,7 +397,8 @@ public:
             return b;
         };
         mute = makeButton("M", Theme::warning, T("Stumm (Mute)"));
-        solo = makeButton("S", Theme::meterMid, "Solo");
+        solo = makeButton("S", Theme::meterMid, T("Solo: nur Spuren mit „S“ sind zu hören, die anderen werden "
+                                                   "stumm (ausgegraut)"));
         if (master) {
             limiter = new QToolButton;
             limiter->setText("LIM");
@@ -785,6 +786,7 @@ void Mixer::sync()
 {
     const Timeline& tl = m_project->timeline();
     if (m_strips.size() != tl.audio.size()) rebuildStrips(tl.audio.size());
+    const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
     for (int i = 0; i < m_strips.size(); ++i) {
         const Track& t = tl.audio[i];
         ChannelStrip* s = m_strips[i];
@@ -794,6 +796,12 @@ void Mixer::sync()
         s->setPan(t.pan);
         s->mute->setChecked(t.muted); // setChecked löst kein clicked aus
         s->solo->setChecked(t.solo);
+        // Durch Solo einer anderen Spur stumm: Name ausgrauen, damit man sieht, dass der Knopf wirkt
+        const bool silenced = anySolo && !t.solo && !t.muted;
+        s->name->setStyleSheet(QString("color: %1; font-weight: 600; background: %2; padding: 2px;")
+                                   .arg((silenced ? Theme::textFaint : Theme::text).name(), Theme::panelHeader.name()));
+        s->name->setToolTip(silenced ? T("%1 – stumm durch Solo einer anderen Spur").arg(s->name->toolTip())
+                                     : s->name->toolTip());
     }
     m_master->setVolume(tl.masterVolumeDb);
     m_master->limiter->setChecked(tl.masterLimiter);
