@@ -150,6 +150,13 @@ void testSplit()
     // Schnitt hinter dem letzten Keyframe (stürzte ab) und vor dem ersten
     CHECK(checkSplit(m, 70, AnimParam::Rotation) < 1e-6);
     CHECK(checkSplit(m, 3, AnimParam::Rotation) < 1e-6);
+    // vor dem ersten Keyframe mit schrägem Bezier-Griff: rechter Teil bleibt bis dahin ruhig (wackelte vorher)
+    Clip b = clip(80);
+    Keys::setKey(b, AnimParam::PosX, 30, 100);
+    Keys::setKey(b, AnimParam::PosX, 70, 0);
+    Keys::setEase(b, {30}, KeyEase::Bezier);
+    Keys::setHandle(b.keys[AnimParam::PosX], 0, false, -10, -40, true);
+    CHECK(checkSplit(b, 10, AnimParam::PosX) < 1e-6);
 }
 
 void testProjectFile(const QString& dir)

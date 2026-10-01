@@ -585,11 +585,12 @@ void split(const Clip& original, Clip& left, Clip& right)
         if (it->isEmpty()) continue;
         KeyTrack l, r;
         for (const Keyframe& k : *it) (k.frame < cut ? l : r) << k;
+        const bool keysBefore = !l.isEmpty(); // sonst gilt rechts vor dem ersten Keyframe schon dessen Wert
         const double atLeftEnd = valueAt(original, it.key(), left.out - original.in);
         const double atCut = valueAt(original, it.key(), cut - original.in);
         if (!r.isEmpty() && (l.isEmpty() || l.last().frame != left.out)) l << Keyframe{left.out, atLeftEnd, KeyEase::Linear};
         if (r.isEmpty()) r << Keyframe{cut, atCut, KeyEase::Linear}; // alle Keyframes vor dem Schnitt
-        else if (!l.isEmpty() && r.first().frame != cut) r.prepend(Keyframe{cut, atCut, KeyEase::Linear});
+        else if (keysBefore && r.first().frame != cut) r.prepend(Keyframe{cut, atCut, KeyEase::Linear});
         sortTrack(l);
         if (!info(it.key()).color) splitBezier(*it, cut, left.out, l, r);
         left.keys.insert(it.key(), l);
