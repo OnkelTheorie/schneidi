@@ -662,7 +662,8 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     // Streifen immer dicht an Master/Lautheit (feste Breite wie im kleinen Fenster), übriger Platz bleibt rechts leer;
     // erst wenn der Platz nicht reicht, scrollen die Spuren (Breite setzt rebuildStrips)
     m_stripScroll = scroll;
-    row->addWidget(scroll);
+    // hoher Stretch: Spuren bekommen den Platz zuerst (bis zur Maximalbreite), erst der Rest geht an den Platzhalter rechts
+    row->addWidget(scroll, 100);
 
     // Master rechts, fest (wie der Bus in DaVinci)
     m_master = new ChannelStrip(true);
