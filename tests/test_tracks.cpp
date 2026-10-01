@@ -235,6 +235,41 @@ int main(int argc, char** argv)
         ed.removeTrack({TrackKind::Audio, 0});
         CHECK(p.timeline().audio.size() == 1 && ed.targetAudioTrack() == 0);
         CHECK(!ed.canRemoveTrack({TrackKind::Video, 5}));
+
+        // --- Spuren umsortieren (Ziehen am Spurkopf)
+        setup(p);
+        ed.renameTrack({TrackKind::Audio, 1}, "Musik");
+        p.edit("x", [](Timeline& tl) { tl.audio[1].volumeDb = -6; tl.audio[1].pan = 30; tl.audio[0].muted = true; });
+        ed.addTrack(TrackKind::Audio, 2);
+        ed.setTargetTracks(0, 0);
+        const int steps = p.undoStack()->count();
+        ed.moveTrack(TrackKind::Audio, 0, 2); // A1 nach ganz unten
+        const Timeline& t2 = p.timeline();
+        CHECK(t2.audio.size() == 3 && t2.audio[0].name == "Musik" && t2.audio[0].volumeDb == -6 && t2.audio[0].pan == 30);
+        CHECK(t2.audio[1].clips.isEmpty() && t2.audio[2].muted && t2.audio[2].clips.size() == 3 && F(p, 22)->start == 250);
+        CHECK(ed.targetAudioTrack() == 2);
+        CHECK(stripNames() == QStringList({"A1=Musik", "A2=Audio 2", "A3=Audio 3"}));
+        CHECK(ed.withLinked({1}).contains(11)); // Verknüpfung bleibt
+        CHECK(p.undoStack()->count() == steps + 1);
+        p.undoStack()->undo();
+        CHECK(p.timeline().audio[1].name == "Musik" && p.timeline().audio[0].muted && p.timeline().audio[0].clips.size() == 3);
+        CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Musik", "A3=Audio 3"}));
+        p.undoStack()->redo();
+        CHECK(p.timeline().audio[0].name == "Musik");
+        // Video: V1 nach oben
+        ed.setTargetTracks(1, 2);
+        ed.moveTrack(TrackKind::Video, 0, 1);
+        CHECK(p.timeline().video[1].clips.size() == 3 && p.timeline().video[0].clips.isEmpty() && ed.targetVideoTrack() == 0);
+        // gleiche Stelle / ungültig: kein Undo-Schritt
+        ed.moveTrack(TrackKind::Video, 1, 1);
+        ed.moveTrack(TrackKind::Audio, 5, 0);
+        CHECK(p.undoStack()->count() == steps + 2);
+        // Projektdatei-Rundlauf
+        ProjectData back3;
+        QString err3;
+        CHECK(ProjectFile::fromJson(ProjectFile::toJson(p.data(), "/x/p.schneidi"), "/x/p.schneidi", &back3, &err3));
+        CHECK(back3.timeline.audio[0].name == "Musik" && back3.timeline.audio[0].pan == 30 && back3.timeline.audio[2].muted);
+        CHECK(back3.timeline.audio[2].clips.size() == 3 && back3.timeline.video[1].clips.size() == 3);
     }
 
     // --- UI: Spurkopf, Klicks
@@ -304,6 +339,39 @@ int main(int argc, char** argv)
     // Spur löschen: V1 ist gesperrt -> Menüpunkt aus
     CHECK(!headerMenu({60, 94 + 64 + 10}, "Spur löschen"));
     CHECK(p.timeline().video.size() == 3);
+
+    // Spur am Spurkopf ziehen: Einfügemarke beim Ziehen, ein Undo-Schritt beim Loslassen
+    auto drag = [&](QPoint from, QPoint to, const QString& shot = {}) {
+        QMouseEvent pr(QEvent::MouseButtonPress, from, view.mapToGlobal(from), Qt::LeftButton, Qt::LeftButton, {});
+        QApplication::sendEvent(&view, &pr);
+        for (int i = 1; i <= 4; ++i) {
+            const QPoint pt = from + (to - from) * i / 4;
+            QMouseEvent mv(QEvent::MouseMove, pt, view.mapToGlobal(pt), Qt::NoButton, Qt::LeftButton, {});
+            QApplication::sendEvent(&view, &mv);
+        }
+        if (!shot.isEmpty()) view.grab().save(shot);
+        QMouseEvent rl(QEvent::MouseButtonRelease, to, view.mapToGlobal(to), Qt::LeftButton, Qt::NoButton, {});
+        QApplication::sendEvent(&view, &rl);
+    };
+    view.resize(1400, 480); // alle Spuren sichtbar
+    QApplication::processEvents();
+    const int vh = view.view().videoTrackHeight, ah = view.view().audioTrackHeight;
+    const int audioTop = TimelineView::kRulerH + 3 * vh + TimelineView::kSeparator;
+    // A1 „Dialog“ unter A3
+    int steps = p.undoStack()->count();
+    drag({60, audioTop + 10}, {60, audioTop + 3 * ah - 3}, qEnvironmentVariable("SCHNEIDI_TEST_SHOT"));
+    CHECK(p.timeline().audio[2].name == "Dialog" && p.timeline().audio[2].clips.size() == 3
+          && p.timeline().audio[1].name == "Musik" && p.undoStack()->count() == steps + 1);
+    // V3 „Titel und Grafik“ (oben) ganz nach unten -> V1; gesperrte alte V1 wird V2
+    drag({60, TimelineView::kRulerH + 10}, {60, TimelineView::kRulerH + 3 * vh - 3});
+    CHECK(p.timeline().video[0].name == "Titel und Grafik" && p.timeline().video[1].locked
+          && p.timeline().video[1].clips.size() == 3);
+    // kurzes Zittern (unter der Ziehschwelle) ändert nichts
+    steps = p.undoStack()->count();
+    drag({60, audioTop + 10}, {60, audioTop + 12});
+    CHECK(p.undoStack()->count() == steps);
+    p.undoStack()->undo();
+    CHECK(p.timeline().video[2].name == "Titel und Grafik");
 
     return Check::result();
 }

@@ -57,6 +57,9 @@ public:
     void addTrack(TrackKind kind, int index);
     bool canRemoveTrack(TrackRef ref) const;
     void removeTrack(TrackRef ref);
+    // Spur innerhalb ihres Typs an Index `to` verschieben (Ziehen am Spurkopf); Clips, Name, Mute/Solo/Pegel usw.
+    // ziehen mit, Zielspuren folgen. Ein Undo-Schritt.
+    void moveTrack(TrackKind kind, int from, int to);
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);
     // Verschieben in 1/100 Frame (Feinposition von Ton-Clips, Clip::subframe); ganze Frames wie moveClips
     void moveClipsFine(const QVector<int>& ids, int fine, TrackKind kind, int trackDelta);

@@ -231,6 +231,22 @@ void Editor::removeTrack(TrackRef ref)
     }
 }
 
+void Editor::moveTrack(TrackKind kind, int from, int to)
+{
+    const int n = m_project->timeline().tracks(kind).size();
+    if (from < 0 || from >= n) return;
+    to = std::clamp(to, 0, n - 1);
+    if (to == from) return;
+    m_project->edit(T("Spur verschieben"), [&](Timeline& tl) { tl.tracks(kind).move(from, to); });
+    // Zielspur folgt ihrer Spur
+    int& target = kind == TrackKind::Video ? m_targetVideo : m_targetAudio;
+    const int old = target;
+    if (target == from) target = to;
+    else if (from < target && target <= to) --target;
+    else if (to <= target && target < from) ++target;
+    if (target != old) emit targetTracksChanged();
+}
+
 void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kind, int trackDelta)
 {
     const QVector<int> ids = editable(idsIn);

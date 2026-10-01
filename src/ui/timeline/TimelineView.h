@@ -111,7 +111,8 @@ private:
         int curve = 0;
     };
     enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe,
-                      CueMaybeMove, CueMove, CueTrim, SpeedPoint, CurvePoint, CurveHandle };
+                      CueMaybeMove, CueMove, CueTrim, SpeedPoint, CurvePoint, CurveHandle,
+                      TrackMaybeMove, TrackMove };
     // Retime-Leiste: Speed-Punkt (point >= 0) oder Abschnitt (segment >= 0) unter der Maus
     struct RetimeHit {
         int clipId = 0;
@@ -247,6 +248,10 @@ private:
     QRect shortNameRect(const Row& row) const; // Kürzel „V1“ = Zielspur-Knopf
     bool isLocked(const Row& row) const; // gesperrte Spur: nichts darauf greifbar
     void headerMenu(const Row& row, const QPoint& globalPos);
+    // Spur am Spurkopf ziehen (umsortieren innerhalb ihres Typs): Zielindex für Maus-y (-1 = keine Änderung)
+    // und die y-Position der Einfügemarke
+    int trackDropIndex(int y, int* lineY = nullptr) const;
+    void drawTrackDrop(QPainter& p);
     void startRename(TrackRef ref);
     void finishRename(bool commit);
     QStringList dropPaths(const QMimeData* mime) const;
@@ -338,6 +343,11 @@ private:
     int m_cueTrackDelta = 0;
     int m_cueDelta = 0;
     EdgeHit m_cueTrim{0, TimelineOps::Edge::Start};
+
+    // Spur ziehen: gegriffene Spur, Zielindex (-1 = keiner) und Einfügemarke
+    TrackRef m_trackDragRef;
+    int m_trackDropTo = -1;
+    int m_trackDropY = 0;
 
     // Spur umbenennen (Eingabefeld über dem Namen im Spurkopf)
     QLineEdit* m_nameEdit = nullptr;
