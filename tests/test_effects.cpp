@@ -14,6 +14,7 @@
 #include "ui/Inspector.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/ScrubField.h"
 #include <QMimeData>
 #include <QTreeWidget>
 #include <QDropEvent>
@@ -141,5 +142,34 @@ int main(int argc, char** argv)
     CHECK(hitY >= 0);
     CHECK(project.undoStack()->count() == before + 1);
     CHECK(!EffectRegistry::has(*clip(aid), "blur"));
+
+    // Zahlenfeld ziehen: langsame Bewegung (1 px je Ereignis) und Shift (fein) ändern den Wert in beide Richtungen,
+    // auch wenn ein Schritt kleiner ist als die angezeigte Genauigkeit (Rest wird gesammelt statt verworfen)
+    {
+        auto drag = [](ScrubField& f, const QVector<int>& xs, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+            auto send = [&](QEvent::Type t, int x, Qt::MouseButtons buttons) {
+                QMouseEvent e(t, QPointF(x, 5), f.mapToGlobal(QPointF(x, 5)), Qt::LeftButton, buttons, mods);
+                QApplication::sendEvent(&f, &e);
+            };
+            send(QEvent::MouseButtonPress, xs.first(), Qt::LeftButton);
+            for (int x : xs) send(QEvent::MouseMove, x, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, xs.last(), Qt::NoButton);
+        };
+        auto pixels = [](int from, int to) {
+            QVector<int> xs;
+            for (int x = from; from < to ? x <= to : x >= to; x += from < to ? 1 : -1) xs << x;
+            return xs;
+        };
+        ScrubField soft(0, 100, 0.5, 0); // wie Weichheit/Rand einer Wischblende
+        soft.setValue(50);
+        drag(soft, {40, 44}); // ab 3 px wird gezogen: +2
+        CHECK_EQ(soft.value(), 52.0);
+        drag(soft, pixels(44, 34)); // 10 px nach links, einzeln: -5
+        CHECK_EQ(soft.value(), 47.0);
+        ScrubField outline(0, 40, 0.1, 1); // wie Umrandung eines Titels
+        outline.setValue(4);
+        drag(outline, pixels(10, 60), Qt::ShiftModifier); // fein: 0,01 je px
+        CHECK(outline.value() > 4.3);
+    }
     return Check::result();
 }
