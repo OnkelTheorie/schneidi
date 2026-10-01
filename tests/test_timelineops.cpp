@@ -181,7 +181,7 @@ int main(int argc, char** argv)
         for (const QVector<int>& order : {QVector<int>{1, 2}, QVector<int>{2, 1}}) {
             tl = base();
             applyTrimEdit(tl, TrimEdit{TrimKind::Ripple, order, {}, Edge::End}, -10, kSrc);
-            CHECK_EQ(dump(tl).section("  ", 0, 0), QString("V1: a[0-40|50-89] b[40-80|50-89] c[80-130|50-99]"));
+            CHECK_EQ(dump(tl), QString("V1: a[0-40|50-89] b[40-80|50-89] c[80-130|50-99]  A1: m[100-120|0-19]"));
         }
         // Ripple-Verkürzen begrenzt durch Platz auf der anderen Spur
         tl = base();

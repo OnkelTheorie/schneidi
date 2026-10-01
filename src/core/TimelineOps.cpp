@@ -442,14 +442,20 @@ int clampTrimEdit(const Timeline& tl, const TrimEdit& e, int delta, const Source
         // Nachbarn begrenzen nicht: der Rest der Spur rückt mit. Die übrigen Spuren rücken ab dem
         // (frühesten) alten Ende mit; Verkürzen nur so weit, wie sie Platz haben.
         int from = INT_MAX;
-        for (int id : e.ids)
-            if (const Clip* c = findClip(tl, id)) {
+        QMap<QPair<int, int>, int> perTrack; // mehrere Clips einer Spur: der Rest rückt um die Summe
+        for (int id : e.ids) {
+            TrackRef ref;
+            if (const Clip* c = findClip(tl, id, &ref)) {
                 if (e.edge == Edge::Start) limitStart(*c, lo, hi);
                 else limitEnd(*c, lo, hi, sourceLength);
                 from = std::min(from, c->end());
+                ++perTrack[qMakePair(int(ref.kind), ref.index)];
             }
+        }
         if (from != INT_MAX) {
-            const int room = rippleRoom(tl, from, tracksOf(tl, e.ids));
+            int most = 1;
+            for (int n : perTrack) most = std::max(most, n);
+            const int room = rippleRoom(tl, from, tracksOf(tl, e.ids)) / most;
             if (e.edge == Edge::Start) hi = std::min(hi, room);
             else lo = std::max(lo, -room);
         }
@@ -505,12 +511,19 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
     switch (e.kind) {
     case TrimKind::Ripple: {
         // pro Spur: Clips ab dem alten Ende des getrimmten Clips rücken um dessen Längenänderung,
-        // die übrigen nicht gesperrten Spuren ab dem frühesten alten Ende ebenso
+        // die übrigen nicht gesperrten Spuren ebenso
         const QVector<TrackRef> edited = tracksOf(tl, e.ids);
-        int from = INT_MAX;
-        for (int id : e.ids)
-            if (const Clip* c = findClip(tl, id)) from = std::min(from, c->end());
         const int shift = e.edge == Edge::Start ? -delta : delta;
+        // Übrige Spuren rücken wie die Spur mit den meisten getrimmten Clips (je Clip ab dessen altem Ende),
+        // sonst laufen sie bei mehreren Clips einer Spur auseinander
+        QMap<QPair<int, int>, QVector<QPair<int, int>>> perTrack; // (Art, Index) -> (altes Ende, Versatz)
+        for (int id : e.ids) {
+            TrackRef ref;
+            if (const Clip* c = findClip(tl, id, &ref)) perTrack[qMakePair(int(ref.kind), ref.index)] << qMakePair(c->end(), shift);
+        }
+        QVector<QPair<int, int>> shifts;
+        for (const auto& list : perTrack)
+            if (list.size() > shifts.size()) shifts = list;
         for (int id : e.ids) {
             TrackRef ref;
             Clip* c = findClip(tl, id, &ref);
@@ -523,7 +536,7 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             for (Clip& o : tl.track(ref).clips)
                 if (o.id != id && o.start >= oldEnd) o.start += shift;
         }
-        if (from != INT_MAX) rippleTracks(tl, {qMakePair(from, shift)}, edited);
+        if (!shifts.isEmpty()) rippleTracks(tl, shifts, edited);
         break;
     }
     case TrimKind::Roll:
