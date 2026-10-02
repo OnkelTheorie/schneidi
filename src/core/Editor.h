@@ -220,6 +220,21 @@ public:
     void cutSelection();
     void paste(int frame);
 
+    // Attribute einfügen (Alt+V) wie DaVinci „Paste Attributes“: überträgt die gewählten Eigenschaften (mit ihren
+    // Keyframes, Zeitpunkte bleiben) vom kopierten Clip auf die ausgewählten Clips, ein Undo-Schritt. Video-Attribute
+    // kommen vom ersten kopierten Clip einer Videospur, Audio-Attribute von dem einer Audiospur. EditorAttributes.cpp
+    enum PasteAttr {
+        AttrZoom = 1 << 0, AttrPosition = 1 << 1, AttrRotation = 1 << 2, AttrCrop = 1 << 3,
+        AttrComposite = 1 << 4, AttrEffects = 1 << 5, AttrColor = 1 << 6, AttrSpeed = 1 << 7,
+        AttrVolume = 1 << 8, AttrPan = 1 << 9, AttrFades = 1 << 10,
+        AttrVideoMask = AttrZoom | AttrPosition | AttrRotation | AttrCrop | AttrComposite | AttrEffects | AttrColor,
+        AttrAudioMask = AttrVolume | AttrPan,
+    };
+    // Welche Attribute die Zwischenablage liefern kann (0 = nichts kopiert)
+    int pasteAttributesAvailable() const;
+    QString pasteAttributesSource() const; // Name des Quellclips für den Dialog
+    void pasteAttributes(int attrs);
+
     // ---- Untertitel (DaVinci Subtitle Tracks, core/Subtitles.h) ----
     // Untertitel-Einträge teilen sich die Auswahl mit den Clips (eigene ids aus demselben Zähler)
     bool isSubtitle(int id) const;
@@ -293,6 +308,8 @@ private:
         Clip clip;
         TrackRef ref;
     };
+    // Attribute einfügen: erster kopierter Clip auf einer Spur dieser Art (nullptr = keiner)
+    static const Clip* clipboardSource(const QVector<ClipboardItem>& items, TrackKind kind);
 
     Project* m_project;
     Selection* m_selection;

@@ -46,6 +46,7 @@ add_executable(schneidi
     src/core/Editor.h             src/core/Editor.cpp
     src/core/EditorSubtitles.cpp
     src/core/EditorCompound.cpp
+    src/core/EditorAttributes.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
     src/core/EffectFolders.h      src/core/EffectFolders.cpp
     src/core/Loudness.h           src/core/Loudness.cpp
@@ -74,6 +75,7 @@ add_executable(schneidi
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
+    src/app/PasteAttributesDialog.h src/app/PasteAttributesDialog.cpp
     src/app/DesignDialog.h src/app/DesignDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
 

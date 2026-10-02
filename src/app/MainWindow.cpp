@@ -7,6 +7,7 @@
 #include "app/DesignDialog.h"
 #include "app/Log.h"
 #include "app/NormalizeDialog.h"
+#include "app/PasteAttributesDialog.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
 #include "core/Editor.h"
@@ -822,6 +823,18 @@ void MainWindow::buildActions()
     makeAction(edit, "cut", T("Ausschneiden"), QKeySequence("Ctrl+X"), [this] { m_editor->cutSelection(); });
     makeAction(edit, "copy", T("Kopieren"), QKeySequence("Ctrl+C"), [this] { m_editor->copySelection(); });
     makeAction(edit, "paste", T("Einfügen am Playhead"), QKeySequence("Ctrl+V"), [this, tv] { m_editor->paste(tv->playhead()); });
+    makeAction(edit, "paste_attributes", T("Attribute einfügen…"), QKeySequence("Alt+V"), [this] {
+        const int targets = int(m_editor->editable(m_editor->clipIdsOf(m_selection->ids())).size());
+        const int available = m_editor->pasteAttributesAvailable();
+        if (!available || !targets) {
+            QMessageBox::information(this, T("Attribute einfügen"),
+                                     !available ? T("Erst einen Clip kopieren (Strg+C).")
+                                                : T("Clips auswählen, auf die die Attribute übertragen werden sollen."));
+            return;
+        }
+        PasteAttributesDialog dlg(available, m_editor->pasteAttributesSource(), targets, this);
+        if (dlg.exec() == QDialog::Accepted) m_editor->pasteAttributes(dlg.attributes());
+    });
     edit->addSeparator();
     makeAction(edit, "delete", T("Löschen (Lücke bleibt)"), QKeySequence(Qt::Key_Backspace), [this] { m_editor->deleteSelection(); });
     makeAction(edit, "delete_alt", T("Löschen (Entf)"), QKeySequence(Qt::Key_Delete), [this] { m_editor->deleteSelection(); });
