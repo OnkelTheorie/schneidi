@@ -906,8 +906,13 @@ void MainWindow::buildActions()
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
     makeAction(trimMenu, "trim_end", T("Ende bis Playhead trimmen"), QKeySequence("Shift+]"),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
-    // Trim-Modus: , und . slippen die Auswahl (wie DaVinci), sonst verschieben
+    // Gewählter Schnittpunkt (V): , und . trimmen ihn. Sonst Trim-Modus: Auswahl slippen (wie DaVinci), sonst verschieben
+    makeAction(trimMenu, "select_edit_point", T("Nächsten Schnittpunkt auswählen"), QKeySequence("V"),
+               [this, tv] { m_editor->selectNearestEditPoint(tv->playhead()); });
+    makeAction(trimMenu, "edit_point_type", T("Schnittpunkt-Seite wechseln"), QKeySequence("U"),
+               [this] { m_editor->cycleEditPointSide(); });
     auto nudge = [this, tv](int frames) {
+        if (m_editor->nudgeEditPoint(frames, tv->tool() == TimelineView::Tool::Trim)) return;
         if (tv->tool() == TimelineView::Tool::Trim) m_editor->slipSelection(frames);
         else m_editor->nudgeSelection(frames);
     };

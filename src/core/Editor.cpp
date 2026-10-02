@@ -692,6 +692,64 @@ void Editor::selectFromPlayhead(int frame, bool forward, bool allTracks)
     m_selection->set(QSet<int>(ids.begin(), ids.end()));
 }
 
+void Editor::selectNearestEditPoint(int frame)
+{
+    const Timeline& tl = m_project->timeline();
+    EditPoint best;
+    int bestDist = INT_MAX;
+    for (TrackRef ref : {TrackRef{TrackKind::Video, m_targetVideo}, TrackRef{TrackKind::Audio, m_targetAudio}}) {
+        if (ref.index < 0 || ref.index >= tl.tracks(ref.kind).size() || isTrackLocked(ref)) continue;
+        const auto& clips = tl.track(ref).clips; // nach Start sortiert
+        for (int i = 0; i < clips.size(); ++i) {
+            const Clip& c = clips[i];
+            const bool joined = i > 0 && clips[i - 1].end() == c.start;
+            auto consider = [&](int at, const EditPoint& e) {
+                if (std::abs(at - frame) < bestDist) {
+                    bestDist = std::abs(at - frame);
+                    best = e;
+                }
+            };
+            consider(c.start, joined ? EditPoint{clips[i - 1].id, c.id, 0} : EditPoint{0, c.id, 1});
+            if (i + 1 >= clips.size() || clips[i + 1].start != c.end()) consider(c.end(), EditPoint{c.id, 0, -1});
+        }
+    }
+    if (!best.isNull()) m_selection->setEditPoint(best);
+}
+
+void Editor::cycleEditPointSide()
+{
+    EditPoint e = m_selection->editPoint();
+    if (!e.leftId || !e.rightId) return; // Kante an einer Lücke: nur eine Seite
+    e.side = e.side == 0 ? -1 : e.side < 0 ? 1 : 0;
+    m_selection->setEditPoint(e);
+}
+
+bool Editor::nudgeEditPoint(int frames, bool ripple)
+{
+    using namespace TimelineOps;
+    const EditPoint e = m_selection->editPoint();
+    if (e.isNull()) return false;
+    const Timeline& tl = m_project->timeline();
+    if (!findClip(tl, e.leftId) && !findClip(tl, e.rightId)) { // Clip gelöscht o. ä.
+        m_selection->clear();
+        return false;
+    }
+    if (e.side == 0 && e.leftId && e.rightId) {
+        const TrimEdit roll = trimEdit(TrimKind::Roll, e.leftId, Edge::End);
+        if (const int d = clampTrimEdit(roll, frames)) applyTrimEdit(roll, d);
+        return true;
+    }
+    const int id = e.side < 0 ? e.leftId : e.rightId;
+    const Edge edge = e.side < 0 ? Edge::End : Edge::Start;
+    if (ripple) {
+        const TrimEdit r = trimEdit(TrimKind::Ripple, id, edge);
+        if (const int d = clampTrimEdit(r, frames)) applyTrimEdit(r, d);
+    } else if (const int d = clampTrim(id, edge, frames)) {
+        trimClip(id, edge, d);
+    }
+    return true;
+}
+
 void Editor::nudgeSelection(int frames)
 {
     const QVector<int> ids = editable(m_selection->ids().values().toVector());

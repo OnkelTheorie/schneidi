@@ -10,6 +10,15 @@ struct TransitionKey {
     bool operator!=(const TransitionKey& o) const { return !(*this == o); }
 };
 
+// Ausgewählter Schnittpunkt (DaVinci V/U): Clip links/rechts vom Schnitt (0 = keiner, Kante an einer Lücke);
+// side: 0 = beide Seiten (Roll), -1 = nur Ende des linken Clips, +1 = nur Anfang des rechten
+struct EditPoint {
+    int leftId = 0, rightId = 0;
+    int side = 0;
+    bool isNull() const { return !leftId && !rightId; }
+    bool operator==(const EditPoint& o) const { return leftId == o.leftId && rightId == o.rightId && side == o.side; }
+};
+
 // Ausgewählte Clips bzw. ein Übergang (UI-Zustand, nicht Teil des Projekts / Undo).
 class Selection : public QObject {
     Q_OBJECT
@@ -22,9 +31,10 @@ public:
 
     void set(const QSet<int>& ids)
     {
-        if (ids == m_ids && m_transition.isNull() && m_keyTimes.isEmpty()) return;
+        if (ids == m_ids && m_transition.isNull() && m_keyTimes.isEmpty() && m_edit.isNull()) return;
         m_ids = ids;
         m_transition = {};
+        m_edit = {};
         m_keyClip = 0;
         m_keyTimes.clear();
         m_keyParam = -1;
@@ -36,9 +46,24 @@ public:
     const TransitionKey& transition() const { return m_transition; }
     void setTransition(const TransitionKey& t)
     {
-        if (t == m_transition && m_ids.isEmpty()) return;
+        if (t == m_transition && m_ids.isEmpty() && m_edit.isNull()) return;
         m_ids.clear();
         m_transition = t;
+        m_edit = {};
+        m_keyClip = 0;
+        m_keyTimes.clear();
+        m_keyParam = -1;
+        emit changed();
+    }
+
+    // Schnittpunkt auswählen hebt Clip- und Übergangsauswahl auf (wie DaVinci)
+    const EditPoint& editPoint() const { return m_edit; }
+    void setEditPoint(const EditPoint& e)
+    {
+        if (e == m_edit && m_ids.isEmpty() && m_transition.isNull()) return;
+        m_ids.clear();
+        m_transition = {};
+        m_edit = e;
         m_keyClip = 0;
         m_keyTimes.clear();
         m_keyParam = -1;
@@ -65,6 +90,7 @@ signals:
 private:
     QSet<int> m_ids;
     TransitionKey m_transition;
+    EditPoint m_edit;
     int m_keyClip = 0;
     QSet<int> m_keyTimes;
     int m_keyParam = -1;

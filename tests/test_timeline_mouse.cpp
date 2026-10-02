@@ -1,5 +1,5 @@
 // Test Maus-Bedienung der Timeline (offscreen): Auswahlrahmen, Auto-Scroll am Rand, Spuren umsortieren;
-// dazu Auswahl ab Playhead (Y / Strg+Y / Alt+Y).
+// dazu Auswahl ab Playhead (Y / Strg+Y / Alt+Y) und Schnittpunkte per Tastatur (V, U, , / .).
 #include "check.h"
 
 #include "app/Theme.h"
@@ -13,6 +13,7 @@
 #include <QApplication>
 #include <QMouseEvent>
 #include <QTest>
+#include <QUndoStack>
 #include <cmath>
 
 namespace {
@@ -176,6 +177,62 @@ void testSelectFromPlayhead()
     CHECK(f.sel.ids() == (QSet<int>{1, 2, 3}));
 }
 
+void testEditPoints()
+{
+    Project project;
+    Selection sel;
+    Editor editor(&project, &sel);
+    project.addMedia(MediaInfo{"/x/a.mp4", "a.mp4", 3000, true, false, false});
+    Timeline tl;
+    tl.video.resize(1);
+    tl.audio.resize(1);
+    Clip b = clip(2, 100, 100);
+    b.in = 50;
+    b.out = 149;
+    tl.video[0].clips << clip(1, 0, 100) << b;
+    tl.audio[0].clips << clip(3, 0, 80);
+    project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 5, 0});
+    auto clipAt = [&](int id) { return *TimelineOps::findClip(project.timeline(), id); };
+
+    CHECK(!editor.nudgeEditPoint(1, false)); // nichts gewählt -> normales Nudge
+    // V: nächster Schnitt auf den Zielspuren (V1 + A1), am Schnitt zweier Clips beide Seiten
+    editor.selectNearestEditPoint(90);
+    CHECK(sel.editPoint() == (EditPoint{1, 2, 0}));
+    CHECK(sel.isEmpty());
+    // . = Roll um 1 Frame, ein Undo-Schritt
+    const int undo0 = project.undoStack()->count();
+    CHECK(editor.nudgeEditPoint(1, false));
+    CHECK_EQ(clipAt(1).end(), 101);
+    CHECK(clipAt(2).start == 101 && clipAt(2).in == 51 && clipAt(2).end() == 200);
+    CHECK_EQ(project.undoStack()->count(), undo0 + 1);
+    CHECK(sel.editPoint() == (EditPoint{1, 2, 0})); // bleibt gewählt
+    // U: nur linke Seite (Ende von Clip 1), ohne Ripple
+    editor.cycleEditPointSide();
+    CHECK_EQ(sel.editPoint().side, -1);
+    editor.nudgeEditPoint(-2, false);
+    CHECK(clipAt(1).end() == 99 && clipAt(2).start == 101);
+    // U: rechte Seite (Anfang von Clip 2), dann wieder beide
+    editor.cycleEditPointSide();
+    CHECK_EQ(sel.editPoint().side, 1);
+    editor.nudgeEditPoint(-1, false);
+    CHECK_EQ(clipAt(2).start, 100);
+    editor.cycleEditPointSide();
+    CHECK_EQ(sel.editPoint().side, 0);
+    // Kante an einer Lücke: nur eine Seite, U ändert nichts; Trim-Modus = Ripple
+    editor.selectNearestEditPoint(260);
+    CHECK(sel.editPoint() == (EditPoint{2, 0, -1}));
+    editor.cycleEditPointSide();
+    CHECK_EQ(sel.editPoint().side, -1);
+    editor.nudgeEditPoint(5, true);
+    CHECK_EQ(clipAt(2).end(), 205);
+    // Ende von A1 liegt näher an 85 als der Schnitt bei 99/100
+    editor.selectNearestEditPoint(85);
+    CHECK(sel.editPoint() == (EditPoint{3, 0, -1}));
+    // Clip-Auswahl hebt den Schnittpunkt auf
+    sel.set({1});
+    CHECK(sel.editPoint().isNull());
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -189,5 +246,6 @@ int main(int argc, char** argv)
     testAutoScroll();
     testTrackMove();
     testSelectFromPlayhead();
+    testEditPoints();
     return Check::result();
 }

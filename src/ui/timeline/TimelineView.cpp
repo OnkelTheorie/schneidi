@@ -978,6 +978,24 @@ void TimelineView::drawTracks(QPainter& p)
             }
     }
 
+    // Gewählter Schnittpunkt (V/U): Klammer an der gewählten Seite bzw. an beiden (Roll), mit Partnern
+    if (const EditPoint ep = m_editor->selection()->editPoint(); !ep.isNull()) {
+        auto bracket = [&](int id, bool end) {
+            for (int pid : m_editor->withLinked({id})) {
+                TrackRef ref;
+                const Clip* c = TimelineOps::findClip(tl, pid, &ref);
+                const auto row = c ? rowFor(ref) : std::nullopt;
+                if (!row) continue;
+                const QRect r = clipRect(*row, *c);
+                const int w = std::min(4, std::max(1, r.width() / 2));
+                p.fillRect(end ? QRect(r.right() - w + 1, r.top(), w, r.height()) : QRect(r.left(), r.top(), w, r.height()),
+                           Theme::primary);
+            }
+        };
+        if (ep.leftId && ep.side <= 0) bracket(ep.leftId, true);
+        if (ep.rightId && ep.side >= 0) bracket(ep.rightId, false);
+    }
+
     // Trimmen: Kante markieren + Versatz anzeigen (wie DaVinci)
     if (m_drag == Drag::Trim) {
         if (const Clip* c = TimelineOps::findClip(tl, m_trim.clipId)) {
