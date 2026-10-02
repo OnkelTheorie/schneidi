@@ -97,6 +97,9 @@ public:
     void deleteSelection();
     void rippleDeleteSelection();
     void selectAll();
+    // Clips ab Playhead wählen (DaVinci Y / Strg+Y / Alt+Y / Strg+Alt+Y): forward = Playhead und rechts davon,
+    // sonst Playhead und links davon. allTracks = alle Spuren, sonst die Spuren der Auswahl (ohne Auswahl: Zielspuren)
+    void selectFromPlayhead(int frame, bool forward, bool allTracks);
     // Auswahl um `frames` verschieben (Nudge, wie , und . in DaVinci)
     void nudgeSelection(int frames);
     // Anfang/Ende bis zum Playhead trimmen (Shift+[ / Shift+]); Auswahl oder Clips unter dem Playhead

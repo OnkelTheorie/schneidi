@@ -1,4 +1,5 @@
-// Test Maus-Bedienung der Timeline (offscreen): Auswahlrahmen, Auto-Scroll am Rand, Spuren umsortieren.
+// Test Maus-Bedienung der Timeline (offscreen): Auswahlrahmen, Auto-Scroll am Rand, Spuren umsortieren;
+// dazu Auswahl ab Playhead (Y / Strg+Y / Alt+Y).
 #include "check.h"
 
 #include "app/Theme.h"
@@ -152,6 +153,29 @@ void testTrackMove()
     CHECK(f.project.timeline().video[0].clips[0].id == 3);
 }
 
+void testSelectFromPlayhead()
+{
+    Fixture f;
+    // ohne Auswahl: Zielspuren V1 + A1; Clip unter dem Playhead gehört dazu
+    f.editor.selectFromPlayhead(60, true, false);
+    CHECK(f.sel.ids() == (QSet<int>{1, 2, 4}));
+    f.editor.selectFromPlayhead(60, false, false);
+    CHECK(f.sel.ids() == (QSet<int>{1, 4}));
+    // alle Spuren
+    f.editor.selectFromPlayhead(110, true, true);
+    CHECK(f.sel.ids() == (QSet<int>{2, 3}));
+    f.editor.selectFromPlayhead(110, false, true);
+    CHECK(f.sel.ids() == (QSet<int>{1, 3, 4}));
+    // mit Auswahl: deren Spuren (hier V2)
+    f.sel.set({3});
+    f.editor.selectFromPlayhead(0, true, false);
+    CHECK(f.sel.ids() == QSet<int>{3});
+    // gesperrte Spur bleibt außen vor
+    f.editor.toggleTrackLock({TrackKind::Audio, 0});
+    f.editor.selectFromPlayhead(0, true, true);
+    CHECK(f.sel.ids() == (QSet<int>{1, 2, 3}));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -164,5 +188,6 @@ int main(int argc, char** argv)
     testRubber();
     testAutoScroll();
     testTrackMove();
+    testSelectFromPlayhead();
     return Check::result();
 }

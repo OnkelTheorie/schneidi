@@ -671,6 +671,27 @@ void Editor::selectAll()
     m_selection->set(ids);
 }
 
+void Editor::selectFromPlayhead(int frame, bool forward, bool allTracks)
+{
+    const Timeline& tl = m_project->timeline();
+    QVector<TrackRef> tracks;
+    if (!allTracks) {
+        tracks = TimelineOps::tracksOf(tl, m_selection->ids().values().toVector());
+        if (tracks.isEmpty()) tracks = {{TrackKind::Video, m_targetVideo}, {TrackKind::Audio, m_targetAudio}};
+    }
+    QVector<int> ids;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (int i = 0; i < tl.tracks(k).size(); ++i) {
+            const Track& t = tl.tracks(k)[i];
+            if (t.locked || (!allTracks && !tracks.contains({k, i}))) continue;
+            // der Clip unter dem Playhead gehört dazu (wie DaVinci)
+            for (const Clip& c : t.clips)
+                if (forward ? c.end() > frame : c.start <= frame) ids << c.id;
+        }
+    ids = withLinked(ids);
+    m_selection->set(QSet<int>(ids.begin(), ids.end()));
+}
+
 void Editor::nudgeSelection(int frames)
 {
     const QVector<int> ids = editable(m_selection->ids().values().toVector());

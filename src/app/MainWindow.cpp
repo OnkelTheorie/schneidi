@@ -847,6 +847,15 @@ void MainWindow::buildActions()
     edit->addSeparator();
     makeAction(edit, "select_all", T("Alles auswählen"), QKeySequence("Ctrl+A"), [this] { m_editor->selectAll(); });
     makeAction(edit, "deselect", T("Auswahl aufheben"), QKeySequence("Ctrl+Shift+A"), [this] { m_selection->clear(); });
+    QMenu* selectMenu = edit->addMenu(T("Ab Playhead auswählen"));
+    makeAction(selectMenu, "select_forward", T("Clips ab Playhead nach rechts (diese Spur)"), QKeySequence("Y"),
+               [this, tv] { m_editor->selectFromPlayhead(tv->playhead(), true, false); });
+    makeAction(selectMenu, "select_backward", T("Clips ab Playhead nach links (diese Spur)"), QKeySequence("Ctrl+Y"),
+               [this, tv] { m_editor->selectFromPlayhead(tv->playhead(), false, false); });
+    makeAction(selectMenu, "select_forward_all", T("Clips ab Playhead nach rechts (alle Spuren)"), QKeySequence("Alt+Y"),
+               [this, tv] { m_editor->selectFromPlayhead(tv->playhead(), true, true); });
+    makeAction(selectMenu, "select_backward_all", T("Clips ab Playhead nach links (alle Spuren)"),
+               QKeySequence("Ctrl+Alt+Y"), [this, tv] { m_editor->selectFromPlayhead(tv->playhead(), false, true); });
     edit->addSeparator();
     makeAction(edit, "edit_keybindings", T("Tastenbelegung…"), QKeySequence("Ctrl+Alt+K"), [this] {
         KeyBindingsDialog dlg(this);
