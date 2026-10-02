@@ -630,6 +630,13 @@ void TimelineView::setLeftFrame(double frame)
     emit viewChanged();
 }
 
+void TimelineView::setZoomAndScroll(double pxPerFrame, double leftFrame, int scrollY)
+{
+    m_view.pxPerFrame = std::clamp(pxPerFrame, ViewState::kMinPxPerFrame, ViewState::kMaxPxPerFrame);
+    m_view.leftFrame = std::max(0.0, leftFrame);
+    setScrollY(scrollY); // begrenzt auf die Höhe der Spuren, zeichnet neu, meldet viewChanged
+}
+
 void TimelineView::setScrollY(int y)
 {
     m_view.scrollY = std::clamp(y, 0, std::max(0, contentHeight() - viewportHeight()));

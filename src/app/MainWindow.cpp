@@ -142,13 +142,22 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(m_mediaPool, &MediaPool::sequenceOpenRequested, m_timeline, &TimelinePanel::openSequence);
-    // Andere Timeline geöffnet: Auswahl weg, Playhead dort, wo er in dieser Timeline zuletzt stand (wie DaVinci)
+    // Andere Timeline geöffnet: Auswahl weg, Playhead und Zoom/Scroll wie zuletzt in dieser Timeline (wie DaVinci)
     m_shownSequence = m_project->currentSequence();
     connect(m_project, &Project::currentSequenceChanged, this, [this, tv] {
         const int id = m_project->currentSequence();
         if (id == m_shownSequence) return;
         m_sequencePos[m_shownSequence] = tv->playhead();
+        m_sequenceView[m_shownSequence] = tv->view();
         m_shownSequence = id;
+        // Zoom/Scroll dieser Timeline wiederherstellen; noch nie gezeigt: Zoom behalten, vorn und oben anfangen
+        const ViewState v = m_sequenceView.value(id, [&] {
+            ViewState d = tv->view();
+            d.leftFrame = 0;
+            d.scrollY = 0;
+            return d;
+        }());
+        tv->setZoomAndScroll(v.pxPerFrame, v.leftFrame, v.scrollY);
         m_selection->clear();
         m_engine->pause();
         const int pos = m_sequencePos.value(id, 0);

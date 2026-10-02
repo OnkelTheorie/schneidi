@@ -2,6 +2,7 @@
 #include "core/Editor.h"
 #include "core/ProjectFile.h"
 #include "core/Types.h"
+#include "ui/timeline/ViewState.h"
 
 #include <QHash>
 #include <QLockFile>
@@ -151,6 +152,7 @@ private:
     QHash<QString, MediaInfo> m_probeCache;
     QHash<QString, int> m_sourcePos; // Quell-Playhead je Datei (nur in dieser Sitzung)
     QHash<int, int> m_sequencePos;   // Playhead je Timeline/Compound Clip (nur in dieser Sitzung)
+    QHash<int, ViewState> m_sequenceView; // Zoom/Scroll je Timeline/Compound Clip (nur in dieser Sitzung)
     int m_shownSequence = 0;         // zuletzt gezeigte Sequenz (für m_sequencePos)
     class MediaCache* m_mediaCache = nullptr;
 

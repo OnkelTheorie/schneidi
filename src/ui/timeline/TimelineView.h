@@ -41,6 +41,8 @@ public:
     int viewportHeight() const { return height() - kRulerH; }
 
     void setLeftFrame(double frame);
+    // Zoom + Scroll auf einmal setzen (Timeline-Wechsel: Ansicht der Timeline wiederherstellen)
+    void setZoomAndScroll(double pxPerFrame, double leftFrame, int scrollY);
     void setScrollY(int y);
     void zoomBy(double factor);
     void zoomToFit();
