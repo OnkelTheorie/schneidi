@@ -249,9 +249,8 @@ private:
     bool isLocked(const Row& row) const; // gesperrte Spur: nichts darauf greifbar
     void headerMenu(const Row& row, const QPoint& globalPos);
     void emptyAreaMenu(const QPoint& globalPos);
-    // Spur am Spurkopf ziehen (umsortieren innerhalb ihres Typs): Zielindex für Maus-y (-1 = keine Änderung)
-    // und die y-Position der Einfügemarke
-    int trackDropIndex(int y, int* lineY = nullptr) const;
+    // Spur am Spurkopf ziehen (umsortieren innerhalb ihres Typs): Index der Zielspur für Maus-y
+    int trackDropIndex(int y) const;
     void drawTrackDrop(QPainter& p);
     void startRename(TrackRef ref);
     void finishRename(bool commit);
@@ -345,10 +344,9 @@ private:
     int m_cueDelta = 0;
     EdgeHit m_cueTrim{0, TimelineOps::Edge::Start};
 
-    // Spur ziehen: gegriffene Spur, Zielindex (-1 = keiner) und Einfügemarke
+    // Spur ziehen: gegriffene Spur und Zielspur (-1 = noch keine)
     TrackRef m_trackDragRef;
     int m_trackDropTo = -1;
-    int m_trackDropY = 0;
 
     // Spur umbenennen (Eingabefeld über dem Namen im Spurkopf)
     QLineEdit* m_nameEdit = nullptr;

@@ -1594,50 +1594,30 @@ void TimelineView::emptyAreaMenu(const QPoint& globalPos)
     menu.exec(globalPos);
 }
 
-int TimelineView::trackDropIndex(int y, int* lineY) const
+int TimelineView::trackDropIndex(int y) const
 {
-    // Zeilen dieses Typs von oben nach unten (Video: höchster Index oben, Audio: A1 oben)
-    QVector<Row> vis;
-    for (const Row& r : rows())
-        if (r.ref.kind == m_trackDragRef.kind) vis << r;
-    const int n = vis.size();
-    if (n < 2) return -1;
-    // nächste Fuge zwischen zwei Zeilen (auch über der ersten / unter der letzten)
-    int gap = 0, gapY = vis[0].y, best = 1 << 30;
-    for (int g = 0; g <= n; ++g) {
-        const int gy = g < n ? vis[g].y : vis[n - 1].y + vis[n - 1].h;
-        if (std::abs(y - gy) < best) {
-            best = std::abs(y - gy);
-            gap = g;
-            gapY = gy;
+    // Zielspur = Spur gleichen Typs unter der Maus (darüber/darunter hinaus: die nächste)
+    int to = -1, best = 1 << 30;
+    for (const Row& r : rows()) {
+        if (r.ref.kind != m_trackDragRef.kind) continue;
+        const int d = y < r.y ? r.y - y : y >= r.y + r.h ? y - (r.y + r.h - 1) : 0;
+        if (d < best) {
+            best = d;
+            to = r.ref.index;
         }
     }
-    // Fuge -> Einfügeposition in Indexreihenfolge -> Zielindex nach dem Herausnehmen
-    const int pos = m_trackDragRef.kind == TrackKind::Audio ? gap : n - gap;
-    const int from = m_trackDragRef.index;
-    const int to = pos > from ? pos - 1 : pos;
-    if (lineY) *lineY = gapY;
-    return to == from ? -1 : to;
+    return to;
 }
 
 void TimelineView::drawTrackDrop(QPainter& p)
 {
     if (m_drag != Drag::TrackMove) return;
+    // Orange Fläche folgt der Maus und markiert die Zielspur (ohne Einfügelinie)
+    const auto row = rowFor({m_trackDragRef.kind, m_trackDropTo >= 0 ? m_trackDropTo : m_trackDragRef.index});
+    if (!row) return;
     p.save();
     p.setClipRect(0, kRulerH, width(), height() - kRulerH);
-    // gegriffene Spur hervorheben
-    if (const auto row = rowFor(m_trackDragRef))
-        p.fillRect(QRect(0, row->y, width(), row->h), Theme::alpha(Theme::primary, 40));
-    // Einfügemarke über Spurkopf und Spur (wie beim Ziehen von Clips: Akzentfarbe)
-    if (m_trackDropTo >= 0) {
-        p.fillRect(QRect(0, m_trackDropY - 2, width(), 4), Theme::primary);
-        QPolygon tip;
-        tip << QPoint(0, m_trackDropY - 6) << QPoint(7, m_trackDropY) << QPoint(0, m_trackDropY + 6);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(Qt::NoPen);
-        p.setBrush(Theme::primary);
-        p.drawPolygon(tip);
-    }
+    p.fillRect(QRect(0, row->y, width(), row->h), Theme::alpha(Theme::primary, 40));
     p.restore();
 }
 
@@ -2026,11 +2006,9 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         setCursor(Qt::ClosedHandCursor);
         [[fallthrough]];
     case Drag::TrackMove: {
-        int y = 0;
-        const int to = trackDropIndex(pos.y(), &y);
-        if (to != m_trackDropTo || y != m_trackDropY) {
+        const int to = trackDropIndex(pos.y());
+        if (to != m_trackDropTo) {
             m_trackDropTo = to;
-            m_trackDropY = y;
             update();
         }
         return;
@@ -2258,7 +2236,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         const int to = m_trackDropTo;
         m_drag = Drag::None;
         m_trackDropTo = -1;
-        if (moved && to >= 0) m_editor->moveTrack(m_trackDragRef.kind, m_trackDragRef.index, to);
+        if (moved && to >= 0 && to != m_trackDragRef.index) m_editor->moveTrack(m_trackDragRef.kind, m_trackDragRef.index, to);
         updateHoverCursor(e->position().toPoint());
         update();
         return;
