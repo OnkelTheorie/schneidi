@@ -13,6 +13,7 @@ class Editor;
 class MediaCache;
 class QLineEdit;
 class QMimeData;
+class QTimer;
 
 // Selbst gezeichnete Timeline: Lineal, Spurköpfe, Clips, Playhead.
 // Scrollbars gehören dem TimelinePanel; diese Klasse hält den ViewState.
@@ -112,7 +113,7 @@ private:
     };
     enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe,
                       CueMaybeMove, CueMove, CueTrim, SpeedPoint, CurvePoint, CurveHandle,
-                      TrackMaybeMove, TrackMove };
+                      TrackMaybeMove, TrackMove, Rubber };
     // Retime-Leiste: Speed-Punkt (point >= 0) oder Abschnitt (segment >= 0) unter der Maus
     struct RetimeHit {
         int clipId = 0;
@@ -251,6 +252,14 @@ private:
     void emptyAreaMenu(const QPoint& globalPos);
     // Spur am Spurkopf ziehen (umsortieren innerhalb ihres Typs): Index der Zielspur für Maus-y
     int trackDropIndex(int y) const;
+    // Auswahlrahmen (Linksklick auf leere Stelle + ziehen): alle berührten Clips/Untertitel, Strg/Shift = dazu
+    void startRubber(Qt::KeyboardModifiers mods);
+    void updateRubber(const QPoint& pos);
+    void drawRubber(QPainter& p);
+    // Auto-Scroll beim Ziehen über den Rand (zählt als Nutzereingabe): Timer läuft, solange die Maus im Randbereich ist
+    void dragMove(const QPoint& pos, Qt::KeyboardModifiers mods);
+    void updateAutoScroll(const QPoint& pos);
+    void autoScrollStep();
     void drawTrackDrop(QPainter& p);
     void startRename(TrackRef ref);
     void finishRename(bool commit);
@@ -343,6 +352,14 @@ private:
     int m_cueTrackDelta = 0;
     int m_cueDelta = 0;
     EdgeHit m_cueTrim{0, TimelineOps::Edge::Start};
+
+    // Auswahlrahmen: Ecke = m_pressPos (wandert beim Auto-Scroll mit), Auswahl vor dem Ziehen (Strg/Shift)
+    QPoint m_rubberPos;
+    QSet<int> m_rubberBase;
+    // Auto-Scroll: letzte Mausposition/Tasten während des Ziehens
+    QTimer* m_autoScroll = nullptr;
+    QPoint m_dragPos;
+    Qt::KeyboardModifiers m_dragMods;
 
     // Spur ziehen: gegriffene Spur und Zielspur (-1 = noch keine)
     TrackRef m_trackDragRef;

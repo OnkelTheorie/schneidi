@@ -30,6 +30,7 @@
 #include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
+#include <QTimer>
 #include <QWheelEvent>
 #include <array>
 #include <tuple>
@@ -111,6 +112,7 @@ void drawLock(QPainter& p, const QRectF& r, const QColor& color)
 constexpr int kSnapPx = 8;
 constexpr double kFinePxPerFrame = 12; // ab hier verschieben Ton-Clips feiner als 1 Frame
 constexpr int kDragStartPx = 4;
+constexpr int kAutoScrollZone = 24; // Randbereich (px), in dem das Ziehen die Timeline mitscrollt
 constexpr int kEdgeGrabPx = 6; // so nah an der Clipkante wird getrimmt statt verschoben
 constexpr int kVolumeGrabPx = 4;
 constexpr int kClipBarH = 16;  // Titelleiste im Clip
@@ -229,6 +231,9 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
     setAcceptDrops(true);
     setMinimumHeight(160);
     setFocusPolicy(Qt::ClickFocus);
+    m_autoScroll = new QTimer(this);
+    m_autoScroll->setInterval(30);
+    connect(m_autoScroll, &QTimer::timeout, this, &TimelineView::autoScrollStep);
 
     // Projekt geändert -> nur neu zeichnen. Der ViewState bleibt unangetastet (Kernregel).
     connect(editor->project(), &Project::timelineChanged, this, [this] {
@@ -727,6 +732,7 @@ void TimelineView::paintEvent(QPaintEvent*)
     drawHeaders(p);
     drawSubtitleHeaders(p);
     drawTrackDrop(p);
+    drawRubber(p);
     drawRuler(p);
     drawPlayhead(p);
 }
@@ -1621,6 +1627,105 @@ void TimelineView::drawTrackDrop(QPainter& p)
     p.restore();
 }
 
+void TimelineView::startRubber(Qt::KeyboardModifiers mods)
+{
+    Selection* sel = m_editor->selection();
+    const bool add = mods & (Qt::ControlModifier | Qt::ShiftModifier);
+    if (!add) sel->clear();
+    m_rubberBase = add ? sel->ids() : QSet<int>{};
+    m_rubberPos = m_pressPos;
+    m_drag = Drag::Rubber;
+}
+
+void TimelineView::updateRubber(const QPoint& pos)
+{
+    if (pos == m_rubberPos) return;
+    m_rubberPos = pos;
+    const QRect r = QRect(m_pressPos, pos).normalized();
+    if (r.width() < kDragStartPx && r.height() < kDragStartPx) return; // Klick ohne Ziehen: nur abwählen
+    // berührte Frames [f0, f1) und Zeilen (Rahmen muss die Clips nur berühren, wie DaVinci)
+    const double f0 = xToFrame(std::max(r.left(), kHeaderW));
+    const double f1 = xToFrame(r.right() + 1);
+    const Timeline& tl = m_editor->project()->timeline();
+    QVector<int> hit;
+    if (r.right() >= kHeaderW) {
+        for (const Row& row : rows()) {
+            if (isLocked(row) || row.y + row.h <= r.top() || row.y > r.bottom()) continue;
+            for (const Clip& c : tl.track(row.ref).clips)
+                if (c.start < f1 && c.end() > f0) hit << c.id;
+        }
+        hit = m_editor->withLinked(hit);
+        for (const SubRow& row : subRows()) {
+            if (m_editor->isSubtitleTrackLocked(row.index) || row.y + row.h <= r.top() || row.y > r.bottom()) continue;
+            for (const SubtitleCue& c : tl.subtitles[row.index].cues)
+                if (c.start < f1 && c.end > f0) hit << c.id;
+        }
+    }
+    QSet<int> ids = m_rubberBase;
+    for (int id : hit) ids.insert(id);
+    m_editor->selection()->set(ids);
+    update();
+}
+
+void TimelineView::drawRubber(QPainter& p)
+{
+    if (m_drag != Drag::Rubber) return;
+    const QRect r = QRect(m_pressPos, m_rubberPos).normalized();
+    if (r.width() < kDragStartPx && r.height() < kDragStartPx) return;
+    p.save();
+    p.setClipRect(kHeaderW, kRulerH, width() - kHeaderW, height() - kRulerH);
+    p.setPen(QPen(Theme::primary, 1));
+    p.setBrush(Theme::alpha(Theme::primary, 35));
+    p.drawRect(r.adjusted(0, 0, -1, -1));
+    p.restore();
+}
+
+void TimelineView::updateAutoScroll(const QPoint& pos)
+{
+    // Nur Ziehvorgänge, bei denen Mitscrollen Sinn ergibt (nicht Lautstärke, Fades, Kurven …)
+    const bool horizontal = m_drag == Drag::Rubber || m_drag == Drag::Move || m_drag == Drag::Trim ||
+                            m_drag == Drag::TrimEdit || m_drag == Drag::CueMove || m_drag == Drag::CueTrim;
+    const bool vertical = horizontal || m_drag == Drag::TrackMove;
+    if (m_drag == Drag::Rubber && (pos - m_pressPos).manhattanLength() < kDragStartPx) return;
+    const bool atX = horizontal && (pos.x() < kHeaderW + kAutoScrollZone || pos.x() >= width() - kAutoScrollZone);
+    const bool atY = vertical && (pos.y() < kRulerH + kAutoScrollZone || pos.y() >= height() - kAutoScrollZone);
+    if (atX || atY) {
+        if (!m_autoScroll->isActive()) m_autoScroll->start();
+    } else {
+        m_autoScroll->stop();
+    }
+}
+
+void TimelineView::autoScrollStep()
+{
+    if (m_drag == Drag::None) {
+        m_autoScroll->stop();
+        return;
+    }
+    const QPoint pos = m_dragPos;
+    // Tempo wächst, je weiter die Maus über den Rand hinaus ist (px pro Schritt)
+    auto speed = [](int depth) { return std::clamp(2 + depth / 2, 2, 60); };
+    const bool horizontal = m_drag != Drag::TrackMove;
+    int dx = 0, dy = 0;
+    if (horizontal) {
+        if (pos.x() < kHeaderW + kAutoScrollZone) dx = -speed(kHeaderW + kAutoScrollZone - pos.x());
+        else if (pos.x() >= width() - kAutoScrollZone) dx = speed(pos.x() - (width() - kAutoScrollZone));
+    }
+    if (pos.y() < kRulerH + kAutoScrollZone) dy = -speed(kRulerH + kAutoScrollZone - pos.y());
+    else if (pos.y() >= height() - kAutoScrollZone) dy = speed(pos.y() - (height() - kAutoScrollZone));
+
+    // Ganze Pixel scrollen und den Druckpunkt um dieselben Pixel verschieben: alle Ziehrechnungen
+    // (Abstand zum Druckpunkt) bleiben dadurch in Timeline-Koordinaten richtig
+    const QPointF oldAnchor(frameToX(0), m_view.scrollY);
+    if (dx) setLeftFrame(m_view.leftFrame + dx / m_view.pxPerFrame);
+    if (dy) setScrollY(m_view.scrollY + dy);
+    const int sx = int(std::lround(oldAnchor.x() - frameToX(0)));
+    const int sy = m_view.scrollY - int(oldAnchor.y());
+    if (!sx && !sy) return; // schon am Anfang / Ende
+    m_pressPos -= QPoint(sx, sy);
+    dragMove(pos, m_dragMods);
+}
+
 void TimelineView::startRename(TrackRef ref)
 {
     if (!m_nameEdit) {
@@ -1951,7 +2056,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         return;
     }
     if (!id) {
-        if (!(e->modifiers() & Qt::ControlModifier)) sel->clear();
+        startRubber(e->modifiers());
         return;
     }
     // Alt-Klick: nur dieser Teil eines verknüpften Clips (wie DaVinci), z. B. den Ton allein verschieben
@@ -1981,7 +2086,18 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
 void TimelineView::mouseMoveEvent(QMouseEvent* e)
 {
     const QPoint pos = e->position().toPoint();
+    m_dragPos = pos;
+    m_dragMods = e->modifiers();
+    if (m_drag != Drag::None) updateAutoScroll(pos);
+    dragMove(pos, e->modifiers());
+}
+
+void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
+{
     switch (m_drag) {
+    case Drag::Rubber:
+        updateRubber(pos);
+        return;
     case Drag::SpeedPoint: {
         const int delta = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
         if (delta != m_rampDelta) {
@@ -2145,7 +2261,7 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
     }
     case Drag::CurvePoint:
     case Drag::CurveHandle:
-        curveMove(pos, e->modifiers());
+        curveMove(pos, mods);
         return;
     case Drag::Keyframe: {
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_keyDragClip);
@@ -2189,7 +2305,7 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
         const auto row = c ? rowFor(ref) : std::nullopt;
         if (!row) return;
         // Shift umgeschaltet -> von der aktuellen Position aus weiter, damit nichts springt
-        const bool fine = e->modifiers() & Qt::ShiftModifier;
+        const bool fine = mods & Qt::ShiftModifier;
         if (fine != m_volFine) {
             m_volFine = fine;
             m_volStartDb = m_volDb;
@@ -2231,6 +2347,14 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e)
 void TimelineView::mouseReleaseEvent(QMouseEvent* e)
 {
     if (e->button() != Qt::LeftButton) return;
+    m_autoScroll->stop();
+    if (m_drag == Drag::Rubber) {
+        m_drag = Drag::None;
+        m_rubberBase.clear();
+        updateHoverCursor(e->position().toPoint());
+        update();
+        return;
+    }
     if (m_drag == Drag::TrackMove || m_drag == Drag::TrackMaybeMove) {
         const bool moved = m_drag == Drag::TrackMove;
         const int to = m_trackDropTo;
@@ -2848,7 +2972,8 @@ bool TimelineView::subtitlePress(QMouseEvent* e, const QPoint& pos)
     }
     const int id = cueAt(pos);
     if (!id) {
-        if (!(e->modifiers() & Qt::ControlModifier)) sel->clear();
+        if (m_tool == Tool::Select) startRubber(e->modifiers());
+        else if (!(e->modifiers() & Qt::ControlModifier)) sel->clear();
         return true;
     }
     QSet<int> ids = sel->ids();
