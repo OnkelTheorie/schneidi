@@ -1,33 +1,31 @@
 # schneidi
 
-Ein schlanker Videoschnitt-Editor mit Seiten für Media, Edit, Color und Deliver. Bedienung inspiriert von DaVinci Resolve, aber deutlich einfacher.
+A lightweight video editor with Media, Edit, Color and Deliver pages. Its workflow is inspired by DaVinci Resolve, with far fewer features. The UI is available in English and German.
 
-*A lightweight video editor inspired by the workflow of DaVinci Resolve, with far fewer features. UI available in German and English.*
+> Status: early development (0.x). The project file format may still change between versions.
 
-> Status: frühe Entwicklung (0.x). Projektdateien können sich zwischen Versionen noch ändern.
+![Edit page](screenshots/edit.png)
 
-![Edit-Seite](screenshots/edit.png)
+## Features
 
-## Funktionen
-
-- Mehrere Video- und Audiospuren, Schneiden, Trimmen, Verschieben, Snapping, Undo/Redo
-- Timeline-Zoom und -Scroll ändern sich **nur durch Nutzereingabe** – nichts springt, wenn Clips kürzer werden
-- Tastenbelegung frei anpassbar
-- Titel, Untertitel, Fades, Übergänge, Lautstärke, Loudness-Normalisierung
-- Farbkorrektur, Kurven, LUTs, Effekte mit Keyframes
-- Clip-Geschwindigkeit / Retime
-- Proxy- und Render-Cache für flüssige Vorschau
-- Export und Render-Warteschlange über FFmpeg
-- Themes, Deutsch/Englisch
+- Multiple video and audio tracks: cut, trim, move, snapping, undo/redo
+- Timeline zoom and scroll change **only on user input** – nothing jumps when clips get shorter
+- Fully customizable keyboard shortcuts
+- Titles, subtitles, fades, transitions, volume, loudness normalization
+- Color correction, curves, LUTs, effects with keyframes
+- Clip speed / retime
+- Proxy and render cache for smooth playback
+- Export and render queue via FFmpeg
+- Themes, English/German
 
 <details>
-<summary>Color-Seite</summary>
+<summary>Color page</summary>
 
-![Color-Seite](screenshots/color.png)
+![Color page](screenshots/color.png)
 
 </details>
 
-## Bauen
+## Building
 
 C++17, Qt 6 Widgets, MLT 7, CMake.
 
@@ -38,14 +36,16 @@ sudo apt install build-essential cmake ninja-build pkg-config qt6-base-dev libml
 cmake -S . -B build -G Ninja && cmake --build build && ./build/schneidi
 ```
 
-**Windows:** über [MSYS2](https://www.msys2.org), Umgebung UCRT64. Repo in einen Ordner ohne Leerzeichen/Umlaute klonen, dann:
+AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage`
+
+**Windows:** via [MSYS2](https://www.msys2.org), UCRT64 environment. Clone the repo into a path without spaces or non-ASCII characters, then:
 
 ```bash
 pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,qt6-base,qt6-svg,mlt,ffmpeg,frei0r-plugins,SDL2,ntldd,libebur128,fftw,libsamplerate,rubberband,rtaudio}
 packaging/windows/build-windows.sh
 ```
 
-Ergebnis: `dist/schneidi-windows-<version>.zip` (Programmordner) und, falls [Inno Setup 6](https://jrsoftware.org/isinfo.php) installiert ist (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`.
+Result: `dist/schneidi-windows-<version>.zip` (portable folder) and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`.
 
 **Tests:**
 
@@ -53,12 +53,14 @@ Ergebnis: `dist/schneidi-windows-<version>.zip` (Programmordner) und, falls [Inn
 cmake -S . -B build-tests -G Ninja -DSCHNEIDI_TESTS=ON && cmake --build build-tests && ctest --test-dir build-tests --output-on-failure
 ```
 
-## Hinweis
+## Credits
 
-schneidi ist ein unabhängiges Open-Source-Projekt. Es steht in keiner Verbindung zu Blackmagic Design und wird von Blackmagic Design weder unterstützt noch empfohlen. „DaVinci Resolve“ ist eine Marke von Blackmagic Design Pty Ltd und wird hier nur zur Beschreibung verwendet.
+Developed with the help of [Claude](https://claude.ai) (Anthropic) as an AI coding assistant.
 
-*schneidi is an independent project, not affiliated with or endorsed by Blackmagic Design. DaVinci Resolve is a trademark of Blackmagic Design Pty Ltd.*
+## Disclaimer
 
-## Lizenz
+schneidi is an independent open-source project. It is not affiliated with, endorsed by or sponsored by Blackmagic Design. DaVinci Resolve is a trademark of Blackmagic Design Pty Ltd and is mentioned here for descriptive purposes only.
+
+## License
 
 [GPL-3.0](LICENSE)
