@@ -2,6 +2,10 @@
 
 A lightweight video editor with Media, Edit, Color and Deliver pages. Its workflow is inspired by DaVinci Resolve, with far fewer features. The UI is available in English and German.
 
+[![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
+
+**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage). To build from source, see [Building](#building).
+
 > Status: early development (0.x). The project file format may still change between versions.
 
 ![Edit page](screenshots/edit.png)
