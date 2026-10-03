@@ -18,11 +18,17 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config git ca-certificates \
             qt6-base-dev libmlt++-dev libmlt-dev libmlt-data \
-            ffmpeg frei0r-plugins
+            ffmpeg frei0r-plugins xvfb xauth locales
+          # Locale-aware sorting and German number format are tested; default "C" locale breaks them
+          sed -i 's/^# *de_DE.UTF-8/de_DE.UTF-8/' /etc/locale.gen
+          locale-gen
       - uses: actions/checkout@v4
       - name: Configure
         run: cmake -S . -B build -G Ninja -DSCHNEIDI_TESTS=ON
       - name: Build
         run: cmake --build build
       - name: Test
-        run: ctest --test-dir build --output-on-failure -j2
+        # MLT's Qt module (titles, subtitles, compositing) needs an X server
+        env:
+          LANG: de_DE.UTF-8
+        run: xvfb-run -a ctest --test-dir build --output-on-failure -j2
