@@ -29,7 +29,14 @@ sudo apt install build-essential cmake ninja-build pkg-config qt6-base-dev libml
 cmake -S . -B build -G Ninja && cmake --build build && ./build/schneidi
 ```
 
-**Windows:** über MSYS2 (UCRT64), siehe [`docs/windows.md`](docs/windows.md) und `packaging/windows/build-windows.sh`.
+**Windows:** über [MSYS2](https://www.msys2.org), Umgebung UCRT64. Repo in einen Ordner ohne Leerzeichen/Umlaute klonen, dann:
+
+```bash
+pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,qt6-base,qt6-svg,mlt,ffmpeg,frei0r-plugins,SDL2,ntldd,libebur128,fftw,libsamplerate,rubberband,rtaudio}
+packaging/windows/build-windows.sh
+```
+
+Ergebnis: `dist/schneidi-windows-<version>.zip` (Programmordner) und, falls [Inno Setup 6](https://jrsoftware.org/isinfo.php) installiert ist (`winget install JRSoftware.InnoSetup`), `dist/schneidi-setup-<version>.exe`.
 
 **Tests:**
 
@@ -37,12 +44,10 @@ cmake -S . -B build -G Ninja && cmake --build build && ./build/schneidi
 cmake -S . -B build-tests -G Ninja -DSCHNEIDI_TESTS=ON && cmake --build build-tests && ctest --test-dir build-tests --output-on-failure
 ```
 
-## Dokumentation
-
-- [`docs/plan.md`](docs/plan.md) – Architektur und Meilensteine
-- [`docs/davinci-shortcuts.md`](docs/davinci-shortcuts.md) – Tastenkürzel
-- [`docs/dev-notes.md`](docs/dev-notes.md) – Entwickler-Notizen
-
 ## Hinweis
 
 schneidi ist ein unabhängiges Projekt und steht in keiner Verbindung zu Blackmagic Design. „DaVinci Resolve“ ist eine Marke von Blackmagic Design.
+
+## Lizenz
+
+[GPL-3.0](LICENSE)

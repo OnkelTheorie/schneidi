@@ -3,7 +3,8 @@
 Eigener Videoschnitt-Editor, angelehnt an DaVinci Resolve (Aufbau, Bedienung, Optik), aber deutlich einfacher.
 Im Zweifel: verhalten wie DaVinci.
 
-- Anforderungen: `videoeditor-anforderungen.md`
+- Anforderungen: `docs/anforderungen.md`
+- `docs/` ist lokal/privat (gitignored, eigenes Repo `schneidi-docs` auf Gitea), nicht im öffentlichen GitHub-Repo
 - Plan/Architektur/Meilensteine: `docs/plan.md`
 - Entwickler-Notizen (Testen, Screenshots, gelöste Stolperfallen): `docs/dev-notes.md`
 - Kernregel: Timeline-Zoom/Scroll ändern sich nur durch Nutzereingabe (siehe Plan).

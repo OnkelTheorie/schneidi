@@ -6,3 +6,6 @@ compile_commands.json
 dist/
 packaging/linux/tools/
 referenz-bilder/
+# Interne Notizen (Plan, Feedback, Ideen) – eigenes privates Repo, nicht öffentlich
+docs/
+videoeditor-anforderungen.md

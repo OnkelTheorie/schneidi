@@ -3,7 +3,7 @@
 # Läuft in MSYS2 (Umgebung UCRT64). Aufbau wie in src/engine/Bundle.h (<prefix> = Programmordner):
 #   schneidi.exe ffmpeg.exe ffprobe.exe *.dll  platforms/ styles/ …  lib/mlt-7  share/mlt-7  lib/frei0r-1
 # Aufruf aus dem Projektordner:  packaging/windows/build-windows.sh
-# Pakete: siehe docs/windows.md
+# Pakete: siehe README.md (Abschnitt Windows)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -319,7 +319,7 @@ QString Engine::audioDriver()
 {
 #ifdef Q_OS_WIN
     // SDL 2.32 über WASAPI knackte an jeder Bildgrenze und verfälschte den Pegel (7.1-Headset, 44,1 kHz);
-    // DirectSound lieferte im Mitschnitt denselben Ton sauber (Nutzer-Test 1, docs/windows.md)
+    // DirectSound lieferte im Mitschnitt denselben Ton sauber (Nutzer-Test 1)
     constexpr const char* fallback = "directsound";
 #else
     constexpr const char* fallback = "";

@@ -111,7 +111,7 @@ if(WIN32)
     target_sources(schneidi PRIVATE packaging/windows/schneidi.rc) # Programmsymbol
 endif()
 
-# Installation (Paketierung: AppImage unter Linux, später Programmordner unter Windows, siehe docs/dev-notes.md)
+# Installation (Paketierung: AppImage unter Linux, später Programmordner unter Windows, siehe README.md)
 include(GNUInstallDirs)
 install(TARGETS schneidi RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(UNIX AND NOT APPLE)
@@ -119,7 +119,7 @@ if(UNIX AND NOT APPLE)
     install(FILES assets/schneidi.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 endif()
 
-# Automatische Tests (CTest): cmake -DSCHNEIDI_TESTS=ON, siehe docs/dev-notes.md
+# Automatische Tests (CTest): cmake -DSCHNEIDI_TESTS=ON, siehe README.md
 option(SCHNEIDI_TESTS "Tests bauen" OFF)
 if(SCHNEIDI_TESTS)
     enable_testing()
