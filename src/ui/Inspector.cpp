@@ -603,7 +603,7 @@ void Inspector::addColor(Section& s, const QString& label, const QString& text,
     swatch->setToolTip(T("%1 wählen").arg(text));
     const TrackKind kind = s.kind;
     const bool title = s.title;
-    connect(swatch, &QToolButton::clicked, this, [=] {
+    connect(swatch, &QToolButton::clicked, this, [=, this] {
         const Clip* c = primary(kind, title);
         if (!c) return;
         Clip copy = *c;
@@ -617,7 +617,7 @@ void Inspector::addColor(Section& s, const QString& label, const QString& text,
             if (also) also(clip);
         }, title);
     });
-    m_refreshers << [=] {
+    m_refreshers << [=, this] {
         if (const Clip* c = primary(kind, title)) {
             Clip copy = *c;
             const QColor col = anim ? Keys::toColor(Keys::valueAt(copy, *anim, localFrame(copy))) : color(copy);
@@ -715,13 +715,13 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
     auto onKey = [this, params](const Clip& c) {
         return std::all_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::keyAt(c, p, localFrame(c)); });
     };
-    connect(diamond, &QToolButton::clicked, this, [=] {
+    connect(diamond, &QToolButton::clicked, this, [=, this] {
         const Clip* c = primary(kind, title, effect);
         if (!c) return;
         m_editor->setKeyframes(selectedIds(kind, title, effect), params, m_playhead, !onKey(*c));
     });
     // Springen: nur Keyframes innerhalb des Clips (nach Trimmen können welche außerhalb liegen)
-    auto jump = [=](bool forward) {
+    auto jump = [=, this](bool forward) {
         const Clip* c = primary(kind, title, effect);
         if (!c) return;
         const int t = localFrame(*c);
@@ -737,7 +737,7 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
 
     // Rechtsklick auf die Raute: Verlauf wie DaVinci
     diamond->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(diamond, &QWidget::customContextMenuRequested, this, [=](const QPoint& pos) {
+    connect(diamond, &QWidget::customContextMenuRequested, this, [=, this](const QPoint& pos) {
         const Clip* c = primary(kind, title, effect);
         if (!c || !onKey(*c)) return;
         const Keyframe* k = Keys::keyAt(*c, params.first(), localFrame(*c));
@@ -749,14 +749,14 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
             QAction* a = menu.addAction(e.name); // wie DaVinci auch deutsch englisch
             a->setCheckable(true);
             a->setChecked(k && k->ease == e.ease);
-            connect(a, &QAction::triggered, this, [=, ease = e.ease] {
+            connect(a, &QAction::triggered, this, [=, this, ease = e.ease] {
                 m_editor->setKeyframeEase(selectedIds(kind, title, effect), params, m_playhead, ease);
             });
         }
         menu.exec(diamond->mapToGlobal(pos));
     });
 
-    m_refreshers << [=] {
+    m_refreshers << [=, this] {
         const Clip* c = primary(kind, title, effect);
         if (!c) return;
         const bool animated = std::any_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::animated(*c, p); });

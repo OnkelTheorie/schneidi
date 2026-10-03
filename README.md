@@ -31,7 +31,7 @@ A lightweight video editor with Media, Edit, Color and Deliver pages. Its workfl
 
 ## Building
 
-C++17, Qt 6 Widgets, MLT 7, CMake.
+C++20, Qt 6 Widgets, MLT 7, CMake.
 
 **Linux (Debian/Ubuntu):**
 

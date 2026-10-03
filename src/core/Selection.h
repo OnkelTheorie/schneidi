@@ -6,8 +6,7 @@
 struct TransitionKey {
     int leftId = 0, rightId = 0;
     bool isNull() const { return !leftId && !rightId; }
-    bool operator==(const TransitionKey& o) const { return leftId == o.leftId && rightId == o.rightId; }
-    bool operator!=(const TransitionKey& o) const { return !(*this == o); }
+    bool operator==(const TransitionKey&) const = default;
 };
 
 // Ausgewählter Schnittpunkt (DaVinci V/U): Clip links/rechts vom Schnitt (0 = keiner, Kante an einer Lücke);
@@ -16,7 +15,7 @@ struct EditPoint {
     int leftId = 0, rightId = 0;
     int side = 0;
     bool isNull() const { return !leftId && !rightId; }
-    bool operator==(const EditPoint& o) const { return leftId == o.leftId && rightId == o.rightId && side == o.side; }
+    bool operator==(const EditPoint&) const = default;
 };
 
 // Ausgewählte Clips bzw. ein Übergang (UI-Zustand, nicht Teil des Projekts / Undo).

@@ -24,10 +24,7 @@ struct EffectInstance {
     QString effectId;   // Schlüssel in der EffectRegistry, z. B. "chromakey"
     QVariantMap params; // Parameter-Werte (fehlende = Default aus der Registry)
     bool enabled = true;
-    bool operator==(const EffectInstance& o) const
-    {
-        return effectId == o.effectId && params == o.params && enabled == o.enabled;
-    }
+    bool operator==(const EffectInstance&) const = default;
 };
 
 constexpr double kMinVolumeDb = -60.0; // ganz unten = -∞ (stumm)
@@ -61,13 +58,7 @@ struct ClipTransform {
     }
     bool hasOpacity() const { return compositeOn && opacity != 100; }
     bool isIdentity() const { return !hasTransform() && !hasCrop() && !hasOpacity(); }
-    bool operator==(const ClipTransform& o) const
-    {
-        return zoomX == o.zoomX && zoomY == o.zoomY && posX == o.posX && posY == o.posY && rotation == o.rotation
-               && cropLeft == o.cropLeft && cropRight == o.cropRight && cropTop == o.cropTop
-               && cropBottom == o.cropBottom && opacity == o.opacity && transformOn == o.transformOn
-               && cropOn == o.cropOn && compositeOn == o.compositeOn;
-    }
+    bool operator==(const ClipTransform&) const = default;
 };
 
 // Titel (Text-Generator wie in DaVinci): Werte in Pixeln des Projektformats
@@ -86,14 +77,7 @@ struct TitleStyle {
     QColor boxColor{0, 0, 0, 160};
     double boxPad = 20;
 
-    bool operator==(const TitleStyle& o) const
-    {
-        return text == o.text && font == o.font && size == o.size && color == o.color && bold == o.bold
-               && italic == o.italic && align == o.align && posX == o.posX && posY == o.posY
-               && outlineOn == o.outlineOn && outlineColor == o.outlineColor && outlineWidth == o.outlineWidth
-               && boxOn == o.boxOn && boxColor == o.boxColor && boxPad == o.boxPad;
-    }
-    bool operator!=(const TitleStyle& o) const { return !(*this == o); }
+    bool operator==(const TitleStyle&) const = default;
 
     // Schrift zum Zeichnen: "Sans" (Standard, so auch in Projekten gespeichert) gibt es unter Windows nicht
     QString fontFamily() const
@@ -130,13 +114,7 @@ struct TransitionStyle {
 
     bool isWipe() const { return type >= TransitionType::WipeRight && type <= TransitionType::WipeUp; }
     bool isLuma() const { return type == TransitionType::Luma; }
-    bool operator==(const TransitionStyle& o) const
-    {
-        return type == o.type && align == o.align && color == o.color && softness == o.softness
-               && border == o.border && borderColor == o.borderColor && audio == o.audio && luma == o.luma
-               && invert == o.invert;
-    }
-    bool operator!=(const TransitionStyle& o) const { return !(*this == o); }
+    bool operator==(const TransitionStyle&) const = default;
 };
 // Reihenfolge = Anzeige in Menüs/Inspector; id = Schlüssel in der Projektdatei
 struct TransitionTypeInfo { TransitionType type; const char* id; const char* name; };
@@ -203,11 +181,7 @@ struct Keyframe {
     // Nur bei Bezier: Griffe relativ zum Keyframe (Frames, Wert); ein: dt <= 0, aus: dt >= 0.
     // Beim Rechnen auf den Nachbarabschnitt gekürzt (Steigung bleibt), siehe core/Keyframes.cpp.
     double inDt = 0, inDv = 0, outDt = 0, outDv = 0;
-    bool operator==(const Keyframe& o) const
-    {
-        return frame == o.frame && value == o.value && ease == o.ease && inDt == o.inDt && inDv == o.inDv &&
-               outDt == o.outDt && outDv == o.outDv;
-    }
+    bool operator==(const Keyframe&) const = default;
 };
 using KeyTrack = QVector<Keyframe>; // nach frame sortiert, jeder Frame höchstens einmal
 
@@ -218,11 +192,11 @@ struct SpeedPoint {
     double source = 0;  // Quell-Position (> 0)
     double speed = 1.0; // Tempo ab hier bis zum nächsten Punkt (> 0)
     int smooth = 0;     // weicher Übergang: Länge in Frames, mittig um den Punkt (0 = harter Wechsel)
-    bool operator==(const SpeedPoint& o) const { return source == o.source && speed == o.speed && smooth == o.smooth; }
+    bool operator==(const SpeedPoint&) const = default;
 };
 
-// Neue Felder in Clip, Track, SubtitleTrack, Timeline auch in deren operator== eintragen (Project::edit erkennt
-// damit Bearbeitungen ohne Änderung – ein vergessenes Feld hieße: Änderung daran landet nicht im Undo)
+// Project::edit erkennt Bearbeitungen ohne Änderung per operator== (Snapshot-Vergleich). Die Vergleiche sind
+// `= default` und erfassen neue Felder automatisch; nur Timeline vergleicht von Hand (ohne `nested`).
 struct Clip {
     int id = 0;
     ClipKind kind = ClipKind::Media;
@@ -282,19 +256,7 @@ struct Clip {
     int end() const { return start + length(); } // exklusiv
     double pos() const { return start + subframe / 100.0; } // mit Feinposition (Zeichnen)
     double endPos() const { return end() + subframe / 100.0; }
-    bool operator==(const Clip& o) const
-    {
-        return id == o.id && kind == o.kind && mediaPath == o.mediaPath && title == o.title
-               && sequenceId == o.sequenceId && start == o.start && in == o.in && out == o.out && linkId == o.linkId
-               && subframe == o.subframe
-               && volumeDb == o.volumeDb && pan == o.pan && audioStream == o.audioStream && enabled == o.enabled
-               && transform == o.transform && effects == o.effects && transIn == o.transIn
-               && transOut == o.transOut && transInAlone == o.transInAlone
-               && transOutAlone == o.transOutAlone && transInStyle == o.transInStyle && transOutStyle == o.transOutStyle
-               && fadeIn == o.fadeIn && fadeOut == o.fadeOut && keys == o.keys && speed == o.speed
-               && reverse == o.reverse && freeze == o.freeze && freezeFrame == o.freezeFrame
-               && keepPitch == o.keepPitch && ramp == o.ramp && renderCache == o.renderCache;
-    }
+    bool operator==(const Clip&) const = default;
     // Titel: jedes Frame gleich, beliebig lang trimmbar (in darf auch negativ werden)
     bool isTitle() const { return kind == ClipKind::Title; }
     bool isCompound() const { return kind == ClipKind::Compound; }
@@ -338,11 +300,7 @@ struct Track {
     double volumeDb = 0.0;
     double pan = 0.0;
     bool solo = false;
-    bool operator==(const Track& o) const
-    {
-        return kind == o.kind && name == o.name && color == o.color && locked == o.locked && clips == o.clips
-               && muted == o.muted && hidden == o.hidden && volumeDb == o.volumeDb && pan == o.pan && solo == o.solo;
-    }
+    bool operator==(const Track&) const = default;
 };
 
 // Untertitel wie DaVinci: eigene Untertitelspuren (ST1, ST2 …) über den Videospuren. Ein Eintrag = Text von
@@ -353,10 +311,7 @@ struct SubtitleCue {
     int end = 0; // exklusiv
     QString text;
     int length() const { return end - start; }
-    bool operator==(const SubtitleCue& o) const
-    {
-        return id == o.id && start == o.start && end == o.end && text == o.text;
-    }
+    bool operator==(const SubtitleCue&) const = default;
 };
 
 // Stil einer Untertitelspur: wie ein Titel, aber posY = Abstand der Textunterkante vom unteren Bildrand
@@ -381,16 +336,13 @@ struct SubtitleTrack {
     bool locked = false;
     TitleStyle style = subtitleBaseStyle();
     QVector<SubtitleCue> cues; // nach start sortiert, ohne Überlappung
-    bool operator==(const SubtitleTrack& o) const
-    {
-        return name == o.name && enabled == o.enabled && locked == o.locked && style == o.style && cues == o.cues;
-    }
+    bool operator==(const SubtitleTrack&) const = default;
 };
 
 struct TrackRef {
     TrackKind kind = TrackKind::Video;
     int index = 0; // V1 = Video/0, A1 = Audio/0
-    bool operator==(const TrackRef& o) const { return kind == o.kind && index == o.index; }
+    bool operator==(const TrackRef&) const = default;
 };
 
 // Kürzel wie im DaVinci-Spurkopf („V1“, „A2“) und angezeigter Spurname (eigener oder „Video 1“/„Audio 1“)
@@ -432,7 +384,8 @@ struct Timeline {
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }
     Track& track(TrackRef r) { return tracks(r.kind)[r.index]; }
     const Track& track(TrackRef r) const { return tracks(r.kind)[r.index]; }
-    // Gleicher Schnitt (ohne `nested`, das nur zum Rendern dient)
+    // Gleicher Schnitt (ohne `nested`, das nur zum Rendern dient).
+    // Von Hand: neue Felder hier eintragen, sonst landen Änderungen daran nicht im Undo
     bool operator==(const Timeline& o) const
     {
         return video == o.video && audio == o.audio && subtitles == o.subtitles && markers == o.markers
@@ -455,7 +408,7 @@ struct Sequence {
 struct AudioStreamInfo {
     int channels = 2;
     QString title; // Stream-Titel aus der Datei (leer = keiner)
-    bool operator==(const AudioStreamInfo& o) const { return channels == o.channels && title == o.title; }
+    bool operator==(const AudioStreamInfo&) const = default;
 };
 
 struct MediaInfo {
@@ -490,7 +443,7 @@ struct MediaBin {
     int id = 0;
     int parent = 0;
     QString name;
-    bool operator==(const MediaBin& o) const { return id == o.id && parent == o.parent && name == o.name; }
+    bool operator==(const MediaBin&) const = default;
 };
 
 // Flag-Farben wie DaVinci (Media Pool/Timeline Rechtsklick → Flags)

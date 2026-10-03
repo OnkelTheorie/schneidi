@@ -15,17 +15,14 @@ struct MediaOrg {
     int bin = 0;
     QString color;
     QStringList flags;
-    bool operator==(const MediaOrg& o) const { return bin == o.bin && color == o.color && flags == o.flags; }
+    bool operator==(const MediaOrg&) const = default;
 };
 // Stand der Media-Pool-Organisation (Bins + Organisation je Pfad) – Undo-Schnappschuss
 struct PoolState {
     QVector<MediaBin> bins;
     QHash<QString, MediaOrg> media;
     QHash<int, int> sequenceBins; // Sequenz-id -> Bin (Timelines/Compound Clips im Media Pool)
-    bool operator==(const PoolState& o) const
-    {
-        return bins == o.bins && media == o.media && sequenceBins == o.sequenceBins;
-    }
+    bool operator==(const PoolState&) const = default;
 };
 
 // Hält das Projekt (Media + Timeline). Jede Änderung der Timeline läuft über edit()
