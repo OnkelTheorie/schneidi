@@ -30,9 +30,8 @@ add_custom_target(schneidi_buildinfo
     BYPRODUCTS ${SCHNEIDI_BUILDINFO}
     COMMENT "Build-Kennung")
 
-add_executable(schneidi
-    src/main.cpp
-
+# All program sources except main.cpp: shared by the app and the tests
+add_library(schneidi_lib STATIC
     src/core/Types.h
     src/core/I18n.h               src/core/I18n.cpp
     src/core/Timecode.h
@@ -96,15 +95,18 @@ add_executable(schneidi
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp
 )
 
-qt_add_resources(schneidi "i18n" PREFIX "/" FILES i18n/en.json)
+qt_add_resources(schneidi_lib "i18n" PREFIX "/" FILES i18n/en.json)
 set(SCHNEIDI_THEMES assets/themes/dark-orange.json assets/themes/midnight.json assets/themes/graphit.json assets/themes/hell.json assets/themes/beige.json)
-qt_add_resources(schneidi "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_THEMES})
+qt_add_resources(schneidi_lib "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_THEMES})
 file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/luts/*.cube) # tools/gen_luts.py
-qt_add_resources(schneidi "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
+qt_add_resources(schneidi_lib "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
+target_include_directories(schneidi_lib PUBLIC src)
+target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets PkgConfig::MLT)
 
-target_include_directories(schneidi PRIVATE src ${CMAKE_BINARY_DIR}/generated)
+add_executable(schneidi src/main.cpp)
+target_include_directories(schneidi PRIVATE ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(schneidi schneidi_buildinfo)
-target_link_libraries(schneidi PRIVATE Qt6::Widgets PkgConfig::MLT)
+target_link_libraries(schneidi PRIVATE schneidi_lib)
 
 if(WIN32)
     set_target_properties(schneidi PROPERTIES WIN32_EXECUTABLE ON)
