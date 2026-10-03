@@ -59,7 +59,7 @@ cmake -S . -B build-tests -G Ninja -DSCHNEIDI_TESTS=ON && cmake --build build-te
 
 ## Credits
 
-Developed with the help of [Claude](https://claude.ai) (Anthropic) as an AI coding assistant.
+Developed by [OnkelTheorie](https://github.com/OnkelTheorie) with the help of [Claude](https://claude.ai) (Anthropic) as an AI coding assistant.
 
 ## Disclaimer
 
