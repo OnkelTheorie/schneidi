@@ -1,8 +1,8 @@
 # schneidi
 
-Ein schlanker Videoschnitt-Editor, angelehnt an DaVinci Resolve (Aufbau, Bedienung, Tastenkürzel), aber deutlich einfacher.
+Ein schlanker Videoschnitt-Editor mit Seiten für Media, Edit, Color und Deliver. Bedienung inspiriert von DaVinci Resolve, aber deutlich einfacher.
 
-*A lightweight video editor modeled after DaVinci Resolve — same layout and shortcuts, far fewer features. UI available in German and English.*
+*A lightweight video editor inspired by the workflow of DaVinci Resolve, with far fewer features. UI available in German and English.*
 
 > Status: frühe Entwicklung (0.x). Projektdateien können sich zwischen Versionen noch ändern.
 
@@ -12,7 +12,7 @@ Ein schlanker Videoschnitt-Editor, angelehnt an DaVinci Resolve (Aufbau, Bedienu
 
 - Mehrere Video- und Audiospuren, Schneiden, Trimmen, Verschieben, Snapping, Undo/Redo
 - Timeline-Zoom und -Scroll ändern sich **nur durch Nutzereingabe** – nichts springt, wenn Clips kürzer werden
-- Tastenbelegung wie in DaVinci, anpassbar
+- Tastenbelegung frei anpassbar
 - Titel, Untertitel, Fades, Übergänge, Lautstärke, Loudness-Normalisierung
 - Farbkorrektur, Kurven, LUTs, Effekte mit Keyframes
 - Clip-Geschwindigkeit / Retime
@@ -55,7 +55,9 @@ cmake -S . -B build-tests -G Ninja -DSCHNEIDI_TESTS=ON && cmake --build build-te
 
 ## Hinweis
 
-schneidi ist ein unabhängiges Projekt und steht in keiner Verbindung zu Blackmagic Design. „DaVinci Resolve“ ist eine Marke von Blackmagic Design.
+schneidi ist ein unabhängiges Open-Source-Projekt. Es steht in keiner Verbindung zu Blackmagic Design und wird von Blackmagic Design weder unterstützt noch empfohlen. „DaVinci Resolve“ ist eine Marke von Blackmagic Design Pty Ltd und wird hier nur zur Beschreibung verwendet.
+
+*schneidi is an independent project, not affiliated with or endorsed by Blackmagic Design. DaVinci Resolve is a trademark of Blackmagic Design Pty Ltd.*
 
 ## Lizenz
 
