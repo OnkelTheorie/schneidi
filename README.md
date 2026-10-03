@@ -2,9 +2,11 @@
 
 Ein schlanker Videoschnitt-Editor, angelehnt an DaVinci Resolve (Aufbau, Bedienung, Tastenkürzel), aber deutlich einfacher.
 
-*A lightweight video editor modeled after DaVinci Resolve's Edit page — same layout and shortcuts, far fewer features. UI available in German and English.*
+*A lightweight video editor modeled after DaVinci Resolve — same layout and shortcuts, far fewer features. UI available in German and English.*
 
 > Status: frühe Entwicklung (0.x). Projektdateien können sich zwischen Versionen noch ändern.
+
+![Edit-Seite](screenshots/edit.png)
 
 ## Funktionen
 
@@ -17,6 +19,13 @@ Ein schlanker Videoschnitt-Editor, angelehnt an DaVinci Resolve (Aufbau, Bedienu
 - Proxy- und Render-Cache für flüssige Vorschau
 - Export und Render-Warteschlange über FFmpeg
 - Themes, Deutsch/Englisch
+
+<details>
+<summary>Color-Seite</summary>
+
+![Color-Seite](screenshots/color.png)
+
+</details>
 
 ## Bauen
 
