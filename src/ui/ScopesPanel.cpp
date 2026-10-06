@@ -47,6 +47,7 @@ protected:
         switch (m_type) {
         case Scopes::Type::Waveform:
         case Scopes::Type::Parade:
+        case Scopes::Type::Overlay:
             paintWave(p);
             break;
         case Scopes::Type::Vectorscope:
@@ -199,6 +200,7 @@ ScopesPanel::ScopesPanel(QWidget* parent) : QWidget(parent)
     m_combo = new QComboBox;
     m_combo->addItem(T("Waveform"), int(Scopes::Type::Waveform));
     m_combo->addItem(T("Parade"), int(Scopes::Type::Parade));
+    m_combo->addItem(T("RGB-Overlay"), int(Scopes::Type::Overlay));
     m_combo->addItem(T("Vektorskop"), int(Scopes::Type::Vectorscope));
     m_combo->addItem(T("Histogramm"), int(Scopes::Type::Histogram));
     m_combo->setToolTip(T("Art des Scopes (berechnet aus dem Vorschaubild nach der Farbkorrektur)"));
@@ -229,7 +231,7 @@ ScopesPanel::ScopesPanel(QWidget* parent) : QWidget(parent)
     connect(m_throttle, &QTimer::timeout, this, &ScopesPanel::dispatch);
 
     const int saved = QSettings().value("color/scope", int(Scopes::Type::Waveform)).toInt();
-    m_type = Scopes::Type(std::clamp(saved, 0, 3));
+    m_type = Scopes::Type(std::clamp(saved, 0, 4));
     m_combo->setCurrentIndex(m_combo->findData(int(m_type)));
     connect(m_combo, &QComboBox::currentIndexChanged, this, [this] {
         setType(Scopes::Type(m_combo->currentData().toInt()));

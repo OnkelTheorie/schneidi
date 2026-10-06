@@ -131,6 +131,21 @@ QImage trace(const Data& d, Type type)
         }
         return img;
     }
+    if (type == Type::Overlay) {
+        QImage img(d.columns, kLevels, QImage::Format_ARGB32_Premultiplied);
+        const double ref = std::max(2.0, d.rows * 0.1);
+        for (int level = 0; level < kLevels; ++level) {
+            QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(kLevels - 1 - level));
+            for (int x = 0; x < d.columns; ++x) {
+                // Premultiplied: channel value = brightness, alpha = strongest channel (drawn with Plus)
+                const int c[3] = {int(intensity(d.rgb[0][x * kLevels + level], ref) * 255 + 0.5),
+                                  int(intensity(d.rgb[1][x * kLevels + level], ref) * 255 + 0.5),
+                                  int(intensity(d.rgb[2][x * kLevels + level], ref) * 255 + 0.5)};
+                line[x] = qRgba(c[0], c[1], c[2], std::max({c[0], c[1], c[2]}));
+            }
+        }
+        return img;
+    }
     const int panels = type == Type::Parade ? 3 : 1;
     QImage img(d.columns * panels, kLevels, QImage::Format_ARGB32_Premultiplied);
     // A cell "full" when a tenth of the column hits it

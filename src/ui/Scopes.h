@@ -4,13 +4,13 @@
 #include <QVector>
 #include <array>
 
-// Video scopes of the Color page (like DaVinci Resolve): Waveform (luma), RGB Parade, Vectorscope, Histogram.
+// Video scopes of the Color page (like DaVinci Resolve): Waveform (luma), RGB Parade, RGB Overlay (R/G/B waveform on top of each other), Vectorscope, Histogram.
 // Pure computation without widgets, safe to run off the UI thread (QImage only, no fonts/painting of text).
 // The frame is point-sampled down to at most maxColumns x maxRows pixels before analysis, so a 960x540 preview
 // frame costs about a millisecond.
 namespace Scopes {
 
-enum class Type { Waveform, Parade, Vectorscope, Histogram };
+enum class Type { Waveform, Parade, Vectorscope, Histogram, Overlay };
 
 constexpr int kLevels = 256;     // vertical resolution of waveform/parade, bins of the histogram
 constexpr int kVectorSize = 256; // vectorscope grid (kVectorSize x kVectorSize)
@@ -40,7 +40,7 @@ struct Data {
 Data compute(const QImage& frame, int maxColumns = 480, int maxRows = 270);
 
 // Trace image (transparent background, premultiplied) in data resolution, scaled up by the widget:
-// Waveform columns x kLevels, Parade 3*columns x kLevels (R | G | B), Vectorscope kVectorSize^2.
+// Waveform/Overlay columns x kLevels, Parade 3*columns x kLevels (R | G | B), Vectorscope kVectorSize^2.
 // Level 0 is the bottom row. Histogram has no trace image (drawn as curves) -> null image.
 QImage trace(const Data& d, Type type);
 

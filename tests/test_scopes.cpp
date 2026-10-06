@@ -234,9 +234,9 @@ void testPanel()
             for (int x = 0; x < img.width(); ++x) n += QColor(img.pixel(x, y)).rgb() != bg;
         return n;
     };
-    const Type types[] = {Type::Waveform, Type::Parade, Type::Vectorscope, Type::Histogram};
-    const char* names[] = {"waveform", "parade", "vectorscope", "histogram"};
-    for (int i = 0; i < 4; ++i) {
+    const Type types[] = {Type::Waveform, Type::Parade, Type::Vectorscope, Type::Histogram, Type::Overlay};
+    const char* names[] = {"waveform", "parade", "vectorscope", "histogram", "overlay"};
+    for (int i = 0; i < 5; ++i) {
         panel.setType(types[i]);
         if (types[i] != Type::Waveform) CHECK(waitFor(panel));
         CHECK(panel.type() == types[i]);
@@ -247,7 +247,7 @@ void testPanel()
     // Combo box follows and switches the type
     auto* combo = panel.findChild<QComboBox*>();
     if (CHECK(combo)) {
-        CHECK_EQ(combo->count(), 4);
+        CHECK_EQ(combo->count(), 5);
         combo->setCurrentIndex(0);
         CHECK(panel.type() == Type::Waveform);
     }
