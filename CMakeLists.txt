@@ -36,6 +36,7 @@ add_library(schneidi_lib STATIC
     src/core/I18n.h               src/core/I18n.cpp
     src/core/Timecode.h
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
+    src/core/TrimFrames.h         src/core/TrimFrames.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
     src/core/Retime.h             src/core/Retime.cpp
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
@@ -61,6 +62,7 @@ add_library(schneidi_lib STATIC
     src/engine/PitchLatency.h     src/engine/PitchLatency.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
+    src/engine/StillFetcher.h     src/engine/StillFetcher.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
     src/engine/Preroll.h          src/engine/Preroll.cpp
@@ -86,6 +88,7 @@ add_library(schneidi_lib STATIC
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
+    src/ui/TrimView.h             src/ui/TrimView.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/ColorPanel.h           src/ui/ColorPanel.cpp
     src/ui/Scopes.h               src/ui/Scopes.cpp
