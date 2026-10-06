@@ -1,7 +1,8 @@
 // Test presets from Kdenlive and Shotcut (core/Presets): custom effect with <parameter factor>, effect group with
 // keyframes (animation strings in frames, clock and SMPTE time, interpolation types, parentIn) and parameter names, Shotcut filter set (MLT XML) and filter preset (folder name = filter), colors and
 // choices, unknown filters skipped, LUT from avfilter.lut3d, broken files; applying via the Editor (one undo step,
-// existing effect takes the values) and the Effects Library category "Presets".
+// existing effect takes the values) and the Effects Library category "Presets". Own presets: clip effects -> Kdenlive
+// <effectgroup> -> read back (values, disabled effects, keyframes incl. eases and trimmed keys), file name, Library.
 // Picture of the Library: PRESETS_DUMP=<png> build-tests/tests/test_presets
 #include "check.h"
 
@@ -17,6 +18,7 @@
 #include <QApplication>
 #include <QColor>
 #include <QDir>
+#include <QFileInfo>
 #include <QFile>
 #include <QListWidget>
 #include <QTreeWidget>
@@ -322,6 +324,102 @@ int main(int argc, char** argv)
             CHECK_EQ(list->count(), 2);
         }
     }
+    // ---- Own presets: save as Kdenlive effect group, read back ----
+    {
+        Clip c;
+        c.in = 10;
+        c.out = 59; // 50 frames
+        CHECK(EffectRegistry::add(c, "frei0r.glow"));
+        CHECK(EffectRegistry::add(c, "frei0r.flippo"));
+        CHECK(EffectRegistry::add(c, "frei0r.colortap"));
+        CHECK(EffectRegistry::add(c, "chromakey"));
+        CHECK(EffectRegistry::add(c, "blur"));
+        CHECK(EffectRegistry::add(c, "color"));
+        CHECK(EffectRegistry::add(c, "grade"));
+        c.effects << EffectInstance{"frei0r.gibtsnicht", {{"0", 0.5}}, true};
+        EffectRegistry::instance(c, "frei0r.flippo")->params["0"] = true;
+        EffectRegistry::instance(c, "frei0r.flippo")->enabled = false;
+        EffectRegistry::instance(c, "frei0r.colortap")->params["0"] = "xray";
+        EffectRegistry::instance(c, "chromakey")->params["color"] = QColor(1, 2, 3, 200);
+        EffectRegistry::instance(c, "chromakey")->params["distance"] = 0.42;
+        EffectRegistry::instance(c, "color")->params["brightness"] = 12.5;
+        const AnimParam glow = animOf("frei0r.glow", "0");
+        Keys::setKey(c, glow, -5, 0.0); // before the clip start (trimmed): becomes a key at frame 0
+        Keys::setKey(c, glow, 20, 0.8);
+        Keys::setKey(c, glow, 40, 0.3);
+        c.keys[glow][1].ease = KeyEase::EaseOut;
+        c.keys[glow][2].ease = KeyEase::EaseInOut;
+        Keys::setKey(c, AnimParam::FxBlur, 0, 10);
+        Keys::setKey(c, AnimParam::FxBlur, 49, 60);
+        c.keys[AnimParam::FxBlur][0].ease = KeyEase::Bezier;
+        Keys::autoHandles(c.keys[AnimParam::FxBlur], 0);
+
+        QStringList skipped;
+        const QByteArray xml = Presets::toXml(c, "Mein Look", &skipped);
+        if (qEnvironmentVariableIsSet("PRESET_XML")) qInfo("%s", xml.constData());
+        CHECK(xml.contains("<effectgroup") && xml.contains("mlt_service"));
+        CHECK_EQ(skipped, (QStringList{EffectRegistry::find("grade")->name, "frei0r.gibtsnicht"}));
+        const Presets::Preset p = Presets::parse(xml, "Mein Look.xml");
+        CHECK(p.error.isEmpty());
+        CHECK_EQ(p.name, QString("Mein Look"));
+        CHECK_EQ(p.source, QString("Kdenlive"));
+        const Presets::Mapped m = Presets::map(p);
+        CHECK(m.skipped.isEmpty() && !m.keyframes);
+        // Onto another clip (other in point): same look at every frame
+        Clip t;
+        t.in = 100;
+        t.out = 149;
+        Presets::apply(t, m);
+        QStringList ids;
+        for (const EffectInstance& e : t.effects) ids << e.effectId;
+        CHECK_EQ(ids, (QStringList{"frei0r.glow", "frei0r.flippo", "frei0r.colortap", "chromakey", "blur", "color"}));
+        for (const EffectInstance& e : t.effects) {
+            const EffectInstance* o = EffectRegistry::instance(c, e.effectId);
+            if (!CHECK(o)) continue;
+            CHECK_EQ(e.enabled, o->enabled);
+            for (auto it = o->params.begin(); it != o->params.end(); ++it) {
+                if (const AnimParam a = animOf(e.effectId, it.key()); a != AnimParam::Count && Keys::animated(c, a))
+                    continue; // animated: compared below
+                if (it.value().typeId() == QMetaType::Double)
+                    CHECK(qAbs(e.params.value(it.key()).toDouble() - it.value().toDouble()) < 1e-9);
+                else
+                    CHECK(e.params.value(it.key()) == it.value());
+            }
+        }
+        CHECK(!EffectRegistry::instance(t, "frei0r.flippo")->enabled);
+        double worst = 0;
+        for (int f = 0; f < 50; ++f) worst = std::max(worst, std::abs(Keys::valueAt(t, glow, f) - Keys::valueAt(c, glow, f)));
+        CHECK(worst < 1e-6); // eases survive as MLT sinusoidal types
+        CHECK_EQ(Keys::keyTimes(t, {glow}), (QVector<int>{0, 20, 40}));
+        CHECK_EQ(t.keys.value(glow).value(0).frame, 100);
+        if (CHECK(Keys::animated(t, AnimParam::FxBlur))) { // Bezier -> smooth: same ends, soft curve
+            CHECK(t.keys[AnimParam::FxBlur][0].ease == KeyEase::Bezier);
+            CHECK(Keys::valueAt(t, AnimParam::FxBlur, 0) == 10 && Keys::valueAt(t, AnimParam::FxBlur, 49) == 60);
+        }
+
+        // Save into the presets folder (safe file name), apply via the Editor, listed in the Library
+        const QString path = Presets::userPresetPath("Mein/Look: *1*");
+        CHECK_EQ(QFileInfo(path).absolutePath(), QFileInfo(EffectFolders::presetDir()).absoluteFilePath());
+        CHECK_EQ(QFileInfo(path).fileName(), QString("Mein_Look_ _1_.xml"));
+        QString err;
+        CHECK(Presets::save(c, "Mein Look", path, &err));
+        project.edit("clear", [](Timeline& tl) { tl.video[0].clips[0].effects.clear(); tl.video[0].clips[0].keys.clear(); });
+        editor.addEffect({1}, Presets::Prefix + path);
+        CHECK_EQ(int(clip().effects.size()), 6);
+        CHECK(Keys::animated(clip(), glow));
+        EffectsLibrary lib2;
+        auto* tree2 = lib2.findChild<QTreeWidget*>();
+        auto* list2 = lib2.findChild<QListWidget*>();
+        const auto top = tree2->findItems("Presets", Qt::MatchExactly | Qt::MatchRecursive);
+        if (CHECK(top.size() == 1)) {
+            tree2->setCurrentItem(top.first());
+            bool listed = false;
+            for (int i = 0; i < list2->count(); ++i)
+                listed |= list2->item(i)->text() == "Mein Look" && !list2->item(i)->data(Qt::UserRole).toString().isEmpty();
+            CHECK(listed);
+        }
+    }
+
     QDir(EffectFolders::root()).removeRecursively();
     return Check::result();
 }

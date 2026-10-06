@@ -9,6 +9,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
+#include <QXmlStreamWriter>
 #include <QRegularExpression>
 #include <QXmlStreamReader>
 #include <algorithm>
@@ -39,7 +41,7 @@ bool isLut3d(const QString& service) { return service == "avfilter.lut3d" || ser
 // Properties that only describe the filter, not its look
 bool ignored(const QString& name)
 {
-    return name == "mlt_service" || name == "version" || name == "in" || name == "out" || name == "disable" ||
+    return name == "mlt_service" || name == "version" || name == "in" || name == "out" ||
            name.startsWith("shotcut:") || name.startsWith("kdenlive:") || name.startsWith("kdenlive_");
 }
 
@@ -266,7 +268,139 @@ QString lutFile(const Filter& f)
     return {};
 }
 
+QString number(double v) { return QString::number(v, 'g', 12); } // always '.', like MLT XML with LC_NUMERIC=C
+
+// Parameter value as MLT property text; empty = not saved
+QString valueText(const EffectParam& p, const QVariant& v)
+{
+    switch (p.type) {
+    case EffectParam::Double: return number(v.toDouble());
+    case EffectParam::Bool: return v.toBool() ? QStringLiteral("1") : QStringLiteral("0");
+    case EffectParam::Color: {
+        const QColor c = v.value<QColor>();
+        return QString::asprintf("0x%02x%02x%02x%02x", c.red(), c.green(), c.blue(), c.alpha()); // MLT 0xrrggbbaa
+    }
+    case EffectParam::Choice: return v.toString();
+    case EffectParam::Path: return {};
+    }
+    return {};
+}
+
+// MLT keyframe type of the segment a -> b (inverse of segmentOf/toKeyTrack)
+QChar segmentChar(const Keyframe& a, const Keyframe& b)
+{
+    if (a.ease == KeyEase::Bezier || b.ease == KeyEase::Bezier) return '~';
+    const bool start = a.ease == KeyEase::EaseOut || a.ease == KeyEase::EaseInOut;
+    const bool end = b.ease == KeyEase::EaseIn || b.ease == KeyEase::EaseInOut;
+    if (start && end) return 'c'; // sinusoidal in/out
+    if (start) return 'a';        // sinusoidal in
+    if (end) return 'b';          // sinusoidal out
+    return {};
+}
+
+// Keyframes as MLT animation string, frames from the clip start. Keys outside the clip (after trimming) would be
+// negative (= from the end in MLT) -> replaced by keys with the value at the clip edge.
+QString animationText(const Clip& c, AnimParam p)
+{
+    const KeyTrack& k = c.keys.value(p);
+    const int len = c.length();
+    KeyTrack inside;
+    for (Keyframe x : k) {
+        x.frame -= c.in;
+        if (x.frame >= 0 && x.frame < len) inside << x;
+    }
+    if (k.first().frame - c.in < 0 && (inside.isEmpty() || inside.first().frame != 0))
+        inside.prepend(Keyframe{0, Keys::valueAt(c, p, 0), KeyEase::Linear});
+    if (k.last().frame - c.in > len - 1 && inside.last().frame != len - 1)
+        inside << Keyframe{len - 1, Keys::valueAt(c, p, len - 1), KeyEase::Linear};
+    QStringList items;
+    for (int i = 0; i < inside.size(); ++i) {
+        QString t = QString::number(inside[i].frame);
+        if (i + 1 < inside.size())
+            if (const QChar type = segmentChar(inside[i], inside[i + 1]); !type.isNull()) t += type;
+        items << t + "=" + number(inside[i].value);
+    }
+    return items.join(';');
+}
+
+QString safeFileName(QString name)
+{
+    static const QRegularExpression bad(QStringLiteral("[\\\\/:*?\"<>|\\x00-\\x1f]"));
+    name.replace(bad, QStringLiteral("_"));
+    name = name.trimmed();
+    while (name.startsWith('.')) name.remove(0, 1); // no hidden files
+    return name.isEmpty() ? QStringLiteral("Preset") : name;
+}
+
 } // namespace
+
+QByteArray toXml(const Clip& c, const QString& name, QStringList* skipped)
+{
+    QByteArray out;
+    QXmlStreamWriter x(&out);
+    x.setAutoFormatting(true);
+    x.setAutoFormattingIndent(4);
+    x.writeStartDocument();
+    x.writeStartElement("effectgroup");
+    x.writeAttribute("id", name);
+    x.writeAttribute("parentIn", "0"); // keyframes count from the clip start
+    for (const EffectInstance& e : c.effects) {
+        const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+        if (!d || e.effectId == kGrade || !d->video) {
+            if (skipped) *skipped << (d ? d->name : e.effectId);
+            continue;
+        }
+        x.writeStartElement("effect");
+        x.writeAttribute("id", d->mltService.isEmpty() ? d->id : d->mltService);
+        if (!d->mltService.isEmpty()) {
+            x.writeStartElement("property");
+            x.writeAttribute("name", "mlt_service");
+            x.writeCharacters(d->mltService);
+            x.writeEndElement();
+        }
+        auto prop = [&](const QString& n, const QString& v) {
+            x.writeStartElement("property");
+            x.writeAttribute("name", n);
+            x.writeCharacters(v);
+            x.writeEndElement();
+        };
+        if (!e.enabled) prop("disable", "1");
+        for (const EffectParam& p : d->params) {
+            const QString n = p.mltProperty.isEmpty() ? p.key : p.mltProperty;
+            if (p.anim != AnimParam::Count && Keys::animated(c, p.anim)) {
+                prop(n, animationText(c, p.anim));
+                continue;
+            }
+            const QString v = valueText(p, e.params.value(p.key, p.defaultValue));
+            if (!v.isEmpty() || p.type == EffectParam::Choice) prop(n, v);
+        }
+        x.writeEndElement();
+    }
+    x.writeEndElement();
+    x.writeEndDocument();
+    return out;
+}
+
+QString userPresetPath(const QString& name)
+{
+    return QDir(EffectFolders::presetDir()).filePath(safeFileName(name) + ".xml");
+}
+
+bool save(const Clip& c, const QString& name, const QString& path, QString* error, QStringList* skipped)
+{
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) {
+        if (error) *error = f.errorString();
+        return false;
+    }
+    f.write(toXml(c, name, skipped));
+    if (!f.commit()) {
+        if (error) *error = f.errorString();
+        return false;
+    }
+    return true;
+}
 
 bool parseAnimation(const QString& v, double fps, QVector<RawKey>* keys)
 {
@@ -394,6 +528,10 @@ Mapped map(const Preset& preset, double fps)
         for (const EffectParam& p : d->params) inst.params[p.key] = p.defaultValue;
         QMap<AnimParam, QVector<AnimKey>> keys;
         for (const auto& [name, value] : f.props) {
+            if (name == "disable") { // MLT: filter switched off
+                inst.enabled = value.trimmed().isEmpty() || value.trimmed() == "0";
+                continue;
+            }
             const EffectParam* p = paramFor(*d, name);
             if (!p) continue;
             const double factor = f.factors.value(name, 1.0);

@@ -994,6 +994,9 @@ void Inspector::addRemoveButton(const Section& s, const QString& id)
     connect(s.header, &QWidget::customContextMenuRequested, this, [this, header = s.header, remove](const QPoint& pos) {
         QMenu menu(this);
         connect(menu.addAction(T("Effekt entfernen")), &QAction::triggered, this, remove);
+        menu.addSeparator();
+        connect(menu.addAction(T("Effekte als Preset speichern…")), &QAction::triggered, this,
+                &Inspector::savePresetRequested);
         menu.exec(header->mapToGlobal(pos));
     });
 }

@@ -42,6 +42,8 @@ public slots:
 signals:
     // Keyframe-Pfeile ◀ ▶: zum vorigen/nächsten Keyframe springen
     void seekRequested(int frame);
+    // Effect header context menu "save effects as preset" (dialog in MainWindow)
+    void savePresetRequested();
 
 private:
     using Field = std::function<double&(Clip&)>;

@@ -62,6 +62,17 @@ struct AnimKey {
 };
 KeyTrack toKeyTrack(QVector<AnimKey> keys, int length);
 
+// Own presets (Inspector / Timeline → Clip → "Effekte als Preset speichern"): the clip's effects as a Kdenlive
+// <effectgroup>, so parse() reads it back and Kdenlive can open it. MLT filters keep their service and property
+// names (frei0r, Green Screen); schneidi's own effects (color correction, blur) are written with their registry id
+// (only schneidi knows them). Keyframes become animation strings in frames from the clip start ("0=0.1;24a=0.8",
+// eases as MLT sinusoidal types, Bezier as smooth); disabled effects get disable=1. Not saved: the Color page grade
+// and effects whose plugin is missing (listed in `skipped`).
+QByteArray toXml(const Clip& c, const QString& name, QStringList* skipped = nullptr);
+// File for an own preset in the presets folder (name made safe as a file name)
+QString userPresetPath(const QString& name);
+bool save(const Clip& c, const QString& name, const QString& path, QString* error, QStringList* skipped = nullptr);
+
 // Shotcut preset folder name (QML objectName or MLT service) -> MLT service, empty = unknown
 QString shotcutService(const QString& folderName);
 

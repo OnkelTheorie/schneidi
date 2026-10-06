@@ -74,6 +74,9 @@ private:
     void updateRenderCacheBar(); // Render-Cache-Balken über der Timeline
     void clipSpeedDialog();
     void normalizeAudioDialog();
+    // Effects of the selected clip as own preset (effects/Presets, Kdenlive format, core/Presets)
+    void saveEffectPreset();
+    const Clip* presetClip() const;
     void buildActions();
     QAction* makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
                        const std::function<void()>& fn);

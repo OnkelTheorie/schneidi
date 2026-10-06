@@ -11,9 +11,11 @@
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
 #include "core/Editor.h"
+#include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "core/I18n.h"
 #include "core/Timecode.h"
+#include "core/Presets.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/Subtitles.h"
@@ -137,6 +139,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (m_engine->mode() == Engine::Mode::Timeline) m_inspector->setPlayhead(f);
     });
     connect(m_inspector, &Inspector::seekRequested, tv, &TimelineView::seekRequested);
+    connect(m_inspector, &Inspector::savePresetRequested, this, &MainWindow::saveEffectPreset);
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
         if (m_engine->mode() == Engine::Mode::Timeline) m_colorPanel->setPlayhead(f);
     });
@@ -193,7 +196,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         }
         for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "normalize_audio", "",
                                "toggle_enabled", "link_clips",
-                               "render_cache_clip", "", "compound_create", "compound_open", "compound_decompose", "",
+                               "render_cache_clip", "save_effect_preset", "", "compound_create", "compound_open", "compound_decompose", "",
                                "delete", "ripple_delete"}) {
             if (!*id) {
                 menu.addSeparator();
@@ -203,6 +206,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             if (!a) continue;
             if (QString(id) == "normalize_audio" && !audio) continue;
             if ((QString(id) == "compound_open" || QString(id) == "compound_decompose") && !compound) continue;
+            if (QString(id) == "save_effect_preset" && !presetClip()) continue;
             if (QString(id) == "render_cache_clip") {
                 if (cacheState < 0) continue; // nur Videoclips (keine Titel)
                 a->setChecked(cacheState == 1);
@@ -989,6 +993,8 @@ void MainWindow::buildActions()
         if (done.isEmpty()) QApplication::beep();
     });
     makeAction(clipMenu, "normalize_audio", T("Audiopegel normalisieren…"), QKeySequence(), [this] { normalizeAudioDialog(); });
+    makeAction(clipMenu, "save_effect_preset", T("Effekte als Preset speichern…"), QKeySequence(),
+               [this] { saveEffectPreset(); });
     makeAction(clipMenu, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
                [this] { m_editor->toggleLinkSelection(); });
     // Wie DaVinci „Render Cache Clip Output“: Vorschau spielt die vorgerenderte Clip-Ausgabe (Wiedergabe > Render-Cache)
@@ -1312,6 +1318,55 @@ void MainWindow::openProjectDialog()
     const QString dir = m_projectPath.isEmpty() ? QDir::homePath() : QFileInfo(m_projectPath).absolutePath();
     const QString path = QFileDialog::getOpenFileName(this, T("Projekt öffnen"), dir, kFileFilter);
     if (!path.isEmpty()) openProject(path);
+}
+
+const Clip* MainWindow::presetClip() const
+{
+    // Like adding effects: selected video clips (else the one under the playhead), the earliest with effects
+    const Clip* best = nullptr;
+    for (int id : m_editor->effectTargets(m_timeline->view()->playhead())) {
+        const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+        const bool has = c && std::any_of(c->effects.begin(), c->effects.end(), [](const EffectInstance& e) {
+            return e.effectId != QLatin1String("grade"); // Color page grade is not part of presets
+        });
+        if (has && (!best || c->start < best->start)) best = c;
+    }
+    return best;
+}
+
+void MainWindow::saveEffectPreset()
+{
+    const Clip* found = presetClip();
+    if (!found) {
+        QMessageBox::information(this, T("Effekte als Preset speichern"), T("Der Clip hat keine Effekte."));
+        return;
+    }
+    const Clip clip = *found; // pointers into the timeline do not survive dialogs
+    QString def;
+    for (const EffectInstance& e : clip.effects)
+        if (const EffectDescriptor* d = EffectRegistry::find(e.effectId); d && e.effectId != QLatin1String("grade")) {
+            def = d->name;
+            break;
+        }
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, T("Effekte als Preset speichern"), T("Name des Presets:"),
+                                               QLineEdit::Normal, def, &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    const QString path = Presets::userPresetPath(name);
+    if (QFileInfo::exists(path)
+        && QMessageBox::question(this, T("Effekte als Preset speichern"),
+                                 T("Ein Preset „%1“ gibt es schon. Ersetzen?").arg(name)) != QMessageBox::Yes)
+        return;
+    QString error;
+    QStringList skipped;
+    if (!Presets::save(clip, name, path, &error, &skipped)) {
+        QMessageBox::warning(this, T("Effekte als Preset speichern"),
+                             T("%1 konnte nicht gespeichert werden:\n%2").arg(QDir::toNativeSeparators(path), error));
+        return;
+    }
+    if (!skipped.isEmpty())
+        QMessageBox::information(this, T("Effekte als Preset speichern"),
+                                 T("Nicht im Preset (Color-Seite bzw. Plugin fehlt): %1").arg(skipped.join(", ")));
 }
 
 bool MainWindow::openProject(const QString& path)
