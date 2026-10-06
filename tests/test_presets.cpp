@@ -1,8 +1,10 @@
 // Test presets from Kdenlive and Shotcut (core/Presets): custom effect as Kdenlive 24.12 writes it (value = MLT value) and from before 19.04 (factor), effect group with
 // keyframes (animation strings in frames, clock and SMPTE time, interpolation types, parentIn) and parameter names, Shotcut filter set (MLT XML) and filter preset (folder name = filter), colors and
-// choices, unknown filters skipped, LUT from avfilter.lut3d, broken files; applying via the Editor (one undo step,
+// choices, MLT filters rebuilt with own effects (brightness/eq/greyscale -> color, blurs -> blur, lift_gamma_gain ->
+// grade, merged into existing values), unknown filters skipped, LUT from avfilter.lut3d, broken files; applying via the Editor (one undo step,
 // existing effect takes the values) and the Effects Library category "Presets". Own presets: clip effects -> Kdenlive
-// <effectgroup> -> read back (values, disabled effects, keyframes incl. eases and trimmed keys), file name, Library.
+// <effectgroup> / custom effect in the shape Kdenlive accepts (its parameter names) -> read back (values, disabled
+// effects, keyframes incl. eases and trimmed keys), file name, Library.
 // Picture of the Library: PRESETS_DUMP=<png> build-tests/tests/test_presets
 #include "check.h"
 
@@ -82,6 +84,7 @@ const QByteArray kKdenliveGroup = R"(<?xml version="1.0"?>
     </effect>
     <effect id="boxblur"><property name="blur">1=0;10=15</property></effect>
     <effect id="frei0r.colortap"><property name="Table">sepia</property></effect>
+    <effect id="qtblend"><property name="rect">1=0 0 1920 1080 1.000000;10=-1527 -861 4974 2798 1.000000</property></effect>
     <description>CRT monitor shut off effect</description>
 </effectgroup>
 )";
@@ -178,7 +181,7 @@ int main(int argc, char** argv)
         const Presets::Preset p = Presets::parse(kKdenliveGroup, "shut_off.xml");
         CHECK(p.error.isEmpty());
         CHECK_EQ(p.name, QString("Shut-off"));
-        CHECK_EQ(int(p.filters.size()), 3);
+        CHECK_EQ(int(p.filters.size()), 4);
         const Presets::Mapped m = Presets::map(p);
         if (const EffectInstance* e = effect(m, "frei0r.levels"); CHECK(e)) {
             CHECK(qAbs(num(*e, "3") - 0.25) < 1e-9); // Gamma
@@ -186,10 +189,11 @@ int main(int argc, char** argv)
         }
         if (const EffectInstance* e = effect(m, "frei0r.colortap"); CHECK(e))
             CHECK_EQ(e->params.value("0").toString(), QString("sepia"));
-        CHECK_EQ(m.skipped, QStringList{"boxblur"});
+        CHECK_EQ(m.skipped, QStringList{"qtblend"});
         CHECK(!m.keyframes); // Gamma is a number: keyframes taken over
         const AnimParam gamma = animOf("frei0r.levels", "3");
-        if (CHECK(m.keys.contains(gamma) && m.keys.size() == 1)) {
+        CHECK(m.keys.contains(AnimParam::FxBlur)); // boxblur -> Gaussian blur
+        if (CHECK(m.keys.contains(gamma) && m.keys.size() == 2)) {
             const QVector<Presets::AnimKey>& k = m.keys[gamma];
             // parentIn="1": the first key lies on the first frame of the clip
             CHECK(k.size() == 3 && k[0].frame == 0 && k[1].frame == 9 && k[2].frame == 11);
@@ -273,12 +277,89 @@ int main(int argc, char** argv)
         CHECK(b.keyframes && b.keys.isEmpty());
     }
 
+    // ---- MLT filters rebuilt with schneidi's effects ----
+    {
+        auto close = [](double a, double b) { return qAbs(a - b) < 1e-6; };
+        // brightness (out = in * level) -> contrast = brightness = 100(level - 1); keys on both
+        Presets::Mapped m = Presets::map(Presets::parse(
+            R"(<effect tag="brightness" id="b"><parameter type="animated" name="level" default="1" value="0=1.2;20=0.5" factor="100"/></effect>)",
+            "b.xml"));
+        if (const EffectInstance* e = effect(m, "color"); CHECK(e)) {
+            CHECK(close(num(*e, "brightness"), 20) && close(num(*e, "contrast"), 20));
+            CHECK(close(num(*e, "saturation"), 0));
+        }
+        if (CHECK(m.keys.contains(AnimParam::FxBrightness) && m.keys.contains(AnimParam::FxContrast))) {
+            CHECK(m.keys[AnimParam::FxContrast].size() == 2 && m.keys[AnimParam::FxContrast][1].frame == 20);
+            CHECK(close(m.keys[AnimParam::FxBrightness][1].value, -50));
+        }
+        CHECK(m.skipped.isEmpty() && m.touched.value("color") == (QSet<QString>{"brightness", "contrast"}));
+
+        // Kdenlive group: avfilter.eq + greyscale make one color correction; blurs; lift/gamma/gain -> grade
+        m = Presets::map(Presets::parse(R"(<effectgroup id="Look" parentIn="0">
+            <effect id="avfilter.eq"><property name="av.contrast">1.3</property><property name="av.brightness">0.1</property>
+                <property name="av.saturation">0.5</property><property name="av.gamma">1</property></effect>
+            <effect id="greyscale"/>
+            <effect id="box_blur"><property name="hradius">5</property><property name="vradius">5</property></effect>
+            <effect id="lift_gamma_gain"><property name="lift_b">0.5</property><property name="gamma_g">4</property>
+                <property name="gain_r">1.5</property></effect>
+        </effectgroup>)", "look.xml"));
+        CHECK(m.skipped.isEmpty());
+        if (const EffectInstance* e = effect(m, "color"); CHECK(e)) {
+            CHECK(close(num(*e, "brightness"), 20) && close(num(*e, "contrast"), 30));
+            CHECK(close(num(*e, "saturation"), -100)); // greyscale after eq
+        }
+        if (const EffectInstance* e = effect(m, "blur"); CHECK(e))
+            CHECK(close(num(*e, "strength"), std::sqrt(10.0) * 2000 / 1080)); // box radius 5 -> sigma sqrt(10)
+        if (const EffectInstance* e = effect(m, "grade"); CHECK(e)) {
+            CHECK(close(num(*e, "gainR"), 1.5) && close(num(*e, "gammaG"), 1) && close(num(*e, "liftB"), std::pow(0.5, 2.2)));
+            CHECK(close(num(*e, "gainG"), 1) && close(num(*e, "gammaR"), 0) && close(num(*e, "liftR"), 0));
+        }
+        // other blurs: gblur sigma, MLT boxblur radius = blur * hori (keys from blur), avfilter.boxblur passes
+        m = Presets::map(Presets::parse(R"(<effectgroup id="B" parentIn="10">
+            <effect id="boxblur"><property name="blur">10=1;30=2</property><property name="hori">3</property></effect>
+            <effect id="avfilter.gblur"><property name="av.sigma">10.8</property></effect>
+        </effectgroup>)", "b.xml"));
+        if (const EffectInstance* e = effect(m, "blur"); CHECK(e)) CHECK(close(num(*e, "strength"), 20)); // gblur later
+        CHECK(!m.keys.contains(AnimParam::FxBlur)); // static gblur replaced the boxblur animation
+        m = Presets::map(Presets::parse(R"(<effectgroup id="B" parentIn="10">
+            <effect id="boxblur"><property name="blur">10=1;30=2</property><property name="hori">3</property></effect>
+            <effect id="frei0r.glow"/></effectgroup>)", "b.xml"));
+        if (CHECK(m.keys.contains(AnimParam::FxBlur))) {
+            const QVector<Presets::AnimKey>& k = m.keys[AnimParam::FxBlur];
+            CHECK(k.size() == 2 && k[0].frame == 0 && k[1].frame == 20); // parentIn subtracted
+            CHECK(close(k[1].value, std::sqrt(6.0 * 7 / 3) * 2000 / 1080)); // radius 2 * 3
+        }
+        const Presets::Mapped bb = Presets::map(Presets::parse(
+            R"(<effect tag="avfilter.boxblur"><property name="av.lr">4</property><property name="av.lp">0</property></effect>)", "x.xml"));
+        if (const EffectInstance* e = effect(bb, "blur"); CHECK(e)) CHECK(close(num(*e, "strength"), 0)); // power 0
+
+        // Shotcut presets of these filters: folder = service / objectName
+        CHECK_EQ(Presets::shotcutService("brightness"), QString("brightness"));
+        CHECK_EQ(Presets::shotcutService("contrast"), QString("lift_gamma_gain"));
+        CHECK_EQ(Presets::shotcutService("blur_gaussian_av"), QString("avfilter.gblur"));
+        m = Presets::map(Presets::parse("level=0.8\nalpha=1\n", "Dunkler", "brightness"));
+        if (const EffectInstance* e = effect(m, "color"); CHECK(e)) CHECK(close(num(*e, "brightness"), -20));
+
+        // Applying keeps the clip's other values of a rebuilt effect
+        Clip c;
+        c.out = 49;
+        CHECK(EffectRegistry::add(c, "color"));
+        EffectRegistry::instance(c, "color")->params["temperature"] = 15.0;
+        Keys::setKey(c, AnimParam::FxBrightness, 0, 10);
+        Keys::setKey(c, AnimParam::FxBrightness, 40, 30);
+        Presets::apply(c, Presets::map(Presets::parse("<effect tag=\"greyscale\"/>", "g.xml")));
+        CHECK_EQ(int(c.effects.size()), 1);
+        CHECK(close(EffectRegistry::value(c, "color", "saturation").toDouble(), -100));
+        CHECK(close(EffectRegistry::value(c, "color", "temperature").toDouble(), 15));
+        CHECK(Keys::animated(c, AnimParam::FxBrightness));
+    }
+
     // ---- Broken / unknown files ----
     CHECK(!Presets::parse("", "leer").error.isEmpty());
     CHECK(!Presets::parse("<html><body/></html>", "x.xml").error.isEmpty());
     CHECK(!Presets::parse("<effect id=\"x\"", "kaputt.xml").error.isEmpty());
     CHECK(!Presets::parse("nur text\n", "x").error.isEmpty());
-    CHECK(Presets::map(Presets::parse("<effect tag=\"boxblur\"/>", "b.xml")).empty());
+    CHECK(Presets::map(Presets::parse("<effect tag=\"qtblend\"/>", "b.xml")).empty());
 
     // ---- LUT: avfilter.lut3d -> color correction; missing file found by name in the own LUTs folder ----
     EffectFolders::ensure();
@@ -315,6 +396,7 @@ int main(int argc, char** argv)
     editor.addEffect({1}, Presets::Prefix + QDir(dir).filePath("Kdenlive/shut_off.xml"));
     CHECK_EQ(project.undoStack()->count(), steps + 1);
     CHECK(EffectRegistry::has(clip(), "frei0r.levels") && EffectRegistry::has(clip(), "frei0r.colortap"));
+    CHECK(EffectRegistry::has(clip(), "blur"));
     const AnimParam gamma = animOf("frei0r.levels", "3");
     if (CHECK(Keys::animated(clip(), gamma))) { // keyframes in clip frames
         CHECK(qAbs(Keys::valueAt(clip(), gamma, 0) - 0.25) < 1e-9);
@@ -322,10 +404,10 @@ int main(int argc, char** argv)
         CHECK_EQ(Keys::keyTimes(clip(), {gamma}), (QVector<int>{0, 9, 11}));
         CHECK_EQ(clip().keys.value(gamma).value(0).frame, 5);
     }
-    CHECK_EQ(int(clip().effects.size()), 2);
+    CHECK_EQ(int(clip().effects.size()), 3);
     editor.addEffect({1}, Presets::Prefix + QDir(dir).filePath("Kdenlive/glow.xml"));
     editor.addEffect({1}, Presets::Prefix + QDir(dir).filePath("glow/Hell"));
-    CHECK_EQ(int(clip().effects.size()), 3); // glow only once, with the later values
+    CHECK_EQ(int(clip().effects.size()), 4); // glow only once, with the later values
     CHECK(qAbs(EffectRegistry::value(clip(), "frei0r.glow", "0").toDouble() - 0.9) < 1e-9);
     editor.addEffect({1}, Presets::Prefix + QDir(dir).filePath("kaputt.xml")); // nothing happens
     CHECK_EQ(project.undoStack()->count(), steps + 3);
@@ -370,7 +452,7 @@ int main(int argc, char** argv)
         CHECK_EQ(names, (QStringList{"Hell", "Shut-off", "Starker Glow", "kaputt"}));
         CHECK_EQ(usable, (QStringList{"Hell", "Shut-off", "Starker Glow"}));
         for (int i = 0; i < list->count(); ++i)
-            if (list->item(i)->text() == "Shut-off") CHECK(list->item(i)->toolTip().contains("boxblur"));
+            if (list->item(i)->text() == "Shut-off") CHECK(list->item(i)->toolTip().contains("qtblend"));
         const auto sub = tree->findItems("Kdenlive", Qt::MatchExactly | Qt::MatchRecursive);
         if (CHECK(sub.size() == 1)) {
             tree->setCurrentItem(sub.first());

@@ -8,6 +8,10 @@
 //   keyframes in source frames of the clip it was saved from, parentIn = that clip's in point)
 // - Shotcut: filter set (MLT XML with <filter> elements, Shotcut/filter-sets) and filter preset (lines
 //   "property=value", Shotcut/presets/<filter>/<name>: the filter comes from the folder name)
+// Common MLT filters without a schneidi counterpart are rebuilt with schneidi's effects: brightness, avfilter.eq,
+// avfilter.hue (saturation), greyscale -> color correction; avfilter.gblur/avgblur/boxblur, boxblur, box_blur ->
+// Gaussian blur (radii in pixels taken for 1080 lines); lift_gamma_gain -> Color page grade (lift/gamma/gain per
+// channel, approximated).
 // Keyframes (MLT animation strings: Kdenlive "1=0;10=15", Shotcut "00:00:00.000=0.2;00:00:01.000=0.9") become
 // schneidi keyframes for number parameters; interpolation types are approximated (smooth -> Bezier, eases -> Ease
 // In/Out, discrete -> hold). Checkbox/color/choice parameters cannot be animated: their first value is used.
@@ -17,6 +21,7 @@
 #include <QHash>
 #include <QMap>
 #include <QPair>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -91,6 +96,9 @@ struct Mapped {
     // Keyframes of number parameters; frames relative to the clip start (negative = from the clip end, like MLT)
     QMap<AnimParam, QVector<AnimKey>> keys;
     bool keyframes = false;          // animated values that cannot be animated here: only the first value taken
+    // Effects rebuilt from other MLT filters (brightness -> color correction …): only these parameters are set,
+    // apply() leaves the clip's other values of the effect alone
+    QHash<QString, QSet<QString>> touched;
     bool empty() const { return effects.isEmpty() && lut.isEmpty(); }
 };
 // fps: project frame rate (keyframe times in clock format)

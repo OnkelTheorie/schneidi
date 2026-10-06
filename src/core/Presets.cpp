@@ -34,7 +34,74 @@ constexpr ShotcutName kShotcutNames[] = {
     {"gradient", "frei0r.cairogradient"},     {"halftone", "frei0r.colorhalftone"},
     {"noise_keyframes", "frei0r.rgbnoise"},   {"nosync", "frei0r.nosync0r"},
     {"scanlines", "frei0r.scanline0r"},       {"lut3d", "avfilter.lut3d"},
+    {"blur_gaussian_av", "avfilter.gblur"},   {"contrast", "lift_gamma_gain"},
 };
+
+// ---- MLT filters rebuilt with schneidi's own effects (color correction, blur, Color page grade) ----
+// A target parameter = f(a, b) of up to two filter properties (alternative names separated by '|', fallback = the
+// filter's default when missing). One of them may be animated: its keys become keys of the target parameter.
+
+// Blur radii are pixels; presets come from projects of unknown size -> assumed 1080 lines. schneidi's blur:
+// sigma = strength * height / 2000 (TimelineBuilder applyBlur).
+double sigmaToStrength(double sigma) { return std::max(0.0, sigma) * 2000.0 / 1080.0; }
+// Box blur of radius r (width 2r+1) has the variance r(r+1)/3; `passes` boxes in a row add up
+double boxToStrength(double r, double passes = 1)
+{
+    r = std::max(0.0, r);
+    return sigmaToStrength(std::sqrt(std::max(0.0, passes) * r * (r + 1) / 3.0));
+}
+// MLT lift_gamma_gain works on the picture taken as linear and converted to gamma 2.2: lift l moves black to
+// l^2.2, gamma g gives x^(1/g), gain multiplies. schneidi's grade: lift moves black to l, gamma g gives
+// x^(2^(-2g)).
+double liftOf(double l) { return l >= 0 ? std::pow(l, 2.2) : -std::pow(-l, 2.2); }
+double gammaOf(double g) { return g > 0 ? std::log2(g) / 2.0 : -1.0; }
+
+struct Factor {
+    const char* names = nullptr; // nullptr = not used (value 1)
+    double fallback = 0;
+};
+struct Conversion {
+    const char* service; // MLT service (also Kdenlive's effect id)
+    const char* effect;  // schneidi effect id
+    const char* param;   // its parameter key
+    Factor a, b;
+    double (*f)(double a, double b);
+};
+// The same look with schneidi's effects (TimelineBuilder applyColor: out = 0.5 + (in - 0.5)(1 + contrast/100) +
+// brightness/200 per channel, saturation -100 = gray, +100 = double)
+const Conversion kConversions[] = {
+    // MLT brightness: out = in * level -> contrast and brightness 100(level - 1) give exactly that
+    {"brightness", "color", "brightness", {"level", 1}, {}, [](double v, double) { return 100 * (v - 1); }},
+    {"brightness", "color", "contrast", {"level", 1}, {}, [](double v, double) { return 100 * (v - 1); }},
+    // FFmpeg eq: out = (in - 0.5) * contrast + 0.5 + brightness (luma), saturation 1 = unchanged
+    {"avfilter.eq", "color", "brightness", {"av.brightness", 0}, {}, [](double v, double) { return 200 * v; }},
+    {"avfilter.eq", "color", "contrast", {"av.contrast", 1}, {}, [](double v, double) { return 100 * (v - 1); }},
+    {"avfilter.eq", "color", "saturation", {"av.saturation", 1}, {}, [](double v, double) { return 100 * (v - 1); }},
+    {"avfilter.hue", "color", "saturation", {"av.s", 1}, {}, [](double v, double) { return 100 * (v - 1); }},
+    {"greyscale", "color", "saturation", {}, {}, [](double, double) { return -100.0; }},
+    {"avfilter.gblur", "blur", "strength", {"av.sigma", 0}, {}, [](double v, double) { return sigmaToStrength(v); }},
+    {"avfilter.avgblur", "blur", "strength", {"av.sizeX", 1}, {}, [](double v, double) { return boxToStrength(v); }},
+    {"avfilter.boxblur", "blur", "strength", {"av.luma_radius|av.lr", 2}, {"av.luma_power|av.lp", 2},
+     [](double r, double passes) { return boxToStrength(r, passes); }},
+    // MLT boxblur: radius = blur (or start) * hori
+    {"boxblur", "blur", "strength", {"blur|start", 2}, {"hori", 1}, [](double v, double h) { return boxToStrength(v * h); }},
+    {"box_blur", "blur", "strength", {"hradius", 1}, {}, [](double v, double) { return boxToStrength(v); }},
+    {"lift_gamma_gain", "grade", "liftR", {"lift_r", 0}, {}, [](double v, double) { return liftOf(v); }},
+    {"lift_gamma_gain", "grade", "liftG", {"lift_g", 0}, {}, [](double v, double) { return liftOf(v); }},
+    {"lift_gamma_gain", "grade", "liftB", {"lift_b", 0}, {}, [](double v, double) { return liftOf(v); }},
+    {"lift_gamma_gain", "grade", "gammaR", {"gamma_r", 1}, {}, [](double v, double) { return gammaOf(v); }},
+    {"lift_gamma_gain", "grade", "gammaG", {"gamma_g", 1}, {}, [](double v, double) { return gammaOf(v); }},
+    {"lift_gamma_gain", "grade", "gammaB", {"gamma_b", 1}, {}, [](double v, double) { return gammaOf(v); }},
+    {"lift_gamma_gain", "grade", "gainR", {"gain_r", 1}, {}, [](double v, double) { return v; }},
+    {"lift_gamma_gain", "grade", "gainG", {"gain_g", 1}, {}, [](double v, double) { return v; }},
+    {"lift_gamma_gain", "grade", "gainB", {"gain_b", 1}, {}, [](double v, double) { return v; }},
+};
+
+bool converted(const QString& service)
+{
+    return std::any_of(std::begin(kConversions), std::end(kConversions),
+                       [&](const Conversion& c) { return service == QLatin1String(c.service); });
+}
 
 // frei0r plugins whose Kdenlive effect file (/usr/share/kdenlive/effects/frei0r_*.xml, Kdenlive 24.12) names the
 // parameters by the plugin's parameter name ("Blur"). Kdenlive sets unknown names on the filter as well, and MLT
@@ -424,6 +491,85 @@ QString safeFileName(QString name)
     return name.isEmpty() ? QStringLiteral("Preset") : name;
 }
 
+
+// Property of a filter by one of its names ('|'), empty = missing
+QString propValue(const Filter& f, const char* names)
+{
+    if (!names) return {};
+    const QStringList list = QString::fromLatin1(names).split('|');
+    for (const auto& [name, value] : f.props)
+        if (list.contains(name)) return value;
+    return {};
+}
+
+// One factor of a conversion: static value and keys (frame -> value, empty = not animated)
+struct FactorValue {
+    double value = 1;
+    QVector<RawKey> keys;
+};
+FactorValue factorOf(const Filter& f, const Factor& factor, double fps)
+{
+    FactorValue out;
+    if (!factor.names) return out;
+    out.value = factor.fallback;
+    const QString text = propValue(f, factor.names);
+    if (text.isEmpty()) return out;
+    bool ok = false;
+    if (parseAnimation(text, fps, &out.keys)) {
+        out.value = out.keys.first().value.toDouble(&ok);
+        if (!ok) out.value = factor.fallback;
+        if (out.keys.size() < 2) out.keys.clear();
+    } else if (const double v = text.toDouble(&ok); ok) {
+        out.value = v;
+    }
+    return out;
+}
+
+void convertFilter(const Filter& f, int parentIn, double fps, Mapped* m)
+{
+    bool enabled = true;
+    for (const auto& [name, value] : f.props)
+        if (name == "disable") enabled = value.trimmed().isEmpty() || value.trimmed() == "0";
+    for (const Conversion& c : kConversions) {
+        if (f.service != QLatin1String(c.service)) continue;
+        const EffectDescriptor* d = EffectRegistry::find(c.effect);
+        if (!d) continue;
+        const EffectParam* p = nullptr;
+        for (const EffectParam& x : d->params)
+            if (x.key == QLatin1String(c.param)) p = &x;
+        if (!p) continue;
+        EffectInstance* inst = nullptr;
+        for (EffectInstance& e : m->effects)
+            if (e.effectId == d->id) inst = &e;
+        if (!inst) { // several filters may build one effect (brightness + saturation): they add up
+            EffectInstance e;
+            e.effectId = d->id;
+            for (const EffectParam& x : d->params) e.params[x.key] = x.defaultValue;
+            m->effects << e;
+            inst = &m->effects.last();
+        }
+        inst->enabled = enabled;
+        m->touched[d->id] << p->key;
+        const FactorValue a = factorOf(f, c.a, fps), b = factorOf(f, c.b, fps);
+        auto value = [&](double x, double y) { return std::clamp(c.f(x, y), p->min, p->max); };
+        inst->params[p->key] = value(a.value, b.value);
+        if (p->anim == AnimParam::Count) continue;
+        m->keys.remove(p->anim);
+        const bool first = !a.keys.isEmpty();
+        const QVector<RawKey>& raw = first ? a.keys : b.keys;
+        if (raw.isEmpty()) continue;
+        QVector<AnimKey> list;
+        for (const RawKey& r : raw) {
+            bool ok = false;
+            const double v = r.value.toDouble(&ok);
+            if (!ok) continue;
+            const int frame = r.frame >= 0 ? std::max(0, r.frame - parentIn) : r.frame;
+            list << AnimKey{frame, first ? value(v, b.value) : value(a.value, v), r.type};
+        }
+        if (list.size() >= 2) m->keys.insert(p->anim, list);
+    }
+}
+
 } // namespace
 
 QByteArray toXml(const Clip& c, const QString& name, QStringList* skipped)
@@ -607,7 +753,7 @@ QString shotcutService(const QString& folderName)
 {
     for (const ShotcutName& n : kShotcutNames)
         if (folderName == QLatin1String(n.objectName)) return QString::fromLatin1(n.service);
-    if (descriptorFor(folderName) || isLut3d(folderName)) return folderName;
+    if (descriptorFor(folderName) || isLut3d(folderName) || converted(folderName)) return folderName;
     if (descriptorFor("frei0r." + folderName)) return "frei0r." + folderName;
     return {};
 }
@@ -667,6 +813,10 @@ Mapped map(const Preset& preset, double fps)
             else m.skipped << f.service;
             continue;
         }
+        if (converted(f.service)) {
+            convertFilter(f, preset.parentIn, fps, &m);
+            continue;
+        }
         const EffectDescriptor* d = descriptorFor(f.service);
         if (!d || !d->video) {
             m.skipped << (f.service.isEmpty() ? QStringLiteral("?") : f.service);
@@ -702,6 +852,7 @@ Mapped map(const Preset& preset, double fps)
         }
         // The same effect twice (Shotcut: several blurs from one plugin): the later one wins, like in the stack
         m.effects.removeIf([&](const EffectInstance& e) { return e.effectId == inst.effectId; });
+        m.touched.remove(inst.effectId);
         for (const EffectParam& p : d->params) m.keys.remove(p.anim);
         m.effects << inst;
         m.keys.insert(keys);
@@ -712,12 +863,20 @@ Mapped map(const Preset& preset, double fps)
 void apply(Clip& c, const Mapped& m)
 {
     for (const EffectInstance& e : m.effects) {
-        if (EffectInstance* old = EffectRegistry::instance(c, e.effectId)) *old = e;
-        else c.effects << e;
+        const QSet<QString> touched = m.touched.value(e.effectId);
+        EffectInstance* old = EffectRegistry::instance(c, e.effectId);
+        if (old && !touched.isEmpty()) { // rebuilt from other filters: only their parameters change
+            for (const QString& key : touched) old->params[key] = e.params.value(key);
+            old->enabled = e.enabled;
+        } else if (old) {
+            *old = e;
+        } else {
+            c.effects << e;
+        }
         // the preset's values replace the old animation of this effect
         if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))
             for (const EffectParam& p : d->params)
-                if (p.anim != AnimParam::Count) c.keys.remove(p.anim);
+                if (p.anim != AnimParam::Count && (touched.isEmpty() || touched.contains(p.key))) c.keys.remove(p.anim);
     }
     for (auto it = m.keys.cbegin(); it != m.keys.cend(); ++it) {
         KeyTrack k = toKeyTrack(it.value(), c.length());
