@@ -1353,6 +1353,16 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path)
             QMessageBox::information(this, T("Medien fehlen"), T("In diesem Ordner wurden keine der Dateien gefunden."));
     }
 
+    // Effects whose plugin is missing here (project from another computer): stay in the project, but do nothing
+    if (const QStringList fx = ProjectFile::missingEffects(data); !fx.isEmpty()) {
+        QMessageBox box(QMessageBox::Warning, T("Effekte fehlen"),
+                        T("%1 Effekt(e) sind auf diesem Rechner nicht installiert und wirken nicht:").arg(fx.size()),
+                        QMessageBox::Ok, this);
+        box.setInformativeText(fx.mid(0, 15).join('\n') + (fx.size() > 15 ? "\n…" : "") + "\n\n"
+                               + T("Sie bleiben mit ihren Werten im Projekt; der Inspector zeigt sie an."));
+        box.exec();
+    }
+
     m_engine->pause();
     m_selection->clear();
     m_probeCache.clear();

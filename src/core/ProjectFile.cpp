@@ -735,6 +735,23 @@ bool load(const QString& path, ProjectData* data, QString* error)
     return fromJson(f.readAll(), path, data, error);
 }
 
+QStringList missingEffects(const ProjectData& data)
+{
+    QSet<QString> out;
+    auto scan = [&](const Timeline& tl) {
+        for (const auto* tracks : {&tl.video, &tl.audio})
+            for (const Track& t : *tracks)
+                for (const Clip& c : t.clips)
+                    for (const EffectInstance& e : c.effects)
+                        if (!EffectRegistry::find(e.effectId)) out << e.effectId;
+    };
+    scan(data.timeline);
+    for (const Sequence& s : data.sequences) scan(s.timeline);
+    QStringList list(out.begin(), out.end());
+    list.sort();
+    return list;
+}
+
 QStringList missingMedia(const ProjectData& data)
 {
     QStringList missing;

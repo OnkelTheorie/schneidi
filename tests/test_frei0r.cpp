@@ -3,6 +3,8 @@
 // Inspector (sections appear with the first clip that has the effect, checkbox/choice with undo) and Effects Library.
 // Keyframes on frei0r number parameters (dynamic AnimParam per effect + key): values, render (also on a cut that does
 // not start at source frame 0), project file (also for a missing plugin), Inspector diamond with undo, removing.
+// Missing plugin (project from another computer): listed on load, stays in the file, Inspector shows a warning section
+// that can remove it.
 // Pictures of Inspector and Library: FREI0R_DUMP=<folder> build-tests/tests/test_frei0r
 #include "check.h"
 
@@ -26,6 +28,7 @@
 #include <QDir>
 #include <QImage>
 #include <QJsonObject>
+#include <QLabel>
 #include <QListWidget>
 #include <QSet>
 #include <QToolButton>
@@ -353,6 +356,52 @@ int main(int argc, char** argv)
             app.processEvents();
             CHECK(!Keys::animated(clip(), ba) && diamond->text() == QString("◇"));
         }
+    }
+
+    // ---- Missing plugin ----
+    {
+        ProjectData md = d;
+        md.timeline.video[0].clips[0].effects << EffectInstance{"frei0r.gibtsnicht", {{"0", 0.5}}, true};
+        Sequence seq;
+        seq.timeline = one(fx("frei0r.invert0r"));
+        seq.timeline.video[0].clips[0].effects << EffectInstance{"frei0r.auchnicht", {}, true}
+                                               << EffectInstance{"frei0r.gibtsnicht", {}, true};
+        md.sequences << seq;
+        CHECK_EQ(ProjectFile::missingEffects(md), (QStringList{"frei0r.auchnicht", "frei0r.gibtsnicht"}));
+        CHECK(ProjectFile::missingEffects(d).isEmpty());
+        // Rendering skips it, the rest still works
+        const QColor still = left(render(one([](Clip& c) {
+                                      c.effects << EffectInstance{"frei0r.gibtsnicht", {}, true};
+                                      fx("frei0r.invert0r")(c);
+                                  }), fmt, 5));
+        CHECK(std::abs(still.red() - inv.red()) < 15);
+    }
+    {
+        auto clip = [&] { return project.timeline().video[0].clips[0]; };
+        auto warning = [&]() -> QLabel* {
+            for (QLabel* l : insp.findChildren<QLabel*>("MissingEffect"))
+                if (l->isVisibleTo(&insp)) return l;
+            return nullptr;
+        };
+        CHECK(!warning());
+        editor.modifyClips({vid}, "unknown", [](Clip& c) {
+            c.effects << EffectInstance{"frei0r.gibtsnicht", {{"0", 0.5}}, true};
+        });
+        app.processEvents();
+        CHECK(warning());
+        QToolButton* title = nullptr;
+        for (QToolButton* b : insp.findChildren<QToolButton*>())
+            if (b->text() == T("%1 (fehlt)").arg("frei0r.gibtsnicht") && b->isVisibleTo(&insp)) title = b;
+        CHECK(title);
+        if (!dump.isEmpty()) insp.grab().save(QDir(dump).filePath("missing.png"));
+        const int steps = project.undoStack()->count();
+        editor.removeEffect({vid}, "frei0r.gibtsnicht"); // like the trash button
+        app.processEvents();
+        CHECK(!EffectRegistry::has(clip(), "frei0r.gibtsnicht") && !warning());
+        CHECK_EQ(project.undoStack()->count(), steps + 1);
+        project.undoStack()->undo();
+        app.processEvents();
+        CHECK(EffectRegistry::has(clip(), "frei0r.gibtsnicht") && warning());
     }
 
     // ---- Effects Library: Open FX → frei0r ----

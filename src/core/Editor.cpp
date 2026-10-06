@@ -541,13 +541,14 @@ void Editor::addEffect(const QVector<int>& ids, const QString& effectId)
 
 void Editor::removeEffect(const QVector<int>& ids, const QString& effectId)
 {
+    // unknown effects (plugin missing on this computer) can be removed too
     const EffectDescriptor* d = EffectRegistry::find(effectId);
-    if (!d) return;
     QVector<int> targets;
     for (int id : editable(ids))
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && EffectRegistry::has(*c, effectId))
             targets << id;
-    modifyClips(targets, T("%1 entfernen").arg(d->name), [&](Clip& c) { EffectRegistry::remove(c, effectId); });
+    modifyClips(targets, T("%1 entfernen").arg(d ? d->name : effectId),
+                [&](Clip& c) { EffectRegistry::remove(c, effectId); });
 }
 
 QVector<int> Editor::effectTargets(int frame) const

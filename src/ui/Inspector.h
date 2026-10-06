@@ -74,6 +74,10 @@ private:
                        const Flag& enabled = {}, bool titleOnly = false, const QString& effect = {});
     // Bereich eines Effekts aus der Effects Library (nur sichtbar, wenn der Clip ihn hat), mit Papierkorb
     void addEffectSection(QVBoxLayout* page, const EffectDescriptor& d);
+    // Effect this computer does not know (plugin missing): warning instead of controls, can be removed
+    void addMissingEffectSection(QVBoxLayout* page, const QString& id);
+    // Trash button in the header + right-click menu "remove effect"
+    void addRemoveButton(const Section& s, const QString& id);
     // Zeile mit Schieberegler + Zahlenfeld
     // anim: animierbarer Parameter -> Keyframe-Rauten rechts (field bleibt für nicht animierbare Werte)
     Param* addSlider(Section& s, const QString& key, const QString& label, double min, double max, double def,

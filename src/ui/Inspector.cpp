@@ -862,23 +862,7 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
         return e ? e->enabled : none;
     }, false, id);
 
-    // Entfernen: Papierkorb in der Kopfzeile oder Rechtsklick auf die Kopfzeile
-    auto remove = [this, id, kind] { m_editor->removeEffect(selectedIds(kind, false, id), id); };
-    auto* trash = new QToolButton;
-    trash->setIcon(trashIcon());
-    trash->setIconSize(QSize(14, 14));
-    trash->setAutoRaise(true);
-    trash->setFocusPolicy(Qt::NoFocus);
-    trash->setToolTip(T("Effekt entfernen"));
-    trash->setStyleSheet("QToolButton { border: none; background: transparent; }");
-    connect(trash, &QToolButton::clicked, this, remove);
-    s.headerLayout->insertWidget(s.headerLayout->count() - 1, trash); // vor dem Zurücksetzen-Knopf
-    s.header->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(s.header, &QWidget::customContextMenuRequested, this, [this, header = s.header, remove](const QPoint& pos) {
-        QMenu menu(this);
-        connect(menu.addAction(T("Effekt entfernen")), &QAction::triggered, this, remove);
-        menu.exec(header->mapToGlobal(pos));
-    });
+    addRemoveButton(s, id);
 
     if (!d.description.isEmpty()) s.header->setToolTip(d.description);
     // Elide long names (frei0r), full name + description in the tooltip
@@ -993,6 +977,49 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
     m_fxSections << FxSection{id, s.header, s.body};
 }
 
+void Inspector::addRemoveButton(const Section& s, const QString& id)
+{
+    // Entfernen: Papierkorb in der Kopfzeile oder Rechtsklick auf die Kopfzeile
+    auto remove = [this, id, kind = s.kind] { m_editor->removeEffect(selectedIds(kind, false, id), id); };
+    auto* trash = new QToolButton;
+    trash->setIcon(trashIcon());
+    trash->setIconSize(QSize(14, 14));
+    trash->setAutoRaise(true);
+    trash->setFocusPolicy(Qt::NoFocus);
+    trash->setToolTip(T("Effekt entfernen"));
+    trash->setStyleSheet("QToolButton { border: none; background: transparent; }");
+    connect(trash, &QToolButton::clicked, this, remove);
+    s.headerLayout->insertWidget(s.headerLayout->count() - 1, trash); // vor dem Zurücksetzen-Knopf
+    s.header->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(s.header, &QWidget::customContextMenuRequested, this, [this, header = s.header, remove](const QPoint& pos) {
+        QMenu menu(this);
+        connect(menu.addAction(T("Effekt entfernen")), &QAction::triggered, this, remove);
+        menu.exec(header->mapToGlobal(pos));
+    });
+}
+
+void Inspector::addMissingEffectSection(QVBoxLayout* page, const QString& id)
+{
+    // Like "Media Offline": the effect stays in the project with its values, but nothing renders it
+    const QString title = T("%1 (fehlt)").arg(id);
+    Section s = addSection(page, TrackKind::Video, title, {}, {}, false, id);
+    addRemoveButton(s, id);
+    for (QToolButton* b : s.header->findChildren<QToolButton*>()) // title in the warning color
+        if (b->isCheckable() && b->text() == title)
+            b->setStyleSheet(QString("QToolButton, QToolButton:checked { color: %1; border: none; background: transparent;"
+                                     " font-weight: 600; }").arg(Theme::warning.name()));
+    auto* warn = new QLabel(T("Plugin auf diesem Rechner nicht installiert: der Effekt wirkt nicht, bleibt aber mit "
+                              "seinen Werten im Projekt."));
+    warn->setObjectName("MissingEffect");
+    warn->setWordWrap(true);
+    warn->setStyleSheet(QString("color: %1;").arg(Theme::warning.name()));
+    s.grid->addWidget(warn, 0, 0, 1, 4);
+    s.header->setToolTip(T("Effekt „%1“ fehlt").arg(id));
+    s.header->hide();
+    s.body->hide();
+    m_fxSections << FxSection{id, s.header, s.body};
+}
+
 void Inspector::arrangeEffectSections()
 {
     // Sichtbar sind die Effekte des angezeigten (frühesten ausgewählten) Videoclips, in seiner Reihenfolge
@@ -1004,9 +1031,11 @@ void Inspector::arrangeEffectSections()
                 return std::any_of(m_fxSections.begin(), m_fxSections.end(),
                                    [&](const FxSection& f) { return f.id == e.effectId; });
             };
-            if (!known()) // create on the first clip with the effect (frei0r: more than a hundred possible)
-                if (const EffectDescriptor* d = EffectRegistry::find(e.effectId); d && d->library && d->video)
-                    addEffectSection(m_videoLay, *d);
+            if (!known()) { // create on the first clip with the effect (frei0r: more than a hundred possible)
+                const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+                if (d && d->library && d->video) addEffectSection(m_videoLay, *d);
+                else if (!d) addMissingEffectSection(m_videoLay, e.effectId); // plugin missing
+            }
             if (known()) order << e.effectId;
         }
     if (order == m_fxOrder) return;
