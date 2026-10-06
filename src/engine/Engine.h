@@ -32,6 +32,7 @@ struct LoudnessReading {
     double momentary = -200, shortTerm = -200, integrated = -200; // LUFS (-200 = noch nichts)
     double range = 0;   // LU
     double seconds = 0; // gemessene Dauer
+    double truePeak = -200; // höchster True Peak seit Reset (dBTP, alle Kanäle; -200 = noch nichts)
 };
 
 class Engine : public QObject {
@@ -104,7 +105,8 @@ signals:
     void speedChanged(double speed);
     void colorBypassChanged(bool on);
     void modeChanged(Engine::Mode mode);
-    // Nur während der Wiedergabe: Spitzenpegel in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R]
+    // Nur während der Wiedergabe: Spitzenpegel in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R];
+    // der Master misst True Peak (dBTP, BS.1770 4x überabgetastet) wie die Lieferprüfung
     void audioLevels(const QVector<float>& db);
     // intern: Position aus dem Consumer-Thread, epoch = Sprung-Zähler beim Anzeigen (ältere werden verworfen)
     void framePosition(int frame, int epoch);

@@ -1,5 +1,6 @@
 #include "engine/TimelineBuilder.h"
 #include "core/Loudness.h"
+#include "core/TruePeak.h"
 
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
@@ -342,7 +343,8 @@ void applyPan(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a = 
 double mltPan(double pan) { return (pan + 100.0) / 200.0; }
 
 // Pegelmesser (passiv): merkt sich den Spitzenpegel des zuletzt verarbeiteten Tons je Kanal in dBFS als
-// _audio_level.N (N = Kanal). Eigener Filter statt MLT "audiolevel": der wandelt den Ton nach s16 und schneidet
+// _audio_level.N (N = Kanal) und den True Peak (BS.1770, 4x überabgetastet) in dBTP als _true_peak.N.
+// Eigener Filter statt MLT "audiolevel": der wandelt den Ton nach s16 und schneidet
 // damit alles über 0 dBFS ab (Vorschau klang anders als der Export, Übersteuerung war nicht messbar).
 int meterGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int* frequency, int* channels, int* samples)
 {
@@ -350,40 +352,41 @@ int meterGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int*
     const int error = mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
     if (error || !*buffer || *channels <= 0 || *samples <= 0) return error;
     const int ch = std::min(*channels, 8), n = *samples;
-    float peak[8] = {};
-    auto sample = [&](int c, int i) -> float {
+    auto signedSample = [&](int c, int i) -> float {
         switch (*format) {
-        case mlt_audio_s16: return std::abs(static_cast<const int16_t*>(*buffer)[i * *channels + c] / 32768.f);
-        case mlt_audio_s32le: return std::abs(static_cast<const int32_t*>(*buffer)[i * *channels + c] / 2147483648.f);
-        case mlt_audio_s32: return std::abs(static_cast<const int32_t*>(*buffer)[c * n + i] / 2147483648.f);
-        case mlt_audio_f32le: return std::abs(static_cast<const float*>(*buffer)[i * *channels + c]);
-        case mlt_audio_float: return std::abs(static_cast<const float*>(*buffer)[c * n + i]);
+        case mlt_audio_s16: return static_cast<const int16_t*>(*buffer)[i * *channels + c] / 32768.f;
+        case mlt_audio_s32le: return static_cast<const int32_t*>(*buffer)[i * *channels + c] / 2147483648.f;
+        case mlt_audio_s32: return static_cast<const int32_t*>(*buffer)[c * n + i] / 2147483648.f;
+        case mlt_audio_f32le: return static_cast<const float*>(*buffer)[i * *channels + c];
+        case mlt_audio_float: return static_cast<const float*>(*buffer)[c * n + i];
         default: return 0.f;
         }
     };
+    float peak[8] = {};
     for (int c = 0; c < ch; ++c)
-        for (int i = 0; i < n; ++i) peak[c] = std::max(peak[c], sample(c, i));
+        for (int i = 0; i < n; ++i) peak[c] = std::max(peak[c], std::abs(signedSample(c, i)));
     mlt_properties props = MLT_FILTER_PROPERTIES(filter);
-    // Master in der Vorschau: Lautheit (Loudness-Meter im Mixer) mitmessen
+    // True Peak dieses Häppchens (Filterverlauf läuft über die Häppchen weiter)
+    auto* tp = static_cast<TruePeakMeter*>(mlt_properties_get_data(props, "_tp", nullptr));
+    if (tp) {
+        tp->resetPeaks();
+        tp->add(n, ch, *frequency, signedSample);
+    }
+    // Master in der Vorschau: Lautheit und maximalen True Peak (Loudness-Meter im Mixer) mitmessen
     if (auto* live = static_cast<SharedLoudness*>(mlt_properties_get_data(props, "_loudness", nullptr));
         live && live->active) {
-        auto signedSample = [&](int c, int i) -> float {
-            switch (*format) {
-            case mlt_audio_s16: return static_cast<const int16_t*>(*buffer)[i * *channels + c] / 32768.f;
-            case mlt_audio_s32le: return static_cast<const int32_t*>(*buffer)[i * *channels + c] / 2147483648.f;
-            case mlt_audio_s32: return static_cast<const int32_t*>(*buffer)[c * n + i] / 2147483648.f;
-            case mlt_audio_f32le: return static_cast<const float*>(*buffer)[i * *channels + c];
-            case mlt_audio_float: return static_cast<const float*>(*buffer)[c * n + i];
-            default: return 0.f;
-            }
-        };
         std::lock_guard<std::mutex> lock(live->mutex);
         live->meter.add(n, *channels, *frequency, signedSample);
+        live->truePeak.add(n, *channels, *frequency, signedSample);
     }
     for (int c = 0; c < ch; ++c) {
         char name[32];
         std::snprintf(name, sizeof name, "_audio_level.%d", c);
         mlt_properties_set_double(props, name, peak[c] > 1e-10f ? 20.0 * std::log10(peak[c]) : -200.0);
+        if (tp) {
+            std::snprintf(name, sizeof name, "_true_peak.%d", c);
+            mlt_properties_set_double(props, name, tp->peakDb(c));
+        }
     }
     return 0;
 }
@@ -400,6 +403,8 @@ std::shared_ptr<Mlt::Filter> makeMeter()
     mlt_filter f = mlt_filter_new();
     if (!f) return nullptr;
     f->process = meterProcess;
+    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), "_tp", new TruePeakMeter, 0,
+                            [](void* p) { delete static_cast<TruePeakMeter*>(p); }, nullptr);
     auto meter = std::make_shared<Mlt::Filter>(f); // hält eine eigene Referenz
     mlt_filter_close(f);
     return meter;

@@ -354,6 +354,7 @@ LoudnessReading Engine::loudness() const
     r.integrated = m.integrated();
     r.range = m.range();
     r.seconds = m.measuredSeconds();
+    r.truePeak = m_loudness->truePeak.maxDb();
     return r;
 }
 
@@ -361,6 +362,7 @@ void Engine::resetLoudness()
 {
     std::lock_guard<std::mutex> lock(m_loudness->mutex);
     m_loudness->meter.reset();
+    m_loudness->truePeak.reset();
 }
 
 void Engine::setColorBypass(bool on)
@@ -450,11 +452,12 @@ void Engine::emitLevels()
 {
     // Die Pegelmesser merken sich den Pegel des zuletzt verarbeiteten Tons
     // (läuft dem Bild wegen des kleinen Puffers minimal voraus – für Meter egal)
-    auto read = [](const MixerHooks::Strip& s, QVector<float>& out) {
+    auto read = [](const MixerHooks::Strip& s, QVector<float>& out, const char* key) {
         float l = -200.f, r = -200.f;
         if (s.audible && s.meter) {
-            if (s.meter->get("_audio_level.0")) l = s.meter->get_double("_audio_level.0");
-            r = s.meter->get("_audio_level.1") ? float(s.meter->get_double("_audio_level.1")) : l; // Mono
+            const QByteArray k0 = QByteArray(key) + ".0", k1 = QByteArray(key) + ".1";
+            if (s.meter->get(k0.constData())) l = s.meter->get_double(k0.constData());
+            r = s.meter->get(k1.constData()) ? float(s.meter->get_double(k1.constData())) : l; // Mono
         }
         out << l << r;
     };
@@ -462,8 +465,8 @@ void Engine::emitLevels()
     {
         std::lock_guard<std::mutex> lock(m_mixerMutex);
         if (!m_mixer) return;
-        for (const auto& s : m_mixer->tracks) read(s, levels);
-        read(m_mixer->master, levels);
+        for (const auto& s : m_mixer->tracks) read(s, levels, "_audio_level");
+        read(m_mixer->master, levels, "_true_peak"); // Master in dBTP (True Peak)
     }
     emit audioLevels(levels); // queued -> UI-Thread
 }
