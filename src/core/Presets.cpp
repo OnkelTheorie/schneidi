@@ -36,6 +36,77 @@ constexpr ShotcutName kShotcutNames[] = {
     {"scanlines", "frei0r.scanline0r"},       {"lut3d", "avfilter.lut3d"},
 };
 
+// frei0r plugins whose Kdenlive effect file (/usr/share/kdenlive/effects/frei0r_*.xml, Kdenlive 24.12) names the
+// parameters by the plugin's parameter name ("Blur"). Kdenlive sets unknown names on the filter as well, and MLT
+// prefers the index -> an own preset must use exactly Kdenlive's name, else its slider would have no effect. All
+// other frei0r plugins (no Kdenlive file: generated from the MLT metadata, or files with "0", "1", …) use the index.
+constexpr const char* kKdenliveNamed[] = {
+    "alpha0ps", "alpha0ps_alpha0ps", "alpha0ps_alphagrad", "alpha0ps_alphaspot", "alphagrad", "alphaspot",
+    "balanc0r", "bgsubtract0r", "bigsh0t_eq_mask", "bigsh0t_eq_to_rect", "bigsh0t_hemi_to_eq", "bigsh0t_rect_to_eq",
+    "bigsh0t_stabilize_360", "bigsh0t_transform_360", "brightness", "cairoimagegrid", "cartoon", "cluster", "colgate",
+    "coloradj_RGB", "colordistance", "colorize", "colortap", "contrast0r", "defish0r", "delay0r", "distort0r",
+    "dither", "edgeglow", "emboss", "facebl0r", "facedetect", "flippo", "glow", "hqdn3d", "hueshift0r", "IIRblur",
+    "kaleid0sc0pe", "keyspillm0pup", "lenscorrection", "letterb0xed", "levels", "lightgraffiti", "mask0mate",
+    "medians", "nosync0r", "pixeliz0r", "pixs0r", "pr0be", "pr0file", "primaries", "rgbnoise", "saturat0r",
+    "scale0tilt", "select0r", "sharpness", "sigmoidaltransfer", "softglow", "sopsat", "squareblur",
+    "three_point_balance", "threshold0r", "timeout", "tint0r", "vertigo", "vignette",
+};
+
+// frei0r plugins Kdenlive hides (data/excluded_effects.txt, 24.12): an <effect> of them would make Kdenlive refuse
+// the whole effect group -> written like schneidi's own effects
+constexpr const char* kKdenliveExcluded[] = {
+    "3dflippo", "baltan", "bgsubtract0r", "bigsh0t_zenith_correction", "colorhalftone", "delay0r", "delaygrab",
+    "lightgraffiti", "perspective", "tehroxx0r", "tehRoxx0r", "water",
+};
+
+// Old frei0r parameter names (MLT frei0r/param_name_map.yaml; Kdenlive's files still use them) -> index.
+// kdenlive = Kdenlive's current file uses this name (written into own presets).
+struct ParamAlias {
+    const char* plugin; // without "frei0r."
+    const char* name;
+    const char* index;
+    bool kdenlive;
+};
+constexpr ParamAlias kParamAliases[] = {
+    {"lenscorrection", "xcenter", "0", true},
+    {"lenscorrection", "ycenter", "1", true},
+    {"lenscorrection", "correctionnearcenter", "2", true},
+    {"lenscorrection", "correctionnearedges", "3", true},
+    {"lenscorrection", "brightness", "4", true},
+    {"pixeliz0r", "BlockSizeX", "0", true},
+    {"pixeliz0r", "BlockSizeY", "1", true},
+    {"alpha0ps", "Shrink/grow amount", "4", false}, // older Kdenlive file of alpha0ps
+};
+
+QString frei0rPlugin(const QString& service)
+{
+    return service.startsWith(QLatin1String("frei0r.")) ? service.mid(7) : QString();
+}
+
+// Parameter name Kdenlive uses for this parameter (see kKdenliveNamed)
+QString kdenliveName(const EffectDescriptor& d, const EffectParam& p)
+{
+    const QString index = p.mltProperty.isEmpty() ? p.key : p.mltProperty;
+    const QString plugin = frei0rPlugin(d.mltService);
+    if (plugin.isEmpty() || p.mltName.isEmpty()) return index;
+    for (const ParamAlias& a : kParamAliases)
+        if (a.kdenlive && plugin == QLatin1String(a.plugin) && index == QLatin1String(a.index))
+            return QString::fromLatin1(a.name);
+    for (const char* named : kKdenliveNamed)
+        if (plugin == QLatin1String(named)) return p.mltName;
+    return index;
+}
+
+// An effect Kdenlive has under the same id (MLT filter it does not hide)
+bool kdenliveKnows(const EffectDescriptor& d)
+{
+    if (d.mltService.isEmpty()) return false;
+    const QString plugin = frei0rPlugin(d.mltService);
+    for (const char* excluded : kKdenliveExcluded)
+        if (plugin == QLatin1String(excluded)) return false;
+    return true;
+}
+
 bool isLut3d(const QString& service) { return service == "avfilter.lut3d" || service == "lut3d"; }
 
 // Properties that only describe the filter, not its look
@@ -54,11 +125,18 @@ void addProp(Filter* f, const QString& name, const QString& value)
     if (!name.isEmpty() && !ignored(name)) f->props.append({name, value.trimmed()});
 }
 
-// Kdenlive <effect>: service from tag / mlt_service property / kdenlive_id / id; children <parameter>, <property>
-Filter readKdenliveEffect(QXmlStreamReader& x, QString* name, QString* description)
+// Element of schneidi's own effects in an own preset (Kdenlive does not know them and would refuse the whole file
+// for an unknown <effect id>; other elements it ignores)
+constexpr const char* kOwnEffect = "schneidi-effect";
+
+// Kdenlive <effect>: service from tag / mlt_service property / kdenlive_id / id; children <parameter>, <property>.
+// <parameter value>/<default> are MLT values (Kdenlive 19.04+: factor only scales the slider). Only custom effects
+// from before 19.04 (attribute kdenlive_info) stored shown values = MLT value * factor.
+Filter readKdenliveEffect(QXmlStreamReader& x, QString* name, QString* description, QVector<Filter>* own = nullptr)
 {
     Filter f;
     const auto a = x.attributes();
+    const bool legacy = a.hasAttribute("kdenlive_info");
     f.service = a.value("tag").toString();
     QString fallback = a.value("kdenlive_id").toString();
     if (fallback.isEmpty()) fallback = a.value("id").toString();
@@ -70,13 +148,16 @@ Filter readKdenliveEffect(QXmlStreamReader& x, QString* name, QString* descripti
             const auto pa = x.attributes();
             const QString n = pa.value("name").toString();
             const QString v = pa.hasAttribute("value") ? pa.value("value").toString() : pa.value("default").toString();
-            if (const double factor = pa.value("factor").toDouble(); factor > 0 && factor != 1) f.factors[n] = factor;
+            if (const double factor = pa.value("factor").toDouble(); legacy && factor > 0 && factor != 1)
+                f.factors[n] = factor;
             addProp(&f, n, v);
             x.skipCurrentElement();
         } else if (x.name() == u"name" && name) {
             *name = x.readElementText().trimmed();
         } else if (x.name() == u"description" && description) {
             *description = x.readElementText().trimmed();
+        } else if (x.name() == QLatin1String(kOwnEffect) && own) {
+            *own << readKdenliveEffect(x, nullptr, nullptr);
         } else {
             x.skipCurrentElement();
         }
@@ -114,14 +195,17 @@ Preset parseXml(const QByteArray& data, Preset p)
     if (x.name() == u"effect") {
         p.source = QStringLiteral("Kdenlive");
         QString name;
-        p.filters << readKdenliveEffect(x, &name, &p.description);
+        QVector<Filter> own;
+        p.filters << readKdenliveEffect(x, &name, &p.description, &own);
+        p.filters << own;
         if (!name.isEmpty()) p.name = name;
     } else if (x.name() == u"effectgroup") {
         p.source = QStringLiteral("Kdenlive");
         if (const QString id = x.attributes().value("id").toString(); !id.isEmpty()) p.name = id;
         p.parentIn = std::max(0, x.attributes().value("parentIn").toInt());
         while (x.readNextStartElement()) {
-            if (x.name() == u"effect") p.filters << readKdenliveEffect(x, nullptr, nullptr);
+            if (x.name() == u"effect" || x.name() == QLatin1String(kOwnEffect))
+                p.filters << readKdenliveEffect(x, nullptr, nullptr);
             else if (x.name() == u"description") p.description = x.readElementText().trimmed();
             else x.skipCurrentElement();
         }
@@ -218,13 +302,21 @@ const EffectDescriptor* descriptorFor(const QString& service)
     return nullptr;
 }
 
-// Kdenlive names frei0r parameters by their title ("Gamma"), Shotcut and MLT by index ("3")
+// Kdenlive names frei0r parameters by their name ("Gamma", some by old names), Shotcut and MLT by index ("3")
 const EffectParam* paramFor(const EffectDescriptor& d, const QString& name)
 {
     for (const EffectParam& p : d.params)
         if (p.mltProperty == name || p.key == name) return &p;
     for (const EffectParam& p : d.params)
-        if (p.label.compare(name, Qt::CaseInsensitive) == 0) return &p;
+        if (!p.mltName.isEmpty() && p.mltName == name) return &p;
+    const QString plugin = frei0rPlugin(d.mltService);
+    for (const ParamAlias& a : kParamAliases)
+        if (plugin == QLatin1String(a.plugin) && name == QLatin1String(a.name))
+            for (const EffectParam& p : d.params)
+                if (p.mltProperty == QLatin1String(a.index)) return &p;
+    for (const EffectParam& p : d.params)
+        if (p.label.compare(name, Qt::CaseInsensitive) == 0 || p.mltName.compare(name, Qt::CaseInsensitive) == 0)
+            return &p;
     return nullptr;
 }
 
@@ -336,47 +428,104 @@ QString safeFileName(QString name)
 
 QByteArray toXml(const Clip& c, const QString& name, QStringList* skipped)
 {
-    QByteArray out;
-    QXmlStreamWriter x(&out);
-    x.setAutoFormatting(true);
-    x.setAutoFormattingIndent(4);
-    x.writeStartDocument();
-    x.writeStartElement("effectgroup");
-    x.writeAttribute("id", name);
-    x.writeAttribute("parentIn", "0"); // keyframes count from the clip start
+    // Kdenlive reads an <effectgroup> only with at least two <effect>s (each id an effect it knows), a single effect
+    // only as a custom effect (<effect tag=…> with its <parameter> definitions). schneidi's own effects go into
+    // <schneidi-effect> elements, which Kdenlive ignores.
+    QVector<QPair<const EffectInstance*, const EffectDescriptor*>> mlt, own;
     for (const EffectInstance& e : c.effects) {
         const EffectDescriptor* d = EffectRegistry::find(e.effectId);
         if (!d || e.effectId == kGrade || !d->video) {
             if (skipped) *skipped << (d ? d->name : e.effectId);
             continue;
         }
-        x.writeStartElement("effect");
-        x.writeAttribute("id", d->mltService.isEmpty() ? d->id : d->mltService);
-        if (!d->mltService.isEmpty()) {
-            x.writeStartElement("property");
-            x.writeAttribute("name", "mlt_service");
-            x.writeCharacters(d->mltService);
+        (kdenliveKnows(*d) ? mlt : own) << qMakePair(&e, d);
+    }
+    const bool single = mlt.size() == 1;
+
+    QByteArray out;
+    QXmlStreamWriter x(&out);
+    x.setAutoFormatting(true);
+    x.setAutoFormattingIndent(4);
+    x.writeStartDocument();
+    auto prop = [&](const QString& n, const QString& v) {
+        x.writeStartElement("property");
+        x.writeAttribute("name", n);
+        x.writeCharacters(v);
+        x.writeEndElement();
+    };
+    // Value of a parameter as MLT text (animation string when animated); empty + false = not saved
+    auto text = [&](const EffectInstance& e, const EffectParam& p, bool* animated) {
+        *animated = p.anim != AnimParam::Count && Keys::animated(c, p.anim);
+        if (*animated) return animationText(c, p.anim);
+        return valueText(p, e.params.value(p.key, p.defaultValue));
+    };
+    auto properties = [&](const EffectInstance& e, const EffectDescriptor& d, bool own) {
+        if (!e.enabled) prop("disable", "1");
+        for (const EffectParam& p : d.params) {
+            bool animated = false;
+            const QString v = text(e, p, &animated);
+            if (!v.isEmpty() || p.type == EffectParam::Choice) prop(own ? p.key : kdenliveName(d, p), v);
+        }
+    };
+    auto ownEffects = [&] {
+        for (const auto& [e, d] : own) {
+            x.writeStartElement(kOwnEffect);
+            x.writeAttribute("id", d->id);
+            properties(*e, *d, true);
             x.writeEndElement();
         }
-        auto prop = [&](const QString& n, const QString& v) {
-            x.writeStartElement("property");
-            x.writeAttribute("name", n);
-            x.writeCharacters(v);
-            x.writeEndElement();
-        };
-        if (!e.enabled) prop("disable", "1");
+    };
+
+    if (single) {
+        // Kdenlive custom effect (like its "Save effect"): the effect's definition with the values in value=
+        const auto [e, d] = mlt.first();
+        x.writeStartElement("effect");
+        x.writeAttribute("tag", d->mltService);
+        x.writeAttribute("id", name);
+        x.writeAttribute("type", "customVideo");
+        x.writeTextElement("name", name);
         for (const EffectParam& p : d->params) {
-            const QString n = p.mltProperty.isEmpty() ? p.key : p.mltProperty;
-            if (p.anim != AnimParam::Count && Keys::animated(c, p.anim)) {
-                prop(n, animationText(c, p.anim));
-                continue;
+            bool animated = false;
+            const QString v = text(*e, p, &animated);
+            if (v.isEmpty() && p.type != EffectParam::Choice) continue;
+            x.writeStartElement("parameter");
+            switch (p.type) {
+            case EffectParam::Double: x.writeAttribute("type", p.anim != AnimParam::Count ? "animated" : "constant"); break;
+            case EffectParam::Bool: x.writeAttribute("type", "bool"); break;
+            case EffectParam::Color: x.writeAttribute("type", "color"); break;
+            case EffectParam::Choice: x.writeAttribute("type", "list"); break;
+            case EffectParam::Path: break;
             }
-            const QString v = valueText(p, e.params.value(p.key, p.defaultValue));
-            if (!v.isEmpty() || p.type == EffectParam::Choice) prop(n, v);
+            x.writeAttribute("name", kdenliveName(*d, p));
+            x.writeAttribute("default", valueText(p, p.defaultValue));
+            if (p.type == EffectParam::Double) {
+                x.writeAttribute("min", number(p.min));
+                x.writeAttribute("max", number(p.max));
+                x.writeAttribute("decimals", QString::number(std::max(p.decimals, 3)));
+            }
+            if (p.type == EffectParam::Choice) x.writeAttribute("paramlist", p.choices.join(';'));
+            x.writeAttribute("value", v);
+            x.writeTextElement("name", p.label);
+            x.writeEndElement();
+        }
+        if (!e->enabled) prop("disable", "1"); // not part of a Kdenlive definition: only schneidi reads it
+        ownEffects();
+        x.writeEndElement();
+    } else {
+        x.writeStartElement("effectgroup");
+        x.writeAttribute("id", name);
+        x.writeAttribute("parentIn", "0"); // keyframes count from the clip start
+        for (const EffectInstance& e : c.effects) { // clip order, own effects in between
+            const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+            if (!d || e.effectId == kGrade || !d->video) continue;
+            const bool isOwn = !kdenliveKnows(*d);
+            x.writeStartElement(isOwn ? QString::fromLatin1(kOwnEffect) : QStringLiteral("effect"));
+            x.writeAttribute("id", isOwn ? d->id : d->mltService);
+            properties(e, *d, isOwn);
+            x.writeEndElement();
         }
         x.writeEndElement();
     }
-    x.writeEndElement();
     x.writeEndDocument();
     return out;
 }

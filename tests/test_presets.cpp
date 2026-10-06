@@ -1,4 +1,4 @@
-// Test presets from Kdenlive and Shotcut (core/Presets): custom effect with <parameter factor>, effect group with
+// Test presets from Kdenlive and Shotcut (core/Presets): custom effect as Kdenlive 24.12 writes it (value = MLT value) and from before 19.04 (factor), effect group with
 // keyframes (animation strings in frames, clock and SMPTE time, interpolation types, parentIn) and parameter names, Shotcut filter set (MLT XML) and filter preset (folder name = filter), colors and
 // choices, unknown filters skipped, LUT from avfilter.lut3d, broken files; applying via the Editor (one undo step,
 // existing effect takes the values) and the Effects Library category "Presets". Own presets: clip effects -> Kdenlive
@@ -23,6 +23,7 @@
 #include <QListWidget>
 #include <QTreeWidget>
 #include <QTemporaryDir>
+#include <QXmlStreamReader>
 #include <QUndoStack>
 #include <clocale>
 
@@ -52,12 +53,23 @@ bool write(const QString& path, const QByteArray& data)
     return f.open(QIODevice::WriteOnly) && f.write(data) == data.size();
 }
 
-const QByteArray kKdenliveEffect = R"(<?xml version="1.0"?>
-<!DOCTYPE kpartgui>
-<effect tag="frei0r.glow" id="frei0r.glow" type="customVideo">
+// As Kdenlive 24.12 writes it ("Save effect": frei0r_glow.xml with id = name and value = MLT value; factor only
+// scales the slider)
+const QByteArray kKdenliveEffect = R"(<!DOCTYPE kpartgui>
+<effect tag="frei0r.glow" id="Starker Glow" type="customVideo">
     <name>Starker Glow</name>
     <description>Viel Glow</description>
-    <parameter type="animated" name="Blur" default="10" value="700" min="0" max="1000" factor="1000"><name>Blur</name></parameter>
+    <author>Richard Spindler</author>
+    <parameter type="animated" name="Blur" default="0.01" min="0" max="1000" factor="1000" value="0.7">
+        <name>Blur</name>
+    </parameter>
+</effect>
+)";
+
+// Custom effect from Kdenlive before 19.04 (kdenlive_info): values were stored in shown units (MLT value * factor)
+const QByteArray kKdenliveLegacy = R"(<effect tag="frei0r.glow" id="Alt" kdenlive_info="" type="custom">
+    <name>Alt</name>
+    <parameter type="constant" name="Blur" default="10" value="400" min="0" max="1000" factor="1000"/>
 </effect>
 )";
 
@@ -96,6 +108,29 @@ const QByteArray kShotcutSet = R"(<?xml version="1.0" encoding="utf-8"?>
 </mlt>
 )";
 
+// Kdenlive's rules for custom effect files (EffectsRepository::parseCustomAssetFile, 24.12): an <effectgroup> needs
+// more than one <effect>, each id an effect Kdenlive knows (here: an MLT filter); a single effect needs tag= with an
+// MLT filter and <parameter> definitions. Elements other than <effect> are ignored.
+bool kdenliveAccepts(const QByteArray& xml)
+{
+    QXmlStreamReader x(xml);
+    if (!x.readNextStartElement()) return false;
+    const bool group = x.name() == u"effectgroup";
+    if (!group) return x.name() == u"effect" && x.attributes().value("tag").startsWith(u"frei0r.") &&
+                         xml.contains("<parameter");
+    int effects = 0;
+    while (!x.atEnd()) {
+        x.readNext();
+        if (!x.isStartElement() || x.name() != u"effect") continue;
+        ++effects;
+        const QString id = x.attributes().value("id").toString();
+        if (std::none_of(EffectRegistry::all().begin(), EffectRegistry::all().end(),
+                         [&](const EffectDescriptor& d) { return d.mltService == id; }))
+            return false;
+    }
+    return !x.hasError() && effects > 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -108,7 +143,7 @@ int main(int argc, char** argv)
     if (!EffectRegistry::find("frei0r.glow") || !EffectRegistry::find("frei0r.levels"))
         return Check::skip("frei0r plugins not installed");
 
-    // ---- Kdenlive custom effect: <parameter value> in shown units (factor) ----
+    // ---- Kdenlive custom effect: <parameter value> is the MLT value (factor only for files before 19.04) ----
     {
         const Presets::Preset p = Presets::parse(kKdenliveEffect, "glow.xml");
         CHECK(p.error.isEmpty());
@@ -118,6 +153,24 @@ int main(int argc, char** argv)
         const Presets::Mapped m = Presets::map(p);
         if (const EffectInstance* e = effect(m, "frei0r.glow"); CHECK(e)) CHECK(qAbs(num(*e, "0") - 0.7) < 1e-9);
         CHECK(m.skipped.isEmpty() && !m.keyframes);
+        const Presets::Mapped legacy = Presets::map(Presets::parse(kKdenliveLegacy, "alt.xml"));
+        if (const EffectInstance* e = effect(legacy, "frei0r.glow"); CHECK(e)) CHECK(qAbs(num(*e, "0") - 0.4) < 1e-9);
+        // Without value: default, also an MLT value
+        const Presets::Mapped def = Presets::map(Presets::parse(
+            R"(<effect tag="frei0r.glow" id="d"><parameter type="animated" name="Blur" default="0.01" factor="1000"/></effect>)",
+            "d.xml"));
+        if (const EffectInstance* e = effect(def, "frei0r.glow"); CHECK(e)) CHECK(qAbs(num(*e, "0") - 0.01) < 1e-9);
+    }
+
+    // ---- Old frei0r parameter names (MLT param_name_map, still used by Kdenlive's lenscorrection/pixeliz0r) ----
+    if (EffectRegistry::find("frei0r.lenscorrection")) {
+        const Presets::Mapped m = Presets::map(Presets::parse(R"(<effectgroup id="g" parentIn="0">
+            <effect id="frei0r.lenscorrection"><property name="xcenter">0.3</property>
+                <property name="brightness">0=0.1;10=0.6</property></effect>
+            <effect id="frei0r.glow"><property name="Blur">0.2</property></effect>
+        </effectgroup>)", "g.xml"));
+        if (const EffectInstance* e = effect(m, "frei0r.lenscorrection"); CHECK(e)) CHECK(qAbs(num(*e, "0") - 0.3) < 1e-9);
+        CHECK(m.keys.value(animOf("frei0r.lenscorrection", "4")).size() == 2);
     }
 
     // ---- Kdenlive effect group: names instead of indexes, keyframes -> first value, unknown filter skipped ----
@@ -357,7 +410,10 @@ int main(int argc, char** argv)
         QStringList skipped;
         const QByteArray xml = Presets::toXml(c, "Mein Look", &skipped);
         if (qEnvironmentVariableIsSet("PRESET_XML")) qInfo("%s", xml.constData());
-        CHECK(xml.contains("<effectgroup") && xml.contains("mlt_service"));
+        CHECK(xml.contains("<effectgroup") && !xml.contains("mlt_service"));
+        CHECK(kdenliveAccepts(xml)); // own effects (blur, color) do not make Kdenlive refuse the group
+        CHECK(xml.contains(R"(<property name="Blur">)"));      // Kdenlive's name of the glow parameter
+        CHECK(xml.contains(R"(<schneidi-effect id="color">)"));
         CHECK_EQ(skipped, (QStringList{EffectRegistry::find("grade")->name, "frei0r.gibtsnicht"}));
         const Presets::Preset p = Presets::parse(xml, "Mein Look.xml");
         CHECK(p.error.isEmpty());
@@ -418,6 +474,46 @@ int main(int argc, char** argv)
                 listed |= list2->item(i)->text() == "Mein Look" && !list2->item(i)->data(Qt::UserRole).toString().isEmpty();
             CHECK(listed);
         }
+    }
+
+    // ---- Own preset with one MLT effect: Kdenlive custom effect (<effect tag> with <parameter> definitions) ----
+    {
+        Clip c;
+        c.in = 0;
+        c.out = 49;
+        CHECK(EffectRegistry::add(c, "frei0r.glow"));
+        CHECK(EffectRegistry::add(c, "color"));
+        EffectRegistry::instance(c, "color")->params["saturation"] = -40.0;
+        const AnimParam glow = animOf("frei0r.glow", "0");
+        Keys::setKey(c, glow, 0, 0.1);
+        Keys::setKey(c, glow, 30, 0.9);
+        const QByteArray xml = Presets::toXml(c, "Ein Glow");
+        if (qEnvironmentVariableIsSet("PRESET_XML")) qInfo("%s", xml.constData());
+        CHECK(kdenliveAccepts(xml));
+        CHECK(xml.contains(R"(<effect tag="frei0r.glow" id="Ein Glow" type="customVideo">)"));
+        CHECK(xml.contains(R"(<parameter type="animated" name="Blur" default="0" min="0" max="1" decimals="3" value="0=0.1;30=0.9">)"));
+        CHECK(xml.contains(R"(<schneidi-effect id="color">)"));
+        const Presets::Preset p = Presets::parse(xml, "Ein Glow.xml");
+        CHECK_EQ(p.name, QString("Ein Glow"));
+        const Presets::Mapped m = Presets::map(p);
+        CHECK(m.skipped.isEmpty());
+        if (const EffectInstance* e = effect(m, "color"); CHECK(e)) CHECK(qAbs(num(*e, "saturation") + 40) < 1e-9);
+        if (CHECK(m.keys.contains(glow))) CHECK(m.keys[glow].size() == 2 && m.keys[glow][1].frame == 30);
+        // Disabled: only schneidi reads it back
+        EffectRegistry::instance(c, "frei0r.glow")->enabled = false;
+        const Presets::Mapped off = Presets::map(Presets::parse(Presets::toXml(c, "x"), "x.xml"));
+        if (const EffectInstance* e = effect(off, "frei0r.glow"); CHECK(e)) CHECK(!e->enabled);
+    }
+    // Plugins whose Kdenlive file uses indexes / old names keep them
+    if (EffectRegistry::find("frei0r.rgbsplit0r") && EffectRegistry::find("frei0r.lenscorrection")) {
+        Clip c;
+        c.out = 9;
+        CHECK(EffectRegistry::add(c, "frei0r.rgbsplit0r"));
+        CHECK(EffectRegistry::add(c, "frei0r.lenscorrection"));
+        const QByteArray xml = Presets::toXml(c, "Namen");
+        CHECK(kdenliveAccepts(xml));
+        CHECK(xml.contains(R"(<property name="1">)") && xml.contains(R"(<property name="xcenter">)"));
+        CHECK(xml.contains(R"(<property name="brightness">)"));
     }
 
     QDir(EffectFolders::root()).removeRecursively();

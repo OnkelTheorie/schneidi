@@ -24,6 +24,9 @@ struct EffectParam {
     int decimals = 2;
     QStringList choices; // Choice: allowed values (passed to MLT as they are)
     QString description; // Tooltip
+    // frei0r: parameter name of the plugin (MLT also accepts it instead of the index in mltProperty; Kdenlive's
+    // effect files mostly use it)
+    QString mltName;
 };
 
 struct EffectDescriptor {

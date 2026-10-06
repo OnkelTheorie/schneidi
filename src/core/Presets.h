@@ -2,8 +2,10 @@
 // Effect presets from Shotcut and Kdenlive (effects folder, subfolder "Presets"). Both programs save MLT filters plus
 // their properties, so a preset becomes schneidi effects wherever the filter is one schneidi knows (frei0r plugins,
 // Green Screen; avfilter.lut3d -> LUT of the color correction). Read formats:
-// - Kdenlive: custom effect (<effect tag="frei0r.glow"> with <parameter>/<property>) and effect group
-//   (<effectgroup> with several <effect>, e.g. /usr/share/kdenlive/effect-templates)
+// - Kdenlive: custom effect (<effect tag="frei0r.glow"> with <parameter value>; the values are MLT values, `factor`
+//   only scales Kdenlive's slider, except in files from before Kdenlive 19.04 with kdenlive_info) and effect group
+//   (<effectgroup> with several <effect id> and their MLT properties, e.g. /usr/share/kdenlive/effect-templates;
+//   keyframes in source frames of the clip it was saved from, parentIn = that clip's in point)
 // - Shotcut: filter set (MLT XML with <filter> elements, Shotcut/filter-sets) and filter preset (lines
 //   "property=value", Shotcut/presets/<filter>/<name>: the filter comes from the folder name)
 // Keyframes (MLT animation strings: Kdenlive "1=0;10=15", Shotcut "00:00:00.000=0.2;00:00:01.000=0.9") become
@@ -27,7 +29,7 @@ inline constexpr const char* Prefix = "preset:";
 struct Filter {
     QString service;                          // MLT service, e.g. "frei0r.glow"
     QVector<QPair<QString, QString>> props;   // MLT property -> value, as in the file
-    QHash<QString, double> factors;           // Kdenlive <parameter factor>: shown value = MLT value * factor
+    QHash<QString, double> factors;           // Kdenlive before 19.04: <parameter value> = MLT value * factor
 };
 
 struct Preset {
@@ -62,12 +64,17 @@ struct AnimKey {
 };
 KeyTrack toKeyTrack(QVector<AnimKey> keys, int length);
 
-// Own presets (Inspector / Timeline → Clip → "Effekte als Preset speichern"): the clip's effects as a Kdenlive
-// <effectgroup>, so parse() reads it back and Kdenlive can open it. MLT filters keep their service and property
-// names (frei0r, Green Screen); schneidi's own effects (color correction, blur) are written with their registry id
-// (only schneidi knows them). Keyframes become animation strings in frames from the clip start ("0=0.1;24a=0.8",
-// eases as MLT sinusoidal types, Bezier as smooth); disabled effects get disable=1. Not saved: the Color page grade
-// and effects whose plugin is missing (listed in `skipped`).
+// Own presets (Inspector / Timeline → Clip → "Effekte als Preset speichern"): the clip's effects in Kdenlive's
+// format, so parse() reads it back and Kdenlive (24.12 checked) can use it from its effects folder:
+// - two or more MLT filters: <effectgroup parentIn="0"> with <effect id=service> and <property> per parameter
+// - one MLT filter: custom effect <effect tag=service type="customVideo"> with <parameter> definitions (Kdenlive
+//   ignores a group with a single effect)
+// frei0r parameters get the names Kdenlive uses (mostly the plugin's parameter name, some plugins the index).
+// schneidi's own effects (color correction, blur) and frei0r plugins Kdenlive hides go into <schneidi-effect>
+// elements: Kdenlive ignores them (an unknown <effect id> would make it refuse the whole group). Keyframes become
+// animation strings in frames from the clip start ("0=0.1;24a=0.8", eases as MLT sinusoidal types, Bezier as
+// smooth); disabled effects get disable=1. Not saved: the Color page grade and effects whose plugin is missing
+// (listed in `skipped`).
 QByteArray toXml(const Clip& c, const QString& name, QStringList* skipped = nullptr);
 // File for an own preset in the presets folder (name made safe as a file name)
 QString userPresetPath(const QString& name);

@@ -88,7 +88,8 @@ bool describe(mlt_repository repo, const QString& service, EffectDescriptor* d)
         if (!pm) continue;
         EffectParam p;
         p.key = p.mltProperty = str(pm, "identifier");
-        p.label = capitalized(str(pm, "title"));
+        p.mltName = str(pm, "title");
+        p.label = capitalized(p.mltName);
         p.description = str(pm, "description");
         if (p.label.isEmpty()) p.label = p.key;
         const QString type = str(pm, "type");
