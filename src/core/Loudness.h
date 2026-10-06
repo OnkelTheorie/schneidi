@@ -6,6 +6,8 @@
 //   Loudness Range (LRA) = 10.–95. Perzentil der Short-term-Werte (Gates -70 LUFS / -20 LU).
 // Reines C++ ohne MLT/Qt -> gleich unter Linux und Windows, testbar. Nicht thread-sicher (Aufrufer sperrt).
 
+#include "core/TruePeak.h"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -92,9 +94,10 @@ private:
 };
 
 // Live-Messung in der Vorschau (Loudness-Meter im Mixer): der Audio-Thread des Players füttert den Messer
-// (nur solange active), die Oberfläche liest unter demselben Mutex.
+// (nur solange active), die Oberfläche liest unter demselben Mutex. truePeak = höchster True Peak seit Reset.
 struct SharedLoudness {
     std::mutex mutex;
     LoudnessMeter meter;
+    TruePeakMeter truePeak;
     std::atomic<bool> active{false};
 };

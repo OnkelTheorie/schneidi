@@ -28,6 +28,9 @@ constexpr double kMeterFloor = -60.0; // unterster Wert der Pegelanzeige (dBFS)
 constexpr double kMeterFall = 24.0;   // Abfall in dB/s (Anstieg sofort)
 constexpr double kPeakHold = 1.0;     // Peak-Hold in Sekunden
 constexpr double kClipDb = -0.001;    // ab hier Übersteuerung (0 dBFS; volle s16-Aussteuerung zählt mit)
+constexpr double kTruePeakLimit = -1.0; // Standard-Grenze für True Peak am Master (EBU R128, Streaming: -1 dBTP)
+
+double truePeakLimit() { return QSettings().value("audio/truePeakLimit", kTruePeakLimit).toDouble(); }
 
 // Fader-Skala wie die Lautstärkelinie in der Timeline (0 = unten, 1 = oben):
 // unteres Viertel -∞..-20 dB, Mitte -20..0 dB, oberes Viertel 0..+12 dB
@@ -89,6 +92,14 @@ public:
     std::function<void()> onFinish;
     std::function<void()> onResetPeak; // Klick auf die Clip-Anzeige
 
+    // Ab welchem Pegel die Übersteuerungs-Anzeige aufleuchtet (Spuren: 0 dBFS; Master: True-Peak-Grenze in dBTP,
+    // dann zusätzlich als Markierung an der Pegelskala)
+    void setOverLimit(double db, bool mark)
+    {
+        m_over = db;
+        m_overMark = mark;
+        update();
+    }
     void setValue(double db)
     {
         if (db == m_db) return;
@@ -101,7 +112,7 @@ public:
         m_target[1] = r;
         for (int ch = 0; ch < 2; ++ch) {
             m_max = std::max(m_max, m_target[ch]);
-            if (m_target[ch] >= kClipDb && !m_clip[ch]) {
+            if (m_target[ch] >= m_over && !m_clip[ch]) {
                 m_clip[ch] = true; // bleibt stehen bis Klick (wie DaVinci)
                 update();
             }
@@ -168,6 +179,8 @@ protected:
             const int y = bottom - int(std::lround(meterPos(db) * h));
             p.fillRect(mx, y, 2 * bw + 1, 1, Theme::alpha(Theme::well, 160));
         }
+        // True-Peak-Grenze (Master): Markierung quer über beide Balken
+        if (m_overMark) p.fillRect(mx - 2, bottom - int(std::lround(meterPos(m_over) * h)), 2 * bw + 5, 1, Theme::primary);
 
         // Fader-Skala
         QFont f = font();
@@ -256,6 +269,8 @@ private:
     }
 
     double m_db = 0;
+    double m_over = kClipDb;
+    bool m_overMark = false;
     float m_target[2] = {kSilent, kSilent}, m_disp[2] = {kSilent, kSilent}, m_hold[2] = {kSilent, kSilent};
     double m_holdAge[2] = {0, 0};
     float m_max = kSilent;
@@ -428,6 +443,8 @@ public:
         value->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::text.name()));
         lay->addWidget(value);
 
+        if (master)
+            peak->setToolTip(T("True Peak (dBTP, ITU-R BS.1770) – rot = über der True-Peak-Grenze\nKlick setzt zurück"));
         peak->onClick = fader->onResetPeak = [this] {
             fader->resetPeak();
             updatePeak();
@@ -510,7 +527,8 @@ public:
         auto round1 = [](double v) { return std::lround(v * 10); };
         const bool changed = live != m_live || round1(r.momentary) != round1(m_r.momentary)
                              || round1(r.shortTerm) != round1(m_r.shortTerm)
-                             || round1(r.integrated) != round1(m_r.integrated) || round1(r.range) != round1(m_r.range);
+                             || round1(r.integrated) != round1(m_r.integrated) || round1(r.range) != round1(m_r.range)
+                             || round1(r.truePeak) != round1(m_r.truePeak);
         m_r = r;
         m_live = live;
         if (changed) update();
@@ -518,6 +536,11 @@ public:
     void setTarget(double lufs)
     {
         m_target = lufs;
+        update();
+    }
+    void setTruePeakLimit(double db)
+    {
+        m_tpLimit = db;
         update();
     }
 
@@ -530,7 +553,7 @@ protected:
         p.setFont(f);
         const QFontMetrics fm(f);
         const int rowH = fm.height() + 1;
-        const int textH = 4 * rowH + 4;
+        const int textH = 5 * rowH + 4;
         const int top = 14, bottom = height() - textH - 6, h = std::max(10, bottom - top);
         const auto yOf = [&](double lufs) {
             return bottom - int(std::lround(std::clamp((lufs - kFloor) / -kFloor, 0.0, 1.0) * h));
@@ -578,6 +601,15 @@ protected:
         row(1, "S", lufsText(values[1]), Theme::text);
         row(2, "M", lufsText(values[0]), Theme::text);
         row(3, "LRA", QString("%1 LU").arg(m_r.range, 0, 'f', 1), Theme::text);
+        // Höchster True Peak seit Reset; über der Grenze rot hinterlegt (Over-Anzeige wie bei der Lieferprüfung)
+        const bool over = m_r.truePeak > m_tpLimit;
+        if (over) p.fillRect(QRect(2, ly + 4 * rowH, width() - 4, rowH), Theme::meterHigh);
+        const QColor tc = over ? Theme::readableOn(Theme::meterHigh) : Theme::text;
+        row(4, "TP", m_r.truePeak <= -99 ? QStringLiteral("–") : QString::number(m_r.truePeak, 'f', 1), tc);
+        if (over) {
+            p.setPen(tc);
+            p.drawText(QRect(4, ly + 4 * rowH, width() - 8, rowH), Qt::AlignLeft | Qt::AlignVCenter, "TP");
+        }
     }
 
 private:
@@ -596,6 +628,7 @@ private:
     LoudnessReading m_r;
     bool m_live = false;
     double m_target = -14.0;
+    double m_tpLimit = kTruePeakLimit;
 };
 
 // Kasten rechts neben dem Master: Titel, Anzeige, Reset
@@ -614,8 +647,8 @@ public:
         name->setAlignment(Qt::AlignCenter);
         name->setStyleSheet(QString("color: %1; font-weight: 600; font-size: 8pt; background: %2; padding: 2px;")
                                 .arg(Theme::text.name(), Theme::panelHeader.name()));
-        name->setToolTip(T("Loudness-Meter (ITU-R BS.1770-4, LUFS) am Master\n"
-                           "Misst bei Wiedergabe der Timeline. Rechtsklick = Ziellautheit"));
+        name->setToolTip(T("Loudness-Meter (ITU-R BS.1770-4, LUFS) und True Peak (dBTP) am Master\n"
+                           "Misst bei Wiedergabe der Timeline. Rechtsklick = Ziellautheit, True-Peak-Grenze"));
         lay->addWidget(name);
         view = new LoudnessView;
         view->setToolTip(name->toolTip());
@@ -623,7 +656,7 @@ public:
         reset = new QToolButton;
         reset->setText(T("Reset"));
         reset->setFocusPolicy(Qt::NoFocus);
-        reset->setToolTip(T("Messung neu beginnen (Integrated, LRA)"));
+        reset->setToolTip(T("Messung neu beginnen (Integrated, LRA, True Peak)"));
         reset->setFixedHeight(18);
         reset->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         reset->setStyleSheet(QString("QToolButton { background: %2; color: %1; font-size: 8pt; padding: 0; }")
@@ -700,11 +733,13 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
         }
         menu.exec(m_master->limiter->mapToGlobal(pos));
     });
+    m_master->fader->setOverLimit(truePeakLimit(), true);
     row->addWidget(m_master);
 
     // Loudness-Meter (Ziel in den Einstellungen, Standard -14 LUFS wie YouTube)
     m_loudness = new LoudnessStrip;
     m_loudness->view->setTarget(QSettings().value("audio/loudnessTarget", -14.0).toDouble());
+    m_loudness->view->setTruePeakLimit(truePeakLimit());
     connect(m_loudness->reset, &QToolButton::clicked, this, [this] {
         m_engine->resetLoudness();
         m_loudness->view->setReading(m_engine->loudness(), false);
@@ -722,6 +757,19 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
             connect(a, &QAction::triggered, this, [this, lufs = lufs] {
                 QSettings().setValue("audio/loudnessTarget", lufs);
                 m_loudness->view->setTarget(lufs);
+            });
+        }
+        // True-Peak-Grenze (Over-Anzeige am Master und in der TP-Zeile)
+        menu.addSection(T("True-Peak-Grenze"));
+        const double limit = truePeakLimit();
+        for (double db : {-1.0, -2.0, 0.0}) {
+            QAction* a = menu.addAction(QString("%1 dBTP").arg(db, 0, 'f', 1));
+            a->setCheckable(true);
+            a->setChecked(std::abs(limit - db) < 0.01);
+            connect(a, &QAction::triggered, this, [this, db] {
+                QSettings().setValue("audio/truePeakLimit", db);
+                m_loudness->view->setTruePeakLimit(db);
+                m_master->fader->setOverLimit(db, true);
             });
         }
         menu.exec(m_loudness->mapToGlobal(pos));
