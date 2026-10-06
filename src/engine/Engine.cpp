@@ -3,6 +3,7 @@
 #include "core/I18n.h"
 #include "core/Loudness.h"
 #include "engine/Bundle.h"
+#include "engine/Frei0r.h"
 #include "engine/Preroll.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
@@ -54,11 +55,13 @@ bool Engine::init(QString* error)
 {
     // Mitgelieferte MLT-Module (AppImage/Windows-Programmordner), sonst die des Systems
     Bundle::prepareMltEnvironment();
+    Frei0r::prepareEnvironment();
     const QString modules = Bundle::mltModuleDir();
     if (!(modules.isEmpty() ? Mlt::Factory::init() : Mlt::Factory::init(Bundle::pathForMlt(modules).constData()))) {
         if (error) *error = T("MLT konnte nicht initialisiert werden.");
         return false;
     }
+    Frei0r::registerEffects();
 
     m_format = ProjectFormat{};
     if (!createConsumer(error)) return false;

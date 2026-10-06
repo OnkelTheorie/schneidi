@@ -33,7 +33,7 @@ namespace {
 constexpr QSize kIcon{48, 27};
 
 enum Category {
-    All, VideoTransitions, AudioTransitions, Titles, OpenFx, Filters,
+    All, VideoTransitions, AudioTransitions, Titles, OpenFx, Filters, Frei0rFilters,
     LutsAll, BuiltinLuts, Luts, LutGroup,                         // LUTs: mitgeliefert + eigene
     LumasAll, BuiltinTransitions, Transitions, TransitionGroup,   // Verlaufsblenden: mitgeliefert + eigene
     // Luts/Transitions = eigener Effekte-Ordner, …Group = dessen Unterordner
@@ -166,6 +166,17 @@ QPixmap effectIcon(const QString& id)
         shade.setColorAt(0, QColor(255, 255, 255, 90));
         shade.setColorAt(1, QColor(0, 0, 0, 150));
         p.fillRect(r, shade);
+    } else if (id.startsWith("frei0r.")) { // frei0r: tile with a short tag (over a hundred filters, no picture per filter)
+        QLinearGradient g(r.topLeft(), r.bottomRight());
+        g.setColorAt(0, QColor(0x3a, 0x40, 0x52));
+        g.setColorAt(1, QColor(0x22, 0x24, 0x2c));
+        p.fillRect(r, g);
+        QFont f = p.font();
+        f.setPixelSize(10);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(QColor(0xb8, 0xc0, 0xd8));
+        p.drawText(r, Qt::AlignCenter, QStringLiteral("f0r"));
     } else if (id == "blur") {
         QRadialGradient g(r.center(), r.height() * 0.55);
         g.setColorAt(0, QColor(0xe8, 0xe8, 0xf0));
@@ -250,7 +261,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     import->setText(T("Effekte importieren…"));
     import->setToolTip(T("Öffnet den Effekte-Ordner. LUTs (.cube, .3dl, .csp, Hald-CLUT) in den Ordner „LUTs“, "
                          "Übergänge (Graustufenbilder) in den Ordner „Transitions“ legen, Unterordner werden zu "
-                         "Kategorien.\n%1")
+                         "Kategorien. frei0r-Plugins in den Ordner „frei0r“ (wirken nach Neustart).\n%1")
                            .arg(QDir::toNativeSeparators(EffectFolders::root())));
     connect(import, &QToolButton::clicked, this, [] {
         EffectFolders::ensure();
@@ -278,6 +289,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     // Open FX → Filter (wie DaVinci: dort liegen die ResolveFX-Filter)
     auto* openFx = add(m_categories, QStringLiteral("Open FX"), OpenFx);
     add(openFx, T("Filter"), Filters);
+    add(openFx, QStringLiteral("frei0r"), Frei0rFilters)->setToolTip(0, T("frei0r-Plugins (eigene im Effekte-Ordner unter „frei0r“)"));
     // Nach Art sortiert, darunter jeweils mitgeliefert und eigener Effekte-Ordner (Unterordner = Unterkategorien)
     auto* luts = add(m_categories, QStringLiteral("LUTs"), LutsAll);
     add(luts, T("Mitgeliefert"), BuiltinLuts);
@@ -479,10 +491,11 @@ void EffectsLibrary::rebuild()
             out << Entry{QString::fromLatin1(i.name), QString("audio:%1").arg(i.id), audioIcon()};
         return out;
     };
-    auto filters = [&] {
+    auto filters = [&](const QString& category) {
         QVector<Entry> out;
         for (const auto& e : EffectRegistry::all())
-            if (e.library) out << Entry{e.name, kEffectPrefix + e.id, effectIcon(e.id)};
+            if (e.library && e.category == category)
+                out << Entry{e.name, kEffectPrefix + e.id, effectIcon(e.id), e.description};
         return out;
     };
     const QVector<Entry> titles{Entry{QStringLiteral("Text"), kTitleData, titleIcon()}};
@@ -495,8 +508,9 @@ void EffectsLibrary::rebuild()
     case VideoTransitions: groups = {{{}, videoTransitions()}}; break;
     case AudioTransitions: groups = {{{}, audioTransitions()}}; break;
     case Titles: groups = {{{}, titles}}; break;
-    case OpenFx:
-    case Filters: groups = {{{}, filters()}}; break;
+    case OpenFx: groups = {{T("Filter"), filters({})}, {QStringLiteral("frei0r"), filters(EffectRegistry::Frei0rCategory)}}; break;
+    case Filters: groups = {{{}, filters({})}}; break;
+    case Frei0rFilters: groups = {{{}, filters(EffectRegistry::Frei0rCategory)}}; break;
     case LutsAll:
         groups = {{T("Mitgeliefert"), files(EffectFolders::builtinLuts(), true, true)},
                   {T("Eigene"), files(m_userLuts, true, false)}};

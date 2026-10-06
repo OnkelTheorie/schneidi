@@ -103,14 +103,17 @@ QString lutDir() { return QDir(root()).filePath("LUTs"); }
 
 QString transitionDir() { return QDir(root()).filePath("Transitions"); }
 
+QString frei0rDir() { return QDir(root()).filePath("frei0r"); }
+
 void ensure()
 {
     QDir().mkpath(lutDir());
     QDir().mkpath(transitionDir());
-    // „2“: neuer Inhalt (Übergänge) -> ältere Liesmich ersetzen
+    QDir().mkpath(frei0rDir());
+    // New content (frei0r) -> replace an older readme
     const QString readme = QDir(root()).filePath(T("Liesmich.txt"));
     QFile old(readme);
-    if (old.open(QIODevice::ReadOnly) && old.readAll().contains("Transitions")) return;
+    if (old.open(QIODevice::ReadOnly) && old.readAll().contains("frei0r")) return;
     old.close();
     QFile f(readme);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
@@ -122,7 +125,10 @@ void ensure()
               "\n"
               "Übergänge: Graustufenbilder (.png, .jpg, .pgm, .bmp, .tif) in den Ordner „Transitions“ legen\n"
               "(z. B. Luma-Übergänge aus Kdenlive, Shotcut oder OpenShot). Dunkle Stellen wechseln zuerst.\n"
-              "Auf einen Schnitt ziehen wie die anderen Übergänge.\n")
+              "Auf einen Schnitt ziehen wie die anderen Übergänge.\n"
+              "\n"
+              "frei0r: zusätzliche frei0r-Plugins (.so unter Linux, .dll unter Windows) in den Ordner „frei0r“ legen.\n"
+              "Sie erscheinen nach einem Neustart unter Open FX → frei0r.\n")
                 .toUtf8());
 }
 

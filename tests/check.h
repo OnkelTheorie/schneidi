@@ -4,6 +4,7 @@
 
 #include "core/Types.h"
 #include "engine/Bundle.h"
+#include "engine/Frei0r.h"
 
 #include <Mlt.h>
 
@@ -62,9 +63,11 @@ inline void initApp(const char* name)
 inline void initMlt()
 {
     Bundle::prepareMltEnvironment();
+    Frei0r::prepareEnvironment();
     const QString modules = Bundle::mltModuleDir();
     if (modules.isEmpty()) Mlt::Factory::init();
     else Mlt::Factory::init(Bundle::pathForMlt(modules).constData());
+    Frei0r::registerEffects();
 }
 
 inline bool haveFfmpeg() { return !QStandardPaths::findExecutable("ffmpeg").isEmpty(); }

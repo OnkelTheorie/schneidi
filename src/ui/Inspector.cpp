@@ -368,9 +368,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     };
     // ---- Effekte aus der Effects Library (Open FX), nur sichtbar, wenn der Clip sie hat ----
     m_videoLay = videoLay;
-    m_fxIndex = videoLay->count();
-    for (const auto& d : EffectRegistry::all())
-        if (d.library && d.video) addEffectSection(videoLay, d);
+    m_fxIndex = videoLay->count(); // sections are created once a clip has the effect (arrangeEffectSections)
     videoLay->addStretch(1);
 
     // ---- Audio ----
@@ -882,8 +880,90 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
         menu.exec(header->mapToGlobal(pos));
     });
 
+    if (!d.description.isEmpty()) s.header->setToolTip(d.description);
+    // Elide long names (frei0r), full name + description in the tooltip
+    auto label = [this](const EffectParam& p) {
+        QLabel* l = rowLabel(p.label);
+        const QString shown = l->fontMetrics().elidedText(p.label, Qt::ElideRight, 110);
+        l->setText(shown);
+        if (shown != p.label || !p.description.isEmpty())
+            l->setToolTip(p.description.isEmpty() || p.description == p.label ? p.label
+                                                                               : p.label + "\n" + p.description);
+        return l;
+    };
+    // Row with its own control (checkbox, color, choice) and a reset button
+    auto addRow = [&s, &label](const EffectParam& p, QWidget* w, QToolButton* reset) {
+        auto* box = new QHBoxLayout;
+        box->setContentsMargins(0, 0, 0, 0);
+        if (qobject_cast<QToolButton*>(w)) box->addStretch(1); // color swatch right-aligned like everywhere
+        box->addWidget(w, qobject_cast<QComboBox*>(w) ? 1 : 0);
+        if (qobject_cast<QCheckBox*>(w)) box->addStretch(1);
+        s.grid->addWidget(label(p), s.rows, 0);
+        s.grid->addLayout(box, s.rows, 1);
+        s.grid->addWidget(reset, s.rows, 2);
+        ++s.rows;
+    };
+    // Set a value: one undo step per change
+    auto set = [this, id, kind](const EffectParam& p, const QVariant& v) {
+        apply(kind, {}, p.label, [id, key = p.key, v](Clip& c) {
+            if (EffectInstance* e = EffectRegistry::instance(c, id)) e->params[key] = v;
+        }, false, id);
+    };
+
     for (const EffectParam& p : d.params) {
-        if (p.type != EffectParam::Double) continue; // bisher nur Zahlen (Green Screen hat einen eigenen Bereich)
+        if (p.type == EffectParam::Bool) {
+            auto* box = new QCheckBox;
+            box->setFocusPolicy(Qt::NoFocus);
+            connect(box, &QCheckBox::clicked, this, [set, p](bool on) { set(p, on); });
+            addRow(p, box, resetButton([set, p] { set(p, p.defaultValue); }));
+            m_refreshers << [this, box, id, key = p.key] {
+                if (const Clip* c = primary(TrackKind::Video, false, id)) {
+                    const QSignalBlocker b(box);
+                    box->setChecked(EffectRegistry::value(*c, id, key).toBool());
+                }
+            };
+            continue;
+        }
+        if (p.type == EffectParam::Choice) {
+            auto* combo = new QComboBox;
+            combo->setFocusPolicy(Qt::NoFocus);
+            combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+            combo->addItems(p.choices);
+            connect(combo, &QComboBox::activated, this, [set, p, combo](int i) { set(p, combo->itemText(i)); });
+            addRow(p, combo, resetButton([set, p] { set(p, p.defaultValue); }));
+            m_refreshers << [this, combo, id, key = p.key] {
+                if (const Clip* c = primary(TrackKind::Video, false, id)) {
+                    const QSignalBlocker b(combo);
+                    combo->setCurrentText(EffectRegistry::value(*c, id, key).toString());
+                }
+            };
+            continue;
+        }
+        if (p.type == EffectParam::Color) {
+            auto* swatch = new QToolButton;
+            swatch->setFixedSize(46, 18);
+            swatch->setFocusPolicy(Qt::NoFocus);
+            swatch->setToolTip(T("%1 wählen").arg(p.label));
+            connect(swatch, &QToolButton::clicked, this, [this, set, p, id] {
+                const Clip* c = primary(TrackKind::Video, false, id);
+                if (!c) return;
+                const QColor col = QColorDialog::getColor(EffectRegistry::value(*c, id, p.key).value<QColor>(), this,
+                                                          T("%1 wählen").arg(p.label));
+                if (col.isValid()) set(p, col);
+            });
+            addRow(p, swatch, resetButton([set, p] { set(p, p.defaultValue); }));
+            m_refreshers << [this, swatch, id, key = p.key] {
+                if (const Clip* c = primary(TrackKind::Video, false, id)) {
+                    const QColor col = EffectRegistry::value(*c, id, key).value<QColor>();
+                    const QString css = QString("QToolButton { background: %1; border: 1px solid %2; border-radius: 2px; }")
+                                            .arg(col.name(), Theme::border.name());
+                    if (swatch->styleSheet() != css) swatch->setStyleSheet(css);
+                }
+            };
+            continue;
+        }
+        if (p.type != EffectParam::Double) continue; // paths (LUT) only on the Color page
+        const int row = s.rows;
         std::optional<AnimParam> anim;
         if (p.anim != AnimParam::Count) anim = p.anim;
         const QString key = p.key;
@@ -901,6 +981,11 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
                     if (EffectInstance* e = EffectRegistry::instance(c, id)) e->params[key] = v;
                 }, false, id);
             };
+        if (QLayoutItem* item = s.grid->itemAtPosition(row, 0); item && item->widget()) {
+            QLabel* l = label(p);
+            delete item->widget();
+            s.grid->addWidget(l, row, 0);
+        }
     }
 
     s.header->hide();
@@ -914,9 +999,16 @@ void Inspector::arrangeEffectSections()
     const Clip* c = primary(TrackKind::Video);
     QStringList order;
     if (c)
-        for (const EffectInstance& e : c->effects)
-            if (std::any_of(m_fxSections.begin(), m_fxSections.end(), [&](const FxSection& f) { return f.id == e.effectId; }))
-                order << e.effectId;
+        for (const EffectInstance& e : c->effects) {
+            const auto known = [&] {
+                return std::any_of(m_fxSections.begin(), m_fxSections.end(),
+                                   [&](const FxSection& f) { return f.id == e.effectId; });
+            };
+            if (!known()) // create on the first clip with the effect (frei0r: more than a hundred possible)
+                if (const EffectDescriptor* d = EffectRegistry::find(e.effectId); d && d->library && d->video)
+                    addEffectSection(m_videoLay, *d);
+            if (known()) order << e.effectId;
+        }
     if (order == m_fxOrder) return;
     m_fxOrder = order;
     int index = m_fxIndex;

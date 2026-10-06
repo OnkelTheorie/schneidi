@@ -5,6 +5,7 @@
 #include "core/Keyframes.h"
 #include "core/Retime.h"
 
+#include <QColor>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -236,6 +237,25 @@ void resolvePathParams(EffectInstance& e, const QJsonObject& rel, const QDir& pr
     }
 }
 
+// JSON has no colors: bring values back to the registry's type (color as QColor, checkbox as bool), otherwise a
+// loaded clip would count as changed (undo, render cache). Unknown effects stay as read.
+void normalizeParams(EffectInstance& e)
+{
+    const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+    if (!d) return;
+    for (const EffectParam& p : d->params) {
+        auto it = e.params.find(p.key);
+        if (it == e.params.end()) continue;
+        switch (p.type) {
+        case EffectParam::Color: *it = QColor(it->toString()); break;
+        case EffectParam::Bool: *it = it->toBool(); break;
+        case EffectParam::Double: *it = it->toDouble(); break;
+        case EffectParam::Choice:
+        case EffectParam::Path: *it = it->toString(); break;
+        }
+    }
+}
+
 // Clips verweisen per Index auf die Medienliste -> Pfad steht nur einmal in der Datei
 QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
 {
@@ -344,6 +364,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
         EffectInstance inst{e.value("id").toString(), e.value("params").toObject().toVariantMap(),
                             e.value("enabled").toBool(true)};
         resolvePathParams(inst, e.value("relPaths").toObject(), projectDir);
+        normalizeParams(inst);
         c.effects << inst;
     }
     keysFromJson(c, o.value("keys").toObject()); // fehlt in älteren Dateien

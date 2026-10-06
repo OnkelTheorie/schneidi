@@ -208,6 +208,10 @@ void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, int
             if (p.type == EffectParam::Color) {
                 const QColor col = v.value<QColor>();
                 f.set(prop.constData(), col.name(QColor::HexRgb).toUtf8().constData()); // "#rrggbb"
+            } else if (p.type == EffectParam::Choice) {
+                f.set(prop.constData(), v.toString().toUtf8().constData());
+            } else if (p.type == EffectParam::Bool) {
+                f.set(prop.constData(), v.toBool() ? 1.0 : 0.0);
             } else {
                 f.set(prop.constData(), v.toDouble());
             }

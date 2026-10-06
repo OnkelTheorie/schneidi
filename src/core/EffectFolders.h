@@ -17,6 +17,7 @@ inline constexpr const char* LutPrefix = "lut:";
 QString root();   // Effekte-Ordner
 QString lutDir(); // root/LUTs
 QString transitionDir(); // root/Transitions (ASCII-Name: MLT/FFmpeg unter Windows)
+QString frei0rDir();     // root/frei0r: own frei0r plugins (engine/Frei0r, picked up after a restart)
 void ensure();    // Ordner (und Liesmich) anlegen, falls sie fehlen
 
 // LUT-Formate (Endungen klein, ohne Punkt): .cube, .3dl, .csp, Hald-CLUT-Bilder

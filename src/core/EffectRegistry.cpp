@@ -6,9 +6,11 @@
 
 namespace EffectRegistry {
 
-const QVector<EffectDescriptor>& all()
+namespace {
+
+QVector<EffectDescriptor>& registry()
 {
-    static const QVector<EffectDescriptor> effects = {
+    static QVector<EffectDescriptor> effects = {
         // frei0r statt avfilter.chromakey: liefert echte Transparenz und stürzt beim Beenden nicht ab
         {"chromakey", "Green Screen", "frei0r.bluescreen0r", true,
          {
@@ -63,6 +65,16 @@ const QVector<EffectDescriptor>& all()
          }},
     };
     return effects;
+}
+
+} // namespace
+
+const QVector<EffectDescriptor>& all() { return registry(); }
+
+void registerEffects(const QVector<EffectDescriptor>& effects)
+{
+    for (const EffectDescriptor& e : effects)
+        if (!find(e.id)) registry() << e;
 }
 
 const EffectDescriptor* find(const QString& id)
