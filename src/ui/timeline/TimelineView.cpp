@@ -1340,6 +1340,30 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
 
 // Filmstreifen wie in DaVinci: Kacheln ab Clip-Anfang, jede zeigt das Frame an ihrer Position.
 // Die Quell-Frames werden auf Zweierpotenzen gerundet, damit beim Zoomen Bilder wiederverwendet werden.
+void TimelineView::updateTrimFrames(const Timeline& preview, const TimelineOps::TrimEdit& edit, int delta)
+{
+    const Project* project = m_editor->project();
+    TrimFrames::View v = TrimFrames::compute(
+        preview, edit, delta, [project](const QString& path) { return project->mediaInfo(path); },
+        [project](const Clip& c) { return project->clipName(c); });
+    if (v.isNull()) { // e.g. audio-only edit: keep the normal viewer
+        endTrimFrames();
+        return;
+    }
+    if (m_trimFramesShown && v == m_trimFrames) return;
+    m_trimFrames = v;
+    m_trimFramesShown = true;
+    emit trimFramesChanged(v);
+}
+
+void TimelineView::endTrimFrames()
+{
+    if (!m_trimFramesShown) return;
+    m_trimFramesShown = false;
+    m_trimFrames = {};
+    emit trimFramesEnded();
+}
+
 void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
 {
     if (!m_cache || body.height() < 10) return;
@@ -2038,6 +2062,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         m_trimEditDelta = 0;
         m_trimPreview = m_editor->project()->timeline();
         m_drag = Drag::TrimEdit;
+        updateTrimFrames(*m_trimPreview, m_trimEdit, 0);
         update();
         return;
     }
@@ -2066,6 +2091,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         m_trimIds = group;
         m_trimDelta = 0;
         m_drag = Drag::Trim;
+        updateTrimFrames(m_editor->project()->timeline(), {TimelineOps::TrimKind::Ripple, m_trimIds, {}, m_trim.edge}, 0);
         update();
         return;
     }
@@ -2243,7 +2269,14 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         const int edgeFrame = m_trim.edge == TimelineOps::Edge::Start ? c->start : c->end();
         const QSet<int> exclude(m_trimIds.begin(), m_trimIds.end());
         delta += snapDelta({edgeFrame + delta}, exclude);
-        m_trimDelta = m_editor->clampTrim(m_trim.clipId, m_trim.edge, delta);
+        const int clamped = m_editor->clampTrim(m_trim.clipId, m_trim.edge, delta);
+        if (clamped != m_trimDelta) { // trim view: same edge trim on a copy (no ripple)
+            Timeline preview = m_editor->project()->timeline();
+            // already clamped -> source length not needed again
+            TimelineOps::trimClips(preview, m_trimIds, m_trim.edge, clamped, [](const Clip&) { return 0; });
+            updateTrimFrames(preview, {TimelineOps::TrimKind::Ripple, m_trimIds, {}, m_trim.edge}, clamped);
+        }
+        m_trimDelta = clamped;
         update();
         return;
     }
@@ -2280,6 +2313,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         if (delta != m_trimEditDelta || !m_trimPreview) {
             m_trimEditDelta = delta;
             m_trimPreview = m_editor->previewTrimEdit(m_trimEdit, delta);
+            updateTrimFrames(*m_trimPreview, m_trimEdit, delta);
             update();
         }
         return;
@@ -2416,6 +2450,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if (trimEdit && m_trimEditDelta != 0) m_editor->applyTrimEdit(m_trimEdit, m_trimEditDelta);
     m_trimPreview.reset();
     m_trimEditDelta = 0;
+    if (trimmed || trimEdit) endTrimFrames(); // viewer back to the playhead frame
     if (keys && m_keyDelta != 0) { // ein Undo-Schritt pro Ziehen
         const QVector<int> times = m_editor->selection()->keyTimes().values().toVector();
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_keyDragClip);

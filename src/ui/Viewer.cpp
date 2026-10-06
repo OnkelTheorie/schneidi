@@ -4,6 +4,8 @@
 #include "core/I18n.h"
 #include "core/Timecode.h"
 #include "engine/Engine.h"
+#include "engine/StillFetcher.h"
+#include "ui/TrimView.h"
 #include "ui/MediaPool.h"
 
 #include <QApplication>
@@ -14,6 +16,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QSignalBlocker>
+#include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -154,6 +157,13 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     m_screen->setMinimumSize(320, 180);
     m_screen->dragData = [this] { return dragData(); };
 
+    m_trim = new TrimView;
+    m_stack = new QStackedWidget;
+    m_stack->addWidget(m_screen);
+    m_stack->addWidget(m_trim);
+    connect(m_engine->stills(), &StillFetcher::ready, m_trim,
+            [this](const QString& path, int frame, const QImage& img) { m_trim->setImage(path, frame, img); });
+
     m_scrubber = new Scrubber;
     m_scrubber->seek = [this](int frame) {
         if (m_engine->speed() != 0.0) m_engine->pause();
@@ -215,7 +225,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     lay->addWidget(m_mode);
-    lay->addWidget(m_screen, 1);
+    lay->addWidget(m_stack, 1);
     lay->addWidget(m_scrubber);
     lay->addLayout(transport);
 
@@ -224,6 +234,41 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     connect(m_engine, &Engine::speedChanged, this,
             [this](double s) { m_playBtn->setText(s == 0.0 ? "▶" : "⏸"); });
     updateTimecode(0);
+}
+
+void Viewer::showTrim(const TrimFrames::View& view)
+{
+    if (view.isNull()) {
+        endTrim();
+        return;
+    }
+    m_trim->setFps(m_engine->fps());
+    m_trim->setAspect(m_engine->frameSize());
+    m_trim->setView(view);
+    // Cached frames at once, the rest in the background (latest request wins -> stays responsive while dragging)
+    StillFetcher* stills = m_engine->stills();
+    QVector<StillFetcher::Request> missing;
+    for (const QVector<TrimFrames::Pane>* panes : {&view.main, &view.small})
+        for (const TrimFrames::Pane& pane : *panes) {
+            if (pane.path.isEmpty()) continue;
+            const QImage img = stills->cached(pane.path, pane.fileFrame);
+            if (!img.isNull()) m_trim->setImage(pane.path, pane.fileFrame, img);
+            else missing << StillFetcher::Request{pane.path, pane.fileFrame};
+        }
+    stills->request(missing);
+    m_stack->setCurrentWidget(m_trim);
+}
+
+void Viewer::endTrim()
+{
+    m_engine->stills()->request({}); // nothing more to decode
+    m_trim->setView({});
+    m_stack->setCurrentWidget(m_screen);
+}
+
+bool Viewer::trimShown() const
+{
+    return m_stack->currentWidget() == m_trim;
 }
 
 void Viewer::setRange(int length, int markIn, int markOut)

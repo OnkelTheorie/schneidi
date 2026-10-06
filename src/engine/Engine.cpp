@@ -8,6 +8,7 @@
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
+#include "engine/StillFetcher.h"
 #include "engine/TimelineBuilder.h"
 
 #include <Mlt.h>
@@ -29,6 +30,7 @@ struct EngineCallbacks {
 
 Engine::Engine(QObject* parent)
     : QObject(parent), m_proxies(new ProxyManager(this)), m_renderCache(new RenderCache(this)),
+      m_stills(new StillFetcher(this)),
       m_loudness(std::make_unique<SharedLoudness>()), m_preroll(std::make_unique<Preroll>())
 {
     // Render-Cache pausiert während der Wiedergabe
@@ -131,6 +133,7 @@ void Engine::setFormat(const ProjectFormat& format)
 
     m_format = format;
     m_renderCache->setFormat(format);
+    m_stills->setFormat(format);
     m_speed = 0;
     QString error;
     if (!createConsumer(&error)) qWarning("%s", qPrintable(error));

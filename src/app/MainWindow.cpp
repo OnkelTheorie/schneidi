@@ -172,6 +172,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         tv->setPlayhead(pos);
     });
     connect(tv, &TimelineView::dropRequested, this, &MainWindow::onDrop);
+    // Trim view in the viewer while an edit is dragged (like DaVinci)
+    connect(tv, &TimelineView::trimFramesChanged, m_viewer, &Viewer::showTrim);
+    connect(tv, &TimelineView::trimFramesEnded, m_viewer, &Viewer::endTrim);
     connect(m_mediaPool, &MediaPool::subtitleFilesImported, this, &MainWindow::importSubtitleFiles);
     connect(tv, &TimelineView::subtitleEditRequested, this, [this](int id) {
         m_inspectorToggle->setChecked(true);
