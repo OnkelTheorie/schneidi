@@ -1,6 +1,7 @@
 #include "core/TimelineOps.h"
 
 #include "core/Keyframes.h"
+#include "core/Subtitles.h"
 
 #include <QHash>
 #include <QSet>
@@ -103,6 +104,9 @@ void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QV
             t.clips = moved;
         }
     }
+    // Untertitelspuren rücken genauso mit (gesperrte bleiben stehen, wie DaVinci)
+    for (SubtitleTrack& st : tl.subtitles)
+        if (!st.locked) Subtitles::ripple(st, shifts);
 }
 
 int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip)
@@ -121,7 +125,16 @@ int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip)
             if (firstMoving >= 0) room = std::min(room, firstMoving - standEnd);
         }
     }
+    for (const SubtitleTrack& st : tl.subtitles)
+        if (!st.locked)
+            if (const int r = Subtitles::rippleRoom(st, from); r >= 0) room = std::min(room, r);
     return std::max(0, room);
+}
+
+void insertSubtitleGap(Timeline& tl, int frame, int length, const IdGen& newId)
+{
+    for (SubtitleTrack& st : tl.subtitles)
+        if (!st.locked) Subtitles::insertGap(st, frame, length, newId);
 }
 
 QVector<int> linkedGroup(const Timeline& tl, int clipId)

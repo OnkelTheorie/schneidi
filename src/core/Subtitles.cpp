@@ -222,4 +222,61 @@ int endFrame(const Timeline& tl)
     return end;
 }
 
+int splitAt(SubtitleTrack& track, int frame, const std::function<int()>& newId)
+{
+    for (int i = 0; i < track.cues.size(); ++i) {
+        SubtitleCue& c = track.cues[i];
+        if (c.start >= frame || c.end <= frame) continue;
+        SubtitleCue right = c;
+        right.id = newId();
+        right.start = frame;
+        c.end = frame;
+        track.cues.insert(i + 1, right);
+        return right.id;
+    }
+    return 0;
+}
+
+bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts)
+{
+    if (shifts.isEmpty() || track.cues.isEmpty()) return false;
+    QVector<SubtitleCue> moved = track.cues;
+    bool changed = false;
+    for (SubtitleCue& c : moved) {
+        int d = 0;
+        for (const auto& s : shifts)
+            if (s.first <= c.start) d += s.second;
+        c.start += d;
+        c.end += d;
+        changed |= d != 0;
+    }
+    if (!changed) return false;
+    bool ok = moved.first().start >= 0;
+    for (int j = 1; ok && j < moved.size(); ++j) ok = moved[j].start >= moved[j - 1].end;
+    if (!ok) return false;
+    track.cues = moved;
+    return true;
+}
+
+int rippleRoom(const SubtitleTrack& track, int from)
+{
+    int standEnd = 0;
+    for (const SubtitleCue& c : track.cues) {
+        if (c.start < from) standEnd = std::max(standEnd, c.end);
+        else return std::max(0, c.start - standEnd); // sortiert: erster rückender Eintrag
+    }
+    return -1;
+}
+
+void insertGap(SubtitleTrack& track, int frame, int length, const std::function<int()>& newId)
+{
+    if (length <= 0) return;
+    splitAt(track, frame, newId);
+    for (SubtitleCue& c : track.cues)
+        if (c.start >= frame) {
+            c.start += length;
+            c.end += length;
+        }
+}
+
 } // namespace Subtitles

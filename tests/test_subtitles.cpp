@@ -201,6 +201,196 @@ void testEditor()
     CHECK_EQ(ProjectFile::toJson(p.data(), "/x/p.schneidi"), end);
 }
 
+// Ripple/Teilen: Untertitelspuren folgen den Clip-Spuren wie in DaVinci (gesperrte bleiben stehen),
+// Strg+B/Klinge teilen Einträge. Jede Bearbeitung ist ein Undo-Schritt.
+struct RippleFixture {
+    Project p;
+    Selection sel;
+    Editor ed{&p, &sel};
+    int x = 0, y = 0, z = 0; // V1: x [0,50) y [50,100) z [100,150), nur Bild
+    RippleFixture(const QVector<SubtitleCue>& st1, const QVector<SubtitleCue>& st2 = {}, bool lockSt2 = true)
+    {
+        p.addMedia({"/x/a.mp4", "a.mp4", 300, true, false, false});
+        p.addMedia({"/x/b.mp4", "b.mp4", 50, true, false, false});
+        p.edit("setup", [&](Timeline& tl) {
+            int start = 0;
+            for (int* id : {&x, &y, &z}) {
+                Clip c;
+                c.id = *id = p.newClipId();
+                c.mediaPath = "/x/a.mp4";
+                c.start = start;
+                c.in = start;
+                c.out = start + 49;
+                tl.video[0].clips << c;
+                start += 50;
+            }
+            for (const auto& list : {st1, st2}) {
+                SubtitleTrack t;
+                for (SubtitleCue c : list) {
+                    c.id = p.newClipId();
+                    t.cues << c;
+                }
+                tl.subtitles << t;
+            }
+            tl.subtitles[1].locked = lockSt2;
+            tl.subtitles[1].enabled = false;
+        });
+        p.undoStack()->clear();
+    }
+    QString st(int i) const { return track(p, i); }
+    QString v1() const
+    {
+        QStringList out;
+        for (const Clip& c : p.timeline().video[0].clips) out << QString("%1-%2").arg(c.start).arg(c.end());
+        return out.join(' ');
+    }
+    int cueId(int trackIndex, int i) const { return p.timeline().subtitles[trackIndex].cues[i].id; }
+};
+
+void testRippleAndSplit()
+{
+    using TimelineOps::Edge;
+    using TimelineOps::TrimKind;
+    { // Löschen mit Ripple: ST1 rückt um den gelöschten Bereich, gesperrte ST2 bleibt stehen
+        RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}, {0, 150, 160, "c"}}, {{0, 110, 120, "fest"}});
+        f.sel.set({f.y});
+        f.ed.rippleDeleteSelection();
+        CHECK_EQ(f.v1(), QString("0-50 50-100"));
+        CHECK_EQ(f.st(0), QString("10-40:a 60-90:b 100-110:c"));
+        CHECK_EQ(f.st(1), QString("110-120:fest"));
+        CHECK_EQ(f.p.undoStack()->count(), 1);
+        f.p.undoStack()->undo();
+        CHECK_EQ(f.v1(), QString("0-50 50-100 100-150"));
+        CHECK_EQ(f.st(0), QString("10-40:a 110-140:b 150-160:c"));
+    }
+    { // Nicht gesperrte ST2 rückt ebenfalls; Eintrag über dem gelöschten Clip: Spur bliebe nicht überschneidungsfrei
+      // -> sie bleibt ganz stehen (wie die Clip-Spuren, nie überschreiben)
+        RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}}, {{0, 60, 90, "drüber"}, {0, 120, 130, "danach"}}, false);
+        f.sel.set({f.y});
+        f.ed.rippleDeleteSelection();
+        CHECK_EQ(f.st(0), QString("10-40:a 60-90:b"));
+        CHECK_EQ(f.st(1), QString("60-90:drüber 120-130:danach"));
+    }
+    { // Löschen mit Ripple vorne: b würde unter den stehenbleibenden Eintrag rutschen -> Spur bleibt stehen
+        RippleFixture f({{0, 20, 30, "früh"}, {0, 60, 70, "b"}});
+        f.sel.set({f.x});
+        f.ed.rippleDeleteSelection();
+        CHECK_EQ(f.v1(), QString("0-50 50-100"));
+        CHECK_EQ(f.st(0), QString("20-30:früh 60-70:b"));
+    }
+    { // Strg+B ohne Auswahl: Clip und Eintrag unter dem Playhead, gesperrte Spur nicht; ein Undo-Schritt
+        RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}}, {{0, 110, 125, "fest"}});
+        const int b = f.cueId(0, 1);
+        f.ed.splitAtPlayhead(120);
+        CHECK_EQ(f.v1(), QString("0-50 50-100 100-120 120-150"));
+        CHECK_EQ(f.st(0), QString("10-40:a 110-120:b 120-140:b"));
+        CHECK_EQ(f.cueId(0, 1), b); // links behält die id
+        CHECK(f.cueId(0, 2) > 0 && f.cueId(0, 2) != b && !TimelineOps::findClip(f.p.timeline(), f.cueId(0, 2)));
+        CHECK_EQ(f.st(1), QString("110-125:fest"));
+        CHECK_EQ(f.p.undoStack()->count(), 1);
+        f.p.undoStack()->undo();
+        CHECK_EQ(f.v1(), QString("0-50 50-100 100-150"));
+        CHECK_EQ(f.st(0), QString("10-40:a 110-140:b"));
+        f.ed.splitAtPlayhead(110); // genau am Anfang: nichts zu teilen beim Eintrag
+        CHECK_EQ(f.st(0), QString("10-40:a 110-140:b"));
+    }
+    { // Strg+B mit Auswahl: nur ausgewählte Einträge bzw. Clips
+        RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}}, {{0, 110, 125, "zwei"}}, false);
+        f.ed.setSplitOnSelectedTracks(false);
+        f.sel.set({f.cueId(0, 1)});
+        f.ed.splitAtPlayhead(120);
+        CHECK_EQ(f.v1(), QString("0-50 50-100 100-150"));
+        CHECK_EQ(f.st(0), QString("10-40:a 110-120:b 120-140:b"));
+        CHECK_EQ(f.st(1), QString("110-125:zwei"));
+        f.sel.set({f.z});
+        f.ed.splitAtPlayhead(130);
+        CHECK_EQ(f.v1(), QString("0-50 50-100 100-130 130-150"));
+        CHECK_EQ(f.st(0), QString("10-40:a 110-120:b 120-140:b"));
+        // „Auf Spuren der Auswahl“: Eintrag einer anderen Stelle derselben Spur ist ausgewählt
+        f.sel.set({f.cueId(0, 0)});
+        f.ed.splitAtPlayhead(135); // aus: a liegt nicht unter dem Playhead
+        CHECK_EQ(f.st(0), QString("10-40:a 110-120:b 120-140:b"));
+        f.ed.setSplitOnSelectedTracks(true);
+        f.ed.splitAtPlayhead(135);
+        CHECK_EQ(f.st(0), QString("10-40:a 110-120:b 120-135:b 135-140:b"));
+        CHECK_EQ(f.v1(), QString("0-50 50-100 100-130 130-150"));
+        CHECK_EQ(f.st(1), QString("110-125:zwei"));
+    }
+    { // Klinge auf einen Eintrag: nur dieser; gesperrte Spur / Kante: nichts
+        RippleFixture f({{0, 110, 140, "b"}}, {{0, 110, 125, "fest"}});
+        f.ed.bladeAt(f.cueId(0, 0), 130);
+        CHECK_EQ(f.v1(), QString("0-50 50-100 100-150"));
+        CHECK_EQ(f.st(0), QString("110-130:b 130-140:b"));
+        CHECK_EQ(f.p.undoStack()->count(), 1);
+        f.ed.bladeAt(f.cueId(1, 0), 115);
+        f.ed.bladeAt(f.cueId(0, 0), 110);
+        f.ed.bladeAt(f.cueId(0, 0), 130);
+        CHECK_EQ(f.st(1), QString("110-125:fest"));
+        CHECK_EQ(f.st(0), QString("110-130:b 130-140:b"));
+        CHECK_EQ(f.p.undoStack()->count(), 1);
+    }
+    { // Einfügen (F9): Eintrag über dem Einfügepunkt wird geteilt, Rest rückt mit; gesperrte Spur bleibt
+        RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}, {0, 140, 150, "c"}}, {{0, 110, 125, "fest"}});
+        f.ed.setSourceMarkIn("/x/b.mp4", 10);
+        f.ed.setSourceMarkOut("/x/b.mp4", 29);
+        const int n = f.p.undoStack()->count();
+        CHECK_EQ(f.ed.sourceEdit(Editor::SourceEditMode::Insert, "/x/b.mp4", 0, 120), 140);
+        CHECK_EQ(f.v1(), QString("0-50 50-100 100-120 120-140 140-170"));
+        CHECK_EQ(f.st(0), QString("10-40:a 110-120:b 140-160:b 160-170:c"));
+        CHECK_EQ(f.st(1), QString("110-125:fest"));
+        CHECK_EQ(f.p.undoStack()->count(), n + 1);
+        f.p.undoStack()->undo();
+        CHECK_EQ(f.st(0), QString("10-40:a 110-140:b 140-150:c"));
+    }
+    { // Ripple-Überschreiben: y (50) durch 20 Frames ersetzen -> Rest rückt um -30
+        RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}});
+        f.ed.setSourceMarkIn("/x/b.mp4", 10);
+        f.ed.setSourceMarkOut("/x/b.mp4", 29);
+        f.ed.sourceEdit(Editor::SourceEditMode::RippleOverwrite, "/x/b.mp4", 0, 60);
+        CHECK_EQ(f.v1(), QString("0-50 50-70 70-120"));
+        CHECK_EQ(f.st(0), QString("10-40:a 80-110:b"));
+    }
+    { // Ripple-Trimmen: Verlängern schiebt ST1, Verkürzen nur so weit, wie ST1 nachrücken kann
+        RippleFixture f({{0, 90, 95, "davor"}, {0, 100, 120, "b"}}, {{0, 99, 101, "fest"}});
+        const auto e = f.ed.trimEdit(TrimKind::Ripple, f.y, Edge::End);
+        f.ed.applyTrimEdit(e, 10);
+        CHECK_EQ(f.v1(), QString("0-50 50-110 110-160"));
+        CHECK_EQ(f.st(0), QString("90-95:davor 110-130:b"));
+        CHECK_EQ(f.st(1), QString("99-101:fest")); // gesperrt: zählt auch nicht als Hindernis
+        CHECK_EQ(f.ed.clampTrimEdit(e, -40), -15); // b darf bis an "davor" (95)
+        f.ed.applyTrimEdit(e, -40);
+        CHECK_EQ(f.v1(), QString("0-50 50-95 95-145"));
+        CHECK_EQ(f.st(0), QString("90-95:davor 95-115:b"));
+        CHECK_EQ(f.p.undoStack()->count(), 2);
+        f.p.undoStack()->undo();
+        f.p.undoStack()->undo();
+        CHECK_EQ(f.st(0), QString("90-95:davor 100-120:b"));
+        // ST1 gesperrt: kein Hindernis mehr, bleibt stehen
+        f.ed.toggleSubtitleTrackLock(0);
+        CHECK_EQ(f.ed.clampTrimEdit(e, -40), -40);
+        f.ed.applyTrimEdit(e, -40);
+        CHECK_EQ(f.v1(), QString("0-50 50-60 60-110"));
+        CHECK_EQ(f.st(0), QString("90-95:davor 100-120:b"));
+    }
+    { // Reine Datenfunktionen
+        SubtitleTrack t;
+        t.cues = {{1, 0, 10, "a"}, {2, 20, 30, "b"}};
+        int next = 10;
+        CHECK_EQ(Subtitles::splitAt(t, 20, [&] { return next++; }), 0);
+        CHECK_EQ(Subtitles::splitAt(t, 25, [&] { return next++; }), 10);
+        CHECK_EQ(cues(t.cues), QString("0-10:a 20-25:b 25-30:b"));
+        CHECK_EQ(Subtitles::rippleRoom(t, 20), 10);
+        CHECK_EQ(Subtitles::rippleRoom(t, 5), 10); // a liegt über `from`, bleibt stehen
+        CHECK_EQ(Subtitles::rippleRoom(t, 22), 0);
+        CHECK_EQ(Subtitles::rippleRoom(t, 40), -1);
+        CHECK(!Subtitles::ripple(t, {{20, -11}}));
+        CHECK(Subtitles::ripple(t, {{20, -10}, {25, 3}}));
+        CHECK_EQ(cues(t.cues), QString("0-10:a 10-15:b 18-23:b"));
+        Subtitles::insertGap(t, 5, 4, [&] { return next++; });
+        CHECK_EQ(cues(t.cues), QString("0-5:a 9-14:a 14-19:b 22-27:b"));
+    }
+}
+
 void testProjectFile()
 {
     ProjectData d;
@@ -373,6 +563,7 @@ int main(int argc, char** argv)
     testSrt();
     testPlace();
     testEditor();
+    testRippleAndSplit();
     testProjectFile();
     if (!Check::haveFfmpeg()) {
         Check::result();

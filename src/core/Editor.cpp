@@ -8,6 +8,7 @@
 #include "core/Retime.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 
 #include <QFileInfo>
@@ -441,6 +442,12 @@ QVector<int> Editor::selectedAudioClips() const
 void Editor::bladeAt(int clipId, int frame)
 {
     Project* p = m_project;
+    int st = -1;
+    if (const SubtitleCue* c = Subtitles::find(p->timeline(), clipId, &st)) { // Untertitel: nur dieser Eintrag
+        if (isSubtitleTrackLocked(st) || frame <= c->start || frame >= c->end) return;
+        p->edit(T("Schnitt"), [&](Timeline& tl) { Subtitles::splitAt(tl.subtitles[st], frame, [p] { return p->newClipId(); }); });
+        return;
+    }
     const QVector<int> ids = withLinked({clipId});
     if (ids.isEmpty()) return;
     p->edit(T("Schnitt"), [&](Timeline& tl) {
@@ -481,11 +488,29 @@ void Editor::splitAtPlayhead(int frame)
     } else {
         ids = targetIds(frame);
     }
-    if (ids.isEmpty()) return;
+    ids.erase(std::remove_if(ids.begin(), ids.end(), [&](int id) { return !TimelineOps::findClip(m_project->timeline(), id); }),
+              ids.end()); // ausgewählte Untertitel stecken auch in der Auswahl
+    // Untertitel wie Clips: ohne Auswahl der Eintrag unter dem Playhead auf jeder nicht gesperrten Untertitelspur,
+    // sonst die ausgewählten Einträge (bzw. alle Untertitelspuren mit ausgewähltem Eintrag)
+    QVector<int> cueTracks;
+    const Timeline& cur = m_project->timeline();
+    const QVector<int> selectedCues = selectedSubtitles();
+    for (int t = 0; t < cur.subtitles.size(); ++t) {
+        const SubtitleTrack& st = cur.subtitles[t];
+        const int i = Subtitles::cueAt(st, frame);
+        if (st.locked || i < 0 || st.cues[i].start == frame) continue;
+        const bool take = m_selection->isEmpty() || selectedCues.contains(st.cues[i].id)
+                          || (m_splitOnSelectedTracks && std::any_of(st.cues.begin(), st.cues.end(), [&](const SubtitleCue& c) {
+                                 return selectedCues.contains(c.id);
+                             }));
+        if (take) cueTracks << t;
+    }
+    if (ids.isEmpty() && cueTracks.isEmpty()) return;
     Project* p = m_project;
     p->edit(T("Schnitt am Playhead"), [&](Timeline& tl) {
         TimelineOps::splitAt(tl, ids, frame, [p] { return p->newClipId(); },
                              [p] { return p->newLinkId(); });
+        for (int t : cueTracks) Subtitles::splitAt(tl.subtitles[t], frame, [p] { return p->newClipId(); });
     });
 }
 
@@ -1108,7 +1133,10 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     p->edit(text.arg(m.name), [&](Timeline& tl) {
         auto newId = [p] { return p->newClipId(); };
         for (const TrackRef& r : rippleTracks) ensureTracks(tl, r.kind, r.index + 1);
-        if (mode == M::Insert) insertGap(tl, rippleTracks, start, len, newId, [p] { return p->newLinkId(); });
+        if (mode == M::Insert) {
+            insertGap(tl, rippleTracks, start, len, newId, [p] { return p->newLinkId(); });
+            insertSubtitleGap(tl, start, len, newId); // Untertitel bleiben synchron (gesperrte Spuren nicht)
+        }
         if (mode == M::RippleOverwrite) {
             for (const TrackRef& r : rippleTracks) {
                 clearRange(tl.track(r), start, replaceEnd, newId);

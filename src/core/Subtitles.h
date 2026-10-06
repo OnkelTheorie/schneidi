@@ -5,7 +5,10 @@
 #include "core/Types.h"
 
 #include <QByteArray>
+#include <QPair>
 #include <QSize>
+
+#include <functional>
 
 namespace Subtitles {
 
@@ -31,5 +34,18 @@ SubtitleCue* find(Timeline& tl, int id, int* trackIndex = nullptr);
 int cueAt(const SubtitleTrack& track, int frame);
 // Letztes Frame (exklusiv) aller Untertitel
 int endFrame(const Timeline& tl);
+
+// ---- Ripple/Teilen (Untertitelspuren folgen den Clip-Spuren wie in DaVinci) ----
+// Teilt den Eintrag, der über `frame` liegt (start < frame < end): links behält die id, rechts bekommt newId(),
+// beide den Text. Rückgabe: id des rechten Teils, 0 = dort lag keiner.
+int splitAt(SubtitleTrack& track, int frame, const std::function<int()>& newId);
+// Wie TimelineOps::rippleTracks für eine Untertitelspur: ein Eintrag rückt um die Summe der Versätze, deren Frame
+// <= seinem Start ist. Würde er dabei einen stehenbleibenden überlappen oder vor Frame 0 rutschen, bleibt die ganze
+// Spur stehen (nie überschreiben). Rückgabe: true = verschoben.
+bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts);
+// Wie weit (Frames nach links) die Einträge ab `from` nachrücken können, ohne zu überschreiben (-1 = keiner rückt)
+int rippleRoom(const SubtitleTrack& track, int from);
+// Einfügen (Insert): Eintrag über `frame` teilen, alles ab `frame` um `length` nach rechts
+void insertGap(SubtitleTrack& track, int frame, int length, const std::function<int()>& newId);
 
 } // namespace Subtitles
