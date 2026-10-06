@@ -85,6 +85,9 @@ int main(int argc, char* argv[])
         if (qstrcmp(argv[i], "--storage") == 0) storageArg = QString::fromLocal8Bit(argv[i + 1]);
         if (qstrcmp(argv[i], "--design") == 0) designArg = QString::fromLocal8Bit(argv[i + 1]);
     }
+    // --verbose: ausführliche MLT-/FFmpeg-Meldungen auf der Konsole (sonst nur Fehler, siehe Bundle::configureMltLogging)
+    for (int i = 1; i < argc; ++i)
+        if (qstrcmp(argv[i], "--verbose") == 0) qputenv("SCHNEIDI_VERBOSE", "1");
     if (!screenshot.isEmpty()) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
         qputenv("SDL_AUDIODRIVER", "dummy");
@@ -147,6 +150,7 @@ int main(int argc, char* argv[])
 
     // Dateien aus der Kommandozeile direkt in den Media Pool
     QStringList files = app.arguments().mid(1);
+    files.removeAll("--verbose");
     const bool demo = files.removeAll("--demo") > 0; // Testhilfe: zusätzlich auf die Timeline legen
     // Testhilfe: --actions select_all,toggle_enabled löst Aktionen (IDs aus keybindings.json) nach dem Start aus
     for (const char* opt : {"--screenshot", "--wait", "--lang", "--format", "--storage", "--design", "--size"})

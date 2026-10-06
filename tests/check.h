@@ -67,6 +67,7 @@ inline void initMlt()
     const QString modules = Bundle::mltModuleDir();
     if (modules.isEmpty()) Mlt::Factory::init();
     else Mlt::Factory::init(Bundle::pathForMlt(modules).constData());
+    Bundle::configureMltLogging();
     Frei0r::registerEffects();
 }
 

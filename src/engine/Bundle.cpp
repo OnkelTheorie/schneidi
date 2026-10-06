@@ -5,6 +5,8 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 
+#include <framework/mlt.h>
+
 #include <iterator>
 
 #ifdef Q_OS_WIN
@@ -71,6 +73,14 @@ QByteArray pathForMlt(const QString& path)
 
 void prepareMltEnvironment()
 {
+    // jackrack (LADSPA/LV2/VST2-Plugins, JACK) nutzt schneidi nicht: nicht laden. Spart das Durchsuchen der
+    // Plugin-Ordner beim Start, und ältere MLT-Versionen melden ohne LADSPA-Plugins sonst als Warnung
+    // „No LADSPA plugins were found! Check your LADSPA_PATH …“ (auch VST_PATH). Ein vom Nutzer gesetztes
+    // MLT_REPOSITORY_DENY bleibt erhalten (Liste mit ':', auch unter Windows – MLT trennt dort ebenfalls so).
+    QByteArray deny = qgetenv("MLT_REPOSITORY_DENY");
+    if (!deny.split(':').contains("libmltjackrack"))
+        qputenv("MLT_REPOSITORY_DENY", deny.isEmpty() ? QByteArray("libmltjackrack") : deny + ":libmltjackrack");
+
     const auto set = setPathEnv;
     if (const QString p = bundledPrefix(); !p.isEmpty()) {
 #ifdef Q_OS_WIN
@@ -88,6 +98,28 @@ void prepareMltEnvironment()
         set("MLT_PRESETS_PATH", d + "/share/mlt/presets");
         set("FREI0R_PATH", d + "/lib/frei0r-1");
     }
+}
+
+bool verboseLogging()
+{
+    const QByteArray v = qgetenv("SCHNEIDI_VERBOSE");
+    return !v.isEmpty() && v != "0";
+}
+
+void configureMltLogging()
+{
+    // FFmpeg-Warnungen gehen direkt auf stderr (nicht ins Log) und sind im Normalbetrieb Rauschen, z. B. „[opus] Could
+    // not update timestamps for skipped/discarded samples“ (Decoder; MLT zählt die Samples selbst, Ton bleibt synchron)
+    // oder „[mp4] Timestamps are unset in a packet for stream 1 … making some up“ (MLT schreibt nach dem Leeren des
+    // Audio-Encoders ein leeres Paket ohne Zeitstempel; die Datei ist korrekt). MLT übernimmt die eigene Stufe nur
+    // einmal, beim ersten avformat-Dienst, als FFmpeg-Stufe – diesen hier mit der gewünschten Stufe anlegen.
+    const bool more = verboseLogging();
+    mlt_log_set_level(more ? MLT_LOG_WARNING : MLT_LOG_ERROR); // MLT- und FFmpeg-Stufen sind gleich nummeriert
+    if (mlt_profile profile = mlt_profile_init(nullptr)) {
+        if (mlt_consumer c = mlt_factory_consumer(profile, "avformat", nullptr)) mlt_consumer_close(c);
+        mlt_profile_close(profile);
+    }
+    mlt_log_set_level(more ? MLT_LOG_INFO : MLT_LOG_WARNING);
 }
 
 QString tool(const QString& name)
