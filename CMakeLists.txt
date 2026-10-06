@@ -129,6 +129,27 @@ if(UNIX AND NOT APPLE)
     install(FILES assets/schneidi.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 endif()
 
+# Debian-Paket (schlank, Systembibliotheken statt Bundling): cmake --build build && cpack --config build/CPackConfig.cmake -G DEB
+# Ausgabe nach dist/ (gitignored). Abhängigkeiten ermittelt dpkg-shlibdeps aus der Binärdatei.
+if(UNIX AND NOT APPLE)
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_PACKAGE_NAME "schneidi")
+    set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Simple video editor inspired by DaVinci Resolve")
+    set(CPACK_PACKAGE_CONTACT "schneidi <noreply@example.com>")
+    set(CPACK_PACKAGE_FILE_NAME "schneidi_${PROJECT_VERSION}_amd64")
+    set(CPACK_STRIP_FILES ON)
+    set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}")
+    set(CPACK_OUTPUT_FILE_PREFIX "${PROJECT_SOURCE_DIR}/dist")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "video")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
+    # MLT modules (FFmpeg, frei0r, ...) are loaded at runtime, not linked; frei0r effects are optional
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libmlt-data, libmlt7")
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "frei0r-plugins, ffmpeg")
+    include(CPack)
+endif()
+
 # Automatische Tests (CTest): cmake -DSCHNEIDI_TESTS=ON, siehe README.md
 option(SCHNEIDI_TESTS "Tests bauen" OFF)
 if(SCHNEIDI_TESTS)
