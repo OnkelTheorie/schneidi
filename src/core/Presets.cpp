@@ -3,13 +3,16 @@
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
+#include "core/Keyframes.h"
 
 #include <QColor>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QXmlStreamReader>
 #include <algorithm>
+#include <cmath>
 
 namespace Presets {
 namespace {
@@ -114,6 +117,7 @@ Preset parseXml(const QByteArray& data, Preset p)
     } else if (x.name() == u"effectgroup") {
         p.source = QStringLiteral("Kdenlive");
         if (const QString id = x.attributes().value("id").toString(); !id.isEmpty()) p.name = id;
+        p.parentIn = std::max(0, x.attributes().value("parentIn").toInt());
         while (x.readNextStartElement()) {
             if (x.name() == u"effect") p.filters << readKdenliveEffect(x, nullptr, nullptr);
             else if (x.name() == u"description") p.description = x.readElementText().trimmed();
@@ -131,17 +135,65 @@ Preset parseXml(const QByteArray& data, Preset p)
     return p;
 }
 
-// First value of an MLT animation string ("1=0;10=15", "00:00:00.000=0.5", "1~=0"); plain values stay as they are
-QString firstValue(const QString& v, bool* animated)
+// One key time of an MLT animation: frames ("10", "-1" = last frame), clock ("hh:mm:ss.zzz", "mm:ss.zzz") or
+// SMPTE ("hh:mm:ss:ff")
+bool parseTime(const QString& text, double fps, int* frame)
 {
-    const qsizetype eq = v.indexOf('=');
-    if (eq < 0 || v.startsWith('#')) return v;
-    const QString key = v.left(eq);
-    static const QString keyChars = QStringLiteral("0123456789:.-~|!$<>()[]{}");
-    if (std::any_of(key.begin(), key.end(), [](QChar c) { return !keyChars.contains(c); })) return v;
-    const QStringList frames = v.split(';', Qt::SkipEmptyParts);
-    if (frames.size() > 1) *animated = true;
-    return frames.value(0).mid(frames.value(0).indexOf('=') + 1).trimmed();
+    if (text.isEmpty()) return false;
+    bool ok = false;
+    if (!text.contains(':')) {
+        *frame = text.toInt(&ok);
+        return ok;
+    }
+    const bool negative = text.startsWith('-');
+    const QStringList parts = (negative ? text.mid(1) : text).split(':');
+    if (parts.size() < 2 || parts.size() > 4) return false;
+    QVector<double> n;
+    for (const QString& part : parts) {
+        n << part.toDouble(&ok); // QString::toDouble: always '.', independent of LC_NUMERIC
+        if (!ok || n.last() < 0) return false;
+    }
+    double f = 0;
+    if (parts.size() == 4) { // SMPTE: frames in the last field
+        f = ((n[0] * 60 + n[1]) * 60 + n[2]) * std::round(fps) + n[3];
+    } else {
+        double seconds = 0;
+        for (double x : n) seconds = seconds * 60 + x;
+        f = seconds * fps;
+    }
+    *frame = int(std::lround(negative ? -f : f));
+    return true;
+}
+
+// Interpolation of a segment from the MLT keyframe type character (mlt_keyframe_type, MLT 7.22+ letters for eases)
+enum class Segment { Linear, Discrete, Smooth, SlowStart, SlowEnd, SlowBoth };
+Segment segmentOf(QChar type)
+{
+    if (type.isNull()) return Segment::Linear;
+    if (type == '|' || type == '!') return Segment::Discrete;
+    if (type == '~' || type == '$') return Segment::Smooth;
+    if (type == '-') return Segment::SlowBoth; // smooth tight: slope 0 at the keys
+    int index = -1;
+    if (type >= 'a' && type <= 'z') index = type.unicode() - 'a';
+    else if (type >= 'A' && type <= 'D') index = 26 + type.unicode() - 'A';
+    if (index < 0) return Segment::Linear;
+    switch (index % 3) { // sinusoidal_in, _out, _in_out, quadratic_in, …
+    case 0: return Segment::SlowStart;
+    case 1: return Segment::SlowEnd;
+    default: return Segment::SlowBoth;
+    }
+}
+
+void slowStart(Keyframe& k)
+{
+    if (k.ease == KeyEase::Linear) k.ease = KeyEase::EaseOut;
+    else if (k.ease == KeyEase::EaseIn) k.ease = KeyEase::EaseInOut;
+}
+
+void slowEnd(Keyframe& k)
+{
+    if (k.ease == KeyEase::Linear) k.ease = KeyEase::EaseIn;
+    else if (k.ease == KeyEase::EaseOut) k.ease = KeyEase::EaseInOut;
 }
 
 // MLT colors: "#rrggbb", "#aarrggbb", "0xrrggbbaa", decimal 0xrrggbbaa, color names
@@ -216,6 +268,58 @@ QString lutFile(const Filter& f)
 
 } // namespace
 
+bool parseAnimation(const QString& v, double fps, QVector<RawKey>* keys)
+{
+    keys->clear();
+    if (v.startsWith('#') || !v.contains('=')) return false;
+    static const QRegularExpression keyRe(QStringLiteral("^(-?[0-9][0-9:.]*)([|!~$a-zA-D-]?)$"));
+    for (const QString& item : v.split(';', Qt::SkipEmptyParts)) {
+        const qsizetype eq = item.indexOf('=');
+        if (eq <= 0) return false;
+        const QRegularExpressionMatch match = keyRe.match(item.left(eq).trimmed());
+        RawKey k;
+        if (!match.hasMatch() || !parseTime(match.captured(1), fps, &k.frame)) return false;
+        if (const QString type = match.captured(2); !type.isEmpty()) k.type = type[0];
+        k.value = item.mid(eq + 1).trimmed();
+        *keys << k;
+    }
+    return !keys->isEmpty();
+}
+
+KeyTrack toKeyTrack(QVector<AnimKey> keys, int length)
+{
+    for (AnimKey& k : keys)
+        if (k.frame < 0) k.frame += length;
+    std::stable_sort(keys.begin(), keys.end(), [](const AnimKey& a, const AnimKey& b) { return a.frame < b.frame; });
+    for (int i = int(keys.size()) - 2; i >= 0; --i) // the same frame twice: the later key wins
+        if (keys[i].frame == keys[i + 1].frame) keys.removeAt(i);
+    KeyTrack out;
+    QVector<int> at; // index of keys[i] in out (holds insert keys in between)
+    for (int i = 0; i < keys.size(); ++i) {
+        at << int(out.size());
+        out << Keyframe{keys[i].frame, keys[i].value, KeyEase::Linear};
+        // discrete: value holds until the frame before the next key
+        if (i + 1 < keys.size() && segmentOf(keys[i].type) == Segment::Discrete && keys[i + 1].frame - keys[i].frame > 1)
+            out << Keyframe{keys[i + 1].frame - 1, keys[i].value, KeyEase::Linear};
+    }
+    QVector<int> smooth;
+    for (int i = 0; i + 1 < keys.size(); ++i) {
+        Keyframe& a = out[at[i]];
+        Keyframe& b = out[at[i + 1]];
+        switch (segmentOf(keys[i].type)) {
+        case Segment::SlowStart: slowStart(a); break;
+        case Segment::SlowEnd: slowEnd(b); break;
+        case Segment::SlowBoth: slowStart(a); slowEnd(b); break;
+        case Segment::Smooth: smooth << at[i] << at[i + 1]; break;
+        default: break;
+        }
+    }
+    // smooth (Catmull-Rom in MLT) -> Bezier with soft handles (same slope rule)
+    for (int i : smooth) out[i].ease = KeyEase::Bezier;
+    for (int i : smooth) Keys::autoHandles(out, i);
+    return out;
+}
+
 QString shotcutService(const QString& folderName)
 {
     for (const ShotcutName& n : kShotcutNames)
@@ -271,7 +375,7 @@ Preset load(const QString& path)
     return parse(f.read(4 << 20), path, QFileInfo(path).absoluteDir().dirName());
 }
 
-Mapped map(const Preset& preset)
+Mapped map(const Preset& preset, double fps)
 {
     Mapped m;
     for (const Filter& f : preset.filters) {
@@ -288,15 +392,32 @@ Mapped map(const Preset& preset)
         EffectInstance inst;
         inst.effectId = d->id;
         for (const EffectParam& p : d->params) inst.params[p.key] = p.defaultValue;
+        QMap<AnimParam, QVector<AnimKey>> keys;
         for (const auto& [name, value] : f.props) {
             const EffectParam* p = paramFor(*d, name);
             if (!p) continue;
-            const QVariant v = convert(*p, firstValue(value, &m.keyframes), f.factors.value(name, 1.0));
-            if (v.isValid()) inst.params[p->key] = v;
+            const double factor = f.factors.value(name, 1.0);
+            QVector<RawKey> raw;
+            const bool animation = parseAnimation(value, fps, &raw);
+            if (const QVariant v = convert(*p, animation ? raw.first().value : value, factor); v.isValid())
+                inst.params[p->key] = v; // static value = first key (stays when the keyframes are removed)
+            if (!animation || raw.size() < 2) continue;
+            if (p->type != EffectParam::Double || p->anim == AnimParam::Count) {
+                m.keyframes = true;
+                continue;
+            }
+            QVector<AnimKey> list;
+            for (const RawKey& r : raw)
+                if (const QVariant v = convert(*p, r.value, factor); v.isValid())
+                    list << AnimKey{r.frame >= 0 ? std::max(0, r.frame - preset.parentIn) : r.frame, v.toDouble(), r.type};
+            keys.remove(p->anim);
+            if (list.size() >= 2) keys.insert(p->anim, list);
         }
         // The same effect twice (Shotcut: several blurs from one plugin): the later one wins, like in the stack
         m.effects.removeIf([&](const EffectInstance& e) { return e.effectId == inst.effectId; });
+        for (const EffectParam& p : d->params) m.keys.remove(p.anim);
         m.effects << inst;
+        m.keys.insert(keys);
     }
     return m;
 }
@@ -306,6 +427,15 @@ void apply(Clip& c, const Mapped& m)
     for (const EffectInstance& e : m.effects) {
         if (EffectInstance* old = EffectRegistry::instance(c, e.effectId)) *old = e;
         else c.effects << e;
+        // the preset's values replace the old animation of this effect
+        if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))
+            for (const EffectParam& p : d->params)
+                if (p.anim != AnimParam::Count) c.keys.remove(p.anim);
+    }
+    for (auto it = m.keys.cbegin(); it != m.keys.cend(); ++it) {
+        KeyTrack k = toKeyTrack(it.value(), c.length());
+        for (Keyframe& x : k) x.frame += c.in; // keys count in source frames
+        c.keys.insert(it.key(), k);
     }
     if (!m.lut.isEmpty()) {
         EffectRegistry::add(c, kGrade);

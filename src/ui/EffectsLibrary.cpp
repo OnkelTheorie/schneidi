@@ -627,7 +627,8 @@ const EffectsLibrary::PresetEntry& EffectsLibrary::presetEntry(const QString& pa
     if (!m.lut.isEmpty()) names << "LUT " + QFileInfo(m.lut).fileName();
     if (!names.isEmpty()) tip << T("Effekte: %1").arg(names.join(", "));
     if (!m.skipped.isEmpty()) tip << T("Nicht unterstützt (ausgelassen): %1").arg(m.skipped.join(", "));
-    if (m.keyframes) tip << T("Keyframes: nur der erste Wert wird übernommen");
+    if (!m.keys.isEmpty()) tip << T("Mit Keyframes");
+    if (m.keyframes) tip << T("Keyframes bei Schaltern/Farben/Auswahl: nur der erste Wert wird übernommen");
     if (!p.error.isEmpty()) tip << T("Lässt sich nicht lesen: %1").arg(p.error);
     else if (m.empty()) tip << T("Enthält keine Effekte, die schneidi kennt");
     tip << QDir::toNativeSeparators(path);

@@ -1,5 +1,5 @@
 // Test presets from Kdenlive and Shotcut (core/Presets): custom effect with <parameter factor>, effect group with
-// keyframes and parameter names, Shotcut filter set (MLT XML) and filter preset (folder name = filter), colors and
+// keyframes (animation strings in frames, clock and SMPTE time, interpolation types, parentIn) and parameter names, Shotcut filter set (MLT XML) and filter preset (folder name = filter), colors and
 // choices, unknown filters skipped, LUT from avfilter.lut3d, broken files; applying via the Editor (one undo step,
 // existing effect takes the values) and the Effects Library category "Presets".
 // Picture of the Library: PRESETS_DUMP=<png> build-tests/tests/test_presets
@@ -8,6 +8,7 @@
 #include "core/Editor.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/Keyframes.h"
 #include "core/Presets.h"
 #include "core/Project.h"
 #include "core/Selection.h"
@@ -19,12 +20,21 @@
 #include <QFile>
 #include <QListWidget>
 #include <QTreeWidget>
+#include <QTemporaryDir>
 #include <QUndoStack>
 #include <clocale>
 
 namespace {
 
 double num(const EffectInstance& e, const QString& key) { return e.params.value(key).toDouble(); }
+
+AnimParam animOf(const QString& effect, const QString& key)
+{
+    if (const EffectDescriptor* d = EffectRegistry::find(effect))
+        for (const EffectParam& p : d->params)
+            if (p.key == key) return p.anim;
+    return AnimParam::Count;
+}
 
 const EffectInstance* effect(const Presets::Mapped& m, const QString& id)
 {
@@ -122,7 +132,50 @@ int main(int argc, char** argv)
         if (const EffectInstance* e = effect(m, "frei0r.colortap"); CHECK(e))
             CHECK_EQ(e->params.value("0").toString(), QString("sepia"));
         CHECK_EQ(m.skipped, QStringList{"boxblur"});
-        CHECK(m.keyframes);
+        CHECK(!m.keyframes); // Gamma is a number: keyframes taken over
+        const AnimParam gamma = animOf("frei0r.levels", "3");
+        if (CHECK(m.keys.contains(gamma) && m.keys.size() == 1)) {
+            const QVector<Presets::AnimKey>& k = m.keys[gamma];
+            // parentIn="1": the first key lies on the first frame of the clip
+            CHECK(k.size() == 3 && k[0].frame == 0 && k[1].frame == 9 && k[2].frame == 11);
+            CHECK(qAbs(k[1].value - 0.2455) < 1e-9 && qAbs(k[2].value - 0.485) < 1e-9);
+        }
+    }
+
+    // ---- Animation strings ----
+    {
+        QVector<Presets::RawKey> k;
+        CHECK(Presets::parseAnimation("1=0;10=15", 25, &k) && k.size() == 2 && k[1].frame == 10 && k[1].value == "15");
+        CHECK(Presets::parseAnimation("00:00:00.000=0.2;00:00:01.000=0.9", 25, &k) && k[1].frame == 25);
+        CHECK(Presets::parseAnimation("00:00:01.000=0.9", 50, &k) && k[0].frame == 50);
+        CHECK(Presets::parseAnimation("00:01.500=1", 30, &k) && k[0].frame == 45);       // mm:ss.zzz
+        CHECK(Presets::parseAnimation("00:00:01:05=1", 25, &k) && k[0].frame == 30);     // SMPTE
+        CHECK(Presets::parseAnimation("0=1;-1=0", 25, &k) && k[1].frame == -1);           // from the end
+        CHECK(Presets::parseAnimation("0~=1;10|=2;20c=3;30-=4;40=5", 25, &k) && k.size() == 5);
+        CHECK(k[0].type == '~' && k[1].type == '|' && k[2].type == 'c' && k[3].type == '-' && k[4].type.isNull());
+        CHECK(Presets::parseAnimation("0=0 0 1920 1080 1", 25, &k) && k[0].value == "0 0 1920 1080 1");
+        for (const char* plain : {"0.5", "sepia", "#ff00ff00", "", "a=b", "1=2;x=3"})
+            CHECK(!Presets::parseAnimation(plain, 25, &k));
+
+        using AK = Presets::AnimKey;
+        // discrete: hold until the frame before the next key
+        KeyTrack t = Presets::toKeyTrack({AK{0, 1, '|'}, AK{10, 2, {}}}, 50);
+        if (CHECK(t.size() == 3)) CHECK(t[1].frame == 9 && t[1].value == 1 && t[2].value == 2);
+        // eases: in = slow start at the first key, out = slow end at the second, in/out both
+        t = Presets::toKeyTrack({AK{0, 0, 'a'}, AK{10, 1, 'e'}, AK{20, 0, 'i'}, AK{30, 1, {}}}, 50);
+        if (CHECK(t.size() == 4)) {
+            CHECK(t[0].ease == KeyEase::EaseOut);
+            CHECK(t[1].ease == KeyEase::Linear);
+            CHECK(t[2].ease == KeyEase::EaseInOut); // slow end of 'e' + slow start of 'i'
+            CHECK(t[3].ease == KeyEase::EaseIn);
+        }
+        // smooth: Bezier with soft handles; negative frames from the end, sorted
+        t = Presets::toKeyTrack({AK{-1, 3, {}}, AK{0, 0, '~'}, AK{20, 2, '~'}}, 50);
+        if (CHECK(t.size() == 3)) {
+            CHECK(t[0].frame == 0 && t[1].frame == 20 && t[2].frame == 49);
+            CHECK(t[0].ease == KeyEase::Bezier && t[1].ease == KeyEase::Bezier && t[2].ease == KeyEase::Bezier);
+            CHECK(t[1].outDv > 0); // rising through the middle key
+        }
     }
 
     // ---- Shotcut filter set: indexes, MLT colors, mask filters skipped ----
@@ -154,7 +207,15 @@ int main(int argc, char** argv)
         // Animated value in Shotcut's time format
         const Presets::Mapped a = Presets::map(Presets::parse("0=00:00:00.000=0.2;00:00:01.000=0.9\n", "a", "glow"));
         if (const EffectInstance* e = effect(a, "frei0r.glow"); CHECK(e)) CHECK(qAbs(num(*e, "0") - 0.2) < 1e-9);
-        CHECK(a.keyframes);
+        CHECK(!a.keyframes);
+        const AnimParam glow = animOf("frei0r.glow", "0");
+        if (CHECK(a.keys.contains(glow))) CHECK(a.keys[glow].size() == 2 && a.keys[glow][1].frame == 25);
+        const Presets::Mapped a50 = Presets::map(Presets::parse("0=00:00:00.000=0.2;00:00:01.000=0.9\n", "a", "glow"), 50);
+        CHECK(a50.keys.value(glow).value(1).frame == 50);
+        // Animated checkbox: cannot be animated -> first value, flagged
+        const Presets::Mapped b = Presets::map(Presets::parse("0=0=1;10=0\n", "b", "flippo"));
+        if (const EffectInstance* e = effect(b, "frei0r.flippo"); CHECK(e)) CHECK(e->params.value("0").toBool());
+        CHECK(b.keyframes && b.keys.isEmpty());
     }
 
     // ---- Broken / unknown files ----
@@ -190,7 +251,8 @@ int main(int argc, char** argv)
         Clip c;
         c.id = 1;
         c.mediaPath = "clip.mp4";
-        c.out = 49;
+        c.in = 5; // keys count in source frames
+        c.out = 54;
         tl.video[0].clips << c;
     });
     auto clip = [&] { return project.timeline().video[0].clips[0]; };
@@ -198,6 +260,13 @@ int main(int argc, char** argv)
     editor.addEffect({1}, Presets::Prefix + QDir(dir).filePath("Kdenlive/shut_off.xml"));
     CHECK_EQ(project.undoStack()->count(), steps + 1);
     CHECK(EffectRegistry::has(clip(), "frei0r.levels") && EffectRegistry::has(clip(), "frei0r.colortap"));
+    const AnimParam gamma = animOf("frei0r.levels", "3");
+    if (CHECK(Keys::animated(clip(), gamma))) { // keyframes in clip frames
+        CHECK(qAbs(Keys::valueAt(clip(), gamma, 0) - 0.25) < 1e-9);
+        CHECK(qAbs(Keys::valueAt(clip(), gamma, 11) - 0.485) < 1e-9);
+        CHECK_EQ(Keys::keyTimes(clip(), {gamma}), (QVector<int>{0, 9, 11}));
+        CHECK_EQ(clip().keys.value(gamma).value(0).frame, 5);
+    }
     CHECK_EQ(int(clip().effects.size()), 2);
     editor.addEffect({1}, Presets::Prefix + QDir(dir).filePath("Kdenlive/glow.xml"));
     editor.addEffect({1}, Presets::Prefix + QDir(dir).filePath("glow/Hell"));
@@ -210,6 +279,17 @@ int main(int argc, char** argv)
     project.undoStack()->undo();
     project.undoStack()->undo();
     CHECK(clip().effects.isEmpty());
+    // An animated preset, then a static one: the static values replace the animation
+    {
+        QTemporaryDir other;
+        const QString puls = QDir(other.path()).filePath("glow/Puls");
+        CHECK(write(puls, "0=0=0.1;-1=0.6\n"));
+        editor.addEffect({1}, Presets::Prefix + puls);
+        const AnimParam glow = animOf("frei0r.glow", "0");
+        CHECK_EQ(Keys::keyTimes(clip(), {glow}), (QVector<int>{0, 49})); // -1 = last frame of the clip
+        editor.addEffect({1}, Presets::Prefix + QDir(dir).filePath("glow/Hell"));
+        CHECK(!Keys::animated(clip(), glow));
+    }
 
     // ---- Effects Library: Presets, subfolders as categories, broken file shown but not usable ----
     EffectsLibrary lib;
