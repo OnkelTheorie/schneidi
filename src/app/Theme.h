@@ -55,6 +55,13 @@ inline QColor quiet{0x3a, 0x8c, 0xc8};        // Lautheit unter dem Ziel
 inline QColor cacheReady{0x3d, 0x8b, 0xe8};   // Render-Cache fertig
 inline QColor cacheMissing{0xd2, 0x3c, 0x3c}; // Render-Cache fehlt
 
+// ---- Scopes of the Color page (fixed like video signal colours, not part of the designs) ----
+inline QColor scopeTrace{0xdc, 0xe8, 0xdc}; // Waveform/Vectorscope trace, Histogram luma
+inline QColor scopeRed{0xff, 0x4c, 0x4c};
+inline QColor scopeGreen{0x4c, 0xe0, 0x5c};
+inline QColor scopeBlue{0x50, 0x84, 0xff};
+inline QColor scopeSkin{0xe8, 0xa8, 0x78};  // skin tone line in the vectorscope
+
 using Colors = QHash<QString, QColor>; // Schlüssel wie in den JSON-Dateien (z. B. "panel", "primary", "playhead")
 
 struct Design {

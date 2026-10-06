@@ -33,6 +33,7 @@
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
+#include "ui/ScopesPanel.h"
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
@@ -144,6 +145,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (m_engine->mode() == Engine::Mode::Timeline) m_colorPanel->setPlayhead(f);
     });
     connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
+    connect(m_engine, &Engine::frameReady, m_scopes, &ScopesPanel::setFrame);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(m_mediaPool, &MediaPool::sequenceOpenRequested, m_timeline, &TimelinePanel::openSequence);
     // Andere Timeline geöffnet: Auswahl weg, Playhead und Zoom/Scroll wie zuletzt in dieser Timeline (wie DaVinci)
@@ -581,6 +583,8 @@ void MainWindow::buildLayout()
     m_mixer = new Mixer(m_project, m_engine);
     m_mixer->hide();
     m_colorPanel = new ColorPanel(m_editor);
+    m_scopes = new ScopesPanel;
+    m_scopes->setVisible(QSettings().value("color/scopesVisible", true).toBool());
 
     // Seiten; die gemeinsamen Panels (Pool, Viewer, Timeline) wandern beim Umschalten mit
     m_editTop = new QSplitter(Qt::Horizontal);
@@ -607,8 +611,14 @@ void MainWindow::buildLayout()
     m_pages->addWidget(m_editMain);
     m_pages->addWidget(m_deliverPage);
     // Color-Seite wie DaVinci (abgespeckt): oben Viewer, Mitte Timeline, unten die Farbräder
+    // and the scopes right of them (DaVinci's scope panel); the scopes analyse each preview frame after the grade
     m_colorPage = new QSplitter(Qt::Vertical);
-    m_colorPage->addWidget(m_colorPanel);
+    m_colorBottom = new QSplitter(Qt::Horizontal);
+    m_colorBottom->addWidget(m_colorPanel);
+    m_colorBottom->addWidget(m_scopes);
+    m_colorBottom->setStretchFactor(0, 1);
+    m_colorBottom->setSizes({1100, 420});
+    m_colorPage->addWidget(m_colorBottom);
     m_pages->addWidget(m_colorPage);
 
     auto* root = new QWidget;
@@ -1183,6 +1193,12 @@ void MainWindow::buildActions()
                [this] { if (m_storageToggle->isEnabled()) m_storageToggle->toggle(); });
     makeAction(workspace, "toggle_mixer", T("Mixer ein/aus"), QKeySequence(),
                [this] { if (m_mixerToggle->isEnabled()) m_mixerToggle->toggle(); });
+    // DaVinci: Workspace > Video Scopes (Ctrl+Shift+W); here the scope panel of the Color page
+    makeAction(workspace, "toggle_scopes", T("Video-Scopes ein/aus"), QKeySequence("Ctrl+Shift+W"), [this] {
+        m_scopes->setVisible(!m_scopes->isVisibleTo(m_colorBottom));
+        QSettings().setValue("color/scopesVisible", m_scopes->isVisibleTo(m_colorBottom));
+        if (m_scopes->isVisibleTo(m_colorBottom)) showPage(Page::Color);
+    });
     workspace->addSeparator();
     // Sprache wie in DaVinci (Preferences → User → UI Settings): wirkt nach dem Neustart
     QMenu* langMenu = workspace->addMenu(T("Sprache"));
