@@ -21,13 +21,17 @@ QVector<int> unlocked(const Timeline& tl, const QVector<int>& clipIds);
 // Spuren, auf denen die Clips liegen (ohne Doppelte)
 QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds);
 
-// Ripple auf den übrigen Spuren wie DaVinci: alle nicht gesperrten Spuren außer `skip` bleiben synchron.
+// Ripple auf den übrigen Spuren wie DaVinci: alle nicht gesperrten Spuren außer `skip` bleiben synchron
+// (auch die nicht gesperrten Untertitelspuren, gleiche Regeln, siehe Subtitles::ripple).
 // shifts: (ab Frame, Versatz) – ein Clip rückt um die Summe der Versätze, deren Frame <= seinem Start ist.
 // Würde eine Spur dabei einen stehenbleibenden Clip überschreiben (oder vor Frame 0 rutschen), bleibt sie
 // ganz stehen – nie überschreiben.
 void rippleTracks(Timeline& tl, const QVector<QPair<int, int>>& shifts, const QVector<TrackRef>& skip);
 // Wie weit (Frames nach links) die übrigen Spuren ab `from` nachrücken können, ohne zu überschreiben
+// (nicht gesperrte Untertitelspuren zählen mit)
 int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip);
+// Einfügen (Insert) auf allen nicht gesperrten Untertitelspuren: Eintrag über `frame` teilen, Rest rückt um `length`
+void insertSubtitleGap(Timeline& tl, int frame, int length, const IdGen& newId);
 
 // Alle Clips mit gleicher linkId (inkl. des Clips selbst).
 QVector<int> linkedGroup(const Timeline& tl, int clipId);

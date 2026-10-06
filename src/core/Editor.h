@@ -90,9 +90,12 @@ public:
     // Beliebige Clip-Eigenschaft ändern (Inspector). Gleicher mergeKey = ein Undo-Schritt.
     void modifyClips(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
                      const QString& mergeKey = {});
+    // Klinge: Clip (mit verknüpften Partnern) bzw. Untertitel-Eintrag (nur dieser) an `frame` teilen
     void bladeAt(int clipId, int frame);
     // Fade-Griff ziehen (nur dieser Clip, wie DaVinci); frames wird auf die Cliplänge begrenzt
     void setClipFade(int clipId, TimelineOps::Edge edge, int frames, const QString& mergeKey = {});
+    // Strg+B: wie DaVinci ohne Auswahl alle Clips und Untertitel unter dem Playhead (nicht gesperrte Spuren),
+    // mit Auswahl nur die ausgewählten (siehe splitOnSelectedTracks). Ein Undo-Schritt.
     void splitAtPlayhead(int frame);
     void deleteSelection();
     void rippleDeleteSelection();

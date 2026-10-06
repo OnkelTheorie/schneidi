@@ -2986,7 +2986,14 @@ bool TimelineView::subtitlePress(QMouseEvent* e, const QPoint& pos)
         return true;
     }
     Selection* sel = m_editor->selection();
-    if (m_tool == Tool::Blade) return true; // Untertitel lassen sich nicht teilen
+    if (m_tool == Tool::Blade) { // Eintrag an der Klinge teilen (wie Clips, mit Snapping)
+        if (const int id = cueAt(pos)) {
+            int frame = int(std::lround(xToFrame(pos.x())));
+            frame += snapDelta({frame}, {});
+            m_editor->bladeAt(id, frame);
+        }
+        return true;
+    }
     if (const auto edge = cueEdgeAt(pos)) {
         if (!sel->contains(edge->clipId)) sel->set({edge->clipId});
         m_cueTrim = *edge;
