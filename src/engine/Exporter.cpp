@@ -100,27 +100,27 @@ bool Exporter::anyRunning()
     return g_running > 0;
 }
 
-int Exporter::savedCores()
+int Exporter::savedThreads()
 {
     return std::max(0, QSettings().value("render/cores", 0).toInt());
 }
 
-void Exporter::setSavedCores(int cores)
+void Exporter::setSavedThreads(int threads)
 {
-    QSettings().setValue("render/cores", std::max(0, cores));
+    QSettings().setValue("render/cores", std::max(0, threads));
 }
 
-int Exporter::availableCores()
+int Exporter::availableThreads()
 {
     return std::max(1, QThread::idealThreadCount());
 }
 
-int Exporter::parallelFrames(const Timeline& tl, int cores)
+int Exporter::parallelFrames(const Timeline& tl, int threads)
 {
     bool frei0r = usesFrei0r(tl);
     if (tl.nested)
         for (const Timeline& n : *tl.nested) frei0r = frei0r || usesFrei0r(n);
-    return frei0r ? 1 : (cores > 0 ? cores : availableCores());
+    return frei0r ? 1 : (threads > 0 ? threads : availableThreads());
 }
 
 Exporter::Exporter(QObject* parent) : QObject(parent)
@@ -162,8 +162,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     m_profile = makeProfile(out);
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
-    const int cores = s.cores > 0 ? s.cores : availableCores();
-    m_builder->setDecoderThreads(cores);
+    const int threads = s.threads > 0 ? s.threads : availableThreads();
+    m_builder->setDecoderThreads(threads);
     m_builder->setSubtitles(s.burnSubtitles && !s.videoCodec.isEmpty());
     m_tractor = m_builder->build(scaled);
     m_tractor->set_in_and_out(m_from, m_from + m_length - 1);
@@ -238,14 +238,14 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     const QString ext = QFileInfo(s.path).suffix().toLower();
     if (ext == "mp4" || ext == "mov" || ext == "m4a") m_consumer->set("movflags", "+faststart");
     // Jedes Frame rendern (real_time < 0), mehrere Bilder gleichzeitig (außer mit frei0r, siehe parallelFrames);
-    // Decoder (oben) und Encoder bekommen dieselbe Kernzahl. Beim Umrechnen der Bildrate holt der "consumer"-Producer
+    // Decoder (oben) und Encoder bekommen dieselbe Threadzahl. Beim Umrechnen der Bildrate holt der "consumer"-Producer
     // die Bilder der Reihe nach -> dort nur eins nach dem anderen, und ohne Vorlese-Thread (real_time 0): Wiederholte
     // Bilder liefern 0 Samples; der Vorlese-Thread holt den Ton vorab, und beim zweiten Abholen durch den Encoder
     // füllt MLT die leeren Bilder mit Stille auf (Ton zu lang, mit Sprüngen).
-    const int frames = convertRate ? 1 : parallelFrames(tl, cores);
+    const int frames = convertRate ? 1 : parallelFrames(tl, threads);
     m_consumer->set("real_time", convertRate ? 0 : -frames);
-    m_consumer->set("threads", cores);
-    qInfo("Export: %d Kerne, %d Bilder gleichzeitig%s", cores, frames,
+    m_consumer->set("threads", threads);
+    qInfo("Export: %d Threads, %d Bilder gleichzeitig%s", threads, frames,
           convertRate ? qPrintable(QString(", Bildrate %1 -> %2").arg(s.format.rate.label(), rate.label())) : "");
     m_consumer->set("terminate_on_pause", 1); // am Ende automatisch stoppen
     m_consumer->connect(*m_source);

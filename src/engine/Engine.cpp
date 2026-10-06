@@ -63,6 +63,7 @@ bool Engine::init(QString* error)
         if (error) *error = T("MLT konnte nicht initialisiert werden.");
         return false;
     }
+    Bundle::configureMltLogging();
     Frei0r::registerEffects();
 
     m_format = ProjectFormat{};
