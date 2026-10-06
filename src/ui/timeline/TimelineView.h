@@ -1,5 +1,6 @@
 #pragma once
 #include "core/TimelineOps.h"
+#include "core/TrimFrames.h"
 #include "core/Types.h"
 #include "ui/timeline/ViewState.h"
 
@@ -87,6 +88,9 @@ signals:
     void clipMenuRequested(const QPoint& globalPos);
     // Doppelklick auf einen Untertitel: Text im Inspector bearbeiten
     void subtitleEditRequested(int cueId);
+    // Trim view (like DaVinci): while an edit is dragged the viewer shows the frames on both sides of it
+    void trimFramesChanged(const TrimFrames::View& view);
+    void trimFramesEnded();
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -303,6 +307,11 @@ private:
     TrimHit m_trimHit{TimelineOps::TrimKind::Ripple, 0, TimelineOps::Edge::End};
     int m_trimEditDelta = 0;
     std::optional<Timeline> m_trimPreview;
+    // Trim view: last emitted frames (only changes are sent); shown = trimFramesChanged sent since the press
+    TrimFrames::View m_trimFrames;
+    bool m_trimFramesShown = false;
+    void updateTrimFrames(const Timeline& preview, const TimelineOps::TrimEdit& edit, int delta);
+    void endTrimFrames();
 
     // Lautstärkelinie ziehen (wie DaVinci); Shift = fein
     int m_volClipId = 0;

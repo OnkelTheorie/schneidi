@@ -24,6 +24,7 @@ class ProducerFactory;
 class ProxyManager;
 class RenderCache;
 class Preroll;
+class StillFetcher;
 struct MixerHooks;
 struct SharedLoudness;
 
@@ -56,6 +57,8 @@ public:
     ProxyManager* proxies() const { return m_proxies; }
     // Render-Cache: Vorschau spielt vorgerenderte Clip-Ausgaben (Export nie); updateTimeline() reiht fehlende ein
     RenderCache* renderCache() const { return m_renderCache; }
+    // Single frames from media files in their own thread (trim view while dragging an edit); follows setFormat()
+    StillFetcher* stills() const { return m_stills; }
 
     MediaInfo probe(const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);
@@ -121,6 +124,7 @@ private:
 
     ProxyManager* m_proxies;
     RenderCache* m_renderCache;
+    StillFetcher* m_stills;
     ProjectFormat m_format;
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<ProducerFactory> m_factory; // Quellansicht (BT.601-Umweg, Profiles.h); überlebt m_source
