@@ -20,6 +20,7 @@ class MediaStorage;
 class Viewer;
 class Inspector;
 class ColorPanel;
+class ScopesPanel;
 class Mixer;
 class TimelinePanel;
 class QMenu;
@@ -127,6 +128,7 @@ private:
     QTimer m_engineTimer; // bündelt Modelländerungen -> Engine
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
+    ScopesPanel* m_scopes = nullptr; // Color page, right of the wheels (like DaVinci)
     Mixer* m_mixer = nullptr;
     TimelinePanel* m_timeline = nullptr;
     DeliverPanel* m_deliver = nullptr;
@@ -141,6 +143,7 @@ private:
     QSplitter* m_deliverPage = nullptr;
     QSplitter* m_deliverRight = nullptr;
     QSplitter* m_colorPage = nullptr; // Viewer, Timeline, Farbräder (wie DaVinci Color)
+    QSplitter* m_colorBottom = nullptr; // Farbräder | Scopes
     QButtonGroup* m_pageButtons = nullptr;
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;

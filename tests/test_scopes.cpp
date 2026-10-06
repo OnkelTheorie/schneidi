@@ -4,7 +4,10 @@
 
 #include "check.h"
 
+#include "app/InputBindings.h"
+#include "app/MainWindow.h"
 #include "app/Theme.h"
+#include "engine/Engine.h"
 #include "ui/Scopes.h"
 #include "ui/ScopesPanel.h"
 
@@ -13,6 +16,8 @@
 #include <QElapsedTimer>
 #include <QImage>
 #include <QSignalSpy>
+#include <QTemporaryDir>
+#include <clocale>
 
 namespace {
 
@@ -248,6 +253,51 @@ void testPanel()
     }
 }
 
+// Offscreen screenshot of the whole Color page: scopes sit right of the wheels and show the real preview frame
+void testColorPage(const QString& dir)
+{
+    const QString clip = Check::makeMedia(QDir(dir).filePath("bars.mp4"),
+                                          {"-f", "lavfi", "-i", "smptebars=size=640x360:rate=25:duration=2", "-c:v",
+                                           "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+    if (!CHECK(!clip.isEmpty())) return;
+    Engine engine;
+    QString err;
+    if (!CHECK(engine.init(&err))) return;
+    std::setlocale(LC_NUMERIC, "C");
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.resize(1600, 950);
+    w.show();
+    w.importFiles({clip}, true);
+    for (const auto& e : InputBindings::instance().entries())
+        if (e.id == "page_color" && e.action) e.action->trigger();
+    auto* scopes = w.findChild<ScopesPanel*>();
+    if (!CHECK(scopes)) return;
+    scopes->setType(Type::Vectorscope);
+    QElapsedTimer t;
+    t.start();
+    // wait until the scopes analysed a real frame of the clip (bars -> many colours in the vectorscope)
+    auto ready = [&] {
+        if (scopes->data().isEmpty() || scopes->busy()) return false;
+        int cells = 0;
+        for (quint32 v : scopes->data().vector) cells += v > 0;
+        return cells > 20;
+    };
+    while (t.elapsed() < 15000 && !ready()) QSignalSpy(scopes, &ScopesPanel::analysed).wait(100);
+    CHECK(ready());
+    CHECK(scopes->isVisible());
+    CHECK(scopes->width() > 250 && scopes->height() > 200);
+    const QImage shot = w.grab().toImage();
+    const QRect area(scopes->mapTo(&w, QPoint(0, 0)), scopes->size());
+    CHECK(QRect(QPoint(0, 0), shot.size()).contains(area));
+    int traced = 0;
+    for (int y = area.top() + 30; y <= area.bottom(); ++y)
+        for (int x = area.left(); x <= area.right(); ++x) traced += QColor(shot.pixel(x, y)).rgb() != Theme::viewerBg.rgb();
+    CHECK(traced > 1000);
+    if (const QString dump = qEnvironmentVariable("SCOPES_DUMP"); !dump.isEmpty())
+        shot.save(QDir(dump).filePath("color-page.png"));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -260,5 +310,11 @@ int main(int argc, char** argv)
     testFormatsAndDownsampling();
     testTraces();
     testPanel();
+    if (!Check::haveFfmpeg()) {
+        std::printf("Hinweis: ffmpeg fehlt, Color-Seite übersprungen\n");
+        return Check::result();
+    }
+    QTemporaryDir tmp;
+    if (CHECK(tmp.isValid())) testColorPage(tmp.path());
     return Check::result();
 }
