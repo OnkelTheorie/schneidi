@@ -2,6 +2,7 @@
 
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/Presets.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Retime.h"
@@ -518,15 +519,23 @@ void Editor::addEffect(const QVector<int>& ids, const QString& effectId)
         setGradeLut(ids, effectId.mid(int(qstrlen(EffectFolders::LutPrefix))));
         return;
     }
-    const EffectDescriptor* d = EffectRegistry::find(effectId);
-    if (!d) return;
     const Timeline& tl = m_project->timeline();
+    const bool preset = effectId.startsWith(Presets::Prefix);
     QVector<int> targets;
     for (int id : editable(ids)) {
         TrackRef ref;
         const Clip* c = TimelineOps::findClip(tl, id, &ref);
-        if (c && ref.kind == TrackKind::Video && !EffectRegistry::has(*c, effectId)) targets << id;
+        if (c && ref.kind == TrackKind::Video && (preset || !EffectRegistry::has(*c, effectId))) targets << id;
     }
+    if (preset) { // Shotcut/Kdenlive preset -> its effects, one undo step
+        const Presets::Preset p = Presets::load(effectId.mid(int(qstrlen(Presets::Prefix))));
+        const Presets::Mapped m = Presets::map(p);
+        if (!p.error.isEmpty() || m.empty()) return;
+        modifyClips(targets, T("Preset „%1“ anwenden").arg(p.name), [&](Clip& c) { Presets::apply(c, m); });
+        return;
+    }
+    const EffectDescriptor* d = EffectRegistry::find(effectId);
+    if (!d) return;
     modifyClips(targets, T("%1 hinzufügen").arg(d->name), [&](Clip& c) { EffectRegistry::add(c, effectId); });
 }
 

@@ -14,7 +14,7 @@ class QListWidget;
 class QTreeWidget;
 
 // Effects Library (Edit-Page wie DaVinci): links Kategorien (Toolbox → Video Transitions, Audio Transitions,
-// Titles; Open FX → Filters; LUTs und Verlaufsblenden → jeweils Mitgeliefert/Eigene, Eigene = Effekte-Ordner,
+// Titles; Open FX → Filters; Presets (Shotcut/Kdenlive); LUTs und Verlaufsblenden → jeweils Mitgeliefert/Eigene, Eigene = Effekte-Ordner,
 // dessen Unterordner als Unterkategorien), rechts die Einträge mit Vorschausymbol. Kategorien lassen sich zuklappen
 // (gespeichert). „Effekte importieren…“ öffnet den Effekte-Ordner, neue Dateien erscheinen von selbst. Ziehen auf einen Schnitt/eine Clipkante legt
 // den Übergang an, "Text" landet als Titel auf der Videospur, ein Filter auf einem Videoclip hängt den Effekt an;
@@ -26,7 +26,7 @@ public:
     // (Titel nutzen MediaPool::MimeType)
     static constexpr const char* MimeType = "application/x-schneidi-transition";
     static bool parseTransition(const QByteArray& data, TrackKind* kind, TransitionStyle* style);
-    // Drag-Daten eines Filters (Open FX): id aus der EffectRegistry, bzw. "lut:<Pfad>" für eine LUT
+    // Drag-Daten eines Filters (Open FX): id aus der EffectRegistry, bzw. "lut:<Pfad>" für eine LUT, "preset:<Pfad>"
     static constexpr const char* EffectMimeType = "application/x-schneidi-effect";
 
     explicit EffectsLibrary(QWidget* parent = nullptr);
@@ -42,13 +42,21 @@ private:
     void fillGroups(class QTreeWidgetItem* root, int groupCategory, const QVector<EffectFolders::LutEntry>& entries);
     QPixmap fileIcon(const QString& path, bool lut, QString* error); // LUT: Musterbild, Übergang: A -> B
     void saveCollapsed();
+    struct PresetEntry {
+        qint64 stamp = 0;
+        QString name, tip;
+        QPixmap icon;
+        bool ok = false;
+    };
+    const PresetEntry& presetEntry(const QString& path); // read + mapped, cached until the file changes
 
     QTreeWidget* m_categories;
     QLineEdit* m_search;
     QListWidget* m_list;
     class QTreeWidgetItem* m_lutRoot = nullptr;
     class QTreeWidgetItem* m_transRoot = nullptr;
-    QVector<EffectFolders::LutEntry> m_userLuts, m_userTransitions;
+    class QTreeWidgetItem* m_presetRoot = nullptr;
+    QVector<EffectFolders::LutEntry> m_userLuts, m_userTransitions, m_userPresets;
     QFileSystemWatcher* m_watcher;
     QTimer* m_rescan;
     struct IconEntry {
@@ -57,4 +65,5 @@ private:
         QString error;
     };
     QHash<QString, IconEntry> m_lutIcons;
+    QHash<QString, PresetEntry> m_presets;
 };

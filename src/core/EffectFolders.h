@@ -18,6 +18,7 @@ QString root();   // Effekte-Ordner
 QString lutDir(); // root/LUTs
 QString transitionDir(); // root/Transitions (ASCII-Name: MLT/FFmpeg unter Windows)
 QString frei0rDir();     // root/frei0r: own frei0r plugins (engine/Frei0r, picked up after a restart)
+QString presetDir();     // root/Presets: Shotcut/Kdenlive presets (core/Presets)
 void ensure();    // Ordner (und Liesmich) anlegen, falls sie fehlen
 
 // LUT-Formate (Endungen klein, ohne Punkt): .cube, .3dl, .csp, Hald-CLUT-Bilder
@@ -38,7 +39,8 @@ QVector<LutEntry> builtinLuts(); // mitgeliefert, Namen übersetzt
 QVector<LutEntry> userLuts();    // lutDir() rekursiv, sortiert nach Gruppe und Name
 QVector<LutEntry> builtinTransitions(); // mitgelieferte Verlaufsblenden
 QVector<LutEntry> userTransitions();    // transitionDir() rekursiv
-QStringList watchDirs();                // LUTs-/Transitions-Ordner und alle Unterordner (zum Beobachten)
+QVector<LutEntry> userPresets();        // presetDir() recursively (every file but readmes; name = file name)
+QStringList watchDirs();                // LUTs-/Transitions-/Presets-Ordner und alle Unterordner (zum Beobachten)
 bool isBuiltin(const QString& path);
 QString builtinId(const QString& path);  // ":/lumas/kreis" -> "kreis"
 QString displayName(const QString& path); // mitgeliefert: übersetzter Name, sonst Dateiname (LUT) bzw. ohne Endung

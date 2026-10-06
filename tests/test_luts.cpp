@@ -226,7 +226,7 @@ void testUserFolder(const QString& dir)
         CHECK_EQ(all[1].name, QString("Zeta"));
         CHECK_EQ(all[2].group, QString("Film/Kodak"));
     }
-    CHECK_EQ(EffectFolders::watchDirs().size(), 4); // LUTs + 2 Unterordner + Transitions
+    CHECK_EQ(EffectFolders::watchDirs().size(), 5); // LUTs + 2 Unterordner + Transitions + Presets
     CHECK_EQ(EffectFolders::findUserLut("k2.cube"), luts.filePath("Film/Kodak/k2.cube"));
     CHECK(EffectFolders::findUserLut("gibtsnicht.cube").isEmpty());
 

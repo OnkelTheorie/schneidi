@@ -3,6 +3,7 @@
 #include "app/Theme.h"
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
+#include "core/Presets.h"
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
 #include "ui/MediaPool.h"
@@ -36,6 +37,7 @@ enum Category {
     All, VideoTransitions, AudioTransitions, Titles, OpenFx, Filters, Frei0rFilters,
     LutsAll, BuiltinLuts, Luts, LutGroup,                         // LUTs: mitgeliefert + eigene
     LumasAll, BuiltinTransitions, Transitions, TransitionGroup,   // Verlaufsblenden: mitgeliefert + eigene
+    PresetsAll, PresetGroup,                                      // Shotcut/Kdenlive presets (own folder only)
     // Luts/Transitions = eigener Effekte-Ordner, …Group = dessen Unterordner
 };
 constexpr int kGroupRole = Qt::UserRole + 1; // …Group: Unterordner relativ zum Ordner
@@ -61,7 +63,8 @@ protected:
         const QString d = items.first()->data(Qt::UserRole).toString();
         if (d == kTitleData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::TitleItem)); // wie "Text" im Pool
         else if (d.startsWith(kEffectPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.mid(3).toUtf8());
-        else if (d.startsWith(EffectFolders::LutPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.toUtf8());
+        else if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix))
+            data->setData(EffectsLibrary::EffectMimeType, d.toUtf8());
         else data->setData(EffectsLibrary::MimeType, d.toUtf8());
         return data;
     }
@@ -190,6 +193,28 @@ QPixmap effectIcon(const QString& id)
     return pm;
 }
 
+// Preset: tile with the program's initial and the number of effects it brings
+QPixmap presetIcon(const QString& source, int effects)
+{
+    QPixmap pm(kIcon);
+    QPainter p(&pm);
+    const QRectF r = pm.rect();
+    QLinearGradient g(r.topLeft(), r.bottomRight());
+    g.setColorAt(0, QColor(0x4a, 0x3c, 0x5a));
+    g.setColorAt(1, QColor(0x26, 0x22, 0x2e));
+    p.fillRect(r, g);
+    QFont f = p.font();
+    f.setPixelSize(10);
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(QColor(0xd0, 0xc0, 0xe0));
+    const QString tag = source.isEmpty() ? QStringLiteral("?") : source.left(1);
+    p.drawText(r, Qt::AlignCenter, effects > 1 ? QString("%1 ×%2").arg(tag).arg(effects) : tag);
+    p.setPen(QColor(0, 0, 0, 120));
+    p.drawRect(r.adjusted(0, 0, -1, -1));
+    return pm;
+}
+
 // Vorlage für LUT-Symbole: Farbton von links nach rechts, oben hell, unten dunkel, unten ein Graukeil
 const QImage& lutSample()
 {
@@ -261,7 +286,8 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     import->setText(T("Effekte importieren…"));
     import->setToolTip(T("Öffnet den Effekte-Ordner. LUTs (.cube, .3dl, .csp, Hald-CLUT) in den Ordner „LUTs“, "
                          "Übergänge (Graustufenbilder) in den Ordner „Transitions“ legen, Unterordner werden zu "
-                         "Kategorien. frei0r-Plugins in den Ordner „frei0r“ (wirken nach Neustart).\n%1")
+                         "Kategorien. frei0r-Plugins in den Ordner „frei0r“ (wirken nach Neustart), Presets aus "
+                         "Kdenlive/Shotcut in den Ordner „Presets“.\n%1")
                            .arg(QDir::toNativeSeparators(EffectFolders::root())));
     connect(import, &QToolButton::clicked, this, [] {
         EffectFolders::ensure();
@@ -299,6 +325,8 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     add(lumas, T("Mitgeliefert"), BuiltinTransitions);
     m_transRoot = add(lumas, T("Eigene"), Transitions);
     m_transRoot->setToolTip(0, QDir::toNativeSeparators(EffectFolders::transitionDir()));
+    m_presetRoot = add(m_categories, QStringLiteral("Presets"), PresetsAll);
+    m_presetRoot->setToolTip(0, T("Presets aus Kdenlive und Shotcut\n%1").arg(QDir::toNativeSeparators(EffectFolders::presetDir())));
     for (QTreeWidgetItem* it : {toolbox, openFx, luts, lumas}) it->setExpanded(true);
     m_categories->setCurrentItem(toolbox);
     connect(m_categories, &QTreeWidget::itemExpanded, this, &EffectsLibrary::saveCollapsed);
@@ -323,7 +351,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
             emit effectRequested(d.mid(3));
             return;
         }
-        if (d.startsWith(EffectFolders::LutPrefix)) { // LUT -> wie ein Filter auf Clips
+        if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix)) { // LUT/Preset -> wie ein Filter
             emit effectRequested(d);
             return;
         }
@@ -391,6 +419,7 @@ void EffectsLibrary::rescanFolders()
     m_watcher->addPaths(EffectFolders::watchDirs());
     m_userLuts = EffectFolders::userLuts();
     m_userTransitions = EffectFolders::userTransitions();
+    m_userPresets = EffectFolders::userPresets();
 
     // Unterkategorien = Unterordner (verschachtelt wie im Ordner); Auswahl bleibt, wenn es sie noch gibt
     const QSignalBlocker block(m_categories);
@@ -398,7 +427,8 @@ void EffectsLibrary::rescanFolders()
     const QString curKey = cur ? collapseKey(cur) : QString();
     const int curCat = cur ? cur->data(0, Qt::UserRole).toInt() : -1; // cur wird gleich evtl. gelöscht
     for (auto [root, group, entries] : {std::tuple{m_lutRoot, int(LutGroup), &m_userLuts},
-                                        std::tuple{m_transRoot, int(TransitionGroup), &m_userTransitions}}) {
+                                        std::tuple{m_transRoot, int(TransitionGroup), &m_userTransitions},
+                                        std::tuple{m_presetRoot, int(PresetGroup), &m_userPresets}}) {
         const bool wasInside = curCat == group;
         qDeleteAll(root->takeChildren());
         fillGroups(root, group, *entries);
@@ -498,6 +528,15 @@ void EffectsLibrary::rebuild()
                 out << Entry{e.name, kEffectPrefix + e.id, effectIcon(e.id), e.description};
         return out;
     };
+    auto presets = [&] {
+        QVector<Entry> out;
+        for (const auto& l : m_userPresets) {
+            if (!group.isEmpty() && l.group != group && !l.group.startsWith(group + '/')) continue;
+            const PresetEntry& p = presetEntry(l.path);
+            out << Entry{p.name, Presets::Prefix + l.path, p.icon, p.tip, p.ok};
+        }
+        return out;
+    };
     const QVector<Entry> titles{Entry{QStringLiteral("Text"), kTitleData, titleIcon()}};
 
     switch (shown) {
@@ -525,6 +564,8 @@ void EffectsLibrary::rebuild()
     case LutGroup: groups = {{{}, files(m_userLuts, true, false)}}; break;
     case Transitions:
     case TransitionGroup: groups = {{{}, files(m_userTransitions, false, false)}}; break;
+    case PresetsAll:
+    case PresetGroup: groups = {{{}, presets()}}; break;
     }
 
     for (const Group& g : groups) {
@@ -555,6 +596,8 @@ void EffectsLibrary::rebuild()
         if (shown == Luts || shown == LutGroup) hint = T("Noch keine LUTs – „Effekte importieren…“ öffnet den Ordner");
         if (shown == Transitions || shown == TransitionGroup)
             hint = T("Noch keine Verlaufsblenden – „Effekte importieren…“ öffnet den Ordner");
+        if (shown == PresetsAll || shown == PresetGroup)
+            hint = T("Noch keine Presets – „Effekte importieren…“ öffnet den Ordner");
         if (!hint.isEmpty()) {
             auto* h = new QListWidgetItem(hint);
             h->setFlags(Qt::NoItemFlags);
@@ -562,4 +605,34 @@ void EffectsLibrary::rebuild()
             m_list->addItem(h);
         }
     }
+}
+
+const EffectsLibrary::PresetEntry& EffectsLibrary::presetEntry(const QString& path)
+{
+    const QFileInfo fi(path);
+    const qint64 stamp = fi.lastModified().toMSecsSinceEpoch() ^ (fi.size() << 20);
+    auto it = m_presets.find(path);
+    if (it != m_presets.end() && it->stamp == stamp) return *it;
+    PresetEntry e;
+    e.stamp = stamp;
+    const Presets::Preset p = Presets::load(path);
+    const Presets::Mapped m = Presets::map(p);
+    e.name = p.name;
+    QStringList tip;
+    if (!p.source.isEmpty()) tip << T("Preset aus %1").arg(p.source);
+    if (!p.description.isEmpty()) tip << p.description;
+    QStringList names;
+    for (const EffectInstance& x : m.effects)
+        if (const EffectDescriptor* d = EffectRegistry::find(x.effectId)) names << d->name;
+    if (!m.lut.isEmpty()) names << "LUT " + QFileInfo(m.lut).fileName();
+    if (!names.isEmpty()) tip << T("Effekte: %1").arg(names.join(", "));
+    if (!m.skipped.isEmpty()) tip << T("Nicht unterstützt (ausgelassen): %1").arg(m.skipped.join(", "));
+    if (m.keyframes) tip << T("Keyframes: nur der erste Wert wird übernommen");
+    if (!p.error.isEmpty()) tip << T("Lässt sich nicht lesen: %1").arg(p.error);
+    else if (m.empty()) tip << T("Enthält keine Effekte, die schneidi kennt");
+    tip << QDir::toNativeSeparators(path);
+    e.tip = tip.join('\n');
+    e.ok = p.error.isEmpty() && !m.empty();
+    e.icon = presetIcon(p.source, int(m.effects.size()) + (m.lut.isEmpty() ? 0 : 1));
+    return *m_presets.insert(path, e);
 }

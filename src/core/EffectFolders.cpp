@@ -105,15 +105,18 @@ QString transitionDir() { return QDir(root()).filePath("Transitions"); }
 
 QString frei0rDir() { return QDir(root()).filePath("frei0r"); }
 
+QString presetDir() { return QDir(root()).filePath("Presets"); }
+
 void ensure()
 {
     QDir().mkpath(lutDir());
     QDir().mkpath(transitionDir());
     QDir().mkpath(frei0rDir());
-    // New content (frei0r) -> replace an older readme
+    QDir().mkpath(presetDir());
+    // New content (presets) -> replace an older readme
     const QString readme = QDir(root()).filePath(T("Liesmich.txt"));
     QFile old(readme);
-    if (old.open(QIODevice::ReadOnly) && old.readAll().contains("frei0r")) return;
+    if (old.open(QIODevice::ReadOnly) && old.readAll().contains("Presets")) return;
     old.close();
     QFile f(readme);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
@@ -128,7 +131,12 @@ void ensure()
               "Auf einen Schnitt ziehen wie die anderen Übergänge.\n"
               "\n"
               "frei0r: zusätzliche frei0r-Plugins (.so unter Linux, .dll unter Windows) in den Ordner „frei0r“ legen.\n"
-              "Sie erscheinen nach einem Neustart unter Open FX → frei0r.\n")
+              "Sie erscheinen nach einem Neustart unter Open FX → frei0r.\n"
+              "\n"
+              "Presets: Effekt-Presets aus Kdenlive (eigene Effekte .xml, Effektgruppen) und Shotcut-Filter-Sets\n"
+              "in den Ordner „Presets“ legen. Shotcut-Filter-Presets samt ihrem Ordner kopieren (der Ordnername\n"
+              "ist der Filter). Übernommen werden frei0r-Filter, Green Screen und LUTs; Keyframes nur mit dem\n"
+              "ersten Wert. Ein Preset auf einen Clip ziehen hängt dessen Effekte an.\n")
                 .toUtf8());
 }
 
@@ -176,11 +184,25 @@ QVector<LutEntry> builtinTransitions()
 
 QVector<LutEntry> userTransitions() { return scan(transitionDir(), &isTransitionFile, false); }
 
+QVector<LutEntry> userPresets()
+{
+    // Shotcut presets have no suffix (and may contain dots) -> keep the file name, only ".xml" is cut off
+    auto accept = [](const QString& name) {
+        const QString suffix = QFileInfo(name).suffix().toLower();
+        return !name.startsWith('.') && suffix != "txt" && suffix != "md";
+    };
+    QVector<LutEntry> out = scan(presetDir(), accept, true);
+    for (LutEntry& e : out)
+        if (e.name.endsWith(".xml", Qt::CaseInsensitive)) e.name.chop(4);
+    return out;
+}
+
 QStringList watchDirs()
 {
     QStringList dirs;
     addDirs(lutDir(), &dirs);
     addDirs(transitionDir(), &dirs);
+    addDirs(presetDir(), &dirs);
     return dirs;
 }
 
