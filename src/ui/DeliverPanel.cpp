@@ -118,17 +118,17 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     connect(project, &Project::formatChanged, this, &DeliverPanel::updateFormat);
     updateFormat();
 
-    // CPU-Kerne fürs Rendern: gilt pro Rechner (nicht in Vorlagen/Aufträgen), wirkt ab dem nächsten Auftrag
-    m_cores = new QComboBox;
-    m_cores->setObjectName("renderCores");
-    const int available = Exporter::availableCores();
-    m_cores->addItem(T("Alle (%1)").arg(available), 0);
-    for (int n = available - 1; n >= 1; --n) m_cores->addItem(QString::number(n), n);
-    m_cores->setCurrentIndex(std::max(0, m_cores->findData(Exporter::savedCores())));
-    m_cores->setToolTip(T("Wie viele Prozessorkerne beim Rendern arbeiten. Weniger = der Rechner bleibt nebenbei "
+    // Threads (logische Prozessoren) fürs Rendern: gilt pro Rechner (nicht in Vorlagen/Aufträgen), wirkt ab dem nächsten Auftrag
+    m_threads = new QComboBox;
+    m_threads->setObjectName("renderThreads");
+    const int available = Exporter::availableThreads();
+    m_threads->addItem(T("Alle (%1)").arg(available), 0);
+    for (int n = available - 1; n >= 1; --n) m_threads->addItem(QString::number(n), n);
+    m_threads->setCurrentIndex(std::max(0, m_threads->findData(Exporter::savedThreads())));
+    m_threads->setToolTip(T("Wie viele Threads (logische Prozessoren) beim Rendern arbeiten. Weniger = der Rechner bleibt nebenbei "
                           "flüssiger. Mit Green Screen wird trotzdem nur ein Bild nach dem anderen berechnet."));
-    connect(m_cores, qOverload<int>(&QComboBox::currentIndexChanged), this,
-            [this] { Exporter::setSavedCores(m_cores->currentData().toInt()); });
+    connect(m_threads, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this] { Exporter::setSavedThreads(m_threads->currentData().toInt()); });
 
     auto* form = new QFormLayout;
     form->setContentsMargins(12, 12, 12, 12);
@@ -144,7 +144,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(T("Bereich"), m_range);
-    form->addRow(T("CPU-Kerne"), m_cores);
+    form->addRow(T("Threads"), m_threads);
 
     m_addBtn = new QPushButton(T("Zur Render-Warteschlange hinzufügen"));
     m_addBtn->setMinimumHeight(30);

@@ -1,5 +1,5 @@
-// Export mit mehreren CPU-Kernen: Bilder parallel (außer frei0r/Green Screen), gleiches Ergebnis wie mit einem Kern.
-// Gibt die Renderzeiten aus (1 Kern / alle Kerne), damit sich der Gewinn nachmessen lässt.
+// Export mit mehreren Threads: Bilder parallel (außer frei0r/Green Screen), gleiches Ergebnis wie mit einem Thread.
+// Gibt die Renderzeiten aus (1 Thread / alle Threads), damit sich der Gewinn nachmessen lässt.
 
 #include "check.h"
 
@@ -54,7 +54,7 @@ Timeline one(const Clip& c)
 void testParallelFrames()
 {
     const Timeline plain = one(effectClip(false));
-    CHECK_EQ(Exporter::parallelFrames(plain, 0), Exporter::availableCores());
+    CHECK_EQ(Exporter::parallelFrames(plain, 0), Exporter::availableThreads());
     CHECK_EQ(Exporter::parallelFrames(plain, 3), 3);
     CHECK_EQ(Exporter::parallelFrames(one(effectClip(true)), 0), 1);
     // ausgeschalteter Green Screen zählt nicht
@@ -83,10 +83,10 @@ double cpuSeconds()
     return u.ru_utime.tv_sec + u.ru_stime.tv_sec + (u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6;
 #endif
 }
-double g_cpuLoad = 0; // letzter render(): Rechenzeit / Laufzeit = im Mittel belegte Kerne
+double g_cpuLoad = 0; // letzter render(): Rechenzeit / Laufzeit = im Mittel belegte Prozessoren
 
 // Rendert und liefert die Dauer in ms (-1 = fehlgeschlagen)
-qint64 render(const Timeline& tl, const QString& path, int cores)
+qint64 render(const Timeline& tl, const QString& path, int threads)
 {
     Exporter ex;
     ExportSettings s;
@@ -94,7 +94,7 @@ qint64 render(const Timeline& tl, const QString& path, int cores)
     s.format = kFmt;
     s.crf = qEnvironmentVariableIsSet("SCHNEIDI_BENCH_CLIP") ? 20 : 23; // Messung: wie die Deliver-Seite (Qualität Hoch, medium)
     s.preset = qEnvironmentVariableIsSet("SCHNEIDI_BENCH_CLIP") ? "medium" : "veryfast";
-    s.cores = cores;
+    s.threads = threads;
     QEventLoop loop;
     bool ok = false;
     QObject::connect(&ex, &Exporter::finished, &loop, [&](bool success, const QString&) {
@@ -147,8 +147,8 @@ void testRender(const QString& dir)
     const QString single = dir + "/one.mp4", all = dir + "/all.mp4";
     const qint64 t1 = render(tl, single, 1);
     const qint64 tn = render(tl, all, 0);
-    std::printf("Export 1080p, %d Bilder, Farbkorrektur + Unschärfe: 1 Kern %lld ms, alle (%d) %lld ms\n", kFrames,
-                t1, Exporter::availableCores(), tn);
+    std::printf("Export 1080p, %d Bilder, Farbkorrektur + Unschärfe: 1 Thread %lld ms, alle (%d) %lld ms\n", kFrames,
+                t1, Exporter::availableThreads(), tn);
     // gleiche Bilder in gleicher Reihenfolge (parallel darf nichts vertauschen)
     for (int pos : {0, 37, kFrames - 1}) {
         const double d = diff(grab(single, pos), grab(all, pos));
@@ -158,7 +158,7 @@ void testRender(const QString& dir)
     Mlt::Producer p(*prof, all.toUtf8().constData());
     CHECK_EQ(p.get_length(), kFrames);
 
-    // Green Screen: läuft trotz „alle Kerne“ (ein Bild nach dem anderen) sauber durch
+    // Green Screen: läuft trotz „alle Threads“ (ein Bild nach dem anderen) sauber durch
     Timeline key = one(effectClip(true));
     key.video[0].clips[0].out = 24;
     const qint64 tk = render(key, dir + "/key.mp4", 0);
@@ -189,12 +189,12 @@ int bench(const QString& clip)
     EffectRegistry::add(graded.video[0].clips[0], "color");
     EffectRegistry::instance(graded.video[0].clips[0], "color")->params["saturation"] = 40.0;
     QTemporaryDir tmp;
-    const QStringList cores = qEnvironmentVariable("SCHNEIDI_BENCH_CORES", "1,0").split(',');
+    const QStringList threadList = qEnvironmentVariable("SCHNEIDI_BENCH_THREADS", qEnvironmentVariable("SCHNEIDI_BENCH_CORES", "1,0")).split(',');
     for (const auto& [name, t] : {std::pair<const char*, const Timeline*>{"Schnitt", &tl}, {"Farbkorrektur", &graded}})
-        for (const QString& n : cores) {
+        for (const QString& n : threadList) {
             const qint64 ms = render(*t, tmp.filePath("bench.mp4"), n.toInt());
-            std::printf("%s, %d Bilder, Kerne %s: %lld ms (%.1f Bilder/s), im Mittel %.1f Kerne belegt\n", name, c.out + 1,
-                        n == "0" ? qPrintable(QString("alle (%1)").arg(Exporter::availableCores())) : qPrintable(n), ms,
+            std::printf("%s, %d Bilder, Threads %s: %lld ms (%.1f Bilder/s), im Mittel %.1f Prozessoren belegt\n", name, c.out + 1,
+                        n == "0" ? qPrintable(QString("alle (%1)").arg(Exporter::availableThreads())) : qPrintable(n), ms,
                         ms > 0 ? (c.out + 1) * 1000.0 / ms : 0.0, g_cpuLoad);
             std::fflush(stdout);
         }

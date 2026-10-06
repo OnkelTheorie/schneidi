@@ -67,7 +67,7 @@ private:
     QComboBox* m_quality;
     QComboBox* m_audioBitrate;
     QComboBox* m_audioBits;
-    QComboBox* m_cores; // CPU-Kerne fürs Rendern (Daten: Anzahl, 0 = alle)
+    QComboBox* m_threads; // Threads fürs Rendern (Daten: Anzahl, 0 = alle)
     QComboBox* m_range; // ganze Timeline / In-Out-Bereich
     QComboBox* m_subtitles; // Untertitel: keine / einbrennen / SRT-Datei (Daten: RenderSettings::Subtitles)
     bool m_hadRange = false;

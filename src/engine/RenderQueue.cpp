@@ -32,7 +32,7 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     s.pixFmt = f.pixFmt;
     s.crf = job.settings.crf();
     s.audioBitrateK = job.settings.audioBitrateK;
-    s.cores = Exporter::savedCores(); // gilt pro Rechner, nicht pro Auftrag
+    s.threads = Exporter::savedThreads(); // gilt pro Rechner, nicht pro Auftrag
     // Größe beim Hinzufügen festgehalten; ohne (nur Audio, alte Datei) nach den Einstellungen
     s.size = job.size.isEmpty() ? job.settings.outputSize(format.size()) : job.size;
     if (job.settings.audioOnly()) s.size = format.size(); // wird nicht gerendert, aber nichts umrechnen
