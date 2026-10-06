@@ -50,6 +50,7 @@ add_library(schneidi_lib STATIC
     src/core/EffectFolders.h      src/core/EffectFolders.cpp
     src/core/Presets.h            src/core/Presets.cpp
     src/core/Loudness.h           src/core/Loudness.cpp
+    src/core/TruePeak.h           src/core/TruePeak.cpp
     src/core/RenderJob.h          src/core/RenderJob.cpp
     src/core/Subtitles.h          src/core/Subtitles.cpp
 
