@@ -25,7 +25,8 @@ done
 
 # Nur die Module, die schneidi nutzt (libmltqt.so = Qt5 bewusst nicht: zöge Qt5 mit hinein)
 MODULES=(core avformat qt6 sdl2 rtaudio frei0r rubberband xml resample plus normalize)
-FREI0R_PLUGINS=(bluescreen0r)
+# frei0r: all plugins (Effects Library, Open FX → frei0r) except face detection (would pull in OpenCV)
+FREI0R_SKIP=(facebl0r facedetect)
 
 # --- Werkzeuge (einmalig herunterladen) ---
 mkdir -p "$TOOLS"
@@ -60,9 +61,11 @@ done
 cp -rL "$MLT_SHARE" "$APPDIR/usr/share/mlt-7"
 if [ -n "$FREI0R_DIR" ]; then
     mkdir -p "$APPDIR/usr/lib/frei0r-1"
-    for f in "${FREI0R_PLUGINS[@]}"; do cp -L "$FREI0R_DIR/$f.so" "$APPDIR/usr/lib/frei0r-1/"; done
+    for so in "$FREI0R_DIR"/*.so; do
+        [[ " ${FREI0R_SKIP[*]} " == *" $(basename "$so" .so) "* ]] || cp -L "$so" "$APPDIR/usr/lib/frei0r-1/"
+    done
 else
-    echo "!! frei0r nicht gefunden (Green Screen fehlt im Paket)" >&2
+    echo "!! frei0r nicht gefunden (Green Screen und frei0r-Effekte fehlen im Paket)" >&2
 fi
 for t in ffmpeg ffprobe; do cp -L "$(command -v "$t")" "$APPDIR/usr/bin/"; done
 

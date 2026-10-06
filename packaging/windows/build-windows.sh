@@ -16,7 +16,8 @@ OUT="$BUILD/schneidi"
 
 # Nur die MLT-Module, die schneidi nutzt (wie im AppImage)
 MODULES=(core avformat qt6 sdl2 rtaudio frei0r rubberband xml resample plus normalize)
-FREI0R_PLUGINS=(bluescreen0r)
+# frei0r: all plugins (Effects Library, Open FX → frei0r) except face detection (would pull in OpenCV)
+FREI0R_SKIP=(facebl0r facedetect)
 
 [ "${MSYSTEM:-}" = "UCRT64" ] || { echo "!! Bitte in der MSYS2-Umgebung UCRT64 starten" >&2; exit 1; }
 
@@ -37,9 +38,10 @@ for m in "${MODULES[@]}"; do
 done
 # Beschreibungen der Module (.yml) und Daten (Profile, Presets, …)
 cp -r "$UCRT/share/mlt" "$OUT/share/mlt-7"
-for f in "${FREI0R_PLUGINS[@]}"; do
-    dll="$UCRT/lib/frei0r-1/$f.dll"
-    if [ -f "$dll" ]; then cp "$dll" "$OUT/lib/frei0r-1/"; else echo "!! frei0r-Plugin fehlt: $dll (Green Screen)" >&2; fi
+[ -f "$UCRT/lib/frei0r-1/bluescreen0r.dll" ] || echo "!! frei0r fehlt (pacman -S mingw-w64-ucrt-x86_64-frei0r-plugins)" >&2
+for dll in "$UCRT"/lib/frei0r-1/*.dll; do
+    [ -f "$dll" ] || continue
+    [[ " ${FREI0R_SKIP[*]} " == *" $(basename "$dll" .dll) "* ]] || cp "$dll" "$OUT/lib/frei0r-1/"
 done
 
 # --- Qt (Plugins: platforms, styles, imageformats, …) ---
