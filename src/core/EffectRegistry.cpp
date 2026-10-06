@@ -1,6 +1,7 @@
 #include "core/EffectRegistry.h"
 
 #include "core/I18n.h"
+#include "core/Keyframes.h"
 
 #include <QColor>
 
@@ -87,6 +88,17 @@ const EffectDescriptor* find(const QString& id)
 bool paramFor(AnimParam p, const EffectDescriptor** effect, const EffectParam** param)
 {
     if (p == AnimParam::Count) return false;
+    if (QString effectId, key; Keys::effectParamOf(p, &effectId, &key)) { // dynamic (frei0r): direct lookup
+        const EffectDescriptor* e = find(effectId);
+        if (!e) return false; // plugin missing
+        for (const auto& x : e->params)
+            if (x.key == key && x.anim == p) {
+                if (effect) *effect = e;
+                if (param) *param = &x;
+                return true;
+            }
+        return false;
+    }
     for (const auto& e : all())
         for (const auto& x : e.params)
             if (x.anim == p) {
@@ -130,6 +142,9 @@ void remove(Clip& c, const QString& id)
     if (const EffectDescriptor* d = find(id))
         for (const auto& p : d->params)
             if (p.anim != AnimParam::Count) c.keys.remove(p.anim);
+    // Dynamic parameters also when the effect is unknown here (plugin missing)
+    QString effectId;
+    c.keys.removeIf([&](const auto& it) { return Keys::effectParamOf(it.key(), &effectId, nullptr) && effectId == id; });
 }
 
 QVariant value(const Clip& c, const QString& id, const QString& key)

@@ -2,6 +2,7 @@
 
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/Keyframes.h"
 #include "engine/Bundle.h"
 
 #include <QColor>
@@ -100,6 +101,8 @@ bool describe(mlt_repository repo, const QString& service, EffectDescriptor* d)
             p.defaultValue = std::clamp(def.isEmpty() ? p.min : mlt_properties_get_double(pm, "default"), p.min, p.max);
             p.step = (p.max - p.min) / 500.0;
             p.decimals = 3;
+            if (str(pm, "animation") != "no") // keyframes like the built-in parameters
+                p.anim = Keys::effectParam(service, p.key);
         } else if (type == "boolean") {
             p.type = EffectParam::Bool;
             p.defaultValue = def.toDouble() > 0.5;

@@ -2,6 +2,7 @@
 #include "core/Editor.h"
 
 #include "core/I18n.h"
+#include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
@@ -52,6 +53,10 @@ void pasteEffects(Clip& c, const Clip& src)
     if (own && !placed) out << *own;
     c.effects = out;
     copyKeyRange(c, src, AnimParam::FxBrightness, AnimParam::FxBlur);
+    // dynamic effect parameters (frei0r) follow their effects
+    c.keys.removeIf([](const auto& it) { return Keys::isEffectParam(it.key()); });
+    for (auto it = src.keys.cbegin(); it != src.keys.cend(); ++it)
+        if (Keys::isEffectParam(it.key())) c.keys.insert(it.key(), it.value());
 }
 
 // Farbkorrektur (Color-Seite) samt LUT übernehmen bzw. entfernen, übrige Effekte bleiben

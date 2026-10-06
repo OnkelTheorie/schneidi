@@ -213,10 +213,14 @@ void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, int
             } else if (p.type == EffectParam::Bool) {
                 f.set(prop.constData(), v.toBool() ? 1.0 : 0.0);
             } else {
-                f.set(prop.constData(), v.toDouble());
+                // keyframes (frei0r): MLT animation via anim_set (numbers, not text -> independent of LC_NUMERIC)
+                const bool animated = p.anim != AnimParam::Count && animate(c, {p.anim}, a, len, [&](int pos, double t) {
+                    f.anim_set(prop.constData(), Keys::valueAt(c, p.anim, t), pos, len);
+                });
+                if (!animated) f.set(prop.constData(), v.toDouble());
             }
         }
-        clip.attach(f);
+        attachTo(clip, f); // keyframes count from the cut's in point
     }
 }
 

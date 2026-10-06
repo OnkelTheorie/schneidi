@@ -3,8 +3,12 @@
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 
+#include <QHash>
+#include <QReadWriteLock>
+
 #include <algorithm>
 #include <cmath>
+#include <deque>
 
 namespace {
 
@@ -56,6 +60,24 @@ constexpr Keys::ParamInfo kParams[] = {
     {AnimParam::GradeTint, "gradeTint", false, nullptr, 0, 0},
     {AnimParam::GradeExposure, "gradeExposure", false, nullptr, 0, 0},
 };
+
+// Dynamic effect parameters (Keys::effectParam): interned per "fx:<effect>:<key>". Read from MLT threads too
+// (render filters call valueAt -> info), hence the lock; a deque keeps the ParamInfo addresses stable.
+struct DynamicParam {
+    QString effectId, key;
+    QByteArray id;
+    Keys::ParamInfo info;
+};
+struct DynamicTable {
+    QReadWriteLock lock;
+    std::deque<DynamicParam> list;
+    QHash<QString, int> byId;
+};
+DynamicTable& dynamicTable()
+{
+    static DynamicTable t;
+    return t;
+}
 
 bool slowStart(const Keyframe& k) { return k.ease == KeyEase::EaseOut || k.ease == KeyEase::EaseInOut; }
 bool slowEnd(const Keyframe& k) { return k.ease == KeyEase::EaseIn || k.ease == KeyEase::EaseInOut; }
@@ -172,8 +194,45 @@ void sortTrack(KeyTrack& k)
 
 namespace Keys {
 
+AnimParam effectParam(const QString& effectId, const QString& key)
+{
+    const QString id = QStringLiteral("fx:%1:%2").arg(effectId, key);
+    DynamicTable& t = dynamicTable();
+    {
+        QReadLocker lock(&t.lock);
+        if (const auto it = t.byId.constFind(id); it != t.byId.cend()) return AnimParam(kEffectParamBase + *it);
+    }
+    QWriteLocker lock(&t.lock);
+    if (const auto it = t.byId.constFind(id); it != t.byId.cend()) return AnimParam(kEffectParamBase + *it);
+    const int n = int(t.list.size());
+    const AnimParam p = AnimParam(kEffectParamBase + n);
+    t.list.push_back(DynamicParam{effectId, key, id.toUtf8(), {}});
+    DynamicParam& d = t.list.back();
+    d.info = ParamInfo{p, d.id.constData(), false, nullptr, -kBig, kBig};
+    t.byId.insert(id, n);
+    return p;
+}
+
+bool effectParamOf(AnimParam p, QString* effectId, QString* key)
+{
+    if (!isEffectParam(p)) return false;
+    DynamicTable& t = dynamicTable();
+    QReadLocker lock(&t.lock);
+    const size_t i = size_t(int(p) - kEffectParamBase);
+    if (i >= t.list.size()) return false;
+    if (effectId) *effectId = t.list[i].effectId;
+    if (key) *key = t.list[i].key;
+    return true;
+}
+
 const ParamInfo& info(AnimParam p)
 {
+    if (isEffectParam(p)) {
+        DynamicTable& t = dynamicTable();
+        QReadLocker lock(&t.lock);
+        if (const size_t i = size_t(int(p) - kEffectParamBase); i < t.list.size()) return t.list[i].info;
+        return kParams[0];
+    }
     for (const auto& i : kParams)
         if (i.param == p) return i;
     return kParams[0];
@@ -181,6 +240,12 @@ const ParamInfo& info(AnimParam p)
 
 bool fromId(const QString& id, AnimParam* p)
 {
+    if (id.startsWith(QLatin1String("fx:"))) { // "fx:<effect id>:<key>" (the key may contain ':')
+        const qsizetype sep = id.indexOf(':', 3);
+        if (sep <= 3 || sep + 1 >= id.size()) return false;
+        *p = effectParam(id.mid(3, sep - 3), id.mid(sep + 1));
+        return true;
+    }
     for (const auto& i : kParams)
         if (id == QLatin1String(i.id)) {
             *p = i.param;
@@ -196,6 +261,8 @@ QString label(AnimParam p)
     const EffectDescriptor* e = nullptr;
     const EffectParam* ep = nullptr;
     if (EffectRegistry::paramFor(p, &e, &ep)) return QStringLiteral("%1: %2").arg(e->name, ep->label);
+    QString effectId, key;
+    if (effectParamOf(p, &effectId, &key)) return QStringLiteral("%1: %2").arg(effectId, key); // plugin missing
     return QString::fromLatin1(i.id);
 }
 
@@ -235,6 +302,8 @@ double staticValue(const Clip& c, AnimParam p)
     default: break;
     }
     // Effekt-Parameter: Wert steht in der Effekt-Instanz (fehlt der Effekt: Default)
+    QString effectId, key;
+    if (effectParamOf(p, &effectId, &key)) return EffectRegistry::value(c, effectId, key).toDouble();
     const EffectDescriptor* e = nullptr;
     const EffectParam* ep = nullptr;
     if (EffectRegistry::paramFor(p, &e, &ep)) return EffectRegistry::value(c, e->id, ep->key).toDouble();
@@ -263,6 +332,11 @@ void setStaticValue(Clip& c, AnimParam p, double v)
     case AnimParam::Pan: c.pan = v; break;
     default: {
         // Effekt-Parameter: nur in eine vorhandene Instanz schreiben (fehlt der Effekt, gibt es nichts zu ändern)
+        QString effectId, key;
+        if (effectParamOf(p, &effectId, &key)) {
+            if (EffectInstance* inst = EffectRegistry::instance(c, effectId)) inst->params[key] = v;
+            break;
+        }
         const EffectDescriptor* e = nullptr;
         const EffectParam* ep = nullptr;
         if (EffectRegistry::paramFor(p, &e, &ep))

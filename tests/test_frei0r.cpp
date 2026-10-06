@@ -1,10 +1,13 @@
 // Test frei0r plugins as effects: registry from the MLT metadata (number, checkbox, color, choice; old alias names
 // only once), rendering with parameters (pixel values on color bars), saving/loading parameters with their type,
 // Inspector (sections appear with the first clip that has the effect, checkbox/choice with undo) and Effects Library.
+// Keyframes on frei0r number parameters (dynamic AnimParam per effect + key): values, render (also on a cut that does
+// not start at source frame 0), project file (also for a missing plugin), Inspector diamond with undo, removing.
 // Pictures of Inspector and Library: FREI0R_DUMP=<folder> build-tests/tests/test_frei0r
 #include "check.h"
 
 #include "core/Editor.h"
+#include "core/Keyframes.h"
 #include "core/EffectRegistry.h"
 #include "core/Project.h"
 #include "core/Selection.h"
@@ -22,8 +25,10 @@
 #include <QComboBox>
 #include <QDir>
 #include <QImage>
+#include <QJsonObject>
 #include <QListWidget>
 #include <QSet>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QUndoStack>
 #include <QTemporaryDir>
@@ -189,6 +194,91 @@ int main(int argc, char** argv)
         CHECK(b.effects[0].params.value("0").typeId() == QMetaType::QColor);
     }
 
+    // ---- Keyframes on frei0r parameters ----
+    const EffectDescriptor* bright = EffectRegistry::find("frei0r.brightness");
+    const AnimParam ba = bright && !bright->params.isEmpty() ? bright->params[0].anim : AnimParam::Count;
+    if (CHECK(bright && ba != AnimParam::Count)) {
+        CHECK(Keys::isEffectParam(ba));
+        CHECK_EQ(QString(Keys::info(ba).id), QString("fx:frei0r.brightness:0"));
+        AnimParam back = AnimParam::Count;
+        CHECK(Keys::fromId("fx:frei0r.brightness:0", &back) && back == ba);
+        CHECK(Keys::effectParam("frei0r.brightness", "0") == ba); // same pair = same value
+        CHECK(Keys::effectParam("frei0r.brightness", "1") != ba);
+        CHECK_EQ(Keys::label(ba), QString("Brightness: Brightness"));
+        double lo = 0, hi = 0;
+        Keys::range(ba, &lo, &hi);
+        CHECK(lo == 0 && hi == 1);
+        const EffectDescriptor* e = nullptr;
+        const EffectParam* ep = nullptr;
+        CHECK(EffectRegistry::paramFor(ba, &e, &ep) && e == bright && ep->key == "0");
+        // Key with ':' in the key part and unknown effects still parse (project from another computer)
+        AnimParam other = AnimParam::Count;
+        CHECK(Keys::fromId("fx:frei0r.gibtsnicht:a:b", &other) && Keys::isEffectParam(other));
+        QString eid, key;
+        CHECK(Keys::effectParamOf(other, &eid, &key) && eid == "frei0r.gibtsnicht" && key == "a:b");
+        CHECK(!Keys::fromId("fx:", &other) && !Keys::fromId("fx:x", &other));
+
+        // Values: static from the instance, animated from the keys (source frames: in + t)
+        Clip c;
+        c.in = 10;
+        c.out = 59;
+        CHECK(EffectRegistry::add(c, "frei0r.brightness"));
+        CHECK(Keys::staticValue(c, ba) == 0.5);
+        Keys::setValue(c, ba, 0, 0.25); // not animated -> instance
+        CHECK(EffectRegistry::value(c, "frei0r.brightness", "0").toDouble() == 0.25);
+        Keys::setKey(c, ba, 0, 0.0);
+        Keys::setKey(c, ba, 40, 1.0);
+        CHECK(Keys::animated(c, ba) && c.keys[ba].first().frame == 10);
+        CHECK(qAbs(Keys::valueAt(c, ba, 20) - 0.5) < 1e-9);
+        Keys::removeKey(c, ba, 0);
+        Keys::removeKey(c, ba, 40); // last one gone: value stays as static value
+        CHECK(!Keys::animated(c, ba) && EffectRegistry::value(c, "frei0r.brightness", "0").toDouble() == 1.0);
+        Keys::setKey(c, ba, 5, 0.3);
+        EffectRegistry::remove(c, "frei0r.brightness"); // keys go with the effect
+        CHECK(c.keys.isEmpty());
+        Clip u;
+        u.effects << EffectInstance{"frei0r.gibtsnicht", {{"a:b", 0.3}}, true};
+        Keys::setKey(u, other, 0, 0.1);
+        EffectRegistry::remove(u, "frei0r.gibtsnicht"); // also without a descriptor
+        CHECK(u.keys.isEmpty() && u.effects.isEmpty());
+
+        // Render: dark at the first key, neutral in the middle, bright at the last
+        auto animated = [&](int in) {
+            return one([&, in](Clip& clip) {
+                clip.in = in;
+                clip.out = 49;
+                fx("frei0r.brightness")(clip);
+                Keys::setKey(clip, ba, 0, 0.0);
+                Keys::setKey(clip, ba, 40 - in, 1.0);
+            });
+        };
+        for (int in : {0, 20}) { // in 20: keys count from the cut, not from source frame 0
+            const Timeline tl = animated(in);
+            const QColor dark = left(render(tl, fmt, 0));
+            const QColor mid = left(render(tl, fmt, (40 - in) / 2));
+            const QColor light = left(render(tl, fmt, 40 - in));
+            CHECK(dark.red() < ref.red() - 60);
+            CHECK(std::abs(mid.red() - ref.red()) < 25);
+            CHECK(light.red() > ref.red() + 30);
+        }
+
+        // Project file: id "fx:<effect>:<key>", also for a missing plugin (stays in the file)
+        ProjectData kd;
+        kd.timeline = animated(0);
+        Clip& kc = kd.timeline.video[0].clips[0];
+        kc.effects << EffectInstance{"frei0r.gibtsnicht", {{"a:b", 0.3}}, true};
+        Keys::setKey(kc, other, 3, 0.7);
+        Keys::setKey(kc, other, 9, 0.2);
+        kc.keys[ba][1].ease = KeyEase::EaseIn;
+        const QJsonObject keysJson = ProjectFile::clipJson(kc).value("keys").toObject();
+        CHECK(keysJson.contains("fx:frei0r.brightness:0") && keysJson.contains("fx:frei0r.gibtsnicht:a:b"));
+        kd.media = d.media;
+        const QString kpath = tmp.filePath("keys.schneidi");
+        ProjectData kl;
+        if (CHECK(ProjectFile::save(kd, kpath, &err)) && CHECK(ProjectFile::load(kpath, &kl, &err)))
+            CHECK(kl.timeline.video[0].clips[0] == kc);
+    }
+
     // ---- Inspector ----
     const QString dump = QString::fromLocal8Bit(qgetenv("FREI0R_DUMP"));
     Project project;
@@ -235,6 +325,35 @@ int main(int argc, char** argv)
     editor.removeEffect({vid}, "frei0r.colortap");
     app.processEvents();
     CHECK(tables && !tables->isVisibleTo(&insp));
+
+    // Keyframe diamond of a frei0r number parameter: one undo step, key at the playhead
+    if (ba != AnimParam::Count) {
+        auto diamonds = [&] {
+            QVector<QToolButton*> out;
+            for (QToolButton* b : insp.findChildren<QToolButton*>())
+                if (b->toolTip().startsWith(T("Keyframe setzen/entfernen")) && b->isVisibleTo(&insp)) out << b;
+            return out;
+        };
+        const auto before = diamonds();
+        editor.addEffect({vid}, "frei0r.brightness");
+        app.processEvents();
+        const auto after = diamonds();
+        QToolButton* diamond = nullptr;
+        for (QToolButton* b : after)
+            if (!before.contains(b)) diamond = b;
+        if (CHECK(diamond && after.size() == before.size() + 1)) {
+            const int steps = project.undoStack()->count();
+            diamond->click();
+            auto clip = [&] { return project.timeline().video[0].clips[0]; };
+            CHECK(Keys::animated(clip(), ba) && Keys::keyAt(clip(), ba, 0));
+            CHECK_EQ(project.undoStack()->count(), steps + 1);
+            app.processEvents();
+            CHECK_EQ(diamond->text(), QString("◆")); // key at the playhead
+            project.undoStack()->undo();
+            app.processEvents();
+            CHECK(!Keys::animated(clip(), ba) && diamond->text() == QString("◇"));
+        }
+    }
 
     // ---- Effects Library: Open FX → frei0r ----
     EffectsLibrary lib;

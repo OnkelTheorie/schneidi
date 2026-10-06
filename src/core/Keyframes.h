@@ -20,6 +20,16 @@ struct ParamInfo {
 const ParamInfo& info(AnimParam p);
 bool fromId(const QString& id, AnimParam* p);
 
+// Dynamic effect parameters (frei0r plugins, known only at run time): animatable without an AnimParam enum entry.
+// Every (effect id, parameter key) pair gets its own AnimParam value >= kEffectParamBase for the lifetime of the
+// process, so Clip::keys, undo, the curve editor etc. treat it like a fixed parameter. The number is never saved:
+// the project file uses the id "fx:<effect id>:<key>", which works even when the plugin is missing.
+inline constexpr int kEffectParamBase = 1000;
+AnimParam effectParam(const QString& effectId, const QString& key);
+inline bool isEffectParam(AnimParam p) { return int(p) >= kEffectParamBase; }
+// Effect id and key of a dynamic parameter (false = fixed parameter)
+bool effectParamOf(AnimParam p, QString* effectId, QString* key);
+
 // Farbe <-> Keyframe-Wert (ARGB als Zahl, in double exakt darstellbar)
 inline double fromColor(const QColor& c) { return double(c.rgba()); }
 inline QColor toColor(double v) { return QColor::fromRgba(QRgb(quint32(v))); }
