@@ -20,6 +20,8 @@ public:
 private:
     void sync();         // Modell -> Kanalzüge (legt sie bei geänderter Spuranzahl neu an)
     void rebuildStrips(int count);
+    void fitStrips();    // strip area width: whole channel strips only
+    void resizeEvent(class QResizeEvent* e) override;
     void onLevels(const QVector<float>& db);
     void tick();         // Pegel abfallen lassen, Peak-Hold
 

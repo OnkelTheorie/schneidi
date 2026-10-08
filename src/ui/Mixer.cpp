@@ -11,7 +11,9 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QResizeEvent>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QTimer>
 #include <QToolButton>
@@ -696,6 +698,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     // Streifen immer dicht an Master/Lautheit (feste Breite wie im kleinen Fenster), übriger Platz bleibt rechts leer;
     // erst wenn der Platz nicht reicht, scrollen die Spuren (Breite setzt rebuildStrips)
     m_stripScroll = scroll;
+    scroll->horizontalScrollBar()->setSingleStep(kStripW); // arrow keys/wheel: one strip at a time
     // hoher Stretch: Spuren bekommen den Platz zuerst (bis zur Maximalbreite), erst der Rest geht an den Platzhalter rechts
     row->addWidget(scroll, 100);
 
@@ -827,7 +830,27 @@ void Mixer::rebuildStrips(int count)
         m_stripLayout->insertWidget(i, s);
         m_strips << s;
     }
-    m_stripScroll->setMaximumWidth(count * kStripW);
+    fitStrips();
+}
+
+void Mixer::resizeEvent(QResizeEvent* e)
+{
+    QWidget::resizeEvent(e);
+    fitStrips();
+}
+
+// Only whole channel strips, like DaVinci: a strip area a few pixels narrower than all strips gave a scrollbar
+// that moved only those few pixels and looked stuck. A strip that does not fit completely scrolls in instead;
+// the leftover space stays empty on the right.
+void Mixer::fitStrips()
+{
+    if (m_strips.isEmpty()) {
+        m_stripScroll->setMaximumWidth(0);
+        return;
+    }
+    const int avail = width() - m_master->minimumWidth() - m_loudness->minimumSizeHint().width();
+    const int shown = std::clamp(avail / kStripW, 1, int(m_strips.size()));
+    m_stripScroll->setMaximumWidth(shown * kStripW);
 }
 
 void Mixer::sync()
