@@ -263,20 +263,31 @@ void testRippleAndSplit()
         CHECK_EQ(f.v1(), QString("0-50 50-100 100-150"));
         CHECK_EQ(f.st(0), QString("10-40:a 110-140:b 150-160:c"));
     }
-    { // Nicht gesperrte ST2 rückt ebenfalls; Eintrag über dem gelöschten Clip: Spur bliebe nicht überschneidungsfrei
-      // -> sie bleibt ganz stehen (wie die Clip-Spuren, nie überschreiben)
+    { // Nicht gesperrte ST2 rückt ebenfalls; Eintrag über dem gelöschten Clip fällt mit weg
         RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}}, {{0, 60, 90, "drüber"}, {0, 120, 130, "danach"}}, false);
         f.sel.set({f.y});
         f.ed.rippleDeleteSelection();
         CHECK_EQ(f.st(0), QString("10-40:a 60-90:b"));
-        CHECK_EQ(f.st(1), QString("60-90:drüber 120-130:danach"));
+        CHECK_EQ(f.st(1), QString("70-80:danach"));
     }
-    { // Löschen mit Ripple vorne: b würde unter den stehenbleibenden Eintrag rutschen -> Spur bleibt stehen
+    { // Löschen mit Ripple vorne: Eintrag auf dem gelöschten Clip fällt weg, b rückt nach
         RippleFixture f({{0, 20, 30, "früh"}, {0, 60, 70, "b"}});
         f.sel.set({f.x});
         f.ed.rippleDeleteSelection();
         CHECK_EQ(f.v1(), QString("0-50 50-100"));
-        CHECK_EQ(f.st(0), QString("20-30:früh 60-70:b"));
+        CHECK_EQ(f.st(0), QString("10-20:b"));
+    }
+    { // Typischer Fall: je Clip ein Eintrag, einer über die Clipgrenze. Mittleren Clip löschen bzw. kürzen
+        RippleFixture f({{0, 0, 50, "x"}, {0, 50, 90, "y"}, {0, 90, 120, "über"}, {0, 120, 150, "z"}});
+        f.sel.set({f.y});
+        f.ed.rippleDeleteSelection();
+        CHECK_EQ(f.v1(), QString("0-50 50-100"));
+        CHECK_EQ(f.st(0), QString("0-50:x 50-70:über 70-100:z"));
+        f.p.undoStack()->undo();
+        const auto e = f.ed.trimEdit(TrimKind::Ripple, f.y, Edge::End);
+        f.ed.applyTrimEdit(e, -20);
+        CHECK_EQ(f.v1(), QString("0-50 50-80 80-130"));
+        CHECK_EQ(f.st(0), QString("0-50:x 50-80:y 80-100:über 100-130:z"));
     }
     { // Strg+B ohne Auswahl: Clip und Eintrag unter dem Playhead, gesperrte Spur nicht; ein Undo-Schritt
         RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}}, {{0, 110, 125, "fest"}});
@@ -350,22 +361,22 @@ void testRippleAndSplit()
         CHECK_EQ(f.v1(), QString("0-50 50-70 70-120"));
         CHECK_EQ(f.st(0), QString("10-40:a 80-110:b"));
     }
-    { // Ripple-Trimmen: Verlängern schiebt ST1, Verkürzen nur so weit, wie ST1 nachrücken kann
+    { // Ripple-Trimmen: Verlängern schiebt ST1, Verkürzen schneidet die entfernte Zeit heraus
         RippleFixture f({{0, 90, 95, "davor"}, {0, 100, 120, "b"}}, {{0, 99, 101, "fest"}});
         const auto e = f.ed.trimEdit(TrimKind::Ripple, f.y, Edge::End);
         f.ed.applyTrimEdit(e, 10);
         CHECK_EQ(f.v1(), QString("0-50 50-110 110-160"));
         CHECK_EQ(f.st(0), QString("90-95:davor 110-130:b"));
         CHECK_EQ(f.st(1), QString("99-101:fest")); // gesperrt: zählt auch nicht als Hindernis
-        CHECK_EQ(f.ed.clampTrimEdit(e, -40), -15); // b darf bis an "davor" (95)
+        CHECK_EQ(f.ed.clampTrimEdit(e, -40), -40); // Untertitel begrenzen nicht
         f.ed.applyTrimEdit(e, -40);
-        CHECK_EQ(f.v1(), QString("0-50 50-95 95-145"));
-        CHECK_EQ(f.st(0), QString("90-95:davor 95-115:b"));
+        CHECK_EQ(f.v1(), QString("0-50 50-70 70-120"));
+        CHECK_EQ(f.st(0), QString("70-90:b")); // "davor" lag in der entfernten Zeit [70, 110)
         CHECK_EQ(f.p.undoStack()->count(), 2);
         f.p.undoStack()->undo();
         f.p.undoStack()->undo();
         CHECK_EQ(f.st(0), QString("90-95:davor 100-120:b"));
-        // ST1 gesperrt: kein Hindernis mehr, bleibt stehen
+        // ST1 gesperrt: bleibt stehen
         f.ed.toggleSubtitleTrackLock(0);
         CHECK_EQ(f.ed.clampTrimEdit(e, -40), -40);
         f.ed.applyTrimEdit(e, -40);
@@ -379,11 +390,21 @@ void testRippleAndSplit()
         CHECK_EQ(Subtitles::splitAt(t, 20, [&] { return next++; }), 0);
         CHECK_EQ(Subtitles::splitAt(t, 25, [&] { return next++; }), 10);
         CHECK_EQ(cues(t.cues), QString("0-10:a 20-25:b 25-30:b"));
-        CHECK_EQ(Subtitles::rippleRoom(t, 20), 10);
-        CHECK_EQ(Subtitles::rippleRoom(t, 5), 10); // a liegt über `from`, bleibt stehen
-        CHECK_EQ(Subtitles::rippleRoom(t, 22), 0);
-        CHECK_EQ(Subtitles::rippleRoom(t, 40), -1);
-        CHECK(!Subtitles::ripple(t, {{20, -11}}));
+        { // entfernte Zeit [9, 20) kürzt a, der Rest rückt nach
+            SubtitleTrack u = t;
+            CHECK(Subtitles::ripple(u, {{20, -11}}));
+            CHECK_EQ(cues(u.cues), QString("0-9:a 9-14:b 14-19:b"));
+            u = t; // [4, 8) mitten aus a
+            CHECK(Subtitles::ripple(u, {{8, -4}}));
+            CHECK_EQ(cues(u.cues), QString("0-6:a 16-21:b 21-26:b"));
+            u = t; // [20, 30): beide b fallen weg
+            CHECK(Subtitles::ripple(u, {{30, -10}}));
+            CHECK_EQ(cues(u.cues), QString("0-10:a"));
+            u = t; // Verlängern an der Kante von a: a wird nicht gedehnt
+            CHECK(Subtitles::ripple(u, {{5, 3}}));
+            CHECK_EQ(cues(u.cues), QString("0-10:a 23-28:b 28-33:b"));
+            CHECK(!Subtitles::ripple(u, {{40, -5}}));
+        }
         CHECK(Subtitles::ripple(t, {{20, -10}, {25, 3}}));
         CHECK_EQ(cues(t.cues), QString("0-10:a 10-15:b 18-23:b"));
         Subtitles::insertGap(t, 5, 4, [&] { return next++; });

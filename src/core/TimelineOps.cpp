@@ -125,10 +125,7 @@ int rippleRoom(const Timeline& tl, int from, const QVector<TrackRef>& skip)
             if (firstMoving >= 0) room = std::min(room, firstMoving - standEnd);
         }
     }
-    for (const SubtitleTrack& st : tl.subtitles)
-        if (!st.locked)
-            if (const int r = Subtitles::rippleRoom(st, from); r >= 0) room = std::min(room, r);
-    return std::max(0, room);
+    return std::max(0, room); // Untertitel begrenzen nicht: sie werden gekürzt (Subtitles::ripple)
 }
 
 void insertSubtitleGap(Timeline& tl, int frame, int length, const IdGen& newId)

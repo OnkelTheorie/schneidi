@@ -39,12 +39,10 @@ int endFrame(const Timeline& tl);
 // Teilt den Eintrag, der über `frame` liegt (start < frame < end): links behält die id, rechts bekommt newId(),
 // beide den Text. Rückgabe: id des rechten Teils, 0 = dort lag keiner.
 int splitAt(SubtitleTrack& track, int frame, const std::function<int()>& newId);
-// Wie TimelineOps::rippleTracks für eine Untertitelspur: ein Eintrag rückt um die Summe der Versätze, deren Frame
-// <= seinem Start ist. Würde er dabei einen stehenbleibenden überlappen oder vor Frame 0 rutschen, bleibt die ganze
-// Spur stehen (nie überschreiben). Rückgabe: true = verschoben.
+// Wie TimelineOps::rippleTracks für eine Untertitelspur. Versatz (frame, d): d > 0 schiebt jeden Eintrag mit
+// Start >= frame um d; d < 0 entfernt die Zeit [frame + d, frame) – Einträge darin werden gekürzt bzw. gelöscht,
+// alles dahinter rückt nach (Untertitel gehören zum Bild, blockieren also nie). Rückgabe: true = geändert.
 bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts);
-// Wie weit (Frames nach links) die Einträge ab `from` nachrücken können, ohne zu überschreiben (-1 = keiner rückt)
-int rippleRoom(const SubtitleTrack& track, int from);
 // Einfügen (Insert): Eintrag über `frame` teilen, alles ab `frame` um `length` nach rechts
 void insertGap(SubtitleTrack& track, int frame, int length, const std::function<int()>& newId);
 

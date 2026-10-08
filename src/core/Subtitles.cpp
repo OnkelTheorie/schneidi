@@ -240,32 +240,31 @@ int splitAt(SubtitleTrack& track, int frame, const std::function<int()>& newId)
 bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts)
 {
     if (shifts.isEmpty() || track.cues.isEmpty()) return false;
-    QVector<SubtitleCue> moved = track.cues;
+    // neue Lage einer Kante t: entfernte Zeit davor abziehen; positive Versätze zählen nur für Einträge,
+    // die ganz dahinter beginnen (ein Eintrag über der Schnittstelle wird nicht gedehnt)
+    auto pos = [&](int t, int cueStart) {
+        int p = t;
+        for (const auto& [frame, d] : shifts) {
+            if (d > 0 && frame <= cueStart) p += d;
+            else if (d < 0) p -= std::clamp(t - (frame + d), 0, -d);
+        }
+        return std::max(0, p);
+    };
+    QVector<SubtitleCue> moved;
     bool changed = false;
-    for (SubtitleCue& c : moved) {
-        int d = 0;
-        for (const auto& s : shifts)
-            if (s.first <= c.start) d += s.second;
-        c.start += d;
-        c.end += d;
-        changed |= d != 0;
+    for (SubtitleCue c : track.cues) {
+        const int s = pos(c.start, c.start), e = pos(c.end, c.start);
+        changed |= s != c.start || e != c.end;
+        if (e <= s) continue; // ganz in entfernter Zeit
+        c.start = s;
+        c.end = e;
+        moved << c;
     }
     if (!changed) return false;
-    bool ok = moved.first().start >= 0;
-    for (int j = 1; ok && j < moved.size(); ++j) ok = moved[j].start >= moved[j - 1].end;
-    if (!ok) return false;
+    for (int j = 1; j < moved.size(); ++j)
+        if (moved[j].start < moved[j - 1].end) return false; // nur bei widersprüchlichen Versätzen
     track.cues = moved;
     return true;
-}
-
-int rippleRoom(const SubtitleTrack& track, int from)
-{
-    int standEnd = 0;
-    for (const SubtitleCue& c : track.cues) {
-        if (c.start < from) standEnd = std::max(standEnd, c.end);
-        else return std::max(0, c.start - standEnd); // sortiert: erster rückender Eintrag
-    }
-    return -1;
 }
 
 void insertGap(SubtitleTrack& track, int frame, int length, const std::function<int()>& newId)
