@@ -4,7 +4,7 @@ A lightweight video editor with Media, Edit, Color and Deliver pages. Its workfl
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
-**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage). To build from source, see [Building](#building).
+**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage or Debian package). To build from source, see [Building](#building).
 
 > Status: early development (0.x). The project file format may still change between versions.
 
@@ -17,6 +17,10 @@ A lightweight video editor with Media, Edit, Color and Deliver pages. Its workfl
 - Fully customizable keyboard shortcuts
 - Titles, subtitles, fades, transitions, volume, loudness normalization
 - Color correction, curves, LUTs, effects with keyframes
+- frei0r effects; import effect presets from Kdenlive and Shotcut
+- Video scopes: waveform, RGB parade, vectorscope, histogram
+- Two-up/four-up trim view while dragging an edit
+- Loudness and true-peak meters
 - Clip speed / retime
 - Proxy and render cache for smooth playback
 - Export and render queue via FFmpeg
