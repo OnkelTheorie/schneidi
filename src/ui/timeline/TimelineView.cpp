@@ -2825,7 +2825,9 @@ QRect TimelineView::subNameRect(const SubRow& row) const
 
 void TimelineView::drawSubtitleTracks(QPainter& p)
 {
-    const Timeline& tl = m_editor->project()->timeline();
+    // während Ripple-Trimmen rücken die Untertitel in der Vorschau mit (wie die Clip-Spuren)
+    const bool trimEdit = m_drag == Drag::TrimEdit && m_trimPreview;
+    const Timeline& tl = trimEdit ? *m_trimPreview : m_editor->project()->timeline();
     if (tl.subtitles.isEmpty()) return;
     const auto& sel = m_editor->selection()->ids();
     const QSet<int> dragging(m_cueIds.begin(), m_cueIds.end());
