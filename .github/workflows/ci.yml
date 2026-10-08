@@ -8,7 +8,7 @@ on:
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # host only runs the container; pinned so runner image moves do not surprise us
     # Same distribution as the main development machine (Debian 13, MLT 7.30, Qt 6.8)
     container: debian:trixie
     steps:
@@ -22,7 +22,7 @@ jobs:
           # Locale-aware sorting and German number format are tested; default "C" locale breaks them
           sed -i 's/^# *de_DE.UTF-8/de_DE.UTF-8/' /etc/locale.gen
           locale-gen
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Configure
         run: cmake -S . -B build -G Ninja -DSCHNEIDI_TESTS=ON
       - name: Build
