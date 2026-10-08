@@ -50,3 +50,7 @@ schneidi_test(test_timeline_mouse)
 schneidi_test(test_trimview)
 schneidi_test(test_paste_attributes)
 schneidi_test(test_scopes)
+
+# Benchmark, not run by CTest
+add_executable(bench_inspector bench_inspector.cpp check.h)
+target_link_libraries(bench_inspector PRIVATE schneidi_lib Qt6::Test)
