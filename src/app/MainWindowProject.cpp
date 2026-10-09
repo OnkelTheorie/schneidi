@@ -45,6 +45,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QFileSystemWatcher>
 #include <QMouseEvent>
 #include <QButtonGroup>
 #include <QHBoxLayout>
@@ -116,6 +117,43 @@ void MainWindow::setProjectPath(const QString& path)
     m_projectPath = path;
     if (!path.isEmpty() && !m_autosaveDisabled) addRecent(path); // Testlauf: Liste des Nutzers nicht anfassen
     updateTitle();
+    // Called right after loading/saving: the file now holds our state
+    m_projectFingerprint = path.isEmpty() ? QByteArray() : ProjectFile::fingerprint(path);
+    if (const QStringList watched = m_projectWatcher->files(); !watched.isEmpty()) m_projectWatcher->removePaths(watched);
+    if (!path.isEmpty()) m_projectWatcher->addPath(path);
+}
+
+void MainWindow::checkProjectFile()
+{
+    if (m_projectPath.isEmpty()) return;
+    if (!m_projectWatcher->files().contains(m_projectPath) && QFileInfo::exists(m_projectPath))
+        m_projectWatcher->addPath(m_projectPath); // replaced by a QSaveFile rename
+    const QByteArray now = ProjectFile::fingerprint(m_projectPath);
+    if (now.isEmpty() || now == m_projectFingerprint) return; // gone (being replaced) or our own save
+    // Not now: a dialog is open or a render job writes its status into this project -> try again shortly
+    if (QApplication::activeModalWidget() || m_deliver->renderQueue()->isRunning()) {
+        m_projectCheck.start(2000);
+        return;
+    }
+    if (m_project->isModified()) {
+        QMessageBox box(QMessageBox::Question, "schneidi",
+                        T("Das Projekt wurde außerhalb von schneidi geändert (z. B. mit schneidi-cli)."),
+                        QMessageBox::NoButton, this);
+        box.setInformativeText(T("Neu laden verwirft die ungespeicherten Änderungen hier. Behalten überschreibt die "
+                                 "Datei beim nächsten Speichern (der andere Stand bleibt als Sicherungskopie)."));
+        QPushButton* reload = box.addButton(T("Neu laden"), QMessageBox::AcceptRole);
+        box.setDefaultButton(box.addButton(T("Behalten"), QMessageBox::RejectRole));
+        box.exec();
+        if (box.clickedButton() != reload) {
+            m_projectFingerprint = now; // do not ask again for this change
+            return;
+        }
+    }
+    ProjectData data;
+    QString error;
+    if (!ProjectFile::load(m_projectPath, &data, &error)) return; // half written by a foreign program: wait for the next change
+    data.playhead = m_timeline->view()->playhead(); // stay where the person is
+    applyLoaded(std::move(data), m_projectPath, false);
 }
 
 // Neustart jetzt oder später; „jetzt“ fragt wie beim Beenden nach dem Speichern und öffnet das Projekt danach wieder
@@ -241,11 +279,11 @@ bool MainWindow::openProject(const QString& path)
     return true;
 }
 
-bool MainWindow::applyLoaded(ProjectData data, const QString& path)
+bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
 {
     // Fehlende Medien wie DaVinci "Media Offline": Ordner durchsuchen lassen oder offline lassen
     int relinked = 0;
-    for (QStringList missing = ProjectFile::missingMedia(data); !missing.isEmpty();
+    for (QStringList missing = ask ? ProjectFile::missingMedia(data) : QStringList{}; !missing.isEmpty();
          missing = ProjectFile::missingMedia(data)) {
         QMessageBox box(QMessageBox::Warning, T("Medien fehlen"),
                         T("%1 Datei(en) nicht gefunden (verschoben oder umbenannt?):").arg(missing.size()),
@@ -268,7 +306,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path)
     }
 
     // Effects whose plugin is missing here (project from another computer): stay in the project, but do nothing
-    if (const QStringList fx = ProjectFile::missingEffects(data); !fx.isEmpty()) {
+    if (const QStringList fx = ask ? ProjectFile::missingEffects(data) : QStringList{}; !fx.isEmpty()) {
         QMessageBox box(QMessageBox::Warning, T("Effekte fehlen"),
                         T("%1 Effekt(e) sind auf diesem Rechner nicht installiert und wirken nicht:").arg(fx.size()),
                         QMessageBox::Ok, this);
@@ -331,6 +369,13 @@ bool MainWindow::saveTo(const QString& path)
     ProjectData data = m_project->data();
     data.playhead = m_timeline->view()->playhead();
     QString error;
+    // schneidi-cli may be writing the same file right now: wait for it (it takes milliseconds)
+    const std::unique_ptr<QLockFile> lock = ProjectFile::lock(path);
+    if (!lock) {
+        QMessageBox::warning(this, T("Projekt speichern"),
+                             T("Die Projektdatei wird gerade von einem anderen Programm gespeichert. Bitte noch einmal versuchen."));
+        return false;
+    }
     if (!m_autosaveDisabled) ProjectFile::backup(path); // bisherigen Stand sichern (Testlauf: nichts ablegen)
     if (!ProjectFile::save(data, path, &error)) {
         QMessageBox::warning(this, T("Projekt speichern"), T("Speichern fehlgeschlagen:\n%1").arg(error));

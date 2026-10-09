@@ -62,6 +62,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QFile>
 #include <QLockFile>
 #include <QSaveFile>
@@ -274,6 +275,13 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_autosaveTimer = new QTimer(this);
     connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
     m_autosaveTimer->start(60 * 1000);
+    // Outside changes of the project file (schneidi-cli): QSaveFile replaces the file, so the watcher loses it
+    // and checkProjectFile() adds it again
+    m_projectWatcher = new QFileSystemWatcher(this);
+    m_projectCheck.setSingleShot(true);
+    m_projectCheck.setInterval(300);
+    connect(&m_projectCheck, &QTimer::timeout, this, &MainWindow::checkProjectFile);
+    connect(m_projectWatcher, &QFileSystemWatcher::fileChanged, this, [this] { m_projectCheck.start(); });
 
 }
 

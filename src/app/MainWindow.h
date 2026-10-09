@@ -105,7 +105,10 @@ private:
     // in die Warteschlange des nächsten Projekts), dann maybeSave(). false = Abbrechen
     bool maybeLeaveProject();
     void offerRestart(const QString& message, const QString& now, const QString& later);
-    bool applyLoaded(ProjectData data, const QString& path);
+    // ask = offer relinking missing media / list missing effects (not when reloading after an outside change)
+    bool applyLoaded(ProjectData data, const QString& path, bool ask = true);
+    // Project file changed outside (schneidi-cli, an AI, another window): reload; unsaved changes here ask first
+    void checkProjectFile();
     void setProjectPath(const QString& path);
     void updateTitle();
     void addRecent(const QString& path);
@@ -163,6 +166,9 @@ private:
     class MediaCache* m_mediaCache = nullptr;
 
     QString m_projectPath; // leer = noch nie gespeichert
+    class QFileSystemWatcher* m_projectWatcher = nullptr;
+    QTimer m_projectCheck;            // waits until an outside save is done
+    QByteArray m_projectFingerprint;  // project file as last loaded/saved here (ProjectFile::fingerprint)
     QMenu* m_recentMenu = nullptr;
     class QLabel* m_titleLabel = nullptr;
     class QTimer* m_autosaveTimer = nullptr;
