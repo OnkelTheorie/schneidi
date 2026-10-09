@@ -33,6 +33,30 @@ A lightweight video editor with Media, Edit, Color and Deliver pages. Its workfl
 
 </details>
 
+## Command line and AI editing (MCP)
+
+`schneidi-cli` edits the same project files without a window, for scripts and AI assistants. A typical rough cut:
+let the AI find the pauses, keep the rest, look at the result, render, then fine-tune in schneidi.
+
+```bash
+schneidi-cli new talk.schneidi --fps 25 --media talk.mp4
+schneidi-cli silence talk.mp4 --project talk.schneidi        # "sound" ranges without the pauses
+schneidi-cli edit talk.schneidi --ops '[{"op":"keep","media":"talk.mp4","ranges":[[0,250],[310,900]]}]'
+schneidi-cli frames talk.schneidi --count 9 --sheet --out sheet.jpg
+schneidi-cli render talk.schneidi --out talk-cut.mp4
+schneidi-cli help                                            # all commands and edit operations (JSON)
+```
+
+Output is JSON on stdout (exit code 0 = ok, 1 = error, 2 = usage error); every save keeps a backup of the previous
+state. `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio, e.g. for
+Claude Code: `claude mcp add schneidi -- schneidi-cli mcp`, or in Claude Desktop's `claude_desktop_config.json`:
+
+```json
+{ "mcpServers": { "schneidi": { "command": "/path/to/schneidi-cli", "args": ["mcp"] } } }
+```
+
+Close the project in schneidi while an AI edits it (the app does not reload changed files yet).
+
 ## Building
 
 C++20, Qt 6 Widgets, MLT 7, CMake.

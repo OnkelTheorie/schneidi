@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Baut dist/schneidi-windows-<version>.zip: Programmordner mit schneidi.exe, Qt, MLT-Modulen, frei0r und ffmpeg/ffprobe.
+# Baut dist/schneidi-windows-<version>.zip: Programmordner mit schneidi.exe (+ schneidi-cli.exe), Qt, MLT-Modulen, frei0r und ffmpeg/ffprobe.
 # Läuft in MSYS2 (Umgebung UCRT64). Aufbau wie in src/engine/Bundle.h (<prefix> = Programmordner):
 #   schneidi.exe ffmpeg.exe ffprobe.exe *.dll  platforms/ styles/ …  lib/mlt-7  share/mlt-7  lib/frei0r-1
 # Aufruf aus dem Projektordner:  packaging/windows/build-windows.sh
@@ -28,8 +28,8 @@ cmake --build "$BUILD"
 # --- Programmordner ---
 rm -rf "$OUT"
 mkdir -p "$OUT/lib/mlt-7" "$OUT/lib/frei0r-1" "$OUT/share"
-cp "$BUILD/schneidi.exe" "$OUT/"
-strip "$OUT/schneidi.exe"
+cp "$BUILD/schneidi.exe" "$BUILD/schneidi-cli.exe" "$OUT/"
+strip "$OUT/schneidi.exe" "$OUT/schneidi-cli.exe"
 cp "$UCRT/bin/ffmpeg.exe" "$UCRT/bin/ffprobe.exe" "$OUT/"
 
 for m in "${MODULES[@]}"; do
