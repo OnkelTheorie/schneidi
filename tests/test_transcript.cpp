@@ -120,6 +120,12 @@ int main(int argc, char** argv)
         Transcript::fitToSpeech(w, levels(7000, {{5500, 6400}}));
         CHECK_EQ(times(w), QString("5470-6000 Nach | 6000-6400 der"));
     }
+    // Real recording: whisper puts "Wie geht" 0.8 s before "das?" into silence, all three are spoken from 13.59 s
+    {
+        QVector<W> w{{12667, 12767, "Wie"}, {12667, 12767, "geht"}, {13567, 14100, "das?"}};
+        Transcript::fitToSpeech(w, levels(15000, {{12020, 12330}, {13590, 14160}}));
+        CHECK_EQ(times(w), QString("13467-13567 Wie | 13467-13567 geht | 13567-14100 das?"));
+    }
     // Alone between pauses: the loud part; nothing loud or no levels: keeps its start
     {
         QVector<W> w{{1000, 1300, "So"}, {2000, 6000, "weg"}, {7000, 7300, "da"}};

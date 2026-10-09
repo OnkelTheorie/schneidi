@@ -157,6 +157,25 @@ void fitToSpeech(QVector<Word>& words, const Levels& levels)
         }
         i = j + 1;
     }
+    if (levels.db.isEmpty()) return;
+    // Words in complete silence just before a word with sound ("Wie geht" 0.8 s before "das?", all spoken at once):
+    // whisper started them too early, they move up to it
+    constexpr qint64 kPull = 1500; // ms: further away it is probably a word of its own
+    const auto silent = [&](const Word& w) { return loud(w.from, std::max(spokenEnd(w), w.from + fm)) == 0; };
+    for (int i = 0; i < words.size();) {
+        if (!silent(words[i])) {
+            ++i;
+            continue;
+        }
+        int j = i;
+        while (j + 1 < words.size() && silent(words[j + 1])) ++j;
+        if (j + 1 < words.size()) {
+            const qint64 shift = words[j + 1].from - spokenEnd(words[j]);
+            if (shift > 0 && shift < kPull)
+                for (int k = i; k <= j; ++k) words[k].from += shift, words[k].to = std::min(words[k].to + shift, words[j + 1].from);
+        }
+        i = j + 1;
+    }
 }
 
 namespace {
