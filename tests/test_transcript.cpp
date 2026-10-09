@@ -75,10 +75,10 @@ int main(int argc, char** argv)
     // the gap before "der" starts a new cue
     CHECK(Transcript::parseWhisperJson(kJson, &r));
     CHECK_EQ(cues(Transcript::toCues(r.words, 25, 42, 700, 100)),
-             QString("108-135 Hallo, schöne Grüße. | 135-148 Nach | 225-240 der Pause"));
+             QString("108-135 Hallo, schöne Grüße. | 135-155 Nach | 225-251 der Pause"));
     // Short lines: a comma in the second half ends a cue; nothing longer than maxChars unless one word is
     CHECK_EQ(cues(Transcript::toCues(r.words, 25, 10, 5000)),
-             QString("8-16 Hallo, | 18-25 schöne | 25-35 Grüße. | 35-133 Nach der | 133-140 Pause"));
+             QString("8-18 Hallo, | 18-25 schöne | 25-35 Grüße. | 35-133 Nach der | 133-154 Pause"));
 
     // Levels of a 1 kHz sine at half scale: about -9 dB, silence -120 dB
     {
@@ -96,6 +96,13 @@ int main(int argc, char** argv)
         QVector<W> w{{6530, 10030, "Diese"}, {10030, 16040, "Scheiß-Pferd,"}, {16040, 16720, "Alter."}};
         Transcript::fitToSpeech(w, levels(17000, {{6540, 7670}, {8650, 9130}, {9840, 13350}, {13920, 17000}}));
         CHECK_EQ(times(w), QString("14280-14880 Diese | 14880-16040 Scheiß-Pferd, | 16040-16720 Alter."));
+    }
+    // Real recording: "Turm auf F7" (sound 2.57–3.86 s), silence, "Mental Advantage" from 5.55 s; whisper stretches
+    // "F7," over the silence up to "Mental". The sound is at its start, so it stays there
+    {
+        QVector<W> w{{1320, 2860, "Turm"}, {2860, 3310, "auf"}, {3310, 5540, "F7,"}, {5540, 5640, "Mental"}};
+        Transcript::fitToSpeech(w, levels(8000, {{2570, 3860}, {5550, 7590}}));
+        CHECK_EQ(times(w), QString("2330-2860 Turm | 2860-3310 auf | 3400-3860 F7, | 5540-5640 Mental"));
     }
     // Stretched first word without sound at its start (whisper's pause before the speech): moves up to the next word
     {

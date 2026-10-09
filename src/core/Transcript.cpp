@@ -127,8 +127,6 @@ void fitToSpeech(QVector<Word>& words, const Levels& levels)
             ++i;
             continue;
         }
-        // No "keep the start after a pause if there is sound": laughter is sound too (and whisper's voice detection
-        // takes it for speech) – measured: "Diese" put on laughter at 6.5 s, spoken at 13.9 s
         // A run of stretched words, e.g. "Das ist scheiße" over 9 s of laughter: they belong together
         int j = i;
         while (j + 1 < words.size() && stretched(words[j + 1]) && words[j + 1].from - words[j].to < kTouch) ++j;
@@ -137,25 +135,23 @@ void fitToSpeech(QVector<Word>& words, const Levels& levels)
         const qint64 from = words[i].from, to = words[j].to;
         const bool nextTouches = j + 1 < words.size() && words[j + 1].from - to < kTouch;
         const bool prevTouches = i > 0 && from - words[i - 1].to < kTouch;
-        qint64 start;
-        if (nextTouches) {
-            start = to - len; // spoken right before the next word (whisper hands the pause to the words before)
-        } else if (prevTouches) {
-            start = from;
-        } else {
-            // Alone between pauses: the loudest stretch of the spoken length, the last one of equal ones
-            const int steps = int((to - from - len) / fm);
-            QVector<int> score(steps + 1);
-            int best = 0;
-            for (int s = 0; s <= steps; ++s) best = std::max(best, score[s] = loud(from + qint64(s) * fm, from + qint64(s) * fm + len));
-            int pick = steps;
-            while (pick > 0 && score[pick] < best) --pick;
-            start = best > 0 ? from + qint64(pick) * fm : from; // nothing loud (or no levels): as whisper says
-        }
+        // Where the sound is: the loudest stretch of the spoken length ("Turm auf F7" with silence after it, whisper
+        // stretched "F7" over the silence); equally loud (laughter, game sound) or no levels: the side of the word that
+        // follows directly (whisper hands the pause to the words before), else the one before
+        const bool toEnd = nextTouches || !prevTouches;
+        const int steps = int((to - from - len) / fm);
+        QVector<int> score(steps + 1);
+        int best = 0;
+        for (int s = 0; s <= steps; ++s) best = std::max(best, score[s] = loud(from + qint64(s) * fm, from + qint64(s) * fm + len));
+        int pick = toEnd ? steps : 0;
+        while (score[pick] < best) pick += toEnd ? -1 : 1;
+        if (best == 0 && !nextTouches && !prevTouches) pick = 0; // nothing loud, alone: as whisper says
+        qint64 start = from + qint64(pick) * fm;
+        const bool atEnd = pick == steps;
         for (int k = i; k <= j; ++k) {
             const qint64 l = spokenLength(words[k]);
             words[k].from = start;
-            words[k].to = k == j && nextTouches ? to : start + l;
+            words[k].to = k == j && atEnd ? to : start + l;
             start += l;
         }
         i = j + 1;
@@ -188,6 +184,13 @@ QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars
             flush();
     }
     flush();
+    // Long enough to read (0.6 s + 50 ms per character), up to the next cue: whisper gives "Ja, ja, ja," 0.1 s
+    for (int i = 0; i < cues.size(); ++i) {
+        const int minimum = int(std::lround((0.6 + 0.05 * cues[i].text.size()) * fps));
+        int end = std::max(cues[i].end, cues[i].start + minimum);
+        if (i + 1 < cues.size()) end = std::min(end, cues[i + 1].start);
+        cues[i].end = std::max(cues[i].end, end);
+    }
     return cues;
 }
 

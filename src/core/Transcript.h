@@ -33,7 +33,8 @@ bool parseWhisperJson(const QByteArray& json, Result* out, QString* error = null
 
 // Words -> subtitle cues (timeline frames, `offset` added): a cue ends after a sentence, before a pause longer than
 // `maxGapMs` or before it would get longer than `maxChars`; long pauses are not shown (a word lasts at most
-// about its spoken length). ids stay 0 (Editor::importSubtitles assigns them).
+// about its spoken length); every cue stays long enough to read, up to the next one. ids stay 0
+// (Editor::importSubtitles assigns them).
 QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars = 42, int maxGapMs = 700, int offset = 0);
 
 // End of a word without the pause after it (whisper stretches `to` to the next word)
