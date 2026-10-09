@@ -1,0 +1,61 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: schneidi version
+      description: Shown in the window title or the release you downloaded
+      placeholder: "0.5.0"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Distribution and version (or Windows version), desktop/session (X11/Wayland), GPU if relevant
+      placeholder: "Debian 13, KDE Plasma (Wayland)"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation
+      options:
+        - AppImage
+        - Debian package (.deb)
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Import a clip
+        2. Drag it to the timeline
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log file
+      description: |
+        Please attach `schneidi.log` (drag the file here). It is in
+        `~/.local/share/schneidi/logs/` on Linux and `%APPDATA%\schneidi\logs\` on Windows.
+        Starting with `schneidi --verbose` writes more detail.
