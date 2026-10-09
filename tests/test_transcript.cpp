@@ -90,12 +90,12 @@ int main(int argc, char** argv)
         CHECK(l.db[80] < -100.f);
     }
     using W = Transcript::Word;
-    // Laughter case (real recording): "Das" right after a pause with sound keeps its start, the stretched rest of the
-    // run ("ist scheiße" over laughter) moves up to "Pferd", which follows it directly; normal words stay
+    // Laughter case (real recording): laughter 6.5–13.4 s, "Diese Scheiß-Pferd, Alter" from 13.9 s; whisper starts
+    // "Diese" on the laughter. The stretched run moves up to "Alter", which follows it directly
     {
-        QVector<W> w{{6520, 8600, "Das"}, {8600, 9820, "ist"}, {9820, 15370, "scheiße"}, {15370, 16130, "Pferd,"}};
+        QVector<W> w{{6530, 10030, "Diese"}, {10030, 16040, "Scheiß-Pferd,"}, {16040, 16720, "Alter."}};
         Transcript::fitToSpeech(w, levels(17000, {{6540, 7670}, {8650, 9130}, {9840, 13350}, {13920, 17000}}));
-        CHECK_EQ(times(w), QString("6520-6980 Das | 14170-14630 ist | 14630-15370 scheiße | 15370-16130 Pferd,"));
+        CHECK_EQ(times(w), QString("14280-14880 Diese | 14880-16040 Scheiß-Pferd, | 16040-16720 Alter."));
     }
     // Stretched first word without sound at its start (whisper's pause before the speech): moves up to the next word
     {

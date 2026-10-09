@@ -105,20 +105,13 @@ void fitToSpeech(QVector<Word>& words, const Levels& levels)
     };
     constexpr qint64 kTouch = 60; // ms: a word that starts this close after another follows it directly
     const auto stretched = [](const Word& w) { return w.to - w.from > spokenLength(w) + 200; };
-    const QVector<Word> original = words;
     for (int i = 0; i < words.size();) {
         if (!stretched(words[i])) {
             ++i;
             continue;
         }
-        // Right after a pause whisper's start is good (voice detection) if there is sound: only the end is stretched
-        // ("Dieses scheiß…" at 6.5 s, then laughter, "Pferd" at 15 s)
-        const qint64 len0 = spokenLength(words[i]);
-        if ((i == 0 || original[i].from - original[i - 1].to >= kTouch) && loud(words[i].from, words[i].from + len0) * fm * 2 >= len0) {
-            words[i].to = words[i].from + len0;
-            ++i;
-            continue;
-        }
+        // No "keep the start after a pause if there is sound": laughter is sound too (and whisper's voice detection
+        // takes it for speech) – measured: "Diese" put on laughter at 6.5 s, spoken at 13.9 s
         // A run of stretched words, e.g. "Das ist scheiße" over 9 s of laughter: they belong together
         int j = i;
         while (j + 1 < words.size() && stretched(words[j + 1]) && words[j + 1].from - words[j].to < kTouch) ++j;
