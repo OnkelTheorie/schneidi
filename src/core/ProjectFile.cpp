@@ -725,6 +725,24 @@ QString backup(const QString& projectPath, int keep)
     return target;
 }
 
+std::unique_ptr<QLockFile> lock(const QString& projectPath, int timeoutMs)
+{
+    const QDir dir(QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("schneidi-locks"));
+    dir.mkpath(".");
+    const QByteArray hash =
+        QCryptographicHash::hash(QFileInfo(projectPath).absoluteFilePath().toUtf8(), QCryptographicHash::Sha1).toHex();
+    auto l = std::make_unique<QLockFile>(dir.filePath(QString::fromLatin1(hash.left(16)) + ".lock"));
+    if (!l->tryLock(timeoutMs)) return nullptr;
+    return l;
+}
+
+QByteArray fingerprint(const QString& path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    return QCryptographicHash::hash(f.readAll(), QCryptographicHash::Sha1);
+}
+
 bool load(const QString& path, ProjectData* data, QString* error)
 {
     QFile f(path);

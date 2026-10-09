@@ -1,4 +1,5 @@
 #include "cli/Commands.h"
+#include "cli/CommandsDetail.h"
 
 #include "core/Editor.h"
 #include "core/Project.h"
@@ -30,9 +31,9 @@
 
 namespace Cli {
 
-namespace {
+namespace detail {
 
-[[noreturn]] void fail(const QString& code, const QString& message) { throw Error{code, message}; }
+void fail(const QString& code, const QString& message) { throw Error{code, message}; }
 
 QString absolute(const QString& path) { return path.isEmpty() ? path : QFileInfo(path).absoluteFilePath(); }
 
@@ -94,48 +95,43 @@ QJsonObject formatJson(const ProjectFormat& f)
 
 // ---------- Projects ----------
 
-// A loaded project with an editor; save() writes it back (with a backup copy of the old state first)
-struct Session {
-    QString path;
-    Project project;
-    Selection selection;
-    Editor editor{&project, &selection};
-
-    explicit Session(const QString& file) : path(absolute(file))
-    {
-        if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
-        ProjectData d;
-        QString error;
-        if (!ProjectFile::load(path, &d, &error)) fail("BAD_PROJECT", error);
-        project.load(d);
+Session::Session(const QString& file, Access access) : path(absolute(file))
+{
+    if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
+    if (access == Access::Write) {
+        lock = ProjectFile::lock(path);
+        if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
     }
-    const ProjectFormat& format() const { return project.format(); }
+    ProjectData d;
+    QString error;
+    if (!ProjectFile::load(path, &d, &error)) fail("BAD_PROJECT", error);
+    project.load(d);
+}
 
-    QString save()
-    {
-        const QString backup = ProjectFile::backup(path);
-        QString error;
-        if (!ProjectFile::save(project.data(), path, &error)) fail("SAVE_FAILED", error);
-        return backup;
-    }
+QString Session::save()
+{
+    if (!lock) fail("INTERNAL", "session was opened read-only");
+    const QString backup = ProjectFile::backup(path);
+    QString error;
+    if (!ProjectFile::save(project.data(), path, &error)) fail("SAVE_FAILED", error);
+    return backup;
+}
 
-    // Media in the project (imported on first use); throws if the file cannot be read
-    const MediaInfo& media(const QString& file)
-    {
-        const QString path = absolute(file);
-        if (const MediaInfo* m = project.mediaInfo(path)) return *m;
-        if (!QFileInfo::exists(path)) fail("NOT_FOUND", "media not found: " + path);
-        const MediaInfo info = Engine::probe(format(), path);
-        if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) fail("BAD_MEDIA", "cannot read media: " + path);
-        project.addMedia(info);
-        return *project.mediaInfo(path);
-    }
-};
+const MediaInfo& Session::media(const QString& file)
+{
+    const QString path = absolute(file);
+    if (const MediaInfo* m = project.mediaInfo(path)) return *m;
+    if (!QFileInfo::exists(path)) fail("NOT_FOUND", "media not found: " + path);
+    const MediaInfo info = Engine::probe(format(), path);
+    if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) fail("BAD_MEDIA", "cannot read media: " + path);
+    project.addMedia(info);
+    return *project.mediaInfo(path);
+}
 
 QString trackName(TrackRef r) { return QString("%1%2").arg(r.kind == TrackKind::Video ? "V" : "A").arg(r.index + 1); }
 
 // "V1", "A2" or a number (1 = first track); returns the index (0-based)
-int parseTrack(const QJsonValue& v, TrackKind* kind = nullptr)
+int parseTrack(const QJsonValue& v, TrackKind* kind)
 {
     if (v.isUndefined() || v.isNull()) return 0;
     QString s = v.isDouble() ? QString::number(v.toInt()) : v.toString().trimmed().toUpper();
@@ -151,6 +147,7 @@ int parseTrack(const QJsonValue& v, TrackKind* kind = nullptr)
     return n - 1;
 }
 
+namespace {
 QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
 {
     const ProjectFormat& f = p.format();
@@ -183,6 +180,8 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     }
     return o;
 }
+
+} // namespace
 
 QJsonObject timelineJson(const Project& p)
 {
@@ -227,345 +226,11 @@ QJsonObject projectJson(const Project& p, const QString& path)
     return {{"project", path}, {"format", formatJson(p.format())}, {"media", media}, {"timeline", timelineJson(p)}};
 }
 
-// ---------- Edit operations ----------
+} // namespace detail
 
-const Clip& clipOf(Session& s, const QJsonObject& op, const char* key = "clip")
-{
-    if (!op.contains(key)) fail("BAD_ARGUMENT", QString("missing '%1' (clip id)").arg(key));
-    const int id = op[key].toInt();
-    const Clip* c = TimelineOps::findClip(s.project.timeline(), id);
-    if (!c) fail("NOT_FOUND", QString("no clip with id %1").arg(id));
-    return *c;
-}
+namespace {
 
-QVector<int> clipIds(Session& s, const QJsonObject& op)
-{
-    QVector<int> ids;
-    const QJsonValue v = op.value("clips");
-    const QJsonArray arr = v.isArray() ? v.toArray() : QJsonArray{op.value("clip")};
-    for (const QJsonValue& x : arr) {
-        const int id = x.toInt();
-        if (!TimelineOps::findClip(s.project.timeline(), id)) fail("NOT_FOUND", QString("no clip with id %1").arg(id));
-        ids << id;
-    }
-    if (ids.isEmpty()) fail("BAD_ARGUMENT", "missing 'clips' (list of clip ids)");
-    // Linked partners (video + its audio) go along, like clicking a clip in the timeline
-    return op.value("linked").toBool(true) ? s.editor.withLinked(ids) : ids;
-}
-
-int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback = -1)
-{
-    if (!op.contains(key)) {
-        if (fallback >= 0) return fallback;
-        fail("BAD_ARGUMENT", QString("missing '%1'").arg(key));
-    }
-    return parseTime(op[key], s.format(), key);
-}
-
-// Source range [in, out) of a media file: defaults to the whole file
-void sourceRange(Session& s, const QJsonObject& op, const MediaInfo& m, int* in, int* out)
-{
-    *in = timeOf(s, op, "in", 0);
-    *out = op.contains("out") ? timeOf(s, op, "out") : m.length;
-    if (op.contains("duration")) *out = *in + timeOf(s, op, "duration");
-    *out = std::min(*out, m.length);
-    if (*in >= *out) fail("BAD_ARGUMENT", QString("empty source range %1..%2 (media has %3 frames)").arg(*in).arg(*out).arg(m.length));
-}
-
-void applyOp(Session& s, const QJsonObject& op)
-{
-    const QString name = op.value("op").toString();
-    Editor& ed = s.editor;
-    const auto end = [&s] { return TimelineOps::endFrame(s.project.timeline()); };
-    s.selection.clear();
-
-    if (name == "place" || name == "append") {
-        const MediaInfo m = s.media(op.value("media").toString());
-        int in = 0, out = 0;
-        sourceRange(s, op, m, &in, &out);
-        const int at = name == "append" ? timeOf(s, op, "at", end()) : timeOf(s, op, "at");
-        ed.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")));
-    } else if (name == "keep") {
-        const MediaInfo m = s.media(op.value("media").toString());
-        int at = timeOf(s, op, "at", end());
-        const int track = parseTrack(op.value("track"));
-        const QJsonArray ranges = op.value("ranges").toArray();
-        if (ranges.isEmpty()) fail("BAD_ARGUMENT", "missing 'ranges' ([[from, to], …] in the source)");
-        for (const QJsonValue& r : ranges) {
-            QJsonObject sub;
-            if (r.isArray()) sub = {{"in", r.toArray().at(0)}, {"out", r.toArray().at(1)}};
-            else sub = {{"in", r.toObject().value("from")}, {"out", r.toObject().value("to")}};
-            int in = 0, out = 0;
-            sourceRange(s, sub, m, &in, &out);
-            ed.placeSourceRange(m.path, in, out - 1, at, track);
-            at += out - in;
-        }
-    } else if (name == "split") {
-        const int at = timeOf(s, op, "at");
-        if (op.contains("clip")) ed.bladeAt(clipOf(s, op).id, at);
-        else ed.splitAtPlayhead(at); // no selection: every clip under `at`
-    } else if (name == "delete") {
-        const QVector<int> ids = clipIds(s, op);
-        s.selection.set(QSet<int>(ids.begin(), ids.end()));
-        if (op.value("ripple").toBool()) ed.rippleDeleteSelection();
-        else ed.deleteSelection();
-    } else if (name == "delete_range") {
-        const int from = timeOf(s, op, "from"), to = timeOf(s, op, "to");
-        if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
-        ed.deleteRange(from, to, op.value("ripple").toBool(true));
-    } else if (name == "move") {
-        const QJsonValue by = op.value("by");
-        int delta = 0;
-        if (by.isDouble()) delta = by.toInt();
-        else if (by.isString() && by.toString().startsWith('-')) delta = -parseTime(by.toString().mid(1), s.format(), "by");
-        else if (by.isString()) delta = parseTime(by, s.format(), "by");
-        if (op.contains("to")) delta = timeOf(s, op, "to") - clipOf(s, {{"clip", clipIds(s, op).first()}}).start;
-        ed.moveClips(clipIds(s, op), delta, TrackKind::Video, op.value("track_delta").toInt());
-    } else if (name == "trim") {
-        const Clip& c = clipOf(s, op);
-        const bool start = op.value("edge").toString() == "start";
-        int delta = op.value("by").toInt();
-        if (op.contains("to")) delta = timeOf(s, op, "to") - (start ? c.start : c.end());
-        ed.trimClip(c.id, start ? TimelineOps::Edge::Start : TimelineOps::Edge::End, delta);
-    } else if (name == "title") {
-        const int at = timeOf(s, op, "at", 0);
-        ed.addTitle(at, op.contains("track") ? parseTrack(op.value("track")) : -1);
-        if (s.selection.ids().isEmpty()) fail("FAILED", "could not place the title (locked track?)");
-        const int id = *s.selection.ids().begin();
-        const int length = timeOf(s, op, "duration", 5 * s.project.fps());
-        const QString text = op.value("text").toString("Title");
-        ed.modifyClips({id}, "Title", [&](Clip& c) {
-            c.title.text = text;
-            if (op.contains("size")) c.title.size = op.value("size").toDouble();
-            if (op.contains("y")) c.title.posY = op.value("y").toDouble();
-            c.out = c.in + std::max(1, length) - 1;
-        });
-    } else if (name == "fade") {
-        const Clip& c = clipOf(s, op);
-        const int id = c.id;
-        if (op.contains("in")) ed.setClipFade(id, TimelineOps::Edge::Start, timeOf(s, op, "in"));
-        if (op.contains("out")) ed.setClipFade(id, TimelineOps::Edge::End, timeOf(s, op, "out"));
-    } else if (name == "volume") {
-        if (!op.contains("db")) fail("BAD_ARGUMENT", "missing 'db'");
-        for (int id : clipIds(s, op))
-            if (TrackRef r; TimelineOps::findClip(s.project.timeline(), id, &r) && r.kind == TrackKind::Audio)
-                ed.setClipVolume(id, op.value("db").toDouble());
-    } else if (name == "speed") {
-        Editor::Retime r;
-        r.speed = op.value("speed").toDouble(1.0);
-        r.reverse = op.value("reverse").toBool();
-        if (r.speed <= 0.01 || r.speed > 100) fail("BAD_ARGUMENT", "speed must be between 0.01 and 100 (1 = normal)");
-        ed.setClipSpeed(clipIds(s, op), r, op.value("ripple").toBool(true));
-    } else if (name == "transition") {
-        ed.addTransitions(timeOf(s, op, "at"));
-    } else if (name == "marker") {
-        const int at = timeOf(s, op, "at");
-        if (!s.project.timeline().markers.contains(at)) ed.toggleMarker(at);
-    } else if (name == "enable" || name == "disable") {
-        const QVector<int> ids = clipIds(s, op);
-        const bool on = name == "enable";
-        ed.modifyClips(ids, on ? "Enable" : "Disable", [on](Clip& c) { c.enabled = on; });
-    } else if (name == "clear") {
-        ed.deleteRange(0, std::max(1, end()), false);
-    } else {
-        fail("BAD_ARGUMENT", QString("unknown op '%1'").arg(name));
-    }
-}
-
-// ---------- Analysis ----------
-
-// Media file + the frame rate frames count in (project format, or the file's own rate)
-struct MediaSource {
-    ProjectFormat format;
-    MediaInfo info;
-};
-
-MediaSource openMedia(const QJsonObject& a)
-{
-    const QString path = a["file"].toString();
-    if (!QFileInfo::exists(path)) fail("NOT_FOUND", "file not found: " + path);
-    MediaSource m;
-    if (a.contains("project")) {
-        Session s(a["project"].toString());
-        m.format = s.format();
-    } else {
-        const ClipFormat cf = detectClipFormat(path);
-        if (cf.ok) {
-            m.format.rate = cf.suggested;
-            m.format.width = cf.width & ~1;
-            m.format.height = cf.height & ~1;
-        }
-    }
-    m.info = Engine::probe(m.format, path);
-    if (m.info.length <= 0 || (!m.info.hasVideo && !m.info.hasAudio)) fail("BAD_MEDIA", "cannot read media: " + path);
-    return m;
-}
-
-QJsonObject cmdProbe(const QJsonObject& a, Context&)
-{
-    const MediaSource m = openMedia(a);
-    const ClipFormat cf = detectClipFormat(m.info.path);
-    QJsonObject o{{"file", m.info.path}, {"frames", m.info.length}, {"seconds", seconds(m.info.length, m.format)},
-                  {"duration_tc", tc(m.info.length, m.format)}, {"video", m.info.hasVideo}, {"audio", m.info.hasAudio},
-                  {"frames_count_in", formatJson(m.format)["fps"]}};
-    if (m.info.isImage) o["image"] = true;
-    if (cf.ok) {
-        o["width"] = cf.width;
-        o["height"] = cf.height;
-        o["fps"] = std::round(cf.rate.fps() * 1000) / 1000;
-        if (cf.variable) o["variable_frame_rate"] = true;
-    }
-    if (m.info.hasAudio) {
-        QJsonArray streams;
-        for (int i = 0; i < m.info.audioStreamCount(); ++i) streams << m.info.audioStreamName(i);
-        o["audio_streams"] = streams;
-    }
-    return o;
-}
-
-QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
-{
-    const MediaSource m = openMedia(a);
-    if (!m.info.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.info.path);
-    const ProjectFormat& f = m.format;
-    const double thresholdDb = a.contains("threshold_db") ? a["threshold_db"].toDouble() : -35.0;
-    const int minLen = a.contains("min") ? parseTime(a["min"], f, "min") : int(std::lround(0.5 * f.rate.fps()));
-    const int pad = a.contains("pad") ? parseTime(a["pad"], f, "pad") : int(std::lround(0.1 * f.rate.fps()));
-    Clip c;
-    c.mediaPath = m.info.path;
-    c.out = m.info.length - 1;
-    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&ctx](double p) {
-        if (ctx.progress) ctx.progress(p);
-        return true;
-    });
-    if (!peaks) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
-    const float limit = float(std::pow(10.0, thresholdDb / 20.0));
-    const int n = int(peaks->size());
-    // Quiet runs of at least minLen frames; the pad of sound stays on both sides (not at the file start/end)
-    QJsonArray silence, sound;
-    int keepFrom = 0, silent = 0;
-    for (int i = 0; i <= n; ++i) {
-        if (i < n && (*peaks)[i] < limit) {
-            ++silent;
-            continue;
-        }
-        if (silent >= minLen) {
-            const int from = i - silent, to = i;
-            const int cutFrom = from == 0 ? 0 : std::min(to, from + pad);
-            const int cutTo = to == n ? n : std::max(cutFrom, to - pad);
-            if (cutTo > cutFrom) {
-                silence << range(cutFrom, cutTo, f);
-                if (cutFrom > keepFrom) sound << range(keepFrom, cutFrom, f);
-                keepFrom = cutTo;
-            }
-        }
-        silent = 0;
-    }
-    if (keepFrom < n) sound << range(keepFrom, n, f);
-    int kept = 0;
-    for (const QJsonValue& r : sound) kept += r["to"].toInt() - r["from"].toInt();
-    return {{"file", m.info.path}, {"frames", n}, {"fps", formatJson(f)["fps"]}, {"threshold_db", thresholdDb},
-            {"silence", silence}, {"sound", sound}, {"kept_frames", kept}, {"kept_s", seconds(kept, f)},
-            {"removed_s", seconds(n - kept, f)}};
-}
-
-QImage sheet(const QVector<QImage>& images, const QStringList& labels)
-{
-    const int cols = std::min<int>(images.size(), images.size() <= 4 ? 2 : images.size() <= 9 ? 3 : 4);
-    const int rows = (images.size() + cols - 1) / cols;
-    const QSize cell = images.first().size();
-    QImage out(cols * cell.width(), rows * cell.height(), QImage::Format_RGB32);
-    out.fill(Qt::black);
-    QPainter p(&out);
-    QFont font = p.font();
-    font.setPixelSize(std::max(12, cell.height() / 14));
-    p.setFont(font);
-    for (int i = 0; i < images.size(); ++i) {
-        const QPoint at((i % cols) * cell.width(), (i / cols) * cell.height());
-        p.drawImage(at, images[i]);
-        const QRect box(at + QPoint(4, 4), QSize(p.fontMetrics().horizontalAdvance(labels[i]) + 8, p.fontMetrics().height() + 2));
-        p.fillRect(box, QColor(0, 0, 0, 170));
-        p.setPen(Qt::white);
-        p.drawText(box, Qt::AlignCenter, labels[i]);
-        p.setPen(QColor(60, 60, 60));
-        p.drawRect(QRect(at, cell).adjusted(0, 0, -1, -1));
-    }
-    return out;
-}
-
-QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
-{
-    const QString src = a["source"].toString();
-    const bool isProject = src.endsWith("." + QString(ProjectFile::Extension));
-    std::unique_ptr<Session> session;
-    MediaSource media;
-    ProjectFormat f;
-    int length = 0;
-    if (isProject) {
-        session = std::make_unique<Session>(src);
-        f = session->format();
-        length = TimelineOps::endFrame(session->project.timeline());
-    } else {
-        QJsonObject ma{{"file", src}};
-        if (a.contains("project")) ma["project"] = a["project"];
-        media = openMedia(ma);
-        f = media.format;
-        length = media.info.length;
-    }
-    if (length <= 0) fail("EMPTY", "nothing to show (empty timeline)");
-    QVector<int> at;
-    for (const QJsonValue& v : a["at"].toArray()) at << parseTime(v, f, "at");
-    if (a.contains("every")) {
-        const int step = parseTime(a["every"], f, "every");
-        if (step <= 0) fail("BAD_ARGUMENT", "'every' must be > 0");
-        for (int fr = 0; fr < length; fr += step) at << fr;
-    }
-    if (a.contains("count")) {
-        const int n = std::clamp(a["count"].toInt(), 1, 100);
-        for (int i = 0; i < n; ++i) at << int((i + 0.5) * length / n);
-    }
-    if (at.isEmpty()) fail("BAD_ARGUMENT", "give 'at' (times), 'every' (interval) or 'count' (evenly spread)");
-    if (at.size() > 100) fail("BAD_ARGUMENT", QString("too many frames (%1, max 100)").arg(at.size()));
-    const int maxEdge = a.contains("width") ? std::clamp(a["width"].toInt(), 64, 3840) : (ctx.mcp ? 480 : 640);
-    const QString outDir = a["out"].toString();
-    const bool asSheet = a["sheet"].toBool();
-    if (outDir.isEmpty() && !ctx.mcp) fail("BAD_ARGUMENT", "missing 'out' (folder for the images, or the sheet file with --sheet)");
-
-    const Timeline tl = session ? session->project.renderTimeline() : Timeline{};
-    QVector<QImage> images;
-    QStringList labels;
-    QJsonArray frames;
-    for (int i = 0; i < at.size(); ++i) {
-        const int fr = std::clamp(at[i], 0, length - 1);
-        QImage img = session ? Snapshot::timeline(f, tl, fr, maxEdge) : Snapshot::media(f, media.info.path, fr, maxEdge);
-        if (img.isNull()) fail("DECODE_FAILED", QString("could not decode frame %1").arg(fr));
-        images << img;
-        labels << tc(fr, f);
-        QJsonObject o{{"frame", fr}, {"tc", tc(fr, f)}, {"s", seconds(fr, f)}};
-        if (!asSheet && !outDir.isEmpty()) {
-            QDir().mkpath(outDir);
-            const QString file = QDir(outDir).absoluteFilePath(QString("frame_%1.jpg").arg(fr, 6, 10, QChar('0')));
-            if (!img.save(file, "JPG", 85)) fail("WRITE_FAILED", "cannot write " + file);
-            o["file"] = file;
-        }
-        frames << o;
-        if (ctx.progress) ctx.progress(double(i + 1) / at.size());
-    }
-    QJsonObject result{{"source", absolute(src)}, {"frames", frames}};
-    if (asSheet) {
-        const QImage s = sheet(images, labels);
-        if (!outDir.isEmpty()) {
-            QString file = absolute(outDir);
-            if (QFileInfo(file).isDir()) file = QDir(file).filePath("sheet.jpg");
-            if (!s.save(file, "JPG", 85)) fail("WRITE_FAILED", "cannot write " + file);
-            result["sheet"] = file;
-        }
-        if (ctx.mcp) ctx.images = {s};
-    } else if (ctx.mcp) {
-        ctx.images = images;
-    }
-    return result;
-}
+using namespace detail;
 
 // ---------- Commands ----------
 
@@ -600,7 +265,7 @@ QJsonObject cmdInfo(const QJsonObject& a, Context&)
 
 QJsonObject cmdImport(const QJsonObject& a, Context&)
 {
-    Session s(a["project"].toString());
+    Session s(a["project"].toString(), Session::Access::Write);
     for (const QJsonValue& v : a["files"].toArray()) s.media(v.toString());
     const QString backup = s.save();
     QJsonObject o = projectJson(s.project, s.path);
@@ -611,7 +276,7 @@ QJsonObject cmdImport(const QJsonObject& a, Context&)
 
 QJsonObject cmdEdit(const QJsonObject& a, Context&)
 {
-    Session s(a["project"].toString());
+    Session s(a["project"].toString(), a["dry_run"].toBool() ? Session::Access::Read : Session::Access::Write);
     QJsonValue opsValue = a["ops"];
     if (opsValue.isObject()) opsValue = QJsonArray{opsValue};
     const QJsonArray ops = opsValue.toArray();
@@ -686,27 +351,6 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
 }
 
 QJsonObject cmdHelp(const QJsonObject& a, Context&);
-
-const QString kEditHelp = QStringLiteral(
-    "List of operations, applied in order, saved once (nothing is saved if one fails). Times: frames (integer), "
-    "\"4.5s\" or \"HH:MM:SS:FF\"; ranges are half-open [from, to). Tracks: \"V1\", \"A2\" (a media clip goes to "
-    "V<n> and A<n>). Clip ids come from `info` and change when clips are split. Operations: "
-    "{op:'append', media, in?, out?, track?} put a source range at the end of the timeline; "
-    "{op:'place', media, at, in?, out?, track?} overwrite at a position; "
-    "{op:'keep', media, ranges:[[from,to],...], at?, track?} put several source ranges one after another (e.g. the "
-    "'sound' ranges of `silence`); "
-    "{op:'split', at, clip?} cut all clips under `at` (or one clip); "
-    "{op:'delete', clips:[ids], ripple?:false}; "
-    "{op:'delete_range', from, to, ripple?:true} remove a time range on all tracks; "
-    "{op:'move', clips, by|to, track_delta?}; "
-    "{op:'trim', clip, edge:'start'|'end', by|to}; "
-    "{op:'title', text, at?, duration?, track?, size?, y?}; "
-    "{op:'fade', clip, in?, out?} fade lengths; "
-    "{op:'volume', clips, db}; "
-    "{op:'speed', clips, speed, reverse?, ripple?:true}; "
-    "{op:'transition', at} cross dissolve at the cut nearest to `at`; "
-    "{op:'marker', at}; {op:'enable'|'disable', clips}; {op:'clear'} empty the timeline. "
-    "Linked audio/video partners are included unless linked:false.");
 
 } // namespace
 
