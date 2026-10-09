@@ -32,4 +32,17 @@ QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars
 // End of a word without the pause after it (whisper stretches `to` to the next word)
 qint64 spokenEnd(const Word& w);
 
+// Loudness of the transcribed audio: one dB value per `frameMs` (RMS), see levelsOf
+struct Levels {
+    int frameMs = 10;
+    QVector<float> db;
+};
+Levels levelsOf(const qint16* samples, qint64 count, int sampleRate, int frameMs = 10);
+
+// Whisper often stretches words over the pause or unrecognised sound (laughter) before them ("Das ist scheiße"
+// 6.5–15.4 s, spoken from 13.9 s); subtitles then start far too early. Runs of words longer than their spoken length
+// move up to the word that follows them directly (or stay after the one before); a run alone between pauses goes to
+// the loudest stretch of `levels` (may be empty: then it keeps its start).
+void fitToSpeech(QVector<Word>& words, const Levels& levels);
+
 } // namespace Transcript

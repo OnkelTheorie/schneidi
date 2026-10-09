@@ -14,6 +14,41 @@
 
 namespace {
 constexpr double kAudioShare = 0.1; // progress: preparing the audio, then whisper
+
+// Loudness of a 16-bit PCM WAV (ffmpeg or the Exporter wrote it), channels mixed; empty if unreadable
+Transcript::Levels wavLevels(const QString& path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    const QByteArray d = f.readAll();
+    const auto u16 = [&](qsizetype at) { return quint16(uchar(d[at]) | uchar(d[at + 1]) << 8); };
+    const auto u32 = [&](qsizetype at) { return quint32(u16(at)) | quint32(u16(at + 2)) << 16; };
+    if (d.size() < 12 || !d.startsWith("RIFF") || d.mid(8, 4) != "WAVE") return {};
+    int channels = 0, rate = 0, bits = 0;
+    for (qsizetype at = 12; at + 8 <= d.size();) {
+        const QByteArray id = d.mid(at, 4);
+        const qsizetype size = u32(at + 4), body = at + 8;
+        if (id == "fmt " && body + 16 <= d.size()) {
+            channels = u16(body + 2);
+            rate = int(u32(body + 4));
+            bits = u16(body + 14);
+        } else if (id == "data") {
+            if (channels <= 0 || rate <= 0 || bits != 16) return {};
+            const qsizetype bytes = std::min(size, d.size() - body);
+            const qint64 frames = bytes / (2 * channels);
+            const auto* s = reinterpret_cast<const qint16*>(d.constData() + body);
+            QVector<qint16> mono(frames);
+            for (qint64 i = 0; i < frames; ++i) {
+                int sum = 0;
+                for (int c = 0; c < channels; ++c) sum += s[i * channels + c];
+                mono[i] = qint16(sum / channels);
+            }
+            return Transcript::levelsOf(mono.constData(), frames, rate);
+        }
+        at = body + size + (size & 1);
+    }
+    return {};
+}
 }
 
 Transcriber::Transcriber(QObject* parent) : QObject(parent)
@@ -43,6 +78,7 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         if (!json.open(QIODevice::ReadOnly)) return done(false, T("Whisper hat kein Ergebnis geschrieben: %1").arg(tail));
         QString error;
         if (!Transcript::parseWhisperJson(json.readAll(), &m_result, &error)) return done(false, error);
+        Transcript::fitToSpeech(m_result.words, wavLevels(m_tmp->filePath("audio.wav")));
         done(true, {});
     });
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
@@ -97,6 +133,12 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
         s.from = request.from;
         s.to = request.to < 0 ? -1 : request.to - 1;
         s.threads = defaultThreads();
+        Timeline tl = request.timeline;
+        if (!request.audioTracks.isEmpty())
+            for (int i = 0; i < tl.audio.size(); ++i) {
+                tl.audio[i].muted = !request.audioTracks.contains(i);
+                tl.audio[i].solo = false;
+            }
         m_exporter = std::make_unique<Exporter>();
         connect(m_exporter.get(), &Exporter::progress, this, [this](int p) { emit progress(kAudioShare * p / 100.0); });
         connect(m_exporter.get(), &Exporter::finished, this, [this](bool ok, const QString& message) {
@@ -106,7 +148,7 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
             runWhisper();
         });
         QString exportError;
-        if (!m_exporter->start(request.timeline, s, &exportError)) return fail(exportError);
+        if (!m_exporter->start(tl, s, &exportError)) return fail(exportError);
     }
     m_running = true;
     return true;

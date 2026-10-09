@@ -309,6 +309,12 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         req.from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
         req.to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
         if (req.to <= req.from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
+        for (const QString& t : a["tracks"].toString().split(',', Qt::SkipEmptyParts)) {
+            TrackKind k;
+            const int i = parseTrack(t, &k);
+            if (k != TrackKind::Audio || i >= req.timeline.audio.size()) fail("BAD_ARGUMENT", "no audio track " + t.trimmed());
+            req.audioTracks << i;
+        }
         offset = req.from;
         length = req.to - req.from;
     } else {

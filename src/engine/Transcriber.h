@@ -21,6 +21,7 @@ struct TranscribeRequest {
     Timeline timeline;
     ProjectFormat format;
     int from = 0, to = -1; // timeline frames; to < 0 = until the end
+    QVector<int> audioTracks; // timeline: only these audio tracks (also muted ones), e.g. the voice without music; empty = as heard
     QString model;               // model file (Extensions::whisperModelPath)
     QString language = "auto";   // "de", "en", … or "auto"
     int threads = 0;             // 0 = half of the logical processors (the computer stays usable)

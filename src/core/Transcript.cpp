@@ -44,6 +44,87 @@ qint64 spokenEnd(const Word& w)
     return std::min(w.to, w.from + 250 + 70 * qint64(w.text.size()));
 }
 
+namespace {
+qint64 spokenLength(const Word& w) { return 250 + 70 * qint64(w.text.size()); }
+}
+
+Levels levelsOf(const qint16* samples, qint64 count, int sampleRate, int frameMs)
+{
+    Levels l;
+    l.frameMs = frameMs;
+    const qint64 n = std::max<qint64>(1, qint64(sampleRate) * frameMs / 1000);
+    for (qint64 i = 0; i + n <= count; i += n) {
+        double sum = 0;
+        for (qint64 j = i; j < i + n; ++j) sum += double(samples[j]) * samples[j];
+        const double rms = std::sqrt(sum / n) / 32768.0;
+        l.db << float(rms > 1e-6 ? 20 * std::log10(rms) : -120.0);
+    }
+    return l;
+}
+
+void fitToSpeech(QVector<Word>& words, const Levels& levels)
+{
+    // Speech = clearly above the quiet parts (20th percentile), at least -50 dB
+    QVector<float> sorted = levels.db;
+    std::sort(sorted.begin(), sorted.end());
+    const float threshold = sorted.isEmpty() ? 0.f : std::max(-50.f, sorted[sorted.size() / 5] + 10.f);
+    QVector<int> voiced(levels.db.size() + 1, 0); // prefix sums of loud frames
+    for (int i = 0; i < levels.db.size(); ++i) voiced[i + 1] = voiced[i] + (levels.db[i] >= threshold);
+    const int fm = std::max(1, levels.frameMs);
+    const auto loud = [&](qint64 a, qint64 b) { // loud frames in [a, b) ms
+        const int fa = int(std::clamp<qint64>(a / fm, 0, levels.db.size()));
+        const int fb = int(std::clamp<qint64>(b / fm, 0, levels.db.size()));
+        return fb > fa ? voiced[fb] - voiced[fa] : 0;
+    };
+    constexpr qint64 kTouch = 60; // ms: a word that starts this close after another follows it directly
+    const auto stretched = [](const Word& w) { return w.to - w.from > spokenLength(w) + 200; };
+    const QVector<Word> original = words;
+    for (int i = 0; i < words.size();) {
+        if (!stretched(words[i])) {
+            ++i;
+            continue;
+        }
+        // Right after a pause whisper's start is good (voice detection) if there is sound: only the end is stretched
+        // ("Dieses scheiß…" at 6.5 s, then laughter, "Pferd" at 15 s)
+        const qint64 len0 = spokenLength(words[i]);
+        if ((i == 0 || original[i].from - original[i - 1].to >= kTouch) && loud(words[i].from, words[i].from + len0) * fm * 2 >= len0) {
+            words[i].to = words[i].from + len0;
+            ++i;
+            continue;
+        }
+        // A run of stretched words, e.g. "Das ist scheiße" over 9 s of laughter: they belong together
+        int j = i;
+        while (j + 1 < words.size() && stretched(words[j + 1]) && words[j + 1].from - words[j].to < kTouch) ++j;
+        qint64 len = 0;
+        for (int k = i; k <= j; ++k) len += spokenLength(words[k]);
+        const qint64 from = words[i].from, to = words[j].to;
+        const bool nextTouches = j + 1 < words.size() && words[j + 1].from - to < kTouch;
+        const bool prevTouches = i > 0 && from - words[i - 1].to < kTouch;
+        qint64 start;
+        if (nextTouches) {
+            start = to - len; // spoken right before the next word (whisper hands the pause to the words before)
+        } else if (prevTouches) {
+            start = from;
+        } else {
+            // Alone between pauses: the loudest stretch of the spoken length, the last one of equal ones
+            const int steps = int((to - from - len) / fm);
+            QVector<int> score(steps + 1);
+            int best = 0;
+            for (int s = 0; s <= steps; ++s) best = std::max(best, score[s] = loud(from + qint64(s) * fm, from + qint64(s) * fm + len));
+            int pick = steps;
+            while (pick > 0 && score[pick] < best) --pick;
+            start = best > 0 ? from + qint64(pick) * fm : from; // nothing loud (or no levels): as whisper says
+        }
+        for (int k = i; k <= j; ++k) {
+            const qint64 l = spokenLength(words[k]);
+            words[k].from = start;
+            words[k].to = k == j && nextTouches ? to : start + l;
+            start += l;
+        }
+        i = j + 1;
+    }
+}
+
 QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars, int maxGapMs, int offset)
 {
     QVector<SubtitleCue> cues;

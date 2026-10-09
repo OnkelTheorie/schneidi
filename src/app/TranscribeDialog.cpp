@@ -4,6 +4,7 @@
 #include "core/Timecode.h"
 #include "engine/Extensions.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -16,7 +17,7 @@
 #include <QVBoxLayout>
 
 TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat& format, int from, int to,
-                                   QWidget* parent)
+                                   const QStringList& trackLabels, QWidget* parent)
     : QDialog(parent), m_timeline(timeline), m_format(format), m_from(from), m_to(to)
 {
     setWindowTitle(T("Untertitel aus Audio erzeugen"));
@@ -24,6 +25,35 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
     auto* form = new QFormLayout;
     form->addRow(T("Bereich"), new QLabel(QString("%1 – %2").arg(Timecode::format(from, format.rate.timebase()),
                                                                  Timecode::format(to, format.rate.timebase()))));
+    // Audio tracks: like the timeline sounds by default; unticking music/game sound helps whisper a lot
+    QVector<int> used;
+    for (int i = 0; i < timeline.audio.size() && i < trackLabels.size(); ++i)
+        if (!trackLabels[i].isEmpty()) used << i;
+    if (used.size() > 1) {
+        bool anySolo = false;
+        for (const Track& t : timeline.audio) anySolo = anySolo || t.solo;
+        auto* tracks = new QVBoxLayout;
+        tracks->setSpacing(2);
+        for (int i : used) {
+            const Track& t = timeline.audio[i];
+            const QString& label = trackLabels[i];
+            const qsizetype dash = label.lastIndexOf(QString::fromUtf8(" – "));
+            auto* box = new QCheckBox(label);
+            box->setChecked(!t.muted && (!anySolo || t.solo));
+            connect(box, &QCheckBox::toggled, this, &TranscribeDialog::updateState);
+            tracks->addWidget(box);
+            m_tracks << TrackBox{i, dash >= 0 ? label.mid(dash + 3) : trackShortName({TrackKind::Audio, i}), box};
+        }
+        m_separate = new QCheckBox(T("Eine Untertitelspur pro Tonspur"));
+        m_separate->setToolTip(T("Jede angehakte Tonspur einzeln erkennen (z. B. Mikrofon und Voice-Chat getrennt) – "
+                                 "genauer als gemischt, dauert pro Spur"));
+        m_separate->setChecked(settings.value("transcribe/separate", true).toBool());
+        tracks->addSpacing(4);
+        tracks->addWidget(m_separate);
+        auto* label = new QLabel(T("Tonspuren"));
+        label->setToolTip(T("Nur die Spuren mit Sprache anhaken – Musik oder Spielton verschlechtern die Erkennung"));
+        form->addRow(label, tracks);
+    }
     m_lang = new QComboBox;
     m_lang->addItem(T("Automatisch erkennen"), "auto");
     static const struct {
@@ -68,7 +98,9 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
     lay->addWidget(m_progress);
     lay->addWidget(buttons);
 
-    connect(&m_transcriber, &Transcriber::progress, this, [this](double p) { m_progress->setValue(int(p * 1000)); });
+    connect(&m_transcriber, &Transcriber::progress, this, [this](double p) {
+        m_progress->setValue(int((m_job + p) / std::max<qsizetype>(1, m_jobs.size()) * 1000));
+    });
     connect(&m_transcriber, &Transcriber::finished, this, [this](bool ok, const QString& error) {
         if (!ok) {
             m_progress->hide();
@@ -77,9 +109,12 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
             return;
         }
         m_language = m_transcriber.result().language;
-        m_cues = Transcript::toCues(m_transcriber.result().words, m_format.rate.fps(), m_chars->value(), 700, m_from);
-        for (SubtitleCue& c : m_cues) c.end = std::min(c.end, m_to);
-        if (m_cues.isEmpty()) {
+        QVector<SubtitleCue> cues =
+            Transcript::toCues(m_transcriber.result().words, m_format.rate.fps(), m_chars->value(), 700, m_from);
+        for (SubtitleCue& c : cues) c.end = std::min(c.end, m_to);
+        if (!cues.isEmpty()) m_results << Result{m_jobs[m_job].name, cues};
+        if (++m_job < m_jobs.size()) return startJob();
+        if (m_results.isEmpty()) {
             m_progress->hide();
             updateState();
             QMessageBox::information(this, windowTitle(), T("Im Ton wurde keine Sprache erkannt."));
@@ -106,7 +141,13 @@ void TranscribeDialog::updateState()
     m_missing->setVisible(!ready);
     m_extensions->setVisible(!ready);
     const bool running = m_transcriber.isRunning();
-    m_start->setEnabled(ready && !running);
+    int ticked = 0;
+    for (const TrackBox& t : m_tracks) {
+        ticked += t.box->isChecked();
+        t.box->setEnabled(!running);
+    }
+    if (m_separate) m_separate->setEnabled(!running && ticked > 1);
+    m_start->setEnabled(ready && (m_tracks.isEmpty() || ticked > 0) && !running);
     m_lang->setEnabled(!running);
     m_model->setEnabled(!running);
     m_chars->setEnabled(!running);
@@ -118,19 +159,39 @@ void TranscribeDialog::run()
     settings.setValue("transcribe/language", m_lang->currentData());
     settings.setValue("transcribe/model", m_model->currentData());
     settings.setValue("transcribe/maxChars", m_chars->value());
+    if (m_separate) settings.setValue("transcribe/separate", m_separate->isChecked());
+    // One job for the mix (all ticked tracks, or the timeline as heard), or one per ticked track
+    m_jobs.clear();
+    m_results.clear();
+    m_job = 0;
+    Job mix{{}, T("Transkript")};
+    for (const TrackBox& t : m_tracks) {
+        if (!t.box->isChecked()) continue;
+        mix.tracks << t.index;
+        m_jobs << Job{{t.index}, T("Transkript – %1").arg(t.name)};
+    }
+    if (!m_separate || !m_separate->isChecked() || m_jobs.size() < 2) m_jobs = {mix};
+    startJob();
+}
+
+void TranscribeDialog::startJob()
+{
     TranscribeRequest req;
     req.timeline = m_timeline;
     req.format = m_format;
     req.from = m_from;
     req.to = m_to;
+    req.audioTracks = m_jobs[m_job].tracks;
     req.language = m_lang->currentData().toString();
     req.model = Extensions::whisperModelPath(m_model->currentData().toString());
     QString error;
     if (!m_transcriber.start(req, &error)) {
+        m_progress->hide();
+        updateState();
         QMessageBox::warning(this, windowTitle(), error);
         return;
     }
-    m_progress->setValue(0);
+    m_progress->setValue(int(double(m_job) / m_jobs.size() * 1000));
     m_progress->show();
     updateState();
 }

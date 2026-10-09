@@ -690,13 +690,28 @@ void MainWindow::transcribeDialog()
     const int from = cur.markIn >= 0 ? std::min(cur.markIn, end - 1) : 0;
     const int to = cur.markOut >= 0 ? std::min(cur.markOut + 1, end) : end;
     m_engine->pause();
-    TranscribeDialog dlg(tl, m_project->format(), from, std::max(from + 1, to), this);
+    // "A3 Audio 3 – Mikrofon": the stream names tell voice from game sound (OBS-style recordings)
+    QStringList labels;
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        const Track& t = tl.audio[i];
+        QStringList streams;
+        for (const Clip& c : t.clips)
+            if (const MediaInfo* m = c.mediaPath.isEmpty() ? nullptr : m_project->mediaInfo(c.mediaPath);
+                m && m->audioStreamCount() > 1 && !streams.contains(m->audioStreamName(c.audioStream)))
+                streams << m->audioStreamName(c.audioStream);
+        const QString name = trackShortName({TrackKind::Audio, i}) + "  " + trackDisplayName(t, {TrackKind::Audio, i});
+        labels << (t.clips.isEmpty() ? QString() : streams.isEmpty() ? name : name + " – " + streams.join(", "));
+    }
+    TranscribeDialog dlg(tl, m_project->format(), from, std::max(from + 1, to), labels, this);
     connect(&dlg, &TranscribeDialog::openExtensions, this, [this] {
         ExtensionsDialog ext(this);
         ext.exec();
     });
     if (dlg.exec() != QDialog::Accepted) return;
-    m_editor->importSubtitles(dlg.cues(), T("Transkript"));
+    QUndoStack* undo = m_project->undoStack();
+    undo->beginMacro(T("Untertitel aus Audio erzeugen"));
+    for (const TranscribeDialog::Result& r : dlg.results()) m_editor->importSubtitles(r.cues, r.name);
+    undo->endMacro();
 }
 
 void MainWindow::exportSubtitlesDialog()

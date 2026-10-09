@@ -34,7 +34,8 @@ ExtensionsDialog::ExtensionsDialog(QWidget* parent) : QDialog(parent)
         if (item.kind == Extensions::Kind::WhisperVad) continue; // comes with whisper
         auto* name = new QLabel(QString("<b>%1</b><br><small>%2</small>").arg(T(item.name).toHtmlEscaped(),
                                                                              T(item.description).toHtmlEscaped()));
-        name->setWordWrap(true);
+        // No word wrap: a wrapped label in a grid gets a height for the wrong width (second line cut off)
+        name->setMinimumHeight(name->sizeHint().height());
         auto* status = new QLabel;
         auto* button = new QPushButton;
         grid->addWidget(name, r, 0);

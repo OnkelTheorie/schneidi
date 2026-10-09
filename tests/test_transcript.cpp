@@ -1,13 +1,40 @@
 // Speech to text without whisper: reading whisper-cli's JSON (one word per segment), grouping words into subtitle
-// cues (sentences, commas, pauses, length) and the extensions catalog (pinned downloads, dependencies).
+// cues (sentences, commas, pauses, length), moving stretched words to where they are spoken, the extensions catalog
+// (pinned downloads, dependencies) and the dialogs (EXT_DUMP / TRANSCRIBE_DUMP = image file).
 #include "check.h"
 
+#include "app/ExtensionsDialog.h"
+#include "app/TranscribeDialog.h"
 #include "core/Transcript.h"
 #include "engine/Extensions.h"
 
-#include <QCoreApplication>
+#include <QApplication>
+#include <QCheckBox>
+#include <QLabel>
+
+#include <cmath>
+#include <cstdio>
 
 namespace {
+
+QString times(const QVector<Transcript::Word>& words)
+{
+    QStringList out;
+    for (const auto& w : words) out << QString("%1-%2 %3").arg(w.from).arg(w.to).arg(w.text);
+    return out.join(" | ");
+}
+
+// 10 ms levels: loud (-20 dB) in the given ranges (ms), silent elsewhere
+Transcript::Levels levels(qint64 lengthMs, const QVector<QPair<qint64, qint64>>& loud)
+{
+    Transcript::Levels l;
+    for (qint64 t = 0; t < lengthMs; t += 10) {
+        bool on = false;
+        for (const auto& [a, b] : loud) on = on || (t >= a && t < b);
+        l.db << (on ? -20.f : -90.f);
+    }
+    return l;
+}
 
 QString cues(const QVector<SubtitleCue>& list)
 {
@@ -33,7 +60,7 @@ const char* kJson = R"({"result":{"language":"de"},"transcription":[
 int main(int argc, char** argv)
 {
     Check::initEnv();
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
     Check::initApp("transcript");
 
     Transcript::Result r;
@@ -52,6 +79,63 @@ int main(int argc, char** argv)
     // Short lines: a comma in the second half ends a cue; nothing longer than maxChars unless one word is
     CHECK_EQ(cues(Transcript::toCues(r.words, 25, 10, 5000)),
              QString("8-16 Hallo, | 18-25 schöne | 25-35 Grüße. | 35-133 Nach der | 133-140 Pause"));
+
+    // Levels of a 1 kHz sine at half scale: about -9 dB, silence -120 dB
+    {
+        QVector<qint16> pcm(16000);
+        for (int i = 0; i < 8000; ++i) pcm[i] = qint16(16384 * std::sin(2 * M_PI * 1000 * i / 16000.0));
+        const Transcript::Levels l = Transcript::levelsOf(pcm.constData(), pcm.size(), 16000);
+        CHECK_EQ(l.db.size(), 100);
+        CHECK(std::abs(l.db[10] + 9.03f) < 0.2f);
+        CHECK(l.db[80] < -100.f);
+    }
+    using W = Transcript::Word;
+    // Laughter case (real recording): "Das" right after a pause with sound keeps its start, the stretched rest of the
+    // run ("ist scheiße" over laughter) moves up to "Pferd", which follows it directly; normal words stay
+    {
+        QVector<W> w{{6520, 8600, "Das"}, {8600, 9820, "ist"}, {9820, 15370, "scheiße"}, {15370, 16130, "Pferd,"}};
+        Transcript::fitToSpeech(w, levels(17000, {{6540, 7670}, {8650, 9130}, {9840, 13350}, {13920, 17000}}));
+        CHECK_EQ(times(w), QString("6520-6980 Das | 14170-14630 ist | 14630-15370 scheiße | 15370-16130 Pferd,"));
+    }
+    // Stretched first word without sound at its start (whisper's pause before the speech): moves up to the next word
+    {
+        QVector<W> w{{1000, 6000, "Nach"}, {6000, 6400, "der"}};
+        Transcript::fitToSpeech(w, levels(7000, {{5500, 6400}}));
+        CHECK_EQ(times(w), QString("5470-6000 Nach | 6000-6400 der"));
+    }
+    // Alone between pauses: the loud part; nothing loud or no levels: keeps its start
+    {
+        QVector<W> w{{1000, 1300, "So"}, {2000, 6000, "weg"}, {7000, 7300, "da"}};
+        Transcript::fitToSpeech(w, levels(8000, {{1000, 1300}, {4000, 4500}, {7000, 7300}}));
+        CHECK_EQ(times(w), QString("1000-1300 So | 4040-4500 weg | 7000-7300 da"));
+        QVector<W> quiet{{1000, 1300, "So"}, {2000, 6000, "weg"}, {7000, 7300, "da"}};
+        Transcript::fitToSpeech(quiet, {});
+        CHECK_EQ(times(quiet), QString("1000-1300 So | 2000-2460 weg | 7000-7300 da"));
+    }
+
+    // Dialogs: descriptions fully visible, track choice only with several tracks (muted ones unticked)
+    {
+        ExtensionsDialog dlg;
+        dlg.show();
+        for (QLabel* l : dlg.findChildren<QLabel*>())
+            if (l->text().contains("<small>") && !CHECK(l->height() >= l->sizeHint().height()))
+                std::printf("       %s: %d < %d\n", qPrintable(l->text().left(40)), l->height(), l->sizeHint().height());
+        if (const QString dump = qEnvironmentVariable("EXT_DUMP"); !dump.isEmpty()) dlg.grab().save(dump);
+    }
+    {
+        Timeline tl;
+        tl.audio.resize(3);
+        for (Track& t : tl.audio) t.clips << Clip{};
+        tl.audio[0].muted = true;
+        TranscribeDialog dlg(tl, ProjectFormat{}, 0, 100, {"A1 mix", "A2 Audio 2 – System", "A3 Audio 3 – Mikrofon"});
+        QStringList ticked;
+        for (QCheckBox* b : dlg.findChildren<QCheckBox*>()) ticked << QString("%1:%2").arg(b->text()).arg(b->isChecked());
+        CHECK_EQ(ticked.join(' '), QString("A1 mix:0 A2 Audio 2 – System:1 A3 Audio 3 – Mikrofon:1 Eine Untertitelspur pro Tonspur:1"));
+        dlg.show();
+        if (const QString dump = qEnvironmentVariable("TRANSCRIBE_DUMP"); !dump.isEmpty()) dlg.grab().save(dump);
+        TranscribeDialog one(tl, ProjectFormat{}, 0, 100, {"A1 mix", "", ""});
+        CHECK(one.findChildren<QCheckBox*>().isEmpty());
+    }
 
     // Catalog: every download pinned; whisper brings the voice detection, models need the program
     for (const Extensions::Item& i : Extensions::catalog()) {

@@ -544,6 +544,8 @@ const QVector<Command>& commands()
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"},
           {"from", T::Time, "for a project: start of the range"},
           {"to", T::Time, "for a project: end of the range"},
+          {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A3\" or \"A2,A3\" (the voice without music; "
+                                "muted ones too; default: what is audible)"},
           {"threads", T::Integer, "processor threads (default: half of them)"}},
          cmdTranscribe},
         {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models. "
