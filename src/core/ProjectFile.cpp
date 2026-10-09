@@ -701,6 +701,15 @@ QStringList backupsOldestFirst(const QDir& dir)
 }
 } // namespace
 
+QStringList backups(const QString& projectPath)
+{
+    const QDir dir(backupDir(projectPath));
+    QStringList out;
+    const QStringList names = backupsOldestFirst(dir);
+    for (auto it = names.rbegin(); it != names.rend(); ++it) out << dir.filePath(*it);
+    return out;
+}
+
 QString backup(const QString& projectPath, int keep)
 {
     QFile current(projectPath);

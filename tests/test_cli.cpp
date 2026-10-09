@@ -4,6 +4,8 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 
+#include <QLockFile>
+
 #include "check.h"
 
 #include <QGuiApplication>
@@ -119,5 +121,48 @@ int main(int argc, char** argv)
     } catch (const Cli::Error& e) {
         CHECK(e.message.startsWith("op 1 (split)"));
     }
+
+    // Subtitles (list and single cue), an effect with checked parameters, tracks
+    edit(R"([{"op":"subtitles","cues":[{"from":0,"to":10,"text":"One"},{"from":20,"to":"1s","text":"Two"}],"name":"AI"},
+             {"op":"subtitle","text":"Three","at":30,"duration":100},
+             {"op":"add_track","kind":"audio"},
+             {"op":"remove_track","track":"V2"}])");
+    QJsonObject tl = run("info", {{"project", g_path}})["timeline"].toObject();
+    const QJsonArray cues = tl["subtitles"][0]["cues"].toArray();
+    CHECK_EQ(tl["subtitles"][0]["name"].toString(), QString("AI"));
+    CHECK_EQ(cues.size(), 3);
+    CHECK_EQ(cues[1]["end"].toInt(), 25);
+    CHECK_EQ(cues[2]["end"].toInt(), 130);
+    CHECK_EQ(tl["tracks"].toArray().size(), 4); // V1, A1, A2, A3
+    const int firstId = tl["tracks"][0]["clips"][0]["id"].toInt();
+    CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"effect","clips":[%1],"effect":"blur",
+             "params":{"radius":3}}])").arg(firstId)}}), QString("BAD_ARGUMENT"));
+    edit(QString(R"([{"op":"effect","clips":[%1],"effect":"blur","params":{"strength":500}},
+                     {"op":"delete","clips":[%2]},
+                     {"op":"subtitle","id":%3,"text":"Two!"}])")
+             .arg(firstId).arg(cues[0]["id"].toInt()).arg(cues[1]["id"].toInt()).toUtf8().constData());
+    tl = run("info", {{"project", g_path}})["timeline"].toObject();
+    CHECK_EQ(tl["tracks"][0]["clips"][0]["effects"][0]["params"]["strength"].toDouble(), 100.0); // clamped
+    CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 2);
+    CHECK_EQ(tl["subtitles"][0]["cues"][0]["text"].toString(), QString("Two!"));
+
+    // Restore = undo of the last edit (and restore again = redo)
+    run("restore", {{"project", g_path}});
+    tl = run("info", {{"project", g_path}})["timeline"].toObject();
+    CHECK(!tl["tracks"][0]["clips"][0].toObject().contains("effects"));
+    CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 3);
+    run("restore", {{"project", g_path}});
+    tl = run("info", {{"project", g_path}})["timeline"].toObject();
+    CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 2);
+    CHECK_EQ(errorOf("restore", {{"project", g_path}, {"backup", "999"}}), QString("NOT_FOUND"));
+
+    // Someone else (the app) saving: writing commands wait, then give up; reading works
+    {
+        const auto held = ProjectFile::lock(g_path, 0);
+        CHECK(held != nullptr);
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"marker","at":1}])"}}), QString("PROJECT_LOCKED"));
+        CHECK_EQ(errorOf("info", {{"project", g_path}}), QString("none"));
+    }
+    edit(R"([{"op":"marker","at":1}])");
     return Check::result();
 }

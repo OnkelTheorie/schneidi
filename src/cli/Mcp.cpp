@@ -95,10 +95,11 @@ int runMcp()
                        {"serverInfo", QJsonObject{{"name", "schneidi"}, {"version", QCoreApplication::applicationVersion()}}},
                        {"instructions",
                         "schneidi is a video editor. Edit projects (.schneidi) with these tools: `new` creates one, "
-                        "`probe`/`silence`/`frames` look at the material, `edit` changes the timeline (see its 'ops' "
-                        "description), `info` shows the result, `render` writes a video. The person can open the "
-                        "project in the schneidi app afterwards for fine cutting. Use absolute file paths. Times are "
-                        "frames in the project frame rate, seconds like \"4.5s\" or timecodes."}});
+                        "`probe`/`silence`/`scenes`/`frames` look at the material, `edit` changes the timeline (see its "
+                        "'ops' description; `effects` lists the video effects), `info` shows the result, `render` "
+                        "writes a video, `restore` undoes a change (`backups` lists the saved states). The project may "
+                        "be open in the schneidi app at the same time: it reloads after every change. Use absolute "
+                        "file paths. Times are frames in the project frame rate, seconds like \"4.5s\" or timecodes."}});
         } else if (method == "tools/list") {
             QJsonArray tools;
             for (const Command& c : commands()) {

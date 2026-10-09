@@ -41,21 +41,24 @@ let the AI find the pauses, keep the rest, look at the result, render, then fine
 ```bash
 schneidi-cli new talk.schneidi --fps 25 --media talk.mp4
 schneidi-cli silence talk.mp4 --project talk.schneidi        # "sound" ranges without the pauses
+schneidi-cli scenes broll.mp4 --project talk.schneidi        # shot changes
 schneidi-cli edit talk.schneidi --ops '[{"op":"keep","media":"talk.mp4","ranges":[[0,250],[310,900]]}]'
 schneidi-cli frames talk.schneidi --count 9 --sheet --out sheet.jpg
 schneidi-cli render talk.schneidi --out talk-cut.mp4
+schneidi-cli restore talk.schneidi                           # undo the last change
 schneidi-cli help                                            # all commands and edit operations (JSON)
 ```
 
-Output is JSON on stdout (exit code 0 = ok, 1 = error, 2 = usage error); every save keeps a backup of the previous
-state. `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio, e.g. for
+Edit operations cover cutting, moving, trimming, titles, fades, volume, speed, transitions, markers, subtitles
+(SRT or cue lists), video effects (`schneidi-cli effects`) and tracks. Output is JSON on stdout (exit code 0 = ok,
+1 = error, 2 = usage error); every save keeps a backup of the previous state (`backups`, `restore`). `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio, e.g. for
 Claude Code: `claude mcp add schneidi -- schneidi-cli mcp`, or in Claude Desktop's `claude_desktop_config.json`:
 
 ```json
 { "mcpServers": { "schneidi": { "command": "/path/to/schneidi-cli", "args": ["mcp"] } } }
 ```
 
-Close the project in schneidi while an AI edits it (the app does not reload changed files yet).
+The project can stay open in schneidi: the app reloads it when the CLI saves (with unsaved changes it asks first).
 
 ## Building
 

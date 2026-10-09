@@ -2,6 +2,7 @@
 #include "cli/CommandsDetail.h"
 
 #include "core/Editor.h"
+#include "core/EffectRegistry.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
@@ -16,7 +17,9 @@
 #include "engine/Snapshot.h"
 
 #include <QBuffer>
+#include <QColor>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -175,7 +178,16 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (c.reverse) o["reverse"] = true;
     if (!c.effects.isEmpty()) {
         QJsonArray fx;
-        for (const EffectInstance& e : c.effects) fx << e.effectId;
+        for (const EffectInstance& e : c.effects) {
+            QJsonObject eo{{"effect", e.effectId}};
+            QJsonObject params;
+            for (auto it = e.params.begin(); it != e.params.end(); ++it)
+                params[it.key()] = it.value().typeId() == QMetaType::QColor ? QJsonValue(it.value().value<QColor>().name())
+                                                                            : QJsonValue::fromVariant(it.value());
+            if (!params.isEmpty()) eo["params"] = params;
+            if (!e.enabled) eo["enabled"] = false;
+            fx << eo;
+        }
         o["effects"] = fx;
     }
     return o;
@@ -205,9 +217,20 @@ QJsonObject timelineJson(const Project& p)
     const int end = TimelineOps::endFrame(tl);
     QJsonObject o{{"length", end}, {"length_s", seconds(end, f)}, {"length_tc", tc(end, f)}, {"tracks", tracks},
                   {"markers", markers}};
-    int cues = 0;
-    for (const SubtitleTrack& st : tl.subtitles) cues += st.cues.size();
-    if (cues) o["subtitle_cues"] = cues;
+    QJsonArray subtitles;
+    for (int i = 0; i < tl.subtitles.size(); ++i) {
+        const SubtitleTrack& st = tl.subtitles[i];
+        QJsonArray cues;
+        for (const SubtitleCue& c : st.cues)
+            cues << QJsonObject{{"id", c.id}, {"start", c.start}, {"end", c.end}, {"start_tc", tc(c.start, f)},
+                                {"end_tc", tc(c.end, f)}, {"text", c.text}};
+        QJsonObject so{{"track", QString("ST%1").arg(i + 1)}, {"cues", cues}};
+        if (!st.name.isEmpty()) so["name"] = st.name;
+        if (!st.enabled) so["enabled"] = false; // not shown/burnt in (one subtitle track at a time)
+        if (st.locked) so["locked"] = true;
+        subtitles << so;
+    }
+    if (!subtitles.isEmpty()) o["subtitles"] = subtitles;
     if (tl.markIn >= 0) o["mark_in"] = tl.markIn;
     if (tl.markOut >= 0) o["mark_out"] = tl.markOut + 1;
     return o;
@@ -299,6 +322,64 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     return o;
 }
 
+QJsonObject cmdBackups(const QJsonObject& a, Context&)
+{
+    const QString path = absolute(a["project"].toString());
+    if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
+    QJsonArray list;
+    const QStringList files = ProjectFile::backups(path);
+    for (int i = 0; i < files.size(); ++i) {
+        QJsonObject o{{"index", i + 1}, {"file", files[i]},
+                      {"saved", QFileInfo(files[i]).lastModified().toString(Qt::ISODate)}};
+        ProjectData d;
+        if (ProjectFile::load(files[i], &d, nullptr)) {
+            int clips = 0;
+            for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+                for (const Track& t : d.timeline.tracks(k)) clips += t.clips.size();
+            const int end = TimelineOps::endFrame(d.timeline);
+            o["clips"] = clips;
+            o["length_tc"] = tc(end, d.format);
+        } else {
+            o["unreadable"] = true;
+        }
+        list << o;
+    }
+    return {{"project", path}, {"backups", list}};
+}
+
+QJsonObject cmdRestore(const QJsonObject& a, Context&)
+{
+    const QString path = absolute(a["project"].toString());
+    if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
+    const auto lock = ProjectFile::lock(path);
+    if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
+    // Pick the copy before the current state goes into the backups (that shifts the numbers)
+    const QStringList files = ProjectFile::backups(path);
+    const QString which = a.contains("backup") ? a["backup"].toString() : QString("1");
+    QString source;
+    bool isIndex = false;
+    const int index = which.toInt(&isIndex);
+    if (isIndex) {
+        if (index < 1 || index > files.size())
+            fail("NOT_FOUND", QString("no backup %1 (there are %2, see `backups`)").arg(index).arg(files.size()));
+        source = files[index - 1];
+    } else {
+        source = absolute(which);
+        if (!QFileInfo::exists(source)) fail("NOT_FOUND", "backup not found: " + source);
+    }
+    ProjectData d;
+    QString error;
+    if (!ProjectFile::load(source, &d, &error)) fail("BAD_PROJECT", error);
+    // Saved again (not copied): media paths relative to the project file stay right
+    const QString backup = ProjectFile::backup(path);
+    if (!ProjectFile::save(d, path, &error)) fail("SAVE_FAILED", error);
+    Project p;
+    p.load(d);
+    QJsonObject o{{"project", path}, {"restored", source}, {"timeline", timelineJson(p)}};
+    if (!backup.isEmpty()) o["backup"] = backup;
+    return o;
+}
+
 QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
 {
     Session s(a["project"].toString());
@@ -352,6 +433,43 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
 
 QJsonObject cmdHelp(const QJsonObject& a, Context&);
 
+QJsonObject cmdEffects(const QJsonObject& a, Context&)
+{
+    const QString only = a["effect"].toString();
+    QJsonArray list;
+    for (const EffectDescriptor& d : EffectRegistry::all()) {
+        if (!d.video || (!only.isEmpty() && d.id != only)) continue;
+        QJsonObject o{{"effect", d.id}, {"name", d.name}};
+        if (!d.category.isEmpty()) o["category"] = d.category;
+        if (d.id == "grade") o["note"] = "the Color page grade (lift/gamma/gain/offset, LUT)";
+        if (only.isEmpty()) {
+            QJsonArray keys;
+            for (const EffectParam& p : d.params) keys << p.key;
+            o["params"] = keys;
+        } else {
+            static const char* types[] = {"number", "color", "path", "boolean", "choice"};
+            QJsonArray params;
+            for (const EffectParam& p : d.params) {
+                QJsonObject po{{"key", p.key}, {"label", p.label}, {"type", types[p.type]}};
+                if (p.type == EffectParam::Double) {
+                    po["min"] = p.min;
+                    po["max"] = p.max;
+                }
+                if (p.type == EffectParam::Choice) po["choices"] = QJsonArray::fromStringList(p.choices);
+                po["default"] = p.type == EffectParam::Color ? QJsonValue(p.defaultValue.value<QColor>().name())
+                                                             : QJsonValue::fromVariant(p.defaultValue);
+                if (!p.description.isEmpty()) po["description"] = p.description;
+                params << po;
+            }
+            o["params"] = params;
+            if (!d.description.isEmpty()) o["description"] = d.description;
+        }
+        list << o;
+    }
+    if (list.isEmpty() && !only.isEmpty()) fail("NOT_FOUND", "no video effect " + only);
+    return {{"effects", list}};
+}
+
 } // namespace
 
 const QVector<Command>& commands()
@@ -377,6 +495,13 @@ const QVector<Command>& commands()
           {"ops", T::Json, kEditHelp, true},
           {"dry_run", T::Boolean, "only show the resulting timeline, do not save"}},
          cmdEdit},
+        {"backups", "List the backup copies of a project (every save keeps the previous state, newest first).",
+         {{"project", T::Path, "project file", true, true}}, cmdBackups},
+        {"restore", "Undo: put a backup copy back as the project (the current state becomes a backup itself, so "
+                    "restore can be undone too).",
+         {{"project", T::Path, "project file", true, true},
+          {"backup", T::String, "number from `backups` (default 1 = state before the last change) or a backup file"}},
+         cmdRestore},
         {"render", "Render the project timeline to a video or audio file.",
          {{"project", T::Path, "project file", true, true},
           {"out", T::Path, "output file (extension added if missing)", true},
@@ -399,6 +524,16 @@ const QVector<Command>& commands()
           {"min", T::Time, "shortest pause (default 0.5s)"},
           {"pad", T::Time, "sound kept around each pause (default 0.1s)"}},
          cmdSilence},
+        {"scenes", "Find scene changes (cuts) in a video file. Returns the 'cuts' and the 'scenes' between them as "
+                   "ranges [from, to) in source frames, e.g. to pick shots for 'keep' or to look at them with `frames`.",
+         {{"file", T::Path, "video file", true, true},
+          {"project", T::Path, "count frames in this project's frame rate (recommended before editing)"},
+          {"threshold", T::Number, "how different two frames must be, 0..1 (default 0.3; lower finds more cuts)"},
+          {"min", T::Time, "shortest scene (default 0.5s)"}},
+         cmdScenes},
+        {"effects", "Video effects for the 'effect' edit operation: all ids with their parameter names, or one "
+                    "effect with types, ranges and defaults.",
+         {{"effect", T::String, "only this effect, with parameter details", false, true}}, cmdEffects},
         {"frames", "Still images of a media file or a project timeline at given times, as files or one contact "
                    "sheet with timecodes (lets you look at the material).",
          {{"source", T::Path, "media file or project (.schneidi)", true, true},

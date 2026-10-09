@@ -45,6 +45,8 @@ bool save(const ProjectData& data, const QString& path, QString* error);
 // eigenen Ordner je Projekt (unter AppDataLocation/backups), die neuesten `keep` bleiben. Unveränderter Stand
 // (gleich der neuesten Kopie) wird nicht doppelt abgelegt. Liefert den Pfad der neuen Kopie (leer = keine).
 QString backup(const QString& projectPath, int keep = 20);
+// Backup copies of a project, newest first (full paths)
+QStringList backups(const QString& projectPath);
 // Ordner der Sicherungskopien eines Projekts (leerer Pfad = Ordner aller Projekte)
 QString backupDir(const QString& projectPath);
 bool load(const QString& path, ProjectData* data, QString* error);

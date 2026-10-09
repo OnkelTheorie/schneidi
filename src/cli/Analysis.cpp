@@ -4,6 +4,7 @@
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/Bundle.h"
 #include "engine/Engine.h"
 #include "engine/Profiles.h"
 #include "engine/Snapshot.h"
@@ -12,6 +13,8 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QPainter>
+#include <QProcess>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
@@ -141,6 +144,63 @@ QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
             {"removed_s", seconds(n - kept, f)}};
 }
 
+
+QJsonObject cmdScenes(const QJsonObject& a, Context& ctx)
+{
+    const MediaSource m = openMedia(a);
+    if (!m.info.hasVideo || m.info.isImage) fail("NO_VIDEO", "file has no moving picture: " + m.info.path);
+    const ProjectFormat& f = m.format;
+    const double threshold = a.contains("threshold") ? a["threshold"].toDouble() : 0.3;
+    if (threshold <= 0 || threshold >= 1) fail("BAD_ARGUMENT", "threshold must be between 0 and 1 (default 0.3)");
+    const int minLen = a.contains("min") ? parseTime(a["min"], f, "min") : int(std::lround(0.5 * f.rate.fps()));
+
+    // ffmpeg's scene score (0..1, difference to the previous frame) on a small copy of each frame; metadata=print
+    // logs time and score of every frame above the threshold. Times start at 0 like the frames in schneidi.
+    QProcess ff;
+    ff.setProgram(Bundle::tool("ffmpeg"));
+    ff.setArguments({"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-i", m.info.path, "-map", "0:v:0",
+                     "-an", "-sn", "-vf",
+                     QString("setpts=PTS-STARTPTS,scale=320:-2,select='gt(scene,%1)',metadata=mode=print").arg(threshold),
+                     "-f", "null", "-", "-progress", "pipe:1"});
+    ff.start();
+    if (!ff.waitForStarted()) fail("TOOL_MISSING", "ffmpeg not found (needed for scene detection)");
+    const double total = m.info.length / f.rate.fps();
+    QByteArray log;
+    while (ff.state() != QProcess::NotRunning) {
+        ff.waitForReadyRead(200);
+        log += ff.readAllStandardError();
+        const QList<QByteArray> lines = ff.readAllStandardOutput().split('\n');
+        for (const QByteArray& line : lines)
+            if (line.startsWith("out_time_us=") && ctx.progress && total > 0)
+                ctx.progress(std::clamp(line.mid(12).toDouble() / 1e6 / total, 0.0, 1.0));
+    }
+    log += ff.readAllStandardError();
+    if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0)
+        fail("DECODE_FAILED", "ffmpeg could not read the video: " + QString::fromUtf8(log.right(400)).trimmed());
+
+    // "frame:12 pts:12 pts_time:0.48" followed by "lavfi.scene_score=0.62"
+    static const QRegularExpression timeRe("pts_time:([0-9.]+)"), scoreRe("lavfi\\.scene_score=([0-9.]+)");
+    QVector<QPair<int, double>> found;
+    for (const QString& line : QString::fromUtf8(log).split('\n')) {
+        if (const auto t = timeRe.match(line); t.hasMatch())
+            found.append({int(std::lround(t.captured(1).toDouble() * f.rate.fps())), 0.0});
+        else if (const auto sc = scoreRe.match(line); sc.hasMatch() && !found.isEmpty())
+            found.last().second = sc.captured(1).toDouble();
+    }
+    // Cuts closer than minLen to the previous one (flashes, fast pans) are dropped; no cut at the very start
+    QJsonArray cuts, scenes;
+    int sceneStart = 0;
+    for (const auto& [frame, score] : found) {
+        if (frame <= 0 || frame >= m.info.length || frame - sceneStart < minLen) continue;
+        cuts << QJsonObject{{"frame", frame}, {"s", seconds(frame, f)}, {"tc", tc(frame, f)},
+                            {"score", std::round(score * 1000) / 1000}};
+        scenes << range(sceneStart, frame, f);
+        sceneStart = frame;
+    }
+    scenes << range(sceneStart, m.info.length, f);
+    return {{"file", m.info.path}, {"frames", m.info.length}, {"fps", formatJson(f)["fps"]}, {"threshold", threshold},
+            {"cuts", cuts}, {"scenes", scenes}};
+}
 
 QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
 {
