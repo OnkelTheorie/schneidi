@@ -139,6 +139,16 @@ target_include_directories(schneidi PRIVATE ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(schneidi schneidi_buildinfo)
 target_link_libraries(schneidi PRIVATE schneidi_lib)
 
+# Command line + MCP server (no window): for scripts and AIs, see src/cli/main.cpp
+add_library(schneidi_cli_lib STATIC
+    src/cli/Commands.h src/cli/Commands.cpp
+    src/cli/Mcp.h      src/cli/Mcp.cpp)
+target_link_libraries(schneidi_cli_lib PUBLIC schneidi_lib)
+add_executable(schneidi-cli src/cli/main.cpp)
+target_include_directories(schneidi-cli PRIVATE ${CMAKE_BINARY_DIR}/generated)
+add_dependencies(schneidi-cli schneidi_buildinfo)
+target_link_libraries(schneidi-cli PRIVATE schneidi_cli_lib)
+
 if(WIN32)
     set_target_properties(schneidi PROPERTIES WIN32_EXECUTABLE ON)
     target_sources(schneidi PRIVATE packaging/windows/schneidi.rc) # Programmsymbol
@@ -146,7 +156,7 @@ endif()
 
 # Installation (Paketierung: AppImage unter Linux, später Programmordner unter Windows, siehe README.md)
 include(GNUInstallDirs)
-install(TARGETS schneidi RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS schneidi schneidi-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(UNIX AND NOT APPLE)
     install(FILES packaging/linux/schneidi.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES assets/schneidi.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
