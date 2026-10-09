@@ -10,6 +10,8 @@ A DaVinci-style workflow without DaVinci's hurdles: runs on modest hardware and 
 
 > Status: early development (0.x). The project file format may still change between versions.
 
+![Editing in schneidi: clips into the timeline, ripple trim with two-up view, color wheels](screenshots/demo.gif)
+
 ![Edit page](screenshots/edit.png)
 
 ## Features
