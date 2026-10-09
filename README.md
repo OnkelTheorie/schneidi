@@ -59,6 +59,7 @@ Claude Code: `claude mcp add schneidi -- schneidi-cli mcp`, or in Claude Desktop
 ```
 
 The project can stay open in schneidi: the app reloads it when the CLI saves (with unsaved changes it asks first).
+The AppImage contains the CLI too: `schneidi-x86_64.AppImage cli help`, or a link to the AppImage named `schneidi-cli`.
 
 ## Building
 

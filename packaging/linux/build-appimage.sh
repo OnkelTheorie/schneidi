@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Baut dist/schneidi-<version>-x86_64.AppImage (Release-Build + Qt, MLT-Module, frei0r, ffmpeg/ffprobe).
 # Aufbau im AppDir wie später der Windows-Programmordner (siehe src/engine/Bundle.h):
-#   usr/bin/{schneidi,ffmpeg,ffprobe}  usr/lib/mlt-7  usr/share/mlt-7  usr/lib/frei0r-1
+#   usr/bin/{schneidi,schneidi-cli,ffmpeg,ffprobe}  usr/lib/mlt-7  usr/share/mlt-7  usr/lib/frei0r-1
 # Aufruf aus dem Projektordner: packaging/linux/build-appimage.sh
+# CLI from the AppImage: `schneidi-<version>-x86_64.AppImage cli help` or a link named schneidi-cli (packaging/linux/AppRun)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -85,7 +86,9 @@ done
 mkdir -p "$DIST"
 cd "$DIST"
 "$TOOLS/linuxdeploy-$ARCH.AppImage" --appdir "$APPDIR" \
+    --executable "$APPDIR/usr/bin/schneidi-cli" \
     --executable "$APPDIR/usr/bin/ffmpeg" --executable "$APPDIR/usr/bin/ffprobe" \
+    --custom-apprun "$ROOT/packaging/linux/AppRun" \
     "${DEPS_ARGS[@]}" \
     --desktop-file "$APPDIR/usr/share/applications/schneidi.desktop" \
     --icon-file "$APPDIR/usr/share/icons/hicolor/scalable/apps/schneidi.svg" \

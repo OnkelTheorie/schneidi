@@ -1,0 +1,12 @@
+#!/bin/sh
+# AppImage entry: the app, or schneidi-cli for `schneidi.AppImage cli …` and for a link named schneidi-cli
+# (the AppImage runtime passes the called name in ARGV0). linuxdeploy runs its hooks (Qt paths) before this script.
+HERE="$(dirname "$(readlink -f "$0")")"
+if [ "$1" = "cli" ]; then
+    shift
+    exec "$HERE/usr/bin/schneidi-cli" "$@"
+fi
+case "$(basename "${ARGV0:-$0}")" in
+    schneidi-cli*) exec "$HERE/usr/bin/schneidi-cli" "$@" ;;
+esac
+exec "$HERE/usr/bin/schneidi" "$@"
