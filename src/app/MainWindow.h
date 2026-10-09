@@ -65,6 +65,7 @@ private:
     void importSubtitleFiles(const QStringList& paths);
     void importSubtitlesDialog();
     void exportSubtitlesDialog();
+    void transcribeDialog();
     MediaInfo probeCached(const QString& path);
     // Wie DaVinci beim ersten Clip in leerer Timeline: Projekt an Auflösung/Framerate des Clips anpassen
     // (ask = nachfragen, sonst direkt übernehmen)

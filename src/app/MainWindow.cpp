@@ -1,4 +1,6 @@
 #include "app/MainWindow.h"
+#include "app/ExtensionsDialog.h"
+#include "app/TranscribeDialog.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -673,6 +675,28 @@ void MainWindow::importSubtitlesDialog()
     const QStringList files = QFileDialog::getOpenFileNames(this, T("Untertitel importieren"), m_projectPath.isEmpty() ? QString() : QFileInfo(m_projectPath).absolutePath(),
                                                             T("Untertitel (*.srt);;Alle Dateien (*)"));
     if (!files.isEmpty()) importSubtitleFiles(files);
+}
+
+// Like DaVinci "Create Subtitles from Audio": whole timeline or In/Out, result as a new subtitle track
+void MainWindow::transcribeDialog()
+{
+    const Timeline tl = m_project->renderTimeline();
+    const int end = TimelineOps::endFrame(tl);
+    if (end <= 0) {
+        QMessageBox::information(this, T("Untertitel aus Audio erzeugen"), T("Die Timeline ist leer."));
+        return;
+    }
+    const Timeline& cur = m_project->timeline();
+    const int from = cur.markIn >= 0 ? std::min(cur.markIn, end - 1) : 0;
+    const int to = cur.markOut >= 0 ? std::min(cur.markOut + 1, end) : end;
+    m_engine->pause();
+    TranscribeDialog dlg(tl, m_project->format(), from, std::max(from + 1, to), this);
+    connect(&dlg, &TranscribeDialog::openExtensions, this, [this] {
+        ExtensionsDialog ext(this);
+        ext.exec();
+    });
+    if (dlg.exec() != QDialog::Accepted) return;
+    m_editor->importSubtitles(dlg.cues(), T("Transkript"));
 }
 
 void MainWindow::exportSubtitlesDialog()

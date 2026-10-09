@@ -1,5 +1,6 @@
 // MainWindow: menus and actions.
 #include "app/MainWindow.h"
+#include "app/ExtensionsDialog.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -326,6 +327,8 @@ void MainWindow::buildActions()
     });
     makeAction(subtitleMenu, "add_subtitle_track", T("Untertitelspur hinzufügen"), QKeySequence(),
                [this] { m_editor->addSubtitleTrack(); });
+    makeAction(subtitleMenu, "transcribe_subtitles", T("Untertitel aus Audio erzeugen…"), QKeySequence(),
+               [this] { transcribeDialog(); });
     QMenu* markMenu = timeline->addMenu(T("In/Out und Marker"));
     // In/Out wie DaVinci: zeigt der Viewer die Quelle, gelten sie für den Quellclip (pro Media-Pool-Clip gemerkt)
     auto markIn = [this, tv](int frame) {
@@ -484,6 +487,10 @@ void MainWindow::buildActions()
         m_scopes->setVisible(!m_scopes->isVisibleTo(m_colorBottom));
         QSettings().setValue("color/scopesVisible", m_scopes->isVisibleTo(m_colorBottom));
         if (m_scopes->isVisibleTo(m_colorBottom)) showPage(Page::Color);
+    });
+    makeAction(workspace, "extensions", T("Erweiterungen…"), QKeySequence(), [this] {
+        ExtensionsDialog dlg(this);
+        dlg.exec();
     });
     workspace->addSeparator();
     // Sprache wie in DaVinci (Preferences → User → UI Settings): wirkt nach dem Neustart

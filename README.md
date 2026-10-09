@@ -24,6 +24,7 @@ A lightweight video editor with Media, Edit, Color and Deliver pages. Its workfl
 - Clip speed / retime
 - Proxy and render cache for smooth playback
 - Export and render queue via FFmpeg
+- Subtitles from speech (whisper.cpp, offline) – an optional download under Workspace → Extensions
 - Themes, English/German
 
 <details>
@@ -42,6 +43,8 @@ let the AI find the pauses, keep the rest, look at the result, render, then fine
 schneidi-cli new talk.schneidi --fps 25 --media talk.mp4
 schneidi-cli silence talk.mp4 --project talk.schneidi        # "sound" ranges without the pauses
 schneidi-cli scenes broll.mp4 --project talk.schneidi        # shot changes
+schneidi-cli extensions --install whisper,small              # optional speech recognition (download, ~200 MB)
+schneidi-cli transcribe talk.mp4 --language de --words       # what is said, with word times
 schneidi-cli edit talk.schneidi --ops '[{"op":"keep","media":"talk.mp4","ranges":[[0,250],[310,900]]}]'
 schneidi-cli frames talk.schneidi --count 9 --sheet --out sheet.jpg
 schneidi-cli render talk.schneidi --out talk-cut.mp4
