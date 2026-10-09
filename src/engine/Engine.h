@@ -45,6 +45,9 @@ public:
     ~Engine() override;
 
     bool init(QString* error);
+    // MLT itself (modules, logging, frei0r effects) without a preview consumer; init() calls it.
+    // Enough for headless use (schneidi-cli): probing, rendering, analysis.
+    static bool initMlt(QString* error);
     // Projekteinstellungen: baut Profil, Vorschau-Consumer und alle Producer neu auf (Viewer zeigt danach
     // die Timeline). Die Timeline selbst kommt mit dem nächsten updateTimeline().
     void setFormat(const ProjectFormat& format);
@@ -61,6 +64,8 @@ public:
     StillFetcher* stills() const { return m_stills; }
 
     MediaInfo probe(const QString& path);
+    // Same without an Engine instance: lengths count in the frame rate of `format`
+    static MediaInfo probe(const ProjectFormat& format, const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);
 
     // Standbild (Grab Still) des aktuell gezeigten Bilds (Timeline bzw. Quelle) in voller Projektauflösung,

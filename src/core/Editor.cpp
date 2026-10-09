@@ -344,6 +344,25 @@ void Editor::modifyClips(const QVector<int>& idsIn, const QString& text, const s
     }, mergeKey);
 }
 
+void Editor::deleteRange(int from, int to, bool ripple)
+{
+    from = std::max(0, from);
+    if (to <= from) return;
+    Project* p = m_project;
+    p->edit(ripple ? T("Bereich löschen mit Ripple") : T("Bereich löschen"), [&](Timeline& tl) {
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (Track& t : tl.tracks(k)) {
+                if (t.locked) continue;
+                TimelineOps::clearDissolveAt(t, from);
+                TimelineOps::clearDissolveAt(t, to);
+                TimelineOps::clearRange(t, from, to, [p] { return p->newClipId(); });
+            }
+        TimelineOps::resolvePendingLinks(tl, [p] { return p->newLinkId(); });
+        if (ripple) TimelineOps::rippleTracks(tl, {{to, from - to}}, {});
+    });
+    m_selection->clear();
+}
+
 void Editor::rippleDeleteSelection()
 {
     const QVector<int> cues = selectedSubtitles();

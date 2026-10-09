@@ -53,7 +53,7 @@ Engine::~Engine()
     m_profile.reset();
 }
 
-bool Engine::init(QString* error)
+bool Engine::initMlt(QString* error)
 {
     // Mitgelieferte MLT-Module (AppImage/Windows-Programmordner), sonst die des Systems
     Bundle::prepareMltEnvironment();
@@ -65,7 +65,12 @@ bool Engine::init(QString* error)
     }
     Bundle::configureMltLogging();
     Frei0r::registerEffects();
+    return true;
+}
 
+bool Engine::init(QString* error)
+{
+    if (!initMlt(error)) return false;
     m_format = ProjectFormat{};
     if (!createConsumer(error)) return false;
     updateTimeline(Timeline{});
@@ -147,17 +152,24 @@ void Engine::setFormat(const ProjectFormat& format)
 
 MediaInfo Engine::probe(const QString& path)
 {
+    return probe(m_format, path);
+}
+
+MediaInfo Engine::probe(const ProjectFormat& format, const QString& path)
+{
     MediaInfo info;
     info.path = path;
     info.name = QFileInfo(path).fileName();
-    Mlt::Producer p(*m_profile, path.toUtf8().constData());
+    const auto profile = makeProfile(format);
+    const int fps = format.rate.timebase();
+    Mlt::Producer p(*profile, path.toUtf8().constData());
     if (!p.is_valid()) return info;
 
     const QString service = p.get("mlt_service");
     info.isImage = service == "qimage" || service == "pixbuf";
     if (info.isImage) {
         info.hasVideo = true;
-        info.length = 5 * fps(); // Standbild: 5 Sekunden wie in DaVinci
+        info.length = 5 * fps; // Standbild: 5 Sekunden wie in DaVinci
     } else {
         // Audiodateien mit eingebettetem Cover gelten nicht als Video
         static const QStringList audioExt{"mp3", "wav", "flac", "ogg", "opus", "m4a", "aac", "wma", "aiff"};

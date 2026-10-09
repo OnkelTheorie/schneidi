@@ -28,4 +28,9 @@ struct Loudness {
 std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& clip,
                                      const std::function<bool(double)>& progress = {});
 
+// Sample peak (linear, all channels) of every timeline frame of the clip, same rules as clipPeakDb
+// (silence detection in schneidi-cli). Index 0 = first frame of the clip.
+std::optional<std::vector<float>> clipFramePeaks(const ProjectFormat& format, const Clip& clip,
+                                                 const std::function<bool(double)>& progress = {});
+
 } // namespace AudioAnalysis

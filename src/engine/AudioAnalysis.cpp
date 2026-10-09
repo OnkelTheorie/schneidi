@@ -15,8 +15,8 @@ namespace AudioAnalysis {
 
 namespace {
 
-// Ton des Clips Frame für Frame als planares float (48 kHz, Stereo) an sink geben.
-// false = kein Ton oder abgebrochen.
+// Pass the clip audio frame by frame to sink as planar float (48 kHz, stereo); a frame that cannot be decoded
+// arrives as pcm == nullptr. false = no audio or canceled.
 bool decode(const ProjectFormat& format, const Clip& clip, const std::function<bool(double)>& progress,
             const std::function<void(const float*, int samples, int channels, int freq)>& sink)
 {
@@ -39,7 +39,10 @@ bool decode(const ProjectFormat& format, const Clip& clip, const std::function<b
         int freq = 48000, channels = 2;
         int samples = mlt_audio_calculate_frame_samples(float(fps), freq, pos);
         const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
-        if (!pcm || samples <= 0 || channels <= 0 || fmt != mlt_audio_float) continue;
+        if (!pcm || samples <= 0 || channels <= 0 || fmt != mlt_audio_float) {
+            sink(nullptr, 0, 0, freq); // keeps frame counting sinks in step
+            continue;
+        }
         anyAudio = true;
         sink(pcm, samples, channels, freq);
     }
@@ -68,6 +71,7 @@ std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& cl
     LoudnessMeter meter;
     float peak = 0.f;
     const bool ok = decode(format, clip, progress, [&](const float* pcm, int samples, int channels, int freq) {
+        if (!pcm) return;
         meter.addPlanar(pcm, samples, channels, freq);
         for (int i = 0, n = samples * channels; i < n; ++i) peak = std::max(peak, std::abs(pcm[i]));
     });
@@ -78,6 +82,19 @@ std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& cl
     l.peakDb = toDb(peak);
     l.blocks = meter.blocks();
     return l;
+}
+
+std::optional<std::vector<float>> clipFramePeaks(const ProjectFormat& format, const Clip& clip,
+                                                 const std::function<bool(double)>& progress)
+{
+    std::vector<float> peaks;
+    const bool ok = decode(format, clip, progress, [&](const float* pcm, int samples, int channels, int) {
+        float peak = 0.f;
+        for (int i = 0, n = samples * channels; i < n; ++i) peak = std::max(peak, std::abs(pcm[i]));
+        peaks.push_back(peak);
+    });
+    if (!ok) return std::nullopt;
+    return peaks;
 }
 
 } // namespace AudioAnalysis

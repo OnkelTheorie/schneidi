@@ -78,6 +78,7 @@ add_library(schneidi_lib STATIC
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/Frei0r.h           src/engine/Frei0r.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
+    src/engine/Snapshot.h         src/engine/Snapshot.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp

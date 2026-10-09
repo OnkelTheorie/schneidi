@@ -99,6 +99,9 @@ public:
     void splitAtPlayhead(int frame);
     void deleteSelection();
     void rippleDeleteSelection();
+    // Remove the time range [from, to) on all unlocked tracks (clips are cut at both ends); ripple = everything
+    // after it moves up, otherwise a gap stays. One undo step. Used by schneidi-cli (cutting out pauses).
+    void deleteRange(int from, int to, bool ripple);
     void selectAll();
     // Clips ab Playhead wählen (DaVinci Y / Strg+Y / Alt+Y / Strg+Alt+Y): forward = Playhead und rechts davon,
     // sonst Playhead und links davon. allTracks = alle Spuren, sonst die Spuren der Auswahl (ohne Auswahl: Zielspuren)

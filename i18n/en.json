@@ -411,6 +411,8 @@
  "Löschen (Entf)": "Delete (Del)",
  "Löschen (Lücke bleibt)": "Delete (leave gap)",
  "Löschen mit Ripple": "Ripple Delete",
+ "Bereich löschen": "Delete Range",
+ "Bereich löschen mit Ripple": "Ripple Delete Range",
  "Löschen mit Ripple (Rücktaste)": "Ripple Delete (Backspace)",
  "MLT konnte nicht initialisiert werden.": "MLT could not be initialized.",
  "Marineblau": "Navy",
