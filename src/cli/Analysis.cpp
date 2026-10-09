@@ -347,7 +347,8 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
 
     const Transcript::Result& r = t.result();
     const int maxChars = a.contains("max_chars") ? std::clamp(a["max_chars"].toInt(), 10, 200) : 42;
-    const QVector<SubtitleCue> cues = Transcript::toCues(r.words, f.rate.fps(), maxChars, 700, offset);
+    QVector<SubtitleCue> cues = Transcript::toCues(r.words, f.rate.fps(), maxChars, 700, offset);
+    Transcript::startAtSound(cues, r.levels, f.rate.fps(), offset);
     QJsonArray segments;
     for (const SubtitleCue& c : cues) {
         QJsonObject o = range(c.start, std::min(c.end, offset + length), f);

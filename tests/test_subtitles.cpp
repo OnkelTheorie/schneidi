@@ -140,10 +140,12 @@ void testEditor()
     ed.setSubtitleTiming(a, 60, 500); // Start stößt an b
     CHECK_EQ(track(p, 0), QString("50-80:Untertitel 80-500:Hallo Welt"));
 
-    // Zweite Spur: nicht sichtbar (nur eine zugleich); einblenden schaltet ST1 aus
+    // Second track: hidden at first; showing it keeps ST1 visible (several at once), hide ST1 for the rest
     CHECK_EQ(ed.addSubtitleTrack(), 1);
     CHECK(!p.timeline().subtitles[1].enabled);
     ed.setSubtitleTrackEnabled(1, true);
+    CHECK(p.timeline().subtitles[0].enabled && p.timeline().subtitles[1].enabled);
+    ed.setSubtitleTrackEnabled(0, false);
     CHECK(!p.timeline().subtitles[0].enabled && p.timeline().subtitles[1].enabled);
     const int c = ed.addSubtitle(0); // landet auf der sichtbaren Spur
     CHECK_EQ(track(p, 1), QString("0-75:Untertitel"));
@@ -576,6 +578,22 @@ int testRender(const QString& dir)
 
 } // namespace
 
+// Transcripts of several speakers (Create Subtitles from Audio, one track per audio track): all visible at once,
+// each one line above the one before
+void testStackedImport()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    const QVector<SubtitleCue> cues{{0, 10, 40, "eins"}};
+    ed.importSubtitles(cues, "Transkript – System", 0);
+    ed.importSubtitles(cues, "Transkript – Mikrofon", 1);
+    const auto& st = p.timeline().subtitles;
+    CHECK_EQ(st.size(), 2);
+    CHECK(st[0].enabled && st[1].enabled);
+    CHECK(st[1].style.posY > st[0].style.posY + st[0].style.size);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -586,6 +604,7 @@ int main(int argc, char** argv)
     testEditor();
     testRippleAndSplit();
     testProjectFile();
+    testStackedImport();
     if (!Check::haveFfmpeg()) {
         Check::result();
         return Check::skip("ffmpeg nicht gefunden (Render-Teil)");

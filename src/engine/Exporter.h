@@ -27,6 +27,7 @@ struct ExportSettings {
     QString preset = "medium"; // Geschwindigkeit vs. Dateigröße
     int audioBitrateK = 192;
     QString audioSampleFormat; // leer = Vorgabe des Codecs (Apple Lossless: s16p/s32p für 16/24 Bit)
+    int audioRate = 0, audioChannels = 0; // 0 = 48 kHz stereo (speech to text wants 16 kHz mono)
     FrameRate rate{0, 1};      // Bildrate der Datei; num 0 = wie die Timeline (format.rate)
     bool burnSubtitles = false; // sichtbare Untertitelspur ins Bild einbrennen
     QString subtitlePath;       // sichtbare Untertitelspur zusätzlich als SRT hierhin schreiben (leer = nicht)

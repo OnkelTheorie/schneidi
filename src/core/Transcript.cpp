@@ -62,14 +62,41 @@ Levels levelsOf(const qint16* samples, qint64 count, int sampleRate, int frameMs
     return l;
 }
 
-void fitToSpeech(QVector<Word>& words, const Levels& levels)
+namespace {
+// Prefix sums of the loud frames; loud = clearly above the quiet parts (20th percentile), at least -50 dB
+QVector<int> loudPrefix(const Levels& levels)
 {
-    // Speech = clearly above the quiet parts (20th percentile), at least -50 dB
     QVector<float> sorted = levels.db;
     std::sort(sorted.begin(), sorted.end());
     const float threshold = sorted.isEmpty() ? 0.f : std::max(-50.f, sorted[sorted.size() / 5] + 10.f);
-    QVector<int> voiced(levels.db.size() + 1, 0); // prefix sums of loud frames
+    QVector<int> voiced(levels.db.size() + 1, 0);
     for (int i = 0; i < levels.db.size(); ++i) voiced[i + 1] = voiced[i] + (levels.db[i] >= threshold);
+    return voiced;
+}
+}
+
+void startAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, int offset)
+{
+    if (levels.db.isEmpty() || fps <= 0) return;
+    const QVector<int> voiced = loudPrefix(levels);
+    const int fm = std::max(1, levels.frameMs);
+    constexpr int kRun = 5; // 50 ms of sound, not a click
+    for (SubtitleCue& c : cues) {
+        const int a = int(std::max(0.0, (c.start - offset) * 1000.0 / fps / fm));
+        const int b = int(std::min<double>(levels.db.size(), (c.end - offset) * 1000.0 / fps / fm));
+        for (int f = a; f + kRun <= b; ++f) {
+            if (voiced[f + kRun] - voiced[f] < kRun) continue;
+            // 100 ms before the sound, so the line is there when the first syllable is
+            const int start = offset + int(std::floor((f * fm - 100) / 1000.0 * fps));
+            if (start > c.start && start < c.end - 1) c.start = start;
+            break;
+        }
+    }
+}
+
+void fitToSpeech(QVector<Word>& words, const Levels& levels)
+{
+    const QVector<int> voiced = loudPrefix(levels);
     const int fm = std::max(1, levels.frameMs);
     const auto loud = [&](qint64 a, qint64 b) { // loud frames in [a, b) ms
         const int fa = int(std::clamp<qint64>(a / fm, 0, levels.db.size()));

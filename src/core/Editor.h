@@ -270,7 +270,8 @@ public:
     int clampSubtitleTrim(int id, TimelineOps::Edge edge, int delta) const;
     void trimSubtitle(int id, TimelineOps::Edge edge, int delta);
     // Eingelesene Einträge (SRT) als neue Spur; name = Spurname (z. B. Dateiname). Liefert den Spur-Index, -1 = leer.
-    int importSubtitles(const QVector<SubtitleCue>& cues, const QString& name);
+    // stack >= 0: always visible, `stack` lines above the default position (several speakers at once)
+    int importSubtitles(const QVector<SubtitleCue>& cues, const QString& name, int stack = -1);
 
     // ---- Compound Clips und verschachtelte Timelines (core/EditorCompound.cpp) ----
     // Ausgewählte Clips (mit Partnern) zu einem Compound Clip zusammenfassen (DaVinci „New Compound Clip“): neue

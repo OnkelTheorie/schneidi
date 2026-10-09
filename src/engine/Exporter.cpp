@@ -239,6 +239,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     m_consumer->set("acodec", s.audioCodec.toUtf8().constData());
     if (!s.audioSampleFormat.isEmpty()) m_consumer->set("sample_fmt", s.audioSampleFormat.toUtf8().constData());
+    if (s.audioRate > 0) m_consumer->set("frequency", s.audioRate);
+    if (s.audioChannels > 0) m_consumer->set("channels", s.audioChannels);
     if (!s.audioCodec.startsWith("pcm_") && s.audioCodec != "alac") {
         const int bitrate = s.audioCodec == "libmp3lame" ? std::min(s.audioBitrateK, 320) : s.audioBitrateK;
         m_consumer->set("ab", QString("%1k").arg(bitrate).toUtf8().constData());

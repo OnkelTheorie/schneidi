@@ -113,6 +113,13 @@ int main(int argc, char** argv)
         CHECK_EQ(times(quiet), QString("1000-1300 So | 2000-2460 weg | 7000-7300 da"));
     }
 
+    // Cues that start in silence begin 100 ms before the sound (25 fps, offset 100 frames = audio start)
+    {
+        QVector<SubtitleCue> cs{{0, 100 + 25, 100 + 75, "Pferd, geh"}, {0, 100 + 75, 100 + 90, "laut"}};
+        Transcript::startAtSound(cs, levels(4000, {{2000, 2600}, {3000, 3600}}), 25, 100);
+        CHECK_EQ(cues(cs), QString("147-175 Pferd, geh | 175-190 laut"));
+    }
+
     // Dialogs: descriptions fully visible, track choice only with several tracks (muted ones unticked)
     {
         ExtensionsDialog dlg;

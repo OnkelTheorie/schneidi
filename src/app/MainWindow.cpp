@@ -710,7 +710,9 @@ void MainWindow::transcribeDialog()
     if (dlg.exec() != QDialog::Accepted) return;
     QUndoStack* undo = m_project->undoStack();
     undo->beginMacro(T("Untertitel aus Audio erzeugen"));
-    for (const TranscribeDialog::Result& r : dlg.results()) m_editor->importSubtitles(r.cues, r.name);
+    const QVector<TranscribeDialog::Result> results = dlg.results();
+    for (int i = 0; i < results.size(); ++i) // one track per speaker: all visible, one above the other
+        m_editor->importSubtitles(results[i].cues, results[i].name, results.size() > 1 ? i : -1);
     undo->endMacro();
 }
 

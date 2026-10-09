@@ -78,7 +78,8 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         if (!json.open(QIODevice::ReadOnly)) return done(false, T("Whisper hat kein Ergebnis geschrieben: %1").arg(tail));
         QString error;
         if (!Transcript::parseWhisperJson(json.readAll(), &m_result, &error)) return done(false, error);
-        Transcript::fitToSpeech(m_result.words, wavLevels(m_tmp->filePath("audio.wav")));
+        m_result.levels = wavLevels(m_tmp->filePath("audio.wav"));
+        Transcript::fitToSpeech(m_result.words, m_result.levels);
         done(true, {});
     });
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
@@ -130,6 +131,8 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
         s.format = request.format;
         s.videoCodec.clear();
         s.audioCodec = "pcm_s16le";
+        s.audioRate = 16000; // what whisper reads; its own conversion of 48 kHz stereo recognises worse
+        s.audioChannels = 1;
         s.from = request.from;
         s.to = request.to < 0 ? -1 : request.to - 1;
         s.threads = defaultThreads();
@@ -164,7 +167,8 @@ void Transcriber::runWhisper()
                      m_request.language.isEmpty() ? QString("auto") : m_request.language, "-ml", "1", "-sow", "-oj",
                      "-of", m_tmp->filePath("out"), "-np", "-pp"};
     // Without voice detection whisper puts the first words of a passage at the start of a pause before it
-    if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty()) args << "--vad" << "-vm" << vad;
+    // Threshold 0.35 instead of 0.5: keeps quiet or laughed words (measured: "Diese Scheiß-Pferd" instead of "Das")
+    if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty()) args << "--vad" << "-vm" << vad << "-vt" << "0.35";
     m_process.start(Extensions::whisperProgram(), args);
 }
 

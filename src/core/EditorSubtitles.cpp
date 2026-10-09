@@ -82,10 +82,7 @@ void Editor::setSubtitleTrackEnabled(int index, bool on)
     const Timeline& cur = m_project->timeline();
     if (!validTrack(cur, index) || cur.subtitles[index].enabled == on) return;
     m_project->edit(on ? T("Untertitelspur einblenden") : T("Untertitelspur ausblenden"), [&](Timeline& tl) {
-        for (int i = 0; i < tl.subtitles.size(); ++i) {
-            if (i == index) tl.subtitles[i].enabled = on;
-            else if (on) tl.subtitles[i].enabled = false;
-        }
+        tl.subtitles[index].enabled = on; // several at once are fine (e.g. two speakers, see importSubtitles' stack)
     });
 }
 
@@ -254,7 +251,7 @@ void Editor::trimSubtitle(int id, TimelineOps::Edge edge, int delta)
     });
 }
 
-int Editor::importSubtitles(const QVector<SubtitleCue>& cues, const QString& name)
+int Editor::importSubtitles(const QVector<SubtitleCue>& cues, const QString& name, int stack)
 {
     if (cues.isEmpty()) return -1;
     const Timeline& cur = m_project->timeline();
@@ -265,7 +262,8 @@ int Editor::importSubtitles(const QVector<SubtitleCue>& cues, const QString& nam
         SubtitleTrack t;
         t.name = name.simplified();
         t.style = Subtitles::defaultStyle(p->format().size());
-        t.enabled = !anyOn;
+        t.enabled = !anyOn || stack >= 0;
+        if (stack > 0) t.style.posY += stack * (t.style.size * 1.3 + 2 * t.style.boxPad + 8); // one line higher each
         for (SubtitleCue c : cues) {
             c.id = p->newClipId();
             Subtitles::place(t, c);
