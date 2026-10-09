@@ -49,6 +49,10 @@ void fitToSpeech(QVector<Word>& words, const Levels& levels);
 
 // A cue that whisper starts in silence ("Pferd, geh …" 1.1 s before the voice) begins shortly before the sound
 // (cues in timeline frames, `offset` = timeline frame of the audio start, as in toCues)
+// Cues of several speakers (one transcript per audio track) as one track: sorted; cues that overlap become one cue
+// with a line per speaker (start of the first, end of the last)
+QVector<SubtitleCue> mergeCues(const QVector<QVector<SubtitleCue>>& tracks);
+
 void startAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, int offset = 0);
 
 } // namespace Transcript

@@ -75,6 +75,23 @@ QVector<int> loudPrefix(const Levels& levels)
 }
 }
 
+QVector<SubtitleCue> mergeCues(const QVector<QVector<SubtitleCue>>& tracks)
+{
+    QVector<SubtitleCue> all;
+    for (const auto& t : tracks) all += t;
+    std::stable_sort(all.begin(), all.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
+    QVector<SubtitleCue> out;
+    for (const SubtitleCue& c : all) {
+        if (!out.isEmpty() && c.start < out.last().end) {
+            out.last().text += '\n' + c.text;
+            out.last().end = std::max(out.last().end, c.end);
+        } else {
+            out << c;
+        }
+    }
+    return out;
+}
+
 void startAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, int offset)
 {
     if (levels.db.isEmpty() || fps <= 0) return;

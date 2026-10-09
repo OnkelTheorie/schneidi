@@ -45,8 +45,9 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
             m_tracks << TrackBox{i, dash >= 0 ? label.mid(dash + 3) : trackShortName({TrackKind::Audio, i}), box};
         }
         m_separate = new QCheckBox(T("Eine Untertitelspur pro Tonspur"));
-        m_separate->setToolTip(T("Jede angehakte Tonspur einzeln erkennen (z. B. Mikrofon und Voice-Chat getrennt) – "
-                                 "genauer als gemischt, dauert pro Spur"));
+        m_separate->setToolTip(T("Jede angehakte Tonspur wird einzeln erkannt (genauer als gemischt). An: eine "
+                                 "Untertitelspur je Tonspur, übereinander. Aus: alles in einer Spur, wer gleichzeitig "
+                                 "spricht, steht in einer zweiten Zeile."));
         m_separate->setChecked(settings.value("transcribe/separate", true).toBool());
         tracks->addSpacing(4);
         tracks->addWidget(m_separate);
@@ -115,6 +116,11 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
         for (SubtitleCue& c : cues) c.end = std::min(c.end, m_to);
         if (!cues.isEmpty()) m_results << Result{m_jobs[m_job].name, cues};
         if (++m_job < m_jobs.size()) return startJob();
+        if (m_results.size() > 1 && !m_separate->isChecked()) {
+            QVector<QVector<SubtitleCue>> all;
+            for (const Result& r : m_results) all << r.cues;
+            m_results = {Result{T("Transkript"), Transcript::mergeCues(all)}};
+        }
         if (m_results.isEmpty()) {
             m_progress->hide();
             updateState();
@@ -165,13 +171,11 @@ void TranscribeDialog::run()
     m_jobs.clear();
     m_results.clear();
     m_job = 0;
-    Job mix{{}, T("Transkript")};
-    for (const TrackBox& t : m_tracks) {
-        if (!t.box->isChecked()) continue;
-        mix.tracks << t.index;
-        m_jobs << Job{{t.index}, T("Transkript – %1").arg(t.name)};
-    }
-    if (!m_separate || !m_separate->isChecked() || m_jobs.size() < 2) m_jobs = {mix};
+    // Always one whisper run per ticked track: in a mix whisper mixes up the speakers (measured: "oder" of one put
+    // 3 s early onto the other's "Ja, ja"); without "one track each" the results are merged afterwards
+    for (const TrackBox& t : m_tracks)
+        if (t.box->isChecked()) m_jobs << Job{{t.index}, T("Transkript – %1").arg(t.name)};
+    if (m_jobs.isEmpty()) m_jobs << Job{{}, T("Transkript")}; // single audio track: as heard
     startJob();
 }
 

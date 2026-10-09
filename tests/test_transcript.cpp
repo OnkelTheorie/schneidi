@@ -120,6 +120,11 @@ int main(int argc, char** argv)
         CHECK_EQ(cues(cs), QString("147-175 Pferd, geh | 175-190 laut"));
     }
 
+    // Two speakers in one track: overlapping cues share one cue (a line each), the rest stays apart
+    CHECK_EQ(cues(Transcript::mergeCues({{{0, 10, 40, "Ja, ja."}, {0, 100, 120, "Okay, tschüss."}},
+                                         {{0, 50, 60, "Oder da?"}, {0, 110, 130, "Ich hab's"}}})),
+             QString("10-40 Ja, ja. | 50-60 Oder da? | 100-130 Okay, tschüss.\nIch hab's"));
+
     // Dialogs: descriptions fully visible, track choice only with several tracks (muted ones unticked)
     {
         ExtensionsDialog dlg;

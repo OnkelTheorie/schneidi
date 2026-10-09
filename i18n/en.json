@@ -366,7 +366,7 @@
  "Italienisch": "Italian",
  "Jalousie horizontal": "Blinds Horizontal",
  "Jalousie vertikal": "Blinds Vertical",
- "Jede angehakte Tonspur einzeln erkennen (z. B. Mikrofon und Voice-Chat getrennt) – genauer als gemischt, dauert pro Spur": "Recognize every ticked audio track on its own (e.g. microphone and voice chat apart) – more accurate than mixed, takes time per track",
+ "Jede angehakte Tonspur wird einzeln erkannt (genauer als gemischt). An: eine Untertitelspur je Tonspur, übereinander. Aus: alles in einer Spur, wer gleichzeitig spricht, steht in einer zweiten Zeile.": "Every ticked audio track is recognized on its own (more accurate than mixed). On: one subtitle track per audio track, one above the other. Off: all in one track, whoever speaks at the same time gets a second line.",
  "Jeder Clip erreicht den Zielpegel für sich": "Each clip reaches the target level on its own",
  "Jetzt neu starten": "Restart Now",
  "Job %1": "Job %1",
