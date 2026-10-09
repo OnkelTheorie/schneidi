@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStringList>
 
 #include <algorithm>
 #include <cmath>
@@ -158,32 +159,66 @@ void fitToSpeech(QVector<Word>& words, const Levels& levels)
     }
 }
 
+namespace {
+// Break points of a phrase that is too long for one line: as few lines as greedy filling needs, but even lengths
+// ("aber wenn du Softbox guckst, | beleidigt dich nicht." instead of "… beleidigt dich | nicht.")
+QVector<int> balancedBreaks(const QVector<Word>& words, int first, int last, int maxChars)
+{
+    const int m = last - first + 1;
+    QVector<int> pre(m + 1, 0); // characters of words [0, k) plus one space each
+    for (int k = 0; k < m; ++k) pre[k + 1] = pre[k] + int(words[first + k].text.size()) + 1;
+    const auto len = [&](int a, int b) { return pre[b] - pre[a] - 1; }; // words [a, b)
+    int lines = 1;
+    for (int k = 0, a = 0; k < m; ++k)
+        if (k > a && len(a, k + 1) > maxChars) a = k, ++lines;
+    if (lines == 1) return {};
+    const double target = double(len(0, m)) / lines;
+    constexpr double kNone = 1e18;
+    // cost[l][k]: best for words [0, k) in l lines; one word longer than maxChars is a line of its own
+    QVector<QVector<double>> cost(lines + 1, QVector<double>(m + 1, kNone));
+    QVector<QVector<int>> from(lines + 1, QVector<int>(m + 1, -1));
+    cost[0][0] = 0;
+    for (int l = 1; l <= lines; ++l)
+        for (int k = 1; k <= m; ++k)
+            for (int a = k - 1; a >= 0; --a) {
+                if (k - a > 1 && len(a, k) > maxChars) break;
+                if (cost[l - 1][a] >= kNone) continue;
+                const double d = len(a, k) - target;
+                if (cost[l - 1][a] + d * d < cost[l][k]) cost[l][k] = cost[l - 1][a] + d * d, from[l][k] = a;
+            }
+    QVector<int> breaks; // index of the first word of each line after the first
+    for (int l = lines, k = m; l > 1; --l) breaks.prepend(first + (k = from[l][k]));
+    return breaks;
+}
+}
+
 QVector<SubtitleCue> toCues(const QVector<Word>& words, double fps, int maxChars, int maxGapMs, int offset)
 {
     QVector<SubtitleCue> cues;
     const auto frame = [&](qint64 ms) { return offset + int(std::lround(ms / 1000.0 * fps)); };
-    QString text;
-    qint64 start = 0, end = 0;
-    const auto flush = [&] {
-        if (text.isEmpty()) return;
-        int a = frame(start), b = std::max(frame(end), a + 1);
-        if (!cues.isEmpty()) a = std::max(a, cues.last().end);
-        cues << SubtitleCue{0, a, std::max(b, a + 1), text};
-        text.clear();
+    const auto add = [&](int a, int b) { // words [a, b] as one cue
+        QStringList text;
+        for (int k = a; k <= b; ++k) text << words[k].text;
+        int s = frame(words[a].from), e = std::max(frame(spokenEnd(words[b])), s + 1);
+        if (!cues.isEmpty()) s = std::max(s, cues.last().end);
+        cues << SubtitleCue{0, s, std::max(e, s + 1), text.join(' ')};
     };
+    const auto flush = [&](int a, int b) { // a phrase: split into even lines if too long
+        if (a > b) return;
+        for (int k : balancedBreaks(words, a, b, maxChars)) add(a, k - 1), a = k;
+        add(a, b);
+    };
+    int first = 0, chars = 0;
     for (int i = 0; i < words.size(); ++i) {
         const Word& w = words[i];
-        const bool gap = !text.isEmpty() && w.from - end > maxGapMs;
-        if (gap || (!text.isEmpty() && text.size() + 1 + w.text.size() > maxChars)) flush();
-        if (text.isEmpty()) start = w.from;
-        text += (text.isEmpty() ? "" : " ") + w.text;
-        end = spokenEnd(w);
+        if (i > first && w.from - spokenEnd(words[i - 1]) > maxGapMs) flush(first, i - 1), first = i, chars = 0;
+        chars += (chars ? 1 : 0) + int(w.text.size());
         const QChar last = w.text.back();
-        // Sentence end: always a new cue; a comma in the second half of a full line: a good place for one
-        if (last == '.' || last == '?' || last == '!' || ((last == ',' || last == ';') && text.size() > maxChars / 2))
-            flush();
+        // Sentence end: always a new cue; a comma after half a line: a good place for one
+        if (last == '.' || last == '?' || last == '!' || ((last == ',' || last == ';') && chars > maxChars / 2))
+            flush(first, i), first = i + 1, chars = 0;
     }
-    flush();
+    flush(first, int(words.size()) - 1);
     // Long enough to read (0.6 s + 50 ms per character), up to the next cue: whisper gives "Ja, ja, ja," 0.1 s
     for (int i = 0; i < cues.size(); ++i) {
         const int minimum = int(std::lround((0.6 + 0.05 * cues[i].text.size()) * fps));

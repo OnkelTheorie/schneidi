@@ -79,6 +79,16 @@ int main(int argc, char** argv)
     // Short lines: a comma in the second half ends a cue; nothing longer than maxChars unless one word is
     CHECK_EQ(cues(Transcript::toCues(r.words, 25, 10, 5000)),
              QString("8-18 Hallo, | 18-25 schöne | 25-35 Grüße. | 35-133 Nach der | 133-154 Pause"));
+    // A long phrase becomes even lines, not a full line and one word left over ("… beleidigt dich | nicht.")
+    {
+        QVector<Transcript::Word> ws;
+        qint64 t = 0;
+        for (const QString& s : QString("aber wenn du Softbox guckst beleidigt dich nicht.").split(' '))
+            ws << Transcript::Word{t, t + 300, s}, t += 300;
+        QStringList lines;
+        for (const auto& c : Transcript::toCues(ws, 25, 42)) lines << c.text;
+        CHECK_EQ(lines.join(" | "), QString("aber wenn du Softbox guckst | beleidigt dich nicht."));
+    }
 
     // Levels of a 1 kHz sine at half scale: about -9 dB, silence -120 dB
     {
