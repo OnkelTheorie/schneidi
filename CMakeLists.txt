@@ -47,6 +47,13 @@ add_library(schneidi_lib STATIC
     src/core/EditorSubtitles.cpp
     src/core/EditorCompound.cpp
     src/core/EditorAttributes.cpp
+    src/core/EditorDetail.h
+    src/core/EditorTracks.cpp
+    src/core/EditorTrim.cpp
+    src/core/EditorSource.cpp
+    src/core/EditorTransitions.cpp
+    src/core/EditorRetime.cpp
+    src/core/EditorEffects.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
     src/core/EffectFolders.h      src/core/EffectFolders.cpp
     src/core/Presets.h            src/core/Presets.cpp
@@ -75,6 +82,9 @@ add_library(schneidi_lib STATIC
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
     src/app/MainWindow.h          src/app/MainWindow.cpp
+    src/app/MainWindowActions.cpp
+    src/app/MainWindowLayout.cpp
+    src/app/MainWindowProject.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
@@ -90,6 +100,11 @@ add_library(schneidi_lib STATIC
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/TrimView.h             src/ui/TrimView.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
+    src/ui/InspectorDetail.h
+    src/ui/InspectorSections.cpp
+    src/ui/InspectorTitle.cpp
+    src/ui/InspectorTransition.cpp
+    src/ui/InspectorSubtitles.cpp
     src/ui/ColorPanel.h           src/ui/ColorPanel.cpp
     src/ui/Scopes.h               src/ui/Scopes.cpp
     src/ui/ScopesPanel.h          src/ui/ScopesPanel.cpp
@@ -100,6 +115,13 @@ add_library(schneidi_lib STATIC
     src/ui/timeline/ViewState.h
     src/ui/timeline/TimelineView.h    src/ui/timeline/TimelineView.cpp
     src/ui/timeline/TimelineCurves.cpp
+    src/ui/timeline/TimelinePaint.cpp
+    src/ui/timeline/TimelineMouse.cpp
+    src/ui/timeline/TimelineDrop.cpp
+    src/ui/timeline/TimelineMenus.cpp
+    src/ui/timeline/TimelineSubtitles.cpp
+    src/ui/timeline/TimelineRetime.cpp
+    src/ui/timeline/TimelineViewDetail.h
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp
 )
 
