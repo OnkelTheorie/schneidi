@@ -531,6 +531,28 @@ const QVector<Command>& commands()
           {"threshold", T::Number, "how different two frames must be, 0..1 (default 0.3; lower finds more cuts)"},
           {"min", T::Time, "shortest scene (default 0.5s)"}},
          cmdScenes},
+        {"transcribe", "Speech to text with whisper (offline; install it with `extensions`). Returns subtitle-sized "
+                       "'segments' with times and, with words, every word's time (to cut out words or filler). "
+                       "Source: a media file or a project (its timeline sound, times in timeline frames).",
+         {{"source", T::Path, "media file or project (.schneidi)", true, true},
+          {"project", T::Path, "for a media file: count frames in this project's frame rate"},
+          {"language", T::String, "spoken language: de, en, fr, … (default auto = detect)"},
+          {"model", T::String, "turbo, small, base, tiny or a model file (default: best installed)"},
+          {"words", T::Boolean, "also return every word with its time"},
+          {"srt", T::Path, "also write the segments as an SRT file"},
+          {"max_chars", T::Integer, "longest segment in characters (default 42, one subtitle line)"},
+          {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"},
+          {"from", T::Time, "for a project: start of the range"},
+          {"to", T::Time, "for a project: end of the range"},
+          {"threads", T::Integer, "processor threads (default: half of them)"}},
+         cmdTranscribe},
+        {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models. "
+                       "Without arguments: list with sizes and what is installed.",
+         {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: turbo 574 MB, "
+                                 "small 190 MB, base 60 MB, tiny 32 MB)"},
+          {"remove", T::String, "ids to delete again"},
+          {"reinstall", T::Boolean, "download again even if installed"}},
+         cmdExtensions},
         {"effects", "Video effects for the 'effect' edit operation: all ids with their parameter names, or one "
                     "effect with types, ranges and defaults.",
          {{"effect", T::String, "only this effect, with parameter details", false, true}}, cmdEffects},

@@ -1,15 +1,23 @@
 // schneidi-cli: commands that look at the material (probe, silence, scenes, frames) without changing a project
 #include "cli/CommandsDetail.h"
 
+#include "core/I18n.h"
 #include "core/ProjectFile.h"
+#include "core/Subtitles.h"
+#include "core/Transcript.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Bundle.h"
 #include "engine/Engine.h"
+#include "engine/Exporter.h"
+#include "engine/Extensions.h"
+#include "engine/Transcriber.h"
 #include "engine/Profiles.h"
 #include "engine/Snapshot.h"
 
 #include <QDir>
+#include <QEventLoop>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QPainter>
@@ -274,6 +282,151 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
         ctx.images = images;
     }
     return result;
+}
+
+QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
+{
+    const QString src = a["source"].toString();
+    TranscribeRequest req;
+    req.model = Extensions::whisperModelPath(a["model"].toString());
+    if (req.model.isEmpty())
+        fail("NOT_INSTALLED", a.contains("model") ? "whisper model not installed: " + a["model"].toString()
+                                                  : "no whisper model installed (see `extensions`, e.g. --install whisper,small)");
+    if (Extensions::whisperProgram().isEmpty())
+        fail("NOT_INSTALLED", "whisper is not installed (see `extensions`, e.g. --install whisper,small)");
+    req.language = a.contains("language") ? a["language"].toString() : "auto";
+    req.threads = a["threads"].toInt();
+    ProjectFormat f;
+    int offset = 0, length = 0;
+    if (src.endsWith("." + QString(ProjectFile::Extension))) {
+        // The timeline's sound as it is mixed for the export; times are timeline frames
+        Session s(src);
+        f = s.format();
+        req.timeline = s.project.renderTimeline();
+        req.format = f;
+        const int end = TimelineOps::endFrame(req.timeline);
+        if (end <= 0) fail("EMPTY", "the timeline is empty");
+        req.from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
+        req.to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
+        if (req.to <= req.from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
+        offset = req.from;
+        length = req.to - req.from;
+    } else {
+        QJsonObject ma{{"file", src}};
+        if (a.contains("project")) ma["project"] = a["project"];
+        const MediaSource m = openMedia(ma);
+        if (!m.info.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.info.path);
+        f = m.format;
+        req.media = m.info.path;
+        req.audioStream = std::clamp(a["audio_stream"].toInt(), 0, std::max(0, m.info.audioStreamCount() - 1));
+        length = m.info.length;
+    }
+
+    Transcriber t;
+    QEventLoop loop;
+    bool ok = false;
+    QString message;
+    QObject::connect(&t, &Transcriber::progress, &loop, [&ctx](double p) {
+        if (ctx.progress) ctx.progress(p);
+    });
+    QObject::connect(&t, &Transcriber::finished, &loop, [&](bool success, const QString& msg) {
+        ok = success;
+        message = msg;
+        loop.quit();
+    });
+    QString error;
+    if (!t.start(req, &error)) fail("TRANSCRIBE_FAILED", error);
+    loop.exec();
+    if (!ok) fail("TRANSCRIBE_FAILED", message);
+
+    const Transcript::Result& r = t.result();
+    const int maxChars = a.contains("max_chars") ? std::clamp(a["max_chars"].toInt(), 10, 200) : 42;
+    const QVector<SubtitleCue> cues = Transcript::toCues(r.words, f.rate.fps(), maxChars, 700, offset);
+    QJsonArray segments;
+    for (const SubtitleCue& c : cues) {
+        QJsonObject o = range(c.start, std::min(c.end, offset + length), f);
+        o["text"] = c.text;
+        segments << o;
+    }
+    QJsonObject out{{"source", absolute(src)}, {"language", r.language}, {"fps", formatJson(f)["fps"]},
+                    {"model", QFileInfo(req.model).fileName()}, {"segments", segments}};
+    if (a["words"].toBool()) {
+        // Word times for cutting: `to` is where the word is spoken to (pauses after it are left out)
+        QJsonArray words;
+        const auto fr = [&](qint64 ms) { return offset + int(std::lround(ms / 1000.0 * f.rate.fps())); };
+        for (const Transcript::Word& w : r.words)
+            words << QJsonObject{{"from", fr(w.from)}, {"to", std::max(fr(w.from) + 1, fr(Transcript::spokenEnd(w)))},
+                                 {"text", w.text}};
+        out["words"] = words;
+    }
+    if (a.contains("srt")) {
+        const QString path = absolute(a["srt"].toString());
+        QFile file(path);
+        QVector<SubtitleCue> shifted = cues;
+        if (!file.open(QIODevice::WriteOnly) || file.write(Subtitles::toSrt(shifted, f.rate.fps(), offset)) < 0)
+            fail("WRITE_FAILED", "cannot write " + path);
+        out["srt"] = path;
+    }
+    return out;
+}
+
+QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx)
+{
+    // "whisper,small" -> items; short model names work too
+    const auto items = [](const QString& list) {
+        QVector<const Extensions::Item*> out;
+        for (QString id : list.split(',', Qt::SkipEmptyParts)) {
+            id = id.trimmed();
+            const Extensions::Item* i = Extensions::find(id);
+            if (!i) i = Extensions::find("whisper-model-" + id);
+            if (!i) fail("NOT_FOUND", "no extension " + id + " (see `extensions`)");
+            out << i;
+        }
+        return out;
+    };
+    QJsonArray done;
+    for (const Extensions::Item* i : Extensions::withDependencies(items(a["remove"].toString()))) {
+        if (!Extensions::remove(*i)) fail("FAILED", "could not remove " + i->id);
+        done << QJsonObject{{"removed", i->id}};
+    }
+    const QVector<const Extensions::Item*> install = Extensions::withDependencies(items(a["install"].toString()));
+    qint64 total = 0, before = 0;
+    for (const Extensions::Item* i : install) total += i->size;
+    for (const Extensions::Item* i : install) {
+        if (Extensions::isInstalled(*i) && !a["reinstall"].toBool()) {
+            before += i->size;
+            continue;
+        }
+        Extensions::Installer installer;
+        QEventLoop loop;
+        bool ok = false;
+        QString message;
+        QObject::connect(&installer, &Extensions::Installer::progress, &loop, [&](qint64 received, qint64) {
+            if (ctx.progress && total > 0) ctx.progress(double(before + received) / total);
+        });
+        QObject::connect(&installer, &Extensions::Installer::finished, &loop, [&](bool success, const QString& msg) {
+            ok = success;
+            message = msg;
+            loop.quit();
+        });
+        QString error;
+        if (!installer.start(*i, &error)) fail("DOWNLOAD_FAILED", error);
+        loop.exec();
+        if (!ok) fail("DOWNLOAD_FAILED", i->id + ": " + message);
+        before += i->size;
+        done << QJsonObject{{"installed", i->id}};
+    }
+    QJsonArray list;
+    for (const Extensions::Item& i : Extensions::catalog()) {
+        QJsonObject o{{"id", i.id}, {"name", T(i.name)}, {"description", T(i.description)},
+                      {"download_mb", std::round(i.size / 1e5) / 10}, {"installed", Extensions::isInstalled(i)}};
+        list << o;
+    }
+    QJsonObject out{{"extensions", list}, {"folder", Extensions::rootDir()}};
+    if (!done.isEmpty()) out["done"] = done;
+    if (Extensions::find("whisper") == nullptr && !Extensions::whisperProgram().isEmpty())
+        out["whisper_program"] = Extensions::whisperProgram(); // own build on PATH
+    return out;
 }
 
 } // namespace Cli::detail

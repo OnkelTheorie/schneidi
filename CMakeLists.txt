@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 find_package(PkgConfig REQUIRED)
 # MLT liefert unter Linux und MSYS2 (Windows) eine .pc-Datei
 pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
@@ -61,6 +61,7 @@ add_library(schneidi_lib STATIC
     src/core/TruePeak.h           src/core/TruePeak.cpp
     src/core/RenderJob.h          src/core/RenderJob.cpp
     src/core/Subtitles.h          src/core/Subtitles.cpp
+    src/core/Transcript.h         src/core/Transcript.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Profiles.h         src/engine/Profiles.cpp
@@ -68,6 +69,8 @@ add_library(schneidi_lib STATIC
     src/engine/RampProducer.h     src/engine/RampProducer.cpp
     src/engine/PitchLatency.h     src/engine/PitchLatency.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
+    src/engine/Extensions.h       src/engine/Extensions.cpp
+    src/engine/Transcriber.h      src/engine/Transcriber.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/StillFetcher.h     src/engine/StillFetcher.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
@@ -90,6 +93,8 @@ add_library(schneidi_lib STATIC
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
+    src/app/ExtensionsDialog.h  src/app/ExtensionsDialog.cpp
+    src/app/TranscribeDialog.h  src/app/TranscribeDialog.cpp
     src/app/PasteAttributesDialog.h src/app/PasteAttributesDialog.cpp
     src/app/DesignDialog.h src/app/DesignDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
@@ -132,7 +137,7 @@ qt_add_resources(schneidi_lib "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_T
 file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/luts/*.cube) # tools/gen_luts.py
 qt_add_resources(schneidi_lib "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
 target_include_directories(schneidi_lib PUBLIC src)
-target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets PkgConfig::MLT)
+target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::MLT)
 
 add_executable(schneidi src/main.cpp)
 target_include_directories(schneidi PRIVATE ${CMAKE_BINARY_DIR}/generated)
