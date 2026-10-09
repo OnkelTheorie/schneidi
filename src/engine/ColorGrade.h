@@ -7,6 +7,7 @@
 
 #include <QString>
 #include <QVector>
+#include <framework/mlt_types.h>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -64,5 +65,8 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
 // Filter an einen Ausschnitt hängen (a = Clip-Frame am Anfang, für Keyframes). bypass: Vorschau-Schalter
 // „Vorher/Nachher“ (true = ohne Korrektur), nullptr = immer anwenden (Export). Nichts zu tun -> kein Filter.
 void attach(Mlt::Producer& cut, const Clip& c, int a, const std::shared_ptr<std::atomic<bool>>& bypass);
+// Filter made by attach(): give `live` the state of `fresh` (same clip, new values) while the preview may be
+// rendering; false = not both such filters
+bool transfer(mlt_filter live, mlt_filter fresh);
 
 } // namespace ColorGrade

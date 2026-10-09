@@ -4,6 +4,7 @@
 #include "core/Loudness.h"
 #include "engine/Bundle.h"
 #include "engine/Frei0r.h"
+#include "engine/LiveUpdate.h"
 #include "engine/Preroll.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
@@ -245,16 +246,27 @@ void Engine::updateTimeline(const Timeline& tl)
     {
         std::lock_guard<std::mutex> lock(m_mixerMutex);
         if (mixerOnly && m_timeline && m_mixer && TimelineBuilder::applyMixer(tl, *m_mixer)) {
+            m_built = tl;
             if (m_speed == 0.0) refresh();
             return;
         }
     }
     m_renderCache->sync(tl); // fehlende Clip-Ausgaben einreihen, überholte verwerfen
+    auto hooks = std::make_unique<MixerHooks>();
+    auto tractor = m_builder->build(tl, hooks.get());
+    // Only values changed (Inspector): copy them into the running tractor instead of restarting the consumer
+    if (m_timeline && LiveUpdate::valuesOnly(m_built, tl)) {
+        std::lock_guard<std::mutex> lock(m_mixerMutex);
+        if (LiveUpdate::transfer(*m_timeline, *tractor)) {
+            m_built = tl;
+            if (m_speed == 0.0) refresh();
+            return;
+        }
+    }
+    m_built = tl;
     const bool active = m_mode == Mode::Timeline;
     const int pos = m_position;
     if (active && m_consumer) m_consumer->stop(); // alten Tractor nicht mehr lesen lassen
-    auto hooks = std::make_unique<MixerHooks>();
-    auto tractor = m_builder->build(tl, hooks.get());
     if (hooks->master.meter) hooks->master.meter->set("_loudness", m_loudness.get(), 0);
     m_preroll->setPoints(m_builder->prerollPoints(), 3 * m_format.rate.timebase(), m_previewSize);
     {

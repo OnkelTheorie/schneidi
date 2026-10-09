@@ -136,6 +136,7 @@ private:
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Tractor> m_timeline;
+    Timeline m_built; // model m_timeline was built from (LiveUpdate)
     std::unique_ptr<MixerHooks> m_mixer;
     std::unique_ptr<SharedLoudness> m_loudness; // vom Master-Pegelmesser im Audio-Thread gefüttert
     std::unique_ptr<Preroll> m_preroll;         // Decoder vor Sprungstellen vorab positionieren

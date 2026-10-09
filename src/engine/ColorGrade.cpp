@@ -123,13 +123,18 @@ inline void sample1d(const Lut& lut, float rgb[3])
 
 // ---- MLT-Filter ----
 
-struct FilterData {
-    Clip clip;      // Kopie: Keyframes werden im Render-Thread gelesen (nur lesend)
-    int a = 0;      // Clip-Frame am Anfang des Ausschnitts
+struct State {
+    Clip clip;      // copy: keyframes are read in the render thread (read only)
+    int a = 0;      // clip frame at the start of the cut
     bool animated = false;
     Params fixed;
     std::shared_ptr<const Lut> lut;
     std::shared_ptr<std::atomic<bool>> bypass;
+};
+
+// The state can be swapped while the preview renders (transfer(), Inspector changes without a rebuild)
+struct FilterData {
+    std::atomic<std::shared_ptr<const State>> state;
 };
 
 constexpr const char* kDataName = "_schneidi_grade";
@@ -140,8 +145,9 @@ int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* wi
 {
     auto filter = static_cast<mlt_filter>(mlt_frame_pop_service(frame));
     const int pos = mlt_frame_pop_service_int(frame);
-    auto* d = static_cast<FilterData*>(mlt_properties_get_data(MLT_FILTER_PROPERTIES(filter), kDataName, nullptr));
-    if (!d || (d->bypass && d->bypass->load())) // Vorher/Nachher: Bild unverändert durchreichen
+    auto* fd = static_cast<FilterData*>(mlt_properties_get_data(MLT_FILTER_PROPERTIES(filter), kDataName, nullptr));
+    const std::shared_ptr<const State> d = fd ? fd->state.load() : nullptr;
+    if (!d || (d->bypass && d->bypass->load())) // before/after: pass the image through unchanged
         return mlt_frame_get_image(frame, image, format, width, height, 0);
     *format = mlt_image_rgba;
     const int err = mlt_frame_get_image(frame, image, format, width, height, 1);
@@ -479,29 +485,35 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
 void attach(Mlt::Producer& cut, const Clip& c, int a, const std::shared_ptr<std::atomic<bool>>& bypass)
 {
     if (!active(c)) return;
-    auto* d = new FilterData;
+    auto d = std::make_shared<State>();
     d->clip = c;
     d->a = a;
     d->animated = std::any_of(kParams.begin(), kParams.end(), [&](AnimParam p) { return Keys::animated(c, p); });
     d->fixed = at(c, a);
-    if (const QString path = lutPath(c); !path.isEmpty()) d->lut = loadLut(path); // fehlt/kaputt: ohne LUT
+    if (const QString path = lutPath(c); !path.isEmpty()) d->lut = loadLut(path); // missing/broken: no LUT
     d->bypass = bypass;
-    if (!d->animated && d->fixed.isNeutral() && !d->lut) {
-        delete d;
-        return;
-    }
+    if (!d->animated && d->fixed.isNeutral() && !d->lut) return;
     mlt_filter f = mlt_filter_new();
-    if (!f) {
-        delete d;
-        return;
-    }
+    if (!f) return;
     f->process = process;
-    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), kDataName, d, 0, destroyData, nullptr);
+    auto* fd = new FilterData;
+    fd->state.store(std::move(d));
+    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), kDataName, fd, 0, destroyData, nullptr);
     Mlt::Filter filter(f); // hält eine eigene Referenz
     mlt_filter_close(f);
     // Position für die Keyframes zählt ab Filter-In (wie bei den anderen Keyframe-Filtern)
     filter.set_in_and_out(cut.get_in(), cut.get_out());
     cut.attach(filter);
+}
+
+bool transfer(mlt_filter live, mlt_filter fresh)
+{
+    if (live->process != process || fresh->process != process) return false;
+    auto* l = static_cast<FilterData*>(mlt_properties_get_data(MLT_FILTER_PROPERTIES(live), kDataName, nullptr));
+    auto* f = static_cast<FilterData*>(mlt_properties_get_data(MLT_FILTER_PROPERTIES(fresh), kDataName, nullptr));
+    if (!l || !f) return false;
+    l->state.store(f->state.load());
+    return true;
 }
 
 } // namespace ColorGrade
