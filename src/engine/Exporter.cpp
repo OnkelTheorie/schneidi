@@ -160,12 +160,20 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         out.height = s.size.height() & ~1;
         scaleTimeline(scaled, s.format.size(), out.size());
     }
+    // Audio only: video tracks carry no sound (TimelineBuilder hides it), so skip decoding their images
+    if (s.videoCodec.isEmpty()) scaled.video.clear();
     m_profile = makeProfile(out);
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
     const int threads = s.threads > 0 ? s.threads : availableThreads();
     m_builder->setDecoderThreads(threads);
     m_builder->setSubtitles(s.burnSubtitles && !s.videoCodec.isEmpty());
     m_tractor = m_builder->build(scaled);
+    if (s.videoCodec.isEmpty()) { // keep the full length when the sound ends before the picture
+        Mlt::Playlist blank(*m_profile);
+        blank.blank(end - 1);
+        blank.set("hide", 3);
+        m_tractor->set_track(blank, m_tractor->count());
+    }
     m_tractor->set_in_and_out(m_from, m_from + m_length - 1);
 
     QDir().mkpath(QFileInfo(s.path).absolutePath());
