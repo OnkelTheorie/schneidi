@@ -35,6 +35,18 @@ QVector<EffectDescriptor>& registry()
              {"strength", T("Stärke"), {}, EffectParam::Double, 25.0, 0, 100, AnimParam::FxBlur, 0.25, 2},
          },
          true},
+        // Noise reduction for voice recordings (DaVinci: Fairlight FX → Noise Reduction). Engine: own spectral noise
+        // suppression (engine/Denoise, real time); defaults work for typical hiss/hum under speech.
+        {"denoise", T("Rauschunterdrückung"), {}, false,
+         {
+             {"reduction", T("Stärke"), {}, EffectParam::Double, 12.0, 0, 40, AnimParam::Count, 0.1, 1, {},
+              T("Um wie viel dB das Rauschen abgesenkt wird")},
+             {"floor", T("Rauschpegel"), {}, EffectParam::Double, -50.0, -80, -20, AnimParam::Count, 0.1, 1, {},
+              T("Pegel des Rauschens in dBFS – gilt, wenn „Rauschen verfolgen“ aus ist")},
+             {"track", T("Rauschen verfolgen"), {}, EffectParam::Bool, true, 0, 0, AnimParam::Count, 1, 2, {},
+              T("Misst das Rauschen laufend in der Aufnahme (in Sprechpausen) statt den festen Rauschpegel zu nehmen")},
+         },
+         true, {}, T("Senkt gleichmäßiges Rauschen (Rauschen, Brummen, Lüfter) in Sprachaufnahmen ab")},
         // Color-Seite (DaVinci „Primaries – Color Wheels“, eigener Bereich statt Effects Library): Werte wie in DaVinci
         // (Lift/Gamma 0 = neutral, Gain 1, Offset 25, Kontrast 1, Pivot 0,435, Sättigung 50), dazu LUT (.cube).
         // Engine: eigener MLT-Filter (engine/ColorGrade), wird vor allen anderen Effekten angewendet.

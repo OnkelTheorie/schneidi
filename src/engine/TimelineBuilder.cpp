@@ -6,6 +6,7 @@
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
+#include "engine/Denoise.h"
 #include "engine/Lumas.h"
 #include "engine/Profiles.h"
 #include "engine/PitchLatency.h"
@@ -189,7 +190,7 @@ void applyGeneric(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, con
                   const EffectDescriptor& d, int a, int len);
 
 // Effects in the order on the clip; a/len: section for keyframes. Video: the Color page grade first (like DaVinci:
-// grade before the edit effects), regardless of its position. Audio: the audio effects (before clip volume/pan).
+// grade before the edit effects), regardless of its position. Audio: the audio effects (before clip volume/pan); noise reduction is attached per clip instead.
 void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, TrackKind kind, int a, int len)
 {
     const bool video = kind == TrackKind::Video;
@@ -200,6 +201,7 @@ void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, Tra
         if (!d || d->video != video) continue;
         if (inst.effectId == "color") applyColor(profile, clip, c, a, len);
         else if (inst.effectId == "blur") applyBlur(profile, clip, c, a, len);
+        else if (inst.effectId == Denoise::EffectId) continue; // one filter per clip (buildTimeline)
         else applyGeneric(profile, clip, c, inst, *d, a, len);
     }
 }
@@ -1309,10 +1311,17 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             useSecond.insert(c.id, seamless ? useSecond.value(prev.id) : !useSecond.value(prev.id));
         }
 
-        // Feinposition: ein Verzögerungsfilter je Clip, an allen seinen Ausschnitten
-        QHash<int, std::shared_ptr<Mlt::Filter>> delays;
+        // Per clip, on all its cuts (their state runs on over cut boundaries): noise reduction, then the
+        // sub-frame delay (Feinposition)
+        QHash<int, std::shared_ptr<Mlt::Filter>> delays, denoisers;
         auto delayed = [&](const Clip& c, Mlt::Producer* cut) {
-            if (!cut || kind != TrackKind::Audio || c.subframe <= 0) return cut;
+            if (!cut || kind != TrackKind::Audio) return cut;
+            if (EffectRegistry::has(c, Denoise::EffectId)) {
+                auto& f = denoisers[c.id];
+                if (!f) f = Denoise::make(m_profile, c);
+                if (f) cut->attach(*f);
+            }
+            if (c.subframe <= 0) return cut;
             auto& f = delays[c.id];
             if (!f) f = makeSubframeDelay(m_profile, c.subframe);
             if (f) cut->attach(*f);
