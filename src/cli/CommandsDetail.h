@@ -8,10 +8,13 @@
 #include "core/ProjectFormat.h"
 #include "core/Selection.h"
 
+#include <QColor>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QLockFile>
 
+#include <functional>
 #include <memory>
 
 namespace Cli::detail {
@@ -45,9 +48,16 @@ struct Session {
 
     explicit Session(const QString& file, Access access = Access::Read);
     const ProjectFormat& format() const { return project.format(); }
+    // Edit/read another timeline (sequence id or name; undefined = keep). The project still opens with the
+    // timeline that was open before, unless open = true.
+    void selectTimeline(const QJsonValue& v, bool open = false);
+    int sequenceOf(const QJsonValue& v) const; // sequence id from an id or a name; throws if there is none
     QString save(); // path of the backup copy (empty = none)
     // Media in the project (imported on first use); throws if the file cannot be read
     const MediaInfo& media(const QString& file);
+
+private:
+    int m_open = 0; // sequence the app opens (restored before saving)
 };
 
 QString trackName(TrackRef r);
@@ -56,10 +66,34 @@ int parseTrack(const QJsonValue& v, TrackKind* kind = nullptr);
 QJsonObject timelineJson(const Project& p);
 QJsonObject projectJson(const Project& p, const QString& path);
 
-// ---------- Edit operations (EditOps.cpp) ----------
+QJsonArray timelinesJson(const Project& p);
 
-extern const QString kEditHelp;
+// ---------- Edit operations (EditOps*.cpp) ----------
+
+// One `op` of the edit command; usage/summary go into the parameter description the AI reads, details into
+// `help edit`
+struct OpDef {
+    QString name;
+    QString usage;   // e.g. "{op:'split', at, clip?}"
+    QString summary; // one line, may be empty
+    QString details; // longer description (parameter names, ranges), may be empty
+    std::function<void(Session&, const QJsonObject&)> run;
+};
+const QVector<OpDef>& editOps();
+void addTimelineOps(QVector<OpDef>& ops); // EditOpsTimelines.cpp
+QString editHelp();
+QJsonArray editOpsHelp();
 void applyOp(Session& s, const QJsonObject& op);
+
+// Helpers for the operations
+const Clip& clipOf(Session& s, const QJsonObject& op, const char* key = "clip");
+// Clip ids of `clips` (or `clip`) with linked partners unless linked:false; cues = subtitle ids allowed too
+QVector<int> clipIds(Session& s, const QJsonObject& op, bool cues = false);
+// Only the clips on video (or audio) tracks; fails if none is left
+QVector<int> onTracks(Session& s, const QVector<int>& ids, TrackKind kind, const char* what);
+int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback = -1);
+double numberOf(const QJsonObject& op, const char* key, double lo, double hi);
+QColor colorOf(const QJsonValue& v, const QString& what);
 
 // ---------- Analysis (Analysis.cpp) ----------
 

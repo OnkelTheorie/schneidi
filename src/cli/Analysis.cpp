@@ -220,6 +220,7 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
     int length = 0;
     if (isProject) {
         session = std::make_unique<Session>(src);
+        session->selectTimeline(a["timeline"]);
         f = session->format();
         length = TimelineOps::endFrame(session->project.timeline());
     } else {
@@ -301,6 +302,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     if (src.endsWith("." + QString(ProjectFile::Extension))) {
         // The timeline's sound as it is mixed for the export; times are timeline frames
         Session s(src);
+        s.selectTimeline(a["timeline"]);
         f = s.format();
         req.timeline = s.project.renderTimeline();
         req.format = f;

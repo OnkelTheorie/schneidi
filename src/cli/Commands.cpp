@@ -109,11 +109,33 @@ Session::Session(const QString& file, Access access) : path(absolute(file))
     QString error;
     if (!ProjectFile::load(path, &d, &error)) fail("BAD_PROJECT", error);
     project.load(d);
+    m_open = project.currentSequence();
+}
+
+int Session::sequenceOf(const QJsonValue& v) const
+{
+    if (v.isDouble() && project.sequence(v.toInt())) return v.toInt();
+    const QString name = v.toVariant().toString().trimmed();
+    for (const Sequence& q : project.sequences())
+        if (q.name.compare(name, Qt::CaseInsensitive) == 0 || QString::number(q.id) == name) return q.id;
+    QStringList names;
+    for (const Sequence& q : project.sequences()) names << QString("%1 \"%2\"").arg(q.id).arg(q.name);
+    fail("NOT_FOUND", QString("no timeline '%1' (there are: %2)").arg(name, names.join(", ")));
+}
+
+void Session::selectTimeline(const QJsonValue& v, bool open)
+{
+    if (v.isUndefined() || v.isNull()) return;
+    const int id = sequenceOf(v);
+    project.setCurrentSequence(id);
+    if (open) m_open = id;
 }
 
 QString Session::save()
 {
     if (!lock) fail("INTERNAL", "session was opened read-only");
+    // The app opens the timeline the user had open (or the one an op asked for), not the last one edited
+    if (project.sequence(m_open)) project.setCurrentSequence(m_open);
     const QString backup = ProjectFile::backup(path);
     QString error;
     if (!ProjectFile::save(project.data(), path, &error)) fail("SAVE_FAILED", error);
@@ -215,7 +237,8 @@ QJsonObject timelineJson(const Project& p)
     QJsonArray markers;
     for (int m : tl.markers) markers << m;
     const int end = TimelineOps::endFrame(tl);
-    QJsonObject o{{"length", end}, {"length_s", seconds(end, f)}, {"length_tc", tc(end, f)}, {"tracks", tracks},
+    QJsonObject o{{"id", p.currentSequence()}, {"name", p.sequenceName(p.currentSequence())},
+                  {"length", end}, {"length_s", seconds(end, f)}, {"length_tc", tc(end, f)}, {"tracks", tracks},
                   {"markers", markers}};
     QJsonArray subtitles;
     for (int i = 0; i < tl.subtitles.size(); ++i) {
@@ -236,6 +259,18 @@ QJsonObject timelineJson(const Project& p)
     return o;
 }
 
+QJsonArray timelinesJson(const Project& p)
+{
+    QJsonArray list;
+    for (const Sequence& q : p.sequences()) {
+        const int end = TimelineOps::endFrame(q.timeline);
+        QJsonObject o{{"id", q.id}, {"name", q.name}, {"length", end}, {"length_tc", tc(end, p.format())}};
+        if (q.compound) o["compound"] = true;
+        list << o;
+    }
+    return list;
+}
+
 QJsonObject projectJson(const Project& p, const QString& path)
 {
     QJsonArray media;
@@ -246,7 +281,8 @@ QJsonObject projectJson(const Project& p, const QString& path)
         if (!QFileInfo::exists(m.path)) o["offline"] = true;
         media << o;
     }
-    return {{"project", path}, {"format", formatJson(p.format())}, {"media", media}, {"timeline", timelineJson(p)}};
+    return {{"project", path}, {"format", formatJson(p.format())}, {"media", media}, {"timelines", timelinesJson(p)},
+            {"timeline", timelineJson(p)}};
 }
 
 } // namespace detail
@@ -283,6 +319,7 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
 QJsonObject cmdInfo(const QJsonObject& a, Context&)
 {
     Session s(a["project"].toString());
+    s.selectTimeline(a["timeline"]);
     return projectJson(s.project, s.path);
 }
 
@@ -300,6 +337,7 @@ QJsonObject cmdImport(const QJsonObject& a, Context&)
 QJsonObject cmdEdit(const QJsonObject& a, Context&)
 {
     Session s(a["project"].toString(), a["dry_run"].toBool() ? Session::Access::Read : Session::Access::Write);
+    s.selectTimeline(a["timeline"]);
     QJsonValue opsValue = a["ops"];
     if (opsValue.isObject()) opsValue = QJsonArray{opsValue};
     const QJsonArray ops = opsValue.toArray();
@@ -313,12 +351,13 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
         }
     }
     const bool dry = a["dry_run"].toBool();
-    QJsonObject o{{"project", s.path}, {"ops", ops.size()}, {"saved", !dry}};
+    // The timeline edited last (save() may switch back to the one the app opens)
+    QJsonObject o{{"project", s.path}, {"ops", ops.size()}, {"saved", !dry}, {"timeline", timelineJson(s.project)}};
+    if (s.project.sequences().size() > 1) o["timelines"] = timelinesJson(s.project);
     if (!dry) {
         const QString backup = s.save();
         if (!backup.isEmpty()) o["backup"] = backup;
     }
-    o["timeline"] = timelineJson(s.project);
     return o;
 }
 
@@ -383,6 +422,7 @@ QJsonObject cmdRestore(const QJsonObject& a, Context&)
 QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
 {
     Session s(a["project"].toString());
+    s.selectTimeline(a["timeline"]);
     const QString formatId = a.contains("format") ? a["format"].toString() : "h264";
     const auto& formats = renderFormats();
     if (std::none_of(formats.begin(), formats.end(), [&](const RenderFormatInfo& i) { return formatId == i.id; }))
@@ -486,13 +526,17 @@ const QVector<Command>& commands()
           {"media", T::Paths, "media files to import"},
           {"overwrite", T::Boolean, "replace an existing project"}},
          cmdNew},
-        {"info", "Show a project: format, media, tracks and clips (ids, positions, source ranges).",
-         {{"project", T::Path, "project file", true, true}}, cmdInfo},
+        {"info", "Show a project: format, media, its timelines and one timeline's tracks and clips (ids, positions, "
+                 "source ranges).",
+         {{"project", T::Path, "project file", true, true},
+          {"timeline", T::String, "timeline to show (id or name; default: the open one)"}},
+         cmdInfo},
         {"import", "Add media files to a project's media pool.",
          {{"project", T::Path, "project file", true, true}, {"files", T::Paths, "media files", true, true}}, cmdImport},
         {"edit", "Apply edit operations to a project and save it (a backup of the previous state is kept).",
          {{"project", T::Path, "project file", true, true},
-          {"ops", T::Json, kEditHelp, true},
+          {"ops", T::Json, editHelp(), true},
+          {"timeline", T::String, "timeline to edit (id or name from `info`; default: the open one)"},
           {"dry_run", T::Boolean, "only show the resulting timeline, do not save"}},
          cmdEdit},
         {"backups", "List the backup copies of a project (every save keeps the previous state, newest first).",
@@ -510,6 +554,7 @@ const QVector<Command>& commands()
           {"height", T::Integer, "shorter image edge, e.g. 720 (default: timeline resolution)"},
           {"from", T::Time, "start of the range (default: timeline start)"},
           {"to", T::Time, "end of the range, exclusive (default: timeline end)"},
+          {"timeline", T::String, "timeline to render (id or name; default: the open one)"},
           {"overwrite", T::Boolean, "replace an existing output file"}},
          cmdRender},
         {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams.",
@@ -544,6 +589,7 @@ const QVector<Command>& commands()
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"},
           {"from", T::Time, "for a project: start of the range"},
           {"to", T::Time, "for a project: end of the range"},
+          {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A3\" or \"A2,A3\" (the voice without music; "
                                 "muted ones too; default: what is audible)"},
           {"threads", T::Integer, "processor threads (default: half of them)"}},
@@ -567,7 +613,8 @@ const QVector<Command>& commands()
           {"out", T::Path, "folder for the images (with sheet: image file)"},
           {"sheet", T::Boolean, "one contact sheet image instead of single images"},
           {"width", T::Integer, "longer image edge in pixels (default 640, MCP 480)"},
-          {"project", T::Path, "for a media file: count frames in this project's frame rate"}},
+          {"project", T::Path, "for a media file: count frames in this project's frame rate"},
+          {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"}},
          cmdFrames},
     };
     return list;
@@ -678,8 +725,9 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
         QJsonArray positional;
         for (const Param& p : c.params)
             if (p.positional) positional << p.name;
-        list << QJsonObject{{"name", c.name}, {"summary", c.summary}, {"positional", positional},
-                            {"params", inputSchema(c)}};
+        QJsonObject o{{"name", c.name}, {"summary", c.summary}, {"positional", positional}, {"params", inputSchema(c)}};
+        if (c.name == "edit" && a.contains("command")) o["ops"] = editOpsHelp();
+        list << o;
     }
     if (list.isEmpty()) fail("NOT_FOUND", "no command " + a["command"].toString());
     return {{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},

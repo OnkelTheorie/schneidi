@@ -164,5 +164,49 @@ int main(int argc, char** argv)
         CHECK_EQ(errorOf("info", {{"project", g_path}}), QString("none"));
     }
     edit(R"([{"op":"marker","at":1}])");
+
+    // Several timelines: a new one gets edited by the following ops, the app keeps opening the old one;
+    // `timeline` selects one for edit/info, place_timeline nests it, compound/decompose
+    {
+        const QJsonObject r = edit(R"([{"op":"new_timeline","name":"Short"},
+                                       {"op":"append","media":"/x/a.mp4","in":0,"out":20}])");
+        CHECK_EQ(r["timeline"]["name"].toString(), QString("Short"));
+        CHECK_EQ(r["timelines"].toArray().size(), 2);
+        ProjectData d;
+        ProjectFile::load(g_path, &d, nullptr);
+        CHECK_EQ(d.currentSequence, 1); // still the first one
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"new_timeline","name":"short"}])"}}),
+                 QString("EXISTS"));
+        CHECK_EQ(errorOf("info", {{"project", g_path}, {"timeline", "Nope"}}), QString("NOT_FOUND"));
+        QJsonObject other = run("info", {{"project", g_path}, {"timeline", "short"}})["timeline"].toObject();
+        CHECK_EQ(other["length"].toInt(), 20);
+        const int shortId = other["id"].toInt();
+
+        edit(R"([{"op":"clear"},{"op":"place_timeline","timeline":"Short","at":0}])");
+        QJsonObject tl = run("info", {{"project", g_path}})["timeline"].toObject();
+        CHECK_EQ(tl["tracks"][0]["clips"][0]["kind"].toString(), QString("compound"));
+        CHECK_EQ(tl["length"].toInt(), 20);
+        // the nested timeline cannot go
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"remove_timeline","timeline":%1}])").arg(shortId)}}),
+                 QString("FAILED"));
+        const int nested = tl["tracks"][0]["clips"][0]["id"].toInt();
+        edit(QString(R"([{"op":"decompose","clips":[%1]},{"op":"remove_timeline","timeline":%2},
+                         {"op":"split","at":10}])").arg(nested).arg(shortId).toUtf8().constData());
+        tl = run("info", {{"project", g_path}})["timeline"].toObject();
+        CHECK_EQ(tl["tracks"][0]["clips"].toArray().size(), 2);
+        CHECK_EQ(tl["tracks"][0]["clips"][0]["kind"].toString(), QString("media"));
+        const int a = tl["tracks"][0]["clips"][0]["id"].toInt(), b = tl["tracks"][0]["clips"][1]["id"].toInt();
+        const QJsonObject c = edit(QString(R"([{"op":"compound","clips":[%1,%2],"name":"Both"}])").arg(a).arg(b).toUtf8().constData());
+        CHECK_EQ(c["timeline"]["tracks"][0]["clips"].toArray().size(), 1);
+        CHECK_EQ(c["timelines"][1]["name"].toString(), QString("Both"));
+        CHECK(c["timelines"][1]["compound"].toBool());
+        // Edit inside the compound clip, open it next time in the app
+        edit(R"([{"op":"timeline","timeline":"Both","open":true},{"op":"marker","at":2}])");
+        ProjectFile::load(g_path, &d, nullptr);
+        CHECK_EQ(d.timeline.markers, QVector<int>{2});
+        edit(R"([{"op":"duplicate_timeline","name":"Copy","switch":true},{"op":"rename_timeline","name":"Copy 2"}])");
+        CHECK_EQ(run("info", {{"project", g_path}})["timelines"].toArray().size(), 3);
+        CHECK_EQ(run("info", {{"project", g_path}, {"timeline", "Copy 2"}})["timeline"].toObject()["markers"].toArray().at(0).toInt(), 2);
+    }
     return Check::result();
 }
