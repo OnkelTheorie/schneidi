@@ -44,7 +44,12 @@ namespace detail {
 
 void fail(const QString& code, const QString& message) { throw Error{code, message}; }
 
-QString absolute(const QString& path) { return path.isEmpty() ? path : QFileInfo(path).absoluteFilePath(); }
+QString absolute(const QString& path)
+{
+    if (path.isEmpty()) return path;
+    if (Live::isAppProject(path)) return QString(Live::AppProject); // not a file in the working directory
+    return QFileInfo(path).absoluteFilePath();
+}
 
 // ---------- Times ----------
 
@@ -554,10 +559,45 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     return o;
 }
 
+// Project file of `project` ("@app" or a file open in the app = the file the app saved it to); throws if the
+// project in the app was never saved
+QString projectFileOf(const QString& project)
+{
+    QString path = absolute(project);
+    bool live = false;
+    if (LiveHost* h = Live::host()) {
+        path = h->liveProjectPath();
+        live = true;
+    } else if (Live::Connection* c = Live::connectionFor(path)) {
+        path = Live::projectPath(c);
+        live = true;
+    }
+    if (live && path.isEmpty())
+        fail("NOT_SAVED", "the project in the schneidi app was never saved, so it has no backups yet");
+    if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
+    return path;
+}
+
+// Backup copy by number from `backups` (1 = newest) or file
+QString backupFile(const QString& path, const QJsonObject& a)
+{
+    const QStringList files = ProjectFile::backups(path);
+    const QString which = a.contains("backup") ? a["backup"].toVariant().toString() : QString("1");
+    bool isIndex = false;
+    const int index = which.toInt(&isIndex);
+    if (isIndex) {
+        if (index < 1 || index > files.size())
+            fail("NOT_FOUND", QString("no backup %1 (there are %2, see `backups`)").arg(index).arg(files.size()));
+        return files[index - 1];
+    }
+    const QString source = absolute(which);
+    if (!QFileInfo::exists(source)) fail("NOT_FOUND", "backup not found: " + source);
+    return source;
+}
+
 QJsonObject cmdBackups(const QJsonObject& a, Context&)
 {
-    const QString path = absolute(a["project"].toString());
-    if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
+    const QString path = projectFileOf(a["project"].toString());
     QJsonArray list;
     const QStringList files = ProjectFile::backups(path);
     for (int i = 0; i < files.size(); ++i) {
@@ -581,26 +621,35 @@ QJsonObject cmdBackups(const QJsonObject& a, Context&)
 
 QJsonObject cmdRestore(const QJsonObject& a, Context&)
 {
+    // In the app: the backup replaces its timelines as one undo step, nothing is saved
+    if (LiveHost* h = Live::host()) {
+        const QString path = projectFileOf(a["project"].toString());
+        const QString source = backupFile(path, a);
+        ProjectData d;
+        QString error;
+        if (!ProjectFile::load(source, &d, &error)) fail("BAD_PROJECT", error);
+        Project* p = h->liveProject();
+        if (!(d.format == p->format()))
+            fail("FORMAT_DIFFERS", "the backup has another project format (resolution/frame rate); close the project "
+                                   "in the app and restore the file");
+        Project restored;
+        restored.load(d);
+        for (const MediaInfo& m : restored.media()) p->addMedia(m);
+        p->closeMerge();
+        p->editSequences(T("KI: %1").arg("restore"), [&](QVector<Sequence>& seqs, int& current) {
+            seqs = restored.sequences();
+            current = restored.currentSequence();
+        });
+        p->closeMerge();
+        return {{"project", path}, {"restored", source}, {"live", true}, {"timeline", timelineJson(*p)}};
+    }
     const QString path = absolute(a["project"].toString());
-    if (Live::connectionFor(path))
-        fail("APP_OPEN", "the project is open in the schneidi app: undo there with the `app` command (action undo)");
+    if (Live::isAppProject(path)) fail("NO_APP", "the schneidi app is not running");
     if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
     const auto lock = ProjectFile::lock(path);
     if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
     // Pick the copy before the current state goes into the backups (that shifts the numbers)
-    const QStringList files = ProjectFile::backups(path);
-    const QString which = a.contains("backup") ? a["backup"].toString() : QString("1");
-    QString source;
-    bool isIndex = false;
-    const int index = which.toInt(&isIndex);
-    if (isIndex) {
-        if (index < 1 || index > files.size())
-            fail("NOT_FOUND", QString("no backup %1 (there are %2, see `backups`)").arg(index).arg(files.size()));
-        source = files[index - 1];
-    } else {
-        source = absolute(which);
-        if (!QFileInfo::exists(source)) fail("NOT_FOUND", "backup not found: " + source);
-    }
+    const QString source = backupFile(path, a);
     ProjectData d;
     QString error;
     if (!ProjectFile::load(source, &d, &error)) fail("BAD_PROJECT", error);
@@ -864,10 +913,11 @@ const QVector<Command>& commands()
           {"dry_run", T::Boolean, "only show the resulting timeline, do not save"}},
          cmdEdit},
         {"backups", "List the backup copies of a project (every save keeps the previous state, newest first).",
-         {{"project", T::Path, "project file", true, true}}, cmdBackups},
+         {{"project", T::Path, "project file or \"@app\"", true, true}}, cmdBackups},
         {"restore", "Undo: put a backup copy back as the project (the current state becomes a backup itself, so "
-                    "restore can be undone too).",
-         {{"project", T::Path, "project file", true, true},
+                    "restore can be undone too). Open in the app: replaces the timelines there as one undo step, "
+                    "nothing is saved.",
+         {{"project", T::Path, "project file or \"@app\"", true, true},
           {"backup", T::String, "number from `backups` (default 1 = state before the last change) or a backup file"}},
          cmdRestore},
         {"app", "The schneidi app (live, when it has the project open): see what the user sees (playhead, selection, "
@@ -984,7 +1034,7 @@ const QVector<Command>& commands()
 
 bool runsInApp(const Command& cmd, const QJsonObject& args)
 {
-    if (cmd.name == "app" || cmd.name == "import") return true;
+    if (cmd.name == "app" || cmd.name == "import" || cmd.name == "restore") return true;
     return cmd.name == "edit" && !args["dry_run"].toBool();
 }
 

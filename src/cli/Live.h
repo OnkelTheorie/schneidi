@@ -84,6 +84,8 @@ private:
 // NO_APP / AMBIGUOUS. The connection stays open for the process (the MCP server keeps its session).
 class Connection;
 Connection* connectionFor(const QString& project);
+// Project file open in the app (empty = never saved)
+QString projectPath(Connection* c);
 // The open project as a project file (JSON) plus the app state; for reading commands
 struct Snapshot {
     QString path; // project file in the app (empty = never saved)

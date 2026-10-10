@@ -170,8 +170,23 @@ int main(int argc, char* argv[])
     CHECK_EQ(fileVideoClips(fake.path), 2);
     CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
 
-    // restore would overwrite the file under the app
-    CHECK_EQ(code(cli({"restore", fake.path})), QString("APP_OPEN"));
+    // backups/restore: "@app" is the app's file; restore replaces the timelines in the app as one undo step
+    CHECK(!ProjectFile::backup(fake.path).isEmpty()); // state with 2 clips
+    r = cli({"backups", "@app"});
+    CHECK_EQ(code(r), QString("ok"));
+    CHECK_EQ(r["backups"].toArray().size(), 1);
+    CHECK_EQ(code(cli({"edit", "@app", "--ops", R"([{"op":"split","at":70}])"})), QString("ok"));
+    CHECK_EQ(videoClips(fake.project), 3);
+    r = cli({"restore", "@app"});
+    CHECK_EQ(code(r), QString("ok"));
+    CHECK(r["live"].toBool());
+    CHECK_EQ(videoClips(fake.project), 2);
+    CHECK_EQ(fake.project.undoStack()->undoText(), QString("KI: restore"));
+    CHECK_EQ(code(cli({"app", "undo"})), QString("ok"));
+    CHECK_EQ(videoClips(fake.project), 3);
+    // The file path of the project open in the app uses the same connection (not "busy" with itself)
+    CHECK_EQ(code(cli({"restore", fake.path})), QString("ok"));
+    CHECK_EQ(videoClips(fake.project), 2);
 
     // The user disconnects the AI: refused until allowed again
     server.disconnectClient();
@@ -184,15 +199,18 @@ int main(int argc, char* argv[])
         QProcess mcp;
         mcp.start(SCHNEIDI_CLI, {"mcp"});
         mcp.write(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})" "\n");
-        mcp.write(QByteArray(R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"info","arguments":{"project":")")
+        // "@app" first, then the file path of the same project: one connection, not busy with itself
+        mcp.write(R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"info","arguments":{"project":"@app"}}})" "\n");
+        mcp.write(QByteArray(R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"info","arguments":{"project":")")
                   + fake.path.toUtf8() + R"("}}})" "\n");
         QByteArray out;
-        for (int i = 0; i < 2000 && out.count('\n') < 2; ++i) {
+        for (int i = 0; i < 2000 && out.count('\n') < 3; ++i) {
             mcp.waitForReadyRead(5);
             out += mcp.readAllStandardOutput();
             QCoreApplication::processEvents();
         }
-        CHECK(out.contains("\\\"ok\\\":true"));
+        CHECK_EQ(out.count("\\\"ok\\\":true"), qsizetype(2));
+        CHECK(!out.contains("APP_BUSY"));
         CHECK(server.attached());
         CHECK_EQ(server.client(), QString("schneidi-cli mcp"));
         CHECK_EQ(code(cli({"info", fake.path})), QString("APP_BUSY"));

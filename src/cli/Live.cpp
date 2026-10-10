@@ -375,10 +375,12 @@ std::vector<Candidate> runningApps()
         auto c = std::make_unique<Connection>();
         c->socket.connectToServer(entry.value("server").toString());
         if (!c->socket.waitForConnected(1000)) {
-            // App gone without cleaning up (crash): forget it
+            // App gone without cleaning up (crash): forget it and its socket file
             if (c->socket.error() == QLocalSocket::ServerNotFoundError
-                || c->socket.error() == QLocalSocket::ConnectionRefusedError)
+                || c->socket.error() == QLocalSocket::ConnectionRefusedError) {
                 QFile::remove(fi.absoluteFilePath());
+                QLocalServer::removeServer(entry.value("server").toString());
+            }
             continue;
         }
         QJsonObject hello;
@@ -408,6 +410,14 @@ Connection* connectionFor(const QString& project)
         if (it->second->socket.state() == QLocalSocket::ConnectedState) return it->second.get();
         map.erase(it);
     }
+    // The file of an app this process is already attached to (e.g. as "@app"): same connection, a second one
+    // would be refused as busy
+    if (!any)
+        for (auto& [k, conn] : map)
+            if (conn->socket.state() == QLocalSocket::ConnectedState) {
+                const QString open = projectPath(conn.get());
+                if (!open.isEmpty() && canonical(open) == key) return conn.get();
+            }
     std::vector<Candidate> apps = runningApps();
     Candidate* pick = nullptr;
     if (any) {
@@ -435,6 +445,14 @@ Connection* connectionFor(const QString& project)
     Connection* c = pick->conn.get();
     map[key] = std::move(pick->conn);
     return c;
+}
+
+QString projectPath(Connection* c)
+{
+    // hello again: the app may have saved the project under a new name since
+    const QJsonObject r = c->request({{"type", "hello"}}, 3000);
+    if (r.value("ok").toBool()) c->project = r.value("project").toString();
+    return c->project;
 }
 
 Snapshot snapshot(Connection* c)
