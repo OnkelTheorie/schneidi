@@ -217,6 +217,28 @@ int main(int argc, char** argv)
             format->setCurrentIndex(0);
             panel.setSettings(RenderSettings{}); // H.264 Timeline Hoch: passt wieder zu YouTube 1080p
             CHECK_EQ(panel.currentPreset(), 0);
+            // Encoder: built-in presets choose it automatically; another one = own settings, kept across formats
+            auto* encoder = panel.findChild<QComboBox*>("renderEncoder");
+            if (CHECK(encoder)) {
+                CHECK(panel.settings().encoder == VideoEncoder::Auto);
+                RenderSettings sw;
+                sw.encoder = VideoEncoder::Software;
+                panel.setSettings(sw);
+                CHECK(panel.settings().encoder == VideoEncoder::Software);
+                CHECK_EQ(panel.currentPreset(), -1);
+                RenderSettings nv; // stays selected even when it does not work here (renders with software then)
+                nv.encoder = VideoEncoder::Nvenc;
+                panel.setSettings(nv);
+                CHECK(panel.settings().encoder == VideoEncoder::Nvenc);
+                CHECK(panel.makeJob().settings.encoder == VideoEncoder::Nvenc);
+                format->setCurrentIndex(3); // AAC: no video encoder
+                CHECK(!encoder->isEnabled());
+                format->setCurrentIndex(1); // H.265
+                CHECK(encoder->isEnabled());
+                CHECK(panel.settings().encoder == VideoEncoder::Nvenc);
+                panel.setSettings(RenderSettings{});
+                CHECK_EQ(panel.currentPreset(), 0);
+            }
         }
         // Eigene Vorlage speichern, wiederfinden, überschreiben, löschen; eingebaute bleiben
         RenderSettings mine;

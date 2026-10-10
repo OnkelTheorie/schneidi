@@ -712,6 +712,11 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings.rateNum = r.num;
         job.settings.rateDen = r.den;
     }
+    if (a.contains("encoder")) {
+        bool ok = false;
+        job.settings.encoder = videoEncoderFromId(a["encoder"].toString(), VideoEncoder::Auto, &ok);
+        if (!ok) fail("BAD_ARGUMENT", "encoder must be auto, software, nvenc, vaapi or qsv");
+    }
     if (a.contains("audio_bitrate")) job.settings.audioBitrateK = std::clamp(a["audio_bitrate"].toInt(), 32, 512);
     if (a.contains("subtitles")) {
         const int i = QStringList{"none", "burn", "srt"}.indexOf(a["subtitles"].toString());
@@ -761,11 +766,13 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     QElapsedTimer timer;
     timer.start();
     QString error;
-    if (!ex.start(tl, RenderQueue::exportSettings(job, s.format()), &error)) fail("RENDER_FAILED", error);
+    const ExportSettings es = RenderQueue::exportSettings(job, s.format());
+    if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
-    const ExportSettings es = RenderQueue::exportSettings(job, s.format());
     QJsonObject o{{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10}};
+    if (!ex.usedCodec().isEmpty()) o["encoder"] = ex.usedCodec(); // video codec that wrote the file, e.g. h264_nvenc
+    if (!ex.note().isEmpty()) o["encoder_note"] = ex.note();
     if (!job.settings.audioOnly()) {
         o["width"] = es.size.width();
         o["height"] = es.size.height();
@@ -942,6 +949,10 @@ const QVector<Command>& commands()
           {"height", T::Integer, "shorter image edge, e.g. 720 (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
           {"fps", T::Number, "output frame rate (default: the timeline's)"},
+          {"encoder", T::String, "H.264/H.265 video encoder: auto (default: a hardware encoder of the graphics card when "
+                                 "one works here, else software), software, nvenc (NVIDIA), vaapi (AMD/Intel on Linux), "
+                                 "qsv (Intel Quick Sync). A hardware encoder that does not work falls back to software; "
+                                 "the answer's 'encoder' is the codec actually used"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3 (default 320)"},
           {"subtitles", T::String, "none (default), burn (into the picture) or srt (file next to the video)"},
           {"from", T::Time, "start of the range (default: timeline start)"},

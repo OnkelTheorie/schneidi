@@ -5,6 +5,7 @@
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "engine/Exporter.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/RenderQueue.h"
 #include "ui/RenderQueuePanel.h"
 
@@ -35,7 +36,7 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     if (a.format != b.format) return false;
     const RenderFormatInfo& f = renderFormat(a.format);
     if (!a.audioOnly() && a.outputSize(timeline) != b.outputSize(timeline)) return false;
-    if (f.hasQuality && a.quality != b.quality) return false;
+    if (f.hasQuality && (a.quality != b.quality || a.encoder != b.encoder)) return false;
     if (a.hasAudioBitrate() && a.audioBitrateK != b.audioBitrateK) return false;
     if (!a.audioBitChoices().isEmpty() && a.audioCodec() != b.audioCodec()) return false;
     if (a.audioSampleFormat() != b.audioSampleFormat()) return false;
@@ -94,6 +95,16 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_quality->addItem(T("Mittel"));
     m_quality->addItem(T("Klein"));
 
+    // Like DaVinci's "Encoder" (Auto / Native / NVIDIA …): only hardware encoders that work on this computer
+    m_encoder = new QComboBox;
+    m_encoder->setObjectName("renderEncoder");
+    connect(m_encoder, qOverload<int>(&QComboBox::activated), this,
+            [this] { m_wantedEncoder = VideoEncoder(m_encoder->currentData().toInt()); });
+    connect(HardwareEncoders::notifier(), &HardwareEncoders::Notifier::probed, this, [this] {
+        updateEncoders();
+        syncPresetToSettings();
+    });
+
     m_audioBitrate = new QComboBox;
     for (int k : {128, 192, 256, 320}) m_audioBitrate->addItem(QString("%1 kbit/s").arg(k), k);
 
@@ -140,6 +151,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Auflösung"), m_resolution);
     form->addRow(T("Bildrate"), m_rate);
     form->addRow(T("Qualität"), m_quality);
+    form->addRow(T("Encoder"), m_encoder);
     form->addRow(T("Audio-Bitrate"), m_audioBitrate);
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
@@ -166,7 +178,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     lay->addWidget(m_status);
 
     connect(m_preset, qOverload<int>(&QComboBox::activated), this, &DeliverPanel::applyPreset);
-    for (QComboBox* c : {m_format, m_resolution, m_rate, m_quality, m_audioBitrate, m_audioBits, m_subtitles})
+    for (QComboBox* c : {m_format, m_resolution, m_rate, m_quality, m_encoder, m_audioBitrate, m_audioBits, m_subtitles})
         connect(c, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
             updateControls();
             syncPresetToSettings();
@@ -315,6 +327,7 @@ RenderSettings DeliverPanel::settings() const
     RenderSettings s;
     s.format = m_format->currentData().toString();
     s.quality = m_quality->currentIndex();
+    if (m_encoder->currentIndex() >= 0) s.encoder = VideoEncoder(m_encoder->currentData().toInt());
     s.audioBitrateK = m_audioBitrate->currentData().toInt();
     if (m_audioBits->currentIndex() >= 0) s.audioBits = m_audioBits->currentData().toInt();
     if (const QSize r = m_rate->currentData().toSize(); r.isValid() && !s.audioOnly()) {
@@ -338,6 +351,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     const bool wasApplying = m_applying;
     m_applying = true;
     m_wantedBits = s.audioBits;
+    m_wantedEncoder = s.encoder;
     m_format->setCurrentIndex(std::max(0, m_format->findData(renderFormat(s.format).id)));
     m_quality->setCurrentIndex(std::clamp(s.quality, 0, 2));
     const int br = m_audioBitrate->findData(s.audioBitrateK);
@@ -374,6 +388,7 @@ void DeliverPanel::updateControls()
     m_resolution->setEnabled(video);
     m_quality->setEnabled(f.hasQuality);
     m_quality->setToolTip(f.hasQuality ? QString() : T("Bei diesem Format fest"));
+    updateEncoders();
     RenderSettings probe;
     probe.format = f.id;
     m_audioBitrate->setEnabled(probe.hasAudioBitrate());
@@ -395,6 +410,53 @@ void DeliverPanel::updateControls()
     if (auto* model = qobject_cast<QStandardItemModel*>(m_subtitles->model()))
         if (QStandardItem* item = model->item(1)) item->setEnabled(video);
     if (!video && m_subtitles->currentIndex() == 1) m_subtitles->setCurrentIndex(0);
+}
+
+void DeliverPanel::showEvent(QShowEvent* e)
+{
+    QWidget::showEvent(e);
+    HardwareEncoders::probeInBackground(); // once: which hardware encoders work (does not block)
+}
+
+void DeliverPanel::updateEncoders()
+{
+    const RenderFormatInfo& f = renderFormat(m_format->currentData().toString());
+    QVector<VideoEncoder> list{VideoEncoder::Auto, VideoEncoder::Software};
+    const bool probed = HardwareEncoders::probed();
+    const QVector<VideoEncoder> hardware = probed ? HardwareEncoders::available(f.id) : QVector<VideoEncoder>();
+    list += hardware;
+    // A hardware encoder from a preset/job that does not work here (or is not known yet) stays selectable
+    const bool missing = f.hasQuality && !list.contains(m_wantedEncoder);
+    if (missing) list << m_wantedEncoder;
+    QStringList labels;
+    for (VideoEncoder e : list) {
+        QString label = videoEncoderLabel(e);
+        if (e == VideoEncoder::Auto)
+            label = hardware.isEmpty() ? T("Automatisch (Software)")
+                                       : T("Automatisch (%1)").arg(hardware.first() == VideoEncoder::Nvenc   ? "NVENC"
+                                                                   : hardware.first() == VideoEncoder::Vaapi ? "VAAPI"
+                                                                                                             : "Quick Sync");
+        else if (missing && probed && e == m_wantedEncoder)
+            label = T("%1 (nicht verfügbar)").arg(label);
+        labels << label;
+    }
+    QStringList shown;
+    for (int i = 0; i < m_encoder->count(); ++i) shown << m_encoder->itemText(i);
+    if (shown != labels) {
+        const QSignalBlocker block(m_encoder); // no nested updateControls()
+        m_encoder->clear();
+        for (int i = 0; i < list.size(); ++i) m_encoder->addItem(labels[i], int(list[i]));
+    }
+    if (f.hasQuality) {
+        const QSignalBlocker block(m_encoder);
+        m_encoder->setCurrentIndex(std::max(0, m_encoder->findData(int(m_wantedEncoder))));
+    }
+    m_encoder->setEnabled(f.hasQuality);
+    m_encoder->setToolTip(!f.hasQuality ? T("Bei diesem Format fest")
+                          : !probed     ? T("Grafikkarte wird noch geprüft …")
+                                        : T("Hardware-Encoder der Grafikkarte rendern viel schneller, die Datei wird bei "
+                                            "gleicher Qualität etwas größer. Klappt einer nicht, wird mit Software "
+                                            "gerendert."));
 }
 
 void DeliverPanel::updateRange()

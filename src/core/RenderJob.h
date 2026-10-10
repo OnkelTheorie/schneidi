@@ -21,6 +21,13 @@ struct RenderFormatInfo {
     bool hasQuality;        // CRF-Stufen (H.264/H.265); ProRes hat feste Qualität
 };
 const QVector<RenderFormatInfo>& renderFormats();
+
+// Video encoder for H.264/H.265: software (libx264/libx265) or a hardware encoder of the graphics card.
+// Auto = the first hardware encoder that works on this computer, else software (engine/HardwareEncoders).
+enum class VideoEncoder { Auto = 0, Software, Nvenc, Vaapi, Qsv };
+QString videoEncoderId(VideoEncoder e); // "auto", "software", "nvenc", "vaapi", "qsv" (JSON, CLI)
+VideoEncoder videoEncoderFromId(const QString& id, VideoEncoder fallback, bool* ok = nullptr);
+QString videoEncoderLabel(VideoEncoder e); // display name (translated)
 const RenderFormatInfo& renderFormat(const QString& id); // unbekannt -> H.264
 
 struct RenderSettings {
@@ -34,8 +41,11 @@ struct RenderSettings {
     // Untertitel exportieren wie DaVinci (sichtbare Untertitelspur): keine, ins Bild einbrennen, als SRT-Datei daneben
     enum Subtitles { NoSubtitles = 0, BurnSubtitles = 1, SrtFile = 2 };
     int subtitles = NoSubtitles;
+    // New settings default to Auto; saved settings without "encoder" (older versions) stay Software (fromJson)
+    VideoEncoder encoder = VideoEncoder::Auto;
 
     bool audioOnly() const;
+    bool hasEncoderChoice() const; // H.264/H.265: software or hardware encoder
     bool hasAudioBitrate() const;   // AAC/MP3
     QVector<int> audioBitChoices() const; // wählbare Bittiefen (leer = nicht einstellbar)
     QString audioCodec() const;     // FFmpeg-Codec mit gewählter Bittiefe, z. B. pcm_f32le
@@ -85,7 +95,8 @@ struct RenderJob {
     int from = 0, to = -1; // Bereich (Frames, inklusive), to < 0 = bis zum Ende
     int sequence = 0;    // Timeline (Sequenz-id) beim Hinzufügen, 0 = die gerade geöffnete (alte Dateien)
     RenderStatus status = RenderStatus::Queued;
-    QString message;     // Fehlertext bzw. Hinweis
+    QString message;     // error text or note (e.g. hardware encoder fell back to software)
+    QString encoderUsed; // FFmpeg video codec of the last render, e.g. "h264_nvenc" (empty = not rendered yet)
     qint64 renderMs = 0; // Dauer des letzten Renderns
 
     bool operator==(const RenderJob& o) const;
