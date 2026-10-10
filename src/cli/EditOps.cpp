@@ -223,14 +223,6 @@ void opFade(Session& s, const QJsonObject& op)
     if (op.contains("out")) s.editor.setClipFade(id, TimelineOps::Edge::End, timeOf(s, op, "out"));
 }
 
-void opVolume(Session& s, const QJsonObject& op)
-{
-    if (!op.contains("db")) fail("BAD_ARGUMENT", "missing 'db'");
-    for (int id : clipIds(s, op))
-        if (TrackRef r; TimelineOps::findClip(s.project.timeline(), id, &r) && r.kind == TrackKind::Audio)
-            s.editor.setClipVolume(id, op.value("db").toDouble());
-}
-
 void opSpeed(Session& s, const QJsonObject& op)
 {
     Editor::Retime r;
@@ -353,7 +345,6 @@ QVector<OpDef> makeOps()
         {"trim", "{op:'trim', clip, edge:'start'|'end', by|to}", {}, {}, opTrim},
         {"title", "{op:'title', text, at?, duration?, track?, size?, y?}", {}, {}, opTitle},
         {"fade", "{op:'fade', clip, in?, out?}", "fade lengths", {}, opFade},
-        {"volume", "{op:'volume', clips, db}", {}, {}, opVolume},
         {"speed", "{op:'speed', clips, speed, reverse?, ripple?:true}", {}, {}, opSpeed},
         {"transition", "{op:'transition', at}", "cross dissolve at the cut nearest to `at`", {},
          [](Session& s, const QJsonObject& op) { s.editor.addTransitions(timeOf(s, op, "at")); }},
@@ -386,6 +377,7 @@ QVector<OpDef> makeOps()
     };
     addTimelineOps(ops);
     addLookOps(ops);
+    addAudioOps(ops);
     return ops;
 }
 

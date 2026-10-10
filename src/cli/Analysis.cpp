@@ -2,6 +2,7 @@
 #include "cli/CommandsDetail.h"
 
 #include "core/I18n.h"
+#include "core/Loudness.h"
 #include "core/ProjectFile.h"
 #include "core/Subtitles.h"
 #include "core/Transcript.h"
@@ -282,6 +283,84 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
     } else if (ctx.mcp) {
         ctx.images = images;
     }
+    return result;
+}
+
+namespace {
+double db1(double v) { return v <= LoudnessMeter::kSilence ? -200.0 : std::round(v * 10) / 10; }
+
+QJsonObject loudnessJson(const AudioAnalysis::Loudness& l)
+{
+    return {{"integrated_lufs", db1(l.integrated)}, {"range_lu", db1(l.range)},
+            {"true_peak_db", db1(l.truePeakDb)}, {"sample_peak_db", db1(l.peakDb)},
+            {"max_momentary_lufs", db1(l.maxMomentary)}, {"max_short_term_lufs", db1(l.maxShortTerm)}};
+}
+} // namespace
+
+QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
+{
+    const QString src = a["source"].toString();
+    const auto progress = [&ctx](double p) {
+        if (ctx.progress) ctx.progress(p);
+        return true;
+    };
+    QJsonObject result{{"source", absolute(src)}};
+    if (!src.endsWith("." + QString(ProjectFile::Extension))) {
+        QJsonObject ma{{"file", src}};
+        const MediaSource m = openMedia(ma);
+        if (!m.info.hasAudio) fail("NO_AUDIO", "the file has no sound");
+        Clip c;
+        c.mediaPath = m.info.path;
+        c.out = m.info.length - 1;
+        c.audioStream = a["audio_stream"].toInt();
+        if (c.audioStream >= m.info.audioStreamCount()) fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s)").arg(m.info.audioStreamCount()));
+        const auto l = AudioAnalysis::clipLoudness(m.format, c, progress);
+        if (!l) fail("DECODE_FAILED", "could not read the sound");
+        result["loudness"] = loudnessJson(*l);
+        return result;
+    }
+    Session s(src);
+    s.selectTimeline(a["timeline"]);
+    const ProjectFormat& f = s.format();
+    const QJsonArray clips = a["clips"].toArray();
+    if (!clips.isEmpty()) {
+        // Every clip on its own (its sound without volume/fades, what 'normalize' measures)
+        QJsonArray list;
+        for (int i = 0; i < clips.size(); ++i) {
+            const Clip* c = TimelineOps::findClip(s.project.timeline(), clips[i].toVariant().toInt());
+            if (!c) fail("NOT_FOUND", "no clip with id " + clips[i].toVariant().toString());
+            QJsonObject o{{"clip", c->id}};
+            if (const auto l = AudioAnalysis::clipLoudness(f, *c)) o["loudness"] = loudnessJson(*l);
+            else o["no_sound"] = true;
+            list << o;
+            progress(double(i + 1) / clips.size());
+        }
+        result["clips"] = list;
+        return result;
+    }
+    // The mix as exported, optionally only some audio tracks
+    Timeline tl = s.project.renderTimeline();
+    const int end = TimelineOps::endFrame(tl);
+    if (end <= 0) fail("EMPTY", "the timeline is empty");
+    const int from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
+    const int to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
+    if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
+    QVector<int> only;
+    for (const QString& t : a["tracks"].toString().split(',', Qt::SkipEmptyParts)) {
+        TrackKind k;
+        const int i = parseTrack(t, &k);
+        if (k != TrackKind::Audio || i >= tl.audio.size()) fail("BAD_ARGUMENT", "no audio track " + t.trimmed());
+        only << i;
+    }
+    if (!only.isEmpty())
+        for (int i = 0; i < tl.audio.size(); ++i) {
+            tl.audio[i].muted = !only.contains(i);
+            tl.audio[i].solo = false;
+        }
+    const auto l = AudioAnalysis::timelineLoudness(f, tl, from, to, progress);
+    if (!l) fail("DECODE_FAILED", "could not mix the sound");
+    result["range"] = range(from, to, f);
+    result["loudness"] = loudnessJson(*l);
     return result;
 }
 

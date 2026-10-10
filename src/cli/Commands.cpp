@@ -282,6 +282,12 @@ QJsonObject timelineJson(const Project& p)
             if (t.locked) o["locked"] = true;
             if (t.muted) o["muted"] = true;
             if (t.hidden) o["hidden"] = true;
+            if (!t.color.isEmpty()) o["color"] = t.color;
+            if (k == TrackKind::Audio) {
+                if (t.volumeDb != 0) o["volume_db"] = t.volumeDb;
+                if (t.pan != 0) o["pan"] = t.pan;
+                if (t.solo) o["solo"] = true;
+            }
             tracks << o;
         }
     QJsonArray markers;
@@ -304,6 +310,11 @@ QJsonObject timelineJson(const Project& p)
         subtitles << so;
     }
     if (!subtitles.isEmpty()) o["subtitles"] = subtitles;
+    if (tl.masterVolumeDb != 0 || tl.masterLimiter) {
+        QJsonObject m{{"volume_db", tl.masterVolumeDb}};
+        if (tl.masterLimiter) m["limiter_db"] = tl.masterLimiterDb;
+        o["master"] = m;
+    }
     if (tl.markIn >= 0) o["mark_in"] = tl.markIn;
     if (tl.markOut >= 0) o["mark_out"] = tl.markOut + 1;
     return o;
@@ -644,6 +655,17 @@ const QVector<Command>& commands()
                                 "muted ones too; default: what is audible)"},
           {"threads", T::Integer, "processor threads (default: half of them)"}},
          cmdTranscribe},
+        {"loudness", "Measure loudness like the Mixer's meter (EBU R128 / BS.1770): integrated LUFS, loudness range, "
+                     "true peak. Source: a media file, a project's mix (as exported) or single clips of a project. "
+                     "Common targets: -14 LUFS / -1 dBTP (streaming), -23 LUFS (EBU broadcast).",
+         {{"source", T::Path, "media file or project (.schneidi)", true, true},
+          {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
+          {"from", T::Time, "for a project: start of the range"},
+          {"to", T::Time, "for a project: end of the range"},
+          {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A1,A2\""},
+          {"clips", T::Times, "for a project: measure these clips (ids) one by one instead of the mix"},
+          {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"}},
+         cmdLoudness},
         {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models. "
                        "Without arguments: list with sizes and what is installed.",
          {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: turbo 574 MB, "

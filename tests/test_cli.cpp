@@ -13,6 +13,8 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 
+#include <cmath>
+
 using Check::dump;
 
 namespace {
@@ -268,6 +270,33 @@ int main(int argc, char** argv)
         CHECK(!tl["tracks"][0]["clips"][1].toObject().contains("transform"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keyframe","clips":[%1],"param":"blur.nope","at":1}])").arg(v1)}}),
                  QString("BAD_ARGUMENT"));
+    }
+
+    // --- With real media (ffmpeg): loudness of a file and of the mix, normalize, mixer
+    if (!Check::haveFfmpeg()) return Check::result();
+    Check::initMlt();
+    {
+        const QString noise = Check::makeMedia(dir.filePath("noise.wav"),
+                                               {"-f", "lavfi", "-i", "anoisesrc=color=pink:amplitude=0.2:duration=6:seed=3:sample_rate=48000",
+                                                "-ac", "2", "-c:a", "pcm_s16le"});
+        const QString proj = dir.filePath("audio.schneidi");
+        run("new", {{"project", proj}});
+        const QJsonObject file = run("loudness", {{"source", noise}})["loudness"].toObject();
+        const double fileLufs = file["integrated_lufs"].toDouble();
+        CHECK(fileLufs < -10 && fileLufs > -40);
+        CHECK(file["true_peak_db"].toDouble() >= file["sample_peak_db"].toDouble());
+        run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(noise)}});
+        const auto mix = [&] { return run("loudness", {{"source", proj}})["loudness"]["integrated_lufs"].toDouble(); };
+        CHECK(std::abs(mix() - fileLufs) < 0.3);
+        const int clip = run("info", {{"project", proj}})["timeline"]["tracks"][2]["clips"][0]["id"].toInt();
+        run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":-20}])").arg(clip)}});
+        CHECK(std::abs(mix() + 20) < 0.3);
+        run("edit", {{"project", proj}, {"ops", R"([{"op":"mixer","track":"master","volume_db":-6}])"}});
+        CHECK(std::abs(mix() + 26) < 0.3);
+        run("edit", {{"project", proj}, {"ops", R"([{"op":"mixer","track":"A1","mute":true}])"}});
+        CHECK(mix() < -100);
+        const QJsonObject perClip = run("loudness", {{"source", proj}, {"clips", QJsonArray{clip}}});
+        CHECK(std::abs(perClip["clips"][0]["loudness"]["integrated_lufs"].toDouble() - fileLufs) < 0.3);
     }
     return Check::result();
 }

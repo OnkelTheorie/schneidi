@@ -83,6 +83,7 @@ struct OpDef {
 const QVector<OpDef>& editOps();
 void addTimelineOps(QVector<OpDef>& ops); // EditOpsTimelines.cpp
 void addLookOps(QVector<OpDef>& ops);     // EditOpsLook.cpp
+void addAudioOps(QVector<OpDef>& ops);    // EditOpsAudio.cpp
 // Name of an animatable value as the ops use it ("x", "opacity", "grade.liftY") and a clip's keyframes by name
 // (times in timeline frames)
 QString paramName(AnimParam p);
@@ -108,6 +109,7 @@ QJsonObject cmdSilence(const QJsonObject& a, Context& ctx);
 QJsonObject cmdScenes(const QJsonObject& a, Context& ctx);
 QJsonObject cmdFrames(const QJsonObject& a, Context& ctx);
 QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx);
+QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx);
 QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx);
 
 } // namespace Cli::detail

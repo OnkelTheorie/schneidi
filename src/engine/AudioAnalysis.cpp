@@ -52,6 +52,34 @@ bool decode(const ProjectFormat& format, const Clip& clip, const std::function<b
 
 double toDb(float peak) { return peak > 1e-10f ? 20.0 * std::log10(double(peak)) : -200.0; }
 
+// Loudness of planar float audio blocks (meters fed by measure())
+struct Measure {
+    LoudnessMeter meter;
+    TruePeakMeter truePeak;
+    float peak = 0.f;
+    double maxMomentary = LoudnessMeter::kSilence, maxShortTerm = LoudnessMeter::kSilence;
+    void add(const float* pcm, int samples, int channels, int freq)
+    {
+        meter.addPlanar(pcm, samples, channels, freq);
+        truePeak.addPlanar(pcm, samples, channels, freq);
+        for (int i = 0, n = samples * channels; i < n; ++i) peak = std::max(peak, std::abs(pcm[i]));
+        maxMomentary = std::max(maxMomentary, meter.momentary());
+        maxShortTerm = std::max(maxShortTerm, meter.shortTerm());
+    }
+    Loudness result() const
+    {
+        Loudness l;
+        l.integrated = meter.integrated();
+        l.range = meter.range();
+        l.peakDb = toDb(peak);
+        l.truePeakDb = truePeak.maxDb();
+        l.maxMomentary = maxMomentary;
+        l.maxShortTerm = maxShortTerm;
+        l.blocks = meter.blocks();
+        return l;
+    }
+};
+
 } // namespace
 
 std::optional<double> clipPeakDb(const ProjectFormat& format, const Clip& clip,
@@ -68,20 +96,38 @@ std::optional<double> clipPeakDb(const ProjectFormat& format, const Clip& clip,
 std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& clip,
                                      const std::function<bool(double)>& progress)
 {
-    LoudnessMeter meter;
-    float peak = 0.f;
+    Measure m;
     const bool ok = decode(format, clip, progress, [&](const float* pcm, int samples, int channels, int freq) {
-        if (!pcm) return;
-        meter.addPlanar(pcm, samples, channels, freq);
-        for (int i = 0, n = samples * channels; i < n; ++i) peak = std::max(peak, std::abs(pcm[i]));
+        if (pcm) m.add(pcm, samples, channels, freq);
     });
     if (!ok) return std::nullopt;
-    Loudness l;
-    l.integrated = meter.integrated();
-    l.range = meter.range();
-    l.peakDb = toDb(peak);
-    l.blocks = meter.blocks();
-    return l;
+    return m.result();
+}
+
+std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Timeline& timeline, int from, int to,
+                                         const std::function<bool(double)>& progress)
+{
+    if (to <= from) return std::nullopt;
+    auto profile = makeProfile(format);
+    TimelineBuilder builder(*profile);
+    builder.setSubtitles(false);
+    const std::unique_ptr<Mlt::Tractor> tractor = builder.build(timeline);
+    if (!tractor || !tractor->is_valid()) return std::nullopt;
+    const double fps = profile->fps();
+    Measure m;
+    tractor->seek(from);
+    for (int pos = from; pos < to; ++pos) {
+        if (progress && (pos - from) % 25 == 0 && !progress(double(pos - from) / (to - from))) return std::nullopt;
+        std::unique_ptr<Mlt::Frame> f(tractor->get_frame());
+        if (!f) break;
+        mlt_audio_format fmt = mlt_audio_float;
+        int freq = 48000, channels = 2;
+        int samples = mlt_audio_calculate_frame_samples(float(fps), freq, pos);
+        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
+        if (pcm && samples > 0 && channels > 0 && fmt == mlt_audio_float) m.add(pcm, samples, channels, freq);
+    }
+    if (progress) progress(1.0);
+    return m.result();
 }
 
 std::optional<std::vector<float>> clipFramePeaks(const ProjectFormat& format, const Clip& clip,
