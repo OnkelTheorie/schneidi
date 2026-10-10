@@ -29,7 +29,7 @@ A DaVinci-style workflow without DaVinci's hurdles: runs on modest hardware and 
 - Proxy and render cache for smooth playback
 - Export and render queue via FFmpeg
 - Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; an optional download under Workspace → Extensions
-- **Command line and MCP server** (`schneidi-cli`): scripts or an AI assistant can do a rough cut – find pauses and scene changes, transcribe, cut, add titles and effects, look at frames, render ([details](#command-line-and-ai-editing-mcp))
+- **Command line and MCP server** (`schneidi-cli`): scripts or an AI assistant can edit almost everything the app can – find pauses and scene changes, transcribe, cut and trim, grade, animate, mix and normalize, measure loudness, look at frames and scopes, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
 <details>
@@ -52,13 +52,19 @@ schneidi-cli extensions --install whisper,small              # optional speech r
 schneidi-cli transcribe talk.mp4 --language de --words       # what is said, with word times
 schneidi-cli edit talk.schneidi --ops '[{"op":"keep","media":"talk.mp4","ranges":[[0,250],[310,900]]}]'
 schneidi-cli frames talk.schneidi --count 9 --sheet --out sheet.jpg
-schneidi-cli render talk.schneidi --out talk-cut.mp4
+schneidi-cli scopes talk.schneidi --at 10s --out scopes.png      # waveform, parade, vectorscope + numbers
+schneidi-cli loudness talk.schneidi                          # LUFS, true peak of the mix
+schneidi-cli render talk.schneidi --out talk-cut.mp4 --preset "YouTube 1080p"
 schneidi-cli restore talk.schneidi                           # undo the last change
-schneidi-cli help                                            # all commands and edit operations (JSON)
+schneidi-cli help                                            # all commands (JSON)
+schneidi-cli help edit                                       # every edit operation with details
 ```
 
-Edit operations cover cutting, moving, trimming, titles, fades, volume, speed, transitions, markers, subtitles
-(SRT or cue lists), video effects (`schneidi-cli effects`) and tracks. Output is JSON on stdout (exit code 0 = ok,
+Edit operations cover cutting, inserting and source edits (insert, replace, place on top, fit to fill), moving,
+trimming (ripple, roll, slip, slide), titles with their style, fades, transitions (dissolve, dip, wipes, luma),
+speed and speed ramps, markers, subtitles (SRT or cue lists, track styles), effects and presets, the color grade
+(wheels, LUTs), transform and crop, keyframes for any animatable value, paste attributes, volume/pan, the mixer,
+loudness normalization, tracks, linking, compound clips, several timelines and the project format. Output is JSON on stdout (exit code 0 = ok,
 1 = error, 2 = usage error); every save keeps a backup of the previous state (`backups`, `restore`). `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio, e.g. for
 Claude Code: `claude mcp add schneidi -- schneidi-cli mcp`, or in Claude Desktop's `claude_desktop_config.json`:
 
