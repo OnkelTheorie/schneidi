@@ -247,16 +247,16 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     const QString ext = QFileInfo(s.path).suffix().toLower();
     if (ext == "mp4" || ext == "mov" || ext == "m4a") m_consumer->set("movflags", "+faststart");
-    // Jedes Frame rendern (real_time < 0), mehrere Bilder gleichzeitig (außer mit frei0r, siehe parallelFrames);
-    // Decoder (oben) und Encoder bekommen dieselbe Threadzahl. Beim Umrechnen der Bildrate holt der "consumer"-Producer
-    // die Bilder der Reihe nach -> dort nur eins nach dem anderen, und ohne Vorlese-Thread (real_time 0): Wiederholte
-    // Bilder liefern 0 Samples; der Vorlese-Thread holt den Ton vorab, und beim zweiten Abholen durch den Encoder
-    // füllt MLT die leeren Bilder mit Stille auf (Ton zu lang, mit Sprüngen).
+    // Render every frame (real_time < 0), several frames at once (not with frei0r, see parallelFrames);
+    // decoder (above) and encoder get the same thread count. When converting the frame rate the "consumer" producer
+    // fetches frames in order -> one at a time there, and without the read-ahead thread (real_time 0): repeated
+    // frames deliver 0 samples; the read-ahead thread fetches the sound early, and on the encoder's second fetch
+    // MLT fills the empty frames with silence (sound too long, with jumps).
     const int frames = convertRate ? 1 : parallelFrames(tl, threads);
     m_consumer->set("real_time", convertRate ? 0 : -frames);
     m_consumer->set("threads", threads);
-    qInfo("Export: %d Threads, %d Bilder gleichzeitig%s", threads, frames,
-          convertRate ? qPrintable(QString(", Bildrate %1 -> %2").arg(s.format.rate.label(), rate.label())) : "");
+    qInfo("Export: %d threads, %d frames at once%s", threads, frames,
+          convertRate ? qPrintable(QString(", frame rate %1 -> %2").arg(s.format.rate.label(), rate.label())) : "");
     m_consumer->set("terminate_on_pause", 1); // am Ende automatisch stoppen
     m_consumer->connect(*m_source);
 
