@@ -184,45 +184,51 @@ void applyBlur(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, int a, 
 // Vorher/Nachher-Schalter des gerade bauenden Builders (nur Vorschau), siehe TimelineBuilder::setGradeBypass
 thread_local std::shared_ptr<std::atomic<bool>> t_gradeBypass;
 
-// Effekte in der Reihenfolge am Clip; a/len: Ausschnitt für Keyframes.
-// Farbkorrektur der Color-Seite zuerst (wie DaVinci: Grade vor den Edit-Effekten), unabhängig von der Position.
-void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, int a, int len)
+// Generic effect: parameters straight onto the MLT filter of the descriptor
+void applyGeneric(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, const EffectInstance& inst,
+                  const EffectDescriptor& d, int a, int len);
+
+// Effects in the order on the clip; a/len: section for keyframes. Video: the Color page grade first (like DaVinci:
+// grade before the edit effects), regardless of its position. Audio: the audio effects (before clip volume/pan).
+void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, TrackKind kind, int a, int len)
 {
-    ColorGrade::attach(clip, c, a, t_gradeBypass);
+    const bool video = kind == TrackKind::Video;
+    if (video) ColorGrade::attach(clip, c, a, t_gradeBypass);
     for (const auto& inst : c.effects) {
         if (!inst.enabled || inst.effectId == ColorGrade::EffectId) continue;
-        if (inst.effectId == "color") {
-            applyColor(profile, clip, c, a, len);
-            continue;
-        }
-        if (inst.effectId == "blur") {
-            applyBlur(profile, clip, c, a, len);
-            continue;
-        }
         const EffectDescriptor* d = EffectRegistry::find(inst.effectId);
-        if (!d || d->mltService.isEmpty()) continue;
-        Mlt::Filter f(profile, d->mltService.toUtf8().constData());
-        if (!f.is_valid()) continue;
-        for (const auto& p : d->params) {
-            const QVariant v = inst.params.value(p.key, p.defaultValue);
-            const QByteArray prop = p.mltProperty.toUtf8();
-            if (p.type == EffectParam::Color) {
-                const QColor col = v.value<QColor>();
-                f.set(prop.constData(), col.name(QColor::HexRgb).toUtf8().constData()); // "#rrggbb"
-            } else if (p.type == EffectParam::Choice) {
-                f.set(prop.constData(), v.toString().toUtf8().constData());
-            } else if (p.type == EffectParam::Bool) {
-                f.set(prop.constData(), v.toBool() ? 1.0 : 0.0);
-            } else {
-                // keyframes (frei0r): MLT animation via anim_set (numbers, not text -> independent of LC_NUMERIC)
-                const bool animated = p.anim != AnimParam::Count && animate(c, {p.anim}, a, len, [&](int pos, double t) {
-                    f.anim_set(prop.constData(), Keys::valueAt(c, p.anim, t), pos, len);
-                });
-                if (!animated) f.set(prop.constData(), v.toDouble());
-            }
-        }
-        attachTo(clip, f); // keyframes count from the cut's in point
+        if (!d || d->video != video) continue;
+        if (inst.effectId == "color") applyColor(profile, clip, c, a, len);
+        else if (inst.effectId == "blur") applyBlur(profile, clip, c, a, len);
+        else applyGeneric(profile, clip, c, inst, *d, a, len);
     }
+}
+
+void applyGeneric(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, const EffectInstance& inst,
+                  const EffectDescriptor& d, int a, int len)
+{
+    if (d.mltService.isEmpty()) return;
+    Mlt::Filter f(profile, d.mltService.toUtf8().constData());
+    if (!f.is_valid()) return;
+    for (const auto& p : d.params) {
+        const QVariant v = inst.params.value(p.key, p.defaultValue);
+        const QByteArray prop = p.mltProperty.toUtf8();
+        if (p.type == EffectParam::Color) {
+            const QColor col = v.value<QColor>();
+            f.set(prop.constData(), col.name(QColor::HexRgb).toUtf8().constData()); // "#rrggbb"
+        } else if (p.type == EffectParam::Choice) {
+            f.set(prop.constData(), v.toString().toUtf8().constData());
+        } else if (p.type == EffectParam::Bool) {
+            f.set(prop.constData(), v.toBool() ? 1.0 : 0.0);
+        } else {
+            // keyframes (frei0r): MLT animation via anim_set (numbers, not text -> independent of LC_NUMERIC)
+            const bool animated = p.anim != AnimParam::Count && animate(c, {p.anim}, a, len, [&](int pos, double t) {
+                f.anim_set(prop.constData(), Keys::valueAt(c, p.anim, t), pos, len);
+            });
+            if (!animated) f.set(prop.constData(), v.toDouble());
+        }
+    }
+    attachTo(clip, f); // keyframes count from the cut's in point
 }
 
 double mltLevel(double db) { return db <= kMinVolumeDb ? -200.0 : db; }
@@ -641,7 +647,7 @@ void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, 
 // a/len: Ausschnitt (Clip-Frame am Anfang, Länge) für Keyframes
 void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKind kind, int a, int len)
 {
-    if (kind == TrackKind::Video) applyEffects(profile, cut, c, a, len);
+    applyEffects(profile, cut, c, kind, a, len);
     if (kind == TrackKind::Video) applyTransform(profile, cut, c, a, len);
     if (c.isTitle() && !Keys::hasTransform(c) && !Keys::animated(c, AnimParam::TitleSize)) {
         // qtext zeichnet in der angeforderten Größe, skaliert aber die Umrandung nicht mit (Vorschau 960 px:

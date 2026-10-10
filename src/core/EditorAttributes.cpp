@@ -170,6 +170,7 @@ void Editor::pasteAttributes(int attrs)
                 c.pan = s->pan;
                 copyKeys(c, *s, {AnimParam::Pan});
             }
+            if (attrs & AttrAudioEffects) pasteEffects(c, *s);
         }
         if (const Clip* s = audio ? aAny : vAny; s && (attrs & AttrFades)) {
             c.fadeIn = std::min(s->fadeIn, c.length());

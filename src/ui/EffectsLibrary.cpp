@@ -28,6 +28,8 @@
 #include <QTreeWidgetItemIterator>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <cmath>
+#include <numbers>
 
 namespace {
 
@@ -38,7 +40,9 @@ enum Category {
     LutsAll, BuiltinLuts, Luts, LutGroup,                         // LUTs: mitgeliefert + eigene
     LumasAll, BuiltinTransitions, Transitions, TransitionGroup,   // Verlaufsblenden: mitgeliefert + eigene
     PresetsAll, PresetGroup,                                      // Shotcut/Kdenlive presets (own folder only)
+    AudioFx,                                                      // audio effects (DaVinci: Audio FX → Fairlight FX)
     // Luts/Transitions = eigener Effekte-Ordner, …Group = dessen Unterordner
+    // (numbers are saved with the collapsed state: append new categories at the end)
 };
 constexpr int kGroupRole = Qt::UserRole + 1; // …Group: Unterordner relativ zum Ordner
 constexpr const char* kLumaPrefix = "luma:"; // Listeneintrag einer Verlaufsblende: "luma:<Bild>"
@@ -180,6 +184,26 @@ QPixmap effectIcon(const QString& id)
         p.setFont(f);
         p.setPen(QColor(0xb8, 0xc0, 0xd8));
         p.drawText(r, Qt::AlignCenter, QStringLiteral("f0r"));
+    } else if (id == "stabilize") { // shaky frame outlines around a calm one
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(QColor(0x80, 0x88, 0xa0), 1));
+        p.drawRect(r.adjusted(9, 4, -15, -9));
+        p.drawRect(r.adjusted(15, 8, -9, -5));
+        p.setPen(QPen(QColor(0xe8, 0xe8, 0xf0), 2));
+        p.drawRect(r.adjusted(12, 6, -12, -7));
+    } else if (id == "denoise") { // noisy wave that becomes clean
+        p.fillRect(r, Theme::audioClip.darker(160));
+        QPainterPath wave;
+        const double mid = r.center().y();
+        for (int x = 4; x <= int(r.width()) - 4; ++x) {
+            const double t = (x - 4) / (r.width() - 8);
+            const double noise = t < 0.5 ? ((x * 7919) % 7 - 3) * 0.9 * (1 - 2 * t) : 0.0;
+            const double y = mid - std::sin(t * 4 * std::numbers::pi) * 6 + noise;
+            if (x == 4) wave.moveTo(x, y);
+            else wave.lineTo(x, y);
+        }
+        p.setPen(QPen(QColor(0xe0, 0xf0, 0xe0), 1.5));
+        p.drawPath(wave);
     } else if (id == "blur") {
         QRadialGradient g(r.center(), r.height() * 0.55);
         g.setColorAt(0, QColor(0xe8, 0xe8, 0xf0));
@@ -316,6 +340,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     auto* openFx = add(m_categories, QStringLiteral("Open FX"), OpenFx);
     add(openFx, T("Filter"), Filters);
     add(openFx, QStringLiteral("frei0r"), Frei0rFilters)->setToolTip(0, T("frei0r-Plugins (eigene im Effekte-Ordner unter „frei0r“)"));
+    add(m_categories, QStringLiteral("Audio FX"), AudioFx)->setToolTip(0, T("Effekte für Audioclips"));
     // Nach Art sortiert, darunter jeweils mitgeliefert und eigener Effekte-Ordner (Unterordner = Unterkategorien)
     auto* luts = add(m_categories, QStringLiteral("LUTs"), LutsAll);
     add(luts, T("Mitgeliefert"), BuiltinLuts);
@@ -521,10 +546,10 @@ void EffectsLibrary::rebuild()
             out << Entry{QString::fromLatin1(i.name), QString("audio:%1").arg(i.id), audioIcon()};
         return out;
     };
-    auto filters = [&](const QString& category) {
+    auto filters = [&](const QString& category, bool video = true) {
         QVector<Entry> out;
         for (const auto& e : EffectRegistry::all())
-            if (e.library && e.category == category)
+            if (e.library && e.category == category && e.video == video)
                 out << Entry{e.name, kEffectPrefix + e.id, effectIcon(e.id), e.description};
         return out;
     };
@@ -550,6 +575,7 @@ void EffectsLibrary::rebuild()
     case OpenFx: groups = {{T("Filter"), filters({})}, {QStringLiteral("frei0r"), filters(EffectRegistry::Frei0rCategory)}}; break;
     case Filters: groups = {{{}, filters({})}}; break;
     case Frei0rFilters: groups = {{{}, filters(EffectRegistry::Frei0rCategory)}}; break;
+    case AudioFx: groups = {{{}, filters({}, false)}}; break;
     case LutsAll:
         groups = {{T("Mitgeliefert"), files(EffectFolders::builtinLuts(), true, true)},
                   {T("Eigene"), files(m_userLuts, true, false)}};

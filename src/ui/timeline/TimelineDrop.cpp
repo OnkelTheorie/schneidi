@@ -118,7 +118,9 @@ std::optional<TimelineView::TransitionDrop> TimelineView::transitionDropAt(const
 int TimelineView::fxDropClipAt(const QPoint& pos) const
 {
     const auto row = rowAt(pos.y());
-    return row && row->ref.kind == TrackKind::Video && !m_editor->isTrackLocked(row->ref) ? clipAt(pos) : 0;
+    // Video filters on video clips, Audio FX on audio clips
+    return row && row->ref.kind == Editor::effectKind(m_fxDragging) && !m_editor->isTrackLocked(row->ref) ? clipAt(pos)
+                                                                                                          : 0;
 }
 
 void TimelineView::dragEnterEvent(QDragEnterEvent* e)

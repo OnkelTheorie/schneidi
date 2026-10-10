@@ -261,9 +261,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         m_editor->addTransitions(tv->playhead(), style, kind);
     });
     connect(m_effects, &EffectsLibrary::titleRequested, this, [this, tv] { m_editor->addTitle(tv->playhead()); });
-    // Filter: auf die ausgewählten Videoclips, ohne Auswahl auf den obersten Clip am Playhead
+    // Filters: onto the selected clips of the effect's kind, without a selection onto the clip at the playhead
     connect(m_effects, &EffectsLibrary::effectRequested, this, [this, tv](const QString& id) {
-        m_editor->addEffect(m_editor->effectTargets(tv->playhead()), id);
+        m_editor->addEffect(m_editor->effectTargets(tv->playhead(), Editor::effectKind(id)), id);
     });
     tv->setProbe([this](const QString& path) { return probeCached(path); });
     m_mediaCache = new MediaCache(this);
