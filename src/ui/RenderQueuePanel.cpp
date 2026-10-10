@@ -178,9 +178,13 @@ void RenderQueuePanel::rebuild()
                               : j.status == RenderStatus::Failed ? T("Fehler")
                                                                  : renderStatusText(j));
         card->message->setFullText(j.message);
-        card->message->setVisible(j.status == RenderStatus::Failed && !j.message.isEmpty());
+        // Failed: the error; done: a note (e.g. the hardware encoder fell back to software)
+        card->message->setVisible((j.status == RenderStatus::Failed || j.status == RenderStatus::Done) && !j.message.isEmpty());
         card->status->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(statusColor(j.status)));
-        card->status->setToolTip(j.message);
+        QStringList tip;
+        if (!j.message.isEmpty()) tip << j.message;
+        if (j.status == RenderStatus::Done && !j.encoderUsed.isEmpty()) tip << T("Video-Encoder: %1").arg(j.encoderUsed);
+        card->status->setToolTip(tip.join('\n'));
         card->status->setMaximumWidth(140);
         // Welche Timeline (wie DaVinci in der Job-Karte); gelöschte Timeline bleibt als Hinweis stehen
         const QString timeline = !j.sequence ? QString()

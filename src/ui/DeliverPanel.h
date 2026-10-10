@@ -40,8 +40,12 @@ public:
     bool deletePreset(int index);         // nur eigene
     const QVector<RenderPreset>& presets() const { return m_presets; }
 
+protected:
+    void showEvent(QShowEvent* e) override;
+
 private:
     void applyPreset(int comboIndex);
+    void updateEncoders(); // encoder choices for the format (hardware ones once the graphics card probe is done)
     void updateRange();
     void updateFormat(); // Auflösungen passend zu den Projekteinstellungen
     void updateControls(); // Felder je nach Format (nur Audio, Qualität)
@@ -65,6 +69,8 @@ private:
     QComboBox* m_rate; // Bildrate der Ausgabe, Daten = QSize(num, den), leer = Timeline
     QSize m_timelineSize; // zuletzt bekannte Timeline-Auflösung
     QComboBox* m_quality;
+    QComboBox* m_encoder; // video encoder (data: int(VideoEncoder)); hardware ones only when they work here
+    VideoEncoder m_wantedEncoder = VideoEncoder::Auto; // from the preset/last choice (kept across format changes)
     QComboBox* m_audioBitrate;
     QComboBox* m_audioBits;
     QComboBox* m_threads; // Threads fürs Rendern (Daten: Anzahl, 0 = alle)
