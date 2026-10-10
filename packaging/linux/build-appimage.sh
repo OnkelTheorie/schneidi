@@ -24,8 +24,8 @@ for d in "/usr/lib/frei0r-1" "/usr/lib/$MULTIARCH/frei0r-1" "/usr/local/lib/frei
     [ -d "$d" ] && FREI0R_DIR="$d" && break
 done
 
-# Nur die Module, die schneidi nutzt (libmltqt.so = Qt5 bewusst nicht: zöge Qt5 mit hinein)
-MODULES=(core avformat qt6 sdl2 rtaudio frei0r rubberband xml resample plus normalize)
+# Only the modules schneidi uses (not libmltqt.so = Qt5: would pull Qt5 in); vidstab = Stabilize effect
+MODULES=(core avformat qt6 sdl2 rtaudio frei0r rubberband xml resample plus normalize vidstab)
 # frei0r: all plugins (Effects Library, Open FX → frei0r) except face detection (would pull in OpenCV)
 FREI0R_SKIP=(facebl0r facedetect)
 
