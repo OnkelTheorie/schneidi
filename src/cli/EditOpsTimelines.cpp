@@ -32,7 +32,8 @@ void opNewTimeline(Session& s, const QJsonObject& op)
         if (!name.isEmpty() && q.name.compare(name, Qt::CaseInsensitive) == 0)
             fail("EXISTS", QString("there is a timeline '%1' already (id %2)").arg(q.name).arg(q.id));
     const int id = s.project.addTimeline(name); // opens it
-    if (op.value("switch").toBool(true)) s.selectTimeline(id, op.value("open").toBool());
+    // In the app the user sees the new timeline right away (open:false keeps showing the old one)
+    if (op.value("switch").toBool(true)) s.selectTimeline(id, op.value("open").toBool(s.live));
     else s.project.setCurrentSequence(previous);
 }
 
@@ -122,7 +123,8 @@ void addTimelineOps(QVector<OpDef>& ops)
                  "this timeline next time; otherwise the app keeps showing the one the user had open.",
                  opTimeline}
         << OpDef{"new_timeline", "{op:'new_timeline', name?, switch?:true, open?}",
-                 "new empty timeline; the following ops edit it unless switch:false", {}, opNewTimeline}
+                 "new empty timeline; the following ops edit it unless switch:false; the app shows it unless "
+                 "open:false", {}, opNewTimeline}
         << OpDef{"rename_timeline", "{op:'rename_timeline', timeline?, name}", {}, {}, opRenameTimeline}
         << OpDef{"duplicate_timeline", "{op:'duplicate_timeline', timeline?, name?, switch?:false}",
                  "copy of a timeline (e.g. a version to try something)", {}, opDuplicateTimeline}

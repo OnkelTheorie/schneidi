@@ -56,6 +56,7 @@ public:
     Editor editor{&project, &selection};
     bool live = false;  // the project as open in the app (inside the app, or a copy of it)
     QJsonObject app;    // live: the app's state (playhead, selection …) for `info`
+    QJsonArray notes;   // hints for the AI from the ops (warnings, what changed besides the given clips)
 
     explicit Session(const QString& file, Access access = Access::Read);
     ~Session();

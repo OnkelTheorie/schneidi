@@ -274,12 +274,13 @@ QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def)
     if (t.align != def.align) o["align"] = QStringList{"left", "center", "right"}.value(t.align);
     num("x", t.posX, def.posX);
     num("y", t.posY, def.posY);
+    // Outline/box switched on: always with their color and size (the defaults are not obvious)
     flag("outline", t.outlineOn, def.outlineOn);
-    color("outline_color", t.outlineColor, def.outlineColor);
-    num("outline_width", t.outlineWidth, def.outlineWidth);
+    color("outline_color", t.outlineColor, t.outlineOn ? QColor() : def.outlineColor);
+    num("outline_width", t.outlineWidth, t.outlineOn ? -1 : def.outlineWidth);
     flag("box", t.boxOn, def.boxOn);
-    color("box_color", t.boxColor, def.boxColor);
-    num("box_padding", t.boxPad, def.boxPad);
+    color("box_color", t.boxColor, t.boxOn ? QColor() : def.boxColor);
+    num("box_padding", t.boxPad, t.boxOn ? -1 : def.boxPad);
     return o;
 }
 
@@ -551,6 +552,7 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     // The timeline edited last (save() may switch back to the one the app opens)
     QJsonObject o{{"project", s.path}, {"ops", ops.size()}, {"saved", !dry && !s.live}, {"timeline", timelineJson(s.project)}};
     if (s.live) o["live"] = true; // changed in the app (one undo step there), the user saves
+    if (!s.notes.isEmpty()) o["notes"] = s.notes;
     if (s.project.sequences().size() > 1) o["timelines"] = timelinesJson(s.project);
     if (!dry) {
         const QString backup = s.save();
@@ -951,10 +953,16 @@ const QVector<Command>& commands()
          {{"file", T::Path, "media file", true, true},
           {"project", T::Path, "count frames in this project's frame rate (default: the file's own)"}},
          cmdProbe},
-        {"silence", "Find pauses in the audio of a media file. Returns 'silence' and 'sound' ranges [from, to); "
-                    "'sound' fits the 'keep' edit operation directly (jump cut).",
-         {{"file", T::Path, "media file", true, true},
-          {"project", T::Path, "count frames in this project's frame rate (recommended before editing)"},
+        {"silence", "Find pauses in the audio of a media file or a project's timeline. Returns 'silence' and "
+                    "'sound' ranges [from, to); for a project they are timeline frames and 'sound' fits the 'keep' "
+                    "edit operation directly (jump cut).",
+         {{"file", T::Path, "media file, or a project (.schneidi or \"@app\"): its timeline sound as exported", true, true},
+          {"project", T::Path, "for a media file: count frames in this project's frame rate"},
+          {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
+          {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A3,A5\" or by name \"Mikrofon\" "
+                                "(track or audio stream name; default: what is audible)"},
+          {"from", T::Time, "for a project: start of the range"},
+          {"to", T::Time, "for a project: end of the range"},
           {"threshold_db", T::Number, "quieter than this counts as silence (default -35)"},
           {"min", T::Time, "shortest pause (default 0.5s)"},
           {"pad", T::Time, "sound kept around each pause (default 0.1s)"}},
@@ -980,8 +988,11 @@ const QVector<Command>& commands()
           {"from", T::Time, "for a project: start of the range"},
           {"to", T::Time, "for a project: end of the range"},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
-          {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A3\" or \"A2,A3\" (the voice without music; "
-                                "muted ones too; default: what is audible)"},
+          {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A3\", \"A2,A3\" or by name \"Discord,Mikrofon\" "
+                                "(track or audio stream name; the voice without music; muted ones too; default: what is audible)"},
+          {"apply", T::Boolean, "for a project: also put the segments onto the timeline as a new subtitle track "
+                                "(live in the app: one undo step)"},
+          {"name", T::String, "apply: name of the new subtitle track"},
           {"threads", T::Integer, "processor threads (default: half of them)"}},
          cmdTranscribe},
         {"loudness", "Measure loudness like the Mixer's meter (EBU R128 / BS.1770): integrated LUFS, loudness range, "
@@ -991,7 +1002,7 @@ const QVector<Command>& commands()
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"from", T::Time, "for a project: start of the range"},
           {"to", T::Time, "for a project: end of the range"},
-          {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A1,A2\""},
+          {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A1,A2\" or by name \"Mikrofon\" (track or audio stream name)"},
           {"clips", T::Times, "for a project: measure these clips (ids) one by one instead of the mix"},
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"}},
          cmdLoudness},

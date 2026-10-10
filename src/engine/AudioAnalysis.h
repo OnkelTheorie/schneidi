@@ -40,4 +40,8 @@ std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Time
 std::optional<std::vector<float>> clipFramePeaks(const ProjectFormat& format, const Clip& clip,
                                                  const std::function<bool(double)>& progress = {});
 
+// Sample peak (linear) of every frame of the timeline mix [from, to) as it is exported. Index 0 = frame `from`.
+std::optional<std::vector<float>> timelineFramePeaks(const ProjectFormat& format, const Timeline& timeline, int from,
+                                                     int to, const std::function<bool(double)>& progress = {});
+
 } // namespace AudioAnalysis

@@ -28,6 +28,7 @@
 #include <QRegularExpression>
 
 #include <algorithm>
+#include <tuple>
 #include <cmath>
 #include <memory>
 
@@ -85,6 +86,71 @@ QImage sheet(const QVector<QImage>& images, const QStringList& labels)
     return out;
 }
 
+// Audio tracks of `tl`: "A3", "A2,A5", numbers, track names or the audio stream names of their clips
+// ("Discord,Mikrofon", as `probe` lists them); empty = none given
+QVector<int> audioTracksOf(const Project& p, const Timeline& tl, const QJsonValue& list)
+{
+    static const QRegularExpression trackRef("^[AaVv]?\\d+$");
+    QVector<int> out;
+    for (QString t : list.toVariant().toString().split(',', Qt::SkipEmptyParts)) {
+        t = t.trimmed();
+        int index = -1;
+        if (trackRef.match(t).hasMatch()) {
+            TrackKind k;
+            index = parseTrack(t, &k);
+            if (k != TrackKind::Audio || index >= tl.audio.size()) fail("BAD_ARGUMENT", "no audio track " + t);
+        }
+        QStringList names;
+        for (int i = 0; i < tl.audio.size(); ++i) {
+            const Track& track = tl.audio[i];
+            QStringList own{track.name};
+            for (const Clip& c : track.clips)
+                if (const MediaInfo* m = p.mediaInfo(c.mediaPath)) own << m->audioStreamName(c.audioStream);
+            own.removeAll(QString());
+            own.removeDuplicates();
+            if (index < 0 && own.contains(t, Qt::CaseInsensitive)) index = i;
+            if (!own.isEmpty()) names << QString("A%1 = %2").arg(i + 1).arg(own.join("/"));
+        }
+        if (index < 0)
+            fail("BAD_ARGUMENT", QString("no audio track '%1' (tracks: %2)").arg(t, names.isEmpty() ? "none named" : names.join(", ")));
+        if (!out.contains(index)) out << index;
+    }
+    return out;
+}
+
+// Pauses in per-frame peaks: quiet runs of at least minLen frames; the pad of sound stays on both sides (not at
+// the start/end). Ranges are shifted by `offset`.
+QJsonObject silenceJson(const std::vector<float>& peaks, int offset, double thresholdDb, int minLen, int pad,
+                        const ProjectFormat& f)
+{
+    const float limit = float(std::pow(10.0, thresholdDb / 20.0));
+    const int n = int(peaks.size());
+    QJsonArray silence, sound;
+    int keepFrom = 0, silent = 0;
+    for (int i = 0; i <= n; ++i) {
+        if (i < n && peaks[i] < limit) {
+            ++silent;
+            continue;
+        }
+        if (silent >= minLen) {
+            const int from = i - silent, to = i;
+            const int cutFrom = from == 0 ? 0 : std::min(to, from + pad);
+            const int cutTo = to == n ? n : std::max(cutFrom, to - pad);
+            if (cutTo > cutFrom) {
+                silence << range(offset + cutFrom, offset + cutTo, f);
+                if (cutFrom > keepFrom) sound << range(offset + keepFrom, offset + cutFrom, f);
+                keepFrom = cutTo;
+            }
+        }
+        silent = 0;
+    }
+    if (keepFrom < n) sound << range(offset + keepFrom, offset + n, f);
+    int kept = 0;
+    for (const QJsonValue& r : sound) kept += r["to"].toInt() - r["from"].toInt();
+    return {{"frames", n}, {"fps", formatJson(f)["fps"]}, {"threshold_db", thresholdDb}, {"silence", silence},
+            {"sound", sound}, {"kept_frames", kept}, {"kept_s", seconds(kept, f)}, {"removed_s", seconds(n - kept, f)}};
+}
+
 } // namespace
 
 QJsonObject cmdProbe(const QJsonObject& a, Context&)
@@ -111,48 +177,55 @@ QJsonObject cmdProbe(const QJsonObject& a, Context&)
 
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
 {
+    const auto progress = [&ctx](double p) {
+        if (ctx.progress) ctx.progress(p);
+        return true;
+    };
+    const auto settings = [&a](const ProjectFormat& f) {
+        const double thresholdDb = a.contains("threshold_db") ? a["threshold_db"].toDouble() : -35.0;
+        const int minLen = a.contains("min") ? parseTime(a["min"], f, "min") : int(std::lround(0.5 * f.rate.fps()));
+        const int pad = a.contains("pad") ? parseTime(a["pad"], f, "pad") : int(std::lround(0.1 * f.rate.fps()));
+        return std::tuple{thresholdDb, minLen, pad};
+    };
+    const QString file = a["file"].toString();
+    if (isProjectFile(file)) {
+        // The timeline's sound as exported (optionally some tracks); ranges in timeline frames, ready for keep
+        Session s(file);
+        s.selectTimeline(a["timeline"]);
+        const ProjectFormat& f = s.format();
+        Timeline tl = s.project.renderTimeline();
+        const int end = TimelineOps::endFrame(tl);
+        if (end <= 0) fail("EMPTY", "the timeline is empty");
+        const int from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
+        const int to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
+        if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
+        const QVector<int> only = audioTracksOf(s.project, tl, a["tracks"]);
+        if (!only.isEmpty())
+            for (int i = 0; i < tl.audio.size(); ++i) {
+                tl.audio[i].muted = !only.contains(i);
+                tl.audio[i].solo = false;
+            }
+        const auto peaks = AudioAnalysis::timelineFramePeaks(f, tl, from, to, progress);
+        if (!peaks) fail("DECODE_FAILED", "could not mix the sound");
+        const auto [thresholdDb, minLen, pad] = settings(f);
+        QJsonObject o{{"project", s.path.isEmpty() ? absolute(file) : s.path}, {"range", range(from, to, f)}};
+        const QJsonObject r = silenceJson(*peaks, from, thresholdDb, minLen, pad, f);
+        for (auto it = r.begin(); it != r.end(); ++it) o[it.key()] = it.value();
+        return o;
+    }
     const MediaSource m = openMedia(a);
     if (!m.info.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.info.path);
     const ProjectFormat& f = m.format;
-    const double thresholdDb = a.contains("threshold_db") ? a["threshold_db"].toDouble() : -35.0;
-    const int minLen = a.contains("min") ? parseTime(a["min"], f, "min") : int(std::lround(0.5 * f.rate.fps()));
-    const int pad = a.contains("pad") ? parseTime(a["pad"], f, "pad") : int(std::lround(0.1 * f.rate.fps()));
     Clip c;
     c.mediaPath = m.info.path;
     c.out = m.info.length - 1;
-    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&ctx](double p) {
-        if (ctx.progress) ctx.progress(p);
-        return true;
-    });
+    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, progress);
     if (!peaks) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
-    const float limit = float(std::pow(10.0, thresholdDb / 20.0));
-    const int n = int(peaks->size());
-    // Quiet runs of at least minLen frames; the pad of sound stays on both sides (not at the file start/end)
-    QJsonArray silence, sound;
-    int keepFrom = 0, silent = 0;
-    for (int i = 0; i <= n; ++i) {
-        if (i < n && (*peaks)[i] < limit) {
-            ++silent;
-            continue;
-        }
-        if (silent >= minLen) {
-            const int from = i - silent, to = i;
-            const int cutFrom = from == 0 ? 0 : std::min(to, from + pad);
-            const int cutTo = to == n ? n : std::max(cutFrom, to - pad);
-            if (cutTo > cutFrom) {
-                silence << range(cutFrom, cutTo, f);
-                if (cutFrom > keepFrom) sound << range(keepFrom, cutFrom, f);
-                keepFrom = cutTo;
-            }
-        }
-        silent = 0;
-    }
-    if (keepFrom < n) sound << range(keepFrom, n, f);
-    int kept = 0;
-    for (const QJsonValue& r : sound) kept += r["to"].toInt() - r["from"].toInt();
-    return {{"file", m.info.path}, {"frames", n}, {"fps", formatJson(f)["fps"]}, {"threshold_db", thresholdDb},
-            {"silence", silence}, {"sound", sound}, {"kept_frames", kept}, {"kept_s", seconds(kept, f)},
-            {"removed_s", seconds(n - kept, f)}};
+    const auto [thresholdDb, minLen, pad] = settings(f);
+    QJsonObject o{{"file", m.info.path}};
+    const QJsonObject r = silenceJson(*peaks, 0, thresholdDb, minLen, pad, f);
+    for (auto it = r.begin(); it != r.end(); ++it) o[it.key()] = it.value();
+    return o;
 }
 
 
@@ -524,13 +597,7 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
     const int from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
     const int to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
     if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
-    QVector<int> only;
-    for (const QString& t : a["tracks"].toString().split(',', Qt::SkipEmptyParts)) {
-        TrackKind k;
-        const int i = parseTrack(t, &k);
-        if (k != TrackKind::Audio || i >= tl.audio.size()) fail("BAD_ARGUMENT", "no audio track " + t.trimmed());
-        only << i;
-    }
+    const QVector<int> only = audioTracksOf(s.project, tl, a["tracks"]);
     if (!only.isEmpty())
         for (int i = 0; i < tl.audio.size(); ++i) {
             tl.audio[i].muted = !only.contains(i);
@@ -569,12 +636,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         req.from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
         req.to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
         if (req.to <= req.from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
-        for (const QString& t : a["tracks"].toString().split(',', Qt::SkipEmptyParts)) {
-            TrackKind k;
-            const int i = parseTrack(t, &k);
-            if (k != TrackKind::Audio || i >= req.timeline.audio.size()) fail("BAD_ARGUMENT", "no audio track " + t.trimmed());
-            req.audioTracks << i;
-        }
+        req.audioTracks = audioTracksOf(s.project, req.timeline, a["tracks"]);
         offset = req.from;
         length = req.to - req.from;
     } else {
@@ -625,6 +687,24 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
             words << QJsonObject{{"from", fr(w.from)}, {"to", std::max(fr(w.from) + 1, fr(Transcript::spokenEnd(w)))},
                                  {"text", w.text}};
         out["words"] = words;
+    }
+    if (a["apply"].toBool()) {
+        // Straight onto the timeline as a new subtitle track (live in the app: one undo step there)
+        if (!isProjectFile(src)) fail("BAD_ARGUMENT", "apply needs a project as source (\"@app\" or a .schneidi file)");
+        QJsonArray list;
+        for (const SubtitleCue& c : cues)
+            list << QJsonObject{{"from", c.start}, {"to", std::min(c.end, offset + length)}, {"text", c.text}};
+        QJsonObject op{{"op", "subtitles"}, {"cues", list}};
+        if (a.contains("name")) op["name"] = a["name"];
+        QJsonObject edit{{"project", src}, {"ops", QJsonArray{op}}};
+        if (a.contains("timeline")) edit["timeline"] = a["timeline"];
+        if (list.isEmpty()) fail("NO_SPEECH", "no speech found, nothing to apply");
+        const QJsonObject done = execute(*find("edit"), edit, ctx);
+        const QJsonArray tracks = done["timeline"]["subtitles"].toArray();
+        QJsonObject applied{{"cues", list.size()}, {"saved", done["saved"].toBool()}};
+        if (!tracks.isEmpty()) applied["track"] = tracks.last()["track"]; // the new one comes last
+        if (done["live"].toBool()) applied["live"] = true;
+        out["applied"] = applied;
     }
     if (a.contains("srt")) {
         const QString path = absolute(a["srt"].toString());

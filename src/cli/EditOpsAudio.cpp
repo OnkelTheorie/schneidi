@@ -2,9 +2,13 @@
 // limiter) and Normalize Audio Levels (measured like the app's dialog)
 #include "cli/CommandsDetail.h"
 
+#include "core/Keyframes.h"
 #include "core/Loudness.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
+
+#include <QJsonArray>
+#include <QJsonDocument>
 
 #include <cmath>
 
@@ -79,8 +83,20 @@ void opNormalize(Session& s, const QJsonObject& op)
     const bool lufs = mode == "lufs";
     const double target = op.contains("target") ? numberOf(op, "target", lufs ? -70 : -60, 0) : (lufs ? -14.0 : -1.0);
     const QVector<int> ids = onTracks(s, clipIds(s, op), TrackKind::Audio, "normalizing");
+    if (op.value("linked").toBool(true)) {
+        QJsonObject given = op;
+        given["linked"] = false;
+        const QVector<int> asked = clipIds(s, given);
+        QJsonArray partners;
+        for (int id : ids)
+            if (!asked.contains(id)) partners << id;
+        if (!partners.isEmpty())
+            s.notes << QString("normalize also changed the linked clips %1 (linked:false = only the given ones)")
+                           .arg(QJsonDocument(partners).toJson(QJsonDocument::Compact));
+    }
     // Measure every clip's sound (without its volume), like the app; relative: one shared reference
     QHash<int, double> levels;
+    QHash<int, double> truePeaks;
     std::vector<double> blocks;
     const Timeline tl = s.project.timeline();
     for (int id : ids) {
@@ -88,6 +104,7 @@ void opNormalize(Session& s, const QJsonObject& op)
         if (lufs) {
             if (const auto l = AudioAnalysis::clipLoudness(s.format(), *c)) {
                 levels[id] = l->integrated;
+                truePeaks[id] = l->truePeakDb;
                 blocks.insert(blocks.end(), l->blocks.begin(), l->blocks.end());
             }
         } else if (const auto peak = AudioAnalysis::clipPeakDb(s.format(), *c)) {
@@ -98,6 +115,18 @@ void opNormalize(Session& s, const QJsonObject& op)
     std::optional<double> ref;
     if (lufs) ref = LoudnessMeter::integratedOf(blocks);
     s.editor.normalizeAudio(levels, target, op.value("relative").toBool(), ref);
+    // Loudness up can push the peaks over 0 dB: say so (the mix of several clips may peak higher still)
+    const Timeline& after = s.project.timeline();
+    for (auto it = truePeaks.begin(); it != truePeaks.end(); ++it) {
+        const Clip* c = TimelineOps::findClip(after, it.key());
+        if (!c || Keys::animated(*c, AnimParam::Volume)) continue;
+        const double peak = it.value() + c->volumeDb;
+        if (peak > -1.0)
+            s.notes << QString("clip %1 now peaks at %2 dBTP (over -1): lower the target or turn on the master "
+                               "limiter ({op:'mixer', track:'master', limiter:true}); `loudness` measures the mix")
+                           .arg(it.key())
+                           .arg(peak, 0, 'f', 1);
+    }
 }
 
 } // namespace

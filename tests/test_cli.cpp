@@ -419,6 +419,36 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(mix() < -100);
         const QJsonObject perClip = run("loudness", {{"source", proj}, {"clips", QJsonArray{clip}}});
         CHECK(std::abs(perClip["clips"][0]["loudness"]["integrated_lufs"].toDouble() - fileLufs) < 0.3);
+        // Loudness up to the top: the answer warns about the true peak
+        {
+            const QString hot = Check::makeMedia(dir.filePath("hot.wav"),
+                                                 {"-f", "lavfi", "-i", "anoisesrc=color=pink:amplitude=0.9:duration=3:seed=3:sample_rate=48000",
+                                                  "-ac", "2", "-c:a", "pcm_s16le"});
+            const QString hp = dir.filePath("hot.schneidi");
+            run("new", {{"project", hp}});
+            run("edit", {{"project", hp}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(hot)}});
+            const int id = run("info", {{"project", hp}})["timeline"]["tracks"][2]["clips"][0]["id"].toInt();
+            const QJsonObject loud = run("edit", {{"project", hp}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":-6}])").arg(id)}});
+            CHECK(QJsonDocument(loud["notes"].toArray()).toJson().contains("dBTP"));
+        }
+        // Silence of the timeline sound: timeline frames, tracks by number or by audio stream name
+        {
+            const QString gap = Check::makeMedia(dir.filePath("gap.mka"),
+                                                 {"-f", "lavfi", "-i", "anoisesrc=color=pink:amplitude=0.3:duration=6:seed=3:sample_rate=48000",
+                                                  "-af", "volume=enable='between(t,2,4)':volume=0", "-ac", "2", "-c:a", "flac",
+                                                  "-metadata:s:a:0", "title=Mikro"});
+            const QString gp = dir.filePath("gap.schneidi");
+            run("new", {{"project", gp}});
+            run("edit", {{"project", gp}, {"ops", QString(R"([{"op":"append","media":"%1"},{"op":"append","media":"%1"}])").arg(gap)}});
+            const int fps = int(std::lround(run("info", {{"project", gp}})["format"]["fps"].toDouble()));
+            const QJsonObject si = run("silence", {{"file", gp}, {"tracks", "mikro"}, {"from", "6s"}});
+            const QJsonArray pauses = si["silence"].toArray();
+            CHECK_EQ(pauses.size(), 1); // only the one in the second clip (from 6s on)
+            CHECK(std::abs(pauses[0]["from"].toInt() - 8 * fps) <= fps / 5 + 1);
+            CHECK(std::abs(pauses[0]["to"].toInt() - 10 * fps) <= fps / 5 + 1);
+            CHECK_EQ(run("silence", {{"file", gp}, {"tracks", "A1"}})["silence"].toArray().size(), 2);
+            CHECK_EQ(errorOf("silence", {{"file", gp}, {"tracks", "Discord"}}), QString("BAD_ARGUMENT"));
+        }
         // Render with a preset (audio only) and a range
         run("edit", {{"project", proj}, {"ops", R"([{"op":"mixer","track":"A1","mute":false}])"}});
         QString wavPreset; // name in the test's UI language

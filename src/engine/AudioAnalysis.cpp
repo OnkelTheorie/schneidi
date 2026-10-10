@@ -143,4 +143,34 @@ std::optional<std::vector<float>> clipFramePeaks(const ProjectFormat& format, co
     return peaks;
 }
 
+std::optional<std::vector<float>> timelineFramePeaks(const ProjectFormat& format, const Timeline& timeline, int from,
+                                                     int to, const std::function<bool(double)>& progress)
+{
+    if (to <= from) return std::nullopt;
+    auto profile = makeProfile(format);
+    TimelineBuilder builder(*profile);
+    builder.setSubtitles(false);
+    const std::unique_ptr<Mlt::Tractor> tractor = builder.build(timeline);
+    if (!tractor || !tractor->is_valid()) return std::nullopt;
+    const double fps = profile->fps();
+    std::vector<float> peaks;
+    peaks.reserve(to - from);
+    tractor->seek(from);
+    for (int pos = from; pos < to; ++pos) {
+        if (progress && (pos - from) % 25 == 0 && !progress(double(pos - from) / (to - from))) return std::nullopt;
+        std::unique_ptr<Mlt::Frame> f(tractor->get_frame());
+        if (!f) break;
+        mlt_audio_format fmt = mlt_audio_float;
+        int freq = 48000, channels = 2;
+        int samples = mlt_audio_calculate_frame_samples(float(fps), freq, pos);
+        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
+        float peak = 0.f;
+        if (pcm && fmt == mlt_audio_float)
+            for (int i = 0, n = samples * channels; i < n; ++i) peak = std::max(peak, std::abs(pcm[i]));
+        peaks.push_back(peak);
+    }
+    if (progress) progress(1.0);
+    return peaks;
+}
+
 } // namespace AudioAnalysis
