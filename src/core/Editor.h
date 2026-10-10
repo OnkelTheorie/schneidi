@@ -244,6 +244,16 @@ public:
     QString pasteAttributesSource() const; // Name des Quellclips für den Dialog
     void pasteAttributes(int attrs);
 
+    // Grade copy/paste on the Color page like DaVinci (Ctrl+C/Ctrl+V there, "=" / "-" = grade of the clip one/two
+    // before). Copies the Color page grade (wheels, LUT, its keyframes) and leaves other effects alone; a source
+    // without a grade resets the targets. Each paste is one undo step. EditorAttributes.cpp
+    bool copyGrade(int clipId);           // false = no video clip
+    bool hasCopiedGrade() const { return m_gradeClipboard.has_value(); }
+    void pasteGrade(const QVector<int>& ids);
+    // Grade of the video clip `back` places before `clipId` in timeline order (start, then lower track first);
+    // false = there is no such clip
+    bool applyGradeFromPrevious(int clipId, int back);
+
     // ---- Untertitel (DaVinci Subtitle Tracks, core/Subtitles.h) ----
     // Untertitel-Einträge teilen sich die Auswahl mit den Clips (eigene ids aus demselben Zähler)
     bool isSubtitle(int id) const;
@@ -327,4 +337,5 @@ private:
     bool m_splitOnSelectedTracks = true;
     int m_targetVideo = 0, m_targetAudio = 0;
     QVector<ClipboardItem> m_clipboard; // Starts relativ zum frühesten Clip
+    std::optional<Clip> m_gradeClipboard; // copyGrade: the source clip (only its grade is used)
 };

@@ -158,6 +158,46 @@ void testDialog()
     if (const QString dump = qEnvironmentVariable("PASTE_DUMP"); !dump.isEmpty()) shot.save(dump);
 }
 
+// Color page grade copy/paste and "=" / "-" (grade of the clip one/two before), other effects stay
+void testGrade()
+{
+    Fixture f;
+    const auto gradeV = [&](int id) {
+        for (const EffectInstance& e : f.at(id).effects)
+            if (e.effectId == "grade") return e.params.value("v").toDouble();
+        return -1.0;
+    };
+    CHECK(!f.editor.hasCopiedGrade());
+    CHECK(!f.editor.copyGrade(3)); // audio clip
+    CHECK(f.editor.copyGrade(1));
+    const int undo0 = f.project.undoStack()->count();
+    f.editor.pasteGrade({2, 5});
+    CHECK_EQ(f.project.undoStack()->count(), undo0 + 1);
+    CHECK_EQ(gradeV(2), 1.0);
+    CHECK_EQ(gradeV(5), 1.0);
+    CHECK_EQ(f.at(2).effects.size(), 2); // "old" stays
+    CHECK_EQ(f.at(5).effects.size(), 1);
+    CHECK_EQ(f.at(1).effects.size(), 3); // source unchanged
+    f.project.undoStack()->undo();
+    CHECK_EQ(gradeV(2), 2.0);
+    CHECK_EQ(gradeV(5), -1.0);
+
+    // "=": clip 5 gets the grade of clip 2, "-": that of clip 1; the first clip has none before it
+    CHECK(f.editor.applyGradeFromPrevious(5, 1));
+    CHECK_EQ(gradeV(5), 2.0);
+    CHECK(f.editor.applyGradeFromPrevious(5, 2));
+    CHECK_EQ(gradeV(5), 1.0);
+    CHECK(!f.editor.applyGradeFromPrevious(1, 1));
+    CHECK(!f.editor.applyGradeFromPrevious(2, 2));
+    // a clip before without a grade resets it
+    CHECK(f.editor.copyGrade(5));
+    f.project.undoStack()->undo();
+    f.project.undoStack()->undo();
+    CHECK_EQ(gradeV(5), -1.0);
+    CHECK(f.editor.applyGradeFromPrevious(2, 1)); // clip 1 has a grade -> 1
+    CHECK_EQ(gradeV(2), 1.0);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -169,5 +209,6 @@ int main(int argc, char** argv)
     Theme::apply(app);
     testPaste();
     testDialog();
+    testGrade();
     return Check::result();
 }

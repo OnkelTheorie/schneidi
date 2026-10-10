@@ -384,6 +384,26 @@ QWidget* ColorPanel::buildSlider(Slider& s, const QString& label, double min, do
     return box;
 }
 
+bool ColorPanel::copyGrade()
+{
+    const Clip* c = current();
+    return c && m_editor->copyGrade(c->id);
+}
+
+bool ColorPanel::pasteGrade()
+{
+    const QVector<int> ids = targets();
+    if (!m_editor->hasCopiedGrade() || ids.isEmpty()) return false;
+    m_editor->pasteGrade(ids);
+    return true;
+}
+
+bool ColorPanel::gradeFromPrevious(int back)
+{
+    const Clip* c = current();
+    return c && m_editor->applyGradeFromPrevious(c->id, back);
+}
+
 QVector<int> ColorPanel::targets() const { return m_editor->effectTargets(m_playhead); }
 
 const Clip* ColorPanel::current() const

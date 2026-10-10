@@ -122,8 +122,15 @@ void MainWindow::buildActions()
     redoAct->setEnabled(false);
     edit->addSeparator();
     makeAction(edit, "cut", T("Ausschneiden"), QKeySequence("Ctrl+X"), [this] { m_editor->cutSelection(); });
-    makeAction(edit, "copy", T("Kopieren"), QKeySequence("Ctrl+C"), [this] { m_editor->copySelection(); });
-    makeAction(edit, "paste", T("Einfügen am Playhead"), QKeySequence("Ctrl+V"), [this, tv] { m_editor->paste(tv->playhead()); });
+    // On the Color page Ctrl+C/Ctrl+V copy and paste the grade, like DaVinci
+    makeAction(edit, "copy", T("Kopieren"), QKeySequence("Ctrl+C"), [this] {
+        if (m_page == Page::Color) m_colorPanel->copyGrade();
+        else m_editor->copySelection();
+    });
+    makeAction(edit, "paste", T("Einfügen am Playhead"), QKeySequence("Ctrl+V"), [this, tv] {
+        if (m_page == Page::Color) m_colorPanel->pasteGrade();
+        else m_editor->paste(tv->playhead());
+    });
     makeAction(edit, "paste_attributes", T("Attribute einfügen…"), QKeySequence("Alt+V"), [this] {
         const int targets = int(m_editor->editable(m_editor->clipIdsOf(m_selection->ids())).size());
         const int available = m_editor->pasteAttributesAvailable();
@@ -470,6 +477,19 @@ void MainWindow::buildActions()
         });
     }
 #endif
+
+    // Color menu like DaVinci (Color → Apply Grade from One/Two Clips Prior); works on the Color page
+    QMenu* colorMenu = menuBar()->addMenu("&Color");
+    makeAction(colorMenu, "grade_copy", T("Grade kopieren (Color-Seite: Strg+C)"), QKeySequence(),
+               [this] { m_colorPanel->copyGrade(); });
+    makeAction(colorMenu, "grade_paste", T("Grade einfügen (Color-Seite: Strg+V)"), QKeySequence(),
+               [this] { m_colorPanel->pasteGrade(); });
+    makeAction(colorMenu, "grade_prev", T("Grade vom vorigen Clip übernehmen"), QKeySequence("="), [this] {
+        if (m_page == Page::Color) m_colorPanel->gradeFromPrevious(1);
+    });
+    makeAction(colorMenu, "grade_prev2", T("Grade vom vorvorigen Clip übernehmen"), QKeySequence("-"), [this] {
+        if (m_page == Page::Color) m_colorPanel->gradeFromPrevious(2);
+    });
 
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
     makeAction(workspace, "page_media", T("Media-Seite"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });

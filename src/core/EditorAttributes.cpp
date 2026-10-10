@@ -183,3 +183,46 @@ void Editor::pasteAttributes(int attrs)
     }
     undo->endMacro();
 }
+
+bool Editor::copyGrade(int clipId)
+{
+    TrackRef ref;
+    const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId, &ref);
+    if (!c || ref.kind != TrackKind::Video) return false;
+    m_gradeClipboard = *c;
+    return true;
+}
+
+void Editor::pasteGrade(const QVector<int>& ids)
+{
+    if (!m_gradeClipboard) return;
+    const Clip src = *m_gradeClipboard;
+    const Timeline& tl = m_project->timeline();
+    QVector<int> targets;
+    for (int id : editable(ids)) {
+        TrackRef ref;
+        if (id != src.id && TimelineOps::findClip(tl, id, &ref) && ref.kind == TrackKind::Video) targets << id;
+    }
+    if (!targets.isEmpty()) modifyClips(targets, T("Grade einfügen"), [&](Clip& c) { pasteColor(c, src); });
+}
+
+bool Editor::applyGradeFromPrevious(int clipId, int back)
+{
+    const Timeline& tl = m_project->timeline();
+    struct Item {
+        int start, track;
+        const Clip* clip;
+    };
+    QVector<Item> order;
+    for (int t = 0; t < tl.video.size(); ++t)
+        for (const Clip& c : tl.video[t].clips) order << Item{c.start, t, &c};
+    // Timeline order like DaVinci's clip strip: by start, at the same start the lower track first
+    std::sort(order.begin(), order.end(),
+              [](const Item& a, const Item& b) { return a.start != b.start ? a.start < b.start : a.track < b.track; });
+    const auto it = std::find_if(order.begin(), order.end(), [&](const Item& i) { return i.clip->id == clipId; });
+    if (it == order.end() || it - order.begin() < back || back < 1) return false;
+    if (editable({clipId}).isEmpty()) return false;
+    const Clip src = *(it - back)->clip;
+    modifyClips({clipId}, T("Grade vom vorigen Clip"), [&](Clip& c) { pasteColor(c, src); });
+    return true;
+}

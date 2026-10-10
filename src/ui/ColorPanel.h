@@ -20,6 +20,12 @@ class ColorPanel : public QWidget {
 public:
     explicit ColorPanel(Editor* editor, QWidget* parent = nullptr);
 
+    // Grade copy/paste like DaVinci's Color page: copy from the shown clip, paste onto the targets (selection or the
+    // clip under the playhead), "=" / "-" = grade of the clip one/two before the shown one. false = nothing to do
+    bool copyGrade();
+    bool pasteGrade();
+    bool gradeFromPrevious(int back);
+
 public slots:
     void setPlayhead(int frame);
 
