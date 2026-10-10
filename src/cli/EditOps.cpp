@@ -385,6 +385,7 @@ QVector<OpDef> makeOps()
          opRemoveTrack},
     };
     addTimelineOps(ops);
+    addLookOps(ops);
     return ops;
 }
 

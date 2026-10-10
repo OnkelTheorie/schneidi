@@ -172,6 +172,36 @@ int parseTrack(const QJsonValue& v, TrackKind* kind)
     return n - 1;
 }
 
+// Title/subtitle style: only what differs from `def`
+QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def)
+{
+    QJsonObject o;
+    const auto num = [&](const char* k, double v, double d) {
+        if (v != d) o[k] = v;
+    };
+    const auto color = [&](const char* k, const QColor& v, const QColor& d) {
+        if (v != d) o[k] = v.alpha() == 255 ? v.name() : v.name(QColor::HexArgb);
+    };
+    const auto flag = [&](const char* k, bool v, bool d) {
+        if (v != d) o[k] = v;
+    };
+    if (t.font != def.font) o["font"] = t.font;
+    num("size", t.size, def.size);
+    color("color", t.color, def.color);
+    flag("bold", t.bold, def.bold);
+    flag("italic", t.italic, def.italic);
+    if (t.align != def.align) o["align"] = QStringList{"left", "center", "right"}.value(t.align);
+    num("x", t.posX, def.posX);
+    num("y", t.posY, def.posY);
+    flag("outline", t.outlineOn, def.outlineOn);
+    color("outline_color", t.outlineColor, def.outlineColor);
+    num("outline_width", t.outlineWidth, def.outlineWidth);
+    flag("box", t.boxOn, def.boxOn);
+    color("box_color", t.boxColor, def.boxColor);
+    num("box_padding", t.boxPad, def.boxPad);
+    return o;
+}
+
 namespace {
 QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
 {
@@ -181,6 +211,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (c.isTitle()) {
         o["kind"] = "title";
         o["text"] = c.title.text;
+        o["style"] = titleStyleJson(c.title, TitleStyle{});
     } else if (c.isCompound()) {
         o["kind"] = "compound";
     } else {
@@ -192,6 +223,25 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (c.linkId) o["link"] = c.linkId;
     if (!c.enabled) o["enabled"] = false;
     if (ref.kind == TrackKind::Audio && c.volumeDb != 0) o["volume_db"] = c.volumeDb;
+    if (ref.kind == TrackKind::Audio && c.pan != 0) o["pan"] = c.pan;
+    if (ref.kind == TrackKind::Audio && c.audioStream != 0) o["audio_stream"] = c.audioStream;
+    if (ref.kind == TrackKind::Video && !c.transform.isIdentity()) {
+        const ClipTransform& t = c.transform;
+        const ClipTransform def;
+        QJsonObject to;
+        const QPair<const char*, double> fields[] = {
+            {"zoom_x", t.zoomX}, {"zoom_y", t.zoomY}, {"x", t.posX}, {"y", t.posY}, {"rotation", t.rotation},
+            {"crop_left", t.cropLeft}, {"crop_right", t.cropRight}, {"crop_top", t.cropTop},
+            {"crop_bottom", t.cropBottom}, {"opacity", t.opacity}};
+        const double defaults[] = {def.zoomX, def.zoomY, def.posX, def.posY, def.rotation, def.cropLeft,
+                                   def.cropRight, def.cropTop, def.cropBottom, def.opacity};
+        for (int i = 0; i < int(std::size(fields)); ++i)
+            if (fields[i].second != defaults[i]) to[fields[i].first] = fields[i].second;
+        o["transform"] = to;
+    }
+    if (const QJsonObject keys = keyframesJson(c); !keys.isEmpty()) o["keyframes"] = keys;
+    if (c.freeze) o["freeze"] = true;
+    if (c.isRetimed() && !c.keepPitch) o["keep_pitch"] = false;
     if (c.fadeIn) o["fade_in"] = c.fadeIn;
     if (c.fadeOut) o["fade_out"] = c.fadeOut;
     if (c.transIn) o["transition_in"] = c.transIn;

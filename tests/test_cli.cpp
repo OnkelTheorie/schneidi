@@ -19,17 +19,24 @@ namespace {
 
 QString g_path;
 
-QJsonObject run(const QString& name, const QJsonObject& raw)
+const QJsonObject run(const QString& name, const QJsonObject& raw)
 {
     const Cli::Command* cmd = Cli::find(name);
     Cli::Context ctx;
-    return cmd->run(Cli::normalize(*cmd, raw), ctx);
+    try {
+        return cmd->run(Cli::normalize(*cmd, raw), ctx);
+    } catch (const Cli::Error& e) {
+        qWarning().noquote() << "unexpected error" << e.code << e.message;
+        throw;
+    }
 }
 
 QString errorOf(const QString& name, const QJsonObject& raw)
 {
     try {
-        run(name, raw);
+        const Cli::Command* cmd = Cli::find(name);
+        Cli::Context ctx;
+        cmd->run(Cli::normalize(*cmd, raw), ctx);
     } catch (const Cli::Error& e) {
         return e.code;
     }
@@ -207,6 +214,60 @@ int main(int argc, char** argv)
         edit(R"([{"op":"duplicate_timeline","name":"Copy","switch":true},{"op":"rename_timeline","name":"Copy 2"}])");
         CHECK_EQ(run("info", {{"project", g_path}})["timelines"].toArray().size(), 3);
         CHECK_EQ(run("info", {{"project", g_path}, {"timeline", "Copy 2"}})["timeline"].toObject()["markers"].toArray().at(0).toInt(), 2);
+    }
+
+    // Look: grade (wheels, sliders, reset), transform, keyframes (times = timeline frames), copy attributes
+    {
+        edit(R"([{"op":"timeline","timeline":1,"open":true},{"op":"clear"},
+                 {"op":"append","media":"/x/a.mp4","in":0,"out":40},{"op":"append","media":"/x/a.mp4","in":50,"out":90}])");
+        QJsonObject tl = run("info", {{"project", g_path}})["timeline"].toObject();
+        const int v1 = tl["tracks"][0]["clips"][0]["id"].toInt(), v2 = tl["tracks"][0]["clips"][1]["id"].toInt();
+        int a1 = 0, a1Track = 0;
+        for (int i = 0; i < tl["tracks"].toArray().size(); ++i)
+            if (tl["tracks"][i]["track"].toString() == "A1") {
+                a1 = tl["tracks"][i]["clips"][0]["id"].toInt();
+                a1Track = i;
+            }
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"color","clips":[%1],"lift":{"q":1}}])").arg(v1)}}),
+                 QString("BAD_ARGUMENT"));
+        edit(QString(R"([{"op":"color","clips":[%1],"gain":{"y":1.2,"b":0.9},"saturation":70,"temperature":9000},
+                         {"op":"transform","clips":[%1],"zoom":1.5,"x":100,"opacity":80},
+                         {"op":"keyframe","clips":[%1],"param":"opacity","keys":[{"at":5,"value":0},{"at":30,"value":100,"ease":"ease_in"}]},
+                         {"op":"keyframe","clips":[%1],"param":"grade.liftY","at":10,"value":0.1},
+                         {"op":"keyframe","clips":[%2],"param":"volume","at":20,"value":-6}])")
+                 .arg(v1).arg(a1).toUtf8().constData());
+        const auto firstClip = [] { return run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"][0].toObject(); };
+        const QJsonObject c = firstClip();
+        const QJsonObject grade = c["effects"][0]["params"].toObject();
+        CHECK_EQ(c["effects"][0]["effect"].toString(), QString("grade"));
+        CHECK_EQ(grade["gainY"].toDouble(), 1.2);
+        CHECK_EQ(grade["gainB"].toDouble(), 0.9);
+        CHECK_EQ(grade["temperature"].toDouble(), 4000.0); // clamped
+        CHECK_EQ(c["transform"]["zoom_x"].toDouble(), 1.5);
+        CHECK_EQ(c["transform"]["x"].toDouble(), 100.0);
+        const QJsonArray op = c["keyframes"]["opacity"].toArray();
+        CHECK_EQ(op.size(), 2);
+        CHECK_EQ(op[1]["at"].toInt(), 30);
+        CHECK_EQ(op[1]["ease"].toString(), QString("ease_in"));
+        CHECK_EQ(c["keyframes"]["grade.liftY"][0]["value"].toDouble(), 0.1);
+        CHECK_EQ(run("info", {{"project", g_path}})["timeline"]["tracks"][a1Track]["clips"][0]["keyframes"]["volume"][0]["value"].toDouble(), -6.0);
+        // Keyframed opacity: transform sets a keyframe at `at` instead of the static value
+        edit(QString(R"([{"op":"transform","clips":[%1],"opacity":50,"at":20},
+                         {"op":"keyframe","clips":[%1],"param":"opacity","at":5,"remove":true},
+                         {"op":"color","clips":[%1],"reset":["gainY"]}])").arg(v1).toUtf8().constData());
+        const QJsonObject c2 = firstClip();
+        CHECK_EQ(c2["keyframes"]["opacity"].toArray().size(), 2);
+        CHECK_EQ(c2["keyframes"]["opacity"][0]["at"].toInt(), 20);
+        CHECK_EQ(c2["effects"][0]["params"]["gainY"].toDouble(), 1.0);
+        // Copy the grade (only) to the second clip, then remove the first one's grade
+        edit(QString(R"([{"op":"copy_attributes","from":%1,"clips":[%2],"attributes":["color"]},
+                         {"op":"color","clips":[%1],"reset":true}])").arg(v1).arg(v2).toUtf8().constData());
+        tl = run("info", {{"project", g_path}})["timeline"].toObject();
+        CHECK(!tl["tracks"][0]["clips"][0].toObject().contains("effects"));
+        CHECK_EQ(tl["tracks"][0]["clips"][1]["effects"][0]["params"]["saturation"].toDouble(), 70.0);
+        CHECK(!tl["tracks"][0]["clips"][1].toObject().contains("transform"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keyframe","clips":[%1],"param":"blur.nope","at":1}])").arg(v1)}}),
+                 QString("BAD_ARGUMENT"));
     }
     return Check::result();
 }

@@ -67,6 +67,7 @@ QJsonObject timelineJson(const Project& p);
 QJsonObject projectJson(const Project& p, const QString& path);
 
 QJsonArray timelinesJson(const Project& p);
+QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def);
 
 // ---------- Edit operations (EditOps*.cpp) ----------
 
@@ -81,6 +82,11 @@ struct OpDef {
 };
 const QVector<OpDef>& editOps();
 void addTimelineOps(QVector<OpDef>& ops); // EditOpsTimelines.cpp
+void addLookOps(QVector<OpDef>& ops);     // EditOpsLook.cpp
+// Name of an animatable value as the ops use it ("x", "opacity", "grade.liftY") and a clip's keyframes by name
+// (times in timeline frames)
+QString paramName(AnimParam p);
+QJsonObject keyframesJson(const Clip& c);
 QString editHelp();
 QJsonArray editOpsHelp();
 void applyOp(Session& s, const QJsonObject& op);
