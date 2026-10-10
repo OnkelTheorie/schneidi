@@ -131,10 +131,10 @@ void opColor(Session& s, const QJsonObject& op)
         }
     }
     if (op.contains("lut")) {
-        const QString path = absolute(op.value("lut").toString());
+        const QString name = op.value("lut").toString();
+        const QString path = name.isEmpty() ? QString() : findAsset(Asset::Lut, name);
         if (!path.isEmpty()) {
             QString error;
-            if (!QFileInfo::exists(path)) fail("NOT_FOUND", "LUT not found: " + path);
             if (!ColorGrade::parseLut(path, &error)) fail("BAD_ARGUMENT", "cannot read the LUT: " + error);
         }
         ed.setGradeLut(ids, path);
@@ -324,7 +324,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "Wheels lift/gamma/gain/offset: a number (master) or {y, r, g, b}. Neutral: lift 0, gamma 0, gain 1, "
                  "offset 25 (ranges: lift/gamma -1..1, gain 0..4, offset 0..100). contrast 0..2 (1), pivot 0..1 "
                  "(0.435), saturation 0..100 (50), temperature -4000..4000 (0, + = warmer), tint -100..100 (0, + = "
-                 "magenta), exposure -4..4 stops (0). lut: .cube/.3dl/.csp/Hald image file, \"\" removes it. "
+                 "magenta), exposure -4..4 stops (0). lut: name from `effects` or a .cube/.3dl/.csp/Hald image file, \"\" removes it. "
                  "reset:true removes the whole grade, reset:[\"liftY\", …] sets single values back. Values that "
                  "have keyframes get one at `at` (default: clip start); keyframe:true/false with `at` sets/removes a "
                  "keyframe of every value there. Single grade values animate with {op:'keyframe', param:'grade.gainY'}.",

@@ -2,12 +2,14 @@
 #include "cli/CommandsDetail.h"
 
 #include "core/Editor.h"
+#include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
 #include "core/Retime.h"
 #include "core/Selection.h"
+#include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
@@ -336,6 +338,37 @@ QJsonObject timelineJson(const Project& p)
     return o;
 }
 
+QString findAsset(Asset kind, const QString& name)
+{
+    QVector<EffectFolders::LutEntry> list;
+    if (kind == Asset::Lut) list = EffectFolders::builtinLuts() + EffectFolders::userLuts();
+    if (kind == Asset::Luma) list = EffectFolders::builtinTransitions() + EffectFolders::userTransitions();
+    if (kind == Asset::Preset) list = EffectFolders::userPresets();
+    for (const EffectFolders::LutEntry& e : list) {
+        const QString id = EffectFolders::isBuiltin(e.path) ? EffectFolders::builtinId(e.path) : QString();
+        const QString grouped = e.group.isEmpty() ? e.name : e.group + "/" + e.name;
+        if (name == id || name.compare(e.name, Qt::CaseInsensitive) == 0 || name.compare(grouped, Qt::CaseInsensitive) == 0
+            || name == QFileInfo(e.path).fileName())
+            return e.path;
+    }
+    if (QFileInfo::exists(name)) return absolute(name);
+    static const char* what[] = {"LUT", "luma transition", "effect preset"};
+    fail("NOT_FOUND", QString("no %1 '%2' (`effects` lists them, or give a file)").arg(what[int(kind)], name));
+}
+
+namespace {
+QJsonArray assetsJson(const QVector<EffectFolders::LutEntry>& list)
+{
+    QJsonArray out;
+    for (const EffectFolders::LutEntry& e : list) {
+        const bool builtin = EffectFolders::isBuiltin(e.path);
+        out << QJsonObject{{"name", builtin ? EffectFolders::builtinId(e.path) : (e.group.isEmpty() ? e.name : e.group + "/" + e.name)},
+                           {"label", builtin ? e.name : QFileInfo(e.path).fileName()}};
+    }
+    return out;
+}
+} // namespace
+
 QJsonArray timelinesJson(const Project& p)
 {
     QJsonArray list;
@@ -506,19 +539,55 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
 {
     Session s(a["project"].toString());
     s.selectTimeline(a["timeline"]);
-    const QString formatId = a.contains("format") ? a["format"].toString() : "h264";
+    RenderJob job;
+    if (a.contains("preset")) {
+        // Deliver presets of the app (built-in and the user's own)
+        const QString name = a["preset"].toString();
+        QStringList names;
+        bool found = false;
+        for (const RenderPreset& p : RenderPresets::all()) {
+            names << p.name;
+            if (p.name.compare(name, Qt::CaseInsensitive) == 0) {
+                job.settings = p.settings;
+                job.preset = p.name;
+                found = true;
+            }
+        }
+        if (!found) fail("NOT_FOUND", QString("no preset '%1' (there are: %2)").arg(name, names.join(", ")));
+    }
+    const QString formatId = a.contains("format") ? a["format"].toString() : job.settings.format;
     const auto& formats = renderFormats();
-    if (std::none_of(formats.begin(), formats.end(), [&](const RenderFormatInfo& i) { return formatId == i.id; }))
-        fail("BAD_ARGUMENT", "unknown format " + formatId + " (h264, h265, prores, aac, mp3, wav, aiff, alac)");
+    const bool srtOnly = formatId == "srt";
+    if (!srtOnly && std::none_of(formats.begin(), formats.end(), [&](const RenderFormatInfo& i) { return formatId == i.id; }))
+        fail("BAD_ARGUMENT", "unknown format " + formatId + " (h264, h265, prores, aac, mp3, wav, aiff, alac, srt)");
     QString out = absolute(a["out"].toString());
-    if (QFileInfo(out).suffix().isEmpty()) out += "." + QString(renderFormat(formatId).extension);
+    if (QFileInfo(out).suffix().isEmpty()) out += "." + QString(srtOnly ? "srt" : renderFormat(formatId).extension);
     if (QFileInfo::exists(out) && !a["overwrite"].toBool())
         fail("EXISTS", "output exists (pass overwrite to replace it): " + out);
-    RenderJob job;
     job.path = out;
-    job.settings.format = formatId;
-    job.settings.quality = std::clamp(a["quality"].toInt(), 0, 2);
-    if (a.contains("height")) job.settings.shortSide = a["height"].toInt();
+    if (!srtOnly) job.settings.format = formatId;
+    if (a.contains("quality")) job.settings.quality = std::clamp(a["quality"].toInt(), 0, 2);
+    if (a.contains("height")) {
+        job.settings.shortSide = a["height"].toInt();
+        job.settings.size = {};
+    }
+    if (a.contains("size")) {
+        const QStringList wh = a["size"].toString().toLower().split('x');
+        const int w = wh.value(0).toInt(), h = wh.value(1).toInt();
+        if (wh.size() != 2 || w < 16 || h < 16 || w > 8192 || h > 8192) fail("BAD_ARGUMENT", "size must look like 1080x1920");
+        job.settings.size = QSize(w & ~1, h & ~1);
+    }
+    if (a.contains("fps")) {
+        const FrameRate r = nearestFrameRate(a["fps"].toDouble());
+        job.settings.rateNum = r.num;
+        job.settings.rateDen = r.den;
+    }
+    if (a.contains("audio_bitrate")) job.settings.audioBitrateK = std::clamp(a["audio_bitrate"].toInt(), 32, 512);
+    if (a.contains("subtitles")) {
+        const int i = QStringList{"none", "burn", "srt"}.indexOf(a["subtitles"].toString());
+        if (i < 0) fail("BAD_ARGUMENT", "subtitles must be none, burn (into the picture) or srt (file next to the video)");
+        job.settings.subtitles = i;
+    }
     job.size = job.settings.outputSize(s.format().size());
     const Timeline tl = s.project.renderTimeline();
     const int end = TimelineOps::endFrame(tl);
@@ -528,6 +597,21 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.from = a.contains("from") ? parseTime(a["from"], s.format(), "from") : 0;
         job.to = (a.contains("to") ? parseTime(a["to"], s.format(), "to") : end) - 1;
         if (job.to < job.from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
+    }
+    if (srtOnly) {
+        // Only the subtitle file (visible subtitle track, times from the range start)
+        const SubtitleTrack* track = nullptr;
+        for (const SubtitleTrack& t : tl.subtitles)
+            if (t.enabled && !t.cues.isEmpty()) track = &t;
+        for (const SubtitleTrack& t : tl.subtitles)
+            if (!track && !t.cues.isEmpty()) track = &t;
+        if (!track) fail("EMPTY", "the timeline has no subtitles");
+        QDir().mkpath(QFileInfo(out).absolutePath());
+        QFile f(out);
+        if (!f.open(QIODevice::WriteOnly)
+            || f.write(Subtitles::toSrt(track->cues, s.project.frameRate(), job.inOut ? job.from : 0, job.inOut ? job.to + 1 : -1)) < 0)
+            fail("WRITE_FAILED", "cannot write " + out);
+        return {{"out", out}, {"format", "srt"}, {"cues", int(track->cues.size())}};
     }
     if (Exporter::readsFile(tl, out)) fail("BAD_ARGUMENT", "the output would overwrite a source file of the project");
     QDir().mkpath(QFileInfo(out).absolutePath());
@@ -550,8 +634,15 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     if (!ex.start(tl, RenderQueue::exportSettings(job, s.format()), &error)) fail("RENDER_FAILED", error);
     loop.exec();
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
-    return {{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10},
-            {"width", job.size.width()}, {"height", job.size.height()}};
+    const ExportSettings es = RenderQueue::exportSettings(job, s.format());
+    QJsonObject o{{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10}};
+    if (!job.settings.audioOnly()) {
+        o["width"] = es.size.width();
+        o["height"] = es.size.height();
+    }
+    if (!job.preset.isEmpty()) o["preset"] = job.preset;
+    if (!es.subtitlePath.isEmpty()) o["srt"] = es.subtitlePath;
+    return o;
 }
 
 QJsonObject cmdHelp(const QJsonObject& a, Context&);
@@ -590,9 +681,25 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         list << o;
     }
     if (list.isEmpty() && !only.isEmpty()) fail("NOT_FOUND", "no video effect " + only);
-    return {{"effects", list}};
+    if (!only.isEmpty()) return {{"effects", list}};
+    QJsonArray types;
+    for (const auto& t : kTransitionTypes) types << t.id;
+    return {{"effects", list},
+            {"luts", assetsJson(EffectFolders::builtinLuts() + EffectFolders::userLuts())},
+            {"transition_types", types},
+            {"lumas", assetsJson(EffectFolders::builtinTransitions() + EffectFolders::userTransitions())},
+            {"presets", assetsJson(EffectFolders::userPresets())}};
 }
 
+} // namespace
+
+namespace {
+QString presetHelp()
+{
+    QStringList names;
+    for (const RenderPreset& p : RenderPresets::all()) names << p.name;
+    return "Deliver preset of the app (other parameters override it): " + names.join(", ");
+}
 } // namespace
 
 const QVector<Command>& commands()
@@ -632,9 +739,14 @@ const QVector<Command>& commands()
         {"render", "Render the project timeline to a video or audio file.",
          {{"project", T::Path, "project file", true, true},
           {"out", T::Path, "output file (extension added if missing)", true},
-          {"format", T::String, "h264 (default), h265, prores, aac, mp3, wav, aiff, alac"},
+          {"preset", T::String, presetHelp()},
+          {"format", T::String, "h264 (default), h265, prores, aac, mp3, wav, aiff, alac; srt = only the subtitle file"},
           {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small (H.264/H.265)"},
           {"height", T::Integer, "shorter image edge, e.g. 720 (default: timeline resolution)"},
+          {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
+          {"fps", T::Number, "output frame rate (default: the timeline's)"},
+          {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3 (default 320)"},
+          {"subtitles", T::String, "none (default), burn (into the picture) or srt (file next to the video)"},
           {"from", T::Time, "start of the range (default: timeline start)"},
           {"to", T::Time, "end of the range, exclusive (default: timeline end)"},
           {"timeline", T::String, "timeline to render (id or name; default: the open one)"},
@@ -696,7 +808,8 @@ const QVector<Command>& commands()
           {"reinstall", T::Boolean, "download again even if installed"}},
          cmdExtensions},
         {"effects", "Video effects for the 'effect' edit operation: all ids with their parameter names, or one "
-                    "effect with types, ranges and defaults.",
+                    "effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
+                    "luma images (op 'transition') and effect presets (op 'effect' preset).",
          {{"effect", T::String, "only this effect, with parameter details", false, true}}, cmdEffects},
         {"frames", "Still images of a media file or a project timeline at given times, as files or one contact "
                    "sheet with timecodes (lets you look at the material).",

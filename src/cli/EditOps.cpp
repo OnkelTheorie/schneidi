@@ -2,6 +2,7 @@
 #include "cli/CommandsDetail.h"
 
 #include "core/EffectRegistry.h"
+#include "core/Presets.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 
@@ -247,6 +248,12 @@ void opEffect(Session& s, const QJsonObject& op)
 {
     const QString effectId = op.value("effect").toString();
     const QVector<int> ids = clipIds(s, op);
+    if (op.contains("preset")) {
+        // Shotcut/Kdenlive preset from the effects folder: adds its effects with their values
+        const QString path = findAsset(Asset::Preset, op.value("preset").toString());
+        s.editor.addEffect(onTracks(s, ids, TrackKind::Video, "presets"), Presets::Prefix + path);
+        return;
+    }
     if (op.value("remove").toBool()) {
         s.editor.removeEffect(ids, effectId);
         return;
@@ -330,8 +337,9 @@ QVector<OpDef> makeOps()
          {}, opSubtitle},
         {"subtitles", "{op:'subtitles', srt?:file, cues?:[{from, to, text}], name?}",
          "new subtitle track from an SRT file or a cue list", {}, opSubtitles},
-        {"effect", "{op:'effect', clips, effect, params?:{key: value}, enabled?, remove?}",
-         "add/set/remove a video effect (ids and parameters: `effects`)", {}, opEffect},
+        {"effect", "{op:'effect', clips, effect, params?:{key: value}, enabled?, remove?} or {op:'effect', clips, preset}",
+         "add/set/remove a video effect (ids and parameters: `effects`); preset = effect preset from `effects`", {},
+         opEffect},
         {"add_track", "{op:'add_track', kind:'video'|'audio', at?}", "new track (default: above/below the others)",
          {}, opAddTrack},
         {"remove_track", "{op:'remove_track', track}", "remove a track with its clips (not the last one; ST1 … = subtitle tracks)", {},

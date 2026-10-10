@@ -3,6 +3,7 @@
 #include "cli/Commands.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
+#include "core/RenderJob.h"
 
 #include <QLockFile>
 
@@ -11,6 +12,7 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QFileInfo>
 #include <QTemporaryDir>
 
 #include <cmath>
@@ -358,6 +360,33 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(run("info", {{"project", g_path}})["timeline"]["mark_in"].toInt(), 2);
     }
 
+    // Project format (resolution scales positions, frame rate locked while clips exist), LUT by name, SRT export
+    {
+        const QJsonObject r = run("edit", {{"project", g_path}, {"ops", R"([{"op":"clear"},
+            {"op":"append","media":"/x/a.mp4","in":0,"out":20},
+            {"op":"subtitle","text":"Hi","at":0,"duration":10}])"}});
+        const int id = std::as_const(r)["timeline"]["tracks"][0]["clips"][0]["id"].toInt();
+        run("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"transform","clips":[%1],"x":100},
+            {"op":"color","clips":[%1],"lut":"teal-orange"},{"op":"format","width":960,"height":540}])").arg(id)}});
+        const QJsonObject info = run("info", {{"project", g_path}});
+        CHECK_EQ(info["format"]["width"].toInt(), 960);
+        CHECK_EQ(info["timeline"]["tracks"][0]["clips"][0]["transform"]["x"].toDouble(), 50.0);
+        CHECK(info["timeline"]["tracks"][0]["clips"][0]["effects"][0]["params"]["lut"].toString().endsWith("teal-orange.cube"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"format","fps":30}])"}}), QString("FAILED"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"color","clips":[%1],"lut":"nope"}])").arg(id)}}),
+                 QString("NOT_FOUND"));
+        const QString srt = dir.filePath("subs.srt");
+        CHECK(run("render", {{"project", g_path}, {"out", srt}, {"format", "srt"}})["cues"].toInt() >= 1); // visible track
+        QFile f(srt);
+        CHECK(f.open(QIODevice::ReadOnly) && f.readAll().contains("Hi"));
+        CHECK_EQ(errorOf("render", {{"project", g_path}, {"out", dir.filePath("x.mp4")}, {"preset", "Nope"}}), QString("NOT_FOUND"));
+        // Frame rate of an empty project: media lengths follow
+        const QString empty = dir.filePath("empty.schneidi");
+        run("new", {{"project", empty}});
+        run("edit", {{"project", empty}, {"ops", R"([{"op":"format","fps":50}])"}});
+        CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 50.0);
+    }
+
     // --- With real media (ffmpeg): loudness of a file and of the mix, normalize, mixer
     if (!Check::haveFfmpeg()) return Check::result();
     Check::initMlt();
@@ -383,6 +412,16 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(mix() < -100);
         const QJsonObject perClip = run("loudness", {{"source", proj}, {"clips", QJsonArray{clip}}});
         CHECK(std::abs(perClip["clips"][0]["loudness"]["integrated_lufs"].toDouble() - fileLufs) < 0.3);
+        // Render with a preset (audio only) and a range
+        run("edit", {{"project", proj}, {"ops", R"([{"op":"mixer","track":"A1","mute":false}])"}});
+        QString wavPreset; // name in the test's UI language
+        for (const RenderPreset& p : RenderPresets::builtins())
+            if (p.settings.format == "wav") wavPreset = p.name;
+        const QJsonObject rendered = run("render", {{"project", proj}, {"out", dir.filePath("out")}, {"preset", wavPreset.toUpper()},
+                                                    {"from", 0}, {"to", "2s"}});
+        CHECK(rendered["out"].toString().endsWith(".wav"));
+        CHECK_EQ(rendered["preset"].toString(), wavPreset);
+        CHECK(QFileInfo(rendered["out"].toString()).size() > 100000);
     }
     return Check::result();
 }

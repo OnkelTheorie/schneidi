@@ -67,6 +67,9 @@ QJsonObject timelineJson(const Project& p);
 QJsonObject projectJson(const Project& p, const QString& path);
 
 QJsonArray timelinesJson(const Project& p);
+// LUT / luma transition / effect preset by built-in id, name in the effects folder or file path; throws if none
+enum class Asset { Lut, Luma, Preset };
+QString findAsset(Asset kind, const QString& name);
 QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def);
 
 // ---------- Edit operations (EditOps*.cpp) ----------

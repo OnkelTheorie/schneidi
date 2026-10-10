@@ -2,6 +2,11 @@
 #include "cli/CommandsDetail.h"
 
 #include "core/TimelineOps.h"
+#include "engine/Engine.h"
+
+#include <QFileInfo>
+
+#include <cmath>
 
 namespace Cli::detail {
 
@@ -78,6 +83,36 @@ void opPlaceTimeline(Session& s, const QJsonObject& op)
         fail("FAILED", "cannot place that timeline here (empty, or it contains this timeline)");
 }
 
+// Project settings like the app's dialog: the resolution scales positions/sizes in every timeline; the frame
+// rate (like DaVinci) only changes while no timeline has clips, then media lengths are counted anew
+void opFormat(Session& s, const QJsonObject& op)
+{
+    ProjectFormat f = s.format();
+    if (op.contains("width")) f.width = int(numberOf(op, "width", 16, 8192));
+    if (op.contains("height")) f.height = int(numberOf(op, "height", 16, 8192));
+    if (f.width % 2 || f.height % 2) fail("BAD_ARGUMENT", "width and height must be even");
+    if (op.contains("fps")) {
+        const FrameRate rate = nearestFrameRate(numberOf(op, "fps", 1, 120));
+        if (rate != f.rate && s.project.frameRateLocked())
+            fail("FAILED", "the frame rate can only change while all timelines are empty (like DaVinci); make a new "
+                           "project with `new --fps` instead");
+        f.rate = rate;
+    }
+    const FrameRate oldRate = s.format().rate;
+    s.project.setFormat(f);
+    if (f.rate == oldRate) return;
+    QVector<MediaInfo> media = s.project.media();
+    for (MediaInfo& m : media) {
+        const MediaInfo fresh = QFileInfo::exists(m.path) ? Engine::probe(f, m.path) : MediaInfo{};
+        const double scale = f.rate.fps() / oldRate.fps();
+        m.length = fresh.length > 0 ? fresh.length : int(std::lround(m.length * scale));
+        const auto mark = [&](int v) { return v < 0 ? -1 : std::min(m.length - 1, int(std::lround(v * scale))); };
+        m.markIn = mark(m.markIn);
+        m.markOut = mark(m.markOut);
+    }
+    s.project.replaceMedia(media);
+}
+
 } // namespace
 
 void addTimelineOps(QVector<OpDef>& ops)
@@ -100,7 +135,11 @@ void addTimelineOps(QVector<OpDef>& ops)
         << OpDef{"decompose", "{op:'decompose', clips}", "put a compound clip's content back in place", {}, opDecompose}
         << OpDef{"place_timeline", "{op:'place_timeline', timeline, at?, track?}",
                  "put another timeline (or compound clip) as one clip into this one (default: at the end)", {},
-                 opPlaceTimeline};
+                 opPlaceTimeline}
+        << OpDef{"format", "{op:'format', width?, height?, fps?}",
+                 "project resolution (scales positions in all timelines) and frame rate (only while all timelines are "
+                 "empty)",
+                 {}, opFormat};
 }
 
 } // namespace Cli::detail

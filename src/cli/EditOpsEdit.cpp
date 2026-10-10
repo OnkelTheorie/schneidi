@@ -153,13 +153,7 @@ TransitionStyle parseTransitionStyle(const QJsonObject& op, TransitionStyle st)
     }
     if (op.contains("luma")) {
         // Built-in name (`effects` lists them), a file in the effects folder or any image file
-        const QString name = op.value("luma").toString();
-        QString path;
-        for (const EffectFolders::LutEntry& e : EffectFolders::builtinTransitions())
-            if (EffectFolders::builtinId(e.path) == name || e.name == name) path = e.path;
-        if (path.isEmpty()) path = EffectFolders::findUserTransition(name);
-        if (path.isEmpty() && QFileInfo::exists(name)) path = absolute(name);
-        if (path.isEmpty()) fail("NOT_FOUND", "no luma transition '" + name + "' (see `effects`)");
+        const QString path = findAsset(Asset::Luma, op.value("luma").toString());
         st.luma = path;
         if (!op.contains("type")) st.type = TransitionType::Luma;
     }
