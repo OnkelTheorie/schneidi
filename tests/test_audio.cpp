@@ -324,6 +324,12 @@ int main(int argc, char** argv)
         CHECK(in.size() == 1920 && peakOf(in, 0, 5) < 0.01f && peakOf(in, 480, 1920) > 0.45f);
         CHECK_EQ(fade.target.load(), -1);
         CHECK(peakOf(frameAudio(71), 0, 1920) > 0.45f);
+        // Playback starts: fade-in at the start frame only
+        tr->seek(80);
+        fade.fadeIn(80, 1.0);
+        const std::vector<float> start = frameAudio(80);
+        CHECK(start.size() == 1920 && peakOf(start, 0, 5) < 0.01f && peakOf(start, 480, 1920) > 0.45f);
+        CHECK_EQ(fade.target.load(), -1);
     }
     return Check::result();
 }

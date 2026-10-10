@@ -428,6 +428,8 @@ void Engine::setSpeed(double speed)
             applyAudioState();
             m_consumer->start();
         }
+    } else if (!wasPlaying && m_mode == Mode::Timeline) {
+        m_seekFade->fadeIn(m_position, speed);
     }
     applyAudioState();
     refresh();

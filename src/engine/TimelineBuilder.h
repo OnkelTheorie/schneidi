@@ -35,7 +35,8 @@ struct MixerHooks {
     Strip master;
 };
 
-// Preview: a seek during playback cuts the sound mid-wave on both sides (audible click). The engine sets the
+// Preview: a seek during playback cuts the sound mid-wave on both sides (audible click), starting playback
+// starts it mid-wave. The engine sets the
 // target, the master meter fades out the old sound still coming (frames before the target), keeps it silent and
 // fades in at the target.
 struct SeekFade {
@@ -49,6 +50,12 @@ struct SeekFade {
         fadedOut = false;
         waited = 0;
         target = frame;
+    }
+    // Playback starts (was silent before): only the fade-in at `frame`, the sound jumps in mid-wave otherwise
+    void fadeIn(int frame, double speed)
+    {
+        start(frame, speed);
+        fadedOut = true;
     }
 };
 
