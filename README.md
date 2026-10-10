@@ -20,15 +20,17 @@ A DaVinci-style workflow without DaVinci's hurdles: runs on modest hardware and 
 - Timeline zoom and scroll change **only on user input** – nothing jumps when clips get shorter
 - Fully customizable keyboard shortcuts
 - Titles, subtitles, fades, transitions, volume, loudness normalization
-- Color correction, curves, LUTs, effects with keyframes
+- Color correction, curves, LUTs, effects with keyframes; copy and paste grades (`=`/`-` like DaVinci)
+- Video stabilization (vid.stab) and audio noise reduction
 - frei0r effects; import effect presets from Kdenlive and Shotcut
 - Video scopes: waveform, RGB parade, vectorscope, histogram
 - Two-up/four-up trim view while dragging an edit
 - Loudness and true-peak meters
 - Clip speed / retime
 - Proxy and render cache for smooth playback
-- Export and render queue via FFmpeg
+- Export and render queue via FFmpeg, with hardware encoders (NVENC, VAAPI, Quick Sync) when available
 - Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; an optional download under Workspace → Extensions
+- Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
 - **Command line and MCP server** (`schneidi-cli`): scripts or an AI assistant can edit almost everything the app can – find pauses and scene changes, transcribe, cut and trim, grade, animate, mix and normalize, measure loudness, look at frames and scopes, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
