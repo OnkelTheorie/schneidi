@@ -32,11 +32,15 @@ Timeline make(const QString& media, int clips, const QStringList& frei0r, bool e
         tl.video[0].clips << c;
         if (!effects) continue;
         Clip& e = tl.video[0].clips.last();
-        EffectRegistry::add(e, "color");
-        EffectRegistry::add(e, "blur");
-        EffectRegistry::add(e, "grade");
-        for (const QString& id : frei0r) EffectRegistry::add(e, id);
+        // BENCH_FX=blur,grade: only these effects (to find the expensive one)
+        const QString only = qEnvironmentVariable("BENCH_FX");
+        for (const QString& id : only.isEmpty() ? QStringList{"color", "blur", "grade"} + frei0r : only.split(','))
+            EffectRegistry::add(e, id);
+        // BENCH_KEYS=0: no keyframes, zoom: only zoom, fx: only effect parameters
+        const QString keys = qEnvironmentVariable("BENCH_KEYS");
+        if (keys == "0") continue;
         for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::FxBrightness, AnimParam::GradeSaturation}) {
+            if ((keys == "zoom") != (p == AnimParam::ZoomX || p == AnimParam::ZoomY) && !keys.isEmpty()) continue;
             Keys::setKey(e, p, 0, Keys::staticValue(e, p));
             Keys::setKey(e, p, 199, Keys::staticValue(e, p) + (p == AnimParam::ZoomX || p == AnimParam::ZoomY ? 0.2 : 5));
         }
@@ -77,13 +81,18 @@ int main(int argc, char** argv)
     const int nFrei0r = argc > 2 ? atoi(argv[2]) : 3;
     QTemporaryDir tmp;
     const QString media = Check::makeMedia(tmp.filePath("bars.mp4"),
-                                           {"-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=25:duration=8", "-c:v",
+                                           {"-f", "lavfi", "-i", QString("testsrc2=size=1920x1080:rate=%1:duration=8").arg(qEnvironmentVariable("BENCH_RATE", "25")), "-c:v",
                                             "libx264", "-preset", "ultrafast", "-g", "250", "-pix_fmt", "yuv420p"});
     Engine engine;
     QString error;
     if (!engine.init(&error)) {
         std::printf("Engine init failed: %s\n", qPrintable(error));
         return 77;
+    }
+    if (const int rate = qEnvironmentVariableIntValue("BENCH_RATE"); rate > 0) { // BENCH_RATE=60: 60 fps project
+        ProjectFormat f;
+        f.rate = {rate, 1};
+        engine.setFormat(f);
     }
     QStringList frei0r;
     for (const EffectDescriptor& d : EffectRegistry::all())
@@ -133,6 +142,16 @@ int main(int argc, char** argv)
             c.transform.rotation = ++n % 10;
             engine.updateTimeline(tl);
         });
+        QElapsedTimer wall;
+        wall.start();
+        double maxGap = 0, last = -1, first = 0;
+        int firstPos = 0;
+        auto gapConn = QObject::connect(&engine, &Engine::frameReady, [&] {
+            const double now = wall.nsecsElapsed() / 1e6;
+            if (last < 0) first = now, firstPos = engine.position();
+            else maxGap = std::max(maxGap, now - last);
+            last = now;
+        });
         engine.play();
         if (changes) change.start(30);
         QEventLoop loop;
@@ -141,6 +160,9 @@ int main(int argc, char** argv)
         change.stop();
         engine.pause();
         QObject::disconnect(conn);
+        QObject::disconnect(gapConn);
+        // Playback speed after the first frame below 1: the audio clock stalled (audible stutter); longest gap between shown frames
+        std::printf("  first frame %.0f ms, speed %.2f, longest gap %.0f ms\n", first, (engine.position() - firstPos) / qEnvironmentVariable("BENCH_RATE", "25").toDouble() / ((last - first) / 1000.0), maxGap);
         return frames / 3.0;
     };
     std::printf("playing: %.1f fps without changes\n", playFps(false));

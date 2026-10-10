@@ -263,18 +263,19 @@ double sourceAspect(Mlt::Producer& cut)
 
 // qtblend with distort=1 always asks for the source in its full media size, even when the consumer renders a small
 // preview -> every effect below it ran in full resolution (1080p/4K) and the preview stuttered. This filter sits
-// above qtblend and lowers meta.media.width/height to what the requested output needs (preview scale times the
+// above qtblend and lowers meta.media.width/height to what the requested output needs (requested size times the
 // largest zoom of the clip, never above the media size). Export requests the full size and is unchanged.
+// Compared with the media size, not the profile: the preview consumer sets the profile itself to the preview size.
 // Measured (tests/bench_inspector, 8 effects + keyframes, 960x540 preview): 125 -> 70 ms per frame.
 int sourceCapGetImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int writable)
 {
     auto filter = static_cast<mlt_filter>(mlt_frame_pop_service(frame));
     mlt_properties fp = MLT_FRAME_PROPERTIES(frame);
-    const mlt_profile profile = mlt_service_profile(MLT_FILTER_SERVICE(filter));
     const int mw = mlt_properties_get_int(fp, "meta.media.width"), mh = mlt_properties_get_int(fp, "meta.media.height");
-    if (profile && profile->width > 0 && mw > 0 && mh > 0 && *width > 0) {
+    if (mw > 0 && mh > 0 && *width > 0 && *height > 0) {
         const double zoom = mlt_properties_get_double(MLT_FILTER_PROPERTIES(filter), "max_zoom");
-        const double scale = std::max(double(*width) / profile->width, double(*height) / profile->height) * zoom;
+        // A source of another aspect ratio is fitted into the frame: the larger ratio keeps enough pixels
+        const double scale = std::max(double(*width) / mw, double(*height) / mh) * zoom;
         if (scale < 1.0) {
             mlt_properties_set_int(fp, "meta.media.width", std::max(2, int(std::ceil(mw * scale))));
             mlt_properties_set_int(fp, "meta.media.height", std::max(2, int(std::ceil(mh * scale))));
@@ -290,7 +291,7 @@ mlt_frame sourceCapProcess(mlt_filter filter, mlt_frame frame)
     return frame;
 }
 
-void attachSourceCap(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
+void attachSourceCap(Mlt::Producer& clip, const Clip& c)
 {
     // Without video effects the extra scaling step costs more than it saves
     if (std::none_of(c.effects.begin(), c.effects.end(), [](const EffectInstance& e) {
@@ -306,7 +307,6 @@ void attachSourceCap(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c)
     mlt_filter f = mlt_filter_new();
     if (!f) return;
     f->process = sourceCapProcess;
-    mlt_service_set_profile(MLT_FILTER_SERVICE(f), profile.get_profile());
     // a little headroom for Bezier overshoot between keyframes
     mlt_properties_set_double(MLT_FILTER_PROPERTIES(f), "max_zoom", std::max(zoom, 1.0) * 1.1);
     Mlt::Filter filter(f); // holds its own reference
@@ -373,7 +373,7 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, i
     // in Zielhöhe an (bei kleinem Zoom nur ein paar Pixel -> Bildsalat) und hält X/Y-Zoom im Seitenverhältnis.
     f.set("distort", 1);
     attachTo(clip, f);
-    attachSourceCap(profile, clip, c); // after qtblend: its get_image runs first
+    attachSourceCap(clip, c); // after qtblend: its get_image runs first
 }
 
 void applyPan(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a = 0, int len = 0)
