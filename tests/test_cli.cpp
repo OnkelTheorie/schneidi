@@ -359,6 +359,12 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(v1(), QString("V1: a[0-5|0-4] a[5-8|50-52] a[8-13|5-9] a[23-33|0-9]"));
         CHECK_EQ(run("info", {{"project", g_path}})["media"][0]["mark_in"].toInt(), 5);
         CHECK_EQ(run("info", {{"project", g_path}})["timeline"]["mark_in"].toInt(), 2);
+        ed(R"([{"op":"replace","media":"/x/a.mp4","at":6,"in":60},{"op":"fit_to_fill","media":"/x/a.mp4","at":40,"to":45,"in":0,"out":10}])");
+        CHECK(v1().startsWith("V1: a[0-5|0-4] a[5-8|59-61] "));
+        const QJsonObject fit = run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"].toArray().last().toObject();
+        CHECK_EQ(fit["start"].toInt(), 40);
+        CHECK_EQ(fit["end"].toInt(), 45);
+        CHECK_EQ(fit["speed"].toDouble(), 2.0);
     }
 
     // Project format (resolution scales positions, frame rate locked while clips exist), LUT by name, SRT export

@@ -395,7 +395,8 @@ void opCopy(Session& s, const QJsonObject& op)
     s.editor.paste(timeOf(s, op, "at"));
 }
 
-void opInsert(Session& s, const QJsonObject& op)
+// Source edits like F9–F12 in the app; `at` (and for fit_to_fill `to`) instead of playhead and timeline In/Out
+void opSourceEdit(Session& s, const QJsonObject& op, Editor::SourceEditMode mode)
 {
     const MediaInfo m = s.media(op.value("media").toString());
     // Source In/Out of the clip for this edit only (the app's marks stay as they were)
@@ -404,16 +405,23 @@ void opInsert(Session& s, const QJsonObject& op)
     if (in >= out) fail("BAD_ARGUMENT", "empty source range");
     const int track = parseTrack(op.value("track"));
     const int at = timeOf(s, op, "at");
-    // `at` wins over the timeline In/Out (which the app's insert would use); both stay as they were
+    const bool fit = mode == Editor::SourceEditMode::FitToFill;
+    const int to = fit ? timeOf(s, op, "to") : 0;
+    if (fit && to <= at) fail("BAD_ARGUMENT", "'to' must be after 'at'");
     const int markIn = s.project.timeline().markIn, markOut = s.project.timeline().markOut;
     if (markIn >= 0 || markOut >= 0) s.editor.clearMarks();
+    if (fit) {
+        s.editor.setMarkIn(at);
+        s.editor.setMarkOut(to - 1);
+    }
     s.project.setMediaMarks(m.path, in, out - 1);
     s.editor.setTargetTracks(track, track);
-    const int end = s.editor.sourceEdit(Editor::SourceEditMode::Insert, m.path, in, at);
+    const int end = s.editor.sourceEdit(mode, m.path, in, at);
     s.project.setMediaMarks(m.path, m.markIn, m.markOut);
+    s.editor.clearMarks();
     if (markIn >= 0) s.editor.setMarkIn(markIn);
     if (markOut >= 0) s.editor.setMarkOut(markOut);
-    if (end < 0) fail("FAILED", "could not insert there");
+    if (end < 0) fail("FAILED", "could not edit there (replace/ripple_overwrite need a clip under `at` on the track)");
 }
 
 } // namespace
@@ -479,8 +487,20 @@ void addEditOps(QVector<OpDef>& ops)
                  "In/Out",
                  {}, opMedia}
         << OpDef{"copy", "{op:'copy', clips, at}", "copy clips to `at` (same tracks, overwrites)", {}, opCopy}
-        << OpDef{"insert", "{op:'insert', media, at, in?, out?, track?}",
-                 "insert a source range at `at`: later clips move right (like F9)", {}, opInsert};
+        << OpDef{"insert", "{op:'insert'|'replace'|'place_on_top'|'ripple_overwrite', media, at, in?, out?, track?}",
+                 "source edits like F9–F12: insert (later clips move right), replace (the clip under `at`, keeps its "
+                 "length), place_on_top (first free track above), ripple_overwrite (replace, the rest moves by the "
+                 "length difference)",
+                 {}, [](Session& s, const QJsonObject& op) { opSourceEdit(s, op, Editor::SourceEditMode::Insert); }}
+        << OpDef{"replace", {}, {}, {},
+                 [](Session& s, const QJsonObject& op) { opSourceEdit(s, op, Editor::SourceEditMode::Replace); }}
+        << OpDef{"place_on_top", {}, {}, {},
+                 [](Session& s, const QJsonObject& op) { opSourceEdit(s, op, Editor::SourceEditMode::PlaceOnTop); }}
+        << OpDef{"ripple_overwrite", {}, {}, {},
+                 [](Session& s, const QJsonObject& op) { opSourceEdit(s, op, Editor::SourceEditMode::RippleOverwrite); }}
+        << OpDef{"fit_to_fill", "{op:'fit_to_fill', media, at, to, in?, out?, track?}",
+                 "source range sped up/slowed down to fill exactly [at, to) (overwrites)", {},
+                 [](Session& s, const QJsonObject& op) { opSourceEdit(s, op, Editor::SourceEditMode::FitToFill); }};
 }
 
 } // namespace Cli::detail
