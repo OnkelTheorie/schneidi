@@ -497,6 +497,26 @@ void Project::setMediaMarks(const QString& path, int markIn, int markOut)
     }
 }
 
+void Project::setTranscript(const QString& path, const MediaTranscript& transcript)
+{
+    for (MediaInfo& m : m_media) {
+        if (m.path != path) continue;
+        QVector<MediaTranscript> list = m.transcripts;
+        list.removeIf([&](const MediaTranscript& t) { return t.audioStream == transcript.audioStream; });
+        if (!transcript.words.isEmpty()) {
+            list << transcript;
+            std::sort(list.begin(), list.end(),
+                      [](const MediaTranscript& a, const MediaTranscript& b) { return a.audioStream < b.audioStream; });
+        }
+        if (list == m.transcripts) return;
+        m.transcripts = list;
+        m_mediaDirty = true;
+        emit transcriptChanged(path);
+        emit modifiedChanged(true);
+        return;
+    }
+}
+
 void Project::replaceMedia(const QVector<MediaInfo>& media)
 {
     m_media = media;

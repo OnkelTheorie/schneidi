@@ -314,11 +314,26 @@ QVector<OpDef> makeOps()
              else s.editor.splitAtPlayhead(at); // no selection: every clip under `at`
          }},
         {"delete", "{op:'delete', clips:[ids], ripple?:false}", "clips or subtitles", {}, opDelete},
-        {"delete_range", "{op:'delete_range', from, to, ripple?:true}", "remove a time range on all tracks", {},
+        {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to],...]}",
+         "remove time ranges on all tracks; `ranges` are all timeline times before the cut (e.g. words of "
+         "`transcribe` with words:true), applied together", {},
          [](Session& s, const QJsonObject& op) {
-             const int from = timeOf(s, op, "from"), to = timeOf(s, op, "to");
-             if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
-             s.editor.deleteRange(from, to, op.value("ripple").toBool(true));
+             QVector<QPair<int, int>> ranges;
+             if (op.contains("ranges")) {
+                 for (const QJsonValue& v : op.value("ranges").toArray()) {
+                     const QJsonArray r = v.toArray();
+                     if (r.size() != 2) fail("BAD_ARGUMENT", "ranges are [from, to] pairs");
+                     QJsonObject pair{{"from", r[0]}, {"to", r[1]}};
+                     ranges << qMakePair(timeOf(s, pair, "from"), timeOf(s, pair, "to"));
+                 }
+                 if (ranges.isEmpty()) fail("BAD_ARGUMENT", "'ranges' is empty");
+             } else {
+                 ranges << qMakePair(timeOf(s, op, "from"), timeOf(s, op, "to"));
+             }
+             for (const auto& r : ranges)
+                 if (r.second <= r.first) fail("BAD_ARGUMENT", "'to' must be after 'from'");
+             const bool ripple = op.value("ripple").toBool(true);
+             s.editor.deleteRanges(ranges, ripple, ripple ? "Delete ranges with ripple" : "Delete ranges");
          }},
         {"move", "{op:'move', clips, by|to, track_delta?}", {}, {}, opMove},
         {"fade", "{op:'fade', clip, in?, out?}", "fade lengths", {}, opFade},

@@ -502,6 +502,8 @@ void MainWindow::buildActions()
                [this] { if (m_storageToggle->isEnabled()) m_storageToggle->toggle(); });
     makeAction(workspace, "toggle_mixer", T("Mixer ein/aus"), QKeySequence(),
                [this] { if (m_mixerToggle->isEnabled()) m_mixerToggle->toggle(); });
+    makeAction(workspace, "toggle_transcript", T("Transkript ein/aus"), QKeySequence(),
+               [this] { if (m_transcriptToggle->isEnabled()) m_transcriptToggle->toggle(); });
     // DaVinci: Workspace > Video Scopes (Ctrl+Shift+W); here the scope panel of the Color page
     makeAction(workspace, "toggle_scopes", T("Video-Scopes ein/aus"), QKeySequence("Ctrl+Shift+W"), [this] {
         m_scopes->setVisible(!m_scopes->isVisibleTo(m_colorBottom));

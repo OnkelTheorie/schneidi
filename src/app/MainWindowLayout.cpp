@@ -34,6 +34,7 @@
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
+#include "ui/TranscriptPanel.h"
 #include "ui/ScopesPanel.h"
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
@@ -86,6 +87,7 @@ void MainWindow::buildLayout()
     m_mixer = new Mixer(m_project, m_engine);
     m_mixer->hide();
     m_colorPanel = new ColorPanel(m_editor);
+    m_transcript = new TranscriptPanel(m_project, m_editor);
     m_scopes = new ScopesPanel;
     m_scopes->setVisible(QSettings().value("color/scopesVisible", true).toBool());
 
@@ -161,6 +163,8 @@ QWidget* MainWindow::buildTopBar()
     m_storageToggle->setToolTip(T("Ordner durchsuchen und Clips direkt in Media Pool/Timeline ziehen"));
     m_inspectorToggle = makeToggle("☰ Inspector", "inspector", true, m_inspector);
     m_mixerToggle = makeToggle("▥ Mixer", "mixer", false, m_mixer);
+    m_transcriptToggle = makeToggle("¶ " + T("Transkript"), "transcript", false, m_transcript);
+    m_transcriptToggle->setToolTip(T("Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline"));
 
     auto* title = m_titleLabel = new QLabel;
     title->setStyleSheet("font-weight: 600;");
@@ -179,6 +183,7 @@ QWidget* MainWindow::buildTopBar()
     lay->addWidget(title);
     lay->addWidget(buildLiveIndicator());
     lay->addStretch(1);
+    lay->addWidget(m_transcriptToggle);
     lay->addWidget(m_mixerToggle);
     lay->addWidget(m_inspectorToggle);
     return bar;
@@ -248,12 +253,13 @@ void MainWindow::showPage(Page page)
         m_editLeft->insertWidget(1, m_mediaPool);
         m_editTop->insertWidget(0, m_editLeft);
         m_editTop->insertWidget(1, m_viewer);
-        m_editTop->insertWidget(2, m_inspector);
+        m_editTop->insertWidget(2, m_transcript);
+        m_editTop->insertWidget(3, m_inspector);
         m_editBottom->insertWidget(0, m_timeline);
         m_editBottom->setStretchFactor(0, 1);
         m_editBottom->setSizes({1300, 300});
         m_editTop->setStretchFactor(1, 1);
-        m_editTop->setSizes({360, 880, 360});
+        m_editTop->setSizes({360, 880, 320, 360});
         m_editMain->setSizes({480, 420});
         m_mediaPool->setVisible(m_poolToggle->isChecked());
         m_storage->setVisible(m_storageToggle->isChecked());
@@ -283,6 +289,7 @@ void MainWindow::showPage(Page page)
     m_storageToggle->setEnabled(edit);
     m_inspectorToggle->setEnabled(edit);
     m_mixerToggle->setEnabled(edit);
+    m_transcriptToggle->setEnabled(edit);
 }
 
 void MainWindow::updateLeftColumn()

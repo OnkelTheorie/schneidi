@@ -411,6 +411,20 @@ struct AudioStreamInfo {
     bool operator==(const AudioStreamInfo&) const = default;
 };
 
+// Speech-to-text of one audio stream of a media file (whisper, Transcript panel): words with times in ms of the
+// source file, so the transcript follows the clips through every edit (core/TranscriptCut)
+struct TranscriptWord {
+    qint64 from = 0, to = 0; // ms; `to` reaches up to the next word (whisper counts pauses to the word before)
+    QString text;            // without leading space, punctuation attached ("Americans,")
+    bool operator==(const TranscriptWord&) const = default;
+};
+struct MediaTranscript {
+    int audioStream = 0;
+    QString language; // "de", "en", …
+    QVector<TranscriptWord> words;
+    bool operator==(const MediaTranscript&) const = default;
+};
+
 struct MediaInfo {
     QString path;
     QString name;
@@ -435,6 +449,13 @@ struct MediaInfo {
     {
         const QString t = stream < audioStreams.size() ? audioStreams[stream].title : QString();
         return t.isEmpty() ? T("Spur %1").arg(stream + 1) : t;
+    }
+    QVector<MediaTranscript> transcripts; // at most one per audio stream
+    const MediaTranscript* transcript(int stream) const
+    {
+        for (const MediaTranscript& t : transcripts)
+            if (t.audioStream == stream) return &t;
+        return nullptr;
     }
 };
 

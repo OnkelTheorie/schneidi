@@ -115,6 +115,11 @@ int main(int argc, char** argv)
              QString("NOT_FOUND"));
     CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-90|20-99]  V2:  A1: a[0-10|0-9] a[10-90|20-99]  A2:"));
 
+    // Several ranges at once, all in times before the cut (words of `transcribe`)
+    edit(R"([{"op":"delete_range","ranges":[[60,70],[5,8]]}])");
+    CHECK_EQ(saved(), QString("V1: a[0-5|0-4] a[5-7|8-9] a[7-57|20-69] a[57-77|80-99]  V2:  "
+                              "A1: a[0-5|0-4] a[5-7|8-9] a[7-57|20-69] a[57-77|80-99]  A2:"));
+
     // Clear, then cut a source range list one after another (jump cut), title on top, delete with linked audio
     edit(R"([{"op":"clear"},
              {"op":"keep","media":"/x/a.mp4","ranges":[[0,10],[30,40],{"from":"2s","to":"3s"}]},

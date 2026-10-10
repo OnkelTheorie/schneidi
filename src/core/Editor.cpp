@@ -10,6 +10,7 @@
 #include "core/Selection.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
+#include "core/TranscriptCut.h"
 
 #include <QFileInfo>
 #include <QHash>
@@ -346,19 +347,29 @@ void Editor::modifyClips(const QVector<int>& idsIn, const QString& text, const s
 
 void Editor::deleteRange(int from, int to, bool ripple)
 {
-    from = std::max(0, from);
-    if (to <= from) return;
+    deleteRanges({{from, to}}, ripple, ripple ? T("Bereich löschen mit Ripple") : T("Bereich löschen"));
+}
+
+void Editor::deleteRanges(const QVector<QPair<int, int>>& input, bool ripple, const QString& text)
+{
+    const QVector<QPair<int, int>> ranges = TranscriptCut::mergeRanges(input);
+    if (ranges.isEmpty()) return;
     Project* p = m_project;
-    p->edit(ripple ? T("Bereich löschen mit Ripple") : T("Bereich löschen"), [&](Timeline& tl) {
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (Track& t : tl.tracks(k)) {
-                if (t.locked) continue;
-                TimelineOps::clearDissolveAt(t, from);
-                TimelineOps::clearDissolveAt(t, to);
-                TimelineOps::clearRange(t, from, to, [p] { return p->newClipId(); });
-            }
-        TimelineOps::resolvePendingLinks(tl, [p] { return p->newLinkId(); });
-        if (ripple) TimelineOps::rippleTracks(tl, {{to, from - to}}, {});
+    p->edit(text, [&](Timeline& tl) {
+        // From the last range back: earlier ranges keep their positions while later ones ripple
+        for (auto r = ranges.crbegin(); r != ranges.crend(); ++r) {
+            const int from = std::max(0, r->first), to = r->second;
+            if (to <= from) continue;
+            for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+                for (Track& t : tl.tracks(k)) {
+                    if (t.locked) continue;
+                    TimelineOps::clearDissolveAt(t, from);
+                    TimelineOps::clearDissolveAt(t, to);
+                    TimelineOps::clearRange(t, from, to, [p] { return p->newClipId(); });
+                }
+            TimelineOps::resolvePendingLinks(tl, [p] { return p->newLinkId(); });
+            if (ripple) TimelineOps::rippleTracks(tl, {{to, from - to}}, {});
+        }
     });
     m_selection->clear();
 }

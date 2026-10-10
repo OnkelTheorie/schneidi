@@ -1,6 +1,7 @@
 #include "app/MainWindow.h"
 #include "app/ExtensionsDialog.h"
 #include "app/TranscribeDialog.h"
+#include "ui/TranscriptPanel.h"
 
 #include "app/InputBindings.h"
 #include "app/Theme.h"
@@ -148,6 +149,14 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (m_engine->mode() == Engine::Mode::Timeline) m_colorPanel->setPlayhead(f);
     });
     connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
+    connect(m_engine, &Engine::positionChanged, this, [this](int f) {
+        if (m_engine->mode() == Engine::Mode::Timeline) m_transcript->setPlayhead(f);
+    });
+    connect(m_transcript, &TranscriptPanel::seekRequested, tv, &TimelineView::seekRequested);
+    connect(m_transcript, &TranscriptPanel::openExtensions, this, [this] {
+        ExtensionsDialog ext(this);
+        ext.exec();
+    });
     connect(m_engine, &Engine::frameReady, m_scopes, &ScopesPanel::setFrame);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(m_mediaPool, &MediaPool::sequenceOpenRequested, m_timeline, &TimelinePanel::openSequence);

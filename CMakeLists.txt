@@ -63,6 +63,7 @@ add_library(schneidi_lib STATIC
     src/core/RenderJob.h          src/core/RenderJob.cpp
     src/core/Subtitles.h          src/core/Subtitles.cpp
     src/core/Transcript.h         src/core/Transcript.cpp
+    src/core/TranscriptCut.h      src/core/TranscriptCut.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Profiles.h         src/engine/Profiles.cpp
@@ -117,6 +118,7 @@ add_library(schneidi_lib STATIC
     src/ui/Scopes.h               src/ui/Scopes.cpp
     src/ui/ScopesPanel.h          src/ui/ScopesPanel.cpp
     src/ui/Mixer.h                src/ui/Mixer.cpp
+    src/ui/TranscriptPanel.h      src/ui/TranscriptPanel.cpp
     src/ui/ScrubField.h           src/ui/ScrubField.cpp
     src/ui/DeliverPanel.h         src/ui/DeliverPanel.cpp
     src/ui/RenderQueuePanel.h     src/ui/RenderQueuePanel.cpp

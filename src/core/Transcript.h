@@ -10,11 +10,7 @@
 
 namespace Transcript {
 
-struct Word {
-    qint64 from = 0, to = 0; // ms; `to` reaches up to the next word (whisper counts pauses to the word before)
-    QString text;            // without leading space, punctuation attached ("Americans,")
-    bool operator==(const Word&) const = default;
-};
+using Word = TranscriptWord;
 
 // Loudness of the transcribed audio: one dB value per `frameMs` (RMS), see levelsOf
 struct Levels {

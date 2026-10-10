@@ -21,6 +21,7 @@ class MediaStorage;
 class Viewer;
 class Inspector;
 class ColorPanel;
+class TranscriptPanel;
 class ScopesPanel;
 class Mixer;
 class TimelinePanel;
@@ -152,6 +153,7 @@ private:
     QTimer m_engineTimer; // bündelt Modelländerungen -> Engine
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
+    TranscriptPanel* m_transcript = nullptr;
     ScopesPanel* m_scopes = nullptr; // Color page, right of the wheels (like DaVinci)
     Mixer* m_mixer = nullptr;
     TimelinePanel* m_timeline = nullptr;
@@ -174,6 +176,7 @@ private:
     QToolButton* m_storageToggle = nullptr;
     QToolButton* m_inspectorToggle = nullptr;
     QToolButton* m_mixerToggle = nullptr;
+    QToolButton* m_transcriptToggle = nullptr;
     Page m_page = Page::Edit;
 
     QHash<QString, MediaInfo> m_probeCache;

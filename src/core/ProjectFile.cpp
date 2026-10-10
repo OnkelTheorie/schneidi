@@ -418,6 +418,15 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
             }
             o["audioStreams"] = streams;
         }
+        if (!m.transcripts.isEmpty()) { // words compact as [from ms, to ms, text]
+            QJsonArray list;
+            for (const MediaTranscript& t : m.transcripts) {
+                QJsonArray words;
+                for (const TranscriptWord& w : t.words) words << QJsonArray{double(w.from), double(w.to), w.text};
+                list << QJsonObject{{"stream", t.audioStream}, {"language", t.language}, {"words", words}};
+            }
+            o["transcripts"] = list;
+        }
         media << o;
     }
 
@@ -553,6 +562,17 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             for (const QJsonValue& a : o.value("audioStreams").toArray())
                 m.audioStreams << AudioStreamInfo{std::max(1, a.toObject().value("channels").toInt(2)),
                                                   a.toObject().value("title").toString()};
+        for (const QJsonValue& v : o.value("transcripts").toArray()) {
+            const QJsonObject to = v.toObject();
+            MediaTranscript t;
+            t.audioStream = std::max(0, to.value("stream").toInt());
+            t.language = to.value("language").toString();
+            for (const QJsonValue& w : to.value("words").toArray()) {
+                const QJsonArray a = w.toArray();
+                if (a.size() >= 3) t.words << TranscriptWord{qint64(a[0].toDouble()), qint64(a[1].toDouble()), a[2].toString()};
+            }
+            if (!t.words.isEmpty() && !m.transcript(t.audioStream)) m.transcripts << t;
+        }
         allMedia << m;
         if (!o.value("notInPool").toBool()) d.media << m;
     }

@@ -94,6 +94,9 @@ public:
     void addMedia(const MediaInfo& info);
     // Quell-In/Out eines Media-Pool-Clips (-1 = keiner). Nicht im Undo (wie DaVinci), gilt aber als Änderung.
     void setMediaMarks(const QString& path, int markIn, int markOut);
+    // Transcript of one audio stream of a media file (Transcript panel); replaces the old one of that stream, empty
+    // words remove it. Not in the undo history (like source marks), but counts as a change.
+    void setTranscript(const QString& path, const MediaTranscript& transcript);
     // Medieninfos ersetzen (z. B. Längen nach einer neuen Framerate), gilt nicht als Änderung
     void replaceMedia(const QVector<MediaInfo>& media);
 
@@ -138,6 +141,7 @@ signals:
     void mediaChanged();
     void poolChanged(); // Bins/Clipfarben/Flags geändert (Medienliste gleich)
     void mediaMarksChanged(const QString& path); // Quell-In/Out geändert (ohne mediaChanged)
+    void transcriptChanged(const QString& path);
     void modifiedChanged(bool modified);
     void renderQueueChanged();
 
