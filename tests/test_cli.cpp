@@ -272,6 +272,92 @@ int main(int argc, char** argv)
                  QString("BAD_ARGUMENT"));
     }
 
+    // Edit page: trim modes, transitions, title style, tracks, link, speed ramp, markers, media pool, copy, insert
+    {
+        const auto ids = [] {
+            const QJsonArray clips = run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"].toArray();
+            QVector<int> out;
+            for (const QJsonValue& c : clips) out << c["id"].toInt();
+            return out;
+        };
+        const auto v1 = [] { return saved().section("  ", 0, 0); };
+        const auto ed = [](const QString& ops) { return run("edit", {{"project", g_path}, {"ops", ops}}); };
+        ed(R"([{"op":"clear"},{"op":"append","media":"/x/a.mp4","in":0,"out":40},{"op":"append","media":"/x/a.mp4","in":50,"out":90}])");
+        CHECK_EQ(v1(), QString("V1: a[0-40|0-39] a[40-80|50-89]"));
+        QVector<int> c = ids();
+        ed(QString(R"([{"op":"trim","clip":%1,"edge":"end","by":-5,"mode":"roll"}])").arg(c[0]));
+        CHECK_EQ(v1(), QString("V1: a[0-35|0-34] a[35-80|45-89]"));
+        ed(QString(R"([{"op":"trim","clip":%1,"by":3,"mode":"slip"}])").arg(c[1]));
+        CHECK_EQ(v1(), QString("V1: a[0-35|0-34] a[35-80|48-92]"));
+        ed(QString(R"([{"op":"trim","clip":%1,"edge":"end","by":-10,"mode":"ripple"}])").arg(c[0]));
+        CHECK_EQ(v1(), QString("V1: a[0-25|0-24] a[25-70|48-92]"));
+        ed(QString(R"([{"op":"trim","clip":%1,"edge":"end","to":10}])").arg(c[0]));
+        CHECK_EQ(v1(), QString("V1: a[0-10|0-9] a[25-70|48-92]"));
+        ed(QString(R"([{"op":"move","clips":[%1],"to":10}])").arg(c[1]));
+        // Transition: dip to color, 10 frames, at the cut; then remove
+        QJsonObject r = ed(R"([{"op":"transition","at":11,"type":"dip_color","color":"#ffffff","length":10,"kind":"video"}])");
+        QJsonObject left = std::as_const(r)["timeline"]["tracks"][0]["clips"][0].toObject();
+        CHECK_EQ(std::as_const(left)["transition_out"].toInt(), 10);
+        CHECK_EQ(std::as_const(left)["transition_out_style"]["type"].toString(), QString("dip_color"));
+        CHECK_EQ(std::as_const(left)["transition_out_style"]["color"].toString(), QString("#ffffff"));
+        CHECK(!std::as_const(r)["timeline"]["tracks"][2]["clips"][0].toObject().contains("transition_out")); // video only
+        r = ed(R"([{"op":"transition","at":10,"remove":true}])");
+        CHECK(!std::as_const(r)["timeline"]["tracks"][0]["clips"][0].toObject().contains("transition_out"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"transition","at":10,"type":"zoom"}])"}}), QString("BAD_ARGUMENT"));
+        // Title with style, then change it
+        r = ed(R"([{"op":"title","text":"Hello
+World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":true,"y":-300,"align":"left"}])");
+        QJsonObject title = std::as_const(r)["timeline"]["tracks"][1]["clips"][0].toObject();
+        CHECK_EQ(std::as_const(title)["style"]["color"].toString(), QString("#ff0000"));
+        CHECK_EQ(std::as_const(title)["style"]["align"].toString(), QString("left"));
+        CHECK_EQ(std::as_const(title)["end"].toInt(), 20);
+        r = ed(QString(R"([{"op":"title","clip":%1,"text":"Bye","size":120}])").arg(std::as_const(title)["id"].toInt()));
+        title = std::as_const(r)["timeline"]["tracks"][1]["clips"][0].toObject();
+        CHECK_EQ(std::as_const(title)["text"].toString(), QString("Bye"));
+        CHECK_EQ(std::as_const(title)["style"]["size"].toDouble(), 120.0);
+        CHECK(std::as_const(title)["style"]["bold"].toBool());
+        // Tracks: name, color, lock (locked tracks are left alone by later ops); subtitle track style
+        r = ed(R"([{"op":"track","track":"V2","name":"Titles","color":"teal","lock":true},
+                   {"op":"add_subtitle_track","name":"DE"},{"op":"track","track":"ST2","size":60,"box":false},
+                   {"op":"mixer","track":"A1","pan":-50}])");
+        CHECK_EQ(std::as_const(r)["timeline"]["tracks"][1]["name"].toString(), QString("Titles"));
+        CHECK(std::as_const(r)["timeline"]["tracks"][1]["locked"].toBool());
+        const QJsonArray subs = std::as_const(r)["timeline"]["subtitles"].toArray();
+        CHECK_EQ(subs.last()["name"].toString(), QString("DE"));
+        CHECK_EQ(subs.last()["style"]["size"].toDouble(), 60.0);
+        CHECK(!subs.last()["style"]["box"].toBool());
+        ed(QString(R"([{"op":"track","track":"V2","lock":false},{"op":"remove_track","track":"ST%1"}])").arg(subs.size()));
+        CHECK_EQ(run("info", {{"project", g_path}})["timeline"]["subtitles"].toArray().size(), int(subs.size()) - 1);
+        // Unlink: moving the video leaves the audio
+        c = ids();
+        ed(QString(R"([{"op":"unlink","clips":[%1]},{"op":"move","clips":[%1],"by":5}])").arg(c[0]));
+        CHECK_EQ(v1(), QString("V1: a[5-15|0-9] a[15-55|53-92]")); // overwrites the start of the next clip
+        CHECK(saved().contains("A1: a[0-10|0-9]"));
+        // Speed ramp: 2x from frame 30 on (the rest of the clip gets shorter)
+        r = ed(QString(R"([{"op":"speed_ramp","clip":%1,"points":[{"at":30,"speed":2}]}])").arg(c[1]));
+        const QJsonObject ramped = std::as_const(r)["timeline"]["tracks"][0]["clips"][1].toObject();
+        CHECK_EQ(std::as_const(ramped)["speed_ramp"][0]["at"].toInt(), 30);
+        CHECK_EQ(std::as_const(ramped)["end"].toInt(), 30 + 13); // 25 frames at 2x
+        ed(QString(R"([{"op":"speed_ramp","clip":%1,"clear":true},{"op":"speed","clips":[%1],"freeze":true,"ripple":false}])").arg(c[1]));
+        CHECK(run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"][1]["freeze"].toBool());
+        // Markers and In/Out; Media Pool organisation
+        r = ed(R"([{"op":"marker","at":1,"remove":true},{"op":"marker","at":7},{"op":"marks","in":2,"out":12},
+                   {"op":"media","media":"/x/a.mp4","bin":"Interviews/Day 1","color":"orange","flags":["red"],"in":5}])");
+        CHECK_EQ(std::as_const(r)["timeline"]["markers"].toArray(), QJsonArray{7});
+        CHECK_EQ(std::as_const(r)["timeline"]["mark_out"].toInt(), 12);
+        const QJsonObject media = run("info", {{"project", g_path}})["media"][0].toObject();
+        CHECK_EQ(std::as_const(media)["bin"].toString(), QString("Day 1"));
+        CHECK_EQ(std::as_const(media)["color"].toString(), QString("orange"));
+        CHECK_EQ(std::as_const(media)["mark_in"].toInt(), 5);
+        // Copy and insert (insert moves the later clips; source marks of the media stay)
+        ed(R"([{"op":"clear"},{"op":"append","media":"/x/a.mp4","in":0,"out":10}])");
+        c = ids();
+        ed(QString(R"([{"op":"copy","clips":[%1],"at":20},{"op":"insert","media":"/x/a.mp4","at":5,"in":50,"out":53}])").arg(c[0]));
+        CHECK_EQ(v1(), QString("V1: a[0-5|0-4] a[5-8|50-52] a[8-13|5-9] a[23-33|0-9]"));
+        CHECK_EQ(run("info", {{"project", g_path}})["media"][0]["mark_in"].toInt(), 5);
+        CHECK_EQ(run("info", {{"project", g_path}})["timeline"]["mark_in"].toInt(), 2);
+    }
+
     // --- With real media (ffmpeg): loudness of a file and of the mix, normalize, mixer
     if (!Check::haveFfmpeg()) return Check::result();
     Check::initMlt();

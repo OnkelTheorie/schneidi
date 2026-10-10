@@ -84,6 +84,8 @@ const QVector<OpDef>& editOps();
 void addTimelineOps(QVector<OpDef>& ops); // EditOpsTimelines.cpp
 void addLookOps(QVector<OpDef>& ops);     // EditOpsLook.cpp
 void addAudioOps(QVector<OpDef>& ops);    // EditOpsAudio.cpp
+void addEditOps(QVector<OpDef>& ops);     // EditOpsEdit.cpp
+QJsonObject transitionStyleJson(const TransitionStyle& st);
 // Name of an animatable value as the ops use it ("x", "opacity", "grade.liftY") and a clip's keyframes by name
 // (times in timeline frames)
 QString paramName(AnimParam p);

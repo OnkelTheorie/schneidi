@@ -191,45 +191,11 @@ void opMove(Session& s, const QJsonObject& op)
     s.editor.moveClips(clipIds(s, op), delta, TrackKind::Video, op.value("track_delta").toInt());
 }
 
-void opTrim(Session& s, const QJsonObject& op)
-{
-    const Clip& c = clipOf(s, op);
-    const bool start = op.value("edge").toString() == "start";
-    int delta = op.value("by").toInt();
-    if (op.contains("to")) delta = timeOf(s, op, "to") - (start ? c.start : c.end());
-    s.editor.trimClip(c.id, start ? TimelineOps::Edge::Start : TimelineOps::Edge::End, delta);
-}
-
-void opTitle(Session& s, const QJsonObject& op)
-{
-    const int at = timeOf(s, op, "at", 0);
-    s.editor.addTitle(at, op.contains("track") ? parseTrack(op.value("track")) : -1);
-    if (s.selection.ids().isEmpty()) fail("FAILED", "could not place the title (locked track?)");
-    const int id = *s.selection.ids().begin();
-    const int length = timeOf(s, op, "duration", 5 * s.project.fps());
-    const QString text = op.value("text").toString("Title");
-    s.editor.modifyClips({id}, "Title", [&](Clip& c) {
-        c.title.text = text;
-        if (op.contains("size")) c.title.size = op.value("size").toDouble();
-        if (op.contains("y")) c.title.posY = op.value("y").toDouble();
-        c.out = c.in + std::max(1, length) - 1;
-    });
-}
-
 void opFade(Session& s, const QJsonObject& op)
 {
     const int id = clipOf(s, op).id;
     if (op.contains("in")) s.editor.setClipFade(id, TimelineOps::Edge::Start, timeOf(s, op, "in"));
     if (op.contains("out")) s.editor.setClipFade(id, TimelineOps::Edge::End, timeOf(s, op, "out"));
-}
-
-void opSpeed(Session& s, const QJsonObject& op)
-{
-    Editor::Retime r;
-    r.speed = op.value("speed").toDouble(1.0);
-    r.reverse = op.value("reverse").toBool();
-    if (r.speed <= 0.01 || r.speed > 100) fail("BAD_ARGUMENT", "speed must be between 0.01 and 100 (1 = normal)");
-    s.editor.setClipSpeed(clipIds(s, op), r, op.value("ripple").toBool(true));
 }
 
 void opSubtitle(Session& s, const QJsonObject& op)
@@ -312,6 +278,12 @@ void opAddTrack(Session& s, const QJsonObject& op)
 
 void opRemoveTrack(Session& s, const QJsonObject& op)
 {
+    if (const QString st = op.value("track").toString().trimmed().toUpper(); st.startsWith("ST")) {
+        const int index = st.mid(2).toInt() - 1;
+        if (index < 0 || index >= s.project.timeline().subtitles.size()) fail("NOT_FOUND", "no subtitle track " + st);
+        s.editor.removeSubtitleTrack(index);
+        return;
+    }
     TrackKind k = TrackKind::Video;
     const int index = parseTrack(op.value("track"), &k);
     if (!s.editor.canRemoveTrack({k, index}))
@@ -342,17 +314,7 @@ QVector<OpDef> makeOps()
              s.editor.deleteRange(from, to, op.value("ripple").toBool(true));
          }},
         {"move", "{op:'move', clips, by|to, track_delta?}", {}, {}, opMove},
-        {"trim", "{op:'trim', clip, edge:'start'|'end', by|to}", {}, {}, opTrim},
-        {"title", "{op:'title', text, at?, duration?, track?, size?, y?}", {}, {}, opTitle},
         {"fade", "{op:'fade', clip, in?, out?}", "fade lengths", {}, opFade},
-        {"speed", "{op:'speed', clips, speed, reverse?, ripple?:true}", {}, {}, opSpeed},
-        {"transition", "{op:'transition', at}", "cross dissolve at the cut nearest to `at`", {},
-         [](Session& s, const QJsonObject& op) { s.editor.addTransitions(timeOf(s, op, "at")); }},
-        {"marker", "{op:'marker', at}", {}, {},
-         [](Session& s, const QJsonObject& op) {
-             const int at = timeOf(s, op, "at");
-             if (!s.project.timeline().markers.contains(at)) s.editor.toggleMarker(at);
-         }},
         {"enable", "{op:'enable'|'disable', clips}", {}, {},
          [](Session& s, const QJsonObject& op) {
              s.editor.modifyClips(clipIds(s, op), "Enable", [](Clip& c) { c.enabled = true; });
@@ -372,12 +334,13 @@ QVector<OpDef> makeOps()
          "add/set/remove a video effect (ids and parameters: `effects`)", {}, opEffect},
         {"add_track", "{op:'add_track', kind:'video'|'audio', at?}", "new track (default: above/below the others)",
          {}, opAddTrack},
-        {"remove_track", "{op:'remove_track', track}", "remove an empty or full track (not the last one)", {},
+        {"remove_track", "{op:'remove_track', track}", "remove a track with its clips (not the last one; ST1 … = subtitle tracks)", {},
          opRemoveTrack},
     };
     addTimelineOps(ops);
     addLookOps(ops);
     addAudioOps(ops);
+    addEditOps(ops);
     return ops;
 }
 

@@ -6,6 +6,7 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
+#include "core/Retime.h"
 #include "core/Selection.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
@@ -246,6 +247,20 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (c.fadeOut) o["fade_out"] = c.fadeOut;
     if (c.transIn) o["transition_in"] = c.transIn;
     if (c.transOut) o["transition_out"] = c.transOut;
+    if (const QJsonObject st = transitionStyleJson(c.transInStyle); c.transIn && !st.isEmpty()) o["transition_in_style"] = st;
+    if (const QJsonObject st = transitionStyleJson(c.transOutStyle); c.transOut && !st.isEmpty()) o["transition_out_style"] = st;
+    if (c.hasRamp()) {
+        const MediaInfo* m = p.mediaInfo(c.mediaPath);
+        const RetimeMap map(c, m ? m->length : 0);
+        const QVector<double> points = map.pointMaterial();
+        QJsonArray ramp;
+        for (int i = 0; i < c.ramp.size() && i < points.size(); ++i) {
+            QJsonObject r{{"at", c.start + int(std::lround(points[i])) - c.in}, {"speed", c.ramp[i].speed}};
+            if (c.ramp[i].smooth) r["smooth"] = c.ramp[i].smooth;
+            ramp << r;
+        }
+        o["speed_ramp"] = ramp;
+    }
     if (c.speed != 1.0) o["speed"] = c.speed;
     if (c.reverse) o["reverse"] = true;
     if (!c.effects.isEmpty()) {
@@ -307,6 +322,7 @@ QJsonObject timelineJson(const Project& p)
         if (!st.name.isEmpty()) so["name"] = st.name;
         if (!st.enabled) so["enabled"] = false; // not shown/burnt in (one subtitle track at a time)
         if (st.locked) so["locked"] = true;
+        if (const QJsonObject style = titleStyleJson(st.style, subtitleBaseStyle()); !style.isEmpty()) so["style"] = style;
         subtitles << so;
     }
     if (!subtitles.isEmpty()) o["subtitles"] = subtitles;
@@ -340,6 +356,12 @@ QJsonObject projectJson(const Project& p, const QString& path)
                       {"video", m.hasVideo}, {"audio", m.hasAudio}};
         if (m.isImage) o["image"] = true;
         if (!QFileInfo::exists(m.path)) o["offline"] = true;
+        if (m.audioStreamCount() > 1) o["audio_streams"] = m.audioStreamCount();
+        if (m.bin) o["bin"] = p.binName(m.bin);
+        if (!m.clipColor.isEmpty()) o["color"] = m.clipColor;
+        if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
+        if (m.markIn >= 0) o["mark_in"] = m.markIn;
+        if (m.markOut >= 0) o["mark_out"] = m.markOut + 1;
         media << o;
     }
     return {{"project", path}, {"format", formatJson(p.format())}, {"media", media}, {"timelines", timelinesJson(p)},
