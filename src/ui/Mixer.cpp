@@ -15,6 +15,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
+#include <QSplitter>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -182,7 +183,7 @@ protected:
             p.fillRect(mx, y, 2 * bw + 1, 1, Theme::alpha(Theme::well, 160));
         }
         // True-Peak-Grenze (Master): Markierung quer über beide Balken
-        if (m_overMark) p.fillRect(mx - 2, bottom - int(std::lround(meterPos(m_over) * h)), 2 * bw + 5, 1, Theme::primary);
+        if (m_overMark) p.fillRect(mx - 1, bottom - int(std::lround(meterPos(m_over) * h)), 2 * bw + 3, 1, Theme::primary);
 
         // Fader-Skala
         QFont f = font();
@@ -193,7 +194,11 @@ protected:
         for (int db : {12, 6, 0, -6, -12, -20, -40, -60}) {
             const int y = faderY(db);
             p.setPen(db == 0 ? Theme::text : Theme::textDim);
-            const QString t = db <= kMinVolumeDb ? QStringLiteral("-∞") : QString::number(db);
+            const bool inf = db <= kMinVolumeDb;
+            QFont lf = f;
+            if (inf) lf.setPointSizeF(9); // the ∞ glyph is tiny at 7 pt and looked cut off
+            p.setFont(lf);
+            const QString t = inf ? QStringLiteral("-∞") : QString::number(db);
             p.drawText(QRect(lx, y - 6, fx - 14 - lx, 12), Qt::AlignRight | Qt::AlignVCenter, t);
             p.fillRect(fx - 12, y, 3, 1, db == 0 ? Theme::text : Theme::textDim);
         }
@@ -695,18 +700,20 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    // Streifen immer dicht an Master/Lautheit (feste Breite wie im kleinen Fenster), übriger Platz bleibt rechts leer;
-    // erst wenn der Platz nicht reicht, scrollen die Spuren (Breite setzt rebuildStrips)
+    // Strips sit right next to master/loudness at a fixed width; only when there is not enough room do they
+    // scroll (fitStrips sets the width of the strip area)
     m_stripScroll = scroll;
     scroll->horizontalScrollBar()->setSingleStep(kStripW); // arrow keys/wheel: one strip at a time
-    // hoher Stretch: Spuren bekommen den Platz zuerst (bis zur Maximalbreite), erst der Rest geht an den Platzhalter rechts
-    row->addWidget(scroll, 100);
+    row->addWidget(scroll);
 
     // Master rechts, fest (wie der Bus in DaVinci)
     m_master = new ChannelStrip(true);
     m_master->name->setText("Master");
     m_master->setStyleSheet(m_master->styleSheet() +
                             QString("QWidget#Strip { border-left: 2px solid %1; }").arg(Theme::border.name()));
+    // the thick left border sits on top of the content -> make room for it, the meter keeps its full width
+    m_master->setFixedWidth(kStripW + 2);
+    m_master->layout()->setContentsMargins(5, 4, 3, 4);
     m_master->fader->onChange = [this](double db) {
         m_master->setVolume(db);
         m_engine->mixerOnlyNext();
@@ -796,6 +803,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
 
 void Mixer::rebuildStrips(int count)
 {
+    const bool allShown = m_strips.isEmpty() || m_stripScroll->width() >= m_strips.size() * kStripW;
     qDeleteAll(m_strips);
     m_strips.clear();
     for (int i = 0; i < count; ++i) {
@@ -831,6 +839,7 @@ void Mixer::rebuildStrips(int count)
         m_strips << s;
     }
     fitStrips();
+    if (allShown) QTimer::singleShot(0, this, &Mixer::growToFit);
 }
 
 void Mixer::resizeEvent(QResizeEvent* e)
@@ -841,16 +850,42 @@ void Mixer::resizeEvent(QResizeEvent* e)
 
 // Only whole channel strips, like DaVinci: a strip area a few pixels narrower than all strips gave a scrollbar
 // that moved only those few pixels and looked stuck. A strip that does not fit completely scrolls in instead;
-// the leftover space stays empty on the right.
+// the leftover space stays empty on the right (growToFit widens the mixer so that usually all strips fit).
 void Mixer::fitStrips()
 {
     if (m_strips.isEmpty()) {
-        m_stripScroll->setMaximumWidth(0);
+        m_stripScroll->setFixedWidth(0);
         return;
     }
-    const int avail = width() - m_master->minimumWidth() - m_loudness->minimumSizeHint().width();
-    const int shown = std::clamp(avail / kStripW, 1, int(m_strips.size()));
-    m_stripScroll->setMaximumWidth(shown * kStripW);
+    const int shown = std::clamp((width() - fixedWidth()) / kStripW, 1, int(m_strips.size()));
+    m_stripScroll->setFixedWidth(shown * kStripW); // fixed: the box layout would otherwise hand a few pixels to the spacer
+    // The scrollbar under the strips takes height: keep master and loudness bottoms level with the strips
+    const int sb = shown < m_strips.size() ? m_stripScroll->horizontalScrollBar()->sizeHint().height() : 0;
+    m_master->layout()->setContentsMargins(5, 4, 3, 4 + sb);
+    m_loudness->layout()->setContentsMargins(3, 4, 3, 4 + sb);
+}
+
+int Mixer::fixedWidth() const { return m_master->minimumWidth() + m_loudness->minimumSizeHint().width(); }
+
+// Widen the mixer in its splitter (taking from the timeline) until all strips fit, at most to 45 % of the
+// splitter. Only grows, so a mixer the user made narrower stays narrower until it is shown again.
+void Mixer::growToFit()
+{
+    auto* sp = qobject_cast<QSplitter*>(parentWidget());
+    if (!sp || !isVisible() || sp->count() < 2) return;
+    QList<int> sizes = sp->sizes();
+    const int idx = sp->indexOf(this), other = idx == 0 ? 1 : 0;
+    const int want = std::min(int(m_strips.size()) * kStripW + fixedWidth(), (sizes[idx] + sizes[other]) * 45 / 100);
+    if (sizes[idx] >= want) return;
+    sizes[other] -= want - sizes[idx];
+    sizes[idx] = want;
+    sp->setSizes(sizes);
+}
+
+void Mixer::showEvent(QShowEvent* e)
+{
+    QWidget::showEvent(e);
+    QTimer::singleShot(0, this, &Mixer::growToFit); // after the splitter has laid out the page
 }
 
 void Mixer::sync()

@@ -21,7 +21,10 @@ private:
     void sync();         // Modell -> Kanalzüge (legt sie bei geänderter Spuranzahl neu an)
     void rebuildStrips(int count);
     void fitStrips();    // strip area width: whole channel strips only
+    int fixedWidth() const; // master + loudness
+    void growToFit();    // widen the mixer in its splitter so all strips fit
     void resizeEvent(class QResizeEvent* e) override;
+    void showEvent(class QShowEvent* e) override;
     void onLevels(const QVector<float>& db);
     void tick();         // Pegel abfallen lassen, Peak-Hold
 
