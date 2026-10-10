@@ -2,8 +2,10 @@
 // dry run, errors leave the file untouched
 #include "cli/Commands.h"
 #include "core/Project.h"
+#include "core/EffectRegistry.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
+#include "core/TimelineOps.h"
 
 #include <QLockFile>
 
@@ -392,6 +394,47 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         run("new", {{"project", empty}});
         run("edit", {{"project", empty}, {"ops", R"([{"op":"format","fps":50}])"}});
         CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 50.0);
+    }
+
+    // Audio effect (noise reduction) on audio clips only; stabilization with a choice parameter; `effects` kinds
+    {
+        writeProject();
+        const QJsonObject tl = run("info", {{"project", g_path}})["timeline"].toObject();
+        const int video = tl["tracks"][0]["clips"][0]["id"].toInt();
+        int audio = 0;
+        for (const QJsonValue& t : tl["tracks"].toArray())
+            if (t["track"].toString() == "A1" && !t["clips"].toArray().isEmpty()) audio = t["clips"][0]["id"].toInt();
+        CHECK(audio > 0);
+        CHECK_EQ(errorOf("edit", {{"project", g_path},
+                                  {"ops", QString(R"([{"op":"effect","clips":[%1],"linked":false,"effect":"denoise"}])").arg(video)}}),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"effect","clips":[%1],"effect":"stabilize",
+                 "params":{"border":"wobbly"}}])").arg(video)}}), QString("BAD_ARGUMENT"));
+        edit(QString(R"([{"op":"effect","clips":[%1],"effect":"denoise","params":{"reduction":20,"track":false}},
+                         {"op":"effect","clips":[%2],"effect":"stabilize","params":{"smoothing":30,"border":"black"}}])")
+                 .arg(audio).arg(video).toUtf8().constData());
+        ProjectData d;
+        QString error;
+        CHECK(ProjectFile::load(g_path, &d, &error));
+        const Clip* a = TimelineOps::findClip(d.timeline, audio);
+        const Clip* v = TimelineOps::findClip(d.timeline, video);
+        CHECK(a && EffectRegistry::value(*a, "denoise", "reduction").toDouble() == 20.0
+              && !EffectRegistry::value(*a, "denoise", "track").toBool());
+        CHECK(v && EffectRegistry::value(*v, "stabilize", "border").toString() == "black"
+              && EffectRegistry::value(*v, "stabilize", "smoothing").toDouble() == 30.0);
+        const QJsonArray fx = run("effects", {})["effects"].toArray();
+        auto kindOf = [&](const QString& id) {
+            for (const QJsonValue& e : fx)
+                if (e["effect"].toString() == id) return e["kind"].toString();
+            return QString();
+        };
+        CHECK_EQ(kindOf("denoise"), QString("audio"));
+        CHECK_EQ(kindOf("stabilize"), QString("video"));
+        const QJsonArray params = run("effects", {{"effect", "stabilize"}})["effects"][0]["params"].toArray();
+        bool analysis = false;
+        for (const QJsonValue& p : params)
+            if (p["key"].toString() == "shakiness") analysis = p["analysis"].toBool();
+        CHECK(analysis);
     }
 
     // --- With real media (ffmpeg): loudness of a file and of the mix, normalize, mixer
