@@ -1,6 +1,6 @@
 # schneidi
 
-A lightweight video editor with Media, Edit, Color and Deliver pages. Its workflow is inspired by DaVinci Resolve, with far fewer features. The UI is available in English and German.
+A lightweight video editor with Media, Edit, Color and Deliver pages. Its workflow is inspired by DaVinci Resolve, with far fewer features. The UI is available in English, German, Spanish, French, Polish and Russian.
 
 A DaVinci-style workflow without DaVinci's hurdles: runs on modest hardware and opens H.264/H.265/AAC footage on Linux.
 
@@ -29,7 +29,7 @@ A DaVinci-style workflow without DaVinci's hurdles: runs on modest hardware and 
 - Proxy and render cache for smooth playback
 - Export and render queue via FFmpeg
 - Subtitles from speech (whisper.cpp, offline) – an optional download under Workspace → Extensions
-- Themes, English/German
+- Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
 <details>
 <summary>Color page</summary>
