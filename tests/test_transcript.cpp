@@ -126,6 +126,19 @@ int main(int argc, char** argv)
         Transcript::fitToSpeech(w, levels(15000, {{12020, 12330}, {13590, 14160}}));
         CHECK_EQ(times(w), QString("13467-13567 Wie | 13467-13567 geht | 13567-14100 das?"));
     }
+    // Real recording (2nd run): whisper gives the words no time of their own and stretches the last one instead
+    // ("Hey," "auf" at 7.79 s in digital silence, spoken from 10.3 s; "Wie" "geht" "das?" at 12.28 s, spoken from
+    // 13.5 s, a crackle at 12.3 s): the words that start together go along with the stretched one
+    {
+        QVector<W> w{{7790, 7890, "Hey,"}, {7790, 10460, "auf"}, {10460, 11050, "YouTube."},
+                     {12280, 12380, "Wie"}, {12280, 12380, "geht"}, {12280, 14050, "das?"}};
+        Transcript::fitToSpeech(w, levels(15000, {{10300, 11400}, {12300, 12350}, {13500, 14100}}));
+        CHECK_EQ(times(w), QString("9470-10000 Hey, | 10000-10460 auf | 10460-11050 YouTube. | "
+                                   "12530-12990 Wie | 12990-13520 geht | 13520-14050 das?"));
+        QVector<SubtitleCue> cs = Transcript::toCues(w, 100);
+        Transcript::startAtSound(cs, levels(15000, {{10300, 11400}, {12300, 12350}, {13500, 14100}}), 100);
+        CHECK_EQ(cues(cs), QString("1019-1105 Hey, auf YouTube. | 1340-1405 Wie geht das?"));
+    }
     // Alone between pauses: the loud part; nothing loud or no levels: keeps its start
     {
         QVector<W> w{{1000, 1300, "So"}, {2000, 6000, "weg"}, {7000, 7300, "da"}};
@@ -141,6 +154,12 @@ int main(int argc, char** argv)
         QVector<SubtitleCue> cs{{0, 100 + 25, 100 + 75, "Pferd, geh"}, {0, 100 + 75, 100 + 90, "laut"}};
         Transcript::startAtSound(cs, levels(4000, {{2000, 2600}, {3000, 3600}}), 25, 100);
         CHECK_EQ(cues(cs), QString("147-175 Pferd, geh | 175-190 laut"));
+    }
+    // A cue without any sound is made up (whisper in silence): dropped
+    {
+        QVector<SubtitleCue> cs{{0, 10, 20, "Hey,"}, {0, 50, 60, "da"}};
+        Transcript::startAtSound(cs, levels(3000, {{2000, 2400}}), 25);
+        CHECK_EQ(cues(cs), QString("50-60 da"));
     }
 
     // Two speakers in one track: overlapping cues share one cue (a line each), the rest stays apart

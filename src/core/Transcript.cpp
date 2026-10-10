@@ -99,9 +99,15 @@ void startAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, 
     const QVector<int> voiced = loudPrefix(levels);
     const int fm = std::max(1, levels.frameMs);
     constexpr int kRun = 5; // 50 ms of sound, not a click
-    for (SubtitleCue& c : cues) {
+    for (int i = 0; i < cues.size(); ++i) {
+        SubtitleCue& c = cues[i];
         const int a = int(std::max(0.0, (c.start - offset) * 1000.0 / fps / fm));
         const int b = int(std::min<double>(levels.db.size(), (c.end - offset) * 1000.0 / fps / fm));
+        // Not a single loud frame: whisper made it up in silence ("Hey," over 3 s of digital silence)
+        if (a < b && voiced[b] == voiced[a]) {
+            cues.remove(i--);
+            continue;
+        }
         for (int f = a; f + kRun <= b; ++f) {
             if (voiced[f + kRun] - voiced[f] < kRun) continue;
             // 100 ms before the sound, so the line is there when the first syllable is
@@ -123,7 +129,7 @@ void fitToSpeech(QVector<Word>& words, const Levels& levels)
     };
     constexpr qint64 kTouch = 60; // ms: a word that starts this close after another follows it directly
     const auto stretched = [](const Word& w) { return w.to - w.from > spokenLength(w) + 200; };
-    for (int i = 0; i < words.size();) {
+    for (int i = 0, done = 0; i < words.size();) {
         if (!stretched(words[i])) {
             ++i;
             continue;
@@ -133,6 +139,11 @@ void fitToSpeech(QVector<Word>& words, const Levels& levels)
         while (j + 1 < words.size() && stretched(words[j + 1]) && words[j + 1].from - words[j].to < kTouch) ++j;
         qint64 len = 0;
         for (int k = i; k <= j; ++k) len += spokenLength(words[k]);
+        // Words whisper gave no time of their own start together with the stretched one ("Wie" "geht" "das?" all at
+        // 12.28 s, "das?" stretched to 14.05 s; "Hey," "auf" at 7.79 s in silence, spoken at 10.4 s): they go along
+        while (i > done && std::abs(words[i - 1].from - words[i].from) < 20
+               && len + spokenLength(words[i - 1]) <= words[j].to - words[i - 1].from)
+            len += spokenLength(words[--i]);
         const qint64 from = words[i].from, to = words[j].to;
         const bool nextTouches = j + 1 < words.size() && words[j + 1].from - to < kTouch;
         const bool prevTouches = i > 0 && from - words[i - 1].to < kTouch;
@@ -155,7 +166,7 @@ void fitToSpeech(QVector<Word>& words, const Levels& levels)
             words[k].to = k == j && atEnd ? to : start + l;
             start += l;
         }
-        i = j + 1;
+        i = done = j + 1;
     }
     if (levels.db.isEmpty()) return;
     // Words in complete silence just before a word with sound ("Wie geht" 0.8 s before "das?", all spoken at once):

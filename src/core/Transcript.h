@@ -45,15 +45,17 @@ Levels levelsOf(const qint16* samples, qint64 count, int sampleRate, int frameMs
 // Whisper often stretches words over the pause or unrecognised sound (laughter) before them ("Das ist scheiße"
 // 6.5–15.4 s, spoken from 13.9 s); subtitles then start far too early. Runs of words longer than their spoken length
 // move up to the word that follows them directly (or stay after the one before); a run alone between pauses goes to
-// the loudest stretch of `levels` (may be empty: then it keeps its start).
+// the loudest stretch of `levels` (may be empty: then it keeps its start). Words that start together with a run
+// (whisper gave them no time) go along with it.
 void fitToSpeech(QVector<Word>& words, const Levels& levels);
 
-// A cue that whisper starts in silence ("Pferd, geh …" 1.1 s before the voice) begins shortly before the sound
-// (cues in timeline frames, `offset` = timeline frame of the audio start, as in toCues)
 // Cues of several speakers (one transcript per audio track) as one track: sorted; cues that overlap become one cue
 // with a line per speaker (start of the first, end of the last)
 QVector<SubtitleCue> mergeCues(const QVector<QVector<SubtitleCue>>& tracks);
 
+// A cue that whisper starts in silence ("Pferd, geh …" 1.1 s before the voice) begins shortly before the sound;
+// a cue without any sound is dropped (whisper makes up words in silence). Cues in timeline frames, `offset` =
+// timeline frame of the audio start, as in toCues
 void startAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, int offset = 0);
 
 } // namespace Transcript
