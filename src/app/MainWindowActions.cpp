@@ -497,14 +497,16 @@ void MainWindow::buildActions()
     QMenu* langMenu = workspace->addMenu(T("Sprache"));
     auto* langGroup = new QActionGroup(langMenu);
     for (const I18n::Language& l : I18n::languages()) {
-        QAction* a = langMenu->addAction(QString::fromUtf8(l.name));
+        QAction* a = langMenu->addAction(l.name);
         a->setCheckable(true);
         a->setChecked(I18n::language() == l.code);
         langGroup->addAction(a);
-        connect(a, &QAction::triggered, this, [this, l] {
-            if (I18n::language() == l.code) return;
-            I18n::setLanguage(l.code);
-            offerRestart(QString::fromUtf8(l.restartText), QString::fromUtf8(l.restartNow), QString::fromUtf8(l.later));
+        connect(a, &QAction::triggered, this, [this, lang = l.code] {
+            if (I18n::language() == lang) return;
+            I18n::setLanguage(lang);
+            // The hint already in the new language (it is not installed until the restart)
+            offerRestart(I18n::translate(lang, N_("Die Sprache ändert sich nach dem Neustart von schneidi.")),
+                         I18n::translate(lang, N_("Jetzt neu starten")), I18n::translate(lang, N_("Später")));
         });
     }
     // Design (Farben der Oberfläche): wirkt wie die Sprache nach dem Neustart

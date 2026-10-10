@@ -132,7 +132,9 @@ add_library(schneidi_lib STATIC
     src/ui/timeline/TimelinePanel.h   src/ui/timeline/TimelinePanel.cpp
 )
 
-qt_add_resources(schneidi_lib "i18n" PREFIX "/" FILES i18n/en.json i18n/es.json i18n/fr.json i18n/pl.json i18n/ru.json)
+# One dictionary per UI language: a new i18n/<code>.json is picked up by the build and the language menu by itself
+file(GLOB SCHNEIDI_I18N RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/i18n/*.json)
+qt_add_resources(schneidi_lib "i18n" PREFIX "/" FILES ${SCHNEIDI_I18N})
 set(SCHNEIDI_THEMES assets/themes/dark-orange.json assets/themes/midnight.json assets/themes/graphit.json assets/themes/hell.json assets/themes/beige.json)
 qt_add_resources(schneidi_lib "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_THEMES})
 file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/luts/*.cube) # tools/gen_luts.py

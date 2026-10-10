@@ -1,6 +1,7 @@
 #include "core/I18n.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QHash>
 #include <QJsonDocument>
@@ -41,25 +42,24 @@ void readDictionary(const QString& lang, QHash<QString, QString>& map)
 
 bool known(const QString& lang)
 {
-    for (const I18n::Language& l : I18n::languages())
-        if (lang == l.code) return true;
-    return false;
+    return lang == "de" || QFile::exists(":/i18n/" + lang + ".json");
 }
 
 } // namespace
 
 namespace I18n {
 
-const QList<Language>& languages()
+QList<Language> languages()
 {
-    static const QList<Language> list = {
-        {"de", "Deutsch", "Die Sprache ändert sich nach dem Neustart von schneidi.", "Jetzt neu starten", "Später"},
-        {"en", "English", "The language changes after restarting schneidi.", "Restart Now", "Later"},
-        {"es", "Español", "El idioma cambiará al reiniciar schneidi.", "Reiniciar ahora", "Más tarde"},
-        {"fr", "Français", "La langue changera au redémarrage de schneidi.", "Redémarrer maintenant", "Plus tard"},
-        {"pl", "Polski", "Język zmieni się po ponownym uruchomieniu schneidi.", "Uruchom ponownie teraz", "Później"},
-        {"ru", "Русский", "Язык изменится после перезапуска schneidi.", "Перезапустить сейчас", "Позже"},
-    };
+    QList<Language> list = {{"de", "Deutsch"}};
+    for (const QString& file : QDir(":/i18n").entryList({"*.json"}, QDir::Files, QDir::Name)) {
+        const QString code = file.chopped(5);
+        // Qt calls English "American English"; otherwise the native name, capitalised ("polski" -> "Polski")
+        QString name = code == "en" ? QString("English") : QLocale(code).nativeLanguageName();
+        if (name.isEmpty()) name = code;
+        name[0] = name[0].toUpper();
+        list.append({code, name});
+    }
     return list;
 }
 
@@ -91,6 +91,14 @@ void install(const QString& override)
         QCoreApplication::installTranslator(qt);
     else
         delete qt;
+}
+
+QString translate(const QString& lang, const char* source)
+{
+    QHash<QString, QString> map;
+    if (lang != "de") readDictionary("en", map);
+    if (lang != "de" && lang != "en") readDictionary(lang, map);
+    return map.value(QString::fromUtf8(source), QString::fromUtf8(source));
 }
 
 QChar decimalPoint() { return language() == "en" ? QChar('.') : QChar(','); }

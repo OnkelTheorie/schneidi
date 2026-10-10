@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the dictionaries i18n/<lang>.json (en, es, fr, pl, ru) with the texts in the code.
+"""Compare all dictionaries i18n/<lang>.json with the texts in the code (new language: copy en.json, empty the values).
 
 Collects all T("…") and N_("…") texts from src/ (also literals concatenated over several lines) plus name and
 description of the designs (assets/themes/*.json).
@@ -11,7 +11,7 @@ Empty value = not translated yet (shown in English; in en.json: shown in German)
 import glob, json, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LANGS = ('en', 'es', 'fr', 'pl', 'ru')
+LANGS = sorted(os.path.basename(f)[:-5] for f in glob.glob(os.path.join(ROOT, 'i18n', '*.json')))
 CALL = re.compile(r'\b(?:T|N_)\(\s*((?:"(?:[^"\\]|\\.)*"\s*)+)\)')
 LIT = re.compile(r'"((?:[^"\\]|\\.)*)"')
 

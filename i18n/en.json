@@ -221,6 +221,7 @@
  "Die LUT-Datei lässt sich nicht lesen:\n%1": "The LUT file cannot be read:\n%1",
  "Die Projektdatei stammt aus einer neueren schneidi-Version.": "The project file was created by a newer version of schneidi.",
  "Die Projektdatei wird gerade von einem anderen Programm gespeichert. Bitte noch einmal versuchen.": "Another program is saving the project file right now. Please try again.",
+ "Die Sprache ändert sich nach dem Neustart von schneidi.": "The language changes after restarting schneidi.",
  "Die Timeline enthält keine Untertitel.": "The timeline contains no subtitles.",
  "Die Timeline gibt es nicht mehr.": "The timeline no longer exists.",
  "Die Timeline ist leer.": "The timeline is empty.",

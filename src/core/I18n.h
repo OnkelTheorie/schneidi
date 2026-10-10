@@ -5,21 +5,19 @@
 #include <QString>
 
 // UI language: German is the source language in the code, every other language comes from i18n/<code>.json
-// (German text -> translated text). Switching takes effect after a restart.
+// (German text -> translated text). A new language only needs a new file there. Switching takes effect after a restart.
 namespace I18n {
 
 struct Language {
-    const char* code;        // "de", "en", "pl", …
-    const char* name;        // native name for the language menu
-    const char* restartText; // restart hint shown in that language (the new language is not loaded yet)
-    const char* restartNow;
-    const char* later;
+    QString code; // "de", "en", "pl", … (file name i18n/<code>.json)
+    QString name; // native name for the language menu
 };
 
-const QList<Language>& languages();    // all UI languages, German first
+QList<Language> languages();           // German plus one language per dictionary in i18n/, German first
 QString language();                    // code of the current UI language
 void setLanguage(const QString& lang); // only stores it, takes effect on the next start
 void install(const QString& override = {}); // after creating the QApplication; override = language for this run only
+QString translate(const QString& lang, const char* source); // source text in another language than the installed one
 QChar decimalPoint();                  // decimal separator of the UI language ("," in German, "." in English)
 
 } // namespace I18n
