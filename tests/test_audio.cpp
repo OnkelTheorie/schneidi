@@ -287,5 +287,43 @@ int main(int argc, char** argv)
             if (!CHECK(faded - base == 960)) std::printf("       mit Einblenden: %ld (ohne %ld)\n", faded, base);
         }
     }
+    // Seek while playing (SeekFade at the master meter): the old sound still coming fades out and stays silent,
+    // the target fades in from 0 (no step in the wave = no click); other frames stay untouched
+    {
+        Timeline tl;
+        tl.video.resize(1);
+        tl.audio.resize(1);
+        tl.audio[0].clips << mk(1, tone, 0, 0, 99);
+        auto prof = makeProfile(fmt);
+        TimelineBuilder b(*prof);
+        MixerHooks hooks;
+        auto tr = b.build(tl, &hooks);
+        SeekFade fade;
+        if (CHECK(hooks.master.meter)) hooks.master.meter->set("_seek_fade", &fade, 0);
+        const auto frameAudio = [&](int pos) {
+            std::unique_ptr<Mlt::Frame> f(tr->get_frame());
+            mlt_audio_format af = mlt_audio_float;
+            int freq = 48000, channels = 2;
+            int samples = mlt_audio_calculate_frame_samples(float(prof->fps()), freq, pos);
+            const auto* pcm = static_cast<const float*>(f->get_audio(af, freq, channels, samples));
+            return std::vector<float>(pcm, pcm + (pcm && af == mlt_audio_float ? samples : 0)); // channel 0 (planar)
+        };
+        const auto peakOf = [](const std::vector<float>& v, size_t from, size_t to) {
+            float p = 0.f;
+            for (size_t i = from; i < std::min(to, v.size()); ++i) p = std::max(p, std::abs(v[i]));
+            return p;
+        };
+        tr->seek(60);
+        CHECK(peakOf(frameAudio(60), 0, 1920) > 0.45f); // untouched
+        fade.start(70, 1.0);
+        const std::vector<float> stale = frameAudio(61); // still the old position
+        CHECK(stale.size() == 1920 && peakOf(stale, 0, 10) > 0.05f && peakOf(stale, 240, 1920) == 0.f);
+        CHECK(peakOf(frameAudio(62), 0, 1920) == 0.f);
+        tr->seek(70);
+        const std::vector<float> in = frameAudio(70);
+        CHECK(in.size() == 1920 && peakOf(in, 0, 5) < 0.01f && peakOf(in, 480, 1920) > 0.45f);
+        CHECK_EQ(fade.target.load(), -1);
+        CHECK(peakOf(frameAudio(71), 0, 1920) > 0.45f);
+    }
     return Check::result();
 }

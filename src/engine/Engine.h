@@ -27,6 +27,7 @@ class Preroll;
 class StillFetcher;
 struct MixerHooks;
 struct SharedLoudness;
+struct SeekFade;
 
 // Loudness-Meter (ITU-R BS.1770) der Vorschau: gemessen am Master, nur bei Wiedergabe mit normaler Geschwindigkeit
 struct LoudnessReading {
@@ -139,6 +140,7 @@ private:
     Timeline m_built; // model m_timeline was built from (LiveUpdate)
     std::unique_ptr<MixerHooks> m_mixer;
     std::unique_ptr<SharedLoudness> m_loudness; // vom Master-Pegelmesser im Audio-Thread gefüttert
+    std::unique_ptr<SeekFade> m_seekFade;       // seek while playing: fade out/in at the master (no click)
     std::unique_ptr<Preroll> m_preroll;         // Decoder vor Sprungstellen vorab positionieren
     std::mutex m_mixerMutex; // m_mixer wird im Consumer-Thread gelesen
     bool m_mixerOnlyNext = false;

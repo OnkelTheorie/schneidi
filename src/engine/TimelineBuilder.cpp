@@ -400,6 +400,49 @@ void applyPan(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a = 
 // Mit hooks werden die Filter immer angehängt (neutral bei 0 dB/Mitte), damit sie live verstellbar sind.
 double mltPan(double pan) { return (pan + 100.0) / 200.0; }
 
+// Multiplies the samples [from, to) of every channel by gain(i)
+template <typename Gain>
+void scaleSamples(void* buffer, mlt_audio_format format, int channels, int n, int from, int to, Gain gain)
+{
+    for (int i = from; i < to; ++i) {
+        const float g = gain(i);
+        for (int c = 0; c < channels; ++c) {
+            switch (format) {
+            case mlt_audio_s16: { auto& v = static_cast<int16_t*>(buffer)[i * channels + c]; v = int16_t(v * g); break; }
+            case mlt_audio_s32le: { auto& v = static_cast<int32_t*>(buffer)[i * channels + c]; v = int32_t(v * double(g)); break; }
+            case mlt_audio_s32: { auto& v = static_cast<int32_t*>(buffer)[c * n + i]; v = int32_t(v * double(g)); break; }
+            case mlt_audio_f32le: static_cast<float*>(buffer)[i * channels + c] *= g; break;
+            case mlt_audio_float: static_cast<float*>(buffer)[c * n + i] *= g; break;
+            default: return;
+            }
+        }
+    }
+}
+
+// Seek during playback (SeekFade): old sound fades out within ~5 ms, then silence until the target, which fades
+// in within ~10 ms
+void seekFade(SeekFade& fade, int pos, void* buffer, mlt_audio_format format, int channels, int n, int frequency)
+{
+    const int target = fade.target;
+    if (target < 0) return;
+    const int dir = fade.direction;
+    // The seeked producer starts exactly at the target; frames still on the way from before are elsewhere
+    const bool arrived = dir > 0 ? pos >= target && pos <= target + 2 : pos <= target && pos >= target - 2;
+    if (arrived || ++fade.waited > 12) {
+        const int len = std::min(n, std::max(1, frequency / 100));
+        scaleSamples(buffer, format, channels, n, 0, len, [len](int i) { return float(i) / len; });
+        int expected = target;
+        fade.target.compare_exchange_strong(expected, -1);
+        return;
+    }
+    int from = 0;
+    if (!fade.fadedOut.exchange(true)) {
+        from = std::min(n, std::max(1, frequency / 200));
+        scaleSamples(buffer, format, channels, n, 0, from, [from](int i) { return 1.f - float(i + 1) / from; });
+    }
+    scaleSamples(buffer, format, channels, n, from, n, [](int) { return 0.f; });
+}
+
 // Pegelmesser (passiv): merkt sich den Spitzenpegel des zuletzt verarbeiteten Tons je Kanal in dBFS als
 // _audio_level.N (N = Kanal) und den True Peak (BS.1770, 4x überabgetastet) in dBTP als _true_peak.N.
 // Eigener Filter statt MLT "audiolevel": der wandelt den Ton nach s16 und schneidet
@@ -424,6 +467,8 @@ int meterGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int*
     for (int c = 0; c < ch; ++c)
         for (int i = 0; i < n; ++i) peak[c] = std::max(peak[c], std::abs(signedSample(c, i)));
     mlt_properties props = MLT_FILTER_PROPERTIES(filter);
+    if (auto* fade = static_cast<SeekFade*>(mlt_properties_get_data(props, "_seek_fade", nullptr)))
+        seekFade(*fade, mlt_frame_get_position(frame), *buffer, *format, *channels, n, *frequency);
     // True Peak dieses Häppchens (Filterverlauf läuft über die Häppchen weiter)
     auto* tp = static_cast<TruePeakMeter*>(mlt_properties_get_data(props, "_tp", nullptr));
     if (tp) {

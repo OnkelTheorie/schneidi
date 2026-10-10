@@ -35,6 +35,23 @@ struct MixerHooks {
     Strip master;
 };
 
+// Preview: a seek during playback cuts the sound mid-wave on both sides (audible click). The engine sets the
+// target, the master meter fades out the old sound still coming (frames before the target), keeps it silent and
+// fades in at the target.
+struct SeekFade {
+    std::atomic<int> target{-1};    // timeline frame; -1 = nothing to do
+    std::atomic<int> direction{1};  // playback direction (1 forward, -1 backward)
+    std::atomic<bool> fadedOut{false};
+    std::atomic<int> waited{0}; // frames silenced so far (emergency stop: the sound comes back after a few)
+    void start(int frame, double speed)
+    {
+        direction = speed < 0 ? -1 : 1;
+        fadedOut = false;
+        waited = 0;
+        target = frame;
+    }
+};
+
 // Vorschau: Stelle, an der ein Decoder springen muss (Clip-Anfang, einblendende Seite eines Übergangs).
 // Bei langen GOPs dauert das bis zu ~1 s (Ton ~150 ms) -> Engine (engine/Preroll) dekodiert das Frame davor vorab.
 struct PrerollPoint {

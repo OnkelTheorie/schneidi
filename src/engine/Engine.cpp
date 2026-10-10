@@ -32,7 +32,7 @@ struct EngineCallbacks {
 Engine::Engine(QObject* parent)
     : QObject(parent), m_proxies(new ProxyManager(this)), m_renderCache(new RenderCache(this)),
       m_stills(new StillFetcher(this)),
-      m_loudness(std::make_unique<SharedLoudness>()), m_preroll(std::make_unique<Preroll>())
+      m_loudness(std::make_unique<SharedLoudness>()), m_seekFade(std::make_unique<SeekFade>()), m_preroll(std::make_unique<Preroll>())
 {
     // Render-Cache pausiert während der Wiedergabe
     connect(this, &Engine::speedChanged, m_renderCache, [this](double s) { m_renderCache->setPlaying(s != 0.0); });
@@ -267,7 +267,10 @@ void Engine::updateTimeline(const Timeline& tl)
     const bool active = m_mode == Mode::Timeline;
     const int pos = m_position;
     if (active && m_consumer) m_consumer->stop(); // alten Tractor nicht mehr lesen lassen
-    if (hooks->master.meter) hooks->master.meter->set("_loudness", m_loudness.get(), 0);
+    if (hooks->master.meter) {
+        hooks->master.meter->set("_loudness", m_loudness.get(), 0);
+        hooks->master.meter->set("_seek_fade", m_seekFade.get(), 0);
+    }
     m_preroll->setPoints(m_builder->prerollPoints(), 3 * m_format.rate.timebase(), m_previewSize);
     {
         std::lock_guard<std::mutex> lock(m_mixerMutex);
@@ -441,6 +444,8 @@ void Engine::seek(int frame)
     ++m_seekEpoch;
     m_seekSkipped = 0;
     m_seekTarget = playing ? frame : -1;
+    if (playing && m_mode == Mode::Timeline) m_seekFade->start(frame, m_speed);
+    else m_seekFade->target = -1;
     m_current->seek(frame);
     m_consumer->purge();
     m_position = frame;
