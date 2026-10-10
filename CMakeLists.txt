@@ -79,6 +79,8 @@ add_library(schneidi_lib STATIC
     src/engine/StillFetcher.h     src/engine/StillFetcher.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
+    src/engine/Denoise.h          src/engine/Denoise.cpp
+    src/engine/Stabilizer.h       src/engine/Stabilizer.cpp
     src/engine/Preroll.h          src/engine/Preroll.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp

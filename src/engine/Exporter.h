@@ -16,6 +16,7 @@ class Tractor;
 class Producer;
 } // namespace Mlt
 class TimelineBuilder;
+class QThread;
 
 struct ExportSettings {
     QString path;
@@ -48,7 +49,7 @@ public:
     explicit Exporter(QObject* parent = nullptr);
     ~Exporter() override;
 
-    bool isRunning() const { return m_consumer != nullptr || m_check != nullptr; }
+    bool isRunning() const { return m_consumer != nullptr || m_check != nullptr || m_analysis != nullptr; }
     // Läuft gerade irgendein Export? (Render-Cache pausiert solange)
     static bool anyRunning();
     // Threads fürs Rendern (Deliver-Seite, gilt pro Rechner, QSettings "render/cores" – Schlüssel bleibt für alte Einstellungen): 0 = alle
@@ -81,6 +82,16 @@ private:
     void onCheckFinished(bool works);
     // Hardware encoder failed: render again with ExportSettings::softwareCodec; false = no fallback possible
     bool fallBackToSoftware(QString* error);
+
+    // Stabilization: missing analyses (engine/Stabilizer) run first in a thread, then start() again for real.
+    // false = nothing to analyze
+    bool runAnalyses(const Timeline& tl, const ExportSettings& s);
+
+    QThread* m_analysis = nullptr;
+    std::shared_ptr<std::atomic<bool>> m_analysisCancel;
+    bool m_analysisDone = false; // start() after the analyses: do not look again
+    Timeline m_pendingTimeline;
+    ExportSettings m_pendingSettings;
 
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<TimelineBuilder> m_builder;

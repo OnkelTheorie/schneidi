@@ -27,13 +27,23 @@ struct EffectParam {
     // frei0r: parameter name of the plugin (MLT also accepts it instead of the index in mltProperty; Kdenlive's
     // effect files mostly use it)
     QString mltName;
+    // Choice: texts shown instead of `choices` (same order; the values stay in the project file). Empty = the values
+    QStringList choiceLabels;
+    // Changing it needs a new analysis pass (stabilization: what vid.stab measures, not how it applies)
+    bool analysis = false;
+    // Shown text of a Choice value (label if there is one)
+    QString choiceText(const QString& value) const
+    {
+        const int i = int(choices.indexOf(value));
+        return i >= 0 && i < choiceLabels.size() ? choiceLabels[i] : value;
+    }
 };
 
 struct EffectDescriptor {
     QString id;
     QString name;
     QString mltService;
-    bool video = true; // false = Audioeffekt
+    bool video = true; // false = audio effect (audio clips, Inspector tab Audio, Effects Library Audio FX)
     QVector<EffectParam> params;
     // In der Effects Library (Open FX → Filter) anbietbar; solche Effekte bekommen im Inspector einen eigenen,
     // entfernbaren Bereich. Nein = fester Bereich im Inspector (Green Screen).

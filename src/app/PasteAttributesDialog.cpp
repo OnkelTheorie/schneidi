@@ -42,7 +42,8 @@ PasteAttributesDialog::PasteAttributesDialog(int available, const QString& sourc
                                           {Editor::AttrComposite, T("Deckkraft")},
                                           {Editor::AttrEffects, T("Effekte")},
                                           {Editor::AttrColor, T("Farbkorrektur (Color)")}}));
-    columns->addWidget(group(T("Audio"), {{Editor::AttrVolume, T("Lautstärke")}, {Editor::AttrPan, T("Panorama")}}));
+    columns->addWidget(group(T("Audio"), {{Editor::AttrVolume, T("Lautstärke")}, {Editor::AttrPan, T("Panorama")},
+                                          {Editor::AttrAudioEffects, T("Effekte")}}));
     columns->addWidget(group(T("Allgemein"), {{Editor::AttrSpeed, T("Geschwindigkeit")},
                                               {Editor::AttrFades, T("Ein-/Ausblenden (Fades)")}}));
     layout->addLayout(columns);

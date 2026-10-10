@@ -259,14 +259,16 @@ void opEffect(Session& s, const QJsonObject& op)
         return;
     }
     const EffectDescriptor* d = EffectRegistry::find(effectId);
-    if (!d || !d->video) fail("NOT_FOUND", QString("no video effect '%1' (see the `effects` command)").arg(effectId));
-    const QVector<int> video = onTracks(s, ids, TrackKind::Video, "effects");
+    if (!d) fail("NOT_FOUND", QString("no effect '%1' (see the `effects` command)").arg(effectId));
+    // video effects on video clips, audio effects (kind "audio" in `effects`) on audio clips
+    const QVector<int> targets = onTracks(s, ids, d->video ? TrackKind::Video : TrackKind::Audio,
+                                          d->video ? "video effects" : "audio effects");
     QVariantMap values;
     const QJsonObject params = op.value("params").toObject();
     for (auto it = params.begin(); it != params.end(); ++it) values[it.key()] = effectValue(*d, it.key(), it.value());
-    s.editor.addEffect(video, effectId); // clips that have it already keep it
+    s.editor.addEffect(targets, effectId); // clips that have it already keep it
     if (values.isEmpty() && !op.contains("enabled")) return;
-    s.editor.modifyClips(video, d->name, [&](Clip& c) {
+    s.editor.modifyClips(targets, d->name, [&](Clip& c) {
         EffectInstance* e = EffectRegistry::instance(c, effectId);
         if (!e) return;
         for (auto it = values.begin(); it != values.end(); ++it) e->params[it.key()] = it.value();
@@ -353,7 +355,14 @@ QVector<OpDef> makeOps()
         {"subtitles", "{op:'subtitles', srt?:file, cues?:[{from, to, text}], name?}",
          "new subtitle track from an SRT file or a cue list", {}, opSubtitles},
         {"effect", "{op:'effect', clips, effect, params?:{key: value}, enabled?, remove?} or {op:'effect', clips, preset}",
-         "add/set/remove a video effect (ids and parameters: `effects`); preset = effect preset from `effects`", {},
+         "add/set/remove an effect (ids and parameters: `effects`); preset = effect preset from `effects`",
+         "Video effects go on video clips, audio effects (kind 'audio' in `effects`, e.g. denoise) on audio clips. "
+         "stabilize needs an analysis pass of the clip: the app runs it in the background (the clip plays "
+         "unstabilized until then), `render` runs missing analyses before it encodes. Changing shakiness/accuracy "
+         "means a new analysis; smoothing, zoom and border do not. Not possible for speed ramps, freeze frames, "
+         "titles and compound clips. denoise (noise reduction for voice recordings, ~11 ms delay): reduction = how far "
+         "the noise is lowered in dB (default 12), track = measure the noise in the recording (default true), floor "
+         "= fixed noise level in dBFS used when track is false.",
          opEffect},
         {"add_track", "{op:'add_track', kind:'video'|'audio', at?}", "new track (default: above/below the others)",
          {}, opAddTrack},

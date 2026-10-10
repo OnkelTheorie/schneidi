@@ -29,6 +29,7 @@
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
+#include "engine/Stabilizer.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
@@ -127,6 +128,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         updateRenderCacheBar();
     });
     connect(renderCache, &RenderCache::progressChanged, this, &MainWindow::updateRenderCacheBar);
+    // Stabilization analysis done -> build the preview again (now with vid.stab); also lets the render cache start
+    connect(Stabilizer::instance(), &Stabilizer::resultReady, this, [this, proxiesChanged] {
+        proxiesChanged();
+        updateRenderCacheBar();
+    });
     connect(renderCache, &RenderCache::failed, this,
             [this](const QString& msg) { QMessageBox::warning(this, T("Render-Cache"), msg); });
 
@@ -270,9 +276,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         m_editor->addTransitions(tv->playhead(), style, kind);
     });
     connect(m_effects, &EffectsLibrary::titleRequested, this, [this, tv] { m_editor->addTitle(tv->playhead()); });
-    // Filter: auf die ausgewählten Videoclips, ohne Auswahl auf den obersten Clip am Playhead
+    // Filters: onto the selected clips of the effect's kind, without a selection onto the clip at the playhead
     connect(m_effects, &EffectsLibrary::effectRequested, this, [this, tv](const QString& id) {
-        m_editor->addEffect(m_editor->effectTargets(tv->playhead()), id);
+        m_editor->addEffect(m_editor->effectTargets(tv->playhead(), Editor::effectKind(id)), id);
     });
     tv->setProbe([this](const QString& path) { return probeCached(path); });
     m_mediaCache = new MediaCache(this);

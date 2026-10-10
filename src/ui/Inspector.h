@@ -77,7 +77,9 @@ private:
     // Bereich eines Effekts aus der Effects Library (nur sichtbar, wenn der Clip ihn hat), mit Papierkorb
     void addEffectSection(QVBoxLayout* page, const EffectDescriptor& d);
     // Effect this computer does not know (plugin missing): warning instead of controls, can be removed
-    void addMissingEffectSection(QVBoxLayout* page, const QString& id);
+    void addMissingEffectSection(QVBoxLayout* page, const QString& id, TrackKind kind);
+    // Stabilization: analysis state with start/cancel button (engine/Stabilizer)
+    void addStabilizeRow(Section& s);
     // Trash button in the header + right-click menu "remove effect"
     void addRemoveButton(const Section& s, const QString& id);
     // Zeile mit Schieberegler + Zahlenfeld
@@ -130,11 +132,16 @@ private:
     bool m_zoomLinked = true;
     int m_lastShownId = 0; // Auswahl gewechselt -> bei Titeln den Tab "Titel" zeigen
     Param* m_crop[4] = {};
-    // Effect sections (Open FX) in the Effects tab, from m_fxIndex in its layout
-    struct FxSection { QString id; QWidget* header; QWidget* body; };
+    // Effect sections: video (Open FX) in the Effects tab from m_fxIndex, audio (Audio FX) in the Audio tab from
+    // m_audioFxIndex
+    struct FxSection { QString id; QWidget* header; QWidget* body; TrackKind kind = TrackKind::Video; };
     QVector<FxSection> m_fxSections;
     QVBoxLayout* m_fxLay = nullptr;
     int m_fxIndex = 0;
+    QVBoxLayout* m_audioFxLay = nullptr;
+    int m_audioFxIndex = 0;
+    QStringList m_audioFxOrder;
+    std::function<void()> m_stabilizeRefresh; // only the analysis row (progress ticks)
     QWidget* m_gradeRow = nullptr; // Color page grade/LUT: shown here, edited on the Color page
     QLabel* m_gradeText = nullptr;
     int m_fxCount = 0;             // effects of the shown clip (tab label; a new one opens the tab)

@@ -205,15 +205,18 @@ public:
     int targetVideoTrack() const { return m_targetVideo; }
     int targetAudioTrack() const { return m_targetAudio; }
     void setTargetTracks(int video, int audio);
-    // Effekte (Open FX aus der Effects Library): an Videoclips anhängen (Clips, die ihn schon haben, bleiben),
-    // bzw. entfernen; je ein Undo-Schritt
+    // Effects (Effects Library: Open FX on video clips, Audio FX on audio clips): add to the clips of the effect's
+    // kind (clips that have it already keep it), or remove; one undo step each
     void addEffect(const QVector<int>& ids, const QString& effectId); // auch "lut:<Pfad>" (EffectFolders::LutPrefix), "preset:<Pfad>" (Presets::Prefix)
     void removeEffect(const QVector<int>& ids, const QString& effectId);
     // Every effect of the clips (Effects Library, Color page grade/LUT) in one undo step; the Green Screen of the
     // Video tab stays
     void removeAllEffects(const QVector<int>& ids);
-    // Ziel für Doppelklick in der Effects Library: ausgewählte Videoclips, sonst der oberste Videoclip am Playhead
-    QVector<int> effectTargets(int frame) const;
+    // Kind of clip an effect id goes on (audio effects, else video: filters, LUTs, presets)
+    static TrackKind effectKind(const QString& effectId);
+    // Target of a double click in the Effects Library: selected clips of the kind, else the top video clip (audio:
+    // the clip on the first audio track) at the playhead
+    QVector<int> effectTargets(int frame, TrackKind kind = TrackKind::Video) const;
 
     // Color-Seite (Effekt "grade", Ziel wie effectTargets): Werte am Timeline-Frame `frame` setzen; legt die Korrektur
     // bei Bedarf an, animierte Werte bekommen dort einen Keyframe (wie im Inspector). Gleicher mergeKey = ein Undo-Schritt.
@@ -237,9 +240,9 @@ public:
     enum PasteAttr {
         AttrZoom = 1 << 0, AttrPosition = 1 << 1, AttrRotation = 1 << 2, AttrCrop = 1 << 3,
         AttrComposite = 1 << 4, AttrEffects = 1 << 5, AttrColor = 1 << 6, AttrSpeed = 1 << 7,
-        AttrVolume = 1 << 8, AttrPan = 1 << 9, AttrFades = 1 << 10,
+        AttrVolume = 1 << 8, AttrPan = 1 << 9, AttrFades = 1 << 10, AttrAudioEffects = 1 << 11, // Audio FX
         AttrVideoMask = AttrZoom | AttrPosition | AttrRotation | AttrCrop | AttrComposite | AttrEffects | AttrColor,
-        AttrAudioMask = AttrVolume | AttrPan,
+        AttrAudioMask = AttrVolume | AttrPan | AttrAudioEffects,
     };
     // Welche Attribute die Zwischenablage liefern kann (0 = nichts kopiert)
     int pasteAttributesAvailable() const;

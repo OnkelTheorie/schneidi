@@ -13,6 +13,7 @@
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
+#include "engine/Stabilizer.h"
 #include "ui/ScrubField.h"
 
 #include <QButtonGroup>
@@ -279,8 +280,8 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
             box->setFocusPolicy(Qt::NoFocus);
             connect(box, &QCheckBox::clicked, this, [set, p](bool on) { set(p, on); });
             addRow(p, box, resetButton([set, p] { set(p, p.defaultValue); }));
-            m_refreshers << [this, box, id, key = p.key] {
-                if (const Clip* c = primary(TrackKind::Video, false, id)) {
+            m_refreshers << [this, box, id, kind, key = p.key] {
+                if (const Clip* c = primary(kind, false, id)) {
                     const QSignalBlocker b(box);
                     box->setChecked(EffectRegistry::value(*c, id, key).toBool());
                 }
@@ -291,13 +292,13 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
             auto* combo = new QComboBox;
             combo->setFocusPolicy(Qt::NoFocus);
             combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-            combo->addItems(p.choices);
-            connect(combo, &QComboBox::activated, this, [set, p, combo](int i) { set(p, combo->itemText(i)); });
+            for (const QString& v : p.choices) combo->addItem(p.choiceText(v), v); // shown text, value as data
+            connect(combo, &QComboBox::activated, this, [set, p, combo](int i) { set(p, combo->itemData(i).toString()); });
             addRow(p, combo, resetButton([set, p] { set(p, p.defaultValue); }));
-            m_refreshers << [this, combo, id, key = p.key] {
-                if (const Clip* c = primary(TrackKind::Video, false, id)) {
+            m_refreshers << [this, combo, id, kind, key = p.key] {
+                if (const Clip* c = primary(kind, false, id)) {
                     const QSignalBlocker b(combo);
-                    combo->setCurrentText(EffectRegistry::value(*c, id, key).toString());
+                    combo->setCurrentIndex(combo->findData(EffectRegistry::value(*c, id, key).toString()));
                 }
             };
             continue;
@@ -307,16 +308,16 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
             swatch->setFixedSize(46, 18);
             swatch->setFocusPolicy(Qt::NoFocus);
             swatch->setToolTip(T("%1 wählen").arg(p.label));
-            connect(swatch, &QToolButton::clicked, this, [this, set, p, id] {
-                const Clip* c = primary(TrackKind::Video, false, id);
+            connect(swatch, &QToolButton::clicked, this, [this, set, p, id, kind] {
+                const Clip* c = primary(kind, false, id);
                 if (!c) return;
                 const QColor col = QColorDialog::getColor(EffectRegistry::value(*c, id, p.key).value<QColor>(), this,
                                                           T("%1 wählen").arg(p.label));
                 if (col.isValid()) set(p, col);
             });
             addRow(p, swatch, resetButton([set, p] { set(p, p.defaultValue); }));
-            m_refreshers << [this, swatch, id, key = p.key] {
-                if (const Clip* c = primary(TrackKind::Video, false, id)) {
+            m_refreshers << [this, swatch, id, kind, key = p.key] {
+                if (const Clip* c = primary(kind, false, id)) {
                     const QColor col = EffectRegistry::value(*c, id, key).value<QColor>();
                     const QString css = QString("QToolButton { background: %1; border: 1px solid %2; border-radius: 2px; }")
                                             .arg(col.name(), Theme::border.name());
@@ -350,10 +351,84 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
             s.grid->addWidget(l, row, 0);
         }
     }
+    if (id == Stabilizer::EffectId) addStabilizeRow(s);
 
     s.header->hide();
     s.body->hide();
-    m_fxSections << FxSection{id, s.header, s.body};
+    m_fxSections << FxSection{id, s.header, s.body, kind};
+}
+
+void Inspector::addStabilizeRow(Section& s)
+{
+    // Like DaVinci's "Stabilize" button, but automatic: the analysis starts when the effect is added or an analysis
+    // parameter changes; here its state, cancel and restart
+    auto* status = new QLabel;
+    status->setWordWrap(true);
+    status->setObjectName("StabilizeStatus");
+    auto* button = new QPushButton;
+    button->setObjectName("StabilizeButton");
+    button->setFocusPolicy(Qt::NoFocus);
+    s.grid->addWidget(rowLabel(T("Analyse")), s.rows, 0);
+    s.grid->addWidget(status, s.rows, 1);
+    s.grid->addWidget(button, ++s.rows, 1, Qt::AlignLeft);
+    ++s.rows;
+    auto current = [this]() -> std::optional<Stabilizer::Request> {
+        const Clip* c = primary(TrackKind::Video, false, Stabilizer::EffectId);
+        return c ? Stabilizer::request(*c, m_editor->project()->format()) : std::nullopt;
+    };
+    connect(button, &QPushButton::clicked, this, [current] {
+        const auto r = current();
+        if (!r) return;
+        Stabilizer* st = Stabilizer::instance();
+        const Stabilizer::State state = st->state(*r);
+        if (state == Stabilizer::State::Running || state == Stabilizer::State::Queued) st->cancel(*r);
+        else st->start(*r);
+    });
+    m_stabilizeRefresh = [this, status, button, current] {
+        const Clip* c = primary(TrackKind::Video, false, Stabilizer::EffectId);
+        if (!c) return;
+        QString text;
+        QString action;
+        QColor color = Theme::textDim;
+        const auto r = current();
+        if (!Stabilizer::available()) {
+            text = T("Das MLT-Modul „vid.stab“ fehlt – der Effekt wirkt nicht, bleibt aber mit seinen Werten im Projekt.");
+            color = Theme::warning;
+        } else if (!r) {
+            text = Stabilizer::unsupportedReason(*c);
+            color = Theme::warning;
+        } else {
+            double progress = 0;
+            switch (Stabilizer::instance()->state(*r, &progress)) {
+            case Stabilizer::State::Done: text = T("Fertig"); break;
+            case Stabilizer::State::Running:
+                text = T("Analysiert … %1 %").arg(int(progress * 100));
+                action = T("Abbrechen");
+                break;
+            case Stabilizer::State::Queued: text = T("Wartet auf die Analyse"); action = T("Abbrechen"); break;
+            case Stabilizer::State::Cancelled:
+                text = T("Abgebrochen – der Clip läuft unstabilisiert");
+                action = T("Analysieren");
+                color = Theme::warning;
+                break;
+            case Stabilizer::State::Failed:
+                text = Stabilizer::instance()->error(*r);
+                action = T("Erneut versuchen");
+                color = Theme::warning;
+                break;
+            case Stabilizer::State::Missing:
+            case Stabilizer::State::Unsupported: text = T("Noch nicht analysiert"); action = T("Analysieren"); break;
+            }
+        }
+        status->setText(text);
+        status->setStyleSheet(QString("color: %1;").arg(color.name()));
+        button->setVisible(!action.isEmpty());
+        button->setText(action);
+    };
+    m_refreshers << m_stabilizeRefresh;
+    connect(Stabilizer::instance(), &Stabilizer::stateChanged, this, [this] {
+        if (m_stabilizeRefresh) m_stabilizeRefresh();
+    });
 }
 
 void Inspector::addRemoveButton(const Section& s, const QString& id)
@@ -370,21 +445,24 @@ void Inspector::addRemoveButton(const Section& s, const QString& id)
     connect(trash, &QToolButton::clicked, this, remove);
     s.headerLayout->insertWidget(s.headerLayout->count() - 1, trash); // vor dem Zurücksetzen-Knopf
     s.header->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(s.header, &QWidget::customContextMenuRequested, this, [this, header = s.header, remove](const QPoint& pos) {
-        QMenu menu(this);
-        connect(menu.addAction(T("Effekt entfernen")), &QAction::triggered, this, remove);
-        menu.addSeparator();
-        connect(menu.addAction(T("Effekte als Preset speichern…")), &QAction::triggered, this,
-                &Inspector::savePresetRequested);
-        menu.exec(header->mapToGlobal(pos));
-    });
+    connect(s.header, &QWidget::customContextMenuRequested, this,
+            [this, header = s.header, remove, video = s.kind == TrackKind::Video](const QPoint& pos) {
+                QMenu menu(this);
+                connect(menu.addAction(T("Effekt entfernen")), &QAction::triggered, this, remove);
+                if (video) { // presets hold video effects
+                    menu.addSeparator();
+                    connect(menu.addAction(T("Effekte als Preset speichern…")), &QAction::triggered, this,
+                            &Inspector::savePresetRequested);
+                }
+                menu.exec(header->mapToGlobal(pos));
+            });
 }
 
-void Inspector::addMissingEffectSection(QVBoxLayout* page, const QString& id)
+void Inspector::addMissingEffectSection(QVBoxLayout* page, const QString& id, TrackKind kind)
 {
     // Like "Media Offline": the effect stays in the project with its values, but nothing renders it
     const QString title = T("%1 (fehlt)").arg(id);
-    Section s = addSection(page, TrackKind::Video, title, {}, {}, false, id);
+    Section s = addSection(page, kind, title, {}, {}, false, id);
     addRemoveButton(s, id);
     for (QToolButton* b : s.header->findChildren<QToolButton*>()) // title in the warning color
         if (b->isCheckable() && b->text() == title)
@@ -399,7 +477,7 @@ void Inspector::addMissingEffectSection(QVBoxLayout* page, const QString& id)
     s.header->setToolTip(T("Effekt „%1“ fehlt").arg(id));
     s.header->hide();
     s.body->hide();
-    m_fxSections << FxSection{id, s.header, s.body};
+    m_fxSections << FxSection{id, s.header, s.body, kind};
 }
 
 int Inspector::effectCount(const Clip& c) const
@@ -415,7 +493,8 @@ int Inspector::effectCount(const Clip& c) const
 
 void Inspector::arrangeEffectSections()
 {
-    // Sichtbar sind die Effekte des angezeigten (frühesten ausgewählten) Videoclips, in seiner Reihenfolge
+    // Shown are the effects of the shown (earliest selected) clip of each kind, in its order: video effects in the
+    // Effects tab, audio effects in the Audio tab
     const Clip* c = primary(TrackKind::Video);
     const bool grade = c && ColorGrade::active(*c);
     m_gradeRow->setVisible(grade);
@@ -424,35 +503,42 @@ void Inspector::arrangeEffectSections()
         m_gradeText->setText(T("Farbkorrektur der Color-Seite") +
                              (lut.isEmpty() ? QString() : "\n" + T("LUT: %1").arg(QFileInfo(lut).completeBaseName())));
     }
-    QStringList order;
-    if (c)
-        for (const EffectInstance& e : c->effects) {
-            const auto known = [&] {
-                return std::any_of(m_fxSections.begin(), m_fxSections.end(),
-                                   [&](const FxSection& f) { return f.id == e.effectId; });
-            };
-            if (!known()) { // create on the first clip with the effect (frei0r: more than a hundred possible)
-                const EffectDescriptor* d = EffectRegistry::find(e.effectId);
-                if (d && d->library && d->video) addEffectSection(m_fxLay, *d);
-                else if (!d) addMissingEffectSection(m_fxLay, e.effectId); // plugin missing
+    for (TrackKind kind : {TrackKind::Video, TrackKind::Audio}) {
+        const bool video = kind == TrackKind::Video;
+        QVBoxLayout* lay = video ? m_fxLay : m_audioFxLay;
+        const Clip* shownClip = video ? c : primary(TrackKind::Audio);
+        auto known = [&](const QString& id) {
+            return std::any_of(m_fxSections.begin(), m_fxSections.end(),
+                               [&](const FxSection& f) { return f.kind == kind && f.id == id; });
+        };
+        QStringList order;
+        if (shownClip)
+            for (const EffectInstance& e : shownClip->effects) {
+                if (!known(e.effectId)) { // create on the first clip with the effect (frei0r: more than a hundred possible)
+                    const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+                    if (d && d->library && d->video == video) addEffectSection(lay, *d);
+                    else if (!d) addMissingEffectSection(lay, e.effectId, kind); // plugin missing
+                }
+                if (known(e.effectId)) order << e.effectId;
             }
-            if (known()) order << e.effectId;
+        QStringList& last = video ? m_fxOrder : m_audioFxOrder;
+        if (order == last) continue;
+        last = order;
+        int index = video ? m_fxIndex : m_audioFxIndex;
+        for (const QString& id : order)
+            for (const FxSection& f : m_fxSections)
+                if (f.kind == kind && f.id == id) {
+                    lay->removeWidget(f.header);
+                    lay->removeWidget(f.body);
+                    lay->insertWidget(index++, f.header);
+                    lay->insertWidget(index++, f.body);
+                }
+        for (const FxSection& f : m_fxSections) {
+            if (f.kind != kind) continue;
+            const bool shown = order.contains(f.id);
+            f.header->setVisible(shown);
+            f.body->setVisible(shown && !f.body->property("collapsed").toBool());
         }
-    if (order == m_fxOrder) return;
-    m_fxOrder = order;
-    int index = m_fxIndex;
-    for (const QString& id : order)
-        for (const FxSection& f : m_fxSections)
-            if (f.id == id) {
-                m_fxLay->removeWidget(f.header);
-                m_fxLay->removeWidget(f.body);
-                m_fxLay->insertWidget(index++, f.header);
-                m_fxLay->insertWidget(index++, f.body);
-            }
-    for (const FxSection& f : m_fxSections) {
-        const bool shown = order.contains(f.id);
-        f.header->setVisible(shown);
-        f.body->setVisible(shown && !f.body->property("collapsed").toBool());
     }
 }
 

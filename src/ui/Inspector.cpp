@@ -302,6 +302,8 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     };
     vol.grid->addWidget(streamLabel, vol.rows, 0);
     vol.grid->addWidget(streamBox, vol.rows++, 1, 1, 2);
+    m_audioFxLay = audioLay;
+    m_audioFxIndex = audioLay->count(); // Audio FX sections below (arrangeEffectSections)
     audioLay->addStretch(1);
 
     // ---- Gesamtaufbau ----

@@ -20,6 +20,7 @@
 #include "engine/Profiles.h"
 #include "engine/RenderQueue.h"
 #include "engine/Snapshot.h"
+#include "engine/Stabilizer.h"
 
 #include <QBuffer>
 #include <QColor>
@@ -789,10 +790,14 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
     const QString only = a["effect"].toString();
     QJsonArray list;
     for (const EffectDescriptor& d : EffectRegistry::all()) {
-        if (!d.video || (!only.isEmpty() && d.id != only)) continue;
-        QJsonObject o{{"effect", d.id}, {"name", d.name}};
+        if (!only.isEmpty() && d.id != only) continue;
+        QJsonObject o{{"effect", d.id}, {"name", d.name}, {"kind", d.video ? "video" : "audio"}};
         if (!d.category.isEmpty()) o["category"] = d.category;
         if (d.id == "grade") o["note"] = "the Color page grade (lift/gamma/gain/offset, LUT)";
+        if (d.id == Stabilizer::EffectId)
+            o["note"] = Stabilizer::available()
+                            ? "needs an analysis pass (background in the app, before encoding in `render`)"
+                            : "MLT module vid.stab is missing: the effect does nothing on this computer";
         if (only.isEmpty()) {
             QJsonArray keys;
             for (const EffectParam& p : d.params) keys << p.key;
@@ -807,6 +812,7 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
                     po["max"] = p.max;
                 }
                 if (p.type == EffectParam::Choice) po["choices"] = QJsonArray::fromStringList(p.choices);
+                if (p.analysis) po["analysis"] = true; // changing it means a new analysis pass
                 po["default"] = p.type == EffectParam::Color ? QJsonValue(p.defaultValue.value<QColor>().name())
                                                              : QJsonValue::fromVariant(p.defaultValue);
                 if (!p.description.isEmpty()) po["description"] = p.description;
@@ -817,7 +823,7 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         }
         list << o;
     }
-    if (list.isEmpty() && !only.isEmpty()) fail("NOT_FOUND", "no video effect " + only);
+    if (list.isEmpty() && !only.isEmpty()) fail("NOT_FOUND", "no effect " + only);
     if (!only.isEmpty()) return {{"effects", list}};
     QJsonArray types;
     for (const auto& t : kTransitionTypes) types << t.id;
@@ -1034,8 +1040,8 @@ const QVector<Command>& commands()
           {"remove", T::String, "ids to delete again"},
           {"reinstall", T::Boolean, "download again even if installed"}},
          cmdExtensions},
-        {"effects", "Video effects for the 'effect' edit operation: all ids with their parameter names, or one "
-                    "effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
+        {"effects", "Video and audio effects for the 'effect' edit operation: all ids with their kind and parameter "
+                    "names, or one effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
                     "luma images (op 'transition') and effect presets (op 'effect' preset).",
          {{"effect", T::String, "only this effect, with parameter details", false, true}}, cmdEffects},
         {"frames", "Still images of a media file or a project timeline at given times, as files or one contact "

@@ -28,11 +28,12 @@ void Editor::addEffect(const QVector<int>& ids, const QString& effectId)
     }
     const Timeline& tl = m_project->timeline();
     const bool preset = effectId.startsWith(Presets::Prefix);
+    const TrackKind kind = effectKind(effectId);
     QVector<int> targets;
     for (int id : editable(ids)) {
         TrackRef ref;
         const Clip* c = TimelineOps::findClip(tl, id, &ref);
-        if (c && ref.kind == TrackKind::Video && (preset || !EffectRegistry::has(*c, effectId))) targets << id;
+        if (c && ref.kind == kind && (preset || !EffectRegistry::has(*c, effectId))) targets << id;
     }
     if (preset) { // Shotcut/Kdenlive preset -> its effects, one undo step
         const Presets::Preset p = Presets::load(effectId.mid(int(qstrlen(Presets::Prefix))));
@@ -74,20 +75,29 @@ void Editor::removeAllEffects(const QVector<int>& ids)
     });
 }
 
-QVector<int> Editor::effectTargets(int frame) const
+TrackKind Editor::effectKind(const QString& effectId)
+{
+    const EffectDescriptor* d = EffectRegistry::find(effectId);
+    return d && !d->video ? TrackKind::Audio : TrackKind::Video;
+}
+
+QVector<int> Editor::effectTargets(int frame, TrackKind kind) const
 {
     const Timeline& tl = m_project->timeline();
     QVector<int> ids;
     for (int id : m_selection->ids()) {
         TrackRef ref;
-        if (TimelineOps::findClip(tl, id, &ref) && ref.kind == TrackKind::Video) ids << id;
+        if (TimelineOps::findClip(tl, id, &ref) && ref.kind == kind) ids << id;
     }
     if (!ids.isEmpty()) return ids;
-    // Ohne Auswahl: sichtbarer (oberster) Videoclip unter dem Playhead
-    for (int i = tl.video.size() - 1; i >= 0; --i)
-        if (!tl.video[i].locked)
-            for (const Clip& c : tl.video[i].clips)
+    // Without a selection: the visible (top) video clip under the playhead, audio: from A1 down
+    const QVector<Track>& tracks = tl.tracks(kind);
+    for (int k = 0; k < tracks.size(); ++k) {
+        const int i = kind == TrackKind::Video ? tracks.size() - 1 - k : k;
+        if (!tracks[i].locked)
+            for (const Clip& c : tracks[i].clips)
                 if (frame >= c.start && frame < c.end()) return {c.id};
+    }
     return {};
 }
 

@@ -266,9 +266,9 @@ void opCopyAttributes(Session& s, const QJsonObject& op)
 {
     static const QPair<const char*, int> attrs[] = {
         {"zoom", Editor::AttrZoom},       {"position", Editor::AttrPosition}, {"rotation", Editor::AttrRotation},
-        {"crop", Editor::AttrCrop},       {"opacity", Editor::AttrComposite}, {"effects", Editor::AttrEffects},
-        {"color", Editor::AttrColor},     {"speed", Editor::AttrSpeed},       {"volume", Editor::AttrVolume},
-        {"pan", Editor::AttrPan},         {"fades", Editor::AttrFades}};
+        {"crop", Editor::AttrCrop},       {"opacity", Editor::AttrComposite}, {"color", Editor::AttrColor},
+        {"speed", Editor::AttrSpeed},     {"volume", Editor::AttrVolume},     {"pan", Editor::AttrPan},
+        {"fades", Editor::AttrFades},     {"effects", Editor::AttrEffects | Editor::AttrAudioEffects}};
     int mask = 0;
     const QJsonArray names = op.value("attributes").toArray();
     for (const QJsonValue& v : names) {
@@ -348,8 +348,8 @@ void addLookOps(QVector<OpDef>& ops)
                  opKeyframe}
         << OpDef{"copy_attributes", "{op:'copy_attributes', from, clips, attributes?}",
                  "Paste Attributes: copy values of clip `from` to the clips",
-                 "attributes (default all): zoom, position, rotation, crop, opacity, effects, color (grade), speed, "
-                 "volume, pan, fades. Keyframes come along.",
+                 "attributes (default all): zoom, position, rotation, crop, opacity, effects (video and audio), color "
+                 "(grade), speed, volume, pan, fades. Keyframes come along.",
                  opCopyAttributes};
 }
 
