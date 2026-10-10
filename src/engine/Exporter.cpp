@@ -5,6 +5,7 @@
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "engine/Profiles.h"
+#include "engine/Stabilizer.h"
 #include "engine/TimelineBuilder.h"
 
 #include <Mlt.h>
@@ -151,6 +152,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                                     .arg(QFileInfo(target).fileName());
             return false;
         }
+    // Stabilization needs its analysis pass: run what is missing first, never export unstabilized silently
+    if (!std::exchange(m_analysisDone, false) && runAnalyses(tl, s)) return true;
 
     // Andere Ausgabegröße als die Timeline: Pixelwerte (Position, Titel …) mitskalieren
     ProjectFormat out = s.format;
@@ -315,8 +318,57 @@ void Exporter::poll()
     emit progress(std::clamp(pos * 100 / std::max(1, m_length), 0, 99));
 }
 
+bool Exporter::runAnalyses(const Timeline& tl, const ExportSettings& s)
+{
+    if (!Stabilizer::available()) return false; // the effect does nothing here (Inspector says so)
+    const QVector<Stabilizer::Request> todo = Stabilizer::missing(tl, s.format);
+    if (todo.isEmpty()) return false;
+    qInfo("Export: stabilization analysis of %lld clip(s) first", qlonglong(todo.size()));
+    m_pendingTimeline = tl;
+    m_pendingSettings = s;
+    m_analysisCancel = std::make_shared<std::atomic<bool>>(false);
+    auto cancel = m_analysisCancel;
+    auto ok = std::make_shared<bool>(true);
+    auto error = std::make_shared<QString>();
+    m_analysis = QThread::create([todo, cancel, ok, error] {
+        for (const Stabilizer::Request& r : todo) {
+            if (Stabilizer::find(r).valid()) continue; // the preview finished it meanwhile
+            if (!(*ok = Stabilizer::analyze(r, error.get(), cancel.get()))) return;
+        }
+    });
+    connect(m_analysis, &QThread::finished, this, [this, ok, error] {
+        m_analysis->wait();
+        delete m_analysis;
+        m_analysis = nullptr;
+        --g_running;
+        if (!*ok) {
+            emit finished(false, T("Stabilisieren fehlgeschlagen: %1").arg(*error));
+            return;
+        }
+        m_analysisDone = true;
+        const Timeline tl = std::exchange(m_pendingTimeline, Timeline{});
+        QString startError;
+        if (!start(tl, m_pendingSettings, &startError)) emit finished(false, startError);
+    });
+    ++g_running; // the render cache waits as during the export itself
+    m_analysis->start();
+    emit progress(0);
+    return true;
+}
+
 void Exporter::cancel()
 {
+    if (m_analysis) { // still analyzing for stabilization
+        *m_analysisCancel = true;
+        m_analysis->disconnect(this);
+        m_analysis->wait();
+        delete m_analysis;
+        m_analysis = nullptr;
+        --g_running;
+        m_pendingTimeline = {};
+        emit finished(false, T("Export abgebrochen."));
+        return;
+    }
     if (!m_consumer) return;
     m_consumer->stop();
     const QString path = m_path;
