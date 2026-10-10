@@ -55,7 +55,7 @@ schneidi-cli frames talk.schneidi --count 9 --sheet --out sheet.jpg
 schneidi-cli scopes talk.schneidi --at 10s --out scopes.png      # waveform, parade, vectorscope + numbers
 schneidi-cli loudness talk.schneidi                          # LUFS, true peak of the mix
 schneidi-cli render talk.schneidi --out talk-cut.mp4 --preset "YouTube 1080p"
-schneidi-cli restore talk.schneidi                           # undo the last change
+schneidi-cli restore talk.schneidi                           # undo the last change (file mode)
 schneidi-cli help                                            # all commands (JSON)
 schneidi-cli help edit                                       # every edit operation with details
 ```
@@ -72,7 +72,17 @@ Claude Code: `claude mcp add schneidi -- schneidi-cli mcp`, or in Claude Desktop
 { "mcpServers": { "schneidi": { "command": "/path/to/schneidi-cli", "args": ["mcp"] } } }
 ```
 
-The project can stay open in schneidi: the app reloads it when the CLI saves (with unsaved changes it asks first).
+**Live with the app:** if the project is open in schneidi, every command works on what the app shows (unsaved
+changes included). An `edit` changes the open project as one undo step and does not save; `info` adds the playhead
+and the selection; `app` plays, seeks, selects, undoes, saves and generates proxies. The app shows "AI connected"
+while a session is active, lights up the clips it changed and has a button to disconnect it. `@app` as the project
+means the project of the running app. Without the app (or on a server) the CLI works on the file as before.
+
+```bash
+schneidi-cli app state                                       # playhead, selection, open timeline
+schneidi-cli edit @app --ops '[{"op":"split","at":"12s"}]'   # cut in the open project
+schneidi-cli app undo
+```
 The AppImage contains the CLI too: `schneidi-x86_64.AppImage cli help`, or a link to the AppImage named `schneidi-cli`.
 
 ## Building
