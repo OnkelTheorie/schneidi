@@ -359,7 +359,7 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
             // Wie DaVinci "Change project frame rate?", hier samt Auflösung
             QString clipRate = cf.rate.label();
             if (cf.variable)
-                clipRate = T("variabel, etwa %1").arg(QString::number(cf.averageFps, 'f', 2).replace('.', I18n::language() == "de" ? "," : "."));
+                clipRate = T("variabel, etwa %1").arg(QString::number(cf.averageFps, 'f', 2).replace('.', I18n::decimalPoint()));
             QMessageBox box(QMessageBox::Question, T("Projekteinstellungen"),
                             T("Das Format des Clips passt nicht zu den Projekteinstellungen. Projekt an den Clip anpassen?"),
                             QMessageBox::NoButton, this);

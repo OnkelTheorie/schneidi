@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Wörterbuch i18n/en.json mit den Texten im Code abgleichen.
+"""Compare the dictionaries i18n/<lang>.json (en, es, fr, pl, ru) with the texts in the code.
 
-Sammelt alle T("…")- und N_("…")-Texte aus src/ (auch über mehrere Zeilen verkettete Literale) sowie Name und
-Beschreibung der Designs (assets/themes/*.json).
-  tools/i18n_check.py           fehlende und überflüssige Einträge anzeigen (Exit 1, wenn etwas fehlt)
-  tools/i18n_check.py --update  fehlende Einträge mit leerem Wert ergänzen, überflüssige entfernen
-Leerer Wert = noch nicht übersetzt (Anzeige bleibt deutsch).
+Collects all T("…") and N_("…") texts from src/ (also literals concatenated over several lines) plus name and
+description of the designs (assets/themes/*.json).
+  tools/i18n_check.py            show missing and unused entries (exit 1 if something is missing)
+  tools/i18n_check.py --update   add missing entries with an empty value, remove unused ones
+  tools/i18n_check.py --lang fr  only check this language (--lang can be repeated)
+Empty value = not translated yet (shown in English; in en.json: shown in German).
 """
 import glob, json, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DICT = os.path.join(ROOT, 'i18n', 'en.json')
+LANGS = ('en', 'es', 'fr', 'pl', 'ru')
 CALL = re.compile(r'\b(?:T|N_)\(\s*((?:"(?:[^"\\]|\\.)*"\s*)+)\)')
 LIT = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
@@ -33,29 +34,37 @@ def sources():
     return found
 
 
-def main():
-    used = sources()
-    d = json.load(open(DICT, encoding='utf-8')) if os.path.exists(DICT) else {}
+def check(lang, used, update):
+    path = os.path.join(ROOT, 'i18n', lang + '.json')
+    d = json.load(open(path, encoding='utf-8')) if os.path.exists(path) else {}
     missing = sorted(used - d.keys())
     unused = sorted(d.keys() - used)
     empty = sorted(k for k in used & d.keys() if not d[k])
-    if '--update' in sys.argv:
+    if update:
         for k in missing:
             d[k] = ''
         for k in unused:
             del d[k]
-        with open(DICT, 'w', encoding='utf-8') as out:
+        with open(path, 'w', encoding='utf-8') as out:
             json.dump(dict(sorted(d.items())), out, ensure_ascii=False, indent=1)
             out.write('\n')
-        print(f'{len(missing)} ergänzt, {len(unused)} entfernt, {len(empty) + len(missing)} unübersetzt')
-        return 0
+        print(f'{lang}: {len(missing)} ergänzt, {len(unused)} entfernt, {len(empty) + len(missing)} unübersetzt')
+        return True
     for k in missing:
-        print('fehlt:', repr(k))
+        print(f'{lang} fehlt:', repr(k))
     for k in unused:
-        print('unbenutzt:', repr(k))
+        print(f'{lang} unbenutzt:', repr(k))
     for k in empty:
-        print('unübersetzt:', repr(k))
-    return 1 if missing or empty else 0
+        print(f'{lang} unübersetzt:', repr(k))
+    return not missing and not empty
+
+
+def main():
+    args = sys.argv[1:]
+    langs = [args[i + 1] for i, a in enumerate(args[:-1]) if a == '--lang'] or LANGS
+    used = sources()
+    ok = [check(lang, used, '--update' in args) for lang in langs]
+    return 0 if all(ok) else 1
 
 
 sys.exit(main())

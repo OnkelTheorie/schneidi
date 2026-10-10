@@ -493,20 +493,18 @@ void MainWindow::buildActions()
         dlg.exec();
     });
     workspace->addSeparator();
-    // Sprache wie in DaVinci (Preferences → User → UI Settings): wirkt nach dem Neustart
+    // Language like in DaVinci (Preferences → User → UI Settings): takes effect after a restart
     QMenu* langMenu = workspace->addMenu(T("Sprache"));
     auto* langGroup = new QActionGroup(langMenu);
-    for (const auto& [code, name] : {std::pair{"de", "Deutsch"}, std::pair{"en", "English"}}) {
-        QAction* a = langMenu->addAction(name);
+    for (const I18n::Language& l : I18n::languages()) {
+        QAction* a = langMenu->addAction(QString::fromUtf8(l.name));
         a->setCheckable(true);
-        a->setChecked(I18n::language() == code);
+        a->setChecked(I18n::language() == l.code);
         langGroup->addAction(a);
-        connect(a, &QAction::triggered, this, [this, lang = QString(code)] {
-            if (lang == I18n::language()) return;
-            I18n::setLanguage(lang);
-            offerRestart(lang == "en" ? "The language changes after restarting schneidi."
-                                      : "Die Sprache ändert sich nach dem Neustart von schneidi.",
-                         lang == "en" ? "Restart Now" : "Jetzt neu starten", lang == "en" ? "Later" : "Später");
+        connect(a, &QAction::triggered, this, [this, l] {
+            if (I18n::language() == l.code) return;
+            I18n::setLanguage(l.code);
+            offerRestart(QString::fromUtf8(l.restartText), QString::fromUtf8(l.restartNow), QString::fromUtf8(l.later));
         });
     }
     // Design (Farben der Oberfläche): wirkt wie die Sprache nach dem Neustart

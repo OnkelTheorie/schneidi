@@ -101,7 +101,7 @@ int main(int argc, char* argv[])
 #endif
     QApplication::setApplicationVersion(QString("%1 (%2)").arg(SCHNEIDI_VERSION, SCHNEIDI_BUILD)); // Version aus CMakeLists, Git-Stand, siehe cmake/BuildInfo.cmake
     Log::install();
-    // Testhilfe: --lang en|de gilt nur für diesen Lauf (Einstellung bleibt unverändert)
+    // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)
     I18n::install(langOverride);
 
     // MLT liest Kommazahlen mit Punkt – deutsches Locale würde "0.5" als 0 lesen

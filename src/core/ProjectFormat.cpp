@@ -4,11 +4,11 @@
 
 QString FrameRate::label() const
 {
-    // 23.976 / 29.97 / 59.94 wie DaVinci; im Deutschen mit Komma
+    // 23.976 / 29.97 / 59.94 like DaVinci; decimal comma in German and the other non-English languages
     QString s = QString::number(fps(), 'f', 3);
     while (s.endsWith('0')) s.chop(1);
     if (s.endsWith('.')) s.chop(1);
-    if (I18n::language() == "de") s.replace('.', ',');
+    s.replace('.', I18n::decimalPoint());
     return s;
 }
 
