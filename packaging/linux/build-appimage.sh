@@ -70,6 +70,19 @@ else
 fi
 for t in ffmpeg ffprobe; do cp -L "$(command -v "$t")" "$APPDIR/usr/bin/"; done
 
+# GL dispatch libraries (libglvnd) as a fallback for systems without a desktop: AppRun adds a folder to the library
+# path only if the system lacks that library (a bundled one could clash with the system's GPU driver)
+for lib in libEGL.so.1 libOpenGL.so.0 libGLdispatch.so.0; do
+    src="/usr/lib/$MULTIARCH/$lib"
+    [ -f "$src" ] || src="$(ldconfig -p | awk -v l="$lib" '$1 == l { print $NF; exit }')"
+    if [ -n "$src" ] && [ -f "$src" ]; then
+        mkdir -p "$APPDIR/usr/lib/fallback/${lib%%.so*}"
+        cp -L "$src" "$APPDIR/usr/lib/fallback/${lib%%.so*}/$lib"
+    else
+        echo "!! $lib not found (the AppImage will need it on the system)" >&2
+    fi
+done
+
 # --- Abhängigkeiten + Qt einsammeln, AppImage bauen ---
 QMAKE_BIN="$(command -v qmake6 || true)"
 [ -n "$QMAKE_BIN" ] || QMAKE_BIN="/usr/lib/qt6/bin/qmake"
