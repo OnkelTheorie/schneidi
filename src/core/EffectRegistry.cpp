@@ -35,6 +35,25 @@ QVector<EffectDescriptor>& registry()
              {"strength", T("Stärke"), {}, EffectParam::Double, 25.0, 0, 100, AnimParam::FxBlur, 0.25, 2},
          },
          true},
+        // Stabilization (DaVinci: Inspector → Stabilization). Engine: MLT vid.stab (engine/Stabilizer) – needs an
+        // analysis pass that runs in the background; until it is done the clip plays unstabilized. Smoothing, zoom and
+        // border apply live, shakiness/accuracy start a new analysis.
+        {"stabilize", T("Stabilisieren"), {}, true,
+         {
+             {"smoothing", T("Glättung"), {}, EffectParam::Double, 15.0, 0, 100, AnimParam::Count, 0.25, 0, {},
+              T("Wie ruhig die Kamera wirkt: Anzahl Frames, über die die Bewegung geglättet wird")},
+             {"zoom", T("Zoom"), {}, EffectParam::Double, 0.0, -50, 100, AnimParam::Count, 0.25, 0, {},
+              T("Zusätzlicher Zoom in Prozent (positiv = Rand weiter aus dem Bild)")},
+             {"border", T("Rand"), {}, EffectParam::Choice, QString("auto"), 0, 0, AnimParam::Count, 1, 2,
+              {"auto", "adaptive", "black", "keep"},
+              T("Was an den Bildrändern passiert, die das Verschieben freilegt"), {},
+              {T("Automatisch zoomen"), T("Mitlaufend zoomen"), T("Schwarz"), T("Vorheriges Bild")}},
+             {"shakiness", T("Wackeln"), {}, EffectParam::Double, 5.0, 1, 10, AnimParam::Count, 0.05, 0, {},
+              T("Wie stark die Aufnahme wackelt (1 = kaum, 10 = sehr). Neue Analyse"), {}, {}, true},
+             {"accuracy", T("Genauigkeit"), {}, EffectParam::Double, 9.0, 1, 15, AnimParam::Count, 0.05, 0, {},
+              T("Genauigkeit der Bewegungserkennung (höher = langsamere Analyse). Neue Analyse"), {}, {}, true},
+         },
+         true, {}, T("Beruhigt verwackelte Aufnahmen. Analysiert den Clip im Hintergrund (Fortschritt im Inspector)")},
         // Noise reduction for voice recordings (DaVinci: Fairlight FX → Noise Reduction). Engine: own spectral noise
         // suppression (engine/Denoise, real time); defaults work for typical hiss/hum under speech.
         {"denoise", T("Rauschunterdrückung"), {}, false,

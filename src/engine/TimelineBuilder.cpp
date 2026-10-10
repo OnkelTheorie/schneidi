@@ -11,6 +11,7 @@
 #include "engine/Profiles.h"
 #include "engine/PitchLatency.h"
 #include "engine/RampProducer.h"
+#include "engine/Stabilizer.h"
 
 #include <Mlt.h>
 #include <QColor>
@@ -189,14 +190,18 @@ thread_local std::shared_ptr<std::atomic<bool>> t_gradeBypass;
 void applyGeneric(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, const EffectInstance& inst,
                   const EffectDescriptor& d, int a, int len);
 
-// Effects in the order on the clip; a/len: section for keyframes. Video: the Color page grade first (like DaVinci:
-// grade before the edit effects), regardless of its position. Audio: the audio effects (before clip volume/pan); noise reduction is attached per clip instead.
+// Effects in the order on the clip; a/len: section for keyframes. Video: stabilization first (it has to see the
+// camera image), then the Color page grade (like DaVinci: grade before the edit effects), regardless of their
+// position. Audio: the audio effects (before clip volume/pan); noise reduction is attached per clip instead.
 void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, TrackKind kind, int a, int len)
 {
     const bool video = kind == TrackKind::Video;
-    if (video) ColorGrade::attach(clip, c, a, t_gradeBypass);
+    if (video) {
+        Stabilizer::attach(profile, clip, c);
+        ColorGrade::attach(clip, c, a, t_gradeBypass);
+    }
     for (const auto& inst : c.effects) {
-        if (!inst.enabled || inst.effectId == ColorGrade::EffectId) continue;
+        if (!inst.enabled || inst.effectId == ColorGrade::EffectId || inst.effectId == Stabilizer::EffectId) continue;
         const EffectDescriptor* d = EffectRegistry::find(inst.effectId);
         if (!d || d->video != video) continue;
         if (inst.effectId == "color") applyColor(profile, clip, c, a, len);

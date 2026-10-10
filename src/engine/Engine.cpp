@@ -9,6 +9,7 @@
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
+#include "engine/Stabilizer.h"
 #include "engine/StillFetcher.h"
 #include "engine/TimelineBuilder.h"
 
@@ -252,6 +253,8 @@ void Engine::updateTimeline(const Timeline& tl)
         }
     }
     m_renderCache->sync(tl); // fehlende Clip-Ausgaben einreihen, überholte verwerfen
+    // Stabilization: analyses the timeline needs run in the background (until then the clips play unstabilized)
+    Stabilizer::instance()->sync(Stabilizer::missing(tl, m_format));
     auto hooks = std::make_unique<MixerHooks>();
     auto tractor = m_builder->build(tl, hooks.get());
     // Only values changed (Inspector): copy them into the running tractor instead of restarting the consumer

@@ -162,6 +162,11 @@ struct Walk {
     void apply()
     {
         for (auto [live, fresh] : copies) {
+            // vid.stab reads its analysis file once: a new one (other shakiness/accuracy, cached already) needs a reload;
+            // smoothing/zoom/border it picks up by itself
+            const char* service = mlt_properties_get(fresh, "mlt_service");
+            if (service && std::strcmp(service, "vidstab") == 0 && !sameText(fresh, live, "results"))
+                mlt_properties_set_int(live, "reload", 1);
             for (int i = 0, n = mlt_properties_count(fresh); i < n; ++i) {
                 const char* name = mlt_properties_get_name(fresh, i);
                 if (!name || isUnderscore(name)) continue;

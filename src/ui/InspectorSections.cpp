@@ -13,6 +13,7 @@
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
+#include "engine/Stabilizer.h"
 #include "ui/ScrubField.h"
 
 #include <QButtonGroup>
@@ -350,10 +351,84 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
             s.grid->addWidget(l, row, 0);
         }
     }
+    if (id == Stabilizer::EffectId) addStabilizeRow(s);
 
     s.header->hide();
     s.body->hide();
     m_fxSections << FxSection{id, s.header, s.body, kind};
+}
+
+void Inspector::addStabilizeRow(Section& s)
+{
+    // Like DaVinci's "Stabilize" button, but automatic: the analysis starts when the effect is added or an analysis
+    // parameter changes; here its state, cancel and restart
+    auto* status = new QLabel;
+    status->setWordWrap(true);
+    status->setObjectName("StabilizeStatus");
+    auto* button = new QPushButton;
+    button->setObjectName("StabilizeButton");
+    button->setFocusPolicy(Qt::NoFocus);
+    s.grid->addWidget(rowLabel(T("Analyse")), s.rows, 0);
+    s.grid->addWidget(status, s.rows, 1);
+    s.grid->addWidget(button, ++s.rows, 1, Qt::AlignLeft);
+    ++s.rows;
+    auto current = [this]() -> std::optional<Stabilizer::Request> {
+        const Clip* c = primary(TrackKind::Video, false, Stabilizer::EffectId);
+        return c ? Stabilizer::request(*c, m_editor->project()->format()) : std::nullopt;
+    };
+    connect(button, &QPushButton::clicked, this, [current] {
+        const auto r = current();
+        if (!r) return;
+        Stabilizer* st = Stabilizer::instance();
+        const Stabilizer::State state = st->state(*r);
+        if (state == Stabilizer::State::Running || state == Stabilizer::State::Queued) st->cancel(*r);
+        else st->start(*r);
+    });
+    m_stabilizeRefresh = [this, status, button, current] {
+        const Clip* c = primary(TrackKind::Video, false, Stabilizer::EffectId);
+        if (!c) return;
+        QString text;
+        QString action;
+        QColor color = Theme::textDim;
+        const auto r = current();
+        if (!Stabilizer::available()) {
+            text = T("Das MLT-Modul „vid.stab“ fehlt – der Effekt wirkt nicht, bleibt aber mit seinen Werten im Projekt.");
+            color = Theme::warning;
+        } else if (!r) {
+            text = Stabilizer::unsupportedReason(*c);
+            color = Theme::warning;
+        } else {
+            double progress = 0;
+            switch (Stabilizer::instance()->state(*r, &progress)) {
+            case Stabilizer::State::Done: text = T("Fertig"); break;
+            case Stabilizer::State::Running:
+                text = T("Analysiert … %1 %").arg(int(progress * 100));
+                action = T("Abbrechen");
+                break;
+            case Stabilizer::State::Queued: text = T("Wartet auf die Analyse"); action = T("Abbrechen"); break;
+            case Stabilizer::State::Cancelled:
+                text = T("Abgebrochen – der Clip läuft unstabilisiert");
+                action = T("Analysieren");
+                color = Theme::warning;
+                break;
+            case Stabilizer::State::Failed:
+                text = Stabilizer::instance()->error(*r);
+                action = T("Erneut versuchen");
+                color = Theme::warning;
+                break;
+            case Stabilizer::State::Missing:
+            case Stabilizer::State::Unsupported: text = T("Noch nicht analysiert"); action = T("Analysieren"); break;
+            }
+        }
+        status->setText(text);
+        status->setStyleSheet(QString("color: %1;").arg(color.name()));
+        button->setVisible(!action.isEmpty());
+        button->setText(action);
+    };
+    m_refreshers << m_stabilizeRefresh;
+    connect(Stabilizer::instance(), &Stabilizer::stateChanged, this, [this] {
+        if (m_stabilizeRefresh) m_stabilizeRefresh();
+    });
 }
 
 void Inspector::addRemoveButton(const Section& s, const QString& id)

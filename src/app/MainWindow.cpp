@@ -28,6 +28,7 @@
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
+#include "engine/Stabilizer.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
@@ -126,6 +127,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         updateRenderCacheBar();
     });
     connect(renderCache, &RenderCache::progressChanged, this, &MainWindow::updateRenderCacheBar);
+    // Stabilization analysis done -> build the preview again (now with vid.stab); also lets the render cache start
+    connect(Stabilizer::instance(), &Stabilizer::resultReady, this, [this, proxiesChanged] {
+        proxiesChanged();
+        updateRenderCacheBar();
+    });
     connect(renderCache, &RenderCache::failed, this,
             [this](const QString& msg) { QMessageBox::warning(this, T("Render-Cache"), msg); });
 

@@ -3,9 +3,11 @@
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/ProjectFile.h"
+#include "core/EffectRegistry.h"
 #include "engine/Bundle.h"
 #include "engine/Exporter.h"
 #include "engine/Profiles.h"
+#include "engine/Stabilizer.h"
 #include "engine/TimelineBuilder.h"
 
 #include <Mlt.h>
@@ -233,6 +235,10 @@ void RenderCache::sync(const Timeline& tl)
         std::stable_sort(clips.begin(), clips.end(), [](const Clip* a, const Clip* b) { return a->start < b->start; });
         for (const Clip* c : clips) {
             if (!wanted(*c) || !QFileInfo::exists(c->mediaPath)) continue;
+            // Stabilization still analyzing: the output would be unstabilized (rendered once the result is there)
+            if (const EffectInstance* st = EffectRegistry::instance(*c, Stabilizer::EffectId);
+                st && st->enabled && Stabilizer::available())
+                if (const auto r = Stabilizer::request(*c, m_format); r && !Stabilizer::find(*r).valid()) continue;
             const QString k = key(*c, m_format);
             if (seen.contains(k) || m_failed.contains(k) || QFileInfo::exists(cacheDir() + "/" + k + ".mov")) continue;
             seen.insert(k);
