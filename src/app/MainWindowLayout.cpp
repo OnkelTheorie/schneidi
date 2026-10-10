@@ -177,6 +177,7 @@ QWidget* MainWindow::buildTopBar()
     lay->addWidget(m_effectsToggle);
     lay->addStretch(1);
     lay->addWidget(title);
+    lay->addWidget(buildLiveIndicator());
     lay->addStretch(1);
     lay->addWidget(m_mixerToggle);
     lay->addWidget(m_inspectorToggle);

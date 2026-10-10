@@ -37,16 +37,28 @@ QJsonObject formatJson(const ProjectFormat& f);
 
 // A loaded project with an editor. Writing sessions hold the project's write lock (ProjectFile::lock) from
 // loading until they end, so the app cannot save in between; save() writes back with a backup copy first.
+// Live (cli/Live.h): is the project open in the app, a writing session in the app process edits the app's project
+// (no file, no lock; the server makes it one undo step) and a reading one in schneidi-cli gets a copy of it.
 struct Session {
     enum class Access { Read, Write };
 
+    struct Opened; // where the project comes from (Commands.cpp)
+
+private:
+    explicit Session(Opened&& o);
+    std::unique_ptr<Project> m_own; // the project unless it is the app's
+
+public:
     QString path;
     std::unique_ptr<QLockFile> lock;
-    Project project;
+    Project& project;
     Selection selection;
     Editor editor{&project, &selection};
+    bool live = false;  // the project as open in the app (inside the app, or a copy of it)
+    QJsonObject app;    // live: the app's state (playhead, selection …) for `info`
 
     explicit Session(const QString& file, Access access = Access::Read);
+    ~Session();
     const ProjectFormat& format() const { return project.format(); }
     // Edit/read another timeline (sequence id or name; undefined = keep). The project still opens with the
     // timeline that was open before, unless open = true.
@@ -58,8 +70,11 @@ struct Session {
 
 private:
     int m_open = 0; // sequence the app opens (restored before saving)
+    bool m_inApp = false; // edits the app's project directly
 };
 
+// A project file (.schneidi) or "@app" (the project open in the app)
+bool isProjectFile(const QString& path);
 QString trackName(TrackRef r);
 // "V1", "A2" or a number (1 = first track); returns the index (0-based)
 int parseTrack(const QJsonValue& v, TrackKind* kind = nullptr);

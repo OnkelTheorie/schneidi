@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Editor.h"
+#include "core/LiveHost.h"
 #include "core/ProjectFile.h"
 #include "core/Types.h"
 #include "ui/timeline/ViewState.h"
@@ -30,7 +31,7 @@ class QButtonGroup;
 class QToolButton;
 class DeliverPanel;
 
-class MainWindow : public QMainWindow {
+class MainWindow : public QMainWindow, public LiveHost {
     Q_OBJECT
 public:
     explicit MainWindow(Engine* engine, QWidget* parent = nullptr);
@@ -50,6 +51,22 @@ public:
     // Neustart (Design/Sprache): main() startet schneidi nach dem Beenden mit diesen Argumenten neu
     bool restartRequested() const { return m_restartRequested; }
     QStringList restartArguments() const;
+
+    // Live connection (cli/Live.h, started in main.cpp): what an AI session sees and controls (MainWindowLive.cpp)
+    Project* liveProject() override { return m_project; }
+    QString liveProjectPath() const override { return m_projectPath; }
+    Selection* liveSelection() override { return m_selection; }
+    int livePlayhead() const override;
+    bool livePlaying() const override;
+    void liveSeek(int frame) override;
+    void livePlay(bool play) override;
+    bool liveSave(QString* error) override;
+    void liveGenerateProxies(const QStringList& files) override;
+    QJsonObject liveProxyState(const QString& file) const override;
+    void liveConnectionChanged(bool connected, const QString& client) override;
+    void liveClipsChanged(const QVector<int>& clipIds) override;
+    // Buttons of the AI indicator in the top bar: end the session (and refuse new ones) / allow again
+    void setLiveControls(const std::function<void()>& disconnect, const std::function<void()>& allow);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -177,4 +194,16 @@ private:
     int m_autosaveSlot = 0; // 0 = noch keiner belegt
     std::unique_ptr<QLockFile> m_autosaveLock;
     bool m_restartRequested = false;
+
+    // AI indicator in the top bar (MainWindowLive.cpp)
+    void updateLiveIndicator();
+    QWidget* buildLiveIndicator();
+    QWidget* m_liveBox = nullptr;
+    class QLabel* m_liveLabel = nullptr;
+    QToolButton* m_liveButton = nullptr;
+    QTimer m_liveLinger; // keeps "connected" visible a moment after a one-shot command
+    bool m_liveConnected = false;
+    bool m_liveRefused = false; // the user disconnected the AI
+    QString m_liveClient;
+    std::function<void()> m_liveDisconnect, m_liveAllow;
 };

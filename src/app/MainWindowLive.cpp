@@ -1,0 +1,127 @@
+// MainWindow: live connection to an AI session (schneidi-cli / MCP, see cli/Live.h): state, control, indicator
+#include "app/MainWindow.h"
+
+#include "app/Theme.h"
+#include "core/I18n.h"
+#include "engine/Engine.h"
+#include "engine/ProxyManager.h"
+#include "ui/timeline/TimelinePanel.h"
+#include "ui/timeline/TimelineView.h"
+
+#include <QHBoxLayout>
+#include <QJsonObject>
+#include <QLabel>
+#include <QToolButton>
+
+int MainWindow::livePlayhead() const { return m_timeline->view()->playhead(); }
+
+bool MainWindow::livePlaying() const { return m_engine->mode() == Engine::Mode::Timeline && m_engine->speed() != 0.0; }
+
+void MainWindow::liveSeek(int frame)
+{
+    const bool playing = livePlaying();
+    jumpToFrame(frame);
+    if (playing) m_engine->play();
+}
+
+void MainWindow::livePlay(bool play)
+{
+    if (!play) {
+        m_engine->pause();
+        return;
+    }
+    if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(livePlayhead());
+    m_engine->play();
+}
+
+bool MainWindow::liveSave(QString* error)
+{
+    if (m_projectPath.isEmpty()) {
+        *error = "the project was never saved: the user has to save it once in the app (File > Save)";
+        return false;
+    }
+    if (!saveTo(m_projectPath)) {
+        *error = "saving failed: " + m_projectPath;
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::liveGenerateProxies(const QStringList& files) { m_engine->proxies()->generate(files); }
+
+QJsonObject MainWindow::liveProxyState(const QString& file) const
+{
+    const ProxyManager* pm = m_engine->proxies();
+    if (pm->hasProxy(file)) return {{"state", "ready"}};
+    if (pm->isPending(file)) return {{"state", "pending"}, {"percent", std::max(0, pm->progressOf(file))}};
+    return {{"state", "none"}};
+}
+
+void MainWindow::liveConnectionChanged(bool connected, const QString& client)
+{
+    m_liveConnected = connected;
+    if (connected) {
+        m_liveClient = client;
+        m_liveLinger.stop();
+    } else {
+        m_liveLinger.start(); // one-shot commands connect and leave right away: stay visible a moment
+    }
+    updateLiveIndicator();
+}
+
+void MainWindow::liveClipsChanged(const QVector<int>& clipIds) { m_timeline->view()->flashClips(clipIds); }
+
+void MainWindow::setLiveControls(const std::function<void()>& disconnect, const std::function<void()>& allow)
+{
+    m_liveDisconnect = disconnect;
+    m_liveAllow = allow;
+}
+
+QWidget* MainWindow::buildLiveIndicator()
+{
+    // Like "Claude is using this tab" in a browser: visible while an AI works on the project
+    m_liveBox = new QWidget;
+    auto* lay = new QHBoxLayout(m_liveBox);
+    lay->setContentsMargins(12, 0, 0, 0);
+    lay->setSpacing(6);
+    m_liveLabel = new QLabel;
+    m_liveButton = new QToolButton;
+    lay->addWidget(m_liveLabel);
+    lay->addWidget(m_liveButton);
+    m_liveLinger.setSingleShot(true);
+    m_liveLinger.setInterval(2500);
+    connect(&m_liveLinger, &QTimer::timeout, this, &MainWindow::updateLiveIndicator);
+    connect(m_liveButton, &QToolButton::clicked, this, [this] {
+        if (m_liveRefused) {
+            m_liveRefused = false;
+            if (m_liveAllow) m_liveAllow();
+        } else {
+            m_liveRefused = true;
+            m_liveLinger.stop();
+            if (m_liveDisconnect) m_liveDisconnect();
+        }
+        updateLiveIndicator();
+    });
+    updateLiveIndicator();
+    return m_liveBox;
+}
+
+void MainWindow::updateLiveIndicator()
+{
+    if (!m_liveBox) return;
+    const bool active = m_liveConnected || m_liveLinger.isActive();
+    m_liveBox->setVisible(active || m_liveRefused);
+    const QString violet = "#b482ff";
+    if (m_liveRefused) {
+        m_liveLabel->setText(T("KI getrennt"));
+        m_liveLabel->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+        m_liveLabel->setToolTip(T("Eine KI kann dieses Projekt erst wieder bearbeiten, wenn du es erlaubst."));
+        m_liveButton->setText(T("Erlauben"));
+    } else {
+        m_liveLabel->setText("● " + T("KI verbunden"));
+        m_liveLabel->setStyleSheet(QString("color: %1; font-weight: 600;").arg(violet));
+        m_liveLabel->setToolTip(T("%1 bearbeitet dieses Projekt. Jede Änderung ist ein Rückgängig-Schritt.")
+                                    .arg(m_liveClient.isEmpty() ? QString("schneidi-cli") : m_liveClient));
+        m_liveButton->setText(T("Trennen"));
+    }
+}

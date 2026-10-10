@@ -57,6 +57,12 @@ struct Command {
 const QVector<Command>& commands();
 const Command* find(const QString& name);
 
+// Runs a command: if its project is open in the running app (cli/Live.h), changing commands run inside the app
+// and reading ones on a copy of what the app shows; otherwise on the file. Both frontends call this.
+QJsonObject execute(const Command& cmd, const QJsonObject& args, Context& ctx);
+// Commands that change the project (or control the app) and therefore run inside the app when it has it open
+bool runsInApp(const Command& cmd, const QJsonObject& args);
+
 // JSON schema of the parameters (MCP inputSchema, `help`)
 QJsonObject inputSchema(const Command& cmd);
 // Convert/validate raw arguments (command line strings or MCP JSON) to the declared types; throws Error

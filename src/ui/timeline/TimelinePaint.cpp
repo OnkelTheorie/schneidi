@@ -31,6 +31,7 @@
 #include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
+#include <QDateTime>
 #include <QTimer>
 #include <QWheelEvent>
 #include <array>
@@ -635,6 +636,18 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
 
     p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
     p.drawPath(path);
+    // Changed by the AI (live connection): violet glow that fades out
+    if (!ghost && m_flash.contains(c.id)) {
+        const double left = 1.0 - double(QDateTime::currentMSecsSinceEpoch() - m_flashStart) / kFlashMs;
+        if (left > 0) {
+            QColor glow(0xb4, 0x82, 0xff);
+            glow.setAlphaF(0.45 * left);
+            p.fillPath(path, glow);
+            glow.setAlphaF(left);
+            p.setPen(QPen(glow, 2));
+            p.drawPath(path);
+        }
+    }
 
     // Keyframe-Symbol unten rechts (wie DaVinci): Klick klappt die Keyframe-Spur auf
     if (!ghost && r.width() >= 40 && r.height() >= 24 && Keys::hasKeys(c)) {

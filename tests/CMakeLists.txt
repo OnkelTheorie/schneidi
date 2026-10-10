@@ -55,6 +55,10 @@ schneidi_test(test_paste_attributes)
 schneidi_test(test_scopes)
 schneidi_test(test_cli)
 target_link_libraries(test_cli PRIVATE schneidi_cli_lib)
+schneidi_test(test_live)
+target_link_libraries(test_live PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_live PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
+add_dependencies(test_live schneidi-cli)
 
 # Benchmark, not run by CTest
 add_executable(bench_inspector bench_inspector.cpp check.h)

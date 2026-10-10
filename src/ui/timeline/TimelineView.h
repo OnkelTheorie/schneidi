@@ -34,6 +34,8 @@ public:
     Tool tool() const { return m_tool; }
     bool snapping() const { return m_snap; }
     int playhead() const { return m_playhead; }
+    // Clips an AI just changed (live connection): they light up briefly
+    void flashClips(const QVector<int>& ids);
 
     // Für die Scrollbars (Scrollbereich ist nach rechts "endlos")
     int visibleFrames() const;
@@ -369,6 +371,10 @@ private:
     QSet<int> m_rubberBase;
     // Auto-Scroll: letzte Mausposition/Tasten während des Ziehens
     QTimer* m_autoScroll = nullptr;
+    QSet<int> m_flash;              // flashClips
+    QTimer* m_flashTimer = nullptr;
+    qint64 m_flashStart = 0;        // ms (QDateTime::currentMSecsSinceEpoch)
+    static constexpr int kFlashMs = 1400;
     QPoint m_dragPos;
     Qt::KeyboardModifiers m_dragMods;
 

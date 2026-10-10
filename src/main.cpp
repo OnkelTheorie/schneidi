@@ -3,6 +3,7 @@
 #include "app/Log.h"
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
+#include "cli/Live.h"
 #include "ui/MediaStorage.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
@@ -172,6 +173,19 @@ int main(int argc, char* argv[])
     // Wiederhergestellt: dieses Projekt bleibt offen (die Datei lässt sich danach normal öffnen).
     const bool restored = !testRun && w.offerAutosaveRestore();
     if (!projectFile.isEmpty() && !restored) w.openProject(QFileInfo(projectFile).absoluteFilePath());
+    // Live connection for schneidi-cli / MCP (cli/Live.h); test runs stay invisible to AIs unless SCHNEIDI_LIVE=1
+    std::unique_ptr<Cli::Live::Server> live;
+    if (qEnvironmentVariable("SCHNEIDI_LIVE", testRun ? "0" : "1") == "1") {
+        live = std::make_unique<Cli::Live::Server>(&w);
+        QString liveError;
+        if (live->start(&liveError)) {
+            Cli::Live::Server* server = live.get();
+            w.setLiveControls([server] { server->disconnectClient(); }, [server] { server->setAllowed(true); });
+        } else {
+            qWarning("Live connection not available: %s", qPrintable(liveError));
+            live.reset();
+        }
+    }
     if (!formatArg.isEmpty()) {
         const QStringList parts = formatArg.split(QRegularExpression("[x@]"));
         ProjectFormat f;

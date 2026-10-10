@@ -42,6 +42,7 @@ add_library(schneidi_lib STATIC
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
     src/core/Project.h            src/core/Project.cpp
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
+    src/core/LiveHost.h
     src/core/Selection.h
     src/core/Editor.h             src/core/Editor.cpp
     src/core/EditorSubtitles.cpp
@@ -89,7 +90,7 @@ add_library(schneidi_lib STATIC
     src/app/MainWindow.h          src/app/MainWindow.cpp
     src/app/MainWindowActions.cpp
     src/app/MainWindowLayout.cpp
-    src/app/MainWindowProject.cpp
+    src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
@@ -145,14 +146,15 @@ target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::M
 add_executable(schneidi src/main.cpp)
 target_include_directories(schneidi PRIVATE ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(schneidi schneidi_buildinfo)
-target_link_libraries(schneidi PRIVATE schneidi_lib)
+target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live connection (cli/Live.h)
 
 # Command line + MCP server (no window): for scripts and AIs, see src/cli/main.cpp
 add_library(schneidi_cli_lib STATIC
     src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/Analysis.cpp
-    src/cli/Mcp.h      src/cli/Mcp.cpp)
+    src/cli/Mcp.h      src/cli/Mcp.cpp
+    src/cli/Live.h     src/cli/Live.cpp)
 target_link_libraries(schneidi_cli_lib PUBLIC schneidi_lib)
 add_executable(schneidi-cli src/cli/main.cpp)
 target_include_directories(schneidi-cli PRIVATE ${CMAKE_BINARY_DIR}/generated)

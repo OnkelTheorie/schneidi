@@ -1,9 +1,11 @@
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "cli/Live.h"
 
 #include "core/Editor.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
@@ -30,6 +32,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QPainter>
+#include <QUndoStack>
 
 #include <algorithm>
 #include <cmath>
@@ -101,18 +104,82 @@ QJsonObject formatJson(const ProjectFormat& f)
 
 // ---------- Projects ----------
 
-Session::Session(const QString& file, Access access) : path(absolute(file))
+// Where a session's project comes from: the app's project (writing inside the app), or a loaded copy
+struct Session::Opened {
+    QString path;
+    std::unique_ptr<QLockFile> lock;
+    Project* inApp = nullptr;
+    std::unique_ptr<Project> own;
+    bool live = false;
+    QJsonObject app;
+};
+
+namespace {
+
+Session::Opened openSession(const QString& file, Session::Access access)
 {
-    if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
-    if (access == Access::Write) {
-        lock = ProjectFile::lock(path);
-        if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
+    Session::Opened o;
+    const bool anyApp = Live::isAppProject(file);
+    o.path = anyApp ? file.trimmed() : absolute(file);
+    const auto load = [&o](const QByteArray& json) {
+        ProjectData d;
+        QString error;
+        if (!ProjectFile::fromJson(json, o.path, &d, &error)) fail("BAD_PROJECT", error);
+        o.own = std::make_unique<Project>();
+        o.own->load(d);
+    };
+    // Inside the app (a command the server runs): its project, or a copy for reading
+    if (LiveHost* h = Live::host()) {
+        const QString appPath = h->liveProjectPath();
+        o.live = true;
+        o.app = Live::appState(h);
+        if (access == Session::Access::Write) o.inApp = h->liveProject();
+        else {
+            o.own = std::make_unique<Project>();
+            o.own->load(h->liveProject()->data());
+        }
+        o.path = appPath;
+        return o;
+    }
+    // schneidi-cli: the project is open in the app -> read what the app shows (writing commands went there)
+    if (Live::Connection* c = Live::connectionFor(o.path)) {
+        if (access == Session::Access::Write) fail("INTERNAL", "changing commands run inside the app");
+        const Live::Snapshot snap = Live::snapshot(c);
+        o.path = snap.path;
+        load(snap.data);
+        o.live = true;
+        o.app = snap.app;
+        return o;
+    }
+    if (anyApp) fail("NO_APP", "the schneidi app is not running");
+    if (!QFileInfo::exists(o.path)) fail("NOT_FOUND", "project not found: " + o.path);
+    if (access == Session::Access::Write) {
+        o.lock = ProjectFile::lock(o.path);
+        if (!o.lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + o.path);
     }
     ProjectData d;
     QString error;
-    if (!ProjectFile::load(path, &d, &error)) fail("BAD_PROJECT", error);
-    project.load(d);
+    if (!ProjectFile::load(o.path, &d, &error)) fail("BAD_PROJECT", error);
+    o.own = std::make_unique<Project>();
+    o.own->load(d);
+    return o;
+}
+
+} // namespace
+
+Session::Session(const QString& file, Access access) : Session(openSession(file, access)) {}
+
+Session::Session(Opened&& o)
+    : m_own(std::move(o.own)), path(o.path), lock(std::move(o.lock)), project(o.inApp ? *o.inApp : *m_own),
+      live(o.live), app(o.app), m_inApp(o.inApp != nullptr)
+{
     m_open = project.currentSequence();
+}
+
+Session::~Session()
+{
+    // In the app: show the user's timeline again if an op opened another one
+    if (m_inApp && project.sequence(m_open) && project.currentSequence() != m_open) project.setCurrentSequence(m_open);
 }
 
 int Session::sequenceOf(const QJsonValue& v) const
@@ -136,6 +203,7 @@ void Session::selectTimeline(const QJsonValue& v, bool open)
 
 QString Session::save()
 {
+    if (m_inApp) return {}; // the app has it (unsaved, like the user's own edits; undo works)
     if (!lock) fail("INTERNAL", "session was opened read-only");
     // The app opens the timeline the user had open (or the one an op asked for), not the last one edited
     if (project.sequence(m_open)) project.setCurrentSequence(m_open);
@@ -154,6 +222,11 @@ const MediaInfo& Session::media(const QString& file)
     if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) fail("BAD_MEDIA", "cannot read media: " + path);
     project.addMedia(info);
     return *project.mediaInfo(path);
+}
+
+bool isProjectFile(const QString& path)
+{
+    return path.endsWith("." + QString(ProjectFile::Extension)) || Live::isAppProject(path);
 }
 
 QString trackName(TrackRef r) { return QString("%1%2").arg(r.kind == TrackKind::Video ? "V" : "A").arg(r.index + 1); }
@@ -436,7 +509,9 @@ QJsonObject cmdInfo(const QJsonObject& a, Context&)
 {
     Session s(a["project"].toString());
     s.selectTimeline(a["timeline"]);
-    return projectJson(s.project, s.path);
+    QJsonObject o = projectJson(s.project, s.path);
+    if (s.live) o["app"] = s.app; // open in the app: what the user sees there
+    return o;
 }
 
 QJsonObject cmdImport(const QJsonObject& a, Context&)
@@ -447,6 +522,7 @@ QJsonObject cmdImport(const QJsonObject& a, Context&)
     QJsonObject o = projectJson(s.project, s.path);
     o.remove("timeline");
     if (!backup.isEmpty()) o["backup"] = backup;
+    if (s.live) o["live"] = true;
     return o;
 }
 
@@ -468,7 +544,8 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     }
     const bool dry = a["dry_run"].toBool();
     // The timeline edited last (save() may switch back to the one the app opens)
-    QJsonObject o{{"project", s.path}, {"ops", ops.size()}, {"saved", !dry}, {"timeline", timelineJson(s.project)}};
+    QJsonObject o{{"project", s.path}, {"ops", ops.size()}, {"saved", !dry && !s.live}, {"timeline", timelineJson(s.project)}};
+    if (s.live) o["live"] = true; // changed in the app (one undo step there), the user saves
     if (s.project.sequences().size() > 1) o["timelines"] = timelinesJson(s.project);
     if (!dry) {
         const QString backup = s.save();
@@ -505,6 +582,8 @@ QJsonObject cmdBackups(const QJsonObject& a, Context&)
 QJsonObject cmdRestore(const QJsonObject& a, Context&)
 {
     const QString path = absolute(a["project"].toString());
+    if (Live::connectionFor(path))
+        fail("APP_OPEN", "the project is open in the schneidi app: undo there with the `app` command (action undo)");
     if (!QFileInfo::exists(path)) fail("NOT_FOUND", "project not found: " + path);
     const auto lock = ProjectFile::lock(path);
     if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
@@ -700,6 +779,60 @@ QString presetHelp()
     for (const RenderPreset& p : RenderPresets::all()) names << p.name;
     return "Deliver preset of the app (other parameters override it): " + names.join(", ");
 }
+
+// The running app: state (playhead, selection …) and control (play, seek, select, undo, save, proxies)
+QJsonObject cmdApp(const QJsonObject& a, Context&)
+{
+    LiveHost* h = Live::host();
+    if (!h) fail("NO_APP", "the project is not open in the schneidi app (start it and open the project, or use \"@app\")");
+    Project* p = h->liveProject();
+    const QString action = a["action"].toString().trimmed().toLower();
+    QJsonObject o;
+    if (action == "state") {
+    } else if (action == "seek") {
+        if (!a.contains("at")) fail("BAD_ARGUMENT", "seek needs 'at' (a time)");
+        h->liveSeek(parseTime(a["at"], p->format(), "at"));
+    } else if (action == "play" || action == "stop") {
+        if (a.contains("at")) h->liveSeek(parseTime(a["at"], p->format(), "at"));
+        h->livePlay(action == "play");
+    } else if (action == "select") {
+        QSet<int> ids;
+        for (const QJsonValue& v : a["clips"].toArray()) {
+            const int id = v.toVariant().toInt();
+            if (!TimelineOps::findClip(p->timeline(), id)) fail("NOT_FOUND", QString("no clip with id %1 in the open timeline").arg(id));
+            ids.insert(id);
+        }
+        h->liveSelection()->set(ids);
+    } else if (action == "undo" || action == "redo") {
+        QUndoStack* u = p->undoStack();
+        const bool undo = action == "undo";
+        if (undo ? !u->canUndo() : !u->canRedo()) fail("NOTHING_TO_DO", "nothing to " + action);
+        o[undo ? "undone" : "redone"] = undo ? u->undoText() : u->redoText();
+        undo ? u->undo() : u->redo();
+    } else if (action == "save") {
+        QString error;
+        if (!h->liveSave(&error)) fail("SAVE_FAILED", error);
+        o["saved"] = h->liveProjectPath();
+    } else if (action == "proxies") {
+        QStringList files;
+        for (const QJsonValue& v : a["files"].toArray()) files << v.toString();
+        if (files.isEmpty())
+            for (const MediaInfo& m : p->media())
+                if (m.hasVideo && !m.isImage) files << m.path;
+        if (a["generate"].toBool(true)) h->liveGenerateProxies(files);
+        QJsonArray list;
+        for (const QString& f : files) {
+            QJsonObject st = h->liveProxyState(f);
+            st["file"] = f;
+            list << st;
+        }
+        o["proxies"] = list;
+    } else {
+        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, undo, redo, save or proxies");
+    }
+    o["app"] = Live::appState(h);
+    return o;
+}
 } // namespace
 
 const QVector<Command>& commands()
@@ -723,7 +856,8 @@ const QVector<Command>& commands()
          cmdInfo},
         {"import", "Add media files to a project's media pool.",
          {{"project", T::Path, "project file", true, true}, {"files", T::Paths, "media files", true, true}}, cmdImport},
-        {"edit", "Apply edit operations to a project and save it (a backup of the previous state is kept).",
+        {"edit", "Apply edit operations to a project and save it (a backup of the previous state is kept). If the "
+                 "project is open in the schneidi app, the app's project changes instead (one undo step, not saved).",
          {{"project", T::Path, "project file", true, true},
           {"ops", T::Json, editHelp(), true},
           {"timeline", T::String, "timeline to edit (id or name from `info`; default: the open one)"},
@@ -736,6 +870,17 @@ const QVector<Command>& commands()
          {{"project", T::Path, "project file", true, true},
           {"backup", T::String, "number from `backups` (default 1 = state before the last change) or a backup file"}},
          cmdRestore},
+        {"app", "The schneidi app (live, when it has the project open): see what the user sees (playhead, selection, "
+                "open timeline) and control it. `info`, `edit` and the other commands already work on the open "
+                "project there (an edit is one undo step in the app; the user saves).",
+         {{"action", T::String, "state, seek {at}, play {at?}, stop, select {clips}, undo, redo, save, proxies "
+                                "{files?, generate?} (preview proxies; default all video files)", true, true},
+          {"project", T::Path, "project file open in the app (default \"@app\" = the project of the running app)"},
+          {"at", T::Time, "seek/play: position in the open timeline"},
+          {"clips", T::Times, "select: clip ids (empty = nothing selected)"},
+          {"files", T::Paths, "proxies: media files (default: all video in the project)"},
+          {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"}},
+         cmdApp},
         {"render", "Render the project timeline to a video or audio file.",
          {{"project", T::Path, "project file", true, true},
           {"out", T::Path, "output file (extension added if missing)", true},
@@ -837,6 +982,25 @@ const QVector<Command>& commands()
     return list;
 }
 
+bool runsInApp(const Command& cmd, const QJsonObject& args)
+{
+    if (cmd.name == "app" || cmd.name == "import") return true;
+    return cmd.name == "edit" && !args["dry_run"].toBool();
+}
+
+QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
+{
+    QJsonObject args = args0;
+    if (cmd.name == "app" && args["project"].toString().isEmpty()) args["project"] = QString(Live::AppProject);
+    if (runsInApp(cmd, args) && !Live::host())
+        if (Live::Connection* c = Live::connectionFor(args["project"].toString())) {
+            QJsonObject result = Live::run(c, cmd.name, args);
+            result["live"] = true;
+            return result;
+        }
+    return cmd.run(args, ctx);
+}
+
 const Command* find(const QString& name)
 {
     for (const Command& c : commands())
@@ -892,7 +1056,10 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& raw)
         bool ok = true;
         switch (p.type) {
         case ParamType::String: out[p.name] = v.isString() ? str : v.toVariant().toString(); break;
-        case ParamType::Path: out[p.name] = absolute(str); ok = v.isString() && !str.isEmpty(); break;
+        case ParamType::Path:
+            out[p.name] = Live::isAppProject(str) ? str.trimmed() : absolute(str);
+            ok = v.isString() && !str.isEmpty();
+            break;
         case ParamType::Integer:
             if (v.isDouble()) out[p.name] = v.toInt();
             else out[p.name] = str.toInt(&ok);

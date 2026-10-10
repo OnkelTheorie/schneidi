@@ -216,7 +216,7 @@ QJsonObject cmdScenes(const QJsonObject& a, Context& ctx)
 QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
 {
     const QString src = a["source"].toString();
-    const bool isProject = src.endsWith("." + QString(ProjectFile::Extension));
+    const bool isProject = isProjectFile(src);
     std::unique_ptr<Session> session;
     MediaSource media;
     ProjectFormat f;
@@ -398,7 +398,7 @@ QJsonObject frameStats(const QImage& frame)
 QJsonObject cmdScopes(const QJsonObject& a, Context& ctx)
 {
     const QString src = a["source"].toString();
-    const bool isProject = src.endsWith("." + QString(ProjectFile::Extension));
+    const bool isProject = isProjectFile(src);
     std::unique_ptr<Session> session;
     MediaSource media;
     ProjectFormat f;
@@ -484,7 +484,7 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
         return true;
     };
     QJsonObject result{{"source", absolute(src)}};
-    if (!src.endsWith("." + QString(ProjectFile::Extension))) {
+    if (!isProjectFile(src)) {
         QJsonObject ma{{"file", src}};
         const MediaSource m = openMedia(ma);
         if (!m.info.hasAudio) fail("NO_AUDIO", "the file has no sound");
@@ -557,7 +557,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     req.threads = a["threads"].toInt();
     ProjectFormat f;
     int offset = 0, length = 0;
-    if (src.endsWith("." + QString(ProjectFile::Extension))) {
+    if (isProjectFile(src)) {
         // The timeline's sound as it is mixed for the export; times are timeline frames
         Session s(src);
         s.selectTimeline(a["timeline"]);

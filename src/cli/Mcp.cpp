@@ -58,7 +58,7 @@ QJsonObject callTool(const QJsonObject& params)
     Context ctx;
     ctx.mcp = true;
     try {
-        QJsonObject result = cmd->run(normalize(*cmd, params["arguments"].toObject()), ctx);
+        QJsonObject result = execute(*cmd, normalize(*cmd, params["arguments"].toObject()), ctx);
         result.insert("ok", true);
         QJsonArray content;
         content << text(result);
@@ -99,8 +99,11 @@ int runMcp()
                         "the material, `edit` changes a timeline (see its 'ops' description, `help` with command "
                         "'edit' has details per op; `effects` lists effects, LUTs and transitions), `info` shows the "
                         "result (a project can have several timelines), `render` writes a video, `restore` undoes a "
-                        "change (`backups` lists the saved states). The project may be open in the schneidi app at the "
-                        "same time: it reloads after every change. Use absolute file paths. Times are frames in the "
+                        "change (`backups` lists the saved states). If the project is open in the schneidi app, all tools "
+                        "work live on what the app shows (unsaved changes included): `edit` changes it there as one "
+                        "undo step and does not save, `info` adds the user's playhead and selection, `app` controls "
+                        "the app (play, seek, select, undo, save, proxies). \"@app\" as project = the project open "
+                        "in the running app. Use absolute file paths. Times are frames in the "
                         "project frame rate, seconds like \"4.5s\" or timecodes."}});
         } else if (method == "tools/list") {
             QJsonArray tools;

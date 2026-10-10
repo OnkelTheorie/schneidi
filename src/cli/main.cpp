@@ -5,6 +5,7 @@
 // stdout carries only JSON; logs and progress go to stderr.
 #include "buildinfo.h"
 #include "cli/Commands.h"
+#include "cli/Live.h"
 #include "cli/Mcp.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
@@ -118,7 +119,10 @@ int main(int argc, char* argv[])
             return 1;
         }
     }
-    if (name == "mcp") return Cli::runMcp();
+    if (name == "mcp") {
+        Cli::Live::setClientName("schneidi-cli mcp");
+        return Cli::runMcp();
+    }
 
     const Cli::Command* cmd = Cli::find(name);
     if (!cmd) {
@@ -142,7 +146,7 @@ int main(int argc, char* argv[])
         return 2;
     }
     try {
-        QJsonObject result = cmd->run(args0, ctx);
+        QJsonObject result = Cli::execute(*cmd, args0, ctx);
         result.insert("ok", true);
         print(result, pretty);
         return 0;
