@@ -95,16 +95,21 @@ int runMcp()
                        {"serverInfo", QJsonObject{{"name", "schneidi"}, {"version", QCoreApplication::applicationVersion()}}},
                        {"instructions",
                         "schneidi is a video editor. Edit projects (.schneidi) with these tools: `new` creates one, "
-                        "`probe`/`silence`/`scenes`/`frames`/`transcribe` look at (and listen to) the material, `edit` changes the timeline (see its "
-                        "'ops' description; `effects` lists the video effects), `info` shows the result, `render` "
-                        "writes a video, `restore` undoes a change (`backups` lists the saved states). The project may "
-                        "be open in the schneidi app at the same time: it reloads after every change. Use absolute "
-                        "file paths. Times are frames in the project frame rate, seconds like \"4.5s\" or timecodes."}});
+                        "`probe`/`silence`/`scenes`/`frames`/`transcribe`/`loudness`/`scopes` look at (and listen to) "
+                        "the material, `edit` changes a timeline (see its 'ops' description, `help` with command "
+                        "'edit' has details per op; `effects` lists effects, LUTs and transitions), `info` shows the "
+                        "result (a project can have several timelines), `render` writes a video, `restore` undoes a "
+                        "change (`backups` lists the saved states). The project may be open in the schneidi app at the "
+                        "same time: it reloads after every change. Use absolute file paths. Times are frames in the "
+                        "project frame rate, seconds like \"4.5s\" or timecodes."}});
         } else if (method == "tools/list") {
             QJsonArray tools;
             for (const Command& c : commands()) {
-                if (c.name == "help") continue;
-                tools << QJsonObject{{"name", c.name}, {"description", c.summary}, {"inputSchema", inputSchema(c)}};
+                // help: only for the details of the edit ops (the tool list already has the rest)
+                const QString summary = c.name == "help" ? QString("Details of every edit op (parameters, ranges): "
+                                                                   "call with command 'edit'.")
+                                                         : c.summary;
+                tools << QJsonObject{{"name", c.name}, {"description", summary}, {"inputSchema", inputSchema(c)}};
             }
             reply(id, {{"tools", tools}});
         } else if (method == "tools/call") {
