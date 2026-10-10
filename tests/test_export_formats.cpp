@@ -43,8 +43,10 @@ bool render(const RenderJob& job)
     Exporter ex;
     QEventLoop loop;
     bool ok = false;
-    QObject::connect(&ex, &Exporter::finished, &loop, [&](bool success, const QString&) {
+    QString message;
+    QObject::connect(&ex, &Exporter::finished, &loop, [&](bool success, const QString& msg) {
         ok = success;
+        message = msg;
         loop.quit();
     });
     QString error;
@@ -54,6 +56,8 @@ bool render(const RenderJob& job)
     }
     QTimer::singleShot(120000, &loop, &QEventLoop::quit);
     loop.exec();
+    // Rare failure on CI (2026-10-10, not reproducible locally): say which export it was
+    if (!ok) std::printf("       %s: %s\n", qPrintable(job.path), qPrintable(message.isEmpty() ? "timeout" : message));
     return CHECK(ok);
 }
 
