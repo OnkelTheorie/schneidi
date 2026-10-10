@@ -97,6 +97,18 @@ int main(int argc, char** argv)
     CHECK(!EffectRegistry::has(*clip(vid), "color") && !Keys::animated(*clip(vid), AnimParam::FxBrightness));
     project.undoStack()->undo();
     CHECK(EffectRegistry::has(*clip(vid), "color") && Keys::animated(*clip(vid), AnimParam::FxBrightness));
+    // Inspector "Remove All" (Effects tab): every effect and its keyframes in one undo step, Green Screen stays
+    {
+        const QVector<EffectInstance> before = clip(vid)->effects;
+        editor.modifyClips({vid}, "t", [](Clip& x) { EffectRegistry::add(x, "chromakey"); });
+        editor.removeAllEffects({vid});
+        CHECK_EQ(clip(vid)->effects.size(), 1);
+        CHECK(EffectRegistry::has(*clip(vid), "chromakey") && !Keys::animated(*clip(vid), AnimParam::FxBrightness));
+        project.undoStack()->undo();
+        CHECK(EffectRegistry::has(*clip(vid), "color") && Keys::animated(*clip(vid), AnimParam::FxBrightness));
+        editor.modifyClips({vid}, "t", [](Clip& x) { EffectRegistry::remove(x, "chromakey"); });
+        CHECK(clip(vid)->effects == before);
+    }
 
     // Inspector zeichnen (Bild wird nicht gespeichert)
     Inspector insp(&editor);

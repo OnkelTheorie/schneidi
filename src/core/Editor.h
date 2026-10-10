@@ -207,6 +207,9 @@ public:
     // bzw. entfernen; je ein Undo-Schritt
     void addEffect(const QVector<int>& ids, const QString& effectId); // auch "lut:<Pfad>" (EffectFolders::LutPrefix), "preset:<Pfad>" (Presets::Prefix)
     void removeEffect(const QVector<int>& ids, const QString& effectId);
+    // Every effect of the clips (Effects Library, Color page grade/LUT) in one undo step; the Green Screen of the
+    // Video tab stays
+    void removeAllEffects(const QVector<int>& ids);
     // Ziel für Doppelklick in der Effects Library: ausgewählte Videoclips, sonst der oberste Videoclip am Playhead
     QVector<int> effectTargets(int frame) const;
 

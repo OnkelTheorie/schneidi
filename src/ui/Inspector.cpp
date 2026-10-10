@@ -31,6 +31,7 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QScrollArea>
+#include <QSet>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
@@ -68,7 +69,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     // Seiten-Index = Button-ID; "Titel" (nur bei Titelclips, wie DaVinci) steht vorne
     const struct { int id; const char* icon; const char* text; } tabs[] = {
         {kTitlePage, "T", N_("Titel")}, {kTransitionPage, "⧓", N_("Übergang")}, {kSubtitlePage, "CC", N_("Untertitel")},
-        {0, "▣", "Video"}, {1, "♫", "Audio"}};
+        {0, "▣", "Video"}, {1, "♫", "Audio"}, {kEffectsPage, "fx", N_("Effekte")}};
     for (const auto& t : tabs) {
         auto* b = new QToolButton;
         b->setText(QString("%1\n%2").arg(t.icon, T(t.text)));
@@ -97,6 +98,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     buildTitlePage(makePage());
     buildTransitionPage(makePage());
     buildSubtitlePage(makePage());
+    QVBoxLayout* fxLay = makePage();
 
     const TrackKind V = TrackKind::Video;
 
@@ -222,10 +224,42 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
             e.enabled = true;
         });
     };
-    // ---- Effekte aus der Effects Library (Open FX), nur sichtbar, wenn der Clip sie hat ----
-    m_videoLay = videoLay;
-    m_fxIndex = videoLay->count(); // sections are created once a clip has the effect (arrangeEffectSections)
     videoLay->addStretch(1);
+
+    // ---- Effects tab: effects from the Effects Library (Open FX) and the Color page grade ----
+    auto* fxBar = new QWidget;
+    auto* fxBarLay = new QHBoxLayout(fxBar);
+    fxBarLay->setContentsMargins(10, 6, 6, 6);
+    auto* fxHint = new QLabel(T("Entfernen: Papierkorb am Effekt"));
+    fxHint->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    auto* removeAll = new QPushButton(T("Alle entfernen"));
+    removeAll->setFocusPolicy(Qt::NoFocus);
+    connect(removeAll, &QPushButton::clicked, this,
+            [this] { m_editor->removeAllEffects(selectedIds(TrackKind::Video)); });
+    fxBarLay->addWidget(fxHint, 1);
+    fxBarLay->addWidget(removeAll);
+    fxLay->addWidget(fxBar);
+    m_gradeRow = new QWidget;
+    auto* gradeLay = new QHBoxLayout(m_gradeRow);
+    gradeLay->setContentsMargins(10, 4, 6, 4);
+    m_gradeText = new QLabel;
+    m_gradeText->setWordWrap(true);
+    auto* gradeTrash = new QToolButton;
+    gradeTrash->setIcon(trashIcon());
+    gradeTrash->setIconSize(QSize(14, 14));
+    gradeTrash->setAutoRaise(true);
+    gradeTrash->setFocusPolicy(Qt::NoFocus);
+    gradeTrash->setToolTip(T("Effekt entfernen"));
+    gradeTrash->setStyleSheet("QToolButton { border: none; background: transparent; }");
+    connect(gradeTrash, &QToolButton::clicked, this,
+            [this] { m_editor->removeEffect(selectedIds(TrackKind::Video, false, "grade"), "grade"); });
+    gradeLay->addWidget(m_gradeText, 1);
+    gradeLay->addWidget(gradeTrash);
+    m_gradeRow->setStyleSheet(QString("QWidget { background: %1; }").arg(Theme::panel.name()));
+    fxLay->addWidget(m_gradeRow);
+    m_fxLay = fxLay;
+    m_fxIndex = fxLay->count(); // sections are created once a clip has the effect (arrangeEffectSections)
+    fxLay->addStretch(1);
 
     // ---- Audio ----
     const TrackKind A = TrackKind::Audio;
@@ -372,9 +406,14 @@ void Inspector::refresh()
     if (!any) return;
 
     const Clip* shown = v ? v : a;
-    const int count = m_editor->selection()->ids().size();
+    // Count linked video + audio clips once (a recording with 5 audio streams is one clip, not "+5")
+    QSet<int> groups;
+    const Timeline& tl = m_editor->project()->timeline();
+    for (int id : m_editor->selection()->ids())
+        if (const Clip* c = TimelineOps::findClip(tl, id)) groups.insert(c->linkId ? -c->linkId : c->id);
+    const int count = int(groups.size());
     QString name = m_editor->project()->clipName(*shown); // Compound Clips: Name der Sequenz
-    if (count > (v && a ? 2 : 1)) name += QString("  (+%1)").arg(count - 1);
+    if (count > 1) name += QString("  (+%1)").arg(count - 1);
     m_clipName->setText(name);
     m_clipName->setToolTip(shown->mediaPath);
 
@@ -384,10 +423,16 @@ void Inspector::refresh()
     m_tabs->button(1)->setEnabled(a);
     m_tabs->button(kTitlePage)->setEnabled(t);
     m_tabs->button(kTitlePage)->setVisible(t);
+    const int fx = v ? effectCount(*v) : 0;
+    m_tabs->button(kEffectsPage)->setText(QString("fx\n%1").arg(fx ? T("Effekte (%1)").arg(fx) : T("Effekte")));
+    m_tabs->button(kEffectsPage)->setVisible(fx > 0);
     int page = m_pages->currentIndex();
     if (t && shown->id != m_lastShownId) page = kTitlePage; // neu ausgewählter Titel -> Tab T("Titel")
+    if (v && v->id == m_lastShownId && fx > m_fxCount) page = kEffectsPage; // effect just added: show it
     m_lastShownId = shown->id;
-    if ((page == 0 && !v) || (page == 1 && !a) || (page == kTitlePage && !t)) page = v ? 0 : 1;
+    m_fxCount = fx;
+    if ((page == 0 && !v) || (page == 1 && !a) || (page == kTitlePage && !t) || (page == kEffectsPage && !fx))
+        page = v ? 0 : 1;
     m_tabs->button(page)->setChecked(true);
     m_pages->setCurrentIndex(page);
 

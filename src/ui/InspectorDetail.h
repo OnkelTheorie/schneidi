@@ -45,6 +45,7 @@ constexpr int kSliderSteps = 1000;
 constexpr int kTitlePage = 2;
 constexpr int kTransitionPage = 3; // nur bei ausgewähltem Übergang, dann einziger Tab
 constexpr int kSubtitlePage = 4;   // nur bei ausgewählten Untertiteln, dann einziger Tab
+constexpr int kEffectsPage = 5;    // effects of the video clip (like DaVinci's Inspector "Effects" tab), only when it has some
 
 inline EffectInstance* findEffect(Clip& c, const QString& id)
 {

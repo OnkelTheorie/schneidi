@@ -196,7 +196,7 @@ bool Inspector::refreshTransition()
     TimelineOps::TransitionSpan span;
     const bool on = selectedTransition(&kind, &span);
     // Übergang ausgewählt: nur dieser Tab (wie DaVinci), sonst ist er ausgeblendet
-    for (int id : {0, 1, kTitlePage}) m_tabs->button(id)->setVisible(!on);
+    for (int id : {0, 1, kTitlePage, kEffectsPage}) m_tabs->button(id)->setVisible(!on);
     m_tabs->button(kTransitionPage)->setVisible(on);
     if (!on) return false;
     m_transKey = m_editor->selection()->transition();

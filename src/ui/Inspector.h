@@ -130,11 +130,15 @@ private:
     bool m_zoomLinked = true;
     int m_lastShownId = 0; // Auswahl gewechselt -> bei Titeln den Tab "Titel" zeigen
     Param* m_crop[4] = {};
-    // Effekt-Bereiche (Open FX) im Tab Video, ab m_fxIndex im Layout
+    // Effect sections (Open FX) in the Effects tab, from m_fxIndex in its layout
     struct FxSection { QString id; QWidget* header; QWidget* body; };
     QVector<FxSection> m_fxSections;
-    QVBoxLayout* m_videoLay = nullptr;
+    QVBoxLayout* m_fxLay = nullptr;
     int m_fxIndex = 0;
+    QWidget* m_gradeRow = nullptr; // Color page grade/LUT: shown here, edited on the Color page
+    QLabel* m_gradeText = nullptr;
+    int m_fxCount = 0;             // effects of the shown clip (tab label; a new one opens the tab)
+    int effectCount(const Clip& c) const;
     QStringList m_fxOrder; // zuletzt angezeigte Reihenfolge
     // Tab "Übergang"
     TransitionKey m_transKey;

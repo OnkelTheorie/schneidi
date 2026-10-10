@@ -12,6 +12,7 @@
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
+#include "engine/ColorGrade.h"
 #include "ui/ScrubField.h"
 
 #include <QButtonGroup>
@@ -401,10 +402,28 @@ void Inspector::addMissingEffectSection(QVBoxLayout* page, const QString& id)
     m_fxSections << FxSection{id, s.header, s.body};
 }
 
+int Inspector::effectCount(const Clip& c) const
+{
+    // What the Effects tab shows: Effects Library effects, missing plugins and the Color page grade
+    int n = ColorGrade::active(c) ? 1 : 0;
+    for (const EffectInstance& e : c.effects) {
+        const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+        if (!d || (d->library && d->video)) ++n;
+    }
+    return n;
+}
+
 void Inspector::arrangeEffectSections()
 {
     // Sichtbar sind die Effekte des angezeigten (frühesten ausgewählten) Videoclips, in seiner Reihenfolge
     const Clip* c = primary(TrackKind::Video);
+    const bool grade = c && ColorGrade::active(*c);
+    m_gradeRow->setVisible(grade);
+    if (grade) {
+        const QString lut = ColorGrade::lutPath(*c);
+        m_gradeText->setText(T("Farbkorrektur der Color-Seite") +
+                             (lut.isEmpty() ? QString() : "\n" + T("LUT: %1").arg(QFileInfo(lut).completeBaseName())));
+    }
     QStringList order;
     if (c)
         for (const EffectInstance& e : c->effects) {
@@ -414,8 +433,8 @@ void Inspector::arrangeEffectSections()
             };
             if (!known()) { // create on the first clip with the effect (frei0r: more than a hundred possible)
                 const EffectDescriptor* d = EffectRegistry::find(e.effectId);
-                if (d && d->library && d->video) addEffectSection(m_videoLay, *d);
-                else if (!d) addMissingEffectSection(m_videoLay, e.effectId); // plugin missing
+                if (d && d->library && d->video) addEffectSection(m_fxLay, *d);
+                else if (!d) addMissingEffectSection(m_fxLay, e.effectId); // plugin missing
             }
             if (known()) order << e.effectId;
         }
@@ -425,10 +444,10 @@ void Inspector::arrangeEffectSections()
     for (const QString& id : order)
         for (const FxSection& f : m_fxSections)
             if (f.id == id) {
-                m_videoLay->removeWidget(f.header);
-                m_videoLay->removeWidget(f.body);
-                m_videoLay->insertWidget(index++, f.header);
-                m_videoLay->insertWidget(index++, f.body);
+                m_fxLay->removeWidget(f.header);
+                m_fxLay->removeWidget(f.body);
+                m_fxLay->insertWidget(index++, f.header);
+                m_fxLay->insertWidget(index++, f.body);
             }
     for (const FxSection& f : m_fxSections) {
         const bool shown = order.contains(f.id);

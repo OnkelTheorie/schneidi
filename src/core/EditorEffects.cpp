@@ -58,6 +58,22 @@ void Editor::removeEffect(const QVector<int>& ids, const QString& effectId)
                 [&](Clip& c) { EffectRegistry::remove(c, effectId); });
 }
 
+void Editor::removeAllEffects(const QVector<int>& ids)
+{
+    const auto removable = [](const EffectInstance& e) { return e.effectId != "chromakey"; };
+    QVector<int> targets;
+    for (int id : editable(ids))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+            c && std::any_of(c->effects.begin(), c->effects.end(), removable))
+            targets << id;
+    modifyClips(targets, T("Alle Effekte entfernen"), [&](Clip& c) {
+        QStringList ids;
+        for (const EffectInstance& e : c.effects)
+            if (removable(e)) ids << e.effectId;
+        for (const QString& id : ids) EffectRegistry::remove(c, id); // with the keyframes of its parameters
+    });
+}
+
 QVector<int> Editor::effectTargets(int frame) const
 {
     const Timeline& tl = m_project->timeline();
