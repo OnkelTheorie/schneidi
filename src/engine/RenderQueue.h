@@ -27,7 +27,8 @@ public:
     // Laufenden Auftrag abbrechen (halbe Datei wird gelöscht) und die restlichen stehen lassen
     void cancel();
 
-    // Einstellungen für den Exporter (Ausgabegröße, Codecs, Bereich) aus einem Auftrag
+    // Settings for the exporter (output size, codecs, range) from a job. Picks the video encoder: with Auto or a
+    // hardware encoder this may wait once per session for the graphics card probe (HardwareEncoders).
     static ExportSettings exportSettings(const RenderJob& job, const ProjectFormat& format);
 
 signals:
@@ -39,7 +40,7 @@ signals:
 private:
     void next();
     void onExportFinished(bool ok, const QString& message);
-    void setStatus(int id, RenderStatus status, const QString& message = {}, qint64 ms = -1);
+    void setStatus(int id, RenderStatus status, const QString& message = {}, qint64 ms = -1, const QString& encoder = {});
 
     Project* m_project;
     Exporter* m_exporter;

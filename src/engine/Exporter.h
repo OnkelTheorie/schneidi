@@ -3,6 +3,7 @@
 #include "core/Types.h"
 
 #include <QObject>
+#include <QProcess>
 #include <QTimer>
 #include <atomic>
 #include <memory>
@@ -20,7 +21,11 @@ struct ExportSettings {
     QString path;
     ProjectFormat format; // Projekteinstellungen (Framerate, Bezugsgröße für Pixelwerte im Schnitt)
     QSize size;           // Ausgabegröße; leer = Timeline-Auflösung
-    QString videoCodec = "libx264"; // leer = nur Audio (kein Videostrom)
+    QString videoCodec = "libx264"; // empty = audio only (no video stream)
+    // videoCodec is a hardware encoder (h264_nvenc …): software codec to use when it does not work (empty = none).
+    // The hardware encoder is tested with the output size first (MLT crashes when it cannot open an encoder).
+    QString softwareCodec;
+    QString encoderNote; // note from choosing the encoder (e.g. not available here), reported with the result
     QString audioCodec = "aac";
     QString pixFmt = "yuv420p";
     int crf = 20;             // Qualität: kleiner = besser
@@ -43,7 +48,7 @@ public:
     explicit Exporter(QObject* parent = nullptr);
     ~Exporter() override;
 
-    bool isRunning() const { return m_consumer != nullptr; }
+    bool isRunning() const { return m_consumer != nullptr || m_check != nullptr; }
     // Läuft gerade irgendein Export? (Render-Cache pausiert solange)
     static bool anyRunning();
     // Threads fürs Rendern (Deliver-Seite, gilt pro Rechner, QSettings "render/cores" – Schlüssel bleibt für alte Einstellungen): 0 = alle
@@ -60,6 +65,10 @@ public:
     static bool sameFile(const QString& a, const QString& b);
     bool start(const Timeline& tl, const ExportSettings& settings, QString* error);
     void cancel();
+    // After finished(): FFmpeg video codec that wrote the file (empty for audio only) and a note for the user
+    // (e.g. the hardware encoder did not work and software was used; empty = nothing to say)
+    QString usedCodec() const { return m_usedCodec; }
+    QString note() const { return m_note; }
 
 signals:
     void progress(int percent);
@@ -68,6 +77,10 @@ signals:
 private:
     void poll();
     void cleanup();
+    bool startConsumer(const QString& codec, QString* error);
+    void onCheckFinished(bool works);
+    // Hardware encoder failed: render again with ExportSettings::softwareCodec; false = no fallback possible
+    bool fallBackToSoftware(QString* error);
 
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<TimelineBuilder> m_builder;
@@ -79,6 +92,13 @@ private:
     QString m_xmlPath;
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<Mlt::Event> m_stoppedEvent;
+    std::unique_ptr<Mlt::Event> m_fatalEvent;
+    std::atomic<bool> m_fatal{false}; // avformat reported a fatal error (e.g. the encoder failed while rendering)
+    std::unique_ptr<QProcess> m_check; // test encode of the hardware encoder before the render starts
+    ExportSettings m_settings;
+    bool m_convertRate = false;
+    int m_threads = 0, m_frames = 1;
+    QString m_usedCodec, m_note;
     std::atomic<bool> m_threadDone{false}; // Encoder-Thread hat sich beendet ("consumer-stopped")
     int m_restarts = 0;
     QTimer m_timer;

@@ -2,6 +2,7 @@
 
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "engine/HardwareEncoders.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -26,6 +27,12 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     s.path = job.path;
     s.format = format;
     s.videoCodec = f.videoCodec;
+    if (f.hasQuality) { // H.264/H.265: software or hardware encoder (may probe the graphics card once)
+        const HardwareEncoders::Choice c = HardwareEncoders::resolve(job.settings.encoder, job.settings.format);
+        s.videoCodec = c.codec;
+        s.softwareCodec = c.fallback;
+        s.encoderNote = c.note;
+    }
     s.audioCodec = job.settings.audioCodec();
     s.audioSampleFormat = job.settings.audioSampleFormat();
     s.rate = job.settings.outputRate(format.rate);
@@ -110,7 +117,9 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
     } else {
         ++m_done;
     }
-    setStatus(id, status, ok || m_canceling ? QString() : message, m_clock.elapsed());
+    // Done: the encoder note (e.g. hardware encoder fell back to software) stays with the job
+    setStatus(id, status, m_canceling ? QString() : ok ? m_exporter->note() : message, m_clock.elapsed(),
+              ok ? m_exporter->usedCodec() : QString());
     emit jobFinished(id, status);
     if (m_canceling) {
         m_canceling = false;
@@ -141,7 +150,7 @@ void RenderQueue::cancel()
     m_exporter->cancel(); // meldet finished() sofort
 }
 
-void RenderQueue::setStatus(int id, RenderStatus status, const QString& message, qint64 ms)
+void RenderQueue::setStatus(int id, RenderStatus status, const QString& message, qint64 ms, const QString& encoder)
 {
     QVector<RenderJob> q = m_project->renderQueue();
     for (RenderJob& j : q)
@@ -149,6 +158,7 @@ void RenderQueue::setStatus(int id, RenderStatus status, const QString& message,
             j.status = status;
             j.message = message;
             if (ms >= 0) j.renderMs = ms;
+            if (!encoder.isEmpty()) j.encoderUsed = encoder;
         }
     m_project->setRenderQueue(q);
 }

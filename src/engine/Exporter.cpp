@@ -4,6 +4,8 @@
 #include "core/I18n.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
+#include "engine/Bundle.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/Profiles.h"
 #include "engine/TimelineBuilder.h"
 
@@ -219,22 +221,124 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     } else {
         m_source = std::make_unique<Mlt::Producer>(*m_tractor);
     }
-    Mlt::Profile& outProfile = convertRate ? *m_outProfile : *m_profile;
+    m_settings = s;
+    m_convertRate = convertRate;
+    m_threads = threads;
+    // Render every frame (real_time < 0), several frames at once (not with frei0r, see parallelFrames)
+    m_frames = convertRate ? 1 : parallelFrames(tl, threads);
+    m_path = s.path;
+    m_note = s.encoderNote;
+    m_usedCodec.clear();
 
-    m_consumer = std::make_unique<Mlt::Consumer>(outProfile, "avformat", s.path.toUtf8().constData());
-    if (!m_consumer->is_valid()) {
-        if (error) *error = T("FFmpeg-Ausgabe (avformat) nicht verfügbar.");
+    // Hardware encoder: test it with the output size first (MLT's avformat consumer crashes when the encoder cannot
+    // be opened, e.g. no such card, too large for the card, all its sessions busy). Runs ffmpeg in the background.
+    if (HardwareEncoders::isHardwareCodec(s.videoCodec)) {
+        Mlt::Profile& p = convertRate ? *m_outProfile : *m_profile;
+        const QSize size(p.width(), p.height());
+        const int known = HardwareEncoders::cachedResult(s.videoCodec, size);
+        if (known == 0) {
+            m_check = std::make_unique<QProcess>();
+            m_check->setProcessChannelMode(QProcess::MergedChannels);
+            connect(m_check.get(), &QProcess::finished, this, [this, size](int code, QProcess::ExitStatus status) {
+                const bool works = status == QProcess::NormalExit && code == 0;
+                HardwareEncoders::remember(m_settings.videoCodec, size, works);
+                if (!works)
+                    qWarning("Export: %s test failed: %s", qPrintable(m_settings.videoCodec),
+                             m_check->readAll().trimmed().constData());
+                onCheckFinished(works);
+            });
+            connect(m_check.get(), &QProcess::errorOccurred, this, [this, size](QProcess::ProcessError e) {
+                if (e != QProcess::FailedToStart) return;
+                HardwareEncoders::remember(m_settings.videoCodec, size, false);
+                onCheckFinished(false);
+            });
+            m_check->start(Bundle::tool("ffmpeg"), HardwareEncoders::testArguments(s.videoCodec, size, s.crf));
+            ++g_running;
+            m_timer.start(); // poll() waits for the consumer
+            emit progress(0);
+            return true;
+        }
+        if (known < 0) {
+            if (!fallBackToSoftware(error)) {
+                cleanup();
+                return false;
+            }
+            ++g_running;
+            m_timer.start();
+            emit progress(0);
+            return true;
+        }
+    }
+    if (!startConsumer(s.videoCodec, error)) {
         cleanup();
         return false;
     }
+    ++g_running;
+    m_timer.start();
+    emit progress(0);
+    return true;
+}
+
+void Exporter::onCheckFinished(bool works)
+{
+    if (!m_check) return;
+    // Not deleted right here: we are inside a signal of m_check
+    m_check.release()->deleteLater();
+    QString error;
+    const bool ok = works ? startConsumer(m_settings.videoCodec, &error) : fallBackToSoftware(&error);
+    if (!ok) {
+        const QString path = m_path;
+        cleanup();
+        QFile::remove(path);
+        emit finished(false, error);
+    }
+}
+
+bool Exporter::fallBackToSoftware(QString* error)
+{
+    const QString hw = m_usedCodec.isEmpty() ? m_settings.videoCodec : m_usedCodec;
+    if (m_settings.softwareCodec.isEmpty() || !HardwareEncoders::isHardwareCodec(hw)) {
+        if (error) *error = T("Hardware-Encoder %1 funktioniert nicht.").arg(hw);
+        return false;
+    }
+    qWarning("Export: hardware encoder %s failed, rendering with %s", qPrintable(hw), qPrintable(m_settings.softwareCodec));
+    m_note = T("Hardware-Encoder %1 funktioniert nicht, mit Software gerendert.")
+                 .arg(videoEncoderLabel(HardwareEncoders::encoderOfCodec(hw)));
+    return startConsumer(m_settings.softwareCodec, error);
+}
+
+bool Exporter::startConsumer(const QString& codec, QString* error)
+{
+    const ExportSettings& s = m_settings;
+    Mlt::Profile& outProfile = m_convertRate ? *m_outProfile : *m_profile;
+    if (m_consumer) { // again (fallback): the old one has stopped
+        m_consumer->stop();
+        m_stoppedEvent.reset();
+        m_fatalEvent.reset();
+        m_consumer.reset();
+    }
+    m_consumer = std::make_unique<Mlt::Consumer>(outProfile, "avformat", s.path.toUtf8().constData());
+    if (!m_consumer->is_valid()) {
+        if (error) *error = T("FFmpeg-Ausgabe (avformat) nicht verfügbar.");
+        return false;
+    }
+    m_usedCodec = codec;
     if (s.videoCodec.isEmpty()) {
-        m_consumer->set("vn", 1); // nur Audio
+        m_consumer->set("vn", 1); // audio only
     } else {
-        m_consumer->set("vcodec", s.videoCodec.toUtf8().constData());
-        m_consumer->set("pix_fmt", s.pixFmt.toUtf8().constData());
-        if (s.videoCodec == "libx264" || s.videoCodec == "libx265") {
-            m_consumer->set("crf", s.crf);
-            m_consumer->set("preset", s.preset.toUtf8().constData());
+        m_consumer->set("vcodec", codec.toUtf8().constData());
+        if (HardwareEncoders::isHardwareCodec(codec)) {
+            m_consumer->set("pix_fmt", HardwareEncoders::pixelFormat(codec).toUtf8().constData());
+            if (codec.endsWith("_vaapi"))
+                m_consumer->set("vaapi_device", HardwareEncoders::vaapiDevice().toUtf8().constData());
+            for (const auto& [key, value] : HardwareEncoders::codecOptions(codec, s.crf))
+                m_consumer->set(key.toUtf8().constData(), value.toUtf8().constData());
+        } else {
+            m_consumer->set("pix_fmt", s.pixFmt.toUtf8().constData());
+            if (codec == "libx264" || codec == "libx265") {
+                m_consumer->set("crf", s.crf);
+                m_consumer->set("preset", s.preset.toUtf8().constData());
+            }
         }
     }
     m_consumer->set("acodec", s.audioCodec.toUtf8().constData());
@@ -247,40 +351,34 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     const QString ext = QFileInfo(s.path).suffix().toLower();
     if (ext == "mp4" || ext == "mov" || ext == "m4a") m_consumer->set("movflags", "+faststart");
-    // Render every frame (real_time < 0), several frames at once (not with frei0r, see parallelFrames);
-    // decoder (above) and encoder get the same thread count. When converting the frame rate the "consumer" producer
+    // Decoder (start) and encoder get the same thread count. When converting the frame rate the "consumer" producer
     // fetches frames in order -> one at a time there, and without the read-ahead thread (real_time 0): repeated
     // frames deliver 0 samples; the read-ahead thread fetches the sound early, and on the encoder's second fetch
     // MLT fills the empty frames with silence (sound too long, with jumps).
-    const int frames = convertRate ? 1 : parallelFrames(tl, threads);
-    m_consumer->set("real_time", convertRate ? 0 : -frames);
-    m_consumer->set("threads", threads);
-    qInfo("Export: %d threads, %d frames at once%s", threads, frames,
-          convertRate ? qPrintable(QString(", frame rate %1 -> %2").arg(s.format.rate.label(), rate.label())) : "");
-    m_consumer->set("terminate_on_pause", 1); // am Ende automatisch stoppen
+    m_consumer->set("real_time", m_convertRate ? 0 : -m_frames);
+    m_consumer->set("threads", m_threads);
+    qInfo("Export: %s, %d threads, %d frames at once%s", s.videoCodec.isEmpty() ? "audio only" : qPrintable(codec),
+          m_threads, m_frames, m_convertRate ? ", frame rate converted" : "");
+    m_consumer->set("terminate_on_pause", 1); // stop by itself at the end
     m_consumer->connect(*m_source);
 
-    // avformat setzt "running" erst NACH pthread_create: ist der Encoder-Thread schneller (kurze Audio-Exporte unter
-    // Last), sieht er running=0, beendet sich ohne ein Bild und danach bleibt running=1 -> is_stopped() nie wahr.
-    // Das Ende des Threads daher zusätzlich über das Ereignis erkennen (siehe poll).
+    // avformat sets "running" only AFTER pthread_create: when the encoder thread is faster (short audio exports
+    // under load), it sees running=0, ends without a frame and afterwards running stays 1 -> is_stopped() never true.
+    // So also detect the end of the thread through the event (see poll).
     m_threadDone = false;
+    m_fatal = false;
     m_restarts = 0;
     m_stoppedEvent.reset(m_consumer->listen("consumer-stopped", &m_threadDone, (mlt_listener)onConsumerStopped));
+    m_fatalEvent.reset(m_consumer->listen("consumer-fatal-error", &m_fatal, (mlt_listener)onConsumerStopped));
 
-    m_path = s.path;
     m_source->set_speed(1);
-    m_source->seek(0); // Position zählt ab dem In-Punkt (seek(m_from) ließ bei In/Out die ersten m_from Frames weg)
+    m_source->seek(0); // position counts from the in point (seek(m_from) dropped the first m_from frames with In/Out)
     if (m_consumer->start() != 0) {
         if (error) *error = T("Export konnte nicht gestartet werden.");
-        cleanup();
         return false;
     }
-    ++g_running;
-    m_timer.start();
-    emit progress(0);
     return true;
 }
-
 void Exporter::poll()
 {
     if (!m_consumer) return;
@@ -298,10 +396,28 @@ void Exporter::poll()
         }
         m_consumer->stop();
     }
+    // Hardware encoder failed while rendering (fatal error or nothing written): render again with software
+    // (not when the file cannot be written at all: that is no encoder problem)
+    const bool hardware = HardwareEncoders::isHardwareCodec(m_usedCodec) && !m_settings.softwareCodec.isEmpty();
+    const QFileInfo dir(QFileInfo(m_path).absolutePath());
+    if (hardware && (m_fatal || (m_consumer->is_stopped() && QFileInfo(m_path).size() <= 0)) && dir.isDir()
+        && dir.isWritable()) {
+        m_consumer->stop();
+        const Mlt::Profile& p = m_convertRate ? *m_outProfile : *m_profile;
+        HardwareEncoders::remember(m_usedCodec, QSize(p.width(), p.height()), false); // not again this session
+        QFile::remove(m_path);
+        QString error;
+        if (fallBackToSoftware(&error)) return;
+        const QString path = m_path;
+        cleanup();
+        QFile::remove(path);
+        emit finished(false, error);
+        return;
+    }
     if (m_consumer->is_stopped()) {
         const QString path = m_path;
         cleanup();
-        // Encoder/Container gescheitert (z. B. Codec fehlt): keine oder leere Datei
+        // Encoder or container failed (e.g. codec missing): no file or an empty one
         if (QFileInfo(path).size() <= 0) {
             QFile::remove(path);
             emit finished(false, T("Export fehlgeschlagen: %1").arg(path));
@@ -317,8 +433,8 @@ void Exporter::poll()
 
 void Exporter::cancel()
 {
-    if (!m_consumer) return;
-    m_consumer->stop();
+    if (!isRunning()) return;
+    if (m_consumer) m_consumer->stop();
     const QString path = m_path;
     cleanup();
     QFile::remove(path); // halbfertige Datei weg
@@ -331,8 +447,15 @@ void Exporter::cleanup()
     m_timer.stop();
     // Immer stop(): beendet sich der Consumer selbst (terminate_on_pause), laufen seine Worker-Threads (real_time < -1)
     // sonst weiter – mlt_consumer_close stoppt sie nicht – und rechnen später auf freigegebenen Profilen/Producern
+    if (m_check) { // test encode still running: only our own ffmpeg process
+        m_check->disconnect(this);
+        m_check->kill();
+        m_check->waitForFinished(2000);
+        m_check.reset();
+    }
     if (m_consumer) m_consumer->stop();
     m_stoppedEvent.reset();
+    m_fatalEvent.reset();
     m_consumer.reset();
     m_source.reset();
     m_outProfile.reset();
