@@ -459,6 +459,16 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(rendered["out"].toString().endsWith(".wav"));
         CHECK_EQ(rendered["preset"].toString(), wavPreset);
         CHECK(QFileInfo(rendered["out"].toString()).size() > 100000);
+        // Video encoder: the answer says which one wrote the file
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("x.mp4")}, {"encoder", "gpu"}}),
+                 QString("BAD_ARGUMENT"));
+        const QJsonObject sw = run("render", {{"project", proj}, {"out", dir.filePath("sw.mp4")}, {"encoder", "software"},
+                                              {"height", 180}, {"to", "1s"}});
+        CHECK_EQ(sw["encoder"].toString(), QString("libx264"));
+        CHECK(!sw.contains("encoder_note"));
+        const QJsonObject autoEnc = run("render", {{"project", proj}, {"out", dir.filePath("auto.mp4")}, {"height", 180},
+                                                   {"to", "1s"}});
+        CHECK(autoEnc["encoder"].toString().startsWith("h264_") || autoEnc["encoder"].toString() == "libx264");
         // Scopes of a mid-grey frame: luma in the middle, nothing clipped, no cast
         const QString grey = Check::makeMedia(dir.filePath("grey.mp4"),
                                               {"-f", "lavfi", "-i", "color=c=0x808080:s=320x180:d=1:r=25", "-c:v", "libx264",
