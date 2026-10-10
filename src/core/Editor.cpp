@@ -108,6 +108,7 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
                 Clip a = c;
                 a.id = newId();
                 a.audioStream = k;
+                if (tl.audio[idx + k].name.isEmpty()) tl.audio[idx + k].name = info->audioStreamTrackLabel(k);
                 TimelineOps::placeClip(tl.audio[idx + k], a, newId);
             }
             start += info->length;

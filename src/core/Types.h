@@ -450,6 +450,13 @@ struct MediaInfo {
         const QString t = stream < audioStreams.size() ? audioStreams[stream].title : QString();
         return t.isEmpty() ? T("Spur %1").arg(stream + 1) : t;
     }
+    // Track label for a stream placed on its own audio track: the file's stream title, but only for multi-stream
+    // files with a real title (otherwise empty = the track keeps its default "Audio N")
+    QString audioStreamTrackLabel(int stream) const
+    {
+        if (audioStreamCount() < 2 || stream >= audioStreams.size()) return {};
+        return audioStreams[stream].title.trimmed();
+    }
     QVector<MediaTranscript> transcripts; // at most one per audio stream
     const MediaTranscript* transcript(int stream) const
     {
