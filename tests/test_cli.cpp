@@ -13,6 +13,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFileInfo>
+#include <QImage>
 #include <QTemporaryDir>
 
 #include <cmath>
@@ -422,6 +423,17 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(rendered["out"].toString().endsWith(".wav"));
         CHECK_EQ(rendered["preset"].toString(), wavPreset);
         CHECK(QFileInfo(rendered["out"].toString()).size() > 100000);
+        // Scopes of a mid-grey frame: luma in the middle, nothing clipped, no cast
+        const QString grey = Check::makeMedia(dir.filePath("grey.mp4"),
+                                              {"-f", "lavfi", "-i", "color=c=0x808080:s=320x180:d=1:r=25", "-c:v", "libx264",
+                                               "-pix_fmt", "yuv420p"});
+        const QJsonObject sc = run("scopes", {{"source", grey}, {"out", dir.filePath("scopes.png")}, {"types", "waveform,histogram"}});
+        const QJsonObject st = sc["stats"].toObject();
+        CHECK(std::abs(st["luma_mean"].toInt() - 512) < 25);
+        CHECK_EQ(st["white_clipped_pct"].toDouble(), 0.0);
+        CHECK(std::abs(st["cast"]["red"].toDouble()) < 2);
+        CHECK(QImage(dir.filePath("scopes.png")).width() == 960);
+        CHECK_EQ(errorOf("scopes", {{"source", grey}, {"types", "rainbow"}}), QString("BAD_ARGUMENT"));
     }
     return Check::result();
 }

@@ -800,6 +800,16 @@ const QVector<Command>& commands()
           {"clips", T::Times, "for a project: measure these clips (ids) one by one instead of the mix"},
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"}},
          cmdLoudness},
+        {"scopes", "Video scopes of one frame like the Color page (waveform, RGB parade, vectorscope, histogram) as "
+                   "one image, plus numbers to judge exposure and color: luma spread (10-bit, 0..1023), clipped "
+                   "black/white in %, RGB means and color cast in % (+ = too much of that channel), saturation.",
+         {{"source", T::Path, "media file or project (.schneidi)", true, true},
+          {"at", T::Time, "frame to look at (default 0)"},
+          {"types", T::String, "comma list: waveform, parade, vectorscope, histogram (default all)"},
+          {"out", T::Path, "image file to write (the MCP tool shows the image anyway)"},
+          {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
+          {"project", T::Path, "for a media file: count frames in this project's frame rate"}},
+         cmdScopes},
         {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models. "
                        "Without arguments: list with sizes and what is installed.",
          {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: turbo 574 MB, "

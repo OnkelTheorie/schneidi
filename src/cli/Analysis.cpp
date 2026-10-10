@@ -15,6 +15,7 @@
 #include "engine/Transcriber.h"
 #include "engine/Profiles.h"
 #include "engine/Snapshot.h"
+#include "ui/Scopes.h"
 
 #include <QDir>
 #include <QEventLoop>
@@ -22,6 +23,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QPainter>
+#include <QPainterPath>
 #include <QProcess>
 #include <QRegularExpression>
 
@@ -287,6 +289,183 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
 }
 
 namespace {
+
+// One scope panel (dark background, trace, graticule) like the Color page, in 10-bit levels like DaVinci
+QImage scopePanel(const Scopes::Data& d, Scopes::Type type, const QString& title, QSize size)
+{
+    QImage img(size, QImage::Format_RGB32);
+    img.fill(QColor(18, 18, 20));
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRect area = img.rect().adjusted(34, 22, -8, -8);
+    QFont font = p.font();
+    font.setPixelSize(11);
+    p.setFont(font);
+    p.setPen(QColor(200, 200, 200));
+    p.drawText(QRect(6, 3, size.width() - 12, 16), Qt::AlignLeft | Qt::AlignVCenter, title);
+    const QColor grid(70, 70, 75);
+    if (type == Scopes::Type::Vectorscope) {
+        const int side = std::min(area.width(), area.height());
+        const QRect sq(area.center().x() - side / 2, area.center().y() - side / 2, side, side);
+        p.drawImage(sq, Scopes::trace(d, type));
+        p.setPen(grid);
+        p.drawEllipse(sq);
+        p.drawLine(sq.center().x(), sq.top(), sq.center().x(), sq.bottom());
+        p.drawLine(sq.left(), sq.center().y(), sq.right(), sq.center().y());
+        // Skin tone line (about 123° like DaVinci's)
+        p.setPen(QColor(200, 150, 90, 160));
+        const double a = 123.0 * M_PI / 180.0;
+        p.drawLine(sq.center(), sq.center() + QPoint(int(std::cos(a) * side / 2), int(-std::sin(a) * side / 2)));
+        return img;
+    }
+    p.setPen(grid);
+    for (int i = 0; i <= 4; ++i) {
+        const int y = area.bottom() - i * area.height() / 4;
+        p.drawLine(area.left(), y, area.right(), y);
+        if (type != Scopes::Type::Histogram) // its height is a count, the levels run along x
+            p.drawText(QRect(0, y - 7, 30, 14), Qt::AlignRight | Qt::AlignVCenter, QString::number(i * 1023 / 4));
+    }
+    if (type == Scopes::Type::Histogram) {
+        // Curves R, G, B, Y over the levels (x), heights relative to the highest bin
+        quint32 top = 1;
+        for (int c = 0; c < 4; ++c)
+            for (int i = 1; i < Scopes::kLevels - 1; ++i) top = std::max(top, d.hist[c][i]);
+        const QColor colors[] = {QColor(230, 70, 70), QColor(70, 210, 90), QColor(80, 130, 240), QColor(220, 220, 220)};
+        for (int c = 0; c < 4; ++c) {
+            QPainterPath path;
+            for (int i = 0; i < Scopes::kLevels; ++i) {
+                const QPointF pt(area.left() + double(i) / (Scopes::kLevels - 1) * area.width(),
+                                 area.bottom() - std::min(1.0, double(d.hist[c][i]) / top) * area.height());
+                i == 0 ? path.moveTo(pt) : path.lineTo(pt);
+            }
+            p.setPen(QPen(colors[c], 1.2));
+            p.drawPath(path);
+        }
+        return img;
+    }
+    p.drawImage(area, Scopes::trace(d, type));
+    return img;
+}
+
+// Numbers the AI can judge a frame by: brightness spread, clipping, colour cast, saturation
+QJsonObject frameStats(const QImage& frame)
+{
+    const QImage img = frame.scaledToWidth(std::min(frame.width(), 480)).convertToFormat(QImage::Format_RGB32);
+    std::array<int, 256> hist{};
+    double sum[3] = {0, 0, 0}, sat = 0;
+    int n = 0;
+    for (int y = 0; y < img.height(); ++y) {
+        const QRgb* line = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        for (int x = 0; x < img.width(); ++x, ++n) {
+            const int r = qRed(line[x]), g = qGreen(line[x]), b = qBlue(line[x]);
+            ++hist[std::clamp(Scopes::luma(r, g, b), 0, 255)];
+            sum[0] += r;
+            sum[1] += g;
+            sum[2] += b;
+            double cb = 0, cr = 0;
+            Scopes::chroma(r / 255.0, g / 255.0, b / 255.0, &cb, &cr);
+            sat += std::hypot(cb, cr);
+        }
+    }
+    if (n == 0) return {};
+    const auto percentile = [&](double q) {
+        int acc = 0;
+        for (int i = 0; i < 256; ++i)
+            if ((acc += hist[i]) >= q * n) return i;
+        return 255;
+    };
+    double mean = 0;
+    for (int i = 0; i < 256; ++i) mean += double(i) * hist[i];
+    const auto pct = [n](double v) { return std::round(v * 1000.0 / n) / 10; };
+    int crushed = 0, clipped = 0;
+    for (int i = 0; i <= 2; ++i) crushed += hist[i];
+    for (int i = 253; i <= 255; ++i) clipped += hist[i];
+    const auto lvl = [](double v) { return int(std::lround(v / 255.0 * 1023)); }; // 10-bit like the scopes
+    const double avg = (sum[0] + sum[1] + sum[2]) / 3;
+    return {{"levels", "10-bit 0..1023 like the scopes"},
+            {"luma_mean", lvl(mean / n)}, {"luma_p1", lvl(percentile(0.01))}, {"luma_p50", lvl(percentile(0.5))},
+            {"luma_p99", lvl(percentile(0.99))}, {"black_clipped_pct", pct(crushed)}, {"white_clipped_pct", pct(clipped)},
+            {"rgb_mean", QJsonArray{lvl(sum[0] / n), lvl(sum[1] / n), lvl(sum[2] / n)}},
+            {"cast", avg <= 0 ? QJsonValue("none")
+                              : QJsonValue(QJsonObject{{"red", std::round((sum[0] - avg) / avg * 1000) / 10},
+                                                       {"green", std::round((sum[1] - avg) / avg * 1000) / 10},
+                                                       {"blue", std::round((sum[2] - avg) / avg * 1000) / 10}})},
+            {"saturation_mean", std::round(sat / n * 2 * 1000) / 10}}; // 0..100 % of the vectorscope radius
+}
+
+} // namespace
+
+QJsonObject cmdScopes(const QJsonObject& a, Context& ctx)
+{
+    const QString src = a["source"].toString();
+    const bool isProject = src.endsWith("." + QString(ProjectFile::Extension));
+    std::unique_ptr<Session> session;
+    MediaSource media;
+    ProjectFormat f;
+    int length = 0;
+    if (isProject) {
+        session = std::make_unique<Session>(src);
+        session->selectTimeline(a["timeline"]);
+        f = session->format();
+        length = TimelineOps::endFrame(session->project.timeline());
+    } else {
+        QJsonObject ma{{"file", src}};
+        if (a.contains("project")) ma["project"] = a["project"];
+        media = openMedia(ma);
+        f = media.format;
+        length = media.info.length;
+        if (!media.info.hasVideo) fail("NO_VIDEO", "the file has no picture");
+    }
+    if (length <= 0) fail("EMPTY", "nothing to show (empty timeline)");
+    const int at = std::clamp(a.contains("at") ? parseTime(a["at"], f, "at") : 0, 0, length - 1);
+    const QImage frame = session ? Snapshot::timeline(f, session->project.renderTimeline(), at, 960)
+                                 : Snapshot::media(f, media.info.path, at, 960);
+    if (frame.isNull()) fail("DECODE_FAILED", QString("could not decode frame %1").arg(at));
+
+    struct Kind {
+        const char* id;
+        Scopes::Type type;
+        const char* title;
+    };
+    static const Kind kinds[] = {{"waveform", Scopes::Type::Waveform, "Waveform (luma)"},
+                                 {"parade", Scopes::Type::Parade, "Parade (R | G | B)"},
+                                 {"vectorscope", Scopes::Type::Vectorscope, "Vectorscope"},
+                                 {"histogram", Scopes::Type::Histogram, "Histogram (R G B Y)"}};
+    QVector<const Kind*> wanted;
+    const QString list = a.contains("types") ? a["types"].toString() : "waveform,parade,vectorscope,histogram";
+    for (const QString& t : list.split(',', Qt::SkipEmptyParts)) {
+        const auto it = std::find_if(std::begin(kinds), std::end(kinds), [&](const Kind& k) { return t.trimmed() == k.id; });
+        if (it == std::end(kinds)) fail("BAD_ARGUMENT", "types: waveform, parade, vectorscope, histogram");
+        wanted << it;
+    }
+    const Scopes::Data d = Scopes::compute(frame);
+    // One sheet: the frame, then the scopes (2 columns)
+    const QSize cell(480, 270);
+    QVector<QImage> panels{frame.scaled(cell, Qt::KeepAspectRatio, Qt::SmoothTransformation)};
+    for (const Kind* k : wanted) panels << scopePanel(d, k->type, k->title, cell);
+    const int cols = 2, rows = (int(panels.size()) + cols - 1) / cols;
+    QImage sheet(cols * cell.width(), rows * cell.height(), QImage::Format_RGB32);
+    sheet.fill(Qt::black);
+    {
+        QPainter p(&sheet);
+        for (int i = 0; i < panels.size(); ++i) {
+            const QPoint pos((i % cols) * cell.width(), (i / cols) * cell.height());
+            p.drawImage(pos + QPoint((cell.width() - panels[i].width()) / 2, (cell.height() - panels[i].height()) / 2), panels[i]);
+        }
+    }
+    QJsonObject result{{"source", absolute(src)}, {"frame", at}, {"tc", tc(at, f)}, {"stats", frameStats(frame)}};
+    const QString out = a["out"].toString();
+    if (!out.isEmpty()) {
+        QDir().mkpath(QFileInfo(out).absolutePath());
+        if (!sheet.save(out, nullptr, 90)) fail("WRITE_FAILED", "cannot write " + out);
+        result["image"] = out;
+    }
+    if (ctx.mcp) ctx.images = {sheet};
+    return result;
+}
+
+namespace {
+
 double db1(double v) { return v <= LoudnessMeter::kSilence ? -200.0 : std::round(v * 10) / 10; }
 
 QJsonObject loudnessJson(const AudioAnalysis::Loudness& l)

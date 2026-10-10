@@ -115,6 +115,7 @@ QJsonObject cmdScenes(const QJsonObject& a, Context& ctx);
 QJsonObject cmdFrames(const QJsonObject& a, Context& ctx);
 QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx);
+QJsonObject cmdScopes(const QJsonObject& a, Context& ctx);
 QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx);
 
 } // namespace Cli::detail
