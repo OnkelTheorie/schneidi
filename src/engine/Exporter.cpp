@@ -284,11 +284,14 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
 void Exporter::poll()
 {
     if (!m_consumer) return;
-    if (m_threadDone && !m_consumer->is_stopped()) {
-        // Wettlauf beim Start (siehe start): Thread weg, nichts gerendert -> neu starten
+    // Race at the start (see start): the thread saw running=0 and ended without a frame. Either running=1 comes
+    // after its end (never stopped), or before mlt_consumer_stopped() puts it back to 0 (looks finished, but the
+    // file is empty) -> start again in both cases
+    const bool nothingWritten = m_consumer->is_stopped() && QFileInfo(m_path).size() <= 0;
+    if (m_threadDone && (!m_consumer->is_stopped() || nothingWritten)) {
         if (++m_restarts <= 3) {
-            qWarning("Export: Encoder-Thread endete sofort, Neustart %d", m_restarts);
-            m_consumer->stop(); // setzt running=0, Thread ist schon beendet
+            qWarning("Export: encoder thread ended at once, restart %d", m_restarts);
+            m_consumer->stop(); // sets running=0, the thread has ended already
             m_threadDone = false;
             m_source->seek(0);
             if (m_consumer->start() == 0) return;
