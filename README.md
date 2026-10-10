@@ -28,7 +28,8 @@ A DaVinci-style workflow without DaVinci's hurdles: runs on modest hardware and 
 - Clip speed / retime
 - Proxy and render cache for smooth playback
 - Export and render queue via FFmpeg
-- Subtitles from speech (whisper.cpp, offline) – an optional download under Workspace → Extensions
+- Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; an optional download under Workspace → Extensions
+- **Command line and MCP server** (`schneidi-cli`): scripts or an AI assistant can do a rough cut – find pauses and scene changes, transcribe, cut, add titles and effects, look at frames, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
 <details>
