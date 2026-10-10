@@ -431,7 +431,9 @@ void Inspector::refresh()
     if (v && v->id == m_lastShownId && fx > m_fxCount) page = kEffectsPage; // effect just added: show it
     m_lastShownId = shown->id;
     m_fxCount = fx;
-    if ((page == 0 && !v) || (page == 1 && !a) || (page == kTitlePage && !t) || (page == kEffectsPage && !fx))
+    // Subtitle/transition pages belong to other selections: never keep them for a regular clip
+    if ((page == 0 && !v) || (page == 1 && !a) || (page == kTitlePage && !t) || (page == kEffectsPage && !fx) ||
+        page == kSubtitlePage || page == kTransitionPage)
         page = v ? 0 : 1;
     m_tabs->button(page)->setChecked(true);
     m_pages->setCurrentIndex(page);
