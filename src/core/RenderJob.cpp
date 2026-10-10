@@ -35,7 +35,44 @@ const RenderFormatInfo& renderFormat(const QString& id)
     return f.first();
 }
 
+QString videoEncoderId(VideoEncoder e)
+{
+    switch (e) {
+    case VideoEncoder::Auto: return "auto";
+    case VideoEncoder::Software: return "software";
+    case VideoEncoder::Nvenc: return "nvenc";
+    case VideoEncoder::Vaapi: return "vaapi";
+    case VideoEncoder::Qsv: return "qsv";
+    }
+    return "auto";
+}
+
+VideoEncoder videoEncoderFromId(const QString& id, VideoEncoder fallback, bool* ok)
+{
+    for (VideoEncoder e : {VideoEncoder::Auto, VideoEncoder::Software, VideoEncoder::Nvenc, VideoEncoder::Vaapi, VideoEncoder::Qsv})
+        if (id.compare(videoEncoderId(e), Qt::CaseInsensitive) == 0) {
+            if (ok) *ok = true;
+            return e;
+        }
+    if (ok) *ok = false;
+    return fallback;
+}
+
+QString videoEncoderLabel(VideoEncoder e)
+{
+    switch (e) {
+    case VideoEncoder::Auto: return T("Automatisch");
+    case VideoEncoder::Software: return T("Software");
+    case VideoEncoder::Nvenc: return "NVIDIA (NVENC)";
+    case VideoEncoder::Vaapi: return "AMD/Intel (VAAPI)";
+    case VideoEncoder::Qsv: return "Intel Quick Sync";
+    }
+    return {};
+}
+
 bool RenderSettings::audioOnly() const { return !*renderFormat(format).videoCodec; }
+
+bool RenderSettings::hasEncoderChoice() const { return renderFormat(format).hasQuality; }
 
 bool RenderSettings::hasAudioBitrate() const
 {
@@ -117,6 +154,8 @@ QString RenderSettings::summary(QSize output) const
     QStringList parts{T(f.label)};
     if (!audioOnly()) parts << resolutionLabel(output.width(), output.height());
     if (f.hasQuality) parts << qualityLabel();
+    if (hasEncoderChoice() && encoder != VideoEncoder::Auto && encoder != VideoEncoder::Software)
+        parts << videoEncoderLabel(encoder);
     if (!audioOnly() && rateNum > 0) parts << QString("%1 fps").arg(FrameRate{rateNum, rateDen}.label());
     if (QLatin1String(f.audioCodec) == QLatin1String("aac")) parts << QString("AAC %1 kbit/s").arg(audioBitrateK);
     else if (hasAudioBitrate()) parts << QString("%1 kbit/s").arg(audioBitrateK);
@@ -134,6 +173,7 @@ QJsonObject RenderSettings::toJson() const
     if (rateNum > 0) o["rate"] = QString("%1/%2").arg(rateNum).arg(rateDen);
     if (subtitles == BurnSubtitles) o["subtitles"] = "burn";
     if (subtitles == SrtFile) o["subtitles"] = "srt";
+    o["encoder"] = videoEncoderId(encoder);
     if (size.isValid() && !size.isEmpty()) {
         o["width"] = size.width();
         o["height"] = size.height();
@@ -158,6 +198,8 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
     if (w > 0 && h > 0) s.size = QSize(w, h);
     const QString sub = o.value("subtitles").toString();
     s.subtitles = sub == "burn" ? BurnSubtitles : sub == "srt" ? SrtFile : NoSubtitles;
+    // Older files know only the software encoder: keep it, so nothing changes for them
+    s.encoder = videoEncoderFromId(o.value("encoder").toString(), VideoEncoder::Software);
     return s;
 }
 
@@ -166,7 +208,7 @@ bool RenderSettings::operator==(const RenderSettings& o) const
     const auto normSize = [](QSize s) { return s.isValid() && !s.isEmpty() ? s : QSize(); };
     return format == o.format && shortSide == o.shortSide && normSize(size) == normSize(o.size)
            && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles
-           && audioBits == o.audioBits && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
+           && audioBits == o.audioBits && encoder == o.encoder && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
 }
 
 // --- Vorlagen
@@ -244,7 +286,7 @@ bool RenderJob::operator==(const RenderJob& o) const
 {
     return id == o.id && path == o.path && preset == o.preset && settings == o.settings && size == o.size
            && inOut == o.inOut && sequence == o.sequence && from == o.from && to == o.to && status == o.status && message == o.message
-           && renderMs == o.renderMs;
+           && renderMs == o.renderMs && encoderUsed == o.encoderUsed;
 }
 
 namespace {
@@ -272,6 +314,7 @@ QJsonArray toJson(const QVector<RenderJob>& jobs)
         }
         if (!j.message.isEmpty()) o["message"] = j.message;
         if (j.renderMs > 0) o["renderMs"] = double(j.renderMs);
+        if (!j.encoderUsed.isEmpty()) o["encoderUsed"] = j.encoderUsed;
         arr << o;
     }
     return arr;
@@ -307,6 +350,7 @@ QVector<RenderJob> fromJson(const QJsonArray& arr)
         if (j.status == RenderStatus::Rendering) j.status = RenderStatus::Queued;
         j.message = o.value("message").toString();
         j.renderMs = qint64(o.value("renderMs").toDouble());
+        j.encoderUsed = o.value("encoderUsed").toString();
         jobs << j;
     }
     return jobs;
