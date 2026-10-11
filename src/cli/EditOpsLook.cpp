@@ -86,7 +86,7 @@ void wheel(const QJsonObject& op, const char* name, const AnimParam params[4], Q
 
 void opColor(Session& s, const QJsonObject& op)
 {
-    const QVector<int> ids = onTracks(s, clipIds(s, op), TrackKind::Video, "color corrections");
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "color corrections");
     Editor& ed = s.editor;
     const QJsonValue reset = op.value("reset");
     if (reset.isBool() && reset.toBool()) {
@@ -150,7 +150,7 @@ void opColor(Session& s, const QJsonObject& op)
 
 void opTransform(Session& s, const QJsonObject& op)
 {
-    const QVector<int> ids = onTracks(s, clipIds(s, op), TrackKind::Video, "transforms");
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "transforms");
     using P = AnimParam;
     QVector<QPair<AnimParam, double>> values;
     if (op.contains("zoom")) {
@@ -213,7 +213,7 @@ void opKeyframe(Session& s, const QJsonObject& op)
 {
     const AnimParam p = parseParam(op.value("param").toString());
     const bool audioParam = p == AnimParam::Volume || p == AnimParam::Pan;
-    const QVector<int> ids = onTracks(s, clipIds(s, op), audioParam ? TrackKind::Audio : TrackKind::Video, "these keyframes");
+    const QVector<int> ids = clipsOn(s, op, audioParam ? TrackKind::Audio : TrackKind::Video, "these keyframes");
     QString effectId;
     const EffectDescriptor* effect = nullptr;
     const EffectParam* ep = nullptr;

@@ -64,6 +64,27 @@ QVector<int> onTracks(Session& s, const QVector<int>& ids, TrackKind kind, const
     return out;
 }
 
+QVector<int> clipsOn(Session& s, const QJsonObject& op, TrackKind kind, const char* what)
+{
+    QJsonObject alone = op;
+    alone["linked"] = false;
+    if (op.contains("linked")) // true: all partners, false: strictly the given clips
+        return onTracks(s, clipIds(s, op.value("linked").toBool() ? op : alone), kind, what);
+    const Timeline& tl = s.project.timeline();
+    QVector<int> out;
+    for (int id : clipIds(s, alone)) {
+        TrackRef r;
+        const QVector<int> ids = TimelineOps::findClip(tl, id, &r) && r.kind == kind ? QVector<int>{id}
+                                                                                     : s.editor.withLinked({id});
+        for (int x : ids)
+            if (TrackRef xr; !out.contains(x) && TimelineOps::findClip(tl, x, &xr) && xr.kind == kind) out << x;
+    }
+    if (out.isEmpty())
+        fail("BAD_ARGUMENT", QString("%1 go on %2 clips; none of the clips is on a %2 track")
+                                 .arg(what, kind == TrackKind::Video ? "video" : "audio"));
+    return out;
+}
+
 double numberOf(const QJsonObject& op, const char* key, double lo, double hi)
 {
     const QJsonValue v = op.value(key);
@@ -247,21 +268,21 @@ void opSubtitles(Session& s, const QJsonObject& op)
 void opEffect(Session& s, const QJsonObject& op)
 {
     const QString effectId = op.value("effect").toString();
-    const QVector<int> ids = clipIds(s, op);
     if (op.contains("preset")) {
         // Shotcut/Kdenlive preset from the effects folder: adds its effects with their values
         const QString path = findAsset(Asset::Preset, op.value("preset").toString());
-        s.editor.addEffect(onTracks(s, ids, TrackKind::Video, "presets"), Presets::Prefix + path);
-        return;
-    }
-    if (op.value("remove").toBool()) {
-        s.editor.removeEffect(ids, effectId);
+        s.editor.addEffect(clipsOn(s, op, TrackKind::Video, "presets"), Presets::Prefix + path);
         return;
     }
     const EffectDescriptor* d = EffectRegistry::find(effectId);
+    if (op.value("remove").toBool()) {
+        s.editor.removeEffect(d ? clipsOn(s, op, d->video ? TrackKind::Video : TrackKind::Audio, "effects") : clipIds(s, op),
+                              effectId);
+        return;
+    }
     if (!d) fail("NOT_FOUND", QString("no effect '%1' (see the `effects` command)").arg(effectId));
     // video effects on video clips, audio effects (kind "audio" in `effects`) on audio clips
-    const QVector<int> targets = onTracks(s, ids, d->video ? TrackKind::Video : TrackKind::Audio,
+    const QVector<int> targets = clipsOn(s, op, d->video ? TrackKind::Video : TrackKind::Audio,
                                           d->video ? "video effects" : "audio effects");
     QVariantMap values;
     const QJsonObject params = op.value("params").toObject();
@@ -404,7 +425,9 @@ QString editHelp()
                "List of operations, applied in order, saved once (nothing is saved if one fails). Times: frames "
                "(integer), \"4.5s\" or \"HH:MM:SS:FF\"; ranges are half-open [from, to). Tracks: \"V1\", \"A2\" (a "
                "media clip goes to V<n> and A<n>). Clip ids come from `info` and change when clips are split. "
-               "Linked audio/video partners are included unless linked:false. Subtitle ids work with 'delete' too. "
+               "Linked audio/video partners are included unless linked:false; ops for one kind of clip (effect, color, "
+               "transform, volume, keyframe …) take only the given clips of that kind, a clip of the other kind "
+               "stands for its linked partners (linked:true = all partners, false = only the given ones). Subtitle ids work with 'delete' too. "
                "`help edit` has details. Operations: ")
         + lines.join("; ") + ".";
 }

@@ -119,6 +119,10 @@ const Clip& clipOf(Session& s, const QJsonObject& op, const char* key = "clip");
 QVector<int> clipIds(Session& s, const QJsonObject& op, bool cues = false);
 // Only the clips on video (or audio) tracks; fails if none is left
 QVector<int> onTracks(Session& s, const QVector<int>& ids, TrackKind kind, const char* what);
+// For ops on one kind of clip (effects, volume, color …): the given clips of that kind alone (Discord's volume must
+// not change the other streams of the file); a clip of the other kind stands for its linked partners of this kind.
+// linked:true = all linked partners of this kind, linked:false = strictly the given clips. Fails if none is left
+QVector<int> clipsOn(Session& s, const QJsonObject& op, TrackKind kind, const char* what);
 int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback = -1);
 double numberOf(const QJsonObject& op, const char* key, double lo, double hi);
 QColor colorOf(const QJsonValue& v, const QString& what);

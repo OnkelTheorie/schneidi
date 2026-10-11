@@ -19,7 +19,7 @@ namespace {
 void opVolume(Session& s, const QJsonObject& op)
 {
     if (!op.contains("db") && !op.contains("pan")) fail("BAD_ARGUMENT", "missing 'db' (and/or 'pan')");
-    const QVector<int> ids = onTracks(s, clipIds(s, op), TrackKind::Audio, "volume and pan");
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Audio, "volume and pan");
     if (op.contains("db")) {
         const double db = numberOf(op, "db", -1000, kMaxVolumeDb);
         for (int id : ids) s.editor.setClipVolume(id, db);
@@ -33,7 +33,7 @@ void opVolume(Session& s, const QJsonObject& op)
 void opAudioStream(Session& s, const QJsonObject& op)
 {
     const int stream = int(numberOf(op, "stream", 0, 63));
-    const QVector<int> ids = onTracks(s, clipIds(s, op), TrackKind::Audio, "audio streams");
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Audio, "audio streams");
     for (int id : ids) {
         const Clip& c = *TimelineOps::findClip(s.project.timeline(), id);
         const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
@@ -82,7 +82,7 @@ void opNormalize(Session& s, const QJsonObject& op)
     if (mode != "peak" && mode != "lufs") fail("BAD_ARGUMENT", "mode must be 'peak' (sample peak, dBFS) or 'lufs' (loudness)");
     const bool lufs = mode == "lufs";
     const double target = op.contains("target") ? numberOf(op, "target", lufs ? -70 : -60, 0) : (lufs ? -14.0 : -1.0);
-    const QVector<int> ids = onTracks(s, clipIds(s, op), TrackKind::Audio, "normalizing");
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Audio, "normalizing");
     if (op.value("linked").toBool(true)) {
         QJsonObject given = op;
         given["linked"] = false;

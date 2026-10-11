@@ -445,6 +445,45 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
     // --- With real media (ffmpeg): loudness of a file and of the mix, normalize, mixer
     if (!Check::haveFfmpeg()) return Check::result();
     Check::initMlt();
+    // Several audio streams (game recording: game, Discord …): ops for audio clips change only the given stream's
+    // clip, the video clip stands for all of them, linked:true takes all partners too
+    {
+        const QString multi = Check::makeMedia(dir.filePath("streams.mkv"),
+                                               {"-f", "lavfi", "-i", "color=c=gray:s=320x240:r=25:d=2", "-f", "lavfi", "-i",
+                                                "sine=f=440:d=2", "-f", "lavfi", "-i", "sine=f=660:d=2", "-map", "0",
+                                                "-map", "1", "-map", "2", "-c:v", "libx264", "-c:a", "aac"});
+        if (CHECK(!multi.isEmpty())) {
+            const QString proj = dir.filePath("streams.schneidi");
+            run("new", {{"project", proj}});
+            run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(multi)}});
+            QHash<QString, int> ids; // track -> its clip
+            for (const QJsonValue& t : run("info", {{"project", proj}})["timeline"]["tracks"].toArray())
+                if (!t["clips"].toArray().isEmpty()) ids[t["track"].toString()] = t["clips"][0]["id"].toInt();
+            if (CHECK(ids.contains("V1") && ids.contains("A1") && ids.contains("A2"))) {
+                run("edit", {{"project", proj},
+                             {"ops", QString(R"([{"op":"volume","clips":[%1],"db":6},
+                                                 {"op":"effect","clips":[%1],"effect":"denoise"},
+                                                 {"op":"effect","clips":[%2],"effect":"stabilize"}])")
+                                         .arg(ids["A2"]).arg(ids["V1"])}});
+                ProjectData d;
+                QString error;
+                CHECK(ProjectFile::load(proj, &d, &error));
+                const Clip* a1 = TimelineOps::findClip(d.timeline, ids["A1"]);
+                const Clip* a2 = TimelineOps::findClip(d.timeline, ids["A2"]);
+                CHECK(a1 && a1->volumeDb == 0.0 && !EffectRegistry::has(*a1, "denoise"));
+                CHECK(a2 && a2->volumeDb == 6.0 && EffectRegistry::has(*a2, "denoise"));
+                run("edit", {{"project", proj},
+                             {"ops", QString(R"([{"op":"effect","clips":[%1],"effect":"denoise","remove":true},
+                                                 {"op":"volume","clips":[%2],"db":-3,"linked":true}])")
+                                         .arg(ids["V1"]).arg(ids["A2"])}});
+                CHECK(ProjectFile::load(proj, &d, &error));
+                a1 = TimelineOps::findClip(d.timeline, ids["A1"]);
+                a2 = TimelineOps::findClip(d.timeline, ids["A2"]);
+                CHECK(a1 && a1->volumeDb == -3.0 && a2 && a2->volumeDb == -3.0);
+                CHECK(a2 && !EffectRegistry::has(*a2, "denoise"));
+            }
+        }
+    }
     {
         const QString noise = Check::makeMedia(dir.filePath("noise.wav"),
                                                {"-f", "lavfi", "-i", "anoisesrc=color=pink:amplitude=0.2:duration=6:seed=3:sample_rate=48000",
