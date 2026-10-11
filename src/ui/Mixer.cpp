@@ -853,6 +853,9 @@ void Mixer::resizeEvent(QResizeEvent* e)
 // the leftover space stays empty on the right (growToFit widens the mixer so that usually all strips fit).
 void Mixer::fitStrips()
 {
+    // Never wider than all strips + master + loudness: a wider splitter share (dragged, restored, window
+    // maximized) left an empty area on the right; the splitter gives the rest to the timeline
+    setMaximumWidth(int(m_strips.size()) * kStripW + fixedWidth());
     if (m_strips.isEmpty()) {
         m_stripScroll->setFixedWidth(0);
         return;
