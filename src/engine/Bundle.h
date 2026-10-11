@@ -19,6 +19,10 @@ bool verboseLogging();
 // Direkt nach Mlt::Factory::init: Meldestufen von MLT und FFmpeg. Normal: MLT ab Warnung, FFmpeg nur Fehler;
 // ausführlich: MLT ab Info, FFmpeg ab Warnung
 void configureMltLogging();
+// Directly after Mlt::Factory::init: MLT's qt module (Qt 5) creates its own QApplication the first time one of its
+// services is made, which calls setlocale(LC_ALL, "") and puts LC_NUMERIC back to e.g. German. MLT modules read
+// numbers with sscanf/atof (vid.stab results, timewarp speed) -> create it now and keep LC_NUMERIC at "C"
+void pinNumericLocale();
 // Pfad so, wie MLT ihn für den Modulordner/Umgebungsvariablen erwartet (Windows: ANSI-Codepage bzw. 8.3-Pfad)
 QByteArray pathForMlt(const QString& path);
 // Pfad eines externen Programms (z. B. "ffmpeg"): erst neben dem Programm, dann im PATH; sonst der bloße Name

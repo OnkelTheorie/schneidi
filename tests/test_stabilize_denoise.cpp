@@ -264,6 +264,14 @@ int main(int argc, char** argv)
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt; // 1920x1080, 25 fps
 
+    // The first qt module service (qtblend: transform/opacity) must not put LC_NUMERIC back to the user's locale:
+    // vid.stab then could not read its results ("0.48" with a German locale) and exported unstabilized
+    {
+        Mlt::Profile profile;
+        Mlt::Transition blend(profile, "qtblend");
+        CHECK_EQ(QString(std::setlocale(LC_NUMERIC, nullptr)), QString("C"));
+    }
+
     // --- Noise reduction: 0-2 s noise only, 2-4 s sine + noise
     {
         const QString noisy = Check::makeMedia(

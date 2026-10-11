@@ -66,6 +66,7 @@ bool Engine::initMlt(QString* error)
         return false;
     }
     Bundle::configureMltLogging();
+    Bundle::pinNumericLocale();
     Frei0r::registerEffects();
     return true;
 }

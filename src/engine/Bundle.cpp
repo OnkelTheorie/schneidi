@@ -7,6 +7,7 @@
 
 #include <framework/mlt.h>
 
+#include <clocale>
 #include <iterator>
 
 #ifdef Q_OS_WIN
@@ -120,6 +121,15 @@ void configureMltLogging()
         mlt_profile_close(profile);
     }
     mlt_log_set_level(more ? MLT_LOG_INFO : MLT_LOG_WARNING);
+}
+
+void pinNumericLocale()
+{
+    if (mlt_profile profile = mlt_profile_init(nullptr)) {
+        if (mlt_transition t = mlt_factory_transition(profile, "qtblend", nullptr)) mlt_transition_close(t);
+        mlt_profile_close(profile);
+    }
+    std::setlocale(LC_NUMERIC, "C");
 }
 
 QString tool(const QString& name)
