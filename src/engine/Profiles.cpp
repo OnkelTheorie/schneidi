@@ -140,8 +140,13 @@ ClipFormat detectClipFormat(const QString& path)
     cf.height = h & ~1;
     cf.rate = {num, den};
     cf.averageFps = averageFps(path);
-    // Weicht der Mittelwert merklich ab, ist die Framerate variabel (Handy) -> nominelle 24/25/30/50/60
+    // If the average differs noticeably the frame rate is variable (phones, game capture that skips frames).
+    // The nominal rate is what the recording aimed for (DVR clips: nominal 60 or 120, average ~45) -> nearest
+    // 24/25/30/50/60 of it; only a nominal rate that is a time base rather than a rate (mkv/webm 1000, 90000)
+    // falls back to the average.
     cf.variable = cf.averageFps > 0 && std::abs(cf.averageFps - cf.rate.fps()) > 0.01 * cf.rate.fps();
-    cf.suggested = cf.variable ? nearestFrameRate(cf.averageFps, true) : nearestFrameRate(cf.rate.fps());
+    cf.suggested = !cf.variable ? nearestFrameRate(cf.rate.fps())
+                   : cf.rate.fps() <= 240 ? nearestFrameRate(std::min(cf.rate.fps(), 60.0), true)
+                                          : nearestFrameRate(cf.averageFps, true);
     return cf;
 }
