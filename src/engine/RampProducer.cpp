@@ -114,6 +114,12 @@ std::unique_ptr<Mlt::Producer> audio(Mlt::Profile& profile, const QString& file,
     Mlt::Producer probe(profile, file.toUtf8().constData());
     if (!probe.is_valid()) return nullptr;
     const int fileLength = probe.get_length();
+    // Stream choice and sample rate from the opened file: the step producers below open lazily and have no
+    // stream metadata yet
+    probe.set("video_index", -1);
+    selectAudioStream(probe, c.audioStream);
+    const int audioIndex = probe.get_int("audio_index");
+    const int sampleRate = PitchLatency::sampleRateOf(probe);
     auto pl = std::make_unique<Mlt::Playlist>(profile);
     std::map<std::pair<double, bool>, std::unique_ptr<Mlt::Producer>> byWarp; // (Tempo mit Richtung, Tonhöhe)
     for (const AudioStep& st : audioSteps(c, fileLength)) {
@@ -121,17 +127,24 @@ std::unique_ptr<Mlt::Producer> audio(Mlt::Profile& profile, const QString& file,
         const bool pitch = c.keepPitch && !st.smooth && std::abs(warp) != 1.0; // rückwärts 100 %: ohne Rubberband
         auto it = byWarp.find({warp, pitch});
         if (it == byWarp.end()) {
-            const QString resource = warp == 1.0 ? file : warpResource(warp, file);
+            // One producer per speed step: opening a file costs ffmpeg's stream analysis twice (validation, then
+            // the real open; ~0.4 s each for 60/120 fps game captures), and a soft ramp has a dozen steps. The file
+            // was opened above already, so skip the validation and give the length ourselves.
+            const QString lazy = "avformat-novalidate:" + file;
+            const QString resource = warp == 1.0 ? lazy : warpResource(warp, lazy);
             auto p = std::make_unique<Mlt::Producer>(profile, resource.toUtf8().constData());
             if (!p->is_valid()) return nullptr;
+            const int length = std::max(1, int(fileLength / std::abs(warp)));
+            p->set("length", length);
+            p->set("out", length - 1);
             if (warp != 1.0) p->set("warp_pitch", pitch ? 1 : 0);
             p->set("video_index", -1);
-            selectAudioStream(*p, c.audioStream);
-            if (pitch) PitchLatency::extend(*p, PitchLatency::frames(profile, warp, PitchLatency::sampleRateOf(*p)));
+            p->set("audio_index", audioIndex);
+            if (pitch) PitchLatency::extend(*p, PitchLatency::frames(profile, warp, sampleRate));
             it = byWarp.emplace(std::make_pair(warp, pitch), std::move(p)).first;
         }
         Mlt::Producer& p = *it->second;
-        const int lead = pitch ? PitchLatency::frames(profile, warp, PitchLatency::sampleRateOf(p)) : 0;
+        const int lead = pitch ? PitchLatency::frames(profile, warp, sampleRate) : 0;
         const int plen = p.get_length() - lead; // ohne die Verlängerung für den Vorlauf
         // timewarp-Frame k zeigt Quellstelle k·v; rückwärts zählt es vom Ende der gewarpten Datei
         int k = int(std::lround(st.s0 / st.speed));

@@ -6,8 +6,14 @@
 #include "core/Types.h"
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
+
+namespace Mlt {
+class Profile;
+}
+class TimelineBuilder;
 
 namespace AudioAnalysis {
 
@@ -34,6 +40,20 @@ std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& cl
 // Loudness of the timeline mix [from, to) as it is exported (clip/track/master levels, mute/solo, limiter)
 std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Timeline& timeline, int from, int to,
                                          const std::function<bool(double)>& progress = {});
+
+// The same for measuring one timeline several times (fader changes): keeps the opened files between the
+// measurements (opening the producers of an edit with speed ramps takes seconds)
+class MixMeter {
+public:
+    explicit MixMeter(const ProjectFormat& format);
+    ~MixMeter();
+    std::optional<Loudness> measure(const Timeline& timeline, int from, int to,
+                                    const std::function<bool(double)>& progress = {});
+
+private:
+    std::unique_ptr<Mlt::Profile> m_profile;
+    std::unique_ptr<TimelineBuilder> m_builder;
+};
 
 // Sample peak (linear, all channels) of every timeline frame of the clip, same rules as clipPeakDb
 // (silence detection in schneidi-cli). Index 0 = first frame of the clip.

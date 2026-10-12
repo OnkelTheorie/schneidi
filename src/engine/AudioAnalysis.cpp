@@ -104,16 +104,38 @@ std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& cl
     return m.result();
 }
 
+namespace {
+// Only the sound: the video tracks' clips (with their transitions, effects, speed ramps) would be built and
+// processed by MLT for every frame although only the audio is read - minutes on a long edit with many effects
+Timeline soundOnly(const Timeline& timeline)
+{
+    Timeline tl = timeline;
+    for (Track& t : tl.video) t.clips.clear();
+    return tl;
+}
+} // namespace
+
 std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Timeline& timeline, int from, int to,
                                          const std::function<bool(double)>& progress)
 {
+    return MixMeter(format).measure(timeline, from, to, progress);
+}
+
+MixMeter::MixMeter(const ProjectFormat& format)
+    : m_profile(makeProfile(format)), m_builder(std::make_unique<TimelineBuilder>(*m_profile))
+{
+    m_builder->setSubtitles(false);
+}
+
+MixMeter::~MixMeter() = default;
+
+std::optional<Loudness> MixMeter::measure(const Timeline& timeline, int from, int to,
+                                          const std::function<bool(double)>& progress)
+{
     if (to <= from) return std::nullopt;
-    auto profile = makeProfile(format);
-    TimelineBuilder builder(*profile);
-    builder.setSubtitles(false);
-    const std::unique_ptr<Mlt::Tractor> tractor = builder.build(timeline);
+    const std::unique_ptr<Mlt::Tractor> tractor = m_builder->build(soundOnly(timeline));
     if (!tractor || !tractor->is_valid()) return std::nullopt;
-    const double fps = profile->fps();
+    const double fps = m_profile->fps();
     Measure m;
     tractor->seek(from);
     for (int pos = from; pos < to; ++pos) {
@@ -150,7 +172,7 @@ std::optional<std::vector<float>> timelineFramePeaks(const ProjectFormat& format
     auto profile = makeProfile(format);
     TimelineBuilder builder(*profile);
     builder.setSubtitles(false);
-    const std::unique_ptr<Mlt::Tractor> tractor = builder.build(timeline);
+    const std::unique_ptr<Mlt::Tractor> tractor = builder.build(soundOnly(timeline));
     if (!tractor || !tractor->is_valid()) return std::nullopt;
     const double fps = profile->fps();
     std::vector<float> peaks;
