@@ -725,7 +725,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         fail("EXISTS", "output exists (pass overwrite to replace it): " + out);
     job.path = out;
     if (!srtOnly) job.settings.format = formatId;
-    if (a.contains("quality")) job.settings.quality = std::clamp(a["quality"].toInt(), 0, 2);
+    if (a.contains("quality")) job.settings.quality = std::clamp(a["quality"].toInt(), 0, RenderSettings::kQualityWeb);
     if (a.contains("height")) {
         job.settings.shortSide = a["height"].toInt();
         job.settings.size = {};
@@ -981,7 +981,7 @@ const QVector<Command>& commands()
           {"out", T::Path, "output file (extension added if missing)", true},
           {"preset", T::String, presetHelp()},
           {"format", T::String, "h264 (default), h265, prores, aac, mp3, wav, aiff, alac; srt = only the subtitle file"},
-          {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small (H.264/H.265)"},
+          {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small, 3 = web: high with a bit rate cap like YouTube recommends (H.264/H.265; the YouTube and phone presets use it)"},
           {"height", T::Integer, "shorter image edge, e.g. 720 (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
           {"fps", T::Number, "output frame rate (default: the timeline's)"},
@@ -1264,7 +1264,8 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
     return {{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
             {"api_version", ApiVersion},
             {"usage", "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, "
-                      "exit code 0 = ok, 1 = error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio."},
+                      "exit code 0 = ok, 1 = error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio. "
+                      "--verbose: progress notes and engine messages on stderr."},
             {"commands", list}};
 }
 

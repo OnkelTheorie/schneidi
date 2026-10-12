@@ -11,6 +11,7 @@
 #include "engine/Engine.h"
 
 #include <QGuiApplication>
+#include <QLoggingCategory>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -105,6 +106,9 @@ int main(int argc, char* argv[])
     QStringList args = app.arguments().mid(1);
     bool pretty = false;
     if (args.removeAll("--pretty")) pretty = true;
+    // Progress notes ("Export: libx264, 12 threads ...") only with --verbose; warnings and errors always go to stderr
+    if (args.removeAll("--verbose")) qputenv("SCHNEIDI_VERBOSE", "1");
+    else QLoggingCategory::setFilterRules(QStringLiteral("*.debug=false\n*.info=false"));
     if (args.isEmpty() || args.first() == "--help" || args.first() == "-h") args = {"help"};
     if (args.first() == "--version") {
         print({{"ok", true}, {"version", QCoreApplication::applicationVersion()}, {"api_version", Cli::ApiVersion}}, pretty);

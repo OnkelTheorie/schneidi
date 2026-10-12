@@ -519,6 +519,30 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             const QJsonObject loud = run("edit", {{"project", hp}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":-6}])").arg(id)}});
             CHECK(QJsonDocument(loud["notes"].toArray()).toJson().contains("dBTP"));
         }
+        // Normalize beyond the clip's +12 dB: allow_track_gain puts the rest on the track, the other clip stays
+        {
+            const QString faint = Check::makeMedia(dir.filePath("faint.wav"),
+                                                   {"-f", "lavfi", "-i", "anoisesrc=color=pink:amplitude=0.004:duration=3:seed=3:sample_rate=48000",
+                                                    "-ac", "2", "-c:a", "pcm_s16le"});
+            const QString tp = dir.filePath("track.schneidi");
+            run("new", {{"project", tp}});
+            run("edit", {{"project", tp}, {"ops", QString(R"([{"op":"append","media":"%1"},{"op":"append","media":"%2"}])").arg(faint, noise)}});
+            const QJsonArray clips = run("info", {{"project", tp}})["timeline"]["tracks"][2]["clips"].toArray();
+            const int quiet = clips[0]["id"].toInt(), other = clips[1]["id"].toInt();
+            const auto part = [&](const char* from, const char* to) {
+                return run("loudness", {{"source", tp}, {"from", from}, {"to", to}})["loudness"]["integrated_lufs"].toDouble();
+            };
+            const double otherBefore = part("3s", "6s");
+            const double faintLufs = run("loudness", {{"source", tp}, {"clips", QJsonArray{quiet}}})["clips"][0]["loudness"]["integrated_lufs"].toDouble();
+            const double target = faintLufs + 18; // 6 dB more than the clip volume can give
+            const QJsonObject r = run("edit", {{"project", tp}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":%2,"allow_track_gain":true}])").arg(quiet).arg(target)}});
+            CHECK(QJsonDocument(r["notes"].toArray()).toJson().contains("allow_track_gain"));
+            const QJsonObject track = run("info", {{"project", tp}})["timeline"]["tracks"][2].toObject();
+            CHECK(std::abs(track["volume_db"].toDouble() - 6) < 0.2);
+            if (!CHECK(std::abs(part("0s", "3s") - target) < 0.3)) std::printf("       quiet %.2f, want %.2f\n", part("0s", "3s"), target);
+            CHECK(std::abs(part("3s", "6s") - otherBefore) < 0.2);
+            CHECK_EQ(track["clips"][1]["id"].toInt(), other);
+        }
         // Silence of the timeline sound: timeline frames, tracks by number or by audio stream name
         {
             const QString gap = Check::makeMedia(dir.filePath("gap.mka"),

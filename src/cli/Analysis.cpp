@@ -27,8 +27,14 @@
 #include <QPainterPath>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QThread>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <optional>
+#include <thread>
+#include <vector>
 #include <tuple>
 #include <cmath>
 #include <memory>
@@ -40,18 +46,26 @@ namespace {
 struct MediaSource {
     ProjectFormat format;
     MediaInfo info;
+    ClipFormat clip; // the file's own format (detected when no project gives the frame rate)
 };
+
+// Project format read once for several files looked at in parallel (perFile), instead of each thread opening
+// the project (or the running app's)
+const ProjectFormat* g_projectFormat = nullptr;
 
 MediaSource openMedia(const QJsonObject& a)
 {
     const QString path = a["file"].toString();
     if (!QFileInfo::exists(path)) fail("NOT_FOUND", "file not found: " + path);
     MediaSource m;
-    if (a.contains("project")) {
+    if (a.contains("project") && g_projectFormat) {
+        m.format = *g_projectFormat;
+    } else if (a.contains("project")) {
         Session s(a["project"].toString());
         m.format = s.format();
     } else {
-        const ClipFormat cf = detectClipFormat(path);
+        m.clip = detectClipFormat(path);
+        const ClipFormat& cf = m.clip;
         if (cf.ok) {
             m.format.rate = cf.suggested;
             m.format.width = cf.width & ~1;
@@ -158,7 +172,8 @@ namespace {
 QJsonObject probeOne(const QJsonObject& a)
 {
     const MediaSource m = openMedia(a);
-    const ClipFormat cf = detectClipFormat(m.info.path);
+    // Detecting opens the file and runs ffprobe: only once (with a project openMedia did not need it)
+    const ClipFormat cf = a.contains("project") ? detectClipFormat(m.info.path) : m.clip;
     QJsonObject o{{"file", m.info.path}, {"frames", m.info.length}, {"seconds", seconds(m.info.length, m.format)},
                   {"duration_tc", tc(m.info.length, m.format)}, {"video", m.info.hasVideo}, {"audio", m.info.hasAudio},
                   {"frames_count_in", formatJson(m.format)["fps"]}};
@@ -176,29 +191,9 @@ QJsonObject probeOne(const QJsonObject& a)
     }
     return o;
 }
-} // namespace
 
-QJsonObject cmdProbe(const QJsonObject& a, Context& ctx)
-{
-    QStringList files;
-    if (a.contains("file")) files << a["file"].toString();
-    for (const QJsonValue& v : a["files"].toArray()) files << v.toString();
-    if (files.isEmpty()) fail("BAD_ARGUMENT", "give 'file' (or 'files', several)");
-    if (files.size() == 1 && !a.contains("files")) return probeOne(a);
-    // Several files: one entry each; a file that cannot be read gets its error instead of failing the whole call
-    QJsonArray list;
-    for (int i = 0; i < files.size(); ++i) {
-        QJsonObject one = a;
-        one["file"] = files[i];
-        try {
-            list << probeOne(one);
-        } catch (const Error& e) {
-            list << QJsonObject{{"file", files[i]}, {"error", QJsonObject{{"code", e.code}, {"message", e.message}}}};
-        }
-        if (ctx.progress) ctx.progress(double(i + 1) / files.size());
-    }
-    return {{"files", list}};
-}
+QJsonObject probeFile(const QJsonObject& a, Context&) { return probeOne(a); }
+} // namespace
 
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
 {
@@ -543,32 +538,68 @@ QJsonObject peaksOne(const QJsonObject& a, Context& ctx)
             {"peaks", list}};
 }
 
-// One file (`file`) or several (`files`, one result each; a failing file gets its error)
-QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const QJsonObject&, Context&))
+// One file (`file`) or several (`files`, one result each; a failing file gets its error). Several files are
+// looked at in parallel, up to `parallel` at once (opening a file and ffprobe take most of the time, mostly
+// waiting; ffmpeg decoding for scenes uses all cores itself).
+QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const QJsonObject&, Context&),
+                    int parallel = 6)
 {
     QStringList files;
     if (a.contains("file")) files << a["file"].toString();
     for (const QJsonValue& v : a["files"].toArray()) files << v.toString();
     if (files.isEmpty()) fail("BAD_ARGUMENT", "give 'file' (or 'files', several)");
     if (files.size() == 1 && !a.contains("files")) return one(a, ctx);
-    QJsonArray list;
-    for (int i = 0; i < files.size(); ++i) {
-        QJsonObject args = a;
-        args.remove("files");
-        args["file"] = files[i];
-        Context sub;
-        if (ctx.progress) sub.progress = [&ctx, i, n = files.size()](double p) { ctx.progress((i + p) / n); };
-        try {
-            list << one(args, sub);
-        } catch (const Error& e) {
-            list << QJsonObject{{"file", files[i]}, {"error", QJsonObject{{"code", e.code}, {"message", e.message}}}};
+    std::optional<ProjectFormat> format;
+    if (a.contains("project")) format = Session(a["project"].toString()).format();
+    const int n = files.size();
+    std::vector<QJsonObject> results(n);
+    std::vector<std::atomic<double>> progress(n);
+    std::atomic<int> next{0};
+    auto work = [&] {
+        for (int i; (i = next++) < n;) {
+            QJsonObject args = a;
+            args.remove("files");
+            args["file"] = files[i];
+            Context sub;
+            sub.progress = [&progress, i](double p) { progress[i] = p; };
+            try {
+                results[i] = one(args, sub);
+            } catch (const Error& e) {
+                results[i] = {{"file", files[i]}, {"error", QJsonObject{{"code", e.code}, {"message", e.message}}}};
+            } catch (const std::exception& e) {
+                results[i] = {{"file", files[i]}, {"error", QJsonObject{{"code", "FAILED"}, {"message", e.what()}}}};
+            }
+            progress[i] = 1.0;
+        }
+    };
+    g_projectFormat = format ? &*format : nullptr;
+    const int threads = std::clamp(QThread::idealThreadCount() / 2, 1, std::min(n, parallel));
+    std::atomic<int> running{threads};
+    std::vector<std::thread> pool;
+    for (int t = 0; t < threads; ++t)
+        pool.emplace_back([&] {
+            work();
+            --running;
+        });
+    // Progress from this thread only (MCP notifications are written here)
+    while (running > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (ctx.progress) {
+            double sum = 0;
+            for (const std::atomic<double>& p : progress) sum += p;
+            ctx.progress(sum / n);
         }
     }
+    for (std::thread& t : pool) t.join();
+    g_projectFormat = nullptr;
+    QJsonArray list;
+    for (QJsonObject& r : results) list << r;
     return {{"files", list}};
 }
 } // namespace
 
-QJsonObject cmdScenes(const QJsonObject& a, Context& ctx) { return perFile(a, ctx, scenesOne); }
+QJsonObject cmdProbe(const QJsonObject& a, Context& ctx) { return perFile(a, ctx, probeFile); }
+QJsonObject cmdScenes(const QJsonObject& a, Context& ctx) { return perFile(a, ctx, scenesOne, 2); }
 QJsonObject cmdPeaks(const QJsonObject& a, Context& ctx) { return perFile(a, ctx, peaksOne); }
 
 

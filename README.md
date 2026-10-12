@@ -73,7 +73,8 @@ speed and speed ramps, markers, subtitles (SRT or cue lists, track styles), effe
 the project format. Positions can be given relative to a clip or to the source material (`{"clip": 12, "source":
 "34.2s"}`), so they stay right while earlier operations move clips. Output is JSON on stdout (exit code 0 = ok,
 1 = error, 2 = usage error); every save keeps a backup of the previous state (`backups`, `restore`). `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio, e.g. for
-Claude Code: `claude mcp add schneidi -- schneidi-cli mcp`, or in Claude Desktop's `claude_desktop_config.json`:
+Claude Code: `claude mcp add --scope user schneidi -- schneidi-cli mcp` (`--scope user`: in every folder, not only
+the one where you ran it), or in Claude Desktop's `claude_desktop_config.json`:
 
 ```json
 { "mcpServers": { "schneidi": { "command": "/path/to/schneidi-cli", "args": ["mcp"] } } }

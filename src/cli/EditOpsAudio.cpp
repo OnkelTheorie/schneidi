@@ -9,6 +9,7 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QSet>
 
 #include <algorithm>
 
@@ -193,13 +194,63 @@ void opNormalize(Session& s, const QJsonObject& op)
     if (levels.isEmpty()) fail("FAILED", "no sound to measure (media missing?)");
     std::optional<double> ref;
     if (lufs) ref = LoudnessMeter::integratedOf(blocks);
-    s.editor.normalizeAudio(levels, target, op.value("relative").toBool(), ref);
+    const bool relative = op.value("relative").toBool();
+    // allow_track_gain: what a clip needs beyond the clip fader's +12 dB goes onto its track's fader; the track's
+    // other clips are lowered by as much, so they stay as loud as they were
+    QHash<int, double> trackGain; // audio track index -> dB added to its fader
+    QSet<int> adjusted;           // clips normalizeAudio sets
+    if (op.value("allow_track_gain").toBool()) {
+        const double shared = relative ? target - (ref ? *ref : *std::max_element(levels.begin(), levels.end())) : 0;
+        for (auto it = levels.begin(); it != levels.end(); ++it) {
+            TrackRef where;
+            const Clip* c = TimelineOps::findClip(tl, it.key(), &where);
+            if (!c || where.kind != TrackKind::Audio || it.value() <= -100.0 || TimelineOps::isLocked(tl, c->id)) continue;
+            adjusted.insert(it.key());
+            const double over = (relative ? shared : target - it.value()) - kMaxVolumeDb;
+            if (over > 0.05) trackGain[where.index] = std::max(trackGain.value(where.index), over);
+        }
+        for (auto it = trackGain.begin(); it != trackGain.end(); ++it)
+            it.value() = std::min(it.value(), kMaxVolumeDb - tl.audio[it.key()].volumeDb);
+        if (relative && !trackGain.isEmpty()) { // one shared change: the same amount on every track
+            const double t = std::max(0.0, *std::min_element(trackGain.begin(), trackGain.end()));
+            for (auto it = trackGain.begin(); it != trackGain.end(); ++it) it.value() = t;
+            if (ref) *ref += t;
+        }
+        for (auto it = levels.begin(); it != levels.end(); ++it) {
+            TrackRef where;
+            if (adjusted.contains(it.key()) && TimelineOps::findClip(tl, it.key(), &where))
+                it.value() += std::max(0.0, trackGain.value(where.index));
+        }
+    }
+    s.editor.normalizeAudio(levels, target, relative, ref);
+    if (std::any_of(trackGain.begin(), trackGain.end(), [](double g) { return g > 0.05; })) {
+        s.project.edit("Normalize: track gain", [&](Timeline& t) {
+            for (auto it = trackGain.begin(); it != trackGain.end(); ++it) {
+                if (it.value() <= 0.05) continue;
+                Track& track = t.audio[it.key()];
+                track.volumeDb += it.value();
+                for (Clip& c : track.clips) {
+                    if (adjusted.contains(c.id)) continue;
+                    if (Keys::animated(c, AnimParam::Volume))
+                        for (Keyframe& k : c.keys[AnimParam::Volume])
+                            k.value = std::clamp(k.value - it.value(), kMinVolumeDb, kMaxVolumeDb);
+                    else
+                        c.volumeDb = std::clamp(c.volumeDb - it.value(), kMinVolumeDb, kMaxVolumeDb);
+                }
+            }
+        });
+        for (auto it = trackGain.begin(); it != trackGain.end(); ++it)
+            if (it.value() > 0.05)
+                s.notes << QString("A%1: track fader +%2 dB (allow_track_gain), its other clips lowered by as much")
+                               .arg(it.key() + 1)
+                               .arg(it.value(), 0, 'f', 1);
+    }
     // The clip fader ends at +12 dB: quiet clips may not reach the target
-    if (!op.value("relative").toBool())
+    if (!relative)
         for (auto it = levels.begin(); it != levels.end(); ++it)
             if (it.value() > -100.0 && target - it.value() > kMaxVolumeDb + 0.05)
                 s.notes << QString("clip %1 needs %2 dB but clip volume ends at +%3 dB: it stays %4 dB under the target "
-                                   "(raise its track: {op:'mixer', track, target_lufs} or the master)")
+                                   "(allow_track_gain:true puts the rest on its track, or raise the master)")
                                .arg(it.key())
                                .arg(target - it.value(), 0, 'f', 1)
                                .arg(kMaxVolumeDb, 0, 'f', 0)
@@ -207,9 +258,10 @@ void opNormalize(Session& s, const QJsonObject& op)
     // Loudness up can push the peaks over 0 dB: say so (the mix of several clips may peak higher still)
     const Timeline& after = s.project.timeline();
     for (auto it = truePeaks.begin(); it != truePeaks.end(); ++it) {
-        const Clip* c = TimelineOps::findClip(after, it.key());
+        TrackRef where;
+        const Clip* c = TimelineOps::findClip(after, it.key(), &where);
         if (!c || Keys::animated(*c, AnimParam::Volume)) continue;
-        const double peak = it.value() + c->volumeDb;
+        const double peak = it.value() + c->volumeDb + std::max(0.0, trackGain.value(where.index));
         if (peak > -1.0)
             s.notes << QString("clip %1 now peaks at %2 dBTP (over -1): lower the target or turn on the master "
                                "limiter ({op:'mixer', track:'master', limiter:true}); `loudness` measures the mix")
@@ -306,11 +358,13 @@ void addAudioOps(QVector<OpDef>& ops)
                  "default -1). target_lufs measures the mix (master) or the track alone and sets the fader so it "
                  "reaches that loudness (e.g. -14 for streaming; turn the limiter on first)",
                  {}, opMixer}
-        << OpDef{"normalize", "{op:'normalize', clips, mode?:'peak'|'lufs', target?, relative?}",
+        << OpDef{"normalize", "{op:'normalize', clips, mode?:'peak'|'lufs', target?, relative?, allow_track_gain?}",
                  "Normalize Audio Levels: measure the clips and set their volume",
                  "mode peak: sample peak to target dBFS (default -1); lufs: integrated loudness to target LUFS (default "
                  "-14, streaming; -23 = EBU R128 broadcast). relative:true moves all clips by the same amount (the "
-                 "loudest/whole hits the target), otherwise each clip on its own. Measures the files (takes a while).",
+                 "loudest/whole hits the target), otherwise each clip on its own. allow_track_gain:true: what a clip needs "
+                 "beyond the clip volume's +12 dB goes onto its track fader (the track's other clips are lowered by as "
+                 "much, so they stay as they were). Measures the files (takes a while).",
                  opNormalize}
         << OpDef{"duck", "{op:'duck', clips|track, under, amount_db?, threshold_db?, attack?, release?, hold?}",
                  "ducking: lower the music while other tracks have sound (volume keyframes)",
