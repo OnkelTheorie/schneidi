@@ -177,6 +177,17 @@ install(TARGETS schneidi schneidi-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR
 if(UNIX AND NOT APPLE)
     install(FILES packaging/linux/schneidi.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES assets/schneidi.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+    # Debian policy: /usr/share/doc/<package>/copyright (DEP-5) and changelog.gz
+    set(SCHNEIDI_MAINTAINER "schneidi project <324913804+OnkelTheorie@users.noreply.github.com>")
+    set(SCHNEIDI_HOMEPAGE "https://github.com/OnkelTheorie/schneidi")
+    configure_file(packaging/linux/copyright.in ${CMAKE_BINARY_DIR}/packaging/copyright @ONLY)
+    # Honors SOURCE_DATE_EPOCH for reproducible packages
+    string(TIMESTAMP SCHNEIDI_CHANGELOG_DATE "%a, %d %b %Y %H:%M:%S +0000" UTC)
+    configure_file(packaging/linux/changelog.in ${CMAKE_BINARY_DIR}/packaging/changelog @ONLY)
+    file(ARCHIVE_CREATE OUTPUT ${CMAKE_BINARY_DIR}/packaging/changelog.gz
+        PATHS ${CMAKE_BINARY_DIR}/packaging/changelog FORMAT raw COMPRESSION GZip)
+    install(FILES ${CMAKE_BINARY_DIR}/packaging/copyright ${CMAKE_BINARY_DIR}/packaging/changelog.gz
+        DESTINATION ${CMAKE_INSTALL_DOCDIR})
 endif()
 
 # Debian-Paket (schlank, Systembibliotheken statt Bundling): cmake --build build && cpack --config build/CPackConfig.cmake -G DEB
@@ -186,7 +197,8 @@ if(UNIX AND NOT APPLE)
     set(CPACK_PACKAGE_NAME "schneidi")
     set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Simple video editor inspired by DaVinci Resolve")
-    set(CPACK_PACKAGE_CONTACT "schneidi <noreply@example.com>")
+    set(CPACK_PACKAGE_CONTACT "${SCHNEIDI_MAINTAINER}")
+    set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "${SCHNEIDI_HOMEPAGE}")
     set(CPACK_PACKAGE_FILE_NAME "schneidi_${PROJECT_VERSION}_amd64")
     set(CPACK_STRIP_FILES ON)
     set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}")

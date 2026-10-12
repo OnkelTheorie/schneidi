@@ -1,7 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=schneidi
-Comment=Videoschnitt
+Comment=Video editor
+Comment[de]=Videoschnitt
 Exec=schneidi %f
 Icon=schneidi
 Terminal=false
