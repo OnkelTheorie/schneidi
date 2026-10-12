@@ -1,0 +1,5 @@
+schneidi (@PROJECT_VERSION@) unstable; urgency=medium
+
+  * Release @PROJECT_VERSION@, see @SCHNEIDI_HOMEPAGE@/releases
+
+ -- @SCHNEIDI_MAINTAINER@  @SCHNEIDI_CHANGELOG_DATE@
