@@ -997,7 +997,8 @@ const QVector<Command>& commands()
           {"overwrite", T::Boolean, "replace an existing output file"}},
          cmdRender},
         {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams.",
-         {{"file", T::Path, "media file", true, true},
+         {{"file", T::Path, "media file", false, true},
+          {"files", T::Paths, "several media files at once (a list of results)"},
           {"project", T::Path, "count frames in this project's frame rate (default: the file's own)"}},
          cmdProbe},
         {"silence", "Find pauses in the audio of a media file or a project's timeline. Returns 'silence' and "
@@ -1075,11 +1076,17 @@ const QVector<Command>& commands()
                     "luma images (op 'transition') and effect presets (op 'effect' preset).",
          {{"effect", T::String, "only this effect, with parameter details", false, true}}, cmdEffects},
         {"frames", "Still images of a media file or a project timeline at given times, as files or one contact "
-                   "sheet with timecodes (lets you look at the material).",
-         {{"source", T::Path, "media file or project (.schneidi)", true, true},
+                   "sheet with timecodes (lets you look at the material). Several files at once with 'sources', a "
+                   "detail of the picture (HUD, kill feed, score …) with 'crop'.",
+         {{"source", T::Path, "media file or project (.schneidi)", false, true},
+          {"sources", T::Paths, "several media files (same times for each; on a sheet labelled 1, 2 … in this order)"},
           {"at", T::Times, "times to show"},
           {"every", T::Time, "one frame every … (e.g. 10s)"},
           {"count", T::Integer, "this many frames spread evenly"},
+          {"from", T::Time, "every/count: start of the range (default: start)"},
+          {"to", T::Time, "every/count: end of the range (default: end)"},
+          {"crop", T::String, "only this region \"x,y,w,h\" in pixels of the full picture, or fractions 0..1 "
+                              "(\"0.75,0.05,0.25,0.3\" = top right); shown at its own size up to 'width'"},
           {"out", T::Path, "folder for the images (with sheet: image file)"},
           {"sheet", T::Boolean, "one contact sheet image instead of single images"},
           {"width", T::Integer, "longer image edge in pixels (default 640, MCP 480)"},

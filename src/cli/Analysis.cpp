@@ -22,6 +22,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QLocale>
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
@@ -75,7 +76,7 @@ QImage sheet(const QVector<QImage>& images, const QStringList& labels)
     p.setFont(font);
     for (int i = 0; i < images.size(); ++i) {
         const QPoint at((i % cols) * cell.width(), (i / cols) * cell.height());
-        p.drawImage(at, images[i]);
+        p.drawImage(QRect(at, cell), images[i]); // several sources may differ in size
         const QRect box(at + QPoint(4, 4), QSize(p.fontMetrics().horizontalAdvance(labels[i]) + 8, p.fontMetrics().height() + 2));
         p.fillRect(box, QColor(0, 0, 0, 170));
         p.setPen(Qt::white);
@@ -153,7 +154,8 @@ QJsonObject silenceJson(const std::vector<float>& peaks, int offset, double thre
 
 } // namespace
 
-QJsonObject cmdProbe(const QJsonObject& a, Context&)
+namespace {
+QJsonObject probeOne(const QJsonObject& a)
 {
     const MediaSource m = openMedia(a);
     const ClipFormat cf = detectClipFormat(m.info.path);
@@ -173,6 +175,29 @@ QJsonObject cmdProbe(const QJsonObject& a, Context&)
         o["audio_streams"] = streams;
     }
     return o;
+}
+} // namespace
+
+QJsonObject cmdProbe(const QJsonObject& a, Context& ctx)
+{
+    QStringList files;
+    if (a.contains("file")) files << a["file"].toString();
+    for (const QJsonValue& v : a["files"].toArray()) files << v.toString();
+    if (files.isEmpty()) fail("BAD_ARGUMENT", "give 'file' (or 'files', several)");
+    if (files.size() == 1 && !a.contains("files")) return probeOne(a);
+    // Several files: one entry each; a file that cannot be read gets its error instead of failing the whole call
+    QJsonArray list;
+    for (int i = 0; i < files.size(); ++i) {
+        QJsonObject one = a;
+        one["file"] = files[i];
+        try {
+            list << probeOne(one);
+        } catch (const Error& e) {
+            list << QJsonObject{{"file", files[i]}, {"error", QJsonObject{{"code", e.code}, {"message", e.message}}}};
+        }
+        if (ctx.progress) ctx.progress(double(i + 1) / files.size());
+    }
+    return {{"files", list}};
 }
 
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
@@ -286,15 +311,44 @@ QJsonObject cmdScenes(const QJsonObject& a, Context& ctx)
             {"cuts", cuts}, {"scenes", scenes}};
 }
 
-QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
+namespace {
+
+// "x,y,w,h" in pixels of the full picture, or fractions of it when all four are <= 1 ("0.75,0,0.25,0.3")
+QRect cropRect(const QString& spec, QSize full)
 {
-    const QString src = a["source"].toString();
-    const bool isProject = isProjectFile(src);
+    const QStringList parts = spec.split(',');
+    QVector<double> v;
+    for (const QString& p : parts) {
+        bool ok = false;
+        v << QLocale::c().toDouble(p.trimmed(), &ok);
+        if (!ok) v.clear();
+        if (v.isEmpty()) break;
+    }
+    if (v.size() != 4) fail("BAD_ARGUMENT", "crop must be \"x,y,w,h\" (pixels, or fractions 0..1 of the picture)");
+    if (std::all_of(v.begin(), v.end(), [](double x) { return x >= 0 && x <= 1; }) && (v[2] < 1 || v[3] < 1))
+        v = {v[0] * full.width(), v[1] * full.height(), v[2] * full.width(), v[3] * full.height()};
+    const QRect r = QRect(int(std::lround(v[0])), int(std::lround(v[1])), int(std::lround(v[2])), int(std::lround(v[3])))
+                        .intersected(QRect(QPoint(0, 0), full));
+    if (r.width() < 4 || r.height() < 4)
+        fail("BAD_ARGUMENT", QString("crop is outside the picture (%1x%2)").arg(full.width()).arg(full.height()));
+    return r;
+}
+
+// The frames of one source (media file or project timeline) for `frames`
+struct FrameSet {
+    QString source;
+    QVector<QImage> images;
+    QStringList labels;
+    QJsonArray frames;
+};
+
+FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int maxEdge, const QString& labelPrefix)
+{
     std::unique_ptr<Session> session;
     MediaSource media;
     ProjectFormat f;
     int length = 0;
-    if (isProject) {
+    if (isProjectFile(src)) {
         session = std::make_unique<Session>(src);
         session->selectTimeline(a["timeline"]);
         f = session->format();
@@ -306,46 +360,93 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
         f = media.format;
         length = media.info.length;
     }
-    if (length <= 0) fail("EMPTY", "nothing to show (empty timeline)");
+    if (length <= 0) fail("EMPTY", "nothing to show (empty timeline): " + src);
     QVector<int> at;
     for (const QJsonValue& v : a["at"].toArray()) at << parseTime(v, f, "at");
+    const int from = a.contains("from") ? std::clamp(parseTime(a["from"], f, "from"), 0, length - 1) : 0;
+    const int to = a.contains("to") ? std::clamp(parseTime(a["to"], f, "to"), from + 1, length) : length;
     if (a.contains("every")) {
         const int step = parseTime(a["every"], f, "every");
         if (step <= 0) fail("BAD_ARGUMENT", "'every' must be > 0");
-        for (int fr = 0; fr < length; fr += step) at << fr;
+        for (int fr = from; fr < to; fr += step) at << fr;
     }
     if (a.contains("count")) {
         const int n = std::clamp(a["count"].toInt(), 1, 100);
-        for (int i = 0; i < n; ++i) at << int((i + 0.5) * length / n);
+        for (int i = 0; i < n; ++i) at << from + int((i + 0.5) * (to - from) / n);
     }
     if (at.isEmpty()) fail("BAD_ARGUMENT", "give 'at' (times), 'every' (interval) or 'count' (evenly spread)");
     if (at.size() > 100) fail("BAD_ARGUMENT", QString("too many frames (%1, max 100)").arg(at.size()));
+    // Crop: decode the full picture, cut the region out, scale it down only if it is larger than maxEdge
+    const bool crop = a.contains("crop");
+    const QSize full = f.size();
+    const QRect region = crop ? cropRect(a["crop"].toString(), full) : QRect();
+    const int decodeEdge = crop ? std::max(full.width(), full.height()) : maxEdge;
+
+    const Timeline tl = session ? session->project.renderTimeline() : Timeline{};
+    FrameSet out;
+    out.source = absolute(src);
+    for (int i = 0; i < at.size(); ++i) {
+        const int fr = std::clamp(at[i], 0, length - 1);
+        QImage img = session ? Snapshot::timeline(f, tl, fr, decodeEdge) : Snapshot::media(f, media.info.path, fr, decodeEdge);
+        if (img.isNull()) fail("DECODE_FAILED", QString("could not decode frame %1 of %2").arg(fr).arg(src));
+        if (crop) {
+            // The snapshot may come out smaller than the format (odd sizes): scale the region along
+            const double kx = double(img.width()) / full.width(), ky = double(img.height()) / full.height();
+            img = img.copy(QRect(int(region.x() * kx), int(region.y() * ky), int(region.width() * kx), int(region.height() * ky)));
+            if (std::max(img.width(), img.height()) > maxEdge)
+                img = img.scaled(maxEdge, maxEdge, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        }
+        out.images << img;
+        out.labels << labelPrefix + tc(fr, f);
+        out.frames << QJsonObject{{"frame", fr}, {"tc", tc(fr, f)}, {"s", seconds(fr, f)}};
+        if (ctx.progress) ctx.progress(double(i + 1) / at.size());
+    }
+    return out;
+}
+
+} // namespace
+
+QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
+{
+    QStringList sources;
+    if (a.contains("source")) sources << a["source"].toString();
+    for (const QJsonValue& v : a["sources"].toArray()) sources << v.toString();
+    if (sources.isEmpty()) fail("BAD_ARGUMENT", "give 'source' (or 'sources', several files)");
     const int maxEdge = a.contains("width") ? std::clamp(a["width"].toInt(), 64, 3840) : (ctx.mcp ? 480 : 640);
     const QString outDir = a["out"].toString();
     const bool asSheet = a["sheet"].toBool();
     if (outDir.isEmpty() && !ctx.mcp) fail("BAD_ARGUMENT", "missing 'out' (folder for the images, or the sheet file with --sheet)");
 
-    const Timeline tl = session ? session->project.renderTimeline() : Timeline{};
     QVector<QImage> images;
     QStringList labels;
-    QJsonArray frames;
-    for (int i = 0; i < at.size(); ++i) {
-        const int fr = std::clamp(at[i], 0, length - 1);
-        QImage img = session ? Snapshot::timeline(f, tl, fr, maxEdge) : Snapshot::media(f, media.info.path, fr, maxEdge);
-        if (img.isNull()) fail("DECODE_FAILED", QString("could not decode frame %1").arg(fr));
-        images << img;
-        labels << tc(fr, f);
-        QJsonObject o{{"frame", fr}, {"tc", tc(fr, f)}, {"s", seconds(fr, f)}};
-        if (!asSheet && !outDir.isEmpty()) {
-            QDir().mkpath(outDir);
-            const QString file = QDir(outDir).absoluteFilePath(QString("frame_%1.jpg").arg(fr, 6, 10, QChar('0')));
-            if (!img.save(file, "JPG", 85)) fail("WRITE_FAILED", "cannot write " + file);
-            o["file"] = file;
+    QJsonArray perSource;
+    for (int si = 0; si < sources.size(); ++si) {
+        Context one;
+        one.mcp = ctx.mcp;
+        if (ctx.progress) one.progress = [&ctx, si, n = sources.size()](double p) { ctx.progress((si + p) / n); };
+        // Several sources on one sheet: label with the source's number (the answer lists them in order)
+        FrameSet set = framesOf(sources[si], a, one, maxEdge, sources.size() > 1 ? QString("%1  ").arg(si + 1) : QString());
+        for (int i = 0; i < set.images.size(); ++i) {
+            if (!asSheet && !outDir.isEmpty()) {
+                QDir().mkpath(outDir);
+                const QString prefix = sources.size() > 1 ? QString("src%1_").arg(si + 1) : QString();
+                const QString file = QDir(outDir).absoluteFilePath(
+                    QString("%1frame_%2.jpg").arg(prefix).arg(set.frames[i].toObject()["frame"].toInt(), 6, 10, QChar('0')));
+                if (!set.images[i].save(file, "JPG", 85)) fail("WRITE_FAILED", "cannot write " + file);
+                QJsonObject o = set.frames[i].toObject();
+                o["file"] = file;
+                set.frames[i] = o;
+            }
         }
-        frames << o;
-        if (ctx.progress) ctx.progress(double(i + 1) / at.size());
+        images += set.images;
+        labels += set.labels;
+        if (images.size() > (asSheet ? 100 : 200))
+            fail("BAD_ARGUMENT", QString("too many frames in total (max %1)").arg(asSheet ? 100 : 200));
+        perSource << QJsonObject{{"n", si + 1}, {"source", set.source}, {"frames", set.frames}};
     }
-    QJsonObject result{{"source", absolute(src)}, {"frames", frames}};
+    QJsonObject result;
+    if (sources.size() == 1) result = {{"source", perSource[0].toObject()["source"]}, {"frames", perSource[0].toObject()["frames"]}};
+    else result = {{"sources", perSource}};
     if (asSheet) {
         const QImage s = sheet(images, labels);
         if (!outDir.isEmpty()) {
