@@ -497,7 +497,7 @@ QString editHelp()
                "Linked audio/video partners are included unless linked:false; ops for one kind of clip (effect, color, "
                "transform, volume, keyframe …) take only the given clips of that kind, a clip of the other kind "
                "stands for its linked partners (linked:true = all partners, false = only the given ones). Subtitle ids work with 'delete' too. "
-               "`help edit` has details. Operations: ")
+               "`help` with command 'edit' and op '<name>' has the details of an op. Operations: ")
         + lines.join("; ") + ".";
 }
 

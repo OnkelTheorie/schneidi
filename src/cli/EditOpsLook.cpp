@@ -341,7 +341,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "param: zoom_x, zoom_y, x, y, rotation, crop_left, crop_right, crop_top, crop_bottom, opacity, "
                  "title_size, title_x, title_y, title_color (\"#rrggbb\"), volume (dB, audio clips), pan (-100..100, "
                  "audio clips) or an effect parameter \"<effect>.<key>\" (keys: `effects <id>`; grade values: "
-                 "grade.liftY, grade.gainR, grade.saturation, …). at = timeline frame inside the clip. Without value "
+                 "grade.liftY, grade.gainR, grade.saturation, …). at = timeline frame inside the clip, or {clip, offset} / "
+                 "{clip, source} (relative, stays right when clips move). Without value "
                  "the keyframe keeps the current value there. ease (from this keyframe on): linear, ease_in, ease_out, "
                  "ease_in_out. Between keyframes the value is interpolated; with no keyframes left the static value "
                  "applies. Times in `info` keyframes are timeline frames.",

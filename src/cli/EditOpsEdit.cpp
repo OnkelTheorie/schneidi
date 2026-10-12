@@ -477,10 +477,11 @@ void addEditOps(QVector<OpDef>& ops)
                  "clip speed (1 = normal, 0.01..100), reverse, freeze frame; ripple: length follows, later clips move", {}, opSpeed}
         << OpDef{"speed_ramp", "{op:'speed_ramp', clip, points:[{at, speed, smooth?}], speed?} or {…, clear:true}",
                  "speed ramp: from each point on its own speed (speed = before the first point)",
-                 "at = timeline frames inside the clip as it is now; smooth = frames of a soft change around the "
+                 "at = timeline frame inside the clip as it is now, or {clip, source:\"12.4s\"} = where the clip "
+                 "plays that source time (safe after earlier ramps); smooth = frames of a soft change around the "
                  "point. The clip length follows the speeds, later clips move. Replaces earlier points.",
                  opSpeedRamp}
-        << OpDef{"marker", "{op:'marker', at, remove?}", {}, {}, opMarker}
+        << OpDef{"marker", "{op:'marker', at, remove?}", "at may be {media, source} to mark a moment of the material", {}, opMarker}
         << OpDef{"marks", "{op:'marks', in?, out?, clear?}", "timeline In/Out range (I/O)", {}, opMarks}
         << OpDef{"media", "{op:'media', media, bin?, color?, flags?, in?, out?}",
                  "Media Pool: move into a bin (\"Name\" or \"A/B\", created if missing), clip color, flags, source "

@@ -518,6 +518,34 @@ QJsonObject cmdInfo(const QJsonObject& a, Context&)
     s.selectTimeline(a["timeline"]);
     QJsonObject o = projectJson(s.project, s.path);
     if (s.live) o["app"] = s.app; // open in the app: what the user sees there
+    if (a["summary"].toBool()) {
+        // Counts instead of the lists (the full JSON of a long timeline is big)
+        QJsonObject tl = o["timeline"].toObject();
+        QJsonArray tracks;
+        int clips = 0;
+        for (const QJsonValue& v : tl["tracks"].toArray()) {
+            QJsonObject t = v.toObject();
+            const int n = t["clips"].toArray().size();
+            clips += n;
+            t.remove("clips");
+            t["clips"] = n;
+            tracks << t;
+        }
+        tl["tracks"] = tracks;
+        tl["clips"] = clips;
+        tl["markers"] = tl["markers"].toArray().size();
+        QJsonArray subs;
+        for (const QJsonValue& v : tl["subtitles"].toArray()) {
+            QJsonObject st = v.toObject();
+            st["cues"] = st["cues"].toArray().size();
+            st.remove("style");
+            subs << st;
+        }
+        if (!subs.isEmpty()) tl["subtitles"] = subs;
+        else tl.remove("subtitles");
+        o["timeline"] = tl;
+        o["media"] = o["media"].toArray().size();
+    }
     return o;
 }
 
@@ -904,7 +932,8 @@ const QVector<Command>& commands()
     using T = ParamType;
     static const QVector<Command> list{
         {"help", "List all commands with their parameters (JSON).",
-         {{"command", T::String, "only this command", false, true}}, cmdHelp},
+         {{"command", T::String, "only this command", false, true},
+          {"op", T::String, "with command 'edit': only these ops, e.g. \"speed_ramp\" or \"title,track\""}}, cmdHelp},
         {"new", "Create a new empty project (.schneidi), optionally with media already in the media pool.",
          {{"project", T::Path, "project file to create (.schneidi)", true, true},
           {"width", T::Integer, "timeline width (default 1920)"},
@@ -916,6 +945,7 @@ const QVector<Command>& commands()
         {"info", "Show a project: format, media, its timelines and one timeline's tracks and clips (ids, positions, "
                  "source ranges).",
          {{"project", T::Path, "project file", true, true},
+          {"summary", T::Boolean, "short form: length, counts of clips/tracks/markers, no clip list"},
           {"timeline", T::String, "timeline to show (id or name; default: the open one)"}},
          cmdInfo},
         {"import", "Add media files to a project's media pool.",
@@ -1188,7 +1218,24 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
         for (const Param& p : c.params)
             if (p.positional) positional << p.name;
         QJsonObject o{{"name", c.name}, {"summary", c.summary}, {"positional", positional}, {"params", inputSchema(c)}};
-        if (c.name == "edit" && a.contains("command")) o["ops"] = editOpsHelp();
+        if (c.name == "edit" && a.contains("command")) {
+            QJsonArray ops = editOpsHelp();
+            if (a.contains("op")) {
+                // Only the asked ops (the full list is long); the parameter list of `edit` itself is left out too
+                const QStringList wanted = a["op"].toString().split(',', Qt::SkipEmptyParts);
+                QJsonArray only;
+                QStringList names;
+                for (const QJsonValue& v : ops) {
+                    names << v["op"].toString();
+                    for (const QString& w : wanted)
+                        if (w.trimmed() == v["op"].toString()) only << v;
+                }
+                if (only.isEmpty()) fail("NOT_FOUND", "no op " + a["op"].toString() + " (ops: " + names.join(", ") + ")");
+                ops = only;
+                o.remove("params");
+            }
+            o["ops"] = ops;
+        }
         list << o;
     }
     if (list.isEmpty()) fail("NOT_FOUND", "no command " + a["command"].toString());

@@ -10,7 +10,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <algorithm>
 #include <cstdio>
+#include <memory>
 #include <iostream>
 #include <string>
 
@@ -57,6 +59,18 @@ QJsonObject callTool(const QJsonObject& params)
     if (!cmd) return failure("NOT_FOUND", "unknown tool " + name);
     Context ctx;
     ctx.mcp = true;
+    // Long jobs (render, transcribe, loudness …) report progress when the client asked for it
+    const QJsonValue token = params["_meta"].toObject().value("progressToken");
+    if (!token.isUndefined() && !token.isNull()) {
+        auto last = std::make_shared<int>(-1);
+        ctx.progress = [token, last](double p) {
+            const int percent = std::clamp(int(p * 100), 0, 100);
+            if (percent == *last) return;
+            *last = percent;
+            send({{"jsonrpc", "2.0"}, {"method", "notifications/progress"},
+                  {"params", QJsonObject{{"progressToken", token}, {"progress", percent}, {"total", 100}}}});
+        };
+    }
     try {
         QJsonObject result = execute(*cmd, normalize(*cmd, params["arguments"].toObject()), ctx);
         result.insert("ok", true);
@@ -97,7 +111,7 @@ int runMcp()
                         "schneidi is a video editor. Edit projects (.schneidi) with these tools: `new` creates one, "
                         "`probe`/`silence`/`scenes`/`frames`/`transcribe`/`loudness`/`scopes` look at (and listen to) "
                         "the material, `edit` changes a timeline (see its 'ops' description, `help` with command "
-                        "'edit' has details per op; `effects` lists effects, LUTs and transitions), `info` shows the "
+                        "'edit' and op '<name>' has details per op; `effects` lists effects, LUTs and transitions), `info` shows the "
                         "result (a project can have several timelines), `render` writes a video, `restore` undoes a "
                         "change (`backups` lists the saved states). If the project is open in the schneidi app, all tools "
                         "work live on what the app shows (unsaved changes included): `edit` changes it there as one "
@@ -109,8 +123,9 @@ int runMcp()
             QJsonArray tools;
             for (const Command& c : commands()) {
                 // help: only for the details of the edit ops (the tool list already has the rest)
-                const QString summary = c.name == "help" ? QString("Details of every edit op (parameters, ranges): "
-                                                                   "call with command 'edit'.")
+                const QString summary = c.name == "help" ? QString("Details of the edit ops (parameters, ranges): "
+                                                                   "command 'edit' and op 'name' (or a comma list; "
+                                                                   "without op: all ops, long).")
                                                          : c.summary;
                 tools << QJsonObject{{"name", c.name}, {"description", summary}, {"inputSchema", inputSchema(c)}};
             }
