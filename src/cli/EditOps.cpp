@@ -3,6 +3,7 @@
 
 #include "core/EffectRegistry.h"
 #include "core/Presets.h"
+#include "core/Retime.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 
@@ -12,6 +13,7 @@
 #include <QJsonArray>
 
 #include <algorithm>
+#include <cmath>
 
 namespace Cli::detail {
 
@@ -44,12 +46,75 @@ QVector<int> clipIds(Session& s, const QJsonObject& op, bool cues)
     return s.editor.withLinked(clips) + subtitles;
 }
 
+namespace {
+
+// Timeline frame where clip c plays source frame `source` (file frames in the project rate, as `probe` with a
+// project counts them); speed, reverse and speed ramps included. -1 = the clip does not play that frame.
+int timelineAtSource(const Session& s, const Clip& c, int source)
+{
+    const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
+    const RetimeMap map(c, m ? m->length : 0);
+    const int t = c.start + int(std::floor(map.materialAtFile(source + 0.5))) - c.in;
+    return t >= c.start && t < c.end() ? t : -1;
+}
+
+QString sourceSpan(const Session& s, const Clip& c)
+{
+    const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
+    const RetimeMap map(c, m ? m->length : 0);
+    const double a = map.fileFrameAt(c.in), b = map.fileFrameAt(c.out);
+    return QString("clip %1 plays source %2..%3").arg(c.id).arg(tc(int(std::min(a, b)), s.format()), tc(int(std::max(a, b)) + 1, s.format()));
+}
+
+// A time given relative to a clip or to the source material instead of the timeline:
+// {clip, offset?} (from the clip start), {clip, from_end} (back from its end), {clip, source} (where the clip plays
+// this source time) or {media, source} (the first clip on the timeline that plays it). They are resolved when the op
+// runs, so earlier ops that move clips (speed ramps, ripple) do not shift them.
+int timeRef(Session& s, const QJsonObject& r, const char* key)
+{
+    const ProjectFormat& f = s.format();
+    const QString what = QString(key);
+    if (r.contains("clip")) {
+        const Clip& c = clipOf(s, r);
+        if (r.contains("source")) {
+            if (c.kind != ClipKind::Media) fail("BAD_ARGUMENT", QString("%1: clip %2 has no source material").arg(what).arg(c.id));
+            const int t = timelineAtSource(s, c, parseTime(r["source"], f, what + ".source"));
+            if (t < 0) fail("BAD_ARGUMENT", QString("%1: source time is not inside the clip (%2)").arg(what, sourceSpan(s, c)));
+            return t;
+        }
+        if (r.contains("from_end")) return c.end() - parseTime(r["from_end"], f, what + ".from_end");
+        return c.start + (r.contains("offset") ? parseTime(r["offset"], f, what + ".offset") : 0);
+    }
+    if (r.contains("media") && r.contains("source")) {
+        const QString path = absolute(r["media"].toString());
+        const int source = parseTime(r["source"], f, what + ".source");
+        const Timeline& tl = s.project.timeline();
+        QStringList used;
+        int best = -1;
+        for (const QVector<Track>* tracks : {&tl.video, &tl.audio})
+            for (const Track& t : *tracks)
+                for (const Clip& c : t.clips) {
+                    if (c.kind != ClipKind::Media || c.mediaPath != path) continue;
+                    const int at = timelineAtSource(s, c, source);
+                    if (at >= 0 && (best < 0 || at < best)) best = at;
+                    if (used.size() < 12) used << sourceSpan(s, c);
+                }
+        if (best >= 0) return best;
+        fail("BAD_ARGUMENT", used.isEmpty() ? QString("%1: %2 is not on the timeline").arg(what, path)
+                                            : QString("%1: no clip plays that source time (%2)").arg(what, used.join("; ")));
+    }
+    fail("BAD_ARGUMENT", QString("%1: a time object needs {clip, offset?|from_end|source} or {media, source}").arg(what));
+}
+
+} // namespace
+
 int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback)
 {
     if (!op.contains(key)) {
         if (fallback >= 0) return fallback;
         fail("BAD_ARGUMENT", QString("missing '%1'").arg(key));
     }
+    if (op[key].isObject()) return timeRef(s, op[key].toObject(), key);
     return parseTime(op[key], s.format(), key);
 }
 
@@ -423,7 +488,11 @@ QString editHelp()
     }
     return QStringLiteral(
                "List of operations, applied in order, saved once (nothing is saved if one fails). Times: frames "
-               "(integer), \"4.5s\" or \"HH:MM:SS:FF\"; ranges are half-open [from, to). Tracks: \"V1\", \"A2\" (a "
+               "(integer), \"4.5s\" or \"HH:MM:SS:FF\"; ranges are half-open [from, to). A timeline position (at, to, "
+               "from, cue times …) can also be relative, resolved when the op runs so earlier ops that move clips do "
+               "not shift it: {clip:id, offset?} (from the clip start), {clip:id, from_end}, {clip:id, source} (where "
+               "the clip plays that source time; speed and ramps included) or {media:file, source} (first clip that "
+               "plays it); source times in seconds (\"12.4s\") are safest. Tracks: \"V1\", \"A2\" (a "
                "media clip goes to V<n> and A<n>). Clip ids come from `info` and change when clips are split. "
                "Linked audio/video partners are included unless linked:false; ops for one kind of clip (effect, color, "
                "transform, volume, keyframe …) take only the given clips of that kind, a clip of the other kind "
