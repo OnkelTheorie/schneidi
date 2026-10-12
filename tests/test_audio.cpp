@@ -237,11 +237,8 @@ int main(int argc, char** argv)
     {
         auto prof = makeProfile(fmt);
         Mlt::Transition qt(*prof, "qtblend");
-        Mlt::Filter lim(*prof, "avfilter.alimiter");
         if (!qt.is_valid()) {
             std::printf("Hinweis: MLT-Qt-Modul ohne Display nicht nutzbar, Render-Prüfungen übersprungen\n");
-        } else if (!lim.is_valid()) {
-            std::printf("Hinweis: avfilter.alimiter fehlt, Limiter-Prüfungen übersprungen\n");
         } else {
             Timeline tl;
             tl.video.resize(1);

@@ -1,4 +1,5 @@
 #include "engine/TimelineBuilder.h"
+#include "core/Limiter.h"
 #include "core/Loudness.h"
 #include "core/TruePeak.h"
 
@@ -526,24 +527,65 @@ std::shared_ptr<Mlt::Filter> makeMeter()
     return meter;
 }
 
-// Limiter am Master: avfilter.alimiter (Lookahead, Sample-Peak). av.level (Auto-Level) ist in FFmpeg standardmäßig an
-// und würde alles auf die Ceiling hochziehen -> aus. Werte per anim_set (Zahlenformat, siehe dev-notes).
+// Master limiter: own filter around PeakLimiter (lookahead, true peak). avfilter.alimiter got integer audio in the
+// export (clipped at 0 dBFS before the limiter, louder than measured) and only held the sample peak.
+// The ceiling is stored in milli-dB as an integer (no number format issues, see dev-notes).
+struct LimiterState {
+    std::mutex mutex;
+    PeakLimiter limiter, before; // before = state before the last frame (the same frame requested again)
+    mlt_position last = -10;
+};
+
+int limiterGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int* frequency, int* channels,
+                    int* samples)
+{
+    auto filter = static_cast<mlt_filter>(mlt_frame_pop_audio(frame));
+    *format = mlt_audio_float;
+    const int error = mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
+    if (error || !*buffer || *channels <= 0 || *samples <= 0) return error;
+    if (*format != mlt_audio_float) {
+        if (!frame->convert_audio || frame->convert_audio(frame, buffer, format, mlt_audio_float) || *format != mlt_audio_float)
+            return 0;
+    }
+    mlt_properties props = MLT_FILTER_PROPERTIES(filter);
+    auto* st = static_cast<LimiterState*>(mlt_properties_get_data(props, "_state", nullptr));
+    if (!st) return 0;
+    const std::lock_guard<std::mutex> lock(st->mutex);
+    const mlt_position pos = mlt_frame_get_position(frame);
+    if (pos == st->last) st->limiter = st->before;
+    else if (pos != st->last + 1) st->limiter.reset(); // jump: start over
+    st->before = st->limiter;
+    st->limiter.setCeilingDb(mlt_properties_get_int(props, "ceiling_mdb") / 1000.0);
+    st->limiter.processPlanar(static_cast<float*>(*buffer), *samples, *channels, *frequency);
+    st->last = pos;
+    return 0;
+}
+
+mlt_frame limiterProcess(mlt_filter filter, mlt_frame frame)
+{
+    mlt_frame_push_audio(frame, filter);
+    mlt_frame_push_audio(frame, reinterpret_cast<void*>(limiterGetAudio));
+    return frame;
+}
+
 void setLimiter(Mlt::Filter& f, bool on, double ceilingDb)
 {
     f.set("disable", on ? 0 : 1);
-    f.anim_set("av.limit", std::clamp(std::pow(10.0, ceilingDb / 20.0), 0.0625, 1.0), 0);
+    f.set("ceiling_mdb", int(std::lround(std::clamp(ceilingDb, -40.0, 0.0) * 1000)));
 }
 
 std::shared_ptr<Mlt::Filter> makeLimiter(Mlt::Profile& profile, bool on, double ceilingDb)
 {
-    auto f = std::make_shared<Mlt::Filter>(profile, "avfilter.alimiter");
-    if (!f->is_valid()) return nullptr;
-    f->set("av.level", 0);
-    f->set("av.asc", 0);
-    f->anim_set("av.attack", 5.0, 0);
-    f->anim_set("av.release", 50.0, 0);
-    setLimiter(*f, on, ceilingDb);
-    return f;
+    mlt_filter f = mlt_filter_new();
+    if (!f) return nullptr;
+    mlt_service_set_profile(MLT_FILTER_SERVICE(f), profile.get_profile());
+    f->process = limiterProcess;
+    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), "_state", new LimiterState, 0,
+                            [](void* p) { delete static_cast<LimiterState*>(p); }, nullptr);
+    auto limiter = std::make_shared<Mlt::Filter>(f);
+    mlt_filter_close(f);
+    setLimiter(*limiter, on, ceilingDb);
+    return limiter;
 }
 
 // Feinposition von Ton-Clips (Clip::subframe): verzögert den Ton um einen Bruchteil eines Frames. Die fehlenden

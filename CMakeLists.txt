@@ -60,6 +60,7 @@ add_library(schneidi_lib STATIC
     src/core/Presets.h            src/core/Presets.cpp
     src/core/Loudness.h           src/core/Loudness.cpp
     src/core/TruePeak.h           src/core/TruePeak.cpp
+    src/core/Limiter.h            src/core/Limiter.cpp
     src/core/RenderJob.h          src/core/RenderJob.cpp
     src/core/Subtitles.h          src/core/Subtitles.cpp
     src/core/Transcript.h         src/core/Transcript.cpp
