@@ -1016,12 +1016,27 @@ const QVector<Command>& commands()
           {"pad", T::Time, "sound kept around each pause (default 0.1s)"}},
          cmdSilence},
         {"scenes", "Find scene changes (cuts) in a video file. Returns the 'cuts' and the 'scenes' between them as "
-                   "ranges [from, to) in source frames, e.g. to pick shots for 'keep' or to look at them with `frames`.",
-         {{"file", T::Path, "video file", true, true},
+                   "ranges [from, to) in source frames, e.g. to pick shots for 'keep' or to look at them with `frames`. "
+                   "With 'region' it finds events in one part of the picture instead ('changes': a new kill feed line, "
+                   "a score or HUD change); look at the region with `frames` crop first to pick it.",
+         {{"file", T::Path, "video file", false, true},
+          {"files", T::Paths, "several video files (one result each)"},
+          {"region", T::String, "only this part of the picture \"x,y,w,h\" (pixels or fractions 0..1, like frames crop)"},
           {"project", T::Path, "count frames in this project's frame rate (recommended before editing)"},
           {"threshold", T::Number, "how different two frames must be, 0..1 (default 0.3; lower finds more cuts)"},
           {"min", T::Time, "shortest scene (default 0.5s)"}},
          cmdScenes},
+        {"peaks", "Find loud moments in the sound of media files (shots, explosions, shouts, applause): the loudest "
+                  "frame of each burst above the threshold, at least 'min' apart. Useful with `scenes` region to find "
+                  "highlights.",
+         {{"file", T::Path, "media file", false, true},
+          {"files", T::Paths, "several media files (one result each)"},
+          {"threshold_db", T::Number, "sample peak in dBFS that counts (default: 12 dB above the file's median level)"},
+          {"min", T::Time, "shortest distance between two peaks (default 0.5s)"},
+          {"top", T::Integer, "only the loudest N peaks (in time order)"},
+          {"audio_stream", T::Integer, "which audio stream, 0 = first"},
+          {"project", T::Path, "count frames in this project's frame rate"}},
+         cmdPeaks},
         {"transcribe", "Speech to text with whisper (offline; install it with `extensions`). Returns subtitle-sized "
                        "'segments' with times and, with words, every word's time (to cut out words or filler). "
                        "Source: a media file or a project (its timeline sound, times in timeline frames).",

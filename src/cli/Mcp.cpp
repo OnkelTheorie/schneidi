@@ -109,7 +109,7 @@ int runMcp()
                        {"serverInfo", QJsonObject{{"name", "schneidi"}, {"version", QCoreApplication::applicationVersion()}}},
                        {"instructions",
                         "schneidi is a video editor. Edit projects (.schneidi) with these tools: `new` creates one, "
-                        "`probe`/`silence`/`scenes`/`frames`/`transcribe`/`loudness`/`scopes` look at (and listen to) "
+                        "`probe`/`silence`/`scenes`/`peaks`/`frames`/`transcribe`/`loudness`/`scopes` look at (and listen to) "
                         "the material, `edit` changes a timeline (see its 'ops' description, `help` with command "
                         "'edit' and op '<name>' has details per op; `effects` lists effects, LUTs and transitions), `info` shows the "
                         "result (a project can have several timelines), `render` writes a video, `restore` undoes a "

@@ -132,6 +132,7 @@ QColor colorOf(const QJsonValue& v, const QString& what);
 QJsonObject cmdProbe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx);
 QJsonObject cmdScenes(const QJsonObject& a, Context& ctx);
+QJsonObject cmdPeaks(const QJsonObject& a, Context& ctx);
 QJsonObject cmdFrames(const QJsonObject& a, Context& ctx);
 QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx);

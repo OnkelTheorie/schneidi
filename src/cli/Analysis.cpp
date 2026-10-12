@@ -254,63 +254,6 @@ QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
 }
 
 
-QJsonObject cmdScenes(const QJsonObject& a, Context& ctx)
-{
-    const MediaSource m = openMedia(a);
-    if (!m.info.hasVideo || m.info.isImage) fail("NO_VIDEO", "file has no moving picture: " + m.info.path);
-    const ProjectFormat& f = m.format;
-    const double threshold = a.contains("threshold") ? a["threshold"].toDouble() : 0.3;
-    if (threshold <= 0 || threshold >= 1) fail("BAD_ARGUMENT", "threshold must be between 0 and 1 (default 0.3)");
-    const int minLen = a.contains("min") ? parseTime(a["min"], f, "min") : int(std::lround(0.5 * f.rate.fps()));
-
-    // ffmpeg's scene score (0..1, difference to the previous frame) on a small copy of each frame; metadata=print
-    // logs time and score of every frame above the threshold. Times start at 0 like the frames in schneidi.
-    QProcess ff;
-    ff.setProgram(Bundle::tool("ffmpeg"));
-    ff.setArguments({"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-i", m.info.path, "-map", "0:v:0",
-                     "-an", "-sn", "-vf",
-                     QString("setpts=PTS-STARTPTS,scale=320:-2,select='gt(scene,%1)',metadata=mode=print").arg(threshold),
-                     "-f", "null", "-", "-progress", "pipe:1"});
-    ff.start();
-    if (!ff.waitForStarted()) fail("TOOL_MISSING", "ffmpeg not found (needed for scene detection)");
-    const double total = m.info.length / f.rate.fps();
-    QByteArray log;
-    while (ff.state() != QProcess::NotRunning) {
-        ff.waitForReadyRead(200);
-        log += ff.readAllStandardError();
-        const QList<QByteArray> lines = ff.readAllStandardOutput().split('\n');
-        for (const QByteArray& line : lines)
-            if (line.startsWith("out_time_us=") && ctx.progress && total > 0)
-                ctx.progress(std::clamp(line.mid(12).toDouble() / 1e6 / total, 0.0, 1.0));
-    }
-    log += ff.readAllStandardError();
-    if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0)
-        fail("DECODE_FAILED", "ffmpeg could not read the video: " + QString::fromUtf8(log.right(400)).trimmed());
-
-    // "frame:12 pts:12 pts_time:0.48" followed by "lavfi.scene_score=0.62"
-    static const QRegularExpression timeRe("pts_time:([0-9.]+)"), scoreRe("lavfi\\.scene_score=([0-9.]+)");
-    QVector<QPair<int, double>> found;
-    for (const QString& line : QString::fromUtf8(log).split('\n')) {
-        if (const auto t = timeRe.match(line); t.hasMatch())
-            found.append({int(std::lround(t.captured(1).toDouble() * f.rate.fps())), 0.0});
-        else if (const auto sc = scoreRe.match(line); sc.hasMatch() && !found.isEmpty())
-            found.last().second = sc.captured(1).toDouble();
-    }
-    // Cuts closer than minLen to the previous one (flashes, fast pans) are dropped; no cut at the very start
-    QJsonArray cuts, scenes;
-    int sceneStart = 0;
-    for (const auto& [frame, score] : found) {
-        if (frame <= 0 || frame >= m.info.length || frame - sceneStart < minLen) continue;
-        cuts << QJsonObject{{"frame", frame}, {"s", seconds(frame, f)}, {"tc", tc(frame, f)},
-                            {"score", std::round(score * 1000) / 1000}};
-        scenes << range(sceneStart, frame, f);
-        sceneStart = frame;
-    }
-    scenes << range(sceneStart, m.info.length, f);
-    return {{"file", m.info.path}, {"frames", m.info.length}, {"fps", formatJson(f)["fps"]}, {"threshold", threshold},
-            {"cuts", cuts}, {"scenes", scenes}};
-}
-
 namespace {
 
 // "x,y,w,h" in pixels of the full picture, or fractions of it when all four are <= 1 ("0.75,0,0.25,0.3")
@@ -405,6 +348,229 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
 }
 
 } // namespace
+
+namespace {
+
+// Events in one region of the picture (kill feed, score, HUD): moments where its content changes and then stays.
+// The game behind such overlays moves all the time, so a plain frame difference fires constantly; a pixel only
+// counts when it was steady just before, differs afterwards and is steady again (a new line that appeared).
+QJsonObject regionChanges(const MediaSource& m, const QJsonObject& a, Context& ctx)
+{
+    const ProjectFormat& f = m.format;
+    const QSize full(std::max(2, f.width), std::max(2, f.height));
+    const QRect r = cropRect(a["region"].toString(), full);
+    constexpr int kRate = 10; // samples per second
+    const int w = 128, h = std::clamp(int(std::lround(128.0 * r.height() / r.width())) & ~1, 8, 256);
+    QProcess ff;
+    ff.setProgram(Bundle::tool("ffmpeg"));
+    ff.setArguments({"-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-i", m.info.path, "-map", "0:v:0",
+                     "-an", "-sn", "-vf",
+                     QString("setpts=PTS-STARTPTS,fps=%1,crop=w=iw*%2:h=ih*%3:x=iw*%4:y=ih*%5,scale=%6:%7,format=rgb24")
+                         .arg(kRate)
+                         .arg(QString::number(double(r.width()) / full.width(), 'f', 5),
+                              QString::number(double(r.height()) / full.height(), 'f', 5),
+                              QString::number(double(r.x()) / full.width(), 'f', 5),
+                              QString::number(double(r.y()) / full.height(), 'f', 5))
+                         .arg(w)
+                         .arg(h),
+                     "-f", "rawvideo", "-"});
+    ff.start();
+    if (!ff.waitForStarted()) fail("TOOL_MISSING", "ffmpeg not found (needed for region events)");
+    const qsizetype frameBytes = qsizetype(w) * h * 3;
+    const double total = m.info.length / f.rate.fps() * kRate;
+    QByteArray raw;
+    while (ff.state() != QProcess::NotRunning) {
+        ff.waitForReadyRead(200);
+        raw += ff.readAllStandardOutput();
+        if (ctx.progress && total > 0) ctx.progress(std::clamp(raw.size() / frameBytes / total, 0.0, 1.0));
+    }
+    raw += ff.readAllStandardOutput();
+    if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0)
+        fail("DECODE_FAILED", "ffmpeg could not read the video: " + QString::fromUtf8(ff.readAllStandardError().right(400)).trimmed());
+    const int n = int(raw.size() / frameBytes);
+    const auto px = [&](int frame, int i) { return reinterpret_cast<const uchar*>(raw.constData()) + frame * frameBytes + i * 3; };
+    const auto diff = [](const uchar* x, const uchar* y) {
+        return std::max({std::abs(x[0] - y[0]), std::abs(x[1] - y[1]), std::abs(x[2] - y[2])});
+    };
+    constexpr int kSteady = 12, kChanged = 40;
+    const double sensitivity = a.contains("threshold") ? a["threshold"].toDouble() : 0.3;
+    if (sensitivity <= 0 || sensitivity >= 1) fail("BAD_ARGUMENT", "threshold must be between 0 and 1 (default 0.3)");
+    const double minShare = 0.01 + sensitivity * 0.1; // share of the region that must change (default 4 %)
+    // score(t): share of pixels steady over t-2..t-1, changed from t-1 to t+2 (overlays slide in for a few
+    // frames), steady over t+2..t+3
+    std::vector<double> score(size_t(std::max(n, 0)), 0.0);
+    for (int t = 2; t + 3 < n; ++t) {
+        int hits = 0;
+        for (int i = 0; i < w * h; ++i)
+            if (diff(px(t - 2, i), px(t - 1, i)) < kSteady && diff(px(t + 2, i), px(t + 3, i)) < kSteady
+                && diff(px(t - 1, i), px(t + 2, i)) > kChanged)
+                ++hits;
+        score[size_t(t)] = double(hits) / (w * h);
+    }
+    const int minGap = std::max(1, int(std::lround((a.contains("min") ? parseTime(a["min"], f, "min") / f.rate.fps() : 0.5) * kRate)));
+    QJsonArray changes;
+    int last = -minGap;
+    for (int t = 2; t + 3 < n; ++t) {
+        if (score[size_t(t)] < minShare) continue;
+        // the strongest sample of a burst
+        bool peak = true;
+        for (int k = std::max(0, t - minGap + 1); k < std::min(n, t + minGap) && peak; ++k)
+            if (score[size_t(k)] > score[size_t(t)]) peak = false;
+        if (!peak || t - last < minGap) continue;
+        last = t;
+        const int frame = std::min(m.info.length - 1, int(std::lround(double(t) / kRate * f.rate.fps())));
+        changes << QJsonObject{{"frame", frame}, {"s", seconds(frame, f)}, {"tc", tc(frame, f)},
+                               {"changed_pct", std::round(score[size_t(t)] * 1000) / 10}};
+    }
+    return {{"file", m.info.path}, {"frames", m.info.length}, {"fps", formatJson(f)["fps"]}, {"region", a["region"]},
+            {"threshold", sensitivity}, {"changes", changes},
+            {"note", "changes = the region's content changed and stayed (a line appeared or went away); check them "
+                     "with `frames` crop"}};
+}
+
+} // namespace
+
+namespace {
+QJsonObject scenesOne(const QJsonObject& a, Context& ctx)
+{
+    const MediaSource m = openMedia(a);
+    if (!m.info.hasVideo || m.info.isImage) fail("NO_VIDEO", "file has no moving picture: " + m.info.path);
+    if (a.contains("region")) return regionChanges(m, a, ctx);
+    const ProjectFormat& f = m.format;
+    const double threshold = a.contains("threshold") ? a["threshold"].toDouble() : 0.3;
+    if (threshold <= 0 || threshold >= 1) fail("BAD_ARGUMENT", "threshold must be between 0 and 1 (default 0.3)");
+    const int minLen = a.contains("min") ? parseTime(a["min"], f, "min") : int(std::lround(0.5 * f.rate.fps()));
+
+    // ffmpeg's scene score (0..1, difference to the previous frame) on a small copy of each frame; metadata=print
+    // logs time and score of every frame above the threshold. Times start at 0 like the frames in schneidi.
+    QProcess ff;
+    ff.setProgram(Bundle::tool("ffmpeg"));
+    ff.setArguments({"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-i", m.info.path, "-map", "0:v:0",
+                     "-an", "-sn", "-vf",
+                     QString("setpts=PTS-STARTPTS,scale=320:-2,select='gt(scene,%1)',metadata=mode=print").arg(threshold),
+                     "-f", "null", "-", "-progress", "pipe:1"});
+    ff.start();
+    if (!ff.waitForStarted()) fail("TOOL_MISSING", "ffmpeg not found (needed for scene detection)");
+    const double total = m.info.length / f.rate.fps();
+    QByteArray log;
+    while (ff.state() != QProcess::NotRunning) {
+        ff.waitForReadyRead(200);
+        log += ff.readAllStandardError();
+        const QList<QByteArray> lines = ff.readAllStandardOutput().split('\n');
+        for (const QByteArray& line : lines)
+            if (line.startsWith("out_time_us=") && ctx.progress && total > 0)
+                ctx.progress(std::clamp(line.mid(12).toDouble() / 1e6 / total, 0.0, 1.0));
+    }
+    log += ff.readAllStandardError();
+    if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0)
+        fail("DECODE_FAILED", "ffmpeg could not read the video: " + QString::fromUtf8(log.right(400)).trimmed());
+
+    // "frame:12 pts:12 pts_time:0.48" followed by "lavfi.scene_score=0.62"
+    static const QRegularExpression timeRe("pts_time:([0-9.]+)"), scoreRe("lavfi\\.scene_score=([0-9.]+)");
+    QVector<QPair<int, double>> found;
+    for (const QString& line : QString::fromUtf8(log).split('\n')) {
+        if (const auto t = timeRe.match(line); t.hasMatch())
+            found.append({int(std::lround(t.captured(1).toDouble() * f.rate.fps())), 0.0});
+        else if (const auto sc = scoreRe.match(line); sc.hasMatch() && !found.isEmpty())
+            found.last().second = sc.captured(1).toDouble();
+    }
+    // Cuts closer than minLen to the previous one (flashes, fast pans) are dropped; no cut at the very start
+    QJsonArray cuts, scenes;
+    int sceneStart = 0;
+    for (const auto& [frame, score] : found) {
+        if (frame <= 0 || frame >= m.info.length || frame - sceneStart < minLen) continue;
+        cuts << QJsonObject{{"frame", frame}, {"s", seconds(frame, f)}, {"tc", tc(frame, f)},
+                            {"score", std::round(score * 1000) / 1000}};
+        scenes << range(sceneStart, frame, f);
+        sceneStart = frame;
+    }
+    scenes << range(sceneStart, m.info.length, f);
+    return {{"file", m.info.path}, {"frames", m.info.length}, {"fps", formatJson(f)["fps"]}, {"threshold", threshold},
+            {"cuts", cuts}, {"scenes", scenes}};
+}
+
+// Loud moments of one file: local maxima of the per-frame peak above the threshold, at least `min` apart
+QJsonObject peaksOne(const QJsonObject& a, Context& ctx)
+{
+    const MediaSource m = openMedia(a);
+    if (!m.info.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.info.path);
+    const ProjectFormat& f = m.format;
+    Clip c;
+    c.mediaPath = m.info.path;
+    c.out = m.info.length - 1;
+    c.audioStream = a["audio_stream"].toInt();
+    if (c.audioStream >= m.info.audioStreamCount())
+        fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s)").arg(m.info.audioStreamCount()));
+    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&ctx](double p) {
+        if (ctx.progress) ctx.progress(p);
+        return true;
+    });
+    if (!peaks || peaks->empty()) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
+    std::vector<double> db(peaks->size());
+    for (size_t i = 0; i < db.size(); ++i) db[i] = 20 * std::log10(std::max(1e-6f, (*peaks)[i]));
+    // Default threshold: well above the file's typical level (median), so it adapts to quiet recordings
+    std::vector<double> sorted = db;
+    std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+    const double median = sorted[sorted.size() / 2];
+    const double threshold = a.contains("threshold_db") ? a["threshold_db"].toDouble() : std::min(-1.0, median + 12);
+    const int minGap = a.contains("min") ? parseTime(a["min"], f, "min") : int(std::lround(0.5 * f.rate.fps()));
+    struct Hit {
+        int frame;
+        double db;
+    };
+    QVector<Hit> hits;
+    for (int i = 0; i < int(db.size()); ++i) {
+        if (db[i] < threshold) continue;
+        if (!hits.isEmpty() && i - hits.last().frame < minGap) {
+            if (db[i] > hits.last().db) hits.last() = {i, db[i]}; // the loudest frame of a burst counts
+            continue;
+        }
+        hits << Hit{i, db[i]};
+    }
+    if (a.contains("top")) {
+        const int top = std::max(1, a["top"].toInt());
+        std::sort(hits.begin(), hits.end(), [](const Hit& x, const Hit& y) { return x.db > y.db; });
+        if (hits.size() > top) hits.resize(top);
+        std::sort(hits.begin(), hits.end(), [](const Hit& x, const Hit& y) { return x.frame < y.frame; });
+    }
+    QJsonArray list;
+    for (const Hit& h : hits)
+        list << QJsonObject{{"frame", h.frame}, {"s", seconds(h.frame, f)}, {"tc", tc(h.frame, f)},
+                            {"peak_db", std::round(h.db * 10) / 10}};
+    return {{"file", m.info.path}, {"frames", m.info.length}, {"fps", formatJson(f)["fps"]},
+            {"median_db", std::round(median * 10) / 10}, {"threshold_db", std::round(threshold * 10) / 10},
+            {"peaks", list}};
+}
+
+// One file (`file`) or several (`files`, one result each; a failing file gets its error)
+QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const QJsonObject&, Context&))
+{
+    QStringList files;
+    if (a.contains("file")) files << a["file"].toString();
+    for (const QJsonValue& v : a["files"].toArray()) files << v.toString();
+    if (files.isEmpty()) fail("BAD_ARGUMENT", "give 'file' (or 'files', several)");
+    if (files.size() == 1 && !a.contains("files")) return one(a, ctx);
+    QJsonArray list;
+    for (int i = 0; i < files.size(); ++i) {
+        QJsonObject args = a;
+        args.remove("files");
+        args["file"] = files[i];
+        Context sub;
+        if (ctx.progress) sub.progress = [&ctx, i, n = files.size()](double p) { ctx.progress((i + p) / n); };
+        try {
+            list << one(args, sub);
+        } catch (const Error& e) {
+            list << QJsonObject{{"file", files[i]}, {"error", QJsonObject{{"code", e.code}, {"message", e.message}}}};
+        }
+    }
+    return {{"files", list}};
+}
+} // namespace
+
+QJsonObject cmdScenes(const QJsonObject& a, Context& ctx) { return perFile(a, ctx, scenesOne); }
+QJsonObject cmdPeaks(const QJsonObject& a, Context& ctx) { return perFile(a, ctx, peaksOne); }
+
+
 
 QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
 {
