@@ -63,6 +63,17 @@ target_link_libraries(test_live PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_live PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_live schneidi-cli)
 
+# Number format regressions (German decimal comma, e.g. 0.7.0: MLT reset LC_NUMERIC and stabilization did nothing):
+# run tests that pass numbers to MLT/FFmpeg a second time under de_DE.UTF-8 (CI generates the locale)
+foreach(name test_stabilize_denoise test_retime test_effects_render test_cli test_export_formats test_audio
+             test_color test_loudness)
+    add_test(NAME ${name}_de_DE COMMAND ${name})
+    set_tests_properties(${name}_de_DE PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 300
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
+endforeach()
+
 # Benchmark, not run by CTest
 add_executable(bench_inspector bench_inspector.cpp check.h)
 target_link_libraries(bench_inspector PRIVATE schneidi_lib Qt6::Test)
