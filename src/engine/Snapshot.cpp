@@ -37,20 +37,48 @@ QImage grab(Mlt::Producer& producer, const ProjectFormat& format, int frame, int
 
 } // namespace
 
+Source::Source() = default;
+Source::~Source()
+{
+    m_producer.reset(); // before the builder/factory that own its parts
+}
+
+std::unique_ptr<Source> Source::media(const ProjectFormat& format, const QString& path)
+{
+    std::unique_ptr<Source> s(new Source);
+    s->m_format = format;
+    s->m_profile = makeProfile(format);
+    s->m_factory = std::make_unique<ProducerFactory>(*s->m_profile);
+    s->m_producer = s->m_factory->open(path);
+    if (s->m_producer) s->m_producer->set("audio_index", -1);
+    return s;
+}
+
+std::unique_ptr<Source> Source::timeline(const ProjectFormat& format, const Timeline& tl)
+{
+    std::unique_ptr<Source> s(new Source);
+    s->m_format = format;
+    s->m_profile = makeProfile(format);
+    s->m_builder = std::make_unique<TimelineBuilder>(*s->m_profile);
+    Timeline picture = tl;
+    for (Track& t : picture.audio) t.clips.clear();
+    s->m_producer = s->m_builder->build(picture);
+    return s;
+}
+
+QImage Source::frame(int frame, int maxEdge)
+{
+    return m_producer ? grab(*m_producer, m_format, frame, maxEdge) : QImage();
+}
+
 QImage media(const ProjectFormat& format, const QString& path, int frame, int maxEdge)
 {
-    auto profile = makeProfile(format);
-    ProducerFactory factory(*profile);
-    const std::unique_ptr<Mlt::Producer> producer = factory.open(path);
-    return producer ? grab(*producer, format, frame, maxEdge) : QImage();
+    return Source::media(format, path)->frame(frame, maxEdge);
 }
 
 QImage timeline(const ProjectFormat& format, const Timeline& tl, int frame, int maxEdge)
 {
-    auto profile = makeProfile(format);
-    TimelineBuilder builder(*profile);
-    const std::unique_ptr<Mlt::Tractor> tractor = builder.build(tl);
-    return tractor ? grab(*tractor, format, frame, maxEdge) : QImage();
+    return Source::timeline(format, tl)->frame(frame, maxEdge);
 }
 
 } // namespace Snapshot

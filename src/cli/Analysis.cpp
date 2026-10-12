@@ -325,12 +325,13 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
     const QRect region = crop ? cropRect(a["crop"].toString(), full) : QRect();
     const int decodeEdge = crop ? std::max(full.width(), full.height()) : maxEdge;
 
-    const Timeline tl = session ? session->project.renderTimeline() : Timeline{};
+    const auto snap = session ? Snapshot::Source::timeline(f, session->project.renderTimeline())
+                              : Snapshot::Source::media(f, media.info.path);
     FrameSet out;
     out.source = absolute(src);
     for (int i = 0; i < at.size(); ++i) {
         const int fr = std::clamp(at[i], 0, length - 1);
-        QImage img = session ? Snapshot::timeline(f, tl, fr, decodeEdge) : Snapshot::media(f, media.info.path, fr, decodeEdge);
+        QImage img = snap->frame(fr, decodeEdge);
         if (img.isNull()) fail("DECODE_FAILED", QString("could not decode frame %1 of %2").arg(fr).arg(src));
         if (crop) {
             // The snapshot may come out smaller than the format (odd sizes): scale the region along
