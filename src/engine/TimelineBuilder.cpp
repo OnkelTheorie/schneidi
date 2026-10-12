@@ -706,36 +706,50 @@ Mlt::Producer* titleCut(Mlt::Profile& profile, const Clip& c, int a, int len)
     double w = 1;
     for (const QString& line : t.text.split('\n')) w = std::max(w, fm.horizontalAdvance(line));
 
-    Mlt::Filter f(profile, "qtext");
-    if (!f.is_valid()) return cut;
-    f.set("argument", t.text.toUtf8().constData());
-    // Rechteck als mlt_rect (Zahlenformat, siehe applyTransform)
-    auto geometry = [&](double tt) {
-        return mlt_rect{(W - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, tt), -Keys::valueAt(c, AnimParam::TitlePosY, tt),
-                        w, H, 1.0};
-    };
-    if (!animate(c, {AnimParam::TitlePosX, AnimParam::TitlePosY}, a, len,
-                 [&](int pos, double tt) { f.anim_set("geometry", geometry(tt), pos, len); }))
-        f.set("geometry", geometry(a));
-    f.set("family", t.fontFamily().toUtf8().constData());
-    f.set("size", size);
-    f.set("weight", t.bold ? 700 : 400);
-    f.set("style", t.italic ? "italic" : "normal");
-    f.set("halign", t.align == 0 ? "left" : t.align == 2 ? "right" : "center");
-    f.set("valign", "middle");
-    // Farben als "#aarrggbb"; bgcolour hat sonst ein leichtes Grau als Standard
+    // qtext strokes the outline centred on the glyph edge, so half of it covers the letters (bold text looked
+    // thin). Like DaVinci the outline goes outside: a layer behind in the outline colour with twice the width,
+    // the text without outline on top.
     auto mltColor = [](const QColor& col) {
         return mlt_color{uint8_t(col.red()), uint8_t(col.green()), uint8_t(col.blue()), uint8_t(col.alpha())};
     };
-    if (!animate(c, {AnimParam::TitleColor}, a, len, [&](int pos, double tt) {
-            f.anim_set("fgcolour", mltColor(Keys::toColor(Keys::valueAt(c, AnimParam::TitleColor, tt))), pos, len);
-        }))
-        f.set("fgcolour", t.color.name(QColor::HexArgb).toUtf8().constData());
-    f.set("bgcolour", t.boxOn ? t.boxColor.name(QColor::HexArgb).toUtf8().constData() : "#00000000");
-    f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
-    f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
-    f.set("outline", t.outlineOn ? std::max(0.0, t.outlineWidth) : 0.0);
-    attachTo(*cut, f);
+    const bool outline = t.outlineOn && t.outlineWidth > 0;
+    auto textFilter = [&](bool outlineLayer) {
+        Mlt::Filter f(profile, "qtext");
+        if (!f.is_valid()) return false;
+        f.set("argument", t.text.toUtf8().constData());
+        // Rectangle as mlt_rect (number format, see applyTransform)
+        auto geometry = [&](double tt) {
+            return mlt_rect{(W - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, tt), -Keys::valueAt(c, AnimParam::TitlePosY, tt),
+                            w, H, 1.0};
+        };
+        if (!animate(c, {AnimParam::TitlePosX, AnimParam::TitlePosY}, a, len,
+                     [&](int pos, double tt) { f.anim_set("geometry", geometry(tt), pos, len); }))
+            f.set("geometry", geometry(a));
+        f.set("family", t.fontFamily().toUtf8().constData());
+        f.set("size", size);
+        f.set("weight", t.bold ? 700 : 400);
+        f.set("style", t.italic ? "italic" : "normal");
+        f.set("halign", t.align == 0 ? "left" : t.align == 2 ? "right" : "center");
+        f.set("valign", "middle");
+        // Colours as "#aarrggbb"; bgcolour otherwise defaults to a light grey
+        if (outlineLayer) {
+            f.set("fgcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
+        } else if (!animate(c, {AnimParam::TitleColor}, a, len, [&](int pos, double tt) {
+                       f.anim_set("fgcolour", mltColor(Keys::toColor(Keys::valueAt(c, AnimParam::TitleColor, tt))), pos, len);
+                   })) {
+            f.set("fgcolour", t.color.name(QColor::HexArgb).toUtf8().constData());
+        }
+        // The box belongs to the bottom layer (the text layer keeps the same pad so both sit in the same place)
+        const bool box = t.boxOn && (outlineLayer || !outline);
+        f.set("bgcolour", box ? t.boxColor.name(QColor::HexArgb).toUtf8().constData() : "#00000000");
+        f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
+        f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
+        f.set("outline", outlineLayer ? 2 * t.outlineWidth : 0.0);
+        attachTo(*cut, f);
+        return true;
+    };
+    if (outline && !textFilter(true)) return cut;
+    if (!textFilter(false)) return cut;
 
     if (sizeAnim) {
         // Maßstab s = Größe/größte Größe um die Textmitte; Produkt aus Größe und Position -> Frame für Frame.
@@ -1019,23 +1033,31 @@ Mlt::Producer* subtitleCut(Mlt::Profile& profile, const TitleStyle& t, const QSt
     const QStringList lines = wrapSubtitle(text.trimmed(), fm, W * 0.9);
     double w = 1;
     for (const QString& line : lines) w = std::max(w, fm.horizontalAdvance(line));
-    Mlt::Filter f(profile, "qtext");
-    if (!f.is_valid()) return cut;
-    f.set("argument", lines.join('\n').toUtf8().constData());
     const double bottom = std::clamp(H - t.posY, 1.0, H);
-    f.set("geometry", mlt_rect{(W - w) / 2 + t.posX, 0, w, bottom, 1.0});
-    f.set("family", t.fontFamily().toUtf8().constData());
-    f.set("size", std::max(1.0, t.size));
-    f.set("weight", t.bold ? 700 : 400);
-    f.set("style", t.italic ? "italic" : "normal");
-    f.set("halign", t.align == 0 ? "left" : t.align == 2 ? "right" : "center");
-    f.set("valign", "bottom");
-    f.set("fgcolour", t.color.name(QColor::HexArgb).toUtf8().constData());
-    f.set("bgcolour", t.boxOn ? t.boxColor.name(QColor::HexArgb).toUtf8().constData() : "#00000000");
-    f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
-    f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
-    f.set("outline", t.outlineOn ? std::max(0.0, t.outlineWidth) : 0.0);
-    attachTo(*cut, f);
+    const bool outline = t.outlineOn && t.outlineWidth > 0;
+    // Outline outside the letters like titles (titleCut): a layer behind with twice the width, the text on top
+    auto textFilter = [&](bool outlineLayer) {
+        Mlt::Filter f(profile, "qtext");
+        if (!f.is_valid()) return false;
+        f.set("argument", lines.join('\n').toUtf8().constData());
+        f.set("geometry", mlt_rect{(W - w) / 2 + t.posX, 0, w, bottom, 1.0});
+        f.set("family", t.fontFamily().toUtf8().constData());
+        f.set("size", std::max(1.0, t.size));
+        f.set("weight", t.bold ? 700 : 400);
+        f.set("style", t.italic ? "italic" : "normal");
+        f.set("halign", t.align == 0 ? "left" : t.align == 2 ? "right" : "center");
+        f.set("valign", "bottom");
+        f.set("fgcolour", (outlineLayer ? t.outlineColor : t.color).name(QColor::HexArgb).toUtf8().constData());
+        const bool box = t.boxOn && (outlineLayer || !outline);
+        f.set("bgcolour", box ? t.boxColor.name(QColor::HexArgb).toUtf8().constData() : "#00000000");
+        f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
+        f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
+        f.set("outline", outlineLayer ? 2 * t.outlineWidth : 0.0);
+        attachTo(*cut, f);
+        return true;
+    };
+    if (outline && !textFilter(true)) return cut;
+    if (!textFilter(false)) return cut;
     // wie bei Titeln: immer in voller Projektgröße zeichnen (Umrandung skaliert sonst in der Vorschau nicht mit)
     Mlt::Filter full(profile, "qtblend");
     if (full.is_valid()) {
