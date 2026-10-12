@@ -138,14 +138,24 @@ QSize RenderSettings::outputSize(QSize timeline) const
 
 int RenderSettings::crf() const
 {
-    static const int crfs[] = {18, 22, 28};
-    return crfs[std::clamp(quality, 0, 2)];
+    static const int crfs[] = {18, 22, 28, 18};
+    return crfs[std::clamp(quality, 0, kQualityWeb)];
+}
+
+int RenderSettings::maxBitrateK(QSize output, FrameRate rate) const
+{
+    if (quality != kQualityWeb || audioOnly() || output.isEmpty() || rate.num <= 0 || rate.den <= 0) return 0;
+    // YouTube (SDR): 1080p30 8 Mbit/s, 1080p60 12, 4K30 35-45, 4K60 53-68 -> bits per pixel, high frame rates
+    // need fewer per frame
+    const double fps = rate.fps();
+    const double bitsPerPixel = fps > 31 ? 0.125 : 0.165;
+    return int(std::lround(double(output.width()) * output.height() * fps * bitsPerPixel / 1000.0));
 }
 
 QString RenderSettings::qualityLabel() const
 {
-    static const char* names[] = {N_("Hoch"), N_("Mittel"), N_("Klein")};
-    return T(names[std::clamp(quality, 0, 2)]);
+    static const char* names[] = {N_("Hoch"), N_("Mittel"), N_("Klein"), N_("Web (begrenzte Bitrate)")};
+    return T(names[std::clamp(quality, 0, kQualityWeb)]);
 }
 
 QString RenderSettings::summary(QSize output) const
@@ -185,7 +195,7 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
 {
     RenderSettings s;
     s.format = renderFormat(o.value("format").toString()).id;
-    s.quality = std::clamp(o.value("quality").toInt(0), 0, 2);
+    s.quality = std::clamp(o.value("quality").toInt(0), 0, kQualityWeb);
     s.audioBitrateK = std::clamp(o.value("audioBitrate").toInt(320), 32, 512);
     s.shortSide = std::max(0, o.value("shortSide").toInt());
     s.audioBits = o.value("audioBits").toInt(24);
@@ -228,9 +238,9 @@ QVector<RenderPreset> builtins()
         return p;
     };
     return {
-        make("YouTube 1080p", "h264", 1080, 0),
-        make("YouTube 4K", "h264", 2160, 0),
-        make(T("Handy / Hochformat 9:16"), "h264", 0, 0, QSize(1080, 1920)),
+        make("YouTube 1080p", "h264", 1080, RenderSettings::kQualityWeb),
+        make("YouTube 4K", "h264", 2160, RenderSettings::kQualityWeb),
+        make(T("Handy / Hochformat 9:16"), "h264", 0, RenderSettings::kQualityWeb, QSize(1080, 1920)),
         make(T("Klein (zum Verschicken)"), "h264", 720, 2),
         make(T("H.265 (kleine Datei, hohe Qualität)"), "h265", 0, 0),
         make(T("Hohe Qualität / Archiv (ProRes 422 HQ)"), "prores", 0, 0),

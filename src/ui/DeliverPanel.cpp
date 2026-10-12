@@ -94,6 +94,8 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_quality->addItem(T("Hoch"));
     m_quality->addItem(T("Mittel"));
     m_quality->addItem(T("Klein"));
+    m_quality->addItem(T("Web (begrenzte Bitrate)"));
+    m_quality->setItemData(RenderSettings::kQualityWeb, T("Hohe Qualität, Bitrate begrenzt wie für YouTube empfohlen (kleinere Datei)"), Qt::ToolTipRole);
 
     // Like DaVinci's "Encoder" (Auto / Native / NVIDIA …): only hardware encoders that work on this computer
     m_encoder = new QComboBox;
@@ -353,7 +355,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     m_wantedBits = s.audioBits;
     m_wantedEncoder = s.encoder;
     m_format->setCurrentIndex(std::max(0, m_format->findData(renderFormat(s.format).id)));
-    m_quality->setCurrentIndex(std::clamp(s.quality, 0, 2));
+    m_quality->setCurrentIndex(std::clamp(s.quality, 0, RenderSettings::kQualityWeb));
     const int br = m_audioBitrate->findData(s.audioBitrateK);
     m_audioBitrate->setCurrentIndex(br >= 0 ? br : m_audioBitrate->count() - 1);
     updateControls(); // Bittiefen des Formats

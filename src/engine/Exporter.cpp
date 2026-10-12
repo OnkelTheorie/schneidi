@@ -344,6 +344,10 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
             }
         }
     }
+    if (!s.videoCodec.isEmpty() && s.maxBitrateK > 0) { // quality target as before, but capped (VBV)
+        m_consumer->set("maxrate", QString("%1k").arg(s.maxBitrateK).toUtf8().constData());
+        m_consumer->set("bufsize", QString("%1k").arg(s.maxBitrateK * 2).toUtf8().constData());
+    }
     m_consumer->set("acodec", s.audioCodec.toUtf8().constData());
     if (!s.audioSampleFormat.isEmpty()) m_consumer->set("sample_fmt", s.audioSampleFormat.toUtf8().constData());
     if (s.audioRate > 0) m_consumer->set("frequency", s.audioRate);

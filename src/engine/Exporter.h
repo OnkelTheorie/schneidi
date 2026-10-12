@@ -30,6 +30,7 @@ struct ExportSettings {
     QString audioCodec = "aac";
     QString pixFmt = "yuv420p";
     int crf = 20;             // Qualität: kleiner = besser
+    int maxBitrateK = 0;      // video bit rate cap (kbit/s), 0 = none
     QString preset = "medium"; // Geschwindigkeit vs. Dateigröße
     int audioBitrateK = 192;
     QString audioSampleFormat; // leer = Vorgabe des Codecs (Apple Lossless: s16p/s32p für 16/24 Bit)

@@ -34,7 +34,10 @@ struct RenderSettings {
     QString format = "h264";
     int shortSide = 0; // Auflösung: 0 = Timeline, sonst kürzere Bildkante im Seitenverhältnis der Timeline
     QSize size;        // feste Ausgabegröße (z. B. Hochformat 1080 × 1920); hat Vorrang vor shortSide
-    int quality = 0;   // 0 = Hoch, 1 = Mittel, 2 = Klein (nur H.264/H.265)
+    // 0 = high, 1 = medium, 2 = small, 3 = web: high with a bit rate cap for upload sites (like DaVinci's
+    // "Restrict to"); only H.264/H.265
+    static constexpr int kQualityWeb = 3;
+    int quality = 0;
     int audioBitrateK = 320; // nur AAC/MP3
     int audioBits = 24;      // Bittiefe bei PCM (16, 24, 32 = Float) und Apple Lossless (16, 24)
     int rateNum = 0, rateDen = 1; // Bildrate der Ausgabe, 0 = wie die Timeline
@@ -53,6 +56,8 @@ struct RenderSettings {
     FrameRate outputRate(FrameRate timeline) const;
     QSize outputSize(QSize timeline) const; // gerade Maße
     int crf() const;
+    // Bit rate cap in kbit/s for the output (0 = none): quality "web", about 1.3x YouTube's recommendation
+    int maxBitrateK(QSize output, FrameRate rate) const;
     QString qualityLabel() const;
     // Kurzbeschreibung für die Warteschlange, z. B. "H.264 (MP4) · 1920 × 1080 · Hoch"
     QString summary(QSize output) const;

@@ -48,6 +48,7 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
         const QFileInfo fi(job.path);
         s.subtitlePath = fi.dir().filePath(fi.completeBaseName() + ".srt");
     }
+    s.maxBitrateK = job.settings.maxBitrateK(s.size, s.rate.num > 0 ? s.rate : format.rate);
     if (job.inOut) {
         s.from = std::max(0, job.from);
         s.to = job.to;

@@ -107,6 +107,16 @@ int main(int argc, char** argv)
         CHECK(formats.contains("h264") && formats.contains("h265") && formats.contains("prores")
               && formats.contains("wav") && formats.contains("aac"));
         CHECK_EQ(b[0].name, QString("YouTube 1080p"));
+        // YouTube: high quality with a bit rate cap (1080p60 ~15.6 Mbit/s, 1080p30 ~10, 4K60 ~62), not 35 Mbit/s
+        CHECK_EQ(b[0].settings.quality, RenderSettings::kQualityWeb);
+        CHECK_EQ(b[0].settings.crf(), 18);
+        CHECK(std::abs(b[0].settings.maxBitrateK({1920, 1080}, {60, 1}) - 15552) < 10);
+        CHECK(std::abs(b[0].settings.maxBitrateK({1920, 1080}, {30, 1}) - 10264) < 10);
+        CHECK(std::abs(b[1].settings.maxBitrateK({3840, 2160}, {60, 1}) - 62208) < 20);
+        RenderSettings high = b[0].settings;
+        high.quality = 0;
+        CHECK_EQ(high.maxBitrateK({1920, 1080}, {60, 1}), 0); // other qualities: no cap
+        CHECK(RenderSettings::fromJson(b[0].settings.toJson()) == b[0].settings);
         CHECK_EQ(b[1].settings.outputSize({1920, 1080}), QSize(3840, 2160));
         CHECK_EQ(b[2].settings.outputSize({1920, 1080}), QSize(1080, 1920)); // Hochformat 9:16
     }
@@ -204,7 +214,9 @@ int main(int argc, char** argv)
             else CHECK_EQ(j.size, presets[i].settings.outputSize({1920, 1080}));
         }
         // Einstellung ändern -> „Eigene Einstellungen“
-        panel.selectPreset(0);
+        const RenderSettings youtube = presets[0].settings;
+        panel.setSettings(RenderSettings{}); // H.264, quality high: no preset (YouTube caps the bit rate)
+        CHECK_EQ(panel.currentPreset(), -1);
         auto* format = panel.findChild<QComboBox*>("renderFormat");
         if (CHECK(format && format->count() == renderFormats().size())) {
             format->setCurrentIndex(1); // H.265 in Timeline-Auflösung = eingebaute H.265-Vorlage
@@ -215,18 +227,18 @@ int main(int argc, char** argv)
             CHECK_EQ(panel.currentPreset(), -1);
             format->setCurrentIndex(1);
             format->setCurrentIndex(0);
-            panel.setSettings(RenderSettings{}); // H.264 Timeline Hoch: passt wieder zu YouTube 1080p
+            panel.setSettings(youtube);
             CHECK_EQ(panel.currentPreset(), 0);
             // Encoder: built-in presets choose it automatically; another one = own settings, kept across formats
             auto* encoder = panel.findChild<QComboBox*>("renderEncoder");
             if (CHECK(encoder)) {
                 CHECK(panel.settings().encoder == VideoEncoder::Auto);
-                RenderSettings sw;
+                RenderSettings sw = youtube;
                 sw.encoder = VideoEncoder::Software;
                 panel.setSettings(sw);
                 CHECK(panel.settings().encoder == VideoEncoder::Software);
                 CHECK_EQ(panel.currentPreset(), -1);
-                RenderSettings nv; // stays selected even when it does not work here (renders with software then)
+                RenderSettings nv = youtube; // stays selected even when it does not work here (renders with software then)
                 nv.encoder = VideoEncoder::Nvenc;
                 panel.setSettings(nv);
                 CHECK(panel.settings().encoder == VideoEncoder::Nvenc);
@@ -236,7 +248,7 @@ int main(int argc, char** argv)
                 format->setCurrentIndex(1); // H.265
                 CHECK(encoder->isEnabled());
                 CHECK(panel.settings().encoder == VideoEncoder::Nvenc);
-                panel.setSettings(RenderSettings{});
+                panel.setSettings(youtube);
                 CHECK_EQ(panel.currentPreset(), 0);
             }
         }
