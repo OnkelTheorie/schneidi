@@ -278,11 +278,15 @@ void opMove(Session& s, const QJsonObject& op)
     s.editor.moveClips(clipIds(s, op), delta, TrackKind::Video, op.value("track_delta").toInt());
 }
 
+// Fade handles of the clips; the linked partners (the sound of a video clip) fade along unless linked:false
 void opFade(Session& s, const QJsonObject& op)
 {
-    const int id = clipOf(s, op).id;
-    if (op.contains("in")) s.editor.setClipFade(id, TimelineOps::Edge::Start, timeOf(s, op, "in"));
-    if (op.contains("out")) s.editor.setClipFade(id, TimelineOps::Edge::End, timeOf(s, op, "out"));
+    if (!op.contains("in") && !op.contains("out")) fail("BAD_ARGUMENT", "missing 'in' and/or 'out' (fade lengths)");
+    for (int id : clipIds(s, op)) {
+        if (s.editor.isSubtitle(id)) continue;
+        if (op.contains("in")) s.editor.setClipFade(id, TimelineOps::Edge::Start, timeOf(s, op, "in"));
+        if (op.contains("out")) s.editor.setClipFade(id, TimelineOps::Edge::End, timeOf(s, op, "out"));
+    }
 }
 
 void opSubtitle(Session& s, const QJsonObject& op)
@@ -424,7 +428,8 @@ QVector<OpDef> makeOps()
              s.editor.deleteRanges(ranges, ripple, ripple ? "Delete ranges with ripple" : "Delete ranges");
          }},
         {"move", "{op:'move', clips, by|to, track_delta?}", {}, {}, opMove},
-        {"fade", "{op:'fade', clip, in?, out?}", "fade lengths", {}, opFade},
+        {"fade", "{op:'fade', clips, in?, out?, linked?}", "fade handles (video: to the track below/black, audio: volume); "
+         "a video clip's sound fades along unless linked:false", {}, opFade},
         {"enable", "{op:'enable'|'disable', clips}", {}, {},
          [](Session& s, const QJsonObject& op) {
              s.editor.modifyClips(clipIds(s, op), "Enable", [](Clip& c) { c.enabled = true; });

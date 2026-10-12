@@ -10,6 +10,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 
+#include <algorithm>
+
 #include <cmath>
 
 namespace Cli::detail {
@@ -216,6 +218,81 @@ void opNormalize(Session& s, const QJsonObject& op)
     }
 }
 
+// Ducking: lower the music (target clips) while the voice/game tracks (`under`) have sound, with volume keyframes
+// (ramps of `attack` before and `release` after each sound; pauses shorter than `hold` stay ducked)
+void opDuck(Session& s, const QJsonObject& op)
+{
+    const ProjectFormat& f = s.format();
+    const Timeline& cur = s.project.timeline();
+    QVector<int> ids;
+    if (op.contains("track")) {
+        TrackKind k = TrackKind::Video;
+        const int index = parseTrack(op.value("track"), &k);
+        if (k != TrackKind::Audio || index >= cur.audio.size()) fail("BAD_ARGUMENT", "track must be an audio track like A2");
+        for (const Clip& c : cur.audio[index].clips) ids << c.id;
+        if (ids.isEmpty()) fail("BAD_ARGUMENT", "the track has no clips");
+    } else {
+        ids = clipsOn(s, op, TrackKind::Audio, "ducking");
+    }
+    if (!op.contains("under")) fail("BAD_ARGUMENT", "missing 'under' (the tracks whose sound lowers the music, e.g. \"A1\")");
+    Timeline tl = s.project.renderTimeline();
+    const QVector<int> voice = audioTracksOf(s.project, tl, op.value("under"));
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        tl.audio[i].muted = !voice.contains(i);
+        tl.audio[i].solo = false;
+    }
+    for (int id : ids)
+        for (const int v : voice)
+            for (const Clip& c : cur.audio.value(v).clips)
+                if (c.id == id) fail("BAD_ARGUMENT", QString("clip %1 is on a track in 'under' itself").arg(id));
+    const double amount = op.contains("amount_db") ? numberOf(op, "amount_db", -60, 0) : -12.0;
+    const double threshold = op.contains("threshold_db") ? numberOf(op, "threshold_db", -80, 0) : -35.0;
+    const int attack = op.contains("attack") ? timeOf(s, op, "attack") : int(std::lround(0.15 * f.rate.fps()));
+    const int release = op.contains("release") ? timeOf(s, op, "release") : int(std::lround(0.4 * f.rate.fps()));
+    const int hold = op.contains("hold") ? timeOf(s, op, "hold") : int(std::lround(0.5 * f.rate.fps()));
+    const int end = TimelineOps::endFrame(tl);
+    if (end <= 0) fail("EMPTY", "the timeline is empty");
+    const auto peaks = AudioAnalysis::timelineFramePeaks(f, tl, 0, end);
+    if (!peaks) fail("DECODE_FAILED", "could not mix the sound");
+    const float limit = float(std::pow(10.0, threshold / 20.0));
+    // Sound ranges [from, to) of the voice tracks; short pauses are bridged
+    QVector<QPair<int, int>> ranges;
+    for (int i = 0; i < int(peaks->size()); ++i) {
+        if ((*peaks)[size_t(i)] < limit) continue;
+        if (!ranges.isEmpty() && i - ranges.last().second <= hold + attack + release) ranges.last().second = i + 1;
+        else ranges.append({i, i + 1});
+    }
+    int ducked = 0;
+    s.editor.modifyClips(ids, "Ducking", [&](Clip& c) {
+        if (Keys::animated(c, AnimParam::Volume) && !op.value("replace").toBool(true)) return;
+        Keys::clear(c, AnimParam::Volume);
+        const double base = c.volumeDb, low = std::max(kMinVolumeDb, base + amount);
+        const int len = c.length();
+        bool any = false;
+        for (const auto& [from, to] : ranges) {
+            const int a = from - c.start, b = to - c.start; // clip frames
+            if (b + release <= 0 || a - attack >= len) continue;
+            any = true;
+            const auto key = [&](int t, double v) {
+                if (t >= 0 && t < len) Keys::setKey(c, AnimParam::Volume, t, v);
+            };
+            key(a - attack, base);
+            key(std::max(0, a), low);
+            key(std::min(len - 1, b), low);
+            key(b + release, base);
+            if (a <= 0) Keys::setKey(c, AnimParam::Volume, 0, low);       // starts inside a sound
+            if (b >= len - 1) Keys::setKey(c, AnimParam::Volume, len - 1, low); // ends inside one
+        }
+        if (any) ++ducked;
+    });
+    s.notes << QString("ducked %1 of %2 clip(s) by %3 dB during %4 sound range(s) of %5")
+                   .arg(ducked)
+                   .arg(ids.size())
+                   .arg(amount, 0, 'f', 1)
+                   .arg(ranges.size())
+                   .arg(op.value("under").toVariant().toString());
+}
+
 } // namespace
 
 void addAudioOps(QVector<OpDef>& ops)
@@ -234,7 +311,15 @@ void addAudioOps(QVector<OpDef>& ops)
                  "mode peak: sample peak to target dBFS (default -1); lufs: integrated loudness to target LUFS (default "
                  "-14, streaming; -23 = EBU R128 broadcast). relative:true moves all clips by the same amount (the "
                  "loudest/whole hits the target), otherwise each clip on its own. Measures the files (takes a while).",
-                 opNormalize};
+                 opNormalize}
+        << OpDef{"duck", "{op:'duck', clips|track, under, amount_db?, threshold_db?, attack?, release?, hold?}",
+                 "ducking: lower the music while other tracks have sound (volume keyframes)",
+                 "clips or track = the music; under = the tracks that duck it (\"A1\", \"A1,A3\" or stream/track "
+                 "names like \"Mikrofon\"). amount_db: how far down (default -12), threshold_db: what counts as "
+                 "sound on 'under' (default -35 dBFS), attack/release: ramp before/after a sound (default 0.15s / "
+                 "0.4s), hold: pauses shorter than this stay ducked (default 0.5s). Replaces the clips' volume "
+                 "keyframes; run it again after editing.",
+                 opDuck};
 }
 
 } // namespace Cli::detail

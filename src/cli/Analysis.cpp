@@ -87,38 +87,6 @@ QImage sheet(const QVector<QImage>& images, const QStringList& labels)
     return out;
 }
 
-// Audio tracks of `tl`: "A3", "A2,A5", numbers, track names or the audio stream names of their clips
-// ("Discord,Mikrofon", as `probe` lists them); empty = none given
-QVector<int> audioTracksOf(const Project& p, const Timeline& tl, const QJsonValue& list)
-{
-    static const QRegularExpression trackRef("^[AaVv]?\\d+$");
-    QVector<int> out;
-    for (QString t : list.toVariant().toString().split(',', Qt::SkipEmptyParts)) {
-        t = t.trimmed();
-        int index = -1;
-        if (trackRef.match(t).hasMatch()) {
-            TrackKind k;
-            index = parseTrack(t, &k);
-            if (k != TrackKind::Audio || index >= tl.audio.size()) fail("BAD_ARGUMENT", "no audio track " + t);
-        }
-        QStringList names;
-        for (int i = 0; i < tl.audio.size(); ++i) {
-            const Track& track = tl.audio[i];
-            QStringList own{track.name};
-            for (const Clip& c : track.clips)
-                if (const MediaInfo* m = p.mediaInfo(c.mediaPath)) own << m->audioStreamName(c.audioStream);
-            own.removeAll(QString());
-            own.removeDuplicates();
-            if (index < 0 && own.contains(t, Qt::CaseInsensitive)) index = i;
-            if (!own.isEmpty()) names << QString("A%1 = %2").arg(i + 1).arg(own.join("/"));
-        }
-        if (index < 0)
-            fail("BAD_ARGUMENT", QString("no audio track '%1' (tracks: %2)").arg(t, names.isEmpty() ? "none named" : names.join(", ")));
-        if (!out.contains(index)) out << index;
-    }
-    return out;
-}
-
 // Pauses in per-frame peaks: quiet runs of at least minLen frames; the pad of sound stays on both sides (not at
 // the start/end). Ranges are shifted by `offset`.
 QJsonObject silenceJson(const std::vector<float>& peaks, int offset, double thresholdDb, int minLen, int pad,
@@ -153,6 +121,38 @@ QJsonObject silenceJson(const std::vector<float>& peaks, int offset, double thre
 }
 
 } // namespace
+
+// Audio tracks of `tl`: "A3", "A2,A5", numbers, track names or the audio stream names of their clips
+// ("Discord,Mikrofon", as `probe` lists them); empty = none given
+QVector<int> audioTracksOf(const Project& p, const Timeline& tl, const QJsonValue& list)
+{
+    static const QRegularExpression trackRef("^[AaVv]?\\d+$");
+    QVector<int> out;
+    for (QString t : list.toVariant().toString().split(',', Qt::SkipEmptyParts)) {
+        t = t.trimmed();
+        int index = -1;
+        if (trackRef.match(t).hasMatch()) {
+            TrackKind k;
+            index = parseTrack(t, &k);
+            if (k != TrackKind::Audio || index >= tl.audio.size()) fail("BAD_ARGUMENT", "no audio track " + t);
+        }
+        QStringList names;
+        for (int i = 0; i < tl.audio.size(); ++i) {
+            const Track& track = tl.audio[i];
+            QStringList own{track.name};
+            for (const Clip& c : track.clips)
+                if (const MediaInfo* m = p.mediaInfo(c.mediaPath)) own << m->audioStreamName(c.audioStream);
+            own.removeAll(QString());
+            own.removeDuplicates();
+            if (index < 0 && own.contains(t, Qt::CaseInsensitive)) index = i;
+            if (!own.isEmpty()) names << QString("A%1 = %2").arg(i + 1).arg(own.join("/"));
+        }
+        if (index < 0)
+            fail("BAD_ARGUMENT", QString("no audio track '%1' (tracks: %2)").arg(t, names.isEmpty() ? "none named" : names.join(", ")));
+        if (!out.contains(index)) out << index;
+    }
+    return out;
+}
 
 namespace {
 QJsonObject probeOne(const QJsonObject& a)

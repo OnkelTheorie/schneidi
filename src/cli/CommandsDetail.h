@@ -129,6 +129,10 @@ QColor colorOf(const QJsonValue& v, const QString& what);
 
 // ---------- Analysis (Analysis.cpp) ----------
 
+// Audio tracks of `tl`: "A3", "A2,A5", numbers, track names or the audio stream names of their clips
+// ("Discord,Mikrofon"); empty = none given. Throws if one is not found
+QVector<int> audioTracksOf(const Project& p, const Timeline& tl, const QJsonValue& list);
+
 QJsonObject cmdProbe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx);
 QJsonObject cmdScenes(const QJsonObject& a, Context& ctx);
