@@ -54,7 +54,7 @@ int timelineAtSource(const Session& s, const Clip& c, int source)
 {
     const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
     const RetimeMap map(c, m ? m->length : 0);
-    const int t = c.start + int(std::floor(map.materialAtFile(source + 0.5))) - c.in;
+    const int t = c.start + int(std::lround(map.materialAtFile(source))) - c.in; // first frame showing it
     return t >= c.start && t < c.end() ? t : -1;
 }
 

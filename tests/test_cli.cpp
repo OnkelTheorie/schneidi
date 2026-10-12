@@ -19,6 +19,7 @@
 #include <QTemporaryDir>
 
 #include <cmath>
+#include <utility>
 
 using Check::dump;
 
@@ -189,7 +190,7 @@ int main(int argc, char** argv)
     {
         const QJsonObject r = edit(R"([{"op":"new_timeline","name":"Short"},
                                        {"op":"append","media":"/x/a.mp4","in":0,"out":20}])");
-        CHECK_EQ(r["timeline"]["name"].toString(), QString("Short"));
+        CHECK_EQ(std::as_const(r)["timeline"]["name"].toString(), QString("Short"));
         CHECK_EQ(r["timelines"].toArray().size(), 2);
         ProjectData d;
         ProjectFile::load(g_path, &d, nullptr);
@@ -567,6 +568,96 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(std::abs(st["cast"]["red"].toDouble()) < 2);
         CHECK(QImage(dir.filePath("scopes.png")).width() == 960);
         CHECK_EQ(errorOf("scopes", {{"source", grey}, {"types", "rainbow"}}), QString("BAD_ARGUMENT"));
+    }
+    // 0.7.1 additions: help for single ops, info summary, relative times, frames crop/sources, probe of several
+    // files, peaks, region events, ducking, linked fades, mixer target_lufs
+    {
+        const QJsonObject h = run("help", {{"command", "edit"}, {"op", "speed_ramp,marker"}});
+        CHECK_EQ(h["commands"][0]["ops"].toArray().size(), 2);
+        CHECK_EQ(errorOf("help", {{"command", "edit"}, {"op", "nope"}}), QString("NOT_FOUND"));
+
+        // Tone bursts at 2-3 s and 6-7 s over a picture with a white box appearing top right at 4 s
+        const QString clip = Check::makeMedia(
+            dir.filePath("bursts.mp4"),
+            {"-f", "lavfi", "-i", "color=c=0x303030:s=320x180:d=10:r=25,drawbox=x=240:y=10:w=60:h=30:c=white:t=fill:enable='gte(t,4)'",
+             "-f", "lavfi", "-i", "aevalsrc='if(between(t,2,3)+between(t,6,7),0.5*sin(2*PI*440*t),0)':d=10:s=48000",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        const QString music = Check::makeMedia(dir.filePath("music.wav"), {"-f", "lavfi", "-i", "sine=frequency=300:duration=10"});
+        const QString proj = dir.filePath("new.schneidi");
+        run("new", {{"project", proj}, {"fps", 25}, {"width", 320}, {"height", 180}, {"overwrite", true}});
+        const auto ed = [&](const QString& ops) { return run("edit", {{"project", proj}, {"ops", ops}}); };
+        ed(QString("[{\"op\":\"append\",\"media\":\"%1\",\"in\":\"1s\"},{\"op\":\"append\",\"media\":\"%1\"},"
+                   "{\"op\":\"place\",\"media\":\"%2\",\"at\":0,\"track\":\"A2\"}]").arg(clip, music));
+        const QJsonObject sum = run("info", {{"project", proj}, {"summary", true}});
+        CHECK_EQ(sum["timeline"]["clips"].toInt(), 5);
+        CHECK(sum["timeline"]["tracks"][0]["clips"].isDouble());
+        CHECK(sum["media"].isDouble());
+
+        // Relative times: source 3 s of the first clip (in = 1 s) sits at 2 s; a speed ramp before it does not
+        // shift a marker given by source time
+        QJsonObject r = ed("[{\"op\":\"marker\",\"at\":{\"clip\":1,\"source\":\"3s\"}},{\"op\":\"marker\",\"at\":{\"clip\":3,\"offset\":10}},"
+                           "{\"op\":\"marker\",\"at\":{\"clip\":3,\"from_end\":5}}]");
+        QJsonArray markers = std::as_const(r)["timeline"]["markers"].toArray();
+        CHECK_EQ(markers.size(), 3);
+        CHECK_EQ(markers.at(0).toInt(), 50);
+        CHECK_EQ(markers.at(1).toInt(), 235);
+        CHECK_EQ(markers.at(2).toInt(), 470);
+        r = ed(QString("[{\"op\":\"speed_ramp\",\"clip\":1,\"points\":[{\"at\":{\"clip\":1,\"source\":\"2s\"},\"speed\":0.5}]},"
+                       "{\"op\":\"marker\",\"at\":{\"media\":\"%1\",\"source\":\"8s\"}}]").arg(clip));
+        markers = std::as_const(r)["timeline"]["markers"].toArray();
+        // The first clip that plays source 8 s: clip 1 (in 1 s, half speed from source 2 s): 25 + 150 * 2 = 325
+        CHECK(markers.contains(QJsonValue(325)));
+
+        CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", "[{\"op\":\"marker\",\"at\":{\"clip\":1}}]"}}), QString("none"));
+        CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", "[{\"op\":\"marker\",\"at\":{\"clip\":3,\"source\":\"20s\"}}]"}}),
+                 QString("BAD_ARGUMENT"));
+
+        // frames: crop of the box region and two sources on one sheet
+        Cli::Context ctx;
+        ctx.mcp = true;
+        const Cli::Command* frames = Cli::find("frames");
+        const QJsonObject fr = frames->run(Cli::normalize(*frames, {{"source", clip}, {"at", QJsonArray{"5s"}}, {"crop", "240,10,60,30"}}), ctx);
+        CHECK_EQ(fr["frames"].toArray().size(), 1);
+        if (CHECK(ctx.images.size() == 1)) {
+            CHECK_EQ(ctx.images[0].width(), 60);
+            CHECK(qGray(ctx.images[0].pixel(30, 15)) > 200); // the white box
+        }
+        Cli::Context ctx2;
+        ctx2.mcp = true;
+        const QJsonObject two = frames->run(
+            Cli::normalize(*frames, {{"sources", QJsonArray{clip, clip}}, {"count", 2}, {"sheet", true}, {"crop", "0.5,0,0.5,0.5"}}), ctx2);
+        CHECK_EQ(two["sources"].toArray().size(), 2);
+        CHECK_EQ(ctx2.images.size(), 1);
+        CHECK_EQ(errorOf("frames", {{"source", clip}, {"at", QJsonArray{0}}, {"crop", "1,2,3"}, {"out", dir.path()}}),
+                 QString("BAD_ARGUMENT"));
+
+        const QJsonObject pr = run("probe", {{"files", QJsonArray{clip, dir.filePath("missing.mp4")}}});
+        CHECK_EQ(pr["files"].toArray().size(), 2);
+        CHECK(pr["files"][1].toObject().contains("error"));
+
+        // peaks: the two bursts; region events: the box at 4 s
+        const QJsonArray peaks = run("peaks", {{"file", clip}, {"threshold_db", -20}, {"min", "2s"}})["peaks"].toArray();
+        if (CHECK_EQ(peaks.size(), 2)) {
+            CHECK(std::abs(peaks[0]["s"].toDouble() - 2.5) < 0.6);
+            CHECK(std::abs(peaks[1]["s"].toDouble() - 6.5) < 0.6);
+        }
+        const QJsonArray changes = run("scenes", {{"file", clip}, {"region", "0.7,0,0.3,0.3"}})["changes"].toArray();
+        if (CHECK_EQ(changes.size(), 1)) CHECK(std::abs(changes[0]["s"].toDouble() - 4.0) < 0.3);
+
+        // Ducking of the music under A1, fades of video + linked sound
+        r = ed("[{\"op\":\"duck\",\"track\":\"A2\",\"under\":\"A1\",\"amount_db\":-10},{\"op\":\"fade\",\"clips\":[3],\"out\":\"1s\"}]");
+        const QJsonArray mkeys = std::as_const(r)["timeline"]["tracks"][3]["clips"][0]["keyframes"]["volume"].toArray();
+        CHECK(mkeys.size() >= 4);
+        bool low = false;
+        for (const QJsonValue& k : mkeys) low = low || std::abs(k["value"].toDouble() + 10) < 0.01;
+        CHECK(low);
+        CHECK_EQ(std::as_const(r)["timeline"]["tracks"][0]["clips"][1]["fade_out"].toInt(), 25);
+        CHECK_EQ(std::as_const(r)["timeline"]["tracks"][2]["clips"][1]["fade_out"].toInt(), 25);
+
+        // Master to a loudness target (no limiter: one measurement, exact)
+        r = ed("[{\"op\":\"mixer\",\"track\":\"A2\",\"mute\":true},{\"op\":\"mixer\",\"track\":\"master\",\"target_lufs\":-20}]");
+        const QJsonObject l = run("loudness", {{"source", proj}})["loudness"].toObject();
+        CHECK(std::abs(l["integrated_lufs"].toDouble() + 20) < 0.5);
     }
     return Check::result();
 }
