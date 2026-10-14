@@ -580,7 +580,7 @@ void Editor::paste(int frame)
     QVector<ClipboardItem> items;
     for (const auto& it : m_clipboard)
         if (!isTrackLocked(it.ref)
-            && (!it.clip.isCompound() || m_project->canNest(it.clip.sequenceId, m_project->currentSequence())))
+            && (!it.clip.isNested() || m_project->canNest(it.clip.sequenceId, m_project->currentSequence())))
             items << it; // never a compound clip inside itself (loop)
     if (items.isEmpty()) return;
     Project* p = m_project;

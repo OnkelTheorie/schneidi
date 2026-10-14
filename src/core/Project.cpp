@@ -165,16 +165,35 @@ void Project::load(const ProjectData& d)
         if (s.timeline.audio.isEmpty()) s.timeline.audio << makeTrack(TrackKind::Audio);
         if (s.name.trimmed().isEmpty()) s.name = T("Timeline %1").arg(s.id);
     }
-    // Remove compound clips referring to missing sequences or loops (broken file)
+    // Multicam clips: angles only point at existing tracks (broken file)
+    QHash<int, int> angles; // multicam sequence id -> number of angles
+    for (Sequence& s : m_sequences) {
+        if (!s.multicam) {
+            s.angles.clear();
+            continue;
+        }
+        s.compound = true;
+        for (MulticamAngle& a : s.angles) {
+            if (a.videoTrack >= s.timeline.video.size()) a.videoTrack = -1;
+            a.videoTrack = std::max(-1, a.videoTrack);
+            a.audioTracks.removeIf([&](int i) { return i < 0 || i >= s.timeline.audio.size(); });
+        }
+        angles.insert(s.id, s.angles.size());
+    }
+    // Remove compound/multicam clips referring to missing (or not multicam) sequences or loops (broken file)
     for (Sequence& s : m_sequences)
         for (auto* tracks : {&s.timeline.video, &s.timeline.audio})
-            for (Track& t : *tracks)
+            for (Track& t : *tracks) {
                 t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(),
                                              [&](const Clip& c) {
-                                                 return c.isCompound()
+                                                 if (c.isMulticam() && !angles.contains(c.sequenceId)) return true;
+                                                 return c.isNested()
                                                         && (!ids.contains(c.sequenceId) || c.sequenceId == s.id);
                                              }),
                               t.clips.end());
+                for (Clip& c : t.clips)
+                    if (c.isMulticam() && (c.angle < 0 || c.angle >= angles.value(c.sequenceId))) c.angle = 0;
+            }
     sanitizePool();
     m_lastClipId = d.lastClipId;
     m_lastLinkId = d.lastLinkId;
@@ -408,7 +427,7 @@ bool timelineUses(const Timeline& tl, int id)
     for (const auto* tracks : {&tl.video, &tl.audio})
         for (const Track& t : *tracks)
             for (const Clip& c : t.clips)
-                if (c.isCompound() && c.sequenceId == id) return true;
+                if (c.isNested() && c.sequenceId == id) return true;
     return false;
 }
 } // namespace
@@ -434,7 +453,7 @@ bool Project::canNest(int child, int parent) const
         for (const auto* tracks : {&s->timeline.video, &s->timeline.audio})
             for (const Track& t : *tracks)
                 for (const Clip& c : t.clips)
-                    if (c.isCompound()) todo << c.sequenceId;
+                    if (c.isNested()) todo << c.sequenceId;
     }
     return true;
 }
@@ -447,8 +466,9 @@ int Project::sequenceLength(int id) const
 
 QString Project::clipName(const Clip& c) const
 {
-    if (c.isCompound())
-        if (const Sequence* s = sequence(c.sequenceId)) return s->name;
+    if (c.isNested())
+        if (const Sequence* s = sequence(c.sequenceId))
+            return c.isMulticam() && c.angle >= 0 && c.angle < s->angles.size() ? s->angles[c.angle].name : s->name;
     return c.displayName();
 }
 
@@ -490,6 +510,19 @@ void Project::setMediaMarks(const QString& path, int markIn, int markOut)
         if (m.markIn == markIn && m.markOut == markOut) return;
         m.markIn = markIn;
         m.markOut = markOut;
+        m_mediaDirty = true;
+        emit mediaMarksChanged(path);
+        emit modifiedChanged(true);
+        return;
+    }
+}
+
+void Project::setMediaMarkers(const QString& path, const QVector<int>& markers)
+{
+    for (MediaInfo& m : m_media) {
+        if (m.path != path) continue;
+        if (m.markers == markers) return;
+        m.markers = markers;
         m_mediaDirty = true;
         emit mediaMarksChanged(path);
         emit modifiedChanged(true);

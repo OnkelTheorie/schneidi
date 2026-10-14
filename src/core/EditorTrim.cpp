@@ -23,7 +23,7 @@
 TimelineOps::SourceLength Editor::sourceLength() const
 {
     return [p = m_project](const Clip& c) {
-        if (c.isCompound()) return p->sequenceLength(c.sequenceId); // content of the sequence
+        if (c.isNested()) return p->sequenceLength(c.sequenceId); // content of the sequence
         const MediaInfo* m = p->mediaInfo(c.mediaPath);
         return m && !m->isImage ? c.retimedLength(m->length) : 0; // stills can be stretched to any length
     };

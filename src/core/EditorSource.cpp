@@ -28,6 +28,16 @@ void Editor::setSourceMarkIn(const QString& path, int frame)
     m_project->setMediaMarks(path, frame, out);
 }
 
+void Editor::toggleSourceMarker(const QString& path, int frame)
+{
+    const MediaInfo* m = m_project->mediaInfo(path);
+    if (!m || frame < 0 || (m->length > 0 && frame >= m->length)) return;
+    QVector<int> markers = m->markers;
+    if (markers.contains(frame)) markers.removeAll(frame);
+    else markers.insert(std::lower_bound(markers.begin(), markers.end(), frame) - markers.begin(), frame);
+    m_project->setMediaMarkers(path, markers);
+}
+
 void Editor::setSourceMarkOut(const QString& path, int frame)
 {
     const MediaInfo* m = m_project->mediaInfo(path);

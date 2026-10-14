@@ -309,7 +309,10 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     QJsonObject o{{"id", c.id}, {"start", c.start}, {"in", c.in}, {"out", c.out}};
     if (c.isTitle()) o["title"] = titleToJson(c.title); // titles have no media reference
     else if (c.isCompound()) o["sequence"] = c.sequenceId; // compound clip: reference to the sequence
-    else o["media"] = mediaIndex;
+    else if (c.isMulticam()) { // multicam segment: sequence + angle shown
+        o["multicam"] = c.sequenceId;
+        if (c.angle != 0) o["angle"] = c.angle;
+    } else o["media"] = mediaIndex;
     if (c.linkId) o["link"] = c.linkId;
     if (c.volumeDb != 0.0) o["volumeDb"] = c.volumeDb;
     if (c.pan != 0.0) o["pan"] = c.pan;
@@ -368,6 +371,10 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     } else if (o.contains("sequence")) {
         c.kind = ClipKind::Compound;
         c.sequenceId = o.value("sequence").toInt();
+    } else if (o.contains("multicam")) {
+        c.kind = ClipKind::Multicam;
+        c.sequenceId = o.value("multicam").toInt();
+        c.angle = std::max(0, o.value("angle").toInt());
     } else {
         c.mediaPath = media.value(o.value("media").toInt(-1)).path;
     }
@@ -437,7 +444,7 @@ namespace ProjectFile {
 QJsonObject clipJson(const Clip& c)
 {
     QJsonObject o = clipToJson(c, -1, QDir::root()); // fixed reference -> relPaths stable (cache key)
-    if (!c.isTitle() && !c.isCompound()) o["media"] = c.mediaPath;
+    if (!c.isTitle() && !c.isNested()) o["media"] = c.mediaPath;
     return o;
 }
 
@@ -453,6 +460,11 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                       {"hasAudio", m.hasAudio}, {"isImage", m.isImage}};
         if (m.markIn >= 0) o["markIn"] = m.markIn; // source in/out (optional, absent in old files)
         if (m.markOut >= 0) o["markOut"] = m.markOut;
+        if (!m.markers.isEmpty()) { // source markers (optional)
+            QJsonArray markers;
+            for (int f : m.markers) markers << f;
+            o["markers"] = markers;
+        }
         if (m.bin != 0) o["bin"] = m.bin; // Media Pool organization (optional, absent in old files)
         if (!m.clipColor.isEmpty()) o["clipColor"] = m.clipColor;
         if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
@@ -482,7 +494,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         for (const Track& t : list) {
             QJsonArray clips;
             for (const Clip& c : t.clips) {
-                if (c.isTitle() || c.isCompound()) {
+                if (c.isTitle() || c.isNested()) {
                     clips << clipToJson(c, -1, projectDir);
                     continue;
                 }
@@ -541,6 +553,16 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
     for (const Sequence& s : data.sequences) {
         QJsonObject o{{"id", s.id}, {"name", s.name}};
         if (s.compound) o["compound"] = true;
+        if (s.multicam) { // angles: name, video track (-1 = none), audio tracks
+            QJsonArray angles;
+            for (const MulticamAngle& a : s.angles) {
+                QJsonArray audio;
+                for (int t : a.audioTracks) audio << t;
+                angles << QJsonObject{{"name", a.name}, {"video", a.videoTrack}, {"audio", audio}};
+            }
+            o["multicam"] = true;
+            o["angles"] = angles;
+        }
         if (s.bin != 0) o["bin"] = s.bin;
         if (s.id != data.currentSequence) o["timeline"] = timelineJson(s.timeline);
         seqs << o;
@@ -603,6 +625,9 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         m.isImage = o.value("isImage").toBool();
         m.markIn = o.value("markIn").toInt(-1);
         m.markOut = o.value("markOut").toInt(-1);
+        for (const QJsonValue& f : o.value("markers").toArray())
+            if (f.toInt(-1) >= 0 && !m.markers.contains(f.toInt())) m.markers << f.toInt();
+        std::sort(m.markers.begin(), m.markers.end());
         m.bin = std::max(0, o.value("bin").toInt()); // missing bins are set to Master by Project::load
         if (trackColorInfo(o.value("clipColor").toString())) m.clipColor = o.value("clipColor").toString();
         for (const QJsonValue& f : o.value("flags").toArray())
@@ -723,6 +748,13 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         seq.id = o.value("id").toInt();
         seq.name = o.value("name").toString();
         seq.compound = o.value("compound").toBool();
+        seq.multicam = o.value("multicam").toBool();
+        for (const QJsonValue& av : o.value("angles").toArray()) {
+            const QJsonObject a = av.toObject();
+            MulticamAngle angle{a.value("name").toString(), a.value("video").toInt(-1), {}};
+            for (const QJsonValue& t : a.value("audio").toArray()) angle.audioTracks << t.toInt(-1);
+            seq.angles << angle;
+        }
         seq.bin = std::max(0, o.value("bin").toInt());
         if (seq.id <= 0) continue;
         if (o.contains("timeline")) seq.timeline = readTimeline(o.value("timeline").toObject());

@@ -3,6 +3,7 @@
 #include "core/Editor.h"
 
 #include "core/I18n.h"
+#include "core/Multicam.h"
 #include "core/Project.h"
 #include "core/Selection.h"
 
@@ -268,12 +269,18 @@ bool Editor::addSequenceAt(int sequenceId, int frame, int track)
     p->edit(T("Einfügen: %1").arg(s->name), [&](Timeline& tl) {
         auto newId = [p] { return p->newClipId(); };
         Clip c;
-        c.kind = ClipKind::Compound;
+        c.kind = s->multicam ? ClipKind::Multicam : ClipKind::Compound;
         c.sequenceId = sequenceId;
         c.start = std::max(0, frame);
         c.in = 0;
         c.out = len - 1;
         c.linkId = video && audio ? p->newLinkId() : 0;
+        if (s->multicam) // first angle with a picture, for picture and sound
+            for (int i = 0; i < s->angles.size(); ++i)
+                if (Multicam::angleHas(*s, i, TrackKind::Video)) {
+                    c.angle = i;
+                    break;
+                }
         for (TrackKind kind : {TrackKind::Video, TrackKind::Audio}) {
             if (kind == TrackKind::Video ? !video : !audio) continue;
             TimelineOps::ensureTracks(tl, kind, idx + 1);

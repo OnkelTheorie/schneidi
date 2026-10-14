@@ -107,7 +107,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
 bool Editor::canRetime(int clipId) const
 {
     const Clip* c = TimelineOps::findClip(m_project->timeline(), clipId);
-    if (!c || c->isTitle() || c->isCompound() || c->freeze) return false;
+    if (!c || c->isTitle() || c->isNested() || c->freeze) return false;
     const MediaInfo* m = m_project->mediaInfo(c->mediaPath);
     return m && !m->isImage && m->length > 0;
 }

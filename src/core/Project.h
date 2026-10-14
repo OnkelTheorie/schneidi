@@ -94,6 +94,8 @@ public:
     void addMedia(const MediaInfo& info);
     // Source in/out of a Media Pool clip (-1 = none). Not in undo (like DaVinci), but counts as a change.
     void setMediaMarks(const QString& path, int markIn, int markOut);
+    // Source markers of a Media Pool clip (sorted source frames); like setMediaMarks not in undo, but a change
+    void setMediaMarkers(const QString& path, const QVector<int>& markers);
     // Transcript of one audio stream of a media file (Transcript panel); replaces the old one of that stream, empty
     // words remove it. Not in the undo history (like source marks), but counts as a change.
     void setTranscript(const QString& path, const MediaTranscript& transcript);

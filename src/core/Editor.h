@@ -1,4 +1,5 @@
 #pragma once
+#include "core/Multicam.h"
 #include "core/TimelineOps.h"
 #include "core/Types.h"
 
@@ -186,6 +187,9 @@ public:
     void setSourceMarkIn(const QString& path, int frame);
     void setSourceMarkOut(const QString& path, int frame);
     void clearSourceMarks(const QString& path);
+    // Source marker (M in the source viewer, multicam sync by marker): set at the source frame or remove the one there.
+    // Like source in/out not in the undo history, but a change of the project.
+    void toggleSourceMarker(const QString& path, int frame);
 
     // Edits from the source viewer like DaVinci (Edit menu, F9-F12)
     enum class SourceEditMode {
@@ -310,6 +314,34 @@ public:
     // Place timeline/compound clip from the Media Pool at the frame on V[track]/A[track] (overwrites, linked).
     // false = empty or loop (sequence contains the opened timeline).
     bool addSequenceAt(int sequenceId, int frame, int track = 0);
+
+    // ---- Multicam (core/EditorMulticam.cpp, core/Multicam.h) ----
+    // New multicam clip in the Media Pool (bin): one angle per entry, its files placed by their offsets (the earliest
+    // recording starts at frame 0). Per angle one video track and one audio track per audio stream; files that are not
+    // in the Media Pool are left out, an angle without files too. Empty name = "Multicam-Clip N". One undo step;
+    // returns the sequence id, 0 = no usable angle. Placing it in a timeline: addSequenceAt.
+    int createMulticamClip(const QString& name, const QVector<Multicam::Angle>& angles, int bin = 0);
+    // Cut to angle `angle` at `frame` (keys 1-9, click in the grid while playing): splits the multicam segment there
+    // (video and audio part together, they stay linked 1:1) and gives the part(s) of `mode` the angle. On an existing
+    // edit only switches. Target: Multicam::clipAt (selection, else top-most). false = nothing changed. One undo step.
+    bool multicamCut(int frame, int angle, Multicam::Mode mode);
+    // Switch the segment under `frame` to the angle without a cut (Alt+1-9, click in the grid while stopped)
+    bool multicamSwitch(int frame, int angle, Multicam::Mode mode);
+    // Angle of the given segments (video or audio parts, the linked part follows by `mode`), one undo step
+    void setMulticamAngle(const QVector<int>& ids, int angle, Multicam::Mode mode);
+    // Replace the segments (with their linked parts) by the clips of their angle (DaVinci "Flatten Multicam Clip"):
+    // what the segment shows, at the same place; attributes of the segment (transform, effects, volume, fades,
+    // transitions at its edges) go onto them; extra audio streams go to the tracks above that are free. One undo step.
+    bool flattenMulticamClips(const QVector<int>& ids);
+    // Rename an angle (empty = file name), one undo step
+    void renameMulticamAngle(int sequenceId, int angle, const QString& name);
+    // Move all tracks of an angle in the multicam sequence by `frames` (resync; never before frame 0), one undo step
+    void nudgeMulticamAngle(int sequenceId, int angle, int frames);
+    // Add an angle (offsets relative to the reference = first file of angle 1; the part before frame 0 is cut off).
+    // Returns its index, -1 = no multicam clip or no usable file. One undo step.
+    int addMulticamAngle(int sequenceId, const Multicam::Angle& angle);
+    // Is the opened timeline a multicam clip (its tracks can't be removed or reordered)?
+    bool inMulticamSequence() const;
 
 signals:
     void targetTracksChanged(); // target tracks (redraw track header marking)

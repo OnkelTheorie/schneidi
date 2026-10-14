@@ -93,6 +93,7 @@ void Editor::addTrack(TrackKind kind, int index)
 {
     const int n = m_project->timeline().tracks(kind).size();
     index = std::clamp(index, 0, n);
+    if (inMulticamSequence()) index = n; // the angle table points at the tracks: new ones only on top
     m_project->edit(kind == TrackKind::Video ? T("Videospur hinzufügen") : T("Audiospur hinzufügen"), [&](Timeline& tl) {
         Track t;
         t.kind = kind;
@@ -108,6 +109,7 @@ void Editor::addTrack(TrackKind kind, int index)
 
 bool Editor::canRemoveTrack(TrackRef ref) const
 {
+    if (inMulticamSequence()) return false; // the angle table points at the tracks
     const auto& tracks = m_project->timeline().tracks(ref.kind);
     return tracks.size() > 1 && ref.index >= 0 && ref.index < tracks.size() && !tracks[ref.index].locked;
 }
@@ -136,7 +138,7 @@ void Editor::removeTrack(TrackRef ref)
 void Editor::moveTrack(TrackKind kind, int from, int to)
 {
     const int n = m_project->timeline().tracks(kind).size();
-    if (from < 0 || from >= n) return;
+    if (from < 0 || from >= n || inMulticamSequence()) return;
     to = std::clamp(to, 0, n - 1);
     if (to == from) return;
     m_project->edit(T("Spur verschieben"), [&](Timeline& tl) { tl.tracks(kind).move(from, to); });

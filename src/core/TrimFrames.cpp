@@ -66,7 +66,7 @@ Pane pane(const Clip& c, bool out, const MediaLookup& media, const ClipName& nam
     p.name = name ? name(c) : c.displayName();
     p.sourceFrame = out ? c.out : c.in;
     p.timelineFrame = out ? c.end() - 1 : c.start;
-    if (c.isTitle() || c.isCompound() || c.mediaPath.isEmpty()) return p; // nothing to decode, pane shows the name
+    if (c.isTitle() || c.isNested() || c.mediaPath.isEmpty()) return p; // nothing to decode, pane shows the name
     p.path = c.mediaPath;
     const MediaInfo* m = media ? media(c.mediaPath) : nullptr;
     if (m && m->isImage) {

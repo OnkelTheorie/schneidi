@@ -150,8 +150,10 @@ inline const TransitionTypeInfo& transitionTypeInfo(TransitionType t)
 }
 
 // Compound: clip whose content is its own timeline (sequence) - compound clip or nested timeline
-// as in DaVinci; in/out count in frames of that timeline
-enum class ClipKind { Media, Title, Compound };
+// as in DaVinci; in/out count in frames of that timeline.
+// Multicam: segment of a multicam clip (sequence with Sequence::multicam), shows the angle Clip::angle of it;
+// in/out count in frames of the multicam sequence (core/Multicam.h)
+enum class ClipKind { Media, Title, Compound, Multicam };
 
 // Keyframes as in DaVinci: one list per clip and animatable parameter. Without keyframes the static value applies
 // (Clip::transform, Clip::title, Clip::volumeDb ...). Functions for it in core/Keyframes.h.
@@ -203,7 +205,8 @@ struct Clip {
     ClipKind kind = ClipKind::Media;
     QString mediaPath; // empty for titles (no media reference)
     TitleStyle title;  // only for kind == Title
-    int sequenceId = 0; // only for kind == Compound: sequence (Project::sequence) whose content the clip shows
+    int sequenceId = 0; // only for kind == Compound/Multicam: sequence (Project::sequence) whose content the clip shows
+    int angle = 0;      // only for kind == Multicam: index in Sequence::angles (video part: picture, audio part: sound)
     int start = 0;  // position in the timeline (frames)
     int in = 0;     // first frame in the source material
     int out = 0;    // last frame in the source material (inclusive, as in MLT)
@@ -261,11 +264,14 @@ struct Clip {
     // Title: every frame identical, trimmable to any length (in may also become negative)
     bool isTitle() const { return kind == ClipKind::Title; }
     bool isCompound() const { return kind == ClipKind::Compound; }
-    // Name in timeline/Inspector: file name or first text line; compound clips carry the name of their sequence
-    // (Project::clipName returns it, only a placeholder here)
+    bool isMulticam() const { return kind == ClipKind::Multicam; }
+    bool isNested() const { return isCompound() || isMulticam(); } // content comes from a sequence
+    // Name in timeline/Inspector: file name or first text line; compound clips carry the name of their sequence,
+    // multicam segments the name of their angle (Project::clipName returns it, only a placeholder here)
     QString displayName() const
     {
         if (isCompound()) return T("Compound Clip");
+        if (isMulticam()) return T("Multicam-Clip");
         return isTitle() ? title.firstLine() : QFileInfo(mediaPath).fileName();
     }
 };
@@ -435,6 +441,15 @@ struct Timeline {
     }
 };
 
+// Angle (camera) of a multicam clip: its picture lies on one video track of the multicam sequence, its sound on
+// one audio track per audio stream of the recording (track indices in Sequence::timeline)
+struct MulticamAngle {
+    QString name;
+    int videoTrack = -1;     // -1 = sound only (e.g. the caster)
+    QVector<int> audioTracks;
+    bool operator==(const MulticamAngle&) const = default;
+};
+
 // Sequence as in DaVinci: own timeline in the project (visible in the Media Pool) or content of a compound clip.
 // All share project format, media and clip ids.
 struct Sequence {
@@ -443,6 +458,9 @@ struct Sequence {
     bool compound = false; // compound clip (not in the timeline selection, unless currently opened)
     int bin = 0;           // bin in the Media Pool (0 = Master)
     Timeline timeline;
+    // Multicam clip (also compound): one angle per recording, placed in sync on its own tracks (core/Multicam.h)
+    bool multicam = false;
+    QVector<MulticamAngle> angles;
 };
 
 // An audio stream of a file (OBS writes e.g. desktop audio and microphone separately into one file)
@@ -505,6 +523,8 @@ struct MediaInfo {
             if (t.audioStream == stream) return &t;
         return nullptr;
     }
+    // Source markers (M in the source viewer; multicam sync by marker): source frames, sorted, not in undo
+    QVector<int> markers;
 };
 
 // Bin (folder) in the Media Pool; Master (id 0) is not in the list, parent 0 = directly under Master

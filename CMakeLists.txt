@@ -55,6 +55,7 @@ add_library(schneidi_lib STATIC
     src/core/EditorTransitions.cpp
     src/core/EditorRetime.cpp
     src/core/EditorEffects.cpp
+    src/core/EditorMulticam.cpp
     src/core/EffectRegistry.h     src/core/EffectRegistry.cpp
     src/core/EffectFolders.h      src/core/EffectFolders.cpp
     src/core/Presets.h            src/core/Presets.cpp
@@ -67,6 +68,9 @@ add_library(schneidi_lib STATIC
     src/core/Subtitles.h          src/core/Subtitles.cpp
     src/core/Transcript.h         src/core/Transcript.cpp
     src/core/TranscriptCut.h      src/core/TranscriptCut.cpp
+    src/core/Fft.h                src/core/Fft.cpp
+    src/core/AudioSync.h          src/core/AudioSync.cpp
+    src/core/Multicam.h           src/core/Multicam.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Profiles.h         src/engine/Profiles.cpp
@@ -88,6 +92,7 @@ add_library(schneidi_lib STATIC
     src/engine/Stabilizer.h       src/engine/Stabilizer.cpp
     src/engine/Preroll.h          src/engine/Preroll.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
+    src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/Frei0r.h           src/engine/Frei0r.cpp
