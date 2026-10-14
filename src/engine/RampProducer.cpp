@@ -28,7 +28,7 @@ int videoGetFrame(mlt_producer self, mlt_frame_ptr frame, int index)
     mlt_producer inner = d->inner->get_producer();
     mlt_producer_seek(inner, f);
     mlt_service_get_frame(MLT_PRODUCER_SERVICE(inner), frame, index);
-    // Position wie bei timewarp: die des Ramp-Producers (Keyframe-Filter am Cut zählen darin)
+    // Position as with timewarp: that of the ramp producer (keyframe filters at the cut count in it)
     mlt_frame_set_position(*frame, pos);
     mlt_producer_prepare_next(self);
     return 0;
@@ -43,7 +43,7 @@ void videoClose(mlt_producer self)
     free(self);
 }
 
-// Tempo als Text für timewarp: liest per atof im aktuellen LC_NUMERIC (siehe dev-notes)
+// Speed as text for timewarp: reads via atof in the current LC_NUMERIC (see docs/dev/mlt.md)
 QString warpResource(double speed, const QString& file)
 {
     char num[32];
@@ -60,11 +60,11 @@ std::unique_ptr<Mlt::Producer> video(Mlt::Profile& profile, std::unique_ptr<Mlt:
     if (!raw) return nullptr;
     auto* d = new VideoData{nullptr, RetimeMap(c, fileLength), fileLength};
     d->inner = std::move(inner);
-    d->inner->set_speed(0); // wir steuern die Position selbst
+    d->inner->set_speed(0); // we control the position ourselves
     raw->child = d;
     raw->get_frame = videoGetFrame;
     raw->close = reinterpret_cast<mlt_destructor>(videoClose);
-    auto p = std::make_unique<Mlt::Producer>(raw); // eigene Referenz
+    auto p = std::make_unique<Mlt::Producer>(raw); // own reference
     mlt_producer_close(raw);
     const int len = std::max(1, d->map.length());
     p->set("resource", d->inner->get("resource"));
@@ -72,7 +72,7 @@ std::unique_ptr<Mlt::Producer> video(Mlt::Profile& profile, std::unique_ptr<Mlt:
     p->set("length", len);
     p->set("in", 0);
     p->set("out", len - 1);
-    // Für sourceAspect (Transform seitenverhältnis-treu), wie beim Standbild
+    // For sourceAspect (transform preserving aspect ratio), as with the still image
     const int vi = d->inner->get_int("video_index");
     const QByteArray rotate = QString("meta.media.%1.codec.rotate").arg(vi).toUtf8();
     for (const char* name : {"width", "height", "aspect_ratio", "video_index", "meta.media.width", "meta.media.height",
@@ -90,7 +90,7 @@ QVector<AudioStep> audioSteps(const Clip& c, int fileLength)
         if (b <= a) return;
         const double s0 = map.sourceAt(a), s1 = map.sourceAt(b);
         double v = (s1 - s0) / (b - a);
-        v = std::round(v * 1000.0) / 1000.0; // gleiche Tempi teilen sich einen Producer
+        v = std::round(v * 1000.0) / 1000.0; // equal speeds share one producer
         if (v <= 0) v = 0.001;
         steps << AudioStep{a, b, s0, v, smooth};
     };
@@ -102,7 +102,7 @@ QVector<AudioStep> audioSteps(const Clip& c, int fileLength)
             add(a, b, false);
             continue;
         }
-        // weicher Übergang: Stufen von etwa 1/8 der Länge, mindestens 2 Frames
+        // smooth transition: steps of about 1/8 of the length, at least 2 frames
         const int step = std::max(2, (b - a) / 8);
         for (int x = a; x < b; x += step) add(x, std::min(b, x + step), true);
     }
@@ -121,10 +121,10 @@ std::unique_ptr<Mlt::Producer> audio(Mlt::Profile& profile, const QString& file,
     const int audioIndex = probe.get_int("audio_index");
     const int sampleRate = PitchLatency::sampleRateOf(probe);
     auto pl = std::make_unique<Mlt::Playlist>(profile);
-    std::map<std::pair<double, bool>, std::unique_ptr<Mlt::Producer>> byWarp; // (Tempo mit Richtung, Tonhöhe)
+    std::map<std::pair<double, bool>, std::unique_ptr<Mlt::Producer>> byWarp; // (speed with direction, pitch)
     for (const AudioStep& st : audioSteps(c, fileLength)) {
         const double warp = c.reverse ? -st.speed : st.speed;
-        const bool pitch = c.keepPitch && !st.smooth && std::abs(warp) != 1.0; // rückwärts 100 %: ohne Rubberband
+        const bool pitch = c.keepPitch && !st.smooth && std::abs(warp) != 1.0; // reverse 100 %: without Rubberband
         auto it = byWarp.find({warp, pitch});
         if (it == byWarp.end()) {
             // One producer per speed step: opening a file costs ffmpeg's stream analysis twice (validation, then
@@ -145,13 +145,13 @@ std::unique_ptr<Mlt::Producer> audio(Mlt::Profile& profile, const QString& file,
         }
         Mlt::Producer& p = *it->second;
         const int lead = pitch ? PitchLatency::frames(profile, warp, sampleRate) : 0;
-        const int plen = p.get_length() - lead; // ohne die Verlängerung für den Vorlauf
-        // timewarp-Frame k zeigt Quellstelle k·v; rückwärts zählt es vom Ende der gewarpten Datei
+        const int plen = p.get_length() - lead; // without the extension for the lead-in
+        // timewarp frame k shows source position k·v; backwards it counts from the end of the warped file
         int k = int(std::lround(st.s0 / st.speed));
         if (c.reverse) k = int(std::lround((plen - 1) - (fileLength - 1 - st.s0) / st.speed));
         const int len = st.m1 - st.m0;
         k = std::clamp(k, 0, std::max(0, plen - len));
-        k += lead; // Tonhöhe halten: Ton um die Rubberband-Verzögerung früher holen (siehe PitchLatency)
+        k += lead; // keep pitch: fetch the audio earlier by the Rubberband delay (see PitchLatency)
         pl->append(p, k, k + len - 1);
     }
     return pl;

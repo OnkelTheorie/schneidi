@@ -23,7 +23,7 @@
 
 namespace {
 
-// Ladefenster: Logo (wie assets/schneidi.svg, von Hand gezeichnet – ohne QtSvg), Name und Version in den Designfarben
+// Splash window: logo (like assets/schneidi.svg, drawn by hand - without QtSvg), name and version in the design colors
 QPixmap splashPixmap()
 {
     const qreal dpr = qApp->devicePixelRatio();
@@ -70,14 +70,14 @@ int main(int argc, char* argv[])
 {
     QElapsedTimer startTimer;
     startTimer.start();
-    // Testhilfe: --screenshot bild.png [--wait ms] läuft unsichtbar und stumm (kein Fenster auf dem Desktop),
-    // löst --actions aus, speichert das Fensterbild und beendet sich
+    // Test helper: --screenshot image.png [--wait ms] runs invisibly and silently (no window on the desktop),
+    // triggers --actions, saves the window image and quits
     QString screenshot;
     int screenshotWait = 4000;
     QString langOverride;
-    QString formatArg; // Testhilfe: --format 1080x1920@30 (Projekteinstellungen für diesen Lauf)
-    QString storageArg; // Testhilfe: --storage <Ordner>
-    QString designArg;  // Testhilfe: --design midnight (nur für diesen Lauf)
+    QString formatArg; // test helper: --format 1080x1920@30 (project settings for this run)
+    QString storageArg; // test helper: --storage <folder>
+    QString designArg;  // test helper: --design midnight (this run only)
     for (int i = 1; i + 1 < argc; ++i) {
         if (qstrcmp(argv[i], "--format") == 0) formatArg = QString::fromLocal8Bit(argv[i + 1]);
         if (qstrcmp(argv[i], "--screenshot") == 0) screenshot = QString::fromLocal8Bit(argv[i + 1]);
@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
         if (qstrcmp(argv[i], "--storage") == 0) storageArg = QString::fromLocal8Bit(argv[i + 1]);
         if (qstrcmp(argv[i], "--design") == 0) designArg = QString::fromLocal8Bit(argv[i + 1]);
     }
-    // --verbose: ausführliche MLT-/FFmpeg-Meldungen auf der Konsole (sonst nur Fehler, siehe Bundle::configureMltLogging)
+    // --verbose: detailed MLT/FFmpeg messages on the console (otherwise only errors, see Bundle::configureMltLogging)
     for (int i = 1; i < argc; ++i)
         if (qstrcmp(argv[i], "--verbose") == 0) qputenv("SCHNEIDI_VERBOSE", "1");
     if (!screenshot.isEmpty()) {
@@ -96,27 +96,27 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     QApplication::setApplicationName("schneidi");
 #ifdef Q_OS_WIN
-    // Ohne Organisationsnamen kann QSettings unter Windows nicht in die Registry schreiben (unter Linux greift
-    // „Unknown Organization“ als Ersatz – dort bleibt es dabei, sonst wären vorhandene Einstellungen weg)
+    // Without an organization name QSettings cannot write to the registry on Windows (on Linux
+    // "Unknown Organization" serves as a substitute - it stays that way there, otherwise existing settings would be gone)
     QApplication::setOrganizationName("schneidi");
 #endif
-    QApplication::setApplicationVersion(QString("%1 (%2)").arg(SCHNEIDI_VERSION, SCHNEIDI_BUILD)); // Version aus CMakeLists, Git-Stand, siehe cmake/BuildInfo.cmake
+    QApplication::setApplicationVersion(QString("%1 (%2)").arg(SCHNEIDI_VERSION, SCHNEIDI_BUILD)); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
     Log::install();
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)
     I18n::install(langOverride);
 
-    // MLT liest Kommazahlen mit Punkt – deutsches Locale würde "0.5" als 0 lesen
+    // MLT reads decimal numbers with a dot - a German locale would read "0.5" as 0
     std::setlocale(LC_NUMERIC, "C");
 
-    // SDL (Audio-Ausgabe von MLT) soll SIGTERM/SIGINT nicht abfangen, sonst lässt sich
-    // das Programm per kill/Strg+C nicht beenden
+    // SDL (MLT's audio output) should not catch SIGTERM/SIGINT, otherwise
+    // the program cannot be ended with kill/Ctrl+C
     qputenv("SDL_NO_SIGNAL_HANDLERS", "1");
 
     Theme::load(designArg);
     Theme::apply(app);
     InputBindings::instance().load();
 
-    // Ladefenster: das Laden der MLT-Module dauert (unter Windows beim ersten Start deutlich, Virenscanner)
+    // Splash window: loading the MLT modules takes a while (clearly on Windows at first start, virus scanner)
     std::unique_ptr<QSplashScreen> splash;
     const auto status = [&splash](const QString& text) {
         if (!splash) return;
@@ -129,8 +129,8 @@ int main(int argc, char* argv[])
         status(T("Lade Module…"));
     }
 
-    Log::installMlt(); // vor der MLT-Initialisierung: fehlende Module landen auch im Log
-    Engine::applyAudioSettings(); // vor der MLT-Initialisierung (SDL liest den Audiotreiber beim Start)
+    Log::installMlt(); // before MLT initialization: missing modules also end up in the log
+    Engine::applyAudioSettings(); // before MLT initialization (SDL reads the audio driver at startup)
     Engine engine;
     QString error;
     const qint64 beforeMlt = startTimer.elapsed();
@@ -143,17 +143,17 @@ int main(int argc, char* argv[])
     status(T("Öffne Fenster…"));
 
     MainWindow w(&engine);
-    // Wie DaVinci maximiert starten; Screenshot-Testläufe (offscreen) behalten die feste Größe aus MainWindow
+    // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();
     if (splash) splash->finish(&w);
     qInfo("Startzeit: MLT %lld ms, Fenster sichtbar nach %lld ms", afterMlt - beforeMlt, startTimer.elapsed());
 
-    // Dateien aus der Kommandozeile direkt in den Media Pool
+    // Files from the command line directly into the Media Pool
     QStringList files = app.arguments().mid(1);
     files.removeAll("--verbose");
-    const bool demo = files.removeAll("--demo") > 0; // Testhilfe: zusätzlich auf die Timeline legen
-    // Testhilfe: --actions select_all,toggle_enabled löst Aktionen (IDs aus keybindings.json) nach dem Start aus
+    const bool demo = files.removeAll("--demo") > 0; // test helper: additionally place on the timeline
+    // Test helper: --actions select_all,toggle_enabled triggers actions (IDs from keybindings.json) after startup
     for (const char* opt : {"--screenshot", "--wait", "--lang", "--format", "--storage", "--design", "--size"})
         if (const int i = files.indexOf(opt); i >= 0) files.remove(i, std::min<qsizetype>(2, files.size() - i));
     QStringList actions;
@@ -161,16 +161,16 @@ int main(int argc, char* argv[])
         actions = files.at(i + 1).split(',', Qt::SkipEmptyParts);
         files.remove(i, 2);
     }
-    // .schneidi-Datei als Argument = Projekt öffnen (z. B. Doppelklick im Dateimanager)
+    // .schneidi file as argument = open project (e.g. double-click in the file manager)
     QString projectFile;
     for (const QString& f : files)
         if (f.endsWith(QString(".%1").arg(ProjectFile::Extension))) projectFile = f;
     files.removeAll(projectFile);
-    // Testläufe (--demo/--actions) lassen die automatische Sicherung des Nutzers in Ruhe
+    // Test runs (--demo/--actions) leave the user's automatic backup alone
     const bool testRun = demo || !actions.isEmpty() || !screenshot.isEmpty();
     if (testRun) w.disableAutosave();
-    // Erst die Sicherung nach einem Absturz anbieten – sonst löscht das Öffnen per Doppelklick sie ungefragt.
-    // Wiederhergestellt: dieses Projekt bleibt offen (die Datei lässt sich danach normal öffnen).
+    // First offer the backup after a crash - otherwise opening by double-click deletes it without asking.
+    // Restored: this project stays open (the file can then be opened normally).
     const bool restored = !testRun && w.offerAutosaveRestore();
     if (!projectFile.isEmpty() && !restored) w.openProject(QFileInfo(projectFile).absoluteFilePath());
     // Live connection for schneidi-cli / MCP (cli/Live.h); test runs stay invisible to AIs unless SCHNEIDI_LIVE=1
@@ -195,7 +195,7 @@ int main(int argc, char* argv[])
         if (f.width >= 16 && f.height >= 16) w.setProjectFormat(f);
     }
     if (!files.isEmpty()) w.importFiles(files, demo, formatArg.isEmpty());
-    // Testhilfe: --storage <Ordner> öffnet den Ordner im Media Storage (wird nicht gespeichert)
+    // Test helper: --storage <folder> opens the folder in Media Storage (is not saved)
     if (!storageArg.isEmpty())
         if (auto* storage = w.findChild<MediaStorage*>()) storage->setFolder(QFileInfo(storageArg).absoluteFilePath());
     QTimer::singleShot(1500, &w, [actions] {
@@ -204,7 +204,7 @@ int main(int argc, char* argv[])
                 if (e.id == id && e.action) e.action->trigger();
     });
     if (!screenshot.isEmpty()) {
-        // --size 2560x1440: Fenstergröße im Testlauf (z. B. Layout im Vollbild prüfen)
+        // --size 2560x1440: window size in the test run (e.g. check layout in full screen)
         QSize size(1600, 950);
         if (const int i = app.arguments().indexOf("--size"); i >= 0 && i + 1 < app.arguments().size()) {
             const QStringList wh = app.arguments()[i + 1].split('x');
@@ -217,7 +217,7 @@ int main(int argc, char* argv[])
         });
     }
     const int rc = app.exec();
-    // Neustart nach Design-/Sprachwechsel: erst hier, wenn das Fenster zu ist und alles gespeichert wurde
+    // Restart after design/language change: only here, when the window is closed and everything has been saved
     if (w.restartRequested()) QProcess::startDetached(QCoreApplication::applicationFilePath(), w.restartArguments());
     return rc;
 }

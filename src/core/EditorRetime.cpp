@@ -30,41 +30,41 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
     m_project->edit(T("Geschwindigkeit ändern"), [&](Timeline& tl) {
         QSet<int> touched;
         const QVector<TrackRef> edited = TimelineOps::tracksOf(tl, all);
-        QVector<QPair<int, int>> shifts; // Ripple für die übrigen Spuren (ab altem Ende, Längenänderung)
+        QVector<QPair<int, int>> shifts; // ripple for the other tracks (from old end, length change)
         for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
             for (Track& t : tl.tracks(k)) {
-                // von hinten, damit Ripple-Verschiebungen sich nicht gegenseitig verfälschen
+                // from the back, so ripple shifts do not distort each other
                 for (int i = t.clips.size() - 1; i >= 0; --i) {
                     Clip& c = t.clips[i];
                     if (!all.contains(c.id) || c.isTitle()) continue;
                     const MediaInfo* m = m_project->mediaInfo(c.mediaPath);
                     if (!m || m->isImage || m->length <= 0) continue;
                     const int L = m->length;
-                    // Konstantes Tempo ersetzt eine Speed Ramp (wie DaVinci „Change Clip Speed“)
+                    // Constant speed replaces a speed ramp (like DaVinci "Change Clip Speed")
                     Clip n = c;
                     n.speed = r.speed;
                     n.reverse = r.reverse;
                     n.freeze = r.freeze;
                     n.ramp.clear();
                     const RetimeMap oldMap(c, L), newMap(n, L);
-                    // Ausschnitt in Datei-Frames (a = Anfang des Clips, b = Ende, bei rückwärts a > b)
+                    // Section in file frames (a = start of the clip, b = end, a > b when reversed)
                     const double a = oldMap.fileFrameAt(c.in);
                     const double b = oldMap.fileFrameAt(c.out);
                     const bool flip = r.reverse != c.reverse;
-                    // Neuer Anfang: gleiches Datei-Frame; bei Richtungswechsel dasselbe Stück umgekehrt
+                    // New start: same file frame; on direction change the same piece reversed
                     const double startFile = flip ? b : a;
                     const int avail = std::max(1, int(L / r.speed));
                     const int newIn = std::clamp(int(std::lround(newMap.materialAtFile(startFile))), 0, avail - 1);
                     const int oldLen = c.length();
                     int newLen = oldLen;
                     if (ripple && !r.freeze && !c.freeze) {
-                        // Quell-Spanne des Clips (bei Speed Ramp nicht einfach Länge · Tempo)
+                        // Source span of the clip (with a speed ramp not simply length * speed)
                         const double span = c.hasRamp() ? oldMap.sourceAt(c.out + 1) - oldMap.sourceAt(c.in)
                                                         : oldLen * c.speed;
                         newLen = std::max(1, int(std::lround(span / r.speed)));
                     }
                     if (!r.freeze) newLen = std::min(newLen, avail - newIn);
-                    // Keyframes über die Datei-Frames umrechnen
+                    // Convert keyframes via the file frames
                     for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
                         KeyTrack mapped = it.value(), moved;
                         for (Keyframe& kf : mapped)
@@ -83,7 +83,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                     c.speed = r.speed;
                     c.reverse = r.reverse;
                     c.freeze = r.freeze;
-                    c.freezeFrame = r.freeze ? newIn : -1; // Bild am Clipanfang (bleibt beim Teilen/Trimmen)
+                    c.freezeFrame = r.freeze ? newIn : -1; // frame at the clip start (stays when splitting/trimming)
                     c.keepPitch = r.keepPitch;
                     c.ramp.clear();
                     c.fadeIn = std::min(c.fadeIn, newLen);
@@ -92,7 +92,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                     if (const int delta = newLen - oldLen; ripple && delta != 0) {
                         for (int j = i + 1; j < t.clips.size(); ++j)
                             if (t.clips[j].start >= oldEnd) t.clips[j].start += delta;
-                        // verknüpfte Partner liefern denselben Versatz -> nur einmal
+                        // linked partners yield the same offset -> only once
                         if (!shifts.contains(qMakePair(oldEnd, delta))) shifts << qMakePair(oldEnd, delta);
                     }
                 }
@@ -119,12 +119,12 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
     const Clip* first = TimelineOps::findClip(cur, clipId);
     const MediaInfo* m = m_project->mediaInfo(first->mediaPath);
     const int L = m->length;
-    // Partner derselben Datei machen mit (Video + Ton), fremde Partner (anderer Ton) nicht
+    // Partners of the same file take part (video + audio), foreign partners (other audio) do not
     QVector<int> ids;
     for (int id : withLinked({clipId}))
         if (const Clip* c = TimelineOps::findClip(cur, id); c && c->mediaPath == first->mediaPath && !c->freeze)
             ids << id;
-    // Erst am Hauptclip prüfen, ob sich etwas ändert (kein leerer Undo-Schritt)
+    // First check on the main clip whether anything changes (no empty undo step)
     {
         Clip probe = *first;
         if (!change(probe, RetimeMap(*first, L), L)) return;
@@ -138,7 +138,7 @@ void Editor::editRamp(const QString& text, int clipId, const std::function<bool(
                 Clip& c = t.clips[i];
                 if (!ids.contains(c.id)) continue;
                 const RetimeMap oldMap(c, L);
-                // Quellstellen merken: Anfang, Ende (exklusiv), Keyframes
+                // Remember source positions: start, end (exclusive), keyframes
                 const double sIn = oldMap.sourceAt(c.in), sEnd = oldMap.sourceAt(c.out + 1);
                 QMap<AnimParam, QVector<double>> keySrc;
                 for (auto it = c.keys.cbegin(); it != c.keys.cend(); ++it)
@@ -190,7 +190,7 @@ void Editor::addSpeedPoint(int clipId, int frame)
             if (std::abs(p.source - s) < 1) return false;
         SpeedPoint p;
         p.source = s;
-        // neuer Abschnitt behält das Tempo der Stelle (harter Wert des Abschnitts, ohne Übergang)
+        // new section keeps the speed of that spot (hard value of the section, without transition)
         int seg = 0;
         while (seg < x.ramp.size() && x.ramp[seg].source <= s) ++seg;
         p.speed = ::Retime::segmentSpeed(x, seg);
@@ -214,7 +214,7 @@ void Editor::moveSpeedPoint(int clipId, int index, int delta)
     if (delta == 0) return;
     editRamp(T("Speed-Punkt verschieben"), clipId, [index, delta](Clip& x, const RetimeMap&, int L) {
         if (index < 0 || index >= x.ramp.size()) return false;
-        // Tempo davor läuft weiter bzw. endet früher -> neue Quellstelle aus dem Tempo des Abschnitts davor
+        // Speed before continues or ends earlier -> new source position from the speed of the section before
         const double before = ::Retime::segmentSpeed(x, index);
         const double lo = (index > 0 ? x.ramp[index - 1].source : 0) + 1;
         const double hi = (index + 1 < x.ramp.size() ? x.ramp[index + 1].source : L) - 1;

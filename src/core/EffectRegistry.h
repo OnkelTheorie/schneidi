@@ -1,7 +1,7 @@
 #pragma once
-// Katalog der verfügbaren Effekte. Ein Effekt = Beschreibung + Parameter (Inspector, Projektdatei, Keyframes).
-// Einfache Effekte bilden ihre Parameter direkt auf einen MLT-Filter ab (mltService/mltProperty);
-// Effekte mit eigener Umrechnung (Farbkorrektur, Unschärfe) baut der TimelineBuilder anhand der id.
+// Catalog of the available effects. An effect = description + parameters (Inspector, project file, keyframes).
+// Simple effects map their parameters directly to an MLT filter (mltService/mltProperty);
+// effects with their own conversion (color correction, blur) are built by the TimelineBuilder by id.
 
 #include "core/Types.h"
 
@@ -14,13 +14,13 @@ struct EffectParam {
     // Path = file path (project file also stores it relative); Bool = checkbox; Choice = one of `choices`
     enum Type { Double, Color, Path, Bool, Choice };
     QString key;         // Name in EffectInstance::params
-    QString label;       // Anzeige im Inspector
-    QString mltProperty; // Property am MLT-Filter (leer = Umrechnung im TimelineBuilder)
+    QString label;       // display in the Inspector
+    QString mltProperty; // property on the MLT filter (empty = conversion in the TimelineBuilder)
     Type type = Double;
     QVariant defaultValue;
     double min = 0, max = 1;
-    AnimParam anim = AnimParam::Count; // Count = nicht animierbar
-    double step = 1;                   // Zahlenfeld: Schritt pro Pixel beim Ziehen
+    AnimParam anim = AnimParam::Count; // Count = not animatable
+    double step = 1;                   // number field: step per pixel when dragging
     int decimals = 2;
     QStringList choices; // Choice: allowed values (passed to MLT as they are)
     QString description; // Tooltip
@@ -45,8 +45,8 @@ struct EffectDescriptor {
     QString mltService;
     bool video = true; // false = audio effect (audio clips, Inspector tab Audio, Effects Library Audio FX)
     QVector<EffectParam> params;
-    // In der Effects Library (Open FX → Filter) anbietbar; solche Effekte bekommen im Inspector einen eigenen,
-    // entfernbaren Bereich. Nein = fester Bereich im Inspector (Green Screen).
+    // Can be offered in the Effects Library (Open FX -> Filter); such effects get their own, removable
+    // section in the Inspector. No = fixed section in the Inspector (Green Screen).
     bool library = false;
     QString category;    // Effects Library: empty = Open FX → Filter, "frei0r" = Open FX → frei0r
     QString description; // Tooltip
@@ -60,17 +60,17 @@ const QVector<EffectDescriptor>& all();
 // ids that already exist are skipped.
 void registerEffects(const QVector<EffectDescriptor>& effects);
 const EffectDescriptor* find(const QString& id);
-// Effekt und Parameter zu einem animierbaren Effekt-Parameter (false = kein Effekt-Parameter)
+// Effect and parameter for an animatable effect parameter (false = not an effect parameter)
 bool paramFor(AnimParam p, const EffectDescriptor** effect, const EffectParam** param);
 
-// Hilfen am Clip
+// Helpers on the clip
 const EffectInstance* instance(const Clip& c, const QString& id);
 EffectInstance* instance(Clip& c, const QString& id);
 bool has(const Clip& c, const QString& id);
-// Neue Instanz mit Default-Werten (ans Ende = zuletzt gerendert). false = unbekannt oder schon vorhanden
+// New instance with default values (at the end = rendered last). false = unknown or already present
 bool add(Clip& c, const QString& id);
-// Entfernt die Instanz samt Keyframes ihrer Parameter
+// Removes the instance together with the keyframes of its parameters
 void remove(Clip& c, const QString& id);
-// Wert eines Parameters (fehlend = Default)
+// Value of a parameter (missing = default)
 QVariant value(const Clip& c, const QString& id, const QString& key);
 } // namespace EffectRegistry

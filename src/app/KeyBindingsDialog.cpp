@@ -20,8 +20,8 @@
 namespace {
 enum Column { ColCategory, ColText, ColKey, ColMouse, ColCount };
 
-// Maustaste einfach drücken statt aus einer Liste wählen (wie die Tasten-Spalte).
-// Entf/Rücktaste = entfernen, Esc oder Wegklicken = abbrechen.
+// Just press the mouse button instead of choosing from a list (like the key column).
+// Del/Backspace = remove, Esc or clicking away = cancel.
 class MouseCapture : public QLabel {
 public:
     explicit MouseCapture(std::function<void(int)> done) : m_done(std::move(done))
@@ -53,7 +53,7 @@ private:
         if (!m_done) return;
         auto done = std::move(m_done);
         m_done = nullptr;
-        done(button); // -1 = nichts ändern
+        done(button); // -1 = change nothing
     }
     std::function<void(int)> m_done;
 };
@@ -131,7 +131,7 @@ void KeyBindingsDialog::fill()
     const auto& bindings = InputBindings::instance();
     const auto& entries = bindings.entries();
 
-    QHash<QString, int> uses; // Taste -> Anzahl Aktionen (Konflikte markieren)
+    QHash<QString, int> uses; // key -> number of actions (mark conflicts)
     for (const auto& e : entries) {
         const QString k = bindings.current(e.id).toString(QKeySequence::PortableText);
         if (!k.isEmpty()) ++uses[k];
@@ -152,7 +152,7 @@ void KeyBindingsDialog::fill()
         auto* keyItem = new QTableWidgetItem(key.toString(QKeySequence::NativeText));
         if (key != e.defaultKey) {
             QFont f = keyItem->font();
-            f.setBold(true); // eigene Belegung
+            f.setBold(true); // own binding
             keyItem->setFont(f);
         }
         if (uses.value(key.toString(QKeySequence::PortableText)) > 1) {
@@ -198,9 +198,9 @@ void KeyBindingsDialog::editRow(int row)
     edit->setFocus();
     connect(edit, &QKeySequenceEdit::editingFinished, this, [this, edit, id] {
         QKeySequence seq = edit->keySequence();
-        if (seq.count() > 1) seq = QKeySequence(seq[0]); // Qt < 6.5: nur die erste Taste zählt
+        if (seq.count() > 1) seq = QKeySequence(seq[0]); // Qt < 6.5: only the first key counts
         InputBindings::instance().setShortcut(id, seq);
-        QMetaObject::invokeMethod(this, [this] { fill(); }, Qt::QueuedConnection); // Editor erst danach entfernen
+        QMetaObject::invokeMethod(this, [this] { fill(); }, Qt::QueuedConnection); // remove the editor only afterwards
     });
 }
 
@@ -220,7 +220,7 @@ void KeyBindingsDialog::editMouse(int row)
     const QString id = m_table->item(row, ColText)->data(Qt::UserRole).toString();
     auto* capture = new MouseCapture([this, id](int b) {
         if (b >= 0) InputBindings::instance().setMouseButton(id, Qt::MouseButton(b));
-        QMetaObject::invokeMethod(this, [this] { fill(); }, Qt::QueuedConnection); // Editor erst danach entfernen
+        QMetaObject::invokeMethod(this, [this] { fill(); }, Qt::QueuedConnection); // remove the editor only afterwards
     });
     m_table->setCellWidget(row, ColMouse, capture);
     capture->setFocus();

@@ -32,7 +32,7 @@ private:
     QString m_mergeKey;
 };
 
-// Projekteinstellungen ändern: Format und (umgerechneter) Schnitt zusammen, damit Undo beides zurücknimmt
+// Change project settings: format and (converted) cut together, so that undo reverts both
 class FormatCommand : public QUndoCommand {
 public:
     FormatCommand(Project* p, ProjectFormat before, ProjectFormat after, QVector<Sequence> seqBefore,
@@ -48,7 +48,7 @@ private:
     QVector<Sequence> m_seqBefore, m_seqAfter;
 };
 
-// Mehrere Sequenzen zugleich (neue Timeline, Compound Clip erstellen/auflösen …) samt geöffneter Sequenz
+// Several sequences at once (new timeline, create/dissolve compound clip ...) together with the opened sequence
 class SequencesCommand : public QUndoCommand {
 public:
     SequencesCommand(Project* p, const QString& text, QVector<Sequence> before, int curBefore,
@@ -64,7 +64,7 @@ private:
     int m_curBefore, m_curAfter;
 };
 
-// Media-Pool-Organisation (Bins, Clipfarben, Flags) ändern – wie in DaVinci rückgängig machbar
+// Change Media Pool organization (bins, clip colors, flags) - undoable as in DaVinci
 class PoolCommand : public QUndoCommand {
 public:
     PoolCommand(Project* p, const QString& text, PoolState before, PoolState after)
@@ -80,7 +80,7 @@ private:
 Track makeTrack(TrackKind kind)
 {
     Track t;
-    t.kind = kind; // Name bleibt leer = Standard „Video 1“ usw.
+    t.kind = kind; // name stays empty = default "Video 1" etc.
     return t;
 }
 
@@ -88,7 +88,7 @@ Track makeTrack(TrackKind kind)
 
 Timeline emptyTimeline()
 {
-    // Standard wie ein leeres DaVinci-Projekt, nur mit je einer Spur mehr
+    // Default like an empty DaVinci project, just with one more track each
     Timeline tl;
     tl.video << makeTrack(TrackKind::Video) << makeTrack(TrackKind::Video);
     tl.audio << makeTrack(TrackKind::Audio) << makeTrack(TrackKind::Audio);
@@ -140,7 +140,7 @@ void Project::load(const ProjectData& d)
     for (const MediaBin& b : m_bins) m_lastBinId = std::max(m_lastBinId, b.id);
     m_sequences = d.sequences;
     m_current = d.currentSequence;
-    // Doppelte/ungültige ids (kaputte Datei) aussortieren
+    // Sort out duplicate/invalid ids (broken file)
     QSet<int> ids;
     m_sequences.erase(std::remove_if(m_sequences.begin(), m_sequences.end(),
                                      [&](const Sequence& s) {
@@ -150,14 +150,14 @@ void Project::load(const ProjectData& d)
                                      }),
                       m_sequences.end());
     if (!ids.contains(m_current)) {
-        // alte Datei (nur eine Timeline) oder geöffnete fehlt: `timeline` als eigene Sequenz
+        // old file (only one timeline) or the opened one is missing: `timeline` as its own sequence
         m_current = 1;
         while (ids.contains(m_current)) ++m_current;
         m_sequences.prepend(Sequence{m_current, T("Timeline %1").arg(1), false, 0, {}});
     }
     current().timeline = d.timeline;
     if (std::none_of(m_sequences.begin(), m_sequences.end(), [](const Sequence& s) { return !s.compound; }))
-        current().compound = false; // es gibt immer mindestens eine normale Timeline
+        current().compound = false; // there is always at least one normal timeline
     m_lastSequenceId = 0;
     for (Sequence& s : m_sequences) {
         m_lastSequenceId = std::max(m_lastSequenceId, s.id);
@@ -165,7 +165,7 @@ void Project::load(const ProjectData& d)
         if (s.timeline.audio.isEmpty()) s.timeline.audio << makeTrack(TrackKind::Audio);
         if (s.name.trimmed().isEmpty()) s.name = T("Timeline %1").arg(s.id);
     }
-    // Compound Clips mit Verweis auf fehlende Sequenzen oder Schleifen (kaputte Datei) -> entfernen
+    // Remove compound clips referring to missing sequences or loops (broken file)
     for (Sequence& s : m_sequences)
         for (auto* tracks : {&s.timeline.video, &s.timeline.audio})
             for (Track& t : *tracks)
@@ -207,17 +207,17 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
 {
     Timeline after = timeline();
     fn(after);
-    TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // Reststücke aus clearRange
+    TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // leftover pieces from clearRange
     TimelineOps::unpairBrokenDissolves(timeline(), after);
     TimelineOps::keepFadesApart(timeline(), after);
     if (after == timeline()) {
-        // Nichts geändert (z. B. Strg+B neben der Auswahl): kein Undo-Schritt. Signal trotzdem, damit ein
-        // vorgemerktes Engine::mixerOnlyNext verbraucht wird und nicht an der nächsten echten Änderung hängt.
+        // Nothing changed (e.g. Ctrl+B beside the selection): no undo step. Signal anyway, so that a
+        // pending Engine::mixerOnlyNext is consumed and does not stick to the next real change.
         emit timelineChanged();
         return;
     }
     const QString key = mergeKey.isEmpty() ? QString() : QString("%1#%2").arg(mergeKey).arg(m_mergeSession);
-    m_undo.push(new SnapshotCommand(this, text, m_current, timeline(), after, key)); // push ruft redo()
+    m_undo.push(new SnapshotCommand(this, text, m_current, timeline(), after, key)); // push calls redo()
 }
 
 bool Project::frameRateLocked() const
@@ -236,7 +236,7 @@ void Project::setFormat(const ProjectFormat& format)
     if (f == m_format) return;
     QVector<Sequence> after = m_sequences;
     for (Sequence& s : after) scaleTimeline(s.timeline, m_format.size(), f.size());
-    m_undo.push(new FormatCommand(this, m_format, f, m_sequences, after)); // push ruft redo()
+    m_undo.push(new FormatCommand(this, m_format, f, m_sequences, after)); // push calls redo()
 }
 
 void Project::applyFormat(const ProjectFormat& format, const QVector<Sequence>& sequences)
@@ -264,7 +264,7 @@ void Project::setTimeline(int sequenceId, const Timeline& tl)
     setTimeline(tl);
 }
 
-// ---------- Sequenzen (mehrere Timelines, Compound Clips) ----------
+// ---------- Sequences (several timelines, compound clips) ----------
 
 const Sequence* Project::sequence(int id) const
 {
@@ -296,7 +296,7 @@ void Project::editSequences(const QString& text, const std::function<void(QVecto
     if (after.isEmpty()) return;
     for (Sequence& seq : after) TimelineOps::resolvePendingLinks(seq.timeline, [this] { return newLinkId(); });
     if (std::none_of(after.begin(), after.end(), [&](const Sequence& s) { return s.id == cur; })) cur = after[0].id;
-    m_undo.push(new SequencesCommand(this, text, m_sequences, m_current, after, cur)); // push ruft redo()
+    m_undo.push(new SequencesCommand(this, text, m_sequences, m_current, after, cur)); // push calls redo()
 }
 
 void Project::applySequences(const QVector<Sequence>& sequences, int cur)
@@ -306,7 +306,7 @@ void Project::applySequences(const QVector<Sequence>& sequences, int cur)
     const bool switched = cur != m_current;
     m_current = cur;
     emit sequencesChanged();
-    emit poolChanged(); // Sequenzen stehen im Media Pool
+    emit poolChanged(); // sequences are in the Media Pool
     if (switched) emit currentSequenceChanged();
     emit timelineChanged();
 }
@@ -315,7 +315,7 @@ int Project::addTimeline(const QString& name, int binId)
 {
     if (binId != 0 && !bin(binId)) binId = 0;
     QString n = name.trimmed();
-    if (n.isEmpty()) { // wie DaVinci „Timeline 1“, „Timeline 2“ … (erste freie Nummer)
+    if (n.isEmpty()) { // like DaVinci "Timeline 1", "Timeline 2" ... (first free number)
         QSet<QString> used;
         for (const Sequence& s : m_sequences) used.insert(s.name);
         for (int i = 1;; ++i) {
@@ -350,7 +350,7 @@ int Project::duplicateSequence(int id)
     Sequence copy = *src;
     copy.id = newSequenceId();
     copy.name = T("%1 Kopie").arg(src->name);
-    // eigene Clip-/Verknüpfungs-ids (Auswahl, Keyframe-Spur usw. hängen an der id)
+    // own clip/link ids (selection, keyframe track etc. depend on the id)
     QHash<int, int> links;
     for (auto* tracks : {&copy.timeline.video, &copy.timeline.audio})
         for (Track& t : *tracks)
@@ -386,7 +386,7 @@ bool Project::removeSequence(int id)
                                                        [&](const Sequence& s) { return s.id == id; })
                                           - list.begin());
                       list.removeAt(idx);
-                      if (cur == id) { // nächste normale Timeline öffnen
+                      if (cur == id) { // open the next normal timeline
                           for (const Sequence& s : list)
                               if (!s.compound) {
                                   cur = s.id;
@@ -421,7 +421,7 @@ bool Project::sequenceUsed(int id) const
 
 bool Project::canNest(int child, int parent) const
 {
-    // Tiefensuche von child aus: erreicht sie parent, entstünde eine Schleife
+    // Depth-first search from child: if it reaches parent, a loop would arise
     QSet<int> seen;
     QVector<int> todo{child};
     while (!todo.isEmpty()) {
@@ -430,7 +430,7 @@ bool Project::canNest(int child, int parent) const
         if (seen.contains(id)) continue;
         seen.insert(id);
         const Sequence* s = sequence(id);
-        if (!s) return id != child; // unbekannte Sequenz taugt nicht
+        if (!s) return id != child; // unknown sequence is no good
         for (const auto* tracks : {&s->timeline.video, &s->timeline.audio})
             for (const Track& t : *tracks)
                 for (const Clip& c : t.clips)
@@ -537,7 +537,7 @@ void Project::markModified()
     emit modifiedChanged(true);
 }
 
-// ---------- Media Pool: Bins, Clipfarben, Flags ----------
+// ---------- Media Pool: bins, clip colors, flags ----------
 
 const MediaBin* Project::bin(int id) const
 {
@@ -548,7 +548,7 @@ const MediaBin* Project::bin(int id) const
 
 QString Project::binName(int id) const
 {
-    if (id == 0) return QStringLiteral("Master"); // heißt auch im deutschen DaVinci so
+    if (id == 0) return QStringLiteral("Master"); // is called that in German DaVinci too
     const MediaBin* b = bin(id);
     return b ? b->name : QString();
 }
@@ -569,7 +569,7 @@ QVector<int> Project::childBins(int parent) const
 
 bool Project::binInside(int id, int ancestor) const
 {
-    for (int guard = 0; guard <= m_bins.size(); ++guard) { // Zyklen gibt es nicht (sanitizePool), trotzdem begrenzen
+    for (int guard = 0; guard <= m_bins.size(); ++guard) { // there are no cycles (sanitizePool), limit anyway
         if (id == ancestor) return true;
         if (id == 0) return false;
         const MediaBin* b = bin(id);
@@ -594,7 +594,7 @@ void Project::applyPool(const PoolState& state)
     for (const MediaBin& b : m_bins) m_lastBinId = std::max(m_lastBinId, b.id);
     for (MediaInfo& m : m_media) {
         const auto it = state.media.constFind(m.path);
-        if (it == state.media.cend()) continue; // später importiert -> unverändert lassen
+        if (it == state.media.cend()) continue; // imported later -> leave unchanged
         m.bin = it->bin;
         m.clipColor = it->color;
         m.flags = it->flags;
@@ -609,11 +609,11 @@ void Project::sanitizePool()
 {
     QSet<int> ids;
     for (const MediaBin& b : m_bins) ids.insert(b.id);
-    ids.remove(0); // 0 ist immer Master
+    ids.remove(0); // 0 is always Master
     for (MediaBin& b : m_bins) {
         if (b.parent != 0 && !ids.contains(b.parent)) b.parent = 0;
     }
-    // Eltern-Zyklen (kaputte Datei) aufbrechen: wer sich über die Eltern selbst erreicht, kommt unter Master
+    // Break up parent cycles (broken file): whatever reaches itself via the parents goes under Master
     for (MediaBin& b : m_bins) {
         int cur = b.parent;
         for (int guard = 0; cur != 0 && guard <= m_bins.size(); ++guard) {
@@ -639,14 +639,14 @@ void Project::editPool(const QString& text, const std::function<void(PoolState&)
     fn(after);
     const PoolState before = poolState();
     if (after == before) return;
-    m_undo.push(new PoolCommand(this, text, before, after)); // push ruft redo()
+    m_undo.push(new PoolCommand(this, text, before, after)); // push calls redo()
 }
 
 int Project::addBin(int parent, const QString& name)
 {
     if (parent != 0 && !bin(parent)) parent = 0;
     QString n = name.trimmed();
-    if (n.isEmpty()) { // wie DaVinci "Bin 1", "Bin 2" … (erste freie Nummer)
+    if (n.isEmpty()) { // like DaVinci "Bin 1", "Bin 2" ... (first free number)
         QSet<QString> used;
         for (const MediaBin& b : m_bins) used.insert(b.name);
         for (int i = 1;; ++i) {
@@ -725,7 +725,7 @@ void Project::setFlag(const QStringList& paths, const QString& flagId, bool on)
             QStringList& flags = s.media[p].flags;
             if (on && !flags.contains(flagId)) {
                 flags << flagId;
-                // Reihenfolge wie in der Farbliste (Anzeige stabil)
+                // order as in the color list (stable display)
                 std::sort(flags.begin(), flags.end(), [](const QString& a, const QString& b) {
                     return flagColorInfo(a) < flagColorInfo(b);
                 });

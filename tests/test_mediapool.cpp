@@ -1,5 +1,5 @@
-// Test Media Pool: Bins (anlegen, umbenennen, verschieben, entfernen), Clipfarben, Flags – Undo, Speichern/Laden,
-// kaputte Dateien (fehlende Bins, Zyklen, unbekannte Farben); Media-Pool-Widget offscreen (Bin-Wechsel, Import in Bin)
+// Test Media Pool: bins (create, rename, move, remove), clip colors, flags - undo, save/load,
+// broken files (missing bins, cycles, unknown colors); Media Pool widget offscreen (bin switch, import into bin)
 #include "check.h"
 
 #include "core/Project.h"
@@ -41,7 +41,7 @@ int main(int argc, char** argv)
     p.addMedia(media("c.mp4"));
     QUndoStack* undo = p.undoStack();
 
-    // --- Bins anlegen: Standardnamen „Bin 1“, „Bin 2“; Unter-Bin; sortiert nach Name
+    // --- Create bins: default names "Bin 1", "Bin 2"; sub-bin; sorted by name
     const int b1 = p.addBin(0);
     const int b2 = p.addBin(0, "  Zeug  ");
     const int sub = p.addBin(b1, "Unter");
@@ -51,19 +51,19 @@ int main(int argc, char** argv)
     CHECK_EQ(p.childBins(0), (QVector<int>{b1, b2}));
     CHECK_EQ(p.childBins(b1), QVector<int>{sub});
     CHECK(p.binInside(sub, b1) && p.binInside(sub, 0) && !p.binInside(b1, sub));
-    CHECK_EQ(p.binName(p.addBin(0)), QString("Bin 2")); // erste freie Nummer
+    CHECK_EQ(p.binName(p.addBin(0)), QString("Bin 2")); // first free number
     undo->undo();
     CHECK_EQ(p.bins().size(), 3);
 
-    // --- Clips verschieben, Farbe, Flags (jeweils ein Undo-Schritt)
+    // --- Move clips, color, flags (one undo step each)
     int n = undo->index();
     p.moveMediaToBin({"/x/a.mp4", "/x/b.mp4"}, sub);
     CHECK(binOf(p, "a.mp4") == sub && binOf(p, "b.mp4") == sub && binOf(p, "c.mp4") == 0);
     p.setClipColor({"/x/a.mp4"}, "orange");
-    p.setClipColor({"/x/b.mp4"}, "gibtsnicht"); // unbekannt: nichts
+    p.setClipColor({"/x/b.mp4"}, "gibtsnicht"); // unknown: nothing
     p.setFlag({"/x/a.mp4", "/x/c.mp4"}, "red", true);
-    p.setFlag({"/x/a.mp4"}, "blue", true); // Reihenfolge wie in der Farbliste: blue vor red
-    p.setFlag({"/x/a.mp4"}, "blue", true); // schon gesetzt: kein Schritt
+    p.setFlag({"/x/a.mp4"}, "blue", true); // order as in the color list: blue before red
+    p.setFlag({"/x/a.mp4"}, "blue", true); // already set: no step
     CHECK_EQ(undo->index(), n + 4);
     CHECK_EQ(p.mediaInfo("/x/a.mp4")->clipColor, QString("orange"));
     CHECK(p.mediaInfo("/x/b.mp4")->clipColor.isEmpty());
@@ -79,19 +79,19 @@ int main(int argc, char** argv)
     undo->redo();
     undo->redo();
 
-    // --- Bin verschieben: nicht in sich selbst/darunter
+    // --- Move bin: not into itself/below
     p.moveBin(b1, sub);
     CHECK_EQ(p.bin(b1)->parent, 0);
     p.moveBin(sub, b2);
     CHECK_EQ(p.bin(sub)->parent, b2);
     undo->undo();
     CHECK_EQ(p.bin(sub)->parent, b1);
-    // Umbenennen (leer = nichts)
+    // Rename (empty = nothing)
     p.renameBin(b2, "Musik");
     p.renameBin(b2, "   ");
     CHECK_EQ(p.binName(b2), QString("Musik"));
 
-    // --- Bin entfernen: Inhalt und Unter-Bins wandern eine Ebene hoch; Undo stellt alles wieder her
+    // --- Remove bin: content and sub-bins move up one level; undo restores everything
     p.removeBin(b1);
     CHECK(!p.bin(b1) && p.bin(sub) && p.bin(sub)->parent == 0 && binOf(p, "a.mp4") == sub);
     p.removeBin(sub);
@@ -100,13 +100,13 @@ int main(int argc, char** argv)
     undo->undo();
     CHECK(p.bin(b1) && p.bin(sub)->parent == b1 && binOf(p, "a.mp4") == sub);
 
-    // --- Später importierte Medien: Undo der Organisation lässt sie in Ruhe; Import in einen fehlenden Bin -> Master
+    // --- Media imported later: undo of the organization leaves them alone; import into a missing bin -> Master
     MediaInfo d = media("d.mp4");
     d.bin = 999;
     p.addMedia(d);
     CHECK_EQ(binOf(p, "d.mp4"), 0);
 
-    // --- Speichern -> Laden: alles gleich, neue Bin-ID nach dem Laden nicht doppelt
+    // --- Save -> load: everything the same, new bin ID after loading not duplicated
     {
         ProjectData data = p.data();
         QString err;
@@ -125,7 +125,7 @@ int main(int argc, char** argv)
         CHECK(!q.undoStack()->canRedo() && q.undoStack()->count() == 1);
     }
 
-    // --- Kaputte Datei: Bin mit fehlendem Eltern-Bin, Eltern-Zyklus, doppelte ID, unbekannte Farbe/Flags
+    // --- Broken file: bin with missing parent bin, parent cycle, duplicate ID, unknown color/flags
     {
         ProjectData data;
         QString err;
@@ -140,13 +140,13 @@ int main(int argc, char** argv)
         q.load(data);
         CHECK_EQ(q.bins().size(), 3);
         CHECK(q.bin(4) && q.bin(4)->parent == 0);
-        CHECK(!q.binInside(q.bin(2)->parent, 2) || q.bin(2)->parent == 0); // Zyklus aufgebrochen
+        CHECK(!q.binInside(q.bin(2)->parent, 2) || q.bin(2)->parent == 0); // cycle broken up
         CHECK(q.binInside(2, 0) && q.binInside(3, 0));
-        CHECK_EQ(q.mediaInfo("/x/a.mp4")->bin, 0); // Bin 7 gibt es nicht
+        CHECK_EQ(q.mediaInfo("/x/a.mp4")->bin, 0); // bin 7 does not exist
         CHECK(q.mediaInfo("/x/a.mp4")->clipColor.isEmpty());
         CHECK_EQ(q.mediaInfo("/x/a.mp4")->flags, (QStringList{"red", "blue"}));
         CHECK_EQ(q.mediaInfo("/x/b.mp4")->bin, 2);
-        // alte Datei ohne Bins: alles im Master, Datei bleibt ohne neue Felder
+        // old file without bins: everything in Master, file stays without new fields
         CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,
             "media":[{"path":"/x/a.mp4","name":"a.mp4","length":10,"hasVideo":true}],"timeline":{"video":[],"audio":[]}})",
                                     "/x/p.schneidi", &data, &err));
@@ -155,7 +155,7 @@ int main(int argc, char** argv)
         CHECK(!json.contains("\"bin\"") && !json.contains("clipColor") && !json.contains("flags"));
     }
 
-    // --- Widget: Bins in der Liste, Bin-Wechsel zeigt nur dessen Clips, Undo aktualisiert die Ansicht
+    // --- Widget: bins in the list, switching bins shows only its clips, undo updates the view
     {
         Engine engine;
         MediaPool pool(&p, &engine);
@@ -180,7 +180,7 @@ int main(int argc, char** argv)
         undo->undo();
         app.processEvents();
         CHECK_EQ(list->count(), 2);
-        // Suche: im Master auch Unter-Bins, ohne Titel-Eintrag; groß/klein egal; leer = wieder normal
+        // Search: in Master also sub-bins, without title entry; case does not matter; empty = normal again
         pool.setCurrentBin(0);
         pool.setSearch("A.MP4");
         CHECK_EQ(list->count(), 1);
@@ -193,7 +193,7 @@ int main(int argc, char** argv)
         CHECK_EQ(list->count(), 0);
         pool.setSearch("");
         CHECK_EQ(list->count(), 2);
-        // Aktueller Bin wird entfernt (Undo des Anlegens): Ansicht springt auf Master
+        // Current bin is removed (undo of creating): view jumps to Master
         const int tmpBin = p.addBin(0, "Weg");
         pool.setCurrentBin(tmpBin);
         undo->undo();
@@ -202,7 +202,7 @@ int main(int argc, char** argv)
         CHECK(!pool.grab().isNull());
     }
 
-    // --- Ordner samt Unterordnern als Bins (Media Storage/Drop): leere und medienlose Ordner ohne Bin, ein Undo-Schritt
+    // --- Folder including subfolders as bins (Media Storage/drop): empty and media-less folders without bin, one undo step
     if (Check::haveFfmpeg()) {
         QTemporaryDir tmp;
         QDir root(tmp.path());
@@ -238,7 +238,7 @@ int main(int argc, char** argv)
             }
             q.undoStack()->undo();
             CHECK(q.bins().isEmpty());
-            // Ordner ohne Brauchbares (nur Text, leere Unterordner): kein leerer Undo-Schritt, keine Änderung
+            // Folder without anything usable (only text, empty subfolders): no empty undo step, no change
             const int idx = q.undoStack()->index();
             for (const char* sub : {"Dreh/NurText", "Dreh/Leer"}) {
                 pool.importFolder(root.filePath(sub));
@@ -251,7 +251,7 @@ int main(int argc, char** argv)
         }
     }
 
-    // --- Proxy: startet ffmpeg nicht (kaputte Datei vorn im PATH), meldet das statt ewig zu warten
+    // --- Proxy: does not start ffmpeg (broken file at the front of PATH), reports that instead of waiting forever
     if (Check::haveFfmpeg()) {
         QTemporaryDir tmp;
         const QString a = Check::makeMedia(tmp.filePath("a.mp4"),

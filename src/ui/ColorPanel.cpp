@@ -32,8 +32,8 @@
 
 namespace {
 
-// Farbbalance eines Rads als Punkt (u, v) in der Fläche, wie ein Vektorskop (BT.709): rechts = Blau, oben = Rot.
-// R/G/B-Änderungen daraus haben zusammen keine Helligkeit -> Balance ändert die Farbe, der Master die Helligkeit.
+// Color balance of a wheel as a point (u, v) in the plane, like a vectorscope (BT.709): right = blue, top = red.
+// R/G/B changes derived from it have no brightness together -> balance changes the color, the master the brightness.
 constexpr double kWr = 0.2126, kWg = 0.7152, kWb = 0.0722;
 
 void uvToRgb(double u, double v, double rgb[3])
@@ -52,7 +52,7 @@ void rgbToUv(const double d[3], double* u, double* v)
 
 } // namespace
 
-// Farbrad wie DaVinci: Punkt ziehen = Farbbalance (relativ zur Mausbewegung, Shift = fein), Doppelklick = Mitte.
+// Color wheel like DaVinci: drag the point = color balance (relative to the mouse movement, Shift = fine), double-click = center.
 // Position (u, v) in -1..1 (Rand = 1).
 class ColorWheel : public QWidget {
 public:
@@ -85,7 +85,7 @@ protected:
         p.setRenderHint(QPainter::Antialiasing);
         const QRectF r = disc();
         const QPointF c = r.center();
-        // Farbkreis: Farbton je Richtung wie ein Vektorskop, zur Mitte hin grau
+        // Color circle: hue per direction like a vectorscope, gray towards the center
         QConicalGradient hue(c, 0);
         for (int i = 0; i <= 12; ++i) {
             const double a = i / 12.0 * 2 * M_PI;
@@ -104,11 +104,11 @@ protected:
         p.setPen(Qt::NoPen);
         p.setBrush(fade);
         p.drawEllipse(r.adjusted(2, 2, -2, -2));
-        // Fadenkreuz
+        // Crosshair
         p.setPen(QPen(QColor(255, 255, 255, 40), 1));
         p.drawLine(QPointF(c.x(), r.top() + 6), QPointF(c.x(), r.bottom() - 6));
         p.drawLine(QPointF(r.left() + 6, c.y()), QPointF(r.right() - 6, c.y()));
-        // Punkt
+        // point
         const QPointF dot(c.x() + m_u * r.width() / 2, c.y() - m_v * r.height() / 2);
         const bool moved = std::abs(m_u) > 1e-6 || std::abs(m_v) > 1e-6;
         p.setPen(QPen(moved ? Theme::primary : Theme::text, 1.5));
@@ -167,7 +167,7 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
         {"Offset", {P::GradeOffsetY, P::GradeOffsetR, P::GradeOffsetG, P::GradeOffsetB}, 25.0, 25.0},
     };
 
-    // Kopfzeile: Titel, Clipname, an/aus, Keyframes, alles zurücksetzen
+    // Header row: title, clip name, on/off, keyframes, reset all
     auto* title = new QLabel(T("Primaries – Farbräder"));
     title->setObjectName("PanelTitle");
     m_clipName = new QLabel;
@@ -220,14 +220,14 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     head->addSpacing(6);
     head->addWidget(resetAll);
 
-    // Räder
+    // Wheels
     auto* wheels = new QHBoxLayout;
     wheels->setSpacing(12);
     wheels->addStretch(1);
     for (Wheel& w : m_wheels) wheels->addWidget(buildWheel(w));
     wheels->addStretch(1);
 
-    // Regler darunter (wie die Leiste unter den DaVinci-Rädern)
+    // Sliders below (like the bar under the DaVinci wheels)
     m_sliders = {{P::GradeContrast}, {P::GradePivot}, {P::GradeSaturation},
                  {P::GradeTemp},     {P::GradeTint},  {P::GradeExposure}};
     auto* bar = new QHBoxLayout;
@@ -303,7 +303,7 @@ QWidget* ColorPanel::buildWheel(Wheel& w)
     lay->setSpacing(4);
 
     auto* head = new QHBoxLayout;
-    auto* name = new QLabel(w.name); // wie DaVinci auch im deutschen Resolve englisch
+    auto* name = new QLabel(w.name); // as in DaVinci, English even in the German Resolve
     name->setStyleSheet(QString("color: %1;").arg(Theme::text.name()));
     auto* reset = smallButton("↺", T("%1 zurücksetzen").arg(w.name));
     const QVector<AnimParam> params{w.p[0], w.p[1], w.p[2], w.p[3]};
@@ -322,7 +322,7 @@ QWidget* ColorPanel::buildWheel(Wheel& w)
         const Wheel& w = m_wheels[index];
         const Clip* c = current();
         if (!c) return;
-        // Helligkeitsanteil der R/G/B-Werte bleibt, nur die Balance folgt dem Punkt
+        // brightness part of the R/G/B values stays, only the balance follows the point
         const int t = localFrame(*c);
         double d[3];
         for (int i = 0; i < 3; ++i) d[i] = Keys::valueAt(*c, w.p[i + 1], t) - w.neutral;
@@ -334,7 +334,7 @@ QWidget* ColorPanel::buildWheel(Wheel& w)
     };
     w.wheel->onFinish = [this] { finish(); };
 
-    // Zahlenfelder Y R G B (Y = Master, wie das Rad unter den DaVinci-Farbrädern)
+    // Number fields Y R G B (Y = master, like the wheel under the DaVinci color wheels)
     auto* grid = new QGridLayout;
     grid->setHorizontalSpacing(3);
     grid->setVerticalSpacing(0);
@@ -377,7 +377,7 @@ QWidget* ColorPanel::buildSlider(Slider& s, const QString& label, double min, do
     s.field->onFinish = [this] { finish(); };
     lay->addWidget(l);
     lay->addWidget(s.field, 0, Qt::AlignHCenter);
-    // Doppelklick auf die Beschriftung = Standardwert (wie DaVinci)
+    // Double-click on the label = default value (like DaVinci)
     l->setToolTip(T("Doppelklick = zurücksetzen"));
     l->installEventFilter(this);
     l->setProperty("gradeParam", int(p));
@@ -434,7 +434,7 @@ void ColorPanel::loadLut()
     if (targets().isEmpty()) return;
     QSettings settings;
     QString dir = settings.value("color/lutDir").toString();
-    if (dir.isEmpty() || !QFileInfo(dir).isDir()) dir = EffectFolders::lutDir(); // eigener LUTs-Ordner
+    if (dir.isEmpty() || !QFileInfo(dir).isDir()) dir = EffectFolders::lutDir(); // own LUTs folder
     const QString path = QFileDialog::getOpenFileName(this, T("LUT laden"), dir, EffectFolders::lutFileFilter());
     if (path.isEmpty()) return;
     settings.setValue("color/lutDir", QFileInfo(path).absolutePath());
@@ -492,7 +492,7 @@ void ColorPanel::refresh()
     m_enabled->setEnabled(has);
 
     const int t = localFrame(*c);
-    auto value = [&](AnimParam p) { return Keys::valueAt(*c, p, t); }; // ohne Korrektur: Standardwerte
+    auto value = [&](AnimParam p) { return Keys::valueAt(*c, p, t); }; // without correction: default values
     for (Wheel& w : m_wheels) {
         for (int i = 0; i < 4; ++i)
             if (!w.field[i]->hasFocus()) w.field[i]->setValue(value(w.p[i]));
@@ -512,7 +512,7 @@ void ColorPanel::refresh()
     m_lutName->setStyleSheet(QString("color: %1;").arg((lutOk ? Theme::text : Theme::warning).name()));
     m_lutClear->setEnabled(!lut.isEmpty());
 
-    // Keyframe-Raute: rot = Keyframe am Playhead, hell = Korrektur animiert
+    // Keyframe diamond: red = keyframe at the playhead, bright = correction animated
     const QVector<AnimParam>& params = ColorGrade::animParams();
     const bool animated = std::any_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::animated(*c, p); });
     const bool here = animated && Keys::keyAt(*c, AnimParam::GradeLiftY, t);

@@ -5,25 +5,25 @@
 #include <mlt++/Mlt.h>
 #include <memory>
 
-// Speed Ramp (Clip::ramp) in der Engine. Positionen beider Producer = Material-Frames des Clips (wie bei timewarp),
-// d. h. Clip::in/out und Keyframe-Filter funktionieren unverändert.
+// Speed Ramp (Clip::ramp) in the engine. Positions of both producers = source frames of the clip (as with timewarp),
+// i.e. Clip::in/out and keyframe filters work unchanged.
 namespace RampProducer {
 
-// Bild: eigener Producer, der je Frame die Quellstelle aus der RetimeMap holt (ein Decoder für alle Tempi,
-// weiche Übergänge Frame für Frame). `inner` = normaler Producer der Datei im Projektprofil.
+// Video: own producer that fetches the source position from the RetimeMap per frame (one decoder for all speeds,
+// smooth transitions frame by frame). `inner` = normal producer of the file in the project profile.
 std::unique_ptr<Mlt::Producer> video(Mlt::Profile& profile, std::unique_ptr<Mlt::Producer> inner, const Clip& c);
 
-// Ton: Playlist aus timewarp-Ausschnitten, je Abschnitt konstantes Tempo; weiche Übergänge in kurzen Stufen.
-// Tonhöhe halten (warp_pitch) nur in Abschnitten mit festem Tempo: der Pitch-Filter braucht nach jedem Wechsel
-// 1–2 Frames zum Einschwingen, in den kurzen Stufen wäre der Ton sonst voller Lücken. 100 % vorwärts = normaler
-// Producer (kein Einschwingen). nullptr = Datei nicht lesbar.
+// Audio: playlist of timewarp excerpts, constant speed per section; smooth transitions in short steps.
+// Keep pitch (warp_pitch) only in sections with constant speed: the pitch filter needs 1–2 frames to settle after every change,
+// in the short steps the audio would otherwise be full of gaps. 100 % forward = normal
+// producer (no settling). nullptr = file not readable.
 std::unique_ptr<Mlt::Producer> audio(Mlt::Profile& profile, const QString& file, const Clip& c);
 
-// Stufen des Tons (auch für Tests): Material [m0, m1) mit konstantem Tempo ab Quellstelle s0
+// Audio steps (also for tests): source [m0, m1) at constant speed from source position s0
 struct AudioStep {
     int m0, m1;
     double s0, speed;
-    bool smooth = false; // Stufe eines weichen Übergangs (ohne Tonhöhenkorrektur)
+    bool smooth = false; // step of a smooth transition (without pitch correction)
 };
 QVector<AudioStep> audioSteps(const Clip& c, int fileLength);
 

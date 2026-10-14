@@ -1,6 +1,6 @@
-// Designs: eingebaute JSON-Dateien vollständig, „Dark Orange“ = Vorgabe im Code, Signalfarben gleich in allen Designs,
-// Speichern/Laden der Nutzerwahl (Primär-/Sekundärfarbe je Design, Signalfarben für alle), Design-Dialog.
-// DESIGN_DUMP=ordner speichert Bilder des Dialogs je Design.
+// Designs: built-in JSON files complete, "Dark Orange" = default in code, signal colors the same in all designs,
+// saving/loading the user's choice (primary/secondary color per design, signal colors for all), design dialog.
+// DESIGN_DUMP=folder saves images of the dialog per design.
 #include "check.h"
 
 #include "app/DesignDialog.h"
@@ -38,7 +38,7 @@ int main(int argc, char** argv)
     Check::initApp("theme");
     clearSettings();
 
-    // --- Vorgabe im Code (vor load) = Design „Dark Orange“
+    // --- Default in code (before load) = design "Dark Orange"
     const QColor window0 = Theme::window, primary0 = Theme::primary, lane0 = Theme::lane, playhead0 = Theme::playhead;
     const Theme::Colors dark = Theme::defaults("dark-orange");
     CHECK_EQ(dark.value("window"), window0);
@@ -49,7 +49,7 @@ int main(int argc, char** argv)
     CHECK_EQ(Theme::window, window0);
     CHECK_EQ(Theme::onPrimary, QColor(Qt::black));
 
-    // --- Eingebaute Designs: vorhanden, alle Schlüssel gesetzt und gültig, keine Signalfarben in den Dateien
+    // --- Built-in designs: present, all keys set and valid, no signal colors in the files
     const QList<Theme::Design> designs = Theme::designs();
     CHECK_EQ(int(designs.size()), 5);
     CHECK_EQ(Theme::defaultDesign(), QString("dark-orange"));
@@ -70,24 +70,24 @@ int main(int argc, char** argv)
         }
         for (const QString& k : signalKeys) {
             CHECK(!colors.contains(k));
-            CHECK_EQ(def.value(k), dark.value(k)); // Signalfarben ändern sich nicht mit dem Design
+            CHECK_EQ(def.value(k), dark.value(k)); // signal colors do not change with the design
         }
-        // Text muss sich vom Hintergrund abheben (grobe Helligkeitsdifferenz)
+        // Text must stand out from the background (rough brightness difference)
         auto y = [](const QColor& c) { return 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue(); };
         CHECK(std::abs(y(def.value("text")) - y(def.value("panel"))) > 110);
         CHECK(std::abs(y(def.value("text")) - y(def.value("trackHeader"))) > 100);
         CHECK(std::abs(y(def.value("textDim")) - y(def.value("panel"))) > 50);
     }
-    CHECK_EQ(Theme::defaults("gibt-es-nicht").value("window"), window0); // unbekannt -> Vorgabe
+    CHECK_EQ(Theme::defaults("gibt-es-nicht").value("window"), window0); // unknown -> default
 
-    // --- Hilfen
+    // --- Helpers
     CHECK_EQ(Theme::readableOn(QColor("#e87a3a")), QColor(Qt::black));
     CHECK_EQ(Theme::readableOn(QColor("#2f6fdc")), QColor(Qt::white));
     CHECK_EQ(Theme::mix(QColor(0, 0, 0), QColor(200, 100, 50), 0.5), QColor(100, 50, 25));
     CHECK_EQ(Theme::alpha(QColor(1, 2, 3), 40).alpha(), 40);
     CHECK(Theme::selectionFrom(QColor("#2f6fdc")).lightnessF() >= 0.61);
 
-    // --- Speichern: nur Abweichungen von der Vorgabe; Primär-/Sekundärfarbe je Design, Signalfarben für alle
+    // --- Saving: only deviations from the default; primary/secondary color per design, signal colors for all
     CHECK_EQ(Theme::savedDesign(), QString("dark-orange"));
     Theme::Colors mid = Theme::defaults("midnight");
     mid.insert("primary", QColor("#ff00aa"));
@@ -106,20 +106,20 @@ int main(int argc, char** argv)
     CHECK_EQ(Theme::saved("graphit").value("primary"), Theme::defaults("graphit").value("primary"));
     CHECK_EQ(Theme::saved("graphit").value("playhead"), QColor("#00ff00"));
 
-    // --- Laden beim Start
+    // --- Loading at startup
     Theme::load();
     CHECK_EQ(Theme::primary, QColor("#ff00aa"));
     CHECK_EQ(Theme::window, Theme::defaults("midnight").value("window"));
     CHECK_EQ(Theme::playhead, QColor("#00ff00"));
     CHECK_EQ(Theme::onPrimary, Theme::readableOn(QColor("#ff00aa")));
-    Theme::load("hell"); // --design: nur dieser Lauf
+    Theme::load("hell"); // --design: this run only
     CHECK_EQ(Theme::window, Theme::defaults("hell").value("window"));
     CHECK_EQ(Theme::onPrimary, QColor(Qt::white));
     CHECK_EQ(Theme::savedDesign(), QString("midnight"));
     Theme::load("gibt-es-nicht");
     CHECK_EQ(Theme::primary, QColor("#ff00aa"));
 
-    // Zurück auf die Vorgabe -> Einträge verschwinden
+    // Back to the default -> entries disappear
     Theme::save("midnight", Theme::defaults("midnight"));
     {
         QSettings s;
@@ -136,7 +136,7 @@ int main(int argc, char** argv)
         d.setColor("primary", QColor("#123456"));
         d.setColor("videoClip", QColor("#654321"));
         CHECK_EQ(d.colors().value("primary"), QColor("#123456"));
-        d.selectDesign("hell"); // eigene Farbe gehört zum Design, Signalfarbe bleibt
+        d.selectDesign("hell"); // own color belongs to the design, signal color stays
         CHECK_EQ(d.colors().value("primary"), Theme::defaults("hell").value("primary"));
         CHECK_EQ(d.colors().value("videoClip"), QColor("#654321"));
         d.selectDesign("graphit");
@@ -153,7 +153,7 @@ int main(int argc, char** argv)
         if (const QString dir = qEnvironmentVariable("DESIGN_DUMP"); !dir.isEmpty()) {
             QDir().mkpath(dir);
             for (const Theme::Design& de : designs) {
-                Theme::activate(Theme::defaults(de.id)); // Dialog selbst im jeweiligen Design
+                Theme::activate(Theme::defaults(de.id)); // dialog itself in the respective design
                 Theme::apply(app);
                 DesignDialog shot;
                 shot.selectDesign(de.id);

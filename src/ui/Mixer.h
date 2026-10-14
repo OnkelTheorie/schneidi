@@ -25,7 +25,7 @@ protected:
 
 private:
     Editor* editor();
-    void sync();         // Modell -> Kanalzüge (legt sie bei geänderter Spuranzahl neu an)
+    void sync();         // model -> channel strips (recreates them when the track count changed)
     void rebuildStrips(int count);
     void fitStrips();    // strip area width: whole channel strips only
     int fixedWidth() const; // master + loudness
@@ -33,7 +33,7 @@ private:
     void resizeEvent(class QResizeEvent* e) override;
     void showEvent(class QShowEvent* e) override;
     void onLevels(const QVector<float>& db);
-    void tick();         // Pegel abfallen lassen, Peak-Hold
+    void tick();         // let levels decay, peak hold
 
     Project* m_project;
     Engine* m_engine;
@@ -42,7 +42,7 @@ private:
     class QScrollArea* m_stripScroll = nullptr;
     QVector<ChannelStrip*> m_strips;
     ChannelStrip* m_master = nullptr;
-    LoudnessStrip* m_loudness = nullptr; // Loudness-Meter rechts neben dem Master
+    LoudnessStrip* m_loudness = nullptr; // Loudness meter to the right of the master
     QTimer* m_timer = nullptr;
     QElapsedTimer m_clock, m_lastLevels;
 };

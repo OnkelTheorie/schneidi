@@ -15,10 +15,10 @@ namespace PitchLatency {
 
 namespace {
 
-constexpr double kClickAt = 0.5; // Klick in Timeline-Sekunden (Rubberband braucht davor ein paar Frames Anlauf)
+constexpr double kClickAt = 0.5; // Click in timeline seconds (Rubberband needs a few frames of run-up before it)
 constexpr double kMaxDelay = 1.5;
 
-// Stereo-WAV (16 Bit) mit einem einzelnen Klick bei `clickAt` Sekunden
+// Stereo WAV (16 bit) with a single click at `clickAt` seconds
 bool writeClick(const QString& path, int rate, double seconds, double clickAt)
 {
     QFile f(path);
@@ -40,11 +40,11 @@ bool writeClick(const QString& path, int rate, double seconds, double clickAt)
     return s.status() == QDataStream::Ok;
 }
 
-// Erster Klick-Sample (Timeline) mit timewarp ab Material-Frame 0, -1 = nicht gefunden
+// First click sample (timeline) with timewarp from source frame 0, -1 = not found
 long clickSample(Mlt::Profile& profile, const QString& file, double speed, bool pitch)
 {
     char num[32];
-    std::snprintf(num, sizeof num, "%.10g", speed); // timewarp liest per atof (siehe dev-notes)
+    std::snprintf(num, sizeof num, "%.10g", speed); // timewarp reads via atof (see docs/dev/mlt.md)
     Mlt::Producer p(profile, QString("timewarp:%1:%2").arg(QString::fromLatin1(num), file).toUtf8().constData());
     if (!p.is_valid()) return -1;
     p.set("warp_pitch", pitch ? 1 : 0);
@@ -61,7 +61,7 @@ long clickSample(Mlt::Profile& profile, const QString& file, double speed, bool 
         const auto* pcm = static_cast<const float*>(fr->get_audio(fmt, freq, channels, samples));
         if (pcm && fmt == mlt_audio_float)
             for (int k = 0; k < samples; ++k)
-                if (std::abs(pcm[k]) > 0.2f) return at + k; // planar: erster Kanal
+                if (std::abs(pcm[k]) > 0.2f) return at + k; // planar: first channel
         at += samples;
     }
     return -1;
@@ -84,7 +84,7 @@ int measure(Mlt::Profile& profile, double speed, int rate)
 int frames(Mlt::Profile& profile, double speed, int sampleRate)
 {
     speed = std::abs(speed);
-    if (speed == 1.0 || speed < 0.1) return 0; // timewarp korrigiert unter 10 % nicht (MLT)
+    if (speed == 1.0 || speed < 0.1) return 0; // timewarp does not correct below 10 % (MLT)
     static std::mutex mutex;
     static std::map<std::tuple<double, int, int, int>, int> cache;
     const std::lock_guard<std::mutex> lock(mutex);

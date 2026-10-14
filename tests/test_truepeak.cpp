@@ -1,6 +1,6 @@
-// Test True Peak (ITU-R BS.1770-4 Annex 2, dBTP): TruePeakMeter mit synthetischen Signalen (fs/4 mit 45°
-// Phasenversatz: Sample Peak 3 dB unter dem echten Spitzenwert), Häppchen-Verarbeitung, und die Messung am
-// Master-Pegelmesser der Vorschau (_true_peak.N und SharedLoudness).
+// Test true peak (ITU-R BS.1770-4 Annex 2, dBTP): TruePeakMeter with synthetic signals (fs/4 with 45 degree
+// phase offset: sample peak 3 dB below the true peak value), chunk processing, and the measurement at the
+// master level meter of the preview (_true_peak.N and SharedLoudness).
 #include "check.h"
 
 #include "core/Loudness.h"
@@ -21,7 +21,7 @@ constexpr double kPi = 3.14159265358979323846;
 
 bool near(double a, double b, double tol) { return std::abs(a - b) <= tol; }
 
-// Stereo-Sinus (verschachtelt), Amplitude linear, Frequenz in Hz, Phase in Bogenmaß
+// Stereo sine (interleaved), amplitude linear, frequency in Hz, phase in radians
 std::vector<float> sine(double freq, double amp, double phase, int frames, int rate, int channels = 2)
 {
     std::vector<float> v(size_t(frames) * channels);
@@ -38,8 +38,8 @@ double samplePeakDb(const std::vector<float>& v)
     return TruePeakMeter::toDb(p);
 }
 
-// Stereo-Signal einspeisen, Spitzenwerte aber erst nach dem Einschwingen messen: der abrupte Einsatz aus der
-// Stille schwingt im Interpolationsfilter über (echtes Intersample-Überschwingen, hier nicht gemeint)
+// Feed in a stereo signal, but measure peaks only after settling: the abrupt onset from silence
+// rings over in the interpolation filter (real intersample overshoot, not meant here)
 void feedSteady(TruePeakMeter& m, const std::vector<float>& v, int rate)
 {
     const int frames = int(v.size() / 2), warm = 100;
@@ -67,19 +67,19 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("truepeak");
 
-    // --- Filter: jede Phase hat Gleichanteil-Verstärkung ~1 (Interpolation, keine Pegeländerung)
+    // --- Filter: each phase has DC gain ~1 (interpolation, no level change)
     for (int p = 0; p < TruePeakMeter::kPhases; ++p) {
         double sum = 0;
         for (double c : TruePeakMeter::kCoef[p]) sum += c;
         CHECK(near(sum, 1.0, 0.03));
     }
-    // Phasen 0/3 und 1/2 sind gespiegelt (symmetrisches 48-Tap-FIR)
+    // Phases 0/3 and 1/2 are mirrored (symmetric 48-tap FIR)
     for (int k = 0; k < TruePeakMeter::kTaps; ++k) {
         CHECK_EQ(TruePeakMeter::kCoef[0][k], TruePeakMeter::kCoef[3][TruePeakMeter::kTaps - 1 - k]);
         CHECK_EQ(TruePeakMeter::kCoef[1][k], TruePeakMeter::kCoef[2][TruePeakMeter::kTaps - 1 - k]);
     }
 
-    // --- Leer/Stille
+    // --- Empty/silence
     {
         TruePeakMeter m;
         CHECK_EQ(m.maxDb(), TruePeakMeter::kSilence);
@@ -89,8 +89,8 @@ int main(int argc, char** argv)
         CHECK_EQ(m.channels(), 2);
     }
 
-    // --- fs/4 mit 45° Phase (EBU Tech 3341, Fall 15–18 sinngemäß): alle Samples liegen bei ±A·0,707, der Sinus
-    // erreicht dazwischen A. Sample Peak -3,01 dB unter dem True Peak; Toleranz der Norm -0,4/+0,2 dB.
+    // --- fs/4 with 45 degree phase (EBU Tech 3341, cases 15-18 in spirit): all samples are at +-A*0.707, the sine
+    // reaches A in between. Sample peak -3.01 dB below the true peak; tolerance of the standard -0.4/+0.2 dB.
     for (int rate : {48000, 44100}) {
         for (double ampDb : {0.0, -6.0, -20.0}) {
             const double amp = std::pow(10.0, ampDb / 20);
@@ -102,10 +102,10 @@ int main(int argc, char** argv)
             if (!CHECK(tp >= ampDb - 0.4 && tp <= ampDb + 0.2))
                 std::printf("       %d Hz, %.0f dB: TP %.3f dBTP, SP %.3f dBFS\n", rate, ampDb, tp, sp);
             CHECK(near(m.peakDb(0), m.peakDb(1), 1e-9));
-            CHECK(tp > sp + 2.5); // Sample Peak unterschätzt deutlich
+            CHECK(tp > sp + 2.5); // sample peak clearly underestimates
         }
     }
-    // Over-Anzeige: Sample Peak -3 dBFS sieht harmlos aus, True Peak liegt über -1 dBTP
+    // Over display: sample peak -3 dBFS looks harmless, true peak is above -1 dBTP
     {
         const auto v = sine(12000, 1.0, kPi / 4, 48000, 48000);
         TruePeakMeter m;
@@ -114,7 +114,7 @@ int main(int argc, char** argv)
         CHECK(m.maxDb() > -1.0);
     }
 
-    // --- fs/4 ohne Phasenversatz: Samples treffen den Gipfel, True Peak = Sample Peak (0 dB)
+    // --- fs/4 without phase offset: samples hit the crest, true peak = sample peak (0 dB)
     {
         const auto v = sine(12000, 1.0, 0.0, 48000, 48000);
         TruePeakMeter m;
@@ -122,7 +122,7 @@ int main(int argc, char** argv)
         if (!CHECK(near(m.maxDb(), 0.0, 0.01))) std::printf("       TP %.4f\n", m.maxDb());
     }
 
-    // --- Tiefe Frequenz (1 kHz, -6 dBFS): Interpolation ändert praktisch nichts
+    // --- Low frequency (1 kHz, -6 dBFS): interpolation changes practically nothing
     {
         const auto v = sine(997, 0.5, 0.3, 48000, 48000);
         TruePeakMeter m;
@@ -131,11 +131,11 @@ int main(int argc, char** argv)
         CHECK(m.maxDb() >= samplePeakDb(v));
     }
 
-    // --- Kanäle getrennt, planar
+    // --- Channels separate, planar
     {
         std::vector<float> planar(2 * 4800, 0.f);
         const auto s = sine(12000, 0.5, kPi / 4, 4800, 48000, 1);
-        std::copy(s.begin(), s.end(), planar.begin()); // nur links
+        std::copy(s.begin(), s.end(), planar.begin()); // left only
         TruePeakMeter m;
         m.addPlanar(planar.data(), 4800, 2, 48000);
         CHECK(near(m.peakDb(0), -6.02, 0.3));
@@ -143,7 +143,7 @@ int main(int argc, char** argv)
         CHECK(near(m.maxDb(), m.peakDb(0), 1e-12));
     }
 
-    // --- Häppchen = ein Strom: dasselbe Ergebnis wie am Stück; resetPeaks behält den Filterverlauf
+    // --- Chunks = one stream: same result as in one piece; resetPeaks keeps the filter history
     {
         const int n = 48000;
         const auto v = sine(9000, 0.8, 1.0, n, 48000);
@@ -151,7 +151,7 @@ int main(int argc, char** argv)
         whole.addInterleaved(v.data(), n, 2, 48000);
         double chunkMin = 1e9;
         for (int i = 0; i < n;) {
-            const int len = std::min(n - i, 1 + (i * 7) % 1601); // ungleich große Häppchen
+            const int len = std::min(n - i, 1 + (i * 7) % 1601); // chunks of unequal size
             parts.addInterleaved(v.data() + size_t(i) * 2, len, 2, 48000);
             perChunk.resetPeaks();
             perChunk.addInterleaved(v.data() + size_t(i) * 2, len, 2, 48000);
@@ -159,13 +159,13 @@ int main(int argc, char** argv)
             i += len;
         }
         CHECK_EQ(parts.maxDb(), whole.maxDb());
-        // jedes längere Häppchen sieht den vollen Spitzenwert (kein Einschwingen an der Grenze)
+        // every longer chunk sees the full peak value (no settling at the boundary)
         if (!CHECK(chunkMin > whole.maxDb() - 0.3)) std::printf("       min %.3f / %.3f\n", chunkMin, whole.maxDb());
         whole.reset();
         CHECK_EQ(whole.maxDb(), TruePeakMeter::kSilence);
     }
 
-    // --- Vorschau: Master-Pegelmesser setzt _true_peak.N, Live-Messung (SharedLoudness) merkt sich das Maximum
+    // --- Preview: master level meter sets _true_peak.N, live measurement (SharedLoudness) remembers the maximum
     Check::initMlt();
     if (!Check::haveFfmpeg()) return Check::result();
     QTemporaryDir tmp;

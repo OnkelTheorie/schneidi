@@ -22,7 +22,7 @@
 
 void Editor::addEffect(const QVector<int>& ids, const QString& effectId)
 {
-    if (effectId.startsWith(EffectFolders::LutPrefix)) { // LUT aus der Effects Library -> Farbkorrektur des Clips
+    if (effectId.startsWith(EffectFolders::LutPrefix)) { // LUT from the Effects Library -> the clip's color grade
         setGradeLut(ids, effectId.mid(int(qstrlen(EffectFolders::LutPrefix))));
         return;
     }
@@ -102,7 +102,7 @@ QVector<int> Editor::effectTargets(int frame, TrackKind kind) const
 }
 
 namespace {
-constexpr const char* kGrade = "grade"; // Effekt der Color-Seite (EffectRegistry)
+constexpr const char* kGrade = "grade"; // effect of the Color page (EffectRegistry)
 
 QVector<AnimParam> gradeParams()
 {
@@ -113,14 +113,14 @@ QVector<AnimParam> gradeParams()
     return list;
 }
 
-// Standardwert eines Grade-Parameters
+// Default value of a grade parameter
 double gradeDefault(AnimParam a)
 {
     const EffectParam* p = nullptr;
     return EffectRegistry::paramFor(a, nullptr, &p) ? p->defaultValue.toDouble() : 0.0;
 }
 
-// Nur Videoclips (Color-Seite wirkt aufs Bild)
+// Video clips only (Color page acts on the picture)
 QVector<int> videoOnly(const Timeline& tl, const QVector<int>& ids)
 {
     QVector<int> out;
@@ -138,7 +138,7 @@ void Editor::setGradeValues(const QVector<int>& ids, const QVector<QPair<AnimPar
                             const QString& text, const QString& mergeKey)
 {
     modifyClips(videoOnly(m_project->timeline(), ids), text, [&](Clip& c) {
-        EffectRegistry::add(c, kGrade); // schon vorhanden: nichts
+        EffectRegistry::add(c, kGrade); // already present: nothing
         for (const auto& [p, v] : values) Keys::setValue(c, p, localFrame(c, frame), v);
     }, mergeKey);
 }

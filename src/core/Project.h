@@ -7,125 +7,125 @@
 #include <QUndoStack>
 #include <functional>
 
-// Leere Timeline mit den Standardspuren (neues Projekt, neue Timeline)
+// Empty timeline with the default tracks (new project, new timeline)
 Timeline emptyTimeline();
 
-// Organisation eines Media-Pool-Clips (Teil von MediaInfo), für Undo getrennt gemerkt
+// Organization of a Media Pool clip (part of MediaInfo), remembered separately for undo
 struct MediaOrg {
     int bin = 0;
     QString color;
     QStringList flags;
     bool operator==(const MediaOrg&) const = default;
 };
-// Stand der Media-Pool-Organisation (Bins + Organisation je Pfad) – Undo-Schnappschuss
+// State of the Media Pool organization (bins + organization per path) - undo snapshot
 struct PoolState {
     QVector<MediaBin> bins;
     QHash<QString, MediaOrg> media;
-    QHash<int, int> sequenceBins; // Sequenz-id -> Bin (Timelines/Compound Clips im Media Pool)
+    QHash<int, int> sequenceBins; // sequence id -> bin (timelines/compound clips in the Media Pool)
     bool operator==(const PoolState&) const = default;
 };
 
-// Hält das Projekt (Media + Timeline). Jede Änderung der Timeline läuft über edit()
-// und ist damit automatisch rückgängig machbar (Snapshot-Undo – einfach und robust;
-// bei sehr großen Projekten später ggf. durch feinere Commands ersetzen).
+// Holds the project (media + timeline). Every change of the timeline goes through edit()
+// and is thus automatically undoable (snapshot undo - simple and robust;
+// for very large projects possibly replace with finer commands later).
 class Project : public QObject {
     Q_OBJECT
 public:
     explicit Project(QObject* parent = nullptr);
-    // Beim Abbau meldet der Undo-Stack noch "cleanChanged" -> nicht mehr weiterreichen (Hauptfenster ist schon weg)
+    // On teardown the undo stack still reports "cleanChanged" -> do not pass it on anymore (main window is already gone)
     ~Project() override { blockSignals(true); }
 
-    // Projekteinstellungen (Timeline-Auflösung und -Framerate)
+    // Project settings (timeline resolution and frame rate)
     const ProjectFormat& format() const { return m_format; }
-    // Ganze Frames pro Timecode-Sekunde (29,97 -> 30) – für Timecode und Standardlängen ("1 s")
+    // Whole frames per timecode second (29.97 -> 30) - for timecode and default lengths ("1 s")
     int fps() const { return m_format.rate.timebase(); }
     double frameRate() const { return m_format.rate.fps(); }
-    // Wie DaVinci: Framerate nur änderbar, solange in keiner Timeline Clips liegen
+    // Like DaVinci: frame rate can only be changed as long as no timeline contains clips
     bool frameRateLocked() const;
-    // Ein Undo-Schritt; neue Auflösung rechnet Positionen/Größen in allen Timelines mit um (scaleTimeline).
-    // Eine gesperrte Framerate bleibt unverändert.
+    // One undo step; a new resolution also converts positions/sizes in all timelines (scaleTimeline).
+    // A locked frame rate stays unchanged.
     void setFormat(const ProjectFormat& format);
-    void applyFormat(const ProjectFormat& format, const QVector<Sequence>& sequences); // nur für Undo
-    // Die gerade geöffnete Timeline (Sequenz currentSequence()); alle Bearbeitungen wirken auf sie
+    void applyFormat(const ProjectFormat& format, const QVector<Sequence>& sequences); // only for undo
+    // The currently opened timeline (sequence currentSequence()); all edits act on it
     const Timeline& timeline() const { return current().timeline; }
     QUndoStack* undoStack() { return &m_undo; }
 
-    // mergeKey: aufeinanderfolgende Edits mit gleichem Schlüssel werden ein Undo-Schritt
-    // (z. B. Regler im Inspector ziehen). closeMerge() beendet die Serie.
+    // mergeKey: consecutive edits with the same key become one undo step
+    // (e.g. dragging a slider in the Inspector). closeMerge() ends the series.
     void edit(const QString& text, const std::function<void(Timeline&)>& fn, const QString& mergeKey = {});
     void closeMerge() { ++m_mergeSession; }
-    void setTimeline(const Timeline& tl); // nur für Undo/Laden (aktuelle Sequenz)
-    // Undo: Timeline einer Sequenz setzen; ist sie nicht geöffnet, wird sie geöffnet (man sieht, was sich ändert)
+    void setTimeline(const Timeline& tl); // only for undo/loading (current sequence)
+    // Undo: set the timeline of a sequence; if it is not open, it gets opened (you see what changes)
     void setTimeline(int sequenceId, const Timeline& tl);
 
-    // ---- Sequenzen: mehrere Timelines pro Projekt und Compound Clips (wie DaVinci) ----
-    // Alle Sequenzen (normale Timelines und Compound Clips) in Anlegereihenfolge
+    // ---- Sequences: several timelines per project and compound clips (like DaVinci) ----
+    // All sequences (normal timelines and compound clips) in creation order
     const QVector<Sequence>& sequences() const { return m_sequences; }
     const Sequence* sequence(int id) const;
     int currentSequence() const { return m_current; }
     QString sequenceName(int id) const;
-    // Öffnen (kein Undo, wie DaVinci); meldet currentSequenceChanged + timelineChanged
+    // Open (no undo, like DaVinci); emits currentSequenceChanged + timelineChanged
     void setCurrentSequence(int id);
-    // Neue leere Timeline (Standardspuren) im Bin, wird geöffnet; Name leer = „Timeline N“. Ein Undo-Schritt.
+    // New empty timeline (default tracks) in the bin, gets opened; empty name = "Timeline N". One undo step.
     int addTimeline(const QString& name = {}, int bin = 0);
     void renameSequence(int id, const QString& name);
-    // Kopie (neue Clip-ids), Name „… Kopie“; liefert die neue id
+    // Copy (new clip ids), name "... copy"; returns the new id
     int duplicateSequence(int id);
-    // Löschen geht nicht bei der letzten normalen Timeline und bei Sequenzen, die ein Compound Clip benutzt
+    // Deleting is not possible for the last normal timeline and for sequences used by a compound clip
     bool canRemoveSequence(int id) const;
     bool removeSequence(int id);
     void moveSequencesToBin(const QVector<int>& ids, int bin);
-    // Wird die Sequenz irgendwo (auch in anderen Sequenzen) als Compound Clip benutzt?
+    // Is the sequence used anywhere (also in other sequences) as a compound clip?
     bool sequenceUsed(int id) const;
-    // Darf `child` als Clip in `parent` liegen (keine Schleife: child enthält parent auch nicht indirekt)?
+    // May `child` be a clip in `parent` (no loop: child does not contain parent even indirectly)?
     bool canNest(int child, int parent) const;
-    int sequenceLength(int id) const; // Ende der Sequenz (Frames), 0 = leer/unbekannt
-    // Name eines Clips wie in der Timeline (Compound Clips: Name der Sequenz)
+    int sequenceLength(int id) const; // end of the sequence (frames), 0 = empty/unknown
+    // Name of a clip as in the timeline (compound clips: name of the sequence)
     QString clipName(const Clip& c) const;
-    // Timeline mit dem Inhalt aller Sequenzen (Timeline::nested) zum Rendern; id 0 = aktuelle
+    // Timeline with the content of all sequences (Timeline::nested) for rendering; id 0 = current
     Timeline renderTimeline(int sequenceId = 0) const;
-    // Mehrere Sequenzen in einem Undo-Schritt ändern (Compound Clip erstellen/auflösen …); current = danach geöffnete
+    // Change several sequences in one undo step (create/dissolve compound clip ...); current = opened afterwards
     void editSequences(const QString& text, const std::function<void(QVector<Sequence>&, int& current)>& fn);
-    void applySequences(const QVector<Sequence>& sequences, int current); // nur für Undo
+    void applySequences(const QVector<Sequence>& sequences, int current); // only for undo
     int newSequenceId() { return ++m_lastSequenceId; }
 
     const QVector<MediaInfo>& media() const { return m_media; }
     const MediaInfo* mediaInfo(const QString& path) const;
     void addMedia(const MediaInfo& info);
-    // Quell-In/Out eines Media-Pool-Clips (-1 = keiner). Nicht im Undo (wie DaVinci), gilt aber als Änderung.
+    // Source in/out of a Media Pool clip (-1 = none). Not in undo (like DaVinci), but counts as a change.
     void setMediaMarks(const QString& path, int markIn, int markOut);
     // Transcript of one audio stream of a media file (Transcript panel); replaces the old one of that stream, empty
     // words remove it. Not in the undo history (like source marks), but counts as a change.
     void setTranscript(const QString& path, const MediaTranscript& transcript);
-    // Medieninfos ersetzen (z. B. Längen nach einer neuen Framerate), gilt nicht als Änderung
+    // Replace media info (e.g. lengths after a new frame rate), does not count as a change
     void replaceMedia(const QVector<MediaInfo>& media);
 
-    // Media Pool wie DaVinci: Bins (Master = 0), Clipfarben, Flags. Jede Änderung ist ein Undo-Schritt
-    // (betrifft nur die Organisation, nicht die Medienliste selbst).
+    // Media Pool like DaVinci: bins (Master = 0), clip colors, flags. Every change is an undo step
+    // (affects only the organization, not the media list itself).
     const QVector<MediaBin>& bins() const { return m_bins; }
     const MediaBin* bin(int id) const;
     QString binName(int id) const;                // 0 = "Master"
-    QVector<int> childBins(int parent) const;     // nach Name sortiert (wie DaVinci)
-    bool binInside(int id, int ancestor) const;   // id == ancestor oder darunter
-    int addBin(int parent, const QString& name = {}); // Standardname "Bin 1", "Bin 2" …; liefert die id
+    QVector<int> childBins(int parent) const;     // sorted by name (like DaVinci)
+    bool binInside(int id, int ancestor) const;   // id == ancestor or below
+    int addBin(int parent, const QString& name = {}); // default name "Bin 1", "Bin 2" ...; returns the id
     void renameBin(int id, const QString& name);
-    void removeBin(int id);                       // Inhalt (Clips, Unter-Bins) wandert in den Eltern-Bin
+    void removeBin(int id);                       // content (clips, sub-bins) moves into the parent bin
     void moveBin(int id, int parent);
-    void moveMediaToBin(const QStringList& paths, int bin, const QVector<int>& sequences = {}); // auch Sequenzen
-    void setClipColor(const QStringList& paths, const QString& colorId); // leer = keine Clipfarbe
+    void moveMediaToBin(const QStringList& paths, int bin, const QVector<int>& sequences = {}); // also sequences
+    void setClipColor(const QStringList& paths, const QString& colorId); // empty = no clip color
     void setFlag(const QStringList& paths, const QString& flagId, bool on);
     void clearFlags(const QStringList& paths);
     PoolState poolState() const;
-    void applyPool(const PoolState& state); // nur für Undo
+    void applyPool(const PoolState& state); // only for undo
 
-    // Deliver: Render-Warteschlange. Kein Undo (wie DaVinci), gilt aber als Änderung (im Projekt gespeichert).
+    // Deliver: render queue. No undo (like DaVinci), but counts as a change (saved in the project).
     const QVector<RenderJob>& renderQueue() const { return m_renderQueue; }
     void setRenderQueue(const QVector<RenderJob>& jobs);
 
-    // Speichern/Laden (.schneidi). load() leert den Undo-Verlauf wie ein frisch geöffnetes Projekt.
+    // Save/load (.schneidi). load() clears the undo history like a freshly opened project.
     ProjectData data() const;
     void load(const ProjectData& d);
-    void reset(); // leeres Projekt
+    void reset(); // empty project
     bool isModified() const { return m_mediaDirty || !m_undo.isClean(); }
     void markSaved();
     void markModified();
@@ -135,20 +135,20 @@ public:
 
 signals:
     void timelineChanged();
-    void currentSequenceChanged(); // andere Timeline geöffnet (kommt vor timelineChanged)
-    void sequencesChanged();       // Sequenzliste/Namen/Bins geändert
-    void formatChanged(); // kommt vor dem zugehörigen timelineChanged()
+    void currentSequenceChanged(); // another timeline opened (comes before timelineChanged)
+    void sequencesChanged();       // sequence list/names/bins changed
+    void formatChanged(); // comes before the corresponding timelineChanged()
     void mediaChanged();
-    void poolChanged(); // Bins/Clipfarben/Flags geändert (Medienliste gleich)
-    void mediaMarksChanged(const QString& path); // Quell-In/Out geändert (ohne mediaChanged)
+    void poolChanged(); // bins/clip colors/flags changed (media list unchanged)
+    void mediaMarksChanged(const QString& path); // source in/out changed (without mediaChanged)
     void transcriptChanged(const QString& path);
     void modifiedChanged(bool modified);
     void renderQueueChanged();
 
 private:
     ProjectFormat m_format;
-    QVector<Sequence> m_sequences; // nie leer
-    int m_current = 1;             // id der geöffneten Sequenz
+    QVector<Sequence> m_sequences; // never empty
+    int m_current = 1;             // id of the opened sequence
     int m_lastSequenceId = 1;
     Sequence& current();
     const Sequence& current() const;
@@ -161,6 +161,6 @@ private:
     int m_lastLinkId = 0;
     int m_mergeSession = 0;
     void editPool(const QString& text, const std::function<void(PoolState&)>& fn);
-    void sanitizePool(); // Verweise auf fehlende Bins -> Master, Eltern-Zyklen auflösen
+    void sanitizePool(); // references to missing bins -> Master, resolve parent cycles
     bool m_mediaDirty = false;
 };

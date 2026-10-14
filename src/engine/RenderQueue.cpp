@@ -39,10 +39,10 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     s.pixFmt = f.pixFmt;
     s.crf = job.settings.crf();
     s.audioBitrateK = job.settings.audioBitrateK;
-    s.threads = Exporter::savedThreads(); // gilt pro Rechner, nicht pro Auftrag
-    // Größe beim Hinzufügen festgehalten; ohne (nur Audio, alte Datei) nach den Einstellungen
+    s.threads = Exporter::savedThreads(); // applies per machine, not per job
+    // Size fixed when adding; without it (audio only, old file) per the settings
     s.size = job.size.isEmpty() ? job.settings.outputSize(format.size()) : job.size;
-    if (job.settings.audioOnly()) s.size = format.size(); // wird nicht gerendert, aber nichts umrechnen
+    if (job.settings.audioOnly()) s.size = format.size(); // is not rendered, but convert nothing
     s.burnSubtitles = job.settings.subtitles == RenderSettings::BurnSubtitles;
     if (job.settings.subtitles == RenderSettings::SrtFile) {
         const QFileInfo fi(job.path);
@@ -79,7 +79,7 @@ void RenderQueue::next()
         const int id = m_pending.takeFirst();
         const auto& q = m_project->renderQueue();
         const auto it = std::find_if(q.cbegin(), q.cend(), [id](const RenderJob& j) { return j.id == id; });
-        if (it == q.cend()) continue; // inzwischen gelöscht
+        if (it == q.cend()) continue; // deleted in the meantime
         const RenderJob job = *it;
         m_current = id;
         m_percent = 0;
@@ -91,7 +91,7 @@ void RenderQueue::next()
         } else if (m_exporter->start(m_project->renderTimeline(job.sequence), exportSettings(job, m_project->format()),
                                      &error)) {
             emit progress(id, 0);
-            return; // weiter in onExportFinished
+            return; // continues in onExportFinished
         }
         m_current = 0;
         ++m_failed;
@@ -107,7 +107,7 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
 {
     const int id = m_current;
     if (!id) return;
-    const int run = m_run; // cancel() aus jobFinished heraus beendet den Lauf schon selbst
+    const int run = m_run; // cancel() from within jobFinished already ends the run itself
     m_current = 0;
     RenderStatus status = RenderStatus::Done;
     if (m_canceling) {
@@ -130,7 +130,7 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
         emit finished(m_done, m_failed);
         return;
     }
-    // Nächsten Auftrag erst nach dem Aufräumen des Exporters starten
+    // Only start the next job after the exporter has been cleaned up
     QTimer::singleShot(0, this, [this, run] {
         if (run == m_run) next();
     });
@@ -139,7 +139,7 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
 void RenderQueue::cancel()
 {
     if (!isRunning()) return;
-    if (!m_current) { // zwischen zwei Aufträgen: Rest nicht mehr starten
+    if (!m_current) { // between two jobs: do not start the rest anymore
         ++m_run;
         for (int rest : std::as_const(m_pending)) setStatus(rest, RenderStatus::Queued);
         m_pending.clear();
@@ -148,7 +148,7 @@ void RenderQueue::cancel()
         return;
     }
     m_canceling = true;
-    m_exporter->cancel(); // meldet finished() sofort
+    m_exporter->cancel(); // reports finished() immediately
 }
 
 void RenderQueue::setStatus(int id, RenderStatus status, const QString& message, qint64 ms, const QString& encoder)

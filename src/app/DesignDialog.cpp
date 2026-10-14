@@ -16,8 +16,8 @@
 
 #include <algorithm>
 
-// Verkleinerte Oberfläche in den gewählten Farben: Panel mit Auswahl, Viewer mit Timecode und Regler,
-// Timeline mit Clips, Keyframes, In/Out, Marker und Playhead, daneben ein Pegel
+// Shrunken UI in the chosen colors: panel with selection, viewer with timecode and slider,
+// timeline with clips, keyframes, In/Out, markers and playhead, next to it a level meter
 class DesignPreview : public QWidget {
 public:
     DesignPreview() { setFixedSize(520, 250); }
@@ -39,7 +39,7 @@ protected:
         const int W = width(), H = height();
         p.fillRect(rect(), c("window"));
 
-        // obere Leiste mit Panel-Schaltern
+        // top bar with panel switches
         p.fillRect(0, 0, W, 16, c("topBar"));
         p.fillRect(0, 16, W, 1, c("border"));
         p.setPen(primary);
@@ -47,7 +47,7 @@ protected:
         p.setPen(c("text"));
         p.drawText(QRect(82, 0, 60, 16), Qt::AlignVCenter, T("Effekte"));
 
-        // Panel links: Titel, Liste mit Auswahl
+        // Panel on the left: title, list with selection
         const QRect panel(0, 17, 118, 110);
         p.fillRect(panel, c("panel"));
         p.fillRect(panel.left(), panel.top(), panel.width(), 15, c("panelHeader"));
@@ -66,7 +66,7 @@ protected:
             p.drawText(r.adjusted(24, 0, 0, 0), Qt::AlignVCenter, items[i]);
         }
 
-        // Viewer mit Timecode (eingelassenes Feld) und Regler
+        // Viewer with timecode (recessed field) and slider
         const QRect viewer(122, 17, W - 122, 88);
         p.fillRect(viewer, c("viewerBg"));
         const QRect img(viewer.center().x() - 70, viewer.top() + 6, 140, viewer.height() - 12);
@@ -155,7 +155,7 @@ protected:
                 clip(0.0, 0.4, c("videoClip"), false, "Interview.mp4");
                 clip(0.4, 0.78, c("videoClip"), true, "Drohne.mov");
                 clip(0.78, 1.0, c("controlOff"), false, T("aus"));
-                // Keyframe-Spur unter dem ausgewählten Clip
+                // Keyframe lane under the selected clip
                 const QRect lane(xOf(0.4), y + rows[i].h - 2, xOf(0.78) - xOf(0.4) - 1, 11);
                 p.fillRect(lane, c("lane"));
                 p.setRenderHint(QPainter::Antialiasing);
@@ -174,7 +174,7 @@ protected:
             }
             y += h;
         }
-        // Untertitel-Streifen
+        // Subtitle stripe
         const QRect sub(xOf(0.1), y + 3, xOf(0.35) - xOf(0.1), 11);
         p.fillRect(sub, c("subtitleClip"));
         p.setPen(QColor(0xf0, 0xf0, 0xf0));
@@ -192,7 +192,7 @@ protected:
                                  QPointF(px + 0.5, ruler.top() + 10)}));
         p.setRenderHint(QPainter::Antialiasing, false);
 
-        // Pegel rechts (wie der Mixer)
+        // Level meter on the right (like the mixer)
         const QRect strip(W - meterW, tlTop, meterW, H - tlTop);
         p.fillRect(strip, c("panel"));
         const QRect mute(strip.left() + 4, strip.top() + 4, 16, 12), solo(mute.right() + 4, mute.top(), 16, 12);
@@ -206,7 +206,7 @@ protected:
         for (int ch = 0; ch < 2; ++ch) {
             const QRect bar(strip.left() + 10 + ch * 8, top, 6, bottom - top);
             p.fillRect(bar, c("well"));
-            const int level = ch ? 78 : 92; // Prozent
+            const int level = ch ? 78 : 92; // percent
             const int yTop = bottom - (bottom - top) * level / 100;
             const int yY = bottom - (bottom - top) * 60 / 100, yR = bottom - (bottom - top) * 85 / 100;
             p.fillRect(bar.left(), yY, 6, bottom - yY, c("meterLow"));

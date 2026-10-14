@@ -1,4 +1,4 @@
-// Test Spuren: hinzufügen/löschen, sperren, umbenennen, Farbe, Ripple über alle nicht gesperrten Spuren, Spurkopf-Bedienung (offscreen)
+// Test tracks: add/delete, lock, rename, color, ripple across all unlocked tracks, track header operation (offscreen)
 #include "check.h"
 
 #include "core/Editor.h"
@@ -52,54 +52,54 @@ int main(int argc, char** argv)
     Selection sel;
     Editor ed(&p, &sel);
 
-    // --- Ripple-Löschen über alle Spuren
+    // --- Ripple delete across all tracks
     setup(p);
     sel.set({2, 12});
     ed.rippleDeleteSelection();
     CHECK(F(p, 3)->start == 100 && F(p, 13)->start == 100);
     CHECK(F(p, 22)->start == 150);
-    // gesperrte A2 bleibt stehen
+    // locked A2 stays put
     setup(p);
     ed.toggleTrackLock({TrackKind::Audio, 1});
     sel.set({2, 12});
     ed.rippleDeleteSelection();
     CHECK(F(p, 3)->start == 100 && F(p, 22)->start == 250);
-    // Spur, auf der Nachrücken überschreiben würde, bleibt stehen
+    // Track on which moving up would overwrite stays put
     setup(p);
     p.edit("x", [](Timeline& tl) { tl.audio[1].clips = {mk(21, 0, 150, 0, "/x/m.mp3"), mk(22, 160, 100, 0, "/x/m.mp3")}; });
     sel.set({2, 12});
     ed.rippleDeleteSelection();
     CHECK(F(p, 22)->start == 160);
 
-    // --- Trim-Modus Ripple
+    // --- Trim mode Ripple
     using namespace TimelineOps;
     setup(p);
     auto e = ed.trimEdit(TrimKind::Ripple, 1, Edge::End);
     CHECK(e.ids.size() == 2);
     ed.applyTrimEdit(e, -30);
     CHECK(F(p, 1)->end() == 70 && F(p, 2)->start == 70 && F(p, 12)->start == 70 && F(p, 22)->start == 220);
-    // Platz auf A2 begrenzt das Verkürzen
+    // Room on A2 limits the shortening
     setup(p);
     p.edit("x", [](Timeline& tl) { tl.audio[1].clips = {mk(21, 0, 120, 0, "/x/m.mp3"), mk(22, 130, 100, 0, "/x/m.mp3")}; });
     e = ed.trimEdit(TrimKind::Ripple, 1, Edge::End);
     CHECK(ed.clampTrimEdit(e, -30) == -10);
-    ed.toggleTrackLock({TrackKind::Audio, 1}); // gesperrt -> begrenzt nicht mehr, bleibt stehen
+    ed.toggleTrackLock({TrackKind::Audio, 1}); // locked -> no longer limits, stays put
     CHECK(ed.clampTrimEdit(e, -30) == -30);
     ed.applyTrimEdit(e, -30);
     CHECK(F(p, 22)->start == 130 && F(p, 2)->start == 70);
-    // Anfang (Clip bleibt, Inhalt wandert) verlängert: alles rückt nach rechts
+    // Start (clip stays, content moves) extended: everything moves right
     setup(p);
     p.edit("x", [](Timeline& tl) { tl.video[0].clips[1].in = 50; tl.video[0].clips[1].out = 149; tl.audio[0].clips[1].in = 50; tl.audio[0].clips[1].out = 149; });
     e = ed.trimEdit(TrimKind::Ripple, 2, Edge::Start);
     ed.applyTrimEdit(e, -20);
     CHECK(F(p, 2)->length() == 120 && F(p, 3)->start == 220 && F(p, 22)->start == 270);
 
-    // --- Speed mit Ripple
+    // --- Speed with ripple
     setup(p);
     ed.setClipSpeed({1}, {0.5, false, false, true}, true);
     CHECK(F(p, 1)->length() == 200 && F(p, 2)->start == 200 && F(p, 22)->start == 350);
 
-    // --- Sperre: nichts änderbar, nicht auswählbar
+    // --- Lock: nothing changeable, not selectable
     setup(p);
     ed.toggleTrackLock({TrackKind::Video, 0});
     CHECK(ed.withLinked({11}) == QVector<int>{11});
@@ -118,38 +118,38 @@ int main(int argc, char** argv)
     CHECK(F(p, 1)->transOut == 0);
     ed.trimClip(1, Edge::End, -10);
     CHECK(F(p, 1)->length() == 100);
-    // Partner auf A1 lässt sich allein trimmen
+    // Partner on A1 can be trimmed alone
     ed.trimClip(11, Edge::End, -10);
     CHECK(F(p, 11)->length() == 90 && F(p, 1)->length() == 100);
-    // Titel: gesperrte V1 wird übersprungen
+    // Title: locked V1 is skipped
     ed.addTitle(500);
     CHECK(p.timeline().video[0].clips.size() == 3 && p.timeline().video[1].clips.size() == 1);
-    // Verschieben von V2 auf gesperrte V1 geht nicht
+    // Moving from V2 onto locked V1 does not work
     const int title = p.timeline().video[1].clips[0].id;
     ed.moveClips({title}, 0, TrackKind::Video, -1);
     CHECK(p.timeline().video[1].clips.size() == 1);
-    // Einfügen auf gesperrte Spur nicht
+    // Do not paste onto a locked track
     sel.set({2});
-    ed.copySelection(); // V1 gesperrt -> Kopieren geht (liest nur)
+    ed.copySelection(); // V1 locked -> copying works (only reads)
     ed.paste(600);
     CHECK(p.timeline().video[0].clips.size() == 3);
-    // Medien auf gesperrte V1 ablegen: nur Ton landet auf A1
+    // Place media onto locked V1: only audio lands on A1
     ed.addMediaAt({"/x/a.mp4"}, 700, 0);
     CHECK(p.timeline().video[0].clips.size() == 3 && p.timeline().audio[0].clips.size() == 4);
-    // Spur sperren wählt Clips der Spur ab
+    // Locking a track deselects the clips of the track
     ed.toggleTrackLock({TrackKind::Video, 0});
     sel.set({1, 11});
     ed.toggleTrackLock({TrackKind::Video, 0});
     CHECK(sel.ids() == QSet<int>{11});
-    // Undo nimmt Sperre zurück
+    // Undo reverts the lock
     p.undoStack()->undo();
     CHECK(!p.timeline().video[0].locked);
 
-    // --- Umbenennen / Farbe
+    // --- Rename / color
     ed.renameTrack({TrackKind::Audio, 1}, "  Musik  ");
     CHECK(p.timeline().audio[1].name == "Musik");
     CHECK(trackDisplayName(p.timeline().audio[0], {TrackKind::Audio, 0}) == "Audio 1");
-    ed.renameTrack({TrackKind::Audio, 1}, "Audio 2"); // Standardname = automatisch
+    ed.renameTrack({TrackKind::Audio, 1}, "Audio 2"); // default name = automatic
     CHECK(p.timeline().audio[1].name.isEmpty());
     ed.renameTrack({TrackKind::Audio, 1}, "Musik");
     ed.setTrackColor({TrackKind::Audio, 1}, "violet");
@@ -157,7 +157,7 @@ int main(int argc, char** argv)
     CHECK(p.timeline().audio[1].color == "violet" && p.timeline().video[0].color.isEmpty());
     ed.toggleTrackLock({TrackKind::Video, 1});
 
-    // --- Speichern/Laden
+    // --- Save/load
     ProjectData d = p.data();
     const QByteArray json = ProjectFile::toJson(d, "/x/projekt.schneidi");
     ProjectData back;
@@ -165,22 +165,22 @@ int main(int argc, char** argv)
     CHECK(ProjectFile::fromJson(json, "/x/projekt.schneidi", &back, &err));
     CHECK(back.timeline.audio[1].name == "Musik" && back.timeline.audio[1].color == "violet");
     CHECK(back.timeline.video[1].locked && !back.timeline.video[0].locked && back.timeline.video[0].name.isEmpty());
-    CHECK(json.contains("\"name\": \"A2\"")); // ältere Versionen sehen das Kürzel
-    // alte Datei: nur "name": "V1"
+    CHECK(json.contains("\"name\": \"A2\"")); // older versions see the abbreviation
+    // old file: only "name": "V1"
     QByteArray old = json;
     old.replace("\"label\": \"Musik\",", "");
     CHECK(ProjectFile::fromJson(old, "/x/projekt.schneidi", &back, &err) && back.timeline.audio[1].name.isEmpty());
 
-    // --- Spuren hinzufügen/löschen (Rechtsklick auf den Spurkopf)
+    // --- Add/delete tracks (right-click on the track header)
     {
         Engine engine;
         Mixer mixer(&p, &engine);
-        // Mixer-Kanalzüge: Kürzel und Spurname (Tooltip) in Spurreihenfolge
+        // Mixer channel strips: abbreviation and track name (tooltip) in track order
         auto stripNames = [&] {
             QStringList out;
             for (QLabel* l : mixer.findChildren<QLabel*>())
-                if (QRegularExpression("^A\\d+$").match(l->text()).hasMatch()) out << l->text() + "=" + l->toolTip().section(" – ", 0, 0); // ohne Solo-Hinweis
-            out.sort(); // A1, A2, A3 (findChildren-Reihenfolge ist nicht festgelegt)
+                if (QRegularExpression("^A\\d+$").match(l->text()).hasMatch()) out << l->text() + "=" + l->toolTip().section(" – ", 0, 0); // without solo hint
+            out.sort(); // A1, A2, A3 (findChildren order is not defined)
             return out;
         };
         setup(p);
@@ -188,7 +188,7 @@ int main(int argc, char** argv)
         p.edit("x", [](Timeline& tl) { tl.audio[1].volumeDb = -6; tl.audio[1].solo = true; tl.audio[0].muted = true; });
         ed.setTargetTracks(1, 1);
         CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Musik"}));
-        // Audio: oberhalb von A1 = Index 0 -> alte Spuren rücken eins weiter
+        // Audio: above A1 = index 0 -> old tracks move up by one
         ed.addTrack(TrackKind::Audio, 0);
         const Timeline& t1 = p.timeline();
         CHECK(t1.audio.size() == 3 && t1.audio[0].clips.isEmpty() && t1.audio[0].name.isEmpty() && !t1.audio[0].muted);
@@ -196,37 +196,37 @@ int main(int argc, char** argv)
         CHECK(t1.audio[2].name == "Musik" && t1.audio[2].volumeDb == -6 && t1.audio[2].solo);
         CHECK(ed.targetAudioTrack() == 2 && ed.targetVideoTrack() == 1);
         CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Audio 2", "A3=Musik"}));
-        for (QLabel* l : mixer.findChildren<QLabel*>()) // neue A1 ist durch das Solo von A3 stumm
+        for (QLabel* l : mixer.findChildren<QLabel*>()) // new A1 is muted by the solo of A3
             if (l->text() == "A1") CHECK(l->toolTip().contains("Solo"));
-        // ein Undo-Schritt
+        // one undo step
         p.undoStack()->undo();
         CHECK(p.timeline().audio.size() == 2 && p.timeline().audio[1].name == "Musik"
               && p.timeline().audio[0].clips.size() == 3);
         CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Musik"}));
         p.undoStack()->redo();
         CHECK(p.timeline().audio.size() == 3 && p.timeline().audio[2].name == "Musik");
-        // Video oberhalb von V2 = ganz oben (Index 2); Zielspur V2 bleibt
+        // Video above V2 = very top (index 2); target track V2 stays
         ed.addTrack(TrackKind::Video, 2);
         CHECK(p.timeline().video.size() == 3 && p.timeline().video[0].clips.size() == 3 && ed.targetVideoTrack() == 1);
-        // Projektdatei-Rundlauf
+        // Project file round trip
         ProjectData back2;
         QString err2;
         CHECK(ProjectFile::fromJson(ProjectFile::toJson(p.data(), "/x/p.schneidi"), "/x/p.schneidi", &back2, &err2));
         CHECK(back2.timeline.video.size() == 3 && back2.timeline.audio.size() == 3);
         CHECK(back2.timeline.audio[2].name == "Musik" && back2.timeline.audio[2].solo && back2.timeline.audio[1].muted);
 
-        // Löschen: Clips der Spur gehen mit, Auswahl darauf wird aufgehoben
+        // Delete: clips of the track go with it, selection on it is cleared
         sel.set({1, 11, 21});
-        ed.removeTrack({TrackKind::Audio, 1}); // die Spur mit 11,12,13
+        ed.removeTrack({TrackKind::Audio, 1}); // the track with 11,12,13
         CHECK(p.timeline().audio.size() == 2 && !F(p, 11) && F(p, 1) && p.timeline().audio[1].name == "Musik");
         CHECK(sel.ids() == QSet<int>({1, 21}));
-        CHECK(ed.targetAudioTrack() == 1); // folgt „Musik“
+        CHECK(ed.targetAudioTrack() == 1); // follows "Musik"
         CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Musik"}));
         p.undoStack()->undo();
         CHECK(p.timeline().audio.size() == 3 && F(p, 11) && p.timeline().audio[1].muted);
         p.undoStack()->redo();
         CHECK(!F(p, 11));
-        // gesperrte Spur und letzte Spur eines Typs nicht löschbar
+        // locked track and last track of a type cannot be deleted
         ed.toggleTrackLock({TrackKind::Audio, 1});
         CHECK(!ed.canRemoveTrack({TrackKind::Audio, 1}));
         ed.removeTrack({TrackKind::Audio, 1});
@@ -238,35 +238,35 @@ int main(int argc, char** argv)
         CHECK(p.timeline().audio.size() == 1 && ed.targetAudioTrack() == 0);
         CHECK(!ed.canRemoveTrack({TrackKind::Video, 5}));
 
-        // --- Spuren umsortieren (Ziehen am Spurkopf)
+        // --- Reorder tracks (dragging at the track header)
         setup(p);
         ed.renameTrack({TrackKind::Audio, 1}, "Musik");
         p.edit("x", [](Timeline& tl) { tl.audio[1].volumeDb = -6; tl.audio[1].pan = 30; tl.audio[0].muted = true; });
         ed.addTrack(TrackKind::Audio, 2);
         ed.setTargetTracks(0, 0);
         const int steps = p.undoStack()->count();
-        ed.moveTrack(TrackKind::Audio, 0, 2); // A1 nach ganz unten
+        ed.moveTrack(TrackKind::Audio, 0, 2); // A1 to the very bottom
         const Timeline& t2 = p.timeline();
         CHECK(t2.audio.size() == 3 && t2.audio[0].name == "Musik" && t2.audio[0].volumeDb == -6 && t2.audio[0].pan == 30);
         CHECK(t2.audio[1].clips.isEmpty() && t2.audio[2].muted && t2.audio[2].clips.size() == 3 && F(p, 22)->start == 250);
         CHECK(ed.targetAudioTrack() == 2);
         CHECK(stripNames() == QStringList({"A1=Musik", "A2=Audio 2", "A3=Audio 3"}));
-        CHECK(ed.withLinked({1}).contains(11)); // Verknüpfung bleibt
+        CHECK(ed.withLinked({1}).contains(11)); // link stays
         CHECK(p.undoStack()->count() == steps + 1);
         p.undoStack()->undo();
         CHECK(p.timeline().audio[1].name == "Musik" && p.timeline().audio[0].muted && p.timeline().audio[0].clips.size() == 3);
         CHECK(stripNames() == QStringList({"A1=Audio 1", "A2=Musik", "A3=Audio 3"}));
         p.undoStack()->redo();
         CHECK(p.timeline().audio[0].name == "Musik");
-        // Video: V1 nach oben
+        // Video: V1 up
         ed.setTargetTracks(1, 2);
         ed.moveTrack(TrackKind::Video, 0, 1);
         CHECK(p.timeline().video[1].clips.size() == 3 && p.timeline().video[0].clips.isEmpty() && ed.targetVideoTrack() == 0);
-        // gleiche Stelle / ungültig: kein Undo-Schritt
+        // same position / invalid: no undo step
         ed.moveTrack(TrackKind::Video, 1, 1);
         ed.moveTrack(TrackKind::Audio, 5, 0);
         CHECK(p.undoStack()->count() == steps + 2);
-        // Projektdatei-Rundlauf
+        // Project file round trip
         ProjectData back3;
         QString err3;
         CHECK(ProjectFile::fromJson(ProjectFile::toJson(p.data(), "/x/p.schneidi"), "/x/p.schneidi", &back3, &err3));
@@ -274,7 +274,7 @@ int main(int argc, char** argv)
         CHECK(back3.timeline.audio[2].clips.size() == 3 && back3.timeline.video[1].clips.size() == 3);
     }
 
-    // --- UI: Spurkopf, Klicks
+    // --- UI: track header, clicks
     setup(p);
     ed.setTrackColor({TrackKind::Audio, 1}, "violet");
     ed.renameTrack({TrackKind::Video, 1}, "Titel und Grafik");
@@ -290,14 +290,14 @@ int main(int argc, char** argv)
         QApplication::sendEvent(&view, &rl);
     };
     const int kH = TimelineView::kHeaderW;
-    // V1 Zeile y 94..158, Schloss bei x kH-54..kH-34, y+6
+    // V1 row y 94..158, lock at x kH-54..kH-34, y+6
     click({kH - 44, 94 + 12});
     CHECK(p.timeline().video[0].locked);
-    click({kH + 50 * 4, 120}); // Clip 1 auf V1
+    click({kH + 50 * 4, 120}); // clip 1 on V1
     CHECK(sel.isEmpty());
-    click({kH + 50 * 4, 190}); // Clip 11 auf A1
+    click({kH + 50 * 4, 190}); // clip 11 on A1
     CHECK(sel.ids() == QSet<int>{11});
-    // Doppelklick auf den Namen von A1 (y 164)
+    // Double-click on the name of A1 (y 164)
     QMouseEvent dbl(QEvent::MouseButtonDblClick, QPoint(60, 164 + 12), view.mapToGlobal(QPoint(60, 176)), Qt::LeftButton, Qt::LeftButton, {});
     QApplication::sendEvent(&view, &dbl);
     QLineEdit* le = view.findChild<QLineEdit*>();
@@ -305,13 +305,13 @@ int main(int argc, char** argv)
     le->setText("Dialog");
     QTest::keyClick(le, Qt::Key_Return);
     CHECK(p.timeline().audio[0].name == "Dialog" && !le->isVisible());
-    // Esc bricht ab
+    // Esc cancels
     QApplication::sendEvent(&view, &dbl);
     le->setText("Quatsch");
     QTest::keyClick(le, Qt::Key_Escape);
     CHECK(p.timeline().audio[0].name == "Dialog" && !le->isVisible());
 
-    // Rechtsklick auf den Spurkopf: Menüpunkt auslösen, sobald das Menü offen ist
+    // Right-click on the track header: trigger menu item as soon as the menu is open
     auto headerMenu = [&](QPoint pt, const QString& text) {
         bool found = false, enabled = false;
         QTimer::singleShot(0, [&] {
@@ -329,20 +329,20 @@ int main(int argc, char** argv)
         QApplication::sendEvent(&view, &ce);
         return found && enabled;
     };
-    // A1 (y 164): unterhalb = neue A2, „Musik“ rückt auf A3 (Audio zählt von oben)
+    // A1 (y 164): below = new A2, "Musik" moves to A3 (audio counts from the top)
     ed.renameTrack({TrackKind::Audio, 1}, "Musik");
     CHECK(headerMenu({60, 170}, "Spur unterhalb hinzufügen"));
     CHECK(p.timeline().audio.size() == 3 && p.timeline().audio[0].name == "Dialog" && p.timeline().audio[1].clips.isEmpty()
           && p.timeline().audio[2].name == "Musik");
-    // V1 (y 94): oberhalb = neue V2, „Titel und Grafik“ rückt auf V3 (Video zählt von unten)
+    // V1 (y 94): above = new V2, "Titel und Grafik" moves to V3 (video counts from the bottom)
     CHECK(headerMenu({60, 100}, "Spur oberhalb hinzufügen"));
     CHECK(p.timeline().video.size() == 3 && p.timeline().video[1].clips.isEmpty()
           && p.timeline().video[2].name == "Titel und Grafik");
-    // Spur löschen: V1 ist gesperrt -> Menüpunkt aus
+    // Delete track: V1 is locked -> menu item off
     CHECK(!headerMenu({60, 94 + 64 + 10}, "Spur löschen"));
     CHECK(p.timeline().video.size() == 3);
 
-    // Spur am Spurkopf ziehen: Einfügemarke beim Ziehen, ein Undo-Schritt beim Loslassen
+    // Drag track at the track header: insertion marker while dragging, one undo step on release
     auto drag = [&](QPoint from, QPoint to, const QString& shot = {}) {
         QMouseEvent pr(QEvent::MouseButtonPress, from, view.mapToGlobal(from), Qt::LeftButton, Qt::LeftButton, {});
         QApplication::sendEvent(&view, &pr);
@@ -355,26 +355,26 @@ int main(int argc, char** argv)
         QMouseEvent rl(QEvent::MouseButtonRelease, to, view.mapToGlobal(to), Qt::LeftButton, Qt::NoButton, {});
         QApplication::sendEvent(&view, &rl);
     };
-    view.resize(1400, 480); // alle Spuren sichtbar
+    view.resize(1400, 480); // all tracks visible
     QApplication::processEvents();
     const int vh = view.view().videoTrackHeight, ah = view.view().audioTrackHeight;
     const int audioTop = TimelineView::kRulerH + 3 * vh + TimelineView::kSeparator;
-    // A1 „Dialog“ unter A3
+    // A1 "Dialog" below A3
     int steps = p.undoStack()->count();
     drag({60, audioTop + 10}, {60, audioTop + 3 * ah - 3}, qEnvironmentVariable("SCHNEIDI_TEST_SHOT"));
     CHECK(p.timeline().audio[2].name == "Dialog" && p.timeline().audio[2].clips.size() == 3
           && p.timeline().audio[1].name == "Musik" && p.undoStack()->count() == steps + 1);
-    // V3 „Titel und Grafik“ (oben) ganz nach unten -> V1; gesperrte alte V1 wird V2
+    // V3 "Titel und Grafik" (top) all the way down -> V1; locked old V1 becomes V2
     drag({60, TimelineView::kRulerH + 10}, {60, TimelineView::kRulerH + 3 * vh - 3});
     CHECK(p.timeline().video[0].name == "Titel und Grafik" && p.timeline().video[1].locked
           && p.timeline().video[1].clips.size() == 3);
-    // kurzes Zittern (unter der Ziehschwelle) ändert nichts
+    // short jitter (below the drag threshold) changes nothing
     steps = p.undoStack()->count();
     drag({60, audioTop + 10}, {60, audioTop + 12});
     CHECK(p.undoStack()->count() == steps);
     p.undoStack()->undo();
     CHECK(p.timeline().video[2].name == "Titel und Grafik");
-    // Freie Fläche unter den Spuren (Kopf und Spurbereich): neue Audio-/Videospur ans Ende
+    // Free area below the tracks (header and track area): new audio/video track at the end
     view.resize(1400, 900);
     QApplication::processEvents();
     const int bottom = view.height() - 30;

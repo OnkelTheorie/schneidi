@@ -30,7 +30,7 @@
 
 namespace {
 
-// Gleiche Ausgabe? (Auflösung über die Timeline aufgelöst, Qualität/Bitrate nur wo sie wirken)
+// Same output? (resolution resolved via the timeline, quality/bit rate only where they take effect)
 bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline)
 {
     if (a.format != b.format) return false;
@@ -82,7 +82,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     for (const RenderFormatInfo& f : renderFormats()) m_format->addItem(T(f.label), QString(f.id));
 
     m_resolution = new QComboBox;
-    // Wie DaVinci „Frame rate“ beim Rendern: Standard = Timeline, sonst wird beim Export umgerechnet
+    // Like DaVinci "Frame rate" when rendering: default = timeline, otherwise converted on export
     m_rate = new QComboBox;
     m_rate->setObjectName("renderRate");
     m_rate->addItem(QString(), QSize());
@@ -110,14 +110,14 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_audioBitrate = new QComboBox;
     for (int k : {128, 192, 256, 320}) m_audioBitrate->addItem(QString("%1 kbit/s").arg(k), k);
 
-    // Bittiefe (WAV/AIFF/ProRes/Apple Lossless); Einträge je nach Format, siehe updateControls
+    // Bit depth (WAV/AIFF/ProRes/Apple Lossless); entries depending on the format, see updateControls
     m_audioBits = new QComboBox;
     m_audioBits->setObjectName("renderAudioBits");
     connect(m_audioBits, qOverload<int>(&QComboBox::activated), this,
             [this] { m_wantedBits = m_audioBits->currentData().toInt(); });
 
-    // Wie DaVinci: "Render: Entire Timeline / In/Out Range"
-    // Untertitel wie DaVinci „Subtitle Settings“: sichtbare Untertitelspur einbrennen oder als eigene Datei
+    // Like DaVinci: "Render: Entire Timeline / In/Out Range"
+    // Subtitles like DaVinci "Subtitle Settings": burn in the visible subtitle track or as a separate file
     m_subtitles = new QComboBox;
     m_subtitles->addItem(T("Keine"), int(RenderSettings::NoSubtitles));
     m_subtitles->addItem(T("Ins Bild einbrennen"), int(RenderSettings::BurnSubtitles));
@@ -131,7 +131,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     connect(project, &Project::formatChanged, this, &DeliverPanel::updateFormat);
     updateFormat();
 
-    // Threads (logische Prozessoren) fürs Rendern: gilt pro Rechner (nicht in Vorlagen/Aufträgen), wirkt ab dem nächsten Auftrag
+    // Threads (logical processors) for rendering: applies per machine (not in presets/jobs), takes effect from the next job
     m_threads = new QComboBox;
     m_threads->setObjectName("renderThreads");
     const int available = Exporter::availableThreads();
@@ -186,7 +186,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
             syncPresetToSettings();
         });
     connect(m_addBtn, &QPushButton::clicked, this, [this] { addToQueue(true); });
-    // Doppelklick in der Warteschlange: Einstellungen des Auftrags übernehmen (wie DaVinci „Job bearbeiten“)
+    // Double-click in the queue: take over the job's settings (like DaVinci "Edit Job")
     connect(m_queuePanel, &RenderQueuePanel::loadJobRequested, this, [this](int id) {
         for (const RenderJob& j : m_project->renderQueue())
             if (j.id == id) {
@@ -205,10 +205,10 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
 
 DeliverPanel::~DeliverPanel()
 {
-    delete m_queuePanel; // sonst bliebe es mit verwaister Warteschlange am Projekt hängen
+    delete m_queuePanel; // otherwise it would stay attached to the project with an orphaned queue
 }
 
-// ---------- Vorlagen
+// ---------- Presets
 
 void DeliverPanel::reloadPresets(const QString& select)
 {
@@ -240,9 +240,9 @@ void DeliverPanel::selectPreset(int index)
 
 void DeliverPanel::applyPreset(int comboIndex)
 {
-    // Combo-Index -> Listenindex (Trennlinie beachten)
+    // Combo index -> list index (mind the separator)
     const QVariant v = m_preset->itemData(comboIndex);
-    if (!v.isValid()) return; // „Eigene Einstellungen“: nichts ändern
+    if (!v.isValid()) return; // "Eigene Einstellungen": change nothing
     const RenderPreset& p = m_presets.value(v.toInt());
     m_applying = true;
     setSettings(p.settings);
@@ -255,7 +255,7 @@ bool DeliverPanel::savePreset(const QString& rawName)
     const QString name = rawName.trimmed();
     if (name.isEmpty()) return false;
     for (const RenderPreset& p : RenderPresets::builtins())
-        if (p.name == name) return false; // eingebaute nicht überschreiben
+        if (p.name == name) return false; // do not overwrite built-in ones
     QVector<RenderPreset> user = RenderPresets::loadUser();
     RenderPreset preset{name, settings(), false};
     const auto it = std::find_if(user.begin(), user.end(), [&](const RenderPreset& p) { return p.name == name; });
@@ -298,7 +298,7 @@ void DeliverPanel::presetMenu()
             == QMessageBox::Yes)
             deletePreset(idx);
     });
-    // Aktualisieren: eigene Vorlage mit geänderten Einstellungen ist gerade „Eigene Einstellungen“ -> letzte merken
+    // Update: a custom preset with changed settings is currently "Eigene Einstellungen" -> remember the last one
     update->setEnabled(user);
     del->setEnabled(user);
     menu.exec(m_presetMenu->mapToGlobal(QPoint(0, m_presetMenu->height())));
@@ -309,7 +309,7 @@ void DeliverPanel::syncPresetToSettings()
     if (m_applying) return;
     const RenderSettings cur = settings();
     const QSize tl = m_project->format().size();
-    // Aktuelle Vorlage passt noch -> bleibt; sonst die erste passende, sonst „Eigene Einstellungen“
+    // Current preset still matches -> stays; otherwise the first matching one, otherwise "Eigene Einstellungen"
     const int cur_idx = currentPreset();
     if (cur_idx >= 0 && cur_idx < m_presets.size() && sameOutput(m_presets[cur_idx].settings, cur, tl)) return;
     for (int i = 0; i < m_preset->count(); ++i) {
@@ -322,7 +322,7 @@ void DeliverPanel::syncPresetToSettings()
     m_preset->setCurrentIndex(0);
 }
 
-// ---------- Einstellungen
+// ---------- Settings
 
 RenderSettings DeliverPanel::settings() const
 {
@@ -342,7 +342,7 @@ RenderSettings DeliverPanel::settings() const
     const QSize tl = m_project->format().size();
     if (size.isValid() && size != tl) {
         const int shortSide = std::min(size.width(), size.height());
-        if (sizeForShortSide(tl, shortSide) == size) s.shortSide = shortSide; // Seitenverhältnis der Timeline
+        if (sizeForShortSide(tl, shortSide) == size) s.shortSide = shortSide; // aspect ratio of the timeline
         else s.size = size;
     }
     return s;
@@ -358,7 +358,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     m_quality->setCurrentIndex(std::clamp(s.quality, 0, RenderSettings::kQualityWeb));
     const int br = m_audioBitrate->findData(s.audioBitrateK);
     m_audioBitrate->setCurrentIndex(br >= 0 ? br : m_audioBitrate->count() - 1);
-    updateControls(); // Bittiefen des Formats
+    updateControls(); // Bit depths of the format
     if (const int b = m_audioBits->findData(s.audioBits); b >= 0) m_audioBits->setCurrentIndex(b);
     m_rate->setCurrentIndex(s.rateNum > 0 ? std::max(0, m_rate->findData(QSize(s.rateNum, s.rateDen))) : 0);
     m_subtitles->setCurrentIndex(std::max(0, m_subtitles->findData(s.subtitles)));
@@ -395,12 +395,12 @@ void DeliverPanel::updateControls()
     probe.format = f.id;
     m_audioBitrate->setEnabled(probe.hasAudioBitrate());
     m_rate->setEnabled(video);
-    // Bittiefen des Formats; die gewünschte (Vorlage/letzte Wahl) bleibt, sonst 24 Bit
+    // Bit depths of the format; the wanted one (preset/last choice) stays, otherwise 24 bit
     const QVector<int> bits = probe.audioBitChoices();
     QVector<int> shown;
     for (int i = 0; i < m_audioBits->count(); ++i) shown << m_audioBits->itemData(i).toInt();
     if (shown != bits) {
-        const QSignalBlocker block(m_audioBits); // clear() meldet sonst einen Wechsel -> updateControls() verschachtelt
+        const QSignalBlocker block(m_audioBits); // clear() would otherwise report a change -> updateControls() nested
         m_audioBits->clear();
         for (int b : bits) m_audioBits->addItem(b == 32 ? T("32 Bit Float") : T("%1 Bit").arg(b), b);
         const int want = m_audioBits->findData(m_wantedBits);
@@ -408,7 +408,7 @@ void DeliverPanel::updateControls()
     }
     m_audioBits->setEnabled(!bits.isEmpty());
     m_audioBits->setToolTip(bits.isEmpty() ? T("Bei diesem Format fest") : QString());
-    // Nur Audio: nichts einzubrennen (Eintrag ausgegraut, SRT daneben geht weiter)
+    // Audio only: nothing to burn in (entry grayed out, SRT beside it still works)
     if (auto* model = qobject_cast<QStandardItemModel*>(m_subtitles->model()))
         if (QStandardItem* item = model->item(1)) item->setEnabled(video);
     if (!video && m_subtitles->currentIndex() == 1) m_subtitles->setCurrentIndex(0);
@@ -463,7 +463,7 @@ void DeliverPanel::updateEncoders()
 
 void DeliverPanel::updateRange()
 {
-    // Bereich nur wählbar, wenn In oder Out gesetzt ist; dann automatisch vorgewählt
+    // Range only selectable if In or Out is set; then preselected automatically
     const Timeline& tl = m_project->timeline();
     const bool has = tl.markIn >= 0 || tl.markOut >= 0;
     const int fps = m_project->fps();
@@ -480,8 +480,8 @@ void DeliverPanel::updateRange()
 
 void DeliverPanel::updateFormat()
 {
-    // Wie DaVinci: Standard ist die Timeline-Auflösung; dazu gängige Größen im selben Seitenverhältnis
-    // (Hochformat-Projekt -> 720 × 1280, 1080 × 1920 …) und das jeweils andere Format (16:9 bzw. 9:16)
+    // Like DaVinci: default is the timeline resolution; plus common sizes in the same aspect ratio
+    // (portrait project -> 720 × 1280, 1080 × 1920 …) and the respective other format (16:9 resp. 9:16)
     const ProjectFormat& f = m_project->format();
     const QSize timeline = f.size();
     const QSize previous = m_resolution->currentData().toSize();
@@ -502,7 +502,7 @@ void DeliverPanel::updateFormat()
     for (QSize other : {QSize(1080, 1920), QSize(1920, 1080)})
         if (!sizes.contains(other) && other.width() * timeline.height() != other.height() * timeline.width())
             selectSize(other);
-    // War die Timeline-Auflösung gewählt, bleibt es die (neue) Timeline-Auflösung
+    // If the timeline resolution was chosen, it stays the (new) timeline resolution
     const int keep = previous.isValid() && previous != m_timelineSize ? m_resolution->findData(previous) : -1;
     m_timelineSize = timeline;
     m_resolution->setCurrentIndex(keep >= 0 ? keep : m_resolution->findData(timeline));
@@ -516,7 +516,7 @@ void DeliverPanel::browse()
     if (!dir.isEmpty()) m_folder->setText(QDir::toNativeSeparators(dir));
 }
 
-// ---------- Warteschlange
+// ---------- Queue
 
 RenderJob DeliverPanel::makeJob() const
 {
@@ -526,7 +526,7 @@ RenderJob DeliverPanel::makeJob() const
     QString name = m_name->text().trimmed();
     if (name.isEmpty()) name = "Export";
     const QString ext = QString(".") + f.extension;
-    // Andere Endung (z. B. .mp4 nach Wechsel auf WAV) ersetzen
+    // Replace a different extension (e.g. .mp4 after switching to WAV)
     for (const RenderFormatInfo& other : renderFormats())
         if (name.endsWith(QString(".") + other.extension, Qt::CaseInsensitive)) {
             name.chop(int(qstrlen(other.extension)) + 1);
@@ -536,7 +536,7 @@ RenderJob DeliverPanel::makeJob() const
     const int idx = currentPreset();
     if (idx >= 0 && idx < m_presets.size()) job.preset = m_presets[idx].name;
     if (!job.settings.audioOnly()) job.size = m_resolution->currentData().toSize();
-    job.sequence = m_project->currentSequence(); // gerendert wird diese Timeline, auch wenn später eine andere offen ist
+    job.sequence = m_project->currentSequence(); // this timeline gets rendered, even if another one is open later
     if (m_range->currentIndex() == 1) {
         const Timeline& tl = m_project->timeline();
         job.inOut = true;

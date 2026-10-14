@@ -1,7 +1,7 @@
 #pragma once
-// Tasten- und Mausrad-Belegung, anpassbar über keybindings.json im Config-Ordner
+// Key and mouse wheel bindings, customizable via keybindings.json in the config folder
 // (Linux: ~/.config/schneidi/, Windows: %APPDATA%/schneidi/).
-// Defaults orientieren sich an DaVinci Resolve.
+// Defaults follow DaVinci Resolve.
 
 #include <QHash>
 #include <QKeySequence>
@@ -18,32 +18,32 @@ public:
     static InputBindings& instance();
 
     struct Entry {
-        QString id;       // Schlüssel in keybindings.json
-        QString category; // z. B. Menüname
+        QString id;       // key in keybindings.json
+        QString category; // e.g. menu name
         QString text;
         QKeySequence defaultKey;
         QPointer<QAction> action;
     };
 
     void load();
-    // Aktion anmelden: bekommt die Taste aus der Datei bzw. ihren Default
+    // Register an action: gets the key from the file resp. its default
     void registerAction(QAction* action, const QString& id, const QString& category, const QKeySequence& defaultKey);
-    // Nach dem Anmelden aller Aktionen: Datei schreiben, falls sie fehlt oder Einträge fehlen
+    // After registering all actions: write the file if it is missing or entries are missing
     void saveIfIncomplete();
 
-    // Für den Tastenbelegungs-Dialog: Änderungen wirken sofort und werden gespeichert
+    // For the key bindings dialog: changes take effect immediately and are saved
     const QVector<Entry>& entries() const { return m_entries; }
     QKeySequence current(const QString& id) const;
     void setShortcut(const QString& id, const QKeySequence& key);
     void resetAll();
 
-    // Zusatz-Maustasten (Seitentasten) -> Aktion, z. B. hintere Seitentaste = Schneiden am Playhead
+    // Extra mouse buttons (side buttons) -> action, e.g. rear side button = cut at the playhead
     static const QVector<Qt::MouseButton>& bindableMouseButtons();
     static QString mouseButtonText(Qt::MouseButton b);
-    QString mouseAction(Qt::MouseButton b) const;              // Aktions-ID oder leer
-    Qt::MouseButton mouseButtonFor(const QString& id) const;   // Qt::NoButton, wenn keine
+    QString mouseAction(Qt::MouseButton b) const;              // action ID or empty
+    Qt::MouseButton mouseButtonFor(const QString& id) const;   // Qt::NoButton if none
     Qt::MouseButton defaultMouseButtonFor(const QString& id) const;
-    void setMouseButton(const QString& id, Qt::MouseButton b); // NoButton = entfernen
+    void setMouseButton(const QString& id, Qt::MouseButton b); // NoButton = remove
     QAction* action(const QString& id) const;
 
     WheelAction wheelAction(Qt::KeyboardModifiers mods) const;
@@ -55,9 +55,9 @@ private:
 
     void save();
 
-    QHash<QString, QString> m_shortcuts;       // actionId -> "Ctrl+B" (aus der Datei)
-    QVector<Entry> m_entries;                  // angemeldete Aktionen in Menü-Reihenfolge
+    QHash<QString, QString> m_shortcuts;       // actionId -> "Ctrl+B" (from the file)
+    QVector<Entry> m_entries;                  // registered actions in menu order
     QHash<int, QString> m_mouse;               // Qt::MouseButton -> actionId
-    QHash<QString, WheelAction> m_wheel;       // "none"/"shift"/"ctrl+alt" -> Aktion
+    QHash<QString, WheelAction> m_wheel;       // "none"/"shift"/"ctrl+alt" -> action
     bool m_fileExisted = false;
 };

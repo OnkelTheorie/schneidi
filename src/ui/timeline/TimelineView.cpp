@@ -67,28 +67,28 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
     m_autoScroll->setInterval(30);
     connect(m_autoScroll, &QTimer::timeout, this, &TimelineView::autoScrollStep);
 
-    // Projekt geändert -> nur neu zeichnen. Der ViewState bleibt unangetastet (Kernregel).
+    // Project changed -> just redraw. The ViewState stays untouched (core rule).
     connect(editor->project(), &Project::timelineChanged, this, [this] {
-        // Trim-Vorschau beruht auf der alten Timeline (andere Spuranzahl möglich, z. B. Strg+Z beim Ziehen):
-        // verwerfen, die nächste Mausbewegung rechnet sie neu
+        // Trim preview is based on the old timeline (different track count possible, e.g. Ctrl+Z while dragging):
+        // discard, the next mouse move recomputes it
         m_trimPreview.reset();
         update();
-        emit viewChanged(); // nur damit die Scrollbar ggf. mehr Platz bekommt
+        emit viewChanged(); // only so that the scrollbar may get more room
     });
     connect(editor->selection(), &Selection::changed, this, qOverload<>(&QWidget::update));
     connect(editor, &Editor::targetTracksChanged, this, qOverload<>(&QWidget::update));
-    // Clipfarbe/Flags im Media Pool geändert -> Clips neu zeichnen
+    // Clip color/flags changed in the Media Pool -> redraw clips
     connect(editor->project(), &Project::poolChanged, this, qOverload<>(&QWidget::update));
 }
 
 void TimelineView::setMediaCache(MediaCache* cache)
 {
     m_cache = cache;
-    // Neue Bilder/Wellenformen fertig -> neu zeichnen (Qt fasst mehrere update() zusammen)
+    // New images/waveforms ready -> redraw (Qt merges several update() calls)
     connect(cache, &MediaCache::updated, this, qOverload<>(&QWidget::update));
 }
 
-// ---------- Geometrie ----------
+// ---------- Geometry ----------
 
 double TimelineView::frameToX(double frame) const
 {
@@ -107,8 +107,8 @@ int TimelineView::visibleFrames() const
 
 int TimelineView::scrollRangeFrames() const
 {
-    // Hinter dem letzten Clip ist immer Platz, und der Bereich wird nie kleiner
-    // als die aktuelle Position -> nichts wird zurückgeschoben.
+    // There is always room behind the last clip, and the range never gets smaller
+    // than the current position -> nothing gets pushed back.
     const int vis = visibleFrames();
     const int end = TimelineOps::endFrame(m_editor->project()->timeline());
     return std::max(end, int(m_view.leftFrame) + vis) + vis * 2;
@@ -116,7 +116,7 @@ int TimelineView::scrollRangeFrames() const
 
 int TimelineView::contentHeight() const
 {
-    // aus den Zeilen, damit aufgeklappte Keyframe-Spuren mitzählen
+    // from the rows, so that expanded keyframe lanes count too
     const auto all = rows();
     if (all.isEmpty()) return 0;
     return all.last().y + all.last().h - (kRulerH - m_view.scrollY);
@@ -126,8 +126,8 @@ QVector<TimelineView::Row> TimelineView::rows() const
 {
     const Timeline& tl = m_editor->project()->timeline();
     QVector<Row> out;
-    int y = kRulerH - m_view.scrollY + subtitlesHeight(); // Untertitelspuren liegen darüber
-    // Spur wird höher, solange ein Clip darauf seine Keyframe-Spur bzw. seinen Kurven-Editor aufgeklappt hat
+    int y = kRulerH - m_view.scrollY + subtitlesHeight(); // subtitle tracks lie above
+    // Track gets taller while a clip on it has its keyframe lane resp. curve editor expanded
     auto row = [&](TrackRef ref, int y, int h) {
         Row r{ref, y, h};
         for (const Clip& c : tl.track(ref).clips) {
@@ -138,7 +138,7 @@ QVector<TimelineView::Row> TimelineView::rows() const
         r.h += r.lane;
         return r;
     };
-    for (int i = tl.video.size() - 1; i >= 0; --i) { // V1 unten, wie in DaVinci
+    for (int i = tl.video.size() - 1; i >= 0; --i) { // V1 at the bottom, like in DaVinci
         out << row({TrackKind::Video, i}, y, m_view.videoTrackHeight);
         y += out.last().h;
     }
@@ -175,8 +175,8 @@ int TimelineView::clipAt(const QPoint& pos) const
     return 0;
 }
 
-// Kante unter der Maus (nur innerhalb des Clips, wie in DaVinci). Bei schmalen Clips
-// wird der Greifbereich kleiner, damit man den Clip noch verschieben kann.
+// Edge under the mouse (only inside the clip, like in DaVinci). With narrow clips
+// the grab area gets smaller so that the clip can still be moved.
 std::optional<TimelineView::EdgeHit> TimelineView::edgeAt(const QPoint& pos) const
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
@@ -206,7 +206,7 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
         const QRect r = clipRect(*row, c);
         const double x1 = frameToX(c.pos()), x2 = frameToX(c.endPos());
         if (pos.x() < x1 || pos.x() >= x2 || pos.y() > r.bottom()) continue;
-        // genau am Schnitt zweier anliegender Clips: Roll
+        // exactly at the cut of two adjacent clips: Roll
         const bool prevAdj = i > 0 && clips[i - 1].end() == c.start;
         const bool nextAdj = i + 1 < clips.size() && clips[i + 1].start == c.end();
         constexpr double kRollPx = 3;
@@ -218,8 +218,8 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
         const bool bar = pos.y() < r.top() + std::min(kClipBarH, r.height() / 2);
         return TrimHit{bar ? TrimKind::Slide : TrimKind::Slip, c.id, Edge::End};
     }
-    // knapp links neben einem Schnitt (Maus über dem Ende des linken Clips) ist oben schon erfasst;
-    // hier bleibt nur Leere
+    // just left of a cut (mouse over the end of the left clip) is already captured above;
+    // only empty space remains here
     return std::nullopt;
 }
 
@@ -235,7 +235,7 @@ QRect TimelineView::transitionRect(const Row& row, const TimelineOps::Transition
                  QPoint(int(frameToX(s.end)) - 1, row.y + row.h - row.lane - 3));
 }
 
-// Übergänge liegen über den Clipkanten und gehen beim Klicken vor (wie DaVinci)
+// Transitions lie above the clip edges and take precedence when clicking (like DaVinci)
 std::optional<TimelineView::TransitionHit> TimelineView::transitionAt(const QPoint& pos) const
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
@@ -246,11 +246,11 @@ std::optional<TimelineView::TransitionHit> TimelineView::transitionAt(const QPoi
         if (pos.x() < r.left() || pos.x() > r.right()) continue;
         const int grab = std::min(kEdgeGrabPx, r.width() / 3);
         int edge = 0;
-        // Nur die freie Kante ist ziehbar: Einblenden rechts, Ausblenden links, Überblendung beide
+        // Only the free edge is draggable: fade-in on the right, fade-out on the left, crossfade both
         if (s.leftId && pos.x() <= r.left() + grab) edge = -1;
         else if (s.rightId && pos.x() >= r.right() - grab) edge = 1;
-        // Klickfläche teilen: an einer Clipkante gehört die untere Hälfte dem Trimmen,
-        // eine nicht ziehbare Übergangskante (Clip-Seite beim Ein-/Ausblenden) ganz
+        // Split the click area: at a clip edge the lower half belongs to trimming,
+        // a non-draggable transition edge (clip side for fade-in/out) entirely
         if (edgeAt(pos) && (!edge || pos.y() >= row->y + row->h / 2)) return std::nullopt;
         return TransitionHit{row->ref, s, edge};
     }
@@ -276,7 +276,7 @@ std::optional<TimelineView::EdgeHit> TimelineView::fadeHandleAt(const QPoint& po
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
         if (c.id != m_hoverClip) continue;
         const QRect r = clipRect(*row, c);
-        if (r.width() < 24) return std::nullopt; // zu schmal: Griffe würden das Trimmen verdecken
+        if (r.width() < 24) return std::nullopt; // too narrow: handles would hide trimming
         for (auto edge : {TimelineOps::Edge::Start, TimelineOps::Edge::End})
             if (fadeHandleRect(r, c, edge).adjusted(-3, -2, 3, 3).contains(pos)) return EdgeHit{c.id, edge};
     }
@@ -323,7 +323,7 @@ std::optional<TimelineView::KeyHit> TimelineView::keyframeAt(const QPoint& pos) 
     for (const Clip& c : m_editor->project()->timeline().track(row->ref).clips) {
         if (!m_keyLanes.contains(c.id)) continue;
         for (int t : Keys::keyTimes(c)) {
-            if (t < 0 || t >= c.length()) continue; // außerhalb des Clips (nach Trimmen) nicht greifbar
+            if (t < 0 || t >= c.length()) continue; // outside the clip (after trimming) not grabbable
             const double d = std::abs(frameToX(c.pos() + t) - pos.x());
             if (d < bestDist) {
                 bestDist = d;
@@ -432,7 +432,7 @@ QVector<int> TimelineView::snapPoints(const QSet<int>& exclude) const
     return pts;
 }
 
-// Liefert die Korrektur, damit eine der Kanten auf einen Snap-Punkt fällt (0 = kein Snap)
+// Returns the correction so that one of the edges lands on a snap point (0 = no snap)
 int TimelineView::snapDelta(const QVector<int>& edges, const QSet<int>& exclude, bool* hit) const
 {
     if (hit) *hit = false;
@@ -453,7 +453,7 @@ int TimelineView::snapDelta(const QVector<int>& edges, const QSet<int>& exclude,
     return best;
 }
 
-// ---------- View-Steuerung (nur durch Nutzer) ----------
+// ---------- View control (by the user only) ----------
 
 void TimelineView::setLeftFrame(double frame)
 {
@@ -466,7 +466,7 @@ void TimelineView::setZoomAndScroll(double pxPerFrame, double leftFrame, int scr
 {
     m_view.pxPerFrame = std::clamp(pxPerFrame, ViewState::kMinPxPerFrame, ViewState::kMaxPxPerFrame);
     m_view.leftFrame = std::max(0.0, leftFrame);
-    setScrollY(scrollY); // begrenzt auf die Höhe der Spuren, zeichnet neu, meldet viewChanged
+    setScrollY(scrollY); // limited to the height of the tracks, redraws, reports viewChanged
 }
 
 void TimelineView::setScrollY(int y)
@@ -478,7 +478,7 @@ void TimelineView::setScrollY(int y)
 
 void TimelineView::zoomBy(double factor)
 {
-    // Tastatur-Zoom: um den Playhead, falls sichtbar, sonst um die Mitte
+    // Keyboard zoom: around the playhead if visible, otherwise around the center
     double anchorX = frameToX(m_playhead);
     if (anchorX < kHeaderW || anchorX > width()) anchorX = kHeaderW + (width() - kHeaderW) / 2.0;
     m_view.setZoomAround(m_view.pxPerFrame * factor, xToFrame(anchorX), anchorX - kHeaderW);
@@ -501,7 +501,7 @@ void TimelineView::setPlayhead(int frame)
 {
     if (frame == m_playhead) return;
     m_playhead = frame;
-    update(); // bewusst KEIN automatisches Mitscrollen
+    update(); // deliberately NO automatic scrolling along
 }
 
 void TimelineView::setTool(Tool tool)
@@ -509,7 +509,7 @@ void TimelineView::setTool(Tool tool)
     if (tool == m_tool) return;
     m_tool = tool;
     setCursor(tool == Tool::Blade ? Qt::IBeamCursor : Qt::ArrowCursor);
-    if (m_hoverClip) m_hoverClip = 0; // Fade-Griffe nur im Auswahl-Werkzeug
+    if (m_hoverClip) m_hoverClip = 0; // Fade handles only in the selection tool
     m_hoverFrame = -1;
     update();
     emit toolChanged(tool);
@@ -534,7 +534,7 @@ void TimelineView::setSnapping(bool on)
     emit snappingChanged(on);
 }
 
-// ---------- Zeichnen ----------
+// ---------- Drawing ----------
 
 void TimelineView::setRenderCacheSpans(const QVector<CacheSpan>& spans)
 {
@@ -572,7 +572,7 @@ bool TimelineView::isLocked(const Row& row) const
 
 int TimelineView::trackDropIndex(int y) const
 {
-    // Zielspur = Spur gleichen Typs unter der Maus (darüber/darunter hinaus: die nächste)
+    // Target track = track of the same type under the mouse (beyond above/below: the nearest)
     int to = -1, best = 1 << 30;
     for (const Row& r : rows()) {
         if (r.ref.kind != m_trackDragRef.kind) continue;

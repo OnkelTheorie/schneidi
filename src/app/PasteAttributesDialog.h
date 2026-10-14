@@ -4,12 +4,12 @@
 
 class QCheckBox;
 
-// „Attribute einfügen“ (Alt+V) wie DaVinci Paste Attributes: Häkchen je Eigenschaft (Video/Audio/Allgemein),
-// nicht verfügbare (keine Quelle dieser Art kopiert) sind ausgegraut. Letzte Wahl wird gemerkt.
+// "Paste Attributes" (Alt+V) like DaVinci Paste Attributes: checkbox per property (Video/Audio/General),
+// unavailable ones (no source of this kind copied) are grayed out. Last choice is remembered.
 class PasteAttributesDialog : public QDialog {
     Q_OBJECT
 public:
-    // available = Editor::pasteAttributesAvailable(), source = Name des kopierten Clips
+    // available = Editor::pasteAttributesAvailable(), source = name of the copied clip
     PasteAttributesDialog(int available, const QString& source, int targetCount, QWidget* parent = nullptr);
     int attributes() const; // Editor::PasteAttr-Bits
 

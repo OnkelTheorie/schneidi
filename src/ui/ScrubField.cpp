@@ -68,7 +68,7 @@ void ScrubField::mouseMoveEvent(QMouseEvent* e)
     const double factor = (e->modifiers() & Qt::ShiftModifier) ? 0.1 : 1.0;
     m_accum += (x - m_lastX) * m_step * factor;
     m_lastX = x;
-    // Rest unterhalb der angezeigten Genauigkeit aufheben (langsames Ziehen, Shift), am Rand verwerfen
+    // Keep the remainder below the displayed precision (slow dragging, Shift), discard at the edge
     const double target = m_value + m_accum;
     change(target);
     m_accum = m_value <= m_min || m_value >= m_max ? 0.0 : target - m_value;
@@ -83,7 +83,7 @@ void ScrubField::mouseReleaseEvent(QMouseEvent* e)
         clearFocus();
         if (onFinish) onFinish();
     } else {
-        startEditing(); // nur geklickt -> Zahl eintippen
+        startEditing(); // just clicked -> type in the number
     }
 }
 
@@ -104,7 +104,7 @@ void ScrubField::commitText()
     setReadOnly(true);
     setCursor(Qt::SizeHorCursor);
     bool ok = false;
-    const double v = text().trimmed().replace(',', '.').toDouble(&ok); // Komma oder Punkt
+    const double v = text().trimmed().replace(',', '.').toDouble(&ok); // comma or dot
     if (ok) change(v);
     showValue();
     if (ok && onFinish) onFinish();
@@ -130,6 +130,6 @@ void ScrubField::keyPressEvent(QKeyEvent* e)
 
 void ScrubField::focusOutEvent(QFocusEvent* e)
 {
-    commitText(); // wegklicken übernimmt wie in DaVinci
+    commitText(); // clicking away commits, like in DaVinci
     QLineEdit::focusOutEvent(e);
 }

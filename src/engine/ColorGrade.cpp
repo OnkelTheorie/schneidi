@@ -22,7 +22,7 @@ namespace {
 
 using P = AnimParam;
 
-// Reihenfolge wie Params (Räder je Y/R/G/B, danach die Regler)
+// Order like Params (wheels each Y/R/G/B, then the sliders)
 const QVector<AnimParam> kParams = {
     P::GradeLiftY,    P::GradeLiftR,    P::GradeLiftG,    P::GradeLiftB,    P::GradeGammaY,   P::GradeGammaR,
     P::GradeGammaG,   P::GradeGammaB,   P::GradeGainY,    P::GradeGainR,    P::GradeGainG,    P::GradeGainB,
@@ -32,25 +32,25 @@ const QVector<AnimParam> kParams = {
 
 inline double clamp01(double x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
 
-// Tonwertkurve eines Kanals (c = 0..2 für R/G/B), x = 0..1 (Gamma-kodiert wie das Bild)
+// Tone curve of a channel (c = 0..2 for R/G/B), x = 0..1 (gamma-encoded like the image)
 struct Curve {
     double mul[3], add[3], lift[3], gain[3], expo[3];
     double contrast, pivot;
 
     explicit Curve(const Params& p)
     {
-        // Weißabgleich (Temperatur/Tönung) als Kanal-Verstärkung, auf gleiche Helligkeit (Rec. 709) normiert
+        // White balance (temperature/tint) as channel gain, normalized to equal brightness (Rec. 709)
         const double k = p.temperature / 4000.0 * 0.3, n = p.tint / 100.0 * 0.25;
         double wb[3] = {1.0 + k, 1.0 - n, 1.0 - k};
         const double l = 0.2126 * wb[0] + 0.7152 * wb[1] + 0.0722 * wb[2];
-        // Belichtung in Blendenstufen: lineares Licht * 2^ev, im Gamma-kodierten Bild (≈ 2,4) also 2^(ev/2,4)
+        // Exposure in stops: linear light * 2^ev, in the gamma-encoded image (≈ 2.4) thus 2^(ev/2.4)
         const double e = std::pow(2.0, p.exposure / 2.4);
         for (int c = 0; c < 3; ++c) {
             mul[c] = std::max(0.0, wb[c] / l) * e;
             add[c] = (p.offset[0] - 25.0) / 100.0 + (p.offset[c + 1] - 25.0) / 100.0;
             lift[c] = p.lift[0] + p.lift[c + 1];
             gain[c] = std::max(0.0, p.gain[0] * p.gain[c + 1]);
-            // Gamma +: Mitten heller (Exponent < 1), 0 = unverändert
+            // Gamma +: midtones brighter (exponent < 1), 0 = unchanged
             expo[c] = std::pow(2.0, -2.0 * (p.gamma[0] + p.gamma[c + 1]));
         }
         contrast = std::max(0.0, p.contrast);
@@ -58,15 +58,15 @@ struct Curve {
     }
     double operator()(int c, double x) const
     {
-        x = x * mul[c] + add[c];                // Weißabgleich, Belichtung, Offset (verschiebt alles)
-        x = (x - pivot) * contrast + pivot;     // Kontrast um den Pivot
-        x = x + lift[c] * (1.0 - x);            // Lift: Schwarz verschieben, Weiß bleibt
-        x = clamp01(x * gain[c]);               // Gain: Weiß verschieben, Schwarz bleibt
-        return expo[c] == 1.0 ? x : std::pow(x, expo[c]); // Gamma: Mitten, 0 und 1 bleiben
+        x = x * mul[c] + add[c];                // white balance, exposure, offset (shifts everything)
+        x = (x - pivot) * contrast + pivot;     // Contrast around the pivot
+        x = x + lift[c] * (1.0 - x);            // Lift: shift black, white stays
+        x = clamp01(x * gain[c]);               // Gain: shift white, black stays
+        return expo[c] == 1.0 ? x : std::pow(x, expo[c]); // Gamma: midtones, 0 and 1 stay
     }
 };
 
-// Vorab-Kurve (.csp) stückweise linear, außerhalb festgehalten
+// Pre-curve (.csp) piecewise linear, held outside
 inline float shape(const Lut& lut, int c, float x)
 {
     const QVector<float>& in = lut.shaperIn[c];
@@ -79,7 +79,7 @@ inline float shape(const Lut& lut, int c, float x)
     return span > 0 ? out[i - 1] + (out[i] - out[i - 1]) * (x - in[i - 1]) / span : out[i];
 }
 
-// Trilineare Interpolation in der 3D-LUT (Eingang 0..1 nach Domain umgerechnet)
+// Trilinear interpolation in the 3D LUT (input 0..1 converted to domain)
 inline void sample3d(const Lut& lut, float rgb[3])
 {
     const int n = lut.size;
@@ -121,7 +121,7 @@ inline void sample1d(const Lut& lut, float rgb[3])
     }
 }
 
-// ---- MLT-Filter ----
+// ---- MLT filter ----
 
 struct State {
     Clip clip;      // copy: keyframes are read in the render thread (read only)
@@ -219,7 +219,7 @@ LutPtr failLut(QString* error, const QString& msg)
     return nullptr;
 }
 
-// Zahl einer Datenzeile (QByteArray::toDouble: immer mit Punkt, unabhängig vom Gebietsschema)
+// Number of a data line (QByteArray::toDouble: always with a dot, independent of the locale)
 bool isNumber(const QByteArray& w)
 {
     bool ok = false;
@@ -229,7 +229,7 @@ bool isNumber(const QByteArray& w)
 
 QList<QByteArray> words(const QByteArray& line) { return line.simplified().split(' '); }
 
-// .cube (Adobe/Resolve): LUT_3D_SIZE/LUT_1D_SIZE, DOMAIN_MIN/MAX bzw. LUT_*_INPUT_RANGE, Daten R schnellster Index
+// .cube (Adobe/Resolve): LUT_3D_SIZE/LUT_1D_SIZE, DOMAIN_MIN/MAX resp. LUT_*_INPUT_RANGE, data R fastest index
 LutPtr parseCube(QIODevice& f, QString* error)
 {
     auto lut = std::make_shared<Lut>();
@@ -258,20 +258,20 @@ LutPtr parseCube(QIODevice& f, QString* error)
         } else if (key == "DOMAIN_MIN" || key == "DOMAIN_MAX") {
             float* dst = key == "DOMAIN_MIN" ? lut->domainMin : lut->domainMax;
             for (int c = 0; c < 3 && c + 1 < w.size(); ++c) dst[c] = float(w.at(c + 1).toDouble());
-        } else if (key == "LUT_3D_INPUT_RANGE" || key == "LUT_1D_INPUT_RANGE") { // Resolve-Variante
+        } else if (key == "LUT_3D_INPUT_RANGE" || key == "LUT_1D_INPUT_RANGE") { // Resolve variant
             for (int c = 0; c < 3; ++c) {
                 lut->domainMin[c] = float(w.value(1).toDouble());
                 lut->domainMax[c] = float(w.value(2).toDouble());
             }
-        } // TITLE und Unbekanntes überspringen
+        } // skip TITLE and unknown things
     }
     if (!expected || lut->data.size() != expected * 3)
         return failLut(error, QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
     return lut;
 }
 
-// .3dl (Lustre/Flame/Nuke): optionale Zeile mit dem Eingangsgitter (N Werte), danach N^3 ganzzahlige RGB-Tripel,
-// B schnellster Index. Ausgangs-Bittiefe aus „Mesh <ein> <aus>“ oder aus dem größten Wert (10/12/16 Bit).
+// .3dl (Lustre/Flame/Nuke): optional line with the input grid (N values), then N^3 integer RGB triples,
+// B fastest index. Output bit depth from "Mesh <in> <out>" or from the largest value (10/12/16 bit).
 LutPtr parse3dl(QIODevice& f, QString* error)
 {
     int size = 0;
@@ -284,9 +284,9 @@ LutPtr parse3dl(QIODevice& f, QString* error)
         if (!isNumber(w.first())) {
             if (w.first().compare("Mesh", Qt::CaseInsensitive) == 0 && w.size() >= 3)
                 outMax = std::pow(2.0, w.at(2).toInt()) - 1;
-            continue; // 3DMESH, LUT8, gamma … überspringen
+            continue; // skip 3DMESH, LUT8, gamma …
         }
-        if (w.size() != 3 && raw.isEmpty() && !size) { // Eingangsgitter: legt die Größe fest
+        if (w.size() != 3 && raw.isEmpty() && !size) { // input grid: fixes the size
             size = int(w.size());
             continue;
         }
@@ -298,7 +298,7 @@ LutPtr parse3dl(QIODevice& f, QString* error)
         }
     }
     const int count = int(raw.size() / 3);
-    if (!size) size = int(std::lround(std::cbrt(double(count)))); // ohne Gitterzeile
+    if (!size) size = int(std::lround(std::cbrt(double(count)))); // without grid line
     if (size < 2 || size > 256 || count != size * size * size)
         return failLut(error, QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
     if (outMax <= 0) {
@@ -308,7 +308,7 @@ LutPtr parse3dl(QIODevice& f, QString* error)
     auto lut = std::make_shared<Lut>();
     lut->size = size;
     lut->data.resize(raw.size());
-    // B schnellster Index -> R schnellster Index
+    // B fastest index -> R fastest index
     for (int r = 0; r < size; ++r)
         for (int g = 0; g < size; ++g)
             for (int b = 0; b < size; ++b) {
@@ -319,8 +319,8 @@ LutPtr parse3dl(QIODevice& f, QString* error)
     return lut;
 }
 
-// .csp (cineSpace): „CSPLUTV100“, „3D“/„1D“, optional METADATA-Block, je Kanal eine Vorab-Kurve
-// (Anzahl, Eingänge, Ausgänge), dann 3D: „N N N“ + N^3 Tripel (R schnellster Index) bzw. 1D: Anzahl + Tripel
+// .csp (cineSpace): "CSPLUTV100", "3D"/"1D", optional METADATA block, one pre-curve per channel
+// (count, inputs, outputs), then 3D: "N N N" + N^3 triples (R fastest index) resp. 1D: count + triples
 LutPtr parseCsp(QIODevice& f, QString* error)
 {
     if (!f.readLine().trimmed().startsWith("CSPLUTV100")) return failLut(error, QStringLiteral("kein cineSpace-LUT"));
@@ -350,7 +350,7 @@ LutPtr parseCsp(QIODevice& f, QString* error)
         *v = nums[i++];
         return true;
     };
-    for (int c = 0; c < 3; ++c) { // Vorab-Kurven
+    for (int c = 0; c < 3; ++c) { // Pre-curves
         double n = 0;
         if (!next(&n) || n < 2 || n > 65536) return failLut(error, QStringLiteral("ungültige Vorab-Kurve"));
         QVector<float> in, out;
@@ -387,7 +387,7 @@ LutPtr parseCsp(QIODevice& f, QString* error)
     return lut;
 }
 
-// Hald-CLUT: quadratisches Bild L^3 x L^3, Würfelgröße N = L^2, Pixel zeilenweise mit R schnellstem Index
+// Hald CLUT: square image L^3 x L^3, cube size N = L^2, pixels row by row with R as fastest index
 LutPtr parseHald(const QString& path, QString* error)
 {
     QImage img(path);
@@ -396,7 +396,7 @@ LutPtr parseHald(const QString& path, QString* error)
     const int level = int(std::lround(std::cbrt(double(w))));
     if (img.height() != w || level * level * level != w || level < 2 || level > 16)
         return failLut(error, QStringLiteral("kein Hald-CLUT (quadratisch, Kantenlänge L³)"));
-    img = img.convertToFormat(QImage::Format_RGBA64); // 16-Bit-PNGs ohne Verlust
+    img = img.convertToFormat(QImage::Format_RGBA64); // 16-bit PNGs without loss
     auto lut = std::make_shared<Lut>();
     lut->size = level * level;
     lut->data.reserve(qsizetype(w) * w * 3);
@@ -453,7 +453,7 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
     const Curve curve(p);
     const size_t n = size_t(width) * size_t(height);
     const double s = std::max(0.0, p.saturation / 50.0);
-    if (!lut && s == 1.0) { // schnell: nur Kanalkurven
+    if (!lut && s == 1.0) { // fast: channel curves only
         uint8_t table[3][256];
         for (int c = 0; c < 3; ++c)
             for (int i = 0; i < 256; ++i) table[c][i] = uint8_t(std::lround(curve(c, i / 255.0) * 255.0));
@@ -470,11 +470,11 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
     const float sf = float(s);
     for (size_t i = 0; i < n; ++i, rgba += 4) {
         float v[3] = {table[0][rgba[0]], table[1][rgba[1]], table[2][rgba[2]]};
-        if (sf != 1.0f) { // Sättigung: Mischung mit der Helligkeit (Rec. 709)
+        if (sf != 1.0f) { // saturation: mix with the brightness (Rec. 709)
             const float y = 0.2126f * v[0] + 0.7152f * v[1] + 0.0722f * v[2];
             for (float& x : v) x = std::clamp(y + (x - y) * sf, 0.0f, 1.0f);
         }
-        if (lut) { // LUT nach der Korrektur (wie eine LUT an einem DaVinci-Node)
+        if (lut) { // LUT after the correction (like a LUT on a DaVinci node)
             if (lut->is3d) sample3d(*lut, v);
             else sample1d(*lut, v);
         }
@@ -499,9 +499,9 @@ void attach(Mlt::Producer& cut, const Clip& c, int a, const std::shared_ptr<std:
     auto* fd = new FilterData;
     fd->state.store(std::move(d));
     mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), kDataName, fd, 0, destroyData, nullptr);
-    Mlt::Filter filter(f); // hält eine eigene Referenz
+    Mlt::Filter filter(f); // holds its own reference
     mlt_filter_close(f);
-    // Position für die Keyframes zählt ab Filter-In (wie bei den anderen Keyframe-Filtern)
+    // Position for the keyframes counts from filter-in (as with the other keyframe filters)
     filter.set_in_and_out(cut.get_in(), cut.get_out());
     cut.attach(filter);
 }

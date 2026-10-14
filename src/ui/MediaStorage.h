@@ -13,11 +13,11 @@ class QTreeWidget;
 class QToolButton;
 class QTreeWidgetItem;
 
-// Media Storage wie DaVinci: Dateibrowser über feste Speicherorte (Ordner). Links die Speicherorte mit ihren
-// Unterordnern, rechts der Inhalt des gewählten Ordners (Unterordner + Mediendateien mit Vorschaubild).
-// Clips lassen sich direkt in Media Pool oder Timeline ziehen (Datei-URLs wie aus dem Dateimanager) –
-// ohne zweiten Monitor/Dateimanager daneben. Doppelklick bzw. Rechtsklick importiert in den Media Pool.
-// Der Ordner wird überwacht: neue Dateien erscheinen von selbst.
+// Media Storage like DaVinci: file browser over fixed storage locations (folders). On the left the locations with their
+// subfolders, on the right the contents of the selected folder (subfolders + media files with thumbnail).
+// Clips can be dragged directly into the Media Pool or timeline (file URLs as from the file manager) –
+// without a second monitor/file manager next to it. Double-click resp. right-click imports into the Media Pool.
+// The folder is watched: new files appear on their own.
 class MediaStorage : public QWidget {
     Q_OBJECT
 public:
@@ -27,14 +27,14 @@ public:
     static bool isMediaFile(const QString& path);
     QString currentFolder() const { return m_folder; }
     void setFolder(const QString& dir);
-    void setPersistent(bool on) { m_persistent = on; } // Testläufe: Einstellungen nicht anfassen
+    void setPersistent(bool on) { m_persistent = on; } // test runs: do not touch the settings
 
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
 
 signals:
-    void importRequested(const QStringList& paths); // in den gewählten Bin des Media Pools
-    void folderImportRequested(const QString& dir);  // samt Unterordnern als Bins
+    void importRequested(const QStringList& paths); // into the selected bin of the Media Pool
+    void folderImportRequested(const QString& dir);  // including subfolders as bins
 
 private:
     void addLocation();
@@ -50,7 +50,7 @@ private:
     void saveLocations();
     void setListMode(bool list);
     void updatePathLabel();
-    // Vorschaubilder: nacheinander per ffmpeg (Videos) bzw. QImageReader (Bilder), im Speicher gemerkt
+    // Thumbnails: one after another via ffmpeg (videos) resp. QImageReader (images), remembered in memory
     void queueThumb(const QString& path);
     void nextThumb();
     void thumbDone(const QString& path, const QPixmap& pm);
@@ -67,7 +67,7 @@ private:
     bool m_listMode = false;
     QFileSystemWatcher* m_watcher;
     QHash<QString, QListWidgetItem*> m_items;
-    QHash<QString, QPixmap> m_thumbs; // Schlüssel: Pfad + Änderungszeit
+    QHash<QString, QPixmap> m_thumbs; // key: path + modification time
     QStringList m_thumbQueue;
     QProcess* m_ffmpeg = nullptr;
     QString m_thumbPath;

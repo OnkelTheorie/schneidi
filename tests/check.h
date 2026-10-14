@@ -1,6 +1,6 @@
 #pragma once
-// Kleine Test-Hilfen für die Testprogramme (CTest): CHECK/CHECK_EQ zählen Fehler, testResult() liefert den
-// Rückgabecode (0 = ok, 1 = Fehler, 77 = übersprungen). Ausgegeben werden nur Fehler und die Zusammenfassung.
+// Small test helpers for the test programs (CTest): CHECK/CHECK_EQ count failures, testResult() returns the
+// exit code (0 = ok, 1 = failure, 77 = skipped). Only failures and the summary are printed.
 
 #include "core/Types.h"
 #include "engine/Bundle.h"
@@ -43,7 +43,7 @@ bool equal(const A& a, const B& b, const char* expr, const char* file, int line)
     return report(false, expr, file, line, s);
 }
 
-// Vor dem Anlegen der QApplication: nie sichtbare Fenster, kein Ton
+// Before creating the QApplication: never visible windows, no sound
 inline void initEnv()
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -51,7 +51,7 @@ inline void initEnv()
     qputenv("SDL_NO_SIGNAL_HANDLERS", "1");
 }
 
-// Nach dem Anlegen der QApplication: eigener Name und Test-Pfade -> Einstellungen/Cache des Nutzers bleiben unberührt
+// After creating the QApplication: own name and test paths -> the user's settings/cache stay untouched
 inline void initApp(const char* name)
 {
     QCoreApplication::setOrganizationName("schneidi-tests");
@@ -59,7 +59,7 @@ inline void initApp(const char* name)
     QStandardPaths::setTestModeEnabled(true);
 }
 
-// MLT wie das Programm starten (mitgelieferte bzw. unter Windows die MSYS2-Module)
+// Start MLT like the program (bundled modules, or the MSYS2 modules on Windows)
 inline void initMlt()
 {
     Bundle::prepareMltEnvironment();
@@ -74,7 +74,7 @@ inline void initMlt()
 
 inline bool haveFfmpeg() { return !QStandardPaths::findExecutable("ffmpeg").isEmpty(); }
 
-// Testmedium per ffmpeg erzeugen (args = Eingänge/Filter/Codecs ohne Ausgabedatei); leer = fehlgeschlagen
+// Create a test medium with ffmpeg (args = inputs/filters/codecs without output file); empty = failed
 inline QString makeMedia(const QString& path, const QStringList& args)
 {
     QProcess p;
@@ -98,7 +98,7 @@ inline int skip(const char* why)
     return kSkip;
 }
 
-// Timeline als kurzer Text für Vergleiche: "V1: a[0-40|0-39] b[40-60|10-29]  A1: …" (Name[start-end|in-out])
+// Timeline as short text for comparisons: "V1: a[0-40|0-39] b[40-60|10-29]  A1: ..." (name[start-end|in-out])
 inline QString dump(const Timeline& tl)
 {
     QString s;

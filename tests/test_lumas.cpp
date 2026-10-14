@@ -1,7 +1,7 @@
-// Test Verlaufsblenden (TransitionType::Luma): mitgelieferte Verläufe (alle erzeugbar, voller Wertebereich),
-// eigene Bilder aus dem Transitions-Ordner, Cache-PNG für MLT (Größe, Umkehren), Drag-Daten "luma:<Bild>",
-// Projektdatei (relativ bzw. im eigenen Ordner wiedergefunden) und Rendern über MLT (Tür horizontal: Mitte schon B,
-// Ränder noch A; umgekehrt andersherum; ins Leere wie Cross Dissolve).
+// Test gradient wipes (TransitionType::Luma): bundled gradients (all producible, full value range),
+// own images from the Transitions folder, cache PNG for MLT (size, invert), drag data "luma:<image>",
+// project file (relative or found again in the own folder) and rendering via MLT (door horizontal: middle already B,
+// edges still A; inverted the other way round; into nothing like Cross Dissolve).
 #include "check.h"
 
 #include "core/EffectFolders.h"
@@ -42,7 +42,7 @@ void testBuiltins()
             std::printf("  %s: %s\n", qPrintable(e.path), qPrintable(err));
             continue;
         }
-        // Voller Bereich: dunkelster Punkt 0, hellster 255 (sonst fängt/endet die Blende nicht pünktlich)
+        // Full range: darkest point 0, brightest 255 (otherwise the wipe does not start/end on time)
         const QImage g = img.convertToFormat(QImage::Format_Grayscale8);
         int lo = 255, hi = 0;
         for (int y = 0; y < g.height(); ++y)
@@ -53,7 +53,7 @@ void testBuiltins()
         CHECK(lo <= 1 && hi >= 254);
         CHECK(EffectFolders::isBuiltin(e.path) && EffectFolders::displayName(e.path) == e.name);
     }
-    // Übersicht: LUMAS_DUMP=<datei.png> build-tests/tests/test_lumas (je Verlauf: Bild, halb durch)
+    // Overview: LUMAS_DUMP=<file.png> build-tests/tests/test_lumas (per gradient: image, halfway)
     if (const QByteArray dump = qgetenv("LUMAS_DUMP"); !dump.isEmpty()) {
         QImage sheet(4 * 330, int((list.size() + 3) / 4) * 100, QImage::Format_RGB32);
         sheet.fill(Qt::darkGray);
@@ -67,7 +67,7 @@ void testBuiltins()
         p.end();
         sheet.save(QString::fromLocal8Bit(dump));
     }
-    // Kreis auf: Mitte dunkel (zuerst), Ecke hell; umgekehrt andersherum
+    // Circle open: middle dark (first), corner bright; inverted the other way round
     const QImage k = Lumas::image(":/lumas/kreis", 160, 90).convertToFormat(QImage::Format_Grayscale8);
     CHECK(k.pixelColor(80, 45).value() < 20 && k.pixelColor(0, 0).value() > 235);
     const QImage ki = Lumas::image(":/lumas/kreis", 160, 90, true).convertToFormat(QImage::Format_Grayscale8);
@@ -79,15 +79,15 @@ void testBuiltins()
 
 void testFiles(const QString& dir)
 {
-    QDir(EffectFolders::root()).removeRecursively(); // Testmodus: eigener Ordner, nie der des Nutzers
+    QDir(EffectFolders::root()).removeRecursively(); // Test mode: own folder, never the user's
     EffectFolders::ensure();
     CHECK(QFileInfo(EffectFolders::transitionDir()).isDir());
     CHECK(EffectFolders::userTransitions().isEmpty());
 
-    // Eigenes Bild (Farbe, falsche Größe): Graustufen, auf Projektgröße skaliert; Unterordner = Gruppe
+    // Own image (color, wrong size): grayscale, scaled to project size; subfolder = group
     QImage own(64, 64, QImage::Format_RGB32);
     for (int y = 0; y < 64; ++y)
-        for (int x = 0; x < 64; ++x) own.setPixelColor(x, y, QColor(x * 4, x * 4, 0)); // links dunkel
+        for (int x = 0; x < 64; ++x) own.setPixelColor(x, y, QColor(x * 4, x * 4, 0)); // dark on the left
     const QDir td(EffectFolders::transitionDir());
     QDir().mkpath(td.filePath("Kdenlive"));
     CHECK(own.save(td.filePath("Kdenlive/links.png")));
@@ -115,7 +115,7 @@ void testFiles(const QString& dir)
     CHECK(!Lumas::file(":/lumas/uhr", 32, 18, false).isEmpty());
     CHECK(Lumas::file(QDir(dir).filePath("fehlt.png"), 32, 18, false).isEmpty());
 
-    // Drag-Daten
+    // Drag data
     TrackKind kind = TrackKind::Audio;
     TransitionStyle st;
     CHECK(EffectsLibrary::parseTransition("luma::/lumas/kreis", &kind, &st));
@@ -158,14 +158,14 @@ void testProjectFile(const QString& dir)
     if (CHECK(l.timeline.video.size() == 1 && l.timeline.video[0].clips.size() == 2))
         CHECK(l.timeline.video[0].clips[0].transOutStyle == st);
 
-    // Mitgeliefert: kein relativer Pfad
+    // Bundled: no relative path
     TransitionStyle bs = st;
     bs.luma = ":/lumas/kreis";
     a.transOutStyle = b.transInStyle = bs;
     d.timeline.video[0].clips = {a, b};
     CHECK(!ProjectFile::toJson(d, projPath).contains("lumaRel"));
 
-    // Von einem anderen Rechner (Windows-Pfad): gleichnamig im eigenen Ordner gefunden
+    // From another machine (Windows path): found by the same name in the own folder
     QByteArray json = ProjectFile::toJson(d, projPath);
     json.replace(":/lumas/kreis", "C:\\\\Users\\\\Max\\\\Lumas\\\\links.png");
     ProjectData o;
@@ -213,11 +213,11 @@ void testRender()
     b.transIn = 20;
     TransitionStyle st;
     st.type = TransitionType::Luma;
-    st.luma = ":/lumas/tuer-h"; // Mitte wechselt zuerst
+    st.luma = ":/lumas/tuer-h"; // middle switches first
     a.transOutStyle = b.transInStyle = st;
     tl.video[0].clips << a << b;
 
-    const QImage mid = render(tl, fmt, 50); // halb durch (Übergang 40..60)
+    const QImage mid = render(tl, fmt, 50); // halfway (transition 40..60)
     if (CHECK(!mid.isNull())) {
         CHECK(bluish(mid.pixelColor(160, 90)));
         CHECK(reddish(mid.pixelColor(5, 90)) && reddish(mid.pixelColor(314, 90)));
@@ -225,7 +225,7 @@ void testRender()
     CHECK(reddish(render(tl, fmt, 38).pixelColor(160, 90)));
     CHECK(bluish(render(tl, fmt, 62).pixelColor(5, 90)));
 
-    // Umgekehrt: Ränder zuerst
+    // Inverted: edges first
     tl.video[0].clips[0].transOutStyle.invert = tl.video[0].clips[1].transInStyle.invert = true;
     const QImage inv = render(tl, fmt, 50);
     if (CHECK(!inv.isNull())) {
@@ -233,7 +233,7 @@ void testRender()
         CHECK(bluish(inv.pixelColor(5, 90)));
     }
 
-    // Ins Leere (nur Ausblenden): wie Cross Dissolve, gleichmäßig dunkler, kein Absturz
+    // Into nothing (fade out only): like Cross Dissolve, evenly darker, no crash
     Timeline single;
     single.video.resize(1);
     Clip s = a;
@@ -268,9 +268,9 @@ void testWidget()
     QTreeWidgetItem* lumas = top("Verlaufsblenden");
     if (!CHECK(lumas && lumas->childCount() == 2 && !top("schneidi") && !top("Übergänge"))) return;
     QTreeWidgetItem* builtinItem = lumas->child(0);
-    QTreeWidgetItem* trans = lumas->child(1); // Eigene
+    QTreeWidgetItem* trans = lumas->child(1); // Own
 
-    // Verlaufsblenden: Mitgeliefert + Eigene mit Kopfzeilen
+    // Gradient wipes: Bundled + Own with headers
     tree->setCurrentItem(lumas);
     const int builtin = int(EffectFolders::builtinTransitions().size());
     CHECK_EQ(realItems(), builtin + 2);
@@ -282,16 +282,16 @@ void testWidget()
         emit list->itemDoubleClicked(list->item(0));
         CHECK_EQ(spy.size(), 1);
     }
-    // LUTs: Mitgeliefert + Eigene
+    // LUTs: Bundled + Own
     if (QTreeWidgetItem* luts = top("LUTs"); CHECK(luts && luts->childCount() == 2)) {
         tree->setCurrentItem(luts->child(0));
         CHECK_EQ(realItems(), int(EffectFolders::builtinLuts().size()));
     }
-    // Toolbox → Videoübergänge enthält die mitgelieferten Verläufe, nicht die leere Art „Verlaufsblende“
+    // Toolbox -> Video Transitions contains the bundled gradients, not the empty style "Gradient wipe"
     tree->setCurrentItem(top("Toolbox")->child(0));
     CHECK_EQ(realItems(), int(std::size(kTransitionTypes)) - 1 + builtin);
 
-    // Eigene Übergänge samt Unterordner
+    // Own transitions including subfolders
     tree->setCurrentItem(trans);
     CHECK_EQ(realItems(), 2);
     if (CHECK(trans->childCount() == 1)) {
@@ -299,7 +299,7 @@ void testWidget()
         CHECK_EQ(realItems(), 1);
     }
 
-    // Zuklappen: Pfeile sichtbar, Zustand wird gespeichert und beim nächsten Mal wiederhergestellt
+    // Collapse: arrows visible, state is saved and restored next time
     CHECK(tree->rootIsDecorated() && top("Toolbox")->isExpanded());
     top("Toolbox")->setExpanded(false);
     {

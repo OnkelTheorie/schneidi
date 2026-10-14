@@ -14,8 +14,8 @@ class QPushButton;
 class QLabel;
 class QToolButton;
 
-// Deliver-Seite wie DaVinci: links die Render-Einstellungen mit Vorlagen (eingebaut + eigene) und
-// „Zur Render-Warteschlange hinzufügen“, rechts die Warteschlange (queuePanel(), vom Hauptfenster platziert).
+// Deliver page like DaVinci: on the left the render settings with presets (built-in + custom) and
+// "Add to Render Queue", on the right the queue (queuePanel(), placed by the main window).
 class DeliverPanel : public QWidget {
     Q_OBJECT
 public:
@@ -25,19 +25,19 @@ public:
     RenderQueuePanel* queuePanel() const { return m_queuePanel; }
     RenderQueue* renderQueue() const { return m_queue; }
 
-    // Aktuelle Einstellungen (Auflösung als Timeline / kürzere Kante / feste Größe, je nach Wahl)
+    // Current settings (resolution as timeline / shorter edge / fixed size, depending on the choice)
     RenderSettings settings() const;
     void setSettings(const RenderSettings& s);
-    // Auftrag aus den aktuellen Einstellungen (Pfad, Größe, Bereich); ohne Rückfrage
+    // Job from the current settings (path, size, range); without confirmation
     RenderJob makeJob() const;
-    // Mit Rückfrage bei vorhandener Datei / gleichem Ziel in der Warteschlange; false = nicht hinzugefügt
+    // With confirmation if the file exists / same target in the queue; false = not added
     bool addToQueue(bool confirm = true);
 
-    // Vorlagen (Index in presets(), -1 = eigene Einstellungen): auswählen, eigene speichern/löschen
+    // Presets (index in presets(), -1 = custom settings): select, save/delete custom ones
     int currentPreset() const;
     void selectPreset(int index);
-    bool savePreset(const QString& name); // gleicher Name = überschreiben; eingebaute nicht
-    bool deletePreset(int index);         // nur eigene
+    bool savePreset(const QString& name); // same name = overwrite; built-in ones not
+    bool deletePreset(int index);         // only custom ones
     const QVector<RenderPreset>& presets() const { return m_presets; }
 
 protected:
@@ -47,38 +47,38 @@ private:
     void applyPreset(int comboIndex);
     void updateEncoders(); // encoder choices for the format (hardware ones once the graphics card probe is done)
     void updateRange();
-    void updateFormat(); // Auflösungen passend zu den Projekteinstellungen
-    void updateControls(); // Felder je nach Format (nur Audio, Qualität)
+    void updateFormat(); // resolutions matching the project settings
+    void updateControls(); // fields depending on the format (audio only, quality)
     void reloadPresets(const QString& select = {});
-    void syncPresetToSettings(); // Einstellung geändert -> passende Vorlage oder „Eigene Einstellungen“
+    void syncPresetToSettings(); // setting changed -> matching preset or "Eigene Einstellungen"
     void presetMenu();
     void browse();
-    int selectSize(QSize s); // Auflösung wählen (ggf. hinzufügen)
+    int selectSize(QSize s); // choose resolution (add if needed)
 
     Project* m_project;
     RenderQueue* m_queue;
-    // Liegt woanders im Fenster (kein Kind), hängt aber an m_queue -> stirbt mit diesem Panel
+    // Lives elsewhere in the window (not a child), but hangs on m_queue -> dies with this panel
     QPointer<RenderQueuePanel> m_queuePanel;
-    QVector<RenderPreset> m_presets; // eingebaute + eigene; Combo-Index = Listenindex + 1
+    QVector<RenderPreset> m_presets; // built-in + custom; combo index = list index + 1
     QComboBox* m_preset;
     QToolButton* m_presetMenu;
     QLineEdit* m_name;
     QLineEdit* m_folder;
     QComboBox* m_format;
-    QComboBox* m_resolution; // Daten: QSize
-    QComboBox* m_rate; // Bildrate der Ausgabe, Daten = QSize(num, den), leer = Timeline
-    QSize m_timelineSize; // zuletzt bekannte Timeline-Auflösung
+    QComboBox* m_resolution; // data: QSize
+    QComboBox* m_rate; // output frame rate, data = QSize(num, den), empty = timeline
+    QSize m_timelineSize; // last known timeline resolution
     QComboBox* m_quality;
     QComboBox* m_encoder; // video encoder (data: int(VideoEncoder)); hardware ones only when they work here
     VideoEncoder m_wantedEncoder = VideoEncoder::Auto; // from the preset/last choice (kept across format changes)
     QComboBox* m_audioBitrate;
     QComboBox* m_audioBits;
-    QComboBox* m_threads; // Threads fürs Rendern (Daten: Anzahl, 0 = alle)
-    QComboBox* m_range; // ganze Timeline / In-Out-Bereich
-    QComboBox* m_subtitles; // Untertitel: keine / einbrennen / SRT-Datei (Daten: RenderSettings::Subtitles)
+    QComboBox* m_threads; // threads for rendering (data: count, 0 = all)
+    QComboBox* m_range; // whole timeline / In-Out range
+    QComboBox* m_subtitles; // Subtitles: none / burn in / SRT file (data: RenderSettings::Subtitles)
     bool m_hadRange = false;
     bool m_applying = false;
-    int m_wantedBits = 24; // zuletzt gewählte Bittiefe (bleibt beim Formatwechsel, wenn möglich)
+    int m_wantedBits = 24; // last chosen bit depth (stays on format change, if possible)
     QPushButton* m_addBtn;
     QLabel* m_status;
 };

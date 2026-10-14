@@ -43,8 +43,8 @@ namespace InspectorDetail {
 
 constexpr int kSliderSteps = 1000;
 constexpr int kTitlePage = 2;
-constexpr int kTransitionPage = 3; // nur bei ausgewähltem Übergang, dann einziger Tab
-constexpr int kSubtitlePage = 4;   // nur bei ausgewählten Untertiteln, dann einziger Tab
+constexpr int kTransitionPage = 3; // only with a selected transition, then the only tab
+constexpr int kSubtitlePage = 4;   // only with selected subtitles, then the only tab
 constexpr int kEffectsPage = 5;    // effects of the video clip (like DaVinci's Inspector "Effects" tab), only when it has some
 
 inline EffectInstance* findEffect(Clip& c, const QString& id)
@@ -59,7 +59,7 @@ inline EffectInstance& ensureEffect(Clip& c, const QString& id)
     if (EffectInstance* e = findEffect(c, id)) return *e;
     EffectInstance inst;
     inst.effectId = id;
-    inst.enabled = false; // erst über den roten Punkt (oder eine Einstellung) einschalten
+    inst.enabled = false; // only switch on via the red dot (or a setting)
     if (const EffectDescriptor* d = EffectRegistry::find(id))
         for (const auto& p : d->params) inst.params[p.key] = p.defaultValue;
     c.effects << inst;
@@ -76,7 +76,7 @@ inline QVariant effectParam(const Clip& c, const QString& effectId, const QStrin
     return {};
 }
 
-// Roter Punkt wie in DaVinci: an = rot, aus = grau
+// Red dot like in DaVinci: on = red, off = gray
 inline QToolButton* makeDot()
 {
     auto* dot = new QToolButton;
@@ -97,7 +97,7 @@ inline QLabel* axisLabel(const QString& t)
     return l;
 }
 
-// Kettensymbol (Zoom X/Y gekoppelt): an = hell, aus = gedimmt
+// Chain icon (Zoom X/Y linked): on = bright, off = dimmed
 inline QIcon chainIcon()
 {
     auto draw = [](const QColor& col) {
@@ -118,7 +118,7 @@ inline QIcon chainIcon()
     return icon;
 }
 
-// Ausrichtungs-Symbol: Zeilen unterschiedlicher Länge, links/mittig/rechts
+// Alignment icon: lines of different length, left/center/right
 inline QIcon alignIcon(int align)
 {
     auto draw = [align](const QColor& col) {
@@ -140,7 +140,7 @@ inline QIcon alignIcon(int align)
     return icon;
 }
 
-// Umschaltknopf (Fett, Kursiv, Ausrichtung)
+// Toggle button (bold, italic, alignment)
 inline QToolButton* toggleButton()
 {
     auto* b = new QToolButton;
@@ -154,7 +154,7 @@ inline QToolButton* toggleButton()
     return b;
 }
 
-// Papierkorb (Effekt entfernen) wie im DaVinci-Inspector
+// Trash can (remove effect) like in the DaVinci Inspector
 inline QIcon trashIcon()
 {
     auto draw = [](const QColor& col) {
@@ -163,11 +163,11 @@ inline QIcon trashIcon()
         QPainter p(&pm);
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(QPen(col, 2.5));
-        p.drawLine(QPointF(7, 9), QPointF(25, 9));    // Deckel
+        p.drawLine(QPointF(7, 9), QPointF(25, 9));    // lid
         p.drawLine(QPointF(13, 9), QPointF(13, 6));
         p.drawLine(QPointF(13, 6), QPointF(19, 6));
         p.drawLine(QPointF(19, 6), QPointF(19, 9));
-        p.drawLine(QPointF(9, 12), QPointF(10.5, 27)); // Eimer
+        p.drawLine(QPointF(9, 12), QPointF(10.5, 27)); // bucket
         p.drawLine(QPointF(10.5, 27), QPointF(21.5, 27));
         p.drawLine(QPointF(21.5, 27), QPointF(23, 12));
         p.drawLine(QPointF(14, 14), QPointF(14.3, 24));

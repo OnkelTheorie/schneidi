@@ -1,6 +1,6 @@
-// Test Effekte im Render (MLT): Farbkorrektur/Unschärfe auf Farbbalken rendern und Pixelwerte prüfen –
-// Richtung der Regler, Keyframes, Teilen, Unschärfe unabhängig von der Auflösung, Titel mit Effekt (Alpha bleibt),
-// gleiches Bild mit deutschem Zahlenformat (LC_NUMERIC) zur Laufzeit. Testmedium wird per ffmpeg erzeugt.
+// Test effects in the render (MLT): render color correction/blur on color bars and check pixel values -
+// direction of the sliders, keyframes, splitting, blur independent of resolution, title with effect (alpha stays),
+// same picture with German number format (LC_NUMERIC) at runtime. Test medium is created with ffmpeg.
 #include "check.h"
 
 #include "core/EffectRegistry.h"
@@ -40,7 +40,7 @@ QImage render(const Timeline& tl, ProjectFormat fmt, int pos, int w = 0, int h =
     return img.copy();
 }
 
-// Eine Videospur mit einem Clip (Farbbalken, 100 Frames), fn passt den Clip an
+// One video track with one clip (color bars, 100 frames), fn adjusts the clip
 Timeline one(const std::function<void(Clip&)>& fn)
 {
     Timeline tl;
@@ -66,7 +66,7 @@ std::function<void(Clip&)> fx(const QString& id, std::initializer_list<std::pair
 
 struct Rgb { double r = 0, g = 0, b = 0; };
 
-// Mittelwert eines Bereichs (relativ 0..1)
+// Mean of a region (relative 0..1)
 Rgb mean(const QImage& img, QRectF rel)
 {
     const QRect q(int(rel.x() * img.width()), int(rel.y() * img.height()), int(rel.width() * img.width()),
@@ -82,11 +82,11 @@ Rgb mean(const QImage& img, QRectF rel)
     if (n) { s.r /= n; s.g /= n; s.b /= n; }
     return s;
 }
-// SMPTE-Balken: links grau (75 %), bei ~35 % Cyan
+// SMPTE bars: gray on the left (75 %), cyan at ~35 %
 Rgb gray(const QImage& img) { return mean(img, QRectF(0.02, 0.1, 0.08, 0.4)); }
 Rgb cyan(const QImage& img) { return mean(img, QRectF(0.35, 0.1, 0.05, 0.4)); }
 
-// Mittlere Abweichung zweier Bilder (auf gleiche Größe skaliert), 0..255
+// Mean deviation of two images (scaled to the same size), 0..255
 double diff(QImage a, QImage b)
 {
     if (a.isNull() || b.isNull()) return 1e9;
@@ -113,15 +113,15 @@ int main(int argc, char** argv)
                                {"-f", "lavfi", "-i", "smptebars=size=1920x1080:rate=25:duration=4", "-vf",
                                 "scale=out_color_matrix=bt709", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
                                 "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"});
-    // BT.709 wie Handy-/Kameramaterial: BT.601-Quellen färbt MLT beim Skalieren anders (dev-notes), das würde die
-    // Größenvergleiche der Unschärfe verfälschen
+    // BT.709 like phone/camera material: MLT colors BT.601 sources differently when scaling (docs/dev/mlt.md), which would
+    // distort the size comparisons of the blur
     if (!CHECK(!g_media.isEmpty())) return Check::result();
 
     Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt; // 1920 × 1080 @ 25
     {
-        // Das MLT-Qt-Modul (qtblend, qtext) verweigert sich je nach Build ohne X11/Wayland -> ohne Display überspringen
+        // The MLT Qt module (qtblend, qtext) refuses depending on the build without X11/Wayland -> skip without a display
         auto prof = makeProfile(fmt);
         Mlt::Transition qt(*prof, "qtblend");
         if (!qt.is_valid()) return Check::skip("MLT-Qt-Modul nicht nutzbar (kein Display? z. B. xvfb-run -a ctest …)");
@@ -130,10 +130,10 @@ int main(int argc, char** argv)
     const QImage ref = render(one([](Clip&) {}), fmt, 10);
     if (!CHECK(!ref.isNull())) return Check::result();
     const Rgb g0 = gray(ref), c0 = cyan(ref);
-    CHECK(g0.r > 150 && std::abs(g0.r - g0.b) < 10); // Balken erkannt
+    CHECK(g0.r > 150 && std::abs(g0.r - g0.b) < 10); // bars detected
     CHECK(c0.r < 60 && c0.g > 150 && c0.b > 150);
 
-    // Farbkorrektur: neutral/deaktiviert = unverändert, Regler in die richtige Richtung
+    // Color correction: neutral/disabled = unchanged, sliders in the right direction
     CHECK(diff(render(one(fx("color", {})), fmt, 10), ref) < 1.0);
     CHECK(diff(render(one([](Clip& c) {
                    fx("color", {{"brightness", 50}})(c);
@@ -141,7 +141,7 @@ int main(int argc, char** argv)
                }), fmt, 10), ref) < 1.0);
     CHECK(gray(render(one(fx("color", {{"brightness", 50}})), fmt, 10)).r > g0.r + 20);
     CHECK(gray(render(one(fx("color", {{"brightness", -50}})), fmt, 10)).r < g0.r - 20);
-    CHECK(gray(render(one(fx("color", {{"contrast", 50}})), fmt, 10)).r > g0.r + 5); // 75 % grau wird heller
+    CHECK(gray(render(one(fx("color", {{"contrast", 50}})), fmt, 10)).r > g0.r + 5); // 75 % gray gets brighter
     const Rgb desat = cyan(render(one(fx("color", {{"saturation", -100}})), fmt, 10));
     CHECK(std::abs(desat.r - desat.g) < 12 && std::abs(desat.g - desat.b) < 12);
     CHECK(cyan(render(one(fx("color", {{"saturation", 50}})), fmt, 10)).r <= c0.r);
@@ -152,7 +152,7 @@ int main(int argc, char** argv)
     const Rgb green = gray(render(one(fx("color", {{"tint", -60}})), fmt, 10));
     CHECK(magenta.g < magenta.r - 10 && green.g > green.r + 10);
 
-    // Keyframes Helligkeit -100 (Frame 0) -> +100 (Frame 50), danach konstant
+    // Keyframes brightness -100 (frame 0) -> +100 (frame 50), constant afterwards
     const Timeline keyed = one([](Clip& c) {
         fx("color", {})(c);
         Keys::setKey(c, AnimParam::FxBrightness, 0, -100);
@@ -162,8 +162,8 @@ int main(int argc, char** argv)
                  k50 = render(keyed, fmt, 50), k75 = render(keyed, fmt, 75);
     CHECK(gray(k0).r + 20 < gray(k25).r && gray(k25).r + 20 < gray(k50).r);
     CHECK(std::abs(gray(k50).r - gray(k75).r) < 2);
-    CHECK(std::abs(gray(k25).r - g0.r) < 6); // Mitte = Helligkeit 0
-    // Geteilt bei 25: beide Teile sehen aus wie vorher
+    CHECK(std::abs(gray(k25).r - g0.r) < 6); // middle = brightness 0
+    // Split at 25: both parts look like before
     {
         Timeline tl = keyed;
         Clip orig = tl.video[0].clips[0], l = orig, r = orig;
@@ -177,7 +177,7 @@ int main(int argc, char** argv)
         CHECK(diff(render(tl, fmt, 40), k40) < 1.0);
     }
 
-    // Unschärfe: sichtbar, und gleich in Vorschaugröße, 720p- und 4K-Projekt (Sigma relativ zur Höhe)
+    // Blur: visible, and the same in preview size, 720p and 4K project (sigma relative to the height)
     const Timeline blur = one(fx("blur", {{"strength", 40}}));
     const QImage full = render(blur, fmt, 10);
     ProjectFormat small = fmt, big = fmt;
@@ -197,7 +197,7 @@ int main(int argc, char** argv)
     CHECK(diff(render(blurK, fmt, 0), ref) < 1.0);
     CHECK(diff(render(blurK, fmt, 50), render(one(fx("blur", {{"strength", 60}})), fmt, 10)) < 1.0);
 
-    // Titel mit Effekt über dem Video: Hintergrund scheint weiter durch (Alpha bleibt erhalten)
+    // Title with effect over the video: background still shows through (alpha is preserved)
     for (const char* id : {"color", "blur"}) {
         Timeline tl = one([](Clip&) {});
         tl.video.resize(2);
@@ -215,7 +215,7 @@ int main(int argc, char** argv)
         if (!CHECK(d < 15.0)) std::printf("       Titel+%s: Abweichung %.2f\n", id, d);
     }
 
-    // Deutsches Zahlenformat zur Laufzeit (wie in der App nach dem Start) darf nichts ändern
+    // German number format at runtime (as in the app after startup) must not change anything
     const Timeline mixed = one(fx("color", {{"brightness", 50}, {"temperature", 30}, {"saturation", -25}}));
     const QImage mixedC = render(mixed, fmt, 10);
     if (std::setlocale(LC_NUMERIC, "de_DE.UTF-8") || std::setlocale(LC_NUMERIC, "de_DE.utf8")) {
@@ -227,8 +227,8 @@ int main(int argc, char** argv)
         std::printf("Hinweis: de_DE-Locale fehlt, Test mit deutschem Zahlenformat übersprungen\n");
     }
 
-    // BT.601-Quelle (ohne Farbangabe, wie ffmpeg sie schreibt): gleiche Farben in voller Größe, Vorschaugröße und
-    // 720p-Projekt (MLT-Skalierer färbte sie falsch, Umweg ProducerFactory)
+    // BT.601 source (without color info, as ffmpeg writes it): same colors in full size, preview size and
+    // 720p project (MLT scaler colored it wrongly, detour via ProducerFactory)
     const QString bars601 = Check::makeMedia(tmp.filePath("bars601.mp4"),
                                              {"-f", "lavfi", "-i", "smptebars=size=1920x1080:rate=25:duration=2",
                                               "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});

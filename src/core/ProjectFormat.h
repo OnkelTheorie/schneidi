@@ -1,7 +1,7 @@
 #pragma once
-// Projekteinstellungen wie DaVinci (Project Settings → Master Settings): Timeline-Auflösung und -Framerate.
-// Alle Frame-Angaben im Modell zählen in dieser Framerate; Pixelwerte (Transform, Titel …) beziehen sich
-// auf diese Auflösung.
+// Project settings like DaVinci (Project Settings -> Master Settings): timeline resolution and frame rate.
+// All frame counts in the model count in this frame rate; pixel values (transform, titles ...) refer
+// to this resolution.
 
 #include "core/I18n.h"
 
@@ -16,8 +16,8 @@ struct FrameRate {
     int num = 25, den = 1;
 
     double fps() const { return double(num) / den; }
-    // Ganze Frames pro Timecode-Sekunde (29,97 -> 30, Non-Drop-Frame wie DaVinci ohne Drop Frame);
-    // gilt auch für Standardlängen wie "1 s" (Übergänge) und "5 s" (Titel, Standbilder)
+    // Whole frames per timecode second (29.97 -> 30, non-drop-frame like DaVinci without drop frame);
+    // also applies to default lengths like "1 s" (transitions) and "5 s" (titles, stills)
     int timebase() const { return std::max(1, int(std::lround(fps()))); }
     bool isInteger() const { return den == 1; }
     QString label() const; // "25", "29.97" (deutsch "29,97")
@@ -25,13 +25,13 @@ struct FrameRate {
     bool operator!=(const FrameRate& o) const { return !(*this == o); }
 };
 
-// Auswahl wie in DaVinci ("Timeline frame rate")
+// Selection as in DaVinci ("Timeline frame rate")
 inline constexpr FrameRate kFrameRates[] = {
     {24000, 1001}, {24, 1}, {25, 1}, {30000, 1001}, {30, 1}, {50, 1}, {60000, 1001}, {60, 1},
 };
 
-// Nächstliegende Standard-Framerate; integerOnly = nur 24/25/30/50/60 (Handy-Clips mit variabler Framerate
-// sind nominell 30 oder 60, ihr Mittelwert liegt oft knapp darunter)
+// Nearest standard frame rate; integerOnly = only 24/25/30/50/60 (phone clips with variable frame rate
+// are nominally 30 or 60, their mean is often slightly below)
 FrameRate nearestFrameRate(double fps, bool integerOnly = false);
 
 struct ProjectFormat {
@@ -43,7 +43,7 @@ struct ProjectFormat {
     bool operator!=(const ProjectFormat& o) const { return !(*this == o); }
 };
 
-// Vorlagen für "Timeline resolution" (Reihenfolge = Anzeige); name wird mit T() übersetzt
+// Presets for "Timeline resolution" (order = display order); name is translated with T()
 struct ResolutionPreset { int width, height; const char* name; };
 inline constexpr ResolutionPreset kResolutionPresets[] = {
     {1280, 720, "HD"},
@@ -55,10 +55,10 @@ inline constexpr ResolutionPreset kResolutionPresets[] = {
     {1080, 1080, N_("Quadrat")},
 };
 
-// "1920 × 1080 HD" bzw. "1000 × 800" für eigene Größen
+// "1920 x 1080 HD" or "1000 x 800" for custom sizes
 QString resolutionLabel(int width, int height);
 
-// Auflösung geändert: Pixelwerte im Modell (Position, Beschneiden, Titel, Wischblenden-Rand) so umrechnen,
-// dass alles relativ zum Bild an derselben Stelle und gleich groß bleibt. Positionen/Beschneiden getrennt
-// nach Breite und Höhe, Größen (Schrift, Umrandung, Rand) mit dem kleineren Faktor (Text passt weiter ins Bild).
+// Resolution changed: convert pixel values in the model (position, crop, title, wipe border) so that
+// everything stays at the same place and the same size relative to the picture. Positions/crop separately
+// by width and height, sizes (font, outline, border) with the smaller factor (text still fits in the picture).
 void scaleTimeline(Timeline& tl, QSize from, QSize to);

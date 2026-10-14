@@ -18,21 +18,21 @@ class Tractor;
 class Playlist;
 } // namespace Mlt
 
-// Übersetzt das Timeline-Modell in einen MLT-Tractor:
-//   Spur 0 = schwarzer Hintergrund, dann V1..Vn (übereinander komponiert), dann A1..An (gemischt).
-// Das Modell bleibt die Wahrheit; der Tractor wird bei Änderungen neu gebaut.
+// Translates the timeline model into an MLT tractor:
+// track 0 = black background, then V1..Vn (composited on top of each other), then A1..An (mixed).
+// The model stays the truth; the tractor is rebuilt on changes.
 
-// Mixer-Anschlüsse für die Vorschau: Fader/Pan-Filter (live verstellbar, ohne Neuaufbau)
-// und Pegelmesser (eigener Filter, nach Fader/Pan/Limiter). Der Export braucht sie nicht.
+// Mixer connections for the preview: fader/pan filters (adjustable live, without rebuild)
+// and level meters (own filter, after fader/pan/limiter). The export does not need them.
 struct MixerHooks {
     struct Strip {
         std::shared_ptr<Mlt::Filter> volume, pan, meter;
         std::shared_ptr<Mlt::Filter> limiter; // master only: always attached, switched via "disable"
         std::shared_ptr<Mlt::Filter> dsp;     // tracks only: EQ + compressor (before the fader)
-        bool audible = true; // false = stumm/weggesoloed -> Pegel -∞
-        std::shared_ptr<Mlt::Playlist> playlist; // nur Spuren: Mute/Solo live über "hide" (ohne Neuaufbau)
+        bool audible = true; // false = muted/soloed away -> level -∞
+        std::shared_ptr<Mlt::Playlist> playlist; // tracks only: mute/solo live via "hide" (without rebuild)
     };
-    std::vector<Strip> tracks; // pro Audiospur
+    std::vector<Strip> tracks; // per audio track
     Strip master;
 };
 
@@ -60,85 +60,85 @@ struct SeekFade {
     }
 };
 
-// Vorschau: Stelle, an der ein Decoder springen muss (Clip-Anfang, einblendende Seite eines Übergangs).
-// Bei langen GOPs dauert das bis zu ~1 s (Ton ~150 ms) -> Engine (engine/Preroll) dekodiert das Frame davor vorab.
+// Preview: spot where a decoder has to jump (clip start, fading-in side of a transition).
+// With long GOPs that takes up to ~1 s (audio ~150 ms) -> the engine (engine/Preroll) decodes the frame before it beforehand.
 struct PrerollPoint {
-    int frame = 0;       // Timeline-Frame, ab dem der Producer gelesen wird
-    int freeFrom = 0;    // ab diesem Timeline-Frame liest ihn niemand mehr (vorher belegt; 0 = frei)
-    int source = 0;      // Frame im Producer bei `frame`
+    int frame = 0;       // timeline frame from which the producer is read
+    int freeFrom = 0;    // from this timeline frame on nobody reads it anymore (occupied before; 0 = free)
+    int source = 0;      // frame in the producer at `frame`
     bool audio = false;
-    std::shared_ptr<Mlt::Producer> producer; // eigene MLT-Referenz
+    std::shared_ptr<Mlt::Producer> producer; // own MLT reference
 };
 
 class TimelineBuilder {
 public:
-    // Welche Datei für einen Clip gelesen wird (Vorschau: Proxy statt Original); ohne = immer das Original
+    // Which file is read for a clip (preview: proxy instead of original); without = always the original
     using MediaResolver = std::function<QString(const QString& path, TrackKind kind)>;
 
     explicit TimelineBuilder(Mlt::Profile& profile);
     ~TimelineBuilder();
 
     void setResolver(MediaResolver resolver) { m_resolver = std::move(resolver); }
-    // Vorschau „Vorher/Nachher“ (Color-Seite): true = Farbkorrektur umgehen; wirkt live ohne Neuaufbau.
-    // Ohne (Export, Standbild) wird immer korrigiert.
+    // Preview "Before/After" (Color page): true = bypass color correction; takes effect live without rebuild.
+    // Without it (export, still) the correction is always applied.
     void setGradeBypass(std::shared_ptr<std::atomic<bool>> flag) { m_gradeBypass = std::move(flag); }
-    // Render-Cache (nur Vorschau, engine/RenderCache.h): fertig gerenderte Ausgabe eines Videoclips (Datei) oder
-    // leer = normal aus dem Original mit Effekten. Ohne = nie (Export, Standbild).
+    // Render cache (preview only, engine/RenderCache.h): fully rendered output of a video clip (file) or
+    // empty = normally from the original with effects. Without = never (export, still).
     using ClipCache = std::function<QString(const Clip& clip)>;
     void setClipCache(ClipCache cache) { m_clipCache = std::move(cache); }
 
-    // Untertitel (sichtbare Untertitelspur) mit ins Bild; Standard an (Vorschau), Export nur beim Einbrennen
+    // Subtitles (visible subtitle track) into the image too; default on (preview), export only when burning in
     void setSubtitles(bool on) { m_subtitles = on; }
-    // Threads je Video-Decoder (Export); 0 = MLT-Standard. Vor build() setzen.
+    // Threads per video decoder (export); 0 = MLT default. Set before build().
     void setDecoderThreads(int threads);
 
-    // hooks != nullptr: Mixer-Filter immer anhängen (auch bei 0 dB) und Pegelmesser einbauen
+    // hooks != nullptr: always attach mixer filters (even at 0 dB) and build in level meters
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);
-    // Sprungstellen der Decoder aus dem letzten build() (nur äußere Timeline), nach frame sortiert
+    // Jump spots of the decoders from the last build() (outer timeline only), sorted by frame
     const std::vector<PrerollPoint>& prerollPoints() const { return m_preroll; }
     // Apply fader/pan/limiter/EQ/compressor live to the filters (the track count must match)
     static bool applyMixer(const Timeline& tl, MixerHooks& hooks);
-    // Ton eines Clips so, wie ihn die Timeline liest (Geschwindigkeit/Rückwärts eingerechnet), ohne
-    // Clip-Lautstärke/Fades; Frames in..out des Clips. nullptr = Titel/Standbild/Datei fehlt.
-    // Gehört dem Builder (Cache), gilt bis zum nächsten Aufruf.
+    // Audio of a clip as the timeline reads it (speed/reverse included), without
+    // clip volume/fades; frames in..out of the clip. nullptr = title/still/file missing.
+    // Owned by the builder (cache), valid until the next call.
     Mlt::Producer* clipAudioSource(const Clip& c);
-    // Bild eines einzelnen Videoclips mit Effekten, Transform, Geschwindigkeit und Keyframes (ohne Fades und
-    // Übergänge) auf transparentem Grund; Frame 0 = erstes Clip-Frame. Für den Render-Cache.
+    // Image of a single video clip with effects, transform, speed and keyframes (without fades and
+    // transitions) on a transparent background; frame 0 = first clip frame. For the render cache.
     std::unique_ptr<Mlt::Tractor> buildClipOutput(const Clip& c);
 
 private:
-    // second: zweiter Producer derselben Datei. Clips an einer Überblendung wechseln sich ab (sonst spult ein
-    // Decoder bei zwei Stellen derselben Datei hin und her); ein Clip liest Übergang und Rumpf vom selben.
-    // retime: Clip, dessen Geschwindigkeit/Rückwärts/Standbild und Ton-Stream gilt (nullptr = Originaltempo, Stream 0)
+    // second: second producer of the same file. Clips at a crossfade alternate (otherwise one
+    // decoder seeks back and forth between two spots of the same file); a clip reads transition and body from the same one.
+    // retime: clip whose speed/reverse/still and audio stream apply (nullptr = original speed, stream 0)
     Mlt::Producer* producerFor(const QString& path, TrackKind kind, int trackIndex, bool second = false,
                                const Clip* retime = nullptr);
 
-    // Eine Timeline ohne Aufräumen des Producer-Caches (auch für verschachtelte Sequenzen)
+    // A timeline without cleaning up the producer cache (also for nested sequences)
     std::unique_ptr<Mlt::Tractor> buildTimeline(const Timeline& tl, MixerHooks* hooks);
-    // Compound Clip: Inhalt der Sequenz (aus Timeline::nested) als Tractor; nullptr = fehlt/Schleife
+    // Compound clip: content of the sequence (from Timeline::nested) as a tractor; nullptr = missing/loop
     Mlt::Producer* nestedProducer(int sequenceId, TrackKind kind, int trackIndex, bool second);
 
-    // Merkt, wo p gelesen wird; springt der Decoder dabei, wird eine PrerollPoint-Stelle notiert
+    // Remembers where p is read; if the decoder jumps there, a PrerollPoint spot is noted
     void noteUse(Mlt::Producer* p, TrackKind kind, int from, int to, int in);
 
     Mlt::Profile& m_profile;
-    std::unique_ptr<ProducerFactory> m_factory; // vor m_cache: muss die Producer überleben
+    std::unique_ptr<ProducerFactory> m_factory; // before m_cache: must outlive the producers
     MediaResolver m_resolver;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass;
     ClipCache m_clipCache;
     bool m_subtitles = true;
-    bool m_transparent = false; // Hintergrund durchsichtig statt schwarz (buildClipOutput)
-    // Pro Datei *und* Spur ein eigener Producer, damit sich Video- und Audiospur
-    // nicht gegenseitig im Decoder hin- und herspulen.
+    bool m_transparent = false; // background transparent instead of black (buildClipOutput)
+    // Per file *and* track one own producer, so that video and audio tracks do
+    // not seek each other back and forth in the decoder.
     std::map<QString, std::unique_ptr<Mlt::Producer>> m_cache;
-    std::set<QString> m_used; // im aktuellen build() benutzte Schlüssel; der Rest fliegt danach raus
-    // Verschachtelte Timelines (Compound Clips) des laufenden build()
+    std::set<QString> m_used; // keys used in the current build(); the rest gets dropped afterwards
+    // Nested timelines (compound clips) of the running build()
     std::shared_ptr<const NestedTimelines> m_nested;
     std::map<QString, std::unique_ptr<Mlt::Producer>> m_nestedCache;
-    std::set<int> m_nestStack; // gerade gebaute Sequenzen (Schleifenschutz)
+    std::set<int> m_nestStack; // sequences currently being built (loop protection)
     bool m_inNested = false;
-    QString m_keyPrefix; // Cache-Schlüssel-Präfix innerhalb verschachtelter Sequenzen
+    QString m_keyPrefix; // cache key prefix inside nested sequences
     std::vector<PrerollPoint> m_preroll;
     struct LastUse { int sourceEnd = -2, timelineEnd = 0; };
-    std::map<Mlt::Producer*, LastUse> m_lastUse; // nur während build()
+    std::map<Mlt::Producer*, LastUse> m_lastUse; // only during build()
 };

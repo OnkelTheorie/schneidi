@@ -35,7 +35,7 @@ bool decode(const ProjectFormat& format, const Clip& clip, const std::function<b
             return false;
         std::unique_ptr<Mlt::Frame> f(src->get_frame());
         if (!f) break;
-        mlt_audio_format fmt = mlt_audio_float; // planar float, nicht auf ±1 begrenzt
+        mlt_audio_format fmt = mlt_audio_float; // planar float, not limited to ±1
         int freq = 48000, channels = 2;
         int samples = mlt_audio_calculate_frame_samples(float(fps), freq, pos);
         const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));

@@ -78,7 +78,7 @@ QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& t
                                const std::function<void()>& fn)
 {
     auto* a = new QAction(text, this);
-    // Kategorie in der Tastenbelegung = Hauptmenü (Untermenüs dienen nur der Übersicht)
+    // Category in the key bindings = main menu (submenus only serve the overview)
     QMenu* top = menu;
     while (auto* parent = qobject_cast<QMenu*>(top->parent())) top = parent;
     InputBindings::instance().registerAction(a, id, top->title().remove('&'), key);
@@ -93,7 +93,7 @@ void MainWindow::buildActions()
     TimelineView* tv = m_timeline->view();
     QUndoStack* undo = m_project->undoStack();
 
-    // Belegung nach DaVinci Resolve (Defaults), überschreibbar in keybindings.json
+    // Bindings after DaVinci Resolve (defaults), overridable in keybindings.json
     QMenu* file = menuBar()->addMenu(T("&Datei"));
     makeAction(file, "project_new", T("Neues Projekt"), QKeySequence("Ctrl+N"), [this] { newProject(); });
     makeAction(file, "project_open", T("Projekt öffnen…"), QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
@@ -150,12 +150,12 @@ void MainWindow::buildActions()
     makeAction(edit, "ripple_delete_alt", T("Löschen mit Ripple (Rücktaste)"), QKeySequence("Shift+Backspace"),
                [this] { m_editor->rippleDeleteSelection(); });
     edit->addSeparator();
-    // Bearbeitungen aus dem Quell-Viewer wie DaVinci (Edit → Insert/Overwrite/Replace/Place on Top …)
+    // Edits from the source Viewer like DaVinci (Edit → Insert/Overwrite/Replace/Place on Top …)
     using SE = Editor::SourceEditMode;
     makeAction(edit, "insert_clip", T("Clip einfügen"), QKeySequence(Qt::Key_F9), [this] { sourceEdit(SE::Insert); });
     makeAction(edit, "overwrite_clip", T("Clip überschreiben"), QKeySequence(Qt::Key_F10), [this] { sourceEdit(SE::Overwrite); });
     makeAction(edit, "replace_clip", T("Clip ersetzen"), QKeySequence(Qt::Key_F11), [this] { sourceEdit(SE::Replace); });
-    // Zielspuren wie DaVinci (Destination Controls): Alt+1…8 Video, Strg+Alt+1…8 Audio; auch Klick aufs Spurkürzel
+    // Target tracks like DaVinci (Destination Controls): Alt+1…8 video, Ctrl+Alt+1…8 audio; also click on the track label
     QMenu* dest = edit->addMenu(T("Zielspur"));
     for (int i = 0; i < 8; ++i) {
         makeAction(dest, QString("target_video_%1").arg(i + 1), T("Video-Zielspur V%1").arg(i + 1),
@@ -192,8 +192,8 @@ void MainWindow::buildActions()
         dlg.exec();
     });
 
-    // Wie DaVinci gegliedert: oben die häufigsten Befehle, der Rest in Untermenüs (sonst füllt das Menü den Bildschirm).
-    // Tastenbelegung-Kategorie bleibt „Timeline“ (makeAction nimmt das oberste Menü).
+    // Organized like DaVinci: the most frequent commands on top, the rest in submenus (otherwise the menu fills the screen).
+    // Key bindings category stays "Timeline" (makeAction takes the topmost menu).
     QMenu* timeline = menuBar()->addMenu("&Timeline");
     makeAction(timeline, "split", T("Clip am Playhead teilen"), QKeySequence("Ctrl+B"),
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
@@ -236,7 +236,7 @@ void MainWindow::buildActions()
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
     makeAction(trimMenu, "trim_end", T("Ende bis Playhead trimmen"), QKeySequence("Shift+]"),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
-    // Gewählter Schnittpunkt (V): , und . trimmen ihn. Sonst Trim-Modus: Auswahl slippen (wie DaVinci), sonst verschieben
+    // Selected edit point (V): , and . trim it. Otherwise trim mode: slip the selection (like DaVinci), otherwise move
     makeAction(trimMenu, "select_edit_point", T("Nächsten Schnittpunkt auswählen"), QKeySequence("V"),
                [this, tv] { m_editor->selectNearestEditPoint(tv->playhead()); });
     makeAction(trimMenu, "edit_point_type", T("Schnittpunkt-Seite wechseln"), QKeySequence("U"),
@@ -259,7 +259,7 @@ void MainWindow::buildActions()
     makeAction(clipMenu, "clip_speed_reset", T("Geschwindigkeit zurücksetzen"), QKeySequence("Ctrl+Alt+R"), [this] {
         m_editor->setClipSpeed(m_editor->selection()->ids().values().toVector(), {}, true);
     });
-    // Retime-Steuerung wie DaVinci (Retime Controls): Tempo je Abschnitt, Speed-Punkte auf dem Clip
+    // Retime controls like DaVinci (Retime Controls): speed per section, speed points on the clip
     auto* retime = makeAction(clipMenu, "retime_controls", T("Retime-Steuerung"), QKeySequence("Ctrl+Shift+R"), [this] {
         const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
         TimelineView* tv = m_timeline->view();
@@ -267,18 +267,18 @@ void MainWindow::buildActions()
         tv->setRetimeControls(ids, on);
     });
     retime->setCheckable(true);
-    // Kurven-Editor wie DaVinci (Kurven-Symbol im Clip): Keyframe-Kurve unter den ausgewählten Clips
+    // Curve editor like DaVinci (curve icon in the clip): keyframe curve under the selected clips
     auto* curves = makeAction(clipMenu, "curve_editor", T("Kurven-Editor"), QKeySequence("Shift+C"), [this] {
         const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
         TimelineView* tv = m_timeline->view();
         const bool on = std::none_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); });
         tv->setCurveEditor(ids, on);
         if (on && std::none_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); }))
-            QApplication::beep(); // keine Keyframes
+            QApplication::beep(); // no keyframes
     });
     curves->setCheckable(true);
     makeAction(clipMenu, "speed_point_add", T("Speed-Punkt hinzufügen"), QKeySequence(), [this] {
-        // an der Playhead-Position in den ausgewählten Clips (bzw. dem Videoclip darunter), Steuerung einblenden
+        // at the playhead position in the selected clips (resp. the video clip below), show the controls
         const int frame = m_timeline->view()->playhead();
         QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
         if (ids.isEmpty())
@@ -301,7 +301,7 @@ void MainWindow::buildActions()
                [this] { saveEffectPreset(); });
     makeAction(clipMenu, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),
                [this] { m_editor->toggleLinkSelection(); });
-    // Wie DaVinci „Render Cache Clip Output“: Vorschau spielt die vorgerenderte Clip-Ausgabe (Wiedergabe > Render-Cache)
+    // Like DaVinci "Render Cache Clip Output": preview plays the pre-rendered clip output (Playback > Render Cache)
     auto* cacheClip = makeAction(clipMenu, "render_cache_clip", T("Render-Cache Clip-Ausgabe"), QKeySequence(),
                                  [this] { m_editor->toggleSelectionRenderCache(); });
     cacheClip->setCheckable(true);
@@ -337,7 +337,7 @@ void MainWindow::buildActions()
     makeAction(subtitleMenu, "transcribe_subtitles", T("Untertitel aus Audio erzeugen…"), QKeySequence(),
                [this] { transcribeDialog(); });
     QMenu* markMenu = timeline->addMenu(T("In/Out und Marker"));
-    // In/Out wie DaVinci: zeigt der Viewer die Quelle, gelten sie für den Quellclip (pro Media-Pool-Clip gemerkt)
+    // In/Out like DaVinci: if the Viewer shows the source, they apply to the source clip (remembered per Media Pool clip)
     auto markIn = [this, tv](int frame) {
         if (sourceActive()) m_editor->setSourceMarkIn(m_engine->sourcePath(), frame < 0 ? -1 : m_engine->position());
         else m_editor->setMarkIn(frame < 0 ? -1 : tv->playhead());
@@ -369,7 +369,7 @@ void MainWindow::buildActions()
     makeAction(markMenu, "goto_out", T("Zum Out-Punkt"), QKeySequence("Shift+O"), [gotoMark] { gotoMark(false); });
     makeAction(markMenu, "marker_prev", T("Vorheriger Marker"), QKeySequence("Shift+Up"), [this] { jumpToMarker(-1); });
     makeAction(markMenu, "marker_next", T("Nächster Marker"), QKeySequence("Shift+Down"), [this] { jumpToMarker(1); });
-    // Timeline-Ansicht: Clipnamen/Dauer ein-/ausblenden (gespeichert), Zoom
+    // Timeline view: show/hide clip names/duration (saved), zoom
     QMenu* viewOpts = timeline->addMenu(T("Timeline-Ansicht"));
     auto addViewOption = [this, viewOpts](const QString& id, const QString& text, const QString& key, bool def,
                                           std::function<void(bool)> apply) {
@@ -410,23 +410,23 @@ void MainWindow::buildActions()
     });
     makeAction(play, "show_timeline", T("Timeline im Viewer zeigen"), QKeySequence("Q"),
               [this, tv] { m_engine->showTimeline(tv->playhead()); });
-    // Wie DaVinci „Grab Still“ (Strg+Alt+G), hier direkt als PNG speichern
+    // Like DaVinci "Grab Still" (Ctrl+Alt+G), here saved directly as PNG
     auto* grab = makeAction(play, "grab_still", T("Standbild exportieren…"), QKeySequence("Ctrl+Alt+G"), [this] { grabStill(); });
     m_viewer->addAction(grab);
     m_viewer->setContextMenuPolicy(Qt::ActionsContextMenu);
     play->addSeparator();
-    // Wie DaVinci (Playback → Use Proxy Media if Available); Export nutzt immer die Originale
+    // Like DaVinci (Playback → Use Proxy Media if Available); export always uses the originals
     auto* useProxy = makeAction(play, "use_proxy", T("Proxy-Medien verwenden, falls vorhanden"), QKeySequence(), [] {});
     useProxy->setCheckable(true);
     useProxy->setChecked(m_engine->proxies()->enabled());
     connect(useProxy, &QAction::toggled, m_engine->proxies(), &ProxyManager::setEnabled);
-    // Vorher/Nachher wie DaVinci (Shift+D, Bypass Color Grades): nur die Vorschau, Export immer mit Korrektur
+    // Before/After like DaVinci (Shift+D, Bypass Color Grades): preview only, export always with correction
     auto* bypass = makeAction(play, "color_bypass", T("Farbkorrektur umgehen (Vorher/Nachher)"), QKeySequence("Shift+D"),
                               [] {});
     bypass->setCheckable(true);
     connect(bypass, &QAction::toggled, m_engine, &Engine::setColorBypass);
     connect(m_engine, &Engine::colorBypassChanged, bypass, &QAction::setChecked);
-    // Wie DaVinci (Playback → Render Cache: None/Smart/User); Export rendert immer aus den Originalen
+    // Like DaVinci (Playback → Render Cache: None/Smart/User); export always renders from the originals
     QMenu* cacheMenu = play->addMenu(T("Render-Cache"));
     auto* cacheGroup = new QActionGroup(cacheMenu);
     for (const auto& [id, text, mode] : {std::tuple{"render_cache_off", N_("Aus"), RenderCache::Mode::Off},
@@ -435,7 +435,7 @@ void MainWindow::buildActions()
         const RenderCache::Mode m = mode;
         QAction* a = makeAction(play, id, T("Render-Cache: %1").arg(T(text)), QKeySequence(),
                                 [this, m] { m_engine->renderCache()->setMode(m); });
-        play->removeAction(a); // Einstellungen-Kategorie „Wiedergabe“, angezeigt im Untermenü
+        play->removeAction(a); // settings category "Wiedergabe", shown in the submenu
         a->setText(T(text));
         a->setCheckable(true);
         a->setChecked(m_engine->renderCache()->mode() == m);
@@ -448,7 +448,7 @@ void MainWindow::buildActions()
     play->removeAction(clearCache);
     cacheMenu->addAction(clearCache);
 
-    // Audio-Ausgabe: Puffergröße (gegen Knacken, wirkt ab dem nächsten Play) und unter Windows der Treiber
+    // Audio output: buffer size (against crackling, takes effect from the next play) and on Windows the driver
     QMenu* audioMenu = play->addMenu(T("Audio-Ausgabe"));
     auto* bufferGroup = new QActionGroup(audioMenu);
     for (const auto& [samples, text] : {std::pair{1024, N_("Puffer klein (1024, wenig Verzögerung)")},
@@ -531,13 +531,13 @@ void MainWindow::buildActions()
                          I18n::translate(lang, N_("Jetzt neu starten")), I18n::translate(lang, N_("Später")));
         });
     }
-    // Design (Farben der Oberfläche): wirkt wie die Sprache nach dem Neustart
+    // Design (UI colors): takes effect after restart, like the language
     makeAction(workspace, "design", T("Design…"), QKeySequence(), [this] {
         if (DesignDialog(this).exec() == QDialog::Accepted && Theme::restartNeeded())
             offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
     });
 
-    // Hilfe: Log-Datei für Fehlermeldungen (unter Windows gibt es kein Terminal)
+    // Help: log file for error messages (Windows has no terminal)
     QMenu* help = menuBar()->addMenu(T("&Hilfe"));
     makeAction(help, "open_log_folder", T("Log-Ordner öffnen"), QKeySequence(),
                [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });

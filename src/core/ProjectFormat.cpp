@@ -67,7 +67,7 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                 ti.boxPad *= s;
                 c.transInStyle.border *= s;
                 c.transOutStyle.border *= s;
-                // Keyframe-Werte in Pixeln genauso umrechnen
+                // Convert keyframe values in pixels likewise
                 for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
                     double f = 1;
                     switch (it.key()) {
@@ -80,12 +80,12 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                     }
                     for (Keyframe& k : it.value()) {
                         k.value *= f;
-                        k.inDv *= f; // Bezier-Griffe
+                        k.inDv *= f; // Bezier handles
                         k.outDv *= f;
                     }
                 }
             }
-    // Inhalt der Compound Clips (nur beim Rendern angehängt) genauso
+    // Content of the compound clips (appended only when rendering) likewise
     if (tl.nested) {
         auto nested = std::make_shared<NestedTimelines>(*tl.nested);
         for (Timeline& n : *nested) scaleTimeline(n, from, to);

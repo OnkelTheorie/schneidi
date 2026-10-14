@@ -20,7 +20,7 @@
 #include <algorithm>
 
 namespace {
-// Zeichnet ein Symbol in ein 20×20-Feld (doppelt aufgelöst für scharfe Kanten)
+// Draws an icon into a 20×20 field (double resolution for sharp edges)
 QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
 {
     using I = TimelinePanel::Icon;
@@ -33,14 +33,14 @@ QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
     p.setPen(pen);
     p.setBrush(Qt::NoBrush);
     switch (icon) {
-    case I::Select: { // Mauspfeil
+    case I::Select: { // mouse arrow
         const QPointF pts[] = { { 6, 3 }, { 6, 16 }, { 9.3, 12.8 }, { 11.6, 17.6 }, { 13.6, 16.7 }, { 11.3, 12 }, { 15.8, 12 } };
         p.setBrush(c);
         p.setPen(QPen(c, 0.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p.drawPolygon(pts, 7);
         break;
     }
-    case I::Trim: { // [◁|▷] – Kasten mit Schnitt und Pfeilen nach außen
+    case I::Trim: { // [◁|▷] – box with cut and arrows pointing outwards
         p.drawRoundedRect(QRectF(2.5, 5, 15, 10), 1.5, 1.5);
         p.drawLine(QPointF(10, 3), QPointF(10, 17));
         p.setBrush(c);
@@ -51,7 +51,7 @@ QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
         p.drawPolygon(r, 3);
         break;
     }
-    case I::Blade: { // Rasierklinge mit Schlitz
+    case I::Blade: { // razor blade with slot
         QPainterPath path;
         path.addRoundedRect(QRectF(2.5, 5.5, 15, 9), 1.5, 1.5);
         QPainterPath slot;
@@ -64,7 +64,7 @@ QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
         p.drawRect(QRectF(9.2, 12.3, 1.6, 2.2));
         break;
     }
-    case I::Snap: { // Hufeisenmagnet, schräg
+    case I::Snap: { // horseshoe magnet, slanted
         p.translate(10, 10);
         p.rotate(45);
         p.translate(-10, -10);
@@ -75,11 +75,11 @@ QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
         u.lineTo(14.5, 8);
         p.setPen(QPen(c, 2.6, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
         p.drawPath(u);
-        p.drawLine(QPointF(5.5, 3.5), QPointF(5.5, 6.8)); // Pole mit kleiner Lücke
+        p.drawLine(QPointF(5.5, 3.5), QPointF(5.5, 6.8)); // poles with a small gap
         p.drawLine(QPointF(14.5, 3.5), QPointF(14.5, 6.8));
         break;
     }
-    case I::Link: { // zwei Kettenglieder, schräg
+    case I::Link: { // two chain links, slanted
         p.translate(10, 10);
         p.rotate(-45);
         p.translate(-10, -10);
@@ -95,7 +95,7 @@ QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
 
 QIcon TimelinePanel::toolIcon(Icon icon)
 {
-    // aus = grau, an = hell (Auswahl-Pfeil in der Primärfarbe)
+    // off = gray, on = bright (selection arrow in the primary color)
     const QColor off = Theme::textDim, hover = Theme::mix(Theme::textDim, Theme::text, 0.75);
     const QColor on = icon == Icon::Select ? Theme::primary : Theme::mix(Theme::text, Theme::readableOn(Theme::panelHeader), 0.5);
     QIcon ic;
@@ -112,7 +112,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     setObjectName("Panel");
     m_view = new TimelineView(editor);
 
-    // --- Werkzeugleiste (wie die Leiste über der DaVinci-Timeline) ---
+    // --- Toolbar (like the bar above the DaVinci timeline) ---
     auto makeTool = [](Icon icon, const QString& tip) {
         auto* b = new QToolButton;
         b->setIcon(toolIcon(icon));
@@ -156,7 +156,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     bar->addWidget(selectBtn);
     bar->addWidget(trimBtn);
     bar->addWidget(bladeBtn);
-    auto* sep = new QWidget; // dünne Trennlinie wie in DaVinci
+    auto* sep = new QWidget; // thin separator line like in DaVinci
     sep->setFixedSize(1, 18);
     sep->setStyleSheet(QString("background: %1;").arg(Theme::controlLight.name()));
     bar->addSpacing(8);
@@ -166,7 +166,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     m_bar = bar;
     m_toolInsert = bar->count();
     bar->addStretch(1);
-    // Timeline-Auswahl (wie das Timeline-Menü über dem DaVinci-Viewer): alle Timelines, dazu ein geöffneter Compound Clip
+    // Timeline selection (like the Timeline menu above the DaVinci viewer): all timelines, plus an opened compound clip
     m_back = new QToolButton;
     m_back->setText(QStringLiteral("◂"));
     m_back->setToolTip(T("Zurück zur übergeordneten Timeline"));
@@ -184,7 +184,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     Project* project = editor->project();
     connect(project, &Project::sequencesChanged, this, &TimelinePanel::rebuildTimelines);
     connect(project, &Project::currentSequenceChanged, this, [this] {
-        // Anders geöffnet (Undo, Laden, Löschen): Verlauf nur behalten, solange er noch passt
+        // Opened differently (undo, load, delete): keep the history only as long as it still fits
         const Project* p = m_editor->project();
         const Sequence* cur = p->sequence(p->currentSequence());
         if (!cur || !cur->compound) m_history.clear();
@@ -197,7 +197,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
 
     auto* barWidget = new QWidget;
     barWidget->setObjectName("Panel");
-    // Schalter zeigen ihren Zustand nur über die Symbolfarbe (kein Hintergrund wie in DaVinci)
+    // Switches show their state only via the icon color (no background as in DaVinci)
     barWidget->setStyleSheet(QString("QWidget#Panel { background: %1; }"
                                      "QToolButton { padding: 3px 5px; }"
                                      "QToolButton:checked { background: transparent; }"
@@ -231,7 +231,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
 
 void TimelinePanel::syncScrollbars()
 {
-    // Scrollbars spiegeln nur den ViewState – sie setzen ihn hier nie zurück
+    // Scrollbars only mirror the ViewState – they never reset it here
     const QSignalBlocker bh(m_hbar), bv(m_vbar);
     const auto& v = m_view->view();
     const int vis = std::max(1, m_view->visibleFrames());
@@ -264,11 +264,11 @@ void TimelinePanel::openSequence(int id)
     Project* p = m_editor->project();
     const Sequence* s = p->sequence(id);
     if (!s || id == p->currentSequence()) return;
-    if (s->compound) m_history << p->currentSequence(); // Compound Clip: Rückweg merken
+    if (s->compound) m_history << p->currentSequence(); // compound clip: remember the way back
     else m_history.clear();
     const QVector<int> history = m_history;
     p->setCurrentSequence(id);
-    m_history = history; // currentSequenceChanged hat ihn ggf. geleert
+    m_history = history; // currentSequenceChanged may have cleared it
     rebuildTimelines();
 }
 
@@ -291,7 +291,7 @@ void TimelinePanel::addToolAction(QAction* action, Icon icon)
 {
     auto* b = new QToolButton;
     b->setDefaultAction(action);
-    b->setIcon(toolIcon(icon)); // setDefaultAction übernimmt sonst Menütext/-symbol
+    b->setIcon(toolIcon(icon)); // setDefaultAction would otherwise take over menu text/icon
     b->setIconSize(QSize(20, 20));
     b->setToolButtonStyle(Qt::ToolButtonIconOnly);
     b->setToolTip(action->toolTip());

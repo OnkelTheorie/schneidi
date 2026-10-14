@@ -20,10 +20,10 @@ namespace {
 struct Role {
     const char* key;
     QColor* color;
-    const char* label = nullptr; // nur Signalfarben (im Dialog einzeln einstellbar)
+    const char* label = nullptr; // only signal colors (individually adjustable in the dialog)
 };
 
-// Design-Farben: Werte kommen aus der JSON-Datei, fehlende Schlüssel aus „Dark Orange“ (Vorgabe in Theme.h)
+// Design colors: values come from the JSON file, missing keys from "Dark Orange" (default in Theme.h)
 const QList<Role>& designRoles()
 {
     static const QList<Role> roles = {
@@ -59,7 +59,7 @@ const QList<Role>& signalRoles()
     return roles;
 }
 
-// Vorgabewerte (Stand von Theme.h beim Programmstart), bevor activate() sie überschreibt
+// Default values (state of Theme.h at program start), before activate() overwrites them
 const Colors& builtinValues()
 {
     static const Colors values = [] {
@@ -176,7 +176,7 @@ static Colors& loadedColors()
 
 void load(const QString& overrideDesign)
 {
-    builtinValues(); // Vorgaben merken, bevor sie überschrieben werden
+    builtinValues(); // remember defaults before they get overwritten
     loadedColors() = saved(kOrder.contains(overrideDesign) ? overrideDesign : savedDesign());
     activate(loadedColors());
 }
@@ -198,7 +198,7 @@ QColor readableOn(const QColor& background)
     return y > 128 ? QColor(Qt::black) : QColor(Qt::white);
 }
 
-// Rand ausgewählter Clips: Primärfarbe, aber hell genug, um sich von den Clipfarben abzuheben
+// Border of selected clips: primary color, but bright enough to stand out from the clip colors
 QColor selectionFrom(const QColor& c)
 {
     float h, s, l, a;
@@ -224,7 +224,7 @@ QString primaryButtonStyle()
 
 void apply(QApplication& app)
 {
-    app.setStyle(QStyleFactory::create("Fusion")); // sieht unter Linux und Windows gleich aus
+    app.setStyle(QStyleFactory::create("Fusion")); // looks the same on Linux and Windows
 
     QPalette p;
     p.setColor(QPalette::Window, window);
@@ -248,7 +248,7 @@ void apply(QApplication& app)
     QFont f = app.font();
     f.setPointSizeF(9.0);
 #ifdef Q_OS_WIN
-    // Symbole wie ⏮ ⏸ ✂ hat Segoe UI nicht; ohne Segoe UI Symbol als Ersatz nimmt Windows die farbige Emoji-Schrift
+    // Segoe UI lacks symbols like ⏮ ⏸ ✂; without Segoe UI Symbol as a fallback Windows takes the colored emoji font
     f.setFamilies({f.family(), "Segoe UI Symbol"});
 #endif
     app.setFont(f);

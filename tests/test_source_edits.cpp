@@ -1,5 +1,5 @@
-// Test der Quell-Bearbeitungen wie DaVinci (F9 Einfügen, F10 Überschreiben, F11 Ersetzen, F12 Oben platzieren,
-// Ripple-Überschreiben, Anhängen), Quell-In/Out in der Projektdatei – ohne UI
+// Test of the source edits like DaVinci (F9 Insert, F10 Overwrite, F11 Replace, F12 Place on Top,
+// Ripple Overwrite, Append), source in/out in the project file - without UI
 #include "core/Editor.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -14,7 +14,7 @@
 using SE = Editor::SourceEditMode;
 using Check::dump;
 
-// Vergleich mit Namen (Ausgabe nur bei Abweichung)
+// Comparison with names (output only on deviation)
 static void check(const char* name, const QString& got, const QString& want)
 {
     Check::report(got == want, name, __FILE__, __LINE__, QString("ist: %1\n       erwartet: %2").arg(got, want));
@@ -50,7 +50,7 @@ int main(int argc, char** argv)
         const int end = f.ed.sourceEdit(SE::Insert, "/x/b.mp4", 0, 40);
         check("Insert", dump(f.p.timeline()) + QString(" end=%1").arg(end),
               "V1: a[0-40|0-39] b[40-60|10-29] a[60-120|40-99]  V2:  A1: a[0-40|0-39] b[40-60|10-29] a[60-120|40-99]  A2: end=60");
-        // verknüpft: V1-b und A1-b gleiche linkId, rechte Teile von a ebenfalls
+        // linked: V1-b and A1-b same linkId, right parts of a likewise
         const Timeline& tl = f.p.timeline();
         const bool linked = tl.video[0].clips[1].linkId && tl.video[0].clips[1].linkId == tl.audio[0].clips[1].linkId
                             && tl.video[0].clips[2].linkId == tl.audio[0].clips[2].linkId
@@ -68,7 +68,7 @@ int main(int argc, char** argv)
               "V1: a[0-40|0-39] b[40-60|10-29] a[60-100|60-99]  V2:  A1: a[0-40|0-39] b[40-60|10-29] a[60-100|60-99]  A2: end=60");
     }
     {
-        Fixture f; // Timeline-In+Out begrenzt die Länge, Marken werden verbraucht
+        Fixture f; // timeline in+out limits the length, marks are consumed
         f.ed.setMarkIn(10);
         f.ed.setMarkOut(14);
         const int end = f.ed.sourceEdit(SE::Overwrite, "/x/b.mp4", 0, 70);
@@ -77,7 +77,7 @@ int main(int argc, char** argv)
               "V1: a[0-10|0-9] b[10-15|0-4] a[15-100|15-99]  V2:  A1: a[0-10|0-9] b[10-15|0-4] a[15-100|15-99]  A2: end=15 marks=-1/-1");
     }
     {
-        Fixture f; // nur Timeline-Out: rückwärts
+        Fixture f; // timeline out only: backwards
         f.ed.setMarkOut(30);
         f.ed.setSourceMarkIn("/x/b.mp4", 5);
         f.ed.setSourceMarkOut("/x/b.mp4", 14);
@@ -86,7 +86,7 @@ int main(int argc, char** argv)
               "V1: a[0-21|0-20] b[21-31|5-14] a[31-100|31-99]  V2:  A1: a[0-21|0-20] b[21-31|5-14] a[31-100|31-99]  A2: end=31");
     }
     {
-        Fixture f; // Replace: Quell-Playhead 30 deckt sich mit Timeline-Playhead 20
+        Fixture f; // Replace: source playhead 30 coincides with timeline playhead 20
         const int end = f.ed.sourceEdit(SE::Replace, "/x/b.mp4", 30, 20);
         check("Replace zu wenig Material", QString::number(end), "-1");
         f.ed.bladeAt(1, 30); // a 0..30 | 30..100
@@ -101,8 +101,8 @@ int main(int argc, char** argv)
               "V1: a[0-100|0-99]  V2: b[20-70|0-49]  A1: a[0-100|0-99]  A2: b[20-70|0-49] end=70");
     }
     {
-        Fixture f; // Ripple Overwrite: a (100) durch b-Bereich (20) ersetzen, dahinter liegender Clip rückt nach
-        f.ed.sourceEdit(SE::AppendAtEnd, "/x/m.wav", 0, 0); // m.wav auf A1 bei 100..130
+        Fixture f; // Ripple Overwrite: replace a (100) with b range (20), clip behind it moves up
+        f.ed.sourceEdit(SE::AppendAtEnd, "/x/m.wav", 0, 0); // m.wav on A1 at 100..130
         f.ed.setSourceMarkIn("/x/b.mp4", 10);
         f.ed.setSourceMarkOut("/x/b.mp4", 29);
         const int end = f.ed.sourceEdit(SE::RippleOverwrite, "/x/b.mp4", 0, 50);
@@ -110,15 +110,15 @@ int main(int argc, char** argv)
               "V1: b[0-20|10-29]  V2:  A1: b[0-20|10-29] m[20-50|0-29]  A2: end=20");
     }
     {
-        Fixture f; // Einfügen nur Ton
+        Fixture f; // Insert audio only
         const int end = f.ed.sourceEdit(SE::Insert, "/x/m.wav", 0, 50);
         check("Insert Ton", dump(f.p.timeline()) + QString(" end=%1").arg(end),
               "V1: a[0-50|0-49] a[80-130|50-99]  V2:  A1: a[0-50|0-49] m[50-80|0-29] a[80-130|50-99]  A2: end=80");
     }
     {
-        Fixture f; // Speichern/Laden der Quell-In/Out
+        Fixture f; // Save/load of the source in/out
         f.ed.setSourceMarkIn("/x/b.mp4", 7);
-        f.ed.setSourceMarkOut("/x/b.mp4", 3); // vor In -> In fällt weg
+        f.ed.setSourceMarkOut("/x/b.mp4", 3); // before in -> in is dropped
         ProjectData d;
         const QString ok0 = QString("%1/%2").arg(f.p.mediaInfo("/x/b.mp4")->markIn).arg(f.p.mediaInfo("/x/b.mp4")->markOut);
         check("Out vor In", ok0, "-1/3");
@@ -128,7 +128,7 @@ int main(int argc, char** argv)
         for (const MediaInfo& m : d.media) got += QString("%1:%2/%3 ").arg(m.name).arg(m.markIn).arg(m.markOut);
         check("Speichern/Laden", got.trimmed(), "a.mp4:-1/-1 b.mp4:2/3 m.wav:-1/-1");
     }
-    {   // Insert rückt alle nicht gesperrten Spuren mit (wie DaVinci), gesperrte bleiben
+    {   // Insert moves all unlocked tracks along (like DaVinci), locked ones stay
         Fixture f;
         f.p.edit("m", [&](Timeline& tl) {
             TimelineOps::ensureTracks(tl, TrackKind::Audio, 2);
@@ -150,8 +150,8 @@ int main(int argc, char** argv)
         check("Beide gesperrt -> nichts", QString::number(r), "-1");
     }
     {
-        // Fit to Fill (Shift+F11): 20 Quell-Frames (10..29) auf 40 Timeline-Frames (40..79) = 50 %, überschreibt,
-        // in/out im umgerechneten Material, Marken verbraucht
+        // Fit to Fill (Shift+F11): 20 source frames (10..29) onto 40 timeline frames (40..79) = 50 %, overwrites,
+        // in/out in the converted material, marks consumed
         Fixture f;
         f.ed.setSourceMarkIn("/x/b.mp4", 10);
         f.ed.setSourceMarkOut("/x/b.mp4", 29);
@@ -165,10 +165,10 @@ int main(int argc, char** argv)
             CHECK(std::abs(t->clips[1].speed - 0.5) < 1e-9);
         CHECK(tl.markIn < 0 && tl.markOut < 0);
         f.p.undoStack()->undo();
-        CHECK_EQ(f.p.timeline().markIn, 40); // ein Undo-Schritt, Marken wieder da
+        CHECK_EQ(f.p.timeline().markIn, 40); // one undo step, marks are back
     }
     {
-        // Schneller: 40 Quell-Frames auf 10 = 400 %; ohne Timeline-Out bzw. mit zu wenig Material nichts
+        // Faster: 40 source frames onto 10 = 400 %; without timeline out or with too little material nothing
         Fixture f;
         f.ed.setSourceMarkIn("/x/b.mp4", 0);
         f.ed.setSourceMarkOut("/x/b.mp4", 39);
@@ -182,7 +182,7 @@ int main(int argc, char** argv)
         CHECK_EQ(c.length(), 10);
     }
     for (SE mode : {SE::Overwrite, SE::Insert}) {
-        Fixture f; // direkt hinter einem Clip mit Ausblenden zu Schwarz: das Ausblenden bleibt (wie DaVinci)
+        Fixture f; // directly behind a clip with fade out to black: the fade out stays (like DaVinci)
         f.p.edit("fade", [](Timeline& tl) { tl.video[0].clips[0].transOut = tl.audio[0].clips[0].transOut = 10; });
         f.ed.sourceEdit(mode, "/x/b.mp4", 0, 100);
         const Timeline& tl = f.p.timeline();

@@ -34,8 +34,8 @@
 namespace {
 
 constexpr const char* kSettingKey = "playback/renderCache";
-constexpr int kIdleMs = 1500; // so lange Ruhe nach einer Änderung, bevor gerendert wird
-// Hochzählen, wenn sich die Art des Renderns ändert (Codec, Farbraum …) -> alte Cache-Dateien passen nicht mehr
+constexpr int kIdleMs = 1500; // this long a rest after a change before rendering
+// Increase when the way of rendering changes (codec, color space …) -> old cache files no longer fit
 constexpr const char* kVersion = "rc1";
 
 QString modeId(RenderCache::Mode m)
@@ -54,7 +54,7 @@ RenderCache::Mode modeFromId(const QString& id)
     return RenderCache::Mode::User;
 }
 
-// Ein Bild der Clip-Ausgabe in Projektgröße (RGBA)
+// One image of the clip output at project size (RGBA)
 const uint8_t* frameImage(Mlt::Producer& p, int pos, int w, int h, std::unique_ptr<Mlt::Frame>& keep)
 {
     p.seek(pos);
@@ -74,8 +74,8 @@ bool hasAlpha(const uint8_t* rgba, int w, int h)
     return false;
 }
 
-// Durchsichtig? Beschneiden/Deckkraft/Transform sicher (auch wenn nur ein Teil animiert ist), sonst Stichproben
-// (Seitenverhältnis anders als das Projekt, Green Screen …)
+// Transparent? Cropping/opacity/transform for sure (even if only a part is animated), otherwise samples
+// (aspect ratio different from the project, Green Screen …)
 bool needsAlpha(const Clip& c, Mlt::Producer& p, int len, int w, int h)
 {
     if (Keys::hasCrop(c) || Keys::hasOpacity(c) || Keys::hasTransform(c)) return true;
@@ -126,7 +126,7 @@ void RenderCache::setMode(Mode mode)
         cancelCurrent();
     }
     emit modeChanged(mode);
-    emit cacheChanged(); // Vorschau neu bauen (liest Cache bzw. nicht mehr), Aufträge kommen mit dem nächsten sync()
+    emit cacheChanged(); // rebuild preview (reads cache resp. no longer), jobs come with the next sync()
 }
 
 void RenderCache::setFormat(const ProjectFormat& format)
@@ -134,7 +134,7 @@ void RenderCache::setFormat(const ProjectFormat& format)
     if (format == m_format) return;
     m_format = format;
     m_jobs.clear();
-    cancelCurrent(); // Schlüssel hängen am Format; das nächste sync() reiht neu ein
+    cancelCurrent(); // keys depend on the format; the next sync() queues anew
 }
 
 bool RenderCache::isExpensive(const Clip& c)
@@ -176,7 +176,7 @@ Clip RenderCache::normalized(const Clip& c)
 
 QString RenderCache::key(const Clip& c, const ProjectFormat& f)
 {
-    // Clip wie in der Projektdatei: neue Felder (z. B. weitere Effekte) zählen automatisch mit
+    // Clip as in the project file: new fields (e.g. further effects) automatically count along
     const QByteArray clip = QJsonDocument(ProjectFile::clipJson(normalized(c))).toJson(QJsonDocument::Compact);
     const QFileInfo fi(c.mediaPath);
     const QString id = QString("%1|%2|%3|%4|%5x%6@%7/%8|")
@@ -228,7 +228,7 @@ void RenderCache::sync(const Timeline& tl)
     QVector<Job> jobs;
     QSet<QString> seen;
     if (m_mode != Mode::Off) {
-        // Nach Position sortiert (Spuren von oben nach unten) -> Anfang der Timeline zuerst
+        // Sorted by position (tracks from top to bottom) -> start of the timeline first
         QVector<const Clip*> clips;
         for (int i = tl.video.size() - 1; i >= 0; --i)
             for (const Clip& c : tl.video[i].clips) clips << &c;
@@ -246,9 +246,9 @@ void RenderCache::sync(const Timeline& tl)
         }
     }
     m_jobs = jobs;
-    // Laufender Auftrag überholt (Clip geändert/gelöscht, Markierung entfernt) -> abbrechen
+    // Running job outdated (clip changed/deleted, marker removed) -> cancel
     if (!m_currentKey.isEmpty() && !seen.contains(m_currentKey)) cancelCurrent();
-    if (!m_jobs.isEmpty() && !m_thread) m_idle.start(); // (neu) warten, solange weiter geändert wird
+    if (!m_jobs.isEmpty() && !m_thread) m_idle.start(); // wait (anew) as long as changes continue
 }
 
 void RenderCache::setPlaying(bool on)
@@ -262,7 +262,7 @@ void RenderCache::clear()
     m_failed.clear();
     const QDir dir(cacheDir());
     for (const QString& f : dir.entryList({"*.mov"}, QDir::Files)) QFile::remove(dir.filePath(f));
-    emit cacheChanged(); // Vorschau liest wieder die Originale; das folgende sync() rendert neu
+    emit cacheChanged(); // preview reads the originals again; the following sync() renders anew
 }
 
 void RenderCache::cancelCurrent()
@@ -285,7 +285,7 @@ void RenderCache::startNext()
     if (m_thread || m_jobs.isEmpty() || m_mode == Mode::Off) return;
     const Job job = m_jobs.takeFirst();
     const QString target = cacheDir() + "/" + job.key + ".mov";
-    if (QFileInfo::exists(target)) { // inzwischen fertig (gleicher Clip doppelt)
+    if (QFileInfo::exists(target)) { // finished in the meantime (same clip twice)
         startNext();
         return;
     }
@@ -300,7 +300,7 @@ void RenderCache::startNext()
     auto cancel = m_cancel;
     auto progress = m_progress;
     m_thread = QThread::create([this, job, format, target, error, ok, cancel, progress] {
-        // Pausieren, solange die Vorschau läuft oder exportiert wird (die haben Vorrang)
+        // Pause while the preview runs or an export is running (they take precedence)
         auto paused = [this] { return m_playing.load() || Exporter::anyRunning(); };
         *ok = render(job.clip, format, target, error.get(), cancel.get(), paused, progress.get());
     });
@@ -353,14 +353,14 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
     QString ffmpeg = Bundle::tool("ffmpeg");
     if (!QFileInfo(ffmpeg).isAbsolute()) return fail(T("ffmpeg wurde nicht gefunden. Bitte ffmpeg installieren."));
 
-    // Schnell dekodierbarer Intra-Codec: ProRes 422 LT, mit Transparenz ProRes 4444 (Alpha). MLT liefert RGBA im
-    // Projektprofil (BT.709) -> so kennzeichnen und umrechnen, dann liest die Vorschau dieselben Farben zurück.
+    // Quickly decodable intra codec: ProRes 422 LT, with transparency ProRes 4444 (alpha). MLT delivers RGBA in the
+    // project profile (BT.709) -> tag and convert accordingly, then the preview reads back the same colors.
     const QString part = file + ".part.mov";
     const QStringList args{
         "-hide_banner", "-nostdin", "-v", "error", "-y",
         "-f", "rawvideo", "-pix_fmt", "rgba", "-s", QString("%1x%2").arg(w).arg(h),
         "-framerate", QString("%1/%2").arg(format.rate.num).arg(format.rate.den), "-i", "pipe:0",
-        // setparams: sonst landet keine Farbkennzeichnung in der Datei und MLT hält sie (unter 720 Zeilen) für BT.601
+        // setparams: otherwise no color tag ends up in the file and MLT takes it (below 720 lines) for BT.601
         "-vf", "scale=out_color_matrix=bt709:out_range=tv,"
                "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv",
         "-c:v", "prores_ks", "-profile:v", alpha ? "4" : "1",
@@ -369,7 +369,7 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
 
     QProcess proc;
     proc.setStandardOutputFile(QProcess::nullDevice());
-    // Niedrige Priorität: Vorschau und Bedienung haben Vorrang
+    // Low priority: preview and operation take precedence
 #if defined(Q_OS_WIN)
     proc.setCreateProcessArgumentsModifier(
         [](QProcess::CreateProcessArguments* a) { a->flags |= BELOW_NORMAL_PRIORITY_CLASS; });
@@ -400,7 +400,7 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
             abort();
             return fail(T("Render-Cache fehlgeschlagen:\n%1").arg(msg.section('\n', -3)));
         }
-        // Puffer klein halten (ein paar Bilder), sonst wächst der Speicher bei langsamem Kodieren
+        // Keep the buffer small (a few images), otherwise memory grows with slow encoding
         while (proc.bytesToWrite() > 2 * frameBytes && proc.state() == QProcess::Running)
             proc.waitForBytesWritten(1000);
         if (progress) *progress = int(qint64(i + 1) * 1000 / len);
@@ -417,7 +417,7 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
         return fail(T("Render-Cache fehlgeschlagen:\n%1").arg(log.section('\n', -3)));
     }
     QFile::remove(file);
-    if (!QFile::rename(part, file)) { // erst jetzt sichtbar -> Vorschau liest nie halbfertige Dateien
+    if (!QFile::rename(part, file)) { // only now visible -> preview never reads half-finished files
         QFile::remove(part);
         return fail(T("Render-Cache: Datei konnte nicht gespeichert werden."));
     }

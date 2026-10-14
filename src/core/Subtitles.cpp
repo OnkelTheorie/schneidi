@@ -27,7 +27,7 @@ QString decode(const QByteArray& data)
     QStringDecoder utf8(QStringDecoder::Utf8, QStringDecoder::Flag::Stateless);
     const QString text = utf8(bytes);
     if (!utf8.hasError()) return text;
-    // Ältere Untertitel (Windows): 1252 = Latin-1 plus typografische Zeichen in 0x80–0x9F
+    // Older subtitles (Windows): 1252 = Latin-1 plus typographic characters in 0x80-0x9F
     static const char16_t cp1252[32] = {
         0x20AC, 0xFFFD, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0xFFFD, 0x017D, 0xFFFD,
         0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0xFFFD, 0x017E, 0x0178};
@@ -40,7 +40,7 @@ QString decode(const QByteArray& data)
     return out;
 }
 
-// "01:02:03,456" (auch "." und Stunden ohne führende Null) -> ms, -1 = ungültig
+// "01:02:03,456" (also "." and hours without leading zero) -> ms, -1 = invalid
 qint64 parseTime(const QString& s)
 {
     static const QRegularExpression re(QStringLiteral("^\\s*(\\d+):(\\d{1,2}):(\\d{1,2})(?:[,.](\\d{1,3}))?\\s*$"));
@@ -81,10 +81,10 @@ QVector<SubtitleCue> parseSrt(const QByteArray& data, double fps, int* skipped)
     QVector<SubtitleCue> cues;
     int bad = 0;
     for (int i = 0; i < lines.size();) {
-        // Block: [Nummer] / Zeitzeile / Text bis Leerzeile
+        // Block: [number] / time line / text up to blank line
         while (i < lines.size() && lines[i].trimmed().isEmpty()) ++i;
         if (i >= lines.size()) break;
-        if (!lines[i].contains(QLatin1String("-->")) && i + 1 < lines.size()) ++i; // Nummer (auch fehlerhafte)
+        if (!lines[i].contains(QLatin1String("-->")) && i + 1 < lines.size()) ++i; // number (also faulty ones)
         const QString timing = lines[i++];
         const int arrow = timing.indexOf(QLatin1String("-->"));
         QStringList body;
@@ -93,7 +93,7 @@ QVector<SubtitleCue> parseSrt(const QByteArray& data, double fps, int* skipped)
             ++bad;
             continue;
         }
-        // Hinter der Endzeit können Positionsangaben stehen ("X1:… Y1:…")
+        // Position info can follow the end time ("X1:... Y1:...")
         const qint64 from = parseTime(timing.left(arrow));
         const qint64 to = parseTime(timing.mid(arrow + 3).trimmed().section(' ', 0, 0));
         const QString t = stripFormatting(body.join('\n'));
@@ -108,7 +108,7 @@ QVector<SubtitleCue> parseSrt(const QByteArray& data, double fps, int* skipped)
         cues << c;
     }
     std::stable_sort(cues.begin(), cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
-    // Überlappungen (kommt in fremden Dateien vor): vorigen Eintrag kürzen, doppelte Startzeit zusammenlegen
+    // Overlaps (occur in foreign files): shorten the previous entry, merge duplicate start time
     QVector<SubtitleCue> out;
     for (const SubtitleCue& c : cues) {
         if (!out.isEmpty() && out.last().start == c.start) {
@@ -145,7 +145,7 @@ TitleStyle defaultStyle(QSize format)
 {
     TitleStyle s = subtitleBaseStyle();
     if (format.height() <= 0) return s;
-    // Hochformat: Schrift nach der kürzeren Kante, damit Zeilen nicht zu kurz werden
+    // Portrait: font by the shorter edge so that lines do not get too short
     const double k = std::min(format.width(), format.height()) / 1080.0;
     const double ky = format.height() / 1080.0;
     s.size = std::round(s.size * k);
@@ -164,15 +164,15 @@ void place(SubtitleTrack& track, const SubtitleCue& cue)
             out << o;
             continue;
         }
-        if (o.start < cue.start) { // links angeschnitten
+        if (o.start < cue.start) { // partly covered on the left
             SubtitleCue left = o;
             left.end = cue.start;
             out << left;
         }
-        if (o.end > cue.end) { // rechts angeschnitten
+        if (o.end > cue.end) { // partly covered on the right
             SubtitleCue right = o;
             right.start = cue.end;
-            if (o.start < cue.start) right.id = 0; // geteilt: rechter Teil braucht eine neue id (vergibt der Editor)
+            if (o.start < cue.start) right.id = 0; // split: right part needs a new id (the editor assigns it)
             out << right;
         }
     }
@@ -195,8 +195,8 @@ const SubtitleCue* find(const Timeline& tl, int id, int* trackIndex)
 
 SubtitleCue* find(Timeline& tl, int id, int* trackIndex)
 {
-    // Nicht über die const-Fassung + const_cast: die QVectors teilen sich die Daten mit anderen Kopien (Undo-Stände),
-    // erst der nicht-konstante Zugriff löst sie ab
+    // Not via the const version + const_cast: the QVectors share their data with other copies (undo states),
+    // only the non-const access detaches them
     int track = -1;
     const SubtitleCue* c = find(std::as_const(tl), id, &track);
     if (!c) return nullptr;
@@ -240,8 +240,8 @@ int splitAt(SubtitleTrack& track, int frame, const std::function<int()>& newId)
 bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts)
 {
     if (shifts.isEmpty() || track.cues.isEmpty()) return false;
-    // neue Lage einer Kante t: entfernte Zeit davor abziehen; positive Versätze zählen nur für Einträge,
-    // die ganz dahinter beginnen (ein Eintrag über der Schnittstelle wird nicht gedehnt)
+    // new position of an edge t: subtract removed time before it; positive offsets only count for entries
+    // that start entirely after it (an entry across the cut is not stretched)
     auto pos = [&](int t, int cueStart) {
         int p = t;
         for (const auto& [frame, d] : shifts) {
@@ -255,14 +255,14 @@ bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts)
     for (SubtitleCue c : track.cues) {
         const int s = pos(c.start, c.start), e = pos(c.end, c.start);
         changed |= s != c.start || e != c.end;
-        if (e <= s) continue; // ganz in entfernter Zeit
+        if (e <= s) continue; // entirely in removed time
         c.start = s;
         c.end = e;
         moved << c;
     }
     if (!changed) return false;
     for (int j = 1; j < moved.size(); ++j)
-        if (moved[j].start < moved[j - 1].end) return false; // nur bei widersprüchlichen Versätzen
+        if (moved[j].start < moved[j - 1].end) return false; // only with contradictory offsets
     track.cues = moved;
     return true;
 }

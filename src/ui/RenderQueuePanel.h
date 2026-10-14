@@ -7,20 +7,20 @@ class QListWidget;
 class QPushButton;
 class QLabel;
 
-// Render-Warteschlange rechts auf der Deliver-Seite (wie DaVinci „Render Queue“): Aufträge als Karten mit
-// Name, Einstellungen, Bereich, Ziel und Status (Fortschrittsbalken beim Rendern). „Alle rendern“ bzw.
-// „Auswahl rendern“, Stoppen; Rechtsklick: erneut rendern, Einstellungen laden, löschen; Entf löscht.
+// Render queue on the right of the Deliver page (like DaVinci "Render Queue"): jobs as cards with
+// name, settings, range, target and status (progress bar while rendering). "Render all" resp.
+// "Render selection", stop; right-click: render again, load settings, delete; Del deletes.
 class RenderQueuePanel : public QWidget {
     Q_OBJECT
 public:
     RenderQueuePanel(Project* project, RenderQueue* queue, QWidget* parent = nullptr);
 
-    void removeJobs(const QVector<int>& ids); // laufender Auftrag bleibt
+    void removeJobs(const QVector<int>& ids); // running job stays
     QVector<int> selectedJobs() const;
-    void renderClicked();                     // wie der Knopf: Auswahl bzw. alle rendern, läuft = stoppen
+    void renderClicked();                     // like the button: render selection resp. all, running = stop
 
 signals:
-    void loadJobRequested(int id); // Doppelklick: Einstellungen in die Render-Einstellungen übernehmen
+    void loadJobRequested(int id); // double-click: take the settings over into the render settings
 
 protected:
     void keyPressEvent(QKeyEvent* e) override;

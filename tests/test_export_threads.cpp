@@ -1,5 +1,5 @@
-// Export mit mehreren Threads: Bilder parallel (außer frei0r/Green Screen), gleiches Ergebnis wie mit einem Thread.
-// Gibt die Renderzeiten aus (1 Thread / alle Threads), damit sich der Gewinn nachmessen lässt.
+// Export with several threads: frames in parallel (except frei0r/Green Screen), same result as with one thread.
+// Prints the render times (1 thread / all threads) so that the gain can be measured afterwards.
 
 #include "check.h"
 
@@ -57,11 +57,11 @@ void testParallelFrames()
     CHECK_EQ(Exporter::parallelFrames(plain, 0), Exporter::availableThreads());
     CHECK_EQ(Exporter::parallelFrames(plain, 3), 3);
     CHECK_EQ(Exporter::parallelFrames(one(effectClip(true)), 0), 1);
-    // ausgeschalteter Green Screen zählt nicht
+    // disabled Green Screen does not count
     Clip off = effectClip(true);
     EffectRegistry::instance(off, "chromakey")->enabled = false;
     CHECK_EQ(Exporter::parallelFrames(one(off), 4), 4);
-    // Green Screen in einer verschachtelten Sequenz (Compound Clip)
+    // Green Screen in a nested sequence (compound clip)
     Timeline outer = plain;
     auto nested = std::make_shared<NestedTimelines>();
     nested->insert(7, one(effectClip(true)));
@@ -69,7 +69,7 @@ void testParallelFrames()
     CHECK_EQ(Exporter::parallelFrames(outer, 4), 1);
 }
 
-// Rechenzeit des Prozesses (alle Threads) in s; 0 = unbekannt
+// CPU time of the process (all threads) in s; 0 = unknown
 double cpuSeconds()
 {
 #ifdef Q_OS_WIN
@@ -83,16 +83,16 @@ double cpuSeconds()
     return u.ru_utime.tv_sec + u.ru_stime.tv_sec + (u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6;
 #endif
 }
-double g_cpuLoad = 0; // letzter render(): Rechenzeit / Laufzeit = im Mittel belegte Prozessoren
+double g_cpuLoad = 0; // last render(): CPU time / run time = average number of processors busy
 
-// Rendert und liefert die Dauer in ms (-1 = fehlgeschlagen)
+// Renders and returns the duration in ms (-1 = failed)
 qint64 render(const Timeline& tl, const QString& path, int threads)
 {
     Exporter ex;
     ExportSettings s;
     s.path = path;
     s.format = kFmt;
-    s.crf = qEnvironmentVariableIsSet("SCHNEIDI_BENCH_CLIP") ? 20 : 23; // Messung: wie die Deliver-Seite (Qualität Hoch, medium)
+    s.crf = qEnvironmentVariableIsSet("SCHNEIDI_BENCH_CLIP") ? 20 : 23; // measurement: like the Deliver page (quality High, medium)
     s.preset = qEnvironmentVariableIsSet("SCHNEIDI_BENCH_CLIP") ? "medium" : "veryfast";
     s.threads = threads;
     QEventLoop loop;
@@ -126,7 +126,7 @@ QImage grab(const QString& path, int pos)
     return QImage(img, w, h, QImage::Format_RGBA8888).copy();
 }
 
-// mittlere Abweichung pro Kanal (0..255), Stichprobe
+// mean deviation per channel (0..255), sample
 double diff(const QImage& a, const QImage& b)
 {
     if (a.size() != b.size() || a.isNull()) return 255;
@@ -149,7 +149,7 @@ void testRender(const QString& dir)
     const qint64 tn = render(tl, all, 0);
     std::printf("Export 1080p, %d Bilder, Farbkorrektur + Unschärfe: 1 Thread %lld ms, alle (%d) %lld ms\n", kFrames,
                 t1, Exporter::availableThreads(), tn);
-    // gleiche Bilder in gleicher Reihenfolge (parallel darf nichts vertauschen)
+    // same images in the same order (parallel must not swap anything)
     for (int pos : {0, 37, kFrames - 1}) {
         const double d = diff(grab(single, pos), grab(all, pos));
         if (!CHECK(d < 2.0)) std::printf("       Bild %d: Abweichung %.2f\n", pos, d);
@@ -158,16 +158,16 @@ void testRender(const QString& dir)
     Mlt::Producer p(*prof, all.toUtf8().constData());
     CHECK_EQ(p.get_length(), kFrames);
 
-    // Green Screen: läuft trotz „alle Threads“ (ein Bild nach dem anderen) sauber durch
+    // Green Screen: runs through cleanly despite "all threads" (one frame after the other)
     Timeline key = one(effectClip(true));
     key.video[0].clips[0].out = 24;
     const qint64 tk = render(key, dir + "/key.mp4", 0);
     std::printf("Export mit Green Screen (25 Bilder): %lld ms\n", tk);
 }
 
-// Messung mit einer echten Datei (nicht Teil des normalen Testlaufs):
-//   SCHNEIDI_BENCH_CLIP=<Datei> [SCHNEIDI_BENCH_CORES=1,0] [SCHNEIDI_BENCH_FPS=60] test_export_threads
-// Clip ganz auf V1 + A1 (Schnitt ohne Effekte) und noch einmal mit Farbkorrektur
+// Measurement with a real file (not part of the normal test run):
+//   SCHNEIDI_BENCH_CLIP=<file> [SCHNEIDI_BENCH_CORES=1,0] [SCHNEIDI_BENCH_FPS=60] test_export_threads
+// Clip entirely on V1 + A1 (cut without effects) and once more with color correction
 int bench(const QString& clip)
 {
     kFmt = ProjectFormat{1920, 1080, {qEnvironmentVariableIntValue("SCHNEIDI_BENCH_FPS") > 0

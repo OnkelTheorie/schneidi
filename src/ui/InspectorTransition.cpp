@@ -61,14 +61,14 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
         c->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         return c;
     };
-    // Zeile mit Beschriftung; rows sammelt beide Widgets, um sie je nach Art ein-/auszublenden
+    // Row with label; rows collects both widgets to show/hide them depending on the kind
     auto addRow = [&](const QString& label, QWidget* w, QVector<QWidget*>* rows = nullptr, int span = 2) {
         QLabel* l = rowLabel(label);
         s.grid->addWidget(l, s.rows, 0);
         s.grid->addWidget(w, s.rows++, 1, 1, span);
         if (rows) *rows << l << w;
     };
-    // Farbfeld (QColorDialog) rechtsbündig in einem eigenen Widget
+    // Color field (QColorDialog) right-aligned in its own widget
     auto swatchRow = [&](QToolButton*& swatch, const QString& text,
                          const std::function<QColor&(TransitionStyle&)>& field) {
         swatch = new QToolButton;
@@ -92,7 +92,7 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
 
     m_transType = combo();
     for (const auto& i : kTransitionTypes) m_transType->addItem(T(i.name), int(i.type));
-    m_transAudioType = combo(); // Audio: Pegelkurve des Crossfades
+    m_transAudioType = combo(); // Audio: level curve of the crossfade
     for (const auto& i : kAudioCurves) m_transAudioType->addItem(i.name, int(i.curve));
     auto* typeBox = new QWidget;
     auto* typeLay = new QHBoxLayout(typeBox);
@@ -101,7 +101,7 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
     typeLay->addWidget(m_transAudioType);
     addRow(T("Art"), typeBox);
 
-    // Verlaufsblende: Verlaufsbild und Umkehren
+    // Gradient wipe: gradient image and invert
     m_transLuma = combo();
     m_transLuma->setToolTip(T("Verlaufsbild: dunkle Stellen wechseln zuerst. Eigene Bilder in den Ordner "
                               "„Transitions“ (Effects Library → „Effekte importieren…“)"));
@@ -132,11 +132,11 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
     m_transAlign->setToolTip(T("Lage zum Schnitt (nur bei Überblendung zwischen zwei Clips)"));
     addRow(T("Ausrichtung"), m_transAlign);
 
-    // Abblende über Farbe ("Dip to Color Dissolve"): Farbe dazwischen
+    // Fade via color ("Dip to Color Dissolve"): color in between
     addRow(T("Farbe"), swatchRow(m_transColor, T("Abblende-Farbe"), [](TransitionStyle& st) -> QColor& { return st.color; }),
            &m_dipRows);
 
-    // Wischblende: Weichheit der Kante, Rand (Breite + Farbe)
+    // Wipe: softness of the edge, border (width + color)
     m_transSoft = new ScrubField(0, 100, 0.5, 0);
     m_transSoft->setSuffix(" %");
     m_transSoft->setToolTip(T("Weiche Kante (nur zwischen zwei Clips)"));
@@ -195,7 +195,7 @@ bool Inspector::refreshTransition()
     TrackKind kind;
     TimelineOps::TransitionSpan span;
     const bool on = selectedTransition(&kind, &span);
-    // Übergang ausgewählt: nur dieser Tab (wie DaVinci), sonst ist er ausgeblendet
+    // Transition selected: only this tab (like DaVinci), otherwise it is hidden
     for (int id : {0, 1, kTitlePage, kEffectsPage}) m_tabs->button(id)->setVisible(!on);
     m_tabs->button(kTransitionPage)->setVisible(on);
     if (!on) return false;
@@ -215,13 +215,13 @@ bool Inspector::refreshTransition()
     m_transType->setCurrentIndex(m_transType->findData(int(span.style.type)));
     m_transAudioType->setCurrentIndex(m_transAudioType->findData(int(span.style.audio)));
     m_transAlign->setCurrentIndex(int(span.style.align));
-    // Felder nur für die passende Art (wie DaVinci je nach Übergang andere Parameter zeigt)
+    // Fields only for the matching kind (as DaVinci shows different parameters per transition)
     for (QWidget* w : m_dipRows) w->setVisible(video && span.style.type == TransitionType::DipToColor);
     for (QWidget* w : m_wipeRows) w->setVisible(video && span.style.isWipe());
     for (QWidget* w : m_lumaRows) w->setVisible(video && span.style.isLuma());
     for (QWidget* w : m_softRows) w->setVisible(video && (span.style.isWipe() || span.style.isLuma()));
     if (video && span.style.isLuma()) {
-        // Auswahl: mitgeliefert, dann eigene Bilder (mit Unterordner); fehlendes Bild als eigener Eintrag
+        // Selection: bundled, then custom images (with subfolder); a missing image as its own entry
         const QSignalBlocker block(m_transLuma);
         m_transLuma->clear();
         for (const auto& e : EffectFolders::builtinTransitions()) m_transLuma->addItem(e.name, e.path);
@@ -249,9 +249,9 @@ bool Inspector::refreshTransition()
     m_transColor->setStyleSheet(swatchStyle(span.style.color));
     m_transBorderColor->setStyleSheet(swatchStyle(span.style.borderColor));
     m_transSoft->setValue(span.style.softness);
-    m_transSoft->setEnabled(span.isDissolve()); // ins/aus dem Leeren: harte Kante
+    m_transSoft->setEnabled(span.isDissolve()); // fade in/out from/to nothing: hard edge
     m_transBorder->setValue(span.style.border);
-    m_transAlign->setEnabled(span.isDissolve()); // Ein-/Ausblenden liegt immer im Clip
+    m_transAlign->setEnabled(span.isDissolve()); // Fade-in/out always lies inside the clip
     m_transLen->setValue(double(span.length()) / std::max(1, m_editor->project()->fps()));
     return true;
 }

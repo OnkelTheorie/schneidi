@@ -1,6 +1,6 @@
-// Test Render-Cache (engine/RenderCache): Schlüssel ändert sich genau bei Änderungen, die das Bild betreffen;
-// Modus Aus/Smart/Benutzer; Rendern (mit/ohne Alpha) liefert dasselbe Bild wie die Live-Vorschau; der Builder
-// liest die Cache-Datei nur mit ClipCache (Vorschau), Export und Standbild nie; Hintergrund-Rendern per sync().
+// Test render cache (engine/RenderCache): key changes exactly for changes that affect the picture;
+// mode Off/Smart/User; rendering (with/without alpha) gives the same picture as the live preview; the builder
+// reads the cache file only with ClipCache (preview), never export and still; background rendering via sync().
 #include "check.h"
 
 #include "core/Editor.h"
@@ -65,7 +65,7 @@ QImage grab(Mlt::Producer& p, int pos, int w, int h)
     return img.copy();
 }
 
-// Timeline rendern; cache: Vorschau-Builder mit Render-Cache
+// Render timeline; cache: preview builder with render cache
 QImage render(const Timeline& tl, int pos, const TimelineBuilder::ClipCache& cache = {})
 {
     auto prof = makeProfile(kFmt);
@@ -75,7 +75,7 @@ QImage render(const Timeline& tl, int pos, const TimelineBuilder::ClipCache& cac
     return grab(*tr, pos, prof->width(), prof->height());
 }
 
-// Mittlere Abweichung (0..255) der RGB-Kanäle
+// Mean deviation (0..255) of the RGB channels
 double diff(const QImage& a, const QImage& b)
 {
     if (a.size() != b.size() || a.isNull()) return 999;
@@ -103,7 +103,7 @@ void testKeys()
         fn(d);
         return RenderCache::key(d, kFmt) == k;
     };
-    // Betrifft das Bild nicht: Position, ID, Ton, Fades, Übergänge, Verknüpfung, Markierung selbst
+    // Does not affect the picture: position, ID, audio, fades, transitions, link, the marking itself
     CHECK(same([](Clip& d) { d.start = 500; }));
     CHECK(same([](Clip& d) { d.id = 7; }));
     CHECK(same([](Clip& d) { d.volumeDb = -6; d.pan = 30; d.keepPitch = false; }));
@@ -112,7 +112,7 @@ void testKeys()
     CHECK(same([](Clip& d) { d.linkId = 3; }));
     CHECK(same([](Clip& d) { d.renderCache = true; }));
     CHECK(same([](Clip& d) { d.keys[AnimParam::Volume] = {{10, -3.0}, {20, 0.0}}; }));
-    // Betrifft das Bild: Ausschnitt, Geschwindigkeit, Effekte, Transform, Keyframes
+    // Affects the picture: section, speed, effects, transform, keyframes
     CHECK(!same([](Clip& d) { d.in = 11; }));
     CHECK(!same([](Clip& d) { d.out = 40; }));
     CHECK(!same([](Clip& d) { d.speed = 0.5; }));
@@ -126,12 +126,12 @@ void testKeys()
         EffectRegistry::add(a, "blur");
         EffectRegistry::add(b, "blur");
         EffectRegistry::instance(b, "blur")->params["strength"] = 60.0;
-        CHECK(RenderCache::key(a, kFmt) != RenderCache::key(b, kFmt)); // Effekt-Parameter
+        CHECK(RenderCache::key(a, kFmt) != RenderCache::key(b, kFmt)); // effect parameter
         EffectRegistry::instance(b, "blur")->params["strength"] = EffectRegistry::instance(a, "blur")->params.value("strength");
         EffectRegistry::instance(b, "blur")->enabled = false;
-        CHECK(RenderCache::key(a, kFmt) != RenderCache::key(b, kFmt)); // Effekt aus
+        CHECK(RenderCache::key(a, kFmt) != RenderCache::key(b, kFmt)); // effect off
     }
-    // Projektformat und geänderte Quelldatei
+    // Project format and changed source file
     CHECK(RenderCache::key(c, ProjectFormat{1280, 720, {25, 1}}) != k);
     CHECK(RenderCache::key(c, ProjectFormat{640, 360, {50, 1}}) != k);
     {
@@ -148,7 +148,7 @@ void testKeys()
         CHECK_EQ(RenderCache::key(c, kFmt), k);
     }
 
-    // Modus: Aus = nie, Benutzer = nur markierte, Smart = zusätzlich teure; Titel nie
+    // Mode: Off = never, User = only marked, Smart = additionally expensive; titles never
     Clip marked = c;
     marked.renderCache = true;
     Clip fx = c;
@@ -173,7 +173,7 @@ void testKeys()
     off.enabled = false;
     CHECK(!RenderCache::wanted(off, M::User));
 
-    // Projektdatei: Markierung wird gespeichert und geladen
+    // Project file: marking is saved and loaded
     ProjectData data;
     data.timeline = one(marked);
     data.media << MediaInfo{g_media, "src.mp4"};
@@ -184,7 +184,7 @@ void testKeys()
           && back.timeline.video[0].clips[0].renderCache);
 }
 
-// Rechtsklick „Render-Cache Clip-Ausgabe“: nur Videoclips (keine Titel/Audio), ein Undo-Schritt, Umschalten
+// Right-click "Render Cache Clip Output": only video clips (no titles/audio), one undo step, toggling
 void testEditor()
 {
     Project p;
@@ -216,7 +216,7 @@ void testEditor()
 
 void testRender(const QString& dir)
 {
-    // Clip mit Effekt, Geschwindigkeit und Keyframes: Cache-Datei == Live-Bild
+    // Clip with effect, speed and keyframes: cache file == live picture
     Clip c = baseClip();
     c.start = 20;
     c.speed = 0.5;
@@ -247,7 +247,7 @@ void testRender(const QString& dir)
         CHECK(d < 2.5) || std::printf("       Frame %d: Abweichung %.2f\n", f, d);
     }
 
-    // Herausgezoomt: Rand durchsichtig -> ProRes 4444 mit Alpha; auf V2 über V1 gleich wie live
+    // Zoomed out: edge transparent -> ProRes 4444 with alpha; on V2 over V1 same as live
     Clip z = baseClip();
     z.start = 0;
     z.transform.zoomX = z.transform.zoomY = 0.5;
@@ -271,7 +271,7 @@ void testRender(const QString& dir)
     const double d = diff(render(two, 3), render(two, 3, [&](const Clip& cl) { return cl.id == z.id ? alphaFile : QString(); }));
     CHECK(d < 2.5) || std::printf("       Alpha: Abweichung %.2f\n", d);
 
-    // Abbrechen: keine (halbe) Datei
+    // Cancel: no (half) file
     std::atomic<bool> cancel{true};
     const QString cancelled = dir + "/cancelled.mov";
     CHECK(!RenderCache::render(c, kFmt, cancelled, &error, &cancel));
@@ -283,17 +283,17 @@ void testBuilderUsesCacheOnlyForPreview(const QString& red)
     Clip c = baseClip();
     c.renderCache = true;
     const Timeline tl = one(c);
-    CHECK(!isRed(render(tl, 5)));                                          // ohne ClipCache (Export)
-    CHECK(isRed(render(tl, 5, [&](const Clip&) { return red; })));         // Vorschau mit Cache
-    CHECK(!isRed(render(tl, 5, [&](const Clip&) { return QString(); }))); // kein passender Cache
+    CHECK(!isRed(render(tl, 5)));                                          // without ClipCache (export)
+    CHECK(isRed(render(tl, 5, [&](const Clip&) { return red; })));         // preview with cache
+    CHECK(!isRed(render(tl, 5, [&](const Clip&) { return QString(); }))); // no matching cache
 
-    // Fades wirken weiter über dem Cache
+    // Fades still act over the cache
     Clip f = c;
     f.fadeIn = 10;
     const QImage first = render(one(f), 0, [&](const Clip&) { return red; });
     CHECK(!first.isNull() && first.pixelColor(320, 180).red() < 40);
 
-    // Übergänge (Bereich vor dem Clip-Anfang) kommen aus dem Original, der Rest aus dem Cache
+    // Transitions (range before the clip start) come from the original, the rest from the cache
     Clip a = baseClip();
     a.id = 5;
     a.in = 0;
@@ -301,7 +301,7 @@ void testBuilderUsesCacheOnlyForPreview(const QString& red)
     Clip b = c;
     b.id = 6;
     b.start = 30;
-    a.transOut = b.transIn = 10; // zentrierte Überblendung 25..35
+    a.transOut = b.transIn = 10; // centered dissolve 25..35
     Timeline t2;
     t2.video.resize(1);
     t2.video[0].clips << a << b;
@@ -309,7 +309,7 @@ void testBuilderUsesCacheOnlyForPreview(const QString& red)
     CHECK(!isRed(render(t2, 20, cacheB)));
     CHECK(isRed(render(t2, 45, cacheB)));
 
-    // RenderCache::resolve: nur im passenden Modus und solange der Schlüssel passt
+    // RenderCache::resolve: only in the matching mode and as long as the key matches
     RenderCache rc;
     rc.setFormat(kFmt);
     rc.setMode(RenderCache::Mode::User);
@@ -319,10 +319,10 @@ void testBuilderUsesCacheOnlyForPreview(const QString& red)
     CHECK_EQ(rc.resolve(c), rc.path(c));
     Clip moved = c;
     moved.start = 100;
-    CHECK_EQ(rc.resolve(moved), rc.path(c)); // Verschieben: Cache bleibt gültig
+    CHECK_EQ(rc.resolve(moved), rc.path(c)); // Moving: cache stays valid
     Clip changed = c;
     changed.transform.rotation = 10;
-    CHECK(rc.resolve(changed).isEmpty()); // geändert: ungültig
+    CHECK(rc.resolve(changed).isEmpty()); // changed: invalid
     Clip unmarked = c;
     unmarked.renderCache = false;
     CHECK(rc.resolve(unmarked).isEmpty());
@@ -333,7 +333,7 @@ void testBuilderUsesCacheOnlyForPreview(const QString& red)
     CHECK(spans.size() == 1 && spans[0].start == c.start && spans[0].end == c.end() && spans[0].done == 1.0);
     CHECK(rc.spans(one(changed)).value(0).done == 0.0);
 
-    // Export liest nie aus dem Cache (Cache-Datei ist rot)
+    // Export never reads from the cache (cache file is red)
     const QString out = QFileInfo(red).dir().filePath("export.mp4");
     Exporter ex;
     ExportSettings s;
@@ -361,7 +361,7 @@ void testBuilderUsesCacheOnlyForPreview(const QString& red)
     CHECK(!QFileInfo::exists(rc.path(c)));
 }
 
-// Hintergrund: sync() rendert markierte Clips nach kurzer Ruhe, Änderung macht ungültig -> neu
+// Background: sync() renders marked clips after a short rest, a change invalidates -> again
 void testBackground()
 {
     RenderCache rc;
@@ -386,23 +386,23 @@ void testBackground()
     rc.sync(one(c));
     CHECK(rc.resolve(c).isEmpty());
     CHECK_EQ(rc.pendingCount(), 1);
-    // Datei entsteht im Render-Thread, cacheChanged kommt danach im UI-Thread -> auf beides warten
+    // File is created in the render thread, cacheChanged comes afterwards in the UI thread -> wait for both
     CHECK(waitFor([&] { return !rc.resolve(c).isEmpty() && changed >= 1; }, 60000));
     CHECK_EQ(rc.pendingCount(), 0);
 
-    // Pausiert während der Wiedergabe
+    // Paused during playback
     Clip d = c;
     d.speed = 2.0;
     rc.setPlaying(true);
     rc.sync(one(d));
-    CHECK(rc.resolve(d).isEmpty()); // geändert -> ungültig
+    CHECK(rc.resolve(d).isEmpty()); // changed -> invalid
     waitFor([] { return false; }, 2500);
     CHECK(rc.isRendering());
     CHECK(rc.resolve(d).isEmpty());
     rc.setPlaying(false);
     CHECK(waitFor([&] { return !rc.resolve(d).isEmpty(); }, 60000));
 
-    // Markierung entfernt während des Renderns -> abgebrochen, nichts liegen gelassen
+    // Marking removed while rendering -> cancelled, nothing left behind
     Clip e = c;
     e.in = 0;
     rc.sync(one(e));

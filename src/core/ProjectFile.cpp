@@ -71,8 +71,8 @@ TrackDynamics dynamicsFromJson(const QJsonObject& o)
     return Compressor::clamped(d);
 }
 
-// 2: Ton-Streams pro Datei (Clip "audioStream"). Ältere schneidi-Versionen würden dort still nur Stream 1 spielen
-// und die Zuordnung beim Speichern verlieren -> sie lehnen die Datei ab.
+// 2: audio streams per file (clip "audioStream"). Older schneidi versions would silently play only stream 1 there
+// and lose the assignment on saving -> they reject the file.
 constexpr int kFormatVersion = 2;
 
 QJsonObject transformToJson(const ClipTransform& t)
@@ -142,7 +142,7 @@ TitleStyle titleFromJson(const QJsonObject& o)
     return t;
 }
 
-// Verlaufsbild: absolut, eigene Dateien zusätzlich relativ zur Projektdatei (wie LUTs)
+// Gradient image: absolute, own files additionally relative to the project file (like LUTs)
 QJsonObject transitionStyleToJson(const TransitionStyle& s, const QDir& projectDir)
 {
     static const char* aligns[] = {"center", "start", "end"};
@@ -172,7 +172,7 @@ TransitionStyle transitionStyleFromJson(const QJsonObject& o, const QDir& projec
     for (const auto& i : kTransitionTypes)
         if (type == i.id) s.type = i.type;
     s.color = color("color", s.color);
-    // ältere Dateien: Abblende über Schwarz/Weiß als eigene Arten
+    // older files: fade through black/white as separate styles
     if (type == "dip_black" || type == "dip_white") {
         s.type = TransitionType::DipToColor;
         s.color = type == "dip_black" ? Qt::black : Qt::white;
@@ -188,7 +188,7 @@ TransitionStyle transitionStyleFromJson(const QJsonObject& o, const QDir& projec
         if (curve == i.id) s.audio = i.curve;
     s.luma = o.value("luma").toString();
     s.invert = o.value("invert").toBool();
-    // Bild fehlt: relativ zur Projektdatei, dann gleichnamig im eigenen Transitions-Ordner suchen
+    // Image missing: relative to the project file, then look for a file of the same name in the own Transitions folder
     if (!s.luma.isEmpty() && !EffectFolders::isBuiltin(s.luma) && !QFileInfo::exists(s.luma)) {
         const QString rel = o.value("lumaRel").toString();
         const QString candidate = rel.isEmpty() ? QString() : QDir::cleanPath(projectDir.absoluteFilePath(rel));
@@ -201,8 +201,8 @@ TransitionStyle transitionStyleFromJson(const QJsonObject& o, const QDir& projec
     return s;
 }
 
-// Keyframes: {"zoomX": [[Quell-Frame, Wert], [Frame, Wert, "easeIn"], …], …}; Verlauf nur, wenn nicht linear.
-// Bezier: [Frame, Wert, "bezier", ein dt, ein dv, aus dt, aus dv] (ältere Versionen lesen das als linear)
+// Keyframes: {"zoomX": [[source frame, value], [frame, value, "easeIn"], ...], ...}; interpolation only if not linear.
+// Bezier: [frame, value, "bezier", in dt, in dv, out dt, out dv] (older versions read that as linear)
 const char* const kEaseIds[] = {"linear", "easeIn", "easeOut", "easeInOut", "bezier"}; // Index = KeyEase
 
 QJsonObject keysToJson(const Clip& c)
@@ -226,7 +226,7 @@ void keysFromJson(Clip& c, const QJsonObject& o)
 {
     for (auto it = o.begin(); it != o.end(); ++it) {
         AnimParam p;
-        if (!Keys::fromId(it.key(), &p)) continue; // unbekannt (neuere Version) -> ignorieren
+        if (!Keys::fromId(it.key(), &p)) continue; // unknown (newer version) -> ignore
         KeyTrack track;
         for (const QJsonValue& v : it.value().toArray()) {
             const QJsonArray e = v.toArray();
@@ -248,7 +248,7 @@ void keysFromJson(Clip& c, const QJsonObject& o)
     }
 }
 
-// Pfad-Parameter eines Effekts (z. B. LUT der Color-Seite) relativ zur Projektdatei
+// Path parameter of an effect (e.g. LUT of the Color page) relative to the project file
 QJsonObject pathParamsRelative(const EffectInstance& e, const QDir& projectDir)
 {
     QJsonObject rel;
@@ -261,8 +261,8 @@ QJsonObject pathParamsRelative(const EffectInstance& e, const QDir& projectDir)
     return rel;
 }
 
-// Wie bei Medien: absoluter Pfad fehlt -> relativ zur Projektdatei versuchen (Ordner verschoben), bei LUTs danach
-// gleichnamig im eigenen LUTs-Ordner (Projekt von einem anderen Rechner, z. B. Linux <-> Windows)
+// As with media: absolute path missing -> try relative to the project file (folder moved), for LUTs then
+// a file of the same name in the own LUTs folder (project from another machine, e.g. Linux <-> Windows)
 void resolvePathParams(EffectInstance& e, const QJsonObject& rel, const QDir& projectDir)
 {
     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
@@ -277,7 +277,7 @@ void resolvePathParams(EffectInstance& e, const QJsonObject& rel, const QDir& pr
                 continue;
             }
         }
-        if (EffectFolders::isLutFile(abs)) // Dateiname auch aus Windows-Pfaden ("C:\…\look.cube")
+        if (EffectFolders::isLutFile(abs)) // file name also from Windows paths ("C:\...\look.cube")
             if (const QString found = EffectFolders::findUserLut(QString(abs).replace('\\', '/').section('/', -1));
                 !found.isEmpty())
                 e.params[p.key] = found;
@@ -303,12 +303,12 @@ void normalizeParams(EffectInstance& e)
     }
 }
 
-// Clips verweisen per Index auf die Medienliste -> Pfad steht nur einmal in der Datei
+// Clips refer to the media list by index -> path appears only once in the file
 QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
 {
     QJsonObject o{{"id", c.id}, {"start", c.start}, {"in", c.in}, {"out", c.out}};
-    if (c.isTitle()) o["title"] = titleToJson(c.title); // Titel haben keinen Medienverweis
-    else if (c.isCompound()) o["sequence"] = c.sequenceId; // Compound Clip: Verweis auf die Sequenz
+    if (c.isTitle()) o["title"] = titleToJson(c.title); // titles have no media reference
+    else if (c.isCompound()) o["sequence"] = c.sequenceId; // compound clip: reference to the sequence
     else o["media"] = mediaIndex;
     if (c.linkId) o["link"] = c.linkId;
     if (c.volumeDb != 0.0) o["volumeDb"] = c.volumeDb;
@@ -316,7 +316,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (c.audioStream != 0) o["audioStream"] = c.audioStream;
     if (c.subframe != 0) o["subframe"] = c.subframe;
     if (!c.enabled) o["enabled"] = false;
-    if (c.transIn > 0) o["transIn"] = c.transIn; // Übergänge (Frames); fehlend = keiner
+    if (c.transIn > 0) o["transIn"] = c.transIn; // transitions (frames); missing = none
     if (c.transOut > 0) o["transOut"] = c.transOut;
     if (c.transInAlone) o["transInAlone"] = true;
     if (c.transOutAlone) o["transOutAlone"] = true;
@@ -324,7 +324,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
         o["transInStyle"] = transitionStyleToJson(c.transInStyle, projectDir);
     if (c.transOut > 0 && c.transOutStyle != TransitionStyle{})
         o["transOutStyle"] = transitionStyleToJson(c.transOutStyle, projectDir);
-    if (c.fadeIn > 0) o["fadeIn"] = c.fadeIn; // Fade-Griffe (Frames)
+    if (c.fadeIn > 0) o["fadeIn"] = c.fadeIn; // fade handles (frames)
     if (c.fadeOut > 0) o["fadeOut"] = c.fadeOut;
     if (c.speed != 1.0) o["speed"] = c.speed;
     if (c.reverse) o["reverse"] = true;
@@ -347,7 +347,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
         QJsonArray fx;
         for (const EffectInstance& e : c.effects) {
             QJsonObject eo{{"id", e.effectId}, {"enabled", e.enabled}, {"params", QJsonObject::fromVariantMap(e.params)}};
-            // Dateipfade (LUT) wie Medien zusätzlich relativ zur Projektdatei
+            // File paths (LUT) additionally relative to the project file, like media
             const QJsonObject rel = pathParamsRelative(e, projectDir);
             if (!rel.isEmpty()) eo["relPaths"] = rel;
             fx << eo;
@@ -373,7 +373,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     }
     c.start = std::max(0, o.value("start").toInt());
     c.in = o.value("in").toInt();
-    c.out = std::max(c.in, o.value("out").toInt()); // von Hand geänderte Datei: mindestens 1 Frame lang
+    c.out = std::max(c.in, o.value("out").toInt()); // file edited by hand: at least 1 frame long
     c.linkId = o.value("link").toInt();
     c.volumeDb = o.value("volumeDb").toDouble(0.0);
     c.pan = o.value("pan").toDouble(0.0);
@@ -392,7 +392,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     if (c.speed <= 0) c.speed = 1.0;
     c.reverse = o.value("reverse").toBool();
     c.freeze = o.value("freeze").toBool();
-    // Ältere Dateien ohne freezeFrame: Bild = `in` beim Laden festhalten (Teilen/Trimmen verschiebt `in` später)
+    // Older files without freezeFrame: pin the frame = `in` on loading (splitting/trimming shifts `in` later)
     c.freezeFrame = c.freeze ? o.value("freezeFrame").toInt(c.in) : -1;
     c.keepPitch = o.value("keepPitch").toBool(true);
     for (const QJsonValue& v : o.value("ramp").toArray()) {
@@ -403,7 +403,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
         p.smooth = j.value("smooth").toInt();
         c.ramp << p;
     }
-    Retime::normalize(c.ramp, 0); // kaputte Werte verwerfen (Dateilänge hier unbekannt)
+    Retime::normalize(c.ramp, 0); // discard broken values (file length unknown here)
     c.renderCache = o.value("renderCache").toBool();
     if (o.contains("transform")) c.transform = transformFromJson(o.value("transform").toObject());
     for (const QJsonValue& v : o.value("effects").toArray()) {
@@ -414,7 +414,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
         normalizeParams(inst);
         c.effects << inst;
     }
-    keysFromJson(c, o.value("keys").toObject()); // fehlt in älteren Dateien
+    keysFromJson(c, o.value("keys").toObject()); // missing in older files
     return c;
 }
 
@@ -427,7 +427,7 @@ QString resolvePath(const QJsonObject& m, const QDir& projectDir)
         const QString candidate = QDir::cleanPath(projectDir.absoluteFilePath(rel));
         if (QFileInfo::exists(candidate)) return candidate;
     }
-    return abs; // bleibt offline, bis neu verknüpft
+    return abs; // stays offline until relinked
 }
 
 } // namespace
@@ -436,7 +436,7 @@ namespace ProjectFile {
 
 QJsonObject clipJson(const Clip& c)
 {
-    QJsonObject o = clipToJson(c, -1, QDir::root()); // fester Bezug -> relPaths stabil (Cache-Schlüssel)
+    QJsonObject o = clipToJson(c, -1, QDir::root()); // fixed reference -> relPaths stable (cache key)
     if (!c.isTitle() && !c.isCompound()) o["media"] = c.mediaPath;
     return o;
 }
@@ -451,9 +451,9 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         QJsonObject o{{"path", m.path}, {"relPath", projectDir.relativeFilePath(m.path)},
                       {"name", m.name}, {"length", m.length}, {"hasVideo", m.hasVideo},
                       {"hasAudio", m.hasAudio}, {"isImage", m.isImage}};
-        if (m.markIn >= 0) o["markIn"] = m.markIn; // Quell-In/Out (optional, alte Dateien ohne)
+        if (m.markIn >= 0) o["markIn"] = m.markIn; // source in/out (optional, absent in old files)
         if (m.markOut >= 0) o["markOut"] = m.markOut;
-        if (m.bin != 0) o["bin"] = m.bin; // Media-Pool-Organisation (optional, alte Dateien ohne)
+        if (m.bin != 0) o["bin"] = m.bin; // Media Pool organization (optional, absent in old files)
         if (!m.clipColor.isEmpty()) o["clipColor"] = m.clipColor;
         if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
         if (!m.audioStreams.isEmpty()) {
@@ -486,14 +486,14 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                     clips << clipToJson(c, -1, projectDir);
                     continue;
                 }
-                if (!index.contains(c.mediaPath)) { // sollte nicht vorkommen, aber nichts verlieren
+                if (!index.contains(c.mediaPath)) { // should not happen, but lose nothing
                     index[c.mediaPath] = media.size();
                     media << QJsonObject{{"path", c.mediaPath}, {"relPath", projectDir.relativeFilePath(c.mediaPath)},
                                          {"name", QFileInfo(c.mediaPath).fileName()}, {"notInPool", true}};
                 }
                 clips << clipToJson(c, index.value(c.mediaPath), projectDir);
             }
-            // "name" = Kürzel (ältere Versionen zeigen es an), eigener Name in "label"
+            // "name" = abbreviation (older versions display it), own name in "label"
             QJsonObject o{{"name", trackShortName({kind, int(arr.size())})}, {"clips", clips}};
             if (!t.name.isEmpty()) o["label"] = t.name;
             if (!t.color.isEmpty()) o["color"] = t.color;
@@ -510,7 +510,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         return arr;
     };
     auto timelineJson = [&](const Timeline& timeline) {
-        QJsonArray subtitles; // Untertitelspuren (optional, alte Dateien ohne)
+        QJsonArray subtitles; // subtitle tracks (optional, absent in old files)
         for (const SubtitleTrack& t : timeline.subtitles) {
             QJsonArray cues;
             for (const SubtitleCue& c : t.cues)
@@ -534,9 +534,9 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         return o;
     };
 
-    // Erst alle Timelines schreiben: Clips mit Dateien außerhalb des Media Pools ergänzen dabei die Medienliste
+    // Write all timelines first: clips with files outside the Media Pool extend the media list in the process
     const QJsonObject current = timelineJson(data.timeline);
-    // Weitere Timelines und Compound Clips (optional, alte Dateien ohne); die geöffnete steht in "timeline"
+    // Further timelines and compound clips (optional, absent in old files); the opened one is in "timeline"
     QJsonArray seqs;
     for (const Sequence& s : data.sequences) {
         QJsonObject o{{"id", s.id}, {"name", s.name}};
@@ -550,12 +550,12 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
 
     QJsonObject root{
         {"app", "schneidi"},       {"version", kFormatVersion},
-        {"fps", data.format.rate.timebase()}, // für ältere Versionen
+        {"fps", data.format.rate.timebase()}, // for older versions
         {"format", QJsonObject{{"width", data.format.width}, {"height", data.format.height},
                                {"fpsNum", data.format.rate.num}, {"fpsDen", data.format.rate.den}}},
         {"playhead", data.playhead}, {"lastClipId", data.lastClipId}, {"lastLinkId", data.lastLinkId},
         {"media", media},           {"bins", bins},
-        {"timeline", current}, // geöffnete Timeline (ältere Versionen lesen nur diese)
+        {"timeline", current}, // opened timeline (older versions read only this one)
     };
     if (!seqs.isEmpty()) {
         root["sequences"] = seqs;
@@ -581,7 +581,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
 
     const QDir projectDir = QFileInfo(projectPath).absoluteDir();
     ProjectData d;
-    // Projekteinstellungen; ältere Dateien kennen nur "fps" (ganzzahlig) und waren immer 1920 × 1080
+    // Project settings; older files know only "fps" (integer) and were always 1920 x 1080
     const QJsonObject fmt = root.value("format").toObject();
     d.format.width = std::max(16, fmt.value("width").toInt(1920));
     d.format.height = std::max(16, fmt.value("height").toInt(1080));
@@ -590,7 +590,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.playhead = root.value("playhead").toInt();
     d.lastClipId = root.value("lastClipId").toInt();
     d.lastLinkId = root.value("lastLinkId").toInt();
-    // Alle Einträge lösen die Clip-Verweise auf; "notInPool" (Datei nur in der Timeline) kommt nicht in den Media Pool
+    // All entries resolve the clip references; "notInPool" (file only in the timeline) does not go into the Media Pool
     QVector<MediaInfo> allMedia;
     for (const QJsonValue& v : root.value("media").toArray()) {
         const QJsonObject o = v.toObject();
@@ -603,11 +603,11 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         m.isImage = o.value("isImage").toBool();
         m.markIn = o.value("markIn").toInt(-1);
         m.markOut = o.value("markOut").toInt(-1);
-        m.bin = std::max(0, o.value("bin").toInt()); // fehlende Bins setzt Project::load auf Master
+        m.bin = std::max(0, o.value("bin").toInt()); // missing bins are set to Master by Project::load
         if (trackColorInfo(o.value("clipColor").toString())) m.clipColor = o.value("clipColor").toString();
         for (const QJsonValue& f : o.value("flags").toArray())
             if (flagColorInfo(f.toString()) && !m.flags.contains(f.toString())) m.flags << f.toString();
-        if (m.hasAudio) // fehlt in älteren Dateien -> audioStreamCount() nimmt 1 Stream an
+        if (m.hasAudio) // missing in older files -> audioStreamCount() assumes 1 stream
             for (const QJsonValue& a : o.value("audioStreams").toArray())
                 m.audioStreams << AudioStreamInfo{std::max(1, a.toObject().value("channels").toInt(2)),
                                                   a.toObject().value("title").toString()};
@@ -639,7 +639,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             const QJsonObject o = v.toObject();
             Track t;
             t.kind = kind;
-            t.name = o.value("label").toString(); // ältere Dateien: nur Kürzel in "name" -> Standardname
+            t.name = o.value("label").toString(); // older files: only abbreviation in "name" -> default name
             if (trackColorInfo(o.value("color").toString())) t.color = o.value("color").toString();
             t.locked = o.value("locked").toBool();
             t.muted = o.value("muted").toBool();
@@ -672,8 +672,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.locked = o.value("locked").toBool();
             if (o.contains("style")) {
                 QJsonObject style = o.value("style").toObject();
-                style["text"] = QString(); // Stil ohne Text
-                // fehlende Werte: Untertitel-Standard statt Titel-Standard
+                style["text"] = QString(); // style without text
+                // missing values: subtitle default instead of title default
                 const TitleStyle base = subtitleBaseStyle();
                 const QJsonObject def = titleToJson(base);
                 for (auto it = def.begin(); it != def.end(); ++it)
@@ -690,7 +690,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             std::sort(t.cues.begin(), t.cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
             timeline.subtitles << t;
         }
-        // ids eindeutig über Clips und Untertitel; fehlende/doppelte (Hand-Änderungen) bekommen eine neue
+        // ids unique across clips and subtitles; missing/duplicate ones (hand edits) get a new one
         QSet<int> usedIds;
         for (const auto* list : {&timeline.video, &timeline.audio})
             for (const Track& t : *list)
@@ -737,7 +737,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
 
 bool save(const ProjectData& data, const QString& path, QString* error)
 {
-    // QSaveFile: erst vollständig schreiben, dann umbenennen -> nie eine halbe Projektdatei
+    // QSaveFile: write completely first, then rename -> never half a project file
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly) || f.write(toJson(data, path)) < 0 || !f.commit()) {
         if (error) *error = f.errorString();
@@ -750,15 +750,15 @@ QString backupDir(const QString& projectPath)
 {
     const QString root = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("backups");
     if (projectPath.isEmpty()) return root;
-    // Name + Kurz-Hash des Pfads: gleichnamige Projekte in verschiedenen Ordnern mischen sich nicht
+    // Name + short hash of the path: projects of the same name in different folders do not get mixed up
     const QFileInfo fi(projectPath);
     const QString hash = QCryptographicHash::hash(fi.absoluteFilePath().toUtf8(), QCryptographicHash::Sha1).toHex().left(8);
     return QDir(root).filePath(fi.completeBaseName() + "-" + hash);
 }
 
 namespace {
-// Sicherungskopien alt -> neu. Nach Änderungszeit, nicht nach Namen: der Name trägt die Ortszeit, und bei der
-// Zeitumstellung im Herbst (03:00 -> 02:00) sortierten sich neue Kopien vor die alten -> die neuesten wurden gelöscht
+// Backup copies old -> new. By modification time, not by name: the name carries local time, and at the
+// autumn clock change (03:00 -> 02:00) new copies sorted before the old ones -> the newest were deleted
 QStringList backupsOldestFirst(const QDir& dir)
 {
     QFileInfoList list = dir.entryInfoList({QString("*.%1").arg(Extension)}, QDir::Files);
@@ -784,7 +784,7 @@ QStringList backups(const QString& projectPath)
 QString backup(const QString& projectPath, int keep)
 {
     QFile current(projectPath);
-    if (!current.open(QIODevice::ReadOnly)) return {}; // noch nie gespeichert
+    if (!current.open(QIODevice::ReadOnly)) return {}; // never saved yet
     const QByteArray bytes = current.readAll();
     const QDir dir(backupDir(projectPath));
     if (!QDir().mkpath(dir.path())) return {};
@@ -793,7 +793,7 @@ QString backup(const QString& projectPath, int keep)
         QFile newest(dir.filePath(existing.last()));
         if (newest.open(QIODevice::ReadOnly) && newest.readAll() == bytes) return {};
     }
-    // Zeitstempel ohne Doppelpunkte (Windows), mit Millisekunden: Namen sortieren sich zeitlich
+    // Timestamp without colons (Windows), with milliseconds: names sort chronologically
     QString target;
     for (QDateTime t = QDateTime::currentDateTime(); target.isEmpty() || QFileInfo::exists(target); t = t.addMSecs(1))
         target = dir.filePath(QString("%1.%2").arg(t.toString("yyyy-MM-dd HH-mm-ss-zzz"), Extension));
@@ -860,18 +860,18 @@ QStringList missingMedia(const ProjectData& data)
 
 int relink(ProjectData* data, const QString& searchDir)
 {
-    QHash<QString, QStringList> wanted; // Dateiname -> alte Pfade (Kamera-Namen wie C0001.MP4 wiederholen sich)
+    QHash<QString, QStringList> wanted; // file name -> old paths (camera names like C0001.MP4 repeat)
     for (const QString& p : missingMedia(*data)) wanted[fileNameAnyOs(p)] << p;
     if (wanted.isEmpty()) return 0;
 
-    QHash<QString, QStringList> found; // Dateiname -> gefundene Dateien
+    QHash<QString, QStringList> found; // file name -> files found
     QDirIterator it(searchDir, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
         const QString path = it.next();
         if (wanted.contains(it.fileName())) found[it.fileName()] << path;
     }
 
-    // Wie viele Ordner am Ende beider Pfade übereinstimmen (camA/C0001.MP4 gehört zu …/camA/C0001.MP4)
+    // How many folders at the end of both paths match (camA/C0001.MP4 belongs to .../camA/C0001.MP4)
     auto score = [](const QString& a, const QString& b) {
         static const QRegularExpression sep("[/\\\\]");
         const QStringList x = a.split(sep, Qt::SkipEmptyParts), y = b.split(sep, Qt::SkipEmptyParts);
@@ -879,10 +879,10 @@ int relink(ProjectData* data, const QString& searchDir)
         while (n < x.size() && n < y.size() && x[x.size() - 1 - n] == y[y.size() - 1 - n]) ++n;
         return n;
     };
-    QHash<QString, QString> moved; // alter Pfad -> neuer Pfad
+    QHash<QString, QString> moved; // old path -> new path
     for (auto w = wanted.cbegin(); w != wanted.cend(); ++w) {
         QStringList candidates = found.value(w.key());
-        // Paare mit der besten Übereinstimmung zuerst vergeben, jede Datei nur einmal
+        // Assign pairs with the best match first, each file only once
         struct Pair { int score; QString old, now; };
         QVector<Pair> pairs;
         for (const QString& old : w.value())
@@ -891,8 +891,8 @@ int relink(ProjectData* data, const QString& searchDir)
         QSet<QString> used;
         for (const Pair& pr : pairs) {
             if (moved.contains(pr.old) || used.contains(pr.now)) continue;
-            // Mehrdeutig (mehrere gleichnamige alte Dateien, andere Datei passt genauso gut): lieber offline lassen
-            // als falsches Material zu zeigen
+            // Ambiguous (several old files of the same name, another file fits just as well): better leave offline
+            // than to show wrong material
             const bool ambiguous = w.value().size() > 1 && std::any_of(pairs.begin(), pairs.end(), [&](const Pair& o) {
                 return o.score == pr.score && !moved.contains(o.old) && !used.contains(o.now)
                        && ((o.old == pr.old) != (o.now == pr.now));

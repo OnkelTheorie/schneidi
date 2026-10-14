@@ -42,11 +42,11 @@ QVector<QVector<quint8>> buildLevels(QVector<quint8> base)
     return levels;
 }
 
-// Platten-Cache für Wellenformen: Schlüssel aus Pfad, Größe und Änderungszeit
+// Disk cache for waveforms: key from path, size and modification time
 QString waveCacheFile(const QString& path, int stream, const FrameRate& rate)
 {
     const QFileInfo fi(path);
-    // weitere Streams mit Zusatz, damit vorhandene Wellenformen (Stream 0) gültig bleiben
+    // further streams with a suffix so that existing waveforms (stream 0) stay valid
     const QString id = (stream > 0 ? QString("s%1|").arg(stream) : QString()) + QString("%1|%2|%3|%4|%5")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
@@ -87,7 +87,7 @@ void saveWave(const QString& file, const QVector<quint8>& base, int frames)
     f.commit();
 }
 
-// Vorhandenen Proxy fürs Dekodieren nehmen (viel kleiner, dichte Keyframes), gleiche Frame-Zählung
+// Use an existing proxy for decoding (much smaller, dense keyframes), same frame counting
 QString decodePath(const QString& path)
 {
     const QString proxy = ProxyManager::proxyPath(path);
@@ -96,8 +96,8 @@ QString decodePath(const QString& path)
 
 QSize thumbSize(const ProjectFormat& format)
 {
-    // Im Seitenverhältnis des Projekts, mindestens so groß wie eine 16:9-Kachel
-    // (die Timeline schneidet die Mitte aus; Hochformat also etwas höher)
+    // In the project's aspect ratio, at least as large as a 16:9 tile
+    // (the timeline crops the middle; so portrait is somewhat taller)
     const QSize s = format.size().scaled(MediaCache::kThumbHeight * 16 / 9, MediaCache::kThumbHeight, Qt::KeepAspectRatioByExpanding);
     return QSize(std::max(2, s.width()), std::max(2, s.height()));
 }
@@ -150,7 +150,7 @@ QImage MediaCache::thumbnail(const QString& path, int frame, int tolerance)
     if (const QImage* img = m_thumbs.object(thumbKey(path, frame))) return *img;
 
     auto it = m_keys.find(path);
-    if (it == m_keys.end()) { // erster Blick auf die Datei -> Keyframe-Durchlauf starten
+    if (it == m_keys.end()) { // first look at the file -> start the keyframe pass
         it = m_keys.insert(path, {});
         m_stripJobs.push_back(path);
         m_stripCond.wakeOne();
@@ -163,10 +163,10 @@ QImage MediaCache::thumbnail(const QString& path, int frame, int tolerance)
         const int key = *(next - 1);
         if (const QImage* img = m_thumbs.object(thumbKey(path, key))) {
             approx = *img;
-            enough = frame - key < tolerance; // Fehler kleiner als der Kachelabstand -> sieht man nicht
+            enough = frame - key < tolerance; // error smaller than the tile spacing -> not visible
         }
     }
-    // Genaues Frame nur, wenn der Keyframe-Durchlauf diese Stelle schon hinter sich hat (oder scheiterte)
+    // Exact frame only if the keyframe pass has already passed this spot (or failed)
     const bool passed = ki.done || next != ki.frames.cend();
     if (!enough && (ki.failed || passed)) queueThumb(path, frame);
     return approx;
@@ -178,7 +178,7 @@ void MediaCache::queueThumb(const QString& path, int frame)
     if (m_thumbPending.contains(key)) return;
     m_thumbPending.insert(key);
     m_thumbJobs.push_front({path, frame});
-    // Alte Anfragen verwerfen (z. B. von Stellen, an denen man längst weitergescrollt hat)
+    // Discard old requests (e.g. from spots one has long scrolled past)
     while (m_thumbJobs.size() > kMaxThumbJobs) {
         m_thumbPending.remove(thumbKey(m_thumbJobs.back().path, m_thumbJobs.back().frame));
         m_thumbJobs.pop_back();
@@ -207,7 +207,7 @@ void MediaCache::setFormat(const ProjectFormat& format)
 
 std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path, int stream)
 {
-    // Schlüssel: Pfad, bei weiteren Streams mit angehängter Nummer (\0 kommt in Pfaden nicht vor)
+    // Key: path, for further streams with an appended number (\0 does not occur in paths)
     const QString key = stream > 0 ? path + QChar(0) + QString::number(stream) : path;
     QMutexLocker lock(&m_mutex);
     if (!m_waveRequested.contains(key)) {
@@ -221,9 +221,9 @@ std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path, int st
 void MediaCache::thumbLoop()
 {
     std::unique_ptr<Mlt::Profile> profile;
-    std::unique_ptr<ProducerFactory> factory; // BT.601-Umweg (Profiles.h), überlebt die Producer
+    std::unique_ptr<ProducerFactory> factory; // BT.601 detour (Profiles.h), outlives the producers
     int generation = -1;
-    // Offene Producer wiederverwenden (Datei öffnen ist teurer als Suchen)
+    // Reuse open producers (opening a file is more expensive than seeking)
     QHash<QString, std::shared_ptr<Mlt::Producer>> producers;
 
     for (;;) {
@@ -239,7 +239,7 @@ void MediaCache::thumbLoop()
             format = m_format;
             gen = m_generation;
         }
-        if (gen != generation) { // neues Projektformat: Producer hängen am alten Profil
+        if (gen != generation) { // new project format: producers hang on the old profile
             producers.clear();
             factory.reset();
             profile = makeProfile(format);
@@ -251,7 +251,7 @@ void MediaCache::thumbLoop()
         if (!prod) {
             if (producers.size() >= 8) producers.clear();
             prod = factory->open(decodePath(job.path));
-            prod->set("audio_index", -1); // Ton wird hier nie gebraucht
+            prod->set("audio_index", -1); // audio is never needed here
             producers.insert(job.path, prod);
         }
 
@@ -269,14 +269,14 @@ void MediaCache::thumbLoop()
                     QImage raw(w, h, QImage::Format_RGBA8888);
                     std::memcpy(raw.bits(), data, size_t(w) * h * 4);
                     img = (w == reqW && h == reqH) ? raw : raw.scaled(reqW, reqH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-                    img = img.convertToFormat(QImage::Format_RGB32); // schneller zu zeichnen
+                    img = img.convertToFormat(QImage::Format_RGB32); // faster to draw
                 }
             }
         }
 
         {
             QMutexLocker lock(&m_mutex);
-            if (gen != m_generation) continue; // inzwischen neues Format
+            if (gen != m_generation) continue; // new format in the meantime
             const QString key = thumbKey(job.path, job.frame);
             m_thumbPending.remove(key);
             if (!img.isNull()) m_thumbs.insert(key, new QImage(img), int(img.sizeInBytes() / 1024) + 1);
@@ -303,8 +303,8 @@ void MediaCache::stripLoop()
         }
         const QSize size = thumbSize(format);
         const double fps = format.rate.fps();
-        // Nur Keyframes dekodieren, anamorphe Pixel entzerren, wie MLT mittig mit schwarzen Rändern ins
-        // Projektformat einpassen; showinfo meldet die Zeit jedes Bilds auf stderr (Drehung macht ffmpeg selbst)
+        // Only decode keyframes, unsqueeze anamorphic pixels, fit into the project format centered with black borders like MLT;
+        // showinfo reports the time of each image on stderr (ffmpeg rotates on its own)
         const QString vf = QString("scale='if(gt(sar,0),iw*sar,iw)':ih,scale=%1:%2:force_original_aspect_ratio=decrease,"
                                    "pad=%1:%2:(ow-iw)/2:(oh-ih)/2:black,setsar=1,showinfo")
                                .arg(size.width())
@@ -315,7 +315,7 @@ void MediaCache::stripLoop()
                             "-f", "rawvideo", "-pix_fmt", "rgba", "-"});
         const qint64 frameBytes = qint64(size.width()) * size.height() * 4;
         QByteArray out, err;
-        std::deque<int> times; // Quell-Frames aus showinfo, noch ohne Bild
+        std::deque<int> times; // source frames from showinfo, still without image
         int count = 0;
         bool aborted = false;
         auto takeFrames = [&] {
@@ -331,7 +331,7 @@ void MediaCache::stripLoop()
             out += ff.readAllStandardOutput();
             while (out.size() >= frameBytes && !times.empty()) {
                 QImage raw(reinterpret_cast<const uchar*>(out.constData()), size.width(), size.height(), QImage::Format_RGBA8888);
-                const QImage img = raw.convertToFormat(QImage::Format_RGB32); // kopiert, schneller zu zeichnen
+                const QImage img = raw.convertToFormat(QImage::Format_RGB32); // copied, faster to draw
                 out.remove(0, int(frameBytes));
                 const int frame = std::max(0, times.front());
                 times.pop_front();
@@ -369,7 +369,7 @@ void MediaCache::stripLoop()
             if (gen != m_generation) continue;
             KeyIndex& ki = m_keys[path];
             ki.done = true;
-            ki.failed = count == 0; // kein ffmpeg / unlesbar -> wie früher über MLT
+            ki.failed = count == 0; // no ffmpeg / unreadable -> via MLT as before
         }
         emit updated();
     }
@@ -397,14 +397,14 @@ void MediaCache::waveLoop()
             format = m_format;
             gen = m_generation;
         }
-        // Wellenform zählt Frames in der Projekt-Framerate
+        // Waveform counts frames in the project frame rate
         const std::unique_ptr<Mlt::Profile> profile = makeProfile(format);
         const double fps = profile->fps();
 
         auto publish = [&](std::shared_ptr<const Waveform> w) {
             {
                 QMutexLocker lock(&m_mutex);
-                if (gen != m_generation) return; // inzwischen neues Format
+                if (gen != m_generation) return; // new format in the meantime
                 m_waves.insert(key, std::move(w));
             }
             emit updated();
@@ -444,7 +444,7 @@ void MediaCache::waveLoop()
             p.seek(i);
             std::unique_ptr<Mlt::Frame> f(p.get_frame());
             if (!f) continue;
-            // Nur Ton holen – ohne get_image wird das Video gar nicht dekodiert
+            // Only fetch audio – without get_image the video is not decoded at all
             mlt_audio_format fmt = mlt_audio_s16;
             int freq = 48000, channels = 2;
             int samples = mlt_audio_calculate_frame_samples(float(fps), freq, i);
@@ -457,7 +457,7 @@ void MediaCache::waveLoop()
                 base[i * N + b] = quint8(std::min(255, peak >> 7));
             }
 
-            // Zwischenstände zeigen, damit lange Dateien nicht ewig leer bleiben
+            // Show intermediate states so that long files do not stay empty forever
             if (sincePublish.elapsed() > 700) {
                 auto w = std::make_shared<Waveform>();
                 w->levels = buildLevels(base);
@@ -469,7 +469,7 @@ void MediaCache::waveLoop()
         if (aborted) {
             QMutexLocker lock(&m_mutex);
             if (m_quit) return;
-            continue; // Formatwechsel: Ergebnis gilt nicht mehr
+            continue; // format change: result no longer applies
         }
 
         auto w = std::make_shared<Waveform>();

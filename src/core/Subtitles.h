@@ -1,6 +1,6 @@
 #pragma once
-// Untertitel (DaVinci Subtitle Tracks): SRT lesen/schreiben und Hilfen für Untertitelspuren.
-// Reine Datenfunktionen, bearbeitet wird über den Editor (Undo).
+// Subtitles (DaVinci Subtitle Tracks): read/write SRT and helpers for subtitle tracks.
+// Pure data functions, editing goes through the Editor (undo).
 
 #include "core/Types.h"
 
@@ -12,38 +12,38 @@
 
 namespace Subtitles {
 
-// SRT-Datei -> Einträge in Timeline-Frames (fps = Projekt-Framerate, z. B. 29.97). ids bleiben 0.
-// Kodierung UTF-8 (mit/ohne BOM), sonst Windows-1252/Latin-1; Formatierungen (<i>, {\an8}) werden entfernt,
-// kaputte Blöcke übersprungen (skipped = Anzahl). Sortiert, Überlappungen am Ende des vorigen gekürzt.
+// SRT file -> entries in timeline frames (fps = project frame rate, e.g. 29.97). ids stay 0.
+// Encoding UTF-8 (with/without BOM), otherwise Windows-1252/Latin-1; formatting (<i>, {\an8}) is removed,
+// broken blocks skipped (skipped = count). Sorted, overlaps shortened at the end of the previous one.
 QVector<SubtitleCue> parseSrt(const QByteArray& data, double fps, int* skipped = nullptr);
-// Einträge -> SRT (UTF-8, CRLF wie die meisten Programme erwarten). offset wird von allen Zeiten abgezogen
-// (Export eines In/Out-Bereichs beginnt bei 00:00:00,000); Einträge davor fallen weg bzw. werden gekürzt.
+// Entries -> SRT (UTF-8, CRLF as most programs expect). offset is subtracted from all times
+// (export of an In/Out range starts at 00:00:00,000); entries before it are dropped or shortened.
 QByteArray toSrt(const QVector<SubtitleCue>& cues, double fps, int offset = 0, int until = -1);
 QString srtTime(qint64 ms); // "HH:MM:SS,mmm"
 
-// Standardstil für ein Projektformat (Größen relativ zur Bildhöhe, Grundlage 1080 Pixel)
+// Default style for a project format (sizes relative to the picture height, basis 1080 pixels)
 TitleStyle defaultStyle(QSize format);
 
-// Eintrag auf die Spur legen; überschreibt, was dort liegt (wie Clips: ganz verdeckte fallen weg,
-// angeschnittene werden gekürzt bzw. geteilt). Spur bleibt sortiert.
+// Place an entry on the track; overwrites what is there (like clips: fully covered ones are dropped,
+// partly covered ones are shortened or split). Track stays sorted.
 void place(SubtitleTrack& track, const SubtitleCue& cue);
-// Eintrag per id suchen (trackIndex = Spur), nullptr = keiner
+// Find an entry by id (trackIndex = track), nullptr = none
 const SubtitleCue* find(const Timeline& tl, int id, int* trackIndex = nullptr);
 SubtitleCue* find(Timeline& tl, int id, int* trackIndex = nullptr);
-// Index des Eintrags unter dem Frame, -1 = keiner
+// Index of the entry under the frame, -1 = none
 int cueAt(const SubtitleTrack& track, int frame);
-// Letztes Frame (exklusiv) aller Untertitel
+// Last frame (exclusive) of all subtitles
 int endFrame(const Timeline& tl);
 
-// ---- Ripple/Teilen (Untertitelspuren folgen den Clip-Spuren wie in DaVinci) ----
-// Teilt den Eintrag, der über `frame` liegt (start < frame < end): links behält die id, rechts bekommt newId(),
-// beide den Text. Rückgabe: id des rechten Teils, 0 = dort lag keiner.
+// ---- Ripple/split (subtitle tracks follow the clip tracks as in DaVinci) ----
+// Splits the entry that lies across `frame` (start < frame < end): left keeps the id, right gets newId(),
+// both the text. Returns: id of the right part, 0 = none lay there.
 int splitAt(SubtitleTrack& track, int frame, const std::function<int()>& newId);
-// Wie TimelineOps::rippleTracks für eine Untertitelspur. Versatz (frame, d): d > 0 schiebt jeden Eintrag mit
-// Start >= frame um d; d < 0 entfernt die Zeit [frame + d, frame) – Einträge darin werden gekürzt bzw. gelöscht,
-// alles dahinter rückt nach (Untertitel gehören zum Bild, blockieren also nie). Rückgabe: true = geändert.
+// Like TimelineOps::rippleTracks for a subtitle track. Offset (frame, d): d > 0 shifts every entry with
+// start >= frame by d; d < 0 removes the time [frame + d, frame) - entries in it are shortened or deleted,
+// everything after it moves up (subtitles belong to the picture, so they never block). Returns: true = changed.
 bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts);
-// Einfügen (Insert): Eintrag über `frame` teilen, alles ab `frame` um `length` nach rechts
+// Insert: split the entry across `frame`, everything from `frame` on by `length` to the right
 void insertGap(SubtitleTrack& track, int frame, int length, const std::function<int()>& newId);
 
 } // namespace Subtitles

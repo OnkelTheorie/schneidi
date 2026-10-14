@@ -1,7 +1,7 @@
-// Export aus Opus-Quellen (MKV/WebM-artig und MP4) nach H.264/AAC (MP4): Ton bleibt synchron zum Bild, Ton- und
-// Bildlänge passen. FFmpeg meldet dabei „[opus] Could not update timestamps for skipped samples“ und „[mp4] Timestamps
-// are unset in a packet for stream 1 … making some up“ – beides harmlos (siehe Bundle::configureMltLogging); dieser
-// Test belegt das. Außerdem: Meldestufen und nicht geladenes jackrack-Modul (LADSPA-Meldung).
+// Export from Opus sources (MKV/WebM-like and MP4) to H.264/AAC (MP4): audio stays in sync with the picture, audio and
+// video length match. FFmpeg reports "[opus] Could not update timestamps for skipped samples" and "[mp4] Timestamps
+// are unset in a packet for stream 1 … making some up“ – both harmless (see Bundle::configureMltLogging); this
+// test proves that. Also: log levels and the jackrack module not being loaded (LADSPA message).
 
 #include "check.h"
 
@@ -24,7 +24,7 @@ namespace {
 
 const ProjectFormat kFmt{320, 180, {25, 1}};
 constexpr int kFrames = 150;    // 6 s
-constexpr int kFlashFrame = 50; // weißes Bild bei 2,0 s, gleichzeitig ein 1-kHz-Klick im Ton
+constexpr int kFlashFrame = 50; // white picture at 2.0 s, at the same time a 1 kHz click in the audio
 
 Timeline timeline(const QString& media)
 {
@@ -73,7 +73,7 @@ QByteArray ffmpegOut(const QStringList& args)
     return p.readAllStandardOutput();
 }
 
-// erster Zeitpunkt (s), an dem der Ton laut wird; -1 = nie
+// first time (s) at which the audio becomes loud; -1 = never
 double audioOnset(const QString& path)
 {
     const QByteArray d = ffmpegOut({"-i", path, "-map", "0:a", "-ac", "1", "-ar", "48000", "-f", "f32le", "-"});
@@ -86,7 +86,7 @@ double audioOnset(const QString& path)
     return -1;
 }
 
-// erstes helles Bild (Index); -1 = keins
+// first bright frame (index); -1 = none
 int flashFrame(const QString& path)
 {
     const QByteArray d =
@@ -111,7 +111,7 @@ void testLogging()
 {
     CHECK(qgetenv("MLT_REPOSITORY_DENY").split(':').contains("libmltjackrack"));
     CHECK_EQ(mlt_log_get_level(), MLT_LOG_WARNING);
-    // jackrack nicht geladen: kein LADSPA-Filter, keine Suche nach Plugins
+    // jackrack not loaded: no LADSPA filter, no search for plugins
     auto prof = makeProfile(kFmt);
     mlt_filter f = mlt_factory_filter(prof->get_profile(), "ladspa", nullptr);
     CHECK(f == nullptr);
@@ -132,7 +132,7 @@ void testSync(const QString& dir, const QString& source)
     std::printf("       Start Ton %.4f / Bild %.4f, Länge Ton %.4f / Bild %.4f\n", aStart, vStart, aDur, vDur);
     CHECK(std::abs(aStart - vStart) < 0.001);
     CHECK(std::abs(vDur - kFrames / 25.0) < 0.001);
-    CHECK(std::abs(aDur - vDur) < 0.05); // AAC: höchstens das letzte Paket (1024 Samples) zu lang
+    CHECK(std::abs(aDur - vDur) < 0.05); // AAC: at most the last packet (1024 samples) too long
     const double onset = audioOnset(out);
     const int flash = flashFrame(out);
     std::printf("       Klick bei %.4f s, helles Bild %d\n", onset, flash);

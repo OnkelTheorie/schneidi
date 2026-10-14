@@ -37,23 +37,23 @@ constexpr QSize kIcon{48, 27};
 
 enum Category {
     All, VideoTransitions, AudioTransitions, Titles, OpenFx, Filters, Frei0rFilters,
-    LutsAll, BuiltinLuts, Luts, LutGroup,                         // LUTs: mitgeliefert + eigene
-    LumasAll, BuiltinTransitions, Transitions, TransitionGroup,   // Verlaufsblenden: mitgeliefert + eigene
+    LutsAll, BuiltinLuts, Luts, LutGroup,                         // LUTs: bundled + custom
+    LumasAll, BuiltinTransitions, Transitions, TransitionGroup,   // Gradient wipes: bundled + custom
     PresetsAll, PresetGroup,                                      // Shotcut/Kdenlive presets (own folder only)
     AudioFx,                                                      // audio effects (DaVinci: Audio FX → Fairlight FX)
-    // Luts/Transitions = eigener Effekte-Ordner, …Group = dessen Unterordner
+    // Luts/Transitions = own effects folder, …Group = its subfolder
     // (numbers are saved with the collapsed state: append new categories at the end)
 };
-constexpr int kGroupRole = Qt::UserRole + 1; // …Group: Unterordner relativ zum Ordner
-constexpr const char* kLumaPrefix = "luma:"; // Listeneintrag einer Verlaufsblende: "luma:<Bild>"
+constexpr int kGroupRole = Qt::UserRole + 1; // …Group: subfolder relative to the folder
+constexpr const char* kLumaPrefix = "luma:"; // List entry of a gradient wipe: "luma:<image>"
 
-// Schlüssel einer Kategorie fürs Speichern des Zugeklappt-Zustands
+// Key of a category for saving the collapsed state
 QString collapseKey(const QTreeWidgetItem* it)
 {
     return QString::number(it->data(0, Qt::UserRole).toInt()) + ':' + it->data(0, kGroupRole).toString();
 }
 constexpr const char* kTitleData = "title";
-constexpr const char* kEffectPrefix = "fx:"; // Listeneintrag eines Filters: "fx:<Effekt-ID>"
+constexpr const char* kEffectPrefix = "fx:"; // List entry of a filter: "fx:<effect ID>"
 
 class EffectList : public QListWidget {
 public:
@@ -65,7 +65,7 @@ protected:
         auto* data = new QMimeData;
         if (items.isEmpty()) return data;
         const QString d = items.first()->data(Qt::UserRole).toString();
-        if (d == kTitleData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::TitleItem)); // wie "Text" im Pool
+        if (d == kTitleData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::TitleItem)); // like "Text" in the pool
         else if (d.startsWith(kEffectPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.mid(3).toUtf8());
         else if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix))
             data->setData(EffectsLibrary::EffectMimeType, d.toUtf8());
@@ -78,7 +78,7 @@ protected:
     }
 };
 
-// Kleines Vorschausymbol: A (blau) geht in B (orange) über
+// Small preview icon: A (blue) transitions into B (orange)
 const QColor kA{0x3b, 0x6a, 0xa0};
 const QColor kB{0xc8, 0x8a, 0x3c};
 
@@ -134,8 +134,8 @@ QPixmap audioIcon()
     p.setPen(QPen(QColor(0xe0, 0xf0, 0xe0), 2));
     const QRectF r = QRectF(pm.rect()).adjusted(5, 5, -5, -5);
     QPainterPath out(r.topLeft()), in(r.bottomLeft());
-    out.cubicTo(r.center().x(), r.top(), r.center().x(), r.bottom(), r.right(), r.bottom()); // leiser werden
-    in.cubicTo(r.center().x(), r.bottom(), r.center().x(), r.top(), r.right(), r.top());      // lauter werden
+    out.cubicTo(r.center().x(), r.top(), r.center().x(), r.bottom(), r.right(), r.bottom()); // getting quieter
+    in.cubicTo(r.center().x(), r.bottom(), r.center().x(), r.top(), r.right(), r.top());      // getting louder
     p.drawPath(out);
     p.drawPath(in);
     return pm;
@@ -155,7 +155,7 @@ QPixmap titleIcon()
     return pm;
 }
 
-// Filter-Symbole: Farbkorrektur = Farbverlauf mit Helligkeitskeil, Unschärfe = weicher Kreis
+// Filter icons: color correction = color gradient with brightness wedge, blur = soft circle
 QPixmap effectIcon(const QString& id)
 {
     QPixmap pm(kIcon);
@@ -239,7 +239,7 @@ QPixmap presetIcon(const QString& source, int effects)
     return pm;
 }
 
-// Vorlage für LUT-Symbole: Farbton von links nach rechts, oben hell, unten dunkel, unten ein Graukeil
+// Template for LUT icons: hue from left to right, bright at the top, dark at the bottom, a gray wedge at the bottom
 const QImage& lutSample()
 {
     static const QImage img = [] {
@@ -305,7 +305,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     m_search->setPlaceholderText(T("Suchen"));
     m_search->setClearButtonEnabled(true);
     m_search->setMaximumWidth(180);
-    // Effekte importieren: öffnet den Effekte-Ordner (wie „Im Dateimanager zeigen“), Dateien dort erscheinen von selbst
+    // Import effects: opens the effects folder (like "Show in file manager"), files there appear on their own
     auto* import = new QToolButton;
     import->setText(T("Effekte importieren…"));
     import->setToolTip(T("Öffnet den Effekte-Ordner. LUTs (.cube, .3dl, .csp, Hald-CLUT) in den Ordner „LUTs“, "
@@ -323,7 +323,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     header->addWidget(import);
     header->addWidget(m_search);
 
-    // Kategorien wie in DaVinci: Toolbox mit Unterpunkten; alles zuklappbar
+    // Categories like in DaVinci: Toolbox with sub-items; everything collapsible
     m_categories = new QTreeWidget;
     m_categories->setHeaderHidden(true);
     m_categories->setIndentation(12);
@@ -336,12 +336,12 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     add(toolbox, T("Videoübergänge"), VideoTransitions);
     add(toolbox, T("Audioübergänge"), AudioTransitions);
     add(toolbox, T("Titel-Vorlagen"), Titles);
-    // Open FX → Filter (wie DaVinci: dort liegen die ResolveFX-Filter)
+    // Open FX → Filters (like DaVinci: the ResolveFX filters live there)
     auto* openFx = add(m_categories, QStringLiteral("Open FX"), OpenFx);
     add(openFx, T("Filter"), Filters);
     add(openFx, QStringLiteral("frei0r"), Frei0rFilters)->setToolTip(0, T("frei0r-Plugins (eigene im Effekte-Ordner unter „frei0r“)"));
     add(m_categories, QStringLiteral("Audio FX"), AudioFx)->setToolTip(0, T("Effekte für Audioclips"));
-    // Nach Art sortiert, darunter jeweils mitgeliefert und eigener Effekte-Ordner (Unterordner = Unterkategorien)
+    // Sorted by kind, below that bundled and custom effects folder each (subfolder = subcategories)
     auto* luts = add(m_categories, QStringLiteral("LUTs"), LutsAll);
     add(luts, T("Mitgeliefert"), BuiltinLuts);
     m_lutRoot = add(luts, T("Eigene"), Luts);
@@ -376,7 +376,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
             emit effectRequested(d.mid(3));
             return;
         }
-        if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix)) { // LUT/Preset -> wie ein Filter
+        if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix)) { // LUT/preset -> like a filter
             emit effectRequested(d);
             return;
         }
@@ -397,7 +397,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     lay->addLayout(header);
     lay->addWidget(split, 1);
 
-    // Effekte-Ordner beobachten (Ordner + Unterordner); Änderungen gesammelt nach kurzer Pause einlesen
+    // Watch the effects folder (folder + subfolders); read changes collected after a short pause
     m_watcher = new QFileSystemWatcher(this);
     m_rescan = new QTimer(this);
     m_rescan->setSingleShot(true);
@@ -446,20 +446,20 @@ void EffectsLibrary::rescanFolders()
     m_userTransitions = EffectFolders::userTransitions();
     m_userPresets = EffectFolders::userPresets();
 
-    // Unterkategorien = Unterordner (verschachtelt wie im Ordner); Auswahl bleibt, wenn es sie noch gibt
+    // Subcategories = subfolders (nested like in the folder); selection stays if it still exists
     const QSignalBlocker block(m_categories);
     const QTreeWidgetItem* cur = m_categories->currentItem();
     const QString curKey = cur ? collapseKey(cur) : QString();
-    const int curCat = cur ? cur->data(0, Qt::UserRole).toInt() : -1; // cur wird gleich evtl. gelöscht
+    const int curCat = cur ? cur->data(0, Qt::UserRole).toInt() : -1; // cur may get deleted soon
     for (auto [root, group, entries] : {std::tuple{m_lutRoot, int(LutGroup), &m_userLuts},
                                         std::tuple{m_transRoot, int(TransitionGroup), &m_userTransitions},
                                         std::tuple{m_presetRoot, int(PresetGroup), &m_userPresets}}) {
         const bool wasInside = curCat == group;
         qDeleteAll(root->takeChildren());
         fillGroups(root, group, *entries);
-        if (wasInside) m_categories->setCurrentItem(root); // unten genauer, falls es den Ordner noch gibt
+        if (wasInside) m_categories->setCurrentItem(root); // more precisely below, if the folder still exists
     }
-    // Zugeklappt-Zustand wiederherstellen (Standard: alles offen)
+    // Restore collapsed state (default: everything open)
     const QStringList collapsed = QSettings().value("effects/collapsed").toStringList();
     for (QTreeWidgetItemIterator it(m_categories); *it; ++it) {
         if ((*it)->childCount()) (*it)->setExpanded(!collapsed.contains(collapseKey(*it)));
@@ -478,7 +478,7 @@ QPixmap EffectsLibrary::fileIcon(const QString& path, bool lut, QString* error)
         IconEntry e;
         e.stamp = stamp;
         QImage img;
-        if (lut) { // ohne Zwischenspeicher lesen: große Ordner sollen nicht dauerhaft im Speicher bleiben
+        if (lut) { // read without cache: large folders should not stay in memory permanently
             if (const auto l = ColorGrade::parseLut(path, &e.error)) {
                 img = lutSample().copy();
                 ColorGrade::apply(img.bits(), img.width(), img.height(), ColorGrade::Params(), l.get());
@@ -518,11 +518,11 @@ void EffectsLibrary::rebuild()
     struct Group { QString header; QVector<Entry> entries; };
     QVector<Group> groups;
 
-    // Dateien aus dem Effekte-Ordner bzw. mitgeliefert (Symbole kosten das Einlesen -> nur für die gewählte Kategorie)
+    // Files from the effects folder resp. bundled (icons cost reading -> only for the selected category)
     auto files = [&](const QVector<EffectFolders::LutEntry>& list, bool lut, bool builtin) {
         QVector<Entry> out;
         for (const auto& l : list) {
-            // Oberkategorie zeigt alles, eine Unterkategorie ihren Ordner samt Unterordnern
+            // Top-level category shows everything, a subcategory its folder including subfolders
             if (!builtin && !group.isEmpty() && l.group != group && !l.group.startsWith(group + '/')) continue;
             QString error;
             const QPixmap icon = fileIcon(l.path, lut, &error);
@@ -536,7 +536,7 @@ void EffectsLibrary::rebuild()
     auto videoTransitions = [&] {
         QVector<Entry> out;
         for (const auto& i : kTransitionTypes)
-            if (i.type != TransitionType::Luma) // Verlaufsblenden kommen einzeln (je Bild)
+            if (i.type != TransitionType::Luma) // Gradient wipes come individually (per image)
                 out << Entry{T(i.name), QString("video:%1").arg(i.id), transitionIcon(i.type)};
         return out + files(EffectFolders::builtinTransitions(), false, true);
     };
@@ -565,7 +565,7 @@ void EffectsLibrary::rebuild()
     const QVector<Entry> titles{Entry{QStringLiteral("Text"), kTitleData, titleIcon()}};
 
     switch (shown) {
-    case All: // Toolbox: alle Gruppen mit Kopfzeile wie in DaVinci
+    case All: // Toolbox: all groups with header like in DaVinci
         groups = {{T("Videoübergänge"), videoTransitions()}, {T("Audioübergänge"), audioTransitions()},
                   {T("Titel-Vorlagen"), titles}};
         break;
@@ -610,7 +610,7 @@ void EffectsLibrary::rebuild()
         }
         for (const Entry* e : hits) {
             auto* it = new QListWidgetItem(QIcon(e->icon), e->name);
-            it->setData(Qt::UserRole, e->ok ? e->data : QString()); // kaputte Datei: sichtbar, aber nicht anwendbar
+            it->setData(Qt::UserRole, e->ok ? e->data : QString()); // broken file: visible, but not applicable
             it->setFlags(e->ok ? Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled : Qt::ItemIsEnabled);
             if (!e->ok) it->setForeground(Theme::warning);
             if (!e->tip.isEmpty()) it->setToolTip(e->tip);

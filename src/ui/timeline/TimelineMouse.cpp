@@ -55,8 +55,8 @@ void TimelineView::updateRubber(const QPoint& pos)
     if (pos == m_rubberPos) return;
     m_rubberPos = pos;
     const QRect r = QRect(m_pressPos, pos).normalized();
-    if (r.width() < kDragStartPx && r.height() < kDragStartPx) return; // Klick ohne Ziehen: nur abwählen
-    // berührte Frames [f0, f1) und Zeilen (Rahmen muss die Clips nur berühren, wie DaVinci)
+    if (r.width() < kDragStartPx && r.height() < kDragStartPx) return; // click without dragging: just deselect
+    // touched frames [f0, f1) and rows (the frame only has to touch the clips, like DaVinci)
     const double f0 = xToFrame(std::max(r.left(), kHeaderW));
     const double f1 = xToFrame(r.right() + 1);
     const Timeline& tl = m_editor->project()->timeline();
@@ -82,7 +82,7 @@ void TimelineView::updateRubber(const QPoint& pos)
 
 void TimelineView::updateAutoScroll(const QPoint& pos)
 {
-    // Nur Ziehvorgänge, bei denen Mitscrollen Sinn ergibt (nicht Lautstärke, Fades, Kurven …)
+    // Only drags where scrolling along makes sense (not volume, fades, curves …)
     const bool horizontal = m_drag == Drag::Rubber || m_drag == Drag::Move || m_drag == Drag::Trim ||
                             m_drag == Drag::TrimEdit || m_drag == Drag::CueMove || m_drag == Drag::CueTrim;
     const bool vertical = horizontal || m_drag == Drag::TrackMove;
@@ -103,7 +103,7 @@ void TimelineView::autoScrollStep()
         return;
     }
     const QPoint pos = m_dragPos;
-    // Tempo wächst, je weiter die Maus über den Rand hinaus ist (px pro Schritt)
+    // Speed grows the further the mouse is beyond the edge (px per step)
     auto speed = [](int depth) { return std::clamp(2 + depth / 2, 2, 60); };
     const bool horizontal = m_drag != Drag::TrackMove;
     int dx = 0, dy = 0;
@@ -114,14 +114,14 @@ void TimelineView::autoScrollStep()
     if (pos.y() < kRulerH + kAutoScrollZone) dy = -speed(kRulerH + kAutoScrollZone - pos.y());
     else if (pos.y() >= height() - kAutoScrollZone) dy = speed(pos.y() - (height() - kAutoScrollZone));
 
-    // Ganze Pixel scrollen und den Druckpunkt um dieselben Pixel verschieben: alle Ziehrechnungen
-    // (Abstand zum Druckpunkt) bleiben dadurch in Timeline-Koordinaten richtig
+    // Scroll whole pixels and shift the press point by the same pixels: all drag computations
+    // (distance to the press point) thus stay correct in timeline coordinates
     const QPointF oldAnchor(frameToX(0), m_view.scrollY);
     if (dx) setLeftFrame(m_view.leftFrame + dx / m_view.pxPerFrame);
     if (dy) setScrollY(m_view.scrollY + dy);
     const int sx = int(std::lround(oldAnchor.x() - frameToX(0)));
     const int sy = m_view.scrollY - int(oldAnchor.y());
-    if (!sx && !sy) return; // schon am Anfang / Ende
+    if (!sx && !sy) return; // already at the start / end
     m_pressPos -= QPoint(sx, sy);
     dragMove(pos, m_dragMods);
 }
@@ -133,7 +133,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
     m_pressPos = pos;
     if (subtitlePress(e, pos)) return;
 
-    if (pos.x() < kHeaderW) { // Spurköpfe
+    if (pos.x() < kHeaderW) { // track headers
         if (const auto row = rowAt(pos.y()); row && headerButton(*row).contains(pos)) {
             if (row->ref.kind == TrackKind::Video) m_editor->toggleTrackHidden(row->ref);
             else m_editor->toggleTrackMute(row->ref);
@@ -142,7 +142,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         } else if (row && shortNameRect(*row).contains(pos)) {
             if (row->ref.kind == TrackKind::Video) m_editor->setTargetTracks(row->ref.index, m_editor->targetAudioTrack());
             else m_editor->setTargetTracks(m_editor->targetVideoTrack(), row->ref.index);
-        } else if (row) { // übriger Spurkopf: Ziehen sortiert die Spur um
+        } else if (row) { // remaining track header: dragging reorders the track
             m_drag = Drag::TrackMaybeMove;
             m_trackDragRef = row->ref;
             m_trackDropTo = -1;
@@ -168,12 +168,12 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
 
     Selection* sel = m_editor->selection();
     if (curvePress(e, pos)) return;
-    // Keyframes: Symbol klappt die Spur auf/zu, Rauten auswählen (Strg = dazu) und ziehen
+    // Keyframes: icon opens/closes the lane, diamonds select (Ctrl = add) and drag
     if (const int kid = keyIconAt(pos)) {
         if (m_keyLanes.contains(kid)) m_keyLanes.remove(kid);
         else m_keyLanes.insert(kid);
         if (sel->keyClip() == kid) sel->setKeyframes(0, {});
-        setScrollY(m_view.scrollY); // Höhe hat sich geändert (Scrollbar anpassen, zeichnet neu)
+        setScrollY(m_view.scrollY); // height has changed (adjust scrollbar, redraws)
         return;
     }
     if (const auto k = keyframeAt(pos)) {
@@ -189,7 +189,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         else if (!times.contains(k->t)) times = {k->t};
         sel->setKeyframes(k->clipId, times);
         if (!ctrl && c) {
-            emit seekRequested(c->start + k->t); // Inspector zeigt die Werte an diesem Keyframe
+            emit seekRequested(c->start + k->t); // Inspector shows the values at this keyframe
             m_keyDragClip = k->clipId;
             m_keyDelta = 0;
             m_drag = Drag::Keyframe;
@@ -197,7 +197,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         update();
         return;
     }
-    // Retime-Steuerung: Speed-Punkt ziehen, Klick auf das Tempo öffnet die Auswahl (wie DaVinci ▾)
+    // Retime controls: drag speed point, click on the speed opens the selection (like DaVinci ▾)
     if (m_tool == Tool::Select)
         if (const auto h = retimeHitAt(pos); h && (h->point >= 0 || !edgeAt(pos))) {
             if (!sel->contains(h->clipId)) {
@@ -214,7 +214,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
             }
             return;
         }
-    if (inLane(pos)) { // leere Stelle in der Keyframe-Spur: Rauten abwählen
+    if (inLane(pos)) { // empty spot in the keyframe lane: deselect diamonds
         sel->setKeyframes(0, {});
         update();
         return;
@@ -240,7 +240,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), f->clipId);
         m_fade = *f;
         m_fadeStart = f->edge == TimelineOps::Edge::Start ? c->fadeIn : c->fadeOut;
-        m_editor->project()->closeMerge(); // ganzes Ziehen = ein Undo-Schritt
+        m_editor->project()->closeMerge(); // whole drag = one undo step
         m_drag = Drag::Fade;
         return;
     }
@@ -249,7 +249,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         if (t->edge) {
             m_transSpan = t->span;
             m_transEdge = t->edge;
-            m_editor->project()->closeMerge(); // ganzes Ziehen = ein Undo-Schritt
+            m_editor->project()->closeMerge(); // whole drag = one undo step
             m_drag = Drag::TransitionLength;
         }
         return;
@@ -270,7 +270,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         if (!sel->ids().contains(vid)) sel->set(QSet<int>(group.begin(), group.end()));
         m_volClipId = vid;
         const Clip* vc = TimelineOps::findClip(m_editor->project()->timeline(), vid);
-        m_volStartDb = m_volDb = volumeAt(*vc, (pos.x() - frameToX(vc->start)) / m_view.pxPerFrame); // mit Keyframes
+        m_volStartDb = m_volDb = volumeAt(*vc, (pos.x() - frameToX(vc->start)) / m_view.pxPerFrame); // with keyframes
         m_volFine = e->modifiers() & Qt::ShiftModifier;
         m_drag = Drag::Volume;
         update();
@@ -280,7 +280,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         startRubber(e->modifiers());
         return;
     }
-    // Alt-Klick: nur dieser Teil eines verknüpften Clips (wie DaVinci), z. B. den Ton allein verschieben
+    // Alt-click: only this part of a linked clip (like DaVinci), e.g. move the audio alone
     const bool alone = e->modifiers() & Qt::AltModifier;
     const QVector<int> group = alone ? m_editor->editable({id}) : m_editor->withLinked({id});
     QSet<int> ids = sel->ids();
@@ -328,8 +328,8 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         return;
     }
     case Drag::Scrub: {
-        // Nur bei neuem Frame springen: jeder Sprung verwirft während der Wiedergabe den Puffer und dekodiert neu –
-        // beim Klicken (Maus zittert ein Pixel) ruckelte das
+        // Only jump on a new frame: every jump discards the buffer during playback and decodes anew –
+        // when clicking (mouse jitters by a pixel) that stuttered
         const int frame = std::max(0, int(std::lround(xToFrame(pos.x()))));
         if (frame != m_scrubFrame) {
             m_scrubFrame = frame;
@@ -360,8 +360,8 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         int delta = int(std::lround(exact));
         QVector<int> edges;
         int minStart = INT_MAX;
-        // Feinposition (Sub-Frame wie DaVinci Fairlight): nur reine Ton-Clips mit gleicher Feinposition und erst,
-        // wenn ein Frame breit genug gezoomt ist; sonst ganze Frames
+        // Sub-frame position (like DaVinci Fairlight): only pure audio clips with the same sub-frame position and only
+        // when zoomed in far enough for a frame to be wide enough; otherwise whole frames
         bool fine = m_view.pxPerFrame >= kFinePxPerFrame;
         int sub = -1;
         for (int id : m_dragIds) {
@@ -380,7 +380,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         m_dragDelta = delta;
         m_dragFine = delta * 100;
         if (fine && sub >= 0) {
-            // eingerastet: genau auf den Frame (Feinposition weg), sonst frei in 1/100 Frame
+            // snapped: exactly onto the frame (sub-frame position gone), otherwise free in 1/100 frame
             m_dragFine = snapped ? delta * 100 - sub : int(std::lround(exact * 100));
             m_dragFine = std::max(m_dragFine, -(minStart * 100 + sub));
         }
@@ -389,7 +389,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         if (const auto row = rowAt(pos.y()); row && row->ref.kind == m_anchorRef.kind)
             m_dragTrackDelta = TimelineOps::clampTrackDelta(tl, m_dragIds, m_anchorRef.kind,
                                                             row->ref.index - m_anchorRef.index);
-        for (TrackRef ref : TimelineOps::tracksOf(tl, m_dragIds)) // nie auf eine gesperrte Spur
+        for (TrackRef ref : TimelineOps::tracksOf(tl, m_dragIds)) // never onto a locked track
             if (m_editor->isTrackLocked({ref.kind, ref.index + m_dragTrackDelta})) m_dragTrackDelta = 0;
         update();
         return;
@@ -414,7 +414,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         m_cueTrackDelta = 0;
         if (const auto row = subRowAt(pos.y())) {
             m_cueTrackDelta = m_editor->clampSubtitleTrackDelta(m_cueIds, row->index - m_cueAnchor);
-            for (int id : m_cueIds) { // nie auf eine gesperrte Spur
+            for (int id : m_cueIds) { // never onto a locked track
                 int t = -1;
                 if (Subtitles::find(tl, id, &t) && m_editor->isSubtitleTrackLocked(t + m_cueTrackDelta)) m_cueTrackDelta = 0;
             }
@@ -456,7 +456,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         const Clip* c = TimelineOps::findClip(tl, m_trimHit.clipId);
         if (!c) return;
         int delta = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
-        // Snapping auf die Kanten, die sich sichtbar bewegen (Slip bewegt keine Kante)
+        // Snapping to the edges that visibly move (slip moves no edge)
         QSet<int> exclude(m_trimEdit.ids.begin(), m_trimEdit.ids.end());
         for (int id : m_trimEdit.rightIds) exclude.insert(id);
         QVector<int> edges;
@@ -465,7 +465,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         case TrimKind::Ripple:
             if (!start) {
                 edges << c->end() + delta;
-                for (int id : m_trimEdit.ids) // was nachrückt (alle nicht gesperrten Spuren), ist kein fester Punkt
+                for (int id : m_trimEdit.ids) // what moves up (all unlocked tracks) is not a fixed point
                     if (const Clip* t = TimelineOps::findClip(tl, id))
                         for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
                             for (const Track& tr : tl.tracks(k))
@@ -497,12 +497,12 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         const QSet<int>& times = m_editor->selection()->keyTimes();
         if (!c || times.isEmpty()) return;
         int delta = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
-        { // Einrasten wie DaVinci: Playhead, Clipgrenzen, Keyframes der anderen Zeiten
+        { // Snapping like DaVinci: playhead, clip boundaries, keyframes of the other times
             QVector<int> moved;
             for (int t : times) moved << t + delta;
             delta += keySnapDelta(*c, moved, times);
         }
-        // alle ausgewählten Rauten bleiben im Clip
+        // all selected diamonds stay in the clip
         const int lo = *std::min_element(times.begin(), times.end());
         const int hi = *std::max_element(times.begin(), times.end());
         delta = std::clamp(delta, -lo, c->length() - 1 - hi);
@@ -522,7 +522,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
     case Drag::TransitionLength: {
         const int dx = int(std::lround((pos.x() - m_pressPos.x()) / m_view.pxPerFrame));
         const int grow = m_transEdge > 0 ? dx : -dx;
-        // Zentrierte Überblendung wächst an beiden Seiten, Ein-/Ausblenden nur an der freien Kante
+        // Centered crossfade grows on both sides, fade-in/out only on the free edge
         const int len = m_transSpan.length() + (m_transSpan.isDissolve() ? 2 * grow : grow);
         m_editor->setTransitionLength(m_transSpan.leftId, m_transSpan.rightId, std::max(1, len),
                                       QStringLiteral("transition-length"));
@@ -533,7 +533,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_volClipId, &ref);
         const auto row = c ? rowFor(ref) : std::nullopt;
         if (!row) return;
-        // Shift umgeschaltet -> von der aktuellen Position aus weiter, damit nichts springt
+        // Shift toggled -> continue from the current position so that nothing jumps
         const bool fine = mods & Qt::ShiftModifier;
         if (fine != m_volFine) {
             m_volFine = fine;
@@ -547,7 +547,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         } else {
             const QRect body = clipBodyRect(clipRect(*row, *c));
             db = posToVolume(volumeToPos(m_volStartDb) - dy / double(std::max(1, body.height() - 1)));
-            if (std::abs(db) < 0.5) db = 0; // 0 dB rastet ein
+            if (std::abs(db) < 0.5) db = 0; // 0 dB snaps in
         }
         db = std::clamp(std::round(db * 10) / 10, kMinVolumeDb, kMaxVolumeDb);
         if (db != m_volDb) {
@@ -598,7 +598,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
         m_editor->moveClipsFine(m_dragIds, m_dragFine, m_anchorRef.kind, m_dragTrackDelta);
     if (m_drag == Drag::CueMove || m_drag == Drag::CueTrim) {
         const Drag d = m_drag;
-        m_drag = Drag::None; // vor der Änderung, damit die Vorschau nicht doppelt gilt
+        m_drag = Drag::None; // before the change, so the preview does not apply twice
         if (d == Drag::CueMove) m_editor->moveSubtitles(m_cueIds, m_cueDelta, m_cueTrackDelta);
         else m_editor->trimSubtitle(m_cueTrim.clipId, m_cueTrim.edge, m_cueDelta);
     }
@@ -613,7 +613,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     const bool trimEdit = m_drag == Drag::TrimEdit;
     const bool ramp = m_drag == Drag::SpeedPoint;
     if (m_drag == Drag::CurvePoint || m_drag == Drag::CurveHandle) curveRelease();
-    m_drag = Drag::None; // vor trimClip, damit die Vorschau nicht doppelt angewendet wird
+    m_drag = Drag::None; // before trimClip, so the preview is not applied twice
     if (ramp && m_rampDelta != 0) m_editor->moveSpeedPoint(m_rampDrag.clipId, m_rampDrag.point, m_rampDelta);
     m_rampDelta = 0;
     if (trimmed && m_trimDelta != 0) m_editor->trimClip(m_trim.clipId, m_trim.edge, m_trimDelta);
@@ -621,17 +621,17 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     m_trimPreview.reset();
     m_trimEditDelta = 0;
     if (trimmed || trimEdit) endTrimFrames(); // viewer back to the playhead frame
-    if (keys && m_keyDelta != 0) { // ein Undo-Schritt pro Ziehen
+    if (keys && m_keyDelta != 0) { // one undo step per drag
         const QVector<int> times = m_editor->selection()->keyTimes().values().toVector();
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), m_keyDragClip);
         const int seek = c && !times.isEmpty() ? c->start + *std::min_element(times.begin(), times.end()) + m_keyDelta : -1;
-        m_editor->moveKeyframes(m_keyDragClip, times, m_keyDelta); // ersetzt die Timeline -> c ungültig
-        if (seek >= 0) emit seekRequested(seek); // Playhead auf die verschobene Raute
+        m_editor->moveKeyframes(m_keyDragClip, times, m_keyDelta); // replaces the timeline -> c invalid
+        if (seek >= 0) emit seekRequested(seek); // playhead onto the moved diamond
     }
     m_keyDelta = 0;
     const Clip* volClip = volume ? TimelineOps::findClip(m_editor->project()->timeline(), m_volClipId) : nullptr;
     if (volClip && Keys::animated(*volClip, AnimParam::Volume)) {
-        // Keyframes: ganze Kurve um den gezogenen Betrag verschieben
+        // Keyframes: shift the whole curve by the dragged amount
         const double delta = m_volDb - m_volStartDb;
         if (delta != 0)
             m_editor->modifyClips({m_volClipId}, T("Lautstärke"), [delta](Clip& c) {
@@ -657,7 +657,7 @@ void TimelineView::mouseDoubleClickEvent(QMouseEvent* e)
         return;
     }
     if (e->button() == Qt::LeftButton && pos.x() >= kHeaderW && curveDoubleClick(pos)) return;
-    // Doppelklick auf den Spurnamen: umbenennen (wie DaVinci)
+    // Double-click on the track name: rename (like DaVinci)
     if (e->button() == Qt::LeftButton && pos.x() < kHeaderW && pos.y() >= kRulerH) {
         if (const auto row = rowAt(pos.y()); row && nameRect(*row).adjusted(-32, 0, 0, 0).contains(pos)) {
             startRename(row->ref);
@@ -685,7 +685,7 @@ void TimelineView::leaveEvent(QEvent*)
 
 void TimelineView::wheelEvent(QWheelEvent* e)
 {
-    // Qt tauscht bei gedrückter Alt-Taste die Achsen -> beide Richtungen auswerten
+    // Qt swaps the axes while Alt is held -> evaluate both directions
     const QPoint ad = e->angleDelta();
     const double steps = (ad.y() != 0 ? ad.y() : ad.x()) / 120.0;
     if (steps == 0) return;
@@ -706,7 +706,7 @@ void TimelineView::wheelEvent(QWheelEvent* e)
         break;
     }
     case WheelAction::TrackHeight: {
-        // nur die Spurart unter der Maus (Video- oder Audiospuren), wie in DaVinci
+        // only the track kind under the mouse (video or audio tracks), like in DaVinci
         const auto row = rowAt(int(e->position().y()));
         const bool audio = row && row->ref.kind == TrackKind::Audio;
         int& h = audio ? m_view.audioTrackHeight : m_view.videoTrackHeight;

@@ -1,5 +1,5 @@
-// Test Speed Ramps (DaVinci Retime Controls): RetimeMap (hart, weich, rückwärts, Umkehrung), Editor-Bearbeitungen mit
-// Ripple/Partnern/Keyframes/Undo, Projektdatei, Ton-Stufen und gerenderte Frames (welches Quellbild wird gezeigt).
+// Test speed ramps (DaVinci Retime Controls): RetimeMap (hard, soft, reversed, inversion), editor edits with
+// ripple/partners/keyframes/undo, project file, audio steps and rendered frames (which source picture is shown).
 #include "check.h"
 
 #include "core/Editor.h"
@@ -55,7 +55,7 @@ void testMap()
         CHECK_EQ(m.length(), 200);
         CHECK_EQ(c.retimedLength(100), 200);
     }
-    // harter Speed-Punkt: bis Quelle 50 normal, danach doppelt so schnell
+    // hard speed point: normal up to source 50, twice as fast afterwards
     c.speed = 1.0;
     c.ramp = {SpeedPoint{50, 2.0, 0}};
     {
@@ -68,7 +68,7 @@ void testMap()
         CHECK_EQ(m.pointMaterial().size(), 1);
         CHECK(close(m.pointMaterial()[0], 50));
     }
-    // weicher Übergang über 10 Frames: außerhalb gleich, innen stetig und umkehrbar
+    // soft transition over 10 frames: same outside, continuous and invertible inside
     c.ramp[0].smooth = 10;
     {
         const RetimeMap m(c, 100);
@@ -81,7 +81,7 @@ void testMap()
             CHECK(close(m.materialAt(m.sourceAt(x)), x, 1e-6));
         CHECK_EQ(m.length(), 75);
     }
-    // zu langer Übergang wird auf die Nachbarabschnitte begrenzt (kein Überlappen)
+    // too long a transition is limited to the neighboring sections (no overlap)
     c.ramp = {SpeedPoint{20, 2.0, 100}, SpeedPoint{40, 1.0, 100}};
     {
         const RetimeMap m(c, 100);
@@ -93,7 +93,7 @@ void testMap()
         }
         CHECK(close(m.sourceAt(90), 100 - (m.length() - 90) * 1.0, 1.0));
     }
-    // rückwärts: Datei-Frame gespiegelt
+    // reversed: file frame mirrored
     c.ramp = {SpeedPoint{50, 2.0, 0}};
     c.reverse = true;
     {
@@ -102,14 +102,14 @@ void testMap()
         CHECK(close(m.fileFrameAt(60), 99 - 70));
         CHECK(close(m.materialAtFile(29), 60));
     }
-    // Aufräumen: sortiert, außerhalb/zu dicht verworfen, Tempo begrenzt
+    // Tidy up: sorted, outside/too close discarded, speed limited
     QVector<SpeedPoint> r{{80, 3, 0}, {10, 0, -5}, {10.5, 2, 0}, {150, 2, 0}, {-3, 2, 0}};
     Retime::normalize(r, 100);
     CHECK_EQ(r.size(), 2);
     CHECK(close(r[0].source, 10) && close(r[0].speed, 1.0) && r[0].smooth == 0);
     CHECK(close(r[1].source, 80) && close(r[1].speed, 3));
 
-    // Ton-Stufen: lückenlos, harte Abschnitte je eine Stufe
+    // Audio steps: gapless, hard sections one step each
     Clip a;
     a.ramp = {SpeedPoint{50, 2.0, 0}};
     auto steps = RampProducer::audioSteps(a, 100);
@@ -142,10 +142,10 @@ void testEditor()
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99] b[100-200|0-99]  V2:  A1: a[0-100|0-99] b[100-200|0-99]  A2:"));
     const int v = clipOn(p.timeline(), TrackKind::Video, 0, 0)->id;
     CHECK(ed.canRetime(v));
-    // Keyframe an Quellstelle 80
+    // Keyframe at source position 80
     ed.modifyClips({v}, "key", [](Clip& c) { c.keys[AnimParam::Opacity] = {Keyframe{80, 0.5}}; });
 
-    // Punkt hinzufügen: Länge bleibt, Partner (Ton) bekommt denselben Punkt
+    // Add point: length stays, partner (audio) gets the same point
     const int steps = undo->count();
     ed.addSpeedPoint(v, 50);
     CHECK_EQ(undo->count(), steps + 1);
@@ -154,38 +154,38 @@ void testEditor()
     CHECK(cv->ramp.size() == 1 && close(cv->ramp[0].source, 50) && close(cv->ramp[0].speed, 1.0));
     CHECK(ca->ramp == cv->ramp);
     CHECK_EQ(cv->length(), 100);
-    ed.addSpeedPoint(v, 50); // gleicher Punkt: nichts
+    ed.addSpeedPoint(v, 50); // same point: nothing
     CHECK_EQ(undo->count(), steps + 1);
 
-    // Tempo des zweiten Abschnitts verdoppeln: Clip 75 lang, b rückt nach, Keyframe bleibt an seiner Quellstelle
+    // Double the speed of the second section: clip 75 long, b moves up, keyframe stays at its source position
     ed.setSegmentSpeed(v, 1, 2.0);
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-75|0-74] b[75-175|0-99]  V2:  A1: a[0-75|0-74] b[75-175|0-99]  A2:"));
     cv = clipOn(p.timeline(), TrackKind::Video, 0, 0);
     CHECK_EQ(cv->keys.value(AnimParam::Opacity).value(0).frame, 65); // 50 + 30 / 2
 
-    // Punkt 10 Frames nach rechts: davor läuft Tempo 1 weiter -> Quelle 60, Länge 60 + 40 / 2 = 80
+    // Point 10 frames to the right: before it speed 1 continues -> source 60, length 60 + 40 / 2 = 80
     ed.moveSpeedPoint(v, 0, 10);
     cv = clipOn(p.timeline(), TrackKind::Video, 0, 0);
     CHECK(close(cv->ramp[0].source, 60));
     CHECK_EQ(cv->length(), 80);
     CHECK_EQ(clipOn(p.timeline(), TrackKind::Video, 0, 1)->start, 80);
 
-    // Weicher Übergang ändert die Länge nicht (mittig um den Punkt)
+    // Soft transition does not change the length (centered around the point)
     ed.setSpeedPointSmooth(v, 0, 12);
     cv = clipOn(p.timeline(), TrackKind::Video, 0, 0);
     CHECK_EQ(cv->ramp[0].smooth, 12);
     CHECK_EQ(cv->length(), 80);
 
-    // Trimmen: Material reicht bis zum Dateiende (Länge der Rampe)
+    // Trimming: material reaches up to the file end (length of the ramp)
     CHECK_EQ(cv->retimedLength(100), 80);
 
-    // Entfernen: wieder normal lang
+    // Remove: normal length again
     ed.removeSpeedPoint(v, 0);
     cv = clipOn(p.timeline(), TrackKind::Video, 0, 0);
     CHECK(cv->ramp.isEmpty());
     CHECK_EQ(cv->length(), 100);
 
-    // Undo-Kette zurück bis vor den Punkt
+    // Undo chain back to before the point
     while (undo->index() > steps) undo->undo();
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99] b[100-200|0-99]  V2:  A1: a[0-100|0-99] b[100-200|0-99]  A2:"));
     CHECK(clipOn(p.timeline(), TrackKind::Video, 0, 0)->ramp.isEmpty());
@@ -193,13 +193,13 @@ void testEditor()
     undo->redo();
     CHECK_EQ(clipOn(p.timeline(), TrackKind::Video, 0, 0)->length(), 75);
 
-    // Konstantes Tempo (Change Clip Speed) ersetzt die Rampe; Länge aus der Quell-Spanne
+    // Constant speed (Change Clip Speed) replaces the ramp; length from the source span
     ed.setClipSpeed({v}, Editor::Retime{1.0, false, false, true}, true);
     cv = clipOn(p.timeline(), TrackKind::Video, 0, 0);
     CHECK(cv->ramp.isEmpty());
     CHECK_EQ(cv->length(), 100);
 
-    // Standbild/Titel: keine Rampe
+    // Freeze frame/title: no ramp
     ed.setClipSpeed({v}, Editor::Retime{1.0, false, true, true}, true);
     CHECK(!ed.canRetime(v));
 }
@@ -225,7 +225,7 @@ void testProjectFile()
     CHECK(c && c->ramp.size() == 1 && c->ramp[0].smooth == 8 && close(c->ramp[0].speed, 0.5));
 }
 
-// ---- Rendern: Helligkeit kodiert die Quell-Frame-Nummer ----
+// ---- Rendering: brightness encodes the source frame number ----
 
 int frameAt(const Timeline& tl, const ProjectFormat& fmt, int pos)
 {
@@ -239,11 +239,11 @@ int frameAt(const Timeline& tl, const ProjectFormat& fmt, int pos)
     const uint8_t* data = f->get_image(ifmt, w, h);
     if (!data) return -1;
     const int g = data[(size_t(h / 2) * w + w / 2) * 4 + 1];
-    return int(std::lround(g / 2.0)); // Quelle: Grau = 2 · Frame
+    return int(std::lround(g / 2.0)); // source: gray = 2 * frame
 }
 
-// Rückwärts mit 100 %: Ton bleibt synchron zum Bild (Piep in Datei-Frame 100 von 200 -> Material-Frame ~98,5),
-// auch mit „Tonhöhe halten“ (Rubberband würde nur seine Verzögerung von ~3 Frames beitragen)
+// Reversed at 100 %: audio stays in sync with the picture (beep in file frame 100 of 200 -> material frame ~98.5),
+// also with "keep pitch" (Rubberband would only contribute its delay of ~3 frames)
 void testReverseAudioSync(const QString& dir)
 {
     const QString file = Check::makeMedia(dir + "/beep.mov",
@@ -282,7 +282,7 @@ void testReverseAudioSync(const QString& dir)
         c.ramp.clear();
         const int got = loudest(c);
         CHECK(std::abs(got - 98.5) <= 1.5);
-        // Speed Ramp rückwärts: Piep im Abschnitt mit 100 %
+        // Speed ramp reversed: beep in the section at 100 %
         c.ramp = {SpeedPoint{150, 2.0, 0}};
         c.out = RetimeMap(c, 200).length() - 1;
         const int gotRamp = loudest(c);
@@ -291,8 +291,8 @@ void testReverseAudioSync(const QString& dir)
     }
 }
 
-// „Tonhöhe halten“ (Rubberband) verzögert den Ton um einige Frames; TimelineBuilder/RampProducer holen ihn um die
-// gemessene Verzögerung (PitchLatency) früher. Klick in der Timeline: mit Tonhöhe höchstens ~½ Frame neben ohne.
+// "Keep pitch" (Rubberband) delays the audio by a few frames; TimelineBuilder/RampProducer fetch it earlier by the
+// measured delay (PitchLatency). Click in the timeline: with pitch at most ~1/2 frame off from without.
 void testPitchAudioSync(const QString& dir)
 {
     const QString file = Check::makeMedia(dir + "/click.wav",
@@ -300,7 +300,7 @@ void testPitchAudioSync(const QString& dir)
     if (!CHECK(!file.isEmpty())) return;
     const ProjectFormat fmt{64, 64, {25, 1}};
     auto prof = makeProfile(fmt);
-    // erster Klick-Sample in der Timeline-Ausgabe
+    // first click sample in the timeline output
     auto clickAt = [&](const Clip& c) -> long {
         Timeline tl = emptyTimeline();
         tl.audio[0].clips << c;
@@ -324,14 +324,14 @@ void testPitchAudioSync(const QString& dir)
     c.mediaPath = file;
     for (double speed : {0.5, 1.5, 2.0, 3.0}) {
         c.speed = speed;
-        c.out = int(200 / speed) - 1; // Datei länger als der Clip: Platz für den Vorlauf
+        c.out = int(200 / speed) - 1; // file longer than the clip: room for the pre-roll
         c.keepPitch = false;
         const long plain = clickAt(c);
         c.keepPitch = true;
         const long pitched = clickAt(c);
-        CHECK(plain > 0 && std::abs(pitched - plain) <= 1100); // ~½ Frame bei 25 fps
+        CHECK(plain > 0 && std::abs(pitched - plain) <= 1100); // ~1/2 frame at 25 fps
     }
-    // bis zum Dateiende (Vorlauf liest hinter dem Ende) und rückwärts (timewarp rechnet vom Ende aus)
+    // up to the file end (pre-roll reads beyond the end) and reversed (timewarp computes from the end)
     for (bool reverse : {false, true}) {
         c.speed = 2.0;
         c.reverse = reverse;
@@ -343,7 +343,7 @@ void testPitchAudioSync(const QString& dir)
         CHECK(plain > 0 && std::abs(pitched - plain) <= 1100);
     }
     c.reverse = false;
-    // Speed Ramp: Klick im Abschnitt mit 150 % (fest, mit Tonhöhe)
+    // Speed ramp: click in the section at 150 % (fixed, with pitch)
     c.speed = 1.0;
     c.ramp = {SpeedPoint{50, 1.5, 0}};
     c.out = RetimeMap(c, 200).length() - 1;
@@ -356,7 +356,7 @@ void testPitchAudioSync(const QString& dir)
 
 int testRender(const QString& dir)
 {
-    // Frame n hat den Grauwert 2n (volle Range, verlustfrei)
+    // Frame n has the gray value 2n (full range, lossless)
     const QString file = Check::makeMedia(dir + "/ramp.mkv",
                                           {"-f", "lavfi", "-i", "nullsrc=size=64x64:rate=25:duration=4,format=gray,geq=lum='2*N'",
                                            "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
@@ -389,13 +389,13 @@ int testRender(const QString& dir)
     CHECK_EQ(frameAt(p.renderTimeline(), fmt, 10), 10);
     CHECK_EQ(frameAt(p.renderTimeline(), fmt, 30), 40); // 20 + 10 · 2
     CHECK_EQ(frameAt(p.renderTimeline(), fmt, 45), 70);
-    // am Anfang getrimmt: Material zählt weiter ab Quelle
+    // trimmed at the start: material keeps counting from the source
     const int id = clipOn(p.timeline(), TrackKind::Video, 0, 0)->id;
     ed.trimClip(id, TimelineOps::Edge::Start, 25);
     const Clip* c = clipOn(p.timeline(), TrackKind::Video, 0, 0);
     CHECK_EQ(c->in, 25);
     CHECK_EQ(frameAt(p.renderTimeline(), fmt, c->start), 30);
-    // rückwärts mit Rampe
+    // reversed with ramp
     Timeline tl = p.renderTimeline();
     Clip& r = tl.video[0].clips[0];
     r.in = 0;
@@ -405,7 +405,7 @@ int testRender(const QString& dir)
     CHECK_EQ(frameAt(tl, fmt, 0), 99);
     CHECK_EQ(frameAt(tl, fmt, 30), 99 - 40);
 
-    // Standbild teilen/am Anfang trimmen: beide Teile zeigen weiter dasselbe Bild
+    // Split a freeze frame/trim at the start: both parts keep showing the same picture
     {
         Project q;
         q.load([&] {
@@ -419,7 +419,7 @@ int testRender(const QString& dir)
         q.addMedia(media(file, 100));
         qe.addMediaAt({file}, 0);
         const int still = clipOn(q.timeline(), TrackKind::Video, 0, 0)->id;
-        qe.trimClip(still, TimelineOps::Edge::Start, 20); // Clip beginnt bei Quelle 20
+        qe.trimClip(still, TimelineOps::Edge::Start, 20); // clip starts at source 20
         qe.setClipSpeed({still}, Editor::Retime{1.0, false, true, true}, false);
         const Clip* s0 = clipOn(q.timeline(), TrackKind::Video, 0, 0);
         if (CHECK(s0 && s0->freeze)) {
@@ -437,14 +437,14 @@ int testRender(const QString& dir)
         }
     }
 
-    // Ton: Playlist so lang wie das Material
+    // Audio: playlist as long as the material
     Clip a = *clipOn(p.timeline(), TrackKind::Audio, 0, 0);
     auto prof = makeProfile(fmt);
     auto audio = RampProducer::audio(*prof, file, a);
     if (CHECK(audio && audio->is_valid())) {
         CHECK_EQ(audio->get_length(), a.retimedLength(100));
-        // Ton im schnellen Abschnitt nicht stumm (Sinus aus der Datei)
-        // durchgehend abspielen: 100 %-Abschnitt ohne Lücke, im 200 %-Abschnitt nur kurz Einschwingen (Tonhöhe halten)
+        // Audio in the fast section not silent (sine from the file)
+        // play through: 100 % section without gap, in the 200 % section only a short settling (keep pitch)
         audio->seek(0);
         int silent = 0;
         for (int pos = 0; pos < audio->get_length(); ++pos) {
@@ -454,11 +454,11 @@ int testRender(const QString& dir)
             const auto* s = static_cast<const float*>(f->get_audio(afmt, freq, ch, samples));
             float peak = 0;
             for (int i = 0; s && i < samples * ch; ++i) peak = std::max(peak, std::abs(s[i]));
-            if (peak < 0.04f) ++silent; // ffmpeg-Sinus: ~0,09
+            if (peak < 0.04f) ++silent; // ffmpeg sine: ~0.09
         }
         CHECK(silent <= 2);
     }
-    // weicher Übergang: Stufen ohne Tonhöhenkorrektur -> keine Lücken
+    // soft transition: steps without pitch correction -> no gaps
     ed.setSpeedPointSmooth(v, 0, 12);
     a = *clipOn(p.timeline(), TrackKind::Audio, 0, 0);
     audio = RampProducer::audio(*prof, file, a);

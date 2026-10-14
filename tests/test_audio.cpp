@@ -1,5 +1,5 @@
-// Test Audio: Normalisieren (Editor-Logik und Spitzenpegel-Messung), Master-Limiter und Pegelmesser im Render,
-// Limiter-Einstellungen in der Projektdatei. Testmedien werden per ffmpeg erzeugt.
+// Test Audio: normalizing (editor logic and peak level measurement), master limiter and level meter in the render,
+// limiter settings in the project file. Test media are created with ffmpeg.
 #include "check.h"
 
 #include "core/Editor.h"
@@ -35,7 +35,7 @@ Clip mk(int id, const QString& path, int start, int in, int out, int link = 0)
 
 bool near(double a, double b, double tol) { return std::abs(a - b) <= tol; }
 
-// Spitzenpegel (dBFS) des gemischten Tons der Timeline über die Frames [from, to]; meterDb = Wert des Master-Pegelmessers
+// Peak level (dBFS) of the mixed audio of the timeline over frames [from, to]; meterDb = value of the master level meter
 double renderPeak(const Timeline& tl, int from, int to, double* meterDb = nullptr)
 {
     auto prof = makeProfile(ProjectFormat{});
@@ -59,7 +59,7 @@ double renderPeak(const Timeline& tl, int from, int to, double* meterDb = nullpt
     return peak > 1e-10f ? 20 * std::log10(peak) : -200;
 }
 
-// Erstes Sample (ab Frame 0) über 0.2 im gemischten Ton, -1 = keins
+// First sample (from frame 0) above 0.2 in the mixed audio, -1 = none
 long firstClick(const Timeline& tl, int frames)
 {
     auto prof = makeProfile(ProjectFormat{});
@@ -89,7 +89,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("audio");
 
-    // --- Normalisieren: Editor-Logik (gemessene Spitzen werden vorgegeben)
+    // --- Normalizing: editor logic (measured peaks are given)
     {
         Project p;
         Selection sel;
@@ -106,28 +106,28 @@ int main(int argc, char** argv)
         });
         auto vol = [&](int id) { return TimelineOps::findClip(p.timeline(), id)->volumeDb; };
 
-        // Auswahl: Videoclip bringt seinen Ton mit, gesperrte Spur nicht
+        // Selection: video clip brings its audio along, locked track does not
         sel.set({1, 12, 31});
         CHECK_EQ(ed.selectedAudioClips(), (QVector<int>{11, 12}));
 
-        // Unabhängig: jeder Clip auf -9 dBFS
+        // Independent: each clip to -9 dBFS
         const int before = p.undoStack()->index();
         ed.normalizeAudio({{11, -3.0}, {12, -20.0}, {21, -200.0}, {31, -6.0}, {1, -1.0}}, -9.0, false);
         CHECK_EQ(p.undoStack()->index(), before + 1);
         CHECK(near(vol(11), -6.0, 1e-9) && near(vol(12), 11.0, 1e-9));
-        CHECK(vol(21) == 0.0 && vol(31) == 0.0); // Stille / gesperrt bleiben
-        CHECK(TimelineOps::findClip(p.timeline(), 1)->volumeDb == 0.0); // Video wird nicht angefasst
+        CHECK(vol(21) == 0.0 && vol(31) == 0.0); // silent/locked ones stay
+        CHECK(TimelineOps::findClip(p.timeline(), 1)->volumeDb == 0.0); // video is not touched
         p.undoStack()->undo();
         CHECK(vol(11) == 0.0 && vol(12) == 0.0);
 
-        // Relativ: alle um denselben Betrag, der lauteste trifft das Ziel
+        // Relative: all by the same amount, the loudest hits the target
         ed.normalizeAudio({{11, -3.0}, {12, -20.0}}, -9.0, true);
         CHECK(near(vol(11), -6.0, 1e-9) && near(vol(12), -6.0, 1e-9));
-        // Begrenzung auf +12 dB
+        // Limit to +12 dB
         ed.normalizeAudio({{12, -40.0}}, -1.0, false);
         CHECK_EQ(vol(12), kMaxVolumeDb);
 
-        // Lautstärke-Keyframes: Kurve verschoben, höchster Punkt = neuer Wert
+        // Volume keyframes: curve shifted, highest point = new value
         ed.modifyClips({21}, "k", [](Clip& c) {
             Keys::setKey(c, AnimParam::Volume, 0, -30);
             Keys::setKey(c, AnimParam::Volume, 50, -10);
@@ -137,14 +137,14 @@ int main(int argc, char** argv)
         CHECK(near(Keys::valueAt(*k, AnimParam::Volume, 0), -24.0, 1e-9)
               && near(Keys::valueAt(*k, AnimParam::Volume, 50), -4.0, 1e-9));
 
-        // Nichts zu tun: kein Undo-Schritt
+        // Nothing to do: no undo step
         const int n = p.undoStack()->index();
         ed.normalizeAudio({{21, -200.0}, {31, -3.0}}, -9.0, false);
         ed.normalizeAudio({}, -9.0, true);
         CHECK_EQ(p.undoStack()->index(), n);
     }
 
-    // --- Limiter-Einstellungen in der Projektdatei
+    // --- Limiter settings in the project file
     {
         ProjectData d;
         TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 1);
@@ -154,20 +154,20 @@ int main(int argc, char** argv)
         QString err;
         CHECK(ProjectFile::fromJson(ProjectFile::toJson(d, "/x/p.schneidi"), "/x/p.schneidi", &back, &err));
         CHECK(back.timeline.masterLimiter && near(back.timeline.masterLimiterDb, -0.3, 1e-9));
-        // alte Datei: aus, -1 dBFS
+        // old file: off, -1 dBFS
         CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[],"timeline":{"video":[],"audio":[]}})",
                                     "/x/p.schneidi", &back, &err));
         CHECK(!back.timeline.masterLimiter && back.timeline.masterLimiterDb == kDefaultLimiterDb);
     }
 
-    // --- Feinposition (Sub-Frame): Verschieben in 1/100 Frame, Übertrag, Projektdatei
+    // --- Fine position (sub-frame): moving in 1/100 frame, carry-over, project file
     {
         Clip c = mk(1, "/x/m.wav", 10, 0, 49);
         TimelineOps::shiftFine(c, 150);
         CHECK(c.start == 11 && c.subframe == 50);
         TimelineOps::shiftFine(c, -60);
         CHECK(c.start == 10 && c.subframe == 90);
-        TimelineOps::shiftFine(c, -5000); // nicht vor 0
+        TimelineOps::shiftFine(c, -5000); // not before 0
         CHECK(c.start == 0 && c.subframe == 0);
 
         Project p;
@@ -181,7 +181,7 @@ int main(int argc, char** argv)
         ed.moveClipsFine({1}, 230, TrackKind::Audio, 0);
         const Clip* moved = TimelineOps::findClip(p.timeline(), 1);
         CHECK(moved && moved->start == 12 && moved->subframe == 30);
-        ed.moveClipsFine({1}, 100, TrackKind::Audio, 0); // ganze Frames: Feinposition bleibt
+        ed.moveClipsFine({1}, 100, TrackKind::Audio, 0); // whole frames: fine position stays
         moved = TimelineOps::findClip(p.timeline(), 1);
         CHECK(moved && moved->start == 13 && moved->subframe == 30);
         p.undoStack()->undo();
@@ -201,11 +201,11 @@ int main(int argc, char** argv)
               && back.timeline.audio[0].clips[0].subframe == 37);
     }
 
-    // --- Mit echten Medien (ffmpeg)
+    // --- With real media (ffmpeg)
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
-    // 4 s Stereo-Sinus: 0-2 s Amplitude 0.1 (-20 dBFS), 2-4 s 0.5 (-6.02 dBFS)
+    // 4 s stereo sine: 0-2 s amplitude 0.1 (-20 dBFS), 2-4 s 0.5 (-6.02 dBFS)
     const QString tone = Check::makeMedia(tmp.filePath("ton.wav"),
                                           {"-f", "lavfi", "-i",
                                            "aevalsrc=if(lt(t\\,2)\\,0.1\\,0.5)*sin(2*PI*440*t)|if(lt(t\\,2)\\,0.1\\,0.5)*sin(2*PI*440*t):s=48000:d=4",
@@ -218,22 +218,22 @@ int main(int argc, char** argv)
     const double loud = 20 * std::log10(0.5), quiet = -20.0;
     auto peak = AudioAnalysis::clipPeakDb(fmt, mk(1, tone, 0, 0, 99));
     CHECK(peak && near(*peak, loud, 0.1));
-    peak = AudioAnalysis::clipPeakDb(fmt, mk(1, tone, 0, 0, 45)); // nur leiser Teil (In/Out zählt)
+    peak = AudioAnalysis::clipPeakDb(fmt, mk(1, tone, 0, 0, 45)); // only the quiet part (in/out counts)
     CHECK(peak && near(*peak, quiet, 0.1));
-    Clip fast = mk(1, tone, 0, 0, 49); // doppelte Geschwindigkeit: Clip-Frames 0-49 = ganze Datei
+    Clip fast = mk(1, tone, 0, 0, 49); // double speed: clip frames 0-49 = whole file
     fast.speed = 2.0;
     peak = AudioAnalysis::clipPeakDb(fmt, fast);
-    // Tonhöhe halten (Standard) rechnet um und schwingt etwas über (~0,4 dB) – so klingt es auch in der Timeline
+    // Keeping pitch (default) converts and overshoots slightly (~0.4 dB) - that is how it sounds in the timeline too
     if (!CHECK(peak && near(*peak, loud, 0.6))) std::printf("       2x: %.2f\n", peak ? *peak : -999.0);
     Clip frozen = mk(1, tone, 0, 0, 49);
     frozen.freeze = true;
     CHECK(!AudioAnalysis::clipPeakDb(fmt, frozen));
     CHECK(!AudioAnalysis::clipPeakDb(fmt, mk(1, tmp.filePath("fehlt.wav"), 0, 0, 49)));
-    int calls = 0; // Abbrechen
+    int calls = 0; // cancel
     CHECK(!AudioAnalysis::clipPeakDb(fmt, mk(1, tone, 0, 0, 99), [&](double) { return ++calls < 2; }));
 
-    // Render: Clip +12 dB auf den lauten Teil = etwa +6 dBFS -> Pegelmesser zeigt über 0 (nicht bei 0 abgeschnitten),
-    // Limiter hält die Ceiling, im Export (ohne hooks) ebenso
+    // Render: clip +12 dB on the loud part = about +6 dBFS -> level meter shows above 0 (not clipped at 0),
+    // limiter holds the ceiling, in the export (without hooks) as well
     {
         auto prof = makeProfile(fmt);
         Mlt::Transition qt(*prof, "qtblend");
@@ -255,16 +255,16 @@ int main(int argc, char** argv)
             const double limited = renderPeak(tl, 10, 40, &meter);
             if (!CHECK(limited <= -0.9 && limited > -3.0)) std::printf("       Limiter: %.2f dBFS\n", limited);
             CHECK(meter <= -0.9);
-            CHECK(renderPeak(tl, 10, 40) <= -0.9); // Export-Weg
-            // Leiser Ton bleibt unverändert (Limiter hebt nicht an)
+            CHECK(renderPeak(tl, 10, 40) <= -0.9); // export path
+            // Quiet audio stays unchanged (limiter does not raise)
             tl.audio[0].clips[0].volumeDb = -10;
             CHECK(near(renderPeak(tl, 10, 40), loud - 10, 0.3));
         }
     }
 
-    // Feinposition (Sub-Frame): Ton um 1/100-Frames später, auch über Ausschnittgrenzen (Einblenden) hinweg
+    // Fine position (sub-frame): audio later by 1/100 frames, also across section boundaries (fade in)
     {
-        // Klick 4 ms vor 0,2 s (Frame 5): mit 0,5 Frames (20 ms) Verzögerung landet er hinter der Grenze
+        // Click 4 ms before 0.2 s (frame 5): with 0.5 frames (20 ms) delay it lands behind the boundary
         const QString click = Check::makeMedia(tmp.filePath("klick.wav"),
                                                {"-f", "lavfi", "-i",
                                                 "aevalsrc=if(between(t\\,0.196\\,0.1965)\\,0.8\\,0)|if(between(t\\,0.196\\,0.1965)\\,0.8\\,0):s=48000:d=2",
@@ -279,7 +279,7 @@ int main(int argc, char** argv)
             tl.audio[0].clips[0].subframe = 50;
             const long half = firstClick(tl, 30);
             if (!CHECK(half - base == 960)) std::printf("       Sub-Frame 50: %ld (ohne %ld)\n", half, base);
-            tl.audio[0].clips[0].transIn = 5; // Ausschnitt Einblenden [10, 15), Klick fällt dahinter
+            tl.audio[0].clips[0].transIn = 5; // section fade in [10, 15), click falls behind it
             const long faded = firstClick(tl, 30);
             if (!CHECK(faded - base == 960)) std::printf("       mit Einblenden: %ld (ohne %ld)\n", faded, base);
         }

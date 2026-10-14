@@ -1,14 +1,14 @@
 #pragma once
-// Log-Datei für Rückmeldungen (unter Windows gibt es kein Terminal): Qt-Meldungen, MLT-Warnungen und
-// ffmpeg-Fehler landen in <AppData>/logs/schneidi.log. Beim Start rotiert, die letzten 3 Läufe bleiben.
+// Log file for feedback (Windows has no terminal): Qt messages, MLT warnings and
+// ffmpeg errors end up in <AppData>/logs/schneidi.log. Rotated at startup, the last 3 runs are kept.
 
 #include <QString>
 
 namespace Log {
 
-// Nach dem Setzen des Programmnamens aufrufen (Pfad hängt davon ab); leitet weiterhin auf stderr aus
+// Call after setting the program name (the path depends on it); still forwards to stderr
 void install();
-// MLT-Meldungen (ab Warnung) mitschreiben – nach der MLT-Initialisierung aufrufen
+// Also write MLT messages (from warning level) – call after MLT initialization
 void installMlt();
 QString directory();
 

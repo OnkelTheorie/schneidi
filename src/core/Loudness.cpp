@@ -18,8 +18,8 @@ void LoudnessMeter::configure(int channels, int rate)
     m_acc = 0;
     m_accCount = 0;
 
-    // K-Filter-Koeffizienten für beliebige Samplerate (aus den 48-kHz-Werten der Norm abgeleitet,
-    // gleiche Herleitung wie libebur128/ffmpeg)
+    // K-filter coefficients for any sample rate (derived from the standard's 48 kHz values,
+    // same derivation as libebur128/ffmpeg)
     const double pi = 3.14159265358979323846;
     {
         const double f0 = 1681.974450955533, G = 3.999843853973347, Q = 0.7071752369554196;
@@ -43,7 +43,7 @@ void LoudnessMeter::configure(int channels, int rate)
         m_hp.a1 = 2.0 * (K * K - 1.0) / a0;
         m_hp.a2 = (1.0 - K / Q + K * K) / a0;
     }
-    // Kanalgewichte: L/R/C = 1; bei 5.1 (L R C LFE Ls Rs) LFE ignoriert, Surround +1,5 dB
+    // Channel weights: L/R/C = 1; for 5.1 (L R C LFE Ls Rs) LFE ignored, surround +1.5 dB
     for (int c = 0; c < kMaxChannels; ++c) m_weight[c] = c < channels ? 1.0 : 0.0;
     if (channels == 6) {
         m_weight[3] = 0.0;
@@ -87,7 +87,7 @@ double LoudnessMeter::shortTerm() const
 
 double LoudnessMeter::integratedOf(const std::vector<double>& blocks)
 {
-    // Absolutes Gate: -70 LUFS
+    // Absolute gate: -70 LUFS
     const double absGate = std::pow(10.0, (-70.0 + 0.691) / 10.0);
     double sum = 0;
     int n = 0;
@@ -97,7 +97,7 @@ double LoudnessMeter::integratedOf(const std::vector<double>& blocks)
             ++n;
         }
     if (n == 0) return kSilence;
-    // Relatives Gate: 10 LU unter dem Mittel der Blöcke über dem absoluten Gate
+    // Relative gate: 10 LU below the mean of the blocks above the absolute gate
     const double relGate = sum / n * std::pow(10.0, -10.0 / 10.0);
     const double gate = std::max(absGate, relGate);
     sum = 0;
@@ -117,7 +117,7 @@ double LoudnessMeter::integrated() const
 
 double LoudnessMeter::range() const
 {
-    // EBU Tech 3342: Short-term-Werte, absolutes Gate -70 LUFS, relatives -20 LU, dann 95. - 10. Perzentil
+    // EBU Tech 3342: short-term values, absolute gate -70 LUFS, relative -20 LU, then 95th - 10th percentile
     const double absGate = std::pow(10.0, (-70.0 + 0.691) / 10.0);
     std::vector<double> kept;
     double sum = 0;

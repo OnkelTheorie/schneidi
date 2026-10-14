@@ -14,7 +14,7 @@
 #include <cmath>
 
 namespace {
-// Ziellautheit gängiger Plattformen/Normen (LUFS)
+// Target loudness of common platforms/standards (LUFS)
 struct LoudnessPreset {
     const char* name;
     double lufs;
@@ -48,7 +48,7 @@ NormalizeDialog::NormalizeDialog(int clipCount, QWidget* parent) : QDialog(paren
     m_target->setRange(-60, 0);
     m_target->setDecimals(1);
     m_target->setSingleStep(0.5);
-    m_peakTarget = settings.value("audio/normalizeTarget", -9.0).toDouble(); // Standard wie DaVinci
+    m_peakTarget = settings.value("audio/normalizeTarget", -9.0).toDouble(); // Default like DaVinci
     m_loudTarget = settings.value("audio/normalizeLoudness", -14.0).toDouble();
     form->addRow(T("Zielpegel"), m_target);
 
@@ -64,13 +64,13 @@ NormalizeDialog::NormalizeDialog(int clipCount, QWidget* parent) : QDialog(paren
     levelRow->addWidget(m_independent);
     levelRow->addStretch();
     form->addRow(T("Pegel setzen"), levelRow);
-    // Bei nur einem Clip sind beide gleich
+    // With only one clip both are equal
     m_relative->setEnabled(clipCount > 1);
     m_independent->setEnabled(clipCount > 1);
 
     m_mode->setCurrentIndex(settings.value("audio/normalizeMode").toString() == "loudness" ? 1 : 0);
     connect(m_mode, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
-        // Wert des vorigen Modus merken, bevor die Einheit wechselt
+        // remember the value of the previous mode before the unit changes
         (mode() == Mode::Loudness ? m_peakTarget : m_loudTarget) = m_target->value();
         updateMode();
     });
@@ -103,7 +103,7 @@ void NormalizeDialog::updateMode()
     adjustSize();
 }
 
-// Vorgabe passend zum Zielwert anzeigen (sonst „Eigener Wert“)
+// Show the preset matching the target value (otherwise "Eigener Wert")
 void NormalizeDialog::syncPreset()
 {
     if (mode() != Mode::Loudness) return;

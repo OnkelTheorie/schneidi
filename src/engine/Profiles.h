@@ -1,6 +1,6 @@
 #pragma once
-// MLT-Profil aus den Projekteinstellungen (Vorschau, Export, Cache) und Format eines Clips erkennen
-// (für "Projekt an den ersten Clip anpassen" wie DaVinci).
+// Detect the MLT profile from the project settings (preview, export, cache) and the format of a clip
+// (for "adapt project to the first clip" like DaVinci).
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
@@ -15,40 +15,40 @@ class Producer;
 class Profile;
 }
 
-// Ton-Streams einer geöffneten Datei (aus den MLT-Metadaten, in Dateireihenfolge)
+// Audio streams of an opened file (from the MLT metadata, in file order)
 QVector<AudioStreamInfo> audioStreamsOf(Mlt::Producer& p);
-// Spielt den n-ten Ton-Stream (0 = erster) statt des Standard-Streams; fehlt er (Datei ersetzt), bleibt es still.
-// Geht auch bei timewarp-Producern (reichen audio_index an die Datei weiter).
+// Plays the n-th audio stream (0 = first) instead of the default stream; if it is missing (file replaced), it stays silent.
+// Also works with timewarp producers (they pass audio_index on to the file).
 void selectAudioStream(Mlt::Producer& p, int stream);
 
-// Quadratische Pixel, progressiv, BT.709
+// Square pixels, progressive, BT.709
 std::unique_ptr<Mlt::Profile> makeProfile(const ProjectFormat& format);
 
-// Öffnet Mediendateien für Bilder. Umweg um einen MLT-Fehler (7.30, filter_swscale): skaliert MLT eine BT.601-Quelle
-// im 709-Profil, rechnet es die Farben nach 709 um, lässt die Kennzeichnung aber auf 601 -> in jeder anderen als der
-// Originalgröße (Vorschau, 720p/4K-Export, Vorschaubilder) falsche Farben. Der Skalierer nimmt die Zielnorm aus dem
-// Profil des Producers, also bekommen solche Quellen ein sonst gleiches Profil mit ihrer eigenen Farbnorm.
-// Die Profile gehören der Fabrik: sie muss alle mit ihr geöffneten Producer überleben.
+// Opens media files for images. Workaround for an MLT bug (7.30, filter_swscale): when MLT scales a BT.601 source
+// in a 709 profile, it converts the colors to 709 but leaves the tag at 601 -> wrong colors at any size other than the
+// original (preview, 720p/4K export, thumbnails). The scaler takes the target standard from the
+// profile of the producer, so such sources get an otherwise identical profile with their own color standard.
+// The profiles belong to the factory: it must outlive all producers opened with it.
 class ProducerFactory {
 public:
     explicit ProducerFactory(Mlt::Profile& base);
     ~ProducerFactory();
     std::unique_ptr<Mlt::Producer> open(const QString& resource);
-    // Threads je Video-Decoder (MLT "threads"); 0 = MLT-Standard (Vorschau)
+    // Threads per video decoder (MLT "threads"); 0 = MLT default (preview)
     void setThreads(int threads) { m_threads = threads; }
 
 private:
     Mlt::Profile& m_base;
     int m_threads = 0;
-    std::map<int, std::unique_ptr<Mlt::Profile>> m_profiles; // Farbnorm -> Profil
+    std::map<int, std::unique_ptr<Mlt::Profile>> m_profiles; // color standard -> profile
 };
 
 struct ClipFormat {
-    bool ok = false;      // Video (kein Standbild/Ton) mit lesbarem Format
-    int width = 0, height = 0; // wie angezeigt (Drehung aus den Metadaten berücksichtigt)
-    FrameRate rate;       // Framerate laut Datei (bei variabler Framerate die höchste)
-    double averageFps = 0; // mittlere Framerate (0 = unbekannt)
-    bool variable = false; // variable Framerate (Handy)
-    FrameRate suggested;  // nächstliegende Standard-Framerate fürs Projekt
+    bool ok = false;      // video (no still image/audio) with a readable format
+    int width = 0, height = 0; // as displayed (rotation from the metadata taken into account)
+    FrameRate rate;       // frame rate according to the file (the highest with variable frame rate)
+    double averageFps = 0; // average frame rate (0 = unknown)
+    bool variable = false; // variable frame rate (phone)
+    FrameRate suggested;  // nearest standard frame rate for the project
 };
 ClipFormat detectClipFormat(const QString& path);

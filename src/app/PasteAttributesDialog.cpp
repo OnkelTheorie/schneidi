@@ -15,7 +15,7 @@ PasteAttributesDialog::PasteAttributesDialog(int available, const QString& sourc
     : QDialog(parent)
 {
     setWindowTitle(T("Attribute einfügen"));
-    // Vorgabe wie DaVinci: nichts angehakt; danach die letzte Wahl
+    // Default like DaVinci: nothing checked; afterwards the last choice
     const int last = QSettings().value("edit/pasteAttributes", 0).toInt();
     auto* layout = new QVBoxLayout(this);
     layout->addWidget(new QLabel(targetCount == 1 ? T("Von „%1“ auf den ausgewählten Clip").arg(source)
@@ -52,7 +52,7 @@ PasteAttributesDialog::PasteAttributesDialog(int available, const QString& sourc
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     QPushButton* all = buttons->addButton(T("Alle"), QDialogButtonBox::ResetRole);
     connect(all, &QPushButton::clicked, this, [this] {
-        bool any = false; // sind schon alle an, schaltet „Alle“ aus
+        bool any = false; // if all are already on, switches "Alle" off
         for (QCheckBox* cb : m_boxes)
             if (cb->isEnabled() && !cb->isChecked()) any = true;
         for (QCheckBox* cb : m_boxes)
@@ -74,7 +74,7 @@ int PasteAttributesDialog::attributes() const
 
 void PasteAttributesDialog::accept()
 {
-    // Nicht verfügbare Häkchen behalten ihren gemerkten Zustand
+    // Unavailable checkboxes keep their remembered state
     QSettings settings;
     int keep = settings.value("edit/pasteAttributes", 0).toInt();
     for (auto it = m_boxes.begin(); it != m_boxes.end(); ++it)

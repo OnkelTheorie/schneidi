@@ -88,12 +88,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 
     buildLayout();
     buildActions();
-    qApp->installEventFilter(this); // Maus-Seitentasten -> Aktionen (keybindings.json, Abschnitt "mouse")
+    qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 
-    // Modell -> Engine
-    // Gebündelt: beim Ziehen (Fade-Griff, Lautstärkelinie, Inspector …) ändert jede Mausbewegung das Modell;
-    // die Vorschau jedes Mal sofort neu zu bauen blockierte die Timeline (Griff hing hinterher).
-    // Mixer-Änderungen sind billig (live gesetzt) und gehen weiter sofort durch.
+    // model -> engine
+    // Bundled: while dragging (fade handle, volume line, Inspector …) every mouse move changes the model;
+    // rebuilding the preview immediately each time blocked the timeline (handle lagged behind).
+    // Mixer changes are cheap (set live) and still go through immediately.
     m_engineTimer.setSingleShot(true);
     m_engineTimer.setInterval(30);
     connect(&m_engineTimer, &QTimer::timeout, this, [this] {
@@ -106,22 +106,22 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         else if (!m_engineTimer.isActive()) m_engineTimer.start();
     });
     m_engine->updateTimeline(m_project->renderTimeline());
-    // Proxy fertig/gelöscht oder "Proxy-Medien verwenden" umgeschaltet -> Vorschau neu aufbauen
+    // Proxy finished/deleted or "use proxy media" toggled -> rebuild the preview
     ProxyManager* proxies = m_engine->proxies();
     auto proxiesChanged = [this] { m_engine->updateTimeline(m_project->renderTimeline()); };
     connect(proxies, &ProxyManager::proxyChanged, this, [this, proxiesChanged](const QString& path) {
-        // auch Clips in Compound Clips (verschachtelte Sequenzen)
+        // also clips in compound clips (nested sequences)
         const auto& seqs = m_project->sequences();
         if (std::any_of(seqs.begin(), seqs.end(),
                         [&](const Sequence& s) { return TimelineOps::usesMediaOnVideo(s.timeline, path); }))
             proxiesChanged();
     });
     connect(proxies, &ProxyManager::enabledChanged, this, proxiesChanged);
-    // Vorher/Nachher: gecachte Clips enthalten die Korrektur -> Vorschau neu aufbauen, damit sie aus dem Original kommen
+    // Before/After: cached clips contain the correction -> rebuild the preview so they come from the original
     connect(m_engine, &Engine::colorBypassChanged, this, [this] {
         if (m_engine->renderCache()->mode() != RenderCache::Mode::Off) m_engine->updateTimeline(m_project->renderTimeline());
     });
-    // Render-Cache: Datei fertig/gelöscht oder Modus geändert -> Vorschau neu aufbauen, Balken über der Timeline
+    // Render cache: file finished/deleted or mode changed -> rebuild the preview, bar above the timeline
     RenderCache* renderCache = m_engine->renderCache();
     connect(renderCache, &RenderCache::cacheChanged, this, [this, proxiesChanged] {
         proxiesChanged();
@@ -136,7 +136,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(renderCache, &RenderCache::failed, this,
             [this](const QString& msg) { QMessageBox::warning(this, T("Render-Cache"), msg); });
 
-    // Engine -> Playhead (nur im Timeline-Modus; im Quellmodus bleibt der Playhead stehen)
+    // Engine -> playhead (only in timeline mode; in source mode the playhead stays put)
     TimelineView* tv = m_timeline->view();
     connect(m_engine, &Engine::positionChanged, this, [this, tv](int f) {
         if (m_engine->mode() == Engine::Mode::Timeline) tv->setPlayhead(f);
@@ -145,7 +145,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(f);
         else m_engine->seek(f);
     });
-    // Keyframes: Inspector zeigt Werte am Playhead, Pfeile ◀ ▶ springen wie ein Klick ins Lineal
+    // Keyframes: Inspector shows values at the playhead, arrows ◀ ▶ jump like a click into the ruler
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
         if (m_engine->mode() == Engine::Mode::Timeline) m_inspector->setPlayhead(f);
     });
@@ -166,7 +166,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_engine, &Engine::frameReady, m_scopes, &ScopesPanel::setFrame);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(m_mediaPool, &MediaPool::sequenceOpenRequested, m_timeline, &TimelinePanel::openSequence);
-    // Andere Timeline geöffnet: Auswahl weg, Playhead und Zoom/Scroll wie zuletzt in dieser Timeline (wie DaVinci)
+    // Another timeline opened: selection gone, playhead and zoom/scroll as last in this timeline (like DaVinci)
     m_shownSequence = m_project->currentSequence();
     connect(m_project, &Project::currentSequenceChanged, this, [this, tv] {
         const int id = m_project->currentSequence();
@@ -174,7 +174,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         m_sequencePos[m_shownSequence] = tv->playhead();
         m_sequenceView[m_shownSequence] = tv->view();
         m_shownSequence = id;
-        // Zoom/Scroll dieser Timeline wiederherstellen; noch nie gezeigt: Zoom behalten, vorn und oben anfangen
+        // Restore zoom/scroll of this timeline; never shown: keep zoom, start at the front and top
         const ViewState v = m_sequenceView.value(id, [&] {
             ViewState d = tv->view();
             d.leftFrame = 0;
@@ -198,7 +198,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         m_inspectorToggle->setChecked(true);
         m_inspector->editSubtitle(id);
     });
-    // Rechtsklick auf Clips: die passenden Aktionen (Tastenkürzel wie im Menü)
+    // Right-click on clips: the matching actions (shortcuts as in the menu)
     connect(tv, &TimelineView::clipMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(this);
         const bool audio = !m_editor->selectedAudioClips().isEmpty();
@@ -231,12 +231,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             if ((QString(id) == "compound_open" || QString(id) == "compound_decompose") && !compound) continue;
             if (QString(id) == "save_effect_preset" && !presetClip()) continue;
             if (QString(id) == "render_cache_clip") {
-                if (cacheState < 0) continue; // nur Videoclips (keine Titel)
+                if (cacheState < 0) continue; // video clips only (no titles)
                 a->setChecked(cacheState == 1);
             }
             menu.addAction(a);
         }
-        // Clipfarbe/Flags wie DaVinci: gelten für den Media-Pool-Clip (Titel haben keinen)
+        // Clip color/flags like DaVinci: apply to the Media Pool clip (titles have none)
         QStringList paths;
         for (int cid : m_editor->selection()->ids())
             if (const Clip* c = TimelineOps::findClip(m_project->timeline(), cid); c && !c->isTitle()
@@ -249,18 +249,18 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         }
         menu.exec(pos);
     });
-    // Quellbereich aus dem Viewer in die Timeline gezogen: dort überschreiben (wie DaVinci)
+    // Source range dragged from the Viewer into the timeline: overwrite there (like DaVinci)
     connect(tv, &TimelineView::rangeDropRequested, this, [this](const QString& path, int in, int out, int frame, int track) {
         if (m_project->frameRateLocked()) {
             m_editor->placeSourceRange(path, in, out, frame, track);
             return;
         }
-        QTimer::singleShot(0, this, [this, path, in, out, frame, track] { // Rückfrage erst nach dem Drop (s. onDrop)
+        QTimer::singleShot(0, this, [this, path, in, out, frame, track] { // confirmation only after the drop (see onDrop)
             offerClipFormat({path}, true);
             m_editor->placeSourceRange(path, in, out, frame, track);
         });
     });
-    // Viewer: Scrubber (Länge, In/Out) und Titel je nach Quelle/Timeline
+    // Viewer: scrubber (length, In/Out) and title depending on source/timeline
     connect(m_engine, &Engine::modeChanged, this, &MainWindow::updateViewer);
     connect(m_project, &Project::timelineChanged, this, &MainWindow::updateViewer);
     connect(m_project, &Project::mediaMarksChanged, this, &MainWindow::updateViewer);
@@ -271,7 +271,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     updateViewer();
     connect(m_storage, &MediaStorage::importRequested, m_mediaPool, &MediaPool::importFiles);
     connect(m_storage, &MediaStorage::folderImportRequested, m_mediaPool, &MediaPool::importFolder);
-    // Effects Library: Doppelklick = wie Strg+T bzw. "Titel einfügen", nur mit der gewählten Art
+    // Effects Library: double-click = like Ctrl+T resp. "Insert title", only with the chosen kind
     connect(m_effects, &EffectsLibrary::transitionRequested, this, [this, tv](TrackKind kind, const TransitionStyle& style) {
         m_editor->addTransitions(tv->playhead(), style, kind);
     });
@@ -283,12 +283,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     tv->setProbe([this](const QString& path) { return probeCached(path); });
     m_mediaCache = new MediaCache(this);
     tv->setMediaCache(m_mediaCache);
-    // Projekteinstellungen -> Engine (Profil neu), Cache, Inspector; kommt vor timelineChanged
+    // Project settings -> engine (profile anew), cache, Inspector; comes before timelineChanged
     connect(m_project, &Project::formatChanged, this, &MainWindow::onFormatChanged);
 
     connect(m_project, &Project::modifiedChanged, this, &MainWindow::updateTitle);
     updateTitle();
-    // Automatische Sicherung jede Minute (nur bei Änderungen), getrennt von der Projektdatei
+    // Automatic backup every minute (only on changes), separate from the project file
     m_autosaveTimer = new QTimer(this);
     connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
     m_autosaveTimer->start(60 * 1000);
@@ -306,7 +306,7 @@ void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, boo
 {
     m_mediaPool->importFiles(paths);
     if (!placeOnTimeline) return;
-    // Testhilfe (--demo): Dateien hintereinander auf V1/A1 legen; Projektformat ohne Nachfrage vom ersten Clip
+    // Test helper (--demo): put files one after another on V1/A1; project format from the first clip without asking
     if (adoptFormat) offerClipFormat(paths, false);
     m_editor->addMediaAt(paths, TimelineOps::endFrame(m_project->timeline()));
 }
@@ -324,21 +324,21 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
         m_editor->addTitle(frame, track);
         return;
     }
-    if (paths.size() == 1 && MediaPool::sequenceOfItem(paths.first())) { // Timeline/Compound Clip verschachteln
+    if (paths.size() == 1 && MediaPool::sequenceOfItem(paths.first())) { // Nest timeline/compound clip
         m_editor->addSequenceAt(MediaPool::sequenceOfItem(paths.first()), frame, track);
         return;
     }
-    // Untertiteldateien werden Untertitelspuren (Zeiten aus der Datei, wie DaVinci)
+    // Subtitle files become subtitle tracks (times from the file, like DaVinci)
     QStringList media, subtitles;
     for (const QString& p : paths)
         (QFileInfo(p).suffix().compare("srt", Qt::CaseInsensitive) == 0 ? subtitles : media) << p;
     if (!subtitles.isEmpty()) {
-        QTimer::singleShot(0, this, [this, subtitles] { importSubtitleFiles(subtitles); }); // Meldungen nicht im Drop
+        QTimer::singleShot(0, this, [this, subtitles] { importSubtitleFiles(subtitles); }); // messages not inside the drop
         if (media.isEmpty()) return;
         onDrop(media, frame, track);
         return;
     }
-    // Direkt aus dem Dateimanager: erst in den Media Pool, dann auf die Timeline (wie DaVinci)
+    // Directly from the file manager: first into the Media Pool, then onto the timeline (like DaVinci)
     QStringList unknown;
     for (const QString& p : paths)
         if (!m_project->mediaInfo(p)) unknown << p;
@@ -347,8 +347,8 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
         m_editor->addMediaAt(paths, frame, track);
         return;
     }
-    // Leere Timeline: evtl. Rückfrage zum Projektformat – erst nach dem Drop (keine modale Abfrage mitten
-    // im Drag & Drop, die Quelle, z. B. der Dateimanager, wartet sonst)
+    // Empty timeline: possibly ask about the project format – only after the drop (no modal query in the middle
+    // of drag & drop, the source, e.g. the file manager, would otherwise wait)
     QTimer::singleShot(0, this, [this, paths, frame, track] {
         offerClipFormat(paths, true);
         m_editor->addMediaAt(paths, frame, track);
@@ -357,8 +357,8 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
 
 void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
 {
-    if (m_project->frameRateLocked()) return; // nur in leerer Timeline
-    // Der erste Clip mit Bild entscheidet (Standbilder und Ton haben kein eigenes Format)
+    if (m_project->frameRateLocked()) return; // only in an empty timeline
+    // The first clip with video decides (still images and audio have no format of their own)
     for (const QString& path : paths) {
         const MediaInfo* info = m_project->mediaInfo(path);
         if (!info || !info->hasVideo || info->isImage) continue;
@@ -371,7 +371,7 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
         want.rate = cf.suggested;
         if (want == cur) return;
         if (ask) {
-            // Wie DaVinci "Change project frame rate?", hier samt Auflösung
+            // Like DaVinci "Change project frame rate?", here including resolution
             QString clipRate = cf.rate.label();
             if (cf.variable)
                 clipRate = T("variabel, etwa %1").arg(QString::number(cf.averageFps, 'f', 2).replace('.', I18n::decimalPoint()));
@@ -429,7 +429,7 @@ bool MainWindow::sourceActive() const
 QString MainWindow::editSource() const
 {
     if (m_project->mediaInfo(m_engine->sourcePath())) return m_engine->sourcePath();
-    const QStringList selected = m_mediaPool->selectedMedia(); // noch nichts in der Quellansicht
+    const QStringList selected = m_mediaPool->selectedMedia(); // nothing in the source view yet
     return selected.isEmpty() ? QString() : selected.first();
 }
 
@@ -437,15 +437,15 @@ void MainWindow::sourceEdit(Editor::SourceEditMode mode)
 {
     const QString path = editSource();
     if (path.isEmpty()) return;
-    offerClipFormat({path}, true); // erster Clip in leerer Timeline: Projektformat anpassen?
+    offerClipFormat({path}, true); // first clip in an empty timeline: adapt project format?
     TimelineView* tv = m_timeline->view();
     const int srcPos = sourceActive() ? m_engine->position() : m_sourcePos.value(path, 0);
     const int end = m_editor->sourceEdit(mode, path, srcPos, tv->playhead());
     if (end < 0) {
-        QApplication::beep(); // kein Clip unter dem Playhead bzw. zu wenig Material
+        QApplication::beep(); // no clip under the playhead resp. too little material
         return;
     }
-    // Playhead ans Ende des neuen Clips (wie DaVinci); die Quellansicht bleibt offen
+    // Playhead to the end of the new clip (like DaVinci); the source view stays open
     if (m_engine->mode() == Engine::Mode::Timeline) {
         m_engine->pause();
         m_engine->seek(end);
@@ -488,7 +488,7 @@ void MainWindow::grabStill()
         QMessageBox::warning(this, T("Standbild exportieren"), T("Das Bild konnte nicht erzeugt werden."));
         return;
     }
-    // Vorschlag: Quellclip bzw. Projektname + Timecode (Doppelpunkte gehen nicht in Dateinamen)
+    // Suggestion: source clip resp. project name + timecode (colons are not allowed in file names)
     const QString base = m_engine->mode() == Engine::Mode::Source
         ? QFileInfo(m_engine->sourcePath()).completeBaseName()
         : (m_projectPath.isEmpty() ? T("Unbenannt") : QFileInfo(m_projectPath).completeBaseName());
@@ -518,7 +518,7 @@ void MainWindow::projectSettingsDialog()
 
 void MainWindow::clipSpeedDialog()
 {
-    // Vorgabe vom ersten ausgewählten Medienclip (Titel haben keine Geschwindigkeit)
+    // Default from the first selected media clip (titles have no speed)
     const Clip* first = nullptr;
     for (int id : m_editor->selection()->ids())
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && !c->isTitle()
@@ -535,20 +535,20 @@ void MainWindow::normalizeAudioDialog()
 {
     const QVector<int> ids = m_editor->selectedAudioClips();
     if (ids.isEmpty()) {
-        QApplication::beep(); // keine Audioclips ausgewählt
+        QApplication::beep(); // no audio clips selected
         return;
     }
     NormalizeDialog dlg(int(ids.size()), this);
     if (dlg.exec() != QDialog::Accepted) return;
-    // Spitzenpegel bzw. Lautheit messen (dekodiert den Ton der Clips; Originale, nie Proxies)
+    // Measure peak level resp. loudness (decodes the audio of the clips; originals, never proxies)
     const bool loudness = dlg.mode() == NormalizeDialog::Mode::Loudness;
     QProgressDialog progress(loudness ? T("Lautheit wird gemessen…") : T("Audiopegel werden gemessen…"), T("Abbrechen"),
                              0, 1000, this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(300);
     QHash<int, double> levels;
-    std::vector<double> blocks; // Lautheit: 400-ms-Blöcke aller Clips -> gemeinsame Lautheit für "Relativ"
-    const Timeline tl = m_project->timeline(); // Kopie: Zeiger bleiben gültig
+    std::vector<double> blocks; // loudness: 400 ms blocks of all clips -> common loudness for "Relativ"
+    const Timeline tl = m_project->timeline(); // copy: pointers stay valid
     for (int i = 0; i < ids.size(); ++i) {
         const Clip* c = TimelineOps::findClip(tl, ids[i]);
         if (!c) continue;
@@ -578,13 +578,13 @@ void MainWindow::onFormatChanged()
 {
     const ProjectFormat& f = m_project->format();
     const FrameRate oldRate = m_engine->format().rate;
-    m_engine->setFormat(f); // Timeline baut das folgende timelineChanged() neu auf
+    m_engine->setFormat(f); // timeline rebuilds in the following timelineChanged()
     m_mediaCache->setFormat(f);
     m_inspector->setFrameSize(f.size());
     m_probeCache.clear();
     if (f.rate == oldRate) return;
-    // Längen im Media Pool zählen in Projekt-Frames -> neu einlesen (nur in leerer Timeline möglich,
-    // Undo/Redo eingeschlossen). Offline-Medien umrechnen.
+    // Lengths in the Media Pool count in project frames -> re-read (only possible in an empty timeline,
+    // undo/redo included). Convert offline media.
     QVector<MediaInfo> media = m_project->media();
     for (MediaInfo& m : media) {
         const MediaInfo fresh = QFileInfo::exists(m.path) ? m_engine->probe(m.path) : MediaInfo{};
@@ -603,7 +603,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
     const QEvent::Type t = event->type();
     if (t != QEvent::MouseButtonPress && t != QEvent::MouseButtonRelease && t != QEvent::MouseButtonDblClick)
         return QMainWindow::eventFilter(obj, event);
-    // Nur im Hauptfenster, nicht in Dialogen (dort wird z. B. die Belegung gewählt)
+    // Only in the main window, not in dialogs (there e.g. the binding is being chosen)
     auto* w = qobject_cast<QWidget*>(obj);
     if (!w || w->window() != this || QApplication::activeModalWidget())
         return QMainWindow::eventFilter(obj, event);
@@ -612,12 +612,12 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
     if (id.isEmpty()) return QMainWindow::eventFilter(obj, event);
     if (t == QEvent::MouseButtonPress)
         if (QAction* a = InputBindings::instance().action(id); a && a->isEnabled()) a->trigger();
-    return true; // Loslassen/Doppelklick der belegten Taste ebenfalls schlucken
+    return true; // also swallow release/double-click of the bound key
 }
 
 void MainWindow::shuttle(int direction)
 {
-    // J/L mehrfach drücken = schneller, wie in DaVinci
+    // Pressing J/L repeatedly = faster, like in DaVinci
     const double s = m_engine->speed();
     if (direction > 0) m_engine->setSpeed(s <= 0 ? 1.0 : std::min(s * 2, 16.0));
     else m_engine->setSpeed(s >= 0 ? -1.0 : std::max(s * 2, -16.0));
@@ -733,7 +733,7 @@ void MainWindow::transcribeDialog()
 
 void MainWindow::exportSubtitlesDialog()
 {
-    // Sichtbare Untertitelspur (wie DaVinci „Export Subtitle“), sonst die erste mit Einträgen
+    // Visible subtitle track (like DaVinci "Export Subtitle"), otherwise the first one with entries
     const Timeline& tl = m_project->timeline();
     int index = -1;
     for (int i = 0; i < tl.subtitles.size(); ++i)

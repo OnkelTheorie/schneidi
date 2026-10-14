@@ -2,21 +2,21 @@
 #include <QLineEdit>
 #include <functional>
 
-// Zahlenfeld wie in DaVinci: klicken = Wert eintippen (Enter übernimmt, Esc bricht ab),
-// gedrückt halten und nach links/rechts ziehen = Wert ändern (Shift = fein).
+// Number field like in DaVinci: click = type a value (Enter commits, Esc cancels),
+// hold and drag left/right = change the value (Shift = fine).
 class ScrubField : public QLineEdit {
 public:
     ScrubField(double min, double max, double step, int decimals, QWidget* parent = nullptr);
 
     double value() const { return m_value; }
-    void setValue(double v); // ohne Callback
+    void setValue(double v); // without callback
     void setRange(double min, double max);
     void setSuffix(const QString& s) { m_suffix = s; showValue(); }
-    // Anzeige für den kleinsten Wert (z. B. "-∞")
+    // Display for the smallest value (e.g. "-∞")
     void setMinimumText(const QString& t) { m_minText = t; showValue(); }
 
-    std::function<void(double)> onChange; // bei jeder Änderung (auch während des Ziehens)
-    std::function<void()> onFinish;       // Ziehen losgelassen / Eingabe übernommen
+    std::function<void(double)> onChange; // on every change (also while dragging)
+    std::function<void()> onFinish;       // drag released / input committed
 
 protected:
     void mousePressEvent(QMouseEvent*) override;

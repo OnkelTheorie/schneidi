@@ -23,9 +23,9 @@
 TimelineOps::SourceLength Editor::sourceLength() const
 {
     return [p = m_project](const Clip& c) {
-        if (c.isCompound()) return p->sequenceLength(c.sequenceId); // Inhalt der Sequenz
+        if (c.isCompound()) return p->sequenceLength(c.sequenceId); // content of the sequence
         const MediaInfo* m = p->mediaInfo(c.mediaPath);
-        return m && !m->isImage ? c.retimedLength(m->length) : 0; // Standbilder beliebig lang ziehbar
+        return m && !m->isImage ? c.retimedLength(m->length) : 0; // stills can be stretched to any length
     };
 }
 
@@ -54,12 +54,12 @@ TimelineOps::TrimEdit Editor::trimEdit(TimelineOps::TrimKind kind, int clipId, T
         e.ids = withLinked({clipId});
         return e;
     }
-    // Roll: auf jeder Spur der Partner den Clip, der am Schnitt endet, und den, der dort beginnt
+    // Roll: on each partner track the clip that ends at the cut and the one that starts there
     const int cut = edge == Edge::Start ? c->start : c->end();
     TrackRef ref;
     findClip(tl, clipId, &ref);
     QVector<int> seeds = withLinked({clipId});
-    for (const Clip& o : tl.track(ref).clips) // Nachbar auf der anderen Seite des Schnitts
+    for (const Clip& o : tl.track(ref).clips) // neighbor on the other side of the cut
         if (o.id != clipId && (edge == Edge::Start ? o.end() == cut : o.start == cut)) seeds += withLinked({o.id});
     QVector<TrackRef> done;
     for (int id : seeds) {
@@ -112,7 +112,7 @@ void Editor::selectNearestEditPoint(int frame)
     int bestDist = INT_MAX;
     for (TrackRef ref : {TrackRef{TrackKind::Video, m_targetVideo}, TrackRef{TrackKind::Audio, m_targetAudio}}) {
         if (ref.index < 0 || ref.index >= tl.tracks(ref.kind).size() || isTrackLocked(ref)) continue;
-        const auto& clips = tl.track(ref).clips; // nach Start sortiert
+        const auto& clips = tl.track(ref).clips; // sorted by start
         for (int i = 0; i < clips.size(); ++i) {
             const Clip& c = clips[i];
             const bool joined = i > 0 && clips[i - 1].end() == c.start;
@@ -132,7 +132,7 @@ void Editor::selectNearestEditPoint(int frame)
 void Editor::cycleEditPointSide()
 {
     EditPoint e = m_selection->editPoint();
-    if (!e.leftId || !e.rightId) return; // Kante an einer Lücke: nur eine Seite
+    if (!e.leftId || !e.rightId) return; // edge at a gap: only one side
     e.side = e.side == 0 ? -1 : e.side < 0 ? 1 : 0;
     m_selection->setEditPoint(e);
 }
@@ -143,7 +143,7 @@ bool Editor::nudgeEditPoint(int frames, bool ripple)
     const EditPoint e = m_selection->editPoint();
     if (e.isNull()) return false;
     const Timeline& tl = m_project->timeline();
-    if (!findClip(tl, e.leftId) && !findClip(tl, e.rightId)) { // Clip gelöscht o. ä.
+    if (!findClip(tl, e.leftId) && !findClip(tl, e.rightId)) { // clip deleted or similar
         m_selection->clear();
         return false;
     }

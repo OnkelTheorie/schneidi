@@ -1,9 +1,9 @@
 #pragma once
-// True-Peak-Messung nach ITU-R BS.1770-4 Annex 2 (EBU Tech 3341, dBTP):
-// 4-fach Überabtastung mit dem 48-Tap-Polyphasen-FIR aus der Empfehlung (4 Phasen à 12 Taps), Spitzenwert des
-// Betrags der interpolierten Werte. Die Original-Samples zählen mit (True Peak >= Sample Peak).
-// Der Filterverlauf bleibt über Aufrufe hinweg erhalten (Häppchen = ein durchgehender Strom).
-// Reines C++ ohne MLT/Qt -> gleich unter Linux und Windows, testbar. Nicht thread-sicher (Aufrufer sperrt).
+// True-peak measurement per ITU-R BS.1770-4 Annex 2 (EBU Tech 3341, dBTP):
+// 4x oversampling with the 48-tap polyphase FIR from the recommendation (4 phases of 12 taps), peak of the
+// magnitude of the interpolated values. The original samples count too (true peak >= sample peak).
+// The filter history is kept across calls (chunks = one continuous stream).
+// Pure C++ without MLT/Qt -> same on Linux and Windows, testable. Not thread-safe (caller locks).
 
 #include <algorithm>
 #include <array>
@@ -15,16 +15,16 @@ public:
     static constexpr int kMaxChannels = 8;
     static constexpr int kPhases = 4, kTaps = 12;
 
-    // Polyphasen-Koeffizienten aus BS.1770-4 Annex 2 (Phase p, Tap k: h[4k + p])
+    // Polyphase coefficients from BS.1770-4 Annex 2 (phase p, tap k: h[4k + p])
     static const double kCoef[kPhases][kTaps];
 
-    // Spitzenwerte und Filterverlauf zurücksetzen
+    // Reset peaks and filter history
     void reset();
-    // Nur die Spitzenwerte zurücksetzen (Verlauf bleibt -> Messung je Häppchen ohne Sprung an den Grenzen)
+    // Reset only the peaks (history stays -> measurement per chunk without a jump at the boundaries)
     void resetPeaks() { m_peak.fill(0.0); }
 
-    // Samples anhängen; sample(c, i) liefert Kanal c, Sample i (±1 = 0 dBFS).
-    // Wechselt Samplerate oder Kanalzahl, beginnt die Filterung neu (Spitzenwerte bleiben).
+    // Append samples; sample(c, i) returns channel c, sample i (+-1 = 0 dBFS).
+    // If sample rate or channel count changes, filtering starts anew (peaks stay).
     template <typename SampleFn>
     void add(int frames, int channels, int rate, SampleFn sample)
     {
@@ -37,7 +37,7 @@ public:
             m_pos = 0;
         }
         for (int i = 0; i < frames; ++i) {
-            m_pos = (m_pos + kTaps - 1) % kTaps; // neuestes Sample an m_pos, ältere dahinter
+            m_pos = (m_pos + kTaps - 1) % kTaps; // newest sample at m_pos, older ones behind it
             for (int c = 0; c < m_channels; ++c) {
                 auto& h = m_hist[c];
                 const double x = double(sample(c, i));

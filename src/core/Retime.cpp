@@ -28,7 +28,7 @@ RetimeMap::RetimeMap(const Clip& c, int fileLength) : m_fileLength(fileLength), 
         m_pieces << Piece{0, kInf, 0, base, base};
         return;
     }
-    // Harte Abschnitte: Quell-Grenzen S, Tempo v, Material-Grenzen M
+    // Hard sections: source boundaries S, speed v, material boundaries M
     QVector<double> S{0}, v{base};
     for (const SpeedPoint& p : c.ramp) {
         S << p.source;
@@ -37,18 +37,18 @@ RetimeMap::RetimeMap(const Clip& c, int fileLength) : m_fileLength(fileLength), 
     QVector<double> M{0};
     for (int i = 1; i < S.size(); ++i) M << M.last() + (S[i] - S[i - 1]) / v[i - 1];
     m_points = M.mid(1);
-    // Übergang je Punkt j (zwischen Abschnitt j und j+1) höchstens so lang wie die halben Nachbarabschnitte je Seite
+    // Transition per point j (between section j and j+1) at most as long as half the neighboring sections per side
     const int n = c.ramp.size();
     QVector<double> W(n, 0.0);
     for (int j = 0; j < n; ++j) {
         const double left = M[j + 1] - M[j];
         const double right = j + 2 < M.size() ? M[j + 2] - M[j + 1] : kInf;
-        const double leftRoom = j == 0 ? left * 2 : left; // Abschnitt 0 hat links keinen weiteren Übergang
+        const double leftRoom = j == 0 ? left * 2 : left; // section 0 has no further transition on the left
         W[j] = std::clamp(double(c.ramp[j].smooth), 0.0, std::min(leftRoom, right));
     }
     double m = 0, s = 0;
     for (int i = 0; i < v.size(); ++i) {
-        // konstanter Teil bis zum Beginn des nächsten Übergangs
+        // constant part up to the start of the next transition
         const bool last = i + 1 >= v.size();
         const double constEnd = last ? kInf : M[i + 1] - W[i] / 2;
         if (constEnd > m) {
@@ -89,10 +89,10 @@ double RetimeMap::materialAt(double s) const
         if (std::isfinite(p.m1) && s >= p.end()) continue;
         const double d = s - p.s0;
         if (p.v0 == p.v1 || !std::isfinite(p.m1)) return p.m0 + d / p.v0;
-        // quadratisch: a·x² + v0·x − d = 0, a = (v1 − v0) / (2w); Tempo > 0 -> die Wurzel mit + ist die richtige
+        // quadratic: a*x^2 + v0*x - d = 0, a = (v1 - v0) / (2w); speed > 0 -> the root with + is the right one
         const double a = (p.v1 - p.v0) / (2.0 * (p.m1 - p.m0));
         const double disc = std::max(0.0, p.v0 * p.v0 + 4.0 * a * d);
-        const double x = 2.0 * d / (p.v0 + std::sqrt(disc)); // numerisch stabil (auch bei a ≈ 0)
+        const double x = 2.0 * d / (p.v0 + std::sqrt(disc)); // numerically stable (also for a ~ 0)
         return p.m0 + x;
     }
     return 0;

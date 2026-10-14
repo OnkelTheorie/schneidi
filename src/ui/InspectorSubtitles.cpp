@@ -42,12 +42,12 @@
 
 using namespace InspectorDetail;
 
-// ---------- Untertitel ----------
+// ---------- Subtitles ----------
 
 const SubtitleCue* Inspector::selectedCue(int* track) const
 {
     const Selection* sel = m_editor->selection();
-    if (sel->isEmpty() || !m_editor->clipIdsOf(sel->ids()).isEmpty()) return nullptr; // Clips haben Vorrang
+    if (sel->isEmpty() || !m_editor->clipIdsOf(sel->ids()).isEmpty()) return nullptr; // clips take precedence
     const Timeline& tl = m_editor->project()->timeline();
     for (int t = 0; t < tl.subtitles.size(); ++t)
         for (const SubtitleCue& c : tl.subtitles[t].cues)
@@ -80,7 +80,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
     const TrackKind V = TrackKind::Video;
     auto cueNow = [this]() { return selectedCue(); };
 
-    // ---- Untertitel: Text + Zeiten (Timecode eintippen wie DaVinci) ----
+    // ---- Subtitle: text + times (type in timecode like DaVinci) ----
     Section cue = addSection(page, V, T("Untertitel"), {});
     m_subText = new QPlainTextEdit;
     m_subText->setFixedHeight(76);
@@ -99,7 +99,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
     };
     cue.grid->addWidget(m_subText, cue.rows++, 0, 1, 3);
 
-    // Start / Ende / Dauer: Enter übernimmt, ungültige Eingabe zeigt wieder den alten Wert
+    // Start / End / Duration: Enter commits, invalid input shows the old value again
     enum { Start, End, Duration };
     const QString labels[] = {T("Start"), T("Ende"), T("Dauer")};
     for (int which : {Start, End, Duration}) {
@@ -113,7 +113,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
             const int f = Timecode::parse(edit->text(), m_editor->project()->fps());
             if (f >= 0) {
                 int start = c->start, end = c->end;
-                if (which == Start) { // Start verschiebt, Dauer bleibt (wie DaVinci)
+                if (which == Start) { // Start moves, duration stays (like DaVinci)
                     end += f - start;
                     start = f;
                 } else if (which == End) {
@@ -123,7 +123,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
                 }
                 m_editor->setSubtitleTiming(c->id, start, end);
             }
-            refresh(); // ungültig/begrenzt -> tatsächlichen Wert zeigen
+            refresh(); // invalid/limited -> show the actual value
         });
         m_subRefreshers << [this, edit, which, cueNow] {
             const SubtitleCue* c = cueNow();
@@ -143,7 +143,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
     });
     cue.grid->addWidget(add, cue.rows++, 1, 1, 2, Qt::AlignLeft);
 
-    // ---- Spurstil (gilt für alle Untertitel der Spur) ----
+    // ---- Track style (applies to all subtitles of the track) ----
     Section st = addSection(page, V, T("Spurstil"), {});
     st.headerLayout->addWidget(resetButton([this] {
         const TitleStyle def = Subtitles::defaultStyle(m_editor->project()->format().size());
@@ -173,7 +173,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
     st.grid->addWidget(rowLabel(T("Schriftart")), st.rows, 0);
     st.grid->addWidget(fontBox, st.rows++, 1);
 
-    // Regler + Zahlenfeld (Ziehen = ein Undo-Schritt)
+    // Slider + number field (dragging = one undo step)
     auto slider = [&](Section& s, const QString& key, const QString& label, double min, double max, double step,
                       int decimals, const std::function<double&(TitleStyle&)>& field,
                       const std::function<void(TitleStyle&)>& also = {}) {
@@ -215,7 +215,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
         s.grid->addWidget(rowLabel(label), s.rows, 0);
         s.grid->addLayout(box, s.rows++, 1);
     };
-    // Farbfeld (QColorDialog mit Deckkraft)
+    // Color field (QColorDialog with opacity)
     auto color = [&](Section& s, const QString& label, const QString& text, const std::function<QColor&(TitleStyle&)>& field,
                      const std::function<void(TitleStyle&)>& also = {}) {
         auto* swatch = new QToolButton;
@@ -293,7 +293,7 @@ void Inspector::buildSubtitlePage(QVBoxLayout* page)
     slider(st, "subPosX", T("Position X"), -2000, 2000, 1, 0, [](TitleStyle& t) -> double& { return t.posX; });
     slider(st, "subPosY", T("Abstand unten"), 0, 2000, 1, 0, [](TitleStyle& t) -> double& { return t.posY; });
 
-    // Umrandung / Hintergrund: Punkt schaltet, Wert ändern schaltet ein
+    // Outline / background: dot switches, changing a value switches on
     auto dotSection = [&](const QString& title, const std::function<bool&(TitleStyle&)>& on) {
         Section s = addSection(page, V, title, {});
         QToolButton* dot = makeDot();

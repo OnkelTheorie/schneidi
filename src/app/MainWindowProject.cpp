@@ -74,7 +74,7 @@
 #include <QStandardPaths>
 #include <QTimer>
 
-// ---- Projektdatei ---------------------------------------------------------------
+// ---- Project file ---------------------------------------------------------------
 
 namespace {
 const QString kFileFilter = T("schneidi-Projekt (*.%1)").arg(ProjectFile::Extension);
@@ -85,7 +85,7 @@ QString MainWindow::autosavePath()
     const QDir dir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
     if (m_autosaveSlot == 0) {
         dir.mkpath(".");
-        // ersten freien Platz belegen; eine abgestürzte Instanz hinterlässt eine verwaiste Sperre, die QLockFile erkennt
+        // occupy the first free slot; a crashed instance leaves an orphaned lock, which QLockFile detects
         for (int slot = 1; slot <= 9 && m_autosaveSlot == 0; ++slot) {
             auto lock = std::make_unique<QLockFile>(dir.filePath(QString("autosave-%1.lock").arg(slot)));
             if (lock->tryLock(0)) {
@@ -93,7 +93,7 @@ QString MainWindow::autosavePath()
                 m_autosaveLock = std::move(lock);
             }
         }
-        if (m_autosaveSlot == 0) m_autosaveSlot = 10; // alles belegt: eigener Platz ohne Sperre
+        if (m_autosaveSlot == 0) m_autosaveSlot = 10; // all taken: own slot without lock
     }
     const QString name = m_autosaveSlot == 1 ? QString("autosave") : QString("autosave-%1").arg(m_autosaveSlot);
     return dir.filePath(QString("%1.%2").arg(name, ProjectFile::Extension));
@@ -115,7 +115,7 @@ void MainWindow::updateTitle()
 void MainWindow::setProjectPath(const QString& path)
 {
     m_projectPath = path;
-    if (!path.isEmpty() && !m_autosaveDisabled) addRecent(path); // Testlauf: Liste des Nutzers nicht anfassen
+    if (!path.isEmpty() && !m_autosaveDisabled) addRecent(path); // test run: do not touch the user's list
     updateTitle();
     // Called right after loading/saving: the file now holds our state
     m_projectFingerprint = path.isEmpty() ? QByteArray() : ProjectFile::fingerprint(path);
@@ -156,7 +156,7 @@ void MainWindow::checkProjectFile()
     applyLoaded(std::move(data), m_projectPath, false);
 }
 
-// Neustart jetzt oder später; „jetzt“ fragt wie beim Beenden nach dem Speichern und öffnet das Projekt danach wieder
+// Restart now or later; "now" asks about saving like on quit and reopens the project afterwards
 void MainWindow::offerRestart(const QString& message, const QString& now, const QString& later)
 {
     QMessageBox box(QMessageBox::Question, "schneidi", message, QMessageBox::NoButton, this);
@@ -165,7 +165,7 @@ void MainWindow::offerRestart(const QString& message, const QString& now, const 
     box.exec();
     if (box.clickedButton() != nowButton) return;
     m_restartRequested = true;
-    if (!close()) m_restartRequested = false; // Speichern abgebrochen -> weiterarbeiten
+    if (!close()) m_restartRequested = false; // Saving canceled -> keep working
 }
 
 QStringList MainWindow::restartArguments() const
@@ -175,7 +175,7 @@ QStringList MainWindow::restartArguments() const
 
 bool MainWindow::maybeSave()
 {
-    if (!m_project->isModified() || m_autosaveDisabled) return true; // Testlauf: nie nachfragen
+    if (!m_project->isModified() || m_autosaveDisabled) return true; // test run: never ask
     const auto answer = QMessageBox::question(this, "schneidi", T("Änderungen am Projekt speichern?"),
                                               QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
                                               QMessageBox::Save);
@@ -191,7 +191,7 @@ bool MainWindow::maybeLeaveProject()
                                   T("Es wird gerade gerendert. Ein anderes Projekt bricht das Rendern ab. Trotzdem fortfahren?"),
                                   QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
             return false;
-        queue->cancel(); // synchron: Status landet noch in diesem Projekt
+        queue->cancel(); // synchronous: status still lands in this project
     }
     return maybeSave();
 }
@@ -201,7 +201,7 @@ void MainWindow::newProject()
     if (!maybeLeaveProject()) return;
     m_engine->pause();
     m_selection->clear();
-    m_engine->setFormat(ProjectFormat{}); // Medienlängen passen schon (leer) -> nicht neu einlesen
+    m_engine->setFormat(ProjectFormat{}); // media lengths already fit (empty) -> do not re-read
     m_project->reset();
     m_sourcePos.clear();
     m_engine->showTimeline(0);
@@ -281,7 +281,7 @@ bool MainWindow::openProject(const QString& path)
 
 bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
 {
-    // Fehlende Medien wie DaVinci "Media Offline": Ordner durchsuchen lassen oder offline lassen
+    // Missing media like DaVinci "Media Offline": have the folder searched or leave offline
     int relinked = 0;
     for (QStringList missing = ask ? ProjectFile::missingMedia(data) : QStringList{}; !missing.isEmpty();
          missing = ProjectFile::missingMedia(data)) {
@@ -318,9 +318,9 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     m_engine->pause();
     m_selection->clear();
     m_probeCache.clear();
-    m_engine->setFormat(data.format); // Medienlängen in der Datei zählen schon in dieser Framerate
+    m_engine->setFormat(data.format); // media lengths in the file already count at this frame rate
     m_project->load(data);
-    if (relinked > 0) m_project->markModified(); // neue Pfade stehen erst nach dem Speichern in der Datei
+    if (relinked > 0) m_project->markModified(); // new paths are only in the file after saving
     m_sourcePos.clear();
     m_engine->showTimeline(data.playhead);
     m_timeline->view()->setPlayhead(data.playhead);
@@ -328,8 +328,8 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     return true;
 }
 
-// Sicherungskopie laden (wie DaVinci „Project Backups“): öffnet als unbenanntes Projekt, damit sie nie
-// versehentlich in den Backup-Ordner gespeichert wird; Speichern fragt nach dem Ziel
+// Load a backup (like DaVinci "Project Backups"): opens as an untitled project so that it is never
+// accidentally saved into the backup folder; saving asks for the target
 void MainWindow::openBackupDialog()
 {
     if (!maybeLeaveProject()) return;
@@ -376,7 +376,7 @@ bool MainWindow::saveTo(const QString& path)
                              T("Die Projektdatei wird gerade von einem anderen Programm gespeichert. Bitte noch einmal versuchen."));
         return false;
     }
-    if (!m_autosaveDisabled) ProjectFile::backup(path); // bisherigen Stand sichern (Testlauf: nichts ablegen)
+    if (!m_autosaveDisabled) ProjectFile::backup(path); // keep the previous state (test run: store nothing)
     if (!ProjectFile::save(data, path, &error)) {
         QMessageBox::warning(this, T("Projekt speichern"), T("Speichern fehlgeschlagen:\n%1").arg(error));
         return false;
@@ -394,20 +394,20 @@ void MainWindow::autosave()
     data.playhead = m_timeline->view()->playhead();
     QDir().mkpath(QFileInfo(autosavePath()).absolutePath());
     if (const QString path = autosavePath(); ProjectFile::save(data, path, nullptr))
-        QSettings().setValue(autosaveKey(), m_projectPath); // wohin die Sicherung gehört
+        QSettings().setValue(autosaveKey(), m_projectPath); // where the backup belongs
 }
 
 void MainWindow::disableAutosave()
 {
     m_autosaveTimer->stop();
     m_autosaveDisabled = true;
-    m_mediaPool->setSaveSettings(false); // Testläufe: Media-Pool-Ansicht nicht speichern
+    m_mediaPool->setSaveSettings(false); // test runs: do not save the Media Pool view
     m_storage->setPersistent(false);
 }
 
 void MainWindow::removeAutosave()
 {
-    if (m_autosaveDisabled) return; // Testlauf: echte Sicherung des Nutzers nicht anfassen
+    if (m_autosaveDisabled) return; // test run: do not touch the user's real backup
 
     QFile::remove(autosavePath());
     QSettings().remove(autosaveKey());
@@ -429,7 +429,7 @@ bool MainWindow::offerAutosaveRestore()
     }
     ProjectData data;
     if (!ProjectFile::load(autosavePath(), &data, nullptr) || !applyLoaded(std::move(data), original)) return false;
-    m_project->markModified(); // wiederhergestellt, aber noch nicht in die Projektdatei gespeichert
+    m_project->markModified(); // restored, but not yet saved into the project file
     return true;
 }
 
@@ -460,7 +460,7 @@ void MainWindow::rebuildRecentMenu()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    // Laufender Export würde beim Beenden abgebrochen und die halbe Datei gelöscht -> erst fragen
+    // A running export would be aborted on quit and the half file deleted -> ask first
     if (Exporter::anyRunning() && !m_autosaveDisabled
         && QMessageBox::question(this, "schneidi", T("Es wird gerade gerendert. Beenden bricht das Rendern ab. Trotzdem beenden?"),
                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
@@ -471,6 +471,6 @@ void MainWindow::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
-    removeAutosave(); // normal beendet -> nichts wiederherzustellen
+    removeAutosave(); // quit normally -> nothing to restore
     event->accept();
 }

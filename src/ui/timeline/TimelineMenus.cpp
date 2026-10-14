@@ -40,7 +40,7 @@
 
 using namespace TimelineViewDetail;
 
-// Rechtsklick auf den Spurkopf (wie DaVinci): sperren, umbenennen, Spurfarbe
+// Right-click on the track header (like DaVinci): lock, rename, track color
 void TimelineView::headerMenu(const Row& row, const QPoint& globalPos)
 {
     const Timeline& tl = m_editor->project()->timeline();
@@ -64,8 +64,8 @@ void TimelineView::headerMenu(const Row& row, const QPoint& globalPos)
     addColor({}, T("Standard"), ref.kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip);
     colors->addSeparator();
     for (const auto& i : kTrackColors) addColor(QString::fromLatin1(i.id), T(i.name), QColor::fromRgba(i.rgb));
-    // Spuren hinzufügen/löschen (DaVinci „Add Track“/„Delete Track“). Oberhalb/unterhalb wie angezeigt:
-    // Video zählt von unten (V1 unten), Audio von oben (A1 oben)
+    // Add/delete tracks (DaVinci "Add Track"/"Delete Track"). Above/below as displayed:
+    // video counts from the bottom (V1 at the bottom), audio from the top (A1 at the top)
     menu.addSeparator();
     const int above = ref.kind == TrackKind::Video ? ref.index + 1 : ref.index;
     const int below = ref.kind == TrackKind::Video ? ref.index : ref.index + 1;
@@ -83,7 +83,7 @@ void TimelineView::headerMenu(const Row& row, const QPoint& globalPos)
     menu.exec(globalPos);
 }
 
-// Rechtsklick auf die freie Fläche ohne Spur: neue Spur ans Ende (Video oben, Audio unten), wie DaVinci „Add Track“
+// Right-click on the empty area without a track: new track at the end (video on top, audio at the bottom), like DaVinci "Add Track"
 void TimelineView::emptyAreaMenu(const QPoint& globalPos)
 {
     const Timeline& tl = m_editor->project()->timeline();
@@ -124,7 +124,7 @@ void TimelineView::startRename(TrackRef ref)
 void TimelineView::finishRename(bool commit)
 {
     if (!m_renaming) return;
-    m_renaming = false; // vor hide(): Fokusverlust meldet sonst noch einmal editingFinished
+    m_renaming = false; // before hide(): focus loss would otherwise report editingFinished once more
     const QString text = m_nameEdit->text();
     m_nameEdit->hide();
     setFocus();
@@ -136,7 +136,7 @@ void TimelineView::finishRename(bool commit)
 
 bool TimelineView::eventFilter(QObject* obj, QEvent* e)
 {
-    // Esc im Namensfeld bricht ab (vorher als ShortcutOverride annehmen, sonst greift ein Tastenkürzel)
+    // Esc in the name field cancels (accept as ShortcutOverride beforehand, otherwise a shortcut fires)
     if (obj == m_nameEdit && (e->type() == QEvent::ShortcutOverride || e->type() == QEvent::KeyPress)
         && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {
         e->accept();
@@ -146,9 +146,9 @@ bool TimelineView::eventFilter(QObject* obj, QEvent* e)
     return QWidget::eventFilter(obj, e);
 }
 
-// ---------- Maus ----------
+// ---------- Mouse ----------
 
-// Rechtsklick auf einen Übergang: Art, Ausrichtung, Löschen (wie DaVinci)
+// Right-click on a transition: kind, alignment, delete (like DaVinci)
 void TimelineView::contextMenuEvent(QContextMenuEvent* e)
 {
     if (const auto sub = subRowAt(e->pos().y())) {
@@ -161,14 +161,14 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
         else emptyAreaMenu(e->globalPos());
         return;
     }
-    // Rechtsklick in der Retime-Leiste: Speed-Punkt (Übergang, Entfernen) bzw. Abschnitt (Tempo)
+    // Right-click in the retime bar: speed point (transition, remove) resp. section (speed)
     if (const auto h = retimeHitAt(e->pos())) {
         if (h->point >= 0) speedPointMenu(*h, e->globalPos());
         else segmentMenu(*h, int(std::lround(xToFrame(e->pos().x()))), e->globalPos());
         return;
     }
     if (curveContextMenu(e->pos(), e->globalPos())) return;
-    // Rechtsklick auf eine Keyframe-Raute: Verlauf (wie DaVinci) oder Löschen, gilt für die ausgewählten Rauten
+    // Right-click on a keyframe diamond: interpolation (like DaVinci) or delete, applies to the selected diamonds
     if (const auto k = keyframeAt(e->pos())) {
         Selection* sel = m_editor->selection();
         if (sel->keyClip() != k->clipId || sel->keyParam() >= 0 || !sel->keyTimes().contains(k->t))
@@ -185,7 +185,7 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
             {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
             {KeyEase::EaseInOut, "Ease In and Out"}, {KeyEase::Bezier, "Bezier"}};
         for (const auto& it : eases) {
-            QAction* a = menu.addAction(it.name); // wie DaVinci auch deutsch englisch
+            QAction* a = menu.addAction(it.name); // as in DaVinci, English even in the German version
             a->setCheckable(true);
             a->setChecked(current == it.ease);
             connect(a, &QAction::triggered, this, [this, id = k->clipId, times, ease = it.ease] {
@@ -200,7 +200,7 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
     }
     const auto t = transitionAt(e->pos());
     if (!t) {
-        // Rechtsklick auf einen Clip: auswählen (falls nicht schon), Menü baut das Hauptfenster (Aktionen)
+        // Right-click on a clip: select (if not already), the main window builds the menu (actions)
         if (const int id = clipAt(e->pos())) {
             Selection* sel = m_editor->selection();
             if (!sel->contains(id)) {
@@ -209,7 +209,7 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
             }
             emit clipMenuRequested(e->globalPos());
         } else if (e->pos().y() >= kRulerH && !rowAt(e->pos().y())) {
-            emptyAreaMenu(e->globalPos()); // freie Fläche unter/zwischen den Spuren
+            emptyAreaMenu(e->globalPos()); // empty area below/between the tracks
         }
         return;
     }

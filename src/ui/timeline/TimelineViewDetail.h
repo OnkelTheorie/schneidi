@@ -39,25 +39,25 @@
 
 namespace TimelineViewDetail {
 
-// Clipname, bei geänderter Geschwindigkeit mit Angabe wie DaVinci (z. B. „clip.mp4 (50 %)“);
-// Audio aus Dateien mit mehreren Ton-Streams (OBS) mit Stream-Name („aufnahme.mkv · Mikro“)
+// Clip name, with changed speed with a note like DaVinci (e.g. "clip.mp4 (50 %)");
+// audio from files with several audio streams (OBS) with stream name ("aufnahme.mkv · Mikro")
 inline QString clipLabel(const Project* project, const Clip& c, TrackKind kind)
 {
-    QString name = project->clipName(c); // Compound Clips: Name der Sequenz
+    QString name = project->clipName(c); // compound clips: name of the sequence
     if (kind == TrackKind::Audio && !c.mediaPath.isEmpty())
         if (const MediaInfo* m = project->mediaInfo(c.mediaPath); m && m->audioStreamCount() > 1)
             name += QString(" · %1").arg(m->audioStreamName(c.audioStream));
     if (!c.isRetimed()) return name;
     if (!c.freeze && !c.reverse && c.speed == 1.0
         && std::all_of(c.ramp.begin(), c.ramp.end(), [](const SpeedPoint& p) { return p.speed == 1.0; }))
-        return name; // Speed-Punkte ohne Tempowechsel
+        return name; // speed points without speed change
     const QString speed = c.freeze     ? T("Standbild")
                           : c.hasRamp() ? T("Speed Ramp")
                                         : QString("%1%2 %").arg(c.reverse ? "-" : "").arg(QLocale().toString(c.speed * 100, 'g', 4));
     return QString("%1 (%2)").arg(name, speed);
 }
 
-// Compound Clip im Clipkörper: gestapelte Ebenen (wie das DaVinci-Symbol) statt Filmstreifen/Wellenform
+// Compound clip in the clip body: stacked layers (like the DaVinci icon) instead of filmstrip/waveform
 inline void drawCompoundBody(QPainter& p, const QRect& body, const QColor& base)
 {
     if (body.height() < 8 || body.width() < 12) return;
@@ -74,14 +74,14 @@ inline void drawCompoundBody(QPainter& p, const QRect& body, const QColor& base)
     p.restore();
 }
 
-// Clipfarbe der Spur: eigene Spurfarbe, sonst ungültig (= Standard je Clipart)
+// Clip color of the track: own track color, otherwise invalid (= default per clip kind)
 inline QColor trackColor(const Track& t)
 {
     const TrackColorInfo* info = trackColorInfo(t.color);
     return info ? QColor::fromRgba(info->rgb) : QColor();
 }
 
-// Farbe eines Clips wie DaVinci: Clipfarbe des Media-Pool-Clips vor der Spurfarbe, sonst ungültig (= Standard)
+// Color of a clip like DaVinci: clip color of the Media Pool clip before the track color, otherwise invalid (= default)
 inline QColor clipColor(const Project* project, const Clip& c, const Track* t)
 {
     if (!c.isTitle())
@@ -90,7 +90,7 @@ inline QColor clipColor(const Project* project, const Clip& c, const Track* t)
     return t ? trackColor(*t) : QColor();
 }
 
-// Schloss-Symbol (Vorhängeschloss) mittig in r
+// Lock icon (padlock) centered in r
 inline void drawLock(QPainter& p, const QRectF& r, const QColor& color)
 {
     const double cx = r.center().x(), cy = r.center().y();
@@ -111,18 +111,18 @@ inline void drawLock(QPainter& p, const QRectF& r, const QColor& color)
 }
 
 constexpr int kSnapPx = 8;
-constexpr double kFinePxPerFrame = 12; // ab hier verschieben Ton-Clips feiner als 1 Frame
+constexpr double kFinePxPerFrame = 12; // from here audio clips move finer than 1 frame
 constexpr int kDragStartPx = 4;
-constexpr int kAutoScrollZone = 24; // Randbereich (px), in dem das Ziehen die Timeline mitscrollt
-constexpr int kEdgeGrabPx = 6; // so nah an der Clipkante wird getrimmt statt verschoben
+constexpr int kAutoScrollZone = 24; // edge zone (px) in which dragging scrolls the timeline along
+constexpr int kEdgeGrabPx = 6; // this close to the clip edge it is trimmed instead of moved
 constexpr int kVolumeGrabPx = 4;
-constexpr int kClipBarH = 16;  // Titelleiste im Clip
-constexpr int kLaneH = 16;     // aufgeklappte Keyframe-Spur unter dem Clip
-constexpr int kCurveH = 120;   // aufgeklappter Kurven-Editor unter dem Clip
-constexpr int kKeyGrabPx = 5;  // so nah an einer Raute wird sie gegriffen
+constexpr int kClipBarH = 16;  // title bar in the clip
+constexpr int kLaneH = 16;     // expanded keyframe lane under the clip
+constexpr int kCurveH = 120;   // expanded curve editor under the clip
+constexpr int kKeyGrabPx = 5;  // this close to a diamond it is grabbed
 
-// Lautstärke <-> Höhe im Clip (0 = unten, 1 = oben), stückweise linear wie ein Fader:
-// unteres Viertel -∞..-20 dB, Mitte -20..0 dB, oberes Viertel 0..+12 dB
+// Volume <-> height in the clip (0 = bottom, 1 = top), piecewise linear like a fader:
+// lower quarter -∞..-20 dB, middle -20..0 dB, upper quarter 0..+12 dB
 inline double volumeToPos(double db)
 {
     db = std::clamp(db, kMinVolumeDb, kMaxVolumeDb);
@@ -150,19 +150,19 @@ inline int volumeLineY(const QRect& body, double db)
     return body.bottom() - int(std::lround(volumeToPos(db) * (body.height() - 1)));
 }
 
-// Clip-Lautstärke an Clip-Frame t (mit Keyframes)
+// Clip volume at clip frame t (with keyframes)
 inline double volumeAt(const Clip& c, double t)
 {
     return Keys::valueAt(c, AnimParam::Volume, std::clamp(t, 0.0, double(c.length() - 1)));
 }
 
-// Raute (Keyframe) um (x, y)
+// Diamond (keyframe) around (x, y)
 inline void drawDiamond(QPainter& p, double x, double y, double r)
 {
     const QPointF pts[] = {{x, y - r}, {x + r, y}, {x, y + r}, {x - r, y}};
     p.drawPolygon(pts, 4);
 }
-// Mauszeiger für den Trim-Modus (wie DaVinci): Klammer(n) für Ripple/Roll, Rahmen für Slip/Slide
+// Mouse cursor for trim mode (like DaVinci): bracket(s) for Ripple/Roll, frame for Slip/Slide
 inline QCursor trimCursor(TimelineOps::TrimKind kind, TimelineOps::Edge edge)
 {
     using TimelineOps::TrimKind;
@@ -175,7 +175,7 @@ inline QCursor trimCursor(TimelineOps::TrimKind kind, TimelineOps::Edge edge)
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
     QPainterPath path;
-    auto arrow = [&](double x1, double x2, double y) { // Linie mit Pfeilspitze bei x2
+    auto arrow = [&](double x1, double x2, double y) { // line with arrowhead at x2
         path.moveTo(x1, y);
         path.lineTo(x2, y);
         const double d = x2 > x1 ? -4 : 4;
@@ -183,7 +183,7 @@ inline QCursor trimCursor(TimelineOps::TrimKind kind, TimelineOps::Edge edge)
         path.lineTo(x2, y);
         path.lineTo(x2 + d, y + 4);
     };
-    auto bracket = [&](double x, bool open) { // "[" (open) bzw. "]"
+    auto bracket = [&](double x, bool open) { // "[" (open) resp. "]"
         const double w = open ? 4 : -4;
         path.moveTo(x + w, M - 9);
         path.lineTo(x, M - 9);
@@ -194,8 +194,8 @@ inline QCursor trimCursor(TimelineOps::TrimKind kind, TimelineOps::Edge edge)
     case TrimKind::Ripple: {
         const bool start = edge == TimelineOps::Edge::Start;
         bracket(start ? M - 2 : M + 2, start);
-        arrow(start ? M - 6 : M + 6, start ? 4 : S - 4, M);   // nach außen
-        arrow(start ? M + 1 : M - 1, start ? M + 10 : M - 10, M); // nach innen
+        arrow(start ? M - 6 : M + 6, start ? 4 : S - 4, M);   // outwards
+        arrow(start ? M + 1 : M - 1, start ? M + 10 : M - 10, M); // inwards
         break;
     }
     case TrimKind::Roll:
@@ -204,8 +204,8 @@ inline QCursor trimCursor(TimelineOps::TrimKind kind, TimelineOps::Edge edge)
         arrow(M - 6, 3, M);
         arrow(M + 6, S - 3, M);
         break;
-    case TrimKind::Slip: // Pfeile innerhalb des Rahmens
-    case TrimKind::Slide: // Pfeile außerhalb
+    case TrimKind::Slip: // arrows inside the frame
+    case TrimKind::Slide: // arrows outside
         path.addRect(M - 7, M - 8, 14, 16);
         if (kind == TrimKind::Slip) {
             arrow(M, M - 5, M);

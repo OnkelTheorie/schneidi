@@ -40,7 +40,7 @@
 
 using namespace TimelineViewDetail;
 
-// ---------- Untertitelspuren ----------
+// ---------- Subtitle tracks ----------
 
 int TimelineView::subtitlesHeight() const
 {
@@ -52,7 +52,7 @@ QVector<TimelineView::SubRow> TimelineView::subRows() const
 {
     QVector<SubRow> out;
     int y = kRulerH - m_view.scrollY;
-    for (int i = m_editor->project()->timeline().subtitles.size() - 1; i >= 0; --i) { // ST1 unten
+    for (int i = m_editor->project()->timeline().subtitles.size() - 1; i >= 0; --i) { // ST1 at the bottom
         out << SubRow{i, y, kSubtitleTrackH};
         y += kSubtitleTrackH;
     }
@@ -109,7 +109,7 @@ QRect TimelineView::subNameRect(const SubRow& row) const
 
 void TimelineView::drawSubtitleTracks(QPainter& p)
 {
-    // während Ripple-Trimmen rücken die Untertitel in der Vorschau mit (wie die Clip-Spuren)
+    // during ripple trimming the subtitles move along in the preview (like the clip tracks)
     const bool trimEdit = m_drag == Drag::TrimEdit && m_trimPreview;
     const Timeline& tl = trimEdit ? *m_trimPreview : m_editor->project()->timeline();
     if (tl.subtitles.isEmpty()) return;
@@ -151,7 +151,7 @@ void TimelineView::drawSubtitleTracks(QPainter& p)
         p.drawLine(kHeaderW, row.y + row.h - 1, width(), row.y + row.h - 1);
         p.setOpacity(t.enabled ? 1.0 : 0.45);
         for (SubtitleCue c : t.cues) {
-            if (moving && dragging.contains(c.id)) continue; // wird unten verschoben gezeichnet
+            if (moving && dragging.contains(c.id)) continue; // is drawn shifted below
             if (m_drag == Drag::CueTrim && c.id == m_cueTrim.clipId)
                 (m_cueTrim.edge == TimelineOps::Edge::Start ? c.start : c.end) += m_cueDelta;
             drawCue(cueRect(row, c), c, sel.contains(c.id), t.locked);
@@ -174,7 +174,7 @@ void TimelineView::drawSubtitleTracks(QPainter& p)
                 }
         }
     }
-    // Trennfuge zu den Videospuren
+    // separator gap to the video tracks
     const int sepY = kRulerH - m_view.scrollY + tl.subtitles.size() * kSubtitleTrackH;
     p.fillRect(QRect(kHeaderW, sepY, width() - kHeaderW, kSeparator), Theme::timelineBg);
     p.restore();
@@ -209,7 +209,7 @@ void TimelineView::drawSubtitleHeaders(QPainter& p)
             const QString name = subtitleTrackDisplayName(t, row.index);
             p.drawText(nr, Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(f).elidedText(name, Qt::ElideRight, nr.width()));
         }
-        // Auge (sichtbar) und Schloss wie bei den anderen Spuren; Auge an = orange
+        // Eye (visible) and lock like on the other tracks; eye on = orange
         const QRect b(kHeaderW - 30, row.y + (row.h - 16) / 2, 20, 16);
         const QRect lb(kHeaderW - 54, b.top(), 20, 16);
         p.setRenderHint(QPainter::Antialiasing);
@@ -279,7 +279,7 @@ void TimelineView::startSubtitleRename(int index)
     for (const SubRow& r : subRows())
         if (r.index == index) row = r;
     if (!row) return;
-    startRename({TrackKind::Video, -1}); // Eingabefeld anlegen (ohne Zeile: tut sonst nichts)
+    startRename({TrackKind::Video, -1}); // Create input field (without a row: does nothing otherwise)
     if (!m_nameEdit) return;
     m_nameSub = index;
     m_renaming = true;
@@ -298,7 +298,7 @@ bool TimelineView::subtitlePress(QMouseEvent* e, const QPoint& pos)
 {
     const auto row = subRowAt(pos.y());
     if (!row) return false;
-    if (pos.x() < kHeaderW) { // Spurkopf: Auge, Schloss
+    if (pos.x() < kHeaderW) { // Track header: eye, lock
         const QRect b(kHeaderW - 30, row->y + (row->h - 16) / 2, 20, 16);
         const QRect lb(kHeaderW - 54, b.top(), 20, 16);
         const SubtitleTrack& t = m_editor->project()->timeline().subtitles[row->index];
@@ -307,7 +307,7 @@ bool TimelineView::subtitlePress(QMouseEvent* e, const QPoint& pos)
         return true;
     }
     Selection* sel = m_editor->selection();
-    if (m_tool == Tool::Blade) { // Eintrag an der Klinge teilen (wie Clips, mit Snapping)
+    if (m_tool == Tool::Blade) { // split entry at the blade (like clips, with snapping)
         if (const int id = cueAt(pos)) {
             int frame = int(std::lround(xToFrame(pos.x())));
             frame += snapDelta({frame}, {});

@@ -20,8 +20,8 @@ class QThread;
 
 struct ExportSettings {
     QString path;
-    ProjectFormat format; // Projekteinstellungen (Framerate, Bezugsgröße für Pixelwerte im Schnitt)
-    QSize size;           // Ausgabegröße; leer = Timeline-Auflösung
+    ProjectFormat format; // project settings (frame rate, reference size for pixel values in the edit)
+    QSize size;           // output size; empty = timeline resolution
     QString videoCodec = "libx264"; // empty = audio only (no video stream)
     // videoCodec is a hardware encoder (h264_nvenc …): software codec to use when it does not work (empty = none).
     // The hardware encoder is tested with the output size first (MLT crashes when it cannot open an encoder).
@@ -29,21 +29,21 @@ struct ExportSettings {
     QString encoderNote; // note from choosing the encoder (e.g. not available here), reported with the result
     QString audioCodec = "aac";
     QString pixFmt = "yuv420p";
-    int crf = 20;             // Qualität: kleiner = besser
+    int crf = 20;             // quality: smaller = better
     int maxBitrateK = 0;      // video bit rate cap (kbit/s), 0 = none
-    QString preset = "medium"; // Geschwindigkeit vs. Dateigröße
+    QString preset = "medium"; // speed vs. file size
     int audioBitrateK = 192;
-    QString audioSampleFormat; // leer = Vorgabe des Codecs (Apple Lossless: s16p/s32p für 16/24 Bit)
+    QString audioSampleFormat; // empty = codec default (Apple Lossless: s16p/s32p for 16/24 bit)
     int audioRate = 0, audioChannels = 0; // 0 = 48 kHz stereo (speech to text wants 16 kHz mono)
-    FrameRate rate{0, 1};      // Bildrate der Datei; num 0 = wie die Timeline (format.rate)
-    bool burnSubtitles = false; // sichtbare Untertitelspur ins Bild einbrennen
-    QString subtitlePath;       // sichtbare Untertitelspur zusätzlich als SRT hierhin schreiben (leer = nicht)
-    int from = 0, to = -1; // Bereich (Frames, inklusive); to < 0 = bis zum Ende der Timeline
-    int threads = 0;       // Threads (logische Prozessoren) fürs Rendern (Bilder parallel, Decoder, Encoder); 0 = alle
+    FrameRate rate{0, 1};      // frame rate of the file; num 0 = like the timeline (format.rate)
+    bool burnSubtitles = false; // burn the visible subtitle track into the image
+    QString subtitlePath;       // additionally write the visible subtitle track as SRT here (empty = not)
+    int from = 0, to = -1; // range (frames, inclusive); to < 0 = until the end of the timeline
+    int threads = 0;       // threads (logical processors) for rendering (images in parallel, decoder, encoder); 0 = all
 };
 
-// Rendert die Timeline in eine Datei. Eigene Producer-Instanzen,
-// damit Vorschau und Export sich nicht in die Quere kommen.
+// Renders the timeline into a file. Own producer instances,
+// so that preview and export do not get in each other's way.
 class Exporter : public QObject {
     Q_OBJECT
 public:
@@ -51,19 +51,19 @@ public:
     ~Exporter() override;
 
     bool isRunning() const { return m_consumer != nullptr || m_check != nullptr || m_analysis != nullptr; }
-    // Läuft gerade irgendein Export? (Render-Cache pausiert solange)
+    // Is any export running right now? (render cache pauses meanwhile)
     static bool anyRunning();
-    // Threads fürs Rendern (Deliver-Seite, gilt pro Rechner, QSettings "render/cores" – Schlüssel bleibt für alte Einstellungen): 0 = alle
+    // Threads for rendering (Deliver page, applies per machine, QSettings "render/cores" – key stays for old settings): 0 = all
     static int savedThreads();
     static void setSavedThreads(int threads);
-    static int availableThreads(); // logische Prozessoren (QThread::idealThreadCount) (mindestens 1)
-    // Wie viele Bilder gleichzeitig gerendert werden: threads (0 = alle), aber 1, wenn die Timeline (auch verschachtelte
-    // Sequenzen) einen frei0r-Effekt nutzt (Green Screen) – die sind nicht thread-sicher
+    static int availableThreads(); // logical processors (QThread::idealThreadCount) (at least 1)
+    // How many images are rendered at once: threads (0 = all), but 1 if the timeline (also nested
+    // sequences) uses a frei0r effect (Green Screen) – those are not thread-safe
     static int parallelFrames(const Timeline& tl, int threads);
-    // Liest die Timeline (auch verschachtelte Sequenzen) diese Datei? Dann darf der Export sie nicht überschreiben
-    // (Quelle und Ausgabe zerstört) – wie DaVinci verweigern statt nachfragen.
+    // Does the timeline (also nested sequences) read this file? Then the export must not overwrite it
+    // (source and output destroyed) – refuse like DaVinci instead of asking.
     static bool readsFile(const Timeline& tl, const QString& path);
-    // Zeigen beide Pfade auf dieselbe vorhandene Datei? (Windows: Groß-/Kleinschreibung egal)
+    // Do both paths point to the same existing file? (Windows: case does not matter)
     static bool sameFile(const QString& a, const QString& b);
     bool start(const Timeline& tl, const ExportSettings& settings, QString* error);
     void cancel();
@@ -97,8 +97,8 @@ private:
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Tractor> m_tractor;
-    // Andere Bildrate als die Timeline: Timeline als MLT-XML, abgespielt über den "consumer"-Producer im Profil der
-    // Ausgabe (rechnet Bilder um, Ton bleibt lückenlos). Sonst zeigt m_source auf m_tractor.
+    // Different frame rate than the timeline: timeline as MLT XML, played via the "consumer" producer in the profile of the
+    // output (converts images, audio stays gapless). Otherwise m_source points to m_tractor.
     std::unique_ptr<Mlt::Profile> m_outProfile;
     std::unique_ptr<Mlt::Producer> m_source;
     QString m_xmlPath;
@@ -111,7 +111,7 @@ private:
     bool m_convertRate = false;
     int m_threads = 0, m_frames = 1;
     QString m_usedCodec, m_note;
-    std::atomic<bool> m_threadDone{false}; // Encoder-Thread hat sich beendet ("consumer-stopped")
+    std::atomic<bool> m_threadDone{false}; // encoder thread has ended ("consumer-stopped")
     int m_restarts = 0;
     QTimer m_timer;
     int m_length = 0;

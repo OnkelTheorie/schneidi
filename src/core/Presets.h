@@ -69,7 +69,7 @@ struct AnimKey {
 };
 KeyTrack toKeyTrack(QVector<AnimKey> keys, int length);
 
-// Own presets (Inspector / Timeline → Clip → "Effekte als Preset speichern"): the clip's effects in Kdenlive's
+// Own presets (Inspector / Timeline -> Clip -> "Effekte als Preset speichern"): the clip's effects in Kdenlive's
 // format, so parse() reads it back and Kdenlive (24.12 checked) can use it from its effects folder:
 // - two or more MLT filters: <effectgroup parentIn="0"> with <effect id=service> and <property> per parameter
 // - one MLT filter: custom effect <effect tag=service type="customVideo"> with <parameter> definitions (Kdenlive

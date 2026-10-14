@@ -31,7 +31,7 @@ void write(const char* level, const QString& text)
     std::lock_guard<std::mutex> lock(s_mutex);
     if (!s_file.isOpen()) return;
     s_file.write(line);
-    s_file.flush(); // bei einem Absturz soll alles bis dahin drinstehen
+    s_file.flush(); // in a crash everything up to then should be in there
 }
 
 void qtHandler(QtMsgType type, const QMessageLogContext& ctx, const QString& msg)
@@ -49,7 +49,7 @@ void mltHandler(void* service, int level, const char* fmt, va_list args)
     va_copy(copy, args);
     std::vsnprintf(buf, sizeof buf, fmt, copy);
     va_end(copy);
-    // Meist UTF-8, unter Windows Pfade teils in der ANSI-Codepage
+    // Mostly UTF-8, on Windows paths partly in the ANSI code page
     QStringDecoder utf8(QStringConverter::Utf8, QStringConverter::Flag::Stateless);
     QString text = utf8(QByteArrayView(buf));
     if (utf8.hasError()) text = QString::fromLocal8Bit(buf);

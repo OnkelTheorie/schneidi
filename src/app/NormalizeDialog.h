@@ -6,9 +6,9 @@ class QDoubleSpinBox;
 class QLabel;
 class QRadioButton;
 
-// „Audiopegel normalisieren“ wie DaVinci (Normalize Audio Levels): Modus Sample Peak Program (Zielpegel in dBFS)
-// oder Lautheit nach ITU-R BS.1770-4 (Ziellautheit in LUFS, Vorgaben YouTube -14, EBU R128 -23 …),
-// Pegel relativ (alle Clips gleich) oder unabhängig (jeder Clip einzeln). Letzte Werte werden gemerkt.
+// "Normalize audio levels" like DaVinci (Normalize Audio Levels): mode Sample Peak Program (target level in dBFS)
+// or loudness according to ITU-R BS.1770-4 (target loudness in LUFS, presets YouTube -14, EBU R128 -23 …),
+// level relative (all clips equal) or independent (each clip individually). Last values are remembered.
 class NormalizeDialog : public QDialog {
     Q_OBJECT
 public:
@@ -16,7 +16,7 @@ public:
 
     explicit NormalizeDialog(int clipCount, QWidget* parent = nullptr);
     Mode mode() const;
-    double targetDb() const; // dBFS bzw. LUFS je nach Modus
+    double targetDb() const; // dBFS resp. LUFS depending on the mode
     bool relative() const;
 
     void accept() override;
@@ -26,7 +26,7 @@ private:
     void syncPreset();
 
     QComboBox* m_mode;
-    QComboBox* m_preset; // Lautheits-Vorgaben
+    QComboBox* m_preset; // Loudness presets
     QLabel* m_presetLabel;
     QDoubleSpinBox* m_target;
     QRadioButton* m_relative;

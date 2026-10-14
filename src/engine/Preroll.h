@@ -7,20 +7,20 @@
 #include <thread>
 #include <vector>
 
-// Vorschau: Decoder (Bild und Ton) vor einer Sprungstelle (Clip-Anfang, Übergang) im Hintergrund an die Stelle bringen.
-// Bei Material mit langen GOPs (OBS, Handy) muss der Decoder beim Springen bis zu mehrere Sekunden ab dem letzten
-// Keyframe dekodieren – mitten in der Wiedergabe stand das Bild dann bis zu ~1 s. Hier wird das Frame vor der Stelle
-// rechtzeitig dekodiert, danach liest die Wiedergabe am Stück weiter. Nur bei Vorwärts-Wiedergabe.
+// Preview: bring the decoder (video and audio) to a jump spot (clip start, transition) in the background beforehand.
+// With material with long GOPs (OBS, phone) the decoder has to decode up to several seconds from the last keyframe
+// when jumping – in the middle of playback the image then froze for up to ~1 s. Here the frame before the spot is
+// decoded in time, after which playback reads on in one go. Forward playback only.
 class Preroll {
 public:
     Preroll();
     ~Preroll();
 
-    // Nach jedem Neuaufbau der Vorschau (Stellen aus TimelineBuilder::prerollPoints)
+    // After every rebuild of the preview (spots from TimelineBuilder::prerollPoints)
     void setPoints(std::vector<PrerollPoint> points, int lookahead, QSize size);
-    // Gezeigtes Frame (Consumer-Thread) und Tempo; speed <= 0 = nichts vorbereiten
+    // Shown frame (consumer thread) and speed; speed <= 0 = prepare nothing
     void update(int position, double speed);
-    // Alles vergessen und auf eine gerade laufende Dekodierung warten (vor dem Abbau von Profil/Producern)
+    // Forget everything and wait for a decode that is currently running (before tearing down profile/producers)
     void clear();
 
 private:
@@ -29,7 +29,7 @@ private:
     std::mutex m_mutex;
     std::condition_variable m_wake;
     std::condition_variable m_idle;
-    bool m_busy = false; // dekodiert gerade (ohne Sperre)
+    bool m_busy = false; // currently decoding (without lock)
     std::vector<PrerollPoint> m_points;
     std::vector<bool> m_done;
     int m_lookahead = 0; // Frames

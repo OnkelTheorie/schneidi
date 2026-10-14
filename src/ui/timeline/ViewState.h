@@ -1,16 +1,16 @@
 #pragma once
 #include <algorithm>
 
-// KERNREGEL: Zoom und Scroll der Timeline sind ein eigener Zustand.
-// Nur Nutzereingaben (Mausrad, Tasten, Scrollbar) ändern ihn – Änderungen am
-// Projekt (Clip kürzen, löschen, …) fassen ihn nie an. Deshalb springt nichts.
+// CORE RULE: zoom and scroll of the timeline are their own state.
+// Only user input (mouse wheel, keys, scrollbar) changes it – changes to the
+// project (shortening a clip, deleting, …) never touch it. That is why nothing jumps.
 struct ViewState {
-    static constexpr double kMinPxPerFrame = 0.002; // ~ Stunden auf dem Bildschirm
-    static constexpr double kMaxPxPerFrame = 60.0;  // einzelne Frames breit
+    static constexpr double kMinPxPerFrame = 0.002; // ~ hours on screen
+    static constexpr double kMaxPxPerFrame = 60.0;  // individual frames wide
 
     double pxPerFrame = 4.0; // Zoom
-    double leftFrame = 0.0;  // Frame am linken Rand (Scroll X), nie < 0
-    int scrollY = 0;         // Pixel (Scroll Y durch die Spuren)
+    double leftFrame = 0.0;  // frame at the left edge (scroll X), never < 0
+    int scrollY = 0;         // pixels (scroll Y through the tracks)
     int videoTrackHeight = 64;
     int audioTrackHeight = 52;
 

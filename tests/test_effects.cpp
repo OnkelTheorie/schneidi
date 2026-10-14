@@ -1,5 +1,5 @@
-// Test Effekte: Editor (Hinzufügen/Entfernen/Undo/Teilen), Projektdatei, Inspector, Effects Library,
-// Filter auf die Timeline ziehen (offscreen)
+// Test effects: editor (add/remove/undo/split), project file, Inspector, Effects Library,
+// dragging filters onto the timeline (offscreen)
 #include "check.h"
 
 #include "core/EffectRegistry.h"
@@ -37,7 +37,7 @@ int main(int argc, char** argv)
     Project project;
     Selection sel;
     Editor editor(&project, &sel);
-    const QString media = "/x/detail.mp4"; // Datei muss nicht existieren (keine Vorschau)
+    const QString media = "/x/detail.mp4"; // file does not have to exist (no preview)
     project.addMedia(MediaInfo{media, "detail.mp4", 125, true, false, false});
     Timeline tl;
     tl.video.resize(2);
@@ -47,7 +47,7 @@ int main(int argc, char** argv)
     c.mediaPath = media;
     c.out = 99;
     tl.video[0].clips << c;
-    Clip a = c; // Audio-Clip: bekommt keine Effekte
+    Clip a = c; // audio clip: gets no effects
     a.id = project.newClipId();
     tl.audio[0].clips << a;
     project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, a.id, 0});
@@ -58,7 +58,7 @@ int main(int argc, char** argv)
     CHECK(EffectRegistry::has(*clip(vid), "color"));
     CHECK(!EffectRegistry::has(*clip(aid), "color"));
     const int undoCount = project.undoStack()->count();
-    editor.addEffect({vid}, "color"); // doppelt: nichts
+    editor.addEffect({vid}, "color"); // twice: nothing
     CHECK(project.undoStack()->count() == undoCount);
     editor.addEffect({vid}, "blur");
     CHECK(clip(vid)->effects.size() == 2);
@@ -67,7 +67,7 @@ int main(int argc, char** argv)
     project.undoStack()->redo();
     CHECK(clip(vid)->effects.size() == 2 && clip(vid)->effects[1].effectId == "blur");
 
-    // Werte + Keyframes
+    // Values + keyframes
     editor.modifyClips({vid}, "t", [](Clip& x) {
         EffectRegistry::instance(x, "color")->params["temperature"] = 40.0;
         Keys::setKey(x, AnimParam::FxBrightness, 0, -20);
@@ -75,7 +75,7 @@ int main(int argc, char** argv)
     });
     CHECK(Keys::valueAt(*clip(vid), AnimParam::FxBrightness, 40) == 5.0);
 
-    // Speichern -> Laden identisch
+    // Save -> load identical
     const QString path = tmp.filePath("fx.schneidi");
     QString err;
     CHECK(ProjectFile::save(project.data(), path, &err));
@@ -85,14 +85,14 @@ int main(int argc, char** argv)
     CHECK(lc && lc->effects == clip(vid)->effects);
     CHECK(lc && lc->keys == clip(vid)->keys);
 
-    // Teilen übernimmt Effekte, Keyframes verteilt
+    // Splitting takes over effects, keyframes distributed
     editor.splitAtPlayhead(50);
     const Track& t0 = project.timeline().video[0];
     CHECK(t0.clips.size() == 2 && t0.clips[1].effects == t0.clips[0].effects);
     CHECK(Keys::valueAt(t0.clips[1], AnimParam::FxBrightness, 0) == Keys::valueAt(*lc, AnimParam::FxBrightness, 50));
     project.undoStack()->undo();
 
-    // Entfernen löscht auch die Keyframes der Effekt-Parameter
+    // Removing also deletes the keyframes of the effect parameters
     editor.removeEffect({vid}, "color");
     CHECK(!EffectRegistry::has(*clip(vid), "color") && !Keys::animated(*clip(vid), AnimParam::FxBrightness));
     project.undoStack()->undo();
@@ -110,7 +110,7 @@ int main(int argc, char** argv)
         CHECK(clip(vid)->effects == before);
     }
 
-    // Inspector zeichnen (Bild wird nicht gespeichert)
+    // Draw Inspector (image is not saved)
     Inspector insp(&editor);
     insp.resize(380, 1250);
     sel.set({vid});
@@ -118,7 +118,7 @@ int main(int argc, char** argv)
     insp.show();
     app.processEvents();
     CHECK(!insp.grab().isNull());
-    // Reihenfolge ändern (Unschärfe zuerst) -> Inspector sortiert um
+    // Change order (blur first) -> Inspector re-sorts
     editor.modifyClips({vid}, "t", [](Clip& x) { std::swap(x.effects[0], x.effects[1]); });
     app.processEvents();
     CHECK(!insp.grab().isNull());
@@ -131,7 +131,7 @@ int main(int argc, char** argv)
     app.processEvents();
     CHECK(!lib.grab().isNull());
 
-    // Filter auf die Timeline ziehen: Audiospur nimmt nichts an, Videoclip bekommt den Effekt (ein Undo-Schritt)
+    // Drag filter onto the timeline: audio track accepts nothing, video clip gets the effect (one undo step)
     editor.removeEffect({vid}, "blur");
     TimelineView tv(&editor);
     tv.resize(1200, 400);
@@ -155,8 +155,8 @@ int main(int argc, char** argv)
     CHECK(project.undoStack()->count() == before + 1);
     CHECK(!EffectRegistry::has(*clip(aid), "blur"));
 
-    // Trim-Werkzeug: Spuren kommen während des Ziehens dazu (z. B. Tastenkürzel) -> Vorschau passt nicht mehr zu den
-    // Zeilen; Zeichnen darf nicht über die Spuren der alten Vorschau hinaus lesen
+    // Trim tool: tracks are added while dragging (e.g. shortcut) -> preview no longer matches the
+    // rows; drawing must not read beyond the tracks of the old preview
     if (hitY >= 0) {
         tv.setTool(TimelineView::Tool::Trim);
         const QPoint at(TimelineView::kHeaderW + 150, hitY);
@@ -176,8 +176,8 @@ int main(int argc, char** argv)
         tv.setTool(TimelineView::Tool::Select);
     }
 
-    // Zahlenfeld ziehen: langsame Bewegung (1 px je Ereignis) und Shift (fein) ändern den Wert in beide Richtungen,
-    // auch wenn ein Schritt kleiner ist als die angezeigte Genauigkeit (Rest wird gesammelt statt verworfen)
+    // Drag number field: slow movement (1 px per event) and Shift (fine) change the value in both directions,
+    // even if a step is smaller than the displayed precision (remainder is collected instead of discarded)
     {
         auto drag = [](ScrubField& f, const QVector<int>& xs, Qt::KeyboardModifiers mods = Qt::NoModifier) {
             auto send = [&](QEvent::Type t, int x, Qt::MouseButtons buttons) {
@@ -193,15 +193,15 @@ int main(int argc, char** argv)
             for (int x = from; from < to ? x <= to : x >= to; x += from < to ? 1 : -1) xs << x;
             return xs;
         };
-        ScrubField soft(0, 100, 0.5, 0); // wie Weichheit/Rand einer Wischblende
+        ScrubField soft(0, 100, 0.5, 0); // like softness/border of a wipe
         soft.setValue(50);
-        drag(soft, {40, 44}); // ab 3 px wird gezogen: +2
+        drag(soft, {40, 44}); // dragging starts at 3 px: +2
         CHECK_EQ(soft.value(), 52.0);
-        drag(soft, pixels(44, 34)); // 10 px nach links, einzeln: -5
+        drag(soft, pixels(44, 34)); // 10 px to the left, one at a time: -5
         CHECK_EQ(soft.value(), 47.0);
-        ScrubField outline(0, 40, 0.1, 1); // wie Umrandung eines Titels
+        ScrubField outline(0, 40, 0.1, 1); // like outline of a title
         outline.setValue(4);
-        drag(outline, pixels(10, 60), Qt::ShiftModifier); // fein: 0,01 je px
+        drag(outline, pixels(10, 60), Qt::ShiftModifier); // fine: 0.01 per px
         CHECK(outline.value() > 4.3);
     }
     return Check::result();

@@ -40,7 +40,7 @@
 
 using namespace TimelineViewDetail;
 
-// ---------- Drag & Drop (Media Pool oder direkt aus dem Dateimanager) ----------
+// ---------- Drag & Drop (Media Pool or directly from the file manager) ----------
 
 QStringList TimelineView::dropPaths(const QMimeData* mime) const
 {
@@ -63,17 +63,17 @@ bool TimelineView::dropRange(const QMimeData* mime, int* in, int* out)
 
 int TimelineView::dropTrackAt(int y) const
 {
-    // V2 und A2 gehören zusammen -> Index der Spur unter der Maus, egal ob Video oder Audio
+    // V2 and A2 belong together -> index of the track under the mouse, whether video or audio
     const auto all = rows();
     for (const Row& r : all)
         if (y >= r.y && y < r.y + r.h) return r.ref.index;
     const Timeline& tl = m_editor->project()->timeline();
-    if (!all.isEmpty() && y >= all.last().y + all.last().h) return tl.audio.size(); // unterhalb: neue Spur
+    if (!all.isEmpty() && y >= all.last().y + all.last().h) return tl.audio.size(); // below: new track
     return 0;
 }
 
-// Schnitt/Clipkante für einen Übergang unter der Maus: nächste Kante des Clips unter der Maus
-// (oder bis 30 px daneben); links vom Schnitt = End on Edit, rechts = Start on Edit, nah dran = mittig.
+// Cut/clip edge for a transition under the mouse: nearest edge of the clip under the mouse
+// (or up to 30 px beside it); left of the cut = End on Edit, right = Start on Edit, close = centered.
 std::optional<TimelineView::TransitionDrop> TimelineView::transitionDropAt(const QPoint& pos) const
 {
     if (pos.x() < kHeaderW || pos.y() < kRulerH) return std::nullopt;
@@ -103,14 +103,14 @@ std::optional<TimelineView::TransitionDrop> TimelineView::transitionDropAt(const
     if (!best) return std::nullopt;
     best->style = m_transDragStyle;
     if (best->leftId && best->rightId) {
-        const double w = m_editor->project()->fps() * m_view.pxPerFrame; // Standardlänge 1 s
+        const double w = m_editor->project()->fps() * m_view.pxPerFrame; // default length 1 s
         const double zone = std::max(4.0, w / 6);
         best->style.align = std::abs(bestDx) <= zone ? TransitionAlign::Center
                             : bestDx < 0             ? TransitionAlign::End
                                                      : TransitionAlign::Start;
     }
     const auto span = m_editor->previewTransitionAt(best->leftId, best->rightId, best->style);
-    if (!span) return std::nullopt; // passt nicht (keine Handles)
+    if (!span) return std::nullopt; // does not fit (no handles)
     best->span = *span;
     return best;
 }
@@ -141,14 +141,14 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
     if (paths.isEmpty()) return;
     m_dropItems.clear();
     for (const QString& path : paths) {
-        if (path == MediaPool::TitleItem) { // Titel aus dem Media Pool: 5 s, nur Video
+        if (path == MediaPool::TitleItem) { // Title from the Media Pool: 5 s, video only
             m_dropItems << DropItem{5 * m_editor->project()->fps(), true, 0};
             continue;
         }
-        if (const int seq = MediaPool::sequenceOfItem(path)) { // Timeline/Compound Clip aus dem Media Pool
+        if (const int seq = MediaPool::sequenceOfItem(path)) { // Timeline/compound clip from the Media Pool
             const Project* project = m_editor->project();
             const Sequence* s = project->sequence(seq);
-            if (!s || !project->canNest(seq, project->currentSequence())) continue; // nie in sich selbst
+            if (!s || !project->canNest(seq, project->currentSequence())) continue; // never into itself
             auto has = [](const QVector<Track>& tracks) {
                 return std::any_of(tracks.begin(), tracks.end(), [](const Track& t) { return !t.clips.isEmpty(); });
             };
@@ -160,7 +160,7 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
         if (const MediaInfo* known = m_editor->project()->mediaInfo(path)) info = *known;
         else if (m_probe) info = m_probe(path);
         int in = 0, out = 0;
-        if (dropRange(e->mimeData(), &in, &out)) info.length = out - in + 1; // Quell-In/Out aus dem Viewer
+        if (dropRange(e->mimeData(), &in, &out)) info.length = out - in + 1; // Source In/Out from the Viewer
         if (info.length > 0 && (info.hasVideo || info.hasAudio))
             m_dropItems << DropItem{info.length, info.hasVideo, info.audioStreamCount()};
     }
@@ -210,7 +210,7 @@ void TimelineView::dragLeaveEvent(QDragLeaveEvent*)
 void TimelineView::dropEvent(QDropEvent* e)
 {
     if (!m_fxDragging.isEmpty()) {
-        // Wie DaVinci: nur auf den Clip unter der Maus (auch wenn andere ausgewählt sind)
+        // Like DaVinci: only onto the clip under the mouse (even if others are selected)
         if (const int id = fxDropClipAt(e->position().toPoint())) {
             m_editor->addEffect({id}, m_fxDragging);
             e->acceptProposedAction();

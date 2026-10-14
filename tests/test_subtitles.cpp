@@ -1,6 +1,6 @@
-// Test Untertitel: SRT lesen/schreiben (Kodierung, Formatierungen, kaputte Blöcke, Überlappungen, 29,97 fps),
-// Überschreiben auf der Spur, Editor-Operationen mit Undo, Projektdatei, Formatwechsel, Einbrennen im Render
-// (Pixel) und SRT-Datei beim Export.
+// Test subtitles: read/write SRT (encoding, formatting, broken blocks, overlaps, 29.97 fps),
+// overwriting on the track, editor operations with undo, project file, format change, burn-in in the render
+// (pixels) and SRT file on export.
 #include "check.h"
 
 #include "core/Editor.h"
@@ -40,7 +40,7 @@ QString track(const Project& p, int i)
 
 void testSrt()
 {
-    // Nummern, CRLF, BOM, Formatierungen, Punkt statt Komma, Positionsangaben, Mehrzeiler
+    // Numbers, CRLF, BOM, formatting, dot instead of comma, position info, multi-line
     const QByteArray srt = "\xEF\xBB\xBF" "1\r\n00:00:01,000 --> 00:00:02,500\r\n<i>Hallo</i> Welt\r\n\r\n"
                            "2\r\n00:00:03.000 --> 00:00:04,000 X1:10 Y1:20\r\n{\\an8}Zeile eins\r\nZeile zwei\r\n\r\n";
     int skipped = -1;
@@ -48,7 +48,7 @@ void testSrt()
     CHECK_EQ(cues(c), QString("25-63:Hallo Welt 75-100:Zeile eins|Zeile zwei"));
     CHECK_EQ(skipped, 0);
 
-    // Fehlende Nummer, kaputte Zeitzeile, leerer Text, unsortiert, Überlappung, doppelte Startzeit, LF, kein Schluss-Leerzeichen
+    // Missing number, broken time line, empty text, unsorted, overlap, duplicate start time, LF, no trailing blank
     const QByteArray messy = "00:00:05,000 --> 00:00:06,000\nohne Nummer\n\n"
                              "7\n00:00:xx --> 00:00:09,000\nkaputt\n\n"
                              "8\n00:00:10,000 --> 00:00:11,000\n\n"
@@ -58,30 +58,30 @@ void testSrt()
     CHECK_EQ(cues(c), QString("0-125:überlappt|gleicher Start 125-150:ohne Nummer"));
     CHECK_EQ(skipped, 2);
 
-    // Windows-1252 (kein gültiges UTF-8): Umlaute und typografische Anführungszeichen
+    // Windows-1252 (not valid UTF-8): umlauts and typographic quotation marks
     c = Subtitles::parseSrt("1\r\n00:00:00,000 --> 00:00:01,000\r\nGr\xFC\xDF\x65 \x84zitiert\x93\r\n", 25);
     CHECK_EQ(c.value(0).text, QString::fromUtf8("Grüße „zitiert“"));
 
-    // 29,97 fps: Frames aus Millisekunden gerundet, zurück wieder dieselben Zeiten
+    // 29.97 fps: frames rounded from milliseconds, back again the same times
     const double ntsc = 30000.0 / 1001.0;
     c = Subtitles::parseSrt("1\n00:01:00,060 --> 00:01:02,000\nA\n", ntsc);
     CHECK_EQ(c.value(0).start, 1800); // 60,06 s * 29,97
     CHECK_EQ(c.value(0).end, 1858);
 
-    // Schreiben -> Lesen ergibt dieselben Einträge (25 fps)
+    // Write -> read gives the same entries (25 fps)
     const QVector<SubtitleCue> list{{1, 0, 30, "Eins"}, {2, 50, 75, "Zwei\nZeilen"}, {3, 90000, 90025, "Stunde"}};
     const QByteArray out = Subtitles::toSrt(list, 25);
     CHECK(out.startsWith("1\r\n00:00:00,000 --> 00:00:01,200\r\nEins\r\n\r\n2\r\n"));
     CHECK(out.contains("01:00:00,000 --> 01:00:01,000"));
     CHECK_EQ(cues(Subtitles::parseSrt(out, 25)), cues(list));
-    // Bereich: Zeiten ab Bereichsanfang, angeschnittene gekürzt, Einträge außerhalb weg
+    // Range: times from the range start, partly covered ones shortened, entries outside gone
     CHECK_EQ(cues(Subtitles::parseSrt(Subtitles::toSrt(list, 25, 10, 60), 25)), QString("0-20:Eins 40-50:Zwei|Zeilen"));
     CHECK_EQ(Subtitles::srtTime(3723004), QString("01:02:03,004"));
 
-    // Timecode-Eingabe im Inspector (wie DaVinci)
+    // Timecode input in the Inspector (like DaVinci)
     CHECK_EQ(Timecode::parse("00:00:10:05", 25), 255);
-    CHECK_EQ(Timecode::parse("1:00", 25), 25);        // Teile von rechts
-    CHECK_EQ(Timecode::parse("1000", 25), 250);       // Ziffern von rechts: 00:00:10:00
+    CHECK_EQ(Timecode::parse("1:00", 25), 25);        // parts from the right
+    CHECK_EQ(Timecode::parse("1000", 25), 250);       // digits from the right: 00:00:10:00
     CHECK_EQ(Timecode::parse("01;00;00;00", 30), 108000);
     CHECK_EQ(Timecode::parse("abc", 25), -1);
     CHECK_EQ(Timecode::parse("", 25), -1);
@@ -92,9 +92,9 @@ void testPlace()
 {
     SubtitleTrack t;
     t.cues = {{1, 0, 50, "a"}, {2, 60, 100, "b"}, {3, 120, 150, "c"}};
-    Subtitles::place(t, {4, 40, 130, "neu"}); // a gekürzt, b verdeckt, c angeschnitten
+    Subtitles::place(t, {4, 40, 130, "neu"}); // a shortened, b covered, c partly covered
     CHECK_EQ(cues(t.cues), QString("0-40:a 40-130:neu 130-150:c"));
-    Subtitles::place(t, {5, 60, 70, "mitten"}); // teilt "neu": rechter Teil braucht eine neue id
+    Subtitles::place(t, {5, 60, 70, "mitten"}); // splits "neu": right part needs a new id
     CHECK_EQ(cues(t.cues), QString("0-40:a 40-60:neu 60-70:mitten 70-130:neu 130-150:c"));
     CHECK_EQ(t.cues[1].id, 4);
     CHECK_EQ(t.cues[3].id, 0);
@@ -109,7 +109,7 @@ void testEditor()
     Editor ed(&p, &sel);
     QUndoStack* undo = p.undoStack();
 
-    // Erster Untertitel legt ST1 an (sichtbar), 3 s lang, ist ausgewählt
+    // First subtitle creates ST1 (visible), 3 s long, is selected
     const int a = ed.addSubtitle(100);
     CHECK(a > 0);
     CHECK_EQ(p.timeline().subtitles.size(), 1);
@@ -117,27 +117,27 @@ void testEditor()
     CHECK_EQ(track(p, 0), QString("100-175:Untertitel"));
     CHECK(sel.contains(a) && ed.isSubtitle(a));
     CHECK_EQ(undo->count(), 1);
-    CHECK_EQ(ed.addSubtitle(120), 0); // dort liegt schon einer
-    const int b = ed.addSubtitle(50); // vor dem nächsten gekürzt
+    CHECK_EQ(ed.addSubtitle(120), 0); // one already lies there
+    const int b = ed.addSubtitle(50); // shortened before the next
     CHECK_EQ(track(p, 0), QString("50-100:Untertitel 100-175:Untertitel"));
 
     ed.setSubtitleText(a, "Hallo", "tippen");
     ed.setSubtitleText(a, "Hallo Welt", "tippen");
-    CHECK_EQ(undo->count(), 3); // Tippen = ein Schritt
+    CHECK_EQ(undo->count(), 3); // typing = one step
     CHECK_EQ(track(p, 0), QString("50-100:Untertitel 100-175:Hallo Welt"));
-    undo->undo(); // Undo nimmt den Text wirklich zurück (Undo-Stand teilte sich früher die Daten)
+    undo->undo(); // undo really reverts the text (the undo state used to share the data)
     CHECK_EQ(track(p, 0), QString("50-100:Untertitel 100-175:Untertitel"));
     undo->redo();
     CHECK_EQ(track(p, 0), QString("50-100:Untertitel 100-175:Hallo Welt"));
 
-    // Kanten: begrenzt auf den Nachbarn und mindestens 1 Frame
+    // Edges: limited to the neighbor and at least 1 frame
     CHECK_EQ(ed.clampSubtitleTrim(a, TimelineOps::Edge::Start, -30), 0);
     CHECK_EQ(ed.clampSubtitleTrim(b, TimelineOps::Edge::End, 10), 0);
     CHECK_EQ(ed.clampSubtitleTrim(b, TimelineOps::Edge::End, -100), -49);
     ed.trimSubtitle(b, TimelineOps::Edge::End, -20);
     ed.trimSubtitle(a, TimelineOps::Edge::Start, -10);
     CHECK_EQ(track(p, 0), QString("50-80:Untertitel 90-175:Hallo Welt"));
-    ed.setSubtitleTiming(a, 60, 500); // Start stößt an b
+    ed.setSubtitleTiming(a, 60, 500); // start hits b
     CHECK_EQ(track(p, 0), QString("50-80:Untertitel 80-500:Hallo Welt"));
 
     // Second track: hidden at first; showing it keeps ST1 visible (several at once), hide ST1 for the rest
@@ -147,19 +147,19 @@ void testEditor()
     CHECK(p.timeline().subtitles[0].enabled && p.timeline().subtitles[1].enabled);
     ed.setSubtitleTrackEnabled(0, false);
     CHECK(!p.timeline().subtitles[0].enabled && p.timeline().subtitles[1].enabled);
-    const int c = ed.addSubtitle(0); // landet auf der sichtbaren Spur
+    const int c = ed.addSubtitle(0); // lands on the visible track
     CHECK_EQ(track(p, 1), QString("0-75:Untertitel"));
 
-    // Verschieben auf ST1 überschreibt dort (wie Clips)
+    // Moving onto ST1 overwrites there (like clips)
     ed.moveSubtitles({c}, 40, -1);
     CHECK_EQ(track(p, 0), QString("40-115:Untertitel 115-500:Hallo Welt"));
     CHECK_EQ(track(p, 1), QString(""));
-    CHECK(!ed.isSubtitle(b)); // ganz verdeckt
+    CHECK(!ed.isSubtitle(b)); // completely covered
     CHECK_EQ(ed.clampSubtitleTrackDelta({c}, 5), 1);
-    ed.moveSubtitles({c}, -100, 0); // nicht vor Frame 0
+    ed.moveSubtitles({c}, -100, 0); // not before frame 0
     CHECK_EQ(track(p, 0), QString("0-75:Untertitel 115-500:Hallo Welt"));
 
-    // Gesperrte Spur: nichts änderbar, Auswahl darauf wird aufgehoben
+    // Locked track: nothing changeable, selection on it is cleared
     sel.set({a, c});
     ed.toggleSubtitleTrackLock(0);
     CHECK(sel.isEmpty());
@@ -171,31 +171,31 @@ void testEditor()
     CHECK_EQ(undo->count(), n);
     ed.toggleSubtitleTrackLock(0);
 
-    // Löschen (auch zusammen mit Clips in der Auswahl)
+    // Delete (also together with clips in the selection)
     sel.set({a});
     ed.deleteSelection();
     CHECK_EQ(track(p, 0), QString("0-75:Untertitel"));
     CHECK(sel.isEmpty());
 
-    // Import als neue Spur (Name aus Datei), ids neu vergeben
+    // Import as a new track (name from file), ids reassigned
     const QVector<SubtitleCue> in = Subtitles::parseSrt("1\n00:00:01,000 --> 00:00:02,000\nimportiert\n", 25);
     CHECK_EQ(ed.importSubtitles(in, "film.de"), 2);
     CHECK_EQ(p.timeline().subtitles[2].name, QString("film.de"));
     CHECK_EQ(track(p, 2), QString("25-50:importiert"));
     CHECK(p.timeline().subtitles[2].cues[0].id > 0);
-    CHECK(!p.timeline().subtitles[2].enabled); // ST2 ist sichtbar
+    CHECK(!p.timeline().subtitles[2].enabled); // ST2 is visible
 
-    // Stil ändern (Ziehen = ein Schritt), umbenennen, Spur löschen
+    // Change style (dragging = one step), rename, delete track
     const int before = undo->count();
     ed.setSubtitleStyle(0, "Größe", [](TitleStyle& s) { s.size = 60; }, "size");
     ed.setSubtitleStyle(0, "Größe", [](TitleStyle& s) { s.size = 70; }, "size");
     CHECK_EQ(undo->count(), before + 1);
-    ed.renameSubtitleTrack(0, "Untertitel 1"); // Standardname -> bleibt leer
+    ed.renameSubtitleTrack(0, "Untertitel 1"); // default name -> stays empty
     CHECK(p.timeline().subtitles[0].name.isEmpty());
     ed.removeSubtitleTrack(2);
     CHECK_EQ(p.timeline().subtitles.size(), 2);
 
-    // Alles zurück -> leer, alles vor -> gleich
+    // Everything back -> empty, everything forward -> same
     const QByteArray end = ProjectFile::toJson(p.data(), "/x/p.schneidi");
     while (undo->canUndo()) undo->undo();
     CHECK(p.timeline().subtitles.isEmpty());
@@ -203,13 +203,13 @@ void testEditor()
     CHECK_EQ(ProjectFile::toJson(p.data(), "/x/p.schneidi"), end);
 }
 
-// Ripple/Teilen: Untertitelspuren folgen den Clip-Spuren wie in DaVinci (gesperrte bleiben stehen),
-// Strg+B/Klinge teilen Einträge. Jede Bearbeitung ist ein Undo-Schritt.
+// Ripple/split: subtitle tracks follow the clip tracks as in DaVinci (locked ones stay put),
+// Ctrl+B/blade split entries. Every edit is one undo step.
 struct RippleFixture {
     Project p;
     Selection sel;
     Editor ed{&p, &sel};
-    int x = 0, y = 0, z = 0; // V1: x [0,50) y [50,100) z [100,150), nur Bild
+    int x = 0, y = 0, z = 0; // V1: x [0,50) y [50,100) z [100,150), picture only
     RippleFixture(const QVector<SubtitleCue>& st1, const QVector<SubtitleCue>& st2 = {}, bool lockSt2 = true)
     {
         p.addMedia({"/x/a.mp4", "a.mp4", 300, true, false, false});
@@ -253,7 +253,7 @@ void testRippleAndSplit()
 {
     using TimelineOps::Edge;
     using TimelineOps::TrimKind;
-    { // Löschen mit Ripple: ST1 rückt um den gelöschten Bereich, gesperrte ST2 bleibt stehen
+    { // Delete with ripple: ST1 moves by the deleted range, locked ST2 stays put
         RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}, {0, 150, 160, "c"}}, {{0, 110, 120, "fest"}});
         f.sel.set({f.y});
         f.ed.rippleDeleteSelection();
@@ -265,21 +265,21 @@ void testRippleAndSplit()
         CHECK_EQ(f.v1(), QString("0-50 50-100 100-150"));
         CHECK_EQ(f.st(0), QString("10-40:a 110-140:b 150-160:c"));
     }
-    { // Nicht gesperrte ST2 rückt ebenfalls; Eintrag über dem gelöschten Clip fällt mit weg
+    { // Unlocked ST2 moves too; entry over the deleted clip is dropped as well
         RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}}, {{0, 60, 90, "drüber"}, {0, 120, 130, "danach"}}, false);
         f.sel.set({f.y});
         f.ed.rippleDeleteSelection();
         CHECK_EQ(f.st(0), QString("10-40:a 60-90:b"));
         CHECK_EQ(f.st(1), QString("70-80:danach"));
     }
-    { // Löschen mit Ripple vorne: Eintrag auf dem gelöschten Clip fällt weg, b rückt nach
+    { // Delete with ripple at the front: entry on the deleted clip is dropped, b moves up
         RippleFixture f({{0, 20, 30, "früh"}, {0, 60, 70, "b"}});
         f.sel.set({f.x});
         f.ed.rippleDeleteSelection();
         CHECK_EQ(f.v1(), QString("0-50 50-100"));
         CHECK_EQ(f.st(0), QString("10-20:b"));
     }
-    { // Typischer Fall: je Clip ein Eintrag, einer über die Clipgrenze. Mittleren Clip löschen bzw. kürzen
+    { // Typical case: one entry per clip, one across the clip boundary. Delete or shorten the middle clip
         RippleFixture f({{0, 0, 50, "x"}, {0, 50, 90, "y"}, {0, 90, 120, "über"}, {0, 120, 150, "z"}});
         f.sel.set({f.y});
         f.ed.rippleDeleteSelection();
@@ -291,23 +291,23 @@ void testRippleAndSplit()
         CHECK_EQ(f.v1(), QString("0-50 50-80 80-130"));
         CHECK_EQ(f.st(0), QString("0-50:x 50-80:y 80-100:über 100-130:z"));
     }
-    { // Strg+B ohne Auswahl: Clip und Eintrag unter dem Playhead, gesperrte Spur nicht; ein Undo-Schritt
+    { // Ctrl+B without selection: clip and entry under the playhead, locked track not; one undo step
         RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}}, {{0, 110, 125, "fest"}});
         const int b = f.cueId(0, 1);
         f.ed.splitAtPlayhead(120);
         CHECK_EQ(f.v1(), QString("0-50 50-100 100-120 120-150"));
         CHECK_EQ(f.st(0), QString("10-40:a 110-120:b 120-140:b"));
-        CHECK_EQ(f.cueId(0, 1), b); // links behält die id
+        CHECK_EQ(f.cueId(0, 1), b); // left keeps the id
         CHECK(f.cueId(0, 2) > 0 && f.cueId(0, 2) != b && !TimelineOps::findClip(f.p.timeline(), f.cueId(0, 2)));
         CHECK_EQ(f.st(1), QString("110-125:fest"));
         CHECK_EQ(f.p.undoStack()->count(), 1);
         f.p.undoStack()->undo();
         CHECK_EQ(f.v1(), QString("0-50 50-100 100-150"));
         CHECK_EQ(f.st(0), QString("10-40:a 110-140:b"));
-        f.ed.splitAtPlayhead(110); // genau am Anfang: nichts zu teilen beim Eintrag
+        f.ed.splitAtPlayhead(110); // exactly at the start: nothing to split for the entry
         CHECK_EQ(f.st(0), QString("10-40:a 110-140:b"));
     }
-    { // Strg+B mit Auswahl: nur ausgewählte Einträge bzw. Clips
+    { // Ctrl+B with selection: only selected entries or clips
         RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}}, {{0, 110, 125, "zwei"}}, false);
         f.ed.setSplitOnSelectedTracks(false);
         f.sel.set({f.cueId(0, 1)});
@@ -319,9 +319,9 @@ void testRippleAndSplit()
         f.ed.splitAtPlayhead(130);
         CHECK_EQ(f.v1(), QString("0-50 50-100 100-130 130-150"));
         CHECK_EQ(f.st(0), QString("10-40:a 110-120:b 120-140:b"));
-        // „Auf Spuren der Auswahl“: Eintrag einer anderen Stelle derselben Spur ist ausgewählt
+        // "On tracks of the selection": entry at another position of the same track is selected
         f.sel.set({f.cueId(0, 0)});
-        f.ed.splitAtPlayhead(135); // aus: a liegt nicht unter dem Playhead
+        f.ed.splitAtPlayhead(135); // off: a is not under the playhead
         CHECK_EQ(f.st(0), QString("10-40:a 110-120:b 120-140:b"));
         f.ed.setSplitOnSelectedTracks(true);
         f.ed.splitAtPlayhead(135);
@@ -329,7 +329,7 @@ void testRippleAndSplit()
         CHECK_EQ(f.v1(), QString("0-50 50-100 100-130 130-150"));
         CHECK_EQ(f.st(1), QString("110-125:zwei"));
     }
-    { // Klinge auf einen Eintrag: nur dieser; gesperrte Spur / Kante: nichts
+    { // Blade on an entry: only this one; locked track / edge: nothing
         RippleFixture f({{0, 110, 140, "b"}}, {{0, 110, 125, "fest"}});
         f.ed.bladeAt(f.cueId(0, 0), 130);
         CHECK_EQ(f.v1(), QString("0-50 50-100 100-150"));
@@ -342,7 +342,7 @@ void testRippleAndSplit()
         CHECK_EQ(f.st(0), QString("110-130:b 130-140:b"));
         CHECK_EQ(f.p.undoStack()->count(), 1);
     }
-    { // Einfügen (F9): Eintrag über dem Einfügepunkt wird geteilt, Rest rückt mit; gesperrte Spur bleibt
+    { // Insert (F9): entry over the insert point is split, rest moves along; locked track stays
         RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}, {0, 140, 150, "c"}}, {{0, 110, 125, "fest"}});
         f.ed.setSourceMarkIn("/x/b.mp4", 10);
         f.ed.setSourceMarkOut("/x/b.mp4", 29);
@@ -355,7 +355,7 @@ void testRippleAndSplit()
         f.p.undoStack()->undo();
         CHECK_EQ(f.st(0), QString("10-40:a 110-140:b 140-150:c"));
     }
-    { // Ripple-Überschreiben: y (50) durch 20 Frames ersetzen -> Rest rückt um -30
+    { // Ripple Overwrite: replace y (50) with 20 frames -> rest moves by -30
         RippleFixture f({{0, 10, 40, "a"}, {0, 110, 140, "b"}});
         f.ed.setSourceMarkIn("/x/b.mp4", 10);
         f.ed.setSourceMarkOut("/x/b.mp4", 29);
@@ -363,46 +363,46 @@ void testRippleAndSplit()
         CHECK_EQ(f.v1(), QString("0-50 50-70 70-120"));
         CHECK_EQ(f.st(0), QString("10-40:a 80-110:b"));
     }
-    { // Ripple-Trimmen: Verlängern schiebt ST1, Verkürzen schneidet die entfernte Zeit heraus
+    { // Ripple trim: extending pushes ST1, shortening cuts the removed time out
         RippleFixture f({{0, 90, 95, "davor"}, {0, 100, 120, "b"}}, {{0, 99, 101, "fest"}});
         const auto e = f.ed.trimEdit(TrimKind::Ripple, f.y, Edge::End);
         f.ed.applyTrimEdit(e, 10);
         CHECK_EQ(f.v1(), QString("0-50 50-110 110-160"));
         CHECK_EQ(f.st(0), QString("90-95:davor 110-130:b"));
-        CHECK_EQ(f.st(1), QString("99-101:fest")); // gesperrt: zählt auch nicht als Hindernis
-        CHECK_EQ(f.ed.clampTrimEdit(e, -40), -40); // Untertitel begrenzen nicht
+        CHECK_EQ(f.st(1), QString("99-101:fest")); // locked: does not count as an obstacle either
+        CHECK_EQ(f.ed.clampTrimEdit(e, -40), -40); // subtitles do not limit
         f.ed.applyTrimEdit(e, -40);
         CHECK_EQ(f.v1(), QString("0-50 50-70 70-120"));
-        CHECK_EQ(f.st(0), QString("70-90:b")); // "davor" lag in der entfernten Zeit [70, 110)
+        CHECK_EQ(f.st(0), QString("70-90:b")); // "davor" lay in the removed time [70, 110)
         CHECK_EQ(f.p.undoStack()->count(), 2);
         f.p.undoStack()->undo();
         f.p.undoStack()->undo();
         CHECK_EQ(f.st(0), QString("90-95:davor 100-120:b"));
-        // ST1 gesperrt: bleibt stehen
+        // ST1 locked: stays put
         f.ed.toggleSubtitleTrackLock(0);
         CHECK_EQ(f.ed.clampTrimEdit(e, -40), -40);
         f.ed.applyTrimEdit(e, -40);
         CHECK_EQ(f.v1(), QString("0-50 50-60 60-110"));
         CHECK_EQ(f.st(0), QString("90-95:davor 100-120:b"));
     }
-    { // Reine Datenfunktionen
+    { // Pure data functions
         SubtitleTrack t;
         t.cues = {{1, 0, 10, "a"}, {2, 20, 30, "b"}};
         int next = 10;
         CHECK_EQ(Subtitles::splitAt(t, 20, [&] { return next++; }), 0);
         CHECK_EQ(Subtitles::splitAt(t, 25, [&] { return next++; }), 10);
         CHECK_EQ(cues(t.cues), QString("0-10:a 20-25:b 25-30:b"));
-        { // entfernte Zeit [9, 20) kürzt a, der Rest rückt nach
+        { // removed time [9, 20) shortens a, the rest moves up
             SubtitleTrack u = t;
             CHECK(Subtitles::ripple(u, {{20, -11}}));
             CHECK_EQ(cues(u.cues), QString("0-9:a 9-14:b 14-19:b"));
-            u = t; // [4, 8) mitten aus a
+            u = t; // [4, 8) from the middle of a
             CHECK(Subtitles::ripple(u, {{8, -4}}));
             CHECK_EQ(cues(u.cues), QString("0-6:a 16-21:b 21-26:b"));
-            u = t; // [20, 30): beide b fallen weg
+            u = t; // [20, 30): both b are dropped
             CHECK(Subtitles::ripple(u, {{30, -10}}));
             CHECK_EQ(cues(u.cues), QString("0-10:a"));
-            u = t; // Verlängern an der Kante von a: a wird nicht gedehnt
+            u = t; // extending at the edge of a: a is not stretched
             CHECK(Subtitles::ripple(u, {{5, 3}}));
             CHECK_EQ(cues(u.cues), QString("0-10:a 23-28:b 28-33:b"));
             CHECK(!Subtitles::ripple(u, {{40, -5}}));
@@ -446,31 +446,31 @@ void testProjectFile()
     CHECK(b.style == t.style);
     CHECK_EQ(cues(b.cues), cues(t.cues));
     CHECK_EQ(b.cues[0].id, 7);
-    // doppelte/fehlende ids werden neu vergeben
+    // duplicate/missing ids are reassigned
     const SubtitleTrack& b2 = back.timeline.subtitles[1];
     CHECK(!b2.enabled);
     CHECK(b2.cues[0].id > 8 && b2.cues[1].id > 8 && b2.cues[0].id != b2.cues[1].id);
     CHECK(back.lastClipId >= b2.cues[1].id);
-    // ohne Stilangaben: Untertitel-Standard (nicht Titel-Standard)
+    // without style info: subtitle default (not title default)
     QByteArray old = json;
     ProjectData d2 = d;
     d2.timeline.subtitles[0].style = subtitleBaseStyle();
     CHECK(ProjectFile::fromJson(ProjectFile::toJson(d2, "/x/p.schneidi"), "/x/p.schneidi", &back, &err));
     CHECK(back.timeline.subtitles[0].style == subtitleBaseStyle());
-    // Speichern -> Laden -> Speichern identisch
+    // Save -> load -> save identical
     CHECK(ProjectFile::fromJson(json, "/x/p.schneidi", &back, &err));
     ProjectData again;
     CHECK(ProjectFile::fromJson(ProjectFile::toJson(back, "/x/p.schneidi"), "/x/p.schneidi", &again, &err));
     CHECK_EQ(ProjectFile::toJson(again, "/x/p.schneidi"), ProjectFile::toJson(back, "/x/p.schneidi"));
 
-    // Formatwechsel rechnet den Spurstil mit um; Standardstil folgt dem Format
+    // Format change converts the track style too; default style follows the format
     Timeline tl = d.timeline;
     scaleTimeline(tl, {1920, 1080}, {3840, 2160});
     CHECK_EQ(tl.subtitles[0].style.size, t.style.size * 2);
     CHECK_EQ(tl.subtitles[0].style.posY, t.style.posY * 2);
     CHECK_EQ(Subtitles::defaultStyle({3840, 2160}).size, 96.0);
-    CHECK_EQ(Subtitles::defaultStyle({1080, 1920}).size, 48.0); // Hochformat: kürzere Kante
-    CHECK_EQ(Subtitles::defaultStyle({1080, 1920}).posY, 107.0); // 60 * 1920 / 1080, gerundet
+    CHECK_EQ(Subtitles::defaultStyle({1080, 1920}).size, 48.0); // portrait: shorter edge
+    CHECK_EQ(Subtitles::defaultStyle({1080, 1920}).posY, 107.0); // 60 * 1920 / 1080, rounded
 }
 
 QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos, bool subtitles = true)
@@ -490,7 +490,7 @@ QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos, bool subtit
     return img.copy();
 }
 
-// Helle Pixel (Text weiß auf Schwarz) in einem Bereich (relativ)
+// Bright pixels (text white on black) in a region (relative)
 int bright(const QImage& img, QRectF rel)
 {
     int n = 0;
@@ -522,7 +522,7 @@ int testRender(const QString& dir)
     tl.video[0].clips << c;
     SubtitleTrack st;
     st.style = Subtitles::defaultStyle(fmt.size());
-    st.style.bold = true; // bei 360p (16 px) sonst zu dünn für eine klare Helligkeitsschwelle
+    st.style.bold = true; // at 360p (16 px) otherwise too thin for a clear brightness threshold
     st.cues = {{2, 10, 40, "Ein ziemlich langer Untertitel, der auf zwei Zeilen umbrochen werden muss"}};
     tl.subtitles << st;
 
@@ -532,22 +532,22 @@ int testRender(const QString& dir)
     if (qEnvironmentVariableIsSet("SUBTITLE_DUMP")) on.save(qEnvironmentVariable("SUBTITLE_DUMP"));
     CHECK(bright(on, bottom) > 100);
     CHECK_EQ(bright(on, top), 0);
-    CHECK_EQ(bright(on, QRectF(0, 0.95, 1, 0.05)), 0); // Abstand zum unteren Rand
-    CHECK_EQ(bright(on, QRectF(0, 0.6, 0.03, 0.4)), 0); // umbrochen: nichts am linken Rand
-    CHECK_EQ(bright(render(tl, fmt, 5), bottom), 0);   // vor dem Eintrag
-    CHECK_EQ(bright(render(tl, fmt, 40), bottom), 0);  // Ende exklusiv
-    CHECK_EQ(bright(render(tl, fmt, 20, false), bottom), 0); // Export ohne Einbrennen
+    CHECK_EQ(bright(on, QRectF(0, 0.95, 1, 0.05)), 0); // distance from the bottom edge
+    CHECK_EQ(bright(on, QRectF(0, 0.6, 0.03, 0.4)), 0); // wrapped: nothing at the left edge
+    CHECK_EQ(bright(render(tl, fmt, 5), bottom), 0);   // before the entry
+    CHECK_EQ(bright(render(tl, fmt, 40), bottom), 0);  // end exclusive
+    CHECK_EQ(bright(render(tl, fmt, 20, false), bottom), 0); // export without burn-in
     Timeline hidden = tl;
     hidden.subtitles[0].enabled = false;
     CHECK_EQ(bright(render(hidden, fmt, 20), bottom), 0);
-    // Position: höher gesetzt -> Text weiter oben
+    // Position: set higher -> text further up
     Timeline high = tl;
     high.subtitles[0].style.posY = 150;
     const QImage hi = render(high, fmt, 20);
     CHECK_EQ(bright(hi, QRectF(0, 0.75, 1, 0.25)), 0);
     CHECK(bright(hi, QRectF(0, 0.3, 1, 0.4)) > 100);
 
-    // Export: SRT daneben (Bereich 20..29 -> Zeiten ab 0, Ende am Bereichsende), Fehler ohne Untertitel
+    // Export: SRT alongside (range 20..29 -> times from 0, end at the range end), error without subtitles
     RenderJob job;
     job.path = dir + "/out.mp4";
     job.settings.subtitles = RenderSettings::SrtFile;

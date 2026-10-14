@@ -12,14 +12,14 @@ namespace {
 QVector<EffectDescriptor>& registry()
 {
     static QVector<EffectDescriptor> effects = {
-        // frei0r statt avfilter.chromakey: liefert echte Transparenz und stürzt beim Beenden nicht ab
+        // frei0r instead of avfilter.chromakey: delivers real transparency and does not crash on exit
         {"chromakey", "Green Screen", "frei0r.bluescreen0r", true,
          {
              {"color", T("Farbe"), "0", EffectParam::Color, QColor(0, 255, 0), 0, 0},
              {"distance", T("Toleranz"), "1", EffectParam::Double, 0.3, 0.0, 1.0},
          }},
-        // Einfache Farbkorrektur (alle Werte -100..+100, 0 = unverändert). Engine: avfilter.colorchannelmixer
-        // (Temperatur/Tönung als Weißabgleich, Sättigung) + avfilter.colorlevels (Helligkeit, Kontrast)
+        // Simple color correction (all values -100..+100, 0 = unchanged). Engine: avfilter.colorchannelmixer
+        // (temperature/tint as white balance, saturation) + avfilter.colorlevels (brightness, contrast)
         {"color", T("Farbkorrektur"), {}, true,
          {
              {"brightness", T("Helligkeit"), {}, EffectParam::Double, 0.0, -100, 100, AnimParam::FxBrightness, 0.5, 2},
@@ -29,7 +29,7 @@ QVector<EffectDescriptor>& registry()
              {"tint", T("Tönung"), {}, EffectParam::Double, 0.0, -100, 100, AnimParam::FxTint, 0.5, 2},
          },
          true},
-        // Stärke relativ zur Bildhöhe -> sieht in jeder Vorschau-/Exportgröße gleich aus. Engine: avfilter.gblur
+        // Strength relative to the picture height -> looks the same in every preview/export size. Engine: avfilter.gblur
         {"blur", T("Gaußsche Unschärfe"), {}, true,
          {
              {"strength", T("Stärke"), {}, EffectParam::Double, 25.0, 0, 100, AnimParam::FxBlur, 0.25, 2},
@@ -66,9 +66,9 @@ QVector<EffectDescriptor>& registry()
               T("Misst das Rauschen laufend in der Aufnahme (in Sprechpausen) statt den festen Rauschpegel zu nehmen")},
          },
          true, {}, T("Senkt gleichmäßiges Rauschen (Rauschen, Brummen, Lüfter) in Sprachaufnahmen ab")},
-        // Color-Seite (DaVinci „Primaries – Color Wheels“, eigener Bereich statt Effects Library): Werte wie in DaVinci
-        // (Lift/Gamma 0 = neutral, Gain 1, Offset 25, Kontrast 1, Pivot 0,435, Sättigung 50), dazu LUT (.cube).
-        // Engine: eigener MLT-Filter (engine/ColorGrade), wird vor allen anderen Effekten angewendet.
+        // Color page (DaVinci "Primaries - Color Wheels", own area instead of Effects Library): values as in DaVinci
+        // (Lift/Gamma 0 = neutral, Gain 1, Offset 25, Contrast 1, Pivot 0.435, Saturation 50), plus LUT (.cube).
+        // Engine: own MLT filter (engine/ColorGrade), applied before all other effects.
         {"grade", T("Farbkorrektur (Color)"), {}, true,
          {
              {"liftY", "Lift", {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftY, 0.002, 2},

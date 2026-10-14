@@ -2,22 +2,22 @@
 
 #include <mlt++/Mlt.h>
 
-// Verzögerung des Tons durch „Tonhöhe halten“ (MLT timewarp mit warp_pitch -> Rubberband-Filter rbpitch). MLT gleicht
-// sie nicht aus: der Ton läuft je nach Tempo 2–10 Frames hinter dem Bild. Sie ist je Tempo/Abtastrate fest (auch nach
-// Sprüngen), hängt aber von der Rubberband-Version ab -> einmal zur Laufzeit messen statt Tabelle.
-// Ausgleich: den Ton um so viele Material-Frames früher aus dem timewarp-Producer holen (Cut-in + frames()).
+// Delay of the audio caused by "keep pitch" (MLT timewarp with warp_pitch -> Rubberband filter rbpitch). MLT does not
+// compensate for it: depending on the speed the audio runs 2–10 frames behind the video. It is fixed per speed/sample rate (also after
+// seeks), but depends on the Rubberband version -> measure once at runtime instead of a table.
+// Compensation: fetch the audio that many source frames earlier from the timewarp producer (cut-in + frames()).
 namespace PitchLatency {
 
-// Verzögerung in Timeline-Frames bei Tempo |speed| (1 oder ohne Tonhöhe: 0). Erstes Mal ~50 ms (Messung mit einem
-// Klick in einer temporären WAV, mit und ohne Tonhöhe), danach aus dem Cache. Thread-sicher.
+// Delay in timeline frames at speed |speed| (1 or without pitch: 0). First time ~50 ms (measurement with a
+// click in a temporary WAV, with and without pitch), afterwards from the cache. Thread-safe.
 int frames(Mlt::Profile& profile, double speed, int sampleRate = 48000);
 
-// timewarp-Producer um `lead` Frames verlängern, damit Cuts mit Vorlauf bis zum Dateiende reichen (sonst kürzt MLT
-// den Cut). Gelesen wird dort hinter dem Dateiende, hörbar wäre das erst nach dem Clipende – also nie. Nur „length“,
-// nicht „out“: rückwärts rechnet timewarp von „out“ aus.
+// Extend the timewarp producer by `lead` frames so that cuts with lead-in reach to the end of the file (otherwise MLT trims
+// the cut). Reading there goes past the end of the file; it would only be audible after the clip end – so never. Only "length",
+// not "out": backwards timewarp computes from "out".
 void extend(Mlt::Producer& p, int lead);
 
-// Abtastrate des ersten Ton-Streams eines Producers (für frames()), 48000 wenn unbekannt
+// Sample rate of the first audio stream of a producer (for frames()), 48000 if unknown
 int sampleRateOf(Mlt::Producer& p);
 
 } // namespace PitchLatency

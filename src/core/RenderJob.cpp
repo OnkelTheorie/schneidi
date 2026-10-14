@@ -82,7 +82,7 @@ bool RenderSettings::hasAudioBitrate() const
 
 QVector<int> RenderSettings::audioBitChoices() const
 {
-    // 64 Bit gibt es nicht: MLT mischt höchstens in 32-Bit-Float
+    // 64 bit does not exist: MLT mixes in 32-bit float at most
     const QLatin1String c(renderFormat(format).audioCodec);
     if (c.startsWith(QLatin1String("pcm_"))) return {16, 24, 32};
     if (c == QLatin1String("alac")) return {16, 24};
@@ -221,7 +221,7 @@ bool RenderSettings::operator==(const RenderSettings& o) const
            && audioBits == o.audioBits && encoder == o.encoder && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
 }
 
-// --- Vorlagen
+// --- Presets
 
 namespace RenderPresets {
 
@@ -290,7 +290,7 @@ QVector<RenderPreset> all()
 
 } // namespace RenderPresets
 
-// --- Warteschlange
+// --- Queue
 
 bool RenderJob::operator==(const RenderJob& o) const
 {

@@ -36,1166 +36,14 @@
 #include <optional>
 #include <utility>
 
+#include "engine/TimelineBuilderDetail.h"
+
+using namespace TimelineBuilderDetail;
+
 namespace {
 
-// Producer-Eigenschaft: Frames, um die cutOf den Ton früher holt (Verzögerung von „Tonhöhe halten“, PitchLatency)
+// Producer property: frames by which cutOf fetches the audio earlier (delay of "keep pitch", PitchLatency)
 constexpr const char* kPitchLead = "schneidi.pitch_lead";
-
-// Keyframes (core/Keyframes.h) als MLT-Animation eines Filter-Werts über einen Ausschnitt: a = Clip-Frame am
-// Anfang des Ausschnitts, len = seine Länge. Gesetzt wird an den Ausschnitt-Grenzen und an allen Keyframes der
-// Parameter (MLT interpoliert linear dazwischen); Abschnitte mit Ease-Kurve (oder bake) Frame für Frame, damit
-// Vorschau, Export und Inspector exakt dieselben Werte haben. false = keiner der Parameter animiert.
-bool animate(const Clip& c, std::initializer_list<AnimParam> params, int a, int len,
-             const std::function<void(int pos, double t)>& set, bool bake = false)
-{
-    if (len <= 0 || std::none_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::animated(c, p); }))
-        return false;
-    QVector<int> pos{0, len - 1};
-    for (int t : Keys::keyTimes(c, QVector<AnimParam>(params)))
-        if (t - a > 0 && t - a < len - 1) pos << t - a;
-    std::sort(pos.begin(), pos.end());
-    pos.erase(std::unique(pos.begin(), pos.end()), pos.end());
-    for (int i = 0; i < pos.size(); ++i) {
-        set(pos[i], a + pos[i]);
-        if (i + 1 == pos.size()) break;
-        bool linear = !bake;
-        for (AnimParam p : params) linear = linear && Keys::linearBetween(c, p, a + pos[i], a + pos[i + 1]);
-        if (!linear)
-            for (int q = pos[i] + 1; q < pos[i + 1]; ++q) set(q, a + q);
-    }
-    return true;
-}
-
-// Filter an einen Ausschnitt hängen; Keyframes zählen ab Filter-In (siehe dev-notes)
-void attachTo(Mlt::Producer& cut, Mlt::Filter& f)
-{
-    f.set_in_and_out(cut.get_in(), cut.get_out());
-    cut.attach(f);
-}
-
-// ---- Effekte (Open FX) ----
-
-// Farbkorrektur als 3x3-Matrix (avfilter.colorchannelmixer): Weißabgleich wie DaVinci Temp/Tint als
-// Kanal-Verstärkung, auf gleiche Helligkeit (Rec. 709) normiert, danach Sättigung (Mischung mit der Helligkeit).
-// Temperatur +100 = warm (mehr Rot, weniger Blau), Tönung +100 = Magenta (weniger Grün), Sättigung -100 = grau.
-struct Matrix { double m[3][3]; };
-Matrix colorMatrix(double temp, double tint, double saturation)
-{
-    const double k = temp / 100.0 * 0.3, n = tint / 100.0 * 0.25;
-    double g[3] = {1.0 + k, 1.0 - n, 1.0 - k};
-    const double w[3] = {0.2126, 0.7152, 0.0722};
-    const double l = w[0] * g[0] + w[1] * g[1] + w[2] * g[2];
-    for (double& x : g) x /= l;
-    const double s = std::max(0.0, 1.0 + saturation / 100.0);
-    Matrix out;
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            out.m[i][j] = std::clamp(((i == j ? s : 0.0) + (1.0 - s) * w[j]) * g[j], -2.0, 2.0);
-    return out;
-}
-
-// Helligkeit/Kontrast als Tonwertkorrektur (avfilter.colorlevels): out = 0,5 + (in - 0,5)·c + b, begrenzt auf 0..1.
-// colorlevels erlaubt Eingang -1..1 und Ausgang 0..1 -> Gerade dort anschneiden, wo sie 0 bzw. 1 erreicht.
-struct Levels { double imin, imax, omin, omax; };
-Levels levels(double brightness, double contrast)
-{
-    const double c = std::max(0.0, 1.0 + contrast / 100.0), b = brightness / 200.0;
-    const double d = 0.5 - 0.5 * c + b; // out = c·in + d
-    Levels lv{0.0, 1.0, d, c + d};
-    if (lv.omin < 0 && c > 0) {
-        lv.imin = std::min(-d / c, 1.0);
-        lv.omin = 0;
-    }
-    if (lv.omax > 1 && c > 0) {
-        lv.imax = std::max((1.0 - d) / c, -1.0);
-        lv.omax = 1;
-    }
-    if (lv.imax - lv.imin < 1e-4) lv.imin = lv.imax - 1e-4; // ganz dunkel/hell: Sprung statt Division durch 0
-    lv.omin = std::clamp(lv.omin, 0.0, 1.0);
-    lv.omax = std::clamp(lv.omax, 0.0, 1.0);
-    return lv;
-}
-
-// Wert eines Effekt-Parameters an Clip-Frame t (statisch aus der Instanz oder aus den Keyframes)
-double fxValue(const Clip& c, AnimParam p, double t) { return Keys::valueAt(c, p, t); }
-
-// Parameter nicht neutral bzw. animiert?
-bool fxActive(const Clip& c, std::initializer_list<AnimParam> params, double neutral = 0.0)
-{
-    return std::any_of(params.begin(), params.end(),
-                       [&](AnimParam p) { return Keys::animated(c, p) || Keys::staticValue(c, p) != neutral; });
-}
-
-// avfilter-Werte immer per anim_set (auch statisch: ein Wert am Anfang): als Zahl gesetzte Properties wandelt
-// MLT beim Weiterreichen an FFmpeg in Text um – mit dem aktuellen Zahlenformat. Nur Filter mit Zahl-Optionen
-// taugen (avfilter.eq hat Text-Optionen für Ausdrücke -> anim_set wirkt dort nicht).
-void fxSet(const Clip& c, std::initializer_list<AnimParam> params, int a, int len,
-           const std::function<void(int pos, double t)>& set)
-{
-    if (!animate(c, params, a, len, set)) set(0, a);
-}
-
-void applyColor(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, int a, int len)
-{
-    using P = AnimParam;
-    if (fxActive(c, {P::FxTemp, P::FxTint, P::FxSaturation})) {
-        Mlt::Filter f(profile, "avfilter.colorchannelmixer");
-        if (f.is_valid()) {
-            static const char* names[3][3] = {{"av.rr", "av.rg", "av.rb"}, {"av.gr", "av.gg", "av.gb"},
-                                              {"av.br", "av.bg", "av.bb"}};
-            fxSet(c, {P::FxTemp, P::FxTint, P::FxSaturation}, a, len, [&](int pos, double t) {
-                const Matrix m = colorMatrix(fxValue(c, P::FxTemp, t), fxValue(c, P::FxTint, t),
-                                             fxValue(c, P::FxSaturation, t));
-                for (int i = 0; i < 3; ++i)
-                    for (int j = 0; j < 3; ++j) f.anim_set(names[i][j], m.m[i][j], pos, len);
-            });
-            attachTo(cut, f);
-        }
-    }
-    if (fxActive(c, {P::FxBrightness, P::FxContrast})) {
-        Mlt::Filter f(profile, "avfilter.colorlevels");
-        if (f.is_valid()) {
-            fxSet(c, {P::FxBrightness, P::FxContrast}, a, len, [&](int pos, double t) {
-                const Levels lv = levels(fxValue(c, P::FxBrightness, t), fxValue(c, P::FxContrast, t));
-                for (const char* ch : {"r", "g", "b"}) {
-                    f.anim_set(QByteArray("av.") + ch + "imin", lv.imin, pos, len);
-                    f.anim_set(QByteArray("av.") + ch + "imax", lv.imax, pos, len);
-                    f.anim_set(QByteArray("av.") + ch + "omin", lv.omin, pos, len);
-                    f.anim_set(QByteArray("av.") + ch + "omax", lv.omax, pos, len);
-                }
-            });
-            attachTo(cut, f);
-        }
-    }
-}
-
-void applyBlur(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, int a, int len)
-{
-    if (!fxActive(c, {AnimParam::FxBlur})) return;
-    Mlt::Filter f(profile, "avfilter.gblur");
-    if (!f.is_valid()) return;
-    // Sigma relativ zur Profilhöhe (Stärke 100 = 1/20 der Bildhöhe); kleinere Vorschau rechnet MLT selbst um
-    // (avformat/resolution_scale.yml), kleinerer Export hat ein kleineres Profil
-    const double scale = profile.height() / 2000.0;
-    fxSet(c, {AnimParam::FxBlur}, a, len, [&](int pos, double t) {
-        const double sigma = std::max(0.0, fxValue(c, AnimParam::FxBlur, t)) * scale;
-        f.anim_set("av.sigma", sigma, pos, len);
-        // sigmaV = -1 (wie sigma) löst gblur nur beim Anlegen auf -> sonst bliebe die Senkrechte fast scharf
-        f.anim_set("av.sigmaV", sigma, pos, len);
-    });
-    attachTo(cut, f);
-}
-
-// Vorher/Nachher-Schalter des gerade bauenden Builders (nur Vorschau), siehe TimelineBuilder::setGradeBypass
-thread_local std::shared_ptr<std::atomic<bool>> t_gradeBypass;
-
-// Generic effect: parameters straight onto the MLT filter of the descriptor
-void applyGeneric(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, const EffectInstance& inst,
-                  const EffectDescriptor& d, int a, int len);
-
-// Effects in the order on the clip; a/len: section for keyframes. Video: stabilization first (it has to see the
-// camera image), then the Color page grade (like DaVinci: grade before the edit effects), regardless of their
-// position. Audio: the audio effects (before clip volume/pan); noise reduction is attached per clip instead.
-void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, TrackKind kind, int a, int len)
-{
-    const bool video = kind == TrackKind::Video;
-    if (video) {
-        Stabilizer::attach(profile, clip, c);
-        ColorGrade::attach(clip, c, a, t_gradeBypass);
-    }
-    for (const auto& inst : c.effects) {
-        if (!inst.enabled || inst.effectId == ColorGrade::EffectId || inst.effectId == Stabilizer::EffectId) continue;
-        const EffectDescriptor* d = EffectRegistry::find(inst.effectId);
-        if (!d || d->video != video) continue;
-        if (inst.effectId == "color") applyColor(profile, clip, c, a, len);
-        else if (inst.effectId == "blur") applyBlur(profile, clip, c, a, len);
-        else if (inst.effectId == Denoise::EffectId) continue; // one filter per clip (buildTimeline)
-        else applyGeneric(profile, clip, c, inst, *d, a, len);
-    }
-}
-
-void applyGeneric(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, const EffectInstance& inst,
-                  const EffectDescriptor& d, int a, int len)
-{
-    if (d.mltService.isEmpty()) return;
-    Mlt::Filter f(profile, d.mltService.toUtf8().constData());
-    if (!f.is_valid()) return;
-    for (const auto& p : d.params) {
-        const QVariant v = inst.params.value(p.key, p.defaultValue);
-        const QByteArray prop = p.mltProperty.toUtf8();
-        if (p.type == EffectParam::Color) {
-            const QColor col = v.value<QColor>();
-            f.set(prop.constData(), col.name(QColor::HexRgb).toUtf8().constData()); // "#rrggbb"
-        } else if (p.type == EffectParam::Choice) {
-            f.set(prop.constData(), v.toString().toUtf8().constData());
-        } else if (p.type == EffectParam::Bool) {
-            f.set(prop.constData(), v.toBool() ? 1.0 : 0.0);
-        } else {
-            // keyframes (frei0r): MLT animation via anim_set (numbers, not text -> independent of LC_NUMERIC)
-            const bool animated = p.anim != AnimParam::Count && animate(c, {p.anim}, a, len, [&](int pos, double t) {
-                f.anim_set(prop.constData(), Keys::valueAt(c, p.anim, t), pos, len);
-            });
-            if (!animated) f.set(prop.constData(), v.toDouble());
-        }
-    }
-    attachTo(clip, f); // keyframes count from the cut's in point
-}
-
-double mltLevel(double db) { return db <= kMinVolumeDb ? -200.0 : db; }
-
-// a/len: Ausschnitt für Keyframes (len = 0: nur statischer Wert, z. B. Mixer)
-void applyVolume(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a = 0, int len = 0)
-{
-    const bool anim = len > 0 && Keys::animated(c, AnimParam::Volume);
-    if (c.volumeDb == 0.0 && !anim) return;
-    Mlt::Filter f(profile, "volume");
-    if (!f.is_valid()) return;
-    // -∞ ist in MLT -200 dB -> Abschnitte, die dort anfangen/enden, nicht linear -> Frame für Frame
-    const KeyTrack keys = c.keys.value(AnimParam::Volume);
-    const bool bake = std::any_of(keys.begin(), keys.end(), [](const Keyframe& k) { return k.value <= kMinVolumeDb; });
-    if (!anim || !animate(c, {AnimParam::Volume}, a, len, [&](int pos, double t) {
-            f.anim_set("level", mltLevel(Keys::valueAt(c, AnimParam::Volume, t)), pos, len);
-        }, bake))
-        f.set("level", mltLevel(c.volumeDb)); // dB
-    if (anim) attachTo(static_cast<Mlt::Producer&>(clip), f);
-    else clip.attach(f);
-}
-
-// Seitenverhältnis des Quellbilds wie angezeigt (Pixel-Seitenverhältnis und Drehung aus den Metadaten), 0 = unbekannt
-double sourceAspect(Mlt::Producer& cut)
-{
-    Mlt::Producer& p = cut.is_cut() ? cut.parent() : cut;
-    double w = p.get_int("width"), h = p.get_int("height");
-    if (w <= 0 || h <= 0) {
-        w = p.get_int("meta.media.width");
-        h = p.get_int("meta.media.height");
-    }
-    if (w <= 0 || h <= 0) return 0;
-    if (const double sar = p.get_double("aspect_ratio"); sar > 0) w *= sar;
-    const int vi = p.get_int("video_index");
-    const int rotate = std::abs(p.get_int(QString("meta.media.%1.codec.rotate").arg(vi).toUtf8().constData())) % 180;
-    return rotate == 90 ? h / w : w / h;
-}
-
-// qtblend with distort=1 always asks for the source in its full media size, even when the consumer renders a small
-// preview -> every effect below it ran in full resolution (1080p/4K) and the preview stuttered. This filter sits
-// above qtblend and lowers meta.media.width/height to what the requested output needs (requested size times the
-// largest zoom of the clip, never above the media size). Export requests the full size and is unchanged.
-// Compared with the media size, not the profile: the preview consumer sets the profile itself to the preview size.
-// Measured (tests/bench_inspector, 8 effects + keyframes, 960x540 preview): 125 -> 70 ms per frame.
-int sourceCapGetImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int writable)
-{
-    auto filter = static_cast<mlt_filter>(mlt_frame_pop_service(frame));
-    mlt_properties fp = MLT_FRAME_PROPERTIES(frame);
-    const int mw = mlt_properties_get_int(fp, "meta.media.width"), mh = mlt_properties_get_int(fp, "meta.media.height");
-    if (mw > 0 && mh > 0 && *width > 0 && *height > 0) {
-        const double zoom = mlt_properties_get_double(MLT_FILTER_PROPERTIES(filter), "max_zoom");
-        // A source of another aspect ratio is fitted into the frame: the larger ratio keeps enough pixels
-        const double scale = std::max(double(*width) / mw, double(*height) / mh) * zoom;
-        if (scale < 1.0) {
-            mlt_properties_set_int(fp, "meta.media.width", std::max(2, int(std::ceil(mw * scale))));
-            mlt_properties_set_int(fp, "meta.media.height", std::max(2, int(std::ceil(mh * scale))));
-        }
-    }
-    return mlt_frame_get_image(frame, image, format, width, height, writable);
-}
-
-mlt_frame sourceCapProcess(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_service(frame, filter);
-    mlt_frame_push_get_image(frame, sourceCapGetImage);
-    return frame;
-}
-
-void attachSourceCap(Mlt::Producer& clip, const Clip& c)
-{
-    // Without video effects the extra scaling step costs more than it saves
-    if (std::none_of(c.effects.begin(), c.effects.end(), [](const EffectInstance& e) {
-            const EffectDescriptor* d = EffectRegistry::find(e.effectId);
-            return e.enabled && d && d->video;
-        }))
-        return;
-    double zoom = 0;
-    for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY}) {
-        zoom = std::max(zoom, std::abs(Keys::staticValue(c, p)));
-        for (const Keyframe& k : c.keys.value(p)) zoom = std::max(zoom, std::abs(k.value));
-    }
-    mlt_filter f = mlt_filter_new();
-    if (!f) return;
-    f->process = sourceCapProcess;
-    // a little headroom for Bezier overshoot between keyframes
-    mlt_properties_set_double(MLT_FILTER_PROPERTIES(f), "max_zoom", std::max(zoom, 1.0) * 1.1);
-    Mlt::Filter filter(f); // holds its own reference
-    mlt_filter_close(f);
-    clip.attach(filter);
-}
-
-void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, int a, int len)
-{
-    const double W = profile.width(), H = profile.height();
-    auto val = [&](AnimParam p, double t) { return Keys::valueAt(c, p, t); };
-    if (Keys::hasCrop(c)) {
-        // Beschneiden = Rand transparent machen, Bild bleibt an seinem Platz (wie DaVinci)
-        Mlt::Filter crop(profile, "qtcrop");
-        if (crop.is_valid()) {
-            auto rect = [&](double t) {
-                const double l = val(AnimParam::CropLeft, t), r = val(AnimParam::CropRight, t);
-                const double top = val(AnimParam::CropTop, t), b = val(AnimParam::CropBottom, t);
-                return mlt_rect{l, top, std::max(1.0, W - l - r), std::max(1.0, H - top - b), 1.0};
-            };
-            if (!animate(c, {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom}, a, len,
-                         [&](int pos, double t) { crop.anim_set("rect", rect(t), pos, len); }))
-                crop.set("rect", rect(a));
-            crop.set("color", "#00000000");
-            attachTo(clip, crop);
-        }
-    }
-    if (Keys::hasOpacity(c)) {
-        // Deckkraft über den Alphakanal (wie Shotcut); die qtblend-Opacity lieferte nur Schwarz
-        Mlt::Filter op(profile, "brightness");
-        if (op.is_valid()) {
-            op.set("level", 1.0);
-            if (!animate(c, {AnimParam::Opacity}, a, len,
-                         [&](int pos, double t) { op.anim_set("alpha", val(AnimParam::Opacity, t) / 100.0, pos, len); }))
-                op.set("alpha", c.transform.opacity / 100.0);
-            attachTo(clip, op);
-        }
-    }
-    if (!Keys::hasTransform(c)) return;
-    Mlt::Filter f(profile, "qtblend");
-    if (!f.is_valid()) return;
-    // distort=1 (unten) zieht die Quelle aufs Rechteck -> Rechteck selbst seitenverhältnis-treu ins Bild einpassen
-    // (Hochformat-Clip im Querformat-Projekt bekommt seitlich Platz, wie ohne Transform und wie in DaVinci)
-    double fitW = W, fitH = H;
-    if (const double asp = c.isTitle() ? 0.0 : sourceAspect(clip); asp > 0) {
-        if (asp > W / H) fitH = W / asp;
-        else fitW = H * asp;
-    }
-    auto rect = [&](double t) {
-        const double w = fitW * val(AnimParam::ZoomX, t), h = fitH * val(AnimParam::ZoomY, t);
-        return mlt_rect{(W - w) / 2 + val(AnimParam::PosX, t), (H - h) / 2 - val(AnimParam::PosY, t), w, h, 1.0};
-    };
-    // Als mlt_rect statt Text setzen: MLT liest Text-Rechtecke mit dem System-Zahlenformat
-    // (deutsch: "940.8" -> 940 und ".8" rutscht ins nächste Feld). 5. Wert (Deckkraft) muss 1 sein.
-    if (!animate(c, {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY}, a, len,
-                 [&](int pos, double t) { f.anim_set("rect", rect(t), pos, len); }))
-        f.set("rect", rect(a));
-    // DaVinci: positiv = gegen den Uhrzeigersinn
-    if (!animate(c, {AnimParam::Rotation}, a, len,
-                 [&](int pos, double t) { f.anim_set("rotation", -val(AnimParam::Rotation, t), pos, len); }))
-        f.set("rotation", -c.transform.rotation);
-    f.set("rotate_center", 1);
-    // distort=1: Quelle in voller Größe holen und erst beim Zeichnen skalieren. Sonst fordert qtblend das Bild
-    // in Zielhöhe an (bei kleinem Zoom nur ein paar Pixel -> Bildsalat) und hält X/Y-Zoom im Seitenverhältnis.
-    f.set("distort", 1);
-    attachTo(clip, f);
-    attachSourceCap(clip, c); // after qtblend: its get_image runs first
-}
-
-void applyPan(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a = 0, int len = 0)
-{
-    const bool anim = len > 0 && Keys::animated(c, AnimParam::Pan);
-    if (c.pan == 0.0 && !anim) return;
-    Mlt::Filter f(profile, "panner");
-    if (!f.is_valid()) return;
-    f.set("channel", -1); // Balance (Stereo)
-    // "start" statt "split": split wirkt in MLT 7 unabhängig vom Wert wie ein fester Versatz (getestet)
-    f.set("start", (c.pan + 100.0) / 200.0);
-    if (anim) {
-        // animiert über "split" (per anim_set als Zahl gesetzt, nicht als Text -> Zahlenformat egal)
-        animate(c, {AnimParam::Pan}, a, len, [&](int pos, double t) {
-            f.anim_set("split", (Keys::valueAt(c, AnimParam::Pan, t) + 100.0) / 200.0, pos, len);
-        });
-        attachTo(static_cast<Mlt::Producer&>(clip), f);
-    } else {
-        clip.attach(f);
-    }
-}
-
-// Mixer: Spur-/Master-Fader und -Pan als Filter auf Playlist bzw. Tractor.
-// Mit hooks werden die Filter immer angehängt (neutral bei 0 dB/Mitte), damit sie live verstellbar sind.
-double mltPan(double pan) { return (pan + 100.0) / 200.0; }
-
-// Multiplies the samples [from, to) of every channel by gain(i)
-template <typename Gain>
-void scaleSamples(void* buffer, mlt_audio_format format, int channels, int n, int from, int to, Gain gain)
-{
-    for (int i = from; i < to; ++i) {
-        const float g = gain(i);
-        for (int c = 0; c < channels; ++c) {
-            switch (format) {
-            case mlt_audio_s16: { auto& v = static_cast<int16_t*>(buffer)[i * channels + c]; v = int16_t(v * g); break; }
-            case mlt_audio_s32le: { auto& v = static_cast<int32_t*>(buffer)[i * channels + c]; v = int32_t(v * double(g)); break; }
-            case mlt_audio_s32: { auto& v = static_cast<int32_t*>(buffer)[c * n + i]; v = int32_t(v * double(g)); break; }
-            case mlt_audio_f32le: static_cast<float*>(buffer)[i * channels + c] *= g; break;
-            case mlt_audio_float: static_cast<float*>(buffer)[c * n + i] *= g; break;
-            default: return;
-            }
-        }
-    }
-}
-
-// Seek during playback (SeekFade): old sound fades out within ~5 ms, then silence until the target, which fades
-// in within ~10 ms
-void seekFade(SeekFade& fade, int pos, void* buffer, mlt_audio_format format, int channels, int n, int frequency)
-{
-    const int target = fade.target;
-    if (target < 0) return;
-    const int dir = fade.direction;
-    // The seeked producer starts exactly at the target; frames still on the way from before are elsewhere
-    const bool arrived = dir > 0 ? pos >= target && pos <= target + 2 : pos <= target && pos >= target - 2;
-    if (arrived || ++fade.waited > 12) {
-        const int len = std::min(n, std::max(1, frequency / 100));
-        scaleSamples(buffer, format, channels, n, 0, len, [len](int i) { return float(i) / len; });
-        int expected = target;
-        fade.target.compare_exchange_strong(expected, -1);
-        return;
-    }
-    int from = 0;
-    if (!fade.fadedOut.exchange(true)) {
-        from = std::min(n, std::max(1, frequency / 200));
-        scaleSamples(buffer, format, channels, n, 0, from, [from](int i) { return 1.f - float(i + 1) / from; });
-    }
-    scaleSamples(buffer, format, channels, n, from, n, [](int) { return 0.f; });
-}
-
-// Pegelmesser (passiv): merkt sich den Spitzenpegel des zuletzt verarbeiteten Tons je Kanal in dBFS als
-// _audio_level.N (N = Kanal) und den True Peak (BS.1770, 4x überabgetastet) in dBTP als _true_peak.N.
-// Eigener Filter statt MLT "audiolevel": der wandelt den Ton nach s16 und schneidet
-// damit alles über 0 dBFS ab (Vorschau klang anders als der Export, Übersteuerung war nicht messbar).
-int meterGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int* frequency, int* channels, int* samples)
-{
-    auto filter = static_cast<mlt_filter>(mlt_frame_pop_audio(frame));
-    const int error = mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
-    if (error || !*buffer || *channels <= 0 || *samples <= 0) return error;
-    const int ch = std::min(*channels, 8), n = *samples;
-    auto signedSample = [&](int c, int i) -> float {
-        switch (*format) {
-        case mlt_audio_s16: return static_cast<const int16_t*>(*buffer)[i * *channels + c] / 32768.f;
-        case mlt_audio_s32le: return static_cast<const int32_t*>(*buffer)[i * *channels + c] / 2147483648.f;
-        case mlt_audio_s32: return static_cast<const int32_t*>(*buffer)[c * n + i] / 2147483648.f;
-        case mlt_audio_f32le: return static_cast<const float*>(*buffer)[i * *channels + c];
-        case mlt_audio_float: return static_cast<const float*>(*buffer)[c * n + i];
-        default: return 0.f;
-        }
-    };
-    float peak[8] = {};
-    for (int c = 0; c < ch; ++c)
-        for (int i = 0; i < n; ++i) peak[c] = std::max(peak[c], std::abs(signedSample(c, i)));
-    mlt_properties props = MLT_FILTER_PROPERTIES(filter);
-    if (auto* fade = static_cast<SeekFade*>(mlt_properties_get_data(props, "_seek_fade", nullptr)))
-        seekFade(*fade, mlt_frame_get_position(frame), *buffer, *format, *channels, n, *frequency);
-    // True Peak dieses Häppchens (Filterverlauf läuft über die Häppchen weiter)
-    auto* tp = static_cast<TruePeakMeter*>(mlt_properties_get_data(props, "_tp", nullptr));
-    if (tp) {
-        tp->resetPeaks();
-        tp->add(n, ch, *frequency, signedSample);
-    }
-    // Master in der Vorschau: Lautheit und maximalen True Peak (Loudness-Meter im Mixer) mitmessen
-    if (auto* live = static_cast<SharedLoudness*>(mlt_properties_get_data(props, "_loudness", nullptr));
-        live && live->active) {
-        std::lock_guard<std::mutex> lock(live->mutex);
-        live->meter.add(n, *channels, *frequency, signedSample);
-        live->truePeak.add(n, *channels, *frequency, signedSample);
-    }
-    for (int c = 0; c < ch; ++c) {
-        char name[32];
-        std::snprintf(name, sizeof name, "_audio_level.%d", c);
-        mlt_properties_set_double(props, name, peak[c] > 1e-10f ? 20.0 * std::log10(peak[c]) : -200.0);
-        if (tp) {
-            std::snprintf(name, sizeof name, "_true_peak.%d", c);
-            mlt_properties_set_double(props, name, tp->peakDb(c));
-        }
-    }
-    return 0;
-}
-
-mlt_frame meterProcess(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_audio(frame, filter);
-    mlt_frame_push_audio(frame, reinterpret_cast<void*>(meterGetAudio));
-    return frame;
-}
-
-std::shared_ptr<Mlt::Filter> makeMeter()
-{
-    mlt_filter f = mlt_filter_new();
-    if (!f) return nullptr;
-    f->process = meterProcess;
-    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), "_tp", new TruePeakMeter, 0,
-                            [](void* p) { delete static_cast<TruePeakMeter*>(p); }, nullptr);
-    auto meter = std::make_shared<Mlt::Filter>(f); // hält eine eigene Referenz
-    mlt_filter_close(f);
-    return meter;
-}
-
-// Master limiter: own filter around PeakLimiter (lookahead, true peak). avfilter.alimiter got integer audio in the
-// export (clipped at 0 dBFS before the limiter, louder than measured) and only held the sample peak.
-// The ceiling is stored in milli-dB as an integer (no number format issues, see dev-notes).
-struct LimiterState {
-    std::mutex mutex;
-    PeakLimiter limiter, before; // before = state before the last frame (the same frame requested again)
-    mlt_position last = -10;
-};
-
-int limiterGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int* frequency, int* channels,
-                    int* samples)
-{
-    auto filter = static_cast<mlt_filter>(mlt_frame_pop_audio(frame));
-    *format = mlt_audio_float;
-    const int error = mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
-    if (error || !*buffer || *channels <= 0 || *samples <= 0) return error;
-    if (*format != mlt_audio_float) {
-        if (!frame->convert_audio || frame->convert_audio(frame, buffer, format, mlt_audio_float) || *format != mlt_audio_float)
-            return 0;
-    }
-    mlt_properties props = MLT_FILTER_PROPERTIES(filter);
-    auto* st = static_cast<LimiterState*>(mlt_properties_get_data(props, "_state", nullptr));
-    if (!st) return 0;
-    const std::lock_guard<std::mutex> lock(st->mutex);
-    const mlt_position pos = mlt_frame_get_position(frame);
-    if (pos == st->last) st->limiter = st->before;
-    else if (pos != st->last + 1) st->limiter.reset(); // jump: start over
-    st->before = st->limiter;
-    st->limiter.setCeilingDb(mlt_properties_get_int(props, "ceiling_mdb") / 1000.0);
-    st->limiter.processPlanar(static_cast<float*>(*buffer), *samples, *channels, *frequency);
-    st->last = pos;
-    return 0;
-}
-
-mlt_frame limiterProcess(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_audio(frame, filter);
-    mlt_frame_push_audio(frame, reinterpret_cast<void*>(limiterGetAudio));
-    return frame;
-}
-
-void setLimiter(Mlt::Filter& f, bool on, double ceilingDb)
-{
-    f.set("disable", on ? 0 : 1);
-    f.set("ceiling_mdb", int(std::lround(std::clamp(ceilingDb, -40.0, 0.0) * 1000)));
-}
-
-std::shared_ptr<Mlt::Filter> makeLimiter(Mlt::Profile& profile, bool on, double ceilingDb)
-{
-    mlt_filter f = mlt_filter_new();
-    if (!f) return nullptr;
-    mlt_service_set_profile(MLT_FILTER_SERVICE(f), profile.get_profile());
-    f->process = limiterProcess;
-    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), "_state", new LimiterState, 0,
-                            [](void* p) { delete static_cast<LimiterState*>(p); }, nullptr);
-    auto limiter = std::make_shared<Mlt::Filter>(f);
-    mlt_filter_close(f);
-    setLimiter(*limiter, on, ceilingDb);
-    return limiter;
-}
-
-// Track EQ + compressor (Mixer "EQ"/"DYN"): one own filter per audio track, before the fader. The settings live in
-// the state (not as text properties), applyMixer changes them while playing.
-struct TrackDspState {
-    std::mutex mutex;
-    TrackEq eq;
-    TrackDynamics dynamics;
-    Equalizer equalizer, eqBefore; // before = state before the last frame (the same frame requested again)
-    Compressor compressor, compBefore;
-    mlt_position last = -10;
-};
-
-int trackDspGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int* frequency, int* channels,
-                     int* samples)
-{
-    auto filter = static_cast<mlt_filter>(mlt_frame_pop_audio(frame));
-    auto* st = static_cast<TrackDspState*>(mlt_properties_get_data(MLT_FILTER_PROPERTIES(filter), "_state", nullptr));
-    bool active = false;
-    if (st) {
-        const std::lock_guard<std::mutex> lock(st->mutex);
-        active = st->eq.on || st->dynamics.on;
-    }
-    if (!active) return mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
-    *format = mlt_audio_float;
-    const int error = mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
-    if (error || !*buffer || *channels <= 0 || *samples <= 0) return error;
-    if (*format != mlt_audio_float) {
-        if (!frame->convert_audio || frame->convert_audio(frame, buffer, format, mlt_audio_float) || *format != mlt_audio_float)
-            return 0;
-    }
-    const std::lock_guard<std::mutex> lock(st->mutex);
-    const mlt_position pos = mlt_frame_get_position(frame);
-    if (pos == st->last) {
-        st->equalizer = st->eqBefore;
-        st->compressor = st->compBefore;
-    } else if (pos != st->last + 1) { // jump: start over
-        st->equalizer.reset();
-        st->compressor.reset();
-    }
-    st->equalizer.setEq(st->eq);
-    st->compressor.setParams(st->dynamics);
-    st->eqBefore = st->equalizer;
-    st->compBefore = st->compressor;
-    auto* pcm = static_cast<float*>(*buffer);
-    st->equalizer.processPlanar(pcm, *samples, *channels, *frequency);
-    st->compressor.processPlanar(pcm, *samples, *channels, *frequency);
-    st->last = pos;
-    return 0;
-}
-
-mlt_frame trackDspProcess(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_audio(frame, filter);
-    mlt_frame_push_audio(frame, reinterpret_cast<void*>(trackDspGetAudio));
-    return frame;
-}
-
-void setTrackDsp(Mlt::Filter& f, const TrackEq& eq, const TrackDynamics& dynamics)
-{
-    auto* st = static_cast<TrackDspState*>(f.get_data("_state"));
-    if (!st) return;
-    const std::lock_guard<std::mutex> lock(st->mutex);
-    st->eq = eq;
-    st->dynamics = dynamics;
-}
-
-std::shared_ptr<Mlt::Filter> makeTrackDsp(Mlt::Profile& profile, const TrackEq& eq, const TrackDynamics& dynamics)
-{
-    mlt_filter f = mlt_filter_new();
-    if (!f) return nullptr;
-    mlt_service_set_profile(MLT_FILTER_SERVICE(f), profile.get_profile());
-    f->process = trackDspProcess;
-    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), "_state", new TrackDspState, 0,
-                            [](void* p) { delete static_cast<TrackDspState*>(p); }, nullptr);
-    auto dsp = std::make_shared<Mlt::Filter>(f);
-    mlt_filter_close(f);
-    setTrackDsp(*dsp, eq, dynamics);
-    return dsp;
-}
-
-// Feinposition von Ton-Clips (Clip::subframe): verzögert den Ton um einen Bruchteil eines Frames. Die fehlenden
-// Samples am Frame-Anfang kommen aus dem Ende des vorigen Frames (gemerkt); nach einem Sprung (Suchen) ist dort
-// Stille – beim Export läuft alles am Stück. Ein Filter je Clip, an allen seinen Ausschnitten (Positionen der Quelle
-// laufen über die Ausschnitte weiter).
-struct SubframeState {
-    std::mutex mutex;
-    mlt_position last = -10;
-    int channels = 0;
-    std::vector<float> tail, prevTail; // planar: channels x Verzögerung
-};
-
-int subframeGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int* frequency, int* channels,
-                     int* samples)
-{
-    auto filter = static_cast<mlt_filter>(mlt_frame_pop_audio(frame));
-    *format = mlt_audio_float;
-    const int error = mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
-    if (error || !*buffer || *channels <= 0 || *samples <= 0) return error;
-    if (*format != mlt_audio_float) {
-        if (!frame->convert_audio || frame->convert_audio(frame, buffer, format, mlt_audio_float) || *format != mlt_audio_float)
-            return 0; // unbekanntes Format: unverändert durchreichen
-    }
-    mlt_properties props = MLT_FILTER_PROPERTIES(filter);
-    auto* st = static_cast<SubframeState*>(mlt_properties_get_data(props, "_state", nullptr));
-    const double fps = mlt_profile_fps(mlt_service_profile(MLT_FILTER_SERVICE(filter)));
-    if (!st || fps <= 0) return 0;
-    const int ch = *channels, n = *samples;
-    const int d = std::min(n, int(std::lround(mlt_properties_get_int(props, "subframe") / 100.0 * *frequency / fps)));
-    if (d <= 0) return 0;
-
-    const std::lock_guard<std::mutex> lock(st->mutex);
-    const mlt_position pos = mlt_frame_get_position(frame);
-    const size_t need = size_t(ch) * size_t(d);
-    std::vector<float> head(need, 0.f); // Anfang dieses Frames: Ende des vorigen
-    if (st->channels == ch) {
-        if (pos == st->last + 1 && st->tail.size() == need) head = st->tail;
-        else if (pos == st->last && st->prevTail.size() == need) head = st->prevTail; // gleiches Frame noch einmal
-    }
-    auto* pcm = static_cast<float*>(*buffer);
-    std::vector<float> tail(need);
-    for (int c = 0; c < ch; ++c) {
-        float* plane = pcm + size_t(c) * n;
-        std::copy(plane + (n - d), plane + n, tail.begin() + size_t(c) * d);
-        std::memmove(plane + d, plane, sizeof(float) * size_t(n - d));
-        std::copy(head.begin() + size_t(c) * d, head.begin() + size_t(c + 1) * d, plane);
-    }
-    if (pos != st->last) {
-        st->prevTail = std::move(head);
-        st->tail = std::move(tail);
-    }
-    st->last = pos;
-    st->channels = ch;
-    return 0;
-}
-
-mlt_frame subframeProcess(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_audio(frame, filter);
-    mlt_frame_push_audio(frame, reinterpret_cast<void*>(subframeGetAudio));
-    return frame;
-}
-
-std::shared_ptr<Mlt::Filter> makeSubframeDelay(Mlt::Profile& profile, int subframe)
-{
-    mlt_filter f = mlt_filter_new();
-    if (!f) return nullptr;
-    mlt_service_set_profile(MLT_FILTER_SERVICE(f), profile.get_profile());
-    f->process = subframeProcess;
-    mlt_properties_set_int(MLT_FILTER_PROPERTIES(f), "subframe", subframe);
-    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), "_state", new SubframeState, 0,
-                            [](void* p) { delete static_cast<SubframeState*>(p); }, nullptr);
-    auto delay = std::make_shared<Mlt::Filter>(f);
-    mlt_filter_close(f);
-    return delay;
-}
-
-// limiter: master only (ceiling in dBFS, nullopt = none); sits after fader/pan and before the meter.
-// track: audio tracks only, its EQ and compressor sit before the fader.
-void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, MixerHooks::Strip* hook,
-                 std::optional<std::pair<bool, double>> limiter = {}, const Track* track = nullptr)
-{
-    if (track && (hook || track->eq.on || track->dynamics.on)) { // preview: always there, switched live
-        auto dsp = makeTrackDsp(profile, track->eq, track->dynamics);
-        if (dsp) s.attach(*dsp);
-        if (hook) hook->dsp = dsp;
-    }
-    if (!hook) { // export: only what is needed
-        Clip c; // same conversion as for clips
-        c.volumeDb = db;
-        c.pan = pan;
-        applyVolume(profile, s, c);
-        applyPan(profile, s, c);
-        if (limiter && limiter->first)
-            if (auto f = makeLimiter(profile, true, limiter->second)) s.attach(*f);
-        return;
-    }
-    hook->volume = std::make_shared<Mlt::Filter>(profile, "volume");
-    hook->volume->set("level", mltLevel(db));
-    s.attach(*hook->volume);
-    hook->pan = std::make_shared<Mlt::Filter>(profile, "panner");
-    hook->pan->set("channel", -1);
-    hook->pan->set("start", mltPan(pan));
-    s.attach(*hook->pan);
-    if (limiter) { // Vorschau: immer da, damit er sich live schalten lässt
-        hook->limiter = makeLimiter(profile, limiter->first, limiter->second);
-        if (hook->limiter) s.attach(*hook->limiter);
-    }
-    hook->meter = makeMeter();
-    s.attach(*hook->meter);
-}
-
-// a/len: Ausschnitt (Clip-Frame am Anfang, Länge) für Keyframes
-void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKind kind, int a, int len)
-{
-    applyEffects(profile, cut, c, kind, a, len);
-    if (kind == TrackKind::Video) applyTransform(profile, cut, c, a, len);
-    if (c.isTitle() && !Keys::hasTransform(c) && !Keys::animated(c, AnimParam::TitleSize)) {
-        // qtext zeichnet in der angeforderten Größe, skaliert aber die Umrandung nicht mit (Vorschau 960 px:
-        // Rand dreimal so dick). qtblend mit distort=1 holt das Bild immer in voller Projektgröße.
-        Mlt::Filter f(profile, "qtblend");
-        if (f.is_valid()) {
-            f.set("rect", mlt_rect{0, 0, double(profile.width()), double(profile.height()), 1.0});
-            f.set("distort", 1);
-            cut.attach(f);
-        }
-    }
-    if (kind == TrackKind::Audio) {
-        applyVolume(profile, cut, c, a, len);
-        applyPan(profile, cut, c, a, len);
-    }
-}
-
-// Titel: transparentes Vollbild ("color" mit Alpha) + qtext-Filter (Qt: Schrift, Farbe, Umrandung, Box).
-// Das Rechteck des Filters wird auf die Breite des Textblocks gesetzt und um dessen Mitte positioniert,
-// dann richtet halign nur die Zeilen im Block aus (wie DaVinci) statt den Block an den Bildrand zu schieben.
-// a/len: Ausschnitt für Keyframes (Position, Farbe, Größe).
-Mlt::Producer* titleCut(Mlt::Profile& profile, const Clip& c, int a, int len)
-{
-    const TitleStyle& t = c.title;
-    // Mit Unschärfe: durchsichtige Fläche in Textfarbe statt Schwarz, sonst mischt gblur (nicht vormultipliziertes
-    // Alpha) die schwarzen Nachbarpixel ein und der Text wird dunkel und grau
-    QByteArray base = "color:#00000000";
-    if (const EffectInstance* fx = EffectRegistry::instance(c, "blur"); fx && fx->enabled)
-        base = "color:#00" + t.color.name(QColor::HexRgb).mid(1).toLatin1();
-    Mlt::Producer src(profile, base.constData());
-    src.set("length", len);
-    src.set("out", len - 1);
-    Mlt::Producer* cut = src.cut(0, len - 1); // Cut hält eine Referenz auf src
-    const double W = profile.width(), H = profile.height();
-
-    // Größe animiert: qtext kann "size" nicht animieren -> in der größten Größe zeichnen (scharf)
-    // und per qtblend um die Textmitte verkleinern
-    const bool sizeAnim = Keys::animated(c, AnimParam::TitleSize);
-    double size = sizeAnim ? 0.0 : t.size;
-    if (sizeAnim) // Ease-Kurven bleiben zwischen den Keyframe-Werten -> größter Keyframe = größte Größe
-        for (const Keyframe& k : c.keys.value(AnimParam::TitleSize)) size = std::max(size, k.value);
-    size = std::max(1.0, size);
-
-    QFont font(t.fontFamily());
-    font.setPixelSize(std::max(1, int(std::lround(size))));
-    font.setBold(t.bold);
-    font.setItalic(t.italic);
-    const QFontMetricsF fm(font);
-    double w = 1;
-    for (const QString& line : t.text.split('\n')) w = std::max(w, fm.horizontalAdvance(line));
-
-    // qtext strokes the outline centred on the glyph edge, so half of it covers the letters (bold text looked
-    // thin). Like DaVinci the outline goes outside: a layer behind in the outline colour with twice the width,
-    // the text without outline on top.
-    auto mltColor = [](const QColor& col) {
-        return mlt_color{uint8_t(col.red()), uint8_t(col.green()), uint8_t(col.blue()), uint8_t(col.alpha())};
-    };
-    const bool outline = t.outlineOn && t.outlineWidth > 0;
-    auto textFilter = [&](bool outlineLayer) {
-        Mlt::Filter f(profile, "qtext");
-        if (!f.is_valid()) return false;
-        f.set("argument", t.text.toUtf8().constData());
-        // Rectangle as mlt_rect (number format, see applyTransform)
-        auto geometry = [&](double tt) {
-            return mlt_rect{(W - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, tt), -Keys::valueAt(c, AnimParam::TitlePosY, tt),
-                            w, H, 1.0};
-        };
-        if (!animate(c, {AnimParam::TitlePosX, AnimParam::TitlePosY}, a, len,
-                     [&](int pos, double tt) { f.anim_set("geometry", geometry(tt), pos, len); }))
-            f.set("geometry", geometry(a));
-        f.set("family", t.fontFamily().toUtf8().constData());
-        f.set("size", size);
-        f.set("weight", t.bold ? 700 : 400);
-        f.set("style", t.italic ? "italic" : "normal");
-        f.set("halign", t.align == 0 ? "left" : t.align == 2 ? "right" : "center");
-        f.set("valign", "middle");
-        // Colours as "#aarrggbb"; bgcolour otherwise defaults to a light grey
-        if (outlineLayer) {
-            f.set("fgcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
-        } else if (!animate(c, {AnimParam::TitleColor}, a, len, [&](int pos, double tt) {
-                       f.anim_set("fgcolour", mltColor(Keys::toColor(Keys::valueAt(c, AnimParam::TitleColor, tt))), pos, len);
-                   })) {
-            f.set("fgcolour", t.color.name(QColor::HexArgb).toUtf8().constData());
-        }
-        // The box belongs to the bottom layer (the text layer keeps the same pad so both sit in the same place)
-        const bool box = t.boxOn && (outlineLayer || !outline);
-        f.set("bgcolour", box ? t.boxColor.name(QColor::HexArgb).toUtf8().constData() : "#00000000");
-        f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
-        f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
-        f.set("outline", outlineLayer ? 2 * t.outlineWidth : 0.0);
-        attachTo(*cut, f);
-        return true;
-    };
-    if (outline && !textFilter(true)) return cut;
-    if (!textFilter(false)) return cut;
-
-    if (sizeAnim) {
-        // Maßstab s = Größe/größte Größe um die Textmitte; Produkt aus Größe und Position -> Frame für Frame.
-        // qtblend (distort=1) holt das Bild außerdem immer in Projektgröße (Umrandung, siehe decorate).
-        Mlt::Filter scale(profile, "qtblend");
-        if (scale.is_valid()) {
-            animate(c, {AnimParam::TitleSize, AnimParam::TitlePosX, AnimParam::TitlePosY}, a, len, [&](int pos, double tt) {
-                const double k = std::max(0.001, Keys::valueAt(c, AnimParam::TitleSize, tt) / size);
-                const double cx = W / 2 + Keys::valueAt(c, AnimParam::TitlePosX, tt);
-                const double cy = H / 2 - Keys::valueAt(c, AnimParam::TitlePosY, tt);
-                scale.anim_set("rect", mlt_rect{cx * (1 - k), cy * (1 - k), W * k, H * k, 1.0}, pos, len);
-            }, true);
-            scale.set("distort", 1);
-            attachTo(*cut, scale);
-        }
-    }
-    return cut;
-}
-
-// Fade-Griffe des Clips auf den Ausschnitt [from, to) (Timeline-Frames) anwenden. Keyframes nur in den
-// Fade-Bereichen und an ihren Grenzen, damit lange Clips nicht tausende Keyframes bekommen.
-void applyClipFades(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKind kind, int from, int to)
-{
-    const int length = c.length();
-    const int fi = std::min(c.fadeIn, length);
-    const int fo = std::min(c.fadeOut, length - fi);
-    const int a = from - c.start, b = to - c.start; // clip-lokal, b exklusiv
-    const int len = b - a;
-    if ((fi <= 0 || a >= fi) && (fo <= 0 || b <= length - fo)) return; // Ausschnitt berührt keinen Fade
-    auto isKey = [&](int t) { return t == a || t == b - 1 || t <= fi || t >= length - fo - 1; };
-    const bool video = kind == TrackKind::Video;
-    Mlt::Filter f(profile, video ? "brightness" : "volume");
-    if (!f.is_valid()) return;
-    if (video) f.set("level", 1.0);
-    for (int t = a; t < b; ++t) {
-        if (!isKey(t)) continue;
-        // dieselbe Kurve zeichnet die Timeline (Wellenform, Fade-Linie)
-        if (video) {
-            f.anim_set("alpha", TimelineOps::fadeRamp(c, t), t - a, len);
-        } else {
-            const double g = TimelineOps::audioFadeGain(c, t);
-            f.anim_set("level", g > 0.001 ? 20.0 * std::log10(g) : -200.0, t - a, len);
-        }
-    }
-    f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
-    cut.attach(f);
-}
-
-// Video ein-/ausblenden über `len` Frames über den Alphakanal (auf V1 = aus Schwarz, darüber = zur
-// Spur darunter, wie DaVinci). Keyframes per anim_set statt als Text: "0.5" würde sonst je nach LC_NUMERIC als 0 gelesen.
-void applyFade(Mlt::Profile& profile, Mlt::Producer& cut, int len, bool fadeIn)
-{
-    auto value = [&](int i) { return fadeIn ? double(i) / len : double(len - 1 - i) / len; };
-    Mlt::Filter f(profile, "brightness");
-    if (!f.is_valid()) return;
-    f.set("level", 1.0);
-    f.anim_set("alpha", value(0), 0, len);
-    f.anim_set("alpha", value(len - 1), len - 1, len);
-    f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
-    cut.attach(f);
-}
-
-// Audio-Übergang: Pegel von Clip clipId im Ausschnitt des Übergangs als Keyframe in dB pro Frame
-// (Kurve aus TimelineOps, dieselbe zeichnet die Wellenform)
-void applyAudioTransition(Mlt::Profile& profile, Mlt::Producer& cut, const TimelineOps::TransitionSpan& s, int clipId)
-{
-    Mlt::Filter f(profile, "volume");
-    if (!f.is_valid()) return;
-    const int len = s.length();
-    for (int i = 0; i < len; ++i) {
-        const double v = TimelineOps::audioTransitionGain(s, clipId, s.start + i);
-        f.anim_set("level", v > 0.001 ? 20.0 * std::log10(v) : -200.0, i, len);
-    }
-    f.set_in_and_out(cut.get_in(), cut.get_out()); // Keyframes zählen ab Filter-In
-    cut.attach(f);
-}
-
-// Deckkraft-Keyframes (brightness/alpha) über einen Ausschnitt der Länge len: (Frame, Wert)
-void applyAlphaKeys(Mlt::Profile& profile, Mlt::Producer& cut, int len, std::initializer_list<std::pair<int, double>> keys)
-{
-    Mlt::Filter f(profile, "brightness");
-    if (!f.is_valid()) return;
-    f.set("level", 1.0);
-    for (const auto& [pos, v] : keys) f.anim_set("alpha", v, std::clamp(pos, 0, len - 1), len);
-    f.set_in_and_out(cut.get_in(), cut.get_out());
-    cut.attach(f);
-}
-
-// Verlaufsbild für luma (Graustufen-PNG, einmal erzeugt): dunkle Stellen wechseln zuerst.
-// PNG statt PGM: luma lädt es über einen Bild-Producer und skaliert es sauber auf die Vorschaugröße.
-QString wipeLuma(TransitionType type, int w, int h)
-{
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/lumas";
-    const QString path = QString("%1/%2_%3x%4.png").arg(dir, transitionTypeInfo(type).id).arg(w).arg(h);
-    if (QFile::exists(path)) return path;
-    QDir().mkpath(dir);
-    QImage img(w, h, QImage::Format_Grayscale8);
-    for (int y = 0; y < h; ++y) {
-        uchar* line = img.scanLine(y);
-        for (int x = 0; x < w; ++x) {
-            double t = 0;
-            switch (type) {
-            case TransitionType::WipeRight: t = double(x) / std::max(1, w - 1); break;
-            case TransitionType::WipeLeft: t = 1.0 - double(x) / std::max(1, w - 1); break;
-            case TransitionType::WipeDown: t = double(y) / std::max(1, h - 1); break;
-            case TransitionType::WipeUp: t = 1.0 - double(y) / std::max(1, h - 1); break;
-            default: break;
-            }
-            line[x] = uchar(std::lround(t * 255));
-        }
-    }
-    // Erst unter anderem Namen schreiben, damit eine zweite Instanz nie ein halbes Bild liest
-    const QString tmp = path + ".tmp.png";
-    if (!img.save(tmp)) return {};
-    QFile::remove(path);
-    QFile::rename(tmp, path);
-    return path;
-}
-
-// Rand einer Wischblende: Farbfläche, per animiertem qtcrop auf einen Streifen um die Kante begrenzt.
-// edge0/edge1 = Lage der Kante (Anteil 0..1 in Wischrichtung) im ersten/letzten Frame, dazwischen linear.
-void addWipeBorder(Mlt::Profile& profile, Mlt::Tractor& mix, int track, int len, const TransitionStyle& st,
-                   double edge0, double edge1)
-{
-    QColor c = st.borderColor;
-    c.setAlpha(255);
-    Mlt::Producer strip(profile, ("color:" + c.name(QColor::HexArgb)).toUtf8().constData());
-    if (!strip.is_valid()) return;
-    strip.set("length", len);
-    strip.set_in_and_out(0, len - 1);
-    Mlt::Filter crop(profile, "qtcrop");
-    if (!crop.is_valid()) return;
-    const double W = profile.width(), H = profile.height();
-    const bool horizontal = st.type == TransitionType::WipeRight || st.type == TransitionType::WipeLeft;
-    // nach links/oben: Kante läuft vom Ende zum Anfang
-    const bool reverse = st.type == TransitionType::WipeLeft || st.type == TransitionType::WipeUp;
-    const double full = horizontal ? W : H;
-    for (const auto& [i, e] : {std::pair{0, edge0}, std::pair{len - 1, edge1}}) {
-        const double pos = (reverse ? 1.0 - e : e) * full;
-        mlt_rect r{0, 0, W, H, 1.0};
-        (horizontal ? r.x : r.y) = pos - st.border / 2;
-        (horizontal ? r.w : r.h) = st.border;
-        crop.anim_set("rect", r, i, len);
-    }
-    crop.set("color", "#00000000");
-    crop.set_in_and_out(0, len - 1);
-    strip.attach(crop);
-    mix.set_track(strip, track);
-    Mlt::Transition t(profile, "qtblend");
-    t.set("always_active", 1);
-    mix.plant_transition(t, 0, track);
-}
-
-// Video-Übergang außer Cross Dissolve als kleiner Tractor: a geht, b kommt; fehlt eine Seite, ist dort Leere.
-std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Producer* a, Mlt::Producer* b, int len,
-                                               const TransitionStyle& st)
-{
-    const TransitionType type = st.type;
-    auto mix = std::make_unique<Mlt::Tractor>(profile);
-    if (type == TransitionType::DipToColor) {
-        // Farbfläche unten, a blendet in der ersten Hälfte aus, b in der zweiten ein (ohne Gegenseite: ganze Länge)
-        QColor c = st.color;
-        c.setAlpha(255); // "#aarrggbb" wie beim Titel
-        Mlt::Producer color(profile, ("color:" + c.name(QColor::HexArgb)).toUtf8().constData());
-        color.set("length", len);
-        color.set_in_and_out(0, len - 1);
-        mix->set_track(color, 0);
-        const int half = a && b ? len / 2 : 0;
-        int track = 1;
-        for (Mlt::Producer* p : {a, b}) {
-            if (!p) continue;
-            if (p == a) applyAlphaKeys(profile, *p, len, {{0, 1.0}, {(b ? half : len) - 1, 0.0}, {len - 1, 0.0}});
-            else applyAlphaKeys(profile, *p, len, {{0, 0.0}, {half, 0.0}, {len - 1, 1.0}});
-            mix->set_track(*p, track);
-            Mlt::Transition t(profile, "qtblend");
-            t.set("always_active", 1);
-            mix->plant_transition(t, 0, track);
-            ++track;
-        }
-        return mix;
-    }
-    if (st.isLuma() && a && b) {
-        // Verlaufsblende: luma mit dem Verlaufsbild (ins/aus dem Leeren blendet der Aufrufer stattdessen)
-        mix->set_track(*a, 0);
-        mix->set_track(*b, 1);
-        Mlt::Transition t(profile, "luma");
-        const QString luma = Lumas::file(st.luma, profile.width(), profile.height(), st.invert);
-        if (!luma.isEmpty()) t.set("resource", luma.toUtf8().constData()); // fehlt: Cross Dissolve
-        t.set("softness", 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0);
-        t.set_in_and_out(0, len - 1);
-        mix->plant_transition(t, 0, 1);
-        return mix;
-    }
-    const bool border = st.border >= 0.5;
-    if (!a || !b) {
-        // Wischblende ins/aus dem Leeren: luma ignoriert Transparenz -> sichtbaren Bereich per qtcrop animieren
-        // (harte Kante, Weichheit wirkt hier nicht)
-        Mlt::Producer& one = a ? *a : *b;
-        // Die neue Seite kommt aus der Startrichtung: nach rechts = von links usw.
-        const bool fromStart = (type == TransitionType::WipeRight || type == TransitionType::WipeDown) == !a;
-        const bool horizontal = type == TransitionType::WipeRight || type == TransitionType::WipeLeft;
-        double edges[2] = {0, 0}; // Lage der Kante für den Rand (Anteil in Wischrichtung)
-        Mlt::Filter crop(profile, "qtcrop");
-        if (crop.is_valid()) {
-            const double W = profile.width(), H = profile.height();
-            for (int k = 0; k < 2; ++k) {
-                const int i = k ? len - 1 : 0;
-                // p = Anteil, den die neue Seite schon einnimmt (Einblenden: der Clip selbst, Ausblenden: die Leere)
-                const double p = len > 1 ? double(i) / (len - 1) : 1.0;
-                const double shown = a ? 1.0 - p : p; // sichtbarer Anteil des Clips
-                mlt_rect r{0, 0, W, H, 1.0};
-                double& pos = horizontal ? r.x : r.y;
-                double& size = horizontal ? r.w : r.h;
-                const double full = horizontal ? W : H;
-                size = full * shown;
-                pos = fromStart ? 0.0 : full - size;
-                crop.anim_set("rect", r, i, len);
-                edges[k] = p; // die Kante wandert in Wischrichtung von 0 nach 1
-            }
-            crop.set("color", "#00000000");
-            crop.set_in_and_out(one.get_in(), one.get_out());
-            one.attach(crop);
-        }
-        mix->set_track(one, 0);
-        if (border) addWipeBorder(profile, *mix, 1, len, st, edges[0], edges[1]);
-        return mix;
-    }
-    // Wischblende zwischen zwei Clips: luma mit Verlaufsbild
-    mix->set_track(*a, 0);
-    mix->set_track(*b, 1);
-    Mlt::Transition t(profile, "luma");
-    const QString luma = wipeLuma(type, profile.width(), profile.height());
-    if (!luma.isEmpty()) t.set("resource", luma.toUtf8().constData());
-    // Weichheit: Anteil des Verlaufs, über den überblendet wird (etwas Weichheit immer, gegen Treppchen)
-    const double soft = 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0;
-    t.set("softness", soft);
-    t.set_in_and_out(0, len - 1);
-    mix->plant_transition(t, 0, 1);
-    if (border) {
-        // luma: Fortschritt p = i/len, Übergangszone endet bei p*(1+soft) -> Mitte der Zone als Kante
-        auto edge = [&](int i) { return double(i) / len * (1.0 + soft) - soft / 2; };
-        addWipeBorder(profile, *mix, 2, len, st, edge(0), edge(len - 1));
-    }
-    return mix;
-}
-
-// Untertitel: Zeilen auf maxWidth umbrechen (vorhandene Zeilenumbrüche bleiben), zu lange Wörter bleiben ganz
-QStringList wrapSubtitle(const QString& text, const QFontMetricsF& fm, double maxWidth)
-{
-    QStringList out;
-    for (const QString& para : text.split('\n')) {
-        QString line;
-        for (const QString& word : para.split(' ', Qt::SkipEmptyParts)) {
-            const QString candidate = line.isEmpty() ? word : line + ' ' + word;
-            if (!line.isEmpty() && fm.horizontalAdvance(candidate) > maxWidth) {
-                out << line;
-                line = word;
-            } else {
-                line = candidate;
-            }
-        }
-        out << line;
-    }
-    return out;
-}
-
-// Ein Untertitel (Spurstil wie ein Titel): Textblock unten, Unterkante posY Pixel über dem Bildrand,
-// Zeilen auf 90 % der Bildbreite umbrochen. len Frames lang.
-Mlt::Producer* subtitleCut(Mlt::Profile& profile, const TitleStyle& t, const QString& text, int len)
-{
-    Mlt::Producer src(profile, "color:#00000000");
-    src.set("length", len);
-    src.set("out", len - 1);
-    Mlt::Producer* cut = src.cut(0, len - 1);
-    const double W = profile.width(), H = profile.height();
-    QFont font(t.fontFamily());
-    font.setPixelSize(std::max(1, int(std::lround(t.size))));
-    font.setBold(t.bold);
-    font.setItalic(t.italic);
-    const QFontMetricsF fm(font);
-    const QStringList lines = wrapSubtitle(text.trimmed(), fm, W * 0.9);
-    double w = 1;
-    for (const QString& line : lines) w = std::max(w, fm.horizontalAdvance(line));
-    const double bottom = std::clamp(H - t.posY, 1.0, H);
-    const bool outline = t.outlineOn && t.outlineWidth > 0;
-    // Outline outside the letters like titles (titleCut): a layer behind with twice the width, the text on top
-    auto textFilter = [&](bool outlineLayer) {
-        Mlt::Filter f(profile, "qtext");
-        if (!f.is_valid()) return false;
-        f.set("argument", lines.join('\n').toUtf8().constData());
-        f.set("geometry", mlt_rect{(W - w) / 2 + t.posX, 0, w, bottom, 1.0});
-        f.set("family", t.fontFamily().toUtf8().constData());
-        f.set("size", std::max(1.0, t.size));
-        f.set("weight", t.bold ? 700 : 400);
-        f.set("style", t.italic ? "italic" : "normal");
-        f.set("halign", t.align == 0 ? "left" : t.align == 2 ? "right" : "center");
-        f.set("valign", "bottom");
-        f.set("fgcolour", (outlineLayer ? t.outlineColor : t.color).name(QColor::HexArgb).toUtf8().constData());
-        const bool box = t.boxOn && (outlineLayer || !outline);
-        f.set("bgcolour", box ? t.boxColor.name(QColor::HexArgb).toUtf8().constData() : "#00000000");
-        f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
-        f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
-        f.set("outline", outlineLayer ? 2 * t.outlineWidth : 0.0);
-        attachTo(*cut, f);
-        return true;
-    };
-    if (outline && !textFilter(true)) return cut;
-    if (!textFilter(false)) return cut;
-    // wie bei Titeln: immer in voller Projektgröße zeichnen (Umrandung skaliert sonst in der Vorschau nicht mit)
-    Mlt::Filter full(profile, "qtblend");
-    if (full.is_valid()) {
-        full.set("rect", mlt_rect{0, 0, W, H, 1.0});
-        full.set("distort", 1);
-        attachTo(*cut, full);
-    }
-    return cut;
-}
 
 } // namespace
 
@@ -1213,11 +61,11 @@ void TimelineBuilder::setDecoderThreads(int threads)
 Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex, bool second,
                                             const Clip* retime)
 {
-    // Proxy (nur Vorschau): Schlüssel mit der tatsächlich gelesenen Datei, damit Umschalten neu öffnet
+    // Proxy (preview only): key with the file actually read, so that switching reopens
     const QString file = m_resolver ? m_resolver(path, kind) : path;
-    // Geschwindigkeit: MLT timewarp (negativ = rückwärts); Standbild: wiederholtes Einzelframe (s. u.)
+    // Speed: MLT timewarp (negative = reverse); still image: repeated single frame (see below)
     const bool freeze = retime && retime->freeze;
-    const bool ramp = retime && retime->hasRamp(); // Speed Ramp: eigener Producer (engine/RampProducer)
+    const bool ramp = retime && retime->hasRamp(); // Speed ramp: own producer (engine/RampProducer)
     const double warp = retime && !freeze && !ramp ? (retime->reverse ? -retime->speed : retime->speed) : 1.0;
     const bool pitch = retime && retime->keepPitch;
     QString resource = file;
@@ -1227,14 +75,14 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
         for (const SpeedPoint& sp : retime->ramp) tag += QString("|%1:%2:%3").arg(sp.source).arg(sp.speed).arg(sp.smooth);
     }
     if (warp != 1.0) {
-        // timewarp liest die Zahl per atof -> im gerade gültigen C-Locale schreiben (Komma/Punkt, siehe dev-notes)
+        // timewarp reads the number via atof -> write it in the currently valid C locale (comma/dot, see docs/dev/mlt.md)
         char num[32];
         std::snprintf(num, sizeof num, "%.10g", warp);
         resource = QString("timewarp:%1:%2").arg(QString::fromLatin1(num), file);
         tag = QString("|w%1%2").arg(warp).arg(pitch ? "p" : "");
     }
     if (freeze) tag = QString("|f%1|%2%3").arg(retime->stillFrame()).arg(retime->speed).arg(retime->reverse ? "r" : "");
-    // Ton-Stream (OBS: mehrere pro Datei) gehört zum Schlüssel: jeder Stream braucht seinen eigenen Producer
+    // Audio stream (OBS: several per file) is part of the key: every stream needs its own producer
     const int stream = kind == TrackKind::Audio && retime ? retime->audioStream : 0;
     if (stream != 0) tag += QString("|s%1").arg(stream);
     const QString key = m_keyPrefix + QString("%1%2|%3|%4%5").arg(kind == TrackKind::Video ? "v" : "a").arg(second ? "x" : "")
@@ -1258,44 +106,44 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
         m_cache.emplace(key, std::move(r));
         return raw;
     }
-    // Video über die Fabrik (BT.601-Quellen, siehe Profiles.h); Ton braucht das nicht
+    // Video via the factory (BT.601 sources, see Profiles.h); audio does not need that
     auto p = kind == TrackKind::Video ? m_factory->open(resource)
                                       : std::make_unique<Mlt::Producer>(m_profile, resource.toUtf8().constData());
     if (!p->is_valid()) return nullptr;
-    // Tonhöhe nur bei echtem Tempowechsel halten: rückwärts mit 100 % braucht kein Rubberband, das brächte nur
-    // dessen Verzögerung (Ton ~3 Frames hinter dem Bild)
+    // Keep pitch only on a real speed change: reverse at 100 % needs no Rubberband, which would only bring
+    // its delay (audio ~3 frames behind the video)
     const bool warpPitch = warp != 1.0 && kind == TrackKind::Audio && pitch && std::abs(warp) != 1.0;
     if (warp != 1.0 && kind == TrackKind::Audio) p->set("warp_pitch", warpPitch ? 1 : 0);
-    // Nicht benötigten Stream gar nicht erst dekodieren
+    // Do not decode an unneeded stream at all
     if (kind == TrackKind::Video) {
         p->set("audio_index", -1);
     } else {
         p->set("video_index", -1);
         selectAudioStream(*p, stream);
     }
-    // Verzögerung der Tonhöhenkorrektur: Cuts holen den Ton so viele Frames früher (cutOf)
+    // Delay of the pitch correction: cuts fetch the audio that many frames earlier (cutOf)
     if (warpPitch) {
         const int lead = PitchLatency::frames(m_profile, warp, PitchLatency::sampleRateOf(*p));
         p->set(kPitchLead, lead);
         PitchLatency::extend(*p, lead);
     }
-    // Standbilder lassen sich beliebig lang ziehen (sonst begrenzt MLT auf die Standardlänge)
+    // Still images can be stretched arbitrarily long (otherwise MLT limits to the default length)
     if (const QByteArray svc = p->get("mlt_service"); svc == "qimage" || svc == "pixbuf") {
         const int len = 24 * 3600 * qRound(m_profile.fps());
         p->set("length", len);
         p->set("out", len - 1);
     }
     if (freeze) {
-        // Standbild: Frame `in` (in Datei-Frames umgerechnet) als 1-Frame-Ausschnitt, in einer Playlist
-        // beliebig oft wiederholt. (MLT hold skaliert im Tractor falsch, der kdenlive-Filter freeze stürzte ab.)
+        // Still image: frame `in` (converted to file frames) as a 1-frame excerpt, repeated arbitrarily often
+        // in a playlist. (MLT hold scales wrongly in the tractor, the kdenlive filter freeze crashed.)
         const int fileLen = p->get_length();
         const double at = retime->stillFrame() * retime->speed;
         const int frame = std::clamp(int(retime->reverse ? fileLen - 1 - at : at), 0, std::max(0, fileLen - 1));
         auto hold = std::make_unique<Mlt::Playlist>(m_profile);
-        std::unique_ptr<Mlt::Producer> one(p->cut(frame, frame)); // Cut hält eine Referenz auf p
+        std::unique_ptr<Mlt::Producer> one(p->cut(frame, frame)); // cut holds a reference to p
         hold->append(*one);
         hold->repeat(0, 24 * 3600 * qRound(m_profile.fps()));
-        // Für sourceAspect (Transform seitenverhältnis-treu)
+        // For sourceAspect (transform preserving aspect ratio)
         const int vi = p->get_int("video_index");
         const QByteArray rotate = QString("meta.media.%1.codec.rotate").arg(vi).toUtf8();
         for (const char* name : {"width", "height", "aspect_ratio", "video_index", "meta.media.width",
@@ -1310,7 +158,7 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
 
 void TimelineBuilder::noteUse(Mlt::Producer* p, TrackKind kind, int from, int to, int in)
 {
-    if (m_inNested || to <= from) return; // innen zählen die Frames der Sequenz, nicht der Timeline
+    if (m_inNested || to <= from) return; // inside, the frames of the sequence count, not of the timeline
     LastUse& last = m_lastUse[p];
     if (in != last.sourceEnd + 1)
         m_preroll.push_back({from, last.timelineEnd, in, kind == TrackKind::Audio,
@@ -1321,7 +169,7 @@ void TimelineBuilder::noteUse(Mlt::Producer* p, TrackKind kind, int from, int to
 Mlt::Producer* TimelineBuilder::clipAudioSource(const Clip& c)
 {
     if (c.isTitle() || c.freeze || c.mediaPath.isEmpty()) return nullptr;
-    m_used.clear(); // nur dieser eine Producer bleibt im Cache
+    m_used.clear(); // only this one producer stays in the cache
     Mlt::Producer* p = producerFor(c.mediaPath, TrackKind::Audio, 0, false, &c);
     for (auto it = m_cache.begin(); it != m_cache.end();)
         it = m_used.count(it->first) ? std::next(it) : m_cache.erase(it);
@@ -1354,7 +202,7 @@ bool TimelineBuilder::applyMixer(const Timeline& tl, MixerHooks& hooks)
     for (int i = 0; i < tl.audio.size(); ++i) {
         MixerHooks::Strip& h = hooks.tracks[i];
         const bool audible = !tl.audio[i].muted && (!anySolo || tl.audio[i].solo);
-        h.playlist->set("hide", audible ? 1 : 3); // 1 = kein Bild, 2 = kein Ton (wie beim Aufbau)
+        h.playlist->set("hide", audible ? 1 : 3); // 1 = no video, 2 = no audio (as when building)
         h.audible = audible;
         h.volume->set("level", mltLevel(tl.audio[i].volumeDb));
         h.pan->set("start", mltPan(tl.audio[i].pan));
@@ -1373,7 +221,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     m_lastUse.clear();
     m_nestedCache.clear();
     m_nested = tl.nested;
-    struct BypassScope { // Filter der Farbkorrektur bekommen den Schalter dieses Builders
+    struct BypassScope { // Color correction filters get the switch of this builder
         explicit BypassScope(std::shared_ptr<std::atomic<bool>> f) { t_gradeBypass = std::move(f); }
         ~BypassScope() { t_gradeBypass.reset(); }
     } bypassScope(m_gradeBypass);
@@ -1382,9 +230,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     m_lastUse.clear();
     std::stable_sort(m_preroll.begin(), m_preroll.end(),
                      [](const PrerollPoint& a, const PrerollPoint& b) { return a.frame < b.frame; });
-    m_nestedCache.clear(); // Cuts halten ihre verschachtelten Tractoren selbst (MLT-Referenzzählung)
-    // Nicht mehr benutzte Producer schließen (z. B. Original nach Umschalten auf den Proxy oder gelöschter Clip);
-    // Cuts im alten Tractor halten ihre Quelle per MLT-Referenzzählung selbst am Leben
+    m_nestedCache.clear(); // Cuts hold their nested tractors themselves (MLT reference counting)
+    // Close producers no longer used (e.g. original after switching to the proxy, or a deleted clip);
+    // cuts in the old tractor keep their source alive themselves via MLT reference counting
     for (auto it = m_cache.begin(); it != m_cache.end();)
         it = m_used.count(it->first) ? std::next(it) : m_cache.erase(it);
     return tractor;
@@ -1392,18 +240,18 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
 
 Mlt::Producer* TimelineBuilder::nestedProducer(int sequenceId, TrackKind kind, int trackIndex, bool second)
 {
-    if (!m_nested || m_nestStack.size() >= 16 || m_nestStack.count(sequenceId)) return nullptr; // Schleife/zu tief
+    if (!m_nested || m_nestStack.size() >= 16 || m_nestStack.count(sequenceId)) return nullptr; // loop/too deep
     const auto it = m_nested->constFind(sequenceId);
     if (it == m_nested->cend()) return nullptr;
-    // Wie bei Dateien: je Spur und Seite eines Übergangs ein eigener Tractor (eigene Decoder)
+    // As with files: one own tractor per track and side of a transition (own decoders)
     const QString key = QString("%1|%2|%3|%4|%5").arg(sequenceId).arg(kind == TrackKind::Video ? "v" : "a")
                             .arg(trackIndex).arg(second ? "x" : "").arg(m_nestStack.size());
     if (auto c = m_nestedCache.find(key); c != m_nestedCache.end()) return c->second.get();
     m_nestStack.insert(sequenceId);
-    const bool transparent = std::exchange(m_transparent, true); // leere Stellen zeigen die Spur darunter
-    const bool subtitles = std::exchange(m_subtitles, false);    // Untertitel gehören zur äußeren Timeline
+    const bool transparent = std::exchange(m_transparent, true); // empty spots show the track below
+    const bool subtitles = std::exchange(m_subtitles, false);    // subtitles belong to the outer timeline
     const bool nested = std::exchange(m_inNested, true);
-    // Producer im Inneren getrennt von denen der äußeren Timeline (eigene Decoder, siehe producerFor)
+    // producers inside separate from those of the outer timeline (own decoders, see producerFor)
     const QString prefix = std::exchange(m_keyPrefix, m_keyPrefix + "n" + key + "/");
     std::unique_ptr<Mlt::Producer> p = buildTimeline(*it, nullptr);
     m_keyPrefix = prefix;
@@ -1419,15 +267,15 @@ Mlt::Producer* TimelineBuilder::nestedProducer(int sequenceId, TrackKind kind, i
 
 std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl, MixerHooks* hooks)
 {
-    // Solo wie DaVinci: sobald eine Spur Solo hat, sind alle anderen Audiospuren stumm
+    // Solo like DaVinci: as soon as one track has solo, all other audio tracks are muted
     const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
     auto tractor = std::make_unique<Mlt::Tractor>(m_profile);
-    // Verschachtelt: Hintergrund weit über das Ende hinaus, damit ein Compound Clip nach Kürzen seines Inhalts
-    // (Clip länger als die Sequenz) leere Frames statt Wiederholungen liefert
+    // Nested: background far beyond the end, so that a compound clip after shortening its content
+    // (clip longer than the sequence) yields empty frames instead of repeats
     const int content = std::max(1, TimelineOps::endFrame(tl));
     const int end = m_inNested ? content + 3600 * qRound(m_profile.fps()) : content;
 
-    // Spur 0: schwarzer Hintergrund über die ganze Länge
+    // Track 0: black background over the whole length
     Mlt::Playlist background(m_profile);
     Mlt::Producer black(m_profile, m_transparent ? "color:#00000000" : "color:black");
     black.set("length", end);
@@ -1447,16 +295,16 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 const auto it = m_nested->constFind(c.sequenceId);
                 return it == m_nested->cend() ? 0 : TimelineOps::endFrame(*it);
             }
-            Mlt::Producer* p = c.mediaPath.isEmpty() ? nullptr : producerFor(c.mediaPath, kind, trackIndex); // leer = Titel
+            Mlt::Producer* p = c.mediaPath.isEmpty() ? nullptr : producerFor(c.mediaPath, kind, trackIndex); // empty = title
             return p && !isStill(p) ? c.retimedLength(p->get_length()) : 0;
         };
         const QVector<TimelineOps::TransitionSpan> spans = TimelineOps::transitions(track, srcLen);
         QHash<int, const Clip*> byId;
         for (const Clip& c : track.clips) byId.insert(c.id, &c);
-        // Producer je Clip (erster/zweiter derselben Datei): ein Clip liest Übergang und Rumpf vom selben Decoder
-        // (kein Sprung am Übergangsende). Folgt ein Clip derselben Datei mit Überblendung oder anderer Quellstelle,
-        // nimmt er den anderen -> der ist vorher frei und kann vorab an die Stelle springen (PrerollPoint).
-        // Lückenlos weiterlaufendes Material (geteilter Clip) bleibt auf demselben und liest am Stück weiter.
+        // Producer per clip (first/second of the same file): a clip reads transition and body from the same decoder
+        // (no jump at the transition end). If a clip of the same file follows with a crossfade or a different source position,
+        // it takes the other one -> that one is free beforehand and can pre-seek to the spot (PrerollPoint).
+        // Gaplessly continuing material (split clip) stays on the same one and keeps reading in one go.
         QHash<int, bool> useSecond;
         for (int i = 1; i < track.clips.size(); ++i) {
             const Clip& prev = track.clips[i - 1];
@@ -1469,7 +317,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
         }
 
         // Per clip, on all its cuts (their state runs on over cut boundaries): noise reduction, then the
-        // sub-frame delay (Feinposition)
+        // sub-frame delay (fine position)
         QHash<int, std::shared_ptr<Mlt::Filter>> delays, denoisers;
         auto delayed = [&](const Clip& c, Mlt::Producer* cut) {
             if (!cut || kind != TrackKind::Audio) return cut;
@@ -1484,7 +332,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             if (f) cut->attach(*f);
             return cut;
         };
-        // Ausschnitt [from, to) der Timeline aus Clip c (darf über In/Out hinaus in die Handles reichen)
+        // Excerpt [from, to) of the timeline from clip c (may extend beyond In/Out into the handles)
         auto rawCutOf = [&](const Clip& c, int from, int to, bool second) -> Mlt::Producer* {
             if (c.isTitle()) {
                 if (!c.enabled || kind != TrackKind::Video) return nullptr;
@@ -1493,7 +341,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 applyClipFades(m_profile, *cut, c, kind, from, to);
                 return cut;
             }
-            if (c.isCompound()) { // Inhalt der Sequenz als eigener Tractor (Frames zählen ab Sequenzanfang)
+            if (c.isCompound()) { // Content of the sequence as its own tractor (frames count from the sequence start)
                 Mlt::Producer* src = c.enabled ? nestedProducer(c.sequenceId, kind, trackIndex, second) : nullptr;
                 const int in = c.in + (from - c.start);
                 if (!src || in < 0) return nullptr;
@@ -1502,10 +350,10 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 applyClipFades(m_profile, *cut, c, kind, from, to);
                 return cut;
             }
-            if (c.freeze && kind == TrackKind::Audio) return nullptr; // Standbild ist stumm (wie DaVinci)
-            // Render-Cache (nur Vorschau): fertige Clip-Ausgabe statt Original + Effekte; Frame 0 = Clip-Anfang.
-            // Nur innerhalb des Clips (Übergänge mit Handles davor/danach kommen weiter aus dem Original).
-            // Bei Vorher/Nachher enthält der Cache die Farbkorrektur -> solche Clips dann aus dem Original.
+            if (c.freeze && kind == TrackKind::Audio) return nullptr; // Still image is muted (like DaVinci)
+            // Render cache (preview only): finished clip output instead of original + effects; frame 0 = clip start.
+            // Only inside the clip (transitions with handles before/after keep coming from the original).
+            // With Before/After the cache contains the color correction -> such clips then from the original.
             const bool gradeBypassed = m_gradeBypass && m_gradeBypass->load()
                 && std::any_of(c.effects.begin(), c.effects.end(),
                                [](const EffectInstance& e) { return e.enabled && e.effectId == QLatin1String("grade"); });
@@ -1514,7 +362,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                     if (Mlt::Producer* cache = producerFor(file, kind, trackIndex, second)) {
                         Mlt::Producer* cut = cache->cut(from - c.start, to - c.start - 1);
                         noteUse(cache, kind, from, to, from - c.start);
-                        applyClipFades(m_profile, *cut, c, kind, from, to); // Fades sind nicht im Cache
+                        applyClipFades(m_profile, *cut, c, kind, from, to); // Fades are not in the cache
                         return cut;
                     }
                 }
@@ -1522,9 +370,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             Mlt::Producer* src = c.enabled ? producerFor(c.mediaPath, kind, trackIndex, second, &c) : nullptr;
             if (!src) return nullptr;
             int in = c.in + (from - c.start);
-            if (in < 0 && isStill(src)) in = 0; // Standbild: jedes Frame gleich
+            if (in < 0 && isStill(src)) in = 0; // Still image: every frame the same
             if (in < 0) return nullptr;
-            // Tonhöhe halten: Ton um die Rubberband-Verzögerung früher holen
+            // Keep pitch: fetch the audio earlier by the Rubberband delay
             in += src->get_int(kPitchLead);
             Mlt::Producer* cut = src->cut(in, in + (to - from) - 1);
             noteUse(src, kind, from, to, in);
@@ -1548,18 +396,18 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             std::unique_ptr<Mlt::Producer> ca(a ? cutOf(*a, s.start, s.end, useSecond.value(a->id)) : nullptr);
             std::unique_ptr<Mlt::Producer> cb(b ? cutOf(*b, s.start, s.end, useSecond.value(b->id)) : nullptr);
             const int len = s.length();
-            // Verlaufsblende ins/aus dem Leeren: luma kennt keine Transparenz -> wie Cross Dissolve aus-/einblenden
+            // Gradient wipe from/to nothing: luma has no transparency -> fade out/in like Cross Dissolve
             const bool styled = s.style.type != TransitionType::CrossDissolve && (!s.style.isLuma() || (ca && cb));
             if (kind == TrackKind::Video && styled && (ca || cb)) {
                 pl.append(*styledTransition(m_profile, ca.get(), cb.get(), len, s.style));
             } else if (ca && cb) {
-                // Cross Dissolve: beide Seiten in einem kleinen Tractor, Überblendung von a nach b
+                // Cross Dissolve: both sides in a small tractor, crossfade from a to b
                 Mlt::Tractor mix(m_profile);
                 mix.set_track(*ca, 0);
                 mix.set_track(*cb, 1);
                 Mlt::Transition t(m_profile, kind == TrackKind::Video ? "luma" : "mix");
                 if (kind == TrackKind::Audio) {
-                    // Crossfade: beide Seiten mit eigener Kurve, dann einfach addieren
+                    // Crossfade: both sides with their own curve, then simply add
                     applyAudioTransition(m_profile, *ca, s, a->id);
                     applyAudioTransition(m_profile, *cb, s, b->id);
                     t.set("start", 1.0);
@@ -1569,7 +417,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 mix.plant_transition(t, 0, 1);
                 pl.append(mix);
             } else if (ca || cb) {
-                // Nur eine Seite (Schnitt zum Leeren oder anderer Clip deaktiviert/offline): Aus-/Einblenden
+                // Only one side (cut to nothing, or the other clip disabled/offline): fade out/in
                 Mlt::Producer& one = ca ? *ca : *cb;
                 if (kind == TrackKind::Video) applyFade(m_profile, one, len, !ca);
                 else applyAudioTransition(m_profile, one, s, ca ? a->id : b->id);
@@ -1586,20 +434,20 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 if (s.rightId == c.id) bodyStart = std::max(bodyStart, s.end);
                 if (s.leftId == c.id) bodyEnd = std::min(bodyEnd, s.start);
             }
-            // Einblenden (Übergang, der in diesem Clip beginnt und keinen linken Clip hat)
+            // Fade in (transition that starts in this clip and has no left clip)
             for (const auto& s : spans)
                 if (s.rightId == c.id && !s.leftId) appendSpan(s);
             if (bodyEnd > bodyStart) {
                 blankTo(bodyStart);
                 if (std::unique_ptr<Mlt::Producer> body(cutOf(c, bodyStart, bodyEnd, useSecond.value(c.id))); body) pl.append(*body);
-                else pl.blank(bodyEnd - bodyStart - 1); // deaktiviert oder Datei fehlt -> Lücke
+                else pl.blank(bodyEnd - bodyStart - 1); // disabled or file missing -> gap
                 cursor = bodyEnd;
             }
-            // Ausblenden bzw. Überblendung zum nächsten Clip
+            // Fade out resp. crossfade to the next clip
             for (const auto& s : spans)
                 if (s.leftId == c.id) appendSpan(s);
         }
-        // hide: 1 = kein Bild, 2 = kein Ton
+        // hide: 1 = no video, 2 = no audio
         int hide = (kind == TrackKind::Video) ? 2 : 1;
         if (kind == TrackKind::Video && track.hidden) hide |= 1;
         if (kind == TrackKind::Audio && (track.muted || (anySolo && !track.solo))) hide |= 2;
@@ -1629,7 +477,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
     };
 
     for (int i = 0; i < tl.video.size(); ++i) fill(tl.video[i], TrackKind::Video, i);
-    // Untertitel über allen Videospuren (sichtbare Spur; Export nur beim Einbrennen)
+    // Subtitles above all video tracks (visible track; export only when burning in)
     if (m_subtitles)
         for (const SubtitleTrack& st : tl.subtitles) {
             if (!st.enabled || st.cues.isEmpty()) continue;
@@ -1643,7 +491,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 pl.append(*cut);
                 cursor = c.end;
             }
-            pl.set("hide", 2); // kein Ton
+            pl.set("hide", 2); // no audio
             tractor->set_track(pl, mltIndex);
             Mlt::Transition t(m_profile, "qtblend");
             t.set("always_active", 1);
@@ -1652,7 +500,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
         }
     for (int i = 0; i < tl.audio.size(); ++i) fill(tl.audio[i], TrackKind::Audio, i);
 
-    // Master-Fader auf dem Tractor (gilt damit auch für den Export)
+    // Master fader on the tractor (thus also applies to the export)
     attachStrip(m_profile, *tractor, tl.masterVolumeDb, 0.0, hooks ? &hooks->master : nullptr,
                 std::make_pair(tl.masterLimiter, tl.masterLimiterDb));
     return tractor;

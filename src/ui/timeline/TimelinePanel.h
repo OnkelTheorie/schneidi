@@ -10,32 +10,32 @@ class QHBoxLayout;
 class QToolButton;
 class QScrollBar;
 
-// Rahmen um die Timeline: Werkzeugleiste oben, Scrollbars rechts/unten.
+// Frame around the timeline: toolbar on top, scrollbars right/bottom.
 class TimelinePanel : public QWidget {
     Q_OBJECT
 public:
     explicit TimelinePanel(Editor* editor, QWidget* parent = nullptr);
     TimelineView* view() const { return m_view; }
-    // Symbole der Werkzeugleiste (gezeichnet wie in DaVinci: aus = grau, an = weiß)
+    // Toolbar icons (drawn like in DaVinci: off = gray, on = white)
     enum class Icon { Select, Trim, Blade, Snap, Link };
     static QIcon toolIcon(Icon icon);
-    // Schalter in der Werkzeugleiste hinter „Snapping“ (z. B. Verknüpfte Auswahl), folgt der Aktion
+    // Switch in the toolbar after "Snapping" (e.g. Linked Selection), follows the action
     void addToolAction(QAction* action, Icon icon);
 
-    // Timeline/Compound Clip öffnen wie DaVinci: ein geöffneter Compound Clip merkt sich die Timeline, aus der er
-    // geöffnet wurde (Knopf „◂“ bzw. back() kehrt dorthin zurück)
+    // Open timeline/compound clip like DaVinci: an opened compound clip remembers the timeline it was
+    // opened from (button "◂" resp. back() returns there)
     void openSequence(int id);
     void back();
     bool canGoBack() const;
 
 private:
     void syncScrollbars();
-    void rebuildTimelines(); // Auswahlliste der Timelines
+    void rebuildTimelines(); // selection list of the timelines
 
     Editor* m_editor;
     QComboBox* m_timelines;
     QToolButton* m_back;
-    QVector<int> m_history; // Timelines, aus denen Compound Clips geöffnet wurden
+    QVector<int> m_history; // timelines from which compound clips were opened
 
     TimelineView* m_view;
     QScrollBar* m_hbar;

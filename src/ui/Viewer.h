@@ -11,20 +11,20 @@ class QStackedWidget;
 class TrimView;
 class QToolButton;
 
-// Vorschaufenster mit Transportleiste (Mitte oben wie in DaVinci).
-// Zeigt Timeline oder Quelle (Media-Pool-Clip); Scrubber unter dem Bild mit In/Out-Bereich.
-// Quelle: Bild in die Timeline ziehen = Quell-In/Out dort überschreiben (wie DaVinci).
+// Preview window with transport bar (top center like in DaVinci).
+// Shows timeline or source (Media Pool clip); scrubber under the image with In/Out range.
+// Source: dragging the image into the timeline = overwrite source In/Out there (like DaVinci).
 class Viewer : public QWidget {
     Q_OBJECT
 public:
-    // Drag aus dem Viewer: Pfad wie beim Media Pool (MediaPool::MimeType), dazu der Quellbereich "in out"
+    // Drag from the Viewer: path as with the Media Pool (MediaPool::MimeType), plus the source range "in out"
     static constexpr const char* RangeMimeType = "application/x-schneidi-source-range";
 
     explicit Viewer(Engine* engine, QWidget* parent = nullptr);
 
-    // Scrubber: Länge der gezeigten Quelle/Timeline und In/Out (-1 = nicht gesetzt)
+    // Scrubber: length of the shown source/timeline and In/Out (-1 = not set)
     void setRange(int length, int markIn, int markOut);
-    // Gezeigte Quelle (Titel über dem Bild, Drag in die Timeline); leer = Timeline
+    // Shown source (title above the image, drag into the timeline); empty = timeline
     void setSource(const QString& path, const QString& name);
 
     // Trim view like DaVinci: while an edit is dragged, show the frames on both sides of it (two-up/four-up,
@@ -36,7 +36,7 @@ public:
 
 private:
     void updateTimecode(int frame);
-    void updateModeText(); // "Timeline"/"Quelle – …", Hinweis bei umgangener Farbkorrektur
+    void updateModeText(); // "Timeline"/"Quelle – …", hint when the color correction is bypassed
     QMimeData* dragData() const;
 
     Engine* m_engine;

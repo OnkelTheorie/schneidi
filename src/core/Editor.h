@@ -12,9 +12,9 @@ class Project;
 class Selection;
 class RetimeMap;
 
-// Bearbeitungs-Operationen auf Nutzerebene (was ein Klick/Shortcut auslöst).
-// UI ruft nur Editor-Methoden auf, nie direkt TimelineOps -> neue Werkzeuge
-// werden hier ergänzt, ohne UI und Engine anzufassen.
+// Editing operations at user level (what a click/shortcut triggers).
+// The UI only calls Editor methods, never TimelineOps directly -> new tools
+// are added here without touching UI and engine.
 class Editor : public QObject {
     Q_OBJECT
 public:
@@ -25,81 +25,81 @@ public:
 
     bool linkedSelection() const { return m_linkedSelection; }
     void setLinkedSelection(bool on) { m_linkedSelection = on; }
-    // Schnitt am Playhead: an = auf allen Spuren der Auswahl (auch der nächste Clip daneben),
-    // aus = nur die ausgewählten Clips. Ohne Auswahl immer alle Clips unter dem Playhead.
+    // Cut at the playhead: on = on all tracks of the selection (also the next clip beside it),
+    // off = only the selected clips. Without a selection always all clips under the playhead.
     bool splitOnSelectedTracks() const { return m_splitOnSelectedTracks; }
     void setSplitOnSelectedTracks(bool on) { m_splitOnSelectedTracks = on; }
 
-    // Clip + verknüpfte Partner (falls "Linked Selection" an ist); nie Clips auf gesperrten Spuren
+    // Clip + linked partners (if "Linked Selection" is on); never clips on locked tracks
     QVector<int> withLinked(const QVector<int>& ids) const;
-    // Nur Clips, die sich bearbeiten lassen (nicht auf gesperrten Spuren)
+    // Only clips that can be edited (not on locked tracks)
     QVector<int> editable(const QVector<int>& ids) const;
     bool isTrackLocked(TrackRef ref) const;
 
-    // Legt Media ab: Video auf V[track], Audio auf A[track] (wie DaVinci, V2 <-> A2).
-    // Fehlende Spuren werden angelegt. Mehrere Dateien landen hintereinander.
+    // Places media: video on V[track], audio on A[track] (like DaVinci, V2 <-> A2).
+    // Missing tracks are created. Several files end up one after another.
     void addMediaAt(const QStringList& paths, int frame, int track = 0);
-    // Titel (5 s, wie DaVinci "Text") am Frame auf die unterste Videospur, die dort über allen Clips frei ist
-    // (fehlende Spur wird angelegt); track >= 0 = feste Spur (Drag aus dem Media Pool). Neuer Clip wird ausgewählt.
+    // Title (5 s, like DaVinci "Text") at the frame on the lowest video track that is free above all clips there
+    // (missing track is created); track >= 0 = fixed track (drag from the Media Pool). New clip is selected.
     void addTitle(int frame, int track = -1);
     void toggleTrackMute(TrackRef ref);
     void toggleTrackHidden(TrackRef ref);
-    // Spur sperren (Schloss wie DaVinci): Clips darauf lassen sich nicht mehr auswählen oder ändern,
-    // Ripple lässt die Spur stehen. Ausgewählte Clips der Spur werden abgewählt.
+    // Lock track (lock like DaVinci): clips on it can no longer be selected or changed,
+    // Ripple leaves the track alone. Selected clips of the track are deselected.
     void toggleTrackLock(TrackRef ref);
-    // Spurname (leer = Standard „Video 1“ usw.) und Spurfarbe (id aus kTrackColors, leer = Standard)
+    // Track name (empty = default "Video 1" etc.) and track color (id from kTrackColors, empty = default)
     void renameTrack(TrackRef ref, const QString& name);
     void setTrackColor(TrackRef ref, const QString& colorId);
     // EQ and compressor of audio track `track` (Mixer "EQ"/"DYN", dialogs), values clamped to their ranges; the
     // preview takes them live. Same mergeKey = one undo step (dragging a control).
     void setTrackEq(int track, const TrackEq& eq, const QString& mergeKey = {});
     void setTrackDynamics(int track, const TrackDynamics& dynamics, const QString& mergeKey = {});
-    // Spuren hinzufügen/löschen (DaVinci „Add Track“/„Delete Track“), je ein Undo-Schritt. addTrack: neue leere
-    // Spur an Index `index` (0 = ganz unten bei Video bzw. A1 bei Audio), die übrigen rücken auf. Eigene Namen und
-    // Eigenschaften bleiben an ihrer Spur, Standardnamen („Video 2“) folgen der Position. Die letzte Spur eines Typs
-    // und gesperrte Spuren lassen sich nicht löschen; Clips darauf werden mitgelöscht. Zielspuren rücken mit.
+    // Add/delete tracks (DaVinci "Add Track"/"Delete Track"), one undo step each. addTrack: new empty
+    // track at index `index` (0 = very bottom for video or A1 for audio), the others move up. Own names and
+    // properties stay with their track, default names ("Video 2") follow the position. The last track of a type
+    // and locked tracks cannot be deleted; clips on them are deleted too. Target tracks move along.
     void addTrack(TrackKind kind, int index);
     bool canRemoveTrack(TrackRef ref) const;
     void removeTrack(TrackRef ref);
-    // Spur innerhalb ihres Typs an Index `to` verschieben (Ziehen am Spurkopf); Clips, Name, Mute/Solo/Pegel usw.
-    // ziehen mit, Zielspuren folgen. Ein Undo-Schritt.
+    // Move a track within its type to index `to` (dragging the track header); clips, name, mute/solo/level etc.
+    // move along, target tracks follow. One undo step.
     void moveTrack(TrackKind kind, int from, int to);
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);
-    // Verschieben in 1/100 Frame (Feinposition von Ton-Clips, Clip::subframe); ganze Frames wie moveClips
+    // Move in 1/100 frame (fine position of audio clips, Clip::subframe); whole frames like moveClips
     void moveClipsFine(const QVector<int>& ids, int fine, TrackKind kind, int trackDelta);
-    // Kante eines Clips (und verknüpfter Partner) ziehen, ohne Ripple
+    // Drag the edge of a clip (and linked partners), without ripple
     void trimClip(int clipId, TimelineOps::Edge edge, int delta);
-    // Wie weit sich die Kante tatsächlich bewegen lässt (für die Live-Vorschau)
+    // How far the edge can actually be moved (for the live preview)
     int clampTrim(int clipId, TimelineOps::Edge edge, int delta) const;
-    // Trim-Modus (T): Bearbeitung zum gegriffenen Clip bauen (mit verknüpften Partnern).
-    // Ripple: Kante `edge`; Roll: Schnitt an dieser Kante (Clips beider Seiten auf den Spuren der Partner); Slip/Slide: Clip.
+    // Trim mode (T): build the edit for the grabbed clip (with linked partners).
+    // Ripple: edge `edge`; Roll: cut at this edge (clips on both sides on the partners' tracks); Slip/Slide: clip.
     TimelineOps::TrimEdit trimEdit(TimelineOps::TrimKind kind, int clipId, TimelineOps::Edge edge = TimelineOps::Edge::End) const;
     int clampTrimEdit(const TimelineOps::TrimEdit& e, int delta) const;
-    Timeline previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) const; // für die Live-Vorschau
+    Timeline previewTrimEdit(const TimelineOps::TrimEdit& e, int delta) const; // for the live preview
     void applyTrimEdit(const TimelineOps::TrimEdit& e, int delta);
-    // Trim-Modus + , / . wie DaVinci: ausgewählte Clips um `frames` slippen
+    // Trim mode + , / . like DaVinci: slip selected clips by `frames`
     void slipSelection(int frames);
-    // Lautstärke eines Audioclips (dB, wird auf kMinVolumeDb..kMaxVolumeDb begrenzt)
+    // Volume of an audio clip (dB, limited to kMinVolumeDb..kMaxVolumeDb)
     void setClipVolume(int clipId, double db);
-    // Audiopegel normalisieren (DaVinci Normalize Audio Levels, Sample Peak): peakDb = gemessener Spitzenpegel je
-    // Audioclip (ohne Clip-Lautstärke). Clip-Lautstärke so setzen, dass die Spitze bei targetDb liegt; relative = alle
-    // Clips um denselben Betrag (lautester trifft das Ziel), sonst jeder einzeln. Lautstärke-Keyframes: Kurve so
-    // verschieben, dass ihr höchster Punkt den Wert bekommt. Stille/gesperrte Clips bleiben. Ein Undo-Schritt.
-    // Lautheit (LUFS, BS.1770) genauso: peakDb = integrierte Lautheit je Clip; relativeRef = Bezugswert für
-    // relative (z. B. gemeinsame Lautheit aller Clips), ohne = lautester Clip.
+    // Normalize audio levels (DaVinci Normalize Audio Levels, sample peak): peakDb = measured peak level per
+    // Audio clip (without clip volume). Set clip volume so that the peak is at targetDb; relative = all
+    // clips by the same amount (loudest hits the target), otherwise each individually. Volume keyframes: shift the curve so
+    // that its highest point gets the value. Silent/locked clips stay. One undo step.
+    // Loudness (LUFS, BS.1770) likewise: peakDb = integrated loudness per clip; relativeRef = reference value for
+    // relative (e.g. common loudness of all clips), without = loudest clip.
     void normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative,
                         std::optional<double> relativeRef = std::nullopt);
-    // Audioclips zum Normalisieren: Auswahl (mit verknüpften Partnern), nur Ton, nicht gesperrt
+    // Audio clips for normalizing: selection (with linked partners), audio only, not locked
     QVector<int> selectedAudioClips() const;
-    // Beliebige Clip-Eigenschaft ändern (Inspector). Gleicher mergeKey = ein Undo-Schritt.
+    // Change any clip property (Inspector). Same mergeKey = one undo step.
     void modifyClips(const QVector<int>& ids, const QString& text, const std::function<void(Clip&)>& fn,
                      const QString& mergeKey = {});
-    // Klinge: Clip (mit verknüpften Partnern) bzw. Untertitel-Eintrag (nur dieser) an `frame` teilen
+    // Blade: split clip (with linked partners) or subtitle entry (only this one) at `frame`
     void bladeAt(int clipId, int frame);
-    // Fade-Griff ziehen (nur dieser Clip, wie DaVinci); frames wird auf die Cliplänge begrenzt
+    // Drag fade handle (only this clip, like DaVinci); frames is limited to the clip length
     void setClipFade(int clipId, TimelineOps::Edge edge, int frames, const QString& mergeKey = {});
-    // Strg+B: wie DaVinci ohne Auswahl alle Clips und Untertitel unter dem Playhead (nicht gesperrte Spuren),
-    // mit Auswahl nur die ausgewählten (siehe splitOnSelectedTracks). Ein Undo-Schritt.
+    // Ctrl+B: like DaVinci without a selection all clips and subtitles under the playhead (unlocked tracks),
+    // with a selection only the selected ones (see splitOnSelectedTracks). One undo step.
     void splitAtPlayhead(int frame);
     void deleteSelection();
     void rippleDeleteSelection();
@@ -109,109 +109,109 @@ public:
     // Several ranges [from, to) in one undo step `text` (Transcript panel: removed words, pauses); ranges may overlap
     void deleteRanges(const QVector<QPair<int, int>>& ranges, bool ripple, const QString& text);
     void selectAll();
-    // Clips ab Playhead wählen (DaVinci Y / Strg+Y / Alt+Y / Strg+Alt+Y): forward = Playhead und rechts davon,
-    // sonst Playhead und links davon. allTracks = alle Spuren, sonst die Spuren der Auswahl (ohne Auswahl: Zielspuren)
+    // Select clips from the playhead (DaVinci Y / Ctrl+Y / Alt+Y / Ctrl+Alt+Y): forward = playhead and right of it,
+    // otherwise playhead and left of it. allTracks = all tracks, otherwise the tracks of the selection (without selection: target tracks)
     void selectFromPlayhead(int frame, bool forward, bool allTracks);
-    // Schnittpunkte per Tastatur (DaVinci V/U, , und .): nächster Schnitt auf den Zielspuren (gesperrte nicht),
-    // Seite wechseln (beide → links → rechts), gewählten Schnitt trimmen (beide = Roll; eine Seite: ripple =
-    // Trim-Modus, sonst ohne Nachrücken). nudgeEditPoint: false = kein Schnittpunkt gewählt.
+    // Edit points by keyboard (DaVinci V/U, , and .): next cut on the target tracks (not locked),
+    // switch side (both -> left -> right), trim the selected cut (both = roll; one side: ripple =
+    // trim mode, otherwise without moving up). nudgeEditPoint: false = no edit point selected.
     void selectNearestEditPoint(int frame);
     void cycleEditPointSide();
     bool nudgeEditPoint(int frames, bool ripple);
-    // Auswahl um `frames` verschieben (Nudge, wie , und . in DaVinci)
+    // Move selection by `frames` (nudge, like , and . in DaVinci)
     void nudgeSelection(int frames);
-    // Anfang/Ende bis zum Playhead trimmen (Shift+[ / Shift+]); Auswahl oder Clips unter dem Playhead
+    // Trim start/end up to the playhead (Shift+[ / Shift+]); selection or clips under the playhead
     void trimToPlayhead(TimelineOps::Edge edge, int frame);
     void toggleSelectionEnabled();
-    // Render-Cache Clip-Ausgabe (wie DaVinci) für die ausgewählten Videoclips: sind alle markiert, aus, sonst an.
-    // Titel werden nicht gecacht. State: 0 = keiner markiert, 1 = alle, 2 = gemischt, -1 = keine passenden Clips
+    // Render cache clip output (like DaVinci) for the selected video clips: if all are marked, off, otherwise on.
+    // Titles are not cached. State: 0 = none marked, 1 = all, 2 = mixed, -1 = no matching clips
     void toggleSelectionRenderCache();
     int selectionRenderCacheState() const;
-    // Ausgewählte Clips verknüpfen, bzw. trennen, wenn sie schon verknüpft sind
+    // Link selected clips, or unlink them if they are already linked
     void toggleLinkSelection();
     void toggleMarker(int frame);
-    // In-/Out-Punkt (I/O wie DaVinci); -1 = entfernen. Liegt Out vor In, wird der andere Punkt verworfen.
+    // In/out point (I/O like DaVinci); -1 = remove. If out is before in, the other point is discarded.
     void setMarkIn(int frame);
     void setMarkOut(int frame);
     void clearMarks();
 
-    // Übergänge (Cross Dissolve, Strg+T) mit Standardlänge 1 s: an beiden Kanten der ausgewählten Clips,
-    // ohne Auswahl am Schnitt, der dem Playhead am nächsten liegt. Zu wenig Handles -> kürzer.
-    // style gesetzt (Doppelklick in der Effects Library): diese Art, vorhandene werden ersetzt;
-    // onlyKind = nur Kanten auf Video- bzw. Audiospuren. Ist ein Übergang ausgewählt, bekommt er die Art.
+    // Transitions (Cross Dissolve, Ctrl+T) with default length 1 s: at both edges of the selected clips,
+    // without a selection at the cut nearest to the playhead. Too few handles -> shorter.
+    // style set (double-click in the Effects Library): this style, existing ones are replaced;
+    // onlyKind = only edges on video or audio tracks. If a transition is selected, it gets the style.
     void addTransitions(int frame, std::optional<TransitionStyle> style = {}, std::optional<TrackKind> onlyKind = {});
-    // Übergang an einem Schnitt (Drop aus der Effects Library): leftId endet, rightId beginnt dort
-    // (0 = keiner -> Ein-/Ausblenden). Standardlänge 1 s, ersetzt einen vorhandenen; ein Undo-Schritt.
+    // Transition at a cut (drop from the Effects Library): leftId ends, rightId starts there
+    // (0 = none -> fade in/out). Default length 1 s, replaces an existing one; one undo step.
     void addTransitionAt(int leftId, int rightId, const TransitionStyle& style);
-    // Wie addTransitionAt, ändert aber nichts: wirksamer Übergang (für die Vorschau beim Ziehen)
+    // Like addTransitionAt, but changes nothing: effective transition (for the preview while dragging)
     std::optional<TimelineOps::TransitionSpan> previewTransitionAt(int leftId, int rightId,
                                                                    const TransitionStyle& style) const;
-    // Übergang zwischen leftId und rightId (0 = Schwarz/Stille) entfernen bzw. Länge ändern
+    // Remove the transition between leftId and rightId (0 = black/silence) or change its length
     void removeTransition(int leftId, int rightId);
     void setTransitionLength(int leftId, int rightId, int length, const QString& mergeKey = {});
     void setTransitionStyle(int leftId, int rightId, const TransitionStyle& style, const QString& mergeKey = {});
-    // Wirksame Übergänge einer Spur (für Anzeige)
+    // Effective transitions of a track (for display)
     QVector<TimelineOps::TransitionSpan> transitions(TrackRef ref) const;
 
-    // Keyframes (Inspector-Rauten): an Timeline-Frame `frame` für die Parameter setzen (on) bzw. entfernen,
-    // jeweils im Clip-Frame unter dem Playhead (auf den Clip begrenzt)
+    // Keyframes (Inspector diamonds): set (on) or remove at timeline frame `frame` for the parameters,
+    // each at the clip frame under the playhead (limited to the clip)
     void setKeyframes(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, bool on);
-    // Verlauf (Linear/Ease) an den Keyframes; params leer = alle Parameter (Keyframe-Spur der Timeline)
+    // Interpolation (Linear/Ease) at the keyframes; params empty = all parameters (keyframe track of the timeline)
     void setKeyframeEase(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, KeyEase ease);
-    // Keyframe-Spur der Timeline: Rauten an Clip-Frames `times` (alle Parameter) verschieben/löschen
+    // Keyframe track of the timeline: move/delete diamonds at clip frames `times` (all parameters)
     void moveKeyframes(int clipId, const QVector<int>& times, int delta);
-    // params leer = alle Parameter (Keyframe-Spur), sonst nur diese (Kurven-Editor)
+    // params empty = all parameters (keyframe track), otherwise only these (curve editor)
     void removeKeyframes(int clipId, const QVector<int>& times, const QVector<AnimParam>& params = {});
 
-    // Geschwindigkeit wie DaVinci „Change Clip Speed“ (Strg+R) für die Clips (mit Partnern). Titel/Standbilder bleiben.
-    // ripple = Cliplänge folgt der Geschwindigkeit, spätere Clips derselben Spuren rücken nach; sonst bleibt die Länge
-    // (begrenzt aufs vorhandene Material). Rückwärts zeigt denselben Ausschnitt umgekehrt; Keyframes wandern mit.
+    // Speed like DaVinci "Change Clip Speed" (Ctrl+R) for the clips (with partners). Titles/stills stay.
+    // ripple = clip length follows the speed, later clips of the same tracks move up; otherwise the length stays
+    // (limited to the available material). Reverse shows the same section backwards; keyframes move along.
     struct Retime {
         double speed = 1.0;
         bool reverse = false, freeze = false, keepPitch = true;
     };
     void setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple);
 
-    // Speed Ramp wie DaVinci „Retime Controls“ am Clip (mit verknüpften Partnern derselben Datei), je ein Undo-Schritt.
-    // Anfang/Ende und Keyframes bleiben an ihrer Quellstelle, die Cliplänge folgt dem Tempo (spätere Clips derselben
-    // Spuren rücken nach). frame = Timeline-Frame im Clip; Abschnitt 0 liegt vor dem ersten Speed-Punkt.
+    // Speed ramp like DaVinci "Retime Controls" on the clip (with linked partners of the same file), one undo step each.
+    // Start/end and keyframes stay at their source position, the clip length follows the speed (later clips of the same
+    // tracks move up). frame = timeline frame in the clip; section 0 lies before the first speed point.
     bool canRetime(int clipId) const;
     void addSpeedPoint(int clipId, int frame);
     void removeSpeedPoint(int clipId, int index);
-    void moveSpeedPoint(int clipId, int index, int delta); // Punkt um delta Timeline-Frames, Tempo davor bleibt
+    void moveSpeedPoint(int clipId, int index, int delta); // move point by delta timeline frames, speed before it stays
     void setSegmentSpeed(int clipId, int segment, double speed);
     void setSpeedPointSmooth(int clipId, int index, int frames);
 
-    // Quell-In/Out (I/O im Quell-Viewer) eines Media-Pool-Clips, -1 = entfernen; Regeln wie setMarkIn/setMarkOut
+    // Source in/out (I/O in the source viewer) of a Media Pool clip, -1 = remove; rules like setMarkIn/setMarkOut
     void setSourceMarkIn(const QString& path, int frame);
     void setSourceMarkOut(const QString& path, int frame);
     void clearSourceMarks(const QString& path);
 
-    // Bearbeitungen aus dem Quell-Viewer wie DaVinci (Edit-Menü, F9–F12)
+    // Edits from the source viewer like DaVinci (Edit menu, F9-F12)
     enum class SourceEditMode {
-        Insert,          // F9: am Timeline-In bzw. Playhead einfügen, spätere Clips der Zielspuren rücken nach
-        Overwrite,       // F10: überschreiben
-        Replace,         // F11: Clip unter dem Playhead ersetzen (Länge bleibt, Quell-Playhead/-In deckt sich mit dem Playhead)
-        PlaceOnTop,      // F12: auf die erste freie Spur über allen Clips im Bereich
-        RippleOverwrite, // Shift+F10: Clip unter dem Playhead ersetzen, Rest der Spur rückt um den Längenunterschied
-        AppendAtEnd,     // Shift+F12: ans Ende der Timeline
-        FitToFill,       // Shift+F11: Quell-In/Out per Geschwindigkeit genau zwischen Timeline-In und -Out (überschreibt)
+        Insert,          // F9: insert at timeline in or playhead, later clips of the target tracks move up
+        Overwrite,       // F10: overwrite
+        Replace,         // F11: replace clip under the playhead (length stays, source playhead/in coincides with the playhead)
+        PlaceOnTop,      // F12: onto the first free track above all clips in the range
+        RippleOverwrite, // Shift+F10: replace clip under the playhead, rest of the track moves by the length difference
+        AppendAtEnd,     // Shift+F12: to the end of the timeline
+        FitToFill,       // Shift+F11: source in/out via speed exactly between timeline in and out (overwrites)
     };
-    // 3-Punkt-Schnitt: Quellbereich = Quell-In/Out (fehlt einer: Clipanfang/-ende), Ziel = Timeline-In, sonst Playhead;
-    // Timeline-In+Out begrenzt die Länge, nur Timeline-Out = rückwärts ab Out. Benutzte Timeline-In/Out werden
-    // danach entfernt (wie DaVinci). srcPos = Quell-Playhead (für Replace ohne Quell-In).
-    // Video/Audio verknüpft auf die Zielspuren, ein Undo-Schritt. Rückgabe: Ende des neuen Clips (neuer Playhead),
-    // -1 = nichts passiert (kein Clip unter dem Playhead, zu wenig Material).
+    // 3-point edit: source range = source in/out (if one is missing: clip start/end), target = timeline in, otherwise playhead;
+    // timeline in+out limits the length, timeline out only = backwards from out. Used timeline in/out are
+    // removed afterwards (like DaVinci). srcPos = source playhead (for Replace without source in).
+    // Video/audio linked onto the target tracks, one undo step. Return value: end of the new clip (new playhead),
+    // -1 = nothing happened (no clip under the playhead, too little material).
     int sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int playhead);
-    // Quellbereich [in, out] an Frame `frame` auf Spur-Index `track` (V[n]/A[n]) überschreiben (Drag aus dem Viewer)
+    // Overwrite source range [in, out] at frame `frame` on track index `track` (V[n]/A[n]) (drag from the viewer)
     void placeSourceRange(const QString& path, int in, int out, int frame, int track);
-    // Zielspuren für F9/F10 … (wie DaVinci Destination Controls), Index 0 = V1/A1
+    // Target tracks for F9/F10 ... (like DaVinci Destination Controls), index 0 = V1/A1
     int targetVideoTrack() const { return m_targetVideo; }
     int targetAudioTrack() const { return m_targetAudio; }
     void setTargetTracks(int video, int audio);
     // Effects (Effects Library: Open FX on video clips, Audio FX on audio clips): add to the clips of the effect's
     // kind (clips that have it already keep it), or remove; one undo step each
-    void addEffect(const QVector<int>& ids, const QString& effectId); // auch "lut:<Pfad>" (EffectFolders::LutPrefix), "preset:<Pfad>" (Presets::Prefix)
+    void addEffect(const QVector<int>& ids, const QString& effectId); // also "lut:<path>" (EffectFolders::LutPrefix), "preset:<path>" (Presets::Prefix)
     void removeEffect(const QVector<int>& ids, const QString& effectId);
     // Every effect of the clips (Effects Library, Color page grade/LUT) in one undo step; the Green Screen of the
     // Video tab stays
@@ -222,25 +222,25 @@ public:
     // the clip on the first audio track) at the playhead
     QVector<int> effectTargets(int frame, TrackKind kind = TrackKind::Video) const;
 
-    // Color-Seite (Effekt "grade", Ziel wie effectTargets): Werte am Timeline-Frame `frame` setzen; legt die Korrektur
-    // bei Bedarf an, animierte Werte bekommen dort einen Keyframe (wie im Inspector). Gleicher mergeKey = ein Undo-Schritt.
+    // Color page (effect "grade", target like effectTargets): set values at timeline frame `frame`; creates the correction
+    // if needed, animated values get a keyframe there (as in the Inspector). Same mergeKey = one undo step.
     void setGradeValues(const QVector<int>& ids, const QVector<QPair<AnimParam, double>>& values, int frame,
                         const QString& text, const QString& mergeKey = {});
-    // Zurücksetzen: params = diese Werte auf den Standard (am Frame), leer = ganze Korrektur samt LUT/Keyframes weg
+    // Reset: params = these values to the default (at the frame), empty = whole correction including LUT/keyframes removed
     void resetGrade(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, const QString& text);
-    void setGradeLut(const QVector<int>& ids, const QString& path); // leer = LUT entfernen
+    void setGradeLut(const QVector<int>& ids, const QString& path); // empty = remove LUT
     void setGradeEnabled(const QVector<int>& ids, bool on);
-    // Keyframe für die ganze Korrektur (wie ein DaVinci-Node): alle Werte am Frame setzen bzw. entfernen
+    // Keyframe for the whole correction (like a DaVinci node): set or remove all values at the frame
     void setGradeKeyframe(const QVector<int>& ids, int frame, bool on);
 
-    // Zwischenablage (Strg+C/X/V): Einfügen am Playhead auf denselben Spuren, überschreibt
+    // Clipboard (Ctrl+C/X/V): paste at the playhead on the same tracks, overwrites
     void copySelection();
     void cutSelection();
     void paste(int frame);
 
-    // Attribute einfügen (Alt+V) wie DaVinci „Paste Attributes“: überträgt die gewählten Eigenschaften (mit ihren
-    // Keyframes, Zeitpunkte bleiben) vom kopierten Clip auf die ausgewählten Clips, ein Undo-Schritt. Video-Attribute
-    // kommen vom ersten kopierten Clip einer Videospur, Audio-Attribute von dem einer Audiospur. EditorAttributes.cpp
+    // Paste Attributes (Alt+V) like DaVinci "Paste Attributes": transfers the chosen properties (with their
+    // keyframes, timing stays) from the copied clip to the selected clips, one undo step. Video attributes
+    // come from the first copied clip on a video track, audio attributes from the one on an audio track. EditorAttributes.cpp
     enum PasteAttr {
         AttrZoom = 1 << 0, AttrPosition = 1 << 1, AttrRotation = 1 << 2, AttrCrop = 1 << 3,
         AttrComposite = 1 << 4, AttrEffects = 1 << 5, AttrColor = 1 << 6, AttrSpeed = 1 << 7,
@@ -248,9 +248,9 @@ public:
         AttrVideoMask = AttrZoom | AttrPosition | AttrRotation | AttrCrop | AttrComposite | AttrEffects | AttrColor,
         AttrAudioMask = AttrVolume | AttrPan | AttrAudioEffects,
     };
-    // Welche Attribute die Zwischenablage liefern kann (0 = nichts kopiert)
+    // Which attributes the clipboard can provide (0 = nothing copied)
     int pasteAttributesAvailable() const;
-    QString pasteAttributesSource() const; // Name des Quellclips für den Dialog
+    QString pasteAttributesSource() const; // name of the source clip for the dialog
     void pasteAttributes(int attrs);
 
     // Grade copy/paste on the Color page like DaVinci (Ctrl+C/Ctrl+V there, "=" / "-" = grade of the clip one/two
@@ -263,81 +263,81 @@ public:
     // false = there is no such clip
     bool applyGradeFromPrevious(int clipId, int back);
 
-    // ---- Untertitel (DaVinci Subtitle Tracks, core/Subtitles.h) ----
-    // Untertitel-Einträge teilen sich die Auswahl mit den Clips (eigene ids aus demselben Zähler)
+    // ---- Subtitles (DaVinci Subtitle Tracks, core/Subtitles.h) ----
+    // Subtitle entries share the selection with the clips (own ids from the same counter)
     bool isSubtitle(int id) const;
-    QVector<int> clipIdsOf(const QSet<int>& ids) const; // nur Clips (ohne Untertitel)
-    QVector<int> selectedSubtitles() const; // ausgewählte Einträge, nicht auf gesperrten Spuren
+    QVector<int> clipIdsOf(const QSet<int>& ids) const; // only clips (without subtitles)
+    QVector<int> selectedSubtitles() const; // selected entries, not on locked tracks
     bool isSubtitleTrackLocked(int index) const;
-    // Neue Spur oben (ST1, ST2 …), Stil passend zum Projektformat; sichtbar, wenn keine andere sichtbar ist. Liefert den Index.
+    // New track on top (ST1, ST2 ...), style fitting the project format; visible if no other is visible. Returns the index.
     int addSubtitleTrack();
     void removeSubtitleTrack(int index);
-    // Sichtbar im Viewer/beim Einbrennen; wie DaVinci immer nur eine Spur zugleich (an = andere aus)
+    // Visible in the viewer/when burning in; like DaVinci only one track at a time (on = others off)
     void setSubtitleTrackEnabled(int index, bool on);
     void toggleSubtitleTrackLock(int index);
     void renameSubtitleTrack(int index, const QString& name);
-    // Spurstil (Schrift, Farbe, Umrandung, Hintergrund, Position); gleicher mergeKey = ein Undo-Schritt
+    // Track style (font, color, outline, background, position); same mergeKey = one undo step
     void setSubtitleStyle(int index, const QString& text, const std::function<void(TitleStyle&)>& fn,
                           const QString& mergeKey = {});
-    // Untertitel am Frame (Standard 3 s, vor dem nächsten Eintrag gekürzt) auf Spur `track`, < 0 = sichtbare Spur
-    // (keine vorhanden: ST1 anlegen). Wird ausgewählt; liefert die id, 0 = dort liegt schon einer / Spur gesperrt.
+    // Subtitle at the frame (default 3 s, shortened before the next entry) on track `track`, < 0 = visible track
+    // (none present: create ST1). Gets selected; returns the id, 0 = one already lies there / track locked.
     int addSubtitle(int frame, int track = -1, const QString& text = {});
     void setSubtitleText(int id, const QString& text, const QString& mergeKey = {});
-    // Start/Ende (Inspector): begrenzt auf die Nachbarn, mindestens 1 Frame
+    // Start/end (Inspector): limited to the neighbors, at least 1 frame
     void setSubtitleTiming(int id, int start, int end);
-    // Verschieben (auch auf andere Untertitelspuren); überschreibt, was dort liegt (wie Clips)
+    // Move (also onto other subtitle tracks); overwrites what is there (like clips)
     void moveSubtitles(const QVector<int>& ids, int delta, int trackDelta);
     int clampSubtitleTrackDelta(const QVector<int>& ids, int trackDelta) const;
-    // Kante ziehen: begrenzt auf die Nachbarn und mindestens 1 Frame
+    // Drag edge: limited to the neighbors and at least 1 frame
     int clampSubtitleTrim(int id, TimelineOps::Edge edge, int delta) const;
     void trimSubtitle(int id, TimelineOps::Edge edge, int delta);
-    // Eingelesene Einträge (SRT) als neue Spur; name = Spurname (z. B. Dateiname). Liefert den Spur-Index, -1 = leer.
+    // Imported entries (SRT) as a new track; name = track name (e.g. file name). Returns the track index, -1 = empty.
     // stack >= 0: always visible, `stack` lines above the default position (several speakers at once)
     int importSubtitles(const QVector<SubtitleCue>& cues, const QString& name, int stack = -1);
 
-    // ---- Compound Clips und verschachtelte Timelines (core/EditorCompound.cpp) ----
-    // Ausgewählte Clips (mit Partnern) zu einem Compound Clip zusammenfassen (DaVinci „New Compound Clip“): neue
-    // Sequenz mit diesen Clips (Spuren ab der untersten benutzten, Zeit ab dem frühesten Clip); in der Timeline
-    // ersetzt sie ein Compound Clip über die ganze Spanne auf der untersten Video- bzw. Audiospur ab der Auswahl, auf
-    // der die Spanne frei ist (Video + Audio verknüpft, überschreibt nie andere Clips). Ein Undo-Schritt; neuer
-    // Clip wird ausgewählt. Liefert die Sequenz-id, 0 = nichts ausgewählt.
+    // ---- Compound clips and nested timelines (core/EditorCompound.cpp) ----
+    // Combine selected clips (with partners) into a compound clip (DaVinci "New Compound Clip"): new
+    // sequence with these clips (tracks from the lowest used one, time from the earliest clip); in the timeline
+    // a compound clip replaces them over the whole span on the lowest video or audio track from the selection on on
+    // which the span is free (video + audio linked, never overwrites other clips). One undo step; new
+    // clip is selected. Returns the sequence id, 0 = nothing selected.
     int createCompoundClip(const QString& name = {});
-    // Compound Clips (mit Partnern) wieder in ihre Clips zerlegen (DaVinci „Decompose in Place“): Inhalt im
-    // benutzten Ausschnitt an dieselbe Stelle, Spuren ab der des Compound Clips. Die Sequenz bleibt im Media Pool.
+    // Decompose compound clips (with partners) back into their clips (DaVinci "Decompose in Place"): content in the
+    // used section at the same position, tracks from that of the compound clip. The sequence stays in the Media Pool.
     bool decomposeCompoundClips(const QVector<int>& ids);
-    // Ausgewählter Compound Clip (für „In Timeline öffnen“), 0 = keiner
+    // Selected compound clip (for "Open in Timeline"), 0 = none
     int selectedCompoundSequence() const;
-    // Timeline/Compound Clip aus dem Media Pool am Frame auf V[track]/A[track] legen (überschreibt, verknüpft).
-    // false = leer oder Schleife (Sequenz enthält die geöffnete Timeline).
+    // Place timeline/compound clip from the Media Pool at the frame on V[track]/A[track] (overwrites, linked).
+    // false = empty or loop (sequence contains the opened timeline).
     bool addSequenceAt(int sequenceId, int frame, int track = 0);
 
 signals:
-    void targetTracksChanged(); // Zielspuren (Spurkopf-Markierung neu zeichnen)
-    void mixerOnlyEdit();       // nächste Änderung betrifft nur den Mixer (Vorschau live, ohne Neuaufbau)
+    void targetTracksChanged(); // target tracks (redraw track header marking)
+    void mixerOnlyEdit();       // next change affects only the mixer (live preview, without rebuild)
 
 private:
     TimelineOps::SourceLength sourceLength() const;
-    // Kopie der Timeline mit Übergang am Schnitt (siehe addTransitionAt); nullopt = Clips nicht gefunden
+    // Copy of the timeline with a transition at the cut (see addTransitionAt); nullopt = clips not found
     std::optional<Timeline> withTransitionAt(int leftId, int rightId, const TransitionStyle& style,
                                              TrackRef* where = nullptr) const;
 
-    // Quellbereich ab Quell-Frame sIn (len Frames) an `start` auf V[vTrack]/A[aTrack] legen (überschreibt, verknüpft)
-    // sIn/len in Frames des umgerechneten Materials, wenn speed != 1 (siehe Clip::speed)
+    // Place source range from source frame sIn (len frames) at `start` on V[vTrack]/A[aTrack] (overwrites, linked)
+    // sIn/len in frames of the converted material if speed != 1 (see Clip::speed)
     void placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack,
                      double speed = 1.0);
 
-    // Gemeinsamer Ablauf der Speed-Ramp-Bearbeitungen (siehe addSpeedPoint); change bekommt den alten Verlauf
-    // und die Dateilänge und liefert false, wenn sich nichts ändert
+    // Common flow of the speed ramp edits (see addSpeedPoint); change gets the old curve
+    // and the file length and returns false if nothing changes
     void editRamp(const QString& text, int clipId, const std::function<bool(Clip&, const RetimeMap&, int)>& change);
 
-    // Clips unter dem Playhead bzw. die Auswahl (mit Partnern), wie DaVinci bei Strg+B
+    // Clips under the playhead or the selection (with partners), like DaVinci for Ctrl+B
     QVector<int> targetIds(int frame) const;
 
     struct ClipboardItem {
         Clip clip;
         TrackRef ref;
     };
-    // Attribute einfügen: erster kopierter Clip auf einer Spur dieser Art (nullptr = keiner)
+    // Paste Attributes: first copied clip on a track of this kind (nullptr = none)
     static const Clip* clipboardSource(const QVector<ClipboardItem>& items, TrackKind kind);
 
     Project* m_project;
@@ -345,6 +345,6 @@ private:
     bool m_linkedSelection = true;
     bool m_splitOnSelectedTracks = true;
     int m_targetVideo = 0, m_targetAudio = 0;
-    QVector<ClipboardItem> m_clipboard; // Starts relativ zum frühesten Clip
+    QVector<ClipboardItem> m_clipboard; // starts relative to the earliest clip
     std::optional<Clip> m_gradeClipboard; // copyGrade: the source clip (only its grade is used)
 };

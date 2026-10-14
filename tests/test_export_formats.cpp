@@ -1,5 +1,5 @@
-// Exportformate der Deliver-Seite: MP3, AIFF, Apple Lossless, Bittiefen (16/24/32 Float) und eine andere Bildrate
-// als die Timeline (Bilder umgerechnet, Länge stimmt, Ton ohne Sprünge). Geprüft per ffprobe/ffmpeg.
+// Export formats of the Deliver page: MP3, AIFF, Apple Lossless, bit depths (16/24/32 float) and a different frame rate
+// than the timeline (frames converted, length correct, audio without jumps). Checked with ffprobe/ffmpeg.
 
 #include "check.h"
 
@@ -61,7 +61,7 @@ bool render(const RenderJob& job)
     return CHECK(ok);
 }
 
-// erster Strom der Art ("audio"/"video") laut ffprobe
+// first stream of the kind ("audio"/"video") according to ffprobe
 QJsonObject probe(const QString& path, const char* type)
 {
     QProcess p;
@@ -109,13 +109,13 @@ void testAudioFormats(const QString& dir)
         if (c.sampleFmt) CHECK_EQ(a.value("sample_fmt").toString(), QString(c.sampleFmt));
         CHECK(std::abs(a.value("format_duration").toString().toDouble() - 4.0) < 0.1);
     }
-    // MP3: Bitrate wie gewählt
+    // MP3: bit rate as chosen
     RenderJob mp3 = job(dir + "/b.mp3", "mp3");
     mp3.settings.audioBitrateK = 192;
     if (render(mp3)) CHECK_EQ(probe(mp3.path, "audio").value("bit_rate").toString(), QString("192000"));
 }
 
-// größte Sprungstelle im Ton (zweite Ableitung, Mono 48 kHz) ab 0,05 s – Sinus 440 Hz bleibt weit darunter
+// largest jump in the audio (second derivative, mono 48 kHz) from 0.05 s - sine 440 Hz stays far below
 int maxJump(const QString& path)
 {
     QProcess p;
@@ -147,7 +147,7 @@ void testFrameRate(const QString& dir)
         const int jump = maxJump(j.path);
         if (!CHECK(jump < 300)) std::printf("       Sprung %d\n", jump);
     }
-    // In/Out-Bereich (Frames 25–74 = 2 s) mit 50 fps -> 100 Bilder
+    // In/Out range (frames 25-74 = 2 s) at 50 fps -> 100 frames
     RenderJob r = job(dir + "/r50.mov", "prores");
     r.settings.rateNum = 50;
     r.inOut = true;
@@ -157,7 +157,7 @@ void testFrameRate(const QString& dir)
         CHECK_EQ(probe(r.path, "video").value("nb_frames").toString(), QString("100"));
         CHECK(maxJump(r.path) < 300);
     }
-    // gleiche Bildrate wie die Timeline: normaler Weg
+    // same frame rate as the timeline: normal path
     RenderJob same = job(dir + "/r25.mov", "prores");
     same.settings.rateNum = 25;
     if (render(same)) CHECK_EQ(probe(same.path, "video").value("nb_frames").toString(), QString("100"));
@@ -175,12 +175,12 @@ void testSettingsJson()
     CHECK_EQ(back.audioCodec(), QString("pcm_f32be"));
     RenderSettings alac;
     alac.format = "alac";
-    alac.audioBits = 32; // gibt es bei Apple Lossless nicht -> 24 Bit
+    alac.audioBits = 32; // does not exist for Apple Lossless -> 24 bit
     CHECK_EQ(alac.audioSampleFormat(), QString("s32p"));
     RenderSettings audio;
     audio.format = "wav";
     audio.rateNum = 50;
-    CHECK(audio.outputRate(kFmt.rate) == kFmt.rate); // nur Audio: Bildrate egal
+    CHECK(audio.outputRate(kFmt.rate) == kFmt.rate); // audio only: frame rate irrelevant
 }
 
 } // namespace

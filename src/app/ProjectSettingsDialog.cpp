@@ -19,7 +19,7 @@ ProjectSettingsDialog::ProjectSettingsDialog(const ProjectFormat& current, bool 
     auto* title = new QLabel(T("Timeline-Format"));
     title->setObjectName("PanelTitle");
 
-    // Vorlagen wie DaVinci ("Timeline resolution"), dahinter "Eigene" mit freien Maßen
+    // Presets like DaVinci ("Timeline resolution"), followed by "Eigene" with free dimensions
     m_resolution = new QComboBox;
     for (const auto& p : kResolutionPresets) m_resolution->addItem(resolutionLabel(p.width, p.height), QSize(p.width, p.height));
     m_resolution->addItem(T("Eigene"), QSize());
@@ -27,7 +27,7 @@ ProjectSettingsDialog::ProjectSettingsDialog(const ProjectFormat& current, bool 
     auto makeSpin = [](int value) {
         auto* s = new QSpinBox;
         s->setRange(16, 8192);
-        s->setSingleStep(2); // gerade Maße (Export in yuv420p)
+        s->setSingleStep(2); // even dimensions (export in yuv420p)
         s->setValue(value);
         return s;
     };
@@ -42,7 +42,7 @@ ProjectSettingsDialog::ProjectSettingsDialog(const ProjectFormat& current, bool 
     m_rate = new QComboBox;
     for (const FrameRate& r : kFrameRates) m_rate->addItem(r.label(), QVariant::fromValue(QSize(r.num, r.den)));
     int rateIndex = m_rate->findData(QSize(current.rate.num, current.rate.den));
-    if (rateIndex < 0) { // ungewöhnliche Rate aus einer Projektdatei: trotzdem anzeigen
+    if (rateIndex < 0) { // unusual rate from a project file: show it anyway
         m_rate->addItem(current.rate.label(), QSize(current.rate.num, current.rate.den));
         rateIndex = m_rate->count() - 1;
     }
@@ -91,7 +91,7 @@ ProjectSettingsDialog::ProjectSettingsDialog(const ProjectFormat& current, bool 
 void ProjectSettingsDialog::presetChosen()
 {
     const QSize s = m_resolution->currentData().toSize();
-    if (s.isEmpty()) { // "Eigene": Maße freigeben
+    if (s.isEmpty()) { // "Eigene": enable the dimensions
         m_width->setFocus();
         return;
     }
@@ -104,7 +104,7 @@ void ProjectSettingsDialog::presetChosen()
 void ProjectSettingsDialog::sizeEdited()
 {
     if (m_updating) return;
-    // Passende Vorlage anzeigen, sonst "Eigene"
+    // Show the matching preset, otherwise "Eigene"
     const int i = m_resolution->findData(QSize(m_width->value(), m_height->value()));
     m_resolution->setCurrentIndex(i >= 0 ? i : m_resolution->count() - 1);
 }

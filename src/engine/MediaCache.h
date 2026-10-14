@@ -1,11 +1,11 @@
 #pragma once
-// Vorschaubilder (Filmstreifen) und Wellenformen für die Timeline.
-// Berechnet asynchron in eigenen Threads, die UI fragt nur ab und
-// bekommt über updated() Bescheid, wenn etwas Neues fertig ist.
+// Thumbnails (filmstrips) and waveforms for the timeline.
+// Computed asynchronously in own threads, the UI only queries and
+// is notified via updated() when something new is ready.
 //
-// Filmstreifen schnell: pro Datei ein ffmpeg-Durchlauf, der nur die Keyframes dekodiert (ein Bild je
-// Keyframe, ~20 ms statt ~150–700 ms für ein genau gesuchtes 4K-Frame). Genaue Frames werden nur noch
-// nachgeladen, wenn der Keyframe weiter weg liegt als der Kachelabstand (stark hineingezoomt).
+// Filmstrips fast: one ffmpeg pass per file that only decodes the keyframes (one image per
+// keyframe, ~20 ms instead of ~150–700 ms for an exactly sought 4K frame). Exact frames are only
+// loaded afterwards if the keyframe is further away than the tile spacing (zoomed in far).
 
 #include "core/ProjectFormat.h"
 
@@ -25,9 +25,9 @@ class QThread;
 
 struct Waveform {
     static constexpr int kBucketsPerFrame = 8;
-    // levels[0]: ein Spitzenwert (0..255) pro Bucket, levels[k]: jeweils 2 Buckets zusammengefasst
+    // levels[0]: one peak value (0..255) per bucket, levels[k]: 2 buckets combined each
     QVector<QVector<quint8>> levels;
-    int frames = 0;     // so viele Frames sind schon berechnet
+    int frames = 0;     // this many frames are already computed
     bool complete = false;
 };
 
@@ -39,22 +39,22 @@ public:
     explicit MediaCache(QObject* parent = nullptr);
     ~MediaCache() override;
 
-    // Liefert das Bild zu (Datei, Quell-Frame), falls schon berechnet; sonst wird es angefordert.
-    // Bis dahin kommt das Bild des vorigen Keyframes (oder ein leeres). tolerance: so viele Frames darf
-    // der Keyframe vor dem gewünschten Frame liegen, ohne dass das genaue Frame berechnet wird.
+    // Returns the image for (file, source frame) if already computed; otherwise it is requested.
+    // Until then the image of the previous keyframe comes (or an empty one). tolerance: by this many frames the
+    // keyframe may lie before the wanted frame without the exact frame being computed.
     QImage thumbnail(const QString& path, int frame, int tolerance = 1);
-    // Nur nachsehen, nichts anfordern (für Ersatzbilder aus gröberen Stufen)
+    // Only look up, request nothing (for substitute images from coarser levels)
     QImage cachedThumbnail(const QString& path, int frame);
 
-    // Wellenform (evtl. noch unvollständig) oder nullptr; fordert sie ggf. an. stream: Ton-Stream der Datei (0 = erster)
+    // Waveform (possibly still incomplete) or nullptr; requests it if needed. stream: audio stream of the file (0 = first)
     std::shared_ptr<const Waveform> waveform(const QString& path, int stream = 0);
 
-    // Projekteinstellungen geändert: Frames zählen in der neuen Framerate, Bilder im neuen Seitenverhältnis
-    // -> alles Berechnete verwerfen (Wellenformen auf der Platte sind nach Framerate getrennt)
+    // Project settings changed: frames count in the new frame rate, images in the new aspect ratio
+    // -> discard everything computed (waveforms on disk are separated by frame rate)
     void setFormat(const ProjectFormat& format);
 
 signals:
-    void updated(); // queued aus den Worker-Threads
+    void updated(); // queued from the worker threads
 
 private:
     struct ThumbJob {
@@ -62,9 +62,9 @@ private:
         int frame;
     };
     struct KeyIndex {
-        QVector<int> frames; // Quell-Frames der schon dekodierten Keyframes (aufsteigend)
+        QVector<int> frames; // source frames of the already decoded keyframes (ascending)
         bool done = false;
-        bool failed = false; // ffmpeg ging nicht -> nur genaue Frames
+        bool failed = false; // ffmpeg did not work -> exact frames only
     };
     static QString thumbKey(const QString& path, int frame);
     void queueThumb(const QString& path, int frame);
@@ -77,10 +77,10 @@ private:
     QWaitCondition m_waveCond;
     bool m_quit = false;
     ProjectFormat m_format;
-    int m_generation = 0; // zählt Formatwechsel; ältere Ergebnisse der Threads werden verworfen
+    int m_generation = 0; // counts format changes; older results from the threads are discarded
 
     QCache<QString, QImage> m_thumbs;
-    std::deque<ThumbJob> m_thumbJobs; // vorne = neueste Anfrage (wird zuerst bearbeitet)
+    std::deque<ThumbJob> m_thumbJobs; // front = newest request (processed first)
     QSet<QString> m_thumbPending;
 
     QHash<QString, KeyIndex> m_keys;

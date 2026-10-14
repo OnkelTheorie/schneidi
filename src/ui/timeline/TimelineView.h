@@ -16,8 +16,8 @@ class QLineEdit;
 class QMimeData;
 class QTimer;
 
-// Selbst gezeichnete Timeline: Lineal, Spurköpfe, Clips, Playhead.
-// Scrollbars gehören dem TimelinePanel; diese Klasse hält den ViewState.
+// Self-drawn timeline: ruler, track headers, clips, playhead.
+// Scrollbars belong to the TimelinePanel; this class holds the ViewState.
 class TimelineView : public QWidget {
     Q_OBJECT
 public:
@@ -26,7 +26,7 @@ public:
     static constexpr int kHeaderW = 180;
     static constexpr int kRulerH = 30;
     static constexpr int kSeparator = 6;
-    static constexpr int kSubtitleTrackH = 34; // Untertitelspur (fest, wie DaVinci schmal)
+    static constexpr int kSubtitleTrackH = 34; // Subtitle track (fixed, narrow like DaVinci)
 
     explicit TimelineView(Editor* editor, QWidget* parent = nullptr);
 
@@ -37,35 +37,35 @@ public:
     // Clips an AI just changed (live connection): they light up briefly
     void flashClips(const QVector<int>& ids);
 
-    // Für die Scrollbars (Scrollbereich ist nach rechts "endlos")
+    // For the scrollbars (scroll range is "endless" to the right)
     int visibleFrames() const;
     int scrollRangeFrames() const;
     int contentHeight() const;
     int viewportHeight() const { return height() - kRulerH; }
 
     void setLeftFrame(double frame);
-    // Zoom + Scroll auf einmal setzen (Timeline-Wechsel: Ansicht der Timeline wiederherstellen)
+    // Set zoom + scroll at once (timeline switch: restore the timeline's view)
     void setZoomAndScroll(double pxPerFrame, double leftFrame, int scrollY);
     void setScrollY(int y);
     void zoomBy(double factor);
     void zoomToFit();
 
-    // Liefert Infos zu einer (evtl. noch nicht importierten) Datei für die Drop-Vorschau
+    // Returns info on a (possibly not yet imported) file for the drop preview
     void setProbe(std::function<MediaInfo(const QString&)> probe) { m_probe = std::move(probe); }
-    // Quelle für Filmstreifen und Wellenformen (optional)
+    // Source for filmstrips and waveforms (optional)
     void setMediaCache(MediaCache* cache);
-    // Render-Cache wie DaVinci: dünner Balken oben im Lineal, rot = noch nicht gecacht, blau = gecacht
-    // (done = schon gerenderter Anteil vom Clip-Anfang)
+    // Render cache like DaVinci: thin bar at the top of the ruler, red = not yet cached, blue = cached
+    // (done = already rendered part from the clip start)
     struct CacheSpan {
-        int start = 0, end = 0; // Timeline-Frames, end exklusiv
+        int start = 0, end = 0; // timeline frames, end exclusive
         double done = 0;
     };
     void setRenderCacheSpans(const QVector<CacheSpan>& spans);
 
-    // Retime-Steuerung wie DaVinci (Retime Controls): Leiste oben im Clip mit Tempo je Abschnitt und Speed-Punkten
+    // Retime controls like DaVinci (Retime Controls): bar at the top of the clip with speed per section and speed points
     void setRetimeControls(const QVector<int>& ids, bool on);
     bool retimeControlsShown(int clipId) const { return m_retimeClips.contains(clipId); }
-    // Kurven-Editor unter dem Clip (nur Clips mit Keyframes); param = gezeigter Parameter (Count = erster animierter)
+    // Curve editor under the clip (only clips with keyframes); param = shown parameter (Count = first animated)
     void setCurveEditor(const QVector<int>& ids, bool on, AnimParam param = AnimParam::Count);
     bool curveEditorShown(int clipId) const;
 
@@ -73,7 +73,7 @@ public slots:
     void setPlayhead(int frame);
     void setTool(TimelineView::Tool tool);
     void setSnapping(bool on);
-    // Ansicht wie DaVincis Timeline-Ansichtsoptionen: Clipname bzw. Dauer in der Titelleiste
+    // View like DaVinci's timeline view options: clip name resp. duration in the title bar
     void setShowClipNames(bool on);
     void setShowClipDurations(bool on);
 
@@ -82,13 +82,13 @@ signals:
     void viewChanged();
     void toolChanged(TimelineView::Tool tool);
     void snappingChanged(bool on);
-    // Dateien (aus Media Pool oder Dateimanager) wurden auf Spur-Index `track` abgelegt
+    // Files (from Media Pool or file manager) were dropped onto track index `track`
     void dropRequested(const QStringList& paths, int frame, int track);
-    // Quellbereich [in, out] aus dem Viewer abgelegt (überschreiben wie DaVinci)
+    // Source range [in, out] from the Viewer dropped (overwrite like DaVinci)
     void rangeDropRequested(const QString& path, int in, int out, int frame, int track);
-    // Rechtsklick auf einen Clip (ist dann ausgewählt)
+    // Right-click on a clip (it is selected then)
     void clipMenuRequested(const QPoint& globalPos);
-    // Doppelklick auf einen Untertitel: Text im Inspector bearbeiten
+    // Double-click on a subtitle: edit the text in the Inspector
     void subtitleEditRequested(int cueId);
     // Trim view (like DaVinci): while an edit is dragged the viewer shows the frames on both sides of it
     void trimFramesChanged(const TrimFrames::View& view);
@@ -113,16 +113,16 @@ protected:
 private:
     struct Row {
         TrackRef ref;
-        int y; // Widget-Koordinate (Scroll bereits eingerechnet)
+        int y; // widget coordinate (scroll already included)
         int h;
-        int lane = 0;    // Höhe unten in der Zeile für Keyframe-Spur + Kurven-Editor (0 = nichts aufgeklappt)
-        int keyLane = 0; // davon die Keyframe-Spur (oben), der Rest ist der Kurven-Editor
+        int lane = 0;    // height at the bottom of the row for keyframe lane + curve editor (0 = nothing expanded)
+        int keyLane = 0; // of that the keyframe lane (top), the rest is the curve editor
         int curve = 0;
     };
     enum class Drag { None, Scrub, MaybeMove, Move, Trim, TrimEdit, Volume, TransitionLength, Fade, Keyframe,
                       CueMaybeMove, CueMove, CueTrim, SpeedPoint, CurvePoint, CurveHandle,
                       TrackMaybeMove, TrackMove, Rubber };
-    // Retime-Leiste: Speed-Punkt (point >= 0) oder Abschnitt (segment >= 0) unter der Maus
+    // Retime bar: speed point (point >= 0) or section (segment >= 0) under the mouse
     struct RetimeHit {
         int clipId = 0;
         int point = -1;
@@ -133,7 +133,7 @@ private:
     void drawRetime(QPainter& p, const QRect& r, const Clip& c);
     void segmentMenu(const RetimeHit& hit, int frame, const QPoint& globalPos);
     void speedPointMenu(const RetimeHit& hit, const QPoint& globalPos);
-    // Übergang unter der Maus; edge: -1/+1 = linke/rechte Kante (Länge ziehen), 0 = Mitte
+    // Transition under the mouse; edge: -1/+1 = left/right edge (drag length), 0 = middle
     struct TransitionHit {
         TrackRef ref;
         TimelineOps::TransitionSpan span;
@@ -144,8 +144,8 @@ private:
         TimelineOps::Edge edge;
     };
 
-    // Trim-Modus (T) wie DaVinci: an der Kante Ripple, genau am Schnitt zweier Clips Roll,
-    // Titelleiste des Clips Slide, übriger Clip Slip
+    // Trim mode (T) like DaVinci: Ripple at the edge, Roll exactly at the cut of two clips,
+    // Slide on the clip's title bar, Slip on the rest of the clip
     struct TrimHit {
         TimelineOps::TrimKind kind;
         int clipId;
@@ -153,24 +153,24 @@ private:
     };
     std::optional<TrimHit> trimHitAt(const QPoint& pos) const;
 
-    // Untertitelspuren (oben, über den Videospuren; höchster Index oben wie bei Video)
+    // Subtitle tracks (top, above the video tracks; highest index on top like with video)
     struct SubRow {
         int index;
         int y;
         int h;
     };
     QVector<SubRow> subRows() const;
-    int subtitlesHeight() const; // alle Untertitelspuren samt Trennfuge (0 = keine)
+    int subtitlesHeight() const; // all subtitle tracks including separator gap (0 = none)
     std::optional<SubRow> subRowAt(int y) const;
     QRect cueRect(const SubRow& row, const SubtitleCue& c) const;
-    int cueAt(const QPoint& pos) const; // id oder 0 (gesperrte Spur: 0)
+    int cueAt(const QPoint& pos) const; // id or 0 (locked track: 0)
     std::optional<EdgeHit> cueEdgeAt(const QPoint& pos) const;
     QRect subNameRect(const SubRow& row) const;
     void drawSubtitleTracks(QPainter& p);
     void drawSubtitleHeaders(QPainter& p);
     void subtitleHeaderMenu(int index, const QPoint& globalPos);
-    void subtitleTrackMenu(const QPoint& pos, const QPoint& globalPos); // Rechtsklick in eine Untertitelspur
-    bool subtitlePress(QMouseEvent* e, const QPoint& pos); // true = erledigt
+    void subtitleTrackMenu(const QPoint& pos, const QPoint& globalPos); // Right-click into a subtitle track
+    bool subtitlePress(QMouseEvent* e, const QPoint& pos); // true = handled
     void startSubtitleRename(int index);
 
     QVector<Row> rows() const;
@@ -181,35 +181,35 @@ private:
     QRect clipRect(const Row& row, const Clip& c) const;
     std::optional<TransitionHit> transitionAt(const QPoint& pos) const;
     QRect transitionRect(const Row& row, const TimelineOps::TransitionSpan& s) const;
-    // Fade-Griffe oben an den Clip-Ecken (wie DaVinci), nur sichtbar/greifbar, wenn die Maus über dem Clip ist
+    // Fade handles at the top clip corners (like DaVinci), only visible/grabbable when the mouse is over the clip
     QRect fadeHandleRect(const QRect& clip, const Clip& c, TimelineOps::Edge edge) const;
     std::optional<EdgeHit> fadeHandleAt(const QPoint& pos) const;
-    // Keyframes: Symbol unten rechts im Clip (klappt die Keyframe-Spur auf) und die Spur darunter (wie DaVinci)
+    // Keyframes: icon at the bottom right in the clip (opens the keyframe lane) and the lane below (like DaVinci)
     QRect keyIconRect(const QRect& clip) const;
-    int keyIconAt(const QPoint& pos) const; // Clip-ID oder 0
+    int keyIconAt(const QPoint& pos) const; // clip ID or 0
     QRect laneRect(const Row& row, const Clip& c) const;
     struct KeyHit {
         int clipId;
         int t; // Clip-Frame
     };
     std::optional<KeyHit> keyframeAt(const QPoint& pos) const;
-    bool inLane(const QPoint& pos) const; // Maus in einer aufgeklappten Keyframe-Spur
+    bool inLane(const QPoint& pos) const; // Mouse in an expanded keyframe lane
     void drawKeyLane(QPainter& p, const Row& row, const Clip& c);
     int keyLaneTop(const Row& row) const { return row.y + row.h - row.lane - 2; }
 
-    // Kurven-Editor wie DaVinci (Kurven-Symbol links neben der Raute): Bereich unter dem Clip mit der Kurve
-    // eines Parameters; Punkte ziehen (Zeit + Wert, Shift = eine Achse), Bezier-Griffe (Alt = getrennt),
-    // Doppelklick = Keyframe, Rechtsklick = Verlauf/Löschen. Umsetzung in TimelineCurves.cpp.
+    // Curve editor like DaVinci (curve icon left of the diamond): area under the clip with the curve
+    // of a parameter; drag points (time + value, Shift = one axis), Bezier handles (Alt = split),
+    // Double-click = keyframe, right-click = interpolation/delete. Implementation in TimelineCurves.cpp.
     struct CurveHit {
         int clipId = 0;
         AnimParam param = AnimParam::Count;
-        int index = -1; // Keyframe im KeyTrack
-        int part = 0;   // 0 = Punkt, -1 = Griff ein, 1 = Griff aus, 2 = Parameter-Auswahl
+        int index = -1; // Keyframe in the KeyTrack
+        int part = 0;   // 0 = point, -1 = handle in, 1 = handle out, 2 = parameter selector
     };
     struct CurveRange {
         double lo = 0, hi = 1;
     };
-    std::optional<AnimParam> curveParam(const Clip& c) const; // gezeigter Parameter (nullopt = zu)
+    std::optional<AnimParam> curveParam(const Clip& c) const; // shown parameter (nullopt = closed)
     QRect curveIconRect(const QRect& clip) const;
     int curveIconAt(const QPoint& pos) const;
     QRect curveRect(const Row& row, const Clip& c) const;
@@ -222,15 +222,15 @@ private:
     bool inCurve(const QPoint& pos, int* clipId = nullptr) const;
     void drawCurveLane(QPainter& p, const Row& row, const Clip& c);
     void drawCurveIcon(QPainter& p, const QRect& clip, bool open);
-    bool curvePress(QMouseEvent* e, const QPoint& pos);   // true = erledigt
+    bool curvePress(QMouseEvent* e, const QPoint& pos);   // true = handled
     void curveMove(const QPoint& pos, Qt::KeyboardModifiers mods);
     void curveRelease();
     bool curveContextMenu(const QPoint& pos, const QPoint& globalPos);
     bool curveDoubleClick(const QPoint& pos);
     void curveParamMenu(int clipId, const QPoint& globalPos);
-    // Einrasten für Keyframes (Clip-Frames): Playhead, Clipgrenzen, andere Keyframes; Korrektur oder 0
+    // Snapping for keyframes (clip frames): playhead, clip boundaries, other keyframes; correction or 0
     int keySnapDelta(const Clip& c, const QVector<int>& times, const QSet<int>& exclude) const;
-    // Audioclip, dessen Lautstärkelinie unter der Maus liegt (0 = keiner)
+    // Audio clip whose volume line lies under the mouse (0 = none)
     int volumeLineAt(const QPoint& pos) const;
     void updateHoverCursor(const QPoint& pos);
     double frameToX(double frame) const;
@@ -240,7 +240,7 @@ private:
 
     void drawRuler(QPainter& p);
     void drawTracks(QPainter& p);
-    // spans: Audio-Übergänge der Spur (Wellenform folgt dem Crossfade); color: Spurfarbe (ungültig = Standard)
+    // spans: audio transitions of the track (waveform follows the crossfade); color: track color (invalid = default)
     void drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKind kind, bool selected, bool ghost,
                   const QVector<TimelineOps::TransitionSpan>& spans = {}, const QColor& color = {});
     void drawTransitions(QPainter& p, const Row& row, const QSet<int>& hiddenClips);
@@ -251,20 +251,20 @@ private:
     void drawPlayhead(QPainter& p);
     void drawLabel(QPainter& p, const QPoint& topLeft, const QString& text);
     QRect headerButton(const Row& row) const;
-    // Spurkopf wie DaVinci: Kürzel „V1“, Name (Doppelklick = umbenennen), Schloss, Auge/M
+    // Track header like DaVinci: label "V1", name (double-click = rename), lock, eye/M
     QRect lockButton(const Row& row) const;
     QRect nameRect(const Row& row) const;
-    QRect shortNameRect(const Row& row) const; // Kürzel „V1“ = Zielspur-Knopf
-    bool isLocked(const Row& row) const; // gesperrte Spur: nichts darauf greifbar
+    QRect shortNameRect(const Row& row) const; // label "V1" = target track button
+    bool isLocked(const Row& row) const; // locked track: nothing on it grabbable
     void headerMenu(const Row& row, const QPoint& globalPos);
     void emptyAreaMenu(const QPoint& globalPos);
-    // Spur am Spurkopf ziehen (umsortieren innerhalb ihres Typs): Index der Zielspur für Maus-y
+    // Drag a track by its header (reorder within its type): index of the target track for mouse y
     int trackDropIndex(int y) const;
-    // Auswahlrahmen (Linksklick auf leere Stelle + ziehen): alle berührten Clips/Untertitel, Strg/Shift = dazu
+    // Selection frame (left-click on empty spot + drag): all touched clips/subtitles, Ctrl/Shift = add
     void startRubber(Qt::KeyboardModifiers mods);
     void updateRubber(const QPoint& pos);
     void drawRubber(QPainter& p);
-    // Auto-Scroll beim Ziehen über den Rand (zählt als Nutzereingabe): Timer läuft, solange die Maus im Randbereich ist
+    // Auto-scroll when dragging beyond the edge (counts as user input): timer runs as long as the mouse is in the edge zone
     void dragMove(const QPoint& pos, Qt::KeyboardModifiers mods);
     void updateAutoScroll(const QPoint& pos);
     void autoScrollStep();
@@ -272,7 +272,7 @@ private:
     void startRename(TrackRef ref);
     void finishRename(bool commit);
     QStringList dropPaths(const QMimeData* mime) const;
-    // Quellbereich aus dem Viewer ("in out"), false = normaler Drag aus Media Pool/Dateimanager
+    // Source range from the Viewer ("in out"), false = normal drag from Media Pool/file manager
     static bool dropRange(const QMimeData* mime, int* in, int* out);
     int dropTrackAt(int y) const;
 
@@ -287,24 +287,24 @@ private:
     int m_playhead = 0;
 
     Drag m_drag = Drag::None;
-    QSet<int> m_retimeClips; // Clips mit sichtbarer Retime-Steuerung
-    RetimeHit m_rampDrag;    // gezogener Speed-Punkt
-    int m_rampDelta = 0;     // Timeline-Frames beim Ziehen
+    QSet<int> m_retimeClips; // clips with visible retime controls
+    RetimeHit m_rampDrag;    // dragged speed point
+    int m_rampDelta = 0;     // timeline frames while dragging
     QPoint m_pressPos;
-    int m_scrubFrame = -1; // letztes Sprungziel beim Ziehen im Lineal (gleiches Frame nicht erneut anspringen)
+    int m_scrubFrame = -1; // last jump target while dragging in the ruler (do not jump to the same frame again)
     TrackRef m_anchorRef;
     QVector<int> m_dragIds;
     int m_dragDelta = 0;
-    int m_dragFine = 0; // Verschiebung in 1/100 Frame (Ton-Clips fein, sonst m_dragDelta * 100)
+    int m_dragFine = 0; // Shift in 1/100 frame (audio clips fine, otherwise m_dragDelta * 100)
     int m_dragAnchorId = 0;
     int m_dragTrackDelta = 0;
 
-    // Trimmen (Kante ziehen)
+    // Trimming (drag edge)
     EdgeHit m_trim{0, TimelineOps::Edge::Start};
     QVector<int> m_trimIds;
     int m_trimDelta = 0;
 
-    // Trim-Modus: laufende Bearbeitung, Delta und Vorschau der Timeline
+    // Trim mode: running edit, delta and preview of the timeline
     TimelineOps::TrimEdit m_trimEdit;
     TrimHit m_trimHit{TimelineOps::TrimKind::Ripple, 0, TimelineOps::Edge::End};
     int m_trimEditDelta = 0;
@@ -315,61 +315,61 @@ private:
     void updateTrimFrames(const Timeline& preview, const TimelineOps::TrimEdit& edit, int delta);
     void endTrimFrames();
 
-    // Lautstärkelinie ziehen (wie DaVinci); Shift = fein
+    // Drag volume line (like DaVinci); Shift = fine
     int m_volClipId = 0;
     double m_volStartDb = 0;
     double m_volDb = 0;
     bool m_volFine = false;
     int m_hoverVolClip = 0;
 
-    // Übergangslänge ziehen (zentrierte Überblendung wächst an beiden Seiten)
+    // Drag transition length (centered crossfade grows on both sides)
     TimelineOps::TransitionSpan m_transSpan;
     int m_transEdge = 0;
 
-    int m_hoverFrame = -1; // Klingen-Vorschau
+    int m_hoverFrame = -1; // Blade preview
 
-    // Keyframe-Spuren: aufgeklappte Clips (Ansichtszustand, nicht im Projekt) und Rauten ziehen
+    // Keyframe lanes: expanded clips (view state, not in the project) and dragging diamonds
     QSet<int> m_keyLanes;
     int m_keyDragClip = 0;
     int m_keyDelta = 0;
 
-    // Kurven-Editor: aufgeklappte Clips mit gewähltem Parameter; Ziehen (Stand beim Drücken, Bereich eingefroren)
+    // Curve editor: expanded clips with chosen parameter; dragging (state at press, range frozen)
     QHash<int, AnimParam> m_curves;
     CurveHit m_curveDrag;
     KeyTrack m_curveOrig;
     QSet<int> m_curveOrigTimes;
     CurveRange m_curveFrozen;
     bool m_curveFreeze = false;
-    int m_curveDragDt = 0;     // aktueller Versatz (Frames) für die Anzeige
+    int m_curveDragDt = 0;     // current offset (frames) for display
     double m_curveDragDv = 0;
 
-    // Fade-Griff ziehen
-    int m_hoverClip = 0; // Clip unter der Maus (zeigt die Fade-Griffe)
+    // Drag fade handle
+    int m_hoverClip = 0; // clip under the mouse (shows the fade handles)
     EdgeHit m_fade{0, TimelineOps::Edge::Start};
     int m_fadeStart = 0;
 
-    // Vorschau beim Reinziehen (Media Pool oder Dateimanager)
+    // Preview when dragging in (Media Pool or file manager)
     struct DropItem {
         int length;
         bool video;
-        int audio; // Anzahl Ton-Streams (je eine Spur ab A[n])
+        int audio; // Number of audio streams (one track each from A[n])
     };
     std::function<MediaInfo(const QString&)> m_probe;
     QVector<DropItem> m_dropItems;
     int m_dropFrame = -1;
     int m_dropTrack = 0;
 
-    // Untertitel ziehen: Einträge, Spurversatz (Anker = gegriffene Spur), Kante
+    // Drag subtitles: entries, track offset (anchor = grabbed track), edge
     QVector<int> m_cueIds;
     int m_cueAnchor = 0;
     int m_cueTrackDelta = 0;
     int m_cueDelta = 0;
     EdgeHit m_cueTrim{0, TimelineOps::Edge::Start};
 
-    // Auswahlrahmen: Ecke = m_pressPos (wandert beim Auto-Scroll mit), Auswahl vor dem Ziehen (Strg/Shift)
+    // Selection frame: corner = m_pressPos (moves along with auto-scroll), selection before dragging (Ctrl/Shift)
     QPoint m_rubberPos;
     QSet<int> m_rubberBase;
-    // Auto-Scroll: letzte Mausposition/Tasten während des Ziehens
+    // Auto-scroll: last mouse position/keys while dragging
     QTimer* m_autoScroll = nullptr;
     QSet<int> m_flash;              // flashClips
     QTimer* m_flashTimer = nullptr;
@@ -378,21 +378,21 @@ private:
     QPoint m_dragPos;
     Qt::KeyboardModifiers m_dragMods;
 
-    // Spur ziehen: gegriffene Spur und Zielspur (-1 = noch keine)
+    // Drag track: grabbed track and target track (-1 = none yet)
     TrackRef m_trackDragRef;
     int m_trackDropTo = -1;
 
-    // Spur umbenennen (Eingabefeld über dem Namen im Spurkopf)
+    // Rename track (input field over the name in the track header)
     QLineEdit* m_nameEdit = nullptr;
     TrackRef m_nameRef;
-    int m_nameSub = -1; // >= 0: Untertitelspur wird umbenannt
+    int m_nameSub = -1; // >= 0: subtitle track is being renamed
     bool m_renaming = false;
 
-    // Übergang aus der Effects Library reinziehen (wie DaVinci): Schnitt unter der Maus hervorheben
+    // Drag in a transition from the Effects Library (like DaVinci): highlight the cut under the mouse
     struct TransitionDrop {
         TrackRef ref;
-        int leftId = 0, rightId = 0; // 0 = keiner (Ein-/Ausblenden)
-        TransitionStyle style;       // Ausrichtung je nach Mausposition zum Schnitt
+        int leftId = 0, rightId = 0; // 0 = none (fade-in/out)
+        TransitionStyle style;       // Alignment depending on the mouse position relative to the cut
         TimelineOps::TransitionSpan span;
     };
     std::optional<TransitionDrop> transitionDropAt(const QPoint& pos) const;
@@ -400,8 +400,8 @@ private:
     TrackKind m_transDragKind = TrackKind::Video;
     TransitionStyle m_transDragStyle;
     std::optional<TransitionDrop> m_transDrop;
-    // Filter (Open FX) aus der Effects Library auf einen Videoclip ziehen
-    QString m_fxDragging;  // Effekt-ID, leer = kein Filter-Drag
-    int m_fxDropClip = 0;  // Videoclip unter der Maus
+    // Drag a filter (Open FX) from the Effects Library onto a video clip
+    QString m_fxDragging;  // effect ID, empty = no filter drag
+    int m_fxDropClip = 0;  // video clip under the mouse
     int fxDropClipAt(const QPoint& pos) const;
 };

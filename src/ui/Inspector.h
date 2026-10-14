@@ -23,9 +23,9 @@ class QToolButton;
 class QVBoxLayout;
 class ScrubField;
 
-// Inspector (rechts oben) im Stil von DaVinci: Tabs Video/Audio, aufklappbare Bereiche mit
-// rotem An/Aus-Punkt, Zahlenfelder zum Eintippen oder Links/Rechts-Ziehen.
-// Änderungen gelten für alle ausgewählten Clips der Art; Ziehen = ein Undo-Schritt.
+// Inspector (top right) in DaVinci style: Video/Audio tabs, collapsible sections with
+// red on/off dot, number fields for typing or left/right dragging.
+// Changes apply to all selected clips of that kind; dragging = one undo step.
 class Inspector : public QWidget {
     Q_OBJECT
 public:
@@ -34,13 +34,13 @@ public:
     void setFrameSize(const QSize& size);
 
 public slots:
-    // Playhead (Timeline-Frame): Werte zeigen den interpolierten Wert dort, Keyframes werden dort gesetzt
+    // Playhead (timeline frame): values show the interpolated value there, keyframes are set there
     void setPlayhead(int frame);
-    // Untertitel auswählen und seinen Text zum Tippen fokussieren (Doppelklick in der Timeline)
+    // Select a subtitle and focus its text for typing (double-click in the timeline)
     void editSubtitle(int cueId);
 
 signals:
-    // Keyframe-Pfeile ◀ ▶: zum vorigen/nächsten Keyframe springen
+    // Keyframe arrows ◀ ▶: jump to the previous/next keyframe
     void seekRequested(int frame);
     // Effect header context menu "save effects as preset" (dialog in MainWindow)
     void savePresetRequested();
@@ -51,30 +51,30 @@ private:
 
     struct Param {
         TrackKind kind;
-        bool title; // nur Titelclips (Tab "Titel")
+        bool title; // title clips only (tab "Titel")
         Field field;
         ScrubField* edit;
         QSlider* slider = nullptr;
         double min, max;
-        std::optional<AnimParam> anim; // animierbar: Wert kommt aus Keys::valueAt, Ändern setzt ggf. Keyframe
-        QString effect;                // Effekt-Parameter: wirkt nur auf ausgewählte Clips mit diesem Effekt
+        std::optional<AnimParam> anim; // animatable: value comes from Keys::valueAt, changing sets a keyframe if needed
+        QString effect;                // effect parameter: only acts on selected clips with this effect
     };
     struct Section {
         QGridLayout* grid;
         TrackKind kind;
         int rows = 0;
         bool title = false;
-        QString effect;              // Bereich eines Effekts (Open FX), sonst leer
-        QWidget* header = nullptr;   // Kopfzeile und Inhalt (zum Ein-/Ausblenden und Umsortieren)
+        QString effect;              // section of an effect (Open FX), otherwise empty
+        QWidget* header = nullptr;   // header row and content (for showing/hiding and reordering)
         QWidget* body = nullptr;
         QHBoxLayout* headerLayout = nullptr;
     };
 
-    // Bereich mit Kopfzeile; `enabled` = roter Punkt (optional)
-    // titleOnly: Bereich wirkt nur auf Titelclips; effect: nur auf Clips mit diesem Effekt
+    // Section with header row; `enabled` = red dot (optional)
+    // titleOnly: section only acts on title clips; effect: only on clips with this effect
     Section addSection(QVBoxLayout* page, TrackKind kind, const QString& title, const std::function<void(Clip&)>& reset,
                        const Flag& enabled = {}, bool titleOnly = false, const QString& effect = {});
-    // Bereich eines Effekts aus der Effects Library (nur sichtbar, wenn der Clip ihn hat), mit Papierkorb
+    // Section of an effect from the Effects Library (only visible if the clip has it), with trash can
     void addEffectSection(QVBoxLayout* page, const EffectDescriptor& d);
     // Effect this computer does not know (plugin missing): warning instead of controls, can be removed
     void addMissingEffectSection(QVBoxLayout* page, const QString& id, TrackKind kind);
@@ -82,40 +82,40 @@ private:
     void addStabilizeRow(Section& s);
     // Trash button in the header + right-click menu "remove effect"
     void addRemoveButton(const Section& s, const QString& id);
-    // Zeile mit Schieberegler + Zahlenfeld
-    // anim: animierbarer Parameter -> Keyframe-Rauten rechts (field bleibt für nicht animierbare Werte)
+    // Row with slider + number field
+    // anim: animatable parameter -> keyframe diamonds on the right (field stays for non-animatable values)
     Param* addSlider(Section& s, const QString& key, const QString& label, double min, double max, double def,
                      double step, int decimals, const Field& field, std::optional<AnimParam> anim = {});
-    // Zeile mit X/Y-Feldern (wie Zoom/Position in DaVinci); link = Kettensymbol dazwischen
+    // Row with X/Y fields (like Zoom/Position in DaVinci); link = chain icon in between
     QPair<Param*, Param*> addXY(Section& s, const QString& key, const QString& label, double min, double max,
                                 double def, double step, int decimals, const Field& x, const Field& y,
                                 QToolButton* link = nullptr, std::optional<AnimParam> ax = {},
                                 std::optional<AnimParam> ay = {});
     Param* makeParam(const Section& s, const QString& key, const QString& text, double min, double max, double def,
                      double step, int decimals, const Field& field, std::optional<AnimParam> anim = {});
-    // Keyframe-Knöpfe wie DaVinci: ◀ Raute ▶ (Raute rot = Keyframe am Playhead; Klick setzt/entfernt,
-    // Rechtsklick = Verlauf); gilt für alle Parameter der Zeile
+    // Keyframe buttons like DaVinci: ◀ diamond ▶ (red diamond = keyframe at the playhead; click sets/removes,
+    // right-click = interpolation); applies to all parameters of the row
     QWidget* keyButtons(TrackKind kind, bool title, const QVector<AnimParam>& params, const QString& effect = {});
-    // Clip-Frame unter dem Playhead (auf den Clip begrenzt)
+    // Clip frame under the playhead (limited to the clip)
     int localFrame(const Clip& c) const;
     QToolButton* resetButton(const std::function<void()>& fn);
     QLabel* rowLabel(const QString& text);
 
-    // Zeile mit Farbfeld (QColorDialog); alpha = Deckkraft wählbar, also = zusätzlich beim Übernehmen
-    // anim: animierbare Farbe (Titelfarbe)
+    // Row with color field (QColorDialog); alpha = opacity selectable, i.e. = additionally when applying
+    // anim: animatable color (title color)
     void addColor(Section& s, const QString& label, const QString& text, const std::function<QColor&(Clip&)>& color,
                   bool alpha, const std::function<void(Clip&)>& also = {}, std::optional<AnimParam> anim = {});
     void buildTitlePage(QVBoxLayout* page);
     void buildTransitionPage(QVBoxLayout* page);
-    // Ausgewählter Übergang (Spurart + wirksame Lage), sonst false
+    // Selected transition (track kind + effective position), otherwise false
     bool selectedTransition(TrackKind* kind, TimelineOps::TransitionSpan* span) const;
-    bool refreshTransition(); // true = Übergang ausgewählt und angezeigt
+    bool refreshTransition(); // true = transition selected and shown
 
     QVector<int> selectedIds(TrackKind kind, bool title = false, const QString& effect = {}) const;
     const Clip* primary(TrackKind kind, bool title = false, const QString& effect = {}) const;
     void apply(TrackKind kind, const QString& key, const QString& text, const std::function<void(Clip&)>& fn,
                bool title = false, const QString& effect = {});
-    // Effekt-Bereiche in der Reihenfolge des angezeigten Clips (= Renderreihenfolge) einsortieren
+    // Sort effect sections into the order of the shown clip (= render order)
     void arrangeEffectSections();
     void refresh();
 
@@ -128,9 +128,9 @@ private:
     QStackedWidget* m_pages;
     QButtonGroup* m_tabs;
     QVector<Param*> m_params;
-    QVector<std::function<void()>> m_refreshers; // weitere Anzeigen (Punkte, Farbe)
+    QVector<std::function<void()>> m_refreshers; // further displays (dots, color)
     bool m_zoomLinked = true;
-    int m_lastShownId = 0; // Auswahl gewechselt -> bei Titeln den Tab "Titel" zeigen
+    int m_lastShownId = 0; // selection changed -> for titles show the "Titel" tab
     Param* m_crop[4] = {};
     // Effect sections: video (Open FX) in the Effects tab from m_fxIndex, audio (Audio FX) in the Audio tab from
     // m_audioFxIndex
@@ -146,27 +146,27 @@ private:
     QLabel* m_gradeText = nullptr;
     int m_fxCount = 0;             // effects of the shown clip (tab label; a new one opens the tab)
     int effectCount(const Clip& c) const;
-    QStringList m_fxOrder; // zuletzt angezeigte Reihenfolge
+    QStringList m_fxOrder; // last displayed order
     // Tab "Übergang"
     TransitionKey m_transKey;
     QComboBox* m_transType = nullptr;
     QComboBox* m_transAudioType = nullptr; // Audio: Cross Fade +3/0/-3 dB
     QComboBox* m_transAlign = nullptr;
     ScrubField* m_transLen = nullptr;
-    QToolButton* m_transColor = nullptr;       // Abblende-Farbe
-    ScrubField* m_transSoft = nullptr;         // Wischblende: Weichheit
-    ScrubField* m_transBorder = nullptr;       // Wischblende: Randbreite
-    QToolButton* m_transBorderColor = nullptr; // Wischblende: Randfarbe
-    QComboBox* m_transLuma = nullptr;          // Verlaufsblende: Verlaufsbild (mitgeliefert + Effekte-Ordner)
-    class QCheckBox* m_transInvert = nullptr;  // Verlaufsblende: umkehren
-    QVector<QWidget*> m_dipRows, m_wipeRows, m_lumaRows, m_softRows; // Zeilen nur für die jeweilige Art
-    // Tab "Untertitel": Text/Zeiten des Eintrags und Stil seiner Spur (wie DaVinci Caption + Track Style)
+    QToolButton* m_transColor = nullptr;       // fade-to-color color
+    ScrubField* m_transSoft = nullptr;         // wipe: softness
+    ScrubField* m_transBorder = nullptr;       // wipe: border width
+    QToolButton* m_transBorderColor = nullptr; // wipe: border color
+    QComboBox* m_transLuma = nullptr;          // Gradient wipe: gradient image (bundled + effects folder)
+    class QCheckBox* m_transInvert = nullptr;  // gradient wipe: invert
+    QVector<QWidget*> m_dipRows, m_wipeRows, m_lumaRows, m_softRows; // rows only for the respective kind
+    // Tab "Untertitel": text/times of the entry and style of its track (like DaVinci Caption + Track Style)
     void buildSubtitlePage(QVBoxLayout* page);
-    bool refreshSubtitle(); // true = nur Untertitel ausgewählt und angezeigt
+    bool refreshSubtitle(); // true = only subtitles selected and shown
     const SubtitleCue* selectedCue(int* track = nullptr) const;
     void changeSubtitleStyle(const QString& text, const std::function<void(TitleStyle&)>& fn, const QString& mergeKey = {});
     QPlainTextEdit* m_subText = nullptr;
     QVector<std::function<void()>> m_subRefreshers;
-    // Stil des ausgewählten Übergangs ändern (mergeKey: Ziehen = ein Undo-Schritt)
+    // Change the style of the selected transition (mergeKey: dragging = one undo step)
     void changeTransition(const std::function<void(TransitionStyle&)>& fn, const QString& mergeKey = {});
 };

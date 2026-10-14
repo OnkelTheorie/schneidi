@@ -2,15 +2,15 @@
 #include <QObject>
 #include <QSet>
 
-// Übergang an einem Schnitt: Clip davor/danach (0 = keiner -> Ein-/Ausblenden)
+// Transition at a cut: clip before/after (0 = none -> fade in/out)
 struct TransitionKey {
     int leftId = 0, rightId = 0;
     bool isNull() const { return !leftId && !rightId; }
     bool operator==(const TransitionKey&) const = default;
 };
 
-// Ausgewählter Schnittpunkt (DaVinci V/U): Clip links/rechts vom Schnitt (0 = keiner, Kante an einer Lücke);
-// side: 0 = beide Seiten (Roll), -1 = nur Ende des linken Clips, +1 = nur Anfang des rechten
+// Selected edit point (DaVinci V/U): clip left/right of the cut (0 = none, edge at a gap);
+// side: 0 = both sides (roll), -1 = only end of the left clip, +1 = only start of the right one
 struct EditPoint {
     int leftId = 0, rightId = 0;
     int side = 0;
@@ -18,7 +18,7 @@ struct EditPoint {
     bool operator==(const EditPoint&) const = default;
 };
 
-// Ausgewählte Clips bzw. ein Übergang (UI-Zustand, nicht Teil des Projekts / Undo).
+// Selected clips or a transition (UI state, not part of the project / undo).
 class Selection : public QObject {
     Q_OBJECT
 public:
@@ -41,7 +41,7 @@ public:
     }
     void clear() { set({}); }
 
-    // Übergang auswählen hebt die Clip-Auswahl auf (wie DaVinci)
+    // Selecting a transition clears the clip selection (like DaVinci)
     const TransitionKey& transition() const { return m_transition; }
     void setTransition(const TransitionKey& t)
     {
@@ -55,7 +55,7 @@ public:
         emit changed();
     }
 
-    // Schnittpunkt auswählen hebt Clip- und Übergangsauswahl auf (wie DaVinci)
+    // Selecting an edit point clears clip and transition selection (like DaVinci)
     const EditPoint& editPoint() const { return m_edit; }
     void setEditPoint(const EditPoint& e)
     {
@@ -69,8 +69,8 @@ public:
         emit changed();
     }
 
-    // Ausgewählte Keyframe-Rauten in der Keyframe-Spur eines Clips (Clip-Frames); Clip-Auswahl bleibt.
-    // keyParam: -1 = alle Parameter (Keyframe-Spur), sonst int(AnimParam) = Punkte im Kurven-Editor
+    // Selected keyframe diamonds in a clip's keyframe track (clip frames); clip selection stays.
+    // keyParam: -1 = all parameters (keyframe track), otherwise int(AnimParam) = points in the curve editor
     int keyClip() const { return m_keyClip; }
     const QSet<int>& keyTimes() const { return m_keyTimes; }
     int keyParam() const { return m_keyParam; }

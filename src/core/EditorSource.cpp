@@ -52,7 +52,7 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
     c.in = sIn;
     c.out = sIn + len - 1;
     c.speed = speed;
-    // Ziele: Bild, dann pro Ton-Stream eine Spur ab aTrack (weitere Streams auf gesperrten Spuren entfallen)
+    // Targets: picture, then one track per audio stream from aTrack on (further streams on locked tracks are dropped)
     struct Target { TrackKind kind; int idx; int stream; };
     QVector<Target> targets;
     if (m.hasVideo) targets << Target{TrackKind::Video, vTrack, 0};
@@ -83,7 +83,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     const MediaInfo m = *info;
     const Timeline& cur = p->timeline();
 
-    // Quellbereich: Quell-In/Out, fehlt einer -> Clipanfang bzw. -ende (wie DaVinci)
+    // Source range: source in/out, if one is missing -> clip start or end (like DaVinci)
     const int last = m.length - 1;
     int sIn = std::clamp(m.markIn >= 0 ? m.markIn : 0, 0, last);
     const int sOut = std::clamp(m.markOut >= 0 ? m.markOut : last, 0, last);
@@ -94,10 +94,10 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     bool usedTimelineMarks = false;
     QVector<TrackRef> rippleTracks; // Insert / Ripple Overwrite
     int rippleFrom = 0, rippleDelta = 0;
-    int replaceEnd = 0;             // Ripple Overwrite: Ende des ersetzten Clips
+    int replaceEnd = 0;             // Ripple Overwrite: end of the replaced clip
     double speed = 1.0;             // Fit to Fill
 
-    // Clip unter dem Playhead auf der Zielspur (Video, bei reinem Ton Audio) samt Spuren seiner Partner
+    // Clip under the playhead on the target track (video, for audio-only audio) including the tracks of its partners
     auto clipUnderPlayhead = [&]() -> const Clip* {
         const TrackRef ref{m.hasVideo ? TrackKind::Video : TrackKind::Audio, m.hasVideo ? m_targetVideo : m_targetAudio};
         if (ref.index >= cur.tracks(ref.kind).size()) return nullptr;
@@ -107,7 +107,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     };
     auto partnerTracks = [&](const Clip& c) {
         QVector<TrackRef> refs;
-        int firstAudio = INT_MAX; // mehrere Ton-Streams: Stream 0 kommt auf die oberste Audiospur der Gruppe
+        int firstAudio = INT_MAX; // several audio streams: stream 0 goes on the topmost audio track of the group
         for (int id : linkedGroup(cur, c.id)) {
             TrackRef r;
             if (!findClip(cur, id, &r) || refs.contains(r)) continue;
@@ -123,7 +123,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     case M::Insert:
     case M::Overwrite:
     case M::PlaceOnTop: {
-        // Timeline-In/Out: In = Ziel, In+Out begrenzt die Länge, nur Out = rückwärts ab Out
+        // Timeline in/out: in = target, in+out limits the length, out only = backwards from out
         const int tIn = cur.markIn, tOut = cur.markOut;
         if (tIn >= 0 && tOut >= tIn) {
             start = tIn;
@@ -132,7 +132,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
             start = tIn;
         } else if (tOut >= 0) {
             start = tOut + 1 - len;
-            if (start < 0) { // vorne kürzen, das Ende bleibt am Out
+            if (start < 0) { // shorten at the front, the end stays at the out
                 sIn -= start;
                 len += start;
                 start = 0;
@@ -140,21 +140,21 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         }
         usedTimelineMarks = tIn >= 0 || tOut >= 0;
         if (mode == M::PlaceOnTop) {
-            // Erste Spur über allen Clips im Bereich (fehlende Spur wird angelegt)
+            // First track above all clips in the range (missing track is created)
             auto freeTrack = [&](TrackKind kind) {
                 int idx = 0;
                 const auto& tracks = cur.tracks(kind);
                 for (int i = 0; i < tracks.size(); ++i)
                     for (const Clip& c : tracks[i].clips)
                         if (c.start < start + len && c.end() > start) idx = i + 1;
-                while (idx < tracks.size() && tracks[idx].locked) ++idx; // gesperrte Spur überspringen
+                while (idx < tracks.size() && tracks[idx].locked) ++idx; // skip locked track
                 return idx;
             };
             vTrack = freeTrack(TrackKind::Video);
             aTrack = freeTrack(TrackKind::Audio);
         }
         if (mode == M::Insert) {
-            // Wie DaVinci: alle nicht gesperrten Spuren rücken mit (bleiben synchron), die Zielspuren sowieso
+            // Like DaVinci: all unlocked tracks move along (stay in sync), the target tracks anyway
             if (m.hasVideo) rippleTracks << TrackRef{TrackKind::Video, vTrack};
             for (int k = 0; k < m.audioStreamCount(); ++k) rippleTracks << TrackRef{TrackKind::Audio, aTrack + k};
             for (TrackKind kind : {TrackKind::Video, TrackKind::Audio})
@@ -167,13 +167,13 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         start = endFrame(cur);
         break;
     case M::FitToFill: {
-        // 4-Punkt-Schnitt wie DaVinci: braucht Timeline-In und -Out; Geschwindigkeit = Quelllänge / Ziellänge
+        // 4-point edit like DaVinci: needs timeline in and out; speed = source length / target length
         const int tIn = cur.markIn, tOut = cur.markOut;
         if (tIn < 0 || tOut < tIn) return -1;
         const int target = tOut - tIn + 1;
         speed = double(len) / target;
         if (std::abs(speed - 1.0) < 1e-9) speed = 1.0;
-        // in/out zählen im umgerechneten Material (Clip::speed)
+        // in/out count in the converted material (Clip::speed)
         const int avail = std::max(1, int(m.length / speed));
         if (avail < target) return -1;
         sIn = std::clamp(int(std::lround(sIn / speed)), 0, avail - target);
@@ -183,14 +183,14 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         break;
     }
     case M::Replace: {
-        // Länge und Lage bleiben; Quell-In (sonst Quell-Playhead) deckt sich mit dem Timeline-Playhead
+        // Length and position stay; source in (otherwise source playhead) coincides with the timeline playhead
         const Clip* c = clipUnderPlayhead();
         if (!c) return -1;
         partnerTracks(*c);
         const int anchor = m.markIn >= 0 ? m.markIn : srcPos;
         sIn = anchor - (playhead - c->start);
         len = c->length();
-        if (sIn < 0 || sIn + len - 1 > last) return -1; // zu wenig Material
+        if (sIn < 0 || sIn + len - 1 > last) return -1; // too little material
         start = c->start;
         break;
     }
@@ -206,7 +206,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     }
     }
     if (len <= 0) return -1;
-    // Gesperrte Zielspur: dieser Teil entfällt (wie beim Ablegen), gesperrte Spuren rücken nie
+    // Locked target track: this part is dropped (as when dropping), locked tracks never move
     MediaInfo m2 = m;
     if (m2.hasVideo && isTrackLocked(TrackRef{TrackKind::Video, vTrack})) m2.hasVideo = false;
     if (m2.hasAudio && isTrackLocked(TrackRef{TrackKind::Audio, aTrack})) m2.hasAudio = false;
@@ -234,18 +234,18 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         for (const TrackRef& r : rippleTracks) ensureTracks(tl, r.kind, r.index + 1);
         if (mode == M::Insert) {
             insertGap(tl, rippleTracks, start, len, newId, [p] { return p->newLinkId(); });
-            insertSubtitleGap(tl, start, len, newId); // Untertitel bleiben synchron (gesperrte Spuren nicht)
+            insertSubtitleGap(tl, start, len, newId); // subtitles stay in sync (locked tracks not)
         }
         if (mode == M::RippleOverwrite) {
             for (const TrackRef& r : rippleTracks) {
                 clearRange(tl.track(r), start, replaceEnd, newId);
                 shiftFrom(tl.track(r), rippleFrom, rippleDelta);
             }
-            // übrige nicht gesperrte Spuren bleiben synchron (bleiben stehen, falls sie überschreiben würden)
+            // other unlocked tracks stay in sync (stay put if they would overwrite)
             TimelineOps::rippleTracks(tl, {{rippleFrom, rippleDelta}}, rippleTracks);
         }
         placeSource(tl, m2, sIn, len, start, vTrack, aTrack, speed);
-        if (usedTimelineMarks) tl.markIn = tl.markOut = -1; // wie DaVinci: benutzte Marken sind verbraucht
+        if (usedTimelineMarks) tl.markIn = tl.markOut = -1; // like DaVinci: used marks are consumed
     });
     return mode == M::Replace ? playhead : start + len;
 }
@@ -257,7 +257,7 @@ void Editor::placeSourceRange(const QString& path, int in, int out, int frame, i
     const MediaInfo m = *info;
     in = std::clamp(in, 0, m.length - 1);
     out = std::clamp(out, in, m.length - 1);
-    MediaInfo m2 = m; // gesperrte Spur: dieser Teil entfällt
+    MediaInfo m2 = m; // locked track: this part is dropped
     track = std::max(0, track);
     if (m2.hasVideo && isTrackLocked(TrackRef{TrackKind::Video, track})) m2.hasVideo = false;
     if (m2.hasAudio && isTrackLocked(TrackRef{TrackKind::Audio, track})) m2.hasAudio = false;

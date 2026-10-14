@@ -52,7 +52,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     m_empty->setAlignment(Qt::AlignCenter);
     m_empty->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
 
-    // ---- Tabs oben (Symbol über Text wie in DaVinci) ----
+    // ---- Tabs at the top (icon above text like in DaVinci) ----
     auto* tabBar = new QWidget;
     tabBar->setObjectName("InspectorTabs");
     tabBar->setStyleSheet(QString("QWidget#InspectorTabs { background: %1; border-bottom: 1px solid %2; }"
@@ -66,7 +66,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     tabLay->setSpacing(0);
     m_tabs = new QButtonGroup(this);
     m_pages = new QStackedWidget;
-    // Seiten-Index = Button-ID; "Titel" (nur bei Titelclips, wie DaVinci) steht vorne
+    // Page index = button ID; "Titel" (only for title clips, like DaVinci) comes first
     const struct { int id; const char* icon; const char* text; } tabs[] = {
         {kTitlePage, "T", N_("Titel")}, {kTransitionPage, "⧓", N_("Übergang")}, {kSubtitlePage, "CC", N_("Untertitel")},
         {0, "▣", "Video"}, {1, "♫", "Audio"}, {kEffectsPage, "fx", N_("Effekte")}};
@@ -130,7 +130,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
                             [](Clip& c) -> double& { return c.transform.zoomX; },
                             [](Clip& c) -> double& { return c.transform.zoomY; }, link, AnimParam::ZoomX,
                             AnimParam::ZoomY);
-    // gekoppelt: X und Y gemeinsam ändern (animiert: Keyframe am Playhead, wie DaVinci)
+    // linked: change X and Y together (animated: keyframe at the playhead, like DaVinci)
     zoom.first->edit->onChange = [this, zy = zoom.second](double v) {
         if (m_zoomLinked) zy->edit->setValue(v);
         apply(TrackKind::Video, "zoom", "Zoom", [this, v](Clip& c) {
@@ -150,7 +150,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     addSlider(tr, "rotation", "Rotation", -360, 360, 0, 0.2, 3, [](Clip& c) -> double& { return c.transform.rotation; },
               AnimParam::Rotation);
 
-    // ---- Beschneiden ----
+    // ---- Crop ----
     Section crop = addSection(videoLay, V, T("Beschneiden"), [](Clip& c) {
         c.transform.cropLeft = c.transform.cropRight = c.transform.cropTop = c.transform.cropBottom = 0;
         c.transform.cropOn = true;
@@ -175,7 +175,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     addSlider(comp, "opacity", T("Deckkraft"), 0, 100, 100, 0.5, 2, [](Clip& c) -> double& { return c.transform.opacity; },
               AnimParam::Opacity);
 
-    // ---- Green Screen (Effekt aus der EffectRegistry) ----
+    // ---- Green Screen (effect from the EffectRegistry) ----
     Section key = addSection(videoLay, V, "Green Screen", [](Clip& c) {
         c.effects.removeIf([](const EffectInstance& x) { return x.effectId == "chromakey"; });
     }, [](Clip& c) -> bool& { return ensureEffect(c, "chromakey").enabled; });
@@ -209,7 +209,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     key.grid->addWidget(rowLabel(T("Farbe")), key.rows, 0);
     key.grid->addLayout(colorBox, key.rows, 1);
     ++key.rows;
-    // Registry speichert 0..1, angezeigt wird Prozent; eigenes onChange schreibt in den Effekt
+    // Registry stores 0..1, percent is displayed; own onChange writes into the effect
     Param* tol = addSlider(key, "keyTolerance", T("Toleranz"), 0, 100, 30, 0.5, 2, [](Clip& c) -> double& {
         static double shown;
         shown = effectParam(c, "chromakey", "distance").toDouble() * 100.0;
@@ -273,7 +273,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
                               [](Clip& c) -> double& { return c.volumeDb; }, AnimParam::Volume);
     volume->edit->setMinimumText("-∞");
     addSlider(vol, "pan", "Pan", -100, 100, 0, 1, 2, [](Clip& c) -> double& { return c.pan; }, AnimParam::Pan);
-    // Ton-Stream der Datei (OBS: Desktop-Ton, Mikro … in einer Datei); nur sichtbar, wenn es mehrere gibt
+    // Audio stream of the file (OBS: desktop audio, mic … in one file); only visible if there are several
     auto* streamLabel = rowLabel(T("Quell-Tonspur"));
     auto* streamBox = new QComboBox;
     streamBox->setFocusPolicy(Qt::ClickFocus);
@@ -284,7 +284,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         const Project* project = m_editor->project();
         apply(A, {}, T("Quell-Tonspur"), [project, stream](Clip& c) {
             const MediaInfo* m = project->mediaInfo(c.mediaPath);
-            if (m && stream < m->audioStreamCount()) c.audioStream = stream; // andere Dateien ohne diesen Stream bleiben
+            if (m && stream < m->audioStreamCount()) c.audioStream = stream; // other files without this stream stay as they are
         });
     });
     m_refreshers << [this, streamBox, streamLabel] {
@@ -306,7 +306,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     m_audioFxIndex = audioLay->count(); // Audio FX sections below (arrangeEffectSections)
     audioLay->addStretch(1);
 
-    // ---- Gesamtaufbau ----
+    // ---- Overall layout ----
     m_clipName = new QLabel;
     m_clipName->setAlignment(Qt::AlignCenter);
     m_clipName->setContentsMargins(8, 4, 8, 4);
@@ -358,7 +358,7 @@ void Inspector::setPlayhead(int frame)
 {
     if (frame == m_playhead) return;
     m_playhead = frame;
-    // Nur neu anzeigen, wenn sich etwas ändern kann (beim Abspielen jedes Frame)
+    // Only redisplay when something can change (every frame during playback)
     const Clip* shown[] = {primary(TrackKind::Video), primary(TrackKind::Audio)};
     if (std::any_of(std::begin(shown), std::end(shown), [](const Clip* c) { return c && Keys::hasKeys(*c); })) refresh();
 }
@@ -378,7 +378,7 @@ QVector<int> Inspector::selectedIds(TrackKind kind, bool title, const QString& e
 
 const Clip* Inspector::primary(TrackKind kind, bool title, const QString& effect) const
 {
-    // Angezeigt wird der früheste ausgewählte Clip der Art
+    // The earliest selected clip of the kind is displayed
     const Clip* best = nullptr;
     const Timeline& tl = m_editor->project()->timeline();
     for (int id : selectedIds(kind, title, effect)) {
@@ -391,7 +391,7 @@ const Clip* Inspector::primary(TrackKind kind, bool title, const QString& effect
 void Inspector::apply(TrackKind kind, const QString& key, const QString& text, const std::function<void(Clip&)>& fn,
                       bool title, const QString& effect)
 {
-    // key leer = eigener Undo-Schritt, sonst werden Ziehbewegungen zusammengefasst
+    // empty key = own undo step, otherwise drag movements are merged
     m_editor->modifyClips(selectedIds(kind, title, effect), text, fn, key.isEmpty() ? QString() : "inspector:" + key);
 }
 
@@ -414,12 +414,12 @@ void Inspector::refresh()
     for (int id : m_editor->selection()->ids())
         if (const Clip* c = TimelineOps::findClip(tl, id)) groups.insert(c->linkId ? -c->linkId : c->id);
     const int count = int(groups.size());
-    QString name = m_editor->project()->clipName(*shown); // Compound Clips: Name der Sequenz
+    QString name = m_editor->project()->clipName(*shown); // compound clips: name of the sequence
     if (count > 1) name += QString("  (+%1)").arg(count - 1);
     m_clipName->setText(name);
     m_clipName->setToolTip(shown->mediaPath);
 
-    // Tabs ohne passenden Clip ausgrauen wie in DaVinci; Titel-Tab nur bei Titelclips
+    // Gray out tabs without a matching clip like in DaVinci; title tab only for title clips
     const Clip* t = primary(TrackKind::Video, true);
     m_tabs->button(0)->setEnabled(v);
     m_tabs->button(1)->setEnabled(a);
@@ -429,7 +429,7 @@ void Inspector::refresh()
     m_tabs->button(kEffectsPage)->setText(QString("fx\n%1").arg(fx ? T("Effekte (%1)").arg(fx) : T("Effekte")));
     m_tabs->button(kEffectsPage)->setVisible(fx > 0);
     int page = m_pages->currentIndex();
-    if (t && shown->id != m_lastShownId) page = kTitlePage; // neu ausgewählter Titel -> Tab T("Titel")
+    if (t && shown->id != m_lastShownId) page = kTitlePage; // newly selected title -> tab T("Titel")
     if (v && v->id == m_lastShownId && fx > m_fxCount) page = kEffectsPage; // effect just added: show it
     m_lastShownId = shown->id;
     m_fxCount = fx;
@@ -443,7 +443,7 @@ void Inspector::refresh()
     arrangeEffectSections();
     for (Param* p : m_params) {
         const Clip* c = p->title ? t : p->kind == TrackKind::Video ? v : a;
-        if (c && !p->effect.isEmpty() && !EffectRegistry::has(*c, p->effect)) c = nullptr; // Bereich ausgeblendet
+        if (c && !p->effect.isEmpty() && !EffectRegistry::has(*c, p->effect)) c = nullptr; // section hidden
         if (!c) continue;
         Clip copy = *c;
         const double val = p->anim ? Keys::valueAt(copy, *p->anim, localFrame(copy)) : p->field(copy);

@@ -22,8 +22,8 @@
 #include <algorithm>
 #include <functional>
 
-// Zeichnet das aktuelle Frame, seitenverhältnis-treu, auf schwarzem Grund.
-// Mit gesetzter dragData-Funktion lässt sich das Bild in die Timeline ziehen.
+// Draws the current frame, aspect-ratio preserving, on a black background.
+// With the dragData function set, the image can be dragged into the timeline.
 class Screen : public QWidget {
 public:
     using QWidget::QWidget;
@@ -70,8 +70,8 @@ private:
     QPoint m_pressPos{-1, -1};
 };
 
-// Scrubber unter dem Bild wie in DaVinci: ganze Länge der Quelle/Timeline, In/Out-Bereich hell
-// mit Klammern (wie im Timeline-Lineal), Playhead rot. Klicken/Ziehen springt dorthin.
+// Scrubber under the image like in DaVinci: whole length of the source/timeline, In/Out range bright
+// with brackets (like in the timeline ruler), playhead red. Click/drag jumps there.
 class Scrubber : public QWidget {
 public:
     std::function<void(int)> seek;
@@ -108,7 +108,7 @@ protected:
         QPainter p(this);
         p.fillRect(rect(), Theme::panel);
         const int mid = height() / 2;
-        // eingelassene Schiene mit feiner Skala darunter (wie am Mixer)
+        // recessed rail with a fine scale below (like on the mixer)
         p.fillRect(QRectF(kMargin, mid - 2, width() - 2 * kMargin, 4), Theme::well);
         for (int i = 0; i <= 20; ++i) {
             const double x = kMargin + i * (width() - 2 * kMargin - 1) / 20.0;
@@ -171,7 +171,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     };
 
     m_timecode = new QLabel;
-    // Timecode im eingelassenen Feld (Formensprache des Mixers)
+    // Timecode in the recessed field (design language of the mixer)
     m_timecode->setStyleSheet(QString("color: %1; background: %2; border: 1px solid %3; border-radius: 2px;"
                                       " font-family: monospace; font-size: 13px; padding: 1px 8px;")
                                   .arg(Theme::text.name(), Theme::well.name(), Theme::border.name()));
@@ -193,7 +193,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     connect(m_playBtn, &QToolButton::clicked, m_engine, &Engine::togglePlay);
     connect(fwdBtn, &QToolButton::clicked, this, [this] { m_engine->setSpeed(2.0); });
 
-    // Vorher/Nachher (Farbkorrektur umgehen, Shift+D) wie im DaVinci-Viewer; an = orange
+    // Before/After (bypass color correction, Shift+D) like in the DaVinci Viewer; on = orange
     auto* bypass = new QToolButton;
     bypass->setText("◐");
     bypass->setCheckable(true);

@@ -47,10 +47,10 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     const TrackKind V = TrackKind::Video;
     auto current = [this]() -> const Clip* { return primary(TrackKind::Video, true); };
 
-    // ---- Text (wie DaVinci "Text": Textfeld, Schrift, Größe, Farbe, Stil, Ausrichtung, Position) ----
+    // ---- Text (like DaVinci "Text": text field, font, size, color, style, alignment, position) ----
     Section txt = addSection(page, V, "Text", [](Clip& c) {
         const TitleStyle d;
-        TitleStyle& t = c.title; // der Text selbst bleibt
+        TitleStyle& t = c.title; // the text itself stays
         t.font = d.font;
         t.size = d.size;
         t.color = d.color;
@@ -67,7 +67,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     edit->setFixedHeight(76);
     edit->setPlaceholderText("Text");
     edit->setTabChangesFocus(true);
-    // Live: jede Änderung sofort in die Vorschau, Tippen = ein Undo-Schritt
+    // Live: every change immediately into the preview, typing = one undo step
     connect(edit, &QPlainTextEdit::textChanged, this, [this, edit, V] {
         const QString text = edit->toPlainText();
         apply(V, "titleText", T("Titeltext"), [text](Clip& c) { c.title.text = text; }, true);
@@ -83,7 +83,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
 
     auto* fontBox = new QFontComboBox;
     fontBox->setFocusPolicy(Qt::ClickFocus);
-    fontBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); // sonst sprengt die Liste die Breite
+    fontBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); // otherwise the list blows the width
     fontBox->setMinimumContentsLength(8);
     fontBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     connect(fontBox, &QFontComboBox::currentFontChanged, this, [this, V](const QFont& f) {
@@ -104,7 +104,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     addColor(txt, T("Farbe"), T("Textfarbe"), [](Clip& c) -> QColor& { return c.title.color; }, true, {},
              AnimParam::TitleColor);
 
-    // Stil + Ausrichtung in einer Zeile
+    // Style + alignment in one row
     auto* bold = toggleButton();
     bold->setText("F");
     bold->setToolTip(T("Fett"));
@@ -155,7 +155,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     addXY(txt, "titlePos", "Position", -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
           [](Clip& c) -> double& { return c.title.posY; }, nullptr, AnimParam::TitlePosX, AnimParam::TitlePosY);
 
-    // ---- Umrandung / Hintergrund (roter Punkt; Wert ändern schaltet ein) ----
+    // ---- Outline / background (red dot; changing a value switches it on) ----
     auto autoOn = [this, V](Param* p, const QString& key, const QString& text, const Flag& on) {
         p->edit->onChange = [this, p, key, text, on, V](double v) {
             const QSignalBlocker b(p->slider);
@@ -211,7 +211,7 @@ void Inspector::addColor(Section& s, const QString& label, const QString& text,
                                                   alpha ? QColorDialog::ShowAlphaChannel : QColorDialog::ColorDialogOptions());
         if (!col.isValid()) return;
         apply(kind, {}, text, [this, color, col, also, anim](Clip& clip) {
-            if (anim) Keys::setValue(clip, *anim, localFrame(clip), Keys::fromColor(col)); // animiert -> Keyframe
+            if (anim) Keys::setValue(clip, *anim, localFrame(clip), Keys::fromColor(col)); // animated -> keyframe
             else color(clip) = col;
             if (also) also(clip);
         }, title);
@@ -222,7 +222,7 @@ void Inspector::addColor(Section& s, const QString& label, const QString& text,
             const QColor col = anim ? Keys::toColor(Keys::valueAt(copy, *anim, localFrame(copy))) : color(copy);
             const QString css = QString("QToolButton { background: %1; border: 1px solid %2; border-radius: 2px; }")
                                     .arg(col.name(QColor::HexArgb), Theme::border.name());
-            if (swatch->styleSheet() != css) swatch->setStyleSheet(css); // beim Abspielen nur bei Änderung
+            if (swatch->styleSheet() != css) swatch->setStyleSheet(css); // while playing only on change
         }
     };
     auto* row = new QHBoxLayout;

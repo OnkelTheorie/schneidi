@@ -1,4 +1,4 @@
-// Editor: Untertitelspuren (Teil von Editor, eigene Datei der Übersicht halber)
+// Editor: subtitle tracks (part of Editor, own file for overview)
 #include "core/Editor.h"
 
 #include "core/I18n.h"
@@ -17,7 +17,7 @@ bool validTrack(const Timeline& tl, int index)
     return index >= 0 && index < tl.subtitles.size();
 }
 
-// Grenzen für einen Eintrag: Ende des vorigen, Anfang des nächsten (INT_MAX = keiner)
+// Limits for an entry: end of the previous, start of the next (INT_MAX = none)
 void neighbours(const SubtitleTrack& t, int id, int* lo, int* hi)
 {
     *lo = 0;
@@ -132,7 +132,7 @@ int Editor::addSubtitle(int frame, int track, const QString& text)
     const bool create = track >= cur.subtitles.size();
     if (create) track = cur.subtitles.size();
     if (!create && (cur.subtitles[track].locked || Subtitles::cueAt(cur.subtitles[track], frame) >= 0)) return 0;
-    int end = frame + 3 * m_project->fps(); // wie DaVinci: 3 s
+    int end = frame + 3 * m_project->fps(); // like DaVinci: 3 s
     if (!create)
         for (const SubtitleCue& c : cur.subtitles[track].cues)
             if (c.start > frame) end = std::min(end, c.start);
@@ -194,7 +194,7 @@ int Editor::clampSubtitleTrackDelta(const QVector<int>& ids, int trackDelta) con
 void Editor::moveSubtitles(const QVector<int>& ids, int delta, int trackDelta)
 {
     const Timeline& cur = m_project->timeline();
-    QVector<QPair<int, SubtitleCue>> moving; // Zielspur, Eintrag
+    QVector<QPair<int, SubtitleCue>> moving; // target track, entry
     int minStart = INT_MAX;
     trackDelta = clampSubtitleTrackDelta(ids, trackDelta);
     for (int id : ids) {
@@ -220,7 +220,7 @@ void Editor::moveSubtitles(const QVector<int>& ids, int delta, int trackDelta)
             m.second.end += delta;
             Subtitles::place(tl.subtitles[m.first], m.second);
         }
-        for (SubtitleTrack& t : tl.subtitles) // geteilte Einträge bekommen eine eigene id
+        for (SubtitleTrack& t : tl.subtitles) // split entries get their own id
             for (SubtitleCue& c : t.cues)
                 if (c.id == 0) c.id = p->newClipId();
     });

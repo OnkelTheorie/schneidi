@@ -24,9 +24,9 @@
 #include <cmath>
 
 namespace {
-std::atomic<int> g_running{0}; // laufende Exporte (m_timer läuft genau dann)
+std::atomic<int> g_running{0}; // running exports (m_timer runs exactly then)
 
-// Sichtbare Untertitelspur (sonst die erste mit Einträgen) im Bereich [from, to) als SRT, Zeiten ab Bereichsanfang
+// Visible subtitle track (otherwise the first one with entries) in the range [from, to) as SRT, times from the start of the range
 bool writeSubtitleFile(const Timeline& tl, double fps, int from, int to, const QString& path, QString* error)
 {
     const SubtitleTrack* track = nullptr;
@@ -57,7 +57,7 @@ bool usesFrei0r(const Timeline& tl)
     return false;
 }
 
-// Läuft im Encoder-Thread von avformat, direkt bevor er sich beendet
+// Runs in the avformat encoder thread, right before it ends
 void onConsumerStopped(mlt_properties, void* done, mlt_event_data)
 {
     static_cast<std::atomic<bool>*>(done)->store(true);
@@ -68,7 +68,7 @@ void onConsumerStopped(mlt_properties, void* done, mlt_event_data)
 bool Exporter::sameFile(const QString& a, const QString& b)
 {
     const QString ca = QFileInfo(a).canonicalFilePath(), cb = QFileInfo(b).canonicalFilePath();
-    if (ca.isEmpty() || cb.isEmpty()) return false; // eine fehlt -> kann nicht dieselbe sein
+    if (ca.isEmpty() || cb.isEmpty()) return false; // one is missing -> cannot be the same
 #ifdef Q_OS_WIN
     return ca.compare(cb, Qt::CaseInsensitive) == 0;
 #else
@@ -157,7 +157,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // Stabilization needs its analysis pass: run what is missing first, never export unstabilized silently
     if (!std::exchange(m_analysisDone, false) && runAnalyses(tl, s)) return true;
 
-    // Andere Ausgabegröße als die Timeline: Pixelwerte (Position, Titel …) mitskalieren
+    // Output size different from the timeline: scale pixel values (position, titles …) along
     ProjectFormat out = s.format;
     Timeline scaled = tl;
     if (!s.size.isEmpty() && s.size != s.format.size()) {
@@ -186,7 +186,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         cleanup();
         return false;
     }
-    // Andere Bildrate: Timeline (mit In/Out) als XML schreiben und im Profil der Ausgabe wieder einlesen
+    // Different frame rate: write the timeline (with In/Out) as XML and read it back in the output profile
     const FrameRate rate = s.rate.num > 0 && s.rate.den > 0 ? s.rate : s.format.rate;
     const bool convertRate = rate != s.format.rate && !s.videoCodec.isEmpty();
     if (convertRate) {
@@ -195,19 +195,19 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         Mlt::Consumer xml(*m_profile, "xml", m_xmlPath.toUtf8().constData());
         xml.set("no_meta", 1);
         xml.connect(*m_tractor);
-        xml.start(); // schreibt sofort
+        xml.start(); // writes immediately
         xml.stop();
         ProjectFormat target = out;
         target.rate = rate;
         m_outProfile = makeProfile(target);
-        // über den Loader ("consumer:<datei>"): der hängt die Umwandler an (Tonformat, Farbraum), sonst kommt der Ton
-        // im falschen Sampleformat beim Encoder an
-        // Der Producer arbeitet intern mit einer Kopie dieses Profils; nur wenn es nicht „explicit“ ist, übernimmt er
-        // das Profil (Bildrate der Timeline) aus dem XML – sonst liefe die Timeline in der neuen Bildrate zu schnell
+        // via the loader ("consumer:<file>"): it attaches the converters (audio format, color space), otherwise the audio arrives
+        // at the encoder in the wrong sample format
+        // The producer works internally with a copy of this profile; only if it is not "explicit" does it take over
+        // the profile (timeline frame rate) from the XML – otherwise the timeline would run too fast at the new frame rate
         m_outProfile->set_explicit(0);
         m_source = std::make_unique<Mlt::Producer>(*m_outProfile, ("consumer:" + m_xmlPath).toUtf8().constData());
         m_outProfile->set_explicit(1);
-        if (!qFuzzyCompare(m_outProfile->fps(), rate.fps())) { // darf sich dabei nicht ändern
+        if (!qFuzzyCompare(m_outProfile->fps(), rate.fps())) { // must not change in the process
             if (error) *error = T("Bildrate kann nicht umgerechnet werden.");
             cleanup();
             return false;
@@ -217,7 +217,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
             cleanup();
             return false;
         }
-        // Der Producer kennt nur die Bildzahl der Timeline -> Länge in der neuen Bildrate selbst setzen
+        // The producer only knows the timeline's frame count -> set the length in the new frame rate ourselves
         m_length = std::max(1, int(std::lround(m_length * rate.fps() / s.format.rate.fps())));
         m_source->set("length", m_length);
         m_source->set_in_and_out(0, m_length - 1);
@@ -434,7 +434,7 @@ void Exporter::poll()
         emit finished(true, T("Export fertig: %1").arg(path));
         return;
     }
-    const int pos = m_source->position(); // relativ zum In-Punkt
+    const int pos = m_source->position(); // relative to the In point
     emit progress(std::clamp(pos * 100 / std::max(1, m_length), 0, 99));
 }
 
@@ -494,7 +494,7 @@ void Exporter::cancel()
     if (m_consumer) m_consumer->stop();
     const QString path = m_path;
     cleanup();
-    QFile::remove(path); // halbfertige Datei weg
+    QFile::remove(path); // half-finished file gone
     emit finished(false, T("Export abgebrochen."));
 }
 
@@ -502,8 +502,8 @@ void Exporter::cleanup()
 {
     if (m_timer.isActive()) --g_running;
     m_timer.stop();
-    // Immer stop(): beendet sich der Consumer selbst (terminate_on_pause), laufen seine Worker-Threads (real_time < -1)
-    // sonst weiter – mlt_consumer_close stoppt sie nicht – und rechnen später auf freigegebenen Profilen/Producern
+    // Always stop(): if the consumer ends itself (terminate_on_pause), its worker threads (real_time < -1) keep running
+    // otherwise – mlt_consumer_close does not stop them – and later compute on freed profiles/producers
     if (m_check) { // test encode still running: only our own ffmpeg process
         m_check->disconnect(this);
         m_check->kill();

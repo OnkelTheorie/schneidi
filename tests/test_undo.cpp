@@ -1,5 +1,5 @@
-// Test Undo/Redo-Kette: viele Editor-Operationen nacheinander (jede muss einen Undo-Schritt anlegen), dann alles
-// zurück = Ausgangszustand, alles vor = Endzustand; jeder Zwischenschritt wird per JSON (Projektdatei) verglichen.
+// Test undo/redo chain: many editor operations in a row (each must create an undo step), then everything
+// back = initial state, everything forward = final state; each intermediate step is compared via JSON (project file).
 #include "check.h"
 
 #include "core/EffectRegistry.h"
@@ -15,7 +15,7 @@
 
 namespace {
 
-// Zustand als Projektdatei-JSON; Zähler für neue IDs laufen absichtlich weiter (IDs werden nie wiederverwendet)
+// State as project file JSON; counters for new IDs deliberately keep going (IDs are never reused)
 QByteArray state(const Project& p)
 {
     ProjectData d = p.data();
@@ -32,8 +32,8 @@ int clipId(const Project& p, TrackKind k, int track, int index)
 int V(const Project& p, int track, int index) { return clipId(p, TrackKind::Video, track, index); }
 int A(const Project& p, int track, int index) { return clipId(p, TrackKind::Audio, track, index); }
 
-// Überblendung, die durch eine Bearbeitung ihren Partner verliert, wird gelöst statt stillschweigend zum
-// Aus-/Einblenden über Schwarz zu werden (Trimmen, Tempo)
+// A dissolve that loses its partner through an edit is released instead of silently turning into a
+// fade out/in over black (trimming, speed)
 void testBrokenDissolves()
 {
     int fileLen = 250;
@@ -55,7 +55,7 @@ void testBrokenDissolves()
         ed.addTransitions(100);
     };
     for (int scenario = 0; scenario < 3; ++scenario) {
-        fileLen = scenario == 2 ? 130 : 250; // rückwärts: A (0..99) hat danach kein Material mehr hinter sich
+        fileLen = scenario == 2 ? 130 : 250; // reversed: A (0..99) then has no material left behind it
         Project p;
         Selection sel;
         Editor ed(&p, &sel);
@@ -65,14 +65,14 @@ void testBrokenDissolves()
         const int a = V(p, 0, 0), b = V(p, 0, 1);
         if (scenario == 0) ed.trimClip(b, TimelineOps::Edge::Start, 5);  // auseinandertrimmen
         if (scenario == 1) ed.trimClip(a, TimelineOps::Edge::End, -5);
-        if (scenario == 2) ed.setClipSpeed({a}, {1.0, true, false, true}, false); // rückwärts: A ohne Handles
+        if (scenario == 2) ed.setClipSpeed({a}, {1.0, true, false, true}, false); // reversed: A without handles
         CHECK_EQ(fades(p), 0);
         CHECK_EQ(dissolves(p), 0);
-        p.undoStack()->undo(); // Undo bringt die Überblendung zurück
+        p.undoStack()->undo(); // undo brings the dissolve back
         CHECK_EQ(dissolves(p), 1);
     }
 
-    // Kopieren nur einer Seite einer Überblendung: Kopie blendet nicht über Schwarz aus
+    // Copying only one side of a dissolve: the copy does not fade out over black
     {
         fileLen = 250;
         Project p;
@@ -83,9 +83,9 @@ void testBrokenDissolves()
         ed.copySelection();
         ed.paste(1000);
         CHECK_EQ(fades(p), 0);
-        CHECK_EQ(dissolves(p), 1); // Original unverändert
+        CHECK_EQ(dissolves(p), 1); // original unchanged
 
-        // Ausschneiden eines Untertitels: bleibt liegen (Zwischenablage kennt nur Clips), Zwischenablage unverändert
+        // Cutting a subtitle: stays in place (clipboard only knows clips), clipboard unchanged
         const int cue = ed.addSubtitle(2000);
         sel.set({cue});
         const int steps = p.undoStack()->index();
@@ -95,8 +95,8 @@ void testBrokenDissolves()
     }
 }
 
-// Aus- und Einblenden, die durch Verschieben/Lücke schließen aneinanderstoßen, bleiben zwei Übergänge (wie DaVinci);
-// erst ein bewusst auf den Schnitt gesetzter Übergang macht daraus eine Überblendung
+// Fade out and fade in that bump together by moving/closing a gap stay two transitions (like DaVinci);
+// only a transition deliberately put on the cut turns them into a dissolve
 void testFadesStayApart()
 {
     auto len = [](const Clip& c) { return c.retimedLength(250); };
@@ -108,43 +108,43 @@ void testFadesStayApart()
     ed.addMediaAt({"/x/a.mp4"}, 0, 0);
     ed.bladeAt(V(p, 0, 0), 100);
     const int a = V(p, 0, 0), b = V(p, 0, 1);
-    ed.moveClips({b}, 50, TrackKind::Video, 0); // Lücke 100..150
+    ed.moveClips({b}, 50, TrackKind::Video, 0); // gap 100..150
     sel.set({a});
-    ed.addTransitions(0); // A: Ein- und Ausblenden
+    ed.addTransitions(0); // A: fade in and out
     sel.set({b});
-    ed.addTransitions(0); // B: Ein- und Ausblenden
+    ed.addTransitions(0); // B: fade in and out
     if (!CHECK_EQ(int(spans(p).size()), 4)) return;
-    ed.moveClips({b}, -50, TrackKind::Video, 0); // Lücke schließen
+    ed.moveClips({b}, -50, TrackKind::Video, 0); // close the gap
     auto s = spans(p);
     CHECK_EQ(int(s.size()), 4);
     for (const auto& x : s) CHECK(!x.isDissolve());
-    // Speichern/Laden behält das
+    // Saving/loading keeps that
     ProjectData d;
     CHECK(ProjectFile::fromJson(ProjectFile::toJson(p.data(), "/x/p.schneidi"), "/x/p.schneidi", &d, nullptr));
     CHECK(!TimelineOps::isDissolve(d.timeline.video[0].clips[0], d.timeline.video[0].clips[1]));
-    // wieder auseinander: Markierung fällt weg, Übergänge bleiben
+    // apart again: marking is dropped, transitions stay
     ed.moveClips({b}, 20, TrackKind::Video, 0);
     CHECK(!TimelineOps::findClip(p.timeline(), a)->transOutAlone && !TimelineOps::findClip(p.timeline(), b)->transInAlone);
     CHECK_EQ(int(spans(p).size()), 4);
     p.undoStack()->undo();
-    // Übergang bewusst auf den Schnitt: Überblendung
+    // Transition deliberately on the cut: dissolve
     sel.clear();
     ed.addTransitions(100);
     s = spans(p);
     CHECK_EQ(int(s.size()), 3);
     CHECK(s.size() == 3 && s[1].isDissolve() && s[1].leftId == a && s[1].rightId == b);
-    // Undo: wieder zwei getrennte Übergänge
+    // Undo: two separate transitions again
     p.undoStack()->undo();
     CHECK_EQ(int(spans(p).size()), 4);
-    // Überblendung bleibt beim gemeinsamen Verschieben eine Überblendung
+    // A dissolve stays a dissolve when moved together
     p.undoStack()->redo();
     ed.moveClips({a, b}, 10, TrackKind::Video, 0);
     CHECK_EQ(int(spans(p).size()), 3);
 
-    // Compound Clip aus B: A behält kein „eigenständig“ ohne Partner (sonst legte danach jede wirkungslose
-    // Bearbeitung einen leeren Undo-Schritt an)
+    // Compound clip from B: A keeps no "standalone" without a partner (otherwise every ineffective
+    // edit afterwards would create an empty undo step)
     p.undoStack()->undo();
-    p.undoStack()->undo(); // wieder zwei getrennte Übergänge
+    p.undoStack()->undo(); // two separate transitions again
     sel.set({b});
     const int seq = ed.createCompoundClip();
     CHECK(!TimelineOps::findClip(p.timeline(), a)->transOutAlone);
@@ -155,7 +155,7 @@ void testFadesStayApart()
     CHECK_EQ(p.undoStack()->count(), steps);
 }
 
-// Fade länger als der (danach gekürzte) Clip: der andere Fade wird nie negativ
+// Fade longer than the (afterwards shortened) clip: the other fade never becomes negative
 void testFadeAfterTrim()
 {
     Project p;
@@ -165,7 +165,7 @@ void testFadeAfterTrim()
     ed.addMediaAt({"/x/a.mp4"}, 0, 0);
     const int a = V(p, 0, 0);
     ed.setClipFade(a, TimelineOps::Edge::End, 80);
-    ed.trimClip(a, TimelineOps::Edge::End, -210); // 40 Frames lang, Ausblenden 80
+    ed.trimClip(a, TimelineOps::Edge::End, -210); // 40 frames long, fade out 80
     ed.setClipFade(a, TimelineOps::Edge::Start, 10);
     CHECK(TimelineOps::findClip(p.timeline(), a)->fadeIn >= 0);
 }
@@ -187,12 +187,12 @@ int main(int argc, char** argv)
     p.addMedia({"/x/a.mp4", "a.mp4", 250, true, true, false});
     p.addMedia({"/x/b.mp4", "b.mp4", 150, true, true, false});
     p.addMedia({"/x/m.wav", "m.wav", 300, false, true, false});
-    ed.setSourceMarkIn("/x/b.mp4", 20); // Quell-Marken gehören nicht zum Undo -> vorher setzen
+    ed.setSourceMarkIn("/x/b.mp4", 20); // source marks are not part of undo -> set beforehand
     ed.setSourceMarkOut("/x/b.mp4", 59);
 
     QVector<QByteArray> states{state(p)};
     QStringList names;
-    // Führt eine Operation aus; sie muss genau einen Undo-Schritt anlegen
+    // Runs an operation; it must create exactly one undo step
     auto step = [&](const char* name, const std::function<void()>& fn) {
         const int before = p.undoStack()->index();
         fn();
@@ -210,7 +210,7 @@ int main(int argc, char** argv)
     step("Titel", [&] { ed.addTitle(50); });
     step("Klinge", [&] { ed.bladeAt(V(p, 0, 0), 100); });
     step("Teilen am Playhead", [&] { sel.clear(); ed.splitAtPlayhead(180); });
-    // Schnitt bei 100 (a|a, genug Material auf beiden Seiten); IDs merken, Indizes ändern sich später
+    // Cut at 100 (a|a, enough material on both sides); remember IDs, indices change later
     const int transL = V(p, 0, 0), transR = V(p, 0, 1);
     step("Übergang Strg+T", [&] { sel.clear(); ed.addTransitions(95); });
     step("Übergangsart", [&] {
@@ -277,13 +277,13 @@ int main(int argc, char** argv)
     });
     step("Effekt entfernen", [&] { ed.removeEffect({fxClip}, "color"); });
 
-    // Alle Schritte haben etwas geändert
+    // All steps changed something
     for (int i = 1; i < states.size(); ++i)
         if (states[i] == states[i - 1]) Check::report(false, "Schritt ändert nichts", __FILE__, __LINE__, names[i - 1]);
 
     const int n = int(states.size()) - 1;
     CHECK_EQ(p.undoStack()->index(), n);
-    // alles zurück, jeder Zwischenstand gleich
+    // everything back, every intermediate state equal
     for (int i = n; i > 0; --i) {
         p.undoStack()->undo();
         if (state(p) != states[i - 1])
@@ -291,7 +291,7 @@ int main(int argc, char** argv)
     }
     CHECK(state(p) == states.first());
     CHECK(!p.undoStack()->canUndo());
-    // alles vor
+    // everything forward
     for (int i = 1; i <= n; ++i) {
         p.undoStack()->redo();
         if (state(p) != states[i])
@@ -300,7 +300,7 @@ int main(int argc, char** argv)
     CHECK(state(p) == states.last());
     CHECK(!p.undoStack()->canRedo());
 
-    // Hälfte zurück, dann neue Operation: Redo-Zweig verworfen, Undo führt wieder zum Zwischenstand
+    // Half back, then a new operation: redo branch discarded, undo leads to the intermediate state again
     for (int i = 0; i < n / 2; ++i) p.undoStack()->undo();
     const QByteArray mid = state(p);
     ed.toggleMarker(777);
@@ -308,7 +308,7 @@ int main(int argc, char** argv)
     p.undoStack()->undo();
     CHECK(state(p) == mid);
 
-    // Zusammengefasste Änderungen (mergeKey, z. B. Regler ziehen) = ein Undo-Schritt
+    // Merged changes (mergeKey, e.g. dragging a slider) = one undo step
     const int before = p.undoStack()->index();
     const QByteArray unchanged = state(p);
     const int id = V(p, 0, 0);
@@ -319,7 +319,7 @@ int main(int argc, char** argv)
     p.undoStack()->undo();
     CHECK(state(p) == unchanged);
 
-    // Bearbeitung ohne Änderung (Teilen, wo kein Clip liegt; gleicher Wert) legt keinen Undo-Schritt an
+    // Edit without change (split where no clip lies; same value) creates no undo step
     const int idle = p.undoStack()->index();
     ed.splitAtPlayhead(100000);
     ed.modifyClips({id}, "Deckkraft", [](Clip&) {});

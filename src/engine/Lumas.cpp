@@ -17,7 +17,7 @@ namespace Lumas {
 
 namespace {
 
-// Wert-Noise (glatt interpoliert) für „Wolken“, fester Startwert -> immer dasselbe Bild
+// Value noise (smoothly interpolated) for "clouds", fixed seed -> always the same image
 double hashNoise(int x, int y)
 {
     quint32 h = quint32(x) * 374761393u + quint32(y) * 668265263u;
@@ -34,7 +34,7 @@ double valueNoise(double x, double y)
     return (a + (b - a) * sx) + ((c + (d - c) * sx) - (a + (b - a) * sx)) * sy;
 }
 
-// Rohwert je Pixel (beliebiger Bereich, wird danach auf 0..1 gestreckt). u/v: Mitte = 0, Höhe = -1..1 (rund)
+// Raw value per pixel (any range, stretched to 0..1 afterwards). u/v: center = 0, height = -1..1 (round)
 bool rawValues(const QString& id, int w, int h, std::vector<double>* out)
 {
     out->resize(size_t(w) * h);
@@ -43,7 +43,7 @@ bool rawValues(const QString& id, int w, int h, std::vector<double>* out)
         for (int x = 0; x < w; ++x) {
             const double fx = (x + 0.5) / w, fy = (y + 0.5) / h; // 0..1
             const double u = (fx * 2 - 1) * aspect, v = fy * 2 - 1;
-            const double angle = std::atan2(u, -v); // 0 = oben, im Uhrzeigersinn
+            const double angle = std::atan2(u, -v); // 0 = top, clockwise
             double t = 0;
             if (id == "kreis") t = std::hypot(u, v);
             else if (id == "kreis-zu") t = -std::hypot(u, v);
@@ -58,7 +58,7 @@ bool rawValues(const QString& id, int w, int h, std::vector<double>* out)
                 const double turns = 2.0;
                 double a = (angle < 0 ? angle + 2 * M_PI : angle) / (2 * M_PI);
                 const double r = std::hypot(u, v) / std::hypot(aspect, 1.0); // 0..1
-                // Arme der Spirale: Winkel + Radius, Reihenfolge von innen nach außen
+                // Arms of the spiral: angle + radius, order from inside to outside
                 t = std::floor(r * turns - a) + a;
                 t = t / turns + r * 1e-3;
             } else if (id == "jalousie-h") t = std::fmod(fy * 8, 1.0) + fy * 1e-3;
@@ -66,7 +66,7 @@ bool rawValues(const QString& id, int w, int h, std::vector<double>* out)
             else if (id == "schachbrett") {
                 const int cx = int(fx * 16), cy = int(fy * 9);
                 const double inCell = std::fmod(fx * 16, 1.0);
-                t = ((cx + cy) % 2) * 1.0 + inCell; // erst jedes zweite Feld, dann die anderen
+                t = ((cx + cy) % 2) * 1.0 + inCell; // first every second cell, then the others
             } else if (id == "welle") t = fx * aspect + 0.12 * std::sin(fy * 2 * M_PI * 2.5);
             else if (id == "pixel") {
                 const int cx = int(fx * 32), cy = int(fy * 18);
@@ -88,7 +88,7 @@ QImage builtin(const QString& id, int w, int h)
     if (!rawValues(id, w, h, &raw)) return {};
     const auto [lo, hi] = std::minmax_element(raw.begin(), raw.end());
     const double span = *hi - *lo > 0 ? *hi - *lo : 1;
-    QImage img(w, h, QImage::Format_Grayscale16); // 16 Bit: weiche, stufenlose Verläufe
+    QImage img(w, h, QImage::Format_Grayscale16); // 16 bit: soft, stepless gradients
     for (int y = 0; y < h; ++y) {
         auto* line = reinterpret_cast<quint16*>(img.scanLine(y));
         for (int x = 0; x < w; ++x) line[x] = quint16(std::lround((raw[size_t(y) * w + x] - *lo) / span * 65535));
@@ -121,7 +121,7 @@ QImage image(const QString& path, int w, int h, bool invert, QString* error)
 QString file(const QString& path, int w, int h, bool invert)
 {
     const QFileInfo fi(path);
-    // "v1": Version der mitgelieferten Verläufe (bei Änderungen an rawValues erhöhen)
+    // "v1": version of the bundled gradients (increase when rawValues changes)
     const QByteArray key = "v1|" + path.toUtf8() + '|' + QByteArray::number(fi.lastModified().toMSecsSinceEpoch()) +
                            '|' + QByteArray::number(fi.size());
     const QString hash = QCryptographicHash::hash(key, QCryptographicHash::Sha1).toHex().left(12);
@@ -131,7 +131,7 @@ QString file(const QString& path, int w, int h, bool invert)
     const QImage img = image(path, w, h, invert);
     if (img.isNull()) return {};
     QDir().mkpath(dir);
-    // Erst unter anderem Namen schreiben, damit eine zweite Instanz nie ein halbes Bild liest
+    // First write under a different name so that a second instance never reads a half image
     const QString tmp = out + ".tmp.png";
     if (!img.save(tmp)) return {};
     QFile::remove(out);
@@ -143,13 +143,13 @@ QImage preview(const QImage& luma, double progress)
 {
     const QImage g = luma.convertToFormat(QImage::Format_Grayscale8);
     QImage out(g.size(), QImage::Format_RGB32);
-    const QColor a(0x3b, 0x6a, 0xa0), b(0xc8, 0x8a, 0x3c); // wie die anderen Übergangssymbole
+    const QColor a(0x3b, 0x6a, 0xa0), b(0xc8, 0x8a, 0x3c); // like the other transition icons
     const double soft = 0.08;
     for (int y = 0; y < g.height(); ++y) {
         const uchar* src = g.constScanLine(y);
         auto* dst = reinterpret_cast<QRgb*>(out.scanLine(y));
         for (int x = 0; x < g.width(); ++x) {
-            // wie MLT luma: Stellen unter dem Fortschritt zeigen schon B, weicher Rand
+            // like MLT luma: spots below the progress already show B, soft edge
             const double t = std::clamp((progress * (1 + soft) - src[x] / 255.0) / soft, 0.0, 1.0);
             dst[x] = qRgb(int(a.red() + (b.red() - a.red()) * t), int(a.green() + (b.green() - a.green()) * t),
                           int(a.blue() + (b.blue() - a.blue()) * t));

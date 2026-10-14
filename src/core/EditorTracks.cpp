@@ -38,7 +38,7 @@ void Editor::toggleTrackLock(TrackRef ref)
     const Timeline& cur = m_project->timeline();
     if (ref.index < 0 || ref.index >= cur.tracks(ref.kind).size()) return;
     const bool lock = !cur.track(ref).locked;
-    // Auswahl auf der Spur aufheben (Clips, Übergang, Keyframe-Rauten), bevor sie gesperrt wird
+    // Clear the selection on the track (clips, transition, keyframe diamonds) before it gets locked
     if (lock) {
         QSet<int> onTrack;
         for (const Clip& c : cur.track(ref).clips) onTrack.insert(c.id);
@@ -56,7 +56,7 @@ void Editor::renameTrack(TrackRef ref, const QString& name)
 {
     const Timeline& cur = m_project->timeline();
     if (ref.index < 0 || ref.index >= cur.tracks(ref.kind).size()) return;
-    // Standardname eingegeben (oder leer) = wieder automatisch benennen
+    // Default name entered (or empty) = name automatically again
     QString n = name.simplified();
     if (n == trackDisplayName(Track{}, ref)) n.clear();
     if (n == cur.track(ref).name) return;
@@ -98,7 +98,7 @@ void Editor::addTrack(TrackKind kind, int index)
         t.kind = kind;
         tl.tracks(kind).insert(index, t);
     });
-    // Zielspur bleibt an „ihrer“ Spur
+    // Target track stays on "its" track
     int& target = kind == TrackKind::Video ? m_targetVideo : m_targetAudio;
     if (target >= index) {
         ++target;
@@ -116,7 +116,7 @@ void Editor::removeTrack(TrackRef ref)
 {
     if (!canRemoveTrack(ref)) return;
     const Timeline& cur = m_project->timeline();
-    // Auswahl auf der Spur aufheben (Clips, Übergang, Keyframe-Rauten)
+    // Clear the selection on the track (clips, transition, keyframe diamonds)
     QSet<int> onTrack;
     for (const Clip& c : cur.track(ref).clips) onTrack.insert(c.id);
     const TransitionKey t = m_selection->transition();
@@ -140,7 +140,7 @@ void Editor::moveTrack(TrackKind kind, int from, int to)
     to = std::clamp(to, 0, n - 1);
     if (to == from) return;
     m_project->edit(T("Spur verschieben"), [&](Timeline& tl) { tl.tracks(kind).move(from, to); });
-    // Zielspur folgt ihrer Spur
+    // Target track follows its track
     int& target = kind == TrackKind::Video ? m_targetVideo : m_targetAudio;
     const int old = target;
     if (target == from) target = to;

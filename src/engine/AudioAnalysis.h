@@ -1,6 +1,6 @@
 #pragma once
-// Tonanalyse für "Audiopegel normalisieren" (wie DaVinci Normalize Audio Levels):
-// Spitzenpegel (Sample Peak Program) oder Lautheit nach ITU-R BS.1770-4 (LUFS)
+// Audio analysis for "Normalize audio levels" (like DaVinci Normalize Audio Levels):
+// peak level (Sample Peak Program) or loudness per ITU-R BS.1770-4 (LUFS)
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
@@ -17,23 +17,23 @@ class TimelineBuilder;
 
 namespace AudioAnalysis {
 
-// Spitzenpegel (Sample Peak, dBFS) des Clip-Tons zwischen In und Out, so wie die Timeline ihn liest
-// (Geschwindigkeit/Rückwärts eingerechnet), aber ohne Clip-Lautstärke, Fades, Spur- und Master-Fader.
-// Stille = -200. nullopt = kein Ton (Titel, Standbild, Datei fehlt) oder abgebrochen.
-// progress(0..1) wird regelmäßig aufgerufen; false bricht ab. Blockiert (Aufrufer zeigt Fortschritt).
+// Peak level (sample peak, dBFS) of the clip audio between In and Out, as the timeline reads it
+// (speed/reverse included), but without clip volume, fades, track and master faders.
+// Silence = -200. nullopt = no audio (title, still, file missing) or canceled.
+// progress(0..1) is called regularly; false cancels. Blocks (caller shows progress).
 std::optional<double> clipPeakDb(const ProjectFormat& format, const Clip& clip,
                                  const std::function<bool(double)>& progress = {});
 
 struct Loudness {
-    double integrated = -200; // LUFS (Stille = -200)
+    double integrated = -200; // LUFS (silence = -200)
     double range = 0;         // Loudness Range (LU)
     double peakDb = -200;     // Sample Peak (dBFS)
     double truePeakDb = -200;   // True Peak (dBTP, 4x oversampled like BS.1770-4)
     double maxMomentary = -200; // loudest 400 ms (LUFS)
     double maxShortTerm = -200; // loudest 3 s (LUFS)
-    std::vector<double> blocks; // 400-ms-Blöcke (LoudnessMeter::integratedOf über mehrere Clips)
+    std::vector<double> blocks; // 400 ms blocks (LoudnessMeter::integratedOf over several clips)
 };
-// Lautheit (ITU-R BS.1770-4, integriert mit Gates) des Clip-Tons, gleiche Regeln wie clipPeakDb
+// Loudness (ITU-R BS.1770-4, integrated with gates) of the clip audio, same rules as clipPeakDb
 std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& clip,
                                      const std::function<bool(double)>& progress = {});
 

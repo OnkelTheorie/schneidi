@@ -19,8 +19,8 @@ inline QString format(int frames, int fps)
         .arg(ff, 2, 10, QChar('0'));
 }
 
-// Eingabe wie in DaVinci -> Frames, -1 = ungültig. "01:02:03:04" (Teile von rechts: Frames, Sekunden, Minuten,
-// Stunden; auch mit ; oder .), nur Ziffern füllen von rechts auf ("1000" = 00:00:10:00).
+// Input as in DaVinci -> frames, -1 = invalid. "01:02:03:04" (parts from the right: frames, seconds, minutes,
+// hours; also with ; or .), digits only fill from the right ("1000" = 00:00:10:00).
 inline int parse(const QString& text, int fps)
 {
     QString t = text.trimmed();
@@ -37,7 +37,7 @@ inline int parse(const QString& text, int fps)
         parts = {t.left(n - 6), t.mid(n - 6, 2), t.mid(n - 4, 2), t.right(2)};
     }
     if (parts.size() > 4) return -1;
-    const int mult[] = {1, fps, fps * 60, fps * 3600}; // von rechts
+    const int mult[] = {1, fps, fps * 60, fps * 3600}; // from the right
     long long frames = 0;
     for (int i = 0; i < parts.size(); ++i) {
         bool ok = false;

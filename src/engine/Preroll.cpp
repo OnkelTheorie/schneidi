@@ -4,9 +4,9 @@
 #include <memory>
 
 namespace {
-// Abstand zur Stelle: näher dran liest die Wiedergabe den Producer womöglich schon (Vorlauf-Puffer)
+// Distance to the spot: closer than this, playback may already be reading the producer (lead-in buffer)
 constexpr int kMinDistance = 8;
-// Vorlauf-Puffer des Consumers: so weit hinter freeFrom kann der Producer noch gelesen werden
+// Lead-in buffer of the consumer: the producer can still be read this far behind freeFrom
 constexpr int kBusyMargin = 4;
 } // namespace
 
@@ -27,7 +27,7 @@ void Preroll::setPoints(std::vector<PrerollPoint> points, int lookahead, QSize s
     std::vector<PrerollPoint> old;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        old.swap(m_points); // außerhalb der Sperre freigeben
+        old.swap(m_points); // release outside the lock
         m_points = std::move(points);
         m_done.assign(m_points.size(), false);
         m_lookahead = lookahead;
@@ -47,7 +47,7 @@ void Preroll::update(int position, double speed)
 {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        // Gesprungen (zurück oder weit vor): schon vorbereitete Stellen gelten nicht mehr
+        // Jumped (back or far ahead): spots already prepared no longer apply
         if (position < m_position || position > m_position + m_lookahead) m_done.assign(m_points.size(), false);
         m_position = position;
         m_speed = speed;
@@ -59,14 +59,14 @@ void Preroll::run()
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     while (!m_quit) {
-        // Nächste fällige Stelle: im Vorausblick, Producer nicht mehr in Benutzung
+        // Next due spot: within look-ahead, producer no longer in use
         int next = -1;
         if (m_speed > 0.0) {
             for (size_t i = 0; i < m_points.size(); ++i) {
                 const PrerollPoint& p = m_points[i];
-                if (p.frame > m_position + m_lookahead) break; // sortiert
+                if (p.frame > m_position + m_lookahead) break; // sorted
                 if (m_done[i] || p.frame < m_position + kMinDistance) continue;
-                if (p.freeFrom + kBusyMargin > m_position) continue; // wird noch gelesen
+                if (p.freeFrom + kBusyMargin > m_position) continue; // is still being read
                 next = int(i);
                 break;
             }
@@ -82,7 +82,7 @@ void Preroll::run()
         const bool audio = m_points[next].audio;
         const QSize size = m_size;
         lock.unlock();
-        // Das Frame davor dekodieren: danach erwartet der Decoder genau `source` und liest ohne Sprung weiter
+        // Decode the frame before it: afterwards the decoder expects exactly `source` and reads on without a jump
         const int at = std::max(0, source - 1);
         producer->seek(at);
         std::unique_ptr<Mlt::Frame> frame(producer->get_frame());
@@ -96,7 +96,7 @@ void Preroll::run()
             int w = size.width(), h = size.height();
             frame->get_image(fmt, w, h);
         }
-        frame.reset(); // Referenzen vor dem Melden abgeben: danach darf die Engine Producer und Profil abbauen
+        frame.reset(); // give up references before reporting: afterwards the engine may tear down producers and profile
         producer.reset();
         lock.lock();
         m_busy = false;

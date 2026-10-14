@@ -1,6 +1,6 @@
-// Test Color-Seite (Effekt "grade"): Pixelrechnung (Lift/Gamma/Gain/Offset, Kontrast, Sättigung, Temperatur,
-// Belichtung, LUT), .cube-Leser, Render über MLT (Vorschau-Bypass, Keyframes, Teilen, deutsches Zahlenformat),
-// Editor-Operationen mit Undo, Speichern/Laden mit LUT-Pfad (auch verschobener Ordner) und alte Dateien.
+// Test Color page (effect "grade"): pixel math (lift/gamma/gain/offset, contrast, saturation, temperature,
+// exposure, LUT), .cube reader, render via MLT (preview bypass, keyframes, splitting, German number format),
+// editor operations with undo, saving/loading with LUT path (also moved folder) and old files.
 #include "check.h"
 
 #include "core/Editor.h"
@@ -31,7 +31,7 @@ namespace {
 
 QString g_media;
 
-// Grauverlauf 0..255 in R=G=B (eine Zeile)
+// Gray ramp 0..255 in R=G=B (one row)
 std::vector<uint8_t> ramp()
 {
     std::vector<uint8_t> px(256 * 4);
@@ -57,7 +57,7 @@ bool writeFile(const QString& path, const QByteArray& data)
     return f.open(QIODevice::WriteOnly) && f.write(data) == data.size();
 }
 
-// .cube-Datei: fn bildet (r, g, b) 0..1 ab
+// .cube file: fn maps (r, g, b) 0..1 to the result
 QByteArray cube(int n, const std::function<void(double&, double&, double&)>& fn)
 {
     QByteArray s = "# Test\nTITLE \"t\"\nLUT_3D_SIZE " + QByteArray::number(n) + "\n";
@@ -127,7 +127,7 @@ Rgb mean(const QImage& img, QRectF rel)
     if (n) { s.r /= n; s.g /= n; s.b /= n; }
     return s;
 }
-Rgb gray(const QImage& img) { return mean(img, QRectF(0.02, 0.1, 0.08, 0.4)); } // SMPTE-Balken: 75 % grau
+Rgb gray(const QImage& img) { return mean(img, QRectF(0.02, 0.1, 0.08, 0.4)); } // SMPTE bars: 75 % gray
 Rgb cyan(const QImage& img) { return mean(img, QRectF(0.35, 0.1, 0.05, 0.4)); }
 
 double diff(const QImage& a, const QImage& b)
@@ -147,43 +147,43 @@ void testPixels(const QString& dir)
     using CP = ColorGrade::Params;
     const std::vector<uint8_t> in = ramp();
     CHECK(CP().isNeutral());
-    CHECK(graded(CP()) == in); // neutral = unverändert, Alpha bleibt
+    CHECK(graded(CP()) == in); // neutral = unchanged, alpha stays
 
     CP p;
-    p.lift[0] = 0.2; // Schwarz hoch, Weiß bleibt
+    p.lift[0] = 0.2; // black up, white stays
     auto o = graded(p);
     CHECK(R(o, 0) > 40 && R(o, 255) == 255);
     p = CP();
-    p.lift[0] = -0.1; // Lift darf negativ (Schwarz wird abgeschnitten)
+    p.lift[0] = -0.1; // Lift may be negative (black is clipped)
     o = graded(p);
     CHECK(R(o, 20) == 0 && R(o, 255) == 255);
     p = CP();
-    p.gain[0] = 0.5; // Weiß runter, Schwarz bleibt
+    p.gain[0] = 0.5; // white down, black stays
     o = graded(p);
     CHECK(R(o, 0) == 0 && std::abs(R(o, 255) - 128) <= 1);
     p = CP();
-    p.gamma[0] = 0.2; // Mitten heller, Enden bleiben
+    p.gamma[0] = 0.2; // midtones brighter, ends stay
     o = graded(p);
     CHECK(R(o, 0) == 0 && R(o, 255) == 255 && R(o, 128) > 145);
     p = CP();
-    p.offset[0] = 35; // alles +0,1
+    p.offset[0] = 35; // everything +0.1
     o = graded(p);
     CHECK(std::abs(R(o, 100) - (100 + 26)) <= 1);
     p = CP();
-    p.contrast = 1.5; // um den Pivot (0,435)
+    p.contrast = 1.5; // around the pivot (0.435)
     o = graded(p);
     CHECK(R(o, 60) < 60 && R(o, 200) > 200 && std::abs(R(o, 111) - 111) <= 1);
     p = CP();
-    p.exposure = 1; // +1 Blende
+    p.exposure = 1; // +1 stop
     o = graded(p);
     CHECK(R(o, 100) > 120 && R(o, 0) == 0);
-    // Farbräder: R-Anteil nur im roten Kanal
+    // Color wheels: R component only in the red channel
     p = CP();
     p.gain[1] = 1.2;
     p.lift[3] = 0.1;
     o = graded(p);
     CHECK(R(o, 150) > 170 && G(o, 150) == 150 && B(o, 10) > 30 && G(o, 10) == 10);
-    // Temperatur: warm = mehr Rot als Blau, Tönung + = weniger Grün
+    // Temperature: warm = more red than blue, tint + = less green
     p = CP();
     p.temperature = 2000;
     o = graded(p);
@@ -192,7 +192,7 @@ void testPixels(const QString& dir)
     p.tint = 60;
     o = graded(p);
     CHECK(G(o, 128) < R(o, 128) - 10);
-    // Sättigung 0 = grau
+    // Saturation 0 = gray
     {
         std::vector<uint8_t> px{200, 50, 30, 255};
         CP s;
@@ -205,7 +205,7 @@ void testPixels(const QString& dir)
         CHECK(px2[0] > 200 && px2[1] < 50);
     }
 
-    // LUT: Identität lässt alles, Invertieren kehrt um, Pfad mit Leerzeichen/Umlaut
+    // LUT: identity leaves everything, invert reverses, path with space/umlaut
     const QString idPath = QDir(dir).filePath("ident ität.cube");
     const QString invPath = QDir(dir).filePath("invert.cube");
     CHECK(writeFile(idPath, cube(17, [](double&, double&, double&) {})));
@@ -224,7 +224,7 @@ void testPixels(const QString& dir)
         CHECK(o[3] == 200); // Alpha
         CHECK(ColorGrade::loadLut(idPath) == idLut); // zwischengespeichert
     }
-    // 1D-LUT mit Domain und kaputte Dateien
+    // 1D LUT with domain and broken files
     const QString oneD = QDir(dir).filePath("half.cube");
     CHECK(writeFile(oneD, "LUT_1D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n0 0 0\n0.5 0.5 0.5\n"));
     if (auto l = ColorGrade::loadLut(oneD); CHECK(l && !l->is3d)) CHECK(std::abs(R(graded(CP(), l.get()), 255) - 128) <= 1);
@@ -243,20 +243,20 @@ void testRender(const QString& dir)
     const Rgb g0 = gray(ref);
     CHECK(g0.r > 150);
 
-    // Neutral / nur angelegt / ausgeschaltet = unverändert
+    // Neutral / only created / switched off = unchanged
     CHECK(diff(render(one(grade({})), fmt, 10), ref) < 0.5);
     CHECK(diff(render(one([](Clip& c) {
                    grade({{"gainY", 0.5}})(c);
                    c.effects[0].enabled = false;
                }), fmt, 10), ref) < 0.5);
-    // Gain halbiert das Grau, Sättigung 0 macht Cyan grau
+    // Gain halves the gray, saturation 0 makes cyan gray
     const Timeline darker = one(grade({{"gainY", 0.5}}));
     const QImage dark = render(darker, fmt, 10);
     CHECK(std::abs(gray(dark).r - g0.r / 2) < 6);
     const Rgb gcy = cyan(render(one(grade({{"saturation", 0.0}})), fmt, 10));
     CHECK(std::abs(gcy.r - gcy.g) < 6 && std::abs(gcy.g - gcy.b) < 6);
 
-    // Vorschau-Schalter Vorher/Nachher: live umschaltbar, ohne Schalter (Export) immer korrigiert
+    // Preview switch before/after: switchable live, without a switch (export) always corrected
     auto bypass = std::make_shared<std::atomic<bool>>(true);
     CHECK(diff(render(darker, fmt, 10, bypass), ref) < 0.5);
     bypass->store(false);
@@ -278,19 +278,19 @@ void testRender(const QString& dir)
             return img;
         };
         CHECK(diff(grab(), dark) < 0.5);
-        flag->store(true); // gleicher Tractor, kein Neuaufbau
+        flag->store(true); // same tractor, no rebuild
         CHECK(diff(grab(), ref) < 0.5);
     }
 
-    // LUT im Render (Invertieren)
+    // LUT in the render (invert)
     const QString inv = QDir(dir).filePath("render invert.cube");
     CHECK(writeFile(inv, cube(5, [](double& r, double& g, double& b) { r = 1 - r; g = 1 - g; b = 1 - b; })));
     const Rgb gi = gray(render(one(grade({{"lut", inv}})), fmt, 10));
     CHECK(std::abs(gi.r - (255 - g0.r)) < 6);
-    // Fehlende LUT: Bild bleibt (kein Absturz)
+    // Missing LUT: picture stays (no crash)
     CHECK(diff(render(one(grade({{"lut", QDir(dir).filePath("weg.cube")}})), fmt, 10), ref) < 0.5);
 
-    // Keyframes Gain 0 (Frame 0) -> 1 (Frame 50); Teilen bei 25 ändert nichts
+    // Keyframes gain 0 (frame 0) -> 1 (frame 50); splitting at 25 changes nothing
     const Timeline keyed = one([](Clip& c) {
         grade({})(c);
         Keys::setKey(c, AnimParam::GradeGainY, 0, 0.0);
@@ -311,11 +311,11 @@ void testRender(const QString& dir)
         CHECK(diff(render(tl, fmt, 40), k40) < 0.5);
     }
 
-    // Deutsches Zahlenformat zur Laufzeit ändert nichts (LUT-Zahlen, Filter)
+    // German number format at runtime changes nothing (LUT numbers, filter)
     const Timeline mixed = one(grade({{"liftY", 0.05}, {"gammaR", 0.1}, {"temperature", 800.0}, {"lut", inv}}));
     const QImage mixedC = render(mixed, fmt, 10);
     if (std::setlocale(LC_NUMERIC, "de_DE.UTF-8") || std::setlocale(LC_NUMERIC, "de_DE.utf8")) {
-        const QString inv2 = QDir(dir).filePath("invert2.cube"); // neu einlesen (nicht aus dem Zwischenspeicher)
+        const QString inv2 = QDir(dir).filePath("invert2.cube"); // read again (not from the cache)
         QFile::copy(inv, inv2);
         const Timeline mixed2 = one(grade({{"liftY", 0.05}, {"gammaR", 0.1}, {"temperature", 800.0}, {"lut", inv2}}));
         CHECK(diff(render(mixed2, fmt, 10), mixedC) < 0.5);
@@ -335,22 +335,22 @@ void testEditorAndFile(const QString& dir)
     QUndoStack* undo = p.undoStack();
     auto clip = [&] { return *TimelineOps::findClip(p.timeline(), v); };
 
-    // Ziel ohne Auswahl: oberster Videoclip am Playhead
+    // Target without selection: topmost video clip at the playhead
     CHECK_EQ(ed.effectTargets(10), QVector<int>{v});
     const int s0 = undo->index();
     ed.setGradeValues({v, a}, {{AnimParam::GradeGainY, 1.3}}, 10, "Gain", "color:gain");
-    ed.setGradeValues({v}, {{AnimParam::GradeGainY, 1.4}}, 10, "Gain", "color:gain"); // Ziehen = ein Schritt
+    ed.setGradeValues({v}, {{AnimParam::GradeGainY, 1.4}}, 10, "Gain", "color:gain"); // dragging = one step
     p.closeMerge();
     CHECK_EQ(undo->index(), s0 + 1);
     CHECK(EffectRegistry::has(clip(), "grade"));
-    CHECK(!EffectRegistry::has(*TimelineOps::findClip(p.timeline(), a), "grade")); // nur Video
+    CHECK(!EffectRegistry::has(*TimelineOps::findClip(p.timeline(), a), "grade")); // video only
     CHECK_EQ(Keys::staticValue(clip(), AnimParam::GradeGainY), 1.4);
     undo->undo();
     CHECK(!EffectRegistry::has(clip(), "grade"));
     undo->redo();
     CHECK_EQ(Keys::staticValue(clip(), AnimParam::GradeGainY), 1.4);
 
-    // Keyframe für die ganze Korrektur, dann Wert an anderer Stelle -> zweiter Keyframe
+    // Keyframe for the whole correction, then value at another position -> second keyframe
     ed.setGradeKeyframe({v}, 0, true);
     CHECK(Keys::animated(clip(), AnimParam::GradeLiftY) && Keys::animated(clip(), AnimParam::GradeGainY));
     ed.setGradeValues({v}, {{AnimParam::GradeGainY, 0.8}}, 100, "Gain");
@@ -360,7 +360,7 @@ void testEditorAndFile(const QString& dir)
     undo->undo();
     CHECK(!Keys::animated(clip(), AnimParam::GradeGainY));
 
-    // LUT, Ausschalten, Rad zurücksetzen
+    // LUT, switching off, reset wheel
     const QString lutDir = QDir(dir).filePath("projekt/luts");
     QDir().mkpath(lutDir);
     const QString lut = QDir(lutDir).filePath("look.cube");
@@ -370,17 +370,17 @@ void testEditorAndFile(const QString& dir)
     ed.setGradeValues({v}, {{AnimParam::GradeLiftR, 0.1}, {AnimParam::GradeLiftB, -0.05}}, 10, "Lift");
     ed.resetGrade({v}, {AnimParam::GradeLiftR, AnimParam::GradeLiftB}, 10, "Lift zurücksetzen");
     CHECK_EQ(Keys::staticValue(clip(), AnimParam::GradeLiftR), 0.0);
-    CHECK_EQ(Keys::staticValue(clip(), AnimParam::GradeGainY), 1.4); // Rest bleibt
+    CHECK_EQ(Keys::staticValue(clip(), AnimParam::GradeGainY), 1.4); // rest stays
     ed.setGradeEnabled({v}, false);
     CHECK(!EffectRegistry::instance(clip(), "grade")->enabled);
     ed.setGradeEnabled({v}, true);
 
-    // Teilen: beide Hälften behalten die Korrektur
+    // Splitting: both halves keep the correction
     ed.bladeAt(v, 100);
     CHECK_EQ(p.timeline().video[0].clips.size(), 2);
     CHECK(EffectRegistry::has(p.timeline().video[0].clips[1], "grade"));
 
-    // Speichern -> Laden -> Speichern identisch
+    // Save -> load -> save identical
     const QString projPath = QDir(dir).filePath("projekt/film.schneidi");
     QString err;
     CHECK(ProjectFile::save(p.data(), projPath, &err));
@@ -391,7 +391,7 @@ void testEditorAndFile(const QString& dir)
     CHECK_EQ(EffectRegistry::value(lc, "grade", "lut").toString(), lut);
     CHECK_EQ(Keys::staticValue(lc, AnimParam::GradeGainY), 1.4);
 
-    // Ordner verschoben: LUT relativ zur Projektdatei wiedergefunden
+    // Folder moved: LUT found again relative to the project file
     const QString moved = QDir(dir).filePath("verschoben");
     CHECK(QDir().rename(QDir(dir).filePath("projekt"), moved));
     ProjectData m;
@@ -399,7 +399,7 @@ void testEditorAndFile(const QString& dir)
     CHECK_EQ(EffectRegistry::value(m.timeline.video[0].clips[0], "grade", "lut").toString(),
              QDir(moved).filePath("luts/look.cube"));
 
-    // Color-Seite (Widget) baut sich mit dem Clip auf und zeigt ihn (offscreen)
+    // Color page (widget) builds up with the clip and shows it (offscreen)
     {
         ColorPanel panel(&ed);
         panel.resize(1400, 320);
@@ -410,13 +410,13 @@ void testEditorAndFile(const QString& dir)
         sel.clear();
     }
 
-    // Ganze Korrektur zurücksetzen = Effekt samt Keyframes weg, ein Undo-Schritt
+    // Reset whole correction = effect including keyframes gone, one undo step
     const int s1 = undo->index();
     ed.resetGrade({v}, {}, 10, "Farbkorrektur zurücksetzen");
     CHECK_EQ(undo->index(), s1 + 1);
     CHECK(!EffectRegistry::has(clip(), "grade"));
 
-    // Alte Datei ohne Farbkorrektur und ohne relPaths lädt
+    // Old file without color correction and without relPaths loads
     const QByteArray old = R"({"app":"schneidi","version":1,"fps":25,"media":[{"path":"/x/a.mp4","name":"a.mp4","length":100,
         "hasVideo":true}],"timeline":{"video":[{"clips":[{"id":1,"start":0,"in":0,"out":49,"media":0,
         "effects":[{"id":"grade","params":{"gainY":0.7,"lut":"/nirgends/x.cube"}}]}]}],"audio":[]}})";
@@ -425,7 +425,7 @@ void testEditorAndFile(const QString& dir)
     if (CHECK(o.timeline.video.size() == 1 && o.timeline.video[0].clips.size() == 1)) {
         const Clip& c = o.timeline.video[0].clips[0];
         CHECK_EQ(Keys::staticValue(c, AnimParam::GradeGainY), 0.7);
-        CHECK_EQ(Keys::staticValue(c, AnimParam::GradeLiftY), 0.0); // fehlend = Standard
+        CHECK_EQ(Keys::staticValue(c, AnimParam::GradeLiftY), 0.0); // missing = default
         CHECK_EQ(EffectRegistry::value(c, "grade", "lut").toString(), QString("/nirgends/x.cube"));
     }
 }

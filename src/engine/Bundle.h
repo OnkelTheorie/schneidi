@@ -1,31 +1,31 @@
 #pragma once
-// Mitgelieferte Laufzeit (AppImage unter Linux, später Programmordner unter Windows): MLT-Module/-Daten, frei0r und
-// ffmpeg/ffprobe liegen beim Programm statt im System. Gleicher Aufbau auf beiden Systemen:
-//   <prefix>/lib/mlt-7, <prefix>/share/mlt-7, <prefix>/lib/frei0r-1, Programme im Programmordner
-// mit <prefix> = Programmordner (Windows) bzw. dessen Elternordner (…/usr/bin -> …/usr, AppImage).
+// Bundled runtime (AppImage on Linux, later program folder on Windows): MLT modules/data, frei0r and
+// ffmpeg/ffprobe live with the program instead of in the system. Same layout on both systems:
+// <prefix>/lib/mlt-7, <prefix>/share/mlt-7, <prefix>/lib/frei0r-1, programs in the program folder
+// with <prefix> = program folder (Windows) resp. its parent folder (…/usr/bin -> …/usr, AppImage).
 
 #include <QByteArray>
 #include <QString>
 
 namespace Bundle {
 
-// Ordner mit den mitgelieferten MLT-Modulen, leer = System-MLT benutzen
+// Folder with the bundled MLT modules, empty = use system MLT
 QString mltModuleDir();
-// Setzt MLT_DATA, MLT_PROFILES_PATH und FREI0R_PATH auf die mitgelieferten Ordner (vor Mlt::Factory::init);
-// lädt das ungenutzte jackrack-Modul nicht (MLT_REPOSITORY_DENY)
+// Sets MLT_DATA, MLT_PROFILES_PATH and FREI0R_PATH to the bundled folders (before Mlt::Factory::init);
+// does not load the unused jackrack module (MLT_REPOSITORY_DENY)
 void prepareMltEnvironment();
-// Ausführliche Meldungen? Umgebungsvariable SCHNEIDI_VERBOSE (main setzt sie bei --verbose)
+// Verbose messages? Environment variable SCHNEIDI_VERBOSE (main sets it with --verbose)
 bool verboseLogging();
-// Direkt nach Mlt::Factory::init: Meldestufen von MLT und FFmpeg. Normal: MLT ab Warnung, FFmpeg nur Fehler;
-// ausführlich: MLT ab Info, FFmpeg ab Warnung
+// Right after Mlt::Factory::init: log levels of MLT and FFmpeg. Normal: MLT from warning, FFmpeg errors only;
+// verbose: MLT from info, FFmpeg from warning
 void configureMltLogging();
 // Directly after Mlt::Factory::init: MLT's qt module (Qt 5) creates its own QApplication the first time one of its
 // services is made, which calls setlocale(LC_ALL, "") and puts LC_NUMERIC back to e.g. German. MLT modules read
 // numbers with sscanf/atof (vid.stab results, timewarp speed) -> create it now and keep LC_NUMERIC at "C"
 void pinNumericLocale();
-// Pfad so, wie MLT ihn für den Modulordner/Umgebungsvariablen erwartet (Windows: ANSI-Codepage bzw. 8.3-Pfad)
+// Path as MLT expects it for the module folder/environment variables (Windows: ANSI code page resp. 8.3 path)
 QByteArray pathForMlt(const QString& path);
-// Pfad eines externen Programms (z. B. "ffmpeg"): erst neben dem Programm, dann im PATH; sonst der bloße Name
+// Path of an external program (e.g. "ffmpeg"): first next to the program, then in PATH; otherwise the bare name
 QString tool(const QString& name);
 
 } // namespace Bundle

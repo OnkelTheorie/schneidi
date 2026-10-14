@@ -36,20 +36,20 @@ class MainWindow : public QMainWindow, public LiveHost {
     Q_OBJECT
 public:
     explicit MainWindow(Engine* engine, QWidget* parent = nullptr);
-    // placeOnTimeline (Testhilfe --demo): hintereinander auf V1/A1; adoptFormat = Projektformat vom ersten Clip
+    // placeOnTimeline (test helper --demo): one after another on V1/A1; adoptFormat = project format from the first clip
     void importFiles(const QStringList& paths, bool placeOnTimeline = false, bool adoptFormat = true);
 
-    // Seiten wie in DaVinci (unten umschaltbar). Neue Seite: hier + in showPage() ergänzen.
+    // Pages like in DaVinci (switchable at the bottom). New page: add here + in showPage().
     enum class Page { Media, Edit, Deliver, Color };
     void showPage(Page page);
 
-    // Projektdatei (.schneidi): nur Verweise auf die Originalmedien + Schnitt
+    // Project file (.schneidi): only references to the original media + edit
     bool openProject(const QString& path);
-    bool offerAutosaveRestore(); // nach Absturz: letzte automatische Sicherung anbieten (true = wiederhergestellt)
-    void disableAutosave();      // Testläufe: keine Sicherung schreiben/löschen
-    // Projekteinstellungen setzen (ein Undo-Schritt); Testhilfe --format
+    bool offerAutosaveRestore(); // after a crash: offer the last automatic backup (true = restored)
+    void disableAutosave();      // test runs: do not write/delete a backup
+    // Set project settings (one undo step); test helper --format
     void setProjectFormat(const ProjectFormat& format);
-    // Neustart (Design/Sprache): main() startet schneidi nach dem Beenden mit diesen Argumenten neu
+    // Restart (design/language): main() restarts schneidi with these arguments after quitting
     bool restartRequested() const { return m_restartRequested; }
     QStringList restartArguments() const;
 
@@ -77,21 +77,21 @@ private:
     void buildLayout();
     QWidget* buildTopBar();
     QWidget* buildPageBar();
-    void updateLeftColumn(); // linke Spalte nur zeigen, wenn Media Pool oder Effects an ist
+    void updateLeftColumn(); // show the left column only if Media Pool or Effects is on
     void onDrop(const QStringList& paths, int frame, int track);
-    // Untertitel (SRT): jede Datei wird eine neue Untertitelspur; Export der sichtbaren Spur
+    // Subtitles (SRT): every file becomes a new subtitle track; export of the visible track
     void importSubtitleFiles(const QStringList& paths);
     void importSubtitlesDialog();
     void exportSubtitlesDialog();
     void transcribeDialog();
     MediaInfo probeCached(const QString& path);
-    // Wie DaVinci beim ersten Clip in leerer Timeline: Projekt an Auflösung/Framerate des Clips anpassen
-    // (ask = nachfragen, sonst direkt übernehmen)
+    // Like DaVinci with the first clip in an empty timeline: adapt the project to the clip's resolution/frame rate
+    // (ask = ask first, otherwise take over directly)
     void offerClipFormat(const QStringList& paths, bool ask);
     void onFormatChanged();
     void projectSettingsDialog();
     void grabStill();
-    void updateRenderCacheBar(); // Render-Cache-Balken über der Timeline
+    void updateRenderCacheBar(); // render cache bar above the timeline
     void clipSpeedDialog();
     void normalizeAudioDialog();
     // Effects of the selected clip as own preset (effects/Presets, Kdenlive format, core/Presets)
@@ -100,12 +100,12 @@ private:
     void buildActions();
     QAction* makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
                        const std::function<void()>& fn);
-    // Quellansicht (Doppelklick im Media Pool): an der zuletzt gezeigten Stelle der Datei öffnen
+    // Source view (double-click in the Media Pool): open at the last shown position of the file
     void showSource(const QString& path);
-    bool sourceActive() const; // Viewer zeigt die Quelle -> I/O wirken auf die Quell-In/Out
-    QString editSource() const; // Quelle für F9/F10 …: Quellansicht, sonst Auswahl im Media Pool
+    bool sourceActive() const; // Viewer shows the source -> I/O apply to the source In/Out
+    QString editSource() const; // source for F9/F10 …: source view, otherwise selection in the Media Pool
     void sourceEdit(Editor::SourceEditMode mode);
-    void updateViewer();        // Scrubber-Bereich, In/Out und Titel des Viewers
+    void updateViewer();        // scrubber range, In/Out and title of the Viewer
     void jumpToEdit(int direction);
     void jumpToMarker(int direction);
     void jumpToFrame(int frame);
@@ -119,9 +119,9 @@ private:
     bool saveAs();
     void openBackupDialog();
     bool saveTo(const QString& path);
-    bool maybeSave(); // false = Abbrechen
-    // Vor Neu/Öffnen: läuft die Render-Warteschlange, fragen und abbrechen (sonst schreibt sie ihren Status
-    // in die Warteschlange des nächsten Projekts), dann maybeSave(). false = Abbrechen
+    bool maybeSave(); // false = cancel
+    // Before New/Open: if the render queue is running, ask and cancel (otherwise it writes its status
+    // into the queue of the next project), then maybeSave(). false = cancel
     bool maybeLeaveProject();
     void offerRestart(const QString& message, const QString& now, const QString& later);
     // ask = offer relinking missing media / list missing effects (not when reloading after an outside change)
@@ -134,11 +134,11 @@ private:
     void rebuildRecentMenu();
     void autosave();
     void removeAutosave();
-    // Jede laufende Instanz hat einen eigenen Sicherungs-Platz (QLockFile), damit sich zwei Fenster nicht
-    // gegenseitig die Sicherung überschreiben oder löschen; Platz 1 = „autosave.schneidi“ wie bisher
+    // Every running instance has its own backup slot (QLockFile) so that two windows do not
+    // overwrite or delete each other's backup; slot 1 = "autosave.schneidi" as before
     QString autosavePath();
-    QString autosaveKey() const; // QSettings-Schlüssel: zu welchem Projekt die Sicherung gehört
-    void createCompoundClip(); // Name abfragen wie DaVinci
+    QString autosaveKey() const; // QSettings key: which project the backup belongs to
+    void createCompoundClip(); // ask for the name like DaVinci
     void openSelectedCompound();
 
     Engine* m_engine;
@@ -150,7 +150,7 @@ private:
     EffectsLibrary* m_effects = nullptr;
     MediaStorage* m_storage = nullptr;
     Viewer* m_viewer = nullptr;
-    QTimer m_engineTimer; // bündelt Modelländerungen -> Engine
+    QTimer m_engineTimer; // bundles model changes -> engine
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
     TranscriptPanel* m_transcript = nullptr;
@@ -161,15 +161,15 @@ private:
 
     QStackedWidget* m_pages = nullptr;
     QSplitter* m_editTop = nullptr;
-    QSplitter* m_editLeft = nullptr;   // Media Pool über Effects Library (wie DaVinci)
+    QSplitter* m_editLeft = nullptr;   // Media Pool above Effects Library (like DaVinci)
     QSplitter* m_editMain = nullptr;
     QSplitter* m_editBottom = nullptr; // Timeline | Mixer
     QSplitter* m_mediaPage = nullptr;
     QSplitter* m_mediaTop = nullptr;
     QSplitter* m_deliverPage = nullptr;
     QSplitter* m_deliverRight = nullptr;
-    QSplitter* m_colorPage = nullptr; // Viewer, Timeline, Farbräder (wie DaVinci Color)
-    QSplitter* m_colorBottom = nullptr; // Farbräder | Scopes
+    QSplitter* m_colorPage = nullptr; // Viewer, timeline, color wheels (like DaVinci Color)
+    QSplitter* m_colorBottom = nullptr; // color wheels | scopes
     QButtonGroup* m_pageButtons = nullptr;
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;
@@ -180,13 +180,13 @@ private:
     Page m_page = Page::Edit;
 
     QHash<QString, MediaInfo> m_probeCache;
-    QHash<QString, int> m_sourcePos; // Quell-Playhead je Datei (nur in dieser Sitzung)
-    QHash<int, int> m_sequencePos;   // Playhead je Timeline/Compound Clip (nur in dieser Sitzung)
-    QHash<int, ViewState> m_sequenceView; // Zoom/Scroll je Timeline/Compound Clip (nur in dieser Sitzung)
-    int m_shownSequence = 0;         // zuletzt gezeigte Sequenz (für m_sequencePos)
+    QHash<QString, int> m_sourcePos; // source playhead per file (this session only)
+    QHash<int, int> m_sequencePos;   // playhead per timeline/compound clip (this session only)
+    QHash<int, ViewState> m_sequenceView; // zoom/scroll per timeline/compound clip (this session only)
+    int m_shownSequence = 0;         // last shown sequence (for m_sequencePos)
     class MediaCache* m_mediaCache = nullptr;
 
-    QString m_projectPath; // leer = noch nie gespeichert
+    QString m_projectPath; // empty = never saved yet
     class QFileSystemWatcher* m_projectWatcher = nullptr;
     QTimer m_projectCheck;            // waits until an outside save is done
     QByteArray m_projectFingerprint;  // project file as last loaded/saved here (ProjectFile::fingerprint)
@@ -194,7 +194,7 @@ private:
     class QLabel* m_titleLabel = nullptr;
     class QTimer* m_autosaveTimer = nullptr;
     bool m_autosaveDisabled = false;
-    int m_autosaveSlot = 0; // 0 = noch keiner belegt
+    int m_autosaveSlot = 0; // 0 = none assigned yet
     std::unique_ptr<QLockFile> m_autosaveLock;
     bool m_restartRequested = false;
 

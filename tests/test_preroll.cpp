@@ -1,6 +1,6 @@
-// Test Decoder-Vorlauf (engine/Preroll, TimelineBuilder::prerollPoints): Clips derselben Datei an Überblendung
-// bzw. hartem Schnitt bekommen abwechselnd eigene Producer, Übergang + Rumpf eines Clips lesen am Stück;
-// Sprungstellen stimmen; vorab dekodierte Stellen ändern die gezeigten Bilder nicht.
+// Test decoder pre-roll (engine/Preroll, TimelineBuilder::prerollPoints): clips of the same file at a dissolve
+// or hard cut get their own producers alternately, transition + body of a clip read in one go;
+// jump points are correct; pre-decoded points do not change the displayed images.
 #include "check.h"
 
 #include "core/ProjectFormat.h"
@@ -32,11 +32,11 @@ Clip clip(int id, int start, int in, int out)
     return c;
 }
 
-// A | Überblendung | B | C (geteilt, nahtlos) | D (harter Schnitt, andere Stelle derselben Datei)
+// A | dissolve | B | C (split, seamless) | D (hard cut, other spot of the same file)
 Timeline scene()
 {
     Clip a = clip(1, 0, 0, 29), b = clip(2, 30, 50, 69), c = clip(3, 50, 70, 79), d = clip(4, 60, 10, 29);
-    a.transOut = b.transIn = 10; // Cross Dissolve 25..35, B ab Quell-Frame 45
+    a.transOut = b.transIn = 10; // Cross Dissolve 25..35, B from source frame 45
     Timeline tl;
     tl.video.resize(1);
     tl.video[0].clips = {a, b, c, d};
@@ -65,21 +65,21 @@ void testPoints()
     const auto& pts = builder.prerollPoints();
     QString list;
     for (const auto& p : pts) list += QString("[%1 frei ab %2 Quelle %3] ").arg(p.frame).arg(p.freeFrom).arg(p.source);
-    // A am Anfang, B (einblendende Seite) ab 25/Quelle 45, D ab 60/Quelle 10 auf dem Producer von A (frei ab 35).
-    // Kein Sprung bei B-Rumpf (35), C (nahtlos) und der ausblendenden Seite von A.
+    // A at the start, B (fading-in side) from 25/source 45, D from 60/source 10 on A's producer (free from 35).
+    // No jump at B body (35), C (seamless) and the fading-out side of A.
     if (!CHECK_EQ(int(pts.size()), 3)) qInfo("%s", qPrintable(list));
     if (pts.size() != 3) return;
     CHECK(pts[0].frame == 0 && pts[0].source == 0);
     CHECK(pts[1].frame == 25 && pts[1].source == 45 && pts[1].freeFrom == 0);
     CHECK(pts[2].frame == 60 && pts[2].source == 10 && pts[2].freeFrom == 35);
-    CHECK(pts[2].producer->get_producer() == pts[0].producer->get_producer()); // D liest vom Producer von A
+    CHECK(pts[2].producer->get_producer() == pts[0].producer->get_producer()); // D reads from A's producer
     CHECK(pts[1].producer->get_producer() != pts[0].producer->get_producer());
     for (const auto& p : pts) CHECK(!p.audio);
 }
 
 void testSameImages()
 {
-    // Referenz: frischer Builder ohne Vorlauf
+    // Reference: fresh builder without pre-roll
     auto prof = makeProfile(kFmt);
     TimelineBuilder ref(*prof);
     auto refTractor = ref.build(scene());
@@ -88,9 +88,9 @@ void testSameImages()
     {
         Preroll preroll;
         preroll.setPoints(builder.prerollPoints(), 50, QSize(kFmt.width, kFmt.height));
-        preroll.update(40, 1.0); // D (60) ist fällig, Producer von A seit 35 frei
+        preroll.update(40, 1.0); // D (60) is due, A's producer free since 35
         QThread::msleep(1500);
-        preroll.update(12, 1.0); // Rücksprung: B (25) erneut
+        preroll.update(12, 1.0); // jump back: B (25) again
         QThread::msleep(1500);
     }
     for (int pos = 20; pos < 80; ++pos) {
@@ -102,7 +102,7 @@ void testSameImages()
     }
 }
 
-// clear() wartet auf eine laufende Dekodierung und gibt alle Producer ab (Engine::setFormat baut danach das Profil ab)
+// clear() waits for a running decode and hands back all producers (Engine::setFormat then tears down the profile)
 void testClearWaits()
 {
     auto prof = makeProfile(kFmt);
@@ -114,14 +114,14 @@ void testClearWaits()
     for (int i = 0; i < 5; ++i) {
         preroll.setPoints(builder->prerollPoints(), 50, QSize(kFmt.width, kFmt.height));
         preroll.update(40, 1.0);
-        QThread::msleep(5 + 10 * i); // mitten in die Dekodierung
+        QThread::msleep(5 + 10 * i); // right in the middle of decoding
         preroll.clear();
-        for (const auto& p : pts) CHECK_EQ(long(p.producer.use_count()), 2L); // pts und Builder, sonst niemand
+        for (const auto& p : pts) CHECK_EQ(long(p.producer.use_count()), 2L); // pts and builder, nobody else
     }
     tractor.reset();
     builder.reset();
     prof.reset();
-    preroll.update(60, 1.0); // nichts mehr zu tun, darf nichts Freigegebenes anfassen
+    preroll.update(60, 1.0); // nothing left to do, must not touch anything released
     QThread::msleep(50);
 }
 
@@ -135,7 +135,7 @@ int main(int argc, char** argv)
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
-    // Lange GOP wie bei OBS-Aufnahmen (nur ein Keyframe)
+    // Long GOP like OBS recordings (only one keyframe)
     g_media = Check::makeMedia(tmp.filePath("src.mp4"),
                                {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=4", "-c:v", "libx264",
                                 "-preset", "ultrafast", "-g", "250", "-pix_fmt", "yuv420p"});

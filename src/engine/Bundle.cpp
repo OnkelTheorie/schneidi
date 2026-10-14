@@ -22,7 +22,7 @@ void setPathEnv(const char* name, const QString& dir)
     if (QFileInfo(dir).isDir()) qputenv(name, pathForMlt(dir));
 }
 
-// Kandidaten für <prefix>: Programmordner selbst (Windows) und dessen Elternordner (…/usr/bin im AppImage)
+// Candidates for <prefix>: program folder itself (Windows) and its parent folder (…/usr/bin in the AppImage)
 QStringList prefixes()
 {
     const QString appDir = QCoreApplication::applicationDirPath();
@@ -36,7 +36,7 @@ QString bundledPrefix()
     return {};
 }
 
-// Nicht paketierter Build unter Windows (MSYS2): MLT sucht Module und Daten sonst neben der .exe
+// Unpackaged build on Windows (MSYS2): MLT otherwise looks for modules and data next to the .exe
 QString devPrefix()
 {
 #if defined(Q_OS_WIN) && defined(SCHNEIDI_MLT_DEV_PREFIX)
@@ -59,10 +59,10 @@ QByteArray pathForMlt(const QString& path)
 {
     const QString native = QDir::toNativeSeparators(path);
 #ifdef Q_OS_WIN
-    // MLT (Modulordner) und die Umgebungsvariablen lesen Pfade in der ANSI-Codepage, nicht als UTF-8
+    // MLT (module folder) and the environment variables read paths in the ANSI code page, not as UTF-8
     const QByteArray local = native.toLocal8Bit();
     if (QString::fromLocal8Bit(local) == native) return local;
-    // Zeichen außerhalb der Codepage: kurzer 8.3-Pfad (nur ASCII), falls das Laufwerk ihn anbietet
+    // Characters outside the code page: short 8.3 path (ASCII only), if the drive offers it
     wchar_t buf[MAX_PATH * 2];
     const DWORD n = GetShortPathNameW(reinterpret_cast<const wchar_t*>(native.utf16()), buf, DWORD(std::size(buf)));
     if (n > 0 && n < std::size(buf)) return QString::fromWCharArray(buf, int(n)).toLocal8Bit();
@@ -74,10 +74,10 @@ QByteArray pathForMlt(const QString& path)
 
 void prepareMltEnvironment()
 {
-    // jackrack (LADSPA/LV2/VST2-Plugins, JACK) nutzt schneidi nicht: nicht laden. Spart das Durchsuchen der
-    // Plugin-Ordner beim Start, und ältere MLT-Versionen melden ohne LADSPA-Plugins sonst als Warnung
-    // „No LADSPA plugins were found! Check your LADSPA_PATH …“ (auch VST_PATH). Ein vom Nutzer gesetztes
-    // MLT_REPOSITORY_DENY bleibt erhalten (Liste mit ':', auch unter Windows – MLT trennt dort ebenfalls so).
+    // schneidi does not use jackrack (LADSPA/LV2/VST2 plugins, JACK): do not load it. Saves searching the
+    // plugin folders at startup, and older MLT versions otherwise report it as a warning without LADSPA plugins
+    // "No LADSPA plugins were found! Check your LADSPA_PATH …" (also VST_PATH). A value set by the user
+    // MLT_REPOSITORY_DENY is kept (list with ':', also on Windows – MLT separates it that way there too).
     QByteArray deny = qgetenv("MLT_REPOSITORY_DENY");
     if (!deny.split(':').contains("libmltjackrack"))
         qputenv("MLT_REPOSITORY_DENY", deny.isEmpty() ? QByteArray("libmltjackrack") : deny + ":libmltjackrack");
@@ -85,7 +85,7 @@ void prepareMltEnvironment()
     const auto set = setPathEnv;
     if (const QString p = bundledPrefix(); !p.isEmpty()) {
 #ifdef Q_OS_WIN
-        // MLT lädt Module mit dem Modulordner als Suchpfad: deren DLLs (ffmpeg, Qt, …) liegen im Programmordner
+        // MLT loads modules with the module folder as search path: their DLLs (ffmpeg, Qt, …) lie in the program folder
         const QString appDir = QDir::toNativeSeparators(QCoreApplication::applicationDirPath());
         SetDllDirectoryW(reinterpret_cast<const wchar_t*>(appDir.utf16()));
 #endif
@@ -109,13 +109,13 @@ bool verboseLogging()
 
 void configureMltLogging()
 {
-    // FFmpeg-Warnungen gehen direkt auf stderr (nicht ins Log) und sind im Normalbetrieb Rauschen, z. B. „[opus] Could
-    // not update timestamps for skipped/discarded samples“ (Decoder; MLT zählt die Samples selbst, Ton bleibt synchron)
-    // oder „[mp4] Timestamps are unset in a packet for stream 1 … making some up“ (MLT schreibt nach dem Leeren des
-    // Audio-Encoders ein leeres Paket ohne Zeitstempel; die Datei ist korrekt). MLT übernimmt die eigene Stufe nur
-    // einmal, beim ersten avformat-Dienst, als FFmpeg-Stufe – diesen hier mit der gewünschten Stufe anlegen.
+    // FFmpeg warnings go directly to stderr (not into the log) and are noise in normal operation, e.g. "[opus] Could
+    // not update timestamps for skipped/discarded samples" (decoder; MLT counts the samples itself, audio stays in sync)
+    // or "[mp4] Timestamps are unset in a packet for stream 1 … making some up" (MLT writes an empty packet without timestamp after flushing the
+    // audio encoder; the file is correct). MLT only takes over its own level once,
+    // at the first avformat service, as the FFmpeg level – create that one here with the desired level.
     const bool more = verboseLogging();
-    mlt_log_set_level(more ? MLT_LOG_WARNING : MLT_LOG_ERROR); // MLT- und FFmpeg-Stufen sind gleich nummeriert
+    mlt_log_set_level(more ? MLT_LOG_WARNING : MLT_LOG_ERROR); // MLT and FFmpeg levels are numbered the same
     if (mlt_profile profile = mlt_profile_init(nullptr)) {
         if (mlt_consumer c = mlt_factory_consumer(profile, "avformat", nullptr)) mlt_consumer_close(c);
         mlt_profile_close(profile);

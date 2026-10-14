@@ -1,5 +1,5 @@
-// Test Maus-Bedienung der Timeline (offscreen): Auswahlrahmen, Auto-Scroll am Rand, Spuren umsortieren;
-// dazu Auswahl ab Playhead (Y / Strg+Y / Alt+Y) und Schnittpunkte per Tastatur (V, U, , / .).
+// Test mouse operation of the timeline (offscreen): selection rectangle, auto-scroll at the edge, reorder tracks;
+// plus selection from the playhead (Y / Ctrl+Y / Alt+Y) and edit points by keyboard (V, U, , / .).
 #include "check.h"
 
 #include "app/Theme.h"
@@ -63,36 +63,36 @@ struct Fixture {
         tv.show();
         QApplication::processEvents();
     }
-    // Zeilen: V2 ab y 30, V1 ab 94 (je 64 hoch), Trennfuge 6, A1 ab 164
+    // Rows: V2 from y 30, V1 from 94 (64 high each), separator 6, A1 from 164
     int x(double frame) const { return int(std::lround(TimelineView::kHeaderW + (frame - tv.view().leftFrame) * tv.view().pxPerFrame)); }
 };
 
 void testRubber()
 {
     Fixture f;
-    // Rahmen von V2 (Frame 130, leer) nach V1 (Frame 95): berührt 3 und 1 – müssen nicht ganz drin sein
+    // Rectangle from V2 (frame 130, empty) to V1 (frame 95): touches 3 and 1 - they do not have to be fully inside
     drag(f.tv, {f.x(130), 40}, {f.x(95), 120});
     CHECK(f.sel.ids() == (QSet<int>{1, 3}));
-    CHECK(f.project.timeline().video[1].clips[0].start == 50); // nichts verschoben
+    CHECK(f.project.timeline().video[1].clips[0].start == 50); // nothing moved
 
-    // Klick auf leere Stelle hebt die Auswahl auf
+    // Click on an empty spot clears the selection
     mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
     mouse(f.tv, QEvent::MouseButtonRelease, {f.x(130), 120}, Qt::NoButton);
     CHECK(f.sel.isEmpty());
 
-    // Rahmen ohne Treffer -> nichts; nach oben/links aufgezogen geht genauso
+    // Rectangle without hit -> nothing; dragged up/left works the same
     drag(f.tv, {f.x(140), 120}, {f.x(110), 100});
     CHECK(f.sel.isEmpty());
     drag(f.tv, {f.x(130), 200}, {f.x(90), 170});
     CHECK(f.sel.ids() == QSet<int>{4});
 
-    // Strg bzw. Shift: zur bestehenden Auswahl hinzufügen
+    // Ctrl or Shift: add to the existing selection
     drag(f.tv, {f.x(140), 120}, {f.x(160), 110}, Qt::ControlModifier);
     CHECK(f.sel.ids() == (QSet<int>{2, 4}));
     drag(f.tv, {f.x(125), 40}, {f.x(115), 50}, Qt::ShiftModifier);
     CHECK(f.sel.ids() == (QSet<int>{2, 3, 4}));
 
-    // Gesperrte Spur: nichts darauf wird ausgewählt
+    // Locked track: nothing on it is selected
     f.editor.toggleTrackLock({TrackKind::Video, 0});
     drag(f.tv, {f.x(125), 40}, {f.x(95), 120});
     CHECK(f.sel.ids() == QSet<int>{3});
@@ -102,8 +102,8 @@ void testAutoScroll()
 {
     Fixture f;
     CHECK_EQ(f.tv.view().leftFrame, 0.0);
-    // Rahmen ab Frame 120 in V1, Maus über den rechten Rand hinaus: Timeline scrollt mit, Rahmenanfang bleibt
-    // an Frame 120 (Clip 1 endet bei 100 -> nicht drin)
+    // Rectangle from frame 120 in V1, mouse beyond the right edge: timeline scrolls along, rectangle start stays
+    // at frame 120 (clip 1 ends at 100 -> not inside)
     const QPoint from(f.x(120), 120);
     mouse(f.tv, QEvent::MouseButtonPress, from, Qt::LeftButton);
     mouse(f.tv, QEvent::MouseMove, from + QPoint(20, 0), Qt::LeftButton);
@@ -114,19 +114,19 @@ void testAutoScroll()
     mouse(f.tv, QEvent::MouseButtonRelease, {f.tv.width() + 10, 120}, Qt::NoButton);
     CHECK(f.sel.ids() == QSet<int>{2});
     QTest::qWait(100);
-    CHECK_EQ(f.tv.view().leftFrame, scrolled); // nach dem Loslassen kein Weiterscrollen
+    CHECK_EQ(f.tv.view().leftFrame, scrolled); // no further scrolling after release
 
-    // zurück an den linken Rand: scrollt bis Frame 0 und nicht weiter
-    CHECK(scrolled < 120); // Frame 130 (leer in V1) noch sichtbar
+    // back to the left edge: scrolls to frame 0 and no further
+    CHECK(scrolled < 120); // frame 130 (empty in V1) still visible
     mouse(f.tv, QEvent::MouseButtonPress, {f.x(130), 120}, Qt::LeftButton);
     mouse(f.tv, QEvent::MouseMove, {f.x(120), 120}, Qt::LeftButton);
     mouse(f.tv, QEvent::MouseMove, {TimelineView::kHeaderW - 40, 120}, Qt::LeftButton);
     QTest::qWait(1500);
     CHECK_EQ(f.tv.view().leftFrame, 0.0);
     mouse(f.tv, QEvent::MouseButtonRelease, {TimelineView::kHeaderW - 40, 120}, Qt::NoButton);
-    CHECK(f.sel.ids() == QSet<int>{1}); // Rahmen reicht jetzt von Frame 0 bis 130
+    CHECK(f.sel.ids() == QSet<int>{1}); // rectangle now spans from frame 0 to 130
 
-    // Clip verschieben über den rechten Rand: landet um den gescrollten Betrag weiter rechts
+    // Move clip beyond the right edge: lands further right by the scrolled amount
     const QPoint grab(f.x(200), 120);
     mouse(f.tv, QEvent::MouseButtonPress, grab, Qt::LeftButton);
     mouse(f.tv, QEvent::MouseMove, grab + QPoint(10, 0), Qt::LeftButton);
@@ -144,12 +144,12 @@ void testAutoScroll()
 void testTrackMove()
 {
     Fixture f;
-    // Spurkopf V2 auf V1 ziehen: V2 wird zu V1 (Clip 3 auf Spur 0)
+    // Drag track header V2 onto V1: V2 becomes V1 (clip 3 on track 0)
     drag(f.tv, {100, 50}, {100, 130});
     const Timeline& tl = f.project.timeline();
     CHECK(tl.video[0].clips.size() == 1 && tl.video[0].clips[0].id == 3);
     CHECK_EQ(tl.video[1].clips.size(), 2);
-    // weit über die Audiospuren hinaus: nächste Videospur (V1) ist das Ziel, ohne Änderung
+    // far beyond the audio tracks: next video track (V1) is the target, without change
     drag(f.tv, {100, 120}, {100, 400});
     CHECK(f.project.timeline().video[0].clips[0].id == 3);
 }
@@ -157,21 +157,21 @@ void testTrackMove()
 void testSelectFromPlayhead()
 {
     Fixture f;
-    // ohne Auswahl: Zielspuren V1 + A1; Clip unter dem Playhead gehört dazu
+    // without selection: target tracks V1 + A1; clip under the playhead belongs to it
     f.editor.selectFromPlayhead(60, true, false);
     CHECK(f.sel.ids() == (QSet<int>{1, 2, 4}));
     f.editor.selectFromPlayhead(60, false, false);
     CHECK(f.sel.ids() == (QSet<int>{1, 4}));
-    // alle Spuren
+    // all tracks
     f.editor.selectFromPlayhead(110, true, true);
     CHECK(f.sel.ids() == (QSet<int>{2, 3}));
     f.editor.selectFromPlayhead(110, false, true);
     CHECK(f.sel.ids() == (QSet<int>{1, 3, 4}));
-    // mit Auswahl: deren Spuren (hier V2)
+    // with selection: its tracks (here V2)
     f.sel.set({3});
     f.editor.selectFromPlayhead(0, true, false);
     CHECK(f.sel.ids() == QSet<int>{3});
-    // gesperrte Spur bleibt außen vor
+    // locked track is left out
     f.editor.toggleTrackLock({TrackKind::Audio, 0});
     f.editor.selectFromPlayhead(0, true, true);
     CHECK(f.sel.ids() == (QSet<int>{1, 2, 3}));
@@ -194,41 +194,41 @@ void testEditPoints()
     project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 5, 0});
     auto clipAt = [&](int id) { return *TimelineOps::findClip(project.timeline(), id); };
 
-    CHECK(!editor.nudgeEditPoint(1, false)); // nichts gewählt -> normales Nudge
-    // V: nächster Schnitt auf den Zielspuren (V1 + A1), am Schnitt zweier Clips beide Seiten
+    CHECK(!editor.nudgeEditPoint(1, false)); // nothing chosen -> normal nudge
+    // V: next cut on the target tracks (V1 + A1), at the cut of two clips both sides
     editor.selectNearestEditPoint(90);
     CHECK(sel.editPoint() == (EditPoint{1, 2, 0}));
     CHECK(sel.isEmpty());
-    // . = Roll um 1 Frame, ein Undo-Schritt
+    // . = roll by 1 frame, one undo step
     const int undo0 = project.undoStack()->count();
     CHECK(editor.nudgeEditPoint(1, false));
     CHECK_EQ(clipAt(1).end(), 101);
     CHECK(clipAt(2).start == 101 && clipAt(2).in == 51 && clipAt(2).end() == 200);
     CHECK_EQ(project.undoStack()->count(), undo0 + 1);
-    CHECK(sel.editPoint() == (EditPoint{1, 2, 0})); // bleibt gewählt
-    // U: nur linke Seite (Ende von Clip 1), ohne Ripple
+    CHECK(sel.editPoint() == (EditPoint{1, 2, 0})); // stays selected
+    // U: left side only (end of clip 1), without ripple
     editor.cycleEditPointSide();
     CHECK_EQ(sel.editPoint().side, -1);
     editor.nudgeEditPoint(-2, false);
     CHECK(clipAt(1).end() == 99 && clipAt(2).start == 101);
-    // U: rechte Seite (Anfang von Clip 2), dann wieder beide
+    // U: right side (start of clip 2), then both again
     editor.cycleEditPointSide();
     CHECK_EQ(sel.editPoint().side, 1);
     editor.nudgeEditPoint(-1, false);
     CHECK_EQ(clipAt(2).start, 100);
     editor.cycleEditPointSide();
     CHECK_EQ(sel.editPoint().side, 0);
-    // Kante an einer Lücke: nur eine Seite, U ändert nichts; Trim-Modus = Ripple
+    // Edge at a gap: one side only, U changes nothing; trim mode = ripple
     editor.selectNearestEditPoint(260);
     CHECK(sel.editPoint() == (EditPoint{2, 0, -1}));
     editor.cycleEditPointSide();
     CHECK_EQ(sel.editPoint().side, -1);
     editor.nudgeEditPoint(5, true);
     CHECK_EQ(clipAt(2).end(), 205);
-    // Ende von A1 liegt näher an 85 als der Schnitt bei 99/100
+    // End of A1 is nearer to 85 than the cut at 99/100
     editor.selectNearestEditPoint(85);
     CHECK(sel.editPoint() == (EditPoint{3, 0, -1}));
-    // Clip-Auswahl hebt den Schnittpunkt auf
+    // Clip selection clears the edit point
     sel.set({1});
     CHECK(sel.editPoint().isNull());
 }

@@ -11,7 +11,7 @@
 
 namespace {
 
-constexpr int kVersion = 2; // erhöhen, wenn sich Defaults ändern
+constexpr int kVersion = 2; // increase when defaults change
 
 const QHash<QString, WheelAction>& wheelNames()
 {
@@ -30,7 +30,7 @@ QString wheelName(WheelAction a)
     return wheelNames().key(a, "none");
 }
 
-// Namen in keybindings.json ("back" = hintere Seitentaste, "forward" = vordere)
+// Names in keybindings.json ("back" = rear side button, "forward" = front one)
 const QHash<QString, Qt::MouseButton>& mouseNames()
 {
     static const QHash<QString, Qt::MouseButton> names = {
@@ -55,7 +55,7 @@ InputBindings& InputBindings::instance()
 
 InputBindings::InputBindings()
 {
-    // Standard wie DaVinci Resolve. (KWin kann Alt+Mausrad abfangen -> in der Datei umbelegbar)
+    // Default like DaVinci Resolve. (KWin may intercept Alt+mouse wheel -> remappable in the file)
     m_wheel = {
         {"none", WheelAction::ScrollVertical},
         {"ctrl", WheelAction::ScrollHorizontal},
@@ -78,7 +78,7 @@ void InputBindings::load()
     if (!f.open(QIODevice::ReadOnly)) return;
     const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
 
-    // Ältere Datei mit überholten Defaults -> Mausrad-Defaults neu schreiben, Tasten behalten
+    // Older file with outdated defaults -> rewrite mouse wheel defaults, keep keys
     const bool outdated = root.value("version").toInt() < kVersion;
     if (outdated) m_fileExisted = false;
 
@@ -86,7 +86,7 @@ void InputBindings::load()
     for (auto it = wheel.begin(); it != wheel.end() && !outdated; ++it)
         m_wheel[it.key().toLower()] = wheelNames().value(it.value().toString(), WheelAction::None);
 
-    // Fehlt der Abschnitt (ältere Datei), bleiben die Defaults und er wird ergänzt
+    // If the section is missing (older file), the defaults remain and it gets added
     if (root.contains("mouse")) {
         m_mouse.clear();
         const QJsonObject mouse = root.value("mouse").toObject();
@@ -146,7 +146,7 @@ void InputBindings::save()
     QJsonObject wheel;
     for (auto it = m_wheel.begin(); it != m_wheel.end(); ++it) wheel[it.key()] = wheelName(it.value());
     QJsonObject keys;
-    for (auto it = m_shortcuts.begin(); it != m_shortcuts.end(); ++it) keys[it.key()] = it.value(); // auch unbekannte behalten
+    for (auto it = m_shortcuts.begin(); it != m_shortcuts.end(); ++it) keys[it.key()] = it.value(); // keep unknown ones too
     for (const Entry& e : m_entries) {
         keys[e.id] = current(e.id).toString(QKeySequence::PortableText);
         m_shortcuts[e.id] = keys[e.id].toString();
@@ -217,7 +217,7 @@ Qt::MouseButton InputBindings::defaultMouseButtonFor(const QString& id) const
 
 void InputBindings::setMouseButton(const QString& id, Qt::MouseButton b)
 {
-    // Pro Aktion eine Maustaste, pro Maustaste eine Aktion
+    // One mouse button per action, one action per mouse button
     for (auto it = m_mouse.begin(); it != m_mouse.end();)
         it = it.value() == id ? m_mouse.erase(it) : std::next(it);
     if (b != Qt::NoButton) m_mouse[b] = id;

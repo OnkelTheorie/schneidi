@@ -92,17 +92,17 @@ void MainWindow::buildLayout()
     m_scopes = new ScopesPanel;
     m_scopes->setVisible(QSettings().value("color/scopesVisible", true).toBool());
 
-    // Seiten; die gemeinsamen Panels (Pool, Viewer, Timeline) wandern beim Umschalten mit
+    // Pages; the shared panels (pool, viewer, timeline) move along when switching
     m_editTop = new QSplitter(Qt::Horizontal);
     m_editLeft = new QSplitter(Qt::Vertical);
     m_editLeft->addWidget(m_effects);
     m_editMain = new QSplitter(Qt::Vertical);
     m_editMain->addWidget(m_editTop);
-    m_editBottom = new QSplitter(Qt::Horizontal); // Mixer rechts neben der Timeline wie in DaVinci
+    m_editBottom = new QSplitter(Qt::Horizontal); // mixer to the right of the timeline like in DaVinci
     m_editBottom->addWidget(m_mixer);
     m_editBottom->setStretchFactor(0, 1);
     m_editMain->addWidget(m_editBottom);
-    // Media-Seite wie DaVinci: oben Media Storage | Viewer, unten der Media Pool
+    // Media page like DaVinci: Media Storage | Viewer on top, the Media Pool below
     m_mediaPage = new QSplitter(Qt::Vertical);
     m_mediaTop = new QSplitter(Qt::Horizontal);
     m_mediaPage->addWidget(m_mediaTop);
@@ -110,13 +110,13 @@ void MainWindow::buildLayout()
     m_deliverRight = new QSplitter(Qt::Vertical);
     m_deliverPage->addWidget(m_deliver);
     m_deliverPage->addWidget(m_deliverRight);
-    m_deliverPage->addWidget(m_deliver->queuePanel()); // Render-Warteschlange rechts wie in DaVinci
+    m_deliverPage->addWidget(m_deliver->queuePanel()); // Render queue on the right like in DaVinci
 
     m_pages = new QStackedWidget;
     m_pages->addWidget(m_mediaPage);
     m_pages->addWidget(m_editMain);
     m_pages->addWidget(m_deliverPage);
-    // Color-Seite wie DaVinci (abgespeckt): oben Viewer, Mitte Timeline, unten die Farbräder
+    // Color page like DaVinci (slimmed down): viewer on top, timeline in the middle, color wheels below
     // and the scopes right of them (DaVinci's scope panel); the scopes analyse each preview frame after the grade
     m_colorPage = new QSplitter(Qt::Vertical);
     m_colorBottom = new QSplitter(Qt::Horizontal);
@@ -142,14 +142,14 @@ void MainWindow::buildLayout()
 
 QWidget* MainWindow::buildTopBar()
 {
-    // Obere Leiste wie in DaVinci: Panels links/rechts ein- und ausblenden, Projektname mittig
-    // Sichtbarkeit wird gespeichert (panels/<key>); Testläufe ändern die Einstellung nicht
+    // Top bar like in DaVinci: show/hide panels left/right, project name in the middle
+    // Visibility is saved (panels/<key>); test runs do not change the setting
     auto makeToggle = [this](const QString& text, const QString& key, bool def, QWidget* panel) {
         auto* b = new QToolButton;
         b->setText(text);
         b->setCheckable(true);
         b->setChecked(QSettings().value("panels/" + key, def).toBool());
-        // Noch nicht eingehängte Panels nur verstecken (show() ohne Eltern öffnete ein eigenes Fenster)
+        // Only hide panels not yet inserted (show() without a parent opened its own window)
         if (panel->parentWidget() || !b->isChecked()) panel->setVisible(b->isChecked());
         connect(b, &QToolButton::toggled, this, [this, key, panel](bool on) {
             panel->setVisible(on);
@@ -192,7 +192,7 @@ QWidget* MainWindow::buildTopBar()
 
 QWidget* MainWindow::buildPageBar()
 {
-    // Seitenleiste unten wie in DaVinci (Media | Edit | Deliver)
+    // Sidebar at the bottom like in DaVinci (Media | Edit | Deliver)
     auto* bar = new QWidget;
     bar->setObjectName("PageBar");
     bar->setStyleSheet(

@@ -1,7 +1,7 @@
-// Test Effekte importieren (LUTs): Leser für .3dl, .csp und Hald-CLUT, mitgelieferte Looks (Kategorie „schneidi“),
-// eigener LUTs-Ordner mit Unterordnern, LUT aus der Effects Library auf einen Clip (mit Undo), Projektdatei
-// (mitgelieferte LUT ohne relativen Pfad, fehlende LUT im eigenen Ordner wiedergefunden) und das Widget samt
-// automatischem Neueinlesen. Bild der Kategorie „schneidi“: LUTS_DUMP=<datei.png> build-tests/tests/test_luts
+// Test importing effects (LUTs): readers for .3dl, .csp and Hald CLUT, bundled looks (category "schneidi"),
+// own LUTs folder with subfolders, LUT from the Effects Library onto a clip (with undo), project file
+// (bundled LUT without relative path, missing LUT found again in the own folder) and the widget including
+// automatic re-reading. Image of the category "schneidi": LUTS_DUMP=<file.png> build-tests/tests/test_luts
 #include "check.h"
 
 #include "core/Editor.h"
@@ -51,7 +51,7 @@ QByteArray cube(int n, const Fn& fn)
     return s;
 }
 
-// .3dl: Gitterzeile + ganzzahlige Werte (maxOut), B schnellster Index
+// .3dl: grid line + integer values (maxOut), B fastest index
 QByteArray threeDl(int n, int maxOut, const Fn& fn, bool meshLine = true)
 {
     QByteArray s = "# Test\n";
@@ -69,7 +69,7 @@ QByteArray threeDl(int n, int maxOut, const Fn& fn, bool meshLine = true)
     return s;
 }
 
-// Grauverlauf 0..255 (eine Zeile) durch die LUT
+// Gray ramp 0..255 (one row) through the LUT
 std::vector<uint8_t> graded(const ColorGrade::Lut* lut)
 {
     std::vector<uint8_t> px(256 * 4);
@@ -109,7 +109,7 @@ void testFormats(const QString& dir)
     QString err;
     auto path = [&](const char* name) { return QDir(dir).filePath(name); };
 
-    // .3dl: 10 und 12 Bit, mit und ohne Gitterzeile, Bittiefe aus „Mesh“
+    // .3dl: 10 and 12 bit, with and without grid line, bit depth from "Mesh"
     CHECK(writeFile(path("id10.3dl"), threeDl(17, 1023, kIdent)));
     CHECK(writeFile(path("inv12.3dl"), threeDl(9, 4095, kInvert)));
     CHECK(writeFile(path("inv-ohne.3dl"), threeDl(5, 1023, kInvert, false)));
@@ -118,7 +118,7 @@ void testFormats(const QString& dir)
         if (auto l = ColorGrade::parseLut(path(n), &err); CHECK(l)) CHECK(isIdentity(l.get()));
     for (const char* n : {"inv12.3dl", "inv-ohne.3dl"})
         if (auto l = ColorGrade::parseLut(path(n), &err); CHECK(l)) CHECK(isInvert(l.get()));
-    // Achsen-Reihenfolge: nur Rot invertiert -> Grün/Blau bleiben
+    // Axis order: only red inverted -> green/blue stay
     CHECK(writeFile(path("rot.3dl"), threeDl(5, 1023, [](double& r, double&, double&) { r = 1 - r; })));
     if (auto l = ColorGrade::parseLut(path("rot.3dl")); CHECK(l)) {
         std::vector<uint8_t> px{255, 0, 64, 255};
@@ -129,13 +129,13 @@ void testFormats(const QString& dir)
     err.clear();
     CHECK(!ColorGrade::parseLut(path("kaputt.3dl"), &err) && !err.isEmpty());
 
-    // .csp: 3D mit Metadaten, Vorab-Kurve (halbiert den Eingang), 1D
+    // .csp: 3D with metadata, pre-curve (halves the input), 1D
     QByteArray csp = "CSPLUTV100\n3D\n\nBEGIN METADATA\nTest\nEND METADATA\n\n";
     for (int c = 0; c < 3; ++c) csp += "2\n0.0 1.0\n0.0 1.0\n";
     csp += "\n9 9 9\n" + cube(9, kInvert).mid(QByteArray("LUT_3D_SIZE 9\n").size());
     CHECK(writeFile(path("inv.csp"), csp));
     if (auto l = ColorGrade::parseLut(path("inv.csp"), &err); CHECK(l)) {
-        CHECK(l->shaperIn[0].isEmpty()); // Identität -> keine Vorab-Kurve
+        CHECK(l->shaperIn[0].isEmpty()); // identity -> no pre-curve
         CHECK(isInvert(l.get()));
     }
     QByteArray half = "CSPLUTV100\n3D\n";
@@ -152,7 +152,7 @@ void testFormats(const QString& dir)
     CHECK(writeFile(path("falsch.csp"), "CSPLUTV100\n3D\n2\n0 1\n0 1\n"));
     CHECK(!ColorGrade::parseLut(path("falsch.csp")));
 
-    // Hald-CLUT (Stufe 4: 64x64, Würfel 16), Identität und invertiert, auch als 16-Bit-Bild
+    // Hald CLUT (level 4: 64x64, cube 16), identity and inverted, also as 16-bit image
     for (bool invert : {false, true}) {
         const int level = 4, n = level * level, w = level * level * level;
         QImage img(w, w, QImage::Format_RGBA64);
@@ -174,7 +174,7 @@ void testFormats(const QString& dir)
     err.clear();
     CHECK(!ColorGrade::parseLut(path("kein-hald.png"), &err) && !err.isEmpty());
 
-    // Unbekannte Endung, fehlende Datei; Zwischenspeicher bei loadLut
+    // Unknown extension, missing file; cache for loadLut
     CHECK(!ColorGrade::parseLut(path("x.txt")));
     CHECK(!ColorGrade::loadLut(path("fehlt.3dl")));
     auto a = ColorGrade::loadLut(path("id10.3dl"));
@@ -193,7 +193,7 @@ void testBuiltins()
         CHECK(!l.name.isEmpty() && EffectFolders::isBuiltin(l.path));
         CHECK_EQ(EffectFolders::displayName(l.path), l.name);
     }
-    // Schwarzweiß macht Farbe grau, Warm macht Grau wärmer
+    // Black and white makes color gray, Warm makes gray warmer
     if (auto sw = ColorGrade::loadLut(":/luts/schwarzweiss.cube"); CHECK(sw)) {
         std::vector<uint8_t> px{200, 60, 30, 255};
         ColorGrade::apply(px.data(), 1, 1, ColorGrade::Params(), sw.get());
@@ -209,10 +209,10 @@ void testBuiltins()
 
 void testUserFolder(const QString& dir)
 {
-    QDir(EffectFolders::root()).removeRecursively(); // Testmodus: eigener Ordner, nie der des Nutzers
+    QDir(EffectFolders::root()).removeRecursively(); // Test mode: own folder, never the user's
     EffectFolders::ensure();
     CHECK(QFileInfo(EffectFolders::lutDir()).isDir());
-    CHECK(!QDir(EffectFolders::root()).entryList({"*.txt"}, QDir::Files).isEmpty()); // Liesmich
+    CHECK(!QDir(EffectFolders::root()).entryList({"*.txt"}, QDir::Files).isEmpty()); // readme
     CHECK(EffectFolders::userLuts().isEmpty());
 
     const QDir luts(EffectFolders::lutDir());
@@ -222,15 +222,15 @@ void testUserFolder(const QString& dir)
     CHECK(writeFile(luts.filePath("Film/notiz.txt"), "keine LUT"));
     const auto all = EffectFolders::userLuts();
     if (CHECK_EQ(all.size(), 3)) {
-        CHECK_EQ(all[0].name, QString("alpha")); // oben zuerst, nach Name
+        CHECK_EQ(all[0].name, QString("alpha")); // top first, by name
         CHECK_EQ(all[1].name, QString("Zeta"));
         CHECK_EQ(all[2].group, QString("Film/Kodak"));
     }
-    CHECK_EQ(EffectFolders::watchDirs().size(), 5); // LUTs + 2 Unterordner + Transitions + Presets
+    CHECK_EQ(EffectFolders::watchDirs().size(), 5); // LUTs + 2 subfolders + Transitions + Presets
     CHECK_EQ(EffectFolders::findUserLut("k2.cube"), luts.filePath("Film/Kodak/k2.cube"));
     CHECK(EffectFolders::findUserLut("gibtsnicht.cube").isEmpty());
 
-    // LUT aus der Effects Library auf einen Clip (wie Ziehen/Doppelklick), Undo
+    // LUT from the Effects Library onto a clip (like dragging/double-click), undo
     Project p;
     Selection sel;
     Editor ed(&p, &sel);
@@ -245,12 +245,12 @@ void testUserFolder(const QString& dir)
     CHECK_EQ(p.undoStack()->index(), s0 + 1);
     CHECK_EQ(ColorGrade::lutPath(clip(v)), builtin);
     CHECK(ColorGrade::active(clip(v)));
-    CHECK(!EffectRegistry::has(clip(a), "grade")); // nur Video
+    CHECK(!EffectRegistry::has(clip(a), "grade")); // video only
     p.undoStack()->undo();
     CHECK(ColorGrade::lutPath(clip(v)).isEmpty());
     p.undoStack()->redo();
 
-    // Projektdatei: mitgelieferte LUT ohne relativen Pfad, lädt wieder
+    // Project file: bundled LUT without relative path, loads again
     const QString projPath = QDir(dir).filePath("p/film.schneidi");
     QDir().mkpath(QFileInfo(projPath).absolutePath());
     CHECK(!ProjectFile::toJson(p.data(), projPath).contains("relPaths"));
@@ -260,7 +260,7 @@ void testUserFolder(const QString& dir)
     CHECK(ProjectFile::load(projPath, &loaded, &err));
     CHECK_EQ(ColorGrade::lutPath(loaded.timeline.video[0].clips[0]), builtin);
 
-    // Projekt von einem anderen Rechner (Windows-Pfad): LUT gleichen Namens im eigenen Ordner gefunden
+    // Project from another machine (Windows path): LUT of the same name found in the own folder
     const QByteArray other = R"({"app":"schneidi","version":2,"fps":25,"media":[{"path":"/x/a.mp4","name":"a.mp4",
         "length":100,"hasVideo":true}],"timeline":{"video":[{"clips":[{"id":1,"start":0,"in":0,"out":49,"media":0,
         "effects":[{"id":"grade","params":{"lut":"C:\\Users\\Max\\Looks\\k2.cube"},"relPaths":{"lut":"../Looks/k2.cube"}}]}]}],
@@ -271,7 +271,7 @@ void testUserFolder(const QString& dir)
         CHECK_EQ(ColorGrade::lutPath(o.timeline.video[0].clips[0]), luts.filePath("Film/Kodak/k2.cube"));
 }
 
-// Oberste Kategorie mit diesem Namen, sonst die erste darunter („LUTs“ gibt es auch unter „schneidi“)
+// Topmost category with this name, otherwise the first below it ("LUTs" also exists under "schneidi")
 QTreeWidgetItem* findCategory(QTreeWidget* tree, const QString& text)
 {
     for (int i = 0; i < tree->topLevelItemCount(); ++i)
@@ -298,10 +298,10 @@ void testWidget()
 
     QTreeWidgetItem* top = findCategory(tree, "LUTs");
     if (!CHECK(top && top->childCount() == 2 && !findCategory(tree, "schneidi"))) return;
-    QTreeWidgetItem* builtin = top->child(0); // Mitgeliefert
-    QTreeWidgetItem* luts = top->child(1);    // Eigene
-    tree->setCurrentItem(top); // LUTs: Mitgeliefert + Eigene
-    if (const QByteArray dump = qgetenv("LUTS_DUMP"); !dump.isEmpty()) // Bild der Kategorie: LUTS_DUMP=<datei.png>
+    QTreeWidgetItem* builtin = top->child(0); // Bundled
+    QTreeWidgetItem* luts = top->child(1);    // Own
+    tree->setCurrentItem(top); // LUTs: Bundled + Own
+    if (const QByteArray dump = qgetenv("LUTS_DUMP"); !dump.isEmpty()) // image of the category: LUTS_DUMP=<file.png>
         lib.grab().save(QString::fromLocal8Bit(dump));
     CHECK_EQ(realItems(list), int(EffectFolders::builtinLuts().size()) + 3);
     tree->setCurrentItem(builtin);
@@ -314,17 +314,17 @@ void testWidget()
     QTreeWidgetItem* kodak = findCategory(tree, "Kodak");
     if (CHECK(film && kodak && kodak->parent() == film)) {
         tree->setCurrentItem(film);
-        CHECK_EQ(realItems(list), 1); // samt Unterordner
+        CHECK_EQ(realItems(list), 1); // including subfolder
     }
 
-    // Doppelklick = Signal mit "lut:<Pfad>"
+    // Double-click = signal with "lut:<path>"
     QSignalSpy spy(&lib, &EffectsLibrary::effectRequested);
     tree->setCurrentItem(builtin);
     emit list->itemDoubleClicked(list->item(0));
     if (CHECK_EQ(spy.size(), 1))
         CHECK(spy.first().first().toString().startsWith(EffectFolders::LutPrefix));
 
-    // Neue Datei + neuer Unterordner erscheinen von selbst, kaputte LUT sichtbar, aber nicht ziehbar
+    // New file + new subfolder appear by themselves, broken LUT visible but not draggable
     tree->setCurrentItem(luts);
     const QDir dir(EffectFolders::lutDir());
     CHECK(writeFile(dir.filePath("neu.cube"), cube(2, kIdent)));
@@ -332,7 +332,7 @@ void testWidget()
     QTRY_COMPARE_WITH_TIMEOUT(realItems(list), 4, 5000);
     CHECK_EQ(list->count(), 5);
     CHECK(findCategory(tree, "Kaputt"));
-    CHECK(tree->currentItem() == luts); // Auswahl bleibt
+    CHECK(tree->currentItem() == luts); // selection stays
     CHECK(QDir(dir.filePath("Kaputt")).removeRecursively());
     QTRY_VERIFY_WITH_TIMEOUT(!findCategory(tree, "Kaputt"), 5000);
     CHECK(!lib.grab().isNull());

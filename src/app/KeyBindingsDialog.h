@@ -4,8 +4,8 @@
 class QTableWidget;
 class QLineEdit;
 
-// Tastenbelegung anpassen (wie "Keyboard Customization" in DaVinci):
-// Zeile doppelklicken und neue Taste drücken, Spalte "Maustaste" für Seitentasten. Wirkt sofort, wird in keybindings.json gespeichert.
+// Customize key bindings (like "Keyboard Customization" in DaVinci):
+// Double-click a row and press a new key, column "Maustaste" for side buttons. Takes effect immediately, saved in keybindings.json.
 class KeyBindingsDialog : public QDialog {
     Q_OBJECT
 public:

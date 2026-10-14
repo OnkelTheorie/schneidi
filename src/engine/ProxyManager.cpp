@@ -19,8 +19,8 @@ namespace {
 
 constexpr const char* kSettingKey = "playback/useProxy";
 
-// Was ffmpeg über die Quelle wissen muss; gelesen über MLT, damit der Proxy genau so interpretiert wird
-// wie das Original (gleiche Framerate, gleiche Farbmatrix)
+// What ffmpeg needs to know about the source; read via MLT so that the proxy is interpreted exactly
+// like the original (same frame rate, same color matrix)
 struct SourceInfo {
     bool ok = false;
     bool hasVideo = false;
@@ -32,26 +32,26 @@ struct SourceInfo {
 
 struct ProxyJob {
     QString error;
-    QStringList args; // ffmpeg-Argumente
+    QStringList args; // ffmpeg arguments
     double durationUs = 0;
 };
 
 SourceInfo probeSource(const QString& path)
 {
     SourceInfo s;
-    Mlt::Profile profile("atsc_1080p_25"); // nur fürs Öffnen; Länge wird unten in Sekunden umgerechnet
+    Mlt::Profile profile("atsc_1080p_25"); // only for opening; length is converted to seconds below
     Mlt::Producer p(profile, path.toUtf8().constData());
     if (!p.is_valid()) return s;
     const QByteArray svc = p.get("mlt_service");
-    if (svc == "qimage" || svc == "pixbuf") return s; // Standbilder brauchen keinen Proxy
+    if (svc == "qimage" || svc == "pixbuf") return s; // still images need no proxy
     s.ok = true;
     s.hasVideo = p.get_int("video_index") >= 0;
-    // meta.media.frame_rate_*/colorspace setzt MLT erst beim ersten Frame
-    // (Framerate = r_frame_rate, bei variabler Framerate also die höchste -> CFR verdoppelt nur Bilder)
+    // MLT only sets meta.media.frame_rate_*/colorspace at the first frame
+    // (frame rate = r_frame_rate, i.e. the highest with variable frame rate -> CFR only duplicates frames)
     std::unique_ptr<Mlt::Frame> frame(p.get_frame());
     s.rateNum = p.get_int("meta.media.frame_rate_num");
     s.rateDen = p.get_int("meta.media.frame_rate_den");
-    // Ohne Angabe in der Datei rät MLT nach der Bildhöhe (unter 720 -> BT.601); der Wert hier ist schon das Ergebnis
+    // Without information in the file MLT guesses by image height (below 720 -> BT.601); the value here is already the result
     if (const int cs = p.get_int("meta.media.colorspace"); cs > 0) s.colorspace = cs;
     else if (const int h = p.get_int("meta.media.height"); h > 0) s.colorspace = h < 720 ? 601 : 709;
     s.fullRange = qstrcmp(p.get("meta.media.color_range"), "jpeg") == 0;
@@ -59,8 +59,8 @@ SourceInfo probeSource(const QString& path)
     return s;
 }
 
-// ffmpeg-Namen zur MLT-Farbmatrix (Proxy bekommt die Matrix des Originals als Kennzeichnung,
-// sonst hält MLT ein 540p-Bild ohne Angabe für BT.601 und die Farben verschieben sich)
+// ffmpeg names for the MLT color matrix (the proxy gets the matrix of the original as tag,
+// otherwise MLT takes a 540p image without tag for BT.601 and the colors shift)
 const char* ffColorspace(int cs)
 {
     switch (cs) {
@@ -71,7 +71,7 @@ const char* ffColorspace(int cs)
     }
 }
 
-// Läuft in einem Hilfsthread (Öffnen + erstes Frame dekodieren kann bei 4K dauern): ffmpeg-Aufruf zusammenstellen
+// Runs in a helper thread (opening + decoding the first frame can take a while at 4K): assemble the ffmpeg call
 ProxyJob prepareJob(const QString& original, const QString& part)
 {
     ProxyJob job;
@@ -82,12 +82,12 @@ ProxyJob prepareJob(const QString& original, const QString& part)
     }
     job.durationUs = info.seconds * 1e6;
 
-    // Längere Kante höchstens kMaxSize (1080p -> 540p, 4K -> Viertel), nie vergrößern; anamorphe Pixel
-    // (sar) werden quadratisch gemacht. Gerade Maße für yuv420p.
+    // Longer edge at most kMaxSize (1080p -> 540p, 4K -> quarter), never enlarge; anamorphic pixels
+    // (sar) are made square. Even dimensions for yuv420p.
     const QString k = QString::number(ProxyManager::kMaxSize);
     const QString f = QString("min(1,%1/max(iw*sar,ih))").arg(k);
-    // Farbmatrix fest wie MLT sie beim Original annimmt (auch bei Dateien ohne Angabe), damit ffmpeg nicht
-    // "korrigiert" und der Proxy in der Vorschau genauso aussieht wie das Original
+    // Fix the color matrix as MLT assumes it for the original (also for files without tag), so that ffmpeg does not
+    // "correct" it and the proxy looks exactly like the original in the preview
     const char* cs = ffColorspace(info.colorspace);
     const QString matrix = info.colorspace == 2020 ? "bt2020" : cs;
     const QString scale = QString("scale=w='trunc(%1*iw*sar/2)*2':h='trunc(%1*ih/2)*2'"
@@ -98,11 +98,11 @@ ProxyJob prepareJob(const QString& original, const QString& part)
     QStringList args{"-hide_banner", "-nostdin", "-y", "-i", original,
                      "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-map_metadata", "-1",
                      "-vf", scale,
-                     // Kurze GOP ohne B-Frames: Springen/Scrubben in der Vorschau bleibt schnell
+                     // short GOP without B-frames: jumping/scrubbing in the preview stays fast
                      "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-tune", "fastdecode",
                      "-g", "10", "-bf", "0", "-pix_fmt", "yuv420p",
                      "-colorspace", cs, "-color_primaries", primaries, "-color_trc", trc, "-color_range", "tv"};
-    // Konstante Framerate gleich der Quelle (Handy-Clips mit variabler Framerate -> CFR)
+    // Constant frame rate equal to the source (phone clips with variable frame rate -> CFR)
     if (info.rateNum > 0 && info.rateDen > 0)
         args << "-r" << QString("%1/%2").arg(info.rateNum).arg(info.rateDen);
     args << "-fps_mode" << "cfr"
@@ -125,7 +125,7 @@ ProxyManager::~ProxyManager()
 {
     m_queue.clear();
     stopCurrent();
-    // Auch Untersuchungen abgebrochener Aufträge können noch laufen (nicht nur m_probeThread)
+    // Probes of canceled jobs may also still be running (not only m_probeThread)
     for (QThread* t : findChildren<QThread*>(Qt::FindDirectChildrenOnly)) {
         t->disconnect(this);
         t->wait();
@@ -139,7 +139,7 @@ QString ProxyManager::cacheDir()
 
 QString ProxyManager::proxyPath(const QString& original)
 {
-    // Schlüssel wie beim Wellenform-Cache: geänderte Originale bekommen automatisch einen neuen Proxy
+    // Key as with the waveform cache: changed originals automatically get a new proxy
     const QFileInfo fi(original);
     const QString id = QString("%1|%2|%3|%4")
                            .arg(fi.absoluteFilePath())
@@ -225,7 +225,7 @@ void ProxyManager::cancelAll()
 
 void ProxyManager::stopCurrent()
 {
-    ++m_job; // laufende Untersuchung verfällt
+    ++m_job; // a running probe expires
     if (m_process) {
         m_process->disconnect(this);
         m_process->kill();
@@ -233,7 +233,7 @@ void ProxyManager::stopCurrent()
         m_process->deleteLater();
         m_process = nullptr;
     }
-    if (!m_currentPart.isEmpty()) QFile::remove(m_currentPart); // halbfertige Datei weg
+    if (!m_currentPart.isEmpty()) QFile::remove(m_currentPart); // half-finished file gone
     m_current.clear();
     m_currentPart.clear();
     m_progress = 0;
@@ -254,11 +254,11 @@ void ProxyManager::startNext()
     emit queueChanged();
     emit progress(original, 0);
 
-    // Quelle im Hilfsthread untersuchen, dann ffmpeg im UI-Thread starten (Abbruch dazwischen: Job verfällt)
+    // Probe the source in a helper thread, then start ffmpeg in the UI thread (cancel in between: job expires)
     const int job = ++m_job;
     auto result = std::make_shared<ProxyJob>();
     m_probeThread = QThread::create([result, original, part = m_currentPart] { *result = prepareJob(original, part); });
-    m_probeThread->setParent(this); // Destruktor wartet auf alle noch laufenden
+    m_probeThread->setParent(this); // destructor waits for all still running ones
     connect(m_probeThread, &QThread::finished, this, [this, result, original, job, thread = m_probeThread] {
         thread->deleteLater();
         if (m_probeThread == thread) m_probeThread = nullptr;
@@ -270,7 +270,7 @@ void ProxyManager::startNext()
 void ProxyManager::launch(const QString& original, const QStringList& args, double durationUs, const QString& error)
 {
     QString ffmpeg = Bundle::tool("ffmpeg");
-    if (!QFileInfo(ffmpeg).isAbsolute()) ffmpeg.clear(); // weder mitgeliefert noch im PATH
+    if (!QFileInfo(ffmpeg).isAbsolute()) ffmpeg.clear(); // neither bundled nor in PATH
     if (!error.isEmpty() || ffmpeg.isEmpty()) {
         m_current.clear();
         m_currentPart.clear();
@@ -290,7 +290,7 @@ void ProxyManager::launch(const QString& original, const QStringList& args, doub
     });
     connect(m_process, &QProcess::finished, this,
             [this](int code, QProcess::ExitStatus st) { onFinished(code, st == QProcess::CrashExit); });
-    // Startet ffmpeg gar nicht (kaputt, gesperrt), kommt kein finished() -> sonst hinge die Warteschlange für immer
+    // If ffmpeg does not start at all (broken, blocked), no finished() arrives -> otherwise the queue would hang forever
     connect(m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart || !m_process) return;
         m_errorTail = m_process->errorString();
@@ -301,7 +301,7 @@ void ProxyManager::launch(const QString& original, const QStringList& args, doub
 
 void ProxyManager::onOutput()
 {
-    // -progress liefert Zeilen "key=value", u. a. out_time_us (Mikrosekunden fertig)
+    // -progress delivers lines "key=value", among others out_time_us (microseconds done)
     while (m_process && m_process->canReadLine()) {
         const QByteArray line = m_process->readLine().trimmed();
         if (!line.startsWith("out_time_us=") || m_durationUs <= 0) continue;
@@ -329,7 +329,7 @@ void ProxyManager::onFinished(int exitCode, bool crashed)
     const QString target = proxyPath(original);
     if (!crashed && exitCode == 0 && QFileInfo(part).size() > 0) {
         QFile::remove(target);
-        QFile::rename(part, target); // erst jetzt sichtbar -> nie halbfertige Proxies in der Vorschau
+        QFile::rename(part, target); // only now visible -> never half-finished proxies in the preview
     } else {
         QFile::remove(part);
         qWarning("Proxy fehlgeschlagen (%s, Code %d): %s", qPrintable(original), exitCode, qPrintable(tail));

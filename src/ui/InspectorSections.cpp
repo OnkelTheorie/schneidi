@@ -89,7 +89,7 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
     prev->setStyleSheet(arrowCss);
     next->setStyleSheet(arrowCss);
 
-    // Keyframe am Playhead für alle Parameter der Zeile?
+    // Keyframe at the playhead for all parameters of the row?
     auto onKey = [this, params](const Clip& c) {
         return std::all_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::keyAt(c, p, localFrame(c)); });
     };
@@ -98,7 +98,7 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
         if (!c) return;
         m_editor->setKeyframes(selectedIds(kind, title, effect), params, m_playhead, !onKey(*c));
     });
-    // Springen: nur Keyframes innerhalb des Clips (nach Trimmen können welche außerhalb liegen)
+    // Jumping: only keyframes inside the clip (after trimming some may lie outside)
     auto jump = [=, this](bool forward) {
         const Clip* c = primary(kind, title, effect);
         if (!c) return;
@@ -113,7 +113,7 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
     connect(prev, &QToolButton::clicked, this, [jump] { jump(false); });
     connect(next, &QToolButton::clicked, this, [jump] { jump(true); });
 
-    // Rechtsklick auf die Raute: Verlauf wie DaVinci
+    // Right-click on the diamond: interpolation like DaVinci
     diamond->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(diamond, &QWidget::customContextMenuRequested, this, [=, this](const QPoint& pos) {
         const Clip* c = primary(kind, title, effect);
@@ -124,7 +124,7 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
             {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
             {KeyEase::EaseInOut, "Ease In and Out"}, {KeyEase::Bezier, "Bezier"}};
         for (const auto& e : eases) {
-            QAction* a = menu.addAction(e.name); // wie DaVinci auch deutsch englisch
+            QAction* a = menu.addAction(e.name); // as in DaVinci, English even in the German version
             a->setCheckable(true);
             a->setChecked(k && k->ease == e.ease);
             connect(a, &QAction::triggered, this, [=, this, ease = e.ease] {
@@ -139,7 +139,7 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
         if (!c) return;
         const bool animated = std::any_of(params.begin(), params.end(), [&](AnimParam p) { return Keys::animated(*c, p); });
         const bool here = animated && onKey(*c);
-        // Raute: leer = kein Keyframe hier, rot gefüllt = Keyframe am Playhead (wie DaVinci)
+        // Diamond: empty = no keyframe here, filled red = keyframe at the playhead (like DaVinci)
         const QString text = here ? "◆" : "◇";
         const QString css = QString("QToolButton { color: %1; border: none; padding: 0px; font-size: 10pt; }")
                                 .arg((here ? Theme::warning : animated ? Theme::text : Theme::textDim).name());
@@ -227,7 +227,7 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
     const QString id = d.id;
     const TrackKind kind = d.video ? TrackKind::Video : TrackKind::Audio;
     Section s = addSection(page, kind, d.name, [id](Clip& c) {
-        // Zurücksetzen: Default-Werte, Keyframes weg, eingeschaltet
+        // Reset: default values, keyframes gone, switched on
         EffectInstance* e = EffectRegistry::instance(c, id);
         const EffectDescriptor* desc = EffectRegistry::find(id);
         if (!e || !desc) return;
@@ -337,7 +337,7 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
                                      shown = EffectRegistry::value(c, id, key).toDouble();
                                      return shown;
                                  }, anim);
-        if (!anim) // nicht animierbar: direkt in die Instanz schreiben
+        if (!anim) // not animatable: write directly into the instance
             param->edit->onChange = [this, param, id, key, kind, label = p.label](double v) {
                 const QSignalBlocker b(param->slider);
                 param->slider->setValue(sliderPos(v, param->min, param->max));
@@ -433,7 +433,7 @@ void Inspector::addStabilizeRow(Section& s)
 
 void Inspector::addRemoveButton(const Section& s, const QString& id)
 {
-    // Entfernen: Papierkorb in der Kopfzeile oder Rechtsklick auf die Kopfzeile
+    // Remove: trash can in the header or right-click on the header
     auto remove = [this, id, kind = s.kind] { m_editor->removeEffect(selectedIds(kind, false, id), id); };
     auto* trash = new QToolButton;
     trash->setIcon(trashIcon());
@@ -443,7 +443,7 @@ void Inspector::addRemoveButton(const Section& s, const QString& id)
     trash->setToolTip(T("Effekt entfernen"));
     trash->setStyleSheet("QToolButton { border: none; background: transparent; }");
     connect(trash, &QToolButton::clicked, this, remove);
-    s.headerLayout->insertWidget(s.headerLayout->count() - 1, trash); // vor dem Zurücksetzen-Knopf
+    s.headerLayout->insertWidget(s.headerLayout->count() - 1, trash); // before the reset button
     s.header->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(s.header, &QWidget::customContextMenuRequested, this,
             [this, header = s.header, remove, video = s.kind == TrackKind::Video](const QPoint& pos) {
@@ -554,7 +554,7 @@ Inspector::Param* Inspector::makeParam(const Section& s, const QString& key, con
             p->slider->setValue(sliderPos(v, p->min, p->max));
         }
         apply(p->kind, key, text, [this, p, field, v](Clip& c) {
-            // animiert: Wert ändern setzt einen Keyframe am Playhead (wie DaVinci)
+            // animated: changing the value sets a keyframe at the playhead (like DaVinci)
             if (p->anim) Keys::setValue(c, *p->anim, localFrame(c), v);
             else field(c) = v;
         }, p->title, p->effect);
@@ -571,12 +571,12 @@ Inspector::Param* Inspector::addSlider(Section& s, const QString& key, const QSt
     Param* p = makeParam(s, key, label, min, max, def, step, decimals, field, anim);
     auto* slider = new QSlider(Qt::Horizontal);
     slider->setRange(0, kSliderSteps);
-    slider->setFocusPolicy(Qt::NoFocus); // Pfeiltasten bleiben bei der Timeline
+    slider->setFocusPolicy(Qt::NoFocus); // arrow keys stay with the timeline
     slider->setValue(sliderPos(def, min, max));
     p->slider = slider;
     connect(slider, &QSlider::valueChanged, this, [p](int v) {
         p->edit->setValue(p->min + (p->max - p->min) * v / kSliderSteps);
-        const QSignalBlocker b(p->slider); // Rückkopplung vermeiden
+        const QSignalBlocker b(p->slider); // avoid feedback
         if (p->edit->onChange) p->edit->onChange(p->edit->value());
     });
     connect(slider, &QSlider::sliderReleased, this, [this] { m_editor->project()->closeMerge(); });
@@ -613,7 +613,7 @@ QPair<Inspector::Param*, Inspector::Param*> Inspector::addXY(Section& s, const Q
     box->addWidget(axisLabel("X"));
     box->addWidget(px->edit);
     if (link) box->addWidget(link);
-    else box->addSpacing(20 + box->spacing()); // Felder bündig mit der Zoom-Zeile
+    else box->addSpacing(20 + box->spacing()); // fields flush with the Zoom row
     box->addWidget(axisLabel("Y"));
     box->addWidget(py->edit);
     s.grid->addWidget(rowLabel(label), s.rows, 0);

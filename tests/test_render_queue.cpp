@@ -1,5 +1,5 @@
-// Test Deliver: Render-Einstellungen/Vorlagen (eingebaut + eigene), Render-Warteschlange (Projektdatei, DeliverPanel,
-// nacheinander rendern mit Status, Fehler, Abbrechen). Gerendert wird klein und kurz (ffmpeg/ffprobe nötig).
+// Test Deliver: render settings/presets (built-in + own), render queue (project file, DeliverPanel,
+// render one after another with status, error, cancel). Rendering is small and short (ffmpeg/ffprobe needed).
 #include "check.h"
 
 #include "core/Project.h"
@@ -35,7 +35,7 @@ const RenderJob* job(const Project& p, int id)
     return nullptr;
 }
 
-// ffprobe: "codec_type=video|codec_name=h264|width=..." je Strom + Dauer
+// ffprobe: "codec_type=video|codec_name=h264|width=..." per stream + duration
 QJsonObject probe(const QString& path)
 {
     QProcess p;
@@ -69,9 +69,9 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("render-queue");
-    QFile::remove(RenderPresets::userFile()); // Test-Einstellungen vom letzten Lauf
+    QFile::remove(RenderPresets::userFile()); // test settings from the last run
 
-    // --- Einstellungen: Ausgabegröße
+    // --- Settings: output size
     {
         const QSize hd(1920, 1080), portrait(1080, 1920);
         RenderSettings s;
@@ -80,12 +80,12 @@ int main(int argc, char** argv)
         CHECK_EQ(s.outputSize(hd), QSize(3840, 2160));
         s.shortSide = 720;
         CHECK_EQ(s.outputSize(portrait), QSize(720, 1280));
-        s.size = QSize(1080, 1920); // fest hat Vorrang
+        s.size = QSize(1080, 1920); // fixed takes precedence
         CHECK_EQ(s.outputSize(hd), QSize(1080, 1920));
         s.format = "wav";
         CHECK(s.audioOnly() && s.outputSize(hd).isEmpty());
         CHECK_EQ(renderFormat("gibtsnicht").id, QString("h264").toLatin1());
-        // JSON hin und zurück
+        // JSON there and back
         RenderSettings a;
         a.format = "prores";
         a.shortSide = 1080;
@@ -96,7 +96,7 @@ int main(int argc, char** argv)
         CHECK(RenderSettings::fromJson(a.toJson()) == a);
     }
 
-    // --- Eingebaute Vorlagen
+    // --- Built-in presets
     {
         const auto b = RenderPresets::builtins();
         QStringList formats;
@@ -118,10 +118,10 @@ int main(int argc, char** argv)
         CHECK_EQ(high.maxBitrateK({1920, 1080}, {60, 1}), 0); // other qualities: no cap
         CHECK(RenderSettings::fromJson(b[0].settings.toJson()) == b[0].settings);
         CHECK_EQ(b[1].settings.outputSize({1920, 1080}), QSize(3840, 2160));
-        CHECK_EQ(b[2].settings.outputSize({1920, 1080}), QSize(1080, 1920)); // Hochformat 9:16
+        CHECK_EQ(b[2].settings.outputSize({1920, 1080}), QSize(1080, 1920)); // portrait 9:16
     }
 
-    // --- Warteschlange in der Projektdatei
+    // --- Queue in the project file
     {
         ProjectData d;
         TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 1);
@@ -144,7 +144,7 @@ int main(int argc, char** argv)
         j2.message = "kaputt";
         RenderJob j3 = j1;
         j3.id = 3;
-        j3.status = RenderStatus::Rendering; // Programm während des Renderns beendet
+        j3.status = RenderStatus::Rendering; // program quit during rendering
         d.renderQueue = {j1, j2, j3};
         ProjectData back;
         QString err;
@@ -156,24 +156,24 @@ int main(int argc, char** argv)
             CHECK(back.renderQueue[1] == j2);
             CHECK(back.renderQueue[2].status == RenderStatus::Queued);
         }
-        // Speichern -> Laden -> Speichern identisch
+        // Save -> load -> save identical
         CHECK_EQ(ProjectFile::toJson(back, "/x/p.schneidi"),
                  ProjectFile::toJson(ProjectData{back.format, back.playhead, back.media, back.bins, back.timeline,
                                                  back.lastClipId, back.lastLinkId, back.renderQueue},
                                      "/x/p.schneidi"));
-        // Leere Warteschlange: kein Eintrag (Dateien bleiben wie vorher); alte Datei ohne Eintrag
+        // Empty queue: no entry (files stay as before); old file without entry
         d.renderQueue.clear();
         CHECK(!ProjectFile::toJson(d, "/x/p.schneidi").contains("renderQueue"));
         CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[],"timeline":{"video":[],"audio":[]}})",
                                     "/x/p.schneidi", &back, &err));
         CHECK(back.renderQueue.isEmpty());
-        // Doppelte/fehlende ids werden neu vergeben, Aufträge ohne Pfad verworfen
+        // Duplicate/missing ids are reassigned, jobs without a path discarded
         const auto fixed = RenderQueueJson::fromJson(QJsonDocument::fromJson(
             R"([{"id":1,"path":"/a.mp4"},{"id":1,"path":"/b.mp4"},{"path":"/c.mp4"},{"id":4}])").array());
         CHECK_EQ(fixed.size(), 3);
         if (fixed.size() == 3) CHECK(fixed[0].id == 1 && fixed[1].id == 2 && fixed[2].id == 3);
 
-        // Project: Änderung gilt als Änderung, aber ohne Undo-Schritt (wie DaVinci)
+        // Project: change counts as a change, but without an undo step (like DaVinci)
         Project p;
         const int undo = p.undoStack()->count();
         CHECK(!p.isModified());
@@ -185,7 +185,7 @@ int main(int argc, char** argv)
         CHECK(p.renderQueue().isEmpty());
     }
 
-    // --- DeliverPanel: Vorlagen, eigene Vorlagen, Aufträge anlegen
+    // --- DeliverPanel: presets, own presets, create jobs
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     {
@@ -202,7 +202,7 @@ int main(int argc, char** argv)
         CHECK_EQ(j.path, QDir(tmp.path()).filePath("Film.mp4"));
         CHECK_EQ(j.preset, QString("YouTube 1080p"));
         CHECK(!j.inOut);
-        // Hochformat, nur Audio, ProRes
+        // Portrait, audio only, ProRes
         const auto& presets = panel.presets();
         for (int i = 0; i < presets.size(); ++i) {
             panel.selectPreset(i);
@@ -213,16 +213,16 @@ int main(int argc, char** argv)
             if (presets[i].settings.audioOnly()) CHECK(j.size.isEmpty());
             else CHECK_EQ(j.size, presets[i].settings.outputSize({1920, 1080}));
         }
-        // Einstellung ändern -> „Eigene Einstellungen“
+        // Change setting -> "Own settings"
         const RenderSettings youtube = presets[0].settings;
         panel.setSettings(RenderSettings{}); // H.264, quality high: no preset (YouTube caps the bit rate)
         CHECK_EQ(panel.currentPreset(), -1);
         auto* format = panel.findChild<QComboBox*>("renderFormat");
         if (CHECK(format && format->count() == renderFormats().size())) {
-            format->setCurrentIndex(1); // H.265 in Timeline-Auflösung = eingebaute H.265-Vorlage
+            format->setCurrentIndex(1); // H.265 at timeline resolution = built-in H.265 preset
             CHECK(panel.currentPreset() >= 0 && presets[panel.currentPreset()].settings.format == "h265");
             RenderSettings custom;
-            custom.quality = 1; // H.264 1080p Mittel: keine Vorlage
+            custom.quality = 1; // H.264 1080p Medium: no preset
             panel.setSettings(custom);
             CHECK_EQ(panel.currentPreset(), -1);
             format->setCurrentIndex(1);
@@ -252,7 +252,7 @@ int main(int argc, char** argv)
                 CHECK_EQ(panel.currentPreset(), 0);
             }
         }
-        // Eigene Vorlage speichern, wiederfinden, überschreiben, löschen; eingebaute bleiben
+        // Save own preset, find again, overwrite, delete; built-in ones stay
         RenderSettings mine;
         mine.format = "h265";
         mine.shortSide = 720;
@@ -267,11 +267,11 @@ int main(int argc, char** argv)
         CHECK_EQ(RenderPresets::loadUser().size(), 1);
         CHECK(RenderPresets::loadUser().value(0).settings == mine);
         {
-            DeliverPanel other(&p); // neue Instanz liest die Datei
+            DeliverPanel other(&p); // new instance reads the file
             CHECK_EQ(other.presets().size(), count);
             CHECK_EQ(other.presets().last().name, QString("Mein Export"));
         }
-        // Ihre Warteschlangen-Anzeige stirbt mit (hing sonst mit gelöschter RenderQueue am Projekt -> Absturz)
+        // Its queue display dies too (otherwise it hung on the project with a deleted RenderQueue -> crash)
         const QWidgetList widgets = QApplication::allWidgets();
         CHECK_EQ(std::count_if(widgets.begin(), widgets.end(), [](QWidget* w) { return qobject_cast<RenderQueuePanel*>(w); }),
                  1);
@@ -280,12 +280,12 @@ int main(int argc, char** argv)
         CHECK(panel.savePreset("Mein Export"));
         CHECK_EQ(panel.presets().size(), count);
         CHECK_EQ(RenderPresets::loadUser().value(0).settings.quality, 2);
-        CHECK(!panel.deletePreset(0)); // eingebaut
+        CHECK(!panel.deletePreset(0)); // built-in
         CHECK(panel.deletePreset(count - 1));
         CHECK(RenderPresets::loadUser().isEmpty());
         CHECK_EQ(panel.presets().size(), count - 1);
 
-        // Aufträge: ids steigen, In/Out-Bereich wird festgehalten, Entfernen
+        // Jobs: ids increase, In/Out range is captured, removal
         panel.selectPreset(0);
         CHECK(panel.addToQueue(false));
         p.edit("inout", [](Timeline& tl) {
@@ -305,7 +305,7 @@ int main(int argc, char** argv)
         CHECK_EQ(p.renderQueue().last().id, 3);
     }
 
-    // --- Rendern (klein und kurz)
+    // --- Rendering (small and short)
     if (!Check::haveFfmpeg() || QStandardPaths::findExecutable("ffprobe").isEmpty())
         return Check::skip("ffmpeg/ffprobe nicht gefunden");
     const QString clip = Check::makeMedia(tmp.filePath("clip.mp4"),
@@ -360,9 +360,9 @@ int main(int argc, char** argv)
     QFile blocker(tmp.filePath("datei"));
     CHECK(blocker.open(QIODevice::WriteOnly));
     blocker.close();
-    RenderJob bad = mk(4, "datei/unmöglich.mp4", "h264"); // Ordner ist eine Datei
+    RenderJob bad = mk(4, "datei/unmöglich.mp4", "h264"); // folder is a file
     RenderJob d = mk(5, "d.m4a", "aac");
-    d.status = RenderStatus::Done; // fertig: wird bei „Alle rendern“ übersprungen
+    d.status = RenderStatus::Done; // done: skipped on "Render all"
     p.setRenderQueue({a, b, c, bad, d});
 
     RenderQueue q(&p);
@@ -377,7 +377,7 @@ int main(int argc, char** argv)
     });
     CHECK(q.start());
     CHECK(q.isRunning());
-    CHECK(!q.start()); // läuft schon
+    CHECK(!q.start()); // already running
     CHECK(waitFor(q));
     CHECK_EQ(order, (QVector<int>{1, 2, 3, 4}));
     CHECK(done == 3 && failed == 1);
@@ -385,7 +385,7 @@ int main(int argc, char** argv)
     CHECK(job(p, 1)->status == RenderStatus::Done && job(p, 1)->renderMs > 0);
     CHECK(job(p, 2)->status == RenderStatus::Done && job(p, 3)->status == RenderStatus::Done);
     CHECK(job(p, 4)->status == RenderStatus::Failed && !job(p, 4)->message.isEmpty());
-    CHECK(job(p, 5)->status == RenderStatus::Done && !QFileInfo::exists(d.path)); // nicht neu gerendert
+    CHECK(job(p, 5)->status == RenderStatus::Done && !QFileInfo::exists(d.path)); // not rendered again
 
     const QJsonObject pa = probe(a.path);
     const QJsonObject va = stream(pa, "video");
@@ -401,22 +401,22 @@ int main(int argc, char** argv)
     CHECK(std::abs(durB - 2.0) < 0.1);
     const QJsonObject pc = probe(c.path);
     CHECK_EQ(stream(pc, "video").value("codec_name").toString(), QString("prores"));
-    CHECK_EQ(stream(pc, "video").value("width").toInt(), 320); // Timeline-Auflösung
+    CHECK_EQ(stream(pc, "video").value("width").toInt(), 320); // timeline resolution
 
-    // Einzelnen fertigen Auftrag gezielt neu rendern
+    // Re-render a single finished job on purpose
     order.clear();
     CHECK(q.start({5}));
     CHECK(waitFor(q));
     CHECK_EQ(order, (QVector<int>{5}));
     CHECK(QFileInfo::exists(d.path) && stream(probe(d.path), "audio").value("codec_name").toString() == "aac");
-    // Ohne Auswahl: alles, was nicht fertig ist -> nur der fehlerhafte Auftrag 4 (schlägt wieder fehl)
+    // Without selection: everything that is not finished -> only the faulty job 4 (fails again)
     order.clear();
     CHECK(q.start());
     CHECK(waitFor(q));
     CHECK_EQ(order, (QVector<int>{4}));
     CHECK(job(p, 4)->status == RenderStatus::Failed);
 
-    // Abbrechen: laufender Auftrag -> „Abgebrochen“, halbe Datei weg, Rest bleibt „Wartet“
+    // Cancel: running job -> "Cancelled", half file gone, rest stays "Waiting"
     {
         RenderJob big = mk(6, "gross.mp4", "h264", QSize(1920, 1080));
         big.settings.quality = 0;
@@ -435,7 +435,7 @@ int main(int argc, char** argv)
         CHECK(!QFileInfo::exists(after.path));
     }
 
-    // Abbrechen zwischen zwei Aufträgen (nächster startet erst per Timer): gilt noch als laufend, Rest startet nicht
+    // Cancel between two jobs (next one starts only via timer): still counts as running, rest does not start
     {
         p.setRenderQueue({mk(8, "eins.mp4", "h264"), mk(9, "zwei.mp4", "h264")});
         CHECK(q.start());
@@ -448,7 +448,7 @@ int main(int argc, char** argv)
         });
         const auto c2 = QObject::connect(&q, &RenderQueue::finished, &q, [&] { ++finishedCount; });
         CHECK(waitFor(q));
-        QCoreApplication::processEvents(); // geplanter Folgeauftrag darf nicht mehr starten
+        QCoreApplication::processEvents(); // scheduled follow-up job must not start anymore
         QObject::disconnect(c1);
         QObject::disconnect(c2);
         CHECK(between);
@@ -458,7 +458,7 @@ int main(int argc, char** argv)
         CHECK(job(p, 9)->status == RenderStatus::Queued);
     }
 
-    // Ausgabe = Quelldatei der Timeline (auch über anderen Pfad dorthin): verweigert, Quelle bleibt unverändert
+    // Output = source file of the timeline (also via another path to it): refused, source stays unchanged
     {
         const QByteArray before = [&] { QFile f(clip); f.open(QIODevice::ReadOnly); return f.readAll(); }();
         RenderJob self = mk(8, "clip.mp4", "h264");

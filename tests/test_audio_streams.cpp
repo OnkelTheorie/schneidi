@@ -1,6 +1,6 @@
-// Test mehrere Ton-Streams pro Datei (OBS: Desktop-Ton, Mikro … getrennt): Einfügen (ein Audio-Clip pro Stream,
-// verknüpft, eigene Spuren, gesperrte Spuren, ein Undo-Schritt), Quell-Viewer-Bearbeitungen, Projektdatei (auch alte
-// Dateien ohne Streams) und gerenderter Ton (welcher Stream klingt, auch mit Geschwindigkeit und Speed Ramp).
+// Test several audio streams per file (OBS: desktop audio, microphone ... separate): inserting (one audio clip per stream,
+// linked, own tracks, locked tracks, one undo step), source viewer edits, project file (also old
+// files without streams) and rendered audio (which stream sounds, also with speed and speed ramp).
 #include "check.h"
 
 #include "core/Editor.h"
@@ -34,7 +34,7 @@ MediaInfo obsMedia(const QString& path, int length, int streams)
     return m;
 }
 
-// Audio-Clips als "A1:s0 A2:s1 …" (Spur:Stream), mit gleicher linkId wie der Videoclip
+// Audio clips as "A1:s0 A2:s1 ..." (track:stream), with the same linkId as the video clip
 QString streams(const Timeline& tl, int* linked = nullptr)
 {
     QString s;
@@ -60,7 +60,7 @@ void testEditor()
     CHECK_EQ(p.mediaInfo("/x/obs.mkv")->audioStreamName(0), T("Spur %1").arg(1));
     CHECK_EQ(p.mediaInfo("/x/obs.mkv")->audioStreamName(1), QString("Mikro"));
 
-    // Ablegen: drei Audio-Clips auf A1–A3 (fehlende Spuren entstehen), alle mit dem Bild verknüpft, ein Undo-Schritt
+    // Placing: three audio clips on A1-A3 (missing tracks are created), all linked to the picture, one undo step
     const int steps = undo->count();
     ed.addMediaAt({"/x/obs.mkv"}, 0);
     CHECK_EQ(undo->count(), steps + 1);
@@ -71,13 +71,13 @@ void testEditor()
     undo->undo();
     CHECK_EQ(streams(p.timeline()), QString());
 
-    // Ablegen auf Spur 2: Streams auf A2–A4
+    // Placing on track 2: streams on A2-A4
     ed.addMediaAt({"/x/obs.mkv"}, 0, 1);
     CHECK_EQ(streams(p.timeline()), QString("A2:s0 A3:s1 A4:s2"));
     undo->undo();
 
-    // gesperrte Spur A2: Stream 1 entfällt, die anderen bleiben verknüpft
-    ed.addMediaAt({"/x/obs.mkv"}, 200); // legt A1–A3 an
+    // locked track A2: stream 1 is dropped, the others stay linked
+    ed.addMediaAt({"/x/obs.mkv"}, 200); // creates A1-A3
     undo->undo();
     Timeline tl = p.timeline();
     TimelineOps::ensureTracks(tl, TrackKind::Audio, 3);
@@ -89,35 +89,35 @@ void testEditor()
     undo->undo();
     undo->undo();
 
-    // Quell-Viewer: Überschreiben legt ebenfalls alle Streams ab Zielspur ab
+    // Source viewer: overwrite also places all streams from the target track
     ed.sourceEdit(Editor::SourceEditMode::Overwrite, "/x/obs.mkv", 0, 0);
     CHECK_EQ(streams(p.timeline(), &linked), QString("A1:s0 A2:s1 A3:s2"));
     CHECK_EQ(linked, 3);
-    // Einfügen: alle Spuren rücken mit, neue Clips wieder auf A1–A3
+    // Insert: all tracks move along, new clips again on A1-A3
     ed.sourceEdit(Editor::SourceEditMode::Insert, "/x/obs.mkv", 0, 0);
     CHECK_EQ(Check::dump(p.timeline()).count("obs[0-100|0-99]"), 4);
     CHECK_EQ(Check::dump(p.timeline()).count("obs[100-200|0-99]"), 4);
-    // Ersetzen am Playhead: gleiche Spuren wie der ersetzte Clip samt Partnern
+    // Replace at the playhead: same tracks as the replaced clip including partners
     ed.sourceEdit(Editor::SourceEditMode::Replace, "/x/obs.mkv", 10, 150);
     for (int i = 0; i < 3; ++i) {
         CHECK_EQ(p.timeline().audio[i].clips.size(), 2);
         for (const Clip& c : p.timeline().audio[i].clips) CHECK_EQ(c.audioStream, i);
     }
 
-    // Teilen behält den Stream
+    // Splitting keeps the stream
     const int a2 = p.timeline().audio[1].clips[0].id;
     sel.set({a2});
     ed.splitAtPlayhead(50);
     for (const Clip& c : p.timeline().audio[1].clips) CHECK_EQ(c.audioStream, 1);
 
-    // Datei mit einem Stream: wie bisher ein Audio-Clip; ältere Einträge ohne Liste zählen als 1 Stream
+    // File with one stream: one audio clip as before; older entries without a list count as 1 stream
     MediaInfo old = obsMedia("/x/alt.mp4", 50, 0);
     old.hasAudio = true;
     CHECK_EQ(old.audioStreamCount(), 1);
 }
 
-// Überschreiben mitten in einen verknüpften Clip: die Reststücke rechts bleiben untereinander verknüpft
-// (eigene Gruppe), die linken behalten die alte Verknüpfung
+// Overwriting in the middle of a linked clip: the remaining pieces on the right stay linked to each other
+// (own group), the left ones keep the old link
 void testOverwriteKeepsLinks()
 {
     Project p;
@@ -179,7 +179,7 @@ void testProjectFile()
     for (int k = 0; k < 3 && k < back.timeline.audio.size(); ++k) CHECK_EQ(back.timeline.audio[k].clips[0].audioStream, k);
     CHECK(ProjectFile::toJson(back, path) == ProjectFile::toJson(d, path));
 
-    // ältere Datei ohne "audioStreams"/"audioStream": ein Stream, Clip auf Stream 0
+    // older file without "audioStreams"/"audioStream": one stream, clip on stream 0
     ProjectData old;
     CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[
         {"path":"/x/a.mp4","name":"a.mp4","length":50,"hasVideo":true,"hasAudio":true}],
@@ -190,7 +190,7 @@ void testProjectFile()
         CHECK_EQ(old.timeline.audio[0].clips[0].audioStream, 0);
 }
 
-// Nulldurchgänge im Ton ab Frame `at` (über mehrere Frames, nach dem Einschwingen) -> Frequenz in Hz
+// Zero crossings in the audio from frame `at` (over several frames, after settling) -> frequency in Hz
 double frequencyAt(Mlt::Producer& p, int at, double fps)
 {
     p.seek(at);
@@ -202,7 +202,7 @@ double frequencyAt(Mlt::Producer& p, int at, double fps)
         mlt_audio_format fmt = mlt_audio_float;
         int freq = 48000, ch = 1, samples = mlt_audio_calculate_frame_samples(float(fps), freq, at + n);
         const auto* s = static_cast<const float*>(f->get_audio(fmt, freq, ch, samples));
-        if (!s || n < 3) continue; // Einschwingen nach dem Springen
+        if (!s || n < 3) continue; // settling after the jump
         for (int i = 0; i < samples; ++i) {
             if ((prev < 0) != (s[i] < 0)) ++zc;
             prev = s[i];
@@ -216,7 +216,7 @@ bool near(double hz, double want) { return std::abs(hz - want) < want * 0.1; }
 
 int testRender(const QString& dir)
 {
-    // Drei Ton-Streams mit 440 / 880 / 220 Hz (Stream 2 als Mikro benannt, Stream 3 mono)
+    // Three audio streams with 440 / 880 / 220 Hz (stream 2 named as microphone, stream 3 mono)
     const QString file = Check::makeMedia(
         dir + "/obs.mkv",
         {"-f", "lavfi", "-i", "testsrc2=size=64x64:rate=25:duration=4", "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
@@ -229,7 +229,7 @@ int testRender(const QString& dir)
     const ProjectFormat fmt{64, 64, {25, 1}};
     auto prof = makeProfile(fmt);
 
-    // Streams erkennen (wie Engine::probe)
+    // Detect streams (like Engine::probe)
     {
         Mlt::Producer probe(*prof, file.toUtf8().constData());
         const QVector<AudioStreamInfo> s = audioStreamsOf(probe);
@@ -248,7 +248,7 @@ int testRender(const QString& dir)
         c.mediaPath = file;
         c.out = 99;
         c.audioStream = k;
-        // normales Tempo, halbes Tempo mit Tonhöhe (timewarp) und Speed Ramp (eigener Producer)
+        // normal speed, half speed with pitch (timewarp) and speed ramp (own producer)
         if (Mlt::Producer* p = builder.clipAudioSource(c); CHECK(p))
             CHECK(near(frequencyAt(*p, 20, fmt.rate.fps()), want[k]));
         Clip slow = c;
@@ -263,7 +263,7 @@ int testRender(const QString& dir)
         if (CHECK(rp && rp->is_valid())) CHECK(near(frequencyAt(*rp, 20, fmt.rate.fps()), want[k]));
     }
 
-    // ganze Timeline: nur der Clip mit Stream 2 (880 Hz) klingt; zwei Streams derselben Datei gleichzeitig
+    // whole timeline: only the clip with stream 2 (880 Hz) sounds; two streams of the same file at the same time
     Timeline tl;
     tl.masterLimiter = false;
     tl.audio.resize(2);
@@ -275,7 +275,7 @@ int testRender(const QString& dir)
     tl.audio[0].clips << a;
     auto tractor = builder.build(tl);
     if (CHECK(tractor)) CHECK(near(frequencyAt(*tractor, 20, fmt.rate.fps()), 880));
-    // Stream fehlt (Datei ersetzt): still statt falscher Ton
+    // Stream missing (file replaced): silent instead of wrong audio
     tl.audio[0].clips[0].audioStream = 7;
     tractor = builder.build(tl);
     if (CHECK(tractor)) CHECK_EQ(frequencyAt(*tractor, 20, fmt.rate.fps()), 0.0);

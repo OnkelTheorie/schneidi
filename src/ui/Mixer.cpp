@@ -31,16 +31,16 @@ namespace {
 
 constexpr int kStripW = 70;
 constexpr float kSilent = -200.f;
-constexpr double kMeterFloor = -60.0; // unterster Wert der Pegelanzeige (dBFS)
-constexpr double kMeterFall = 24.0;   // Abfall in dB/s (Anstieg sofort)
-constexpr double kPeakHold = 1.0;     // Peak-Hold in Sekunden
-constexpr double kClipDb = -0.001;    // ab hier Übersteuerung (0 dBFS; volle s16-Aussteuerung zählt mit)
-constexpr double kTruePeakLimit = -1.0; // Standard-Grenze für True Peak am Master (EBU R128, Streaming: -1 dBTP)
+constexpr double kMeterFloor = -60.0; // lowest value of the level display (dBFS)
+constexpr double kMeterFall = 24.0;   // decay in dB/s (rise instantly)
+constexpr double kPeakHold = 1.0;     // peak hold in seconds
+constexpr double kClipDb = -0.001;    // from here overload (0 dBFS; full s16 level counts too)
+constexpr double kTruePeakLimit = -1.0; // default limit for true peak at the master (EBU R128, streaming: -1 dBTP)
 
 double truePeakLimit() { return QSettings().value("audio/truePeakLimit", kTruePeakLimit).toDouble(); }
 
-// Fader-Skala wie die Lautstärkelinie in der Timeline (0 = unten, 1 = oben):
-// unteres Viertel -∞..-20 dB, Mitte -20..0 dB, oberes Viertel 0..+12 dB
+// Fader scale like the volume line in the timeline (0 = bottom, 1 = top):
+// lower quarter -∞..-20 dB, middle -20..0 dB, upper quarter 0..+12 dB
 double faderPos(double db)
 {
     db = std::clamp(db, kMinVolumeDb, kMaxVolumeDb);
@@ -66,7 +66,7 @@ QColor meterColor(double db)
     return Theme::meterLow;
 }
 
-// Spitzenwert-Anzeige über dem Pegel: "-3.2", "+1.5", "-∞"
+// Peak value display above the level: "-3.2", "+1.5", "-∞"
 QString peakText(double db)
 {
     if (db <= -99) return QStringLiteral("-∞");
@@ -82,8 +82,8 @@ QString panText(double pan)
 
 } // namespace
 
-// Pegelanzeige (Stereo) + Fader in einem Widget: links die Balken, Mitte die Fader-Skala, rechts der Fader.
-// Ziehen = Wert ändern (Shift = fein), 0 dB rastet ein, Doppelklick = 0 dB.
+// Level display (stereo) + fader in one widget: bars on the left, fader scale in the middle, fader on the right.
+// Dragging = change value (Shift = fine), 0 dB snaps in, double-click = 0 dB.
 class FaderMeter : public QWidget {
 public:
     FaderMeter()
@@ -92,15 +92,15 @@ public:
         setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
         setFixedWidth(kStripW - 6);
         setCursor(Qt::SizeVerCursor);
-        setMouseTracking(true); // Zeiger über der Clip-Anzeige
+        setMouseTracking(true); // pointer over the clip indicator
     }
 
     std::function<void(double)> onChange;
     std::function<void()> onFinish;
-    std::function<void()> onResetPeak; // Klick auf die Clip-Anzeige
+    std::function<void()> onResetPeak; // click on the clip indicator
 
-    // Ab welchem Pegel die Übersteuerungs-Anzeige aufleuchtet (Spuren: 0 dBFS; Master: True-Peak-Grenze in dBTP,
-    // dann zusätzlich als Markierung an der Pegelskala)
+    // From which level the overload indicator lights up (tracks: 0 dBFS; master: true-peak limit in dBTP,
+    // then additionally as a marker on the level scale)
     void setOverLimit(double db, bool mark)
     {
         m_over = db;
@@ -120,12 +120,12 @@ public:
         for (int ch = 0; ch < 2; ++ch) {
             m_max = std::max(m_max, m_target[ch]);
             if (m_target[ch] >= m_over && !m_clip[ch]) {
-                m_clip[ch] = true; // bleibt stehen bis Klick (wie DaVinci)
+                m_clip[ch] = true; // stays until click (like DaVinci)
                 update();
             }
         }
     }
-    // Höchster Pegel seit dem letzten Zurücksetzen (dBFS) und ob übersteuert wurde
+    // Highest level since the last reset (dBFS) and whether it overloaded
     float maxPeak() const { return m_max; }
     bool clipped() const { return m_clip[0] || m_clip[1]; }
     void resetPeak()
@@ -134,7 +134,7 @@ public:
         m_clip[0] = m_clip[1] = false;
         update();
     }
-    // Anzeige nachführen; true = neu zeichnen nötig
+    // Track the display; true = redraw needed
     bool tick(double dt)
     {
         bool changed = false;
@@ -160,7 +160,7 @@ protected:
         p.setRenderHint(QPainter::Antialiasing, false);
         const int top = trackTop(), bottom = trackBottom(), h = bottom - top;
 
-        // Pegel: zwei Balken, darüber je eine Clip-Anzeige (rot = übersteuert, bleibt bis Klick)
+        // Level: two bars, above each a clip indicator (red = overloaded, stays until click)
         const int mx = 3, bw = 5;
         for (int ch = 0; ch < 2; ++ch) {
             p.fillRect(clipRect(ch), m_clip[ch] ? Theme::warning : Theme::well);
@@ -169,7 +169,7 @@ protected:
             const auto yOf = [&](double db) { return bottom - int(std::lround(meterPos(db) * h)); };
             const int y = yOf(m_disp[ch]);
             if (y < bottom) {
-                // Farbzonen: grün bis -12, gelb bis -3, rot darüber
+                // Color zones: green up to -12, yellow up to -3, red above
                 const int yY = yOf(-12), yR = yOf(-3);
                 auto zone = [&](int from, int to, const QColor& c) {
                     const int a = std::max(y, to), b = from;
@@ -181,15 +181,15 @@ protected:
             }
             if (m_hold[ch] > kMeterFloor) p.fillRect(bar.x(), yOf(m_hold[ch]), bw, 2, meterColor(m_hold[ch]));
         }
-        // Segment-Linien über den Balken (alle 6 dB)
+        // Segment lines across the bars (every 6 dB)
         for (int db = -6; db > kMeterFloor; db -= 6) {
             const int y = bottom - int(std::lround(meterPos(db) * h));
             p.fillRect(mx, y, 2 * bw + 1, 1, Theme::alpha(Theme::well, 160));
         }
-        // True-Peak-Grenze (Master): Markierung quer über beide Balken
+        // True-peak limit (master): marker across both bars
         if (m_overMark) p.fillRect(mx - 1, bottom - int(std::lround(meterPos(m_over) * h)), 2 * bw + 3, 1, Theme::primary);
 
-        // Fader-Skala
+        // Fader scale
         QFont f = font();
         f.setPointSizeF(7);
         p.setFont(f);
@@ -207,7 +207,7 @@ protected:
             p.fillRect(fx - 12, y, 3, 1, db == 0 ? Theme::text : Theme::textDim);
         }
 
-        // Fader: Schiene + Kappe
+        // Fader: rail + cap
         p.fillRect(fx - 1, top, 3, h + 1, Theme::well);
         const int ky = faderY(m_db);
         const QRect knob(fx - 9, ky - 6, 19, 12);
@@ -236,7 +236,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* e) override
     {
         if (!m_dragging) {
-            // Über der Clip-Anzeige Handzeiger (Klick setzt zurück), sonst Fader
+            // Over the clip indicator hand cursor (click resets), otherwise fader
             const bool onClip = clipRect(0).united(clipRect(1)).adjusted(-2, -2, 2, 2).contains(e->position().toPoint());
             setCursor(onClip ? Qt::PointingHandCursor : Qt::SizeVerCursor);
             return;
@@ -244,10 +244,10 @@ protected:
         const double dy = e->position().y() - m_pressY;
         double db;
         if (e->modifiers() & Qt::ShiftModifier) {
-            db = m_startDb - dy * 0.1; // fein: 0,1 dB pro Pixel
+            db = m_startDb - dy * 0.1; // fine: 0.1 dB per pixel
         } else {
             db = faderDb(faderPos(m_startDb) - dy / std::max(1, trackBottom() - trackTop()));
-            if (std::abs(db) < 0.5) db = 0; // 0 dB rastet ein
+            if (std::abs(db) < 0.5) db = 0; // 0 dB snaps in
         }
         db = std::clamp(std::round(db * 10) / 10, kMinVolumeDb, kMaxVolumeDb);
         if (db == m_db) return;
@@ -290,7 +290,7 @@ private:
     double m_pressY = 0, m_startDb = 0;
 };
 
-// Pan-Drehregler: ziehen (hoch/rechts = rechts, Shift = fein), Doppelklick = Mitte
+// Pan knob: drag (up/right = right, Shift = fine), double-click = center
 class PanKnob : public QWidget {
 public:
     PanKnob()
@@ -319,7 +319,7 @@ protected:
         p.setPen(Qt::NoPen);
         p.setBrush(Theme::control);
         p.drawEllipse(r);
-        // Bogen von der Mitte (oben) bis zum Wert, ±135°
+        // Arc from the middle (top) to the value, ±135°
         const double angle = m_value / 100.0 * 135.0;
         p.setPen(QPen(Theme::primary, 2.5, Qt::SolidLine, Qt::FlatCap));
         p.setBrush(Qt::NoBrush);
@@ -361,13 +361,13 @@ protected:
     }
 
 private:
-    double m_value = 0.1; // != 0, damit der erste setValue(0) den Tooltip setzt
+    double m_value = 0.1; // != 0, so that the first setValue(0) sets the tooltip
     bool m_dragging = false;
     QPointF m_press;
     double m_start = 0;
 };
 
-// Anklickbare Spitzenwert-Anzeige (Klick = zurücksetzen)
+// Clickable peak value display (click = reset)
 class PeakLabel : public QLabel {
 public:
     std::function<void()> onClick;
@@ -379,8 +379,8 @@ protected:
     }
 };
 
-// Ein Kanalzug: Name, Pan, M/S, Spitzenwert, Pegel+Fader, Wert. Beim Master bleiben Pan/M/S leer (gleiche Höhe),
-// statt M/S sitzt dort der Limiter-Schalter.
+// A channel strip: name, pan, M/S, peak value, level+fader, value. On the master, pan/M/S stay empty (same height),
+// the limiter switch sits there instead of M/S.
 class ChannelStrip : public QWidget {
 public:
     explicit ChannelStrip(bool master)
@@ -465,7 +465,7 @@ public:
             lay->addLayout(fx);
         }
 
-        // Spitzenwert seit dem letzten Zurücksetzen (rot hinterlegt = übersteuert); Klick setzt zurück
+        // Peak value since the last reset (red background = overloaded); click resets
         peak = new PeakLabel;
         peak->setAlignment(Qt::AlignCenter);
         peak->setCursor(Qt::PointingHandCursor);
@@ -492,7 +492,7 @@ public:
                 w->setSizePolicy(sp);
                 w->hide();
             }
-            // M/S gibt es am Master nicht; an ihrer Stelle (gleiche Höhe) sitzt der Limiter-Schalter
+            // There is no M/S on the master; in their place (same height) sits the limiter switch
             for (QToolButton* b : {mute, solo}) {
                 ms->removeWidget(b);
                 b->hide();
@@ -503,7 +503,7 @@ public:
         updatePeak();
     }
 
-    // Spitzenwert-Anzeige an den Pegelmesser angleichen (nur bei Änderung neu setzen)
+    // Align the peak value display with the level meter (only set anew on change)
     void updatePeak()
     {
         const float db = fader->maxPeak();
@@ -534,7 +534,7 @@ public:
     QLabel* panLabel;
     QToolButton* mute;
     QToolButton* solo;
-    QToolButton* limiter = nullptr; // nur Master
+    QToolButton* limiter = nullptr; // master only
     QToolButton* eq = nullptr;      // tracks only
     QToolButton* dyn = nullptr;
     PeakLabel* peak;
@@ -545,12 +545,12 @@ private:
     bool m_peakClip = false;
 };
 
-// Loudness-Meter wie in DaVinci (Fairlight): Balken für Momentary (M) und Short-term (S) in LUFS, darunter
-// Integrated, Short-term, Momentary und Loudness Range. Ziellinie orange (Rechtsklick = Ziel wählen),
-// Integrated grün im Zielbereich (±1 LU), gelb darunter, rot darüber. Reset beginnt die Messung neu.
+// Loudness meter like in DaVinci (Fairlight): bars for Momentary (M) and Short-term (S) in LUFS, below them
+// Integrated, Short-term, Momentary and Loudness Range. Target line orange (right-click = choose target),
+// Integrated green in the target range (±1 LU), yellow below, red above. Reset restarts the measurement.
 class LoudnessView : public QWidget {
 public:
-    static constexpr double kFloor = -48.0; // unterster Wert der Skala (LUFS)
+    static constexpr double kFloor = -48.0; // lowest value of the scale (LUFS)
 
     LoudnessView()
     {
@@ -561,7 +561,7 @@ public:
 
     void setReading(const LoudnessReading& r, bool live)
     {
-        // Nur bei sichtbarer Änderung neu zeichnen
+        // Only redraw on a visible change
         auto round1 = [](double v) { return std::lround(v * 10); };
         const bool changed = live != m_live || round1(r.momentary) != round1(m_r.momentary)
                              || round1(r.shortTerm) != round1(m_r.shortTerm)
@@ -596,7 +596,7 @@ protected:
         const auto yOf = [&](double lufs) {
             return bottom - int(std::lround(std::clamp((lufs - kFloor) / -kFloor, 0.0, 1.0) * h));
         };
-        // Balken M und S
+        // Bars M and S
         const int bw = 9, x0 = 6;
         const double values[2] = {m_live ? m_r.momentary : LoudnessMeter::kSilence,
                                   m_live ? m_r.shortTerm : LoudnessMeter::kSilence};
@@ -609,7 +609,7 @@ protected:
             p.setPen(Theme::textDim);
             p.drawText(QRect(bar.x() - 2, 0, bw + 4, top - 2), Qt::AlignCenter, names[i]);
         }
-        // Skala (LUFS) und Ziellinie
+        // Scale (LUFS) and target line
         const int sx = x0 + 2 * (bw + 3);
         for (int v = 0; v >= int(kFloor); v -= 6) {
             const int y = yOf(v);
@@ -620,7 +620,7 @@ protected:
         const int ty = yOf(m_target);
         p.fillRect(x0 - 2, ty, sx - x0 + 1, 2, Theme::primary);
 
-        // Werte
+        // values
         const int ly = bottom + 8;
         auto row = [&](int i, const QString& label, const QString& value, const QColor& color) {
             const QRect r(4, ly + i * rowH, width() - 8, rowH);
@@ -639,7 +639,7 @@ protected:
         row(1, "S", lufsText(values[1]), Theme::text);
         row(2, "M", lufsText(values[0]), Theme::text);
         row(3, "LRA", QString("%1 LU").arg(m_r.range, 0, 'f', 1), Theme::text);
-        // Höchster True Peak seit Reset; über der Grenze rot hinterlegt (Over-Anzeige wie bei der Lieferprüfung)
+        // Highest true peak since reset; red background above the limit (over indicator like in the delivery check)
         const bool over = m_r.truePeak > m_tpLimit;
         if (over) p.fillRect(QRect(2, ly + 4 * rowH, width() - 4, rowH), Theme::meterHigh);
         const QColor tc = over ? Theme::readableOn(Theme::meterHigh) : Theme::text;
@@ -669,7 +669,7 @@ private:
     double m_tpLimit = kTruePeakLimit;
 };
 
-// Kasten rechts neben dem Master: Titel, Anzeige, Reset
+// Box to the right of the master: title, display, reset
 class LoudnessStrip : public QWidget {
 public:
     LoudnessStrip()
@@ -737,7 +737,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     scroll->horizontalScrollBar()->setSingleStep(kStripW); // arrow keys/wheel: one strip at a time
     row->addWidget(scroll);
 
-    // Master rechts, fest (wie der Bus in DaVinci)
+    // Master on the right, fixed (like the bus in DaVinci)
     m_master = new ChannelStrip(true);
     m_master->name->setText("Master");
     m_master->setStyleSheet(m_master->styleSheet() +
@@ -751,7 +751,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
         m_project->edit(T("Master-Lautstärke"), [db](Timeline& tl) { tl.masterVolumeDb = db; }, "mixer-master");
     };
     m_master->fader->onFinish = [this] { m_project->closeMerge(); };
-    // Limiter am Master (wie ein Bus-Limiter in DaVinci Fairlight): Klick = an/aus, Rechtsklick = Ceiling
+    // Limiter on the master (like a bus limiter in DaVinci Fairlight): click = on/off, right-click = ceiling
     connect(m_master->limiter, &QToolButton::clicked, this, [this](bool on) {
         m_engine->mixerOnlyNext();
         m_project->edit(on ? T("Limiter an") : T("Limiter aus"), [on](Timeline& tl) { tl.masterLimiter = on; });
@@ -768,7 +768,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
                 m_engine->mixerOnlyNext();
                 m_project->edit(T("Limiter-Ceiling"), [db](Timeline& tl) {
                     tl.masterLimiterDb = db;
-                    tl.masterLimiter = true; // Ceiling wählen schaltet ein
+                    tl.masterLimiter = true; // choosing a ceiling switches it on
                 });
             });
         }
@@ -777,7 +777,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     m_master->fader->setOverLimit(truePeakLimit(), true);
     row->addWidget(m_master);
 
-    // Loudness-Meter (Ziel in den Einstellungen, Standard -14 LUFS wie YouTube)
+    // Loudness meter (target in the settings, default -14 LUFS like YouTube)
     m_loudness = new LoudnessStrip;
     m_loudness->view->setTarget(QSettings().value("audio/loudnessTarget", -14.0).toDouble());
     m_loudness->view->setTruePeakLimit(truePeakLimit());
@@ -800,7 +800,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
                 m_loudness->view->setTarget(lufs);
             });
         }
-        // True-Peak-Grenze (Over-Anzeige am Master und in der TP-Zeile)
+        // True-peak limit (over indicator at the master and in the TP row)
         menu.addSection(T("True-Peak-Grenze"));
         const double limit = truePeakLimit();
         for (double db : {-1.0, -2.0, 0.0}) {
@@ -882,7 +882,7 @@ void Mixer::rebuildStrips(int count)
         };
         s->fader->onFinish = s->pan->onFinish = [this] { m_project->closeMerge(); };
         connect(s->mute, &QToolButton::clicked, this, [this, i] {
-            m_engine->mixerOnlyNext(); // live umschalten, kein Neuaufbau (sonst ruckelt die Wiedergabe)
+            m_engine->mixerOnlyNext(); // switch live, no rebuild (otherwise playback stutters)
             m_project->edit(T("Spur stumm"), [i](Timeline& tl) {
                 if (i < tl.audio.size()) tl.audio[i].muted = !tl.audio[i].muted;
             });
@@ -975,15 +975,15 @@ void Mixer::sync()
     for (int i = 0; i < m_strips.size(); ++i) {
         const Track& t = tl.audio[i];
         ChannelStrip* s = m_strips[i];
-        s->name->setText(trackShortName({TrackKind::Audio, i})); // wie DaVinci „A1“, Name als Tooltip
+        s->name->setText(trackShortName({TrackKind::Audio, i})); // like DaVinci "A1", name as tooltip
         s->name->setToolTip(trackDisplayName(t, {TrackKind::Audio, i}));
         s->setVolume(t.volumeDb);
         s->setPan(t.pan);
-        s->mute->setChecked(t.muted); // setChecked löst kein clicked aus
+        s->mute->setChecked(t.muted); // setChecked does not trigger clicked
         s->solo->setChecked(t.solo);
         s->eq->setChecked(t.eq.on);
         s->dyn->setChecked(t.dynamics.on);
-        // Durch Solo einer anderen Spur stumm: Name ausgrauen, damit man sieht, dass der Knopf wirkt
+        // Muted by another track's solo: gray out the name so one sees that the button works
         const bool silenced = anySolo && !t.solo && !t.muted;
         s->name->setStyleSheet(QString("color: %1; font-weight: 600; background: %2; padding: 2px;")
                                    .arg((silenced ? Theme::textFaint : Theme::text).name(), Theme::panelHeader.name()));
@@ -998,7 +998,7 @@ void Mixer::sync()
 
 void Mixer::onLevels(const QVector<float>& db)
 {
-    if (db.size() != 2 * (m_strips.size() + 1)) return; // Spuranzahl ändert sich gerade
+    if (db.size() != 2 * (m_strips.size() + 1)) return; // track count is changing right now
     for (int i = 0; i < m_strips.size(); ++i) m_strips[i]->fader->setLevel(db[2 * i], db[2 * i + 1]);
     m_master->fader->setLevel(db[db.size() - 2], db[db.size() - 1]);
     m_lastLevels.start();
@@ -1008,7 +1008,7 @@ void Mixer::tick()
 {
     const double dt = m_clock.restart() / 1000.0;
     if (!isVisible()) return;
-    // Keine Pegel mehr (Pause, Stopp, Quellmodus) -> Anzeige fällt ab
+    // No levels anymore (pause, stop, source mode) -> display falls
     const bool silent = !m_lastLevels.isValid() || m_lastLevels.elapsed() > 150;
     auto step = [&](ChannelStrip* s) {
         if (silent) s->fader->setLevel(kSilent, kSilent);

@@ -11,10 +11,10 @@ class QToolButton;
 class ScrubField;
 class ColorWheel;
 
-// Color-Seite unten (wie DaVinci „Primaries – Color Wheels“, abgespeckt): Räder Lift/Gamma/Gain/Offset mit
-// Master (Y) und R/G/B, darunter Kontrast, Pivot, Sättigung, Temperatur, Tönung, Belichtung, dazu LUT (.cube).
-// Wirkt auf die ausgewählten Videoclips, ohne Auswahl auf den obersten Videoclip am Playhead (wie DaVinci:
-// der Clip unter dem Playhead). Keyframes für die ganze Korrektur (◀ ◆ ▶), Ziehen = ein Undo-Schritt.
+// Color page at the bottom (like DaVinci "Primaries – Color Wheels", slimmed down): Lift/Gamma/Gain/Offset wheels with
+// Master (Y) and R/G/B, below them Contrast, Pivot, Saturation, Temperature, Tint, Exposure, plus LUT (.cube).
+// Acts on the selected video clips, without a selection on the topmost video clip at the playhead (like DaVinci:
+// the clip under the playhead). Keyframes for the whole correction (◀ ◆ ▶), dragging = one undo step.
 class ColorPanel : public QWidget {
     Q_OBJECT
 public:
@@ -30,7 +30,7 @@ public slots:
     void setPlayhead(int frame);
 
 signals:
-    void seekRequested(int frame); // Keyframe-Pfeile
+    void seekRequested(int frame); // keyframe arrows
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -40,8 +40,8 @@ private:
     struct Wheel {
         QString name;
         AnimParam p[4]; // Y, R, G, B
-        double neutral; // Standardwert jedes Kanals
-        double range;   // Kanal-Änderung am Radrand
+        double neutral; // default value of each channel
+        double range;   // channel change at the wheel edge
         ColorWheel* wheel = nullptr;
         ScrubField* field[4] = {};
     };
@@ -54,7 +54,7 @@ private:
     QWidget* buildSlider(Slider& s, const QString& label, double min, double max, double step, int decimals);
     QToolButton* smallButton(const QString& text, const QString& tip);
     QVector<int> targets() const;
-    const Clip* current() const; // angezeigter Clip (frühester der Ziele)
+    const Clip* current() const; // displayed clip (earliest of the targets)
     int localFrame(const Clip& c) const;
     void setValues(const QVector<QPair<AnimParam, double>>& values, const QString& text, const QString& key);
     void finish();

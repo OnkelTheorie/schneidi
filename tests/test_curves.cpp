@@ -1,5 +1,5 @@
-// Test Kurven-Editor (Keyframes mit Bezier-Griffen): Kurvenwerte, abgeleitete Griffe, weiche Griffe, Teilen ohne
-// Formänderung, Projektdatei, Engine-Linearität, Einrasten und die Bedienung im Kurven-Editor der Timeline (offscreen).
+// Test curve editor (keyframes with Bezier handles): curve values, derived handles, smooth handles, splitting without
+// shape change, project file, engine linearity, snapping and operation in the timeline's curve editor (offscreen).
 #include "check.h"
 
 #include "app/Theme.h"
@@ -34,7 +34,7 @@ Clip clip(int length)
 
 void testValues()
 {
-    // Bezier mit abgeleitetem Griff auf der Geraden = genau linear
+    // Bezier with derived handle on the straight line = exactly linear
     Clip c = clip(100);
     Keys::setKey(c, AnimParam::PosX, 0, 0);
     Keys::setKey(c, AnimParam::PosX, 30, 30);
@@ -43,7 +43,7 @@ void testValues()
     CHECK(k[0].ease == KeyEase::Bezier);
     for (double t : {0.0, 3.3, 15.0, 29.0, 30.0}) CHECK(close(Keys::valueAt(c, AnimParam::PosX, t), t, 1e-6));
 
-    // flache Griffe: symmetrisches S (langsam los, langsam an)
+    // flat handles: symmetric S (start slowly, arrive slowly)
     Keys::setHandle(k, 0, true, 15, 0, true);
     Keys::setHandle(k, 1, false, -15, 0, true);
     CHECK(close(Keys::valueAt(c, AnimParam::PosX, 15), 15, 1e-6));
@@ -58,38 +58,38 @@ void testValues()
     }
     CHECK(monotone);
     CHECK(!Keys::linearBetween(c, AnimParam::PosX, 0, 30));
-    CHECK(Keys::linearBetween(c, AnimParam::PosX, 30, 60)); // nach dem letzten Keyframe konstant
+    CHECK(Keys::linearBetween(c, AnimParam::PosX, 30, 60)); // constant after the last keyframe
 
-    // zu lange Griffe werden auf den Abschnitt gekürzt: Endpunkte stimmen, Zeit läuft vorwärts, kein NaN
+    // too long handles are shortened to the section: end points match, time runs forward, no NaN
     Keys::setHandle(k, 0, true, 500, 0, true);
     Keys::setHandle(k, 1, false, -500, 0, true);
     CHECK(close(Keys::valueAt(c, AnimParam::PosX, 0), 0) && close(Keys::valueAt(c, AnimParam::PosX, 30), 30));
     CHECK(!std::isnan(Keys::valueAt(c, AnimParam::PosX, 12.5)));
     double dt, dv;
     CHECK(Keys::handle(k, 0, true, &dt, &dv) && close(dt, 30));
-    CHECK(!Keys::handle(k, 0, false, &dt, &dv)); // kein Nachbar davor
+    CHECK(!Keys::handle(k, 0, false, &dt, &dv)); // no neighbor before
 
-    // Überschwingen erlaubt (Griff nach oben)
+    // Overshoot allowed (handle upward)
     Keys::setHandle(k, 0, true, 10, 40, true);
     bool over = false;
     for (int t = 0; t <= 30; ++t) over |= Keys::valueAt(c, AnimParam::PosX, t) > 30;
     CHECK(over);
 
-    // Griffe bleiben auf einer Linie (ohne Alt), mit Alt getrennt
-    Keys::setHandle(k, 1, false, -10, -5); // Steigung 0,5
+    // Handles stay on a line (without Alt), separate with Alt
+    Keys::setHandle(k, 1, false, -10, -5); // slope 0.5
     CHECK(close(k[1].outDv, k[1].outDt * 0.5));
     Keys::setHandle(k, 1, false, -10, -20, true);
-    CHECK(close(k[1].outDv, k[1].outDt * 0.5)); // unverändert
+    CHECK(close(k[1].outDv, k[1].outDt * 0.5)); // unchanged
     CHECK(close(k[1].inDv, -20));
 
-    // waagerechte Bezier-Kurve gleicher Werte = linear
+    // horizontal Bezier curve of equal values = linear
     Clip f = clip(50);
     Keys::setKey(f, AnimParam::Opacity, 0, 50);
     Keys::setKey(f, AnimParam::Opacity, 20, 50);
     Keys::setEase(f, {0, 20}, KeyEase::Bezier);
     CHECK(Keys::linearBetween(f, AnimParam::Opacity, 0, 20));
 
-    // Farben: Bezier wie linear
+    // Colors: Bezier like linear
     Clip col = clip(50);
     Keys::setKey(col, AnimParam::TitleColor, 0, Keys::fromColor(QColor(0, 0, 0)));
     Keys::setKey(col, AnimParam::TitleColor, 10, Keys::fromColor(QColor(200, 100, 0)));
@@ -104,20 +104,20 @@ void testAutoHandles()
         Keys::setKey(c, AnimParam::PosY, t, v);
     Keys::setEase(c, {0, 10, 20, 40, 60}, KeyEase::Bezier);
     const KeyTrack& k = c.keys[AnimParam::PosY];
-    CHECK(close(k[1].inDv, 0) && close(k[1].outDv, 0)); // Spitze: flach
-    CHECK(close(k[0].outDv, 0));                         // Anfang: flach
-    // 40: Steigung (90 − 0) / (60 − 20) = 2,25; Griffe ein Drittel der Nachbarabschnitte
+    CHECK(close(k[1].inDv, 0) && close(k[1].outDv, 0)); // peak: flat
+    CHECK(close(k[0].outDv, 0));                         // start: flat
+    // 40: slope (90 - 0) / (60 - 20) = 2.25; handles a third of the neighboring sections
     CHECK(close(k[3].inDt, -20.0 / 3) && close(k[3].outDt, 20.0 / 3));
     CHECK(close(k[3].outDv, 20.0 / 3 * 2.25) && close(k[3].inDv, -20.0 / 3 * 2.25));
-    // Kurve geht durch alle Keyframes
+    // Curve passes through all keyframes
     for (const Keyframe& key : k) CHECK(close(Keys::valueAt(c, AnimParam::PosY, key.frame), key.value));
-    // schon Bezier: Verlauf erneut setzen lässt die Griffe stehen
+    // already Bezier: setting the interpolation again leaves the handles
     KeyTrack before = k;
     Keys::setEase(c, {40}, KeyEase::Bezier);
     CHECK(c.keys[AnimParam::PosY] == before);
 }
 
-// Teilen im Bezier-Abschnitt: beide Teile folgen genau der alten Kurve
+// Splitting in a Bezier section: both parts follow exactly the old curve
 void testSplit()
 {
     auto checkSplit = [](const Clip& orig, int cut, AnimParam p) {
@@ -141,23 +141,23 @@ void testSplit()
     CHECK(checkSplit(c, 20, AnimParam::ZoomX) < 1e-6);
     CHECK(checkSplit(c, 71, AnimParam::ZoomX) < 1e-6);
     CHECK(checkSplit(c, 51, AnimParam::ZoomX) < 1e-6);
-    // gemischt: linear -> Bezier
+    // mixed: linear -> Bezier
     Clip m = clip(80);
     Keys::setKey(m, AnimParam::Rotation, 5, 0);
     Keys::setKey(m, AnimParam::Rotation, 60, 90);
     Keys::setHandle(m.keys[AnimParam::Rotation], 1, false, -30, 0, true);
     CHECK(checkSplit(m, 33, AnimParam::Rotation) < 1e-6);
-    // Schnitt hinter dem letzten Keyframe (stürzte ab) und vor dem ersten
+    // Cut after the last keyframe (crashed) and before the first
     CHECK(checkSplit(m, 70, AnimParam::Rotation) < 1e-6);
     CHECK(checkSplit(m, 3, AnimParam::Rotation) < 1e-6);
-    // vor dem ersten Keyframe mit schrägem Bezier-Griff: rechter Teil bleibt bis dahin ruhig (wackelte vorher)
+    // before the first keyframe with a slanted Bezier handle: right part stays calm until then (used to wobble)
     Clip b = clip(80);
     Keys::setKey(b, AnimParam::PosX, 30, 100);
     Keys::setKey(b, AnimParam::PosX, 70, 0);
     Keys::setEase(b, {30}, KeyEase::Bezier);
     Keys::setHandle(b.keys[AnimParam::PosX], 0, false, -10, -40, true);
     CHECK(checkSplit(b, 10, AnimParam::PosX) < 1e-6);
-    // Ease-In/Out (keine Bezier-Griffe): Kurve bleibt exakt (wurde vorher leicht verformt)
+    // Ease in/out (no Bezier handles): curve stays exact (used to be slightly deformed)
     Clip e = clip(100);
     Keys::setKey(e, AnimParam::Opacity, 10, 0.0);
     Keys::setKey(e, AnimParam::Opacity, 50, 1.0);
@@ -166,7 +166,7 @@ void testSplit()
     Keys::setEase(e, {50}, KeyEase::EaseInOut);
     Keys::setEase(e, {90}, KeyEase::EaseIn);
     for (int cut : {5, 23, 50, 67, 95}) CHECK(checkSplit(e, cut, AnimParam::Opacity) < 1e-9);
-    // beide Teile behalten alle Keys (unsichtbar außerhalb): rechten Teil nach links ziehen -> Animation wieder da
+    // both parts keep all keys (invisible outside): drag the right part to the left -> animation is back
     Clip l = e, r = e;
     l.out = e.in + 29;
     r.in = e.in + 30;
@@ -200,7 +200,7 @@ void testProjectFile(const QString& dir)
     CHECK(close(b.keys[AnimParam::Volume][0].outDv, 4.25));
 }
 
-// Geschwindigkeit ändern streckt die Kurve samt Griffen, rückwärts spiegelt sie
+// Changing speed stretches the curve including handles, reversed mirrors it
 void testSpeed()
 {
     Project project;
@@ -261,7 +261,7 @@ void testUi()
     Clip c = clip(100);
     Keys::setKey(c, AnimParam::Opacity, 10, 20);
     Keys::setKey(c, AnimParam::Opacity, 80, 80);
-    Keys::setKey(c, AnimParam::PosX, 50, 7); // anderer Parameter: bleibt beim Löschen stehen
+    Keys::setKey(c, AnimParam::PosX, 50, 7); // other parameter: stays when deleting
     tl.video[0].clips << c;
     project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 1, 0});
     auto opacity = [&] { return TimelineOps::findClip(project.timeline(), 1)->keys.value(AnimParam::Opacity); };
@@ -276,14 +276,14 @@ void testUi()
     CHECK_EQ(tv.contentHeight(), h0 + 120);
     CHECK(!tv.grab().isNull());
 
-    // Lage wie in TimelineView/TimelineCurves: V1 ab y 30, Höhe 64 + 120; Kurvenfläche y 113..203 (91 px)
+    // Layout as in TimelineView/TimelineCurves: V1 from y 30, height 64 + 120; curve area y 113..203 (91 px)
     const double ppf = tv.view().pxPerFrame;
     const int kH = TimelineView::kHeaderW;
     const double lo = 20 - 60 * 0.12, hi = 80 + 60 * 0.12;
     auto yOf = [&](double v) { return int(std::lround(203 - (v - lo) / (hi - lo) * 91)); };
     auto xOf = [&](double t) { return int(std::lround(kH + t * ppf)); };
 
-    // Punkt bei 80 um 10 Frames nach rechts und 20 px nach oben: ein Undo-Schritt, Wert steigt
+    // Point at 80 by 10 frames to the right and 20 px up: one undo step, value rises
     const int undo0 = project.undoStack()->count();
     drag(tv, {xOf(80), yOf(80)}, {xOf(80) + int(10 * ppf), yOf(80) - 20});
     KeyTrack k = opacity();
@@ -296,14 +296,14 @@ void testUi()
     CHECK_EQ(opacity().last().frame, 80);
     CHECK(close(opacity().last().value, 80));
 
-    // Shift = nur eine Achse; Einrasten am Keyframe 50 des anderen Parameters
+    // Shift = one axis only; snapping to keyframe 50 of the other parameter
     drag(tv, {xOf(80), yOf(80)}, {xOf(51) + 1, yOf(80) - 3}, Qt::ShiftModifier);
     k = opacity();
     CHECK_EQ(k.last().frame, 50);
     CHECK(close(k.last().value, 80));
     project.undoStack()->undo();
 
-    // Doppelklick in eine leere Stelle: neuer Keyframe mit dem Wert unter der Maus, Entf löscht nur diesen Parameter
+    // Double-click on an empty spot: new keyframe with the value under the mouse, Del deletes only this parameter
     const QPoint empty(xOf(45), yOf(50));
     mouse(tv, QEvent::MouseButtonPress, empty, Qt::LeftButton);
     mouse(tv, QEvent::MouseButtonRelease, empty, Qt::NoButton);
@@ -317,7 +317,7 @@ void testUi()
     CHECK_EQ(opacity().size(), 2);
     CHECK_EQ(TimelineOps::findClip(project.timeline(), 1)->keys.value(AnimParam::PosX).size(), 1);
 
-    // Griff ziehen: Punkt 10 auswählen, Aus-Griff nach oben -> Bezier, Wert in der Mitte steigt
+    // Drag handle: select point 10, out handle upward -> Bezier, value in the middle rises
     const double mid = Keys::valueAt(*TimelineOps::findClip(project.timeline(), 1), AnimParam::Opacity, 30);
     mouse(tv, QEvent::MouseButtonPress, {xOf(10), yOf(20)}, Qt::LeftButton);
     mouse(tv, QEvent::MouseButtonRelease, {xOf(10), yOf(20)}, Qt::NoButton);
@@ -330,12 +330,12 @@ void testUi()
     CHECK(k[0].outDv > dv + 5);
     CHECK(Keys::valueAt(*TimelineOps::findClip(project.timeline(), 1), AnimParam::Opacity, 30) > mid + 3);
 
-    // Zuklappen: Spur wieder so hoch wie vorher
+    // Collapse: track as high as before again
     tv.setCurveEditor({1}, false);
     CHECK(!tv.curveEditorShown(1));
     CHECK_EQ(tv.contentHeight(), h0);
 
-    // Keyframe-Spur (Raute unten rechts im Clip aufklappen): Rauten rasten beim Ziehen am Playhead ein
+    // Keyframe track (expand diamond at the bottom right of the clip): diamonds snap to the playhead when dragging
     const QPoint icon(xOf(100) - 1 - 7, 30 + 64 - 3 - 6);
     mouse(tv, QEvent::MouseButtonPress, icon, Qt::LeftButton);
     mouse(tv, QEvent::MouseButtonRelease, icon, Qt::NoButton);

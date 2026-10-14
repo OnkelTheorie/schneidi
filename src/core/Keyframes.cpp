@@ -30,7 +30,7 @@ constexpr Keys::ParamInfo kParams[] = {
     {AnimParam::TitleColor, "titleColor", true, N_("Textfarbe"), 0, 0},
     {AnimParam::Volume, "volume", false, N_("Lautstärke"), kMinVolumeDb, kMaxVolumeDb},
     {AnimParam::Pan, "pan", false, "Pan", -100, 100},
-    // Effekt-Parameter: Name und Bereich aus der EffectRegistry
+    // Effect parameter: name and range from the EffectRegistry
     {AnimParam::FxBrightness, "fxBrightness", false, nullptr, 0, 0},
     {AnimParam::FxContrast, "fxContrast", false, nullptr, 0, 0},
     {AnimParam::FxSaturation, "fxSaturation", false, nullptr, 0, 0},
@@ -82,7 +82,7 @@ DynamicTable& dynamicTable()
 bool slowStart(const Keyframe& k) { return k.ease == KeyEase::EaseOut || k.ease == KeyEase::EaseInOut; }
 bool slowEnd(const Keyframe& k) { return k.ease == KeyEase::EaseIn || k.ease == KeyEase::EaseInOut; }
 
-// Verlauf zwischen zwei Keyframes (u = 0..1): Ease Out am ersten = langsam los, Ease In am zweiten = langsam an
+// Interpolation between two keyframes (u = 0..1): Ease Out at the first = start slowly, Ease In at the second = arrive slowly
 double shape(const Keyframe& a, const Keyframe& b, double u)
 {
     if (slowStart(a) && slowEnd(b)) return (1.0 - std::cos(u * M_PI)) / 2.0;
@@ -91,12 +91,12 @@ double shape(const Keyframe& a, const Keyframe& b, double u)
     return u;
 }
 
-// Bezier-Abschnitt (mindestens eine Seite Bezier): kubische Kurve durch (0, a.value) .. (D, b.value) in Frames/Wert.
-// Seiten ohne Bezier bekommen einen abgeleiteten Griff: Ease = flach, sonst ein Drittel auf der Geraden
-// (Linear–Linear ergibt so genau die Gerade).
+// Bezier section (at least one side Bezier): cubic curve through (0, a.value) .. (D, b.value) in frames/value.
+// Sides without Bezier get a derived handle: Ease = flat, otherwise a third along the straight line
+// (Linear-Linear thus gives exactly the straight line).
 bool bezierSegment(const Keyframe& a, const Keyframe& b) { return a.ease == KeyEase::Bezier || b.ease == KeyEase::Bezier; }
 
-// Griff auf die Abschnittslänge kürzen, Steigung bleibt
+// Shorten handle to the section length, slope stays
 void clampHandle(double& dt, double& dv, double maxAbs)
 {
     if (std::abs(dt) <= maxAbs || dt == 0) return;
@@ -105,7 +105,7 @@ void clampHandle(double& dt, double& dv, double maxAbs)
 }
 
 struct Controls {
-    double x1, y1, x2, y2; // x relativ zu a (Frames), y = Wert
+    double x1, y1, x2, y2; // x relative to a (frames), y = value
 };
 
 Controls controls(const Keyframe& a, const Keyframe& b)
@@ -140,7 +140,7 @@ double cubic(double p0, double p1, double p2, double p3, double u)
     return v * v * v * p0 + 3 * v * v * u * p1 + 3 * v * u * u * p2 + u * u * u * p3;
 }
 
-// Kurvenparameter u zur Zeit x (Frames nach a). x(u) steigt monoton, weil beide Griffe im Abschnitt liegen.
+// Curve parameter u at time x (frames after a). x(u) rises monotonically because both handles lie within the section.
 double solveU(const Controls& c, double D, double x)
 {
     if (x <= 0) return 0;
@@ -160,7 +160,7 @@ double bezierValue(const Keyframe& a, const Keyframe& b, double x)
     return cubic(a.value, c.y1, c.y2, b.value, solveU(c, D, x));
 }
 
-// Abgeleiteter Griff eines Keyframes ohne Bezier (relativ), passend zu controls()
+// Derived handle of a keyframe without Bezier (relative), matching controls()
 void derivedHandle(const KeyTrack& k, int i, bool out, double* dt, double* dv)
 {
     *dt = *dv = 0;
@@ -172,8 +172,8 @@ void derivedHandle(const KeyTrack& k, int i, bool out, double* dt, double* dv)
     *dv = flat ? 0 : (k[j].value - k[i].value) / 3;
 }
 
-// Teilen in einem Bezier-Abschnitt: Kurve an den neuen Kanten zerlegen (de Casteljau), damit beide Teile
-// genau der alten Kurve folgen. l endet mit dem Keyframe an leftEnd, r beginnt mit dem an cut.
+// Splitting in a Bezier section: split the curve at the new edges (de Casteljau) so that both parts
+// follow exactly the old curve. l ends with the keyframe at leftEnd, r starts with the one at cut.
 double mix(double a, double b, double w, bool color)
 {
     if (!color) return a + (b - a) * w;
@@ -301,7 +301,7 @@ double staticValue(const Clip& c, AnimParam p)
     case AnimParam::Pan: return c.pan;
     default: break;
     }
-    // Effekt-Parameter: Wert steht in der Effekt-Instanz (fehlt der Effekt: Default)
+    // Effect parameter: value is in the effect instance (if the effect is missing: default)
     QString effectId, key;
     if (effectParamOf(p, &effectId, &key)) return EffectRegistry::value(c, effectId, key).toDouble();
     const EffectDescriptor* e = nullptr;
@@ -331,7 +331,7 @@ void setStaticValue(Clip& c, AnimParam p, double v)
     case AnimParam::Volume: c.volumeDb = v; break;
     case AnimParam::Pan: c.pan = v; break;
     default: {
-        // Effekt-Parameter: nur in eine vorhandene Instanz schreiben (fehlt der Effekt, gibt es nichts zu ändern)
+        // Effect parameter: only write into an existing instance (if the effect is missing, there is nothing to change)
         QString effectId, key;
         if (effectParamOf(p, &effectId, &key)) {
             if (EffectInstance* inst = EffectRegistry::instance(c, effectId)) inst->params[key] = v;
@@ -364,7 +364,7 @@ double valueAt(const Clip& c, AnimParam p, double t)
     const auto it = c.keys.constFind(p);
     if (it == c.keys.cend() || it->isEmpty()) return staticValue(c, p);
     const KeyTrack& k = *it;
-    const double s = c.in + t; // Quell-Frame
+    const double s = c.in + t; // source frame
     if (s <= k.first().frame) return k.first().value;
     if (s >= k.last().frame) return k.last().value;
     for (int i = 1; i < k.size(); ++i) {
@@ -374,7 +374,7 @@ double valueAt(const Clip& c, AnimParam p, double t)
         const double u = (s - a.frame) / double(b.frame - a.frame);
         const bool color = info(p).color;
         if (bezierSegment(a, b) && !color) return bezierValue(a, b, s - a.frame);
-        // Farben: Bezier-Seiten wie linear (Griffe haben keinen Farbwert)
+        // Colors: Bezier sides like linear (handles have no color value)
         auto plain = [](Keyframe k) {
             if (k.ease == KeyEase::Bezier) k.ease = KeyEase::Linear;
             return k;
@@ -413,7 +413,7 @@ void removeKey(Clip& c, AnimParam p, int t)
     it->erase(std::remove_if(it->begin(), it->end(), [&](const Keyframe& k) { return k.frame == c.in + t; }), it->end());
     if (it->isEmpty()) {
         c.keys.erase(it);
-        setStaticValue(c, p, v); // wie DaVinci: der Wert bleibt stehen
+        setStaticValue(c, p, v); // like DaVinci: the value stays
     }
 }
 
@@ -449,9 +449,9 @@ bool linearBetween(const Clip& c, AnimParam p, int t0, int t1)
     for (int i = 1; i < k.size(); ++i) {
         const Keyframe& a = k[i - 1];
         const Keyframe& b = k[i];
-        if (s1 <= a.frame || s0 >= b.frame) continue; // Abschnitt berührt dieses Segment nicht
+        if (s1 <= a.frame || s0 >= b.frame) continue; // section does not touch this segment
         if (bezierSegment(a, b) && !info(p).color) {
-            // Bezier: nur eine waagerechte Kurve ist sicher linear (sonst Frame für Frame rechnen)
+            // Bezier: only a horizontal curve is certainly linear (otherwise compute frame by frame)
             const Controls ctl = controls(a, b);
             if (a.value == b.value && ctl.y1 == a.value && ctl.y2 == a.value) continue;
             return false;
@@ -473,7 +473,7 @@ void rescaleHandles(const KeyTrack& before, KeyTrack& after)
         };
         const double rPrev = i > 0 ? ratio(i - 1) : i + 1 < n ? ratio(i + 1) : 1.0;
         const double rNext = i + 1 < n ? ratio(i + 1) : rPrev;
-        // nur die Zeit streckt sich, der Wert des Griffs bleibt; rückwärts tauschen ein und aus
+        // only the time stretches, the handle's value stays; reversed swaps in and out
         const double inDt = before[i].inDt * rPrev, inDv = before[i].inDv;
         const double outDt = before[i].outDt * rNext, outDv = before[i].outDv;
         const bool flip = rPrev < 0 || rNext < 0;
@@ -489,7 +489,7 @@ void setEase(Clip& c, const QVector<int>& times, KeyEase ease, const QVector<Ani
     for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
         if (!inList(params, it.key())) continue;
         KeyTrack& k = *it;
-        QVector<int> fresh; // neu auf Bezier: weiche Griffe berechnen, wenn alle Verläufe stehen
+        QVector<int> fresh; // newly Bezier: compute smooth handles once all interpolations are set
         for (int i = 0; i < k.size(); ++i)
             if (times.contains(k[i].frame - c.in)) {
                 if (ease == KeyEase::Bezier && k[i].ease != KeyEase::Bezier) fresh << i;
@@ -505,7 +505,7 @@ void autoHandles(KeyTrack& k, int i)
     Keyframe& key = k[i];
     const Keyframe* prev = i > 0 ? &k[i - 1] : nullptr;
     const Keyframe* next = i + 1 < k.size() ? &k[i + 1] : nullptr;
-    // Steigung wie Catmull-Rom; an Spitzen/Tälern und an den Enden flach (kein Überschwingen)
+    // Slope like Catmull-Rom; flat at peaks/valleys and at the ends (no overshoot)
     double slope = 0;
     if (prev && next && (key.value - prev->value) * (next->value - key.value) > 0)
         slope = (next->value - prev->value) / double(next->frame - prev->frame);
@@ -538,7 +538,7 @@ void setHandle(KeyTrack& k, int i, bool out, double dt, double dv, bool broken)
 {
     if (i < 0 || i >= k.size()) return;
     Keyframe& key = k[i];
-    if (key.ease != KeyEase::Bezier) { // bisherige Form beider Seiten als Griffe übernehmen
+    if (key.ease != KeyEase::Bezier) { // take over the previous shape of both sides as handles
         derivedHandle(k, i, false, &key.inDt, &key.inDv);
         derivedHandle(k, i, true, &key.outDt, &key.outDv);
         if (i == 0) {
@@ -555,7 +555,7 @@ void setHandle(KeyTrack& k, int i, bool out, double dt, double dv, bool broken)
     (out ? key.outDt : key.inDt) = dt;
     (out ? key.outDv : key.inDv) = dv;
     if (broken || dt == 0) return;
-    // wie DaVinci: Griffe bleiben auf einer Linie (gleiche Steigung), die Länge der anderen Seite bleibt
+    // like DaVinci: handles stay on a line (same slope), the length of the other side stays
     const double slope = dv / dt;
     if (out) key.inDv = key.inDt * slope;
     else key.outDv = key.outDt * slope;
@@ -585,7 +585,7 @@ void move(Clip& c, const QVector<int>& times, int delta)
             }
         }
         if (moved.isEmpty()) continue;
-        // Verschobene Keyframes gewinnen gegen solche, die am Ziel schon liegen
+        // Moved keyframes win against those already at the target
         kept.erase(std::remove_if(kept.begin(), kept.end(), [&](const Keyframe& k) {
             return std::any_of(moved.begin(), moved.end(), [&](const Keyframe& m) { return m.frame == k.frame; });
         }), kept.end());
@@ -596,9 +596,9 @@ void move(Clip& c, const QVector<int>& times, int delta)
 
 void split(const Clip& original, Clip& left, Clip& right)
 {
-    // Wie DaVinci: beide Teile behalten alle Keyframes (Quell-Frames bleiben gleich). Keys außerhalb eines Teils
-    // sind unsichtbar, bestimmen aber weiter den Verlauf -> Kurve jeder Form exakt wie vorher, und beim
-    // Zurückziehen eines Teils ist die Animation wieder da (wie nach dem Trimmen).
+    // Like DaVinci: both parts keep all keyframes (source frames stay the same). Keys outside a part
+    // are invisible but still determine the course -> curve of any shape exactly as before, and when
+    // a part is dragged back out the animation is there again (as after trimming).
     left.keys = original.keys;
     right.keys = original.keys;
 }

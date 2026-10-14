@@ -1,6 +1,6 @@
-// Test Projektdatei: Projekt mit allen Features speichern -> laden -> speichern ergibt dieselbe Datei, und
-// alle Werte kommen unverändert zurück (auch Felder, die beim ersten Speichern verloren gehen würden).
-// Dazu: verschobener Projektordner (relative Pfade), ungültige/zu neue Dateien.
+// Test project file: save a project with all features -> load -> save gives the same file, and
+// all values come back unchanged (also fields that would be lost on the first save).
+// Also: moved project folder (relative paths), invalid/too new files.
 #include "check.h"
 
 #include "core/EffectRegistry.h"
@@ -15,7 +15,7 @@
 
 namespace {
 
-// Feldweiser Vergleich (Ausgabe des ersten Unterschieds), damit auch Werte auffallen, die gar nicht gespeichert werden
+// Field-by-field comparison (prints the first difference), so values that are not saved at all stand out too
 QString diffClip(const Clip& a, const Clip& b)
 {
 #define D(f) if (!(a.f == b.f)) return QString("Clip %1: " #f).arg(a.id)
@@ -78,7 +78,7 @@ Clip mk(int id, const QString& path, int start, int in, int out, int link = 0)
     return c;
 }
 
-// Projekt mit möglichst allen Features (Werte bewusst krumm, damit Rundungen auffallen)
+// Project with as many features as possible (values deliberately awkward so that rounding stands out)
 ProjectData fullProject(const QString& dir)
 {
     const QString a = dir + "/medien/a.mp4", b = dir + "/medien/b.mov", m = dir + "/medien/musik.wav",
@@ -97,7 +97,7 @@ ProjectData fullProject(const QString& dir)
     TimelineOps::ensureTracks(tl, TrackKind::Video, 3);
     TimelineOps::ensureTracks(tl, TrackKind::Audio, 3);
 
-    // V1: a | b mit Überblendung (Wischblende mit Rand/Weichheit, Start on Edit), Fades, Transform, Effekte, Keyframes
+    // V1: a | b with dissolve (wipe with border/softness, Start on Edit), fades, transform, effects, keyframes
     Clip v1 = mk(1, a, 0, 10, 209, 1);
     v1.transIn = 13;
     v1.transInStyle.type = TransitionType::DipToColor;
@@ -134,7 +134,7 @@ ProjectData fullProject(const QString& dir)
     Keys::setKey(v1, AnimParam::ZoomX, 5, 1.0);
     Keys::setKey(v1, AnimParam::ZoomX, 60, 2.5);
     Keys::setEase(v1, {5}, KeyEase::Bezier, {AnimParam::ZoomX});
-    Keys::setHandle(v1.keys[AnimParam::ZoomX], 0, true, 12.25, 0.875, true); // Bezier-Griffe
+    Keys::setHandle(v1.keys[AnimParam::ZoomX], 0, true, 12.25, 0.875, true); // Bezier handles
     Clip v2 = mk(2, b, 200, 50, 149, 2);
     v2.transIn = 25;
     v2.transInStyle = v1.transOutStyle;
@@ -149,10 +149,10 @@ ProjectData fullProject(const QString& dir)
     rev.reverse = true;
     rev.speed = 2.0;
     Clip img = mk(5, still, 620, 0, 124);
-    img.transform.transformOn = false; // nur Schalter geändert, Werte neutral
+    img.transform.transformOn = false; // only switch changed, values neutral
     tl.video[0].clips << v1 << v2 << frozen << rev << img;
 
-    // V2: Titel mit allen Stil-Werten, Keyframes auf Größe/Farbe, Ausblenden über Farbe
+    // V2: title with all style values, keyframes on size/color, fade out via color
     Clip t = mk(6, {}, 30, -20, 129);
     t.kind = ClipKind::Title;
     t.title.text = "Zeile 1\nZeile \"2\" – äöü ß";
@@ -186,7 +186,7 @@ ProjectData fullProject(const QString& dir)
     tl.video[2].hidden = true;
     tl.video[2].color = "orange";
 
-    // A1: Partner von v1/v2 mit Lautstärke, Pan, Keyframes, Audio-Übergang
+    // A1: partner of v1/v2 with volume, pan, keyframes, audio transition
     Clip a1 = mk(11, a, 0, 10, 209, 1);
     a1.volumeDb = -7.5;
     a1.pan = 33.3;
@@ -204,7 +204,7 @@ ProjectData fullProject(const QString& dir)
     tl.audio[0].muted = true;
     tl.audio[0].volumeDb = -3.25;
     tl.audio[0].pan = -20;
-    // A2: Musik, gesperrt, benannt, Solo, mit Fades
+    // A2: music, locked, named, solo, with fades
     Clip mu = mk(21, m, 0, 5, 804);
     mu.fadeIn = 50;
     mu.fadeOut = 75;
@@ -228,12 +228,12 @@ ProjectData fullProject(const QString& dir)
 
 } // namespace
 
-// Sicherungskopien: alter Stand landet im Backup-Ordner, gleicher Stand nicht doppelt, nur die neuesten bleiben
+// Backup copies: old state lands in the backup folder, same state not twice, only the newest remain
 void testBackups(const QString& dir)
 {
-    QDir(ProjectFile::backupDir({})).removeRecursively(); // Testmodus-Pfad, Reste früherer Läufe
+    QDir(ProjectFile::backupDir({})).removeRecursively(); // test mode path, leftovers of earlier runs
     const QString path = dir + "/backup-test.schneidi";
-    CHECK(ProjectFile::backup(path).isEmpty()); // noch nie gespeichert
+    CHECK(ProjectFile::backup(path).isEmpty()); // never saved yet
     ProjectData d;
     QString err;
     QStringList states;
@@ -246,21 +246,21 @@ void testBackups(const QString& dir)
         CHECK(f.open(QIODevice::ReadOnly));
         states << f.readAll();
     }
-    CHECK(ProjectFile::backup(path, 4).isEmpty() == false); // Stand 5 ist noch nicht gesichert
-    CHECK(ProjectFile::backup(path, 4).isEmpty());          // jetzt schon -> keine Doppelung
+    CHECK(ProjectFile::backup(path, 4).isEmpty() == false); // state 5 is not backed up yet
+    CHECK(ProjectFile::backup(path, 4).isEmpty());          // now it is -> no duplicate
     const QDir bdir(ProjectFile::backupDir(path));
     const QStringList files = bdir.entryList({"*.schneidi"}, QDir::Files, QDir::Name);
     CHECK_EQ(files.size(), 4);
-    // Die vier neuesten Stände 2..5 in zeitlicher Reihenfolge
+    // The four newest states 2..5 in chronological order
     for (int i = 0; i < files.size() && i < 4; ++i) {
         QFile f(bdir.filePath(files[i]));
         CHECK(f.open(QIODevice::ReadOnly));
         CHECK(f.readAll() == states[2 + i].toUtf8());
     }
-    // Zeitumstellung (Herbst: Uhr springt zurück) -> neue Kopie hat einen „früheren“ Namen; trotzdem bleibt sie,
-    // weggeräumt wird die älteste
+    // Clock change (autumn: clock jumps back) -> new copy has an "earlier" name; it stays anyway,
+    // the oldest is cleared away
     {
-        QFile late(bdir.filePath("2099-01-01 00-00-00-000.schneidi")); // Name „aus der Zukunft“, Inhalt alt
+        QFile late(bdir.filePath("2099-01-01 00-00-00-000.schneidi")); // name "from the future", content old
         CHECK(late.open(QIODevice::WriteOnly) && late.write("alt") == 3);
         late.flush();
         CHECK(late.setFileTime(QDateTime::currentDateTime().addDays(-1), QFileDevice::FileModificationTime));
@@ -268,10 +268,10 @@ void testBackups(const QString& dir)
         d.playhead = 99;
         CHECK(ProjectFile::save(d, path, &err));
         CHECK(!ProjectFile::backup(path, 4).isEmpty());
-        CHECK(!QFileInfo::exists(bdir.filePath("2099-01-01 00-00-00-000.schneidi"))); // älteste nach Zeit
+        CHECK(!QFileInfo::exists(bdir.filePath("2099-01-01 00-00-00-000.schneidi"))); // oldest by time
         CHECK_EQ(bdir.entryList({"*.schneidi"}, QDir::Files).size(), 4);
     }
-    // gleichnamiges Projekt in anderem Ordner: eigener Backup-Ordner
+    // project of the same name in another folder: own backup folder
     CHECK(ProjectFile::backupDir(path) != ProjectFile::backupDir(dir + "/medien/backup-test.schneidi"));
     QDir(ProjectFile::backupDir({})).removeRecursively();
 }
@@ -287,12 +287,12 @@ int main(int argc, char** argv)
     QDir().mkpath(dir + "/medien");
     for (const char* f : {"a.mp4", "b.mov", "musik.wav", "bild.png"}) {
         QFile file(dir + "/medien/" + f);
-        CHECK(file.open(QIODevice::WriteOnly)); // leere Platzhalter: Projektdatei prüft nur, ob es sie gibt
+        CHECK(file.open(QIODevice::WriteOnly)); // empty placeholders: project file only checks whether they exist
     }
 
     testBackups(dir);
 
-    // --- Speichern -> Laden -> Speichern identisch, alle Werte gleich
+    // --- Save -> load -> save identical, all values equal
     const ProjectData orig = fullProject(dir);
     const QString path = dir + "/schnitt.schneidi";
     QString err;
@@ -305,17 +305,17 @@ int main(int argc, char** argv)
     QFile f1(path), f2(path2);
     CHECK(f1.open(QIODevice::ReadOnly) && f2.open(QIODevice::ReadOnly));
     const QByteArray json1 = f1.readAll(), json2 = f2.readAll();
-    f1.close(); // Windows: Ordner mit offenen Dateien lässt sich unten nicht umbenennen
+    f1.close(); // Windows: a folder with open files cannot be renamed below
     f2.close();
     CHECK(!json1.isEmpty() && json1 == json2);
-    // Direkt über toJson/fromJson ebenso (dritte Runde)
+    // Directly via toJson/fromJson likewise (third round)
     ProjectData again;
     CHECK(ProjectFile::fromJson(json2, path, &again, &err));
     CHECK_EQ(diffData(again, orig), QString());
     CHECK(ProjectFile::toJson(again, path) == json1);
     CHECK(ProjectFile::missingMedia(loaded).isEmpty());
 
-    // --- Clip, dessen Datei nicht im Media Pool steht: bleibt erhalten, zweites Speichern identisch
+    // --- Clip whose file is not in the Media Pool: is kept, second save identical
     {
         ProjectData d = orig;
         d.timeline.video[2].clips << mk(30, dir + "/medien/extra.mp4", 0, 0, 49);
@@ -327,7 +327,7 @@ int main(int argc, char** argv)
         CHECK(ProjectFile::toJson(back, path) == j1);
     }
 
-    // --- Projektordner verschoben: Medien über den relativen Pfad wiedergefunden
+    // --- Project folder moved: media found again via the relative path
     {
         const QString moved = tmp.filePath("verschoben");
         CHECK(QDir().rename(dir, moved));
@@ -337,7 +337,7 @@ int main(int argc, char** argv)
         const Clip* c = TimelineOps::findClip(d.timeline, 21);
         CHECK(c && c->mediaPath == moved + "/medien/musik.wav");
         CHECK(ProjectFile::missingMedia(d).isEmpty());
-        // Medien weg: bleiben offline (alter Pfad), relink findet sie in einem anderen Ordner
+        // Media gone: stay offline (old path), relink finds them in another folder
         const QString elsewhere = tmp.filePath("anderswo/tief");
         QDir().mkpath(elsewhere);
         CHECK(QDir().rename(moved + "/medien", elsewhere + "/medien"));
@@ -348,7 +348,7 @@ int main(int argc, char** argv)
         CHECK(c && c->mediaPath == elsewhere + "/medien/a.mp4" && ProjectFile::missingMedia(d).isEmpty());
     }
 
-    // --- Projekt vom anderen System (Linux <-> Windows): Dateiname aus fremden Pfaden, relink findet die Medien
+    // --- Project from the other system (Linux <-> Windows): file name from foreign paths, relink finds the media
     {
         CHECK_EQ(ProjectFile::fileNameAnyOs("/home/nutzer/Videos/a.mp4"), QString("a.mp4"));
         CHECK_EQ(ProjectFile::fileNameAnyOs("C:\\Users\\nutzer\\Videos\\Clip 1.mov"), QString("Clip 1.mov"));
@@ -368,7 +368,7 @@ int main(int argc, char** argv)
         CHECK(c && QFileInfo(c->mediaPath).fileName() == "b.mov");
     }
 
-    // --- Ältere Datei: Standbild ohne freezeFrame zeigt `in` – auch nach Teilen (verschiebt `in` des rechten Teils)
+    // --- Older file: freeze frame without freezeFrame shows `in` - also after splitting (shifts `in` of the right part)
     {
         ProjectData d;
         CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[{"path":"/x/a.mp4","length":100,"hasVideo":true}],
@@ -380,7 +380,7 @@ int main(int argc, char** argv)
         CHECK(r && r->stillFrame() == 40);
     }
 
-    // --- Von Hand kaputt geänderte Datei: out < in bzw. negativer Start werden korrigiert
+    // --- File broken by hand: out < in or negative start are corrected
     {
         ProjectData d;
         CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"media":[{"path":"/x/a.mp4","length":100,"hasVideo":true}],
@@ -390,7 +390,7 @@ int main(int argc, char** argv)
         CHECK(c && c->start == 0 && c->out >= c->in && c->length() >= 1);
     }
 
-    // --- Gleichnamige Kameradateien (camA/C0001.MP4, camB/C0001.MP4): jede findet ihre eigene, nichts doppelt
+    // --- Camera files of the same name (camA/C0001.MP4, camB/C0001.MP4): each finds its own, nothing twice
     {
         const QString root = tmp.filePath("karte");
         for (const char* cam : {"camA", "camB"}) {
@@ -410,24 +410,24 @@ int main(int argc, char** argv)
         CHECK_EQ(ProjectFile::relink(&d, root), 2);
         CHECK_EQ(d.media.value(0).path, root + "/neu/camA/C0001.MP4");
         CHECK_EQ(d.media.value(1).path, root + "/neu/camB/C0001.MP4");
-        // Ordnernamen passen nicht mehr: nicht raten, beide bleiben offline
+        // Folder names no longer match: do not guess, both stay offline
         d = project("/alt/x/C0001.MP4", "/alt/y/C0001.MP4");
         CHECK_EQ(ProjectFile::relink(&d, root), 0);
         CHECK_EQ(ProjectFile::missingMedia(d).size(), 2);
-        // nur eine Datei dieses Namens gesucht: beste Übereinstimmung, sonst die erste gefundene
+        // only one file of this name searched: best match, otherwise the first found
         d = project("/alt/camB/C0001.MP4", "/alt/andere.mp4");
         CHECK_EQ(ProjectFile::relink(&d, root), 1);
         CHECK_EQ(d.media.value(0).path, root + "/neu/camB/C0001.MP4");
     }
 
-    // --- Ungültige Dateien
+    // --- Invalid files
     {
         ProjectData d;
         CHECK(!ProjectFile::fromJson("kein json", path, &d, &err) && !err.isEmpty());
         CHECK(!ProjectFile::fromJson(R"({"app":"anders","version":1})", path, &d, &err));
         CHECK(!ProjectFile::fromJson(R"({"app":"schneidi","version":999})", path, &d, &err));
         CHECK(!ProjectFile::load(tmp.filePath("gibtsnicht.schneidi"), &d, &err));
-        // alte Datei ohne Format/Keyframes/Spurnamen: Standardwerte
+        // old file without format/keyframes/track names: default values
         CHECK(ProjectFile::fromJson(R"({"app":"schneidi","version":1,"fps":30,
             "media":[{"path":"/x/a.mp4","name":"a.mp4","length":100,"hasVideo":true}],
             "timeline":{"video":[{"name":"V1","clips":[{"id":3,"media":0,"start":5,"in":0,"out":9,

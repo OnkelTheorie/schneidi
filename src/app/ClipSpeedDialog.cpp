@@ -53,7 +53,7 @@ ClipSpeedDialog::ClipSpeedDialog(const Editor::Retime& current, int clipLength, 
     connect(m_percent, &QDoubleSpinBox::valueChanged, this, &ClipSpeedDialog::percentEdited);
     connect(m_fps, &QDoubleSpinBox::valueChanged, this, &ClipSpeedDialog::fpsEdited);
     connect(m_ripple, &QCheckBox::toggled, this, &ClipSpeedDialog::updateDuration);
-    // Standbild: Geschwindigkeit spielt keine Rolle (wie DaVinci ausgegraut)
+    // Still image: speed does not matter (grayed out like DaVinci)
     connect(m_freeze, &QCheckBox::toggled, this, [this](bool on) {
         for (QWidget* w : {static_cast<QWidget*>(m_percent), static_cast<QWidget*>(m_fps),
                            static_cast<QWidget*>(m_reverse), static_cast<QWidget*>(m_pitch)})

@@ -1,6 +1,6 @@
-// Test mehrere Timelines pro Projekt + Compound Clips: Sequenzen anlegen/umbenennen/duplizieren/löschen, Undo über
-// Timelines hinweg, Compound Clip erstellen/auflösen, Schleifenschutz, Projektdatei (auch alte Dateien), Bins,
-// Rendern verschachtelter Timelines (Pixel: Inhalt, Transparenz, Ausschnitt, Export-Skalierung).
+// Test several timelines per project + compound clips: create/rename/duplicate/delete sequences, undo across
+// timelines, create/dissolve compound clip, loop protection, project file (also old files), bins,
+// rendering of nested timelines (pixels: content, transparency, section, export scaling).
 #include "check.h"
 
 #include "core/Editor.h"
@@ -58,13 +58,13 @@ void testSequences()
     CHECK_EQ(p.sequences().size(), 1);
     const int first = p.currentSequence();
     CHECK_EQ(p.sequenceName(first), QString("Timeline 1"));
-    CHECK(!p.canRemoveSequence(first)); // letzte Timeline bleibt
+    CHECK(!p.canRemoveSequence(first)); // last timeline stays
 
     p.addMedia(media("/x/a.mp4", 100));
     ed.addMediaAt({"/x/a.mp4"}, 0);
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99]  V2:  A1: a[0-100|0-99]  A2:"));
 
-    // Neue Timeline: leer, geöffnet, Standardname mit nächster Nummer; Undo öffnet wieder die erste
+    // New timeline: empty, opened, default name with next number; undo opens the first again
     const int second = p.addTimeline();
     CHECK_EQ(p.currentSequence(), second);
     CHECK_EQ(p.sequenceName(second), QString("Timeline 2"));
@@ -72,7 +72,7 @@ void testSequences()
     ed.addMediaAt({"/x/a.mp4"}, 50);
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[50-150|0-99]  V2:  A1: a[50-150|0-99]  A2:"));
 
-    // Zur ersten wechseln (kein Undo-Schritt), dort ändern; Undo nimmt erst das zurück, dann in Timeline 2
+    // Switch to the first (no undo step), change there; undo reverts that first, then in timeline 2
     const int steps = undo->count();
     p.setCurrentSequence(first);
     CHECK_EQ(undo->count(), steps);
@@ -83,14 +83,14 @@ void testSequences()
     undo->undo();
     CHECK_EQ(p.currentSequence(), first);
     CHECK(TimelineOps::endFrame(p.timeline()) == 100);
-    undo->undo(); // Clip in Timeline 2 -> öffnet Timeline 2
+    undo->undo(); // clip in timeline 2 -> opens timeline 2
     CHECK_EQ(p.currentSequence(), second);
     CHECK(TimelineOps::endFrame(p.timeline()) == 0);
     undo->redo();
     CHECK(TimelineOps::endFrame(p.timeline()) == 150);
-    CHECK(TimelineOps::endFrame(p.sequence(first)->timeline) == 100); // andere Timeline unberührt
+    CHECK(TimelineOps::endFrame(p.sequence(first)->timeline) == 100); // other timeline untouched
 
-    // Umbenennen, Duplizieren (eigene Clip-ids), Löschen
+    // Rename, duplicate (own clip ids), delete
     p.renameSequence(second, "  Schnitt B ");
     CHECK_EQ(p.sequenceName(second), QString("Schnitt B"));
     const int dup = p.duplicateSequence(second);
@@ -102,16 +102,16 @@ void testSequences()
           == clipOn(p.sequence(dup)->timeline, TrackKind::Audio, 0, 0)->linkId);
     CHECK(clipOn(p.sequence(dup)->timeline, TrackKind::Video, 0, 0)->linkId
           != clipOn(p.sequence(second)->timeline, TrackKind::Video, 0, 0)->linkId);
-    CHECK(p.removeSequence(second)); // geöffnet -> nächste normale Timeline öffnet sich
+    CHECK(p.removeSequence(second)); // opened -> next normal timeline opens
     CHECK(!p.sequence(second));
     CHECK_EQ(p.currentSequence(), first);
     undo->undo();
     CHECK(p.sequence(second) && p.currentSequence() == second);
-    undo->undo(); // Duplizieren
+    undo->undo(); // duplicate
     CHECK(!p.sequence(dup));
     CHECK_EQ(p.sequences().size(), 2);
 
-    // Bins: Timeline in Bin, Bin löschen -> zurück in den Eltern-Bin (ein Undo-Schritt je)
+    // Bins: timeline into bin, delete bin -> back into the parent bin (one undo step each)
     const int bin = p.addBin(0, "Schnitte");
     p.moveSequencesToBin({second}, bin);
     CHECK_EQ(p.sequence(second)->bin, bin);
@@ -120,11 +120,11 @@ void testSequences()
     undo->undo();
     CHECK_EQ(p.sequence(second)->bin, bin);
 
-    // Framerate bleibt gesperrt, solange irgendeine Timeline Clips hat
+    // Frame rate stays locked as long as any timeline has clips
     p.setCurrentSequence(first);
     ed.selectAll();
     ed.deleteSelection();
-    CHECK(p.frameRateLocked()); // Timeline 2 hat noch Clips
+    CHECK(p.frameRateLocked()); // timeline 2 still has clips
 }
 
 void testCompound()
@@ -136,21 +136,21 @@ void testCompound()
     p.addMedia(media("/x/a.mp4", 100));
     p.addMedia(media("/x/b.mp4", 100));
     p.addMedia(media("/x/t.png", 50, true, false));
-    ed.addMediaAt({"/x/a.mp4", "/x/b.mp4"}, 10); // a 10-110, b 110-210 auf V1/A1
-    ed.addMediaAt({"/x/t.png"}, 60, 1);          // t 60-110 auf V2
+    ed.addMediaAt({"/x/a.mp4", "/x/b.mp4"}, 10); // a 10-110, b 110-210 on V1/A1
+    ed.addMediaAt({"/x/t.png"}, 60, 1);          // t 60-110 on V2
     const QString before = Check::dump(p.timeline());
     const int parent = p.currentSequence();
 
-    // b und t (mit Audio-Partner von b) zusammenfassen -> Spanne 60..210
+    // Combine b and t (with audio partner of b) -> span 60..210
     const Clip* b = clipOn(p.timeline(), TrackKind::Video, 0, 1);
     const Clip* t = clipOn(p.timeline(), TrackKind::Video, 1, 0);
     sel.set({b->id, t->id});
     const int seq = ed.createCompoundClip("Mein Compound");
     if (!CHECK(seq > 0)) return;
-    CHECK_EQ(p.currentSequence(), parent); // bleibt in der Timeline
+    CHECK_EQ(p.currentSequence(), parent); // stays in the timeline
     CHECK_EQ(p.sequenceName(seq), QString("Mein Compound"));
     CHECK(p.sequence(seq)->compound);
-    // Spanne 60–210 überschneidet a auf V1/A1 -> Compound Clip auf die nächste freie Spur (a bleibt ganz)
+    // Span 60-210 overlaps a on V1/A1 -> compound clip onto the next free track (a stays whole)
     CHECK_EQ(Check::dump(p.timeline()),
              QString("V1: a[10-110|0-99]  V2: C%1[60-210|0-149]  A1: a[10-110|0-99]  A2: C%1[60-210|0-149]").arg(seq));
     const Timeline& inner = p.sequence(seq)->timeline;
@@ -168,14 +168,14 @@ void testCompound()
     undo->redo();
     CHECK(p.sequence(seq));
 
-    // Trimmen begrenzt auf die Länge der Sequenz
+    // Trimming limited to the length of the sequence
     const int vid = clipOn(p.timeline(), TrackKind::Video, 1, 0)->id;
     CHECK_EQ(ed.clampTrim(vid, TimelineOps::Edge::End, 50), 0);
-    ed.trimClip(vid, TimelineOps::Edge::Start, 20); // Inhalt ab Frame 20
+    ed.trimClip(vid, TimelineOps::Edge::Start, 20); // content from frame 20
     const Clip* cc = TimelineOps::findClip(p.timeline(), vid);
     CHECK(cc && cc->start == 80 && cc->in == 20);
 
-    // Schleifenschutz: Compound in sich selbst geht nicht, Timeline in ihren Compound auch nicht
+    // Loop protection: compound into itself is not possible, timeline into its compound neither
     CHECK(!p.canNest(seq, seq));
     CHECK(!p.canNest(parent, seq));
     CHECK(p.canNest(seq, parent));
@@ -187,20 +187,20 @@ void testCompound()
     ed.copySelection();
     p.setCurrentSequence(seq);
     const QString innerBefore = Check::dump(p.timeline());
-    ed.paste(0); // Compound Clip in seinen eigenen Inhalt -> nichts
+    ed.paste(0); // compound clip into its own content -> nothing
     CHECK_EQ(Check::dump(p.timeline()), innerBefore);
     p.setCurrentSequence(parent);
 
-    // Timeline aus dem Media Pool verschachteln
+    // Nest timeline from the Media Pool
     const int other = p.addTimeline("Nest");
     CHECK(ed.addSequenceAt(parent, 5));
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: C%1[5-215|0-209]  V2:  A1: C%1[5-215|0-209]  A2:").arg(parent));
-    CHECK(!p.canNest(other, seq));    // other enthält (über parent) seq -> nicht in seq legen
-    CHECK(!p.canNest(other, parent)); // other enthält parent -> Schleife
+    CHECK(!p.canNest(other, seq));    // other contains (via parent) seq -> do not put into seq
+    CHECK(!p.canNest(other, parent)); // other contains parent -> loop
     CHECK(p.canNest(seq, other));
     p.setCurrentSequence(parent);
 
-    // Auflösen: Inhalt im benutzten Ausschnitt (ab Frame 20) an dieselbe Stelle, Spuren ab der des Compound Clips
+    // Dissolve: content in the used section (from frame 20) at the same position, tracks from that of the compound clip
     sel.set({vid});
     CHECK(ed.decomposeCompoundClips({vid}));
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[10-110|0-99]  V2: b[110-210|0-99]  V3: t[80-110|20-49]  "
@@ -208,11 +208,11 @@ void testCompound()
     const Clip* vb = clipOn(p.timeline(), TrackKind::Video, 1, 0);
     const Clip* ab = clipOn(p.timeline(), TrackKind::Audio, 1, 0);
     CHECK(vb && ab && vb->linkId && vb->linkId == ab->linkId);
-    CHECK(p.sequence(seq)); // bleibt im Media Pool
+    CHECK(p.sequence(seq)); // stays in the Media Pool
     undo->undo();
     CHECK(clipOn(p.timeline(), TrackKind::Video, 1, 0)->isCompound());
 
-    // Verknüpfte Auswahl aus: nur der Videoteil wird aufgelöst, der Audioteil bleibt -> kein doppelter Ton
+    // Linked selection off: only the video part is dissolved, the audio part stays -> no duplicate audio
     ed.setLinkedSelection(false);
     CHECK(ed.decomposeCompoundClips({vid}));
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[10-110|0-99]  V2: b[110-210|0-99]  V3: t[80-110|20-49]  "
@@ -220,7 +220,7 @@ void testCompound()
     ed.setLinkedSelection(true);
 }
 
-// Auflösen mit belegten Spuren darüber: Inhalt weicht auf freie Spuren aus, der Titel darüber bleibt
+// Dissolve with occupied tracks above: content moves to free tracks, the title above stays
 void testDecomposeKeepsClipsAbove()
 {
     Project p;
@@ -231,9 +231,9 @@ void testDecomposeKeepsClipsAbove()
     ed.addMediaAt({"/x/a.mp4"}, 0, 0);
     ed.addMediaAt({"/x/b.mp4"}, 0, 1);
     ed.selectAll();
-    const int seq = ed.createCompoundClip(); // zwei Videospuren innen, Compound Clip auf V1
+    const int seq = ed.createCompoundClip(); // two video tracks inside, compound clip on V1
     CHECK(seq > 0);
-    ed.addTitle(10, 1); // Titel auf V2 über dem Compound Clip
+    ed.addTitle(10, 1); // title on V2 above the compound clip
     CHECK_EQ(Check::dump(p.timeline()).count("T["), 1);
     const Clip* cc = clipOn(p.timeline(), TrackKind::Video, 0, 0);
     if (!CHECK(cc && cc->isCompound())) return;
@@ -280,12 +280,12 @@ void testProjectFile()
         CHECK_EQ(Check::dump(o->timeline), Check::dump(s.timeline));
     }
     CHECK_EQ(q.renderQueue().value(0).sequence, second);
-    // Speichern -> Laden -> Speichern identisch
+    // Save -> load -> save identical
     CHECK_EQ(ProjectFile::toJson(q.data(), "/x/projekt.schneidi"), json);
-    // Ältere Versionen lesen nur "timeline": dort steht die geöffnete Timeline
+    // Older versions read only "timeline": the opened timeline is in there
     CHECK(json.contains("\"timeline\"") && json.contains("\"sequences\""));
 
-    // Alte Datei ohne Sequenzen: eine Timeline „Timeline 1“
+    // Old file without sequences: one timeline "Timeline 1"
     ProjectData old;
     old.timeline = p.sequence(p.currentSequence())->timeline;
     old.timeline.video[0].clips.clear();
@@ -295,7 +295,7 @@ void testProjectFile()
     CHECK_EQ(r.sequences().size(), 1);
     CHECK_EQ(r.sequenceName(r.currentSequence()), QString("Timeline 1"));
 
-    // Kaputte Datei: Compound Clip auf fehlende Sequenz fliegt raus, Selbstverweis auch
+    // Broken file: compound clip pointing to a missing sequence is dropped, self-reference too
     ProjectData broken = back;
     broken.sequences.removeIf([&](const Sequence& s) { return s.id == seq; });
     Project b2;
@@ -305,7 +305,7 @@ void testProjectFile()
             CHECK(!c || !c->isCompound());
 }
 
-// ---- Rendern ----
+// ---- Rendering ----
 
 QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos)
 {
@@ -330,7 +330,7 @@ bool near(QRgb c, int r, int g, int b)
 
 int testRender(const QString& dir)
 {
-    // rot 0–2 s, dann grün 2–4 s (Ausschnitt prüfbar); blau als Hintergrund
+    // red 0-2 s, then green 2-4 s (section checkable); blue as background
     const QString rg = Check::makeMedia(dir + "/rg.mp4", {"-f", "lavfi", "-i", "color=red:size=320x180:rate=25:duration=2",
                                                           "-f", "lavfi", "-i", "color=lime:size=320x180:rate=25:duration=2",
                                                           "-filter_complex", "[0][1]concat=n=2:v=1:a=0", "-c:v", "libx264",
@@ -358,9 +358,9 @@ int testRender(const QString& dir)
     Editor ed(&p, &sel);
     p.addMedia(media(rg, 100, true, false));
     p.addMedia(media(blue, 100, true, false));
-    ed.addMediaAt({blue}, 0, 0); // V1 blau
-    ed.addMediaAt({rg}, 0, 1);   // V2 rot/grün
-    // V2-Clip auf 0–60 kürzen (danach sieht man V1)
+    ed.addMediaAt({blue}, 0, 0); // V1 blue
+    ed.addMediaAt({rg}, 0, 1);   // V2 red/green
+    // Shorten V2 clip to 0-60 (afterwards V1 is visible)
     const int rgId = clipOn(p.timeline(), TrackKind::Video, 1, 0)->id;
     ed.trimClip(rgId, TimelineOps::Edge::End, -40);
     sel.set({rgId});
@@ -369,38 +369,38 @@ int testRender(const QString& dir)
     const Clip* c = clipOn(p.timeline(), TrackKind::Video, 1, 0);
     if (!CHECK(c && c->isCompound())) return 1;
 
-    // Inhalt: rot bei 10; ohne verschachtelte Timelines (Timeline::nested) bleibt nur V1 blau
+    // Content: red at 10; without nested timelines (Timeline::nested) only V1 blue remains
     QImage img = render(p.renderTimeline(), fmt, 10);
     CHECK(near(img.pixel(160, 90), 255, 0, 0));
     img = render(p.timeline(), fmt, 10);
     CHECK(near(img.pixel(160, 90), 0, 0, 255));
 
-    // Ausschnitt: Compound Clip beginnt mit Inhalt-Frame 52 (Inhalt: 0–49 rot, 50–59 grün)
+    // Section: compound clip starts with content frame 52 (content: 0-49 red, 50-59 green)
     const int cid = c->id;
     ed.trimClip(cid, TimelineOps::Edge::Start, 52);
-    img = render(p.renderTimeline(), fmt, 55); // Inhalt Frame 55 -> grün
+    img = render(p.renderTimeline(), fmt, 55); // content frame 55 -> green
     CHECK(near(img.pixel(160, 90), 0, 255, 0));
 
-    // Transparenz: Compound Clip mit herausgezoomtem Inhalt zeigt die Spur darunter
+    // Transparency: compound clip with zoomed-out content shows the track below
     p.setCurrentSequence(seq);
     const int innerId = clipOn(p.timeline(), TrackKind::Video, 0, 0)->id;
     ed.modifyClips({innerId}, "zoom", [](Clip& x) { x.transform.zoomX = x.transform.zoomY = 0.5; });
     p.setCurrentSequence(p.sequences().first().id);
     img = render(p.renderTimeline(), fmt, 55);
-    CHECK(near(img.pixel(160, 90), 0, 255, 0)); // Mitte: grün
-    CHECK(near(img.pixel(10, 10), 0, 0, 255));  // Rand: V1 blau scheint durch
+    CHECK(near(img.pixel(160, 90), 0, 255, 0)); // middle: green
+    CHECK(near(img.pixel(10, 10), 0, 0, 255));  // edge: V1 blue shines through
 
-    // Export in anderer Größe: Inhalt der Compound Clips mitskaliert (Position in Pixeln)
+    // Export at a different size: content of the compound clips scaled along (position in pixels)
     p.setCurrentSequence(seq);
-    ed.modifyClips({innerId}, "pos", [](Clip& x) { x.transform.posX = 80; }); // halbe Breite nach rechts (320er Bild)
+    ed.modifyClips({innerId}, "pos", [](Clip& x) { x.transform.posX = 80; }); // half width to the right (320 picture)
     p.setCurrentSequence(p.sequences().first().id);
     Timeline big = p.renderTimeline();
     scaleTimeline(big, {320, 180}, {640, 360});
     img = render(big, ProjectFormat{640, 360, {25, 1}}, 55);
-    CHECK(near(img.pixel(320 + 160, 180), 0, 255, 0)); // um 160 (= 80 · 2) nach rechts
+    CHECK(near(img.pixel(320 + 160, 180), 0, 255, 0)); // by 160 (= 80 * 2) to the right
     CHECK(near(img.pixel(200, 180), 0, 0, 255));
 
-    // Kein Absturz bei Schleife (kaputte Daten): Compound verweist auf sich selbst
+    // No crash on loop (broken data): compound refers to itself
     Timeline loop = p.renderTimeline();
     auto nested = std::make_shared<NestedTimelines>(*loop.nested);
     (*nested)[seq].video[0].clips[0].kind = ClipKind::Compound;

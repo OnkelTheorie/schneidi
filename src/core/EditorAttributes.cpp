@@ -1,4 +1,4 @@
-// Attribute einfügen (Alt+V) wie DaVinci „Paste Attributes“, siehe Editor.h
+// Paste Attributes (Alt+V) like DaVinci "Paste Attributes", see Editor.h
 #include "core/Editor.h"
 
 #include "core/I18n.h"
@@ -12,7 +12,7 @@
 
 namespace {
 
-constexpr const char* kGrade = "grade"; // Effekt der Color-Seite (EffectRegistry)
+constexpr const char* kGrade = "grade"; // effect of the Color page (EffectRegistry)
 
 void copyKeys(Clip& c, const Clip& src, std::initializer_list<AnimParam> params)
 {
@@ -37,7 +37,7 @@ std::optional<EffectInstance> gradeOf(const Clip& c, int* index = nullptr)
     return std::nullopt;
 }
 
-// Effekte ohne die Farbkorrektur übernehmen; die eigene Farbkorrektur bleibt (an der Stelle der Quelle bzw. am Ende)
+// Take over the effects without the color grade; the clip's own grade stays (at the source's position or at the end)
 void pasteEffects(Clip& c, const Clip& src)
 {
     const auto own = gradeOf(c);
@@ -59,7 +59,7 @@ void pasteEffects(Clip& c, const Clip& src)
         if (Keys::isEffectParam(it.key())) c.keys.insert(it.key(), it.value());
 }
 
-// Farbkorrektur (Color-Seite) samt LUT übernehmen bzw. entfernen, übrige Effekte bleiben
+// Take over or remove the color grade (Color page) including LUT; other effects stay
 void pasteColor(Clip& c, const Clip& src)
 {
     int at = -1;
@@ -73,7 +73,7 @@ void pasteColor(Clip& c, const Clip& src)
 
 const Clip* Editor::clipboardSource(const QVector<ClipboardItem>& items, TrackKind kind)
 {
-    const Clip* best = nullptr; // frühester Start
+    const Clip* best = nullptr; // earliest start
     for (const auto& it : items)
         if (it.ref.kind == kind && (!best || it.clip.start < best->start)) best = &it.clip;
     return best;
@@ -102,11 +102,11 @@ void Editor::pasteAttributes(int attrs)
     attrs &= pasteAttributesAvailable();
     const QVector<int> ids = editable(clipIdsOf(m_selection->ids()));
     if (!attrs || ids.isEmpty()) return;
-    // Kopie der Quellen: die Zwischenablage bleibt, aber Zeiger sollen nicht an ihr hängen
+    // Copy of the sources: the clipboard stays, but pointers should not stay attached to it
     const QVector<ClipboardItem> clipboard = m_clipboard;
     const Clip* vsrc = clipboardSource(clipboard, TrackKind::Video);
     const Clip* asrc = clipboardSource(clipboard, TrackKind::Audio);
-    // Fades und Tempo gelten für beide Spurarten; fehlt eine Quelle dieser Art, kommt der Wert von der anderen
+    // Fades and speed apply to both track kinds; if a source of this kind is missing, the value comes from the other one
     const Clip* vAny = vsrc ? vsrc : asrc;
     const Clip* aAny = asrc ? asrc : vsrc;
 
@@ -177,7 +177,7 @@ void Editor::pasteAttributes(int attrs)
             c.fadeOut = std::min(s->fadeOut, c.length());
         }
     });
-    if (attrs & AttrSpeed) { // Länge folgt dem Tempo, spätere Clips rücken nach (wie DaVinci)
+    if (attrs & AttrSpeed) { // length follows the speed, later clips move up (like DaVinci)
         auto retime = [](const Clip& s) { return Retime{s.speed, s.reverse, s.freeze, s.keepPitch}; };
         if (!videoTargets.isEmpty() && vAny) setClipSpeed(videoTargets, retime(*vAny), true);
         if (!audioTargets.isEmpty() && aAny) setClipSpeed(audioTargets, retime(*aAny), true);

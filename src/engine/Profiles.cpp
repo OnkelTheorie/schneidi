@@ -8,7 +8,7 @@
 #include <numeric>
 
 namespace {
-// Absolute Stream-Indizes (meta.media.N) der Ton-Streams
+// Absolute stream indices (meta.media.N) of the audio streams
 QVector<int> audioIndices(Mlt::Producer& p)
 {
     QVector<int> out;
@@ -33,15 +33,15 @@ QVector<AudioStreamInfo> audioStreamsOf(Mlt::Producer& p)
 
 void selectAudioStream(Mlt::Producer& p, int stream)
 {
-    if (stream <= 0 && p.get_int("audio_index") < 0) return; // kein Ton
+    if (stream <= 0 && p.get_int("audio_index") < 0) return; // no audio
     const QVector<int> idx = audioIndices(p);
-    if (idx.isEmpty() && stream <= 0) return; // Metadaten fehlen: Standard-Stream lassen
+    if (idx.isEmpty() && stream <= 0) return; // metadata missing: leave the default stream
     p.set("audio_index", stream >= 0 && stream < idx.size() ? idx[stream] : -1);
 }
 
 std::unique_ptr<Mlt::Profile> makeProfile(const ProjectFormat& f)
 {
-    auto p = std::make_unique<Mlt::Profile>("atsc_1080p_25"); // Grundlage, alle Werte werden überschrieben
+    auto p = std::make_unique<Mlt::Profile>("atsc_1080p_25"); // basis, all values get overwritten
     const int g = std::max(1, std::gcd(f.width, f.height));
     p->set_width(f.width);
     p->set_height(f.height);
@@ -63,10 +63,10 @@ std::unique_ptr<Mlt::Producer> ProducerFactory::open(const QString& resource)
     auto p = std::make_unique<Mlt::Producer>(m_base, res.constData());
     if (!p->is_valid()) return p;
     if (m_threads > 0) p->set("threads", m_threads);
-    // Farbnorm des Videostroms steht schon nach dem Öffnen fest (meta.media.colorspace erst nach dem ersten Frame)
+    // The color standard of the video stream is known right after opening (meta.media.colorspace only after the first frame)
     const int vi = p->get_int("video_index");
     const int cs = vi >= 0 ? p->get_int(QString("meta.media.%1.codec.colorspace").arg(vi).toUtf8().constData()) : 0;
-    // Nur Normen, die MLT beim Skalieren kennt (601-Familie, 240); 2020 u. Ä. behandelt es ohnehin nicht
+    // Only standards MLT knows when scaling (601 family, 240); it does not handle 2020 etc. anyway
     const bool known = cs == 601 || cs == 170 || cs == 470 || cs == 624 || cs == 240;
     if (!known || cs == m_base.colorspace()) return p;
     auto& prof = m_profiles[cs];
@@ -96,8 +96,8 @@ double parseRate(const QByteArray& s)
     return den > 0 ? num / den : 0.0;
 }
 
-// Mittlere Framerate per ffprobe (MLT kennt nur r_frame_rate, bei variabler Framerate also die höchste).
-// Ohne ffprobe: 0 -> nur die Angabe aus MLT zählt.
+// Average frame rate via ffprobe (MLT only knows r_frame_rate, i.e. the highest with variable frame rate).
+// Without ffprobe: 0 -> only the value from MLT counts.
 double averageFps(const QString& path)
 {
     QProcess proc;
@@ -116,27 +116,27 @@ double averageFps(const QString& path)
 ClipFormat detectClipFormat(const QString& path)
 {
     ClipFormat cf;
-    Mlt::Profile profile("atsc_1080p_25"); // nur zum Öffnen
+    Mlt::Profile profile("atsc_1080p_25"); // only for opening
     Mlt::Producer p(profile, path.toUtf8().constData());
     if (!p.is_valid()) return cf;
     const QByteArray svc = p.get("mlt_service");
-    if (svc == "qimage" || svc == "pixbuf") return cf; // Standbilder haben kein eigenes Format
+    if (svc == "qimage" || svc == "pixbuf") return cf; // still images have no format of their own
     static const QStringList audioExt{"mp3", "wav", "flac", "ogg", "opus", "m4a", "aac", "wma", "aiff"};
     const int vi = p.get_int("video_index");
     if (vi < 0 || audioExt.contains(QFileInfo(path).suffix().toLower())) return cf;
 
-    // meta.media.* setzt MLT erst nach dem ersten Frame
+    // MLT only sets meta.media.* after the first frame
     std::unique_ptr<Mlt::Frame> frame(p.get_frame());
     int w = p.get_int("meta.media.width"), h = p.get_int("meta.media.height");
     const double sar = p.get_double("aspect_ratio");
-    if (sar > 0 && std::abs(sar - 1.0) > 0.01) w = int(std::lround(w * sar)); // anamorphe Pixel
+    if (sar > 0 && std::abs(sar - 1.0) > 0.01) w = int(std::lround(w * sar)); // anamorphic pixels
     const int rotate = std::abs(p.get_int(QString("meta.media.%1.codec.rotate").arg(vi).toUtf8().constData())) % 180;
-    if (rotate == 90) std::swap(w, h); // Handy hochkant: Datei quer, mit Drehung in den Metadaten
+    if (rotate == 90) std::swap(w, h); // phone portrait: file landscape, with rotation in the metadata
     const int num = p.get_int("meta.media.frame_rate_num"), den = p.get_int("meta.media.frame_rate_den");
     if (w <= 0 || h <= 0 || num <= 0 || den <= 0) return cf;
 
     cf.ok = true;
-    cf.width = w & ~1; // gerade Maße (yuv420p)
+    cf.width = w & ~1; // even dimensions (yuv420p)
     cf.height = h & ~1;
     cf.rate = {num, den};
     cf.averageFps = averageFps(path);

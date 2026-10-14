@@ -43,7 +43,7 @@ namespace {
 
 constexpr QSize kThumb{144, 81};
 constexpr QSize kListIcon{64, 36};
-constexpr int kColorBarH = 6; // Clipfarbe als Streifen unten im Vorschaubild
+constexpr int kColorBarH = 6; // Clip color as a stripe at the bottom of the thumbnail
 
 class MediaList : public QListWidget {
 public:
@@ -54,12 +54,12 @@ protected:
     {
         auto* data = new QMimeData;
         if (items.isEmpty()) return data;
-        // Timeline/Viewer: erster Clip (bzw. Titel); Bin-Liste: alle Clips
+        // Timeline/Viewer: first clip (resp. title); bin list: all clips
         data->setData(MediaPool::MimeType, items.first()->data(Qt::UserRole).toString().toUtf8());
         QStringList paths;
         for (QListWidgetItem* it : items) {
             const QString path = it->data(Qt::UserRole).toString();
-            if (path != MediaPool::TitleItem) paths << path; // Sequenzen mit: lassen sich in Bins verschieben
+            if (path != MediaPool::TitleItem) paths << path; // sequences too: can be moved into bins
         }
         if (!paths.isEmpty()) data->setData(MediaPool::ListMimeType, paths.join('\n').toUtf8());
         return data;
@@ -67,12 +67,12 @@ protected:
     QStringList mimeTypes() const override { return {MediaPool::MimeType, MediaPool::ListMimeType}; }
 };
 
-// Bin-Liste: Clips oder Bins daraufziehen = verschieben; Entf entfernt den gewählten Bin
+// Bin list: drag clips or bins onto it = move; Del removes the selected bin
 class BinTree : public QTreeWidget {
 public:
     std::function<void(const QStringList&, int)> mediaDropped;
     std::function<void(int, int)> binDropped;
-    std::function<bool(int, int)> canMoveBin; // (Bin, Ziel)
+    std::function<bool(int, int)> canMoveBin; // (bin, target)
     std::function<void()> deletePressed;
 
     explicit BinTree(QWidget* parent = nullptr) : QTreeWidget(parent)
@@ -99,7 +99,7 @@ protected:
         if (e->mimeData()->hasFormat(MediaPool::ListMimeType) || e->mimeData()->hasFormat(MediaPool::BinMimeType))
             e->acceptProposedAction();
         else
-            e->ignore(); // Dateien aus dem Dateimanager: Media Pool importiert
+            e->ignore(); // Files from the file manager: Media Pool imports
     }
     void dragMoveEvent(QDragMoveEvent* e) override
     {
@@ -136,7 +136,7 @@ protected:
     }
     bool event(QEvent* e) override
     {
-        // Entf/Rücktaste gehören hier dem Bin, nicht dem Timeline-Löschen (Fenster-Kürzel)
+        // Del/Backspace belong to the bin here, not to timeline deletion (window shortcut)
         if (e->type() == QEvent::ShortcutOverride && state() != EditingState) {
             const int key = static_cast<QKeyEvent*>(e)->key();
             if (key == Qt::Key_Delete || key == Qt::Key_Backspace) {
@@ -163,7 +163,7 @@ private:
         m_hover = it;
         if (m_hover) m_hover->setBackground(0, Theme::alpha(Theme::secondary, 90));
     }
-    QTreeWidgetItem* m_hover = nullptr; // Drop-Ziel (hervorgehoben)
+    QTreeWidgetItem* m_hover = nullptr; // Drop target (highlighted)
 };
 
 QPixmap placeholderThumb(const QString& label)
@@ -212,7 +212,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     importBtn->setText(T("Importieren…"));
     connect(importBtn, &QToolButton::clicked, this, &MediaPool::importDialog);
 
-    // Ansicht wie DaVinci oben rechts im Media Pool: Symbol-/Listenansicht, Sortierung
+    // View like DaVinci at the top right of the Media Pool: icon/list view, sorting
     auto viewButton = [this](const QString& text, const QString& tip, ViewMode mode) {
         auto* b = new QToolButton;
         b->setText(text);
@@ -251,17 +251,17 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     }
     m_sortBtn->setMenu(sortMenu);
 
-    // Proxy-Erzeugung läuft: Datei + Prozent und Abbrechen im Kopf (wie DaVinci-Fortschrittsanzeige)
+    // Proxy generation is running: file + percent and cancel in the header (like the DaVinci progress display)
     m_proxyStatus = new QLabel;
     m_proxyStatus->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
     m_proxyStatus->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_proxyStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); // Pool nicht breiter drücken
+    m_proxyStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); // do not push the pool wider
     m_proxyCancel = new QToolButton;
     m_proxyCancel->setText(T("Abbrechen"));
     m_proxyCancel->setToolTip(T("Proxy-Erzeugung abbrechen"));
     connect(m_proxyCancel, &QToolButton::clicked, m_engine->proxies(), &ProxyManager::cancelAll);
 
-    // Suche: Lupe blendet das Feld ein, Esc bzw. erneuter Klick leert und schließt es
+    // Search: magnifier shows the field, Esc resp. another click clears and closes it
     m_search = new QLineEdit;
     m_search->setPlaceholderText(T("Suchen…"));
     m_search->setClearButtonEnabled(true);
@@ -270,7 +270,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_search->installEventFilter(this);
     connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildClips(); });
     m_searchBtn = new QToolButton;
-    m_searchBtn->setText("🔍︎"); // U+FE0E: als Schrift, nicht als farbiges Emoji (Windows)
+    m_searchBtn->setText("🔍︎"); // U+FE0E: as text, not as a colored emoji (Windows)
     m_searchBtn->setToolTip(T("Clips suchen"));
     m_searchBtn->setAutoRaise(true);
     m_searchBtn->setCheckable(true);
@@ -293,7 +293,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     header->addWidget(m_sortBtn);
     header->addWidget(importBtn);
 
-    // Bin-Liste links (Master oben, Unter-Bins eingerückt)
+    // Bin list on the left (Master on top, sub-bins indented)
     auto* bins = new BinTree;
     m_bins = bins;
     m_bins->setHeaderHidden(true);
@@ -328,7 +328,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
         m_currentBin = id;
         rebuildClips();
     });
-    connect(m_bins, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* it) { // Umbenennen per Doppelklick
+    connect(m_bins, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* it) { // Rename via double-click
         const int id = it->data(0, Qt::UserRole).toInt();
         const QString name = it->text(0).trimmed();
         if (id == 0) return;
@@ -349,7 +349,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_list->setResizeMode(QListView::Adjust);
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
-    m_list->setSelectionMode(QAbstractItemView::ExtendedSelection); // mehrere Clips für Proxy-Befehle, Bins, Farben
+    m_list->setSelectionMode(QAbstractItemView::ExtendedSelection); // several clips for proxy commands, bins, colors
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_list, &QListWidget::customContextMenuRequested, this, &MediaPool::showContextMenu);
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
@@ -380,8 +380,8 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
 
     connect(m_project, &Project::mediaChanged, this, &MediaPool::rebuild);
     connect(m_project, &Project::timelineChanged, this, &MediaPool::updateSequenceItems);
-    // Organisation geändert: gesammelt nach dem aktuellen Ereignis neu aufbauen (kann aus itemChanged der
-    // Bin-Liste kommen – das Element darf dort nicht gelöscht werden)
+    // Organization changed: rebuild collected after the current event (may come from itemChanged of the
+    // bin list – the item must not be deleted there)
     connect(m_project, &Project::poolChanged, this, [this] {
         if (m_rebuildQueued) return;
         m_rebuildQueued = true;
@@ -429,7 +429,7 @@ QStringList MediaPool::addFiles(const QStringList& paths, int bin)
 
 void MediaPool::importFiles(const QStringList& paths)
 {
-    // Ordner (z. B. aus dem Dateimanager gezogen) samt Unterordnern als Bins
+    // Folder (e.g. dragged from the file manager) including subfolders as bins
     QStringList files, subtitles;
     for (const QString& path : paths) {
         if (QFileInfo(path).isDir()) importFolder(path);
@@ -438,13 +438,13 @@ void MediaPool::importFiles(const QStringList& paths)
     }
     if (!subtitles.isEmpty()) emit subtitleFilesImported(subtitles);
     if (files.isEmpty()) return;
-    const QStringList failed = addFiles(files, m_currentBin); // wie DaVinci: Import landet im gewählten Bin
+    const QStringList failed = addFiles(files, m_currentBin); // like DaVinci: import lands in the selected bin
     if (!failed.isEmpty())
         QMessageBox::warning(this, "Import", T("Nicht lesbar:") + "\n" + failed.join('\n'));
 }
 
 namespace {
-// Liegen im Ordner (oder darunter, Tiefe wie importFolderInto) Mediendateien?
+// Are there media files in the folder (or below, depth like importFolderInto)?
 bool containsMedia(const QString& dir, int depth)
 {
     if (depth > 8) return false;
@@ -459,7 +459,7 @@ bool containsMedia(const QString& dir, int depth)
 
 void MediaPool::importFolder(const QString& dir)
 {
-    if (!containsMedia(dir, 0)) return; // sonst bliebe ein leerer Undo-Schritt und das Projekt gälte als geändert
+    if (!containsMedia(dir, 0)) return; // otherwise an empty undo step would remain and the project would count as modified
     QStringList failed;
     QUndoStack* undo = m_project->undoStack();
     undo->beginMacro(T("Ordner importieren"));
@@ -469,10 +469,10 @@ void MediaPool::importFolder(const QString& dir)
         QMessageBox::warning(this, "Import", T("Nicht lesbar:") + "\n" + failed.join('\n'));
 }
 
-// Legt den Bin nur an, wenn im Ordner (oder darunter) Medien liegen; liefert, ob etwas importiert wurde
+// Only creates the bin if there is media in the folder (or below); returns whether anything was imported
 bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, QStringList* failed)
 {
-    if (depth > 8) return false; // Schutz vor sehr tiefen Bäumen
+    if (depth > 8) return false; // protection against very deep trees
     const QDir d(dir);
     QStringList files;
     for (const QFileInfo& fi : d.entryInfoList(QDir::Files, QDir::Name | QDir::IgnoreCase | QDir::LocaleAware))
@@ -489,7 +489,7 @@ bool MediaPool::importFolderInto(const QString& dir, int parentBin, int depth, Q
         any = bad.size() < files.size();
     }
     for (const QFileInfo& sub : subdirs) any = importFolderInto(sub.absoluteFilePath(), bin, depth + 1, failed) || any;
-    if (!any) m_project->removeBin(bin); // nichts Brauchbares darin
+    if (!any) m_project->removeBin(bin); // nothing usable inside
     return any;
 }
 
@@ -531,7 +531,7 @@ void MediaPool::setSearch(const QString& text)
 bool MediaPool::eventFilter(QObject* obj, QEvent* e)
 {
     if (obj == m_search && e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {
-        m_searchBtn->setChecked(false); // leert und schließt
+        m_searchBtn->setChecked(false); // clears and closes
         return true;
     }
     return QWidget::eventFilter(obj, e);
@@ -572,7 +572,7 @@ void MediaPool::applyViewMode()
 
 void MediaPool::rebuild()
 {
-    m_thumbs.clear(); // neue Medien bzw. neues Projektformat (Seitenverhältnis) -> Vorschaubilder neu
+    m_thumbs.clear(); // new media resp. new project format (aspect ratio) -> thumbnails anew
     rebuildBins();
     rebuildClips();
 }
@@ -580,7 +580,7 @@ void MediaPool::rebuild()
 void MediaPool::rebuildBins()
 {
     if (m_currentBin != 0 && !m_project->bin(m_currentBin)) m_currentBin = 0;
-    // Zugeklappte Bins merken (neue sind aufgeklappt)
+    // Remember collapsed bins (new ones are expanded)
     QSet<int> collapsed;
     for (QTreeWidgetItemIterator it(m_bins); *it; ++it)
         if (!(*it)->isExpanded() && (*it)->childCount() > 0) collapsed.insert((*it)->data(0, Qt::UserRole).toInt());
@@ -611,7 +611,7 @@ void MediaPool::rebuildBins()
     m_bins->setCurrentItem(current ? current : master);
     m_editBin = 0;
     if (edit) {
-        // Neuer Bin: Eltern aufklappen und Namen gleich bearbeiten (wie DaVinci)
+        // New bin: expand parents and edit the name right away (like DaVinci)
         for (QTreeWidgetItem* p = edit->parent(); p; p = p->parent()) p->setExpanded(true);
         m_bins->scrollToItem(edit);
         QTimer::singleShot(0, m_bins, [this, id = edit->data(0, Qt::UserRole).toInt()] {
@@ -623,7 +623,7 @@ void MediaPool::rebuildBins()
 
 void MediaPool::rebuildClips()
 {
-    // Auswahl bleibt erhalten (z. B. nach Clipfarbe/Flag für mehrere Clips)
+    // Selection is kept (e.g. after clip color/flag for several clips)
     QSet<QString> selected;
     for (QListWidgetItem* it : m_list->selectedItems()) selected.insert(it->data(Qt::UserRole).toString());
     const int scroll = m_list->verticalScrollBar()->value();
@@ -635,7 +635,7 @@ void MediaPool::rebuildClips()
     const bool list = m_viewMode == ViewMode::List;
 
     if (m_currentBin == 0 && search.isEmpty()) {
-        // Titel-Generator vorne im Master (in DaVinci unter Effects > Titles > "Text"); ziehen = 5-s-Titel
+        // Title generator at the front of the Master (in DaVinci under Effects > Titles > "Text"); drag = 5 s title
         QPixmap titleThumb(kThumb);
         titleThumb.fill(Theme::titleClip.darker(135));
         {
@@ -653,7 +653,7 @@ void MediaPool::rebuildClips()
         m_list->addItem(titleItem);
     }
 
-    // Timelines und Compound Clips des Bins (wie DaVinci zwischen den Clips; hier vorne, nach Namen)
+    // Timelines and compound clips of the bin (like DaVinci among the clips; here at the front, by name)
     QVector<const Sequence*> seqs;
     for (const Sequence& q : m_project->sequences())
         if (search.isEmpty() ? q.bin == m_currentBin
@@ -669,7 +669,7 @@ void MediaPool::rebuildClips()
         {
             QPainter p(&thumb);
             p.setRenderHint(QPainter::Antialiasing);
-            // Symbol: Timeline = Spurbalken, Compound Clip = gestapelte Ebenen
+            // Icon: timeline = track bars, compound clip = stacked layers
             const QColor fg(0xe8, 0xe8, 0xec);
             if (q->compound) {
                 for (int i = 2; i >= 0; --i) {
@@ -723,7 +723,7 @@ void MediaPool::rebuildClips()
     for (const MediaInfo* m : media) {
         if (!m_thumbs.contains(m->path)) {
             QPixmap thumb;
-            const bool offline = !QFileInfo::exists(m->path); // wie DaVinci "Media Offline"
+            const bool offline = !QFileInfo::exists(m->path); // like DaVinci "Media Offline"
             if (offline) thumb = placeholderThumb("Media Offline");
             else if (m->hasVideo) {
                 const QImage img = m_engine->thumbnail(m->path, m->isImage ? 0 : m->length / 3, kThumb);
@@ -773,7 +773,7 @@ void MediaPool::updateItem(const QString& path)
     p.setRenderHint(QPainter::Antialiasing);
     QString tip = path;
     if (const int pct = proxies->progressOf(path); pct >= 0) {
-        // In Arbeit/wartend: abgedunkelt, Prozent in der Mitte, Balken unten
+        // In progress/waiting: darkened, percent in the middle, bar at the bottom
         p.fillRect(pm.rect(), QColor(0, 0, 0, 140));
         QFont f = p.font();
         f.setPixelSize(13);
@@ -787,7 +787,7 @@ void MediaPool::updateItem(const QString& path)
         p.fillRect(QRect(bar.left(), bar.top(), bar.width() * pct / 100, bar.height()), Theme::primary);
         tip += "\n" + (running ? T("Proxy wird erzeugt: %1 %").arg(pct) : T("Proxy wartet auf Erzeugung"));
     } else if (proxies->hasProxy(path)) {
-        // Kleines Proxy-Symbol oben rechts
+        // Small proxy icon at the top right
         const QRectF badge(pm.width() - 22, 4, 18, 14);
         p.setPen(Qt::NoPen);
         p.setBrush(QColor(0x18, 0x18, 0x1b, 220));
@@ -801,13 +801,13 @@ void MediaPool::updateItem(const QString& path)
         tip += "\n" + T("Proxy vorhanden");
     }
     if (info) {
-        // Clipfarbe als Streifen unten (in der Listenansicht wird das Bild verkleinert -> Streifen dicker)
+        // Clip color as a stripe at the bottom (in list view the image is scaled down -> thicker stripe)
         if (const TrackColorInfo* c = trackColorInfo(info->clipColor)) {
             const int h = m_viewMode == ViewMode::List ? kColorBarH * 2 : kColorBarH;
             p.fillRect(QRect(0, pm.height() - h, pm.width(), h), QColor::fromRgba(c->rgb));
             tip += "\n" + T("Clipfarbe: %1").arg(T(c->name));
         }
-        // Flags oben links nebeneinander (wie DaVinci am Vorschaubild)
+        // Flags at the top left next to each other (like DaVinci on the thumbnail)
         const double fs = m_viewMode == ViewMode::List ? 26 : 14;
         double x = 4;
         QStringList names;
@@ -822,7 +822,7 @@ void MediaPool::updateItem(const QString& path)
             names << T(f->name);
         }
         if (!names.isEmpty()) tip += "\n" + T("Flags: %1").arg(names.join(", "));
-        // Mehrere Ton-Streams (OBS): Anzahl unten links, Namen im Tooltip
+        // Several audio streams (OBS): count at the bottom left, names in the tooltip
         if (const int n = info->audioStreamCount(); n > 1) {
             QFont f = p.font();
             f.setPixelSize(m_viewMode == ViewMode::List ? 20 : 10);
@@ -902,7 +902,7 @@ void MediaPool::updateSequenceItems()
         const QString text = list ? q->name + "    " + duration : q->name + "\n" + duration;
         if (it->text() != text) it->setText(text);
         QFont f = it->font();
-        f.setBold(id == m_project->currentSequence()); // geöffnete Timeline hervorheben
+        f.setBold(id == m_project->currentSequence()); // highlight the opened timeline
         it->setFont(f);
     }
 }
@@ -959,7 +959,7 @@ void MediaPool::addFlagsMenu(QMenu* menu, Project* project, const QStringList& p
         QAction* a = flags->addAction(QIcon(flagIcon(QColor::fromRgba(i.rgb))), T(i.name));
         a->setCheckable(true);
         a->setChecked(all);
-        // Haben alle das Flag: entfernen, sonst allen hinzufügen
+        // If all have the flag: remove, otherwise add to all
         QObject::connect(a, &QAction::triggered, project, [project, paths, id, all] { project->setFlag(paths, id, !all); });
     }
     flags->addSeparator();
@@ -970,7 +970,7 @@ void MediaPool::addFlagsMenu(QMenu* menu, Project* project, const QStringList& p
 
 void MediaPool::showContextMenu(const QPoint& pos)
 {
-    // Rechtsklick auf einen nicht ausgewählten Clip wählt nur diesen (wie DaVinci)
+    // Right-click on a non-selected clip selects only that one (like DaVinci)
     if (QListWidgetItem* it = m_list->itemAt(pos); it && !it->isSelected()) {
         m_list->clearSelection();
         it->setSelected(true);
@@ -978,7 +978,7 @@ void MediaPool::showContextMenu(const QPoint& pos)
     const QStringList paths = selectedMedia();
     const QVector<int> seqs = selectedSequences();
     QMenu menu(this);
-    if (seqs.size() == 1) { // Timeline/Compound Clip wie DaVinci
+    if (seqs.size() == 1) { // Timeline/compound clip like DaVinci
         const int id = seqs.first();
         menu.addAction(T("In Timeline öffnen"), this, [this, id] { emit sequenceOpenRequested(id); });
         menu.addAction(T("Umbenennen…"), this, [this, id] { renameSequence(id); });
@@ -1030,7 +1030,7 @@ void MediaPool::showContextMenu(const QPoint& pos)
 void MediaPool::showBinMenu(const QPoint& pos)
 {
     QTreeWidgetItem* it = m_bins->itemAt(pos);
-    if (it) m_bins->setCurrentItem(it); // wählt den Bin (wie DaVinci)
+    if (it) m_bins->setCurrentItem(it); // selects the bin (like DaVinci)
     const int id = it ? it->data(0, Qt::UserRole).toInt() : 0;
     QMenu menu(this);
     menu.addAction(T("Neuer Bin"), this, &MediaPool::newBin);
@@ -1050,7 +1050,7 @@ void MediaPool::removeBin(int id)
     int clips = 0;
     for (const MediaInfo& m : m_project->media())
         if (m.bin != 0 && m_project->binInside(m.bin, id)) ++clips;
-    // DaVinci löscht die Clips mit; hier wandern sie (und Unter-Bins) in den Eltern-Bin -> nichts geht verloren
+    // DaVinci deletes the clips too; here they (and sub-bins) move into the parent bin -> nothing gets lost
     if (clips > 0
         && QMessageBox::question(this, T("Bin entfernen"),
                                  T("Bin „%1“ enthält %2 Clip(s). Sie werden in „%3“ verschoben.")

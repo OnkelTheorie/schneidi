@@ -32,7 +32,7 @@
 
 namespace {
 
-constexpr QSize kThumb{144, 81}; // wie im Media Pool
+constexpr QSize kThumb{144, 81}; // like in the Media Pool
 constexpr QSize kListIcon{48, 27};
 constexpr int kPathRole = Qt::UserRole;
 constexpr int kDirRole = Qt::UserRole + 1;
@@ -78,7 +78,7 @@ QPixmap placeholder(const QString& label, bool folder = false)
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
     if (folder) {
-        // schlichtes Ordnersymbol
+        // plain folder icon
         const QRectF body(kThumb.width() / 2.0 - 30, 24, 60, 40);
         p.setPen(Qt::NoPen);
         p.setBrush(Theme::mix(Theme::textDim, Theme::thumbBg, 0.3));
@@ -92,7 +92,7 @@ QPixmap placeholder(const QString& label, bool folder = false)
     return pm;
 }
 
-// Dateiliste: Ziehen liefert Datei-URLs (Media Pool und Timeline nehmen sie wie aus dem Dateimanager)
+// File list: dragging yields file URLs (Media Pool and timeline take them as if from the file manager)
 class StorageList : public QListWidget {
 public:
     using QListWidget::QListWidget;
@@ -133,7 +133,7 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     auto* header = new QHBoxLayout;
     header->setContentsMargins(0, 0, 4, 0);
     header->setSpacing(2);
-    // Symbol-/Listenansicht wie im Media Pool (Liste passt in die schmale Spalte der Edit-Seite)
+    // Icon/list view like in the Media Pool (list fits into the narrow column of the Edit page)
     auto viewButton = [this](const QString& text, const QString& tip, bool list) {
         auto* b = new QToolButton;
         b->setText(text);
@@ -155,7 +155,7 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     header->addWidget(m_listBtn);
     header->addWidget(addBtn);
 
-    // Links: Speicherorte, Unterordner werden erst beim Aufklappen gelesen
+    // Left: storage locations, subfolders are only read when expanded
     m_tree = new QTreeWidget;
     m_tree->setHeaderHidden(true);
     m_tree->setColumnCount(1);
@@ -169,7 +169,7 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     });
     connect(m_tree, &QTreeWidget::customContextMenuRequested, this, &MediaStorage::showLocationMenu);
 
-    // Rechts: Pfad mit „eine Ebene hoch“, darunter der Ordnerinhalt
+    // Right: path with "one level up", below it the folder contents
     auto* upBtn = new QToolButton;
     upBtn->setText("↑");
     upBtn->setToolTip(T("Übergeordneter Ordner"));
@@ -212,7 +212,7 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     split->addWidget(fileArea);
     split->setStretchFactor(1, 1);
     split->setSizes({110, 400});
-    split->setCollapsible(1, false); // Ordnerbaum lässt sich in schmalen Spalten ganz zuschieben
+    split->setCollapsible(1, false); // folder tree can be pushed shut completely in narrow columns
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -220,7 +220,7 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     lay->addLayout(header);
     lay->addWidget(split, 1);
 
-    // Neue/gelöschte Dateien im offenen Ordner (z. B. frisch vom Handy kopiert) erscheinen von selbst
+    // New/deleted files in the open folder (e.g. freshly copied from the phone) appear on their own
     m_watcher = new QFileSystemWatcher(this);
     auto* rescan = new QTimer(this);
     rescan->setSingleShot(true);
@@ -233,7 +233,7 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     if (s.contains("mediaStorage/locations")) {
         m_locations = s.value("mediaStorage/locations").toStringList();
     } else {
-        // Erster Start: Videos-Ordner (falls vorhanden) und persönlicher Ordner
+        // First start: Videos folder (if present) and home folder
         const QString movies = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
         if (!movies.isEmpty() && QFileInfo(movies).isDir()) m_locations << movies;
         m_locations << QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
@@ -272,14 +272,14 @@ void MediaStorage::setListMode(bool list)
         m_list->setWordWrap(true);
         m_list->setSpacing(0);
     }
-    // setViewMode setzt diese zurück
+    // setViewMode resets these
     m_list->setMovement(QListView::Static);
     m_list->setResizeMode(QListView::Adjust);
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
 }
 
-// Pfad von links kürzen: das Ende (aktueller Ordner) ist das Wichtige
+// Shorten the path from the left: the end (current folder) is what matters
 void MediaStorage::updatePathLabel()
 {
     const QString native = QDir::toNativeSeparators(m_folder);
@@ -329,7 +329,7 @@ void MediaStorage::rebuildLocations()
         it->setData(0, kPathRole, loc);
         it->setToolTip(0, QDir::toNativeSeparators(loc));
         it->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
-        if (!QFileInfo(loc).isDir()) it->setForeground(0, Theme::textDim); // z. B. abgezogener USB-Stick
+        if (!QFileInfo(loc).isDir()) it->setForeground(0, Theme::textDim); // e.g. unplugged USB stick
     }
 }
 
@@ -349,7 +349,7 @@ void MediaStorage::populateChildren(QTreeWidgetItem* item)
     if (dirs.isEmpty()) item->setChildIndicatorPolicy(QTreeWidgetItem::DontShowIndicator);
 }
 
-// Ordner im Baum markieren (unter dem passenden Speicherort aufklappen), ohne setFolder erneut auszulösen
+// Mark folder in the tree (expand under the matching location), without triggering setFolder again
 void MediaStorage::selectFolderInTree(const QString& dir)
 {
     QTreeWidgetItem* best = nullptr;
@@ -523,7 +523,7 @@ void MediaStorage::nextThumb()
 {
     while (!m_ffmpeg && !m_thumbQueue.isEmpty()) {
         const QString path = m_thumbQueue.takeFirst();
-        if (!m_items.contains(path)) continue; // Ordner inzwischen gewechselt
+        if (!m_items.contains(path)) continue; // folder changed in the meantime
         const QString ext = QFileInfo(path).suffix().toLower();
         if (imageExt().contains(ext)) {
             QImageReader reader(path);
@@ -534,7 +534,7 @@ void MediaStorage::nextThumb()
             thumbDone(path, img.isNull() ? placeholder("?") : framed(img));
             continue;
         }
-        // Video: ein Bild bei 1 s (bei sehr kurzen Clips das erste), ffmpeg dreht Handyvideos selbst richtig
+        // Video: one frame at 1 s (for very short clips the first one), ffmpeg rotates phone videos correctly on its own
         m_thumbPath = path;
         m_ffmpeg = new QProcess(this);
         auto run = [this, path](bool atStart) {
@@ -550,7 +550,7 @@ void MediaStorage::nextThumb()
             img.loadFromData(m_ffmpeg->readAllStandardOutput(), "PNG");
             if (img.isNull() && !m_ffmpeg->property("atStart").toBool()) {
                 m_ffmpeg->setProperty("atStart", true);
-                run(true); // kürzer als 1 s
+                run(true); // shorter than 1 s
                 return;
             }
             m_ffmpeg->deleteLater();
@@ -560,11 +560,11 @@ void MediaStorage::nextThumb()
             nextThumb();
         });
         connect(m_ffmpeg, &QProcess::errorOccurred, this, [this, path](QProcess::ProcessError e) {
-            if (e != QProcess::FailedToStart) return; // Absturz o. Ä. meldet finished
+            if (e != QProcess::FailedToStart) return; // crash or similar reports finished
             m_ffmpeg->deleteLater();
             m_ffmpeg = nullptr;
             m_thumbPath.clear();
-            // kein ffmpeg -> gar nicht erst weiter versuchen
+            // no ffmpeg -> do not even try further
             for (const QString& p : std::exchange(m_thumbQueue, {}) << path) thumbDone(p, placeholder(T("Video")));
         });
         run(false);

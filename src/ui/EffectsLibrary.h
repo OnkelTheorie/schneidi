@@ -13,20 +13,20 @@ class QTimer;
 class QListWidget;
 class QTreeWidget;
 
-// Effects Library (Edit-Page wie DaVinci): links Kategorien (Toolbox → Video Transitions, Audio Transitions,
-// Titles; Open FX → Filters; Presets (Shotcut/Kdenlive); LUTs und Verlaufsblenden → jeweils Mitgeliefert/Eigene, Eigene = Effekte-Ordner,
-// dessen Unterordner als Unterkategorien), rechts die Einträge mit Vorschausymbol. Kategorien lassen sich zuklappen
-// (gespeichert). „Effekte importieren…“ öffnet den Effekte-Ordner, neue Dateien erscheinen von selbst. Ziehen auf einen Schnitt/eine Clipkante legt
-// den Übergang an, "Text" landet als Titel auf der Videospur, ein Filter auf einem Videoclip hängt den Effekt an;
-// Doppelklick wendet den Eintrag am Playhead/auf die Auswahl an.
+// Effects Library (Edit page like DaVinci): on the left categories (Toolbox → Video Transitions, Audio Transitions,
+// Titles; Open FX → Filters; Presets (Shotcut/Kdenlive); LUTs and gradient wipes → each Bundled/Custom, Custom = effects folder,
+// its subfolders as subcategories), on the right the entries with preview icon. Categories can be collapsed
+// (saved). "Import effects…" opens the effects folder, new files appear on their own. Dragging onto a cut/clip edge creates
+// the transition, "Text" ends up as a title on the video track, a filter on a video clip attaches the effect;
+// double-click applies the entry at the playhead/to the selection.
 class EffectsLibrary : public QWidget {
     Q_OBJECT
 public:
-    // Drag-Daten eines Übergangs: "video:<Art-ID>", "luma:<Bild>" (Verlaufsblende) bzw. "audio:<Kurven-ID>"
-    // (Titel nutzen MediaPool::MimeType)
+    // Drag data of a transition: "video:<kind id>", "luma:<image>" (gradient wipe) resp. "audio:<curve id>"
+    // (titles use MediaPool::MimeType)
     static constexpr const char* MimeType = "application/x-schneidi-transition";
     static bool parseTransition(const QByteArray& data, TrackKind* kind, TransitionStyle* style);
-    // Drag-Daten eines Filters (Open FX): id aus der EffectRegistry, bzw. "lut:<Pfad>" für eine LUT, "preset:<Pfad>"
+    // Drag data of a filter (Open FX): id from the EffectRegistry, resp. "lut:<path>" for a LUT, "preset:<path>"
     static constexpr const char* EffectMimeType = "application/x-schneidi-effect";
 
     explicit EffectsLibrary(QWidget* parent = nullptr);
@@ -38,9 +38,9 @@ signals:
 
 private:
     void rebuild();
-    void rescanFolders(); // eigene LUTs/Übergänge neu einlesen (Ordner geändert), Unterkategorien neu
+    void rescanFolders(); // re-read custom LUTs/transitions (folder changed), subcategories anew
     void fillGroups(class QTreeWidgetItem* root, int groupCategory, const QVector<EffectFolders::LutEntry>& entries);
-    QPixmap fileIcon(const QString& path, bool lut, QString* error); // LUT: Musterbild, Übergang: A -> B
+    QPixmap fileIcon(const QString& path, bool lut, QString* error); // LUT: sample image, transition: A -> B
     void saveCollapsed();
     struct PresetEntry {
         qint64 stamp = 0;
@@ -60,7 +60,7 @@ private:
     QFileSystemWatcher* m_watcher;
     QTimer* m_rescan;
     struct IconEntry {
-        qint64 stamp = 0; // Änderungszeit + Größe der Datei
+        qint64 stamp = 0; // modification time + size of the file
         QPixmap icon;
         QString error;
     };

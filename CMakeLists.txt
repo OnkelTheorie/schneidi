@@ -71,6 +71,8 @@ add_library(schneidi_lib STATIC
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Profiles.h         src/engine/Profiles.cpp
     src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp
+    src/engine/TimelineBuilderDetail.h src/engine/TimelineBuilderClip.cpp
+    src/engine/TimelineBuilderAudio.cpp src/engine/TimelineBuilderTransitions.cpp
     src/engine/LiveUpdate.h       src/engine/LiveUpdate.cpp
     src/engine/RampProducer.h     src/engine/RampProducer.cpp
     src/engine/PitchLatency.h     src/engine/PitchLatency.cpp

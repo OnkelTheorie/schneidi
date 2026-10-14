@@ -1,6 +1,6 @@
-// Test „Attribute einfügen“ (Alt+V, DaVinci Paste Attributes): gewählte Eigenschaften samt Keyframes vom kopierten
-// Clip auf die Auswahl, Video/Audio getrennt, eigene Farbkorrektur bleibt bei „Effekte“, Tempo mit Ripple,
-// ein Undo-Schritt; Dialog (ausgegraute Häkchen, gemerkte Wahl).
+// Test "Paste Attributes" (Alt+V, DaVinci Paste Attributes): chosen properties including keyframes from the copied
+// clip onto the selection, video/audio separate, own color correction stays with "Effects", speed with ripple,
+// one undo step; dialog (grayed-out checkmarks, remembered choice).
 #include "check.h"
 
 #include "app/PasteAttributesDialog.h"
@@ -57,18 +57,18 @@ struct Fixture {
         Keys::setKey(src, AnimParam::PosX, 50, 200);
         src.effects << fx("blur", 1) << fx("grade", 1) << fx("chromakey", 1);
         src.fadeIn = 10;
-        src.fadeOut = 300; // länger als das Ziel -> begrenzt
+        src.fadeOut = 300; // longer than the target -> limited
         src.speed = 2;
         Clip dst = clip(2, 100, 100);
         dst.transform.rotation = 45;
         dst.effects << fx("grade", 2) << fx("old", 2);
-        Keys::setKey(dst, AnimParam::ZoomX, 5, 3); // Quelle hat keine Zoom-Keyframes -> entfernt
+        Keys::setKey(dst, AnimParam::ZoomX, 5, 3); // source has no zoom keyframes -> removed
         Clip asrc = clip(3, 0, 100);
         asrc.volumeDb = -6;
         asrc.pan = 30;
         asrc.fadeIn = 7;
         Clip adst = clip(4, 100, 100);
-        Clip later = clip(5, 200, 50); // rückt bei Tempo-Änderung nach
+        Clip later = clip(5, 200, 50); // moves up on speed change
         tl.video[0].clips << src << dst << later;
         tl.audio[0].clips << asrc << adst;
         project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 10, 0});
@@ -95,27 +95,27 @@ void testPaste()
     CHECK_EQ(f.project.undoStack()->count(), undo0 + 1);
     const Clip& d = f.at(2);
     CHECK(d.transform.zoomX == 2 && d.transform.zoomY == 2 && d.transform.posX == 100);
-    CHECK_EQ(d.transform.rotation, 45.0); // nicht angehakt
+    CHECK_EQ(d.transform.rotation, 45.0); // not checked
     CHECK_EQ(d.transform.opacity, 100.0);
     CHECK(d.keys.value(AnimParam::PosX) == f.at(1).keys.value(AnimParam::PosX));
     CHECK(!d.keys.contains(AnimParam::ZoomX));
-    // Effekte der Quelle, eigene Farbkorrektur bleibt an der Stelle der Quell-Korrektur
+    // Effects of the source, own color correction stays at the position of the source correction
     CHECK_EQ(d.effects.size(), 3);
     CHECK(d.effects.size() == 3 && d.effects[0].effectId == "blur" && d.effects[1] == fx("grade", 2) &&
           d.effects[2].effectId == "chromakey");
     CHECK(d.fadeIn == 10 && d.fadeOut == 100);
     const Clip& a = f.at(4);
     CHECK(a.volumeDb == -6 && a.pan == 0);
-    CHECK_EQ(a.fadeIn, 7); // Audio-Fades von der Audio-Quelle
-    CHECK(a.transform == ClipTransform{}); // Video-Attribute nicht auf Audioclips
+    CHECK_EQ(a.fadeIn, 7); // audio fades from the audio source
+    CHECK(a.transform == ClipTransform{}); // video attributes not onto audio clips
     CHECK_EQ(f.at(5).start, 200);
 
-    // Farbkorrektur allein: Quell-Korrektur ersetzt die eigene, übrige Effekte bleiben
+    // Color correction alone: source correction replaces the own, other effects stay
     f.editor.pasteAttributes(Editor::AttrColor | Editor::AttrRotation | Editor::AttrPan);
     CHECK(f.at(2).effects.size() == 3 && f.at(2).effects[1] == fx("grade", 1));
     CHECK(f.at(2).transform.rotation == 10 && f.at(4).pan == 30);
 
-    // Tempo: Länge folgt (Ripple), ein Undo-Schritt auch mit zwei Bearbeitungen
+    // Speed: length follows (ripple), one undo step even with two edits
     const int undo1 = f.project.undoStack()->count();
     f.editor.pasteAttributes(Editor::AttrSpeed | Editor::AttrComposite);
     CHECK_EQ(f.project.undoStack()->count(), undo1 + 1);
@@ -128,29 +128,29 @@ void testPaste()
     CHECK(f.project.timeline().video[0].clips == before.video[0].clips);
     CHECK(f.project.timeline().audio[0].clips == before.audio[0].clips);
 
-    // Nur Audio kopiert: Video-Attribute nicht verfügbar, Fades/Tempo schon
+    // Only audio copied: video attributes not available, fades/speed are
     f.sel.set({3});
     f.editor.copySelection();
     const int audioOnly = f.editor.pasteAttributesAvailable();
     CHECK(!(audioOnly & Editor::AttrVideoMask) && (audioOnly & Editor::AttrFades) && (audioOnly & Editor::AttrVolume));
     f.sel.set({2});
     f.editor.pasteAttributes(Editor::AttrZoom | Editor::AttrFades);
-    CHECK(f.at(2).transform.zoomX == 1 && f.at(2).fadeIn == 7); // Fades fallen auf die andere Quelle zurück
+    CHECK(f.at(2).transform.zoomX == 1 && f.at(2).fadeIn == 7); // fades fall back to the other source
 }
 
 void testDialog()
 {
-    QSettings().remove("edit/pasteAttributes"); // Testlauf davor
+    QSettings().remove("edit/pasteAttributes"); // test run before
     const int avail = Editor::AttrAudioMask | Editor::AttrFades;
     {
         PasteAttributesDialog dlg(avail, "a.mp4", 2);
-        CHECK_EQ(dlg.attributes(), 0); // Vorgabe: nichts angehakt
+        CHECK_EQ(dlg.attributes(), 0); // default: nothing checked
         for (QCheckBox* cb : dlg.findChildren<QCheckBox*>())
             if (cb->isEnabled()) cb->setChecked(true);
         CHECK_EQ(dlg.attributes(), avail);
         dlg.accept();
     }
-    // gemerkt; ausgegraute bleiben aus
+    // remembered; grayed-out ones stay off
     PasteAttributesDialog dlg(Editor::AttrVideoMask | Editor::AttrVolume, "a.mp4", 1);
     CHECK_EQ(dlg.attributes(), int(Editor::AttrVolume));
     const QPixmap shot = dlg.grab();

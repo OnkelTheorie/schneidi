@@ -43,7 +43,7 @@ using namespace TimelineViewDetail;
 
 void TimelineView::paintEvent(QPaintEvent*)
 {
-    if (m_renaming && m_nameSub >= 0) { // Untertitelspur
+    if (m_renaming && m_nameSub >= 0) { // subtitle track
         std::optional<SubRow> row;
         for (const SubRow& r : subRows())
             if (r.index == m_nameSub) row = r;
@@ -53,7 +53,7 @@ void TimelineView::paintEvent(QPaintEvent*)
         } else {
             finishRename(false);
         }
-    } else if (m_renaming) { // Namensfeld folgt der Zeile (Scrollen, Spurhöhe)
+    } else if (m_renaming) { // name field follows the row (scrolling, track height)
         if (const auto row = rowFor(m_nameRef)) {
             const QRect g = nameRect(*row).adjusted(-3, 0, 0, 0);
             if (m_nameEdit->geometry() != g) m_nameEdit->setGeometry(g);
@@ -80,7 +80,7 @@ void TimelineView::drawRuler(QPainter& p)
     p.setPen(Theme::border);
     p.drawLine(0, kRulerH - 1, width(), kRulerH - 1);
 
-    // Abstand der Beschriftungen so wählen, dass mind. ~100 px dazwischen liegen
+    // Choose the label spacing so that there are at least ~100 px between them
     const int candidates[] = {1, 2, 5, 10, fps, 2 * fps, 5 * fps, 10 * fps, 15 * fps, 30 * fps, 60 * fps,
                               120 * fps, 300 * fps, 600 * fps, 900 * fps, 1800 * fps, 3600 * fps, 7200 * fps};
     int major = candidates[std::size(candidates) - 1];
@@ -110,7 +110,7 @@ void TimelineView::drawRuler(QPainter& p)
             p.drawText(x + 3, 12, Timecode::format(fr, fps));
         }
     }
-    // Render-Cache (wie DaVinci): rot = muss noch gerendert werden, blau = fertig
+    // Render cache (like DaVinci): red = still to be rendered, blue = done
     for (const CacheSpan& c : m_cacheSpans) {
         const double x0 = frameToX(c.start), x1 = frameToX(c.end);
         if (x1 < kHeaderW || x0 > width()) continue;
@@ -118,7 +118,7 @@ void TimelineView::drawRuler(QPainter& p)
         p.fillRect(QRectF(x0, 0, xd - x0, 3), Theme::cacheReady);
         p.fillRect(QRectF(xd, 0, x1 - xd, 3), Theme::cacheMissing);
     }
-    // In/Out-Bereich (I/O): Balken in der Sekundärfarbe im Lineal mit Klammern an den Enden
+    // In/Out range (I/O): bar in the secondary color in the ruler with brackets at the ends
     const Timeline& tlm = m_editor->project()->timeline();
     if (tlm.markIn >= 0 || tlm.markOut >= 0) {
         const double xIn = tlm.markIn >= 0 ? frameToX(tlm.markIn) : kHeaderW - 1;
@@ -134,7 +134,7 @@ void TimelineView::drawRuler(QPainter& p)
             p.drawLine(QPointF(xOut - 1, kRulerH - 15), QPointF(xOut - 5, kRulerH - 15));
         }
     }
-    // Marker (M) als kleine Fähnchen wie in DaVinci (Sekundärfarbe)
+    // Markers (M) as small flags like in DaVinci (secondary color)
     p.setRenderHint(QPainter::Antialiasing);
     for (int m : m_editor->project()->timeline().markers) {
         const double x = frameToX(m);
@@ -150,7 +150,7 @@ void TimelineView::drawRuler(QPainter& p)
     }
     p.restore();
 
-    // Ecke links oben: aktueller Timecode wie in DaVinci, im eingelassenen Feld
+    // Top left corner: current timecode as in DaVinci, in the recessed field
     p.fillRect(QRect(0, 0, kHeaderW, kRulerH), Theme::panelHeader);
     const QRect tcBox(4, 4, kHeaderW - 9, kRulerH - 8);
     p.fillRect(tcBox, Theme::well);
@@ -168,7 +168,7 @@ void TimelineView::drawRuler(QPainter& p)
 
 void TimelineView::drawTracks(QPainter& p)
 {
-    // Trim-Modus: Timeline so zeichnen, wie sie nach dem Loslassen aussieht
+    // Trim mode: draw the timeline as it looks after release
     const bool trimEdit = m_drag == Drag::TrimEdit && m_trimPreview;
     const Timeline& tl = trimEdit ? *m_trimPreview : m_editor->project()->timeline();
     const auto& sel = m_editor->selection()->ids();
@@ -187,23 +187,23 @@ void TimelineView::drawTracks(QPainter& p)
 
         const Track& track = tl.track(row.ref);
         p.setOpacity(track.muted || track.hidden ? 0.4 : 1.0);
-        QSet<int> hidden; // Übergänge von Clips, die gerade gezogen/getrimmt werden, ausblenden
+        QSet<int> hidden; // hide transitions of clips that are currently being dragged/trimmed
         if (moving) hidden = dragSet;
         if (m_drag == Drag::Trim) hidden = QSet<int>(m_trimIds.begin(), m_trimIds.end());
         if (trimEdit) {
-            // Spur ändert sich evtl. -> Übergänge ausblenden (Ripple rückt alle nicht gesperrten Spuren)
+            // Track may change -> hide transitions (ripple moves all unlocked tracks)
             bool affected = m_trimEdit.kind == TimelineOps::TrimKind::Ripple && !track.locked;
             for (const Clip& c : track.clips)
                 affected |= m_trimEdit.ids.contains(c.id) || m_trimEdit.rightIds.contains(c.id);
             if (affected)
                 for (const Clip& o : track.clips) hidden.insert(o.id);
         }
-        QVector<TimelineOps::TransitionSpan> audioSpans; // Wellenform folgt den Crossfades
+        QVector<TimelineOps::TransitionSpan> audioSpans; // Waveform follows the crossfades
         if (row.ref.kind == TrackKind::Audio)
             for (const auto& s : m_editor->transitions(row.ref))
                 if (!hidden.contains(s.leftId) && !hidden.contains(s.rightId)) audioSpans << s;
         for (Clip c : track.clips) {
-            if (moving && dragSet.contains(c.id)) continue; // wird unten verschoben gezeichnet
+            if (moving && dragSet.contains(c.id)) continue; // is drawn shifted below
             if (m_drag == Drag::Trim && m_trimIds.contains(c.id)) {
                 if (m_trim.edge == TimelineOps::Edge::Start) {
                     c.start += m_trimDelta;
@@ -214,7 +214,7 @@ void TimelineView::drawTracks(QPainter& p)
             }
             if (m_drag == Drag::Volume && c.id == m_volClipId) {
                 c.volumeDb = m_volDb;
-                // animiert: ganze Kurve verschieben (Vorschau wie beim Loslassen)
+                // animated: shift the whole curve (preview like on release)
                 for (Keyframe& k : c.keys[AnimParam::Volume])
                     k.value = std::clamp(k.value + m_volDb - m_volStartDb, kMinVolumeDb, kMaxVolumeDb);
                 if (c.keys.value(AnimParam::Volume).isEmpty()) c.keys.remove(AnimParam::Volume);
@@ -226,7 +226,7 @@ void TimelineView::drawTracks(QPainter& p)
             if (row.curve && curveParam(c)) drawCurveLane(p, row, c);
         }
         drawTransitions(p, row, hidden);
-        if (track.locked) { // gesperrt: abgedunkelt und schraffiert wie DaVinci
+        if (track.locked) { // locked: darkened and hatched like DaVinci
             p.setOpacity(1.0);
             const QRect area(kHeaderW, row.y, width() - kHeaderW, row.h - 1);
             p.fillRect(area, QColor(0, 0, 0, 90));
@@ -236,7 +236,7 @@ void TimelineView::drawTracks(QPainter& p)
 
     p.setOpacity(1.0);
 
-    // Verschobene Clips an der Zielposition
+    // Moved clips at the target position
     if (moving) {
         for (int id : m_dragIds) {
             TrackRef ref;
@@ -244,7 +244,7 @@ void TimelineView::drawTracks(QPainter& p)
             if (!c) continue;
             ref.index += m_dragTrackDelta;
             auto row = rowFor(ref);
-            if (!row && ref.kind == TrackKind::Audio && !allRows.isEmpty()) { // Spur entsteht beim Loslassen
+            if (!row && ref.kind == TrackKind::Audio && !allRows.isEmpty()) { // track is created on release
                 const Row& last = allRows.last();
                 const int extra = ref.index - int(tl.audio.size());
                 row = Row{ref, last.y + last.h + extra * m_view.audioTrackHeight, m_view.audioTrackHeight};
@@ -259,12 +259,12 @@ void TimelineView::drawTracks(QPainter& p)
         }
     }
 
-    // Vorschau beim Reinziehen: Video auf V[n], Audio auf A[n]
+    // Preview when dragging in: video onto V[n], audio onto A[n]
     if (m_dropFrame >= 0 && !m_dropItems.isEmpty()) {
-        // Spur k unter der Zielspur (weitere Ton-Streams); fehlende Audiospuren entstehen unter der letzten
+        // Track k below the target track (further audio streams); missing audio tracks are created below the last one
         auto ghostRow = [&](TrackKind kind, int k) -> std::optional<Row> {
             const int idx = m_dropTrack + k;
-            if (auto r = rowFor({kind, idx})) return isLocked(*r) ? std::nullopt : r; // gesperrte Spur bekommt nichts
+            if (auto r = rowFor({kind, idx})) return isLocked(*r) ? std::nullopt : r; // a locked track gets nothing
             if (kind == TrackKind::Audio && !allRows.isEmpty()) {
                 const Row& last = allRows.last();
                 const int missing = std::max(0, idx - int(tl.audio.size()));
@@ -287,7 +287,7 @@ void TimelineView::drawTracks(QPainter& p)
         p.drawLine(x, kRulerH, x, height());
     }
 
-    // Übergang reinziehen: Lage des neuen Übergangs am Schnitt zeigen
+    // Dragging in a transition: show the position of the new transition at the cut
     if (m_transDrop) {
         if (const auto row = rowFor(m_transDrop->ref)) {
             const QRect r = transitionRect(*row, m_transDrop->span);
@@ -301,7 +301,7 @@ void TimelineView::drawTracks(QPainter& p)
         }
     }
 
-    // Filter reinziehen: Ziel-Clip umranden
+    // Dragging in a filter: outline the target clip
     if (m_fxDropClip) {
         TrackRef ref;
         if (const Clip* c = TimelineOps::findClip(tl, m_fxDropClip, &ref))
@@ -314,7 +314,7 @@ void TimelineView::drawTracks(QPainter& p)
             }
     }
 
-    // Gewählter Schnittpunkt (V/U): Klammer an der gewählten Seite bzw. an beiden (Roll), mit Partnern
+    // Selected edit point (V/U): bracket on the selected side resp. on both (roll), with partners
     if (const EditPoint ep = m_editor->selection()->editPoint(); !ep.isNull()) {
         auto bracket = [&](int id, bool end) {
             for (int pid : m_editor->withLinked({id})) {
@@ -332,7 +332,7 @@ void TimelineView::drawTracks(QPainter& p)
         if (ep.rightId && ep.side >= 0) bracket(ep.rightId, false);
     }
 
-    // Trimmen: Kante markieren + Versatz anzeigen (wie DaVinci)
+    // Trimming: mark edge + show offset (like DaVinci)
     if (m_drag == Drag::Trim) {
         if (const Clip* c = TimelineOps::findClip(tl, m_trim.clipId)) {
             const int edgeFrame = m_trim.edge == TimelineOps::Edge::Start ? c->start + m_trimDelta : c->end() + m_trimDelta;
@@ -344,7 +344,7 @@ void TimelineView::drawTracks(QPainter& p)
         }
     }
 
-    // Trim-Modus: bewegte Kante bzw. Clip markieren + Versatz anzeigen
+    // Trim mode: mark moved edge resp. clip + show offset
     if (trimEdit) {
         using TimelineOps::TrimKind;
         TrackRef ref;
@@ -365,7 +365,7 @@ void TimelineView::drawTracks(QPainter& p)
         }
     }
 
-    // Lautstärke ziehen: aktuellen Wert an der Linie anzeigen
+    // Dragging volume: show the current value at the line
     if (m_drag == Drag::Volume) {
         TrackRef ref;
         if (const Clip* c = TimelineOps::findClip(tl, m_volClipId, &ref)) {
@@ -378,7 +378,7 @@ void TimelineView::drawTracks(QPainter& p)
         }
     }
 
-    // Klingen-Vorschau
+    // Blade preview
     if (m_tool == Tool::Blade && m_hoverFrame >= 0) {
         const int x = int(frameToX(m_hoverFrame));
         p.setPen(QPen(Theme::primary, 1));
@@ -387,7 +387,7 @@ void TimelineView::drawTracks(QPainter& p)
     p.restore();
 }
 
-// Übergang als halbtransparentes Kästchen über dem Schnitt (wie DaVinci), Diagonale zeigt die Richtung
+// Transition as a semi-transparent box over the cut (like DaVinci), diagonal shows the direction
 void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>& hiddenClips)
 {
     const TransitionKey selKey = m_editor->selection()->transition();
@@ -403,9 +403,9 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
         p.fillPath(path, QColor(0xe6, 0xe6, 0xee, selected ? 130 : 95));
         p.setClipPath(path);
         p.setPen(QPen(QColor(0xff, 0xff, 0xff, 170), 1));
-        if (s.rightId) p.drawLine(r.bottomLeft(), r.topRight());  // einblenden
-        if (s.leftId) p.drawLine(r.topLeft(), r.bottomRight());   // ausblenden
-        // Schnitt in der unteren Hälfte andeuten: dort wird getrimmt statt der Übergang gewählt
+        if (s.rightId) p.drawLine(r.bottomLeft(), r.topRight());  // fade in
+        if (s.leftId) p.drawLine(r.topLeft(), r.bottomRight());   // fade out
+        // Hint the cut in the lower half: trimming happens there instead of selecting the transition
         if (s.isDissolve()) {
             const int cx = int(frameToX(s.cut));
             p.setPen(QPen(QColor(0x10, 0x10, 0x10, 160), 1, Qt::DashLine));
@@ -427,7 +427,7 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
         p.drawPath(path);
         p.restore();
     }
-    // Länge ziehen: Wert anzeigen
+    // Dragging length: show the value
     if (m_drag == Drag::TransitionLength) {
         for (const auto& s : m_editor->transitions(row.ref)) {
             if (s.leftId != m_transSpan.leftId || s.rightId != m_transSpan.rightId) continue;
@@ -438,8 +438,8 @@ void TimelineView::drawTransitions(QPainter& p, const Row& row, const QSet<int>&
     }
 }
 
-// Keyframe-Spur unter dem Clip: eine Raute pro Keyframe-Zeit (alle Parameter zusammen, wie DaVincis
-// zusammengefasste Spur); ausgewählte orange, beim Ziehen an der neuen Stelle
+// Keyframe lane under the clip: one diamond per keyframe time (all parameters together, like DaVinci's
+// merged track); selected ones orange, while dragging at the new position
 void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
 {
     const QRect lane = laneRect(row, c);
@@ -453,7 +453,7 @@ void TimelineView::drawKeyLane(QPainter& p, const Row& row, const Clip& c)
     p.setClipRect(lane.adjusted(-6, 0, 6, 0), Qt::IntersectClip);
     p.setRenderHint(QPainter::Antialiasing);
     const double y = lane.center().y() + 0.5;
-    // ausgewählte zuletzt, damit sie beim Ziehen über anderen liegen
+    // selected last, so they lie above others while dragging
     for (bool pass : {false, true})
         for (int t : Keys::keyTimes(c)) {
             if (t < 0 || t >= c.length()) continue;
@@ -480,7 +480,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
                   : c.isCompound() ? Theme::compoundClip
                   : kind == TrackKind::Video ? Theme::videoClip
                                              : Theme::audioClip;
-    if (!c.enabled) base = Theme::controlOff; // deaktiviert (D) wie DaVinci: grau
+    if (!c.enabled) base = Theme::controlOff; // disabled (D) like DaVinci: gray
     if (ghost) base.setAlpha(200);
     const QColor body = base.darker(135);
 
@@ -490,25 +490,25 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     path.addRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
     p.fillPath(path, body);
 
-    // Titelleiste mit Dateiname
+    // Title bar with file name
     const int barH = std::min(kClipBarH, r.height());
     p.save();
     p.setClipPath(path);
     p.fillRect(QRect(r.left(), r.top(), r.width(), barH), base);
     const QRect bodyRect = clipBodyRect(r);
-    if (bodyRect.height() > 4) { // auch beim Ziehen: Wellenform/Bilder wandern mit (wie DaVinci)
+    if (bodyRect.height() > 4) { // also while dragging: waveform/images move along (like DaVinci)
         p.setRenderHint(QPainter::Antialiasing, false);
         if (c.isCompound()) drawCompoundBody(p, bodyRect, base);
-        else if (kind == TrackKind::Video && !c.isTitle()) drawFilmstrip(p, bodyRect, c); // Titel: nur Farbe
+        else if (kind == TrackKind::Video && !c.isTitle()) drawFilmstrip(p, bodyRect, c); // Title: color only
         else if (kind == TrackKind::Audio) drawWaveform(p, bodyRect, c, spans, color);
         p.setRenderHint(QPainter::Antialiasing);
     }
-    // Lautstärkelinie wie in DaVinci (zum Hoch-/Runterziehen)
+    // Volume line like in DaVinci (for dragging up/down)
     if (!ghost && kind == TrackKind::Audio && bodyRect.height() >= 6) {
         const bool active = c.id == m_hoverVolClip || (m_drag == Drag::Volume && c.id == m_volClipId);
         p.setRenderHint(QPainter::Antialiasing, false);
         if (Keys::animated(c, AnimParam::Volume)) {
-            // Keyframes: Linie folgt der Kurve (nur sichtbarer Teil, alle 2 px)
+            // Keyframes: line follows the curve (only the visible part, every 2 px)
             QPolygonF curve;
             const int x0 = std::max(bodyRect.left(), kHeaderW), x1 = std::min(bodyRect.right(), width());
             const double clipX = frameToX(c.pos());
@@ -523,27 +523,27 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
             p.drawPolyline(curve);
         } else {
             const int y = volumeLineY(bodyRect, c.volumeDb);
-            p.setPen(QPen(QColor(0, 0, 0, 140), 1)); // Schatten, damit die Linie auf der Wellenform lesbar bleibt
+            p.setPen(QPen(QColor(0, 0, 0, 140), 1)); // shadow so the line stays readable on the waveform
             p.drawLine(bodyRect.left(), y + (active ? 2 : 1), bodyRect.right(), y + (active ? 2 : 1));
             p.setPen(QPen(active ? QColor(0xff, 0xff, 0xff) : QColor(0xff, 0xff, 0xff, 190), active ? 2 : 1));
             p.drawLine(bodyRect.left(), y, bodyRect.right(), y);
         }
         p.setRenderHint(QPainter::Antialiasing);
     }
-    // Fade-Bereiche wie DaVinci: Fläche über der Kurve abgedunkelt, Kurve von unten zum Pegel.
-    // Video: gerade Rampe (Deckkraft linear), Audio: Sinus-Kurve auf der Lautstärkelinie (wie die Engine)
+    // Fade areas like DaVinci: area above the curve darkened, curve from the bottom to the level.
+    // Video: straight ramp (opacity linear), audio: sine curve on the volume line (like the engine)
     if (!ghost && (c.fadeIn > 0 || c.fadeOut > 0)) {
         const int top = r.top() + barH, bottom = r.bottom();
         const int fi = std::min(c.fadeIn, c.length()), fo = std::min(c.fadeOut, c.length() - fi);
         const bool audio = kind == TrackKind::Audio && bodyRect.height() >= 6;
         auto ramp = [&](double x0, double x1, bool in) {
-            QPolygonF curve; // von links nach rechts
+            QPolygonF curve; // from left to right
             if (audio) {
                 const double clipX = frameToX(c.pos());
                 const int steps = std::clamp(int(x1 - x0) / 2, 2, 64);
                 for (int i = 0; i <= steps; ++i) {
                     const double x = x0 + (x1 - x0) * i / steps;
-                    // Randpixel liegen genau auf 0 bzw. 1, damit die Kurve unten ansetzt
+                    // edge pixels lie exactly on 0 resp. 1 so that the curve starts at the bottom
                     const double t = in ? (x - clipX) / m_view.pxPerFrame
                                         : c.length() - (x1 - x) / m_view.pxPerFrame;
                     const double g = TimelineOps::audioFadeGain(c, std::clamp(t, 0.0, double(c.length())));
@@ -571,7 +571,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     }
     p.restore();
 
-    // "fx" rechts in der Titelleiste wie DaVinci, wenn der Clip Effekte hat (Farbkorrektur der Color-Seite zählt nicht)
+    // "fx" on the right in the title bar like DaVinci if the clip has effects (the Color page correction does not count)
     const bool hasFx = std::any_of(c.effects.begin(), c.effects.end(), [](const EffectInstance& e) {
         const EffectDescriptor* d = EffectRegistry::find(e.effectId);
         return d && e.effectId != QLatin1String("grade") && (d->library || e.enabled);
@@ -594,7 +594,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         fxW += 4;
     }
 
-    // Flags des Media-Pool-Clips vorne in der Titelleiste (wie DaVinci)
+    // Flags of the Media Pool clip at the front of the title bar (like DaVinci)
     int flagW = 0;
     if (!c.isTitle() && r.width() > 40 && barH >= 10) {
         if (const MediaInfo* m = m_editor->project()->mediaInfo(c.mediaPath)) {
@@ -616,7 +616,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         p.setFont(f);
         const QFontMetrics fm(f);
         QRect textRect(std::max(r.left(), kHeaderW) + 5 + flagW, r.top(), r.right() - 3 - fxW - std::max(r.left(), kHeaderW) - 5 - flagW, barH);
-        // Dauer rechts (vor „fx“), nur wenn sie ganz hineinpasst; der Name nimmt den Rest
+        // Duration on the right (before "fx"), only if it fits entirely; the name takes the rest
         if (m_showDurations) {
             const QString dur = Timecode::format(c.length(), m_editor->project()->fps());
             const int w = fm.horizontalAdvance(dur);
@@ -649,7 +649,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         }
     }
 
-    // Keyframe-Symbol unten rechts (wie DaVinci): Klick klappt die Keyframe-Spur auf
+    // Keyframe icon bottom right (like DaVinci): click opens the keyframe lane
     if (!ghost && r.width() >= 40 && r.height() >= 24 && Keys::hasKeys(c)) {
         const QRectF k = keyIconRect(r);
         const bool open = m_keyLanes.contains(c.id);
@@ -661,7 +661,7 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
         if (r.width() >= 56) drawCurveIcon(p, r, m_curves.contains(c.id));
     }
 
-    // Fade-Griffe (weiße Anfasser oben an den Ecken), nur unter der Maus bzw. beim Ziehen
+    // Fade handles (white grips at the top corners), only under the mouse resp. while dragging
     const bool fading = m_drag == Drag::Fade && m_fade.clipId == c.id;
     if (!ghost && r.width() >= 24 && m_tool == Tool::Select && (c.id == m_hoverClip || fading)) {
         p.setPen(QPen(QColor(0, 0, 0, 160), 1));
@@ -679,8 +679,8 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
     p.restore();
 }
 
-// Filmstreifen wie in DaVinci: Kacheln ab Clip-Anfang, jede zeigt das Frame an ihrer Position.
-// Die Quell-Frames werden auf Zweierpotenzen gerundet, damit beim Zoomen Bilder wiederverwendet werden.
+// Filmstrip like in DaVinci: tiles from the clip start, each shows the frame at its position.
+// The source frames are rounded to powers of two so that images are reused when zooming.
 void TimelineView::updateTrimFrames(const Timeline& preview, const TimelineOps::TrimEdit& edit, int delta)
 {
     const Project* project = m_editor->project();
@@ -720,7 +720,7 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
 
     const int first = std::max(0, int((kHeaderW - clipX) / tileW));
     const int last = int((std::min(body.right(), width()) - clipX) / tileW);
-    // Geschwindigkeit/Speed Ramp: Kachel zeigt das Datei-Frame, das dort gespielt wird
+    // Speed/speed ramp: tile shows the file frame that is played there
     const int fileLen = info ? info->length : 0;
     const std::optional<RetimeMap> map = c.isRetimed() && fileLen > 0 ? std::optional<RetimeMap>(RetimeMap(c, fileLen))
                                                                        : std::nullopt;
@@ -729,13 +729,13 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
         if (map && !still)
             src = std::clamp(int(map->fileFrameAt(c.freeze ? c.stillFrame() : src)), 0, fileLen - 1);
         QImage img = m_cache->thumbnail(c.mediaPath, src / step * step, step);
-        // Noch nicht fertig -> übergangsweise ein Bild aus einer gröberen Stufe
+        // Not ready yet -> temporarily an image from a coarser level
         for (int s = step * 2; img.isNull() && s <= step * 64; s *= 2)
             img = m_cache->cachedThumbnail(c.mediaPath, src / s * s);
         if (img.isNull()) continue;
 
         const QRect target(int(clipX) + i * tileW, body.top(), tileW, tileH);
-        // Seitenverhältnis der Kachel mittig aus dem Bild ausschneiden
+        // Crop the tile's aspect ratio centered from the image
         QRectF source(img.rect());
         const double want = double(tileW) / tileH;
         if (source.width() / source.height() > want) {
@@ -757,22 +757,22 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
     if (!wave || wave->levels.isEmpty()) return;
 
     constexpr int N = Waveform::kBucketsPerFrame;
-    // Stufe wählen, bei der pro Pixel nur 1-2 Werte zusammengefasst werden müssen
+    // Choose a level at which only 1-2 values per pixel have to be combined
     const double bucketsPerPx = N / m_view.pxPerFrame;
     int level = 0;
     while (level + 1 < wave->levels.size() && (1 << (level + 1)) <= bucketsPerPx) ++level;
     const QVector<quint8>& lv = wave->levels[level];
-    const double scale = double(N) / (1 << level); // Buckets dieser Stufe pro Frame
+    const double scale = double(N) / (1 << level); // buckets of this level per frame
     const int available = int(std::min<double>(lv.size(), std::ceil(wave->frames * scale)));
     const int clipEnd = int(std::min<double>(available, (c.out + 1) * scale));
 
     const bool volAnim = Keys::animated(c, AnimParam::Volume);
-    if ((c.volumeDb <= kMinVolumeDb && !volAnim) || c.freeze) return; // stumm (auch Standbild) -> flach
-    // Geschwindigkeit/Speed Ramp: Pixel zeigt den Ton der Datei, der dort gespielt wird
+    if ((c.volumeDb <= kMinVolumeDb && !volAnim) || c.freeze) return; // muted (also still image) -> flat
+    // Speed/speed ramp: pixel shows the file's audio that is played there
     const MediaInfo* info = m_editor->project()->mediaInfo(c.mediaPath);
     const int fileLen = info && info->length > 0 ? info->length : int(wave->frames);
     const std::optional<RetimeMap> map = c.isRetimed() ? std::optional<RetimeMap>(RetimeMap(c, fileLen)) : std::nullopt;
-    // Übergänge, die diesen Clip betreffen (Crossfade/Ein-/Ausblenden)
+    // Transitions affecting this clip (crossfade/fade-in/out)
     QVector<TimelineOps::TransitionSpan> own;
     for (const auto& s : spans)
         if (s.leftId == c.id || s.rightId == c.id) own << s;
@@ -783,7 +783,7 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
     const int x0 = std::max(body.left(), kHeaderW);
     const int x1 = std::min(body.right(), width() - 1);
 
-    // Höhe in dB statt linear (-48 dB .. 0 dB), sonst sieht normales Material fast flach aus
+    // Height in dB instead of linear (-48 dB .. 0 dB), otherwise normal material looks almost flat
     static const auto dbTable = [] {
         std::array<double, 256> t{};
         for (int i = 1; i < 256; ++i) t[i] = std::max(0.0, 1.0 + 20.0 * std::log10(i / 255.0) / 48.0);
@@ -800,7 +800,7 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
             if (f0 >= c.out + 1) continue;
             f0 = map->fileFrameAt(f0);
             f1 = map->fileFrameAt(f1);
-            if (f0 > f1) std::swap(f0, f1); // rückwärts
+            if (f0 > f1) std::swap(f0, f1); // backwards
             end = available;
         }
         const int b0 = int(std::floor(f0 * scale));
@@ -808,11 +808,11 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
         int peak = 0;
         for (int b = std::max(0, b0); b < b1; ++b) peak = std::max<int>(peak, lv[b]);
         if (peak == 0) continue;
-        // Wellenform folgt Clip-Lautstärke, Fade-Griffen und Übergängen (dB-Skala unten)
+        // Waveform follows clip volume, fade handles and transitions (dB scale below)
         double db = volAnim ? volumeAt(c, (x + 0.5 - clipX) / m_view.pxPerFrame) : c.volumeDb;
         if (db <= kMinVolumeDb) continue;
         if (fades) {
-            const double t = (x + 0.5 - clipX) / m_view.pxPerFrame; // Mitte des Pixels, ab Clipanfang
+            const double t = (x + 0.5 - clipX) / m_view.pxPerFrame; // center of the pixel, from the clip start
             double g = TimelineOps::audioFadeGain(c, t);
             for (const auto& s : own) g *= TimelineOps::audioTransitionGain(s, c.id, c.start + t);
             if (g <= 0.001) continue;
@@ -823,7 +823,7 @@ void TimelineView::drawWaveform(QPainter& p, const QRect& body, const Clip& c,
         const int h = std::max(1, int(v * half));
         lines << QLine(x, mid - h, x, mid + h);
     }
-    // Standard hellgrün; bei eigener Spurfarbe ein heller Ton davon
+    // Default light green; with own track color a light tone of it
     QColor pen(0xc8, 0xf0, 0xcf, 210);
     if (color.isValid()) pen = QColor::fromHsvF(color.hsvHueF(), color.hsvSaturationF() * 0.25f, 0.94, 210 / 255.0);
     p.setPen(pen);
@@ -840,17 +840,17 @@ void TimelineView::drawHeaders(QPainter& p)
         const Track& t = tl.track(row.ref);
         const QRect r(0, row.y, kHeaderW - 1, row.h - 1);
         p.fillRect(r, Theme::trackHeader);
-        // farbige Kennung links wie in DaVinci (Spurfarbe)
+        // colored tag on the left as in DaVinci (track color)
         const QColor col = trackColor(t);
         p.fillRect(QRect(0, row.y, 3, row.h - 1),
                    col.isValid() ? col : row.ref.kind == TrackKind::Video ? Theme::videoClip : Theme::audioClip);
-        // Kürzel im Kästchen, daneben der Name (wie DaVinci „V1  Video 1“)
+        // Label in the box, next to it the name (like DaVinci "V1  Video 1")
         QFont f = font();
         f.setBold(true);
         f.setPointSizeF(8);
         p.setFont(f);
-        // Zielspur für F9/F10 … (DaVinci Destination Control): Kästchen orange umrandet (nicht gefüllt, wie in
-        // DaVinci), Klick wählt die Spur
+        // Target track for F9/F10 … (DaVinci Destination Control): box outlined in orange (not filled, as in
+        // DaVinci), click selects the track
         const QRect shortBox = shortNameRect(row);
         const bool target = row.ref.index == (row.ref.kind == TrackKind::Video ? m_editor->targetVideoTrack()
                                                                                  : m_editor->targetAudioTrack());
@@ -874,7 +874,7 @@ void TimelineView::drawHeaders(QPainter& p)
         p.drawText(r.adjusted(10, 0, -6, -6), Qt::AlignBottom | Qt::AlignLeft,
                    (t.clips.size() == 1 ? T("1 Clip") : T("%1 Clips").arg(t.clips.size())));
 
-        // Knopf: Video = Auge (ausblenden), Audio = M (stumm)
+        // Button: video = eye (hide), audio = M (mute)
         const QRect b = headerButton(row);
         const bool active = row.ref.kind == TrackKind::Video ? t.hidden : t.muted;
         p.setRenderHint(QPainter::Antialiasing);
@@ -886,7 +886,7 @@ void TimelineView::drawHeaders(QPainter& p)
         f.setBold(true);
         p.setFont(f);
         p.drawText(b, Qt::AlignCenter, row.ref.kind == TrackKind::Video ? (t.hidden ? "⊘" : "◉") : "M");
-        // Schloss: gesperrt = hell auf Orange
+        // Lock: locked = bright on orange
         const QRect lb = lockButton(row);
         p.setPen(Qt::NoPen);
         p.setBrush(t.locked ? Theme::primary : Theme::control);
@@ -912,7 +912,7 @@ void TimelineView::drawLabel(QPainter& p, const QPoint& topLeft, const QString& 
 void TimelineView::drawTrackDrop(QPainter& p)
 {
     if (m_drag != Drag::TrackMove) return;
-    // Orange Fläche folgt der Maus und markiert die Zielspur (ohne Einfügelinie)
+    // Orange area follows the mouse and marks the target track (without insertion line)
     const auto row = rowFor({m_trackDragRef.kind, m_trackDropTo >= 0 ? m_trackDropTo : m_trackDragRef.index});
     if (!row) return;
     p.save();
@@ -940,7 +940,7 @@ void TimelineView::drawPlayhead(QPainter& p)
     if (x < kHeaderW || x > width()) return;
     p.setPen(QPen(Theme::playhead, 1));
     p.drawLine(x, kRulerH - 8, x, height());
-    // Griff im Lineal
+    // handle in the ruler
     QPolygon handle;
     handle << QPoint(x - 6, kRulerH - 14) << QPoint(x + 6, kRulerH - 14) << QPoint(x + 6, kRulerH - 8)
            << QPoint(x, kRulerH - 2) << QPoint(x - 6, kRulerH - 8);

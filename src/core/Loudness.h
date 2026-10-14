@@ -1,10 +1,10 @@
 #pragma once
-// Lautheitsmessung nach ITU-R BS.1770-4 / EBU R128 (EBU Tech 3341/3342):
-// K-Filter (Hochregal + Hochpass) je Kanal, Energie in 100-ms-Häppchen, daraus
-//   Momentary  = letzte 400 ms, Short-term = letzte 3 s,
-//   Integrated = alle 400-ms-Blöcke (75 % Überlappung) mit absolutem (-70 LUFS) und relativem (-10 LU) Gate,
-//   Loudness Range (LRA) = 10.–95. Perzentil der Short-term-Werte (Gates -70 LUFS / -20 LU).
-// Reines C++ ohne MLT/Qt -> gleich unter Linux und Windows, testbar. Nicht thread-sicher (Aufrufer sperrt).
+// Loudness measurement per ITU-R BS.1770-4 / EBU R128 (EBU Tech 3341/3342):
+// K-filter (high shelf + high pass) per channel, energy in 100 ms chunks, from which
+//   Momentary  = last 400 ms, Short-term = last 3 s,
+//   Integrated = all 400 ms blocks (75 % overlap) with absolute (-70 LUFS) and relative (-10 LU) gate,
+//   Loudness Range (LRA) = 10th-95th percentile of the short-term values (gates -70 LUFS / -20 LU).
+// Pure C++ without MLT/Qt -> same on Linux and Windows, testable. Not thread-safe (caller locks).
 
 #include "core/TruePeak.h"
 
@@ -17,13 +17,13 @@
 
 class LoudnessMeter {
 public:
-    static constexpr double kSilence = -200.0; // "−∞" (noch nichts gemessen bzw. Stille)
+    static constexpr double kSilence = -200.0; // "-inf" (nothing measured yet or silence)
     static constexpr int kMaxChannels = 8;
 
     void reset();
 
-    // Samples anhängen; sample(c, i) liefert Kanal c, Sample i als float (±1 = 0 dBFS).
-    // Wechselt Samplerate oder Kanalzahl, beginnt die Filterung neu (Blöcke bleiben erhalten).
+    // Append samples; sample(c, i) returns channel c, sample i as float (+-1 = 0 dBFS).
+    // If sample rate or channel count changes, filtering starts anew (blocks are kept).
     template <typename SampleFn>
     void add(int frames, int channels, int rate, SampleFn sample)
     {
@@ -39,7 +39,7 @@ public:
             if (++m_accCount >= m_blockSamples) finishSubBlock();
         }
     }
-    // Planar float (MLT mlt_audio_float) bzw. verschachtelt (f32le)
+    // Planar float (MLT mlt_audio_float) or interleaved (f32le)
     void addPlanar(const float* data, int frames, int channels, int rate)
     {
         add(frames, channels, rate, [&](int c, int i) { return data[c * frames + i]; });
@@ -49,16 +49,16 @@ public:
         add(frames, channels, rate, [&](int c, int i) { return data[i * channels + c]; });
     }
 
-    double momentary() const;  // LUFS, kSilence solange < 400 ms
-    double shortTerm() const;  // LUFS, kSilence solange < 3 s (wie EBU: erst dann gültig)
-    double integrated() const; // LUFS, kSilence ohne Block über dem Gate
-    double range() const;      // LU (0 ohne genug Werte)
+    double momentary() const;  // LUFS, kSilence while < 400 ms
+    double shortTerm() const;  // LUFS, kSilence while < 3 s (as in EBU: only valid then)
+    double integrated() const; // LUFS, kSilence without a block above the gate
+    double range() const;      // LU (0 without enough values)
     double measuredSeconds() const { return m_subBlocks * 0.1; }
 
-    // 400-ms-Blöcke (mittlere gewichtete Energie) – mehrere Messungen lassen sich damit gemeinsam gaten
+    // 400 ms blocks (mean weighted energy) - several measurements can thus be gated together
     const std::vector<double>& blocks() const { return m_blocks; }
     static double integratedOf(const std::vector<double>& blocks);
-    static double lufs(double power); // -0.691 + 10·log10(power), Stille = kSilence
+    static double lufs(double power); // -0.691 + 10*log10(power), silence = kSilence
 
 private:
     struct Biquad {
@@ -67,7 +67,7 @@ private:
     void configure(int channels, int rate);
     double filter(int c, double x)
     {
-        // Direktform II transponiert, zwei Stufen (Hochregal, dann Hochpass)
+        // Direct form II transposed, two stages (high shelf, then high pass)
         auto& s = m_state[c];
         const double y1 = m_shelf.b0 * x + s[0];
         s[0] = m_shelf.b1 * x - m_shelf.a1 * y1 + s[1];
@@ -78,7 +78,7 @@ private:
         return y2;
     }
     void finishSubBlock();
-    double windowPower(int subBlocks) const; // Mittel der letzten n Häppchen
+    double windowPower(int subBlocks) const; // mean of the last n chunks
 
     int m_rate = 0, m_channels = 0;
     int m_blockSamples = 4800; // 100 ms
@@ -87,14 +87,14 @@ private:
     std::array<double, kMaxChannels> m_weight{};
     double m_acc = 0;
     int m_accCount = 0;
-    std::deque<double> m_recent; // Energie je 100-ms-Häppchen (höchstens 30 = 3 s)
+    std::deque<double> m_recent; // energy per 100 ms chunk (at most 30 = 3 s)
     long long m_subBlocks = 0;
-    std::vector<double> m_blocks;     // 400-ms-Blöcke (alle 100 ms)
-    std::vector<double> m_shortTerms; // 3-s-Fenster (alle 100 ms) für LRA
+    std::vector<double> m_blocks;     // 400 ms blocks (every 100 ms)
+    std::vector<double> m_shortTerms; // 3 s windows (every 100 ms) for LRA
 };
 
-// Live-Messung in der Vorschau (Loudness-Meter im Mixer): der Audio-Thread des Players füttert den Messer
-// (nur solange active), die Oberfläche liest unter demselben Mutex. truePeak = höchster True Peak seit Reset.
+// Live measurement in the preview (loudness meter in the mixer): the player's audio thread feeds the meter
+// (only while active), the UI reads under the same mutex. truePeak = highest true peak since reset.
 struct SharedLoudness {
     std::mutex mutex;
     LoudnessMeter meter;

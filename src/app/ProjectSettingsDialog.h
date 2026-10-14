@@ -7,9 +7,9 @@ class QComboBox;
 class QSpinBox;
 class QLabel;
 
-// Projekteinstellungen wie DaVinci (Datei → Projekteinstellungen…, Shift+9), Bereich "Master Settings":
-// Timeline-Auflösung (Vorlagen oder eigene Größe) und Timeline-Framerate. Die Framerate ist wie in DaVinci
-// gesperrt, sobald Clips in der Timeline liegen.
+// Project settings like DaVinci (File → Project Settings…, Shift+9), section "Master Settings":
+// Timeline resolution (presets or custom size) and timeline frame rate. The frame rate is, as in DaVinci,
+// locked as soon as there are clips in the timeline.
 class ProjectSettingsDialog : public QDialog {
     Q_OBJECT
 public:

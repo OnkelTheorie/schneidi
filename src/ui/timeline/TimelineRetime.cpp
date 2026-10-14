@@ -40,7 +40,7 @@
 
 using namespace TimelineViewDetail;
 
-// ---------- Retime-Steuerung (Speed Ramps) ----------
+// ---------- Retime controls (Speed Ramps) ----------
 
 namespace {
 constexpr int kRetimeBarH = 14;
@@ -84,7 +84,7 @@ std::optional<TimelineView::RetimeHit> TimelineView::retimeHitAt(const QPoint& p
         hit.clipId = c.id;
         double best = kSpeedPointGrabPx + 1;
         for (int i = 0; i < points.size(); ++i) {
-            if (points[i] <= c.in || points[i] >= c.out + 1) continue; // außerhalb des Ausschnitts
+            if (points[i] <= c.in || points[i] >= c.out + 1) continue; // outside the excerpt
             const double d = std::abs(frameToX(c.pos() + points[i] - c.in) - pos.x());
             if (d < best) {
                 best = d;
@@ -112,11 +112,11 @@ void TimelineView::drawRetime(QPainter& p, const QRect& r, const Clip& c)
     p.setClipRect(r.intersected(QRect(kHeaderW, 0, width(), height())), Qt::IntersectClip);
     p.fillRect(bar, QColor(0, 0, 0, 150));
     auto xOf = [&](double mat) { return frameToX(c.pos() + mat - c.in); };
-    // Weiche Übergänge: heller Bereich über die Clip-Höhe
+    // Smooth transitions: bright area across the clip height
     for (const RetimeMap::Piece& pc : map.pieces())
         if (pc.v0 != pc.v1)
             p.fillRect(QRectF(QPointF(xOf(pc.m0), bar.top()), QPointF(xOf(pc.m1), r.bottom())), QColor(0xff, 0xff, 0xff, 28));
-    // Tempo je Abschnitt (mit ▾ wie DaVinci)
+    // Speed per section (with ▾ like DaVinci)
     QFont f = font();
     f.setPointSizeF(7);
     p.setFont(f);
@@ -133,7 +133,7 @@ void TimelineView::drawRetime(QPainter& p, const QRect& r, const Clip& c)
         p.setPen(speed == 1.0 ? QColor(0xe8, 0xe8, 0xe8) : QColor(0xff, 0xc8, 0x5a));
         p.drawText(area, Qt::AlignCenter, text);
     }
-    // Speed-Punkte: Linie über den Clip, Griff in der Leiste
+    // Speed points: line across the clip, handle in the bar
     p.setRenderHint(QPainter::Antialiasing);
     for (int i = 0; i < points.size(); ++i) {
         double x = xOf(points[i]);

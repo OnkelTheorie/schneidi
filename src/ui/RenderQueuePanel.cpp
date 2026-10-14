@@ -22,7 +22,7 @@
 
 namespace {
 
-// Einzeilige Beschriftung, die sich der Kartenbreite anpasst (zu lang = „…“, voller Text im Tooltip)
+// Single-line label that adapts to the card width (too long = "…", full text in the tooltip)
 class ElidedLabel : public QLabel {
 public:
     void setFullText(const QString& text)
@@ -49,7 +49,7 @@ private:
     QString m_text;
 };
 
-// Eine Karte je Auftrag
+// One card per job
 class JobCard : public QWidget {
 public:
     JobCard()
@@ -79,7 +79,7 @@ public:
                                         "QProgressBar::chunk { background: %1; }")
                                     .arg(Theme::primary.name(), Theme::well.name()));
         lay->addWidget(progress);
-        setAttribute(Qt::WA_TransparentForMouseEvents); // Auswahl/Kontextmenü macht die Liste
+        setAttribute(Qt::WA_TransparentForMouseEvents); // selection/context menu are handled by the list
     }
     ElidedLabel *title, *summary, *range, *path, *message;
     QLabel* status;
@@ -146,7 +146,7 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
             [this](QListWidgetItem* item) { emit loadJobRequested(item->data(kIdRole).toInt()); });
     connect(m_list, &QWidget::customContextMenuRequested, this, &RenderQueuePanel::contextMenu);
     connect(m_project, &Project::renderQueueChanged, this, &RenderQueuePanel::rebuild);
-    connect(m_project, &Project::sequencesChanged, this, &RenderQueuePanel::rebuild); // Timeline-Namen
+    connect(m_project, &Project::sequencesChanged, this, &RenderQueuePanel::rebuild); // timeline name
     connect(m_queue, &RenderQueue::runningChanged, this, &RenderQueuePanel::updateButton);
     connect(m_queue, &RenderQueue::progress, this, [this](int id, int percent) {
         for (int i = 0; i < m_list->count(); ++i)
@@ -186,7 +186,7 @@ void RenderQueuePanel::rebuild()
         if (j.status == RenderStatus::Done && !j.encoderUsed.isEmpty()) tip << T("Video-Encoder: %1").arg(j.encoderUsed);
         card->status->setToolTip(tip.join('\n'));
         card->status->setMaximumWidth(140);
-        // Welche Timeline (wie DaVinci in der Job-Karte); gelöschte Timeline bleibt als Hinweis stehen
+        // Which timeline (like DaVinci in the job card); a deleted timeline stays as a hint
         const QString timeline = !j.sequence ? QString()
                                  : m_project->sequence(j.sequence) ? m_project->sequenceName(j.sequence)
                                                                    : T("(Timeline gelöscht)");
@@ -264,8 +264,8 @@ void RenderQueuePanel::keyPressEvent(QKeyEvent* e)
 
 bool RenderQueuePanel::eventFilter(QObject* obj, QEvent* e)
 {
-    // Entf in der Liste löscht Aufträge, nicht Clips (Tastenkürzel der Timeline nicht auslösen)
-    // Karten auf Listenbreite halten
+    // Del in the list deletes jobs, not clips (do not trigger the timeline shortcut)
+    // keep cards at list width
     if (obj == m_list->viewport() && e->type() == QEvent::Resize)
         for (int i = 0; i < m_list->count(); ++i) {
             QListWidgetItem* item = m_list->item(i);
@@ -296,7 +296,7 @@ void RenderQueuePanel::contextMenu(const QPoint& pos)
             }
         m_project->setRenderQueue(q);
     });
-    // nur sinnvoll, wenn ein gewählter Auftrag fertig/fehlgeschlagen/abgebrochen ist (nicht schon wartend oder laufend)
+    // only useful if a selected job is finished/failed/canceled (not already waiting or running)
     const QVector<RenderJob> queue = m_project->renderQueue();
     reset->setEnabled(std::any_of(queue.begin(), queue.end(), [&](const RenderJob& j) {
         return ids.contains(j.id) && j.status != RenderStatus::Queued && j.status != RenderStatus::Rendering;

@@ -1,5 +1,5 @@
-// Kurven-Editor der Timeline (wie DaVincis Kurven unter dem Clip): Zeichnen und Maus.
-// Die Kurve zeigt einen animierten Parameter über die Cliplänge; Punkte = Keyframes, bei Bezier mit Griffen.
+// Curve editor of the timeline (like DaVinci's curves under the clip): drawing and mouse.
+// The curve shows an animated parameter over the clip length; points = keyframes, with handles for Bezier.
 #include "ui/timeline/TimelineView.h"
 
 #include "app/Theme.h"
@@ -22,14 +22,14 @@
 namespace {
 
 constexpr int kSnapPx = 8;
-constexpr int kGrabPx = 6;      // so nah an einem Punkt/Griff wird er gegriffen
-constexpr int kChipH = 15;      // Parameter-Auswahl oben links
-constexpr int kPlotTop = 21;    // Abstand der Kurvenfläche vom oberen Rand
+constexpr int kGrabPx = 6;      // this close to a point/handle it is grabbed
+constexpr int kChipH = 15;      // parameter selector top left
+constexpr int kPlotTop = 21;    // distance of the curve area from the top edge
 constexpr int kPlotBottom = 8;
 
-bool curveable(AnimParam p) { return !Keys::info(p).color; } // Farben haben keine Kurve
+bool curveable(AnimParam p) { return !Keys::info(p).color; } // Colors have no curve
 
-// Erster Parameter mit Kurve (Reihenfolge wie im Inspector)
+// First parameter with a curve (order as in the Inspector)
 std::optional<AnimParam> firstCurveParam(const Clip& c)
 {
     for (auto it = c.keys.cbegin(); it != c.keys.cend(); ++it)
@@ -43,7 +43,7 @@ QString formatValue(double v, double span)
     return QLocale().toString(v, 'f', decimals);
 }
 
-// Bereich des Parameters einhalten (Lautstärke, Deckkraft …)
+// Keep within the range of the parameter (volume, opacity …)
 double clampValue(AnimParam p, double v)
 {
     double lo, hi;
@@ -64,7 +64,7 @@ void TimelineView::setCurveEditor(const QVector<int>& ids, bool on, AnimParam pa
     }
     Selection* sel = m_editor->selection();
     if (ids.contains(sel->keyClip()) && sel->keyParam() >= 0) sel->setKeyframes(0, {});
-    setScrollY(m_view.scrollY); // Höhe hat sich geändert
+    setScrollY(m_view.scrollY); // height has changed
 }
 
 bool TimelineView::curveEditorShown(int clipId) const
@@ -78,7 +78,7 @@ std::optional<AnimParam> TimelineView::curveParam(const Clip& c) const
     const auto it = m_curves.constFind(c.id);
     if (it == m_curves.cend()) return std::nullopt;
     if (Keys::animated(c, *it) && curveable(*it)) return *it;
-    return firstCurveParam(c); // gewählter Parameter hat keine Keyframes mehr
+    return firstCurveParam(c); // chosen parameter has no keyframes anymore
 }
 
 QRect TimelineView::curveIconRect(const QRect& r) const
@@ -108,7 +108,7 @@ void TimelineView::drawCurveIcon(QPainter& p, const QRect& r, bool open)
     p.setPen(QPen(QColor(0, 0, 0, 170), 1));
     p.setBrush(open ? Theme::primary : Theme::secondary);
     p.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), 2, 2);
-    // kleine S-Kurve
+    // small S-curve
     QPainterPath s;
     s.moveTo(box.left() + 2.5, box.bottom() - 2.5);
     s.cubicTo(box.center().x() + 1, box.bottom() - 2.5, box.center().x() - 1, box.top() + 2.5, box.right() - 2.5,
@@ -141,7 +141,7 @@ QRect TimelineView::curveChipRect(const QRect& curve, const Clip& c) const
 
 TimelineView::CurveRange TimelineView::curveRange(const Clip& c, AnimParam p) const
 {
-    // beim Ziehen eingefroren, sonst springt die Skala unter der Maus
+    // frozen while dragging, otherwise the scale jumps under the mouse
     if (m_curveFreeze && m_curveDrag.clipId == c.id && m_curveDrag.param == p) return m_curveFrozen;
     const KeyTrack k = c.keys.value(p);
     double lo = Keys::valueAt(c, p, 0), hi = lo;
@@ -191,7 +191,7 @@ std::optional<TimelineView::CurveHit> TimelineView::curveHitAt(const QPoint& pos
         const KeyTrack k = c.keys.value(*param);
         const bool mine = sel->keyClip() == c.id && sel->keyParam() == int(*param);
         auto dist = [&](double x, double y) { return std::hypot(x - pos.x(), y - pos.y()); };
-        // Griffe der ausgewählten Punkte liegen über den Punkten
+        // handles of the selected points lie above the points
         for (int i = 0; i < k.size(); ++i) {
             const int t = k[i].frame - c.in;
             if (!mine || !sel->keyTimes().contains(t) || t < 0 || t >= c.length()) continue;
@@ -263,7 +263,7 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
     p.setClipRect(R.adjusted(-8, 0, 8, 0).intersected(QRect(kHeaderW, 0, width() - kHeaderW, height())),
                   Qt::IntersectClip);
 
-    // Rasterlinien mit Werten (oben, Mitte, unten)
+    // Grid lines with values (top, middle, bottom)
     QFont f = font();
     f.setPointSizeF(7.5);
     p.setFont(f);
@@ -273,13 +273,13 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
         const int y = int(std::lround(curveY(plot, range, v)));
         p.setPen(QPen(Theme::alpha(Theme::text, 28), 1, Qt::DashLine));
         p.drawLine(R.left() + 1, y, R.right() - 1, y);
-        // Wert über der Linie, oben darunter (darüber liegt die Parameter-Auswahl)
+        // Value above the line, at the top below it (the parameter selector sits above)
         p.setPen(Theme::textDim);
         const QRect box = frac == 1.0 ? QRect(labelX, y + 1, 90, 12) : QRect(labelX, y - 13, 90, 12);
         p.drawText(box, Qt::AlignLeft | (frac == 1.0 ? Qt::AlignTop : Qt::AlignBottom), formatValue(v, range.hi - range.lo));
     }
 
-    // Kurve (nur sichtbarer Teil, alle 2 px)
+    // Curve (only the visible part, every 2 px)
     p.setRenderHint(QPainter::Antialiasing);
     const int x0 = std::max(R.left(), kHeaderW), x1 = std::min(R.right(), width());
     QPainterPath path;
@@ -287,14 +287,14 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
         const double t = std::clamp((std::min(x, x1) - frameToX(c.pos())) / m_view.pxPerFrame, 0.0,
                                     double(c.length() - 1));
         const QPointF pt(std::min(x, x1), curveY(plot, range, Keys::valueAt(c, *param, t)));
-        if (x == x0) path.moveTo(pt); // nicht path.isEmpty(): ist nach moveTo noch true
+        if (x == x0) path.moveTo(pt); // not path.isEmpty(): still true after moveTo
         else path.lineTo(pt);
     }
     p.setPen(QPen(Theme::mix(Theme::primary, Theme::meterMid, 0.25), 1.6));
     p.setBrush(Qt::NoBrush);
     p.drawPath(path);
 
-    // Punkte; ausgewählte orange mit Griffen
+    // Points; selected ones orange with handles
     for (int pass = 0; pass < 2; ++pass)
         for (int i = 0; i < k.size(); ++i) {
             const int t = k[i].frame - c.in;
@@ -317,7 +317,7 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
             p.drawEllipse(pt, 3.8, 3.8);
         }
 
-    // Parameter-Auswahl oben links (Klick = Menü)
+    // Parameter selector top left (click = menu)
     const QRect chip = curveChipRect(R, c);
     f.setPointSizeF(8);
     p.setFont(f);
@@ -328,7 +328,7 @@ void TimelineView::drawCurveLane(QPainter& p, const Row& row, const Clip& c)
     p.drawText(chip.adjusted(6, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, Keys::label(*param) + "  ▾");
     p.restore();
 
-    // Beim Ziehen: Wert und Zeitversatz am gegriffenen Punkt
+    // While dragging: value and time offset at the grabbed point
     if (m_drag == Drag::CurvePoint && m_curveDrag.clipId == c.id && m_curveDrag.index >= 0 &&
         m_curveDrag.index < m_curveOrig.size()) {
         const Keyframe& o = m_curveOrig[m_curveDrag.index];
@@ -365,7 +365,7 @@ void TimelineView::curveParamMenu(int clipId, const QPoint& globalPos)
 
 bool TimelineView::curvePress(QMouseEvent* e, const QPoint& pos)
 {
-    // Kurven-Symbol im Clip klappt den Kurven-Editor auf/zu
+    // Curve icon in the clip opens/closes the curve editor
     if (const int id = curveIconAt(pos)) {
         if (m_curves.contains(id)) {
             m_curves.remove(id);
@@ -374,7 +374,7 @@ bool TimelineView::curvePress(QMouseEvent* e, const QPoint& pos)
         }
         Selection* sel = m_editor->selection();
         if (sel->keyClip() == id && sel->keyParam() >= 0) sel->setKeyframes(0, {});
-        setScrollY(m_view.scrollY); // Höhe hat sich geändert
+        setScrollY(m_view.scrollY); // height has changed
         return true;
     }
     const auto h = curveHitAt(pos);
@@ -391,7 +391,7 @@ bool TimelineView::curvePress(QMouseEvent* e, const QPoint& pos)
         curveParamMenu(h->clipId, mapToGlobal(chip.bottomLeft() + QPoint(0, 2)));
         return true;
     }
-    if (h->index < 0) { // leere Stelle: Punkte abwählen
+    if (h->index < 0) { // empty spot: deselect points
         if (sel->keyParam() >= 0) sel->setKeyframes(0, {});
         update();
         return true;
@@ -400,7 +400,7 @@ bool TimelineView::curvePress(QMouseEvent* e, const QPoint& pos)
     const int t = k[h->index].frame - c->in;
     if (h->part == 0) {
         QSet<int> times = sel->keyClip() == h->clipId && sel->keyParam() == int(h->param) ? sel->keyTimes() : QSet<int>{};
-        const bool ctrl = e->modifiers() & Qt::ControlModifier; // Shift = eine Achse beim Ziehen
+        const bool ctrl = e->modifiers() & Qt::ControlModifier; // Shift = one axis while dragging
         if (ctrl && times.contains(t)) times.remove(t);
         else if (ctrl) times.insert(t);
         else if (!times.contains(t)) times = {t};
@@ -409,7 +409,7 @@ bool TimelineView::curvePress(QMouseEvent* e, const QPoint& pos)
             update();
             return true;
         }
-        emit seekRequested(c->start + t); // Inspector zeigt den Wert an diesem Keyframe
+        emit seekRequested(c->start + t); // Inspector shows the value at this keyframe
     }
     m_curveDrag = *h;
     m_curveOrig = k;
@@ -444,7 +444,7 @@ void TimelineView::curveMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         const double dx = pos.x() - m_pressPos.x(), dy = pos.y() - m_pressPos.y();
         int delta = int(std::lround(dx / m_view.pxPerFrame));
         double dv = -dy / plot.height() * (range.hi - range.lo);
-        if (mods & Qt::ShiftModifier) { // eine Achse (wie DaVinci)
+        if (mods & Qt::ShiftModifier) { // one axis (like DaVinci)
             if (std::abs(dx) > std::abs(dy)) dv = 0;
             else delta = 0;
         }
@@ -464,7 +464,7 @@ void TimelineView::curveMove(const QPoint& pos, Qt::KeyboardModifiers mods)
                 kept << key;
             }
         }
-        // verschobene Punkte gewinnen gegen solche, die am Ziel schon liegen
+        // moved points win over those already lying at the target
         kept.erase(std::remove_if(kept.begin(), kept.end(), [&](const Keyframe& x) {
             return std::any_of(moved.begin(), moved.end(), [&](const Keyframe& m) { return m.frame == x.frame; });
         }), kept.end());
@@ -480,7 +480,7 @@ void TimelineView::curveMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         update();
         return;
     }
-    // live wie beim Fade-Ziehen: ein Undo-Schritt pro Ziehen
+    // live like fade dragging: one undo step per drag
     m_editor->modifyClips({m_curveDrag.clipId}, T("Kurve bearbeiten"), [&](Clip& clip) { clip.keys[param] = k; },
                           QStringLiteral("curve-edit"));
     update();
@@ -523,7 +523,7 @@ bool TimelineView::curveContextMenu(const QPoint& pos, const QPoint& globalPos)
         {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
         {KeyEase::EaseInOut, "Ease In and Out"}, {KeyEase::Bezier, "Bezier"}};
     for (const auto& it : eases) {
-        QAction* a = menu.addAction(it.name); // wie DaVinci auch deutsch englisch
+        QAction* a = menu.addAction(it.name); // as in DaVinci, English even in the German version
         a->setCheckable(true);
         a->setChecked(k[h->index].ease == it.ease);
         connect(a, &QAction::triggered, this, [this, id, times, param, ease = it.ease] {
@@ -557,7 +557,7 @@ bool TimelineView::curveDoubleClick(const QPoint& pos)
     const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), h->clipId, &ref);
     const auto row = c ? rowFor(ref) : std::nullopt;
     if (!c || !row) return true;
-    // Doppelklick in die Kurvenfläche: Keyframe an dieser Stelle mit dem Wert unter der Maus
+    // Double-click in the curve area: keyframe at this spot with the value under the mouse
     const QRect plot = curvePlotRect(curveRect(*row, *c));
     const int t = std::clamp(int(std::lround(xToFrame(pos.x()) - c->start)), 0, c->length() - 1);
     const double v = clampValue(h->param, curveValue(plot, curveRange(*c, h->param), pos.y()));
