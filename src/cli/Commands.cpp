@@ -384,6 +384,26 @@ QJsonObject timelineJson(const Project& p)
                 if (t.volumeDb != 0) o["volume_db"] = t.volumeDb;
                 if (t.pan != 0) o["pan"] = t.pan;
                 if (t.solo) o["solo"] = true;
+                if (t.dynamics != TrackDynamics{}) {
+                    const TrackDynamics& d = t.dynamics;
+                    o["compressor"] = QJsonObject{{"on", d.on},           {"threshold_db", d.thresholdDb},
+                                                  {"ratio", d.ratio},     {"attack_ms", d.attackMs},
+                                                  {"release_ms", d.releaseMs}, {"knee_db", d.kneeDb},
+                                                  {"makeup_db", d.makeupDb}};
+                }
+                if (t.eq != TrackEq{}) {
+                    static const char* kinds[] = {"high_pass", "low_shelf", "bell", "high_shelf", "low_pass"};
+                    QJsonArray bands;
+                    for (size_t b = 0; b < t.eq.bands.size(); ++b) {
+                        const EqBand& band = t.eq.bands[b];
+                        QJsonObject bo{{"band", int(b) + 1}, {"kind", kinds[int(band.kind)]}, {"on", band.on},
+                                       {"freq", band.freq}, {"q", band.q}};
+                        if (band.kind != EqBand::Kind::HighPass && band.kind != EqBand::Kind::LowPass)
+                            bo["gain_db"] = band.gainDb;
+                        bands << bo;
+                    }
+                    o["eq"] = QJsonObject{{"on", t.eq.on}, {"bands", bands}};
+                }
             }
             tracks << o;
         }

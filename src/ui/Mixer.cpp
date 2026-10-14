@@ -1,8 +1,12 @@
 #include "ui/Mixer.h"
 
+#include "app/DynamicsDialog.h"
+#include "app/EqDialog.h"
 #include "app/Theme.h"
+#include "core/Editor.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/Selection.h"
 #include "core/Loudness.h"
 #include "engine/Engine.h"
 
@@ -435,6 +439,31 @@ public:
             ms->addWidget(limiter);
         }
         lay->addLayout(ms);
+        // EQ and compressor of the track (like Fairlight); the master has its limiter instead, an empty row of
+        // the same height keeps the faders level
+        if (master) {
+            lay->addSpacing(18 + lay->spacing());
+        } else {
+            auto* fx = new QHBoxLayout;
+            fx->setSpacing(3);
+            auto makeFx = [&](const QString& text, const QString& tip) {
+                auto* b = new QToolButton;
+                b->setText(text);
+                b->setCheckable(true);
+                b->setFocusPolicy(Qt::NoFocus);
+                b->setToolTip(tip);
+                b->setFixedSize(26, 18);
+                b->setStyleSheet(QString("QToolButton { background: %2; color: %1; font-size: 7pt; font-weight: 600; "
+                                         "padding: 0; } QToolButton:checked { background: %3; color: %4; }")
+                                     .arg(Theme::text.name(), Theme::control.name(), Theme::primary.name(),
+                                          Theme::onPrimary.name()));
+                fx->addWidget(b);
+                return b;
+            };
+            eq = makeFx("EQ", T("EQ der Spur an/aus\nDoppelklick = EQ bearbeiten"));
+            dyn = makeFx("DYN", T("Kompressor der Spur an/aus\nDoppelklick = Kompressor bearbeiten"));
+            lay->addLayout(fx);
+        }
 
         // Spitzenwert seit dem letzten Zurücksetzen (rot hinterlegt = übersteuert); Klick setzt zurück
         peak = new PeakLabel;
@@ -506,6 +535,8 @@ public:
     QToolButton* mute;
     QToolButton* solo;
     QToolButton* limiter = nullptr; // nur Master
+    QToolButton* eq = nullptr;      // tracks only
+    QToolButton* dyn = nullptr;
     PeakLabel* peak;
     FaderMeter* fader;
     QLabel* value;
@@ -801,6 +832,33 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     sync();
 }
 
+Editor* Mixer::editor()
+{
+    if (m_editor) return m_editor;
+    // Without the main window's editor (tests): an own one, its edits update the preview live like the faders
+    auto* selection = new Selection(this);
+    m_editor = new Editor(m_project, selection, this);
+    connect(m_editor, &Editor::mixerOnlyEdit, m_engine, &Engine::mixerOnlyNext);
+    return m_editor;
+}
+
+void Mixer::setEditor(Editor* editor) { m_editor = editor; }
+
+bool Mixer::eventFilter(QObject* watched, QEvent* e)
+{
+    if (e->type() == QEvent::MouseButtonDblClick)
+        for (int i = 0; i < m_strips.size(); ++i) {
+            QDialog* dialog = nullptr;
+            if (watched == m_strips[i]->eq) dialog = new EqDialog(editor(), i, this);
+            else if (watched == m_strips[i]->dyn) dialog = new DynamicsDialog(editor(), i, this);
+            if (!dialog) continue;
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->show(); // not modal: the preview keeps playing while adjusting
+            return true;    // no second click (would switch back)
+        }
+    return QWidget::eventFilter(watched, e);
+}
+
 void Mixer::rebuildStrips(int count)
 {
     const bool allShown = m_strips.isEmpty() || m_stripScroll->width() >= m_strips.size() * kStripW;
@@ -835,6 +893,24 @@ void Mixer::rebuildStrips(int count)
                 if (i < tl.audio.size()) tl.audio[i].solo = !tl.audio[i].solo;
             });
         });
+        // EQ/DYN: click = on/off, double click = editor (the first click of it has switched already)
+        const QString tag = trackShortName({TrackKind::Audio, i});
+        s->eq->setObjectName("eq_" + tag);
+        s->dyn->setObjectName("dyn_" + tag);
+        connect(s->eq, &QToolButton::clicked, this, [this, i](bool on) {
+            if (i >= m_project->timeline().audio.size()) return;
+            TrackEq eq = m_project->timeline().audio[i].eq;
+            eq.on = on;
+            editor()->setTrackEq(i, eq);
+        });
+        connect(s->dyn, &QToolButton::clicked, this, [this, i](bool on) {
+            if (i >= m_project->timeline().audio.size()) return;
+            TrackDynamics d = m_project->timeline().audio[i].dynamics;
+            d.on = on;
+            editor()->setTrackDynamics(i, d);
+        });
+        s->eq->installEventFilter(this);
+        s->dyn->installEventFilter(this);
         m_stripLayout->insertWidget(i, s);
         m_strips << s;
     }
@@ -905,6 +981,8 @@ void Mixer::sync()
         s->setPan(t.pan);
         s->mute->setChecked(t.muted); // setChecked löst kein clicked aus
         s->solo->setChecked(t.solo);
+        s->eq->setChecked(t.eq.on);
+        s->dyn->setChecked(t.dynamics.on);
         // Durch Solo einer anderen Spur stumm: Name ausgrauen, damit man sieht, dass der Knopf wirkt
         const bool silenced = anySolo && !t.solo && !t.muted;
         s->name->setStyleSheet(QString("color: %1; font-weight: 600; background: %2; padding: 2px;")

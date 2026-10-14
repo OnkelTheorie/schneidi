@@ -1,4 +1,6 @@
 #include "engine/TimelineBuilder.h"
+#include "core/Dynamics.h"
+#include "core/Equalizer.h"
 #include "core/Limiter.h"
 #include "core/Loudness.h"
 #include "core/TruePeak.h"
@@ -588,6 +590,85 @@ std::shared_ptr<Mlt::Filter> makeLimiter(Mlt::Profile& profile, bool on, double 
     return limiter;
 }
 
+// Track EQ + compressor (Mixer "EQ"/"DYN"): one own filter per audio track, before the fader. The settings live in
+// the state (not as text properties), applyMixer changes them while playing.
+struct TrackDspState {
+    std::mutex mutex;
+    TrackEq eq;
+    TrackDynamics dynamics;
+    Equalizer equalizer, eqBefore; // before = state before the last frame (the same frame requested again)
+    Compressor compressor, compBefore;
+    mlt_position last = -10;
+};
+
+int trackDspGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int* frequency, int* channels,
+                     int* samples)
+{
+    auto filter = static_cast<mlt_filter>(mlt_frame_pop_audio(frame));
+    auto* st = static_cast<TrackDspState*>(mlt_properties_get_data(MLT_FILTER_PROPERTIES(filter), "_state", nullptr));
+    bool active = false;
+    if (st) {
+        const std::lock_guard<std::mutex> lock(st->mutex);
+        active = st->eq.on || st->dynamics.on;
+    }
+    if (!active) return mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
+    *format = mlt_audio_float;
+    const int error = mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
+    if (error || !*buffer || *channels <= 0 || *samples <= 0) return error;
+    if (*format != mlt_audio_float) {
+        if (!frame->convert_audio || frame->convert_audio(frame, buffer, format, mlt_audio_float) || *format != mlt_audio_float)
+            return 0;
+    }
+    const std::lock_guard<std::mutex> lock(st->mutex);
+    const mlt_position pos = mlt_frame_get_position(frame);
+    if (pos == st->last) {
+        st->equalizer = st->eqBefore;
+        st->compressor = st->compBefore;
+    } else if (pos != st->last + 1) { // jump: start over
+        st->equalizer.reset();
+        st->compressor.reset();
+    }
+    st->equalizer.setEq(st->eq);
+    st->compressor.setParams(st->dynamics);
+    st->eqBefore = st->equalizer;
+    st->compBefore = st->compressor;
+    auto* pcm = static_cast<float*>(*buffer);
+    st->equalizer.processPlanar(pcm, *samples, *channels, *frequency);
+    st->compressor.processPlanar(pcm, *samples, *channels, *frequency);
+    st->last = pos;
+    return 0;
+}
+
+mlt_frame trackDspProcess(mlt_filter filter, mlt_frame frame)
+{
+    mlt_frame_push_audio(frame, filter);
+    mlt_frame_push_audio(frame, reinterpret_cast<void*>(trackDspGetAudio));
+    return frame;
+}
+
+void setTrackDsp(Mlt::Filter& f, const TrackEq& eq, const TrackDynamics& dynamics)
+{
+    auto* st = static_cast<TrackDspState*>(f.get_data("_state"));
+    if (!st) return;
+    const std::lock_guard<std::mutex> lock(st->mutex);
+    st->eq = eq;
+    st->dynamics = dynamics;
+}
+
+std::shared_ptr<Mlt::Filter> makeTrackDsp(Mlt::Profile& profile, const TrackEq& eq, const TrackDynamics& dynamics)
+{
+    mlt_filter f = mlt_filter_new();
+    if (!f) return nullptr;
+    mlt_service_set_profile(MLT_FILTER_SERVICE(f), profile.get_profile());
+    f->process = trackDspProcess;
+    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), "_state", new TrackDspState, 0,
+                            [](void* p) { delete static_cast<TrackDspState*>(p); }, nullptr);
+    auto dsp = std::make_shared<Mlt::Filter>(f);
+    mlt_filter_close(f);
+    setTrackDsp(*dsp, eq, dynamics);
+    return dsp;
+}
+
 // Feinposition von Ton-Clips (Clip::subframe): verzögert den Ton um einen Bruchteil eines Frames. Die fehlenden
 // Samples am Frame-Anfang kommen aus dem Ende des vorigen Frames (gemerkt); nach einem Sprung (Suchen) ist dort
 // Stille – beim Export läuft alles am Stück. Ein Filter je Clip, an allen seinen Ausschnitten (Positionen der Quelle
@@ -664,12 +745,18 @@ std::shared_ptr<Mlt::Filter> makeSubframeDelay(Mlt::Profile& profile, int subfra
     return delay;
 }
 
-// limiter: nur Master (Ceiling in dBFS, nullopt = keiner); sitzt nach Fader/Pan und vor dem Pegelmesser
+// limiter: master only (ceiling in dBFS, nullopt = none); sits after fader/pan and before the meter.
+// track: audio tracks only, its EQ and compressor sit before the fader.
 void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, MixerHooks::Strip* hook,
-                 std::optional<std::pair<bool, double>> limiter = {})
+                 std::optional<std::pair<bool, double>> limiter = {}, const Track* track = nullptr)
 {
-    if (!hook) { // Export: nur was nötig ist
-        Clip c; // gleiche Umrechnung wie bei Clips
+    if (track && (hook || track->eq.on || track->dynamics.on)) { // preview: always there, switched live
+        auto dsp = makeTrackDsp(profile, track->eq, track->dynamics);
+        if (dsp) s.attach(*dsp);
+        if (hook) hook->dsp = dsp;
+    }
+    if (!hook) { // export: only what is needed
+        Clip c; // same conversion as for clips
         c.volumeDb = db;
         c.pan = pan;
         applyVolume(profile, s, c);
@@ -1262,7 +1349,7 @@ bool TimelineBuilder::applyMixer(const Timeline& tl, MixerHooks& hooks)
 {
     if (int(hooks.tracks.size()) != tl.audio.size() || !hooks.master.volume) return false;
     for (const MixerHooks::Strip& h : hooks.tracks)
-        if (!h.volume || !h.pan || !h.playlist) return false;
+        if (!h.volume || !h.pan || !h.playlist || !h.dsp) return false;
     const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
     for (int i = 0; i < tl.audio.size(); ++i) {
         MixerHooks::Strip& h = hooks.tracks[i];
@@ -1271,6 +1358,7 @@ bool TimelineBuilder::applyMixer(const Timeline& tl, MixerHooks& hooks)
         h.audible = audible;
         h.volume->set("level", mltLevel(tl.audio[i].volumeDb));
         h.pan->set("start", mltPan(tl.audio[i].pan));
+        setTrackDsp(*h.dsp, tl.audio[i].eq, tl.audio[i].dynamics);
     }
     hooks.master.volume->set("level", mltLevel(tl.masterVolumeDb));
     if (hooks.master.limiter) setLimiter(*hooks.master.limiter, tl.masterLimiter, tl.masterLimiterDb);
@@ -1523,7 +1611,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 h->audible = !(hide & 2);
                 h->playlist = std::make_shared<Mlt::Playlist>(pl);
             }
-            attachStrip(m_profile, pl, track.volumeDb, track.pan, h);
+            attachStrip(m_profile, pl, track.volumeDb, track.pan, h, {}, &track);
         }
         tractor->set_track(pl, mltIndex);
 

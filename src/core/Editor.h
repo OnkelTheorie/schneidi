@@ -50,6 +50,10 @@ public:
     // Spurname (leer = Standard „Video 1“ usw.) und Spurfarbe (id aus kTrackColors, leer = Standard)
     void renameTrack(TrackRef ref, const QString& name);
     void setTrackColor(TrackRef ref, const QString& colorId);
+    // EQ and compressor of audio track `track` (Mixer "EQ"/"DYN", dialogs), values clamped to their ranges; the
+    // preview takes them live. Same mergeKey = one undo step (dragging a control).
+    void setTrackEq(int track, const TrackEq& eq, const QString& mergeKey = {});
+    void setTrackDynamics(int track, const TrackDynamics& dynamics, const QString& mergeKey = {});
     // Spuren hinzufügen/löschen (DaVinci „Add Track“/„Delete Track“), je ein Undo-Schritt. addTrack: neue leere
     // Spur an Index `index` (0 = ganz unten bei Video bzw. A1 bei Audio), die übrigen rücken auf. Eigene Namen und
     // Eigenschaften bleiben an ihrer Spur, Standardnamen („Video 2“) folgen der Position. Die letzte Spur eines Typs

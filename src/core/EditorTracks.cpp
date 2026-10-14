@@ -1,7 +1,9 @@
 // Editor: track operations (mute, hide, lock, name, color, add, remove, move).
 #include "core/Editor.h"
 
+#include "core/Dynamics.h"
 #include "core/EffectFolders.h"
+#include "core/Equalizer.h"
 #include "core/EffectRegistry.h"
 #include "core/Presets.h"
 #include "core/I18n.h"
@@ -67,6 +69,24 @@ void Editor::setTrackColor(TrackRef ref, const QString& colorId)
     if (ref.index < 0 || ref.index >= cur.tracks(ref.kind).size() || cur.track(ref).color == colorId) return;
     if (!colorId.isEmpty() && !trackColorInfo(colorId)) return;
     m_project->edit(T("Spurfarbe ändern"), [&](Timeline& tl) { tl.track(ref).color = colorId; });
+}
+
+void Editor::setTrackEq(int track, const TrackEq& eq, const QString& mergeKey)
+{
+    if (track < 0 || track >= m_project->timeline().audio.size()) return;
+    const TrackEq e = Equalizer::clamped(eq);
+    if (m_project->timeline().audio[track].eq == e) return;
+    emit mixerOnlyEdit();
+    m_project->edit(T("Spur-EQ"), [&](Timeline& tl) { tl.audio[track].eq = e; }, mergeKey);
+}
+
+void Editor::setTrackDynamics(int track, const TrackDynamics& dynamics, const QString& mergeKey)
+{
+    if (track < 0 || track >= m_project->timeline().audio.size()) return;
+    const TrackDynamics d = Compressor::clamped(dynamics);
+    if (m_project->timeline().audio[track].dynamics == d) return;
+    emit mixerOnlyEdit();
+    m_project->edit(T("Spur-Kompressor"), [&](Timeline& tl) { tl.audio[track].dynamics = d; }, mergeKey);
 }
 
 void Editor::addTrack(TrackKind kind, int index)

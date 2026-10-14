@@ -27,7 +27,8 @@ class Playlist;
 struct MixerHooks {
     struct Strip {
         std::shared_ptr<Mlt::Filter> volume, pan, meter;
-        std::shared_ptr<Mlt::Filter> limiter; // nur Master: immer angehängt, per "disable" an/aus
+        std::shared_ptr<Mlt::Filter> limiter; // master only: always attached, switched via "disable"
+        std::shared_ptr<Mlt::Filter> dsp;     // tracks only: EQ + compressor (before the fader)
         bool audible = true; // false = stumm/weggesoloed -> Pegel -∞
         std::shared_ptr<Mlt::Playlist> playlist; // nur Spuren: Mute/Solo live über "hide" (ohne Neuaufbau)
     };
@@ -93,9 +94,9 @@ public:
 
     // hooks != nullptr: Mixer-Filter immer anhängen (auch bei 0 dB) und Pegelmesser einbauen
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);
-    // Fader/Pan/Limiter live auf die Filter übertragen (Spuranzahl muss passen)
     // Sprungstellen der Decoder aus dem letzten build() (nur äußere Timeline), nach frame sortiert
     const std::vector<PrerollPoint>& prerollPoints() const { return m_preroll; }
+    // Apply fader/pan/limiter/EQ/compressor live to the filters (the track count must match)
     static bool applyMixer(const Timeline& tl, MixerHooks& hooks);
     // Ton eines Clips so, wie ihn die Timeline liest (Geschwindigkeit/Rückwärts eingerechnet), ohne
     // Clip-Lautstärke/Fades; Frames in..out des Clips. nullptr = Titel/Standbild/Datei fehlt.

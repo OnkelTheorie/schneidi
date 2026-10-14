@@ -1,7 +1,9 @@
 #include "core/ProjectFile.h"
 
+#include "core/Dynamics.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/Equalizer.h"
 #include "core/Keyframes.h"
 #include "core/Retime.h"
 
@@ -23,6 +25,51 @@
 #include <algorithm>
 
 namespace {
+
+// Track EQ/compressor: only written when not the default; loading clamps the values (hand-edited files)
+QJsonObject eqToJson(const TrackEq& eq)
+{
+    QJsonArray bands;
+    for (const EqBand& b : eq.bands)
+        bands << QJsonObject{{"on", b.on}, {"freq", b.freq}, {"gainDb", b.gainDb}, {"q", b.q}};
+    return QJsonObject{{"on", eq.on}, {"bands", bands}};
+}
+
+TrackEq eqFromJson(const QJsonObject& o)
+{
+    TrackEq eq;
+    eq.on = o.value("on").toBool();
+    const QJsonArray bands = o.value("bands").toArray();
+    for (int i = 0; i < std::min<int>(bands.size(), int(eq.bands.size())); ++i) {
+        const QJsonObject b = bands[i].toObject();
+        EqBand& band = eq.bands[size_t(i)];
+        band.on = b.value("on").toBool(band.on);
+        band.freq = b.value("freq").toDouble(band.freq);
+        band.gainDb = b.value("gainDb").toDouble(band.gainDb);
+        band.q = b.value("q").toDouble(band.q);
+    }
+    return Equalizer::clamped(eq);
+}
+
+QJsonObject dynamicsToJson(const TrackDynamics& d)
+{
+    return QJsonObject{{"on", d.on},           {"thresholdDb", d.thresholdDb}, {"ratio", d.ratio},
+                       {"attackMs", d.attackMs}, {"releaseMs", d.releaseMs},     {"kneeDb", d.kneeDb},
+                       {"makeupDb", d.makeupDb}};
+}
+
+TrackDynamics dynamicsFromJson(const QJsonObject& o)
+{
+    TrackDynamics d;
+    d.on = o.value("on").toBool();
+    d.thresholdDb = o.value("thresholdDb").toDouble(d.thresholdDb);
+    d.ratio = o.value("ratio").toDouble(d.ratio);
+    d.attackMs = o.value("attackMs").toDouble(d.attackMs);
+    d.releaseMs = o.value("releaseMs").toDouble(d.releaseMs);
+    d.kneeDb = o.value("kneeDb").toDouble(d.kneeDb);
+    d.makeupDb = o.value("makeupDb").toDouble(d.makeupDb);
+    return Compressor::clamped(d);
+}
 
 // 2: Ton-Streams pro Datei (Clip "audioStream"). Ältere schneidi-Versionen würden dort still nur Stream 1 spielen
 // und die Zuordnung beim Speichern verlieren -> sie lehnen die Datei ab.
@@ -456,6 +503,8 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
             if (t.volumeDb != 0.0) o["volumeDb"] = t.volumeDb;
             if (t.pan != 0.0) o["pan"] = t.pan;
             if (t.solo) o["solo"] = true;
+            if (t.eq != TrackEq{}) o["eq"] = eqToJson(t.eq);
+            if (t.dynamics != TrackDynamics{}) o["dynamics"] = dynamicsToJson(t.dynamics);
             arr << o;
         }
         return arr;
@@ -598,6 +647,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.volumeDb = o.value("volumeDb").toDouble(0.0);
             t.pan = o.value("pan").toDouble(0.0);
             t.solo = o.value("solo").toBool();
+            if (o.contains("eq")) t.eq = eqFromJson(o.value("eq").toObject());
+            if (o.contains("dynamics")) t.dynamics = dynamicsFromJson(o.value("dynamics").toObject());
             for (const QJsonValue& cv : o.value("clips").toArray()) {
                 Clip c = clipFromJson(cv.toObject(), allMedia, projectDir);
                 d.lastClipId = std::max(d.lastClipId, c.id);

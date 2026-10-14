@@ -85,6 +85,7 @@ void MainWindow::buildLayout()
     m_timeline = new TimelinePanel(m_editor);
     m_deliver = new DeliverPanel(m_project);
     m_mixer = new Mixer(m_project, m_engine);
+    m_mixer->setEditor(m_editor);
     m_mixer->hide();
     m_colorPanel = new ColorPanel(m_editor);
     m_transcript = new TranscriptPanel(m_project, m_editor);

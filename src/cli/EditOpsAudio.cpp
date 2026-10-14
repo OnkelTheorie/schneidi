@@ -2,6 +2,8 @@
 // limiter) and Normalize Audio Levels (measured like the app's dialog)
 #include "cli/CommandsDetail.h"
 
+#include "core/Dynamics.h"
+#include "core/Equalizer.h"
 #include "core/Keyframes.h"
 #include "core/Loudness.h"
 #include "core/TimelineOps.h"
@@ -12,8 +14,9 @@
 #include <QSet>
 
 #include <algorithm>
-
 #include <cmath>
+#include <iterator>
+#include <tuple>
 
 namespace Cli::detail {
 
@@ -118,6 +121,61 @@ void mixToLoudness(Session& s, int track, double target)
     }
 }
 
+// compressor:{on?, threshold_db?, ratio?, attack_ms?, release_ms?, knee_db?, makeup_db?} onto d; giving values
+// without `on` switches it on (like the app's dialog, where changing a value is meant to be heard)
+TrackDynamics compressorFrom(const QJsonValue& v, TrackDynamics d)
+{
+    if (!v.isObject()) fail("BAD_ARGUMENT", "'compressor' must be an object like {on:true, threshold_db:-20, ratio:4}");
+    const QJsonObject o = v.toObject();
+    using C = Compressor;
+    const std::tuple<const char*, double*, double, double> fields[] = {
+        {"threshold_db", &d.thresholdDb, C::kMinThreshold, C::kMaxThreshold},
+        {"ratio", &d.ratio, C::kMinRatio, C::kMaxRatio},
+        {"attack_ms", &d.attackMs, C::kMinAttack, C::kMaxAttack},
+        {"release_ms", &d.releaseMs, C::kMinRelease, C::kMaxRelease},
+        {"knee_db", &d.kneeDb, 0, C::kMaxKnee},
+        {"makeup_db", &d.makeupDb, C::kMinMakeup, C::kMaxMakeup}};
+    bool values = false;
+    for (const auto& [key, field, lo, hi] : fields)
+        if (o.contains(key)) {
+            *field = numberOf(o, key, lo, hi);
+            values = true;
+        }
+    for (const QString& key : o.keys())
+        if (key != "on" && std::none_of(std::begin(fields), std::end(fields), [&](const auto& f) { return key == std::get<0>(f); }))
+            fail("BAD_ARGUMENT", QString("unknown compressor field '%1'").arg(key));
+    d.on = o.contains("on") ? o.value("on").toBool() : (values || d.on);
+    return d;
+}
+
+// eq:{on?, bands?:[{band (1-6), on?, freq?, gain_db?, q?}]} onto eq; changing a band without `on` switches it and
+// the EQ on (like dragging a point in the app)
+TrackEq eqFrom(const QJsonValue& v, TrackEq eq)
+{
+    if (!v.isObject()) fail("BAD_ARGUMENT", "'eq' must be an object like {on:true, bands:[{band:3, freq:2500, gain_db:3}]}");
+    const QJsonObject o = v.toObject();
+    bool changed = false;
+    for (const QJsonValue& bv : o.value("bands").toArray()) {
+        const QJsonObject b = bv.toObject();
+        const int index = int(numberOf(b, "band", 1, 6)) - 1;
+        if (index + 1 != b.value("band").toDouble()) fail("BAD_ARGUMENT", "'band' must be a whole number 1-6");
+        EqBand& band = eq.bands[size_t(index)];
+        const bool filter = band.kind == EqBand::Kind::HighPass || band.kind == EqBand::Kind::LowPass;
+        if (b.contains("gain_db") && filter)
+            fail("BAD_ARGUMENT", QString("band %1 is a %2 pass filter: it has freq and q, no gain_db")
+                                     .arg(index + 1).arg(band.kind == EqBand::Kind::HighPass ? "high" : "low"));
+        bool values = false;
+        if (b.contains("freq")) band.freq = numberOf(b, "freq", Equalizer::kMinFreq, Equalizer::kMaxFreq), values = true;
+        if (b.contains("gain_db")) band.gainDb = numberOf(b, "gain_db", Equalizer::kMinGain, Equalizer::kMaxGain), values = true;
+        if (b.contains("q")) band.q = numberOf(b, "q", Equalizer::kMinQ, Equalizer::kMaxQ), values = true;
+        band.on = b.contains("on") ? b.value("on").toBool() : (values || band.on);
+        changed = true;
+    }
+    if (o.contains("bands") && !o.value("bands").isArray()) fail("BAD_ARGUMENT", "'bands' must be an array");
+    eq.on = o.contains("on") ? o.value("on").toBool() : (changed || eq.on);
+    return eq;
+}
+
 void opMixer(Session& s, const QJsonObject& op)
 {
     const QString track = op.value("track").toString().trimmed().toLower();
@@ -125,8 +183,8 @@ void opMixer(Session& s, const QJsonObject& op)
     const double targetLufs = toLoudness ? numberOf(op, "target_lufs", -70, 0) : 0;
     if (toLoudness && op.contains("volume_db")) fail("BAD_ARGUMENT", "give volume_db or target_lufs, not both");
     if (track == "master") {
-        if (op.contains("pan") || op.contains("mute") || op.contains("solo"))
-            fail("BAD_ARGUMENT", "the master has volume_db, limiter and limiter_db");
+        if (op.contains("pan") || op.contains("mute") || op.contains("solo") || op.contains("compressor") || op.contains("eq"))
+            fail("BAD_ARGUMENT", "the master has volume_db, limiter and limiter_db (eq and compressor are per track)");
         double db = 0, ceiling = 0;
         if (op.contains("volume_db")) db = numberOf(op, "volume_db", kMinVolumeDb, kMaxVolumeDb);
         if (op.contains("limiter_db")) ceiling = numberOf(op, "limiter_db", -20, 0);
@@ -146,6 +204,9 @@ void opMixer(Session& s, const QJsonObject& op)
     double db = 0, pan = 0;
     if (op.contains("volume_db")) db = numberOf(op, "volume_db", kMinVolumeDb, kMaxVolumeDb);
     if (op.contains("pan")) pan = numberOf(op, "pan", -100, 100);
+    const Track& now = s.project.timeline().audio[index];
+    const TrackDynamics dynamics = op.contains("compressor") ? compressorFrom(op.value("compressor"), now.dynamics) : now.dynamics;
+    const TrackEq eq = op.contains("eq") ? eqFrom(op.value("eq"), now.eq) : now.eq;
     s.project.edit("Mixer", [&](Timeline& tl) {
         Track& t = tl.audio[index];
         if (op.contains("volume_db")) t.volumeDb = db;
@@ -153,6 +214,9 @@ void opMixer(Session& s, const QJsonObject& op)
         if (op.contains("mute")) t.muted = op.value("mute").toBool();
         if (op.contains("solo")) t.solo = op.value("solo").toBool();
     });
+    // Same path as the app's Mixer buttons/dialogs (Editor)
+    s.editor.setTrackDynamics(index, dynamics);
+    s.editor.setTrackEq(index, eq);
     if (toLoudness) mixToLoudness(s, index, targetLufs);
 }
 
@@ -353,11 +417,19 @@ void addAudioOps(QVector<OpDef>& ops)
                  "clip volume in dB (-60 = silent, max +12) and pan (-100 left … 100 right)", {}, opVolume}
         << OpDef{"audio_stream", "{op:'audio_stream', clips, stream}",
                  "which audio stream of the file the clips play (0 = first; `probe` lists them)", {}, opAudioStream}
-        << OpDef{"mixer", "{op:'mixer', track:'A1'|'master', volume_db?|target_lufs?, pan?, mute?, solo?, limiter?, limiter_db?}",
+        << OpDef{"mixer", "{op:'mixer', track:'A1'|'master', volume_db?|target_lufs?, pan?, mute?, solo?, limiter?, "
+                          "limiter_db?, compressor?, eq?}",
                  "track faders like the Mixer; the master has volume_db, limiter (on/off) and limiter_db (ceiling, "
                  "default -1). target_lufs measures the mix (master) or the track alone and sets the fader so it "
-                 "reaches that loudness (e.g. -14 for streaming; turn the limiter on first)",
-                 {}, opMixer}
+                 "reaches that loudness (e.g. -14 for streaming; turn the limiter on first). Tracks also have a "
+                 "compressor and an EQ (before the fader)",
+                 "compressor:{on?, threshold_db? (-60..0, default -20), ratio? (1..100, default 4), attack_ms? "
+                 "(default 10), release_ms? (default 150), knee_db? (default 6), makeup_db? (default 0)} - tames peaks "
+                 "(game sound, shouting); stereo-linked. eq:{on?, bands?:[{band, on?, freq?, gain_db?, q?}]} - 6 bands "
+                 "like Fairlight: 1 high pass (off by default), 2 low shelf, 3 and 4 bell, 5 high shelf, 6 low pass "
+                 "(off by default); freq 20..20000 Hz, gain_db -24..24 (not for 1 and 6), q 0.1..10. Giving values "
+                 "switches the compressor / the band and the EQ on unless 'on' is given. `info` shows both on the track.",
+                 opMixer}
         << OpDef{"normalize", "{op:'normalize', clips, mode?:'peak'|'lufs', target?, relative?, allow_track_gain?}",
                  "Normalize Audio Levels: measure the clips and set their volume",
                  "mode peak: sample peak to target dBFS (default -1); lufs: integrated loudness to target LUFS (default "

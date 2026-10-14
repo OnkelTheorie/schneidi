@@ -61,6 +61,8 @@ add_library(schneidi_lib STATIC
     src/core/Loudness.h           src/core/Loudness.cpp
     src/core/TruePeak.h           src/core/TruePeak.cpp
     src/core/Limiter.h            src/core/Limiter.cpp
+    src/core/Dynamics.h           src/core/Dynamics.cpp
+    src/core/Equalizer.h          src/core/Equalizer.cpp
     src/core/RenderJob.h          src/core/RenderJob.cpp
     src/core/Subtitles.h          src/core/Subtitles.cpp
     src/core/Transcript.h         src/core/Transcript.cpp
@@ -104,6 +106,8 @@ add_library(schneidi_lib STATIC
     src/app/TranscribeDialog.h  src/app/TranscribeDialog.cpp
     src/app/PasteAttributesDialog.h src/app/PasteAttributesDialog.cpp
     src/app/DesignDialog.h src/app/DesignDialog.cpp
+    src/app/EqDialog.h src/app/EqDialog.cpp
+    src/app/DynamicsDialog.h src/app/DynamicsDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
@@ -111,6 +115,7 @@ add_library(schneidi_lib STATIC
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
+    src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/TrimView.h             src/ui/TrimView.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/InspectorDetail.h

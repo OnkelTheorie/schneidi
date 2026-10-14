@@ -15,6 +15,7 @@
 #include <QVector>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 
 enum class TrackKind { Video, Audio };
@@ -288,6 +289,43 @@ inline const TrackColorInfo* trackColorInfo(const QString& id)
     return nullptr;
 }
 
+// EQ per audio track like Fairlight: 6 bands (high pass, low shelf, 2 bells, high shelf, low pass), the kind is fixed
+// per band. Default flat: filters off, the other bands at 0 dB (DSP and response in core/Equalizer.h)
+struct EqBand {
+    enum class Kind { HighPass, LowShelf, Bell, HighShelf, LowPass };
+    Kind kind = Kind::Bell;
+    bool on = true;
+    double freq = 1000; // Hz: corner (filters, shelves) or center (bell)
+    double gainDb = 0;  // shelves and bells only
+    double q = 1.0;
+    bool operator==(const EqBand&) const = default;
+};
+struct TrackEq {
+    bool on = false;
+    std::array<EqBand, 6> bands{{
+        {EqBand::Kind::HighPass, false, 30, 0, 0.707},
+        {EqBand::Kind::LowShelf, true, 100, 0, 0.707},
+        {EqBand::Kind::Bell, true, 500, 0, 1.0},
+        {EqBand::Kind::Bell, true, 2000, 0, 1.0},
+        {EqBand::Kind::HighShelf, true, 8000, 0, 0.707},
+        {EqBand::Kind::LowPass, false, 18000, 0, 0.707},
+    }};
+    bool operator==(const TrackEq&) const = default;
+};
+
+// Compressor per audio track (Fairlight "Dynamics"): stereo-linked, after the EQ and before the fader
+// (DSP in core/Dynamics.h)
+struct TrackDynamics {
+    bool on = false;
+    double thresholdDb = -20;
+    double ratio = 4;
+    double attackMs = 10;
+    double releaseMs = 150;
+    double kneeDb = 6;
+    double makeupDb = 0;
+    bool operator==(const TrackDynamics&) const = default;
+};
+
 struct Track {
     TrackKind kind = TrackKind::Video;
     QString name;  // vom Nutzer vergeben (Doppelklick im Spurkopf); leer = Standard „Video 1“/„Audio 1“
@@ -300,6 +338,9 @@ struct Track {
     double volumeDb = 0.0;
     double pan = 0.0;
     bool solo = false;
+    // Audio only: EQ -> compressor -> fader/pan
+    TrackEq eq;
+    TrackDynamics dynamics;
     bool operator==(const Track&) const = default;
 };
 
