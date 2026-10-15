@@ -297,6 +297,13 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
         o["style"] = titleStyleJson(c.title, TitleStyle{});
     } else if (c.isCompound()) {
         o["kind"] = "compound";
+    } else if (c.isMulticam()) {
+        // A segment of a multicam clip: shows one angle of it (1-based like the grid and the keys)
+        o["kind"] = "multicam";
+        o["multicam"] = c.sequenceId;
+        o["angle"] = c.angle + 1;
+        if (const Sequence* s = p.sequence(c.sequenceId); s && c.angle >= 0 && c.angle < s->angles.size())
+            o["angle_name"] = s->angles[c.angle].name;
     } else {
         o["kind"] = "media";
         o["media"] = c.mediaPath;
@@ -469,13 +476,18 @@ QJsonArray assetsJson(const QVector<EffectFolders::LutEntry>& list)
 }
 } // namespace
 
-QJsonArray timelinesJson(const Project& p)
+QJsonArray timelinesJson(const Project& p, const QHash<int, QVector<Multicam::Angle>>& sync)
 {
     QJsonArray list;
     for (const Sequence& q : p.sequences()) {
         const int end = TimelineOps::endFrame(q.timeline);
         QJsonObject o{{"id", q.id}, {"name", q.name}, {"length", end}, {"length_tc", tc(end, p.format())}};
         if (q.compound) o["compound"] = true;
+        if (q.multicam) {
+            o["multicam"] = true;
+            const auto it = sync.find(q.id);
+            o["angles"] = multicamAnglesJson(q, it != sync.end() ? &it.value() : nullptr);
+        }
         list << o;
     }
     return list;
@@ -495,6 +507,11 @@ QJsonObject projectJson(const Project& p, const QString& path)
         if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
         if (m.markIn >= 0) o["mark_in"] = m.markIn;
         if (m.markOut >= 0) o["mark_out"] = m.markOut + 1;
+        if (!m.markers.isEmpty()) { // source markers (sync:'marker' of the multicam op)
+            QJsonArray markers;
+            for (int f : m.markers) markers << f;
+            o["markers"] = markers;
+        }
         media << o;
     }
     return {{"project", path}, {"format", formatJson(p.format())}, {"media", media}, {"timelines", timelinesJson(p)},
@@ -602,7 +619,7 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     QJsonObject o{{"project", s.path}, {"ops", ops.size()}, {"saved", !dry && !s.live}, {"timeline", timelineJson(s.project)}};
     if (s.live) o["live"] = true; // changed in the app (one undo step there), the user saves
     if (!s.notes.isEmpty()) o["notes"] = s.notes;
-    if (s.project.sequences().size() > 1) o["timelines"] = timelinesJson(s.project);
+    if (s.project.sequences().size() > 1) o["timelines"] = timelinesJson(s.project, s.multicamSync);
     if (!dry) {
         const QString backup = s.save();
         if (!backup.isEmpty()) o["backup"] = backup;
@@ -1110,6 +1127,16 @@ const QVector<Command>& commands()
                     "names, or one effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
                     "luma images (op 'transition') and effect presets (op 'effect' preset).",
          {{"effect", T::String, "only this effect, with parameter details", false, true}}, cmdEffects},
+        {"sync", "Line up recordings of the same event (camera angles, player POVs) by their sound: the offset "
+                 "of each file to the first one (the reference), found by shared sounds like a round start or "
+                 "announcements. Files that do not overlap the reference are matched over the others. A file without "
+                 "a clear match is not found (no guessing). The 'multicam' edit op does this itself; use this to check "
+                 "first. Takes a while for long files (decodes the sound).",
+         {{"files", T::Paths, "media files, the first is the reference (at least two)", true, true},
+          {"stream", T::Integer, "audio stream used, 0 = first (default)"},
+          {"max_offset_s", T::Number, "largest offset searched in seconds (default: any)"},
+          {"project", T::Path, "count offset_frames in this project's frame rate (default: the reference file's)"}},
+         cmdSync},
         {"frames", "Still images of a media file or a project timeline at given times, as files or one contact "
                    "sheet with timecodes (lets you look at the material). Several files at once with 'sources', a "
                    "detail of the picture (HUD, kill feed, score …) with 'crop'.",
@@ -1144,6 +1171,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
     if (cmd.name == "app" && args["project"].toString().isEmpty()) args["project"] = QString(Live::AppProject);
     if (runsInApp(cmd, args) && !Live::host())
         if (Live::Connection* c = Live::connectionFor(args["project"].toString())) {
+            if (cmd.name == "edit") args = withSoundSync(args, ctx); // decode here, not in the app
             QJsonObject result = Live::run(c, cmd.name, args);
             result["live"] = true;
             return result;

@@ -292,9 +292,10 @@ bool burstWav(const QString& path, double length, const QVector<QPair<double, in
 void testSyncCommandAndSoundSync(const QString& dir)
 {
     if (!Check::haveFfmpeg()) return;
-    // Shared bursts (round start, spike …) every ~1.3 s; B started 1.6 s after A and has its own bursts too
+    // Shared bursts (round start, spike …) about 1.3 s apart, irregularly (a repeating pattern would be periodic
+    // sound, which is "not found" on purpose); B started 1.6 s after A and has its own bursts too
     QVector<QPair<double, int>> shared, a, b;
-    for (int k = 0; k < 14; ++k) shared << qMakePair(1.0 + 1.3 * k + 0.17 * (k % 3), k + 1);
+    for (int k = 0; k < 14; ++k) shared << qMakePair(1.0 + 1.3 * k + 0.4 * (double(hash(uint32_t(k) + 99u)) / 4294967296.0), k + 1);
     for (const auto& [t, kind] : shared) {
         a << qMakePair(t, kind);
         if (t - 1.6 > 0) b << qMakePair(t - 1.6, kind);
