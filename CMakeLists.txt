@@ -71,6 +71,8 @@ add_library(schneidi_lib STATIC
     src/core/Fft.h                src/core/Fft.cpp
     src/core/AudioSync.h          src/core/AudioSync.cpp
     src/core/Multicam.h           src/core/Multicam.cpp
+    src/core/StreamPresets.h      src/core/StreamPresets.cpp
+    src/core/Ducking.h            src/core/Ducking.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Profiles.h         src/engine/Profiles.cpp
@@ -107,10 +109,13 @@ add_library(schneidi_lib STATIC
     src/app/MainWindowLayout.cpp
     src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp
     src/app/MainWindowMulticam.cpp
+    src/app/MainWindowAudio.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
+    src/app/StreamPresetsDialog.h src/app/StreamPresetsDialog.cpp
+    src/app/DuckingDialog.h src/app/DuckingDialog.cpp
     src/app/MulticamDialog.h src/app/MulticamDialog.cpp
     src/app/ExtensionsDialog.h  src/app/ExtensionsDialog.cpp
     src/app/TranscribeDialog.h  src/app/TranscribeDialog.cpp

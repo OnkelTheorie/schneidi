@@ -62,21 +62,28 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
     c.in = sIn;
     c.out = sIn + len - 1;
     c.speed = speed;
-    // Targets: picture, then one track per audio stream from aTrack on (further streams on locked tracks are dropped)
-    struct Target { TrackKind kind; int idx; int stream; };
+    // Targets: picture, then one track per placed audio stream (import presets) from aTrack on (further streams on
+    // locked tracks are dropped)
+    struct Target { TrackKind kind; int idx; StreamPlacement stream; };
     QVector<Target> targets;
-    if (m.hasVideo) targets << Target{TrackKind::Video, vTrack, 0};
-    if (m.hasAudio)
-        for (int k = 0; k < m.audioStreamCount(); ++k)
-            if (k == 0 || !isTrackLocked({TrackKind::Audio, aTrack + k})) targets << Target{TrackKind::Audio, aTrack + k, k};
+    if (m.hasVideo) targets << Target{TrackKind::Video, vTrack, {}};
+    if (m.hasAudio) {
+        const QVector<StreamPlacement> placed = m_streamPresets.placements(m);
+        for (int k = 0; k < placed.size(); ++k)
+            if (k == 0 || !isTrackLocked({TrackKind::Audio, aTrack + k})) targets << Target{TrackKind::Audio, aTrack + k, placed[k]};
+    }
     c.linkId = targets.size() > 1 ? p->newLinkId() : 0;
     for (const Target& tg : targets) {
         TimelineOps::ensureTracks(tl, tg.kind, tg.idx + 1);
         Track& t = tl.tracks(tg.kind)[tg.idx];
         Clip x = c;
         x.id = newId();
-        x.audioStream = tg.stream;
-        if (tg.kind == TrackKind::Audio && t.name.isEmpty()) t.name = m.audioStreamTrackLabel(tg.stream);
+        if (tg.kind == TrackKind::Audio) {
+            x.audioStream = tg.stream.stream;
+            x.enabled = tg.stream.enabled;
+            x.volumeDb = tg.stream.volumeDb;
+            if (t.name.isEmpty()) t.name = tg.stream.trackLabel;
+        }
         TimelineOps::clearDissolveAt(t, x.start);
         TimelineOps::clearDissolveAt(t, x.end());
         TimelineOps::placeClip(t, x, newId);
@@ -92,6 +99,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     if (!info || info->length <= 0 || (!info->hasVideo && !info->hasAudio)) return -1;
     const MediaInfo m = *info;
     const Timeline& cur = p->timeline();
+    const int placedStreams = m.hasAudio ? int(m_streamPresets.placements(m).size()) : 0; // audio tracks it fills
 
     // Source range: source in/out, if one is missing -> clip start or end (like DaVinci)
     const int last = m.length - 1;
@@ -166,7 +174,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         if (mode == M::Insert) {
             // Like DaVinci: all unlocked tracks move along (stay in sync), the target tracks anyway
             if (m.hasVideo) rippleTracks << TrackRef{TrackKind::Video, vTrack};
-            for (int k = 0; k < m.audioStreamCount(); ++k) rippleTracks << TrackRef{TrackKind::Audio, aTrack + k};
+            for (int k = 0; k < placedStreams; ++k) rippleTracks << TrackRef{TrackKind::Audio, aTrack + k};
             for (TrackKind kind : {TrackKind::Video, TrackKind::Audio})
                 for (int i = 0; i < cur.tracks(kind).size(); ++i)
                     if (!cur.tracks(kind)[i].locked && !rippleTracks.contains(TrackRef{kind, i})) rippleTracks << TrackRef{kind, i};
@@ -226,7 +234,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     if (m2.hasVideo && !rippleTracks.contains(TrackRef{TrackKind::Video, vTrack}) && mode == M::RippleOverwrite)
         rippleTracks << TrackRef{TrackKind::Video, vTrack};
     if (m2.hasAudio && mode == M::RippleOverwrite)
-        for (int k = 0; k < m2.audioStreamCount(); ++k)
+        for (int k = 0; k < placedStreams; ++k)
             if (const TrackRef r{TrackKind::Audio, aTrack + k}; !rippleTracks.contains(r) && !isTrackLocked(r)) rippleTracks << r;
 
     QString text;

@@ -162,7 +162,7 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
         int in = 0, out = 0;
         if (dropRange(e->mimeData(), &in, &out)) info.length = out - in + 1; // Source In/Out from the Viewer
         if (info.length > 0 && (info.hasVideo || info.hasAudio))
-            m_dropItems << DropItem{info.length, info.hasVideo, info.audioStreamCount()};
+            m_dropItems << DropItem{info.length, info.hasVideo, int(m_editor->streamPresets().placements(info).size())};
     }
     if (m_dropItems.isEmpty()) return;
     e->acceptProposedAction();

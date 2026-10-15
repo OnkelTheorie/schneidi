@@ -2,6 +2,7 @@
 // Audio analysis for "Normalize audio levels" (like DaVinci Normalize Audio Levels):
 // peak level (Sample Peak Program) or loudness per ITU-R BS.1770-4 (LUFS)
 
+#include "core/Ducking.h"
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
 
@@ -63,5 +64,11 @@ std::optional<std::vector<float>> clipFramePeaks(const ProjectFormat& format, co
 // Sample peak (linear) of every frame of the timeline mix [from, to) as it is exported. Index 0 = frame `from`.
 std::optional<std::vector<float>> timelineFramePeaks(const ProjectFormat& format, const Timeline& timeline, int from,
                                                      int to, const std::function<bool(double)>& progress = {});
+
+// Ducking: where the audio tracks `under` (indices; the others are muted, solo ignored) have sound in the timeline
+// mix (render timeline, see Project::renderTimeline). nullopt = could not mix or canceled; no tracks / empty = no range.
+std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& under,
+                                           const Ducking::Params& params,
+                                           const std::function<bool(double)>& progress = {});
 
 } // namespace AudioAnalysis

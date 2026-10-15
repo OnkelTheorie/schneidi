@@ -1,5 +1,7 @@
 #pragma once
+#include "core/Ducking.h"
 #include "core/Multicam.h"
+#include "core/StreamPresets.h"
 #include "core/TimelineOps.h"
 #include "core/Types.h"
 
@@ -90,6 +92,10 @@ public:
     // relative (e.g. common loudness of all clips), without = loudest clip.
     void normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative,
                         std::optional<double> relativeRef = std::nullopt);
+    // Ducking (core/Ducking.h): replaces the volume keyframes of the audio clips `ids` (the music) so they are lowered
+    // during `ranges` (timeline frames where the 'under' tracks have sound, AudioAnalysis::soundRanges). Locked clips
+    // stay. Returns how many clips got lowered; no clip or no range = nothing changes. One undo step.
+    int duck(const QVector<int>& ids, const Ducking::Ranges& ranges, const Ducking::Params& params);
     // Audio clips for normalizing: selection (with linked partners), audio only, not locked
     QVector<int> selectedAudioClips() const;
     // Change any clip property (Inspector). Same mergeKey = one undo step.
@@ -210,6 +216,10 @@ public:
     // Overwrite source range [in, out] at frame `frame` on track index `track` (V[n]/A[n]) (drag from the viewer)
     void placeSourceRange(const QString& path, int in, int out, int frame, int track);
     // Target tracks for F9/F10 ... (like DaVinci Destination Controls), index 0 = V1/A1
+    // Import presets for files with several audio streams (core/StreamPresets.h): used by every edit that makes
+    // clips from files; changing them leaves the timeline as it is (not in the undo)
+    void setStreamPresets(const StreamPresets& presets) { m_streamPresets = presets; }
+    const StreamPresets& streamPresets() const { return m_streamPresets; }
     int targetVideoTrack() const { return m_targetVideo; }
     int targetAudioTrack() const { return m_targetAudio; }
     void setTargetTracks(int video, int audio);
@@ -377,6 +387,7 @@ private:
     bool m_linkedSelection = true;
     bool m_splitOnSelectedTracks = true;
     int m_targetVideo = 0, m_targetAudio = 0;
+    StreamPresets m_streamPresets;
     QVector<ClipboardItem> m_clipboard; // starts relative to the earliest clip
     std::optional<Clip> m_gradeClipboard; // copyGrade: the source clip (only its grade is used)
 };

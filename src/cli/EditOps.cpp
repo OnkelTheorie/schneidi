@@ -232,8 +232,20 @@ namespace {
 
 int endOf(Session& s) { return TimelineOps::endFrame(s.project.timeline()); }
 
+// presets:false = every audio stream of the file is placed, the import presets of the app are left aside for this op
+struct PresetsScope {
+    Editor& editor;
+    StreamPresets saved;
+    PresetsScope(Session& s, const QJsonObject& op) : editor(s.editor), saved(s.editor.streamPresets())
+    {
+        if (!op.value("presets").toBool(true)) editor.setStreamPresets({});
+    }
+    ~PresetsScope() { editor.setStreamPresets(saved); }
+};
+
 void opPlace(Session& s, const QJsonObject& op, bool append)
 {
+    const PresetsScope presets(s, op);
     const MediaInfo m = s.media(op.value("media").toString());
     int in = 0, out = 0;
     sourceRange(s, op, m, &in, &out);
@@ -243,6 +255,7 @@ void opPlace(Session& s, const QJsonObject& op, bool append)
 
 void opKeep(Session& s, const QJsonObject& op)
 {
+    const PresetsScope presets(s, op);
     const MediaInfo m = s.media(op.value("media").toString());
     int at = timeOf(s, op, "at", endOf(s));
     const int track = parseTrack(op.value("track"));
@@ -390,15 +403,20 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
     s.editor.removeTrack({k, index});
 }
 
+// Details of the ops that place source ranges (import presets, core/StreamPresets.h)
+const char* const kPresetsDetails = "files with several audio streams (OBS) follow the app's import presets (Mix muted, "
+                                    "rules per stream title); presets:false places every stream";
+
 QVector<OpDef> makeOps()
 {
     QVector<OpDef> ops{
-        {"append", "{op:'append', media, in?, out?, track?}", "put a source range at the end of the timeline", {},
+        {"append", "{op:'append', media, in?, out?, track?, presets?}", "put a source range at the end of the timeline",
+         kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, true); }},
-        {"place", "{op:'place', media, at, in?, out?, track?}", "overwrite at a position", {},
+        {"place", "{op:'place', media, at, in?, out?, track?, presets?}", "overwrite at a position", kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, false); }},
-        {"keep", "{op:'keep', media, ranges:[[from,to],...], at?, track?}",
-         "put several source ranges one after another (e.g. the 'sound' ranges of `silence`)", {}, opKeep},
+        {"keep", "{op:'keep', media, ranges:[[from,to],...], at?, track?, presets?}",
+         "put several source ranges one after another (e.g. the 'sound' ranges of `silence`)", kPresetsDetails, opKeep},
         {"split", "{op:'split', at, clip?}", "cut all clips under `at` (or one clip)", {},
          [](Session& s, const QJsonObject& op) {
              const int at = timeOf(s, op, "at");

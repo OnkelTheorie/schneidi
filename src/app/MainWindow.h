@@ -94,6 +94,11 @@ private:
     void updateRenderCacheBar(); // render cache bar above the timeline
     void clipSpeedDialog();
     void normalizeAudioDialog();
+    // Import presets for audio streams and ducking (MainWindowAudio.cpp)
+    void streamPresetsDialog();
+    const Clip* streamPresetsClip() const; // selected clip whose stream setup can be remembered (nullptr = none)
+    void rememberStreamSettings();
+    void duckingDialog();
     // Effects of the selected clip as own preset (effects/Presets, Kdenlive format, core/Presets)
     void saveEffectPreset();
     const Clip* presetClip() const;

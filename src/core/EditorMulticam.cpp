@@ -34,24 +34,31 @@ QVector<UsableFile> usableFiles(const Project* p, const Multicam::Angle& a)
     return out;
 }
 
-// Name of the audio track of stream `stream` of an angle (several streams: "<angle> – <stream title>")
-QString audioTrackName(const QString& angle, const MediaInfo& m, int stream)
+// Name of the audio track of a placed stream of an angle (several streams: "<angle> – <track label or stream title>")
+QString audioTrackName(const QString& angle, const MediaInfo& m, const StreamPlacement& s)
 {
-    return m.audioStreamCount() < 2 ? angle : QString("%1 – %2").arg(angle, m.audioStreamName(stream));
+    if (m.audioStreamCount() < 2) return angle;
+    return QString("%1 – %2").arg(angle, s.trackLabel.isEmpty() ? m.audioStreamName(s.stream) : s.trackLabel);
 }
 
 // Puts the files of one angle onto new tracks on top of `inner`: one video track (if any file has a picture) and one
-// audio track per audio stream; each file at offset + shift. A file overlapping the previous one of the angle is
-// cut at its start, as is the part before frame 0. Picture and sound of a file are linked.
-MulticamAngle placeAngle(Timeline& inner, const QString& name, const QVector<UsableFile>& files, int shift, Project* p)
+// audio track per placed audio stream (import presets); each file at offset + shift. A file overlapping the previous
+// one of the angle is cut at its start, as is the part before frame 0. Picture and sound of a file are linked.
+MulticamAngle placeAngle(Timeline& inner, const QString& name, const QVector<UsableFile>& files, int shift, Project* p,
+                         const StreamPresets& presets)
 {
     MulticamAngle a;
     a.name = name;
-    int streams = 0;
+    QVector<QVector<StreamPlacement>> placed;
+    int streams = 0, widest = 0;
     bool video = false;
     for (const UsableFile& f : files) {
         video = video || f.info.hasVideo;
-        streams = std::max(streams, f.info.audioStreamCount());
+        placed << presets.placements(f.info);
+        if (placed.last().size() > streams) {
+            streams = placed.last().size();
+            widest = placed.size() - 1;
+        }
     }
     if (video) {
         Track t;
@@ -63,12 +70,13 @@ MulticamAngle placeAngle(Timeline& inner, const QString& name, const QVector<Usa
     for (int k = 0; k < streams; ++k) {
         Track t;
         t.kind = TrackKind::Audio;
-        t.name = audioTrackName(name, files.first().info, k);
+        t.name = audioTrackName(name, files[widest].info, placed[widest][k]);
         inner.audio << t;
         a.audioTracks << inner.audio.size() - 1;
     }
     int prevEnd = INT_MIN;
-    for (const UsableFile& f : files) {
+    for (int i = 0; i < files.size(); ++i) {
+        const UsableFile& f = files[i];
         int start = f.offset + shift;
         int cut = std::max(0, -start);
         if (prevEnd > start) cut = std::max(cut, prevEnd - start);
@@ -79,7 +87,7 @@ MulticamAngle placeAngle(Timeline& inner, const QString& name, const QVector<Usa
         c.in = cut;
         c.out = f.info.length - 1;
         const bool picture = f.info.hasVideo && a.videoTrack >= 0;
-        const int n = std::min<int>(f.info.audioStreamCount(), a.audioTracks.size());
+        const int n = std::min<int>(placed[i].size(), a.audioTracks.size());
         c.linkId = picture && n > 0 ? p->newLinkId() : 0;
         if (picture) {
             Clip x = c;
@@ -89,7 +97,9 @@ MulticamAngle placeAngle(Timeline& inner, const QString& name, const QVector<Usa
         for (int k = 0; k < n; ++k) {
             Clip x = c;
             x.id = p->newClipId();
-            x.audioStream = k;
+            x.audioStream = placed[i][k].stream;
+            x.enabled = placed[i][k].enabled;
+            x.volumeDb = placed[i][k].volumeDb;
             inner.audio[a.audioTracks[k]].clips << x;
         }
         prevEnd = c.end();
@@ -187,7 +197,7 @@ int Editor::createMulticamClip(const QString& name, const QVector<Multicam::Angl
     // The earliest recording starts at frame 0
     Timeline inner;
     QVector<MulticamAngle> table;
-    for (const Usable& u : list) table << placeAngle(inner, u.name, u.files, -earliest, p);
+    for (const Usable& u : list) table << placeAngle(inner, u.name, u.files, -earliest, p, m_streamPresets);
     for (TrackKind kind : {TrackKind::Video, TrackKind::Audio}) // e.g. only sound: still one track (like loading)
         if (inner.tracks(kind).isEmpty()) TimelineOps::ensureTracks(inner, kind, 1);
 
@@ -458,7 +468,7 @@ int Editor::addMulticamAngle(int sequenceId, const Multicam::Angle& angle)
     QString n = angle.name.trimmed();
     if (n.isEmpty()) n = Multicam::defaultAngleName(files.first().info.path);
     Timeline inner = s->timeline;
-    const MulticamAngle a = placeAngle(inner, n, files, reference, p);
+    const MulticamAngle a = placeAngle(inner, n, files, reference, p, m_streamPresets);
     const int index = s->angles.size();
     p->editSequences(T("Winkel hinzufügen"), [&](QVector<Sequence>& list, int&) {
         if (Sequence* x = sequenceIn(list, sequenceId)) {

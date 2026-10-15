@@ -110,6 +110,7 @@ void MainWindow::buildActions()
     makeAction(file, "export_subtitles", T("Untertitel exportieren (SRT)…"), QKeySequence(), [this] { exportSubtitlesDialog(); });
     file->addSeparator();
     makeAction(file, "project_settings", T("Projekteinstellungen…"), QKeySequence("Shift+9"), [this] { projectSettingsDialog(); });
+    makeAction(file, "stream_presets", T("Import-Vorgaben für Ton-Streams…"), QKeySequence(), [this] { streamPresetsDialog(); });
     file->addSeparator();
     makeAction(file, "quit", T("Beenden"), QKeySequence("Ctrl+Q"), [this] { close(); });
 
@@ -300,6 +301,8 @@ void MainWindow::buildActions()
         if (done.isEmpty()) QApplication::beep();
     });
     makeAction(clipMenu, "normalize_audio", T("Audiopegel normalisieren…"), QKeySequence(), [this] { normalizeAudioDialog(); });
+    makeAction(clipMenu, "audio_ducking", T("Ducking…"), QKeySequence(), [this] { duckingDialog(); });
+    makeAction(clipMenu, "stream_presets_learn", T("Spur-Einstellungen merken"), QKeySequence(), [this] { rememberStreamSettings(); });
     makeAction(clipMenu, "save_effect_preset", T("Effekte als Preset speichern…"), QKeySequence(),
                [this] { saveEffectPreset(); });
     makeAction(clipMenu, "link_clips", T("Clips verknüpfen/trennen"), QKeySequence("Ctrl+Alt+L"),

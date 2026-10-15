@@ -150,7 +150,7 @@ void testEditorDuckOneUndoStep()
     CHECK_EQ(QString(ProjectFile::toJson(p.data(), "/x/p.schneidi")), before);
     CHECK_EQ(ed.duck({}, {{50, 75}}, Ducking::defaults(25)), 0);
     CHECK_EQ(ed.duck({m1}, {}, Ducking::defaults(25)), 0); // nothing to duck under: no step
-    CHECK_EQ(p.undoStack()->count(), steps);
+    CHECK_EQ(p.undoStack()->index(), steps); // count() keeps the undone step; no new step = index stays
 }
 
 // ---- Real sound ----

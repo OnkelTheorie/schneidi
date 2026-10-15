@@ -3,6 +3,7 @@
 #include "cli/Live.h"
 
 #include "core/Editor.h"
+#include "core/StreamPresets.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/LiveHost.h"
@@ -180,6 +181,7 @@ Session::Session(Opened&& o)
       live(o.live), app(o.app), m_inApp(o.inApp != nullptr)
 {
     m_open = project.currentSequence();
+    editor.setStreamPresets(StreamPresets::load()); // the same import presets as the app
 }
 
 Session::~Session()

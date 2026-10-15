@@ -92,9 +92,10 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
             c.in = 0;
             c.out = info->length - 1;
             const bool video = info->hasVideo && videoOk;
-            // One clip per audio stream on the next track (like DaVinci); locked tracks get nothing
-            QVector<int> streams;
-            for (int k = 0; k < info->audioStreamCount(); ++k)
+            // One clip per placed audio stream on the next track (like DaVinci); locked tracks get nothing
+            const QVector<StreamPlacement> placed = m_streamPresets.placements(*info);
+            QVector<int> streams; // index into placed = track offset
+            for (int k = 0; k < placed.size(); ++k)
                 if (k == 0 ? audioOk : !isTrackLocked({TrackKind::Audio, idx + k})) streams << k;
             c.linkId = int(video) + streams.size() > 1 ? p->newLinkId() : 0;
             if (video) {
@@ -107,8 +108,10 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
                 TimelineOps::ensureTracks(tl, TrackKind::Audio, idx + k + 1);
                 Clip a = c;
                 a.id = newId();
-                a.audioStream = k;
-                if (tl.audio[idx + k].name.isEmpty()) tl.audio[idx + k].name = info->audioStreamTrackLabel(k);
+                a.audioStream = placed[k].stream;
+                a.enabled = placed[k].enabled;
+                a.volumeDb = placed[k].volumeDb;
+                if (tl.audio[idx + k].name.isEmpty()) tl.audio[idx + k].name = placed[k].trackLabel;
                 TimelineOps::placeClip(tl.audio[idx + k], a, newId);
             }
             start += info->length;
@@ -196,6 +199,24 @@ void Editor::setClipVolume(int clipId, double db)
     m_project->edit(T("Lautstärke"), [&](Timeline& tl) {
         if (Clip* clip = TimelineOps::findClip(tl, clipId)) clip->volumeDb = db;
     });
+}
+
+int Editor::duck(const QVector<int>& ids, const Ducking::Ranges& ranges, const Ducking::Params& params)
+{
+    const Timeline& cur = m_project->timeline();
+    QVector<int> music;
+    for (int id : ids) {
+        TrackRef ref;
+        const Clip* c = TimelineOps::findClip(cur, id, &ref);
+        if (c && ref.kind == TrackKind::Audio && !TimelineOps::isLocked(cur, id) && !music.contains(id)) music << id;
+    }
+    if (music.isEmpty() || ranges.isEmpty()) return 0;
+    int ducked = 0;
+    m_project->edit(T("Ducking"), [&](Timeline& tl) {
+        for (int id : music)
+            if (Clip* c = TimelineOps::findClip(tl, id); c && Ducking::apply(*c, ranges, params)) ++ducked;
+    });
+    return ducked;
 }
 
 void Editor::normalizeAudio(const QHash<int, double>& peakDb, double targetDb, bool relative,

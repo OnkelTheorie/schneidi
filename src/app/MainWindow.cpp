@@ -85,6 +85,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_project = new Project(this);
     m_selection = new Selection(this);
     m_editor = new Editor(m_project, m_selection, this);
+    m_editor->setStreamPresets(StreamPresets::load()); // import presets for audio streams (all projects)
 
     buildLayout();
     buildActions();
@@ -218,7 +219,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             }));
             k->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); }));
         }
-        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "normalize_audio", "",
+        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "normalize_audio",
+                               "audio_ducking", "stream_presets_learn", "",
                                "toggle_enabled", "link_clips",
                                "render_cache_clip", "save_effect_preset", "", "compound_create", "compound_open", "compound_decompose", "",
                                "delete", "ripple_delete"}) {
@@ -228,7 +230,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             }
             QAction* a = InputBindings::instance().action(id);
             if (!a) continue;
-            if (QString(id) == "normalize_audio" && !audio) continue;
+            if ((QString(id) == "normalize_audio" || QString(id) == "audio_ducking") && !audio) continue;
+            if (QString(id) == "stream_presets_learn" && !streamPresetsClip()) continue;
             if (QString(id) == "compound_open" && !compound && !multicam) continue;
             if (QString(id) == "compound_decompose") {
                 if (compound) menu.addAction(a);

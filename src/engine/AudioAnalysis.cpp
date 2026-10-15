@@ -1,6 +1,7 @@
 #include "engine/AudioAnalysis.h"
 
 #include "core/Loudness.h"
+#include "core/TimelineOps.h"
 #include "engine/Profiles.h"
 #include "engine/TimelineBuilder.h"
 
@@ -193,6 +194,23 @@ std::optional<std::vector<float>> timelineFramePeaks(const ProjectFormat& format
     }
     if (progress) progress(1.0);
     return peaks;
+}
+
+std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& under,
+                                           const Ducking::Params& params, const std::function<bool(double)>& progress)
+{
+    Timeline tl = timeline;
+    bool any = false;
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        tl.audio[i].muted = !under.contains(i);
+        tl.audio[i].solo = false;
+        any = any || (!tl.audio[i].muted && !tl.audio[i].clips.isEmpty());
+    }
+    const int end = TimelineOps::endFrame(tl);
+    if (!any || end <= 0) return Ducking::Ranges{};
+    const auto peaks = timelineFramePeaks(format, tl, 0, end, progress);
+    if (!peaks) return std::nullopt;
+    return Ducking::soundRanges(*peaks, 0, params);
 }
 
 } // namespace AudioAnalysis
