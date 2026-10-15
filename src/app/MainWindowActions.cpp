@@ -200,8 +200,11 @@ void MainWindow::buildActions()
     makeAction(timeline, "add_transition", T("Übergang hinzufügen (Cross Dissolve)"), QKeySequence("Ctrl+T"),
                [this, tv] { m_editor->addTransitions(tv->playhead()); });
     makeAction(timeline, "add_title", T("Titel einfügen"), QKeySequence(), [this, tv] { m_editor->addTitle(tv->playhead()); });
-    makeAction(timeline, "add_marker", T("Marker setzen/entfernen"), QKeySequence("M"),
-               [this, tv] { m_editor->toggleMarker(tv->playhead()); });
+    // In the source viewer M sets a source marker (multicam sync by marker), like DaVinci
+    makeAction(timeline, "add_marker", T("Marker setzen/entfernen"), QKeySequence("M"), [this, tv] {
+        if (sourceActive()) m_editor->toggleSourceMarker(m_engine->sourcePath(), m_engine->position());
+        else m_editor->toggleMarker(tv->playhead());
+    });
     timeline->addSeparator();
     QMenu* toolsMenu = timeline->addMenu(T("Werkzeuge"));
     makeAction(toolsMenu, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
@@ -325,6 +328,7 @@ void MainWindow::buildActions()
     });
     makeAction(compoundMenu, "timeline_back", T("Zurück zur übergeordneten Timeline"), QKeySequence(),
                [this] { m_timeline->back(); });
+    buildMulticamActions(timeline);
     QMenu* subtitleMenu = timeline->addMenu(T("Untertitel"));
     makeAction(subtitleMenu, "add_subtitle", T("Untertitel hinzufügen"), QKeySequence(), [this, tv] {
         if (const int id = m_editor->addSubtitle(tv->playhead())) {
@@ -410,6 +414,7 @@ void MainWindow::buildActions()
     });
     makeAction(play, "show_timeline", T("Timeline im Viewer zeigen"), QKeySequence("Q"),
               [this, tv] { m_engine->showTimeline(tv->playhead()); });
+    buildMulticamViewerAction(play);
     // Like DaVinci "Grab Still" (Ctrl+Alt+G), here saved directly as PNG
     auto* grab = makeAction(play, "grab_still", T("Standbild exportieren…"), QKeySequence("Ctrl+Alt+G"), [this] { grabStill(); });
     m_viewer->addAction(grab);

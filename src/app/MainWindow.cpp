@@ -136,27 +136,27 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(renderCache, &RenderCache::failed, this,
             [this](const QString& msg) { QMessageBox::warning(this, T("Render-Cache"), msg); });
 
-    // Engine -> playhead (only in timeline mode; in source mode the playhead stays put)
+    // Engine -> playhead (timeline and multicam grid; in source mode the playhead stays put)
     TimelineView* tv = m_timeline->view();
     connect(m_engine, &Engine::positionChanged, this, [this, tv](int f) {
-        if (m_engine->mode() == Engine::Mode::Timeline) tv->setPlayhead(f);
+        if (m_engine->timelinePositions()) tv->setPlayhead(f);
     });
     connect(tv, &TimelineView::seekRequested, this, [this](int f) {
-        if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(f);
+        if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(f);
         else m_engine->seek(f);
     });
     // Keyframes: Inspector shows values at the playhead, arrows ◀ ▶ jump like a click into the ruler
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
-        if (m_engine->mode() == Engine::Mode::Timeline) m_inspector->setPlayhead(f);
+        if (m_engine->timelinePositions()) m_inspector->setPlayhead(f);
     });
     connect(m_inspector, &Inspector::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_inspector, &Inspector::savePresetRequested, this, &MainWindow::saveEffectPreset);
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
-        if (m_engine->mode() == Engine::Mode::Timeline) m_colorPanel->setPlayhead(f);
+        if (m_engine->timelinePositions()) m_colorPanel->setPlayhead(f);
     });
     connect(m_colorPanel, &ColorPanel::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
-        if (m_engine->mode() == Engine::Mode::Timeline) m_transcript->setPlayhead(f);
+        if (m_engine->timelinePositions()) m_transcript->setPlayhead(f);
     });
     connect(m_transcript, &TranscriptPanel::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_transcript, &TranscriptPanel::openExtensions, this, [this] {
@@ -204,6 +204,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         const bool audio = !m_editor->selectedAudioClips().isEmpty();
         const int cacheState = m_editor->selectionRenderCacheState();
         const bool compound = m_editor->selectedCompoundSequence() != 0;
+        const bool multicam = selectedMulticamSequence() != 0;
         {
             QAction* r = InputBindings::instance().action("retime_controls");
             const QVector<int> ids = m_editor->clipIdsOf(m_selection->ids());
@@ -228,7 +229,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             QAction* a = InputBindings::instance().action(id);
             if (!a) continue;
             if (QString(id) == "normalize_audio" && !audio) continue;
-            if ((QString(id) == "compound_open" || QString(id) == "compound_decompose") && !compound) continue;
+            if (QString(id) == "compound_open" && !compound && !multicam) continue;
+            if (QString(id) == "compound_decompose") {
+                if (compound) menu.addAction(a);
+                if (multicam) addMulticamMenu(&menu); // switch angle, flatten (like DaVinci)
+                continue;
+            }
             if (QString(id) == "save_effect_preset" && !presetClip()) continue;
             if (QString(id) == "render_cache_clip") {
                 if (cacheState < 0) continue; // video clips only (no titles)
@@ -269,6 +275,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (sourceActive()) m_sourcePos[m_engine->sourcePath()] = f;
     });
     updateViewer();
+    setupMulticam();
     connect(m_storage, &MediaStorage::importRequested, m_mediaPool, &MediaPool::importFiles);
     connect(m_storage, &MediaStorage::folderImportRequested, m_mediaPool, &MediaPool::importFolder);
     // Effects Library: double-click = like Ctrl+T resp. "Insert title", only with the chosen kind
@@ -411,6 +418,7 @@ void MainWindow::createCompoundClip()
 void MainWindow::openSelectedCompound()
 {
     if (const int id = m_editor->selectedCompoundSequence()) m_timeline->openSequence(id);
+    else if (const int mc = selectedMulticamSequence()) m_timeline->openSequence(mc); // multicam clip like a compound clip
 }
 
 void MainWindow::showSource(const QString& path)
@@ -446,7 +454,7 @@ void MainWindow::sourceEdit(Editor::SourceEditMode mode)
         return;
     }
     // Playhead to the end of the new clip (like DaVinci); the source view stays open
-    if (m_engine->mode() == Engine::Mode::Timeline) {
+    if (m_engine->timelinePositions()) {
         m_engine->pause();
         m_engine->seek(end);
     } else {
@@ -460,11 +468,13 @@ void MainWindow::updateViewer()
         const MediaInfo* m = m_project->mediaInfo(m_engine->sourcePath());
         m_viewer->setSource(m->path, m->name);
         m_viewer->setRange(m->length, m->markIn, m->markOut);
+        m_viewer->setMarkers(m->markers);
         return;
     }
     const Timeline& tl = m_project->timeline();
     m_viewer->setSource({}, {});
     m_viewer->setRange(TimelineOps::endFrame(tl), tl.markIn, tl.markOut);
+    m_viewer->setMarkers(tl.markers);
 }
 
 void MainWindow::setProjectFormat(const ProjectFormat& format)
@@ -641,6 +651,17 @@ void MainWindow::jumpToEdit(int direction)
 
 void MainWindow::jumpToMarker(int direction)
 {
+    if (sourceActive()) { // source markers (M in the source viewer)
+        const int pos = m_engine->position();
+        const QVector<int>& markers = m_project->mediaInfo(m_engine->sourcePath())->markers;
+        int best = -1;
+        for (int m : markers)
+            if (direction > 0 ? m > pos && (best < 0 || m < best) : m < pos && m > best) best = m;
+        if (best < 0) return;
+        m_engine->pause();
+        m_engine->seek(best);
+        return;
+    }
     jumpTo(m_project->timeline().markers, direction);
 }
 
@@ -660,7 +681,7 @@ void MainWindow::jumpToFrame(int frame)
 {
     if (frame < 0) return;
     m_engine->pause();
-    if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(frame);
+    if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(frame);
     else m_engine->seek(frame);
 }
 

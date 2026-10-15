@@ -88,6 +88,12 @@ public:
         m_out = out;
         update();
     }
+    void setMarkers(const QVector<int>& markers)
+    {
+        if (markers == m_markers) return;
+        m_markers = markers;
+        update();
+    }
     void setPosition(int frame)
     {
         if (frame == m_pos) return;
@@ -128,6 +134,14 @@ protected:
                 p.drawLine(QPointF(x2 - 1, 3), QPointF(x2 - 5, 3));
             }
         }
+        // Markers as small triangles on top (like in the timeline ruler)
+        p.setPen(Qt::NoPen);
+        p.setBrush(Theme::secondary);
+        for (int m : m_markers) {
+            if (m < 0 || m >= m_length) continue;
+            const double mx = xOf(m + 0.5);
+            p.drawPolygon(QPolygonF({QPointF(mx - 4, 1), QPointF(mx + 4, 1), QPointF(mx, 7)}));
+        }
         const double x = xOf(std::clamp(m_pos, 0, m_length));
         p.setPen(QPen(Theme::playhead, 2));
         p.drawLine(QPointF(x, 1), QPointF(x, height() - 1));
@@ -143,6 +157,7 @@ protected:
 
 private:
     int m_length = 0, m_in = -1, m_out = -1, m_pos = 0;
+    QVector<int> m_markers;
 };
 
 Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engine)
@@ -263,7 +278,26 @@ void Viewer::endTrim()
 {
     m_engine->stills()->request({}); // nothing more to decode
     m_trim->setView({});
-    m_stack->setCurrentWidget(m_screen);
+    m_stack->setCurrentWidget(m_multicamOn && m_multicam ? m_multicam : m_screen);
+}
+
+void Viewer::setMulticamView(QWidget* view)
+{
+    m_multicam = view;
+    m_stack->addWidget(view);
+}
+
+void Viewer::showMulticam(bool on)
+{
+    if (on == m_multicamOn) return;
+    m_multicamOn = on;
+    if (!trimShown()) m_stack->setCurrentWidget(on && m_multicam ? m_multicam : m_screen);
+    updateModeText();
+}
+
+void Viewer::setMarkers(const QVector<int>& markers)
+{
+    m_scrubber->setMarkers(markers);
 }
 
 bool Viewer::trimShown() const
@@ -289,7 +323,9 @@ void Viewer::setSource(const QString& path, const QString& name)
 
 void Viewer::updateModeText()
 {
-    QString text = m_sourcePath.isEmpty() ? QStringLiteral("Timeline") : T("Quelle – %1").arg(m_sourceName);
+    QString text = !m_sourcePath.isEmpty() ? T("Quelle – %1").arg(m_sourceName)
+                   : m_multicamOn         ? T("Timeline – Multicam")
+                                          : QStringLiteral("Timeline");
     if (m_engine->colorBypass()) text += T("  (Farbkorrektur umgangen)");
     m_mode->setText(text);
 }

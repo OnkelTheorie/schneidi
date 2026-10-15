@@ -669,9 +669,16 @@ void MediaPool::rebuildClips()
         {
             QPainter p(&thumb);
             p.setRenderHint(QPainter::Antialiasing);
-            // Icon: timeline = track bars, compound clip = stacked layers
+            // Icon: timeline = track bars, compound clip = stacked layers, multicam clip = grid of angles
             const QColor fg(0xe8, 0xe8, 0xec);
-            if (q->compound) {
+            if (q->multicam) {
+                for (int i = 0; i < 4; ++i) {
+                    const QRectF r(34 + (i % 2) * 31, 14 + (i / 2) * 27, 29, 25);
+                    p.setPen(QPen(i == 0 ? Theme::multicamActive : fg, i == 0 ? 2.0 : 1.0));
+                    p.setBrush(Theme::compoundClip.darker(110 + 20 * i));
+                    p.drawRect(r);
+                }
+            } else if (q->compound) {
                 for (int i = 2; i >= 0; --i) {
                     const QRectF r(46 + i * 8, 20 + (2 - i) * 8, 36, 24);
                     p.setPen(QPen(fg, 1.2));
@@ -693,8 +700,9 @@ void MediaPool::rebuildClips()
         const QString item = sequenceItem(q->id);
         auto* it = new QListWidgetItem(QIcon(thumb), QString());
         it->setData(Qt::UserRole, item);
-        it->setToolTip(q->compound ? T("Compound Clip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
-                                   : T("Timeline – Doppelklick öffnet sie, in eine andere Timeline ziehen verschachtelt sie"));
+        it->setToolTip(q->multicam ? T("Multicam-Clip – in die Timeline ziehen legt ihn ab, Doppelklick öffnet die Winkel")
+                       : q->compound ? T("Compound Clip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
+                                     : T("Timeline – Doppelklick öffnet sie, in eine andere Timeline ziehen verschachtelt sie"));
         m_list->addItem(it);
     }
     updateSequenceItems();
@@ -1002,6 +1010,15 @@ void MediaPool::showContextMenu(const QPoint& pos)
             undo->endMacro();
             m_editBin = id;
         });
+        QStringList recordings; // video/audio files (no stills) become the angles, in the order shown
+        for (int row = 0; row < m_list->count(); ++row) {
+            const QString path = m_list->item(row)->data(Qt::UserRole).toString();
+            if (!m_list->item(row)->isSelected() || !paths.contains(path)) continue;
+            if (const MediaInfo* m = m_project->mediaInfo(path); m && !m->isImage) recordings << path;
+        }
+        menu.addAction(T("Multicam-Clip aus ausgewählten Clips erstellen…"), this,
+                       [this, recordings] { emit multicamRequested(recordings); })
+            ->setEnabled(!recordings.isEmpty());
         menu.addSeparator();
         addClipColorMenu(&menu, m_project, paths);
         addFlagsMenu(&menu, m_project, paths);

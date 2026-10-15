@@ -39,6 +39,7 @@
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
+#include "ui/MulticamView.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
@@ -80,6 +81,8 @@ void MainWindow::buildLayout()
     m_effects = new EffectsLibrary;
     m_storage = new MediaStorage;
     m_viewer = new Viewer(m_engine);
+    m_multicam = new MulticamView(m_project, m_selection, m_editor);
+    m_viewer->setMulticamView(m_multicam);
     m_inspector = new Inspector(m_editor);
     m_inspector->setFrameSize(m_project->format().size());
     m_timeline = new TimelinePanel(m_editor);

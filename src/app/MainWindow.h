@@ -139,7 +139,18 @@ private:
     QString autosavePath();
     QString autosaveKey() const; // QSettings key: which project the backup belongs to
     void createCompoundClip(); // ask for the name like DaVinci
-    void openSelectedCompound();
+    void openSelectedCompound(); // also a multicam clip (like DaVinci "Open in Timeline")
+
+    // Multicam (MainWindowMulticam.cpp): viewer mode with the grid, keys 1-9 cut / Alt+1-9 switch (only there,
+    // otherwise Alt+N stays the video target track), Media Pool dialog, timeline right-click
+    void buildMulticamActions(QMenu* timeline);
+    void buildMulticamViewerAction(QMenu* playback);
+    void setupMulticam(); // connections, after buildActions()
+    void setMulticamMode(bool on);
+    void syncMulticam(); // the engine's grid follows the multicam clip at the playhead (MulticamView)
+    void createMulticamClip(const QStringList& paths);
+    void addMulticamMenu(QMenu* menu); // "Switch Angle" + "Flatten" for selected multicam segments
+    int selectedMulticamSequence() const;
 
     Engine* m_engine;
     Project* m_project;
@@ -150,6 +161,10 @@ private:
     EffectsLibrary* m_effects = nullptr;
     MediaStorage* m_storage = nullptr;
     Viewer* m_viewer = nullptr;
+    class MulticamView* m_multicam = nullptr;
+    class QAction* m_multicamAction = nullptr;
+    bool m_multicamMode = false;
+    bool m_multicamSyncing = false, m_multicamSyncAgain = false;
     QTimer m_engineTimer; // bundles model changes -> engine
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;

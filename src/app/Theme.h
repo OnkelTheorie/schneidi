@@ -54,6 +54,7 @@ inline QColor warning{0xe8, 0x41, 0x4a};      // overload, error, mute, keyframe
 inline QColor quiet{0x3a, 0x8c, 0xc8};        // loudness below the target
 inline QColor cacheReady{0x3d, 0x8b, 0xe8};   // render cache done
 inline QColor cacheMissing{0xd2, 0x3c, 0x3c}; // render cache missing
+inline QColor multicamActive{0xe8, 0x2a, 0x2a}; // frame around the active angle in the multicam grid
 
 // ---- Scopes of the Color page (fixed like video signal colours, not part of the designs) ----
 inline QColor scopeTrace{0xdc, 0xe8, 0xdc}; // Waveform/Vectorscope trace, Histogram luma

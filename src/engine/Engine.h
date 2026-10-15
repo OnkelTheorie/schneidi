@@ -26,6 +26,8 @@ class RenderCache;
 class Preroll;
 class StillFetcher;
 struct MixerHooks;
+struct MulticamGridHooks;
+struct MulticamGridOptions;
 struct SharedLoudness;
 struct SeekFade;
 
@@ -40,7 +42,9 @@ struct LoudnessReading {
 class Engine : public QObject {
     Q_OBJECT
 public:
-    enum class Mode { Timeline, Source };
+    // Multicam: the grid of a multicam clip (ui/MulticamView) plays instead of the timeline; positions are still
+    // timeline frames (grid frame + offset), so playhead and cuts work as in Timeline mode
+    enum class Mode { Timeline, Source, Multicam };
 
     explicit Engine(QObject* parent = nullptr);
     ~Engine() override;
@@ -78,9 +82,20 @@ public:
     // (otherwise playback stutters while dragging the fader)
     void mixerOnlyNext() { m_mixerOnlyNext = true; }
     bool mixerOnlyPending() const { return m_mixerOnlyNext; }
-    void showTimeline(int position);
+    // keepSpeed: keep playing (leaving the multicam grid during playback)
+    void showTimeline(int position, bool keepSpeed = false);
     void showSource(const QString& path, int position = 0);
     Mode mode() const { return m_mode; }
+    // Positions are timeline frames (Timeline or Multicam mode)
+    bool timelinePositions() const { return m_mode != Mode::Source; }
+    // Multicam grid of a multicam sequence (content = Project::renderTimeline(id), angles = Sequence::angles):
+    // offset = timeline frame minus sequence frame, position = timeline frame. Keeps playing. Same grid as shown:
+    // only offset and sound are applied (no rebuild, so cutting/switching does not restart playback).
+    // false = nothing to show (no angles).
+    bool showMulticam(const Timeline& content, const QVector<MulticamAngle>& angles, const MulticamGridOptions& options,
+                      int offset, int position);
+    // Sound of this angle in the grid, live
+    void setMulticamAudio(int angle);
     // Last file shown in the source view (kept after Q/timeline, empty = none yet)
     const QString& sourcePath() const { return m_sourcePath; }
 
@@ -146,6 +161,14 @@ private:
     bool m_mixerOnlyNext = false;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass = std::make_shared<std::atomic<bool>>(false);
     std::unique_ptr<Mlt::Producer> m_source;
+    // Multicam grid: own builder (the grid would otherwise clear the timeline's producer cache)
+    std::unique_ptr<TimelineBuilder> m_gridBuilder;
+    std::unique_ptr<Mlt::Tractor> m_grid;
+    std::unique_ptr<MulticamGridHooks> m_gridHooks;
+    Timeline m_gridContent;
+    QVector<MulticamAngle> m_gridAngles;
+    int m_gridColumns = 0, m_gridPage = 0;
+    std::atomic<int> m_offset{0}; // timeline frame minus producer frame (Multicam mode, else 0)
     QString m_sourcePath;
     Mlt::Producer* m_current = nullptr;
 

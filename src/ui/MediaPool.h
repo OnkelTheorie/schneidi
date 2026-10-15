@@ -72,6 +72,8 @@ signals:
     void sequenceOpenRequested(int id);
     // subtitle files (.srt) imported/dragged in: become subtitle tracks, not media
     void subtitleFilesImported(const QStringList& paths);
+    // Right-click "Create Multicam Clip Using Selected Clips" (like DaVinci): the main window asks for name and sync
+    void multicamRequested(const QStringList& paths);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* e) override;

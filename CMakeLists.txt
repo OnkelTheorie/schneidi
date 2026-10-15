@@ -106,10 +106,12 @@ add_library(schneidi_lib STATIC
     src/app/MainWindowActions.cpp
     src/app/MainWindowLayout.cpp
     src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp
+    src/app/MainWindowMulticam.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
+    src/app/MulticamDialog.h src/app/MulticamDialog.cpp
     src/app/ExtensionsDialog.h  src/app/ExtensionsDialog.cpp
     src/app/TranscribeDialog.h  src/app/TranscribeDialog.cpp
     src/app/PasteAttributesDialog.h src/app/PasteAttributesDialog.cpp
@@ -125,6 +127,7 @@ add_library(schneidi_lib STATIC
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp
+    src/ui/MulticamView.h         src/ui/MulticamView.cpp
     src/ui/TrimView.h             src/ui/TrimView.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/InspectorDetail.h

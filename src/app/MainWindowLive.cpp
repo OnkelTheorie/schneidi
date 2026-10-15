@@ -15,7 +15,7 @@
 
 int MainWindow::livePlayhead() const { return m_timeline->view()->playhead(); }
 
-bool MainWindow::livePlaying() const { return m_engine->mode() == Engine::Mode::Timeline && m_engine->speed() != 0.0; }
+bool MainWindow::livePlaying() const { return m_engine->timelinePositions() && m_engine->speed() != 0.0; }
 
 void MainWindow::liveSeek(int frame)
 {
@@ -30,7 +30,7 @@ void MainWindow::livePlay(bool play)
         m_engine->pause();
         return;
     }
-    if (m_engine->mode() != Engine::Mode::Timeline) m_engine->showTimeline(livePlayhead());
+    if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(livePlayhead());
     m_engine->play();
 }
 

@@ -48,6 +48,9 @@ Engine::~Engine()
     if (m_consumer) m_consumer->stop();
     m_consumer.reset();
     m_preroll.reset(); // after the consumer (reports every frame to it), before the producers
+    m_gridHooks.reset();
+    m_grid.reset();
+    m_gridBuilder.reset();
     m_timeline.reset();
     m_source.reset();
     m_builder.reset();
@@ -93,6 +96,11 @@ bool Engine::createConsumer(QString* error)
     });
     m_builder->setGradeBypass(m_gradeBypass);
     m_builder->setClipCache([this](const Clip& c) { return m_renderCache->resolve(c); });
+    m_gridBuilder = std::make_unique<TimelineBuilder>(*m_profile);
+    m_gridBuilder->setResolver([this](const QString& path, TrackKind kind) {
+        return kind == TrackKind::Video ? m_proxies->resolve(path) : path;
+    });
+    m_gridBuilder->setGradeBypass(m_gradeBypass);
     // Preview image in the project's aspect ratio (otherwise portrait gets distorted), even dimensions
     const QSize fit = m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
     m_previewSize = QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
@@ -136,6 +144,12 @@ void Engine::setFormat(const ProjectFormat& format)
         m_timeline.reset();
     }
     m_source.reset();
+    m_gridHooks.reset();
+    m_grid.reset();
+    m_gridContent = {};
+    m_gridAngles.clear();
+    m_offset = 0;
+    m_gridBuilder.reset();
     m_builder.reset();
     m_factory.reset();
     m_profile.reset();
@@ -284,13 +298,58 @@ void Engine::updateTimeline(const Timeline& tl)
     if (active && m_consumer) connectProducer(m_timeline.get(), pos);
 }
 
-void Engine::showTimeline(int position)
+void Engine::showTimeline(int position, bool keepSpeed)
 {
     if (!m_timeline) return;
-    m_speed = 0;
+    if (!keepSpeed) m_speed = 0;
     m_mode = Mode::Timeline;
+    m_offset = 0;
     connectProducer(m_timeline.get(), position);
+    if (m_grid) { // not shown any more: free its decoders
+        m_gridHooks.reset();
+        m_grid.reset();
+        m_gridContent = {};
+        m_gridAngles.clear();
+    }
     emit modeChanged(m_mode);
+}
+
+bool Engine::showMulticam(const Timeline& content, const QVector<MulticamAngle>& angles,
+                          const MulticamGridOptions& options, int offset, int position)
+{
+    if (!m_consumer || !m_gridBuilder) return false;
+    if (m_mode == Mode::Multicam && m_grid && content == m_gridContent && angles == m_gridAngles
+        && options.columns == m_gridColumns && options.page == m_gridPage) {
+        setMulticamAudio(options.activeAngle);
+        if (offset != m_offset) { // another segment of the same multicam clip, slipped: same timeline frame
+            m_offset = offset;
+            const int at = m_position;
+            m_seekTarget = -1;
+            seek(at);
+        }
+        return true;
+    }
+    auto hooks = std::make_unique<MulticamGridHooks>();
+    auto grid = m_gridBuilder->buildMulticamGrid(content, angles, options, hooks.get());
+    if (!grid || !grid->is_valid()) return false;
+    m_consumer->stop(); // the old grid must not be read anymore
+    m_grid = std::move(grid);
+    m_gridHooks = std::move(hooks);
+    m_gridContent = content;
+    m_gridAngles = angles;
+    m_gridColumns = options.columns;
+    m_gridPage = options.page;
+    m_offset = offset;
+    const bool changed = m_mode != Mode::Multicam;
+    m_mode = Mode::Multicam;
+    connectProducer(m_grid.get(), position);
+    if (changed) emit modeChanged(m_mode);
+    return true;
+}
+
+void Engine::setMulticamAudio(int angle)
+{
+    if (m_gridHooks) TimelineBuilder::applyMulticamAudio(*m_gridHooks, angle);
 }
 
 void Engine::showSource(const QString& path, int position)
@@ -302,6 +361,7 @@ void Engine::showSource(const QString& path, int position)
     m_sourcePath = path;
     m_speed = 0;
     m_mode = Mode::Source;
+    m_offset = 0;
     connectProducer(m_source.get(), std::max(0, position));
     emit modeChanged(m_mode);
 }
@@ -312,7 +372,7 @@ void Engine::connectProducer(Mlt::Producer* producer, int position)
     m_current = producer;
     m_current->set_speed(m_speed);
     applyAudioState();
-    m_current->seek(position);
+    m_current->seek(std::max(0, position - m_offset));
     m_position = position;
     m_consumer->connect(*m_current);
     m_consumer->start();
@@ -423,7 +483,7 @@ void Engine::setSpeed(double speed)
     m_speed = speed;
     m_current->set_speed(speed);
     if (speed == 0.0) {
-        m_current->seek(m_position); // stay exactly on the shown frame
+        m_current->seek(std::max(0, m_position - m_offset)); // stay exactly on the shown frame
         m_consumer->purge();         // discard buffered audio immediately
         if (wasPlaying) {
             // Close the audio device right when stopping (restart without audio) instead of only at the next
@@ -444,15 +504,16 @@ void Engine::seek(int frame)
 {
     if (!m_current) return;
     frame = std::max(0, frame);
+    const int at = std::max(0, frame - m_offset); // frame of the producer (multicam grid: of the sequence)
     const bool playing = m_speed != 0.0;
     // During playback already on the way to this frame: do not discard buffers and decode again
-    if (playing && m_seekTarget == frame) return;
+    if (playing && m_seekTarget == at) return;
     ++m_seekEpoch;
     m_seekSkipped = 0;
-    m_seekTarget = playing ? frame : -1;
+    m_seekTarget = playing ? at : -1;
     if (playing && m_mode == Mode::Timeline) m_seekFade->start(frame, m_speed);
     else m_seekFade->target = -1;
-    m_current->seek(frame);
+    m_current->seek(at);
     m_consumer->purge();
     m_position = frame;
     // Only redraw when stopped: during playback the next image comes anyway, and a refresh
@@ -483,7 +544,8 @@ void Engine::onFrameShown(void* mltFrame)
         emit frameReady(img); // queued -> UI thread
     }
     m_preroll->update(pos, m_mode == Mode::Timeline ? m_speed : 0.0);
-    if (m_speed != 0.0 && pos != m_position.exchange(pos)) emit framePosition(pos, m_seekEpoch);
+    const int shown = pos + m_offset; // timeline frame
+    if (m_speed != 0.0 && shown != m_position.exchange(shown)) emit framePosition(shown, m_seekEpoch);
     if (m_speed != 0.0 && m_mode == Mode::Timeline) emitLevels();
 }
 
