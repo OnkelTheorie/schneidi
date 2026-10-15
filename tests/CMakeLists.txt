@@ -70,12 +70,14 @@ schneidi_test(test_audio_sync)
 schneidi_test(test_multicam)
 schneidi_test(test_multicam_render)
 schneidi_test(test_multicam_viewer)
+schneidi_test(test_multicam_cli)
+target_link_libraries(test_multicam_cli PRIVATE schneidi_cli_lib)
 
 # Number format regressions (German decimal comma, e.g. 0.7.0: MLT reset LC_NUMERIC and stabilization did nothing):
 # run tests that pass numbers to MLT/FFmpeg a second time under de_DE.UTF-8 (CI generates the locale)
 foreach(name test_stabilize_denoise test_retime test_effects_render test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
-             test_multicam_viewer)
+             test_multicam_viewer test_multicam_cli)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77
@@ -102,7 +104,6 @@ function(schneidi_pending_test name)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1")
 endfunction()
 
-schneidi_pending_test(test_multicam_cli schneidi_cli_lib)
 schneidi_pending_test(test_stream_presets schneidi_cli_lib)
 schneidi_pending_test(test_ducking schneidi_cli_lib)
 

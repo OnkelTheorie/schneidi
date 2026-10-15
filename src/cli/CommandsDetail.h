@@ -9,6 +9,7 @@
 #include "core/Selection.h"
 
 #include <QColor>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -57,6 +58,9 @@ public:
     bool live = false;  // the project as open in the app (inside the app, or a copy of it)
     QJsonObject app;    // live: the app's state (playhead, selection …) for `info`
     QJsonArray notes;   // hints for the AI from the ops (warnings, what changed besides the given clips)
+    // How the recordings of the multicam clips made in this session were synced (sequence id -> placement); the
+    // model keeps only the positions, so `synced`/`via`/`confidence` show in the answer of that edit only
+    QHash<int, QVector<Multicam::Angle>> multicamSync;
 
     explicit Session(const QString& file, Access access = Access::Read);
     ~Session();
@@ -82,7 +86,8 @@ int parseTrack(const QJsonValue& v, TrackKind* kind = nullptr);
 QJsonObject timelineJson(const Project& p);
 QJsonObject projectJson(const Project& p, const QString& path);
 
-QJsonArray timelinesJson(const Project& p);
+// sync = how the recordings of multicam clips were synced (Session::multicamSync), if known
+QJsonArray timelinesJson(const Project& p, const QHash<int, QVector<Multicam::Angle>>& sync = {});
 // LUT / luma transition / effect preset by built-in id, name in the effects folder or file path; throws if none
 enum class Asset { Lut, Luma, Preset };
 QString findAsset(Asset kind, const QString& name);
@@ -104,6 +109,14 @@ void addTimelineOps(QVector<OpDef>& ops); // EditOpsTimelines.cpp
 void addLookOps(QVector<OpDef>& ops);     // EditOpsLook.cpp
 void addAudioOps(QVector<OpDef>& ops);    // EditOpsAudio.cpp
 void addEditOps(QVector<OpDef>& ops);     // EditOpsEdit.cpp
+void addMulticamOps(QVector<OpDef>& ops); // EditOpsMulticam.cpp
+// Multicam (EditOpsMulticam.cpp): the angles of a multicam sequence for `info` (1-based, files with their start
+// in the multicam clip; with `sync` also how they were synced) and the sync method's name in the CLI
+QJsonArray multicamAnglesJson(const Sequence& s, const QVector<Multicam::Angle>* sync = nullptr);
+QString syncMethodName(Multicam::SyncMethod m);
+// Live: the sound sync of 'multicam' ops measured here in schneidi-cli and handed to the op (private field), so the
+// app does not decode recordings for minutes while the user waits
+QJsonObject withSoundSync(const QJsonObject& editArgs, Context& ctx);
 QJsonObject transitionStyleJson(const TransitionStyle& st);
 // Name of an animatable value as the ops use it ("x", "opacity", "grade.liftY") and a clip's keyframes by name
 // (times in timeline frames)
@@ -142,5 +155,6 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx);
 QJsonObject cmdScopes(const QJsonObject& a, Context& ctx);
 QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx);
+QJsonObject cmdSync(const QJsonObject& a, Context& ctx); // EditOpsMulticam.cpp
 
 } // namespace Cli::detail

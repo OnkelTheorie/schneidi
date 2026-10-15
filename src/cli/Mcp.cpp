@@ -110,8 +110,9 @@ int runMcp()
                        {"instructions",
                         "schneidi is a video editor. Edit projects (.schneidi) with these tools: `new` creates one, "
                         "`probe`/`silence`/`scenes`/`peaks`/`frames`/`transcribe`/`loudness`/`scopes` look at (and listen to) "
-                        "the material, `edit` changes a timeline (see its 'ops' description, `help` with command "
-                        "'edit' and op '<name>' has details per op; `effects` lists effects, LUTs and transitions), `info` shows the "
+                        "the material (`sync` lines up recordings of the same event by their sound), `edit` changes a "
+                        "timeline (see its 'ops' description, `help` with command 'edit' and op '<name>' has details "
+                        "per op; `effects` lists effects, LUTs and transitions), `info` shows the "
                         "result (a project can have several timelines), `render` writes a video, `restore` undoes a "
                         "change (`backups` lists the saved states). If the project is open in the schneidi app, all tools "
                         "work live on what the app shows (unsaved changes included): `edit` changes it there as one "

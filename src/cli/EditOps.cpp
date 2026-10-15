@@ -464,6 +464,7 @@ QVector<OpDef> makeOps()
     addLookOps(ops);
     addAudioOps(ops);
     addEditOps(ops);
+    addMulticamOps(ops);
     return ops;
 }
 
