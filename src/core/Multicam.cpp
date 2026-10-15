@@ -93,6 +93,23 @@ bool angleHas(const Sequence& s, int angle, TrackKind kind)
                                     : !a.audioTracks.isEmpty();
 }
 
+Timeline angleTimeline(const Timeline& content, const MulticamAngle& angle, TrackKind kind)
+{
+    Timeline t = content;
+    t.video.clear();
+    t.audio.clear();
+    t.subtitles.clear();
+    t.nested.reset();
+    t.angles.clear();
+    if (kind == TrackKind::Video) {
+        if (angle.videoTrack >= 0 && angle.videoTrack < content.video.size()) t.video << content.video[angle.videoTrack];
+    } else {
+        for (int i : angle.audioTracks)
+            if (i >= 0 && i < content.audio.size()) t.audio << content.audio[i];
+    }
+    return t;
+}
+
 std::optional<SourcePos> sourceAt(const Sequence& s, int angle, int frame, TrackKind kind)
 {
     if (!angleHas(s, angle, kind)) return std::nullopt;

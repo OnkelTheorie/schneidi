@@ -70,6 +70,19 @@ struct PrerollPoint {
     std::shared_ptr<Mlt::Producer> producer; // own MLT reference
 };
 
+// Grid of a multicam clip for the viewer (ui/MulticamView): all angles of a page in their cells (ui/MulticamGrid),
+// frame = frame of the multicam sequence. Sound = only the active angle.
+struct MulticamGridOptions {
+    int columns = 0;     // 0 = auto by the number of angles, 2..4 = fixed (MulticamGrid::columns)
+    int page = 0;        // clamped to the last page
+    int activeAngle = 0; // whose sound plays
+};
+// Live switching of the grid's sound (applyMulticamAudio), without rebuilding
+struct MulticamGridHooks {
+    std::vector<std::shared_ptr<Mlt::Playlist>> audio; // per angle (nullptr = angle without sound)
+    int active = -1;
+};
+
 class TimelineBuilder {
 public:
     // Which file is read for a clip (preview: proxy instead of original); without = always the original
@@ -105,6 +118,11 @@ public:
     // Image of a single video clip with effects, transform, speed and keyframes (without fades and
     // transitions) on a transparent background; frame 0 = first clip frame. For the render cache.
     std::unique_ptr<Mlt::Tractor> buildClipOutput(const Clip& c);
+    // Grid of a multicam sequence (content = Sequence::timeline, angles = Sequence::angles); nullptr = no angles
+    std::unique_ptr<Mlt::Tractor> buildMulticamGrid(const Timeline& content, const QVector<MulticamAngle>& angles,
+                                                    const MulticamGridOptions& options, MulticamGridHooks* hooks = nullptr);
+    // Let the sound of `angle` play in the grid (live); false = no such angle (unchanged)
+    static bool applyMulticamAudio(MulticamGridHooks& hooks, int angle);
 
 private:
     // second: second producer of the same file. Clips at a crossfade alternate (otherwise one
@@ -115,8 +133,11 @@ private:
 
     // A timeline without cleaning up the producer cache (also for nested sequences)
     std::unique_ptr<Mlt::Tractor> buildTimeline(const Timeline& tl, MixerHooks* hooks);
-    // Compound clip: content of the sequence (from Timeline::nested) as a tractor; nullptr = missing/loop
-    Mlt::Producer* nestedProducer(int sequenceId, TrackKind kind, int trackIndex, bool second);
+    // Compound clip: content of the sequence (from Timeline::nested) as a tractor; nullptr = missing/loop.
+    // angle >= 0 (multicam segment): only the tracks of that angle (its picture resp. its sound)
+    Mlt::Producer* nestedProducer(int sequenceId, TrackKind kind, int trackIndex, bool second, int angle = -1);
+    // A sequence's content as a nested tractor (transparent, no subtitles, own decoders under keyPrefix)
+    std::unique_ptr<Mlt::Tractor> buildInner(const Timeline& tl, const QString& keyPrefix);
 
     // Remembers where p is read; if the decoder jumps there, a PrerollPoint spot is noted
     void noteUse(Mlt::Producer* p, TrackKind kind, int from, int to, int in);

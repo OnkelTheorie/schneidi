@@ -480,6 +480,7 @@ Timeline Project::renderTimeline(int sequenceId) const
     for (const Sequence& x : m_sequences) {
         Timeline t = x.timeline;
         t.nested.reset();
+        t.angles = x.multicam ? x.angles : QVector<MulticamAngle>{};
         nested->insert(x.id, t);
     }
     tl.nested = std::move(nested);

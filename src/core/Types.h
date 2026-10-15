@@ -407,6 +407,15 @@ inline QString trackDisplayName(const Track& t, TrackRef r)
     return (r.kind == TrackKind::Video ? T("Video %1") : T("Audio %1")).arg(r.index + 1);
 }
 
+// Angle (camera) of a multicam clip: its picture lies on one video track of the multicam sequence, its sound on
+// one audio track per audio stream of the recording (track indices in Sequence::timeline)
+struct MulticamAngle {
+    QString name;
+    int videoTrack = -1;     // -1 = sound only (e.g. the caster)
+    QVector<int> audioTracks;
+    bool operator==(const MulticamAngle&) const = default;
+};
+
 struct Timeline;
 // Content of the sequences (id -> timeline) for nested clips when rendering
 using NestedTimelines = QHash<int, Timeline>;
@@ -426,12 +435,14 @@ struct Timeline {
     // For rendering only (Project::renderTimeline): content of all sequences that compound clips refer to.
     // Never saved and not part of undo; the truth is the sequences in the Project.
     std::shared_ptr<const NestedTimelines> nested;
+    // For rendering only, in the entries of `nested`: angles of a multicam sequence (copy of Sequence::angles)
+    QVector<MulticamAngle> angles;
 
     QVector<Track>& tracks(TrackKind k) { return k == TrackKind::Video ? video : audio; }
     const QVector<Track>& tracks(TrackKind k) const { return k == TrackKind::Video ? video : audio; }
     Track& track(TrackRef r) { return tracks(r.kind)[r.index]; }
     const Track& track(TrackRef r) const { return tracks(r.kind)[r.index]; }
-    // Same cut (without `nested`, which only serves rendering).
+    // Same cut (without `nested`/`angles`, which only serve rendering).
     // By hand: enter new fields here, otherwise changes to them do not end up in undo
     bool operator==(const Timeline& o) const
     {
@@ -439,15 +450,6 @@ struct Timeline {
                && markIn == o.markIn && markOut == o.markOut && masterVolumeDb == o.masterVolumeDb
                && masterLimiter == o.masterLimiter && masterLimiterDb == o.masterLimiterDb;
     }
-};
-
-// Angle (camera) of a multicam clip: its picture lies on one video track of the multicam sequence, its sound on
-// one audio track per audio stream of the recording (track indices in Sequence::timeline)
-struct MulticamAngle {
-    QString name;
-    int videoTrack = -1;     // -1 = sound only (e.g. the caster)
-    QVector<int> audioTracks;
-    bool operator==(const MulticamAngle&) const = default;
 };
 
 // Sequence as in DaVinci: own timeline in the project (visible in the Media Pool) or content of a compound clip.

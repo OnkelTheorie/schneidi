@@ -70,4 +70,8 @@ const Clip* clipAt(const Timeline& timeline, int frame, const QSet<int>& selecte
 // Does angle `angle` of the sequence have picture (Video) or sound (Audio)?
 bool angleHas(const Sequence& sequence, int angle, TrackKind kind);
 
+// What one part of an angle shows: the multicam sequence's content reduced to the angle's picture track (Video) or
+// its sound tracks (Audio); the other kind and the subtitles are left out. No tracks = the angle has no such part.
+Timeline angleTimeline(const Timeline& content, const MulticamAngle& angle, TrackKind kind);
+
 } // namespace Multicam

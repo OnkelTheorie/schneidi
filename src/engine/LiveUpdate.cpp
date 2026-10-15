@@ -189,7 +189,7 @@ bool valuesOnly(const Timeline& before, const Timeline& after)
     if (before.nested->size() != after.nested->size()) return false;
     for (auto it = before.nested->begin(); it != before.nested->end(); ++it) {
         auto other = after.nested->find(it.key());
-        if (other == after.nested->end() || !sameCut(*other, *it)) return false;
+        if (other == after.nested->end() || !sameCut(*other, *it) || other->angles != it->angles) return false;
     }
     return true;
 }

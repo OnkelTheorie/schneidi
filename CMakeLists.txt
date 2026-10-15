@@ -77,6 +77,7 @@ add_library(schneidi_lib STATIC
     src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp
     src/engine/TimelineBuilderDetail.h src/engine/TimelineBuilderClip.cpp
     src/engine/TimelineBuilderAudio.cpp src/engine/TimelineBuilderTransitions.cpp
+    src/engine/TimelineBuilderMulticam.cpp
     src/engine/LiveUpdate.h       src/engine/LiveUpdate.cpp
     src/engine/RampProducer.h     src/engine/RampProducer.cpp
     src/engine/PitchLatency.h     src/engine/PitchLatency.cpp
@@ -123,6 +124,7 @@ add_library(schneidi_lib STATIC
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
+    src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp
     src/ui/TrimView.h             src/ui/TrimView.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/InspectorDetail.h

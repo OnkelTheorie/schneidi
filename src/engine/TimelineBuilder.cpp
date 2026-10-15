@@ -3,6 +3,7 @@
 #include "core/Equalizer.h"
 #include "core/Limiter.h"
 #include "core/Loudness.h"
+#include "core/Multicam.h"
 #include "core/TruePeak.h"
 
 #include "core/EffectRegistry.h"
@@ -238,31 +239,44 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     return tractor;
 }
 
-Mlt::Producer* TimelineBuilder::nestedProducer(int sequenceId, TrackKind kind, int trackIndex, bool second)
+Mlt::Producer* TimelineBuilder::nestedProducer(int sequenceId, TrackKind kind, int trackIndex, bool second, int angle)
 {
     if (!m_nested || m_nestStack.size() >= 16 || m_nestStack.count(sequenceId)) return nullptr; // loop/too deep
     const auto it = m_nested->constFind(sequenceId);
     if (it == m_nested->cend()) return nullptr;
     // As with files: one own tractor per track and side of a transition (own decoders)
-    const QString key = QString("%1|%2|%3|%4|%5").arg(sequenceId).arg(kind == TrackKind::Video ? "v" : "a")
-                            .arg(trackIndex).arg(second ? "x" : "").arg(m_nestStack.size());
+    QString key = QString("%1|%2|%3|%4|%5").arg(sequenceId).arg(kind == TrackKind::Video ? "v" : "a")
+                      .arg(trackIndex).arg(second ? "x" : "").arg(m_nestStack.size());
+    if (angle >= 0) key += QString("|m%1").arg(angle);
     if (auto c = m_nestedCache.find(key); c != m_nestedCache.end()) return c->second.get();
+    Timeline content;
+    if (angle >= 0) { // Multicam segment: only the angle's own tracks
+        if (angle >= it->angles.size()) return nullptr;
+        content = Multicam::angleTimeline(*it, it->angles[angle], kind);
+        if (content.tracks(kind).isEmpty()) return nullptr; // e.g. picture of a sound-only angle
+    }
     m_nestStack.insert(sequenceId);
-    const bool transparent = std::exchange(m_transparent, true); // empty spots show the track below
-    const bool subtitles = std::exchange(m_subtitles, false);    // subtitles belong to the outer timeline
-    const bool nested = std::exchange(m_inNested, true);
-    // producers inside separate from those of the outer timeline (own decoders, see producerFor)
-    const QString prefix = std::exchange(m_keyPrefix, m_keyPrefix + "n" + key + "/");
-    std::unique_ptr<Mlt::Producer> p = buildTimeline(*it, nullptr);
-    m_keyPrefix = prefix;
-    m_inNested = nested;
-    m_subtitles = subtitles;
-    m_transparent = transparent;
+    std::unique_ptr<Mlt::Producer> p = buildInner(angle >= 0 ? content : *it, m_keyPrefix + "n" + key + "/");
     m_nestStack.erase(sequenceId);
     if (!p || !p->is_valid()) return nullptr;
     Mlt::Producer* raw = p.get();
     m_nestedCache.emplace(key, std::move(p));
     return raw;
+}
+
+std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildInner(const Timeline& tl, const QString& keyPrefix)
+{
+    const bool transparent = std::exchange(m_transparent, true); // empty spots show the track below
+    const bool subtitles = std::exchange(m_subtitles, false);    // subtitles belong to the outer timeline
+    const bool nested = std::exchange(m_inNested, true);
+    // producers inside separate from those of the outer timeline (own decoders, see producerFor)
+    const QString prefix = std::exchange(m_keyPrefix, keyPrefix);
+    std::unique_ptr<Mlt::Tractor> p = buildTimeline(tl, nullptr);
+    m_keyPrefix = prefix;
+    m_inNested = nested;
+    m_subtitles = subtitles;
+    m_transparent = transparent;
+    return p;
 }
 
 std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl, MixerHooks* hooks)
@@ -290,7 +304,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             return svc == "qimage" || svc == "pixbuf";
         };
         const TimelineOps::SourceLength srcLen = [&](const Clip& c) {
-            if (c.isCompound()) {
+            if (c.isNested()) {
                 if (!m_nested) return 0;
                 const auto it = m_nested->constFind(c.sequenceId);
                 return it == m_nested->cend() ? 0 : TimelineOps::endFrame(*it);
@@ -341,8 +355,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 applyClipFades(m_profile, *cut, c, kind, from, to);
                 return cut;
             }
-            if (c.isCompound()) { // Content of the sequence as its own tractor (frames count from the sequence start)
-                Mlt::Producer* src = c.enabled ? nestedProducer(c.sequenceId, kind, trackIndex, second) : nullptr;
+            if (c.isNested()) { // Content of the sequence as its own tractor (frames count from the sequence start)
+                const int angle = c.isMulticam() ? std::max(0, c.angle) : -1; // multicam: only the active angle
+                Mlt::Producer* src = c.enabled ? nestedProducer(c.sequenceId, kind, trackIndex, second, angle) : nullptr;
                 const int in = c.in + (from - c.start);
                 if (!src || in < 0) return nullptr;
                 Mlt::Producer* cut = src->cut(in, in + (to - from) - 1);
