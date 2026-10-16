@@ -94,6 +94,30 @@ MulticamView::MulticamView(Project* project, Selection* selection, Editor* edito
     connect(m_prev, &QToolButton::clicked, this, [this] { setPage(m_page - 1); });
     connect(m_next, &QToolButton::clicked, this, [this] { setPage(m_page + 1); });
 
+    // Many angles decoded from the originals stutter: offer proxies (like DaVinci's "Generate Proxy Media")
+    m_hint = new QWidget(this);
+    m_hint->setObjectName("MulticamProxyHint");
+    m_hint->setAttribute(Qt::WA_StyledBackground);
+    m_hint->setStyleSheet(QString("#MulticamProxyHint { background: %1; }")
+                              .arg(Theme::mix(Theme::panel, Theme::meterMid, 0.18).name()));
+    auto* hintLay = new QHBoxLayout(m_hint);
+    hintLay->setContentsMargins(8, 2, 4, 2);
+    hintLay->setSpacing(6);
+    m_hintLabel = new QLabel;
+    m_hintLabel->setStyleSheet(QString("color: %1;").arg(Theme::text.name()));
+    hintLay->addWidget(m_hintLabel, 1);
+    m_hintButton = new QToolButton;
+    m_hintButton->setObjectName("multicam_proxies");
+    m_hintButton->setText(T("Proxy-Medien erzeugen"));
+    m_hintButton->setToolTip(T("Kleine Kopien der Aufnahmen für eine flüssige Vorschau; der Export nutzt die Originale"));
+    m_hintButton->setFocusPolicy(Qt::NoFocus);
+    hintLay->addWidget(m_hintButton);
+    connect(m_hintButton, &QToolButton::clicked, this, [this] {
+        if (!m_missingProxies.isEmpty()) emit proxiesRequested(m_missingProxies);
+    });
+    m_hint->setFixedHeight(m_hintButton->sizeHint().height() + 4); // same with and without the button
+    m_hint->hide();
+
     connect(m_project, &Project::timelineChanged, this, &MulticamView::refresh);
     connect(m_project, &Project::currentSequenceChanged, this, &MulticamView::refresh);
     connect(m_project, &Project::sequencesChanged, this, [this] {
@@ -107,12 +131,19 @@ MulticamView::MulticamView(Project* project, Selection* selection, Editor* edito
 
 int MulticamView::barHeight() const
 {
-    return m_bar->sizeHint().height();
+    return m_bar->sizeHint().height() + (m_hint->isHidden() ? 0 : m_hint->height());
 }
 
 void MulticamView::resizeEvent(QResizeEvent*)
 {
-    m_bar->setGeometry(0, 0, width(), barHeight());
+    layoutBars();
+}
+
+void MulticamView::layoutBars()
+{
+    const int bar = m_bar->sizeHint().height();
+    m_bar->setGeometry(0, 0, width(), bar);
+    m_hint->setGeometry(0, bar, width(), m_hint->height());
 }
 
 QRect MulticamView::gridRect() const
@@ -204,6 +235,48 @@ QString MulticamView::angleName(int angle) const
     return s && angle >= 0 && angle < s->angles.size() ? s->angles[angle].name : QString();
 }
 
+QStringList MulticamView::angleFiles() const
+{
+    QStringList files;
+    const Sequence* s = m_sequence ? m_project->sequence(m_sequence) : nullptr;
+    if (!s) return files;
+    for (const MulticamAngle& a : s->angles) {
+        if (a.videoTrack < 0 || a.videoTrack >= s->timeline.video.size()) continue;
+        for (const Clip& c : s->timeline.video[a.videoTrack].clips)
+            if (c.kind == ClipKind::Media && !c.mediaPath.isEmpty() && !files.contains(c.mediaPath)) files << c.mediaPath;
+    }
+    return files;
+}
+
+void MulticamView::setProxyState(const QStringList& missing, int pending)
+{
+    m_missingProxies = missing;
+    m_pendingProxies = pending;
+    updateProxyHint();
+}
+
+QString MulticamView::proxyHint() const
+{
+    if (!m_sequence) return {};
+    const int shown = std::min(perPage(), angleCount() - m_page * perPage()); // cells decoded at once
+    if (shown <= kProxyHintCells) return {};
+    if (!m_missingProxies.isEmpty())
+        return T("Viele Winkel ohne Proxy-Medien: das Raster läuft ruckelig");
+    if (m_pendingProxies > 0) return T("Proxy-Medien werden erzeugt (noch %1) …").arg(m_pendingProxies);
+    return {};
+}
+
+void MulticamView::updateProxyHint()
+{
+    const QString hint = proxyHint();
+    m_hintLabel->setText(hint);
+    m_hintButton->setVisible(!m_missingProxies.isEmpty());
+    if (hint.isEmpty() == m_hint->isHidden()) return;
+    m_hint->setVisible(!hint.isEmpty());
+    layoutBars();
+    update();
+}
+
 QString MulticamView::message() const
 {
     return m_sequence ? QString() : T("Kein Multicam-Clip am Playhead");
@@ -248,6 +321,7 @@ void MulticamView::updateControls()
     m_prev->setEnabled(m_page > 0);
     m_next->setEnabled(m_page < pages - 1);
     m_pageLabel->setText(pages > 1 ? T("Seite %1/%2").arg(m_page + 1).arg(pages) : QString());
+    updateProxyHint(); // depends on the cells of the page
 }
 
 void MulticamView::cutToAngle(int angle)

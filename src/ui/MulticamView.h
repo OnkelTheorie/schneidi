@@ -3,7 +3,7 @@
 // (picture from the engine's grid tractor, see Engine::showMulticam), the active angle framed red, angle names,
 // layout auto/2x2/3x3/4x4 with pages, modes video+audio / video / audio. Click into the grid: while playing = cut
 // to that angle, while stopped = switch the segment's angle, Alt+click = cut. Knows no engine: the main window
-// feeds position, playback state and the grid picture and rebuilds the grid on gridChanged().
+// feeds position, playback state, the grid picture and the angles' proxy state and rebuilds the grid on gridChanged().
 
 #include "core/Multicam.h"
 
@@ -56,6 +56,16 @@ public:
     // Area of the grid picture (aspect ratio of the project), cells as MulticamGrid::cell of it
     QRect gridRect() const;
 
+    // More cells than this on a page play smoothly only with proxies: H.264 decodes only at full size, so 16 1080p
+    // decoders are a slide show (docs/plan-0.8.md)
+    static constexpr int kProxyHintCells = 4;
+    // Media files on the angles' picture tracks (what proxies help with), each once
+    QStringList angleFiles() const;
+    // Proxy state of angleFiles(), fed by the main window: files without a proxy (not queued), files being generated
+    void setProxyState(const QStringList& missing, int pending);
+    // Hint above the grid (many cells without proxies, proxies being generated); empty = none
+    QString proxyHint() const;
+
 public slots:
     // Absolute angle (0-based); invalid angles or no multicam clip: nothing. Each is one undo step.
     void cutToAngle(int angle);
@@ -65,6 +75,8 @@ signals:
     // Multicam clip, its offset, its content or the page/layout changed: the grid tractor needs to follow
     void gridChanged();
     void soundAngleChanged(int angle);
+    // "Generate proxies" in the hint: these files have none yet
+    void proxiesRequested(const QStringList& files);
 
 protected:
     void paintEvent(QPaintEvent* e) override;
@@ -74,7 +86,9 @@ protected:
 private:
     void refresh(); // state from the timeline at the playhead
     void updateControls();
-    int barHeight() const;
+    void updateProxyHint();
+    void layoutBars();
+    int barHeight() const; // control bar plus the proxy hint (if shown)
 
     Project* m_project;
     Selection* m_selection;
@@ -87,6 +101,11 @@ private:
     QToolButton* m_prev;
     QToolButton* m_next;
     QLabel* m_pageLabel;
+    QWidget* m_hint;
+    QLabel* m_hintLabel;
+    QToolButton* m_hintButton;
+    QStringList m_missingProxies;
+    int m_pendingProxies = 0;
     QImage m_frame;
     Multicam::Mode m_mode = Multicam::Mode::Both;
     int m_position = 0;

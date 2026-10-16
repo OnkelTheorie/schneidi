@@ -11,6 +11,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "engine/ProxyManager.h"
 #include "engine/SoundSync.h"
 #include "engine/TimelineBuilder.h"
 #include "ui/MediaPool.h"
@@ -104,6 +105,27 @@ void MainWindow::setupMulticam()
         }
     });
     connect(m_mediaPool, &MediaPool::multicamRequested, this, &MainWindow::createMulticamClip);
+    // Proxy hint in the grid: follows the multicam clip and the proxy queue
+    ProxyManager* proxies = m_engine->proxies();
+    connect(m_multicam, &MulticamView::gridChanged, this, &MainWindow::updateMulticamProxies);
+    connect(m_multicam, &MulticamView::proxiesRequested, proxies, &ProxyManager::generate);
+    connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateMulticamProxies);
+    connect(proxies, &ProxyManager::proxyChanged, this, &MainWindow::updateMulticamProxies);
+    connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateMulticamProxies);
+    updateMulticamProxies();
+}
+
+void MainWindow::updateMulticamProxies()
+{
+    const ProxyManager* proxies = m_engine->proxies();
+    QStringList missing;
+    int pending = 0;
+    if (proxies->enabled()) // proxy media switched off: the user wants the originals
+        for (const QString& f : m_multicam->angleFiles()) {
+            if (proxies->isPending(f)) ++pending;
+            else if (!proxies->hasProxy(f)) missing << f;
+        }
+    m_multicam->setProxyState(missing, pending);
 }
 
 void MainWindow::setMulticamMode(bool on)

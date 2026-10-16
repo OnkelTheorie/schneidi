@@ -153,6 +153,7 @@ private:
     void setupMulticam(); // connections, after buildActions()
     void setMulticamMode(bool on);
     void syncMulticam(); // the engine's grid follows the multicam clip at the playhead (MulticamView)
+    void updateMulticamProxies(); // proxy state of the grid's angles -> MulticamView (hint + "Generate proxies")
     void createMulticamClip(const QStringList& paths);
     void addMulticamMenu(QMenu* menu); // "Switch Angle" + "Flatten" for selected multicam segments
     int selectedMulticamSequence() const;

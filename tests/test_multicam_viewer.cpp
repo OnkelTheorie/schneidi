@@ -1,7 +1,7 @@
 // Multicam viewer (docs/plan-0.8.md): grid layout (auto 1x1/2x2/3x3/4x4, fixed, pages, cells tile the area, hit
 // test), the grid widget (click while playing = cut, while stopped = switch, Alt+click = cut, number keys, modes
 // video+audio / video / audio, pages, the grid follows the active angle's page, red frame on the active angle,
-// nothing to do without a multicam clip), the engine (a grid rebuilt while playing goes on where playback is) and
+// nothing to do without a multicam clip, the proxy hint above many cells), the engine (a grid rebuilt while playing goes on where playback is) and
 // the main window (multicam mode, keys 1–9 / Alt+1–9 only there, Alt+N = target track otherwise, flatten action).
 // Everything offscreen.
 #include "check.h"
@@ -328,6 +328,54 @@ void testPagesAndLayoutChoice()
     CHECK_EQ(f.view.pageCount(), 1);
 }
 
+void testProxyHintForManyCells()
+{
+    Fixture f(10);
+    auto* button = f.view.findChild<QToolButton*>("multicam_proxies");
+    auto* layout = f.view.findChild<QComboBox*>("multicam_layout");
+    if (!CHECK(button && layout)) return;
+    QStringList files;
+    for (int i = 1; i <= 10; ++i) files << QString("/x/pov%1.mp4").arg(i);
+    CHECK_EQ(f.view.angleFiles(), files);
+    CHECK(f.view.proxyHint().isEmpty()); // nothing fed yet = no proxies missing
+    const QRect full = f.view.gridRect();
+
+    // 10 cells decoded at once, two files without a proxy: hint + button, the grid makes room
+    f.view.setProxyState({files[2], files[7]}, 0);
+    CHECK(!f.view.proxyHint().isEmpty());
+    CHECK(button->isVisibleTo(&f.view));
+    CHECK(f.view.gridRect().top() > full.top());
+    const QRect withHint = f.view.gridRect();
+    QSignalSpy spy(&f.view, &MulticamView::proxiesRequested);
+    button->click();
+    if (CHECK_EQ(spy.size(), 1)) CHECK_EQ(spy[0][0].toStringList(), QStringList({files[2], files[7]}));
+
+    // Being generated: hint without the button; done: no hint, full grid again
+    f.view.setProxyState({}, 2);
+    CHECK(f.view.proxyHint().contains("2"));
+    CHECK(!button->isVisibleTo(&f.view));
+    CHECK_EQ(f.view.gridRect(), withHint); // the hint keeps its height without the button
+    f.view.setProxyState({}, 0);
+    CHECK(f.view.proxyHint().isEmpty());
+    CHECK_EQ(f.view.gridRect(), full);
+
+    // 2x2 = four decoders: smooth without proxies, no hint (page 3 has only two cells)
+    f.view.setProxyState({files[0]}, 0);
+    CHECK(!f.view.proxyHint().isEmpty());
+    layout->setCurrentIndex(1);
+    CHECK(f.view.proxyHint().isEmpty());
+    f.view.setPage(2);
+    CHECK(f.view.proxyHint().isEmpty());
+    layout->setCurrentIndex(0);
+    CHECK(!f.view.proxyHint().isEmpty());
+
+    // Four angles: never a hint
+    Fixture four(4);
+    four.view.setProxyState(four.view.angleFiles(), 0);
+    CHECK_EQ(four.view.angleFiles().size(), 4);
+    CHECK(four.view.proxyHint().isEmpty());
+}
+
 void testPageFollowRebuildsGrid()
 {
     // Following the active angle to its page also changes the picture: the grid tractor has to follow (before, only
@@ -443,6 +491,8 @@ void testMainWindowMulticamMode(const QString& dir)
     mode->trigger();
     view = w.findChild<MulticamView*>();
     CHECK(view && view->isVisible());
+    CHECK_EQ(view->angleFiles(), QStringList({a, b}));
+    CHECK(view->proxyHint().isEmpty()); // two angles play smoothly from the originals
     CHECK(action("multicam_cut_2")->isEnabled() && action("multicam_switch_1")->isEnabled());
     CHECK(!action("target_video_2")->isEnabled()); // otherwise Alt+2 would be ambiguous
     engine.seek(50);
@@ -493,6 +543,7 @@ int main(int argc, char** argv)
     testNoMulticamClipAtPlayhead();
     testActiveAngleFramedAndNamed();
     testPagesAndLayoutChoice();
+    testProxyHintForManyCells();
     testPageFollowRebuildsGrid();
     testGridRebuildWhilePlayingKeepsPosition(dir.path());
     testMainWindowMulticamMode(dir.path());
