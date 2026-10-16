@@ -2,6 +2,7 @@
 
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
+#include "core/RenderJob.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "engine/Bundle.h"
@@ -182,6 +183,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_tractor->set_in_and_out(m_from, m_from + m_length - 1);
 
     QDir().mkpath(QFileInfo(s.path).absolutePath());
+    if (s.output == ExportSettings::Output::ImageSequence) QDir().mkpath(imageSequenceDir(s.path));
     if (!s.subtitlePath.isEmpty() && !writeSubtitleFile(tl, s.format.rate.fps(), m_from, m_from + m_length, s.subtitlePath, error)) {
         cleanup();
         return false;
@@ -229,7 +231,15 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_threads = threads;
     // Render every frame (real_time < 0), several frames at once (not with frei0r, see parallelFrames)
     m_frames = convertRate ? 1 : parallelFrames(tl, threads);
-    m_path = s.path;
+    m_target = s.path;
+    switch (s.output) {
+    case ExportSettings::Output::File: m_path = s.path; break;
+    case ExportSettings::Output::ImageSequence: m_path = imageSequencePattern(s.path); break;
+    case ExportSettings::Output::Gif:
+        m_path = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                     .filePath(QString("schneidi-gif-%1.mov").arg(QUuid::createUuid().toString(QUuid::Id128)));
+        break;
+    }
     m_note = s.encoderNote;
     m_usedCodec.clear();
 
@@ -320,7 +330,7 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
         m_fatalEvent.reset();
         m_consumer.reset();
     }
-    m_consumer = std::make_unique<Mlt::Consumer>(outProfile, "avformat", s.path.toUtf8().constData());
+    m_consumer = std::make_unique<Mlt::Consumer>(outProfile, "avformat", m_path.toUtf8().constData());
     if (!m_consumer->is_valid()) {
         if (error) *error = T("FFmpeg-Ausgabe (avformat) nicht verfügbar.");
         return false;
@@ -338,26 +348,31 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
                 m_consumer->set(key.toUtf8().constData(), value.toUtf8().constData());
         } else {
             m_consumer->set("pix_fmt", s.pixFmt.toUtf8().constData());
-            if (codec == "libx264" || codec == "libx265") {
-                m_consumer->set("crf", s.crf);
-                m_consumer->set("preset", s.preset.toUtf8().constData());
-            }
+            if (s.crf > 0) m_consumer->set("crf", s.crf); // H.264/H.265/AV1/VP9; fixed-quality formats have 0
+            if (codec == "libx264" || codec == "libx265") m_consumer->set("preset", s.preset.toUtf8().constData());
         }
     }
     if (!s.videoCodec.isEmpty() && s.maxBitrateK > 0) { // quality target as before, but capped (VBV)
         m_consumer->set("maxrate", QString("%1k").arg(s.maxBitrateK).toUtf8().constData());
         m_consumer->set("bufsize", QString("%1k").arg(s.maxBitrateK * 2).toUtf8().constData());
     }
-    m_consumer->set("acodec", s.audioCodec.toUtf8().constData());
+    for (const QString& option : s.codecOptions) { // "key=value" from the format (profile, speed …)
+        const qsizetype eq = option.indexOf('=');
+        if (eq > 0) m_consumer->set(option.left(eq).toUtf8().constData(), option.mid(eq + 1).toUtf8().constData());
+    }
+    if (s.output == ExportSettings::Output::ImageSequence) m_consumer->set("f", "image2"); // one file per frame
+    if (s.audioCodec.isEmpty()) m_consumer->set("an", 1); // GIF, image sequence: no sound
+    else m_consumer->set("acodec", s.audioCodec.toUtf8().constData());
     if (!s.audioSampleFormat.isEmpty()) m_consumer->set("sample_fmt", s.audioSampleFormat.toUtf8().constData());
     if (s.audioRate > 0) m_consumer->set("frequency", s.audioRate);
     if (s.audioChannels > 0) m_consumer->set("channels", s.audioChannels);
-    if (!s.audioCodec.startsWith("pcm_") && s.audioCodec != "alac") {
+    if (!s.audioCodec.isEmpty() && !s.audioCodec.startsWith("pcm_") && s.audioCodec != "alac" && s.audioCodec != "flac") {
         const int bitrate = s.audioCodec == "libmp3lame" ? std::min(s.audioBitrateK, 320) : s.audioBitrateK;
         m_consumer->set("ab", QString("%1k").arg(bitrate).toUtf8().constData());
     }
-    const QString ext = QFileInfo(s.path).suffix().toLower();
-    if (ext == "mp4" || ext == "mov" || ext == "m4a") m_consumer->set("movflags", "+faststart");
+    const QString ext = QFileInfo(m_path).suffix().toLower();
+    if ((ext == "mp4" || ext == "mov" || ext == "m4a") && s.output == ExportSettings::Output::File)
+        m_consumer->set("movflags", "+faststart");
     // Decoder (start) and encoder get the same thread count. When converting the frame rate the "consumer" producer
     // fetches frames in order -> one at a time there, and without the read-ahead thread (real_time 0): repeated
     // frames deliver 0 samples; the read-ahead thread fetches the sound early, and on the encoder's second fetch
@@ -392,7 +407,7 @@ void Exporter::poll()
     // Race at the start (see start): the thread saw running=0 and ended without a frame. Either running=1 comes
     // after its end (never stopped), or before mlt_consumer_stopped() puts it back to 0 (looks finished, but the
     // file is empty) -> start again in both cases
-    const bool nothingWritten = m_consumer->is_stopped() && QFileInfo(m_path).size() <= 0;
+    const bool nothingWritten = m_consumer->is_stopped() && !wroteOutput();
     if (m_threadDone && (!m_consumer->is_stopped() || nothingWritten)) {
         if (++m_restarts <= 3) {
             qWarning("Export: encoder thread ended at once, restart %d", m_restarts);
@@ -423,19 +438,83 @@ void Exporter::poll()
     }
     if (m_consumer->is_stopped()) {
         const QString path = m_path;
+        const bool wrote = wroteOutput();
         cleanup();
         // Encoder or container failed (e.g. codec missing): no file or an empty one
-        if (QFileInfo(path).size() <= 0) {
+        if (!wrote) {
             QFile::remove(path);
-            emit finished(false, T("Export fehlgeschlagen: %1").arg(path));
+            emit finished(false, T("Export fehlgeschlagen: %1").arg(m_target));
+            return;
+        }
+        if (m_settings.output == ExportSettings::Output::Gif) {
+            convertToGif();
             return;
         }
         emit progress(100);
-        emit finished(true, T("Export fertig: %1").arg(path));
+        emit finished(true, T("Export fertig: %1").arg(m_target));
         return;
     }
     const int pos = m_source->position(); // relative to the In point
-    emit progress(std::clamp(pos * 100 / std::max(1, m_length), 0, 99));
+    // GIF: the conversion afterwards gets the last tenth
+    const int scale = m_settings.output == ExportSettings::Output::Gif ? 90 : 100;
+    emit progress(std::clamp(pos * scale / std::max(1, m_length), 0, scale - 1));
+}
+
+bool Exporter::wroteOutput() const
+{
+    if (m_settings.output == ExportSettings::Output::ImageSequence)
+        return QFileInfo(QString(m_path).replace("%05d", "00001")).size() > 0;
+    return QFileInfo(m_path).size() > 0;
+}
+
+void Exporter::convertToGif()
+{
+    // One palette for the whole clip from the changing parts (stats_mode=diff: moving things get the colors),
+    // error diffusion only where pixels change (diff_mode=rectangle: smaller file, no flicker in still areas)
+    const QString part = m_target + ".part";
+    m_gif = std::make_unique<QProcess>();
+    m_gif->setProcessChannelMode(QProcess::SeparateChannels);
+    connect(m_gif.get(), &QProcess::readyReadStandardOutput, this, [this] {
+        // -progress pipe:1 reports "frame=N" lines
+        for (const QByteArray& line : m_gif->readAllStandardOutput().split('\n'))
+            if (line.startsWith("frame="))
+                emit progress(std::clamp(90 + line.mid(6).trimmed().toInt() * 10 / std::max(1, m_length), 90, 99));
+    });
+    connect(m_gif.get(), &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
+        finishGif(status == QProcess::NormalExit && code == 0, QString::fromUtf8(m_gif->readAllStandardError()).trimmed());
+    });
+    connect(m_gif.get(), &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart) finishGif(false, T("ffmpeg nicht gefunden."));
+    });
+    ++g_running; // the render cache keeps waiting
+    m_gif->start(Bundle::tool("ffmpeg"),
+                 {"-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-progress", "pipe:1", "-i", m_path, "-vf",
+                  "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle",
+                  "-loop", "0", "-f", "gif", "-y", part});
+    emit progress(90);
+}
+
+void Exporter::finishGif(bool ok, const QString& log)
+{
+    if (!m_gif) return;
+    m_gif->disconnect(this);
+    m_gif.release()->deleteLater(); // inside one of its signals
+    --g_running;
+    QFile::remove(m_path); // intermediate
+    const QString part = m_target + ".part";
+    if (ok) {
+        QFile::remove(m_target);
+        ok = QFile::rename(part, m_target);
+    }
+    if (!ok) {
+        if (!log.isEmpty()) qWarning("Export: GIF conversion failed: %s", qPrintable(log));
+        QFile::remove(part);
+        emit finished(false, T("Export fehlgeschlagen: %1").arg(m_target));
+        return;
+    }
+    m_usedCodec = "gif"; // what wrote the file (not the intermediate)
+    emit progress(100);
+    emit finished(true, T("Export fertig: %1").arg(m_target));
 }
 
 bool Exporter::runAnalyses(const Timeline& tl, const ExportSettings& s)
@@ -487,6 +566,17 @@ void Exporter::cancel()
         m_analysis = nullptr;
         --g_running;
         m_pendingTimeline = {};
+        emit finished(false, T("Export abgebrochen."));
+        return;
+    }
+    if (m_gif) { // GIF conversion: only our own ffmpeg process
+        m_gif->disconnect(this);
+        m_gif->kill();
+        m_gif->waitForFinished(2000);
+        m_gif.reset();
+        --g_running;
+        QFile::remove(m_path);
+        QFile::remove(m_target + ".part");
         emit finished(false, T("Export abgebrochen."));
         return;
     }

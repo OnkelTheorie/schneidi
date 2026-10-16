@@ -27,8 +27,14 @@ struct ExportSettings {
     // The hardware encoder is tested with the output size first (MLT crashes when it cannot open an encoder).
     QString softwareCodec;
     QString encoderNote; // note from choosing the encoder (e.g. not available here), reported with the result
-    QString audioCodec = "aac";
+    QString audioCodec = "aac"; // empty = no sound (GIF, image sequence)
     QString pixFmt = "yuv420p";
+    // File: path is the file. Gif: renders a lossless intermediate (videoCodec/pixFmt, e.g. PNG in MOV) into the temp
+    // folder, then ffmpeg turns it into path with its own palette. ImageSequence: path "…/name.png" writes
+    // "…/name/name_00001.png" … (imageSequencePattern in core/RenderJob.h)
+    enum class Output { File, Gif, ImageSequence };
+    Output output = Output::File;
+    QStringList codecOptions; // further consumer properties "key=value" (ProRes/DNxHR profile, VP9 speed …)
     int crf = 20;             // quality: smaller = better
     int maxBitrateK = 0;      // video bit rate cap (kbit/s), 0 = none
     QString preset = "medium"; // speed vs. file size
@@ -50,7 +56,10 @@ public:
     explicit Exporter(QObject* parent = nullptr);
     ~Exporter() override;
 
-    bool isRunning() const { return m_consumer != nullptr || m_check != nullptr || m_analysis != nullptr; }
+    bool isRunning() const
+    {
+        return m_consumer != nullptr || m_check != nullptr || m_analysis != nullptr || m_gif != nullptr;
+    }
     // Is any export running right now? (render cache pauses meanwhile)
     static bool anyRunning();
     // Threads for rendering (Deliver page, applies per machine, QSettings "render/cores" – key stays for old settings): 0 = all
@@ -83,6 +92,11 @@ private:
     void onCheckFinished(bool works);
     // Hardware encoder failed: render again with ExportSettings::softwareCodec; false = no fallback possible
     bool fallBackToSoftware(QString* error);
+    // Has the encoder written anything yet? (image sequences: the first frame)
+    bool wroteOutput() const;
+    // GIF: intermediate rendered -> ffmpeg palettegen/paletteuse into the target (m_gif)
+    void convertToGif();
+    void finishGif(bool ok, const QString& log);
 
     // Stabilization: missing analyses (engine/Stabilizer) run first in a thread, then start() again for real.
     // false = nothing to analyze
@@ -107,6 +121,8 @@ private:
     std::unique_ptr<Mlt::Event> m_fatalEvent;
     std::atomic<bool> m_fatal{false}; // avformat reported a fatal error (e.g. the encoder failed while rendering)
     std::unique_ptr<QProcess> m_check; // test encode of the hardware encoder before the render starts
+    std::unique_ptr<QProcess> m_gif;   // GIF: ffmpeg converts the intermediate m_path into m_target
+    QString m_target;                  // file the user asked for (differs from m_path for GIF/image sequences)
     ExportSettings m_settings;
     bool m_convertRate = false;
     int m_threads = 0, m_frames = 1;

@@ -774,11 +774,16 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     const QString formatId = a.contains("format") ? a["format"].toString() : job.settings.format;
     const auto& formats = renderFormats();
     const bool srtOnly = formatId == "srt";
-    if (!srtOnly && std::none_of(formats.begin(), formats.end(), [&](const RenderFormatInfo& i) { return formatId == i.id; }))
-        fail("BAD_ARGUMENT", "unknown format " + formatId + " (h264, h265, prores, aac, mp3, wav, aiff, alac, srt)");
+    if (!srtOnly && std::none_of(formats.begin(), formats.end(), [&](const RenderFormatInfo& i) { return formatId == i.id; })) {
+        QStringList ids;
+        for (const RenderFormatInfo& i : formats) ids << i.id;
+        fail("BAD_ARGUMENT", "unknown format " + formatId + " (" + ids.join(", ") + ", srt)");
+    }
     QString out = absolute(a["out"].toString());
     if (QFileInfo(out).suffix().isEmpty()) out += "." + QString(srtOnly ? "srt" : renderFormat(formatId).extension);
-    if (QFileInfo::exists(out) && !a["overwrite"].toBool())
+    RenderSettings target = job.settings;
+    if (!srtOnly) target.format = formatId;
+    if (QFileInfo::exists(firstOutputFile(out, target)) && !a["overwrite"].toBool())
         fail("EXISTS", "output exists (pass overwrite to replace it): " + out);
     job.path = out;
     if (!srtOnly) job.settings.format = formatId;
@@ -794,7 +799,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings.size = QSize(w & ~1, h & ~1);
     }
     if (a.contains("fps")) {
-        const FrameRate r = nearestFrameRate(a["fps"].toDouble());
+        const FrameRate r = nearestExportRate(a["fps"].toDouble());
         job.settings.rateNum = r.num;
         job.settings.rateDen = r.den;
     }
@@ -858,6 +863,10 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
     QJsonObject o{{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10}};
     if (!ex.usedCodec().isEmpty()) o["encoder"] = ex.usedCodec(); // video codec that wrote the file, e.g. h264_nvenc
+    if (job.settings.kind() == RenderKind::ImageSequence) {
+        o["frames_dir"] = imageSequenceDir(out);
+        o["pattern"] = QFileInfo(imageSequencePattern(out)).fileName();
+    }
     if (!ex.note().isEmpty()) o["encoder_note"] = ex.note();
     if (!job.settings.audioOnly()) {
         o["width"] = es.size.width();
@@ -1036,12 +1045,16 @@ const QVector<Command>& commands()
           {"files", T::Paths, "proxies: media files (default: all video in the project)"},
           {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"}},
          cmdApp},
-        {"render", "Render the project timeline to a video or audio file.",
+        {"render", "Render the project timeline to a video, animated GIF, image sequence or audio file.",
          {{"project", T::Path, "project file", true, true},
           {"out", T::Path, "output file (extension added if missing)", true},
           {"preset", T::String, presetHelp()},
-          {"format", T::String, "h264 (default), h265, prores, aac, mp3, wav, aiff, alac; srt = only the subtitle file"},
-          {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small, 3 = web: high with a bit rate cap like YouTube recommends (H.264/H.265; the YouTube and phone presets use it)"},
+          {"format", T::String,
+           "h264 (default), h265, av1, vp9 (WebM); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
+           "dnxhr-sq, dnxhr-hq, dnxhr-hqx (MOV); gif (animated, no sound; e.g. height 480, fps 15); png, tiff, jpeg = "
+           "image sequence (out 'x.png' writes x/x_00001.png …); audio only: aac, mp3, opus, wav, aiff, flac, alac; "
+           "srt = only the subtitle file"},
+          {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small, 3 = web: high with a bit rate cap like YouTube recommends (H.264/H.265 only; the YouTube and phone presets use it). ProRes, DNxHR, GIF and images have a fixed quality"},
           {"height", T::Integer, "shorter image edge, e.g. 720 (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
           {"fps", T::Number, "output frame rate (default: the timeline's)"},
@@ -1049,7 +1062,7 @@ const QVector<Command>& commands()
                                  "one works here, else software), software, nvenc (NVIDIA), vaapi (AMD/Intel on Linux), "
                                  "qsv (Intel Quick Sync). A hardware encoder that does not work falls back to software; "
                                  "the answer's 'encoder' is the codec actually used"},
-          {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3 (default 320)"},
+          {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
           {"subtitles", T::String, "none (default), burn (into the picture) or srt (file next to the video)"},
           {"from", T::Time, "start of the range (default: timeline start)"},
           {"to", T::Time, "end of the range, exclusive (default: timeline end)"},

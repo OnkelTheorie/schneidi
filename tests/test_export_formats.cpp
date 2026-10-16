@@ -1,5 +1,6 @@
-// Export formats of the Deliver page: MP3, AIFF, Apple Lossless, bit depths (16/24/32 float) and a different frame rate
-// than the timeline (frames converted, length correct, audio without jumps). Checked with ffprobe/ffmpeg.
+// Export formats of the Deliver page: MP3, AIFF, Apple Lossless, FLAC, Opus, bit depths (16/24/32 float), AV1, VP9,
+// ProRes/DNxHR profiles, animated GIF, image sequences and a different frame rate than the timeline (frames converted,
+// length correct, audio without jumps). Checked with ffprobe/ffmpeg.
 
 #include "check.h"
 
@@ -8,6 +9,9 @@
 #include "engine/RenderQueue.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QStandardPaths>
 #include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -15,6 +19,7 @@
 #include <QTimer>
 #include <clocale>
 #include <cmath>
+#include <tuple>
 
 namespace {
 
@@ -100,6 +105,9 @@ void testAudioFormats(const QString& dir)
         {"alac", 16, "a16.m4a", "alac", "s16p"},
         {"alac", 24, "a24.m4a", "alac", "s32p"},
         {"prores", 32, "p32.mov", "pcm_f32le", nullptr},
+        {"flac", 16, "a16.flac", "flac", "s16"},
+        {"flac", 24, "a24.flac", "flac", "s32"},
+        {"opus", 24, "a.opus", "opus", nullptr},
     };
     for (const Case& c : cases) {
         const QString path = dir + "/" + c.file;
@@ -163,6 +171,98 @@ void testFrameRate(const QString& dir)
     if (render(same)) CHECK_EQ(probe(same.path, "video").value("nb_frames").toString(), QString("100"));
 }
 
+// ffprobe -count_frames: frames really in the file (GIF has no nb_frames)
+int countFrames(const QString& path)
+{
+    QProcess p;
+    p.start("ffprobe", {"-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                        "stream=nb_read_frames", "-of", "default=nw=1:nk=1", path});
+    p.waitForFinished(60000);
+    return p.readAllStandardOutput().trimmed().toInt();
+}
+
+void testVideoFormats(const QString& dir)
+{
+    struct Case { const char* format; const char* file; const char* codec; const char* profile; const char* pixFmt; const char* audio; };
+    const Case cases[] = {
+        {"av1", "v.av1.mp4", "av1", nullptr, "yuv420p", "aac"},
+        {"vp9", "v.webm", "vp9", nullptr, "yuv420p", "opus"},
+        {"prores", "hq.mov", "prores", "HQ", "yuv422p10le", "pcm_s24le"},
+        {"prores422", "std.mov", "prores", "Standard", "yuv422p10le", "pcm_s24le"},
+        {"proreslt", "lt.mov", "prores", "LT", "yuv422p10le", "pcm_s24le"},
+        {"proresproxy", "proxy.mov", "prores", "Proxy", "yuv422p10le", "pcm_s24le"},
+        {"prores4444", "4444.mov", "prores", "4444", "yuv444p12le", "pcm_s24le"}, // decoder reports 4444 as 12 bit
+        {"dnxhr-sq", "sq.mov", "dnxhd", "DNXHR SQ", "yuv422p", "pcm_s24le"},
+        {"dnxhr-hq", "dhq.mov", "dnxhd", "DNXHR HQ", "yuv422p", "pcm_s24le"},
+        {"dnxhr-hqx", "hqx.mov", "dnxhd", "DNXHR HQX", "yuv422p10le", "pcm_s24le"},
+    };
+    for (const Case& c : cases) {
+        const QString path = dir + "/" + c.file;
+        if (!render(job(path, c.format))) continue;
+        const QJsonObject v = probe(path, "video");
+        bool ok = CHECK_EQ(v.value("codec_name").toString(), QString(c.codec));
+        if (c.profile) ok = CHECK_EQ(v.value("profile").toString(), QString(c.profile)) && ok;
+        ok = CHECK_EQ(v.value("pix_fmt").toString(), QString(c.pixFmt)) && ok;
+        ok = CHECK_EQ(probe(path, "audio").value("codec_name").toString(), QString(c.audio)) && ok;
+        ok = CHECK_EQ(countFrames(path), kFrames) && ok;
+        if (!ok) std::printf("       %s\n", c.file);
+    }
+    // Quality levels take effect (CRF per format): "small" is clearly smaller than "high"
+    for (const char* format : {"av1", "vp9"}) {
+        const QString ext = renderFormat(format).extension;
+        RenderJob high = job(dir + "/q0-" + format + "." + ext, format), small = job(dir + "/q2-" + format + "." + ext, format);
+        small.settings.quality = 2;
+        if (render(high) && render(small))
+            if (!CHECK(QFileInfo(small.path).size() * 3 < QFileInfo(high.path).size() * 2))
+                std::printf("       %s: %lld vs %lld\n", format, QFileInfo(small.path).size(), QFileInfo(high.path).size());
+    }
+}
+
+void testGif(const QString& dir)
+{
+    RenderJob j = job(dir + "/anim.gif", "gif");
+    j.settings.shortSide = 180;
+    j.settings.rateNum = 10;
+    j.settings.rateDen = 1;
+    j.size = j.settings.outputSize(kFmt.size());
+    if (!render(j)) return;
+    const QJsonObject v = probe(j.path, "video");
+    CHECK_EQ(v.value("codec_name").toString(), QString("gif"));
+    CHECK_EQ(v.value("width").toInt(), 320);
+    CHECK_EQ(v.value("height").toInt(), 180);
+    CHECK(probe(j.path, "audio").isEmpty());
+    CHECK_EQ(countFrames(j.path), 40); // 4 s at 10 fps
+    CHECK(!QFileInfo::exists(j.path + ".part"));
+    // the intermediate in the temp folder is gone again
+    CHECK(QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).entryList({"schneidi-gif-*"}).isEmpty());
+}
+
+void testImageSequence(const QString& dir)
+{
+    RenderJob j = job(dir + "/seq.png", "png");
+    if (render(j)) {
+        const QDir frames(dir + "/seq");
+        CHECK_EQ(frames.entryList({"seq_*.png"}, QDir::Files).size(), qsizetype(kFrames));
+        CHECK(frames.exists("seq_00001.png"));
+        CHECK(frames.exists("seq_00100.png"));
+        CHECK(!QFileInfo::exists(j.path)); // no file of the plain name
+        const QJsonObject v = probe(frames.filePath("seq_00001.png"), "video");
+        CHECK_EQ(v.value("codec_name").toString(), QString("png"));
+        CHECK_EQ(v.value("width").toInt(), 640);
+        CHECK_EQ(firstOutputFile(j.path, j.settings), frames.filePath("seq_00001.png"));
+    }
+    for (const auto& [format, file, codec] : {std::tuple{"jpeg", "j.jpg", "mjpeg"}, std::tuple{"tiff", "t.tif", "tiff"}}) {
+        RenderJob k = job(dir + "/" + file, format);
+        k.inOut = true; // 10 frames are enough
+        k.from = 0;
+        k.to = 9;
+        if (!render(k)) continue;
+        const QString first = firstOutputFile(k.path, k.settings);
+        CHECK_EQ(probe(first, "video").value("codec_name").toString(), QString(codec));
+        CHECK_EQ(QDir(imageSequenceDir(k.path)).entryList(QDir::Files).size(), qsizetype(10));
+    }
+}
+
 void testSettingsJson()
 {
     RenderSettings s;
@@ -181,6 +281,40 @@ void testSettingsJson()
     audio.format = "wav";
     audio.rateNum = 50;
     CHECK(audio.outputRate(kFmt.rate) == kFmt.rate); // audio only: frame rate irrelevant
+
+    // Quality per format; "web" (bit rate cap) only where it exists
+    RenderSettings av1;
+    av1.format = "av1";
+    CHECK_EQ(av1.crf(), 28);
+    av1.quality = RenderSettings::kQualityWeb;
+    CHECK_EQ(av1.crf(), 28);
+    CHECK_EQ(av1.maxBitrateK(QSize(1920, 1080), {25, 1}), 0);
+    CHECK(!av1.hasEncoderChoice());
+    RenderSettings h264;
+    h264.quality = RenderSettings::kQualityWeb;
+    CHECK(h264.maxBitrateK(QSize(1920, 1080), {25, 1}) > 0);
+    CHECK(h264.hasEncoderChoice());
+    RenderSettings gif;
+    gif.format = "gif";
+    CHECK(!gif.hasAudio() && !gif.audioOnly() && gif.kind() == RenderKind::Gif);
+    CHECK(gif.audioBitChoices().isEmpty());
+    RenderSettings opus;
+    opus.format = "opus";
+    CHECK(opus.hasAudioBitrate() && opus.audioOnly());
+    RenderSettings flac;
+    flac.format = "flac";
+    CHECK(flac.audioBitChoices() == QVector<int>({16, 24}));
+    CHECK_EQ(imageSequencePattern("/x/a b.png"), QString("/x/a b/a b_%05d.png"));
+    const FrameRate fps15{15, 1}, fps25{25, 1};
+    CHECK(nearestExportRate(15) == fps15);
+    CHECK(nearestExportRate(24.9) == fps25);
+    // every format id is unique and found again
+    QStringList ids;
+    for (const RenderFormatInfo& f : renderFormats()) {
+        CHECK(!ids.contains(f.id));
+        ids << f.id;
+        CHECK_EQ(QString(renderFormat(f.id).id), QString(f.id));
+    }
 }
 
 } // namespace
@@ -203,6 +337,9 @@ int main(int argc, char** argv)
                                 "-shortest"});
     if (!CHECK(!g_media.isEmpty())) return Check::result();
     testAudioFormats(tmp.path());
+    testVideoFormats(tmp.path());
+    testGif(tmp.path());
+    testImageSequence(tmp.path());
     testFrameRate(tmp.path());
     return Check::result();
 }

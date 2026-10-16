@@ -10,15 +10,25 @@
 #include <QString>
 #include <QVector>
 
+// What a format writes: a video file, audio only, an animated GIF (rendered losslessly first, then converted with
+// ffmpeg's palette filters) or an image sequence (one file per frame in its own folder)
+enum class RenderKind { Video, Audio, Gif, ImageSequence };
+
 // Output format = container + codecs (like DaVinci's format/codec pairs, slimmed down)
 struct RenderFormatInfo {
     const char* id;         // stored in project/presets
     const char* label;      // display (N_ marks where translated)
-    const char* extension;  // Dateiendung
+    const char* extension;  // file extension
     const char* videoCodec; // "" = audio only
-    const char* audioCodec; // PCM: bit depth comes from RenderSettings::audioBits (ending le/be stays)
+    const char* audioCodec; // "" = no sound; PCM: bit depth comes from RenderSettings::audioBits (ending le/be stays)
     const char* pixFmt;     // pixel format of the video
-    bool hasQuality;        // CRF levels (H.264/H.265); ProRes has fixed quality
+    RenderKind kind;
+    int crf[3];             // CRF of the quality levels high/medium/small; 0 = fixed quality (ProRes, DNxHR, images)
+    bool webQuality;        // quality "web" (bit rate cap) available (H.264/H.265)
+    bool hardware;          // hardware encoders of the graphics card selectable (H.264/H.265)
+    const char* options;    // further encoder settings for MLT's avformat consumer, "key=value key=value"
+
+    bool hasQuality() const { return crf[0] > 0; }
 };
 const QVector<RenderFormatInfo>& renderFormats();
 
@@ -48,11 +58,13 @@ struct RenderSettings {
     VideoEncoder encoder = VideoEncoder::Auto;
 
     bool audioOnly() const;
+    bool hasAudio() const;          // GIF and image sequences have no sound
+    RenderKind kind() const;
     bool hasEncoderChoice() const; // H.264/H.265: software or hardware encoder
     bool hasAudioBitrate() const;   // AAC/MP3
     QVector<int> audioBitChoices() const; // selectable bit depths (empty = not adjustable)
     QString audioCodec() const;     // FFmpeg codec with the chosen bit depth, e.g. pcm_f32le
-    QString audioSampleFormat() const; // Apple Lossless only: s16p/s32p, otherwise empty
+    QString audioSampleFormat() const; // Apple Lossless: s16p/s32p, FLAC: s16/s32, otherwise empty
     FrameRate outputRate(FrameRate timeline) const;
     QSize outputSize(QSize timeline) const; // even dimensions
     int crf() const;
@@ -67,6 +79,16 @@ struct RenderSettings {
     bool operator==(const RenderSettings& o) const;
     bool operator!=(const RenderSettings& o) const { return !(*this == o); }
 };
+
+// Image sequences: frames go into a folder named like the file, "<folder>/<name>/<name>_00001.png"
+// (path = "<folder>/<name>.png" as for every other format; numbering starts at 1 like ffmpeg)
+QString imageSequenceDir(const QString& path);
+QString imageSequencePattern(const QString& path); // "…/name/name_%05d.png" for the avformat consumer
+QString firstOutputFile(const QString& path, const RenderSettings& s); // the file itself, for sequences the first frame
+
+// Frame rates offered for export only (GIF, smaller files) in addition to kFrameRates
+inline constexpr FrameRate kExportOnlyRates[] = {{10, 1}, {12, 1}, {15, 1}};
+FrameRate nearestExportRate(double fps);
 
 // Output size with the timeline's aspect ratio and a given shorter edge (even dimensions)
 QSize sizeForShortSide(QSize timeline, int shortSide);

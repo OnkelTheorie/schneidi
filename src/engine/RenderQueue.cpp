@@ -27,7 +27,7 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     s.path = job.path;
     s.format = format;
     s.videoCodec = f.videoCodec;
-    if (f.hasQuality) { // H.264/H.265: software or hardware encoder (may probe the graphics card once)
+    if (f.hardware) { // H.264/H.265: software or hardware encoder (may probe the graphics card once)
         const HardwareEncoders::Choice c = HardwareEncoders::resolve(job.settings.encoder, job.settings.format);
         s.videoCodec = c.codec;
         s.softwareCodec = c.fallback;
@@ -37,6 +37,10 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     s.audioSampleFormat = job.settings.audioSampleFormat();
     s.rate = job.settings.outputRate(format.rate);
     s.pixFmt = f.pixFmt;
+    s.output = f.kind == RenderKind::Gif             ? ExportSettings::Output::Gif
+               : f.kind == RenderKind::ImageSequence ? ExportSettings::Output::ImageSequence
+                                                     : ExportSettings::Output::File;
+    s.codecOptions = QString(f.options).split(' ', Qt::SkipEmptyParts);
     s.crf = job.settings.crf();
     s.audioBitrateK = job.settings.audioBitrateK;
     s.threads = Exporter::savedThreads(); // applies per machine, not per job

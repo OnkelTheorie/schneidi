@@ -218,7 +218,9 @@ int main(int argc, char** argv)
         panel.setSettings(RenderSettings{}); // H.264, quality high: no preset (YouTube caps the bit rate)
         CHECK_EQ(panel.currentPreset(), -1);
         auto* format = panel.findChild<QComboBox*>("renderFormat");
-        if (CHECK(format && format->count() == renderFormats().size())) {
+        int formats = 0; // entries without the separators between the groups
+        for (int i = 0; format && i < format->count(); ++i) formats += format->itemData(i).isValid() ? 1 : 0;
+        if (CHECK(format && formats == renderFormats().size())) {
             format->setCurrentIndex(1); // H.265 at timeline resolution = built-in H.265 preset
             CHECK(panel.currentPreset() >= 0 && presets[panel.currentPreset()].settings.format == "h265");
             RenderSettings custom;

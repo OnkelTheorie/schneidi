@@ -36,7 +36,8 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     if (a.format != b.format) return false;
     const RenderFormatInfo& f = renderFormat(a.format);
     if (!a.audioOnly() && a.outputSize(timeline) != b.outputSize(timeline)) return false;
-    if (f.hasQuality && (a.quality != b.quality || a.encoder != b.encoder)) return false;
+    if (f.hasQuality() && a.quality != b.quality) return false;
+    if (f.hardware && a.encoder != b.encoder) return false;
     if (a.hasAudioBitrate() && a.audioBitrateK != b.audioBitrateK) return false;
     if (!a.audioBitChoices().isEmpty() && a.audioCodec() != b.audioCodec()) return false;
     if (a.audioSampleFormat() != b.audioSampleFormat()) return false;
@@ -79,13 +80,20 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
 
     m_format = new QComboBox;
     m_format->setObjectName("renderFormat");
-    for (const RenderFormatInfo& f : renderFormats()) m_format->addItem(T(f.label), QString(f.id));
+    // Groups like DaVinci's format list: delivery, mastering, GIF, image sequences, audio only
+    const auto group = [](const RenderFormatInfo& f) { return int(f.kind) * 2 + (f.hasQuality() ? 0 : 1); };
+    for (const RenderFormatInfo& f : renderFormats()) {
+        if (m_format->count() > 0 && group(renderFormat(m_format->itemData(m_format->count() - 1).toString())) != group(f))
+            m_format->insertSeparator(m_format->count());
+        m_format->addItem(T(f.label), QString(f.id));
+    }
 
     m_resolution = new QComboBox;
     // Like DaVinci "Frame rate" when rendering: default = timeline, otherwise converted on export
     m_rate = new QComboBox;
     m_rate->setObjectName("renderRate");
     m_rate->addItem(QString(), QSize());
+    for (const FrameRate& r : kExportOnlyRates) m_rate->addItem(QString("%1 fps").arg(r.label()), QSize(r.num, r.den));
     for (const FrameRate& r : kFrameRates) m_rate->addItem(QString("%1 fps").arg(r.label()), QSize(r.num, r.den));
     m_rate->setToolTip(T("Weicht die Bildrate von der Timeline ab, werden Bilder beim Export ausgelassen oder "
                          "wiederholt (der Ton bleibt unverändert)."));
@@ -389,8 +397,13 @@ void DeliverPanel::updateControls()
     const RenderFormatInfo& f = renderFormat(m_format->currentData().toString());
     const bool video = *f.videoCodec;
     m_resolution->setEnabled(video);
-    m_quality->setEnabled(f.hasQuality);
-    m_quality->setToolTip(f.hasQuality ? QString() : T("Bei diesem Format fest"));
+    m_quality->setEnabled(f.hasQuality());
+    m_quality->setToolTip(f.hasQuality() ? QString() : T("Bei diesem Format fest"));
+    // "Web" (bit rate cap) only for H.264/H.265
+    if (auto* model = qobject_cast<QStandardItemModel*>(m_quality->model()))
+        if (QStandardItem* item = model->item(RenderSettings::kQualityWeb)) item->setEnabled(f.webQuality);
+    if (!f.webQuality && f.hasQuality() && m_quality->currentIndex() == RenderSettings::kQualityWeb)
+        m_quality->setCurrentIndex(0);
     updateEncoders();
     RenderSettings probe;
     probe.format = f.id;
@@ -429,7 +442,7 @@ void DeliverPanel::updateEncoders()
     const QVector<VideoEncoder> hardware = probed ? HardwareEncoders::available(f.id) : QVector<VideoEncoder>();
     list += hardware;
     // A hardware encoder from a preset/job that does not work here (or is not known yet) stays selectable
-    const bool missing = f.hasQuality && !list.contains(m_wantedEncoder);
+    const bool missing = f.hardware && !list.contains(m_wantedEncoder);
     if (missing) list << m_wantedEncoder;
     QStringList labels;
     for (VideoEncoder e : list) {
@@ -450,12 +463,12 @@ void DeliverPanel::updateEncoders()
         m_encoder->clear();
         for (int i = 0; i < list.size(); ++i) m_encoder->addItem(labels[i], int(list[i]));
     }
-    if (f.hasQuality) {
+    if (f.hardware) {
         const QSignalBlocker block(m_encoder);
         m_encoder->setCurrentIndex(std::max(0, m_encoder->findData(int(m_wantedEncoder))));
     }
-    m_encoder->setEnabled(f.hasQuality);
-    m_encoder->setToolTip(!f.hasQuality ? T("Bei diesem Format fest")
+    m_encoder->setEnabled(f.hardware);
+    m_encoder->setToolTip(!f.hardware ? T("Bei diesem Format fest")
                           : !probed     ? T("Grafikkarte wird noch geprüft …")
                                         : T("Hardware-Encoder der Grafikkarte rendern viel schneller, die Datei wird bei "
                                             "gleicher Qualität etwas größer. Klappt einer nicht, wird mit Software "
@@ -563,7 +576,7 @@ bool DeliverPanel::addToQueue(bool confirm)
     const bool inQueue = std::any_of(q.cbegin(), q.cend(), [&](const RenderJob& j) {
         return j.path == job.path && j.status != RenderStatus::Done;
     });
-    if (confirm && (inQueue || QFileInfo::exists(job.path))) {
+    if (confirm && (inQueue || QFileInfo::exists(firstOutputFile(job.path, job.settings)))) {
         const QString text = inQueue ? T("%1 ist schon in der Render-Warteschlange. Trotzdem hinzufügen?").arg(file)
                                      : T("%1 existiert schon. Beim Rendern überschreiben?").arg(file);
         if (QMessageBox::question(this, T("Zur Render-Warteschlange hinzufügen"), text) != QMessageBox::Yes)

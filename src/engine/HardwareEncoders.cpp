@@ -161,7 +161,7 @@ void ensureProbed()
 QString codecName(VideoEncoder e, const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
-    if (!f.hasQuality) return f.videoCodec;
+    if (!f.hardware) return f.videoCodec;
     const QString base = QLatin1String(f.id) == QLatin1String("h265") ? "hevc" : "h264";
     switch (e) {
     case VideoEncoder::Nvenc: return base + "_nvenc";
@@ -254,7 +254,7 @@ bool test(const QString& codec, QSize size, int crf)
 
 QVector<VideoEncoder> available(const QString& format)
 {
-    if (!renderFormat(format).hasQuality) return {};
+    if (!renderFormat(format).hardware) return {};
     ensureProbed();
     QVector<VideoEncoder> list;
     for (VideoEncoder e : {VideoEncoder::Nvenc, VideoEncoder::Qsv, VideoEncoder::Vaapi})
@@ -293,7 +293,7 @@ Choice resolve(VideoEncoder wanted, const QString& format)
     const RenderFormatInfo& f = renderFormat(format);
     Choice c;
     c.codec = f.videoCodec;
-    if (!f.hasQuality || wanted == VideoEncoder::Software) return c;
+    if (!f.hardware || wanted == VideoEncoder::Software) return c;
     const QVector<VideoEncoder> list = available(format);
     if (wanted == VideoEncoder::Auto) {
         if (!list.isEmpty()) {
