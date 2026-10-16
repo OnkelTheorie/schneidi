@@ -14,6 +14,8 @@ A DaVinci-style workflow without DaVinci's hurdles: runs on modest hardware and 
 
 ![Edit page](screenshots/edit.png)
 
+![Multicam view: nine angles of one event side by side – click an angle or press 1–9 to cut to it](screenshots/multicam.png)
+
 ## Features
 
 - Multiple video and audio tracks: cut, trim, move, snapping, undo/redo
@@ -96,6 +98,26 @@ schneidi-cli edit @app --ops '[{"op":"split","at":"12s"}]'   # cut in the open p
 schneidi-cli app undo
 ```
 The AppImage contains the CLI too: `schneidi-x86_64.AppImage cli help`, or a link to the AppImage named `schneidi-cli`.
+
+## Roadmap
+
+What we are working on next. Plans can still change; the order within a version is not fixed.
+
+### 0.8.x – small updates
+| Feature | What it does |
+|---|---|
+| **Keyboard and layout presets** | Load a whole set of shortcuts at once, a simpler "beginner" layout, remember panel sizes per page |
+| **Contact sheets** | `frames`: choose the number of columns and the tile size, crop each source separately |
+
+### 0.9 – Masks & analysis
+| Feature | What it does |
+|---|---|
+| **Shape masks** | Shapes such as a rectangle or an ellipse on the Color page: grade only part of the picture |
+| **Blur or cover a region** | Hide a face, a name, a phone number or an overlay (built on the masks) |
+| **Motion tracking** | A mask follows a moving object, so the blur stays where it belongs |
+| **Highlight finder for AI editing** | `peaks` groups loud moments into fights, finds a kill sound from one example, `scenes` spots new kill-feed entries by color and size, and every candidate gets a score – ready to hand to `keep` |
+| **EDL / XML export** | Hand a finished cut over to other editors for finishing |
+| **Voiceover** | Record your voice straight onto a track while the timeline plays |
 
 ## Building
 
