@@ -1,7 +1,7 @@
-// Multicam in schneidi-cli / MCP (docs/plan-0.8.md): edit ops multicam (sync start/in/marker/sound), source_marker,
-// angle (cut/switch, by number or name, modes), angle_cuts (a list of switch points at once, e.g. from an AI that
-// found the kills per POV), flatten, multicam_nudge, angle_name; info/timelines show angles; the sync command
-// measures offsets of files without a project. Errors name the op/cut and save nothing.
+// Multicam in schneidi-cli / MCP (docs/archiv/plan-0.8.md): edit ops multicam (sync start/in/marker/sound),
+// source_marker, angle (cut/switch, by number or name, modes), angle_cuts (a list of switch points at once, e.g. from
+// an AI that found the kills per POV), flatten, multicam_nudge, angle_name; info/timelines show angles; the sync
+// command measures offsets of files without a project. Errors name the op/cut and save nothing.
 #include "cli/Commands.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"

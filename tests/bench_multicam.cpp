@@ -1,4 +1,4 @@
-// Benchmark (not a CTest test): what the multicam grid (docs/plan-0.8.md) costs in the real preview Engine.
+// Benchmark (not a CTest test): what the multicam grid (docs/archiv/plan-0.8.md) costs in the real preview Engine.
 // Opens a project with a multicam clip, shows its grid, plays it (shown frames per second) and flips the pages
 // back and forth while stopped and while playing (memory after each step: does it settle or keep growing?).
 // Run: QT_QPA_PLATFORM=offscreen SDL_AUDIODRIVER=dummy ./build-tests/tests/bench_multicam <project.schneidi> [cycles]

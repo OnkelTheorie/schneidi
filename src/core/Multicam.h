@@ -1,6 +1,6 @@
 #pragma once
-// Multicam like DaVinci (docs/plan-0.8.md): a multicam clip is a sequence (Sequence::multicam) with one angle per
-// recording, each on its own tracks in sync. In a timeline its segments (ClipKind::Multicam) show one angle each;
+// Multicam like DaVinci (docs/archiv/plan-0.8.md): a multicam clip is a sequence (Sequence::multicam) with one angle
+// per recording, each on its own tracks in sync. In a timeline its segments (ClipKind::Multicam) show one angle each;
 // cutting/switching (Editor::multicamCut ...) writes normal edits. Here: sync placement of the recordings and
 // lookups shared by editor, engine and viewer. Edits are in core/EditorMulticam.cpp.
 

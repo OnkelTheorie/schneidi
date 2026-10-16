@@ -1,6 +1,6 @@
 #pragma once
-// Ducking (docs/plan-0.8.md): lower the music while other tracks (voice, game) have sound, with volume keyframes that
-// stay editable on the volume line. Same logic for the app (DuckingDialog -> Editor::duck) and the CLI op `duck`;
+// Ducking (docs/archiv/plan-0.8.md): lower the music while other tracks (voice, game) have sound, with volume keyframes
+// that stay editable on the volume line. Same logic for the app (DuckingDialog -> Editor::duck) and the CLI op `duck`;
 // the sound ranges come from per-frame peaks of the 'under' tracks (AudioAnalysis::soundRanges).
 
 #include "core/Types.h"

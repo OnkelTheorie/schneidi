@@ -1,5 +1,5 @@
 #pragma once
-// Audio sync for multicam (docs/plan-0.8.md): finds the offset between two recordings of the same event by their
+// Audio sync for multicam (docs/archiv/plan-0.8.md): finds the offset between two recordings of the same event by their
 // sound. Each recording becomes an onset envelope (how suddenly the level rises in five bands, log-compressed,
 // 200 values/s), so only shared events count (round start, spike, announcements) and not how loud or dull each one
 // hears them. The envelopes are cross-correlated over the whole length (FFT, scored per lag against the spread of

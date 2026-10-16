@@ -1,5 +1,5 @@
 #pragma once
-// Multicam viewer like DaVinci (docs/plan-0.8.md): the grid of all angles of the multicam clip at the playhead
+// Multicam viewer like DaVinci (docs/archiv/plan-0.8.md): the grid of all angles of the multicam clip at the playhead
 // (picture from the engine's grid tractor, see Engine::showMulticam), the active angle framed red, angle names,
 // layout auto/2x2/3x3/4x4 with pages, modes video+audio / video / audio. Click into the grid: while playing = cut
 // to that angle, while stopped = switch the segment's angle, Alt+click = cut. Knows no engine: the main window
@@ -57,7 +57,7 @@ public:
     QRect gridRect() const;
 
     // More cells than this on a page play smoothly only with proxies: H.264 decodes only at full size, so 16 1080p
-    // decoders are a slide show (docs/plan-0.8.md)
+    // decoders are a slide show (docs/archiv/plan-0.8.md)
     static constexpr int kProxyHintCells = 4;
     // Media files on the angles' picture tracks (what proxies help with), each once
     QStringList angleFiles() const;

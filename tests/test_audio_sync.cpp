@@ -1,5 +1,5 @@
-// Audio sync for multicam (docs/plan-0.8.md): onset envelope, offset between two recordings that only share a few
-// sounds (round start, spike, announcements) while each player hears his own sounds, cases where it must not guess
+// Audio sync for multicam (docs/archiv/plan-0.8.md): onset envelope, offset between two recordings that only share a
+// few sounds (round start, spike, announcements) while each player hears his own sounds, cases where it must not guess
 // (silence, nothing shared, only periodic beeps), drift between two clocks, chains of recordings that do not all
 // overlap, real files (sample rates, several streams, no audio, cancel), sync by source marker / In point and the
 // fallback from sound to marker. Source markers in the Media Pool and the project file.

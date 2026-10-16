@@ -1,4 +1,4 @@
-// Import presets for files with several audio streams (docs/plan-0.8.md; OBS: "Mix" plus single streams plays
+// Import presets for files with several audio streams (docs/archiv/plan-0.8.md; OBS: "Mix" plus single streams plays
 // everything twice): "mute the Mix stream when single streams exist" and rules per stream title (place / mute /
 // leave out, volume, track name), applied wherever clips come from files (insert, F9–F12, drag from the viewer,
 // multicam angles, CLI), learned from a clip in the timeline, kept in the settings, edited in a dialog.

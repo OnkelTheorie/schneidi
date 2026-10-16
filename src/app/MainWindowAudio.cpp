@@ -1,4 +1,4 @@
-// MainWindow: import presets for audio streams and ducking (docs/plan-0.8.md)
+// MainWindow: import presets for audio streams and ducking (docs/archiv/plan-0.8.md)
 #include "app/MainWindow.h"
 
 #include "app/DuckingDialog.h"

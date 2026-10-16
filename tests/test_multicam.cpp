@@ -1,5 +1,5 @@
-// Multicam (docs/plan-0.8.md), model and Editor without rendering: a multicam clip is a sequence with one angle per
-// recording (video track + one audio track per stream, placed by the sync offsets). In the timeline its segments
+// Multicam (docs/archiv/plan-0.8.md), model and Editor without rendering: a multicam clip is a sequence with one angle
+// per recording (video track + one audio track per stream, placed by the sync offsets). In the timeline its segments
 // carry the active angle; cutting/switching writes normal edits that can be changed later (other angle, roll, trim,
 // ripple, transitions, copy). Flatten turns segments into the angle's own clips. Resync inside the multicam
 // sequence, renaming/adding angles, protections, project file (also broken files) and a long undo chain.

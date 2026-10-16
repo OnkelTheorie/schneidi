@@ -1,9 +1,9 @@
-// Multicam viewer (docs/plan-0.8.md): grid layout (auto 1x1/2x2/3x3/4x4, fixed, pages, cells tile the area, hit
+// Multicam viewer (docs/archiv/plan-0.8.md): grid layout (auto 1x1/2x2/3x3/4x4, fixed, pages, cells tile the area, hit
 // test), the grid widget (click while playing = cut, while stopped = switch, Alt+click = cut, number keys, modes
 // video+audio / video / audio, pages, the grid follows the active angle's page, red frame on the active angle,
-// nothing to do without a multicam clip, the proxy hint above many cells), the engine (a grid rebuilt while playing goes on where playback is) and
-// the main window (multicam mode, keys 1–9 / Alt+1–9 only there, Alt+N = target track otherwise, flatten action).
-// Everything offscreen.
+// nothing to do without a multicam clip, the proxy hint above many cells), the engine (a grid rebuilt while playing
+// goes on where playback is) and the main window (multicam mode, keys 1–9 / Alt+1–9 only there, Alt+N = target track
+// otherwise, flatten action). Everything offscreen.
 #include "check.h"
 
 #include "app/InputBindings.h"

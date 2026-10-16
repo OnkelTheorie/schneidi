@@ -1,5 +1,5 @@
-// Multicam rendering (docs/plan-0.8.md): a segment shows picture and sound of its active angle (also video-only and
-// audio-only switches, several streams of one angle, an angle's muted stream, gaps of a split recording), the sync
+// Multicam rendering (docs/archiv/plan-0.8.md): a segment shows picture and sound of its active angle (also video-only
+// and audio-only switches, several streams of one angle, an angle's muted stream, gaps of a split recording), the sync
 // offset is respected frame-exactly and follows a resync, the sound runs on across a through edit. The grid for the
 // viewer: all angles of a page in their cells (auto and fixed layout, pages, aspect ratio kept), at the right sync
 // position, sound = only the active angle, switched live without rebuilding.

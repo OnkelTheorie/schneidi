@@ -1,5 +1,5 @@
-// MainWindow: multicam like DaVinci (docs/plan-0.8.md) – viewer mode with the grid of the angles, cut/switch keys,
-// "Create Multicam Clip" from the Media Pool, angle menu in the timeline.
+// MainWindow: multicam like DaVinci (docs/archiv/plan-0.8.md) – viewer mode with the grid of the angles, cut/switch
+// keys, "Create Multicam Clip" from the Media Pool, angle menu in the timeline.
 #include "app/MainWindow.h"
 
 #include "app/InputBindings.h"
