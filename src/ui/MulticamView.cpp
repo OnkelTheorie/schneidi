@@ -223,12 +223,15 @@ void MulticamView::refresh()
         active = m_mode == Multicam::Mode::Audio ? (audio ? audio->angle : c->angle) : (video ? video->angle : c->angle);
         sound = audio ? audio->angle : c->angle;
     }
-    const bool gridMoved = sequence != m_sequence || offset != m_offset;
+    const bool clipMoved = sequence != m_sequence || offset != m_offset;
+    const int page = m_page;
     m_sequence = sequence;
     m_offset = offset;
     // The active angle changed (key, click, menu, playback into the next segment): show its page
     if (active != m_active && active >= 0) m_page = active / perPage();
     m_page = std::clamp(m_page, 0, pageCount() - 1);
+    // Another page is another picture: the grid tractor follows, not only names and frame
+    const bool gridMoved = clipMoved || m_page != page;
     const bool activeChanged = active != m_active;
     m_active = active;
     const bool soundChanged = sound != m_sound;

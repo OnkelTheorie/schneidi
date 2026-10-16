@@ -12,6 +12,7 @@
 #include "engine/Stabilizer.h"
 #include "engine/StillFetcher.h"
 #include "engine/TimelineBuilder.h"
+#include "ui/MulticamGrid.h"
 
 #include <Mlt.h>
 #include <QCoreApplication>
@@ -19,8 +20,28 @@
 #include <QFileInfo>
 #include <QPainter>
 #include <QSettings>
+#include <QThread>
+#include <algorithm>
 #include <cstring>
 #include <utility>
+
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+
+namespace {
+
+// Hands freed memory back to the system. glibc raises its mmap threshold after the first freed frame buffer (several
+// MB each), from then on frames come from the heap and stay there when freed: every multicam grid built (one decoder
+// per cell) left hundreds of MB behind (4 GB after flipping the pages of 20 angles a few times).
+void releaseFreedMemory()
+{
+#ifdef __GLIBC__
+    malloc_trim(0);
+#endif
+}
+
+} // namespace
 
 struct EngineCallbacks {
     // Runs in the MLT consumer thread as soon as a frame is to be shown
@@ -310,6 +331,7 @@ void Engine::showTimeline(int position, bool keepSpeed)
         m_grid.reset();
         m_gridContent = {};
         m_gridAngles.clear();
+        releaseFreedMemory();
     }
     emit modeChanged(m_mode);
 }
@@ -329,12 +351,19 @@ bool Engine::showMulticam(const Timeline& content, const QVector<MulticamAngle>&
         }
         return true;
     }
+    // One decoder per cell: their own frame threads only cost memory (each holds frames of its own) once the cells
+    // keep all cores busy; a single cell decodes with all of them
+    const int cells = std::min<int>(angles.size(), MulticamGrid::perPage(angles.size(), options.columns));
+    m_gridBuilder->setDecoderThreads(cells <= 1 ? 0 : std::max(1, QThread::idealThreadCount() / cells));
     auto hooks = std::make_unique<MulticamGridHooks>();
     auto grid = m_gridBuilder->buildMulticamGrid(content, angles, options, hooks.get());
     if (!grid || !grid->is_valid()) return false;
     m_consumer->stop(); // the old grid must not be read anymore
+    // Building took a while and the old grid played on meanwhile: go on from there, not from `position`
+    if (m_speed != 0.0 && m_mode == Mode::Multicam) position = m_position;
     m_grid = std::move(grid);
     m_gridHooks = std::move(hooks);
+    releaseFreedMemory(); // the old grid's decoders and frames
     m_gridContent = content;
     m_gridAngles = angles;
     m_gridColumns = options.columns;

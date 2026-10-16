@@ -1,7 +1,8 @@
 // Multicam viewer (docs/plan-0.8.md): grid layout (auto 1x1/2x2/3x3/4x4, fixed, pages, cells tile the area, hit
 // test), the grid widget (click while playing = cut, while stopped = switch, Alt+click = cut, number keys, modes
-// video+audio / video / audio, pages, red frame on the active angle, nothing to do without a multicam clip) and the
-// main window (multicam mode, keys 1–9 / Alt+1–9 only there, Alt+N = target track otherwise, flatten action).
+// video+audio / video / audio, pages, the grid follows the active angle's page, red frame on the active angle,
+// nothing to do without a multicam clip), the engine (a grid rebuilt while playing goes on where playback is) and
+// the main window (multicam mode, keys 1–9 / Alt+1–9 only there, Alt+N = target track otherwise, flatten action).
 // Everything offscreen.
 #include "check.h"
 
@@ -14,6 +15,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "engine/TimelineBuilder.h"
 #include "ui/MulticamGrid.h"
 #include "ui/MulticamView.h"
 
@@ -21,6 +23,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QMouseEvent>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -325,6 +328,68 @@ void testPagesAndLayoutChoice()
     CHECK_EQ(f.view.pageCount(), 1);
 }
 
+void testPageFollowRebuildsGrid()
+{
+    // Following the active angle to its page also changes the picture: the grid tractor has to follow (before, only
+    // the names and the red frame moved to the new page while the picture stayed on the old one)
+    Fixture f(10);
+    f.view.setColumns(2);
+    QSignalSpy spy(&f.view, &MulticamView::gridChanged);
+    f.ed.multicamSwitch(100, 8, Mode::Both);
+    f.view.setPosition(100);
+    CHECK_EQ(f.view.page(), 2);
+    CHECK_EQ(spy.count(), 1);
+    spy.clear();
+    f.ed.multicamSwitch(100, 0, Mode::Both);
+    f.view.setPosition(100);
+    CHECK_EQ(f.view.page(), 0);
+    CHECK_EQ(spy.count(), 1);
+    // Another angle of the same page: no rebuild
+    spy.clear();
+    f.ed.multicamSwitch(100, 1, Mode::Both);
+    f.view.setPosition(100);
+    CHECK_EQ(f.view.page(), 0);
+    CHECK_EQ(spy.count(), 0);
+}
+
+void testGridRebuildWhilePlayingKeepsPosition(const QString& dir)
+{
+    // Building a grid takes a while (one decoder per angle) and the old grid plays on meanwhile: the new one starts
+    // where playback is, not at the position asked for before building (the playhead jumped back)
+    if (!Check::haveFfmpeg()) return;
+    QStringList files;
+    for (const char* color : {"red", "lime", "blue"})
+        files << Check::makeMedia(dir + QString("/rb_%1.mp4").arg(color),
+                                  {"-f", "lavfi", "-i", QString("color=%1:size=320x180:rate=25:duration=20").arg(color),
+                                   "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+    if (!CHECK(!files.contains(QString()))) return;
+    Project p;
+    Selection sel;
+    Editor ed{&p, &sel};
+    QVector<Multicam::Angle> list;
+    for (const QString& f : files) {
+        p.addMedia(media(f, 500, true, false));
+        list << Multicam::Angle{QFileInfo(f).baseName(), {{f, 0}}};
+    }
+    const int seq = ed.createMulticamClip("RGB", list);
+    if (!CHECK(seq > 0)) return;
+    Engine engine;
+    QString err;
+    if (!CHECK(engine.init(&err))) return;
+    engine.setFormat(p.format());
+    const Timeline content = p.renderTimeline(seq);
+    const QVector<MulticamAngle> angles = p.sequence(seq)->angles;
+    MulticamGridOptions o;
+    if (!CHECK(engine.showMulticam(content, angles, o, 0, 0))) return;
+    engine.play();
+    CHECK(QTest::qWaitFor([&] { return engine.position() >= 50; }, 10000));
+    const int playing = engine.position();
+    o.columns = 4; // another layout: rebuilt
+    CHECK(engine.showMulticam(content, angles, o, 0, 10));
+    CHECK(engine.position() >= playing);
+    engine.pause();
+}
+
 // ---- Main window ----
 
 void testMainWindowMulticamMode(const QString& dir)
@@ -428,6 +493,8 @@ int main(int argc, char** argv)
     testNoMulticamClipAtPlayhead();
     testActiveAngleFramedAndNamed();
     testPagesAndLayoutChoice();
+    testPageFollowRebuildsGrid();
+    testGridRebuildWhilePlayingKeepsPosition(dir.path());
     testMainWindowMulticamMode(dir.path());
     return Check::result();
 }
