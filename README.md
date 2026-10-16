@@ -103,19 +103,22 @@ The AppImage contains the CLI too: `schneidi-x86_64.AppImage cli help`, or a lin
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.8.x – small updates
-| Feature | What it does |
-|---|---|
-| **Keyboard and layout presets** | Load a whole set of shortcuts at once, a simpler "beginner" layout, remember panel sizes per page |
-| **Contact sheets** | `frames`: choose the number of columns and the tile size, crop each source separately |
+### 0.8.x – bug fixes
+Only fixes for problems found in 0.8.0 – new features wait for the next version.
 
-### 0.9 – Masks & analysis
+### 0.9 – Masks & workspace
 | Feature | What it does |
 |---|---|
 | **Shape masks** | Shapes such as a rectangle or an ellipse on the Color page: grade only part of the picture |
 | **Blur or cover a region** | Hide a face, a name, a phone number or an overlay (built on the masks) |
 | **Motion tracking** | A mask follows a moving object, so the blur stays where it belongs |
+| **Keyboard and layout presets** | Load a whole set of shortcuts at once, a simpler "beginner" layout, remember panel sizes per page |
+
+### 0.10 – Analysis & handoff
+| Feature | What it does |
+|---|---|
 | **Highlight finder for AI editing** | `peaks` groups loud moments into fights, finds a kill sound from one example, `scenes` spots new kill-feed entries by color and size, and every candidate gets a score – ready to hand to `keep` |
+| **Contact sheets** | `frames`: choose the number of columns and the tile size, crop each source separately |
 | **EDL / XML export** | Hand a finished cut over to other editors for finishing |
 | **Voiceover** | Record your voice straight onto a track while the timeline plays |
 
