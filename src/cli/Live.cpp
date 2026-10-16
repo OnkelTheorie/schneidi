@@ -73,6 +73,26 @@ QHash<int, QByteArray> clipStates(const Project& p)
     return out;
 }
 
+// What a failed edit leaves behind outside the undo history (source In/Out, source markers, media lengths after a
+// frame rate change): set back to how it was before the edit
+void restoreMedia(Project& p, const QVector<MediaInfo>& before)
+{
+    bool lengths = false;
+    for (const MediaInfo& old : before) {
+        const MediaInfo* now = p.mediaInfo(old.path);
+        if (!now) continue;
+        lengths = lengths || now->length != old.length;
+        p.setMediaMarks(old.path, old.markIn, old.markOut);
+        p.setMediaMarkers(old.path, old.markers);
+    }
+    if (!lengths) return;
+    QVector<MediaInfo> media = p.media();
+    for (MediaInfo& m : media)
+        for (const MediaInfo& old : before)
+            if (old.path == m.path) m.length = old.length;
+    p.replaceMedia(media);
+}
+
 // Undo text: "KI: split, delete"
 QString undoText(const QJsonObject& args)
 {
@@ -287,6 +307,7 @@ QJsonObject Server::runCommand(const QJsonObject& msg)
     HostScope scope(m_host);
     Project* p = m_host->liveProject();
     const QHash<int, QByteArray> before = clipStates(*p);
+    const QVector<MediaInfo> mediaBefore = p->media();
     // One undo step per edit command; it never merges with the user's slider series before or after it
     QUndoStack* undo = p->undoStack();
     const bool step = name == "edit";
@@ -303,6 +324,7 @@ QJsonObject Server::runCommand(const QJsonObject& msg)
         if (step) {
             undo->endMacro();
             if (undo->index() > index) undo->undo(); // all or nothing, like on the file
+            restoreMedia(*p, mediaBefore);
         }
         return errorReply(e.code, e.message);
     }

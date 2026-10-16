@@ -139,6 +139,14 @@ int main(int argc, char* argv[])
     CHECK_EQ(code(r), QString("NOT_FOUND"));
     CHECK_EQ(videoClips(fake.project), 2);
     CHECK_EQ(fake.project.undoStack()->index(), undoBefore + 1);
+    // ... also what is not in the undo history: source markers and source In/Out
+    r = cli({"edit", fake.path, "--ops",
+             R"([{"op":"source_marker","media":"/x/a.mp4","at":30},{"op":"media","media":"/x/a.mp4","in":5,"out":60},
+                 {"op":"delete","clips":[999]}])"});
+    CHECK_EQ(code(r), QString("NOT_FOUND"));
+    CHECK(fake.project.mediaInfo("/x/a.mp4")->markers.isEmpty());
+    CHECK_EQ(fake.project.mediaInfo("/x/a.mp4")->markIn, -1);
+    CHECK_EQ(fake.project.mediaInfo("/x/a.mp4")->markOut, -1);
 
     // Dry run: computed on a copy
     r = cli({"edit", fake.path, "--dry-run", "--ops", R"([{"op":"split","at":30}])"});
