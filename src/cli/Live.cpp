@@ -73,10 +73,18 @@ QHash<int, QByteArray> clipStates(const Project& p)
     return out;
 }
 
-// What a failed edit leaves behind outside the undo history (source In/Out, source markers, media lengths after a
-// frame rate change): set back to how it was before the edit
+// What a failed edit leaves behind outside the undo history (imported media, source In/Out, source markers, media
+// lengths after a frame rate change): set back to how it was before the edit
 void restoreMedia(Project& p, const QVector<MediaInfo>& before)
 {
+    // Files the edit imported (append/place/insert of a new file) leave the Media Pool again
+    if (p.media().size() != before.size()) {
+        QVector<MediaInfo> kept;
+        for (const MediaInfo& m : p.media())
+            if (std::any_of(before.cbegin(), before.cend(), [&](const MediaInfo& old) { return old.path == m.path; }))
+                kept << m;
+        p.replaceMedia(kept);
+    }
     bool lengths = false;
     for (const MediaInfo& old : before) {
         const MediaInfo* now = p.mediaInfo(old.path);

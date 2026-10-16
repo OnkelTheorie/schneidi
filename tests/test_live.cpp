@@ -147,6 +147,18 @@ int main(int argc, char* argv[])
     CHECK(fake.project.mediaInfo("/x/a.mp4")->markers.isEmpty());
     CHECK_EQ(fake.project.mediaInfo("/x/a.mp4")->markIn, -1);
     CHECK_EQ(fake.project.mediaInfo("/x/a.mp4")->markOut, -1);
+    // ... and files it imported leave the Media Pool again
+    const QString broll = Check::makeMedia(tmp.path() + "/broll.mkv",
+                                           {"-f", "lavfi", "-i", "testsrc2=size=64x64:rate=25:duration=2", "-c:v", "ffv1"});
+    if (CHECK(!broll.isEmpty())) {
+        Check::initMlt(); // append reads the new file
+        const int mediaBefore = fake.project.media().size();
+        r = cli({"edit", fake.path, "--ops",
+                 QString(R"([{"op":"append","media":"%1"},{"op":"delete","clips":[999]}])").arg(broll)});
+        CHECK_EQ(code(r), QString("NOT_FOUND"));
+        CHECK_EQ(fake.project.media().size(), mediaBefore);
+        CHECK(!fake.project.mediaInfo(broll));
+    }
 
     // Dry run: computed on a copy
     r = cli({"edit", fake.path, "--dry-run", "--ops", R"([{"op":"split","at":30}])"});
