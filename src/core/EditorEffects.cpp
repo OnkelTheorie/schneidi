@@ -161,7 +161,12 @@ void Editor::resetGrade(const QVector<int>& ids, const QVector<AnimParam>& param
             EffectRegistry::remove(c, kGrade);
             return;
         }
-        for (AnimParam p : params) Keys::setValue(c, p, localFrame(c, frame), gradeDefault(p));
+        for (AnimParam p : params) {
+            QString effectId, key;
+            if (Keys::effectParamOf(p, &effectId, &key)) // a window's value only where the clip has that window
+                if (const int n = GradeWindows::windowOf(key); n > 0 && !GradeWindows::exists(c, n)) continue;
+            Keys::setValue(c, p, localFrame(c, frame), gradeDefault(p));
+        }
     });
 }
 
@@ -219,6 +224,31 @@ void Editor::removeGradeWindow(const QVector<int>& ids, int n)
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && GradeWindows::exists(*c, n))
             targets << id;
     modifyClips(targets, T("Fenster löschen"), [&](Clip& c) { GradeWindows::remove(c, n); });
+}
+
+void Editor::setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points)
+{
+    const Clip* found = TimelineOps::findClip(m_project->timeline(), clipId);
+    if (!found || !GradeWindows::exists(*found, n) || points.isEmpty()) return;
+    modifyClips({clipId}, T("Fenster verfolgen"), [&](Clip& c) {
+        const AnimParam px = GradeWindows::param(n, "x"), py = GradeWindows::param(n, "y");
+        int lo = from, hi = from;
+        for (const GradeWindows::PathPoint& p : points) {
+            lo = std::min(lo, p.frame);
+            hi = std::max(hi, p.frame);
+        }
+        // Keep the start where it is, then replace what lies in the tracked range
+        const double x0 = Keys::valueAt(c, px, from), y0 = Keys::valueAt(c, py, from);
+        for (AnimParam p : {px, py})
+            for (int t : Keys::keyTimes(c, {p}))
+                if (t >= lo && t <= hi) Keys::removeKey(c, p, t);
+        Keys::setKey(c, px, from, x0);
+        Keys::setKey(c, py, from, y0);
+        for (const GradeWindows::PathPoint& p : points) {
+            Keys::setKey(c, px, p.frame, p.x);
+            Keys::setKey(c, py, p.frame, p.y);
+        }
+    });
 }
 
 void Editor::setGradeWindowOption(const QVector<int>& ids, int n, const QString& key, const QVariant& value)

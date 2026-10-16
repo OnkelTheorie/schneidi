@@ -81,20 +81,23 @@ void InputBindings::load()
     // Older file with outdated defaults -> rewrite mouse wheel defaults, keep keys
     const bool outdated = root.value("version").toInt() < kVersion;
     if (outdated) m_fileExisted = false;
+    // If the mouse section is missing (older file), the defaults remain and it gets added
+    if (!root.contains("mouse")) m_fileExisted = false;
+    applyJson(root, !outdated);
+}
 
+void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
+{
     const QJsonObject wheel = root.value("wheel").toObject();
-    for (auto it = wheel.begin(); it != wheel.end() && !outdated; ++it)
+    for (auto it = wheel.begin(); it != wheel.end() && withWheel; ++it)
         m_wheel[it.key().toLower()] = wheelNames().value(it.value().toString(), WheelAction::None);
 
-    // If the section is missing (older file), the defaults remain and it gets added
     if (root.contains("mouse")) {
         m_mouse.clear();
         const QJsonObject mouse = root.value("mouse").toObject();
         for (auto it = mouse.begin(); it != mouse.end(); ++it)
             if (mouseNames().contains(it.key().toLower()) && !it.value().toString().isEmpty())
                 m_mouse[mouseNames().value(it.key().toLower())] = it.value().toString();
-    } else {
-        m_fileExisted = false;
     }
 
     const QJsonObject keys = root.value("shortcuts").toObject();
@@ -141,24 +144,56 @@ void InputBindings::saveIfIncomplete()
     if (!complete) save();
 }
 
-void InputBindings::save()
+QJsonObject InputBindings::toJson() const
 {
     QJsonObject wheel;
     for (auto it = m_wheel.begin(); it != m_wheel.end(); ++it) wheel[it.key()] = wheelName(it.value());
     QJsonObject keys;
     for (auto it = m_shortcuts.begin(); it != m_shortcuts.end(); ++it) keys[it.key()] = it.value(); // keep unknown ones too
-    for (const Entry& e : m_entries) {
-        keys[e.id] = current(e.id).toString(QKeySequence::PortableText);
-        m_shortcuts[e.id] = keys[e.id].toString();
-    }
+    for (const Entry& e : m_entries) keys[e.id] = current(e.id).toString(QKeySequence::PortableText);
     QJsonObject mouse;
     for (auto it = mouseNames().begin(); it != mouseNames().end(); ++it) mouse[it.key()] = m_mouse.value(it.value());
-    QJsonObject root{{"version", kVersion}, {"wheel", wheel}, {"mouse", mouse}, {"shortcuts", keys}};
+    return {{"version", kVersion}, {"wheel", wheel}, {"mouse", mouse}, {"shortcuts", keys}};
+}
 
+void InputBindings::save()
+{
+    const QJsonObject root = toJson();
+    const QJsonObject keys = root.value("shortcuts").toObject();
+    for (const Entry& e : m_entries) m_shortcuts[e.id] = keys.value(e.id).toString();
     QDir().mkpath(QFileInfo(filePath()).absolutePath());
     QFile f(filePath());
     if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(root).toJson());
     m_fileExisted = true;
+}
+
+bool InputBindings::exportSet(const QString& path) const
+{
+    QFile f(path);
+    return f.open(QIODevice::WriteOnly) && f.write(QJsonDocument(toJson()).toJson()) > 0;
+}
+
+bool InputBindings::importSet(const QString& path, QString* error)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        if (error) *error = f.errorString();
+        return false;
+    }
+    QJsonParseError pe;
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.object().value("shortcuts").isObject()) {
+        if (error) *error = T("Keine Tastenbelegung in der Datei");
+        return false;
+    }
+    // A whole set: what the file leaves out goes back to the default
+    m_shortcuts.clear();
+    m_mouse = defaultMouse();
+    applyJson(doc.object(), true);
+    for (const Entry& e : m_entries)
+        if (e.action) e.action->setShortcut(current(e.id));
+    save();
+    return true;
 }
 
 QString InputBindings::modifierKey(Qt::KeyboardModifiers mods)

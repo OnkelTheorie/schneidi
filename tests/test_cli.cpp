@@ -1,6 +1,7 @@
 // schneidi-cli command layer without media decoding: argument checks, edit operations on a saved project,
 // dry run, errors leave the file untouched
 #include "cli/Commands.h"
+#include "cli/CommandsDetail.h"
 #include "core/Project.h"
 #include "core/EffectRegistry.h"
 #include "core/ProjectFile.h"
@@ -91,6 +92,15 @@ int main(int argc, char** argv)
     Check::initApp("cli");
     QTemporaryDir dir;
     g_path = dir.filePath("t.schneidi");
+
+    // Every edit op name exists once (a second "track" once hid the track settings op)
+    {
+        QStringList names;
+        for (const Cli::detail::OpDef& op : Cli::detail::editOps()) {
+            if (!CHECK(!names.contains(op.name))) std::printf("       op %s twice\n", qPrintable(op.name));
+            names << op.name;
+        }
+    }
 
     // Arguments: types, unknown and missing parameters
     CHECK_EQ(errorOf("info", {}), QString("BAD_ARGUMENT"));
@@ -316,6 +326,8 @@ int main(int argc, char** argv)
         CHECK_EQ(w2["effects"][0]["windows"][0]["window"].toInt(), 2);
         CHECK(!w2["keyframes"].toObject().contains("grade.w1.x"));
         edit(QString(R"([{"op":"window","clips":[%1],"window":2,"remove":true}])").arg(v1).toUtf8().constData());
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"track_window","clips":[%1],"window":1}])").arg(v1)}}),
+                 QString("NOT_FOUND"));
     }
 
     // Edit page: trim modes, transitions, title style, tracks, link, speed ramp, markers, media pool, copy, insert

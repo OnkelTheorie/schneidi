@@ -7,6 +7,7 @@
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
+#include "engine/Tracker.h"
 
 #include <QFileInfo>
 
@@ -205,6 +206,29 @@ void opWindow(Session& s, const QJsonObject& op)
             ed.setGradeValues({id}, values, op.contains("at") ? timeOf(s, op, "at") : clip(id)->start, "Window");
     if (op.contains("keyframe"))
         for (int id : with) ed.setGradeKeyframe({id}, timeOf(s, op, "at"), op.value("keyframe").toBool(), n);
+}
+
+void opTrack(Session& s, const QJsonObject& op)
+{
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "tracking");
+    const int n = op.value("window").toInt();
+    if (n < 1 || n > GradeWindows::kMax) fail("BAD_ARGUMENT", "window is a number 1..4");
+    for (int id : ids) {
+        const Clip c = *TimelineOps::findClip(s.project.timeline(), id);
+        if (!GradeWindows::exists(c, n)) fail("NOT_FOUND", QString("clip %1 has no window %2").arg(id).arg(n));
+        const int from = op.contains("from") ? localFrame(c, timeOf(s, op, "from")) : 0;
+        const int to = op.contains("to") ? localFrame(c, timeOf(s, op, "to")) : c.length() - 1;
+        const Tracker::Result r = Tracker::trackWindow(s.format(), c, n, from, to);
+        if (!r.error.isEmpty()) fail("BAD_ARGUMENT", r.error);
+        s.editor.setGradeWindowPath(id, n, from, r.points);
+        QString note = QString("clip %1 window %2: tracked %3 of %4 frames from %5")
+                           .arg(id).arg(n).arg(r.points.size()).arg(std::abs(to - from))
+                           .arg(tc(c.start + from, s.format()));
+        if (r.lost)
+            note += QString(", lost at %1 (the window stays there; look with `frames`, move it and track again from "
+                            "there)").arg(tc(c.start + r.lostAt, s.format()));
+        s.notes << note;
+    }
 }
 
 // ---------- transform ----------
@@ -406,6 +430,14 @@ void addLookOps(QVector<OpDef>& ops)
                  "clip start); keyframe:true/false with `at` sets/removes a keyframe of every window value there. "
                  "Animate single values with {op:'keyframe', param:'grade.w1.x'}. remove:true deletes the window.",
                  opWindow}
+        << OpDef{"track_window", "{op:'track_window', clips, window, from?, to?}",
+                 "the window follows the object under it (tracker, position only)",
+                 "Tracks what is inside window `window` from `from` to `to` (timeline frames inside the clip, default "
+                 "clip start to clip end; to < from tracks backwards) and sets x/y keyframes of the window on every "
+                 "frame (keyframes in that range are replaced). Place the window on the object at `from` first. "
+                 "Stops where the picture no longer matches (see notes); move the window there and track again. Works "
+                 "on the clip's picture before transform, speed changes included. Slow: ~10–40 frames per second.",
+                 opTrack}
         << OpDef{"transform", "{op:'transform', clips, zoom?, zoom_x?, zoom_y?, x?, y?, rotation?, crop_left?, "
                               "crop_right?, crop_top?, crop_bottom?, opacity?, reset?, at?}",
                  "Inspector transform/crop/opacity of video clips",

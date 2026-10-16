@@ -498,6 +498,16 @@ void MainWindow::buildActions()
     makeAction(colorMenu, "grade_prev2", T("Grade vom vorvorigen Clip übernehmen"), QKeySequence("-"), [this] {
         if (m_page == Page::Color) m_colorPanel->gradeFromPrevious(2);
     });
+    colorMenu->addSeparator();
+    // Windows of the Color page: choose the next layer (whole picture → window 1 → …), add one at the playhead clip
+    makeAction(colorMenu, "color_next_layer", T("Nächstes Fenster wählen"), QKeySequence(), [this] {
+        showPage(Page::Color);
+        m_colorPanel->nextLayer();
+    });
+    makeAction(colorMenu, "color_add_window", T("Fenster hinzufügen"), QKeySequence(), [this] {
+        showPage(Page::Color);
+        m_colorPanel->addWindow("ellipse");
+    });
 
     QMenu* workspace = menuBar()->addMenu(T("&Arbeitsbereich"));
     makeAction(workspace, "page_media", T("Media-Seite"), QKeySequence("Shift+2"), [this] { showPage(Page::Media); });
@@ -518,6 +528,20 @@ void MainWindow::buildActions()
         QSettings().setValue("color/scopesVisible", m_scopes->isVisibleTo(m_colorBottom));
         if (m_scopes->isVisibleTo(m_colorBottom)) showPage(Page::Color);
     });
+    // Panel sets of the Edit page and panel sizes (remembered per page, MainWindow::applySizes)
+    QMenu* panels = workspace->addMenu(T("Panels"));
+    makeAction(panels, "panels_standard", T("Standard (Media Pool, Inspector)"), QKeySequence(),
+               [this] { applyPanelSet(true, false, false, false, false, true); });
+    makeAction(panels, "panels_simple", T("Einfach (nur Media Pool)"), QKeySequence(),
+               [this] { applyPanelSet(true, false, false, false, false, false); });
+    makeAction(panels, "panels_transcript", T("Schnitt nach Text (mit Transkript)"), QKeySequence(),
+               [this] { applyPanelSet(true, false, false, true, false, true); });
+    makeAction(panels, "panels_audio", T("Ton (mit Mixer)"), QKeySequence(),
+               [this] { applyPanelSet(true, true, false, false, true, true); });
+    makeAction(panels, "panels_all", T("Alle Panels"), QKeySequence(),
+               [this] { applyPanelSet(true, true, true, true, true, true); });
+    panels->addSeparator();
+    makeAction(panels, "layout_reset", T("Panelgrößen zurücksetzen"), QKeySequence(), [this] { resetSizes(); });
     makeAction(workspace, "extensions", T("Erweiterungen…"), QKeySequence(), [this] {
         ExtensionsDialog dlg(this);
         dlg.exec();

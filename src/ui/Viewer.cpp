@@ -7,6 +7,7 @@
 #include "engine/StillFetcher.h"
 #include "ui/TrimView.h"
 #include "ui/MediaPool.h"
+#include "ui/ViewerOverlay.h"
 
 #include <QApplication>
 #include <QDrag>
@@ -15,6 +16,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPointer>
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QToolButton>
@@ -22,11 +24,11 @@
 #include <algorithm>
 #include <functional>
 
-// Draws the current frame, aspect-ratio preserving, on a black background.
+// Draws the current frame, aspect-ratio preserving, on a black background, and an overlay on top (on-screen controls).
 // With the dragData function set, the image can be dragged into the timeline.
 class Screen : public QWidget {
 public:
-    using QWidget::QWidget;
+    explicit Screen(QWidget* parent = nullptr) : QWidget(parent) { setMouseTracking(true); }
     std::function<QMimeData*()> dragData;
 
     void setImage(const QImage& img)
@@ -34,24 +36,48 @@ public:
         m_image = img;
         update();
     }
+    void setOverlay(ViewerOverlay* o)
+    {
+        if (m_overlay) disconnect(m_overlay, nullptr, this, nullptr);
+        m_overlay = o;
+        if (o) connect(o, &ViewerOverlay::changed, this, qOverload<>(&QWidget::update));
+        update();
+    }
 
 protected:
+    // Area of the frame in the widget (picture without the bars)
+    QRectF frameRect() const
+    {
+        if (m_image.isNull()) return {};
+        QSize s = m_image.size().scaled(size(), Qt::KeepAspectRatio);
+        return QRectF(QPoint((width() - s.width()) / 2, (height() - s.height()) / 2), s);
+    }
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
         p.fillRect(rect(), Theme::viewerBg);
         if (m_image.isNull()) return;
-        QSize s = m_image.size().scaled(size(), Qt::KeepAspectRatio);
-        QRect r(QPoint((width() - s.width()) / 2, (height() - s.height()) / 2), s);
+        const QRectF r = frameRect();
         p.setRenderHint(QPainter::SmoothPixmapTransform);
         p.drawImage(r, m_image);
+        if (m_overlay) m_overlay->paint(p, r);
     }
     void mousePressEvent(QMouseEvent* e) override
     {
+        if (m_overlay && m_overlay->mousePress(e, frameRect())) {
+            m_overlayDrag = true;
+            return;
+        }
         if (e->button() == Qt::LeftButton) m_pressPos = e->pos();
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
+        if (m_overlayDrag) {
+            m_overlay->mouseMove(e, frameRect());
+            return;
+        }
+        if (!(e->buttons() & Qt::LeftButton))
+            setCursor(m_overlay ? m_overlay->cursorAt(e->position(), frameRect()) : Qt::ArrowCursor);
         if (!(e->buttons() & Qt::LeftButton) || m_pressPos.x() < 0 || !dragData) return;
         if ((e->pos() - m_pressPos).manhattanLength() < QApplication::startDragDistance()) return;
         m_pressPos = QPoint(-1, -1);
@@ -63,11 +89,20 @@ protected:
             drag->setPixmap(QPixmap::fromImage(m_image.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
         drag->exec(Qt::CopyAction);
     }
-    void mouseReleaseEvent(QMouseEvent*) override { m_pressPos = QPoint(-1, -1); }
+    void mouseReleaseEvent(QMouseEvent* e) override
+    {
+        if (m_overlayDrag) {
+            m_overlayDrag = false;
+            if (m_overlay) m_overlay->mouseRelease(e, frameRect());
+        }
+        m_pressPos = QPoint(-1, -1);
+    }
 
 private:
     QImage m_image;
     QPoint m_pressPos{-1, -1};
+    QPointer<ViewerOverlay> m_overlay;
+    bool m_overlayDrag = false;
 };
 
 // Scrubber under the image like in DaVinci: whole length of the source/timeline, In/Out range bright
@@ -304,6 +339,8 @@ bool Viewer::trimShown() const
 {
     return m_stack->currentWidget() == m_trim;
 }
+
+void Viewer::setOverlay(ViewerOverlay* overlay) { m_screen->setOverlay(overlay); }
 
 void Viewer::setRange(int length, int markIn, int markOut)
 {

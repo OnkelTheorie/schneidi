@@ -4,6 +4,7 @@
 // Defaults follow DaVinci Resolve.
 
 #include <QHash>
+#include <QJsonObject>
 #include <QKeySequence>
 #include <QPointer>
 #include <QString>
@@ -36,6 +37,11 @@ public:
     QKeySequence current(const QString& id) const;
     void setShortcut(const QString& id, const QKeySequence& key);
     void resetAll();
+    // A whole set of keys, mouse buttons and wheel (same format as keybindings.json), e.g. to take it to another
+    // computer or keep several: export writes the current set, import replaces it (actions missing in the file get
+    // their default) and takes effect immediately
+    bool exportSet(const QString& path) const;
+    bool importSet(const QString& path, QString* error);
 
     // Extra mouse buttons (side buttons) -> action, e.g. rear side button = cut at the playhead
     static const QVector<Qt::MouseButton>& bindableMouseButtons();
@@ -54,6 +60,8 @@ private:
     static QString modifierKey(Qt::KeyboardModifiers mods);
 
     void save();
+    QJsonObject toJson() const;
+    void applyJson(const QJsonObject& root, bool withWheel); // shortcuts, mouse (and wheel) from a file
 
     QHash<QString, QString> m_shortcuts;       // actionId -> "Ctrl+B" (from the file)
     QVector<Entry> m_entries;                  // registered actions in menu order

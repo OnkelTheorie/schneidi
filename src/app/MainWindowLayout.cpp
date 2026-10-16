@@ -91,6 +91,7 @@ void MainWindow::buildLayout()
     m_mixer->setEditor(m_editor);
     m_mixer->hide();
     m_colorPanel = new ColorPanel(m_editor);
+    m_viewer->setOverlay(m_colorPanel->overlay()); // window outline, only while the Color page shows
     m_transcript = new TranscriptPanel(m_project, m_editor);
     m_scopes = new ScopesPanel;
     m_scopes->setVisible(QSettings().value("color/scopesVisible", true).toBool());
@@ -126,9 +127,15 @@ void MainWindow::buildLayout()
     m_colorBottom->addWidget(m_colorPanel);
     m_colorBottom->addWidget(m_scopes);
     m_colorBottom->setStretchFactor(0, 1);
-    m_colorBottom->setSizes({1100, 420});
     m_colorPage->addWidget(m_colorBottom);
     m_pages->addWidget(m_colorPage);
+    const QPair<QSplitter*, const char*> splitters[] = {
+        {m_editTop, "editTop"},         {m_editMain, "editMain"},
+        {m_editBottom, "editBottom"},   {m_mediaPage, "mediaPage"},   {m_mediaTop, "mediaTop"},
+        {m_deliverPage, "deliverPage"}, {m_deliverRight, "deliverRight"}, {m_colorPage, "colorPage"},
+        {m_colorBottom, "colorBottom"}};
+    for (const auto& [sp, name] : splitters) watchSizes(sp, name);
+    applySizes(m_colorBottom, {1100, 420});
 
     auto* root = new QWidget;
     root->setObjectName("Root");
@@ -245,9 +252,9 @@ void MainWindow::showPage(Page page)
         m_mediaTop->insertWidget(0, m_storage);
         m_mediaTop->insertWidget(1, m_viewer);
         m_mediaTop->setStretchFactor(1, 1);
-        m_mediaTop->setSizes({700, 900});
+        applySizes(m_mediaTop, {700, 900});
         m_mediaPage->insertWidget(1, m_mediaPool);
-        m_mediaPage->setSizes({520, 380});
+        applySizes(m_mediaPage, {520, 380});
         m_storage->setVisible(true);
         m_mediaPool->setVisible(true);
         m_pages->setCurrentWidget(m_mediaPage);
@@ -261,10 +268,10 @@ void MainWindow::showPage(Page page)
         m_editTop->insertWidget(3, m_inspector);
         m_editBottom->insertWidget(0, m_timeline);
         m_editBottom->setStretchFactor(0, 1);
-        m_editBottom->setSizes({1300, 300});
+        applySizes(m_editBottom, {1300, 300});
         m_editTop->setStretchFactor(1, 1);
-        m_editTop->setSizes({360, 880, 320, 360});
-        m_editMain->setSizes({480, 420});
+        applySizes(m_editTop, {360, 880, 320, 360});
+        applySizes(m_editMain, {480, 420});
         m_mediaPool->setVisible(m_poolToggle->isChecked());
         m_storage->setVisible(m_storageToggle->isChecked());
         updateLeftColumn();
@@ -273,16 +280,16 @@ void MainWindow::showPage(Page page)
     case Page::Deliver:
         m_deliverRight->insertWidget(0, m_viewer);
         m_deliverRight->insertWidget(1, m_timeline);
-        m_deliverRight->setSizes({480, 380});
+        applySizes(m_deliverRight, {480, 380});
         m_deliverPage->setStretchFactor(1, 1);
-        m_deliverPage->setSizes({340, 940, 320});
+        applySizes(m_deliverPage, {340, 940, 320});
         m_pages->setCurrentWidget(m_deliverPage);
         break;
     case Page::Color:
         m_colorPage->insertWidget(0, m_viewer);
         m_colorPage->insertWidget(1, m_timeline);
         m_colorPage->setStretchFactor(0, 1);
-        m_colorPage->setSizes({460, 200, 300});
+        applySizes(m_colorPage, {460, 200, 300});
         m_pages->setCurrentWidget(m_colorPage);
         break;
     }
@@ -294,6 +301,60 @@ void MainWindow::showPage(Page page)
     m_inspectorToggle->setEnabled(edit);
     m_mixerToggle->setEnabled(edit);
     m_transcriptToggle->setEnabled(edit);
+}
+
+void MainWindow::watchSizes(QSplitter* s, const QString& name)
+{
+    s->setObjectName(name);
+    connect(s, &QSplitter::splitterMoved, this, [this, s] {
+        if (m_autosaveDisabled) return; // test runs leave the user's layout alone
+        // Hidden panels report 0: keep their last size so they come back as they were
+        const QString key = "layout/" + s->objectName();
+        QList<int> sizes = s->sizes();
+        const QVariantList saved = QSettings().value(key).toList();
+        const QList<int> defaults = m_defaultSizes.value(s);
+        QVariantList out;
+        for (int i = 0; i < sizes.size(); ++i) {
+            if (s->widget(i)->isHidden())
+                sizes[i] = i < saved.size() ? saved[i].toInt() : i < defaults.size() ? defaults[i] : sizes[i];
+            out << sizes[i];
+        }
+        QSettings().setValue(key, out);
+    });
+}
+
+void MainWindow::applySizes(QSplitter* s, const QList<int>& defaults)
+{
+    m_defaultSizes[s] = defaults;
+    const QVariantList saved = QSettings().value("layout/" + s->objectName()).toList();
+    if (saved.size() != defaults.size() || s->count() != defaults.size()) {
+        s->setSizes(defaults);
+        return;
+    }
+    QList<int> sizes;
+    for (const QVariant& v : saved) sizes << std::max(0, v.toInt());
+    s->setSizes(sizes);
+}
+
+void MainWindow::resetSizes()
+{
+    QSettings settings;
+    settings.beginGroup("layout");
+    settings.remove("");
+    settings.endGroup();
+    applySizes(m_colorBottom, {1100, 420});
+    showPage(m_page); // sets the page's defaults again
+}
+
+void MainWindow::applyPanelSet(bool pool, bool effects, bool storage, bool transcript, bool mixer, bool inspector)
+{
+    m_poolToggle->setChecked(pool);
+    m_effectsToggle->setChecked(effects);
+    m_storageToggle->setChecked(storage);
+    m_transcriptToggle->setChecked(transcript);
+    m_mixerToggle->setChecked(mixer);
+    m_inspectorToggle->setChecked(inspector);
+    if (m_page == Page::Edit) showPage(Page::Edit);
 }
 
 void MainWindow::updateLeftColumn()

@@ -98,6 +98,7 @@ add_library(schneidi_lib STATIC
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
+    src/engine/Tracker.h          src/engine/Tracker.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/Frei0r.h           src/engine/Frei0r.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
@@ -131,6 +132,8 @@ add_library(schneidi_lib STATIC
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
+    src/ui/ViewerOverlay.h
+    src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp
     src/ui/MulticamView.h         src/ui/MulticamView.cpp

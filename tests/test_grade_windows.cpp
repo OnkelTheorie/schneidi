@@ -14,8 +14,13 @@
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
 #include "engine/Snapshot.h"
+#include "engine/Tracker.h"
+#include "ui/ColorPanel.h"
+#include "ui/WindowOverlay.h"
 
 #include <QApplication>
+#include <QMouseEvent>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QUndoStack>
 #include <clocale>
@@ -284,6 +289,120 @@ void testModel(const QString& dir)
     CHECK(GradeWindows::exists(*TimelineOps::findClip(p.timeline(), id1), 1));
 }
 
+// Smooth texture around a moving point (dx, dy): sub-pixel shifts change the picture
+Tracker::Gray pattern(int w, int h, double dx, double dy)
+{
+    Tracker::Gray g;
+    g.width = w;
+    g.height = h;
+    g.px.resize(size_t(w) * h);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            const double u = x - 60 - dx, v = y - 40 - dy;
+            const double blob = std::exp(-(u * u + v * v) / 60.0) + 0.6 * std::exp(-((u - 5) * (u - 5) + (v + 4) * (v + 4)) / 20.0);
+            // the fine texture belongs to the object and moves with it (a still background inside the window pulls a
+            // template matcher towards "no movement")
+            g.px[size_t(y) * w + x] = float(0.2 + 0.5 * blob + 0.05 * std::sin(u * 0.3) * std::cos(v * 0.2));
+        }
+    return g;
+}
+
+void testTrackerMath()
+{
+    Tracker::PointTracker t(pattern(160, 100, 0, 0), QRectF(48, 28, 24, 24));
+    CHECK(t.valid());
+    CHECK_EQ(t.center(), QPointF(60, 40));
+    // Moves 3.4 px right and 1.7 px up per picture
+    for (int i = 1; i <= 8; ++i) {
+        CHECK(t.next(pattern(160, 100, 3.4 * i, -1.7 * i)));
+        if (!CHECK(std::abs(t.center().x() - (60 + 3.4 * i)) < 0.35 && std::abs(t.center().y() - (40 - 1.7 * i)) < 0.35))
+            std::printf("       picture %d: %.3f, %.3f (expected %.3f, %.3f)\n", i, t.center().x(), t.center().y(),
+                        60 + 3.4 * i, 40 - 1.7 * i);
+    }
+    CHECK(t.score() > 0.9);
+    // Nothing there any more: lost, position stays
+    Tracker::Gray flat;
+    flat.width = 160;
+    flat.height = 100;
+    flat.px.assign(size_t(160) * 100, 0.5f);
+    const QPointF before = t.center();
+    CHECK(!t.next(flat));
+    CHECK_EQ(t.center(), before);
+}
+
+void drag(WindowOverlay& ov, const QRectF& frame, QPointF from, QPointF to, Qt::KeyboardModifiers mods = {})
+{
+    QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton, mods);
+    QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, mods);
+    QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton, mods);
+    CHECK(ov.mousePress(&press, frame));
+    ov.mouseMove(&move, frame);
+    ov.mouseRelease(&release, frame);
+}
+
+void testOverlayAndPanel()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 100, true, true, false});
+    ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+    const int id = p.timeline().video[0].clips[0].id;
+    ed.addGradeWindow({id}, 1, "rectangle");
+    const auto win = [&] { return GradeWindows::geometryAt(*TimelineOps::findClip(p.timeline(), id), 1, 10); };
+
+    // Project 1920 x 1080 shown at half size
+    const QRectF frame(10, 20, 960, 540);
+    WindowOverlay ov(&ed, [&] { return QVector<int>{id}; });
+    ov.setTarget(id, 1, 10);
+    CHECK(ov.centerPos(frame).isNull()); // hidden: nothing to grab
+    ov.setVisible(true);
+    CHECK_EQ(ov.centerPos(frame), QPointF(490, 290));
+    CHECK_EQ(ov.handlePos(3, frame), QPointF(490 + 192, 290)); // 40 % of 960 / 2
+
+    // Move: 96 widget pixels = 10 % of the width; one undo step
+    const int undoBefore = p.undoStack()->count();
+    drag(ov, frame, QPointF(490, 290), QPointF(490 + 96, 290 + 27));
+    CHECK(std::abs(win().x - 60) < 1e-6);
+    CHECK(std::abs(win().y - 55) < 1e-6);
+    CHECK_EQ(p.undoStack()->count(), undoBefore + 1);
+    // Right handle: width around the center
+    drag(ov, frame, ov.handlePos(3, frame), ov.centerPos(frame) + QPointF(288, 0));
+    CHECK(std::abs(win().width - 60) < 1e-6);
+    CHECK(std::abs(win().height - 40) < 1e-6);
+    // Rotate knob to the right of the center = -90 degrees (counterclockwise positive)
+    drag(ov, frame, ov.handlePos(8, frame), ov.centerPos(frame) + QPointF(100, 0));
+    CHECK(std::abs(win().rotation + 90) < 1e-6);
+    // Clicks outside the window are left to the viewer
+    QMouseEvent outside(QEvent::MouseButtonPress, QPointF(15, 25), QPointF(15, 25), Qt::LeftButton, Qt::LeftButton, {});
+    CHECK(!ov.mousePress(&outside, frame));
+    // Keyframed position: dragging sets a keyframe at the playhead
+    ed.setGradeKeyframe({id}, 0, true, 1);
+    ov.setTarget(id, 1, 40);
+    drag(ov, frame, ov.centerPos(frame), ov.centerPos(frame) + QPointF(-96, 0));
+    const Clip* c = TimelineOps::findClip(p.timeline(), id);
+    CHECK(Keys::keyAt(*c, GradeWindows::param(1, "x"), 40));
+    CHECK(std::abs(GradeWindows::geometryAt(*c, 1, 40).x - 50) < 1e-6);
+    CHECK(std::abs(GradeWindows::geometryAt(*c, 1, 0).x - 60) < 1e-6);
+
+    // Panel: the layer follows the windows; a deleted window falls back to the whole picture
+    ColorPanel panel(&ed);
+    panel.setPlayhead(10);
+    panel.show();
+    panel.setLayer(1);
+    CHECK_EQ(panel.layer(), 1);
+    panel.setLayer(3); // does not exist
+    CHECK_EQ(panel.layer(), 0);
+    panel.setLayer(1);
+    // Keyframe button of the window layer keys the window, not the whole picture
+    ed.setGradeKeyframe({id}, 60, true, panel.layer());
+    c = TimelineOps::findClip(p.timeline(), id);
+    CHECK(Keys::keyAt(*c, GradeWindows::param(1, "saturation"), 60));
+    CHECK(!Keys::keyAt(*c, AnimParam::GradeSaturation, 60));
+    ed.removeGradeWindow({id}, 1);
+    CHECK_EQ(panel.layer(), 0);
+}
+
 void testRender(const QString& media)
 {
     ProjectFormat fmt;
@@ -317,6 +436,76 @@ void testRender(const QString& media)
     CHECK(std::abs(qGray(off.pixel(right)) - qGray(ref.pixel(right))) <= 2);
 }
 
+// A red square moves over a test picture: the window follows it, forwards and backwards
+void testTrack(const QString& media)
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({media, "moving.mp4", 75, true, false, false});
+    ed.addMediaAt({media}, 0, 0);
+    const int id = p.timeline().video[0].clips[0].id;
+    ed.addGradeWindow({id}, 1, "rectangle");
+    // Square 60 x 60 at (100 + 80 t, 150 + 20 t) in 640 x 360 -> center at t = 0: 130/640, 180/360
+    const auto pct = [](double px, double size) { return px / size * 100; };
+    ed.setGradeValues({id}, {{GradeWindows::param(1, "x"), pct(130, 640)}, {GradeWindows::param(1, "y"), pct(180, 360)},
+                             {GradeWindows::param(1, "width"), pct(70, 640)}, {GradeWindows::param(1, "height"), pct(70, 360)}},
+                      0, "Place");
+    const Clip c = *TimelineOps::findClip(p.timeline(), id);
+    int calls = 0;
+    const Tracker::Result r = Tracker::trackWindow(p.format(), c, 1, 0, 50, [&](int done, int total) {
+        ++calls;
+        CHECK(done <= total && total == 50);
+    });
+    CHECK(r.error.isEmpty());
+    CHECK(!r.lost);
+    CHECK_EQ(r.points.size(), 50);
+    CHECK_EQ(calls, 50);
+    if (r.points.size() == 50) {
+        // Frame 50 = 2 s: center at 290/640, 220/360 (project 1920 x 1080 shows the same picture scaled)
+        CHECK(std::abs(r.points.last().x - pct(290, 640)) < 0.6);
+        CHECK(std::abs(r.points.last().y - pct(220, 360)) < 0.8);
+        CHECK(std::abs(r.points[24].x - pct(130 + 80 * 25 / 25.0, 640)) < 0.6);
+    }
+    ed.setGradeWindowPath(id, 1, 0, r.points);
+    const Clip* t = TimelineOps::findClip(p.timeline(), id);
+    CHECK(Keys::keyAt(*t, GradeWindows::param(1, "x"), 0));
+    CHECK(Keys::keyAt(*t, GradeWindows::param(1, "x"), 50));
+    CHECK(std::abs(GradeWindows::geometryAt(*t, 1, 50).x - pct(290, 640)) < 0.6);
+    // Backwards from frame 50 finds the start again; the keyframes there are replaced
+    const Tracker::Result back = Tracker::trackWindow(p.format(), *t, 1, 50, 10);
+    CHECK_EQ(back.points.size(), 40);
+    if (!back.points.isEmpty()) {
+        CHECK_EQ(back.points.last().frame, 10);
+        if (!CHECK(std::abs(back.points.last().x - pct(130 + 80 * 10 / 25.0, 640)) < 0.8))
+            std::printf("       frame 10: x %.3f %% (expected %.3f %%), y %.3f %%\n", back.points.last().x,
+                        pct(130 + 80 * 10 / 25.0, 640), back.points.last().y);
+    }
+    ed.setGradeWindowPath(id, 1, 50, back.points);
+    t = TimelineOps::findClip(p.timeline(), id);
+    CHECK_EQ(Keys::keyTimes(*t, {GradeWindows::param(1, "x")}).size(), 51);
+    // Cancel right away: nothing tracked
+    std::atomic<bool> stop{true};
+    const Tracker::Result none = Tracker::trackWindow(p.format(), *t, 1, 0, 20, {}, &stop);
+    CHECK(none.canceled);
+    CHECK(none.points.isEmpty());
+    // No window 2
+    CHECK(!Tracker::trackWindow(p.format(), *t, 2, 0, 20).error.isEmpty());
+
+    // Color page: tracking runs in the background and sets the keyframes when done
+    ColorPanel panel(&ed);
+    panel.setPlayhead(0);
+    panel.show();
+    panel.setLayer(1);
+    QSignalSpy spy(&panel, &ColorPanel::trackingFinished);
+    panel.startTracking(true);
+    CHECK(panel.tracking());
+    CHECK(spy.wait(120000));
+    CHECK(!panel.tracking());
+    t = TimelineOps::findClip(p.timeline(), id);
+    CHECK(Keys::keyAt(*t, GradeWindows::param(1, "x"), 74));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -330,6 +519,8 @@ int main(int argc, char** argv)
     testMask();
     testPixels();
     testModel(tmp.path());
+    testOverlayAndPanel();
+    testTrackerMath();
 
     if (!Check::haveFfmpeg()) {
         std::printf("Hinweis: ffmpeg fehlt, Render-Test übersprungen\n");
@@ -342,5 +533,11 @@ int main(int argc, char** argv)
     Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
     testRender(media);
+    const QString moving = Check::makeMedia(
+        tmp.filePath("moving.mp4"),
+        {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i",
+         "color=c=red:s=60x60:d=3:r=25", "-filter_complex", "[0][1]overlay=x='100+t*80':y='150+t*20'", "-c:v",
+         "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "1"});
+    if (CHECK(!moving.isEmpty())) testTrack(moving);
     return Check::result();
 }

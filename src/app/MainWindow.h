@@ -78,6 +78,12 @@ private:
     QWidget* buildTopBar();
     QWidget* buildPageBar();
     void updateLeftColumn(); // show the left column only if Media Pool or Effects is on
+    // Panel sizes per page are remembered (settings layout/<splitter>); defaults when nothing is saved yet
+    void watchSizes(QSplitter* s, const QString& name);
+    void applySizes(QSplitter* s, const QList<int>& defaults);
+    void resetSizes();
+    // Panel set of the Edit page (Workspace → Panels): which toggles are on
+    void applyPanelSet(bool pool, bool effects, bool storage, bool transcript, bool mixer, bool inspector);
     void onDrop(const QStringList& paths, int frame, int track);
     // Subtitles (SRT): every file becomes a new subtitle track; export of the visible track
     void importSubtitleFiles(const QStringList& paths);
@@ -192,6 +198,7 @@ private:
     QSplitter* m_deliverRight = nullptr;
     QSplitter* m_colorPage = nullptr; // Viewer, timeline, color wheels (like DaVinci Color)
     QSplitter* m_colorBottom = nullptr; // color wheels | scopes
+    QHash<QSplitter*, QList<int>> m_defaultSizes;
     QButtonGroup* m_pageButtons = nullptr;
     QToolButton* m_poolToggle = nullptr;
     QToolButton* m_effectsToggle = nullptr;

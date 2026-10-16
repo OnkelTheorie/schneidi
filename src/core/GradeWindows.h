@@ -67,6 +67,12 @@ struct FillInfo {
 };
 FillInfo fillAt(const Clip& c, int n, double t);
 
+// Window center on a clip frame (tracking result, Editor::setGradeWindowPath)
+struct PathPoint {
+    int frame = 0;       // clip frame (0 = first frame of the clip)
+    double x = 0, y = 0; // center in % of the picture
+};
+
 // Mask in pixels of a picture of the given size: weight() is 1 inside, 0 outside, smooth in the soft edge
 // (inverted: the other way round). bounds() = pixels where the weight can be > 0 (whole picture when inverted).
 class Mask {

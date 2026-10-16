@@ -14,6 +14,11 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QMessageBox>
+#include <QSettings>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -58,6 +63,15 @@ private:
     std::function<void(int)> m_done;
 };
 }
+
+namespace {
+// Folder of the last loaded/saved set, else the config folder (where keybindings.json lives)
+QString setDir()
+{
+    const QString dir = QSettings().value("keys/setDir").toString();
+    return !dir.isEmpty() && QFileInfo(dir).isDir() ? dir : QFileInfo(InputBindings::instance().filePath()).absolutePath();
+}
+} // namespace
 
 KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
 {
@@ -106,6 +120,32 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
         InputBindings::instance().resetAll();
         fill();
     });
+    // Whole sets (to another computer, several setups): same format as keybindings.json
+    auto* loadSet = new QPushButton(T("Satz laden…"));
+    loadSet->setToolTip(T("Ganze Tastenbelegung aus einer Datei laden (ersetzt die jetzige)"));
+    connect(loadSet, &QPushButton::clicked, this, [this] {
+        QSettings settings;
+        const QString path = QFileDialog::getOpenFileName(this, T("Tastenbelegung laden"), setDir(),
+                                                          T("Tastenbelegung (*.json)"));
+        if (path.isEmpty()) return;
+        settings.setValue("keys/setDir", QFileInfo(path).absolutePath());
+        QString error;
+        if (!InputBindings::instance().importSet(path, &error))
+            QMessageBox::warning(this, T("Tastenbelegung laden"), error);
+        fill();
+    });
+    auto* saveSet = new QPushButton(T("Satz speichern…"));
+    saveSet->setToolTip(T("Ganze Tastenbelegung als Datei speichern"));
+    connect(saveSet, &QPushButton::clicked, this, [this] {
+        QString path = QFileDialog::getSaveFileName(this, T("Tastenbelegung speichern"),
+                                                    QDir(setDir()).filePath(T("tastenbelegung.json")),
+                                                    T("Tastenbelegung (*.json)"));
+        if (path.isEmpty()) return;
+        if (!path.endsWith(".json", Qt::CaseInsensitive)) path += ".json";
+        QSettings().setValue("keys/setDir", QFileInfo(path).absolutePath());
+        if (!InputBindings::instance().exportSet(path))
+            QMessageBox::warning(this, T("Tastenbelegung speichern"), T("Die Datei lässt sich nicht schreiben."));
+    });
     auto* close = new QPushButton(T("Schließen"));
     close->setDefault(true);
     connect(close, &QPushButton::clicked, this, &QDialog::accept);
@@ -114,6 +154,9 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     buttons->addWidget(resetOne);
     buttons->addWidget(clearOne);
     buttons->addWidget(resetAll);
+    buttons->addSpacing(12);
+    buttons->addWidget(loadSet);
+    buttons->addWidget(saveSet);
     buttons->addStretch(1);
     buttons->addWidget(close);
 

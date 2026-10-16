@@ -42,6 +42,9 @@ public:
     bool trimShown() const;
     TrimView* trimView() const { return m_trim; }
 
+    // On-screen controls over the picture (Color page windows); nullptr = none
+    void setOverlay(class ViewerOverlay* overlay);
+
 private:
     void updateTimecode(int frame);
     void updateModeText(); // "Timeline"/"Quelle – …", hint when the color correction is bypassed

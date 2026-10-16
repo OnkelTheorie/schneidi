@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Ducking.h"
+#include "core/GradeWindows.h"
 #include "core/Multicam.h"
 #include "core/StreamPresets.h"
 #include "core/TimelineOps.h"
@@ -253,6 +254,9 @@ public:
     void addGradeWindow(const QVector<int>& ids, int n, const QString& shape);
     void removeGradeWindow(const QVector<int>& ids, int n);
     void setGradeWindowOption(const QVector<int>& ids, int n, const QString& key, const QVariant& value);
+    // Tracking result: window n of the clip follows the points (keyframes for x/y on every point; keyframes there and
+    // between `from` and the last point are replaced, `from` keeps its position as a keyframe). One undo step.
+    void setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points);
 
     // Clipboard (Ctrl+C/X/V): paste at the playhead on the same tracks, overwrites
     void copySelection();
