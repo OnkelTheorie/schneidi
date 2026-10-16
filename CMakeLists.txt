@@ -38,6 +38,7 @@ add_library(schneidi_lib STATIC
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
     src/core/TrimFrames.h         src/core/TrimFrames.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
+    src/core/GradeWindows.h       src/core/GradeWindows.cpp
     src/core/Retime.h             src/core/Retime.cpp
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
     src/core/Project.h            src/core/Project.cpp

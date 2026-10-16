@@ -27,6 +27,13 @@ void copyKeyRange(Clip& c, const Clip& src, AnimParam first, AnimParam last)
     for (int p = int(first); p <= int(last); ++p) copyKeys(c, src, {AnimParam(p)});
 }
 
+// Dynamic parameter of the grade (its windows, core/GradeWindows)
+bool isGradeParam(AnimParam p)
+{
+    QString effectId;
+    return Keys::effectParamOf(p, &effectId, nullptr) && effectId == QLatin1String(kGrade);
+}
+
 std::optional<EffectInstance> gradeOf(const Clip& c, int* index = nullptr)
 {
     for (int i = 0; i < c.effects.size(); ++i)
@@ -53,10 +60,11 @@ void pasteEffects(Clip& c, const Clip& src)
     if (own && !placed) out << *own;
     c.effects = out;
     copyKeyRange(c, src, AnimParam::FxBrightness, AnimParam::FxBlur);
-    // dynamic effect parameters (frei0r) follow their effects
-    c.keys.removeIf([](const auto& it) { return Keys::isEffectParam(it.key()); });
+    // dynamic effect parameters (frei0r) follow their effects; those of the grade (windows) stay with the grade
+    const auto other = [](AnimParam p) { return Keys::isEffectParam(p) && !isGradeParam(p); };
+    c.keys.removeIf([&](const auto& it) { return other(it.key()); });
     for (auto it = src.keys.cbegin(); it != src.keys.cend(); ++it)
-        if (Keys::isEffectParam(it.key())) c.keys.insert(it.key(), it.value());
+        if (other(it.key())) c.keys.insert(it.key(), it.value());
 }
 
 // Take over or remove the color grade (Color page) including LUT; other effects stay
@@ -67,6 +75,9 @@ void pasteColor(Clip& c, const Clip& src)
     if (at >= 0) c.effects.removeAt(at);
     if (const auto g = gradeOf(src)) c.effects.insert(at >= 0 ? at : c.effects.size(), *g);
     copyKeyRange(c, src, AnimParam::GradeLiftY, AnimParam::GradeExposure);
+    c.keys.removeIf([](const auto& it) { return isGradeParam(it.key()); }); // windows
+    for (auto it = src.keys.cbegin(); it != src.keys.cend(); ++it)
+        if (isGradeParam(it.key())) c.keys.insert(it.key(), it.value());
 }
 
 } // namespace

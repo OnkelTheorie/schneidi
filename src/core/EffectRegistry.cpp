@@ -1,5 +1,6 @@
 #include "core/EffectRegistry.h"
 
+#include "core/GradeWindows.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 
@@ -9,9 +10,17 @@ namespace EffectRegistry {
 
 namespace {
 
+// The grade gets the parameters of its windows (Color page, core/GradeWindows)
+QVector<EffectDescriptor> withWindows(QVector<EffectDescriptor> effects)
+{
+    for (EffectDescriptor& d : effects)
+        if (d.id == QLatin1String("grade")) d.params += GradeWindows::params(d.params);
+    return effects;
+}
+
 QVector<EffectDescriptor>& registry()
 {
-    static QVector<EffectDescriptor> effects = {
+    static QVector<EffectDescriptor> effects = withWindows({
         // frei0r instead of avfilter.chromakey: delivers real transparency and does not crash on exit
         {"chromakey", "Green Screen", "frei0r.bluescreen0r", true,
          {
@@ -95,7 +104,7 @@ QVector<EffectDescriptor>& registry()
              {"exposure", T("Belichtung"), {}, EffectParam::Double, 0.0, -4, 4, AnimParam::GradeExposure, 0.01, 2},
              {"lut", "LUT", {}, EffectParam::Path, QString(), 0, 0},
          }},
-    };
+    });
     return effects;
 }
 
@@ -162,7 +171,8 @@ bool add(Clip& c, const QString& id)
     if (!d || has(c, id)) return false;
     EffectInstance inst;
     inst.effectId = id;
-    for (const auto& p : d->params) inst.params[p.key] = p.defaultValue;
+    for (const auto& p : d->params)
+        if (!p.sparse) inst.params[p.key] = p.defaultValue;
     c.effects << inst;
     return true;
 }

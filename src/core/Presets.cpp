@@ -544,7 +544,8 @@ void convertFilter(const Filter& f, int parentIn, double fps, Mapped* m)
         if (!inst) { // several filters may build one effect (brightness + saturation): they add up
             EffectInstance e;
             e.effectId = d->id;
-            for (const EffectParam& x : d->params) e.params[x.key] = x.defaultValue;
+            for (const EffectParam& x : d->params)
+                if (!x.sparse) e.params[x.key] = x.defaultValue;
             m->effects << e;
             inst = &m->effects.last();
         }
@@ -824,7 +825,8 @@ Mapped map(const Preset& preset, double fps)
         }
         EffectInstance inst;
         inst.effectId = d->id;
-        for (const EffectParam& p : d->params) inst.params[p.key] = p.defaultValue;
+        for (const EffectParam& p : d->params)
+            if (!p.sparse) inst.params[p.key] = p.defaultValue;
         QMap<AnimParam, QVector<AnimKey>> keys;
         for (const auto& [name, value] : f.props) {
             if (name == "disable") { // MLT: filter switched off

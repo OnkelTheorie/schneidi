@@ -3,6 +3,7 @@
 #include "cli/CommandsDetail.h"
 
 #include "core/EffectRegistry.h"
+#include "core/GradeWindows.h"
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
@@ -84,6 +85,21 @@ void wheel(const QJsonObject& op, const char* name, const AnimParam params[4], Q
     }
 }
 
+// Wheels and sliders of a grade op (lift, gamma, gain, offset, contrast, pivot, saturation, temperature, tint,
+// exposure) for the parameters `list` in the order of ColorGrade::animParams(): the grade's own or a window's
+QVector<QPair<AnimParam, double>> gradeValues(const QJsonObject& op, const QVector<AnimParam>& list)
+{
+    QVector<QPair<AnimParam, double>> values;
+    wheel(op, "lift", &list[0], &values);
+    wheel(op, "gamma", &list[4], &values);
+    wheel(op, "gain", &list[8], &values);
+    wheel(op, "offset", &list[12], &values);
+    static const char* sliders[] = {"contrast", "pivot", "saturation", "temperature", "tint", "exposure"};
+    for (int i = 0; i < 6; ++i)
+        if (op.contains(sliders[i])) values.append({list[16 + i], paramValue(list[16 + i], op.value(sliders[i]), sliders[i])});
+    return values;
+}
+
 void opColor(Session& s, const QJsonObject& op)
 {
     const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "color corrections");
@@ -108,21 +124,7 @@ void opColor(Session& s, const QJsonObject& op)
         }
     }
 
-    using P = AnimParam;
-    QVector<QPair<AnimParam, double>> values;
-    static const P lift[4] = {P::GradeLiftY, P::GradeLiftR, P::GradeLiftG, P::GradeLiftB};
-    static const P gamma[4] = {P::GradeGammaY, P::GradeGammaR, P::GradeGammaG, P::GradeGammaB};
-    static const P gain[4] = {P::GradeGainY, P::GradeGainR, P::GradeGainG, P::GradeGainB};
-    static const P offset[4] = {P::GradeOffsetY, P::GradeOffsetR, P::GradeOffsetG, P::GradeOffsetB};
-    wheel(op, "lift", lift, &values);
-    wheel(op, "gamma", gamma, &values);
-    wheel(op, "gain", gain, &values);
-    wheel(op, "offset", offset, &values);
-    const QPair<const char*, P> sliders[] = {{"contrast", P::GradeContrast},     {"pivot", P::GradePivot},
-                                             {"saturation", P::GradeSaturation}, {"temperature", P::GradeTemp},
-                                             {"tint", P::GradeTint},             {"exposure", P::GradeExposure}};
-    for (const auto& [name, p] : sliders)
-        if (op.contains(name)) values.append({p, paramValue(p, op.value(name), name)});
+    const QVector<QPair<AnimParam, double>> values = gradeValues(op, ColorGrade::animParams());
     if (!values.isEmpty()) {
         // Keyframed values get a keyframe at `at` (default: each clip's start), like turning a wheel in the app
         for (int id : ids) {
@@ -144,6 +146,65 @@ void opColor(Session& s, const QJsonObject& op)
         for (int id : ids) ed.setGradeKeyframe({id}, timeOf(s, op, "at"), op.value("keyframe").toBool());
     }
     if (op.contains("enabled")) ed.setGradeEnabled(ids, op.value("enabled").toBool());
+}
+
+// ---------- windows (shape masks of the grade) ----------
+
+void opWindow(Session& s, const QJsonObject& op)
+{
+    const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "windows");
+    Editor& ed = s.editor;
+    const auto clip = [&](int id) { return TimelineOps::findClip(s.project.timeline(), id); };
+    int n = 0;
+    if (op.contains("window")) {
+        n = op.value("window").toInt();
+        if (n < 1 || n > GradeWindows::kMax) fail("BAD_ARGUMENT", "window is a number 1..4");
+    }
+    if (op.contains("add")) {
+        const QString shape = op.value("add").toString();
+        GradeWindows::Shape sh;
+        if (!GradeWindows::shapeFromId(shape, &sh)) fail("BAD_ARGUMENT", "add is \"rectangle\" or \"ellipse\"");
+        for (int k = 1; k <= GradeWindows::kMax && !n; ++k) // first number free on all clips
+            if (std::none_of(ids.begin(), ids.end(), [&](int id) { return GradeWindows::exists(*clip(id), k); })) n = k;
+        if (!n) fail("BAD_ARGUMENT", "no free window on these clips (at most 4 per clip)");
+        ed.addGradeWindow(ids, n, shape);
+        s.notes << QString("window %1 added").arg(n);
+    }
+    if (!n) fail("BAD_ARGUMENT", "window (1..4) is missing; add a new one with add:'ellipse' or add:'rectangle'");
+    QVector<int> with;
+    for (int id : ids)
+        if (GradeWindows::exists(*clip(id), n)) with << id;
+    if (with.isEmpty()) fail("NOT_FOUND", QString("no clip has window %1 (add one with add)").arg(n));
+    if (op.value("remove").toBool()) {
+        ed.removeGradeWindow(with, n);
+        return;
+    }
+    if (op.contains("shape")) {
+        GradeWindows::Shape sh;
+        if (!GradeWindows::shapeFromId(op.value("shape").toString(), &sh))
+            fail("BAD_ARGUMENT", "shape is \"rectangle\" or \"ellipse\"");
+        ed.setGradeWindowOption(with, n, "shape", op.value("shape").toString());
+    }
+    if (op.contains("invert")) ed.setGradeWindowOption(with, n, "invert", op.value("invert").toBool());
+    if (op.contains("fill")) {
+        GradeWindows::Fill f;
+        if (!GradeWindows::fillFromId(op.value("fill").toString(), &f))
+            fail("BAD_ARGUMENT", "fill is \"none\", \"blur\", \"pixelate\" or \"color\"");
+        ed.setGradeWindowOption(with, n, "fill", op.value("fill").toString());
+    }
+    if (op.contains("color")) ed.setGradeWindowOption(with, n, "color", colorOf(op.value("color"), "color"));
+    QVector<QPair<AnimParam, double>> values;
+    for (const QString& k : GradeWindows::geometryKeys())
+        if (op.contains(k)) {
+            const AnimParam p = GradeWindows::param(n, k);
+            values.append({p, paramValue(p, op.value(k), k)});
+        }
+    values += gradeValues(op, ColorGrade::windowParams(n));
+    if (!values.isEmpty())
+        for (int id : with)
+            ed.setGradeValues({id}, values, op.contains("at") ? timeOf(s, op, "at") : clip(id)->start, "Window");
+    if (op.contains("keyframe"))
+        for (int id : with) ed.setGradeKeyframe({id}, timeOf(s, op, "at"), op.value("keyframe").toBool(), n);
 }
 
 // ---------- transform ----------
@@ -329,6 +390,22 @@ void addLookOps(QVector<OpDef>& ops)
                  "have keyframes get one at `at` (default: clip start); keyframe:true/false with `at` sets/removes a "
                  "keyframe of every value there. Single grade values animate with {op:'keyframe', param:'grade.gainY'}.",
                  opColor}
+        << OpDef{"window", "{op:'window', clips, window?, add?, remove?, shape?, x?, y?, width?, height?, rotation?, "
+                           "softness?, invert?, fill?, amount?, color?, lift?, gamma?, gain?, offset?, contrast?, pivot?, "
+                           "saturation?, temperature?, tint?, exposure?, at?, keyframe?}",
+                 "Color page window (shape mask like DaVinci): grade or hide part of the picture",
+                 "Up to 4 windows per clip, part of its grade (copied, reset and switched off with it). add:'ellipse' "
+                 "or 'rectangle' makes a new one (number = first free one, see notes; default centered, 40 x 40 %). "
+                 "x/y = center in % of the picture width/height from the top left (50/50 = middle), width/height in % "
+                 "of the picture width/height, rotation in degrees (counterclockwise), softness = soft edge outside the "
+                 "shape in % of the picture height (default 5), invert:true = everything outside. Inside the window "
+                 "its own correction applies (lift … exposure like op 'color', neutral by default) and a fill: none, "
+                 "blur (amount 0..100 like the blur effect), pixelate (amount 100 = blocks of 1/10 of the picture "
+                 "height) or color (color \"#rrggbb\", covers it). Hide a face or a name: fill:'blur' or 'pixelate'. "
+                 "The picture is the clip before transform/crop. Values that have keyframes get one at `at` (default "
+                 "clip start); keyframe:true/false with `at` sets/removes a keyframe of every window value there. "
+                 "Animate single values with {op:'keyframe', param:'grade.w1.x'}. remove:true deletes the window.",
+                 opWindow}
         << OpDef{"transform", "{op:'transform', clips, zoom?, zoom_x?, zoom_y?, x?, y?, rotation?, crop_left?, "
                               "crop_right?, crop_top?, crop_bottom?, opacity?, reset?, at?}",
                  "Inspector transform/crop/opacity of video clips",

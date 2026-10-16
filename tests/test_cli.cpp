@@ -281,6 +281,41 @@ int main(int argc, char** argv)
         CHECK(!tl["tracks"][0]["clips"][1].toObject().contains("transform"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keyframe","clips":[%1],"param":"blur.nope","at":1}])").arg(v1)}}),
                  QString("BAD_ARGUMENT"));
+
+        // Windows: add (first free number), shape/fill/correction, keyframes, listed apart in `info`, remove
+        const QJsonObject added = run("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"window","clips":[%1],"add":"rectangle",
+            "x":70,"width":20,"fill":"pixelate","amount":30,"saturation":0}])").arg(v1)}});
+        CHECK(added["notes"].toArray().contains(QJsonValue("window 1 added")));
+        edit(QString(R"([{"op":"window","clips":[%1],"add":"ellipse","invert":true,"exposure":-1},
+                         {"op":"keyframe","clips":[%1],"param":"grade.w1.x","keys":[{"at":0,"value":20},{"at":20,"value":80}]}])")
+                 .arg(v1).toUtf8().constData());
+        const QJsonObject w = firstClip();
+        const QJsonArray wins = w["effects"][0]["windows"].toArray();
+        CHECK_EQ(wins.size(), 2);
+        CHECK_EQ(wins[0]["window"].toInt(), 1);
+        CHECK_EQ(wins[0]["shape"].toString(), QString("rectangle"));
+        CHECK_EQ(wins[0]["fill"].toString(), QString("pixelate"));
+        CHECK_EQ(wins[0]["amount"].toDouble(), 30.0);
+        CHECK_EQ(wins[0]["saturation"].toDouble(), 0.0);
+        CHECK_EQ(wins[0]["width"].toDouble(), 20.0);
+        CHECK_EQ(wins[1]["shape"].toString(), QString("ellipse"));
+        CHECK_EQ(wins[1]["invert"].toBool(), true);
+        CHECK(!w["effects"][0]["params"].toObject().contains("w1.x"));
+        CHECK_EQ(w["keyframes"]["grade.w1.x"][1]["value"].toDouble(), 80.0);
+        // A keyframed value gets a keyframe at `at`
+        edit(QString(R"([{"op":"window","clips":[%1],"window":1,"x":50,"at":10}])").arg(v1).toUtf8().constData());
+        const QJsonObject wk = firstClip();
+        CHECK_EQ(wk["keyframes"]["grade.w1.x"].toArray().size(), 3);
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"window","clips":[%1],"window":3,"x":1}])").arg(v1)}}),
+                 QString("NOT_FOUND"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"window","clips":[%1],"window":1,"fill":"smear"}])").arg(v1)}}),
+                 QString("BAD_ARGUMENT"));
+        edit(QString(R"([{"op":"window","clips":[%1],"window":1,"remove":true}])").arg(v1).toUtf8().constData());
+        const QJsonObject w2 = firstClip();
+        CHECK_EQ(w2["effects"][0]["windows"].toArray().size(), 1);
+        CHECK_EQ(w2["effects"][0]["windows"][0]["window"].toInt(), 2);
+        CHECK(!w2["keyframes"].toObject().contains("grade.w1.x"));
+        edit(QString(R"([{"op":"window","clips":[%1],"window":2,"remove":true}])").arg(v1).toUtf8().constData());
     }
 
     // Edit page: trim modes, transitions, title style, tracks, link, speed ramp, markers, media pool, copy, insert

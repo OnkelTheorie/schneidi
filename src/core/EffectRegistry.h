@@ -31,6 +31,9 @@ struct EffectParam {
     QStringList choiceLabels;
     // Changing it needs a new analysis pass (stabilization: what vid.stab measures, not how it applies)
     bool analysis = false;
+    // Not written into a new instance (missing = default): many optional values that are mostly unused, like the
+    // windows of the Color page (core/GradeWindows)
+    bool sparse = false;
     // Shown text of a Choice value (label if there is one)
     QString choiceText(const QString& value) const
     {

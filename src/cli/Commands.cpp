@@ -6,6 +6,7 @@
 #include "core/StreamPresets.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/GradeWindows.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -356,13 +357,30 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (c.reverse) o["reverse"] = true;
     if (!c.effects.isEmpty()) {
         QJsonArray fx;
+        const auto json = [](const QVariant& v) {
+            return v.typeId() == QMetaType::QColor ? QJsonValue(v.value<QColor>().name()) : QJsonValue::fromVariant(v);
+        };
         for (const EffectInstance& e : c.effects) {
             QJsonObject eo{{"effect", e.effectId}};
             QJsonObject params;
-            for (auto it = e.params.begin(); it != e.params.end(); ++it)
-                params[it.key()] = it.value().typeId() == QMetaType::QColor ? QJsonValue(it.value().value<QColor>().name())
-                                                                            : QJsonValue::fromVariant(it.value());
+            QMap<int, QJsonObject> windows; // grade: its windows apart ("w1.x" -> windows[1].x)
+            for (auto it = e.params.begin(); it != e.params.end(); ++it) {
+                QString key;
+                if (const int n = e.effectId == QLatin1String("grade") ? GradeWindows::windowOf(it.key(), &key) : 0)
+                    windows[n][key] = json(it.value());
+                else
+                    params[it.key()] = json(it.value());
+            }
             if (!params.isEmpty()) eo["params"] = params;
+            if (!windows.isEmpty()) {
+                QJsonArray list;
+                for (auto it = windows.begin(); it != windows.end(); ++it) {
+                    QJsonObject w = it.value();
+                    w["window"] = it.key();
+                    list << w;
+                }
+                eo["windows"] = list;
+            }
             if (!e.enabled) eo["enabled"] = false;
             fx << eo;
         }
@@ -860,19 +878,22 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         if (!only.isEmpty() && d.id != only) continue;
         QJsonObject o{{"effect", d.id}, {"name", d.name}, {"kind", d.video ? "video" : "audio"}};
         if (!d.category.isEmpty()) o["category"] = d.category;
-        if (d.id == "grade") o["note"] = "the Color page grade (lift/gamma/gain/offset, LUT)";
+        if (d.id == "grade")
+            o["note"] = "the Color page grade (lift/gamma/gain/offset, LUT); windows (shape masks) via the `window` op";
         if (d.id == Stabilizer::EffectId)
             o["note"] = Stabilizer::available()
                             ? "needs an analysis pass (background in the app, before encoding in `render`)"
                             : "MLT module vid.stab is missing: the effect does nothing on this computer";
         if (only.isEmpty()) {
             QJsonArray keys;
-            for (const EffectParam& p : d.params) keys << p.key;
+            for (const EffectParam& p : d.params)
+                if (!p.sparse) keys << p.key; // grade windows: `help edit --op window`
             o["params"] = keys;
         } else {
             static const char* types[] = {"number", "color", "path", "boolean", "choice"};
             QJsonArray params;
             for (const EffectParam& p : d.params) {
+                if (p.sparse) continue;
                 QJsonObject po{{"key", p.key}, {"label", p.label}, {"type", types[p.type]}};
                 if (p.type == EffectParam::Double) {
                     po["min"] = p.min;

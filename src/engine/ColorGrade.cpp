@@ -13,7 +13,9 @@
 #include <QRgba64>
 #include <QList>
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <mutex>
 
 namespace ColorGrade {
@@ -127,6 +129,7 @@ struct State {
     Clip clip;      // copy: keyframes are read in the render thread (read only)
     int a = 0;      // clip frame at the start of the cut
     bool animated = false;
+    bool windows = false; // has windows (computed per frame)
     Params fixed;
     std::shared_ptr<const Lut> lut;
     std::shared_ptr<std::atomic<bool>> bypass;
@@ -152,7 +155,10 @@ int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* wi
     *format = mlt_image_rgba;
     const int err = mlt_frame_get_image(frame, image, format, width, height, 1);
     if (err || !*image || *format != mlt_image_rgba) return err;
-    apply(*image, *width, *height, d->animated ? at(d->clip, d->a + pos) : d->fixed, d->lut.get());
+    const Params p = d->animated ? at(d->clip, d->a + pos) : d->fixed;
+    if (!p.isNeutral() || d->lut) apply(*image, *width, *height, p, d->lut.get());
+    if (d->windows)
+        for (const Window& w : windowsAt(d->clip, d->a + pos)) applyWindow(*image, *width, *height, w);
     return 0;
 }
 
@@ -175,24 +181,58 @@ bool Params::isNeutral() const
 
 const QVector<AnimParam>& animParams() { return kParams; }
 
-Params at(const Clip& c, double t)
+namespace {
+
+// Values of the parameters `list` (order like kParams) at clip frame t
+Params paramsAt(const Clip& c, const QVector<AnimParam>& list, double t)
 {
     Params p;
     if (!EffectRegistry::has(c, EffectId)) return p;
-    auto v = [&](AnimParam a) { return Keys::valueAt(c, a, t); };
+    auto v = [&](int i) { return Keys::valueAt(c, list[i], t); };
     for (int i = 0; i < 4; ++i) {
-        p.lift[i] = v(kParams[i]);
-        p.gamma[i] = v(kParams[4 + i]);
-        p.gain[i] = v(kParams[8 + i]);
-        p.offset[i] = v(kParams[12 + i]);
+        p.lift[i] = v(i);
+        p.gamma[i] = v(4 + i);
+        p.gain[i] = v(8 + i);
+        p.offset[i] = v(12 + i);
     }
-    p.contrast = v(P::GradeContrast);
-    p.pivot = v(P::GradePivot);
-    p.saturation = v(P::GradeSaturation);
-    p.temperature = v(P::GradeTemp);
-    p.tint = v(P::GradeTint);
-    p.exposure = v(P::GradeExposure);
+    p.contrast = v(16);
+    p.pivot = v(17);
+    p.saturation = v(18);
+    p.temperature = v(19);
+    p.tint = v(20);
+    p.exposure = v(21);
     return p;
+}
+
+} // namespace
+
+Params at(const Clip& c, double t) { return paramsAt(c, kParams, t); }
+
+const QVector<AnimParam>& windowParams(int n)
+{
+    static const auto table = [] {
+        std::array<QVector<AnimParam>, GradeWindows::kMax + 1> t;
+        for (int w = 1; w <= GradeWindows::kMax; ++w)
+            for (const QString& k : GradeWindows::correctionKeys()) t[w] << GradeWindows::param(w, k);
+        return t;
+    }();
+    return table[std::clamp(n, 0, GradeWindows::kMax)];
+}
+
+Params windowAt(const Clip& c, int n, double t)
+{
+    if (n < 1 || n > GradeWindows::kMax) return {};
+    return paramsAt(c, windowParams(n), t);
+}
+
+QVector<Window> windowsAt(const Clip& c, double t)
+{
+    QVector<Window> out;
+    for (int n : GradeWindows::list(c)) {
+        Window w{GradeWindows::geometryAt(c, n, t), windowAt(c, n, t), GradeWindows::fillAt(c, n, t)};
+        if (!w.isNoop()) out << w;
+    }
+    return out;
 }
 
 QString lutPath(const Clip& c)
@@ -206,7 +246,15 @@ bool active(const Clip& c)
     if (!e || !e->enabled) return false;
     if (!lutPath(c).isEmpty()) return true;
     if (std::any_of(kParams.begin(), kParams.end(), [&](AnimParam p) { return Keys::animated(c, p); })) return true;
-    return !at(c, 0).isNeutral();
+    if (!at(c, 0).isNeutral()) return true;
+    for (int n : GradeWindows::list(c)) {
+        const QVector<AnimParam>& list = windowParams(n);
+        if (std::any_of(list.begin(), list.end(), [&](AnimParam p) { return Keys::animated(c, p); })) return true;
+        if (Keys::animated(c, GradeWindows::param(n, "amount"))) return true;
+        if (!windowAt(c, n, 0).isNeutral() || GradeWindows::fillAt(c, n, 0).fill != GradeWindows::Fill::None)
+            return true;
+    }
+    return false;
 }
 
 namespace {
@@ -482,6 +530,127 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
     }
 }
 
+namespace {
+
+// Radii of three box blurs that together approximate a Gaussian blur with sigma
+std::array<int, 3> boxRadii(double sigma)
+{
+    const double ideal = std::sqrt(12 * sigma * sigma / 3 + 1);
+    int lo = int(std::floor(ideal));
+    if (lo % 2 == 0) --lo;
+    const int hi = lo + 2;
+    const int m = int(std::lround((12 * sigma * sigma - 3 * lo * lo - 12 * lo - 9) / (-4.0 * lo - 4)));
+    std::array<int, 3> r{};
+    for (int i = 0; i < 3; ++i) r[i] = ((i < m ? lo : hi) - 1) / 2;
+    return r;
+}
+
+// Box blur of radius r over RGB of an RGBA buffer along one direction (step = distance of neighbors in pixels,
+// n = pixels per line, lines = number of lines, lineStep = distance of the lines); the edge pixel repeats
+void boxBlur(const uint8_t* src, uint8_t* dst, int n, int lines, int step, int lineStep, int r)
+{
+    const int div = 2 * r + 1;
+    for (int l = 0; l < lines; ++l) {
+        const uint8_t* s = src + size_t(l) * lineStep * 4;
+        uint8_t* d = dst + size_t(l) * lineStep * 4;
+        const auto px = [&](int i) { return s + size_t(std::clamp(i, 0, n - 1)) * step * 4; };
+        int sum[3] = {0, 0, 0};
+        for (int i = -r; i <= r; ++i)
+            for (int c = 0; c < 3; ++c) sum[c] += px(i)[c];
+        for (int i = 0; i < n; ++i) {
+            uint8_t* o = d + size_t(i) * step * 4;
+            for (int c = 0; c < 3; ++c) o[c] = uint8_t((sum[c] + div / 2) / div);
+            o[3] = px(i)[3];
+            const uint8_t* add = px(i + r + 1);
+            const uint8_t* sub = px(i - r);
+            for (int c = 0; c < 3; ++c) sum[c] += add[c] - sub[c];
+        }
+    }
+}
+
+void gaussian(std::vector<uint8_t>& buf, int w, int h, double sigma)
+{
+    if (sigma < 0.5 || w <= 0 || h <= 0) return;
+    std::vector<uint8_t> tmp(buf.size());
+    for (int r : boxRadii(sigma)) {
+        if (r <= 0) continue;
+        boxBlur(buf.data(), tmp.data(), w, h, 1, w, r); // rows
+        boxBlur(tmp.data(), buf.data(), h, w, w, 1, r); // columns
+    }
+}
+
+void pixelate(std::vector<uint8_t>& buf, int w, int h, int block)
+{
+    for (int by = 0; by < h; by += block)
+        for (int bx = 0; bx < w; bx += block) {
+            const int x1 = std::min(w, bx + block), y1 = std::min(h, by + block);
+            long sum[3] = {0, 0, 0};
+            for (int y = by; y < y1; ++y)
+                for (int x = bx; x < x1; ++x)
+                    for (int c = 0; c < 3; ++c) sum[c] += buf[(size_t(y) * w + x) * 4 + c];
+            const long n = long(x1 - bx) * (y1 - by);
+            for (int y = by; y < y1; ++y)
+                for (int x = bx; x < x1; ++x)
+                    for (int c = 0; c < 3; ++c) buf[(size_t(y) * w + x) * 4 + c] = uint8_t((sum[c] + n / 2) / n);
+        }
+}
+
+} // namespace
+
+void applyWindow(uint8_t* rgba, int width, int height, const Window& w)
+{
+    using GradeWindows::Fill;
+    if (!rgba || width <= 0 || height <= 0 || w.isNoop()) return;
+    const GradeWindows::Mask mask(w.geometry, width, height);
+    const QRect r = mask.bounds();
+    if (r.isEmpty()) return;
+    // Area worked on: the mask plus what blur/pixelate need around it (pixel blocks on a grid from the picture corner,
+    // so they do not swim while the window moves)
+    QRect area = r;
+    double sigma = 0;
+    int block = 0;
+    if (w.fill.fill == Fill::Blur) {
+        sigma = w.fill.amount * height / 2000.0; // like the blur effect: 100 = 1/20 of the picture height
+        const int m = int(std::ceil(sigma * 3)) + 1;
+        area = r.adjusted(-m, -m, m, m);
+    } else if (w.fill.fill == Fill::Pixelate) {
+        block = std::max(2, int(std::lround(w.fill.amount / 100.0 * height / 10.0))); // 100 = 1/10 of the height
+        const int x0 = r.left() / block * block, y0 = r.top() / block * block;
+        area = QRect(QPoint(x0, y0), QPoint((r.right() / block + 1) * block - 1, (r.bottom() / block + 1) * block - 1));
+    }
+    area = area.intersected(QRect(0, 0, width, height));
+    const int aw = area.width(), ah = area.height();
+    std::vector<uint8_t> fx(size_t(aw) * ah * 4);
+    for (int y = 0; y < ah; ++y)
+        std::memcpy(fx.data() + size_t(y) * aw * 4, rgba + (size_t(area.top() + y) * width + area.left()) * 4,
+                    size_t(aw) * 4);
+    if (!w.params.isNeutral()) apply(fx.data(), aw, ah, w.params, nullptr);
+    switch (w.fill.fill) {
+    case Fill::None: break;
+    case Fill::Blur: gaussian(fx, aw, ah, sigma); break;
+    case Fill::Pixelate: pixelate(fx, aw, ah, block); break;
+    case Fill::Color: {
+        const QColor& col = w.fill.color;
+        const uint8_t rgb[3] = {uint8_t(col.red()), uint8_t(col.green()), uint8_t(col.blue())};
+        for (size_t i = 0; i < fx.size(); i += 4) std::memcpy(&fx[i], rgb, 3);
+        break;
+    }
+    }
+    for (int y = r.top(); y <= r.bottom(); ++y) {
+        uint8_t* dst = rgba + (size_t(y) * width + r.left()) * 4;
+        const uint8_t* src = fx.data() + (size_t(y - area.top()) * aw + (r.left() - area.left())) * 4;
+        for (int x = r.left(); x <= r.right(); ++x, dst += 4, src += 4) {
+            const float m = mask.weight(x, y);
+            if (m <= 0) continue;
+            if (m >= 1) {
+                std::memcpy(dst, src, 3);
+                continue;
+            }
+            for (int c = 0; c < 3; ++c) dst[c] = uint8_t(std::lround(dst[c] + (src[c] - dst[c]) * m));
+        }
+    }
+}
+
 void attach(Mlt::Producer& cut, const Clip& c, int a, const std::shared_ptr<std::atomic<bool>>& bypass)
 {
     if (!active(c)) return;
@@ -492,7 +661,8 @@ void attach(Mlt::Producer& cut, const Clip& c, int a, const std::shared_ptr<std:
     d->fixed = at(c, a);
     if (const QString path = lutPath(c); !path.isEmpty()) d->lut = loadLut(path); // missing/broken: no LUT
     d->bypass = bypass;
-    if (!d->animated && d->fixed.isNeutral() && !d->lut) return;
+    d->windows = !GradeWindows::list(c).isEmpty();
+    if (!d->animated && d->fixed.isNeutral() && !d->lut && !d->windows) return;
     mlt_filter f = mlt_filter_new();
     if (!f) return;
     f->process = process;

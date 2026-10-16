@@ -3,6 +3,7 @@
 
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/GradeWindows.h"
 #include "core/Presets.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -109,7 +110,7 @@ QVector<AnimParam> gradeParams()
     QVector<AnimParam> list;
     if (const EffectDescriptor* d = EffectRegistry::find(kGrade))
         for (const EffectParam& p : d->params)
-            if (p.anim != AnimParam::Count) list << p.anim;
+            if (p.anim != AnimParam::Count && !p.sparse) list << p.anim; // without the windows
     return list;
 }
 
@@ -139,7 +140,13 @@ void Editor::setGradeValues(const QVector<int>& ids, const QVector<QPair<AnimPar
 {
     modifyClips(videoOnly(m_project->timeline(), ids), text, [&](Clip& c) {
         EffectRegistry::add(c, kGrade); // already present: nothing
-        for (const auto& [p, v] : values) Keys::setValue(c, p, localFrame(c, frame), v);
+        for (const auto& [p, v] : values) {
+            // Values of a window only where the clip has that window
+            QString effectId, key;
+            if (Keys::effectParamOf(p, &effectId, &key))
+                if (const int n = GradeWindows::windowOf(key); n > 0 && !GradeWindows::exists(c, n)) continue;
+            Keys::setValue(c, p, localFrame(c, frame), v);
+        }
     }, mergeKey);
 }
 
@@ -175,16 +182,52 @@ void Editor::setGradeEnabled(const QVector<int>& ids, bool on)
                 });
 }
 
-void Editor::setGradeKeyframe(const QVector<int>& ids, int frame, bool on)
+void Editor::setGradeKeyframe(const QVector<int>& ids, int frame, bool on, int window)
 {
-    const QVector<AnimParam> params = gradeParams();
+    QVector<AnimParam> params = gradeParams();
+    if (window >= 1 && window <= GradeWindows::kMax) {
+        params.clear();
+        for (const QString& k : GradeWindows::correctionKeys() + GradeWindows::geometryKeys())
+            params << GradeWindows::param(window, k);
+    }
     modifyClips(videoOnly(m_project->timeline(), ids), on ? T("Keyframe setzen") : T("Keyframe entfernen"),
                 [&](Clip& c) {
                     EffectRegistry::add(c, kGrade);
                     const int t = localFrame(c, frame);
+                    if (window > 0 && !GradeWindows::exists(c, window)) return;
                     for (AnimParam p : params) {
                         if (on) Keys::setKey(c, p, t, Keys::valueAt(c, p, t));
                         else Keys::removeKey(c, p, t);
                     }
                 });
+}
+
+void Editor::addGradeWindow(const QVector<int>& ids, int n, const QString& shape)
+{
+    GradeWindows::Shape s = GradeWindows::Shape::Ellipse;
+    if (n < 1 || n > GradeWindows::kMax || !GradeWindows::shapeFromId(shape, &s)) return;
+    modifyClips(videoOnly(m_project->timeline(), ids), T("Fenster hinzufügen"), [&](Clip& c) {
+        EffectRegistry::add(c, kGrade);
+        GradeWindows::add(c, n, s);
+    });
+}
+
+void Editor::removeGradeWindow(const QVector<int>& ids, int n)
+{
+    QVector<int> targets;
+    for (int id : videoOnly(m_project->timeline(), ids))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && GradeWindows::exists(*c, n))
+            targets << id;
+    modifyClips(targets, T("Fenster löschen"), [&](Clip& c) { GradeWindows::remove(c, n); });
+}
+
+void Editor::setGradeWindowOption(const QVector<int>& ids, int n, const QString& key, const QVariant& value)
+{
+    QVector<int> targets;
+    for (int id : videoOnly(m_project->timeline(), ids))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && GradeWindows::exists(*c, n))
+            targets << id;
+    modifyClips(targets, T("Fenster ändern"), [&](Clip& c) {
+        EffectRegistry::instance(c, kGrade)->params[GradeWindows::key(n, key)] = value;
+    });
 }

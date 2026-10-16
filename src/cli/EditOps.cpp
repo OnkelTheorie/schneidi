@@ -196,7 +196,8 @@ QVariant effectValue(const EffectDescriptor& d, const QString& key, const QJsonV
     const auto it = std::find_if(d.params.begin(), d.params.end(), [&](const EffectParam& p) { return p.key == key; });
     if (it == d.params.end()) {
         QStringList keys;
-        for (const EffectParam& p : d.params) keys << p.key;
+        for (const EffectParam& p : d.params)
+            if (!p.sparse) keys << p.key;
         fail("BAD_ARGUMENT", QString("effect %1 has no parameter '%2' (has: %3)").arg(d.id, key, keys.join(", ")));
     }
     const EffectParam& p = *it;

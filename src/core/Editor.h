@@ -244,8 +244,15 @@ public:
     void resetGrade(const QVector<int>& ids, const QVector<AnimParam>& params, int frame, const QString& text);
     void setGradeLut(const QVector<int>& ids, const QString& path); // empty = remove LUT
     void setGradeEnabled(const QVector<int>& ids, bool on);
-    // Keyframe for the whole correction (like a DaVinci node): set or remove all values at the frame
-    void setGradeKeyframe(const QVector<int>& ids, int frame, bool on);
+    // Keyframe for the whole correction (like a DaVinci node): set or remove all values at the frame.
+    // window = 0: the grade's own values, 1..4: that window's correction, shape and fill amount
+    void setGradeKeyframe(const QVector<int>& ids, int frame, bool on, int window = 0);
+    // Windows of the grade (shape masks, core/GradeWindows): add window n (shape "rectangle"/"ellipse", creates the
+    // grade if needed; clips that already have window n keep it), remove it, set a fixed property
+    // (shape, invert, fill, color – the numbers go through setGradeValues with GradeWindows::param)
+    void addGradeWindow(const QVector<int>& ids, int n, const QString& shape);
+    void removeGradeWindow(const QVector<int>& ids, int n);
+    void setGradeWindowOption(const QVector<int>& ids, int n, const QString& key, const QVariant& value);
 
     // Clipboard (Ctrl+C/X/V): paste at the playhead on the same tracks, overwrites
     void copySelection();
