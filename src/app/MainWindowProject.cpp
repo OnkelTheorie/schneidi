@@ -108,7 +108,7 @@ void MainWindow::updateTitle()
 {
     const QString name = m_projectPath.isEmpty() ? T("Unbenannt") : QFileInfo(m_projectPath).completeBaseName();
     const QString shown = name + (m_project->isModified() ? " *" : "");
-    setWindowTitle(shown + " – schneidi");
+    setWindowTitle(shown + " – " + appName());
     if (m_titleLabel) m_titleLabel->setText(shown);
 }
 

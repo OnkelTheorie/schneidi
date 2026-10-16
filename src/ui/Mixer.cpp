@@ -638,12 +638,12 @@ protected:
         row(0, "I", lufsText(I), ic);
         row(1, "S", lufsText(values[1]), Theme::text);
         row(2, "M", lufsText(values[0]), Theme::text);
-        row(3, "LRA", QString("%1 LU").arg(m_r.range, 0, 'f', 1), Theme::text);
+        row(3, "LRA", lufsText(m_r.range) + " LU", Theme::text);
         // Highest true peak since reset; red background above the limit (over indicator like in the delivery check)
         const bool over = m_r.truePeak > m_tpLimit;
         if (over) p.fillRect(QRect(2, ly + 4 * rowH, width() - 4, rowH), Theme::meterHigh);
         const QColor tc = over ? Theme::readableOn(Theme::meterHigh) : Theme::text;
-        row(4, "TP", m_r.truePeak <= -99 ? QStringLiteral("–") : QString::number(m_r.truePeak, 'f', 1), tc);
+        row(4, "TP", m_r.truePeak <= -99 ? QStringLiteral("–") : lufsText(m_r.truePeak), tc);
         if (over) {
             p.setPen(tc);
             p.drawText(QRect(4, ly + 4 * rowH, width() - 8, rowH), Qt::AlignLeft | Qt::AlignVCenter, "TP");
@@ -660,7 +660,7 @@ private:
     static QString lufsText(double v)
     {
         if (v <= -99) return QStringLiteral("–");
-        return QString::number(v, 'f', 1);
+        return QString::number(v, 'f', 1).replace('.', I18n::decimalPoint());
     }
 
     LoudnessReading m_r;

@@ -106,13 +106,13 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
 
     // Style + alignment in one row
     auto* bold = toggleButton();
-    bold->setText("F");
+    bold->setText(T("F")); // first letter of "bold" in the UI language (B, G, N, Ж)
     bold->setToolTip(T("Fett"));
     QFont bf = bold->font();
     bf.setBold(true);
     bold->setFont(bf);
     auto* italic = toggleButton();
-    italic->setText("K");
+    italic->setText(T("K")); // first letter of "italic" (I, K, К)
     italic->setToolTip(T("Kursiv"));
     QFont itf = italic->font();
     itf.setItalic(true);

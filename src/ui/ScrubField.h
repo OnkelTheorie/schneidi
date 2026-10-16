@@ -27,6 +27,7 @@ protected:
 
 private:
     void showValue();
+    QString number() const;
     void startEditing();
     void commitText();
     void change(double v);

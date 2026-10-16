@@ -25,6 +25,7 @@ namespace {
 // Single-line label that adapts to the card width (too long = "…", full text in the tooltip)
 class ElidedLabel : public QLabel {
 public:
+    explicit ElidedLabel(Qt::TextElideMode mode = Qt::ElideRight) : m_mode(mode) {}
     void setFullText(const QString& text)
     {
         m_text = text;
@@ -42,11 +43,12 @@ protected:
         p.setPen(palette().color(foregroundRole()));
         p.setFont(font());
         p.drawText(rect(), int(alignment() | Qt::AlignVCenter),
-                   fontMetrics().elidedText(m_text, Qt::ElideMiddle, width()));
+                   fontMetrics().elidedText(m_text, m_mode, width()));
     }
 
 private:
     QString m_text;
+    Qt::TextElideMode m_mode;
 };
 
 // One card per job
@@ -58,15 +60,16 @@ public:
         lay->setContentsMargins(8, 6, 8, 6);
         lay->setSpacing(2);
         auto* top = new QHBoxLayout;
-        title = new ElidedLabel;
+        title = new ElidedLabel(Qt::ElideMiddle); // file name: keep the extension
         title->setStyleSheet(QString("color: %1; font-weight: 600;").arg(Theme::text.name()));
         status = new QLabel;
         status->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         top->addWidget(title, 1);
         top->addWidget(status);
         lay->addLayout(top);
+        // Path in the middle (keeps folder start and file name); the rest at the end, so no word is cut in half
         for (ElidedLabel** l : {&summary, &range, &path, &message}) {
-            *l = new ElidedLabel;
+            *l = new ElidedLabel(l == &path ? Qt::ElideMiddle : Qt::ElideRight);
             (*l)->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::textDim.name()));
             lay->addWidget(*l);
         }

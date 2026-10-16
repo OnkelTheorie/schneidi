@@ -507,7 +507,7 @@ void ColorPanel::refresh()
 
     const QString lut = ColorGrade::lutPath(*c);
     const bool lutOk = lut.isEmpty() || QFileInfo::exists(lut);
-    m_lutName->setText(lut.isEmpty() ? T("keine") : EffectFolders::displayName(lut) + (lutOk ? QString() : T(" (fehlt)")));
+    m_lutName->setText(lut.isEmpty() ? T("Keine") : EffectFolders::displayName(lut) + (lutOk ? QString() : T(" (fehlt)")));
     m_lutName->setToolTip(lut);
     m_lutName->setStyleSheet(QString("color: %1;").arg((lutOk ? Theme::text : Theme::warning).name()));
     m_lutClear->setEnabled(!lut.isEmpty());

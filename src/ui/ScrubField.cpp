@@ -1,6 +1,7 @@
 #include "ui/ScrubField.h"
 
 #include "app/Theme.h"
+#include "core/I18n.h"
 
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -37,7 +38,13 @@ void ScrubField::setRange(double min, double max)
 void ScrubField::showValue()
 {
     if (!m_minText.isEmpty() && m_value <= m_min) setText(m_minText);
-    else setText(QString::number(m_value, 'f', m_decimals) + m_suffix);
+    else setText(number() + m_suffix);
+}
+
+// Decimal separator of the UI language, like the other number fields
+QString ScrubField::number() const
+{
+    return QString::number(m_value, 'f', m_decimals).replace('.', I18n::decimalPoint());
 }
 
 void ScrubField::change(double v)
@@ -92,7 +99,7 @@ void ScrubField::startEditing()
     m_editing = true;
     setReadOnly(false);
     setCursor(Qt::IBeamCursor);
-    setText(QString::number(m_value, 'f', m_decimals));
+    setText(number());
     setFocus();
     selectAll();
 }

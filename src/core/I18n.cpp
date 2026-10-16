@@ -14,6 +14,7 @@
 namespace {
 
 constexpr const char* kContext = "schneidi";
+QString s_installed; // language of this run (install), may differ from the setting (--lang)
 
 // Simple translator without Qt Linguist: dictionary from a JSON resource
 class MapTranslator : public QTranslator {
@@ -77,6 +78,12 @@ void install(const QString& override)
 {
     auto* app = QCoreApplication::instance();
     const QString lang = known(override) ? override : language();
+    s_installed = lang;
+    // Numbers in spin boxes, dates and sorting follow the UI language, not the system (English UI on a German
+    // system showed "1,0 s" next to "170.0"); no thousands separator, number fields read back what they show
+    QLocale locale(lang);
+    locale.setNumberOptions(QLocale::OmitGroupSeparator);
+    QLocale::setDefault(locale);
     if (lang != "de") {
         // English first, so texts not translated yet show in English rather than German
         QHash<QString, QString> map;
@@ -101,7 +108,11 @@ QString translate(const QString& lang, const char* source)
     return map.value(QString::fromUtf8(source), QString::fromUtf8(source));
 }
 
-QChar decimalPoint() { return language() == "en" ? QChar('.') : QChar(','); }
+QChar decimalPoint()
+{
+    const QString lang = s_installed.isEmpty() ? language() : s_installed;
+    return lang == "en" ? QChar('.') : QChar(',');
+}
 
 } // namespace I18n
 

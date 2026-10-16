@@ -209,7 +209,7 @@ QWidget* MainWindow::buildPageBar()
     lay->setContentsMargins(10, 0, 10, 0);
     lay->setSpacing(4);
 
-    auto* brand = new QLabel("schneidi");
+    auto* brand = new QLabel(appName()); // with the version, like DaVinci (bug reports, screenshots)
     brand->setStyleSheet(QString("color: %1; font-weight: 600;").arg(Theme::textDim.name()));
     lay->addWidget(brand);
     lay->addStretch(1);

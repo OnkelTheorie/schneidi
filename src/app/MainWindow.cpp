@@ -77,9 +77,14 @@
 #include <QStandardPaths>
 #include <QTimer>
 
+QString MainWindow::appName()
+{
+    return "schneidi " + QCoreApplication::applicationVersion().section(' ', 0, 0);
+}
+
 MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m_engine(engine)
 {
-    setWindowTitle("schneidi");
+    setWindowTitle(appName());
     resize(1600, 950);
 
     m_project = new Project(this);

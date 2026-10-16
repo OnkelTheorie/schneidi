@@ -113,6 +113,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     // Bit depth (WAV/AIFF/ProRes/Apple Lossless); entries depending on the format, see updateControls
     m_audioBits = new QComboBox;
     m_audioBits->setObjectName("renderAudioBits");
+    m_audioBits->setPlaceholderText(T("Bei diesem Format fest")); // compressed formats: no choices, not an empty box
     connect(m_audioBits, qOverload<int>(&QComboBox::activated), this,
             [this] { m_wantedBits = m_audioBits->currentData().toInt(); });
 

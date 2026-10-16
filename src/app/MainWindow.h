@@ -135,6 +135,7 @@ private:
     void checkProjectFile();
     void setProjectPath(const QString& path);
     void updateTitle();
+    static QString appName(); // "schneidi 0.8.2" (version without the build state)
     void addRecent(const QString& path);
     void rebuildRecentMenu();
     void autosave();
