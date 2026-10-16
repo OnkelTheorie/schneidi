@@ -7,7 +7,7 @@ body:
     attributes:
       label: schneidi version
       description: Shown in the window title or the release you downloaded
-      placeholder: "0.5.0"
+      placeholder: "0.8.1"
     validations:
       required: true
   - type: input

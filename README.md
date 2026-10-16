@@ -1,20 +1,32 @@
 # schneidi
 
-A lightweight video editor with Media, Edit, Color and Deliver pages. Its workflow is inspired by DaVinci Resolve, with far fewer features. The UI is available in English, German, Spanish, French, Polish and Russian.
+**A DaVinci-style video editor that an AI assistant can edit with you – live, in the project you have open.**
 
-A DaVinci-style workflow without DaVinci's hurdles: runs on modest hardware and opens H.264/H.265/AAC footage on Linux.
+schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far fewer features. It runs on modest hardware and opens H.264/H.265 video with AAC sound on Linux, which the free DaVinci Resolve does not. The UI is available in English, German, Spanish, French, Polish and Russian.
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
-**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage or Debian package). To build from source, see [Building](#building).
+**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage or Debian package). Windows: no download yet – [build it yourself](#building); an installer is planned for 1.0.
 
 > Status: early development (0.x). The project file format may still change between versions.
 
+![Edit page while an AI assistant is connected: transcript, title inspector and timeline](screenshots/edit.png)
+
+## Why schneidi?
+
+- **Edit together with an AI.** schneidi comes with its own command line and [MCP server](#command-line-and-ai-editing-mcp). Claude or another assistant can find pauses, scene changes and loud moments, transcribe, cut, grade, mix and render. When the project is open in the app, each change lands there as one undo step while you watch ("AI connected") – review it, undo it or disconnect.
+- **DaVinci's workflow without its hurdles.** The same pages and terms (ripple, roll, slip, slide, compound clips) and many of the same shortcuts (`=`/`-` to copy grades, `1`–`9` to cut multicam angles), but light enough for an older laptop.
+- **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, open source (GPL-3.0).
+- **Long recordings of one event.** Sync hours of recordings from several PCs or cameras by their sound and cut them in a multicam view that shows up to 16 angles at once.
+
+## Screenshots
+
 ![Editing in schneidi: clips into the timeline, ripple trim with two-up view, color wheels](screenshots/demo.gif)
 
-![Edit page](screenshots/edit.png)
-
-![Multicam view: nine angles of one event side by side – click an angle or press 1–9 to cut to it](screenshots/multicam.png)
+| | |
+|---|---|
+| [![Media page: Media Storage and Media Pool](screenshots/media.png)](screenshots/media.png)<br>**Media** – browse folders, import into the Media Pool | [![Color page: color wheels and RGB parade](screenshots/color.png)](screenshots/color.png)<br>**Color** – color wheels, LUTs, scopes |
+| [![Deliver page: render settings and render queue](screenshots/deliver.png)](screenshots/deliver.png)<br>**Deliver** – presets and render queue | [![Multicam view: nine angles of one event side by side](screenshots/multicam.png)](screenshots/multicam.png)<br>**Multicam** – click an angle or press 1–9 to cut to it |
 
 ## Features
 
@@ -38,13 +50,6 @@ A DaVinci-style workflow without DaVinci's hurdles: runs on modest hardware and 
 - Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
 - **Command line and MCP server** (`schneidi-cli`): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
-
-<details>
-<summary>Color page</summary>
-
-![Color page](screenshots/color.png)
-
-</details>
 
 ## Command line and AI editing (MCP)
 
