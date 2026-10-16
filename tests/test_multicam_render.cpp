@@ -2,7 +2,8 @@
 // and audio-only switches, several streams of one angle, an angle's muted stream, gaps of a split recording), the sync
 // offset is respected frame-exactly and follows a resync, the sound runs on across a through edit. The grid for the
 // viewer: all angles of a page in their cells (auto and fixed layout, pages, aspect ratio kept), at the right sync
-// position, sound = only the active angle, switched live without rebuilding.
+// position, sound = only the active angle, switched live without rebuilding, fine detail of a large angle smoothed
+// into its small cell instead of dropped.
 #include "check.h"
 
 #include "core/Editor.h"
@@ -70,6 +71,7 @@ QImage image(Mlt::Producer& tr, int pos)
 {
     tr.seek(pos);
     std::unique_ptr<Mlt::Frame> f(tr.get_frame());
+    f->set("consumer.rescale", "bilinear"); // as the preview consumer (Engine) and the export scale
     mlt_image_format ifmt = mlt_image_rgba;
     int w = kFmt.width, h = kFmt.height;
     const uint8_t* data = f->get_image(ifmt, w, h);
@@ -165,7 +167,7 @@ int frameOf(const QImage& img, const QRect& r)
 }
 
 struct Files {
-    QString red, lime, blue, yellow, ramp, two, narrow, part1, part2;
+    QString red, lime, blue, yellow, ramp, two, narrow, part1, part2, lines;
 };
 Files g;
 
@@ -380,6 +382,33 @@ void testGridKeepsAspect()
     CHECK(near(img.pixel(155, 45), 0, 0, 0));
 }
 
+void testGridSmoothsFineDetail()
+{
+    // 1280x720 angle with a 1-px black line every 4 px into a cell of the 4x4 grid (80x45, 16x smaller): averaged to
+    // gray, not sampled away (a few source columns only -> stripes, or all white / all black)
+    Fixture f;
+    f.p.addMedia(info(g.lines, 200));
+    f.p.addMedia(info(g.red, 200));
+    const int seq = f.ed.createMulticamClip("Lines", {{"L", {{g.lines, 0}}}, {"R", {{g.red, 0}}}});
+    MulticamGridOptions o;
+    o.columns = 4;
+    const QImage img = gridImage(*f.p.sequence(seq), o, 10);
+    if (!CHECK(!img.isNull())) return;
+    double sum = 0;
+    int n = 0, lo = 255, hi = 0;
+    for (int y = 10; y < 35; y += 3)
+        for (int x = 8; x < 72; ++x) {
+            const int v = qGray(img.pixel(x, y));
+            sum += v;
+            ++n;
+            lo = std::min(lo, v);
+            hi = std::max(hi, v);
+        }
+    const double mean = sum / n; // source: 3/4 white
+    CHECK(mean > 160 && mean < 225);
+    CHECK(hi - lo < 60); // even gray, no stripes left over
+}
+
 void testGridSoundIsActiveAngleOnlyAndLive()
 {
     Fixture f;
@@ -437,7 +466,10 @@ int main(int argc, char** argv)
                                                   "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264",
                                                   "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le",
                                                   "-shortest"});
-    for (const QString& file : {g.red, g.lime, g.blue, g.yellow, g.narrow, g.part1, g.part2, g.ramp, g.two})
+    g.lines = Check::makeMedia(g_dir + "/lines.mp4", {"-f", "lavfi", "-i", "color=white:size=1280x720:rate=25:duration=8",
+                                                      "-vf", "geq=lum='if(eq(mod(X,4),1),16,235)':cb=128:cr=128",
+                                                      "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv420p"});
+    for (const QString& file : {g.red, g.lime, g.blue, g.yellow, g.narrow, g.part1, g.part2, g.ramp, g.two, g.lines})
         if (!CHECK(!file.isEmpty())) return Check::result();
     Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
@@ -457,6 +489,7 @@ int main(int argc, char** argv)
     testGridPagesAndEmptyCells();
     testGridFollowsSyncPosition();
     testGridKeepsAspect();
+    testGridSmoothsFineDetail();
     testGridSoundIsActiveAngleOnlyAndLive();
     return Check::result();
 }

@@ -136,6 +136,9 @@ bool Engine::createConsumer(QString* error)
     }
     m_consumer->set("terminate_on_pause", 0);
     m_consumer->set("real_time", 1);
+    // Scale smoothly like the export: the audio consumers default to "nearest", so downscaled pictures (preview size,
+    // multicam cells, transform zoom) dropped fine detail – 1-px lines vanished in the multicam grid
+    m_consumer->set("rescale", "bilinear");
     // Compute directly at preview size (crossfades, transform, effects) instead of project size and then
     // scale down – the Viewer only shows m_previewSize anyway. MLT scales rectangles/blur along with it.
     if (!qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW")) {

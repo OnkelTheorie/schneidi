@@ -438,6 +438,50 @@ void testGridRebuildWhilePlayingKeepsPosition(const QString& dir)
     engine.pause();
 }
 
+void testPreviewGridSmoothsFineDetail(const QString& dir)
+{
+    // The preview consumer scales like the export (bilinear): a 1-px line pattern averages to gray in a 4x4 cell
+    // instead of being sampled away (audio consumers default to "nearest": the lines vanished, gray turned white)
+    if (!Check::haveFfmpeg()) return;
+    const QString lines = Check::makeMedia(dir + "/lines.mp4",
+                                           {"-f", "lavfi", "-i", "color=white:size=1920x1080:rate=25:duration=4", "-vf",
+                                            "geq=lum='if(eq(mod(X,4),1),16,235)':cb=128:cr=128", "-c:v", "libx264",
+                                            "-qp", "0", "-pix_fmt", "yuv420p"});
+    if (!CHECK(!lines.isEmpty())) return;
+    Project p;
+    Selection sel;
+    Editor ed{&p, &sel};
+    p.addMedia(media(lines, 100, true, false));
+    const int seq = ed.createMulticamClip("Lines", {{"L", {{lines, 0}}}, {"L2", {{lines, 0}}}});
+    if (!CHECK(seq > 0)) return;
+    Engine engine;
+    QString err;
+    if (!CHECK(engine.init(&err))) return;
+    engine.setFormat(p.format());
+    QImage frame;
+    QObject::connect(&engine, &Engine::frameReady, &engine, [&](const QImage& img) { frame = img; });
+    MulticamGridOptions o;
+    o.columns = 4;
+    if (!CHECK(engine.showMulticam(p.renderTimeline(seq), p.sequence(seq)->angles, o, 0, 10))) return;
+    // The first images may still be black (angle not decoded yet)
+    const auto shown = [&] { return !frame.isNull() && qGray(frame.pixel(MulticamGrid::cell(frame.rect(), 2, 0, 4).center())) > 50; };
+    if (!CHECK(QTest::qWaitFor(shown, 10000))) return;
+    const QRect cell = MulticamGrid::cell(frame.rect(), 2, 0, 4);
+    double sum = 0;
+    int n = 0, lo = 255, hi = 0;
+    for (int y = cell.top() + cell.height() / 4; y < cell.bottom() - cell.height() / 4; y += 3)
+        for (int x = cell.left() + cell.width() / 8; x < cell.right() - cell.width() / 8; ++x) {
+            const int v = qGray(frame.pixel(x, y));
+            sum += v;
+            ++n;
+            lo = std::min(lo, v);
+            hi = std::max(hi, v);
+        }
+    const double mean = n ? sum / n : 0; // source: 3/4 white
+    CHECK(mean > 160 && mean < 225);
+    CHECK(hi - lo < 60);
+}
+
 // ---- Main window ----
 
 void testMainWindowMulticamMode(const QString& dir)
@@ -546,6 +590,7 @@ int main(int argc, char** argv)
     testProxyHintForManyCells();
     testPageFollowRebuildsGrid();
     testGridRebuildWhilePlayingKeepsPosition(dir.path());
+    testPreviewGridSmoothsFineDetail(dir.path());
     testMainWindowMulticamMode(dir.path());
     return Check::result();
 }
