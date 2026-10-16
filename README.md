@@ -10,7 +10,7 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 
 > Status: early development (0.x). The project file format may still change between versions.
 
-![Edit page while an AI assistant is connected: transcript, title inspector and timeline](screenshots/edit.png)
+![An AI assistant edits live in schneidi: keeps the speech, adds b-roll with dissolves, subtitles, a title, ducked music and a grade](screenshots/demo.gif)
 
 ## Why schneidi?
 
@@ -21,7 +21,7 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 
 ## Screenshots
 
-![Editing in schneidi: clips into the timeline, ripple trim with two-up view, color wheels](screenshots/demo.gif)
+![Edit page while an AI assistant is connected: transcript, title inspector and timeline](screenshots/edit.png)
 
 | | |
 |---|---|
@@ -102,7 +102,7 @@ schneidi-cli app state                                       # playhead, selecti
 schneidi-cli edit @app --ops '[{"op":"split","at":"12s"}]'   # cut in the open project
 schneidi-cli app undo
 ```
-The AppImage contains the CLI too: `schneidi-x86_64.AppImage cli help`, or a link to the AppImage named `schneidi-cli`.
+The AppImage contains the CLI too: `./schneidi-<version>-x86_64.AppImage cli help`, or a link to the AppImage named `schneidi-cli`.
 
 ## Roadmap
 
