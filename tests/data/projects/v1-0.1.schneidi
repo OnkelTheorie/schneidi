@@ -1,0 +1,127 @@
+{
+    "app": "schneidi",
+    "fps": 30,
+    "lastClipId": 6,
+    "lastLinkId": 2,
+    "media": [
+        {
+            "hasAudio": true,
+            "hasVideo": true,
+            "isImage": false,
+            "length": 300,
+            "name": "a.mp4",
+            "path": "/fixtures/media/a.mp4",
+            "relPath": "media/a.mp4"
+        },
+        {
+            "hasAudio": true,
+            "hasVideo": true,
+            "isImage": false,
+            "length": 250,
+            "name": "b.mp4",
+            "path": "/fixtures/media/b.mp4",
+            "relPath": "media/b.mp4"
+        }
+    ],
+    "playhead": 42,
+    "timeline": {
+        "audio": [
+            {
+                "clips": [
+                    {
+                        "id": 2,
+                        "in": 10,
+                        "link": 1,
+                        "media": 0,
+                        "out": 149,
+                        "start": 0,
+                        "volumeDb": -6
+                    },
+                    {
+                        "id": 4,
+                        "in": 0,
+                        "link": 2,
+                        "media": 1,
+                        "out": 99,
+                        "pan": -0.5,
+                        "start": 140
+                    }
+                ],
+                "name": "A1"
+            },
+            {
+                "clips": [
+                ],
+                "muted": true,
+                "name": "A2"
+            }
+        ],
+        "markers": [
+            30,
+            200
+        ],
+        "video": [
+            {
+                "clips": [
+                    {
+                        "id": 1,
+                        "in": 10,
+                        "link": 1,
+                        "media": 0,
+                        "out": 149,
+                        "start": 0,
+                        "transform": {
+                            "compositeOn": true,
+                            "cropBottom": 0,
+                            "cropLeft": 40,
+                            "cropOn": true,
+                            "cropRight": 0,
+                            "cropTop": 0,
+                            "opacity": 80,
+                            "posX": 120,
+                            "posY": -60,
+                            "rotation": 5,
+                            "transformOn": true,
+                            "zoomX": 1.2,
+                            "zoomY": 1.2
+                        }
+                    },
+                    {
+                        "enabled": false,
+                        "id": 3,
+                        "in": 0,
+                        "link": 2,
+                        "media": 1,
+                        "out": 99,
+                        "start": 140
+                    }
+                ],
+                "name": "V1"
+            },
+            {
+                "clips": [
+                    {
+                        "effects": [
+                            {
+                                "enabled": true,
+                                "id": "chromakey",
+                                "params": {
+                                    "color": "#ff00ff00",
+                                    "distance": 0.25
+                                }
+                            }
+                        ],
+                        "id": 5,
+                        "in": 50,
+                        "media": 1,
+                        "out": 119,
+                        "start": 60
+                    }
+                ],
+                "hidden": true,
+                "name": "V2"
+            }
+        ]
+    },
+    "version": 1
+}

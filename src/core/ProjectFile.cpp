@@ -23,6 +23,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <algorithm>
+#include <array>
 
 namespace {
 
@@ -71,9 +72,25 @@ TrackDynamics dynamicsFromJson(const QJsonObject& o)
     return Compressor::clamped(d);
 }
 
-// 2: audio streams per file (clip "audioStream"). Older schneidi versions would silently play only stream 1 there
-// and lose the assignment on saving -> they reject the file.
+// Format versions. Raise only when an older schneidi would silently misread the new data (it then rejects the
+// file); new optional fields need no new version (written only when set, read with a default).
+//  1: first format (0.1, until 2026-09-30)
+//  2: audio streams per file (clip "audioStream"). Older versions would play only stream 1 and lose the assignment.
 constexpr int kFormatVersion = 2;
+
+// Migrations: kMigrations[i] turns the JSON of version i + 1 into version i + 2 before the reader sees it. A step
+// converts what the reader of the new version no longer understands (renamed/restructured fields); a new version
+// without anything to convert gets an empty step. The reader itself keeps reading old optional fields with defaults.
+using Migration = void (*)(QJsonObject& root);
+const std::array<Migration, kFormatVersion - 1> kMigrations = {
+    [](QJsonObject&) {}, // 1 -> 2: nothing to convert (clips without "audioStream" use stream 0)
+};
+
+void migrate(QJsonObject& root)
+{
+    for (int v = std::max(1, root.value("version").toInt(1)); v < kFormatVersion; ++v) kMigrations[size_t(v - 1)](root);
+    root["version"] = kFormatVersion;
+}
 
 QJsonObject transformToJson(const ClipTransform& t)
 {
@@ -591,7 +608,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
 {
     QJsonParseError pe;
     const QJsonDocument doc = QJsonDocument::fromJson(json, &pe);
-    const QJsonObject root = doc.object();
+    QJsonObject root = doc.object();
     if (pe.error != QJsonParseError::NoError || root.value("app").toString() != "schneidi") {
         if (error) *error = T("Keine gültige schneidi-Projektdatei.");
         return false;
@@ -600,6 +617,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         if (error) *error = T("Die Projektdatei stammt aus einer neueren schneidi-Version.");
         return false;
     }
+    migrate(root);
 
     const QDir projectDir = QFileInfo(projectPath).absoluteDir();
     ProjectData d;
