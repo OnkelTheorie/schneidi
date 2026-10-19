@@ -22,6 +22,55 @@
 
 namespace Cli::detail {
 
+LoudPeaks loudPeaks(const MediaSource& m, const QJsonObject& a, const std::function<void(double)>& progress)
+{
+    if (!m.info.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.info.path);
+    const ProjectFormat& f = m.format;
+    Clip c;
+    c.mediaPath = m.info.path;
+    c.out = m.info.length - 1;
+    c.audioStream = a["audio_stream"].toInt();
+    if (c.audioStream >= m.info.audioStreamCount())
+        fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s)").arg(m.info.audioStreamCount()));
+    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&progress](double p) {
+        if (progress) progress(p);
+        return true;
+    });
+    if (!peaks || peaks->empty()) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
+    std::vector<double> db(peaks->size());
+    for (size_t i = 0; i < db.size(); ++i) db[i] = 20 * std::log10(std::max(1e-6f, (*peaks)[i]));
+    LoudPeaks out;
+    // Default threshold: well above the file's typical level (median), so it adapts to quiet recordings
+    std::vector<double> sorted = db;
+    std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+    out.medianDb = sorted[sorted.size() / 2];
+    out.thresholdDb = a.contains("threshold_db") ? a["threshold_db"].toDouble() : std::min(-1.0, out.medianDb + 12);
+    const int minGap = a.contains("min") ? parseTime(a["min"], f, "min") : int(std::lround(0.5 * f.rate.fps()));
+    QVector<Peak>& hits = out.peaks;
+    for (int i = 0; i < int(db.size()); ++i) {
+        if (db[i] < out.thresholdDb) continue;
+        if (!hits.isEmpty() && i - hits.last().frame < minGap) {
+            if (db[i] > hits.last().db) hits.last() = {i, db[i]}; // the loudest frame of a burst counts
+            continue;
+        }
+        hits << Peak{i, db[i]};
+    }
+    return out;
+}
+
+QVector<PeakGroup> groupPeaks(const QVector<Peak>& peaks, int gap)
+{
+    QVector<PeakGroup> out;
+    for (int i = 0; i < peaks.size();) {
+        int j = i;
+        double loudest = peaks[i].db;
+        while (j + 1 < peaks.size() && peaks[j + 1].frame - peaks[j].frame < gap) loudest = std::max(loudest, peaks[++j].db);
+        out << PeakGroup{peaks[i].frame, peaks[j].frame + 1, j - i + 1, loudest};
+        i = j + 1;
+    }
+    return out;
+}
+
 namespace {
 // Pauses in per-frame peaks: quiet runs of at least minLen frames; the pad of sound stays on both sides (not at
 // the start/end). Ranges are shifted by `offset`.
@@ -60,69 +109,34 @@ QJsonObject silenceJson(const std::vector<float>& peaks, int offset, double thre
 QJsonObject peaksOne(const QJsonObject& a, Context& ctx)
 {
     const MediaSource m = openMedia(a);
-    if (!m.info.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.info.path);
     const ProjectFormat& f = m.format;
-    Clip c;
-    c.mediaPath = m.info.path;
-    c.out = m.info.length - 1;
-    c.audioStream = a["audio_stream"].toInt();
-    if (c.audioStream >= m.info.audioStreamCount())
-        fail("BAD_ARGUMENT", QString("the file has %1 audio stream(s)").arg(m.info.audioStreamCount()));
-    const auto peaks = AudioAnalysis::clipFramePeaks(f, c, [&ctx](double p) {
+    LoudPeaks lp = loudPeaks(m, a, [&ctx](double p) {
         if (ctx.progress) ctx.progress(p);
-        return true;
     });
-    if (!peaks || peaks->empty()) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
-    std::vector<double> db(peaks->size());
-    for (size_t i = 0; i < db.size(); ++i) db[i] = 20 * std::log10(std::max(1e-6f, (*peaks)[i]));
-    // Default threshold: well above the file's typical level (median), so it adapts to quiet recordings
-    std::vector<double> sorted = db;
-    std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
-    const double median = sorted[sorted.size() / 2];
-    const double threshold = a.contains("threshold_db") ? a["threshold_db"].toDouble() : std::min(-1.0, median + 12);
-    const int minGap = a.contains("min") ? parseTime(a["min"], f, "min") : int(std::lround(0.5 * f.rate.fps()));
-    struct Hit {
-        int frame;
-        double db;
-    };
-    QVector<Hit> hits;
-    for (int i = 0; i < int(db.size()); ++i) {
-        if (db[i] < threshold) continue;
-        if (!hits.isEmpty() && i - hits.last().frame < minGap) {
-            if (db[i] > hits.last().db) hits.last() = {i, db[i]}; // the loudest frame of a burst counts
-            continue;
-        }
-        hits << Hit{i, db[i]};
-    }
+    QVector<Peak>& hits = lp.peaks;
     if (a.contains("top")) {
         const int top = std::max(1, a["top"].toInt());
-        std::sort(hits.begin(), hits.end(), [](const Hit& x, const Hit& y) { return x.db > y.db; });
+        std::sort(hits.begin(), hits.end(), [](const Peak& x, const Peak& y) { return x.db > y.db; });
         if (hits.size() > top) hits.resize(top);
-        std::sort(hits.begin(), hits.end(), [](const Hit& x, const Hit& y) { return x.frame < y.frame; });
+        std::sort(hits.begin(), hits.end(), [](const Peak& x, const Peak& y) { return x.frame < y.frame; });
     }
     QJsonArray list;
-    for (const Hit& h : hits)
+    for (const Peak& h : hits)
         list << QJsonObject{{"frame", h.frame}, {"s", seconds(h.frame, f)}, {"tc", tc(h.frame, f)},
                             {"peak_db", std::round(h.db * 10) / 10}};
     QJsonObject out{{"file", m.info.path}, {"frames", m.info.length}, {"fps", formatJson(f)["fps"]},
-                    {"median_db", std::round(median * 10) / 10}, {"threshold_db", std::round(threshold * 10) / 10},
+                    {"median_db", std::round(lp.medianDb * 10) / 10}, {"threshold_db", std::round(lp.thresholdDb * 10) / 10},
                     {"peaks", list}};
     if (a.contains("group")) {
-        // Bursts: peaks less than `group` apart are one (a fight, a rally); the end is the last peak + 1 frame
         const int gap = parseTime(a["group"], f, "group");
         if (gap <= 0) fail("BAD_ARGUMENT", "'group' must be > 0");
         QJsonArray groups;
-        for (int i = 0; i < hits.size();) {
-            int j = i;
-            double loudest = hits[i].db;
-            while (j + 1 < hits.size() && hits[j + 1].frame - hits[j].frame < gap) loudest = std::max(loudest, hits[++j].db);
-            const int from = hits[i].frame, to = hits[j].frame + 1, count = j - i + 1;
-            QJsonObject g = range(from, to, f);
-            g["hits"] = count;
-            g["peak_db"] = std::round(loudest * 10) / 10;
-            g["per_s"] = std::round(count / std::max(1.0, seconds(to - from, f)) * 10) / 10;
+        for (const PeakGroup& pg : groupPeaks(hits, gap)) {
+            QJsonObject g = range(pg.from, pg.to, f);
+            g["hits"] = pg.hits;
+            g["peak_db"] = std::round(pg.peakDb * 10) / 10;
+            g["per_s"] = std::round(pg.hits / std::max(1.0, seconds(pg.to - pg.from, f)) * 10) / 10;
             groups << g;
-            i = j + 1;
         }
         out["groups"] = groups;
     }

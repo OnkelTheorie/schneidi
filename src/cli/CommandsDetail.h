@@ -150,6 +150,7 @@ QJsonObject cmdProbe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx);
 QJsonObject cmdScenes(const QJsonObject& a, Context& ctx);
 QJsonObject cmdPeaks(const QJsonObject& a, Context& ctx);
+QJsonObject cmdHighlights(const QJsonObject& a, Context& ctx); // AnalysisHighlights.cpp
 QJsonObject cmdFrames(const QJsonObject& a, Context& ctx);
 QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx);

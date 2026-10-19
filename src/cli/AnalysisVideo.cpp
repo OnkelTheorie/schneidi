@@ -201,10 +201,12 @@ QJsonObject regionChanges(const MediaSource& m, const QJsonObject& a, Context& c
                      "with `frames` crop"}};
 }
 
+} // namespace
+
 // Events of one colour in a region (the yellow mark of the player's own kill feed lines): how much of the picture
 // has that colour, and moments where it rises (something appeared) or falls and stays. Counting the colour instead
 // of comparing pixels ignores lines moving up when an old one goes away.
-QJsonObject regionColorEvents(const MediaSource& m, const QJsonObject& a, Context& ctx)
+ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::function<void(double)>& progress)
 {
     const ProjectFormat& f = m.format;
     const QSize full(std::max(2, f.width), std::max(2, f.height));
@@ -257,7 +259,7 @@ QJsonObject regionColorEvents(const MediaSource& m, const QJsonObject& a, Contex
         ff.waitForReadyRead(200);
         raw += ff.readAllStandardOutput();
         consume();
-        if (ctx.progress && total > 0) ctx.progress(std::clamp(share.size() / total, 0.0, 1.0));
+        if (progress && total > 0) progress(std::clamp(share.size() / total, 0.0, 1.0));
     }
     raw += ff.readAllStandardOutput();
     consume();
@@ -317,15 +319,32 @@ QJsonObject regionColorEvents(const MediaSource& m, const QJsonObject& a, Contex
         }
     }
     std::sort(events.begin(), events.end(), [](const Event& x, const Event& y) { return x.sample < y.sample; });
+    ColorEvents out;
+    out.color = color;
+    out.tolerance = tolerance;
+    out.minArea = minArea;
+    out.most = share.empty() ? 0.0 : *std::max_element(share.begin(), share.end());
+    for (const Event& e : events)
+        out.events << ColorEvent{std::min(m.info.length - 1, int(std::lround(double(e.sample) / kRate * f.rate.fps()))),
+                                 e.appear, e.area};
+    return out;
+}
+
+namespace {
+// scenes with region + color
+QJsonObject regionColorEvents(const MediaSource& m, const QJsonObject& a, Context& ctx)
+{
+    const ProjectFormat& f = m.format;
+    const ColorEvents ce = colorEvents(m, a, [&ctx](double p) {
+        if (ctx.progress) ctx.progress(p);
+    });
     QJsonArray changes;
-    for (const Event& e : events) {
-        const int frame = std::min(m.info.length - 1, int(std::lround(double(e.sample) / kRate * f.rate.fps())));
-        changes << QJsonObject{{"frame", frame}, {"s", seconds(frame, f)}, {"tc", tc(frame, f)},
+    for (const ColorEvent& e : ce.events)
+        changes << QJsonObject{{"frame", e.frame}, {"s", seconds(e.frame, f)}, {"tc", tc(e.frame, f)},
                                {"kind", e.appear ? "appear" : "disappear"}, {"area_pct", std::round(e.area * 1e5) / 1e3}};
-    }
     return {{"file", m.info.path}, {"frames", m.info.length}, {"fps", formatJson(f)["fps"]}, {"region", a["region"]},
-            {"color", color.name()}, {"tolerance", tolerance},
-            {"most_pct", std::round((share.empty() ? 0.0 : *std::max_element(share.begin(), share.end())) * 1e5) / 1e3}, {"min_area", minArea}, {"changes", changes},
+            {"color", ce.color.name()}, {"tolerance", ce.tolerance}, {"min_area", ce.minArea},
+            {"most_pct", std::round(ce.most * 1e5) / 1e3}, {"changes", changes},
             {"note", "changes = more (appear) or less (disappear) of the colour in the region, and it stayed; "
                      "area_pct = how much of the whole picture changed; most_pct = the most of the colour at one time "
                      "(0 = the colour is not there: check it with frames crop)"}};

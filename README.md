@@ -63,6 +63,7 @@ schneidi-cli silence talk.mp4 --project talk.schneidi        # "sound" ranges wi
 schneidi-cli scenes broll.mp4 --project talk.schneidi        # shot changes
 schneidi-cli scenes game.mp4 --region 0.75,0.05,0.25,0.3     # events in a part of the picture (kill feed)
 schneidi-cli peaks game.mp4 --top 10                         # the loudest moments
+schneidi-cli highlights game.mp4 --region 0.70,0.04,0.22,0.23 --color "#e7e371"  # own kills (Valorant), best first
 schneidi-cli sync cam1.mp4 cam2.mp4 cam3.mp4                 # offsets of recordings of the same event
 schneidi-cli extensions --install whisper,small              # optional speech recognition (download, ~200 MB)
 schneidi-cli transcribe talk.mp4 --language de --words       # what is said, with word times
@@ -115,7 +116,7 @@ Only fixes for problems found in 0.9.0 – new features wait for the next versio
 ### 0.10 – Analysis & exchange
 | Feature | What it does |
 |---|---|
-| **Highlight finder for AI editing** | `peaks` groups loud moments into fights, finds a kill sound from one example, `scenes` spots new kill-feed entries by color and size, and every candidate gets a score – ready to hand to `keep` |
+| **Highlight finder for AI editing** | `highlights` finds your own kills by the color of your kill-feed entries and adds loud moments; multi kills score higher, every candidate comes with lead-in and lead-out, ready to hand to `keep`. `peaks` groups loud moments into fights, `scenes` spots new kill-feed entries by color |
 | **Contact sheets** | `frames`: choose the number of columns and the tile size, crop each source separately |
 | **Timeline exchange** | Export **and import** timelines as FCP7 XML, OpenTimelineIO and EDL – bring a cut over from Premiere Pro or DaVinci Resolve, or hand one over for finishing |
 

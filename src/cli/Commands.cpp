@@ -1119,6 +1119,26 @@ const QVector<Command>& commands()
           {"audio_stream", T::Integer, "which audio stream, 0 = first"},
           {"project", T::Path, "count frames in this project's frame rate"}},
          cmdPeaks},
+        {"highlights", "Candidates for a highlight video: kills from the kill feed (with region + color, see "
+                       "`scenes` color) and loud moments, as source ranges with lead-in and lead-out, best first. "
+                       "Kills closer than 'join' are one candidate (a multi kill scores more). Without a kill feed the "
+                       "sound alone (bursts of loud moments) gives the candidates, e.g. for sport or vlogs. 'keep' "
+                       "of each file fits the 'keep' edit operation; check candidates with `frames` crop.",
+         {{"file", T::Path, "video file", false, true},
+          {"files", T::Paths, "several video files (one result each, plus 'best': all candidates by score)"},
+          {"region", T::String, "where the kill feed is, \"x,y,w,h\" (fractions 0..1 or pixels; look with `frames` "
+                                "crop first). Only the part with the player's mark: e.g. Valorant \"0.70,0.04,0.22,0.23\""},
+          {"color", T::String, "the mark of the player's own kill feed lines, e.g. Valorant \"#e7e371\" (yellow)"},
+          {"tolerance", T::Integer, "with color: largest difference per channel, 0..255 (default 25)"},
+          {"min_area", T::Number, "with color: smallest new mark as a part of the whole picture (default 0.0001)"},
+          {"pre", T::Time, "lead-in before the first kill / loud moment (default 2s)"},
+          {"post", T::Time, "lead-out after the last one (default 1s)"},
+          {"join", T::Time, "kills at most this far apart are one candidate (default 4s; loud moments without a kill feed: 2s)"},
+          {"threshold_db", T::Number, "loud moments: sample peak in dBFS (default 12 dB above the file's median)"},
+          {"audio_stream", T::Integer, "which audio stream, 0 = first"},
+          {"top", T::Integer, "only the best N candidates ('best' with several files)"},
+          {"project", T::Path, "count frames in this project's frame rate (recommended before 'keep')"}},
+         cmdHighlights},
         {"transcribe", "Speech to text with whisper (offline; install it with `extensions`). Returns subtitle-sized "
                        "'segments' with times and, with words, every word's time (to cut out words or filler). "
                        "Source: a media file or a project (its timeline sound, times in timeline frames).",

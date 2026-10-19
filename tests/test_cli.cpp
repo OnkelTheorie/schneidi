@@ -756,6 +756,20 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         }
         CHECK(colorEvents["most_pct"].toDouble() > 0.5);
         CHECK_EQ(errorOf("scenes", {{"file", marks}, {"color", "#e7e371"}}), QString("BAD_ARGUMENT")); // no region
+        // highlights (0.10): the mark as a kill with lead-in/out; without a kill feed the two tone bursts
+        const QJsonObject hl = run("highlights", {{"file", marks}, {"region", "0.5,0,0.5,0.8"}, {"color", "#e7e371"}});
+        if (CHECK_EQ(hl["candidates"].toArray().size(), 1)) {
+            const QJsonObject c = hl["candidates"][0].toObject();
+            CHECK_EQ(c["kills"].toInt(), 1);
+            CHECK(std::abs(c["from_s"].toDouble() - 1.0) < 0.15); // 2 s before the kill at 3 s
+            CHECK(std::abs(c["to_s"].toDouble() - 4.0) < 0.15);   // 1 s after
+            CHECK_EQ(hl["keep"].toArray().size(), 1);
+        }
+        const QJsonObject hs = run("highlights", {{"files", QJsonArray{clip, clip}}, {"top", 3}});
+        CHECK_EQ(hs["files"][0]["candidates"].toArray().size(), 2);
+        CHECK_EQ(hs["best"].toArray().size(), 3);
+        CHECK(hs["best"][0]["file"].isString());
+        CHECK_EQ(errorOf("highlights", {{"file", marks}}), QString("NO_AUDIO")); // neither sound nor a kill feed
 
         // Ducking of the music under A1, fades of video + linked sound
         r = ed("[{\"op\":\"duck\",\"track\":\"A2\",\"under\":\"A1\",\"amount_db\":-10},{\"op\":\"fade\",\"clips\":[3],\"out\":\"1s\"}]");
