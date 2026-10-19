@@ -112,13 +112,17 @@ What we are working on next. Plans can still change; the order within a version 
 ### 0.9.x – bug fixes
 Only fixes for problems found in 0.9.0 – new features wait for the next version.
 
-### 0.10 – Analysis & handoff
+### 0.10 – Analysis & exchange
 | Feature | What it does |
 |---|---|
 | **Highlight finder for AI editing** | `peaks` groups loud moments into fights, finds a kill sound from one example, `scenes` spots new kill-feed entries by color and size, and every candidate gets a score – ready to hand to `keep` |
 | **Contact sheets** | `frames`: choose the number of columns and the tile size, crop each source separately |
-| **EDL / XML export** | Hand a finished cut over to other editors for finishing |
-| **Voiceover** | Record your voice straight onto a track while the timeline plays |
+| **Timeline exchange** | Export **and import** timelines as FCP7 XML, OpenTimelineIO and EDL – bring a cut over from Premiere Pro or DaVinci Resolve, or hand one over for finishing |
+
+### Later
+- **0.11 – Short form:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, embedded subtitle tracks, voiceover recording
+- **0.12 – Everyday editing:** reorder effects, slip/slide tools, graded thumbnails, render cache limits, Media Pool filters
+- **0.13 – Color 2:** RGB parade, curves on the Color page, master wheels, qualifier
 
 ## Building
 
