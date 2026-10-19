@@ -140,6 +140,19 @@ int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback = -1
 double numberOf(const QJsonObject& op, const char* key, double lo, double hi);
 QColor colorOf(const QJsonValue& v, const QString& what);
 
+// ---------- Commands on projects and the app (CommandsProject.cpp) ----------
+
+QJsonObject cmdNew(const QJsonObject& a, Context& ctx);
+QJsonObject cmdInfo(const QJsonObject& a, Context& ctx);
+QJsonObject cmdImport(const QJsonObject& a, Context& ctx);
+QJsonObject cmdEdit(const QJsonObject& a, Context& ctx);
+QJsonObject cmdBackups(const QJsonObject& a, Context& ctx);
+QJsonObject cmdRestore(const QJsonObject& a, Context& ctx);
+QJsonObject cmdRender(const QJsonObject& a, Context& ctx);
+QJsonObject cmdEffects(const QJsonObject& a, Context& ctx);
+QJsonObject cmdApp(const QJsonObject& a, Context& ctx);
+QString presetHelp(); // the app's Deliver presets for the `render` description
+
 // ---------- Analysis (Analysis*.cpp) ----------
 
 // Audio tracks of `tl`: "A3", "A2,A5", numbers, track names or the audio stream names of their clips

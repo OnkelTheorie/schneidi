@@ -184,7 +184,7 @@ target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live con
 
 # Command line + MCP server (no window): for scripts and AIs, see src/cli/main.cpp
 add_library(schneidi_cli_lib STATIC
-    src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h
+    src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h src/cli/CommandsProject.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp
