@@ -16,6 +16,8 @@ struct Language {
 QList<Language> languages();           // German plus one language per dictionary in i18n/, German first
 QString language();                    // code of the current UI language
 void setLanguage(const QString& lang); // only stores it, takes effect on the next start
+// Before creating the QApplication (application name set): environment for texts of the platform theme (LANGUAGE)
+void prepareEnvironment(const QString& override = {});
 void install(const QString& override = {}); // after creating the QApplication; override = language for this run only
 QString translate(const QString& lang, const char* source); // source text in another language than the installed one
 QChar decimalPoint();                  // decimal separator of the UI language ("," in German, "." in English)

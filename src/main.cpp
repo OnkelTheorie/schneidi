@@ -93,13 +93,15 @@ int main(int argc, char* argv[])
         qputenv("QT_QPA_PLATFORM", "offscreen");
         qputenv("SDL_AUDIODRIVER", "dummy");
     }
-    QApplication app(argc, argv);
+    // Names before the application object: I18n::prepareEnvironment reads the language setting
     QApplication::setApplicationName("schneidi");
 #ifdef Q_OS_WIN
     // Without an organization name QSettings cannot write to the registry on Windows (on Linux
     // "Unknown Organization" serves as a substitute - it stays that way there, otherwise existing settings would be gone)
     QApplication::setOrganizationName("schneidi");
 #endif
+    I18n::prepareEnvironment(langOverride);
+    QApplication app(argc, argv);
     QApplication::setApplicationVersion(QString("%1 (%2)").arg(SCHNEIDI_VERSION, SCHNEIDI_BUILD)); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
     Log::install();
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)

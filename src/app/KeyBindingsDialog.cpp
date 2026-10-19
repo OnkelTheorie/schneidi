@@ -85,7 +85,7 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     connect(m_filter, &QLineEdit::textChanged, this, &KeyBindingsDialog::applyFilter);
 
     m_table = new QTableWidget(0, ColCount);
-    m_table->setHorizontalHeaderLabels({T("Bereich"), T("Funktion"), T("Taste"), T("Maustaste")});
+    m_table->setHorizontalHeaderLabels({T("Menü"), T("Funktion"), T("Taste"), T("Maustaste")});
     m_table->verticalHeader()->hide();
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);

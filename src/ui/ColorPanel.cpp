@@ -660,7 +660,7 @@ QWidget* ColorPanel::buildWindows()
     connect(m_shape, &QComboBox::activated, this, [this](int i) {
         m_editor->setGradeWindowOption(targets(), m_layer, "shape", m_shape->itemData(i).toString());
     });
-    m_invert = new QCheckBox(T("Umkehren"));
+    m_invert = new QCheckBox(T("Invertieren"));
     m_invert->setToolTip(T("Wirkt außerhalb des Fensters statt innen"));
     connect(m_invert, &QCheckBox::clicked, this,
             [this](bool on) { m_editor->setGradeWindowOption(targets(), m_layer, "invert", on); });

@@ -129,7 +129,7 @@ QVector<EffectParam> params(const QVector<EffectParam>& grade)
         {
             EffectParam p;
             p.key = "invert";
-            p.label = T("Umkehren");
+            p.label = T("Invertieren");
             p.type = EffectParam::Bool;
             p.defaultValue = false;
             add(p, false);

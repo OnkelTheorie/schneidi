@@ -31,6 +31,19 @@ private:
     QHash<QString, QString> m_map;
 };
 
+// Qt's own texts (shortcut names, dialog buttons) default to their English source: the platform theme (KDE) installs
+// Qt's translation for the system language, which showed "Strg+Z" and "Ja/Nein" in an English UI on a German system.
+// Installed first, so Qt's translation for the UI language and the dictionary come before it
+class SourceTranslator : public QTranslator {
+public:
+    using QTranslator::QTranslator;
+    bool isEmpty() const override { return false; }
+    QString translate(const char* context, const char* source, const char*, int) const override
+    {
+        return qstrcmp(context, kContext) != 0 ? QString::fromUtf8(source) : QString();
+    }
+};
+
 // Reads i18n/<lang>.json into map; empty values (not translated yet) are skipped
 void readDictionary(const QString& lang, QHash<QString, QString>& map)
 {
@@ -74,6 +87,14 @@ QString language()
 
 void setLanguage(const QString& lang) { QSettings().setValue("ui/language", lang); }
 
+void prepareEnvironment(const QString& override)
+{
+    // The platform theme (KDE) translates its own texts, e.g. Yes/No in message boxes, by LANGUAGE (gettext order),
+    // not by Qt's translators -> same language as the UI
+    const QString lang = known(override) ? override : language();
+    qputenv("LANGUAGE", lang.toUtf8());
+}
+
 void install(const QString& override)
 {
     auto* app = QCoreApplication::instance();
@@ -84,6 +105,7 @@ void install(const QString& override)
     QLocale locale(lang);
     locale.setNumberOptions(QLocale::OmitGroupSeparator);
     QLocale::setDefault(locale);
+    QCoreApplication::installTranslator(new SourceTranslator(app));
     if (lang != "de") {
         // English first, so texts not translated yet show in English rather than German
         QHash<QString, QString> map;
