@@ -25,7 +25,7 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 
 | | |
 |---|---|
-| [![Media page: Media Storage and Media Pool](screenshots/media.png)](screenshots/media.png)<br>**Media** – browse folders, import into the Media Pool | [![Color page: color wheels and RGB parade](screenshots/color.png)](screenshots/color.png)<br>**Color** – color wheels, LUTs, scopes |
+| [![Media page: Media Storage and Media Pool](screenshots/media.png)](screenshots/media.png)<br>**Media** – browse folders, import into the Media Pool | [![Color page: a window darkens everything outside an ellipse, color wheels and RGB parade](screenshots/color.png)](screenshots/color.png)<br>**Color** – color wheels, windows, LUTs, scopes |
 | [![Deliver page: render settings and render queue](screenshots/deliver.png)](screenshots/deliver.png)<br>**Deliver** – presets and render queue | [![Multicam view: nine angles of one event side by side](screenshots/multicam.png)](screenshots/multicam.png)<br>**Multicam** – click an angle or press 1–9 to cut to it |
 
 ## Features
@@ -33,9 +33,10 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 - Multiple video and audio tracks: cut, trim, move, snapping, undo/redo
 - **Multicam:** a multicam clip from several recordings of one event, synced by sound, markers, In points or start; the viewer shows up to 16 angles at once (more on pages) – click or press 1–9 to cut, change angles later, flatten to normal clips
 - Timeline zoom and scroll change **only on user input** – nothing jumps when clips get shorter
-- Fully customizable keyboard shortcuts
+- Fully customizable keyboard shortcuts and mouse side buttons – presets (DaVinci-style or beginner) and whole sets to save and load; panel sets for the Edit page, panel sizes remembered per page
 - Titles, subtitles, fades, transitions, volume, loudness normalization
 - Color correction, curves, LUTs, effects with keyframes; copy and paste grades (`=`/`-` like DaVinci)
+- **Windows** on the Color page (rectangle, ellipse, soft edge, invert): grade only part of the picture, or blur, pixelate or cover a region (a face, a name, an overlay); **tracking** makes a window follow a moving object
 - Video stabilization (vid.stab) and audio noise reduction
 - frei0r effects; import effect presets from Kdenlive and Shotcut
 - Video scopes: waveform, RGB parade, vectorscope, histogram
@@ -79,7 +80,7 @@ schneidi-cli help edit --op speed_ramp                       # one edit operatio
 Edit operations cover cutting, inserting and source edits (insert, replace, place on top, fit to fill), moving,
 trimming (ripple, roll, slip, slide), titles with their style, fades, transitions (dissolve, dip, wipes, luma),
 speed and speed ramps, markers, subtitles (SRT or cue lists, track styles), effects and presets, the color grade
-(wheels, LUTs), transform and crop, keyframes for any animatable value, paste attributes, volume/pan, the mixer
+(wheels, LUTs, windows with blur/pixelate and tracking), transform and crop, keyframes for any animatable value, paste attributes, volume/pan, the mixer
 (also to a loudness target, EQ and compressor per track), ducking, loudness normalization, tracks, linking, compound
 clips, multicam clips (create, cut to an angle, change angles, flatten), several timelines and the project format. Positions can be given relative to a clip or to the source material (`{"clip": 12, "source":
 "34.2s"}`), so they stay right while earlier operations move clips. Output is JSON on stdout (exit code 0 = ok,
@@ -108,16 +109,8 @@ The AppImage contains the CLI too: `./schneidi-<version>-x86_64.AppImage cli hel
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.8.x – bug fixes
-Only fixes for problems found in 0.8.0 – new features wait for the next version.
-
-### 0.9 – Masks & workspace
-| Feature | What it does |
-|---|---|
-| **Shape masks** | Shapes such as a rectangle or an ellipse on the Color page: grade only part of the picture |
-| **Blur or cover a region** | Hide a face, a name, a phone number or an overlay (built on the masks) |
-| **Motion tracking** | A mask follows a moving object, so the blur stays where it belongs |
-| **Keyboard and layout presets** | Load a whole set of shortcuts at once, a simpler "beginner" layout, remember panel sizes per page |
+### 0.9.x – bug fixes
+Only fixes for problems found in 0.9.0 – new features wait for the next version.
 
 ### 0.10 – Analysis & handoff
 | Feature | What it does |
