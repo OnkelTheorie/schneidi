@@ -113,7 +113,7 @@ bool MainWindow::importTimelineFile(const QString& path)
     for (const QString& f : local)
         if (!m_project->mediaInfo(f) && !files.contains(f)) files << f;
     if (!files.isEmpty()) m_mediaPool->importFiles(files);
-    const Interchange::Imported imp = Interchange::addToProject(*m_project, seq, local);
+    const Interchange::Imported imp = Interchange::addToProject(*m_project, seq, local, {}, &Engine::startTimecode);
     undo->endMacro();
     const QString done = T("Timeline „%1“ importiert (%2 Clips).").arg(imp.name).arg(imp.clips);
     if (imp.warnings.isEmpty()) statusBar()->showMessage(done, 5000);
@@ -140,6 +140,7 @@ void MainWindow::exportTimelineDialog()
     settings.setValue("interchange/dir", QFileInfo(path).absolutePath());
     settings.setValue("interchange/filter", filter);
     Interchange::Sequence seq = Interchange::fromTimeline(*m_project);
+    Interchange::applyStartTimecodes(seq, &Engine::startTimecode);
     const QByteArray data = Interchange::write(seq, *format);
     QSaveFile out(path);
     if (!out.open(QIODevice::WriteOnly) || out.write(data) != data.size() || !out.commit()) {

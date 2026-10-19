@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 
 #include <cmath>
 
@@ -84,14 +85,14 @@ QByteArray writeOtio(Sequence& seq)
                 const double fileStart = it.in * it.speed;
                 QJsonObject ref{{"OTIO_SCHEMA", "ExternalReference.1"}, {"name", QFileInfo(it.path).fileName()},
                                 {"target_url", urlFromPath(it.path)}, {"metadata", QJsonObject{}}};
-                if (it.mediaLength > 0) ref["available_range"] = timeRange(0, it.mediaLength, rate);
+                if (it.mediaLength > 0) ref["available_range"] = timeRange(it.mediaStart, it.mediaLength, rate);
                 QJsonArray effects;
                 if (it.speed != 1.0 || it.reverse)
                     effects << QJsonObject{{"OTIO_SCHEMA", "LinearTimeWarp.1"}, {"name", ""}, {"effect_name", "LinearTimeWarp"},
                                            {"time_scalar", it.reverse ? -it.speed : it.speed}, {"metadata", QJsonObject{}}};
                 children << QJsonObject{{"OTIO_SCHEMA", "Clip.1"},
                                         {"name", it.name.isEmpty() ? QFileInfo(it.path).fileName() : it.name},
-                                        {"source_range", timeRange(fileStart, it.length, rate)},
+                                        {"source_range", timeRange(it.mediaStart + fileStart, it.length, rate)},
                                         {"media_reference", ref},
                                         {"effects", effects},
                                         {"markers", QJsonArray{}},
@@ -129,8 +130,11 @@ QByteArray writeOtio(Sequence& seq)
 
 Sequence readOtio(const QByteArray& data)
 {
+    // OTIO writes Inf/NaN, and other programs integers beyond 64 bits, into metadata: not valid for Qt's JSON reader,
+    // read as text
+    static const QRegularExpression bigInt(R"(([:\[,]\s*)(-?\d{19,}|-?Inf(?:inity)?|NaN)(?=\s*[,\]}]))");
     QJsonParseError err;
-    const QJsonDocument doc = QJsonDocument::fromJson(data, &err);
+    const QJsonDocument doc = QJsonDocument::fromJson(QString::fromUtf8(data).replace(bigInt, "\\1\"\\2\"").toUtf8(), &err);
     if (doc.isNull()) throw Error{T("Kein lesbares JSON: %1").arg(err.errorString())};
     QJsonObject tl = doc.object();
     // A collection of timelines (SerializableCollection): the first one
@@ -164,10 +168,12 @@ Sequence readOtio(const QByteArray& data)
     }
     const int offset = frames(std::as_const(tl)["global_start_time"], rate);
     for (const QJsonValue& m : std::as_const(tl)["tracks"]["markers"].toArray()) seq.markers << frames(m["marked_range"]["start_time"], rate) - offset;
-    QStringList skipped;
+    QStringList skipped, generators;
     bool otherTransitions = false, effects = false;
     for (const QJsonValue& tv : tracks) {
-        if (!tv["OTIO_SCHEMA"].toString().startsWith("Track")) continue;
+        // "Sequence" = a track in files of OTIO before 0.9
+        const QString trackSchema = tv["OTIO_SCHEMA"].toString();
+        if (!trackSchema.startsWith("Track") && !trackSchema.startsWith("Sequence")) continue;
         const bool video = tv["kind"].toString() != "Audio";
         TrackData td;
         td.name = tv["name"].toString();
@@ -198,9 +204,18 @@ Sequence readOtio(const QByteArray& data)
                 pending = p;
                 continue;
             }
-            const int length = frames(cv["source_range"]["duration"], rate);
-            if (schema.startsWith("Gap") || !schema.startsWith("Clip")) {
-                if (!schema.startsWith("Gap")) skipped << cv["name"].toString(schema); // nested stacks, generators …
+            QJsonObject ref = cv["media_reference"].toObject();
+            if (ref.isEmpty()) { // Clip.2: several references
+                const QJsonObject refs = cv["media_references"].toObject();
+                ref = refs[cv["active_media_reference_key"].toString("DEFAULT_MEDIA")].toObject();
+            }
+            // Without a source range a clip plays all of its media
+            const QJsonValue range = cv["source_range"].isObject() ? cv["source_range"] : ref["available_range"];
+            const int length = frames(range["duration"], rate);
+            const bool generator = ref["OTIO_SCHEMA"].toString().startsWith("GeneratorReference");
+            if (generator) generators << cv["name"].toString(ref["generator_kind"].toString());
+            if (schema.startsWith("Gap") || !schema.startsWith("Clip") || generator) {
+                if (!schema.startsWith("Gap") && !generator) skipped << cv["name"].toString(schema); // nested stacks …
                 if (pending) {
                     // A transition into a gap = fade out of the item before
                     if (pending->leftItem >= 0) {
@@ -219,14 +234,13 @@ Sequence readOtio(const QByteArray& data)
             it.start = pos;
             it.length = length;
             it.enabled = cv["enabled"].toBool(true);
-            QJsonObject ref = cv["media_reference"].toObject();
-            if (ref.isEmpty()) { // Clip.2: several references
-                const QJsonObject refs = cv["media_references"].toObject();
-                ref = refs[cv["active_media_reference_key"].toString("DEFAULT_MEDIA")].toObject();
-            }
             it.path = pathFromUrl(ref["target_url"].toString());
             if (it.path.isEmpty()) it.path = it.name;
-            if (ref.contains("available_range")) it.mediaLength = frames(std::as_const(ref)["available_range"]["duration"], rate);
+            // Source times count from the media's start timecode (DaVinci: 01:00:00:00 for most camera files)
+            if (ref["available_range"].isObject()) {
+                it.mediaLength = frames(std::as_const(ref)["available_range"]["duration"], rate);
+                it.mediaStart = std::max(0, frames(std::as_const(ref)["available_range"]["start_time"], rate));
+            }
             for (const QJsonValue& e : cv["effects"].toArray()) {
                 if (e["OTIO_SCHEMA"].toString().startsWith("LinearTimeWarp")) {
                     const double s = e["time_scalar"].toDouble(1.0);
@@ -238,7 +252,7 @@ Sequence readOtio(const QByteArray& data)
                     effects = true;
                 }
             }
-            const int fileStart = frames(cv["source_range"]["start_time"], rate);
+            const int fileStart = std::max(0, frames(range["start_time"], rate) - it.mediaStart);
             it.in = int(std::lround(fileStart / it.speed));
             const QJsonObject meta = cv["metadata"]["schneidi"].toObject();
             it.volumeDb = meta["volume_db"].toDouble(0);
@@ -268,6 +282,7 @@ Sequence readOtio(const QByteArray& data)
         (video ? seq.video : seq.audio) << td;
     }
     if (!skipped.isEmpty()) seq.warnings << T("Weggelassen (keine Clips): %1").arg(skipped.join(", "));
+    if (!generators.isEmpty()) seq.warnings << T("Generatoren/Titel weggelassen: %1").arg(generators.join(", "));
     if (otherTransitions) seq.warnings << T("Andere Übergänge als Blenden als Überblendung gelesen");
     if (effects) seq.warnings << T("Effekte nicht übernommen");
     return seq;

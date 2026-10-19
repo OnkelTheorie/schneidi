@@ -51,6 +51,9 @@ struct Item {
     QVector<Key> volumeKeys, opacityKeys; // dB / %
     int link = 0; // items with the same link (> 0) belong together (picture and its sound)
     int mediaLength = 0; // frames of the whole file (0 = unknown), for the file description of FCP7 XML / OTIO
+    // Timecode of the file's first frame in frames (0 = none): cameras start at 01:00:00:00 or the time of day.
+    // EDL source times and OTIO ranges count in it, FCP7 XML describes it with the file.
+    int mediaStart = 0;
     bool operator==(const Item&) const = default;
 };
 
@@ -79,6 +82,9 @@ struct Sequence {
     QVector<TrackData> video, audio;
     QVector<int> markers;
     QStringList warnings; // what was left out or changed (shown to the user)
+    // EDL: Item::in is still the source timecode (the file's start timecode is not in the file);
+    // applyStartTimecodes makes it a frame of the file
+    bool inIsTimecode = false;
 };
 
 struct Error {
@@ -104,6 +110,13 @@ void convertRate(Sequence& seq, FrameRate rate);
 // (0 = unknown: left as is).
 void fitAudioStreams(Sequence& seq, const std::function<int(const QString&)>& streams);
 
+// Start timecodes of the files ("01:00:00:00", empty = none; `timecode` gets a path of the sequence) into
+// Item::mediaStart, before writing a file. After reading an EDL (inIsTimecode) the source timecodes become frames of
+// the file; for a file without a timecode whose clips all lie beyond its end (`length` in frames, 0 = unknown) the
+// full hours are taken off (a copy that lost the camera's timecode).
+void applyStartTimecodes(Sequence& seq, const std::function<QString(const QString&)>& timecode,
+                         const std::function<int(const QString&)>& length = {});
+
 // Media files the sequence uses (in order of first use)
 QStringList mediaFiles(const Sequence& seq);
 
@@ -124,8 +137,10 @@ struct Imported {
 // of the sequence (missing = path as given); clips of files not in the media pool are left out, clips beyond the end
 // of their file shortened, channel items of other programs dropped (fitAudioStreams). The timeline is converted to
 // the project's frame rate; the caller may adopt the file's format first (while the project is empty).
-// Empty name = the sequence's (made unique).
-Imported addToProject(Project& p, Sequence seq, const QHash<QString, QString>& local, const QString& name = {});
+// Empty name = the sequence's (made unique). `timecode`: start timecode of a local media file (EDL source times are
+// counted in it, see applyStartTimecodes).
+Imported addToProject(Project& p, Sequence seq, const QHash<QString, QString>& local, const QString& name = {},
+                      const std::function<QString(const QString&)>& timecode = {});
 
 // ---- Files ----
 

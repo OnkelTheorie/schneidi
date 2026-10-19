@@ -93,11 +93,12 @@ struct Node {
         }
         return n->text.trimmed();
     }
+    // Number of a child path, rounded ("1055.0" in files of Nuke Studio)
     int num(const QString& path, int fallback = 0) const
     {
         bool ok = false;
-        const int v = at(path).toInt(&ok);
-        return ok ? v : fallback;
+        const double v = at(path).toDouble(&ok);
+        return ok ? int(std::lround(v)) : fallback;
     }
 };
 
@@ -267,10 +268,11 @@ QByteArray writeFcp7(Sequence& seq)
                 const int mediaFrames = it.mediaLength > 0 ? int(std::lround(it.mediaLength / it.speed)) : it.in + it.length;
                 x.writeTextElement("duration", QString::number(mediaFrames));
                 writeRate(x, seq.format.rate);
+                // Next to a transition: start/end -1 (the transition's edit point), in/out include the part under it
                 x.writeTextElement("start", in ? "-1" : QString::number(it.start));
                 x.writeTextElement("end", out ? "-1" : QString::number(it.start + it.length));
-                x.writeTextElement("in", QString::number(it.in));
-                x.writeTextElement("out", QString::number(it.in + it.length));
+                x.writeTextElement("in", QString::number(it.in - (in ? it.start - in->start : 0)));
+                x.writeTextElement("out", QString::number(it.in + (out ? out->end - it.start : it.length)));
                 // The file: described once, later uses refer to its id
                 x.writeStartElement("file");
                 if (fileIds.contains(it.path)) {
@@ -286,8 +288,8 @@ QByteArray writeFcp7(Sequence& seq)
                     if (it.mediaLength > 0) x.writeTextElement("duration", QString::number(it.mediaLength));
                     x.writeStartElement("timecode");
                     writeRate(x, seq.format.rate);
-                    x.writeTextElement("string", Timecode::format(0, seq.format.rate.timebase()));
-                    x.writeTextElement("frame", "0");
+                    x.writeTextElement("string", Timecode::format(it.mediaStart, seq.format.rate.timebase()));
+                    x.writeTextElement("frame", QString::number(it.mediaStart));
                     x.writeTextElement("displayformat", "NDF");
                     x.writeEndElement();
                     x.writeStartElement("media");
@@ -405,7 +407,7 @@ Sequence readFcp7(const QByteArray& data)
     // Links: union of linkclipref ids -> one link number per group
     QHash<QString, int> linkOf;
     int nextLink = 0;
-    QSet<QString> effectsLost, generators;
+    QSet<QString> effectsLost, generators, nested;
     bool otherTransitions = false;
     const Node* media = sq->child("media");
     if (!media) throw Error{T("Die Sequenz enthält kein <media>")};
@@ -415,63 +417,57 @@ Sequence readFcp7(const QByteArray& data)
         for (const Node* tn : kind->all("track")) {
             TrackData td;
             td.enabled = tn->at("enabled").toUpper() != "FALSE";
-            // In file order: clip items and transitions; a clip with start/end -1 takes its edit point from the
-            // transition next to it
-            struct Tr {
-                int start, end, cut;
-                bool fromBlack, toBlack;
-                Transition t;
+            // Clip items and transitions in file order. A clip item next to a transition has start or end -1: it
+            // begins or ends at the transition's edit point, its in/out also cover the part under the transition.
+            QVector<const Node*> els;
+            for (const Node& el : tn->children)
+                if (el.name == "clipitem" || el.name == "transitionitem" || el.name == "generatoritem") els << &el;
+            const auto cutOf = [](const Node& tr) {
+                const int start = tr.num("start"), end = tr.num("end");
+                const QString align = tr.at("alignment").toLower();
+                return align.startsWith("start") ? start : align.startsWith("end") ? end : (start + end) / 2;
             };
-            QVector<Tr> trs;
-            QVector<int> trBefore, trAfter; // per item: index in trs or -1
-            const Node* lastEl = nullptr;
-            for (const Node& el : tn->children) {
-                if (el.name == "transitionitem") {
-                    Tr tr;
-                    tr.start = el.num("start");
-                    tr.end = el.num("end");
-                    const QString align = el.at("alignment").toLower();
-                    tr.fromBlack = align == "start-black";
-                    tr.toBlack = align == "end-black";
-                    tr.cut = align.startsWith("start") ? tr.start : align.startsWith("end") ? tr.end : tr.start + (tr.end - tr.start) / 2;
-                    const Node* eff = el.child("effect");
-                    const QString name = eff ? eff->at("name") + " " + eff->at("effectid") : QString();
-                    tr.t.type = name.contains("Dip", Qt::CaseInsensitive) ? TransitionType::DipToColor : TransitionType::CrossDissolve;
-                    if (!name.contains("Dissolve", Qt::CaseInsensitive) && !name.contains("Fade", Qt::CaseInsensitive)
-                        && !name.contains("Dip", Qt::CaseInsensitive))
-                        otherTransitions = true;
-                    if (eff)
-                        for (const Node* p : eff->all("parameter"))
-                            if (p->at("parameterid") == "color")
-                                if (const Node* v = p->child("value"))
-                                    tr.t.color = QColor(v->num("red"), v->num("green"), v->num("blue"));
-                    if (lastEl && lastEl->name == "clipitem" && !trAfter.isEmpty() && !tr.fromBlack) trAfter.last() = int(trs.size());
-                    trs << tr;
-                    lastEl = &el;
-                    continue;
-                }
+            QVector<int> itemOf(els.size(), -1); // element -> index in td.items
+            for (int e = 0; e < els.size(); ++e) {
+                const Node& el = *els[e];
                 if (el.name == "generatoritem") {
                     generators << el.at("name");
-                    lastEl = &el;
                     continue;
                 }
                 if (el.name != "clipitem") continue;
                 Item it;
                 it.name = el.at("name");
-                it.enabled = el.at("enabled").toUpper() != "FALSE";
-                const int in = el.num("in"), out = el.num("out");
-                it.in = in;
-                it.length = std::max(0, out - in);
-                const int start = el.num("start", -1), end = el.num("end", -1);
-                trBefore << (lastEl && lastEl->name == "transitionitem" && !trs.last().toBlack ? int(trs.size()) - 1 : -1);
-                trAfter << -1;
-                it.start = start >= 0 ? start : end >= 0 ? end - it.length : trBefore.last() >= 0 ? trs[trBefore.last()].cut : 0;
-                if (const Node* f = el.child("file")) {
-                    const Node* def = files.value(f->attrs.value("id"), f);
-                    const QString url = def->at("pathurl");
-                    it.path = url.isEmpty() ? def->at("name") : pathFromUrl(url);
-                    if (const int d = def->num("duration"); d > 0) it.mediaLength = d;
+                if (el.child("sequence")) { // a nested sequence
+                    nested << it.name;
+                    continue;
                 }
+                const Node* f = el.child("file");
+                const Node* def = f ? files.value(f->attrs.value("id"), f) : nullptr;
+                const QString url = def ? def->at("pathurl") : QString();
+                if (url.isEmpty()) { // Premiere's generators (bars, black video, titles) are clip items without a file
+                    generators << it.name;
+                    continue;
+                }
+                it.path = pathFromUrl(url);
+                if (const int d = def->num("duration"); d > 0)
+                    it.mediaLength = int(std::lround(d * seq.format.rate.fps() / rateOf(*def, seq.format.rate).fps()));
+                it.enabled = el.at("enabled").toUpper() != "FALSE";
+                // in/out count in the clip item's own rate (Premiere: the file's), start/end in the sequence's
+                const double k = seq.format.rate.fps() / rateOf(el, seq.format.rate).fps();
+                const int in = int(std::lround(el.num("in") * k)), out = int(std::lround(el.num("out") * k));
+                const Node* before = e > 0 && els[e - 1]->name == "transitionitem" ? els[e - 1] : nullptr;
+                const Node* after = e + 1 < els.size() && els[e + 1]->name == "transitionitem" ? els[e + 1] : nullptr;
+                int start = el.num("start", -1), end = el.num("end", -1);
+                it.in = in;
+                if (start < 0 && before) {
+                    start = cutOf(*before);
+                    it.in += start - before->num("start");
+                }
+                if (end < 0 && after) end = cutOf(*after);
+                if (start < 0) start = end >= 0 ? end - (out - in) : 0;
+                if (end < 0) end = start + (out - in);
+                it.start = start;
+                it.length = std::max(0, end - start);
                 if (it.name.isEmpty()) it.name = QFileInfo(it.path).fileName();
                 if (!video) it.audioStream = std::max(0, el.num("sourcetrack/trackindex", 1) - 1);
                 for (const Node* filter : el.all("filter")) {
@@ -483,9 +479,10 @@ Sequence readFcp7(const QByteArray& data)
                             if (p->at("parameterid").toLower() == pid) return p;
                         return nullptr;
                     };
-                    const auto keys = [](const Node* p, const std::function<double(double)>& convert) {
+                    const auto keys = [k](const Node* p, const std::function<double(double)>& convert) {
                         QVector<Key> out;
-                        for (const Node* k : p->all("keyframe")) out << Key{k->num("when"), convert(k->at("value").toDouble())};
+                        for (const Node* key : p->all("keyframe"))
+                            out << Key{int(std::lround(key->num("when") * k)), convert(key->at("value").toDouble())};
                         return out;
                     };
                     if (id == "timeremap") {
@@ -508,7 +505,7 @@ Sequence readFcp7(const QByteArray& data)
                             it.opacity = p->at("value").isEmpty() ? 100 : p->at("value").toDouble();
                             it.opacityKeys = keys(p, [](double v) { return v; });
                         }
-                    } else if (id != "basic" && id != "audiopan") {
+                    } else if (id != "basic" && id != "audiopan" && !eff->at("name").isEmpty()) {
                         effectsLost << eff->at("name");
                     }
                 }
@@ -522,27 +519,29 @@ Sequence readFcp7(const QByteArray& data)
                 if (link)
                     for (const QString& r : refs) linkOf.insert(r, link);
                 it.link = link;
+                itemOf[e] = int(td.items.size());
                 td.items << it;
-                lastEl = &el;
             }
-            // Transitions to items: a dissolve between the item before and after it, fades on one side
-            for (int t = 0; t < trs.size(); ++t) {
-                Transition tr = trs[t].t;
-                tr.start = trs[t].start;
-                tr.end = trs[t].end;
-                tr.left = int(trAfter.indexOf(t));
-                tr.right = int(trBefore.indexOf(t));
-                if (trs[t].fromBlack) {
-                    // the item after the fade in
-                    for (int i = 0; i < td.items.size(); ++i)
-                        if (td.items[i].start == tr.start) tr.right = i;
-                    tr.left = -1;
-                }
-                if (trs[t].toBlack) {
-                    for (int i = 0; i < td.items.size(); ++i)
-                        if (td.items[i].start + td.items[i].length == tr.end) tr.left = i;
-                    tr.right = -1;
-                }
+            // Transitions: a dissolve between the items before and after it, a fade from/to black on one side
+            for (int e = 0; e < els.size(); ++e) {
+                const Node& el = *els[e];
+                if (el.name != "transitionitem") continue;
+                Transition tr;
+                tr.start = el.num("start");
+                tr.end = el.num("end");
+                const QString align = el.at("alignment").toLower();
+                if (align != "start-black") tr.left = e > 0 ? itemOf[e - 1] : -1;
+                if (align != "end-black") tr.right = e + 1 < els.size() ? itemOf[e + 1] : -1;
+                const Node* eff = el.child("effect");
+                const QString name = eff ? eff->at("name") + " " + eff->at("effectid") : QString();
+                tr.type = name.contains("Dip", Qt::CaseInsensitive) ? TransitionType::DipToColor : TransitionType::CrossDissolve;
+                if (!name.contains("Dissolve", Qt::CaseInsensitive) && !name.contains("Fade", Qt::CaseInsensitive)
+                    && !name.contains("Dip", Qt::CaseInsensitive))
+                    otherTransitions = true;
+                if (eff)
+                    for (const Node* p : eff->all("parameter"))
+                        if (p->at("parameterid") == "color")
+                            if (const Node* v = p->child("value")) tr.color = QColor(v->num("red"), v->num("green"), v->num("blue"));
                 if (tr.left >= 0 || tr.right >= 0) td.transitions << tr;
             }
             (video ? seq.video : seq.audio) << td;
@@ -561,6 +560,8 @@ Sequence readFcp7(const QByteArray& data)
         seq.warnings << T("Effekte nicht übernommen: %1").arg(QStringList(effectsLost.begin(), effectsLost.end()).join(", "));
     if (!generators.isEmpty())
         seq.warnings << T("Generatoren/Titel weggelassen: %1").arg(QStringList(generators.begin(), generators.end()).join(", "));
+    if (!nested.isEmpty())
+        seq.warnings << T("Verschachtelte Sequenzen weggelassen: %1").arg(QStringList(nested.begin(), nested.end()).join(", "));
     if (otherTransitions) seq.warnings << T("Andere Übergänge als Blenden als Überblendung gelesen");
     return seq;
 }

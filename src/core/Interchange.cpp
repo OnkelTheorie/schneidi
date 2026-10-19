@@ -2,6 +2,7 @@
 
 #include "core/Keyframes.h"
 #include "core/Project.h"
+#include "core/Timecode.h"
 #include "core/TimelineOps.h"
 
 #include <QDir>
@@ -9,8 +10,10 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QRegularExpression>
+#include <QSet>
 #include <QUrl>
 
+#include <climits>
 #include <cmath>
 
 namespace Interchange {
@@ -272,6 +275,7 @@ void convertRate(Sequence& seq, FrameRate rate)
                 it.start = f(it.start);
                 it.length = it.length > 0 ? std::max(1, end - it.start) : 0; // 0 = left out (fitAudioStreams)
                 it.in = f(it.in);
+                it.mediaStart = f(it.mediaStart);
                 for (Key& key : it.volumeKeys) key.frame = f(key.frame);
                 for (Key& key : it.opacityKeys) key.frame = f(key.frame);
             }
@@ -290,11 +294,14 @@ void fitAudioStreams(Sequence& seq, const std::function<int(const QString&)>& st
         for (Item& it : td.items) {
             const int n = streams(it.path);
             if (n <= 0 || it.audioStream < n) continue;
+            // Its twin: the item of a stream the file has, at the same place or of the same link (Premiere trims
+            // the channels of a clip one by one at audio transitions)
             bool twin = false;
             for (const TrackData& other : seq.audio)
                 for (const Item& o : other.items)
-                    twin = twin || (&o != &it && o.path == it.path && o.start == it.start && o.length == it.length
-                                    && o.audioStream < n && o.length > 0);
+                    twin = twin || (&o != &it && o.path == it.path && o.audioStream < n && o.length > 0
+                                    && ((o.start == it.start && o.length == it.length)
+                                        || (it.link > 0 && o.link == it.link && o.start < it.start + it.length && it.start < o.start + o.length)));
             if (twin) {
                 it.length = 0;
                 ++dropped;
@@ -304,6 +311,42 @@ void fitAudioStreams(Sequence& seq, const std::function<int(const QString&)>& st
         }
     if (dropped)
         seq.warnings << T("%1 Audioclips einzelner Kanäle weggelassen (der Stream der Datei spielt alle Kanäle)").arg(dropped);
+}
+
+void applyStartTimecodes(Sequence& seq, const std::function<QString(const QString&)>& timecode,
+                         const std::function<int(const QString&)>& length)
+{
+    const int fps = seq.format.rate.timebase();
+    const int hour = 3600 * fps;
+    QHash<QString, int> startOf; // path -> start frame, -1 = no timecode
+    for (const QString& path : mediaFiles(seq)) {
+        const QString tc = timecode ? timecode(path) : QString();
+        startOf.insert(path, tc.isEmpty() ? -1 : std::max(-1, Timecode::parse(tc, fps)));
+    }
+    const auto fileFrame = [](const Item& it) { return int(std::lround(it.in * it.speed)); };
+    if (seq.inIsTimecode && length) {
+        // No timecode, every clip beyond the end of the file: the full hours of the source timecodes are taken off
+        QHash<QString, int> first;
+        QSet<QString> inside;
+        for (const QVector<TrackData>* tracks : {&seq.video, &seq.audio})
+            for (const TrackData& td : *tracks)
+                for (const Item& it : td.items) {
+                    if (startOf.value(it.path) >= 0) continue;
+                    const int n = length(it.path);
+                    if (n <= 0 || fileFrame(it) < n) inside << it.path;
+                    first[it.path] = std::min(first.value(it.path, INT_MAX), fileFrame(it));
+                }
+        for (auto i = first.cbegin(); i != first.cend(); ++i)
+            if (!inside.contains(i.key()) && i.value() >= hour) startOf[i.key()] = i.value() / hour * hour;
+    }
+    for (QVector<TrackData>* tracks : {&seq.video, &seq.audio})
+        for (TrackData& td : *tracks)
+            for (Item& it : td.items) {
+                const int start = std::max(0, startOf.value(it.path, -1));
+                if (seq.inIsTimecode) it.in = int(std::lround(std::max(0, fileFrame(it) - start) / it.speed));
+                it.mediaStart = start;
+            }
+    seq.inIsTimecode = false;
 }
 
 QStringList mediaFiles(const Sequence& seq)
@@ -333,9 +376,24 @@ QString findMedia(const QString& path, const QStringList& folders)
     return {};
 }
 
-Imported addToProject(Project& p, Sequence seq, const QHash<QString, QString>& local, const QString& name)
+Imported addToProject(Project& p, Sequence seq, const QHash<QString, QString>& local, const QString& name,
+                      const std::function<QString(const QString&)>& timecode)
 {
     Imported out;
+    int beyond = 0; // clips that lie behind the end of their file
+    if (seq.inIsTimecode) {
+        const double k = seq.format.rate.fps() / p.format().rate.fps();
+        applyStartTimecodes(
+            seq,
+            [&](const QString& path) {
+                const QString file = local.value(path, path);
+                return timecode && p.mediaInfo(file) ? timecode(file) : QString();
+            },
+            [&](const QString& path) {
+                const MediaInfo* m = p.mediaInfo(local.value(path, path));
+                return m && !m->isImage ? int(m->length * k) : 0;
+            });
+    }
     for (QVector<TrackData>* tracks : {&seq.video, &seq.audio})
         for (TrackData& td : *tracks)
             for (Item& it : td.items) {
@@ -350,7 +408,10 @@ Imported addToProject(Project& p, Sequence seq, const QHash<QString, QString>& l
                 // Beyond the end of the file (another version of it, another frame rate): shortened
                 if (!m->isImage) {
                     const double fileLength = m->length * seq.format.rate.fps() / p.format().rate.fps() / std::max(0.01, it.speed);
-                    if (it.in + it.length > fileLength) it.length = std::max(0, int(fileLength) - it.in);
+                    if (it.in + it.length > fileLength) {
+                        it.length = std::max(0, int(fileLength) - it.in);
+                        if (it.length == 0) ++beyond;
+                    }
                 }
             }
     fitAudioStreams(seq, [&p](const QString& path) {
@@ -362,6 +423,8 @@ Imported addToProject(Project& p, Sequence seq, const QHash<QString, QString>& l
     convertRate(seq, p.format().rate);
     if (!out.missing.isEmpty())
         seq.warnings << T("%1 Mediendateien nicht gefunden, ihre Clips fehlen").arg(out.missing.size());
+    if (beyond > 0)
+        seq.warnings << T("%1 Clips liegen hinter dem Ende ihrer Datei und fehlen (andere Fassung der Datei oder anderer Timecode?)").arg(beyond);
     // Name unique like the app's timelines
     const QString base = !name.trimmed().isEmpty() ? name.trimmed() : !seq.name.isEmpty() ? seq.name : QString("Timeline");
     QStringList taken;

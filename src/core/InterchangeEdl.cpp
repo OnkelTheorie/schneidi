@@ -1,5 +1,5 @@
-// EDL (CMX3600): one video track and audio channels, cuts and dissolves. Source timecodes count from 00:00:00:00
-// of the file, the timeline starts at 01:00:00:00 (like DaVinci). Comment lines carry the clip name and the file
+// EDL (CMX3600): one video track and audio channels, cuts and dissolves. Source timecodes are the file's own
+// (Item::mediaStart, 00:00:00:00 without one), the timeline starts at 01:00:00:00 (like DaVinci). Comment lines carry the clip name and the file
 // ("* FROM CLIP NAME:", "* SOURCE FILE:"), which Premiere and DaVinci read when conforming.
 #include "core/Interchange.h"
 
@@ -70,8 +70,8 @@ QByteArray writeEdl(Sequence& seq)
             if (tr.right >= 0) inOf.insert(tr.right, &tr);
             else if (tr.left >= 0) outOf.insert(tr.left, &tr);
         }
-        const auto src = [](const Item& it, int recFrame) { // file frame at a timeline frame
-            return int(std::lround((it.in + (recFrame - it.start)) * it.speed));
+        const auto src = [](const Item& it, int recFrame) { // source timecode at a timeline frame
+            return it.mediaStart + int(std::lround((it.in + (recFrame - it.start)) * it.speed));
         };
         for (int i = 0; i < td->items.size(); ++i) {
             const Item& it = td->items[i];
@@ -200,10 +200,13 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
         if (QString v = value("SOURCE FILE:"); !v.isEmpty()) last->file = pathFromUrl(v);
     }
     if (events.isEmpty()) throw Error{T("Keine EDL-Ereignisse gefunden")};
-    // Timeline start: the hour of the first event (01:00:00:00 in most programs)
+    // Timeline start: the hour of the first event (01:00:00:00 in most programs), or the first event when that is far
+    // from a full hour (Premiere: 00:59:53:11)
     int first = INT_MAX;
     for (const Event& e : events) first = std::min(first, e.recIn);
-    const int offset = first / (3600 * fps) * (3600 * fps);
+    int offset = first / (3600 * fps) * (3600 * fps);
+    if (first - offset > 600 * fps) offset = first;
+    seq.inIsTimecode = true;
     int link = 0;
     for (const Event& e : events) {
         const bool black = e.reel.toUpper() == "BL" || e.reel.toUpper() == "BLK";

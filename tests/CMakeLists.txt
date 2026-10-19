@@ -20,6 +20,7 @@ endfunction()
 
 schneidi_test(test_timelineops)
 schneidi_test(test_interchange)
+target_compile_definitions(test_interchange PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 schneidi_test(test_interchange_app)
 schneidi_test(test_preroll)
 schneidi_test(test_projectfile)

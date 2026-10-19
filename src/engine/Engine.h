@@ -71,6 +71,8 @@ public:
     MediaInfo probe(const QString& path);
     // Same without an Engine instance: lengths count in the frame rate of `format`
     static MediaInfo probe(const ProjectFormat& format, const QString& path);
+    // Timecode of the file's first frame ("01:00:00:00", from cameras and other editors' renders); empty = none
+    static QString startTimecode(const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);
 
     // Still (Grab Still) of the currently shown image (timeline resp. source) at full project resolution,

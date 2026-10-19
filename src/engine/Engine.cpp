@@ -230,6 +230,22 @@ MediaInfo Engine::probe(const ProjectFormat& format, const QString& path)
     return info;
 }
 
+QString Engine::startTimecode(const QString& path)
+{
+    const auto profile = makeProfile(ProjectFormat{});
+    Mlt::Producer p(*profile, "avformat", path.toUtf8().constData());
+    if (!p.is_valid()) return {};
+    // The container's tag, else the one of the video stream (QuickTime: a timecode track, shown on the stream)
+    QString container, stream;
+    const QString video = QString("meta.attr.%1.stream.timecode.markup").arg(p.get_int("video_index"));
+    for (int i = 0; i < p.count(); ++i) {
+        const QString name = p.get_name(i);
+        if (name == "meta.attr.timecode.markup") container = p.get(i);
+        else if (name == video || (stream.isEmpty() && name.endsWith(".stream.timecode.markup"))) stream = p.get(i);
+    }
+    return (container.isEmpty() ? stream : container).trimmed();
+}
+
 QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
 {
     ProducerFactory factory(*m_profile);

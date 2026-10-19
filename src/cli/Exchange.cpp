@@ -3,6 +3,7 @@
 
 #include "core/Interchange.h"
 #include "core/TimelineOps.h"
+#include "engine/Engine.h"
 
 #include <QDir>
 #include <QFile>
@@ -35,6 +36,7 @@ QJsonObject cmdExportTimeline(const QJsonObject& a, Context&)
     if (QFileInfo(out).suffix().isEmpty()) out += "." + Interchange::extension(f);
     if (QFileInfo::exists(out) && !a["overwrite"].toBool()) fail("EXISTS", "file exists (overwrite: true replaces it): " + out);
     Interchange::Sequence seq = Interchange::fromTimeline(s.project, s.project.currentSequence());
+    Interchange::applyStartTimecodes(seq, &Engine::startTimecode);
     const QByteArray data = Interchange::write(seq, f);
     QDir().mkpath(QFileInfo(out).absolutePath());
     QFile file(out);
@@ -84,7 +86,7 @@ QJsonObject importTimeline(Session& s, const QJsonObject& a)
             // not readable: counts as missing
         }
     }
-    const Interchange::Imported imp = Interchange::addToProject(s.project, seq, local, a["name"].toString());
+    const Interchange::Imported imp = Interchange::addToProject(s.project, seq, local, a["name"].toString(), &Engine::startTimecode);
     s.selectTimeline(imp.sequenceId, true);
     QJsonObject o{{"timeline", QJsonObject{{"id", imp.sequenceId}, {"name", imp.name}, {"clips", imp.clips}}},
                   {"format", Interchange::formatName(f)}};
