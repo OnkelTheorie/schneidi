@@ -170,6 +170,56 @@ void testFadeAfterTrim()
     CHECK(TimelineOps::findClip(p.timeline(), a)->fadeIn >= 0);
 }
 
+// A cut where both clips are used to their ends gets no transition (DaVinci "insufficient handles");
+// trimClips ripple-trims both sides (with the linked audio) so it fits, in one undo step
+void testTransitionTrimClips()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia({"/x/a.mp4", "a.mp4", 250, true, true, false});
+    p.addMedia({"/x/b.mp4", "b.mp4", 150, true, true, false});
+    ed.addMediaAt({"/x/a.mp4"}, 0, 0);
+    ed.addMediaAt({"/x/b.mp4"}, 250, 0);
+    sel.clear();
+    const int a = V(p, 0, 0), b = V(p, 0, 1);
+    const int fps = p.fps();
+    auto len = [&](const Clip& c) { return c.retimedLength(p.mediaInfo(c.mediaPath)->length); };
+    auto dissolve = [&](TrackKind k) {
+        for (const auto& s : TimelineOps::transitions(p.timeline().tracks(k)[0], len))
+            if (s.leftId && s.rightId) return s.length();
+        return 0;
+    };
+    CHECK_EQ(ed.transitionsLackingHandles(250).size(), 2); // video and audio cut
+    const int steps = p.undoStack()->index();
+    CHECK_EQ(ed.addTransitions(250).size(), 2);
+    CHECK(!ed.addTransitionAt(a, b, {}));
+    CHECK_EQ(p.undoStack()->index(), steps); // nothing fits -> no undo step
+    CHECK(ed.previewTransitionAt(a, b, {}, true).has_value());
+    CHECK_EQ(p.undoStack()->index(), steps);
+
+    CHECK(ed.addTransitions(250, {}, {}, true).isEmpty());
+    CHECK_EQ(p.undoStack()->index(), steps + 1);
+    const Clip* ca = TimelineOps::findClip(p.timeline(), a);
+    const Clip* cb = TimelineOps::findClip(p.timeline(), b);
+    CHECK_EQ(ca->out, 249 - (fps - fps / 2));
+    CHECK_EQ(cb->in, fps / 2);
+    CHECK_EQ(cb->start, ca->end());
+    CHECK_EQ(dissolve(TrackKind::Video), fps);
+    CHECK_EQ(dissolve(TrackKind::Audio), fps);
+    CHECK_EQ(A(p, 0, 1) ? TimelineOps::findClip(p.timeline(), A(p, 0, 1))->start : -1, cb->start); // audio in sync
+
+    // Drop onto the cut (Effects Library), aligned to the start of the cut: only the left clip needs material
+    p.undoStack()->undo();
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), a)->out, 249);
+    TransitionStyle start;
+    start.align = TransitionAlign::Start;
+    CHECK(ed.addTransitionAt(a, b, start, true));
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), a)->out, 249 - fps);
+    CHECK_EQ(TimelineOps::findClip(p.timeline(), b)->in, 0);
+    CHECK_EQ(dissolve(TrackKind::Video), fps);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -179,6 +229,7 @@ int main(int argc, char** argv)
     Check::initApp("undo");
     testFadesStayApart();
     testFadeAfterTrim();
+    testTransitionTrimClips();
 
     Project p;
     Selection sel;

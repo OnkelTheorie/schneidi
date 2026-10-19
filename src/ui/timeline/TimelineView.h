@@ -27,6 +27,8 @@ public:
     static constexpr int kRulerH = 30;
     static constexpr int kSeparator = 6;
     static constexpr int kSubtitleTrackH = 34; // Subtitle track (fixed, narrow like DaVinci)
+    // DaVinci "Insufficient handles": ask whether to trim the clips so a transition fits
+    static bool confirmTrimForTransition(QWidget* parent);
 
     explicit TimelineView(Editor* editor, QWidget* parent = nullptr);
 
@@ -394,6 +396,7 @@ private:
         int leftId = 0, rightId = 0; // 0 = none (fade-in/out)
         TransitionStyle style;       // Alignment depending on the mouse position relative to the cut
         TimelineOps::TransitionSpan span;
+        bool trim = false; // fits only after trimming the clips (no spare material at the cut)
     };
     std::optional<TransitionDrop> transitionDropAt(const QPoint& pos) const;
     bool m_transDragging = false;

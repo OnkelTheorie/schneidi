@@ -288,7 +288,9 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_storage, &MediaStorage::folderImportRequested, m_mediaPool, &MediaPool::importFolder);
     // Effects Library: double-click = like Ctrl+T resp. "Insert title", only with the chosen kind
     connect(m_effects, &EffectsLibrary::transitionRequested, this, [this, tv](TrackKind kind, const TransitionStyle& style) {
-        m_editor->addTransitions(tv->playhead(), style, kind);
+        const bool trim = !m_editor->transitionsLackingHandles(tv->playhead(), style, kind).isEmpty()
+                          && TimelineView::confirmTrimForTransition(this);
+        m_editor->addTransitions(tv->playhead(), style, kind, trim);
     });
     connect(m_effects, &EffectsLibrary::titleRequested, this, [this, tv] { m_editor->addTitle(tv->playhead()); });
     // Filters: onto the selected clips of the effect's kind, without a selection onto the clip at the playhead

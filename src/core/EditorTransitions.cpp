@@ -59,7 +59,8 @@ bool sameTransitions(const Timeline& a, const Timeline& b)
 
 } // namespace
 
-void Editor::addTransitions(int frame, std::optional<TransitionStyle> style, std::optional<TrackKind> onlyKind)
+QVector<QPair<int, int>> Editor::addTransitions(int frame, std::optional<TransitionStyle> style,
+                                                std::optional<TrackKind> onlyKind, bool trimClips)
 {
     const Timeline& cur = m_project->timeline();
     // Selected transition: only swap the style (alignment stays)
@@ -72,8 +73,29 @@ void Editor::addTransitions(int frame, std::optional<TransitionStyle> style, std
             s.audio = style->audio;
             setTransitionStyle(t.leftId, t.rightId, s);
         }
-        return;
+        return {};
     }
+    QVector<QPair<int, int>> lacking;
+    const auto tl = withTransitions(frame, style, onlyKind, trimClips, &lacking);
+    if (tl && !sameTransitions(cur, *tl))
+        m_project->edit(T("Übergang hinzufügen"), [&](Timeline& t) { t = *tl; });
+    return lacking;
+}
+
+QVector<QPair<int, int>> Editor::transitionsLackingHandles(int frame, std::optional<TransitionStyle> style,
+                                                           std::optional<TrackKind> onlyKind) const
+{
+    if (style && !m_selection->transition().isNull()) return {}; // only swaps the style
+    QVector<QPair<int, int>> lacking;
+    withTransitions(frame, style, onlyKind, false, &lacking);
+    return lacking;
+}
+
+std::optional<Timeline> Editor::withTransitions(int frame, std::optional<TransitionStyle> style,
+                                                std::optional<TrackKind> onlyKind, bool trimClips,
+                                                QVector<QPair<int, int>>* lacking) const
+{
+    const Timeline& cur = m_project->timeline();
     struct EdgeRef { int clipId; bool atEnd; };
     QVector<EdgeRef> edges;
     auto kindOk = [&](int clipId) {
@@ -94,7 +116,7 @@ void Editor::addTransitions(int frame, std::optional<TransitionStyle> style, std
                 for (const auto& c : t.clips)
                     for (int f : {c.start, c.end()})
                         if (!t.locked && (best < 0 || std::abs(f - frame) < std::abs(best - frame))) best = f;
-        if (best < 0) return;
+        if (best < 0) return std::nullopt;
         for (TrackKind k : kinds)
             for (const auto& t : cur.tracks(k))
                 for (const auto& c : t.clips) {
@@ -103,12 +125,13 @@ void Editor::addTransitions(int frame, std::optional<TransitionStyle> style, std
                     if (c.end() == best) edges << EdgeRef{c.id, true};
                 }
     }
-    if (edges.isEmpty()) return;
+    if (edges.isEmpty()) return std::nullopt;
 
-    // Start from a copy and bring it to the fitting length; if nothing changes -> no undo step
+    // Start from a copy and bring it to the fitting length
     Timeline tl = cur;
     const int length = std::max(1, m_project->fps()); // default 1 s like DaVinci
     QSet<int> touched;
+    QVector<QPair<int, int>> cuts; // dissolves (clip ending | clip starting at the cut)
     for (const EdgeRef& e : edges) {
         TrackRef ref;
         Clip* c = TimelineOps::findClip(tl, e.clipId, &ref);
@@ -131,6 +154,7 @@ void Editor::addTransitions(int frame, std::optional<TransitionStyle> style, std
                 set(clips[idx + 1].transIn, clips[idx + 1].transInStyle, length);
                 c->transOutAlone = clips[idx + 1].transInAlone = false; // wanted at the cut: dissolve
                 touched.insert(clips[idx + 1].id);
+                if (!cuts.contains(qMakePair(c->id, clips[idx + 1].id))) cuts << qMakePair(c->id, clips[idx + 1].id);
             }
         } else {
             set(c->transIn, c->transInStyle, length);
@@ -138,15 +162,70 @@ void Editor::addTransitions(int frame, std::optional<TransitionStyle> style, std
                 set(clips[idx - 1].transOut, clips[idx - 1].transOutStyle, length);
                 c->transInAlone = clips[idx - 1].transOutAlone = false;
                 touched.insert(clips[idx - 1].id);
+                if (!cuts.contains(qMakePair(clips[idx - 1].id, c->id))) cuts << qMakePair(clips[idx - 1].id, c->id);
             }
         }
     }
+    const Timeline wanted = tl; // before fitting (fitting sets the lengths of cuts without material to 0)
     fitTransitions(tl, touched, sourceLength());
-    if (sameTransitions(cur, tl)) return;
-    m_project->edit(T("Übergang hinzufügen"), [&](Timeline& t) { t = tl; });
+    auto missing = [&] {
+        QVector<QPair<int, int>> out;
+        for (const auto& [l, r] : cuts) {
+            TrackRef ref;
+            if (!TimelineOps::findClip(tl, l, &ref)) continue;
+            const auto spans = TimelineOps::transitions(tl.track(ref), sourceLength());
+            if (std::none_of(spans.begin(), spans.end(), [&](const auto& s) { return s.leftId == l && s.rightId == r; }))
+                out << qMakePair(l, r);
+        }
+        return out;
+    };
+    QVector<QPair<int, int>> miss = missing();
+    if (trimClips && !miss.isEmpty()) {
+        tl = wanted;
+        for (const auto& [l, r] : miss)
+            if (const Clip* c = TimelineOps::findClip(tl, l)) trimForTransition(tl, l, r, c->transOutStyle.align, length);
+        fitTransitions(tl, touched, sourceLength());
+        miss = missing();
+    }
+    if (lacking) *lacking = miss;
+    return tl;
 }
 
-std::optional<Timeline> Editor::withTransitionAt(int leftId, int rightId, const TransitionStyle& style,
+bool Editor::trimForTransition(Timeline& tl, int leftId, int rightId, TransitionAlign align, int length) const
+{
+    using namespace TimelineOps;
+    TrackRef ref;
+    const Clip* l = findClip(tl, leftId, &ref);
+    const Clip* r = findClip(tl, rightId);
+    if (!l || !r || l->end() != r->start || tl.track(ref).locked) return false;
+    const SourceLength len = sourceLength();
+    const int srcLen = len ? len(*l) : 0;
+    const int handleOut = srcLen > 0 ? srcLen - 1 - l->out : INT_MAX / 2;
+    const int handleIn = r->in;
+    // Shorter if the clips are too short for the full length
+    for (; length > 0; --length) {
+        const int before = align == TransitionAlign::Start ? 0 : align == TransitionAlign::End ? length : length / 2;
+        const int after = length - before;
+        const int dl = std::max(0, after - handleOut), dr = std::max(0, before - handleIn);
+        if (l->length() - dl < std::max(1, before) || r->length() - dr < std::max(1, after)) continue;
+        Timeline t = tl;
+        if (dl > 0) {
+            const TrimEdit e = trimEdit(TrimKind::Ripple, leftId, Edge::End);
+            if (TimelineOps::clampTrimEdit(t, e, -dl, len) != -dl) return false;
+            TimelineOps::applyTrimEdit(t, e, -dl, len);
+        }
+        if (dr > 0) {
+            const TrimEdit e = trimEdit(TrimKind::Ripple, rightId, Edge::Start);
+            if (TimelineOps::clampTrimEdit(t, e, dr, len) != dr) return false;
+            TimelineOps::applyTrimEdit(t, e, dr, len);
+        }
+        tl = t;
+        return true;
+    }
+    return false;
+}
+
+std::optional<Timeline> Editor::withTransitionAt(int leftId, int rightId, const TransitionStyle& style, bool trimClips,
                                                  TrackRef* where) const
 {
     Timeline tl = m_project->timeline();
@@ -163,22 +242,39 @@ std::optional<Timeline> Editor::withTransitionAt(int leftId, int rightId, const 
     if (where) *where = l ? lRef : rRef;
     QSet<int> touched{leftId, rightId};
     touched.remove(0);
+    const Timeline wanted = tl; // before fitting (fitting sets the lengths of a cut without material to 0)
     fitTransitions(tl, touched, sourceLength());
+    if (trimClips && l && r) {
+        const auto spans = TimelineOps::transitions(tl.track(lRef), sourceLength());
+        if (std::none_of(spans.begin(), spans.end(), [&](const auto& s) { return s.leftId == leftId && s.rightId == rightId; })) {
+            Timeline trimmed = wanted;
+            if (trimForTransition(trimmed, leftId, rightId, style.align, length)) {
+                tl = trimmed;
+                fitTransitions(tl, touched, sourceLength());
+            }
+        }
+    }
     return tl;
 }
 
-void Editor::addTransitionAt(int leftId, int rightId, const TransitionStyle& style)
+bool Editor::addTransitionAt(int leftId, int rightId, const TransitionStyle& style, bool trimClips)
 {
-    const auto tl = withTransitionAt(leftId, rightId, style);
-    if (!tl || sameTransitions(m_project->timeline(), *tl)) return;
-    m_project->edit(T("Übergang hinzufügen"), [&](Timeline& t) { t = *tl; });
+    TrackRef ref;
+    const auto tl = withTransitionAt(leftId, rightId, style, trimClips, &ref);
+    if (!tl) return false;
+    const auto spans = TimelineOps::transitions(tl->track(ref), sourceLength());
+    if (std::none_of(spans.begin(), spans.end(), [&](const auto& s) { return s.leftId == leftId && s.rightId == rightId; }))
+        return false;
+    if (!sameTransitions(m_project->timeline(), *tl))
+        m_project->edit(T("Übergang hinzufügen"), [&](Timeline& t) { t = *tl; });
+    return true;
 }
 
 std::optional<TimelineOps::TransitionSpan> Editor::previewTransitionAt(int leftId, int rightId,
-                                                                       const TransitionStyle& style) const
+                                                                       const TransitionStyle& style, bool trimClips) const
 {
     TrackRef ref;
-    const auto tl = withTransitionAt(leftId, rightId, style, &ref);
+    const auto tl = withTransitionAt(leftId, rightId, style, trimClips, &ref);
     if (!tl) return std::nullopt;
     for (const auto& s : TimelineOps::transitions(tl->track(ref), sourceLength()))
         if (s.leftId == leftId && s.rightId == rightId) return s;

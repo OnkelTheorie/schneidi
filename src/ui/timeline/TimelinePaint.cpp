@@ -291,10 +291,11 @@ void TimelineView::drawTracks(QPainter& p)
     if (m_transDrop) {
         if (const auto row = rowFor(m_transDrop->ref)) {
             const QRect r = transitionRect(*row, m_transDrop->span);
-            QColor fill = Theme::primary;
+            const QColor edge = m_transDrop->trim ? Theme::warning : Theme::primary; // red: clips get trimmed
+            QColor fill = edge;
             fill.setAlpha(110);
             p.fillRect(r, fill);
-            p.setPen(QPen(Theme::primary, 2));
+            p.setPen(QPen(edge, 2));
             p.drawRect(r.adjusted(1, 1, -1, -1));
             const int x = int(frameToX(m_transDrop->span.cut));
             p.drawLine(x, row->y, x, row->y + row->h - 2);

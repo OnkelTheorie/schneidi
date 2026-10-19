@@ -29,8 +29,10 @@
 #include <QHash>
 #include <QInputDialog>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPushButton>
 #include <QTimer>
 #include <QWheelEvent>
 #include <array>
@@ -109,10 +111,27 @@ std::optional<TimelineView::TransitionDrop> TimelineView::transitionDropAt(const
                             : bestDx < 0             ? TransitionAlign::End
                                                      : TransitionAlign::Start;
     }
-    const auto span = m_editor->previewTransitionAt(best->leftId, best->rightId, best->style);
-    if (!span) return std::nullopt; // does not fit (no handles)
+    auto span = m_editor->previewTransitionAt(best->leftId, best->rightId, best->style);
+    if (!span && best->leftId && best->rightId) { // no spare material: fits after trimming (asked on drop)
+        span = m_editor->previewTransitionAt(best->leftId, best->rightId, best->style, true);
+        best->trim = true;
+    }
+    if (!span) return std::nullopt;
     best->span = *span;
     return best;
+}
+
+bool TimelineView::confirmTrimForTransition(QWidget* parent)
+{
+    QMessageBox box(QMessageBox::Question, T("Zu wenig Material"),
+                    T("Die Clips haben am Schnitt kein Material übrig für den Übergang.\n"
+                      "Clips kürzen, damit er passt? (Die Timeline wird dadurch kürzer.)"),
+                    QMessageBox::NoButton, parent);
+    QPushButton* trim = box.addButton(T("Clips kürzen"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(trim);
+    box.exec();
+    return box.clickedButton() == trim;
 }
 
 int TimelineView::fxDropClipAt(const QPoint& pos) const
@@ -221,13 +240,14 @@ void TimelineView::dropEvent(QDropEvent* e)
         return;
     }
     if (m_transDragging) {
-        if (const auto d = transitionDropAt(e->position().toPoint())) {
-            m_editor->addTransitionAt(d->leftId, d->rightId, d->style);
-            e->acceptProposedAction();
-        }
+        const auto d = transitionDropAt(e->position().toPoint());
         m_transDragging = false;
         m_transDrop.reset();
         update();
+        if (d) {
+            e->acceptProposedAction();
+            if (!d->trim || confirmTrimForTransition(this)) m_editor->addTransitionAt(d->leftId, d->rightId, d->style, d->trim);
+        }
         return;
     }
     int in = 0, out = 0;

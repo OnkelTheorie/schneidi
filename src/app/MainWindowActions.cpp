@@ -199,7 +199,11 @@ void MainWindow::buildActions()
     makeAction(timeline, "split", T("Clip am Playhead teilen"), QKeySequence("Ctrl+B"),
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
     makeAction(timeline, "add_transition", T("Übergang hinzufügen (Cross Dissolve)"), QKeySequence("Ctrl+T"),
-               [this, tv] { m_editor->addTransitions(tv->playhead()); });
+               [this, tv] {
+                   const bool trim = !m_editor->transitionsLackingHandles(tv->playhead()).isEmpty()
+                                     && TimelineView::confirmTrimForTransition(this);
+                   m_editor->addTransitions(tv->playhead(), {}, {}, trim);
+               });
     makeAction(timeline, "add_title", T("Titel einfügen"), QKeySequence(), [this, tv] { m_editor->addTitle(tv->playhead()); });
     // In the source viewer M sets a source marker (multicam sync by marker), like DaVinci
     makeAction(timeline, "add_marker", T("Marker setzen/entfernen"), QKeySequence("M"), [this, tv] {

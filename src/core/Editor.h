@@ -147,13 +147,21 @@ public:
     // without a selection at the cut nearest to the playhead. Too few handles -> shorter.
     // style set (double-click in the Effects Library): this style, existing ones are replaced;
     // onlyKind = only edges on video or audio tracks. If a transition is selected, it gets the style.
-    void addTransitions(int frame, std::optional<TransitionStyle> style = {}, std::optional<TrackKind> onlyKind = {});
+    // A cut without spare material on a needed side gets none (DaVinci "insufficient handles"); trimClips =
+    // ripple-trim the clips there first (with linked partners, like the trim mode) so it fits. One undo step.
+    // Returns the cuts (left, right clip id) that got no transition for lack of material.
+    QVector<QPair<int, int>> addTransitions(int frame, std::optional<TransitionStyle> style = {},
+                                            std::optional<TrackKind> onlyKind = {}, bool trimClips = false);
+    // Like addTransitions without trimClips, but changes nothing: the cuts that lack material
+    QVector<QPair<int, int>> transitionsLackingHandles(int frame, std::optional<TransitionStyle> style = {},
+                                                       std::optional<TrackKind> onlyKind = {}) const;
     // Transition at a cut (drop from the Effects Library): leftId ends, rightId starts there
     // (0 = none -> fade in/out). Default length 1 s, replaces an existing one; one undo step.
-    void addTransitionAt(int leftId, int rightId, const TransitionStyle& style);
+    // trimClips like addTransitions. false = it does not fit (nothing changed).
+    bool addTransitionAt(int leftId, int rightId, const TransitionStyle& style, bool trimClips = false);
     // Like addTransitionAt, but changes nothing: effective transition (for the preview while dragging)
-    std::optional<TimelineOps::TransitionSpan> previewTransitionAt(int leftId, int rightId,
-                                                                   const TransitionStyle& style) const;
+    std::optional<TimelineOps::TransitionSpan> previewTransitionAt(int leftId, int rightId, const TransitionStyle& style,
+                                                                   bool trimClips = false) const;
     // Remove the transition between leftId and rightId (0 = black/silence) or change its length
     void removeTransition(int leftId, int rightId);
     void setTransitionLength(int leftId, int rightId, int length, const QString& mergeKey = {});
@@ -371,8 +379,15 @@ signals:
 private:
     TimelineOps::SourceLength sourceLength() const;
     // Copy of the timeline with a transition at the cut (see addTransitionAt); nullopt = clips not found
-    std::optional<Timeline> withTransitionAt(int leftId, int rightId, const TransitionStyle& style,
+    std::optional<Timeline> withTransitionAt(int leftId, int rightId, const TransitionStyle& style, bool trimClips,
                                              TrackRef* where = nullptr) const;
+    // Copy of the timeline with the transitions of addTransitions; nullopt = nothing to do
+    std::optional<Timeline> withTransitions(int frame, std::optional<TransitionStyle> style,
+                                            std::optional<TrackKind> onlyKind, bool trimClips,
+                                            QVector<QPair<int, int>>* lacking) const;
+    // Ripple-trim the clips at the cut leftId|rightId in tl so a dissolve of `length` with `align` fits there
+    // (shorter if the clips are too short for it); false = not possible (locked, no room)
+    bool trimForTransition(Timeline& tl, int leftId, int rightId, TransitionAlign align, int length) const;
 
     // Place source range from source frame sIn (len frames) at `start` on V[vTrack]/A[aTrack] (overwrites, linked)
     // sIn/len in frames of the converted material if speed != 1 (see Clip::speed)

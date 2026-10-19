@@ -188,6 +188,14 @@ void opTransition(Session& s, const QJsonObject& op)
                         if (!t.locked && (!only || k == *only) && (cut < 0 || std::abs(f - at) < std::abs(cut - at))) cut = f;
         if (cut < 0) fail("FAILED", "no cut there (empty timeline?)");
     }
+    // Clips ending/starting at the cut (trim:true may move it)
+    QSet<int> endsAt, startsAt;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : cur.tracks(k))
+            for (const Clip& c : t.clips) {
+                if (cut >= 0 && c.end() == cut) endsAt.insert(c.id);
+                if (cut >= 0 && c.start == cut) startsAt.insert(c.id);
+            }
     const auto spans = [&] {
         QVector<TimelineOps::TransitionSpan> out;
         const Timeline& tl = s.project.timeline();
@@ -195,7 +203,9 @@ void opTransition(Session& s, const QJsonObject& op)
             if (only && k != *only) continue;
             for (int i = 0; i < tl.tracks(k).size(); ++i)
                 for (const auto& sp : ed.transitions({k, i}))
-                    if (clips.isEmpty() ? sp.cut == cut : (clips.contains(sp.leftId) || clips.contains(sp.rightId))) out << sp;
+                    if (clips.isEmpty() ? endsAt.contains(sp.leftId) || startsAt.contains(sp.rightId)
+                                        : clips.contains(sp.leftId) || clips.contains(sp.rightId))
+                        out << sp;
         }
         return out;
     };
@@ -203,15 +213,19 @@ void opTransition(Session& s, const QJsonObject& op)
         for (const auto& sp : spans()) ed.removeTransition(sp.leftId, sp.rightId);
         return;
     }
+    const bool trim = op.value("trim").toBool();
+    QVector<QPair<int, int>> lacking;
     if (clips.isEmpty()) {
-        ed.addTransitions(cut, std::nullopt, only);
+        lacking = ed.addTransitions(cut, std::nullopt, only, trim);
     } else {
         s.selection.set(clips);
-        ed.addTransitions(0, std::nullopt, only);
+        lacking = ed.addTransitions(0, std::nullopt, only, trim);
         s.selection.clear();
     }
     const auto found = spans();
-    if (found.isEmpty()) fail("FAILED", "no transition possible there");
+    if (found.isEmpty())
+        fail("FAILED", lacking.isEmpty() || trim ? "no transition possible there"
+                                                 : "no spare material at the cut ('trim':true shortens the clips so it fits)");
     const int length = op.contains("length") ? timeOf(s, op, "length") : 0;
     for (const auto& sp : found) {
         const TransitionStyle st = parseTransitionStyle(op, sp.style);
@@ -457,14 +471,15 @@ void addEditOps(QVector<OpDef>& ops)
                  "move a clip edge; mode normal (default, no ripple), ripple, roll (the cut), slip (content, by only), "
                  "slide (clip between its neighbours)",
                  {}, opTrim}
-        << OpDef{"transition", "{op:'transition', at|clips, type?, length?, align?, kind?, remove?, …}",
+        << OpDef{"transition", "{op:'transition', at|clips, type?, length?, align?, kind?, trim?, remove?, …}",
                  "transition at the cut nearest to `at` (all tracks) or at both edges of the clips (default cross "
                  "dissolve, 1s)",
                  "type: cross_dissolve, dip_color (color), wipe_right, wipe_left, wipe_down, wipe_up (softness 0..100, "
                  "border px, border_color), luma (luma: built-in name from `effects` or an image file, softness, "
                  "invert). align: center, start, end (relative to the cut). audio_curve: plus3, zero, minus3. "
                  "kind: only 'video' or 'audio' tracks. Alone at a clip edge it fades from/to black (silence). "
-                 "remove:true removes them; existing ones change their style/length.",
+                 "remove:true removes them; existing ones change their style/length. A cut without spare material "
+                 "(clips used to their ends) gets none; trim:true ripple-trims the clips there so it fits.",
                  opTransition}
         << OpDef{"track", "{op:'track', track, name?, lock?, mute?, hidden?, color?, move_to?}",
                  "track header settings; subtitle tracks (ST1 …) take name, enabled, lock and the title style",
