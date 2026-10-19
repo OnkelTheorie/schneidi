@@ -89,6 +89,60 @@ void Editor::setTrackDynamics(int track, const TrackDynamics& dynamics, const QS
     m_project->edit(T("Spur-Kompressor"), [&](Timeline& tl) { tl.audio[track].dynamics = d; }, mergeKey);
 }
 
+void Editor::setTrackVolume(int track, double db, const QString& mergeKey)
+{
+    const Timeline& tl = m_project->timeline();
+    if (track >= tl.audio.size() || track < -1) return;
+    db = std::clamp(db, kMinVolumeDb, kMaxVolumeDb);
+    if ((track < 0 ? tl.masterVolumeDb : tl.audio[track].volumeDb) == db) return;
+    emit mixerOnlyEdit();
+    m_project->edit(track < 0 ? T("Master-Lautstärke") : T("Spurlautstärke"), [&](Timeline& t) {
+        (track < 0 ? t.masterVolumeDb : t.audio[track].volumeDb) = db;
+    }, mergeKey);
+}
+
+void Editor::setTrackPan(int track, double pan, const QString& mergeKey)
+{
+    if (track < 0 || track >= m_project->timeline().audio.size()) return;
+    pan = std::clamp(pan, -100.0, 100.0);
+    if (m_project->timeline().audio[track].pan == pan) return;
+    emit mixerOnlyEdit();
+    m_project->edit(T("Spur-Pan"), [&](Timeline& t) { t.audio[track].pan = pan; }, mergeKey);
+}
+
+void Editor::setTrackMuted(int track, bool on)
+{
+    if (track < 0 || track >= m_project->timeline().audio.size() || m_project->timeline().audio[track].muted == on) return;
+    emit mixerOnlyEdit(); // switch live, no rebuild (otherwise playback stutters)
+    m_project->edit(T("Spur stumm"), [&](Timeline& t) { t.audio[track].muted = on; });
+}
+
+void Editor::setTrackSolo(int track, bool on)
+{
+    if (track < 0 || track >= m_project->timeline().audio.size() || m_project->timeline().audio[track].solo == on) return;
+    emit mixerOnlyEdit();
+    m_project->edit(T("Spur solo"), [&](Timeline& t) { t.audio[track].solo = on; });
+}
+
+void Editor::setMasterLimiter(bool on)
+{
+    if (m_project->timeline().masterLimiter == on) return;
+    emit mixerOnlyEdit();
+    m_project->edit(on ? T("Limiter an") : T("Limiter aus"), [&](Timeline& t) { t.masterLimiter = on; });
+}
+
+void Editor::setMasterLimiterCeiling(double db)
+{
+    db = std::clamp(db, -20.0, 0.0);
+    const Timeline& tl = m_project->timeline();
+    if (tl.masterLimiterDb == db && tl.masterLimiter) return;
+    emit mixerOnlyEdit();
+    m_project->edit(T("Limiter-Ceiling"), [&](Timeline& t) {
+        t.masterLimiterDb = db;
+        t.masterLimiter = true;
+    });
+}
+
 void Editor::addTrack(TrackKind kind, int index)
 {
     const int n = m_project->timeline().tracks(kind).size();

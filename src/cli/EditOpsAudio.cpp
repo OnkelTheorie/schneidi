@@ -95,9 +95,7 @@ void mixToLoudness(Session& s, int track, double target)
             s.notes << note + QString(", true peak %1 dBTP").arg(l->truePeakDb, 0, 'f', 1);
             return;
         }
-        s.project.edit(track >= 0 ? "Mixer" : "Master", [&](Timeline& t) {
-            (track >= 0 ? t.audio[track].volumeDb : t.masterVolumeDb) = want;
-        });
+        s.editor.setTrackVolume(track, want);
         // Without the limiter a fader moves the loudness by exactly its change: no need to measure again
         // (measuring a long edit takes a while)
         if (!s.project.timeline().masterLimiter) {
@@ -188,11 +186,10 @@ void opMixer(Session& s, const QJsonObject& op)
         double db = 0, ceiling = 0;
         if (op.contains("volume_db")) db = numberOf(op, "volume_db", kMinVolumeDb, kMaxVolumeDb);
         if (op.contains("limiter_db")) ceiling = numberOf(op, "limiter_db", -20, 0);
-        s.project.edit("Master", [&](Timeline& tl) {
-            if (op.contains("volume_db")) tl.masterVolumeDb = db;
-            if (op.contains("limiter")) tl.masterLimiter = op.value("limiter").toBool();
-            if (op.contains("limiter_db")) tl.masterLimiterDb = ceiling;
-        });
+        // Same path as the app's Mixer (Editor); a ceiling switches the limiter on unless limiter:false says otherwise
+        if (op.contains("volume_db")) s.editor.setTrackVolume(-1, db);
+        if (op.contains("limiter_db")) s.editor.setMasterLimiterCeiling(ceiling);
+        if (op.contains("limiter")) s.editor.setMasterLimiter(op.value("limiter").toBool());
         if (toLoudness) mixToLoudness(s, -1, targetLufs);
         return;
     }
@@ -207,14 +204,11 @@ void opMixer(Session& s, const QJsonObject& op)
     const Track& now = s.project.timeline().audio[index];
     const TrackDynamics dynamics = op.contains("compressor") ? compressorFrom(op.value("compressor"), now.dynamics) : now.dynamics;
     const TrackEq eq = op.contains("eq") ? eqFrom(op.value("eq"), now.eq) : now.eq;
-    s.project.edit("Mixer", [&](Timeline& tl) {
-        Track& t = tl.audio[index];
-        if (op.contains("volume_db")) t.volumeDb = db;
-        if (op.contains("pan")) t.pan = pan;
-        if (op.contains("mute")) t.muted = op.value("mute").toBool();
-        if (op.contains("solo")) t.solo = op.value("solo").toBool();
-    });
-    // Same path as the app's Mixer buttons/dialogs (Editor)
+    // Same path as the app's Mixer faders, buttons and dialogs (Editor)
+    if (op.contains("volume_db")) s.editor.setTrackVolume(index, db);
+    if (op.contains("pan")) s.editor.setTrackPan(index, pan);
+    if (op.contains("mute")) s.editor.setTrackMuted(index, op.value("mute").toBool());
+    if (op.contains("solo")) s.editor.setTrackSolo(index, op.value("solo").toBool());
     s.editor.setTrackDynamics(index, dynamics);
     s.editor.setTrackEq(index, eq);
     if (toLoudness) mixToLoudness(s, index, targetLufs);

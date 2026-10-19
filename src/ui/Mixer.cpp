@@ -747,15 +747,11 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     m_master->layout()->setContentsMargins(5, 4, 3, 4);
     m_master->fader->onChange = [this](double db) {
         m_master->setVolume(db);
-        m_engine->mixerOnlyNext();
-        m_project->edit(T("Master-Lautstärke"), [db](Timeline& tl) { tl.masterVolumeDb = db; }, "mixer-master");
+        m_editor->setTrackVolume(-1, db, "mixer-master");
     };
     m_master->fader->onFinish = [this] { m_project->closeMerge(); };
     // Limiter on the master (like a bus limiter in DaVinci Fairlight): click = on/off, right-click = ceiling
-    connect(m_master->limiter, &QToolButton::clicked, this, [this](bool on) {
-        m_engine->mixerOnlyNext();
-        m_project->edit(on ? T("Limiter an") : T("Limiter aus"), [on](Timeline& tl) { tl.masterLimiter = on; });
-    });
+    connect(m_master->limiter, &QToolButton::clicked, this, [this](bool on) { m_editor->setMasterLimiter(on); });
     connect(m_master->limiter, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(this);
         menu.addSection(T("Limiter-Ceiling"));
@@ -764,13 +760,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
             QAction* a = menu.addAction(QString("%1 dBFS").arg(db, 0, 'f', 1));
             a->setCheckable(true);
             a->setChecked(std::abs(current - db) < 0.001);
-            connect(a, &QAction::triggered, this, [this, db] {
-                m_engine->mixerOnlyNext();
-                m_project->edit(T("Limiter-Ceiling"), [db](Timeline& tl) {
-                    tl.masterLimiterDb = db;
-                    tl.masterLimiter = true; // choosing a ceiling switches it on
-                });
-            });
+            connect(a, &QAction::triggered, this, [this, db] { m_editor->setMasterLimiterCeiling(db); }); // switches it on
         }
         menu.exec(m_master->limiter->mapToGlobal(pos));
     });
@@ -868,30 +858,21 @@ void Mixer::rebuildStrips(int count)
         auto* s = new ChannelStrip(false);
         s->fader->onChange = [this, i, s](double db) {
             s->setVolume(db);
-            m_engine->mixerOnlyNext();
-            m_project->edit(T("Spurlautstärke"), [i, db](Timeline& tl) {
-                if (i < tl.audio.size()) tl.audio[i].volumeDb = db;
-            }, "mixer-vol-" + QString::number(i));
+            m_editor->setTrackVolume(i, db, "mixer-vol-" + QString::number(i));
         };
         s->pan->onChange = [this, i, s](double v) {
             s->setPan(v);
-            m_engine->mixerOnlyNext();
-            m_project->edit(T("Spur-Pan"), [i, v](Timeline& tl) {
-                if (i < tl.audio.size()) tl.audio[i].pan = v;
-            }, "mixer-pan-" + QString::number(i));
+            m_editor->setTrackPan(i, v, "mixer-pan-" + QString::number(i));
         };
         s->fader->onFinish = s->pan->onFinish = [this] { m_project->closeMerge(); };
-        connect(s->mute, &QToolButton::clicked, this, [this, i] {
-            m_engine->mixerOnlyNext(); // switch live, no rebuild (otherwise playback stutters)
-            m_project->edit(T("Spur stumm"), [i](Timeline& tl) {
-                if (i < tl.audio.size()) tl.audio[i].muted = !tl.audio[i].muted;
-            });
+        const auto track = [this, i]() -> const Track* {
+            return i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
+        };
+        connect(s->mute, &QToolButton::clicked, this, [this, i, track] {
+            if (const Track* t = track()) m_editor->setTrackMuted(i, !t->muted);
         });
-        connect(s->solo, &QToolButton::clicked, this, [this, i] {
-            m_engine->mixerOnlyNext();
-            m_project->edit(T("Spur solo"), [i](Timeline& tl) {
-                if (i < tl.audio.size()) tl.audio[i].solo = !tl.audio[i].solo;
-            });
+        connect(s->solo, &QToolButton::clicked, this, [this, i, track] {
+            if (const Track* t = track()) m_editor->setTrackSolo(i, !t->solo);
         });
         // EQ/DYN: click = on/off, double click = editor (the first click of it has switched already)
         const QString tag = trackShortName({TrackKind::Audio, i});

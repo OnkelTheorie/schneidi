@@ -58,6 +58,15 @@ public:
     // preview takes them live. Same mergeKey = one undo step (dragging a control).
     void setTrackEq(int track, const TrackEq& eq, const QString& mergeKey = {});
     void setTrackDynamics(int track, const TrackDynamics& dynamics, const QString& mergeKey = {});
+    // Mixer faders and buttons of audio track `track` (volume: -1 = master), clamped to their ranges; the preview
+    // takes them live. Same mergeKey = one undo step (dragging a fader). Mixer panel and CLI both go through these.
+    void setTrackVolume(int track, double db, const QString& mergeKey = {});
+    void setTrackPan(int track, double pan, const QString& mergeKey = {});
+    void setTrackMuted(int track, bool on);
+    void setTrackSolo(int track, bool on);
+    // Master limiter (like a bus limiter in Fairlight): on/off; a new ceiling (dBFS, -20..0) switches it on
+    void setMasterLimiter(bool on);
+    void setMasterLimiterCeiling(double db);
     // Add/delete tracks (DaVinci "Add Track"/"Delete Track"), one undo step each. addTrack: new empty
     // track at index `index` (0 = very bottom for video or A1 for audio), the others move up. Own names and
     // properties stay with their track, default names ("Video 2") follow the position. The last track of a type
