@@ -560,7 +560,7 @@ void MediaPool::applyViewMode()
     } else {
         m_list->setViewMode(QListView::IconMode);
         m_list->setIconSize(kThumb);
-        m_list->setGridSize(QSize(kThumb.width() + 16, kThumb.height() + 48));
+        m_list->setGridSize(QSize(kThumb.width() + 16, kThumb.height() + 52)); // two text lines + the item border
         m_list->setWordWrap(true);
         m_list->setSpacing(0);
     }

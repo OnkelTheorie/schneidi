@@ -266,6 +266,7 @@ void apply(QApplication& app)
         QToolButton:checked { color: %6; background: %8; }
         QToolButton:disabled { color: %10; }
         QListWidget { background: %3; border: none; }
+        QListWidget::item { border: 1px solid transparent; }
         QListWidget::item:selected { background: %8; border: 1px solid %6; }
         QScrollBar { background: %1; border: none; }
         QScrollBar:horizontal { height: 10px; }
