@@ -701,6 +701,24 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(ctx2.images.size(), 1);
         CHECK_EQ(errorOf("frames", {{"source", clip}, {"at", QJsonArray{0}}, {"crop", "1,2,3"}, {"out", dir.path()}}),
                  QString("BAD_ARGUMENT"));
+        // Contact sheet (0.10): fixed columns, tile width, a source with its own region and times
+        Cli::Context ctx3;
+        ctx3.mcp = true;
+        const QJsonObject own = frames->run(
+            Cli::normalize(*frames, {{"sources", QJsonArray{clip, QJsonObject{{"file", clip}, {"crop", "240,10,60,30"},
+                                                                             {"at", QJsonArray{"5s", "6s", "7s"}}}}},
+                                     {"count", 2}, {"sheet", true}, {"columns", 5}, {"tile_width", 200}}),
+            ctx3);
+        CHECK_EQ(own["sources"][0]["frames"].toArray().size(), 2);
+        CHECK_EQ(own["sources"][1]["frames"].toArray().size(), 3); // own times replace 'count'
+        CHECK_EQ(own["sheet_size"][0].toInt(), 5 * 200);           // 5 tiles of 200 px in one row
+        if (CHECK(ctx3.images.size() == 1)) {
+            const QImage& s = ctx3.images[0];
+            // tile 4 = the cropped white box of the second source, scaled to the tile width (fitted into the cell)
+            CHECK(qGray(s.pixel(3 * 200 + 100, s.height() / 2)) > 200);
+        }
+        CHECK_EQ(errorOf("frames", {{"sources", QJsonArray{QJsonObject{{"file", clip}, {"width", 10}}}}, {"at", QJsonArray{0}}}),
+                 QString("BAD_ARGUMENT"));
 
         const QJsonObject pr = run("probe", {{"files", QJsonArray{clip, dir.filePath("missing.mp4")}}});
         CHECK_EQ(pr["files"].toArray().size(), 2);

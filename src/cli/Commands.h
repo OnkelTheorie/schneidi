@@ -29,6 +29,7 @@ enum class ParamType {
     Time,    // frames (integer), "12.5s" (seconds) or timecode "00:01:02:03"
     Times,   // list of times
     Paths,   // list of files
+    Sources, // list of files, each optionally an object {file, …settings for this file}
     Json,    // any JSON value (edit operations)
 };
 

@@ -77,20 +77,27 @@ MediaSource openMedia(const QJsonObject& a)
     return m;
 }
 
-QImage sheet(const QVector<QImage>& images, const QStringList& labels)
+// Contact sheet: `columns` (0 = 2–4 depending on the count). Tiles of different sizes (sources with their own crop)
+// share the largest cell and are fitted into it, centered.
+QImage sheet(const QVector<QImage>& images, const QStringList& labels, int columns = 0)
 {
-    const int cols = std::min<int>(images.size(), images.size() <= 4 ? 2 : images.size() <= 9 ? 3 : 4);
+    const int cols = columns > 0 ? std::min<int>(images.size(), columns)
+                                 : std::min<int>(images.size(), images.size() <= 4 ? 2 : images.size() <= 9 ? 3 : 4);
     const int rows = (images.size() + cols - 1) / cols;
-    const QSize cell = images.first().size();
+    QSize cell;
+    for (const QImage& img : images) cell = cell.expandedTo(img.size());
     QImage out(cols * cell.width(), rows * cell.height(), QImage::Format_RGB32);
     out.fill(Qt::black);
     QPainter p(&out);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
     QFont font = p.font();
-    font.setPixelSize(std::max(12, cell.height() / 14));
+    font.setPixelSize(std::clamp(cell.height() / 14, 12, 28));
     p.setFont(font);
     for (int i = 0; i < images.size(); ++i) {
         const QPoint at((i % cols) * cell.width(), (i / cols) * cell.height());
-        p.drawImage(QRect(at, cell), images[i]); // several sources may differ in size
+        QRect target(QPoint(), images[i].size().scaled(cell, Qt::KeepAspectRatio));
+        target.moveCenter(QRect(at, cell).center());
+        p.drawImage(target, images[i]);
         const QRect box(at + QPoint(4, 4), QSize(p.fontMetrics().horizontalAdvance(labels[i]) + 8, p.fontMetrics().height() + 2));
         p.fillRect(box, QColor(0, 0, 0, 170));
         p.setPen(Qt::white);
@@ -606,11 +613,38 @@ QJsonObject cmdPeaks(const QJsonObject& a, Context& ctx) { return perFile(a, ctx
 
 QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
 {
-    QStringList sources;
-    if (a.contains("source")) sources << a["source"].toString();
-    for (const QJsonValue& v : a["sources"].toArray()) sources << v.toString();
+    // Every source with its arguments: an object entry in 'sources' overrides region and times for that file
+    struct Source {
+        QString path;
+        QJsonObject args;
+    };
+    QVector<Source> sources;
+    if (a.contains("source")) sources << Source{a["source"].toString(), a};
+    for (const QJsonValue& v : a["sources"].toArray()) {
+        if (!v.isObject()) {
+            sources << Source{v.toString(), a};
+            continue;
+        }
+        QJsonObject args = a;
+        const QJsonObject o = v.toObject();
+        for (auto it = o.begin(); it != o.end(); ++it) {
+            static const QStringList own{"file", "crop", "at", "every", "count", "from", "to", "timeline"};
+            if (!own.contains(it.key()))
+                fail("BAD_ARGUMENT", QString("sources: unknown key '%1' (allowed: %2)").arg(it.key(), own.join(", ")));
+            // the source's own times replace the general ones completely
+            if (it.key() == "at" || it.key() == "every" || it.key() == "count")
+                for (const char* k : {"at", "every", "count"}) args.remove(k);
+        }
+        for (auto it = o.begin(); it != o.end(); ++it)
+            if (it.key() != "file") args[it.key()] = it.value();
+        sources << Source{o["file"].toString(), args};
+    }
     if (sources.isEmpty()) fail("BAD_ARGUMENT", "give 'source' (or 'sources', several files)");
-    const int maxEdge = a.contains("width") ? std::clamp(a["width"].toInt(), 64, 3840) : (ctx.mcp ? 480 : 640);
+    // tile_width: decode large enough for portrait pictures too, then scale every image to exactly that width
+    const int tileWidth = a.contains("tile_width") ? std::clamp(a["tile_width"].toInt(), 32, 1920) : 0;
+    const int maxEdge = tileWidth ? std::min(3840, tileWidth * 2)
+                        : a.contains("width") ? std::clamp(a["width"].toInt(), 64, 3840)
+                                              : (ctx.mcp ? 480 : 640);
     const QString outDir = a["out"].toString();
     const bool asSheet = a["sheet"].toBool();
     if (outDir.isEmpty() && !ctx.mcp) fail("BAD_ARGUMENT", "missing 'out' (folder for the images, or the sheet file with --sheet)");
@@ -623,7 +657,11 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
         one.mcp = ctx.mcp;
         if (ctx.progress) one.progress = [&ctx, si, n = sources.size()](double p) { ctx.progress((si + p) / n); };
         // Several sources on one sheet: label with the source's number (the answer lists them in order)
-        FrameSet set = framesOf(sources[si], a, one, maxEdge, sources.size() > 1 ? QString("%1  ").arg(si + 1) : QString());
+        FrameSet set = framesOf(sources[si].path, sources[si].args, one, maxEdge,
+                                sources.size() > 1 ? QString("%1  ").arg(si + 1) : QString());
+        if (tileWidth)
+            for (QImage& img : set.images)
+                if (img.width() != tileWidth) img = img.scaledToWidth(tileWidth, Qt::SmoothTransformation);
         for (int i = 0; i < set.images.size(); ++i) {
             if (!asSheet && !outDir.isEmpty()) {
                 QDir().mkpath(outDir);
@@ -646,7 +684,8 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
     if (sources.size() == 1) result = {{"source", perSource[0].toObject()["source"]}, {"frames", perSource[0].toObject()["frames"]}};
     else result = {{"sources", perSource}};
     if (asSheet) {
-        const QImage s = sheet(images, labels);
+        const QImage s = sheet(images, labels, a["columns"].toInt());
+        result["sheet_size"] = QJsonArray{s.width(), s.height()};
         if (!outDir.isEmpty()) {
             QString file = absolute(outDir);
             if (QFileInfo(file).isDir()) file = QDir(file).filePath("sheet.jpg");

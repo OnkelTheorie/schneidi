@@ -1177,7 +1177,8 @@ const QVector<Command>& commands()
                    "sheet with timecodes (lets you look at the material). Several files at once with 'sources', a "
                    "detail of the picture (HUD, kill feed, score …) with 'crop'.",
          {{"source", T::Path, "media file or project (.schneidi)", false, true},
-          {"sources", T::Paths, "several media files (same times for each; on a sheet labelled 1, 2 … in this order)"},
+          {"sources", T::Sources, "several media files (on a sheet labelled 1, 2 … in this order); an entry may be an "
+                                  "object {file, crop?, at?, every?, count?, from?, to?} with its own region/times"},
           {"at", T::Times, "times to show"},
           {"every", T::Time, "one frame every … (e.g. 10s)"},
           {"count", T::Integer, "this many frames spread evenly"},
@@ -1187,6 +1188,9 @@ const QVector<Command>& commands()
                               "(\"0.75,0.05,0.25,0.3\" = top right); shown at its own size up to 'width'"},
           {"out", T::Path, "folder for the images (with sheet: image file)"},
           {"sheet", T::Boolean, "one contact sheet image instead of single images"},
+          {"columns", T::Integer, "sheet: number of columns (default: 2–4 depending on the count)"},
+          {"tile_width", T::Integer, "width of every image/tile in pixels (instead of 'width'; e.g. 320 for many tiles, "
+                                     "800 to read small HUD text)"},
           {"width", T::Integer, "longer image edge in pixels (default 640, MCP 480)"},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"}},
@@ -1237,6 +1241,7 @@ QJsonObject inputSchema(const Command& cmd)
         case ParamType::Time: s["type"] = QJsonArray{"integer", "string"}; break;
         case ParamType::Times: s["type"] = "array"; s["items"] = QJsonObject{{"type", QJsonArray{"integer", "string"}}}; break;
         case ParamType::Paths: s["type"] = "array"; s["items"] = QJsonObject{{"type", "string"}}; break;
+        case ParamType::Sources: s["type"] = "array"; s["items"] = QJsonObject{{"type", QJsonArray{"string", "object"}}}; break;
         case ParamType::Json: s["type"] = "array"; s["items"] = QJsonObject{{"type", "object"}}; break;
         }
         props[p.name] = s;
@@ -1293,6 +1298,22 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& raw)
         case ParamType::Paths: {
             QJsonArray arr;
             for (const QJsonValue& x : list()) arr << absolute(x.toString());
+            out[p.name] = arr;
+            break;
+        }
+        case ParamType::Sources: {
+            QJsonArray arr;
+            for (const QJsonValue& x : list()) {
+                if (!x.isObject()) {
+                    arr << absolute(x.toString());
+                    continue;
+                }
+                QJsonObject o = x.toObject();
+                if (!o["file"].isString() || o["file"].toString().isEmpty())
+                    fail("BAD_ARGUMENT", QString("%1: every object needs 'file'").arg(p.name));
+                o["file"] = absolute(o["file"].toString());
+                arr << o;
+            }
             out[p.name] = arr;
             break;
         }
