@@ -3,6 +3,7 @@
 #include "core/I18n.h"
 #include "core/TimelineOps.h"
 
+#include <QFileInfo>
 #include <QSet>
 #include <QUndoCommand>
 #include <algorithm>
@@ -549,6 +550,21 @@ void Project::setTranscript(const QString& path, const MediaTranscript& transcri
         emit modifiedChanged(true);
         return;
     }
+}
+
+void Project::recountMedia(FrameRate oldRate, const std::function<int(const QString&)>& probeLength)
+{
+    const double k = m_format.rate.fps() / oldRate.fps();
+    QVector<MediaInfo> media = m_media;
+    for (MediaInfo& m : media) {
+        const int fresh = probeLength && QFileInfo::exists(m.path) ? probeLength(m.path) : 0;
+        m.length = fresh > 0 ? fresh : std::max(1, int(std::lround(m.length * k)));
+        const auto scale = [&](int frame) { return frame < 0 ? -1 : std::min(m.length - 1, int(std::lround(frame * k))); };
+        m.markIn = scale(m.markIn);
+        m.markOut = scale(m.markOut);
+        for (int& marker : m.markers) marker = scale(marker);
+    }
+    replaceMedia(media);
 }
 
 void Project::replaceMedia(const QVector<MediaInfo>& media)

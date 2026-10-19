@@ -101,6 +101,10 @@ public:
     void setTranscript(const QString& path, const MediaTranscript& transcript);
     // Replace media info (e.g. lengths after a new frame rate), does not count as a change
     void replaceMedia(const QVector<MediaInfo>& media);
+    // After a frame rate change (from `oldRate` to the current one): media lengths, source in/out and source markers
+    // counted anew. `probeLength` = a file's real length in the new rate (0 = unknown: offline files are scaled).
+    // App and CLI both call this after setFormat.
+    void recountMedia(FrameRate oldRate, const std::function<int(const QString& path)>& probeLength);
 
     // Media Pool like DaVinci: bins (Master = 0), clip colors, flags. Every change is an undo step
     // (affects only the organization, not the media list itself).

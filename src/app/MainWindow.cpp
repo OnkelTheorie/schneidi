@@ -604,18 +604,8 @@ void MainWindow::onFormatChanged()
     m_probeCache.clear();
     if (f.rate == oldRate) return;
     // Lengths in the Media Pool count in project frames -> re-read (only possible in an empty timeline,
-    // undo/redo included). Convert offline media.
-    QVector<MediaInfo> media = m_project->media();
-    for (MediaInfo& m : media) {
-        const MediaInfo fresh = QFileInfo::exists(m.path) ? m_engine->probe(m.path) : MediaInfo{};
-        m.length = fresh.length > 0 ? fresh.length : int(std::lround(m.length * f.rate.fps() / oldRate.fps()));
-        auto scaleMark = [&](int mark) {
-            return mark < 0 ? -1 : std::min(m.length - 1, int(std::lround(mark * f.rate.fps() / oldRate.fps())));
-        };
-        m.markIn = scaleMark(m.markIn);
-        m.markOut = scaleMark(m.markOut);
-    }
-    m_project->replaceMedia(media);
+    // undo/redo included)
+    m_project->recountMedia(oldRate, [this](const QString& path) { return m_engine->probe(path).length; });
 }
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)

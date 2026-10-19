@@ -287,5 +287,28 @@ int main(int argc, char** argv)
             qputenv("PATH", path);
         }
     }
+    // New frame rate (empty timelines): lengths, source in/out and source markers counted anew; a file that cannot
+    // be read again is scaled
+    {
+        Project q;
+        MediaInfo m = media("c.mp4"); // /x/c.mp4 does not exist
+        m.length = 100;
+        m.markIn = 10;
+        m.markOut = 50;
+        m.markers = {20, 99};
+        q.addMedia(m);
+        ProjectFormat f = q.format();
+        const FrameRate old = f.rate;
+        f.rate = FrameRate{50, 1};
+        q.setFormat(f);
+        q.recountMedia(old, [](const QString&) { return 0; });
+        const MediaInfo* r = q.mediaInfo("/x/c.mp4");
+        if (CHECK(r)) {
+            CHECK_EQ(r->length, 200);
+            CHECK_EQ(r->markIn, 20);
+            CHECK_EQ(r->markOut, 100);
+            CHECK_EQ(r->markers, (QVector<int>{40, 198}));
+        }
+    }
     return Check::result();
 }

@@ -102,16 +102,7 @@ void opFormat(Session& s, const QJsonObject& op)
     const FrameRate oldRate = s.format().rate;
     s.project.setFormat(f);
     if (f.rate == oldRate) return;
-    QVector<MediaInfo> media = s.project.media();
-    for (MediaInfo& m : media) {
-        const MediaInfo fresh = QFileInfo::exists(m.path) ? Engine::probe(f, m.path) : MediaInfo{};
-        const double scale = f.rate.fps() / oldRate.fps();
-        m.length = fresh.length > 0 ? fresh.length : int(std::lround(m.length * scale));
-        const auto mark = [&](int v) { return v < 0 ? -1 : std::min(m.length - 1, int(std::lround(v * scale))); };
-        m.markIn = mark(m.markIn);
-        m.markOut = mark(m.markOut);
-    }
-    s.project.replaceMedia(media);
+    s.project.recountMedia(oldRate, [&f](const QString& path) { return Engine::probe(f, path).length; });
 }
 
 } // namespace
