@@ -19,6 +19,8 @@ function(schneidi_test name)
 endfunction()
 
 schneidi_test(test_timelineops)
+schneidi_test(test_interchange)
+schneidi_test(test_interchange_app)
 schneidi_test(test_preroll)
 schneidi_test(test_projectfile)
 schneidi_test(test_project_versions)

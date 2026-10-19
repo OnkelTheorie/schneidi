@@ -609,10 +609,13 @@ QJsonObject cmdInfo(const QJsonObject& a, Context&)
 QJsonObject cmdImport(const QJsonObject& a, Context&)
 {
     Session s(a["project"].toString(), Session::Access::Write);
+    if (!a.contains("files") && !a.contains("timeline_file")) fail("BAD_ARGUMENT", "give 'files' (media) or 'timeline_file'");
     for (const QJsonValue& v : a["files"].toArray()) s.media(v.toString());
+    const QJsonObject imported = a.contains("timeline_file") ? importTimeline(s, a) : QJsonObject();
     const QString backup = s.save();
     QJsonObject o = projectJson(s.project, s.path);
     o.remove("timeline");
+    for (auto it = imported.begin(); it != imported.end(); ++it) o[it.key()] = it.value();
     if (!backup.isEmpty()) o["backup"] = backup;
     if (s.live) o["live"] = true;
     return o;
@@ -1017,8 +1020,28 @@ const QVector<Command>& commands()
           {"summary", T::Boolean, "short form: length, counts of clips/tracks/markers, no clip list"},
           {"timeline", T::String, "timeline to show (id or name; default: the open one)"}},
          cmdInfo},
-        {"import", "Add media files to a project's media pool.",
-         {{"project", T::Path, "project file", true, true}, {"files", T::Paths, "media files", true, true}}, cmdImport},
+        {"import", "Add media files to a project's media pool, or a timeline from another editor: an FCP7 XML "
+                   "(Premiere: File › Export › Final Cut Pro XML; DaVinci: File › Export › Timeline › FCP 7 XML), "
+                   "OpenTimelineIO (.otio) or EDL becomes a new timeline, its media imported. Carried over: tracks, "
+                   "clips, gaps, constant speed, volume, opacity, dissolves, markers; not: color, effects, titles.",
+         {{"project", T::Path, "project file", true, true},
+          {"files", T::Paths, "media files", false, true},
+          {"timeline_file", T::Path, "timeline of another program: .xml (FCP7), .otio or .edl"},
+          {"format", T::String, "timeline_file format if the extension does not tell: xml, otio, edl"},
+          {"search", T::Paths, "folders to look for media of the timeline that are not where the file says "
+                               "(another computer); default: the folder of the timeline file"},
+          {"name", T::String, "name of the new timeline (default: the one in the file)"},
+          {"fps", T::Number, "EDL only (it has no frame rate): its frame rate (default: the project's)"}},
+         cmdImport},
+        {"export_timeline", "Write a timeline for another editor: FCP7 XML (Premiere Pro: File › Import; DaVinci "
+                            "Resolve: File › Import › Timeline), OpenTimelineIO (.otio) or EDL (one video track). "
+                            "'warnings' list what cannot be carried over (titles, effects, color, compound clips).",
+         {{"project", T::Path, "project file", true, true},
+          {"out", T::Path, "file to write: .xml, .otio or .edl", true},
+          {"format", T::String, "xml (FCP7), otio or edl (default: from the extension of 'out')"},
+          {"timeline", T::String, "which timeline (id or name; default: the open one)"},
+          {"overwrite", T::Boolean, "replace an existing file"}},
+         cmdExportTimeline},
         {"edit", "Apply edit operations to a project and save it (a backup of the previous state is kept). If the "
                  "project is open in the schneidi app, the app's project changes instead (one undo step, not saved).",
          {{"project", T::Path, "project file", true, true},

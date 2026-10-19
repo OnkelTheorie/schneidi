@@ -157,5 +157,8 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx);
 QJsonObject cmdScopes(const QJsonObject& a, Context& ctx);
 QJsonObject cmdExtensions(const QJsonObject& a, Context& ctx);
 QJsonObject cmdSync(const QJsonObject& a, Context& ctx); // EditOpsMulticam.cpp
+// Exchange.cpp: timelines to/from EDL, FCP7 XML, OpenTimelineIO
+QJsonObject cmdExportTimeline(const QJsonObject& a, Context& ctx);
+QJsonObject importTimeline(Session& s, const QJsonObject& a); // import with timeline_file
 
 } // namespace Cli::detail

@@ -38,6 +38,8 @@ public:
     explicit MainWindow(Engine* engine, QWidget* parent = nullptr);
     // placeOnTimeline (test helper --demo): one after another on V1/A1; adoptFormat = project format from the first clip
     void importFiles(const QStringList& paths, bool placeOnTimeline = false, bool adoptFormat = true);
+    // Timeline of another editor (FCP7 XML, OTIO, EDL) as a new timeline; false = not readable (message shown)
+    bool importTimelineFile(const QString& path);
 
     // Pages like in DaVinci (switchable at the bottom). New page: add here + in showPage().
     enum class Page { Media, Edit, Deliver, Color };
@@ -89,6 +91,9 @@ private:
     void importSubtitleFiles(const QStringList& paths);
     void importSubtitlesDialog();
     void exportSubtitlesDialog();
+    // Timelines of other editors (FCP7 XML, OpenTimelineIO, EDL), MainWindowExchange.cpp
+    void importTimelineDialog();
+    void exportTimelineDialog();
     void transcribeDialog();
     MediaInfo probeCached(const QString& path);
     // Like DaVinci with the first clip in an empty timeline: adapt the project to the clip's resolution/frame rate

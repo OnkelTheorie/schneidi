@@ -770,6 +770,15 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(hs["best"].toArray().size(), 3);
         CHECK(hs["best"][0]["file"].isString());
         CHECK_EQ(errorOf("highlights", {{"file", marks}}), QString("NO_AUDIO")); // neither sound nor a kill feed
+        // Timeline exchange (0.10): export as FCP7 XML, import into a new project = the same clips
+        const QJsonObject ex = run("export_timeline", {{"project", proj}, {"out", dir.filePath("cut.xml")}});
+        CHECK(QFileInfo::exists(dir.filePath("cut.xml")));
+        CHECK_EQ(errorOf("export_timeline", {{"project", proj}, {"out", dir.filePath("cut.xml")}}), QString("EXISTS"));
+        run("new", {{"project", dir.filePath("imp.schneidi")}, {"overwrite", true}});
+        const QJsonObject im = run("import", {{"project", dir.filePath("imp.schneidi")}, {"timeline_file", dir.filePath("cut.xml")}});
+        CHECK(ex["clips"].toInt() > 0);
+        CHECK_EQ(im["timeline"]["clips"].toInt(), ex["clips"].toInt());
+        CHECK_EQ(errorOf("import", {{"project", dir.filePath("imp.schneidi")}, {"timeline_file", clip}}), QString("BAD_ARGUMENT"));
 
         // Ducking of the music under A1, fades of video + linked sound
         r = ed("[{\"op\":\"duck\",\"track\":\"A2\",\"under\":\"A1\",\"amount_db\":-10},{\"op\":\"fade\",\"clips\":[3],\"out\":\"1s\"}]");

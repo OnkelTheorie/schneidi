@@ -72,6 +72,8 @@ add_library(schneidi_lib STATIC
     src/core/Fft.h                src/core/Fft.cpp
     src/core/AudioSync.h          src/core/AudioSync.cpp
     src/core/Multicam.h           src/core/Multicam.cpp
+    src/core/Interchange.h        src/core/Interchange.cpp
+    src/core/InterchangeEdl.cpp   src/core/InterchangeFcp7.cpp  src/core/InterchangeOtio.cpp
     src/core/StreamPresets.h      src/core/StreamPresets.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
 
@@ -110,7 +112,7 @@ add_library(schneidi_lib STATIC
     src/app/MainWindowActions.cpp
     src/app/MainWindowLayout.cpp
     src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp
-    src/app/MainWindowMulticam.cpp
+    src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
@@ -186,7 +188,7 @@ add_library(schneidi_cli_lib STATIC
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp
-    src/cli/AnalysisHighlights.cpp
+    src/cli/AnalysisHighlights.cpp src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp
     src/cli/Live.h     src/cli/Live.cpp)
 target_link_libraries(schneidi_cli_lib PUBLIC schneidi_lib)
