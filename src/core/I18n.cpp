@@ -105,7 +105,9 @@ void install(const QString& override)
     QLocale locale(lang);
     locale.setNumberOptions(QLocale::OmitGroupSeparator);
     QLocale::setDefault(locale);
-    QCoreApplication::installTranslator(new SourceTranslator(app));
+    // Only against a platform theme in another language: in the system language its texts are right (KDE
+    // translates e.g. "Cancel" itself, which the source translator would hide)
+    if (lang != QLocale::system().name().left(2)) QCoreApplication::installTranslator(new SourceTranslator(app));
     if (lang != "de") {
         // English first, so texts not translated yet show in English rather than German
         QHash<QString, QString> map;
