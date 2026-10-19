@@ -233,25 +233,12 @@ void opNormalize(Session& s, const QJsonObject& op)
                            .arg(QJsonDocument(partners).toJson(QJsonDocument::Compact));
     }
     // Measure every clip's sound (without its volume), like the app; relative: one shared reference
-    QHash<int, double> levels;
-    QHash<int, double> truePeaks;
-    std::vector<double> blocks;
     const Timeline tl = s.project.timeline();
-    for (int id : ids) {
-        const Clip* c = TimelineOps::findClip(tl, id);
-        if (lufs) {
-            if (const auto l = AudioAnalysis::clipLoudness(s.format(), *c)) {
-                levels[id] = l->integrated;
-                truePeaks[id] = l->truePeakDb;
-                blocks.insert(blocks.end(), l->blocks.begin(), l->blocks.end());
-            }
-        } else if (const auto peak = AudioAnalysis::clipPeakDb(s.format(), *c)) {
-            levels[id] = *peak;
-        }
-    }
+    AudioAnalysis::ClipLevels measured = *AudioAnalysis::measureClips(s.format(), tl, ids, lufs); // same as the app
+    QHash<int, double>& levels = measured.levels;
+    const QHash<int, double>& truePeaks = measured.truePeaks;
     if (levels.isEmpty()) fail("FAILED", "no sound to measure (media missing?)");
-    std::optional<double> ref;
-    if (lufs) ref = LoudnessMeter::integratedOf(blocks);
+    std::optional<double> ref = measured.shared;
     const bool relative = op.value("relative").toBool();
     // allow_track_gain: what a clip needs beyond the clip fader's +12 dB goes onto its track's fader; the track's
     // other clips are lowered by as much, so they stay as loud as they were

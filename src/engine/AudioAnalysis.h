@@ -6,6 +6,9 @@
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
 
+#include <QHash>
+#include <QVector>
+
 #include <functional>
 #include <memory>
 #include <optional>
@@ -37,6 +40,18 @@ struct Loudness {
 // Loudness (ITU-R BS.1770-4, integrated with gates) of the clip audio, same rules as clipPeakDb
 std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& clip,
                                      const std::function<bool(double)>& progress = {});
+
+// "Normalize audio levels": the level of every clip in `ids` (sample peak dBFS, or with loudness the integrated
+// LUFS), without its volume; with loudness also the true peaks and the loudness of all clips together (the reference
+// for "relative"). Clips without sound are missing. nullopt = canceled (progress over all clips returned false).
+// App dialog and CLI op both measure with this.
+struct ClipLevels {
+    QHash<int, double> levels;     // clip id -> dBFS or LUFS
+    QHash<int, double> truePeaks;  // loudness only: clip id -> dBTP
+    std::optional<double> shared;  // loudness only: all clips as one
+};
+std::optional<ClipLevels> measureClips(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& ids,
+                                       bool loudness, const std::function<bool(double)>& progress = {});
 
 // Loudness of the timeline mix [from, to) as it is exported (clip/track/master levels, mute/solo, limiter)
 std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Timeline& timeline, int from, int to,

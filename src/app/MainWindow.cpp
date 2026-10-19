@@ -566,32 +566,15 @@ void MainWindow::normalizeAudioDialog()
                              0, 1000, this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(300);
-    QHash<int, double> levels;
-    std::vector<double> blocks; // loudness: 400 ms blocks of all clips -> common loudness for "Relativ"
-    const Timeline tl = m_project->timeline(); // copy: pointers stay valid
-    for (int i = 0; i < ids.size(); ++i) {
-        const Clip* c = TimelineOps::findClip(tl, ids[i]);
-        if (!c) continue;
-        const auto step = [&](double f) {
-            progress.setValue(int((i + f) / ids.size() * 1000));
-            QApplication::processEvents();
-            return !progress.wasCanceled();
-        };
-        if (loudness) {
-            const auto l = AudioAnalysis::clipLoudness(m_project->format(), *c, step);
-            if (l) {
-                levels[c->id] = l->integrated;
-                blocks.insert(blocks.end(), l->blocks.begin(), l->blocks.end());
-            }
-        } else if (const auto peak = AudioAnalysis::clipPeakDb(m_project->format(), *c, step)) {
-            levels[c->id] = *peak;
-        }
-        if (progress.wasCanceled()) return;
-    }
+    const Timeline tl = m_project->timeline(); // copy: stays the same while events are processed
+    const auto measured = AudioAnalysis::measureClips(m_project->format(), tl, ids, loudness, [&](double f) {
+        progress.setValue(int(f * 1000));
+        QApplication::processEvents();
+        return !progress.wasCanceled();
+    });
+    if (!measured) return;
     progress.setValue(1000);
-    std::optional<double> ref;
-    if (loudness) ref = LoudnessMeter::integratedOf(blocks);
-    m_editor->normalizeAudio(levels, dlg.targetDb(), dlg.relative(), ref);
+    m_editor->normalizeAudio(measured->levels, dlg.targetDb(), dlg.relative(), measured->shared);
 }
 
 void MainWindow::onFormatChanged()

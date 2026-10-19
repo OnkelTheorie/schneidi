@@ -94,6 +94,34 @@ std::optional<double> clipPeakDb(const ProjectFormat& format, const Clip& clip,
     return toDb(peak);
 }
 
+std::optional<ClipLevels> measureClips(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& ids,
+                                       bool loudness, const std::function<bool(double)>& progress)
+{
+    ClipLevels out;
+    std::vector<double> blocks; // 400 ms blocks of all clips -> their loudness together
+    for (int i = 0; i < ids.size(); ++i) {
+        const Clip* c = TimelineOps::findClip(timeline, ids[i]);
+        if (!c) continue;
+        bool go = true;
+        const auto step = [&](double f) {
+            if (progress && !progress((i + f) / ids.size())) go = false;
+            return go;
+        };
+        if (loudness) {
+            if (const auto l = clipLoudness(format, *c, step)) {
+                out.levels[c->id] = l->integrated;
+                out.truePeaks[c->id] = l->truePeakDb;
+                blocks.insert(blocks.end(), l->blocks.begin(), l->blocks.end());
+            }
+        } else if (const auto peak = clipPeakDb(format, *c, step)) {
+            out.levels[c->id] = *peak;
+        }
+        if (!go) return std::nullopt;
+    }
+    if (loudness) out.shared = LoudnessMeter::integratedOf(blocks);
+    return out;
+}
+
 std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& clip,
                                      const std::function<bool(double)>& progress)
 {
