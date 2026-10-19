@@ -72,6 +72,8 @@ schneidi-cli frames talk.schneidi --count 9 --sheet --out sheet.jpg
 schneidi-cli scopes talk.schneidi --at 10s --out scopes.png      # waveform, parade, vectorscope + numbers
 schneidi-cli loudness talk.schneidi                          # LUFS, true peak of the mix
 schneidi-cli render talk.schneidi --out talk-cut.mp4 --preset "YouTube 1080p"
+schneidi-cli export_timeline talk.schneidi --out talk.xml       # for Premiere / DaVinci (also .otio, .edl)
+schneidi-cli import talk.schneidi --timeline_file premiere.xml   # a cut from Premiere / DaVinci as a new timeline
 schneidi-cli restore talk.schneidi                           # undo the last change (file mode)
 schneidi-cli help                                            # all commands (JSON)
 schneidi-cli help edit                                       # every edit operation with details
