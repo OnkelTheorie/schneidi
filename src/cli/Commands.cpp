@@ -1095,6 +1095,13 @@ const QVector<Command>& commands()
          {{"file", T::Path, "video file", false, true},
           {"files", T::Paths, "several video files (one result each)"},
           {"region", T::String, "only this part of the picture \"x,y,w,h\" (pixels or fractions 0..1, like frames crop)"},
+          {"color", T::String, "with region: only pixels of this colour count (\"#e7e371\": a mark of what you look "
+                               "for, e.g. the yellow of your own kill feed lines; pick it from a `frames` crop). "
+                               "'changes' are then moments where more of it appears and stays"},
+          {"tolerance", T::Integer, "with color: largest difference per channel, 0..255 (default 25)"},
+          {"only", T::String, "with color: appear (default: more of the colour), disappear or both"},
+          {"min_area", T::Number, "with color: smallest change as a part of the whole picture (default 0.0001, about "
+                                  "200 pixels in 1080p; a kill feed mark is 0.01-0.05 %)"},
           {"project", T::Path, "count frames in this project's frame rate (recommended before editing)"},
           {"threshold", T::Number, "how different two frames must be, 0..1 (default 0.3; lower finds more cuts)"},
           {"min", T::Time, "shortest scene (default 0.5s)"}},
@@ -1107,6 +1114,8 @@ const QVector<Command>& commands()
           {"threshold_db", T::Number, "sample peak in dBFS that counts (default: 12 dB above the file's median level)"},
           {"min", T::Time, "shortest distance between two peaks (default 0.5s)"},
           {"top", T::Integer, "only the loudest N peaks (in time order)"},
+          {"group", T::Time, "also return 'groups': peaks less than this apart as one burst (a fight, a rally) "
+                             "with from/to, hits, the loudest peak_db and hits per second, e.g. \"2s\""},
           {"audio_stream", T::Integer, "which audio stream, 0 = first"},
           {"project", T::Path, "count frames in this project's frame rate"}},
          cmdPeaks},

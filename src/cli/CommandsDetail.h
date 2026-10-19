@@ -1,6 +1,6 @@
 #pragma once
 // Shared helpers of the schneidi-cli commands (Commands.cpp: projects, table, arguments; EditOps.cpp: edit
-// operations; Analysis.cpp: looking at media). Not part of the public interface in Commands.h.
+// operations; Analysis*.cpp: looking at media). Not part of the public interface in Commands.h.
 
 #include "cli/Commands.h"
 #include "core/Editor.h"
@@ -140,7 +140,7 @@ int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback = -1
 double numberOf(const QJsonObject& op, const char* key, double lo, double hi);
 QColor colorOf(const QJsonValue& v, const QString& what);
 
-// ---------- Analysis (Analysis.cpp) ----------
+// ---------- Analysis (Analysis*.cpp) ----------
 
 // Audio tracks of `tl`: "A3", "A2,A5", numbers, track names or the audio stream names of their clips
 // ("Discord,Mikrofon"); empty = none given. Throws if one is not found

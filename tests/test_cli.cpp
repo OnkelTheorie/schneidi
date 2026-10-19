@@ -732,6 +732,30 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         }
         const QJsonArray changes = run("scenes", {{"file", clip}, {"region", "0.7,0,0.3,0.3"}})["changes"].toArray();
         if (CHECK_EQ(changes.size(), 1)) CHECK(std::abs(changes[0]["s"].toDouble() - 4.0) < 0.3);
+        // peaks group (0.10): each tone burst is one group
+        const QJsonArray groups = run("peaks", {{"file", clip}, {"threshold_db", -20}, {"group", "1s"}})["groups"].toArray();
+        if (CHECK_EQ(groups.size(), 2)) {
+            CHECK(std::abs(groups[0]["from_s"].toDouble() - 2.0) < 0.2);
+            CHECK(groups[0]["to_s"].toDouble() < 3.2);
+            CHECK(groups[0]["hits"].toInt() >= 2);
+        }
+        // Colour events (0.10): a yellow mark that appears at 3 s and stays counts, a yellow flash at 6 s and a
+        // white box do not
+        const QString marks = Check::makeMedia(
+            dir.filePath("marks.mp4"),
+            {"-f", "lavfi", "-i",
+             "color=c=0x303030:s=320x180:d=8:r=25,drawbox=x=250:y=20:w=30:h=12:c=0xe7e371:t=fill:enable='gte(t,3)',"
+             "drawbox=x=200:y=50:w=60:h=30:c=0xe7e371:t=fill:enable='between(t,6,6.12)',"
+             "drawbox=x=200:y=90:w=60:h=30:c=white:t=fill:enable='gte(t,5)'",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+        const QJsonObject colorEvents = run("scenes", {{"file", marks}, {"region", "0.5,0,0.5,0.8"}, {"color", "#e7e371"}});
+        const QJsonArray appeared = colorEvents["changes"].toArray();
+        if (CHECK_EQ(appeared.size(), 1)) {
+            CHECK(std::abs(appeared[0]["s"].toDouble() - 3.0) < 0.15);
+            CHECK_EQ(appeared[0]["kind"].toString(), QString("appear"));
+        }
+        CHECK(colorEvents["most_pct"].toDouble() > 0.5);
+        CHECK_EQ(errorOf("scenes", {{"file", marks}, {"color", "#e7e371"}}), QString("BAD_ARGUMENT")); // no region
 
         // Ducking of the music under A1, fades of video + linked sound
         r = ed("[{\"op\":\"duck\",\"track\":\"A2\",\"under\":\"A1\",\"amount_db\":-10},{\"op\":\"fade\",\"clips\":[3],\"out\":\"1s\"}]");

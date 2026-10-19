@@ -184,7 +184,8 @@ target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live con
 add_library(schneidi_cli_lib STATIC
     src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
-    src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp src/cli/Analysis.cpp
+    src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
+    src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp
     src/cli/Live.h     src/cli/Live.cpp)
 target_link_libraries(schneidi_cli_lib PUBLIC schneidi_lib)
