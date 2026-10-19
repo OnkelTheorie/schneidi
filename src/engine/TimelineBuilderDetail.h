@@ -34,6 +34,9 @@ bool animate(const Clip& c, std::initializer_list<AnimParam> params, int a, int 
 void attachTo(Mlt::Producer& cut, Mlt::Filter& f);
 // Aspect ratio of the source picture as displayed (pixel aspect and rotation from the metadata), 0 = unknown
 double sourceAspect(Mlt::Producer& cut);
+// Request the source below a qtblend (distort) only as large as the output needs: requested size times maxZoom
+// (qtblend otherwise fetches the full media size and lets Qt shrink it, which is slow and drops fine detail)
+void attachSourceCap(Mlt::Producer& clip, double maxZoom);
 // Effects, transform, volume, pan of a clip on a section; a/len: section (clip frame at the start, length) for keyframes
 void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKind kind, int a, int len);
 // Title clip: transparent full frame + qtext filter; a/len: section for keyframes

@@ -260,7 +260,7 @@ double sourceAspect(Mlt::Producer& cut)
 // preview -> every effect below it ran in full resolution (1080p/4K) and the preview stuttered. This filter sits
 // above qtblend and lowers meta.media.width/height to what the requested output needs (requested size times the
 // largest zoom of the clip, never above the media size). Export requests the full size and is unchanged.
-// Compared with the media size, not the profile: the preview consumer sets the profile itself to the preview size.
+// Compared with the media size (the profile is the project size; the preview consumer has its own, see Engine).
 // Measured (tests/bench_inspector, 8 effects + keyframes, 960x540 preview): 125 -> 70 ms per frame.
 int sourceCapGetImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int writable)
 {
@@ -299,11 +299,15 @@ void attachSourceCap(Mlt::Producer& clip, const Clip& c)
         zoom = std::max(zoom, std::abs(Keys::staticValue(c, p)));
         for (const Keyframe& k : c.keys.value(p)) zoom = std::max(zoom, std::abs(k.value));
     }
+    attachSourceCap(clip, std::max(zoom, 1.0) * 1.1); // a little headroom for Bezier overshoot between keyframes
+}
+
+void attachSourceCap(Mlt::Producer& clip, double maxZoom)
+{
     mlt_filter f = mlt_filter_new();
     if (!f) return;
     f->process = sourceCapProcess;
-    // a little headroom for Bezier overshoot between keyframes
-    mlt_properties_set_double(MLT_FILTER_PROPERTIES(f), "max_zoom", std::max(zoom, 1.0) * 1.1);
+    mlt_properties_set_double(MLT_FILTER_PROPERTIES(f), "max_zoom", maxZoom);
     Mlt::Filter filter(f); // holds its own reference
     mlt_filter_close(f);
     clip.attach(filter);

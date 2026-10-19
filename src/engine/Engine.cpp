@@ -68,6 +68,7 @@ Engine::~Engine()
 {
     if (m_consumer) m_consumer->stop();
     m_consumer.reset();
+    m_consumerProfile.reset();
     m_preroll.reset(); // after the consumer (reports every frame to it), before the producers
     m_gridHooks.reset();
     m_grid.reset();
@@ -126,8 +127,9 @@ bool Engine::createConsumer(QString* error)
     const QSize fit = m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
     m_previewSize = QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
 
+    m_consumerProfile = makeProfile(m_format);
     for (const char* id : {"sdl2_audio", "rtaudio"}) {
-        m_consumer = std::make_unique<Mlt::Consumer>(*m_profile, id);
+        m_consumer = std::make_unique<Mlt::Consumer>(*m_consumerProfile, id);
         if (m_consumer->is_valid()) break;
     }
     if (!m_consumer || !m_consumer->is_valid()) {
@@ -166,6 +168,7 @@ void Engine::setFormat(const ProjectFormat& format)
     m_preroll->clear();
     m_current = nullptr;
     m_consumer.reset();
+    m_consumerProfile.reset();
     {
         std::lock_guard<std::mutex> lock(m_mixerMutex);
         m_mixer.reset();

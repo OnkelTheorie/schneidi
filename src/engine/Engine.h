@@ -148,6 +148,10 @@ private:
     StillFetcher* m_stills;
     ProjectFormat m_format;
     std::unique_ptr<Mlt::Profile> m_profile;
+    // The preview consumer's own copy: setting its width/height writes them into its profile (mlt_consumer.c), which
+    // with a shared profile made every producer/filter take 960x540 for the project size (titles, positions in the
+    // preview twice as large)
+    std::unique_ptr<Mlt::Profile> m_consumerProfile;
     std::unique_ptr<ProducerFactory> m_factory; // source view (BT.601 detour, Profiles.h); outlives m_source
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<TimelineBuilder> m_builder;

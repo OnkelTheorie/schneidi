@@ -3,6 +3,7 @@
 #include "core/Multicam.h"
 #include "core/TimelineOps.h"
 #include "engine/TimelineBuilder.h"
+#include "engine/TimelineBuilderDetail.h"
 #include "ui/MulticamGrid.h"
 
 #include <Mlt.h>
@@ -58,6 +59,8 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildMulticamGrid(const Timeline&
             place.set("rect", mlt_rect{double(cell.x()), double(cell.y()), double(cell.width()), double(cell.height()), 1.0});
             place.set("distort", 1);
             pl->attach(place);
+            // after qtblend (its get_image runs first): decode/scale the angle near cell size
+            TimelineBuilderDetail::attachSourceCap(*pl, 1.1 * cell.width() / frame.width());
         }
         pl->set("hide", 2); // no audio
         tractor->set_track(*pl, track);
