@@ -45,6 +45,46 @@ QHash<int, QString> defaultMouse()
     return {{Qt::BackButton, "split"}};
 }
 
+// Default like DaVinci Resolve. (KWin may intercept Alt+mouse wheel -> remappable in the file)
+QHash<QString, WheelAction> defaultWheel()
+{
+    return {
+        {"none", WheelAction::ScrollVertical},
+        {"ctrl", WheelAction::ScrollHorizontal},
+        {"alt", WheelAction::Zoom},
+        {"shift", WheelAction::TrackHeight},
+    };
+}
+
+// Beginner set: differences to the defaults ("" = no key). Single letters that switch tools or move clips are
+// easy to hit by accident, so only playback, marks, blade/select and the common Ctrl keys stay
+const QHash<QString, QString>& beginnerKeys()
+{
+    static const QHash<QString, QString> keys = {
+        {"split", "S"},
+        {"split_alt", "Ctrl+B"},
+        {"page_media", "Ctrl+1"},
+        {"page_edit", "Ctrl+2"},
+        {"page_color", "Ctrl+3"},
+        {"page_deliver", "Ctrl+4"},
+        {"select_forward", ""},
+        {"select_backward", ""},
+        {"select_forward_all", ""},
+        {"tool_trim", ""},
+        {"select_edit_point", ""},
+        {"edit_point_type", ""},
+        {"nudge_left", ""},
+        {"nudge_right", ""},
+        {"nudge_left_multi", ""},
+        {"nudge_right_multi", ""},
+        {"toggle_enabled", ""},
+        {"show_timeline", ""},
+        {"grade_prev", ""},
+        {"grade_prev2", ""},
+    };
+    return keys;
+}
+
 } // namespace
 
 InputBindings& InputBindings::instance()
@@ -55,13 +95,7 @@ InputBindings& InputBindings::instance()
 
 InputBindings::InputBindings()
 {
-    // Default like DaVinci Resolve. (KWin may intercept Alt+mouse wheel -> remappable in the file)
-    m_wheel = {
-        {"none", WheelAction::ScrollVertical},
-        {"ctrl", WheelAction::ScrollHorizontal},
-        {"alt", WheelAction::Zoom},
-        {"shift", WheelAction::TrackHeight},
-    };
+    m_wheel = defaultWheel();
     m_mouse = defaultMouse();
 }
 
@@ -194,6 +228,37 @@ bool InputBindings::importSet(const QString& path, QString* error)
         if (e.action) e.action->setShortcut(current(e.id));
     save();
     return true;
+}
+
+QStringList InputBindings::presetIds()
+{
+    return {"standard", "beginner"};
+}
+
+QString InputBindings::presetName(const QString& id)
+{
+    if (id == "beginner") return T("Einsteiger");
+    return T("Standard (wie DaVinci Resolve)");
+}
+
+void InputBindings::applyPreset(const QString& id)
+{
+    m_shortcuts.clear();
+    m_mouse = defaultMouse();
+    m_wheel = defaultWheel();
+    if (id == "beginner") {
+        for (auto it = beginnerKeys().begin(); it != beginnerKeys().end(); ++it) m_shortcuts[it.key()] = it.value();
+        // Zoom with Ctrl like most programs, Shift scrolls sideways
+        m_wheel = {
+            {"none", WheelAction::ScrollVertical},
+            {"ctrl", WheelAction::Zoom},
+            {"shift", WheelAction::ScrollHorizontal},
+            {"alt", WheelAction::TrackHeight},
+        };
+    }
+    for (const Entry& e : m_entries)
+        if (e.action) e.action->setShortcut(current(e.id));
+    save();
 }
 
 QString InputBindings::modifierKey(Qt::KeyboardModifiers mods)

@@ -1,4 +1,5 @@
-// Test workspace presets: whole key sets saved to a file and loaded again (InputBindings::exportSet/importSet).
+// Test workspace presets: whole key sets saved to a file and loaded again (InputBindings::exportSet/importSet),
+// built-in sets (InputBindings::applyPreset).
 #include "check.h"
 
 #include "app/InputBindings.h"
@@ -72,5 +73,35 @@ int main(int argc, char** argv)
     CHECK(!error.isEmpty());
     CHECK(!b.importSet(tmp.filePath("missing.json"), &error));
     CHECK_EQ(play.shortcut(), QKeySequence("K"));
+
+    // Built-in sets: beginner changes keys, wheel and keeps the side button; standard brings back every default
+    QAction trim;
+    b.registerAction(&trim, "tool_trim", "Edit", QKeySequence("T"));
+    b.setMouseButton("play", Qt::ForwardButton);
+    CHECK_EQ(InputBindings::presetIds(), QStringList({"standard", "beginner"}));
+    b.applyPreset("beginner");
+    CHECK_EQ(split.shortcut(), QKeySequence("S"));
+    CHECK_EQ(trim.shortcut(), QKeySequence());
+    CHECK_EQ(play.shortcut(), QKeySequence("Space"));
+    CHECK_EQ(b.mouseButtonFor("play"), Qt::NoButton);
+    CHECK_EQ(b.mouseAction(Qt::BackButton), QString("split"));
+    CHECK(b.wheelAction(Qt::ControlModifier) == WheelAction::Zoom);
+    CHECK(b.wheelAction(Qt::ShiftModifier) == WheelAction::ScrollHorizontal);
+    {
+        QFile f(b.filePath());
+        CHECK(f.open(QIODevice::ReadOnly));
+        const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+        CHECK_EQ(root["shortcuts"].toObject()["tool_trim"].toString(), QString());
+        CHECK_EQ(root["wheel"].toObject()["ctrl"].toString(), QString("zoom"));
+    }
+    // The beginner set survives a restart (load reads the file again)
+    b.load();
+    CHECK(b.wheelAction(Qt::ControlModifier) == WheelAction::Zoom);
+    CHECK_EQ(b.current("tool_trim"), QKeySequence());
+    b.applyPreset("standard");
+    CHECK_EQ(split.shortcut(), QKeySequence("Ctrl+B"));
+    CHECK_EQ(trim.shortcut(), QKeySequence("T"));
+    CHECK(b.wheelAction(Qt::ControlModifier) == WheelAction::ScrollHorizontal);
+    CHECK(b.wheelAction(Qt::AltModifier) == WheelAction::Zoom);
     return Check::result();
 }

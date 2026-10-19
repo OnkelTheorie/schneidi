@@ -8,6 +8,7 @@
 #include <QKeySequence>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 class QAction;
@@ -42,6 +43,12 @@ public:
     // their default) and takes effect immediately
     bool exportSet(const QString& path) const;
     bool importSet(const QString& path, QString* error);
+    // Built-in sets: "standard" (like DaVinci Resolve, the defaults) and "beginner" (few, telling keys: S splits,
+    // Ctrl+1-4 switch pages, no single-letter keys for special tools; Ctrl+wheel zooms). Replaces the current set
+    // including mouse buttons and wheel, takes effect immediately and is saved
+    static QStringList presetIds();
+    static QString presetName(const QString& id);
+    void applyPreset(const QString& id);
 
     // Extra mouse buttons (side buttons) -> action, e.g. rear side button = cut at the playhead
     static const QVector<Qt::MouseButton>& bindableMouseButtons();

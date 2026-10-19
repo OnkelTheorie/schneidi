@@ -17,6 +17,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QMenu>
 #include <QMessageBox>
 #include <QSettings>
 #include <QTableWidget>
@@ -120,6 +121,22 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
         InputBindings::instance().resetAll();
         fill();
     });
+    // Built-in sets (standard like DaVinci, beginner)
+    auto* preset = new QPushButton(T("Vorlage"));
+    preset->setToolTip(T("Fertige Tastenbelegung laden (ersetzt die jetzige)"));
+    auto* presetMenu = new QMenu(preset);
+    for (const QString& id : InputBindings::presetIds())
+        presetMenu->addAction(InputBindings::presetName(id), this, [this, id] {
+            if (QMessageBox::question(this, T("Tastenbelegung"),
+                                      T("Vorlage „%1“ laden? Die jetzige Belegung (auch Maustasten und Mausrad) "
+                                        "wird ersetzt.")
+                                          .arg(InputBindings::presetName(id)))
+                != QMessageBox::Yes)
+                return;
+            InputBindings::instance().applyPreset(id);
+            fill();
+        });
+    preset->setMenu(presetMenu);
     // Whole sets (to another computer, several setups): same format as keybindings.json
     auto* loadSet = new QPushButton(T("Satz laden…"));
     loadSet->setToolTip(T("Ganze Tastenbelegung aus einer Datei laden (ersetzt die jetzige)"));
@@ -155,6 +172,7 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     buttons->addWidget(clearOne);
     buttons->addWidget(resetAll);
     buttons->addSpacing(12);
+    buttons->addWidget(preset);
     buttons->addWidget(loadSet);
     buttons->addWidget(saveSet);
     buttons->addStretch(1);
