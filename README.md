@@ -33,7 +33,7 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 - Multiple video and audio tracks: cut, trim, move, snapping, undo/redo
 - **Multicam:** a multicam clip from several recordings of one event, synced by sound, markers, In points or start; the viewer shows up to 16 angles at once (more on pages) – click or press 1–9 to cut, change angles later, flatten to normal clips
 - Timeline zoom and scroll change **only on user input** – nothing jumps when clips get shorter
-- Fully customizable keyboard shortcuts and mouse side buttons – presets (DaVinci-style or beginner) and whole sets to save and load; panel sets for the Edit page, panel sizes remembered per page
+- Fully customizable keyboard shortcuts and mouse side buttons, two per function – presets (DaVinci-style or beginner) and whole sets to save and load; panel sets for the Edit page, panel sizes remembered per page
 - Titles, subtitles, fades, transitions, volume, loudness normalization
 - Color correction, curves, LUTs, effects with keyframes; copy and paste grades (`=`/`-` like DaVinci)
 - **Windows** on the Color page (rectangle, ellipse, soft edge, invert): grade only part of the picture, or blur, pixelate or cover a region (a face, a name, an overlay); **tracking** makes a window follow a moving object

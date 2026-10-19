@@ -5,13 +5,14 @@
 #include <QAction>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
 
 namespace {
 
-constexpr int kVersion = 2; // increase when defaults change
+constexpr int kVersion = 3; // increase when defaults or the format change (3: two slots per action)
 
 const QHash<QString, WheelAction>& wheelNames()
 {
@@ -40,9 +41,25 @@ const QHash<QString, Qt::MouseButton>& mouseNames()
     return names;
 }
 
-QHash<int, QString> defaultMouse()
+// Default mouse buttons: action -> input
+QHash<QString, QString> defaultMouse()
 {
-    return {{Qt::BackButton, "split"}};
+    return {{"split", "mouse:back"}};
+}
+
+// Input string from the file: key in PortableText, "mouse:<name>" or empty
+QString normalizeInput(const QString& raw)
+{
+    const QString s = raw.trimmed();
+    if (s.startsWith("mouse:", Qt::CaseInsensitive))
+        return mouseNames().contains(s.mid(6).toLower()) ? s.toLower() : QString();
+    return QKeySequence::fromString(s, QKeySequence::PortableText).toString(QKeySequence::PortableText);
+}
+
+QStringList padded(QStringList list)
+{
+    while (list.size() < InputBindings::kSlots) list << QString();
+    return list.mid(0, InputBindings::kSlots);
 }
 
 // Default like DaVinci Resolve. (KWin may intercept Alt+mouse wheel -> remappable in the file)
@@ -96,7 +113,6 @@ InputBindings& InputBindings::instance()
 InputBindings::InputBindings()
 {
     m_wheel = defaultWheel();
-    m_mouse = defaultMouse();
 }
 
 QString InputBindings::filePath() const
@@ -112,12 +128,10 @@ void InputBindings::load()
     if (!f.open(QIODevice::ReadOnly)) return;
     const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
 
-    // Older file with outdated defaults -> rewrite mouse wheel defaults, keep keys
-    const bool outdated = root.value("version").toInt() < kVersion;
-    if (outdated) m_fileExisted = false;
-    // If the mouse section is missing (older file), the defaults remain and it gets added
-    if (!root.contains("mouse")) m_fileExisted = false;
-    applyJson(root, !outdated);
+    // Older file -> rewrite it in the current format; before version 2 also with the new mouse wheel defaults
+    const int version = root.value("version").toInt();
+    if (version < kVersion) m_fileExisted = false;
+    applyJson(root, version >= 2);
 }
 
 void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
@@ -126,55 +140,139 @@ void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
     for (auto it = wheel.begin(); it != wheel.end() && withWheel; ++it)
         m_wheel[it.key().toLower()] = wheelNames().value(it.value().toString(), WheelAction::None);
 
-    if (root.contains("mouse")) {
-        m_mouse.clear();
-        const QJsonObject mouse = root.value("mouse").toObject();
-        for (auto it = mouse.begin(); it != mouse.end(); ++it)
-            if (mouseNames().contains(it.key().toLower()) && !it.value().toString().isEmpty())
-                m_mouse[mouseNames().value(it.key().toLower())] = it.value().toString();
+    // "split": "B" (one slot) or ["B", "mouse:back"]
+    const QJsonObject keys = root.value("shortcuts").toObject();
+    for (auto it = keys.begin(); it != keys.end(); ++it) {
+        QStringList binds;
+        if (it.value().isArray())
+            for (const QJsonValue& v : it.value().toArray()) binds << normalizeInput(v.toString());
+        else binds << normalizeInput(it.value().toString());
+        m_inputs[it.key()] = padded(binds);
     }
 
-    const QJsonObject keys = root.value("shortcuts").toObject();
-    for (auto it = keys.begin(); it != keys.end(); ++it)
-        m_shortcuts[it.key()] = it.value().toString();
+    // Before version 3 mouse buttons had their own section {"back": "split"} (missing = the default)
+    if (root.value("version").toInt() < 3) {
+        QHash<QString, QString> legacy; // input -> action
+        if (root.contains("mouse")) {
+            const QJsonObject mouse = root.value("mouse").toObject();
+            for (auto it = mouse.begin(); it != mouse.end(); ++it)
+                if (mouseNames().contains(it.key().toLower()) && !it.value().toString().isEmpty())
+                    legacy["mouse:" + it.key().toLower()] = it.value().toString();
+        } else {
+            const QHash<QString, QString> defaults = defaultMouse();
+            for (auto it = defaults.begin(); it != defaults.end(); ++it) legacy[it.value()] = it.key();
+        }
+        for (auto it = legacy.begin(); it != legacy.end(); ++it) {
+            const QString& id = it.value();
+            if (!m_inputs.contains(id) && defaultInputs(id).contains(it.key())) continue;
+            QStringList binds = inputs(id);
+            if (binds.contains(it.key())) continue;
+            const qsizetype free = binds.indexOf(QString());
+            binds[free >= 0 ? free : kSlots - 1] = it.key();
+            m_inputs[id] = binds;
+        }
+    }
+    rebuildMouse();
 }
 
 void InputBindings::registerAction(QAction* action, const QString& id, const QString& category,
                                    const QKeySequence& defaultKey)
 {
     m_entries.append({id, category, action->text(), defaultKey, action});
-    action->setShortcut(current(id));
+    apply(m_entries.last());
+    rebuildMouse();
+}
+
+QStringList InputBindings::defaultInputs(const QString& id) const
+{
+    QStringList binds;
+    for (const Entry& e : m_entries)
+        if (e.id == id && !e.defaultKey.isEmpty()) binds << e.defaultKey.toString(QKeySequence::PortableText);
+    if (defaultMouse().contains(id)) binds << defaultMouse().value(id);
+    return padded(binds);
+}
+
+QStringList InputBindings::inputs(const QString& id) const
+{
+    return m_inputs.contains(id) ? padded(m_inputs.value(id)) : defaultInputs(id);
 }
 
 QKeySequence InputBindings::current(const QString& id) const
 {
-    if (m_shortcuts.contains(id)) return QKeySequence(m_shortcuts.value(id));
-    for (const Entry& e : m_entries)
-        if (e.id == id) return e.defaultKey;
+    for (const QString& in : inputs(id))
+        if (!in.isEmpty() && inputMouseButton(in) == Qt::NoButton)
+            return QKeySequence::fromString(in, QKeySequence::PortableText);
     return {};
 }
 
-void InputBindings::setShortcut(const QString& id, const QKeySequence& key)
+void InputBindings::setInput(const QString& id, int slot, const QString& input)
 {
-    m_shortcuts[id] = key.toString(QKeySequence::PortableText);
+    if (slot < 0 || slot >= kSlots) return;
+    QStringList binds = inputs(id);
+    const QString in = normalizeInput(input);
+    if (!in.isEmpty())
+        for (QString& other : binds)
+            if (other == in) other.clear();
+    binds[slot] = in;
+    setInputs(id, binds);
+}
+
+void InputBindings::setInputs(const QString& id, const QStringList& list)
+{
+    QStringList binds;
+    for (const QString& in : padded(list)) {
+        const QString n = normalizeInput(in);
+        binds << (binds.contains(n) ? QString() : n);
+    }
+    // One action per mouse button: take it from the others
+    QStringList ids = m_inputs.keys();
+    for (const Entry& e : m_entries) ids << e.id;
+    for (const QString& in : binds) {
+        if (inputMouseButton(in) == Qt::NoButton) continue;
+        for (const QString& other : ids) {
+            if (other == id) continue;
+            QStringList o = inputs(other);
+            if (o.removeAll(in) > 0) m_inputs[other] = padded(o);
+        }
+    }
+    m_inputs[id] = binds;
     for (const Entry& e : m_entries)
-        if (e.id == id && e.action) e.action->setShortcut(key);
+        if (e.id == id) apply(e);
+    rebuildMouse();
     save();
+}
+
+void InputBindings::apply(const Entry& e) const
+{
+    if (!e.action) return;
+    QList<QKeySequence> keys;
+    for (const QString& in : inputs(e.id))
+        if (!in.isEmpty() && inputMouseButton(in) == Qt::NoButton)
+            keys << QKeySequence::fromString(in, QKeySequence::PortableText);
+    e.action->setShortcuts(keys);
+}
+
+void InputBindings::rebuildMouse()
+{
+    m_mouse.clear();
+    for (const Entry& e : m_entries)
+        for (const QString& in : inputs(e.id))
+            if (const Qt::MouseButton b = inputMouseButton(in); b != Qt::NoButton && !m_mouse.contains(b))
+                m_mouse[b] = e.id;
 }
 
 void InputBindings::resetAll()
 {
-    m_shortcuts.clear();
-    m_mouse = defaultMouse();
-    for (const Entry& e : m_entries)
-        if (e.action) e.action->setShortcut(e.defaultKey);
+    m_inputs.clear();
+    for (const Entry& e : m_entries) apply(e);
+    rebuildMouse();
     save();
 }
 
 void InputBindings::saveIfIncomplete()
 {
     bool complete = m_fileExisted;
-    for (const Entry& e : m_entries) complete &= m_shortcuts.contains(e.id);
+    for (const Entry& e : m_entries) complete &= m_inputs.contains(e.id);
     if (!complete) save();
 }
 
@@ -182,22 +280,23 @@ QJsonObject InputBindings::toJson() const
 {
     QJsonObject wheel;
     for (auto it = m_wheel.begin(); it != m_wheel.end(); ++it) wheel[it.key()] = wheelName(it.value());
+    QStringList ids = m_inputs.keys(); // keep unknown ones too
+    for (const Entry& e : m_entries) ids << e.id;
     QJsonObject keys;
-    for (auto it = m_shortcuts.begin(); it != m_shortcuts.end(); ++it) keys[it.key()] = it.value(); // keep unknown ones too
-    for (const Entry& e : m_entries) keys[e.id] = current(e.id).toString(QKeySequence::PortableText);
-    QJsonObject mouse;
-    for (auto it = mouseNames().begin(); it != mouseNames().end(); ++it) mouse[it.key()] = m_mouse.value(it.value());
-    return {{"version", kVersion}, {"wheel", wheel}, {"mouse", mouse}, {"shortcuts", keys}};
+    for (const QString& id : ids) {
+        const QStringList binds = inputs(id);
+        if (binds.mid(1).join(QString()).isEmpty()) keys[id] = binds[0]; // one slot: plain string like before
+        else keys[id] = QJsonArray::fromStringList(binds);
+    }
+    return {{"version", kVersion}, {"wheel", wheel}, {"shortcuts", keys}};
 }
 
 void InputBindings::save()
 {
-    const QJsonObject root = toJson();
-    const QJsonObject keys = root.value("shortcuts").toObject();
-    for (const Entry& e : m_entries) m_shortcuts[e.id] = keys.value(e.id).toString();
+    for (const Entry& e : m_entries) m_inputs[e.id] = inputs(e.id);
     QDir().mkpath(QFileInfo(filePath()).absolutePath());
     QFile f(filePath());
-    if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(root).toJson());
+    if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(toJson()).toJson());
     m_fileExisted = true;
 }
 
@@ -221,11 +320,10 @@ bool InputBindings::importSet(const QString& path, QString* error)
         return false;
     }
     // A whole set: what the file leaves out goes back to the default
-    m_shortcuts.clear();
-    m_mouse = defaultMouse();
+    m_inputs.clear();
     applyJson(doc.object(), true);
-    for (const Entry& e : m_entries)
-        if (e.action) e.action->setShortcut(current(e.id));
+    for (const Entry& e : m_entries) apply(e);
+    rebuildMouse();
     save();
     return true;
 }
@@ -243,11 +341,15 @@ QString InputBindings::presetName(const QString& id)
 
 void InputBindings::applyPreset(const QString& id)
 {
-    m_shortcuts.clear();
-    m_mouse = defaultMouse();
+    m_inputs.clear();
     m_wheel = defaultWheel();
     if (id == "beginner") {
-        for (auto it = beginnerKeys().begin(); it != beginnerKeys().end(); ++it) m_shortcuts[it.key()] = it.value();
+        // Replaces the first slot, the default side button stays
+        for (auto it = beginnerKeys().begin(); it != beginnerKeys().end(); ++it) {
+            QStringList binds = defaultInputs(it.key());
+            binds[0] = it.value();
+            m_inputs[it.key()] = binds;
+        }
         // Zoom with Ctrl like most programs, Shift scrolls sideways
         m_wheel = {
             {"none", WheelAction::ScrollVertical},
@@ -256,8 +358,8 @@ void InputBindings::applyPreset(const QString& id)
             {"alt", WheelAction::TrackHeight},
         };
     }
-    for (const Entry& e : m_entries)
-        if (e.action) e.action->setShortcut(current(e.id));
+    for (const Entry& e : m_entries) apply(e);
+    rebuildMouse();
     save();
 }
 
@@ -295,33 +397,28 @@ QString InputBindings::mouseButtonText(Qt::MouseButton b)
     }
 }
 
+QString InputBindings::mouseInput(Qt::MouseButton b)
+{
+    for (auto it = mouseNames().begin(); it != mouseNames().end(); ++it)
+        if (it.value() == b) return "mouse:" + it.key();
+    return {};
+}
+
+Qt::MouseButton InputBindings::inputMouseButton(const QString& input)
+{
+    if (!input.startsWith("mouse:")) return Qt::NoButton;
+    return mouseNames().value(input.mid(6), Qt::NoButton);
+}
+
+QString InputBindings::inputText(const QString& input)
+{
+    if (const Qt::MouseButton b = inputMouseButton(input); b != Qt::NoButton) return mouseButtonText(b);
+    return QKeySequence::fromString(input, QKeySequence::PortableText).toString(QKeySequence::NativeText);
+}
+
 QString InputBindings::mouseAction(Qt::MouseButton b) const
 {
     return m_mouse.value(b);
-}
-
-Qt::MouseButton InputBindings::mouseButtonFor(const QString& id) const
-{
-    for (auto it = m_mouse.begin(); it != m_mouse.end(); ++it)
-        if (it.value() == id) return Qt::MouseButton(it.key());
-    return Qt::NoButton;
-}
-
-Qt::MouseButton InputBindings::defaultMouseButtonFor(const QString& id) const
-{
-    const QHash<int, QString> d = defaultMouse();
-    for (auto it = d.begin(); it != d.end(); ++it)
-        if (it.value() == id) return Qt::MouseButton(it.key());
-    return Qt::NoButton;
-}
-
-void InputBindings::setMouseButton(const QString& id, Qt::MouseButton b)
-{
-    // One mouse button per action, one action per mouse button
-    for (auto it = m_mouse.begin(); it != m_mouse.end();)
-        it = it.value() == id ? m_mouse.erase(it) : std::next(it);
-    if (b != Qt::NoButton) m_mouse[b] = id;
-    save();
 }
 
 QAction* InputBindings::action(const QString& id) const

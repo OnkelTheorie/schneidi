@@ -1,14 +1,20 @@
 // Test workspace presets: whole key sets saved to a file and loaded again (InputBindings::exportSet/importSet),
-// built-in sets (InputBindings::applyPreset).
+// built-in sets (InputBindings::applyPreset), two slots per action that take keys or mouse buttons, old files.
 #include "check.h"
 
 #include "app/InputBindings.h"
+#include "app/KeyBindingsDialog.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QMouseEvent>
+#include <QTableWidget>
 #include <QTemporaryDir>
 
 int main(int argc, char** argv)
@@ -28,29 +34,70 @@ int main(int argc, char** argv)
     b.registerAction(&extra, "extra", "Edit", QKeySequence());
     b.saveIfIncomplete();
 
-    b.setShortcut("split", QKeySequence("S"));
-    b.setShortcut("extra", QKeySequence("Ctrl+E"));
-    b.setMouseButton("play", Qt::ForwardButton);
+    // Defaults: the key in slot 1, split also has the rear side button
+    CHECK_EQ(b.inputs("split"), QStringList({"Ctrl+B", "mouse:back"}));
+    CHECK_EQ(b.inputs("extra"), QStringList({"", ""}));
+    CHECK_EQ(b.mouseAction(Qt::BackButton), QString("split"));
+
+    // Both slots take keys or mouse buttons, in any order
+    b.setInput("play", 1, "K");
+    CHECK_EQ(play.shortcuts(), QList<QKeySequence>({QKeySequence("Space"), QKeySequence("K")}));
+    b.setInput("extra", 0, "mouse:task");
+    b.setInput("extra", 1, "Ctrl+E");
+    CHECK_EQ(b.inputs("extra"), QStringList({"mouse:task", "Ctrl+E"}));
+    CHECK_EQ(extra.shortcut(), QKeySequence("Ctrl+E"));
+    CHECK_EQ(b.current("extra"), QKeySequence("Ctrl+E"));
+    CHECK_EQ(b.mouseAction(Qt::TaskButton), QString("extra"));
+    b.setInput("extra", 0, "Ctrl+E"); // the same input in the other slot moves over
+    CHECK_EQ(b.inputs("extra"), QStringList({"Ctrl+E", ""}));
+    CHECK_EQ(b.mouseAction(Qt::TaskButton), QString());
+    // One action per mouse button: assigning it elsewhere takes it away
+    b.setInput("play", 1, "mouse:back");
+    CHECK_EQ(b.mouseAction(Qt::BackButton), QString("play"));
+    CHECK_EQ(b.inputs("split"), QStringList({"Ctrl+B", ""}));
+    CHECK_EQ(play.shortcuts(), QList<QKeySequence>({QKeySequence("Space")}));
+    b.resetAll();
+    CHECK_EQ(b.mouseAction(Qt::BackButton), QString("split"));
+    CHECK_EQ(b.inputs("play"), QStringList({"Space", ""}));
+
+    b.setInput("split", 0, "S");
+    b.setInput("extra", 0, "Ctrl+E");
+    b.setInput("play", 1, "mouse:forward");
     const QString set = tmp.filePath("mine.json");
     CHECK(b.exportSet(set));
 
     // Back to the defaults, then load the set: everything as saved, the actions follow immediately
     b.resetAll();
     CHECK_EQ(split.shortcut(), QKeySequence("Ctrl+B"));
-    CHECK_EQ(b.mouseButtonFor("play"), Qt::NoButton);
+    CHECK_EQ(b.mouseAction(Qt::ForwardButton), QString());
     QString error;
     CHECK(b.importSet(set, &error));
     CHECK_EQ(split.shortcut(), QKeySequence("S"));
     CHECK_EQ(extra.shortcut(), QKeySequence("Ctrl+E"));
     CHECK_EQ(play.shortcut(), QKeySequence("Space"));
-    CHECK_EQ(b.mouseButtonFor("play"), Qt::ForwardButton);
+    CHECK_EQ(b.mouseAction(Qt::ForwardButton), QString("play"));
     CHECK_EQ(b.mouseAction(Qt::BackButton), QString("split")); // the default side button was saved with the set
-    // The loaded set is the new keybindings.json
+    // The loaded set is the new keybindings.json: one slot as a plain string, two as a list
     {
         QFile f(b.filePath());
         CHECK(f.open(QIODevice::ReadOnly));
-        CHECK_EQ(QJsonDocument::fromJson(f.readAll()).object()["shortcuts"].toObject()["split"].toString(), QString("S"));
+        const QJsonObject keys = QJsonDocument::fromJson(f.readAll()).object()["shortcuts"].toObject();
+        CHECK_EQ(keys["extra"].toString(), QString("Ctrl+E"));
+        CHECK_EQ(keys["split"].toArray().toVariantList(), QVariantList({"S", "mouse:back"}));
     }
+
+    // Old file (version 2): mouse buttons in their own section, they end up in a free slot
+    {
+        QFile f(tmp.filePath("old.json"));
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.write(R"({"version": 2, "mouse": {"back": "", "forward": "extra"},
+                    "shortcuts": {"split": "X", "play": "Space", "extra": ""}})");
+    }
+    CHECK(b.importSet(tmp.filePath("old.json"), &error));
+    CHECK_EQ(b.inputs("split"), QStringList({"X", ""}));
+    CHECK_EQ(b.inputs("extra"), QStringList({"mouse:forward", ""}));
+    CHECK_EQ(b.mouseAction(Qt::ForwardButton), QString("extra"));
+    CHECK_EQ(b.mouseAction(Qt::BackButton), QString());
 
     // A set that leaves an action out: that one gets its default (a whole set, not a merge)
     {
@@ -62,6 +109,7 @@ int main(int argc, char** argv)
     CHECK_EQ(play.shortcut(), QKeySequence("K"));
     CHECK_EQ(split.shortcut(), QKeySequence("Ctrl+B"));
     CHECK_EQ(extra.shortcut(), QKeySequence());
+    CHECK_EQ(b.mouseAction(Qt::BackButton), QString("split")); // old file without mouse section: the default
 
     // Not a key set: nothing changes
     {
@@ -77,14 +125,14 @@ int main(int argc, char** argv)
     // Built-in sets: beginner changes keys, wheel and keeps the side button; standard brings back every default
     QAction trim;
     b.registerAction(&trim, "tool_trim", "Edit", QKeySequence("T"));
-    b.setMouseButton("play", Qt::ForwardButton);
+    b.setInput("play", 1, "mouse:forward");
     CHECK_EQ(InputBindings::presetIds(), QStringList({"standard", "beginner"}));
     b.applyPreset("beginner");
     CHECK_EQ(split.shortcut(), QKeySequence("S"));
     CHECK_EQ(trim.shortcut(), QKeySequence());
     CHECK_EQ(play.shortcut(), QKeySequence("Space"));
-    CHECK_EQ(b.mouseButtonFor("play"), Qt::NoButton);
-    CHECK_EQ(b.mouseAction(Qt::BackButton), QString("split"));
+    CHECK_EQ(b.mouseAction(Qt::ForwardButton), QString());
+    CHECK_EQ(b.inputs("split"), QStringList({"S", "mouse:back"}));
     CHECK(b.wheelAction(Qt::ControlModifier) == WheelAction::Zoom);
     CHECK(b.wheelAction(Qt::ShiftModifier) == WheelAction::ScrollHorizontal);
     {
@@ -103,5 +151,52 @@ int main(int argc, char** argv)
     CHECK_EQ(trim.shortcut(), QKeySequence("T"));
     CHECK(b.wheelAction(Qt::ControlModifier) == WheelAction::ScrollHorizontal);
     CHECK(b.wheelAction(Qt::AltModifier) == WheelAction::Zoom);
+
+    // Dialog: double-click Key 1/Key 2, then press a key combination or a side button
+    {
+        KeyBindingsDialog dlg;
+        dlg.show();
+        auto* table = dlg.findChild<QTableWidget*>();
+        if (!CHECK(table && table->columnCount() == 4)) return Check::result();
+        int row = -1;
+        for (int r = 0; r < table->rowCount(); ++r)
+            if (table->item(r, 1)->data(Qt::UserRole).toString() == "extra") row = r;
+        if (!CHECK(row >= 0)) return Check::result();
+        auto capture = [&](int col) {
+            emit table->cellDoubleClicked(row, col);
+            return qobject_cast<QLabel*>(table->cellWidget(row, col));
+        };
+        if (QLabel* c = capture(3); CHECK(c)) {
+            QKeyEvent ctrl(QEvent::KeyPress, Qt::Key_Control, Qt::ControlModifier); // modifiers alone wait
+            QApplication::sendEvent(c, &ctrl);
+            CHECK_EQ(b.inputs("extra"), QStringList({"", ""}));
+            QKeyEvent key(QEvent::KeyPress, Qt::Key_J, Qt::ControlModifier | Qt::ShiftModifier);
+            QApplication::sendEvent(c, &key);
+        }
+        QApplication::processEvents();
+        CHECK_EQ(b.inputs("extra"), QStringList({"", "Ctrl+Shift+J"}));
+        CHECK_EQ(table->item(row, 3)->text(), QKeySequence("Ctrl+Shift+J").toString(QKeySequence::NativeText));
+        if (QLabel* c = capture(2); CHECK(c)) {
+            QMouseEvent press(QEvent::MouseButtonPress, QPointF(5, 5), QPointF(5, 5), Qt::ForwardButton,
+                              Qt::ForwardButton, Qt::NoModifier);
+            QApplication::sendEvent(c, &press);
+        }
+        QApplication::processEvents();
+        CHECK_EQ(b.inputs("extra"), QStringList({"mouse:forward", "Ctrl+Shift+J"}));
+        CHECK_EQ(table->item(row, 2)->text(), InputBindings::mouseButtonText(Qt::ForwardButton));
+        if (QLabel* c = capture(2); CHECK(c)) { // Esc cancels
+            QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(c, &esc);
+        }
+        QApplication::processEvents();
+        CHECK_EQ(b.inputs("extra"), QStringList({"mouse:forward", "Ctrl+Shift+J"}));
+        CHECK(!table->cellWidget(row, 2));
+        if (const QString shot = qEnvironmentVariable("KEYBINDINGS_SHOT"); !shot.isEmpty()) {
+            table->scrollToItem(table->item(row, 1));
+            table->selectRow(row);
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete); // the removed capture widgets
+            dlg.grab().save(shot);
+        }
+    }
     return Check::result();
 }

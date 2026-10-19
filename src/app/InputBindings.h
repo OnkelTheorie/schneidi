@@ -33,10 +33,18 @@ public:
     // After registering all actions: write the file if it is missing or entries are missing
     void saveIfIncomplete();
 
+    // Every action has two slots (like "Key 1"/"Key 2"), each holds a key or a mouse button: an input string is
+    // a key in PortableText ("Ctrl+B"), "mouse:back" etc. for a mouse button, or empty.
     // For the key bindings dialog: changes take effect immediately and are saved
+    static constexpr int kSlots = 2;
     const QVector<Entry>& entries() const { return m_entries; }
-    QKeySequence current(const QString& id) const;
-    void setShortcut(const QString& id, const QKeySequence& key);
+    QStringList inputs(const QString& id) const;        // always kSlots entries
+    QStringList defaultInputs(const QString& id) const; // always kSlots entries
+    QKeySequence current(const QString& id) const;      // first key of the action (empty if none)
+    // Sets one slot; the same input in the other slot is cleared, a mouse button is taken from other actions
+    // (one action per mouse button)
+    void setInput(const QString& id, int slot, const QString& input);
+    void setInputs(const QString& id, const QStringList& inputs);
     void resetAll();
     // A whole set of keys, mouse buttons and wheel (same format as keybindings.json), e.g. to take it to another
     // computer or keep several: export writes the current set, import replaces it (actions missing in the file get
@@ -53,10 +61,10 @@ public:
     // Extra mouse buttons (side buttons) -> action, e.g. rear side button = cut at the playhead
     static const QVector<Qt::MouseButton>& bindableMouseButtons();
     static QString mouseButtonText(Qt::MouseButton b);
-    QString mouseAction(Qt::MouseButton b) const;              // action ID or empty
-    Qt::MouseButton mouseButtonFor(const QString& id) const;   // Qt::NoButton if none
-    Qt::MouseButton defaultMouseButtonFor(const QString& id) const;
-    void setMouseButton(const QString& id, Qt::MouseButton b); // NoButton = remove
+    static QString mouseInput(Qt::MouseButton b);           // "mouse:back", empty if not bindable
+    static Qt::MouseButton inputMouseButton(const QString& input); // Qt::NoButton for a key
+    static QString inputText(const QString& input);         // for display: native key text or mouse button name
+    QString mouseAction(Qt::MouseButton b) const;           // action ID or empty
     QAction* action(const QString& id) const;
 
     WheelAction wheelAction(Qt::KeyboardModifiers mods) const;
@@ -67,12 +75,14 @@ private:
     static QString modifierKey(Qt::KeyboardModifiers mods);
 
     void save();
+    void apply(const Entry& e) const; // keys of the action's slots -> QAction
+    void rebuildMouse();
     QJsonObject toJson() const;
     void applyJson(const QJsonObject& root, bool withWheel); // shortcuts, mouse (and wheel) from a file
 
-    QHash<QString, QString> m_shortcuts;       // actionId -> "Ctrl+B" (from the file)
+    QHash<QString, QStringList> m_inputs;      // actionId -> slots (from the file or changed; else the defaults)
     QVector<Entry> m_entries;                  // registered actions in menu order
-    QHash<int, QString> m_mouse;               // Qt::MouseButton -> actionId
+    QHash<int, QString> m_mouse;               // Qt::MouseButton -> actionId (cache of the slots)
     QHash<QString, WheelAction> m_wheel;       // "none"/"shift"/"ctrl+alt" -> action
     bool m_fileExisted = false;
 };

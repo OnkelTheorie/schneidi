@@ -8,7 +8,6 @@
 #include <QHash>
 #include <QHeaderView>
 #include <QKeyEvent>
-#include <QKeySequenceEdit>
 #include <QMouseEvent>
 #include <functional>
 #include <QLabel>
@@ -24,44 +23,68 @@
 #include <QVBoxLayout>
 
 namespace {
-enum Column { ColCategory, ColText, ColKey, ColMouse, ColCount };
+enum Column { ColCategory, ColText, ColSlot1, ColSlot2, ColCount };
 
-// Just press the mouse button instead of choosing from a list (like the key column).
-// Del/Backspace = remove, Esc or clicking away = cancel.
-class MouseCapture : public QLabel {
+// Captures the next key (with modifiers) or mouse side button, like a QKeySequenceEdit that also takes the mouse.
+// Esc or clicking away = cancel.
+class InputCapture : public QLabel {
 public:
-    explicit MouseCapture(std::function<void(int)> done) : m_done(std::move(done))
+    explicit InputCapture(std::function<void(const QString&, bool)> done) : m_done(std::move(done))
     {
-        setText(T("Maustaste drücken …"));
+        setText(T("Taste oder Maustaste drücken …"));
         setFocusPolicy(Qt::StrongFocus);
         setStyleSheet(QString("color: %1; padding-left: 4px;").arg(Theme::primary.name()));
-        setToolTip(T("Seitentaste drücken. Entf = entfernen, Esc = abbrechen"));
+        setToolTip(T("Taste, Tastenkombination oder Seitentaste der Maus drücken. Esc = abbrechen"));
     }
 
 protected:
+    bool event(QEvent* e) override
+    {
+        // Take every key, also Tab and keys that are shortcuts somewhere else
+        if (e->type() == QEvent::ShortcutOverride) {
+            e->accept();
+            return true;
+        }
+        if (e->type() == QEvent::KeyPress) {
+            keyPress(static_cast<QKeyEvent*>(e));
+            return true;
+        }
+        return QLabel::event(e);
+    }
     void mousePressEvent(QMouseEvent* e) override
     {
         e->accept();
-        if (InputBindings::bindableMouseButtons().contains(e->button())) finish(int(e->button()));
-        else if (e->button() != Qt::LeftButton) setText(T("Nur Seitentasten/Zusatztasten"));
+        if (InputBindings::bindableMouseButtons().contains(e->button()))
+            finish(InputBindings::mouseInput(e->button()), true);
+        else if (e->button() != Qt::LeftButton) setText(T("Bei der Maus nur Seitentasten/Zusatztasten"));
     }
     void mouseDoubleClickEvent(QMouseEvent* e) override { mousePressEvent(e); }
-    void keyPressEvent(QKeyEvent* e) override
-    {
-        if (e->key() == Qt::Key_Escape) finish(-1);
-        else if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) finish(int(Qt::NoButton));
-    }
-    void focusOutEvent(QFocusEvent*) override { finish(-1); }
+    void focusOutEvent(QFocusEvent*) override { finish({}, false); }
 
 private:
-    void finish(int button)
+    void keyPress(QKeyEvent* e)
+    {
+        int key = e->key();
+        const Qt::KeyboardModifiers mods =
+            e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+        if (key == Qt::Key_Escape && mods == Qt::NoModifier) return finish({}, false);
+        if (key == Qt::Key_Shift || key == Qt::Key_Control || key == Qt::Key_Alt || key == Qt::Key_Meta
+            || key == Qt::Key_AltGr || key == Qt::Key_unknown || key == 0) {
+            // Only modifiers so far: show them and wait for the key
+            setText(QKeySequence(mods.toInt()).toString(QKeySequence::NativeText) + " …");
+            return;
+        }
+        if (key == Qt::Key_Backtab) key = Qt::Key_Tab; // Shift+Tab arrives as Backtab
+        finish(QKeySequence(QKeyCombination(mods, Qt::Key(key))).toString(QKeySequence::PortableText), true);
+    }
+    void finish(const QString& input, bool ok)
     {
         if (!m_done) return;
         auto done = std::move(m_done);
         m_done = nullptr;
-        done(button); // -1 = change nothing
+        done(input, ok); // ok = false: change nothing
     }
-    std::function<void(int)> m_done;
+    std::function<void(const QString&, bool)> m_done;
 };
 }
 
@@ -85,21 +108,20 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     connect(m_filter, &QLineEdit::textChanged, this, &KeyBindingsDialog::applyFilter);
 
     m_table = new QTableWidget(0, ColCount);
-    m_table->setHorizontalHeaderLabels({T("Menü"), T("Funktion"), T("Taste"), T("Maustaste")});
+    m_table->setHorizontalHeaderLabels({T("Menü"), T("Funktion"), T("Taste 1"), T("Taste 2")});
     m_table->verticalHeader()->hide();
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->horizontalHeader()->setSectionResizeMode(ColText, QHeaderView::Stretch);
     m_table->setColumnWidth(ColCategory, 110);
-    m_table->setColumnWidth(ColKey, 150);
-    m_table->setColumnWidth(ColMouse, 150);
+    m_table->setColumnWidth(ColSlot1, 150);
+    m_table->setColumnWidth(ColSlot2, 150);
     connect(m_table, &QTableWidget::cellDoubleClicked, this,
-            [this](int row, int col) { col == ColMouse ? editMouse(row) : editRow(row); });
+            [this](int row, int col) { editSlot(row, col == ColSlot2 ? 1 : 0); });
 
-    auto* hint = new QLabel(T("Doppelklick auf eine Zeile, dann die neue Taste drücken. "
-                            "Doppelklick in der Spalte Maustaste, dann die Seitentaste der Maus drücken. "
-                            "Fett = eigene Belegung, rot = doppelt belegt."));
+    auto* hint = new QLabel(T("Doppelklick auf Taste 1 oder Taste 2, dann die neue Taste oder die Seitentaste der Maus "
+                            "drücken (Esc = abbrechen). Fett = eigene Belegung, rot = doppelt belegt."));
     hint->setWordWrap(true);
     hint->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
 
@@ -107,13 +129,14 @@ KeyBindingsDialog::KeyBindingsDialog(QWidget* parent) : QDialog(parent)
     resetOne->setToolTip(T("Gewählte Zeile auf Standard zurücksetzen"));
     connect(resetOne, &QPushButton::clicked, this, [this] { resetRow(m_table->currentRow()); });
     auto* clearOne = new QPushButton(T("Entfernen"));
-    clearOne->setToolTip(T("Taste und Maustaste der gewählten Zeile entfernen"));
+    clearOne->setToolTip(T("Gewählte Taste entfernen (Spalte Taste 1 oder 2, sonst beide)"));
     connect(clearOne, &QPushButton::clicked, this, [this] {
         const int row = m_table->currentRow();
         if (row < 0) return;
         const QString id = m_table->item(row, ColText)->data(Qt::UserRole).toString();
-        InputBindings::instance().setShortcut(id, {});
-        InputBindings::instance().setMouseButton(id, Qt::NoButton);
+        const int col = m_table->currentColumn();
+        if (col == ColSlot1 || col == ColSlot2) InputBindings::instance().setInput(id, col - ColSlot1, {});
+        else InputBindings::instance().setInputs(id, {});
         fill();
     });
     auto* resetAll = new QPushButton(T("Alle zurücksetzen"));
@@ -192,46 +215,38 @@ void KeyBindingsDialog::fill()
     const auto& bindings = InputBindings::instance();
     const auto& entries = bindings.entries();
 
-    QHash<QString, int> uses; // key -> number of actions (mark conflicts)
-    for (const auto& e : entries) {
-        const QString k = bindings.current(e.id).toString(QKeySequence::PortableText);
-        if (!k.isEmpty()) ++uses[k];
-    }
+    QHash<QString, int> uses; // key or mouse button -> number of actions (mark conflicts)
+    for (const auto& e : entries)
+        for (const QString& in : bindings.inputs(e.id))
+            if (!in.isEmpty()) ++uses[in];
 
-    for (int r = 0; r < m_table->rowCount(); ++r) {
-        m_table->removeCellWidget(r, ColKey);
-        m_table->removeCellWidget(r, ColMouse);
-    }
+    for (int r = 0; r < m_table->rowCount(); ++r)
+        for (int c = ColSlot1; c <= ColSlot2; ++c) m_table->removeCellWidget(r, c);
     m_table->setRowCount(entries.size());
     for (int i = 0; i < entries.size(); ++i) {
         const auto& e = entries[i];
-        const QKeySequence key = bindings.current(e.id);
         auto* cat = new QTableWidgetItem(e.category);
         cat->setForeground(Theme::textDim);
         auto* text = new QTableWidgetItem(e.text);
         text->setData(Qt::UserRole, e.id);
-        auto* keyItem = new QTableWidgetItem(key.toString(QKeySequence::NativeText));
-        if (key != e.defaultKey) {
-            QFont f = keyItem->font();
-            f.setBold(true); // own binding
-            keyItem->setFont(f);
-        }
-        if (uses.value(key.toString(QKeySequence::PortableText)) > 1) {
-            keyItem->setForeground(Theme::warning);
-            keyItem->setToolTip(T("Diese Taste ist mehrfach belegt"));
-        }
         m_table->setItem(i, ColCategory, cat);
         m_table->setItem(i, ColText, text);
-        m_table->setItem(i, ColKey, keyItem);
 
-        const Qt::MouseButton mb = bindings.mouseButtonFor(e.id);
-        auto* mouseItem = new QTableWidgetItem(InputBindings::mouseButtonText(mb));
-        if (mb != bindings.defaultMouseButtonFor(e.id)) {
-            QFont f = mouseItem->font();
-            f.setBold(true);
-            mouseItem->setFont(f);
+        const QStringList inputs = bindings.inputs(e.id);
+        const QStringList defaults = bindings.defaultInputs(e.id);
+        for (int s = 0; s < InputBindings::kSlots; ++s) {
+            auto* item = new QTableWidgetItem(InputBindings::inputText(inputs[s]));
+            if (inputs[s] != defaults[s]) {
+                QFont f = item->font();
+                f.setBold(true); // own binding
+                item->setFont(f);
+            }
+            if (uses.value(inputs[s]) > 1) {
+                item->setForeground(Theme::warning);
+                item->setToolTip(T("Diese Taste ist mehrfach belegt"));
+            }
+            m_table->setItem(i, ColSlot1 + s, item);
         }
-        m_table->setItem(i, ColMouse, mouseItem);
     }
     applyFilter();
 }
@@ -246,43 +261,22 @@ void KeyBindingsDialog::applyFilter()
     }
 }
 
-void KeyBindingsDialog::editRow(int row)
-{
-    if (row < 0) return;
-    const QString id = m_table->item(row, ColText)->data(Qt::UserRole).toString();
-    auto* edit = new QKeySequenceEdit(InputBindings::instance().current(id));
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
-    edit->setMaximumSequenceLength(1);
-#endif
-    edit->setClearButtonEnabled(true);
-    m_table->setCellWidget(row, ColKey, edit);
-    edit->setFocus();
-    connect(edit, &QKeySequenceEdit::editingFinished, this, [this, edit, id] {
-        QKeySequence seq = edit->keySequence();
-        if (seq.count() > 1) seq = QKeySequence(seq[0]); // Qt < 6.5: only the first key counts
-        InputBindings::instance().setShortcut(id, seq);
-        QMetaObject::invokeMethod(this, [this] { fill(); }, Qt::QueuedConnection); // remove the editor only afterwards
-    });
-}
-
 void KeyBindingsDialog::resetRow(int row)
 {
     if (row < 0) return;
     const QString id = m_table->item(row, ColText)->data(Qt::UserRole).toString();
-    for (const auto& e : InputBindings::instance().entries())
-        if (e.id == id) InputBindings::instance().setShortcut(id, e.defaultKey);
-    InputBindings::instance().setMouseButton(id, InputBindings::instance().defaultMouseButtonFor(id));
+    InputBindings::instance().setInputs(id, InputBindings::instance().defaultInputs(id));
     fill();
 }
 
-void KeyBindingsDialog::editMouse(int row)
+void KeyBindingsDialog::editSlot(int row, int slot)
 {
     if (row < 0) return;
     const QString id = m_table->item(row, ColText)->data(Qt::UserRole).toString();
-    auto* capture = new MouseCapture([this, id](int b) {
-        if (b >= 0) InputBindings::instance().setMouseButton(id, Qt::MouseButton(b));
+    auto* capture = new InputCapture([this, id, slot](const QString& input, bool ok) {
+        if (ok) InputBindings::instance().setInput(id, slot, input);
         QMetaObject::invokeMethod(this, [this] { fill(); }, Qt::QueuedConnection); // remove the editor only afterwards
     });
-    m_table->setCellWidget(row, ColMouse, capture);
+    m_table->setCellWidget(row, ColSlot1 + slot, capture);
     capture->setFocus();
 }
