@@ -44,6 +44,19 @@ void clearRange(Track& track, int start, int end, const IdGen& newId);
 // Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id
 void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId);
 
+// Changes the clips for which `need` is true with `apply`, without touching the others: tracks without such a clip
+// stay shared with copies of the timeline (the undo snapshots; a plain non-const loop would copy every track)
+template <typename Need, typename Apply>
+void changeClips(Timeline& tl, Need need, Apply apply)
+{
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        QVector<Track>& tracks = tl.tracks(k);
+        for (int t = 0; t < tracks.size(); ++t)
+            for (int i = 0; i < std::as_const(tracks)[t].clips.size(); ++i)
+                if (need(std::as_const(tracks)[t].clips[i])) apply(tracks[t].clips[i]);
+    }
+}
+
 // Places a clip on the track in overwrite mode.
 void placeClip(Track& track, const Clip& clip, const IdGen& newId);
 

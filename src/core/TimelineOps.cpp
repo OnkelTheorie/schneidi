@@ -17,35 +17,33 @@ void sortTrack(Track& t)
               [](const Clip& a, const Clip& b) { return a.start < b.start; });
 }
 
-template <typename TL, typename C>
-C* findIn(TL& tl, int clipId, TrackRef* where)
-{
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
-        auto& tracks = tl.tracks(k);
-        for (int i = 0; i < tracks.size(); ++i) {
-            for (auto& c : tracks[i].clips) {
-                if (c.id == clipId) {
-                    if (where) *where = {k, i};
-                    return &c;
-                }
-            }
-        }
-    }
-    return nullptr;
-}
-
 } // namespace
 
 namespace TimelineOps {
 
-Clip* findClip(Timeline& tl, int clipId, TrackRef* where)
-{
-    return findIn<Timeline, Clip>(tl, clipId, where);
-}
-
 const Clip* findClip(const Timeline& tl, int clipId, TrackRef* where)
 {
-    return findIn<const Timeline, const Clip>(tl, clipId, where);
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        const QVector<Track>& tracks = tl.tracks(k);
+        for (int i = 0; i < tracks.size(); ++i)
+            for (const Clip& c : tracks[i].clips)
+                if (c.id == clipId) {
+                    if (where) *where = {k, i};
+                    return &c;
+                }
+    }
+    return nullptr;
+}
+
+Clip* findClip(Timeline& tl, int clipId, TrackRef* where)
+{
+    // Searched read-only: only the track of the clip is detached from copies of the timeline (undo snapshots)
+    TrackRef ref;
+    const Clip* c = findClip(std::as_const(tl), clipId, &ref);
+    if (!c) return nullptr;
+    const qsizetype index = c - std::as_const(tl).track(ref).clips.constData();
+    if (where) *where = ref;
+    return &tl.track(ref).clips[index];
 }
 
 bool isLocked(const Timeline& tl, int clipId)
@@ -150,13 +148,10 @@ QVector<int> linkedGroup(const Timeline& tl, int clipId)
 void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId)
 {
     QHash<int, int> map;
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (Track& t : tl.tracks(k))
-            for (Clip& c : t.clips)
-                if (c.linkId < 0) {
-                    if (!map.contains(c.linkId)) map[c.linkId] = newLinkId();
-                    c.linkId = map[c.linkId];
-                }
+    changeClips(tl, [](const Clip& c) { return c.linkId < 0; }, [&](Clip& c) {
+        if (!map.contains(c.linkId)) map[c.linkId] = newLinkId();
+        c.linkId = map[c.linkId];
+    });
 }
 
 void clearRange(Track& track, int start, int end, const IdGen& newId)
@@ -715,12 +710,12 @@ void unpairBrokenDissolves(const Timeline& before, Timeline& after)
     dissolveSides(before, outBefore, inBefore);
     if (outBefore.isEmpty()) return;
     dissolveSides(after, outAfter, inAfter);
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (Track& t : after.tracks(k))
-            for (Clip& c : t.clips) {
-                if (c.transOut > 0 && outBefore.contains(c.id) && !outAfter.contains(c.id)) c.transOut = 0;
-                if (c.transIn > 0 && inBefore.contains(c.id) && !inAfter.contains(c.id)) c.transIn = 0;
-            }
+    const auto brokenOut = [&](const Clip& c) { return c.transOut > 0 && outBefore.contains(c.id) && !outAfter.contains(c.id); };
+    const auto brokenIn = [&](const Clip& c) { return c.transIn > 0 && inBefore.contains(c.id) && !inAfter.contains(c.id); };
+    changeClips(after, [&](const Clip& c) { return brokenOut(c) || brokenIn(c); }, [&](Clip& c) {
+        if (brokenOut(c)) c.transOut = 0;
+        if (brokenIn(c)) c.transIn = 0;
+    });
 }
 
 void keepFadesApart(const Timeline& before, Timeline& after)
@@ -734,31 +729,48 @@ void keepFadesApart(const Timeline& before, Timeline& after)
                 const Clip& b = t.clips[i + 1];
                 if (a.end() == b.start && a.transOut > 0 && b.transIn > 0) touchedBefore.insert(a.id, b.id);
             }
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (Track& t : after.tracks(k))
-            for (int i = 0; i < t.clips.size(); ++i) {
-                Clip& a = t.clips[i];
-                Clip* b = i + 1 < t.clips.size() ? &t.clips[i + 1] : nullptr;
+    // The flags are worked out on the side and only changed clips are written (unchanged tracks stay shared with
+    // the undo snapshot)
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        QVector<Track>& tracks = after.tracks(k);
+        for (int ti = 0; ti < tracks.size(); ++ti) {
+            const QVector<Clip>& cs = std::as_const(tracks)[ti].clips;
+            const int n = int(cs.size());
+            QVector<char> outAlone(n), inAlone(n);
+            for (int i = 0; i < n; ++i) {
+                outAlone[i] = cs[i].transOutAlone;
+                inAlone[i] = cs[i].transInAlone;
+            }
+            for (int i = 0; i < n; ++i) {
+                const Clip& a = cs[i];
+                const Clip* b = i + 1 < n ? &cs[i + 1] : nullptr;
                 const bool touching = b && a.end() == b->start && a.transOut > 0 && b->transIn > 0;
                 if (!touching) {
-                    a.transOutAlone = false;
-                    if (b) b->transInAlone = false;
+                    outAlone[i] = false;
+                    if (b) inAlone[i + 1] = false;
                     continue;
                 }
-                if (a.transOutAlone || b->transInAlone) { // stays standalone (mark both sides the same)
-                    a.transOutAlone = b->transInAlone = true;
+                if (outAlone[i] || inAlone[i + 1]) { // stays standalone (mark both sides the same)
+                    outAlone[i] = inAlone[i + 1] = true;
                     continue;
                 }
                 if (touchedBefore.value(a.id) == b->id) continue; // was already a dissolve or deliberately made one
                 // Newly bumped together: only leave standalone if both transitions were already there before
                 const Clip* a0 = findClip(before, a.id);
                 const Clip* b0 = findClip(before, b->id);
-                if (a0 && b0 && a0->transOut > 0 && b0->transIn > 0) a.transOutAlone = b->transInAlone = true;
+                if (a0 && b0 && a0->transOut > 0 && b0->transIn > 0) outAlone[i] = inAlone[i + 1] = true;
             }
-    // First clip of each track: a fade in without predecessor is never marked standalone
-    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-        for (Track& t : after.tracks(k))
-            if (!t.clips.isEmpty()) t.clips.first().transInAlone = false;
+            // First clip of each track: a fade in without predecessor is never marked standalone
+            if (n > 0) inAlone[0] = false;
+            for (int i = 0; i < n; ++i) {
+                const Clip& c = std::as_const(tracks)[ti].clips[i];
+                if (c.transOutAlone == bool(outAlone[i]) && c.transInAlone == bool(inAlone[i])) continue;
+                Clip& m = tracks[ti].clips[i];
+                m.transOutAlone = outAlone[i];
+                m.transInAlone = inAlone[i];
+            }
+        }
+    }
 }
 
 int endFrame(const Timeline& tl)
