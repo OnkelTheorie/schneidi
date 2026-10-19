@@ -516,17 +516,37 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
     for (int c = 0; c < 3; ++c)
         for (int i = 0; i < 256; ++i) table[c][i] = float(curve(c, i / 255.0));
     const float sf = float(s);
+    // 0..1 -> 0..255, rounded (std::lround per channel made a 1080p frame take ~25 ms)
+    auto byte = [](float x) { return uint8_t(int((x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x) * 255.0f + 0.5f)); };
+    if (!lut) {
+        // Saturation: mix with the brightness (Rec. 709), y + (v - y) * s = y * (1 - s) + v * s. Both parts come
+        // from tables in 16-bit fixed point (byte value << 16), so a pixel is a few additions
+        int ys[3][256], vs[3][256];
+        const float w[3] = {0.2126f, 0.7152f, 0.0722f};
+        for (int c = 0; c < 3; ++c)
+            for (int i = 0; i < 256; ++i) {
+                ys[c][i] = int(std::lround(table[c][i] * w[c] * (1.0f - sf) * 255.0f * 65536.0f));
+                vs[c][i] = int(std::lround(table[c][i] * sf * 255.0f * 65536.0f)) + 32768; // + 0.5 for rounding
+            }
+        auto clampByte = [](int v) { return uint8_t(v < 0 ? 0 : v > (255 << 16) ? 255 : v >> 16); };
+        for (size_t i = 0; i < n; ++i, rgba += 4) {
+            const int y = ys[0][rgba[0]] + ys[1][rgba[1]] + ys[2][rgba[2]];
+            rgba[0] = clampByte(y + vs[0][rgba[0]]);
+            rgba[1] = clampByte(y + vs[1][rgba[1]]);
+            rgba[2] = clampByte(y + vs[2][rgba[2]]);
+        }
+        return;
+    }
     for (size_t i = 0; i < n; ++i, rgba += 4) {
         float v[3] = {table[0][rgba[0]], table[1][rgba[1]], table[2][rgba[2]]};
         if (sf != 1.0f) { // saturation: mix with the brightness (Rec. 709)
             const float y = 0.2126f * v[0] + 0.7152f * v[1] + 0.0722f * v[2];
             for (float& x : v) x = std::clamp(y + (x - y) * sf, 0.0f, 1.0f);
         }
-        if (lut) { // LUT after the correction (like a LUT on a DaVinci node)
-            if (lut->is3d) sample3d(*lut, v);
-            else sample1d(*lut, v);
-        }
-        for (int c = 0; c < 3; ++c) rgba[c] = uint8_t(std::lround(std::clamp(v[c], 0.0f, 1.0f) * 255.0f));
+        // LUT after the correction (like a LUT on a DaVinci node)
+        if (lut->is3d) sample3d(*lut, v);
+        else sample1d(*lut, v);
+        for (int c = 0; c < 3; ++c) rgba[c] = byte(v[c]);
     }
 }
 

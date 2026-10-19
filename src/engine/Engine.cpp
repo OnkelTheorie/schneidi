@@ -139,6 +139,10 @@ bool Engine::createConsumer(QString* error)
     // Scale smoothly like the export: the audio consumers default to "nearest", so downscaled pictures (preview size,
     // multicam cells, transform zoom) dropped fine detail – 1-px lines vanished in the multicam grid
     m_consumer->set("rescale", "bilinear");
+    // The render thread delivers RGBA, which the Viewer shows anyway: with the default (YUV) every clip with an
+    // RGBA filter (grade, windows) was converted RGBA -> YUV -> RGBA – a 1080p60 project with a grade on every clip
+    // played at ~36 instead of ~51 fps
+    m_consumer->set("mlt_image_format", "rgba");
     // Compute directly at preview size (crossfades, transform, effects) instead of project size and then
     // scale down – the Viewer only shows m_previewSize anyway. MLT scales rectangles/blur along with it.
     if (!qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW")) {
