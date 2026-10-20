@@ -29,6 +29,8 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSplitter>
+#include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -378,7 +380,16 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     lay->addLayout(header);
     lay->addWidget(split, 1);
 
+    m_thumbPool = new QThreadPool(this);
+    m_thumbPool->setMaxThreadCount(2);
+    m_thumbPool->setThreadPriority(QThread::LowPriority);
     connect(m_project, &Project::mediaChanged, this, &MediaPool::rebuild);
+    connect(m_project, &Project::formatChanged, this, [this] { // thumbnails in the new aspect ratio
+        ++m_thumbGeneration;
+        m_thumbs.clear();
+        m_thumbPending.clear();
+        rebuildClips();
+    });
     connect(m_project, &Project::timelineChanged, this, &MediaPool::updateSequenceItems);
     // Organization changed: rebuild collected after the current event (may come from itemChanged of the
     // bin list – the item must not be deleted there)
@@ -414,9 +425,22 @@ void MediaPool::importDialog()
 
 QStringList MediaPool::addFiles(const QStringList& paths, int bin)
 {
+    // Probing opens every file (recordings with several audio streams: ~0.5 s each) – side by side in threads,
+    // otherwise the window stood still for seconds when importing a dozen clips. Added in the given order.
+    QVector<MediaInfo> infos(paths.size());
+    if (paths.size() == 1) {
+        infos[0] = m_engine->probe(paths[0]);
+    } else {
+        const ProjectFormat format = m_engine->format();
+        QThreadPool pool;
+        pool.setMaxThreadCount(std::clamp(QThread::idealThreadCount() / 2, 1, int(paths.size())));
+        MediaInfo* out = infos.data(); // detached once here, the threads only write their own element
+        for (int i = 0; i < paths.size(); ++i)
+            pool.start([out, &format, &paths, i] { out[i] = Engine::probe(format, paths[i]); });
+        pool.waitForDone();
+    }
     QStringList failed;
-    for (const QString& path : paths) {
-        MediaInfo info = m_engine->probe(path);
+    for (MediaInfo& info : infos) {
         if (info.length <= 0 || (!info.hasVideo && !info.hasAudio)) {
             failed << info.name;
             continue;
@@ -570,11 +594,45 @@ void MediaPool::applyViewMode()
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
 }
 
+MediaPool::~MediaPool()
+{
+    // Finish running thumbnail jobs while this object is complete (they report back to it)
+    m_thumbPool->clear();
+    m_thumbPool->waitForDone();
+}
+
 void MediaPool::rebuild()
 {
-    m_thumbs.clear(); // new media resp. new project format (aspect ratio) -> thumbnails anew
+    // Keep the thumbnails of media still there (computing all anew per added file made importing crawl);
+    // removed media lose theirs, so a re-import reads the file again
+    QSet<QString> paths;
+    for (const MediaInfo& m : m_project->media()) paths.insert(m.path);
+    for (auto it = m_thumbs.begin(); it != m_thumbs.end();) it = paths.contains(it.key()) ? std::next(it) : m_thumbs.erase(it);
     rebuildBins();
     rebuildClips();
+}
+
+void MediaPool::requestThumb(const QString& path, int frame)
+{
+    if (m_thumbPending.contains(path)) return;
+    m_thumbPending.insert(path);
+    const ProjectFormat format = m_project->format();
+    const int generation = m_thumbGeneration;
+    m_thumbPool->start([this, format, path, frame, generation] {
+        const QImage img = Engine::thumbnail(format, path, frame, kThumb);
+        QMetaObject::invokeMethod(this, [this, path, img, generation] { thumbReady(path, img, generation); },
+                                  Qt::QueuedConnection);
+    });
+}
+
+void MediaPool::thumbReady(const QString& path, const QImage& img, int generation)
+{
+    if (generation != m_thumbGeneration) return; // format changed meanwhile: requested anew
+    m_thumbPending.remove(path);
+    const MediaInfo* info = m_project->mediaInfo(path);
+    if (!info) return; // removed meanwhile
+    m_thumbs.insert(path, img.isNull() ? placeholderThumb(info->hasAudio ? T("♪ Audio") : "?") : QPixmap::fromImage(img));
+    updateItem(path);
 }
 
 void MediaPool::rebuildBins()
@@ -729,16 +787,18 @@ void MediaPool::rebuildClips()
     });
 
     for (const MediaInfo* m : media) {
+        const bool offline = !QFileInfo::exists(m->path); // like DaVinci "Media Offline"
+        if (!offline && m_offline.remove(m->path)) m_thumbs.remove(m->path); // file is back
         if (!m_thumbs.contains(m->path)) {
-            QPixmap thumb;
-            const bool offline = !QFileInfo::exists(m->path); // like DaVinci "Media Offline"
-            if (offline) thumb = placeholderThumb("Media Offline");
-            else if (m->hasVideo) {
-                const QImage img = m_engine->thumbnail(m->path, m->isImage ? 0 : m->length / 3, kThumb);
-                if (!img.isNull()) thumb = QPixmap::fromImage(img);
+            if (offline) {
+                m_thumbs.insert(m->path, placeholderThumb("Media Offline"));
+                m_offline.insert(m->path);
+            } else if (m->hasVideo) {
+                m_thumbs.insert(m->path, placeholderThumb(QString())); // until the worker delivers
+                requestThumb(m->path, m->isImage ? 0 : m->length / 3);
+            } else {
+                m_thumbs.insert(m->path, placeholderThumb(m->hasAudio ? T("♪ Audio") : "?"));
             }
-            if (thumb.isNull()) thumb = placeholderThumb(m->hasAudio ? T("♪ Audio") : "?");
-            m_thumbs.insert(m->path, thumb);
         }
         const QString duration = Timecode::format(m->length, m_project->fps());
         auto* item = new QListWidgetItem(list ? m->name + "    " + duration : m->name + "\n" + duration);

@@ -45,6 +45,10 @@ struct SeekFade {
     std::atomic<int> direction{1};  // playback direction (1 forward, -1 backward)
     std::atomic<bool> fadedOut{false};
     std::atomic<int> waited{0}; // frames silenced so far (emergency stop: the sound comes back after a few)
+    // Seeks in quick succession (dragging the playhead while playing): stay silent until release() – a fade-in per
+    // mouse move crackled
+    std::atomic<bool> hold{false};
+    std::atomic<bool> fadeInNext{false}; // released after the target was reached: fade in the next sound
     void start(int frame, double speed)
     {
         direction = speed < 0 ? -1 : 1;
@@ -57,6 +61,11 @@ struct SeekFade {
     {
         start(frame, speed);
         fadedOut = true;
+    }
+    void release()
+    {
+        if (!hold.exchange(false)) return;
+        if (target < 0) fadeInNext = true;
     }
 };
 

@@ -56,6 +56,8 @@ void applyPan(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a = 
 void setLimiter(Mlt::Filter& f, bool on, double ceilingDb);
 void setTrackDsp(Mlt::Filter& f, const TrackEq& eq, const TrackDynamics& dynamics);
 std::shared_ptr<Mlt::Filter> makeSubframeDelay(Mlt::Profile& profile, int subframe);
+// Short ramp at a hard cut: first frame of the excerpt (rampIn) resp. its last one (rampOut)
+void attachEdgeDeclick(Mlt::Profile& profile, Mlt::Producer& cut, bool rampIn, bool rampOut);
 // Mixer strip (fader, pan, meter) on a playlist or tractor. limiter: master only (ceiling in dBFS, nullopt = none);
 // track: audio tracks only, its EQ and compressor sit before the fader.
 void attachStrip(Mlt::Profile& profile, Mlt::Service& s, double db, double pan, MixerHooks::Strip* hook,

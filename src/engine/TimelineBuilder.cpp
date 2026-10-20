@@ -25,6 +25,7 @@
 #include <QFont>
 #include <QFontMetricsF>
 #include <QHash>
+#include <QSet>
 #include <QImage>
 #include <QString>
 #include <algorithm>
@@ -330,16 +331,33 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             useSecond.insert(c.id, seamless ? useSecond.value(prev.id) : !useSecond.value(prev.id));
         }
 
-        // Per clip, on all its cuts (their state runs on over cut boundaries): noise reduction, then the
-        // sub-frame delay (fine position)
+        // Hard cuts in the sound: clip edges without a fade that do not continue seamlessly (split clip) get a short
+        // ramp against the click (attachEdgeDeclick); crossfades start their excerpt elsewhere and stay untouched
+        QSet<int> declickIn, declickOut;
+        if (kind == TrackKind::Audio)
+            for (int i = 0; i < track.clips.size(); ++i) {
+                const Clip& c = track.clips[i];
+                auto continues = [&](const Clip& a, const Clip& b) { // b plays on exactly where a stops
+                    return !a.mediaPath.isEmpty() && a.mediaPath == b.mediaPath && a.audioStream == b.audioStream
+                        && a.enabled && b.enabled && b.start == a.end() && b.in == a.out + 1 && a.speed == b.speed
+                        && !a.reverse && !b.reverse && a.ramp.isEmpty() && b.ramp.isEmpty();
+                };
+                if (c.fadeIn <= 0 && (i == 0 || !continues(track.clips[i - 1], c))) declickIn.insert(c.id);
+                if (c.fadeOut <= 0 && (i + 1 == track.clips.size() || !continues(c, track.clips[i + 1])))
+                    declickOut.insert(c.id);
+            }
+        // Per clip, on all its cuts (their state runs on over cut boundaries): noise reduction, the edge ramp, then
+        // the sub-frame delay (fine position)
         QHash<int, std::shared_ptr<Mlt::Filter>> delays, denoisers;
-        auto delayed = [&](const Clip& c, Mlt::Producer* cut) {
+        auto delayed = [&](const Clip& c, Mlt::Producer* cut, int from, int to) {
             if (!cut || kind != TrackKind::Audio) return cut;
             if (EffectRegistry::has(c, Denoise::EffectId)) {
                 auto& f = denoisers[c.id];
                 if (!f) f = Denoise::make(m_profile, c);
                 if (f) cut->attach(*f);
             }
+            attachEdgeDeclick(m_profile, *cut, from == c.start && declickIn.contains(c.id),
+                              to == c.end() && declickOut.contains(c.id));
             if (c.subframe <= 0) return cut;
             auto& f = delays[c.id];
             if (!f) f = makeSubframeDelay(m_profile, c.subframe);
@@ -396,7 +414,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             return cut;
         };
         auto cutOf = [&](const Clip& c, int from, int to, bool second) {
-            return delayed(c, rawCutOf(c, from, to, second));
+            return delayed(c, rawCutOf(c, from, to, second), from, to);
         };
 
         int cursor = 0;

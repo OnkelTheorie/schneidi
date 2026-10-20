@@ -5,9 +5,11 @@
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
 
+#include <QElapsedTimer>
 #include <QImage>
 #include <QObject>
 #include <QSize>
+#include <QTimer>
 #include <QVector>
 #include <atomic>
 #include <memory>
@@ -74,6 +76,8 @@ public:
     // Timecode of the file's first frame ("01:00:00:00", from cameras and other editors' renders); empty = none
     static QString startTimecode(const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);
+    // Same without an Engine instance (own profile; usable from worker threads), image in the aspect ratio of `format`
+    static QImage thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size);
 
     // Still (Grab Still) of the currently shown image (timeline resp. source) at full project resolution,
     // always from the originals (not from proxies)
@@ -184,6 +188,8 @@ private:
     // Jump during playback: no longer show/report images from the buffer from before the jump
     std::atomic<int> m_seekEpoch{0};
     std::atomic<int> m_seekTarget{-1};
+    QElapsedTimer m_lastSeek;  // seeks in quick succession = dragging (SeekFade::hold)
+    QTimer* m_seekRelease;     // no seek for a moment: dragging ended, sound fades in
     std::atomic<int> m_seekSkipped{0};
     QSize m_previewSize{960, 540}; // project format scaled down (longer edge 960)
 

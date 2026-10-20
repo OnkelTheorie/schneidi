@@ -201,7 +201,8 @@ void testMainRender(const QString& dir)
         std::printf("       beep at frame %.2f, flash at frame %d\n", beepFrame, flash);
 }
 
-// Lossless render (WAV): exact level, and the hard cut between sine and cosine neither overshoots nor drops out
+// Lossless render (WAV): exact level, and the hard cut between sine and cosine neither overshoots nor drops out;
+// the edge ramps (attachEdgeDeclick) dip only within ~4 ms on each side and the wave no longer jumps there (click)
 void testCut(const QString& dir)
 {
     const QString out = dir + "/cut.wav";
@@ -212,10 +213,15 @@ void testCut(const QString& dir)
     const size_t cut = size_t(kCut / kFps * kRate);
     const float peak = peakOf(s, cut - 4800, cut + 4800);
     if (!CHECK(peak <= kAmp * 1.01f)) std::printf("       peak at the cut %.4f (clip level %.4f)\n", peak, kAmp);
-    // no gap: every 1 ms window (= one period of 1 kHz) around the cut still has the full sine
+    // no gap: every 1 ms window (= one period of 1 kHz) around the cut still has the full sine, except the ramps
     float weakest = 1.f;
-    for (size_t at = cut - 2400; at + 48 <= cut + 2400; at += 48) weakest = std::min(weakest, peakOf(s, at, at + 48));
+    for (size_t at = cut - 2400; at + 48 <= cut + 2400; at += 48)
+        if (at + 48 <= cut - 240 || at >= cut + 240) weakest = std::min(weakest, peakOf(s, at, at + 48));
     if (!CHECK(weakest > kAmp * 0.7f)) std::printf("       weakest 1 ms window at the cut %.4f\n", weakest);
+    // no click: from sample to sample the wave changes at most as fast as the 1 kHz sine itself (2 pi f / rate)
+    float jump = 0.f;
+    for (size_t i = cut - 2400; i + 1 < cut + 2400; ++i) jump = std::max(jump, std::abs(s[i + 1] - s[i]));
+    if (!CHECK(jump <= kAmp * 2 * M_PI * 1000 / kRate * 1.1)) std::printf("       jump at the cut %.4f\n", jump);
 }
 
 // Software encoders not rendered by other tests: file written, right length

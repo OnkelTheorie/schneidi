@@ -1,5 +1,7 @@
 #pragma once
 #include <QHash>
+#include <QImage>
+#include <QSet>
 #include <QPixmap>
 #include <QWidget>
 
@@ -15,6 +17,7 @@ class QRectF;
 class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
+class QThreadPool;
 
 // Media Pool (top left like in DaVinci): on the left the bin list (Master with sub-bins), on the right the clips of the
 // selected bin with thumbnail (icon or list view). Double-click -> view in the Viewer as source,
@@ -37,6 +40,7 @@ public:
     enum class SortKey { Name, Date, Duration };
 
     MediaPool(Project* project, Engine* engine, QWidget* parent = nullptr);
+    ~MediaPool() override;
 
     // Selected media (without title and sequence entries)
     QStringList selectedMedia() const;
@@ -81,7 +85,7 @@ protected:
     bool eventFilter(QObject* obj, QEvent* e) override; // Esc in the search field
 
 private:
-    void rebuild();      // media list changed: thumbnails anew, then view
+    void rebuild();      // media list changed: view anew (thumbnails of new media come from requestThumb)
     void rebuildBins();  // bin list anew (selection/expanded bins stay)
     void rebuildClips(); // clips of the selected bin (sorted)
     void showContextMenu(const QPoint& pos);
@@ -90,6 +94,9 @@ private:
     QStringList addFiles(const QStringList& paths, int bin); // returns the unreadable file names
     bool importFolderInto(const QString& dir, int parentBin, int depth, QStringList* failed);
     void updateItem(const QString& path);
+    // Thumbnail in a worker thread (opens the file and decodes up to a third of it: blocked the window per clip)
+    void requestThumb(const QString& path, int frame);
+    void thumbReady(const QString& path, const QImage& img, int generation);
     void updateSequenceItems(); // duration of the timeline entries (after changes in the edit) // thumbnail with clip color, flags, proxy icon resp. progress
     void updateProxyStatus();
     void applyViewMode();
@@ -109,6 +116,10 @@ private:
     QLineEdit* m_search;
     QHash<QString, QListWidgetItem*> m_items; // path -> entry
     QHash<QString, QPixmap> m_thumbs;         // thumbnail without displaying
+    QSet<QString> m_thumbPending;             // being computed
+    QSet<QString> m_offline;                  // showing "Media Offline" (computed anew when the file is back)
+    int m_thumbGeneration = 0;                // project format changed: older results are dropped
+    QThreadPool* m_thumbPool;
     int m_currentBin = 0;
     int m_editBin = 0; // newly created: edit the name after the rebuild
     ViewMode m_viewMode = ViewMode::Thumbnails;

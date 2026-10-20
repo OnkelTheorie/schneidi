@@ -58,6 +58,10 @@ Engine::Engine(QObject* parent)
 {
     // Render cache pauses during playback
     connect(this, &Engine::speedChanged, m_renderCache, [this](double s) { m_renderCache->setPlaying(s != 0.0); });
+    m_seekRelease = new QTimer(this);
+    m_seekRelease->setSingleShot(true);
+    m_seekRelease->setInterval(120);
+    connect(m_seekRelease, &QTimer::timeout, this, [this] { m_seekFade->release(); });
     // Messages that were already on their way when jumping made the playhead briefly jump back
     connect(this, &Engine::framePosition, this, [this](int frame, int epoch) {
         if (epoch == m_seekEpoch) emit positionChanged(frame);
@@ -248,7 +252,13 @@ QString Engine::startTimecode(const QString& path)
 
 QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
 {
-    ProducerFactory factory(*m_profile);
+    return thumbnail(m_format, path, frame, size);
+}
+
+QImage Engine::thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size)
+{
+    const auto profile = makeProfile(format);
+    ProducerFactory factory(*profile);
     const std::unique_ptr<Mlt::Producer> producer = factory.open(path);
     Mlt::Producer& p = *producer;
     if (!p.is_valid()) return {};
@@ -256,7 +266,7 @@ QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
     std::unique_ptr<Mlt::Frame> f(p.get_frame());
     if (!f) return {};
     // Fetch in the project's aspect ratio and center at the desired size (black borders)
-    const QSize fit = m_format.size().scaled(size, Qt::KeepAspectRatio);
+    const QSize fit = format.size().scaled(size, Qt::KeepAspectRatio);
     mlt_image_format fmt = mlt_image_rgba;
     int w = std::max(2, fit.width()), h = std::max(2, fit.height());
     const uint8_t* data = f->get_image(fmt, w, h);
@@ -566,8 +576,19 @@ void Engine::seek(int frame)
     ++m_seekEpoch;
     m_seekSkipped = 0;
     m_seekTarget = playing ? at : -1;
-    if (playing && m_mode == Mode::Timeline) m_seekFade->start(frame, m_speed);
-    else m_seekFade->target = -1;
+    if (playing && m_mode == Mode::Timeline) {
+        m_seekFade->start(frame, m_speed);
+        // The next seek within moments: the playhead is being dragged -> silent until it rests (each seek's own
+        // fade-in crackled)
+        if (m_lastSeek.isValid() && m_lastSeek.elapsed() < 150) {
+            m_seekFade->hold = true;
+            m_seekRelease->start();
+        }
+    } else {
+        m_seekFade->target = -1;
+        m_seekFade->release();
+    }
+    m_lastSeek.start();
     m_current->seek(at);
     m_consumer->purge();
     m_position = frame;

@@ -327,6 +327,18 @@ int main(int argc, char** argv)
         const std::vector<float> start = frameAudio(80);
         CHECK(start.size() == 1920 && peakOf(start, 0, 5) < 0.01f && peakOf(start, 480, 1920) > 0.45f);
         CHECK_EQ(fade.target.load(), -1);
+        // Dragging the playhead (seeks in quick succession): silent even at the target until release(), then the
+        // next sound fades in
+        fade.start(90, 1.0);
+        fade.hold = true;
+        tr->seek(90);
+        CHECK(peakOf(frameAudio(90), 240, 1920) == 0.f);
+        CHECK_EQ(fade.target.load(), -1);
+        CHECK(peakOf(frameAudio(91), 0, 1920) == 0.f);
+        fade.release();
+        const std::vector<float> resumed = frameAudio(92);
+        CHECK(resumed.size() == 1920 && peakOf(resumed, 0, 5) < 0.01f && peakOf(resumed, 480, 1920) > 0.45f);
+        CHECK(peakOf(frameAudio(93), 0, 1920) > 0.45f);
     }
     return Check::result();
 }

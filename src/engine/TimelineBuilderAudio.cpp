@@ -100,16 +100,28 @@ void scaleSamples(void* buffer, mlt_audio_format format, int channels, int n, in
     }
 }
 
-// Seek during playback (SeekFade): old sound fades out within ~5 ms, then silence until the target, which fades
-// in within ~10 ms
+// Seek during playback (SeekFade): old sound fades out within ~5 ms, then silence until the target, which fades in
+// within ~10 ms (while dragging: silence until SeekFade::release)
 void seekFade(SeekFade& fade, int pos, void* buffer, mlt_audio_format format, int channels, int n, int frequency)
 {
     const int target = fade.target;
-    if (target < 0) return;
+    const bool hold = fade.hold;
+    if (target < 0 && !hold) {
+        if (fade.fadeInNext.exchange(false)) {
+            const int len = std::min(n, std::max(1, frequency / 100));
+            scaleSamples(buffer, format, channels, n, 0, len, [len](int i) { return float(i) / len; });
+        }
+        return;
+    }
     const int dir = fade.direction;
     // The seeked producer starts exactly at the target; frames still on the way from before are elsewhere
-    const bool arrived = dir > 0 ? pos >= target && pos <= target + 2 : pos <= target && pos >= target - 2;
-    if (arrived || ++fade.waited > 12) {
+    const bool arrived = target >= 0 && (dir > 0 ? pos >= target && pos <= target + 2 : pos <= target && pos >= target - 2);
+    if (hold) { // dragging: silent; reaching the target only ends the waiting (release() fades in)
+        if (arrived) {
+            int expected = target;
+            fade.target.compare_exchange_strong(expected, -1);
+        }
+    } else if (arrived || ++fade.waited > 12) {
         const int len = std::min(n, std::max(1, frequency / 100));
         scaleSamples(buffer, format, channels, n, 0, len, [len](int i) { return float(i) / len; });
         int expected = target;
@@ -332,6 +344,50 @@ std::shared_ptr<Mlt::Filter> makeTrackDsp(Mlt::Profile& profile, const TrackEq& 
     mlt_filter_close(f);
     setTrackDsp(*dsp, eq, dynamics);
     return dsp;
+}
+
+// Hard cut in the sound (clip edge without a fade, crossfade or seamless continuation): ~4 ms ramp at the clip's
+// first resp. last frame. Otherwise the wave jumps there (old and new material, or material and silence), which
+// clicks – Final Cut does the same at every edit. The filter sits on one excerpt (in/out = the excerpt's), so only
+// its first/last frame counts.
+int declickGetAudio(mlt_frame frame, void** buffer, mlt_audio_format* format, int* frequency, int* channels, int* samples)
+{
+    auto filter = static_cast<mlt_filter>(mlt_frame_pop_audio(frame));
+    const auto pos = mlt_position(reinterpret_cast<intptr_t>(mlt_frame_pop_audio(frame))); // in the excerpt, from process()
+    const int error = mlt_frame_get_audio(frame, buffer, format, frequency, channels, samples);
+    if (error || !*buffer || *channels <= 0 || *samples <= 0) return error;
+    mlt_properties props = MLT_FILTER_PROPERTIES(filter);
+    const int n = *samples, len = std::min(n, std::max(1, *frequency / 250));
+    if (pos == 0 && mlt_properties_get_int(props, "ramp_in"))
+        scaleSamples(*buffer, *format, *channels, n, 0, len, [len](int i) { return float(i) / len; });
+    if (pos == mlt_properties_get_int(props, "last") && mlt_properties_get_int(props, "ramp_out"))
+        scaleSamples(*buffer, *format, *channels, n, n - len, n, [n, len](int i) { return float(n - 1 - i) / len; });
+    return 0;
+}
+
+mlt_frame declickProcess(mlt_filter filter, mlt_frame frame)
+{
+    mlt_frame_push_audio(frame, reinterpret_cast<void*>(intptr_t(mlt_filter_get_position(filter, frame))));
+    mlt_frame_push_audio(frame, filter);
+    mlt_frame_push_audio(frame, reinterpret_cast<void*>(declickGetAudio));
+    return frame;
+}
+
+void attachEdgeDeclick(Mlt::Profile& profile, Mlt::Producer& cut, bool rampIn, bool rampOut)
+{
+    if (!rampIn && !rampOut) return;
+    mlt_filter f = mlt_filter_new();
+    if (!f) return;
+    mlt_service_set_profile(MLT_FILTER_SERVICE(f), profile.get_profile());
+    f->process = declickProcess;
+    mlt_properties props = MLT_FILTER_PROPERTIES(f);
+    mlt_properties_set_int(props, "ramp_in", rampIn);
+    mlt_properties_set_int(props, "ramp_out", rampOut);
+    mlt_properties_set_int(props, "last", cut.get_out() - cut.get_in());
+    Mlt::Filter filter(f);
+    mlt_filter_close(f);
+    filter.set_in_and_out(cut.get_in(), cut.get_out()); // positions count from the excerpt start
+    cut.attach(filter);
 }
 
 // Sub-frame position of audio clips (Clip::subframe): delays the audio by a fraction of a frame. The missing
