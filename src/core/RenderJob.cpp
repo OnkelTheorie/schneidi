@@ -87,7 +87,7 @@ QString videoEncoderLabel(VideoEncoder e)
 {
     switch (e) {
     case VideoEncoder::Auto: return T("Automatisch");
-    case VideoEncoder::Software: return T("Software");
+    case VideoEncoder::Software: return T("Prozessor (Software)");
     case VideoEncoder::Nvenc: return "NVIDIA (NVENC)";
     case VideoEncoder::Vaapi: return "AMD/Intel (VAAPI)";
     case VideoEncoder::Qsv: return "Intel Quick Sync";

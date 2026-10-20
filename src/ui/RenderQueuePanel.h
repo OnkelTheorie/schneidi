@@ -37,4 +37,8 @@ private:
     QListWidget* m_list;
     QPushButton* m_renderBtn;
     QLabel* m_empty;
+    // Starting a job blocks the window for a few seconds (opening the media): clicks made meanwhile arrive late
+    // and would stop the render that was just started -> ignore them (input event times, milliseconds)
+    quint64 m_clickTime = 0;
+    quint64 m_ignoreClicksBefore = 0;
 };

@@ -168,6 +168,13 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     // Audio only: video tracks carry no sound (TimelineBuilder hides it), so skip decoding their images
     if (s.videoCodec.isEmpty()) scaled.video.clear();
+    // Muted (or not soloed) audio tracks and hidden video tracks add nothing to the file: leave their clips out, so
+    // their media is neither opened (slow start) nor decoded while rendering. The length stays (end is computed above)
+    const bool anySolo = std::any_of(scaled.audio.cbegin(), scaled.audio.cend(), [](const Track& t) { return t.solo; });
+    for (Track& t : scaled.audio)
+        if (t.muted || (anySolo && !t.solo)) t.clips.clear();
+    for (Track& t : scaled.video)
+        if (t.hidden) t.clips.clear();
     m_profile = makeProfile(out);
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
     const int threads = s.threads > 0 ? s.threads : availableThreads();
@@ -230,7 +237,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_convertRate = convertRate;
     m_threads = threads;
     // Render every frame (real_time < 0), several frames at once (not with frei0r, see parallelFrames)
-    m_frames = convertRate ? 1 : parallelFrames(tl, threads);
+    m_frames = convertRate ? 1 : parallelFrames(scaled, threads); // effects on left-out tracks do not count
     m_target = s.path;
     switch (s.output) {
     case ExportSettings::Output::File: m_path = s.path; break;

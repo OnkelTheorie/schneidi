@@ -7,6 +7,7 @@
 #include "engine/RenderQueue.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -141,6 +142,7 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
     lay->addLayout(bottom);
 
     m_list->installEventFilter(this);
+    m_renderBtn->installEventFilter(this);
     m_list->viewport()->installEventFilter(this);
     m_list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     connect(m_renderBtn, &QPushButton::clicked, this, &RenderQueuePanel::renderClicked);
@@ -158,6 +160,17 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
                     card->progress->setValue(percent);
                     card->status->setText(T("Rendert %1 %").arg(percent));
                 }
+        updateButton(); // after "preparing"
+    });
+    connect(m_queue, &RenderQueue::preparing, this, [this](int id) {
+        for (int i = 0; i < m_list->count(); ++i)
+            if (m_list->item(i)->data(kIdRole).toInt() == id)
+                if (auto* card = static_cast<JobCard*>(m_list->itemWidget(m_list->item(i))))
+                    card->status->setText(T("Wird vorbereitet …"));
+        m_renderBtn->setText(T("Wird vorbereitet …"));
+        m_renderBtn->setEnabled(false);
+        // Paint now: until the job runs, the event loop does not get to it
+        if (QWidget* w = window()) w->repaint();
     });
     rebuild();
 }
@@ -243,7 +256,10 @@ void RenderQueuePanel::renderClicked()
         m_queue->cancel();
         return;
     }
+    QElapsedTimer busy;
+    busy.start();
     m_queue->start(selectedJobs());
+    m_ignoreClicksBefore = m_clickTime + quint64(busy.elapsed());
 }
 
 void RenderQueuePanel::removeJobs(const QVector<int>& ids)
@@ -274,6 +290,12 @@ bool RenderQueuePanel::eventFilter(QObject* obj, QEvent* e)
             QListWidgetItem* item = m_list->item(i);
             item->setSizeHint(QSize(m_list->viewport()->width() - 4, item->sizeHint().height()));
         }
+    if (obj == m_renderBtn && (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease ||
+                               e->type() == QEvent::MouseButtonDblClick)) {
+        const quint64 time = static_cast<QInputEvent*>(e)->timestamp();
+        if (time < m_ignoreClicksBefore) return true; // clicked while the start blocked the window
+        if (e->type() == QEvent::MouseButtonRelease) m_clickTime = time; // the release triggers clicked()
+    }
     if (obj == m_list && e->type() == QEvent::ShortcutOverride) {
         const int key = static_cast<QKeyEvent*>(e)->key();
         if (key == Qt::Key_Delete || key == Qt::Key_Backspace) e->accept();

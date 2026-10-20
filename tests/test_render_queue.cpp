@@ -252,6 +252,12 @@ int main(int argc, char** argv)
                 CHECK(panel.settings().encoder == VideoEncoder::Nvenc);
                 panel.setSettings(youtube);
                 CHECK_EQ(panel.currentPreset(), 0);
+                // Picked in the list (as the user does): stays, was put back to the old choice before
+                encoder->setCurrentIndex(encoder->findData(int(VideoEncoder::Software)));
+                CHECK(VideoEncoder(encoder->currentData().toInt()) == VideoEncoder::Software);
+                CHECK(panel.settings().encoder == VideoEncoder::Software);
+                CHECK(panel.makeJob().settings.encoder == VideoEncoder::Software);
+                panel.setSettings(youtube);
             }
         }
         // Save own preset, find again, overwrite, delete; built-in ones stay

@@ -108,8 +108,12 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     // Like DaVinci's "Encoder" (Auto / Native / NVIDIA …): only hardware encoders that work on this computer
     m_encoder = new QComboBox;
     m_encoder->setObjectName("renderEncoder");
-    connect(m_encoder, qOverload<int>(&QComboBox::activated), this,
-            [this] { m_wantedEncoder = VideoEncoder(m_encoder->currentData().toInt()); });
+    // currentIndexChanged, not activated: Qt sends activated only after currentIndexChanged, whose handler below
+    // (updateControls -> updateEncoders) would otherwise put the old choice back first. Connected before it, so
+    // the wish is known there; updateEncoders' own changes are blocked.
+    connect(m_encoder, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int i) {
+        if (i >= 0) m_wantedEncoder = VideoEncoder(m_encoder->itemData(i).toInt());
+    });
     connect(HardwareEncoders::notifier(), &HardwareEncoders::Notifier::probed, this, [this] {
         updateEncoders();
         syncPresetToSettings();
@@ -147,8 +151,11 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_threads->addItem(T("Alle (%1)").arg(available), 0);
     for (int n = available - 1; n >= 1; --n) m_threads->addItem(QString::number(n), n);
     m_threads->setCurrentIndex(std::max(0, m_threads->findData(Exporter::savedThreads())));
-    m_threads->setToolTip(T("Wie viele Threads (logische Prozessoren) beim Rendern arbeiten. Weniger = der Rechner bleibt nebenbei "
-                          "flüssiger. Mit Green Screen wird trotzdem nur ein Bild nach dem anderen berechnet."));
+    // Also with a graphics card encoder: it only compresses, decoding and computing the frames stays on the CPU
+    m_threads->setToolTip(T("Wie viele Threads (logische Prozessoren) die Bilder dekodieren und berechnen. Gilt auch mit "
+                          "Grafikkarten-Encoder: Die Grafikkarte komprimiert nur, Dekodieren, Effekte und Zusammensetzen "
+                          "macht der Prozessor. Weniger = der Rechner bleibt nebenbei flüssiger. Mit Green Screen wird "
+                          "trotzdem nur ein Bild nach dem anderen berechnet."));
     connect(m_threads, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this] { Exporter::setSavedThreads(m_threads->currentData().toInt()); });
 
@@ -167,7 +174,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
     form->addRow(T("Bereich"), m_range);
-    form->addRow(T("Threads"), m_threads);
+    form->addRow(T("CPU-Threads"), m_threads);
 
     m_addBtn = new QPushButton(T("Zur Render-Warteschlange hinzufügen"));
     m_addBtn->setMinimumHeight(30);
@@ -448,7 +455,7 @@ void DeliverPanel::updateEncoders()
     for (VideoEncoder e : list) {
         QString label = videoEncoderLabel(e);
         if (e == VideoEncoder::Auto)
-            label = hardware.isEmpty() ? T("Automatisch (Software)")
+            label = hardware.isEmpty() ? T("Automatisch (Prozessor)")
                                        : T("Automatisch (%1)").arg(hardware.first() == VideoEncoder::Nvenc   ? "NVENC"
                                                                    : hardware.first() == VideoEncoder::Vaapi ? "VAAPI"
                                                                                                              : "Quick Sync");
@@ -470,9 +477,10 @@ void DeliverPanel::updateEncoders()
     m_encoder->setEnabled(f.hardware);
     m_encoder->setToolTip(!f.hardware ? T("Bei diesem Format fest")
                           : !probed     ? T("Grafikkarte wird noch geprüft …")
-                                        : T("Hardware-Encoder der Grafikkarte rendern viel schneller, die Datei wird bei "
-                                            "gleicher Qualität etwas größer. Klappt einer nicht, wird mit Software "
-                                            "gerendert."));
+                                        : T("Prozessor (Software) = der Prozessor komprimiert das Video: kleinste "
+                                            "Datei bei gleicher Qualität, aber langsamer. Die Hardware-Encoder der "
+                                            "Grafikkarte komprimieren viel schneller, die Datei wird etwas größer. "
+                                            "Klappt einer nicht, rechnet der Prozessor."));
 }
 
 void DeliverPanel::updateRange()

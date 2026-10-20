@@ -33,6 +33,7 @@ public:
 
 signals:
     void progress(int jobId, int percent);
+    void preparing(int jobId); // right before a job's setup, which blocks (opening the media): show it now
     void runningChanged(bool running);
     void jobFinished(int jobId, RenderStatus status);
     void finished(int done, int failed); // queue finished resp. canceled

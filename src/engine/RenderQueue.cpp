@@ -89,6 +89,7 @@ void RenderQueue::next()
         m_percent = 0;
         setStatus(id, RenderStatus::Rendering);
         m_clock.start();
+        emit preparing(id);
         QString error;
         if (job.sequence && !m_project->sequence(job.sequence)) {
             error = T("Die Timeline gibt es nicht mehr.");
