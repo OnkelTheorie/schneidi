@@ -1,6 +1,6 @@
 // Export formats of the Deliver page: MP3, AIFF, Apple Lossless, FLAC, Opus, bit depths (16/24/32 float), AV1, VP9,
 // ProRes/DNxHR profiles, animated GIF, image sequences and a different frame rate than the timeline (frames converted,
-// length correct, audio without jumps). Checked with ffprobe/ffmpeg.
+// length correct, audio without jumps); BT.601 sources converted exactly to BT.709. Checked with ffprobe/ffmpeg.
 
 #include "check.h"
 
@@ -17,9 +17,12 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <algorithm>
+#include <array>
 #include <clocale>
 #include <cmath>
 #include <tuple>
+#include <vector>
 
 namespace {
 
@@ -218,6 +221,70 @@ void testVideoFormats(const QString& dir)
     }
 }
 
+// Frame n as 8-bit 4:4:4 Y'CbCr planes (ffmpeg only resamples, the matrix stays)
+QByteArray frame444(const QString& path, int n)
+{
+    QProcess p;
+    p.start("ffmpeg", {"-v", "error", "-i", path, "-vf", QString("select=eq(n\\,%1)").arg(n), "-frames:v", "1", "-f",
+                       "rawvideo", "-pix_fmt", "yuv444p", "-"});
+    p.waitForFinished(60000);
+    return p.readAllStandardOutput();
+}
+
+// BT.601 source (small, unmarked: MLT takes it for 601) into BT.709 exports: colors converted exactly, in every path
+// of the workers' conversion (yuv420p, packed 4:2:2, 10-bit 4:4:4; OutputColor)
+void testColorStandard(const QString& dir)
+{
+    const int n = 50, size = kFmt.width * kFmt.height;
+    const QByteArray src = frame444(g_media, n);
+    if (!CHECK_EQ(src.size(), 3 * size)) return;
+    // Exact 601 -> 709 per pixel (via R'G'B', limited range)
+    auto convert = [](double y, double cb, double cr, std::array<double, 3>& out) {
+        const double yy = (y - 16) / 219, pb = (cb - 128) / 224, pr = (cr - 128) / 224;
+        const double r = yy + 1.402 * pr, b = yy + 1.772 * pb, g = (yy - 0.299 * r - 0.114 * b) / 0.587;
+        const double y2 = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        out = {16 + 219 * y2, 128 + 224 * (b - y2) / 1.8556, 128 + 224 * (r - y2) / 1.5748};
+    };
+    for (const char* file : {"c.mp4", "hq.mov", "4444.mov"}) {
+        const QString path = dir + "/" + file;
+        if (QString(file) == "c.mp4" && !render(job(path, "h264"))) continue;
+        if (!CHECK_EQ(probe(path, "video").value("color_space").toString(), QString("bt709"))) continue;
+        const QByteArray out = frame444(path, n);
+        if (!CHECK_EQ(out.size(), 3 * size)) continue;
+        // Compared as 16x16 block means: chroma resampling (4:2:0 -> 4:2:2 -> 4:4:4 vs 4:2:0 -> 4:4:4) differs at
+        // testsrc2's sharp edges, a wrong matrix shifts whole areas
+        constexpr int kBlock = 16;
+        const int bw = kFmt.width / kBlock, bh = kFmt.height / kBlock;
+        std::vector<std::array<double, 3>> got(size_t(bw) * bh), want(got.size());
+        for (int y = 0; y < bh * kBlock; ++y)
+            for (int x = 0; x < bw * kBlock; ++x) {
+                const int i = y * kFmt.width + x;
+                const size_t bi = size_t(y / kBlock) * bw + x / kBlock;
+                std::array<double, 3> w;
+                convert(uint8_t(src[i]), uint8_t(src[size + i]), uint8_t(src[2 * size + i]), w);
+                for (int c = 0; c < 3; ++c) {
+                    got[bi][c] += uint8_t(out[c * size + i]);
+                    want[bi][c] += std::clamp(w[c], 0.0, 255.0);
+                }
+            }
+        std::array<double, 3> bias{}, sq{};
+        const double perBlock = kBlock * kBlock;
+        for (size_t bi = 0; bi < got.size(); ++bi)
+            for (int c = 0; c < 3; ++c) {
+                const double d = (got[bi][c] - want[bi][c]) / perBlock;
+                bias[c] += d;
+                sq[c] += d * d;
+            }
+        // Lossy codecs and MLT's 4:2:0 -> 4:2:2 chroma: rms ~1, no shift. Without the matrix (601 values as 709)
+        // rms is 6-18; the encoder thread's swscale path (via RGB) shifted luma by -0.5
+        for (int c = 0; c < 3; ++c) {
+            const double b = bias[c] / got.size(), rms = std::sqrt(sq[c] / got.size());
+            if (!CHECK(std::abs(b) < 0.3 && rms < 1.5))
+                std::printf("       %s channel %d: bias %+.3f, rms %.3f\n", file, c, b, rms);
+        }
+    }
+}
+
 void testGif(const QString& dir)
 {
     RenderJob j = job(dir + "/anim.gif", "gif");
@@ -338,6 +405,7 @@ int main(int argc, char** argv)
     if (!CHECK(!g_media.isEmpty())) return Check::result();
     testAudioFormats(tmp.path());
     testVideoFormats(tmp.path());
+    testColorStandard(tmp.path());
     testGif(tmp.path());
     testImageSequence(tmp.path());
     testFrameRate(tmp.path());

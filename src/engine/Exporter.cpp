@@ -7,6 +7,7 @@
 #include "core/TimelineOps.h"
 #include "engine/Bundle.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/OutputColor.h"
 #include "engine/Profiles.h"
 #include "engine/Stabilizer.h"
 #include "engine/TimelineBuilder.h"
@@ -233,6 +234,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     } else {
         m_source = std::make_unique<Mlt::Producer>(*m_tractor);
     }
+    // The workers deliver YUV in the output's color standard, the encoder thread only repacks (see OutputColor.h)
+    if (!s.videoCodec.isEmpty())
+        if (auto f = OutputColor::make(convertRate ? *m_outProfile : *m_profile)) m_source->attach(*f);
     m_settings = s;
     m_convertRate = convertRate;
     m_threads = threads;
@@ -358,6 +362,10 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
             if (s.crf > 0) m_consumer->set("crf", s.crf); // H.264/H.265/AV1/VP9; fixed-quality formats have 0
             if (codec == "libx264" || codec == "libx265") m_consumer->set("preset", s.preset.toUtf8().constData());
         }
+        // 4:2:0 output: the workers deliver yuv420p (MLT asks for yuv422 otherwise), so the encoder thread only copies
+        // or interleaves instead of subsampling every frame a second time (~10 % faster, one chroma step less)
+        const QByteArray pixFmt = m_consumer->get("pix_fmt");
+        if (pixFmt == "yuv420p" || pixFmt == "nv12") m_consumer->set("mlt_image_format", "yuv420p");
     }
     if (!s.videoCodec.isEmpty() && s.maxBitrateK > 0) { // quality target as before, but capped (VBV)
         m_consumer->set("maxrate", QString("%1k").arg(s.maxBitrateK).toUtf8().constData());
