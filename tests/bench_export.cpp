@@ -6,6 +6,7 @@
 //   --codec libx264|h264_nvenc|…  (default libx264)   --preset medium   --crf 20   --threads 0 (all)
 //   --seconds N   only the first N seconds        --rate 30   other output frame rate
 //   --ref         also FFmpeg alone (default for a media file)   --keep <file>  keep the rendered file
+//   --an / --vn   no sound / no picture (which part is slow?)
 #include "check.h"
 
 #include "core/Project.h"
@@ -103,6 +104,7 @@ int main(int argc, char** argv)
     const double outRate = option("--rate", "0").toDouble();
     const QString keep = option("--keep", "");
     bool ref = flag("--ref");
+    const bool noAudio = flag("--an"), noVideo = flag("--vn");
     if (args.size() != 1) {
         std::printf("usage: bench_export <project.schneidi | media file> [--codec c] [--preset p] [--crf n] "
                     "[--threads n] [--seconds n] [--rate fps] [--ref] [--keep file]\n");
@@ -156,7 +158,8 @@ int main(int argc, char** argv)
     ExportSettings s;
     s.path = keep.isEmpty() ? dir.filePath("bench.mp4") : keep;
     s.format = format;
-    s.videoCodec = codec;
+    s.videoCodec = noVideo ? QString() : codec;
+    if (noAudio) s.audioCodec.clear();
     s.softwareCodec = codec.startsWith("lib") ? QString() : QString("libx264");
     s.preset = preset;
     s.crf = crf;
@@ -214,7 +217,11 @@ int main(int argc, char** argv)
     if (ex.usedCodec() == "libx264" || ex.usedCodec() == "libx265") a << "-preset" << preset << "-crf" << QString::number(crf);
     if (threads > 0) a << "-threads" << QString::number(threads);
     if (outRate > 0) a << "-r" << QString::number(outRate);
-    a << "-pix_fmt" << "yuv420p" << "-c:a" << "aac" << "-b:a" << "192k" << dir.filePath("ffmpeg.mp4");
+    if (noVideo) a << "-vn";
+    else a << "-pix_fmt" << "yuv420p";
+    if (noAudio) a << "-an";
+    else a << "-c:a" << "aac" << "-b:a" << "192k";
+    a << dir.filePath("ffmpeg.mp4");
     QProcess p;
     QElapsedTimer t;
     t.start();
