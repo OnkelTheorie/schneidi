@@ -10,6 +10,7 @@
 #include "check.h"
 
 #include <QGuiApplication>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalSocket>
@@ -61,6 +62,25 @@ void setup(Project& p)
     });
 }
 
+// Waits for a child process while the server in this process keeps answering. Not `while (!waitForFinished(5))`:
+// when processEvents() reaps the finished child, waitForFinished() returns false for good ("already finished") and
+// the loop never ends; happens when the child exits while this process is busy (under load: the old 300-s hang).
+bool waitServing(QProcess& p, int timeoutMs = 120000)
+{
+    QElapsedTimer t;
+    t.start();
+    while (p.state() != QProcess::NotRunning) {
+        if (t.hasExpired(timeoutMs)) {
+            p.kill();
+            p.waitForFinished(1000);
+            return false;
+        }
+        p.waitForFinished(5);
+        QCoreApplication::processEvents();
+    }
+    return true;
+}
+
 // schneidi-cli as its own process; the server here answers while it waits
 QJsonObject cli(const QStringList& args, const QByteArray& stdinData = {})
 {
@@ -68,7 +88,7 @@ QJsonObject cli(const QStringList& args, const QByteArray& stdinData = {})
     p.start(SCHNEIDI_CLI, args);
     if (!stdinData.isEmpty()) p.write(stdinData);
     p.closeWriteChannel();
-    while (!p.waitForFinished(5)) QCoreApplication::processEvents();
+    if (!waitServing(p)) std::printf("       timeout: schneidi-cli %s\n", qPrintable(args.join(' ')));
     QCoreApplication::processEvents();
     const QByteArray out = p.readAllStandardOutput();
     const QJsonObject o = QJsonDocument::fromJson(out).object();
@@ -235,7 +255,7 @@ int main(int argc, char* argv[])
         CHECK_EQ(server.client(), QString("schneidi-cli mcp"));
         CHECK_EQ(code(cli({"info", fake.path})), QString("APP_BUSY"));
         mcp.closeWriteChannel();
-        while (!mcp.waitForFinished(5)) QCoreApplication::processEvents();
+        CHECK(waitServing(mcp));
         for (int i = 0; i < 50 && server.attached(); ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         CHECK(!server.attached());
     }
