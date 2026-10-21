@@ -5,7 +5,7 @@
 // Run: QT_QPA_PLATFORM=offscreen ./build-tests/tests/bench_export <project.schneidi | media file> [options]
 //   --codec libx264|h264_nvenc|…  (default libx264)   --preset medium   --crf 20   --threads 0 (all)
 //   --seconds N   only the first N seconds        --rate 30   other output frame rate
-//   --ref         also FFmpeg alone (default for a media file)   --keep <file>  keep the rendered file
+//   --ref         also FFmpeg alone (default for a media file, --no-ref: not, e.g. under perf)   --keep <file>  keep the rendered file
 //   --an / --vn   no sound / no picture (which part is slow?)
 #include "check.h"
 
@@ -104,10 +104,11 @@ int main(int argc, char** argv)
     const double outRate = option("--rate", "0").toDouble();
     const QString keep = option("--keep", "");
     bool ref = flag("--ref");
+    const bool noRef = flag("--no-ref");
     const bool noAudio = flag("--an"), noVideo = flag("--vn");
     if (args.size() != 1) {
         std::printf("usage: bench_export <project.schneidi | media file> [--codec c] [--preset p] [--crf n] "
-                    "[--threads n] [--seconds n] [--rate fps] [--ref] [--keep file]\n");
+                    "[--threads n] [--seconds n] [--rate fps] [--ref | --no-ref] [--an | --vn] [--keep file]\n");
         return 2;
     }
     const QString input = args[0];
@@ -148,7 +149,7 @@ int main(int argc, char** argv)
             a.id = 2;
             tl.audio[0].clips << a;
         }
-        ref = true;
+        ref = !noRef;
     }
     const double loadMs = loadClock.elapsed();
     const double fps = format.rate.fps();

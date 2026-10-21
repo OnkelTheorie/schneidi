@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <vector>
 
 namespace OutputColor {
 
@@ -85,28 +87,48 @@ void packed422(const Matrix& m, const uint8_t* src, uint8_t* dst, int width, int
     }
 }
 
-// Planar, chroma subsampled by sx x sy (1 or 2)
+// One row of chroma samples: new Cb/Cr, and the luma offset for each of the S luma columns of a sample. __restrict
+// and plain loops so the compiler uses SIMD (this file is built with full vectorization, see CMakeLists.txt).
+template <typename T, int S>
+void chromaRow(const Matrix& m, const T* __restrict cbIn, const T* __restrict crIn, T* __restrict cbOut,
+               T* __restrict crOut, int16_t* __restrict dy, int n, int mid, int max)
+{
+    const int yCb = m.yCb, yCr = m.yCr, cbCb = m.cbCb, cbCr = m.cbCr, crCb = m.crCb, crCr = m.crCr;
+    for (int i = 0; i < n; ++i) {
+        const int cb = int(cbIn[i]) - mid, cr = int(crIn[i]) - mid;
+        const int d = (yCb * cb + yCr * cr + kRound) >> Matrix::kShift;
+        for (int k = 0; k < S; ++k) dy[i * S + k] = int16_t(d);
+        cbOut[i] = clampTo<T>(mid + ((cbCb * cb + cbCr * cr + kRound) >> Matrix::kShift), max);
+        crOut[i] = clampTo<T>(mid + ((crCb * cb + crCr * cr + kRound) >> Matrix::kShift), max);
+    }
+}
+
+// One luma row with the offsets of its chroma samples; 16 bit is enough (10 bit code values plus a small offset) and
+// lets plain SSE2 clamp 8 samples at once
 template <typename T>
-void planar(const Matrix& m, const T* src, T* dst, int width, int height, int sx, int sy, int bits)
+void lumaRow(const T* __restrict in, T* __restrict out, const int16_t* __restrict dy, int width, int16_t max)
+{
+    for (int x = 0; x < width; ++x) out[x] = T(std::clamp<int16_t>(int16_t(in[x] + dy[x]), 0, max));
+}
+
+// Planar, chroma subsampled by S x S (1 or 2), row by row (per-sample loops took ~3 ms per 1080p frame; export runs
+// this on every frame of a BT.601 source)
+template <typename T, int S>
+void planar(const Matrix& m, const T* src, T* dst, int width, int height, int bits)
 {
     const int mid = 1 << (bits - 1), max = (1 << bits) - 1;
-    const int cw = width / sx, ch = height / sy;
-    const T* sy0 = src;
+    const int cw = width / S, ch = height / S;
     const T* scb = src + size_t(width) * height;
     const T* scr = scb + size_t(cw) * ch;
-    T* dy0 = dst;
     T* dcb = dst + size_t(width) * height;
     T* dcr = dcb + size_t(cw) * ch;
+    std::vector<int16_t> dy(static_cast<size_t>(width)); // luma offset per column of the row
     for (int cy = 0; cy < ch; ++cy) {
-        for (int cx = 0; cx < cw; ++cx) {
-            const size_t ci = size_t(cy) * cw + cx;
-            int dy;
-            chroma<T>(m, int(scb[ci]) - mid, int(scr[ci]) - mid, mid, max, dy, dcb[ci], dcr[ci]);
-            for (int j = 0; j < sy; ++j)
-                for (int i = 0; i < sx; ++i) {
-                    const size_t li = size_t(cy * sy + j) * width + cx * sx + i;
-                    dy0[li] = clampTo<T>(int(sy0[li]) + dy, max);
-                }
+        const size_t c0 = size_t(cy) * cw;
+        chromaRow<T, S>(m, scb + c0, scr + c0, dcb + c0, dcr + c0, dy.data(), cw, mid, max);
+        for (int j = 0; j < S; ++j) {
+            const size_t l0 = size_t(cy * S + j) * width;
+            lumaRow<T>(src + l0, dst + l0, dy.data(), width, int16_t(max));
         }
     }
 }
@@ -163,14 +185,12 @@ bool convert(const uint8_t* src, uint8_t* dst, mlt_image_format format, int widt
     if (width <= 0 || height <= 0 || width % 2 || height % 2 || !matrix(fromColorspace, toColorspace, m)) return false;
     switch (format) {
     case mlt_image_yuv422: packed422(m, src, dst, width, height); return true;
-    case mlt_image_yuv420p: planar<uint8_t>(m, src, dst, width, height, 2, 2, 8); return true;
+    case mlt_image_yuv420p: planar<uint8_t, 2>(m, src, dst, width, height, 8); return true;
     case mlt_image_yuv420p10:
-        planar<uint16_t>(m, reinterpret_cast<const uint16_t*>(src), reinterpret_cast<uint16_t*>(dst), width, height, 2,
-                         2, 10);
+        planar<uint16_t, 2>(m, reinterpret_cast<const uint16_t*>(src), reinterpret_cast<uint16_t*>(dst), width, height, 10);
         return true;
     case mlt_image_yuv444p10:
-        planar<uint16_t>(m, reinterpret_cast<const uint16_t*>(src), reinterpret_cast<uint16_t*>(dst), width, height, 1,
-                         1, 10);
+        planar<uint16_t, 1>(m, reinterpret_cast<const uint16_t*>(src), reinterpret_cast<uint16_t*>(dst), width, height, 10);
         return true;
     default: return false;
     }
