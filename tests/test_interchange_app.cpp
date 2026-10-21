@@ -1,15 +1,19 @@
 // Timeline import in the app (File › Import Timeline): an FCP7 XML from "another computer" (Windows paths) whose
 // files lie next to it becomes a new, opened timeline in an empty project, which takes the file's format; one undo
-// step removes it again
+// step removes it again. Export dialog: chosen by program, the extension follows the format.
 #include "check.h"
 
 #include "app/MainWindow.h"
+#include "app/TimelineExportDialog.h"
 #include "core/Interchange.h"
 #include "core/Project.h"
 #include "engine/Engine.h"
 
 #include <QApplication>
 #include <QDir>
+#include <QLineEdit>
+#include <QRadioButton>
+#include <QSettings>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -118,6 +122,37 @@ int main(int argc, char** argv)
     if (CHECK_EQ(p->timeline().video[0].clips.size(), 1)) {
         CHECK_EQ(p->timeline().video[0].clips[0].in, 50);
         CHECK_EQ(p->timeline().video[0].clips[0].length(), 25);
+    }
+
+    // Export dialog (File › Export Timeline): by program, extension follows, choice remembered
+    QSettings().remove("interchange");
+    {
+        TimelineExportDialog d("Rohschnitt", dir.path());
+        CHECK_EQ(d.targetId(), QString("premiere"));
+        CHECK(d.format() == Interchange::Format::Fcp7);
+        CHECK_EQ(d.path(), dir.filePath("Rohschnitt.xml"));
+        d.findChild<QRadioButton*>("target_resolve")->click();
+        CHECK(d.format() == Interchange::Format::Otio);
+        CHECK_EQ(d.path(), dir.filePath("Rohschnitt.otio"));
+        d.findChild<QRadioButton*>("target_edl")->click();
+        CHECK_EQ(d.path(), dir.filePath("Rohschnitt.edl"));
+        d.findChild<QLineEdit*>("path")->setText(dir.filePath("anders")); // typed without extension
+        CHECK_EQ(d.path(), dir.filePath("anders.edl"));
+        d.findChild<QRadioButton*>("target_resolve-xml")->click();
+        CHECK(d.format() == Interchange::Format::Fcp7);
+        CHECK_EQ(d.path(), dir.filePath("anders.xml"));
+        if (const QString shot = qEnvironmentVariable("EXPORT_DIALOG_DUMP"); !shot.isEmpty()) {
+            d.findChild<QRadioButton*>("target_resolve")->click();
+            d.adjustSize();
+            d.grab().save(shot);
+            d.findChild<QRadioButton*>("target_resolve-xml")->click();
+        }
+        d.accept();
+    }
+    {
+        TimelineExportDialog d("X", QDir::tempPath());
+        CHECK_EQ(d.targetId(), QString("resolve-xml")); // remembered
+        CHECK_EQ(QFileInfo(d.path()).absolutePath(), QFileInfo(dir.filePath("anders.xml")).absolutePath());
     }
     return Check::result();
 }

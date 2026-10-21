@@ -568,7 +568,8 @@ const QVector<Command>& commands()
           {"fps", T::Number, "EDL only (it has no frame rate): its frame rate (default: the project's)"}},
          cmdImport},
         {"export_timeline", "Write a timeline for another editor: FCP7 XML (Premiere Pro: File › Import; DaVinci "
-                            "Resolve: File › Import › Timeline), OpenTimelineIO (.otio) or EDL (one video track). "
+                            "Resolve: File › Import › Timeline), OpenTimelineIO (.otio, DaVinci Resolve 18.5+) or EDL "
+                            "(any editor; one video track). "
                             "'warnings' list what cannot be carried over (titles, effects, color, compound clips).",
          {{"project", T::Path, "project file", true, true},
           {"out", T::Path, "file to write: .xml, .otio or .edl", true},

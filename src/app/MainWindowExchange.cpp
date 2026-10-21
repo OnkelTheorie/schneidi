@@ -1,6 +1,7 @@
 // MainWindow: timelines from and to other editors (File › Import/Export Timeline, like DaVinci) – FCP7 XML,
 // OpenTimelineIO, EDL. The formats are in core/Interchange.
 #include "app/MainWindow.h"
+#include "app/TimelineExportDialog.h"
 
 #include "core/I18n.h"
 #include "core/Interchange.h"
@@ -124,24 +125,17 @@ bool MainWindow::importTimelineFile(const QString& path)
 void MainWindow::exportTimelineDialog()
 {
     const QString title = T("Timeline exportieren");
-    const QString xml = "Final Cut Pro 7 XML (*.xml)", otio = "OpenTimelineIO (*.otio)", edl = T("EDL – nur eine Videospur (*.edl)");
-    QSettings settings;
-    QString filter = settings.value("interchange/filter", xml).toString();
-    const QString name = m_project->sequenceName(m_project->currentSequence());
-    const QString suggestion = QDir(startDir(m_projectPath)).filePath(name);
-    QString path = QFileDialog::getSaveFileName(this, title, suggestion, QStringList{xml, otio, edl}.join(";;"), &filter);
-    if (path.isEmpty()) return;
-    // Format from the extension, or from the chosen filter (the extension is added)
-    auto format = Interchange::formatOf(path);
-    if (!format) {
-        format = filter == otio ? Interchange::Format::Otio : filter == edl ? Interchange::Format::Edl : Interchange::Format::Fcp7;
-        path += "." + Interchange::extension(*format);
-    }
-    settings.setValue("interchange/dir", QFileInfo(path).absolutePath());
-    settings.setValue("interchange/filter", filter);
+    TimelineExportDialog dialog(m_project->sequenceName(m_project->currentSequence()), startDir(m_projectPath), this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const QString path = dialog.path();
+    const Interchange::Format format = dialog.format();
+    if (QFileInfo::exists(path)
+        && QMessageBox::question(this, title, T("%1 gibt es schon. Ersetzen?").arg(QFileInfo(path).fileName()))
+               != QMessageBox::Yes)
+        return;
     Interchange::Sequence seq = Interchange::fromTimeline(*m_project);
     Interchange::applyStartTimecodes(seq, &Engine::startTimecode);
-    const QByteArray data = Interchange::write(seq, *format);
+    const QByteArray data = Interchange::write(seq, format);
     QSaveFile out(path);
     if (!out.open(QIODevice::WriteOnly) || out.write(data) != data.size() || !out.commit()) {
         QMessageBox::warning(this, title, T("Datei konnte nicht gespeichert werden:\n%1").arg(path));

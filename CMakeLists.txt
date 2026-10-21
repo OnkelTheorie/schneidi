@@ -129,6 +129,7 @@ add_library(schneidi_lib STATIC
     src/app/DesignDialog.h src/app/DesignDialog.cpp
     src/app/EqDialog.h src/app/EqDialog.cpp
     src/app/DynamicsDialog.h src/app/DynamicsDialog.cpp
+    src/app/TimelineExportDialog.h src/app/TimelineExportDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp

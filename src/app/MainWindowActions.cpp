@@ -111,7 +111,7 @@ void MainWindow::buildActions()
     // Like DaVinci File › Import/Export › Timeline: cuts from and for Premiere, DaVinci, Final Cut 7, Avid …
     makeAction(file, "import_timeline", T("Timeline importieren (XML, OTIO, EDL)…"), QKeySequence("Ctrl+Shift+I"),
                [this] { importTimelineDialog(); });
-    makeAction(file, "export_timeline", T("Timeline exportieren (XML, OTIO, EDL)…"), QKeySequence(), [this] { exportTimelineDialog(); });
+    makeAction(file, "export_timeline", T("Timeline exportieren (Premiere, DaVinci, EDL)…"), QKeySequence(), [this] { exportTimelineDialog(); });
     file->addSeparator();
     makeAction(file, "project_settings", T("Projekteinstellungen…"), QKeySequence("Shift+9"), [this] { projectSettingsDialog(); });
     makeAction(file, "stream_presets", T("Import-Vorgaben für Ton-Streams…"), QKeySequence(), [this] { streamPresetsDialog(); });
