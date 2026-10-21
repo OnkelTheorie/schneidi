@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 project(schneidi VERSION 0.9.0 LANGUAGES CXX)
+# Version being worked on. While it differs from the released version above, the app shows "0.9.0 → 0.10.0".
+# On release set both to the same number; after that, set this one to the next target.
+set(SCHNEIDI_NEXT_VERSION 0.10.0)
 
 # Ohne Angabe optimiert bauen (Debug-Builds ruckeln bei der Wiedergabe: eigene Filter laufen pro Frame)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -21,14 +24,15 @@ if(WIN32)
     add_compile_definitions(SCHNEIDI_MLT_DEV_PREFIX="${MLT_PREFIX}")
 endif()
 
-# Git-Stand fürs Log/„Über“ (buildinfo.h, bei jedem Build aktualisiert)
+# Git state for the log and the splash screen (buildinfo.h, refreshed on every build)
 find_package(Git QUIET)
 set(SCHNEIDI_BUILDINFO ${CMAKE_BINARY_DIR}/generated/buildinfo.h)
 add_custom_target(schneidi_buildinfo
     COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR} -DOUT=${SCHNEIDI_BUILDINFO} -DGIT=${GIT_EXECUTABLE} -DVERSION=${PROJECT_VERSION}
+            -DNEXT=${SCHNEIDI_NEXT_VERSION}
             -P ${PROJECT_SOURCE_DIR}/cmake/BuildInfo.cmake
     BYPRODUCTS ${SCHNEIDI_BUILDINFO}
-    COMMENT "Build-Kennung")
+    COMMENT "Build id")
 
 # All program sources except main.cpp: shared by the app and the tests
 add_library(schneidi_lib STATIC

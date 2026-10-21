@@ -102,7 +102,7 @@ int main(int argc, char* argv[])
 #endif
     I18n::prepareEnvironment(langOverride);
     QApplication app(argc, argv);
-    QApplication::setApplicationVersion(QString("%1 (%2)").arg(SCHNEIDI_VERSION, SCHNEIDI_BUILD)); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
+    QApplication::setApplicationVersion(QString("%1 (%2)").arg(QString::fromUtf8(SCHNEIDI_VERSION_LABEL), SCHNEIDI_BUILD)); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
     Log::install();
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)
     I18n::install(langOverride);

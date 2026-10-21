@@ -79,7 +79,7 @@
 
 QString MainWindow::appName()
 {
-    return "schneidi " + QCoreApplication::applicationVersion().section(' ', 0, 0);
+    return "schneidi " + QCoreApplication::applicationVersion().section(" (", 0, 0);
 }
 
 MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m_engine(engine)

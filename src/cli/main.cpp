@@ -99,7 +99,7 @@ int main(int argc, char* argv[])
 #ifdef Q_OS_WIN
     QGuiApplication::setOrganizationName("schneidi");
 #endif
-    QGuiApplication::setApplicationVersion(QString("%1 (%2)").arg(SCHNEIDI_VERSION, SCHNEIDI_BUILD));
+    QGuiApplication::setApplicationVersion(QString("%1 (%2)").arg(QString::fromUtf8(SCHNEIDI_VERSION_LABEL), SCHNEIDI_BUILD));
     I18n::install("en");
     std::setlocale(LC_NUMERIC, "C"); // MLT reads numbers with a dot
 
