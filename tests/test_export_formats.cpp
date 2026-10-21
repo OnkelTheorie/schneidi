@@ -447,6 +447,11 @@ int main(int argc, char** argv)
     std::setlocale(LC_NUMERIC, "C");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
+    // Own temp folder: testGif checks that no intermediate stays behind, and under parallel ctest other tests
+    // render GIFs into the shared one at the same time
+    const QString ownTemp = tmp.filePath("temp");
+    QDir().mkpath(ownTemp);
+    for (const char* var : {"TMPDIR", "TMP", "TEMP"}) qputenv(var, QDir::toNativeSeparators(ownTemp).toLocal8Bit());
     g_media = Check::makeMedia(tmp.filePath("src.mp4"),
                                {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=4", "-f", "lavfi", "-i",
                                 "sine=frequency=440:duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",

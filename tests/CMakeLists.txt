@@ -12,9 +12,12 @@ function(schneidi_test name)
     add_executable(${name} ${name}.cpp check.h)
     target_link_libraries(${name} PRIVATE schneidi_lib Qt6::Test)
     add_test(NAME ${name} COMMAND ${name})
+    # RESOURCE_LOCK: the locale/display variants below run the same program with the same test folders – never at
+    # the same time as it (test_luts_c_locale deleted a folder test_luts was looking for)
     set_tests_properties(${name} PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
+        RESOURCE_LOCK ${name}
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1")
 endfunction()
 
@@ -101,6 +104,7 @@ foreach(name test_stabilize_denoise test_retime test_effects_render test_cli tes
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
+        RESOURCE_LOCK ${name}
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
 endforeach()
 
@@ -110,6 +114,7 @@ foreach(name test_cli test_multicam_render)
     add_test(NAME ${name}_no_display COMMAND ${name})
     set_tests_properties(${name}_no_display PROPERTIES
         SKIP_RETURN_CODE 77
+        RESOURCE_LOCK ${name}
         TIMEOUT 300
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1"
         ENVIRONMENT_MODIFICATION "DISPLAY=unset:;WAYLAND_DISPLAY=unset:")
@@ -119,6 +124,7 @@ endforeach()
 add_test(NAME test_luts_c_locale COMMAND test_luts)
 set_tests_properties(test_luts_c_locale PROPERTIES
     SKIP_RETURN_CODE 77
+    RESOURCE_LOCK test_luts
     TIMEOUT 300
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;LC_ALL=C;LANG=C")
 
