@@ -114,6 +114,13 @@ foreach(name test_cli test_multicam_render)
         ENVIRONMENT_MODIFICATION "DISPLAY=unset:;WAYLAND_DISPLAY=unset:")
 endforeach()
 
+# C/POSIX locale (servers, containers): name lists must still sort without case first
+add_test(NAME test_luts_c_locale COMMAND test_luts)
+set_tests_properties(test_luts_c_locale PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;LC_ALL=C;LANG=C")
+
 # Benchmark, not run by CTest
 add_executable(bench_inspector bench_inspector.cpp check.h)
 target_link_libraries(bench_inspector PRIVATE schneidi_lib Qt6::Test)

@@ -718,7 +718,7 @@ void MediaPool::rebuildClips()
                              : m_project->binInside(q.bin, m_currentBin) && q.name.contains(search, Qt::CaseInsensitive))
             seqs << &q;
     std::stable_sort(seqs.begin(), seqs.end(), [&](const Sequence* a, const Sequence* b) {
-        const int c = QString::localeAwareCompare(a->name, b->name);
+        const int c = I18n::compareNames(a->name, b->name);
         return m_sortAscending ? c < 0 : c > 0;
     });
     for (const Sequence* q : seqs) {
@@ -782,7 +782,7 @@ void MediaPool::rebuildClips()
         } else if (m_sortKey == SortKey::Duration) {
             c = a->length < b->length ? -1 : a->length > b->length ? 1 : 0;
         }
-        if (c == 0) c = QString::localeAwareCompare(a->name, b->name);
+        if (c == 0) c = I18n::compareNames(a->name, b->name);
         return m_sortAscending ? c < 0 : c > 0;
     });
 

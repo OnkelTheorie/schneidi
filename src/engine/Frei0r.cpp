@@ -2,6 +2,7 @@
 
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
+#include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "engine/Bundle.h"
 
@@ -159,7 +160,7 @@ int registerEffects()
         if (describe(repo, name, &d)) out << d;
     }
     std::sort(out.begin(), out.end(), [](const EffectDescriptor& a, const EffectDescriptor& b) {
-        return QString::localeAwareCompare(a.name, b.name) < 0;
+        return I18n::compareNames(a.name, b.name) < 0;
     });
     EffectRegistry::registerEffects(out);
     return int(out.size());

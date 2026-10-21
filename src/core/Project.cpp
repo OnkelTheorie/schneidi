@@ -609,7 +609,7 @@ QVector<int> Project::childBins(int parent) const
     for (const MediaBin& b : m_bins)
         if (b.parent == parent) list << &b;
     std::sort(list.begin(), list.end(), [](const MediaBin* a, const MediaBin* b) {
-        const int c = QString::localeAwareCompare(a->name, b->name);
+        const int c = I18n::compareNames(a->name, b->name);
         return c != 0 ? c < 0 : a->id < b->id;
     });
     QVector<int> ids;

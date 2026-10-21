@@ -21,6 +21,9 @@ void prepareEnvironment(const QString& override = {});
 void install(const QString& override = {}); // after creating the QApplication; override = language for this run only
 QString translate(const QString& lang, const char* source); // source text in another language than the installed one
 QChar decimalPoint();                  // decimal separator of the UI language ("," in German, "." in English)
+// Order of names in lists (media, LUTs, effects, timelines): by the system's collation, but without case first even
+// where the system has none (C/POSIX locale on servers and in containers sorts by bytes: "Zeta" before "alpha")
+int compareNames(const QString& a, const QString& b);
 
 } // namespace I18n
 

@@ -75,8 +75,8 @@ QVector<LutEntry> scan(const QString& dir, bool (*accept)(const QString&), bool 
         out << LutEntry{fi.absoluteFilePath(), keepSuffix ? fi.fileName() : fi.completeBaseName(), group};
     }
     std::sort(out.begin(), out.end(), [](const LutEntry& a, const LutEntry& b) {
-        const int g = QString::localeAwareCompare(a.group, b.group);
-        return g != 0 ? g < 0 : QString::localeAwareCompare(a.name, b.name) < 0;
+        const int g = I18n::compareNames(a.group, b.group);
+        return g != 0 ? g < 0 : I18n::compareNames(a.name, b.name) < 0;
     });
     return out;
 }

@@ -132,6 +132,12 @@ QString translate(const QString& lang, const char* source)
     return map.value(QString::fromUtf8(source), QString::fromUtf8(source));
 }
 
+int compareNames(const QString& a, const QString& b)
+{
+    const int c = QString::localeAwareCompare(a.toCaseFolded(), b.toCaseFolded());
+    return c != 0 ? c : QString::localeAwareCompare(a, b);
+}
+
 QChar decimalPoint()
 {
     const QString lang = s_installed.isEmpty() ? language() : s_installed;
