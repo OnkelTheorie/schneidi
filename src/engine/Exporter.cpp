@@ -365,6 +365,8 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
     m_usedCodec = codec;
     if (s.videoCodec.isEmpty()) {
         m_consumer->set("vn", 1); // audio only
+        // vn only drops the video encoder: without video_off MLT's render threads still fetch (decode) every image
+        m_consumer->set("video_off", 1);
     } else {
         m_consumer->set("vcodec", codec.toUtf8().constData());
         if (HardwareEncoders::isHardwareCodec(codec)) {
