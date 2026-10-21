@@ -23,6 +23,10 @@ void configureMltLogging();
 // services is made, which calls setlocale(LC_ALL, "") and puts LC_NUMERIC back to e.g. German. MLT modules read
 // numbers with sscanf/atof (vid.stab results, timewarp speed) -> create it now and keep LC_NUMERIC at "C"
 void pinNumericLocale();
+// Directly after Mlt::Factory::init, in one thread: MLT creates its service caches (one per producer kind) lazily and
+// without a lock (mlt_service.c get_cache). The first producers opened in parallel (Media Pool thumbnails, parallel
+// opening before an export) raced on it and crashed – about 1 in 10 starts with a project (2026-10-21)
+void prepareMltCaches();
 // Path as MLT expects it for the module folder/environment variables (Windows: ANSI code page resp. 8.3 path)
 QByteArray pathForMlt(const QString& path);
 // Path of an external program (e.g. "ffmpeg"): first next to the program, then in PATH; otherwise the bare name

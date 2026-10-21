@@ -69,6 +69,7 @@ inline void initMlt()
     else Mlt::Factory::init(Bundle::pathForMlt(modules).constData());
     Bundle::configureMltLogging();
     Bundle::pinNumericLocale();
+    Bundle::prepareMltCaches();
     Frei0r::registerEffects();
 }
 

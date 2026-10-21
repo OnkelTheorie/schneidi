@@ -143,6 +143,14 @@ void pinNumericLocale()
     std::setlocale(LC_NUMERIC, "C");
 }
 
+void prepareMltCaches()
+{
+    // every name MLT 7.30 uses with mlt_service_cache_* (grep over src/)
+    for (const char* name : {"producer_avformat", "link_avdeinterlace", "link_swresample", "qimage.image", "qimage.alpha",
+                             "qimage.qimage", "pixbuf.image", "pixbuf.alpha", "pixbuf.pixbuf", "pango.image"})
+        mlt_service_cache_get_size(nullptr, name); // creates the cache (and the list of caches) if missing
+}
+
 QString tool(const QString& name)
 {
     const QString appDir = QCoreApplication::applicationDirPath();

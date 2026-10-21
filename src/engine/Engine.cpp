@@ -96,6 +96,7 @@ bool Engine::initMlt(QString* error)
     }
     Bundle::configureMltLogging();
     Bundle::pinNumericLocale();
+    Bundle::prepareMltCaches();
     Frei0r::registerEffects();
     return true;
 }
