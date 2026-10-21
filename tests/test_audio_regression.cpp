@@ -4,6 +4,8 @@
 // - A/V sync: a white flash frame and a beep at the same source time stay together (also behind an in-point)
 // - a hard cut between two clips with different sine phases: no peak above the clip level, no gap
 // - every software video/audio encoder not covered elsewhere (H.265, AAC) writes a file of the right length
+// - audio packets with overlapping timestamps (the user's clip program writes some, e.g. 2026-10-11_19-17-02):
+//   the sound follows the timestamps like a player, not the raw packet order (that drifts by the overlaps)
 // Already covered elsewhere: hardware encoders (test_hw_encoders), MP3/WAV/AIFF/ALAC/ProRes + frame rate conversion
 // (test_export_formats), per-stream volume/streams (test_audio_streams), seek click in the preview (test_audio).
 
@@ -69,18 +71,9 @@ Timeline timeline()
     return tl;
 }
 
-bool render(const QString& path, const QString& format, int frames = kFrames)
+// Renders through the normal export path; false = failed (reported)
+bool run(const Timeline& tl, const RenderJob& job)
 {
-    RenderJob job;
-    job.id = 1;
-    job.path = path;
-    job.settings.format = format;
-    job.settings.encoder = VideoEncoder::Software; // same result on every machine
-    if (frames != kFrames) {
-        job.inOut = true;
-        job.from = 0;
-        job.to = frames - 1;
-    }
     Exporter ex;
     QEventLoop loop;
     bool ok = false;
@@ -91,14 +84,35 @@ bool render(const QString& path, const QString& format, int frames = kFrames)
         loop.quit();
     });
     QString error;
-    if (!CHECK(ex.start(timeline(), RenderQueue::exportSettings(job, kFmt), &error))) {
+    if (!CHECK(ex.start(tl, RenderQueue::exportSettings(job, kFmt), &error))) {
         std::printf("       %s\n", qPrintable(error));
         return false;
     }
     QTimer::singleShot(120000, &loop, &QEventLoop::quit);
     loop.exec();
-    if (!ok) std::printf("       %s: %s\n", qPrintable(path), qPrintable(message.isEmpty() ? "timeout" : message));
-    return CHECK(ok) && CHECK(QFileInfo(path).size() > 0);
+    if (!ok) std::printf("       %s: %s\n", qPrintable(job.path), qPrintable(message.isEmpty() ? "timeout" : message));
+    return CHECK(ok) && CHECK(QFileInfo(job.path).size() > 0);
+}
+
+RenderJob job(const QString& path, const QString& format)
+{
+    RenderJob j;
+    j.id = 1;
+    j.path = path;
+    j.settings.format = format;
+    j.settings.encoder = VideoEncoder::Software; // same result on every machine
+    return j;
+}
+
+bool render(const QString& path, const QString& format, int frames = kFrames)
+{
+    RenderJob j = job(path, format);
+    if (frames != kFrames) {
+        j.inOut = true;
+        j.from = 0;
+        j.to = frames - 1;
+    }
+    return run(timeline(), j);
 }
 
 // first stream of the type ("audio"/"video") per ffprobe, with the container duration as "format_duration"
@@ -245,6 +259,102 @@ void testEncoders(const QString& dir)
 
 } // namespace
 
+// Times (s) where the signal first exceeds the threshold after at least 0.3 s of quiet: beep onsets
+std::vector<double> onsets(const std::vector<float>& s, float threshold = 0.25f)
+{
+    std::vector<double> out;
+    long quiet = kRate;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (std::abs(s[i]) > threshold) {
+            if (quiet >= kRate * 3 / 10) out.push_back(double(i) / kRate);
+            quiet = 0;
+        } else {
+            ++quiet;
+        }
+    }
+    return out;
+}
+
+void testOverlappingAudio(const QString& dir)
+{
+    // Beeps at 1, 3, 5, 7 s; AAC in Matroska, then every 40th packet onwards 21 ms earlier (overlaps the one before,
+    // 9 times in 8 s: ~190 ms), like the clip program's files
+    const QString clean = Check::makeMedia(dir + "/beeps.mkv", {
+        "-f", "lavfi", "-i", "color=c=black:s=320x180:r=25:d=8", "-f", "lavfi", "-i",
+        "aevalsrc=if(lt(mod(t-1\\,2)\\,0.1)*gte(t\\,1)\\,0.5*sin(2*PI*1000*t)\\,0):s=48000:d=8",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest"});
+    const QString overlapping = Check::makeMedia(dir + "/overlap.mkv", {
+        "-i", clean, "-c", "copy", "-bsf:a", "setts=ts=TS-21*floor(N/40)"});
+    if (!CHECK(!clean.isEmpty() && !overlapping.isEmpty())) return;
+    // Reference: decoded by the timestamps (aresample async) – and the raw order, which must really differ here
+    auto decode = [](const QString& path, bool byTimestamps) {
+        QProcess p;
+        QStringList args{"-v", "error", "-nostdin", "-i", path, "-map", "0:a:0", "-af",
+                         QString("pan=mono|c0=c0%1").arg(byTimestamps ? ",aresample=async=1:min_hard_comp=0.01:first_pts=0" : ""),
+                         "-f", "f32le", "-ar", QString::number(kRate), "-"};
+        p.start("ffmpeg", args);
+        p.waitForFinished(60000);
+        const QByteArray d = p.readAllStandardOutput();
+        const auto* f = reinterpret_cast<const float*>(d.constData());
+        return std::vector<float>(f, f + d.size() / qsizetype(sizeof(float)));
+    };
+    const std::vector<double> want = onsets(decode(overlapping, true)), raw = onsets(decode(overlapping, false));
+    if (!CHECK_EQ(int(want.size()), 4) || !CHECK_EQ(int(raw.size()), 4)) return;
+    CHECK(raw[3] - want[3] > 0.1); // the material does what it should
+
+    Timeline tl;
+    tl.video.resize(1);
+    tl.audio.resize(1);
+    tl.video[0].clips << clip(1, overlapping, 0, 0, 199, 1);
+    tl.audio[0].clips << clip(2, overlapping, 0, 0, 199, 1);
+    const RenderJob j = job(dir + "/overlap.wav", "wav");
+    if (!run(tl, j)) return;
+    const std::vector<double> got = onsets(decodeAudio(j.path));
+    if (!CHECK_EQ(int(got.size()), 4)) return;
+    for (int i = 0; i < 4; ++i)
+        if (!CHECK(std::abs(got[size_t(i)] - want[size_t(i)]) <= 1 / kFps))
+            std::printf("       beep %d at %.3f s, by timestamps %.3f s (raw order %.3f s)\n", i, got[size_t(i)],
+                        want[size_t(i)], raw[size_t(i)]);
+}
+
+// Phone video with variable frame rate (frames dropped irregularly, timestamps kept): flash and beep at 1, 3, 5 s
+// stay together in the 25 fps render, and picture and sound are as long as the source
+void testVariableFrameRate(const QString& dir)
+{
+    const QString vfr = Check::makeMedia(dir + "/vfr.mp4", {
+        "-f", "lavfi", "-i",
+        "color=c=black:s=320x180:r=60:d=6,drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:"
+        "enable=eq(n\\,60)+eq(n\\,180)+eq(n\\,300),select='not(mod(n\\,2))+eq(mod(n\\,7)\\,3)'",
+        "-f", "lavfi", "-i",
+        "aevalsrc=if(lt(mod(t-1\\,2)\\,0.1)*gte(t\\,1)\\,0.5*sin(2*PI*1000*t)\\,0):s=48000:d=6",
+        "-fps_mode", "vfr", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+    if (!CHECK(!vfr.isEmpty())) return;
+    const QJsonObject src = probe(vfr, "video");
+    CHECK(src.value("avg_frame_rate").toString() != src.value("r_frame_rate").toString()); // really variable
+    Timeline tl;
+    tl.video.resize(1);
+    tl.audio.resize(1);
+    tl.video[0].clips << clip(1, vfr, 0, 0, 149, 1);
+    tl.audio[0].clips << clip(2, vfr, 0, 0, 149, 1);
+    const RenderJob j = job(dir + "/vfr-out.mp4", "h264");
+    if (!run(tl, j)) return;
+    const QJsonObject v = probe(j.path, "video"), a = probe(j.path, "audio");
+    CHECK_EQ(v.value("nb_read_frames").toString().toInt(), 150);
+    CHECK(std::abs(number(a, "duration") - 6.0) <= 1 / kFps);
+    const std::vector<double> bright = frameBrightness(j.path);
+    std::vector<int> flashes;
+    for (int f = 0; f < int(bright.size()); ++f)
+        if (bright[size_t(f)] > 180 && (flashes.empty() || f > flashes.back() + 5)) flashes.push_back(f);
+    const std::vector<double> beeps = onsets(decodeAudio(j.path));
+    if (!CHECK_EQ(int(flashes.size()), 3) || !CHECK_EQ(int(beeps.size()), 3)) return;
+    for (int i = 0; i < 3; ++i) {
+        const int want = 25 + 50 * i; // 1, 3, 5 s
+        if (!CHECK(std::abs(flashes[size_t(i)] - want) <= 1)) std::printf("       flash %d at frame %d, expected %d\n", i, flashes[size_t(i)], want);
+        if (!CHECK(std::abs(beeps[size_t(i)] * kFps - flashes[size_t(i)]) <= 1.0))
+            std::printf("       beep %d at frame %.2f, flash at %d\n", i, beeps[size_t(i)] * kFps, flashes[size_t(i)]);
+    }
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -276,5 +386,7 @@ int main(int argc, char** argv)
     testMainRender(tmp.path());
     testCut(tmp.path());
     testEncoders(tmp.path());
+    testOverlappingAudio(tmp.path());
+    testVariableFrameRate(tmp.path());
     return Check::result();
 }
