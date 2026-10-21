@@ -9,6 +9,7 @@
 #include "engine/HardwareEncoders.h"
 #include "engine/OutputColor.h"
 #include "engine/Profiles.h"
+#include "engine/RateConverter.h"
 #include "engine/Stabilizer.h"
 #include "engine/TimelineBuilder.h"
 
@@ -196,38 +197,20 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         cleanup();
         return false;
     }
-    // Different frame rate: write the timeline (with In/Out) as XML and read it back in the output profile
+    // Different frame rate: play the timeline in the output's profile (engine/RateConverter)
     const FrameRate rate = s.rate.num > 0 && s.rate.den > 0 ? s.rate : s.format.rate;
     const bool convertRate = rate != s.format.rate && !s.videoCodec.isEmpty();
     if (convertRate) {
-        m_xmlPath = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
-                        .filePath(QString("schneidi-export-%1.mlt").arg(QUuid::createUuid().toString(QUuid::Id128)));
-        Mlt::Consumer xml(*m_profile, "xml", m_xmlPath.toUtf8().constData());
-        xml.set("no_meta", 1);
-        xml.connect(*m_tractor);
-        xml.start(); // writes immediately
-        xml.stop();
         ProjectFormat target = out;
         target.rate = rate;
         m_outProfile = makeProfile(target);
-        // via the loader ("consumer:<file>"): it attaches the converters (audio format, color space), otherwise the audio arrives
-        // at the encoder in the wrong sample format
-        // The producer works internally with a copy of this profile; only if it is not "explicit" does it take over
-        // the profile (timeline frame rate) from the XML – otherwise the timeline would run too fast at the new frame rate
-        m_outProfile->set_explicit(0);
-        m_source = std::make_unique<Mlt::Producer>(*m_outProfile, ("consumer:" + m_xmlPath).toUtf8().constData());
-        m_outProfile->set_explicit(1);
-        if (!qFuzzyCompare(m_outProfile->fps(), rate.fps())) { // must not change in the process
+        m_source = RateConverter::make(*m_outProfile, *m_profile, *m_tractor);
+        if (!m_source || !m_source->is_valid()) {
             if (error) *error = T("Bildrate kann nicht umgerechnet werden.");
             cleanup();
             return false;
         }
-        if (!m_source->is_valid()) {
-            if (error) *error = T("Bildrate kann nicht umgerechnet werden (MLT-Modul „consumer“ fehlt).");
-            cleanup();
-            return false;
-        }
-        // The producer only knows the timeline's frame count -> set the length in the new frame rate ourselves
+        // Length in the new frame rate
         m_length = std::max(1, int(std::lround(m_length * rate.fps() / s.format.rate.fps())));
         m_source->set("length", m_length);
         m_source->set_in_and_out(0, m_length - 1);
@@ -388,7 +371,7 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
     const QString ext = QFileInfo(m_path).suffix().toLower();
     if ((ext == "mp4" || ext == "mov" || ext == "m4a") && s.output == ExportSettings::Output::File)
         m_consumer->set("movflags", "+faststart");
-    // Decoder (start) and encoder get the same thread count. When converting the frame rate the "consumer" producer
+    // Decoder (start) and encoder get the same thread count. When converting the frame rate the RateConverter
     // fetches frames in order -> one at a time there, and without the read-ahead thread (real_time 0): repeated
     // frames deliver 0 samples; the read-ahead thread fetches the sound early, and on the encoder's second fetch
     // MLT fills the empty frames with silence (sound too long, with jumps).
@@ -621,8 +604,6 @@ void Exporter::cleanup()
     m_consumer.reset();
     m_source.reset();
     m_outProfile.reset();
-    if (!m_xmlPath.isEmpty()) QFile::remove(m_xmlPath);
-    m_xmlPath.clear();
     m_tractor.reset();
     m_builder.reset();
     m_profile.reset();

@@ -88,6 +88,7 @@ add_library(schneidi_lib STATIC
     src/engine/PitchLatency.h     src/engine/PitchLatency.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/OutputColor.h      src/engine/OutputColor.cpp
+    src/engine/RateConverter.h    src/engine/RateConverter.cpp
     src/engine/HardwareEncoders.h src/engine/HardwareEncoders.cpp
     src/engine/Extensions.h       src/engine/Extensions.cpp
     src/engine/Transcriber.h      src/engine/Transcriber.cpp

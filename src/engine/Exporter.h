@@ -111,11 +111,10 @@ private:
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Tractor> m_tractor;
-    // Different frame rate than the timeline: timeline as MLT XML, played via the "consumer" producer in the profile of the
-    // output (converts images, audio stays gapless). Otherwise m_source points to m_tractor.
+    // Different frame rate than the timeline: m_source plays m_tractor in the output's profile (engine/RateConverter).
+    // Otherwise m_source points to m_tractor.
     std::unique_ptr<Mlt::Profile> m_outProfile;
     std::unique_ptr<Mlt::Producer> m_source;
-    QString m_xmlPath;
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<Mlt::Event> m_stoppedEvent;
     std::unique_ptr<Mlt::Event> m_fatalEvent;

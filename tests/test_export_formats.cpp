@@ -1,9 +1,11 @@
 // Export formats of the Deliver page: MP3, AIFF, Apple Lossless, FLAC, Opus, bit depths (16/24/32 float), AV1, VP9,
 // ProRes/DNxHR profiles, animated GIF, image sequences and a different frame rate than the timeline (frames converted,
-// length correct, audio without jumps); BT.601 sources converted exactly to BT.709. Checked with ffprobe/ffmpeg.
+// length correct, audio without jumps, clip filters kept); BT.601 sources converted exactly to BT.709. Checked with ffprobe/ffmpeg.
 
 #include "check.h"
 
+#include "core/EffectRegistry.h"
+#include "core/Keyframes.h"
 #include "core/RenderJob.h"
 #include "engine/Exporter.h"
 #include "engine/RenderQueue.h"
@@ -46,7 +48,7 @@ Timeline timeline()
     return tl;
 }
 
-bool render(const RenderJob& job)
+bool render(const RenderJob& job, const Timeline& tl = timeline())
 {
     Exporter ex;
     QEventLoop loop;
@@ -58,7 +60,7 @@ bool render(const RenderJob& job)
         loop.quit();
     });
     QString error;
-    if (!CHECK(ex.start(timeline(), RenderQueue::exportSettings(job, kFmt), &error))) {
+    if (!CHECK(ex.start(tl, RenderQueue::exportSettings(job, kFmt), &error))) {
         std::printf("       %s\n", qPrintable(error));
         return false;
     }
@@ -229,6 +231,53 @@ QByteArray frame444(const QString& path, int n)
                        "rawvideo", "-pix_fmt", "yuv444p", "-"});
     p.waitForFinished(60000);
     return p.readAllStandardOutput();
+}
+
+// RMS of the audio (mono 48 kHz, 16 bit), 0 = none
+double audioRms(const QString& path)
+{
+    QProcess p;
+    p.start("ffmpeg", {"-v", "error", "-i", path, "-map", "0:a", "-f", "s16le", "-ac", "1", "-ar", "48000", "-"});
+    p.waitForFinished(60000);
+    const QByteArray d = p.readAllStandardOutput();
+    const auto* s = reinterpret_cast<const qint16*>(d.constData());
+    const qsizetype n = d.size() / 2;
+    double sum = 0;
+    for (qsizetype i = 0; i < n; ++i) sum += double(s[i]) * s[i];
+    return n > 0 ? std::sqrt(sum / n) : 0;
+}
+
+// Different frame rate with clip filters of our own (made with mlt_filter_new: color grade, edge ramps, volume):
+// 0.4.4-0.9 lost them on the XML detour and the file had no video (2026-10-20)
+void testFrameRateFilters(const QString& dir)
+{
+    Timeline tl = timeline();
+    Clip& v = tl.video[0].clips[0];
+    EffectRegistry::add(v, "grade");
+    Keys::setStaticValue(v, AnimParam::GradeSaturation, 0); // gray
+    tl.audio[0].clips[0].volumeDb = -20;
+    RenderJob j = job(dir + "/f30.mov", "prores");
+    j.settings.rateNum = 30;
+    if (!render(j, tl)) return;
+    const QJsonObject vs = probe(j.path, "video");
+    CHECK_EQ(vs.value("nb_frames").toString(), QString("120"));
+    const double dur = probe(j.path, "audio").value("duration").toString().toDouble();
+    if (!CHECK(std::abs(dur - 4.0) < 0.05)) std::printf("       Ton %.3f s\n", dur);
+    // Saturation 0: chroma stays at the middle (testsrc2 is colorful)
+    const int size = kFmt.width * kFmt.height;
+    const QByteArray f = frame444(j.path, 60);
+    if (CHECK_EQ(f.size(), 3 * size)) {
+        int worst = 0;
+        for (int i = size; i < 3 * size; ++i) worst = std::max(worst, std::abs(int(uint8_t(f[i])) - 128));
+        if (!CHECK(worst <= 3)) std::printf("       Farbe %d vom Grau\n", worst);
+    }
+    CHECK(maxJump(j.path) < 300);
+    // Sound exactly as without converting (-20 dB; the level of a mono source also drops by the pan law)
+    RenderJob same = job(dir + "/f25.mov", "prores");
+    if (!render(same, tl)) return;
+    const double level = audioRms(same.path), ratio = audioRms(j.path) / level;
+    CHECK(level < 0.15 * audioRms(g_media));
+    if (!CHECK(std::abs(ratio - 1) < 0.02)) std::printf("       Pegel %.3f\n", ratio);
 }
 
 // BT.601 source (small, unmarked: MLT takes it for 601) into BT.709 exports: colors converted exactly, in every path
@@ -409,5 +458,6 @@ int main(int argc, char** argv)
     testGif(tmp.path());
     testImageSequence(tmp.path());
     testFrameRate(tmp.path());
+    testFrameRateFilters(tmp.path());
     return Check::result();
 }
