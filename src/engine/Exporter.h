@@ -58,7 +58,8 @@ public:
 
     bool isRunning() const
     {
-        return m_consumer != nullptr || m_check != nullptr || m_analysis != nullptr || m_gif != nullptr;
+        return m_build != nullptr || m_consumer != nullptr || m_check != nullptr || m_analysis != nullptr
+            || m_gif != nullptr;
     }
     // Is any export running right now? (render cache pauses meanwhile)
     static bool anyRunning();
@@ -88,6 +89,8 @@ signals:
 private:
     void poll();
     void cleanup();
+    // After the build thread: test the hardware encoder or start the consumer; false = failed (error set)
+    bool launch(QString* error);
     bool startConsumer(const QString& codec, QString* error);
     void onCheckFinished(bool works);
     // Hardware encoder failed: render again with ExportSettings::softwareCodec; false = no fallback possible
@@ -107,6 +110,20 @@ private:
     bool m_analysisDone = false; // start() after the analyses: do not look again
     Timeline m_pendingTimeline;
     ExportSettings m_pendingSettings;
+
+    // MLT graph of the export, built in m_build (start), then moved into the members below
+    struct Graph {
+        std::unique_ptr<Mlt::Profile> profile;
+        std::unique_ptr<TimelineBuilder> builder;
+        std::unique_ptr<Mlt::Tractor> tractor;
+        std::unique_ptr<Mlt::Profile> outProfile;
+        std::unique_ptr<Mlt::Producer> source;
+        int length = 0;
+        QString error;
+    };
+    QThread* m_build = nullptr;
+    std::shared_ptr<std::atomic<bool>> m_buildCancel;
+    void stopBuild(); // cancel and wait for m_build (only files being opened right now still finish)
 
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<TimelineBuilder> m_builder;

@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QUuid>
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QtMath>
@@ -131,8 +132,9 @@ QString file(const QString& path, int w, int h, bool invert)
     const QImage img = image(path, w, h, invert);
     if (img.isNull()) return {};
     QDir().mkpath(dir);
-    // First write under a different name so that a second instance never reads a half image
-    const QString tmp = out + ".tmp.png";
+    // First write under a different name so that a second instance never reads a half image (own name per writer:
+    // preview and export build in different threads)
+    const QString tmp = out + "." + QUuid::createUuid().toString(QUuid::Id128) + ".tmp.png";
     if (!img.save(tmp)) return {};
     QFile::remove(out);
     QFile::rename(tmp, out);

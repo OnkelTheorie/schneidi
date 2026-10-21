@@ -137,6 +137,7 @@ Exporter::Exporter(QObject* parent) : QObject(parent)
 
 Exporter::~Exporter()
 {
+    if (m_build) stopBuild();
     cancel();
 }
 
@@ -177,49 +178,15 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         if (t.muted || (anySolo && !t.solo)) t.clips.clear();
     for (Track& t : scaled.video)
         if (t.hidden) t.clips.clear();
-    m_profile = makeProfile(out);
-    m_builder = std::make_unique<TimelineBuilder>(*m_profile);
-    const int threads = s.threads > 0 ? s.threads : availableThreads();
-    m_builder->setDecoderThreads(threads);
-    m_builder->setSubtitles(s.burnSubtitles && !s.videoCodec.isEmpty());
-    m_tractor = m_builder->build(scaled);
-    if (s.videoCodec.isEmpty()) { // keep the full length when the sound ends before the picture
-        Mlt::Playlist blank(*m_profile);
-        blank.blank(end - 1);
-        blank.set("hide", 3);
-        m_tractor->set_track(blank, m_tractor->count());
-    }
-    m_tractor->set_in_and_out(m_from, m_from + m_length - 1);
 
     QDir().mkpath(QFileInfo(s.path).absolutePath());
     if (s.output == ExportSettings::Output::ImageSequence) QDir().mkpath(imageSequenceDir(s.path));
-    if (!s.subtitlePath.isEmpty() && !writeSubtitleFile(tl, s.format.rate.fps(), m_from, m_from + m_length, s.subtitlePath, error)) {
-        cleanup();
+    if (!s.subtitlePath.isEmpty() && !writeSubtitleFile(tl, s.format.rate.fps(), m_from, m_from + m_length, s.subtitlePath, error))
         return false;
-    }
     // Different frame rate: play the timeline in the output's profile (engine/RateConverter)
     const FrameRate rate = s.rate.num > 0 && s.rate.den > 0 ? s.rate : s.format.rate;
     const bool convertRate = rate != s.format.rate && !s.videoCodec.isEmpty();
-    if (convertRate) {
-        ProjectFormat target = out;
-        target.rate = rate;
-        m_outProfile = makeProfile(target);
-        m_source = RateConverter::make(*m_outProfile, *m_profile, *m_tractor);
-        if (!m_source || !m_source->is_valid()) {
-            if (error) *error = T("Bildrate kann nicht umgerechnet werden.");
-            cleanup();
-            return false;
-        }
-        // Length in the new frame rate
-        m_length = std::max(1, int(std::lround(m_length * rate.fps() / s.format.rate.fps())));
-        m_source->set("length", m_length);
-        m_source->set_in_and_out(0, m_length - 1);
-    } else {
-        m_source = std::make_unique<Mlt::Producer>(*m_tractor);
-    }
-    // The workers deliver YUV in the output's color standard, the encoder thread only repacks (see OutputColor.h)
-    if (!s.videoCodec.isEmpty())
-        if (auto f = OutputColor::make(convertRate ? *m_outProfile : *m_profile)) m_source->attach(*f);
+    const int threads = s.threads > 0 ? s.threads : availableThreads();
     m_settings = s;
     m_convertRate = convertRate;
     m_threads = threads;
@@ -237,10 +204,85 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_note = s.encoderNote;
     m_usedCodec.clear();
 
+    // Building the MLT graph opens every file of the timeline (probing all streams, ~0.1 s per file even in
+    // parallel): in a thread, so the window stays responsive. launch() continues in this thread.
+    auto graph = std::make_shared<Graph>();
+    const int from = m_from, length = m_length;
+    m_buildCancel = std::make_shared<std::atomic<bool>>(false);
+    m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), out, s, threads, end, from,
+                               length, rate, convertRate] {
+        Graph& g = *graph;
+        g.profile = makeProfile(out);
+        g.builder = std::make_unique<TimelineBuilder>(*g.profile);
+        g.builder->setCancelFlag(cancel);
+        g.builder->setDecoderThreads(threads);
+        g.builder->setSubtitles(s.burnSubtitles && !s.videoCodec.isEmpty());
+        g.tractor = g.builder->build(scaled);
+        if (*cancel) return;
+        if (s.videoCodec.isEmpty()) { // keep the full length when the sound ends before the picture
+            Mlt::Playlist blank(*g.profile);
+            blank.blank(end - 1);
+            blank.set("hide", 3);
+            g.tractor->set_track(blank, g.tractor->count());
+        }
+        g.tractor->set_in_and_out(from, from + length - 1);
+        g.length = length;
+        if (convertRate) {
+            ProjectFormat target = out;
+            target.rate = rate;
+            g.outProfile = makeProfile(target);
+            g.source = RateConverter::make(*g.outProfile, *g.profile, *g.tractor);
+            if (!g.source || !g.source->is_valid()) {
+                g.error = T("Bildrate kann nicht umgerechnet werden.");
+                return;
+            }
+            // Length in the new frame rate
+            g.length = std::max(1, int(std::lround(length * rate.fps() / s.format.rate.fps())));
+            g.source->set("length", g.length);
+            g.source->set_in_and_out(0, g.length - 1);
+        } else {
+            g.source = std::make_unique<Mlt::Producer>(*g.tractor);
+        }
+        // The workers deliver YUV in the output's color standard, the encoder thread only repacks (see OutputColor.h)
+        if (!s.videoCodec.isEmpty())
+            if (auto f = OutputColor::make(convertRate ? *g.outProfile : *g.profile)) g.source->attach(*f);
+    });
+    connect(m_build, &QThread::finished, this, [this, graph] {
+        m_build->wait();
+        delete m_build;
+        m_build = nullptr;
+        --g_running;
+        if (!graph->error.isEmpty()) {
+            emit finished(false, graph->error);
+            return;
+        }
+        m_profile = std::move(graph->profile);
+        m_builder = std::move(graph->builder);
+        m_tractor = std::move(graph->tractor);
+        m_outProfile = std::move(graph->outProfile);
+        m_source = std::move(graph->source);
+        m_length = graph->length;
+        QString error;
+        if (!launch(&error)) {
+            const QString path = m_path;
+            cleanup();
+            QFile::remove(path);
+            emit finished(false, error);
+        }
+    });
+    ++g_running; // the render cache waits already
+    m_build->start();
+    emit progress(0);
+    return true;
+}
+
+bool Exporter::launch(QString* error)
+{
+    const ExportSettings& s = m_settings;
     // Hardware encoder: test it with the output size first (MLT's avformat consumer crashes when the encoder cannot
     // be opened, e.g. no such card, too large for the card, all its sessions busy). Runs ffmpeg in the background.
     if (HardwareEncoders::isHardwareCodec(s.videoCodec)) {
-        Mlt::Profile& p = convertRate ? *m_outProfile : *m_profile;
+        Mlt::Profile& p = m_convertRate ? *m_outProfile : *m_profile;
         const QSize size(p.width(), p.height());
         const int known = HardwareEncoders::cachedResult(s.videoCodec, size);
         if (known == 0) {
@@ -262,27 +304,18 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
             m_check->start(Bundle::tool("ffmpeg"), HardwareEncoders::testArguments(s.videoCodec, size, s.crf));
             ++g_running;
             m_timer.start(); // poll() waits for the consumer
-            emit progress(0);
             return true;
         }
         if (known < 0) {
-            if (!fallBackToSoftware(error)) {
-                cleanup();
-                return false;
-            }
+            if (!fallBackToSoftware(error)) return false;
             ++g_running;
             m_timer.start();
-            emit progress(0);
             return true;
         }
     }
-    if (!startConsumer(s.videoCodec, error)) {
-        cleanup();
-        return false;
-    }
+    if (!startConsumer(s.videoCodec, error)) return false;
     ++g_running;
     m_timer.start();
-    emit progress(0);
     return true;
 }
 
@@ -554,8 +587,24 @@ bool Exporter::runAnalyses(const Timeline& tl, const ExportSettings& s)
     return true;
 }
 
+void Exporter::stopBuild()
+{
+    // Not left running detached: it would still open files while the program ends (MLT closed: crash)
+    *m_buildCancel = true;
+    m_build->disconnect(this);
+    m_build->wait();
+    delete m_build;
+    m_build = nullptr;
+    --g_running;
+}
+
 void Exporter::cancel()
 {
+    if (m_build) { // still building the graph
+        stopBuild();
+        emit finished(false, T("Export abgebrochen."));
+        return;
+    }
     if (m_analysis) { // still analyzing for stabilization
         *m_analysisCancel = true;
         m_analysis->disconnect(this);

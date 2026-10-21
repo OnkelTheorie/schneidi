@@ -113,6 +113,8 @@ public:
     void setSubtitles(bool on) { m_subtitles = on; }
     // Threads per video decoder (export); 0 = MLT default. Set before build().
     void setDecoderThreads(int threads);
+    // Set from another thread: build() stops opening files and returns an empty tractor (export cancelled)
+    void setCancelFlag(std::shared_ptr<const std::atomic<bool>> flag) { m_cancel = std::move(flag); }
 
     // hooks != nullptr: always attach mixer filters (even at 0 dB) and build in level meters
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);
@@ -139,6 +141,17 @@ private:
     // retime: clip whose speed/reverse/still and audio stream apply (nullptr = original speed, stream 0)
     Mlt::Producer* producerFor(const QString& path, TrackKind kind, int trackIndex, bool second = false,
                                const Clip* retime = nullptr);
+    // What producerFor reads: cache key, file (after the proxy resolver), MLT resource (timewarp: …), speed ramp
+    struct Source {
+        QString key, file, resource;
+        bool ramp = false;
+    };
+    Source sourceOf(const QString& path, TrackKind kind, int trackIndex, bool second, const Clip* retime) const;
+    // Opens the producers a build will need in parallel threads into m_opened (opening is slow, see prefetch)
+    void prefetch(const Timeline& tl);
+    // A new producer of the file: from m_opened if prefetch() opened it, otherwise opened now
+    std::unique_ptr<Mlt::Producer> openFile(TrackKind kind, const QString& resource);
+    static QString openKey(TrackKind kind, const QString& resource);
 
     // A timeline without cleaning up the producer cache (also for nested sequences)
     std::unique_ptr<Mlt::Tractor> buildTimeline(const Timeline& tl, MixerHooks* hooks);
@@ -162,6 +175,9 @@ private:
     // not seek each other back and forth in the decoder.
     std::map<QString, std::unique_ptr<Mlt::Producer>> m_cache;
     std::set<QString> m_used; // keys used in the current build(); the rest gets dropped afterwards
+    std::shared_ptr<const std::atomic<bool>> m_cancel;
+    bool cancelled() const { return m_cancel && m_cancel->load(); }
+    std::map<QString, std::vector<std::unique_ptr<Mlt::Producer>>> m_opened; // openKey -> opened by prefetch(), unused
     // Nested timelines (compound clips) of the running build()
     std::shared_ptr<const NestedTimelines> m_nested;
     std::map<QString, std::unique_ptr<Mlt::Producer>> m_nestedCache;

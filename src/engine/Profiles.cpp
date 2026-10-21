@@ -69,6 +69,7 @@ std::unique_ptr<Mlt::Producer> ProducerFactory::open(const QString& resource)
     // Only standards MLT knows when scaling (601 family, 240); it does not handle 2020 etc. anyway
     const bool known = cs == 601 || cs == 170 || cs == 470 || cs == 624 || cs == 240;
     if (!known || cs == m_base.colorspace()) return p;
+    std::lock_guard lock(m_mutex);
     auto& prof = m_profiles[cs];
     if (!prof) {
         prof = std::make_unique<Mlt::Profile>();
@@ -81,9 +82,12 @@ std::unique_ptr<Mlt::Producer> ProducerFactory::open(const QString& resource)
         prof->set_explicit(1);
         prof->set_colorspace(cs);
     }
-    auto own = std::make_unique<Mlt::Producer>(*prof, res.constData());
-    if (m_threads > 0 && own->is_valid()) own->set("threads", m_threads);
-    return own->is_valid() ? std::move(own) : std::move(p);
+    // Move the producer and the normalizing filters the loader attached (swscale …) to that profile instead of opening
+    // the file a second time (each open probes all streams, ~100 ms with several audio streams: slow export start)
+    p->set_profile(*prof);
+    for (int i = 0; i < p->filter_count(); ++i)
+        if (std::unique_ptr<Mlt::Filter> f{p->filter(i)}; f && f->is_valid()) f->set_profile(*prof);
+    return p;
 }
 
 namespace {

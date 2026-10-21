@@ -21,6 +21,7 @@
 #include <QColor>
 #include <QDir>
 #include <QFile>
+#include <QUuid>
 #include <QStandardPaths>
 #include <QFont>
 #include <QFontMetricsF>
@@ -103,8 +104,9 @@ QString wipeLuma(TransitionType type, int w, int h)
             line[x] = uchar(std::lround(t * 255));
         }
     }
-    // First write under a different name so that a second instance never reads a half image
-    const QString tmp = path + ".tmp.png";
+    // First write under a different name so that a second instance never reads a half image (own name per writer:
+    // preview and export build in different threads)
+    const QString tmp = path + "." + QUuid::createUuid().toString(QUuid::Id128) + ".tmp.png";
     if (!img.save(tmp)) return {};
     QFile::remove(path);
     QFile::rename(tmp, path);

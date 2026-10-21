@@ -85,6 +85,10 @@ schneidi_test(test_stream_presets)
 target_link_libraries(test_stream_presets PRIVATE schneidi_cli_lib)
 schneidi_test(test_ducking)
 target_link_libraries(test_ducking PRIVATE schneidi_cli_lib)
+# Speed brake: alone (parallel tests would distort the times), baseline per machine in data/speed-baseline.json
+schneidi_test(test_speed)
+target_compile_definitions(test_speed PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
+set_tests_properties(test_speed PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
 
 # Number format regressions (German decimal comma, e.g. 0.7.0: MLT reset LC_NUMERIC and stabilization did nothing):
 # run tests that pass numbers to MLT/FFmpeg a second time under de_DE.UTF-8 (CI generates the locale)
@@ -108,5 +112,7 @@ add_executable(bench_playback bench_playback.cpp check.h)
 target_link_libraries(bench_playback PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_multicam bench_multicam.cpp check.h)
 target_link_libraries(bench_multicam PRIVATE schneidi_lib Qt6::Test)
+add_executable(bench_export bench_export.cpp check.h)
+target_link_libraries(bench_export PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_undo bench_undo.cpp check.h)
 target_link_libraries(bench_undo PRIVATE schneidi_lib Qt6::Test)

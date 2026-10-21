@@ -9,6 +9,7 @@
 
 #include <map>
 #include <memory>
+#include <mutex>
 
 namespace Mlt {
 class Producer;
@@ -33,6 +34,7 @@ class ProducerFactory {
 public:
     explicit ProducerFactory(Mlt::Profile& base);
     ~ProducerFactory();
+    // Thread-safe (TimelineBuilder::prefetch opens several files at once)
     std::unique_ptr<Mlt::Producer> open(const QString& resource);
     // Threads per video decoder (MLT "threads"); 0 = MLT default (preview)
     void setThreads(int threads) { m_threads = threads; }
@@ -41,6 +43,7 @@ private:
     Mlt::Profile& m_base;
     int m_threads = 0;
     std::map<int, std::unique_ptr<Mlt::Profile>> m_profiles; // color standard -> profile
+    std::mutex m_mutex;                                       // guards m_profiles
 };
 
 struct ClipFormat {

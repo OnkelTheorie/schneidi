@@ -36,6 +36,7 @@
 #include <cmath>
 #include <functional>
 #include <optional>
+#include <thread>
 #include <utility>
 
 #include "engine/TimelineBuilderDetail.h"
@@ -60,8 +61,8 @@ void TimelineBuilder::setDecoderThreads(int threads)
     m_factory->setThreads(threads);
 }
 
-Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex, bool second,
-                                            const Clip* retime)
+TimelineBuilder::Source TimelineBuilder::sourceOf(const QString& path, TrackKind kind, int trackIndex, bool second,
+                                                  const Clip* retime) const
 {
     // Proxy (preview only): key with the file actually read, so that switching reopens
     const QString file = m_resolver ? m_resolver(path, kind) : path;
@@ -89,6 +90,86 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     if (stream != 0) tag += QString("|s%1").arg(stream);
     const QString key = m_keyPrefix + QString("%1%2|%3|%4%5").arg(kind == TrackKind::Video ? "v" : "a").arg(second ? "x" : "")
                             .arg(trackIndex).arg(file, tag);
+    return {key, file, resource, ramp};
+}
+
+std::unique_ptr<Mlt::Producer> TimelineBuilder::openFile(TrackKind kind, const QString& resource)
+{
+    // Opened ahead by prefetch()?
+    if (auto it = m_opened.find(openKey(kind, resource)); it != m_opened.end() && !it->second.empty()) {
+        std::unique_ptr<Mlt::Producer> p = std::move(it->second.back());
+        it->second.pop_back();
+        return p;
+    }
+    // Video via the factory (BT.601 sources, see Profiles.h); audio does not need that
+    return kind == TrackKind::Video ? m_factory->open(resource)
+                                    : std::make_unique<Mlt::Producer>(m_profile, resource.toUtf8().constData());
+}
+
+QString TimelineBuilder::openKey(TrackKind kind, const QString& resource)
+{
+    return (kind == TrackKind::Video ? QStringLiteral("v|") : QStringLiteral("a|")) + resource;
+}
+
+void TimelineBuilder::prefetch(const Timeline& tl)
+{
+    // Which producers will this build open? Same keys as buildTimeline (first/second producer as there, without
+    // looking at dissolves: a wrong guess only costs one producer opened for nothing or one opened later)
+    std::map<QString, int> wanted; // openKey -> count
+    std::set<QString> keys;
+    auto collect = [&](const Track& track, TrackKind kind, int trackIndex) {
+        bool second = false;
+        for (int i = 0; i < track.clips.size(); ++i) {
+            const Clip& c = track.clips[i];
+            if (i > 0) {
+                const Clip& prev = track.clips[i - 1];
+                if (c.mediaPath.isEmpty() || c.mediaPath != prev.mediaPath) second = false;
+                else if (c.start != prev.end() || c.in != prev.out + 1) second = !second;
+            }
+            if (!c.enabled || c.mediaPath.isEmpty() || c.isTitle() || c.isNested()) continue;
+            if (c.freeze && kind == TrackKind::Audio) continue;
+            const Source src = sourceOf(c.mediaPath, kind, trackIndex, second, &c);
+            if (src.ramp && kind == TrackKind::Audio) continue; // RampProducer opens its own
+            if (m_cache.count(src.key) || !keys.insert(src.key).second) continue;
+            ++wanted[openKey(kind, src.ramp ? src.file : src.resource)];
+        }
+    };
+    for (int i = 0; i < tl.video.size(); ++i) collect(tl.video[i], TrackKind::Video, i);
+    for (int i = 0; i < tl.audio.size(); ++i) collect(tl.audio[i], TrackKind::Audio, i);
+    std::vector<QString> jobs;
+    for (const auto& [k, n] : wanted)
+        for (int i = 0; i < n; ++i) jobs.push_back(k);
+    if (jobs.size() < 2) return; // nothing to gain
+
+    // Opening probes every stream of the file (~100–200 ms each, mostly waiting for the disk and the demuxer):
+    // in parallel, the build then takes them from m_opened. Several decoders open at once already elsewhere
+    // (StillFetcher, MediaCache), MLT and FFmpeg allow that with separate producers.
+    std::vector<std::unique_ptr<Mlt::Producer>> results(jobs.size());
+    std::atomic<size_t> next{0};
+    auto work = [&] {
+        for (size_t i; !cancelled() && (i = next++) < jobs.size();) {
+            const QString resource = jobs[i].mid(2);
+            results[i] = jobs[i].startsWith('v') ? m_factory->open(resource)
+                                                 : std::make_unique<Mlt::Producer>(m_profile, resource.toUtf8().constData());
+        }
+    };
+    const int n = int(std::min<size_t>(jobs.size(), std::clamp(std::thread::hardware_concurrency(), 2u, 8u)));
+    std::vector<std::thread> threads;
+    for (int i = 1; i < n; ++i) threads.emplace_back(work);
+    work();
+    for (std::thread& t : threads) t.join();
+    for (size_t i = 0; i < jobs.size(); ++i)
+        if (results[i]) m_opened[jobs[i]].push_back(std::move(results[i]));
+}
+
+Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex, bool second,
+                                            const Clip* retime)
+{
+    const auto [key, file, resource, ramp] = sourceOf(path, kind, trackIndex, second, retime);
+    const bool freeze = retime && retime->freeze;
+    const double warp = retime && !freeze && !ramp ? (retime->reverse ? -retime->speed : retime->speed) : 1.0;
+    const bool pitch = retime && retime->keepPitch;
+    const int stream = kind == TrackKind::Audio && retime ? retime->audioStream : 0;
     m_used.insert(key);
     auto it = m_cache.find(key);
     if (it != m_cache.end()) return it->second.get();
@@ -96,7 +177,7 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     if (ramp) {
         std::unique_ptr<Mlt::Producer> r;
         if (kind == TrackKind::Video) {
-            auto inner = m_factory->open(file);
+            auto inner = openFile(kind, file);
             if (!inner->is_valid()) return nullptr;
             inner->set("audio_index", -1);
             r = RampProducer::video(m_profile, std::move(inner), *retime);
@@ -108,9 +189,7 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
         m_cache.emplace(key, std::move(r));
         return raw;
     }
-    // Video via the factory (BT.601 sources, see Profiles.h); audio does not need that
-    auto p = kind == TrackKind::Video ? m_factory->open(resource)
-                                      : std::make_unique<Mlt::Producer>(m_profile, resource.toUtf8().constData());
+    auto p = openFile(kind, resource);
     if (!p->is_valid()) return nullptr;
     // Keep pitch only on a real speed change: reverse at 100 % needs no Rubberband, which would only bring
     // its delay (audio ~3 frames behind the video)
@@ -227,7 +306,13 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
         explicit BypassScope(std::shared_ptr<std::atomic<bool>> f) { t_gradeBypass = std::move(f); }
         ~BypassScope() { t_gradeBypass.reset(); }
     } bypassScope(m_gradeBypass);
+    prefetch(tl);
+    if (cancelled()) {
+        m_opened.clear();
+        return std::make_unique<Mlt::Tractor>(m_profile);
+    }
     auto tractor = buildTimeline(tl, hooks);
+    m_opened.clear(); // opened ahead but not used (guessed wrong)
     m_nested.reset();
     m_lastUse.clear();
     std::stable_sort(m_preroll.begin(), m_preroll.end(),
