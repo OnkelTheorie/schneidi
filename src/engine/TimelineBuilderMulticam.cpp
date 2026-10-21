@@ -66,7 +66,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildMulticamGrid(const Timeline&
         tractor->set_track(*pl, track);
         Mlt::Transition t(m_profile, "qtblend");
         t.set("always_active", 1);
-        tractor->plant_transition(t, 0, track);
+        TimelineBuilderDetail::plantBlend(*tractor, t, track);
         ++track;
     }
 

@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QStandardPaths>
 
 #include <framework/mlt.h>
@@ -81,6 +82,16 @@ void prepareMltEnvironment()
     QByteArray deny = qgetenv("MLT_REPOSITORY_DENY");
     if (!deny.split(':').contains("libmltjackrack"))
         qputenv("MLT_REPOSITORY_DENY", deny.isEmpty() ? QByteArray("libmltjackrack") : deny + ":libmltjackrack");
+
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    // MLT's Qt module (qtblend, qtext, …) refuses to load without $DISPLAY / $WAYLAND_DISPLAY, even when a Qt
+    // application already exists – then the timeline gets invalid transitions and crashes. On a server (no display,
+    // QT_QPA_PLATFORM=offscreen) our application is already there and MLT uses it instead of opening one itself, so
+    // the check only has to be passed: a placeholder name that nobody connects to.
+    if (qEnvironmentVariableIsEmpty("DISPLAY") && qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")
+        && qobject_cast<QGuiApplication*>(QCoreApplication::instance()) && QGuiApplication::platformName() == "offscreen")
+        qputenv("DISPLAY", ":schneidi-offscreen");
+#endif
 
     const auto set = setPathEnv;
     if (const QString p = bundledPrefix(); !p.isEmpty()) {

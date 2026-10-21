@@ -103,6 +103,17 @@ foreach(name test_stabilize_denoise test_retime test_effects_render test_cli tes
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
 endforeach()
 
+# Server/container without a display: MLT's Qt module (qtblend, qtext) must still load – it used to refuse without
+# $DISPLAY and the timeline crashed on the invalid transition (see Bundle::prepareMltEnvironment)
+foreach(name test_cli test_multicam_render)
+    add_test(NAME ${name}_no_display COMMAND ${name})
+    set_tests_properties(${name}_no_display PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 300
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1"
+        ENVIRONMENT_MODIFICATION "DISPLAY=unset:;WAYLAND_DISPLAY=unset:")
+endforeach()
+
 # Benchmark, not run by CTest
 add_executable(bench_inspector bench_inspector.cpp check.h)
 target_link_libraries(bench_inspector PRIVATE schneidi_lib Qt6::Test)

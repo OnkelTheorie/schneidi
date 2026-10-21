@@ -19,6 +19,7 @@
 
 #include <Mlt.h>
 #include <QColor>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QStandardPaths>
@@ -311,6 +312,16 @@ void attachSourceCap(Mlt::Producer& clip, double maxZoom)
     Mlt::Filter filter(f); // holds its own reference
     mlt_filter_close(f);
     clip.attach(filter);
+}
+
+void plantBlend(Mlt::Tractor& tractor, Mlt::Transition& blend, int track)
+{
+    if (blend.is_valid()) {
+        tractor.plant_transition(blend, 0, track);
+        return;
+    }
+    static std::once_flag warned;
+    std::call_once(warned, [] { qWarning("MLT transition qtblend is missing (Qt module not loaded): video tracks are not composited"); });
 }
 
 void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, int a, int len)

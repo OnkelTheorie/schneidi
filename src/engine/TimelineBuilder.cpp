@@ -584,7 +584,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
         if (kind == TrackKind::Video) {
             Mlt::Transition t(m_profile, "qtblend");
             t.set("always_active", 1);
-            tractor->plant_transition(t, 0, mltIndex);
+            TimelineBuilderDetail::plantBlend(*tractor, t, mltIndex);
         } else {
             Mlt::Transition t(m_profile, "mix");
             t.set("always_active", 1);
@@ -613,7 +613,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             tractor->set_track(pl, mltIndex);
             Mlt::Transition t(m_profile, "qtblend");
             t.set("always_active", 1);
-            tractor->plant_transition(t, 0, mltIndex);
+            TimelineBuilderDetail::plantBlend(*tractor, t, mltIndex);
             ++mltIndex;
         }
     for (int i = 0; i < tl.audio.size(); ++i) fill(tl.audio[i], TrackKind::Audio, i);
