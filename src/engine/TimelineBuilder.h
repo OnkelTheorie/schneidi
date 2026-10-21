@@ -37,36 +37,34 @@ struct MixerHooks {
 };
 
 // Preview: a seek during playback cuts the sound mid-wave on both sides (audible click), starting playback
-// starts it mid-wave. The engine sets the
-// target, the master meter fades out the old sound still coming (frames before the target), keeps it silent and
-// fades in at the target.
+// starts it mid-wave. The master meter notices the jump itself (frame position not the next one) and turns the step
+// into a dip: held-back old sound fades out, new sound fades in. (Fading out "the frames still coming" after the
+// seek did not work: usually none come, the old sound was already in the device buffer and ended mid-wave.)
 struct SeekFade {
-    std::atomic<int> target{-1};    // timeline frame; -1 = nothing to do
-    std::atomic<int> direction{1};  // playback direction (1 forward, -1 backward)
-    std::atomic<bool> fadedOut{false};
-    std::atomic<int> waited{0}; // frames silenced so far (emergency stop: the sound comes back after a few)
+    // Engine side
+    std::atomic<int> direction{1};    // 1 / -1 = normal playback forward/backward; 0 = other speed: untouched
+    std::atomic<bool> restart{true};  // playback (re)starts: nothing old to fade out, fade in the first sound
     // Seeks in quick succession (dragging the playhead while playing): stay silent until release() – a fade-in per
     // mouse move crackled
     std::atomic<bool> hold{false};
-    std::atomic<bool> fadeInNext{false}; // released after the target was reached: fade in the next sound
-    void start(int frame, double speed)
+    // Counted up before every seek while playing: a chunk rendered during the seek can carry the new sound under
+    // the next frame position (race with MLT's read-ahead) – positions alone missed such jumps
+    std::atomic<int> seeks{0};
+    // Playback starts or changes speed: the sound jumps in mid-wave otherwise
+    void play(double speed)
     {
-        direction = speed < 0 ? -1 : 1;
-        fadedOut = false;
-        waited = 0;
-        target = frame;
+        direction = speed == 1.0 ? 1 : speed == -1.0 ? -1 : 0;
+        restart = true;
     }
-    // Playback starts (was silent before): only the fade-in at `frame`, the sound jumps in mid-wave otherwise
-    void fadeIn(int frame, double speed)
-    {
-        start(frame, speed);
-        fadedOut = true;
-    }
-    void release()
-    {
-        if (!hold.exchange(false)) return;
-        if (target < 0) fadeInNext = true;
-    }
+    void release() { hold = false; }
+
+    // Master meter side (only the thread rendering the audio): the last 5 ms of every chunk come out with the next
+    // one, so at a jump in the frame positions the old sound can still be faded out
+    std::vector<float> tail;
+    int tailChannels = 0;
+    int lastPos = -1;
+    int seenSeeks = 0;
+    bool silent = true;
 };
 
 // Preview: spot where a decoder has to jump (clip start, fading-in side of a transition).
@@ -122,6 +120,9 @@ public:
     const std::vector<PrerollPoint>& prerollPoints() const { return m_preroll; }
     // Apply fader/pan/limiter/EQ/compressor live to the filters (the track count must match)
     static bool applyMixer(const Timeline& tl, MixerHooks& hooks);
+    // `after` differs from `before` only in what applyMixer() switches live (or not at all in the picture/sound:
+    // track names, colors, locks) – also for changes from the CLI/AI, which do not say so like the Mixer panel
+    static bool mixerOnlyChange(const Timeline& before, const Timeline& after);
     // Audio of a clip as the timeline reads it (speed/reverse included), without
     // clip volume/fades; frames in..out of the clip. nullptr = title/still/file missing.
     // Owned by the builder (cache), valid until the next call.

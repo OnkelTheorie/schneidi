@@ -44,7 +44,7 @@ namespace TimelineBuilderDetail {
 void applyVolume(Mlt::Profile& profile, Mlt::Service& clip, const Clip& c, int a, int len)
 {
     const bool anim = len > 0 && Keys::animated(c, AnimParam::Volume);
-    if (c.volumeDb == 0.0 && !anim) return;
+    if (c.volumeDb == 0.0 && !anim && !t_liveValues) return;
     Mlt::Filter f(profile, "volume");
     if (!f.is_valid()) return;
     // -∞ is -200 dB in MLT -> sections starting/ending there not linear -> frame by frame
@@ -100,40 +100,80 @@ void scaleSamples(void* buffer, mlt_audio_format format, int channels, int n, in
     }
 }
 
-// Seek during playback (SeekFade): old sound fades out within ~5 ms, then silence until the target, which fades in
-// within ~10 ms (while dragging: silence until SeekFade::release)
+// Seek during playback (SeekFade): every chunk is delayed by 5 ms (its end comes out with the next chunk). Frame
+// position not the next one = jump: the held-back old sound fades out over those 5 ms, the new one fades in over
+// 10 ms. While dragging (hold) silent, after release() the next sound fades in.
 void seekFade(SeekFade& fade, int pos, void* buffer, mlt_audio_format format, int channels, int n, int frequency)
 {
-    const int target = fade.target;
-    const bool hold = fade.hold;
-    if (target < 0 && !hold) {
-        if (fade.fadeInNext.exchange(false)) {
-            const int len = std::min(n, std::max(1, frequency / 100));
-            scaleSamples(buffer, format, channels, n, 0, len, [len](int i) { return float(i) / len; });
-        }
-        return;
-    }
     const int dir = fade.direction;
-    // The seeked producer starts exactly at the target; frames still on the way from before are elsewhere
-    const bool arrived = target >= 0 && (dir > 0 ? pos >= target && pos <= target + 2 : pos <= target && pos >= target - 2);
-    if (hold) { // dragging: silent; reaching the target only ends the waiting (release() fades in)
-        if (arrived) {
-            int expected = target;
-            fade.target.compare_exchange_strong(expected, -1);
-        }
-    } else if (arrived || ++fade.waited > 12) {
-        const int len = std::min(n, std::max(1, frequency / 100));
-        scaleSamples(buffer, format, channels, n, 0, len, [len](int i) { return float(i) / len; });
-        int expected = target;
-        fade.target.compare_exchange_strong(expected, -1);
+    const bool restart = fade.restart.exchange(false);
+    if (dir == 0 || n <= 1 || channels <= 0) { // shuttling: untouched; afterwards play() starts anew
+        fade.lastPos = -1;
         return;
     }
-    int from = 0;
-    if (!fade.fadedOut.exchange(true)) {
-        from = std::min(n, std::max(1, frequency / 200));
-        scaleSamples(buffer, format, channels, n, 0, from, [from](int i) { return 1.f - float(i + 1) / from; });
+    const auto at = [&](int i, int c) -> size_t {
+        return format == mlt_audio_s32 || format == mlt_audio_float ? size_t(c) * n + i : size_t(i) * channels + c;
+    };
+    const auto get = [&](int i, int c) -> float {
+        switch (format) {
+        case mlt_audio_s16: return static_cast<const int16_t*>(buffer)[at(i, c)] / 32768.f;
+        case mlt_audio_s32le:
+        case mlt_audio_s32: return static_cast<const int32_t*>(buffer)[at(i, c)] / 2147483648.f;
+        case mlt_audio_f32le:
+        case mlt_audio_float: return static_cast<const float*>(buffer)[at(i, c)];
+        default: return 0.f;
+        }
+    };
+    const auto set = [&](int i, int c, float v) {
+        switch (format) {
+        case mlt_audio_s16: static_cast<int16_t*>(buffer)[at(i, c)] = int16_t(std::clamp(v * 32768.f, -32768.f, 32767.f)); break;
+        case mlt_audio_s32le:
+        case mlt_audio_s32:
+            static_cast<int32_t*>(buffer)[at(i, c)] = int32_t(std::clamp(double(v) * 2147483648.0, -2147483648.0, 2147483647.0));
+            break;
+        case mlt_audio_f32le:
+        case mlt_audio_float: static_cast<float*>(buffer)[at(i, c)] = v; break;
+        default: break;
+        }
+    };
+    if (format != mlt_audio_s16 && format != mlt_audio_s32le && format != mlt_audio_s32 && format != mlt_audio_f32le
+        && format != mlt_audio_float)
+        return;
+
+    const int hold = std::clamp(frequency / 200, 1, n - 1); // held back: 5 ms
+    if (restart || channels != fade.tailChannels || fade.tail.size() != size_t(hold) * channels) {
+        fade.tail.assign(size_t(hold) * channels, 0.f);
+        fade.tailChannels = channels;
+        fade.silent = true;
     }
-    scaleSamples(buffer, format, channels, n, from, n, [](int) { return 0.f; });
+    const int seeks = fade.seeks;
+    const bool jump = !restart && fade.lastPos >= 0 && (pos != fade.lastPos + dir || seeks != fade.seenSeeks);
+    fade.lastPos = pos;
+    fade.seenSeeks = seeks;
+    const bool silentNow = fade.hold;
+    const bool fadeOut = !fade.silent && (jump || silentNow);
+    const bool fadeIn = !silentNow && (fade.silent || jump);
+    const int inLen = std::clamp(frequency / 100, 1, n - hold); // 10 ms, ends before the next tail
+
+    std::vector<float> next(size_t(hold) * channels);
+    for (int c = 0; c < channels; ++c) {
+        for (int i = 0; i < hold; ++i) next[size_t(i) * channels + c] = get(n - hold + i, c);
+        // shift the chunk back by `hold` (from the end, in place), the held-back tail goes in front
+        for (int i = n - 1; i >= hold; --i) {
+            float v = get(i - hold, c);
+            if (silentNow) v = 0.f;
+            else if (fadeIn && i - hold < inLen) v *= float(i - hold) / inLen;
+            set(i, c, v);
+        }
+        for (int i = 0; i < hold; ++i) {
+            float v = fade.tail[size_t(i) * channels + c];
+            if (fade.silent) v = 0.f;
+            else if (fadeOut) v *= 1.f - float(i + 1) / hold;
+            set(i, c, v);
+        }
+    }
+    fade.tail = std::move(next);
+    fade.silent = silentNow;
 }
 
 // Level meter (passive): remembers the peak level of the last processed audio per channel in dBFS as

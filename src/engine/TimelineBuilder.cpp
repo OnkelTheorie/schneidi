@@ -294,6 +294,54 @@ bool TimelineBuilder::applyMixer(const Timeline& tl, MixerHooks& hooks)
     return true;
 }
 
+bool TimelineBuilder::mixerOnlyChange(const Timeline& before, const Timeline& after)
+{
+    if (before.audio.size() != after.audio.size() || before.video.size() != after.video.size()) return false;
+    // Contents of the compound clips used (not part of Timeline::operator==). `nested` holds every sequence, the
+    // open one too – its own mixer change must not count
+    if (before.nested != after.nested) {
+        QSet<int> used;
+        QVector<const Timeline*> todo{&after};
+        while (!todo.isEmpty()) {
+            const Timeline* t = todo.takeLast();
+            for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+                for (const Track& tr : t->tracks(k))
+                    for (const Clip& c : tr.clips) {
+                        if (!c.isNested() || used.contains(c.sequenceId)) continue;
+                        used.insert(c.sequenceId);
+                        if (!after.nested || !before.nested) return false;
+                        const auto a = after.nested->constFind(c.sequenceId), b = before.nested->constFind(c.sequenceId);
+                        if (a == after.nested->cend() || b == before.nested->cend() || !(*a == *b) || a->angles != b->angles)
+                            return false;
+                        todo << &*a;
+                    }
+        }
+    }
+    Timeline t = before;
+    for (int i = 0; i < t.audio.size(); ++i) {
+        Track& a = t.audio[i];
+        const Track& b = after.audio[i];
+        a.muted = b.muted;
+        a.solo = b.solo;
+        a.volumeDb = b.volumeDb;
+        a.pan = b.pan;
+        a.eq = b.eq;
+        a.dynamics = b.dynamics;
+    }
+    for (QVector<Track>* tracks : {&t.video, &t.audio}) {
+        const QVector<Track>& from = tracks == &t.video ? after.video : after.audio;
+        for (int i = 0; i < tracks->size(); ++i) {
+            (*tracks)[i].name = from[i].name;
+            (*tracks)[i].color = from[i].color;
+            (*tracks)[i].locked = from[i].locked;
+        }
+    }
+    t.masterVolumeDb = after.masterVolumeDb;
+    t.masterLimiter = after.masterLimiter;
+    t.masterLimiterDb = after.masterLimiterDb;
+    return t == after;
+}
+
 std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHooks* hooks)
 {
     if (hooks) *hooks = {};
@@ -303,9 +351,17 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::build(const Timeline& tl, MixerHo
     m_nestedCache.clear();
     m_nested = tl.nested;
     struct BypassScope { // Color correction filters get the switch of this builder
-        explicit BypassScope(std::shared_ptr<std::atomic<bool>> f) { t_gradeBypass = std::move(f); }
-        ~BypassScope() { t_gradeBypass.reset(); }
-    } bypassScope(m_gradeBypass);
+        BypassScope(std::shared_ptr<std::atomic<bool>> f, bool live)
+        {
+            t_gradeBypass = std::move(f);
+            t_liveValues = live;
+        }
+        ~BypassScope()
+        {
+            t_gradeBypass.reset();
+            t_liveValues = false;
+        }
+    } bypassScope(m_gradeBypass, hooks != nullptr);
     prefetch(tl);
     if (cancelled()) {
         m_opened.clear();

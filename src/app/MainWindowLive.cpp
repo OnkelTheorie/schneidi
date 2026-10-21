@@ -17,11 +17,13 @@ int MainWindow::livePlayhead() const { return m_timeline->view()->playhead(); }
 
 bool MainWindow::livePlaying() const { return m_engine->timelinePositions() && m_engine->speed() != 0.0; }
 
+// Like a click into the ruler: playback keeps running with the seek fade. Pause + play reopened the audio
+// device on every seek (gap + click), and quick seeks did not count as dragging.
 void MainWindow::liveSeek(int frame)
 {
-    const bool playing = livePlaying();
-    jumpToFrame(frame);
-    if (playing) m_engine->play();
+    if (frame < 0) return;
+    if (livePlaying()) m_engine->seek(frame);
+    else jumpToFrame(frame);
 }
 
 void MainWindow::livePlay(bool play)

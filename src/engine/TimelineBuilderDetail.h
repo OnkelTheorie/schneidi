@@ -25,6 +25,9 @@ namespace TimelineBuilderDetail {
 
 // Before/after switch of the builder that is currently building (preview only), see TimelineBuilder::setGradeBypass
 extern thread_local std::shared_ptr<std::atomic<bool>> t_gradeBypass;
+// Building for the preview (build() with hooks): clip volume filters also at 0 dB, so that a volume change in the
+// Inspector/by the AI is only a value change (LiveUpdate) – adding a filter meant a rebuild = audio device reopened
+extern thread_local bool t_liveValues;
 
 // ---- Clip (TimelineBuilderClip.cpp) ----
 

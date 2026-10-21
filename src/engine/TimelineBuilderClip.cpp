@@ -188,6 +188,7 @@ void applyBlur(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, int a, 
 
 // Before/After switch of the currently building builder (preview only), see TimelineBuilder::setGradeBypass
 thread_local std::shared_ptr<std::atomic<bool>> t_gradeBypass;
+thread_local bool t_liveValues = false;
 
 // Generic effect: parameters straight onto the MLT filter of the descriptor
 void applyGeneric(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, const EffectInstance& inst,

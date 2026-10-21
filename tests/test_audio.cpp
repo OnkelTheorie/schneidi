@@ -284,8 +284,9 @@ int main(int argc, char** argv)
             if (!CHECK(faded - base == 960)) std::printf("       mit Einblenden: %ld (ohne %ld)\n", faded, base);
         }
     }
-    // Seek while playing (SeekFade at the master meter): the old sound still coming fades out and stays silent,
-    // the target fades in from 0 (no step in the wave = no click); other frames stay untouched
+    // Seek while playing (SeekFade at the master meter): every chunk comes out 5 ms late (its end with the next
+    // chunk); at a jump in the positions the held-back old sound fades out and the new one fades in – a dip, no step
+    // in the wave (click); continuous playback stays sample-exact
     {
         Timeline tl;
         tl.video.resize(1);
@@ -298,6 +299,7 @@ int main(int argc, char** argv)
         SeekFade fade;
         if (CHECK(hooks.master.meter)) hooks.master.meter->set("_seek_fade", &fade, 0);
         const auto frameAudio = [&](int pos) {
+            tr->seek(pos);
             std::unique_ptr<Mlt::Frame> f(tr->get_frame());
             mlt_audio_format af = mlt_audio_float;
             int freq = 48000, channels = 2;
@@ -310,35 +312,48 @@ int main(int argc, char** argv)
             for (size_t i = from; i < std::min(to, v.size()); ++i) p = std::max(p, std::abs(v[i]));
             return p;
         };
-        tr->seek(60);
-        CHECK(peakOf(frameAudio(60), 0, 1920) > 0.45f); // untouched
-        fade.start(70, 1.0);
-        const std::vector<float> stale = frameAudio(61); // still the old position
-        CHECK(stale.size() == 1920 && peakOf(stale, 0, 10) > 0.05f && peakOf(stale, 240, 1920) == 0.f);
-        CHECK(peakOf(frameAudio(62), 0, 1920) == 0.f);
-        tr->seek(70);
+        // largest step between neighbouring samples (a 440-Hz sine at 0.5 moves < 0.029 per sample)
+        const auto maxStep = [](const std::vector<float>& v) {
+            float m = 0.f;
+            for (size_t i = 1; i < v.size(); ++i) m = std::max(m, std::abs(v[i] - v[i - 1]));
+            return m;
+        };
+        const auto join = [](std::vector<float> a, const std::vector<float>& b) {
+            a.insert(a.end(), b.begin(), b.end());
+            return a;
+        };
+        fade.play(1.0); // playback starts at 60: silent 5 ms, then fade-in
+        const std::vector<float> start = frameAudio(60);
+        CHECK(start.size() == 1920 && peakOf(start, 0, 240) == 0.f && peakOf(start, 240, 245) < 0.01f
+              && peakOf(start, 720, 1920) > 0.45f);
+        const std::vector<float> a61 = frameAudio(61), a62 = frameAudio(62);
+        CHECK(peakOf(a61, 0, 1920) > 0.45f && peakOf(a62, 0, 1920) > 0.45f);
+        CHECK(maxStep(join(join(start, a61), a62)) < 0.04f); // continuous playback: no step
+        // Jump 62 -> 70: old sound fades out, new one fades in
         const std::vector<float> in = frameAudio(70);
-        CHECK(in.size() == 1920 && peakOf(in, 0, 5) < 0.01f && peakOf(in, 480, 1920) > 0.45f);
-        CHECK_EQ(fade.target.load(), -1);
+        CHECK(in.size() == 1920 && peakOf(in, 0, 60) > 0.05f && peakOf(in, 236, 246) < 0.01f
+              && peakOf(in, 720, 1920) > 0.45f);
+        if (!CHECK(maxStep(join(a62, in)) < 0.04f)) std::printf("       Sprung: Stufe %.3f\n", maxStep(join(a62, in)));
         CHECK(peakOf(frameAudio(71), 0, 1920) > 0.45f);
-        // Playback starts: fade-in at the start frame only
-        tr->seek(80);
-        fade.fadeIn(80, 1.0);
-        const std::vector<float> start = frameAudio(80);
-        CHECK(start.size() == 1920 && peakOf(start, 0, 5) < 0.01f && peakOf(start, 480, 1920) > 0.45f);
-        CHECK_EQ(fade.target.load(), -1);
-        // Dragging the playhead (seeks in quick succession): silent even at the target until release(), then the
-        // next sound fades in
-        fade.start(90, 1.0);
+        // A seek the positions do not show (race with the read-ahead): the engine's seek counter still fades
+        ++fade.seeks;
+        const std::vector<float> raced = frameAudio(72);
+        CHECK(peakOf(raced, 236, 246) < 0.01f && peakOf(raced, 720, 1920) > 0.45f);
+        // Dragging the playhead (seeks in quick succession): silent until release(), then the next sound fades in
         fade.hold = true;
-        tr->seek(90);
-        CHECK(peakOf(frameAudio(90), 240, 1920) == 0.f);
-        CHECK_EQ(fade.target.load(), -1);
-        CHECK(peakOf(frameAudio(91), 0, 1920) == 0.f);
+        const std::vector<float> d90 = frameAudio(90);
+        CHECK(peakOf(d90, 0, 60) > 0.05f && peakOf(d90, 240, 1920) == 0.f && maxStep(d90) < 0.04f);
+        CHECK(peakOf(frameAudio(95), 0, 1920) == 0.f);
+        CHECK(peakOf(frameAudio(96), 0, 1920) == 0.f);
         fade.release();
-        const std::vector<float> resumed = frameAudio(92);
-        CHECK(resumed.size() == 1920 && peakOf(resumed, 0, 5) < 0.01f && peakOf(resumed, 480, 1920) > 0.45f);
-        CHECK(peakOf(frameAudio(93), 0, 1920) > 0.45f);
+        const std::vector<float> resumed = frameAudio(97);
+        CHECK(resumed.size() == 1920 && peakOf(resumed, 0, 245) < 0.01f && peakOf(resumed, 720, 1920) > 0.45f
+              && maxStep(resumed) < 0.04f);
+        CHECK(peakOf(frameAudio(98), 0, 1920) > 0.45f);
+        // Shuttling (other speed): untouched
+        fade.play(2.0);
+        const std::vector<float> fast = frameAudio(20);
+        CHECK(fast.size() == 1920 && peakOf(fast, 0, 60) > 0.05f);
     }
     return Check::result();
 }

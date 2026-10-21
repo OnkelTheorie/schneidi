@@ -316,7 +316,7 @@ QImage Engine::grabStill(const Timeline& tl)
 
 void Engine::updateTimeline(const Timeline& tl)
 {
-    const bool mixerOnly = std::exchange(m_mixerOnlyNext, false);
+    const bool mixerOnly = std::exchange(m_mixerOnlyNext, false) || TimelineBuilder::mixerOnlyChange(m_built, tl);
     {
         std::lock_guard<std::mutex> lock(m_mixerMutex);
         if (mixerOnly && m_timeline && m_mixer && TimelineBuilder::applyMixer(tl, *m_mixer)) {
@@ -353,6 +353,7 @@ void Engine::updateTimeline(const Timeline& tl)
         m_mixer = std::move(hooks);
         m_timeline = std::move(tractor);
     }
+    m_seekFade->restart = true; // the sound starts anew (device reopened): fade in
     if (active && m_consumer) connectProducer(m_timeline.get(), pos);
 }
 
@@ -558,8 +559,8 @@ void Engine::setSpeed(double speed)
             applyAudioState();
             m_consumer->start();
         }
-    } else if (!wasPlaying && m_mode == Mode::Timeline) {
-        m_seekFade->fadeIn(m_position, speed);
+    } else if (m_mode == Mode::Timeline && (!wasPlaying || speed != m_seekFade->direction)) {
+        m_seekFade->play(speed);
     }
     applyAudioState();
     refresh();
@@ -577,19 +578,19 @@ void Engine::seek(int frame)
     ++m_seekEpoch;
     m_seekSkipped = 0;
     m_seekTarget = playing ? at : -1;
-    if (playing && m_mode == Mode::Timeline) {
-        m_seekFade->start(frame, m_speed);
-        // The next seek within moments: the playhead is being dragged -> silent until it rests (each seek's own
-        // fade-in crackled)
+    const bool timelinePlaying = playing && m_mode == Mode::Timeline;
+    if (timelinePlaying) {
+        // The master meter fades at the jump by itself (SeekFade). The next seek within moments: the playhead is
+        // being dragged -> silent until it rests (each seek's own fade-in crackled)
         if (m_lastSeek.isValid() && m_lastSeek.elapsed() < 150) {
             m_seekFade->hold = true;
             m_seekRelease->start();
         }
     } else {
-        m_seekFade->target = -1;
         m_seekFade->release();
     }
     m_lastSeek.start();
+    if (timelinePlaying) ++m_seekFade->seeks;
     m_current->seek(at);
     m_consumer->purge();
     m_position = frame;
