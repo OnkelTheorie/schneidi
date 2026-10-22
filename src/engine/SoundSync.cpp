@@ -2,6 +2,8 @@
 
 #include "core/ProjectFormat.h"
 #include "engine/Profiles.h"
+#include "engine/audio/Path.h"
+#include "engine/audio/Reader.h"
 
 #include <Mlt.h>
 #include <QFileInfo>
@@ -25,11 +27,43 @@ std::unique_ptr<Mlt::Profile> decodeProfile()
     return makeProfile(f);
 }
 
+// Own engine: the stream from the picture's first frame (position 0, as MLT counts) to its end, channels averaged.
+// At 48 kHz like the material mostly is (MLT handed out the file's own rate; resampling to 16 kHz would cut the
+// envelope's top band).
+std::optional<std::vector<float>> envelopeOwn(const QString& path, int stream, const Progress& progress)
+{
+    constexpr int kRate = 48000;
+    const auto reader = Audio::Reader::open(path, stream, Audio::Reader::Options{kRate, 0});
+    if (!reader) return std::nullopt;
+    const int64_t end = reader->info().end;
+    if (end <= 0) return std::nullopt;
+    const int channels = reader->channels() > 0 ? reader->channels() : reader->info().sourceChannels;
+    if (channels <= 0) return std::nullopt;
+    constexpr int kChunk = kRate / kChunksPerSecond;
+    std::vector<float> buf(size_t(kChunk) * size_t(channels)), mono(kChunk);
+    std::vector<float*> out(static_cast<size_t>(channels));
+    for (int c = 0; c < channels; ++c) out[size_t(c)] = buf.data() + size_t(c) * kChunk;
+    AudioSync::Envelope env(kRate);
+    for (int64_t pos = 0; pos < end; pos += kChunk) {
+        if (progress && (pos / kChunk) % 50 == 0 && !progress(double(pos) / double(end))) return std::nullopt;
+        const int n = int(std::min<int64_t>(kChunk, end - pos));
+        reader->read(pos, n, out.data());
+        std::fill(mono.begin(), mono.begin() + n, 0.f);
+        for (int c = 0; c < channels; ++c)
+            for (int i = 0; i < n; ++i) mono[size_t(i)] += out[size_t(c)][i];
+        for (int i = 0; i < n; ++i) mono[size_t(i)] /= float(channels);
+        env.add(mono.data(), n);
+    }
+    if (progress && !progress(1.0)) return std::nullopt;
+    return env.take();
+}
+
 } // namespace
 
 std::optional<std::vector<float>> fileEnvelope(const QString& path, int stream, const Progress& progress)
 {
     if (stream < 0 || !QFileInfo(path).isFile()) return std::nullopt;
+    if (Audio::ownPath()) return envelopeOwn(path, stream, progress);
     const auto profile = decodeProfile();
     Mlt::Producer p(*profile, path.toUtf8().constData());
     if (!p.is_valid() || p.get_int("audio_index") < 0) return std::nullopt;

@@ -35,6 +35,8 @@ public:
         // gain and pan curves reach a frame's value at its end and start constant in every excerpt, sub-frame clips
         // are cut at the clip end, latency is not compensated, frame boundaries use MLT's float frame rate.
         bool mltCompat = false;
+        // Short ramps at hard cuts against clicks; off to measure the plain source of a clip (analyses)
+        bool declick = true;
     };
 
     Mixer(const Timeline& timeline, FrameRate fps, const Options& options);

@@ -86,6 +86,8 @@ schneidi_test(test_av_sync)
 schneidi_test(test_audio_reader)
 schneidi_test(test_audio_mixer)
 schneidi_test(test_export_audio)
+schneidi_test(test_audio_analysis)
+target_compile_definitions(test_audio_analysis PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 target_compile_definitions(test_export_audio PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 target_compile_definitions(test_audio_mixer PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 set_tests_properties(test_av_sync PROPERTIES RUN_SERIAL TRUE) # preview timing
@@ -121,10 +123,11 @@ foreach(name test_stabilize_denoise test_retime test_effects_render test_cli tes
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
 endforeach()
 
-# Own audio engine (docs/plan-0.10-ton.md): export tests a second time with the sound from Audio::Mixer instead of
-# MLT (the default until the switch-over); known MLT errors become strict checks there
+# Own audio engine (docs/plan-0.10-ton.md): export and analysis tests a second time with the sound from Audio::Mixer
+# instead of MLT (the default until the switch-over); known MLT errors become strict checks there
 foreach(name test_av_sync test_audio_regression test_export_formats test_audio_streams test_export_opus test_cli
-             test_multicam_render test_render_queue)
+             test_multicam_render test_render_queue test_loudness test_ducking test_audio_sync test_dynamics_eq
+             test_multicam_cli)
     add_test(NAME ${name}_own_audio COMMAND ${name})
     set_tests_properties(${name}_own_audio PROPERTIES
         SKIP_RETURN_CODE 77

@@ -1,6 +1,8 @@
 #pragma once
 // Audio analysis for "Normalize audio levels" (like DaVinci Normalize Audio Levels):
-// peak level (Sample Peak Program) or loudness per ITU-R BS.1770-4 (LUFS)
+// peak level (Sample Peak Program) or loudness per ITU-R BS.1770-4 (LUFS), plus frame peaks for silence detection
+// and ducking. The sound comes from the own audio engine (Audio::Mixer, the same mix as the export) or, as long as
+// it is the chosen path (Audio::ownPath), through MLT.
 
 #include "core/Ducking.h"
 #include "core/ProjectFormat.h"
@@ -57,8 +59,9 @@ std::optional<ClipLevels> measureClips(const ProjectFormat& format, const Timeli
 std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Timeline& timeline, int from, int to,
                                          const std::function<bool(double)>& progress = {});
 
-// The same for measuring one timeline several times (fader changes): keeps the opened files between the
-// measurements (opening the producers of an edit with speed ramps takes seconds)
+// The same for measuring one timeline several times (fader changes). MLT audio path: keeps the opened files between
+// the measurements (opening the producers of an edit with speed ramps takes seconds); the own engine opens a file in
+// about a millisecond and mixes each measurement afresh.
 class MixMeter {
 public:
     explicit MixMeter(const ProjectFormat& format);
@@ -67,7 +70,8 @@ public:
                                     const std::function<bool(double)>& progress = {});
 
 private:
-    std::unique_ptr<Mlt::Profile> m_profile;
+    ProjectFormat m_format;
+    std::unique_ptr<Mlt::Profile> m_profile; // MLT audio path only, made on first use
     std::unique_ptr<TimelineBuilder> m_builder;
 };
 

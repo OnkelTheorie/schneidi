@@ -345,12 +345,12 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
             const Excerpt& e = atStart ? excerpts.first() : excerpts.last();
             return !e.span && (atStart ? e.from == c.start : e.to == c.end()) ? &e : nullptr;
         };
-        if (c.fadeIn <= 0 && (ci == 0 || !continues(track.clips[ci - 1], c)))
+        if (opt.declick && c.fadeIn <= 0 && (ci == 0 || !continues(track.clips[ci - 1], c)))
             if (edge(true)) {
                 v.declickIn = clock.start(c.start);
                 v.declickInLen = int(std::min(ramp, clock.start(c.start + 1) - v.declickIn));
             }
-        if (c.fadeOut <= 0 && (ci + 1 == track.clips.size() || !continues(c, track.clips[ci + 1])))
+        if (opt.declick && c.fadeOut <= 0 && (ci + 1 == track.clips.size() || !continues(c, track.clips[ci + 1])))
             if (edge(false)) {
                 v.declickOut = clock.start(c.end());
                 v.declickOutLen = int(std::min(ramp, v.declickOut - clock.start(c.end() - 1)));

@@ -3,6 +3,8 @@
 
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
+#include "engine/audio/Path.h"
+#include "engine/audio/Reader.h"
 
 #include <Mlt.h>
 #include <QCryptographicHash>
@@ -17,8 +19,10 @@
 #include <QStandardPaths>
 #include <QThread>
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 
 namespace {
 
@@ -43,11 +47,13 @@ QVector<QVector<quint8>> buildLevels(QVector<quint8> base)
 }
 
 // Disk cache for waveforms: key from path, size and modification time
-QString waveCacheFile(const QString& path, int stream, const FrameRate& rate)
+QString waveCacheFile(const QString& path, int stream, const FrameRate& rate, bool own)
 {
     const QFileInfo fi(path);
-    // further streams with a suffix so that existing waveforms (stream 0) stay valid
-    const QString id = (stream > 0 ? QString("s%1|").arg(stream) : QString()) + QString("%1|%2|%3|%4|%5")
+    // further streams with a suffix so that existing waveforms (stream 0) stay valid; the own audio engine places
+    // some files' sound differently than MLT (sound stream later than the picture, 44.1 kHz) -> own entries
+    const QString id = (own ? QStringLiteral("own|") : QString()) + (stream > 0 ? QString("s%1|").arg(stream) : QString())
+                       + QString("%1|%2|%3|%4|%5")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())
@@ -398,9 +404,7 @@ void MediaCache::waveLoop()
             gen = m_generation;
         }
         // Waveform counts frames in the project frame rate
-        const std::unique_ptr<Mlt::Profile> profile = makeProfile(format);
-        const double fps = profile->fps();
-
+        const bool own = Audio::ownPath();
         auto publish = [&](std::shared_ptr<const Waveform> w) {
             {
                 QMutexLocker lock(&m_mutex);
@@ -410,7 +414,7 @@ void MediaCache::waveLoop()
             emit updated();
         };
 
-        const QString cacheFile = waveCacheFile(path, stream, format.rate);
+        const QString cacheFile = waveCacheFile(path, stream, format.rate, own);
         {
             auto w = std::make_shared<Waveform>();
             if (loadWave(cacheFile, *w)) {
@@ -419,9 +423,74 @@ void MediaCache::waveLoop()
             }
         }
 
-        Mlt::Producer p(*profile, path.toUtf8().constData());
-        if (p.is_valid()) selectAudioStream(p, stream);
-        const int length = p.is_valid() ? p.get_length() : 0;
+        // Peaks of frame i: fills peaks[0..N) with 0..255; false = no sound for it
+        int length = 0;
+        std::function<bool(int, quint8*)> framePeaks;
+        // Own engine: the stream as the mixer reads it (stereo, 48 kHz), frame i = samples of timeline frame i
+        std::unique_ptr<Audio::Reader> reader;
+        std::vector<float> buf[2];
+        int64_t bufFrom = 0, bufTo = 0;
+        // MLT audio path
+        std::unique_ptr<Mlt::Profile> profile;
+        std::unique_ptr<Mlt::Producer> producer;
+        if (own) {
+            constexpr int kRate = 48000;
+            reader = Audio::Reader::open(path, stream, Audio::Reader::Options{kRate, 2});
+            const FrameRate fps = format.rate;
+            const auto frameStart = [fps](int64_t f) {
+                const int64_t n = f * kRate * fps.den;
+                return (2 * n + fps.num) / (2 * int64_t(fps.num)); // = Audio::Mixer::frameStart (f >= 0)
+            };
+            if (reader)
+                length = int(std::ceil(double(std::max<int64_t>(0, reader->info().end)) * fps.num / (double(kRate) * fps.den)));
+            framePeaks = [&, frameStart](int i, quint8* peaks) {
+                const int64_t a = frameStart(i), b = frameStart(i + 1);
+                if (b > bufTo) { // read about a second ahead
+                    bufFrom = a;
+                    bufTo = std::max(b, frameStart(i + 25));
+                    float* out[2];
+                    for (int c = 0; c < 2; ++c) {
+                        buf[c].resize(size_t(bufTo - bufFrom));
+                        out[c] = buf[c].data();
+                    }
+                    reader->read(bufFrom, int(bufTo - bufFrom), out);
+                }
+                const int samples = int(b - a);
+                for (int k = 0; k < N; ++k) {
+                    const int s0 = samples * k / N, s1 = samples * (k + 1) / N;
+                    float peak = 0.f;
+                    for (int c = 0; c < 2; ++c)
+                        for (int s = s0; s < s1; ++s) peak = std::max(peak, std::abs(buf[c][size_t(a - bufFrom + s)]));
+                    peaks[k] = quint8(std::min(255, int(std::min(peak, 1.f) * 32767.f) >> 7)); // as the s16 path
+                }
+                return true;
+            };
+        } else {
+            profile = makeProfile(format);
+            const double fps = profile->fps();
+            producer = std::make_unique<Mlt::Producer>(*profile, path.toUtf8().constData());
+            if (producer->is_valid()) selectAudioStream(*producer, stream);
+            length = producer->is_valid() ? producer->get_length() : 0;
+            framePeaks = [&, fps](int i, quint8* peaks) {
+                Mlt::Producer& p = *producer;
+                p.seek(i);
+                std::unique_ptr<Mlt::Frame> f(p.get_frame());
+                if (!f) return false;
+                // Only fetch audio – without get_image the video is not decoded at all
+                mlt_audio_format fmt = mlt_audio_s16;
+                int freq = 48000, channels = 2;
+                int samples = mlt_audio_calculate_frame_samples(float(fps), freq, i);
+                const auto* pcm = static_cast<const int16_t*>(f->get_audio(fmt, freq, channels, samples));
+                if (!pcm || samples <= 0 || channels <= 0) return false;
+                for (int b = 0; b < N; ++b) {
+                    const int s0 = samples * b / N, s1 = samples * (b + 1) / N;
+                    int peak = 0;
+                    for (int s = s0 * channels; s < s1 * channels; ++s) peak = std::max(peak, std::abs(int(pcm[s])));
+                    peaks[b] = quint8(std::min(255, peak >> 7));
+                }
+                return true;
+            };
+        }
         if (length <= 0) {
             auto w = std::make_shared<Waveform>();
             w->complete = true;
@@ -441,21 +510,7 @@ void MediaCache::waveLoop()
                     break;
                 }
             }
-            p.seek(i);
-            std::unique_ptr<Mlt::Frame> f(p.get_frame());
-            if (!f) continue;
-            // Only fetch audio – without get_image the video is not decoded at all
-            mlt_audio_format fmt = mlt_audio_s16;
-            int freq = 48000, channels = 2;
-            int samples = mlt_audio_calculate_frame_samples(float(fps), freq, i);
-            const auto* pcm = static_cast<const int16_t*>(f->get_audio(fmt, freq, channels, samples));
-            if (!pcm || samples <= 0 || channels <= 0) continue;
-            for (int b = 0; b < N; ++b) {
-                const int s0 = samples * b / N, s1 = samples * (b + 1) / N;
-                int peak = 0;
-                for (int s = s0 * channels; s < s1 * channels; ++s) peak = std::max(peak, std::abs(int(pcm[s])));
-                base[i * N + b] = quint8(std::min(255, peak >> 7));
-            }
+            if (!framePeaks(i, base.data() + i * N)) continue;
 
             // Show intermediate states so that long files do not stay empty forever
             if (sincePublish.elapsed() > 700) {
