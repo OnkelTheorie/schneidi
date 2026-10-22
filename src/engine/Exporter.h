@@ -2,6 +2,7 @@
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
 
+#include <QHash>
 #include <QObject>
 #include <QProcess>
 #include <QTimer>
@@ -14,6 +15,7 @@ class Consumer;
 class Event;
 class Tractor;
 class Producer;
+class Filter;
 } // namespace Mlt
 class TimelineBuilder;
 class QThread;
@@ -46,6 +48,12 @@ struct ExportSettings {
     QString subtitlePath;       // additionally write the visible subtitle track as SRT here (empty = not)
     int from = 0, to = -1; // range (frames, inclusive); to < 0 = until the end of the timeline
     int threads = 0;       // threads (logical processors) for rendering (images in parallel, decoder, encoder); 0 = all
+    // Sound from the own audio engine (engine/MixedSound) or through MLT; Default = Audio::ownPath()
+    enum class AudioPath { Default, Mlt, Own };
+    AudioPath audioPath = AudioPath::Default;
+    // Length of each media file in frames of the project rate (Project::media()), for the own audio engine: reversed
+    // clips and transition handles mirror/stop at the length the project knows. Missing = taken from the file.
+    QHash<QString, int> mediaLengths;
 };
 
 // Renders the timeline into a file. Own producer instances,
@@ -118,6 +126,7 @@ private:
         std::unique_ptr<Mlt::Tractor> tractor;
         std::unique_ptr<Mlt::Profile> outProfile;
         std::unique_ptr<Mlt::Producer> source;
+        std::unique_ptr<Mlt::Filter> sound; // own audio engine on source (engine/MixedSound)
         int length = 0;
         QString error;
     };
@@ -132,6 +141,7 @@ private:
     // Otherwise m_source points to m_tractor.
     std::unique_ptr<Mlt::Profile> m_outProfile;
     std::unique_ptr<Mlt::Producer> m_source;
+    std::unique_ptr<Mlt::Filter> m_sound; // own audio engine attached to m_source
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<Mlt::Event> m_stoppedEvent;
     std::unique_ptr<Mlt::Event> m_fatalEvent;
@@ -141,6 +151,8 @@ private:
     QString m_target;                  // file the user asked for (differs from m_path for GIF/image sequences)
     ExportSettings m_settings;
     bool m_convertRate = false;
+    bool m_ownAudio = false;  // sound from engine/MixedSound
+    QString m_sampleFormat;   // own audio: FFmpeg sample format of the audio encoder
     int m_threads = 0, m_frames = 1;
     QString m_usedCodec, m_note;
     std::atomic<bool> m_threadDone{false}; // encoder thread has ended ("consumer-stopped")

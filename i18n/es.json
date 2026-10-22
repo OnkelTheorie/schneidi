@@ -128,6 +128,7 @@
  "Audio-Ausgabe": "Salida de audio",
  "Audio-Bitrate": "Tasa de bits de audio",
  "Audio-Bittiefe": "Profundidad de bits de audio",
+ "Audio-Encoder %1 nicht verfügbar.": "El codificador de audio %1 no está disponible.",
  "Audio-Zielspur A%1": "Destino de audio A%1",
  "Audioclips": "Clips de audio",
  "Audiopegel normalisieren": "Normalizar niveles de audio",

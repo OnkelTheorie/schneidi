@@ -128,6 +128,7 @@
  "Audio-Ausgabe": "Audio Output",
  "Audio-Bitrate": "Audio Bit Rate",
  "Audio-Bittiefe": "Audio Bit Depth",
+ "Audio-Encoder %1 nicht verfügbar.": "Audio encoder %1 is not available.",
  "Audio-Zielspur A%1": "Audio Destination A%1",
  "Audioclips": "Audio clips",
  "Audiopegel normalisieren": "Normalize Audio Levels",

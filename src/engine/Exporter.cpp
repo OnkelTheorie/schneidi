@@ -7,11 +7,13 @@
 #include "core/TimelineOps.h"
 #include "engine/Bundle.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/MixedSound.h"
 #include "engine/OutputColor.h"
 #include "engine/Profiles.h"
 #include "engine/RateConverter.h"
 #include "engine/Stabilizer.h"
 #include "engine/TimelineBuilder.h"
+#include "engine/audio/Path.h"
 
 #include <Mlt.h>
 #include <QDir>
@@ -25,6 +27,11 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <optional>
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
 
 namespace {
 std::atomic<int> g_running{0}; // running exports (m_timer runs exactly then)
@@ -58,6 +65,46 @@ bool usesFrei0r(const Timeline& tl)
                 if (e.enabled && d && d->mltService.startsWith("frei0r.")) return true;
             }
     return false;
+}
+
+// The sample format MLT's avformat consumer gives the audio encoder (pick_sample_fmt): the wanted one if the codec
+// takes it, otherwise the codec's first; empty = unknown codec
+QString encoderSampleFormat(const QString& codecName, const QString& wanted)
+{
+    const AVCodec* codec = avcodec_find_encoder_by_name(codecName.toUtf8().constData());
+    if (!codec) return {};
+    const AVSampleFormat* formats = nullptr;
+    int count = 0;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+    const void* list = nullptr;
+    if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, &list, &count) < 0) count = 0;
+    formats = static_cast<const AVSampleFormat*>(list);
+#else
+    formats = codec->sample_fmts;
+    while (formats && formats[count] != AV_SAMPLE_FMT_NONE) ++count;
+#endif
+    const AVSampleFormat want = wanted.isEmpty() ? AV_SAMPLE_FMT_S16 : av_get_sample_fmt(wanted.toUtf8().constData());
+    for (int i = 0; i < count; ++i)
+        if (formats[i] == want) return QString::fromLatin1(av_get_sample_fmt_name(want));
+    for (int i = 0; i < count; ++i)
+        switch (formats[i]) {
+        case AV_SAMPLE_FMT_U8: case AV_SAMPLE_FMT_S16: case AV_SAMPLE_FMT_S32: case AV_SAMPLE_FMT_FLT:
+        case AV_SAMPLE_FMT_U8P: case AV_SAMPLE_FMT_S16P: case AV_SAMPLE_FMT_S32P: case AV_SAMPLE_FMT_FLTP:
+            return QString::fromLatin1(av_get_sample_fmt_name(formats[i]));
+        default: break;
+        }
+    return {};
+}
+
+// Bits the file keeps of an integer sample format (MixedSound rounds to them); 0 = float or the full format
+int fileBits(const QString& codec, const QString& sampleFormat)
+{
+    if (codec.startsWith("pcm_s16") || sampleFormat.startsWith("s16")) return 16;
+    if (codec.startsWith("pcm_s24")) return 24;
+    if (codec == "alac" || codec == "flac") return sampleFormat.startsWith("s32") ? 24 : 16; // s32 = 24 bit there
+    if (sampleFormat.startsWith("s32")) return 32;
+    if (sampleFormat.startsWith("u8")) return 8;
+    return 0;
 }
 
 // Runs in the avformat encoder thread, right before it ends
@@ -171,6 +218,24 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     // Audio only: video tracks carry no sound (TimelineBuilder hides it), so skip decoding their images
     if (s.videoCodec.isEmpty()) scaled.video.clear();
+    // Own audio engine: the mixer gets the timeline as it is (it handles mute/solo itself), the MLT graph no sound
+    const bool ownAudio = !s.audioCodec.isEmpty()
+                          && (s.audioPath == ExportSettings::AudioPath::Own
+                              || (s.audioPath == ExportSettings::AudioPath::Default && Audio::ownPath()));
+    QString sampleFormat;
+    if (ownAudio) {
+        sampleFormat = encoderSampleFormat(s.audioCodec, s.audioSampleFormat);
+        if (sampleFormat.isEmpty()) {
+            if (error) *error = T("Audio-Encoder %1 nicht verfügbar.").arg(s.audioCodec);
+            return false;
+        }
+    }
+    const bool soundInGraph = !ownAudio && !s.audioCodec.isEmpty();
+    if (!soundInGraph) { // no sound filters in the graph either
+        scaled.audio.clear();
+        scaled.masterVolumeDb = 0;
+        scaled.masterLimiter = false;
+    }
     // Muted (or not soloed) audio tracks and hidden video tracks add nothing to the file: leave their clips out, so
     // their media is neither opened (slow start) nor decoded while rendering. The length stays (end is computed above)
     const bool anySolo = std::any_of(scaled.audio.cbegin(), scaled.audio.cend(), [](const Track& t) { return t.solo; });
@@ -189,6 +254,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     const int threads = s.threads > 0 ? s.threads : availableThreads();
     m_settings = s;
     m_convertRate = convertRate;
+    m_ownAudio = ownAudio;
+    m_sampleFormat = sampleFormat;
     m_threads = threads;
     // Render every frame (real_time < 0), several frames at once (not with frei0r, see parallelFrames)
     m_frames = convertRate ? 1 : parallelFrames(scaled, threads); // effects on left-out tracks do not count
@@ -209,8 +276,10 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     auto graph = std::make_shared<Graph>();
     const int from = m_from, length = m_length;
     m_buildCancel = std::make_shared<std::atomic<bool>>(false);
-    m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), out, s, threads, end, from,
-                               length, rate, convertRate] {
+    std::optional<Timeline> sound;
+    if (ownAudio) sound = tl;
+    m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), sound = std::move(sound), out,
+                               s, threads, end, from, length, rate, convertRate, soundInGraph, sampleFormat] {
         Graph& g = *graph;
         g.profile = makeProfile(out);
         g.builder = std::make_unique<TimelineBuilder>(*g.profile);
@@ -219,7 +288,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         g.builder->setSubtitles(s.burnSubtitles && !s.videoCodec.isEmpty());
         g.tractor = g.builder->build(scaled);
         if (*cancel) return;
-        if (s.videoCodec.isEmpty()) { // keep the full length when the sound ends before the picture
+        if (s.videoCodec.isEmpty() || !soundInGraph) { // keep the full length when the picture or sound ends earlier
             Mlt::Playlist blank(*g.profile);
             blank.blank(end - 1);
             blank.set("hide", 3);
@@ -246,6 +315,23 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         // The workers deliver YUV in the output's color standard, the encoder thread only repacks (see OutputColor.h)
         if (!s.videoCodec.isEmpty())
             if (auto f = OutputColor::make(convertRate ? *g.outProfile : *g.profile)) g.source->attach(*f);
+        if (sound) {
+            Audio::Mixer::Options o;
+            o.fileLength = [lengths = s.mediaLengths](const QString& path) { return lengths.value(path); };
+            MixedSound::Output mo;
+            mo.rate = s.audioRate > 0 ? s.audioRate : 48000;
+            mo.channels = s.audioChannels > 0 ? s.audioChannels : 2;
+            mo.bits = fileBits(s.audioCodec, sampleFormat);
+            mo.fps = rate;
+            mo.firstFrame = from;
+            mo.firstPosition = convertRate ? 0 : from;
+            g.sound = MixedSound::make(convertRate ? *g.outProfile : *g.profile, *sound, s.format.rate, o, mo);
+            if (!g.sound) {
+                g.error = T("Export konnte nicht gestartet werden.");
+                return;
+            }
+            g.source->attach(*g.sound);
+        }
     });
     connect(m_build, &QThread::finished, this, [this, graph] {
         m_build->wait();
@@ -261,6 +347,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         m_tractor = std::move(graph->tractor);
         m_outProfile = std::move(graph->outProfile);
         m_source = std::move(graph->source);
+        m_sound = std::move(graph->sound);
         m_length = graph->length;
         QString error;
         if (!launch(&error)) {
@@ -396,7 +483,16 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
     if (s.output == ExportSettings::Output::ImageSequence) m_consumer->set("f", "image2"); // one file per frame
     if (s.audioCodec.isEmpty()) m_consumer->set("an", 1); // GIF, image sequence: no sound
     else m_consumer->set("acodec", s.audioCodec.toUtf8().constData());
-    if (!s.audioSampleFormat.isEmpty()) m_consumer->set("sample_fmt", s.audioSampleFormat.toUtf8().constData());
+    if (m_ownAudio) {
+        // The consumer fetches the sound once in its own format (default s16, the cause of 16-bit "24 bit" files)
+        // and converts it for the encoder: ask for the encoder's format right away
+        m_consumer->set("sample_fmt", m_sampleFormat.toUtf8().constData());
+        if (m_sampleFormat.startsWith("s32")) m_consumer->set("mlt_audio_format", "s32le");
+        else if (m_sampleFormat.startsWith("flt")) m_consumer->set("mlt_audio_format", "f32le");
+        else if (m_sampleFormat.startsWith("u8")) m_consumer->set("mlt_audio_format", "u8");
+    } else if (!s.audioSampleFormat.isEmpty()) {
+        m_consumer->set("sample_fmt", s.audioSampleFormat.toUtf8().constData());
+    }
     if (s.audioRate > 0) m_consumer->set("frequency", s.audioRate);
     if (s.audioChannels > 0) m_consumer->set("channels", s.audioChannels);
     if (!s.audioCodec.isEmpty() && !s.audioCodec.startsWith("pcm_") && s.audioCodec != "alac" && s.audioCodec != "flac") {
@@ -412,8 +508,8 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
     // MLT fills the empty frames with silence (sound too long, with jumps).
     m_consumer->set("real_time", m_convertRate ? 0 : -m_frames);
     m_consumer->set("threads", m_threads);
-    qInfo("Export: %s, %d threads, %d frames at once%s", s.videoCodec.isEmpty() ? "audio only" : qPrintable(codec),
-          m_threads, m_frames, m_convertRate ? ", frame rate converted" : "");
+    qInfo("Export: %s, %d threads, %d frames at once%s%s", s.videoCodec.isEmpty() ? "audio only" : qPrintable(codec),
+          m_threads, m_frames, m_convertRate ? ", frame rate converted" : "", m_ownAudio ? ", own audio engine" : "");
     m_consumer->set("terminate_on_pause", 1); // stop by itself at the end
     m_consumer->connect(*m_source);
 
@@ -654,6 +750,7 @@ void Exporter::cleanup()
     m_fatalEvent.reset();
     m_consumer.reset();
     m_source.reset();
+    m_sound.reset();
     m_outProfile.reset();
     m_tractor.reset();
     m_builder.reset();

@@ -60,6 +60,13 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     return s;
 }
 
+ExportSettings RenderQueue::exportSettings(const RenderJob& job, const Project& project)
+{
+    ExportSettings s = exportSettings(job, project.format());
+    for (const MediaInfo& m : project.media()) s.mediaLengths.insert(m.path, m.length);
+    return s;
+}
+
 bool RenderQueue::start(const QVector<int>& ids)
 {
     if (isRunning()) return false;
@@ -93,8 +100,7 @@ void RenderQueue::next()
         QString error;
         if (job.sequence && !m_project->sequence(job.sequence)) {
             error = T("Die Timeline gibt es nicht mehr.");
-        } else if (m_exporter->start(m_project->renderTimeline(job.sequence), exportSettings(job, m_project->format()),
-                                     &error)) {
+        } else if (m_exporter->start(m_project->renderTimeline(job.sequence), exportSettings(job, *m_project), &error)) {
             emit progress(id, 0);
             return; // continues in onExportFinished
         }

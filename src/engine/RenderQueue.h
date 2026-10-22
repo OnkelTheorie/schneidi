@@ -30,6 +30,8 @@ public:
     // Settings for the exporter (output size, codecs, range) from a job. Picks the video encoder: with Auto or a
     // hardware encoder this may wait once per session for the graphics card probe (HardwareEncoders).
     static ExportSettings exportSettings(const RenderJob& job, const ProjectFormat& format);
+    // The same with the project's media lengths (ExportSettings::mediaLengths)
+    static ExportSettings exportSettings(const RenderJob& job, const Project& project);
 
 signals:
     void progress(int jobId, int percent);

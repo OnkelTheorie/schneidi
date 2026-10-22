@@ -11,6 +11,7 @@
 #include "core/RenderJob.h"
 #include "engine/Engine.h"
 #include "engine/Exporter.h"
+#include "engine/audio/Path.h"
 #include "engine/RenderQueue.h"
 
 #include <QApplication>
@@ -33,8 +34,9 @@ const ProjectFormat kFmt{320, 180, {25, 1}};
 constexpr int kFps = 25;
 constexpr int kRate = 48000;
 constexpr double kSeconds = 8;
-// Until the own audio engine exists the sound comes from MLT; its known offsets are reported, not counted
-constexpr bool kMltAudio = true;
+// Sound through MLT (until the own audio engine is the default, SCHNEIDI_AUDIO): its known offsets are reported, not
+// counted; the own engine must be exact
+bool mltAudio() { return !Audio::ownPath(); }
 // Flash/beep times of the sources (frames at 25 fps = seconds * 25)
 constexpr int kFlashes[] = {25, 58, 92, 131, 170};
 // Timeline: [0, 80) from in 0, [100, 215) from in 85 -> flashes 25, 58 and 107, 146, 185
@@ -233,7 +235,7 @@ void testExport(const QString& dir)
             worst = std::max(worst, std::abs(got[i]));
             line += QString("%1%2").arg(i == 2 ? "  | B:" : " ").arg(got[i], 7, 'f', 2);
         }
-        const bool ok = worst <= kExportTolMs, known = !ok && kMltAudio && v.mltOffset;
+        const bool ok = worst <= kExportTolMs, known = !ok && mltAudio() && v.mltOffset;
         std::printf("  %-20s A:%s%s\n", v.name, qPrintable(line),
                     ok ? "" : known ? "  <- versetzt (bekannt: MLT-Ton-Weg)" : "  <- versetzt");
         if (!known && !CHECK(ok)) std::printf("       %s\n", v.what);

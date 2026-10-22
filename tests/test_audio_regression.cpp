@@ -15,6 +15,7 @@
 
 #include "core/RenderJob.h"
 #include "engine/Exporter.h"
+#include "engine/audio/Path.h"
 #include "engine/RenderQueue.h"
 
 #include <QApplication>
@@ -360,7 +361,7 @@ void testVariableFrameRate(const QString& dir)
 // MLT < 7.36 (producer_avformat decode_audio) compares the packet pts after a seek with the wanted position in the
 // stream's 1 ms ticks; the rounding error makes it drop 48 samples (dev/mlt.md). The own audio engine reads by
 // itself (docs/plan-0.10-ton.md): then this must hold on every MLT version.
-constexpr bool kMltAudio = true;
+bool mltAudio() { return !Audio::ownPath(); }
 
 // Every clip plays its source sample-exact after its start; per container (MOV = control, always strict)
 void testContinuity(const QString& dir, const char* container)
@@ -399,7 +400,7 @@ void testContinuity(const QString& dir, const char* container)
             where += QString(" %1").arg(i + 1);
         }
     }
-    const bool known = mkv && kMltAudio && mlt_version_get_int() < ((7 << 16) | (36 << 8));
+    const bool known = mkv && mltAudio() && mlt_version_get_int() < ((7 << 16) | (36 << 8));
     std::printf("       %s: %d von 12 Clips nicht sample-genau%s%s\n", container, broken,
                 broken ? qPrintable(QString(" (Clip%1)").arg(where)) : "", known ? " – bekannt bei MLT < 7.36" : "");
     if (known) {

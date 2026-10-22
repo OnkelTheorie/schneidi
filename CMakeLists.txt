@@ -118,6 +118,8 @@ add_library(schneidi_lib STATIC
     src/engine/audio/Reader.h     src/engine/audio/Reader.cpp
     src/engine/audio/Mixer.h      src/engine/audio/Mixer.cpp
     src/engine/audio/Retimer.h    src/engine/audio/Retimer.cpp
+    src/engine/audio/Path.h       src/engine/audio/Path.cpp
+    src/engine/MixedSound.h       src/engine/MixedSound.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp

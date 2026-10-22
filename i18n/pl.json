@@ -128,6 +128,7 @@
  "Audio-Ausgabe": "Wyjście audio",
  "Audio-Bitrate": "Przepływność audio",
  "Audio-Bittiefe": "Głębia bitowa audio",
+ "Audio-Encoder %1 nicht verfügbar.": "Koder audio %1 jest niedostępny.",
  "Audio-Zielspur A%1": "Docelowa ścieżka audio A%1",
  "Audioclips": "Klipy audio",
  "Audiopegel normalisieren": "Normalizuj poziomy audio",

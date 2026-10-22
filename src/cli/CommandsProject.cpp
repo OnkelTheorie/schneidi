@@ -359,7 +359,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     QElapsedTimer timer;
     timer.start();
     QString error;
-    const ExportSettings es = RenderQueue::exportSettings(job, s.format());
+    const ExportSettings es = RenderQueue::exportSettings(job, s.project);
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
