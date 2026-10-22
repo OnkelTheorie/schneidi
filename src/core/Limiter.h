@@ -19,6 +19,11 @@ public:
     void reset();
     // Planar float in place (channel c at data[c * samples + i]); a new rate or channel count starts over
     void processPlanar(float* data, int samples, int channels, int rate);
+    // Set up for this format ahead of the first block (latency() is known then); same format = no change
+    void prepare(int channels, int rate)
+    {
+        if (channels > 0 && rate > 0 && (channels != m_channels || rate != m_rate)) configure(channels, rate);
+    }
     int latency() const { return m_delay; } // samples at the current rate
 
 private:

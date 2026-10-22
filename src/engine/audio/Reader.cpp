@@ -251,6 +251,9 @@ struct Reader::Impl {
                                 f->sample_rate, 0, nullptr) < 0)
             return false;
         av_opt_set_int(swr, "exact_rational", 1, 0); // a rational step: the phase never drifts
+        // Downmix (5.1 -> stereo) scaled so that no sum exceeds full scale, as FFmpeg does for integer output and the
+        // MLT path did (its frames are s16): front 0.41, center and surrounds 0.29. Float output would skip that.
+        av_opt_set_double(swr, "rematrix_maxval", 1.0, 0);
         if (swr_init(swr) < 0) {
             swr_free(&swr);
             return false;

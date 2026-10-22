@@ -84,6 +84,8 @@ schneidi_test(test_audio_regression)
 schneidi_test(test_audio_reference)
 schneidi_test(test_av_sync)
 schneidi_test(test_audio_reader)
+schneidi_test(test_audio_mixer)
+target_compile_definitions(test_audio_mixer PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 set_tests_properties(test_av_sync PROPERTIES RUN_SERIAL TRUE) # preview timing
 target_compile_definitions(test_audio_reference PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 schneidi_test(test_dynamics_eq)
