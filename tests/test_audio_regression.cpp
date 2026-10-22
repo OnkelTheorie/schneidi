@@ -6,6 +6,8 @@
 // - every software video/audio encoder not covered elsewhere (H.265, AAC) writes a file of the right length
 // - audio packets with overlapping timestamps (the user's clip program writes some, e.g. 2026-10-11_19-17-02):
 //   the sound follows the timestamps like a player, not the raw packet order (that drifts by the overlaps)
+// - Matroska sources: every clip plays its source sample-exact after its start (MLT < 7.36 drops 48 samples after
+//   some seeks because of the 1 ms time base, a click 1-5 frames after the cut – known until the own audio engine)
 // Already covered elsewhere: hardware encoders (test_hw_encoders), MP3/WAV/AIFF/ALAC/ProRes + frame rate conversion
 // (test_export_formats), per-stream volume/streams (test_audio_streams), seek click in the preview (test_audio).
 
@@ -72,7 +74,7 @@ Timeline timeline()
 }
 
 // Renders through the normal export path; false = failed (reported)
-bool run(const Timeline& tl, const RenderJob& job)
+bool run(const Timeline& tl, const RenderJob& job, const ProjectFormat& fmt = kFmt)
 {
     Exporter ex;
     QEventLoop loop;
@@ -84,7 +86,7 @@ bool run(const Timeline& tl, const RenderJob& job)
         loop.quit();
     });
     QString error;
-    if (!CHECK(ex.start(tl, RenderQueue::exportSettings(job, kFmt), &error))) {
+    if (!CHECK(ex.start(tl, RenderQueue::exportSettings(job, fmt), &error))) {
         std::printf("       %s\n", qPrintable(error));
         return false;
     }
@@ -355,6 +357,59 @@ void testVariableFrameRate(const QString& dir)
     }
 }
 
+// MLT < 7.36 (producer_avformat decode_audio) compares the packet pts after a seek with the wanted position in the
+// stream's 1 ms ticks; the rounding error makes it drop 48 samples (dev/mlt.md). The own audio engine reads by
+// itself (docs/plan-0.10-ton.md): then this must hold on every MLT version.
+constexpr bool kMltAudio = true;
+
+// Every clip plays its source sample-exact after its start; per container (MOV = control, always strict)
+void testContinuity(const QString& dir, const char* container)
+{
+    const bool mkv = QString(container) == "mkv";
+    // Chirp (not periodic: a dropped block cannot line up again) as lossless PCM
+    const QString src = Check::makeMedia(QString("%1/chirp.%2").arg(dir, container), {
+        "-f", "lavfi", "-i", "color=c=gray:s=320x180:r=30:d=8", "-f", "lavfi", "-i",
+        "aevalsrc=0.3*sin(2*PI*(200*t+120*t*t))|0.3*sin(2*PI*(200*t+120*t*t)):s=48000:d=8",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", "-shortest"});
+    if (!CHECK(!src.isEmpty())) return;
+    // 30 fps: clip starts fall between the 1 ms ticks (at 25 fps every frame is a whole 40 ms and nothing rounds).
+    // 12 adjacent clips of 18 frames from irregular in points (each one a seek in the file)
+    const ProjectFormat fmt{320, 180, {30, 1}};
+    constexpr int ins[] = {7, 44, 109, 16, 170, 79, 141, 5, 205, 35, 124, 181};
+    constexpr int len = 18;
+    Timeline tl;
+    tl.video.resize(1);
+    tl.audio.resize(1);
+    for (int i = 0; i < 12; ++i) tl.audio[0].clips << clip(i + 1, src, i * len, ins[i], ins[i] + len - 1, 0);
+    const RenderJob j = job(QString("%1/continuity-%2.wav").arg(dir, container), "wav");
+    if (!run(tl, j, fmt)) return;
+    const std::vector<float> got = decodeAudio(j.path), want = decodeAudio(src);
+    // Per clip, away from the 4 ms edge ramps: the source at the in point, sample for sample
+    const long perFrame = kRate / 30, edge = kRate / 100;
+    int broken = 0;
+    QString where;
+    for (int i = 0; i < 12; ++i) {
+        const long at = i * len * perFrame, from = ins[i] * perFrame;
+        float worst = 0.f;
+        for (long k = edge; k < len * perFrame - edge; ++k)
+            if (size_t(at + k) < got.size() && size_t(from + k) < want.size())
+                worst = std::max(worst, std::abs(got[size_t(at + k)] - want[size_t(from + k)]));
+        if (worst > 1e-4f) {
+            ++broken;
+            where += QString(" %1").arg(i + 1);
+        }
+    }
+    const bool known = mkv && kMltAudio && mlt_version_get_int() < ((7 << 16) | (36 << 8));
+    std::printf("       %s: %d von 12 Clips nicht sample-genau%s%s\n", container, broken,
+                broken ? qPrintable(QString(" (Clip%1)").arg(where)) : "", known ? " – bekannt bei MLT < 7.36" : "");
+    if (known) {
+        // The material must still show the bug, else this test no longer proves anything (or MLT got fixed here)
+        if (!CHECK(broken > 0)) std::printf("       MLT-Fehler nicht mehr da: Test auf die strenge Prüfung umstellen\n");
+    } else {
+        CHECK_EQ(broken, 0);
+    }
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -388,5 +443,7 @@ int main(int argc, char** argv)
     testEncoders(tmp.path());
     testOverlappingAudio(tmp.path());
     testVariableFrameRate(tmp.path());
+    testContinuity(tmp.path(), "mov");
+    testContinuity(tmp.path(), "mkv");
     return Check::result();
 }

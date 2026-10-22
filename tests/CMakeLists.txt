@@ -80,6 +80,11 @@ target_link_libraries(test_live PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_live PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_live schneidi-cli)
 schneidi_test(test_audio_regression)
+# Reference renders of the sound (own audio engine, docs/plan-0.10-ton.md): references in the private docs folder
+schneidi_test(test_audio_reference)
+schneidi_test(test_av_sync)
+set_tests_properties(test_av_sync PROPERTIES RUN_SERIAL TRUE) # preview timing
+target_compile_definitions(test_audio_reference PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 schneidi_test(test_dynamics_eq)
 target_link_libraries(test_dynamics_eq PRIVATE schneidi_cli_lib)
 schneidi_test(test_audio_sync)

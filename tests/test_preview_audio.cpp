@@ -3,7 +3,8 @@
 // it to a file) must have no step in the wave and must come from one opened audio device.
 // Clicks found this way (docs/testdaten/knacken): a full purge on seek threw away the fade-out (SeekFade), every seek
 // of a drag played 5 ms of sound, clip volume 0 -> x dB and mixer changes from the AI rebuilt the timeline
-// (audio device closed and reopened).
+// (audio device closed and reopened). Stopping breaks off (sdl2_audio drops its buffer) – checked as known until the
+// own audio engine.
 #include "check.h"
 
 #include "engine/Engine.h"
@@ -104,7 +105,7 @@ int main(int argc, char** argv)
     engine.updateTimeline(tl);
     wait(700);
     const double played = playing.elapsed() / 1000.0;
-    engine.pause(); // stopping still cuts (MLT closes the device at once) – not checked
+    engine.pause();
     wait(300);
 
     QFile f(out);
@@ -133,5 +134,26 @@ int main(int argc, char** argv)
     }
     std::printf("       %.2f s Ton, größte Krümmung %d bei %.3f s\n", seconds, largest, largestAt / 48000.0);
     CHECK_EQ(clicks, 0);
+
+    // Stop: the sound fades out within a few ms instead of breaking off (the last sounding 2 ms are much quieter than
+    // the sine before them). sdl2_audio closes the device at once and drops its buffer (dev/mlt.md) – known until the
+    // own audio engine (docs/plan-0.10-ton.md), which fades out and keeps the device open.
+    qsizetype last = frames - 1;
+    while (last > 0 && std::abs(s[last * 2]) < 1000) --last;
+    auto peak = [&](qsizetype from, qsizetype to) {
+        int p = 0;
+        for (qsizetype i = std::max<qsizetype>(0, from); i <= to; ++i) p = std::max(p, std::abs(int(s[i * 2])));
+        return p;
+    };
+    const int tail = peak(last - 96, last), before = peak(last - 2400, last - 1440);
+    const bool cut = before > 0 && tail > before / 2;
+    constexpr bool kMltAudio = true;
+    std::printf("       Stopp: letzte 2 ms Spitze %d, 30–50 ms davor %d%s\n", tail, before,
+                cut ? (kMltAudio ? " – bricht ab (bekannt: MLT-Ton-Weg)" : " – bricht ab") : " – blendet aus");
+    if (kMltAudio) {
+        if (!CHECK(cut)) std::printf("       Stopp knackt nicht mehr: Test auf die strenge Prüfung umstellen\n");
+    } else {
+        CHECK(!cut);
+    }
     return Check::result();
 }
