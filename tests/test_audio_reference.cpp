@@ -107,10 +107,10 @@ bool makeSources()
                      "0.1*sin(2*PI*600*t)|0.1*sin(2*PI*700*t):s=48000:d=6:c=5.1",
                      "-c:a", "pcm_s16le"}},
         {kFlac, {"-f", "lavfi", "-i", chirp, "-c:a", "flac", "-sample_fmt", "s32"}},
-        // MP3 with a cover picture (attached_pic): MLT must not take it for a video
-        {kMp3, {"-f", "lavfi", "-i", tone, "-f", "lavfi", "-i", "color=c=red:s=64x64:d=1", "-map", "0:a", "-map", "1:v",
-                "-frames:v", "1", "-c:v", "mjpeg", "-disposition:v", "attached_pic", "-c:a", "libmp3lame", "-b:a", "192k",
-                "-id3v2_version", "3"}},
+        // MP3 with a cover picture (attached_pic): MLT must not take it for a video. A one-frame picture source:
+        // with "-frames:v 1" FFmpeg ends the whole file after 48 ms
+        {kMp3, {"-f", "lavfi", "-i", tone, "-f", "lavfi", "-i", "color=c=red:s=64x64:r=1:d=1", "-map", "0:a", "-map", "1:v",
+                "-c:v", "mjpeg", "-disposition:v", "attached_pic", "-c:a", "libmp3lame", "-b:a", "192k", "-id3v2_version", "3"}},
         // AAC with its encoder delay (priming) as in every phone/OBS MP4
         {kAac, QStringList{"-f", "lavfi", "-i", kVideo, "-f", "lavfi", "-i", tone} + kX264
                    + QStringList{"-c:a", "aac", "-b:a", "192k", "-shortest"}},
@@ -622,6 +622,10 @@ bool check(const Case& c, const QString& tmp, QJsonObject* entry = nullptr)
         *entry = levels(ref);
         (*entry)["render_ms"] = ms;
     }
+    // A silent reference proves nothing (the first cover.mp3 was 48 ms long and the case compared silence)
+    float refPeak = 0;
+    for (float v : ref) refPeak = std::max(refPeak, std::abs(v));
+    if (!CHECK(refPeak > 1e-3f)) std::printf("       %s: reference without sound\n", c.name);
     const bool ok = !ref.empty() && d.frames == d.refFrames && d.maxDiff <= kExact;
     std::printf("  %-18s %6.3f s  max. Abweichung %.2e  Differenz %7.1f dB  %5lld ms%s\n", c.name,
                 double(d.frames) / kRate, d.maxDiff, d.diffDb, ms, ok ? "" : "  <- ANDERS");

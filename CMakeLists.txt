@@ -18,6 +18,8 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 find_package(PkgConfig REQUIRED)
 # MLT liefert unter Linux und MSYS2 (Windows) eine .pc-Datei
 pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
+# Own audio engine (src/engine/audio): FFmpeg libraries directly, see docs/plan-0.10-ton.md
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libavutil)
 if(WIN32)
     # Nicht paketierter Build: MLT-Module/-Daten aus MSYS2 (siehe engine/Bundle.cpp)
     pkg_get_variable(MLT_PREFIX mlt-framework-7 prefix)
@@ -111,6 +113,7 @@ add_library(schneidi_lib STATIC
     src/engine/Frei0r.h           src/engine/Frei0r.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
     src/engine/Snapshot.h         src/engine/Snapshot.cpp
+    src/engine/audio/Reader.h     src/engine/audio/Reader.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
@@ -188,7 +191,7 @@ qt_add_resources(schneidi_lib "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_T
 file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/luts/*.cube) # tools/gen_luts.py
 qt_add_resources(schneidi_lib "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
 target_include_directories(schneidi_lib PUBLIC src)
-target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::MLT)
+target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::MLT PkgConfig::FFMPEG)
 
 add_executable(schneidi src/main.cpp)
 target_include_directories(schneidi PRIVATE ${CMAKE_BINARY_DIR}/generated)

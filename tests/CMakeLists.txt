@@ -83,6 +83,7 @@ schneidi_test(test_audio_regression)
 # Reference renders of the sound (own audio engine, docs/plan-0.10-ton.md): references in the private docs folder
 schneidi_test(test_audio_reference)
 schneidi_test(test_av_sync)
+schneidi_test(test_audio_reader)
 set_tests_properties(test_av_sync PROPERTIES RUN_SERIAL TRUE) # preview timing
 target_compile_definitions(test_audio_reference PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 schneidi_test(test_dynamics_eq)
@@ -149,3 +150,5 @@ add_executable(bench_export bench_export.cpp check.h)
 target_link_libraries(bench_export PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_undo bench_undo.cpp check.h)
 target_link_libraries(bench_undo PRIVATE schneidi_lib Qt6::Test)
+add_executable(bench_audio_reader bench_audio_reader.cpp check.h)
+target_link_libraries(bench_audio_reader PRIVATE schneidi_lib Qt6::Test)

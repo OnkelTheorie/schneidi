@@ -129,12 +129,12 @@ Only fixes for problems found in 0.9.0 – new features wait for the next versio
 
 ## Building
 
-C++20, Qt 6 Widgets, MLT 7, CMake.
+C++20, Qt 6 Widgets, MLT 7, FFmpeg libraries (own audio engine), CMake.
 
 **Linux (Debian/Ubuntu):**
 
 ```bash
-sudo apt install build-essential cmake ninja-build pkg-config qt6-base-dev libmlt++-dev libmlt-dev
+sudo apt install build-essential cmake ninja-build pkg-config qt6-base-dev libmlt++-dev libmlt-dev libavformat-dev libavcodec-dev libswresample-dev libavutil-dev
 cmake -S . -B build -G Ninja && cmake --build build && ./build/schneidi
 ```
 
