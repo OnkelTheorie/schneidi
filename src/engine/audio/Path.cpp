@@ -12,4 +12,9 @@ bool ownPath()
     return choice == QLatin1String("own");
 }
 
+void setOwnPath(bool own)
+{
+    QSettings().setValue("audio/engine", own ? "own" : "mlt");
+}
+
 } // namespace Audio

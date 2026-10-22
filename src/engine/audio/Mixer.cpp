@@ -25,6 +25,7 @@ namespace {
 
 constexpr int kMaxNesting = 16;
 constexpr double kMaxGainDb = 20; // like MLT's volume filter (clip volumes stay below anyway)
+constexpr int kGlide = 480;       // a gain changed live glides over 10 ms (no zipper click)
 
 int64_t floorDiv(int64_t a, int64_t b)
 {
@@ -36,6 +37,24 @@ double dbToGain(double db)
 {
     if (db <= kMinVolumeDb) return 1e-10; // -inf: MLT's -200 dB, practically silent
     return std::pow(10.0, std::min(db, kMaxGainDb) / 20.0);
+}
+
+// Sound of the timeline apart from what the mixer panel changes (Mixer::updateMix): the clips of the audio tracks and
+// the nested sequences
+bool sameSound(const Timeline& a, const Timeline& b)
+{
+    if (a.audio.size() != b.audio.size() || a.masterLimiter != b.masterLimiter) return false;
+    for (int i = 0; i < a.audio.size(); ++i) {
+        Track x = a.audio[i], y = b.audio[i];
+        for (Track* t : {&x, &y}) {
+            t->volumeDb = t->pan = 0;
+            t->muted = t->solo = false;
+            t->eq = {};
+            t->dynamics = {};
+        }
+        if (!(x == y)) return false;
+    }
+    return TimelineOps::sameNested(a, b);
 }
 
 // Gain of a curve value (fades, transitions): below 0.001 silent, as the MLT path sets -200 dB there
@@ -114,6 +133,7 @@ struct Voice {
 struct TrackPlan {
     std::vector<Voice> voices; // sorted by tStart
     bool audible = true;
+    bool planned = false; // voices planned (a track that was silent when planned has none)
     TrackEq eq;
     TrackDynamics dynamics;
     double gain = 1.0;
@@ -132,6 +152,7 @@ struct Mixer::Impl {
     QSet<int> stack; // sequences being planned (no loops)
     QHash<QString, int> lengths; // file lengths taken from the files (frames)
 
+    Timeline planned; // what plan() got (updateMix)
     std::vector<TrackPlan> tracks;
     double masterGain = 1.0;
     bool limiter = false;
@@ -152,9 +173,15 @@ struct Mixer::Impl {
         Compressor comp;
         std::vector<VoiceState> voices;
         size_t firstVoice = 0; // voices before it have ended
+        // Gain per channel (fader, pan, mute) applied so far; a new value glides there (updateMix)
+        double applied[kChannels] = {};
+        bool levelSet = false;
     };
     std::vector<TrackState> trackStates;
     PeakLimiter peakLimiter;
+    double masterApplied = 1.0;
+    bool metering = false;
+    std::vector<float> peaks; // per track L, R of the last render (metering)
     int64_t expected = INT64_MIN; // next render position
     int latency = 0;              // master (limiter), compensated in exact mode
     std::vector<float> mix[kChannels], track[kChannels], voice[kChannels], scratch;
@@ -166,6 +193,7 @@ struct Mixer::Impl {
 
     int fileLength(const QString& path);
     void plan(const Timeline& tl);
+    void applyMixValues(const Timeline& tl);
     void planTrack(const Track& track, TrackPlan& out);
     void renderMix(int64_t pos, int count);
     void renderVoice(Voice& v, VoiceState& st, int64_t u, int count, float* const* out);
@@ -187,8 +215,23 @@ int Mixer::Impl::fileLength(const QString& path)
 
 void Mixer::Impl::plan(const Timeline& tl)
 {
-    const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
+    planned = tl;
     tracks.resize(size_t(tl.audio.size()));
+    applyMixValues(tl);
+    for (int i = 0; i < tl.audio.size(); ++i) {
+        TrackPlan& p = tracks[size_t(i)];
+        if (p.audible) planTrack(tl.audio[i], p);
+        p.planned = p.audible;
+    }
+    limiter = tl.masterLimiter;
+    masterApplied = masterGain;
+    endSample = clock.start(TimelineOps::endFrame(tl));
+}
+
+// What the mixer panel changes: fader, pan, mute/solo, EQ, compressor, master fader, limiter ceiling
+void Mixer::Impl::applyMixValues(const Timeline& tl)
+{
+    const bool anySolo = std::any_of(tl.audio.begin(), tl.audio.end(), [](const Track& t) { return t.solo; });
     for (int i = 0; i < tl.audio.size(); ++i) {
         const Track& t = tl.audio[i];
         TrackPlan& p = tracks[size_t(i)];
@@ -197,14 +240,11 @@ void Mixer::Impl::plan(const Timeline& tl)
         p.dynamics = t.dynamics;
         p.gain = t.volumeDb == 0.0 ? 1.0 : dbToGain(t.volumeDb);
         p.pan = t.pan / 100.0;
-        if (p.audible) planTrack(t, p);
     }
     masterGain = tl.masterVolumeDb == 0.0 ? 1.0 : dbToGain(tl.masterVolumeDb);
-    limiter = tl.masterLimiter;
     limiterDb = std::clamp(tl.masterLimiterDb, -40.0, 0.0);
     // The MLT path keeps the ceiling in milli-dB
     if (opt.mltCompat) limiterDb = std::lround(limiterDb * 1000) / 1000.0;
-    endSample = clock.start(TimelineOps::endFrame(tl));
 }
 
 void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
@@ -384,6 +424,7 @@ void Mixer::Impl::restart()
             v.denoisers.clear();
         }
         ts.firstVoice = 0;
+        ts.levelSet = false;
         ts.eq = Equalizer{};
         ts.eq.setEq(tracks[i].eq);
         ts.comp = Compressor{};
@@ -393,6 +434,7 @@ void Mixer::Impl::restart()
     peakLimiter.setCeilingDb(limiterDb);
     peakLimiter.prepare(kChannels, opt.rate);
     latency = limiter && !opt.mltCompat ? peakLimiter.latency() : 0;
+    masterApplied = masterGain;
 }
 
 bool Mixer::Impl::readSource(Voice& v, VoiceState& st, int64_t u, int count, float* const* out)
@@ -505,7 +547,17 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
     for (size_t ti = 0; ti < tracks.size(); ++ti) {
         TrackPlan& tp = tracks[ti];
         TrackState& ts = trackStates[ti];
-        if (!tp.audible) continue;
+        // Fader, then balance like MLT's panner; a changed value glides (updateMix)
+        const double side[kChannels] = {tp.pan < 0 ? 1.0 : std::max(0.0, 1.0 - tp.pan),
+                                        tp.pan < 0 ? std::max(0.0, tp.pan + 1.0) : 1.0};
+        double target[kChannels];
+        for (int c = 0; c < kChannels; ++c) target[c] = tp.audible ? tp.gain * side[c] : 0.0;
+        if (!ts.levelSet) std::copy(target, target + kChannels, ts.applied);
+        ts.levelSet = true;
+        const bool glide = !std::equal(target, target + kChannels, ts.applied);
+        float* peak = metering ? peaks.data() + 2 * ti : nullptr;
+        if (peak) peak[0] = peak[1] = 0.f;
+        if (!tp.audible && !glide) continue;
         for (auto& t : track) std::fill(t.begin(), t.begin() + count, 0.f);
         while (ts.firstVoice < tp.voices.size() && tp.voices[ts.firstVoice].tEnd <= pos) {
             ts.voices[ts.firstVoice] = {}; // done: close its reader
@@ -525,7 +577,10 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
             any = true;
         }
         // EQ and compressor run on silence too (their tails), like the MLT path's track filter
-        if (!any && !tp.eq.on && !tp.dynamics.on) continue;
+        if (!any && !tp.eq.on && !tp.dynamics.on) {
+            std::copy(target, target + kChannels, ts.applied);
+            continue;
+        }
         if (tp.eq.on || tp.dynamics.on) {
             scratch.resize(size_t(count) * kChannels);
             float* planar = scratch.data();
@@ -534,20 +589,41 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
             if (tp.dynamics.on) ts.comp.processPlanar(planar, count, kChannels, opt.rate);
             for (int c = 0; c < kChannels; ++c) std::copy(planar + size_t(c) * count, planar + size_t(c + 1) * count, track[c].begin());
         }
-        // Fader, then balance like MLT's panner (each rounds to float)
-        const double side[kChannels] = {tp.pan < 0 ? 1.0 : std::max(0.0, 1.0 - tp.pan),
-                                        tp.pan < 0 ? std::max(0.0, tp.pan + 1.0) : 1.0};
+        if (!glide) { // fader, then pan (each rounds to float, like MLT's filters)
+            for (int c = 0; c < kChannels; ++c)
+                for (int i = 0; i < count; ++i) {
+                    float x = track[c][size_t(i)];
+                    if (tp.gain != 1.0) x = float(x * tp.gain);
+                    if (tp.pan != 0.0) x = float(x * side[c]);
+                    track[c][size_t(i)] = x;
+                }
+        } else {
+            const int len = std::min(count, kGlide);
+            for (int c = 0; c < kChannels; ++c) {
+                const double from = ts.applied[c], to = target[c];
+                for (int i = 0; i < count; ++i) {
+                    const double g = i < len ? from + (to - from) * (i + 1) / len : to;
+                    track[c][size_t(i)] = float(track[c][size_t(i)] * g);
+                }
+                ts.applied[c] = to;
+            }
+        }
         for (int c = 0; c < kChannels; ++c)
             for (int i = 0; i < count; ++i) {
-                float x = track[c][size_t(i)];
-                if (tp.gain != 1.0) x = float(x * tp.gain);
-                if (tp.pan != 0.0) x = float(x * side[c]);
-                mix[c][size_t(i)] += x;
+                mix[c][size_t(i)] += track[c][size_t(i)];
+                if (peak) peak[c] = std::max(peak[c], std::abs(track[c][size_t(i)]));
             }
     }
-    if (masterGain != 1.0)
+    if (masterGain != masterApplied) {
+        const int len = std::min(count, kGlide);
+        for (auto& m : mix)
+            for (int i = 0; i < count; ++i)
+                m[size_t(i)] = float(m[size_t(i)] * (i < len ? masterApplied + (masterGain - masterApplied) * (i + 1) / len : masterGain));
+        masterApplied = masterGain;
+    } else if (masterGain != 1.0) {
         for (auto& m : mix)
             for (int i = 0; i < count; ++i) m[size_t(i)] = float(m[size_t(i)] * masterGain);
+    }
 }
 
 Mixer::Mixer(const Timeline& timeline, FrameRate fps, const Options& options)
@@ -567,6 +643,33 @@ int64_t Mixer::frameAt(int64_t sample) const { return d->clock.frameAt(sample); 
 const Mixer::Stats& Mixer::stats() const { return *d->stats; }
 
 void Mixer::render(int64_t pos, int count, float* const* out) { d->render(pos, count, out); }
+
+void Mixer::setMetering(bool on)
+{
+    d->metering = on;
+    d->peaks.assign(on ? d->tracks.size() * 2 : 0, 0.f);
+}
+
+const std::vector<float>& Mixer::trackPeaks() const { return d->peaks; }
+
+bool Mixer::updateMix(const Timeline& timeline)
+{
+    Impl& m = *d;
+    if (!sameSound(m.planned, timeline)) return false;
+    const bool anySolo = std::any_of(timeline.audio.begin(), timeline.audio.end(), [](const Track& t) { return t.solo; });
+    for (int i = 0; i < timeline.audio.size(); ++i) {
+        const Track& t = timeline.audio[i];
+        if (!t.muted && (!anySolo || t.solo) && !m.tracks[size_t(i)].planned) return false; // silent when planned
+    }
+    m.applyMixValues(timeline);
+    m.planned = timeline;
+    for (size_t i = 0; i < m.trackStates.size(); ++i) {
+        m.trackStates[i].eq.setEq(m.tracks[i].eq);
+        m.trackStates[i].comp.setParams(m.tracks[i].dynamics);
+    }
+    m.peakLimiter.setCeilingDb(m.limiterDb);
+    return true;
+}
 
 void Mixer::Impl::render(int64_t pos, int count, float* const* out)
 {

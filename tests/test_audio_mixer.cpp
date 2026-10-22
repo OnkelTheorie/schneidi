@@ -573,6 +573,69 @@ void checkJumps(const Synth& src)
     CHECK_EQ(jumping.stats().restarts, 2);
 }
 
+// Live values (preview, Mixer::updateMix): fader, pan and mute glide within 10 ms to what a mixer built with the new
+// values gives (then sample-exact), without a step; a track that was silent when planned or a changed clip needs a
+// new mixer. Level meters per track after fader/pan.
+void checkLive(const Synth& src)
+{
+    Timeline tl;
+    tl.audio.resize(2);
+    for (Track& t : tl.audio) t.kind = TrackKind::Audio;
+    tl.audio[0].clips << synthClip(src.tone, 0, 200, 1.0, false, false);
+    Clip b = synthClip(src.tone, 0, 200, 1.0, false, false);
+    b.id = 2;
+    tl.audio[1].clips << b;
+    Audio::Mixer::Options o;
+    o.fileLength = [](const QString&) { return int(kSynthSeconds * kFps); };
+    auto take = [&](Audio::Mixer& m, int64_t pos, int n, std::vector<float>* right = nullptr) {
+        std::vector<float> l(static_cast<size_t>(n)), r(static_cast<size_t>(n));
+        float* buf[2] = {l.data(), r.data()};
+        m.render(pos, n, buf);
+        if (right) *right = r;
+        return l;
+    };
+    Audio::Mixer live(tl, FrameRate{kFps, 1}, o);
+    live.setMetering(true);
+    take(live, 0, kRate);
+    const std::vector<float> peaks = live.trackPeaks();
+    if (CHECK_EQ(int(peaks.size()), 4))
+        CHECK(std::abs(peaks[0] - 0.25f) < 0.001f && std::abs(peaks[3] - 0.25f) < 0.001f);
+
+    Timeline changed = tl;
+    changed.audio[0].volumeDb = -6;
+    changed.audio[1].pan = 50;
+    changed.masterVolumeDb = -3;
+    bool ok = CHECK(live.updateMix(changed));
+    std::vector<float> rLive, rFresh;
+    const std::vector<float> glide = take(live, kRate, kRate, &rLive);
+    Audio::Mixer fresh(changed, FrameRate{kFps, 1}, o);
+    const std::vector<float> want = take(fresh, kRate, kRate, &rFresh);
+    float step = 0;
+    for (size_t i = 1; i < glide.size(); ++i) step = std::max(step, std::abs(glide[i] - glide[i - 1]));
+    const bool after = std::equal(glide.begin() + 480, glide.end(), want.begin() + 480)
+                       && std::equal(rLive.begin() + 480, rLive.end(), rFresh.begin() + 480);
+    // Two 1-kHz tracks at 0.25 change by up to 0.5 * 2 pi * 1000 / 48000 = 0.0654 per sample on their own
+    std::printf("  Live-Werte: nach 10 ms %s wie neu gebaut, größter Schritt %.4f (die Welle selbst: 0,0654)\n",
+                after ? "gleich" : "ANDERS", step);
+    ok = CHECK(after) && CHECK(step < 0.0655f) && ok;
+    take(live, 2 * kRate - 4800, 4800); // levels of a block after the glide
+    if (CHECK_EQ(int(live.trackPeaks().size()), 4)) // A1 at -6 dB: 0.125; A2 panned right: left at half
+        CHECK(std::abs(live.trackPeaks()[0] - 0.125f) < 0.001f && std::abs(live.trackPeaks()[2] - 0.125f) < 0.002f);
+
+    Timeline muted = changed;
+    muted.audio[1].muted = true;
+    CHECK(live.updateMix(muted));
+    const std::vector<float> m = take(live, 2 * kRate, kRate / 2);
+    Audio::Mixer freshMuted(muted, FrameRate{kFps, 1}, o);
+    CHECK(std::equal(m.begin() + 480, m.end(), take(freshMuted, 2 * kRate, kRate / 2).begin() + 480));
+    Audio::Mixer silentPlanned(muted, FrameRate{kFps, 1}, o);
+    CHECK(!silentPlanned.updateMix(changed)); // A2 has no planned voices
+    Timeline cut = changed;
+    cut.audio[0].clips[0].volumeDb = -1;
+    CHECK(!live.updateMix(cut));
+    CHECK(!live.updateMix(Timeline{}));
+}
+
 void checkRetimed(const Synth& src)
 {
     struct T {
@@ -688,6 +751,7 @@ int main(int argc, char** argv)
         if (CHECK(tmp.isValid()) && CHECK(makeSynth(tmp.path(), &src))) {
             checkCurves(src);
             checkJumps(src);
+            checkLive(src);
             checkRetimed(src);
         }
     }

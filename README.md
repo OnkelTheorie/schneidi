@@ -134,7 +134,7 @@ C++20, Qt 6 Widgets, MLT 7, FFmpeg libraries (own audio engine), CMake.
 **Linux (Debian/Ubuntu):**
 
 ```bash
-sudo apt install build-essential cmake ninja-build pkg-config qt6-base-dev libmlt++-dev libmlt-dev libavformat-dev libavcodec-dev libswresample-dev libavutil-dev librubberband-dev
+sudo apt install build-essential cmake ninja-build pkg-config qt6-base-dev libmlt++-dev libmlt-dev libavformat-dev libavcodec-dev libswresample-dev libavutil-dev librubberband-dev libminiaudio-dev
 cmake -S . -B build -G Ninja && cmake --build build && ./build/schneidi
 ```
 
@@ -145,7 +145,7 @@ The .deb needs Debian 13 / Ubuntu 25.04 or newer (MLT ≥ 7.30, Qt ≥ 6.8, libc
 **Windows:** via [MSYS2](https://www.msys2.org), UCRT64 environment. Clone the repo into a path without spaces or non-ASCII characters, then:
 
 ```bash
-pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,qt6-base,qt6-svg,mlt,ffmpeg,frei0r-plugins,SDL2,ntldd,libebur128,fftw,libsamplerate,rubberband,rtaudio}
+pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,qt6-base,qt6-svg,mlt,ffmpeg,frei0r-plugins,SDL2,ntldd,libebur128,fftw,libsamplerate,rubberband,rtaudio,miniaudio}
 packaging/windows/build-windows.sh
 ```
 

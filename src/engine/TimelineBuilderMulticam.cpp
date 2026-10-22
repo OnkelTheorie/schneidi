@@ -72,7 +72,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildMulticamGrid(const Timeline&
 
     // Sound: every angle (also those of other pages), only the active one audible
     std::vector<std::shared_ptr<Mlt::Playlist>> sound(static_cast<size_t>(n));
-    for (int angle = 0; angle < n; ++angle) {
+    for (int angle = 0; angle < n && m_gridSound; ++angle) {
         std::unique_ptr<Mlt::Playlist> pl = part(angle, TrackKind::Audio);
         if (!pl) continue;
         pl->set("hide", angle == o.activeAngle ? 1 : 3); // 1 = no video, 2 = no audio

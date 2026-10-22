@@ -3,11 +3,12 @@
 // it to a file) must have no step in the wave and must come from one opened audio device.
 // Clicks found this way (docs/testdaten/knacken): a full purge on seek threw away the fade-out (SeekFade), every seek
 // of a drag played 5 ms of sound, clip volume 0 -> x dB and mixer changes from the AI rebuilt the timeline
-// (audio device closed and reopened). Stopping breaks off (sdl2_audio drops its buffer) – checked as known until the
-// own audio engine.
+// (audio device closed and reopened). Stopping breaks off on the MLT sound path (sdl2_audio drops its buffer) – checked
+// as known there; the own audio engine (SCHNEIDI_AUDIO=own, its file device as the speaker) fades out.
 #include "check.h"
 
 #include "engine/Engine.h"
+#include "engine/audio/Path.h"
 
 #include <QApplication>
 #include <QDir>
@@ -48,6 +49,7 @@ int main(int argc, char** argv)
     const QString out = tmp.filePath("speaker.raw");
     qputenv("SDL_AUDIODRIVER", "disk"); // the "speaker": SDL writes what it would play, in real time
     qputenv("SDL_DISKAUDIOFILE", QDir::toNativeSeparators(out).toLocal8Bit());
+    qputenv("SCHNEIDI_AUDIO_DEVICE", ("file:" + QDir::toNativeSeparators(out)).toLocal8Bit()); // own audio engine
     QApplication app(argc, argv);
     Check::initApp("preview_audio");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
@@ -147,7 +149,7 @@ int main(int argc, char** argv)
     };
     const int tail = peak(last - 96, last), before = peak(last - 2400, last - 1440);
     const bool cut = before > 0 && tail > before / 2;
-    constexpr bool kMltAudio = true;
+    const bool kMltAudio = !Audio::ownPath();
     std::printf("       Stopp: letzte 2 ms Spitze %d, 30–50 ms davor %d%s\n", tail, before,
                 cut ? (kMltAudio ? " – bricht ab (bekannt: MLT-Ton-Weg)" : " – bricht ab") : " – blendet aus");
     if (kMltAudio) {

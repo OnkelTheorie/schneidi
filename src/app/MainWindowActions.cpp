@@ -28,6 +28,7 @@
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
+#include "engine/audio/Path.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
@@ -475,6 +476,22 @@ void MainWindow::buildActions()
         a->setChecked(Engine::audioBuffer() == samples);
         bufferGroup->addAction(a);
         connect(a, &QAction::triggered, this, [this, n = samples] { m_engine->setAudioBuffer(n); });
+    }
+    // Sound engine (docs/plan-0.10-ton.md): the own one is tried out here until it becomes the default
+    audioMenu->addSeparator();
+    auto* engineGroup = new QActionGroup(audioMenu);
+    for (const auto& [own, text] : {std::pair{false, N_("Ton-Maschine: MLT (bisher)")},
+                                    std::pair{true, N_("Ton-Maschine: eigene (neu, Test)")}}) {
+        QAction* a = audioMenu->addAction(T(text));
+        a->setCheckable(true);
+        a->setChecked(Audio::ownPath() == own);
+        engineGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, own = own] {
+            if (own == Audio::ownPath()) return;
+            Audio::setOwnPath(own);
+            offerRestart(T("Die Ton-Maschine wechselt nach dem Neustart von schneidi."), T("Jetzt neu starten"),
+                         T("Später"));
+        });
     }
 #ifdef Q_OS_WIN
     audioMenu->addSeparator();

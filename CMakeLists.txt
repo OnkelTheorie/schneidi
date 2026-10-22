@@ -22,6 +22,9 @@ pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libavutil)
 # Time stretching with pitch correction (own audio engine)
 pkg_check_modules(RUBBERBAND REQUIRED IMPORTED_TARGET rubberband)
+# Sound devices of the own audio engine: miniaudio, a single header (Debian libminiaudio-dev, MSYS2 miniaudio)
+find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h PATH_SUFFIXES miniaudio REQUIRED)
+find_package(Threads REQUIRED)
 if(WIN32)
     # Nicht paketierter Build: MLT-Module/-Daten aus MSYS2 (siehe engine/Bundle.cpp)
     pkg_get_variable(MLT_PREFIX mlt-framework-7 prefix)
@@ -86,6 +89,7 @@ add_library(schneidi_lib STATIC
     src/core/Ducking.h            src/core/Ducking.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
+    src/engine/PreviewConsumer.h  src/engine/PreviewConsumer.cpp
     src/engine/Profiles.h         src/engine/Profiles.cpp
     src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp
     src/engine/TimelineBuilderDetail.h src/engine/TimelineBuilderClip.cpp
@@ -119,6 +123,9 @@ add_library(schneidi_lib STATIC
     src/engine/audio/Mixer.h      src/engine/audio/Mixer.cpp
     src/engine/audio/Retimer.h    src/engine/audio/Retimer.cpp
     src/engine/audio/Path.h       src/engine/audio/Path.cpp
+    src/engine/audio/Device.h     src/engine/audio/Device.cpp
+    src/engine/audio/Player.h     src/engine/audio/Player.cpp
+    src/engine/audio/Miniaudio.h  src/engine/audio/Miniaudio.cpp
     src/engine/MixedSound.h       src/engine/MixedSound.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
@@ -197,7 +204,11 @@ qt_add_resources(schneidi_lib "themes" PREFIX "/" BASE assets FILES ${SCHNEIDI_T
 file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/luts/*.cube) # tools/gen_luts.py
 qt_add_resources(schneidi_lib "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
 target_include_directories(schneidi_lib PUBLIC src)
-target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::MLT PkgConfig::FFMPEG PkgConfig::RUBBERBAND)
+target_include_directories(schneidi_lib PRIVATE ${MINIAUDIO_INCLUDE_DIR})
+target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::MLT PkgConfig::FFMPEG PkgConfig::RUBBERBAND
+                      Threads::Threads ${CMAKE_DL_LIBS})
+# Third-party code: its warnings are not ours
+set_source_files_properties(src/engine/audio/Miniaudio.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 add_executable(schneidi src/main.cpp)
 target_include_directories(schneidi PRIVATE ${CMAKE_BINARY_DIR}/generated)

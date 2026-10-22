@@ -6,6 +6,7 @@
 #include "core/Types.h"
 
 #include <QElapsedTimer>
+#include <QHash>
 #include <QImage>
 #include <QObject>
 #include <QSize>
@@ -23,6 +24,10 @@ class Tractor;
 } // namespace Mlt
 class TimelineBuilder;
 class ProducerFactory;
+class PreviewConsumer;
+namespace Audio {
+class Player;
+}
 class ProxyManager;
 class RenderCache;
 class Preroll;
@@ -84,6 +89,8 @@ public:
     QImage grabStill(const Timeline& tl);
 
     void updateTimeline(const Timeline& tl); // model changed -> rebuild
+    // Lengths of the project's media in frames (Project::media()): the sound is mixed with them like in the export
+    void setMediaLengths(const QHash<QString, int>& lengths);
     // Next updateTimeline() only changes fader/pan/mute/solo -> apply live instead of rebuilding
     // (otherwise playback stutters while dragging the fader)
     void mixerOnlyNext() { m_mixerOnlyNext = true; }
@@ -123,7 +130,8 @@ public:
     // dropouts (Windows/WASAPI needs more than PulseAudio), at the cost of slightly more delay. Takes effect from the next play.
     static int audioBuffer();
     void setAudioBuffer(int samples);
-    // Audio driver of SDL (empty = automatic; Windows: "directsound" (default)/"wasapi"). Takes effect after restart.
+    // Audio driver (empty = automatic; Windows: "directsound" (default)/"wasapi"): SDL's on the MLT sound path (after a
+    // restart), miniaudio's backend of the same name on the own one (from the next play)
     static QString audioDriver();
     static void setAudioDriver(const QString& driver);
     // Call before init(): sets the chosen driver for SDL (an already set environment variable takes precedence)
@@ -148,6 +156,11 @@ private:
     void applyAudioState();
     void onFrameShown(void* mltFrame);
     void emitLevels();
+    // Own audio engine: the clock in frames of the connected producer, where playback of `frame` (producer frame)
+    // starts in samples, and what the player plays in the current mode (positions = producer frames)
+    double clockFrames() const;
+    double soundStart(int frame, double speed) const;
+    void syncPlayer(int position, bool restart);
 
     ProxyManager* m_proxies;
     RenderCache* m_renderCache;
@@ -192,6 +205,13 @@ private:
     QTimer* m_seekRelease;     // no seek for a moment: dragging ended, sound fades in
     std::atomic<int> m_seekSkipped{0};
     QSize m_previewSize{960, 540}; // project format scaled down (longer edge 960)
+
+    // Own audio engine (Audio::ownPath(), docs/plan-0.10-ton.md): the player plays the sound, the picture follows its
+    // clock (m_preview is the consumer); the MLT graph has no sound. nullptr = sound through MLT (sdl2_audio).
+    std::unique_ptr<Audio::Player> m_player;
+    std::unique_ptr<PreviewConsumer> m_preview;
+    Timeline m_sourceSound;  // source view: the file as a timeline
+    int m_gridSoundAngle = 0; // multicam grid: whose sound plays
 
     friend struct EngineCallbacks;
 };

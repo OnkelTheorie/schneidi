@@ -8,5 +8,7 @@
 namespace Audio {
 
 bool ownPath();
+// The setting "audio/engine" (the environment variable still wins); takes effect at the next start
+void setOwnPath(bool own);
 
 } // namespace Audio

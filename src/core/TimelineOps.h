@@ -168,6 +168,8 @@ void unpairBrokenDissolves(const Timeline& before, Timeline& after);
 void keepFadesApart(const Timeline& before, Timeline& after);
 
 int endFrame(const Timeline& tl);
+// The nested sequences (compound clips, multicam angles) of both are the same; Timeline's == leaves them out
+bool sameNested(const Timeline& a, const Timeline& b);
 // Is the file anywhere on a video track? (e.g. only rebuild the preview if a proxy belongs to it)
 bool usesMediaOnVideo(const Timeline& tl, const QString& path);
 

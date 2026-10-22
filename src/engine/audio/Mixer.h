@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <vector>
 
 namespace Audio {
 
@@ -52,6 +53,15 @@ public:
 
     // Mixes [pos, pos + count) into out[0..kChannels) (planar). Positions outside the timeline give silence.
     void render(int64_t pos, int count, float* const* out);
+
+    // Live (preview): takes over what the mixer panel changes – track fader, pan, mute/solo, EQ, compressor, master
+    // fader, limiter ceiling – without starting over; gains glide to the new value within the next render().
+    // false = the timeline differs in more than that (build a new mixer).
+    bool updateMix(const Timeline& timeline);
+    // Level meters (preview): peak of the last render() per audio track after fader/pan, L and R (linear, 0 =
+    // silent or muted). Off by default.
+    void setMetering(bool on);
+    const std::vector<float>& trackPeaks() const;
 
     // Counters for tests and the log
     struct Stats {

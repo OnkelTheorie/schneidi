@@ -49,6 +49,8 @@ inline void initEnv()
     qputenv("QT_QPA_PLATFORM", "offscreen");
     qputenv("SDL_AUDIODRIVER", "dummy");
     qputenv("SDL_NO_SIGNAL_HANDLERS", "1");
+    // Own audio engine: never the sound card in tests (silence paced by a timer), unless a test chose a device
+    if (!qEnvironmentVariableIsSet("SCHNEIDI_AUDIO_DEVICE")) qputenv("SCHNEIDI_AUDIO_DEVICE", "null");
 }
 
 // After creating the QApplication: own name and test paths -> the user's settings/cache stay untouched

@@ -111,6 +111,11 @@ public:
     void setSubtitles(bool on) { m_subtitles = on; }
     // Threads per video decoder (export); 0 = MLT default. Set before build().
     void setDecoderThreads(int threads);
+    // The built timeline lasts at least this long (preview with the own audio engine: the picture graph has no
+    // sound tracks but must last as long as the sound)
+    void setMinimumLength(int frames) { m_minLength = frames; }
+    // buildMulticamGrid() with the angles' sound (MLT sound path); off = picture only
+    void setGridSound(bool on) { m_gridSound = on; }
     // Set from another thread: build() stops opening files and returns an empty tractor (export cancelled)
     void setCancelFlag(std::shared_ptr<const std::atomic<bool>> flag) { m_cancel = std::move(flag); }
 
@@ -171,6 +176,8 @@ private:
     std::shared_ptr<std::atomic<bool>> m_gradeBypass;
     ClipCache m_clipCache;
     bool m_subtitles = true;
+    int m_minLength = 0;
+    bool m_gridSound = true;
     bool m_transparent = false; // background transparent instead of black (buildClipOutput)
     // Per file *and* track one own producer, so that video and audio tracks do
     // not seek each other back and forth in the decoder.

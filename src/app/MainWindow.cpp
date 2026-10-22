@@ -107,6 +107,14 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         updateRenderCacheBar();
     });
     connect(m_editor, &Editor::mixerOnlyEdit, m_engine, &Engine::mixerOnlyNext);
+    // The sound is mixed with the project's media lengths, like in the export (RenderQueue::exportSettings)
+    auto mediaLengths = [this] {
+        QHash<QString, int> lengths;
+        for (const MediaInfo& m : m_project->media()) lengths.insert(m.path, m.length);
+        m_engine->setMediaLengths(lengths);
+    };
+    connect(m_project, &Project::mediaChanged, this, mediaLengths);
+    mediaLengths();
     connect(m_project, &Project::timelineChanged, this, [this] {
         if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(m_project->renderTimeline());
         else if (!m_engineTimer.isActive()) m_engineTimer.start();

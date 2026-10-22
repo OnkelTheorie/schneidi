@@ -2,16 +2,21 @@
 
 #include "core/I18n.h"
 #include "core/Loudness.h"
+#include "core/Multicam.h"
+#include "core/TimelineOps.h"
 #include "engine/Bundle.h"
 #include "engine/Frei0r.h"
 #include "engine/LiveUpdate.h"
 #include "engine/Preroll.h"
+#include "engine/PreviewConsumer.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
 #include "engine/Stabilizer.h"
 #include "engine/StillFetcher.h"
 #include "engine/TimelineBuilder.h"
+#include "engine/audio/Path.h"
+#include "engine/audio/Player.h"
 #include "ui/MulticamGrid.h"
 
 #include <Mlt.h>
@@ -22,6 +27,7 @@
 #include <QSettings>
 #include <QThread>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <utility>
 
@@ -39,6 +45,25 @@ void releaseFreedMemory()
 #ifdef __GLIBC__
     malloc_trim(0);
 #endif
+}
+
+constexpr int kSoundRate = 48000; // the own audio engine's rate (the device converts if it runs at another)
+
+// Own audio engine: what the picture graph is built from – no sound tracks, no master (the player has them)
+Timeline pictureOnly(const Timeline& tl)
+{
+    Timeline p = tl;
+    p.audio.clear();
+    p.masterVolumeDb = 0;
+    p.masterLimiter = false;
+    return p;
+}
+
+// Same picture graph: only the sound differs (the length counts: the graph lasts as long as the sound)
+bool samePicture(const Timeline& a, const Timeline& b)
+{
+    return pictureOnly(a) == pictureOnly(b) && TimelineOps::endFrame(a) == TimelineOps::endFrame(b)
+           && TimelineOps::sameNested(a, b);
 }
 
 } // namespace
@@ -61,7 +86,18 @@ Engine::Engine(QObject* parent)
     m_seekRelease = new QTimer(this);
     m_seekRelease->setSingleShot(true);
     m_seekRelease->setInterval(120);
-    connect(m_seekRelease, &QTimer::timeout, this, [this] { m_seekFade->release(); });
+    connect(m_seekRelease, &QTimer::timeout, this, [this] {
+        m_seekFade->release();
+        if (m_player) m_player->setMuted(false);
+    });
+    if (Audio::ownPath()) {
+        Audio::Player::Options o;
+        o.rate = kSoundRate;
+        o.buffer = audioBuffer();
+        o.backend = audioDriver();
+        m_player = std::make_unique<Audio::Player>(o);
+        m_player->setLoudness(m_loudness.get());
+    }
     // Messages that were already on their way when jumping made the playhead briefly jump back
     connect(this, &Engine::framePosition, this, [this](int frame, int epoch) {
         if (epoch == m_seekEpoch) emit positionChanged(frame);
@@ -72,6 +108,8 @@ Engine::~Engine()
 {
     if (m_consumer) m_consumer->stop();
     m_consumer.reset();
+    m_preview.reset();
+    m_player.reset(); // feeds m_loudness
     m_consumerProfile.reset();
     m_preroll.reset(); // after the consumer (reports every frame to it), before the producers
     m_gridHooks.reset();
@@ -128,20 +166,28 @@ bool Engine::createConsumer(QString* error)
         return kind == TrackKind::Video ? m_proxies->resolve(path) : path;
     });
     m_gridBuilder->setGradeBypass(m_gradeBypass);
+    m_gridBuilder->setGridSound(!m_player); // own audio engine: the player plays the angle's sound
     // Preview image in the project's aspect ratio (otherwise portrait gets distorted), even dimensions
     const QSize fit = m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
     m_previewSize = QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
 
     m_consumerProfile = makeProfile(m_format);
-    for (const char* id : {"sdl2_audio", "rtaudio"}) {
-        m_consumer = std::make_unique<Mlt::Consumer>(*m_consumerProfile, id);
-        if (m_consumer->is_valid()) break;
+    if (m_player) {
+        // Own audio engine: the picture follows the player's clock, MLT renders no sound
+        m_preview = std::make_unique<PreviewConsumer>(*m_consumerProfile, [this] { return clockFrames(); });
+        m_consumer = std::make_unique<Mlt::Consumer>(m_preview->consumer());
+        m_consumer->set("audio_off", 1);
+    } else {
+        for (const char* id : {"sdl2_audio", "rtaudio"}) {
+            m_consumer = std::make_unique<Mlt::Consumer>(*m_consumerProfile, id);
+            if (m_consumer->is_valid()) break;
+        }
+        if (!m_consumer || !m_consumer->is_valid()) {
+            if (error) *error = T("Kein MLT-Audio-Consumer (sdl2_audio/rtaudio) gefunden.");
+            return false;
+        }
+        m_consumer->set("terminate_on_pause", 0);
     }
-    if (!m_consumer || !m_consumer->is_valid()) {
-        if (error) *error = T("Kein MLT-Audio-Consumer (sdl2_audio/rtaudio) gefunden.");
-        return false;
-    }
-    m_consumer->set("terminate_on_pause", 0);
     m_consumer->set("real_time", 1);
     // Scale smoothly like the export: the audio consumers default to "nearest", so downscaled pictures (preview size,
     // multicam cells, transform zoom) dropped fine detail – 1-px lines vanished in the multicam grid
@@ -160,7 +206,7 @@ bool Engine::createConsumer(QString* error)
     // Small lead-in buffer: otherwise the audio keeps running for ~1 s after pause/seek
     m_consumer->set("buffer", 2);
     m_consumer->set("prefill", 1);
-    m_consumer->set("audio_buffer", audioBuffer());
+    if (!m_player) m_consumer->set("audio_buffer", audioBuffer());
     m_consumer->listen("consumer-frame-show", this, (mlt_listener)EngineCallbacks::onFrameShow);
     return true;
 }
@@ -170,9 +216,11 @@ void Engine::setFormat(const ProjectFormat& format)
     if (format == m_format && m_profile) return;
     // Tear down everything attached to the old profile in this order: consumer first (reads the producers)
     if (m_consumer) m_consumer->stop();
+    if (m_player) m_player->pause();
     m_preroll->clear();
     m_current = nullptr;
     m_consumer.reset();
+    m_preview.reset();
     m_consumerProfile.reset();
     {
         std::lock_guard<std::mutex> lock(m_mixerMutex);
@@ -316,7 +364,16 @@ QImage Engine::grabStill(const Timeline& tl)
 
 void Engine::updateTimeline(const Timeline& tl)
 {
-    const bool mixerOnly = std::exchange(m_mixerOnlyNext, false) || TimelineBuilder::mixerOnlyChange(m_built, tl);
+    const bool hinted = std::exchange(m_mixerOnlyNext, false);
+    if (m_player) {
+        // Own audio engine: the player takes every change live; the picture graph only changes with the picture
+        if (m_mode == Mode::Timeline) m_player->setTimeline(tl, m_format.rate);
+        if (m_timeline && samePicture(m_built, tl)) {
+            m_built = tl;
+            return;
+        }
+    }
+    const bool mixerOnly = !m_player && (hinted || TimelineBuilder::mixerOnlyChange(m_built, tl));
     {
         std::lock_guard<std::mutex> lock(m_mixerMutex);
         if (mixerOnly && m_timeline && m_mixer && TimelineBuilder::applyMixer(tl, *m_mixer)) {
@@ -328,10 +385,12 @@ void Engine::updateTimeline(const Timeline& tl)
     m_renderCache->sync(tl); // queue missing clip outputs, discard outdated ones
     // Stabilization: analyses the timeline needs run in the background (until then the clips play unstabilized)
     Stabilizer::instance()->sync(Stabilizer::missing(tl, m_format));
+    const Timeline picture = m_player ? pictureOnly(tl) : tl;
+    m_builder->setMinimumLength(m_player ? TimelineOps::endFrame(tl) : 0);
     auto hooks = std::make_unique<MixerHooks>();
-    auto tractor = m_builder->build(tl, hooks.get());
+    auto tractor = m_builder->build(picture, m_player ? nullptr : hooks.get());
     // Only values changed (Inspector): copy them into the running tractor instead of restarting the consumer
-    if (m_timeline && LiveUpdate::valuesOnly(m_built, tl)) {
+    if (m_timeline && LiveUpdate::valuesOnly(m_player ? pictureOnly(m_built) : m_built, picture)) {
         std::lock_guard<std::mutex> lock(m_mixerMutex);
         if (LiveUpdate::transfer(*m_timeline, *tractor)) {
             m_built = tl;
@@ -357,6 +416,11 @@ void Engine::updateTimeline(const Timeline& tl)
     if (active && m_consumer) connectProducer(m_timeline.get(), pos);
 }
 
+void Engine::setMediaLengths(const QHash<QString, int>& lengths)
+{
+    if (m_player) m_player->setFileLengths(lengths);
+}
+
 void Engine::showTimeline(int position, bool keepSpeed)
 {
     if (!m_timeline) return;
@@ -364,6 +428,7 @@ void Engine::showTimeline(int position, bool keepSpeed)
     m_mode = Mode::Timeline;
     m_offset = 0;
     connectProducer(m_timeline.get(), position);
+    syncPlayer(position, true);
     if (m_grid) { // not shown any more: free its decoders
         m_gridHooks.reset();
         m_grid.reset();
@@ -409,13 +474,19 @@ bool Engine::showMulticam(const Timeline& content, const QVector<MulticamAngle>&
     m_offset = offset;
     const bool changed = m_mode != Mode::Multicam;
     m_mode = Mode::Multicam;
+    m_gridSoundAngle = options.activeAngle;
     connectProducer(m_grid.get(), position);
+    syncPlayer(position, true);
     if (changed) emit modeChanged(m_mode);
     return true;
 }
 
 void Engine::setMulticamAudio(int angle)
 {
+    if (m_player && m_mode == Mode::Multicam && angle != m_gridSoundAngle) {
+        m_gridSoundAngle = angle;
+        syncPlayer(m_position, false); // crossfades to the other angle's sound
+    }
     if (m_gridHooks) TimelineBuilder::applyMulticamAudio(*m_gridHooks, angle);
 }
 
@@ -429,7 +500,18 @@ void Engine::showSource(const QString& path, int position)
     m_speed = 0;
     m_mode = Mode::Source;
     m_offset = 0;
+    if (m_player) { // the sound of the original file (the picture may come from the proxy), stream 0 like MLT
+        Clip c;
+        c.id = 1;
+        c.mediaPath = path;
+        c.out = std::max(0, m_source->get_length() - 1);
+        m_sourceSound = Timeline{};
+        m_sourceSound.audio.resize(1);
+        m_sourceSound.audio[0].kind = TrackKind::Audio;
+        m_sourceSound.audio[0].clips << c;
+    }
     connectProducer(m_source.get(), std::max(0, position));
+    syncPlayer(std::max(0, position), true);
     emit modeChanged(m_mode);
 }
 
@@ -454,11 +536,45 @@ void Engine::connectProducer(Mlt::Producer* producer, int position)
 // sends out an audio snippet.
 void Engine::applyAudioState()
 {
+    // Loudness only during normal playback of the timeline (shuttling/reverse/source distort the measurement)
+    m_loudness->active = m_speed == 1.0 && m_mode == Mode::Timeline;
+    if (m_player) return; // own audio engine: MLT renders no sound
     const bool playing = m_speed != 0.0;
     m_consumer->set("audio_off", playing ? 0 : 1);
     m_consumer->set("scrub_audio", playing ? 1 : 0);
-    // Loudness only during normal playback of the timeline (shuttling/reverse/source distort the measurement)
-    m_loudness->active = m_speed == 1.0 && m_mode == Mode::Timeline;
+}
+
+double Engine::clockFrames() const
+{
+    if (!m_player->playing()) return NAN; // a frame still on its way from before the stop: at once
+    return m_player->position() * m_format.rate.fps() / kSoundRate;
+}
+
+double Engine::soundStart(int frame, double speed) const
+{
+    // Forward the sound of a frame starts at its first sample, backward after its last
+    return double(speed < 0 ? frame + 1 : frame) * kSoundRate / m_format.rate.fps();
+}
+
+// Own audio engine: the player plays what the current mode shows (positions = frames of the connected producer);
+// restart: playing goes on at `position` (another producer: another time axis)
+void Engine::syncPlayer(int position, bool restart)
+{
+    if (!m_player) return;
+    switch (m_mode) {
+    case Mode::Timeline: m_player->setTimeline(m_built, m_format.rate); break;
+    case Mode::Source: m_player->setTimeline(m_sourceSound, m_format.rate); break;
+    case Mode::Multicam: {
+        Timeline sound;
+        if (m_gridSoundAngle >= 0 && m_gridSoundAngle < m_gridAngles.size())
+            sound = Multicam::angleTimeline(m_gridContent, m_gridAngles[m_gridSoundAngle], TrackKind::Audio);
+        m_player->setTimeline(sound, m_format.rate);
+        break;
+    }
+    }
+    if (!restart) return;
+    if (m_speed != 0.0) m_player->play(soundStart(position - m_offset, m_speed), m_speed);
+    else m_player->pause();
 }
 
 int Engine::audioBuffer()
@@ -475,6 +591,7 @@ int Engine::audioBuffer()
 void Engine::setAudioBuffer(int samples)
 {
     QSettings().setValue("audio/buffer", samples);
+    if (m_player) m_player->setDevice(audioBuffer(), audioDriver());
     // sdl2_audio reopens the device on every play (applyAudioState) and then reads the value
     if (m_consumer) m_consumer->set("audio_buffer", audioBuffer());
     qInfo("Audio-Puffer: %d Samples", audioBuffer());
@@ -547,8 +664,33 @@ void Engine::setSpeed(double speed)
 {
     if (!m_current) return;
     const bool wasPlaying = m_speed != 0.0;
+    const double before = m_speed;
     m_speed = speed;
     m_current->set_speed(speed);
+    if (m_player) {
+        // Own audio engine: the device stays open, the player fades. The picture waits for the sound's clock.
+        const int at = std::max(0, m_position - m_offset);
+        if (speed == 0.0) {
+            m_player->pause();
+            m_current->seek(at); // stay exactly on the shown frame
+            m_consumer->purge();
+        } else if (wasPlaying && (before > 0) == (speed > 0)) {
+            m_player->play(m_player->position(), speed); // faster/slower from where the sound is
+        } else {
+            if (wasPlaying) { // turning around: the picture rendered ahead lies the other way
+                ++m_seekEpoch;
+                m_seekSkipped = 0;
+                m_seekTarget = at;
+                m_current->seek(at);
+                m_consumer->purge();
+            }
+            m_player->play(soundStart(at, speed), speed);
+        }
+        applyAudioState();
+        refresh();
+        emit speedChanged(speed);
+        return;
+    }
     if (speed == 0.0) {
         m_current->seek(std::max(0, m_position - m_offset)); // stay exactly on the shown frame
         m_consumer->purge();         // discard buffered audio immediately
@@ -578,6 +720,23 @@ void Engine::seek(int frame)
     ++m_seekEpoch;
     m_seekSkipped = 0;
     m_seekTarget = playing ? at : -1;
+    if (m_player) {
+        if (playing) {
+            // The next seek within moments: the playhead is being dragged -> silent until it rests
+            if (m_lastSeek.isValid() && m_lastSeek.elapsed() < 150) {
+                m_player->setMuted(true);
+                m_seekRelease->start();
+            }
+            m_player->play(soundStart(at, m_speed), m_speed);
+        }
+        m_lastSeek.start();
+        m_current->seek(at);
+        m_consumer->purge();
+        m_position = frame;
+        if (!playing) refresh();
+        emit positionChanged(frame);
+        return;
+    }
     const bool timelinePlaying = playing && m_mode == Mode::Timeline;
     if (timelinePlaying) {
         // The master meter fades at the jump by itself (SeekFade). The next seek within moments: the playhead is
@@ -613,6 +772,7 @@ void Engine::onFrameShown(void* mltFrame)
         if (!arrived && ++m_seekSkipped < 50) return;
         m_seekTarget = -1;
     }
+    if (m_player && m_speed != 0.0) m_player->release(); // the picture is there: the sound may start
     mlt_image_format fmt = mlt_image_rgba;
     int w = m_previewSize.width(), h = m_previewSize.height();
     const uint8_t* data = frame.get_image(fmt, w, h);
@@ -629,6 +789,15 @@ void Engine::onFrameShown(void* mltFrame)
 
 void Engine::emitLevels()
 {
+    if (m_player) { // peaks of what was heard since the last frame
+        const std::vector<float> peaks = m_player->takeLevels();
+        if (peaks.empty()) return;
+        QVector<float> levels;
+        levels.reserve(int(peaks.size()));
+        for (const float p : peaks) levels << (p > 1e-10f ? 20.f * std::log10(p) : -200.f);
+        emit audioLevels(levels); // queued -> UI thread
+        return;
+    }
     // The level meters remember the level of the last processed audio
     // (runs minimally ahead of the image because of the small buffer – irrelevant for meters)
     auto read = [](const MixerHooks::Strip& s, QVector<float>& out, const char* key) {

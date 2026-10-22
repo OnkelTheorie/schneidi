@@ -782,6 +782,15 @@ int endFrame(const Timeline& tl)
     return end;
 }
 
+bool sameNested(const Timeline& a, const Timeline& b)
+{
+    if (a.nested == b.nested) return true;
+    if (!a.nested || !b.nested || *a.nested != *b.nested) return false;
+    for (auto it = a.nested->cbegin(); it != a.nested->cend(); ++it)
+        if (it->angles != b.nested->value(it.key()).angles) return false;
+    return true;
+}
+
 bool usesMediaOnVideo(const Timeline& tl, const QString& path)
 {
     for (const auto& t : tl.video)

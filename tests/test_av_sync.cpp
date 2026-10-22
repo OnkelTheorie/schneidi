@@ -43,6 +43,8 @@ constexpr int kFlashes[] = {25, 58, 92, 131, 170};
 constexpr int kInB = 85, kStartB = 100, kLenA = 80, kLenB = 115;
 // Matroska stores 1 ms ticks: a sample-exact beep may land up to 1 ms off; everything else is sample-exact
 constexpr double kExportTolMs = 1.0;
+// Preview with the own audio engine: a frame is shown when the sound reaches it (+ the time to hand it to the UI)
+constexpr double kPreviewTolMs = 10.0;
 
 struct Variant {
     const char* name;
@@ -280,9 +282,9 @@ struct SpeakerClock {
 };
 
 // Preview: the real Engine plays a timeline with three sources from their file start (the MLT offset of the export
-// above shows here too) – flash shown (frameReady) against beep handed to the speaker. Only measured and printed
-// (target with the own engine: |offset| <= 10 ms, docs/plan-0.10-ton.md › Offen); the disk driver has no device
-// latency, a real sound card adds its buffer on top.
+// above shows here too) – flash shown (frameReady) against beep handed to the speaker. MLT sound path: only measured
+// and printed. Own audio engine (picture follows its clock): |offset| <= kPreviewTolMs. The "speaker" (SDL's disk
+// driver resp. the engine's file device) has no device latency; with a sound card the clock subtracts its buffer.
 void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock)
 {
     const Variant* parts[] = {&kVariants[0], &kVariants[1], &kVariants[3]}; // mov, late_audio, aac
@@ -348,7 +350,10 @@ void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock
             const size_t n = size_t(2 * i + k);
             const qint64 heard = clock.timeOf(beeps[n]);
             if (!CHECK(heard >= 0)) return;
-            line += QString(" %1").arg((heard - flashes[n]) / 1e6, 7, 'f', 1);
+            const double ms = (heard - flashes[n]) / 1e6;
+            line += QString(" %1").arg(ms, 7, 'f', 1);
+            if (!mltAudio() && std::abs(ms) > kPreviewTolMs) line += " <- versetzt";
+            if (!mltAudio()) CHECK(std::abs(ms) <= kPreviewTolMs);
         }
         std::printf("  %-20s%s\n", parts[i]->name, qPrintable(line));
     }
@@ -364,6 +369,7 @@ int main(int argc, char** argv)
     clock.path = tmp.filePath("speaker.raw");
     qputenv("SDL_AUDIODRIVER", "disk"); // the "speaker": SDL writes what it would play, in real time
     qputenv("SDL_DISKAUDIOFILE", QDir::toNativeSeparators(clock.path).toLocal8Bit());
+    qputenv("SCHNEIDI_AUDIO_DEVICE", ("file:" + QDir::toNativeSeparators(clock.path)).toLocal8Bit()); // own engine
     QApplication app(argc, argv);
     Check::initApp("av_sync");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");

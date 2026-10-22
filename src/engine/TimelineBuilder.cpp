@@ -428,7 +428,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
     auto tractor = std::make_unique<Mlt::Tractor>(m_profile);
     // Nested: background far beyond the end, so that a compound clip after shortening its content
     // (clip longer than the sequence) yields empty frames instead of repeats
-    const int content = std::max(1, TimelineOps::endFrame(tl));
+    const int content = std::max({1, TimelineOps::endFrame(tl), m_inNested ? 0 : m_minLength});
     const int end = m_inNested ? content + 3600 * qRound(m_profile.fps()) : content;
 
     // Track 0: black background over the whole length
