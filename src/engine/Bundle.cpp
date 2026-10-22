@@ -149,6 +149,23 @@ void prepareMltCaches()
     for (const char* name : {"producer_avformat", "link_avdeinterlace", "link_swresample", "qimage.image", "qimage.alpha",
                              "qimage.qimage", "pixbuf.image", "pixbuf.alpha", "pixbuf.pixbuf", "pango.image"})
         mlt_service_cache_get_size(nullptr, name); // creates the cache (and the list of caches) if missing
+    // Service metadata (the module's YAML) is loaded on first use and stored without a lock (mlt_repository_metadata).
+    // timewarp asks for its clip producer's metadata while it opens: two speed clips opened in parallel before an
+    // export crashed in producer_timewarp_init (2026-10-22). Load it here for every producer a file can open as, once
+    // (6.5 ms; the frei0r generators would add 20 ms and are never opened from a file)
+    const mlt_repository repository = mlt_factory_repository();
+    const mlt_properties producers = mlt_repository_producers(repository);
+    for (int i = 0, n = mlt_properties_count(producers); i < n; ++i)
+        if (const char* name = mlt_properties_get_name(producers, i); qstrncmp(name, "frei0r.", 7) != 0)
+            mlt_repository_metadata(repository, mlt_service_producer_type, name);
+    // The loader (every file goes through it) reads loader.dict (file name -> producer) and loader.ini (normalizing
+    // filters) on first use into statics, without a lock (producer_loader.c): crashed in producer_loader_init with
+    // files opened in parallel. One producer with a service prefix loads loader.ini, one without loads loader.dict
+    // (it need not exist).
+    const mlt_profile profile = mlt_profile_init(nullptr);
+    for (const char* resource : {"color:black", "schneidi-warm-up.invalid"})
+        if (const mlt_producer p = mlt_factory_producer(profile, "loader", resource)) mlt_producer_close(p);
+    mlt_profile_close(profile);
 }
 
 QString tool(const QString& name)

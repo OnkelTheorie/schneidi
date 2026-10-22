@@ -25,7 +25,9 @@ void configureMltLogging();
 void pinNumericLocale();
 // Directly after Mlt::Factory::init, in one thread: MLT creates its service caches (one per producer kind) lazily and
 // without a lock (mlt_service.c get_cache). The first producers opened in parallel (Media Pool thumbnails, parallel
-// opening before an export) raced on it and crashed – about 1 in 10 starts with a project (2026-10-21)
+// opening before an export) raced on it and crashed – about 1 in 10 starts with a project (2026-10-21). Same for the
+// producers' metadata, which timewarp reads while opening, and the loader's tables (speed clips opened in parallel
+// crashed, 2026-10-22)
 void prepareMltCaches();
 // Path as MLT expects it for the module folder/environment variables (Windows: ANSI code page resp. 8.3 path)
 QByteArray pathForMlt(const QString& path);

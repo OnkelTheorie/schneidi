@@ -1,7 +1,9 @@
 // Opening the first producers in parallel right after MLT starts (Media Pool thumbnails when a project opens,
 // parallel opening before an export) crashed about 1 start in 10: MLT creates its service caches lazily and without a
-// lock. Engine::initMlt creates them first (Bundle::prepareMltCaches). The race only exists for the very first
-// producers of a process -> the test starts itself several times; each child opens 16 producers at the same moment.
+// lock. Engine::initMlt creates them first (Bundle::prepareMltCaches). Same for the loader's tables and the producer
+// metadata timewarp reads: two speed clips opened in parallel before an export crashed 5 exports in 6 (2026-10-22).
+// The races only exist for the very first producers of a process -> the test starts itself several times; each child
+// opens 16 producers at the same moment, directly, through the loader and as timewarp (speed clips).
 #include "check.h"
 
 #include "engine/Engine.h"
@@ -24,12 +26,15 @@ int child(const QString& media)
     Mlt::Profile profile;
     std::atomic<int> ready{0}, opened{0};
     std::vector<std::thread> threads;
-    const QByteArray resource = media.toUtf8();
+    // as the TimelineBuilder opens files: avformat directly, through the loader, speed clips (timewarp, also reversed)
+    const QByteArray file = media.toUtf8();
+    const QByteArray kinds[][2] = {{"avformat", file}, {"loader", file}, {"loader", "timewarp:0.5:" + file},
+                                   {"loader", "timewarp:-1.5:" + file}};
     for (int i = 0; i < 16; ++i)
-        threads.emplace_back([&] {
+        threads.emplace_back([&, i] {
             ++ready;
             while (ready < 16) std::this_thread::yield(); // all at once
-            Mlt::Producer p(profile, "avformat", resource.constData());
+            Mlt::Producer p(profile, kinds[i % 4][0].constData(), kinds[i % 4][1].constData());
             if (p.is_valid()) ++opened;
         });
     for (std::thread& t : threads) t.join();
