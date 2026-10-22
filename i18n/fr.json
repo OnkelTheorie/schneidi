@@ -1026,7 +1026,7 @@
  "Ton wird gemessen…": "Mesure du son…",
  "Ton wird synchronisiert…": "Synchronisation par le son…",
  "Ton-Maschine: MLT (bisher)": "Moteur audio : MLT (actuel)",
- "Ton-Maschine: eigene (neu, Test)": "Moteur audio : propre (nouveau, test)",
+ "Ton-Maschine: SMT (neu, Test)": "Moteur audio : SMT (nouveau, test)",
  "Ton-Stream": "Flux audio",
  "Ton-Stream, nach dem synchronisiert wird (OBS: meist der Mix mit dem Spielton). Dateien mit weniger Streams nehmen den ersten.": "Flux audio utilisé pour la synchronisation (OBS : généralement le mix avec le son du jeu). Les fichiers avec moins de flux utilisent le premier.",
  "Ton: gemeinsame Geräusche (Rundenstart, Ansagen) finden. Marker: die ersten Quell-Marker (M im Quell-Viewer) liegen übereinander. In-Punkt: die Quell-In-Punkte liegen übereinander.": "Son : trouver des sons communs (début de manche, annonces). Marqueur : les premiers marqueurs source (M dans le visualiseur source) sont alignés. Point d'entrée : les points d'entrée source sont alignés.",

@@ -1026,7 +1026,7 @@
  "Ton wird gemessen…": "Midiendo el sonido…",
  "Ton wird synchronisiert…": "Sincronizando por sonido…",
  "Ton-Maschine: MLT (bisher)": "Motor de sonido: MLT (actual)",
- "Ton-Maschine: eigene (neu, Test)": "Motor de sonido: propio (nuevo, prueba)",
+ "Ton-Maschine: SMT (neu, Test)": "Motor de sonido: SMT (nuevo, prueba)",
  "Ton-Stream": "Pista de audio",
  "Ton-Stream, nach dem synchronisiert wird (OBS: meist der Mix mit dem Spielton). Dateien mit weniger Streams nehmen den ersten.": "Pista de audio usada para sincronizar (OBS: normalmente la mezcla con el sonido del juego). Los archivos con menos pistas usan la primera.",
  "Ton: gemeinsame Geräusche (Rundenstart, Ansagen) finden. Marker: die ersten Quell-Marker (M im Quell-Viewer) liegen übereinander. In-Punkt: die Quell-In-Punkte liegen übereinander.": "Sonido: busca sonidos comunes (inicio de ronda, anuncios). Marcador: los primeros marcadores de origen (M en el visor de origen) coinciden. Punto de entrada: los puntos de entrada de origen coinciden.",

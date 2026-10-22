@@ -507,7 +507,7 @@ void MainWindow::buildActions()
     audioMenu->addSeparator();
     auto* engineGroup = new QActionGroup(audioMenu);
     for (const auto& [own, text] : {std::pair{false, N_("Ton-Maschine: MLT (bisher)")},
-                                    std::pair{true, N_("Ton-Maschine: eigene (neu, Test)")}}) {
+                                    std::pair{true, N_("Ton-Maschine: SMT (neu, Test)")}}) {
         QAction* a = audioMenu->addAction(T(text));
         a->setCheckable(true);
         a->setChecked(Audio::ownPath() == own);

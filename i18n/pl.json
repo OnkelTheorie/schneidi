@@ -1026,7 +1026,7 @@
  "Ton wird gemessen…": "Mierzenie dźwięku…",
  "Ton wird synchronisiert…": "Synchronizacja dźwiękiem…",
  "Ton-Maschine: MLT (bisher)": "Silnik dźwięku: MLT (dotychczasowy)",
- "Ton-Maschine: eigene (neu, Test)": "Silnik dźwięku: własny (nowy, test)",
+ "Ton-Maschine: SMT (neu, Test)": "Silnik dźwięku: SMT (nowy, test)",
  "Ton-Stream": "Strumień audio",
  "Ton-Stream, nach dem synchronisiert wird (OBS: meist der Mix mit dem Spielton). Dateien mit weniger Streams nehmen den ersten.": "Strumień audio używany do synchronizacji (OBS: zwykle miks z dźwiękiem gry). Pliki z mniejszą liczbą strumieni używają pierwszego.",
  "Ton: gemeinsame Geräusche (Rundenstart, Ansagen) finden. Marker: die ersten Quell-Marker (M im Quell-Viewer) liegen übereinander. In-Punkt: die Quell-In-Punkte liegen übereinander.": "Dźwięk: wyszukaj wspólne dźwięki (start rundy, komunikaty). Znacznik: pierwsze znaczniki źródła (M w podglądzie źródła) się pokrywają. Punkt wejścia: punkty wejścia źródła się pokrywają.",

@@ -1026,7 +1026,7 @@
  "Ton wird gemessen…": "Measuring sound…",
  "Ton wird synchronisiert…": "Syncing by sound…",
  "Ton-Maschine: MLT (bisher)": "Sound engine: MLT (current)",
- "Ton-Maschine: eigene (neu, Test)": "Sound engine: own (new, test)",
+ "Ton-Maschine: SMT (neu, Test)": "Sound engine: SMT (new, test)",
  "Ton-Stream": "Audio stream",
  "Ton-Stream, nach dem synchronisiert wird (OBS: meist der Mix mit dem Spielton). Dateien mit weniger Streams nehmen den ersten.": "Audio stream used for the sync (OBS: usually the mix with the game sound). Files with fewer streams use the first one.",
  "Ton: gemeinsame Geräusche (Rundenstart, Ansagen) finden. Marker: die ersten Quell-Marker (M im Quell-Viewer) liegen übereinander. In-Punkt: die Quell-In-Punkte liegen übereinander.": "Sound: find shared sounds (round start, announcements). Marker: the first source markers (M in the source viewer) line up. In point: the source In points line up.",
