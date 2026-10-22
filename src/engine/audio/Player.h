@@ -11,6 +11,10 @@
 // Positions are samples of the timeline at the output rate. The clock sits between samples: forward, after hearing
 // sample k it is k + 1; backward it is k. A frame f plays forward over [start(f), start(f + 1)).
 //
+// The device can vanish while playing (headphones unplugged): a watchdog notices when it stops taking samples and
+// reopens – the chosen output, else the system default, else silence (the clock runs on) – and goes back to the
+// chosen output once it is there again. The picture stands for that moment (~0.3 s), then both run on in sync.
+//
 // Speeds: 1 and -1 sound normal; 2 and 4 (and backwards) play the sound faster like tape; other speeds are silent
 // while the clock runs.
 
@@ -33,6 +37,7 @@ public:
         int rate = 48000;
         int buffer = 1024; // samples the device buffers
         QString backend;   // Device::Config::backend
+        QString output;    // Device::Config::output ("" = system default)
     };
     explicit Player(const Options& options);
     Player() : Player(Options{}) {}
@@ -44,8 +49,8 @@ public:
     // Lengths of media files in frames as the project knows them (the export's ExportSettings::mediaLengths): the
     // mix must place reversed clips and transition handles like the export. Files missing here are measured.
     void setFileLengths(const QHash<QString, int>& lengths);
-    // Device settings; take effect at the next play() while stopped
-    void setDevice(int buffer, const QString& backend);
+    // Device settings; an open device is reopened with them at once (a short gap while playing)
+    void setDevice(int buffer, const QString& backend, const QString& output);
 
     // Starts playing at clock position `position` with `speed` (negative = backwards); while playing it is a jump or
     // a speed change. The sound fades in once release() is called or 0.3 s have passed.
@@ -75,6 +80,8 @@ public:
         int mixers = 0;     // mixers built (timeline changes that needed more than updateMix)
         int liveUpdates = 0; // timeline changes taken over by Mixer::updateMix
         int fadeOuts = 0;   // generations faded out (jumps, stops, speed changes)
+        int reopens = 0;    // device reopened because it went silent or the chosen output came back
+        int reroutes = 0;   // the system moved the sound to another output by itself
     };
     Stats stats() const;
 

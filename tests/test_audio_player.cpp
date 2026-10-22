@@ -264,5 +264,29 @@ int main(int argc, char** argv)
     const int tail = peak(last - 96, last), before = peak(last - 2400, last - 1440);
     std::printf("Stopp: letzte 2 ms Spitze %d, 30–50 ms davor %d\n", tail, before);
     CHECK(before > 8000 && tail < before / 2);
+
+    // 8. The device vanishes while playing (it stops calling back without a word, like a chosen PulseAudio output
+    // whose card goes away): the watchdog reopens and the clock runs on; new settings reopen at once.
+    player.reset();
+    qputenv("SCHNEIDI_AUDIO_DEVICE", "null:stall=500");
+    auto lost = std::make_unique<Audio::Player>(opt);
+    lost->setTimeline(tl, kFps);
+    lost->play(0, 1.0);
+    lost->release();
+    sleepMs(1200);
+    const double afterLoss = lost->position();
+    sleepMs(500);
+    const double later = lost->position();
+    std::printf("Gerät weg: Uhr nach 1,2 s bei %.3f s, 0,5 s später +%.3f s, %d× neu geöffnet\n", afterLoss / kRate,
+                (later - afterLoss) / kRate, lost->stats().reopens);
+    CHECK_EQ(lost->stats().reopens, 1);
+    CHECK(afterLoss > 0.7 * kRate && afterLoss < 1.2 * kRate); // stood ~0.25 s
+    CHECK(std::abs(later - afterLoss - 0.5 * kRate) < 0.05 * kRate);
+    lost->setDevice(1920, QString(), QString());
+    sleepMs(500);
+    const double changed = lost->position();
+    CHECK(std::abs(changed - later - 0.5 * kRate) < 0.1 * kRate);
+    CHECK_EQ(lost->stats().reopens, 1); // a settings change is no vanished device
+    CHECK(lost->playing());
     return Check::result();
 }

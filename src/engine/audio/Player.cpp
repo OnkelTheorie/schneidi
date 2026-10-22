@@ -31,6 +31,9 @@ constexpr int kChunk = 8192;    // backwards: mixed forward in chunks of this si
 constexpr int kOverlap = 256;   // crossfade between reversed chunks
 constexpr int kMaxTape = 4;     // faster than this: silent
 constexpr int64_t kHoldNs = 300'000'000;
+constexpr int64_t kSilentNs = 250'000'000; // a device that took nothing for this long (at least) has vanished
+constexpr int64_t kRetryNs = 2'000'000'000; // on a fallback: look for the asked output this often
+constexpr int kSilentTries = 3;             // reopened this often without it calling back: silence until it is back
 
 int64_t nowNs()
 {
@@ -100,10 +103,23 @@ struct Player::Impl {
         bool sounding = false;
         float muteGain = 1.f;
     } cb;
-    std::atomic<int> underruns{0}, fadeOuts{0}, mixersBuilt{0}, liveUpdates{0};
+    std::atomic<int> underruns{0}, fadeOuts{0}, mixersBuilt{0}, liveUpdates{0}, reopens{0}, reroutes{0};
+    std::atomic<int64_t> lastCallback{0}; // when the device last took samples (ns)
+    std::atomic<int64_t> silentLimit{kSilentNs}; // took nothing for this long: vanished (ns, from the buffer)
 
+    // The device: opened by play() and the watchdog, under deviceMutex (taken before `mutex`, never inside it)
+    std::mutex deviceMutex;
     std::unique_ptr<Device> device;
+    bool forcedSilence = false; // the sound card kept failing: silence until available() says it is back
+    int64_t openedAt = 0;       // lastCallback when it was opened: later = it has called back since
+    int opened = 0;             // devices opened so far
     QString deviceName, deviceError;
+
+    // Watchdog thread: notices a vanished device, applies new settings, brings the asked output back
+    std::thread watchdog;
+    std::mutex watchMutex;
+    std::condition_variable watchWake;
+    bool watchQuit = false;
 
     std::mutex levelMutex;
     std::deque<LevelEntry> levels;
@@ -133,7 +149,11 @@ struct Player::Impl {
     void process(float* out, int frames);
     void publishClock(int64_t now);
     double positionLocked();
-    void openDevice();
+    Device::Config deviceConfig();
+    void openDevice(bool silent = false); // under deviceMutex
+    void closeDevice();                   // under deviceMutex
+    bool deviceSilent() const;
+    void watch();
 
     void feed();
     void takeTimeline(Feed& f, const Timeline& tl, FrameRate fps, bool playingForward);
@@ -219,6 +239,7 @@ void Player::Impl::process(float* out, int frames)
     }
     s.sounding = sound;
     s.total += frames;
+    lastCallback.store(now, std::memory_order_relaxed);
     publishClock(now);
 }
 
@@ -468,37 +489,146 @@ void Player::Impl::produce(Feed& f, float* const* out, int n)
 
 // ---- Control ----
 
-void Player::Impl::openDevice()
+Device::Config Player::Impl::deviceConfig()
 {
+    std::lock_guard<std::mutex> lock(mutex);
     Device::Config c;
     c.rate = opt.rate;
     c.channels = kChannels;
     c.buffer = opt.buffer;
     c.backend = opt.backend;
-    device.reset(); // the old callback stops first
+    c.output = opt.output;
+    return c;
+}
+
+void Player::Impl::openDevice(bool silent)
+{
+    Device::Config c = deviceConfig();
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        deviceDirty = false;
+    }
+    if (silent) c.backend = "null";
+    forcedSilence = silent;
+    closeDevice(); // the old callback stops first
+    silentLimit = std::max<int64_t>(kSilentNs, int64_t(c.buffer) * 6 * 1'000'000'000 / c.rate);
+    openedAt = nowNs();
+    ++opened;
+    lastCallback.store(openedAt, std::memory_order_relaxed);
     QString error;
     device = Device::open(c, [this](float* out, int frames) { process(out, frames); }, &error);
     latency = device->latency();
     qInfo("Audio: %s, Latenz %d Samples", qPrintable(device->name()), latency.load());
     std::lock_guard<std::mutex> lock(mutex);
     deviceName = device->name();
-    deviceError = error;
+    deviceError = silent ? QString("Ausgabe antwortet nicht") : error;
+}
+
+bool Player::Impl::deviceSilent() const
+{
+    return nowNs() - lastCallback.load(std::memory_order_relaxed) > silentLimit.load(std::memory_order_relaxed);
+}
+
+void Player::Impl::closeDevice()
+{
+    if (!device) return;
+    if (!deviceSilent()) {
+        device.reset();
+        return;
+    }
+    // A vanished device: closing it may take long or hang in the backend (seen with miniaudio and PulseAudio), so it
+    // never calls us again and is closed aside
+    device->detach();
+    std::thread([old = std::move(device)]() mutable { old.reset(); }).detach();
+}
+
+void Player::Impl::watch()
+{
+    int64_t lastTry = 0;
+    int tries = 0;   // reopens in a row without the device calling back
+    int seenReroutes = 0;
+    int seen = 0;
+    std::unique_lock<std::mutex> wl(watchMutex);
+    while (!watchQuit) {
+        watchWake.wait_for(wl, std::chrono::milliseconds(50));
+        if (watchQuit) break;
+        wl.unlock();
+        bool retry = false;
+        Device::Config want;
+        {
+            std::lock_guard<std::mutex> dl(deviceMutex);
+            if (device) {
+                if (opened != seen) { // opened anew (here or by play())
+                    seen = opened;
+                    seenReroutes = 0;
+                }
+                bool dirty;
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    dirty = deviceDirty;
+                }
+                const int64_t now = nowNs();
+                const int64_t silent = now - lastCallback.load(std::memory_order_relaxed);
+                if (const int r = device->reroutes(); r != seenReroutes) {
+                    qInfo("Audio: das System hat die Ausgabe verlegt");
+                    reroutes.fetch_add(r - seenReroutes, std::memory_order_relaxed);
+                    seenReroutes = r;
+                }
+                if (dirty) {
+                    openDevice();
+                    tries = 0;
+                } else if (deviceSilent()) {
+                    ++tries;
+                    reopens.fetch_add(1, std::memory_order_relaxed);
+                    qWarning("Audio: %s nimmt seit %lld ms nichts mehr – öffne neu", qPrintable(device->name()),
+                             (long long)(silent / 1'000'000));
+                    openDevice(tries >= kSilentTries); // the clock must run: silence after a few tries
+                    lastTry = now;
+                } else {
+                    if (!forcedSilence && lastCallback.load(std::memory_order_relaxed) > openedAt) tries = 0;
+                    if ((forcedSilence || device->fallback()) && now - lastTry > kRetryNs) {
+                        lastTry = now;
+                        retry = true;
+                        want = deviceConfig();
+                    }
+                }
+            }
+        }
+        // Looking for the asked output takes a few ms (the audio system lists its devices): not under deviceMutex
+        if (retry && Device::available(want)) {
+            std::lock_guard<std::mutex> dl(deviceMutex);
+            if (device && (forcedSilence || device->fallback())) {
+                qInfo("Audio: gewünschte Ausgabe ist wieder da");
+                reopens.fetch_add(1, std::memory_order_relaxed);
+                tries = 0;
+                openDevice();
+            }
+        }
+        wl.lock();
+    }
 }
 
 Player::Player(const Options& options) : d(std::make_unique<Impl>(options))
 {
     d->feeder = std::thread([this] { d->feed(); });
+    d->watchdog = std::thread([this] { d->watch(); });
 }
 
 Player::~Player()
 {
+    {
+        std::lock_guard<std::mutex> lock(d->watchMutex);
+        d->watchQuit = true;
+    }
+    d->watchWake.notify_all();
+    d->watchdog.join();
     {
         std::lock_guard<std::mutex> lock(d->mutex);
         d->quit = true;
     }
     d->wake.notify_all();
     d->feeder.join();
-    d->device.reset();
+    d->closeDevice();
 }
 
 void Player::setTimeline(const Timeline& timeline, FrameRate fps)
@@ -516,13 +646,14 @@ void Player::setFileLengths(const QHash<QString, int>& lengths)
     d->projectLengths = lengths;
 }
 
-void Player::setDevice(int buffer, const QString& backend)
+void Player::setDevice(int buffer, const QString& backend, const QString& output)
 {
     std::lock_guard<std::mutex> lock(d->mutex);
-    if (buffer == d->opt.buffer && backend == d->opt.backend) return;
+    if (buffer == d->opt.buffer && backend == d->opt.backend && output == d->opt.output) return;
     d->opt.buffer = buffer;
     d->opt.backend = backend;
-    d->deviceDirty = true;
+    d->opt.output = output;
+    d->deviceDirty = true; // the watchdog reopens an open device; play() opens with them anyway
 }
 
 void Player::play(double position, double speed)
@@ -532,13 +663,11 @@ void Player::play(double position, double speed)
         return;
     }
     {
-        std::unique_lock<std::mutex> lock(d->mutex);
-        if (!d->device || (d->deviceDirty && !d->cmd.playing)) {
-            d->deviceDirty = false;
-            lock.unlock();
-            d->openDevice();
-            lock.lock();
-        }
+        std::lock_guard<std::mutex> dl(d->deviceMutex);
+        if (!d->device) d->openDevice();
+    }
+    {
+        std::lock_guard<std::mutex> lock(d->mutex);
         d->cmd = {d->cmd.gen + 1, true, position, speed};
         d->heardMax = 0;
         d->holdUntil.store(nowNs() + kHoldNs, std::memory_order_relaxed);
@@ -628,6 +757,8 @@ Player::Stats Player::stats() const
     s.mixers = d->mixersBuilt.load();
     s.liveUpdates = d->liveUpdates.load();
     s.fadeOuts = d->fadeOuts.load();
+    s.reopens = d->reopens.load();
+    s.reroutes = d->reroutes.load();
     return s;
 }
 

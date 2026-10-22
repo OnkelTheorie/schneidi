@@ -95,6 +95,7 @@ Engine::Engine(QObject* parent)
         o.rate = kSoundRate;
         o.buffer = audioBuffer();
         o.backend = audioDriver();
+        o.output = audioOutput();
         m_player = std::make_unique<Audio::Player>(o);
         m_player->setLoudness(m_loudness.get());
     }
@@ -591,7 +592,7 @@ int Engine::audioBuffer()
 void Engine::setAudioBuffer(int samples)
 {
     QSettings().setValue("audio/buffer", samples);
-    if (m_player) m_player->setDevice(audioBuffer(), audioDriver());
+    if (m_player) m_player->setDevice(audioBuffer(), audioDriver(), audioOutput());
     // sdl2_audio reopens the device on every play (applyAudioState) and then reads the value
     if (m_consumer) m_consumer->set("audio_buffer", audioBuffer());
     qInfo("Audio-Puffer: %d Samples", audioBuffer());
@@ -612,6 +613,18 @@ QString Engine::audioDriver()
 void Engine::setAudioDriver(const QString& driver)
 {
     QSettings().setValue("audio/driver", driver);
+}
+
+QString Engine::audioOutput()
+{
+    return QSettings().value("audio/output").toString();
+}
+
+void Engine::setAudioOutput(const QString& id)
+{
+    QSettings().setValue("audio/output", id);
+    if (m_player) m_player->setDevice(audioBuffer(), audioDriver(), audioOutput());
+    qInfo("Audio-Ausgabe: %s", id.isEmpty() ? "Systemstandard" : qPrintable(id));
 }
 
 void Engine::applyAudioSettings()

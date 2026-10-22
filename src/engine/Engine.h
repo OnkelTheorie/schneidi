@@ -134,6 +134,9 @@ public:
     // restart), miniaudio's backend of the same name on the own one (from the next play)
     static QString audioDriver();
     static void setAudioDriver(const QString& driver);
+    // Output device of the own sound engine (Audio::Device::Output::id, empty = system default); at once
+    static QString audioOutput();
+    void setAudioOutput(const QString& id);
     // Call before init(): sets the chosen driver for SDL (an already set environment variable takes precedence)
     static void applyAudioSettings();
 

@@ -28,6 +28,7 @@
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
+#include "engine/audio/Device.h"
 #include "engine/audio/Path.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
@@ -476,6 +477,31 @@ void MainWindow::buildActions()
         a->setChecked(Engine::audioBuffer() == samples);
         bufferGroup->addAction(a);
         connect(a, &QAction::triggered, this, [this, n = samples] { m_engine->setAudioBuffer(n); });
+    }
+    // Output device like DaVinci (Video and Audio I/O → Speaker Setup); only the own sound engine can choose one. The
+    // list is read when the menu opens: devices come and go.
+    if (Audio::ownPath()) {
+        QMenu* outputMenu = audioMenu->addMenu(T("Ausgabegerät"));
+        connect(outputMenu, &QMenu::aboutToShow, this, [this, outputMenu] {
+            outputMenu->clear();
+            auto* group = new QActionGroup(outputMenu);
+            const QString current = Engine::audioOutput();
+            auto add = [&](const QString& id, const QString& text) {
+                QAction* a = outputMenu->addAction(text);
+                a->setCheckable(true);
+                a->setChecked(id == current);
+                group->addAction(a);
+                connect(a, &QAction::triggered, this, [this, id] { m_engine->setAudioOutput(id); });
+            };
+            add(QString(), T("Systemstandard"));
+            outputMenu->addSeparator();
+            bool found = current.isEmpty();
+            for (const Audio::Device::Output& o : Audio::Device::outputs(Engine::audioDriver())) {
+                add(o.id, o.name);
+                found = found || o.id == current;
+            }
+            if (!found) add(current, T("%1 (nicht angeschlossen)").arg(current));
+        });
     }
     // Sound engine (docs/plan-0.10-ton.md): the own one is tried out here until it becomes the default
     audioMenu->addSeparator();
