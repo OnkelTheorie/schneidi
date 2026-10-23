@@ -144,7 +144,7 @@ int main(int argc, char** argv)
     qputenv("SCHNEIDI_AUDIO_DEVICE", ("file:" + QDir::toNativeSeparators(speaker)).toLocal8Bit());
     QApplication app(argc, argv);
     Check::initApp("picture_catchup");
-    if (!Audio::ownPath()) return Check::skip("nur mit der eigenen Ton-Maschine (SCHNEIDI_AUDIO=own)");
+    if (!Audio::ownPath()) return Check::skip("nur mit der eigenen Ton-Maschine (nicht SCHNEIDI_AUDIO=mlt)");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     if (!CHECK(tmp.isValid())) return Check::result();
     const QString media = Check::makeMedia(

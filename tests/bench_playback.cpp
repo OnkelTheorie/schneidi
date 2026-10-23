@@ -1,6 +1,6 @@
 // Benchmark (not a CTest test): playback of a real project in the preview Engine, like pressing play in the app.
 // Reports shown frames per second and the longest gaps (stutter) per second of playback; with the own audio engine
-// (SCHNEIDI_AUDIO=own) also how far the shown frame is behind the sound clock (picture follows sound).
+// (the default; not with SCHNEIDI_AUDIO=mlt) also how far the shown frame is behind the sound clock (picture follows sound).
 // Run: xvfb-run -a env SDL_AUDIODRIVER=dummy ./build-tests/tests/bench_playback <project.schneidi> [seconds] [start]
 //      (start in seconds of the timeline; default 10 s from 0)
 #include "check.h"

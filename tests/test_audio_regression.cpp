@@ -7,7 +7,7 @@
 // - audio packets with overlapping timestamps (the user's clip program writes some, e.g. 2026-10-11_19-17-02):
 //   the sound follows the timestamps like a player, not the raw packet order (that drifts by the overlaps)
 // - Matroska sources: every clip plays its source sample-exact after its start (MLT < 7.36 drops 48 samples after
-//   some seeks because of the 1 ms time base, a click 1-5 frames after the cut – known until the own audio engine)
+//   some seeks because of the 1 ms time base, a click 1-5 frames after the cut – known on the MLT fallback)
 // Already covered elsewhere: hardware encoders (test_hw_encoders), MP3/WAV/AIFF/ALAC/ProRes + frame rate conversion
 // (test_export_formats), per-stream volume/streams (test_audio_streams), seek click in the preview (test_audio).
 

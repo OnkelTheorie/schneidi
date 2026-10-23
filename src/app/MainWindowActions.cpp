@@ -503,11 +503,11 @@ void MainWindow::buildActions()
             if (!found) add(current, T("%1 (nicht angeschlossen)").arg(current));
         });
     }
-    // Sound engine (docs/plan-0.10-ton.md): the own one is tried out here until it becomes the default
+    // Sound engine (docs/plan-0.10-ton.md): the own one, MLT's as a fallback for one version
     audioMenu->addSeparator();
     auto* engineGroup = new QActionGroup(audioMenu);
-    for (const auto& [own, text] : {std::pair{false, N_("Ton-Maschine: MLT (bisher)")},
-                                    std::pair{true, N_("Ton-Maschine: SMT (neu, Test)")}}) {
+    for (const auto& [own, text] : {std::pair{true, N_("Ton-Maschine: SMT (Standard)")},
+                                    std::pair{false, N_("Ton-Maschine: MLT (Rückfall)")}}) {
         QAction* a = audioMenu->addAction(T(text));
         a->setCheckable(true);
         a->setChecked(Audio::ownPath() == own);

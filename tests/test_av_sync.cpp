@@ -34,8 +34,8 @@ const ProjectFormat kFmt{320, 180, {25, 1}};
 constexpr int kFps = 25;
 constexpr int kRate = 48000;
 constexpr double kSeconds = 8;
-// Sound through MLT (until the own audio engine is the default, SCHNEIDI_AUDIO): its known offsets are reported, not
-// counted; the own engine must be exact
+// Sound through MLT (the fallback, SCHNEIDI_AUDIO=mlt): its known offsets are reported, not counted; the own engine
+// must be exact
 bool mltAudio() { return !Audio::ownPath(); }
 // Flash/beep times of the sources (frames at 25 fps = seconds * 25)
 constexpr int kFlashes[] = {25, 58, 92, 131, 170};

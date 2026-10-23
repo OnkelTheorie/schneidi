@@ -4,7 +4,7 @@
 // Clicks found this way (docs/testdaten/knacken): a full purge on seek threw away the fade-out (SeekFade), every seek
 // of a drag played 5 ms of sound, clip volume 0 -> x dB and mixer changes from the AI rebuilt the timeline
 // (audio device closed and reopened). Stopping breaks off on the MLT sound path (sdl2_audio drops its buffer) – checked
-// as known there; the own audio engine (SCHNEIDI_AUDIO=own, its file device as the speaker) fades out.
+// as known there (SCHNEIDI_AUDIO=mlt); the own audio engine (the default, its file device as the speaker) fades out.
 #include "check.h"
 
 #include "engine/Engine.h"

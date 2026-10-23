@@ -128,19 +128,19 @@ foreach(name test_stabilize_denoise test_retime test_effects_render test_cli tes
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
 endforeach()
 
-# Own audio engine (docs/plan-0.10-ton.md): export and analysis tests a second time with the sound from Audio::Mixer
-# instead of MLT (the default until the switch-over); known MLT errors become strict checks there
-foreach(name test_av_sync test_preview_audio test_picture_catchup test_open_background test_audio_regression test_export_formats test_audio_streams test_export_opus test_cli
+# MLT's sound as a fallback (docs/plan-0.10-ton.md, the own engine SMT is the default since 0.10): export, preview and
+# analysis tests a second time with the sound through MLT; its known errors are reported there, not failed
+foreach(name test_av_sync test_preview_audio test_open_background test_audio_regression test_export_formats test_audio_streams test_export_opus test_cli
              test_multicam_render test_render_queue test_loudness test_ducking test_audio_sync test_dynamics_eq
              test_multicam_cli)
-    add_test(NAME ${name}_own_audio COMMAND ${name})
-    set_tests_properties(${name}_own_audio PROPERTIES
+    add_test(NAME ${name}_mlt_audio COMMAND ${name})
+    set_tests_properties(${name}_mlt_audio PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
         RESOURCE_LOCK ${name}
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_AUDIO=own")
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_AUDIO=mlt")
 endforeach()
-set_tests_properties(test_av_sync_own_audio test_preview_audio_own_audio test_picture_catchup_own_audio
+set_tests_properties(test_av_sync test_preview_audio test_picture_catchup test_av_sync_mlt_audio test_preview_audio_mlt_audio
                      PROPERTIES RUN_SERIAL TRUE) # preview timing
 
 # Server/container without a display: MLT's Qt module (qtblend, qtext) must still load – it used to refuse without
