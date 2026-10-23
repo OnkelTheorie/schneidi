@@ -119,6 +119,9 @@ public:
     double speed() const { return m_speed; }
     void seek(int frame);
     int position() const { return m_position; }
+    // Own audio engine while playing: the frame heard right now (fractional, in positions like position()); NaN
+    // otherwise (stopped, sound through MLT). position() = the frame on screen, which follows it.
+    double soundFrame() const;
 
     // Before/After (Color page, like DaVinci "Bypass Color Grades"): preview without color correction; export untouched
     void setColorBypass(bool on);
@@ -156,6 +159,8 @@ private:
     bool createConsumer(QString* error);
     void connectProducer(Mlt::Producer* producer, int position);
     void refresh();
+    // Moves the connected producer to `at` (its frames) while connected and drops what was rendered before
+    void seekProducer(int at);
     void applyAudioState();
     void onFrameShown(void* mltFrame);
     void emitLevels();

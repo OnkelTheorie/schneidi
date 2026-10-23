@@ -551,6 +551,12 @@ double Engine::clockFrames() const
     return m_player->position() * m_format.rate.fps() / kSoundRate;
 }
 
+double Engine::soundFrame() const
+{
+    if (!m_player) return NAN;
+    return clockFrames() + m_offset; // NaN stays NaN
+}
+
 double Engine::soundStart(int frame, double speed) const
 {
     // Forward the sound of a frame starts at its first sample, backward after its last
@@ -685,8 +691,7 @@ void Engine::setSpeed(double speed)
         const int at = std::max(0, m_position - m_offset);
         if (speed == 0.0) {
             m_player->pause();
-            m_current->seek(at); // stay exactly on the shown frame
-            m_consumer->purge();
+            seekProducer(at); // stay exactly on the shown frame
         } else if (wasPlaying && (before > 0) == (speed > 0)) {
             m_player->play(m_player->position(), speed); // faster/slower from where the sound is
         } else {
@@ -694,8 +699,7 @@ void Engine::setSpeed(double speed)
                 ++m_seekEpoch;
                 m_seekSkipped = 0;
                 m_seekTarget = at;
-                m_current->seek(at);
-                m_consumer->purge();
+                seekProducer(at);
             }
             m_player->play(soundStart(at, speed), speed);
         }
@@ -705,8 +709,7 @@ void Engine::setSpeed(double speed)
         return;
     }
     if (speed == 0.0) {
-        m_current->seek(std::max(0, m_position - m_offset)); // stay exactly on the shown frame
-        m_consumer->purge();         // discard buffered audio immediately
+        seekProducer(std::max(0, m_position - m_offset)); // stay exactly on the shown frame, no buffered audio
         if (wasPlaying) {
             // Close the audio device right when stopping (restart without audio) instead of only at the next
             // timeline rebuild while stopped – closing crackles, which is not noticeable when stopping
@@ -743,8 +746,7 @@ void Engine::seek(int frame)
             m_player->play(soundStart(at, m_speed), m_speed);
         }
         m_lastSeek.start();
-        m_current->seek(at);
-        m_consumer->purge();
+        seekProducer(at);
         m_position = frame;
         if (!playing) refresh();
         emit positionChanged(frame);
@@ -763,13 +765,22 @@ void Engine::seek(int frame)
     }
     m_lastSeek.start();
     if (timelinePlaying) ++m_seekFade->seeks;
-    m_current->seek(at);
-    m_consumer->purge();
+    seekProducer(at);
     m_position = frame;
     // Only redraw when stopped: during playback the next image comes anyway, and a refresh
     // also sends out an audio snippet with scrub_audio (audible stutter after the jump)
     if (!playing) refresh();
     emit positionChanged(frame);
+}
+
+void Engine::seekProducer(int at)
+{
+    if (m_preview) {
+        m_preview->seek(at); // never overridden by one of its catch-up jumps
+        return;
+    }
+    m_current->seek(at);
+    m_consumer->purge();
 }
 
 void Engine::onFrameShown(void* mltFrame)
