@@ -123,12 +123,14 @@ Only fixes for problems found in 0.10.0 – new features wait for the next versi
 | **Own export path** | Fetching pictures and encoding run in parallel without extra copies – about 2–3× faster exports for H.264/H.265/AV1/ProRes |
 | **Smart Render** | Parts of the timeline that are not changed are copied instead of encoded again |
 | **Hardware decoding in the viewer** | Smoother playback of large files on the graphics card |
+| **Crash report** | After a crash, schneidi offers a local report you can look at and send yourself – no telemetry |
 
 ### Later
-- **0.12 – AI Update:** an AI chat right in the app (Claude, OpenAI-compatible or local), a Claude skill/plugin, a server version for fully automatic editing
-- **0.13 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, voiceover recording, text to speech
-- **0.14 – Template Update:** templates with placeholders filled from a list, brand kit
-- **0.15 – Newcomer Update:** Premiere/Final Cut key presets, apt repository and update notice
+- **0.12 – AI Update:** an AI chat right in the app (Claude, OpenAI-compatible or local), a Claude skill/plugin, a server version for fully automatic editing, an update notice
+- **0.13 – Everyday Update:** change the order of effects, slip/slide tools, color grades shown in the filmstrip and Media Pool, Media Pool filters
+- **0.14 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, voiceover recording, text to speech
+- **0.15 – Template Update:** templates with placeholders filled from a list, brand kit
+- **0.16 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
 
 ## Building
 
