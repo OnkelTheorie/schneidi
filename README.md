@@ -54,6 +54,20 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 - **Command line and MCP server** (`schneidi-cli`): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
+## How light is it?
+
+Measured with the current development version (0.11) on a Ryzen 5 5600X limited to **a single core** without swap (Linux cgroups) – a stand-in for old hardware, not a real old laptop:
+
+| | Empty project | Project with a 1080p clip |
+|---|---|---|
+| Least RAM it still starts with | 176 MB | 320 MB |
+| RAM to keep working | – | 512 MB |
+| Window ready, full core | 1.4 s | 1.4 s |
+| Window ready, 10 % of one core | 14 s | 16 s |
+| Window ready, 5 % of one core | 33 s | 30 s |
+
+Playback is the hard part on such a machine: one core decodes 140 Mbit/s 1080p60 gaming footage at only about 4 frames per second, but with proxies the same project plays at 58 frames per second on that single core.
+
 ## Command line and AI editing (MCP)
 
 `schneidi-cli` edits the same project files without a window, for scripts and AI assistants. A typical rough cut:
