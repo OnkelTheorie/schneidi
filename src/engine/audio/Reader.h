@@ -1,5 +1,5 @@
 #pragma once
-// Own audio engine (docs/plan-0.10-ton.md), first block: reads one audio stream of a media file as float samples at
+// Own audio engine (docs/archiv/plan-0.10-ton.md), first block: reads one audio stream of a media file as float samples at
 // a fixed output rate, with sample-exact random access. Uses the FFmpeg libraries directly, no MLT.
 //
 // Time: position 0 is the picture's first frame (the first key frame, like MLT's frame 0), or the first sample of a

@@ -360,7 +360,7 @@ void testVariableFrameRate(const QString& dir)
 
 // MLT < 7.36 (producer_avformat decode_audio) compares the packet pts after a seek with the wanted position in the
 // stream's 1 ms ticks; the rounding error makes it drop 48 samples (dev/mlt.md). The own audio engine reads by
-// itself (docs/plan-0.10-ton.md): then this must hold on every MLT version.
+// itself (docs/archiv/plan-0.10-ton.md): then this must hold on every MLT version.
 bool mltAudio() { return !Audio::ownPath(); }
 
 // Every clip plays its source sample-exact after its start; per container (MOV = control, always strict)

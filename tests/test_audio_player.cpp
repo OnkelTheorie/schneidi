@@ -1,4 +1,4 @@
-// Own audio engine, step 5 (docs/plan-0.10-ton.md): Audio::Player plays live. The "speaker" is the file device
+// Own audio engine, step 5 (docs/archiv/plan-0.10-ton.md): Audio::Player plays live. The "speaker" is the file device
 // (SCHNEIDI_AUDIO_DEVICE=file:…, 16-bit stereo in real time). A sine timeline is played, jumped in, dragged, changed
 // live (clip volume = new mix, fader = live value), played at 2x, backwards and silent at 8x, then stopped – what
 // the speaker got must have no step in the wave anywhere, the stop fades out, and nothing runs dry. The clock

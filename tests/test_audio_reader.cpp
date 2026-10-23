@@ -1,4 +1,4 @@
-// Own audio engine, step 1 (docs/plan-0.10-ton.md): Audio::Reader reads one audio stream sample-exact.
+// Own audio engine, step 1 (docs/archiv/plan-0.10-ton.md): Audio::Reader reads one audio stream sample-exact.
 // Per source (containers, codecs, late streams, rates, channel layouts):
 // - content: the samples equal FFmpeg's own decode of the stream (bit-exact for every codec: same decoder), placed
 //   where the container says the stream starts (sound later than the picture: positive, picture later: negative)

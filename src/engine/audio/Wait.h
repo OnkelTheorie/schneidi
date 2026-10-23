@@ -1,5 +1,5 @@
 #pragma once
-// Own audio engine (docs/plan-0.10-ton.md): waits that keep their time. With MSYS2's thread library (winpthreads)
+// Own audio engine (docs/archiv/plan-0.10-ton.md): waits that keep their time. With MSYS2's thread library (winpthreads)
 // std::condition_variable::wait_for and std::this_thread::sleep_for/sleep_until wake in Windows' ~15.6 ms grid, even
 // after timeBeginPeriod(1), and sleep_for below 1 ms returns at once (measured, docs/dev/ton.md). The picture follows
 // the sound clock to the millisecond and the timer device paces blocks of 10 ms, so they wait through these helpers:

@@ -1,5 +1,5 @@
 #pragma once
-// Preview with the own audio engine (docs/plan-0.10-ton.md, step 5): picture follows sound. An MLT consumer that
+// Preview with the own audio engine (docs/archiv/plan-0.10-ton.md, step 5): picture follows sound. An MLT consumer that
 // only shows pictures – MLT renders them ahead in its read-ahead thread (real_time 1, audio_off), this consumer's
 // thread takes them in order and fires "consumer-frame-show" when the sound clock reaches each one. A frame that
 // comes late is shown at once; frames MLT could not render in time (it drops images itself when rendering is too

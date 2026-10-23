@@ -1,4 +1,4 @@
-// Picture follows sound on a machine too slow for the material (docs/plan-0.10-ton.md › Zielbild: "a frame that is
+// Picture follows sound on a machine too slow for the material (docs/archiv/plan-0.10-ton.md › Zielbild: "a frame that is
 // too late is skipped, the sound runs on"). Measured on one core (2026-10-23): the picture fell further and further
 // behind the sound clock and never caught up (15 s: sound at frame 843, picture at 434). Here a test filter makes
 // rendering slow without needing CPU (it sleeps, so parallel load does not matter) and behaves like a long-GOP decoder:

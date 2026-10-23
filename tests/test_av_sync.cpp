@@ -1,4 +1,4 @@
-// Picture/sound sync in milliseconds (docs/plan-0.10-ton.md, step 0): sources with a white flash frame and a beep
+// Picture/sound sync in milliseconds (docs/archiv/plan-0.10-ton.md, step 0): sources with a white flash frame and a beep
 // starting at the same moment, five times at irregular places, in the containers and stream layouts real recordings
 // have – sound stream starting later than the picture (phones, OBS), picture starting later, AAC with its encoder
 // delay, Matroska with its 1 ms time base. Two clips per source (from the file start and from an in point) are

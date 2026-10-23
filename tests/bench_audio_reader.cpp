@@ -1,4 +1,4 @@
-// Benchmark (not a CTest test): the own audio reader (engine/audio/Reader, docs/plan-0.10-ton.md step 1) against
+// Benchmark (not a CTest test): the own audio reader (engine/audio/Reader, docs/archiv/plan-0.10-ton.md step 1) against
 // MLT's avformat producer on real files. Per file and audio stream: time to open (until the first samples), decoding
 // speed, time per jump, and whether both deliver the same samples (lag, difference).
 // Run: QT_QPA_PLATFORM=offscreen ./build-tests/tests/bench_audio_reader <media files…> [--seconds 30] [--reps 5]

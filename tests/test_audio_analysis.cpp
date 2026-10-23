@@ -1,4 +1,4 @@
-// Own audio engine, step 4 (docs/plan-0.10-ton.md): the analyses take their sound from the own engine
+// Own audio engine, step 4 (docs/archiv/plan-0.10-ton.md): the analyses take their sound from the own engine
 // (Audio::Mixer for clip and timeline levels, Audio::Reader for waveforms and sound sync) instead of MLT.
 // Every check runs both paths (SCHNEIDI_AUDIO=mlt|own in the same process) on generated sources:
 // - clip peak/loudness ("Normalize audio levels"): own = MLT, clip volume/fades/effects ignored, also with speed
@@ -357,7 +357,7 @@ void checkReferences(const QString& refDir)
     for (const QString& f : QDir(refDir + "/projekte").entryList({"*.schneidi"}, QDir::Files, QDir::Name))
         projects << refDir + "/projekte/" + f;
     if (QFileInfo::exists(refDir + "/echt/tiktok.schneidi")) projects << refDir + "/echt/tiktok.schneidi";
-    // Where MLT's sound is known to be wrong (docs/plan-0.10-ton.md, steps 0-2): sound stream later than the picture,
+    // Where MLT's sound is known to be wrong (docs/archiv/plan-0.10-ton.md, steps 0-2): sound stream later than the picture,
     // tempo with pitch (Rubberband settles differently), MKV dropping samples (tiktok); 5.1: MLT's analyses ask for
     // float and get the downmix without normalization, 7.7 dB louder than MLT's own export (s16, normalized)
     const QStringList mltWrong{"late_start", "speed_pitch", "ramp", "tiktok", "surround"};

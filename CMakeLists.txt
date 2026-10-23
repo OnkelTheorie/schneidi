@@ -22,7 +22,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 # MLT liefert unter Linux und MSYS2 (Windows) eine .pc-Datei
 pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
-# Own audio engine (src/engine/audio): FFmpeg libraries directly, see docs/plan-0.10-ton.md
+# Own audio engine (src/engine/audio): FFmpeg libraries directly, see docs/archiv/plan-0.10-ton.md
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libavutil)
 # Time stretching with pitch correction (own audio engine)
 pkg_check_modules(RUBBERBAND REQUIRED IMPORTED_TARGET rubberband)

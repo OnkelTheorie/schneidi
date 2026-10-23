@@ -139,7 +139,7 @@ int main(int argc, char** argv)
 
     // Stop: the sound fades out within a few ms instead of breaking off (the last sounding 2 ms are much quieter than
     // the sine before them). sdl2_audio closes the device at once and drops its buffer (dev/mlt.md) – known until the
-    // own audio engine (docs/plan-0.10-ton.md), which fades out and keeps the device open.
+    // own audio engine (docs/archiv/plan-0.10-ton.md), which fades out and keeps the device open.
     qsizetype last = frames - 1;
     while (last > 0 && std::abs(s[last * 2]) < 1000) --last;
     auto peak = [&](qsizetype from, qsizetype to) {

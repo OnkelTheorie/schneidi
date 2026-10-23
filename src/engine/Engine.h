@@ -232,7 +232,7 @@ private:
     std::atomic<int> m_seekSkipped{0};
     QSize m_previewSize{960, 540}; // project format scaled down (longer edge 960)
 
-    // Own audio engine (Audio::ownPath(), docs/plan-0.10-ton.md): the player plays the sound, the picture follows its
+    // Own audio engine (Audio::ownPath(), docs/archiv/plan-0.10-ton.md): the player plays the sound, the picture follows its
     // clock (m_preview is the consumer); the MLT graph has no sound. nullptr = sound through MLT (sdl2_audio).
     std::unique_ptr<Audio::Player> m_player;
     std::unique_ptr<PreviewConsumer> m_preview;

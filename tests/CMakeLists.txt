@@ -80,7 +80,7 @@ target_link_libraries(test_live PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_live PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_live schneidi-cli)
 schneidi_test(test_audio_regression)
-# Reference renders of the sound (own audio engine, docs/plan-0.10-ton.md): references in the private docs folder
+# Reference renders of the sound (own audio engine, docs/archiv/plan-0.10-ton.md): references in the private docs folder
 schneidi_test(test_audio_reference)
 schneidi_test(test_av_sync)
 schneidi_test(test_audio_reader)
@@ -128,7 +128,7 @@ foreach(name test_stabilize_denoise test_retime test_effects_render test_cli tes
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
 endforeach()
 
-# MLT's sound as a fallback (docs/plan-0.10-ton.md, the own engine SMT is the default since 0.10): export, preview and
+# MLT's sound as a fallback (docs/archiv/plan-0.10-ton.md, the own engine SMT is the default since 0.10): export, preview and
 # analysis tests a second time with the sound through MLT; its known errors are reported there, not failed
 foreach(name test_av_sync test_preview_audio test_open_background test_audio_regression test_export_formats test_audio_streams test_export_opus test_cli
              test_multicam_render test_render_queue test_loudness test_ducking test_audio_sync test_dynamics_eq

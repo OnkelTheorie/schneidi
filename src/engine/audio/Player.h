@@ -1,5 +1,5 @@
 #pragma once
-// Own audio engine (docs/plan-0.10-ton.md), step 5: live playback. The same Audio::Mixer as export and analyses mixes
+// Own audio engine (docs/archiv/plan-0.10-ton.md), step 5: live playback. The same Audio::Mixer as export and analyses mixes
 // the timeline ahead in a feeder thread into a ring buffer; the device callback (real time: no locks, no allocation)
 // only copies from it and fades. The device stays open – play, pause, jumps and speed changes start a new
 // "generation": the callback fades the old sound out within 5 ms, drops the rest and fades the new one in.

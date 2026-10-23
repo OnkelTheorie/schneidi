@@ -1,5 +1,5 @@
 #pragma once
-// Own audio engine (docs/plan-0.10-ton.md), step 5: the sound output. A device pulls interleaved float samples from a
+// Own audio engine (docs/archiv/plan-0.10-ton.md), step 5: the sound output. A device pulls interleaved float samples from a
 // callback in its own real-time thread and keeps running while open; what it plays (sound, silence, fades) is the
 // player's business, so play/pause/seek never close or reopen it.
 //
