@@ -4,6 +4,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
+#include "engine/ProxyManager.h"
 #include "ui/FileManager.h"
 
 #include <QDateTime>
@@ -586,7 +587,7 @@ void MediaStorage::nextThumb()
         auto run = [this, path](bool atStart) {
             QStringList args{"-hide_banner", "-nostdin", "-loglevel", "error"};
             if (!atStart) args << "-ss" << "1";
-            args << "-i" << path << "-frames:v" << "1" << "-vf"
+            args << "-i" << ProxyManager::decodeSource(path) << "-frames:v" << "1" << "-vf"
                  << QString("scale=%1:%2:force_original_aspect_ratio=decrease").arg(kThumb.width()).arg(kThumb.height())
                  << "-f" << "image2pipe" << "-c:v" << "png" << "-";
             m_ffmpeg->start(Bundle::tool("ffmpeg"), args);

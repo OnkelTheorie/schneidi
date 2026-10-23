@@ -23,6 +23,9 @@ public:
     // Location of the proxy for an original (regardless of whether it exists yet)
     static QString proxyPath(const QString& original);
     bool hasProxy(const QString& original) const;
+    // For thumbnails, filmstrips and stills: proxy if present (regardless of the switch, much faster to decode and
+    // seek; same frame rate and aspect ratio), otherwise the original
+    static QString decodeSource(const QString& original);
     // For the preview: proxy if enabled and present, otherwise the original
     QString resolve(const QString& original) const;
 

@@ -316,7 +316,8 @@ QImage Engine::thumbnail(const ProjectFormat& format, const QString& path, int f
 {
     const auto profile = makeProfile(format);
     ProducerFactory factory(*profile);
-    const std::unique_ptr<Mlt::Producer> producer = factory.open(path);
+    // Proxy if present: a 4K original takes ~0.2–0.7 s per exactly sought frame
+    const std::unique_ptr<Mlt::Producer> producer = factory.open(ProxyManager::decodeSource(path));
     Mlt::Producer& p = *producer;
     if (!p.is_valid()) return {};
     p.seek(frame);

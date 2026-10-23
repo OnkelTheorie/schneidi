@@ -94,13 +94,6 @@ void saveWave(const QString& file, const QVector<quint8>& base, int frames)
     f.commit();
 }
 
-// Use an existing proxy for decoding (much smaller, dense keyframes), same frame counting
-QString decodePath(const QString& path)
-{
-    const QString proxy = ProxyManager::proxyPath(path);
-    return QFileInfo::exists(proxy) ? proxy : path;
-}
-
 QSize thumbSize(const ProjectFormat& format)
 {
     // In the project's aspect ratio, at least as large as a 16:9 tile
@@ -267,7 +260,7 @@ void MediaCache::thumbLoop()
         std::shared_ptr<Mlt::Producer> prod = producers.value(job.path);
         if (!prod) {
             if (producers.size() >= 8) producers.clear();
-            prod = factory->open(decodePath(job.path));
+            prod = factory->open(ProxyManager::decodeSource(job.path));
             prod->set("audio_index", -1); // audio is never needed here
             producers.insert(job.path, prod);
         }
@@ -329,7 +322,7 @@ void MediaCache::stripLoop()
                                .arg(size.height());
         QProcess ff;
         ff.start(Bundle::tool("ffmpeg"), {"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-skip_frame", "nokey", "-i",
-                            decodePath(path), "-map", "0:v:0", "-an", "-sn", "-vf", vf, "-fps_mode", "passthrough",
+                            ProxyManager::decodeSource(path), "-map", "0:v:0", "-an", "-sn", "-vf", vf, "-fps_mode", "passthrough",
                             "-f", "rawvideo", "-pix_fmt", "rgba", "-"});
         const qint64 frameBytes = qint64(size.width()) * size.height() * 4;
         QByteArray out, err;

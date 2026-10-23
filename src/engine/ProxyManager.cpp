@@ -138,6 +138,12 @@ QString ProxyManager::cacheDir()
     return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/proxies";
 }
 
+QString ProxyManager::decodeSource(const QString& original)
+{
+    const QString proxy = proxyPath(original);
+    return QFileInfo::exists(proxy) ? proxy : original;
+}
+
 QString ProxyManager::proxyPath(const QString& original)
 {
     // Key as with the waveform cache: changed originals automatically get a new proxy

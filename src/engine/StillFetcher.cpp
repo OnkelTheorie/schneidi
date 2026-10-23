@@ -12,13 +12,6 @@
 
 namespace {
 constexpr int kCacheKB = 64 * 1024; // ~40 frames at 960x540
-
-// Proxy if it exists (same rule as the filmstrip in MediaCache): much faster to seek than a 4K original
-QString decodePath(const QString& path)
-{
-    const QString proxy = ProxyManager::proxyPath(path);
-    return QFileInfo::exists(proxy) ? proxy : path;
-}
 } // namespace
 
 StillFetcher::StillFetcher(QObject* parent) : QObject(parent)
@@ -126,7 +119,7 @@ void StillFetcher::loop()
         std::shared_ptr<Mlt::Producer> prod = producers.value(job.path);
         if (!prod) {
             if (producers.size() >= 6) producers.clear();
-            prod = factory->open(decodePath(job.path));
+            prod = factory->open(ProxyManager::decodeSource(job.path));
             prod->set("audio_index", -1); // no sound needed here
             producers.insert(job.path, prod);
         }
