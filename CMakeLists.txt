@@ -157,6 +157,7 @@ add_library(schneidi_lib STATIC
     src/app/DynamicsDialog.h src/app/DynamicsDialog.cpp
     src/app/TimelineExportDialog.h src/app/TimelineExportDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
+    src/app/CrashReport.h         src/app/CrashReport.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp

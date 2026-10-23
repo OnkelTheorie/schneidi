@@ -1,4 +1,5 @@
 #include "buildinfo.h"
+#include "app/CrashReport.h"
 #include "app/InputBindings.h"
 #include "app/Log.h"
 #include "core/ProjectFile.h"
@@ -104,6 +105,7 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     QApplication::setApplicationVersion(QString("%1 (%2)").arg(QString::fromUtf8(SCHNEIDI_VERSION_LABEL), SCHNEIDI_BUILD)); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
     Log::install();
+    CrashReport::install(); // after the log: attaches the previous run's log to its crash report
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)
     I18n::install(langOverride);
 
@@ -175,6 +177,7 @@ int main(int argc, char* argv[])
     // Restored: this project stays open (the file can then be opened normally).
     const bool restored = !testRun && w.offerAutosaveRestore();
     if (!projectFile.isEmpty() && !restored) w.openProject(QFileInfo(projectFile).absoluteFilePath());
+    if (!testRun) QTimer::singleShot(0, &w, [&w] { CrashReport::offer(&w); }); // crashed last time: show the report
     // Live connection for schneidi-cli / MCP (cli/Live.h); test runs stay invisible to AIs unless SCHNEIDI_LIVE=1
     std::unique_ptr<Cli::Live::Server> live;
     if (qEnvironmentVariable("SCHNEIDI_LIVE", testRun ? "0" : "1") == "1") {
