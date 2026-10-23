@@ -1,6 +1,7 @@
 #include "engine/audio/Device.h"
 
 #include "engine/audio/Miniaudio.h"
+#include "engine/audio/Wait.h"
 
 #include <QByteArray>
 #include <QFile>
@@ -69,7 +70,7 @@ private:
                 }
             }
             due += period; // absolute deadlines: no drift
-            std::this_thread::sleep_until(due);
+            sleepUntil(due); // Wait.h: sleep_until wakes in a ~16 ms grid on Windows
         }
     }
 
@@ -193,9 +194,23 @@ public:
                 static_cast<SoundCard*>(n->pDevice->pUserData)->m_reroutes.fetch_add(1, std::memory_order_relaxed);
         };
         c.pUserData = this;
+        // Stereo onto a device with more channels (WASAPI hands miniaudio the device's mix format, e.g. a 7.1 headset):
+        // left to front left, right to front right, nothing else. miniaudio's default spreads the channels by speaker
+        // position – the right speaker got the left channel at -13 dB (measured, docs/dev/ton.md). Onto fewer channels
+        // (a mono device) the default stays: it averages, "simple" would drop the right channel.
+        c.playback.channelMixMode = ma_channel_mix_mode_simple;
         if (const ma_result r = ma_device_init(&m_maContext, &c, &m_maDevice); r != MA_SUCCESS) {
             if (error) *error = QString("miniaudio: Gerät lässt sich nicht öffnen (%1)").arg(ma_result_description(r));
             return false;
+        }
+        if (m_maDevice.playback.internalChannels < c.playback.channels) {
+            ma_device_uninit(&m_maDevice);
+            c.playback.channelMixMode = ma_channel_mix_mode_default;
+            if (const ma_result r = ma_device_init(&m_maContext, &c, &m_maDevice); r != MA_SUCCESS) {
+                if (error)
+                    *error = QString("miniaudio: Gerät lässt sich nicht öffnen (%1)").arg(ma_result_description(r));
+                return false;
+            }
         }
         m_device = true;
         if (const ma_result r = ma_device_start(&m_maDevice); r != MA_SUCCESS) {

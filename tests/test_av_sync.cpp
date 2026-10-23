@@ -300,6 +300,10 @@ void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock
     // The disk driver waits whole milliseconds per block (SDL_Delay): 1024 samples = 21.33 ms played in 21 ms, the
     // "speaker" ran 1.6 % fast and the offset drifted 11 ms per second. 960 samples = exactly 20 ms
     QSettings().setValue("audio/buffer", 960);
+    // Before the engine: its consumer may still show a frame while it shuts down (a destroyed mutex threw on Windows)
+    std::mutex lock;
+    std::vector<qint64> shown; // ns of each flash frame (rising edge)
+    bool bright = false;
     Engine engine;
     QString error;
     if (!engine.init(&error)) {
@@ -307,9 +311,6 @@ void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock
         return;
     }
     engine.setFormat(kFmt);
-    std::mutex lock;
-    std::vector<qint64> shown; // ns of each flash frame (rising edge)
-    bool bright = false;
     QObject::connect(&engine, &Engine::frameReady, &engine, [&](const QImage& img) {
         const qint64 now = clock.clock.nsecsElapsed(); // in the consumer thread, at the moment of showing
         const bool white = qGray(img.pixel(img.width() / 2, img.height() / 2)) > 180;

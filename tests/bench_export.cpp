@@ -27,8 +27,8 @@
 #include <QTimer>
 #include <cstdio>
 #ifdef Q_OS_WIN
-#include <psapi.h>
 #include <windows.h>
+#include <psapi.h> // after windows.h (needs its types)
 #else
 #include <sys/resource.h>
 #endif

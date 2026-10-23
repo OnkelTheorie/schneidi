@@ -176,3 +176,8 @@ add_executable(bench_audio_reader bench_audio_reader.cpp check.h)
 target_link_libraries(bench_audio_reader PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_device_loss bench_device_loss.cpp check.h)
 target_link_libraries(bench_device_loss PRIVATE schneidi_lib Qt6::Test)
+if(WIN32) # WASAPI loopback: what the system sends to the sound card
+    add_executable(bench_soundcard bench_soundcard.cpp check.h)
+    target_link_libraries(bench_soundcard PRIVATE schneidi_lib Qt6::Test)
+    target_include_directories(bench_soundcard PRIVATE ${MINIAUDIO_INCLUDE_DIR})
+endif()

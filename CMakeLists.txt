@@ -126,6 +126,7 @@ add_library(schneidi_lib STATIC
     src/engine/audio/Device.h     src/engine/audio/Device.cpp
     src/engine/audio/Player.h     src/engine/audio/Player.cpp
     src/engine/audio/Miniaudio.h  src/engine/audio/Miniaudio.cpp
+    src/engine/audio/Wait.h       src/engine/audio/Wait.cpp
     src/engine/MixedSound.h       src/engine/MixedSound.cpp
 
     src/app/Theme.h               src/app/Theme.cpp

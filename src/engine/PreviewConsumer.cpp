@@ -1,4 +1,5 @@
 #include "engine/PreviewConsumer.h"
+#include "engine/audio/Wait.h"
 
 #include <Mlt.h>
 
@@ -92,7 +93,7 @@ struct PreviewConsumer::Impl {
             const double ahead = speed > 0 ? pos - now : now - (pos + 1);
             if (ahead <= 0) return true;
             const double seconds = std::min(ahead / (fps * std::abs(speed)), 0.05); // look again: the clock may stand
-            cond.wait_for(lock, std::chrono::duration<double>(seconds));
+            Audio::waitFor(cond, lock, std::chrono::nanoseconds(int64_t(seconds * 1e9))); // exact on Windows too
         }
     }
 

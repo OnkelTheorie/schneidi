@@ -5,6 +5,7 @@
 #include "engine/audio/Device.h"
 #include "engine/audio/Mixer.h"
 #include "engine/audio/Reader.h"
+#include "engine/audio/Wait.h"
 
 #include <QHash>
 
@@ -137,6 +138,7 @@ struct Player::Impl {
         double start = 0, speed = 1;
         int64_t next = 0;     // forward: next sample to mix; backward: end of the next chunk (exclusive)
         int64_t produced = 0; // output samples of the generation
+        uint64_t genFrom = 0; // ring index of the generation's first block (blocks before it are dropped)
         std::vector<float> rev[kChannels], tail[kChannels], chunk[kChannels], content[kChannels], other[kChannels];
         int revPos = 0, revLen = 0;
         bool haveTail = false;
@@ -162,7 +164,14 @@ struct Player::Impl {
     void mixForward(Feed& f, int n, float* const* out);
     void mixBackward(Feed& f, int n, float* const* out);
     void notePeaks(Feed& f);
-    int leadBlocks() const { return (std::max(opt.buffer, 2400) + kBlock - 1) / kBlock; }
+    // Ahead of the device: at least 50 ms and the asked buffer, and the device's real buffer + 20 ms – a device may
+    // take its whole buffer at once (miniaudio's DirectSound: gaps up to 100 ms, then 2 periods of 1440 at once,
+    // more than the 2048 asked; measured, docs/dev/ton.md)
+    int leadBlocks() const
+    {
+        const int ahead = std::max({opt.buffer, 2400, latency.load(std::memory_order_relaxed) + opt.rate / 50});
+        return (ahead + kBlock - 1) / kBlock;
+    }
 };
 
 // ---- Device thread ----
@@ -326,8 +335,12 @@ void Player::Impl::feed()
             continue;
         }
         if (c.gen != f.gen) startGeneration(f, c);
-        if (written.load(std::memory_order_relaxed) - consumed.load(std::memory_order_acquire) >= uint64_t(leadBlocks())) {
-            wake.wait_for(lock, std::chrono::milliseconds(2));
+        // Ahead = blocks of this generation only: the old ones still in the ring are dropped by the callback. Counting
+        // them too, the feeder waited after a jump while the callback emptied the ring (an underrun where the wait is
+        // coarse: on Windows a plain 2-ms wait takes ~16 ms, Wait.h).
+        const uint64_t w = written.load(std::memory_order_relaxed), r = consumed.load(std::memory_order_acquire);
+        if (w - std::max(r, f.genFrom) >= uint64_t(leadBlocks()) || w - r >= uint64_t(kRing - 1)) {
+            waitFor(wake, lock, std::chrono::milliseconds(2));
             continue;
         }
         lock.unlock();
@@ -381,6 +394,7 @@ void Player::Impl::startGeneration(Feed& f, const Command& c)
     f.start = c.start;
     f.speed = c.speed;
     f.produced = 0;
+    f.genFrom = written.load(std::memory_order_relaxed);
     f.old.reset();
     f.next = std::llround(c.start);
     f.revPos = f.revLen = 0;
