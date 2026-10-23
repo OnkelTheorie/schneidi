@@ -56,17 +56,27 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 
 ## How light is it?
 
-Measured with the current development version (0.11) on a Ryzen 5 5600X limited to **a single core** without swap (Linux cgroups) – a stand-in for old hardware, not a real old laptop:
+Measured with the current development version (0.11) on a Ryzen 5 5600X restricted with Linux cgroups (one core, no swap) – a stand-in for old hardware, not a real old laptop.
+
+**Starting:**
 
 | | Empty project | Project with a 1080p clip |
 |---|---|---|
-| Least RAM it still starts with | 176 MB | 320 MB |
-| RAM to keep working | – | 512 MB |
-| Window ready, full core | 1.4 s | 1.4 s |
+| Least RAM it starts and keeps running with | 176 MB | 448 MB |
+| Window ready, one full core | 1.4 s | 1.4 s |
 | Window ready, 10 % of one core | 14 s | 16 s |
 | Window ready, 5 % of one core | 33 s | 30 s |
 
-Playback is the hard part on such a machine: one core decodes 140 Mbit/s 1080p60 gaming footage at only about 4 frames per second, but with proxies the same project plays at 58 frames per second on that single core.
+**But starting is not the same as editing smoothly.** Playback of a demanding project (12 gaming clips, 1080p60 at 140 Mbit/s, a grade on every clip):
+
+| CPU | From the original files | From proxies |
+|---|---|---|
+| 1 core | 3.6 frames/s – a slideshow | 58 frames/s |
+| 2 cores | 9 frames/s | |
+| 4 cores | 38 frames/s | |
+| 6 cores | 48 frames/s | |
+
+So on a weak computer, create proxies before editing (right-click a clip in the Media Pool › Generate Proxy Media). Faster decoding, including hardware decoding, is the main goal of 0.11.
 
 ## Command line and AI editing (MCP)
 
