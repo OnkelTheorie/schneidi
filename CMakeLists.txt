@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 project(schneidi VERSION 0.10.0 LANGUAGES CXX)
 # Version being worked on. While it differs from the released version above, the app shows "0.9.0 → 0.10.0".
 # On release set both to the same number; after that, set this one to the next target.
-set(SCHNEIDI_NEXT_VERSION 0.10.0)
+set(SCHNEIDI_NEXT_VERSION 0.11.0)
 
 # Ohne Angabe optimiert bauen (Debug-Builds ruckeln bei der Wiedergabe: eigene Filter laufen pro Frame)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
