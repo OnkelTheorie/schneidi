@@ -684,6 +684,9 @@ int writeReferences(const QStringList& only, const QString& tmp)
 int main(int argc, char** argv)
 {
     Check::initEnv();
+    // The references are the MLT sound path's (above); the own engine (the default) is checked against the same
+    // projects by test_export_audio and test_audio_mixer
+    if (qEnvironmentVariableIsEmpty("SCHNEIDI_AUDIO")) qputenv("SCHNEIDI_AUDIO", "mlt");
     QApplication app(argc, argv);
     Check::initApp("audio_reference");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
