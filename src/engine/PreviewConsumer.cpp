@@ -242,9 +242,11 @@ struct PreviewConsumer::Impl {
             if (!frame) continue;
             mlt_properties fp = MLT_FRAME_PROPERTIES(frame);
             const double speed = mlt_properties_get_double(fp, "_speed");
-            mlt_events_block(props, props);
+            // Block our own listener (its owner is this, not props): otherwise resetting "refresh" counts as a new
+            // refresh and the stopped preview renders the same frame endlessly (a whole core while idle)
+            mlt_events_block(props, this);
             mlt_properties_set_int(props, "refresh", 0);
-            mlt_events_unblock(props, props);
+            mlt_events_unblock(props, this);
             if (speed != 0.0) {
                 const int pos = mlt_frame_get_position(frame);
                 const bool rendered = mlt_properties_get_int(fp, "rendered");
