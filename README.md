@@ -41,15 +41,17 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 - frei0r effects; import effect presets from Kdenlive and Shotcut
 - Video scopes: waveform, RGB parade, vectorscope, histogram
 - Two-up/four-up trim view while dragging an edit
+- **Own audio engine (SMT):** sound is read, mixed and played sample-exact – lips in sync within about 1 ms in the viewer, no clicks when stopping, jumping or moving faders, real 24-bit export; choose the output device, survives an unplugged headset
 - Loudness and true-peak meters, master limiter that holds a true-peak ceiling
 - Per-track EQ (6 bands) and compressor in the mixer, ducking (music goes down while someone speaks)
 - Files with several audio streams (OBS): import presets per stream title – mute the mix, leave out streams, name the tracks
 - Clip speed / retime
+- **Timeline exchange:** import and export FCP7 XML, OpenTimelineIO and EDL – bring a cut over from Premiere Pro or DaVinci Resolve, or hand one over for finishing
 - Proxy and render cache for smooth playback
 - Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available; YouTube/phone presets cap the bit rate
 - Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; an optional download under Workspace → Extensions
 - Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
-- **Command line and MCP server** (`schneidi-cli`): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
+- **Command line and MCP server** (`schneidi-cli`): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
 ## Command line and AI editing (MCP)
@@ -112,20 +114,21 @@ The AppImage contains the CLI too: `./schneidi-<version>-x86_64.AppImage cli hel
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.9.x – bug fixes
-Only fixes for problems found in 0.9.0 – new features wait for the next version.
+### 0.10.x – bug fixes
+Only fixes for problems found in 0.10.0 – new features wait for the next version.
 
-### 0.10 – Analysis & exchange
+### 0.11 – Boost Update
 | Feature | What it does |
 |---|---|
-| **Highlight finder for AI editing** | `highlights` finds your own kills by the color of your kill-feed entries and adds loud moments; multi kills score higher, every candidate comes with lead-in and lead-out, ready to hand to `keep`. `peaks` groups loud moments into fights, `scenes` spots new kill-feed entries by color |
-| **Contact sheets** | `frames`: choose the number of columns and the tile size, crop each source separately |
-| **Timeline exchange** | Export **and import** timelines as FCP7 XML, OpenTimelineIO and EDL – bring a cut over from Premiere Pro or DaVinci Resolve, or hand one over for finishing |
+| **Own export path** | Fetching pictures and encoding run in parallel without extra copies – about 2–3× faster exports for H.264/H.265/AV1/ProRes |
+| **Smart Render** | Parts of the timeline that are not changed are copied instead of encoded again |
+| **Hardware decoding in the viewer** | Smoother playback of large files on the graphics card |
 
 ### Later
-- **0.11 – Short form:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, embedded subtitle tracks, voiceover recording
-- **0.12 – Everyday editing:** reorder effects, slip/slide tools, graded thumbnails, render cache limits, Media Pool filters
-- **0.13 – Color 2:** RGB parade, curves on the Color page, master wheels, qualifier
+- **0.12 – AI Update:** an AI chat right in the app (Claude, OpenAI-compatible or local), a Claude skill/plugin, a server version for fully automatic editing
+- **0.13 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, voiceover recording, text to speech
+- **0.14 – Template Update:** templates with placeholders filled from a list, brand kit
+- **0.15 – Newcomer Update:** Premiere/Final Cut key presets, apt repository and update notice
 
 ## Building
 

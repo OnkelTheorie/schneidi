@@ -272,9 +272,10 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_SECTION "video")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
-    # MLT modules (FFmpeg, frei0r, ...) are loaded at runtime, not linked; frei0r effects are optional
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libmlt-data, libmlt7")
-    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "frei0r-plugins, ffmpeg")
+    # MLT modules (FFmpeg, frei0r, ...) are loaded at runtime, not linked; frei0r effects are optional.
+    # miniaudio (own audio engine) opens ALSA/PulseAudio with dlopen, invisible to shlibdeps.
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libmlt-data, libmlt7, libasound2t64 | libasound2")
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "frei0r-plugins, ffmpeg, libpulse0")
     include(CPack)
 endif()
 
