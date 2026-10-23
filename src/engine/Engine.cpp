@@ -4,6 +4,7 @@
 #include "core/Loudness.h"
 #include "core/Multicam.h"
 #include "core/TimelineOps.h"
+#include "engine/Background.h"
 #include "engine/Bundle.h"
 #include "engine/Frei0r.h"
 #include "engine/LiveUpdate.h"
@@ -24,11 +25,13 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QPainter>
+#include <QSet>
 #include <QSettings>
 #include <QThread>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <thread>
 #include <utility>
 
 #ifdef __GLIBC__
@@ -107,6 +110,7 @@ Engine::Engine(QObject* parent)
 
 Engine::~Engine()
 {
+    stopOpening();
     if (m_consumer) m_consumer->stop();
     m_consumer.reset();
     m_preview.reset();
@@ -215,6 +219,8 @@ bool Engine::createConsumer(QString* error)
 void Engine::setFormat(const ProjectFormat& format)
 {
     if (format == m_format && m_profile) return;
+    const bool waiting = m_opening != nullptr;
+    stopOpening(); // its producers belong to the old builder
     // Tear down everything attached to the old profile in this order: consumer first (reads the producers)
     if (m_consumer) m_consumer->stop();
     if (m_player) m_player->pause();
@@ -250,6 +256,7 @@ void Engine::setFormat(const ProjectFormat& format)
         emit modeChanged(m_mode);
     }
     emit speedChanged(m_speed);
+    if (waiting) updateTimeline(std::exchange(m_waiting, Timeline{})); // what was being opened, now in the new format
 }
 
 MediaInfo Engine::probe(const QString& path)
@@ -366,7 +373,85 @@ QImage Engine::grabStill(const Timeline& tl)
 void Engine::updateTimeline(const Timeline& tl)
 {
     const bool hinted = std::exchange(m_mixerOnlyNext, false);
+    // Files are being opened: the newest timeline is built when they are open
+    if (m_opening) {
+        m_waiting = tl;
+        m_waitingHinted = m_waitingHinted || hinted;
+        return;
+    }
+    applyTimeline(tl, hinted);
+}
+
+struct Engine::Opening {
+    quint64 id = 0;
+    std::vector<QString> jobs;
+    std::vector<std::unique_ptr<Mlt::Producer>> producers; // written by the thread, read after join
+    std::atomic<bool> cancel{false};
+    std::thread thread;
+};
+
+bool Engine::openInBackground(const Timeline& picture, const Timeline& tl)
+{
+    if (!m_openInBackground) return false;
+    std::vector<QString> jobs = m_builder->openJobs(picture);
+    if (jobs.empty()) return false;
+    // Other content (a project opened, nothing of the old picture stays): black instead of the old picture meanwhile
+    auto media = [](const Timeline& t) {
+        QSet<QString> paths;
+        for (const auto* tracks : {&t.video, &t.audio})
+            for (const Track& track : *tracks)
+                for (const Clip& c : track.clips)
+                    if (!c.mediaPath.isEmpty()) paths.insert(c.mediaPath);
+        return paths;
+    };
+    const QSet<QString> shown = media(m_built);
+    if (!m_timeline || (!shown.isEmpty() && !shown.intersects(media(tl)))) applyTimeline(Timeline{}, false);
+
+    auto o = std::make_unique<Opening>();
+    o->id = ++m_openings;
+    o->jobs = std::move(jobs);
+    m_waiting = tl;
+    m_waitingHinted = false;
+    Opening* raw = o.get();
+    o->thread = std::thread([this, raw, builder = m_builder.get()] {
+        {
+            const Background::Foreground busy; // thumbnails, waveforms … wait (ends here: quitting must not wait)
+            raw->producers = builder->openAll(raw->jobs, &raw->cancel);
+        }
+        const quint64 id = raw->id;
+        QMetaObject::invokeMethod(this, [this, id] { finishOpening(id); }, Qt::QueuedConnection);
+    });
+    m_opening = std::move(o);
+    emit openingChanged(true);
+    return true;
+}
+
+void Engine::finishOpening(quint64 id)
+{
+    if (!m_opening || m_opening->id != id) return; // stopped meanwhile (stopOpening)
+    m_opening->thread.join();
+    m_builder->adopt(m_opening->jobs, std::move(m_opening->producers));
+    m_opening.reset();
+    const Timeline tl = std::exchange(m_waiting, Timeline{});
+    applyTimeline(tl, std::exchange(m_waitingHinted, false)); // opens again if the newest one needs more files
+    if (!m_opening) emit openingChanged(false);
+}
+
+void Engine::stopOpening()
+{
+    if (!m_opening) return;
+    m_opening->cancel = true; // the running opens finish (MLT cannot be interrupted), the rest is skipped
+    m_opening->thread.join();
+    m_opening.reset(); // its producers go before the builder they belong to
+    emit openingChanged(false);
+}
+
+void Engine::applyTimeline(const Timeline& tl, bool hinted)
+{
+    const Timeline picture = m_player ? pictureOnly(tl) : tl;
     if (m_player) {
+        // The sound waits for the picture while its files open (otherwise new sound under the old picture)
+        if (!(m_timeline && samePicture(m_built, tl)) && openInBackground(picture, tl)) return;
         // Own audio engine: the player takes every change live; the picture graph only changes with the picture
         if (m_mode == Mode::Timeline) m_player->setTimeline(tl, m_format.rate);
         if (m_timeline && samePicture(m_built, tl)) {
@@ -383,10 +468,11 @@ void Engine::updateTimeline(const Timeline& tl)
             return;
         }
     }
+    if (!m_player && openInBackground(picture, tl)) return;
+    const Background::Foreground busy; // the build opens files too: background work waits
     m_renderCache->sync(tl); // queue missing clip outputs, discard outdated ones
     // Stabilization: analyses the timeline needs run in the background (until then the clips play unstabilized)
     Stabilizer::instance()->sync(Stabilizer::missing(tl, m_format));
-    const Timeline picture = m_player ? pictureOnly(tl) : tl;
     m_builder->setMinimumLength(m_player ? TimelineOps::endFrame(tl) : 0);
     auto hooks = std::make_unique<MixerHooks>();
     auto tractor = m_builder->build(picture, m_player ? nullptr : hooks.get());

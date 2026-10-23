@@ -75,6 +75,7 @@
 #include <QSettings>
 #include <QInputDialog>
 #include <QStandardPaths>
+#include <QStatusBar>
 #include <QTimer>
 
 QString MainWindow::appName()
@@ -118,6 +119,12 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_project, &Project::timelineChanged, this, [this] {
         if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(m_project->renderTimeline());
         else if (!m_engineTimer.isActive()) m_engineTimer.start();
+    });
+    // Files open in a thread (MLT probes them: seconds on weak hardware): the window stays usable meanwhile
+    m_engine->setOpenInBackground(true);
+    connect(m_engine, &Engine::openingChanged, this, [this](bool opening) {
+        if (opening) statusBar()->showMessage(T("Medien werden geöffnet …"));
+        else if (statusBar()->currentMessage() == T("Medien werden geöffnet …")) statusBar()->clearMessage();
     });
     m_engine->updateTimeline(m_project->renderTimeline());
     // Proxy finished/deleted or "use proxy media" toggled -> rebuild the preview

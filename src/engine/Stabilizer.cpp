@@ -3,6 +3,7 @@
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "engine/Profiles.h"
+#include "engine/Background.h"
 
 #include <Mlt.h>
 #include <QCoreApplication>
@@ -377,6 +378,7 @@ void Stabilizer::next()
     auto progress = m_progress;
     auto error = m_error;
     m_thread = QThread::create([r, ok, cancel, progress, error] {
+        Background::lowerThisThread(Background::Level::Lowest);
         *ok = analyze(r, error.get(), cancel.get(), progress.get());
     });
     connect(m_thread, &QThread::finished, this, [this, ok] {

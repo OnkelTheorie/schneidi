@@ -89,6 +89,7 @@ add_library(schneidi_lib STATIC
     src/core/Ducking.h            src/core/Ducking.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
+    src/engine/Background.h       src/engine/Background.cpp
     src/engine/PreviewConsumer.h  src/engine/PreviewConsumer.cpp
     src/engine/Profiles.h         src/engine/Profiles.cpp
     src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp

@@ -119,6 +119,15 @@ public:
     // Set from another thread: build() stops opening files and returns an empty tractor (export cancelled)
     void setCancelFlag(std::shared_ptr<const std::atomic<bool>> flag) { m_cancel = std::move(flag); }
 
+    // Opening files ahead, also in another thread (preview: the window stays usable while MLT probes them, which
+    // decodes pictures – 0.1–0.4 s per producer, seconds on weak hardware). openJobs: the producers a build of tl
+    // would open that are not open yet. openAll: opens them in parallel; any thread, it only uses the factory and
+    // the profile; stops at *cancel. adopt: the next build takes them (same order as the jobs).
+    std::vector<QString> openJobs(const Timeline& tl) const;
+    std::vector<std::unique_ptr<Mlt::Producer>> openAll(const std::vector<QString>& jobs,
+                                                        const std::atomic<bool>* cancel = nullptr) const;
+    void adopt(const std::vector<QString>& jobs, std::vector<std::unique_ptr<Mlt::Producer>> producers);
+
     // hooks != nullptr: always attach mixer filters (even at 0 dB) and build in level meters
     std::unique_ptr<Mlt::Tractor> build(const Timeline& tl, MixerHooks* hooks = nullptr);
     // Jump spots of the decoders from the last build() (outer timeline only), sorted by frame
@@ -153,7 +162,7 @@ private:
         bool ramp = false;
     };
     Source sourceOf(const QString& path, TrackKind kind, int trackIndex, bool second, const Clip* retime) const;
-    // Opens the producers a build will need in parallel threads into m_opened (opening is slow, see prefetch)
+    // Opens the producers a build will need in parallel threads into m_opened (openJobs + openAll + adopt)
     void prefetch(const Timeline& tl);
     // A new producer of the file: from m_opened if prefetch() opened it, otherwise opened now
     std::unique_ptr<Mlt::Producer> openFile(TrackKind kind, const QString& resource);

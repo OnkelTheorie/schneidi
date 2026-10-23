@@ -2,6 +2,7 @@
 
 #include "app/Theme.h"
 #include "core/I18n.h"
+#include "engine/Background.h"
 
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -225,6 +226,7 @@ ScopesPanel::ScopesPanel(QWidget* parent) : QWidget(parent)
     m_worker->moveToThread(m_thread);
     connect(m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
     m_thread->start(QThread::LowPriority);
+    QMetaObject::invokeMethod(m_worker, [] { Background::lowerThisThread(Background::Level::Low); });
 
     m_throttle = new QTimer(this);
     m_throttle->setSingleShot(true);

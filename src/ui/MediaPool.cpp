@@ -8,6 +8,7 @@
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
 #include "ui/MediaStorage.h"
+#include "engine/Background.h"
 
 #include <QActionGroup>
 #include <QDateTime>
@@ -619,6 +620,8 @@ void MediaPool::requestThumb(const QString& path, int frame)
     const ProjectFormat format = m_project->format();
     const int generation = m_thumbGeneration;
     m_thumbPool->start([this, format, path, frame, generation] {
+        Background::lowerThisThread(Background::Level::Low); // own pool: its threads do nothing else
+        Background::yieldToForeground();
         const QImage img = Engine::thumbnail(format, path, frame, kThumb);
         QMetaObject::invokeMethod(this, [this, path, img, generation] { thumbReady(path, img, generation); },
                                   Qt::QueuedConnection);

@@ -5,6 +5,7 @@
 #include "engine/ProxyManager.h"
 #include "engine/audio/Path.h"
 #include "engine/audio/Reader.h"
+#include "engine/Background.h"
 
 #include <Mlt.h>
 #include <QCryptographicHash>
@@ -113,9 +114,18 @@ QSize thumbSize(const ProjectFormat& format)
 MediaCache::MediaCache(QObject* parent) : QObject(parent)
 {
     m_thumbs.setMaxCost(kThumbCacheKB);
-    m_thumbThread = QThread::create([this] { thumbLoop(); });
-    m_stripThread = QThread::create([this] { stripLoop(); });
-    m_waveThread = QThread::create([this] { waveLoop(); });
+    m_thumbThread = QThread::create([this] {
+        Background::lowerThisThread(Background::Level::Low);
+        thumbLoop();
+    });
+    m_stripThread = QThread::create([this] {
+        Background::lowerThisThread(Background::Level::Low); // also the ffmpeg it starts (inherits the nice value)
+        stripLoop();
+    });
+    m_waveThread = QThread::create([this] {
+        Background::lowerThisThread(Background::Level::Lowest);
+        waveLoop();
+    });
     m_thumbThread->start(QThread::LowPriority);
     m_stripThread->start(QThread::LowPriority);
     m_waveThread->start(QThread::LowestPriority);
@@ -245,6 +255,7 @@ void MediaCache::thumbLoop()
             format = m_format;
             gen = m_generation;
         }
+        Background::yieldToForeground();
         if (gen != generation) { // new project format: producers hang on the old profile
             producers.clear();
             factory.reset();
@@ -307,6 +318,7 @@ void MediaCache::stripLoop()
             format = m_format;
             gen = m_generation;
         }
+        Background::yieldToForeground();
         const QSize size = thumbSize(format);
         const double fps = format.rate.fps();
         // Only decode keyframes, unsqueeze anamorphic pixels, fit into the project format centered with black borders like MLT;
@@ -394,6 +406,10 @@ void MediaCache::waveLoop()
             QMutexLocker lock(&m_mutex);
             while (!m_quit && m_waveJobs.empty()) m_waveCond.wait(&m_mutex);
             if (m_quit) return;
+            lock.unlock();
+            Background::yieldToForeground();
+            lock.relock();
+            if (m_quit || m_waveJobs.empty()) continue;
             key = path = m_waveJobs.front();
             m_waveJobs.pop_front();
             if (const int z = key.indexOf(QChar(0)); z >= 0) {

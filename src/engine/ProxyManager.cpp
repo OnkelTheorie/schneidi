@@ -2,6 +2,7 @@
 #include "engine/Bundle.h"
 
 #include "core/I18n.h"
+#include "engine/Background.h"
 
 #include <Mlt.h>
 #include <QCryptographicHash>
@@ -296,6 +297,7 @@ void ProxyManager::launch(const QString& original, const QStringList& args, doub
         m_errorTail = m_process->errorString();
         onFinished(-1, true);
     });
+    Background::lowerProcess(*m_process); // playback takes precedence
     m_process->start(ffmpeg, args);
 }
 

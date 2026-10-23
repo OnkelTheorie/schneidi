@@ -3,6 +3,7 @@
 
 #include "app/Theme.h"
 #include "core/I18n.h"
+#include "engine/Background.h"
 
 #include <QDateTime>
 #include <QEvent>
@@ -521,6 +522,16 @@ void MediaStorage::queueThumb(const QString& path)
 
 void MediaStorage::nextThumb()
 {
+    if (Background::foregroundBusy() && !m_ffmpeg && !m_thumbQueue.isEmpty()) { // later, the preview first
+        if (!m_thumbRetry) {
+            m_thumbRetry = true;
+            QTimer::singleShot(200, this, [this] {
+                m_thumbRetry = false;
+                nextThumb();
+            });
+        }
+        return;
+    }
     while (!m_ffmpeg && !m_thumbQueue.isEmpty()) {
         const QString path = m_thumbQueue.takeFirst();
         if (!m_items.contains(path)) continue; // folder changed in the meantime
@@ -537,6 +548,7 @@ void MediaStorage::nextThumb()
         // Video: one frame at 1 s (for very short clips the first one), ffmpeg rotates phone videos correctly on its own
         m_thumbPath = path;
         m_ffmpeg = new QProcess(this);
+        Background::lowerProcess(*m_ffmpeg);
         auto run = [this, path](bool atStart) {
             QStringList args{"-hide_banner", "-nostdin", "-loglevel", "error"};
             if (!atStart) args << "-ss" << "1";

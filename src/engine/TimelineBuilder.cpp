@@ -28,6 +28,7 @@
 #include <QSet>
 #include <QImage>
 #include <QString>
+#include <QThread>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -111,7 +112,7 @@ QString TimelineBuilder::openKey(TrackKind kind, const QString& resource)
     return (kind == TrackKind::Video ? QStringLiteral("v|") : QStringLiteral("a|")) + resource;
 }
 
-void TimelineBuilder::prefetch(const Timeline& tl)
+std::vector<QString> TimelineBuilder::openJobs(const Timeline& tl) const
 {
     // Which producers will this build open? Same keys as buildTimeline (first/second producer as there, without
     // looking at dissolves: a wrong guess only costs one producer opened for nothing or one opened later)
@@ -137,29 +138,49 @@ void TimelineBuilder::prefetch(const Timeline& tl)
     for (int i = 0; i < tl.video.size(); ++i) collect(tl.video[i], TrackKind::Video, i);
     for (int i = 0; i < tl.audio.size(); ++i) collect(tl.audio[i], TrackKind::Audio, i);
     std::vector<QString> jobs;
-    for (const auto& [k, n] : wanted)
-        for (int i = 0; i < n; ++i) jobs.push_back(k);
-    if (jobs.size() < 2) return; // nothing to gain
+    for (const auto& [k, n] : wanted) {
+        const auto it = m_opened.find(k); // opened ahead already (adopt)
+        for (int i = it == m_opened.end() ? 0 : int(it->second.size()); i < n; ++i) jobs.push_back(k);
+    }
+    return jobs;
+}
 
+std::vector<std::unique_ptr<Mlt::Producer>> TimelineBuilder::openAll(const std::vector<QString>& jobs,
+                                                                     const std::atomic<bool>* cancel) const
+{
     // Opening probes every stream of the file (~100–200 ms each, mostly waiting for the disk and the demuxer):
-    // in parallel, the build then takes them from m_opened. Several decoders open at once already elsewhere
-    // (StillFetcher, MediaCache), MLT and FFmpeg allow that with separate producers.
+    // in parallel. Several decoders open at once already elsewhere (StillFetcher, MediaCache), MLT and FFmpeg allow
+    // that with separate producers.
     std::vector<std::unique_ptr<Mlt::Producer>> results(jobs.size());
     std::atomic<size_t> next{0};
+    auto stop = [&] { return cancelled() || (cancel && cancel->load()); };
     auto work = [&] {
-        for (size_t i; !cancelled() && (i = next++) < jobs.size();) {
+        for (size_t i; !stop() && (i = next++) < jobs.size();) {
             const QString resource = jobs[i].mid(2);
             results[i] = jobs[i].startsWith('v') ? m_factory->open(resource)
                                                  : std::make_unique<Mlt::Producer>(m_profile, resource.toUtf8().constData());
         }
     };
-    const int n = int(std::min<size_t>(jobs.size(), std::clamp(std::thread::hardware_concurrency(), 2u, 8u)));
+    // Cores this process may use (QThread::idealThreadCount respects the affinity, hardware_concurrency does not)
+    const int n = int(std::min<size_t>(jobs.size(), size_t(std::clamp(QThread::idealThreadCount(), 2, 8))));
     std::vector<std::thread> threads;
     for (int i = 1; i < n; ++i) threads.emplace_back(work);
     work();
     for (std::thread& t : threads) t.join();
-    for (size_t i = 0; i < jobs.size(); ++i)
-        if (results[i]) m_opened[jobs[i]].push_back(std::move(results[i]));
+    return results;
+}
+
+void TimelineBuilder::adopt(const std::vector<QString>& jobs, std::vector<std::unique_ptr<Mlt::Producer>> producers)
+{
+    for (size_t i = 0; i < jobs.size() && i < producers.size(); ++i)
+        if (producers[i]) m_opened[jobs[i]].push_back(std::move(producers[i]));
+}
+
+void TimelineBuilder::prefetch(const Timeline& tl)
+{
+    const std::vector<QString> jobs = openJobs(tl);
+    if (jobs.size() < 2) return; // nothing to gain
+    adopt(jobs, openAll(jobs));
 }
 
 Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind, int trackIndex, bool second,

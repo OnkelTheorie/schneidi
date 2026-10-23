@@ -69,6 +69,7 @@ private:
     QHash<QString, QListWidgetItem*> m_items;
     QHash<QString, QPixmap> m_thumbs; // key: path + modification time
     QStringList m_thumbQueue;
+    bool m_thumbRetry = false; // nextThumb() waits for foreground work (Background::foregroundBusy)
     QProcess* m_ffmpeg = nullptr;
     QString m_thumbPath;
 };

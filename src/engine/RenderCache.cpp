@@ -9,6 +9,7 @@
 #include "engine/Profiles.h"
 #include "engine/Stabilizer.h"
 #include "engine/TimelineBuilder.h"
+#include "engine/Background.h"
 
 #include <Mlt.h>
 #include <QCryptographicHash>
@@ -24,12 +25,6 @@
 #include <QSet>
 #include <QThread>
 #include <algorithm>
-
-#if defined(Q_OS_WIN)
-#include <windows.h>
-#elif defined(Q_OS_UNIX)
-#include <unistd.h>
-#endif
 
 namespace {
 
@@ -300,8 +295,9 @@ void RenderCache::startNext()
     auto cancel = m_cancel;
     auto progress = m_progress;
     m_thread = QThread::create([this, job, format, target, error, ok, cancel, progress] {
+        Background::lowerThisThread(Background::Level::Lowest);
         // Pause while the preview runs or an export is running (they take precedence)
-        auto paused = [this] { return m_playing.load() || Exporter::anyRunning(); };
+        auto paused = [this] { return m_playing.load() || Exporter::anyRunning() || Background::foregroundBusy(); };
         *ok = render(job.clip, format, target, error.get(), cancel.get(), paused, progress.get());
     });
     connect(m_thread, &QThread::finished, this, [this, error, ok] { onFinished(*ok, *error); });
@@ -369,13 +365,7 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
 
     QProcess proc;
     proc.setStandardOutputFile(QProcess::nullDevice());
-    // Low priority: preview and operation take precedence
-#if defined(Q_OS_WIN)
-    proc.setCreateProcessArgumentsModifier(
-        [](QProcess::CreateProcessArguments* a) { a->flags |= BELOW_NORMAL_PRIORITY_CLASS; });
-#elif defined(Q_OS_UNIX)
-    proc.setChildProcessModifier([] { (void)::nice(10); });
-#endif
+    Background::lowerProcess(proc); // preview and operation take precedence
     proc.start(ffmpeg, args);
     if (!proc.waitForStarted(10000)) return fail(T("Render-Cache: ffmpeg ließ sich nicht starten."));
 

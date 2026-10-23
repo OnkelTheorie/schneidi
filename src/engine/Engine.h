@@ -89,6 +89,11 @@ public:
     QImage grabStill(const Timeline& tl);
 
     void updateTimeline(const Timeline& tl); // model changed -> rebuild
+    // Files the timeline needs that are not open yet are opened in a thread, the window stays usable; the newest
+    // timeline is built afterwards (until then the Viewer shows the old picture, or black for other content).
+    // Off (tests, CLI): updateTimeline() opens them itself and returns when the timeline is built.
+    void setOpenInBackground(bool on) { m_openInBackground = on; }
+    bool opening() const { return m_opening != nullptr; }
     // Lengths of the project's media in frames (Project::media()): the sound is mixed with them like in the export
     void setMediaLengths(const QHash<QString, int>& lengths);
     // Next updateTimeline() only changes fader/pan/mute/solo -> apply live instead of rebuilding
@@ -154,6 +159,8 @@ signals:
     void audioLevels(const QVector<float>& db);
     // internal: position from the consumer thread, epoch = jump counter when displaying (older ones are discarded)
     void framePosition(int frame, int epoch);
+    // Files are being opened in the background (setOpenInBackground) / done and built
+    void openingChanged(bool opening);
 
 private:
     bool createConsumer(QString* error);
@@ -163,6 +170,11 @@ private:
     void seekProducer(int at);
     void applyAudioState();
     void onFrameShown(void* mltFrame);
+    void applyTimeline(const Timeline& tl, bool hinted);
+    // Starts opening the files `picture` needs in a thread; false = all open (build now)
+    bool openInBackground(const Timeline& picture, const Timeline& tl);
+    void finishOpening(quint64 id);
+    void stopOpening(); // cancels and waits (before the builder goes away)
     void emitLevels();
     // Own audio engine: the clock in frames of the connected producer, where playback of `frame` (producer frame)
     // starts in samples, and what the player plays in the current mode (positions = producer frames)
@@ -184,6 +196,12 @@ private:
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Tractor> m_timeline;
     Timeline m_built; // model m_timeline was built from (LiveUpdate)
+    struct Opening;
+    std::unique_ptr<Opening> m_opening; // files being opened for m_builder (openInBackground)
+    quint64 m_openings = 0;
+    Timeline m_waiting;                 // newest timeline while opening
+    bool m_waitingHinted = false;
+    bool m_openInBackground = false;
     std::unique_ptr<MixerHooks> m_mixer;
     std::unique_ptr<SharedLoudness> m_loudness; // fed by the master level meter in the audio thread
     std::unique_ptr<SeekFade> m_seekFade;       // seek while playing: fade out/in at the master (no click)
