@@ -106,4 +106,4 @@ cd "$DIST"
     --desktop-file "$APPDIR/usr/share/applications/schneidi.desktop" \
     --icon-file "$APPDIR/usr/share/icons/hicolor/scalable/apps/schneidi.svg" \
     --plugin qt --output appimage
-echo ">> fertig: $(ls -1 "$DIST"/schneidi*.AppImage | tail -1)"
+echo ">> fertig: $(ls -1t "$DIST"/schneidi*.AppImage | head -1)"

@@ -1,6 +1,7 @@
 // Test render cache (engine/RenderCache): key changes exactly for changes that affect the picture;
 // mode Off/Smart/User; rendering (with/without alpha) gives the same picture as the live preview; the builder
-// reads the cache file only with ClipCache (preview), never export and still; background rendering via sync().
+// reads the cache file only with ClipCache (preview), never export and still; background rendering via sync();
+// size limit (trimDir).
 #include "check.h"
 
 #include "core/Editor.h"
@@ -92,6 +93,34 @@ bool isRed(const QImage& img)
 {
     const QColor c = img.pixelColor(img.width() / 2, img.height() / 2);
     return c.red() > 200 && c.green() < 60 && c.blue() < 60;
+}
+
+// Size limit: oldest files (modification time = last use) go first, kept keys never, other files untouched
+void testTrim(const QString& base)
+{
+    const QString dir = base + "/trim";
+    QDir().mkpath(dir);
+    const QDateTime now = QDateTime::currentDateTime();
+    auto make = [&](const QString& name, int kb, int ageMin) {
+        QFile f(dir + "/" + name);
+        f.open(QIODevice::WriteOnly);
+        f.write(QByteArray(kb * 1024, 'x'));
+        f.setFileTime(now.addSecs(-60 * ageMin), QFileDevice::FileModificationTime);
+    };
+    make("a.mov", 100, 40); // oldest
+    make("b.mov", 100, 30); // old but kept (in use)
+    make("c.mov", 100, 20);
+    make("d.mov", 100, 10); // newest
+    make("x.txt", 500, 50); // not a cache file
+    CHECK_EQ(RenderCache::trimDir(dir, 0, {}), 0); // 0 = unlimited
+    CHECK_EQ(RenderCache::trimDir(dir, 400 * 1024, {}), 0); // fits exactly
+    CHECK_EQ(RenderCache::trimDir(dir, 250 * 1024, {"b"}), 2); // a and c go, b is kept
+    CHECK(!QFile::exists(dir + "/a.mov"));
+    CHECK(QFile::exists(dir + "/b.mov"));
+    CHECK(!QFile::exists(dir + "/c.mov"));
+    CHECK(QFile::exists(dir + "/d.mov"));
+    CHECK(QFile::exists(dir + "/x.txt"));
+    CHECK_EQ(RenderCache::trimDir(dir, 50 * 1024, {"b", "d"}), 0); // only kept files left
 }
 
 void testKeys()
@@ -443,6 +472,7 @@ int main(int argc, char** argv)
         Mlt::Transition qt(*prof, "qtblend");
         if (!qt.is_valid()) return Check::skip("MLT-Qt-Modul nicht nutzbar (kein Display? z. B. xvfb-run -a ctest …)");
     }
+    testTrim(tmp.path());
     testKeys();
     testEditor();
     testRender(tmp.path());

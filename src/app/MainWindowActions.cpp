@@ -60,6 +60,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QUndoStack>
+#include <QLocale>
 #include <QMenu>
 #include <QProgressDialog>
 #include <QCloseEvent>
@@ -465,6 +466,23 @@ void MainWindow::buildActions()
                                      [this] { m_engine->renderCache()->clear(); });
     play->removeAction(clearCache);
     cacheMenu->addAction(clearCache);
+    // Size limit: beyond it the least recently used files go (files of the open timeline stay)
+    QMenu* limitMenu = cacheMenu->addMenu(T("Größenlimit"));
+    auto* limitGroup = new QActionGroup(limitMenu);
+    for (const int gb : {10, 20, 50, 100, 0}) {
+        QAction* a = limitMenu->addAction(gb ? T("%1 GB").arg(gb) : T("Unbegrenzt"));
+        a->setCheckable(true);
+        a->setData(qint64(gb) * 1024 * 1024 * 1024);
+        limitGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, a] { m_engine->renderCache()->setLimit(a->data().toLongLong()); });
+    }
+    QAction* usedInfo = cacheMenu->addAction(QString());
+    usedInfo->setEnabled(false);
+    connect(cacheMenu, &QMenu::aboutToShow, this, [this, limitGroup, usedInfo] {
+        const RenderCache* rc = m_engine->renderCache();
+        for (QAction* a : limitGroup->actions()) a->setChecked(a->data().toLongLong() == rc->limit());
+        usedInfo->setText(T("Belegt: %1").arg(QLocale().formattedDataSize(rc->usedBytes(), 1, QLocale::DataSizeTraditionalFormat)));
+    });
 
     // Audio output: buffer size (against crackling, takes effect from the next play) and on Windows the driver
     QMenu* audioMenu = play->addMenu(T("Audio-Ausgabe"));

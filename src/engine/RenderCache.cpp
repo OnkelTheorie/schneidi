@@ -29,6 +29,7 @@
 namespace {
 
 constexpr const char* kSettingKey = "playback/renderCache";
+constexpr const char* kLimitKey = "playback/renderCacheLimit";
 constexpr int kIdleMs = 1500; // this long a rest after a change before rendering
 // Increase when the way of rendering changes (codec, color space …) -> old cache files no longer fit
 constexpr const char* kVersion = "rc1";
@@ -87,6 +88,7 @@ bool needsAlpha(const Clip& c, Mlt::Producer& p, int len, int w, int h)
 RenderCache::RenderCache(QObject* parent) : QObject(parent)
 {
     m_mode = modeFromId(QSettings().value(kSettingKey, "user").toString());
+    m_limit = std::max<qint64>(0, QSettings().value(kLimitKey, kDefaultLimit).toLongLong());
     m_idle.setSingleShot(true);
     m_idle.setInterval(kIdleMs);
     connect(&m_idle, &QTimer::timeout, this, &RenderCache::startNext);
@@ -221,7 +223,7 @@ int RenderCache::pendingCount() const
 void RenderCache::sync(const Timeline& tl)
 {
     QVector<Job> jobs;
-    QSet<QString> seen;
+    QSet<QString> seen, inUse;
     if (m_mode != Mode::Off) {
         // Sorted by position (tracks from top to bottom) -> start of the timeline first
         QVector<const Clip*> clips;
@@ -235,10 +237,26 @@ void RenderCache::sync(const Timeline& tl)
                 st && st->enabled && Stabilizer::available())
                 if (const auto r = Stabilizer::request(*c, m_format); r && !Stabilizer::find(*r).valid()) continue;
             const QString k = key(*c, m_format);
-            if (seen.contains(k) || m_failed.contains(k) || QFileInfo::exists(cacheDir() + "/" + k + ".mov")) continue;
+            inUse.insert(k);
+            if (seen.contains(k) || m_failed.contains(k)) continue;
+            const QString file = cacheDir() + "/" + k + ".mov";
+            if (QFileInfo::exists(file)) {
+                // Used again -> counts as recent for the size limit (once per session is enough)
+                if (!m_touched.contains(k)) {
+                    QFile f(file);
+                    if (f.open(QIODevice::ReadWrite)) f.setFileTime(QDateTime::currentDateTime(), QFileDevice::FileModificationTime);
+                    m_touched.insert(k);
+                }
+                continue;
+            }
             seen.insert(k);
             jobs << Job{k, normalized(*c)};
         }
+    }
+    m_inUse = inUse;
+    if (!m_trimmedOnce) { // old files from earlier sessions
+        m_trimmedOnce = true;
+        trim();
     }
     m_jobs = jobs;
     // Running job outdated (clip changed/deleted, marker removed) -> cancel
@@ -258,6 +276,49 @@ void RenderCache::clear()
     const QDir dir(cacheDir());
     for (const QString& f : dir.entryList({"*.mov"}, QDir::Files)) QFile::remove(dir.filePath(f));
     emit cacheChanged(); // preview reads the originals again; the following sync() renders anew
+}
+
+void RenderCache::setLimit(qint64 bytes)
+{
+    bytes = std::max<qint64>(0, bytes);
+    if (bytes == m_limit) return;
+    m_limit = bytes;
+    QSettings().setValue(kLimitKey, bytes);
+    trim();
+}
+
+qint64 RenderCache::usedBytes() const
+{
+    qint64 sum = 0;
+    const QDir dir(cacheDir());
+    for (const QFileInfo& fi : dir.entryInfoList({"*.mov"}, QDir::Files)) sum += fi.size();
+    return sum;
+}
+
+int RenderCache::trimDir(const QString& dirPath, qint64 limit, const QSet<QString>& keep)
+{
+    if (limit <= 0) return 0;
+    QFileInfoList files = QDir(dirPath).entryInfoList({"*.mov"}, QDir::Files);
+    qint64 sum = 0;
+    for (const QFileInfo& fi : files) sum += fi.size();
+    if (sum <= limit) return 0;
+    std::sort(files.begin(), files.end(),
+              [](const QFileInfo& a, const QFileInfo& b) { return a.lastModified() < b.lastModified(); });
+    int removed = 0;
+    for (const QFileInfo& fi : files) {
+        if (sum <= limit) break;
+        if (keep.contains(fi.completeBaseName())) continue;
+        if (QFile::remove(fi.absoluteFilePath())) {
+            sum -= fi.size();
+            ++removed;
+        }
+    }
+    return removed;
+}
+
+void RenderCache::trim()
+{
+    if (trimDir(cacheDir(), m_limit, m_inUse) > 0) emit cacheChanged();
 }
 
 void RenderCache::cancelCurrent()
@@ -321,6 +382,10 @@ void RenderCache::onFinished(bool ok, const QString& error)
             m_reported.insert(error, true);
             emit failed(error);
         }
+    }
+    if (ok) {
+        m_touched.insert(key);
+        trimDir(cacheDir(), m_limit, m_inUse);
     }
     emit cacheChanged();
     if (!m_jobs.isEmpty()) QTimer::singleShot(0, this, &RenderCache::startNext);
