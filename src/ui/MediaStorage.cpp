@@ -4,6 +4,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
+#include "ui/FileManager.h"
 
 #include <QDateTime>
 #include <QEvent>
@@ -29,6 +30,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace {
@@ -464,9 +466,15 @@ void MediaStorage::showFileMenu(const QPoint& pos)
     if (!files.isEmpty()) {
         menu.addAction(T("In den Media Pool importieren"), this, [this, files] { emit importRequested(files); });
     }
+    if (at && !at->data(kDirRole).toBool()) {
+        const QString file = at->data(kPathRole).toString();
+        menu.addAction(T("Mit Standardprogramm öffnen"), this, [file] { FileManager::open(file); });
+        menu.addAction(T("Im Dateimanager zeigen"), this, [file] { FileManager::reveal(file); });
+    }
     if (at && at->data(kDirRole).toBool()) {
         const QString dir = at->data(kPathRole).toString();
         menu.addAction(T("Ordner öffnen"), this, [this, dir] { setFolder(dir); });
+        menu.addAction(T("Im Dateimanager zeigen"), this, [dir] { FileManager::reveal(dir); });
         const QStringList media = mediaIn(dir);
         QAction* a = menu.addAction(T("Ordnerinhalt in den Media Pool importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
@@ -482,9 +490,11 @@ void MediaStorage::showFileMenu(const QPoint& pos)
         const QStringList media = mediaIn(m_folder);
         QAction* a = menu.addAction(T("Alle Clips dieses Ordners importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
-        if (!m_folder.isEmpty())
+        if (!m_folder.isEmpty()) {
             menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this,
                            [this, dir = m_folder] { emit folderImportRequested(dir); });
+            menu.addAction(T("Ordner im Dateimanager öffnen"), this, [dir = m_folder] { FileManager::open(dir); });
+        }
     }
     menu.addSeparator();
     menu.addAction(T("Aktualisieren"), this, &MediaStorage::rebuildFiles);
@@ -511,6 +521,7 @@ void MediaStorage::showLocationMenu(const QPoint& pos)
         QAction* a = menu.addAction(T("Ordnerinhalt in den Media Pool importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
         menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this, [this, dir] { emit folderImportRequested(dir); });
+        menu.addAction(T("Im Dateimanager zeigen"), this, [dir] { FileManager::reveal(dir); });
     }
     menu.exec(m_tree->viewport()->mapToGlobal(pos));
 }
@@ -518,6 +529,29 @@ void MediaStorage::showLocationMenu(const QPoint& pos)
 void MediaStorage::queueThumb(const QString& path)
 {
     if (!m_thumbQueue.contains(path) && path != m_thumbPath) m_thumbQueue << path;
+}
+
+int MediaStorage::nextInView() const
+{
+    // What is shown first, then what is nearest to it: scrolled down, the clips coming into view load next and not
+    // the ones above that nobody looks at
+    const QRect view = m_list->viewport()->rect();
+    int best = 0;
+    int bestDistance = std::numeric_limits<int>::max();
+    for (int i = 0; i < m_thumbQueue.size(); ++i) {
+        const QListWidgetItem* it = m_items.value(m_thumbQueue[i]);
+        if (!it) return i; // gone, dropped at once
+        const QRect r = m_list->visualItemRect(it);
+        const int distance = r.intersects(view) ? 0
+                             : r.bottom() < view.top() ? view.top() - r.bottom()
+                                                       : r.top() - view.bottom();
+        if (distance == 0) return i;
+        if (distance < bestDistance) {
+            best = i;
+            bestDistance = distance;
+        }
+    }
+    return best;
 }
 
 void MediaStorage::nextThumb()
@@ -533,7 +567,7 @@ void MediaStorage::nextThumb()
         return;
     }
     while (!m_ffmpeg && !m_thumbQueue.isEmpty()) {
-        const QString path = m_thumbQueue.takeFirst();
+        const QString path = m_thumbQueue.takeAt(nextInView());
         if (!m_items.contains(path)) continue; // folder changed in the meantime
         const QString ext = QFileInfo(path).suffix().toLower();
         if (imageExt().contains(ext)) {

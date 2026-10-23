@@ -15,6 +15,10 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+# Linux: "show in file manager" over the freedesktop D-Bus interface (src/ui/FileManager.cpp); without it the folder opens
+if(UNIX AND NOT APPLE)
+    find_package(Qt6 QUIET COMPONENTS DBus)
+endif()
 find_package(PkgConfig REQUIRED)
 # MLT liefert unter Linux und MSYS2 (Windows) eine .pc-Datei
 pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
@@ -157,6 +161,7 @@ add_library(schneidi_lib STATIC
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
+    src/ui/FileManager.h          src/ui/FileManager.cpp
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/ViewerOverlay.h
@@ -209,6 +214,10 @@ target_include_directories(schneidi_lib PUBLIC src)
 target_include_directories(schneidi_lib PRIVATE ${MINIAUDIO_INCLUDE_DIR})
 target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::MLT PkgConfig::FFMPEG PkgConfig::RUBBERBAND
                       Threads::Threads ${CMAKE_DL_LIBS})
+if(TARGET Qt6::DBus)
+    target_link_libraries(schneidi_lib PUBLIC Qt6::DBus)
+    target_compile_definitions(schneidi_lib PRIVATE SCHNEIDI_HAVE_DBUS)
+endif()
 # Third-party code: its warnings are not ours
 set_source_files_properties(src/engine/audio/Miniaudio.cpp PROPERTIES COMPILE_OPTIONS "-w")
 

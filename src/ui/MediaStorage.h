@@ -53,6 +53,7 @@ private:
     // Thumbnails: one after another via ffmpeg (videos) resp. QImageReader (images), remembered in memory
     void queueThumb(const QString& path);
     void nextThumb();
+    int nextInView() const; // index in m_thumbQueue to make next
     void thumbDone(const QString& path, const QPixmap& pm);
 
     QStringList m_locations;

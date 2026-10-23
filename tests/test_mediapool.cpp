@@ -12,6 +12,7 @@
 #include <QFile>
 #include <QDir>
 #include "ui/MediaPool.h"
+#include "ui/MediaStorage.h"
 
 #include <QApplication>
 #include <QListWidget>
@@ -248,6 +249,41 @@ int main(int argc, char** argv)
             pool.importFolder(root.filePath("Leer2"));
             CHECK_EQ(q.undoStack()->index(), idx);
             CHECK(q.bins().isEmpty());
+        }
+    }
+
+    // --- Media Storage: thumbnails of what is shown come first. Scrolled to the end right away, the clips at the
+    // bottom get theirs while the ones above (out of view) still wait.
+    if (Check::haveFfmpeg()) {
+        QTemporaryDir tmp;
+        const QString first = Check::makeMedia(tmp.filePath("clip00.mp4"),
+                                               {"-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:duration=1.5", "-c:v", "libx264"});
+        constexpr int kClips = 40;
+        for (int i = 1; i < kClips; ++i) QFile::copy(first, tmp.filePath(QString("clip%1.mp4").arg(i, 2, 10, QChar('0'))));
+        MediaStorage storage;
+        storage.setPersistent(false);
+        storage.resize(500, 300);
+        storage.show();
+        storage.setFolder(tmp.path());
+        auto* list = storage.findChild<QListWidget*>();
+        if (CHECK(list) && CHECK_EQ(list->count(), kClips)) {
+            list->scrollToBottom();
+            QVector<qint64> before;
+            for (int i = 0; i < kClips; ++i) before << list->item(i)->icon().cacheKey();
+            QListWidgetItem* last = list->item(kClips - 1);
+            QEventLoop loop;
+            QTimer poll;
+            QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+                if (last->icon().cacheKey() != before.last()) loop.quit();
+            });
+            poll.start(20);
+            QTimer::singleShot(20000, &loop, &QEventLoop::quit);
+            loop.exec();
+            CHECK(last->icon().cacheKey() != before.last()); // the last one got its thumbnail
+            int waiting = 0; // out of view at the top, still without one (the first one may have been under way)
+            for (int i = 1; i < 10; ++i)
+                if (list->item(i)->icon().cacheKey() == before[i]) ++waiting;
+            CHECK_EQ(waiting, 9);
         }
     }
 
