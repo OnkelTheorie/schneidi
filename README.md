@@ -56,27 +56,29 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 
 ## How light is it?
 
-Measured with the current development version (0.11) on a Ryzen 5 5600X restricted with Linux cgroups (one core, no swap) – a stand-in for old hardware, not a real old laptop.
+Measured with the current development version (0.11) on a Ryzen 5 5600X restricted with Linux cgroups (cores, RAM, no swap) – a stand-in for old hardware, not a real old laptop.
 
 **Starting:**
 
 | | Empty project | Project with a 1080p clip |
 |---|---|---|
-| Least RAM it starts and keeps running with | 176 MB | 448 MB |
-| Window ready, one full core | 1.4 s | 1.4 s |
-| Window ready, 10 % of one core | 14 s | 16 s |
-| Window ready, 5 % of one core | 33 s | 30 s |
+| Least RAM it starts and keeps running with | 128 MB | 288 MB |
+| Window visible, one full core | 0.6 s | 0.5 s |
+| Window visible, 10 % of one core | 6 s | 6 s |
+| Window visible, 5 % of one core | 11 s | 15 s |
 
-**But starting is not the same as editing smoothly.** Playback of a demanding project (12 gaming clips, 1080p60 at 140 Mbit/s, a grade on every clip):
+Thumbnails for the Media Storage (your Videos folder) are made by a separate ffmpeg at the start; for a large file that takes up to ~100 MB more for a moment.
 
-| CPU | From the original files | From proxies |
-|---|---|---|
-| 1 core | 3.6 frames/s – a slideshow | 58 frames/s |
-| 2 cores | 9 frames/s | |
-| 4 cores | 38 frames/s | |
-| 6 cores | 48 frames/s | |
+**But starting is not the same as editing smoothly.** Playback of a demanding project (12 gaming clips, 1080p60 at 140 Mbit/s, a grade on every clip), frames per second out of 60:
 
-So on a weak computer, create proxies before editing (right-click a clip in the Media Pool › Generate Proxy Media). Faster decoding, including hardware decoding, is the main goal of 0.11.
+| CPU | From the original files | Originals, decoded on the graphics card | From proxies |
+|---|---|---|---|
+| 1 core | 12 – stutters | 55 | 57 |
+| 2 cores | 44 | 59 – smooth | 57 |
+| 4 cores | 57 – smooth | | |
+| 6 cores | 58 – smooth | | |
+
+0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. Without a usable graphics card, create proxies on a weak computer before editing (right-click a clip in the Media Pool › Generate Proxy Media).
 
 ## Command line and AI editing (MCP)
 
@@ -144,9 +146,9 @@ Only fixes for problems found in 0.10.0 – new features wait for the next versi
 ### 0.11 – Boost Update
 | Feature | What it does |
 |---|---|
-| **Own export path** | Fetching pictures and encoding run in parallel without extra copies – about 2–3× faster exports for H.264/H.265/AV1/ProRes |
+| **Own export path** | Decoding, fetching pictures and encoding run in parallel without extra copies – exports about 1.3–1.6× faster (measured: NVENC 49 → 75 frames/s, x264 ultrafast 45 → 68, x264 medium 34 → 41 on the project above) |
 | **Smart Render** | Parts of the timeline that are not changed are copied instead of encoded again |
-| **Hardware decoding in the viewer** | Smoother playback of large files on the graphics card |
+| **Own decoding, also on the graphics card** | Smooth playback of large files with 2 cores and a graphics card, or 4 cores without one (see How light is it?) |
 | **Crash report** | After a crash, schneidi offers a local report you can look at and send yourself – no telemetry |
 
 ### Later
