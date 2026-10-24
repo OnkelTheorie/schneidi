@@ -146,15 +146,60 @@ AVPixelFormat avFormatOf(mlt_image_format f)
 }
 
 // Per thread: a context per conversion (sws_getCachedContext reuses it while the parameters stay the same)
-SwsContext* cachedContext(int w, int h, AVPixelFormat src, AVPixelFormat dst, int flags)
+SwsContext* cachedContext(int w, int h, AVPixelFormat src, AVPixelFormat dst, int flags, int dw = 0, int dh = 0)
 {
     struct Holder {
         SwsContext* ctx = nullptr;
         ~Holder() { sws_freeContext(ctx); }
     };
     thread_local Holder holder;
-    holder.ctx = sws_getCachedContext(holder.ctx, w, h, src, w, h, dst, flags, nullptr, nullptr, nullptr);
+    holder.ctx = sws_getCachedContext(holder.ctx, w, h, src, dw ? dw : w, dh ? dh : h, dst, flags, nullptr, nullptr, nullptr);
     return holder.ctx;
+}
+
+// MLT's swscale filter (filter_scale): the interpolation the consumer asked for, in good quality
+int scaleFlags(const char* interp)
+{
+    int flags = SWS_BILINEAR;
+    const QByteArray i(interp ? interp : "");
+    if (i == "nearest" || i == "neighbor") flags = SWS_POINT;
+    else if (i == "tiles" || i == "fast_bilinear") flags = SWS_FAST_BILINEAR;
+    else if (i == "bicubic") flags = SWS_BICUBIC;
+    else if (i == "bicublin") flags = SWS_BICUBLIN;
+    else if (i == "gauss") flags = SWS_GAUSS;
+    else if (i == "sinc") flags = SWS_SINC;
+    else if (i == "hyper" || i == "lanczos") flags = SWS_LANCZOS;
+    else if (i == "spline") flags = SWS_SPLINE;
+    return flags | SWS_FULL_CHR_H_INP | SWS_FULL_CHR_H_INT | SWS_ACCURATE_RND;
+}
+
+// Converted and scaled in one pass (rgb/rgba or planar YUV, progressive, no separate alpha); false = not possible
+bool convertScaled(const Picture& pic, uint8_t* buffer, mlt_image_format format, int width, int height, int dw, int dh,
+                   int flags, const Info& info, int profileColorspace, int* colorspace)
+{
+    const AVFrame* frame = pic.frame;
+    const AVPixelFormat src = withRange(AVPixelFormat(frame->format), info.fullRange);
+    const AVPixelFormat dst = avFormatOf(format);
+    uint8_t* outData[4] = {};
+    int outStride[4] = {};
+    const bool rgb = format == mlt_image_rgb || format == mlt_image_rgba;
+    if (rgb)
+        av_image_fill_arrays(outData, outStride, buffer, dst, dw, dh, kImageAlign);
+    else
+        mlt_image_format_planes(format, dw, dh, buffer, outData, outStride);
+    SwsContext* ctx = cachedContext(width, height, src, dst, flags, dw, dh);
+    if (!ctx) return false;
+    *colorspace = info.colorspace;
+    // swscale's RGB side is SWS_CS_DEFAULT (601). RGB to RGB goes through YUV inside swscale: the same matrix both
+    // ways, or the colors shift (MLT's swscale filter shifted them so: a 601-tagged RGBA picture in a 709 profile)
+    const AVPixFmtDescriptor* srcDesc = av_pix_fmt_desc_get(src);
+    const bool rgbSource = srcDesc && (srcDesc->flags & AV_PIX_FMT_FLAG_RGB);
+    if (rgb)
+        lumaTransfer(ctx, rgbSource ? 601 : info.colorspace, 601);
+    else if (!lumaTransfer(ctx, info.colorspace, profileColorspace))
+        *colorspace = profileColorspace;
+    sws_scale(ctx, frame->data, frame->linesize, 0, height, outData, outStride);
+    return true;
 }
 
 struct Sliced {
@@ -360,6 +405,49 @@ int getImage(mlt_frame frame, uint8_t** buffer, mlt_image_format* format, int* w
     outputSize(*d, profile, width, height);
     // The picture must hold the size (a stream whose size changes midway: MLT's test image instead)
     if (pic->frame->width < *width || pic->frame->height < *height) return 1;
+
+    auto tag = [&](int colorspace) {
+        mlt_properties_set_int(fp, "colorspace", colorspace);
+        mlt_properties_set_int(fp, "full_range", fullRange);
+        mlt_properties_set_int(fp, "format", *format);
+        mlt_properties_set_int(fp, "progressive", pic->progressive);
+        mlt_properties_set_int(fp, "top_field_first", pic->topFieldFirst);
+        // The source's scan type on the producer (MLT updates it per picture; written only when it changes)
+        mlt_properties pp = MLT_PRODUCER_PROPERTIES(producer);
+        if (d->progressive.exchange(pic->progressive) != int(pic->progressive))
+            mlt_properties_set_int(pp, "meta.media.progressive", pic->progressive);
+        if (d->topFieldFirst.exchange(pic->topFieldFirst) != int(pic->topFieldFirst))
+            mlt_properties_set_int(pp, "meta.media.top_field_first", pic->topFieldFirst);
+    };
+
+    // The rescaler (MLT's swscale filter above) tells the size it wants. Scaled right here, in one swscale pass:
+    // MLT converted at full size and the filter then scaled that again with a new context per picture – a 1080p
+    // preview spent more than half its time there, in swscale's C paths. Not with crop or interlacing (the crop and
+    // deinterlace filters in between need the full picture) or a separate alpha plane.
+    const int dw = mlt_properties_get_int(fp, "rescale_width"), dh = mlt_properties_get_int(fp, "rescale_height");
+    const char* interp = mlt_properties_get(fp, "consumer.rescale");
+    const auto pixFmt = AVPixelFormat(pic->frame->format);
+    const bool separateAlpha = (pixFmt == AV_PIX_FMT_YUVA420P || pixFmt == AV_PIX_FMT_YUVA444P) && *format != mlt_image_rgba;
+    const bool cropped = mlt_properties_get_int(fp, "crop.left") || mlt_properties_get_int(fp, "crop.right")
+                         || mlt_properties_get_int(fp, "crop.top") || mlt_properties_get_int(fp, "crop.bottom");
+    if (dw >= 6 && dh >= 6 && (dw != *width || dh != *height) && interp && std::strcmp(interp, "none") != 0
+        && avFormatOf(*format) != AV_PIX_FMT_NONE && pic->progressive && !cropped && !separateAlpha
+        && !qEnvironmentVariableIsSet("SCHNEIDI_SCALE_LATE")) { // as MLT, for comparisons
+        const int size = mlt_image_format_size(*format, dw, dh, nullptr);
+        auto* image = static_cast<uint8_t*>(mlt_pool_alloc(size));
+        int colorspace = d->info.colorspace;
+        if (image && convertScaled(*pic, image, *format, *width, *height, dw, dh, scaleFlags(interp), d->info,
+                                   profile->colorspace, &colorspace)) {
+            mlt_frame_set_image(frame, image, size, mlt_pool_release);
+            *width = dw;
+            *height = dh;
+            *buffer = image;
+            tag(colorspace);
+            return 0;
+        }
+        mlt_pool_release(image);
+    }
+
     const int size = mlt_image_format_size(*format, *width, *height, nullptr);
     auto* image = static_cast<uint8_t*>(mlt_pool_alloc(size));
     if (!image) return 1;
@@ -368,17 +456,7 @@ int getImage(mlt_frame frame, uint8_t** buffer, mlt_image_format* format, int* w
     const int colorspace = convert(*pic, image, *format, *width, *height, &alpha, d->info, profile->colorspace);
     if (alpha) mlt_frame_set_alpha(frame, alpha, *width * *height, mlt_pool_release);
     *buffer = image;
-    mlt_properties_set_int(fp, "colorspace", colorspace);
-    mlt_properties_set_int(fp, "full_range", fullRange);
-    mlt_properties_set_int(fp, "format", *format);
-    mlt_properties_set_int(fp, "progressive", pic->progressive);
-    mlt_properties_set_int(fp, "top_field_first", pic->topFieldFirst);
-    // The source's scan type on the producer (MLT updates it per picture; written only when it changes)
-    mlt_properties pp = MLT_PRODUCER_PROPERTIES(producer);
-    if (d->progressive.exchange(pic->progressive) != int(pic->progressive))
-        mlt_properties_set_int(pp, "meta.media.progressive", pic->progressive);
-    if (d->topFieldFirst.exchange(pic->topFieldFirst) != int(pic->topFieldFirst))
-        mlt_properties_set_int(pp, "meta.media.top_field_first", pic->topFieldFirst);
+    tag(colorspace);
     return 0;
 }
 

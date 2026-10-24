@@ -19,6 +19,7 @@ extern "C" {
 #include <QApplication>
 #include <QCryptographicHash>
 #include <QElapsedTimer>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QThread>
 #include <atomic>
@@ -84,6 +85,53 @@ int maxDiff(const QByteArray& a, const QByteArray& b)
     int m = 0;
     for (qsizetype i = 0; i < a.size(); ++i) m = std::max(m, std::abs(int(uint8_t(a[i])) - int(uint8_t(b[i]))));
     return m;
+}
+
+// Mean difference per byte (scaled pictures: the own decoder scales in one pass, MLT converts and then scales)
+double meanDiff(const QByteArray& a, const QByteArray& b)
+{
+    if (a.size() != b.size() || a.isEmpty()) return 9999;
+    double sum = 0;
+    for (qsizetype i = 0; i < a.size(); ++i) sum += std::abs(int(uint8_t(a[i])) - int(uint8_t(b[i])));
+    return sum / double(a.size());
+}
+
+// Same picture up to resampling: everything equal but the pixels, which differ little on average. pixels = false:
+// only the rest (MLT's way shifted the colors there, testScaledColors checks them against FFmpeg)
+bool close(const Picture& a, const Picture& b, bool pixels)
+{
+    return a.ok && b.ok && a.width == b.width && a.height == b.height && a.format == b.format
+           && a.colorspace == b.colorspace && a.fullRange == b.fullRange && a.progressive == b.progressive
+           && a.image.size() == b.image.size() && (!pixels || meanDiff(a.image, b.image) < 1.0)
+           && a.alpha.size() == b.alpha.size() && (a.alpha.isEmpty() || meanDiff(a.alpha, b.alpha) < 1.0);
+}
+
+// FFmpeg's picture 0 of a file, scaled with swscale alone (one pass), as raw bytes
+QByteArray ffmpegScaled(const QString& path, int w, int h, const char* pixFmt, const char* matrix)
+{
+    QProcess p;
+    p.start("ffmpeg", {"-v", "error", "-i", path, "-frames:v", "1", "-vf",
+                       QString("scale=%1:%2:flags=bilinear+accurate_rnd+full_chroma_int+full_chroma_inp:in_color_matrix=%3,"
+                               "format=%4").arg(w).arg(h).arg(matrix, pixFmt),
+                       "-f", "rawvideo", "-"});
+    p.waitForFinished(60000);
+    return p.readAllStandardOutput();
+}
+
+// Scaled pictures keep their colors: as FFmpeg scales them. MLT's way (RGBA converted at the source size, then its
+// swscale filter) shifted a BT.601 source in a 709 profile by ~8 per channel: cyan 0,255,255 became 22,255,253.
+void testScaledColors(const QString& sd601, Mlt::Profile& p1080)
+{
+    auto own = Video::openProducer(p1080, sd601, {});
+    if (!CHECK(own && own->is_valid())) return;
+    const Picture rgba = fetch(*own, 0, mlt_image_rgba, p1080.width(), p1080.height());
+    const QByteArray ref = ffmpegScaled(sd601, p1080.width(), p1080.height(), "rgba", "bt601");
+    if (!CHECK_EQ(rgba.image.size(), ref.size())) return;
+    double sum = 0;
+    qsizetype n = 0;
+    for (qsizetype i = 0; i < ref.size(); i += 4)
+        for (int k = 0; k < 3; ++k, ++n) sum += std::abs(int(uint8_t(rgba.image[i + k])) - int(uint8_t(ref[i + k])));
+    if (!CHECK(sum / double(n) < 1.0)) std::printf("       scaled RGBA differs from FFmpeg by %.2f\n", sum / double(n));
 }
 
 struct Media {
@@ -165,14 +213,27 @@ void compare(const Media& m, Mlt::Profile& profile, const QVector<mlt_image_form
                                   __FILE__, __LINE__);
                 continue;
             }
+            // Bit-exact to MLT when scaling like MLT (converted at the source size, then MLT's swscale filter)
             const Picture a = fetch(*mlt, pos, fmt, w, h, range);
+            qputenv("SCHNEIDI_SCALE_LATE", "1");
             const Picture b = fetch(*own, pos, fmt, w, h, range);
+            qunsetenv("SCHNEIDI_SCALE_LATE");
             if (!same(a, b) && ++failures <= 3) {
                 Check::report(false, qPrintable(QString("%1 %2 %3 pos %4").arg(m.name, mlt_image_format_name(fmt))
                                                     .arg(scaled ? "scaled" : "native").arg(pos)),
                               __FILE__, __LINE__,
                               QString("MLT: %1\n       own: %2\n       max diff %3")
                                   .arg(describe(a), describe(b)).arg(maxDiff(a.image, b.image)));
+            }
+            // The default: a picture of another size converted and scaled in one swscale pass -> close to that
+            const Picture c = fetch(*own, pos, fmt, w, h, range);
+            const bool shifted = c.format == mlt_image_rgba && c.colorspace != profile.colorspace();
+            if (!close(b, c, !shifted) && ++failures <= 3) {
+                Check::report(false, qPrintable(QString("%1 %2 %3 pos %4 in one pass").arg(m.name, mlt_image_format_name(fmt))
+                                                    .arg(scaled ? "scaled" : "native").arg(pos)),
+                              __FILE__, __LINE__,
+                              QString("late: %1\n       one pass: %2\n       mean diff %3")
+                                  .arg(describe(b), describe(c)).arg(meanDiff(b.image, c.image), 0, 'f', 3));
             }
         }
         Check::report(failures == 0, qPrintable(QString("%1 %2 %3").arg(m.name, mlt_image_format_name(fmt))
@@ -404,6 +465,10 @@ int main(int argc, char** argv)
         for (const Media& m : media)
             if (m.name == "h264" || m.name == "rotated-90") compare(Media{m.name + "@1080p50", m.path, 200}, *p1080,
                                                                      {mlt_image_rgba, mlt_image_yuv420p}, true);
+    }
+    {
+        auto p1080 = makeProfile(ProjectFormat{1920, 1080, {50, 1}});
+        testScaledColors(file("h264.mp4"), *p1080);
     }
     testThreads(media.value(0), *p25);
     testHibernate(media.value(0).path);
