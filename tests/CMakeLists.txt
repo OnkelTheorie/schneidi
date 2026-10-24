@@ -95,6 +95,7 @@ schneidi_test(test_audio_player)
 set_tests_properties(test_audio_player PROPERTIES RUN_SERIAL TRUE) # real time
 # Picture keeps up with the sound when rendering is too slow: own audio engine only (the MLT variant skips)
 schneidi_test(test_picture_catchup)
+schneidi_test(test_play_end) # playback stops at the end and stays stopped
 schneidi_test(test_open_background) # opening files in a thread (Engine::setOpenInBackground)
 target_compile_definitions(test_audio_analysis PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 target_compile_definitions(test_export_audio PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
@@ -134,7 +135,7 @@ endforeach()
 
 # MLT's sound as a fallback (docs/archiv/plan-0.10-ton.md, the own engine SMT is the default since 0.10): export, preview and
 # analysis tests a second time with the sound through MLT; its known errors are reported there, not failed
-foreach(name test_av_sync test_preview_audio test_open_background test_audio_regression test_export_formats test_audio_streams test_export_opus test_cli
+foreach(name test_av_sync test_preview_audio test_play_end test_open_background test_audio_regression test_export_formats test_audio_streams test_export_opus test_cli
              test_multicam_render test_render_queue test_loudness test_ducking test_audio_sync test_dynamics_eq
              test_multicam_cli)
     add_test(NAME ${name}_mlt_audio COMMAND ${name})
@@ -144,7 +145,7 @@ foreach(name test_av_sync test_preview_audio test_open_background test_audio_reg
         RESOURCE_LOCK ${name}
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_AUDIO=mlt")
 endforeach()
-set_tests_properties(test_av_sync test_preview_audio test_picture_catchup test_av_sync_mlt_audio test_preview_audio_mlt_audio
+set_tests_properties(test_av_sync test_preview_audio test_picture_catchup test_play_end test_av_sync_mlt_audio test_preview_audio_mlt_audio test_play_end_mlt_audio
                      PROPERTIES RUN_SERIAL TRUE) # preview timing
 
 # Server/container without a display: MLT's Qt module (qtblend, qtext) must still load – it used to refuse without

@@ -29,6 +29,7 @@
 #include <QSettings>
 #include <QThread>
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstring>
 #include <thread>
@@ -104,7 +105,9 @@ Engine::Engine(QObject* parent)
     }
     // Messages that were already on their way when jumping made the playhead briefly jump back
     connect(this, &Engine::framePosition, this, [this](int frame, int epoch) {
-        if (epoch == m_seekEpoch) emit positionChanged(frame);
+        if (epoch != m_seekEpoch) return;
+        emit positionChanged(frame);
+        stopAtEnd();
     }, Qt::QueuedConnection);
 }
 
@@ -381,6 +384,7 @@ void Engine::updateTimeline(const Timeline& tl)
         return;
     }
     applyTimeline(tl, hinted);
+    stopAtEnd(); // deleted while playing: the playhead may lie behind the new end
 }
 
 struct Engine::Opening {
@@ -435,6 +439,7 @@ void Engine::finishOpening(quint64 id)
     m_opening.reset();
     const Timeline tl = std::exchange(m_waiting, Timeline{});
     applyTimeline(tl, std::exchange(m_waitingHinted, false)); // opens again if the newest one needs more files
+    stopAtEnd();
     if (!m_opening) emit openingChanged(false);
 }
 
@@ -766,9 +771,37 @@ void Engine::play() { setSpeed(1.0); }
 void Engine::pause() { setSpeed(0.0); }
 void Engine::togglePlay() { setSpeed(m_speed == 0.0 ? 1.0 : 0.0); }
 
+int Engine::lastFrame() const
+{
+    switch (m_mode) {
+    case Mode::Timeline: return TimelineOps::endFrame(m_built) - 1;
+    case Mode::Source: return m_source ? m_source->get_length() - 1 : -1;
+    case Mode::Multicam: break;
+    }
+    return INT_MAX;
+}
+
+bool Engine::atEnd(double speed) const
+{
+    if (m_mode == Mode::Multicam) return false;
+    return speed > 0 ? m_position >= lastFrame() : m_position <= 0;
+}
+
+// The producer pauses by itself at its end, but the engine kept its speed: nothing moved, the button still showed
+// playing, and the next rebuild (an edit, an import) played on by itself (user report 2026-10-24). Stop for real.
+void Engine::stopAtEnd()
+{
+    if (m_speed != 0.0 && m_current && atEnd(m_speed)) pause();
+}
+
 void Engine::setSpeed(double speed)
 {
     if (!m_current) return;
+    if (speed != 0.0 && m_speed == 0.0 && atEnd(speed)) {
+        // Play at the end starts from the front (Premiere, Final Cut); backwards at the start there is nothing
+        if (speed < 0 || lastFrame() <= 0) return;
+        seek(0);
+    }
     const bool wasPlaying = m_speed != 0.0;
     const double before = m_speed;
     m_speed = speed;

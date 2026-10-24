@@ -181,6 +181,11 @@ private:
     double clockFrames() const;
     double soundStart(int frame, double speed) const;
     void syncPlayer(int position, bool restart);
+    // Playback ends at the last frame of what is shown (timeline frames; -1 = nothing there), going backwards at 0.
+    // Multicam grid: no end of its own, the window moves on to the next segment.
+    int lastFrame() const;
+    bool atEnd(double speed) const;
+    void stopAtEnd();
 
     ProxyManager* m_proxies;
     RenderCache* m_renderCache;
