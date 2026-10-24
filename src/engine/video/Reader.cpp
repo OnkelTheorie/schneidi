@@ -583,8 +583,11 @@ struct Reader::Impl {
         if (position <= 0) ts = 0;
         else if (firstPts != AV_NOPTS_VALUE) ts += firstPts;
         else if (fmt->start_time != AV_NOPTS_VALUE) ts += fmt->start_time;
-        // B-frames: start 2 s earlier, so frames referencing before the key frame decode cleanly (MLT's preseek)
-        if (mustDecode && dec->has_b_frames && av_q2d(info.timeBase) != 0) ts -= int64_t(2 / av_q2d(info.timeBase));
+        // B-frames: start a little earlier. Index times can be decode times (MP4), which run ahead of the shown time
+        // by the reorder delay: a key frame decoded before the target may be shown after it. MLT starts 2 s earlier
+        // (preseek), which decodes up to two more seconds per seek – on a weak computer every catch-up jump.
+        if (mustDecode && dec->has_b_frames && av_q2d(info.timeBase) != 0 && fps > 0)
+            ts -= int64_t((dec->has_b_frames + 2) / fps / av_q2d(info.timeBase));
         ts = std::max<int64_t>(ts, 0);
         dec->skip_loop_filter = AVDISCARD_NONREF;
         av_seek_frame(fmt, info.index, ts, AVSEEK_FLAG_BACKWARD);

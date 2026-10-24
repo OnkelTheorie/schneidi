@@ -7,7 +7,8 @@
 // Frame choice as in MLT's producer_avformat (7.30) so the same position shows the same picture: positions count in
 // the stream's frame rate (MLT's guess, see Info::frameRate) from the first key frame; a request for position p
 // returns the first decoded picture at p or later. Jumps back, or more than 64 frames forward, seek to the key frame
-// before (2 s earlier still for codecs with B-frames) and decode from there. At the end of the stream the last picture.
+// before (a few frames earlier still for codecs with B-frames) and decode from there. At the end of the stream the last
+// picture.
 //
 // A reader unused for a while (4 s) that is not among the 4 most recently used closes its decoder and drops its pictures,
 // like MLT's cache of open producers; the next request opens it again (and seeks).

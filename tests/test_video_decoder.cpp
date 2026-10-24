@@ -153,6 +153,10 @@ QVector<int> positions(int frames)
     for (int i = 0; i < std::min(frames, 40); ++i) out << i;
     out << 5 << 3 << frames / 2 << frames / 2 + 1 << frames / 2 + 7 << frames / 2 + 70 << 1 << frames - 2 << frames - 1
         << frames + 3 << 0;
+    // Seeks (back from the end) to just before and onto a key frame of the 2 s GOPs: with B-frames the key frame is
+    // decoded before the pictures shown ahead of it (the seek must not land on it)
+    for (int k : {46, 47, 48, 49, 50, 51})
+        if (k < frames - 1) out << frames - 1 << k;
     return out;
 }
 
