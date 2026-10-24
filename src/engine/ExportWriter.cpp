@@ -305,6 +305,7 @@ struct ExportWriter::Impl {
     // Smart render
     std::vector<uint8_t> pieceHeader; // parameter sets of the piece encoder (Annex B)
     bool pieceStart = false;          // the next encoded packet is the piece's first: parameter sets before it
+    int piecesOpened = 0;             // x265 prints its whole configuration per encoder: only for the first piece
     bool pieceFed = false;            // the piece encoder has pictures
     int64_t videoPackets = 0;
 
@@ -618,7 +619,10 @@ struct ExportWriter::Impl {
             o.hardware = false;
             QString error;
             auto reader = Video::Reader::open(path, o, &error);
-            if (!reader) return nullptr;
+            if (!reader) {
+                qInfo("Export: smart render encodes %s (%s)", qPrintable(QFileInfo(path).fileName()), qPrintable(error));
+                return nullptr;
+            }
             info = reader->info();
             const AVCodecParameters* par = reader->container()->streams[info.index]->codecpar;
             codec = par->codec_id;
@@ -641,19 +645,23 @@ struct ExportWriter::Impl {
         }
         auto src = std::make_unique<Source>();
         const QByteArray file = path.toUtf8();
+        auto cannot = [&](const char* what) {
+            qInfo("Export: smart render encodes %s (%s)", qPrintable(QFileInfo(path).fileName()), what);
+            return nullptr;
+        };
         if (avformat_open_input(&src->fmt, file.constData(), nullptr, nullptr) < 0
             || avformat_find_stream_info(src->fmt, nullptr) < 0 || info.index >= int(src->fmt->nb_streams))
-            return nullptr;
+            return cannot("cannot be opened");
         src->index = info.index;
         AVStream* st = src->fmt->streams[info.index];
         src->tb = av_q2d(st->time_base);
         src->fps = av_q2d(info.frameRate);
         src->pkt = av_packet_alloc();
         const AVBitStreamFilter* filter = av_bsf_get_by_name(codec == AV_CODEC_ID_H264 ? "h264_mp4toannexb" : "hevc_mp4toannexb");
-        if (!src->pkt || !filter || av_bsf_alloc(filter, &src->bsf) < 0) return nullptr;
+        if (!src->pkt || !filter || av_bsf_alloc(filter, &src->bsf) < 0) return cannot("no bitstream filter");
         avcodec_parameters_copy(src->bsf->par_in, st->codecpar);
         src->bsf->time_base_in = st->time_base;
-        if (av_bsf_init(src->bsf) < 0) return nullptr;
+        if (av_bsf_init(src->bsf) < 0) return cannot("bitstream filter failed");
         src->params = std::shared_ptr<AVCodecParameters>(avcodec_parameters_alloc(),
                                                           [](AVCodecParameters* p) { avcodec_parameters_free(&p); });
         if (!src->params || avcodec_parameters_copy(src->params.get(), src->bsf->par_out) < 0) return nullptr;
@@ -727,6 +735,7 @@ struct ExportWriter::Impl {
         int64_t start = 0; // stream position of the IDR picture
         int count = 0;
         bool whole = false; // contiguous positions start … start + count - 1, decodable with kDelay
+        const char* why = nullptr; // not whole: the reason, for the log
         ~Gop() { freePackets(packets); }
     };
 
@@ -746,21 +755,31 @@ struct ExportWriter::Impl {
             bytes += size_t(p->size);
             g.packets.push_back(p);
             // Way past the span or too large to hold: not copied anyway
-            if (bytes > kMaxGopBytes || src.position(p) > limit + 1000) return;
+            if (bytes > kMaxGopBytes || src.position(p) > limit + 1000) {
+                g.why = bytes > kMaxGopBytes ? "GOP too large" : "GOP too long";
+                return;
+            }
         }
         std::vector<int64_t> pos;
         pos.reserve(g.packets.size());
         for (size_t j = 0; j < g.packets.size(); ++j) {
             const int64_t q = src.position(g.packets[j]) - g.start;
-            if (int64_t(j) - q > kDelay) return; // shown later than the decode times allow
+            if (int64_t(j) - q > kDelay) { // shown later than the decode times allow
+                g.why = "pictures reordered too far";
+                return;
+            }
             pos.push_back(q);
         }
         std::sort(pos.begin(), pos.end());
         for (size_t j = 0; j < pos.size(); ++j)
-            if (pos[j] != int64_t(j)) return; // gap, double or earlier picture (open GOP, frame rate changes)
+            if (pos[j] != int64_t(j)) { // gap, double or earlier picture (open GOP, frame rate changes)
+                g.why = "pictures missing or doubled (open GOP or variable frame rate)";
+                return;
+            }
         g.count = int(pos.size());
         // Next GOP right behind (a gap in between: the Reader shows the next picture there, not ours)
         g.whole = !next || src.position(next) == g.start + g.count;
+        if (!g.whole) g.why = "gap before the next key frame";
     }
 
     // Copy what fits of span, encode the rest
@@ -779,6 +798,8 @@ struct ExportWriter::Impl {
         }
         if (!p || src->position(p) >= s1) {
             av_packet_free(&p);
+            qInfo("Export: smart render encodes %s at %d..%d (no IDR key frame there)", qPrintable(QFileInfo(span.file).fileName()),
+                  span.from, span.to);
             return encodePiece(span.from, span.to);
         }
         int out = span.from + int(src->position(p) - s0);
@@ -791,7 +812,11 @@ struct ExportWriter::Impl {
             AVPacket* next = nullptr;
             readGop(*src, p, *g, next, s1);
             p = next;
-            if (!g->whole || g->start + g->count > s1) break; // ends behind the span: encode from its start
+            if (!g->whole || g->start + g->count > s1) { // ends behind the span: encode from its start
+                if (g->why)
+                    qInfo("Export: smart render encodes %s from %d (%s)", qPrintable(QFileInfo(span.file).fileName()), out, g->why);
+                break;
+            }
             Item item;
             item.frames = g->count;
             item.params = src->params;
@@ -941,6 +966,13 @@ struct ExportWriter::Impl {
         for (const auto& [key, value] : s.videoOptions)
             applyOption(venc, key, value, AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM);
         if (smart) venc->max_b_frames = 0;
+        if (smart && piecesOpened++ > 0 && std::strcmp(vcodec->name, "libx265") == 0) {
+            uint8_t* params = nullptr;
+            av_opt_get(venc->priv_data, "x265-params", 0, &params);
+            const QByteArray given(params ? reinterpret_cast<const char*>(params) : "");
+            av_free(params);
+            av_opt_set(venc->priv_data, "x265-params", (given.isEmpty() ? given : given + ':') + "log-level=warning", 0);
+        }
         if (!venc->rc_initial_buffer_occupancy) venc->rc_initial_buffer_occupancy = venc->rc_buffer_size * 3 / 4;
         if ((r = avcodec_open2(venc, vcodec, nullptr)) < 0) {
             fail(QStringLiteral("video encoder %1 cannot be opened: %2").arg(s.videoCodec, avError(r)), true);
