@@ -48,6 +48,7 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const ProjectFo
     s.size = job.size.isEmpty() ? job.settings.outputSize(format.size()) : job.size;
     if (job.settings.audioOnly()) s.size = format.size(); // is not rendered, but convert nothing
     s.burnSubtitles = job.settings.subtitles == RenderSettings::BurnSubtitles;
+    s.smartRender = job.settings.smartRender && f.hardware; // H.264/H.265
     if (job.settings.subtitles == RenderSettings::SrtFile) {
         const QFileInfo fi(job.path);
         s.subtitlePath = fi.dir().filePath(fi.completeBaseName() + ".srt");

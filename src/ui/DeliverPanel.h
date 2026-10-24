@@ -8,6 +8,7 @@
 class Project;
 class RenderQueue;
 class RenderQueuePanel;
+class QCheckBox;
 class QComboBox;
 class QLineEdit;
 class QPushButton;
@@ -75,6 +76,7 @@ private:
     QComboBox* m_audioBits;
     QComboBox* m_threads; // threads for rendering (data: count, 0 = all)
     QComboBox* m_range; // whole timeline / In-Out range
+    QCheckBox* m_smart; // smart render (H.264/H.265 only)
     QComboBox* m_subtitles; // Subtitles: none / burn in / SRT file (data: RenderSettings::Subtitles)
     bool m_hadRange = false;
     bool m_applying = false;

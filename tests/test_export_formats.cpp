@@ -296,7 +296,9 @@ void testColorStandard(const QString& dir)
     };
     for (const char* file : {"c.mp4", "hq.mov", "4444.mov"}) {
         const QString path = dir + "/" + file;
-        if (QString(file) == "c.mp4" && !render(job(path, "h264"))) continue;
+        RenderJob j = job(path, "h264");
+        j.settings.smartRender = false; // would copy the source as it is (tests/test_smart_render)
+        if (QString(file) == "c.mp4" && !render(j)) continue;
         if (!CHECK_EQ(probe(path, "video").value("color_space").toString(), QString("bt709"))) continue;
         const QByteArray out = frame444(path, n);
         if (!CHECK_EQ(out.size(), 3 * size)) continue;

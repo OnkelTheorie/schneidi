@@ -12,6 +12,7 @@
 #include "engine/OutputColor.h"
 #include "engine/Profiles.h"
 #include "engine/RateConverter.h"
+#include "engine/SmartRender.h"
 #include "engine/Stabilizer.h"
 #include "engine/TimelineBuilder.h"
 #include "engine/audio/Path.h"
@@ -271,6 +272,15 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     }
     m_note = s.encoderNote;
     m_usedCodec.clear();
+    m_copiedPercent = 0;
+    // Smart render: only where the own path writes the timeline as it is (size, frame rate, sound from the own engine)
+    m_copy.clear();
+    const bool sameSize = s.size.isEmpty() || s.size == s.format.size();
+    if (s.smartRender && SmartRender::enabled() && s.output == ExportSettings::Output::File && !s.videoCodec.isEmpty()
+        && !convertRate && sameSize && (ownAudio || s.audioCodec.isEmpty())
+        && s.writer != ExportSettings::Writer::Mlt && (s.writer == ExportSettings::Writer::Own || ExportWriter::wanted()))
+        m_copy = SmartRender::spans(tl, m_from, m_length, s.burnSubtitles);
+    const bool smart = !m_copy.isEmpty();
 
     // Building the MLT graph opens every file of the timeline (probing all streams, ~0.1 s per file even in
     // parallel): in a thread, so the window stays responsive. launch() continues in this thread.
@@ -280,9 +290,15 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     std::optional<Timeline> sound;
     if (ownAudio) sound = tl;
     m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), sound = std::move(sound), out,
-                               s, threads, end, from, length, frames, rate, convertRate, soundInGraph, sampleFormat] {
+                               s, threads, end, from, length, frames, rate, convertRate, soundInGraph, sampleFormat, smart, copy = m_copy] {
         Graph& g = *graph;
         g.profile = makeProfile(out);
+        // Smart render: export in the color standard of the files to copy (gaming clips are mostly tagged BT.601, also
+        // in HD). Otherwise they would not fit, or copied and encoded stretches would differ. The file is tagged so.
+        if (smart) {
+            const int cs = SmartRender::colorspace(copy, s.videoCodec, out.size());
+            if (cs > 0 && cs != g.profile->colorspace()) g.profile->set_colorspace(cs);
+        }
         g.builder = std::make_unique<TimelineBuilder>(*g.profile);
         g.builder->setCancelFlag(cancel);
         g.builder->setDecoderThreads(threads);
@@ -332,7 +348,24 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                 g.error = T("Export konnte nicht gestartet werden.");
                 return;
             }
-            g.source->attach(*g.sound);
+        }
+        // Smart render: the writer fetches the sound apart from the pictures (only encoded pieces are rendered),
+        // from a producer that carries nothing but the sound
+        if (smart) {
+            // Built like the timeline's tractor (blank track, in point): frame positions count from the timeline
+            // start as there, which MixedSound expects (a plain producer counts from its in point). One frame more
+            // than fetched: at its out point a producer pauses, the last frame would be silent.
+            Mlt::Playlist blank(*g.profile);
+            blank.blank(end);
+            Mlt::Tractor tractor(*g.profile);
+            tractor.set_track(blank, 0);
+            tractor.set_in_and_out(from, from + length);
+            g.soundSource = std::make_unique<Mlt::Producer>(tractor);
+            g.soundSource->set_speed(1);
+        }
+        if (g.sound) {
+            if (g.soundSource) g.soundSource->attach(*g.sound);
+            else g.source->attach(*g.sound);
         }
     });
     connect(m_build, &QThread::finished, this, [this, graph] {
@@ -350,6 +383,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         m_outProfile = std::move(graph->outProfile);
         m_source = std::move(graph->source);
         m_sound = std::move(graph->sound);
+        m_soundSource = std::move(graph->soundSource);
+        if (!m_soundSource) m_copy.clear();
         m_length = graph->length;
         QString error;
         if (!launch(&error)) {
@@ -586,12 +621,13 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     w.threads = m_threads;
     w.realTime = m_convertRate ? 0 : -m_frames; // see startConsumer
     w.length = m_length;
+    if (m_soundSource) w.copy = m_copy;
     m_usedCodec = codec;
     qInfo("Export: %s (own path), %d threads, %d frames at once%s%s", qPrintable(codec), m_threads, m_frames,
           m_convertRate ? ", frame rate converted" : "", m_ownAudio ? ", own audio engine" : "");
     m_source->set_speed(1);
     m_source->seek(0); // position counts from the in point
-    m_writer = std::make_unique<ExportWriter>(outProfile, *m_source, w);
+    m_writer = std::make_unique<ExportWriter>(outProfile, *m_source, w, m_soundSource.get());
     m_writer->start();
     if (m_writer->state() == ExportWriter::State::Failed) {
         if (error) *error = T("Export konnte nicht gestartet werden.");
@@ -611,6 +647,15 @@ void Exporter::pollWriter()
     case ExportWriter::State::Failed: {
         const QString message = m_writer->error();
         qWarning("Export: %s", qPrintable(message));
+        if (m_writer->smartFailed()) {
+            QString error;
+            if (smartFallback(&error)) return;
+            const QString path = m_path;
+            cleanup();
+            QFile::remove(path);
+            emit finished(false, error);
+            return;
+        }
         // Hardware encoder could not be opened or failed while encoding: render again with software
         const bool hardware = HardwareEncoders::isHardwareCodec(m_usedCodec) && !m_settings.softwareCodec.isEmpty();
         if (hardware && m_writer->encoderFailed()) {
@@ -633,6 +678,12 @@ void Exporter::pollWriter()
         return;
     }
     case ExportWriter::State::Done: {
+        if (const int copied = m_writer->framesCopied(); copied > 0) {
+            m_copiedPercent = std::clamp(int(std::lround(copied * 100.0 / std::max(1, m_length))), 1, 100);
+            qInfo("Export: smart render copied %d of %d frames", copied, m_length);
+            const QString smart = T("Smart Render: %1 % kopiert, %2 % kodiert").arg(m_copiedPercent).arg(100 - m_copiedPercent);
+            m_note = m_note.isEmpty() ? smart : m_note + " · " + smart;
+        }
         const QString path = m_path;
         const bool wrote = wroteOutput();
         cleanup();
@@ -646,6 +697,20 @@ void Exporter::pollWriter()
         return;
     }
     }
+}
+
+bool Exporter::smartFallback(QString* error)
+{
+    qWarning("Export: smart render failed, encoding everything");
+    m_writer.reset();
+    QFile::remove(m_path);
+    m_copy.clear();
+    if (m_sound && m_soundSource) {
+        m_soundSource->detach(*m_sound);
+        m_source->attach(*m_sound);
+    }
+    m_soundSource.reset();
+    return startConsumer(m_usedCodec, error);
 }
 
 void Exporter::poll()
@@ -874,6 +939,8 @@ void Exporter::cleanup()
     m_consumer.reset();
     m_source.reset();
     m_sound.reset();
+    m_soundSource.reset();
+    m_copy.clear();
     m_outProfile.reset();
     m_tractor.reset();
     m_builder.reset();

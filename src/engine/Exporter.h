@@ -1,6 +1,7 @@
 #pragma once
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
+#include "engine/SmartRender.h"
 
 #include <QByteArray>
 #include <QHash>
@@ -62,6 +63,9 @@ struct ExportSettings {
     // avformat consumer. Default = ExportWriter::wanted(); formats the own path cannot write always go through MLT.
     enum class Writer { Default, Mlt, Own };
     Writer writer = Writer::Default;
+    // Smart render (engine/SmartRender): copy what shows a file unchanged instead of encoding it (own path, H.264/H.265,
+    // timeline size and frame rate, own audio engine). Falls back to encoding by itself.
+    bool smartRender = false;
 };
 
 // Renders the timeline into a file. Own producer instances,
@@ -97,6 +101,8 @@ public:
     // (e.g. the hardware encoder did not work and software was used; empty = nothing to say)
     QString usedCodec() const { return m_usedCodec; }
     QString note() const { return m_note; }
+    // After finished(): share of the frames copied by smart render (0 = everything encoded)
+    int copiedPercent() const { return m_copiedPercent; }
 
 signals:
     void progress(int percent);
@@ -144,6 +150,7 @@ private:
         std::unique_ptr<Mlt::Profile> outProfile;
         std::unique_ptr<Mlt::Producer> source;
         std::unique_ptr<Mlt::Filter> sound; // own audio engine on source (engine/MixedSound)
+        std::unique_ptr<Mlt::Producer> soundSource; // smart render: carries `sound` instead of source
         int length = 0;
         QString error;
     };
@@ -158,7 +165,12 @@ private:
     // Otherwise m_source points to m_tractor.
     std::unique_ptr<Mlt::Profile> m_outProfile;
     std::unique_ptr<Mlt::Producer> m_source;
-    std::unique_ptr<Mlt::Filter> m_sound; // own audio engine attached to m_source
+    std::unique_ptr<Mlt::Filter> m_sound; // own audio engine attached to m_source (smart render: to m_soundSource)
+    std::unique_ptr<Mlt::Producer> m_soundSource;
+    QVector<SmartRender::Span> m_copy; // smart render: what may be copied (empty = encode everything)
+    int m_copiedPercent = 0;
+    // Smart render failed as a whole: the sound goes back onto m_source, render again encoding everything
+    bool smartFallback(QString* error);
     std::unique_ptr<Mlt::Consumer> m_consumer;
     std::unique_ptr<ExportWriter> m_writer; // instead of m_consumer (own export path)
     std::unique_ptr<Mlt::Event> m_stoppedEvent;

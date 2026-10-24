@@ -56,6 +56,8 @@ struct RenderSettings {
     int subtitles = NoSubtitles;
     // New settings default to Auto; saved settings without "encoder" (older versions) stay Software (fromJson)
     VideoEncoder encoder = VideoEncoder::Auto;
+    // Smart render (H.264/H.265): copy unchanged stretches of the source instead of encoding them (engine/SmartRender)
+    bool smartRender = true;
 
     bool audioOnly() const;
     bool hasAudio() const;          // GIF and image sequences have no sound

@@ -88,6 +88,7 @@ RenderJob job(const QString& path, const QString& format, VideoEncoder encoder, 
     j.settings.format = format;
     j.settings.encoder = encoder;
     j.settings.quality = quality;
+    j.settings.smartRender = false; // compares encoder output (smart render would copy the source)
     return j;
 }
 

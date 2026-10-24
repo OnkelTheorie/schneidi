@@ -245,6 +245,7 @@ QJsonObject RenderSettings::toJson() const
     if (subtitles == BurnSubtitles) o["subtitles"] = "burn";
     if (subtitles == SrtFile) o["subtitles"] = "srt";
     o["encoder"] = videoEncoderId(encoder);
+    if (!smartRender) o["smartRender"] = false;
     if (size.isValid() && !size.isEmpty()) {
         o["width"] = size.width();
         o["height"] = size.height();
@@ -271,6 +272,7 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
     s.subtitles = sub == "burn" ? BurnSubtitles : sub == "srt" ? SrtFile : NoSubtitles;
     // Older files know only the software encoder: keep it, so nothing changes for them
     s.encoder = videoEncoderFromId(o.value("encoder").toString(), VideoEncoder::Software);
+    s.smartRender = o.value("smartRender").toBool(true);
     return s;
 }
 
@@ -279,7 +281,7 @@ bool RenderSettings::operator==(const RenderSettings& o) const
     const auto normSize = [](QSize s) { return s.isValid() && !s.isEmpty() ? s : QSize(); };
     return format == o.format && shortSide == o.shortSide && normSize(size) == normSize(o.size)
            && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles
-           && audioBits == o.audioBits && encoder == o.encoder && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
+           && audioBits == o.audioBits && encoder == o.encoder && smartRender == o.smartRender && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
 }
 
 // --- Presets

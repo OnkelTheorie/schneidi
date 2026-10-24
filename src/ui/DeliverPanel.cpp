@@ -9,6 +9,7 @@
 #include "engine/RenderQueue.h"
 #include "ui/RenderQueuePanel.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QStandardItemModel>
 #include <QDir>
@@ -38,6 +39,7 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     if (!a.audioOnly() && a.outputSize(timeline) != b.outputSize(timeline)) return false;
     if (f.hasQuality() && a.quality != b.quality) return false;
     if (f.hardware && a.encoder != b.encoder) return false;
+    if (f.hardware && a.smartRender != b.smartRender) return false;
     if (a.hasAudioBitrate() && a.audioBitrateK != b.audioBitrateK) return false;
     if (!a.audioBitChoices().isEmpty() && a.audioCodec() != b.audioCodec()) return false;
     if (a.audioSampleFormat() != b.audioSampleFormat()) return false;
@@ -136,6 +138,13 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_subtitles->addItem(T("Ins Bild einbrennen"), int(RenderSettings::BurnSubtitles));
     m_subtitles->addItem(T("Als SRT-Datei daneben"), int(RenderSettings::SrtFile));
     m_subtitles->setToolTip(T("Gilt für die sichtbare Untertitelspur"));
+    m_smart = new QCheckBox(T("Unveränderte Stellen kopieren"));
+    m_smart->setObjectName("renderSmart");
+    m_smart->setChecked(true);
+    m_smart->setToolTip(T("Smart Render: Wo ein Clip ohne Effekt, Übergang oder Titel läuft und die Datei schon passt "
+                          "(gleicher Codec, Größe, Bildrate), werden ihre Bilder verlustfrei übernommen statt neu kodiert – "
+                          "um ein Vielfaches schneller. Nur Schnitte bis zum nächsten Schlüsselbild und Stellen mit Effekten "
+                          "werden kodiert. Passt etwas nicht, wird automatisch normal kodiert."));
     m_range = new QComboBox;
     m_range->addItem(T("Ganze Timeline"));
     m_range->addItem(T("In/Out-Bereich"));
@@ -173,6 +182,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     form->addRow(T("Audio-Bitrate"), m_audioBitrate);
     form->addRow(T("Audio-Bittiefe"), m_audioBits);
     form->addRow(T("Untertitel"), m_subtitles);
+    form->addRow(T("Smart Render"), m_smart);
     form->addRow(T("Bereich"), m_range);
     form->addRow(T("CPU-Threads"), m_threads);
 
@@ -201,6 +211,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
             updateControls();
             syncPresetToSettings();
         });
+    connect(m_smart, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
     connect(m_addBtn, &QPushButton::clicked, this, [this] { addToQueue(true); });
     // Double-click in the queue: take over the job's settings (like DaVinci "Edit Job")
     connect(m_queuePanel, &RenderQueuePanel::loadJobRequested, this, [this](int id) {
@@ -353,6 +364,7 @@ RenderSettings DeliverPanel::settings() const
         s.rateDen = r.height();
     }
     s.subtitles = m_subtitles->currentData().toInt();
+    s.smartRender = m_smart->isChecked();
     if (s.audioOnly() && s.subtitles == RenderSettings::BurnSubtitles) s.subtitles = RenderSettings::NoSubtitles;
     const QSize size = m_resolution->currentData().toSize();
     const QSize tl = m_project->format().size();
@@ -378,6 +390,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     if (const int b = m_audioBits->findData(s.audioBits); b >= 0) m_audioBits->setCurrentIndex(b);
     m_rate->setCurrentIndex(s.rateNum > 0 ? std::max(0, m_rate->findData(QSize(s.rateNum, s.rateDen))) : 0);
     m_subtitles->setCurrentIndex(std::max(0, m_subtitles->findData(s.subtitles)));
+    m_smart->setChecked(s.smartRender);
     if (!s.audioOnly()) selectSize(s.outputSize(m_project->format().size()));
     m_applying = wasApplying;
     updateControls();
@@ -412,6 +425,7 @@ void DeliverPanel::updateControls()
     if (!f.webQuality && f.hasQuality() && m_quality->currentIndex() == RenderSettings::kQualityWeb)
         m_quality->setCurrentIndex(0);
     updateEncoders();
+    m_smart->setEnabled(f.hardware); // H.264/H.265
     RenderSettings probe;
     probe.format = f.id;
     m_audioBitrate->setEnabled(probe.hasAudioBitrate());
