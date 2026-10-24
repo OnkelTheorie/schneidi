@@ -315,6 +315,51 @@ void attachSourceCap(Mlt::Producer& clip, double maxZoom)
     clip.attach(filter);
 }
 
+// qtblend (transform) leaves an alpha mask on its frames even when the picture covers everything. In YUV (export) the
+// track transition then always composites and decodes the tracks below; in RGBA (preview) it checks the pixels itself.
+// Dropping a fully opaque mask lets it skip covered tracks (user tip 2026-10-24, tests/test_occlusion).
+bool opaque(const uint8_t* alpha, size_t n)
+{
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        uint64_t v;
+        std::memcpy(&v, alpha + i, 8);
+        if (v != ~uint64_t(0)) return false;
+    }
+    for (; i < n; ++i)
+        if (alpha[i] != 255) return false;
+    return true;
+}
+
+int opaqueGetImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int writable)
+{
+    mlt_frame_pop_service(frame);
+    const int error = mlt_frame_get_image(frame, image, format, width, height, writable);
+    if (error || *format == mlt_image_rgba) return error;
+    int size = 0;
+    const uint8_t* alpha = mlt_frame_get_alpha_size(frame, &size);
+    const size_t pixels = size_t(*width) * *height;
+    if (alpha && size_t(size) >= pixels && opaque(alpha, pixels)) mlt_frame_set_alpha(frame, nullptr, 0, nullptr);
+    return error;
+}
+
+mlt_frame opaqueProcess(mlt_filter filter, mlt_frame frame)
+{
+    mlt_frame_push_service(frame, filter);
+    mlt_frame_push_get_image(frame, opaqueGetImage);
+    return frame;
+}
+
+void attachOpaqueCheck(Mlt::Producer& clip)
+{
+    mlt_filter f = mlt_filter_new();
+    if (!f) return;
+    f->process = opaqueProcess;
+    Mlt::Filter filter(f); // holds its own reference
+    mlt_filter_close(f);
+    clip.attach(filter);
+}
+
 void plantBlend(Mlt::Tractor& tractor, Mlt::Transition& blend, int track)
 {
     if (blend.is_valid()) {
@@ -385,6 +430,7 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, i
     f.set("distort", 1);
     attachTo(clip, f);
     attachSourceCap(clip, c); // after qtblend: its get_image runs first
+    attachOpaqueCheck(clip);  // after qtblend too: looks at its result
 }
 
 // a/len: excerpt (clip frame at the start, length) for keyframes

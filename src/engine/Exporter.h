@@ -2,7 +2,10 @@
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
 
+#include <QByteArray>
 #include <QHash>
+#include <QPair>
+#include <QVector>
 #include <QObject>
 #include <QProcess>
 #include <QTimer>
@@ -18,6 +21,7 @@ class Producer;
 class Filter;
 } // namespace Mlt
 class TimelineBuilder;
+class ExportWriter;
 class QThread;
 
 struct ExportSettings {
@@ -54,6 +58,10 @@ struct ExportSettings {
     // Length of each media file in frames of the project rate (Project::media()), for the own audio engine: reversed
     // clips and transition handles mirror/stop at the length the project knows. Missing = taken from the file.
     QHash<QString, int> mediaLengths;
+    // Who writes a video file: the own path (engine/ExportWriter: fetching and encoding in separate threads) or MLT's
+    // avformat consumer. Default = ExportWriter::wanted(); formats the own path cannot write always go through MLT.
+    enum class Writer { Default, Mlt, Own };
+    Writer writer = Writer::Default;
 };
 
 // Renders the timeline into a file. Own producer instances,
@@ -66,8 +74,8 @@ public:
 
     bool isRunning() const
     {
-        return m_build != nullptr || m_consumer != nullptr || m_check != nullptr || m_analysis != nullptr
-            || m_gif != nullptr;
+        return m_build != nullptr || m_consumer != nullptr || m_writer != nullptr || m_check != nullptr
+            || m_analysis != nullptr || m_gif != nullptr;
     }
     // Is any export running right now? (render cache pauses meanwhile)
     static bool anyRunning();
@@ -100,6 +108,15 @@ private:
     // After the build thread: test the hardware encoder or start the consumer; false = failed (error set)
     bool launch(QString* error);
     bool startConsumer(const QString& codec, QString* error);
+    // Own export path (engine/ExportWriter) for this video codec? (settings, output kind, format support)
+    bool useWriter(const QString& codec) const;
+    bool startWriter(const QString& codec, QString* error);
+    void pollWriter();
+    // Encoder options as MLT consumer properties (the own writer takes the same names as AVOptions)
+    QVector<QPair<QByteArray, QByteArray>> encoderOptions(const QString& codec) const;
+    // Sample format of the audio encoder (what MLT's consumer would pick)
+    QString audioSampleFormat() const;
+    int audioBitrateK() const; // 0 = none for this codec (PCM, lossless)
     void onCheckFinished(bool works);
     // Hardware encoder failed: render again with ExportSettings::softwareCodec; false = no fallback possible
     bool fallBackToSoftware(QString* error);
@@ -143,6 +160,7 @@ private:
     std::unique_ptr<Mlt::Producer> m_source;
     std::unique_ptr<Mlt::Filter> m_sound; // own audio engine attached to m_source
     std::unique_ptr<Mlt::Consumer> m_consumer;
+    std::unique_ptr<ExportWriter> m_writer; // instead of m_consumer (own export path)
     std::unique_ptr<Mlt::Event> m_stoppedEvent;
     std::unique_ptr<Mlt::Event> m_fatalEvent;
     std::atomic<bool> m_fatal{false}; // avformat reported a fatal error (e.g. the encoder failed while rendering)

@@ -6,6 +6,7 @@
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "engine/Bundle.h"
+#include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MixedSound.h"
 #include "engine/OutputColor.h"
@@ -274,17 +275,18 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // Building the MLT graph opens every file of the timeline (probing all streams, ~0.1 s per file even in
     // parallel): in a thread, so the window stays responsive. launch() continues in this thread.
     auto graph = std::make_shared<Graph>();
-    const int from = m_from, length = m_length;
+    const int from = m_from, length = m_length, frames = m_frames;
     m_buildCancel = std::make_shared<std::atomic<bool>>(false);
     std::optional<Timeline> sound;
     if (ownAudio) sound = tl;
     m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), sound = std::move(sound), out,
-                               s, threads, end, from, length, rate, convertRate, soundInGraph, sampleFormat] {
+                               s, threads, end, from, length, frames, rate, convertRate, soundInGraph, sampleFormat] {
         Graph& g = *graph;
         g.profile = makeProfile(out);
         g.builder = std::make_unique<TimelineBuilder>(*g.profile);
         g.builder->setCancelFlag(cancel);
         g.builder->setDecoderThreads(threads);
+        g.builder->setParallelFrames(frames);
         g.builder->setSubtitles(s.burnSubtitles && !s.videoCodec.isEmpty());
         g.tractor = g.builder->build(scaled);
         if (*cancel) return;
@@ -368,7 +370,8 @@ bool Exporter::launch(QString* error)
     const ExportSettings& s = m_settings;
     // Hardware encoder: test it with the output size first (MLT's avformat consumer crashes when the encoder cannot
     // be opened, e.g. no such card, too large for the card, all its sessions busy). Runs ffmpeg in the background.
-    if (HardwareEncoders::isHardwareCodec(s.videoCodec)) {
+    // The own path opens the encoder itself and reports when it cannot (fallback in pollWriter): no test needed
+    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && !useWriter(s.videoCodec)) {
         Mlt::Profile& p = m_convertRate ? *m_outProfile : *m_profile;
         const QSize size(p.width(), p.height());
         const int known = HardwareEncoders::cachedResult(s.videoCodec, size);
@@ -444,6 +447,8 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
         m_fatalEvent.reset();
         m_consumer.reset();
     }
+    m_writer.reset();
+    if (useWriter(codec)) return startWriter(codec, error);
     m_consumer = std::make_unique<Mlt::Consumer>(outProfile, "avformat", m_path.toUtf8().constData());
     if (!m_consumer->is_valid()) {
         if (error) *error = T("FFmpeg-Ausgabe (avformat) nicht verfügbar.");
@@ -460,25 +465,14 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
             m_consumer->set("pix_fmt", HardwareEncoders::pixelFormat(codec).toUtf8().constData());
             if (codec.endsWith("_vaapi"))
                 m_consumer->set("vaapi_device", HardwareEncoders::vaapiDevice().toUtf8().constData());
-            for (const auto& [key, value] : HardwareEncoders::codecOptions(codec, s.crf))
-                m_consumer->set(key.toUtf8().constData(), value.toUtf8().constData());
         } else {
             m_consumer->set("pix_fmt", s.pixFmt.toUtf8().constData());
-            if (s.crf > 0) m_consumer->set("crf", s.crf); // H.264/H.265/AV1/VP9; fixed-quality formats have 0
-            if (codec == "libx264" || codec == "libx265") m_consumer->set("preset", s.preset.toUtf8().constData());
         }
+        for (const auto& [key, value] : encoderOptions(codec)) m_consumer->set(key.constData(), value.constData());
         // 4:2:0 output: the workers deliver yuv420p (MLT asks for yuv422 otherwise), so the encoder thread only copies
         // or interleaves instead of subsampling every frame a second time (~10 % faster, one chroma step less)
         const QByteArray pixFmt = m_consumer->get("pix_fmt");
         if (pixFmt == "yuv420p" || pixFmt == "nv12") m_consumer->set("mlt_image_format", "yuv420p");
-    }
-    if (!s.videoCodec.isEmpty() && s.maxBitrateK > 0) { // quality target as before, but capped (VBV)
-        m_consumer->set("maxrate", QString("%1k").arg(s.maxBitrateK).toUtf8().constData());
-        m_consumer->set("bufsize", QString("%1k").arg(s.maxBitrateK * 2).toUtf8().constData());
-    }
-    for (const QString& option : s.codecOptions) { // "key=value" from the format (profile, speed …)
-        const qsizetype eq = option.indexOf('=');
-        if (eq > 0) m_consumer->set(option.left(eq).toUtf8().constData(), option.mid(eq + 1).toUtf8().constData());
     }
     if (s.output == ExportSettings::Output::ImageSequence) m_consumer->set("f", "image2"); // one file per frame
     if (s.audioCodec.isEmpty()) m_consumer->set("an", 1); // GIF, image sequence: no sound
@@ -495,10 +489,7 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
     }
     if (s.audioRate > 0) m_consumer->set("frequency", s.audioRate);
     if (s.audioChannels > 0) m_consumer->set("channels", s.audioChannels);
-    if (!s.audioCodec.isEmpty() && !s.audioCodec.startsWith("pcm_") && s.audioCodec != "alac" && s.audioCodec != "flac") {
-        const int bitrate = s.audioCodec == "libmp3lame" ? std::min(s.audioBitrateK, 320) : s.audioBitrateK;
-        m_consumer->set("ab", QString("%1k").arg(bitrate).toUtf8().constData());
-    }
+    if (const int bitrate = audioBitrateK(); bitrate > 0) m_consumer->set("ab", QString("%1k").arg(bitrate).toUtf8().constData());
     const QString ext = QFileInfo(m_path).suffix().toLower();
     if ((ext == "mp4" || ext == "mov" || ext == "m4a") && s.output == ExportSettings::Output::File)
         m_consumer->set("movflags", "+faststart");
@@ -530,8 +521,139 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
     }
     return true;
 }
+QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& codec) const
+{
+    const ExportSettings& s = m_settings;
+    QVector<QPair<QByteArray, QByteArray>> o;
+    if (s.videoCodec.isEmpty()) return o;
+    if (HardwareEncoders::isHardwareCodec(codec)) {
+        for (const auto& [key, value] : HardwareEncoders::codecOptions(codec, s.crf)) o.append({key.toUtf8(), value.toUtf8()});
+    } else {
+        if (s.crf > 0) o.append({"crf", QByteArray::number(s.crf)}); // H.264/H.265/AV1/VP9; fixed-quality formats have 0
+        if (codec == "libx264" || codec == "libx265") o.append({"preset", s.preset.toUtf8()});
+    }
+    if (s.maxBitrateK > 0) { // quality target as before, but capped (VBV)
+        o.append({"maxrate", QByteArray::number(s.maxBitrateK) + "k"});
+        o.append({"bufsize", QByteArray::number(s.maxBitrateK * 2) + "k"});
+    }
+    for (const QString& option : s.codecOptions) { // "key=value" from the format (profile, speed …)
+        const qsizetype eq = option.indexOf('=');
+        if (eq > 0) o.append({option.left(eq).toUtf8(), option.mid(eq + 1).toUtf8()});
+    }
+    return o;
+}
+
+QString Exporter::audioSampleFormat() const
+{
+    return m_ownAudio ? m_sampleFormat : encoderSampleFormat(m_settings.audioCodec, m_settings.audioSampleFormat);
+}
+
+int Exporter::audioBitrateK() const
+{
+    const QString& c = m_settings.audioCodec;
+    if (c.isEmpty() || c.startsWith("pcm_") || c == "alac" || c == "flac") return 0;
+    return c == "libmp3lame" ? std::min(m_settings.audioBitrateK, 320) : m_settings.audioBitrateK;
+}
+
+bool Exporter::useWriter(const QString& codec) const
+{
+    const ExportSettings& s = m_settings;
+    if (s.writer == ExportSettings::Writer::Mlt || (s.writer == ExportSettings::Writer::Default && !ExportWriter::wanted()))
+        return false;
+    if (s.output != ExportSettings::Output::File || s.videoCodec.isEmpty()) return false;
+    const QString pixFmt = HardwareEncoders::isHardwareCodec(codec) ? HardwareEncoders::pixelFormat(codec) : s.pixFmt;
+    return ExportWriter::supports(m_path, codec, pixFmt, s.audioCodec, s.audioCodec.isEmpty() ? QString() : audioSampleFormat());
+}
+
+bool Exporter::startWriter(const QString& codec, QString* error)
+{
+    const ExportSettings& s = m_settings;
+    Mlt::Profile& outProfile = m_convertRate ? *m_outProfile : *m_profile;
+    ExportWriter::Settings w;
+    w.path = m_path;
+    w.videoCodec = codec;
+    w.pixFmt = HardwareEncoders::isHardwareCodec(codec) ? HardwareEncoders::pixelFormat(codec) : s.pixFmt;
+    w.videoOptions = encoderOptions(codec);
+    w.audioCodec = s.audioCodec;
+    if (!s.audioCodec.isEmpty()) {
+        w.sampleFormat = audioSampleFormat();
+        w.audioBitrateK = audioBitrateK();
+        if (s.audioRate > 0) w.audioRate = s.audioRate;
+        if (s.audioChannels > 0) w.audioChannels = s.audioChannels;
+    }
+    const QString ext = QFileInfo(m_path).suffix().toLower();
+    w.fastStart = ext == "mp4" || ext == "mov" || ext == "m4a";
+    w.threads = m_threads;
+    w.realTime = m_convertRate ? 0 : -m_frames; // see startConsumer
+    w.length = m_length;
+    m_usedCodec = codec;
+    qInfo("Export: %s (own path), %d threads, %d frames at once%s%s", qPrintable(codec), m_threads, m_frames,
+          m_convertRate ? ", frame rate converted" : "", m_ownAudio ? ", own audio engine" : "");
+    m_source->set_speed(1);
+    m_source->seek(0); // position counts from the in point
+    m_writer = std::make_unique<ExportWriter>(outProfile, *m_source, w);
+    m_writer->start();
+    if (m_writer->state() == ExportWriter::State::Failed) {
+        if (error) *error = T("Export konnte nicht gestartet werden.");
+        qWarning("Export: %s", qPrintable(m_writer->error()));
+        m_writer.reset();
+        return false;
+    }
+    return true;
+}
+
+void Exporter::pollWriter()
+{
+    switch (m_writer->state()) {
+    case ExportWriter::State::Running:
+        emit progress(std::clamp(m_writer->framesWritten() * 100 / std::max(1, m_length), 0, 99));
+        return;
+    case ExportWriter::State::Failed: {
+        const QString message = m_writer->error();
+        qWarning("Export: %s", qPrintable(message));
+        // Hardware encoder could not be opened or failed while encoding: render again with software
+        const bool hardware = HardwareEncoders::isHardwareCodec(m_usedCodec) && !m_settings.softwareCodec.isEmpty();
+        if (hardware && m_writer->encoderFailed()) {
+            m_writer.reset();
+            const Mlt::Profile& p = m_convertRate ? *m_outProfile : *m_profile;
+            HardwareEncoders::remember(m_usedCodec, QSize(p.width(), p.height()), false); // not again this session
+            QFile::remove(m_path);
+            QString error;
+            if (fallBackToSoftware(&error)) return;
+            const QString path = m_path;
+            cleanup();
+            QFile::remove(path);
+            emit finished(false, error);
+            return;
+        }
+        const QString path = m_path;
+        cleanup();
+        QFile::remove(path);
+        emit finished(false, T("Export fehlgeschlagen: %1").arg(m_target));
+        return;
+    }
+    case ExportWriter::State::Done: {
+        const QString path = m_path;
+        const bool wrote = wroteOutput();
+        cleanup();
+        if (!wrote) {
+            QFile::remove(path);
+            emit finished(false, T("Export fehlgeschlagen: %1").arg(m_target));
+            return;
+        }
+        emit progress(100);
+        emit finished(true, T("Export fertig: %1").arg(m_target));
+        return;
+    }
+    }
+}
+
 void Exporter::poll()
 {
+    if (m_writer) {
+        pollWriter();
+        return;
+    }
     if (!m_consumer) return;
     // Race at the start (see start): the thread saw running=0 and ended without a frame. Either running=1 comes
     // after its end (never stopped), or before mlt_consumer_stopped() puts it back to 0 (looks finished, but the
@@ -745,6 +867,7 @@ void Exporter::cleanup()
         m_check->waitForFinished(2000);
         m_check.reset();
     }
+    m_writer.reset(); // stops its threads and render workers, releases every frame before the graph goes
     if (m_consumer) m_consumer->stop();
     m_stoppedEvent.reset();
     m_fatalEvent.reset();

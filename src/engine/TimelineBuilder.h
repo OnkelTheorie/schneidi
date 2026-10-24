@@ -111,6 +111,9 @@ public:
     void setSubtitles(bool on) { m_subtitles = on; }
     // Threads per video decoder (export); 0 = MLT default. Set before build().
     void setDecoderThreads(int threads);
+    // Several frames rendered at once (export workers): video files decode in order (engine/DecodeOrder);
+    // frames = how many at once, 0/1 = off. Set before build().
+    void setParallelFrames(int frames) { m_parallelFrames = frames; }
     // The built timeline lasts at least this long (preview with the own audio engine: the picture graph has no
     // sound tracks but must last as long as the sound)
     void setMinimumLength(int frames) { m_minLength = frames; }
@@ -193,6 +196,7 @@ private:
     std::map<QString, std::unique_ptr<Mlt::Producer>> m_cache;
     std::set<QString> m_used; // keys used in the current build(); the rest gets dropped afterwards
     std::shared_ptr<const std::atomic<bool>> m_cancel;
+    int m_parallelFrames = 0;
     bool cancelled() const { return m_cancel && m_cancel->load(); }
     std::map<QString, std::vector<std::unique_ptr<Mlt::Producer>>> m_opened; // openKey -> opened by prefetch(), unused
     // Nested timelines (compound clips) of the running build()

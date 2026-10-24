@@ -20,7 +20,8 @@ class Profile;
 
 namespace OutputColor {
 
-// Filter for the producer the export consumer reads: YUV frames in another standard are converted to the profile's
+// Filter for the producer the export consumer reads: YUV frames in another standard (or in full range) are converted to
+// the profile's standard in limited range
 std::unique_ptr<Mlt::Filter> make(Mlt::Profile& profile);
 
 // Matrix-only conversion between Y'CbCr standards (MLT colorspace numbers: 601 family, 240, 709, 2020), limited
@@ -28,5 +29,9 @@ std::unique_ptr<Mlt::Filter> make(Mlt::Profile& profile);
 // src and dst are whole images of that format. false = not handled (nothing written).
 bool convert(const uint8_t* src, uint8_t* dst, mlt_image_format format, int width, int height, int fromColorspace,
              int toColorspace);
+
+// Full range (0-255, "jpeg") -> limited range (16-235 luma, 16-240 chroma; times 4 for 10 bit) in place, same formats
+// as convert(). MLT's producer does it for 8-bit sources, deeper ones arrive in full range (consumer's swscale did it).
+bool toLimitedRange(uint8_t* image, mlt_image_format format, int width, int height);
 
 } // namespace OutputColor

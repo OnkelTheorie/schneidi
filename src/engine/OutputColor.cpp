@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace OutputColor {
@@ -141,20 +142,38 @@ int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* wi
     mlt_properties fp = MLT_FRAME_PROPERTIES(frame);
     const int from = mlt_properties_get_int(fp, "colorspace");
     const int to = mlt_properties_get_int(MLT_FILTER_PROPERTIES(filter), "colorspace");
-    // Full range sources stay with the consumer (it also knows the target range)
-    if (from <= 0 || from == to || mlt_properties_get_int(fp, "full_range")) return 0;
+    // The export is always limited range (MLT's consumer has no color_range set)
+    const bool fullRange = mlt_properties_get_int(fp, "full_range");
+    const bool otherMatrix = from > 0 && from != to;
+    if (!otherMatrix && !fullRange) return 0;
     const int size = mlt_image_format_size(*format, *width, *height, nullptr);
     if (size <= 0) return 0;
     // Never in place: the image may be cached by the producer (repeated frames would be converted twice)
     auto* out = static_cast<uint8_t*>(mlt_pool_alloc(size));
     if (!out) return 0;
-    if (!convert(*image, out, *format, *width, *height, from, to)) {
+    // Range first (into out), then the matrix (from a copy of it); either one alone writes out directly
+    bool ranged = false, converted = false;
+    if (fullRange) {
+        std::memcpy(out, *image, size_t(size));
+        ranged = toLimitedRange(out, *format, *width, *height);
+    }
+    if (otherMatrix) {
+        if (ranged) {
+            std::vector<uint8_t> limited(out, out + size);
+            converted = convert(limited.data(), out, *format, *width, *height, from, to);
+            if (!converted) std::memcpy(out, limited.data(), size_t(size)); // matrix left to the consumer
+        } else {
+            converted = convert(*image, out, *format, *width, *height, from, to);
+        }
+    }
+    if (!ranged && !converted) { // format not handled: leave it to the consumer
         mlt_pool_release(out);
         return 0;
     }
     mlt_frame_set_image(frame, out, size, mlt_pool_release);
     *image = out;
-    mlt_properties_set_int(fp, "colorspace", to);
+    if (converted) mlt_properties_set_int(fp, "colorspace", to);
+    if (ranged) mlt_properties_set_int(fp, "full_range", 0);
     return 0;
 }
 
@@ -192,6 +211,60 @@ bool convert(const uint8_t* src, uint8_t* dst, mlt_image_format format, int widt
     case mlt_image_yuv444p10:
         planar<uint16_t, 1>(m, reinterpret_cast<const uint16_t*>(src), reinterpret_cast<uint16_t*>(dst), width, height, 10);
         return true;
+    default: return false;
+    }
+}
+
+namespace {
+
+// Lookup tables full -> limited range for one bit depth (luma, chroma)
+struct RangeTables {
+    std::vector<uint16_t> luma, chroma;
+    explicit RangeTables(int bits)
+    {
+        const int n = 1 << bits, max = n - 1, scale = 1 << (bits - 8), mid = n / 2;
+        luma.resize(n);
+        chroma.resize(n);
+        for (int v = 0; v < n; ++v) {
+            luma[v] = uint16_t(16 * scale + std::lround(v * (219.0 * scale) / max));
+            chroma[v] = uint16_t(std::clamp<long>(mid + std::lround((v - mid) * (224.0 * scale) / max), 16 * scale, 240 * scale));
+        }
+    }
+};
+
+template <typename T>
+void mapPlane(T* p, size_t n, const std::vector<uint16_t>& table)
+{
+    for (size_t i = 0; i < n; ++i) p[i] = T(table[p[i]]);
+}
+
+} // namespace
+
+bool toLimitedRange(uint8_t* image, mlt_image_format format, int width, int height)
+{
+    if (width <= 0 || height <= 0 || width % 2 || height % 2) return false;
+    static const RangeTables eight(8), ten(10);
+    const size_t luma = size_t(width) * height;
+    switch (format) {
+    case mlt_image_yuv422:
+        for (size_t i = 0; i < luma * 2; i += 2) {
+            image[i] = uint8_t(eight.luma[image[i]]);
+            image[i + 1] = uint8_t(eight.chroma[image[i + 1]]);
+        }
+        return true;
+    case mlt_image_yuv420p:
+        mapPlane(image, luma, eight.luma);
+        mapPlane(image + luma, luma / 2, eight.chroma);
+        return true;
+    case mlt_image_yuv420p10:
+    case mlt_image_yuv444p10: {
+        auto* p = reinterpret_cast<uint16_t*>(image);
+        const size_t chroma = format == mlt_image_yuv420p10 ? luma / 2 : luma * 2;
+        for (size_t i = 0; i < luma + chroma; ++i) p[i] = uint16_t(std::min<int>(p[i], 1023)); // stray bits
+        mapPlane(p, luma, ten.luma);
+        mapPlane(p + luma, chroma, ten.chroma);
+        return true;
+    }
     default: return false;
     }
 }

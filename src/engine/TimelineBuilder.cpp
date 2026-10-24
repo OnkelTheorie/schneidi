@@ -1,4 +1,6 @@
 #include "engine/TimelineBuilder.h"
+
+#include "engine/DecodeOrder.h"
 #include "core/Dynamics.h"
 #include "core/Equalizer.h"
 #include "core/Limiter.h"
@@ -10,6 +12,7 @@
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
+#include "engine/DecodeOrder.h"
 #include "engine/Denoise.h"
 #include "engine/Lumas.h"
 #include "engine/Profiles.h"
@@ -219,6 +222,8 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
     // Do not decode an unneeded stream at all
     if (kind == TrackKind::Video) {
         p->set("audio_index", -1);
+        if (m_parallelFrames > 1 && QByteArray(p->get("mlt_service")).startsWith("avformat"))
+            DecodeOrder::attach(*p);
     } else {
         p->set("video_index", -1);
         selectAudioStream(*p, stream);
