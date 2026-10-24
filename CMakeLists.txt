@@ -23,7 +23,7 @@ find_package(PkgConfig REQUIRED)
 # MLT liefert unter Linux und MSYS2 (Windows) eine .pc-Datei
 pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
 # Own audio engine (src/engine/audio): FFmpeg libraries directly, see docs/archiv/plan-0.10-ton.md
-pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libavutil)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libswscale libavutil)
 # Time stretching with pitch correction (own audio engine)
 pkg_check_modules(RUBBERBAND REQUIRED IMPORTED_TARGET rubberband)
 # Sound devices of the own audio engine: miniaudio, a single header (Debian libminiaudio-dev, MSYS2 miniaudio)
@@ -127,6 +127,9 @@ add_library(schneidi_lib STATIC
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
     src/engine/Snapshot.h         src/engine/Snapshot.cpp
     src/engine/audio/Reader.h     src/engine/audio/Reader.cpp
+    src/engine/video/Reader.h     src/engine/video/Reader.cpp
+    src/engine/video/Producer.h   src/engine/video/Producer.cpp
+    src/engine/video/Hardware.h   src/engine/video/Hardware.cpp
     src/engine/audio/Mixer.h      src/engine/audio/Mixer.cpp
     src/engine/audio/Retimer.h    src/engine/audio/Retimer.cpp
     src/engine/audio/Path.h       src/engine/audio/Path.cpp
@@ -203,7 +206,8 @@ add_library(schneidi_lib STATIC
 # Per-pixel loops run on every exported frame: full vectorization (GCC/Clang -O2 only vectorizes loops whose length
 # is a known multiple of the vector width). OutputColor: 3.5 -> 1.6 ms per 1080p frame.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set_source_files_properties(src/engine/OutputColor.cpp PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-O3>")
+    set_source_files_properties(src/engine/OutputColor.cpp src/engine/video/Reader.cpp
+                                PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-O3>")
 endif()
 
 # One dictionary per UI language: a new i18n/<code>.json is picked up by the build and the language menu by itself
@@ -287,7 +291,8 @@ if(UNIX AND NOT APPLE)
     # MLT modules (FFmpeg, frei0r, ...) are loaded at runtime, not linked; frei0r effects are optional.
     # miniaudio (own audio engine) opens ALSA/PulseAudio with dlopen, invisible to shlibdeps.
     set(CPACK_DEBIAN_PACKAGE_DEPENDS "libmlt-data, libmlt7, libasound2t64 | libasound2")
-    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "frei0r-plugins, ffmpeg, libpulse0")
+    # Hardware decoding on AMD/Intel (VAAPI) loads the driver at runtime; NVIDIA comes with its driver (CUDA)
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "frei0r-plugins, ffmpeg, libpulse0, mesa-va-drivers | va-driver")
     include(CPack)
 endif()
 

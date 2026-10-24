@@ -1,5 +1,7 @@
 #include "engine/Profiles.h"
 #include "engine/Bundle.h"
+#include "engine/audio/Path.h"
+#include "engine/video/Producer.h"
 
 #include <Mlt.h>
 #include <QByteArray>
@@ -57,12 +59,29 @@ std::unique_ptr<Mlt::Profile> makeProfile(const ProjectFormat& f)
 ProducerFactory::ProducerFactory(Mlt::Profile& base) : m_base(base) {}
 ProducerFactory::~ProducerFactory() = default;
 
+namespace {
+
+// A media file the own decoder may read (not timewarp:…, color:…, still images)
+bool forOwnDecoder(const QString& resource)
+{
+    if (!Video::ownDecoder() || !Audio::ownPath()) return false;
+    static const QStringList stills{"png", "jpg", "jpeg", "bmp", "gif", "webp", "tif", "tiff", "svg", "exr", "tga",
+                                    "ppm", "heic", "avif", "mlt", "xml", "kdenlive"};
+    const QFileInfo fi(resource);
+    return fi.isFile() && !stills.contains(fi.suffix().toLower());
+}
+
+} // namespace
+
 std::unique_ptr<Mlt::Producer> ProducerFactory::open(const QString& resource)
 {
-    const QByteArray res = resource.toUtf8();
-    auto p = std::make_unique<Mlt::Producer>(m_base, res.constData());
-    if (!p->is_valid()) return p;
-    if (m_threads > 0) p->set("threads", m_threads);
+    std::unique_ptr<Mlt::Producer> p;
+    if (forOwnDecoder(resource)) p = Video::openProducer(m_base, resource, {m_threads, m_parallelFrames});
+    if (!p) {
+        p = std::make_unique<Mlt::Producer>(m_base, resource.toUtf8().constData());
+        if (!p->is_valid()) return p;
+        if (m_threads > 0) p->set("threads", m_threads);
+    }
     // The color standard of the video stream is known right after opening (meta.media.colorspace only after the first frame)
     const int vi = p->get_int("video_index");
     const int cs = vi >= 0 ? p->get_int(QString("meta.media.%1.codec.colorspace").arg(vi).toUtf8().constData()) : 0;

@@ -111,9 +111,9 @@ public:
     void setSubtitles(bool on) { m_subtitles = on; }
     // Threads per video decoder (export); 0 = MLT default. Set before build().
     void setDecoderThreads(int threads);
-    // Several frames rendered at once (export workers): video files decode in order (engine/DecodeOrder);
-    // frames = how many at once, 0/1 = off. Set before build().
-    void setParallelFrames(int frames) { m_parallelFrames = frames; }
+    // Several frames rendered at once (export workers): video files decode in order (own decoder: frames kept around
+    // the request; MLT's producers: engine/DecodeOrder); frames = how many at once, 0/1 = off. Set before build().
+    void setParallelFrames(int frames);
     // The built timeline lasts at least this long (preview with the own audio engine: the picture graph has no
     // sound tracks but must last as long as the sound)
     void setMinimumLength(int frames) { m_minLength = frames; }

@@ -65,6 +65,12 @@ void TimelineBuilder::setDecoderThreads(int threads)
     m_factory->setThreads(threads);
 }
 
+void TimelineBuilder::setParallelFrames(int frames)
+{
+    m_parallelFrames = frames;
+    m_factory->setParallelFrames(frames);
+}
+
 TimelineBuilder::Source TimelineBuilder::sourceOf(const QString& path, TrackKind kind, int trackIndex, bool second,
                                                   const Clip* retime) const
 {

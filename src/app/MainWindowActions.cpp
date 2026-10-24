@@ -30,6 +30,7 @@
 #include "engine/RenderCache.h"
 #include "engine/audio/Device.h"
 #include "engine/audio/Path.h"
+#include "engine/video/Hardware.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
@@ -53,6 +54,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QStackedWidget>
+#include <QStatusBar>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QMenuBar>
@@ -445,6 +447,14 @@ void MainWindow::buildActions()
     bypass->setCheckable(true);
     connect(bypass, &QAction::toggled, m_engine, &Engine::setColorBypass);
     connect(m_engine, &Engine::colorBypassChanged, bypass, &QAction::setChecked);
+    // Like DaVinci (Preferences → Decode Options → use GPU for H.264/H.265): preview and export
+    auto* gpuDecode = makeAction(play, "gpu_decode", T("Grafikkarte zum Dekodieren nutzen"), QKeySequence(), [] {});
+    gpuDecode->setCheckable(true);
+    gpuDecode->setChecked(Video::Hardware::enabled());
+    connect(gpuDecode, &QAction::toggled, this, [this](bool on) {
+        Video::Hardware::setEnabled(on);
+        statusBar()->showMessage(T("Gilt für Clips, die ab jetzt geöffnet werden (alle nach einem Neustart)"), 6000);
+    });
     // Like DaVinci (Playback → Render Cache: None/Smart/User); export always renders from the originals
     QMenu* cacheMenu = play->addMenu(T("Render-Cache"));
     auto* cacheGroup = new QActionGroup(cacheMenu);

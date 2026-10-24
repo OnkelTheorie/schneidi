@@ -30,6 +30,8 @@ std::unique_ptr<Mlt::Profile> makeProfile(const ProjectFormat& format);
 // original (preview, 720p/4K export, thumbnails). The scaler takes the target standard from the
 // profile of the producer, so such sources get an otherwise identical profile with their own color standard.
 // The profiles belong to the factory: it must outlive all producers opened with it.
+// Video files go to the own decoder (engine/video/Producer) unless SCHNEIDI_DECODER=mlt or the MLT sound path is on
+// (the source view takes its sound from the same producer there).
 class ProducerFactory {
 public:
     explicit ProducerFactory(Mlt::Profile& base);
@@ -38,10 +40,13 @@ public:
     std::unique_ptr<Mlt::Producer> open(const QString& resource);
     // Threads per video decoder (MLT "threads"); 0 = MLT default (preview)
     void setThreads(int threads) { m_threads = threads; }
+    // Frames rendered at once (export workers): the own decoder keeps that many decoded around the request
+    void setParallelFrames(int frames) { m_parallelFrames = frames; }
 
 private:
     Mlt::Profile& m_base;
     int m_threads = 0;
+    int m_parallelFrames = 1;
     std::map<int, std::unique_ptr<Mlt::Profile>> m_profiles; // color standard -> profile
     std::mutex m_mutex;                                       // guards m_profiles
 };

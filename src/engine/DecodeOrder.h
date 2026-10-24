@@ -10,7 +10,8 @@
 // covered, qtblend skips it) counts as done when it is released, so it holds up the next ones only until then. Waiting
 // is capped (1 s, a warning), so even an unforeseen case cannot deadlock.
 //
-// Replaced by the own decoder (plan 0.11 point 7), which decodes in order by design.
+// Only for MLT's avformat producers (SCHNEIDI_DECODER=mlt, files the own decoder leaves to MLT): the own decoder
+// (engine/video) decodes in order by design and keeps neighboring frames for the workers.
 
 namespace Mlt {
 class Producer;
