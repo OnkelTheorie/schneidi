@@ -10,6 +10,12 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 
 > Status: early development (0.x). The project file format may still change between versions.
 
+<p align="center">
+  <a href="https://github.com/ZenITDigital"><img src="https://github.com/ZenITDigital.png?size=160" width="80" height="80" alt="ZenITDigital"></a><br>
+  <b>💛 A huge thank you to <a href="https://github.com/ZenITDigital">@ZenITDigital</a></b><br>
+  for sponsoring the Claude Max plan that schneidi is developed with.
+</p>
+
 ![An AI assistant edits live in schneidi: keeps the speech, adds b-roll with dissolves, subtitles, a title, ducked music and a grade](screenshots/demo.gif)
 
 ## Why schneidi?
@@ -202,6 +208,8 @@ cmake -S . -B build-tests -G Ninja -DSCHNEIDI_TESTS=ON && cmake --build build-te
 ## Credits
 
 Developed by [OnkelTheorie](https://github.com/OnkelTheorie) with the help of [Claude](https://claude.ai) (Anthropic) as an AI coding assistant.
+
+Sponsored by [@ZenITDigital](https://github.com/ZenITDigital), who pays for the Claude Max plan behind schneidi's development – thank you so much!
 
 ## Disclaimer
 
