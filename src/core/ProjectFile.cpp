@@ -5,6 +5,7 @@
 #include "core/EffectRegistry.h"
 #include "core/Equalizer.h"
 #include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "core/Retime.h"
 
 #include <QColor>
@@ -24,6 +25,7 @@
 #include <QSet>
 #include <algorithm>
 #include <array>
+#include <cmath>
 
 namespace {
 
@@ -76,7 +78,9 @@ TrackDynamics dynamicsFromJson(const QJsonObject& o)
 // file); new optional fields need no new version (written only when set, read with a default).
 //  1: first format (0.1, until 2026-09-30)
 //  2: audio streams per file (clip "audioStream"). Older versions would play only stream 1 and lose the assignment.
-constexpr int kFormatVersion = 2;
+//  3: crop measured on the clip's picture as it fits into the frame (0.12, convertCrop). Older versions would crop
+//     pictures of another shape than the frame wrongly.
+constexpr int kFormatVersion = 3;
 
 // Migrations: kMigrations[i] turns the JSON of version i + 1 into version i + 2 before the reader sees it. A step
 // converts what the reader of the new version no longer understands (renamed/restructured fields); a new version
@@ -84,7 +88,65 @@ constexpr int kFormatVersion = 2;
 using Migration = void (*)(QJsonObject& root);
 const std::array<Migration, kFormatVersion - 1> kMigrations = {
     [](QJsonObject&) {}, // 1 -> 2: nothing to convert (clips without "audioStream" use stream 0)
+    [](QJsonObject&) {}, // 2 -> 3: crop values are converted while reading (convertCrop needs the media's shape)
 };
+
+// Format 3: crop values are timeline pixels on the clip's picture fitted into the frame (ClipTransform). Up to format 2
+// the engine measured them on the frame: without a transform from the frame's edges (letterbox bars included), with
+// one as a share of the frame size laid onto the picture (x of the width, y of the height). For a picture shaped like
+// the frame all three agree; other clips get values that crop as before (a linear crop animation that crossed the
+// edge of a letterbox bar gets a keyframe there, ease curves change a little). Shape unknown (offline): left as it is.
+
+// Linear keyframe sections of `k` that cross one of the levels get a keyframe there (nearest frame), so that
+// clamping the values afterwards keeps the course: before, values beyond the level simply had no effect
+void addCrossings(KeyTrack& k, std::initializer_list<double> levels)
+{
+    KeyTrack out;
+    for (int i = 0; i < k.size(); ++i) {
+        out << k[i];
+        if (i + 1 >= k.size() || k[i].ease != KeyEase::Linear || k[i + 1].ease != KeyEase::Linear) continue;
+        const Keyframe& a = k[i];
+        const Keyframe& b = k[i + 1];
+        QVector<Keyframe> between;
+        for (double level : levels) {
+            if ((a.value - level) * (b.value - level) >= 0) continue; // not crossing (or touching at a key)
+            const int f = int(std::lround(a.frame + (level - a.value) / (b.value - a.value) * (b.frame - a.frame)));
+            if (f <= a.frame || f >= b.frame) continue;
+            Keyframe x;
+            x.frame = f;
+            x.value = level;
+            between << x;
+        }
+        std::sort(between.begin(), between.end(), [](const Keyframe& x, const Keyframe& y) { return x.frame < y.frame; });
+        for (const Keyframe& x : between)
+            if (out.last().frame < x.frame) out << x;
+    }
+    k = out;
+}
+
+void convertCrop(Clip& c, QSizeF frame)
+{
+    constexpr AnimParam crops[] = {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom};
+    if (c.kind != ClipKind::Media) return; // titles, compound and multicam clips fill the frame
+    if (std::none_of(std::begin(crops), std::end(crops),
+                     [&](AnimParam p) { return Keys::staticValue(c, p) != 0 || Keys::animated(c, p); }))
+        return;
+    const QSizeF fit = MediaAspect::fit(MediaAspect::of(c.mediaPath), frame);
+    if (std::abs(fit.width() - frame.width()) < 0.01 && std::abs(fit.height() - frame.height()) < 0.01) return;
+    const bool transformed = Keys::hasTransform(c); // decided the old way of measuring
+    for (AnimParam p : crops) {
+        const bool x = p == AnimParam::CropLeft || p == AnimParam::CropRight;
+        const double frameLen = x ? frame.width() : frame.height(), pictureLen = x ? fit.width() : fit.height();
+        if (transformed) {
+            const double k = pictureLen / frameLen;
+            Keys::convert(c, p, [k](double v) { return v * k; }, k);
+        } else {
+            const double bar = (frameLen - pictureLen) / 2;
+            if (c.keys.contains(p)) addCrossings(c.keys[p], {bar, bar + pictureLen});
+            Keys::convert(c, p, [=](double v) { return std::clamp(v - bar, 0.0, pictureLen); }, 1.0);
+        }
+    }
+}
 
 void migrate(QJsonObject& root)
 {
@@ -617,6 +679,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         if (error) *error = T("Die Projektdatei stammt aus einer neueren schneidi-Version.");
         return false;
     }
+    const int fileVersion = std::max(1, root.value("version").toInt(1));
     migrate(root);
 
     const QDir projectDir = QFileInfo(projectPath).absoluteDir();
@@ -694,6 +757,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             if (o.contains("dynamics")) t.dynamics = dynamicsFromJson(o.value("dynamics").toObject());
             for (const QJsonValue& cv : o.value("clips").toArray()) {
                 Clip c = clipFromJson(cv.toObject(), allMedia, projectDir);
+                if (fileVersion < 3 && kind == TrackKind::Video) convertCrop(c, QSizeF(d.format.width, d.format.height));
                 d.lastClipId = std::max(d.lastClipId, c.id);
                 d.lastLinkId = std::max(d.lastLinkId, c.linkId);
                 t.clips << c;

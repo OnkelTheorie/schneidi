@@ -8,6 +8,7 @@
 
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
 #include "engine/Denoise.h"
@@ -374,20 +375,28 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, i
 {
     const double W = profile.width(), H = profile.height();
     auto val = [&](AnimParam p, double t) { return Keys::valueAt(c, p, t); };
-    if (Keys::hasCrop(c)) {
-        // Cropping = make the edge transparent, the image stays in its place (like DaVinci)
-        Mlt::Filter crop(profile, "qtcrop");
-        if (crop.is_valid()) {
+    const bool transform = Keys::hasTransform(c), crop = Keys::hasCrop(c);
+    // The picture as it fits into the frame at zoom 1, keeping its aspect ratio (a portrait clip in a landscape
+    // project gets room at the sides, as without transform and as in DaVinci); titles fill the frame
+    const QSizeF fit = MediaAspect::fit(c.isTitle() ? 0.0 : sourceAspect(clip), QSizeF(W, H));
+    if (crop) {
+        // Cropping = the picture's edges become transparent, the picture stays in its place. Values are timeline
+        // pixels on the fitted picture (ClipTransform), the same at every zoom and shape. The qtblend below always
+        // hands qtcrop the whole source picture (distort=1, never letterboxed), and qtcrop scales absolute values by
+        // image size / profile size -> give it the share of the picture times the profile size.
+        Mlt::Filter cf(profile, "qtcrop");
+        if (cf.is_valid()) {
             auto rect = [&](double t) {
-                const double l = val(AnimParam::CropLeft, t), r = val(AnimParam::CropRight, t);
-                const double top = val(AnimParam::CropTop, t), b = val(AnimParam::CropBottom, t);
-                return mlt_rect{l, top, std::max(1.0, W - l - r), std::max(1.0, H - top - b), 1.0};
+                const double l = val(AnimParam::CropLeft, t) / fit.width(), r = val(AnimParam::CropRight, t) / fit.width();
+                const double top = val(AnimParam::CropTop, t) / fit.height();
+                const double b = val(AnimParam::CropBottom, t) / fit.height();
+                return mlt_rect{l * W, top * H, std::max(1.0, (1 - l - r) * W), std::max(1.0, (1 - top - b) * H), 1.0};
             };
             if (!animate(c, {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom}, a, len,
-                         [&](int pos, double t) { crop.anim_set("rect", rect(t), pos, len); }))
-                crop.set("rect", rect(a));
-            crop.set("color", "#00000000");
-            attachTo(clip, crop);
+                         [&](int pos, double t) { cf.anim_set("rect", rect(t), pos, len); }))
+                cf.set("rect", rect(a));
+            cf.set("color", "#00000000");
+            attachTo(clip, cf);
         }
     }
     if (Keys::hasOpacity(c)) {
@@ -401,28 +410,28 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, i
             attachTo(clip, op);
         }
     }
-    if (!Keys::hasTransform(c)) return;
+    // A crop needs the qtblend too (even at zoom 1): without it qtcrop got the frame as MLT letterboxes it, so values
+    // counted from the frame's edges and the bars inside the kept area turned opaque black
+    if (!transform && !crop) return;
     Mlt::Filter f(profile, "qtblend");
     if (!f.is_valid()) return;
-    // distort=1 (below) stretches the source onto the rectangle -> fit the rectangle itself into the image preserving aspect ratio
-    // (a portrait clip in a landscape project gets room at the sides, as without transform and as in DaVinci)
-    double fitW = W, fitH = H;
-    if (const double asp = c.isTitle() ? 0.0 : sourceAspect(clip); asp > 0) {
-        if (asp > W / H) fitH = W / asp;
-        else fitW = H * asp;
-    }
+    // distort=1 (below) stretches the source onto the rectangle -> the rectangle itself is the fitted picture
     auto rect = [&](double t) {
-        const double w = fitW * val(AnimParam::ZoomX, t), h = fitH * val(AnimParam::ZoomY, t);
-        return mlt_rect{(W - w) / 2 + val(AnimParam::PosX, t), (H - h) / 2 - val(AnimParam::PosY, t), w, h, 1.0};
+        const double zx = transform ? val(AnimParam::ZoomX, t) : 1.0, zy = transform ? val(AnimParam::ZoomY, t) : 1.0;
+        const double x = transform ? val(AnimParam::PosX, t) : 0.0, y = transform ? val(AnimParam::PosY, t) : 0.0;
+        const double w = fit.width() * zx, h = fit.height() * zy;
+        return mlt_rect{(W - w) / 2 + x, (H - h) / 2 - y, w, h, 1.0};
     };
     // Set as mlt_rect instead of text: MLT reads text rectangles with the system number format
     // (German: "940.8" -> 940 and ".8" slips into the next field). The 5th value (opacity) must be 1.
-    if (!animate(c, {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY}, a, len,
-                 [&](int pos, double t) { f.anim_set("rect", rect(t), pos, len); }))
+    if (!transform
+        || !animate(c, {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY}, a, len,
+                    [&](int pos, double t) { f.anim_set("rect", rect(t), pos, len); }))
         f.set("rect", rect(a));
     // DaVinci: positive = counterclockwise
-    if (!animate(c, {AnimParam::Rotation}, a, len,
-                 [&](int pos, double t) { f.anim_set("rotation", -val(AnimParam::Rotation, t), pos, len); }))
+    if (!transform) f.set("rotation", 0.0);
+    else if (!animate(c, {AnimParam::Rotation}, a, len,
+                      [&](int pos, double t) { f.anim_set("rotation", -val(AnimParam::Rotation, t), pos, len); }))
         f.set("rotation", -c.transform.rotation);
     f.set("rotate_center", 1);
     // distort=1: fetch the source at full size and only scale when drawing. Otherwise qtblend requests the image
@@ -438,7 +447,7 @@ void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKin
 {
     applyEffects(profile, cut, c, kind, a, len);
     if (kind == TrackKind::Video) applyTransform(profile, cut, c, a, len);
-    if (c.isTitle() && !Keys::hasTransform(c) && !Keys::animated(c, AnimParam::TitleSize)) {
+    if (c.isTitle() && !Keys::hasTransform(c) && !Keys::hasCrop(c) && !Keys::animated(c, AnimParam::TitleSize)) {
         // qtext draws at the requested size but does not scale the outline along (preview 960 px:
         // outline three times as thick). qtblend with distort=1 always fetches the image at full project size.
         Mlt::Filter f(profile, "qtblend");

@@ -471,10 +471,11 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK_EQ(keys[0]["at"].toInt(), 45);
             CHECK_EQ(keys[1]["at"].toInt(), 69);
         }
-        // The help says what slip does with keyframes
-        const QJsonObject help = run("help", {{"command", "edit"}, {"op", "trim"}});
+        // The help says what slip does with keyframes and what crop values mean
+        const QJsonObject help = run("help", {{"command", "edit"}, {"op", "trim,transform"}});
         const QString text = QJsonDocument(help).toJson();
         CHECK(text.contains("keyframes stay where they are in the clip"));
+        CHECK(text.contains("timeline pixels on that fitted picture"));
     }
 
     // Project format (resolution scales positions, frame rate locked while clips exist), LUT by name, SRT export

@@ -39,13 +39,17 @@ inline QString formatVolumeDb(double db)
     return QString("%1%2 dB").arg(db > 0.05 ? "+" : "").arg(db, 0, 'f', 1);
 }
 
-// Transform/Crop/Composite as in the DaVinci Inspector (pixel values refer to the project format)
+// Transform/Crop/Composite of the Inspector; pixel values are pixels of the project format (timeline)
 struct ClipTransform {
-    double zoomX = 1.0, zoomY = 1.0;
+    double zoomX = 1.0, zoomY = 1.0; // 1 = the picture fitted into the frame, keeping its shape
     double posX = 0, posY = 0;  // pixels, Y positive upward (like DaVinci)
-    double rotation = 0;        // Grad
-    double cropLeft = 0, cropRight = 0, cropTop = 0, cropBottom = 0; // Pixel
-    double opacity = 100;       // Prozent
+    double rotation = 0;        // degrees, positive = counterclockwise
+    // Timeline pixels on the picture as it fits into the frame at zoom 1, cut off its own edges (not the frame's):
+    // a 1920x1080 clip in a 1080x1920 timeline is 1080x607.5 there, so 1 = 1920/1080 source pixels. Applied before
+    // zoom/position/rotation (a zoomed clip shows its crop zoomed too); the cut area is transparent. Project format 3;
+    // older files are converted while loading (ProjectFile convertCrop).
+    double cropLeft = 0, cropRight = 0, cropTop = 0, cropBottom = 0;
+    double opacity = 100;       // percent
     // Sections can be switched off individually (red dot in the Inspector); values are kept
     bool transformOn = true, cropOn = true, compositeOn = true;
 

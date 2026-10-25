@@ -2,6 +2,7 @@
 
 #include "core/I18n.h"
 #include "core/Loudness.h"
+#include "core/MediaAspect.h"
 #include "core/Multicam.h"
 #include "core/TimelineOps.h"
 #include "engine/Background.h"
@@ -16,6 +17,7 @@
 #include "engine/Stabilizer.h"
 #include "engine/StillFetcher.h"
 #include "engine/TimelineBuilder.h"
+#include "engine/TimelineBuilderDetail.h"
 #include "engine/audio/Path.h"
 #include "engine/audio/Player.h"
 #include "ui/MulticamGrid.h"
@@ -144,6 +146,7 @@ bool Engine::initMlt(QString* error)
     Bundle::pinNumericLocale();
     Bundle::prepareMltCaches();
     Frei0r::registerEffects();
+    MediaAspect::setProbe(&Engine::pictureAspect);
     return true;
 }
 
@@ -311,6 +314,21 @@ QString Engine::startTimecode(const QString& path)
         else if (name == video || (stream.isEmpty() && name.endsWith(".stream.timecode.markup"))) stream = p.get(i);
     }
     return (container.isEmpty() ? stream : container).trimmed();
+}
+
+double Engine::pictureAspect(const QString& path)
+{
+    // Opened like the TimelineBuilder opens it, so the shape is the one it fits into the frame
+    const auto profile = makeProfile(ProjectFormat{});
+    ProducerFactory factory(*profile); // owns profiles the producer may use: declared first, destroyed last
+    const std::unique_ptr<Mlt::Producer> p = factory.open(path);
+    if (!p || !p->is_valid() || p->get_int("video_index") < 0) return 0;
+    double aspect = TimelineBuilderDetail::sourceAspect(*p);
+    if (aspect <= 0) { // still images: size only after the first frame
+        std::unique_ptr<Mlt::Frame> frame(p->get_frame());
+        aspect = TimelineBuilderDetail::sourceAspect(*p);
+    }
+    return aspect;
 }
 
 QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)

@@ -1,0 +1,255 @@
+{
+    "app": "schneidi",
+    "bins": [
+    ],
+    "currentSequence": 1,
+    "format": {
+        "fpsDen": 1,
+        "fpsNum": 25,
+        "height": 1920,
+        "width": 1080
+    },
+    "fps": 25,
+    "lastClipId": 6,
+    "lastLinkId": 0,
+    "media": [
+        {
+            "hasAudio": false,
+            "hasVideo": true,
+            "isImage": false,
+            "length": 250,
+            "name": "grad.mkv",
+            "path": "/fixtures/media/grad.mkv",
+            "relPath": "media/grad.mkv"
+        },
+        {
+            "hasAudio": false,
+            "hasVideo": true,
+            "isImage": false,
+            "length": 250,
+            "name": "green.mkv",
+            "path": "/fixtures/media/green.mkv",
+            "relPath": "media/green.mkv"
+        },
+        {
+            "hasAudio": false,
+            "hasVideo": true,
+            "isImage": true,
+            "length": 125,
+            "name": "sq.png",
+            "path": "/fixtures/media/sq.png",
+            "relPath": "media/sq.png"
+        }
+    ],
+    "playhead": 0,
+    "sequences": [
+        {
+            "id": 1,
+            "name": "Timeline 1"
+        }
+    ],
+    "timeline": {
+        "audio": [
+            {
+                "clips": [
+                ],
+                "name": "A1"
+            },
+            {
+                "clips": [
+                ],
+                "name": "A2"
+            }
+        ],
+        "markIn": -1,
+        "markOut": -1,
+        "markers": [
+        ],
+        "masterLimiter": false,
+        "masterLimiterDb": -1,
+        "masterVolumeDb": 0,
+        "video": [
+            {
+                "clips": [
+                    {
+                        "id": 1,
+                        "in": 0,
+                        "media": 1,
+                        "out": 99,
+                        "start": 0,
+                        "transform": {
+                            "compositeOn": true,
+                            "cropBottom": 0,
+                            "cropLeft": 50,
+                            "cropOn": true,
+                            "cropRight": 0,
+                            "cropTop": 30,
+                            "opacity": 100,
+                            "posX": 0,
+                            "posY": 0,
+                            "rotation": 0,
+                            "transformOn": true,
+                            "zoomX": 1,
+                            "zoomY": 1
+                        }
+                    },
+                    {
+                        "id": 2,
+                        "in": 0,
+                        "media": 0,
+                        "out": 99,
+                        "start": 100,
+                        "transform": {
+                            "compositeOn": true,
+                            "cropBottom": 600,
+                            "cropLeft": 100,
+                            "cropOn": true,
+                            "cropRight": 0,
+                            "cropTop": 700,
+                            "opacity": 100,
+                            "posX": 0,
+                            "posY": 0,
+                            "rotation": 0,
+                            "transformOn": true,
+                            "zoomX": 1,
+                            "zoomY": 1
+                        }
+                    },
+                    {
+                        "id": 3,
+                        "in": 0,
+                        "media": 0,
+                        "out": 99,
+                        "start": 200,
+                        "transform": {
+                            "compositeOn": true,
+                            "cropBottom": 50,
+                            "cropLeft": 0,
+                            "cropOn": true,
+                            "cropRight": 200,
+                            "cropTop": 100,
+                            "opacity": 100,
+                            "posX": 0,
+                            "posY": 0,
+                            "rotation": 0,
+                            "transformOn": true,
+                            "zoomX": 1.5,
+                            "zoomY": 1.5
+                        }
+                    },
+                    {
+                        "id": 4,
+                        "in": 0,
+                        "keys": {
+                            "cropBottom": [
+                                [
+                                    0,
+                                    700
+                                ],
+                                [
+                                    50,
+                                    900
+                                ]
+                            ],
+                            "cropTop": [
+                                [
+                                    0,
+                                    600
+                                ],
+                                [
+                                    99,
+                                    800
+                                ]
+                            ]
+                        },
+                        "media": 0,
+                        "out": 99,
+                        "start": 300,
+                        "transform": {
+                            "compositeOn": true,
+                            "cropBottom": 0,
+                            "cropLeft": 20,
+                            "cropOn": true,
+                            "cropRight": 0,
+                            "cropTop": 0,
+                            "opacity": 100,
+                            "posX": 0,
+                            "posY": 0,
+                            "rotation": 0,
+                            "transformOn": true,
+                            "zoomX": 1,
+                            "zoomY": 1
+                        }
+                    },
+                    {
+                        "id": 5,
+                        "in": 0,
+                        "media": 2,
+                        "out": 49,
+                        "start": 400,
+                        "transform": {
+                            "compositeOn": true,
+                            "cropBottom": 0,
+                            "cropLeft": 0,
+                            "cropOn": true,
+                            "cropRight": 300,
+                            "cropTop": 500,
+                            "opacity": 100,
+                            "posX": 0,
+                            "posY": 0,
+                            "rotation": 0,
+                            "transformOn": true,
+                            "zoomX": 1,
+                            "zoomY": 1
+                        }
+                    },
+                    {
+                        "id": 6,
+                        "in": 0,
+                        "out": 49,
+                        "start": 450,
+                        "title": {
+                            "align": 1,
+                            "bold": false,
+                            "boxColor": "#a0000000",
+                            "boxOn": false,
+                            "boxPad": 20,
+                            "color": "#ffffffff",
+                            "font": "Sans",
+                            "italic": false,
+                            "outlineColor": "#ff000000",
+                            "outlineOn": false,
+                            "outlineWidth": 4,
+                            "posX": 0,
+                            "posY": 0,
+                            "size": 300,
+                            "text": "Crop"
+                        },
+                        "transform": {
+                            "compositeOn": true,
+                            "cropBottom": 0,
+                            "cropLeft": 400,
+                            "cropOn": true,
+                            "cropRight": 0,
+                            "cropTop": 900,
+                            "opacity": 100,
+                            "posX": 0,
+                            "posY": 0,
+                            "rotation": 0,
+                            "transformOn": true,
+                            "zoomX": 1,
+                            "zoomY": 1
+                        }
+                    }
+                ],
+                "name": "V1"
+            },
+            {
+                "clips": [
+                ],
+                "name": "V2"
+            }
+        ]
+    },
+    "version": 2
+}

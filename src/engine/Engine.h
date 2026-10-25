@@ -80,6 +80,9 @@ public:
     static MediaInfo probe(const ProjectFormat& format, const QString& path);
     // Timecode of the file's first frame ("01:00:00:00", from cameras and other editors' renders); empty = none
     static QString startTimecode(const QString& path);
+    // Width / height of the file's picture as the timeline shows it (pixel aspect, rotation), 0 = none/unreadable.
+    // initMlt() installs it as MediaAspect's probe (core: converting crop values).
+    static double pictureAspect(const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);
     // Same without an Engine instance (own profile; usable from worker threads), image in the aspect ratio of `format`
     static QImage thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size);

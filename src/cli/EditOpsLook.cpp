@@ -441,8 +441,15 @@ void addLookOps(QVector<OpDef>& ops)
         << OpDef{"transform", "{op:'transform', clips, zoom?, zoom_x?, zoom_y?, x?, y?, rotation?, crop_left?, "
                               "crop_right?, crop_top?, crop_bottom?, opacity?, reset?, at?}",
                  "Inspector transform/crop/opacity of video clips",
-                 "zoom 1 = 100 %; x/y in pixels of the timeline from the center, y up; rotation in degrees; crop in "
-                 "pixels; opacity 0..100. reset:true sets all back first. Values that have keyframes get one at `at`.",
+                 "zoom 1 = the clip's picture fitted into the frame keeping its shape (a 1920x1080 clip in a "
+                 "1080x1920 timeline is 1080x607.5 wide/high, centered, with transparent bars above and below); x/y "
+                 "in pixels of the timeline from the center, y up; rotation in degrees, counterclockwise. crop_* = "
+                 "timeline pixels on that fitted picture at zoom 1, cut off the picture's own edges (not the frame's), "
+                 "the same unit at every zoom and timeline shape: crop px = source px * fitted width / source width "
+                 "(1920x1080 clip: * 1 in a 1920x1080 timeline, * 0.5625 in 1080x1920, * 0.5 in 960x540). Crop "
+                 "applies before zoom/position/rotation, so at zoom 2 a crop of 100 hides 200 timeline pixels; the "
+                 "cut area is transparent (tracks below show). opacity 0..100. reset:true sets all back first. "
+                 "Values that have keyframes get one at `at`.",
                  opTransform}
         << OpDef{"keyframe", "{op:'keyframe', clips, param, at, value?, ease?, remove?} or {op:'keyframe', clips, "
                              "param, keys:[{at, value, ease?}, …]} or {op:'keyframe', clips, param, clear:true}",
@@ -454,7 +461,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "{clip, source} (relative, stays right when clips move). Without value "
                  "the keyframe keeps the current value there. ease (from this keyframe on): linear, ease_in, ease_out, "
                  "ease_in_out. Between keyframes the value is interpolated; with no keyframes left the static value "
-                 "applies. Times in `info` keyframes are timeline frames.",
+                 "applies. Times in `info` keyframes are timeline frames. Units as in op 'transform' (crop_*: timeline "
+                 "pixels on the fitted picture).",
                  opKeyframe}
         << OpDef{"copy_attributes", "{op:'copy_attributes', from, clips, attributes?}",
                  "Paste Attributes: copy values of clip `from` to the clips",

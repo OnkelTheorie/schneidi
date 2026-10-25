@@ -4,6 +4,7 @@
 #include "check.h"
 
 #include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "core/ProjectFile.h"
 
 #include <QCoreApplication>
@@ -11,6 +12,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
+
+#include <cmath>
 
 namespace {
 
@@ -38,7 +41,7 @@ void testRoundTrip(const QString& tmp)
         const QString path = tmp + "/" + name;
         const QByteArray first = ProjectFile::toJson(d, path);
         const QJsonObject root = QJsonDocument::fromJson(first).object();
-        CHECK_EQ(root.value("version").toInt(), 2);
+        CHECK_EQ(root.value("version").toInt(), 3);
         ProjectData again;
         CHECK(ProjectFile::fromJson(first, path, &again, &err));
         Check::report(ProjectFile::toJson(again, path) == first, qPrintable(name + ": save -> load -> save is stable"),
@@ -131,6 +134,67 @@ void testVersion2()
     }
 }
 
+// Format 2 -> 3 (0.12): crop measured on the clip's picture fitted into the frame. Fixture saved before the change (9:16
+// timeline 1080x1920, media offline: their shapes come from a stand-in probe). Converted so every clip crops as before.
+void testVersion2Crop()
+{
+    int asked = 0;
+    MediaAspect::setProbe([&asked](const QString& path) {
+        ++asked;
+        return path.endsWith("grad.mkv") ? 16.0 / 9 : path.endsWith("green.mkv") ? 9.0 / 16 : path.endsWith("sq.png") ? 1.0 : 0.0;
+    });
+    ProjectData d;
+    QString err;
+    if (!CHECK(ProjectFile::load(kData + "/v2-0.12dev-crop.schneidi", &d, &err))) return;
+    CHECK_EQ(d.format.width, 1080);
+    const Timeline& tl = d.timeline;
+    const auto near = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+    // Shaped like the frame (9:16): unchanged
+    if (const Clip* c = clip(tl, 1); CHECK(c)) CHECK(near(c->transform.cropLeft, 50) && near(c->transform.cropTop, 30));
+    // 16:9 without transform: was measured from the frame's edges, bars (656.25 px) included; 600 px off the bottom
+    // only cut into the bar
+    if (const Clip* c = clip(tl, 2); CHECK(c)) {
+        CHECK(near(c->transform.cropTop, 700 - 656.25));
+        CHECK(near(c->transform.cropBottom, 0));
+        CHECK(near(c->transform.cropLeft, 100));
+    }
+    // 16:9 at zoom 1.5: was a share of the frame size (x of 1080, y of 1920) -> times the fitted picture (1080x607.5)
+    if (const Clip* c = clip(tl, 3); CHECK(c)) {
+        CHECK(near(c->transform.cropTop, 100 * 607.5 / 1920));
+        CHECK(near(c->transform.cropBottom, 50 * 607.5 / 1920));
+        CHECK(near(c->transform.cropRight, 200));
+        CHECK_EQ(c->transform.zoomX, 1.5);
+    }
+    // Keyframes without transform: each value converted; the crop_top animation 600 -> 800 crossed the bar's edge
+    // (656.25) and gets a keyframe there, so it starts to cut into the picture at the same frame as before
+    if (const Clip* c = clip(tl, 4); CHECK(c)) {
+        const KeyTrack bottom = c->keys.value(AnimParam::CropBottom), top = c->keys.value(AnimParam::CropTop);
+        if (CHECK_EQ(bottom.size(), 2)) CHECK(near(bottom[0].value, 43.75) && near(bottom[1].value, 243.75));
+        if (CHECK_EQ(top.size(), 3)) {
+            CHECK(near(top[0].value, 0) && near(top[1].value, 0) && near(top[2].value, 143.75));
+            CHECK_EQ(top[1].frame - c->in, 28); // 600 + 200 * 28/99 = 656.6
+        }
+        CHECK(near(c->transform.cropLeft, 20));
+    }
+    // A square image (fitted 1080x1080, bars of 420 px above and below)
+    if (const Clip* c = clip(tl, 5); CHECK(c)) CHECK(near(c->transform.cropTop, 80) && near(c->transform.cropRight, 300));
+    // A title is the frame itself
+    if (const Clip* c = clip(tl, 6); CHECK(c) && CHECK(c->isTitle()))
+        CHECK(near(c->transform.cropLeft, 400) && near(c->transform.cropTop, 900));
+    CHECK(asked >= 3);
+    // Saved as format 3 and loaded again: nothing converted twice
+    QTemporaryDir tmp;
+    const QString path = tmp.filePath("again.schneidi");
+    if (!CHECK(ProjectFile::save(d, path, &err))) return;
+    ProjectData again;
+    if (CHECK(ProjectFile::load(path, &again, &err))) CHECK(again.timeline == d.timeline);
+    MediaAspect::setProbe({});
+    // Without a probe (or the media offline) the values stay as they are
+    ProjectData plain;
+    if (CHECK(ProjectFile::load(kData + "/v2-0.12dev-crop.schneidi", &plain, &err)))
+        if (const Clip* c = clip(plain.timeline, 2); CHECK(c)) CHECK(near(c->transform.cropTop, 700));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -142,5 +206,6 @@ int main(int argc, char** argv)
     testRoundTrip(tmp.path());
     testVersion1();
     testVersion2();
+    testVersion2Crop();
     return Check::result();
 }

@@ -1,5 +1,7 @@
 #include "core/ProjectFormat.h"
 
+#include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "core/Types.h"
 
 QString FrameRate::label() const
@@ -49,16 +51,35 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
         st.outlineWidth *= s;
         st.boxPad *= s;
     }
+    const QSizeF before(from), after(to);
     for (auto* tracks : {&tl.video, &tl.audio})
         for (Track& t : *tracks)
             for (Clip& c : t.clips) {
                 ClipTransform& tr = c.transform;
                 tr.posX *= sx;
                 tr.posY *= sy;
-                tr.cropLeft *= sx;
-                tr.cropRight *= sx;
-                tr.cropTop *= sy;
-                tr.cropBottom *= sy;
+                // Crop: timeline pixels on the picture fitted into the frame -> it scales with that picture. With the
+                // frame's shape kept that is the frame's scale; otherwise the picture keeps its own shape (needs it:
+                // MediaAspect, a file of unknown shape counts as shaped like the old frame), while titles and
+                // compound clips are the frame itself.
+                constexpr AnimParam crops[] = {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop,
+                                               AnimParam::CropBottom};
+                if (tracks == &tl.video && std::any_of(std::begin(crops), std::end(crops), [&](AnimParam p) {
+                        return Keys::staticValue(c, p) != 0 || Keys::animated(c, p);
+                    })) {
+                    double kx = sx, ky = sy;
+                    if (std::abs(sx - sy) > 1e-9 && c.kind == ClipKind::Media) {
+                        double aspect = MediaAspect::of(c.mediaPath);
+                        if (aspect <= 0) aspect = before.width() / before.height();
+                        const QSizeF a = MediaAspect::fit(aspect, before), b = MediaAspect::fit(aspect, after);
+                        kx = b.width() / a.width();
+                        ky = b.height() / a.height();
+                    }
+                    for (AnimParam p : crops) {
+                        const double k = p == AnimParam::CropLeft || p == AnimParam::CropRight ? kx : ky;
+                        Keys::convert(c, p, [k](double v) { return v * k; }, k);
+                    }
+                }
                 TitleStyle& ti = c.title;
                 ti.posX *= sx;
                 ti.posY *= sy;
@@ -71,10 +92,8 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                 for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
                     double f = 1;
                     switch (it.key()) {
-                    case AnimParam::PosX: case AnimParam::CropLeft: case AnimParam::CropRight:
-                    case AnimParam::TitlePosX: f = sx; break;
-                    case AnimParam::PosY: case AnimParam::CropTop: case AnimParam::CropBottom:
-                    case AnimParam::TitlePosY: f = sy; break;
+                    case AnimParam::PosX: case AnimParam::TitlePosX: f = sx; break;
+                    case AnimParam::PosY: case AnimParam::TitlePosY: f = sy; break;
                     case AnimParam::TitleSize: f = s; break;
                     default: continue;
                     }

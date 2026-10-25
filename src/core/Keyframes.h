@@ -8,6 +8,8 @@
 
 #include <QColor>
 
+#include <functional>
+
 namespace Keys {
 
 struct ParamInfo {
@@ -52,6 +54,8 @@ void removeKey(Clip& c, AnimParam p, int t);         // last one removed -> valu
 // Change a value as in the DaVinci Inspector: animated -> keyframe at t (new or replaced), otherwise static value
 void setValue(Clip& c, AnimParam p, int t, double v);
 void clear(Clip& c, AnimParam p);                    // all keyframes removed, static value stays
+// New unit: the static value and every keyframe value through f; Bezier handle values scale by `slope` (f's slope)
+void convert(Clip& c, AnimParam p, const std::function<double(double)>& f, double slope);
 
 // Clip frames of all keyframes (sorted, without duplicates); params empty = all parameters
 QVector<int> keyTimes(const Clip& c, const QVector<AnimParam>& params = {});

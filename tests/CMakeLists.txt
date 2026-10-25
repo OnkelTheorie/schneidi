@@ -69,6 +69,7 @@ schneidi_test(test_export_writer)
 schneidi_test(test_smart_render)
 schneidi_test(test_video_decoder)
 schneidi_test(test_occlusion)
+schneidi_test(test_crop)
 schneidi_test(test_hw_encoders)
 schneidi_test(test_export_opus)
 schneidi_test(test_timeline_mouse)
@@ -125,7 +126,7 @@ set_tests_properties(test_speed PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
 foreach(name test_stabilize_denoise test_retime test_effects_render test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
-             test_ducking)
+             test_ducking test_crop)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77

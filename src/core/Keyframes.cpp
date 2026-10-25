@@ -594,6 +594,18 @@ void move(Clip& c, const QVector<int>& times, int delta)
     }
 }
 
+void convert(Clip& c, AnimParam p, const std::function<double(double)>& f, double slope)
+{
+    setStaticValue(c, p, f(staticValue(c, p)));
+    const auto it = c.keys.find(p);
+    if (it == c.keys.end()) return;
+    for (Keyframe& k : *it) {
+        k.value = f(k.value);
+        k.inDv *= slope;
+        k.outDv *= slope;
+    }
+}
+
 void shiftWithIn(Clip& c, int delta)
 {
     if (delta == 0) return;
