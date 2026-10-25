@@ -141,7 +141,7 @@ struct Frames {
 Frames decode(const QString& path)
 {
     QProcess p;
-    p.start("ffmpeg", {"-v", "error", "-i", path, "-map", "0:v:0", "-vsync", "passthrough", "-f", "rawvideo", "-pix_fmt",
+    p.start("ffmpeg", {"-v", "error", "-i", path, "-map", "0:v:0", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt",
                        "yuv420p", "-"});
     Frames f;
     while (p.waitForReadyRead(30000) || p.bytesAvailable()) {
