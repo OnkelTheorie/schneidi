@@ -43,9 +43,13 @@ public:
     // Places media: video on V[track], audio on A[track] (like DaVinci, V2 <-> A2).
     // Missing tracks are created. Several files end up one after another.
     void addMediaAt(const QStringList& paths, int frame, int track = 0);
-    // Title (5 s, like DaVinci "Text") at the frame on the lowest video track that is free above all clips there
-    // (missing track is created); track >= 0 = fixed track (drag from the Media Pool). New clip is selected.
-    void addTitle(int frame, int track = -1);
+    // Title of `length` frames (<= 0: 5 s, like DaVinci "Text") at the frame on the lowest video track that is free
+    // above all clips in that range (missing track is created); track >= 0 = fixed track (drag from the Media Pool),
+    // overwritten only in [frame, frame + length). New clip is selected.
+    void addTitle(int frame, int track = -1, int length = 0);
+    // New length of a title from its start: shorter frees the end, longer overwrites what lies in the new range on
+    // its track (like a new title there; nothing after it changes)
+    void setTitleLength(int clipId, int length);
     void toggleTrackMute(TrackRef ref);
     void toggleTrackHidden(TrackRef ref);
     // Lock track (lock like DaVinci): clips on it can no longer be selected or changed,

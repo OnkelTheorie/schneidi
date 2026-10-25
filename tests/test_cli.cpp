@@ -438,6 +438,29 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(fit["speed"].toDouble(), 2.0);
     }
 
+    // Titles with a duration (AI test runs 2026-10-25)
+    {
+        const auto ed = [](const QString& ops) { return run("edit", {{"project", g_path}, {"ops", ops}}); };
+        const auto track = [](int i) { return saved().section("  ", i, i); };
+        ed(R"([{"op":"clear"},{"op":"place","media":"/x/a.mp4","at":40,"in":0,"out":30,"track":"V2"}])");
+        CHECK_EQ(track(1), QString("V2: a[40-70|0-29]"));
+        // Only [at, at + duration) changes: the title was placed with 5 s first, which overwrote the clip after it
+        ed(R"([{"op":"title","text":"Frei.","at":25,"duration":15,"track":"V2"}])");
+        CHECK_EQ(track(1), QString("V2: T[25-40|0-14] a[40-70|0-29]"));
+        // Without a track: above the clips in its own range (none on V2 before frame 25), not in 5 s
+        ed(R"([{"op":"title","text":"Low","at":0,"duration":20}])");
+        CHECK_EQ(track(0), QString("V1: T[0-20|0-19]"));
+        // A new duration keeps the start: longer overwrites only the added range, shorter frees the end
+        const auto clipsOf = [](int i) { return run("info", {{"project", g_path}})["timeline"]["tracks"][i]["clips"].toArray(); };
+        const int title = clipsOf(1)[0].toObject()["id"].toInt();
+        ed(QString(R"([{"op":"title","clip":%1,"duration":20}])").arg(title));
+        CHECK_EQ(track(1), QString("V2: T[25-45|0-19] a[45-70|5-29]"));
+        ed(QString(R"([{"op":"title","clip":%1,"duration":5,"text":"F"}])").arg(title));
+        CHECK_EQ(track(1), QString("V2: T[25-30|0-4] a[45-70|5-29]"));
+        CHECK_EQ(clipsOf(1)[0].toObject()["text"].toString(), QString("F"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"title","at":0,"duration":0}])"}}), QString("BAD_ARGUMENT"));
+    }
+
     // Project format (resolution scales positions, frame rate locked while clips exist), LUT by name, SRT export
     {
         const QJsonObject r = run("edit", {{"project", g_path}, {"ops", R"([{"op":"clear"},

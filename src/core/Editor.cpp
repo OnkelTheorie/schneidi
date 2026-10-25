@@ -124,7 +124,7 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track)
     });
 }
 
-void Editor::addTitle(int frame, int track)
+void Editor::addTitle(int frame, int track, int length)
 {
     Project* p = m_project;
     const Timeline& cur = p->timeline();
@@ -133,7 +133,8 @@ void Editor::addTitle(int frame, int track)
     c.title.text = T("Titel");
     c.start = std::max(0, frame);
     c.in = 0;
-    c.out = 5 * p->fps() - 1;
+    // Placed with its final length: placing 5 s first and shortening afterwards overwrote what followed on the track
+    c.out = (length > 0 ? length : 5 * p->fps()) - 1;
     if (track < 0) {
         track = 0;
         for (int i = 0; i < cur.video.size(); ++i)
@@ -149,6 +150,22 @@ void Editor::addTitle(int frame, int track)
         TimelineOps::placeClip(tl.video[track], c, [p] { return p->newClipId(); });
     });
     m_selection->set({c.id});
+}
+
+void Editor::setTitleLength(int clipId, int length)
+{
+    TrackRef ref;
+    const Clip* cur = TimelineOps::findClip(m_project->timeline(), clipId, &ref);
+    if (!cur || !cur->isTitle() || length <= 0 || cur->length() == length || isTrackLocked(ref)) return;
+    Clip c = *cur;
+    c.out = c.in + length - 1;
+    Project* p = m_project;
+    p->edit(T("Titellänge"), [&](Timeline& tl) {
+        Track& t = tl.track(ref);
+        t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(), [&](const Clip& x) { return x.id == clipId; }),
+                      t.clips.end());
+        TimelineOps::placeClip(t, c, [p] { return p->newClipId(); }); // a longer title overwrites its new range only
+    });
 }
 
 void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kind, int trackDelta)

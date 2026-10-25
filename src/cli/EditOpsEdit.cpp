@@ -67,26 +67,27 @@ bool applyStyle(TitleStyle& t, const QJsonObject& op)
 
 void opTitle(Session& s, const QJsonObject& op)
 {
+    const bool created = !op.contains("clip");
+    const int length = op.contains("duration") ? timeOf(s, op, "duration") : 0;
+    if (op.contains("duration") && length <= 0) fail("BAD_ARGUMENT", "duration must be at least one frame");
     int id = 0;
-    if (op.contains("clip")) {
+    if (!created) {
         const Clip& c = clipOf(s, op);
         if (!c.isTitle()) fail("BAD_ARGUMENT", QString("clip %1 is not a title").arg(c.id));
         id = c.id;
+        if (length > 0) s.editor.setTitleLength(id, length);
     } else {
-        s.editor.addTitle(timeOf(s, op, "at", 0), op.contains("track") ? parseTrack(op.value("track")) : -1);
+        // Placed with its final length: only [at, at + duration) changes on the track
+        s.selection.clear();
+        s.editor.addTitle(timeOf(s, op, "at", 0), op.contains("track") ? parseTrack(op.value("track")) : -1, length);
         if (s.selection.ids().isEmpty()) fail("FAILED", "could not place the title (locked track?)");
         id = *s.selection.ids().begin();
     }
-    const bool created = !op.contains("clip");
-    const int length = op.contains("duration") ? timeOf(s, op, "duration") : (created ? 5 * s.project.fps() : 0);
     TitleStyle style = TimelineOps::findClip(s.project.timeline(), id)->title;
     if (created) style.text = "Title";
     if (op.contains("text")) style.text = op.value("text").toString();
     applyStyle(style, op);
-    s.editor.modifyClips({id}, "Title", [&](Clip& c) {
-        c.title = style;
-        if (length > 0) c.out = c.in + length - 1; // longer titles overwrite nothing: see TimelineOps::modify
-    });
+    s.editor.modifyClips({id}, "Title", [&](Clip& c) { c.title = style; });
 }
 
 // ---------- trim ----------
@@ -463,7 +464,9 @@ QJsonObject transitionStyleJson(const TransitionStyle& st)
 void addEditOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"title", "{op:'title', text?, at?, duration?, track?, clip?, <style>}",
-                 "new title (5s, lowest free video track) or with clip: change one",
+                 "new title (duration default 5s; on `track` it overwrites only [at, at+duration), without track it "
+                 "goes on the video track above the clips in that range) or with clip: change one (a new duration "
+                 "keeps its start; longer overwrites only the added range)",
                  "Style (pixels of the timeline format, from the center, y up): " + kStyleFields
                      + ". Colors \"#rrggbb\" or \"#aarrggbb\". text may have several lines (\\n).",
                  opTitle}
