@@ -169,6 +169,7 @@
  "Behalten": "Keep",
  "Bei der Maus nur Seitentasten/Zusatztasten": "Mouse: side/extra buttons only",
  "Bei diesem Format fest": "Fixed for this format",
+ "Bei „Mittel“ und „Klein“ wird alles neu kodiert: kopierte Stellen behielten die Bitrate der Originaldatei.": "With “Medium” and “Small” everything is encoded: copied parts would keep the bit rate of the original file.",
  "Beige": "Beige",
  "Beim ersten Clip in einer leeren Timeline bietet schneidi an, dessen Format zu übernehmen.": "When the first clip is added to an empty timeline, schneidi offers to use its format.",
  "Belegt: %1": "Used: %1",

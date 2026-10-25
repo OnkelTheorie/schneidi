@@ -622,6 +622,7 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     w.realTime = m_convertRate ? 0 : -m_frames; // see startConsumer
     w.length = m_length;
     if (m_soundSource) w.copy = m_copy;
+    w.maxBitrateK = s.maxBitrateK;
     m_usedCodec = codec;
     qInfo("Export: %s (own path), %d threads, %d frames at once%s%s", qPrintable(codec), m_threads, m_frames,
           m_convertRate ? ", frame rate converted" : "", m_ownAudio ? ", own audio engine" : "");

@@ -31,6 +31,12 @@
 
 namespace {
 
+// Smart render copies at "High" and "Web" (below its cap) only: copied pictures keep the file's bit rate
+bool smartQuality(int quality)
+{
+    return quality == 0 || quality == RenderSettings::kQualityWeb;
+}
+
 // Same output? (resolution resolved via the timeline, quality/bit rate only where they take effect)
 bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline)
 {
@@ -39,13 +45,21 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     if (!a.audioOnly() && a.outputSize(timeline) != b.outputSize(timeline)) return false;
     if (f.hasQuality() && a.quality != b.quality) return false;
     if (f.hardware && a.encoder != b.encoder) return false;
-    if (f.hardware && a.smartRender != b.smartRender) return false;
+    if (f.hardware && smartQuality(a.quality) && a.smartRender != b.smartRender) return false;
     if (a.hasAudioBitrate() && a.audioBitrateK != b.audioBitrateK) return false;
     if (!a.audioBitChoices().isEmpty() && a.audioCodec() != b.audioCodec()) return false;
     if (a.audioSampleFormat() != b.audioSampleFormat()) return false;
     const FrameRate none{0, 1};
     if (!a.audioOnly() && a.outputRate(none) != b.outputRate(none)) return false;
     return a.subtitles == b.subtitles;
+}
+
+QString smartTip()
+{
+    return T("Smart Render: Wo ein Clip ohne Effekt, Übergang oder Titel läuft und die Datei schon passt "
+             "(gleicher Codec, Größe, Bildrate), werden ihre Bilder verlustfrei übernommen statt neu kodiert – "
+             "um ein Vielfaches schneller. Nur Schnitte bis zum nächsten Schlüsselbild und Stellen mit Effekten "
+             "werden kodiert. Passt etwas nicht, wird automatisch normal kodiert.");
 }
 
 } // namespace
@@ -141,10 +155,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_smart = new QCheckBox(T("Unveränderte Stellen kopieren"));
     m_smart->setObjectName("renderSmart");
     m_smart->setChecked(true);
-    m_smart->setToolTip(T("Smart Render: Wo ein Clip ohne Effekt, Übergang oder Titel läuft und die Datei schon passt "
-                          "(gleicher Codec, Größe, Bildrate), werden ihre Bilder verlustfrei übernommen statt neu kodiert – "
-                          "um ein Vielfaches schneller. Nur Schnitte bis zum nächsten Schlüsselbild und Stellen mit Effekten "
-                          "werden kodiert. Passt etwas nicht, wird automatisch normal kodiert."));
+    m_smart->setToolTip(smartTip());
     m_range = new QComboBox;
     m_range->addItem(T("Ganze Timeline"));
     m_range->addItem(T("In/Out-Bereich"));
@@ -425,7 +436,12 @@ void DeliverPanel::updateControls()
     if (!f.webQuality && f.hasQuality() && m_quality->currentIndex() == RenderSettings::kQualityWeb)
         m_quality->setCurrentIndex(0);
     updateEncoders();
-    m_smart->setEnabled(f.hardware); // H.264/H.265
+    const bool copies = smartQuality(m_quality->currentIndex());
+    m_smart->setEnabled(f.hardware && copies); // H.264/H.265
+    m_smart->setToolTip(copies || !f.hardware
+                            ? smartTip()
+                            : T("Bei „Mittel“ und „Klein“ wird alles neu kodiert: kopierte Stellen behielten die Bitrate "
+                                "der Originaldatei."));
     RenderSettings probe;
     probe.format = f.id;
     m_audioBitrate->setEnabled(probe.hasAudioBitrate());

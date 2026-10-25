@@ -53,6 +53,7 @@ public:
         // Smart render: output frames that show a file as it is (sorted, engine/SmartRender). Needs `sound` in the
         // constructor. Empty = encode everything.
         QVector<SmartRender::Span> copy;
+        int maxBitrateK = 0; // smart render: a GOP above the export's bit rate cap (kbit/s) is encoded; 0 = no cap
     };
     // Can this path write such a file? (muxer from the file name, encoders, MLT image format for pixFmt)
     static bool supports(const QString& path, const QString& videoCodec, const QString& pixFmt, const QString& audioCodec,

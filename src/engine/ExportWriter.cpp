@@ -817,6 +817,14 @@ struct ExportWriter::Impl {
             AVPacket* next = nullptr;
             readGop(*src, p, *g, next, s1);
             p = next;
+            if (g->whole && s.maxBitrateK > 0) { // "Web" quality: a copy must stay below the cap like the encoder
+                int64_t bytes = 0;
+                for (const AVPacket* q : g->packets) bytes += q->size;
+                if (double(bytes) * 8 / 1000 * fps / g->count > s.maxBitrateK) {
+                    g->whole = false;
+                    g->why = "above the bit rate cap";
+                }
+            }
             if (!g->whole || g->start + g->count > s1) { // ends behind the span: encode from its start
                 if (g->why)
                     qInfo("Export: smart render encodes %s from %d (%s)", qPrintable(QFileInfo(span.file).fileName()), out, g->why);

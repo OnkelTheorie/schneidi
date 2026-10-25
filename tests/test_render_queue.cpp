@@ -96,6 +96,23 @@ int main(int argc, char** argv)
         CHECK(RenderSettings::fromJson(a.toJson()) == a);
     }
 
+    // --- Smart render at "High" and "Web" (the writer copies below the cap only): copied pictures keep the file's bit
+    // rate (a game recording: 4x the file), "Medium"/"Small" encode everything
+    {
+        RenderJob job;
+        job.path = "/tmp/out.mp4";
+        job.settings.format = "h264";
+        job.settings.encoder = VideoEncoder::Software;
+        const ProjectFormat fmt;
+        for (int q = 0; q <= RenderSettings::kQualityWeb; ++q) {
+            job.settings.quality = q;
+            CHECK_EQ(RenderQueue::exportSettings(job, fmt).smartRender, q == 0 || q == RenderSettings::kQualityWeb);
+        }
+        job.settings.quality = 0;
+        job.settings.smartRender = false;
+        CHECK(!RenderQueue::exportSettings(job, fmt).smartRender);
+    }
+
     // --- Built-in presets
     {
         const auto b = RenderPresets::builtins();

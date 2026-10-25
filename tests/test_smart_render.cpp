@@ -277,6 +277,20 @@ void testExports(const QString& dir)
     compare("h264", dir, cuts(a, b, false), settings(dir + "/x.mp4"), 100, 120);
     compare("mkv", dir, cuts(a, b, false), settings(dir + "/x.mkv"), 100, 120);
     compare("effect", dir, cuts(a, b, true), settings(dir + "/x.mp4"), 70, 90);
+    // Bit rate cap ("Web" quality): GOPs above it are encoded (a game recording would make the file 4x larger), below
+    // it copied
+    {
+        ExportSettings s = settings(dir + "/cap-low.mp4");
+        s.maxBitrateK = 1;
+        const Result low = render(cuts(a, b, false), s);
+        CHECK(low.ok);
+        CHECK_EQ(low.copiedPercent, 0);
+        s.path = dir + "/cap-high.mp4";
+        s.maxBitrateK = 1'000'000;
+        const Result high = render(cuts(a, b, false), s);
+        CHECK(high.ok);
+        CHECK(high.copiedPercent > 50);
+    }
     {
         ExportSettings s = settings(dir + "/x.mp4");
         s.from = 30;
