@@ -80,6 +80,17 @@ Thumbnails for the Media Storage (your Videos folder) are made by a separate ffm
 
 0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. Without a usable graphics card, create proxies on a weak computer before editing (right-click a clip in the Media Pool › Generate Proxy Media).
 
+**And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet). Material: 15 s of a 1080p60 gaming clip.
+
+| | Raspberry Pi Zero 2 W |
+|---|---|
+| Window visible | 6.5 s, 180 MB RAM |
+| Playback 720p30 original | 12 frames/s, sound in sync |
+| Playback 1080p60 original | 1 frame/s – not usable |
+| Playback 1080p60 from proxies | 28 frames/s, sound in sync |
+| Jumping in the timeline, original → proxies | 2.1 s → 0.1 s |
+| Export 5 s of 720p (x264) | 82 s |
+
 ## Command line and AI editing (MCP)
 
 `schneidi-cli` edits the same project files without a window, for scripts and AI assistants. A typical rough cut:
