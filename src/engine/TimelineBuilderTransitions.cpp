@@ -18,6 +18,12 @@
 #include "engine/Stabilizer.h"
 
 #include <Mlt.h>
+
+extern "C" {
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
+}
+
 #include <QColor>
 #include <QDir>
 #include <QFile>
@@ -145,6 +151,94 @@ void addWipeBorder(Mlt::Profile& profile, Mlt::Tractor& mix, int track, int len,
     Mlt::Transition t(profile, "qtblend");
     t.set("always_active", 1);
     mix.plant_transition(t, 0, track);
+}
+
+// ---- Both sides of a transition at the requested size ----
+// luma (Cross Dissolve, wipes) composites at the size its first input (a) comes back with and lays the second (b) on
+// top at the size it asked for, without scaling. MLT's qtblend filter passes a picture whose rectangle is the whole
+// frame through unchanged in YUV, at its own (media) size instead of the requested one: zoom exactly 1, e.g. where
+// zoom keyframes end. The incoming clip then sat as a small rectangle in the top left corner of the preview (AI
+// test run 2026-10-25), or only the corner of a larger b showed; with sources larger than the export, the export too.
+namespace {
+
+AVPixelFormat avFormatOf(mlt_image_format f)
+{
+    switch (f) {
+    case mlt_image_rgb: return AV_PIX_FMT_RGB24;
+    case mlt_image_rgba: return AV_PIX_FMT_RGBA;
+    case mlt_image_yuv422: return AV_PIX_FMT_YUYV422;
+    case mlt_image_yuv420p: return AV_PIX_FMT_YUV420P;
+    case mlt_image_yuv422p16: return AV_PIX_FMT_YUV422P16LE;
+    case mlt_image_yuv420p10: return AV_PIX_FMT_YUV420P10LE;
+    case mlt_image_yuv444p10: return AV_PIX_FMT_YUV444P10LE;
+    default: return AV_PIX_FMT_NONE;
+    }
+}
+
+// Scale an image (MLT layout = planes packed one after the other) from w x h to ow x oh; nullptr = not possible
+uint8_t* scaled(const uint8_t* src, AVPixelFormat format, int w, int h, int ow, int oh, int* size)
+{
+    *size = av_image_get_buffer_size(format, ow, oh, 1);
+    if (*size <= 0) return nullptr;
+    const bool rgb = format == AV_PIX_FMT_RGBA || format == AV_PIX_FMT_RGB24;
+    // Same format in and out: scaling only, no color conversion (RGB keeps full chroma)
+    SwsContext* ctx = sws_getContext(w, h, format, ow, oh, format,
+                                     SWS_BILINEAR | (rgb ? SWS_FULL_CHR_H_INP | SWS_FULL_CHR_H_INT : 0), nullptr,
+                                     nullptr, nullptr);
+    if (!ctx) return nullptr;
+    auto* out = static_cast<uint8_t*>(mlt_pool_alloc(*size));
+    uint8_t* in[4];
+    uint8_t* to[4];
+    int inStride[4], toStride[4];
+    av_image_fill_arrays(in, inStride, src, format, w, h, 1);
+    av_image_fill_arrays(to, toStride, out, format, ow, oh, 1);
+    sws_scale(ctx, in, inStride, 0, h, to, toStride);
+    sws_freeContext(ctx);
+    return out;
+}
+
+int requestedSizeGetImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height,
+                          int writable)
+{
+    mlt_frame_pop_service(frame);
+    const int ow = *width, oh = *height;
+    const int error = mlt_frame_get_image(frame, image, format, width, height, writable);
+    if (error || !*image || ow <= 0 || oh <= 0 || (*width == ow && *height == oh)) return error;
+    const AVPixelFormat av = avFormatOf(*format);
+    int size = 0;
+    uint8_t* out = av == AV_PIX_FMT_NONE ? nullptr : scaled(*image, av, *width, *height, ow, oh, &size);
+    if (!out) return error; // other formats (GPU) stay as they are
+    int alphaSize = 0;
+    if (const uint8_t* alpha = mlt_frame_get_alpha_size(frame, &alphaSize); alpha) {
+        int scaledSize = 0;
+        uint8_t* a = alphaSize >= *width * *height ? scaled(alpha, AV_PIX_FMT_GRAY8, *width, *height, ow, oh, &scaledSize)
+                                                  : nullptr;
+        mlt_frame_set_alpha(frame, a, a ? scaledSize : 0, a ? mlt_pool_release : nullptr); // unknown layout: dropped
+    }
+    mlt_frame_set_image(frame, out, size, mlt_pool_release);
+    *image = out;
+    *width = ow;
+    *height = oh;
+    return 0;
+}
+
+mlt_frame requestedSizeProcess(mlt_filter filter, mlt_frame frame)
+{
+    mlt_frame_push_service(frame, filter);
+    mlt_frame_push_get_image(frame, requestedSizeGetImage);
+    return frame;
+}
+
+} // namespace
+
+void attachRequestedSize(Mlt::Producer& cut)
+{
+    mlt_filter f = mlt_filter_new();
+    if (!f) return;
+    f->process = requestedSizeProcess;
+    Mlt::Filter filter(f); // holds its own reference
+    mlt_filter_close(f);
+    cut.attach(filter);
 }
 
 // Video transition other than Cross Dissolve as a small tractor: a leaves, b arrives; if a side is missing, it is empty there.

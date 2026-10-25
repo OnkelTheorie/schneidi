@@ -82,5 +82,8 @@ void applyAudioTransition(Mlt::Profile& profile, Mlt::Producer& cut, const Timel
 // Video transition other than Cross Dissolve as a small tractor: a leaves, b enters; a missing side is empty
 std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Producer* a, Mlt::Producer* b, int len,
                                                const TransitionStyle& st);
+// One side of a two-sided video transition: always hands out the picture at the requested size (luma needs both
+// the same size, see the .cpp). Attach last, after all of the cut's own filters.
+void attachRequestedSize(Mlt::Producer& cut);
 
 } // namespace TimelineBuilderDetail

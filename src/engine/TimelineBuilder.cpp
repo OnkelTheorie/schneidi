@@ -607,6 +607,10 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             std::unique_ptr<Mlt::Producer> ca(a ? cutOf(*a, s.start, s.end, useSecond.value(a->id)) : nullptr);
             std::unique_ptr<Mlt::Producer> cb(b ? cutOf(*b, s.start, s.end, useSecond.value(b->id)) : nullptr);
             const int len = s.length();
+            if (kind == TrackKind::Video && ca && cb) { // luma needs both pictures at the requested size
+                attachRequestedSize(*ca);
+                attachRequestedSize(*cb);
+            }
             // Gradient wipe from/to nothing: luma has no transparency -> fade out/in like Cross Dissolve
             const bool styled = s.style.type != TransitionType::CrossDissolve && (!s.style.isLuma() || (ca && cb));
             if (kind == TrackKind::Video && styled && (ca || cb)) {
