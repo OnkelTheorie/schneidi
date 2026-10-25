@@ -318,7 +318,10 @@ int RenderCache::trimDir(const QString& dirPath, qint64 limit, const QSet<QStrin
 
 void RenderCache::trim()
 {
-    if (trimDir(cacheDir(), m_limit, m_inUse) > 0) emit cacheChanged();
+    QSet<QString> keep = m_inUse;
+    // Lowering the limit while a clip renders: its file in the making (<key>.mov.part.mov) stays
+    if (!m_currentKey.isEmpty()) keep.insert(m_currentKey + ".mov.part");
+    if (trimDir(cacheDir(), m_limit, keep) > 0) emit cacheChanged();
 }
 
 void RenderCache::cancelCurrent()
