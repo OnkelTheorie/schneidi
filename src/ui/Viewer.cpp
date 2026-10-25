@@ -199,7 +199,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
 {
     setObjectName("Panel");
 
-    m_mode = new QLabel("Timeline");
+    m_mode = new QLabel(T("Timeline"));
     m_mode->setObjectName("PanelTitle");
     m_mode->setAlignment(Qt::AlignCenter);
 
@@ -407,7 +407,7 @@ void Viewer::updateModeText()
 {
     QString text = !m_sourcePath.isEmpty() ? T("Quelle – %1").arg(m_sourceName)
                    : m_multicamOn         ? T("Timeline – Multicam")
-                                          : QStringLiteral("Timeline");
+                                          : T("Timeline");
     if (m_engine->colorBypass()) text += T("  (Farbkorrektur umgangen)");
     m_mode->setText(text);
 }

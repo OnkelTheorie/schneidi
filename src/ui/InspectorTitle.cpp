@@ -48,7 +48,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     auto current = [this]() -> const Clip* { return primary(TrackKind::Video, true); };
 
     // ---- Text (like DaVinci "Text": text field, font, size, color, style, alignment, position) ----
-    Section txt = addSection(page, V, "Text", [](Clip& c) {
+    Section txt = addSection(page, V, T("Text"), [](Clip& c) {
         const TitleStyle d;
         TitleStyle& t = c.title; // the text itself stays
         t.font = d.font;
@@ -65,7 +65,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
 
     auto* edit = new QPlainTextEdit;
     edit->setFixedHeight(76);
-    edit->setPlaceholderText("Text");
+    edit->setPlaceholderText(T("Text"));
     edit->setTabChangesFocus(true);
     // Live: every change immediately into the preview, typing = one undo step
     connect(edit, &QPlainTextEdit::textChanged, this, [this, edit, V] {
@@ -152,7 +152,7 @@ void Inspector::buildTitlePage(QVBoxLayout* page)
     txt.grid->addWidget(rowLabel(T("Stil")), txt.rows, 0);
     txt.grid->addLayout(styleBox, txt.rows++, 1);
 
-    addXY(txt, "titlePos", "Position", -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
+    addXY(txt, "titlePos", T("Position"), -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.title.posX; },
           [](Clip& c) -> double& { return c.title.posY; }, nullptr, AnimParam::TitlePosX, AnimParam::TitlePosY);
 
     // ---- Outline / background (red dot; changing a value switches it on) ----

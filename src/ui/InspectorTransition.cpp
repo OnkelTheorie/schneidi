@@ -93,7 +93,7 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
     m_transType = combo();
     for (const auto& i : kTransitionTypes) m_transType->addItem(T(i.name), int(i.type));
     m_transAudioType = combo(); // Audio: level curve of the crossfade
-    for (const auto& i : kAudioCurves) m_transAudioType->addItem(i.name, int(i.curve));
+    for (const auto& i : kAudioCurves) m_transAudioType->addItem(T(i.name), int(i.curve));
     auto* typeBox = new QWidget;
     auto* typeLay = new QHBoxLayout(typeBox);
     typeLay->setContentsMargins(0, 0, 0, 0);
@@ -119,7 +119,7 @@ void Inspector::buildTransitionPage(QVBoxLayout* page)
     });
 
     m_transLen = new ScrubField(0.04, 600, 0.04, 2);
-    m_transLen->setSuffix(" s");
+    m_transLen->setSuffix(T(" s"));
     m_transLen->onChange = [this](double sec) {
         const int frames = std::max(1, int(std::lround(sec * m_editor->project()->fps())));
         m_editor->setTransitionLength(m_transKey.leftId, m_transKey.rightId, frames, "transLenInspector");
@@ -203,7 +203,7 @@ bool Inspector::refreshTransition()
     m_content->setVisible(true);
     m_empty->setVisible(false);
     const bool video = kind == TrackKind::Video;
-    QString name = video ? T(transitionTypeInfo(span.style.type).name) : QString(audioCurveInfo(span.style.audio).name);
+    QString name = video ? T(transitionTypeInfo(span.style.type).name) : T(audioCurveInfo(span.style.audio).name);
     if (video && span.style.isLuma()) name = EffectFolders::displayName(span.style.luma);
     m_clipName->setText(name);
     m_clipName->setToolTip({});

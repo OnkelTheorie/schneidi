@@ -226,10 +226,10 @@ QString RenderSettings::summary(QSize output) const
     if (hasEncoderChoice() && encoder != VideoEncoder::Auto && encoder != VideoEncoder::Software)
         parts << videoEncoderLabel(encoder);
     if (!audioOnly() && rateNum > 0) parts << QString("%1 fps").arg(FrameRate{rateNum, rateDen}.label());
-    if (QLatin1String(f.audioCodec) == QLatin1String("aac")) parts << QString("AAC %1 kbit/s").arg(audioBitrateK);
+    if (QLatin1String(f.audioCodec) == QLatin1String("aac")) parts << "AAC " + T("%1 kbit/s").arg(audioBitrateK);
     else if (QLatin1String(f.audioCodec) == QLatin1String("libopus") && !audioOnly())
-        parts << QString("Opus %1 kbit/s").arg(audioBitrateK);
-    else if (hasAudioBitrate()) parts << QString("%1 kbit/s").arg(audioBitrateK);
+        parts << "Opus " + T("%1 kbit/s").arg(audioBitrateK);
+    else if (hasAudioBitrate()) parts << T("%1 kbit/s").arg(audioBitrateK);
     if (const int bits = validBits(*this)) parts << (bits == 32 ? T("32 Bit Float") : T("%1 Bit").arg(bits));
     if (subtitles == BurnSubtitles && !audioOnly()) parts << T("Untertitel eingebrannt");
     if (subtitles == SrtFile) parts << T("Untertitel als SRT");

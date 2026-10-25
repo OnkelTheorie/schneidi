@@ -120,7 +120,7 @@ struct TransitionStyle {
 // Order = display in menus/Inspector; id = key in the project file
 struct TransitionTypeInfo { TransitionType type; const char* id; const char* name; };
 inline constexpr TransitionTypeInfo kTransitionTypes[] = {
-    {TransitionType::CrossDissolve, "cross_dissolve", "Cross Dissolve"},
+    {TransitionType::CrossDissolve, "cross_dissolve", N_("Cross Dissolve")},
     {TransitionType::DipToColor, "dip_color", N_("Abblende über Farbe")},
     {TransitionType::WipeRight, "wipe_right", N_("Wischblende nach rechts")},
     {TransitionType::WipeLeft, "wipe_left", N_("Wischblende nach links")},
@@ -131,9 +131,9 @@ inline constexpr TransitionTypeInfo kTransitionTypes[] = {
 // Audio transition styles (names as in the DaVinci Inspector, English in the German DaVinci too)
 struct AudioCurveInfo { AudioCurve curve; const char* id; const char* name; };
 inline constexpr AudioCurveInfo kAudioCurves[] = {
-    {AudioCurve::Plus3dB, "plus3", "Cross Fade +3 dB"},
-    {AudioCurve::Zero, "zero", "Cross Fade 0 dB"},
-    {AudioCurve::Minus3dB, "minus3", "Cross Fade -3 dB"},
+    {AudioCurve::Plus3dB, "plus3", N_("Cross Fade +3 dB")},
+    {AudioCurve::Zero, "zero", N_("Cross Fade 0 dB")},
+    {AudioCurve::Minus3dB, "minus3", N_("Cross Fade -3 dB")},
 };
 inline const AudioCurveInfo& audioCurveInfo(AudioCurve c)
 {
@@ -177,6 +177,11 @@ enum class AnimParam {
 // Interpolation at a keyframe (right-click on the diamond as in DaVinci):
 // Ease In = arrive slowly, Ease Out = start slowly, Bezier = free with handles (curve editor)
 enum class KeyEase { Linear, EaseIn, EaseOut, EaseInOut, Bezier };
+// Names in the ease menus (Inspector diamond, timeline keyframes, curve editor)
+struct KeyEaseInfo { KeyEase ease; const char* name; };
+inline constexpr KeyEaseInfo kKeyEases[] = {
+    {KeyEase::Linear, N_("Linear")}, {KeyEase::EaseIn, N_("Ease In")}, {KeyEase::EaseOut, N_("Ease Out")},
+    {KeyEase::EaseInOut, N_("Ease In and Out")}, {KeyEase::Bezier, N_("Bezier")}};
 struct Keyframe {
     int frame = 0;      // source frame (like Clip::in) -> trimming at the start leaves the keyframes at the source
     double value = 0;

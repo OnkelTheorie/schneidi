@@ -68,7 +68,7 @@ TranscriptPanel::TranscriptPanel(Project* project, Editor* editor, QWidget* pare
     m_minPause->setRange(0.3, 10);
     m_minPause->setSingleStep(0.1);
     m_minPause->setDecimals(1);
-    m_minPause->setSuffix(" s");
+    m_minPause->setSuffix(T(" s"));
     m_minPause->setValue(QSettings().value("transcript/minPause", 1.0).toDouble());
     m_minPause->setToolTip(T("Pausen ab dieser Länge"));
     connect(m_minPause, &QDoubleSpinBox::valueChanged, this, [](double v) { QSettings().setValue("transcript/minPause", v); });

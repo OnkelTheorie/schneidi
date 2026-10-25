@@ -210,7 +210,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_sortKey = sort == "date" ? SortKey::Date : sort == "duration" ? SortKey::Duration : SortKey::Name;
     m_sortAscending = settings.value("mediaPool/sortAscending", true).toBool();
 
-    auto* title = new QLabel("Media Pool");
+    auto* title = new QLabel(T("Media Pool"));
     title->setObjectName("PanelTitle");
     auto* importBtn = new QToolButton;
     importBtn->setText(T("Importieren…"));
@@ -466,7 +466,7 @@ void MediaPool::importFiles(const QStringList& paths)
     if (files.isEmpty()) return;
     const QStringList failed = addFiles(files, m_currentBin); // like DaVinci: import lands in the selected bin
     if (!failed.isEmpty())
-        QMessageBox::warning(this, "Import", T("Nicht lesbar:") + "\n" + failed.join('\n'));
+        QMessageBox::warning(this, T("Import"), T("Nicht lesbar:") + "\n" + failed.join('\n'));
 }
 
 namespace {
@@ -492,7 +492,7 @@ void MediaPool::importFolder(const QString& dir)
     importFolderInto(dir, m_currentBin, 0, &failed);
     undo->endMacro();
     if (!failed.isEmpty())
-        QMessageBox::warning(this, "Import", T("Nicht lesbar:") + "\n" + failed.join('\n'));
+        QMessageBox::warning(this, T("Import"), T("Nicht lesbar:") + "\n" + failed.join('\n'));
 }
 
 // Only creates the bin if there is media in the folder (or below); returns whether anything was imported
@@ -795,7 +795,7 @@ void MediaPool::rebuildClips()
         if (!offline && m_offline.remove(m->path)) m_thumbs.remove(m->path); // file is back
         if (!m_thumbs.contains(m->path)) {
             if (offline) {
-                m_thumbs.insert(m->path, placeholderThumb("Media Offline"));
+                m_thumbs.insert(m->path, placeholderThumb(T("Media Offline")));
                 m_offline.insert(m->path);
             } else if (m->hasVideo) {
                 m_thumbs.insert(m->path, placeholderThumb(QString())); // until the worker delivers

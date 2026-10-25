@@ -45,7 +45,7 @@ using namespace InspectorDetail;
 Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
 {
     setObjectName("Panel");
-    auto* title = new QLabel("Inspector");
+    auto* title = new QLabel(T("Inspector"));
     title->setObjectName("PanelTitle");
 
     m_empty = new QLabel(T("Kein Clip ausgewählt"));
@@ -69,7 +69,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     // Page index = button ID; "Titel" (only for title clips, like DaVinci) comes first
     const struct { int id; const char* icon; const char* text; } tabs[] = {
         {kTitlePage, "T", N_("Titel")}, {kTransitionPage, "⧓", N_("Übergang")}, {kSubtitlePage, "CC", N_("Untertitel")},
-        {0, "▣", "Video"}, {1, "♫", "Audio"}, {kEffectsPage, "fx", N_("Effekte")}};
+        {0, "▣", N_("Video")}, {1, "♫", N_("Audio")}, {kEffectsPage, "fx", N_("Effekte")}};
     for (const auto& t : tabs) {
         auto* b = new QToolButton;
         b->setText(QString("%1\n%2").arg(t.icon, T(t.text)));
@@ -103,7 +103,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     const TrackKind V = TrackKind::Video;
 
     // ---- Transform ----
-    Section tr = addSection(videoLay, V, "Transform", [](Clip& c) {
+    Section tr = addSection(videoLay, V, T("Transform"), [](Clip& c) {
         const ClipTransform d;
         c.transform.zoomX = d.zoomX;
         c.transform.zoomY = d.zoomY;
@@ -126,28 +126,28 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     link->setFocusPolicy(Qt::NoFocus);
     link->setFixedSize(20, 20);
     connect(link, &QToolButton::toggled, this, [this](bool on) { m_zoomLinked = on; });
-    const auto zoom = addXY(tr, "zoom", "Zoom", 0.0, 100.0, 1.0, 0.005, 3,
+    const auto zoom = addXY(tr, "zoom", T("Zoom"), 0.0, 100.0, 1.0, 0.005, 3,
                             [](Clip& c) -> double& { return c.transform.zoomX; },
                             [](Clip& c) -> double& { return c.transform.zoomY; }, link, AnimParam::ZoomX,
                             AnimParam::ZoomY);
     // linked: change X and Y together (animated: keyframe at the playhead, like DaVinci)
     zoom.first->edit->onChange = [this, zy = zoom.second](double v) {
         if (m_zoomLinked) zy->edit->setValue(v);
-        apply(TrackKind::Video, "zoom", "Zoom", [this, v](Clip& c) {
+        apply(TrackKind::Video, "zoom", T("Zoom"), [this, v](Clip& c) {
             Keys::setValue(c, AnimParam::ZoomX, localFrame(c), v);
             if (m_zoomLinked) Keys::setValue(c, AnimParam::ZoomY, localFrame(c), v);
         });
     };
     zoom.second->edit->onChange = [this, zx = zoom.first](double v) {
         if (m_zoomLinked) zx->edit->setValue(v);
-        apply(TrackKind::Video, "zoom", "Zoom", [this, v](Clip& c) {
+        apply(TrackKind::Video, "zoom", T("Zoom"), [this, v](Clip& c) {
             Keys::setValue(c, AnimParam::ZoomY, localFrame(c), v);
             if (m_zoomLinked) Keys::setValue(c, AnimParam::ZoomX, localFrame(c), v);
         });
     };
-    addXY(tr, "pos", "Position", -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.transform.posX; },
+    addXY(tr, "pos", T("Position"), -10000, 10000, 0, 1, 3, [](Clip& c) -> double& { return c.transform.posX; },
           [](Clip& c) -> double& { return c.transform.posY; }, nullptr, AnimParam::PosX, AnimParam::PosY);
-    addSlider(tr, "rotation", "Rotation", -360, 360, 0, 0.2, 3, [](Clip& c) -> double& { return c.transform.rotation; },
+    addSlider(tr, "rotation", T("Rotation"), -360, 360, 0, 0.2, 3, [](Clip& c) -> double& { return c.transform.rotation; },
               AnimParam::Rotation);
 
     // ---- Crop ----
@@ -167,7 +167,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
                           AnimParam::CropBottom);
 
     // ---- Composite ----
-    Section comp = addSection(videoLay, V, "Composite", [](Clip& c) {
+    Section comp = addSection(videoLay, V, T("Composite"), [](Clip& c) {
         c.transform.opacity = 100;
         c.transform.compositeOn = true;
         Keys::clear(c, AnimParam::Opacity);
@@ -176,7 +176,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
               AnimParam::Opacity);
 
     // ---- Green Screen (effect from the EffectRegistry) ----
-    Section key = addSection(videoLay, V, "Green Screen", [](Clip& c) {
+    Section key = addSection(videoLay, V, T("Green Screen"), [](Clip& c) {
         c.effects.removeIf([](const EffectInstance& x) { return x.effectId == "chromakey"; });
     }, [](Clip& c) -> bool& { return ensureEffect(c, "chromakey").enabled; });
     auto* swatch = new QToolButton;
@@ -272,7 +272,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     Param* volume = addSlider(vol, "volume", T("Lautstärke"), kMinVolumeDb, kMaxVolumeDb, 0, 0.1, 2,
                               [](Clip& c) -> double& { return c.volumeDb; }, AnimParam::Volume);
     volume->edit->setMinimumText("-∞");
-    addSlider(vol, "pan", "Pan", -100, 100, 0, 1, 2, [](Clip& c) -> double& { return c.pan; }, AnimParam::Pan);
+    addSlider(vol, "pan", T("Panorama"), -100, 100, 0, 1, 2, [](Clip& c) -> double& { return c.pan; }, AnimParam::Pan);
     // Audio stream of the file (OBS: desktop audio, mic … in one file); only visible if there are several
     auto* streamLabel = rowLabel(T("Quell-Tonspur"));
     auto* streamBox = new QComboBox;

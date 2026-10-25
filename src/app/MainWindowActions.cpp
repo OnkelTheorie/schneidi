@@ -204,7 +204,7 @@ void MainWindow::buildActions()
 
     // Organized like DaVinci: the most frequent commands on top, the rest in submenus (otherwise the menu fills the screen).
     // Key bindings category stays "Timeline" (makeAction takes the topmost menu).
-    QMenu* timeline = menuBar()->addMenu("&Timeline");
+    QMenu* timeline = menuBar()->addMenu(T("&Timeline"));
     makeAction(timeline, "split", T("Clip am Playhead teilen"), QKeySequence("Ctrl+B"),
                [this, tv] { m_editor->splitAtPlayhead(tv->playhead()); });
     makeAction(timeline, "add_transition", T("Übergang hinzufügen (Cross Dissolve)"), QKeySequence("Ctrl+T"),
@@ -412,7 +412,7 @@ void MainWindow::buildActions()
     makeAction(viewOpts, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [tv] { tv->zoomToFit(); });
 
     QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
-    makeAction(play, "play_pause", "Play/Pause", QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
+    makeAction(play, "play_pause", T("Play/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
     makeAction(play, "shuttle_back", T("Rückwärts (J)"), QKeySequence("J"), [this] { shuttle(-1); });
     makeAction(play, "stop", T("Stopp (K)"), QKeySequence("K"), [this] { m_engine->pause(); });
     makeAction(play, "shuttle_fwd", T("Vorwärts (L)"), QKeySequence("L"), [this] { shuttle(1); });
@@ -566,7 +566,7 @@ void MainWindow::buildActions()
 #endif
 
     // Color menu like DaVinci (Color → Apply Grade from One/Two Clips Prior); works on the Color page
-    QMenu* colorMenu = menuBar()->addMenu("&Color");
+    QMenu* colorMenu = menuBar()->addMenu(T("&Color"));
     makeAction(colorMenu, "grade_copy", T("Grade kopieren (Color-Seite: Strg+C)"), QKeySequence(),
                [this] { m_colorPanel->copyGrade(); });
     makeAction(colorMenu, "grade_paste", T("Grade einfügen (Color-Seite: Strg+V)"), QKeySequence(),

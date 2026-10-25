@@ -168,12 +168,12 @@ QWidget* MainWindow::buildTopBar()
         });
         return b;
     };
-    m_poolToggle = makeToggle("▦ Media Pool", "mediaPool", true, m_mediaPool);
-    m_effectsToggle = makeToggle("✦ Effects", "effects", false, m_effects);
-    m_storageToggle = makeToggle("▤ Media Storage", "mediaStorage", false, m_storage);
+    m_poolToggle = makeToggle("▦ " + T("Media Pool"), "mediaPool", true, m_mediaPool);
+    m_effectsToggle = makeToggle("✦ " + T("Effects"), "effects", false, m_effects);
+    m_storageToggle = makeToggle("▤ " + T("Media Storage"), "mediaStorage", false, m_storage);
     m_storageToggle->setToolTip(T("Ordner durchsuchen und Clips direkt in Media Pool/Timeline ziehen"));
-    m_inspectorToggle = makeToggle("☰ Inspector", "inspector", true, m_inspector);
-    m_mixerToggle = makeToggle("▥ Mixer", "mixer", false, m_mixer);
+    m_inspectorToggle = makeToggle("☰ " + T("Inspector"), "inspector", true, m_inspector);
+    m_mixerToggle = makeToggle("▥ " + T("Mixer"), "mixer", false, m_mixer);
     m_transcriptToggle = makeToggle("¶ " + T("Transkript"), "transcript", false, m_transcript);
     m_transcriptToggle->setToolTip(T("Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline"));
 
@@ -223,14 +223,14 @@ QWidget* MainWindow::buildPageBar()
 
     m_pageButtons = new QButtonGroup(this);
     const struct { const char* icon; const char* name; Page page; } pages[] = {
-        {"▤", "Media", Page::Media},
-        {"✂", "Edit", Page::Edit},
-        {"◐", "Color", Page::Color},
-        {"⇪", "Deliver", Page::Deliver},
+        {"▤", N_("Media"), Page::Media},
+        {"✂", N_("Edit"), Page::Edit},
+        {"◐", N_("Color"), Page::Color},
+        {"⇪", N_("Deliver"), Page::Deliver},
     };
     for (const auto& pg : pages) {
         auto* b = new QToolButton;
-        b->setText(QString("%1\n%2").arg(pg.icon, pg.name));
+        b->setText(QString("%1\n%2").arg(pg.icon, T(pg.name)));
         b->setToolButtonStyle(Qt::ToolButtonTextOnly);
         b->setCheckable(true);
         b->setChecked(pg.page == m_page);

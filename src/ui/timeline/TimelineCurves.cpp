@@ -519,11 +519,8 @@ bool TimelineView::curveContextMenu(const QPoint& pos, const QPoint& globalPos)
     const AnimParam param = h->param;
 
     QMenu menu(this);
-    const struct { KeyEase ease; const char* name; } eases[] = {
-        {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
-        {KeyEase::EaseInOut, "Ease In and Out"}, {KeyEase::Bezier, "Bezier"}};
-    for (const auto& it : eases) {
-        QAction* a = menu.addAction(it.name); // as in DaVinci, English even in the German version
+    for (const auto& it : kKeyEases) {
+        QAction* a = menu.addAction(T(it.name));
         a->setCheckable(true);
         a->setChecked(k[h->index].ease == it.ease);
         connect(a, &QAction::triggered, this, [this, id, times, param, ease = it.ease] {

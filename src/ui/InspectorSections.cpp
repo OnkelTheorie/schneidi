@@ -120,11 +120,8 @@ QWidget* Inspector::keyButtons(TrackKind kind, bool title, const QVector<AnimPar
         if (!c || !onKey(*c)) return;
         const Keyframe* k = Keys::keyAt(*c, params.first(), localFrame(*c));
         QMenu menu(this);
-        const struct { KeyEase ease; const char* name; } eases[] = {
-            {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
-            {KeyEase::EaseInOut, "Ease In and Out"}, {KeyEase::Bezier, "Bezier"}};
-        for (const auto& e : eases) {
-            QAction* a = menu.addAction(e.name); // as in DaVinci, English even in the German version
+        for (const auto& e : kKeyEases) {
+            QAction* a = menu.addAction(T(e.name));
             a->setCheckable(true);
             a->setChecked(k && k->ease == e.ease);
             connect(a, &QAction::triggered, this, [=, this, ease = e.ease] {

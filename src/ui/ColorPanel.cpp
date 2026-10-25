@@ -169,10 +169,10 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     setObjectName("Panel");
     using P = AnimParam;
     m_wheels = {
-        {"Lift", {P::GradeLiftY, P::GradeLiftR, P::GradeLiftG, P::GradeLiftB}, 0.0, 0.25},
-        {"Gamma", {P::GradeGammaY, P::GradeGammaR, P::GradeGammaG, P::GradeGammaB}, 0.0, 0.25},
-        {"Gain", {P::GradeGainY, P::GradeGainR, P::GradeGainG, P::GradeGainB}, 1.0, 0.5},
-        {"Offset", {P::GradeOffsetY, P::GradeOffsetR, P::GradeOffsetG, P::GradeOffsetB}, 25.0, 25.0},
+        {N_("Lift"), {P::GradeLiftY, P::GradeLiftR, P::GradeLiftG, P::GradeLiftB}, 0.0, 0.25},
+        {N_("Gamma"), {P::GradeGammaY, P::GradeGammaR, P::GradeGammaG, P::GradeGammaB}, 0.0, 0.25},
+        {N_("Gain"), {P::GradeGainY, P::GradeGainR, P::GradeGainG, P::GradeGainB}, 1.0, 0.5},
+        {N_("Offset"), {P::GradeOffsetY, P::GradeOffsetR, P::GradeOffsetG, P::GradeOffsetB}, 25.0, 25.0},
     };
 
     m_overlay = new WindowOverlay(m_editor, [this] { return targets(); }, this);
@@ -249,14 +249,14 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     bar->setSpacing(14);
     bar->addStretch(1);
     bar->addWidget(buildSlider(m_sliders[0], T("Kontrast"), 0, 2, 0.002, 3));
-    bar->addWidget(buildSlider(m_sliders[1], "Pivot", 0, 1, 0.001, 3));
+    bar->addWidget(buildSlider(m_sliders[1], T("Pivot"), 0, 1, 0.001, 3));
     bar->addWidget(buildSlider(m_sliders[2], T("Sättigung"), 0, 100, 0.1, 2));
     bar->addWidget(buildSlider(m_sliders[3], T("Temperatur"), -4000, 4000, 5, 1));
     bar->addWidget(buildSlider(m_sliders[4], T("Tönung"), -100, 100, 0.1, 2));
     bar->addWidget(buildSlider(m_sliders[5], T("Belichtung"), -4, 4, 0.01, 2));
 
     // LUT
-    auto* lutLabel = new QLabel("LUT");
+    auto* lutLabel = new QLabel(T("LUT"));
     lutLabel->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
     m_lutName = new QLabel;
     m_lutName->setMinimumWidth(120);
@@ -330,11 +330,11 @@ QWidget* ColorPanel::buildWheel(Wheel& w)
     lay->setSpacing(4);
 
     auto* head = new QHBoxLayout;
-    auto* name = new QLabel(w.name); // as in DaVinci, English even in the German Resolve
+    auto* name = new QLabel(T(w.name));
     name->setStyleSheet(QString("color: %1;").arg(Theme::text.name()));
-    auto* reset = smallButton("↺", T("%1 zurücksetzen").arg(w.name));
+    auto* reset = smallButton("↺", T("%1 zurücksetzen").arg(T(w.name)));
     const QVector<AnimParam> params{w.p[0], w.p[1], w.p[2], w.p[3]};
-    connect(reset, &QToolButton::clicked, this, [this, params, n = w.name] {
+    connect(reset, &QToolButton::clicked, this, [this, params, n = T(w.name)] {
         QVector<AnimParam> list;
         for (AnimParam p : params) list << mapped(p);
         m_editor->resetGrade(targets(), list, m_playhead, T("%1 zurücksetzen").arg(n));
@@ -360,7 +360,7 @@ QWidget* ColorPanel::buildWheel(Wheel& w)
         double rgb[3];
         uvToRgb(u * w.range, v * w.range, rgb);
         setValues({{p[0], w.neutral + y + rgb[0]}, {p[1], w.neutral + y + rgb[1]}, {p[2], w.neutral + y + rgb[2]}},
-                  w.name, QString("color:wheel:%1:%2").arg(w.name).arg(m_layer));
+                  T(w.name), QString("color:wheel:%1:%2").arg(w.name).arg(m_layer));
     };
     w.wheel->onFinish = [this] { finish(); };
 
@@ -381,7 +381,7 @@ QWidget* ColorPanel::buildWheel(Wheel& w)
         f->setFixedWidth(46);
         f->setValue(w.neutral);
         const AnimParam p = w.p[i];
-        f->onChange = [this, p, n = w.name](double v) {
+        f->onChange = [this, p, n = T(w.name)](double v) {
             setValues({{mapped(p), v}}, n, QString("color:%1").arg(int(mapped(p))));
         };
         f->onFinish = [this] { finish(); };

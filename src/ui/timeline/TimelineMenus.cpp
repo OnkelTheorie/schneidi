@@ -181,11 +181,8 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
             for (const Keyframe& kf : track)
                 if (kf.frame == c->in + k->t) current = kf.ease;
         QMenu menu(this);
-        const struct { KeyEase ease; const char* name; } eases[] = {
-            {KeyEase::Linear, "Linear"}, {KeyEase::EaseIn, "Ease In"}, {KeyEase::EaseOut, "Ease Out"},
-            {KeyEase::EaseInOut, "Ease In and Out"}, {KeyEase::Bezier, "Bezier"}};
-        for (const auto& it : eases) {
-            QAction* a = menu.addAction(it.name); // as in DaVinci, English even in the German version
+        for (const auto& it : kKeyEases) {
+            QAction* a = menu.addAction(T(it.name));
             a->setCheckable(true);
             a->setChecked(current == it.ease);
             connect(a, &QAction::triggered, this, [this, id = k->clipId, times, ease = it.ease] {
@@ -230,7 +227,7 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
         menu.addSeparator();
     } else {
         for (const auto& i : kAudioCurves) {
-            QAction* a = menu.addAction(i.name);
+            QAction* a = menu.addAction(T(i.name));
             a->setCheckable(true);
             a->setChecked(s.style.audio == i.curve);
             connect(a, &QAction::triggered, this, [this, s, curve = i.curve] {

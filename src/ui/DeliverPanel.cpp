@@ -122,7 +122,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     });
 
     m_audioBitrate = new QComboBox;
-    for (int k : {128, 192, 256, 320}) m_audioBitrate->addItem(QString("%1 kbit/s").arg(k), k);
+    for (int k : {128, 192, 256, 320}) m_audioBitrate->addItem(T("%1 kbit/s").arg(k), k);
 
     // Bit depth (WAV/AIFF/ProRes/Apple Lossless); entries depending on the format, see updateControls
     m_audioBits = new QComboBox;

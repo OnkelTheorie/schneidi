@@ -306,7 +306,7 @@ public:
     {
         if (v == m_value) return;
         m_value = v;
-        setToolTip(QStringLiteral("Pan: ") + panText(v));
+        setToolTip(T("Pan: %1").arg(panText(v)));
         update();
     }
 
@@ -713,7 +713,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
-    auto* title = new QLabel("Mixer");
+    auto* title = new QLabel(T("Mixer"));
     title->setObjectName("PanelTitle");
     root->addWidget(title);
 
@@ -739,7 +739,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
 
     // Master on the right, fixed (like the bus in DaVinci)
     m_master = new ChannelStrip(true);
-    m_master->name->setText("Master");
+    m_master->name->setText(T("Master"));
     m_master->setStyleSheet(m_master->styleSheet() +
                             QString("QWidget#Strip { border-left: 2px solid %1; }").arg(Theme::border.name()));
     // the thick left border sits on top of the content -> make room for it, the meter keeps its full width

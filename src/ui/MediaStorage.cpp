@@ -127,7 +127,7 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
 {
     setObjectName("Panel");
 
-    auto* title = new QLabel("Media Storage");
+    auto* title = new QLabel(T("Media Storage"));
     title->setObjectName("PanelTitle");
     auto* addBtn = new QToolButton;
     addBtn->setText(T("+ Ordner"));

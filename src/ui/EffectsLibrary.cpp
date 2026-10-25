@@ -543,7 +543,7 @@ void EffectsLibrary::rebuild()
     auto audioTransitions = [&] {
         QVector<Entry> out;
         for (const auto& i : kAudioCurves)
-            out << Entry{QString::fromLatin1(i.name), QString("audio:%1").arg(i.id), audioIcon()};
+            out << Entry{T(i.name), QString("audio:%1").arg(i.id), audioIcon()};
         return out;
     };
     auto filters = [&](const QString& category, bool video = true) {
@@ -562,7 +562,7 @@ void EffectsLibrary::rebuild()
         }
         return out;
     };
-    const QVector<Entry> titles{Entry{QStringLiteral("Text"), kTitleData, titleIcon()}};
+    const QVector<Entry> titles{Entry{T("Text"), kTitleData, titleIcon()}};
 
     switch (shown) {
     case All: // Toolbox: all groups with header like in DaVinci
@@ -650,7 +650,7 @@ const EffectsLibrary::PresetEntry& EffectsLibrary::presetEntry(const QString& pa
     QStringList names;
     for (const EffectInstance& x : m.effects)
         if (const EffectDescriptor* d = EffectRegistry::find(x.effectId)) names << d->name;
-    if (!m.lut.isEmpty()) names << "LUT " + QFileInfo(m.lut).fileName();
+    if (!m.lut.isEmpty()) names << T("LUT") + " " + QFileInfo(m.lut).fileName();
     if (!names.isEmpty()) tip << T("Effekte: %1").arg(names.join(", "));
     if (!m.skipped.isEmpty()) tip << T("Nicht unterstützt (ausgelassen): %1").arg(m.skipped.join(", "));
     if (!m.keys.isEmpty()) tip << T("Mit Keyframes");

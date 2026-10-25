@@ -77,7 +77,8 @@
 // ---- Project file ---------------------------------------------------------------
 
 namespace {
-const QString kFileFilter = T("schneidi-Projekt (*.%1)").arg(ProjectFile::Extension);
+// A function, not a global: a global would be built before the dictionary is loaded (always German)
+QString fileFilter() { return T("schneidi-Projekt (*.%1)").arg(ProjectFile::Extension); }
 }
 
 QString MainWindow::autosavePath()
@@ -213,7 +214,7 @@ void MainWindow::openProjectDialog()
 {
     if (!maybeLeaveProject()) return;
     const QString dir = m_projectPath.isEmpty() ? QDir::homePath() : QFileInfo(m_projectPath).absolutePath();
-    const QString path = QFileDialog::getOpenFileName(this, T("Projekt öffnen"), dir, kFileFilter);
+    const QString path = QFileDialog::getOpenFileName(this, T("Projekt öffnen"), dir, fileFilter());
     if (!path.isEmpty()) openProject(path);
 }
 
@@ -336,7 +337,7 @@ void MainWindow::openBackupDialog()
     QString dir = ProjectFile::backupDir(m_projectPath);
     if (!QFileInfo::exists(dir)) dir = ProjectFile::backupDir({});
     QDir().mkpath(dir);
-    const QString path = QFileDialog::getOpenFileName(this, T("Sicherungskopie öffnen"), dir, kFileFilter);
+    const QString path = QFileDialog::getOpenFileName(this, T("Sicherungskopie öffnen"), dir, fileFilter());
     if (path.isEmpty()) return;
     ProjectData data;
     QString error;
@@ -358,7 +359,7 @@ bool MainWindow::saveAs()
     QString path = QFileDialog::getSaveFileName(
         this, T("Projekt speichern unter"),
         m_projectPath.isEmpty() ? QDir::home().filePath(T("Unbenannt.%1").arg(ProjectFile::Extension)) : m_projectPath,
-        kFileFilter);
+        fileFilter());
     if (path.isEmpty()) return false;
     if (QFileInfo(path).suffix() != ProjectFile::Extension) path += QString(".%1").arg(ProjectFile::Extension);
     return saveTo(path);
