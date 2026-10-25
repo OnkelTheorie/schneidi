@@ -473,6 +473,11 @@ int main(int argc, char** argv)
                                                            "-c:v", "libvpx-vp9", "-auto-alt-ref", "0"}), 25);
 
     auto p25 = makeProfile(fmt25);
+    // 4:2:2 in portrait (iPhone ProRes): a quarter turn per plane garbled the chroma (max diff 255) -> MLT takes it
+    if (const QString rotated = Check::makeMedia(file("rotated-prores.mov"), {"-display_rotation", "-90", "-i",
+                                                                              file("prores.mov"), "-c", "copy"});
+        !rotated.isEmpty())
+        Check::report(!Video::openProducer(*p25, rotated, {}), "rotated 4:2:2 left to MLT", __FILE__, __LINE__);
     if (const QString dbg = qEnvironmentVariable("SCHNEIDI_DEBUG_DECODER"); !dbg.isEmpty()) {
         for (const Media& m : media)
             if (m.name == dbg) debugPositions(m, *p25);

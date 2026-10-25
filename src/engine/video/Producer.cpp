@@ -658,6 +658,14 @@ std::unique_ptr<Mlt::Producer> openProducer(Mlt::Profile& profile, const QString
         return nullptr;
     // Formats swscale cannot read are no use
     if (!sws_isSupportedInput(withRange(info.format, info.fullRange))) return nullptr;
+    const int turns = std::abs(info.rotation - 90) < 1.0 ? 1 : std::abs(info.rotation - 180) < 1.0 ? 2
+                    : std::abs(info.rotation - 270) < 1.0 ? 3 : 0;
+    // A quarter turn of 4:2:2 (iPhone ProRes in portrait) leaves chroma the reader's plane-wise turn cannot hold: MLT
+    // converts the picture first
+    if (turns % 2) {
+        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(info.format);
+        if (!desc || desc->log2_chroma_w != desc->log2_chroma_h) return nullptr;
+    }
     if (info.frameRate.num <= 0 || info.frameRate.den <= 0) reader->setFrameRate({profile.frame_rate_num(), profile.frame_rate_den()});
 
     mlt_producer raw = mlt_producer_new(profile.get_profile());
@@ -666,8 +674,7 @@ std::unique_ptr<Mlt::Producer> openProducer(Mlt::Profile& profile, const QString
     d->reader = std::move(reader);
     d->info = d->reader->info();
     d->sourceFps = av_q2d(d->info.frameRate);
-    d->turns = std::abs(d->info.rotation - 90) < 1.0 ? 1 : std::abs(d->info.rotation - 180) < 1.0 ? 2
-             : std::abs(d->info.rotation - 270) < 1.0 ? 3 : 0;
+    d->turns = turns;
     d->fast = options.fastConvert && !qEnvironmentVariableIsSet("SCHNEIDI_EXACT_PREVIEW"); // exact: comparisons
     d->native = pickImageFormat(withRange(d->info.format, d->info.fullRange), mlt_image_yuv422);
     raw->child = d;

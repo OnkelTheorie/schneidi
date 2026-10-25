@@ -173,6 +173,8 @@ AVFrame* turned(const AVFrame* src, int quarters)
     const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(fmt);
     if (!desc || (desc->flags & (AV_PIX_FMT_FLAG_BITSTREAM | AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_HWACCEL)))
         return nullptr;
+    // Turned sideways, 4:2:2 chroma would need 4:4:0 (FFmpeg's transpose refuses such formats too)
+    if (quarters != 2 && desc->log2_chroma_w != desc->log2_chroma_h) return nullptr;
     AVFrame* dst = av_frame_alloc();
     dst->format = fmt;
     dst->width = quarters == 2 ? src->width : src->height;
