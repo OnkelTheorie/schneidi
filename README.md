@@ -6,7 +6,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
-**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage or Debian package). Windows: no download yet – [build it yourself](#building); an installer is planned for 1.0.
+**[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage or Debian package). Windows: no download yet – [build it yourself](#building) (tested less thoroughly than Linux); an installer is planned for 1.0.
 
 > Status: early development (0.x). The project file format may still change between versions.
 
@@ -53,8 +53,8 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - Files with several audio streams (OBS): import presets per stream title – mute the mix, leave out streams, name the tracks
 - Clip speed / retime
 - **Timeline exchange:** import and export FCP7 XML, OpenTimelineIO and EDL – bring a cut over from Premiere Pro or DaVinci Resolve, or hand one over for finishing
-- Proxy and render cache for smooth playback
-- Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available; YouTube/phone presets cap the bit rate
+- Own video decoding, also on the graphics card (NVIDIA, AMD/Intel via VA-API); proxy media and a render cache for smooth playback – schneidi offers proxies when playback cannot keep up
+- Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available; YouTube/phone presets cap the bit rate; **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
 - Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; an optional download under Workspace → Extensions
 - Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
 - **Command line and MCP server** (`schneidi-cli`): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
@@ -62,7 +62,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 
 ## How light is it?
 
-Measured with the current development version (0.11) on a Ryzen 5 5600X restricted with Linux cgroups (cores, RAM, no swap) – a stand-in for old hardware, not a real old laptop.
+Measured with 0.11 on a Ryzen 5 5600X restricted with Linux cgroups (cores, RAM, no swap) – a stand-in for old hardware, not a real old laptop.
 
 **Starting:**
 
@@ -157,19 +157,18 @@ The AppImage contains the CLI too: `./schneidi-<version>-x86_64.AppImage cli hel
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.10.x – bug fixes
-Only fixes for problems found in 0.10.0 – new features wait for the next version.
+### 0.11.x – bug fixes
+Only fixes for problems found in 0.11.0 – new features wait for the next version.
 
-### 0.11 – Boost Update
+### 0.12 – AI Update
 | Feature | What it does |
 |---|---|
-| **Own export path** | Decoding, fetching pictures and encoding run in parallel without extra copies – exports about 1.3–1.6× faster (measured: NVENC 49 → 75 frames/s, x264 ultrafast 45 → 68, x264 medium 34 → 41 on the project above) |
-| **Smart Render** | Parts of the timeline that are not changed are copied instead of encoded again |
-| **Own decoding, also on the graphics card** | Smooth playback of large files with 2 cores and a graphics card, or 4 cores without one (see How light is it?) |
-| **Crash report** | After a crash, schneidi offers a local report you can look at and send yourself – no telemetry |
+| **AI chat in the app** | A chat panel next to the timeline that edits live with the same tools as the MCP server – Claude, OpenAI-compatible or local (Ollama); let it work directly or review its changes and accept them as one undo step |
+| **Claude skill/plugin** | One command installs everything Claude needs to edit with schneidi |
+| **Server version** | schneidi on a server or in Docker, for fully automatic editing through MCP, CLI or HTTP |
+| **Update notice** | Once a day schneidi asks GitHub for a new release – can be switched off, no error without a network |
 
 ### Later
-- **0.12 – AI Update:** an AI chat right in the app (Claude, OpenAI-compatible or local), a Claude skill/plugin, a server version for fully automatic editing, an update notice
 - **0.13 – Everyday Update:** change the order of effects, slip/slide tools, color grades shown in the filmstrip and Media Pool, Media Pool filters
 - **0.14 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, voiceover recording, text to speech
 - **0.15 – Template Update:** templates with placeholders filled from a list, brand kit
