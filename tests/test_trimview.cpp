@@ -259,7 +259,8 @@ void testTimelineSignals()
         CHECK(views[1].kind == TrimKind::Slip);
         CHECK_EQ(views[1].small.size(), 2);
         // In of b as the slip preview computes it (TimelineOps decides the direction)
-        const Clip* b = TimelineOps::findClip(m.editor.previewTrimEdit(m.editor.trimEdit(TrimKind::Slip, 2), views[1].delta), 2);
+        const Timeline preview = m.editor.previewTrimEdit(m.editor.trimEdit(TrimKind::Slip, 2), views[1].delta);
+        const Clip* b = TimelineOps::findClip(preview, 2);
         if (CHECK(b) && CHECK_EQ(views[1].main.size(), 2)) PANE(views[1].main[0], 2, false, b->in, 106);
     }
     mouse(tv, QEvent::MouseButtonRelease, mid, Qt::NoButton);
