@@ -224,6 +224,11 @@ bool ExportWriter::wanted()
     return choice != QLatin1String("mlt");
 }
 
+void ExportWriter::setWanted(bool own)
+{
+    QSettings().setValue("render/writer", own ? "own" : "mlt");
+}
+
 bool ExportWriter::supports(const QString& path, const QString& videoCodec, const QString& pixFmt, const QString& audioCodec,
                             const QString& sampleFormat)
 {

@@ -30,7 +30,9 @@
 #include "engine/RenderCache.h"
 #include "engine/audio/Device.h"
 #include "engine/audio/Path.h"
+#include "engine/ExportWriter.h"
 #include "engine/video/Hardware.h"
+#include "engine/video/Producer.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
@@ -454,6 +456,17 @@ void MainWindow::buildActions()
     connect(gpuDecode, &QAction::toggled, this, [this](bool on) {
         Video::Hardware::setEnabled(on);
         statusBar()->showMessage(T("Gilt für Clips, die ab jetzt geöffnet werden (alle nach einem Neustart)"), 6000);
+    });
+    // Way back while the own decoder and export path (0.11) are new: MLT decodes and writes as up to 0.10
+    auto* compat = makeAction(play, "compat_mlt", T("Kompatibilitätsmodus: Bild und Export über MLT"), QKeySequence(),
+                              [] {});
+    compat->setCheckable(true);
+    compat->setChecked(!Video::ownDecoder() || !ExportWriter::wanted());
+    connect(compat, &QAction::toggled, this, [this](bool on) {
+        Video::setOwnDecoder(!on);
+        ExportWriter::setWanted(!on);
+        offerRestart(T("Der Kompatibilitätsmodus wirkt nach dem Neustart von schneidi."), T("Jetzt neu starten"),
+                     T("Später"));
     });
     // Like DaVinci (Playback → Render Cache: None/Smart/User); export always renders from the originals
     QMenu* cacheMenu = play->addMenu(T("Render-Cache"));

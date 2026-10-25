@@ -31,7 +31,9 @@ struct ProducerOptions {
 // nullptr if the own decoder does not take this file (MLT opens it then)
 std::unique_ptr<Mlt::Producer> openProducer(Mlt::Profile& profile, const QString& path, const ProducerOptions& options);
 
-// Own decoder switched on (SCHNEIDI_DECODER != "mlt")
+// Own decoder switched on (SCHNEIDI_DECODER != "mlt", else the setting "video/decoder" != "mlt"); read once per run
 bool ownDecoder();
+// The setting (compatibility mode in the Playback menu): takes effect after a restart
+void setOwnDecoder(bool own);
 
 } // namespace Video

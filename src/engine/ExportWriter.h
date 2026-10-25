@@ -59,6 +59,7 @@ public:
                          const QString& sampleFormat);
     // Own path wanted? SCHNEIDI_EXPORT=mlt (or the setting "render/writer" = "mlt") goes back to MLT's consumer
     static bool wanted();
+    static void setWanted(bool own); // the setting "render/writer"
 
     // source (and sound) must outlive the writer (the Exporter destroys the writer first). sound: smart render only,
     // delivers the sound of the output frames (the source then only the pictures)

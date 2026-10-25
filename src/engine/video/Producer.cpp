@@ -13,6 +13,7 @@ extern "C" {
 }
 
 #include <QByteArray>
+#include <QSettings>
 
 #include <algorithm>
 #include <atomic>
@@ -638,8 +639,17 @@ void setStreamMetadata(mlt_properties p, const AVFormatContext* fmt, const Info&
 
 bool ownDecoder()
 {
-    static const bool on = qEnvironmentVariable("SCHNEIDI_DECODER").trimmed().toLower() != "mlt";
+    static const bool on = [] {
+        QString choice = qEnvironmentVariable("SCHNEIDI_DECODER").trimmed().toLower();
+        if (choice.isEmpty()) choice = QSettings().value("video/decoder").toString().trimmed().toLower();
+        return choice != QLatin1String("mlt");
+    }();
     return on;
+}
+
+void setOwnDecoder(bool own)
+{
+    QSettings().setValue("video/decoder", own ? "own" : "mlt");
 }
 
 std::unique_ptr<Mlt::Producer> openProducer(Mlt::Profile& profile, const QString& path, const ProducerOptions& options)
