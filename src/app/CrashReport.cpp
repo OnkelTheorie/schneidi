@@ -26,6 +26,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
 #if defined(__GLIBC__)
 #include <execinfo.h>
@@ -270,12 +271,30 @@ void install()
     void* warm[1];
     backtrace(warm, 1); // loads libgcc now: the first call may allocate, not allowed in the handler
 #endif
+#ifndef Q_OS_WIN
+    // A stack overflow (endless recursion) leaves no stack for the handler: it gets its own (main thread, where the
+    // UI recurses; other threads keep the plain handler)
+    static char altStack[64 * 1024];
+    stack_t ss{};
+    ss.ss_sp = altStack;
+    ss.ss_size = sizeof altStack;
+    const bool onOwnStack = sigaltstack(&ss, nullptr) == 0;
+#endif
     for (const int sig : {SIGSEGV, SIGABRT, SIGFPE, SIGILL
 #ifdef SIGBUS
                           , SIGBUS
 #endif
-         })
+         }) {
+#ifdef Q_OS_WIN
         std::signal(sig, onSignal);
+#else
+        struct sigaction sa{};
+        sa.sa_handler = onSignal;
+        sa.sa_flags = onOwnStack ? SA_ONSTACK : 0;
+        sigemptyset(&sa.sa_mask);
+        sigaction(sig, &sa, nullptr);
+#endif
+    }
     s_previousTerminate = std::set_terminate(onTerminate);
 #ifdef Q_OS_WIN
     SetUnhandledExceptionFilter(onException);
