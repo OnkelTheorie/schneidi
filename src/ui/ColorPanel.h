@@ -47,6 +47,8 @@ public:
     // Tracker of the chosen window from the playhead to the clip end (forward) or start, in the background
     void startTracking(bool forward);
     void stopTracking();
+    // Another project replaces this one: stop and drop the result (clip ids start over in every project)
+    void discardTracking();
     bool tracking() const { return m_trackThread != nullptr; }
 
 public slots:
@@ -131,5 +133,6 @@ private:
     QThread* m_trackThread = nullptr;
     std::shared_ptr<std::atomic<bool>> m_trackCancel;
     std::shared_ptr<std::atomic<int>> m_trackDone, m_trackTotal;
+    int m_trackGeneration = 0; // +1 per run and by discardTracking(): a finished run of another one is dropped
     QTimer m_trackPoll;
 };

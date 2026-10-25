@@ -202,6 +202,7 @@ void MainWindow::newProject()
     if (!maybeLeaveProject()) return;
     m_engine->pause();
     m_selection->clear();
+    m_colorPanel->discardTracking();
     m_engine->setFormat(ProjectFormat{}); // media lengths already fit (empty) -> do not re-read
     m_project->reset();
     m_sourcePos.clear();
@@ -318,6 +319,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
 
     m_engine->pause();
     m_selection->clear();
+    m_colorPanel->discardTracking();
     m_probeCache.clear();
     m_engine->setFormat(data.format); // media lengths in the file already count at this frame rate
     m_project->load(data);

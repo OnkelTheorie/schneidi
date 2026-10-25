@@ -846,14 +846,19 @@ void ColorPanel::startTracking(bool forward)
             total->store(t);
         }, cancel.get());
     });
-    connect(m_trackThread, &QThread::finished, this, [this, result, clipId = clip.id, start = clip.start, n, from] {
+    m_trackThread->setParent(this); // the destructor waits for it, then it goes with the panel
+    const int generation = ++m_trackGeneration;
+    connect(m_trackThread, &QThread::finished, this, [this, result, clipId = clip.id, start = clip.start, n, from,
+                                                      generation] {
         m_trackThread->wait();
         delete m_trackThread;
         m_trackThread = nullptr;
         m_trackPoll.stop();
         const ProjectFormat& fmt = m_editor->project()->format();
         QString text;
-        if (!result->error.isEmpty()) {
+        if (generation != m_trackGeneration) {
+            // discarded: the clip id may name another clip by now
+        } else if (!result->error.isEmpty()) {
             text = result->error;
         } else {
             // The clip may have moved meanwhile: the keyframes count from its start, so they still fit
@@ -880,4 +885,11 @@ void ColorPanel::startTracking(bool forward)
 void ColorPanel::stopTracking()
 {
     if (m_trackCancel) m_trackCancel->store(true);
+}
+
+void ColorPanel::discardTracking()
+{
+    if (!tracking()) return;
+    stopTracking();
+    ++m_trackGeneration;
 }

@@ -21,6 +21,7 @@
 #include <QApplication>
 #include <QMouseEvent>
 #include <QSignalSpy>
+#include <QThread>
 #include <QTemporaryDir>
 #include <QUndoStack>
 #include <clocale>
@@ -504,6 +505,23 @@ void testTrack(const QString& media)
     CHECK(!panel.tracking());
     t = TimelineOps::findClip(p.timeline(), id);
     CHECK(Keys::keyAt(*t, GradeWindows::param(1, "x"), 74));
+    // Another project opened meanwhile: the run is dropped (its clip id may name another clip there)
+    p.edit("keys", [&](Timeline& tl) {
+        Clip* c = TimelineOps::findClip(tl, id);
+        for (AnimParam k : {GradeWindows::param(1, "x"), GradeWindows::param(1, "y")})
+            for (int frame : Keys::keyTimes(*c, {k}))
+                if (frame > 0) Keys::removeKey(*c, k, frame);
+    });
+    panel.startTracking(true);
+    if (QThread* worker = panel.findChild<QThread*>()) { // let it finish first: its whole result is waiting
+        QSignalSpy finished(worker, &QThread::finished);
+        for (int i = 0; i < 12000 && finished.isEmpty(); ++i) QThread::msleep(10);
+    }
+    panel.discardTracking();
+    CHECK(spy.wait(120000));
+    CHECK(!panel.tracking());
+    t = TimelineOps::findClip(p.timeline(), id);
+    CHECK_EQ(Keys::keyTimes(*t, {GradeWindows::param(1, "x")}).size(), 1);
 }
 
 } // namespace
