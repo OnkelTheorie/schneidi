@@ -26,6 +26,10 @@
 #include <cmath>
 #include <functional>
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
+
 namespace {
 
 const ProjectFormat kFmt{640, 360, {25, 1}};
@@ -223,6 +227,18 @@ void testCompare(const QString& dir)
         compare("mltsound", dir, timeline(), s, kFrames);
         s.rate = FrameRate{30, 1}; // repeated frames deliver no sound (RateConverter)
         compare("mltsound30", dir, timeline(), s, 90);
+    }
+    if (avcodec_find_encoder_by_name("libx265")) {
+        // HEVC in MP4 as 'hvc1' on both ways: Apple players (QuickTime, Safari, iPhone) play no 'hev1'
+        for (const auto writer : {ExportSettings::Writer::Mlt, ExportSettings::Writer::Own}) {
+            ExportSettings s = settings(dir + (writer == ExportSettings::Writer::Own ? "/hevc-own.mp4" : "/hevc-mlt.mp4"));
+            s.writer = writer;
+            s.videoCodec = "libx265";
+            s.preset = "ultrafast";
+            s.crf = 28;
+            s.audioCodec = "aac";
+            if (CHECK(render(timeline(), s))) CHECK_EQ(videoStream(s.path).value("codec_tag_string").toString(), QString("hvc1"));
+        }
     }
 }
 

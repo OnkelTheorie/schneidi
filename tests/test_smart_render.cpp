@@ -156,6 +156,14 @@ Frames decode(const QString& path)
     return f;
 }
 
+QString videoTag(const QString& path)
+{
+    QProcess p;
+    p.start("ffprobe", {"-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_tag_string", "-of", "csv=p=0", path});
+    p.waitForFinished(30000);
+    return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+}
+
 QByteArray sound(const QString& path)
 {
     QProcess p;
@@ -306,7 +314,12 @@ void testExports(const QString& dir)
                                                                                 << "-x265-params"
                                                                                 << "log-level=0:keyint=20:min-keyint=20:open-gop=0:scenecut=0"
                                                                                 << tag709);
-        if (CHECK(!h.isEmpty())) compare("hevc", dir, cuts(h, h, false), settings(dir + "/x.mp4", "libx265"), 100, 120);
+        if (CHECK(!h.isEmpty())) {
+            compare("hevc", dir, cuts(h, h, false), settings(dir + "/x.mp4", "libx265"), 100, 120);
+            // 'hvc1' on both: Apple players play no 'hev1'
+            CHECK_EQ(videoTag(dir + "/hevc-normal.mp4"), QString("hvc1"));
+            CHECK_EQ(videoTag(dir + "/hevc-smart.mp4"), QString("hvc1"));
+        }
     }
     // Cancelling while copying/encoding: nothing left behind
     Timeline longer = cuts(a, b, false);

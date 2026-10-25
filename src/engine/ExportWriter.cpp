@@ -945,6 +945,10 @@ struct ExportWriter::Impl {
         // sound there (smart render at 30 fps: 112 ms late); FFmpeg-based players were in sync either way.
         if (std::strcmp(oc->oformat->name, "mp4") == 0)
             av_dict_set(&options, "movflags", "+negative_cts_offsets", AV_DICT_APPEND);
+        // HEVC in MP4/MOV as 'hvc1' instead of FFmpeg's default 'hev1': Apple players (QuickTime, Safari, iPhone) play
+        // no 'hev1'. Smart render's in-band parameter sets per piece then work as they do in H.264's 'avc1'.
+        const bool mov = std::strcmp(oc->oformat->name, "mp4") == 0 || std::strcmp(oc->oformat->name, "mov") == 0;
+        if (mov && vst->codecpar->codec_id == AV_CODEC_ID_HEVC) vst->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
         r = avformat_write_header(oc, &options);
         av_dict_free(&options);
         if (r < 0) {

@@ -530,6 +530,8 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
     // see ExportWriter::writeHeader)
     if ((ext == "mp4" || ext == "mov" || ext == "m4a") && s.output == ExportSettings::Output::File)
         m_consumer->set("movflags", ext == "mp4" ? "+faststart+negative_cts_offsets" : "+faststart");
+    // HEVC as 'hvc1' for Apple players (see ExportWriter::writeHeader)
+    if ((ext == "mp4" || ext == "mov") && (codec == "libx265" || codec.startsWith("hevc_"))) m_consumer->set("vtag", "hvc1");
     // Decoder (start) and encoder get the same thread count. When converting the frame rate the RateConverter
     // fetches frames in order -> one at a time there, and without the read-ahead thread (real_time 0): repeated
     // frames deliver 0 samples; the read-ahead thread fetches the sound early, and on the encoder's second fetch
