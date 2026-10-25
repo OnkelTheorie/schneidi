@@ -1,8 +1,8 @@
 # schneidi
 
-**A DaVinci-style video editor that an AI assistant can edit with you – live, in the project you have open.**
+**A fast, light video editor that an AI assistant can edit with you – live, in the project you have open.**
 
-schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far fewer features. It runs on modest hardware and opens H.264/H.265 video with AAC sound on Linux, which the free DaVinci Resolve does not. The UI is available in English, German, Spanish, French, Polish and Russian.
+schneidi has four pages – Media, Edit, Color and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box, which the free DaVinci Resolve does not. The UI is available in English, German, Spanish, French, Polish and Russian.
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
@@ -15,7 +15,7 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 ## Why schneidi?
 
 - **Edit together with an AI.** schneidi comes with its own command line and [MCP server](#command-line-and-ai-editing-mcp). Claude or another assistant can find pauses, scene changes and loud moments, transcribe, cut, grade, mix and render. When the project is open in the app, each change lands there as one undo step while you watch ("AI connected") – review it, undo it or disconnect.
-- **DaVinci's workflow without its hurdles.** The same pages and terms (ripple, roll, slip, slide, compound clips) and many of the same shortcuts (`=`/`-` to copy grades, `1`–`9` to cut multicam angles), but light enough for an older laptop.
+- **A professional workflow on any computer.** Pages for each step, ripple, roll, slip and slide trims, compound clips, multicam, color wheels and scopes – with the shortcuts you know from the big editors (presets for DaVinci-style or beginner keys), but light enough for an older laptop.
 - **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, open source (GPL-3.0).
 - **Long recordings of one event.** Sync hours of recordings from several PCs or cameras by their sound and cut them in a multicam view that shows up to 16 angles at once.
 
@@ -35,7 +35,7 @@ schneidi has Media, Edit, Color and Deliver pages like DaVinci Resolve, with far
 - Timeline zoom and scroll change **only on user input** – nothing jumps when clips get shorter
 - Fully customizable keyboard shortcuts and mouse side buttons, two per function – presets (DaVinci-style or beginner) and whole sets to save and load; panel sets for the Edit page, panel sizes remembered per page
 - Titles, subtitles, fades, transitions, volume, loudness normalization
-- Color correction, curves, LUTs, effects with keyframes; copy and paste grades (`=`/`-` like DaVinci)
+- Color correction, curves, LUTs, effects with keyframes; copy and paste grades (`=`/`-`)
 - **Windows** on the Color page (rectangle, ellipse, soft edge, invert): grade only part of the picture, or blur, pixelate or cover a region (a face, a name, an overlay); **tracking** makes a window follow a moving object
 - Video stabilization (vid.stab) and audio noise reduction
 - frei0r effects; import effect presets from Kdenlive and Shotcut
@@ -80,7 +80,7 @@ Thumbnails for the Media Storage (your Videos folder) are made by a separate ffm
 
 0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media).
 
-**And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet). Material: 15 s of a 1080p60 gaming clip.
+**And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet). DaVinci Resolve, Premiere Pro and Final Cut Pro are not available for this computer at all. Material: 15 s of a 1080p60 gaming clip.
 
 | | Raspberry Pi Zero 2 W |
 |---|---|
