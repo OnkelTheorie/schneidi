@@ -24,7 +24,8 @@ public:
     void setType(Scopes::Type type);
     // Last finished analysis (for tests)
     const Scopes::Data& data() const { return m_data; }
-    bool busy() const { return m_busy; }
+    // An analysis runs or a newer frame waits for the throttle (for tests)
+    bool busy() const;
 
 public slots:
     void setFrame(const QImage& frame);

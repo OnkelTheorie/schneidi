@@ -261,6 +261,11 @@ void ScopesPanel::setType(Scopes::Type type)
     }
 }
 
+bool ScopesPanel::busy() const
+{
+    return m_busy || m_throttle->isActive();
+}
+
 void ScopesPanel::setFrame(const QImage& frame)
 {
     m_frame = frame;
