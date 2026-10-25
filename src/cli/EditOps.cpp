@@ -406,12 +406,14 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
 
 // Details of the ops that place source ranges (import presets, core/StreamPresets.h)
 const char* const kPresetsDetails =
-    "track: V2 puts the picture on V2 and the sound from A2 on. Files with several audio streams (OBS) follow the "
-    "app's import presets (the Mix stream muted when its single streams are there, rules per stream title; "
-    "presets:false places every stream as it is), one track per stream named after it. A stream never lands on a "
-    "track named after another stream of the file: then the streams take free tracks with their names, or new "
-    "tracks below. Sound that already plays there (a second copy of the same moment, e.g. a blurred background or "
-    "picture-in-picture) comes in disabled: 'enable' turns it on";
+    "track: V2 puts the picture on V2 and the sound from A2 on. Files with several audio streams (OBS) get one "
+    "track per stream, named after it, and follow the user's import presets from the app (by default every stream "
+    "plays; users can e.g. mute the Mix stream when its single streams are there, or set rules per stream title; "
+    "presets:false places every stream as it is). A recording with a Mix stream plus its single streams then plays "
+    "everything twice: turn off the Mix or the single streams with 'disable' (check with `loudness`). A stream never "
+    "lands on a track named after another stream of the file: then the streams take free tracks with their names, "
+    "or new tracks below. Sound that already plays there (a second copy of the same moment, e.g. a blurred "
+    "background or picture-in-picture) comes in disabled: 'enable' turns it on";
 
 QVector<OpDef> makeOps()
 {

@@ -1,5 +1,6 @@
 // Import presets for files with several audio streams (docs/archiv/plan-0.8.md; OBS: "Mix" plus single streams plays
-// everything twice): "mute the Mix stream when single streams exist" (on by default) and rules per stream title
+// everything twice): "mute the Mix stream when single streams exist" (off by default: nothing is muted unless the user
+// says so) and rules per stream title
 // (place / mute / leave out, volume, track name), applied wherever clips come from files (insert, F9–F12, drag from
 // the viewer, multicam angles, CLI), learned from a clip in the timeline, kept in the settings, edited in a dialog.
 // A further copy of such a file (picture-in-picture, blurred background) never puts a stream on a track named after
@@ -113,9 +114,10 @@ void testPlanSingleStreamAndUntitled()
     // No presets change nothing
     CHECK_EQ(actions(StreamPresets::none().plan(obs("/x/o.mkv", 10, kObs))),
              QString("Mix:place Spotify:place Discord:place System:place Mikrofon:place"));
-    // The defaults mute the Mix next to its single streams (both together would play everything twice)
+    // The defaults mute nothing either (user decision 2026-10-25: muting is the user's own rule)
+    CHECK(StreamPresets{} == StreamPresets::none());
     CHECK_EQ(actions(StreamPresets{}.plan(obs("/x/o.mkv", 10, kObs))),
-             QString("Mix:mute Spotify:place Discord:place System:place Mikrofon:place"));
+             QString("Mix:place Spotify:place Discord:place System:place Mikrofon:place"));
 }
 
 void testMuteMixWhenSeparate()
@@ -183,9 +185,9 @@ void testAddMediaAtAppliesPresets()
         CHECK_EQ(audio(f.p.timeline()), QString("A1:s0 A2:s1 A3:s2 A4:s3 A5:s4"));
     }
     {
-        Fixture f; // the defaults (an Editor without settings, a new user)
+        Fixture f; // the defaults (an Editor without settings, a new user): nothing muted
         f.ed.addMediaAt({"/x/obs.mkv"}, 0);
-        CHECK_EQ(audio(f.p.timeline()), QString("A1:s0(off) A2:s1 A3:s2 A4:s3 A5:s4"));
+        CHECK_EQ(audio(f.p.timeline()), QString("A1:s0 A2:s1 A3:s2 A4:s3 A5:s4"));
     }
     Fixture f;
     f.usePresets();
@@ -230,7 +232,7 @@ void testSecondCopyKeepsTracksTrue()
     // run 2026-10-25): "V2 -> A2" put its Mix on the first copy's "Spotify" track and overwrote the first copy's
     // single streams. Now it gets its own tracks named like its streams, the first copy stays as it was, and its
     // sound (the same moment again) comes in disabled. Same for the viewer drag/CLI and the media pool drop.
-    const QString first = "A1 Mix:s0(off) A2 Spotify:s1 A3 Discord:s2 A4 System:s3 A5 Mikrofon:s4";
+    const QString first = "A1 Mix:s0 A2 Spotify:s1 A3 Discord:s2 A4 System:s3 A5 Mikrofon:s4"; // defaults: all play
     for (bool pool : {false, true}) {
         Fixture f;
         const auto place = [&](int frame, int track) {
@@ -264,7 +266,7 @@ void testSecondCopyKeepsTracksTrue()
     Fixture f;
     f.ed.renameTrack({TrackKind::Audio, 1}, "Voice");
     f.ed.placeSourceRange("/x/obs.mkv", 0, 99, 0, 0);
-    CHECK_EQ(audioAt(f.p.timeline(), 50), QString("A1 Mix:s0(off) A2 Voice:s1 A3 Discord:s2 A4 System:s3 A5 Mikrofon:s4"));
+    CHECK_EQ(audioAt(f.p.timeline(), 50), QString("A1 Mix:s0 A2 Voice:s1 A3 Discord:s2 A4 System:s3 A5 Mikrofon:s4"));
 }
 
 void testRepeatedSound()
@@ -373,13 +375,14 @@ void testSaveLoadSettings()
 {
     QSettings().remove("import/streamPresets");
     const StreamPresets defaults = StreamPresets::load();
-    CHECK(defaults.muteMix && defaults.rules.isEmpty());
-    // Switched off by the user: stays off (not the default)
-    StreamPresets off = StreamPresets::none();
-    off.save();
+    CHECK(!defaults.muteMix && defaults.rules.isEmpty());
+    // Switched on by the user: stays on
+    StreamPresets on;
+    on.muteMix = true;
+    on.save();
     CHECK(QSettings().contains("import/streamPresets"));
-    CHECK(StreamPresets::load() == off);
-    CHECK(StreamPresets::fromJson({}).muteMix); // a missing value is the default
+    CHECK(StreamPresets::load() == on);
+    CHECK(!StreamPresets::fromJson({}).muteMix); // a missing value is the default
     StreamPresets p;
     p.rules << rule("Discord", Action::Mute) << rule("Mikrofon", Action::Place, 2.5, "Mic") << rule("Spotify", Action::Skip);
     p.save();
@@ -425,8 +428,9 @@ void testCliRealRecording(const QString& dir)
 {
     // A recording like the user's own recorder writes it (MKV, streams titled Mix, Discord, Mikrofon; the Mix = the
     // others together), cut by the CLI like the AI test run of 2026-10-25: append into a new 9:16 project with the
-    // default presets, then the same range again on V2 as a blurred background. It must play once: the timeline is
-    // as loud as the Mix stream alone (the Mix and its parts together, or both copies, would be +6 LU).
+    // user's presets muting the Mix (off by default: the user turns it on), then the same range again on V2 as a
+    // blurred background. It must play once: the timeline is as loud as the Mix stream alone (the Mix and its parts
+    // together, or both copies, would be +6 LU).
     if (!Check::haveFfmpeg()) return;
     const QString mix = "0.2*sin(2*PI*440*t)+0.2*sin(2*PI*660*t)";
     const QString file = Check::makeMedia(
@@ -438,7 +442,9 @@ void testCliRealRecording(const QString& dir)
          "-metadata:s:a:2", "title=Mikrofon"});
     if (!CHECK(!file.isEmpty())) return;
     Check::initMlt();
-    QSettings().remove("import/streamPresets"); // a new user: the defaults
+    StreamPresets user;
+    user.muteMix = true; // set in the import presets dialog, like the user does
+    user.save();
     const QString path = dir + "/real.schneidi";
     auto run = [&](const QString& name, const QJsonObject& raw) {
         const Cli::Command* cmd = Cli::find(name);
@@ -474,6 +480,7 @@ void testCliRealRecording(const QString& dir)
     run("edit", {{"project", path},
                  {"ops", QString(R"([{"op":"clear"},{"op":"append","media":"%1","presets":false}])").arg(file)}});
     CHECK_EQ(audioAt(load(), 10), QString("A1 Mix:s0 A2 Discord:s1 A3 Mikrofon:s2"));
+    QSettings().remove("import/streamPresets");
 }
 
 void testCliFollowsPresets(const QString& dir)
