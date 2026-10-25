@@ -438,7 +438,7 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(fit["speed"].toDouble(), 2.0);
     }
 
-    // Titles with a duration (AI test runs 2026-10-25)
+    // Titles with a duration, slip with keyframes (AI test runs 2026-10-25)
     {
         const auto ed = [](const QString& ops) { return run("edit", {{"project", g_path}, {"ops", ops}}); };
         const auto track = [](int i) { return saved().section("  ", i, i); };
@@ -459,6 +459,22 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(track(1), QString("V2: T[25-30|0-4] a[45-70|5-29]"));
         CHECK_EQ(clipsOf(1)[0].toObject()["text"].toString(), QString("F"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"title","at":0,"duration":0}])"}}), QString("BAD_ARGUMENT"));
+        // Slip shows other source frames; the keyframes stay where they are in the clip (they moved with the content
+        // before, some out of the clip)
+        const int a = clipsOf(1)[1].toObject()["id"].toInt();
+        ed(QString(R"([{"op":"keyframe","clips":[%1],"param":"opacity","keys":[{"at":45,"value":0},{"at":69,"value":100}]},
+                      {"op":"trim","clip":%1,"mode":"slip","by":5}])").arg(a));
+        const QJsonObject slipped = clipsOf(1)[1].toObject();
+        CHECK_EQ(slipped["src_in"].toInt(), 10);
+        const QJsonArray keys = slipped["keyframes"]["opacity"].toArray();
+        if (CHECK_EQ(keys.size(), 2)) {
+            CHECK_EQ(keys[0]["at"].toInt(), 45);
+            CHECK_EQ(keys[1]["at"].toInt(), 69);
+        }
+        // The help says what slip does with keyframes
+        const QJsonObject help = run("help", {{"command", "edit"}, {"op", "trim"}});
+        const QString text = QJsonDocument(help).toJson();
+        CHECK(text.contains("keyframes stay where they are in the clip"));
     }
 
     // Project format (resolution scales positions, frame rate locked while clips exist), LUT by name, SRT export

@@ -73,6 +73,9 @@ void rescaleHandles(const KeyTrack& before, KeyTrack& after);
 void setEase(Clip& c, const QVector<int>& times, KeyEase ease, const QVector<AnimParam>& params = {});
 void removeAt(Clip& c, const QVector<int>& times, const QVector<AnimParam>& params = {});
 void move(Clip& c, const QVector<int>& times, int delta);
+// All keyframes by `delta` source frames, after Clip::in/out moved by it (slip): they keep their clip frame t, i.e.
+// their place in the clip and in the timeline, instead of riding along with the content (and out of the clip)
+void shiftWithIn(Clip& c, int delta);
 
 // After splitting (left/right = copies with new in/out): like DaVinci both parts keep all keyframes,
 // also those outside their range (invisible) -> both look exactly as before, whatever the curve shape.

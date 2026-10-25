@@ -473,7 +473,11 @@ void addEditOps(QVector<OpDef>& ops)
         << OpDef{"trim", "{op:'trim', clip, edge?:'start'|'end', by|to, mode?}",
                  "move a clip edge; mode normal (default, no ripple), ripple, roll (the cut), slip (content, by only), "
                  "slide (clip between its neighbours)",
-                 {}, opTrim}
+                 "by/to in frames (or times). slip shows other source frames in the same place: by > 0 = later "
+                 "material; the clip's keyframes stay where they are in the clip (an animation keeps its timing, "
+                 "they never leave the clip), so Color page windows that were tracked to the content need tracking "
+                 "again after a slip.",
+                 opTrim}
         << OpDef{"transition", "{op:'transition', at|clips, type?, length?, align?, kind?, trim?, remove?, …}",
                  "transition at the cut nearest to `at` (all tracks) or at both edges of the clips (default cross "
                  "dissolve, 1s)",

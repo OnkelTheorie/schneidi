@@ -3,6 +3,7 @@
 // effective transitions at edges, fade/transition curves
 #include "check.h"
 
+#include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 
 #include <QCoreApplication>
@@ -216,6 +217,16 @@ int main(int argc, char** argv)
         CHECK_EQ(clampTrimEdit(tl, e, 200, kSrc), 100);
         applyTrimEdit(tl, e, 30, kSrc);
         CHECK_EQ(dump(tl), QString("V1: a[0-50|50-99] b[50-100|80-129] c[100-150|50-99]  A1: m[120-140|0-19]"));
+        // Keyframes stay where they are in the clip: stored as source frames they rode along with the content
+        // (AI test run 2026-10-25: some ended up behind the clip's end)
+        tl = base();
+        Keys::setKey(tl.video[0].clips[1], AnimParam::Opacity, 0, 0);
+        Keys::setKey(tl.video[0].clips[1], AnimParam::Opacity, 49, 100);
+        applyTrimEdit(tl, e, 30, kSrc);
+        CHECK_EQ(Keys::keyTimes(tl.video[0].clips[1]), QVector<int>({0, 49}));
+        CHECK_EQ(Keys::valueAt(tl.video[0].clips[1], AnimParam::Opacity, 49), 100.0);
+        applyTrimEdit(tl, e, -50, kSrc);
+        CHECK_EQ(Keys::keyTimes(tl.video[0].clips[1]), QVector<int>({0, 49}));
         // Slide: b moves, a gets longer, c shorter
         tl = base();
         e = TrimEdit{TrimKind::Slide, {2}, {}, Edge::End};

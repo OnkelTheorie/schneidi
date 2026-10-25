@@ -594,6 +594,13 @@ void move(Clip& c, const QVector<int>& times, int delta)
     }
 }
 
+void shiftWithIn(Clip& c, int delta)
+{
+    if (delta == 0) return;
+    for (auto it = c.keys.begin(); it != c.keys.end(); ++it)
+        for (Keyframe& k : *it) k.frame += delta; // order and distances stay, handles are relative
+}
+
 void split(const Clip& original, Clip& left, Clip& right)
 {
     // Like DaVinci: both parts keep all keyframes (source frames stay the same). Keys outside a part

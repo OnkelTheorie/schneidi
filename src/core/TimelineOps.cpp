@@ -585,10 +585,13 @@ void applyTrimEdit(Timeline& tl, const TrimEdit& e, int delta, const SourceLengt
             }
         break;
     case TrimKind::Slip:
+        // Only which source frames play changes: keyframes stay where they are in the clip (stored as source frames,
+        // they used to move with the content, some out of the clip)
         for (int id : e.ids)
             if (Clip* c = findClip(tl, id); c && !c->isTitle()) {
                 c->in += delta;
                 c->out += delta;
+                Keys::shiftWithIn(*c, delta);
             }
         break;
     case TrimKind::Slide: {

@@ -120,7 +120,7 @@ enum class TrimKind {
     Ripple, // drag edge, later clips move up (start: clip stays put, content moves);
             // like DaVinci on all unlocked tracks (shortening only as far as all can move up)
     Roll,   // move the cut between two clips: left end, right start, total length stays
-    Slip,   // move content within the clip (in/out), position and length stay
+    Slip,   // move content within the clip (in/out), position, length and keyframes (their place in the clip) stay
     Slide,  // move clip, left neighbor gets longer/shorter, right one the other way round
 };
 struct TrimEdit {
