@@ -131,23 +131,63 @@ Handle begin(const char* reason)
     return h;
 }
 
-void putStack(Handle h)
+#ifdef Q_OS_WIN
+// One line per address: the address, then module+offset (exe+offset for schneidi.exe; a release build has no debug
+// info: nearest symbol in `nm -C schneidi.exe` below 0x140000000 + offset). Addresses in no module stay bare.
+void putFrame(Handle h, unsigned long long pc)
+{
+    putHex(h, pc);
+    HMODULE module = nullptr;
+    if (pc && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                 reinterpret_cast<LPCWSTR>(pc), &module)) {
+        put(h, "  ");
+        wchar_t path[MAX_PATH];
+        const DWORD n = module == GetModuleHandleW(nullptr) ? 0 : GetModuleFileNameW(module, path, MAX_PATH);
+        const wchar_t* name = path;
+        for (DWORD i = 0; i < n; ++i)
+            if (path[i] == L'\\' || path[i] == L'/') name = path + i + 1;
+        char utf8[MAX_PATH * 3];
+        const int len = n ? WideCharToMultiByte(CP_UTF8, 0, name, int(path + n - name), utf8, sizeof utf8, nullptr, nullptr) : 0;
+        if (len > 0) put(h, utf8, size_t(len));
+        else put(h, "exe");
+        put(h, "+");
+        putHex(h, pc - reinterpret_cast<unsigned long long>(module));
+    }
+    put(h, "\n");
+}
+#endif
+
+// context (Windows exceptions): the faulting thread's registers – the stack then starts at the crash site instead of
+// in this handler, and goes past a frame without unwind data (CaptureStackBackTrace stops there)
+void putStack(Handle h, [[maybe_unused]] const void* context = nullptr)
 {
 #ifdef SCHNEIDI_HAVE_BACKTRACE
     put(h, "\nCall stack:\n");
     void* frames[64];
     backtrace_symbols_fd(frames, backtrace(frames, 64), h);
 #elif defined(Q_OS_WIN)
-    put(h, "\nCall stack (offsets into schneidi.exe where inside it):\n");
+    put(h, "\nCall stack:\n");
+#if defined(_M_X64) || defined(__x86_64__)
+    if (context) {
+        CONTEXT c = *static_cast<const CONTEXT*>(context);
+        for (int i = 0; i < 62 && (c.Rip || i == 0); ++i) { // the first may be 0 (a call through a null pointer)
+            putFrame(h, c.Rip);
+            DWORD64 imageBase = 0;
+            if (PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(c.Rip, &imageBase, nullptr)) {
+                void* handlerData = nullptr;
+                DWORD64 frame = 0;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, c.Rip, f, &c, &handlerData, &frame, nullptr);
+            } else { // leaf function or a jump to nowhere: the return address is on top of the stack
+                c.Rip = *reinterpret_cast<const DWORD64*>(c.Rsp);
+                c.Rsp += 8;
+            }
+        }
+        return;
+    }
+#endif
     void* frames[62];
     const USHORT n = CaptureStackBackTrace(0, 62, frames, nullptr);
-    const auto base = reinterpret_cast<unsigned long long>(GetModuleHandleW(nullptr));
-    for (USHORT i = 0; i < n; ++i) {
-        putHex(h, reinterpret_cast<unsigned long long>(frames[i]));
-        put(h, "  exe+");
-        putHex(h, reinterpret_cast<unsigned long long>(frames[i]) - base);
-        put(h, "\n");
-    }
+    for (USHORT i = 0; i < n; ++i) putFrame(h, reinterpret_cast<unsigned long long>(frames[i]));
 #else
     put(h, "\n(no call stack on this platform)\n");
 #endif
@@ -193,17 +233,12 @@ LONG WINAPI onException(EXCEPTION_POINTERS* info)
         const Handle h = begin("unhandled Windows exception");
         const EXCEPTION_RECORD* r = info ? info->ExceptionRecord : nullptr;
         if (r) {
-            const auto base = reinterpret_cast<unsigned long long>(GetModuleHandleW(nullptr));
-            const auto at = reinterpret_cast<unsigned long long>(r->ExceptionAddress);
             put(h, "Code: ");
             putHex(h, r->ExceptionCode);
             put(h, "\nAddress: ");
-            putHex(h, at);
-            put(h, "  exe+");
-            putHex(h, at - base);
-            put(h, "\n");
+            putFrame(h, reinterpret_cast<unsigned long long>(r->ExceptionAddress));
         }
-        putStack(h);
+        putStack(h, info ? info->ContextRecord : nullptr);
         closeReport(h);
     }
     return EXCEPTION_CONTINUE_SEARCH; // Windows error dialog / WER as usual
