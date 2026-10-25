@@ -940,6 +940,11 @@ struct ExportWriter::Impl {
         }
         AVDictionary* options = nullptr;
         if (s.fastStart) av_dict_set(&options, "movflags", "+faststart", 0);
+        // MP4: B-frames and smart render's decode delay as negative composition offsets (ctts version 1) instead of an
+        // edit list. Media Foundation (Windows Media Player) ignores edit lists: the picture came 2-4 frames after the
+        // sound there (smart render at 30 fps: 112 ms late); FFmpeg-based players were in sync either way.
+        if (std::strcmp(oc->oformat->name, "mp4") == 0)
+            av_dict_set(&options, "movflags", "+negative_cts_offsets", AV_DICT_APPEND);
         r = avformat_write_header(oc, &options);
         av_dict_free(&options);
         if (r < 0) {

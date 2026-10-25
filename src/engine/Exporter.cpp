@@ -526,8 +526,10 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
     if (s.audioChannels > 0) m_consumer->set("channels", s.audioChannels);
     if (const int bitrate = audioBitrateK(); bitrate > 0) m_consumer->set("ab", QString("%1k").arg(bitrate).toUtf8().constData());
     const QString ext = QFileInfo(m_path).suffix().toLower();
+    // MP4: negative composition offsets instead of an edit list for B-frames (Windows Media Player ignores edit lists,
+    // see ExportWriter::writeHeader)
     if ((ext == "mp4" || ext == "mov" || ext == "m4a") && s.output == ExportSettings::Output::File)
-        m_consumer->set("movflags", "+faststart");
+        m_consumer->set("movflags", ext == "mp4" ? "+faststart+negative_cts_offsets" : "+faststart");
     // Decoder (start) and encoder get the same thread count. When converting the frame rate the RateConverter
     // fetches frames in order -> one at a time there, and without the read-ahead thread (real_time 0): repeated
     // frames deliver 0 samples; the read-ahead thread fetches the sound early, and on the encoder's second fetch
