@@ -216,4 +216,4 @@ schneidi is an independent open-source project. It is not affiliated with, endor
 
 ## License
 
-[GPL-3.0](LICENSE)
+[GPL-3.0](LICENSE), with an [additional permission](LICENSE-EXCEPTION.md) for app store libraries (ads, in-app purchases) in schneidi's own code. The code is open; the name "schneidi" and the logo are protected – see [TRADEMARKS.md](TRADEMARKS.md).
