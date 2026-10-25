@@ -203,6 +203,37 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     m_mode->setObjectName("PanelTitle");
     m_mode->setAlignment(Qt::AlignCenter);
 
+    // Hint bar (as the multicam grid's proxy hint)
+    m_hint = new QWidget;
+    m_hint->setObjectName("ViewerHint");
+    m_hint->setAttribute(Qt::WA_StyledBackground);
+    m_hint->setStyleSheet(QString("#ViewerHint { background: %1; }")
+                              .arg(Theme::mix(Theme::panel, Theme::meterMid, 0.18).name()));
+    auto* hintLay = new QHBoxLayout(m_hint);
+    hintLay->setContentsMargins(8, 2, 4, 2);
+    hintLay->setSpacing(6);
+    m_hintLabel = new QLabel;
+    m_hintLabel->setStyleSheet(QString("color: %1;").arg(Theme::text.name()));
+    m_hintLabel->setWordWrap(true);
+    hintLay->addWidget(m_hintLabel, 1);
+    m_hintButton = new QToolButton;
+    m_hintButton->setObjectName("viewer_hint_button");
+    m_hintButton->setFocusPolicy(Qt::NoFocus);
+    hintLay->addWidget(m_hintButton);
+    auto* hintClose = new QToolButton;
+    hintClose->setObjectName("viewer_hint_close");
+    hintClose->setText("✕");
+    hintClose->setToolTip(T("Hinweis schließen"));
+    hintClose->setAutoRaise(true);
+    hintClose->setFocusPolicy(Qt::NoFocus);
+    hintLay->addWidget(hintClose);
+    connect(m_hintButton, &QToolButton::clicked, this, &Viewer::hintAccepted);
+    connect(hintClose, &QToolButton::clicked, this, [this] {
+        setHint({});
+        emit hintClosed();
+    });
+    m_hint->hide();
+
     m_screen = new Screen;
     m_screen->setMinimumSize(320, 180);
     m_screen->dragData = [this] { return dragData(); };
@@ -275,6 +306,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     lay->addWidget(m_mode);
+    lay->addWidget(m_hint);
     lay->addWidget(m_stack, 1);
     lay->addWidget(m_scrubber);
     lay->addLayout(transport);
@@ -284,6 +316,19 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     connect(m_engine, &Engine::speedChanged, this,
             [this](double s) { m_playBtn->setText(s == 0.0 ? "▶" : "⏸"); });
     updateTimecode(0);
+}
+
+void Viewer::setHint(const QString& text, const QString& button)
+{
+    m_hintLabel->setText(text);
+    m_hintButton->setText(button);
+    m_hintButton->setVisible(!button.isEmpty());
+    m_hint->setVisible(!text.isEmpty());
+}
+
+QString Viewer::hint() const
+{
+    return m_hint->isHidden() ? QString() : m_hintLabel->text();
 }
 
 void Viewer::showTrim(const TrimFrames::View& view)

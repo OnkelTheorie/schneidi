@@ -138,6 +138,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             proxiesChanged();
     });
     connect(proxies, &ProxyManager::enabledChanged, this, proxiesChanged);
+    setupProxyHint();
     // Before/After: cached clips contain the correction -> rebuild the preview so they come from the original
     connect(m_engine, &Engine::colorBypassChanged, this, [this] {
         if (m_engine->renderCache()->mode() != RenderCache::Mode::Off) m_engine->updateTimeline(m_project->renderTimeline());
@@ -773,4 +774,80 @@ void MainWindow::exportSubtitlesDialog()
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly) || f.write(Subtitles::toSrt(t.cues, m_project->frameRate())) < 0 || !f.commit())
         QMessageBox::warning(this, T("Untertitel exportieren"), T("Untertiteldatei kann nicht geschrieben werden: %1").arg(path));
+}
+
+void MainWindow::setupProxyHint()
+{
+    m_playClock.start();
+    connect(m_engine, &Engine::speedChanged, this, [this](double speed) {
+        if (speed == 1.0) m_playMeter.start(m_project->frameRate(), m_playClock.elapsed());
+        else m_playMeter.stop();
+    });
+    connect(m_engine, &Engine::positionChanged, this, [this] {
+        if (!m_playMeter.frame(m_playClock.elapsed()) || m_proxyHintClosed || !m_slowFiles.isEmpty()) return;
+        m_slowFiles = playingVideoFiles();
+        m_slowRate = m_playMeter.rate();
+        m_slowFps = m_playMeter.fps();
+        qInfo("Playback too slow: %.1f of %.2f pictures/s", m_slowRate, m_slowFps);
+        updateProxyHint();
+    });
+    ProxyManager* proxies = m_engine->proxies();
+    connect(m_viewer, &Viewer::hintAccepted, this, [this, proxies] {
+        QStringList missing;
+        for (const QString& f : std::as_const(m_slowFiles))
+            if (!proxies->isPending(f) && !proxies->hasProxy(f)) missing << f;
+        proxies->generate(missing);
+    });
+    connect(m_viewer, &Viewer::hintClosed, this, [this] {
+        m_proxyHintClosed = true;
+        m_slowFiles.clear();
+    });
+    connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateProxyHint);
+    connect(proxies, &ProxyManager::proxyChanged, this, &MainWindow::updateProxyHint);
+    connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateProxyHint);
+}
+
+void MainWindow::updateProxyHint()
+{
+    const ProxyManager* proxies = m_engine->proxies();
+    int missing = 0, pending = 0;
+    if (proxies->enabled()) // proxy media switched off: the user wants the originals
+        for (const QString& f : std::as_const(m_slowFiles)) {
+            if (proxies->isPending(f)) ++pending;
+            else if (!proxies->hasProxy(f)) ++missing;
+        }
+    if (missing > 0)
+        m_viewer->setHint(T("Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Proxy-Medien machen die Vorschau flüssig, "
+                            "der Export nutzt weiter die Originale")
+                              .arg(qRound(m_slowRate)).arg(qRound(m_slowFps)),
+                          T("Proxy-Medien erzeugen"));
+    else if (pending > 0)
+        m_viewer->setHint(T("Proxy-Medien werden erzeugt (noch %1) …").arg(pending));
+    else {
+        m_slowFiles.clear(); // all there (or switched off): a new measurement decides again
+        m_viewer->setHint({});
+    }
+}
+
+QStringList MainWindow::playingVideoFiles() const
+{
+    QStringList out;
+    auto add = [&](const QString& path) {
+        const MediaInfo* m = m_project->mediaInfo(path);
+        if (m && m->hasVideo && !m->isImage && !out.contains(path) && QFileInfo::exists(path)) out << path;
+    };
+    if (m_engine->mode() == Engine::Mode::Source) {
+        add(m_engine->sourcePath());
+        return out;
+    }
+    auto scan = [&](const Timeline& tl) {
+        for (const Track& track : tl.video)
+            for (const Clip& c : track.clips)
+                if (c.kind == ClipKind::Media && c.enabled) add(c.mediaPath);
+    };
+    const Timeline tl = m_project->renderTimeline();
+    scan(tl);
+    if (tl.nested)
+        for (const Timeline& nested : *tl.nested) scan(nested);
+    return out;
 }

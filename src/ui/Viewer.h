@@ -45,6 +45,15 @@ public:
     // On-screen controls over the picture (Color page windows); nullptr = none
     void setOverlay(class ViewerOverlay* overlay);
 
+    // Hint bar above the picture (playback too slow: offer proxy media) with an optional button and a close button;
+    // empty text = hidden
+    void setHint(const QString& text, const QString& button = {});
+    QString hint() const;
+
+signals:
+    void hintAccepted(); // the hint's button
+    void hintClosed();   // the hint's close button
+
 private:
     void updateTimecode(int frame);
     void updateModeText(); // "Timeline"/"Quelle – …", hint when the color correction is bypassed
@@ -56,6 +65,9 @@ private:
     QStackedWidget* m_stack;
     class Scrubber* m_scrubber;
     QLabel* m_mode;
+    QWidget* m_hint;
+    QLabel* m_hintLabel;
+    QToolButton* m_hintButton;
     QLabel* m_timecode;
     QToolButton* m_playBtn;
     QWidget* m_multicam = nullptr;

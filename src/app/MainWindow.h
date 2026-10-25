@@ -1,8 +1,11 @@
 #pragma once
 #include "core/Editor.h"
 #include "core/LiveHost.h"
+#include "core/PlaybackMeter.h"
 #include "core/ProjectFile.h"
 #include "core/Types.h"
+
+#include <QElapsedTimer>
 #include "ui/timeline/ViewState.h"
 
 #include <QHash>
@@ -166,6 +169,10 @@ private:
     void setMulticamMode(bool on);
     void syncMulticam(); // the engine's grid follows the multicam clip at the playhead (MulticamView)
     void updateMulticamProxies(); // proxy state of the grid's angles -> MulticamView (hint + "Generate proxies")
+    // Playback too slow for the originals: hint above the picture with "Generate proxies" (never unasked)
+    void setupProxyHint();
+    void updateProxyHint();
+    QStringList playingVideoFiles() const; // video files of what plays (timeline incl. nested clips, or the source)
     void createMulticamClip(const QStringList& paths);
     void addMulticamMenu(QMenu* menu); // "Switch Angle" + "Flatten" for selected multicam segments
     int selectedMulticamSequence() const;
@@ -184,6 +191,11 @@ private:
     bool m_multicamMode = false;
     bool m_multicamSyncing = false, m_multicamSyncAgain = false;
     QTimer m_engineTimer; // bundles model changes -> engine
+    PlaybackMeter m_playMeter;
+    QElapsedTimer m_playClock;
+    QStringList m_slowFiles; // playback was too slow with these files (proxy hint); empty = no hint
+    double m_slowRate = 0, m_slowFps = 0;
+    bool m_proxyHintClosed = false; // closed: not again in this session
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
     TranscriptPanel* m_transcript = nullptr;

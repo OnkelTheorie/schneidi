@@ -60,6 +60,7 @@ add_library(schneidi_lib STATIC
     src/core/ProjectFile.h        src/core/ProjectFile.cpp
     src/core/LiveHost.h
     src/core/Selection.h
+    src/core/PlaybackMeter.h
     src/core/Editor.h             src/core/Editor.cpp
     src/core/EditorSubtitles.cpp
     src/core/EditorCompound.cpp
