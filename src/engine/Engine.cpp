@@ -162,7 +162,9 @@ bool Engine::createConsumer(QString* error)
 {
     m_profile = makeProfile(m_format);
     m_factory = std::make_unique<ProducerFactory>(*m_profile);
+    m_factory->setPreview(true);
     m_builder = std::make_unique<TimelineBuilder>(*m_profile);
+    m_builder->setPreview(true);
     // Only the image from the proxy: audio decodes cheaply and thus stays exact as in the export
     m_builder->setResolver([this](const QString& path, TrackKind kind) {
         return kind == TrackKind::Video ? m_proxies->resolve(path) : path;
@@ -170,6 +172,7 @@ bool Engine::createConsumer(QString* error)
     m_builder->setGradeBypass(m_gradeBypass);
     m_builder->setClipCache([this](const Clip& c) { return m_renderCache->resolve(c); });
     m_gridBuilder = std::make_unique<TimelineBuilder>(*m_profile);
+    m_gridBuilder->setPreview(true);
     m_gridBuilder->setResolver([this](const QString& path, TrackKind kind) {
         return kind == TrackKind::Video ? m_proxies->resolve(path) : path;
     });

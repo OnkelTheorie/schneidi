@@ -18,6 +18,7 @@ extern "C" {
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 namespace Video {
 
@@ -31,6 +32,7 @@ struct Data {
     double sourceFps = 0;
     int turns = 0;                 // quarter turns applied by the reader
     mlt_image_format native = mlt_image_yuv422;
+    bool fast = false;             // preview: ProducerOptions::fastConvert
     std::atomic<int> progressive{-1}, topFieldFirst{-1}; // last values written to the producer
 };
 
@@ -145,14 +147,17 @@ AVPixelFormat avFormatOf(mlt_image_format f)
     }
 }
 
-// Per thread: a context per conversion (sws_getCachedContext reuses it while the parameters stay the same)
-SwsContext* cachedContext(int w, int h, AVPixelFormat src, AVPixelFormat dst, int flags, int dw = 0, int dh = 0)
+// Per thread: a context per conversion (sws_getCachedContext reuses it while the parameters stay the same); slot =
+// another context for a second pass in the same thread
+SwsContext* cachedContext(int w, int h, AVPixelFormat src, AVPixelFormat dst, int flags, int dw = 0, int dh = 0,
+                          int slot = 0)
 {
     struct Holder {
         SwsContext* ctx = nullptr;
         ~Holder() { sws_freeContext(ctx); }
     };
-    thread_local Holder holder;
+    thread_local Holder holders[2];
+    Holder& holder = holders[slot];
     holder.ctx = sws_getCachedContext(holder.ctx, w, h, src, dw ? dw : w, dh ? dh : h, dst, flags, nullptr, nullptr, nullptr);
     return holder.ctx;
 }
@@ -173,9 +178,45 @@ int scaleFlags(const char* interp)
     return flags | SWS_FULL_CHR_H_INP | SWS_FULL_CHR_H_INT | SWS_ACCURATE_RND;
 }
 
+// swscale's unscaled YUV -> RGB converters (SIMD on aarch64 and x86) take these, and only without SWS_ACCURATE_RND
+bool fastRgbSource(AVPixelFormat f)
+{
+    return f == AV_PIX_FMT_YUV420P || f == AV_PIX_FMT_YUVJ420P || f == AV_PIX_FMT_YUV422P || f == AV_PIX_FMT_YUVJ422P
+           || f == AV_PIX_FMT_NV12;
+}
+
+// Preview: YUV -> RGB(A), first the planes scaled (YUV -> YUV, SIMD), then converted unscaled without accurate
+// rounding (the SIMD converter: nearest chroma, ±1 step). With SWS_ACCURATE_RND and SWS_FULL_CHR_H_INT (MLT's flags)
+// the combined pass runs in C code in one thread: 80 ms for 1080p -> 540p on a Raspberry Pi Zero 2 W, 3 ms so.
+bool convertFast(const AVFrame* frame, AVPixelFormat src, uint8_t** outData, int* outStride, AVPixelFormat dst,
+                 int width, int height, int dw, int dh, int flags, int colorspace)
+{
+    const uint8_t* const* inData = frame->data;
+    const int* inStride = frame->linesize;
+    uint8_t* midData[4] = {};
+    int midStride[4] = {};
+    if (dw != width || dh != height) {
+        thread_local std::vector<uint8_t> mid;
+        const int size = av_image_get_buffer_size(src, dw, dh, 32);
+        if (size <= 0) return false;
+        mid.resize(size_t(size));
+        av_image_fill_arrays(midData, midStride, mid.data(), src, dw, dh, 32);
+        SwsContext* scale = cachedContext(width, height, src, src, flags & ~SWS_ACCURATE_RND, dw, dh, 1);
+        if (!scale) return false;
+        sws_scale(scale, frame->data, frame->linesize, 0, height, midData, midStride);
+        inData = midData;
+        inStride = midStride;
+    }
+    SwsContext* ctx = cachedContext(dw, dh, src, dst, SWS_POINT);
+    if (!ctx) return false;
+    lumaTransfer(ctx, colorspace, 601); // swscale's RGB side is SWS_CS_DEFAULT (601)
+    sws_scale(ctx, inData, inStride, 0, dh, outData, outStride);
+    return true;
+}
+
 // Converted and scaled in one pass (rgb/rgba or planar YUV, progressive, no separate alpha); false = not possible
 bool convertScaled(const Picture& pic, uint8_t* buffer, mlt_image_format format, int width, int height, int dw, int dh,
-                   int flags, const Info& info, int profileColorspace, int* colorspace)
+                   int flags, const Info& info, int profileColorspace, int* colorspace, bool fast)
 {
     const AVFrame* frame = pic.frame;
     const AVPixelFormat src = withRange(AVPixelFormat(frame->format), info.fullRange);
@@ -187,9 +228,11 @@ bool convertScaled(const Picture& pic, uint8_t* buffer, mlt_image_format format,
         av_image_fill_arrays(outData, outStride, buffer, dst, dw, dh, kImageAlign);
     else
         mlt_image_format_planes(format, dw, dh, buffer, outData, outStride);
+    *colorspace = info.colorspace;
+    if (fast && rgb && fastRgbSource(src))
+        return convertFast(frame, src, outData, outStride, dst, width, height, dw, dh, flags, info.colorspace);
     SwsContext* ctx = cachedContext(width, height, src, dst, flags, dw, dh);
     if (!ctx) return false;
-    *colorspace = info.colorspace;
     // swscale's RGB side is SWS_CS_DEFAULT (601). RGB to RGB goes through YUV inside swscale: the same matrix both
     // ways, or the colors shift (MLT's swscale filter shifted them so: a 601-tagged RGBA picture in a 709 profile)
     const AVPixFmtDescriptor* srcDesc = av_pix_fmt_desc_get(src);
@@ -272,7 +315,7 @@ int slicedProc(int /*id*/, int idx, int jobs, void* cookie)
 
 // MLT's convert_image; returns the YUV colorspace of the result
 int convert(const Picture& pic, uint8_t* buffer, mlt_image_format format, int width, int height, uint8_t** alpha,
-            const Info& info, int profileColorspace)
+            const Info& info, int profileColorspace, bool fast)
 {
     const AVFrame* frame = pic.frame;
     const auto pixFmt = AVPixelFormat(frame->format);
@@ -312,7 +355,9 @@ int convert(const Picture& pic, uint8_t* buffer, mlt_image_format format, int wi
                 outData[i] += outStride[i] / 2;
             }
             sws_scale(ctx, inData, inStride, 0, fieldHeight, outData, outStride);
-        } else {
+        } else if (!fast || !fastRgbSource(src)
+                   || !convertFast(frame, src, outData, outStride, dst, width, height, width, height, flags,
+                                   info.colorspace)) {
             SwsContext* ctx = cachedContext(width, height, src, dst, flags);
             if (!ctx) return result;
             lumaTransfer(ctx, info.colorspace, 601);
@@ -437,7 +482,7 @@ int getImage(mlt_frame frame, uint8_t** buffer, mlt_image_format* format, int* w
         auto* image = static_cast<uint8_t*>(mlt_pool_alloc(size));
         int colorspace = d->info.colorspace;
         if (image && convertScaled(*pic, image, *format, *width, *height, dw, dh, scaleFlags(interp), d->info,
-                                   profile->colorspace, &colorspace)) {
+                                   profile->colorspace, &colorspace, d->fast)) {
             mlt_frame_set_image(frame, image, size, mlt_pool_release);
             *width = dw;
             *height = dh;
@@ -453,7 +498,7 @@ int getImage(mlt_frame frame, uint8_t** buffer, mlt_image_format* format, int* w
     if (!image) return 1;
     mlt_frame_set_image(frame, image, size, mlt_pool_release);
     uint8_t* alpha = nullptr;
-    const int colorspace = convert(*pic, image, *format, *width, *height, &alpha, d->info, profile->colorspace);
+    const int colorspace = convert(*pic, image, *format, *width, *height, &alpha, d->info, profile->colorspace, d->fast);
     if (alpha) mlt_frame_set_alpha(frame, alpha, *width * *height, mlt_pool_release);
     *buffer = image;
     tag(colorspace);
@@ -623,6 +668,7 @@ std::unique_ptr<Mlt::Producer> openProducer(Mlt::Profile& profile, const QString
     d->sourceFps = av_q2d(d->info.frameRate);
     d->turns = std::abs(d->info.rotation - 90) < 1.0 ? 1 : std::abs(d->info.rotation - 180) < 1.0 ? 2
              : std::abs(d->info.rotation - 270) < 1.0 ? 3 : 0;
+    d->fast = options.fastConvert && !qEnvironmentVariableIsSet("SCHNEIDI_EXACT_PREVIEW"); // exact: comparisons
     d->native = pickImageFormat(withRange(d->info.format, d->info.fullRange), mlt_image_yuv422);
     raw->child = d;
     raw->get_frame = getFrame;

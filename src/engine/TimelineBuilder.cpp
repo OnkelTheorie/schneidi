@@ -65,6 +65,11 @@ void TimelineBuilder::setDecoderThreads(int threads)
     m_factory->setThreads(threads);
 }
 
+void TimelineBuilder::setPreview(bool on)
+{
+    m_factory->setPreview(on);
+}
+
 void TimelineBuilder::setParallelFrames(int frames)
 {
     m_parallelFrames = frames;

@@ -114,6 +114,8 @@ public:
     // Several frames rendered at once (export workers): video files decode in order (own decoder: frames kept around
     // the request; MLT's producers: engine/DecodeOrder); frames = how many at once, 0/1 = off. Set before build().
     void setParallelFrames(int frames);
+    // Preview: faster picture conversion (ProducerFactory::setPreview); off = pixels as MLT (export, still)
+    void setPreview(bool on);
     // The built timeline lasts at least this long (preview with the own audio engine: the picture graph has no
     // sound tracks but must last as long as the sound)
     void setMinimumLength(int frames) { m_minLength = frames; }

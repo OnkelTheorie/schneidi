@@ -19,6 +19,7 @@ extern "C" {
 #include <QApplication>
 #include <QCryptographicHash>
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QThread>
@@ -132,6 +133,28 @@ void testScaledColors(const QString& sd601, Mlt::Profile& p1080)
     for (qsizetype i = 0; i < ref.size(); i += 4)
         for (int k = 0; k < 3; ++k, ++n) sum += std::abs(int(uint8_t(rgba.image[i + k])) - int(uint8_t(ref[i + k])));
     if (!CHECK(sum / double(n) < 1.0)) std::printf("       scaled RGBA differs from FFmpeg by %.2f\n", sum / double(n));
+}
+
+// Preview (fastConvert): YUV -> RGBA without accurate rounding, at the media size and scaled. Same size and tags;
+// unscaled within 3 steps of the exact picture, scaled close on average (the planes are scaled before the chroma is
+// upsampled: testsrc2's hard color edges differ there, real footage shows no visible difference). YUV stays exact.
+void testFastConvert(const QString& path, Mlt::Profile& profile, int width, int height)
+{
+    auto exact = Video::openProducer(profile, path, {});
+    auto fast = Video::openProducer(profile, path, {0, 1, true});
+    if (!CHECK(exact && fast)) return;
+    const QString name = QFileInfo(path).fileName();
+    for (const QSize size : {QSize(width, height), QSize(width / 2, height / 2), QSize(width * 3 / 2, height * 3 / 2)})
+        for (int pos : {0, 7, 30}) {
+            const Picture a = fetch(*exact, pos, mlt_image_rgba, size.width(), size.height());
+            const Picture b = fetch(*fast, pos, mlt_image_rgba, size.width(), size.height());
+            const double mean = meanDiff(a.image, b.image);
+            const bool unscaled = size == QSize(width, height);
+            if (!CHECK(close(a, b, false) && (unscaled ? maxDiff(a.image, b.image) <= 3 : mean < 4.0)))
+                std::printf("       %s %dx%d @%d: %s vs %s, mean %.2f\n", qPrintable(name), size.width(), size.height(),
+                            pos, qPrintable(describe(a)), qPrintable(describe(b)), mean);
+        }
+    CHECK(same(fetch(*exact, 3, mlt_image_yuv420p, width, height), fetch(*fast, 3, mlt_image_yuv420p, width, height)));
 }
 
 struct Media {
@@ -474,6 +497,9 @@ int main(int argc, char** argv)
         auto p1080 = makeProfile(ProjectFormat{1920, 1080, {50, 1}});
         testScaledColors(file("h264.mp4"), *p1080);
     }
+    testFastConvert(file("h264.mp4"), *p25, 640, 360);
+    testFastConvert(file("mjpeg.avi"), *p25, 640, 360);
+    testFastConvert(file("sd.mp4"), *p25, 720, 576);
     testThreads(media.value(0), *p25);
     testHibernate(media.value(0).path);
 

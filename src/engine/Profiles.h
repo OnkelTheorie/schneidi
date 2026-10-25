@@ -42,11 +42,14 @@ public:
     void setThreads(int threads) { m_threads = threads; }
     // Frames rendered at once (export workers): the own decoder keeps that many decoded around the request
     void setParallelFrames(int frames) { m_parallelFrames = frames; }
+    // Preview: faster picture conversion (Video::ProducerOptions::fastConvert); off = pixels as MLT (export)
+    void setPreview(bool on) { m_preview = on; }
 
 private:
     Mlt::Profile& m_base;
     int m_threads = 0;
     int m_parallelFrames = 1;
+    bool m_preview = false;
     std::map<int, std::unique_ptr<Mlt::Profile>> m_profiles; // color standard -> profile
     std::mutex m_mutex;                                       // guards m_profiles
 };

@@ -76,7 +76,7 @@ bool forOwnDecoder(const QString& resource)
 std::unique_ptr<Mlt::Producer> ProducerFactory::open(const QString& resource)
 {
     std::unique_ptr<Mlt::Producer> p;
-    if (forOwnDecoder(resource)) p = Video::openProducer(m_base, resource, {m_threads, m_parallelFrames});
+    if (forOwnDecoder(resource)) p = Video::openProducer(m_base, resource, {m_threads, m_parallelFrames, m_preview});
     if (!p) {
         p = std::make_unique<Mlt::Producer>(m_base, resource.toUtf8().constData());
         if (!p->is_valid()) return p;

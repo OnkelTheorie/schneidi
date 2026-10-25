@@ -22,6 +22,10 @@ namespace Video {
 struct ProducerOptions {
     int threads = 0;       // decoder threads (MLT "threads"; 0 = FFmpeg's choice)
     int parallelFrames = 1; // frames rendered at once (export workers): kept decoded so none waits for a seek
+    // Preview: YUV -> RGB without swscale's accurate rounding (±1 step), so its SIMD paths run (NEON, x86). With
+    // accurate rounding swscale stays in C code: a Raspberry Pi showed 1080p at 1 frame/s. Export stays as MLT.
+    // SCHNEIDI_EXACT_PREVIEW=1 switches it off (comparisons).
+    bool fastConvert = false;
 };
 
 // nullptr if the own decoder does not take this file (MLT opens it then)
