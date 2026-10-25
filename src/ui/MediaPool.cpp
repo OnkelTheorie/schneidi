@@ -1142,7 +1142,7 @@ void MediaPool::removeBin(int id)
     if (clips > 0
         && QMessageBox::question(this, T("Bin entfernen"),
                                  T("Bin „%1“ enthält %2 Clip(s). Sie werden in „%3“ verschoben.")
-                                     .arg(name).arg(clips).arg(m_project->binName(parent)),
+                                     .arg(name, QString::number(clips), m_project->binName(parent)),
                                  QMessageBox::Ok | QMessageBox::Cancel) != QMessageBox::Ok)
         return;
     if (m_currentBin != 0 && m_project->binInside(m_currentBin, id)) m_currentBin = parent;

@@ -30,7 +30,7 @@ void opNewTimeline(Session& s, const QJsonObject& op)
     const QString name = op.value("name").toString().trimmed();
     for (const Sequence& q : s.project.sequences())
         if (!name.isEmpty() && q.name.compare(name, Qt::CaseInsensitive) == 0)
-            fail("EXISTS", QString("there is a timeline '%1' already (id %2)").arg(q.name).arg(q.id));
+            fail("EXISTS", QString("there is a timeline '%1' already (id %2)").arg(q.name, QString::number(q.id)));
     const int id = s.project.addTimeline(name); // opens it
     // In the app the user sees the new timeline right away (open:false keeps showing the old one)
     if (op.value("switch").toBool(true)) s.selectTimeline(id, op.value("open").toBool(s.live));

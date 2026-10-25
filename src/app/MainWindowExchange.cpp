@@ -116,7 +116,7 @@ bool MainWindow::importTimelineFile(const QString& path)
     if (!files.isEmpty()) m_mediaPool->importFiles(files);
     const Interchange::Imported imp = Interchange::addToProject(*m_project, seq, local, {}, &Engine::startTimecode);
     undo->endMacro();
-    const QString done = T("Timeline „%1“ importiert (%2 Clips).").arg(imp.name).arg(imp.clips);
+    const QString done = T("Timeline „%1“ importiert (%2 Clips).").arg(imp.name, QString::number(imp.clips));
     if (imp.warnings.isEmpty()) statusBar()->showMessage(done, 5000);
     else showNotes(this, title, done + "\n\n" + T("Hinweise:") + "\n" + shortList(imp.warnings));
     return true;

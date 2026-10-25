@@ -305,7 +305,7 @@ void opMulticam(Session& s, const QJsonObject& op)
     const QString name = op.value("name").toString().trimmed();
     for (const Sequence& q : s.project.sequences())
         if (!name.isEmpty() && q.name.compare(name, Qt::CaseInsensitive) == 0)
-            fail("EXISTS", QString("there is a timeline '%1' already (id %2)").arg(q.name).arg(q.id));
+            fail("EXISTS", QString("there is a timeline '%1' already (id %2)").arg(q.name, QString::number(q.id)));
     for (const Multicam::Source& src : sources)
         for (const QString& f : src.files) s.media(f); // imported into the Media Pool (fails if unreadable)
 
@@ -351,7 +351,7 @@ void opSourceMarker(Session& s, const QJsonObject& op)
     const MediaInfo m = s.media(op.value("media").toString());
     if (!op.contains("at")) fail("BAD_ARGUMENT", "missing 'at' (source time in the file)");
     const int at = parseTime(op.value("at"), s.format(), "at");
-    if (at >= m.length) fail("BAD_ARGUMENT", QString("'at' is after the end of %1 (%2 frames)").arg(m.path).arg(m.length));
+    if (at >= m.length) fail("BAD_ARGUMENT", QString("'at' is after the end of %1 (%2 frames)").arg(m.path, QString::number(m.length)));
     const bool remove = op.value("remove").toBool();
     if (m.markers.contains(at) != remove) return; // already as wanted
     s.editor.toggleSourceMarker(m.path, at);
