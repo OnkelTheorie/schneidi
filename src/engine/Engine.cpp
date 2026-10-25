@@ -911,15 +911,16 @@ void Engine::onFrameShown(void* mltFrame)
     if (!mltFrame) return;
     Mlt::Frame frame(static_cast<mlt_frame>(mltFrame));
     const int pos = frame.get_position();
+    const double speed = m_speed; // read once: the UI thread may change it meanwhile
+    const Mode mode = m_mode;
     const int target = m_seekTarget;
     if (target >= 0) {
         // Only show again from the jump target on (buffer still contains images from before); emergency brake after 50 images
-        const double speed = m_speed;
         const bool arrived = speed == 0.0 || (speed > 0 ? pos >= target && pos <= target + 60 : pos <= target && pos >= target - 60);
         if (!arrived && ++m_seekSkipped < 50) return;
         m_seekTarget = -1;
     }
-    if (m_player && m_speed != 0.0) m_player->release(); // the picture is there: the sound may start
+    if (m_player && speed != 0.0) m_player->release(); // the picture is there: the sound may start
     mlt_image_format fmt = mlt_image_rgba;
     int w = m_previewSize.width(), h = m_previewSize.height();
     const uint8_t* data = frame.get_image(fmt, w, h);
@@ -928,10 +929,10 @@ void Engine::onFrameShown(void* mltFrame)
         std::memcpy(img.bits(), data, size_t(w) * h * 4);
         emit frameReady(img); // queued -> UI thread
     }
-    m_preroll->update(pos, m_mode == Mode::Timeline ? m_speed : 0.0);
+    m_preroll->update(pos, mode == Mode::Timeline ? speed : 0.0);
     const int shown = pos + m_offset; // timeline frame
-    if (m_speed != 0.0 && shown != m_position.exchange(shown)) emit framePosition(shown, m_seekEpoch);
-    if (m_speed != 0.0 && m_mode == Mode::Timeline) emitLevels();
+    if (speed != 0.0 && shown != m_position.exchange(shown)) emit framePosition(shown, m_seekEpoch);
+    if (speed != 0.0 && mode == Mode::Timeline) emitLevels();
 }
 
 void Engine::emitLevels()

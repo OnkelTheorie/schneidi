@@ -226,8 +226,9 @@ private:
     QString m_sourcePath;
     Mlt::Producer* m_current = nullptr;
 
-    Mode m_mode = Mode::Timeline;
-    double m_speed = 0.0;
+    // Atomic: onFrameShown reads them on the consumer's thread while the UI thread switches mode/speed
+    std::atomic<Mode> m_mode{Mode::Timeline};
+    std::atomic<double> m_speed{0.0};
     std::atomic<int> m_position{0};
     // Jump during playback: no longer show/report images from the buffer from before the jump
     std::atomic<int> m_seekEpoch{0};
