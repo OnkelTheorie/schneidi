@@ -261,9 +261,8 @@ void TimelineView::drawTracks(QPainter& p)
 
     // Preview when dragging in: video onto V[n], audio onto A[n]
     if (m_dropFrame >= 0 && !m_dropItems.isEmpty()) {
-        // Track k below the target track (further audio streams); missing audio tracks are created below the last one
-        auto ghostRow = [&](TrackKind kind, int k) -> std::optional<Row> {
-            const int idx = m_dropTrack + k;
+        // Track idx (further audio streams below); missing audio tracks are created below the last one
+        auto ghostRow = [&](TrackKind kind, int idx) -> std::optional<Row> {
             if (auto r = rowFor({kind, idx})) return isLocked(*r) ? std::nullopt : r; // a locked track gets nothing
             if (kind == TrackKind::Audio && !allRows.isEmpty()) {
                 const Row& last = allRows.last();
@@ -272,13 +271,15 @@ void TimelineView::drawTracks(QPainter& p)
             }
             return std::nullopt;
         };
-        const auto vRow = ghostRow(TrackKind::Video, 0);
+        const auto vRow = ghostRow(TrackKind::Video, m_dropTrack);
         int start = m_dropFrame;
         for (const DropItem& it : m_dropItems) {
             const int x1 = int(frameToX(start)), x2 = int(frameToX(start + it.length));
             if (it.video && vRow) p.fillRect(QRect(x1, vRow->y + 1, x2 - x1, vRow->h - 3), Theme::alpha(Theme::videoClip, 150));
+            const int a0 =
+                it.audio > 1 ? m_editor->streamTrackStart(tl, it.info, m_dropTrack, start, it.length) : m_dropTrack;
             for (int k = 0; k < it.audio; ++k)
-                if (const auto aRow = ghostRow(TrackKind::Audio, k))
+                if (const auto aRow = ghostRow(TrackKind::Audio, a0 + k))
                     p.fillRect(QRect(x1, aRow->y + 1, x2 - x1, aRow->h - 3), Theme::alpha(Theme::audioClip, 150));
             start += it.length;
         }

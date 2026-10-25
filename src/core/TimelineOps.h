@@ -36,6 +36,11 @@ void insertSubtitleGap(Timeline& tl, int frame, int length, const IdGen& newId);
 // All clips with the same linkId (including the clip itself).
 QVector<int> linkedGroup(const Timeline& tl, int clipId);
 
+// The audio clips among `clipIds` whose sound already plays over their whole length: other enabled clips (not in
+// `clipIds`) on unmuted tracks play the same stream of the same file at the same source time (a second copy of a
+// moment for picture-in-picture or a blurred background would play it twice). Retimed clips never count.
+QVector<int> repeatedSound(const Timeline& tl, const QVector<int>& clipIds);
+
 // Overwrites the range [start, end) on a track (like "Overwrite" in DaVinci):
 // clips in it are shortened, split or removed. Nothing moves up.
 // If a linked clip is split, the right piece provisionally gets the linkId -old (same on all tracks);

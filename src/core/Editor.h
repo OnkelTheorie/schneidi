@@ -238,6 +238,12 @@ public:
     // clips from files; changing them leaves the timeline as it is (not in the undo)
     void setStreamPresets(const StreamPresets& presets) { m_streamPresets = presets; }
     const StreamPresets& streamPresets() const { return m_streamPresets; }
+    // First audio track for the placed streams of file m (one track each, from there on) when an edit puts them over
+    // [start, start + length) and targets audio track aTrack (V2 -> A2): aTrack, unless one of the tracks from there
+    // on is named after another stream of the file (a second copy on V2 would put the Mix on the "Spotify" track of
+    // the first one). Then tracks named like the streams that are free there, else the first free tracks below
+    // whose names fit (new ones at the bottom), so names stay true and nothing is overwritten.
+    int streamTrackStart(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length) const;
     int targetVideoTrack() const { return m_targetVideo; }
     int targetAudioTrack() const { return m_targetAudio; }
     void setTargetTracks(int video, int audio);
@@ -402,6 +408,9 @@ private:
     // sIn/len in frames of the converted material if speed != 1 (see Clip::speed)
     void placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack,
                      double speed = 1.0);
+    // New audio clips whose sound already plays there (TimelineOps::repeatedSound, e.g. a second copy of a moment
+    // for a blurred background) come in disabled, so nothing is heard twice
+    static void muteRepeatedSound(Timeline& tl, const QVector<int>& ids);
 
     // Common flow of the speed ramp edits (see addSpeedPoint); change gets the old curve
     // and the file length and returns false if nothing changes

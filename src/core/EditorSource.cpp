@@ -51,6 +51,47 @@ void Editor::clearSourceMarks(const QString& path)
     m_project->setMediaMarks(path, -1, -1);
 }
 
+int Editor::streamTrackStart(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length) const
+{
+    const QVector<StreamPlacement> placed = m_streamPresets.placements(m);
+    const int n = int(placed.size());
+    if (n < 2) return aTrack;
+    const auto same = [](const QString& a, const QString& b) {
+        return a.trimmed().compare(b.trimmed(), Qt::CaseInsensitive) == 0;
+    };
+    const auto name = [&](int i) { return i < tl.audio.size() ? tl.audio[i].name.trimmed() : QString(); };
+    // A track from j on is named after another stream of the file than the one it would get
+    const auto crossed = [&](int j) {
+        for (int k = 0; k < n; ++k) {
+            const QString t = name(j + k);
+            if (t.isEmpty() || same(t, placed[k].trackLabel)) continue;
+            for (const StreamPlacement& o : placed)
+                if (same(t, o.trackLabel)) return true;
+        }
+        return false;
+    };
+    if (aTrack < 0 || !crossed(aTrack)) return aTrack;
+    const auto free = [&](int j) { // unlocked and empty over the range
+        for (int k = 0; k < n && j + k < tl.audio.size(); ++k) {
+            const Track& t = tl.audio[j + k];
+            if (t.locked) return false;
+            for (const Clip& c : t.clips)
+                if (c.start < start + length && c.end() > start) return false;
+        }
+        return true;
+    };
+    const auto named = [&](int j) {
+        for (int k = 0; k < n; ++k)
+            if (!same(name(j + k), placed[k].trackLabel)) return false;
+        return true;
+    };
+    for (int j = 0; j < tl.audio.size(); ++j)
+        if (named(j) && free(j)) return j;
+    int j = aTrack + 1;
+    while (crossed(j) || !free(j)) ++j; // ends below the last track at the latest
+    return j;
+}
+
 void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int start, int vTrack, int aTrack,
                          double speed)
 {
@@ -69,10 +110,13 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
     if (m.hasVideo) targets << Target{TrackKind::Video, vTrack, {}};
     if (m.hasAudio) {
         const QVector<StreamPlacement> placed = m_streamPresets.placements(m);
+        const int a0 = streamTrackStart(tl, m, aTrack, start, len);
         for (int k = 0; k < placed.size(); ++k)
-            if (k == 0 || !isTrackLocked({TrackKind::Audio, aTrack + k})) targets << Target{TrackKind::Audio, aTrack + k, placed[k]};
+            if ((k == 0 && a0 == aTrack) || !isTrackLocked({TrackKind::Audio, a0 + k}))
+                targets << Target{TrackKind::Audio, a0 + k, placed[k]};
     }
     c.linkId = targets.size() > 1 ? p->newLinkId() : 0;
+    QVector<int> sound; // the new audio clips
     for (const Target& tg : targets) {
         TimelineOps::ensureTracks(tl, tg.kind, tg.idx + 1);
         Track& t = tl.tracks(tg.kind)[tg.idx];
@@ -83,11 +127,21 @@ void Editor::placeSource(Timeline& tl, const MediaInfo& m, int sIn, int len, int
             x.enabled = tg.stream.enabled;
             x.volumeDb = tg.stream.volumeDb;
             if (t.name.isEmpty()) t.name = tg.stream.trackLabel;
+            sound << x.id;
         }
         TimelineOps::clearDissolveAt(t, x.start);
         TimelineOps::clearDissolveAt(t, x.end());
         TimelineOps::placeClip(t, x, newId);
     }
+    muteRepeatedSound(tl, sound);
+}
+
+void Editor::muteRepeatedSound(Timeline& tl, const QVector<int>& ids)
+{
+    const QVector<int> repeated = TimelineOps::repeatedSound(tl, ids);
+    if (repeated.isEmpty()) return;
+    TimelineOps::changeClips(
+        tl, [&](const Clip& c) { return repeated.contains(c.id); }, [](Clip& c) { c.enabled = false; });
 }
 
 int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int playhead)

@@ -153,7 +153,7 @@ QJsonObject StreamPresets::toJson() const
 StreamPresets StreamPresets::fromJson(const QJsonObject& o)
 {
     StreamPresets p;
-    p.muteMix = o.value("muteMix").toBool();
+    p.muteMix = o.value("muteMix").toBool(p.muteMix);
     for (const QJsonValue& v : o.value("rules").toArray()) {
         const QJsonObject r = v.toObject();
         StreamRule rule;

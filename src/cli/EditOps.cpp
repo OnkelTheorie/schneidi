@@ -239,7 +239,7 @@ struct PresetsScope {
     StreamPresets saved;
     PresetsScope(Session& s, const QJsonObject& op) : editor(s.editor), saved(s.editor.streamPresets())
     {
-        if (!op.value("presets").toBool(true)) editor.setStreamPresets({});
+        if (!op.value("presets").toBool(true)) editor.setStreamPresets(StreamPresets::none());
     }
     ~PresetsScope() { editor.setStreamPresets(saved); }
 };
@@ -405,8 +405,13 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
 }
 
 // Details of the ops that place source ranges (import presets, core/StreamPresets.h)
-const char* const kPresetsDetails = "files with several audio streams (OBS) follow the app's import presets (Mix muted, "
-                                    "rules per stream title); presets:false places every stream";
+const char* const kPresetsDetails =
+    "track: V2 puts the picture on V2 and the sound from A2 on. Files with several audio streams (OBS) follow the "
+    "app's import presets (the Mix stream muted when its single streams are there, rules per stream title; "
+    "presets:false places every stream as it is), one track per stream named after it. A stream never lands on a "
+    "track named after another stream of the file: then the streams take free tracks with their names, or new "
+    "tracks below. Sound that already plays there (a second copy of the same moment, e.g. a blurred background or "
+    "picture-in-picture) comes in disabled: 'enable' turns it on";
 
 QVector<OpDef> makeOps()
 {

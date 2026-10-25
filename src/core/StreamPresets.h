@@ -1,9 +1,9 @@
 #pragma once
 // Import presets for files with several audio streams (docs/archiv/plan-0.8.md; OBS records "Mix" plus single streams,
 // which plays everything twice): rules per stream title (place / mute = clip disabled / leave out, volume, track name)
-// and the switch "mute the Mix stream when single streams exist". Applied wherever clips come from files (Editor:
-// insert, source edits, drag from the viewer, multicam angles; CLI). Kept in the settings (all projects), not in the
-// project.
+// and the switch "mute the Mix stream when single streams exist" (on by default). Applied wherever clips come from
+// files (Editor: insert, source edits, drag from the viewer, multicam angles; CLI). Kept in the settings (all
+// projects), not in the project.
 
 #include "core/Types.h"
 
@@ -29,9 +29,13 @@ struct StreamPlacement {
 };
 
 struct StreamPresets {
-    bool muteMix = false;
+    // On by default: a Mix stream next to its parts would play everything twice (and clip)
+    bool muteMix = true;
     QVector<StreamRule> rules;
     bool operator==(const StreamPresets&) const = default;
+
+    // No presets: every stream as in the file (CLI presets:false)
+    static StreamPresets none() { return {false, {}}; }
 
     // "Mix", "mix 1", "Mix (alles)", "Mix-Spur", "Mix2" – not "Mixer", "Remix", "Discord Mix"
     static bool isMixTitle(const QString& title);

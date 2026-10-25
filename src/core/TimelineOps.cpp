@@ -145,6 +145,32 @@ QVector<int> linkedGroup(const Timeline& tl, int clipId)
     return ids;
 }
 
+QVector<int> repeatedSound(const Timeline& tl, const QVector<int>& clipIds)
+{
+    const auto plain = [](const Clip& c) { return c.kind == ClipKind::Media && c.enabled && !c.isRetimed(); };
+    QVector<int> out;
+    for (const Track& track : tl.audio)
+        for (const Clip& x : track.clips) {
+            if (!clipIds.contains(x.id) || !plain(x) || x.mediaPath.isEmpty()) continue;
+            // Parts of x that the same sound covers elsewhere (source frame = timeline frame - start + in on both)
+            QVector<QPair<int, int>> spans;
+            for (const Track& t : tl.audio) {
+                if (t.muted) continue;
+                for (const Clip& c : t.clips)
+                    if (!clipIds.contains(c.id) && plain(c) && c.mediaPath == x.mediaPath
+                        && c.audioStream == x.audioStream && c.start - c.in == x.start - x.in
+                        && c.subframe == x.subframe && c.start < x.end() && c.end() > x.start)
+                        spans << qMakePair(std::max(c.start, x.start), std::min(c.end(), x.end()));
+            }
+            std::sort(spans.begin(), spans.end());
+            int covered = x.start;
+            for (const auto& [from, to] : spans)
+                if (from <= covered) covered = std::max(covered, to);
+            if (covered >= x.end()) out << x.id;
+        }
+    return out;
+}
+
 void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId)
 {
     QHash<int, int> map;
