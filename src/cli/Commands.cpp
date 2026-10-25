@@ -59,16 +59,18 @@ QString absolute(const QString& path)
 // Frames from 120 (frames), "120" (frames), "4.8s" (seconds) or "00:00:04:20" (timecode)
 int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what)
 {
+    constexpr double kMax = 2e9; // as Timecode::parse: beyond that the cast to int would be undefined
     if (v.isDouble()) {
         const double d = v.toDouble();
-        if (d < 0 || d != std::floor(d)) fail("BAD_ARGUMENT", QString("%1: frames must be a whole number >= 0, got %2").arg(what).arg(d));
+        if (d < 0 || d != std::floor(d) || d > kMax)
+            fail("BAD_ARGUMENT", QString("%1: frames must be a whole number >= 0, got %2").arg(what).arg(d));
         return int(d);
     }
     const QString s = v.toString().trimmed();
     if (s.endsWith('s')) {
         bool ok = false;
         const double sec = s.chopped(1).toDouble(&ok);
-        if (ok && sec >= 0) return int(std::lround(sec * fmt.rate.fps()));
+        if (ok && sec >= 0 && sec * fmt.rate.fps() <= kMax) return int(std::lround(sec * fmt.rate.fps()));
     } else if (!s.isEmpty()) {
         bool ok = false;
         const int frames = s.toInt(&ok);

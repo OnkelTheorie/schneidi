@@ -106,6 +106,22 @@ int main(int argc, char** argv)
     CHECK_EQ(errorOf("info", {}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("info", {{"project", g_path}, {"bogus", 1}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("info", {{"project", dir.filePath("missing.schneidi")}}), QString("NOT_FOUND"));
+    // Times beyond int: an error, not an undefined cast
+    {
+        const ProjectFormat fmt;
+        auto timeError = [&](const QJsonValue& v) {
+            try {
+                Cli::detail::parseTime(v, fmt, "at");
+            } catch (const Cli::Error& e) {
+                return e.code;
+            }
+            return QString("none");
+        };
+        CHECK_EQ(Cli::detail::parseTime(QJsonValue(250), fmt, "at"), 250);
+        CHECK_EQ(Cli::detail::parseTime(QJsonValue("4.5s"), fmt, "at"), int(std::lround(4.5 * fmt.rate.fps())));
+        CHECK_EQ(timeError(QJsonValue(1e12)), QString("BAD_ARGUMENT"));
+        CHECK_EQ(timeError(QJsonValue("1e10s")), QString("BAD_ARGUMENT"));
+    }
     const QJsonObject help = run("help", {});
     CHECK_EQ(help["commands"].toArray().size(), int(Cli::commands().size()));
 
