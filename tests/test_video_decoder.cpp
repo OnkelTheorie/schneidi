@@ -457,6 +457,15 @@ int main(int argc, char** argv)
                                                              "-c", "copy"}), 100);
     add("rotated-180", Check::makeMedia(file("rotated180.mp4"), {"-display_rotation", "180", "-i", file("h264.mp4"),
                                                                  "-c", "copy"}), 100);
+    // iPhone-like: HEVC 10 bit HLG/BT.2020 in MOV (hvc1, Apple's time scale 600), also in portrait
+    add("iphone-hlg", Check::makeMedia(file("iphone-hlg.mov"), {"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-t",
+                                                                 "2", "-c:v", "libx265", "-pix_fmt", "yuv420p10le",
+                                                                 "-tag:v", "hvc1", "-color_primaries", "bt2020",
+                                                                 "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc",
+                                                                 "-x265-params", "log-level=error",
+                                                                 "-video_track_timescale", "600"}), 50);
+    add("iphone-hlg-portrait", Check::makeMedia(file("iphone-hlg-portrait.mov"), {"-display_rotation", "-90", "-i",
+                                                                                   file("iphone-hlg.mov"), "-c", "copy"}), 50);
     // Interlaced (top field first)
     add("interlaced", Check::makeMedia(file("interlaced.mp4"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "libx264",
                                                                 "-flags", "+ildct+ilme", "-x264opts", "tff=1",
