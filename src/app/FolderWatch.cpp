@@ -9,6 +9,7 @@
 #include <QSet>
 #include <QUndoStack>
 
+#include <algorithm>
 #include <utility>
 
 namespace {

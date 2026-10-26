@@ -8,7 +8,6 @@
 
 #include "core/Types.h"
 
-#include <QByteArray>
 #include <QDateTime>
 #include <QHash>
 #include <QSet>
@@ -100,8 +99,6 @@ public:
                 const QDateTime& now = QDateTime::currentDateTimeUtc());
     // Probing failed (an MP4 whose index is written last, a broken file): left alone until it changes
     void rejected(const QString& path);
-    // What the last scan listed (paths, sizes, times): unchanged = nothing new to look at
-    QByteArray fingerprint() const { return m_fingerprint; }
 
 private:
     struct Seen {
@@ -114,7 +111,6 @@ private:
     int m_settleMs;
     QHash<QString, Seen> m_seen; // by pathKey
     QSet<QString> m_listed;      // watch folders listed before (pathKey): files new to a listed folder have appeared
-    QByteArray m_fingerprint;
 };
 
 } // namespace WatchFolders

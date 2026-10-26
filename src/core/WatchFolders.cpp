@@ -1,6 +1,5 @@
 #include "core/WatchFolders.h"
 
-#include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
 
@@ -147,7 +146,6 @@ Scanner::Result Scanner::scan(const QVector<WatchFolder>& watches, const std::fu
 {
     Result r;
     const qint64 nowMs = now.toMSecsSinceEpoch();
-    QCryptographicHash hash(QCryptographicHash::Sha1);
     QSet<QString> present, listed;
     for (int wi = 0; wi < watches.size(); ++wi) {
         const WatchFolder& w = watches[wi];
@@ -156,14 +154,12 @@ Scanner::Result Scanner::scan(const QVector<WatchFolder>& watches, const std::fu
         if (w.path.isEmpty() || !QFileInfo(w.path).isDir()) continue;
         const bool firstListing = !m_listed.contains(wkey) && !listed.contains(wkey);
         listed.insert(wkey);
-        hash.addData(wkey.toUtf8());
         QSet<QString> ignored;
         for (const QString& f : w.ignored) ignored.insert(pathKey(f));
         for (const Listed& f : list(w, &r.folders)) {
             const QString key = pathKey(f.path);
             if (present.contains(key)) continue; // two watches cover it: the first one takes it
             present.insert(key);
-            hash.addData(QString("%1|%2|%3").arg(key).arg(f.size).arg(f.modified).toUtf8());
             auto it = m_seen.find(key);
             if (it == m_seen.end()) {
                 it = m_seen.insert(key, {});
@@ -193,7 +189,6 @@ Scanner::Result Scanner::scan(const QVector<WatchFolder>& watches, const std::fu
     for (auto it = m_seen.begin(); it != m_seen.end();)
         it = present.contains(it.key()) ? std::next(it) : m_seen.erase(it);
     m_listed = listed;
-    m_fingerprint = hash.result();
     return r;
 }
 

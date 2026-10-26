@@ -87,3 +87,4 @@ Read the guide that fits the task (several if it combines them):
 | Several cameras or recordings of the same event | [references/sync-multicam.md](references/sync-multicam.md) |
 | Formats, presets, hardware encoding, exchange with other editors | [references/export.md](references/export.md) |
 | Checking a render before handing it over | [references/check.md](references/check.md) |
+| Automation: new recordings in a folder → cut → render, without anyone clicking | [references/automation.md](references/automation.md) |
