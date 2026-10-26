@@ -447,6 +447,29 @@ int main(int argc, char* argv[])
         CHECK(!QFileInfo::exists(tmp.filePath("outside/evil.bin")));
         CHECK_EQ(http("PUT", s.base + "/files/in", "x", {{"Authorization", "Bearer " + kToken}}).status, 409);
         CHECK_EQ(http("PUT", s.base + "/files/x.bin", "x").status, 401);
+        // Hidden files of the work folder (a home folder's .ssh …) are not served, not written
+        QDir(root).mkpath(".hidden");
+        QFile(root + "/.hidden/key").open(QIODevice::WriteOnly);
+        CHECK_EQ(http("GET", s.base + "/files/.hidden/key", {}, {{"Authorization", "Bearer " + kToken}}).status, 403);
+        CHECK_EQ(http("PUT", s.base + "/files/.ssh/authorized_keys", "x", {{"Authorization", "Bearer " + kToken}}).status, 403);
+        CHECK(!QFileInfo::exists(root + "/.ssh"));
+        CHECK_EQ(errorCode(s.call("files", {{"path", ".hidden"}})), QString("HIDDEN"));
+        // An early error answer while the body still comes in: one answer, not a second one for the body
+        {
+            const QUrl url(s.base);
+            QTcpSocket raw;
+            raw.connectToHost(url.host(), quint16(url.port()));
+            CHECK(raw.waitForConnected(5000));
+            raw.write("POST /mcp HTTP/1.1\r\nHost: " + url.authority().toLatin1()
+                      + "\r\nContent-Type: application/json\r\nContent-Length: 2000000\r\n\r\n" + QByteArray(1000, ' '));
+            QByteArray got;
+            QElapsedTimer t;
+            t.start();
+            while (!t.hasExpired(1500))
+                if (raw.waitForReadyRead(100)) got += raw.readAll();
+            CHECK_EQ(got.count("HTTP/1.1 "), qsizetype(1));
+            CHECK(got.startsWith("HTTP/1.1 401"));
+        }
         CHECK(!QFileInfo::exists(root + "/x.bin"));
 
         // `files`: what is there (symlinks out of the work folder stay hidden)

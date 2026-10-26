@@ -42,7 +42,8 @@ Worker::Worker(const QString& program, const QStringList& args, const QString& d
     connect(&m_proc, &QProcess::readyReadStandardOutput, this, &Worker::onOutput);
     connect(&m_proc, &QProcess::finished, this, &Worker::onGone);
     connect(&m_proc, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
-        if (e == QProcess::FailedToStart) onGone();
+        // Queued: it may come right out of start() below, before Jobs listens to `gone`
+        if (e == QProcess::FailedToStart) QMetaObject::invokeMethod(this, &Worker::onGone, Qt::QueuedConnection);
     });
     m_idle.start();
     m_proc.start();
@@ -79,6 +80,8 @@ void Worker::run(Job* job)
 
 void Worker::kill()
 {
+    // Never picked again: an answer already in the pipe must not make it idle for the next call
+    m_state = State::Stopping;
     if (m_proc.state() != QProcess::NotRunning) m_proc.kill();
 }
 

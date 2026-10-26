@@ -16,6 +16,7 @@ constexpr qint64 kFilePiece = 256 * 1024;
 constexpr int kMaxHeaders = 100;
 constexpr int kIdleMs = 120 * 1000;   // keep-alive without a request
 constexpr int kStalledMs = 60 * 1000; // half a head or body without new data
+constexpr int kHeadMs = 30 * 1000;    // a whole head, however slowly it trickles in (connections are limited)
 constexpr qint64 kDiscardMax = 4 << 20; // body of a request answered early (error): read and dropped up to this size
 } // namespace
 
@@ -81,10 +82,13 @@ void Connection::process()
     while (m_state == State::Head) {
         const qsizetype end = m_buf.indexOf("\r\n\r\n");
         if (end < 0) {
+            if (!m_buf.isEmpty() && !m_headClock.isValid()) m_headClock.start();
             if (m_buf.size() > kMaxHead) fail(431, "request head too large");
+            else if (m_headClock.isValid() && m_headClock.hasExpired(kHeadMs)) fail(408, "request head too slow");
             else armTimer();
             return;
         }
+        m_headClock.invalidate();
         const QByteArray text = m_buf.left(end);
         m_buf.remove(0, end + 4);
         if (!parseHead(text)) return;
@@ -92,8 +96,11 @@ void Connection::process()
         m_bodyMax = -1;
         m_sink = nullptr;
         m_state = State::Body;
+        const quint64 request = ++m_requests;
         emit headReceived(this);
-        if (m_state != State::Body) return; // answered right away (the connection closes if a body was due)
+        // Answered right away (an error): the connection closes, or finishAnswer drops the rest of a small body and
+        // may already be on the next request – nothing more to do for this one
+        if (m_state != State::Body || m_discard || m_requests != request) return;
         if (!m_sink && m_bodyMax < 0) m_bodyMax = kDefaultBody;
         if (!m_sink && m_req.length > m_bodyMax) {
             fail(413, "request body too large");
@@ -229,7 +236,9 @@ void Connection::writeHead(int status, const Headers& headers)
     // Answered before the body is in (an error): a small rest is read and dropped (clients that send the whole
     // body first see the answer then), for a big one the connection closes after the answer
     if (m_state == State::Body && m_received < m_req.length) {
-        if (m_keepAlive && m_req.length - m_received <= kDiscardMax) m_discard = true;
+        // A client waiting for "100 Continue" sends no body after this answer: dropping would swallow its next request
+        const bool waits = m_received == 0 && m_buf.isEmpty() && m_req.header("expect").toLower() == "100-continue";
+        if (m_keepAlive && !waits && m_req.length - m_received <= kDiscardMax) m_discard = true;
         else m_keepAlive = false;
     }
     QByteArray h = "HTTP/1.1 " + QByteArray::number(status) + ' ' + reason(status) + "\r\n";

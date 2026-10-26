@@ -57,6 +57,7 @@ QJsonObject Server::filesTool(const QJsonObject& args, const QString& base) cons
 {
     const QString path = args.contains("path") ? args["path"].toString() : Sandbox::root();
     const QFileInfo fi(path);
+    if (Sandbox::hidden(path)) fail("HIDDEN", "hidden files and folders of the work folder are not listed");
     if (!fi.exists()) fail("NOT_FOUND", "not found: " + Sandbox::mapBack(path));
     QJsonArray entries;
     bool truncated = false;
@@ -107,6 +108,7 @@ void Server::prepareUpload(Job& job, const QString& givenPath)
     else if (QFileInfo(target).isDir() || givenPath.endsWith('/') || givenPath.endsWith('\\'))
         target = QDir(target).filePath(name);
     target = Sandbox::resolve(target); // the file name must not lead out either
+    if (Sandbox::hidden(target)) fail("HIDDEN", "upload into hidden files or folders of the work folder is not allowed");
     if (QFileInfo(target).isDir()) fail("BAD_ARGUMENT", "that is a folder: " + Sandbox::mapBack(target));
     if (QFileInfo::exists(target) && !job.args["overwrite"].toBool())
         fail("EXISTS", "file exists (pass overwrite to replace it): " + Sandbox::mapBack(target));
@@ -227,7 +229,9 @@ QString Server::filePath(const QString& requestPath) const
 {
     QString rel = requestPath.mid(int(qstrlen("/files")));
     while (rel.startsWith('/')) rel.remove(0, 1);
-    return Sandbox::resolve(rel.isEmpty() ? QString(".") : rel);
+    const QString path = Sandbox::resolve(rel.isEmpty() ? QString(".") : rel);
+    if (Sandbox::hidden(path)) fail("HIDDEN", "hidden files and folders of the work folder are not served");
+    return path;
 }
 
 void Server::filesHead(Http::Connection* c)

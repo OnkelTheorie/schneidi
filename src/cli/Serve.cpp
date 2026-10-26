@@ -48,6 +48,7 @@ namespace {
 
 constexpr qint64 kMaxMessage = 16 << 20; // one JSON-RPC message (edit ops); files go through /files
 constexpr int kMaxConnections = 256;
+constexpr int kMaxPerAddress = 32; // one device (not behind a reverse proxy: everyone comes from it)
 constexpr int kMaxSessions = 1000;
 
 QString randomToken(int bytes)
@@ -130,9 +131,9 @@ Server::Server(const Options& opt) : m_opt(opt), m_tcp(new QTcpServer(this)), m_
     for (const Command& c : serverTools(opt.jobWaitS))
         m_mcp.extraTools << QJsonObject{{"name", c.name}, {"description", c.summary}, {"inputSchema", inputSchema(c)}};
 
-    // Workers: the same program as MCP server on stdio, in the same work folder (and nothing else)
+    // Workers: the same program as MCP server on stdio, in the same work folder (and nothing else). Without the maps:
+    // the arguments come mapped already, and withLinks maps the answers back (twice would map a path again)
     QStringList args{"mcp", "--root", Sandbox::root()};
-    for (const QString& m : opt.maps) args << "--map" << m;
     if (!opt.extensions) args << "--no-extensions";
     if (opt.verbose) args << "--verbose";
     m_jobs = new Jobs(args, Sandbox::root(), opt.workers, this);
@@ -147,7 +148,11 @@ bool Server::listen(QString* error)
     }
     connect(m_tcp, &QTcpServer::newConnection, this, [this] {
         while (QTcpSocket* s = m_tcp->nextPendingConnection()) {
-            if (m_connections >= kMaxConnections) {
+            // Not one device taking all connections (slow or idle ones); a reverse proxy (this computer, --public-url)
+            // brings everyone
+            const QHostAddress peer = s->peerAddress();
+            const QString address = peer.isLoopback() || !m_opt.publicUrl.isEmpty() ? QString() : peer.toString();
+            if (m_connections >= kMaxConnections || (!address.isEmpty() && m_perAddress.value(address) >= kMaxPerAddress)) {
                 s->write("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                 s->disconnectFromHost();
                 connect(s, &QTcpSocket::disconnected, s, &QObject::deleteLater);
@@ -155,10 +160,12 @@ bool Server::listen(QString* error)
             }
             auto* c = new Http::Connection(s, this);
             ++m_connections;
+            if (!address.isEmpty()) ++m_perAddress[address];
             connect(c, &Http::Connection::headReceived, this, [this](Http::Connection* x) { onHead(x); });
             connect(c, &Http::Connection::requestReceived, this, [this](Http::Connection* x) { onRequest(x); });
-            connect(c, &Http::Connection::closed, this, [this](Http::Connection* x) {
+            connect(c, &Http::Connection::closed, this, [this, address](Http::Connection* x) {
                 --m_connections;
+                if (!address.isEmpty() && --m_perAddress[address] <= 0) m_perAddress.remove(address);
                 m_uploads.erase(x); // an unfinished upload: the temporary file goes away
             });
         }
@@ -424,8 +431,12 @@ QString Server::writtenProject(const Command& cmd, const QJsonObject& args) cons
     if (runsInApp(cmd, args) || cmd.name == "new") file = args["project"].toString();
     else if (cmd.name == "transcribe" && args["apply"].toBool()) file = args["source"].toString();
     if (file.isEmpty()) return {};
+    // The same key for a file `new` creates and the existing one (a work folder reached through a link)
     const QFileInfo fi(file);
-    const QString key = fi.exists() ? fi.canonicalFilePath() : fi.absoluteFilePath();
+    const QString folder = QFileInfo(fi.absolutePath()).canonicalFilePath();
+    const QString key = fi.exists() ? fi.canonicalFilePath()
+                        : folder.isEmpty() ? fi.absoluteFilePath()
+                                           : QDir(folder).filePath(fi.fileName());
 #ifdef Q_OS_WIN
     return key.toLower();
 #else
@@ -561,12 +572,8 @@ QJsonObject Server::withLinks(const Job& j, const QJsonObject& result) const
             }
             static const QStringList keys{"out", "file", "sheet", "image", "srt", "frames_dir"};
             if (!it->isString() || !keys.contains(it.key())) continue;
-            QString path;
-            try {
-                path = Sandbox::resolve(it->toString()); // a path given back mapped (--map) maps forth again
-            } catch (const Error&) {
-                continue;
-            }
+            const QString path = it->toString(); // as the worker wrote it: a path of this computer
+            if (Sandbox::relative(path).isNull()) continue; // not in the work folder
             const QFileInfo fi(path);
             const bool fresh = it.key() == "frames_dir" ? fi.isDir() : fi.isFile() && fi.lastModified() >= since;
             if (!fresh) continue;
@@ -577,6 +584,7 @@ QJsonObject Server::withLinks(const Job& j, const QJsonObject& result) const
             if (!o.contains(it.key())) o[it.key()] = it.value();
     };
     walk(answer);
+    answer = Sandbox::mapBack(QJsonValue(answer)).toObject(); // paths as the client knows them (--map)
     content[0] = QJsonObject{{"type", "text"}, {"text", QString::fromUtf8(json(answer))}};
     QJsonObject r = result;
     r["content"] = content;
@@ -665,6 +673,10 @@ Options parse(const QStringList& args)
             fail("USAGE", "--listen needs an IP address like 127.0.0.1, 0.0.0.0 or ::, got " + opt.listenText);
     }
     opt.port = number("port", 0, 65535, 8642);
+    // Off this computer the work folder is given on purpose (started in the home folder, all of it would be served)
+    if (!o.contains("root") && !opt.listen.isLoopback())
+        fail("USAGE", "--root is needed when the server is reachable from other devices: the work folder, everything in "
+                      "it can be read and written");
     opt.root = o.contains("root") ? one("root") : QDir::currentPath();
     opt.maps = o.value("map");
     opt.workers = number("workers", 1, 64, std::clamp(QThread::idealThreadCount() / 2, 1, 4));
@@ -761,7 +773,8 @@ QJsonObject help()
                   {"listen", "address to listen on (default 127.0.0.1 = only this computer; 0.0.0.0 = all networks, "
                              "then a token is required)"},
                   {"port", "TCP port (default 8642; 0 = any free one, printed at start)"},
-                  {"root", "work folder (default: the current folder): all paths are inside it"},
+                  {"root", "work folder: all paths are inside it, its hidden files are not served (default on "
+                           "127.0.0.1: the current folder; required on any other address)"},
                   {"map", "path of another computer = path here, e.g. 'Z:\\Clips=/data/clips' (repeatable)"},
                   {"token", "token clients must send (Authorization: Bearer …); better --token-file or the "
                             "environment variable SCHNEIDI_TOKEN (not visible in the process list). Not on 127.0.0.1: "

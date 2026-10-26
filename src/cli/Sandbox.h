@@ -31,6 +31,9 @@ bool appAllowed();
 QString resolve(const QString& path);
 // Path relative to the root ("" = the root itself); null if outside (or no root)
 QString relative(const QString& absolutePath);
+// A hidden file or folder in the work folder, or something in one (".ssh/id_rsa", ".config/…"): the server's own file
+// access (/files, `files`, `upload`) leaves them out, as its listings do
+bool hidden(const QString& absolutePath);
 // Answers: paths of this computer back to the client's (reverse of the maps); strings in objects/arrays too
 QString mapBack(const QString& path);
 QJsonValue mapBack(const QJsonValue& v);

@@ -27,7 +27,8 @@ services:
     # command: ["serve", "--listen", "0.0.0.0", "--root", "/data", "--workers", "2", "--job-wait", "50"]
 
   # HTTPS with Let's Encrypt in front (a domain pointing to this machine, ports 80/443 open): uncomment, put in your
-  # domain and remove the "ports" of schneidi above. Clients then use https://schneidi.example.org/mcp.
+  # domain, remove the "ports" of schneidi above and give it the domain too (command: [..., "--public-url",
+  # "https://schneidi.example.org"]). Clients then use https://schneidi.example.org/mcp.
   # caddy:
   #   image: caddy:2
   #   restart: unless-stopped

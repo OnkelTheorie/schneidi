@@ -5,6 +5,7 @@
 // request bodies (411).
 
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonObject>
 #include <QList>
@@ -97,6 +98,8 @@ private:
     bool m_keepAlive = true;
     bool m_chunked = false;
     bool m_discard = false; // reading the rest of a body that was answered early
+    quint64 m_requests = 0; // heads read on this connection
+    QElapsedTimer m_headClock; // since the first byte of the head being read
     std::unique_ptr<QFile> m_file;
     qint64 m_fileLeft = 0;
 };

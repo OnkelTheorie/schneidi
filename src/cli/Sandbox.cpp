@@ -172,6 +172,12 @@ QString relative(const QString& absolutePath)
     return {};
 }
 
+bool hidden(const QString& absolutePath)
+{
+    const QStringList parts = relative(absolutePath).split('/');
+    return std::any_of(parts.begin(), parts.end(), [](const QString& part) { return part.startsWith('.'); });
+}
+
 QString mapBack(const QString& path)
 {
     const Map* best = nullptr;

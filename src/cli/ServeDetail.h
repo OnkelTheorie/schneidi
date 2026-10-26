@@ -115,6 +115,7 @@ private:
     QHash<QString, Session> m_sessions;
     std::map<Http::Connection*, Upload> m_uploads;
     int m_connections = 0;
+    QHash<QString, int> m_perAddress; // open connections per client address (not this computer's)
 };
 
 } // namespace Cli::Serve
