@@ -129,7 +129,7 @@ void test(const QString& dir)
     w.liveActivity(job);
     CHECK_EQ(log->entries()[0].detail, T("Pausen gefunden: %1").arg(18));
     CHECK_EQ(label->text(), "● " + T("KI verbunden"));
-    // Interrupted when the AI leaves
+    // Interrupted when the AI leaves (the live server ends the running work of a client that goes away)
     job.id = 8;
     job.tool = "render";
     job.state = LiveActivity::State::Started;
@@ -140,6 +140,11 @@ void test(const QString& dir)
     failed.error = "no clip with id 999";
     w.liveChanged(failed);
     w.liveConnectionChanged(false, "schneidi-cli mcp");
+    LiveActivity gone;
+    gone.id = 8;
+    gone.state = LiveActivity::State::Failed;
+    gone.error = "interrupted";
+    w.liveActivity(gone);
     CHECK(log->runningJob() == nullptr);
     CHECK_EQ(log->entries()[1].detail, T("abgebrochen"));
     CHECK(log->entries()[0].state == AiLog::Entry::State::Failed);

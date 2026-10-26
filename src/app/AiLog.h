@@ -41,7 +41,6 @@ public:
     int add(Entry e);                // returns the id
     // Work outside the app: "start" adds an entry, progress/end/failed update the running one with that id
     void activity(const LiveActivity& a);
-    void interruptRunning(); // the AI left while its work ran
     void clear();
 
     // Texts of a job: while it runs ("sucht Stille", after "KI") and its result ("Pausen gefunden: 18")

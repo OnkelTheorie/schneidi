@@ -82,6 +82,7 @@ private:
         bool authed = false;
         bool chat = false;         // the app's own AI chat (said hello with the chat's secret)
         bool chatAttached = false; // ... and attached
+        QHash<int, int> jobs;      // running work outside the app: the client's activity id -> LiveActivity::id
     };
     void onConnection();
     void onReadyRead(QLocalSocket* s);
@@ -101,6 +102,7 @@ private:
     QString m_refusal; // why new sessions are refused (empty = the user disconnected the AI)
     QString m_waiting;
     bool m_running = false; // a command runs (it may spin the event loop: no second one meanwhile)
+    int m_lastJob = 0;      // LiveActivity::id: unique in the app (every client process counts from 1)
 };
 
 // ---------- schneidi-cli side ----------

@@ -5,7 +5,6 @@
 #include "app/AiChat.h"
 #include "app/AiChatPanel.h"
 #include "app/AiKeys.h"
-#include "app/AiLog.h"
 #include "app/McpClient.h"
 #include "core/I18n.h"
 #include "core/Project.h"
@@ -85,11 +84,6 @@ void MainWindow::setupChat()
         setAiSettings(s); // also updates the panel
     });
     connect(m_chat, &AiChat::turnFinished, this, &MainWindow::chatTurnFinished);
-    // Work of the chat outside the app (an analysis) that its stop ended: not running anymore in the AI log (an AI
-    // from outside that is connected reports its own work)
-    connect(m_chat, &AiChat::stopped, this, [this] {
-        if (!m_liveConnected) m_aiLog->interruptRunning();
-    });
     connect(m_chat, &AiChat::cleared, this, [this] {
         // A new chat while the bar waits: the changes stay (one step each), nothing is thrown away unasked
         if (m_review.pending) m_chatPanel->hideApproval();

@@ -270,6 +270,14 @@ void Server::onConnection()
         connect(s, &QLocalSocket::readyRead, this, [this, s] { onReadyRead(s); });
         connect(s, &QLocalSocket::disconnected, this, [this, s] {
             detach(s);
+            // Its work outside the app ends with it (a stopped chat, a client that crashed)
+            for (int job : m_peers.value(s).jobs) {
+                LiveActivity a;
+                a.id = job;
+                a.state = LiveActivity::State::Failed;
+                a.error = "interrupted";
+                m_host->liveActivity(a);
+            }
             m_peers.remove(s);
             s->deleteLater();
         });
@@ -347,8 +355,13 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         const QString state = msg.value("state").toString();
         if (!states.contains(state)) return;
         LiveActivity a;
-        a.id = msg.value("id").toInt();
         a.state = states.value(state);
+        // Ids of the client's own count: another process (the chat beside an AI from outside) has the same ones
+        const int clientId = msg.value("id").toInt();
+        if (a.state == LiveActivity::State::Started) peer.jobs.insert(clientId, ++m_lastJob);
+        if (!peer.jobs.contains(clientId)) return; // its start was not seen
+        a.id = peer.jobs.value(clientId);
+        if (a.state == LiveActivity::State::Finished || a.state == LiveActivity::State::Failed) peer.jobs.remove(clientId);
         a.tool = msg.value("tool").toString();
         a.target = msg.value("target").toString();
         a.percent = msg.value("percent").toInt(-1);

@@ -94,7 +94,7 @@ void AiLog::activity(const LiveActivity& a)
     using S = LiveActivity::State;
     Entry* e = runningEntry(a.id);
     if (a.state == S::Started) {
-        if (e) { // the same id again: the earlier one never ended (another session)
+        if (e) { // the same id again (cannot happen, the server numbers jobs): the earlier one never ended
             e->state = Entry::State::Failed;
             e->detail = T("abgebrochen");
         }
@@ -117,20 +117,6 @@ void AiLog::activity(const LiveActivity& a)
         e->detail = a.error == "interrupted" ? T("abgebrochen") : T("fehlgeschlagen: %1").arg(a.error);
     }
     if (a.state != S::Progress) trim();
-    emit changed();
-}
-
-void AiLog::interruptRunning()
-{
-    bool any = false;
-    for (Entry& e : m_entries)
-        if (e.state == Entry::State::Running) {
-            e.state = Entry::State::Failed;
-            e.detail = T("abgebrochen");
-            any = true;
-        }
-    if (!any) return;
-    trim();
     emit changed();
 }
 

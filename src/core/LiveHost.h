@@ -36,7 +36,7 @@ struct LiveChange {
 // user sees it working before (or without) any edit
 struct LiveActivity {
     enum class State { Started, Progress, Finished, Failed };
-    int id = 0; // the same for all messages of one job (per connection)
+    int id = 0; // the same for all messages of one job, unique in the app (the server numbers the clients' jobs)
     State state = State::Started;
     QString tool;        // command: "silence", "render" …
     QString target;      // file or project it works on (may be empty)

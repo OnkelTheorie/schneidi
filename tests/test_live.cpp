@@ -426,6 +426,45 @@ int main(int argc, char* argv[])
         CHECK(reply.contains("APP_WAITING"));
         CHECK(!server.attached());
         server.setWaiting({});
+
+        // Work outside the app of two processes at once (an AI from outside and the app's own chat): both count their
+        // jobs from 1, the app keeps them apart; a process that goes away ends its running work
+        const auto talk = [](QLocalSocket& s, const QByteArray& lines, int answers) {
+            s.write(lines);
+            s.flush();
+            QByteArray got;
+            for (int i = 0; i < 200 && got.count('\n') < answers; ++i) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+                s.waitForReadyRead(5);
+                got += s.readAll();
+            }
+            return got;
+        };
+        const QByteArray job = R"({"type":"activity","id":1,"state":"start","tool":"silence"})" "\n";
+        QLocalSocket outside, chat;
+        outside.connectToServer(entry["server"].toString());
+        chat.connectToServer(server.chatEnvironment().value(Cli::Live::ChatServerEnv));
+        CHECK(outside.waitForConnected(1000) && chat.waitForConnected(1000));
+        CHECK(talk(outside, QByteArray(R"({"type":"hello","token":")") + entry["token"].toString().toUtf8() + "\"}\n"
+                                + R"({"type":"attach","client":"raw"})" "\n", 2).contains("\"ok\":true"));
+        CHECK(talk(chat, QByteArray(R"({"type":"hello","token":")")
+                             + server.chatEnvironment().value(Cli::Live::ChatSecretEnv).toUtf8() + "\"}\n"
+                             + R"({"type":"attach","client":"chat"})" "\n", 2).contains("\"ok\":true"));
+        fake.activities.clear();
+        talk(outside, job, 0);
+        talk(chat, job, 0);
+        for (int i = 0; i < 20; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        if (CHECK_EQ(fake.activities.size(), qsizetype(2))) CHECK(fake.activities[0].id != fake.activities[1].id);
+        const int chatJob = fake.activities.value(1).id;
+        chat.disconnectFromServer();
+        for (int i = 0; i < 50 && fake.activities.size() < 3; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        if (CHECK_EQ(fake.activities.size(), qsizetype(3))) {
+            CHECK_EQ(fake.activities[2].id, chatJob);
+            CHECK(fake.activities[2].state == LiveActivity::State::Failed);
+            CHECK_EQ(fake.activities[2].error, QString("interrupted"));
+        }
+        outside.disconnectFromServer();
+        for (int i = 0; i < 50 && server.attached(); ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
     }
 
     return Check::result();

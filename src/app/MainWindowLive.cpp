@@ -72,7 +72,6 @@ void MainWindow::liveConnectionChanged(bool connected, const QString& client)
         m_liveLinger.stop();
     } else {
         m_liveLinger.start(); // one-shot commands connect and leave right away: stay visible a moment
-        m_aiLog->interruptRunning(); // its work outside the app ends with it
     }
     updateLiveIndicator();
 }
