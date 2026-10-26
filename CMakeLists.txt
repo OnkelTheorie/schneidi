@@ -244,8 +244,13 @@ add_library(schneidi_cli_lib STATIC
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp
     src/cli/AnalysisHighlights.cpp src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp
-    src/cli/Live.h     src/cli/Live.cpp)
+    src/cli/Live.h     src/cli/Live.cpp
+    src/cli/Guide.h    src/cli/Guide.cpp
+    src/cli/Setup.h    src/cli/Setup.cpp)
 target_link_libraries(schneidi_cli_lib PUBLIC schneidi_lib)
+# The Claude skill of the repo is the editing guide of every AI (cli/Guide.h): `guide` tool, setup, app chat
+file(GLOB_RECURSE SCHNEIDI_SKILL RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/skills/schneidi/*.md)
+qt_add_resources(schneidi_cli_lib "skill" PREFIX "/" BASE skills FILES ${SCHNEIDI_SKILL})
 add_executable(schneidi-cli src/cli/main.cpp)
 target_include_directories(schneidi-cli PRIVATE ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(schneidi-cli schneidi_buildinfo)

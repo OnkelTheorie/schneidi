@@ -2,11 +2,13 @@
 //   schneidi-cli help                      all commands (JSON)
 //   schneidi-cli info film.schneidi        timeline as JSON
 //   schneidi-cli mcp                       MCP server on stdio (Claude Desktop, Claude Code, …)
+//   schneidi-cli setup claude              connect Claude Code / Claude Desktop (MCP server + guide)
 // stdout carries only JSON; logs and progress go to stderr.
 #include "buildinfo.h"
 #include "cli/Commands.h"
 #include "cli/Live.h"
 #include "cli/Mcp.h"
+#include "cli/Setup.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
 
@@ -115,6 +117,7 @@ int main(int argc, char* argv[])
         return 0;
     }
     const QString name = args.takeFirst();
+    if (name == "setup") return Cli::Setup::run(args, pretty);
 
     if (name != "help") {
         QString error;

@@ -1,5 +1,6 @@
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "cli/Guide.h"
 #include "cli/Live.h"
 
 #include "core/Editor.h"
@@ -531,6 +532,7 @@ using namespace detail;
 
 namespace {
 QJsonObject cmdHelp(const QJsonObject& a, Context&);
+QJsonObject cmdGuide(const QJsonObject& a, Context&);
 } // namespace
 
 const QVector<Command>& commands()
@@ -540,6 +542,12 @@ const QVector<Command>& commands()
         {"help", "List all commands with their parameters (JSON).",
          {{"command", T::String, "only this command", false, true},
           {"op", T::String, "with command 'edit': only these ops, e.g. \"speed_ramp\" or \"title,track\""}}, cmdHelp},
+        {"guide", "How to edit well with schneidi: the workflow (look at the material, small steps, check the render) "
+                  "and how-tos per task (highlight reel, talking head, short/9:16, ad, subtitles, color, sound, "
+                  "several cameras, export, checking a render). Read it first if you have not edited with schneidi "
+                  "before; without a topic: the main guide and the list of topics.",
+         {{"topic", T::String, "one task guide, e.g. \"highlights\" or \"ad\" (see 'topics')", false, true}},
+         cmdGuide},
         {"new", "Create a new empty project (.schneidi), optionally with media already in the media pool.",
          {{"project", T::Path, "project file to create (.schneidi)", true, true},
           {"width", T::Integer, "timeline width (default 1920)"},
@@ -927,6 +935,19 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& raw)
 
 namespace {
 
+QJsonObject cmdGuide(const QJsonObject& a, Context&)
+{
+    const QString topic = a["topic"].toString().trimmed().toLower().remove(".md").remove("references/");
+    const QString text = Guide::text(topic);
+    if (text.isEmpty()) fail("NOT_FOUND", "no guide topic '" + topic + "' (topics: " + Guide::topics().join(", ") + ")");
+    if (!topic.isEmpty()) return {{"topic", topic}, {"guide", text}};
+    QJsonArray topics;
+    for (const QString& t : Guide::topics()) topics << QJsonObject{{"topic", t}, {"title", Guide::title(t)}};
+    return {{"guide", text},
+            {"topics", topics},
+            {"note", "references/<topic>.md in the guide = guide with that topic; command and op details: help"}};
+}
+
 QJsonObject cmdHelp(const QJsonObject& a, Context&)
 {
     QJsonArray list;
@@ -960,7 +981,8 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
     return {{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
             {"api_version", ApiVersion},
             {"usage", "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, "
-                      "exit code 0 = ok, 1 = error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio. "
+                      "exit code 0 = ok, 1 = error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio; "
+                      "`schneidi-cli setup claude` connects Claude Code and Claude Desktop to it. "
                       "--verbose: progress notes and engine messages on stderr."},
             {"commands", list}};
 }
