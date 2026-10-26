@@ -295,7 +295,6 @@ QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def)
     return o;
 }
 
-namespace {
 QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
 {
     const ProjectFormat& f = p.format();
@@ -399,8 +398,6 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     }
     return o;
 }
-
-} // namespace
 
 QJsonObject timelineJson(const Project& p)
 {
@@ -609,11 +606,14 @@ const QVector<Command>& commands()
           {"overwrite", T::Boolean, "replace an existing file"}},
          cmdExportTimeline},
         {"edit", "Apply edit operations to a project and save it (a backup of the previous state is kept). If the "
-                 "project is open in the schneidi app, the app's project changes instead (one undo step, not saved).",
+                 "project is open in the schneidi app, the app's project changes instead (one undo step, not saved). "
+                 "Answer: 'changes' (clips and subtitles added and changed as `info` shows them, with their new ids; "
+                 "removed ids) and the timeline as a summary.",
          {{"project", T::Path, "project file", true, true},
           {"ops", T::Json, editHelp(), true},
           {"timeline", T::String, "timeline to edit (id or name from `info`; default: the open one)"},
-          {"dry_run", T::Boolean, "only show the resulting timeline, do not save"}},
+          {"dry_run", T::Boolean, "only show what would change, do not save"},
+          {"full", T::Boolean, "answer with the whole timeline (every clip, like `info`) instead of the summary"}},
          cmdEdit},
         {"backups", "List the backup copies of a project (every save keeps the previous state, newest first).",
          {{"project", T::Path, "project file or \"@app\"", true, true}}, cmdBackups},

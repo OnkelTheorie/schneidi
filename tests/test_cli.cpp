@@ -28,8 +28,11 @@ namespace {
 
 QString g_path;
 
-const QJsonObject run(const QString& name, const QJsonObject& raw)
+// `edit` answers with the whole timeline here (the tests look at it; the short default answer: testEditAnswer)
+const QJsonObject run(const QString& name, const QJsonObject& raw0)
 {
+    QJsonObject raw = raw0;
+    if (name == "edit" && !raw.contains("full")) raw["full"] = true;
     const Cli::Command* cmd = Cli::find(name);
     Cli::Context ctx;
     try {
@@ -138,6 +141,42 @@ int main(int argc, char** argv)
     CHECK(!dry["saved"].toBool());
     CHECK_EQ(dry["timeline"]["tracks"][0]["clips"].toArray().size(), 3);
     CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-90|20-99]  V2:  A1: a[0-10|0-9] a[10-90|20-99]  A2:"));
+
+    // testEditAnswer: by default an edit answers with what changed (new clips with their ids, as `info` shows them)
+    // and the timeline as a summary - an AI reads every answer
+    {
+        const auto answer = [](const char* ops) {
+            return run("edit", {{"project", g_path}, {"ops", QString(ops)}, {"dry_run", true}, {"full", false}});
+        };
+        QJsonObject r = answer(R"([{"op":"split","at":50}])");
+        const QJsonObject changes = r["changes"].toObject();
+        const QJsonArray added = changes["added"].toArray(), changed = changes["changed"].toArray();
+        CHECK_EQ(added.size(), 2); // the right halves on V1 and A1
+        CHECK_EQ(changed.size(), 2);
+        CHECK(!changes.contains("removed"));
+        CHECK_EQ(added[0].toObject().value("start").toInt(), 50);
+        CHECK(added[0].toObject().value("id").toInt() > 0);
+        CHECK(!added[0].toObject().contains("timeline")); // only items of another timeline name it
+        CHECK_EQ(changed[0].toObject().value("end").toInt(), 50);
+        const QJsonObject tl = r["timeline"].toObject();
+        CHECK_EQ(tl["tracks"].toArray().at(0).toObject().value("clips").toInt(), 3);
+        CHECK_EQ(tl["clips"].toInt(), 6);
+        CHECK(tl["master"].isObject());
+        const qsizetype compact = QJsonDocument(r).toJson(QJsonDocument::Compact).size();
+        const qsizetype full = QJsonDocument(edit(R"([{"op":"split","at":50}])", true)).toJson(QJsonDocument::Compact).size();
+        CHECK(compact < full);
+        // Removed: ids and tracks; subtitles count like clips
+        const int first = changed[0].toObject().value("id").toInt();
+        r = answer(QString(R"([{"op":"delete","clips":[%1]},{"op":"subtitle","text":"Hi","at":5}])").arg(first).toUtf8().constData());
+        const QJsonArray removed = r["changes"].toObject().value("removed").toArray();
+        CHECK_EQ(removed.size(), 2); // with its linked partner
+        CHECK(removed.at(0).toObject().value("id").toInt() == first || removed.at(1).toObject().value("id").toInt() == first);
+        bool cue = false;
+        for (const QJsonValue& v : r["changes"].toObject().value("added").toArray())
+            cue |= v.toObject().value("track").toString() == "ST1" && v.toObject().value("text").toString() == "Hi";
+        CHECK(cue);
+        CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-90|20-99]  V2:  A1: a[0-10|0-9] a[10-90|20-99]  A2:"));
+    }
 
     // A failing op saves nothing (also not the ops before it)
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"split","at":50},{"op":"trim","clip":999}])"}}),

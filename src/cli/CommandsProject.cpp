@@ -43,6 +43,94 @@
 
 namespace Cli::detail {
 
+namespace {
+
+// A timeline as `info` with summary shows it: counts instead of the lists (the full JSON of a long timeline is big)
+QJsonObject summarized(QJsonObject tl)
+{
+    QJsonArray tracks;
+    int clips = 0;
+    for (const QJsonValue& v : tl["tracks"].toArray()) {
+        QJsonObject t = v.toObject();
+        const int n = t["clips"].toArray().size();
+        clips += n;
+        t.remove("clips");
+        t["clips"] = n;
+        tracks << t;
+    }
+    tl["tracks"] = tracks;
+    tl["clips"] = clips;
+    tl["markers"] = tl["markers"].toArray().size();
+    QJsonArray subs;
+    for (const QJsonValue& v : tl["subtitles"].toArray()) {
+        QJsonObject st = v.toObject();
+        st["cues"] = st["cues"].toArray().size();
+        st.remove("style");
+        subs << st;
+    }
+    if (!subs.isEmpty()) tl["subtitles"] = subs;
+    else tl.remove("subtitles");
+    return tl;
+}
+
+// Every clip and subtitle of every timeline as `info` shows it, by timeline and id: what an edit changed
+struct Shown {
+    int sequence = 0;
+    QJsonObject json;
+};
+QMap<QString, Shown> shownItems(const Project& p)
+{
+    QMap<QString, Shown> out;
+    const ProjectFormat& f = p.format();
+    for (const Sequence& q : p.sequences()) {
+        const Timeline& tl = q.id == p.currentSequence() ? p.timeline() : q.timeline;
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+            for (int i = 0; i < tl.tracks(k).size(); ++i)
+                for (const Clip& c : tl.tracks(k)[i].clips)
+                    out.insert(QString("%1/c%2").arg(q.id).arg(c.id), {q.id, clipJson(p, c, {k, i})});
+        for (int i = 0; i < tl.subtitles.size(); ++i)
+            for (const SubtitleCue& c : tl.subtitles[i].cues)
+                out.insert(QString("%1/s%2").arg(q.id).arg(c.id),
+                           {q.id, QJsonObject{{"id", c.id}, {"track", QString("ST%1").arg(i + 1)}, {"start", c.start},
+                                              {"end", c.end}, {"start_tc", tc(c.start, f)}, {"end_tc", tc(c.end, f)},
+                                              {"text", c.text}}});
+    }
+    return out;
+}
+
+// What an edit added, changed and removed (clips and subtitles); an item of another timeline than `shown` names it.
+// Long lists only with the place of each item (a `format` change touches every clip; `info` has the rest).
+QJsonObject changesJson(const QMap<QString, Shown>& before, const QMap<QString, Shown>& after, int shown)
+{
+    QVector<Shown> added, changed, removed;
+    for (auto it = after.begin(); it != after.end(); ++it) {
+        const auto old = before.find(it.key());
+        if (old == before.end()) added << it.value();
+        else if (old.value().json != it.value().json) changed << it.value();
+    }
+    for (auto it = before.begin(); it != before.end(); ++it)
+        if (!after.contains(it.key()))
+            removed << Shown{it.value().sequence, {{"id", it.value().json["id"]}, {"track", it.value().json["track"]}}};
+    const auto list = [shown](const QVector<Shown>& items) {
+        QJsonArray out;
+        const bool brief = items.size() > 40;
+        for (const Shown& s : items) {
+            QJsonObject j = s.json;
+            if (brief) j = QJsonObject{{"id", j["id"]}, {"track", j["track"]}, {"start", j["start"]}, {"end", j["end"]}};
+            if (s.sequence != shown) j["timeline"] = s.sequence;
+            out << j;
+        }
+        return out;
+    };
+    QJsonObject o;
+    if (!added.isEmpty()) o["added"] = list(added);
+    if (!changed.isEmpty()) o["changed"] = list(changed);
+    if (!removed.isEmpty()) o["removed"] = list(removed);
+    return o;
+}
+
+} // namespace
+
 // ---------- Commands ----------
 
 QJsonObject cmdNew(const QJsonObject& a, Context&)
@@ -75,31 +163,7 @@ QJsonObject cmdInfo(const QJsonObject& a, Context&)
     QJsonObject o = projectJson(s.project, s.path);
     if (s.live) o["app"] = s.app; // open in the app: what the user sees there
     if (a["summary"].toBool()) {
-        // Counts instead of the lists (the full JSON of a long timeline is big)
-        QJsonObject tl = o["timeline"].toObject();
-        QJsonArray tracks;
-        int clips = 0;
-        for (const QJsonValue& v : tl["tracks"].toArray()) {
-            QJsonObject t = v.toObject();
-            const int n = t["clips"].toArray().size();
-            clips += n;
-            t.remove("clips");
-            t["clips"] = n;
-            tracks << t;
-        }
-        tl["tracks"] = tracks;
-        tl["clips"] = clips;
-        tl["markers"] = tl["markers"].toArray().size();
-        QJsonArray subs;
-        for (const QJsonValue& v : tl["subtitles"].toArray()) {
-            QJsonObject st = v.toObject();
-            st["cues"] = st["cues"].toArray().size();
-            st.remove("style");
-            subs << st;
-        }
-        if (!subs.isEmpty()) tl["subtitles"] = subs;
-        else tl.remove("subtitles");
-        o["timeline"] = tl;
+        o["timeline"] = summarized(o["timeline"].toObject());
         o["media"] = o["media"].toArray().size();
     }
     return o;
@@ -128,6 +192,7 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     if (opsValue.isObject()) opsValue = QJsonArray{opsValue};
     const QJsonArray ops = opsValue.toArray();
     if (ops.isEmpty()) fail("BAD_ARGUMENT", "'ops' must be a non-empty list of operations");
+    const QMap<QString, Shown> before = shownItems(s.project);
     for (int i = 0; i < ops.size(); ++i) {
         try {
             if (!ops[i].isObject()) fail("BAD_ARGUMENT", "operation is not an object");
@@ -137,8 +202,12 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
         }
     }
     const bool dry = a["dry_run"].toBool();
-    // The timeline edited last (save() may switch back to the one the app opens)
-    QJsonObject o{{"project", s.path}, {"ops", ops.size()}, {"saved", !dry && !s.live}, {"timeline", timelineJson(s.project)}};
+    // The timeline edited last (save() may switch back to the one the app opens): what changed and a summary; the
+    // whole timeline only on request (an AI reads every answer: it was up to 56 KB per edit)
+    const QJsonObject tl = timelineJson(s.project);
+    QJsonObject o{{"project", s.path}, {"ops", ops.size()}, {"saved", !dry && !s.live},
+                  {"timeline", a["full"].toBool() ? tl : summarized(tl)},
+                  {"changes", changesJson(before, shownItems(s.project), s.project.currentSequence())}};
     if (s.live) o["live"] = true; // changed in the app (one undo step there), the user saves
     if (!s.notes.isEmpty()) o["notes"] = s.notes;
     if (s.project.sequences().size() > 1) o["timelines"] = timelinesJson(s.project, s.multicamSync);

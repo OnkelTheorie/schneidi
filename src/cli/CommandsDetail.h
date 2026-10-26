@@ -83,6 +83,8 @@ bool isProjectFile(const QString& path);
 QString trackName(TrackRef r);
 // "V1", "A2" or a number (1 = first track); returns the index (0-based)
 int parseTrack(const QJsonValue& v, TrackKind* kind = nullptr);
+// A clip as `info` shows it
+QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref);
 QJsonObject timelineJson(const Project& p);
 QJsonObject projectJson(const Project& p, const QString& path);
 // "Parent/Child" of a Media Pool bin (0 = top level: "")

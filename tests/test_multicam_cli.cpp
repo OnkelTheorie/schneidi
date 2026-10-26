@@ -21,8 +21,11 @@ namespace {
 
 QString g_path;
 
-QJsonObject run(const QString& name, const QJsonObject& raw)
+// `edit` answers with the whole timeline here (the tests look at the new clips in it)
+QJsonObject run(const QString& name, const QJsonObject& raw0)
 {
+    QJsonObject raw = raw0;
+    if (name == "edit") raw["full"] = true;
     const Cli::Command* cmd = Cli::find(name);
     if (!cmd) {
         qWarning() << "no command" << name;
