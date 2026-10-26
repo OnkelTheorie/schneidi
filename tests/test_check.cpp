@@ -303,6 +303,23 @@ int main(int argc, char** argv)
             CHECK(issues[0].from > 60);
             CHECK_EQ(issues[0].to, 100);
         }
+        // A counter x1, x2, x3 at the bottom of one track: one finding for all of them, from the first to the last
+        {
+            Timeline counter;
+            counter.video.resize(2);
+            counter.video[0].clips << clip(1, 0, 300, "/x/a.mp4");
+            counter.video[1].clips << title(12, 100, 50, "x2", 0, -700) << title(11, 0, 50, "x1", 0, -700)
+                                   << title(13, 200, 50, "x3", 0, -700) << title(14, 250, 50, "TOP", 0, 910);
+            const auto grouped = ExportCheck::layout(counter, 0, 300, v);
+            if (CHECK_EQ(clipsOf(grouped), QVector<int>({11, 14}))) {
+                CHECK_EQ(grouped[0].clips, QVector<int>({11, 12, 13}));
+                CHECK_EQ(grouped[0].from, 0);
+                CHECK_EQ(grouped[0].to, 250);
+                CHECK(grouped[0].message.contains("3") && grouped[0].message.contains("x1")
+                      && grouped[0].message.contains("x3"));
+                CHECK(grouped[1].clips.isEmpty()); // alone in its zone
+            }
+        }
         // The same in 16:9, and outside the checked range: nothing
         CHECK(ExportCheck::layout(tl, 0, 300, f).isEmpty());
         CHECK(ExportCheck::layout(tl, 0, 50, v).isEmpty());

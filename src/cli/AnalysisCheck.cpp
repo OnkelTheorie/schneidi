@@ -101,6 +101,11 @@ QJsonObject issueJson(const ExportCheck::Issue& i, const ProjectFormat& f)
         for (auto it = r.begin(); it != r.end(); ++it) o[it.key()] = it.value();
     }
     if (i.clip) o["clip"] = i.clip;
+    if (!i.clips.isEmpty()) {
+        QJsonArray clips;
+        for (int id : i.clips) clips << id;
+        o["clips"] = clips;
+    }
     return o;
 }
 

@@ -30,6 +30,7 @@ struct Issue {
     int from = -1;   // frames (exclusive end), -1 = whole video
     int to = -1;
     int clip = 0;    // the clip it is about (title outside the safe area, recording with stutter), 0 = none
+    QVector<int> clips; // all clips when one finding stands for several (titles of a track in the same zone)
 };
 
 struct Options {

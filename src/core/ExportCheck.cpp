@@ -121,22 +121,29 @@ QPair<double, Zone> covered(const QRectF& r, double W, double H, const Options& 
     return {std::min(1.0, sum / total), zone};
 }
 
-QString zoneMessage(Zone z, const QString& what)
+QString zoneMessage(Zone z, const QString& what, bool several = false)
 {
     switch (z) {
     case Zone::Bottom:
-        return T("%1 liegt unten, wo TikTok, Reels und Shorts Beschreibung und Knöpfe zeigen – höher setzen (etwa "
-                 "25–35 % über dem unteren Rand)")
+        return (several ? T("%1 liegen unten, wo TikTok, Reels und Shorts Beschreibung und Knöpfe zeigen – höher setzen "
+                            "(etwa 25–35 % über dem unteren Rand)")
+                        : T("%1 liegt unten, wo TikTok, Reels und Shorts Beschreibung und Knöpfe zeigen – höher setzen "
+                            "(etwa 25–35 % über dem unteren Rand)"))
             .arg(what);
     case Zone::Right:
-        return T("%1 reicht rechts unter die Knöpfe von TikTok, Reels und Shorts – schmaler machen oder weiter nach "
-                 "links setzen")
+        return (several ? T("%1 reichen rechts unter die Knöpfe von TikTok, Reels und Shorts – schmaler machen oder "
+                            "weiter nach links setzen")
+                        : T("%1 reicht rechts unter die Knöpfe von TikTok, Reels und Shorts – schmaler machen oder "
+                            "weiter nach links setzen"))
             .arg(what);
-    case Zone::Top: return T("%1 liegt oben unter der Leiste von TikTok, Reels und Shorts – tiefer setzen").arg(what);
+    case Zone::Top:
+        return (several ? T("%1 liegen oben unter der Leiste von TikTok, Reels und Shorts – tiefer setzen")
+                        : T("%1 liegt oben unter der Leiste von TikTok, Reels und Shorts – tiefer setzen"))
+            .arg(what);
     case Zone::Outside:
     case Zone::None: break;
     }
-    return T("%1 ragt aus dem Bild").arg(what);
+    return (several ? T("%1 ragen aus dem Bild") : T("%1 ragt aus dem Bild")).arg(what);
 }
 
 // "A1" or "A1 (Spielton)"
@@ -325,7 +332,16 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
     QVector<Issue> out;
     if (!isVertical(f) || to <= from) return out;
     const double W = f.width, H = f.height;
-    for (const Track& t : tl.video) {
+    // Titles of one track in the same zone (a counter x1 ... x16, captions) are one finding, not one per title
+    struct Found {
+        int track;
+        Zone zone;
+        int from, to, clip;
+        QString text;
+    };
+    QVector<Found> found;
+    for (int ti = 0; ti < tl.video.size(); ++ti) {
+        const Track& t = tl.video[ti];
         if (t.hidden) continue;
         for (const Clip& c : t.clips) {
             if (!c.isTitle() || !c.enabled || c.title.text.trimmed().isEmpty() || c.end() <= from || c.start >= to)
@@ -347,10 +363,33 @@ QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat&
             }
             if (first < 0 || bad < std::min(b - a, int(std::lround(0.5 * f.rate.fps())))) continue;
             const Zone zone = Zone(std::max_element(zones.begin(), zones.end()) - zones.begin());
-            out << issue(Severity::Warning, "safe_area",
-                         zoneMessage(zone, T("Titel „%1“").arg(c.title.text.simplified())), first,
-                         std::min(b, last + step), c.id);
+            found.append({ti, zone, first, std::min(b, last + step), c.id, c.title.text.simplified()});
         }
+    }
+    for (int i = 0; i < found.size(); ++i) {
+        const Found& f0 = found[i];
+        if (f0.clip == 0) continue; // taken into an earlier group
+        QVector<Found> group{f0};
+        for (int j = i + 1; j < found.size(); ++j)
+            if (found[j].clip && found[j].track == f0.track && found[j].zone == f0.zone) {
+                group.append(found[j]);
+                found[j].clip = 0;
+            }
+        std::sort(group.begin(), group.end(), [](const Found& a, const Found& b) { return a.from < b.from; });
+        if (group.size() == 1) {
+            out << issue(Severity::Warning, "safe_area", zoneMessage(f0.zone, T("Titel „%1“").arg(f0.text)), f0.from,
+                         f0.to, f0.clip);
+            continue;
+        }
+        Issue is = issue(Severity::Warning, "safe_area",
+                         zoneMessage(f0.zone,
+                                     T("%1 Titel („%2“ … „%3“)")
+                                         .arg(group.size())
+                                         .arg(group.first().text, group.last().text),
+                                     true),
+                         group.first().from, group.last().to, group.first().clip);
+        for (const Found& g : group) is.clips << g.clip;
+        out << is;
     }
     // Subtitles: the track style places every cue; one issue per track from its first covered cue on
     for (int i = 0; i < tl.subtitles.size(); ++i) {
