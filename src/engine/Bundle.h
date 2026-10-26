@@ -12,7 +12,7 @@ namespace Bundle {
 // Folder with the bundled MLT modules, empty = use system MLT
 QString mltModuleDir();
 // Sets MLT_DATA, MLT_PROFILES_PATH and FREI0R_PATH to the bundled folders (before Mlt::Factory::init);
-// does not load the unused jackrack module (MLT_REPOSITORY_DENY)
+// does not load the unused jackrack module, nor MLT's Qt 5 modules when the Qt 6 ones are there (MLT_REPOSITORY_DENY)
 void prepareMltEnvironment();
 // Verbose messages? Environment variable SCHNEIDI_VERBOSE (main sets it with --verbose)
 bool verboseLogging();

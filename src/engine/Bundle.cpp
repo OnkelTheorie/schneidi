@@ -79,9 +79,22 @@ void prepareMltEnvironment()
     // plugin folders at startup, and older MLT versions otherwise report it as a warning without LADSPA plugins
     // "No LADSPA plugins were found! Check your LADSPA_PATH …" (also VST_PATH). A value set by the user
     // MLT_REPOSITORY_DENY is kept (list with ':', also on Windows – MLT separates it that way there too).
-    QByteArray deny = qgetenv("MLT_REPOSITORY_DENY");
-    if (!deny.split(':').contains("libmltjackrack"))
-        qputenv("MLT_REPOSITORY_DENY", deny.isEmpty() ? QByteArray("libmltjackrack") : deny + ":libmltjackrack");
+    const auto deny = [](const QByteArray& module) {
+        const QByteArray list = qgetenv("MLT_REPOSITORY_DENY");
+        if (!list.split(':').contains(module))
+            qputenv("MLT_REPOSITORY_DENY", list.isEmpty() ? module : list + ':' + module);
+    };
+    deny("libmltjackrack");
+    // Systems with MLT for Qt 5 and Qt 6 side by side (Debian, Ubuntu): both Qt modules offer qimage, qtblend, qtext …
+    // and the Qt 5 one won. It pulled Qt 5 into this Qt 6 program, and without Qt 5's WebP plugin a .webp picture
+    // fell through to avformat: a 10-minute "video" with one picture and then nothing. Only the Qt 6 modules (as in
+    // the AppImage); a system with nothing but the Qt 5 module keeps it.
+    QString modules = mltModuleDir();
+    if (modules.isEmpty()) modules = qEnvironmentVariable("MLT_REPOSITORY", QStringLiteral(SCHNEIDI_MLT_MODULE_DIR));
+    if (!QDir(modules).entryList({"libmltqt6.*"}, QDir::Files).isEmpty()) {
+        deny("libmltqt");
+        deny("libmltglaxnimate");
+    }
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     // MLT's Qt module (qtblend, qtext, …) refuses to load without $DISPLAY / $WAYLAND_DISPLAY, even when a Qt
