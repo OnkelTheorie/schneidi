@@ -1,0 +1,44 @@
+# schneidi as a server for AIs and automation (MCP over HTTP), see README.md here.
+#   docker compose -f packaging/docker/compose.yml up -d
+#   docker compose -f packaging/docker/compose.yml logs schneidi   # address and, without SCHNEIDI_TOKEN, the token
+services:
+  schneidi:
+    image: ghcr.io/onkeltheorie/schneidi:latest
+    build: # or build it here: docker compose -f packaging/docker/compose.yml up -d --build
+      context: ../..
+      dockerfile: packaging/docker/Dockerfile
+    restart: unless-stopped
+    ports:
+      # Reachable from the network, with the token. Behind the Caddy below: remove this (Caddy reaches it inside).
+      - "8642:8642"
+    environment:
+      # Token for "Authorization: Bearer …": set it here or in a .env file next to this file (SCHNEIDI_TOKEN=…,
+      # at least 16 characters, e.g. `openssl rand -base64 32`). Empty: the server makes one, keeps it in the
+      # schneidi-home volume and prints it in the log.
+      SCHNEIDI_TOKEN: ${SCHNEIDI_TOKEN:-}
+    volumes:
+      # Work folder: material, projects, renders (also through PUT/GET /files/<path> and the `upload` tool).
+      # A folder of the host instead: - ./data:/data  (it must belong to user 1000: mkdir data && sudo chown 1000:1000 data)
+      - schneidi-data:/data
+      # Backups of the projects, the generated token, extensions (whisper: docker compose exec schneidi
+      # schneidi-cli extensions --install whisper,small)
+      - schneidi-home:/home/schneidi/.local/share/schneidi
+    # Options: docker compose run --rm schneidi help serve
+    # command: ["serve", "--listen", "0.0.0.0", "--root", "/data", "--workers", "2", "--job-wait", "50"]
+
+  # HTTPS with Let's Encrypt in front (a domain pointing to this machine, ports 80/443 open): uncomment, put in your
+  # domain and remove the "ports" of schneidi above. Clients then use https://schneidi.example.org/mcp.
+  # caddy:
+  #   image: caddy:2
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   command: caddy reverse-proxy --from schneidi.example.org --to schneidi:8642
+  #   volumes:
+  #     - caddy-data:/data
+
+volumes:
+  schneidi-data:
+  schneidi-home:
+  # caddy-data:

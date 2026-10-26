@@ -1,0 +1,9 @@
+# Build context of packaging/docker/Dockerfile (the repository root): only what the build needs
+build/
+build-*/
+dist/
+docs/
+tests/
+screenshots/
+.cache/
+*.user
