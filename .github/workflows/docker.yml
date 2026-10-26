@@ -1,0 +1,77 @@
+name: Docker
+
+# Server image (schneidi-cli serve, packaging/docker) on ghcr.io: for every release tag, or by hand
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Image name
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT" # registry names are lower case
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=ref,event=branch
+      # Build once into the local Docker, check it, then push the same build (from the cache)
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          load: true
+          tags: schneidi:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Check the image
+        run: |
+          set -e
+          # The command line: MLT, FFmpeg and the effects work in the image (new project, cut, render)
+          docker run --rm --entrypoint sh schneidi:test -c '
+            set -e; cd /data
+            ffmpeg -loglevel error -f lavfi -i testsrc2=size=320x180:rate=25:duration=2 -f lavfi -i sine=duration=2 \
+                   -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest clip.mp4
+            schneidi-cli new film.schneidi --media clip.mp4 --width 320 --height 180
+            schneidi-cli edit film.schneidi --ops "[{\"op\":\"append\",\"media\":\"clip.mp4\"},{\"op\":\"title\",\"text\":\"Hi\",\"at\":0}]"
+            schneidi-cli render film.schneidi --out out.mp4 --encoder software
+            test -s out.mp4'
+          # The server: refuses without the token, answers MCP with it
+          docker run -d --name schneidi-check -p 8642:8642 -e SCHNEIDI_TOKEN=check-token-0123456789 schneidi:test
+          for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8642/mcp && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8642/mcp -d '{}')" = 401
+          curl -sS -X POST http://127.0.0.1:8642/mcp \
+               -H "Authorization: Bearer check-token-0123456789" -H "Content-Type: application/json" \
+               -H "Accept: application/json, text/event-stream" \
+               -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            | grep -q '"protocolVersion"'
+          docker logs schneidi-check
+          docker stop schneidi-check
+      - name: Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

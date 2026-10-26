@@ -92,6 +92,11 @@ target_link_libraries(test_check PRIVATE schneidi_cli_lib)
 target_link_libraries(test_setup PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_setup PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
 add_dependencies(test_setup schneidi-cli)
+# MCP over HTTP: real server processes (workers are schneidi-cli mcp) on a free port
+schneidi_test(test_serve)
+target_link_libraries(test_serve PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_serve PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
+add_dependencies(test_serve schneidi-cli)
 schneidi_test(test_audio_regression)
 # Reference renders of the sound (own audio engine, docs/archiv/plan-0.10-ton.md): references in the private docs folder
 schneidi_test(test_audio_reference)

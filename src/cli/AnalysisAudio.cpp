@@ -276,7 +276,11 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
 {
     const QString src = a["source"].toString();
     TranscribeRequest req;
-    req.model = Extensions::whisperModelPath(a["model"].toString());
+    QString model = a["model"].toString();
+    // A model file (not the name of an installed model) is a path like any other (a server's work folder)
+    if (!model.isEmpty() && Extensions::whisperModelPath(model) == QFileInfo(model).absoluteFilePath())
+        model = absolute(model);
+    req.model = Extensions::whisperModelPath(model);
     if (req.model.isEmpty())
         fail("NOT_INSTALLED", a.contains("model") ? "whisper model not installed: " + a["model"].toString()
                                                   : "no whisper model installed (see `extensions`, e.g. --install whisper,small)");

@@ -247,6 +247,10 @@ add_library(schneidi_cli_lib STATIC
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp
+    src/cli/Sandbox.h  src/cli/Sandbox.cpp
+    src/cli/Http.h     src/cli/Http.cpp
+    src/cli/Serve.h    src/cli/Serve.cpp src/cli/ServeDetail.h src/cli/ServeFiles.cpp
+    src/cli/ServeJobs.h src/cli/ServeJobs.cpp
     src/cli/Live.h     src/cli/Live.cpp
     src/cli/Guide.h    src/cli/Guide.cpp
     src/cli/Setup.h    src/cli/Setup.cpp)

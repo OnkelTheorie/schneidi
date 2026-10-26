@@ -31,7 +31,7 @@ namespace Cli::Live {
 namespace {
 
 LiveHost* g_host = nullptr;
-bool g_isApp = false; // this process runs a server: never connect to an app as a client
+bool g_isApp = false; // this process runs a server (or is told so by disable()): never connect to an app as a client
 QString g_clientName = "schneidi-cli";
 
 QByteArray line(const QJsonObject& o) { return QJsonDocument(o).toJson(QJsonDocument::Compact) + '\n'; }
@@ -440,6 +440,8 @@ std::vector<Candidate> runningApps()
 } // namespace
 
 void setClientName(const QString& name) { g_clientName = name; }
+
+void disable() { g_isApp = true; }
 
 Connection* connectionFor(const QString& project)
 {

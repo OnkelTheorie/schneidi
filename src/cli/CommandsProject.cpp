@@ -180,6 +180,7 @@ QString backupFile(const QString& path, const QJsonObject& a)
             fail("NOT_FOUND", QString("no backup %1 (there are %2, see `backups`)").arg(index).arg(files.size()));
         return files[index - 1];
     }
+    if (files.contains(which)) return which; // a file from `backups` (outside a server's work folder)
     const QString source = absolute(which);
     if (!QFileInfo::exists(source)) fail("NOT_FOUND", "backup not found: " + source);
     return source;
