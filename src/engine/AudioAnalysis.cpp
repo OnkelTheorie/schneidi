@@ -258,9 +258,9 @@ std::optional<Loudness> clipLoudness(const ProjectFormat& format, const Clip& cl
 }
 
 std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Timeline& timeline, int from, int to,
-                                         const std::function<bool(double)>& progress)
+                                         const std::function<bool(double)>& progress, std::vector<float>* framePeaks)
 {
-    return MixMeter(format).measure(timeline, from, to, progress);
+    return MixMeter(format).measure(timeline, from, to, progress, framePeaks);
 }
 
 MixMeter::MixMeter(const ProjectFormat& format) : m_format(format) {}
@@ -268,11 +268,18 @@ MixMeter::MixMeter(const ProjectFormat& format) : m_format(format) {}
 MixMeter::~MixMeter() = default;
 
 std::optional<Loudness> MixMeter::measure(const Timeline& timeline, int from, int to,
-                                          const std::function<bool(double)>& progress)
+                                          const std::function<bool(double)>& progress, std::vector<float>* framePeaks)
 {
     if (to <= from) return std::nullopt;
     Measure m;
-    const Sink sink = [&](const float* pcm, int samples, int channels, int freq) { m.add(pcm, samples, channels, freq); };
+    if (framePeaks) {
+        framePeaks->clear();
+        framePeaks->reserve(size_t(to - from));
+    }
+    const Sink sink = [&](const float* pcm, int samples, int channels, int freq) {
+        m.add(pcm, samples, channels, freq);
+        if (framePeaks) framePeaks->push_back(framePeak(pcm, samples, channels));
+    };
     if (Audio::ownPath()) {
         if (!mix(m_format, timeline, from, to, progress, sink)) return std::nullopt;
     } else {

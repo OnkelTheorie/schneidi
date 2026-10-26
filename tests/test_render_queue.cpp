@@ -544,5 +544,44 @@ int main(int argc, char** argv)
         }
         if (const QByteArray dump = qgetenv("CHECK_DUMP"); !dump.isEmpty()) panel.grab().save(QString::fromLocal8Bit(dump));
     }
+
+    // --- The same check for a vertical video: a title in the zone TikTok/Reels/Shorts cover is listed with its time
+    // and clicking it moves the playhead to the title; a 16:9 timeline with the same title does not get it
+    for (const bool vertical : {true, false}) {
+        Project q;
+        ProjectData d;
+        d.format.width = vertical ? 180 : 320;
+        d.format.height = vertical ? 320 : 180;
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 2);
+        Clip v;
+        v.id = 1;
+        v.mediaPath = clip;
+        v.out = 49;
+        d.timeline.video[0].clips << v;
+        Clip t;
+        t.id = 2;
+        t.kind = ClipKind::Title;
+        t.title.text = "x16";
+        t.title.size = 20;
+        t.title.posY = vertical ? -140 : -75; // the bottom 6 % of the picture
+        t.start = 10;
+        t.out = 9;
+        d.timeline.video[1].clips << t;
+        d.lastClipId = 2;
+        q.load(d);
+        DeliverPanel panel(&q);
+        CHECK(panel.runCheck());
+        QListWidget* list = panel.checkList();
+        int row = -1;
+        for (int i = 0; i < list->count(); ++i)
+            if (list->item(i)->text().contains("x16")) row = i;
+        CHECK_EQ(row >= 0, vertical);
+        if (row >= 0) {
+            CHECK_EQ(list->item(row)->data(Qt::UserRole).toInt(), 10);
+            QSignalSpy seek(&panel, &DeliverPanel::seekRequested);
+            emit list->itemClicked(list->item(row));
+            if (CHECK_EQ(seek.count(), 1)) CHECK_EQ(seek.first().first().toInt(), 10);
+        }
+    }
     return Check::result();
 }

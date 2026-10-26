@@ -35,7 +35,8 @@ names cost a failed call.
    (`changes`, with their new ids) and the timeline as a summary; take ids from there or from `info`, never guess
    them - they change when clips are split. Positions relative to a clip or to source time
    (`{"clip": 3, "source": "12.4s"}`) stay correct while earlier ops move things.
-4. **Check before rendering**: `check` on the project (gaps, missing media, subtitles, sound), `info` (length,
+4. **Check before rendering**: `check` on the project (gaps, missing media, subtitles, sound, game sound or
+   speech buried under the music, stutter in recordings; 9:16: text the apps cover, a slow start), `info` (length,
    tracks) and a `frames` sheet of the timeline.
 5. **Render**, then **look at the rendered file yourself**: `check` on the file, a `frames` sheet, `probe`. Read
    [references/check.md](references/check.md) for what to look for. Fix and render again if something is off.

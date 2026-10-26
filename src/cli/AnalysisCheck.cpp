@@ -7,6 +7,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Bundle.h"
+#include "engine/CheckMeasure.h"
 
 #include <QJsonArray>
 #include <QProcess>
@@ -99,6 +100,7 @@ QJsonObject issueJson(const ExportCheck::Issue& i, const ProjectFormat& f)
         const QJsonObject r = range(i.from, i.to, f);
         for (auto it = r.begin(); it != r.end(); ++it) o[it.key()] = it.value();
     }
+    if (i.clip) o["clip"] = i.clip;
     return o;
 }
 
@@ -132,14 +134,24 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
         result["range"] = range(from, to, f);
         issues += ExportCheck::timeline(tl, from, to, f, opt);
+        issues += ExportCheck::layout(tl, from, to, f, opt);
+        // The timeline as exported (render timeline: compound clips, limiter, mute/solo)
+        const Timeline render = s.project.renderTimeline();
+        const auto media = [&s](const QString& path) { return s.project.mediaInfo(path); };
+        const double scanned = withSound ? 0.1 : 0.8;
+        if (const auto st = CheckMeasure::stutter(
+                f, tl, from, to, [&](const QString& p) { return media(p) ? media(p)->length : 0; }, progress(0, scanned)))
+            issues += *st;
+        issues += CheckMeasure::hook(f, render, from, to, opt);
         if (withSound) {
-            // The mix as exported (render timeline: compound clips, limiter, mute/solo)
-            const Timeline mix = s.project.renderTimeline();
-            const auto peaks = AudioAnalysis::timelineFramePeaks(f, mix, from, to, progress(0, 0.5));
-            const auto loud = AudioAnalysis::timelineLoudness(f, mix, from, to, progress(0.5, 1));
-            if (!peaks || !loud) fail("DECODE_FAILED", "could not mix the sound");
-            measured = {*peaks, *loud};
-            issues += ExportCheck::sound(measured.peaks, from, loud->integrated, loud->truePeakDb, f, opt, mix.masterLimiter);
+            std::vector<float> peaks;
+            const auto loud = AudioAnalysis::timelineLoudness(f, render, from, to, progress(scanned, 0.55), &peaks);
+            if (!loud) fail("DECODE_FAILED", "could not mix the sound");
+            measured = {peaks, *loud};
+            issues += ExportCheck::sound(measured.peaks, from, loud->integrated, loud->truePeakDb, f, opt, render.masterLimiter);
+            const auto picture = [&](const QString& p) { return media(p) && media(p)->hasVideo && !media(p)->isImage; };
+            if (const auto balance = CheckMeasure::mix(f, render, from, to, picture, opt, progress(0.55, 1)))
+                issues += *balance;
         }
     } else {
         const MediaSource m = openMedia(QJsonObject{{"file", src}});

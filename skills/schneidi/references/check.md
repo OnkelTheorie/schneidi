@@ -7,6 +7,16 @@ Before rendering, **`check` the project**: missing media, gaps without picture (
 clips is black in the video), subtitles too short or too fast to read or past the end, and the sound of the mix
 (no sound, clipping, true peak, loudness off the target, silence at the end). Fix the errors; decide on each
 warning (a fade to black or a pause can be intended). `target_lufs` for other targets (-23 broadcast, -16 podcast).
+It also finds:
+- `under_music`: a track with events (game sound, speech) more than 15 LU under the music while its events play -
+  raise that track or `duck` the music under it. Name the music track "Music" if it is not a plain sound file.
+- `stutter`: a clip uses a part of a recording where the game lagged (the picture stands still) - trim the clip
+  around it (`probe` `gaps` shows the jumps, `highlights` gives `clean` parts).
+- 9:16 only: `safe_area` / `subtitle_safe_area` = text where TikTok, Reels and Shorts put caption and buttons
+  (bottom 20 %), their button column (right) or their top bar - move it; `slow_hook` (info) = the first second
+  hardly moves - start with the strongest moment.
+
+Each finding has its time range (and `clip` when it is about one).
 
 After rendering:
 

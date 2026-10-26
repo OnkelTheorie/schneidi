@@ -6,6 +6,7 @@
 #include "engine/Background.h"
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
+#include "engine/FrameGaps.h"
 
 #include <QEventLoop>
 #include <QFileInfo>
@@ -166,7 +167,49 @@ QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const
     return {{"files", list}};
 }
 
+QPair<int, int> frozenFrames(double at, double end, const ProjectFormat& f)
+{
+    const double fps = f.rate.fps();
+    const int from = int(std::lround(at * fps)) + 1;
+    return {from, std::max(from + 1, int(std::lround(end * fps)))};
+}
+
+QJsonObject stretchJson(const Stutter::Stretch& st, const ProjectFormat& f)
+{
+    const auto [from, to] = frozenFrames(st.from, st.to, f);
+    QJsonObject o = range(from, to, f);
+    o["jumps"] = st.jumps;
+    o["missing_frames"] = st.missing;
+    o["longest_s"] = std::round(st.longest * 1000) / 1000;
+    return o;
+}
+
 namespace {
+
+// Jumps in the picture's time stamps (stutter): the list (at most 50) and the stretches they form
+QJsonObject gapsJson(const QString& path, const ProjectFormat& f)
+{
+    const std::optional<Stutter::Scan> s = FrameGaps::scan(path);
+    if (!s) return {{"checked", false}};
+    int missing = 0;
+    QJsonArray jumps;
+    for (const Stutter::Jump& j : s->jumps) {
+        missing += j.missing;
+        if (jumps.size() >= 50) continue;
+        const auto [from, to] = frozenFrames(j.at, j.end(), f);
+        jumps << QJsonObject{{"at_s", std::round(j.at * 1000) / 1000}, {"length_s", std::round(j.length * 1000) / 1000},
+                             {"missing_frames", j.missing}, {"from", from}, {"to", to}};
+    }
+    QJsonArray stretches;
+    for (const Stutter::Stretch& st : Stutter::stretches(s->jumps)) stretches << stretchJson(st, f);
+    QJsonObject o{{"frame_ms", std::round(s->frameDuration * 1e5) / 100}, {"frames", s->frames},
+                  {"jump_count", int(s->jumps.size())}, {"missing_frames", missing},
+                  {"missing_s", std::round(missing * s->frameDuration * 1000) / 1000}, {"jumps", jumps},
+                  {"stutter", stretches}};
+    if (s->jumps.size() > jumps.size()) o["jumps_listed"] = int(jumps.size());
+    return o;
+}
+
 QJsonObject probeOne(const QJsonObject& a)
 {
     const MediaSource m = openMedia(a);
@@ -187,6 +230,7 @@ QJsonObject probeOne(const QJsonObject& a)
         for (int i = 0; i < m.info.audioStreamCount(); ++i) streams << m.info.audioStreamName(i);
         o["audio_streams"] = streams;
     }
+    if (a["gaps"].toBool() && m.info.hasVideo && !m.info.isImage) o["gaps"] = gapsJson(m.info.path, m.format);
     return o;
 }
 

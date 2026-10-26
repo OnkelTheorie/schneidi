@@ -7,6 +7,7 @@
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/CheckMeasure.h"
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/RenderQueue.h"
@@ -208,8 +209,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_addBtn->setStyleSheet(Theme::primaryButtonStyle());
     m_checkBtn = new QPushButton(T("Vor dem Export prüfen"));
     m_checkBtn->setToolTip(T("Sucht, was in fertigen Videos oft schiefgeht: Lücken ohne Bild, fehlende Dateien, "
-                             "Untertitel zu kurz oder zu schnell, Ton übersteuert, zu leise oder zu laut, Stille am "
-                             "Ende"));
+                             "Ruckler in Aufnahmen, Untertitel zu kurz oder zu schnell, Ton übersteuert, zu leise oder "
+                             "zu laut, Stille am Ende, Spielton oder Sprache unter der Musik; bei Hochformat Text, den "
+                             "TikTok, Reels und Shorts verdecken, und ein langsamer Einstieg"));
     m_checkList = new QListWidget;
     m_checkList->setWordWrap(true);
     m_checkList->setMaximumHeight(200);
@@ -661,39 +663,52 @@ bool DeliverPanel::runCheck()
         m_status->setText(T("Die Timeline ist leer."));
         return true;
     }
-    QVector<ExportCheck::Issue> issues = ExportCheck::timeline(tl, from, to, f);
+    QVector<ExportCheck::Issue> issues = ExportCheck::timeline(tl, from, to, f) + ExportCheck::layout(tl, from, to, f);
     // What this export leaves out does not matter: the picture for sound-only formats, subtitles when not exported
     issues.removeIf([&](const ExportCheck::Issue& i) {
-        return (job.settings.audioOnly() && (i.check == "black" || i.check.startsWith("subtitle")))
+        return (job.settings.audioOnly() && (i.check == "black" || i.check == "safe_area" || i.check.startsWith("subtitle")))
                || (job.settings.subtitles == RenderSettings::NoSubtitles && i.check.startsWith("subtitle"));
     });
 
     QString sound;
     bool canceled = false;
-    if (job.settings.hasAudio()) {
-        QProgressDialog progress(T("Ton wird gemessen…"), T("Abbrechen"), 0, 1000, this);
-        progress.setWindowModality(Qt::WindowModal);
-        progress.setMinimumDuration(400);
-        const auto step = [&progress](double a, double b) {
-            return [&progress, a, b](double p) {
-                progress.setValue(int((a + (b - a) * p) * 1000));
-                QApplication::processEvents();
-                return !progress.wasCanceled();
-            };
+    QProgressDialog progress(T("Aufnahmen werden geprüft…"), T("Abbrechen"), 0, 1000, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(400);
+    const auto step = [&progress](double a, double b) {
+        return [&progress, a, b](double p) {
+            progress.setValue(int((a + (b - a) * p) * 1000));
+            QApplication::processEvents();
+            return !progress.wasCanceled();
         };
-        const Timeline mix = m_project->renderTimeline(job.sequence);
-        const auto peaks = AudioAnalysis::timelineFramePeaks(f, mix, from, to, step(0, 0.5));
-        const auto loud = peaks && !progress.wasCanceled()
-                              ? AudioAnalysis::timelineLoudness(f, mix, from, to, step(0.5, 1))
-                              : std::nullopt;
+    };
+    const Timeline render = m_project->renderTimeline(job.sequence);
+    const auto media = [this](const QString& path) { return m_project->mediaInfo(path); };
+    const double picture = job.settings.hasAudio() ? 0.1 : 1.0;
+    if (!job.settings.audioOnly()) {
+        // Stutter in the recordings (time stamps, cached) and the start of a vertical video
+        if (const auto st = CheckMeasure::stutter(
+                f, tl, from, to, [&](const QString& p) { return media(p) ? media(p)->length : 0; }, step(0, picture)))
+            issues += *st;
         canceled = progress.wasCanceled();
-        if (peaks && loud) {
-            issues += ExportCheck::sound(*peaks, from, loud->integrated, loud->truePeakDb, f, {}, mix.masterLimiter);
+        if (!canceled) issues += CheckMeasure::hook(f, render, from, to);
+    }
+    if (job.settings.hasAudio() && !canceled) {
+        progress.setLabelText(T("Ton wird gemessen…"));
+        std::vector<float> peaks;
+        const auto loud = AudioAnalysis::timelineLoudness(f, render, from, to, step(picture, 0.6), &peaks);
+        if (loud && !progress.wasCanceled()) {
+            issues += ExportCheck::sound(peaks, from, loud->integrated, loud->truePeakDb, f, {}, render.masterLimiter);
             if (loud->integrated > -200)
                 sound = T("Lautheit %1 LUFS, True Peak %2 dBTP")
                             .arg(QString::number(loud->integrated, 'f', 1).replace('.', I18n::decimalPoint()),
                                  QString::number(loud->truePeakDb, 'f', 1).replace('.', I18n::decimalPoint()));
+            // Music against game sound / speech: each track alone
+            const auto hasPicture = [&](const QString& p) { return media(p) && media(p)->hasVideo && !media(p)->isImage; };
+            if (const auto balance = CheckMeasure::mix(f, render, from, to, hasPicture, {}, step(0.6, 1)))
+                issues += *balance;
         }
+        canceled = progress.wasCanceled();
     }
 
     std::stable_sort(issues.begin(), issues.end(), [](const ExportCheck::Issue& a, const ExportCheck::Issue& b) {

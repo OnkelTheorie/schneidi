@@ -42,8 +42,9 @@ public:
     bool deletePreset(int index);         // only custom ones
     const QVector<RenderPreset>& presets() const { return m_presets; }
 
-    // Check before export (core/ExportCheck): the range that would be rendered, picture/subtitles at once, the sound
-    // measured with progress (cancelable); the result as a list under the buttons. false = canceled.
+    // Check before export (core/ExportCheck): the range that would be rendered, picture/subtitles/layout at once,
+    // stutter of the recordings, the hook of a vertical video and the sound (mix, music against the other tracks)
+    // measured with progress (engine/CheckMeasure, cancelable); the result as a list under the buttons. false = canceled.
     bool runCheck();
     QListWidget* checkList() const { return m_checkList; }
 
