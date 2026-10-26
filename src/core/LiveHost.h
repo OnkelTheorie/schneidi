@@ -3,6 +3,8 @@
 // MainWindow implements it; the server (cli/Live.cpp) only talks to this interface, so the app code does not
 // depend on the command layer. All calls happen in the GUI thread.
 
+#include "core/Types.h"
+
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
@@ -10,6 +12,37 @@
 
 class Project;
 class Selection;
+
+// What one AI command did inside the app (cli/Live.cpp compares the clips before and after it): the app lights the
+// clips up in the timeline and lists the step in its AI log
+struct LiveChange {
+    QString command;      // "edit", "app", "import", "restore"
+    QString step;         // what it did: the edit ops ("split, delete"), the app action ("undo") …
+    QVector<int> added;   // new clips (ids, all timelines)
+    QVector<int> changed; // clips that are still there but differ
+    struct Removed {      // deleted clips: where they were before the command
+        int id = 0;
+        int sequence = 0; // timeline (Project::currentSequence id)
+        TrackRef track;
+        int start = 0, end = 0; // timeline frames, end exclusive
+        QString name;
+    };
+    QVector<Removed> removed;
+    QString error; // the command failed and changed nothing: why
+};
+
+// Work of an AI connected to the app that runs outside it (analyses, render, transcribe … in schneidi-cli), so the
+// user sees it working before (or without) any edit
+struct LiveActivity {
+    enum class State { Started, Progress, Finished, Failed };
+    int id = 0; // the same for all messages of one job (per connection)
+    State state = State::Started;
+    QString tool;        // command: "silence", "render" …
+    QString target;      // file or project it works on (may be empty)
+    int percent = -1;    // -1 = unknown
+    QJsonObject summary; // Finished: {"count": 18} (things found), {"lufs": -14.2} or {"file": path written}
+    QString error;       // Failed
+};
 
 class LiveHost {
 public:
@@ -29,6 +62,8 @@ public:
 
     // Shown to the user: an AI session is connected (client = its name) or not anymore
     virtual void liveConnectionChanged(bool connected, const QString& client) = 0;
-    // Clips an AI command just changed (flash them in the timeline)
-    virtual void liveClipsChanged(const QVector<int>& clipIds) = 0;
+    // An AI command ran in the app (also when it failed); not for reading ones
+    virtual void liveChanged(const LiveChange& change) = 0;
+    // The connected AI works outside the app (start, progress, end of a job)
+    virtual void liveActivity(const LiveActivity& activity) = 0;
 };

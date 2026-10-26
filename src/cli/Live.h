@@ -11,7 +11,10 @@
 //   {"type":"attach","client":name}       -> {"ok":true} (one attached client at a time; shown in the app)
 //   {"type":"snapshot"}                    -> {"ok":true,"data":project file JSON,"app":state}
 //   {"type":"run","command":…,"args":{…}} -> {"ok":true,"result":{…}} or {"ok":false,"error":{code,message}}
+//   {"type":"activity","id":n,"state":"start"|"progress"|"end"|"failed","tool":…,"target":…,"percent":…,
+//    "summary":{…},"error":…}         -> no answer (work outside the app, see Activity; attached client only)
 // attach, snapshot and run while the app waits -> {"ok":false,"error":{"code":"APP_WAITING","message":text}}
+// hello of an app that refuses AIs has "allowed":false and "refusal": why (the user disconnected, or the setting)
 
 #include "cli/Commands.h"
 
@@ -49,8 +52,9 @@ public:
 
     bool attached() const { return m_attached; }
     QString client() const { return m_client; }
-    // The user disconnects the AI ("Trennen"): the session ends and new ones are refused until allowed again
-    void disconnectClient();
+    // The user disconnects the AI ("Trennen") or turned AI connections off in the settings: the session ends and
+    // new ones are refused until allowed again; `reason` tells the AI why (empty = "the user disconnected the AI")
+    void disconnectClient(const QString& reason = {});
     bool allowed() const { return m_allowed; }
     void setAllowed(bool on);
     // The app cannot take commands yet (its restore dialog at start waits for the user, a project is being opened):
@@ -81,6 +85,7 @@ private:
     QPointer<QLocalSocket> m_attached;
     QString m_client;
     bool m_allowed = true;
+    QString m_refusal; // why new sessions are refused (empty = the user disconnected the AI)
     QString m_waiting;
     bool m_running = false; // a command runs (it may spin the event loop: no second one meanwhile)
 };
@@ -108,5 +113,37 @@ QJsonObject run(Connection* c, const QString& command, const QJsonObject& args);
 void setClientName(const QString& name);
 // Never connect to an app (server, work folder: cli/Sandbox.h): projects are always files
 void disable();
+
+// Work an AI does outside the app while it is connected to it (analyses, check, render, transcribe … here in
+// schneidi-cli): reported to the app so the user sees it working, with progress and a short result
+// ({"type":"activity"}). Put around a command by Cli::execute. Reports only when this process already talks to an
+// app (an MCP session that used "@app" or a project open there) or the command's own project is open in one; does
+// nothing inside the app, for quick reading commands (info, help …) and when the app is gone (reporting never fails
+// a command).
+class Activity {
+public:
+    Activity(const QString& command, const QJsonObject& args, Context& ctx);
+    ~Activity(); // neither finished() nor failed(): reported as failed (interrupted)
+    Activity(const Activity&) = delete;
+    Activity& operator=(const Activity&) = delete;
+    void finished(const QJsonObject& result);
+    void failed(const Error& error);
+    bool reporting() const { return m_conn != nullptr; }
+
+private:
+    void send(QJsonObject msg);
+    void progress(double p);
+
+    Connection* m_conn = nullptr;
+    Context& m_ctx;
+    std::function<void(double)> m_progress; // the command's own progress (restored at the end)
+    QString m_tool;
+    int m_id = 0;
+    int m_percent = -1;
+    qint64 m_lastSent = 0; // ms, throttles progress messages
+    bool m_done = false;
+};
+// One-line result of a job for the app (counts, not the details): {"count": n}, {"lufs": x} or {"file": path}
+QJsonObject activitySummary(const QString& tool, const QJsonObject& result);
 
 } // namespace Cli::Live

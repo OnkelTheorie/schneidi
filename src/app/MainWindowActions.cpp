@@ -123,6 +123,9 @@ void MainWindow::buildActions()
     file->addSeparator();
     makeAction(file, "project_settings", T("Projekteinstellungen…"), QKeySequence("Shift+9"), [this] { projectSettingsDialog(); });
     makeAction(file, "stream_presets", T("Import-Vorgaben für Ton-Streams…"), QKeySequence(), [this] { streamPresetsDialog(); });
+    // Settings of the app (all projects); on macOS the system puts it into the application menu
+    makeAction(file, "settings", T("Einstellungen…"), QKeySequence("Ctrl+,"), [this] { settingsDialog(); })
+        ->setMenuRole(QAction::PreferencesRole);
     file->addSeparator();
     makeAction(file, "quit", T("Beenden"), QKeySequence("Ctrl+Q"), [this] { close(); });
 
@@ -635,6 +638,8 @@ void MainWindow::buildActions()
                [this] { applyPanelSet(true, true, true, true, true, true); });
     panels->addSeparator();
     makeAction(panels, "layout_reset", T("Panelgrößen zurücksetzen"), QKeySequence(), [this] { resetSizes(); });
+    // What AIs connected to the app did (also opens with a click on the AI indicator)
+    makeAction(workspace, "ai_log", T("KI-Protokoll…"), QKeySequence(), [this] { showAiLog(); });
     makeAction(workspace, "extensions", T("Erweiterungen…"), QKeySequence(), [this] {
         ExtensionsDialog dlg(this);
         dlg.exec();
@@ -666,6 +671,7 @@ void MainWindow::buildActions()
     QMenu* help = menuBar()->addMenu(T("&Hilfe"));
     makeAction(help, "open_log_folder", T("Log-Ordner öffnen"), QKeySequence(),
                [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
+    makeAction(help, "check_updates", T("Nach Updates suchen…"), QKeySequence(), [this] { checkForUpdates(true); });
 
     InputBindings::instance().saveIfIncomplete();
 }

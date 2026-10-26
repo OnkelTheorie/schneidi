@@ -1,4 +1,5 @@
 #pragma once
+#include "app/AiSettings.h"
 #include "core/Editor.h"
 #include "core/LiveHost.h"
 #include "core/PlaybackMeter.h"
@@ -12,6 +13,7 @@
 #include <QLockFile>
 #include <QMainWindow>
 #include <QTimer>
+#include <QUrl>
 #include <functional>
 #include <memory>
 
@@ -70,9 +72,24 @@ public:
     void liveGenerateProxies(const QStringList& files) override;
     QJsonObject liveProxyState(const QString& file) const override;
     void liveConnectionChanged(bool connected, const QString& client) override;
-    void liveClipsChanged(const QVector<int>& clipIds) override;
-    // Buttons of the AI indicator in the top bar: end the session (and refuse new ones) / allow again
-    void setLiveControls(const std::function<void()>& disconnect, const std::function<void()>& allow);
+    void liveChanged(const LiveChange& change) override;
+    void liveActivity(const LiveActivity& activity) override;
+    // AI log (click on the AI indicator, Workspace › AI Log): popup under the indicator
+    void showAiLog();
+    class AiLog* aiLog() const { return m_aiLog; }
+    // "Connect with Claude" in Settings › AI (cli/Setup.h; main.cpp hands it in, the app does not link the CLI)
+    void setClaudeSetup(const std::function<QJsonObject(bool remove)>& setup) { m_claudeSetup = setup; }
+    // Buttons of the AI indicator in the top bar and Settings › AI: end the session and refuse new ones (reason for
+    // the AI; empty = the user disconnected it) / allow again
+    void setLiveControls(const std::function<void(const QString& reason)>& disconnect, const std::function<void()>& allow);
+    // Settings (File › Settings…, MainWindowSettings.cpp); test runs apply them without saving
+    void settingsDialog(int tab = 0);
+    const AiSettings& aiSettings() const { return m_aiSettings; }
+    void setAiSettings(const AiSettings& s);
+    // Update hint (app/UpdateCheck.h): automatically at most once a day a few seconds after the start (main.cpp, not
+    // in test runs); manual = Help › Check for Updates… (also says "up to date" or why it failed)
+    void startUpdateCheck();
+    void checkForUpdates(bool manual);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -247,13 +264,28 @@ private:
 
     // AI indicator in the top bar (MainWindowLive.cpp)
     void updateLiveIndicator();
+    AiSettings m_aiSettings; // Settings › AI
+
+    // Update hint: bar below the top bar with "Now / Later / Don't ask again" (MainWindowSettings.cpp)
+    QWidget* buildUpdateBar();
+    class UpdateCheck* m_updates = nullptr;
+    QWidget* m_updateBar = nullptr;
+    class QLabel* m_updateText = nullptr;
+    QUrl m_updatePage;
+    static QString liveOffReason(); // for the AI: connections are off in the settings
+    class AiLog* m_aiLog = nullptr;
+    class AiLogView* m_aiLogView = nullptr;
+    void aiLogActivated(int entryId); // select the entry's clips, jump there (a click of the user)
+    void applyAiMarkStyle();          // Settings › AI -> timeline highlight
+    std::function<QJsonObject(bool)> m_claudeSetup;
     QWidget* buildLiveIndicator();
     QWidget* m_liveBox = nullptr;
-    class QLabel* m_liveLabel = nullptr;
+    QToolButton* m_liveLabel = nullptr; // click: AI log
     QToolButton* m_liveButton = nullptr;
     QTimer m_liveLinger; // keeps "connected" visible a moment after a one-shot command
     bool m_liveConnected = false;
     bool m_liveRefused = false; // the user disconnected the AI
     QString m_liveClient;
-    std::function<void()> m_liveDisconnect, m_liveAllow;
+    std::function<void(const QString&)> m_liveDisconnect;
+    std::function<void()> m_liveAllow;
 };

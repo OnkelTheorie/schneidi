@@ -861,7 +861,16 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
             result["live"] = true;
             return result;
         }
-    return cmd.run(args, ctx);
+    // Analyses, render … while an AI is connected to the app: the app shows that it works (cli/Live.h)
+    Live::Activity activity(cmd.name, args, ctx);
+    try {
+        QJsonObject result = cmd.run(args, ctx);
+        activity.finished(result);
+        return result;
+    } catch (const Error& e) {
+        activity.failed(e);
+        throw;
+    }
 }
 
 const Command* find(const QString& name)

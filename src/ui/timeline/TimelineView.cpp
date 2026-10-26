@@ -40,12 +40,75 @@
 
 using namespace TimelineViewDetail;
 
-void TimelineView::flashClips(const QVector<int>& ids)
+void TimelineView::markAiChanges(const AiMarks& marks)
 {
-    m_flash = QSet<int>(ids.begin(), ids.end());
-    m_flashStart = QDateTime::currentMSecsSinceEpoch();
-    m_flashTimer->start();
+    if (!m_aiStyle.on) return;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (int id : marks.added) m_aiClips.insert(id, {now, true});
+    for (int id : marks.changed) m_aiClips.insert(id, {now, false});
+    for (const AiMarks::Ghost& g : marks.removed) m_aiGhosts << AiGhostMark{g, now};
+    if (aiMarkCount()) m_aiTimer->start();
     update();
+}
+
+void TimelineView::setAiMarkStyle(const AiMarkStyle& style)
+{
+    m_aiStyle = style;
+    m_aiStyle.durationMs = std::max(1, style.durationMs);
+    if (!style.on) {
+        m_aiClips.clear();
+        m_aiGhosts.clear();
+    }
+    update();
+}
+
+double TimelineView::aiStrength(qint64 start) const
+{
+    return std::clamp(1.0 - double(QDateTime::currentMSecsSinceEpoch() - start) / m_aiStyle.durationMs, 0.0, 1.0);
+}
+
+QVector<TimelineView::AiArrow> TimelineView::aiArrows() const
+{
+    const Timeline& tl = m_editor->project()->timeline();
+    const QRect view(kHeaderW, kRulerH, width() - kHeaderW, height() - kRulerH);
+    QVector<AiArrow> out;
+    const auto add = [&](const QRect& r, double strength) {
+        if (strength <= 0 || r.intersects(view)) return;
+        Qt::Edge edge = r.right() < view.left() ? Qt::LeftEdge
+                        : r.left() > view.right() ? Qt::RightEdge
+                        : r.bottom() < view.top() ? Qt::TopEdge
+                                                  : Qt::BottomEdge;
+        const QPoint at(std::clamp(r.center().x(), view.left() + 7, view.right() - 7),
+                        std::clamp(r.center().y(), view.top() + 7, view.bottom() - 7));
+        for (AiArrow& a : out) // one arrow per spot
+            if (a.edge == edge && (a.at - at).manhattanLength() < 10) {
+                a.strength = std::max(a.strength, strength);
+                return;
+            }
+        out << AiArrow{at, edge, strength};
+    };
+    for (auto it = m_aiClips.begin(); it != m_aiClips.end(); ++it) {
+        TrackRef ref;
+        const Clip* c = TimelineOps::findClip(tl, it.key(), &ref);
+        const auto row = c ? rowFor(ref) : std::nullopt;
+        if (row) add(clipRect(*row, *c), aiStrength(it->start));
+    }
+    for (const AiGhostMark& g : m_aiGhosts)
+        if (const auto row = rowFor(g.ghost.track))
+            add(QRect(QPoint(int(frameToX(g.ghost.start)), row->y + 1),
+                      QPoint(int(frameToX(g.ghost.end)) - 1, row->y + row->h - row->lane - 3)),
+                aiStrength(g.start));
+    return out;
+}
+
+void TimelineView::revealRange(int from, int to, std::optional<TrackRef> track)
+{
+    const double x0 = frameToX(from), x1 = frameToX(std::max(from + 1, to));
+    if (x1 < kHeaderW || x0 > width()) // keep the zoom, the range a bit right of the left edge
+        setLeftFrame(from - visibleFrames() * 0.1);
+    if (!track) return;
+    if (const auto row = rowFor(*track); row && (row->y < kRulerH || row->y + row->h > height()))
+        setScrollY(m_view.scrollY + row->y - kRulerH - (viewportHeight() - row->h) / 2);
 }
 
 TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor)
@@ -54,13 +117,13 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
     setAcceptDrops(true);
     setMinimumHeight(160);
     setFocusPolicy(Qt::ClickFocus);
-    m_flashTimer = new QTimer(this);
-    m_flashTimer->setInterval(40);
-    connect(m_flashTimer, &QTimer::timeout, this, [this] {
-        if (QDateTime::currentMSecsSinceEpoch() - m_flashStart > kFlashMs) {
-            m_flash.clear();
-            m_flashTimer->stop();
-        }
+    m_aiTimer = new QTimer(this);
+    m_aiTimer->setInterval(40);
+    connect(m_aiTimer, &QTimer::timeout, this, [this] {
+        for (auto it = m_aiClips.begin(); it != m_aiClips.end();)
+            it = aiStrength(it->start) <= 0 ? m_aiClips.erase(it) : std::next(it);
+        m_aiGhosts.removeIf([this](const AiGhostMark& g) { return aiStrength(g.start) <= 0; });
+        if (!aiMarkCount()) m_aiTimer->stop();
         update();
     });
     m_autoScroll = new QTimer(this);

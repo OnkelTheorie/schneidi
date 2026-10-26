@@ -71,6 +71,7 @@ void TimelineView::paintEvent(QPaintEvent*)
     drawRubber(p);
     drawRuler(p);
     drawPlayhead(p);
+    drawAiArrows(p);
 }
 
 void TimelineView::drawRuler(QPainter& p)
@@ -235,6 +236,7 @@ void TimelineView::drawTracks(QPainter& p)
     }
 
     p.setOpacity(1.0);
+    drawAiGhosts(p);
 
     // Moved clips at the target position
     if (moving) {
@@ -638,15 +640,16 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
 
     p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
     p.drawPath(path);
-    // Changed by the AI (live connection): violet glow that fades out
-    if (!ghost && m_flash.contains(c.id)) {
-        const double left = 1.0 - double(QDateTime::currentMSecsSinceEpoch() - m_flashStart) / kFlashMs;
-        if (left > 0) {
-            QColor glow(0xb4, 0x82, 0xff);
-            glow.setAlphaF(0.45 * left);
-            p.fillPath(path, glow);
+    // Changed by an AI (live connection): fades out; new = filled, edited = a strong outline only
+    if (const auto mark = m_aiClips.constFind(c.id); !ghost && mark != m_aiClips.cend()) {
+        if (const double left = aiStrength(mark->start); left > 0) {
+            QColor glow = m_aiStyle.color;
+            if (mark->added || !m_aiStyle.distinguish) {
+                glow.setAlphaF(0.45 * left);
+                p.fillPath(path, glow);
+            }
             glow.setAlphaF(left);
-            p.setPen(QPen(glow, 2));
+            p.setPen(QPen(glow, mark->added || !m_aiStyle.distinguish ? 2 : 3));
             p.drawPath(path);
         }
     }
@@ -950,4 +953,50 @@ void TimelineView::drawPlayhead(QPainter& p)
     p.setBrush(Theme::playhead);
     p.setPen(Qt::NoPen);
     p.drawPolygon(handle);
+}
+
+// Clips an AI deleted: a hatched, dashed "ghost" at the old place that fades out (inside the track area clip)
+void TimelineView::drawAiGhosts(QPainter& p)
+{
+    for (const AiGhostMark& g : std::as_const(m_aiGhosts)) {
+        const double left = aiStrength(g.start);
+        const auto row = rowFor(g.ghost.track);
+        if (left <= 0 || !row) continue;
+        const QRect r(QPoint(int(frameToX(g.ghost.start)), row->y + 1),
+                      QPoint(int(frameToX(g.ghost.end)) - 1, row->y + row->h - row->lane - 3));
+        if (r.right() < kHeaderW || r.left() > width()) continue;
+        QColor c = m_aiStyle.color;
+        c.setAlphaF(0.5 * left);
+        p.fillRect(r, QBrush(c, Qt::BDiagPattern));
+        c.setAlphaF(left);
+        p.setPen(QPen(c, 2, Qt::DashLine));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(r.adjusted(1, 1, -1, -1));
+    }
+}
+
+// Lit changes outside the visible area: a small triangle at the edge pointing there (the view does not move)
+void TimelineView::drawAiArrows(QPainter& p)
+{
+    const QVector<AiArrow> arrows = aiArrows();
+    if (arrows.isEmpty()) return;
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    for (const AiArrow& a : arrows) {
+        const QPointF c = a.at;
+        constexpr double s = 7; // half size
+        QPolygonF tri;
+        switch (a.edge) {
+        case Qt::LeftEdge: tri << c + QPointF(-s, 0) << c + QPointF(s, -s) << c + QPointF(s, s); break;
+        case Qt::RightEdge: tri << c + QPointF(s, 0) << c + QPointF(-s, -s) << c + QPointF(-s, s); break;
+        case Qt::TopEdge: tri << c + QPointF(0, -s) << c + QPointF(-s, s) << c + QPointF(s, s); break;
+        case Qt::BottomEdge: tri << c + QPointF(0, s) << c + QPointF(-s, -s) << c + QPointF(s, -s); break;
+        }
+        QColor fill = m_aiStyle.color;
+        fill.setAlphaF(std::max(0.25, a.strength));
+        p.setPen(QPen(QColor(0, 0, 0, int(160 * a.strength)), 1));
+        p.setBrush(fill);
+        p.drawPolygon(tri);
+    }
+    p.restore();
 }

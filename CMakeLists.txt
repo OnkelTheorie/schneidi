@@ -149,7 +149,12 @@ add_library(schneidi_lib STATIC
     src/app/MainWindow.h          src/app/MainWindow.cpp
     src/app/MainWindowActions.cpp
     src/app/MainWindowLayout.cpp
-    src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp
+    src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
+    src/app/SettingsDialog.h src/app/SettingsDialog.cpp
+    src/app/AiSettings.h src/app/AiSettings.cpp
+    src/app/AiSettingsPage.h src/app/AiSettingsPage.cpp
+    src/app/UpdateCheck.h src/app/UpdateCheck.cpp
+    src/app/AiLog.h src/app/AiLog.cpp
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp

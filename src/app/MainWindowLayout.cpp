@@ -143,6 +143,7 @@ void MainWindow::buildLayout()
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     lay->addWidget(buildTopBar());
+    lay->addWidget(buildUpdateBar());
     lay->addWidget(m_pages, 1);
     lay->addWidget(buildPageBar());
     setCentralWidget(root);
