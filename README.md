@@ -103,6 +103,8 @@ Thumbnails for the Media Storage (your Videos folder) are made by a separate ffm
 
 ## AI chat in the app
 
+![The AI chat panel next to the timeline: the AI finds the speech, adds b-roll with dissolves, subtitles and ducked music; each tool step is listed, the new clips light up](screenshots/chat.png)
+
 Click **✧ AI** in the top bar and tell an AI what to do in the open project – "remove every pause longer than a
 second", "put the subtitles on and make them bigger", "cut the clips to the beat of the song". It uses the same tools
 as every other AI ([below](#command-line-and-ai-editing-mcp)), looks at frames, measures the sound and works while
