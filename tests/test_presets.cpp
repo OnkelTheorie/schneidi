@@ -510,7 +510,8 @@ int main(int argc, char** argv)
         Presets::apply(t, m);
         QStringList ids;
         for (const EffectInstance& e : t.effects) ids << e.effectId;
-        CHECK_EQ(ids, (QStringList{"frei0r.glow", "frei0r.flippo", "frei0r.colortap", "chromakey", "blur", "color"}));
+        // Written in render order: the Green Screen key (a fixed stage) first, then the clip's order
+        CHECK_EQ(ids, (QStringList{"chromakey", "frei0r.glow", "frei0r.flippo", "frei0r.colortap", "blur", "color"}));
         for (const EffectInstance& e : t.effects) {
             const EffectInstance* o = EffectRegistry::instance(c, e.effectId);
             if (!CHECK(o)) continue;
