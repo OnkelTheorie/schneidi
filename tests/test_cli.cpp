@@ -475,6 +475,7 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         const QJsonObject help = run("help", {{"command", "edit"}, {"op", "trim,transform"}});
         const QString text = QJsonDocument(help).toJson();
         CHECK(text.contains("keyframes stay where they are in the clip"));
+        CHECK(text.contains("windows (x, y, size, rotation) moves with the content"));
         CHECK(text.contains("timeline pixels on that fitted picture"));
     }
 

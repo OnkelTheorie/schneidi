@@ -1,6 +1,7 @@
 #include "core/Keyframes.h"
 
 #include "core/EffectRegistry.h"
+#include "core/GradeWindows.h"
 #include "core/I18n.h"
 
 #include <QHash>
@@ -610,7 +611,8 @@ void shiftWithIn(Clip& c, int delta)
 {
     if (delta == 0) return;
     for (auto it = c.keys.begin(); it != c.keys.end(); ++it)
-        for (Keyframe& k : *it) k.frame += delta; // order and distances stay, handles are relative
+        if (!GradeWindows::followsContent(it.key()))
+            for (Keyframe& k : *it) k.frame += delta; // order and distances stay, handles are relative
 }
 
 void split(const Clip& original, Clip& left, Clip& right)

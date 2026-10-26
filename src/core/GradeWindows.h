@@ -40,6 +40,9 @@ QVector<EffectParam> params(const QVector<EffectParam>& grade);
 const QStringList& correctionKeys();
 // Animatable keys of the window shape (x, y, width, height, rotation, softness) and the fill amount
 const QStringList& geometryKeys();
+// Keyframes of a window's place on the picture (x, y, width, height, rotation): they sit on something in the content
+// (a tracked face to blur), so they stay on their source frames when a slip changes which frames play
+bool followsContent(AnimParam p);
 
 bool exists(const Clip& c, int n);
 QVector<int> list(const Clip& c); // existing window numbers, ascending

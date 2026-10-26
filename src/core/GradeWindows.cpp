@@ -83,6 +83,14 @@ const QStringList& geometryKeys()
     return keys;
 }
 
+bool followsContent(AnimParam p)
+{
+    static const QStringList placement = {"x", "y", "width", "height", "rotation"};
+    QString effectId, k, name;
+    return Keys::effectParamOf(p, &effectId, &k) && effectId == QLatin1String(kGrade) && windowOf(k, &name) > 0
+           && placement.contains(name);
+}
+
 QVector<EffectParam> params(const QVector<EffectParam>& grade)
 {
     QVector<EffectParam> out;

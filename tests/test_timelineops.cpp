@@ -3,6 +3,7 @@
 // effective transitions at edges, fade/transition curves
 #include "check.h"
 
+#include "core/GradeWindows.h"
 #include "core/Keyframes.h"
 #include "core/TimelineOps.h"
 
@@ -227,6 +228,17 @@ int main(int argc, char** argv)
         CHECK_EQ(Keys::valueAt(tl.video[0].clips[1], AnimParam::Opacity, 49), 100.0);
         applyTrimEdit(tl, e, -50, kSrc);
         CHECK_EQ(Keys::keyTimes(tl.video[0].clips[1]), QVector<int>({0, 49}));
+        // ... except the place of a Color page window: it sits on the content (a tracked face) and moves with it;
+        // its other keys (fill amount) stay in the clip like any animation
+        tl = base();
+        Clip& b = tl.video[0].clips[1];
+        const AnimParam wx = GradeWindows::param(1, "x"), wAmount = GradeWindows::param(1, "amount");
+        Keys::setKey(b, wx, 40, 20);
+        Keys::setKey(b, wAmount, 40, 80);
+        applyTrimEdit(tl, e, 30, kSrc);
+        CHECK_EQ(Keys::keyTimes(tl.video[0].clips[1], {wx}), QVector<int>({10}));
+        CHECK_EQ(Keys::valueAt(tl.video[0].clips[1], wx, 10), 20.0);
+        CHECK_EQ(Keys::keyTimes(tl.video[0].clips[1], {wAmount}), QVector<int>({40}));
         // Slide: b moves, a gets longer, c shorter
         tl = base();
         e = TrimEdit{TrimKind::Slide, {2}, {}, Edge::End};

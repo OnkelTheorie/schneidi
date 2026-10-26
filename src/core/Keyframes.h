@@ -78,7 +78,8 @@ void setEase(Clip& c, const QVector<int>& times, KeyEase ease, const QVector<Ani
 void removeAt(Clip& c, const QVector<int>& times, const QVector<AnimParam>& params = {});
 void move(Clip& c, const QVector<int>& times, int delta);
 // All keyframes by `delta` source frames, after Clip::in/out moved by it (slip): they keep their clip frame t, i.e.
-// their place in the clip and in the timeline, instead of riding along with the content (and out of the clip)
+// their place in the clip and in the timeline, instead of riding along with the content (and out of the clip).
+// Except the place of Color page windows (GradeWindows::followsContent): a window sits on the content.
 void shiftWithIn(Clip& c, int delta);
 
 // After splitting (left/right = copies with new in/out): like DaVinci both parts keep all keyframes,
