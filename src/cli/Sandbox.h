@@ -34,8 +34,8 @@ QString relative(const QString& absolutePath);
 // Answers: paths of this computer back to the client's (reverse of the maps); strings in objects/arrays too
 QString mapBack(const QString& path);
 QJsonValue mapBack(const QJsonValue& v);
-// A project file names media, LUTs and transition images: refuse existing ones outside the root (a project put
-// into the work folder must not read other files of the server). Missing files are fine (offline media).
+// A project file names media, LUTs and transition images: refuse any outside the root, also missing ones (a project
+// put into the work folder must not read other files of the server; the engine reads more than plain paths)
 void checkProject(const Project& p);
 
 } // namespace Cli::Sandbox

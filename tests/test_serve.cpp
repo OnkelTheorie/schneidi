@@ -83,16 +83,35 @@ void sandboxRules(const QString& base)
     const Cli::Command* probe = Cli::find("probe");
     CHECK_EQ(codeOf([&] { Cli::normalize(*probe, {{"file", "../outside/secret.mp4"}}); }), QString("OUTSIDE_ROOT"));
     CHECK_EQ(Cli::normalize(*probe, {{"file", "clips/a.mp4"}})["file"].toString(), root + "/clips/a.mp4");
-    // A project naming an existing file outside: refused; offline media elsewhere are fine
+    // A project naming a file outside: refused, also a missing one or one the engine would read through options,
+    // a prefix or a link (MLT/FFmpeg open the string as written); offline media inside are fine
     {
-        Project p;
-        ProjectData d;
-        d.timeline = emptyTimeline();
-        p.load(d);
-        p.addMedia({"/somewhere/else/offline.mp4", "offline.mp4", 100, true, true, false});
-        CHECK_EQ(codeOf([&] { Cli::Sandbox::checkProject(p); }), QString("none"));
-        p.addMedia({QDir(base).filePath("outside/secret.mp4"), "secret.mp4", 100, true, true, false});
-        CHECK_EQ(codeOf([&] { Cli::Sandbox::checkProject(p); }), QString("OUTSIDE_ROOT"));
+        const auto projectWith = [](const QString& path) {
+            auto p = std::make_unique<Project>();
+            ProjectData d;
+            d.timeline = emptyTimeline();
+            p->load(d);
+            p->addMedia({path, "x.mp4", 100, true, true, false});
+            return p;
+        };
+        const auto check = [&](const QString& path) {
+            const auto p = projectWith(path);
+            return codeOf([&] { Cli::Sandbox::checkProject(*p); });
+        };
+        CHECK_EQ(check(root + "/clips/offline.mp4"), QString("none"));
+        CHECK_EQ(check(root + "/clips/./sub//a.mp4"), QString("none"));
+        CHECK_EQ(check(QDir(base).filePath("outside/secret.mp4")), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(check("/somewhere/else/offline.mp4"), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(check(QDir(base).filePath("outside/secret.mp4") + "?x"), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(check(root + "/clips/a.mp4?/../../../outside/secret.mp4"), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(check(root + "/clips/../clips/a.mp4"), QString("OUTSIDE_ROOT")); // ".." follows links on disk
+        CHECK_EQ(check("avformat:" + QDir(base).filePath("outside/secret.mp4")), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(check("clips/a.mp4"), QString("OUTSIDE_ROOT")); // not a plain absolute path
+        if (QFileInfo(root + "/link").isSymLink()) {
+            CHECK_EQ(check(root + "/link/secret.mp4"), QString("OUTSIDE_ROOT"));
+            CHECK_EQ(check(root + "/link/missing.mp4"), QString("OUTSIDE_ROOT"));
+            CHECK_EQ(check(root + "/dangling.mp4"), QString("OUTSIDE_ROOT"));
+        }
     }
     CHECK_EQ(codeOf([] { Cli::Sandbox::configure({"/no/such/folder"}); }), QString("BAD_ARGUMENT"));
     CHECK_EQ(codeOf([&] { Cli::Sandbox::configure({root, {"no-equals-sign"}}); }), QString("BAD_ARGUMENT"));
@@ -320,6 +339,15 @@ int main(int argc, char* argv[])
     QFile::copy(clip, tmp.filePath("outside/other.mp4"));
     QFile::link(tmp.filePath("outside"), root + "/link");
     const bool links = QFileInfo(root + "/link").isSymLink();
+
+    // An empty token on the network would switch the check off: refused before anything listens
+    {
+        QProcess p;
+        p.start(SCHNEIDI_CLI, {"serve", "--listen", "0.0.0.0", "--port", "0", "--root", root, "--token", ""});
+        CHECK(p.waitForFinished(20000));
+        CHECK_EQ(p.exitCode(), 2);
+        CHECK(QJsonDocument::fromJson(p.readAllStandardOutput()).object()["error"].toObject()["message"].toString().contains("token"));
+    }
 
     // ---------- Server 1: token, files, tools ----------
     {

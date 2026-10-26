@@ -686,7 +686,7 @@ Options parse(const QStringList& args)
         opt.token = QString::fromUtf8(f.readLine()).trimmed();
         if (opt.token.isEmpty()) fail("USAGE", "--token-file is empty: " + f.fileName());
         opt.tokenFrom = f.fileName();
-    } else if (!qEnvironmentVariableIsEmpty("SCHNEIDI_TOKEN")) {
+    } else if (!qEnvironmentVariable("SCHNEIDI_TOKEN").trimmed().isEmpty()) {
         opt.token = qEnvironmentVariable("SCHNEIDI_TOKEN").trimmed();
         opt.tokenFrom = "SCHNEIDI_TOKEN";
     } else if (!opt.listen.isLoopback()) {
@@ -704,7 +704,8 @@ Options parse(const QStringList& args)
         opt.tokenFrom = f.fileName();
         opt.tokenShown = true;
     }
-    if (!opt.token.isEmpty() && opt.token.size() < 16)
+    // An empty --token would switch the check off for everyone on the network
+    if ((!opt.token.isEmpty() || !opt.listen.isLoopback()) && opt.token.size() < 16)
         fail("USAGE", "the token is too short (at least 16 characters; leave it out to get a generated one)");
     return opt;
 }

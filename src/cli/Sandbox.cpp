@@ -11,6 +11,9 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QRegularExpression>
+
+#include <algorithm>
 
 namespace Cli::Sandbox {
 
@@ -197,6 +200,38 @@ QJsonValue mapBack(const QJsonValue& v)
     return v;
 }
 
+namespace {
+
+// A file named in a project, as the engine will open it: MLT and FFmpeg take the string as written and read more than
+// a plain path ("avformat:" or "http:" prefixes, "file.mp4?…" options, "%d" sequences, ".all.png" folders), and the
+// system resolves ".." after links. So: a plain absolute path, inside the work folder (or `own`, the server's effects
+// folder) also when nothing is there yet, and the deepest existing part of it really inside (links).
+bool allowedFile(const QString& given, const QStringList& own)
+{
+    static const QRegularExpression scheme("^[A-Za-z][A-Za-z0-9+.-]+:"); // "avformat:", "file:" – not a drive "C:"
+    const QString f = QDir::fromNativeSeparators(given);
+    if (!QDir::isAbsolutePath(f) || scheme.match(f).hasMatch() || f.startsWith("//") || f.contains('?')
+        || f.split('/').contains(".."))
+        return false;
+    const State& s = state();
+    const QString clean = QDir::cleanPath(f);
+    const auto inside = [&](const QString& path) {
+        return under(path, s.root) || under(path, s.canonical)
+               || std::any_of(own.begin(), own.end(), [&](const QString& o) { return under(path, o); });
+    };
+    if (!inside(clean)) return false;
+    for (QString probe = clean;;) {
+        const QFileInfo fi(probe);
+        if (fi.isSymLink() && !fi.exists()) return false; // a link pointing nowhere
+        if (fi.exists()) return inside(fi.canonicalFilePath());
+        const QString parent = fi.path();
+        if (parent == probe) return false;
+        probe = parent;
+    }
+}
+
+} // namespace
+
 void checkProject(const Project& p)
 {
     const State& s = state();
@@ -214,16 +249,15 @@ void checkProject(const Project& p)
                                 if (param.type == EffectParam::Path) files << e.params.value(param.key).toString();
                 }
     // The server's own LUTs and transition images (`effects` lists them) are allowed
-    const QString own = QFileInfo(EffectFolders::root()).canonicalFilePath();
+    QStringList own{QDir::cleanPath(EffectFolders::root())};
+    if (const QString c = QFileInfo(EffectFolders::root()).canonicalFilePath(); !c.isEmpty()) own << c;
     files.removeDuplicates();
     for (const QString& f : files) {
-        if (f.isEmpty() || EffectFolders::isBuiltin(f)) continue;
-        const QFileInfo fi(f);
-        if (!fi.exists()) continue; // offline: nothing to read
-        const QString c = fi.canonicalFilePath();
-        if (under(c, s.canonical) || under(c, own)) continue;
-        fail("OUTSIDE_ROOT", QString("the project uses a file outside the work folder %1: %2 (copy it into the work "
-                                     "folder and use that)")
+        if (f.isEmpty() || EffectFolders::isBuiltin(f) || allowedFile(f, own)) continue;
+        // Also offline ones: the engine would still try to open them
+        fail("OUTSIDE_ROOT", QString("the project uses a file outside the work folder %1: %2 (put it into the work "
+                                     "folder – next to the project as it was on the other computer, then it is found "
+                                     "there – or use a copy there)")
                                  .arg(s.root, f));
     }
 }
