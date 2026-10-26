@@ -599,8 +599,9 @@ namespace {
 // Commands worth showing while they run: they look at material or write files and may take a while
 bool isJob(const QString& command)
 {
-    static const QStringList jobs{"probe",      "silence", "scenes", "peaks",  "highlights",      "frames",    "transcribe",
-                                  "loudness",   "scopes",  "sync",   "render", "export_timeline", "extensions"};
+    static const QStringList jobs{"probe",  "silence", "scenes", "peaks",           "highlights", "frames",
+                                  "transcribe", "loudness", "scopes", "sync", "render", "export_timeline",
+                                  "extensions", "check"};
     return jobs.contains(command);
 }
 
@@ -661,6 +662,7 @@ QJsonObject activitySummary(const QString& tool, const QJsonObject& r)
     static const QHash<QString, QStringList> counted{
         {"silence", {"silence"}},       {"scenes", {"cuts", "changes"}}, {"peaks", {"peaks"}},
         {"highlights", {"best", "candidates"}}, {"frames", {"frames"}},  {"transcribe", {"segments"}},
+        {"check", {"issues"}},
     };
     if (counted.contains(tool)) return {{"count", countOf(r, counted.value(tool))}};
     if (tool == "sync") {

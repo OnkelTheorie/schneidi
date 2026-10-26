@@ -39,6 +39,7 @@ const Job* jobOf(const QString& tool)
         {"render", N_("rendert"), N_("Video geschrieben: %1")},
         {"export_timeline", N_("exportiert die Timeline"), N_("Timeline exportiert: %1")},
         {"extensions", N_("lädt eine Erweiterung"), N_("Erweiterung fertig")},
+        {"check", N_("prüft vor dem Export"), N_("Geprüft, Hinweise: %1")},
     };
     for (const Job& j : jobs)
         if (tool == QLatin1String(j.tool)) return &j;

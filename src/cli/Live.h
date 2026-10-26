@@ -112,11 +112,12 @@ QJsonObject run(Connection* c, const QString& command, const QJsonObject& args);
 // Name shown in the app ("schneidi-cli" or "schneidi-cli mcp"); set by main()
 void setClientName(const QString& name);
 
-// Work an AI does outside the app while it is connected to it (analyses, render, transcribe … here in schneidi-cli):
-// reported to the app so the user sees it working, with progress and a short result ({"type":"activity"}). Put
-// around a command by Cli::execute. Reports only when this process already talks to an app (an MCP session that used
-// "@app" or a project open there) or the command's own project is open in one; does nothing inside the app, for
-// quick reading commands (info, help …) and when the app is gone (reporting never fails a command).
+// Work an AI does outside the app while it is connected to it (analyses, check, render, transcribe … here in
+// schneidi-cli): reported to the app so the user sees it working, with progress and a short result
+// ({"type":"activity"}). Put around a command by Cli::execute. Reports only when this process already talks to an
+// app (an MCP session that used "@app" or a project open there) or the command's own project is open in one; does
+// nothing inside the app, for quick reading commands (info, help …) and when the app is gone (reporting never fails
+// a command).
 class Activity {
 public:
     Activity(const QString& command, const QJsonObject& args, Context& ctx);
