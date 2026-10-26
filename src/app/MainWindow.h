@@ -205,7 +205,9 @@ private:
     // Playback too slow for the originals: hint above the picture with "Generate proxies" (never unasked)
     void setupProxyHint();
     void updateProxyHint();
+    bool offersRenderCache() const; // the hint offers "Render-Cache: Smart" instead of proxies
     QStringList playingVideoFiles() const; // video files of what plays (timeline incl. nested clips, or the source)
+    bool expensiveAtPlayhead() const;      // a clip with effects or changed speed plays here (RenderCache::isExpensive)
     void createMulticamClip(const QStringList& paths);
     void addMulticamMenu(QMenu* menu); // "Switch Angle" + "Flatten" for selected multicam segments
     int selectedMulticamSequence() const;
@@ -229,6 +231,7 @@ private:
     QStringList m_slowFiles; // playback was too slow with these files (proxy hint); empty = no hint
     double m_slowRate = 0, m_slowFps = 0;
     bool m_proxyHintClosed = false; // closed: not again in this session
+    bool m_slowEffects = false;     // clips with effects played: the hint offers the smart render cache first
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
     TranscriptPanel* m_transcript = nullptr;

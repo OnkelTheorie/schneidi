@@ -794,13 +794,23 @@ void MainWindow::setupProxyHint()
     connect(m_engine, &Engine::positionChanged, this, [this] {
         if (!m_playMeter.frame(m_playClock.elapsed()) || m_proxyHintClosed || !m_slowFiles.isEmpty()) return;
         m_slowFiles = playingVideoFiles();
+        m_slowEffects = expensiveAtPlayhead();
         m_slowRate = m_playMeter.rate();
         m_slowFps = m_playMeter.fps();
         qInfo("Playback too slow: %.1f of %.2f pictures/s", m_slowRate, m_slowFps);
         updateProxyHint();
     });
     ProxyManager* proxies = m_engine->proxies();
-    connect(m_viewer, &Viewer::hintAccepted, this, [this, proxies] {
+    RenderCache* cache = m_engine->renderCache();
+    connect(m_viewer, &Viewer::hintAccepted, this, [this, proxies, cache] {
+        if (offersRenderCache()) {
+            // Effects were the cost: their clips get rendered in the background; if it still stutters afterwards,
+            // a new measurement offers proxies
+            m_slowFiles.clear();
+            m_slowEffects = false;
+            cache->setMode(RenderCache::Mode::Smart);
+            return updateProxyHint();
+        }
         QStringList missing;
         for (const QString& f : std::as_const(m_slowFiles))
             if (!proxies->isPending(f) && !proxies->hasProxy(f)) missing << f;
@@ -810,13 +820,27 @@ void MainWindow::setupProxyHint()
         m_proxyHintClosed = true;
         m_slowFiles.clear();
     });
+    connect(cache, &RenderCache::modeChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::queueChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::proxyChanged, this, &MainWindow::updateProxyHint);
     connect(proxies, &ProxyManager::enabledChanged, this, &MainWindow::updateProxyHint);
 }
 
+bool MainWindow::offersRenderCache() const
+{
+    // Proxies only make decoding cheaper; with effects in the picture the smart render cache helps more (it also
+    // plays a quickly decodable file instead of the original)
+    return !m_slowFiles.isEmpty() && m_slowEffects && m_engine->renderCache()->mode() != RenderCache::Mode::Smart;
+}
+
 void MainWindow::updateProxyHint()
 {
+    if (offersRenderCache())
+        return m_viewer->setHint(T("Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Hier kosten die Effekte am meisten. "
+                                   "Der Render-Cache „Smart“ rechnet Clips mit Effekten in Pausen vor, der Export nutzt "
+                                   "weiter die Originale")
+                                     .arg(qRound(m_slowRate)).arg(qRound(m_slowFps)),
+                                 T("Render-Cache: Smart"));
     const ProxyManager* proxies = m_engine->proxies();
     int missing = 0, pending = 0;
     if (proxies->enabled()) // proxy media switched off: the user wants the originals
@@ -835,6 +859,18 @@ void MainWindow::updateProxyHint()
         m_slowFiles.clear(); // all there (or switched off): a new measurement decides again
         m_viewer->setHint({});
     }
+}
+
+bool MainWindow::expensiveAtPlayhead() const
+{
+    if (m_engine->mode() == Engine::Mode::Source) return false;
+    const int at = m_engine->position();
+    const Timeline tl = m_project->renderTimeline();
+    for (const Track& track : tl.video)
+        for (const Clip& c : track.clips)
+            if (c.kind == ClipKind::Media && c.enabled && c.start <= at && at < c.end() && RenderCache::isExpensive(c))
+                return true;
+    return false;
 }
 
 QStringList MainWindow::playingVideoFiles() const
