@@ -1,4 +1,6 @@
 #pragma once
+#include "app/AiKeys.h"
+#include "app/AiProvider.h"
 #include "app/AiSettings.h"
 
 #include <QJsonObject>
@@ -16,6 +18,8 @@ class QFormLayout;
 class QGroupBox;
 class QToolButton;
 class QVBoxLayout;
+class QLineEdit;
+class AiClient;
 
 // Settings › AI: one section (group box with a form) per topic. The AI chat (plan 0.12, point 4) adds its own
 // section "AI chat" (provider, address, model, key, approval mode, test button) with addSection(…, 0), so it comes
@@ -40,8 +44,18 @@ public:
     void runClaudeSetup(bool remove);
     static QString claudeResultText(const QJsonObject& result, bool remove); // one line per target, translated
 
+    // The AI chat's section, first on the page: provider, address, model (list from the provider), key (where it
+    // comes from, stored in the keychain), approval mode, connection test, what a company file prescribes. `keys`
+    // stays the main window's; a typed key is stored only by applyChatKey() (after OK)
+    void addChatSection(Ai::Keys* keys);
+    bool applyChatKey(QString* error);
+    QString chatProvider() const; // chosen on the page
+
 private:
     void updateEnabled();
+    void chatProviderChanged();
+    void updateKeyState();
+    Ai::Endpoint chatEndpoint(); // from the page's fields (a typed key or the stored one)
 
     AiSettings m_initial; // what the page does not show stays as it was
     QVBoxLayout* m_sections = nullptr;
@@ -58,4 +72,19 @@ private:
     QPushButton* m_claudeConnect = nullptr;
     QPushButton* m_claudeRemove = nullptr;
     QLabel* m_claudeResult = nullptr;
+    // AI chat
+    Ai::Keys* m_keys = nullptr;
+    Ai::Company m_company;
+    QComboBox* m_chatProvider = nullptr;
+    QLineEdit* m_chatAddress = nullptr;
+    QComboBox* m_chatModel = nullptr;
+    QLineEdit* m_chatKey = nullptr;
+    QLabel* m_keyState = nullptr;
+    QPushButton* m_keyRemove = nullptr;
+    QComboBox* m_approval = nullptr;
+    QLabel* m_chatResult = nullptr;
+    AiClient* m_client = nullptr;
+    QHash<QString, QString> m_models; // per provider, as edited on the page
+    QString m_shownProvider;
+    QString m_startProvider, m_startModel; // shown when the page opened
 };

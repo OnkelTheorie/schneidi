@@ -1,4 +1,5 @@
 #include "app/MainWindow.h"
+#include "app/AiKeys.h"
 #include "app/AiLog.h"
 #include "app/ExtensionsDialog.h"
 #include "app/TranscribeDialog.h"
@@ -99,6 +100,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 
     buildLayout();
     buildActions();
+    setupChat();
     applyAiMarkStyle();
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 

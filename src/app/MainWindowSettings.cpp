@@ -1,6 +1,7 @@
 // MainWindow: settings of the app (File › Settings…) and applying them
 #include "app/MainWindow.h"
 
+#include "app/AiKeys.h"
 #include "app/AiLog.h"
 #include "app/AiSettingsPage.h"
 #include "app/DesignDialog.h"
@@ -26,12 +27,15 @@ void MainWindow::settingsDialog(int tab)
     SettingsDialog dlg(m_aiSettings, this);
     dlg.showTab(tab == 1 ? SettingsDialog::Tab::Ai : SettingsDialog::Tab::General);
     dlg.aiPage()->setClaudeSetup(m_claudeSetup);
+    dlg.aiPage()->addChatSection(m_aiKeys.get());
     connect(&dlg, &SettingsDialog::designRequested, this, [this, &dlg] {
         if (DesignDialog(&dlg).exec() == QDialog::Accepted && Theme::restartNeeded())
             offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
     });
     connect(&dlg, &SettingsDialog::keyBindingsRequested, this, [&dlg] { KeyBindingsDialog(&dlg).exec(); });
     if (dlg.exec() != QDialog::Accepted) return;
+    if (QString error; !dlg.aiPage()->applyChatKey(&error))
+        QMessageBox::warning(this, T("Einstellungen"), T("Schlüssel nicht gespeichert: %1").arg(error));
     setAiSettings(dlg.aiSettings());
     if (dlg.updateHint() != UpdateCheck::enabled() && !m_autosaveDisabled) UpdateCheck::setEnabled(dlg.updateHint());
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
@@ -60,6 +64,7 @@ void MainWindow::setAiSettings(const AiSettings& s)
         }
     }
     updateLiveIndicator();
+    updateChatPanel();
 }
 
 void MainWindow::applyAiMarkStyle()

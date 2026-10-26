@@ -195,6 +195,12 @@ int main(int argc, char* argv[])
             live.reset();
         }
     }
+    // AI chat panel: its tools are this installation's `schneidi-cli mcp`, talking to this app (cli/Live.h). Test runs
+    // (and runs without a screen) never send anything to an AI provider.
+    // Without the live connection the chat's tools must not reach another schneidi that runs: a server that is not there
+    w.setAiChatTools(Cli::Setup::serverCommand(), live ? live->chatEnvironment()
+                                                       : QHash<QString, QString>{{Cli::Live::ChatServerEnv, "none"}});
+    w.setAiChatOffline(testRun || QGuiApplication::platformName() == QLatin1String("offscreen"));
     const auto liveWaiting = [&live](const QString& message) {
         if (live) live->setWaiting(message);
     };

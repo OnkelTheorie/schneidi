@@ -37,10 +37,16 @@ class QButtonGroup;
 class QToolButton;
 class DeliverPanel;
 
+namespace Ai {
+struct Endpoint;
+class Keys;
+} // namespace Ai
+
 class MainWindow : public QMainWindow, public LiveHost {
     Q_OBJECT
 public:
     explicit MainWindow(Engine* engine, QWidget* parent = nullptr);
+    ~MainWindow() override;
     // placeOnTimeline (test helper --demo): one after another on V1/A1; adoptFormat = project format from the first clip
     void importFiles(const QStringList& paths, bool placeOnTimeline = false, bool adoptFormat = true);
     // Timeline of another editor (FCP7 XML, OTIO, EDL) as a new timeline; false = not readable (message shown)
@@ -74,6 +80,7 @@ public:
     void liveConnectionChanged(bool connected, const QString& client) override;
     void liveChanged(const LiveChange& change) override;
     void liveActivity(const LiveActivity& activity) override;
+    void liveCommandRunning(bool running, bool ownChat) override;
     // AI log (click on the AI indicator, Workspace › AI Log): popup under the indicator
     void showAiLog();
     class AiLog* aiLog() const { return m_aiLog; }
@@ -86,6 +93,13 @@ public:
     void settingsDialog(int tab = 0);
     const AiSettings& aiSettings() const { return m_aiSettings; }
     void setAiSettings(const AiSettings& s);
+    // AI chat (the "AI" panel, MainWindowChat.cpp): main.cpp hands in its tool server (`schneidi-cli mcp`; the app
+    // does not link the command layer) with the environment of the live connection (Cli::Live::Server::chatEnvironment)
+    void setAiChatTools(const QStringList& command, const QHash<QString, QString>& environment);
+    void setAiChatOffline(bool on); // test runs: the chat never sends anything
+    class AiChat* aiChat() const { return m_chat; }
+    class AiChatPanel* aiChatPanel() const { return m_chatPanel; }
+    void showAiChat(bool on);
     // Update hint (app/UpdateCheck.h): automatically at most once a day a few seconds after the start (main.cpp, not
     // in test runs); manual = Help › Check for Updates… (also says "up to date" or why it failed)
     void startUpdateCheck();
@@ -288,4 +302,33 @@ private:
     QString m_liveClient;
     std::function<void(const QString&)> m_liveDisconnect;
     std::function<void()> m_liveAllow;
+
+    // AI chat (MainWindowChat.cpp)
+    void buildChat();      // panel, chat and the splitter beside the pages (before the top bar)
+    void setupChat();      // connections, after the actions
+    void placeChat(bool left);
+    void applyChatWidth();
+    void updateChatPanel(); // setup page or chat, the provider line
+    bool sendChat(const QString& text);
+    bool chatEndpoint(Ai::Endpoint& e, QString* problem);
+    QString chatKeyHint(const QString& provider);
+    void chatTurnFinished();
+    void chatUndoChanged();
+    void acceptChatChanges();
+    void discardChatChanges();
+    class AiChat* m_chat = nullptr;
+    class AiChatPanel* m_chatPanel = nullptr;
+    QSplitter* m_chatSplit = nullptr;
+    QToolButton* m_chatToggle = nullptr;
+    class QHBoxLayout* m_topBarLayout = nullptr;
+    std::unique_ptr<Ai::Keys> m_aiKeys;
+    bool m_chatCommand = false; // a command of the own chat runs in the app (its undo steps)
+    // Review mode: the undo index before the request, whether something else changed the history meanwhile, and
+    // whether the bar waits for the user
+    struct ChatReview {
+        bool active = false;
+        int start = 0;
+        bool broken = false;
+        bool pending = false;
+    } m_review;
 };

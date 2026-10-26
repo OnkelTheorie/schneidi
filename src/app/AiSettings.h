@@ -1,9 +1,11 @@
 #pragma once
 // Settings of the AI features (Settings › AI), the same for all projects (QSettings "ai/…"). Read once at start and
 // after the settings dialog; test runs change them only in memory (MainWindow does not save them then).
-// The AI chat (plan 0.12, point 4) puts its provider settings next to these.
+// The AI chat's key is not here: it lives in the system keychain (app/AiKeys.h).
 
 #include <QColor>
+#include <QHash>
+#include <QString>
 
 struct AiSettings {
     // AI indicator in the top bar: always (also to open the log), only while an AI is connected or works, never
@@ -16,6 +18,15 @@ struct AiSettings {
     bool distinguish = true; // new clips filled, edited ones outlined (off: both filled)
     Indicator indicator = Indicator::WhileActive;
     int logLength = 200;     // entries the AI log keeps (this session only; 0 = no log)
+
+    // AI chat (the "AI" panel, app/AiChat.h). Approval: Auto = every change goes through (one undo step per edit);
+    // Review = the changes of one request stay visible until the user accepts them (one undo step) or discards them.
+    enum class Approval { Auto, Review };
+    QString chatProvider;               // preset id (app/AiProvider.h); empty = not set up yet
+    QString chatAddress;                // base URL; empty = the provider's own
+    QHash<QString, QString> chatModels; // model per provider (empty/missing = the provider's default)
+    Approval approval = Approval::Auto;
+    QString chatModel() const { return chatModels.value(chatProvider); } // of the chosen provider
 
     static QColor defaultColor(); // violet, like the AI indicator
     static constexpr int kMinHighlightMs = 300;
