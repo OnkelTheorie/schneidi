@@ -1,7 +1,10 @@
 #include "engine/Background.h"
 
 #include <QProcess>
+#include <QSettings>
 #include <QThread>
+
+#include <algorithm>
 
 #include <atomic>
 #include <chrono>
@@ -57,16 +60,28 @@ void lowerThisThread(Level level)
 #endif
 }
 
-void lowerProcess(QProcess& process)
+void lowerProcess(QProcess& process, Level level)
 {
 #if defined(Q_OS_WIN)
-    process.setCreateProcessArgumentsModifier(
-        [](QProcess::CreateProcessArguments* a) { a->flags |= BELOW_NORMAL_PRIORITY_CLASS; });
+    const DWORD flag = level == Level::Low ? BELOW_NORMAL_PRIORITY_CLASS : IDLE_PRIORITY_CLASS;
+    process.setCreateProcessArgumentsModifier([flag](QProcess::CreateProcessArguments* a) { a->flags |= flag; });
 #elif defined(Q_OS_UNIX)
-    process.setChildProcessModifier([] { (void)::nice(10); });
+    const int nice = level == Level::Low ? 10 : 19;
+    process.setChildProcessModifier([nice] { (void)::nice(nice); });
 #else
     Q_UNUSED(process);
+    Q_UNUSED(level);
 #endif
+}
+
+int chosenThreads() { return std::max(0, QSettings().value("performance/threads", 0).toInt()); }
+
+void setChosenThreads(int threads) { QSettings().setValue("performance/threads", std::max(0, threads)); }
+
+int threads(int automatic)
+{
+    const int chosen = chosenThreads();
+    return chosen > 0 ? std::min(chosen, std::max(1, QThread::idealThreadCount())) : std::max(1, automatic);
 }
 
 } // namespace Background

@@ -16,8 +16,17 @@ enum class Level {
 // threads that do nothing else afterwards: own threads, own pools). Elsewhere: QThread priority.
 void lowerThisThread(Level level);
 
-// Starts the child process (ffmpeg) at low priority: nice 10 / BELOW_NORMAL_PRIORITY_CLASS. Call before start().
-void lowerProcess(QProcess& process);
+// Starts the child process (ffmpeg, whisper) at low priority. Call before start().
+// Low: nice 10 / BELOW_NORMAL_PRIORITY_CLASS; Lowest: nice 19 / IDLE_PRIORITY_CLASS.
+void lowerProcess(QProcess& process, Level level = Level::Low);
+
+// Processor threads for background work: transcription, analyses, proxies, reading files on import (Settings ›
+// General › Performance, setting "performance/threads"). 0 = automatic: each kind of work keeps its own default.
+// Rendering has its own choice on the Deliver page.
+int chosenThreads();
+void setChosenThreads(int threads);
+// The chosen number (at most the logical processors), else `automatic`
+int threads(int automatic);
 
 // Work the user waits for right now (opening files for the preview, building it): while one is alive, background
 // jobs hold back before their next step (a low priority alone still leaves them a share of a weak CPU).

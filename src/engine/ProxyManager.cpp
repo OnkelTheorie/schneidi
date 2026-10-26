@@ -106,6 +106,14 @@ ProxyJob prepareJob(const QString& original, const QString& part)
     // Constant frame rate equal to the source (phone clips with variable frame rate -> CFR)
     if (info.rateNum > 0 && info.rateDen > 0)
         args << "-r" << QString("%1/%2").arg(info.rateNum).arg(info.rateDen);
+    // Threads chosen in the settings: decoding (before -i), filters and encoding; otherwise ffmpeg's own choice
+    if (Background::chosenThreads() > 0) {
+        const QString n = QString::number(Background::threads(1));
+        const qsizetype input = args.indexOf("-i");
+        args.insert(input, n);
+        args.insert(input, "-threads");
+        args << "-threads" << n << "-filter_threads" << n;
+    }
     args << "-fps_mode" << "cfr"
          << "-c:a" << "aac" << "-b:a" << "192k"
          << "-movflags" << "+faststart" << "-f" << "mp4"

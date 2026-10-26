@@ -3,6 +3,7 @@
 #include "cli/AnalysisDetail.h"
 
 #include "core/I18n.h"
+#include "engine/Background.h"
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
 
@@ -141,7 +142,7 @@ QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const
         }
     };
     g_projectFormat = format ? &*format : nullptr;
-    const int threads = std::clamp(QThread::idealThreadCount() / 2, 1, std::min(n, parallel));
+    const int threads = std::clamp(Background::threads(QThread::idealThreadCount() / 2), 1, std::min(n, parallel));
     std::atomic<int> running{threads};
     std::vector<std::thread> pool;
     for (int t = 0; t < threads; ++t)

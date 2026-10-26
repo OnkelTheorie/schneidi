@@ -786,7 +786,7 @@ const QVector<Command>& commands()
           {"apply", T::Boolean, "for a project: also put the segments onto the timeline as a new subtitle track "
                                 "(live in the app: one undo step)"},
           {"name", T::String, "apply: name of the new subtitle track"},
-          {"threads", T::Integer, "processor threads (default: half of them)"}},
+          {"threads", T::Integer, "processor threads (default: the app setting Performance, else half of them)"}},
          cmdTranscribe},
         {"loudness", "Measure loudness like the Mixer's meter (EBU R128 / BS.1770): integrated LUFS, loudness range, "
                      "true peak. Source: a media file, a project's mix (as exported) or single clips of a project. "

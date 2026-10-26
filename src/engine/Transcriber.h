@@ -25,7 +25,7 @@ struct TranscribeRequest {
     QString model;               // model file (Extensions::whisperModelPath)
     QString language = "auto";   // "de", "en", … or "auto"
     bool music = false;          // sung words and shouts in a song (no voice detection, see runWhisper)
-    int threads = 0;             // 0 = half of the logical processors (the computer stays usable)
+    int threads = 0;             // 0 = Background::threads (setting, else half of the logical processors)
 };
 
 class Transcriber : public QObject {

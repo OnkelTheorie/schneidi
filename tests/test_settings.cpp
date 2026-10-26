@@ -1,6 +1,7 @@
 // App settings (File › Settings…, app/SettingsDialog): the AI page shows and returns AiSettings, sections can be
 // added (the AI chat adds its own), the settings survive a restart (QSettings), the main window applies them (AI
-// indicator modes, AI connections on/off with the reason for the AI) and a test run never saves them. "Connect with
+// indicator modes, AI connections on/off with the reason for the AI) and a test run never saves them. General ›
+// Performance chooses the threads for background work (Background::threads). "Connect with
 // Claude" runs the setup the app hands in (in a thread) and shows its answer per target.
 // SETTINGS_DUMP=<folder>: pictures of both tabs (settings-general.png, settings-ai.png).
 
@@ -12,6 +13,7 @@
 #include "app/SettingsDialog.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
+#include "engine/Background.h"
 #include "engine/Engine.h"
 
 #include <QApplication>
@@ -27,6 +29,7 @@
 #include <QSpinBox>
 #include <QSettings>
 #include <QTabWidget>
+#include <QThread>
 #include <QToolButton>
 #include <clocale>
 #include <functional>
@@ -155,6 +158,30 @@ void testDialog()
     }
 }
 
+// General › Performance: threads for background work (whisper, analyses, proxies, import); 0 = automatic
+void testBackgroundThreads()
+{
+    QSettings().remove("performance");
+    CHECK_EQ(Background::chosenThreads(), 0);
+    CHECK_EQ(Background::threads(3), 3); // automatic: the caller's own default
+    {
+        SettingsDialog dlg(AiSettings{});
+        auto* combo = dlg.findChild<QComboBox*>("background_threads");
+        if (CHECK(combo)) {
+            CHECK_EQ(dlg.backgroundThreads(), 0);
+            CHECK_EQ(combo->count(), QThread::idealThreadCount() + 1); // automatic + every number
+            combo->setCurrentIndex(combo->findData(1));
+            CHECK_EQ(dlg.backgroundThreads(), 1);
+        }
+    }
+    Background::setChosenThreads(1);
+    CHECK_EQ(Background::threads(6), 1); // the choice wins, also over a larger default
+    CHECK_EQ(SettingsDialog(AiSettings{}).backgroundThreads(), 1); // shown again
+    Background::setChosenThreads(100000);
+    CHECK_EQ(Background::threads(6), QThread::idealThreadCount()); // at most the logical processors
+    QSettings().remove("performance");
+}
+
 void testMainWindow()
 {
     QSettings().remove("ai");
@@ -236,6 +263,7 @@ int main(int argc, char** argv)
     I18n::install("de");
     testSettings();
     testDialog();
+    testBackgroundThreads();
     testMainWindow();
     return Check::result();
 }

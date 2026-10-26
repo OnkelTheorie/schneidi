@@ -10,6 +10,7 @@
 #include "app/Theme.h"
 #include "app/UpdateCheck.h"
 #include "core/I18n.h"
+#include "engine/Background.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
@@ -38,6 +39,8 @@ void MainWindow::settingsDialog(int tab)
         QMessageBox::warning(this, T("Einstellungen"), T("Schlüssel nicht gespeichert: %1").arg(error));
     setAiSettings(dlg.aiSettings());
     if (dlg.updateHint() != UpdateCheck::enabled() && !m_autosaveDisabled) UpdateCheck::setEnabled(dlg.updateHint());
+    if (dlg.backgroundThreads() != Background::chosenThreads() && !m_autosaveDisabled)
+        Background::setChosenThreads(dlg.backgroundThreads()); // takes effect with the next job
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
     const QString lang = dlg.language();
     if (lang != I18n::language() && !m_autosaveDisabled) {

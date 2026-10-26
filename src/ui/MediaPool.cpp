@@ -435,7 +435,7 @@ QStringList MediaPool::addFiles(const QStringList& paths, int bin)
     } else {
         const ProjectFormat format = m_engine->format();
         QThreadPool pool;
-        pool.setMaxThreadCount(std::clamp(QThread::idealThreadCount() / 2, 1, int(paths.size())));
+        pool.setMaxThreadCount(std::clamp(Background::threads(QThread::idealThreadCount() / 2), 1, int(paths.size())));
         MediaInfo* out = infos.data(); // detached once here, the threads only write their own element
         for (int i = 0; i < paths.size(); ++i)
             pool.start([out, &format, &paths, i] { out[i] = Engine::probe(format, paths[i]); });

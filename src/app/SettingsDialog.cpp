@@ -4,6 +4,7 @@
 #include "app/Theme.h"
 #include "app/UpdateCheck.h"
 #include "core/I18n.h"
+#include "engine/Background.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -16,6 +17,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QTabWidget>
+#include <QThread>
 #include <QVBoxLayout>
 
 namespace {
@@ -126,11 +128,28 @@ QWidget* SettingsDialog::buildGeneral()
         m_checkNow->setEnabled(true);
         m_updateResult->setText(T("Suche fehlgeschlagen: %1").arg(message).toHtmlEscaped());
     });
+
+    // Threads for background work (whisper above all keeps every thread it gets busy for minutes)
+    auto* performance = new QGroupBox(T("Leistung"));
+    auto* pform = new QFormLayout(performance);
+    pform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_threads = new QComboBox;
+    m_threads->setObjectName("background_threads");
+    m_threads->addItem(T("Automatisch"), 0);
+    for (int n = std::max(1, QThread::idealThreadCount()); n >= 1; --n) m_threads->addItem(QString::number(n), n);
+    m_threads->setCurrentIndex(std::max(0, m_threads->findData(Background::chosenThreads())));
+    pform->addRow(T("Threads für Hintergrundarbeit"), m_threads);
+    pform->addRow(hint(T("Transkription (Whisper), Analysen, Proxys und das Einlesen beim Import. Weniger Threads: "
+                         "Musik, Spiele und andere Programme laufen nebenbei flüssiger, die Arbeit dauert länger. "
+                         "Den Export stellst du auf der Deliver-Seite ein.")));
+    lay->addWidget(performance);
     lay->addStretch(1);
     return page;
 }
 
 bool SettingsDialog::updateHint() const { return m_updateHint->isChecked(); }
+
+int SettingsDialog::backgroundThreads() const { return m_threads->currentData().toInt(); }
 
 void SettingsDialog::showTab(Tab tab) { m_tabs->setCurrentIndex(tab == Tab::Ai ? 1 : 0); }
 

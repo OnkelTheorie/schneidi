@@ -1,6 +1,7 @@
 #include "engine/Transcriber.h"
 
 #include "core/I18n.h"
+#include "engine/Background.h"
 #include "engine/Bundle.h"
 #include "engine/Exporter.h"
 #include "engine/Extensions.h"
@@ -53,6 +54,9 @@ Transcript::Levels wavLevels(const QString& path)
 
 Transcriber::Transcriber(QObject* parent) : QObject(parent)
 {
+    // Whisper keeps every thread it gets busy for minutes: lowest priority, so music, games and the preview still
+    // get through (at normal priority the user's music crackled); also for the ffmpeg that reads the sound first
+    Background::lowerProcess(m_process, Background::Level::Lowest);
     connect(&m_process, &QProcess::readyReadStandardError, this, [this] {
         const QByteArray data = m_process.readAllStandardError();
         m_log += data;
@@ -98,7 +102,7 @@ Transcriber::~Transcriber()
     }
 }
 
-int Transcriber::defaultThreads() { return std::max(1, QThread::idealThreadCount() / 2); }
+int Transcriber::defaultThreads() { return Background::threads(QThread::idealThreadCount() / 2); }
 
 bool Transcriber::start(const TranscribeRequest& request, QString* error)
 {
