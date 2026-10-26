@@ -25,6 +25,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
+#include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
@@ -413,6 +414,12 @@ void MainWindow::buildActions()
                   [tv](bool on) { tv->setShowClipNames(on); });
     addViewOption("show_clip_durations", T("Clipdauer anzeigen"), "timeline/showClipDurations", false,
                   [tv](bool on) { tv->setShowClipDurations(on); });
+    // Filmstrip with each clip's Color page grade (engine/GradedThumbs); off = the source pictures
+    addViewOption("show_graded_thumbnails", T("Farbkorrektur in Miniaturen anzeigen"), "timeline/gradedThumbnails", true,
+                  [tv](bool on) {
+                      GradedThumbs::setEnabled(on);
+                      tv->update();
+                  });
     viewOpts->addSeparator();
     makeAction(viewOpts, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
     makeAction(viewOpts, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });

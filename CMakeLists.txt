@@ -134,6 +134,7 @@ add_library(schneidi_lib STATIC
     src/engine/FrameGaps.h        src/engine/FrameGaps.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
+    src/engine/GradedThumbs.h     src/engine/GradedThumbs.cpp
     src/engine/BlurFill.h         src/engine/BlurFill.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
