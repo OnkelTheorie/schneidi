@@ -42,6 +42,7 @@
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
 #include "ui/ScopesPanel.h"
+#include "ui/TranscriptPanel.h"
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
