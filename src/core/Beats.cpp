@@ -183,8 +183,11 @@ std::vector<double> novelty(const std::vector<const std::vector<double>*>& featu
     for (const std::vector<double>* f : features) {
         std::vector<double> prefix(size_t(n) + 1, 0.0);
         for (int i = 0; i < n; ++i) prefix[size_t(i) + 1] = prefix[size_t(i)] + (*f)[size_t(i)];
-        for (int u = w; u + w <= n; ++u)
-            nov[size_t(u)] += std::abs((prefix[size_t(u + w)] - prefix[size_t(u)]) - (prefix[size_t(u)] - prefix[size_t(u - w)])) / w;
+        for (int u = w; u + w <= n; ++u) {
+            const double after = prefix[size_t(u + w)] - prefix[size_t(u)];
+            const double before = prefix[size_t(u)] - prefix[size_t(u - w)];
+            nov[size_t(u)] += std::abs(after - before) / w;
+        }
     }
     std::vector<double> peaks(size_t(n), 0.0);
     for (int u = 1; u + 1 < n; ++u)
@@ -308,8 +311,9 @@ Result analyze(const Values& v, const Options& o)
     for (int i = 0; i < n; ++i) {
         if (x[size_t(i)] > 0) hits.push_back({valueTime(i), x[size_t(i)]});
         if (i >= 3) {
-            const double before = (double(v.energy[size_t(i) - 1]) + v.energy[size_t(i) - 2] + v.energy[size_t(i) - 3]) / 3;
-            if (const double rise = v.energy[size_t(i)] - before; rise > 0) loud.push_back({valueTime(i), rise});
+            const size_t j = size_t(i);
+            const double before = (double(v.energy[j - 1]) + v.energy[j - 2] + v.energy[j - 3]) / 3;
+            if (const double rise = v.energy[j] - before; rise > 0) loud.push_back({valueTime(i), rise});
         }
     }
     if (hits.size() < 8 || loud.size() < 8) return r;
@@ -415,7 +419,8 @@ Result analyze(const Values& v, const Options& o)
 
     // Phrases: the same one level up, four bars (eight when every second 4-bar boundary hardly changes anything)
     if (bars >= 8) {
-        const std::vector<double> be = floored(r.barEnergyDb, 50), bb = floored(r.barBassDb, 50), bh = floored(barHigh, 50);
+        const std::vector<double> be = floored(r.barEnergyDb, 50), bb = floored(r.barBassDb, 50);
+        const std::vector<double> bh = floored(barHigh, 50);
         // Changes from one bar to the next and between two-bar halves (each counts the same)
         std::vector<double> nov(be.size(), 0.0);
         for (int w : {1, 2}) {

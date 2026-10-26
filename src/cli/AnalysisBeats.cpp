@@ -65,7 +65,8 @@ QJsonObject cmdBeats(const QJsonObject& a, Context& ctx)
     const bool isProject = isProjectFile(file);
     // Checked before decoding (that takes a while)
     const QString apply = a["apply"].toString(), marks = a.contains("markers") ? a["markers"].toString() : "phrases";
-    if (a.contains("apply") && apply != "markers") fail("BAD_ARGUMENT", "apply: only \"markers\" (on the phrase starts or bars)");
+    if (a.contains("apply") && apply != "markers")
+        fail("BAD_ARGUMENT", "apply: only \"markers\" (on the phrase starts or bars)");
     if (!apply.isEmpty() && !isProject)
         fail("BAD_ARGUMENT", "apply needs a project as file (\"@app\" or a .schneidi file)");
     if (marks != "phrases" && marks != "bars") fail("BAD_ARGUMENT", "markers: phrases or bars");
@@ -104,7 +105,8 @@ QJsonObject cmdBeats(const QJsonObject& a, Context& ctx)
                 tl.audio[i].solo = false;
             }
         sound.fps = f.rate.fps();
-        if (!AudioAnalysis::timelineSound(f, tl, from, to, sink, progress)) fail("DECODE_FAILED", "could not mix the sound");
+        if (!AudioAnalysis::timelineSound(f, tl, from, to, sink, progress))
+            fail("DECODE_FAILED", "could not mix the sound");
         out["project"] = s.path.isEmpty() ? absolute(file) : s.path;
     } else {
         const MediaSource m = openMedia(a);
@@ -121,7 +123,8 @@ QJsonObject cmdBeats(const QJsonObject& a, Context& ctx)
         c.in = from;
         c.out = to - 1;
         sound.fps = f.rate.fps();
-        if (!AudioAnalysis::clipSound(f, c, sink, progress)) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
+        if (!AudioAnalysis::clipSound(f, c, sink, progress))
+            fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
         out["file"] = m.info.path;
     }
     if (!sound.features) fail("NO_AUDIO", "no sound in the range");
