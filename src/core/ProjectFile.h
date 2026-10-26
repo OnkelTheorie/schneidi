@@ -4,6 +4,7 @@
 
 #include "core/ProjectFormat.h"
 #include "core/RenderJob.h"
+#include "core/StreamPresets.h"
 #include "core/Types.h"
 
 #include <QJsonObject>
@@ -11,6 +12,7 @@
 #include <QString>
 
 #include <memory>
+#include <optional>
 
 struct ProjectData {
     ProjectFormat format; // old files without this: 1920 x 1080, 25 fps
@@ -25,6 +27,12 @@ struct ProjectData {
     // Empty (old files) = only `timeline` as "Timeline 1".
     QVector<Sequence> sequences;
     int currentSequence = 0;
+    // From a start template (core/StartTemplates.h) or Project Settings, optional: the first clip in an empty
+    // timeline leaves the resolution / frame rate as they are (false = the app offers the clip's, as always)
+    bool fixedResolution = false;
+    bool fixedFrameRate = false;
+    // The project's own import presets for audio streams (optional; none = those of the settings, all projects)
+    std::optional<StreamPresets> importPresets;
 };
 
 namespace ProjectFile {

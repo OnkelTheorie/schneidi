@@ -97,6 +97,7 @@ add_library(schneidi_lib STATIC
     src/core/Interchange.h        src/core/Interchange.cpp
     src/core/InterchangeEdl.cpp   src/core/InterchangeFcp7.cpp  src/core/InterchangeOtio.cpp
     src/core/StreamPresets.h      src/core/StreamPresets.cpp
+    src/core/StartTemplates.h     src/core/StartTemplates.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
     src/core/ExportCheck.h        src/core/ExportCheck.cpp
     src/core/Stutter.h            src/core/Stutter.cpp
@@ -178,6 +179,7 @@ add_library(schneidi_lib STATIC
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
     src/app/StreamPresetsDialog.h src/app/StreamPresetsDialog.cpp
+    src/app/StartTemplatesPage.h src/app/StartTemplatesPage.cpp
     src/app/DuckingDialog.h src/app/DuckingDialog.cpp
     src/app/MulticamDialog.h src/app/MulticamDialog.cpp
     src/app/ExtensionsDialog.h  src/app/ExtensionsDialog.cpp

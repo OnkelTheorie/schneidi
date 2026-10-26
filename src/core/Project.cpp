@@ -156,6 +156,9 @@ ProjectData Project::data() const
     d.lastLinkId = m_lastLinkId;
     d.sequences = m_sequences;
     d.currentSequence = m_current;
+    d.fixedResolution = m_fixedResolution;
+    d.fixedFrameRate = m_fixedFrameRate;
+    d.importPresets = m_importPresets;
     return d;
 }
 
@@ -227,6 +230,9 @@ void Project::load(const ProjectData& d)
     m_lastClipId = d.lastClipId;
     m_lastLinkId = d.lastLinkId;
     m_renderQueue = d.renderQueue;
+    m_fixedResolution = d.fixedResolution;
+    m_fixedFrameRate = d.fixedFrameRate;
+    m_importPresets = d.importPresets;
     markSaved();
     emit formatChanged();
     emit mediaChanged();
@@ -235,6 +241,7 @@ void Project::load(const ProjectData& d)
     emit currentSequenceChanged();
     emit timelineChanged();
     emit renderQueueChanged();
+    emit importPresetsChanged();
 }
 
 void Project::reset()
@@ -616,6 +623,22 @@ void Project::setRenderQueue(const QVector<RenderJob>& jobs)
     if (jobs == m_renderQueue) return;
     m_renderQueue = jobs;
     emit renderQueueChanged();
+    markModified();
+}
+
+void Project::setFixedFormat(bool resolution, bool frameRate)
+{
+    if (resolution == m_fixedResolution && frameRate == m_fixedFrameRate) return;
+    m_fixedResolution = resolution;
+    m_fixedFrameRate = frameRate;
+    markModified();
+}
+
+void Project::setImportPresets(const std::optional<StreamPresets>& presets)
+{
+    if (presets == m_importPresets) return;
+    m_importPresets = presets;
+    emit importPresetsChanged();
     markModified();
 }
 

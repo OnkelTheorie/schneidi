@@ -674,6 +674,13 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         root["currentSequence"] = data.currentSequence;
     }
     if (!data.renderQueue.isEmpty()) root["renderQueue"] = RenderQueueJson::toJson(data.renderQueue);
+    if (data.fixedResolution || data.fixedFrameRate) { // optional, absent in old files
+        QJsonObject fixed;
+        if (data.fixedResolution) fixed["resolution"] = true;
+        if (data.fixedFrameRate) fixed["frameRate"] = true;
+        root["fixedFormat"] = fixed;
+    }
+    if (data.importPresets) root["importPresets"] = data.importPresets->toJson(); // optional
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
 
@@ -855,6 +862,11 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     }
     d.currentSequence = root.value("currentSequence").toInt();
     d.renderQueue = RenderQueueJson::fromJson(root.value("renderQueue").toArray());
+    const QJsonObject fixed = root.value("fixedFormat").toObject();
+    d.fixedResolution = fixed.value("resolution").toBool();
+    d.fixedFrameRate = fixed.value("frameRate").toBool();
+    if (root.value("importPresets").isObject())
+        d.importPresets = StreamPresets::fromJson(root.value("importPresets").toObject());
 
     *data = d;
     return true;
