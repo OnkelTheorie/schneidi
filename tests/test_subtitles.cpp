@@ -76,6 +76,12 @@ void testSrt()
     CHECK_EQ(cues(Subtitles::parseSrt(out, 25)), cues(list));
     // Range: times from the range start, partly covered ones shortened, entries outside gone
     CHECK_EQ(cues(Subtitles::parseSrt(Subtitles::toSrt(list, 25, 10, 60), 25)), QString("0-20:Eins 40-50:Zwei|Zeilen"));
+    // An empty line inside a text (typed, or left by removed formatting) would end the entry: left out on writing
+    // (fuzzing found the rest of the text coming back as an entry of its own)
+    c = Subtitles::parseSrt("0:0:5-->0:0:5\nt\n<>\r3:0:0-->0:0:0\n0", 25);
+    CHECK_EQ(cues(c), QString("125-126:t||3:0:0-->0:0:0|0"));
+    CHECK_EQ(cues(Subtitles::parseSrt(Subtitles::toSrt(c, 25), 25)), QString("125-126:t|3:0:0-->0:0:0|0"));
+    CHECK(Subtitles::toSrt({{1, 0, 25, "oben\n \nunten"}}, 25).endsWith("\r\noben\r\nunten\r\n\r\n"));
     CHECK_EQ(Subtitles::srtTime(3723004), QString("01:02:03,004"));
 
     // Timecode input in the Inspector (like DaVinci)

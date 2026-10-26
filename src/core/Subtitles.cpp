@@ -134,9 +134,11 @@ QByteArray toSrt(const QVector<SubtitleCue>& cues, double fps, int offset, int u
         if (end <= start) continue;
         out += QString::number(++n) + "\r\n";
         out += srtTime(frameToMs(start - offset, fps)) + " --> " + srtTime(frameToMs(end - offset, fps)) + "\r\n";
-        QString text = c.text.trimmed();
-        text.replace('\n', QLatin1String("\r\n"));
-        out += text + "\r\n\r\n";
+        // A blank line ends an entry: empty lines inside the text (typed, or left by removed formatting) are left
+        // out, else the rest of the text would become a broken entry of its own
+        QStringList lines = c.text.trimmed().split('\n');
+        lines.removeIf([](const QString& line) { return line.trimmed().isEmpty(); });
+        out += lines.join(QLatin1String("\r\n")) + "\r\n\r\n";
     }
     return out.toUtf8();
 }
