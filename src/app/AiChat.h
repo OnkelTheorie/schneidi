@@ -67,10 +67,12 @@ public:
 
     // One line for a tool step: "Sucht Stille · a.mp4", "Bearbeitet: split, delete"
     static QString toolLine(const QString& tool, const QJsonObject& args);
-    // What the model gets back from a tool: long answers cut with a note, at most kMaxImages pictures
+    // What the model gets back from a tool: long answers cut with a note, at most kMaxImages pictures of at most
+    // kMaxImageEdge
     static Ai::ToolResult capped(Ai::ToolResult r);
     static constexpr int kMaxToolText = 24000;
     static constexpr int kMaxImages = 8;
+    static constexpr int kMaxImageEdge = 2000; // pixels, longer edges are scaled down
     static constexpr int kMaxRounds = 40; // tool rounds per request
 
 signals:

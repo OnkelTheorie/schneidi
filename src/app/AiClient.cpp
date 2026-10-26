@@ -23,6 +23,8 @@ QNetworkRequest request(const Ai::Endpoint& e, const QUrl& url, bool fallbacks, 
     QNetworkRequest req(url);
     for (const auto& [name, value] : Ai::headers(e, fallbacks)) req.setRawHeader(name, value);
     req.setTransferTimeout(timeoutMs);
+    // The key goes with every redirect Qt follows: only within the address the user set (onFinished explains others)
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::SameOriginRedirectPolicy);
     return req;
 }
 
@@ -34,7 +36,7 @@ bool isEventStream(QNetworkReply* r)
     return r->header(QNetworkRequest::ContentTypeHeader).toString().contains("event-stream", Qt::CaseInsensitive);
 }
 
-// Model list and test: a reply replaced by a newer one ends without a signal
+// Model list, test: a reply replaced by a newer one of its kind ends without a signal
 void dropSide(QPointer<QNetworkReply>& side)
 {
     if (!side) return;
@@ -54,7 +56,8 @@ AiClient::AiClient(QObject* parent) : QObject(parent), m_nam(new QNetworkAccessM
 AiClient::~AiClient()
 {
     abort();
-    dropSide(m_side);
+    dropSide(m_models);
+    dropSide(m_test);
 }
 
 void AiClient::send(const Ai::Endpoint& e, const Ai::Request& r)
@@ -121,7 +124,6 @@ QString AiClient::networkError(QNetworkReply* reply, const Ai::Endpoint& e) cons
     case QNetworkReply::TimeoutError:
         return T("Keine Antwort von %1 (Zeitüberschreitung).").arg(host);
     case QNetworkReply::SslHandshakeFailedError:
-    case QNetworkReply::InsecureRedirectError:
         return T("Sichere Verbindung zu %1 fehlgeschlagen: %2").arg(host, reply->errorString());
     case QNetworkReply::TemporaryNetworkFailureError:
     case QNetworkReply::NetworkSessionFailedError:
@@ -132,6 +134,14 @@ QString AiClient::networkError(QNetworkReply* reply, const Ai::Endpoint& e) cons
     default:
         return T("Netzwerkfehler: %1").arg(reply->errorString());
     }
+}
+
+QString AiClient::redirectError(QNetworkReply* reply)
+{
+    const QUrl to = reply->url().resolved(QUrl::fromEncoded(reply->rawHeader("location")));
+    return T("Der Server leitet zu %1 weiter. Der Schlüssel geht nur an die eingestellte Adresse: bitte diese Adresse in "
+             "den Einstellungen eintragen, wenn sie stimmt.")
+        .arg(to.adjusted(QUrl::RemoveUserInfo | QUrl::RemoveQuery | QUrl::RemoveFragment).toString());
 }
 
 void AiClient::onFinished()
@@ -155,8 +165,13 @@ void AiClient::onFinished()
         return true;
     };
 
-    if (status == 0) { // no answer at all
+    if (status == 0 && reply->error() != QNetworkReply::InsecureRedirectError) { // no answer at all
         emit failed(networkError(reply, m_endpoint));
+        return;
+    }
+    if ((status >= 300 && status < 400) || reply->error() == QNetworkReply::InsecureRedirectError) {
+        // To another address: not followed, the key stays here
+        emit failed(redirectError(reply));
         return;
     }
     if (status != 200) {
@@ -164,7 +179,7 @@ void AiClient::onFinished()
         // A proxy or older server that does not know the optional parts of the Anthropic request: once without them
         const QString said = Ai::providerMessage(m_errorBody).toLower();
         if (status == 400 && m_endpoint.protocol == Ai::Protocol::Anthropic && !m_compat
-            && (said.contains("fallback") || said.contains("anthropic-beta") || said.contains("cache_control"))) {
+            && (said.contains("fallback") || said.contains("cache_control"))) { // (the beta's name has "fallback")
             m_compat = true;
             start();
             return;
@@ -193,22 +208,24 @@ void AiClient::onFinished()
 
 void AiClient::listModels(const Ai::Endpoint& e)
 {
-    dropSide(m_side);
+    dropSide(m_models);
     QNetworkReply* reply = m_nam->get(request(e, Ai::modelsUrl(e), false, 30000));
-    m_side = reply;
+    m_models = reply;
     connect(reply, &QNetworkReply::finished, this, [this, reply, e] {
         reply->deleteLater();
         const int status = statusOf(reply);
         const QByteArray body = reply->readAll();
         if (reply->property("dropped").toBool()) return;
         if (status == 200) emit models(Ai::parseModels(QJsonDocument::fromJson(body).object()));
+        else if ((status >= 300 && status < 400) || reply->error() == QNetworkReply::InsecureRedirectError)
+            emit modelsFailed(redirectError(reply));
         else emit modelsFailed(status ? Ai::httpFailure(status, body).message : networkError(reply, e));
     });
 }
 
 void AiClient::test(const Ai::Endpoint& e)
 {
-    dropSide(m_side);
+    dropSide(m_test);
     Ai::Request r;
     r.model = e.model;
     r.provider = e.provider;
@@ -219,13 +236,15 @@ void AiClient::test(const Ai::Endpoint& e)
     m.text = "Reply with the single word OK.";
     r.messages << m;
     QNetworkReply* reply = post(e, Ai::body(e.protocol, r), false);
-    m_side = reply;
+    m_test = reply;
     connect(reply, &QNetworkReply::finished, this, [this, reply, e] {
         reply->deleteLater();
         const int status = statusOf(reply);
         const QByteArray body = reply->readAll();
         if (reply->property("dropped").toBool()) return;
         if (status == 200) emit tested(true, T("Verbindung steht: %1 antwortet.").arg(e.model));
+        else if ((status >= 300 && status < 400) || reply->error() == QNetworkReply::InsecureRedirectError)
+            emit tested(false, redirectError(reply));
         else emit tested(false, status ? Ai::httpFailure(status, body).message : networkError(reply, e));
     });
 }

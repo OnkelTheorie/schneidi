@@ -51,6 +51,9 @@ void McpClient::start()
     m_buffer.clear();
     m_process = new QProcess(this);
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    // The tools never talk to an AI provider: the chat's keys stay in the app
+    for (const QString& key : env.keys())
+        if (key == "SCHNEIDI_AI_KEY" || key.endsWith("_API_KEY")) env.remove(key);
     for (auto it = m_environment.begin(); it != m_environment.end(); ++it) env.insert(it.key(), it.value());
     m_process->setProcessEnvironment(env);
 #ifdef Q_OS_WIN
@@ -93,7 +96,7 @@ void McpClient::start()
 void McpClient::call(const QString& tool, const QJsonObject& arguments, const Progress& progress, const Done& done)
 {
     if (!m_ready) {
-        done({T("Die Werkzeuge der KI laufen nicht."), {}, true});
+        done({"not run: the schneidi tools are not running", {}, true}); // for the model: English
         return;
     }
     const int id = m_next++;
@@ -192,7 +195,8 @@ void McpClient::onEnded()
     m_process = nullptr;
     m_ready = false;
     m_starting = false;
-    finishAll({why, {}, true});
+    // The running calls' answers go to the model: English
+    finishAll({"the schneidi tools (schneidi-cli) ended" + (last.isEmpty() ? QString() : ": " + last), {}, true});
     if (starting) emit failed(why);
 }
 
@@ -208,5 +212,5 @@ void McpClient::stop()
     m_ready = false;
     m_starting = false;
     m_buffer.clear();
-    finishAll({T("Gestoppt."), {}, true});
+    finishAll({"stopped", {}, true}); // for the model: English
 }

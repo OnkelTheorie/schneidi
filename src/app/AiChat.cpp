@@ -5,8 +5,12 @@
 #include "app/McpClient.h"
 #include "core/I18n.h"
 
+#include <QBuffer>
 #include <QFileInfo>
+#include <QImage>
 #include <QJsonDocument>
+
+#include <algorithm>
 
 namespace {
 
@@ -133,6 +137,15 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review
     m_stopped = false;
     m_rounds = 0;
     m_request = text.trimmed();
+    // Pictures of earlier requests are not sent again: the model has seen them, and a long chat would outgrow what
+    // providers take per request (count and size of pictures). It can look again with `frames`.
+    for (Ai::Message& m : m_history)
+        for (Ai::ToolResult& t : m.results)
+            if (!t.images.isEmpty()) {
+                t.text += QString("\n[%1 picture(s) of this answer were in an earlier request and are not sent again]")
+                              .arg(t.images.size());
+                t.images.clear();
+            }
     add({Entry::Kind::User, m_request});
     QString message = m_request;
     if (!m_notes.isEmpty()) {
@@ -251,19 +264,23 @@ void AiChat::onReply(const Ai::Reply& reply)
         add({Entry::Kind::Assistant, reply.text});
     }
     m_streaming = -1;
+    if (reply.refused()) {
+        // The refused answer is not kept: its tool calls would stay unanswered and break every later request (the
+        // providers want the partial output dropped); what the user writes next joins their last message
+        addError(T("Das Modell hat die Anfrage abgelehnt."));
+        finishTurn();
+        return;
+    }
     Ai::Message m;
     m.role = Ai::Message::Role::Assistant;
     m.text = reply.text;
     m.calls = reply.calls;
     if (m_endpoint.protocol == Ai::Protocol::Anthropic) m.anthropic = reply.anthropic;
     m_history << m;
-    if (reply.refused()) {
-        addError(T("Das Modell hat die Anfrage abgelehnt."));
-        finishTurn();
-        return;
-    }
     if (reply.calls.isEmpty()) {
-        if (reply.cutOff()) addNotice(T("Die Antwort wurde abgeschnitten (zu lang)."));
+        if (reply.stop == "model_context_window_exceeded")
+            addNotice(T("Der Chat ist zu lang für das Modell geworden: „Neuer Chat“ fängt frisch an."));
+        else if (reply.cutOff()) addNotice(T("Die Antwort wurde abgeschnitten (zu lang)."));
         else if (reply.text.trimmed().isEmpty()) addNotice(T("Die KI hat nichts geantwortet."));
         finishTurn();
         return;
@@ -290,6 +307,16 @@ void AiChat::nextTool()
         m_calls.clear();
         m_results.clear();
         requestModel();
+        return;
+    }
+    if (!m_mcp->isReady()) {
+        // The tool server went away (crashed): every call of this answer gets its answer, the turn ends; the next
+        // request starts the server again (else the model would call dead tools round after round)
+        for (int i = int(m_results.size()); i < m_calls.size(); ++i)
+            m_results << Ai::ToolResult{m_calls[i].id, m_calls[i].name, "not run: the schneidi tools stopped", {}, true};
+        appendUser({}, m_results);
+        addError(T("Die Werkzeuge der KI sind ausgefallen. Schreib einfach weiter: sie starten dann neu."));
+        finishTurn();
         return;
     }
     const Ai::ToolCall call = m_calls[m_results.size()];
@@ -329,11 +356,25 @@ void AiChat::toolDone(int entry, const Ai::ToolCall& call, const QString& text, 
 
 Ai::ToolResult AiChat::capped(Ai::ToolResult r)
 {
-    if (r.text.size() > kMaxToolText)
-        r.text = r.text.left(kMaxToolText)
+    if (r.text.size() > kMaxToolText) {
+        const int n = r.text[kMaxToolText - 1].isHighSurrogate() ? kMaxToolText - 1 : kMaxToolText; // whole characters
+        r.text = r.text.left(n)
                  + QString("\n[cut by the schneidi app: the answer has %1 characters; ask for less, e.g. `info` with "
                            "summary:true or a shorter range]")
                        .arg(r.text.size());
+    }
+    // Pictures no larger than providers take in any request (a tall contact sheet, a 4K still)
+    for (Ai::Image& img : r.images) {
+        QImage pic = QImage::fromData(QByteArray::fromBase64(img.base64));
+        if (pic.isNull() || std::max(pic.width(), pic.height()) <= kMaxImageEdge) continue;
+        pic = pic.scaled(kMaxImageEdge, kMaxImageEdge, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        QByteArray data;
+        QBuffer buffer(&data);
+        buffer.open(QIODevice::WriteOnly);
+        const bool png = img.mime == "image/png";
+        if (!pic.save(&buffer, png ? "PNG" : "JPG", png ? -1 : 85)) continue;
+        img.base64 = data.toBase64();
+    }
     if (r.images.size() > kMaxImages) {
         r.text += QString("\n[only the first %1 of %2 images are attached; ask for fewer frames or a contact sheet]")
                       .arg(kMaxImages)

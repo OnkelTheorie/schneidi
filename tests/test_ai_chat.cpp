@@ -77,6 +77,7 @@ public:
         QByteArray type = "text/event-stream";
         QByteArray body;
         int delayMs = 0;
+        QByteArray location; // a redirect
     };
     QVector<Request> requests;
     QVector<Response> script;
@@ -123,6 +124,7 @@ private:
             QByteArray head = "HTTP/1.1 " + QByteArray::number(answer.status) + " X\r\nContent-Type: " + answer.type
                               + "\r\nConnection: close\r\n";
             if (answer.status == 529 || answer.status == 429) head += "Retry-After: 0\r\n";
+            if (!answer.location.isEmpty()) head += "Location: " + answer.location + "\r\n";
             if (!answer.type.contains("event-stream")) head += "Content-Length: " + QByteArray::number(answer.body.size()) + "\r\n";
             guard->write(head + "\r\n" + answer.body);
             guard->disconnectFromHost();
@@ -251,6 +253,44 @@ bool alternating(const QJsonObject& body)
         before = v["role"].toString();
     }
     return true;
+}
+
+// The network side alone: a redirect to another address gets neither the key nor the conversation
+void testClient()
+{
+    FakeProvider fake, other;
+    Ai::Endpoint e;
+    e.protocol = Ai::Protocol::Anthropic;
+    e.provider = "claude";
+    e.address = fake.address();
+    e.model = "claude-sonnet-5-5";
+    e.key = kKey;
+    Ai::Request r;
+    r.model = e.model;
+    Ai::Message m;
+    m.text = "hello";
+    r.messages << m;
+    AiClient client;
+    QString failure;
+    bool done = false;
+    QObject::connect(&client, &AiClient::failed, [&](const QString& message) { failure = message; });
+    QObject::connect(&client, &AiClient::finished, [&](const Ai::Reply&) { done = true; });
+    fake.script = {{307, "application/json", "{}", 0, other.address().toUtf8() + "/v1/messages"}};
+    client.send(e, r);
+    CHECK(waitFor([&] { return !client.busy(); }));
+    CHECK(!done);
+    CHECK(failure.contains(other.address()));
+    CHECK(other.requests.isEmpty());
+    // The same address (another path): followed, with the key
+    failure.clear();
+    fake.script = {{307, "application/json", "{}", 0, fake.address().toUtf8() + "/v2/messages"}, anthropicText("Hallo")};
+    client.send(e, r);
+    CHECK(waitFor([&] { return !client.busy(); }));
+    CHECK(done && failure.isEmpty());
+    if (CHECK_EQ(fake.requests.size(), 3)) {
+        CHECK_EQ(fake.requests[2].path, QByteArray("/v2/messages"));
+        CHECK_EQ(fake.requests[2].headers.value("x-api-key"), kKey);
+    }
 }
 
 void dump(QWidget* w, const QString& name)
@@ -477,6 +517,9 @@ void test(const QString& dir)
         CHECK(e->text.contains(T("Der Schlüssel wurde abgelehnt. Prüfe ihn in Einstellungen › KI.")));
         CHECK(!e->text.contains(kKey)); // never the key itself
     }
+    // The pictures of the request before are not sent again (a note says so)
+    CHECK(!QJsonDocument(fake.last().body).toJson().contains("base64"));
+    CHECK(QJsonDocument(fake.last().body).toJson().contains("not sent again"));
     // Overloaded, then fine: tried again by itself
     fake.script = {{529, "application/json", R"({"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}})"},
                    anthropicText("Hallo!")};
@@ -518,6 +561,21 @@ void test(const QString& dir)
             for (const QJsonValue& b : v["content"].toArray())
                 answered |= b["tool_use_id"].toString() == "toolu_7";
         CHECK(answered);
+    }
+    // A refused answer with a tool call: not run, not kept (unanswered it would break every later request)
+    {
+        FakeProvider::Response refused = anthropicTool("toolu_r", "info", {{"project", "@app"}});
+        refused.body.replace("\"stop_reason\":\"tool_use\"", "\"stop_reason\":\"refusal\"");
+        fake.script = {refused, anthropicText("Gern.")};
+        panel->sendText("Etwas Heikles");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e))
+            CHECK_EQ(e->text, T("Das Modell hat die Anfrage abgelehnt."));
+        panel->sendText("Dann etwas anderes");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK(alternating(fake.last().body));
+        CHECK(!QJsonDocument(fake.last().body).toJson().contains("toolu_r"));
+        CHECK(lastUserText(fake.last().body).contains("Dann etwas anderes"));
     }
     // No server there
     s.chatAddress = "http://127.0.0.1:1";
@@ -613,6 +671,7 @@ int main(int argc, char** argv)
     Theme::apply(app);
     I18n::install("de");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg fehlt");
+    testClient();
     test(tmp.path());
     QSettings().remove("ai");
     return Check::result();

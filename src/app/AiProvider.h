@@ -97,10 +97,10 @@ struct Request {
     QString system;
     QJsonArray tools; // MCP tools as tools/list gives them: name, description, inputSchema
     QVector<Message> messages;
-    int maxTokens = 16000;
+    int maxTokens = 32000; // thinking counts too (on by default in the 5.x models): room for long edit calls
     bool stream = true;
     bool fallbacks = false; // Anthropic: fallbacksFor()
-    bool autoCache = true;  // Anthropic: cache the growing conversation too (top-level cache_control)
+    bool autoCache = true;  // Anthropic: cache marks (the system prompt and, top-level, the growing conversation)
     QString provider;       // preset id
 };
 QJsonObject anthropicBody(const Request& r);
@@ -118,7 +118,7 @@ struct Reply {
     QString error;     // the provider reported an error in the stream (or the stream broke off)
     QString errorType; // e.g. "overloaded_error"
     bool refused() const { return stop == "refusal" || stop == "content_filter"; }
-    bool cutOff() const { return stop == "max_tokens" || stop == "length"; }
+    bool cutOff() const { return stop == "max_tokens" || stop == "length" || stop == "model_context_window_exceeded"; }
 };
 
 // Reads a streamed answer (server-sent events) piece by piece

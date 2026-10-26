@@ -165,6 +165,7 @@ void testAnthropicBody()
     r.autoCache = false;
     const QJsonObject plain = Ai::anthropicBody(r);
     CHECK(!plain.contains("fallbacks") && !plain.contains("cache_control"));
+    CHECK(!plain["system"][0].toObject().contains("cache_control"));
 }
 
 void testOpenAiBody()
@@ -285,6 +286,18 @@ void testAnthropicStream()
     if (CHECK_EQ(r.calls.size(), 1)) CHECK(!r.calls[0].error.isEmpty());
     r = stream(Ai::Protocol::Anthropic, sse({R"({"type":"message_delta","delta":{"stop_reason":"refusal"}})"}), 100);
     CHECK(r.refused());
+    r = stream(Ai::Protocol::Anthropic, sse({R"({"type":"message_delta","delta":{"stop_reason":"model_context_window_exceeded"}})"}), 100);
+    CHECK(r.cutOff());
+    // A server-side fallback in the middle: thinking and tool calls before the last "fallback" block are dropped
+    r = stream(Ai::Protocol::Anthropic,
+               sse({R"({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"a","signature":"s"}})",
+                    R"({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_declined","name":"info","input":{}}})",
+                    R"({"type":"content_block_start","index":2,"content_block":{"type":"fallback"}})",
+                    R"({"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"toolu_ok","name":"info","input":{}}})",
+                    R"({"type":"message_delta","delta":{"stop_reason":"tool_use"}})", R"({"type":"message_stop"})"}),
+               100);
+    if (CHECK_EQ(r.calls.size(), 1)) CHECK_EQ(r.calls[0].id, QString("toolu_ok"));
+    if (CHECK_EQ(r.anthropic.size(), 2)) CHECK_EQ(r.anthropic[0].toObject()["type"].toString(), QString("fallback"));
 }
 
 void testOpenAiStream()
@@ -331,6 +344,15 @@ void testOpenAiStream()
     // An error in the stream (OpenRouter)
     r = stream(Ai::Protocol::OpenAi, chunk(R"({"error":{"message":"Provider returned error","code":502}})"), 4);
     CHECK_EQ(r.error, QString("Provider returned error"));
+    // ... also next to "choices" in the middle of an answer; "error": null is none
+    r = stream(Ai::Protocol::OpenAi,
+               chunk(R"({"choices":[{"index":0,"delta":{"content":"Hal"}}],"error":null})")
+                   + chunk(R"({"choices":[{"index":0,"delta":{},"finish_reason":"error"}],"error":{"message":"upstream timeout"}})"),
+               7);
+    CHECK_EQ(r.text, QString("Hal"));
+    CHECK_EQ(r.error, QString("upstream timeout"));
+    r = stream(Ai::Protocol::OpenAi, chunk(R"({"choices":[{"index":0,"delta":{},"finish_reason":"error"}]})"), 7);
+    CHECK(!r.error.isEmpty());
 }
 
 void testBodiesAndErrors()

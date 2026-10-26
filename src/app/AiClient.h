@@ -47,6 +47,7 @@ private:
     void onFinished();
     QNetworkReply* post(const Ai::Endpoint& e, const QJsonObject& body, bool fallbacks);
     QString networkError(QNetworkReply* reply, const Ai::Endpoint& e) const;
+    static QString redirectError(QNetworkReply* reply); // a redirect to another address (not followed)
 
     QNetworkAccessManager* m_nam;
     QPointer<QNetworkReply> m_reply;
@@ -59,5 +60,5 @@ private:
     bool m_compat = false; // Anthropic: sent again without the optional parts (a proxy refused them)
     int m_timeoutMs = 180000;
     QVector<int> m_retryDelays{3000, 10000};
-    QPointer<QNetworkReply> m_side; // model list or test
+    QPointer<QNetworkReply> m_models, m_test; // model list, test
 };

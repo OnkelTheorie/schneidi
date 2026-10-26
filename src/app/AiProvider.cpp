@@ -172,9 +172,11 @@ QJsonObject anthropicBody(const Request& r)
     QJsonObject o{{"model", r.model}, {"max_tokens", r.maxTokens}, {"messages", messages}};
     // Cache: the guide and the tools (system comes after the tools: one mark at its end covers both), and the
     // growing conversation by the automatic mark
-    if (!r.system.isEmpty())
-        o["system"] = QJsonArray{QJsonObject{{"type", "text"}, {"text", r.system},
-                                             {"cache_control", QJsonObject{{"type", "ephemeral"}}}}};
+    if (!r.system.isEmpty()) {
+        QJsonObject system{{"type", "text"}, {"text", r.system}};
+        if (r.autoCache) system["cache_control"] = QJsonObject{{"type", "ephemeral"}};
+        o["system"] = QJsonArray{system};
+    }
     if (!tools.isEmpty()) o["tools"] = tools;
     if (r.autoCache) o["cache_control"] = QJsonObject{{"type", "ephemeral"}};
     if (r.stream) o["stream"] = true;
@@ -280,9 +282,12 @@ QString StreamParser::feed(const QByteArray& bytes)
 QString StreamParser::event(const QJsonObject& o)
 {
     if (o.isEmpty()) return {};
-    // Errors look alike in both: {"type":"error","error":{…}} (Anthropic), {"error":{…}} (OpenAI, OpenRouter)
-    if (o.contains("error") && (o["type"].toString() == "error" || !o.contains("choices"))) {
-        const QJsonValue e = o["error"];
+    // Errors look alike in both: {"type":"error","error":{…}} (Anthropic), {"error":{…}} (OpenAI; OpenRouter also next
+    // to "choices" with finish_reason "error"); an "error": null of some servers is none
+    const QJsonValue err = o["error"];
+    if ((err.isObject() && !err.toObject().isEmpty()) || (err.isString() && !err.toString().isEmpty())
+        || o["type"].toString() == "error") {
+        const QJsonValue e = err;
         m_reply.error = e.isObject() ? e["message"].toString() : e.toString();
         if (m_reply.error.isEmpty()) m_reply.error = compact(o);
         m_reply.errorType = e.isObject() ? e["type"].toString() : QString();
@@ -356,6 +361,10 @@ QString StreamParser::openAiEvent(const QJsonObject& o)
     if (choices.isEmpty()) return {};
     const QJsonObject c = choices.first().toObject();
     if (const QString f = c["finish_reason"].toString(); !f.isEmpty()) m_reply.stop = f;
+    if (m_reply.stop == "error" && m_reply.error.isEmpty()) { // OpenRouter: the model failed mid-answer
+        m_reply.error = "the provider ended the answer with an error";
+        m_finished = true;
+    }
     const QJsonObject d = c["delta"].toObject();
     const QJsonArray calls = d["tool_calls"].toArray();
     for (int k = 0; k < calls.size(); ++k) {
@@ -390,10 +399,16 @@ Reply StreamParser::reply() const
 {
     Reply r = m_reply;
     if (m_protocol == Protocol::Anthropic) {
+        // A server-side fallback in the middle of the answer: the thinking and tool calls before the last "fallback"
+        // block belong to the model that gave up – neither run nor sent back
+        int fallback = -1;
+        for (int i = 0; i < m_blocks.size(); ++i)
+            if (m_blocks[i]["type"].toString() == "fallback") fallback = i;
+        static const QStringList dropped{"thinking", "redacted_thinking", "tool_use"};
         QJsonArray content;
         for (int i = 0; i < m_blocks.size(); ++i) {
             QJsonObject b = m_blocks[i];
-            if (b.isEmpty()) continue;
+            if (b.isEmpty() || (i < fallback && dropped.contains(b["type"].toString()))) continue;
             if (b["type"].toString() == "tool_use") {
                 ToolCall call{b["id"].toString(), b["name"].toString(), {}, {}};
                 call.input = m_json.contains(i) ? readArguments(m_json.value(i), &call.error) : b["input"].toObject();
