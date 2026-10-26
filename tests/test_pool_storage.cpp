@@ -33,6 +33,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QTest>
+#include <QThread>
 #include <QTreeWidget>
 #include <QUndoStack>
 #include <clocale>
