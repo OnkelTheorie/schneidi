@@ -688,6 +688,11 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
     const auto* me = static_cast<QMouseEvent*>(event);
     const QString id = InputBindings::instance().mouseAction(me->button());
     if (id.isEmpty()) return QMainWindow::eventFilter(obj, event);
+    // A panel's action only over that panel (the action's parent)
+    if (!InputBindings::instance().scope(id).isEmpty())
+        if (QAction* a = InputBindings::instance().action(id))
+            if (auto* panel = qobject_cast<QWidget*>(a->parent()); panel && panel != w && !panel->isAncestorOf(w))
+                return QMainWindow::eventFilter(obj, event);
     if (t == QEvent::MouseButtonPress)
         if (QAction* a = InputBindings::instance().action(id); a && a->isEnabled()) a->trigger();
     return true; // also swallow release/double-click of the bound key

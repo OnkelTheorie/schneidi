@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QStandardPaths>
 
 namespace {
@@ -183,11 +184,40 @@ void InputBindings::registerAction(QAction* action, const QString& id, const QSt
     rebuildMouse();
 }
 
+void InputBindings::registerPanelAction(QAction* action, const QString& id, const QString& category, const QString& scope,
+                                        const QKeySequence& defaultKey, const QKeySequence& defaultKey2)
+{
+    action->setShortcutContext(Qt::WidgetShortcut); // never fires through Qt (not added to a widget), see matches()
+    m_entries.append({id, category, action->text(), defaultKey, action, scope, defaultKey2});
+    apply(m_entries.last());
+    rebuildMouse();
+}
+
+bool InputBindings::matches(const QAction* action, const QKeyEvent* e)
+{
+    if (!action || !action->isEnabled() || e->key() == 0 || e->key() == Qt::Key_unknown) return false;
+    const Qt::KeyboardModifiers mods =
+        e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+    const QKeySequence pressed(QKeyCombination(mods, Qt::Key(e->key())));
+    for (const QKeySequence& k : action->shortcuts())
+        if (k == pressed) return true;
+    return false;
+}
+
+QString InputBindings::scope(const QString& id) const
+{
+    for (const Entry& e : m_entries)
+        if (e.id == id) return e.scope;
+    return {};
+}
+
 QStringList InputBindings::defaultInputs(const QString& id) const
 {
     QStringList binds;
     for (const Entry& e : m_entries)
-        if (e.id == id && !e.defaultKey.isEmpty()) binds << e.defaultKey.toString(QKeySequence::PortableText);
+        if (e.id == id)
+            for (const QKeySequence& k : {e.defaultKey, e.defaultKey2})
+                if (!k.isEmpty()) binds << k.toString(QKeySequence::PortableText);
     if (defaultMouse().contains(id)) binds << defaultMouse().value(id);
     return padded(binds);
 }

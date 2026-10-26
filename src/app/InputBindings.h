@@ -12,6 +12,7 @@
 #include <QVector>
 
 class QAction;
+class QKeyEvent;
 
 enum class WheelAction { None, ScrollVertical, ScrollHorizontal, Zoom, TrackHeight };
 
@@ -25,11 +26,23 @@ public:
         QString text;
         QKeySequence defaultKey;
         QPointer<QAction> action;
+        QString scope;            // empty = the whole window, else a panel (see registerPanelAction)
+        QKeySequence defaultKey2; // default of the second slot (panel actions)
     };
 
     void load();
     // Register an action: gets the key from the file resp. its default
     void registerAction(QAction* action, const QString& id, const QString& category, const QKeySequence& defaultKey);
+    // Register an action of one panel (scope, e.g. "render_queue"): its keys only count while that panel has the focus
+    // and win there over the window's (Del deletes render jobs there, clips elsewhere). The panel checks them itself
+    // with matches() in its ShortcutOverride and KeyPress events; the action is not added to a widget (Qt would call the
+    // same key in the window ambiguous and do nothing). A mouse button bound to it only works over its parent widget.
+    // Keys are only marked as used twice within the same scope.
+    void registerPanelAction(QAction* action, const QString& id, const QString& category, const QString& scope,
+                             const QKeySequence& defaultKey, const QKeySequence& defaultKey2 = {});
+    // Is the key of this event one of the action's keys?
+    static bool matches(const QAction* action, const QKeyEvent* e);
+    QString scope(const QString& id) const; // empty = window-wide
     // After registering all actions: write the file if it is missing or entries are missing
     void saveIfIncomplete();
 

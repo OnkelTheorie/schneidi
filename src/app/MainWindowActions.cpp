@@ -685,5 +685,10 @@ void MainWindow::buildActions()
                [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
     makeAction(help, "check_updates", T("Nach Updates suchen…"), QKeySequence(), [this] { checkForUpdates(true); });
 
+    // Panel keys: only while the panel has the focus, there they win over the window's (InputBindings::registerPanelAction)
+    InputBindings::instance().registerPanelAction(m_deliver->queuePanel()->deleteAction(), "render_queue_delete",
+                                                  T("Render-Warteschlange"), "render_queue", QKeySequence(Qt::Key_Delete),
+                                                  QKeySequence(Qt::Key_Backspace));
+
     InputBindings::instance().saveIfIncomplete();
 }

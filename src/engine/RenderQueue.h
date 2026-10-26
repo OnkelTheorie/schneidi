@@ -20,8 +20,12 @@ public:
     bool isRunning() const { return m_current > 0 || !m_pending.isEmpty(); }
     int currentJob() const { return m_current; } // id, 0 = none
     int currentProgress() const { return m_percent; }
+    // The current job is being prepared: waiting for the graphics card probe, opening its files, stabilization
+    // analyses. All of it in the background (the window stays usable, cancel() works), then progress(id, 0).
+    bool isPreparing() const { return m_current > 0 && m_preparing; }
 
-    // Renders the jobs ids (in queue order); empty = all that are not finished yet.
+    // Renders the jobs ids in queue order (as it is when the next job starts: dragging waiting jobs changes which one
+    // comes next); empty = all that are not finished yet.
     // Finished jobs in ids are rendered again. false = nothing to do or already running.
     bool start(const QVector<int>& ids = {});
     // Cancel the running job (half file is deleted) and leave the rest as they are
@@ -34,14 +38,15 @@ public:
     static ExportSettings exportSettings(const RenderJob& job, const Project& project);
 
 signals:
-    void progress(int jobId, int percent);
-    void preparing(int jobId); // right before a job's setup, which blocks (opening the media): show it now
+    void progress(int jobId, int percent); // percent 0 = preparing has ended, frames are rendered
+    void preparing(int jobId);             // a job starts: preparing (isPreparing()) until its first progress()
     void runningChanged(bool running);
     void jobFinished(int jobId, RenderStatus status);
     void finished(int done, int failed); // queue finished resp. canceled
 
 private:
     void next();
+    bool launch(); // starts the exporter for m_current; false = failed at once (status set)
     void onExportFinished(bool ok, const QString& message);
     void setStatus(int id, RenderStatus status, const QString& message = {}, qint64 ms = -1, const QString& encoder = {});
 
@@ -51,6 +56,8 @@ private:
     int m_run = 0; // counts up on start/cancel: a still scheduled follow-up job of an old run does not start
     int m_current = 0;
     int m_percent = 0;
+    bool m_preparing = false;
+    QMetaObject::Connection m_probeWait; // waiting for the graphics card probe (HardwareEncoders::notifier)
     int m_done = 0, m_failed = 0;
     bool m_canceling = false;
     QElapsedTimer m_clock;
