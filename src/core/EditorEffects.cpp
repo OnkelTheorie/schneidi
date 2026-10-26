@@ -82,18 +82,18 @@ namespace {
 // `fx` with the effect `id` at place `to` among the movable effects (clamped); the fixed stages keep their slots
 QVector<EffectInstance> withEffectAt(const QVector<EffectInstance>& fx, const QString& id, int to)
 {
-    QVector<int> slots; // indices of the movable effects in fx
+    QVector<int> at; // indices of the movable effects in fx
     QVector<EffectInstance> list;
     for (int i = 0; i < fx.size(); ++i)
         if (EffectRegistry::movable(fx[i].effectId)) {
-            slots << i;
+            at << i;
             list << fx[i];
         }
     const auto it = std::find_if(list.begin(), list.end(), [&](const EffectInstance& e) { return e.effectId == id; });
     if (it == list.end()) return fx;
     list.move(int(it - list.begin()), std::clamp(to, 0, int(list.size()) - 1));
     QVector<EffectInstance> out = fx;
-    for (int k = 0; k < slots.size(); ++k) out[slots[k]] = list[k];
+    for (int k = 0; k < at.size(); ++k) out[at[k]] = list[k];
     return out;
 }
 
