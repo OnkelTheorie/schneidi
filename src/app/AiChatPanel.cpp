@@ -79,6 +79,35 @@ private:
     }
 };
 
+// The picture bigger in a window of its own; a click or Escape closes it. Not a Qt::Popup: on X11 a popup grabs
+// mouse and keyboard, and one opened from a mouse press here never let go (the whole desktop stopped answering).
+class PictureWindow : public QLabel {
+public:
+    PictureWindow(const QImage& image, QWidget* parent) : QLabel(parent, Qt::Dialog)
+    {
+        setAttribute(Qt::WA_DeleteOnClose);
+        setWindowTitle(T("KI-Chat"));
+        setToolTip({});
+        const QScreen* s = parent->screen();
+        const QRect area = s ? s->availableGeometry() : QRect(0, 0, 1280, 720);
+        const QSize fit = image.size().boundedTo(area.size() * 0.8); // never larger than the picture itself
+        setPixmap(QPixmap::fromImage(image.scaled(fit, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+        adjustSize();
+        QPoint at = QCursor::pos() - QPoint(width() / 2, height() / 2);
+        at.setX(std::clamp(at.x(), area.left(), std::max(area.left(), area.right() - width())));
+        at.setY(std::clamp(at.y(), area.top(), std::max(area.top(), area.bottom() - height())));
+        move(at);
+    }
+
+protected:
+    void mouseReleaseEvent(QMouseEvent*) override { close(); }
+    void keyPressEvent(QKeyEvent* e) override
+    {
+        if (e->key() == Qt::Key_Escape) close();
+        else QLabel::keyPressEvent(e);
+    }
+};
+
 // A picture of a tool answer: a click shows it bigger
 class Thumbnail : public QLabel {
 public:
@@ -91,16 +120,13 @@ public:
     }
 
 protected:
-    void mousePressEvent(QMouseEvent*) override
+    void mouseReleaseEvent(QMouseEvent* e) override
     {
-        auto* big = new QLabel(nullptr, Qt::Popup);
-        big->setAttribute(Qt::WA_DeleteOnClose);
-        QSize fit(720, 480);
-        if (const QScreen* s = screen()) fit = fit.boundedTo(s->availableGeometry().size() * 0.8);
-        big->setPixmap(QPixmap::fromImage(m_image.scaled(fit, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
-        big->adjustSize();
-        big->move(QCursor::pos() - QPoint(big->width() / 2, big->height() / 2));
+        if (e->button() != Qt::LeftButton || !rect().contains(e->position().toPoint())) return;
+        auto* big = new PictureWindow(m_image, window());
         big->show();
+        big->raise();
+        big->activateWindow();
     }
 
 private:

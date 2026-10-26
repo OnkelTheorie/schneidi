@@ -31,7 +31,9 @@
 #include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -517,6 +519,42 @@ void test(const QString& dir)
         CHECK(t->state == AiChat::Entry::State::Done);
     }
     CHECK_EQ(chat->usage().input, qint64(500));
+
+    // A click on a picture shows it bigger in a window of its own; never a popup (on X11 a popup grabs mouse and
+    // keyboard, and one opened from a press kept the grab: the whole desktop stopped answering). Click/Escape close it.
+    QLabel* thumb = nullptr;
+    for (QLabel* l : panel->findChildren<QLabel*>())
+        if (l->toolTip() == T("Klick: größer zeigen")) thumb = l;
+    if (CHECK(thumb)) {
+        const auto pictureWindow = [] {
+            for (QWidget* top : QApplication::topLevelWidgets())
+                if (top->isVisible() && top->inherits("QLabel") && top->windowTitle() == T("KI-Chat")) return top;
+            return static_cast<QWidget*>(nullptr);
+        };
+        const auto click = [](QWidget* target, QEvent::Type type) {
+            const QPointF at(target->width() / 2.0, target->height() / 2.0);
+            QMouseEvent e(type, at, target->mapToGlobal(at), Qt::LeftButton,
+                          type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(target, &e);
+        };
+        click(thumb, QEvent::MouseButtonPress);
+        CHECK(!pictureWindow()); // opens on release, not while the button is down
+        click(thumb, QEvent::MouseButtonRelease);
+        QPointer<QWidget> big = pictureWindow();
+        if (CHECK(big)) {
+            CHECK(!QApplication::activePopupWidget());
+            CHECK(big->windowType() == Qt::Dialog);
+            QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(big, &esc);
+            CHECK(waitFor([&] { return big.isNull(); }));
+        }
+        click(thumb, QEvent::MouseButtonRelease);
+        big = pictureWindow();
+        if (CHECK(big)) {
+            click(big, QEvent::MouseButtonRelease); // a click on the picture closes it too
+            CHECK(waitFor([&] { return big.isNull(); }));
+        }
+    }
     dump(panel, "ai-conversation.png");
     dump(&w, "ai-window.png");
 
