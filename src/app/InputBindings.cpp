@@ -4,11 +4,13 @@
 
 #include <QAction>
 #include <QDir>
+#include <QKeyEvent>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
+#include <QWidget>
 
 namespace {
 
@@ -425,5 +427,58 @@ QAction* InputBindings::action(const QString& id) const
 {
     for (const Entry& e : m_entries)
         if (e.id == id) return e.action;
+    return nullptr;
+}
+
+namespace {
+
+// Keys of the scoped actions of one widget: while it has the focus they win over the window's shortcuts
+class ScopeKeys : public QObject {
+public:
+    explicit ScopeKeys(QWidget* scope) : QObject(scope) { scope->installEventFilter(this); }
+    QList<QAction*> actions;
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override
+    {
+        if (e->type() != QEvent::ShortcutOverride && e->type() != QEvent::KeyPress) return QObject::eventFilter(obj, e);
+        QAction* a = InputBindings::matching(actions, static_cast<QKeyEvent*>(e));
+        if (!a) return QObject::eventFilter(obj, e);
+        if (e->type() == QEvent::ShortcutOverride) e->accept(); // the window's shortcut stays quiet, the key comes here
+        else a->trigger();
+        return true;
+    }
+};
+
+} // namespace
+
+void InputBindings::registerScopedAction(QAction* action, const QString& id, const QString& category,
+                                         const QKeySequence& defaultKey, QWidget* scope)
+{
+    registerAction(action, id, category, defaultKey);
+    m_entries.last().scope = scope;
+    ScopeKeys* keys = scope->findChild<ScopeKeys*>(QString(), Qt::FindDirectChildrenOnly);
+    if (!keys) keys = new ScopeKeys(scope);
+    keys->actions << action;
+}
+
+QWidget* InputBindings::scopeOf(const QString& id) const
+{
+    for (const Entry& e : m_entries)
+        if (e.id == id) return e.scope;
+    return nullptr;
+}
+
+QAction* InputBindings::matching(const QList<QAction*>& actions, const QKeyEvent* event)
+{
+    if (!event || event->key() == 0 || event->key() == Qt::Key_unknown) return nullptr;
+    const QKeySequence key(event->keyCombination());
+    // A key of the number pad also counts as the same key without the pad (Enter, Delete, digits)
+    const QKeySequence plain(QKeyCombination(event->modifiers() & ~Qt::KeypadModifier, Qt::Key(event->key())));
+    for (QAction* a : actions) {
+        if (!a || !a->isEnabled()) continue;
+        for (const QKeySequence& s : a->shortcuts())
+            if (s == key || s == plain) return a;
+    }
     return nullptr;
 }

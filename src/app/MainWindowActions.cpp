@@ -375,7 +375,7 @@ void MainWindow::buildActions()
     };
     auto gotoMark = [this](bool in) {
         if (sourceActive()) {
-            const MediaInfo* m = m_project->mediaInfo(m_engine->sourcePath());
+            const MediaInfo* m = m_editor->sourceMedia(m_engine->sourcePath());
             const int f = in ? m->markIn : m->markOut;
             if (f < 0) return;
             m_engine->pause();
@@ -684,6 +684,11 @@ void MainWindow::buildActions()
     makeAction(help, "open_log_folder", T("Log-Ordner öffnen"), QKeySequence(),
                [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
     makeAction(help, "check_updates", T("Nach Updates suchen…"), QKeySequence(), [this] { checkForUpdates(true); });
+
+    // Media Pool keys: only while their widget has the focus, there they win over the window's keys (Delete in the bin
+    // list removes the bin, never timeline clips)
+    for (const MediaPool::KeyAction& k : m_mediaPool->keyActions())
+        InputBindings::instance().registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope);
 
     InputBindings::instance().saveIfIncomplete();
 }

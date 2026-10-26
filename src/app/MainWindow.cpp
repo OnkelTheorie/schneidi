@@ -79,7 +79,9 @@
 #include <QSettings>
 #include <QInputDialog>
 #include <QStandardPaths>
+#include <QPointer>
 #include <QStatusBar>
+#include <QThreadPool>
 #include <QTimer>
 #include <algorithm>
 
@@ -311,6 +313,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     // Source range dragged from the Viewer into the timeline: overwrite there (like DaVinci)
     connect(tv, &TimelineView::rangeDropRequested, this, [this](const QString& path, int in, int out, int frame, int track) {
+        // Looked at in the Media Storage without importing: into the selected bin first
+        if (!m_editor->importPreviewSource(path, m_mediaPool->currentBin())) return;
         if (m_project->frameRateLocked()) {
             m_editor->placeSourceRange(path, in, out, frame, track);
             return;
@@ -332,6 +336,17 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     setupMulticam();
     connect(m_storage, &MediaStorage::importRequested, m_mediaPool, &MediaPool::importFiles);
     connect(m_storage, &MediaStorage::folderImportRequested, m_mediaPool, &MediaPool::importFolder);
+    connect(m_storage, &MediaStorage::previewRequested, this, &MainWindow::previewFile);
+    connect(m_editor, &Editor::previewSourceChanged, this, &MainWindow::updateViewer);
+    // Media Storage marks what is in the Media Pool already
+    auto poolFiles = [this] {
+        QStringList paths;
+        paths.reserve(m_project->media().size());
+        for (const MediaInfo& m : m_project->media()) paths << m.path;
+        m_storage->setPoolFiles(paths);
+    };
+    connect(m_project, &Project::mediaChanged, this, poolFiles);
+    poolFiles();
     // Effects Library: double-click = like Ctrl+T resp. "Insert title", only with the chosen kind
     connect(m_effects, &EffectsLibrary::transitionRequested, this, [this, tv](TrackKind kind, const TransitionStyle& style) {
         const bool trim = !m_editor->transitionsLackingHandles(tv->playhead(), style, kind).isEmpty()
@@ -485,14 +500,55 @@ void MainWindow::showSource(const QString& path)
     m_engine->showSource(path, m_sourcePos.value(path, m->markIn >= 0 ? m->markIn : 0));
 }
 
+void MainWindow::previewFile(const QString& path)
+{
+    if (m_project->mediaInfo(path)) { // in the Media Pool already: its clip with its marks
+        showSource(path);
+        return;
+    }
+    const MediaInfo& before = m_editor->previewSource();
+    MediaInfo info;
+    const auto cached = m_probeCache.constFind(path);
+    if (cached != m_probeCache.cend()) {
+        info = *cached;
+    } else {
+        info.path = path;
+        info.name = QFileInfo(path).fileName();
+    }
+    if (before.path == path) { // clicked again: its marks stay
+        info.markIn = before.markIn;
+        info.markOut = before.markOut;
+        info.markers = before.markers;
+    }
+    m_editor->setPreviewSource(info);
+    m_engine->pause();
+    m_engine->showSource(path, m_sourcePos.value(path, 0));
+    if (cached != m_probeCache.cend()) return;
+    // Probing opens the file once more (~0.5 s with several audio streams): in the background, the window stays usable
+    QThreadPool::globalInstance()->start([guard = QPointer<MainWindow>(this), format = m_project->format(), path] {
+        const MediaInfo probed = Engine::probe(format, path);
+        QMetaObject::invokeMethod(qApp, [guard, format, probed] {
+            if (!guard || guard->m_project->format() != format) return; // lengths count in another frame rate now
+            guard->m_probeCache.insert(probed.path, probed);
+            const MediaInfo& shown = guard->m_editor->previewSource();
+            if (shown.path != probed.path) return; // another file meanwhile, or imported
+            MediaInfo info = probed;
+            info.markIn = shown.markIn;
+            info.markOut = shown.markOut;
+            info.markers = shown.markers;
+            guard->m_editor->setPreviewSource(info);
+        }, Qt::QueuedConnection);
+    });
+}
+
 bool MainWindow::sourceActive() const
 {
-    return m_engine->mode() == Engine::Mode::Source && m_project->mediaInfo(m_engine->sourcePath());
+    return m_engine->mode() == Engine::Mode::Source && m_editor->sourceMedia(m_engine->sourcePath());
 }
 
 QString MainWindow::editSource() const
 {
-    if (m_project->mediaInfo(m_engine->sourcePath())) return m_engine->sourcePath();
+    if (m_editor->sourceMedia(m_engine->sourcePath())) return m_engine->sourcePath();
     const QStringList selected = m_mediaPool->selectedMedia(); // nothing in the source view yet
     return selected.isEmpty() ? QString() : selected.first();
 }
@@ -501,6 +557,12 @@ void MainWindow::sourceEdit(Editor::SourceEditMode mode)
 {
     const QString path = editSource();
     if (path.isEmpty()) return;
+    // Looked at in the Media Storage without importing: into the selected bin first (no undo step, like every
+    // import; the edit is one). Not probed yet (just clicked): nothing to place yet.
+    if (!m_editor->importPreviewSource(path, m_mediaPool->currentBin())) {
+        QApplication::beep();
+        return;
+    }
     offerClipFormat({path}, true); // first clip in an empty timeline: adapt project format?
     TimelineView* tv = m_timeline->view();
     const int srcPos = sourceActive() ? m_engine->position() : m_sourcePos.value(path, 0);
@@ -521,8 +583,8 @@ void MainWindow::sourceEdit(Editor::SourceEditMode mode)
 void MainWindow::updateViewer()
 {
     if (sourceActive()) {
-        const MediaInfo* m = m_project->mediaInfo(m_engine->sourcePath());
-        m_viewer->setSource(m->path, m->name);
+        const MediaInfo* m = m_editor->sourceMedia(m_engine->sourcePath());
+        m_viewer->setSource(m->path, m_project->mediaInfo(m->path) ? m->name : T("%1 (nicht importiert)").arg(m->name));
         m_viewer->setRange(m->length, m->markIn, m->markOut);
         m_viewer->setMarkers(m->markers);
         return;
@@ -670,6 +732,7 @@ void MainWindow::onFormatChanged()
     m_mediaCache->setFormat(f);
     m_inspector->setFrameSize(f.size());
     m_probeCache.clear();
+    m_editor->setPreviewSource({}); // its length counts in the old frame rate; the Viewer shows the timeline now
     if (f.rate == oldRate) return;
     // Lengths in the Media Pool count in project frames -> re-read (only possible in an empty timeline,
     // undo/redo included)
@@ -688,6 +751,9 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
     const auto* me = static_cast<QMouseEvent*>(event);
     const QString id = InputBindings::instance().mouseAction(me->button());
     if (id.isEmpty()) return QMainWindow::eventFilter(obj, event);
+    // A scoped action (Media Pool keys) only over its widget
+    if (const QWidget* scope = InputBindings::instance().scopeOf(id); scope && scope != w && !scope->isAncestorOf(w))
+        return QMainWindow::eventFilter(obj, event);
     if (t == QEvent::MouseButtonPress)
         if (QAction* a = InputBindings::instance().action(id); a && a->isEnabled()) a->trigger();
     return true; // also swallow release/double-click of the bound key
@@ -721,7 +787,7 @@ void MainWindow::jumpToMarker(int direction)
 {
     if (sourceActive()) { // source markers (M in the source viewer)
         const int pos = m_engine->position();
-        const QVector<int>& markers = m_project->mediaInfo(m_engine->sourcePath())->markers;
+        const QVector<int>& markers = m_editor->sourceMedia(m_engine->sourcePath())->markers;
         int best = -1;
         for (int m : markers)
             if (direction > 0 ? m > pos && (best < 0 || m < best) : m < pos && m > best) best = m;

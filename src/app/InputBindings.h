@@ -12,6 +12,8 @@
 #include <QVector>
 
 class QAction;
+class QKeyEvent;
+class QWidget;
 
 enum class WheelAction { None, ScrollVertical, ScrollHorizontal, Zoom, TrackHeight };
 
@@ -25,6 +27,7 @@ public:
         QString text;
         QKeySequence defaultKey;
         QPointer<QAction> action;
+        QPointer<QWidget> scope; // registerScopedAction: the widget it acts in; null = the whole window
     };
 
     void load();
@@ -69,6 +72,16 @@ public:
 
     WheelAction wheelAction(Qt::KeyboardModifiers mods) const;
     QString filePath() const;
+
+    // An action that only acts inside `scope` (e.g. Delete in the Media Pool's bin list): its keys work while that
+    // widget has the focus and win there over window keys with the same input (Delete there never deletes timeline
+    // clips); a mouse button bound to it works over that widget. Never put such an action into a menu: that makes its
+    // keys global.
+    void registerScopedAction(QAction* action, const QString& id, const QString& category,
+                              const QKeySequence& defaultKey, QWidget* scope);
+    QWidget* scopeOf(const QString& id) const; // nullptr = whole window
+    // The action among `actions` whose keys match the key event (enabled ones only), else nullptr
+    static QAction* matching(const QList<QAction*>& actions, const QKeyEvent* event);
 
 private:
     InputBindings();
