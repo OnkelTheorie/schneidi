@@ -608,6 +608,35 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(std::abs(mix() + 26) < 0.3);
         run("edit", {{"project", proj}, {"ops", R"([{"op":"mixer","track":"A1","mute":true}])"}});
         CHECK(mix() < -100);
+        // info shows what the header/mixer ops set (also in the summary), the master always
+        {
+            const QString sp = dir.filePath("state.schneidi");
+            run("new", {{"project", sp}});
+            run("edit", {{"project", sp}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(noise)}});
+            QJsonObject master = run("info", {{"project", sp}, {"summary", true}})["timeline"]["master"].toObject();
+            CHECK_EQ(master["volume_db"].toDouble(), 0.0);
+            CHECK(master.contains("limiter") && !master["limiter"].toBool());
+            CHECK_EQ(master["limiter_db"].toDouble(), -1.0);
+            run("edit", {{"project", sp}, {"ops", R"([{"op":"mixer","track":"A1","mute":true},
+                {"op":"mixer","track":"A2","solo":true},{"op":"track","track":"V2","hidden":true,"lock":true},
+                {"op":"mixer","track":"master","volume_db":-3,"limiter":true,"limiter_db":-2}])"}});
+            for (const bool summary : {true, false}) {
+                const QJsonObject tl = run("info", {{"project", sp}, {"summary", summary}})["timeline"].toObject();
+                const QJsonArray tracks = tl["tracks"].toArray(); // V1, V2, A1, A2
+                CHECK(!tracks[0].toObject().contains("hidden") && !tracks[0].toObject().contains("muted")); // defaults
+                CHECK(tracks[1]["hidden"].toBool() && tracks[1]["locked"].toBool());
+                CHECK(tracks[2]["muted"].toBool() && !tracks[2].toObject().contains("solo"));
+                CHECK(tracks[3]["solo"].toBool() && !tracks[3].toObject().contains("muted"));
+                master = tl["master"].toObject();
+                CHECK_EQ(master["volume_db"].toDouble(), -3.0);
+                CHECK(master["limiter"].toBool());
+                CHECK_EQ(master["limiter_db"].toDouble(), -2.0);
+            }
+            run("edit", {{"project", sp}, {"ops", R"([{"op":"mixer","track":"master","limiter":false}])"}});
+            master = run("info", {{"project", sp}, {"summary", true}})["timeline"]["master"].toObject();
+            CHECK(master.contains("limiter") && !master["limiter"].toBool());
+            CHECK_EQ(master["limiter_db"].toDouble(), -2.0); // the ceiling stays for the next time
+        }
         const QJsonObject perClip = run("loudness", {{"source", proj}, {"clips", QJsonArray{clip}}});
         CHECK(std::abs(perClip["clips"][0]["loudness"]["integrated_lufs"].toDouble() - fileLufs) < 0.3);
         // Loudness up to the top: the answer warns about the true peak

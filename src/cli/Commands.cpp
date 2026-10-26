@@ -457,11 +457,9 @@ QJsonObject timelineJson(const Project& p)
         subtitles << so;
     }
     if (!subtitles.isEmpty()) o["subtitles"] = subtitles;
-    if (tl.masterVolumeDb != 0 || tl.masterLimiter) {
-        QJsonObject m{{"volume_db", tl.masterVolumeDb}};
-        if (tl.masterLimiter) m["limiter_db"] = tl.masterLimiterDb;
-        o["master"] = m;
-    }
+    // Always, so a change (also back to the default) can be checked: fader, limiter on/off and its ceiling
+    o["master"] = QJsonObject{
+        {"volume_db", tl.masterVolumeDb}, {"limiter", tl.masterLimiter}, {"limiter_db", tl.masterLimiterDb}};
     if (tl.markIn >= 0) o["mark_in"] = tl.markIn;
     if (tl.markOut >= 0) o["mark_out"] = tl.markOut + 1;
     return o;
@@ -551,9 +549,12 @@ const QVector<Command>& commands()
           {"overwrite", T::Boolean, "replace an existing project"}},
          cmdNew},
         {"info", "Show a project: format, media, its timelines and one timeline's tracks and clips (ids, positions, "
-                 "source ranges).",
+                 "source ranges). Each track shows its header and mixer state when not default: name, color, muted, "
+                 "solo, hidden, locked; audio tracks volume_db, pan, compressor, eq. 'master': volume_db, limiter "
+                 "(on/off), limiter_db (ceiling). To check such settings after an edit, summary:true is enough.",
          {{"project", T::Path, "project file", true, true},
-          {"summary", T::Boolean, "short form: length, counts of clips/tracks/markers, no clip list"},
+          {"summary", T::Boolean, "short form: length, counts of clips/tracks/markers, no clip list (track states and "
+                                  "master stay)"},
           {"timeline", T::String, "timeline to show (id or name; default: the open one)"}},
          cmdInfo},
         {"import", "Add media files to a project's media pool, or a timeline from another editor: an FCP7 XML "
