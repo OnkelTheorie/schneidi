@@ -5,6 +5,7 @@
 
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
+#include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
 
@@ -438,6 +439,36 @@ int main(int argc, char** argv)
         CHECK(d.timeline.markIn == -1 && d.media[0].markIn == -1);
         const Clip& c = d.timeline.video[0].clips[0];
         CHECK(c.transOutStyle.type == TransitionType::DipToColor && c.transOutStyle.color == QColor(Qt::white));
+    }
+
+    // --- Broken files (edited by hand or by an AI; found by fuzzing, tests/fuzz): opened as a valid project, and
+    // saving it again gives the same file
+    {
+        // Opened like the app does; the saved file of the opened project
+        const auto opened = [&](const QByteArray& json, Project& p) {
+            ProjectData d;
+            if (!ProjectFile::fromJson(json, path, &d, &err)) return QByteArray();
+            p.load(d);
+            return ProjectFile::toJson(p.data(), path);
+        };
+        const auto stable = [&](const QByteArray& json) {
+            Project a, b;
+            const QByteArray once = opened(json, a);
+            return !once.isEmpty() && opened(once, b) == once;
+        };
+        // Only compound and multicam clips (a multicam one without "compound"): one of them is a normal timeline
+        {
+            const QByteArray json = R"({"app":"schneidi","currentSequence":1,"sequences":[{"compound":true,"id":1},
+                                        {"id":3,"multicam":true}]})";
+            Project p;
+            CHECK(!opened(json, p).isEmpty());
+            CHECK(p.sequence(1) && !p.sequence(1)->compound && !p.sequence(1)->multicam);
+            CHECK(p.sequence(3) && p.sequence(3)->compound && p.sequence(3)->multicam);
+            CHECK(stable(json));
+            // The open one is the multicam clip: it becomes a normal timeline
+            CHECK(!opened(R"({"app":"schneidi","currentSequence":3,"sequences":[{"id":3,"multicam":true}]})", p).isEmpty());
+            CHECK(p.sequence(3) && !p.sequence(3)->compound && !p.sequence(3)->multicam);
+        }
     }
     return Check::result();
 }
