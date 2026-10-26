@@ -722,6 +722,29 @@ const QVector<Command>& commands()
           {"audio_stream", T::Integer, "which audio stream, 0 = first"},
           {"project", T::Path, "count frames in this project's frame rate"}},
          cmdPeaks},
+        {"beats", "Tempo and structure of a song in one call, to cut to the music (not to a fixed grid): bpm (70-220 "
+                  "by default, half/double tempo resolved by which beats are loud) with a confidence, the beat grid "
+                  "(beat_phase = first beat, beat_period: beat k is at beat_phase + k * beat_period), the bar ones "
+                  "(downbeats, 4/4 assumed, with a confidence), phrases of 4 or 8 bars with their energy, the energy "
+                  "per bar as two lines of digits (overall and bass), breaks (the bass or the whole sound drops out) "
+                  "and drops (the sound coming back after a break, best first). Times in seconds and frames. Put the "
+                  "strongest moments on the drops and phrase starts, cuts on beats or bar ones. Source: a media file "
+                  "or a project (its timeline sound as exported, times in timeline frames).",
+         {{"file", T::Path, "song (media file), or a project (.schneidi or \"@app\"): its timeline sound as exported", true, true},
+          {"project", T::Path, "for a media file: count frames in this project's frame rate"},
+          {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
+          {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A2\" (the music; track or audio stream "
+                                "name; default: what is audible)"},
+          {"from", T::Time, "start of the range (a media file: in its own time)"},
+          {"to", T::Time, "end of the range"},
+          {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"},
+          {"min_bpm", T::Number, "slowest tempo to report (default 70)"},
+          {"max_bpm", T::Number, "fastest tempo to report (default 220; e.g. 150 to get 100 instead of 200)"},
+          {"beats", T::Boolean, "also return every beat (s, frame; bar_one on the bar ones)"},
+          {"apply", T::String, "\"markers\": put timeline markers on the phrase starts (or the bars, see markers); "
+                               "project or \"@app\" only, live in the app one undo step"},
+          {"markers", T::String, "with apply: phrases (default) or bars"}},
+         cmdBeats},
         {"highlights", "Candidates for a highlight video: kills from the kill feed (with region + color, see "
                        "`scenes` color) and loud moments, as source ranges with lead-in and lead-out, best first. "
                        "Kills closer than 'join' are one candidate (a multi kill scores more). Without a kill feed the "

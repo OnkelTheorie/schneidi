@@ -169,6 +169,7 @@ QJsonObject cmdProbe(const QJsonObject& a, Context& ctx);
 QJsonObject cmdSilence(const QJsonObject& a, Context& ctx);
 QJsonObject cmdScenes(const QJsonObject& a, Context& ctx);
 QJsonObject cmdPeaks(const QJsonObject& a, Context& ctx);
+QJsonObject cmdBeats(const QJsonObject& a, Context& ctx); // AnalysisBeats.cpp
 QJsonObject cmdHighlights(const QJsonObject& a, Context& ctx); // AnalysisHighlights.cpp
 QJsonObject cmdFrames(const QJsonObject& a, Context& ctx);
 QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx);

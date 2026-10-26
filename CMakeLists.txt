@@ -88,6 +88,7 @@ add_library(schneidi_lib STATIC
     src/core/TranscriptCut.h      src/core/TranscriptCut.cpp
     src/core/Fft.h                src/core/Fft.cpp
     src/core/AudioSync.h          src/core/AudioSync.cpp
+    src/core/Beats.h              src/core/Beats.cpp
     src/core/Multicam.h           src/core/Multicam.cpp
     src/core/Interchange.h        src/core/Interchange.cpp
     src/core/InterchangeEdl.cpp   src/core/InterchangeFcp7.cpp  src/core/InterchangeOtio.cpp
@@ -260,7 +261,8 @@ add_library(schneidi_cli_lib STATIC
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp
-    src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/Exchange.cpp
+    src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
+    src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp
     src/cli/Sandbox.h  src/cli/Sandbox.cpp
     src/cli/Http.h     src/cli/Http.cpp

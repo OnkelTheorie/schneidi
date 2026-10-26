@@ -149,10 +149,10 @@ int main(int argc, char** argv)
     QJsonObject r = run("beats", {{"file", file}});
     CHECK(near(r["bpm"].toDouble(), bpm, 0.05));
     CHECK(r["confidence"].toDouble() > 0.5);
-    CHECK(near(r["beat_phase"]["s"].toDouble(), phase, 0.01));
-    CHECK_EQ(r["beat_phase"]["frame"].toInt(), int(std::lround(phase * 25)));
-    CHECK(near(r["beat_period"]["s"].toDouble(), beat, 0.0005));
-    CHECK(near(r["beat_period"]["frames"].toDouble(), beat * 25, 0.01));
+    CHECK(near(r.value("beat_phase")["s"].toDouble(), phase, 0.01));
+    CHECK_EQ(r.value("beat_phase")["frame"].toInt(), int(std::lround(phase * 25)));
+    CHECK(near(r.value("beat_period")["s"].toDouble(), beat, 0.0005));
+    CHECK(near(r.value("beat_period")["frames"].toDouble(), beat * 25, 0.01));
     CHECK_EQ(r["fps"].toDouble(), 25.0);
     // Bar ones: the louder kick, where the sound changes
     const QJsonObject down = r["downbeats"].toObject();
@@ -164,16 +164,16 @@ int main(int argc, char** argv)
     const QJsonArray phrases = r["phrases"].toArray();
     if (CHECK_EQ(phrases.size(), 5)) {
         for (int i = 0; i < 5; ++i) {
-            CHECK_EQ(phrases[i]["bar"].toInt(), 1 + 8 * i);
-            CHECK(near(phrases[i]["s"].toDouble(), phase + 8 * i * bar, 0.01));
+            CHECK_EQ(phrases.at(i)["bar"].toInt(), 1 + 8 * i);
+            CHECK(near(phrases.at(i)["s"].toDouble(), phase + 8 * i * bar, 0.01));
         }
-        CHECK(phrases[2]["energy"].toInt() < phrases[1]["energy"].toInt()); // the break
-        CHECK(phrases[3]["energy"].toInt() > phrases[1]["energy"].toInt()); // the drop: louder than before
-        CHECK_EQ(phrases[3]["bass"].toInt(), 9);
-        CHECK_EQ(phrases[2]["bass"].toInt(), 0);
+        CHECK(phrases.at(2)["energy"].toInt() < phrases.at(1)["energy"].toInt()); // the break
+        CHECK(phrases.at(3)["energy"].toInt() > phrases.at(1)["energy"].toInt()); // the drop: louder than before
+        CHECK_EQ(phrases.at(3)["bass"].toInt(), 9);
+        CHECK_EQ(phrases.at(2)["bass"].toInt(), 0);
     }
     // Energy per bar: one digit per bar, a space before every phrase
-    const QString energy = r["energy"]["overall"].toString(), bass = r["energy"]["bass"].toString();
+    const QString energy = r.value("energy")["overall"].toString(), bass = r.value("energy")["bass"].toString();
     CHECK_EQ(QString(energy).remove(' ').size(), kBars);
     CHECK_EQ(energy.count(' '), 4);
     CHECK_EQ(QString(bass).remove(' ').mid(kBreakFrom, kBreakTo - kBreakFrom), QString(8, '0'));
@@ -181,19 +181,19 @@ int main(int argc, char** argv)
     // The break and the drop after it
     const QJsonArray breaks = r["breaks"].toArray();
     if (CHECK_EQ(breaks.size(), 1)) {
-        CHECK(near(breaks[0]["from_s"].toDouble(), breakFrom, 0.02));
-        CHECK(near(breaks[0]["to_s"].toDouble(), dropAt, 0.02));
-        CHECK_EQ(breaks[0]["bars"].toDouble(), 8.0);
-        CHECK(breaks[0]["bass_db"].toDouble() < -20);
+        CHECK(near(breaks.at(0)["from_s"].toDouble(), breakFrom, 0.02));
+        CHECK(near(breaks.at(0)["to_s"].toDouble(), dropAt, 0.02));
+        CHECK_EQ(breaks.at(0)["bars"].toDouble(), 8.0);
+        CHECK(breaks.at(0)["bass_db"].toDouble() < -20);
     }
     const QJsonArray drops = r["drops"].toArray();
     if (CHECK_EQ(drops.size(), 1)) {
-        CHECK(near(drops[0]["s"].toDouble(), dropAt, 0.02));
-        CHECK_EQ(drops[0]["frame"].toInt(), int(std::lround(dropAt * 25)));
-        CHECK_EQ(drops[0]["bar"].toInt(), kBreakTo + 1);
-        CHECK_EQ(drops[0]["beat"].toInt(), 1);
-        CHECK(drops[0]["bass_jump_db"].toDouble() > 20);
-        CHECK(near(drops[0]["break_s"].toDouble(), 8 * bar, 0.05));
+        CHECK(near(drops.at(0)["s"].toDouble(), dropAt, 0.02));
+        CHECK_EQ(drops.at(0)["frame"].toInt(), int(std::lround(dropAt * 25)));
+        CHECK_EQ(drops.at(0)["bar"].toInt(), kBreakTo + 1);
+        CHECK_EQ(drops.at(0)["beat"].toInt(), 1);
+        CHECK(drops.at(0)["bass_jump_db"].toDouble() > 20);
+        CHECK(near(drops.at(0)["break_s"].toDouble(), 8 * bar, 0.05));
     }
     CHECK(!r.contains("beats")); // only when asked
 
@@ -202,33 +202,33 @@ int main(int argc, char** argv)
     run("new", {{"project", project}, {"fps", 30}});
     r = run("beats", {{"file", file}, {"project", project}, {"beats", true}});
     CHECK_EQ(r["fps"].toDouble(), 30.0);
-    if (CHECK_EQ(r["drops"].toArray().size(), 1)) CHECK_EQ(r["drops"][0]["frame"].toInt(), int(std::lround(dropAt * 30)));
+    if (CHECK_EQ(r["drops"].toArray().size(), 1)) CHECK_EQ(r.value("drops")[0]["frame"].toInt(), int(std::lround(dropAt * 30)));
     const QJsonArray beats = r["beats"].toArray();
     CHECK_EQ(beats.size(), kBars * 4);
     if (beats.size() > 8) {
-        CHECK(near(beats[0]["s"].toDouble(), phase, 0.01));
-        CHECK(near(beats[8]["s"].toDouble(), phase + 8 * beat, 0.01));
-        CHECK_EQ(beats[8]["frame"].toInt(), int(std::lround(beats[8]["s"].toDouble() * 30)));
-        CHECK(beats[4]["bar_one"].toBool());
-        CHECK(!beats[5]["bar_one"].toBool());
+        CHECK(near(beats.at(0)["s"].toDouble(), phase, 0.01));
+        CHECK(near(beats.at(8)["s"].toDouble(), phase + 8 * beat, 0.01));
+        CHECK_EQ(beats.at(8)["frame"].toInt(), int(std::lround(beats.at(8)["s"].toDouble() * 30)));
+        CHECK(beats.at(4)["bar_one"].toBool());
+        CHECK(!beats.at(5)["bar_one"].toBool());
     }
     // A range of the file: times stay the file's
     r = run("beats", {{"file", file}, {"from", "20s"}, {"to", "60s"}});
     CHECK(near(r["bpm"].toDouble(), bpm, 0.1));
-    CHECK(near(std::fmod(r["beat_phase"]["s"].toDouble() - phase + 100 * beat, beat), 0, 0.01)
-          || near(std::fmod(r["beat_phase"]["s"].toDouble() - phase + 100 * beat, beat), beat, 0.01));
-    CHECK(r["beat_phase"]["s"].toDouble() >= 20);
-    if (CHECK(!r["drops"].toArray().isEmpty())) CHECK(near(r["drops"][0]["s"].toDouble(), dropAt, 0.02));
+    CHECK(near(std::fmod(r.value("beat_phase")["s"].toDouble() - phase + 100 * beat, beat), 0, 0.01)
+          || near(std::fmod(r.value("beat_phase")["s"].toDouble() - phase + 100 * beat, beat), beat, 0.01));
+    CHECK(r.value("beat_phase")["s"].toDouble() >= 20);
+    if (CHECK(!r["drops"].toArray().isEmpty())) CHECK(near(r.value("drops")[0]["s"].toDouble(), dropAt, 0.02));
 
     // Octaves: a sharp off-beat bass does not double 90 BPM; a kick on every beat keeps 200 BPM (not 100)
     const QString slow = dir.filePath("slow.wav"), fast = dir.filePath("fast.wav");
     if (CHECK(writeWav(slow, song(90, 0.4)) && writeWav(fast, song(200, 0.033, false)))) {
         r = run("beats", {{"file", slow}});
         CHECK(near(r["bpm"].toDouble(), 90, 0.05));
-        CHECK(near(r["beat_phase"]["s"].toDouble(), 0.4, 0.01));
+        CHECK(near(r.value("beat_phase")["s"].toDouble(), 0.4, 0.01));
         r = run("beats", {{"file", fast}});
         CHECK(near(r["bpm"].toDouble(), 200, 0.05));
-        CHECK(near(r["beat_phase"]["s"].toDouble(), 0.033, 0.01));
+        CHECK(near(r.value("beat_phase")["s"].toDouble(), 0.033, 0.01));
         r = run("beats", {{"file", fast}, {"max_bpm", 150}});
         CHECK(near(r["bpm"].toDouble(), 100, 0.05)); // the range asked for
     }
@@ -237,20 +237,20 @@ int main(int argc, char** argv)
     run("edit", {{"project", project}, {"ops", QString(R"([{"op":"place","media":"%1","at":60}])").arg(file)}});
     r = run("beats", {{"file", project}, {"from", 60}});
     CHECK(near(r["bpm"].toDouble(), bpm, 0.05));
-    CHECK(near(r["beat_phase"]["s"].toDouble(), 2 + phase, 0.01));
-    if (CHECK(!r["drops"].toArray().isEmpty())) CHECK_EQ(r["drops"][0]["frame"].toInt(), int(std::lround((2 + dropAt) * 30)));
+    CHECK(near(r.value("beat_phase")["s"].toDouble(), 2 + phase, 0.01));
+    if (CHECK(!r["drops"].toArray().isEmpty())) CHECK_EQ(r.value("drops")[0]["frame"].toInt(), int(std::lround((2 + dropAt) * 30)));
     CHECK(!r.contains("applied"));
     r = run("beats", {{"file", project}, {"from", 60}, {"apply", "markers"}});
-    CHECK_EQ(r["applied"]["markers"].toInt(), 5);
-    CHECK(r["applied"]["saved"].toBool());
-    QJsonArray markers = run("info", {{"project", project}})["timeline"]["markers"].toArray();
+    CHECK_EQ(r.value("applied")["markers"].toInt(), 5);
+    CHECK(r.value("applied")["saved"].toBool());
+    QJsonArray markers = run("info", {{"project", project}}).value("timeline")["markers"].toArray();
     if (CHECK_EQ(markers.size(), 5))
         for (int i = 0; i < 5; ++i) CHECK_EQ(markers[i].toInt(), int(std::lround((2 + phase + 8 * i * bar) * 30)));
     run("restore", {{"project", project}}); // one edit = one step back
-    CHECK(run("info", {{"project", project}})["timeline"]["markers"].toArray().isEmpty());
+    CHECK(run("info", {{"project", project}}).value("timeline")["markers"].toArray().isEmpty());
     r = run("beats", {{"file", project}, {"from", 60}, {"apply", "markers"}, {"markers", "bars"}});
-    CHECK_EQ(r["applied"]["markers"].toInt(), kBars);
-    markers = run("info", {{"project", project}})["timeline"]["markers"].toArray();
+    CHECK_EQ(r.value("applied")["markers"].toInt(), kBars);
+    markers = run("info", {{"project", project}}).value("timeline")["markers"].toArray();
     if (CHECK_EQ(markers.size(), kBars)) CHECK_EQ(markers[1].toInt(), int(std::lround((2 + phase + bar) * 30)));
 
     // Errors

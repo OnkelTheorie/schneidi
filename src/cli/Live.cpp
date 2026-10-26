@@ -689,7 +689,7 @@ bool isJob(const QString& command)
 {
     static const QStringList jobs{"probe",  "silence", "scenes", "peaks",           "highlights", "frames",
                                   "transcribe", "loudness", "scopes", "sync", "render", "export_timeline",
-                                  "extensions", "check", "overview"};
+                                  "extensions", "check", "overview", "beats"};
     return jobs.contains(command);
 }
 
@@ -764,6 +764,7 @@ QJsonObject activitySummary(const QString& tool, const QJsonObject& r)
         if (r.value("integrated_lufs").isDouble()) return {{"lufs", r.value("integrated_lufs")}};
         return {{"count", countOf(r, {"clips"})}};
     }
+    if (tool == "beats" && r.value("bpm").isDouble()) return {{"bpm", r.value("bpm")}};
     if (tool == "render" || tool == "export_timeline")
         if (const QString out = r.value("out").toString(); !out.isEmpty()) return {{"file", out}};
     return {};

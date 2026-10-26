@@ -430,6 +430,7 @@ QString Server::writtenProject(const Command& cmd, const QJsonObject& args) cons
     QString file;
     if (runsInApp(cmd, args) || cmd.name == "new") file = args["project"].toString();
     else if (cmd.name == "transcribe" && args["apply"].toBool()) file = args["source"].toString();
+    else if (cmd.name == "beats" && !args["apply"].toString().isEmpty()) file = args["file"].toString();
     if (file.isEmpty()) return {};
     // The same key for a file `new` creates and the existing one (a work folder reached through a link)
     const QFileInfo fi(file);

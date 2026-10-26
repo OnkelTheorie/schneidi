@@ -90,6 +90,8 @@ schneidi_test(test_check)
 schneidi_test(test_contact_sheet)
 schneidi_test(test_overview)
 target_link_libraries(test_overview PRIVATE schneidi_cli_lib)
+schneidi_test(test_beats) # `beats`: tempo, bars, phrases, breaks, drops of a song
+target_link_libraries(test_beats PRIVATE schneidi_cli_lib)
 target_link_libraries(test_check PRIVATE schneidi_cli_lib)
 target_link_libraries(test_setup PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_setup PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
@@ -144,27 +146,6 @@ target_link_libraries(test_ducking PRIVATE schneidi_cli_lib)
 schneidi_test(test_speed)
 target_compile_definitions(test_speed PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 set_tests_properties(test_speed PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
-
-# Tests written before their feature: CTest builds them during the test run (<name>_build), so a missing API fails
-# these tests instead of the whole build. Once the feature is done, move the test up to schneidi_test(). Extra
-# arguments = more libraries to link.
-function(schneidi_pending_test name)
-    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp check.h)
-    target_link_libraries(${name} PRIVATE schneidi_lib Qt6::Test ${ARGN})
-    add_test(NAME ${name}_build COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name})
-    set_tests_properties(${name}_build PROPERTIES
-        FIXTURES_SETUP ${name}_built
-        RESOURCE_LOCK schneidi_build_dir
-        TIMEOUT 900)
-    add_test(NAME ${name} COMMAND ${name})
-    set_tests_properties(${name} PROPERTIES
-        FIXTURES_REQUIRED ${name}_built
-        SKIP_RETURN_CODE 77
-        TIMEOUT 300
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null")
-endfunction()
-
-schneidi_pending_test(test_beats schneidi_cli_lib) # `beats`: tempo, bars, phrases, breaks, drops of a song
 
 # Number format regressions (German decimal comma, e.g. 0.7.0: MLT reset LC_NUMERIC and stabilization did nothing):
 # run tests that pass numbers to MLT/FFmpeg a second time under de_DE.UTF-8 (CI generates the locale)

@@ -84,6 +84,16 @@ std::optional<std::vector<float>> clipFramePeaks(const ProjectFormat& format, co
 std::optional<std::vector<float>> timelineFramePeaks(const ProjectFormat& format, const Timeline& timeline, int from,
                                                      int to, const std::function<bool(double)>& progress = {});
 
+// The sound itself, timeline frame by timeline frame, as planar float (48 kHz, stereo): of the clip as
+// clipFramePeaks reads it, or of the timeline mix [from, to) as timelineFramePeaks (schneidi-cli `beats`).
+// pcm == nullptr = a frame that could not be decoded (MLT path; keeps counting sinks in step). false = no audio,
+// could not mix or canceled.
+using SoundSink = std::function<void(const float* pcm, int samples, int channels, int rate)>;
+bool clipSound(const ProjectFormat& format, const Clip& clip, const SoundSink& sink,
+               const std::function<bool(double)>& progress = {});
+bool timelineSound(const ProjectFormat& format, const Timeline& timeline, int from, int to, const SoundSink& sink,
+                   const std::function<bool(double)>& progress = {});
+
 // Ducking: where the audio tracks `under` (indices; the others are muted, solo ignored) have sound in the timeline
 // mix (render timeline, see Project::renderTimeline). nullopt = could not mix or canceled; no tracks / empty = no range.
 std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& under,

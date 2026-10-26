@@ -12,6 +12,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 
 namespace {
 
@@ -41,6 +42,7 @@ const Job* jobOf(const QString& tool)
         {"extensions", N_("lädt eine Erweiterung"), N_("Erweiterung fertig")},
         {"check", N_("prüft vor dem Export"), N_("Geprüft, Hinweise: %1")},
         {"overview", N_("verschafft sich einen Überblick"), N_("Überblick: %1 Abschnitte")},
+        {"beats", N_("sucht den Takt eines Songs"), N_("Tempo: %1 BPM")},
     };
     for (const Job& j : jobs)
         if (tool == QLatin1String(j.tool)) return &j;
@@ -146,6 +148,8 @@ QString AiLog::jobResult(const QString& tool, const QJsonObject& summary)
     const QString done = T(j->done);
     if (!done.contains("%1")) return done;
     if (summary.contains("count")) return done.arg(summary.value("count").toInt());
+    if (summary.contains("bpm"))
+        return done.arg(QString::number(std::round(summary.value("bpm").toDouble() * 10) / 10).replace('.', I18n::decimalPoint()));
     if (summary.contains("lufs"))
         return done.arg(QString::number(summary.value("lufs").toDouble(), 'f', 1).replace('.', I18n::decimalPoint()));
     if (summary.contains("file")) return done.arg(QFileInfo(summary.value("file").toString()).fileName());

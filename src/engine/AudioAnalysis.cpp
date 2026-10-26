@@ -310,6 +310,18 @@ std::optional<std::vector<float>> timelineFramePeaks(const ProjectFormat& format
     return peaks;
 }
 
+bool clipSound(const ProjectFormat& format, const Clip& clip, const SoundSink& sink,
+               const std::function<bool(double)>& progress)
+{
+    return decode(format, clip, progress, sink);
+}
+
+bool timelineSound(const ProjectFormat& format, const Timeline& timeline, int from, int to, const SoundSink& sink,
+                   const std::function<bool(double)>& progress)
+{
+    return to > from && mix(format, timeline, from, to, progress, sink);
+}
+
 std::optional<Ducking::Ranges> soundRanges(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& under,
                                            const Ducking::Params& params, const std::function<bool(double)>& progress)
 {
