@@ -435,7 +435,12 @@ namespace {
 // Keys of the scoped actions of one widget: while it has the focus they win over the window's shortcuts
 class ScopeKeys : public QObject {
 public:
-    explicit ScopeKeys(QWidget* scope) : QObject(scope) { scope->installEventFilter(this); }
+    static constexpr const char* Name = "schneidi_scope_keys";
+    explicit ScopeKeys(QWidget* scope) : QObject(scope)
+    {
+        setObjectName(Name);
+        scope->installEventFilter(this);
+    }
     QList<QAction*> actions;
 
 protected:
@@ -457,7 +462,7 @@ void InputBindings::registerScopedAction(QAction* action, const QString& id, con
 {
     registerAction(action, id, category, defaultKey);
     m_entries.last().scope = scope;
-    ScopeKeys* keys = scope->findChild<ScopeKeys*>(QString(), Qt::FindDirectChildrenOnly);
+    auto* keys = dynamic_cast<ScopeKeys*>(scope->findChild<QObject*>(ScopeKeys::Name, Qt::FindDirectChildrenOnly));
     if (!keys) keys = new ScopeKeys(scope);
     keys->actions << action;
 }
