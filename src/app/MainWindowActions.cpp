@@ -669,6 +669,7 @@ void MainWindow::buildActions()
     QMenu* help = menuBar()->addMenu(T("&Hilfe"));
     makeAction(help, "open_log_folder", T("Log-Ordner öffnen"), QKeySequence(),
                [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
+    makeAction(help, "check_updates", T("Nach Updates suchen…"), QKeySequence(), [this] { checkForUpdates(true); });
 
     InputBindings::instance().saveIfIncomplete();
 }

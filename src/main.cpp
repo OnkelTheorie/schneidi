@@ -200,6 +200,7 @@ int main(int argc, char* argv[])
     if (!projectFile.isEmpty() && !restored) w.openProject(QFileInfo(projectFile).absoluteFilePath());
     liveWaiting({});
     if (!testRun) QTimer::singleShot(0, &w, [&w] { CrashReport::offer(&w); }); // crashed last time: show the report
+    if (!testRun) w.startUpdateCheck(); // at most once a day, a few seconds from now
     if (!formatArg.isEmpty()) {
         const QStringList parts = formatArg.split(QRegularExpression("[x@]"));
         ProjectFormat f;

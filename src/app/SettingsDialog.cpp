@@ -2,9 +2,12 @@
 
 #include "app/AiSettingsPage.h"
 #include "app/Theme.h"
+#include "app/UpdateCheck.h"
 #include "core/I18n.h"
 
+#include <QCheckBox>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -81,9 +84,52 @@ QWidget* SettingsDialog::buildGeneral()
     form->addRow(buttons);
     form->addRow(hint(T("Sprache und Design ändern sich nach dem Neustart von schneidi.")));
     lay->addWidget(look);
+
+    // Update hint (the check itself happens in the main window; "Check now" asks right here)
+    auto* updates = new QGroupBox(T("Updates"));
+    auto* uform = new QFormLayout(updates);
+    m_updateHint = new QCheckBox(T("Beim Start nach neuen Versionen suchen (höchstens einmal am Tag)"));
+    m_updateHint->setChecked(UpdateCheck::enabled());
+    uform->addRow(m_updateHint);
+    auto* checkRow = new QHBoxLayout;
+    m_checkNow = new QPushButton(T("Jetzt suchen"));
+    m_checkNow->setObjectName("update_check_now");
+    m_updateResult = new QLabel;
+    m_updateResult->setObjectName("update_result");
+    m_updateResult->setWordWrap(true);
+    m_updateResult->setOpenExternalLinks(true);
+    m_updateResult->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    checkRow->addWidget(m_checkNow);
+    checkRow->addWidget(m_updateResult, 1);
+    uform->addRow(checkRow);
+    uform->addRow(hint(T("Fragt GitHub nach der neuesten Version; mit geht nur die Versionsnummer, nichts über deine "
+                         "Projekte. Neue Versionen gibt es auf der Release-Seite.")));
+    lay->addWidget(updates);
+    m_updates = new UpdateCheck(this);
+    const QString current = UpdateCheck::runningVersion(QCoreApplication::applicationVersion());
+    connect(m_checkNow, &QPushButton::clicked, this, [this, current] {
+        m_checkNow->setEnabled(false);
+        m_updateResult->setText(T("Suche…"));
+        m_updates->check(current);
+    });
+    connect(m_updates, &UpdateCheck::newer, this, [this](const UpdateCheck::Release& r, const QString& cur) {
+        m_checkNow->setEnabled(true);
+        m_updateResult->setText(T("schneidi %1 ist da (du hast %2).").arg(r.version, cur) + QString(" <a href=\"%1\">%2</a>")
+                                    .arg(r.page.toString().toHtmlEscaped(), T("Release-Seite öffnen")));
+    });
+    connect(m_updates, &UpdateCheck::upToDate, this, [this](const QString& cur) {
+        m_checkNow->setEnabled(true);
+        m_updateResult->setText(T("schneidi ist aktuell (%1).").arg(cur).toHtmlEscaped());
+    });
+    connect(m_updates, &UpdateCheck::failed, this, [this](const QString& message) {
+        m_checkNow->setEnabled(true);
+        m_updateResult->setText(T("Suche fehlgeschlagen: %1").arg(message).toHtmlEscaped());
+    });
     lay->addStretch(1);
     return page;
 }
+
+bool SettingsDialog::updateHint() const { return m_updateHint->isChecked(); }
 
 void SettingsDialog::showTab(Tab tab) { m_tabs->setCurrentIndex(tab == Tab::Ai ? 1 : 0); }
 

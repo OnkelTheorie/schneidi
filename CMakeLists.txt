@@ -153,6 +153,7 @@ add_library(schneidi_lib STATIC
     src/app/SettingsDialog.h src/app/SettingsDialog.cpp
     src/app/AiSettings.h src/app/AiSettings.cpp
     src/app/AiSettingsPage.h src/app/AiSettingsPage.cpp
+    src/app/UpdateCheck.h src/app/UpdateCheck.cpp
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp

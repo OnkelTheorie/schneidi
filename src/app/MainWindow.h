@@ -13,6 +13,7 @@
 #include <QLockFile>
 #include <QMainWindow>
 #include <QTimer>
+#include <QUrl>
 #include <functional>
 #include <memory>
 
@@ -79,6 +80,10 @@ public:
     void settingsDialog(int tab = 0);
     const AiSettings& aiSettings() const { return m_aiSettings; }
     void setAiSettings(const AiSettings& s);
+    // Update hint (app/UpdateCheck.h): automatically at most once a day a few seconds after the start (main.cpp, not
+    // in test runs); manual = Help › Check for Updates… (also says "up to date" or why it failed)
+    void startUpdateCheck();
+    void checkForUpdates(bool manual);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -254,6 +259,13 @@ private:
     // AI indicator in the top bar (MainWindowLive.cpp)
     void updateLiveIndicator();
     AiSettings m_aiSettings; // Settings › AI
+
+    // Update hint: bar below the top bar with "Now / Later / Don't ask again" (MainWindowSettings.cpp)
+    QWidget* buildUpdateBar();
+    class UpdateCheck* m_updates = nullptr;
+    QWidget* m_updateBar = nullptr;
+    class QLabel* m_updateText = nullptr;
+    QUrl m_updatePage;
     static QString liveOffReason(); // for the AI: connections are off in the settings
     QWidget* buildLiveIndicator();
     QWidget* m_liveBox = nullptr;
