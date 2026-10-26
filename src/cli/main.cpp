@@ -2,12 +2,15 @@
 //   schneidi-cli help                      all commands (JSON)
 //   schneidi-cli info film.schneidi        timeline as JSON
 //   schneidi-cli mcp                       MCP server on stdio (Claude Desktop, Claude Code, …)
+//   schneidi-cli serve --root /data        MCP server over HTTP (AIs on other devices, Docker), cli/Serve.h
 //   schneidi-cli setup claude              connect Claude Code / Claude Desktop (MCP server + guide)
 // stdout carries only JSON; logs and progress go to stderr.
 #include "buildinfo.h"
 #include "cli/Commands.h"
 #include "cli/Live.h"
 #include "cli/Mcp.h"
+#include "cli/Sandbox.h"
+#include "cli/Serve.h"
 #include "cli/Setup.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
@@ -119,6 +122,8 @@ int main(int argc, char* argv[])
     const QString name = args.takeFirst();
     if (name == "setup") return Cli::Setup::run(args, pretty);
 
+    // The HTTP server only routes: MLT runs in its workers (`mcp` processes)
+    if (name == "serve") return Cli::Serve::run(args);
     if (name != "help") {
         QString error;
         if (!Engine::initMlt(&error)) {
@@ -127,8 +132,19 @@ int main(int argc, char* argv[])
         }
     }
     if (name == "mcp") {
+        Cli::Mcp::Options opt;
+        try {
+            const auto o = Cli::Serve::parseOptions(args, {"root", "map"}, {"no-extensions"});
+            Cli::Sandbox::configure({o.value("root").value(0), o.value("map")});
+            opt.root = Cli::Sandbox::root();
+            opt.app = Cli::Sandbox::appAllowed();
+            opt.extensions = !o.contains("no-extensions");
+        } catch (const Cli::Error& e) {
+            print(errorJson(e.code, e.message), pretty);
+            return 2;
+        }
         Cli::Live::setClientName("schneidi-cli mcp");
-        return Cli::runMcp();
+        return Cli::Mcp::run(opt);
     }
 
     const Cli::Command* cmd = Cli::find(name);

@@ -2,6 +2,8 @@
 #include "cli/CommandsDetail.h"
 #include "cli/Guide.h"
 #include "cli/Live.h"
+#include "cli/Sandbox.h"
+#include "cli/Serve.h"
 
 #include "core/Editor.h"
 #include "core/StreamPresets.h"
@@ -50,9 +52,9 @@ void fail(const QString& code, const QString& message) { throw Error{code, messa
 
 QString absolute(const QString& path)
 {
-    if (path.isEmpty()) return path;
-    if (Live::isAppProject(path)) return QString(Live::AppProject); // not a file in the working directory
-    return QFileInfo(path).absoluteFilePath();
+    // "@app" stays (not a file in the working directory); in a work folder (server) relative paths start there and
+    // nothing outside it is allowed
+    return Sandbox::resolve(path);
 }
 
 // ---------- Times ----------
@@ -173,6 +175,7 @@ Session::Opened openSession(const QString& file, Session::Access access)
     if (!ProjectFile::load(o.path, &d, &error)) fail("BAD_PROJECT", error);
     o.own = std::make_unique<Project>();
     o.own->load(d);
+    Sandbox::checkProject(*o.own);
     return o;
 }
 
@@ -219,6 +222,7 @@ QString Session::save()
     if (!lock) fail("INTERNAL", "session was opened read-only");
     // The app opens the timeline the user had open (or the one an op asked for), not the last one edited
     if (project.sequence(m_open)) project.setCurrentSequence(m_open);
+    Sandbox::checkProject(project); // e.g. media of an imported timeline
     const QString backup = ProjectFile::backup(path);
     QString error;
     if (!ProjectFile::save(project.data(), path, &error)) fail("SAVE_FAILED", error);
@@ -479,7 +483,7 @@ QString findAsset(Asset kind, const QString& name)
             || name == QFileInfo(e.path).fileName())
             return e.path;
     }
-    if (QFileInfo::exists(name)) return absolute(name);
+    if (const QString file = absolute(name); QFileInfo::exists(file)) return file;
     static const char* what[] = {"LUT", "luma transition", "effect preset"};
     fail("NOT_FOUND", QString("no %1 '%2' (`effects` lists them, or give a file)").arg(what[int(kind)], name));
 }
@@ -889,7 +893,7 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& raw)
         switch (p.type) {
         case ParamType::String: out[p.name] = v.isString() ? str : v.toVariant().toString(); break;
         case ParamType::Path:
-            out[p.name] = Live::isAppProject(str) ? str.trimmed() : absolute(str);
+            out[p.name] = absolute(str);
             ok = v.isString() && !str.isEmpty();
             break;
         case ParamType::Integer:
@@ -964,6 +968,11 @@ QJsonObject cmdGuide(const QJsonObject& a, Context&)
 
 QJsonObject cmdHelp(const QJsonObject& a, Context&)
 {
+    // The servers are not commands of the table: their options
+    const QJsonObject servers = Serve::help();
+    if (servers.contains(a["command"].toString()))
+        return {{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
+                {a["command"].toString(), servers[a["command"].toString()]}};
     QJsonArray list;
     for (const Command& c : commands()) {
         if (a.contains("command") && c.name != a["command"].toString()) continue;
@@ -995,10 +1004,11 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
     return {{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
             {"api_version", ApiVersion},
             {"usage", "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, "
-                      "exit code 0 = ok, 1 = error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio; "
-                      "`schneidi-cli setup claude` connects Claude Code and Claude Desktop to it. "
+                      "exit code 0 = ok, 1 = error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio, "
+                      "`schneidi-cli serve` one over HTTP (see 'servers'); `schneidi-cli setup claude` connects Claude "
+                      "Code and Claude Desktop to it. "
                       "--verbose: progress notes and engine messages on stderr."},
-            {"commands", list}};
+            {"commands", list}, {"servers", servers}};
 }
 
 } // namespace

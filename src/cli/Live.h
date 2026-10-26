@@ -106,5 +106,7 @@ Snapshot snapshot(Connection* c);
 QJsonObject run(Connection* c, const QString& command, const QJsonObject& args);
 // Name shown in the app ("schneidi-cli" or "schneidi-cli mcp"); set by main()
 void setClientName(const QString& name);
+// Never connect to an app (server, work folder: cli/Sandbox.h): projects are always files
+void disable();
 
 } // namespace Cli::Live
