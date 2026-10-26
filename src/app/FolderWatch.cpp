@@ -98,6 +98,7 @@ void FolderWatch::startScan()
     if (watches.isEmpty()) return;
     QSet<QString> pool;
     for (const MediaInfo& m : m_project->media()) pool.insert(WatchFolders::pathKey(m.path));
+    for (const WatchImport& w : m_waiting) pool.insert(WatchFolders::pathKey(w.media.path)); // probed already
     m_running = true;
     m_scanner->setSettleMs(m_settleMs);
     const ProjectFormat format = m_project->format();

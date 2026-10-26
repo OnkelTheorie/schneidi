@@ -262,6 +262,7 @@ QJsonObject follow(const QJsonObject& a, Context& ctx)
     QHash<QString, qint64> dirty; // files that came or changed since the last pass -> when they last changed (ms)
     QString projectFile;
     QDateTime projectTime;
+    QString lastWarning; // the same problem again (the user turned AI connections off in the app): said once
     for (bool pass = true;; QThread::msleep(1000)) {
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         if (!pass) {
@@ -286,10 +287,12 @@ QJsonObject follow(const QJsonObject& a, Context& ctx)
             // The app is busy with another AI, waits for the user or was closed; the file is being saved: again soon
             static const QStringList transient{"APP_BUSY", "APP_WAITING", "APP_DISCONNECTED", "PROJECT_LOCKED"};
             if (!transient.contains(e.code)) throw;
-            warn(e);
+            if (e.code != lastWarning) warn(e);
+            lastWarning = e.code;
             QThread::msleep(1000);
             continue;
         }
+        lastWarning.clear();
         for (const QJsonValue& v : r["new"].toArray()) ctx.line(v.toObject());
         revision = r["revision"].toInt();
         watches = watchesOf(r["folders"].toArray());
