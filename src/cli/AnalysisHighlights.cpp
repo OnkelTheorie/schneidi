@@ -2,6 +2,8 @@
 // moments, ready for the 'keep' edit operation
 #include "cli/AnalysisDetail.h"
 
+#include "engine/FrameGaps.h"
+
 #include <QJsonArray>
 
 #include <algorithm>
@@ -17,6 +19,8 @@ struct Candidate {
     int peaks = 0;         // loud moments inside
     double loudest = -200; // dBFS of the loudest of them
     double score = 0;
+    QVector<Stutter::Stretch> stutter; // jumps in the recording's time stamps inside (the game lagged)
+    QVector<QPair<int, int>> clean;    // with stutter: the parts without it, source frames
 };
 
 QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
@@ -83,8 +87,28 @@ QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
                        : c.peaks + std::max(0.0, c.loudest - sound.thresholdDb) / 3;
     }
 
-    QJsonArray keep;
-    for (const Candidate& c : list) keep << QJsonArray{c.from, c.to};
+    // Stutter (variable frame rate capture that dropped frames while the game lagged): the stretches inside each
+    // candidate and its parts without them, so only the lagging part is cut instead of the whole moment
+    const std::optional<Stutter::Scan> gaps =
+        m.info.hasVideo && !m.info.isImage ? FrameGaps::scan(m.info.path) : std::nullopt;
+    const double fps = f.rate.fps();
+    bool anyStutter = false;
+    if (gaps && !gaps->jumps.isEmpty())
+        for (Candidate& c : list) {
+            c.stutter = Stutter::stretches(Stutter::inRange(*gaps, c.from / fps, c.to / fps));
+            if (c.stutter.isEmpty()) continue;
+            anyStutter = true;
+            for (const auto& [s0, s1] : Stutter::cleanPieces(*gaps, c.from / fps, c.to / fps))
+                if (const int x = int(std::ceil(s0 * fps - 1e-6)), y = int(std::ceil(s1 * fps - 1e-6)); y > x)
+                    c.clean.append({x, y});
+        }
+
+    QJsonArray keep, keepClean;
+    for (const Candidate& c : list) {
+        keep << QJsonArray{c.from, c.to};
+        if (c.stutter.isEmpty()) keepClean << QJsonArray{c.from, c.to};
+        for (const auto& [x, y] : c.clean) keepClean << QJsonArray{x, y};
+    }
     std::stable_sort(list.begin(), list.end(), [](const Candidate& x, const Candidate& y) { return x.score > y.score; });
     QJsonArray candidates;
     for (const Candidate& c : list) {
@@ -107,11 +131,28 @@ QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
             o["loudest_db"] = std::round(c.loudest * 10) / 10;
             reasons << QString("%1 loud moment%2").arg(c.peaks).arg(c.peaks == 1 ? "" : "s");
         }
+        if (!c.stutter.isEmpty()) {
+            QJsonArray st, clean;
+            int missing = 0;
+            for (const Stutter::Stretch& x : c.stutter) {
+                st << stretchJson(x, f);
+                missing += x.missing;
+            }
+            for (const auto& [x, y] : c.clean) {
+                QJsonObject piece = range(x, y, f);
+                piece["kills"] = int(std::count_if(c.kills.begin(), c.kills.end(), [&](int k) { return k >= x && k < y; }));
+                clean << piece;
+            }
+            o["stutter"] = st;
+            o["clean"] = clean;
+            reasons << QString("stutter: %1 frame%2 missing").arg(missing).arg(missing == 1 ? "" : "s");
+        }
         o["reasons"] = QJsonArray::fromStringList(reasons);
         candidates << o;
     }
     QJsonObject out{{"file", m.info.path}, {"frames", m.info.length}, {"fps", formatJson(f)["fps"]},
                     {"candidates", candidates}, {"keep", keep}};
+    if (anyStutter) out["keep_clean"] = keepClean;
     if (feed) out["kill_feed_most_pct"] = std::round(most * 1e5) / 1e3;
     return out;
 }

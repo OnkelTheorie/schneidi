@@ -659,10 +659,16 @@ const QVector<Command>& commands()
           {"timeline", T::String, "timeline to render (id or name; default: the open one)"},
           {"overwrite", T::Boolean, "replace an existing output file"}},
          cmdRender},
-        {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams.",
+        {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams. With gaps: the stutter "
+                  "of a recording with variable frame rate (variable_frame_rate true: game capture keeps the time "
+                  "stamps of the frames it got, so where the game lagged the picture stands still).",
          {{"file", T::Path, "media file", false, true},
           {"files", T::Paths, "several media files at once (a list of results)"},
-          {"project", T::Path, "count frames in this project's frame rate (default: the file's own)"}},
+          {"project", T::Path, "count frames in this project's frame rate (default: the file's own)"},
+          {"gaps", T::Boolean, "also find jumps in the picture's time stamps longer than 2 frame durations: 'jumps' "
+                               "(at_s, length_s, missing_frames; from/to = frames that repeat the old picture) and "
+                               "'stutter' (jumps less than 0.5 s apart as one stretch, from/to). Fast (reads the "
+                               "packets, no decoding), cached. Cut stutter stretches out of the ranges you use"}},
          cmdProbe},
         {"silence", "Find pauses in the audio of a media file or a project's timeline. Returns 'silence' and "
                     "'sound' ranges [from, to); for a project they are timeline frames and 'sound' fits the 'keep' "
@@ -749,7 +755,10 @@ const QVector<Command>& commands()
                        "`scenes` color) and loud moments, as source ranges with lead-in and lead-out, best first. "
                        "Kills closer than 'join' are one candidate (a multi kill scores more). Without a kill feed the "
                        "sound alone (bursts of loud moments) gives the candidates, e.g. for sport or vlogs. 'keep' "
-                       "of each file fits the 'keep' edit operation; check candidates with `frames` crop.",
+                       "of each file fits the 'keep' edit operation; check candidates with `frames` crop. A candidate "
+                       "over stutter in the recording (jumps in the time stamps, see `probe` gaps) has 'stutter' (the "
+                       "stretches) and 'clean' (its parts without them, with their kills); 'keep_clean' is 'keep' with "
+                       "only those parts - use it to drop the lag, not the moment.",
          {{"file", T::Path, "video file", false, true},
           {"files", T::Paths, "several video files (one result each, plus 'best': all candidates by score)"},
           {"region", T::String, "where the kill feed is, \"x,y,w,h\" (fractions 0..1 or pixels; look with `frames` "

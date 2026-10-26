@@ -2,6 +2,7 @@
 // Shared parts of the commands that look at the material (Analysis.cpp, AnalysisAudio.cpp, AnalysisVideo.cpp)
 
 #include "cli/CommandsDetail.h"
+#include "core/Stutter.h"
 #include "engine/Profiles.h"
 
 #include <QColor>
@@ -28,6 +29,14 @@ QRect cropRect(const QString& spec, QSize full);
 // One file (`file`) or several (`files`, one result each, looked at in parallel up to `parallel` at once)
 QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const QJsonObject&, Context&),
                     int parallel = 6);
+
+// ---------- Stutter (Analysis.cpp; core/Stutter.h, engine/FrameGaps.h) ----------
+
+// Frames [from, to) in `f` where a jump (or a stretch of them) between source seconds `at` and `end` holds the picture:
+// from the frame after the last good one up to the next one (at least one frame)
+QPair<int, int> frozenFrames(double at, double end, const ProjectFormat& f);
+// A stretch of stutter as a range with its jumps, missing frames and the longest jump
+QJsonObject stretchJson(const Stutter::Stretch& st, const ProjectFormat& f);
 
 // ---------- Sound (AnalysisAudio.cpp) ----------
 
