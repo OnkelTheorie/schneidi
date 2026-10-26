@@ -86,7 +86,7 @@ PoolFilterButton::PoolFilterButton(QWidget* parent) : QToolButton(parent)
     const struct { PoolFilter::Kind kind; const char* name; } kinds[] = {
         {PoolFilter::Video, N_("Video")},
         {PoolFilter::Audio, N_("Audio")},
-        {PoolFilter::Image, N_("Bilder")},
+        {PoolFilter::Image, N_("Standbilder")},
         {PoolFilter::Timeline, N_("Timelines und Compound Clips")},
     };
     for (const auto& k : kinds) {

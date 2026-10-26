@@ -32,7 +32,7 @@ QString PoolFilter::summary() const
     QStringList parts;
     QStringList names;
     const struct { Kind kind; const char* name; } kindNames[] = {
-        {Video, N_("Video")}, {Audio, N_("Audio")}, {Image, N_("Bilder")}, {Timeline, N_("Timelines")}};
+        {Video, N_("Video")}, {Audio, N_("Audio")}, {Image, N_("Standbilder")}, {Timeline, N_("Timelines")}};
     for (const auto& k : kindNames)
         if (kinds & k.kind) names << T(k.name);
     if (!names.isEmpty()) parts << names.join(", ");
