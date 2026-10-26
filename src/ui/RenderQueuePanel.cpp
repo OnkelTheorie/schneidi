@@ -8,6 +8,7 @@
 #include "engine/RenderQueue.h"
 
 #include <QAction>
+#include <QCursor>
 #include <QDir>
 #include <QDrag>
 #include <QDropEvent>

@@ -7,6 +7,7 @@
 #include "core/RenderJob.h"
 #include "core/TimelineOps.h"
 #include "engine/Exporter.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/RenderQueue.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
@@ -671,6 +672,69 @@ int main(int argc, char** argv)
         CHECK_EQ(finishedCount, 1);
         CHECK(job(p, 8)->status == RenderStatus::Done);
         CHECK(job(p, 9)->status == RenderStatus::Queued);
+    }
+
+    // Preparing a job (graphics card probe, opening the files, analyses) runs in the background: start() returns at
+    // once, the event loop goes on meanwhile (the window stays usable), the job is "preparing" until its first progress
+    {
+        p.setRenderQueue({mk(13, "prep.mp4", "h264")});
+        int preparing = 0, firstProgress = -1;
+        bool loopWhilePreparing = false;
+        const auto c1 = QObject::connect(&q, &RenderQueue::preparing, [&](int id) { preparing = id; });
+        const auto c2 = QObject::connect(&q, &RenderQueue::progress, [&](int, int percent) {
+            if (firstProgress < 0) firstProgress = percent;
+        });
+        CHECK(q.start());
+        CHECK_EQ(preparing, 13);
+        CHECK(q.isPreparing());
+        CHECK(job(p, 13)->status == RenderStatus::Rendering);
+        QTimer::singleShot(0, &q, [&] { loopWhilePreparing = q.isPreparing(); });
+        CHECK(waitFor(q));
+        CHECK(loopWhilePreparing);
+        CHECK_EQ(firstProgress, 0);
+        CHECK(!q.isPreparing());
+        CHECK(job(p, 13)->status == RenderStatus::Done);
+        QObject::disconnect(c1);
+        QObject::disconnect(c2);
+    }
+
+    // Cancel while preparing: nothing written, the job canceled, the rest waits, nothing keeps running
+    {
+        p.setRenderQueue({mk(14, "prepcancel.mp4", "h264"), mk(15, "prepnext.mp4", "h264")});
+        int finishedCount = 0;
+        const auto c = QObject::connect(&q, &RenderQueue::finished, [&] { ++finishedCount; });
+        CHECK(q.start());
+        CHECK(q.isPreparing());
+        q.cancel();
+        CHECK(!q.isRunning() && !q.isPreparing());
+        CHECK(job(p, 14)->status == RenderStatus::Canceled);
+        CHECK(job(p, 15)->status == RenderStatus::Queued);
+        QEventLoop settle;
+        QTimer::singleShot(300, &settle, &QEventLoop::quit);
+        settle.exec();
+        QObject::disconnect(c);
+        CHECK_EQ(finishedCount, 1);
+        CHECK(!Exporter::anyRunning());
+        CHECK(!QFileInfo::exists(tmp.filePath("prepcancel.mp4")) && !QFileInfo::exists(tmp.filePath("prepnext.mp4")));
+    }
+
+    // Encoder "Auto" in the first job of a session waits for the graphics card probe: in the background too, cancel
+    // works meanwhile, the next start waits again and renders
+    {
+        HardwareEncoders::resetForTests();
+        RenderJob autoJob = mk(16, "probe.mp4", "h264");
+        autoJob.settings.encoder = VideoEncoder::Auto;
+        p.setRenderQueue({autoJob});
+        CHECK(q.start());
+        CHECK(q.isPreparing());
+        q.cancel();
+        CHECK(!q.isRunning());
+        CHECK(job(p, 16)->status == RenderStatus::Canceled);
+        CHECK(q.start({16}));
+        CHECK(waitFor(q));
+        CHECK(HardwareEncoders::probed());
+        CHECK(job(p, 16)->status == RenderStatus::Done);
+        CHECK(QFileInfo(autoJob.path).size() > 0);
     }
 
     // Order: "Render all" takes the waiting jobs in the queue's order as it is when the next one starts, so dragging
