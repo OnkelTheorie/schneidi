@@ -841,6 +841,31 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         }
         CHECK(colorEvents["most_pct"].toDouble() > 0.5);
         CHECK_EQ(errorOf("scenes", {{"file", marks}, {"color", "#e7e371"}}), QString("BAD_ARGUMENT")); // no region
+        // A semi-transparent kill feed line (CS2): an opaque inner outline and a see-through outer one that only
+        // matches the colour on a dark background. The background turns light (3 s) and dark again (4.5 s): the same
+        // line looking stronger is no new kill (it was counted again before); the second line at 6 s is
+        const QString lineAt1 = "x=400:y=20:w=200:h=26:t=2:c=0xd01010:enable='gte(t,1)',"
+                                "drawbox=x=398:y=18:w=204:h=30:t=2:c=0xd01010@0.5:enable='gte(t,1)'";
+        const QString lineAt6 = "x=400:y=62:w=200:h=26:t=2:c=0xd01010:enable='gte(t,6)',"
+                                "drawbox=x=398:y=60:w=204:h=30:t=2:c=0xd01010@0.5:enable='gte(t,6)'";
+        const QString feed = Check::makeMedia(
+            dir.filePath("feed.mkv"),
+            {"-f", "lavfi", "-i",
+             "color=c=0x202020:s=640x360:d=8:r=25,drawbox=x=0:y=0:w=iw:h=ih:c=0x8090b0:t=fill:enable='between(t,3,4.5)',"
+             "drawbox=" + lineAt1 + ",drawbox=" + lineAt6,
+             "-c:v", "ffv1", "-pix_fmt", "bgr0"});
+        const QJsonObject feedArgs{{"file", feed}, {"region", "0.5,0,0.5,0.4"}, {"color", "#961414"}, {"tolerance", 60}};
+        QJsonObject feedBoth = feedArgs;
+        feedBoth["only"] = "both";
+        const QJsonArray lines = run("scenes", feedBoth)["changes"].toArray();
+        if (CHECK_EQ(lines.size(), 2)) {
+            CHECK(std::abs(lines[0]["s"].toDouble() - 1.0) < 0.15);
+            CHECK(std::abs(lines[1]["s"].toDouble() - 6.0) < 0.15);
+            CHECK_EQ(lines[1]["kind"].toString(), QString("appear"));
+        }
+        int feedKills = 0;
+        for (const QJsonValue& c : run("highlights", feedArgs)["candidates"].toArray()) feedKills += c["kills"].toInt();
+        CHECK_EQ(feedKills, 2);
         // highlights (0.10): the mark as a kill with lead-in/out; without a kill feed the two tone bursts
         const QJsonObject hl = run("highlights", {{"file", marks}, {"region", "0.5,0,0.5,0.8"}, {"color", "#e7e371"}});
         if (CHECK_EQ(hl["candidates"].toArray().size(), 1)) {

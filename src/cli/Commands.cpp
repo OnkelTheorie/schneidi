@@ -658,7 +658,8 @@ const QVector<Command>& commands()
           {"region", T::String, "only this part of the picture \"x,y,w,h\" (pixels or fractions 0..1, like frames crop)"},
           {"color", T::String, "with region: only pixels of this colour count (\"#e7e371\": a mark of what you look "
                                "for, e.g. the yellow of your own kill feed lines; pick it from a `frames` crop). "
-                               "'changes' are then moments where more of it appears and stays"},
+                               "'changes' are then moments where more of it appears in a new place (a new line) "
+                               "and stays; the same mark looking stronger on another background does not count"},
           {"tolerance", T::Integer, "with color: largest difference per channel, 0..255 (default 25)"},
           {"only", T::String, "with color: appear (default: more of the colour), disappear or both"},
           {"min_area", T::Number, "with color: smallest change as a part of the whole picture (default 0.0001, about "

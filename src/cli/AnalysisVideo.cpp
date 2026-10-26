@@ -16,7 +16,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace Cli::detail {
@@ -201,11 +203,69 @@ QJsonObject regionChanges(const MediaSource& m, const QJsonObject& a, Context& c
                      "with `frames` crop"}};
 }
 
+// Rows with the colour as lines: runs of rows that have some (one empty row inside is a broken outline, not a gap
+// between two lines); runs with fewer than `speck` pixels are specks of the background, not a line
+std::vector<std::pair<int, int>> colorLines(const std::vector<int>& rows, double speck)
+{
+    std::vector<std::pair<int, int>> out;
+    const int h = int(rows.size());
+    for (int y = 0; y < h;) {
+        if (rows[size_t(y)] == 0) {
+            ++y;
+            continue;
+        }
+        const int first = y;
+        int last = y, sum = 0;
+        while (y < h && (rows[size_t(y)] > 0 || (y + 1 < h && rows[size_t(y + 1)] > 0))) {
+            if (rows[size_t(y)] > 0) {
+                last = y;
+                sum += rows[size_t(y)];
+            }
+            ++y;
+        }
+        if (sum >= speck) out.emplace_back(first, last);
+    }
+    return out;
+}
+
+// Pixels of the colour in `to` (pixels per row of one sample) that the lines of `from` (the other side of a moment)
+// do not explain. The same line explains its rows and `margin` rows around them: semi-transparent kill feed lines
+// (CS2) match the colour more or less depending on the game behind them, so an outline edge comes and goes. Or all
+// lines moved up or down together (an old one went away) and brightened while doing so. What is left is colour in
+// a new place: a new line.
+int unexplainedColor(const std::vector<int>& from, const int* to, int margin, double speck)
+{
+    const int h = int(from.size());
+    std::vector<char> same(size_t(h), 0), moved(size_t(h), 0);
+    int tallest = 0;
+    for (const auto& [first, last] : colorLines(from, speck)) {
+        tallest = std::max(tallest, last - first + 1);
+        for (int y = std::max(0, first - margin); y <= std::min(h - 1, last + margin); ++y) same[size_t(y)] = 1;
+        for (int y = std::max(0, first - 1); y <= std::min(h - 1, last + 1); ++y) moved[size_t(y)] = 1;
+    }
+    int total = 0, explained = 0;
+    for (int y = 0; y < h; ++y) {
+        total += to[y];
+        if (same[size_t(y)]) explained += to[y];
+    }
+    // Lines move by a whole line (at least their height): a smaller shift would only blur "the same place"
+    if (tallest > 0)
+        for (int d = std::max(tallest, 2 * margin + 1); d < h; ++d)
+            for (const int shift : {-d, d}) {
+                int e = 0;
+                for (int y = std::max(0, shift); y < std::min(h, h + shift); ++y)
+                    if (moved[size_t(y - shift)]) e += to[y];
+                explained = std::max(explained, e);
+            }
+    return total - explained;
+}
+
 } // namespace
 
 // Events of one colour in a region (the yellow mark of the player's own kill feed lines): how much of the picture
 // has that colour, and moments where it rises (something appeared) or falls and stays. Counting the colour instead
-// of comparing pixels ignores lines moving up when an old one goes away.
+// of comparing pixels ignores lines moving up when an old one goes away; a rise only counts when the new colour is
+// in rows it was not in just before (a new line, not the same line on a brighter background).
 ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::function<void(double)>& progress)
 {
     const ProjectFormat& f = m.format;
@@ -216,6 +276,7 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
     const QString only = a.contains("only") ? a["only"].toString() : "appear";
     if (only != "appear" && only != "disappear" && only != "both")
         fail("BAD_ARGUMENT", "only must be appear (default), disappear or both");
+    const bool appears = only != "disappear", disappears = only != "appear";
     // Share of the whole picture, so it does not depend on the region's size (default ~200 pixels in 1080p)
     const double minArea = a.contains("min_area") ? a["min_area"].toDouble() : 0.0001;
     if (minArea <= 0 || minArea >= 1) fail("BAD_ARGUMENT", "min_area must be between 0 and 1 (default 0.0001)");
@@ -242,16 +303,59 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
     const double picture = double(full.width()) * full.height();
     const int cr = color.red(), cg = color.green(), cb = color.blue();
     std::vector<double> share; // per sample: part of the picture in the colour (inside the region)
+    // rise(t): how much more of the colour there is from t on than just before (lines slide in for a few
+    // samples), and it stays; fall(t) the other way round
+    const auto lo = [&](int from, int to) {
+        double v = 1;
+        for (int k = std::max(0, from); k <= std::min(int(share.size()) - 1, to); ++k) v = std::min(v, share[size_t(k)]);
+        return v;
+    };
+    const auto hi = [&](int from, int to) {
+        double v = 0;
+        for (int k = std::max(0, from); k <= std::min(int(share.size()) - 1, to); ++k) v = std::max(v, share[size_t(k)]);
+        return v;
+    };
+    std::vector<double> rise, fall;
+    // Where the colour is: pixels per row of the last kWindow samples (t-3 … t+4 around a moment t)
+    constexpr int kWindow = 8;
+    std::vector<int> rows(size_t(kWindow) * h, 0);
+    const auto rowsOf = [&](int sample) { return rows.data() + size_t(sample % kWindow) * h; };
+    const int margin = std::max(2, int(std::lround(4.0 * full.height() / 1080))); // an outline edge (1-2 px) and more
+    const double speck = minArea * picture / 2;
+    // The colour that arrived (left) at t: what the samples after (before) it have outside the rows of the other side
+    const auto changed = [&](int t, bool appear) {
+        std::vector<int> other(size_t(h), 0);
+        for (int k = appear ? t - 3 : t + 2; k <= (appear ? t - 1 : t + 4); ++k)
+            for (int y = 0; y < h; ++y) other[size_t(y)] = std::max(other[size_t(y)], rowsOf(k)[y]);
+        int least = std::numeric_limits<int>::max();
+        for (int k = appear ? t + 2 : t - 3; k <= (appear ? t + 4 : t - 1); ++k)
+            least = std::min(least, unexplainedColor(other, rowsOf(k), margin, speck));
+        return least;
+    };
     QByteArray raw;
     // Decoded samples are counted as they come (a long file would not fit in memory)
     const auto consume = [&] {
         qsizetype at = 0;
         for (; raw.size() - at >= frameBytes; at += frameBytes) {
             const uchar* p = reinterpret_cast<const uchar*>(raw.constData()) + at;
+            int* row = rowsOf(int(share.size()));
             int hits = 0;
-            for (int i = 0; i < w * h; ++i, p += 3)
-                hits += std::abs(p[0] - cr) <= tolerance && std::abs(p[1] - cg) <= tolerance && std::abs(p[2] - cb) <= tolerance;
+            for (int y = 0; y < h; ++y) {
+                int count = 0;
+                for (int x = 0; x < w; ++x, p += 3)
+                    count += std::abs(p[0] - cr) <= tolerance && std::abs(p[1] - cg) <= tolerance && std::abs(p[2] - cb) <= tolerance;
+                row[y] = count;
+                hits += count;
+            }
             share.push_back(hits / picture);
+            // The window around t = this sample - 4 is complete: a step that counts needs colour in a new place
+            rise.push_back(0.0);
+            fall.push_back(0.0);
+            if (const int t = int(share.size()) - 5; t >= 3) {
+                const double up = lo(t + 2, t + 4) - hi(t - 3, t - 1), down = lo(t - 3, t - 1) - hi(t + 2, t + 4);
+                if (appears && up >= minArea && changed(t, true) >= speck) rise[size_t(t)] = up;
+                if (disappears && down >= minArea && changed(t, false) >= speck) fall[size_t(t)] = down;
+            }
         }
         raw.remove(0, at);
     };
@@ -266,24 +370,7 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
     if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0)
         fail("DECODE_FAILED", "ffmpeg could not read the video: " + QString::fromUtf8(ff.readAllStandardError().right(400)).trimmed());
 
-    // rise(t): how much more of the colour there is from t on than just before (lines slide in for a few
-    // samples), and it stays; fall(t) the other way round
     const int n = int(share.size());
-    const auto lo = [&](int from, int to) {
-        double v = 1;
-        for (int k = std::max(0, from); k <= std::min(n - 1, to); ++k) v = std::min(v, share[size_t(k)]);
-        return v;
-    };
-    const auto hi = [&](int from, int to) {
-        double v = 0;
-        for (int k = std::max(0, from); k <= std::min(n - 1, to); ++k) v = std::max(v, share[size_t(k)]);
-        return v;
-    };
-    std::vector<double> rise(size_t(n), 0.0), fall(size_t(n), 0.0);
-    for (int t = 3; t + 4 < n; ++t) {
-        rise[size_t(t)] = lo(t + 2, t + 4) - hi(t - 3, t - 1);
-        fall[size_t(t)] = lo(t - 3, t - 1) - hi(t + 2, t + 4);
-    }
     const int minGap = std::max(1, int(std::lround((a.contains("min") ? parseTime(a["min"], f, "min") / f.rate.fps() : 0.5) * kRate)));
     struct Event {
         int sample;
@@ -292,7 +379,7 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
     };
     QVector<Event> events;
     for (const bool appear : {true, false}) {
-        if ((appear && only == "disappear") || (!appear && only == "appear")) continue;
+        if (appear ? !appears : !disappears) continue;
         const std::vector<double>& score = appear ? rise : fall;
         int last = -minGap;
         for (int t = 0; t < n; ++t) {
