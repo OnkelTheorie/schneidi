@@ -13,6 +13,25 @@ extern "C" {
 #include <mutex>
 #include <vector>
 
+#if defined(Q_OS_LINUX)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+// NVIDIA's libnvcuvid lowers "the process" whenever it creates a decoder: setpriority(PRIO_PROCESS, getpid(), 10)
+// from one of its threads. On Linux that is only the main thread, i.e. the window, and every thread started after it
+// inherits nice 10; without rights it never goes back up. The preview then loses against any other load. This
+// definition replaces the C library's in the executables (exported there, see CMakeLists.txt) and turns such a call
+// from another thread into one for the calling thread. Everything else passes through unchanged.
+int setpriority(__priority_which_t which, id_t who, int prio) noexcept
+{
+    const pid_t self = static_cast<pid_t>(syscall(SYS_gettid));
+    if (which == PRIO_PROCESS && who != 0 && static_cast<pid_t>(who) == getpid() && self != getpid())
+        who = static_cast<id_t>(self);
+    return static_cast<int>(syscall(SYS_setpriority, which, who, prio));
+}
+#endif
+
 namespace Video::Hardware {
 
 namespace {
