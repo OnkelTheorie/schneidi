@@ -1,5 +1,8 @@
 #include "engine/Snapshot.h"
 
+#include "core/ContactSheet.h"
+#include "core/Timecode.h"
+
 #include "engine/Profiles.h"
 #include "engine/TimelineBuilder.h"
 
@@ -79,6 +82,28 @@ QImage media(const ProjectFormat& format, const QString& path, int frame, int ma
 QImage timeline(const ProjectFormat& format, const Timeline& tl, int frame, int maxEdge)
 {
     return Source::timeline(format, tl)->frame(frame, maxEdge);
+}
+
+QImage contactSheet(const ProjectFormat& format, const Timeline& tl, const QVector<int>& frames, int tileWidth,
+                    int columns, const std::function<bool(int)>& progress, int* failed)
+{
+    if (failed) *failed = -1;
+    const auto source = Source::timeline(format, tl);
+    QVector<QImage> images;
+    QStringList labels;
+    for (int i = 0; i < frames.size(); ++i) {
+        if (progress && !progress(i)) return {};
+        // Decoded large enough for portrait formats too, then every tile exactly tileWidth wide
+        const QImage img = source->frame(frames[i], tileWidth * 2);
+        if (img.isNull()) {
+            if (failed) *failed = frames[i];
+            return {};
+        }
+        images << img.scaledToWidth(tileWidth, Qt::SmoothTransformation);
+        labels << Timecode::format(frames[i], format.rate.timebase());
+    }
+    if (progress) progress(int(frames.size()));
+    return ContactSheet::compose(images, labels, columns);
 }
 
 } // namespace Snapshot

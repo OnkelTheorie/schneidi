@@ -87,6 +87,7 @@ target_compile_definitions(test_live PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneid
 add_dependencies(test_live schneidi-cli)
 schneidi_test(test_setup)
 schneidi_test(test_check)
+schneidi_test(test_contact_sheet)
 target_link_libraries(test_check PRIVATE schneidi_cli_lib)
 target_link_libraries(test_setup PRIVATE schneidi_cli_lib)
 target_compile_definitions(test_setup PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")

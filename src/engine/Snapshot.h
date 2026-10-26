@@ -7,7 +7,9 @@
 
 #include <QImage>
 #include <QString>
+#include <QVector>
 
+#include <functional>
 #include <memory>
 
 namespace Mlt {
@@ -42,5 +44,11 @@ private:
 QImage media(const ProjectFormat& format, const QString& path, int frame, int maxEdge = 0);
 // Frame of a timeline (use Project::renderTimeline so compound clips render)
 QImage timeline(const ProjectFormat& format, const Timeline& tl, int frame, int maxEdge = 0);
+
+// Contact sheet of a timeline (core/ContactSheet.h): the frames scaled to tileWidth, labelled with their timecode.
+// progress(done) is asked before every frame; false cancels. Null image = canceled or a frame could not be read
+// (*failed = that frame, else -1).
+QImage contactSheet(const ProjectFormat& format, const Timeline& tl, const QVector<int>& frames, int tileWidth,
+                    int columns, const std::function<bool(int)>& progress = {}, int* failed = nullptr);
 
 } // namespace Snapshot

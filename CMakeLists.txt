@@ -94,6 +94,7 @@ add_library(schneidi_lib STATIC
     src/core/StreamPresets.h      src/core/StreamPresets.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
     src/core/ExportCheck.h        src/core/ExportCheck.cpp
+    src/core/ContactSheet.h       src/core/ContactSheet.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Background.h       src/engine/Background.cpp
@@ -165,6 +166,7 @@ add_library(schneidi_lib STATIC
     src/app/EqDialog.h src/app/EqDialog.cpp
     src/app/DynamicsDialog.h src/app/DynamicsDialog.cpp
     src/app/TimelineExportDialog.h src/app/TimelineExportDialog.cpp
+    src/app/ContactSheetDialog.h src/app/ContactSheetDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
     src/app/CrashReport.h         src/app/CrashReport.cpp
 

@@ -1,6 +1,7 @@
 // schneidi-cli: looking at the picture of the material (scenes, region events, frames, scopes)
 #include "cli/AnalysisDetail.h"
 
+#include "core/ContactSheet.h"
 #include "core/TimelineOps.h"
 #include "engine/Bundle.h"
 #include "engine/Snapshot.h"
@@ -24,37 +25,6 @@
 namespace Cli::detail {
 
 namespace {
-// Contact sheet: `columns` (0 = 2–4 depending on the count). Tiles of different sizes (sources with their own crop)
-// share the largest cell and are fitted into it, centered.
-QImage sheet(const QVector<QImage>& images, const QStringList& labels, int columns = 0)
-{
-    const int cols = columns > 0 ? std::min<int>(images.size(), columns)
-                                 : std::min<int>(images.size(), images.size() <= 4 ? 2 : images.size() <= 9 ? 3 : 4);
-    const int rows = (images.size() + cols - 1) / cols;
-    QSize cell;
-    for (const QImage& img : images) cell = cell.expandedTo(img.size());
-    QImage out(cols * cell.width(), rows * cell.height(), QImage::Format_RGB32);
-    out.fill(Qt::black);
-    QPainter p(&out);
-    p.setRenderHint(QPainter::SmoothPixmapTransform);
-    QFont font = p.font();
-    font.setPixelSize(std::clamp(cell.height() / 14, 12, 28));
-    p.setFont(font);
-    for (int i = 0; i < images.size(); ++i) {
-        const QPoint at((i % cols) * cell.width(), (i / cols) * cell.height());
-        QRect target(QPoint(), images[i].size().scaled(cell, Qt::KeepAspectRatio));
-        target.moveCenter(QRect(at, cell).center());
-        p.drawImage(target, images[i]);
-        const QRect box(at + QPoint(4, 4), QSize(p.fontMetrics().horizontalAdvance(labels[i]) + 8, p.fontMetrics().height() + 2));
-        p.fillRect(box, QColor(0, 0, 0, 170));
-        p.setPen(Qt::white);
-        p.drawText(box, Qt::AlignCenter, labels[i]);
-        p.setPen(QColor(60, 60, 60));
-        p.drawRect(QRect(at, cell).adjusted(0, 0, -1, -1));
-    }
-    return out;
-}
-
 // The frames of one source (media file or project timeline) for `frames`
 struct FrameSet {
     QString source;
@@ -93,7 +63,7 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
     }
     if (a.contains("count")) {
         const int n = std::clamp(a["count"].toInt(), 1, 100);
-        for (int i = 0; i < n; ++i) at << from + int((i + 0.5) * (to - from) / n);
+        at += ContactSheet::spread(from, to, n);
     }
     if (at.isEmpty()) fail("BAD_ARGUMENT", "give 'at' (times), 'every' (interval) or 'count' (evenly spread)");
     if (at.size() > 100) fail("BAD_ARGUMENT", QString("too many frames (%1, max 100)").arg(at.size()));
@@ -575,7 +545,7 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
     if (sources.size() == 1) result = {{"source", perSource[0].toObject()["source"]}, {"frames", perSource[0].toObject()["frames"]}};
     else result = {{"sources", perSource}};
     if (asSheet) {
-        const QImage s = sheet(images, labels, a["columns"].toInt());
+        const QImage s = ContactSheet::compose(images, labels, a["columns"].toInt());
         result["sheet_size"] = QJsonArray{s.width(), s.height()};
         if (!outDir.isEmpty()) {
             QString file = absolute(outDir);

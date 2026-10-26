@@ -96,6 +96,7 @@ private:
     void exportSubtitlesDialog();
     // Timelines of other editors (FCP7 XML, OpenTimelineIO, EDL), MainWindowExchange.cpp
     void importTimelineDialog();
+    void contactSheetDialog(); // File › Save Contact Sheet: stills of the timeline as one picture
     void exportTimelineDialog();
     void transcribeDialog();
     MediaInfo probeCached(const QString& path);

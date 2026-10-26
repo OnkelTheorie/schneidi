@@ -1,22 +1,32 @@
 // MainWindow: timelines from and to other editors (File › Import/Export Timeline, like DaVinci) – FCP7 XML,
 // OpenTimelineIO, EDL. The formats are in core/Interchange.
 #include "app/MainWindow.h"
+#include "app/ContactSheetDialog.h"
 #include "app/TimelineExportDialog.h"
 
+#include "core/ContactSheet.h"
 #include "core/I18n.h"
 #include "core/Interchange.h"
 #include "core/Project.h"
+#include "core/Timecode.h"
+#include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "engine/Snapshot.h"
 #include "ui/MediaPool.h"
 
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QApplication>
+#include <QDesktopServices>
 #include <QMessageBox>
+#include <QProgressDialog>
+#include <QPushButton>
 #include <QSaveFile>
 #include <QSettings>
 #include <QStatusBar>
 #include <QUndoStack>
+#include <QUrl>
 
 namespace {
 
@@ -144,4 +154,52 @@ void MainWindow::exportTimelineDialog()
     const QString done = T("Timeline exportiert: %1").arg(QFileInfo(path).fileName());
     if (seq.warnings.isEmpty()) statusBar()->showMessage(done, 5000);
     else showNotes(this, title, done + "\n\n" + T("Nicht übernommen:") + "\n" + shortList(seq.warnings));
+}
+
+void MainWindow::contactSheetDialog()
+{
+    const QString title = T("Kontaktbogen speichern");
+    const Timeline& tl = m_project->timeline();
+    const int end = TimelineOps::endFrame(tl);
+    if (end <= 0) {
+        QMessageBox::information(this, title, T("Die Timeline ist leer."));
+        return;
+    }
+    const bool hasInOut = tl.markIn >= 0 && tl.markOut > tl.markIn;
+    ContactSheetDialog dialog(m_project->sequenceName(m_project->currentSequence()), startDir(m_projectPath), hasInOut,
+                              this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const int from = dialog.inOut() ? tl.markIn : 0;
+    const int to = dialog.inOut() ? std::min(end, tl.markOut + 1) : end;
+    const QVector<int> frames = ContactSheet::spread(from, to, std::min(dialog.count(), to - from));
+    const ProjectFormat& f = m_project->format();
+
+    QProgressDialog progress(T("Bilder werden geholt…"), T("Abbrechen"), 0, int(frames.size()), this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(300);
+    int failed = -1;
+    // The picture as exported (compound clips, effects, grades)
+    const QImage sheet = Snapshot::contactSheet(f, m_project->renderTimeline(), frames, dialog.tileWidth(),
+                                                dialog.columns(), [&progress](int done) {
+                                                    progress.setValue(done);
+                                                    QApplication::processEvents();
+                                                    return !progress.wasCanceled();
+                                                }, &failed);
+    if (sheet.isNull()) {
+        if (failed >= 0)
+            QMessageBox::warning(this, title, T("Bild %1 konnte nicht geholt werden.").arg(Timecode::format(failed, m_project->fps())));
+        return;
+    }
+    const QString path = dialog.path();
+    if (!sheet.save(path, nullptr, 90)) {
+        QMessageBox::warning(this, title, T("Datei konnte nicht gespeichert werden:\n%1").arg(path));
+        return;
+    }
+    QMessageBox box(QMessageBox::Information, title, T("Kontaktbogen gespeichert: %1").arg(QFileInfo(path).fileName()),
+                    QMessageBox::Close, this);
+    QPushButton* open = box.addButton(T("Öffnen"), QMessageBox::ActionRole);
+    QPushButton* folder = box.addButton(T("Im Ordner zeigen"), QMessageBox::ActionRole);
+    box.exec();
+    if (box.clickedButton() == open) QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    else if (box.clickedButton() == folder) QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
 }
