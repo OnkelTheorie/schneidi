@@ -149,6 +149,7 @@ QJsonObject cmdEdit(const QJsonObject& a, Context& ctx);
 QJsonObject cmdBackups(const QJsonObject& a, Context& ctx);
 QJsonObject cmdRestore(const QJsonObject& a, Context& ctx);
 QJsonObject cmdRender(const QJsonObject& a, Context& ctx);
+QJsonObject cmdCheck(const QJsonObject& a, Context& ctx);
 QJsonObject cmdEffects(const QJsonObject& a, Context& ctx);
 QJsonObject cmdApp(const QJsonObject& a, Context& ctx);
 QString presetHelp(); // the app's Deliver presets for the `render` description

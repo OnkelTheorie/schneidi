@@ -93,6 +93,7 @@ add_library(schneidi_lib STATIC
     src/core/InterchangeEdl.cpp   src/core/InterchangeFcp7.cpp  src/core/InterchangeOtio.cpp
     src/core/StreamPresets.h      src/core/StreamPresets.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
+    src/core/ExportCheck.h        src/core/ExportCheck.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Background.h       src/engine/Background.cpp
@@ -242,7 +243,7 @@ add_library(schneidi_cli_lib STATIC
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp
-    src/cli/AnalysisHighlights.cpp src/cli/Exchange.cpp
+    src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp
     src/cli/Live.h     src/cli/Live.cpp
     src/cli/Guide.h    src/cli/Guide.cpp

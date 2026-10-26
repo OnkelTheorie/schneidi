@@ -741,6 +741,20 @@ const QVector<Command>& commands()
           {"clips", T::Times, "for a project: measure these clips (ids) one by one instead of the mix"},
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"}},
          cmdLoudness},
+        {"check", "Check before export or before handing a video over: what typically goes wrong. A project "
+                  "(before rendering): missing media files, frames without any picture (a gap = black), subtitles too "
+                  "short/too fast to read or past the end, and the sound of the mix as exported: no sound, clipping, "
+                  "true peak above -1 dBTP, loudness off the target, silence at the end. A rendered file (after "
+                  "rendering): black stretches, frozen picture, no sound, the same sound checks. 'issues' (errors "
+                  "first, each with check id, message and time range), counts of 'errors'/'warnings' and the measured "
+                  "'sound'. Fix errors before handing over; warnings may be intended (a fade to black, a pause).",
+         {{"source", T::Path, "project (.schneidi) or rendered media file", true, true},
+          {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
+          {"from", T::Time, "for a project: start of the range to check (default: start)"},
+          {"to", T::Time, "for a project: end of the range (default: end of the timeline)"},
+          {"target_lufs", T::Number, "loudness target (default -14 for web/streaming; -23 broadcast, -16 podcasts)"},
+          {"sound", T::Boolean, "measure the sound (default true; false = only the quick checks, no mixing)"}},
+         cmdCheck},
         {"scopes", "Video scopes of one frame like the Color page (waveform, RGB parade, vectorscope, histogram) as "
                    "one image, plus numbers to judge exposure and color: luma spread (10-bit, 0..1023), clipped "
                    "black/white in %, RGB means and color cast in % (+ = too much of that channel), saturation.",

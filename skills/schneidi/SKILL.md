@@ -32,8 +32,9 @@ names cost a failed call.
    = width 1080, height 1920), then `edit` with a list of ops. Read clip ids from `info` after each change - they
    change when clips are split. Positions relative to a clip or to source time (`{"clip": 3, "source": "12.4s"}`)
    stay correct while earlier ops move things.
-4. **Check before rendering**: `info` (length, tracks, gaps) and a `frames` sheet of the timeline.
-5. **Render**, then **look at the rendered file yourself**: `frames` sheet, `loudness`, `probe`. Read
+4. **Check before rendering**: `check` on the project (gaps, missing media, subtitles, sound), `info` (length,
+   tracks) and a `frames` sheet of the timeline.
+5. **Render**, then **look at the rendered file yourself**: `check` on the file, a `frames` sheet, `probe`. Read
    [references/check.md](references/check.md) for what to look for. Fix and render again if something is off.
 6. **Report briefly**: output file(s), length, what you did, measured loudness, and anything you could not do.
 
