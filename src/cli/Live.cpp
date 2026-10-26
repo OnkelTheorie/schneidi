@@ -198,7 +198,27 @@ QJsonObject appState(LiveHost* h)
 
 // ---------- App side ----------
 
-Server::Server(LiveHost* host, QObject* parent) : QObject(parent), m_host(host) { g_isApp = true; }
+Server::Server(LiveHost* host, QObject* parent) : QObject(parent), m_host(host)
+{
+    g_isApp = true;
+    m_idle = new QTimer(this);
+    m_idle->setSingleShot(true);
+    connect(m_idle, &QTimer::timeout, this, &Server::letGoIfIdle);
+}
+
+void Server::setIdleLimit(int ms)
+{
+    m_idleMs = ms;
+    if (m_idle->isActive()) m_idle->start(m_idleMs);
+}
+
+void Server::letGoIfIdle()
+{
+    if (!m_attached) return;
+    // Work it reported is still running (a long render): not idle
+    if (m_running || !m_peers.value(m_attached).jobs.isEmpty()) return m_idle->start(m_idleMs);
+    detach(m_attached); // the socket stays open: its next request takes the app again if it is free
+}
 
 Server::~Server()
 {
@@ -284,10 +304,21 @@ void Server::onConnection()
     }
 }
 
+void Server::attach(QLocalSocket* s, const QString& client)
+{
+    m_attached = s;
+    m_client = client;
+    m_peers[s].client = client;
+    m_idle->start(m_idleMs);
+    m_host->liveConnectionChanged(true, m_client);
+    emit stateChanged();
+}
+
 void Server::detach(QLocalSocket* s)
 {
     if (m_attached != s) return;
     m_attached = nullptr;
+    m_idle->stop();
     const QString client = m_client;
     m_client.clear();
     m_host->liveConnectionChanged(false, client);
@@ -332,6 +363,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         peer.authed = true;
         peer.chat = chat;
     }
+    if (s == m_attached) m_idle->start(m_idleMs); // anything it sends shows it is still at work
     if (type == "hello") {
         // The app's own chat is always allowed and never waits for another AI
         QJsonObject o{{"ok", true},
@@ -343,6 +375,18 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         if (!m_waiting.isEmpty()) o["waiting"] = m_waiting;
         if (!peer.chat && !m_allowed && !m_refusal.isEmpty()) o["refusal"] = m_refusal;
         return reply(o);
+    }
+    // Let go while it was idle: its next request takes the app again if it is free
+    const bool wantsApp = type == "snapshot" || type == "run"
+                          || (type == "activity" && msg.value("state").toString() == "start");
+    if (wantsApp && !peer.chat && m_attached != s && !peer.client.isEmpty() && m_waiting.isEmpty()) {
+        if (!m_attached && m_allowed) attach(s, peer.client);
+        else if (type != "activity")
+            return reply(m_allowed ? errorReply("APP_BUSY", "another AI session connected to the schneidi app while "
+                                                            "this one was idle")
+                                   : errorReply("APP_DISCONNECTED", m_refusal.isEmpty()
+                                                                        ? "the user disconnected the AI in the schneidi app"
+                                                                        : m_refusal));
     }
     const bool attached = m_attached == s || peer.chatAttached;
     // Work of the attached AI outside the app: shown there, never answered (the client does not wait for it)
@@ -383,10 +427,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
                                                                              : m_refusal));
         if (m_attached && m_attached != s)
             return reply(errorReply("APP_BUSY", "another AI session is connected to the schneidi app"));
-        m_attached = s;
-        m_client = msg.value("client").toString("schneidi-cli");
-        m_host->liveConnectionChanged(true, m_client);
-        emit stateChanged();
+        if (m_attached != s) attach(s, msg.value("client").toString("schneidi-cli"));
         return reply({{"ok", true}});
     }
     if (!attached) return reply(errorReply("NOT_ATTACHED", "attach first"));
@@ -406,6 +447,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         const QJsonObject result = runCommand(msg, ownChat);
         m_host->liveCommandRunning(false, ownChat);
         m_running = false;
+        if (guard && guard == m_attached) m_idle->start(m_idleMs); // a long command counts from its end
         if (guard) guard->write(line(result));
         // Requests that came in meanwhile
         QTimer::singleShot(0, this, [this] {

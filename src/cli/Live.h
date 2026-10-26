@@ -9,6 +9,10 @@
 //   {"type":"hello","token":…}            -> {"ok":true,"project":path,"busy":bool,"allowed":bool,"pid":…,
 //                                              "waiting":text (only while the app waits, see Server::setWaiting)}
 //   {"type":"attach","client":name}       -> {"ok":true} (one attached client at a time; shown in the app)
+// An attached client that sends nothing for Server::idleLimit() (and has no work running) is let go: the app no
+// longer shows it and another AI may attach. Its socket stays open; its next snapshot/run/activity takes the app
+// again if it is free (no new attach needed), else APP_BUSY. So an MCP session that is done (its chat still open,
+// the process alive) never blocks the app for the next AI.
 //   {"type":"snapshot"}                    -> {"ok":true,"data":project file JSON,"app":state}
 //   {"type":"run","command":…,"args":{…}} -> {"ok":true,"result":{…}} or {"ok":false,"error":{code,message}}
 //   {"type":"activity","id":n,"state":"start"|"progress"|"end"|"failed","tool":…,"target":…,"percent":…,
@@ -32,6 +36,7 @@
 
 class LiveHost;
 class QLocalServer;
+class QTimer;
 
 namespace Cli::Live {
 
@@ -72,6 +77,9 @@ public:
     QString waiting() const { return m_waiting; }
     // For the app's own AI chat process (variable -> value): it connects to this app with the chat's secret
     QHash<QString, QString> chatEnvironment() const;
+    // How long an attached AI may stay silent before it is let go (see above; default 2 min)
+    int idleLimit() const { return m_idleMs; }
+    void setIdleLimit(int ms);
 
 signals:
     void stateChanged(); // attached/allowed changed
@@ -83,12 +91,15 @@ private:
         bool chat = false;         // the app's own AI chat (said hello with the chat's secret)
         bool chatAttached = false; // ... and attached
         QHash<int, int> jobs;      // running work outside the app: the client's activity id -> LiveActivity::id
+        QString client;            // attached once under this name: may take the app again after it was let go
     };
     void onConnection();
     void onReadyRead(QLocalSocket* s);
     void handle(QLocalSocket* s, const QJsonObject& msg);
     QJsonObject runCommand(const QJsonObject& msg, bool ownChat);
+    void attach(QLocalSocket* s, const QString& client);
     void detach(QLocalSocket* s);
+    void letGoIfIdle();
 
     LiveHost* m_host;
     QLocalServer* m_server = nullptr;
@@ -102,6 +113,8 @@ private:
     QString m_refusal; // why new sessions are refused (empty = the user disconnected the AI)
     QString m_waiting;
     bool m_running = false; // a command runs (it may spin the event loop: no second one meanwhile)
+    QTimer* m_idle = nullptr; // runs while an AI is attached, restarted by everything it sends
+    int m_idleMs = 2 * 60 * 1000;
     int m_lastJob = 0;      // LiveActivity::id: unique in the app (every client process counts from 1)
 };
 

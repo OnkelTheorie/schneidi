@@ -465,6 +465,60 @@ int main(int argc, char* argv[])
         }
         outside.disconnectFromServer();
         for (int i = 0; i < 50 && server.attached(); ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+
+        // An AI that is done (its MCP process still alive) is let go after the idle limit: the app shows no AI any
+        // more, another one may attach; its next request takes the app again if it is free, else APP_BUSY. Work it
+        // reported keeps it attached.
+        server.setIdleLimit(300);
+        const auto idle = [](int ms) {
+            QElapsedTimer t;
+            t.start();
+            while (!t.hasExpired(ms)) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        };
+        const QByteArray hello = QByteArray(R"({"type":"hello","token":")") + entry["token"].toString().toUtf8() + "\"}\n";
+        const QByteArray snap = R"({"type":"snapshot"})" "\n";
+        QLocalSocket first, second;
+        first.connectToServer(entry["server"].toString());
+        second.connectToServer(entry["server"].toString());
+        CHECK(first.waitForConnected(1000) && second.waitForConnected(1000));
+        CHECK(talk(first, hello + R"({"type":"attach","client":"first"})" "\n", 2).contains("\"ok\":true"));
+        CHECK(server.attached());
+        idle(150);
+        CHECK(talk(first, snap, 1).contains("\"ok\":true")); // a request restarts the time
+        idle(200);
+        CHECK(server.attached());
+        idle(300);
+        CHECK(!server.attached());
+        CHECK_EQ(fake.events.last(), QString("detach"));
+        CHECK(first.state() == QLocalSocket::ConnectedState);
+        // Free again: the first one takes it with its next request, no new attach
+        CHECK(talk(first, snap, 1).contains("\"ok\":true"));
+        CHECK(server.attached());
+        CHECK_EQ(server.client(), QString("first"));
+        // Running work is not idle
+        talk(first, R"({"type":"activity","id":7,"state":"start","tool":"render"})" "\n", 0);
+        idle(500);
+        CHECK(server.attached());
+        talk(first, R"({"type":"activity","id":7,"state":"end","tool":"render"})" "\n", 0);
+        idle(500);
+        CHECK(!server.attached());
+        // Another AI attaches meanwhile: the first one hears so
+        CHECK(talk(second, hello, 1).contains("\"busy\":false"));
+        CHECK(talk(second, R"({"type":"attach","client":"second"})" "\n", 1).contains("\"ok\":true"));
+        const QByteArray busy = talk(first, snap, 1);
+        CHECK(busy.contains("APP_BUSY") && busy.contains("idle"));
+        CHECK_EQ(server.client(), QString("second"));
+        second.disconnectFromServer();
+        for (int i = 0; i < 50 && server.attached(); ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        CHECK(talk(first, snap, 1).contains("\"ok\":true"));
+        CHECK_EQ(server.client(), QString("first"));
+        // The user disconnects the AI while none is attached: the one let go is refused too
+        idle(500);
+        server.disconnectClient();
+        CHECK(talk(first, snap, 1).contains("APP_DISCONNECTED"));
+        CHECK(!server.attached());
+        server.setAllowed(true);
+        first.disconnectFromServer();
     }
 
     return Check::result();

@@ -10,15 +10,31 @@
 #include <QJsonDocument>
 #include <QThread>
 
+#include <framework/mlt.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
 #include <memory>
 #include <string>
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 namespace Cli::Mcp {
 
 namespace {
+
+// An MCP server lives as long as the AI's chat, mostly idle: after a tool it gives back what the tool used. MLT keeps
+// every image buffer it freed for reuse (a 3-s render of a 1080x1920 timeline left 1.3 GB behind, 0.4 GB after this).
+void releaseMemory()
+{
+    if (mlt_factory_repository()) mlt_pool_purge();
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
+}
 
 QString imageBase64(const QImage& img)
 {
@@ -158,19 +174,21 @@ QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& 
                     {"params", QJsonObject{{"progressToken", token}, {"progress", percent}, {"total", 100}}}});
         };
     }
+    QJsonObject out;
     try {
         testHooks(name, ctx.progress);
         QJsonObject result = execute(*cmd, normalize(*cmd, params["arguments"].toObject()), ctx);
         result = Sandbox::mapBack(result).toObject(); // paths as the client knows them (--map)
-        QJsonObject out = toolResult(result);
+        out = toolResult(result);
         QJsonArray content = out["content"].toArray();
         for (const QImage& img : ctx.images)
             content << QJsonObject{{"type", "image"}, {"data", imageBase64(img)}, {"mimeType", "image/jpeg"}};
         out["content"] = content;
-        return out;
     } catch (const Error& e) {
-        return toolError(e.code, e.message);
+        out = toolError(e.code, e.message);
     }
+    releaseMemory();
+    return out;
 }
 
 bool handle(const QJsonObject& msg, const Options& opt, const ToolCall& call, const Send& send)
