@@ -57,7 +57,9 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available; YouTube/phone presets cap the bit rate; **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
 - Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; an optional download under Workspace → Extensions
 - Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
-- **Command line and MCP server** (`schneidi-cli`): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
+- **Check before export:** one click on the Deliver page (or `check` for an AI) finds what often goes wrong in finished videos – a forgotten frame between two clips, missing files, subtitles too short or too fast to read, clipping, loudness off the target, silence at the end
+- Contact sheet: stills of the timeline with timecodes as one picture (File › Save Contact Sheet)
+- **Command line and MCP server** (`schneidi-cli`, locally or over HTTP on a server): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
 ## How light is it?
@@ -159,6 +161,17 @@ schneidi-cli edit @app --ops '[{"op":"split","at":"12s"}]'   # cut in the open p
 schneidi-cli app undo
 ```
 The AppImage contains the CLI too: `./schneidi-<version>-x86_64.AppImage cli help`, or a link to the AppImage named `schneidi-cli`.
+
+**On a server (HTTP, Docker):** `schneidi-cli serve` runs the same tools as an MCP server over HTTP, so AIs on other
+devices and fully automatic pipelines can edit on a server: material goes in by `PUT /files/…` or the `upload` tool,
+results come back as download links, long renders turn into jobs (`jobs`), and nothing outside the work folder
+(`--root`) can be read or written. It listens on localhost by default; on the network a token is required. A Docker
+image with compose file is in [packaging/docker](packaging/docker/README.md).
+
+```bash
+schneidi-cli serve --root ~/videos                            # http://127.0.0.1:8642/mcp
+claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
+```
 
 ## Roadmap
 
