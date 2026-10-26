@@ -35,6 +35,7 @@ protected:
 signals:
     void importRequested(const QStringList& paths); // into the selected bin of the Media Pool
     void folderImportRequested(const QString& dir);  // including subfolders as bins
+    void watchFolderRequested(const QString& dir);   // "Watch This Folder…": new files come into the Media Pool
 
 private:
     void addLocation();

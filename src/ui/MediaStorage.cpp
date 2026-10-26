@@ -480,6 +480,7 @@ void MediaStorage::showFileMenu(const QPoint& pos)
         QAction* a = menu.addAction(T("Ordnerinhalt in den Media Pool importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
         menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this, [this, dir] { emit folderImportRequested(dir); });
+        menu.addAction(T("Diesen Ordner überwachen…"), this, [this, dir] { emit watchFolderRequested(dir); });
         if (!m_locations.contains(dir))
             menu.addAction(T("Als Speicherort hinzufügen"), this, [this, dir] {
                 m_locations << dir;
@@ -494,6 +495,7 @@ void MediaStorage::showFileMenu(const QPoint& pos)
         if (!m_folder.isEmpty()) {
             menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this,
                            [this, dir = m_folder] { emit folderImportRequested(dir); });
+            menu.addAction(T("Diesen Ordner überwachen…"), this, [this, dir = m_folder] { emit watchFolderRequested(dir); });
             menu.addAction(T("Ordner im Dateimanager öffnen"), this, [dir = m_folder] { FileManager::open(dir); });
         }
     }
@@ -522,6 +524,7 @@ void MediaStorage::showLocationMenu(const QPoint& pos)
         QAction* a = menu.addAction(T("Ordnerinhalt in den Media Pool importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
         menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this, [this, dir] { emit folderImportRequested(dir); });
+        menu.addAction(T("Diesen Ordner überwachen…"), this, [this, dir] { emit watchFolderRequested(dir); });
         menu.addAction(T("Im Dateimanager zeigen"), this, [dir] { FileManager::reveal(dir); });
     }
     menu.exec(m_tree->viewport()->mapToGlobal(pos));
