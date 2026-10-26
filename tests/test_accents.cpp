@@ -220,12 +220,36 @@ void testCli(const QString& dir)
     bool noted = false;
     for (const QJsonValue& n : r["notes"].toArray()) noted |= n.toString().contains("accent 'hit' at 2 of 3 times");
     CHECK(noted);
+    // The answer counts the keyframes of a changed clip (all of them for 20 clips were 30-40 KB)
+    const QJsonArray changed = r["changes"]["changed"].toArray();
+    if (CHECK(!changed.isEmpty())) {
+        const QJsonObject counts = changed[0].toObject().value("keyframes").toObject();
+        CHECK(counts.value("zoom").isDouble() && counts.value("zoom").toInt() >= 3);
+        CHECK(!changed[0].toObject().contains("media"));
+    }
     QJsonObject c = firstClip();
     const QJsonObject keys = std::as_const(c)["keyframes"].toObject();
     CHECK(keys.contains("zoom") && !keys.contains("zoom_x") && !keys.contains("zoom_y")); // both axes alike: one
     CHECK(keys.contains("grade.exposure") && keys.contains("x") && keys.contains("y"));
     CHECK_EQ(keys["zoom"][1]["at"].toInt(), 25);
     CHECK(near(keys["zoom"][1]["value"].toDouble(), 1.12, 1e-4));
+    {
+        // A zoom (or place) set afterwards without `at` moves the whole curve: the punch stays a punch around it
+        const int first = std::as_const(c)["id"].toInt();
+        const double x0 = keys["x"][0]["value"].toDouble(), x1 = keys["x"][1]["value"].toDouble();
+        run("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"transform","clips":[%1],"zoom":2,"x":100}])")
+                                                      .arg(first)}});
+        const QJsonObject after = firstClip();
+        const QJsonObject moved = after["keyframes"].toObject();
+        CHECK(near(moved["zoom"][0]["value"].toDouble(), 2.0, 1e-4));
+        CHECK(near(moved["zoom"][1]["value"].toDouble(), 2.24, 1e-4));
+        CHECK_EQ(moved["zoom"].toArray().size(), keys["zoom"].toArray().size()); // no extra keyframe
+        CHECK(near(moved["x"][1]["value"].toDouble() - moved["x"][0]["value"].toDouble(), x1 - x0, 1e-4));
+        CHECK(near(moved["x"][0]["value"].toDouble(), 100, 1e-4));
+        CHECK(near(after["transform"]["zoom_x"].toDouble(), 2.0, 1e-4)); // the value without keyframes follows
+        run("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"transform","clips":[%1],"zoom":1,"x":0}])")
+                                                      .arg(first)}});
+    }
 
     // Markers, strength, length, one part set directly
     run("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keyframe","clips":[%1],"param":"zoom","clear":true},

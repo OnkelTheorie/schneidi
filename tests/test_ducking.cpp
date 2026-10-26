@@ -18,6 +18,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDialogButtonBox>
+#include <QJsonArray>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSettings>
@@ -221,7 +222,11 @@ void testCliDuckMatchesEditor(const QString& dir)
     const Cli::Command* cmd = Cli::find("edit");
     Cli::Context ctx;
     try {
-        cmd->run(Cli::normalize(*cmd, {{"project", path}, {"ops", R"([{"op":"duck","track":"A2","under":"A1"}])"}}), ctx);
+        const QJsonObject r = cmd->run(
+            Cli::normalize(*cmd, {{"project", path}, {"ops", R"([{"op":"duck","track":"A2","under":"A1"}])"}}), ctx);
+        // The note says how long the sound counts (one range over everything = the music only lower)
+        const QString note = r["notes"].toArray().at(0).toString();
+        CHECK(note.contains("sound range") && note.contains(" s above threshold_db -35"));
     } catch (const Cli::Error& e) {
         CHECK(false);
         qWarning().noquote() << e.code << e.message;

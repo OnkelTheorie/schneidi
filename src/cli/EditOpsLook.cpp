@@ -48,6 +48,22 @@ void clampToRange(AnimParam p, double* v)
     if (lo < hi) *v = std::clamp(*v, lo, hi);
 }
 
+// A transform value without `at`: with keyframes it is the base of the curve, the whole curve moves so that the clip's
+// first frame gets the value - zoom scaled (an accent's punch stays the same punch around the new zoom), the others
+// shifted (a shake stays a shake around the new place); without keyframes the static value
+void setBase(Clip& c, AnimParam p, double v)
+{
+    const bool animated = Keys::animated(c, p);
+    const double old = animated ? Keys::valueAt(c, p, 0) : 0;
+    Keys::setStaticValue(c, p, v); // also with keyframes: the value without them, what `info` shows as transform
+    if (!animated) return;
+    const bool scale = (p == AnimParam::ZoomX || p == AnimParam::ZoomY) && std::abs(old) > 1e-9;
+    for (Keyframe& k : c.keys[p]) {
+        k.value = scale ? k.value * v / old : k.value + v - old;
+        clampToRange(p, &k.value);
+    }
+}
+
 // Value of a JSON field for parameter p (colors as "#rrggbb")
 double paramValue(AnimParam p, const QJsonValue& v, const QString& name)
 {
@@ -289,7 +305,10 @@ void opTransform(Session& s, const QJsonObject& op)
             for (const auto& [name, p] : fields) Keys::clear(c, p);
             c.transform = ClipTransform{};
         }
-        for (const auto& [p, v] : values) Keys::setValue(c, p, hasAt ? localFrame(c, at) : 0, v);
+        for (const auto& [p, v] : values) {
+            if (hasAt) Keys::setValue(c, p, localFrame(c, at), v);
+            else setBase(c, p, v);
+        }
         for (const auto& [name, member] : switches)
             if (op.contains(name)) c.transform.*member = op.value(name).toBool();
         if (!c.isTitle()) {
@@ -575,7 +594,9 @@ void addLookOps(QVector<OpDef>& ops)
                  "(default 40, like the blur effect), fit_dim 0..100 = percent darker than the clip (default 20); "
                  "fit:'none' = transparent again (default). Opacity and fades act on the whole clip; titles do not "
                  "take it. reset:true sets all back first. "
-                 "Values that have keyframes get one at `at`. transform_on/crop_on/opacity_on:false switch that "
+                 "Values that have keyframes: with `at` a keyframe there; without `at` the whole curve follows (zoom "
+                 "scaled, the others shifted by the difference at the clip start), so accents keep their shape around "
+                 "a new zoom or place. transform_on/crop_on/opacity_on:false switch that "
                  "Inspector section off (its values and keyframes stay but do not apply, e.g. to compare), true on "
                  "again; `info` shows them when off.",
                  opTransform}

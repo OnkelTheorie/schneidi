@@ -353,12 +353,25 @@ void opDuck(Session& s, const QJsonObject& op)
             return c && Keys::animated(*c, AnimParam::Volume);
         });
     const int ducked = s.editor.duck(ids, *ranges, params);
-    s.notes << QString("ducked %1 of %2 clip(s) by %3 dB during %4 sound range(s) of %5")
-                   .arg(ducked)
-                   .arg(ids.size())
-                   .arg(params.amountDb, 0, 'f', 1)
-                   .arg(ranges->size())
-                   .arg(op.value("under").toVariant().toString());
+    // How long the sound counts: one range over everything means the music is simply lower all the time
+    int covered = 0;
+    for (const auto& [from, to] : *ranges) covered += to - from;
+    const int length = TimelineOps::endFrame(tl);
+    const double fps = f.rate.fps();
+    QString note = QString("ducked %1 of %2 clip(s) by %3 dB during %4 sound range(s) of %5: %6 s of %7 s above "
+                           "threshold_db %8")
+                       .arg(ducked)
+                       .arg(ids.size())
+                       .arg(params.amountDb, 0, 'f', 1)
+                       .arg(ranges->size())
+                       .arg(op.value("under").toVariant().toString())
+                       .arg(covered / fps, 0, 'f', 1)
+                       .arg(length / fps, 0, 'f', 1)
+                       .arg(params.thresholdDb, 0, 'f', 0);
+    if (length > 0 && covered > 0.6 * length)
+        note += " - the sound is above it most of the time; a higher threshold_db (e.g. -20) ducks only the loud "
+                "moments (shots, words)";
+    s.notes << note;
 }
 
 } // namespace

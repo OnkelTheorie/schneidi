@@ -109,6 +109,26 @@ int main(int argc, char** argv)
     CHECK_EQ(errorOf("info", {}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("info", {{"project", g_path}, {"bogus", 1}}), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf("info", {{"project", dir.filePath("missing.schneidi")}}), QString("NOT_FOUND"));
+    // Names of another command's parameter (`file` vs `source`, `output` for `out`): taken when unambiguous; an
+    // unknown one names the right ones
+    {
+        const Cli::Command* frames = Cli::find("frames");
+        const QJsonObject n = Cli::normalize(*frames, {{"file", g_path}, {"at", QJsonArray{0}}});
+        CHECK(n.contains("source") && !n.contains("file"));
+        const Cli::Command* loudness = Cli::find("loudness");
+        CHECK(Cli::normalize(*loudness, {{"project", g_path}}).contains("source"));
+        const Cli::Command* render = Cli::find("render");
+        CHECK(Cli::normalize(*render, {{"project", g_path}, {"output", dir.filePath("x.mp4")}}).contains("out"));
+        const Cli::Command* probe = Cli::find("probe");
+        CHECK(Cli::normalize(*probe, {{"source", g_path}}).contains("file"));
+        QString message;
+        try {
+            Cli::normalize(*frames, {{"source", g_path}, {"file", g_path}}); // both: no guess
+        } catch (const Cli::Error& e) {
+            message = e.message;
+        }
+        CHECK(message.contains("'file'") && message.contains("source") && message.contains("sheet"));
+    }
     // Times beyond int: an error, not an undefined cast
     {
         const ProjectFormat fmt;
@@ -158,6 +178,8 @@ int main(int argc, char** argv)
         CHECK(added[0].toObject().value("id").toInt() > 0);
         CHECK(!added[0].toObject().contains("timeline")); // only items of another timeline name it
         CHECK_EQ(changed[0].toObject().value("end").toInt(), 50);
+        CHECK(!changed[0].toObject().contains("media")); // changed clips: their place and what changed
+        CHECK(changed[0].toObject().contains("src_out"));
         const QJsonObject tl = r["timeline"].toObject();
         CHECK_EQ(tl["tracks"].toArray().at(0).toObject().value("clips").toInt(), 3);
         CHECK_EQ(tl["clips"].toInt(), 6);
@@ -949,6 +971,18 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK(std::abs(c["to_s"].toDouble() - 4.0) < 0.15);   // 1 s after
             CHECK_EQ(hl["keep"].toArray().size(), 1);
         }
+        // A banner in the kill feed's colour (Valorant's yellow "BUY PHASE") is no kill: listed apart
+        const QString banner = Check::makeMedia(
+            dir.filePath("banner.mp4"),
+            {"-f", "lavfi", "-i",
+             "color=c=0x303030:s=320x180:d=6:r=25,drawbox=x=250:y=20:w=30:h=12:c=0xe7e371:t=fill:enable='gte(t,2)',"
+             "drawbox=x=170:y=60:w=140:h=60:c=0xe7e371:t=fill:enable='gte(t,4)'",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+        const QJsonObject hb = run("highlights", {{"file", banner}, {"region", "0.5,0,0.5,0.8"}, {"color", "#e7e371"}});
+        int bannerKills = 0;
+        for (const QJsonValue& c : hb["candidates"].toArray()) bannerKills += c["kills"].toInt();
+        CHECK_EQ(bannerKills, 1);
+        if (CHECK_EQ(hb["banners"].toArray().size(), 1)) CHECK(std::abs(hb["banners"][0].toDouble() - 4.0) < 0.15);
         const QJsonObject hs = run("highlights", {{"files", QJsonArray{clip, clip}}, {"top", 3}});
         CHECK_EQ(hs["files"][0]["candidates"].toArray().size(), 2);
         CHECK_EQ(hs["best"].toArray().size(), 3);

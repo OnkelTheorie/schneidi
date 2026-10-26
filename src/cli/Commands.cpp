@@ -35,6 +35,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QPainter>
@@ -563,7 +564,8 @@ const QVector<Command>& commands()
     static const QVector<Command> list{
         {"help", "List all commands with their parameters (JSON).",
          {{"command", T::String, "only this command", false, true},
-          {"op", T::String, "with command 'edit': only these ops, e.g. \"speed_ramp\" or \"title,track\""}}, cmdHelp},
+          {"op", T::String, "with command 'edit': the details of these ops, e.g. \"speed_ramp\" or \"title,track\" "
+                            "(\"all\" = every op; without: only what each op is for)"}}, cmdHelp},
         {"guide", "How to edit well with schneidi: the workflow (look at the material, small steps, check the render) "
                   "and how-tos per task (highlight reel, talking head, short/9:16, ad, subtitles, color, sound, "
                   "several cameras, export, checking a render). Read it first if you have not edited with schneidi "
@@ -612,7 +614,8 @@ const QVector<Command>& commands()
          cmdExportTimeline},
         {"edit", "Apply edit operations to a project and save it (a backup of the previous state is kept). If the "
                  "project is open in the schneidi app, the app's project changes instead (one undo step, not saved). "
-                 "Answer: 'changes' (clips and subtitles added and changed as `info` shows them, with their new ids; "
+                 "Answer: 'changes' (added clips and subtitles as `info` shows them, with their new ids; changed "
+                 "ones with id, track, start, end and the values that changed, keyframes as a count per parameter; "
                  "removed ids) and the timeline as a summary.",
          {{"project", T::Path, "project file", true, true},
           {"ops", T::Json, editHelp(), true},
@@ -763,7 +766,10 @@ const QVector<Command>& commands()
                        "of each file fits the 'keep' edit operation; check candidates with `frames` crop. A candidate "
                        "over stutter in the recording (jumps in the time stamps, see `probe` gaps) has 'stutter' (the "
                        "stretches) and 'clean' (its parts without them, with their kills); 'keep_clean' is 'keep' with "
-                       "only those parts - use it to drop the lag, not the moment.",
+                       "only those parts - use it to drop the lag, not the moment. 'kill_feed_most_pct' = the most "
+                       "of the colour at one time in percent of the picture (0 = never there: check region and colour; "
+                       "kill feed marks stay well under 0.3); bigger patches of it (a banner in that colour) are not "
+                       "counted as kills but listed in 'banners' (seconds).",
          {{"file", T::Path, "video file", false, true},
           {"files", T::Paths, "several video files (one result each, plus 'best': all candidates by score)"},
           {"region", T::String, "where the kill feed is, \"x,y,w,h\" (fractions 0..1 or pixels; look with `frames` "
@@ -957,12 +963,52 @@ QJsonObject inputSchema(const Command& cmd)
     return o;
 }
 
-QJsonObject normalize(const Command& cmd, const QJsonObject& raw)
+namespace {
+
+// Names an AI often uses for a parameter that has another name in this command (the analysis commands take `file`,
+// the ones that also read projects `source`; files are written to `out`): taken as that parameter when the command
+// has no parameter of the name, has the target and the call does not give the target as well
+const QHash<QString, QStringList>& parameterAliases()
 {
-    QJsonObject out;
+    static const QHash<QString, QStringList> aliases = {
+        {"file", {"source"}},
+        {"source", {"file"}},
+        {"files", {"sources"}},
+        {"sources", {"files"}},
+        {"path", {"source", "file", "project"}},
+        {"input", {"source", "file"}},
+        {"project", {"source"}},
+        {"output", {"out"}},
+        {"output_file", {"out"}},
+        {"out_file", {"out"}},
+        {"destination", {"out"}},
+    };
+    return aliases;
+}
+
+} // namespace
+
+QJsonObject normalize(const Command& cmd, const QJsonObject& given)
+{
+    const auto has = [&cmd](const QString& name) {
+        return std::any_of(cmd.params.begin(), cmd.params.end(), [&](const Param& p) { return p.name == name; });
+    };
+    QJsonObject raw = given;
+    for (auto it = given.begin(); it != given.end(); ++it) {
+        if (has(it.key())) continue;
+        for (const QString& target : parameterAliases().value(it.key()))
+            if (has(target) && !raw.contains(target)) {
+                raw[target] = raw.take(it.key());
+                break;
+            }
+    }
+    QStringList names;
+    for (const Param& p : cmd.params) names << p.name;
     for (auto it = raw.begin(); it != raw.end(); ++it)
-        if (std::none_of(cmd.params.begin(), cmd.params.end(), [&](const Param& p) { return p.name == it.key(); }))
-            fail("BAD_ARGUMENT", QString("unknown parameter '%1' for %2").arg(it.key(), cmd.name));
+        if (!has(it.key()))
+            fail("BAD_ARGUMENT", QString("unknown parameter '%1' for %2 (parameters: %3)")
+                                     .arg(it.key(), cmd.name, names.join(", ")));
+    QJsonObject out;
     for (const Param& p : cmd.params) {
         if (!raw.contains(p.name) || raw[p.name].isNull()) {
             if (p.required) fail("BAD_ARGUMENT", QString("missing parameter '%1' for %2").arg(p.name, cmd.name));
@@ -1070,7 +1116,15 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
         QJsonObject o{{"name", c.name}, {"summary", c.summary}, {"positional", positional}, {"params", inputSchema(c)}};
         if (c.name == "edit" && a.contains("command")) {
             QJsonArray ops = editOpsHelp();
-            if (a.contains("op")) {
+            if (!a.contains("op")) {
+                // What each op is for; the details of all of them are ~40 KB, an AI asks for the ones it uses
+                for (QJsonValueRef v : ops) {
+                    QJsonObject op = v.toObject();
+                    op.remove("details");
+                    v = op;
+                }
+                o["details"] = "help with op:'<name>' (or a comma list, \"all\" = every op) shows the details of ops";
+            } else if (a["op"].toString() != "all") {
                 // Only the asked ops (the full list is long); the parameter list of `edit` itself is left out too
                 const QStringList wanted = a["op"].toString().split(',', Qt::SkipEmptyParts);
                 QJsonArray only;

@@ -13,6 +13,10 @@ namespace Cli::detail {
 
 namespace {
 
+// A kill feed line's mark covers well under 0.3 % of the picture (Valorant at 1080p: 0.03-0.08 %); a patch of the
+// colour bigger than 1 % that appears at once is a banner or menu in that colour (buy phase, round won), not a kill
+constexpr double kBannerArea = 0.01;
+
 struct Candidate {
     int from, to;          // source frames, with lead-in and lead-out
     QVector<int> kills;    // frames of the kill feed events inside
@@ -43,14 +47,14 @@ QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
     };
 
     // Kill feed: a new line of the player's colour; sound: loud moments (shots, explosions, shouts)
-    QVector<int> kills;
+    QVector<int> kills, banners;
     double most = 0;
     if (feed) {
         if (!m.info.hasVideo || m.info.isImage) fail("NO_VIDEO", "file has no moving picture: " + m.info.path);
         QJsonObject ca = a;
         ca["only"] = "appear";
         const ColorEvents ce = colorEvents(m, ca, progress(0.0, m.info.hasAudio ? 0.85 : 1.0));
-        for (const ColorEvent& e : ce.events) kills << e.frame;
+        for (const ColorEvent& e : ce.events) (e.area > kBannerArea ? banners : kills) << e.frame;
         most = ce.most;
     }
     LoudPeaks sound;
@@ -154,6 +158,13 @@ QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
                     {"candidates", candidates}, {"keep", keep}};
     if (anyStutter) out["keep_clean"] = keepClean;
     if (feed) out["kill_feed_most_pct"] = std::round(most * 1e5) / 1e3;
+    if (!banners.isEmpty()) {
+        QJsonArray times;
+        for (int b : banners) times << seconds(b, f);
+        out["banners"] = times;
+        out["banners_note"] = "patches of the colour bigger than 1 % of the picture at once (a banner or menu in that "
+                              "colour, e.g. the buy phase), not counted as kills";
+    }
     return out;
 }
 

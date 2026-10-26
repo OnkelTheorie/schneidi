@@ -101,13 +101,36 @@ QMap<QString, Shown> shownItems(const Project& p)
 
 // What an edit added, changed and removed (clips and subtitles); an item of another timeline than `shown` names it.
 // Long lists only with the place of each item (a `format` change touches every clip; `info` has the rest).
+// A changed item: where it is (id, track, start, end) and the values that changed - keyframes as their count per
+// parameter, a value that went back to its default as null (accents or a transform on 20 clips answered with every
+// keyframe of every clip, 30-40 KB)
+QJsonObject changedJson(const QJsonObject& before, const QJsonObject& after)
+{
+    QJsonObject j{{"id", after["id"]}, {"track", after["track"]}, {"start", after["start"]}, {"end", after["end"]}};
+    for (auto it = after.begin(); it != after.end(); ++it) {
+        if (j.contains(it.key()) || before.value(it.key()) == it.value()) continue;
+        if (it.key() != "keyframes" || !it.value().isObject()) {
+            j[it.key()] = it.value();
+            continue;
+        }
+        QJsonObject counts;
+        const QJsonObject keys = it.value().toObject();
+        for (auto k = keys.begin(); k != keys.end(); ++k) counts[k.key()] = k.value().toArray().size();
+        j["keyframes"] = counts;
+    }
+    for (auto it = before.begin(); it != before.end(); ++it)
+        if (!after.contains(it.key())) j[it.key()] = QJsonValue::Null;
+    return j;
+}
+
 QJsonObject changesJson(const QMap<QString, Shown>& before, const QMap<QString, Shown>& after, int shown)
 {
     QVector<Shown> added, changed, removed;
     for (auto it = after.begin(); it != after.end(); ++it) {
         const auto old = before.find(it.key());
         if (old == before.end()) added << it.value();
-        else if (old.value().json != it.value().json) changed << it.value();
+        else if (old.value().json != it.value().json)
+            changed << Shown{it.value().sequence, changedJson(old.value().json, it.value().json)};
     }
     for (auto it = before.begin(); it != before.end(); ++it)
         if (!after.contains(it.key()))

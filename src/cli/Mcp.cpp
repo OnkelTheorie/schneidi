@@ -94,7 +94,7 @@ QJsonArray toolList(const Options& opt)
         // help: only for the details of the edit ops (the tool list already has the rest)
         QString summary = c.name == "help" ? QString("Details of the edit ops (parameters, ranges): "
                                                      "command 'edit' and op 'name' (or a comma list; "
-                                                     "without op: all ops, long).")
+                                                     "\"all\" = every op; without op: only what each op is for).")
                                            : c.summary;
         static const QStringList longTools{"render", "transcribe", "sync", "highlights", "scenes"};
         if (opt.server && longTools.contains(c.name))
