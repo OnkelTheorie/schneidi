@@ -84,8 +84,8 @@ StartTemplatesPage::StartTemplatesPage(QWidget* parent) : QWidget(parent)
     buttons->addWidget(folder);
     v->addLayout(buttons);
     v->addWidget(hint(T("Eigene Vorlage: ein Projekt so einrichten, wie neue Projekte aussehen sollen (Spuren, Namen, "
-                        "stumm, Format, Import-Vorgaben), dann Datei › Als Startvorlage speichern…. Eingebaute "
-                        "Vorlagen lassen sich kopieren, aber nicht ändern.")));
+                        "stumm, Format, Import-Vorgaben), und mit Datei › Als Startvorlage speichern… sichern. "
+                        "Eingebaute Vorlagen lassen sich kopieren, aber nicht ändern.")));
     lay->addWidget(box, 1);
 
     connect(m_list, &QListWidget::currentRowChanged, this, &StartTemplatesPage::showDetails);
@@ -143,7 +143,7 @@ void StartTemplatesPage::showDetails()
         return;
     }
     QStringList lines;
-    if (!t->displayDescription().isEmpty()) lines << t->displayDescription();
+    if (!t->displayDescription().isEmpty()) lines << t->displayDescription() << QString();
     lines << StartTemplates::summary(*t);
     m_details->setText(lines.join('\n'));
 }

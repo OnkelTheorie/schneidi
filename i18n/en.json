@@ -483,7 +483,7 @@
  "Eigene": "Custom",
  "Eigene Adresse (OpenAI-kompatibel)": "Own address (OpenAI-compatible)",
  "Eigene Einstellungen": "Custom",
- "Eigene Vorlage: ein Projekt so einrichten, wie neue Projekte aussehen sollen (Spuren, Namen, stumm, Format, Import-Vorgaben), dann Datei › Als Startvorlage speichern…. Eingebaute Vorlagen lassen sich kopieren, aber nicht ändern.": "Your own template: set up a project the way new projects should look (tracks, names, muted, format, import presets), then File › Save as Start Template…. Built-in templates can be copied but not changed.",
+ "Eigene Vorlage: ein Projekt so einrichten, wie neue Projekte aussehen sollen (Spuren, Namen, stumm, Format, Import-Vorgaben), und mit Datei › Als Startvorlage speichern… sichern. Eingebaute Vorlagen lassen sich kopieren, aber nicht ändern.": "Your own template: set up a project the way new projects should look (tracks, names, muted, format, import presets) and keep it with File › Save as Start Template… Built-in templates can be copied but not changed.",
  "Eigener Wert": "Custom",
  "Ein Bericht wurde lokal gespeichert, nichts wurde gesendet. Wenn du helfen möchtest, hänge ihn an eine Fehlermeldung an (der Bericht enthält Version, System, Aufrufliste und das Protokoll mit Dateipfaden).": "A report was saved locally, nothing was sent. If you want to help, attach it to a bug report (it contains the version, system, call stack and the log with file paths).",
  "Ein Fenster begrenzt Räder und Regler auf einen Bildteil, die Füllung verdeckt ihn. Im Viewer ziehen: verschieben, Griffe = Größe, oberer Punkt = drehen.": "A window limits the wheels and sliders to part of the picture, its fill hides it. Drag in the viewer: move, handles = size, top dot = rotate.",
