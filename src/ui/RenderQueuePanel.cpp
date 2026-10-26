@@ -8,6 +8,7 @@
 #include "engine/RenderQueue.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QCursor>
 #include <QDir>
 #include <QDrag>
@@ -334,7 +335,8 @@ void RenderQueuePanel::renderClicked()
     QElapsedTimer busy;
     busy.start();
     m_queue->start(selectedJobs());
-    m_ignoreClicksBefore = m_clickTime + quint64(busy.elapsed());
+    // The button says "Stop" at once: the second click of a double-click must not stop the render just started
+    m_ignoreClicksBefore = m_clickTime + quint64(busy.elapsed()) + quint64(QApplication::doubleClickInterval());
 }
 
 void RenderQueuePanel::removeJobs(const QVector<int>& ids)
