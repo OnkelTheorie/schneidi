@@ -20,9 +20,9 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 
 ## Why schneidi?
 
-- **Edit together with an AI.** schneidi comes with its own command line and [MCP server](#command-line-and-ai-editing-mcp). Claude or another assistant can find pauses, scene changes and loud moments, transcribe, cut, grade, mix and render. When the project is open in the app, each change lands there as one undo step while you watch ("AI connected") – review it, undo it or disconnect.
+- **Edit together with an AI – any AI, any way.** Tell it what to do in the [AI chat](#ai-chat-in-the-app) next to the timeline (Claude, an OpenAI-compatible service or a local model), connect Claude Code or Claude Desktop in one step, or let an assistant work through the [command line and MCP server](#command-line-and-ai-editing-mcp), also on a server. It finds pauses, scene changes, loud moments and the beats of a song, transcribes, cuts, grades, mixes and renders – and you see what it does: changed clips light up, the AI log lists every step, each change is an undo step. Or review first and accept or discard the whole request.
 - **A professional workflow on any computer.** Pages for each step, ripple, roll, slip and slide trims, compound clips, multicam, color wheels and scopes – with the shortcuts you know from the big editors (presets for DaVinci-style or beginner keys), but light enough for an older laptop.
-- **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, open source (GPL-3.0).
+- **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, open source (GPL-3.0). The AI chat talks only to the provider you pick; with Ollama it stays on your computer too.
 - **Long recordings of one event.** Sync hours of recordings from several PCs or cameras by their sound and cut them in a multicam view that shows up to 16 angles at once.
 
 ## Screenshots
@@ -59,6 +59,8 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
 - **Check before export:** one click on the Deliver page (or `check` for an AI) finds what often goes wrong in finished videos – a forgotten frame between two clips, missing files, subtitles too short or too fast to read, clipping, loudness off the target, silence at the end
 - Contact sheet: stills of the timeline with timecodes as one picture (File › Save Contact Sheet)
+- **AI chat in the app:** tell an AI what to do in the open project – Claude, OpenAI-compatible services (OpenAI, OpenRouter, LM Studio, your company's proxy …) or a local model with Ollama; automatic or review mode ([details](#ai-chat-in-the-app))
+- **See what an AI does:** clips it adds or changes light up in the timeline, the AI log lists every step (a click jumps there), its analyses and renders show with progress
 - **Command line and MCP server** (`schneidi-cli`, locally or over HTTP on a server): scripts or an AI assistant can edit almost everything the app can – find pauses, scene changes, loud moments and events in a part of the picture (kill feed, score), pick highlights (your own kills, loud fights), sync recordings by their sound, build multicam clips, transcribe, cut and trim, grade, animate, mix, duck music and normalize, measure loudness, look at frames (or a detail of them) and scopes, render ([details](#command-line-and-ai-editing-mcp))
 - Themes, six UI languages (English, German, Spanish, French, Polish, Russian)
 
@@ -98,6 +100,26 @@ Thumbnails for the Media Storage (your Videos folder) are made by a separate ffm
 | Playback 1080p60 from proxies | 59 of 60 frames/s, sound in sync |
 | Jumping in the timeline, original → proxies | 2 s → 0.07 s |
 | Export 5 s of 720p (x264) | 82 s |
+
+## AI chat in the app
+
+Click **✧ AI** in the top bar and tell an AI what to do in the open project – "remove every pause longer than a
+second", "put the subtitles on and make them bigger", "cut the clips to the beat of the song". It uses the same tools
+as every other AI ([below](#command-line-and-ai-editing-mcp)), looks at frames, measures the sound and works while
+you watch: changed clips light up, each change is an undo step. In **review mode** (Settings › AI) the changes of a
+request show in the timeline and preview first; then **Accept** keeps them as one undo step and **Discard** puts the
+project back.
+
+- **Providers:** Claude (Anthropic), OpenAI, OpenRouter, Ollama on your computer, or any address that speaks the
+  OpenAI chat API (LM Studio, vLLM, Mistral, Groq, a company proxy …). The model name is free to change.
+- **Keys:** from the environment (`SCHNEIDI_AI_KEY`, or `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY`
+  for that provider only), else from the system keychain (Secret Service, Windows Credential Manager). Keys never go
+  into logs or the chat.
+- **For companies:** a `schneidi-ai.json` in `/etc/xdg/schneidi` or `~/.config/schneidi` (Windows:
+  `C:\ProgramData\schneidi\schneidi`) sets `provider`, `address`, `model` and `key` or `key_file`;
+  `"locked": true` keeps users on that provider.
+- **Privacy:** before the first message to a cloud provider schneidi says once what goes there (project contents,
+  frames, transcripts). The chat history stays in memory only. The panel shows the tokens of the chat.
 
 ## Command line and AI editing (MCP)
 
@@ -178,19 +200,19 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.11.x – bug fixes
-Only fixes for problems found in 0.11.0 – new features wait for the next version.
+### 0.12.x – bug fixes
+Only fixes for problems found in 0.12.0 – new features wait for the next version.
 
-### 0.12 – AI Update
+### 0.13 – Everyday Update
 | Feature | What it does |
 |---|---|
-| **AI chat in the app** | A chat panel next to the timeline that edits live with the same tools as the MCP server – Claude, OpenAI-compatible or local (Ollama); let it work directly or review its changes and accept them as one undo step |
-| **Claude skill/plugin** | One command installs everything Claude needs to edit with schneidi |
-| **Server version** | schneidi on a server or in Docker, for fully automatic editing through MCP, CLI or HTTP |
-| **Update notice** | Once a day schneidi asks GitHub for a new release – can be switched off, no error without a network |
+| **Effect order** | Drag effects into another order – a blur before or after the grade makes a difference |
+| **Slip and slide tools** | Own tools in the toolbar to slip a clip's content or slide a clip between its neighbors |
+| **Grades in the filmstrip and Media Pool** | Thumbnails show the clip as it looks after color correction |
+| **Media Pool filters** | Show only flagged clips, a clip color or a media type |
+| **Every key customizable** | The last fixed shortcuts (Media Pool, Transcript, Render Queue) move into the keyboard settings |
 
 ### Later
-- **0.13 – Everyday Update:** change the order of effects, slip/slide tools, color grades shown in the filmstrip and Media Pool, Media Pool filters
 - **0.14 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, voiceover recording, text to speech
 - **0.15 – Template Update:** templates with placeholders filled from a list, brand kit
 - **0.16 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
