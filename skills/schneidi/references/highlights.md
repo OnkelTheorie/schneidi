@@ -12,6 +12,10 @@ also read [social.md](social.md).
   events, vlogs.
 - Look at the top candidates (`frames` with `at` around each kill time, or a cropped sheet) before you trust them.
   Drop near-duplicates and moments that only are loud.
+- **Lag**: game capture with `variable_frame_rate` stutters where the game lagged (the picture stands still).
+  `highlights` marks such candidates with `stutter` and gives their `clean` parts (with the kills in them) and a
+  `keep_clean` list; `probe` with `gaps` lists the jumps of any file. Cut out the lagging part, keep the moment -
+  don't drop a multi-kill because of half a second of lag.
 
 ## Build
 - Project in the material's frame rate (60 fps gameplay → `fps` 60).
@@ -43,7 +47,8 @@ also read [social.md](social.md).
 - Keep the game/event sound - it carries the action: shots and kills must stay audible. Measure first: `loudness`
   of the song and of the game clips (a mastered song is often -4 to -8 LUFS, game sound -15 to -20). Then lower the
   music until it sits a few LU under the game sound at the moments, or let the sound lower it (`duck` with the
-  music as `track`/`clips` and the game track as `under`). Never only turn the game sound down.
+  music as `track`/`clips` and the game track as `under`). Never only turn the game sound down. `check` warns
+  (`under_music`) when the game sound ends up more than 15 LU under the music.
 - A title on the moment the song sings or shouts it: `transcribe` the song with `music` true and `words` true (only
   the part you use, with `from`/`to` on a project, it is slow); whisper may hear it a bit wrong.
 - See [audio.md](audio.md) for loudness: master limiter on, about -14 LUFS.
