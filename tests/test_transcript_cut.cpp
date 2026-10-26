@@ -1,7 +1,9 @@
 // Text-based editing (Transcript panel): media transcripts placed on the timeline through the clips, cutting
-// words and pauses (ripple, one undo step), the panel itself and the transcripts in the project file.
+// words and pauses (ripple, one undo step), the panel itself with its bindable cut keys and the transcripts in the
+// project file.
 #include "check.h"
 
+#include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
@@ -12,8 +14,13 @@
 #include "core/TranscriptCut.h"
 #include "ui/TranscriptPanel.h"
 
+#include <QAction>
 #include <QApplication>
+#include <QLabel>
+#include <QTest>
+#include <QTextEdit>
 #include <QUndoStack>
+#include <QVBoxLayout>
 
 namespace {
 
@@ -153,6 +160,75 @@ void testPanel()
     CHECK_EQ(panel.words().size(), 6);
 }
 
+// The cut keys are a bindable action ("transcript_cut", scope "transcript"): in the text with words selected they
+// cut and the window's action on the same key (the timeline's Delete) stays quiet; without words the key goes on
+// to the window; rebinding takes effect at once (also in the hint)
+void testPanelKeys()
+{
+    Fixture f;
+    QWidget window;
+    auto* lay = new QVBoxLayout(&window);
+    auto* panel = new TranscriptPanel(&f.project, &f.editor);
+    lay->addWidget(panel);
+    QAction windowDelete(&window); // like MainWindow's "delete"/"delete_alt" (window shortcuts)
+    windowDelete.setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace), QKeySequence("X")});
+    windowDelete.setShortcutContext(Qt::WindowShortcut);
+    window.addAction(&windowDelete);
+    int windowDeletes = 0;
+    QObject::connect(&windowDelete, &QAction::triggered, [&] { ++windowDeletes; });
+    window.resize(400, 500);
+    window.show();
+    window.activateWindow();
+    CHECK(QTest::qWaitForWindowActive(&window));
+    auto* text = panel->findChild<QTextEdit*>();
+    if (!CHECK(text)) return;
+    text->setFocus();
+    QCoreApplication::processEvents();
+    CHECK_EQ(panel->cutAction()->shortcuts(),
+             QList<QKeySequence>({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)}));
+
+    panel->selectWords(2, 3);
+    QTest::keyClick(text, Qt::Key_Delete);
+    QCoreApplication::processEvents();
+    CHECK_EQ(panel->words().size(), 4);
+    CHECK_EQ(windowDeletes, 0);
+    panel->selectWords(0, 0);
+    QTest::keyClick(text, Qt::Key_Backspace);
+    QCoreApplication::processEvents();
+    CHECK_EQ(panel->words().size(), 3);
+    CHECK_EQ(windowDeletes, 0);
+    // No words selected: the window's Delete
+    QTest::keyClick(text, Qt::Key_Delete);
+    CHECK_EQ(windowDeletes, 1);
+    CHECK_EQ(panel->words().size(), 3);
+
+    // Rebound (key dialog) to X: X cuts in the text, Delete goes to the window even with words selected
+    InputBindings& b = InputBindings::instance();
+    b.registerAction(panel->cutAction(), "transcript_cut", T("Transkript"), QKeySequence(Qt::Key_Delete), "transcript",
+                     QKeySequence(Qt::Key_Backspace));
+    CHECK_EQ(b.inputs("transcript_cut"), QStringList({"Del", "Backspace"}));
+    b.setInputs("transcript_cut", {"X", ""});
+    CHECK_EQ(panel->cutAction()->shortcuts(), QList<QKeySequence>({QKeySequence("X")}));
+    panel->selectWords(0, 0);
+    QTest::keyClick(text, Qt::Key_Delete);
+    QCoreApplication::processEvents();
+    CHECK_EQ(windowDeletes, 2);
+    CHECK_EQ(panel->words().size(), 3);
+    panel->selectWords(0, 0);
+    QTest::keyClick(text, Qt::Key_X);
+    QCoreApplication::processEvents();
+    CHECK_EQ(panel->words().size(), 2);
+    CHECK_EQ(windowDeletes, 2);
+    bool hint = false;
+    for (const QLabel* l : panel->findChildren<QLabel*>())
+        hint |= l->text() == T("Wörter markieren und %1 drücken schneidet sie heraus. Klick = zum Wort springen.")
+                                 .arg(QKeySequence("X").toString(QKeySequence::NativeText));
+    CHECK(hint);
+    b.resetAll();
+    CHECK_EQ(panel->cutAction()->shortcuts(),
+             QList<QKeySequence>({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)}));
+}
+
 void testProjectFile()
 {
     Fixture f;
@@ -186,6 +262,7 @@ int main(int argc, char** argv)
     testWords();
     testRanges();
     testPanel();
+    testPanelKeys();
     testProjectFile();
     return Check::result();
 }
