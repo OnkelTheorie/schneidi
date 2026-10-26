@@ -25,11 +25,18 @@ public:
         QString text;
         QKeySequence defaultKey;
         QPointer<QAction> action;
+        // Empty = the whole window. Otherwise the panel the keys belong to (e.g. "transcript"): they only act while
+        // it has the focus and come first there (the panel matches its action's keys itself), so they only clash
+        // with keys of the same scope
+        QString scope = {};
+        QKeySequence defaultKey2 = {}; // default of the second slot
     };
 
     void load();
-    // Register an action: gets the key from the file resp. its default
-    void registerAction(QAction* action, const QString& id, const QString& category, const QKeySequence& defaultKey);
+    // Register an action: gets the key from the file resp. its default. The same id again (a new window) replaces
+    // the old entry.
+    void registerAction(QAction* action, const QString& id, const QString& category, const QKeySequence& defaultKey,
+                        const QString& scope = {}, const QKeySequence& defaultKey2 = {});
     // After registering all actions: write the file if it is missing or entries are missing
     void saveIfIncomplete();
 

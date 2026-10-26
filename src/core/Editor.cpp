@@ -168,6 +168,21 @@ void Editor::setTitleLength(int clipId, int length)
     });
 }
 
+QVector<int> Editor::unlockedSubtitles(const QVector<int>& ids, int* minStart) const
+{
+    const Timeline& tl = m_project->timeline();
+    QVector<int> out;
+    int first = INT_MAX;
+    for (int id : ids)
+        if (int t = -1; const SubtitleCue* c = Subtitles::find(tl, id, &t))
+            if (!tl.subtitles[t].locked && !out.contains(id)) {
+                out << id;
+                first = std::min(first, c->start);
+            }
+    if (minStart) *minStart = first;
+    return out;
+}
+
 void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kind, int trackDelta)
 {
     const QVector<int> ids = editable(idsIn);
@@ -177,11 +192,17 @@ void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kin
     const int dt = TimelineOps::clampTrackDelta(cur, ids, kind, trackDelta);
     for (TrackRef ref : TimelineOps::tracksOf(cur, ids))
         if (isTrackLocked({ref.kind, ref.index + dt})) return;
+    int cueStart = INT_MAX;
+    const QVector<int> cues = unlockedSubtitles(ids, &cueStart); // selected subtitles move along in time
+    const int cueDelta = std::max(deltaFrames, -cueStart);
+    const bool clips = !TimelineOps::tracksOf(cur, ids).isEmpty();
+    if (!clips && (cues.isEmpty() || cueDelta == 0)) return;
     Project* p = m_project;
-    p->edit(T("Clips verschieben"), [&](Timeline& tl) {
+    p->edit(clips ? T("Clips verschieben") : T("Untertitel verschieben"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
         TimelineOps::moveClips(tl, ids, deltaFrames, kind, trackDelta,
                                [p] { return p->newClipId(); });
+        if (cueDelta) Subtitles::move(tl, cues, cueDelta, 0, [p] { return p->newClipId(); });
     });
 }
 
@@ -204,12 +225,16 @@ void Editor::moveClipsFine(const QVector<int>& idsIn, int fine, TrackKind kind, 
         }
     if (target.isEmpty()) return;
     const int frames = target.begin()->start - TimelineOps::findClip(cur, target.begin().key())->start;
+    int cueStart = INT_MAX;
+    const QVector<int> cues = unlockedSubtitles(ids, &cueStart); // move along by whole frames
+    const int cueDelta = std::max(frames, -cueStart);
     Project* p = m_project;
     p->edit(T("Clips verschieben"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
         TimelineOps::moveClips(tl, ids, frames, kind, trackDelta, [p] { return p->newClipId(); });
         for (auto it = target.cbegin(); it != target.cend(); ++it)
             if (Clip* c = TimelineOps::findClip(tl, it.key())) c->subframe = it->subframe;
+        if (cueDelta) Subtitles::move(tl, cues, cueDelta, 0, [p] { return p->newClipId(); });
     });
 }
 
@@ -440,6 +465,9 @@ void Editor::selectAll()
         for (const auto& t : tl.tracks(k))
             if (!t.locked) // locked tracks cannot be selected
                 for (const auto& c : t.clips) ids.insert(c.id);
+    for (const SubtitleTrack& t : tl.subtitles) // subtitles too, like the selection frame
+        if (!t.locked)
+            for (const SubtitleCue& c : t.cues) ids.insert(c.id);
     m_selection->set(ids);
 }
 
@@ -467,16 +495,22 @@ void Editor::selectFromPlayhead(int frame, bool forward, bool allTracks)
 void Editor::nudgeSelection(int frames)
 {
     const QVector<int> ids = editable(m_selection->ids().values().toVector());
-    if (ids.isEmpty()) return;
     int minStart = INT_MAX;
+    const QVector<int> cues = unlockedSubtitles(ids, &minStart); // subtitles of the selection move along
+    bool any = !cues.isEmpty();
     for (int id : ids)
-        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id)) minStart = std::min(minStart, c->start);
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id)) {
+            minStart = std::min(minStart, c->start);
+            any = true;
+        }
+    if (!any) return;
     frames = std::max(frames, -minStart); // not before frame 0
     if (frames == 0) return;
     Project* p = m_project;
     p->edit("Nudge", [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
         TimelineOps::moveClips(tl, ids, frames, TrackKind::Video, 0, [p] { return p->newClipId(); });
+        Subtitles::move(tl, cues, frames, 0, [p] { return p->newClipId(); });
     });
 }
 

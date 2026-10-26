@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
+#include <algorithm>
 
 namespace {
 
@@ -176,10 +177,13 @@ void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
 }
 
 void InputBindings::registerAction(QAction* action, const QString& id, const QString& category,
-                                   const QKeySequence& defaultKey)
+                                   const QKeySequence& defaultKey, const QString& scope, const QKeySequence& defaultKey2)
 {
-    m_entries.append({id, category, action->text(), defaultKey, action});
-    apply(m_entries.last());
+    const Entry entry{id, category, action->text(), defaultKey, action, scope, defaultKey2};
+    const auto it = std::find_if(m_entries.begin(), m_entries.end(), [&](const Entry& e) { return e.id == id; });
+    if (it != m_entries.end()) *it = entry;
+    else m_entries.append(entry);
+    apply(entry);
     rebuildMouse();
 }
 
@@ -187,7 +191,9 @@ QStringList InputBindings::defaultInputs(const QString& id) const
 {
     QStringList binds;
     for (const Entry& e : m_entries)
-        if (e.id == id && !e.defaultKey.isEmpty()) binds << e.defaultKey.toString(QKeySequence::PortableText);
+        if (e.id == id)
+            for (const QKeySequence& key : {e.defaultKey, e.defaultKey2})
+                if (!key.isEmpty()) binds << key.toString(QKeySequence::PortableText);
     if (defaultMouse().contains(id)) binds << defaultMouse().value(id);
     return padded(binds);
 }
