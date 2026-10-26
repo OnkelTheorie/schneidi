@@ -43,6 +43,7 @@ public:
         if (o) connect(o, &ViewerOverlay::changed, this, qOverload<>(&QWidget::update));
         update();
     }
+    ViewerOverlay* overlay() const { return m_overlay; }
 
 protected:
     // Area of the frame in the widget (picture without the bars)
@@ -76,8 +77,10 @@ protected:
             m_overlay->mouseMove(e, frameRect());
             return;
         }
-        if (!(e->buttons() & Qt::LeftButton))
+        if (!(e->buttons() & Qt::LeftButton)) {
             setCursor(m_overlay ? m_overlay->cursorAt(e->position(), frameRect()) : Qt::ArrowCursor);
+            if (m_overlay) m_overlay->hover(e->position(), frameRect());
+        }
         if (!(e->buttons() & Qt::LeftButton) || m_pressPos.x() < 0 || !dragData) return;
         if ((e->pos() - m_pressPos).manhattanLength() < QApplication::startDragDistance()) return;
         m_pressPos = QPoint(-1, -1);
@@ -96,6 +99,10 @@ protected:
             if (m_overlay) m_overlay->mouseRelease(e, frameRect());
         }
         m_pressPos = QPoint(-1, -1);
+    }
+    void leaveEvent(QEvent*) override
+    {
+        if (m_overlay) m_overlay->leave();
     }
 
 private:
@@ -386,6 +393,7 @@ bool Viewer::trimShown() const
 }
 
 void Viewer::setOverlay(ViewerOverlay* overlay) { m_screen->setOverlay(overlay); }
+ViewerOverlay* Viewer::overlay() const { return m_screen->overlay(); }
 
 void Viewer::setRange(int length, int markIn, int markOut)
 {

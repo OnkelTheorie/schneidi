@@ -38,12 +38,19 @@ public slots:
     void setPlayhead(int frame);
     // Select a subtitle and focus its text for typing (double-click in the timeline)
     void editSubtitle(int cueId);
+    // Green Screen: key color of the selected video clips (one undo step, switches the key on)
+    void applyKeyColor(const QColor& color);
+    // Pipette button pressed or not (without keyPickRequested/keyPickCancelled)
+    void setKeyPicking(bool on);
 
 signals:
     // Keyframe arrows ◀ ▶: jump to the previous/next keyframe
     void seekRequested(int frame);
     // Effect header context menu "save effects as preset" (dialog in MainWindow)
     void savePresetRequested();
+    // Green Screen pipette switched on for this clip resp. off again (MainWindow shows the picker in the viewer)
+    void keyPickRequested(int clipId);
+    void keyPickCancelled();
 
 private:
     using Field = std::function<double&(Clip&)>;
@@ -132,6 +139,7 @@ private:
     bool m_zoomLinked = true;
     int m_lastShownId = 0; // selection changed -> for titles show the "Titel" tab
     Param* m_crop[4] = {};
+    QToolButton* m_keyPipette = nullptr;
     // Effect sections: video (Open FX) in the Effects tab from m_fxIndex, audio (Audio FX) in the Audio tab from
     // m_audioFxIndex
     struct FxSection { QString id; QWidget* header; QWidget* body; TrackKind kind = TrackKind::Video; };

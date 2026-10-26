@@ -221,18 +221,25 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     auto* swatch = new QToolButton;
     swatch->setFixedSize(46, 18);
     swatch->setFocusPolicy(Qt::NoFocus);
-    swatch->setToolTip(T("Key-Farbe wählen – im Dialog gibt es eine Pipette zum Picken im Viewer"));
+    swatch->setToolTip(T("Key-Farbe wählen"));
     connect(swatch, &QToolButton::clicked, this, [this] {
         const Clip* c = primary(TrackKind::Video);
         if (!c) return;
         const QColor col = QColorDialog::getColor(effectParam(*c, "chromakey", "color").value<QColor>(), this,
                                                   T("Key-Farbe wählen"));
-        if (!col.isValid()) return;
-        apply(TrackKind::Video, {}, T("Key-Farbe"), [col](Clip& clip) {
-            EffectInstance& e = ensureEffect(clip, "chromakey");
-            e.params["color"] = col;
-            e.enabled = true;
-        });
+        if (col.isValid()) applyKeyColor(col);
+    });
+    // Pipette: the viewer shows the clip without its key, a click there picks the color (MainWindow, KeyColorPicker)
+    m_keyPipette = toggleButton();
+    m_keyPipette->setObjectName("KeyPipette");
+    m_keyPipette->setFixedSize(26, 18);
+    m_keyPipette->setIcon(pipetteIcon());
+    m_keyPipette->setToolTip(T("Key-Farbe mit der Pipette aus dem Bild im Viewer picken"));
+    connect(m_keyPipette, &QToolButton::toggled, this, [this](bool on) {
+        const Clip* c = primary(TrackKind::Video);
+        if (on && c) emit keyPickRequested(c->id);
+        else if (on) setKeyPicking(false);
+        else emit keyPickCancelled();
     });
     m_refreshers << [this, swatch] {
         if (const Clip* c = primary(TrackKind::Video)) {
@@ -243,7 +250,9 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     };
     auto* colorBox = new QHBoxLayout;
     colorBox->setContentsMargins(0, 0, 0, 0);
+    colorBox->setSpacing(4);
     colorBox->addStretch(1);
+    colorBox->addWidget(m_keyPipette);
     colorBox->addWidget(swatch);
     key.grid->addWidget(rowLabel(T("Farbe")), key.rows, 0);
     key.grid->addLayout(colorBox, key.rows, 1);
@@ -388,6 +397,21 @@ void Inspector::setFrameSize(const QSize& size)
         m_crop[i]->edit->setRange(0, max);
     }
     refresh();
+}
+
+void Inspector::applyKeyColor(const QColor& color)
+{
+    apply(TrackKind::Video, {}, T("Key-Farbe"), [color](Clip& clip) {
+        EffectInstance& e = ensureEffect(clip, "chromakey");
+        e.params["color"] = color;
+        e.enabled = true;
+    });
+}
+
+void Inspector::setKeyPicking(bool on)
+{
+    const QSignalBlocker b(m_keyPipette);
+    m_keyPipette->setChecked(on);
 }
 
 int Inspector::localFrame(const Clip& c) const

@@ -90,6 +90,9 @@ public:
     // Still (Grab Still) of the currently shown image (timeline resp. source) at full project resolution,
     // always from the originals (not from proxies)
     QImage grabStill(const Timeline& tl);
+    // Frame `position` of `tl` the same way, but RGBA with transparency where nothing covers the frame
+    // (Green Screen pipette: one clip alone without its key)
+    QImage grabFrame(const Timeline& tl, int position);
 
     void updateTimeline(const Timeline& tl); // model changed -> rebuild
     // Files the timeline needs that are not open yet are opened in a thread, the window stays usable; the newest

@@ -180,6 +180,32 @@ inline QIcon trashIcon()
     return icon;
 }
 
+// Pipette (pick the key color from the picture)
+inline QIcon pipetteIcon()
+{
+    auto draw = [](const QColor& col) {
+        QPixmap pm(32, 32);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.translate(16, 16);
+        p.rotate(45);
+        p.setPen(Qt::NoPen);
+        p.setBrush(col);
+        p.drawRoundedRect(QRectF(-4.5, -15, 9, 9), 3, 3); // bulb
+        p.drawRect(QRectF(-6.5, -6.5, 13, 3));            // collar
+        p.setPen(QPen(col, 2.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(-2.5, -3, 5, 13)); // tube
+        p.drawLine(QPointF(0, 10), QPointF(0, 15));
+        return pm;
+    };
+    QIcon icon;
+    icon.addPixmap(draw(Theme::textDim), QIcon::Normal, QIcon::Off);
+    icon.addPixmap(draw(Theme::text), QIcon::Normal, QIcon::On);
+    return icon;
+}
+
 inline int sliderPos(double v, double min, double max)
 {
     return int(std::lround((v - min) / std::max(1e-9, max - min) * kSliderSteps));

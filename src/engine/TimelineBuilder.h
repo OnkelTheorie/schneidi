@@ -146,6 +146,8 @@ public:
     // clip volume/fades; frames in..out of the clip. nullptr = title/still/file missing.
     // Owned by the builder (cache), valid until the next call.
     Mlt::Producer* clipAudioSource(const Clip& c);
+    // build(): transparent background instead of black where no clip covers the frame (Engine::grabFrame)
+    void setTransparentBackground(bool on) { m_transparent = on; }
     // Image of a single video clip with effects, transform, speed and keyframes (without fades and
     // transitions) on a transparent background; frame 0 = first clip frame. For the render cache.
     std::unique_ptr<Mlt::Tractor> buildClipOutput(const Clip& c);

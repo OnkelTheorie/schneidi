@@ -20,6 +20,9 @@ public:
     virtual bool mouseRelease(QMouseEvent*, const QRectF&) { return false; }
     // Cursor shape over a point (no button pressed); Qt::ArrowCursor = nothing there
     virtual Qt::CursorShape cursorAt(const QPointF&, const QRectF&) const { return Qt::ArrowCursor; }
+    // Mouse over the picture without a button pressed, resp. left the viewer
+    virtual void hover(const QPointF&, const QRectF&) {}
+    virtual void leave() {}
 
 signals:
     void changed(); // repaint

@@ -305,9 +305,9 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildClipOutput(const Clip& clip)
     tl.video.resize(1);
     tl.video[0].clips << c;
     tl.masterLimiter = false;
-    m_transparent = true;
+    const bool transparent = std::exchange(m_transparent, true);
     auto tractor = build(tl);
-    m_transparent = false;
+    m_transparent = transparent;
     return tractor;
 }
 

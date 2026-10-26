@@ -12,6 +12,7 @@
 #include <QHash>
 #include <QLockFile>
 #include <QMainWindow>
+#include <QPointer>
 #include <QTimer>
 #include <QUrl>
 #include <functional>
@@ -138,6 +139,9 @@ private:
     void onFormatChanged();
     void projectSettingsDialog();
     void grabStill();
+    // Green Screen pipette (Inspector): the viewer shows the clip alone without its key until a click picks the color
+    void startKeyPick(int clipId);
+    void stopKeyPick();
     void updateRenderCacheBar(); // render cache bar above the timeline
     void clipSpeedDialog();
     void normalizeAudioDialog();
@@ -234,6 +238,7 @@ private:
     bool m_slowEffects = false;     // clips with effects played: the hint offers the smart render cache first
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
+    QPointer<class KeyColorPicker> m_keyPicker; // while the pipette is on
     TranscriptPanel* m_transcript = nullptr;
     ScopesPanel* m_scopes = nullptr; // Color page, right of the wheels (like DaVinci)
     Mixer* m_mixer = nullptr;

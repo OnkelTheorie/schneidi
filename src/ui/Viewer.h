@@ -44,6 +44,7 @@ public:
 
     // On-screen controls over the picture (Color page windows); nullptr = none
     void setOverlay(class ViewerOverlay* overlay);
+    ViewerOverlay* overlay() const;
 
     // Hint bar above the picture (playback too slow: offer proxy media) with an optional button and a close button;
     // empty text = hidden

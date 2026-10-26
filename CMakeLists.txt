@@ -198,6 +198,7 @@ add_library(schneidi_lib STATIC
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
     src/ui/ViewerOverlay.h
+    src/ui/KeyColorPicker.h       src/ui/KeyColorPicker.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp

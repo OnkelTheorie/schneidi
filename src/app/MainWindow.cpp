@@ -42,6 +42,7 @@
 #include "ui/ColorPanel.h"
 #include "ui/ScopesPanel.h"
 #include "ui/Inspector.h"
+#include "ui/KeyColorPicker.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
@@ -80,6 +81,7 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTimer>
+#include <algorithm>
 
 QString MainWindow::appName()
 {
@@ -181,6 +183,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     connect(m_inspector, &Inspector::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_inspector, &Inspector::savePresetRequested, this, &MainWindow::saveEffectPreset);
+    connect(m_inspector, &Inspector::keyPickRequested, this, &MainWindow::startKeyPick);
+    connect(m_inspector, &Inspector::keyPickCancelled, this, &MainWindow::stopKeyPick);
+    connect(m_selection, &Selection::changed, this, [this] {
+        if (m_keyPicker) stopKeyPick();
+    });
     connect(m_engine, &Engine::positionChanged, this, [this](int f) {
         if (m_engine->timelinePositions()) m_colorPanel->setPlayhead(f);
     });
@@ -567,6 +574,45 @@ void MainWindow::grabStill()
     }
     if (!img.save(path, nullptr, 95))
         QMessageBox::warning(this, T("Standbild exportieren"), T("Datei konnte nicht gespeichert werden:\n%1").arg(path));
+}
+
+void MainWindow::startKeyPick(int clipId)
+{
+    stopKeyPick();
+    m_engine->pause();
+    const Timeline full = m_project->renderTimeline();
+    const Timeline alone = KeyColorPicker::isolate(full, clipId);
+    const Clip* clip = nullptr;
+    for (const Track& t : alone.video)
+        if (!t.clips.isEmpty()) clip = &t.clips.first();
+    QImage picture;
+    if (clip) {
+        // At the playhead; outside the clip (or a source shown in the viewer) its nearest frame
+        const int at = m_engine->timelinePositions() ? m_engine->position() : clip->start;
+        picture = m_engine->grabFrame(alone, std::clamp(at, clip->start, clip->end() - 1));
+    }
+    if (picture.isNull()) {
+        m_inspector->setKeyPicking(false);
+        statusBar()->showMessage(T("Das Bild des Clips konnte nicht erzeugt werden."), 4000);
+        return;
+    }
+    m_keyPicker = new KeyColorPicker(picture, this);
+    connect(m_keyPicker, &KeyColorPicker::picked, this, [this](const QColor& color) {
+        m_inspector->applyKeyColor(color);
+        stopKeyPick();
+    });
+    connect(m_keyPicker, &KeyColorPicker::cancelled, this, &MainWindow::stopKeyPick);
+    m_viewer->setOverlay(m_keyPicker);
+    m_inspector->setKeyPicking(true); // the stopKeyPick() above switched the button off
+}
+
+void MainWindow::stopKeyPick()
+{
+    m_inspector->setKeyPicking(false);
+    if (!m_keyPicker) return;
+    m_viewer->setOverlay(m_colorPanel->overlay());
+    m_keyPicker->deleteLater();
+    m_keyPicker = nullptr;
 }
 
 void MainWindow::projectSettingsDialog()

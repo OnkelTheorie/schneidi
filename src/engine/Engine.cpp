@@ -364,6 +364,26 @@ QImage Engine::thumbnail(const ProjectFormat& format, const QString& path, int f
     return out;
 }
 
+namespace {
+
+// Frame `position` of `producer` as RGBA (with transparency) in the profile's size; empty on failure
+QImage rgbaFrame(Mlt::Profile& profile, Mlt::Producer& producer, int position)
+{
+    if (!producer.is_valid()) return {};
+    producer.seek(position);
+    std::unique_ptr<Mlt::Frame> f(producer.get_frame());
+    if (!f) return {};
+    mlt_image_format fmt = mlt_image_rgba;
+    int w = profile.width(), h = profile.height();
+    const uint8_t* data = f->get_image(fmt, w, h);
+    if (!data || w <= 0 || h <= 0) return {};
+    QImage img(w, h, QImage::Format_RGBA8888);
+    std::memcpy(img.bits(), data, size_t(w) * h * 4);
+    return img;
+}
+
+} // namespace
+
 QImage Engine::grabStill(const Timeline& tl)
 {
     // Own profile and own producers (like the export) -> preview keeps running undisturbed
@@ -377,22 +397,24 @@ QImage Engine::grabStill(const Timeline& tl)
         builder = std::make_unique<TimelineBuilder>(*profile);
         producer = builder->build(tl);
     }
-    if (!producer || !producer->is_valid()) return {};
-    producer->seek(m_position);
-    std::unique_ptr<Mlt::Frame> f(producer->get_frame());
-    if (!f) return {};
-    mlt_image_format fmt = mlt_image_rgba;
-    int w = profile->width(), h = profile->height();
-    const uint8_t* data = f->get_image(fmt, w, h);
-    if (!data || w <= 0 || h <= 0) return {};
-    QImage img(w, h, QImage::Format_RGBA8888);
-    std::memcpy(img.bits(), data, size_t(w) * h * 4);
+    if (!producer) return {};
+    const QImage img = rgbaFrame(*profile, *producer, m_position);
+    if (img.isNull()) return {};
     // Transparent spots (empty timeline, zoomed-out clips) black as in the Viewer
     QImage out(img.size(), QImage::Format_RGB32);
     out.fill(Qt::black);
     QPainter painter(&out);
     painter.drawImage(0, 0, img);
     return out;
+}
+
+QImage Engine::grabFrame(const Timeline& tl, int position)
+{
+    auto profile = makeProfile(m_format);
+    TimelineBuilder builder(*profile);
+    builder.setTransparentBackground(true);
+    const std::unique_ptr<Mlt::Producer> producer = builder.build(tl);
+    return producer ? rgbaFrame(*profile, *producer, position) : QImage();
 }
 
 void Engine::updateTimeline(const Timeline& tl)
