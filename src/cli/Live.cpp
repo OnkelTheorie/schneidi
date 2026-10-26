@@ -205,6 +205,11 @@ void Server::setAllowed(bool on)
     emit stateChanged();
 }
 
+void Server::setWaiting(const QString& message)
+{
+    m_waiting = message;
+}
+
 void Server::onConnection()
 {
     while (QLocalSocket* s = m_server->nextPendingConnection()) {
@@ -264,14 +269,18 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         peer.authed = true;
     }
     if (type == "hello") {
-        reply({{"ok", true},
-               {"project", m_host->liveProjectPath()},
-               {"busy", m_attached && m_attached != s},
-               {"allowed", m_allowed},
-               {"pid", QCoreApplication::applicationPid()},
-               {"version", QCoreApplication::applicationVersion()}});
-        return;
+        QJsonObject o{{"ok", true},
+                      {"project", m_host->liveProjectPath()},
+                      {"busy", m_attached && m_attached != s},
+                      {"allowed", m_allowed},
+                      {"pid", QCoreApplication::applicationPid()},
+                      {"version", QCoreApplication::applicationVersion()}};
+        if (!m_waiting.isEmpty()) o["waiting"] = m_waiting;
+        return reply(o);
     }
+    // The app waits for the user (restore dialog at start): its project is not the one the user will work on yet
+    if (!m_waiting.isEmpty() && (type == "attach" || type == "snapshot" || type == "run"))
+        return reply(errorReply("APP_WAITING", m_waiting));
     if (type == "attach") {
         if (!m_allowed) return reply(errorReply("APP_DISCONNECTED", "the user disconnected the AI in the schneidi app"));
         if (m_attached && m_attached != s)
@@ -391,6 +400,7 @@ struct Candidate {
     std::unique_ptr<Connection> conn;
     bool busy = false;
     bool allowed = true;
+    QString waiting; // the app waits for the user (why, for the AI)
 };
 
 std::vector<Candidate> runningApps()
@@ -421,7 +431,8 @@ std::vector<Candidate> runningApps()
         }
         if (!hello.value("ok").toBool()) continue;
         c->project = hello.value("project").toString();
-        out.push_back({std::move(c), hello.value("busy").toBool(), hello.value("allowed").toBool(true)});
+        out.push_back({std::move(c), hello.value("busy").toBool(), hello.value("allowed").toBool(true),
+                       hello.value("waiting").toString()});
     }
     return out;
 }
@@ -464,6 +475,7 @@ Connection* connectionFor(const QString& project)
             if (!c.conn->project.isEmpty() && canonical(c.conn->project) == key) pick = &c;
         if (!pick) return nullptr;
     }
+    if (!pick->waiting.isEmpty()) detail::fail("APP_WAITING", pick->waiting);
     if (!pick->allowed)
         detail::fail("APP_DISCONNECTED", "the project is open in the schneidi app and the user disconnected the AI "
                                          "there (the app can allow it again)");

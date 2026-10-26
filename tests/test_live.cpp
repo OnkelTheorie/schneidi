@@ -1,6 +1,7 @@
 // Live connection (cli/Live.h): a server on a fake app in this process, schneidi-cli as a real second process.
 // Reading commands see the app's (unsaved) project, edits change it as one undo step without touching the file,
-// `app` controls playhead/selection/undo, one AI session at a time, the user can disconnect it.
+// `app` controls playhead/selection/undo, one AI session at a time, the user can disconnect it, while the app waits
+// for the user (restore dialog at start) AIs hear that and nothing runs.
 #include "cli/Live.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
@@ -234,6 +235,24 @@ int main(int argc, char* argv[])
     server.setAllowed(true);
     CHECK_EQ(code(cli({"info", fake.path})), QString("ok"));
 
+    // The app waits for the user (restore dialog at start, before the project is open): AIs hear that instead of
+    // "not running", nothing runs meanwhile; afterwards everything works
+    {
+        server.setWaiting("schneidi is waiting for the user (restore dialog)");
+        r = cli({"info", "@app"});
+        CHECK_EQ(code(r), QString("APP_WAITING"));
+        CHECK(r["error"].toObject()["message"].toString().contains("restore dialog"));
+        CHECK_EQ(code(cli({"app", "state"})), QString("APP_WAITING"));
+        CHECK_EQ(code(cli({"info", fake.path})), QString("APP_WAITING"));
+        const int clipsBefore = videoClips(fake.project);
+        CHECK_EQ(code(cli({"edit", "@app", "--ops", R"([{"op":"split","at":60}])"})), QString("APP_WAITING"));
+        CHECK_EQ(videoClips(fake.project), clipsBefore);
+        CHECK(!server.attached());
+        server.setWaiting({});
+        CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
+        CHECK_EQ(code(cli({"app", "state"})), QString("ok"));
+    }
+
     // One AI session at a time: an MCP server keeps its connection
     {
         QProcess mcp;
@@ -291,6 +310,24 @@ int main(int argc, char* argv[])
             reply += s.readAll();
         }
         CHECK(reply.contains("AUTH"));
+        // A client asking past hello while the app waits: refused with the reason, not attached
+        server.setWaiting("schneidi is waiting for the user (restore dialog)");
+        QLocalSocket ok;
+        ok.connectToServer(entry["server"].toString());
+        CHECK(ok.waitForConnected(1000));
+        ok.write(QByteArray(R"({"type":"hello","token":")") + entry["token"].toString().toUtf8() + "\"}\n"
+                 + R"({"type":"attach","client":"raw"})" "\n");
+        ok.flush();
+        reply.clear();
+        for (int i = 0; i < 200 && reply.count('\n') < 2; ++i) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            ok.waitForReadyRead(5);
+            reply += ok.readAll();
+        }
+        CHECK(reply.contains("\"waiting\":\"schneidi is waiting"));
+        CHECK(reply.contains("APP_WAITING"));
+        CHECK(!server.attached());
+        server.setWaiting({});
     }
 
     return Check::result();

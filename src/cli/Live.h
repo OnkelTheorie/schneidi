@@ -6,10 +6,12 @@
 // Transport: QLocalSocket (Unix socket / Windows named pipe), one JSON object per line. Every app writes a small
 // file into registryDir() with its socket name and a random token; only the user can read it, the token proves
 // the client is that user. Messages from the client:
-//   {"type":"hello","token":…}            -> {"ok":true,"project":path,"busy":bool,"allowed":bool,"pid":…}
+//   {"type":"hello","token":…}            -> {"ok":true,"project":path,"busy":bool,"allowed":bool,"pid":…,
+//                                              "waiting":text (only while the app waits, see Server::setWaiting)}
 //   {"type":"attach","client":name}       -> {"ok":true} (one attached client at a time; shown in the app)
 //   {"type":"snapshot"}                    -> {"ok":true,"data":project file JSON,"app":state}
 //   {"type":"run","command":…,"args":{…}} -> {"ok":true,"result":{…}} or {"ok":false,"error":{code,message}}
+// attach, snapshot and run while the app waits -> {"ok":false,"error":{"code":"APP_WAITING","message":text}}
 
 #include "cli/Commands.h"
 
@@ -51,6 +53,11 @@ public:
     void disconnectClient();
     bool allowed() const { return m_allowed; }
     void setAllowed(bool on);
+    // The app cannot take commands yet (its restore dialog at start waits for the user, a project is being opened):
+    // `message` tells the AI why (empty = ready). The server runs from the start, so AIs hear "waiting" instead of
+    // "the app is not running"; nothing runs meanwhile (a modal dialog's event loop still delivers requests).
+    void setWaiting(const QString& message);
+    QString waiting() const { return m_waiting; }
 
 signals:
     void stateChanged(); // attached/allowed changed
@@ -74,14 +81,16 @@ private:
     QPointer<QLocalSocket> m_attached;
     QString m_client;
     bool m_allowed = true;
+    QString m_waiting;
     bool m_running = false; // a command runs (it may spin the event loop: no second one meanwhile)
 };
 
 // ---------- schneidi-cli side ----------
 
 // Connection to the app that has `project` open; nullptr = no app has it open (work on the file). Throws
-// APP_BUSY (another AI session is connected), APP_DISCONNECTED (the user disconnected the AI) and, for "@app",
-// NO_APP / AMBIGUOUS. The connection stays open for the process (the MCP server keeps its session).
+// APP_BUSY (another AI session is connected), APP_DISCONNECTED (the user disconnected the AI), APP_WAITING (the
+// app waits for the user, e.g. its restore dialog at start) and, for "@app", NO_APP / AMBIGUOUS. The connection
+// stays open for the process (the MCP server keeps its session).
 class Connection;
 Connection* connectionFor(const QString& project);
 // Project file open in the app (empty = never saved)

@@ -173,12 +173,8 @@ int main(int argc, char* argv[])
     // Test runs (--demo/--actions) leave the user's automatic backup alone
     const bool testRun = demo || !actions.isEmpty() || !screenshot.isEmpty();
     if (testRun) w.disableAutosave();
-    // First offer the backup after a crash - otherwise opening by double-click deletes it without asking.
-    // Restored: this project stays open (the file can then be opened normally).
-    const bool restored = !testRun && w.offerAutosaveRestore();
-    if (!projectFile.isEmpty() && !restored) w.openProject(QFileInfo(projectFile).absoluteFilePath());
-    if (!testRun) QTimer::singleShot(0, &w, [&w] { CrashReport::offer(&w); }); // crashed last time: show the report
-    // Live connection for schneidi-cli / MCP (cli/Live.h); test runs stay invisible to AIs unless SCHNEIDI_LIVE=1
+    // Live connection for schneidi-cli / MCP (cli/Live.h); test runs stay invisible to AIs unless SCHNEIDI_LIVE=1.
+    // Started before the restore dialog: while it waits for the user, AIs hear that instead of "not running".
     std::unique_ptr<Cli::Live::Server> live;
     if (qEnvironmentVariable("SCHNEIDI_LIVE", testRun ? "0" : "1") == "1") {
         live = std::make_unique<Cli::Live::Server>(&w);
@@ -191,6 +187,18 @@ int main(int argc, char* argv[])
             live.reset();
         }
     }
+    const auto liveWaiting = [&live](const QString& message) {
+        if (live) live->setWaiting(message);
+    };
+    // First offer the backup after a crash - otherwise opening by double-click deletes it without asking.
+    // Restored: this project stays open (the file can then be opened normally).
+    liveWaiting("schneidi is waiting for the user (restore dialog: restore unsaved changes after a crash?); "
+                "try again once it is answered");
+    const bool restored = !testRun && w.offerAutosaveRestore();
+    liveWaiting("schneidi is opening a project; try again in a moment");
+    if (!projectFile.isEmpty() && !restored) w.openProject(QFileInfo(projectFile).absoluteFilePath());
+    liveWaiting({});
+    if (!testRun) QTimer::singleShot(0, &w, [&w] { CrashReport::offer(&w); }); // crashed last time: show the report
     if (!formatArg.isEmpty()) {
         const QStringList parts = formatArg.split(QRegularExpression("[x@]"));
         ProjectFormat f;
