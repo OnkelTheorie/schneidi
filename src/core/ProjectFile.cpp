@@ -156,13 +156,21 @@ void migrate(QJsonObject& root)
 
 QJsonObject transformToJson(const ClipTransform& t)
 {
-    return {
+    QJsonObject o{
         {"zoomX", t.zoomX},         {"zoomY", t.zoomY},         {"posX", t.posX},
         {"posY", t.posY},           {"rotation", t.rotation},   {"cropLeft", t.cropLeft},
         {"cropRight", t.cropRight}, {"cropTop", t.cropTop},     {"cropBottom", t.cropBottom},
         {"opacity", t.opacity},     {"transformOn", t.transformOn}, {"cropOn", t.cropOn},
         {"compositeOn", t.compositeOn},
     };
+    // Fill around the fitted picture (0.12): written only when not the default, older projects stay as they were
+    const ClipTransform def;
+    if (t.fill != def.fill)
+        for (const FitFillInfo& f : kFitFills)
+            if (f.fill == t.fill) o["fill"] = f.id;
+    if (t.fillBlur != def.fillBlur) o["fillBlur"] = t.fillBlur;
+    if (t.fillDim != def.fillDim) o["fillDim"] = t.fillDim;
+    return o;
 }
 
 ClipTransform transformFromJson(const QJsonObject& o)
@@ -181,6 +189,10 @@ ClipTransform transformFromJson(const QJsonObject& o)
     t.transformOn = o.value("transformOn").toBool(t.transformOn);
     t.cropOn = o.value("cropOn").toBool(t.cropOn);
     t.compositeOn = o.value("compositeOn").toBool(t.compositeOn);
+    for (const FitFillInfo& f : kFitFills) // unknown (newer) fills: none
+        if (o.value("fill").toString() == QLatin1String(f.id)) t.fill = f.fill;
+    t.fillBlur = o.value("fillBlur").toDouble(t.fillBlur);
+    t.fillDim = o.value("fillDim").toDouble(t.fillDim);
     return t;
 }
 
@@ -423,8 +435,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
         o["ramp"] = ramp;
     }
     if (c.renderCache) o["renderCache"] = true;
-    if (!c.transform.isIdentity() || !c.transform.transformOn || !c.transform.cropOn || !c.transform.compositeOn)
-        o["transform"] = transformToJson(c.transform);
+    if (c.transform != ClipTransform{}) o["transform"] = transformToJson(c.transform); // any value or switch changed
     if (!c.effects.isEmpty()) {
         QJsonArray fx;
         for (const EffectInstance& e : c.effects) {

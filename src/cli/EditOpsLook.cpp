@@ -12,6 +12,7 @@
 #include <QFileInfo>
 
 #include <cmath>
+#include <optional>
 
 namespace Cli::detail {
 
@@ -261,8 +262,25 @@ void opTransform(Session& s, const QJsonObject& op)
         if (!op.value(name).isBool()) fail("BAD_ARGUMENT", QString("%1 must be true or false").arg(name));
         anySwitch = true;
     }
-    if (values.isEmpty() && !reset && !anySwitch)
-        fail("BAD_ARGUMENT", "nothing to set (zoom, x, y, rotation, crop_*, opacity, *_on or reset)");
+    // Fill around the fitted picture: 'blur' = a blurred copy of the same picture (titles fill the frame: skipped)
+    std::optional<FitFill> fill;
+    if (op.contains("fit")) {
+        for (const FitFillInfo& f : kFitFills)
+            if (op.value("fit").toString() == QLatin1String(f.id)) fill = f.fill;
+        if (!fill) fail("BAD_ARGUMENT", "fit is 'blur' (a blurred copy of the picture around it) or 'none' (transparent)");
+    }
+    const std::optional<double> fillBlur = op.contains("fit_blur") ? std::optional(numberOf(op, "fit_blur", 0, 100))
+                                                                   : std::nullopt;
+    const std::optional<double> fillDim = op.contains("fit_dim") ? std::optional(numberOf(op, "fit_dim", 0, 100))
+                                                                 : std::nullopt;
+    const bool anyFill = fill || fillBlur || fillDim;
+    if (anyFill) {
+        const Timeline& tl = s.project.timeline();
+        if (std::all_of(ids.begin(), ids.end(), [&](int id) { return TimelineOps::findClip(tl, id)->isTitle(); }))
+            fail("BAD_ARGUMENT", "fit is for clips with a picture; titles fill the frame");
+    }
+    if (values.isEmpty() && !reset && !anySwitch && !anyFill)
+        fail("BAD_ARGUMENT", "nothing to set (zoom, x, y, rotation, crop_*, opacity, fit, fit_blur, fit_dim, *_on or reset)");
     const bool hasAt = op.contains("at");
     const int at = hasAt ? timeOf(s, op, "at") : 0;
     s.editor.modifyClips(ids, "Transform", [&](Clip& c) {
@@ -273,6 +291,11 @@ void opTransform(Session& s, const QJsonObject& op)
         for (const auto& [p, v] : values) Keys::setValue(c, p, hasAt ? localFrame(c, at) : 0, v);
         for (const auto& [name, member] : switches)
             if (op.contains(name)) c.transform.*member = op.value(name).toBool();
+        if (!c.isTitle()) {
+            if (fill) c.transform.fill = *fill;
+            if (fillBlur) c.transform.fillBlur = *fillBlur;
+            if (fillDim) c.transform.fillDim = *fillDim;
+        }
     });
 }
 
@@ -468,9 +491,9 @@ void addLookOps(QVector<OpDef>& ops)
                  "on the clip's picture before transform, speed changes included. Slow: ~10–40 frames per second.",
                  opTrack}
         << OpDef{"transform", "{op:'transform', clips, zoom?, zoom_x?, zoom_y?, x?, y?, rotation?, crop_left?, "
-                              "crop_right?, crop_top?, crop_bottom?, opacity?, transform_on?, crop_on?, opacity_on?, "
-                              "reset?, at?}",
-                 "Inspector transform/crop/opacity of video clips",
+                              "crop_right?, crop_top?, crop_bottom?, opacity?, fit?, fit_blur?, fit_dim?, transform_on?, "
+                              "crop_on?, opacity_on?, reset?, at?}",
+                 "Inspector transform/crop/opacity of video clips; fit:'blur' = blurred background (9:16 from 16:9)",
                  "zoom 1 = the clip's picture fitted into the frame keeping its shape (a 1920x1080 clip in a "
                  "1080x1920 timeline is 1080x607.5 wide/high, centered, with transparent bars above and below); x/y "
                  "in pixels of the timeline from the center, y up; rotation in degrees, counterclockwise. crop_* = "
@@ -478,7 +501,15 @@ void addLookOps(QVector<OpDef>& ops)
                  "the same unit at every zoom and timeline shape: crop px = source px * fitted width / source width "
                  "(1920x1080 clip: * 1 in a 1920x1080 timeline, * 0.5625 in 1080x1920, * 0.5 in 960x540). Crop "
                  "applies before zoom/position/rotation, so at zoom 2 a crop of 100 hides 200 timeline pixels; the "
-                 "cut area is transparent (tracks below show). opacity 0..100. reset:true sets all back first. "
+                 "cut area is transparent (tracks below show). opacity 0..100. "
+                 "fit:'blur' fills the frame around the fitted picture (bars, room left by zoom < 1, moves, rotation) "
+                 "with a blurred copy of the same picture, enlarged to cover the frame: a vertical video from 16:9 "
+                 "material on ONE track (one clip per scene, decoded once, plays smoothly), instead of a blurred second "
+                 "copy on the track below. The copy shows the clip's whole (cropped) picture and does not zoom or move "
+                 "with it; zoom 1.2-1.5 crops the edges of the sharp picture and keeps a HUD readable. fit_blur 0..100 "
+                 "(default 40, like the blur effect), fit_dim 0..100 = percent darker than the clip (default 20); "
+                 "fit:'none' = transparent again (default). Opacity and fades act on the whole clip; titles do not "
+                 "take it. reset:true sets all back first. "
                  "Values that have keyframes get one at `at`. transform_on/crop_on/opacity_on:false switch that "
                  "Inspector section off (its values and keyframes stay but do not apply, e.g. to compare), true on "
                  "again; `info` shows them when off.",

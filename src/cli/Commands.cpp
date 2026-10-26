@@ -340,6 +340,11 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
         if (!t.transformOn) to["transform_on"] = false;
         if (!t.cropOn) to["crop_on"] = false;
         if (!t.compositeOn) to["opacity_on"] = false;
+        // Blurred fill around the fitted picture: with its strength and darkening, so the effective look is visible
+        const bool blur = t.fill == FitFill::Blur;
+        if (blur) to["fit"] = "blur";
+        if (blur || t.fillBlur != def.fillBlur) to["fit_blur"] = t.fillBlur;
+        if (blur || t.fillDim != def.fillDim) to["fit_dim"] = t.fillDim;
         if (!to.isEmpty()) o["transform"] = to;
     }
     if (const QJsonObject keys = keyframesJson(c); !keys.isEmpty()) o["keyframes"] = keys;
