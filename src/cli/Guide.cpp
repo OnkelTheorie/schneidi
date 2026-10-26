@@ -16,7 +16,8 @@ QString readResource(const QString& path)
 {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return {};
-    return QString::fromUtf8(f.readAll());
+    // A Windows checkout (core.autocrlf) builds the files in with CRLF: the front matter must still be found
+    return QString::fromUtf8(f.readAll()).replace("\r\n", "\n");
 }
 
 } // namespace
