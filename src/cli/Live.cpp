@@ -219,6 +219,7 @@ bool Server::start(QString* error)
     }
     connect(m_server, &QLocalServer::newConnection, this, &Server::onConnection);
     m_token = randomHex(16);
+    m_chatSecret = randomHex(16);
     m_file = QString("%1/%2.json").arg(dir).arg(QCoreApplication::applicationPid());
     QFile f(m_file);
     // Owner-only before the token goes in
@@ -233,6 +234,12 @@ bool Server::start(QString* error)
                                       {"version", QCoreApplication::applicationVersion()}})
                 .toJson());
     return true;
+}
+
+QHash<QString, QString> Server::chatEnvironment() const
+{
+    if (!m_server) return {};
+    return {{ChatServerEnv, m_server->fullServerName()}, {ChatSecretEnv, m_chatSecret}};
 }
 
 void Server::disconnectClient(const QString& reason)
@@ -307,27 +314,32 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
     const QString type = msg.value("type").toString();
     Peer& peer = m_peers[s];
     if (!peer.authed) {
-        if (type != "hello" || msg.value("token").toString() != m_token) {
+        const QString token = msg.value("token").toString();
+        const bool chat = !m_chatSecret.isEmpty() && token == m_chatSecret;
+        if (type != "hello" || (token != m_token && !chat)) {
             reply(errorReply("AUTH", "wrong token"));
             s->disconnectFromServer();
             return;
         }
         peer.authed = true;
+        peer.chat = chat;
     }
     if (type == "hello") {
+        // The app's own chat is always allowed and never waits for another AI
         QJsonObject o{{"ok", true},
                       {"project", m_host->liveProjectPath()},
-                      {"busy", m_attached && m_attached != s},
-                      {"allowed", m_allowed},
+                      {"busy", !peer.chat && m_attached && m_attached != s},
+                      {"allowed", peer.chat || m_allowed},
                       {"pid", QCoreApplication::applicationPid()},
                       {"version", QCoreApplication::applicationVersion()}};
         if (!m_waiting.isEmpty()) o["waiting"] = m_waiting;
-        if (!m_allowed && !m_refusal.isEmpty()) o["refusal"] = m_refusal;
+        if (!peer.chat && !m_allowed && !m_refusal.isEmpty()) o["refusal"] = m_refusal;
         return reply(o);
     }
+    const bool attached = m_attached == s || peer.chatAttached;
     // Work of the attached AI outside the app: shown there, never answered (the client does not wait for it)
     if (type == "activity") {
-        if (m_attached != s || !m_waiting.isEmpty()) return;
+        if (!attached || !m_waiting.isEmpty()) return;
         static const QHash<QString, LiveActivity::State> states{{"start", LiveActivity::State::Started},
                                                                  {"progress", LiveActivity::State::Progress},
                                                                  {"end", LiveActivity::State::Finished},
@@ -349,6 +361,10 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
     if (!m_waiting.isEmpty() && (type == "attach" || type == "snapshot" || type == "run"))
         return reply(errorReply("APP_WAITING", m_waiting));
     if (type == "attach") {
+        if (peer.chat) { // not shown as a connected AI: the chat panel shows what it does
+            peer.chatAttached = true;
+            return reply({{"ok", true}});
+        }
         if (!m_allowed)
             return reply(errorReply("APP_DISCONNECTED", m_refusal.isEmpty() ? "the user disconnected the AI in the schneidi app"
                                                                              : m_refusal));
@@ -360,7 +376,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         emit stateChanged();
         return reply({{"ok", true}});
     }
-    if (m_attached != s) return reply(errorReply("NOT_ATTACHED", "attach first"));
+    if (!attached) return reply(errorReply("NOT_ATTACHED", "attach first"));
     if (type == "snapshot") {
         Project* p = m_host->liveProject();
         const QString path = m_host->liveProjectPath();
@@ -372,7 +388,10 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
     if (type == "run") {
         QPointer<QLocalSocket> guard(s);
         m_running = true;
-        const QJsonObject result = runCommand(msg);
+        const bool ownChat = peer.chat;
+        m_host->liveCommandRunning(true, ownChat);
+        const QJsonObject result = runCommand(msg, ownChat);
+        m_host->liveCommandRunning(false, ownChat);
         m_running = false;
         if (guard) guard->write(line(result));
         // Requests that came in meanwhile
@@ -384,7 +403,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
     reply(errorReply("BAD_REQUEST", "unknown request type " + type));
 }
 
-QJsonObject Server::runCommand(const QJsonObject& msg)
+QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
 {
     const QString name = msg.value("command").toString();
     const Command* cmd = find(name);
@@ -408,6 +427,7 @@ QJsonObject Server::runCommand(const QJsonObject& msg)
     const bool logged = !(name == "app" && args.value("action").toString().trimmed().toLower() == "state");
     LiveChange change;
     change.command = name;
+    change.ownChat = ownChat;
     try {
         result = cmd->run(args, ctx);
     } catch (const Error& e) {
@@ -484,19 +504,30 @@ struct Candidate {
 std::vector<Candidate> runningApps()
 {
     std::vector<Candidate> out;
-    const QDir dir(registryDir());
-    for (const QFileInfo& fi : dir.entryInfoList({"*.json"}, QDir::Files)) {
-        QFile f(fi.absoluteFilePath());
-        if (!f.open(QIODevice::ReadOnly)) continue;
-        const QJsonObject entry = QJsonDocument::fromJson(f.readAll()).object();
-        f.close();
+    // Started by the app's own AI chat: only that app, with the chat's secret (Live.h)
+    QVector<QJsonObject> entries;
+    QStringList files;
+    if (const QString own = qEnvironmentVariable(ChatServerEnv); !own.isEmpty()) {
+        entries << QJsonObject{{"server", own}, {"token", qEnvironmentVariable(ChatSecretEnv)}};
+        files << QString();
+    } else {
+        for (const QFileInfo& fi : QDir(registryDir()).entryInfoList({"*.json"}, QDir::Files)) {
+            QFile f(fi.absoluteFilePath());
+            if (!f.open(QIODevice::ReadOnly)) continue;
+            entries << QJsonDocument::fromJson(f.readAll()).object();
+            files << fi.absoluteFilePath();
+        }
+    }
+    for (int i = 0; i < entries.size(); ++i) {
+        const QJsonObject& entry = entries[i];
         auto c = std::make_unique<Connection>();
         c->socket.connectToServer(entry.value("server").toString());
         if (!c->socket.waitForConnected(1000)) {
             // App gone without cleaning up (crash): forget it and its socket file
-            if (c->socket.error() == QLocalSocket::ServerNotFoundError
-                || c->socket.error() == QLocalSocket::ConnectionRefusedError) {
-                QFile::remove(fi.absoluteFilePath());
+            if (!files[i].isEmpty()
+                && (c->socket.error() == QLocalSocket::ServerNotFoundError
+                    || c->socket.error() == QLocalSocket::ConnectionRefusedError)) {
+                QFile::remove(files[i]);
                 QLocalServer::removeServer(entry.value("server").toString());
             }
             continue;

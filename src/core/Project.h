@@ -54,6 +54,10 @@ public:
     // (e.g. dragging a slider in the Inspector). closeMerge() ends the series.
     void edit(const QString& text, const std::function<void(Timeline&)>& fn, const QString& mergeKey = {});
     void closeMerge() { ++m_mergeSession; }
+    // The undo steps after `fromIndex` (QUndoStack::index()) become one step called `text`, e.g. an AI chat turn the
+    // user accepted: the state before them and the state now, everything the history covers (timelines, the open
+    // one, project settings, Media Pool organization). Nothing to combine (index <= fromIndex): no step.
+    void combineSteps(int fromIndex, const QString& text);
     void setTimeline(const Timeline& tl); // only for undo/loading (current sequence)
     // Undo: set the timeline of a sequence; if it is not open, it gets opened (you see what changes)
     void setTimeline(int sequenceId, const Timeline& tl);
