@@ -36,6 +36,7 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <clocale>
+#include <utility>
 
 namespace {
 
@@ -344,7 +345,7 @@ void testCli(const QString& dir)
     const QString path = dir + "/cli.schneidi";
     // Default without a template: Neutral, as before
     QJsonObject r = run("new", {{"project", path}});
-    CHECK_EQ(r["template"]["id"].toString(), QString("neutral"));
+    CHECK_EQ(std::as_const(r)["template"]["id"].toString(), QString("neutral"));
     ProjectData plain;
     plain.timeline = emptyTimeline();
     {
@@ -356,28 +357,28 @@ void testCli(const QString& dir)
 
     // podcast: in one call
     r = run("new", {{"project", path}, {"template", "podcast"}, {"overwrite", true}});
-    CHECK_EQ(r["template"]["id"].toString(), QString("podcast"));
-    const QJsonArray tracks = r["timeline"]["tracks"].toArray();
+    CHECK_EQ(std::as_const(r)["template"]["id"].toString(), QString("podcast"));
+    const QJsonArray tracks = std::as_const(r)["timeline"]["tracks"].toArray();
     QStringList names;
     for (const QJsonValue& v : tracks) names << v["name"].toString();
     CHECK_EQ(names.join(","), QString(",,%1,%2,%3").arg(T("Stimme 1"), T("Stimme 2"), T("Musik")));
-    CHECK(r["timeline"]["master"]["limiter"].toBool());
+    CHECK(std::as_const(r)["timeline"]["master"]["limiter"].toBool());
 
     // vertical: width/height from the template, fps given; the format keeps its fixed resolution
     r = run("new", {{"project", path}, {"template", "vertical"}, {"fps", 60}, {"overwrite", true}});
-    CHECK_EQ(r["format"]["width"].toInt(), 1080);
-    CHECK_EQ(r["format"]["height"].toInt(), 1920);
-    CHECK_EQ(r["format"]["fps"].toDouble(), 60.0);
-    CHECK(r["format"]["fixed_resolution"].toBool());
+    CHECK_EQ(std::as_const(r)["format"]["width"].toInt(), 1080);
+    CHECK_EQ(std::as_const(r)["format"]["height"].toInt(), 1920);
+    CHECK_EQ(std::as_const(r)["format"]["fps"].toDouble(), 60.0);
+    CHECK(std::as_const(r)["format"]["fixed_resolution"].toBool());
     CHECK(loadProject(path).fixedResolution);
     // explicit width/height win over the template's
     r = run("new", {{"project", path}, {"template", "vertical"}, {"width", 720}, {"height", 1280}, {"overwrite", true}});
-    CHECK_EQ(r["format"]["width"].toInt(), 720);
+    CHECK_EQ(std::as_const(r)["format"]["width"].toInt(), 720);
 
     // The user's default applies without a template
     StartTemplates::setDefaultId("podcast");
     r = run("new", {{"project", path}, {"overwrite", true}});
-    CHECK_EQ(r["template"]["id"].toString(), QString("podcast"));
+    CHECK_EQ(std::as_const(r)["template"]["id"].toString(), QString("podcast"));
     StartTemplates::setDefaultId("neutral");
 
     // Unknown template: the error names the ones there are
@@ -398,10 +399,10 @@ void testCli(const QString& dir)
     QString error;
     CHECK(StartTemplates::save(mine, &error));
     r = run("new", {{"project", path}, {"template", "mein spiel"}, {"overwrite", true}});
-    CHECK_EQ(r["template"]["id"].toString(), QString("Mein Spiel"));
+    CHECK_EQ(std::as_const(r)["template"]["id"].toString(), QString("Mein Spiel"));
     CHECK(loadProject(path).timeline.audio.value(0).muted);
     r = run("new", {{"project", path}, {"template", mine.path}, {"overwrite", true}});
-    CHECK_EQ(r["timeline"]["tracks"].toArray().at(2)["name"].toString(), QString("Game"));
+    CHECK_EQ(std::as_const(r)["timeline"]["tracks"].toArray().at(2)["name"].toString(), QString("Game"));
     {
         const QString other = dir + "/other.schneidi";
         src.addMedia({"/x/a.mp4", "a.mp4", 100, true, true, false});
@@ -420,8 +421,8 @@ void testCli(const QString& dir)
 
     // templates: built-in and own, the default marked, what each sets
     r = run("templates", {});
-    CHECK_EQ(r["default"].toString(), QString("neutral"));
-    const QJsonArray list = r["templates"].toArray();
+    CHECK_EQ(std::as_const(r)["default"].toString(), QString("neutral"));
+    const QJsonArray list = std::as_const(r)["templates"].toArray();
     CHECK_EQ(list.size(), qsizetype(5));
     QJsonObject game, own;
     for (const QJsonValue& v : list) {
@@ -429,14 +430,14 @@ void testCli(const QString& dir)
         if (v["id"].toString() == "Mein Spiel") own = v.toObject();
         if (v["id"].toString() == "neutral") CHECK(v["default"].toBool());
     }
-    CHECK(game["built_in"].toBool() && game["import_presets"]["mute_mix"].toBool());
-    CHECK(game["master"]["limiter"].toBool());
-    CHECK(!own["built_in"].toBool() && own["file"].toString() == mine.path);
-    CHECK(own["tracks"].toArray().at(2)["muted"].toBool());
+    CHECK(std::as_const(game)["built_in"].toBool() && std::as_const(game)["import_presets"]["mute_mix"].toBool());
+    CHECK(std::as_const(game)["master"]["limiter"].toBool());
+    CHECK(!std::as_const(own)["built_in"].toBool() && std::as_const(own)["file"].toString() == mine.path);
+    CHECK(std::as_const(own)["tracks"].toArray().at(2)["muted"].toBool());
     CHECK(!own.contains("import_presets"));
     r = run("templates", {{"template", "vertical"}});
-    CHECK_EQ(r["format"]["height"].toInt(), 1920);
-    CHECK(r["format"]["fixed_resolution"].toBool() && !r["format"]["fixed_frame_rate"].toBool());
+    CHECK_EQ(std::as_const(r)["format"]["height"].toInt(), 1920);
+    CHECK(std::as_const(r)["format"]["fixed_resolution"].toBool() && !std::as_const(r)["format"]["fixed_frame_rate"].toBool());
     clean();
 }
 
