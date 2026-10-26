@@ -2,14 +2,19 @@
 
 #include "app/Theme.h"
 #include "core/I18n.h"
+#include "core/ExportCheck.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
+#include "core/TimelineOps.h"
+#include "engine/AudioAnalysis.h"
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/RenderQueue.h"
 #include "ui/RenderQueuePanel.h"
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QProgressDialog>
 #include <QComboBox>
 #include <QStandardItemModel>
 #include <QDir>
@@ -20,6 +25,7 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
@@ -200,6 +206,14 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_addBtn = new QPushButton(T("Zur Render-Warteschlange hinzufügen"));
     m_addBtn->setMinimumHeight(30);
     m_addBtn->setStyleSheet(Theme::primaryButtonStyle());
+    m_checkBtn = new QPushButton(T("Vor dem Export prüfen"));
+    m_checkBtn->setToolTip(T("Sucht, was in fertigen Videos oft schiefgeht: Lücken ohne Bild, fehlende Dateien, "
+                             "Untertitel zu kurz oder zu schnell, Ton übersteuert, zu leise oder zu laut, Stille am "
+                             "Ende"));
+    m_checkList = new QListWidget;
+    m_checkList->setWordWrap(true);
+    m_checkList->setMaximumHeight(200);
+    m_checkList->hide();
     m_status = new QLabel;
     m_status->setWordWrap(true);
     m_status->setStyleSheet(QString("color: %1; padding: 0 12px;").arg(Theme::textDim.name()));
@@ -212,6 +226,8 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     lay->addStretch(1);
     auto* bottom = new QVBoxLayout;
     bottom->setContentsMargins(12, 0, 12, 0);
+    bottom->addWidget(m_checkList);
+    bottom->addWidget(m_checkBtn);
     bottom->addWidget(m_addBtn);
     lay->addLayout(bottom);
     lay->addWidget(m_status);
@@ -224,6 +240,11 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
         });
     connect(m_smart, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
     connect(m_addBtn, &QPushButton::clicked, this, [this] { addToQueue(true); });
+    connect(m_checkBtn, &QPushButton::clicked, this, [this] { runCheck(); });
+    connect(m_checkList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        const int frame = item->data(Qt::UserRole).toInt();
+        if (frame >= 0) emit seekRequested(frame);
+    });
     // Double-click in the queue: take over the job's settings (like DaVinci "Edit Job")
     connect(m_queuePanel, &RenderQueuePanel::loadJobRequested, this, [this](int id) {
         for (const RenderJob& j : m_project->renderQueue())
@@ -624,4 +645,77 @@ bool DeliverPanel::addToQueue(bool confirm)
     m_project->setRenderQueue(q);
     m_status->setText(T("Job %1 hinzugefügt: %2").arg(job.id).arg(file));
     return true;
+}
+
+bool DeliverPanel::runCheck()
+{
+    const RenderJob job = makeJob();
+    const ProjectFormat& f = m_project->format();
+    const Timeline& tl = m_project->timeline();
+    const int end = TimelineOps::endFrame(tl);
+    const int from = job.inOut ? job.from : 0;
+    const int to = job.inOut && job.to >= 0 ? std::min(end, job.to + 1) : end;
+    m_checkList->clear();
+    if (to <= from) {
+        m_checkList->hide();
+        m_status->setText(T("Die Timeline ist leer."));
+        return true;
+    }
+    QVector<ExportCheck::Issue> issues = ExportCheck::timeline(tl, from, to, f);
+    // What this export leaves out does not matter: the picture for sound-only formats, subtitles when not exported
+    issues.removeIf([&](const ExportCheck::Issue& i) {
+        return (job.settings.audioOnly() && (i.check == "black" || i.check.startsWith("subtitle")))
+               || (job.settings.subtitles == RenderSettings::NoSubtitles && i.check.startsWith("subtitle"));
+    });
+
+    QString sound;
+    bool canceled = false;
+    if (job.settings.hasAudio()) {
+        QProgressDialog progress(T("Ton wird gemessen…"), T("Abbrechen"), 0, 1000, this);
+        progress.setWindowModality(Qt::WindowModal);
+        progress.setMinimumDuration(400);
+        const auto step = [&progress](double a, double b) {
+            return [&progress, a, b](double p) {
+                progress.setValue(int((a + (b - a) * p) * 1000));
+                QApplication::processEvents();
+                return !progress.wasCanceled();
+            };
+        };
+        const Timeline mix = m_project->renderTimeline(job.sequence);
+        const auto peaks = AudioAnalysis::timelineFramePeaks(f, mix, from, to, step(0, 0.5));
+        const auto loud = peaks && !progress.wasCanceled()
+                              ? AudioAnalysis::timelineLoudness(f, mix, from, to, step(0.5, 1))
+                              : std::nullopt;
+        canceled = progress.wasCanceled();
+        if (peaks && loud) {
+            issues += ExportCheck::sound(*peaks, from, loud->integrated, loud->truePeakDb, f, {}, mix.masterLimiter);
+            if (loud->integrated > -200)
+                sound = T("Lautheit %1 LUFS, True Peak %2 dBTP")
+                            .arg(QString::number(loud->integrated, 'f', 1).replace('.', I18n::decimalPoint()),
+                                 QString::number(loud->truePeakDb, 'f', 1).replace('.', I18n::decimalPoint()));
+        }
+    }
+
+    std::stable_sort(issues.begin(), issues.end(), [](const ExportCheck::Issue& a, const ExportCheck::Issue& b) {
+        return a.severity != b.severity ? int(a.severity) < int(b.severity) : a.from < b.from;
+    });
+    const int fps = m_project->fps();
+    for (const ExportCheck::Issue& i : issues) {
+        // Time first: the message may wrap
+        const QString at = i.from >= 0 ? Timecode::format(i.from, fps) + "  " : QString();
+        auto* item = new QListWidgetItem(QString::fromUtf8("● ") + at + i.message, m_checkList);
+        item->setToolTip(i.message);
+        item->setForeground(i.severity == ExportCheck::Severity::Error     ? Theme::warning
+                            : i.severity == ExportCheck::Severity::Warning ? Theme::meterMid
+                                                                           : Theme::textDim);
+        item->setData(Qt::UserRole, i.from);
+    }
+    m_checkList->setVisible(!issues.isEmpty());
+    const int errors = ExportCheck::errors(issues), warnings = ExportCheck::warnings(issues);
+    QString summary = errors == 0 && warnings == 0 ? T("Prüfung: alles in Ordnung.")
+                                                    : T("Prüfung: %1 Fehler, %2 Warnungen.").arg(errors).arg(warnings);
+    if (!sound.isEmpty()) summary += ' ' + sound;
+    if (canceled) summary += ' ' + T("Ton nicht geprüft (abgebrochen).");
+    m_status->setText(summary);
+    return !canceled;
 }

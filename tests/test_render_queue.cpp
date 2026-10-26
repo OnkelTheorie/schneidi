@@ -21,6 +21,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QUndoStack>
@@ -499,6 +501,48 @@ int main(int argc, char** argv)
         QFile f(clip);
         CHECK(f.open(QIODevice::ReadOnly) && f.readAll() == before);
         CHECK(!Exporter::readsFile(p.renderTimeline(), tmp.filePath("anders.mp4")));
+    }
+
+    // --- Check before export on the Deliver page: a forgotten frame between two clips, sound measured; clicking a
+    // result asks to move the playhead there (CHECK_DUMP=<file.png>: the panel with the results)
+    {
+        Project q;
+        ProjectData d;
+        d.format.width = 320;
+        d.format.height = 180;
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 1);
+        TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 1);
+        for (int i = 0; i < 2; ++i) {
+            Clip v;
+            v.id = 1 + 2 * i;
+            v.mediaPath = clip;
+            v.start = i * 26;
+            v.out = 24;
+            v.linkId = 1 + i;
+            Clip a = v;
+            a.id = v.id + 1;
+            d.timeline.video[0].clips << v;
+            d.timeline.audio[0].clips << a;
+        }
+        d.lastClipId = 4;
+        d.lastLinkId = 2;
+        q.load(d);
+        DeliverPanel panel(&q);
+        panel.resize(340, 700);
+        CHECK(panel.runCheck());
+        QListWidget* list = panel.checkList();
+        int gapRow = -1;
+        for (int i = 0; i < list->count(); ++i)
+            if (list->item(i)->data(Qt::UserRole).toInt() == 25) gapRow = i;
+        CHECK(gapRow >= 0); // frame 25 has no picture
+        CHECK(!list->isHidden());
+        if (gapRow >= 0) {
+            QSignalSpy seek(&panel, &DeliverPanel::seekRequested);
+            emit list->itemClicked(list->item(gapRow));
+            CHECK_EQ(seek.count(), 1);
+            if (!seek.isEmpty()) CHECK_EQ(seek.first().first().toInt(), 25);
+        }
+        if (const QByteArray dump = qgetenv("CHECK_DUMP"); !dump.isEmpty()) panel.grab().save(QString::fromLocal8Bit(dump));
     }
     return Check::result();
 }

@@ -14,6 +14,7 @@ class QLineEdit;
 class QPushButton;
 class QLabel;
 class QToolButton;
+class QListWidget;
 
 // Deliver page like DaVinci: on the left the render settings with presets (built-in + custom) and
 // "Add to Render Queue", on the right the queue (queuePanel(), placed by the main window).
@@ -40,6 +41,14 @@ public:
     bool savePreset(const QString& name); // same name = overwrite; built-in ones not
     bool deletePreset(int index);         // only custom ones
     const QVector<RenderPreset>& presets() const { return m_presets; }
+
+    // Check before export (core/ExportCheck): the range that would be rendered, picture/subtitles at once, the sound
+    // measured with progress (cancelable); the result as a list under the buttons. false = canceled.
+    bool runCheck();
+    QListWidget* checkList() const { return m_checkList; }
+
+signals:
+    void seekRequested(int frame); // a check result was clicked
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -82,5 +91,7 @@ private:
     bool m_applying = false;
     int m_wantedBits = 24; // last chosen bit depth (stays on format change, if possible)
     QPushButton* m_addBtn;
+    QPushButton* m_checkBtn;
+    QListWidget* m_checkList; // results of the last check (hidden until one ran)
     QLabel* m_status;
 };

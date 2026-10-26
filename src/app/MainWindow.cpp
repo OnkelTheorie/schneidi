@@ -181,6 +181,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         if (m_engine->timelinePositions()) m_transcript->setPlayhead(f);
     });
     connect(m_transcript, &TranscriptPanel::seekRequested, tv, &TimelineView::seekRequested);
+    connect(m_deliver, &DeliverPanel::seekRequested, tv, &TimelineView::seekRequested);
     connect(m_transcript, &TranscriptPanel::openExtensions, this, [this] {
         ExtensionsDialog ext(this);
         ext.exec();
