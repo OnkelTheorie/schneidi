@@ -261,6 +261,13 @@ public:
     // Every effect of the clips (Effects Library, Color page grade/LUT) in one undo step; the Green Screen of the
     // Video tab stays
     void removeAllEffects(const QVector<int>& ids);
+    // Effect order: the movable effects (EffectRegistry::movable) render in the clip's order, after the fixed stages.
+    // Puts `effectId` at place `to` among them (0 = rendered first, past the end = last) in every clip that has it;
+    // the fixed stages keep their place. One undo step; false = nothing moved (a fixed stage, no clip has it, or it
+    // is there already)
+    bool moveEffect(const QVector<int>& ids, const QString& effectId, int to);
+    // The same by `steps` places per clip (-1 = one earlier, up in the Inspector), stopping at the ends
+    bool moveEffectBy(const QVector<int>& ids, const QString& effectId, int steps);
     // Kind of clip an effect id goes on (audio effects, else video: filters, LUTs, presets)
     static TrackKind effectKind(const QString& effectId);
     // Target of a double click in the Effects Library: selected clips of the kind, else the top video clip (audio:

@@ -17,9 +17,9 @@ public:
     // `picture`: the frame with the clip alone (RGBA, transparent where the clip does not cover it)
     explicit KeyColorPicker(const QImage& picture, QObject* parent = nullptr);
 
-    // `tl` with only the video clip `clipId` left, as its key sees it: its effects up to the Green Screen (the key and
-    // what comes after it left out), full opacity, no fades or transitions, its track shown. Empty timeline if the
-    // clip is not in it.
+    // `tl` with only the video clip `clipId` left, as its key sees it: the stages before the Green Screen
+    // (stabilization, Color page grade), without the key and the effects after it, full opacity, no fades or
+    // transitions, its track shown. Empty timeline if the clip is not in it.
     static Timeline isolate(const Timeline& tl, int clipId);
     // Average color of the covered pixels (alpha >= 128) in a square of 2*radius+1 around `at` (image pixels);
     // invalid if none is covered

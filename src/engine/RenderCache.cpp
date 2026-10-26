@@ -36,6 +36,9 @@ constexpr const char* kVersion = "rc1";
 // Cropped clips render differently since project format 3 (crop measured on the fitted picture, letterbox bars stay
 // transparent): only their cache files are stale
 constexpr const char* kCropVersion = "crop2";
+// Since 0.13 the Green Screen key renders right after the grade, before the other effects (before: at its place in
+// the clip's effect list): only cache files of keyed clips are stale
+constexpr const char* kKeyVersion = "key2";
 
 QString modeId(RenderCache::Mode m)
 {
@@ -188,7 +191,8 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
                            .arg(f.rate.num)
                            .arg(f.rate.den);
     const QByteArray crop = Keys::hasCrop(c) ? QByteArray(kCropVersion) : QByteArray();
-    return QCryptographicHash::hash(id.toUtf8() + crop + clip, QCryptographicHash::Sha1).toHex();
+    const QByteArray key = EffectRegistry::has(c, "chromakey") ? QByteArray(kKeyVersion) : QByteArray();
+    return QCryptographicHash::hash(id.toUtf8() + crop + key + clip, QCryptographicHash::Sha1).toHex();
 }
 
 QString RenderCache::path(const Clip& c) const

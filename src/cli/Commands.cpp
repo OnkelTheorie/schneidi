@@ -376,7 +376,8 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
         const auto json = [](const QVariant& v) {
             return v.typeId() == QMetaType::QColor ? QJsonValue(v.value<QColor>().name()) : QJsonValue::fromVariant(v);
         };
-        for (const EffectInstance& e : c.effects) {
+        for (const EffectInstance* fxi : EffectRegistry::renderOrder(c)) { // the order they render in
+            const EffectInstance& e = *fxi;
             QJsonObject eo{{"effect", e.effectId}};
             QJsonObject params;
             QMap<int, QJsonObject> windows; // grade: its windows apart ("w1.x" -> windows[1].x)

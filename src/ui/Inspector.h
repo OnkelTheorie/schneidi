@@ -43,6 +43,10 @@ public slots:
     // Pipette button pressed or not (without keyPickRequested/keyPickCancelled)
     void setKeyPicking(bool on);
 
+protected:
+    // Dragging the header of an effect section changes the effect order
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 signals:
     // Keyframe arrows ◀ ▶: jump to the previous/next keyframe
     void seekRequested(int frame);
@@ -75,6 +79,7 @@ private:
         QWidget* header = nullptr;   // header row and content (for showing/hiding and reordering)
         QWidget* body = nullptr;
         QHBoxLayout* headerLayout = nullptr;
+        QToolButton* toggle = nullptr; // the title (click = fold)
     };
 
     // Section with header row; `enabled` = red dot (optional)
@@ -87,8 +92,16 @@ private:
     void addMissingEffectSection(QVBoxLayout* page, const QString& id, TrackKind kind);
     // Stabilization: analysis state with start/cancel button (engine/Stabilizer)
     void addStabilizeRow(Section& s);
-    // Trash button in the header + right-click menu "remove effect"
+    // Trash button in the header + right-click menu "remove effect" (and "move up/down" for a movable effect)
     void addRemoveButton(const Section& s, const QString& id);
+    // Effect order: grip on the header of a movable effect; the header (grip, title, empty part) can be dragged to
+    // another place among the movable effects. Fixed stages (stabilization) get the same indent without a grip
+    void addMoveHandle(const Section& s, const QString& id);
+    // Place of `id` among the movable effects of the shown clip of `kind` (-1 = none) and their count
+    int effectPlace(TrackKind kind, const QString& id, int* count = nullptr) const;
+    // Header drag: follow the mouse (drop line in the gap it would land in), end it (apply = move the effect)
+    void dragEffect(const QPoint& globalPos);
+    void endEffectDrag(bool apply);
     // Row with slider + number field
     // anim: animatable parameter -> keyframe diamonds on the right (field stays for non-animatable values)
     Param* addSlider(Section& s, const QString& key, const QString& label, double min, double max, double def,
@@ -122,7 +135,7 @@ private:
     const Clip* primary(TrackKind kind, bool title = false, const QString& effect = {}) const;
     void apply(TrackKind kind, const QString& key, const QString& text, const std::function<void(Clip&)>& fn,
                bool title = false, const QString& effect = {});
-    // Sort effect sections into the order of the shown clip (= render order)
+    // Sort effect sections into the render order of the shown clip: fixed stages first, then the clip's order
     void arrangeEffectSections();
     void refresh();
 
@@ -155,6 +168,19 @@ private:
     int m_fxCount = 0;             // effects of the shown clip (tab label; a new one opens the tab)
     int effectCount(const Clip& c) const;
     QStringList m_fxOrder; // last displayed order
+    // Header drag of an effect section: pressed header (nullptr = none), its effect, press point (global), started
+    // (past the drag distance), target place among the movable effects (-1 = where it is)
+    struct FxDrag {
+        QWidget* header = nullptr;
+        QString id;
+        TrackKind kind = TrackKind::Video;
+        QPoint start;
+        bool active = false;
+        int to = -1;
+        QString style; // the header's own style sheet while it is highlighted
+    };
+    FxDrag m_fxDrag;
+    QWidget* m_dropLine = nullptr; // line in the gap the dragged effect lands in
     // Tab "Übergang"
     TransitionKey m_transKey;
     QComboBox* m_transType = nullptr;
