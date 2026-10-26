@@ -24,6 +24,7 @@
 #include "core/Presets.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/StartTemplates.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
@@ -99,7 +100,10 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_project = new Project(this);
     m_selection = new Selection(this);
     m_editor = new Editor(m_project, m_selection, this);
-    m_editor->setStreamPresets(StreamPresets::load()); // import presets for audio streams (all projects)
+    // Import presets for audio streams: the project's own (from its start template) or the settings' (all projects)
+    const auto importPresets = [this] { m_editor->setStreamPresets(m_project->effectiveImportPresets()); };
+    connect(m_project, &Project::importPresetsChanged, this, importPresets);
+    importPresets();
 
     buildLayout();
     buildActions();
@@ -363,6 +367,13 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(&m_projectCheck, &QTimer::timeout, this, &MainWindow::checkProjectFile);
     connect(m_projectWatcher, &QFileSystemWatcher::fileChanged, this, [this] { m_projectCheck.start(); });
 
+    // schneidi starts with the user's start template too (Settings › Start Templates; Neutral = as it always did)
+    if (const StartTemplate t = StartTemplates::defaultTemplate(); t.id != QLatin1String(StartTemplates::NeutralId)) {
+        const ProjectData d = StartTemplates::apply(t);
+        m_engine->setFormat(d.format);
+        m_project->load(d);
+        m_engine->showTimeline(0);
+    }
 }
 
 void MainWindow::importFiles(const QStringList& paths, bool placeOnTimeline, bool adoptFormat)
@@ -421,6 +432,7 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
 void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
 {
     if (m_project->frameRateLocked()) return; // only in an empty timeline
+    if (m_project->fixedResolution() && m_project->fixedFrameRate()) return; // start template / Project Settings
     // The first clip with video decides (still images and audio have no format of their own)
     for (const QString& path : paths) {
         const MediaInfo* info = m_project->mediaInfo(path);
@@ -428,10 +440,11 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
         const ClipFormat cf = detectClipFormat(path);
         if (!cf.ok) return;
         const ProjectFormat cur = m_project->format();
+        // A fixed resolution or frame rate (start template, Project Settings) stays as it is
         ProjectFormat want;
-        want.width = cf.width;
-        want.height = cf.height;
-        want.rate = cf.suggested;
+        want.width = m_project->fixedResolution() ? cur.width : cf.width;
+        want.height = m_project->fixedResolution() ? cur.height : cf.height;
+        want.rate = m_project->fixedFrameRate() ? cur.rate : cf.suggested;
         if (want == cur) return;
         if (ask) {
             // Like DaVinci "Change project frame rate?", here including resolution
@@ -618,7 +631,10 @@ void MainWindow::stopKeyPick()
 void MainWindow::projectSettingsDialog()
 {
     ProjectSettingsDialog dlg(m_project->format(), m_project->frameRateLocked(), this);
-    if (dlg.exec() == QDialog::Accepted) m_project->setFormat(dlg.format());
+    dlg.setFixed(m_project->fixedResolution(), m_project->fixedFrameRate());
+    if (dlg.exec() != QDialog::Accepted) return;
+    m_project->setFormat(dlg.format());
+    m_project->setFixedFormat(dlg.fixedResolution(), dlg.fixedFrameRate());
 }
 
 void MainWindow::clipSpeedDialog()
