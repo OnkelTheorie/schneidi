@@ -29,6 +29,7 @@ struct LiveChange {
     };
     QVector<Removed> removed;
     QString error; // the command failed and changed nothing: why
+    bool ownChat = false; // the app's own AI chat did it (not an AI from outside)
 };
 
 // Work of an AI connected to the app that runs outside it (analyses, render, transcribe … in schneidi-cli), so the
@@ -66,4 +67,11 @@ public:
     virtual void liveChanged(const LiveChange& change) = 0;
     // The connected AI works outside the app (start, progress, end of a job)
     virtual void liveActivity(const LiveActivity& activity) = 0;
+    // A command of an AI runs in the app right now (before and after it; ownChat = the app's own AI chat sent it):
+    // everything the undo history gets meanwhile comes from that command
+    virtual void liveCommandRunning(bool running, bool ownChat)
+    {
+        Q_UNUSED(running);
+        Q_UNUSED(ownChat);
+    }
 };

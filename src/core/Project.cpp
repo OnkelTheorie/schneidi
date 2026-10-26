@@ -78,6 +78,34 @@ private:
     PoolState m_before, m_after;
 };
 
+// Several steps as one (Project::combineSteps): the whole state the history covers, before and after
+class CombinedCommand : public QUndoCommand {
+public:
+    struct State {
+        ProjectFormat format;
+        QVector<Sequence> sequences;
+        int current = 0;
+        PoolState pool;
+    };
+    CombinedCommand(Project* p, const QString& text, State before, State after)
+        : QUndoCommand(text), m_project(p), m_before(std::move(before)), m_after(std::move(after)) {}
+    void undo() override { apply(m_before); }
+    void redo() override { apply(m_after); }
+
+    static State capture(const Project& p) { return {p.format(), p.sequences(), p.currentSequence(), p.poolState()}; }
+
+private:
+    void apply(const State& s)
+    {
+        if (!(s.format == m_project->format())) m_project->applyFormat(s.format, s.sequences);
+        m_project->applySequences(s.sequences, s.current);
+        m_project->applyPool(s.pool);
+    }
+
+    Project* m_project;
+    State m_before, m_after;
+};
+
 Track makeTrack(TrackKind kind)
 {
     Track t;
@@ -238,6 +266,16 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
     }
     const QString key = mergeKey.isEmpty() ? QString() : QString("%1#%2").arg(mergeKey).arg(m_mergeSession);
     m_undo.push(new SnapshotCommand(this, text, m_current, timeline(), after, key)); // push calls redo()
+}
+
+void Project::combineSteps(int fromIndex, const QString& text)
+{
+    if (fromIndex < 0 || m_undo.index() <= fromIndex) return;
+    closeMerge();
+    CombinedCommand::State after = CombinedCommand::capture(*this);
+    m_undo.setIndex(fromIndex); // undoes them: the state before
+    m_undo.push(new CombinedCommand(this, text, CombinedCommand::capture(*this), std::move(after))); // push calls redo()
+    closeMerge();
 }
 
 bool Project::frameRateLocked() const

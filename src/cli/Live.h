@@ -15,6 +15,11 @@
 //    "summary":{…},"error":…}         -> no answer (work outside the app, see Activity; attached client only)
 // attach, snapshot and run while the app waits -> {"ok":false,"error":{"code":"APP_WAITING","message":text}}
 // hello of an app that refuses AIs has "allowed":false and "refusal": why (the user disconnected, or the setting)
+//
+// The app's own AI chat starts `schneidi-cli mcp` with the environment of Server::chatEnvironment(): that process
+// talks to exactly this app and says hello with the chat's secret instead of the token. The chat is always allowed
+// (also when the user turned AI connections off: it is the app itself) and never busy (it does not take the place of
+// an attached AI from outside); everything else works as for any client.
 
 #include "cli/Commands.h"
 
@@ -32,6 +37,9 @@ namespace Cli::Live {
 
 // "@app" as project = the project open in the (only) running app
 inline constexpr const char* AppProject = "@app";
+// Environment of the app's own chat process (see above): the app's socket and the chat's secret
+inline constexpr const char* ChatServerEnv = "SCHNEIDI_LIVE_SERVER";
+inline constexpr const char* ChatSecretEnv = "SCHNEIDI_LIVE_SECRET";
 bool isAppProject(const QString& project);
 
 QString registryDir();
@@ -62,6 +70,8 @@ public:
     // "the app is not running"; nothing runs meanwhile (a modal dialog's event loop still delivers requests).
     void setWaiting(const QString& message);
     QString waiting() const { return m_waiting; }
+    // For the app's own AI chat process (variable -> value): it connects to this app with the chat's secret
+    QHash<QString, QString> chatEnvironment() const;
 
 signals:
     void stateChanged(); // attached/allowed changed
@@ -70,16 +80,19 @@ private:
     struct Peer {
         QByteArray buffer;
         bool authed = false;
+        bool chat = false;         // the app's own AI chat (said hello with the chat's secret)
+        bool chatAttached = false; // ... and attached
     };
     void onConnection();
     void onReadyRead(QLocalSocket* s);
     void handle(QLocalSocket* s, const QJsonObject& msg);
-    QJsonObject runCommand(const QJsonObject& msg);
+    QJsonObject runCommand(const QJsonObject& msg, bool ownChat);
     void detach(QLocalSocket* s);
 
     LiveHost* m_host;
     QLocalServer* m_server = nullptr;
     QString m_token;
+    QString m_chatSecret; // the app's own AI chat
     QString m_file; // registry entry
     QHash<QLocalSocket*, Peer> m_peers;
     QPointer<QLocalSocket> m_attached;

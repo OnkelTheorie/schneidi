@@ -1,6 +1,8 @@
 // MainWindow: layout, top bar, page bar and pages.
 #include "app/MainWindow.h"
 
+#include "app/AiChatPanel.h"
+
 #include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "app/KeyBindingsDialog.h"
@@ -137,6 +139,9 @@ void MainWindow::buildLayout()
     for (const auto& [sp, name] : splitters) watchSizes(sp, name);
     applySizes(m_colorBottom, {1100, 420});
 
+    // The AI chat beside the pages (all of them), left or right (MainWindowChat.cpp)
+    buildChat();
+
     auto* root = new QWidget;
     root->setObjectName("Root");
     auto* lay = new QVBoxLayout(root);
@@ -144,7 +149,7 @@ void MainWindow::buildLayout()
     lay->setSpacing(0);
     lay->addWidget(buildTopBar());
     lay->addWidget(buildUpdateBar());
-    lay->addWidget(m_pages, 1);
+    lay->addWidget(m_chatSplit, 1);
     lay->addWidget(buildPageBar());
     setCentralWidget(root);
 
@@ -177,6 +182,9 @@ QWidget* MainWindow::buildTopBar()
     m_mixerToggle = makeToggle("▥ " + T("Mixer"), "mixer", false, m_mixer);
     m_transcriptToggle = makeToggle("¶ " + T("Transkript"), "transcript", false, m_transcript);
     m_transcriptToggle->setToolTip(T("Gesprochenen Text der Tonclips zeigen; Wörter löschen schneidet die Timeline"));
+    m_chatToggle = makeToggle("✧ " + T("KI"), "aiChat", false, m_chatPanel);
+    m_chatToggle->setObjectName("ai_chat_toggle");
+    m_chatToggle->setToolTip(T("KI-Chat: sag einer KI, was sie im offenen Projekt tun soll"));
 
     auto* title = m_titleLabel = new QLabel;
     title->setStyleSheet("font-weight: 600;");
@@ -186,8 +194,10 @@ QWidget* MainWindow::buildTopBar()
     bar->setObjectName("TopBar");
     bar->setStyleSheet(QString("QWidget#TopBar { background: %1; border-bottom: 1px solid %2; }")
                            .arg(Theme::topBar.name(), Theme::border.name()));
-    auto* lay = new QHBoxLayout(bar);
+    auto* lay = m_topBarLayout = new QHBoxLayout(bar);
     lay->setContentsMargins(6, 2, 6, 2);
+    const bool chatLeft = m_chatSplit->indexOf(m_chatPanel) == 0; // the button sits on the panel's side
+    if (chatLeft) lay->addWidget(m_chatToggle);
     lay->addWidget(m_storageToggle);
     lay->addWidget(m_poolToggle);
     lay->addWidget(m_effectsToggle);
@@ -198,6 +208,7 @@ QWidget* MainWindow::buildTopBar()
     lay->addWidget(m_transcriptToggle);
     lay->addWidget(m_mixerToggle);
     lay->addWidget(m_inspectorToggle);
+    if (!chatLeft) lay->addWidget(m_chatToggle);
     return bar;
 }
 

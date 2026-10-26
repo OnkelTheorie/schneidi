@@ -33,6 +33,12 @@ AiSettings AiSettings::load()
     const QString ind = s.value("ai/indicator").toString();
     for (Indicator i : {Indicator::Always, Indicator::WhileActive, Indicator::Never})
         if (ind == indicatorKey(i)) a.indicator = i;
+    a.chatProvider = s.value("ai/chat/provider").toString();
+    a.chatAddress = s.value("ai/chat/address").toString().trimmed();
+    const QVariantMap models = s.value("ai/chat/models").toMap();
+    for (auto it = models.begin(); it != models.end(); ++it)
+        if (const QString m = it.value().toString().trimmed(); !m.isEmpty()) a.chatModels.insert(it.key(), m);
+    a.approval = s.value("ai/chat/approval").toString() == "review" ? Approval::Review : Approval::Auto;
     return a;
 }
 
@@ -46,4 +52,10 @@ void AiSettings::save() const
     s.setValue("ai/distinguish", distinguish);
     s.setValue("ai/logLength", logLength);
     s.setValue("ai/indicator", indicatorKey(indicator));
+    s.setValue("ai/chat/provider", chatProvider);
+    s.setValue("ai/chat/address", chatAddress);
+    QVariantMap models;
+    for (auto it = chatModels.begin(); it != chatModels.end(); ++it) models.insert(it.key(), it.value());
+    s.setValue("ai/chat/models", models);
+    s.setValue("ai/chat/approval", approval == Approval::Review ? "review" : "auto");
 }

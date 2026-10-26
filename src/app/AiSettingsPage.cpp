@@ -1,5 +1,6 @@
 #include "app/AiSettingsPage.h"
 
+#include "app/AiClient.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
 
@@ -7,12 +8,14 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDir>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
@@ -149,6 +152,23 @@ AiSettings AiSettingsPage::settings() const
     s.distinguish = m_distinguish->isChecked();
     s.indicator = AiSettings::Indicator(m_indicator->currentData().toInt());
     s.logLength = m_logLength->value();
+    if (m_chatProvider) {
+        const QString id = chatProvider();
+        // Not set up yet and nothing touched here: stays not set up (OK for another reason chooses no provider)
+        const bool untouched = m_initial.chatProvider.isEmpty() && id == m_startProvider
+                               && m_chatModel->currentText().trimmed() == m_startModel
+                               && m_chatAddress->text().trimmed().isEmpty() && m_chatKey->text().trimmed().isEmpty();
+        if (m_chatProvider->isEnabled() && !untouched) s.chatProvider = id; // locked: the company file decides
+        if (m_chatAddress->isEnabled()) s.chatAddress = m_chatAddress->text().trimmed();
+        s.chatModels = m_models;
+        s.chatModels.insert(id, m_chatModel->currentText().trimmed());
+        for (auto it = s.chatModels.begin(); it != s.chatModels.end();) { // only what differs from the default
+            const Ai::Preset* q = Ai::preset(it.key());
+            const bool plain = it.value().isEmpty() || (q && it.value() == q->model && !m_company.found());
+            it = plain ? s.chatModels.erase(it) : std::next(it);
+        }
+        s.approval = AiSettings::Approval(m_approval->currentData().toInt());
+    }
     return s;
 }
 
@@ -232,4 +252,200 @@ QString AiSettingsPage::claudeResultText(const QJsonObject& result, bool remove)
         lines << line;
     }
     return lines.isEmpty() ? T("fehlgeschlagen") : lines.join("\n");
+}
+
+// ---------- AI chat ----------
+
+void AiSettingsPage::addChatSection(Ai::Keys* keys)
+{
+    if (m_chatProvider || !keys) return;
+    m_keys = keys;
+    m_company = Ai::company();
+    m_models = m_initial.chatModels;
+    m_client = new AiClient(this);
+    QGroupBox* box = addSection(T("KI-Chat"), 0);
+    box->setObjectName("ai_chat_section");
+    QFormLayout* f = formOf(box);
+    f->addRow(hint(T("Im Panel „KI“ bearbeitet eine KI das offene Projekt auf Zuruf, mit denselben Werkzeugen wie jede "
+                     "andere KI. Jede Änderung lässt sich rückgängig machen.")));
+    m_chatProvider = new QComboBox;
+    m_chatProvider->setObjectName("ai_chat_provider");
+    for (const Ai::Preset& p : Ai::presets()) m_chatProvider->addItem(T(p.name), p.id);
+    const Ai::Choice choice = Ai::choose(m_initial.chatProvider, m_initial.chatAddress, m_initial.chatModels, m_company);
+    m_chatProvider->setCurrentIndex(
+        std::max(0, m_chatProvider->findData(choice.provider.isEmpty() ? QString("claude") : choice.provider)));
+    f->addRow(T("Anbieter"), m_chatProvider);
+    m_chatAddress = new QLineEdit;
+    m_chatAddress->setObjectName("ai_chat_address");
+    m_chatAddress->setClearButtonEnabled(true);
+    f->addRow(T("Adresse"), m_chatAddress);
+    auto* modelRow = new QHBoxLayout;
+    m_chatModel = new QComboBox;
+    m_chatModel->setObjectName("ai_chat_model");
+    m_chatModel->setEditable(true);
+    m_chatModel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto* load = new QPushButton(T("Modelle laden"));
+    load->setObjectName("ai_chat_models");
+    load->setToolTip(T("Die Modelle, die der Anbieter anbietet, in die Liste holen"));
+    modelRow->addWidget(m_chatModel, 1);
+    modelRow->addWidget(load);
+    f->addRow(T("Modell"), modelRow);
+    auto* keyRow = new QHBoxLayout;
+    m_chatKey = new QLineEdit;
+    m_chatKey->setObjectName("ai_chat_key");
+    m_chatKey->setEchoMode(QLineEdit::Password);
+    m_keyRemove = new QPushButton(T("Entfernen"));
+    m_keyRemove->setObjectName("ai_chat_key_remove");
+    m_keyRemove->setToolTip(T("Den gespeicherten Schlüssel löschen"));
+    keyRow->addWidget(m_chatKey, 1);
+    keyRow->addWidget(m_keyRemove);
+    f->addRow(T("Schlüssel"), keyRow);
+    m_keyState = hint({});
+    m_keyState->setObjectName("ai_chat_key_state");
+    f->addRow(m_keyState);
+    m_approval = new QComboBox;
+    m_approval->setObjectName("ai_chat_approval");
+    m_approval->addItem(T("Automatisch: jede Änderung gilt sofort"), int(AiSettings::Approval::Auto));
+    m_approval->addItem(T("Annehmen: erst ansehen, dann übernehmen oder verwerfen"), int(AiSettings::Approval::Review));
+    m_approval->setCurrentIndex(m_initial.approval == AiSettings::Approval::Review ? 1 : 0);
+    f->addRow(T("Freigabe"), m_approval);
+    f->addRow(hint(T("Automatisch: jede Änderung der KI ist ein eigener Rückgängig-Schritt. Annehmen: die Änderungen einer "
+                     "Anfrage sind sofort in Timeline und Vorschau zu sehen; danach übernimmst du sie als einen Schritt "
+                     "oder verwirfst sie.")));
+    auto* testRow = new QHBoxLayout;
+    auto* test = new QPushButton(T("Verbindung testen"));
+    test->setObjectName("ai_chat_test");
+    test->setToolTip(T("Schickt eine winzige Anfrage an den Anbieter (kostet fast nichts)"));
+    m_chatResult = new QLabel;
+    m_chatResult->setObjectName("ai_chat_result");
+    m_chatResult->setWordWrap(true);
+    m_chatResult->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    testRow->addWidget(test);
+    testRow->addWidget(m_chatResult, 1);
+    f->addRow(testRow);
+    if (m_company.found()) {
+        const QString file = QDir::toNativeSeparators(m_company.file);
+        QString text = choice.locked ? T("Anbieter und Adresse gibt deine Firma vor (%1).").arg(file)
+                                     : T("Vorgaben deiner Firma aus %1.").arg(file);
+        if (!m_company.error.isEmpty()) text += " " + T("Die Datei ist fehlerhaft: %1").arg(m_company.error);
+        QLabel* note = hint(text);
+        note->setObjectName("ai_chat_company");
+        f->addRow(note);
+    }
+    if (choice.locked) {
+        m_chatProvider->setEnabled(false);
+        m_chatAddress->setEnabled(false);
+    }
+
+    connect(m_chatProvider, &QComboBox::currentIndexChanged, this, &AiSettingsPage::chatProviderChanged);
+    connect(m_keyRemove, &QPushButton::clicked, this, [this] {
+        QString error;
+        if (!m_keys->remove(chatProvider(), &error)) m_chatResult->setText(T("Nicht gelöscht: %1").arg(error));
+        updateKeyState();
+    });
+    connect(load, &QPushButton::clicked, this, [this, load] {
+        load->setEnabled(false);
+        m_chatResult->setText(T("Frage den Anbieter …"));
+        m_client->listModels(chatEndpoint());
+    });
+    connect(m_client, &AiClient::models, this, [this, load](const QStringList& ids) {
+        load->setEnabled(true);
+        const QString current = m_chatModel->currentText();
+        m_chatModel->clear();
+        m_chatModel->addItems(ids);
+        m_chatModel->setCurrentText(current);
+        m_chatResult->setText(T("Modelle geladen: %1").arg(ids.size()));
+    });
+    connect(m_client, &AiClient::modelsFailed, this, [this, load](const QString& message) {
+        load->setEnabled(true);
+        m_chatResult->setText(message);
+    });
+    connect(test, &QPushButton::clicked, this, [this, test] {
+        test->setEnabled(false);
+        m_chatResult->setText(T("Teste …"));
+        m_client->test(chatEndpoint());
+    });
+    connect(m_client, &AiClient::tested, this, [this, test](bool, const QString& message) {
+        test->setEnabled(true);
+        m_chatResult->setText(message);
+    });
+    chatProviderChanged();
+    m_startProvider = chatProvider();
+    m_startModel = m_chatModel->currentText().trimmed();
+    if (choice.locked) m_chatAddress->setText(choice.address);
+    else if (m_initial.chatProvider == chatProvider()) m_chatAddress->setText(m_initial.chatAddress);
+}
+
+QString AiSettingsPage::chatProvider() const
+{
+    return m_chatProvider ? m_chatProvider->currentData().toString() : m_initial.chatProvider;
+}
+
+void AiSettingsPage::chatProviderChanged()
+{
+    // The model typed for the provider shown so far stays (also when switching back)
+    if (!m_shownProvider.isEmpty()) m_models.insert(m_shownProvider, m_chatModel->currentText().trimmed());
+    const QString id = chatProvider();
+    m_shownProvider = id;
+    const Ai::Preset* p = Ai::preset(id);
+    const Ai::Choice c = Ai::choose(id, {}, m_models, m_company);
+    if (m_chatAddress->isEnabled()) m_chatAddress->clear();
+    m_chatAddress->setPlaceholderText(c.address.isEmpty() ? QString("http://server:8000/v1") : c.address);
+    m_chatModel->clear();
+    if (p && !p->model.isEmpty()) m_chatModel->addItem(p->model);
+    m_chatModel->setCurrentText(c.model);
+    m_chatResult->clear();
+    updateKeyState();
+}
+
+void AiSettingsPage::updateKeyState()
+{
+    const QString id = chatProvider();
+    const Ai::Preset* p = Ai::preset(id);
+    QString state;
+    bool stored = false;
+    for (const QString& var : Ai::keyVariables(id))
+        if (state.isEmpty() && !qEnvironmentVariable(var.toLatin1().constData()).trimmed().isEmpty())
+            state = T("Aus der Umgebungsvariable %1 (hat Vorrang).").arg(var);
+    if (state.isEmpty() && m_company.found() && !m_company.key.isEmpty()
+        && (m_company.provider.isEmpty() || m_company.provider == id))
+        state = T("Aus der Firmen-Datei.");
+    if (state.isEmpty() && m_keys->hasStored(id)) {
+        stored = true;
+        state = m_keys->secure() ? T("Gespeichert: %1.").arg(m_keys->storeName())
+                                 : T("Unverschlüsselt in den Einstellungen gespeichert.");
+    }
+    if (state.isEmpty())
+        state = p && !p->needsKey ? T("Für diesen Anbieter meist nicht nötig.") : T("Noch kein Schlüssel.");
+    if (!m_keys->secure())
+        state += " " + T("Kein Schlüsselbund des Systems gefunden: ein neuer Schlüssel wird unverschlüsselt in den "
+                         "Einstellungen gespeichert.");
+    m_keyState->setText(state);
+    m_keyRemove->setVisible(stored);
+    m_chatKey->setPlaceholderText(stored ? T("gespeichert – zum Ändern neu eingeben") : QString());
+}
+
+Ai::Endpoint AiSettingsPage::chatEndpoint()
+{
+    const QString id = chatProvider();
+    const Ai::Preset* p = Ai::preset(id);
+    QHash<QString, QString> models = m_models;
+    models.insert(id, m_chatModel->currentText().trimmed());
+    const Ai::Choice c = Ai::choose(id, m_chatAddress->text().trimmed(), models, m_company);
+    Ai::Endpoint e;
+    e.protocol = p ? p->protocol : Ai::Protocol::OpenAi;
+    e.provider = id;
+    e.address = c.address;
+    e.model = c.model;
+    e.key = m_chatKey->text().trimmed();
+    if (e.key.isEmpty()) e.key = m_keys->resolve(id, m_company).key;
+    return e;
+}
+
+bool AiSettingsPage::applyChatKey(QString* error)
+{
+    if (!m_chatKey || m_chatKey->text().trimmed().isEmpty()) return true;
+    const bool ok = m_keys->store(chatProvider(), m_chatKey->text().trimmed(), error);
+    if (ok) m_chatKey->clear();
+    return ok;
 }

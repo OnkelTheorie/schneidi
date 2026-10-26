@@ -155,6 +155,13 @@ add_library(schneidi_lib STATIC
     src/app/AiSettingsPage.h src/app/AiSettingsPage.cpp
     src/app/UpdateCheck.h src/app/UpdateCheck.cpp
     src/app/AiLog.h src/app/AiLog.cpp
+    src/app/AiProvider.h src/app/AiProvider.cpp
+    src/app/AiClient.h src/app/AiClient.cpp
+    src/app/AiKeys.h src/app/AiKeys.cpp
+    src/app/McpClient.h src/app/McpClient.cpp
+    src/app/AiChat.h src/app/AiChat.cpp
+    src/app/AiChatPanel.h src/app/AiChatPanel.cpp
+    src/app/MainWindowChat.cpp
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
@@ -235,6 +242,9 @@ target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::M
 if(TARGET Qt6::DBus)
     target_link_libraries(schneidi_lib PUBLIC Qt6::DBus)
     target_compile_definitions(schneidi_lib PRIVATE SCHNEIDI_HAVE_DBUS)
+endif()
+if(WIN32)
+    target_link_libraries(schneidi_lib PUBLIC advapi32) # Credential Manager: the AI chat's key (app/AiKeys.cpp)
 endif()
 # Third-party code: its warnings are not ours
 set_source_files_properties(src/engine/audio/Miniaudio.cpp PROPERTIES COMPILE_OPTIONS "-w")

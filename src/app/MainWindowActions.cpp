@@ -1,5 +1,6 @@
 // MainWindow: menus and actions.
 #include "app/MainWindow.h"
+#include "app/AiChatPanel.h"
 #include "app/ExtensionsDialog.h"
 
 #include "app/InputBindings.h"
@@ -636,6 +637,17 @@ void MainWindow::buildActions()
                [this] { applyPanelSet(true, true, false, false, true, true); });
     makeAction(panels, "panels_all", T("Alle Panels"), QKeySequence(),
                [this] { applyPanelSet(true, true, true, true, true, true); });
+    panels->addSeparator();
+    // The AI chat beside all pages, docked left or right
+    makeAction(panels, "toggle_ai_chat", T("KI-Chat ein/aus"), QKeySequence(), [this] { m_chatToggle->toggle(); });
+    makeAction(panels, "ai_chat_left", T("KI-Chat links andocken"), QKeySequence(), [this] {
+        showAiChat(true);
+        emit m_chatPanel->sideRequested(true);
+    });
+    makeAction(panels, "ai_chat_right", T("KI-Chat rechts andocken"), QKeySequence(), [this] {
+        showAiChat(true);
+        emit m_chatPanel->sideRequested(false);
+    });
     panels->addSeparator();
     makeAction(panels, "layout_reset", T("Panelgrößen zurücksetzen"), QKeySequence(), [this] { resetSizes(); });
     // What AIs connected to the app did (also opens with a click on the AI indicator)

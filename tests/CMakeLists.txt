@@ -128,6 +128,12 @@ schneidi_test(test_proxy_hint)
 schneidi_test(test_settings) # app settings (File › Settings…), AI page, indicator modes
 schneidi_test(test_update_check) # update hint against a local HTTP server
 schneidi_test(test_ai_activity) # AI changes light up, AI log, indicator with the AI's work
+schneidi_test(test_ai_providers) # AI chat: requests/answers of both protocols, keys, company file (no network)
+# AI chat end to end: MainWindow + live server, the real schneidi-cli mcp, a fake provider on 127.0.0.1
+schneidi_test(test_ai_chat)
+target_link_libraries(test_ai_chat PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_ai_chat PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>")
+add_dependencies(test_ai_chat schneidi-cli)
 schneidi_test(test_multicam_cli)
 target_link_libraries(test_multicam_cli PRIVATE schneidi_cli_lib)
 schneidi_test(test_stream_presets)
