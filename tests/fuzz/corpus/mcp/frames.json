@@ -1,0 +1,1 @@
+{"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "frames", "arguments": {"file": "../outside/secret", "at": "00:00:01:05", "times": "1, 4.5s, 00:00:02:00"}, "_meta": {"progressToken": 7}}}

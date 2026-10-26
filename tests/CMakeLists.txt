@@ -201,6 +201,26 @@ set_tests_properties(test_luts_c_locale PROPERTIES
     TIMEOUT 300
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;LC_ALL=C;LANG=C")
 
+# Fuzz targets (tests/fuzz) without libFuzzer: each one's code with its rules on its seeds and on every input that
+# once found a bug (fuzz/regressions/<target>: put the shrunk input of a finding there, next to the fix)
+set(fuzz_format_edl Edl)
+set(fuzz_format_fcp7 Fcp7)
+set(fuzz_format_otio Otio)
+foreach(target http mcp project srt edl fcp7 otio)
+    if(DEFINED fuzz_format_${target}) # one source for the three exchange formats
+        add_executable(replay_${target} fuzz/fuzz_interchange.cpp fuzz/replay_main.cpp fuzz/FuzzCommon.h)
+        target_compile_definitions(replay_${target} PRIVATE FUZZ_FORMAT=${fuzz_format_${target}})
+    else()
+        add_executable(replay_${target} fuzz/fuzz_${target}.cpp fuzz/replay_main.cpp fuzz/FuzzCommon.h)
+    endif()
+    target_link_libraries(replay_${target} PRIVATE schneidi_cli_lib)
+    add_test(NAME replay_${target} COMMAND replay_${target} ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/corpus/${target}
+                                                            ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/regressions/${target})
+    set_tests_properties(replay_${target} PROPERTIES
+        TIMEOUT 300
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null")
+endforeach()
+
 # Benchmark, not run by CTest
 add_executable(bench_inspector bench_inspector.cpp check.h)
 target_link_libraries(bench_inspector PRIVATE schneidi_lib Qt6::Test)

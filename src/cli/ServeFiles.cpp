@@ -225,13 +225,35 @@ void Server::download(const QString& id)
 
 // ---------- Files over HTTP ----------
 
-QString Server::filePath(const QString& requestPath) const
+QString filePath(const QString& requestPath)
 {
     QString rel = requestPath.mid(int(qstrlen("/files")));
     while (rel.startsWith('/')) rel.remove(0, 1);
     const QString path = Sandbox::resolve(rel.isEmpty() ? QString(".") : rel);
     if (Sandbox::hidden(path)) fail("HIDDEN", "hidden files and folders of the work folder are not served");
     return path;
+}
+
+ByteRange byteRange(const QByteArray& rangeHeader, qint64 size)
+{
+    const QByteArray range = rangeHeader.trimmed();
+    if (!range.startsWith("bytes=") || range.contains(',')) return {};
+    const QByteArray spec = range.mid(6).trimmed();
+    const qsizetype dash = spec.indexOf('-');
+    bool okA = true, okB = true;
+    const QByteArray a = spec.left(dash).trimmed(), b = spec.mid(dash + 1).trimmed();
+    qint64 from = -1, to = size - 1;
+    if (dash < 0) {
+        okA = false;
+    } else if (a.isEmpty()) {
+        const qint64 n = b.toLongLong(&okB);
+        if (okB && n > 0) from = std::max<qint64>(0, size - n);
+    } else {
+        from = a.toLongLong(&okA);
+        if (!b.isEmpty()) to = std::min(b.toLongLong(&okB), size - 1);
+    }
+    if (!okA || !okB || from < 0 || from >= size || to < from) return {ByteRange::Unsatisfiable};
+    return {ByteRange::Part, from, to};
 }
 
 void Server::filesHead(Http::Connection* c)
@@ -327,30 +349,16 @@ void Server::filesGet(Http::Connection* c)
     h << QPair<QByteArray, QByteArray>{"Accept-Ranges", "bytes"};
     static const QMimeDatabase db;
     const QByteArray type = db.mimeTypeForFile(fi, QMimeDatabase::MatchExtension).name().toLatin1();
-    // One byte range ("bytes=a-b", "bytes=a-", "bytes=-n"); several ranges: the whole file
-    const QByteArray range = r.header("range").trimmed();
-    if (range.startsWith("bytes=") && !range.contains(',')) {
-        const QByteArray spec = range.mid(6).trimmed();
-        const qsizetype dash = spec.indexOf('-');
-        bool okA = true, okB = true;
-        const QByteArray a = spec.left(dash).trimmed(), b = spec.mid(dash + 1).trimmed();
-        qint64 from = -1, to = size - 1;
-        if (dash < 0) {
-            okA = false;
-        } else if (a.isEmpty()) {
-            const qint64 n = b.toLongLong(&okB);
-            if (okB && n > 0) from = std::max<qint64>(0, size - n);
-        } else {
-            from = a.toLongLong(&okA);
-            if (!b.isEmpty()) to = std::min(b.toLongLong(&okB), size - 1);
-        }
-        if (!okA || !okB || from < 0 || from >= size || to < from) {
-            h << QPair<QByteArray, QByteArray>{"Content-Range", "bytes */" + QByteArray::number(size)};
-            c->respondJson(416, errorJson("RANGE", "range not satisfiable"), h);
-            return;
-        }
-        h << QPair<QByteArray, QByteArray>{"Content-Range", QString("bytes %1-%2/%3").arg(from).arg(to).arg(size).toLatin1()};
-        c->sendFile(206, std::move(file), from, to - from + 1, type, h);
+    const ByteRange range = byteRange(r.header("range"), size);
+    if (range.kind == ByteRange::Unsatisfiable) {
+        h << QPair<QByteArray, QByteArray>{"Content-Range", "bytes */" + QByteArray::number(size)};
+        c->respondJson(416, errorJson("RANGE", "range not satisfiable"), h);
+        return;
+    }
+    if (range.kind == ByteRange::Part) {
+        h << QPair<QByteArray, QByteArray>{"Content-Range",
+                                           QString("bytes %1-%2/%3").arg(range.from).arg(range.to).arg(size).toLatin1()};
+        c->sendFile(206, std::move(file), range.from, range.to - range.from + 1, type, h);
         return;
     }
     c->sendFile(200, std::move(file), 0, size, type, h);

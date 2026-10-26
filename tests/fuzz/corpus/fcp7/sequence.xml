@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="4">
+ <sequence id="seq1">
+  <name>Seed &amp; more</name>
+  <duration>100</duration>
+  <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+  <media>
+   <video>
+    <format><samplecharacteristics><width>1080</width><height>1920</height><pixelaspectratio>square</pixelaspectratio>
+     <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate></samplecharacteristics></format>
+    <track>
+     <enabled>TRUE</enabled>
+     <clipitem id="c1">
+      <name>a.mp4</name><enabled>TRUE</enabled>
+      <start>0</start><end>50</end><in>10</in><out>60</out>
+      <file id="f1"><name>a.mp4</name><pathurl>file://localhost/media/a%20b.mp4</pathurl><duration>300</duration>
+       <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+       <timecode><string>01:00:00;00</string><frame>107892</frame><displayformat>DF</displayformat><rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate></timecode>
+       <media><video><samplecharacteristics><width>1920</width><height>1080</height></samplecharacteristics></video>
+        <audio><channelcount>2</channelcount></audio></media></file>
+      <filter><effect><name>Opacity</name><effectid>opacity</effectid><effectcategory>motion</effectcategory><effecttype>motion</effecttype>
+       <parameter><parameterid>opacity</parameterid><valuemin>0</valuemin><valuemax>100</valuemax><value>80</value>
+        <keyframe><when>10</when><value>0</value></keyframe><keyframe><when>30</when><value>100</value></keyframe></parameter></effect></filter>
+      <link><linkclipref>c1</linkclipref><mediatype>video</mediatype><trackindex>1</trackindex><clipindex>1</clipindex></link>
+      <link><linkclipref>c2</linkclipref><mediatype>audio</mediatype><trackindex>1</trackindex><clipindex>1</clipindex></link>
+     </clipitem>
+     <transitionitem><start>45</start><end>55</end><alignment>center</alignment>
+      <effect><name>Cross Dissolve</name><effectid>Cross Dissolve</effectid><effecttype>transition</effecttype><mediatype>video</mediatype></effect></transitionitem>
+     <clipitem id="c3"><name>b.mov</name><start>50</start><end>100</end><in>0</in><out>100</out>
+      <file id="f2"><pathurl>file:///C:/clips/b.mov</pathurl><duration>500</duration><rate><timebase>25</timebase></rate></file>
+      <filter><effect><name>Time Remap</name><effectid>timeremap</effectid>
+       <parameter><parameterid>variablespeed</parameterid><value>0</value></parameter>
+       <parameter><parameterid>speed</parameterid><value>200</value></parameter>
+       <parameter><parameterid>reverse</parameterid><value>FALSE</value></parameter></effect></filter></clipitem>
+     <generatoritem id="g1"><name>Color</name><start>100</start><end>110</end><in>0</in><out>10</out>
+      <effect><name>Color</name><effectid>Color</effectid><effectcategory>Matte</effectcategory>
+       <parameter><parameterid>color</parameterid><value><alpha>255</alpha><red>255</red><green>0</green><blue>0</blue></value></parameter></effect></generatoritem>
+    </track>
+   </video>
+   <audio>
+    <track>
+     <clipitem id="c2"><name>a.mp4</name><start>0</start><end>50</end><in>10</in><out>60</out><file id="f1"/>
+      <sourcetrack><mediatype>audio</mediatype><trackindex>2</trackindex></sourcetrack>
+      <filter><effect><name>Audio Levels</name><effectid>audiolevels</effectid>
+       <parameter><parameterid>level</parameterid><value>0.5</value><keyframe><when>0</when><value>1</value></keyframe></parameter></effect></filter>
+      <filter><effect><name>Audio Pan</name><effectid>audiopan</effectid><parameter><parameterid>level</parameterid><value>-0.5</value></parameter></effect></filter>
+     </clipitem>
+    </track>
+   </audio>
+  </media>
+  <marker><name>m</name><comment>c</comment><in>30</in><out>-1</out></marker>
+ </sequence>
+</xmeml>

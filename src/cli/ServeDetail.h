@@ -50,6 +50,21 @@ struct Options {
 QByteArray json(const QJsonObject& o);
 QJsonObject errorJson(const QString& code, const QString& message);
 
+// What the server reads from a request, kept apart from the server object (tests/fuzz feeds them any bytes):
+// "host:port" / "[::1]:port" of a Host header -> host
+QString hostOf(const QByteArray& hostHeader);
+// "localhost", "*.localhost" or a loopback address
+bool loopbackName(const QString& host);
+// "/files/<path>" -> the file in the work folder; throws Error (OUTSIDE_ROOT, HIDDEN)
+QString filePath(const QString& requestPath);
+// One byte range of a Range header for a file of `size` bytes: "bytes=a-b", "bytes=a-", "bytes=-n". No header or
+// several ranges: the whole file.
+struct ByteRange {
+    enum Kind { Whole, Part, Unsatisfiable } kind = Whole;
+    qint64 from = 0, to = -1; // Part: the bytes from..to (both included)
+};
+ByteRange byteRange(const QByteArray& rangeHeader, qint64 size);
+
 // Listens, checks access, answers /mcp (tool calls become jobs on the workers) and /files
 class Server : public QObject {
 public:
@@ -105,7 +120,6 @@ private:
     void filesHead(Http::Connection* c);
     void filesGet(Http::Connection* c);
     void filesPutDone(Http::Connection* c);
-    QString filePath(const QString& requestPath) const; // throws Error
 
     Options m_opt;
     Mcp::Options m_mcp;

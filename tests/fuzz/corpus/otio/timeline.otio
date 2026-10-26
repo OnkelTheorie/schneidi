@@ -1,0 +1,214 @@
+{
+ "OTIO_SCHEMA": "Timeline.1",
+ "name": "Seed",
+ "global_start_time": {
+  "OTIO_SCHEMA": "RationalTime.1",
+  "rate": 24,
+  "value": 86400
+ },
+ "metadata": {
+  "schneidi": {
+   "width": 1920,
+   "height": 1080,
+   "rate_num": 24000,
+   "rate_den": 1001
+  }
+ },
+ "tracks": {
+  "OTIO_SCHEMA": "Stack.1",
+  "children": [
+   {
+    "OTIO_SCHEMA": "Track.1",
+    "kind": "Video",
+    "name": "V1",
+    "enabled": true,
+    "children": [
+     {
+      "OTIO_SCHEMA": "Clip.1",
+      "name": "a.mp4",
+      "source_range": {
+       "OTIO_SCHEMA": "TimeRange.1",
+       "start_time": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 24,
+        "value": 10
+       },
+       "duration": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 24,
+        "value": 48
+       }
+      },
+      "media_reference": {
+       "OTIO_SCHEMA": "ExternalReference.1",
+       "target_url": "file:///media/a.mp4",
+       "available_range": {
+        "OTIO_SCHEMA": "TimeRange.1",
+        "start_time": {
+         "OTIO_SCHEMA": "RationalTime.1",
+         "rate": 24,
+         "value": 0
+        },
+        "duration": {
+         "OTIO_SCHEMA": "RationalTime.1",
+         "rate": 24,
+         "value": 240
+        }
+       }
+      },
+      "effects": [
+       {
+        "OTIO_SCHEMA": "LinearTimeWarp.1",
+        "name": "",
+        "effect_name": "LinearTimeWarp",
+        "time_scalar": 2.0
+       }
+      ],
+      "markers": [
+       {
+        "OTIO_SCHEMA": "Marker.2",
+        "name": "m",
+        "color": "RED",
+        "marked_range": {
+         "OTIO_SCHEMA": "TimeRange.1",
+         "start_time": {
+          "OTIO_SCHEMA": "RationalTime.1",
+          "rate": 24,
+          "value": 12
+         },
+         "duration": {
+          "OTIO_SCHEMA": "RationalTime.1",
+          "rate": 24,
+          "value": 0
+         }
+        }
+       }
+      ],
+      "metadata": {
+       "schneidi": {
+        "link": 1,
+        "opacity": 80,
+        "opacity_keys": [
+         [
+          0,
+          0
+         ],
+         [
+          10,
+          100
+         ]
+        ]
+       }
+      }
+     },
+     {
+      "OTIO_SCHEMA": "Transition.1",
+      "name": "",
+      "transition_type": "SMPTE_Dissolve",
+      "in_offset": {
+       "OTIO_SCHEMA": "RationalTime.1",
+       "rate": 24,
+       "value": 6
+      },
+      "out_offset": {
+       "OTIO_SCHEMA": "RationalTime.1",
+       "rate": 24,
+       "value": 6
+      },
+      "metadata": {
+       "schneidi": {
+        "type": "dip",
+        "color": "#ffffff"
+       }
+      }
+     },
+     {
+      "OTIO_SCHEMA": "Gap.1",
+      "source_range": {
+       "OTIO_SCHEMA": "TimeRange.1",
+       "start_time": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 24,
+        "value": 0
+       },
+       "duration": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 24,
+        "value": 12
+       }
+      }
+     },
+     {
+      "OTIO_SCHEMA": "Clip.1",
+      "name": "b.mov",
+      "source_range": {
+       "OTIO_SCHEMA": "TimeRange.1",
+       "start_time": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 25,
+        "value": 0
+       },
+       "duration": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 25,
+        "value": 25
+       }
+      },
+      "media_references": {
+       "DEFAULT_MEDIA": {
+        "OTIO_SCHEMA": "ExternalReference.1",
+        "target_url": "C:\\clips\\b.mov"
+       }
+      },
+      "active_media_reference_key": "DEFAULT_MEDIA"
+     }
+    ]
+   },
+   {
+    "OTIO_SCHEMA": "Track.1",
+    "kind": "Audio",
+    "name": "A1",
+    "children": [
+     {
+      "OTIO_SCHEMA": "Clip.1",
+      "name": "a.mp4",
+      "source_range": {
+       "OTIO_SCHEMA": "TimeRange.1",
+       "start_time": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 24,
+        "value": 10
+       },
+       "duration": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 24,
+        "value": 48
+       }
+      },
+      "media_reference": {
+       "OTIO_SCHEMA": "ExternalReference.1",
+       "target_url": "file:///media/a.mp4"
+      },
+      "metadata": {
+       "schneidi": {
+        "link": 1,
+        "audio_stream": 1,
+        "volume_db": -6,
+        "volume_keys": [
+         [
+          0,
+          -20
+         ],
+         [
+          12,
+          0
+         ]
+        ]
+       }
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

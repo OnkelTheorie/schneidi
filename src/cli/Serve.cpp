@@ -44,6 +44,21 @@ QJsonObject errorJson(const QString& code, const QString& message)
     return {{"ok", false}, {"error", QJsonObject{{"code", code}, {"message", message}}}};
 }
 
+bool loopbackName(const QString& host)
+{
+    const QString h = host.toLower();
+    if (h == "localhost" || h.endsWith(".localhost")) return true;
+    const QHostAddress a(QString(h).remove('[').remove(']'));
+    return !a.isNull() && a.isLoopback();
+}
+
+QString hostOf(const QByteArray& hostHeader)
+{
+    const QString h = QString::fromLatin1(hostHeader).trimmed();
+    if (h.startsWith('[')) return h.left(h.indexOf(']') + 1);
+    return h.section(':', 0, 0);
+}
+
 namespace {
 
 constexpr qint64 kMaxMessage = 16 << 20; // one JSON-RPC message (edit ops); files go through /files
@@ -65,22 +80,6 @@ bool sameToken(const QByteArray& given, const QByteArray& expected)
     unsigned diff = unsigned(given.size() ^ expected.size());
     for (qsizetype i = 0; i < given.size(); ++i) diff |= unsigned(uchar(given[i]) ^ uchar(expected[i % expected.size()]));
     return diff == 0;
-}
-
-bool loopbackName(const QString& host)
-{
-    const QString h = host.toLower();
-    if (h == "localhost" || h.endsWith(".localhost")) return true;
-    const QHostAddress a(QString(h).remove('[').remove(']'));
-    return !a.isNull() && a.isLoopback();
-}
-
-// "host:port" / "[::1]:port" -> host
-QString hostOf(const QByteArray& hostHeader)
-{
-    const QString h = QString::fromLatin1(hostHeader).trimmed();
-    if (h.startsWith('[')) return h.left(h.indexOf(']') + 1);
-    return h.section(':', 0, 0);
 }
 
 // Server tools besides the commands: in the command table's form (schema and argument checks for free)
