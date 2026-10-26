@@ -173,13 +173,35 @@ QJsonObject cmdImport(const QJsonObject& a, Context&)
 {
     Session s(a["project"].toString(), Session::Access::Write);
     if (!a.contains("files") && !a.contains("timeline_file")) fail("BAD_ARGUMENT", "give 'files' (media) or 'timeline_file'");
-    for (const QJsonValue& v : a["files"].toArray()) s.media(v.toString());
+    QString firstVideo;
+    for (const QJsonValue& v : a["files"].toArray()) {
+        const bool known = s.project.mediaInfo(absolute(v.toString()));
+        const MediaInfo& m = s.media(v.toString());
+        if (!known && firstVideo.isEmpty() && m.hasVideo && !m.isImage) firstVideo = m.path;
+    }
     const QJsonObject imported = a.contains("timeline_file") ? importTimeline(s, a) : QJsonObject();
     const QString backup = s.save();
     QJsonObject o = projectJson(s.project, s.path);
     o.remove("timeline");
     for (auto it = imported.begin(); it != imported.end(); ++it) o[it.key()] = it.value();
     if (!backup.isEmpty()) o["backup"] = backup;
+    // Material in another frame rate than the project, which can only change while every timeline is empty (an AI
+    // once cut 60-fps gameplay in a 25-fps project). The first new video only: detecting runs ffprobe.
+    bool empty = TimelineOps::endFrame(s.project.timeline()) == 0;
+    for (const Sequence& q : s.project.sequences())
+        if (q.id != s.project.currentSequence()) empty = empty && TimelineOps::endFrame(q.timeline) == 0;
+    if (empty && !firstVideo.isEmpty()) {
+        const ClipFormat cf = detectClipFormat(firstVideo);
+        const double project = s.project.format().rate.fps();
+        if (cf.ok && std::abs(cf.rate.fps() - project) > 0.01)
+            o["notes"] = QJsonArray{QString("%1 has %2 fps%3, the project %4 fps: while the timeline is empty, the "
+                                            "edit op `format` with fps %5 matches the material (later it cannot change)")
+                                        .arg(QFileInfo(firstVideo).fileName())
+                                        .arg(std::round(cf.rate.fps() * 1000) / 1000)
+                                        .arg(cf.variable ? " (variable frame rate)" : "")
+                                        .arg(std::round(project * 1000) / 1000)
+                                        .arg(std::round(cf.suggested.fps() * 1000) / 1000)};
+    }
     if (s.live) o["live"] = true;
     return o;
 }

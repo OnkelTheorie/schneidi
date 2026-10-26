@@ -789,6 +789,15 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(std::abs(st["cast"]["red"].toDouble()) < 2);
         CHECK(QImage(dir.filePath("scopes.png")).width() == 960);
         CHECK_EQ(errorOf("scopes", {{"source", grey}, {"types", "rainbow"}}), QString("BAD_ARGUMENT"));
+        // Import into an empty project of another frame rate: a note how to match it; the same rate: nothing to say
+        const QString fifty = Check::makeMedia(dir.filePath("fifty.mp4"),
+                                               {"-f", "lavfi", "-i", "color=c=gray:s=320x180:d=1:r=50", "-c:v", "libx264",
+                                                "-pix_fmt", "yuv420p"});
+        const QString rateProject = dir.filePath("rate.schneidi");
+        run("new", {{"project", rateProject}});
+        const QJsonObject other = run("import", {{"project", rateProject}, {"files", QJsonArray{fifty}}});
+        CHECK(other["notes"].toArray().at(0).toString().contains("`format` with fps 50"));
+        CHECK(!run("import", {{"project", rateProject}, {"files", QJsonArray{grey}}}).contains("notes"));
     }
     // 0.7.1 additions: help for single ops, info summary, relative times, frames crop/sources, probe of several
     // files, peaks, region events, ducking, linked fades, mixer target_lufs
