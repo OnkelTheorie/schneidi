@@ -170,10 +170,10 @@ void ScrubFrames::run()
                         ++it;
                     }
                 }
-                continue;
+            } else {
+                ++m_decoded;
+                m_pictures.insert(key(job.path, job.slot), new QImage(img), int(img.sizeInBytes() / 1024) + 1);
             }
-            ++m_decoded;
-            m_pictures.insert(key(job.path, job.slot), new QImage(img), int(img.sizeInBytes() / 1024) + 1);
         }
         emit ready(job.path, job.slot);
     }

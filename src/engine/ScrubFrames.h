@@ -34,7 +34,7 @@ public:
     int decoded() const;              // pictures decoded so far (tests)
 
 signals:
-    void ready(const QString& path, int slot); // queued from the worker thread
+    void ready(const QString& path, int slot); // a new picture, or the file failed (queued from the worker thread)
 
 private:
     struct Job {

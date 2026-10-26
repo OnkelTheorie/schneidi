@@ -278,6 +278,7 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
     // The timeline's Delete as a window key in the same window
     windowKeys->resize(700, 400);
     pool.setParent(windowKeys);
+    pool.show();
     windowKeys->show();
     QApplication::processEvents();
     auto* tree = pool.findChild<QTreeWidget*>();
