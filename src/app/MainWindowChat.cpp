@@ -226,7 +226,11 @@ bool MainWindow::sendChat(const QString& text)
     return true;
 }
 
-void MainWindow::liveCommandRunning(bool running, bool ownChat) { m_chatCommand = running && ownChat; }
+void MainWindow::liveCommandRunning(bool running, bool ownChat)
+{
+    m_chatCommand = running && ownChat;
+    m_liveCommand = running;
+}
 
 void MainWindow::chatUndoChanged()
 {

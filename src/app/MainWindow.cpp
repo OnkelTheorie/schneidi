@@ -330,6 +330,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     updateViewer();
     setupMulticam();
+    setupWatchFolders();
     connect(m_storage, &MediaStorage::importRequested, m_mediaPool, &MediaPool::importFiles);
     connect(m_storage, &MediaStorage::folderImportRequested, m_mediaPool, &MediaPool::importFolder);
     // Effects Library: double-click = like Ctrl+T resp. "Insert title", only with the chosen kind
