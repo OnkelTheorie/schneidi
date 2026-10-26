@@ -104,6 +104,7 @@ let the AI find the pauses, keep the rest, look at the result, render, then fine
 
 ```bash
 schneidi-cli new talk.schneidi --fps 25 --media talk.mp4
+schneidi-cli overview talk.mp4                               # first look: loudness, silence, motion, cuts per stretch
 schneidi-cli silence talk.mp4 --project talk.schneidi        # "sound" ranges without the pauses
 schneidi-cli scenes broll.mp4 --project talk.schneidi        # shot changes
 schneidi-cli scenes game.mp4 --region 0.75,0.05,0.25,0.3     # events in a part of the picture (kill feed)

@@ -245,7 +245,7 @@ add_library(schneidi_cli_lib STATIC
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp
-    src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/Exchange.cpp
+    src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp
     src/cli/Sandbox.h  src/cli/Sandbox.cpp
     src/cli/Http.h     src/cli/Http.cpp

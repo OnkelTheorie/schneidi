@@ -677,6 +677,18 @@ const QVector<Command>& commands()
           {"min", T::Time, "shortest pause (default 0.5s)"},
           {"pad", T::Time, "sound kept around each pause (default 0.1s)"}},
          cmdSilence},
+        {"overview", "A first look at material in one call, a few lines of text: per stretch of time (window, about 20 "
+                     "of them) how loud the sound is and how much of it is silent, how much the picture moves (0 = "
+                     "still, 10-30 = a fast game or handheld), how many cuts and how bright (media file), or which "
+                     "clips play there (project). Cheap: read it first, then pick the detailed analysis (`silence`, "
+                     "`scenes`, `peaks`, `transcribe`, `frames`) for the parts that matter.",
+         {{"file", T::Path, "media file or project (.schneidi)", false, true},
+          {"files", T::Paths, "several media files (one overview each)"},
+          {"window", T::Time, "length of a stretch (default: about 1/20 of the whole, on whole seconds)"},
+          {"timeline", T::String, "for a project: which timeline (default: the open one)"},
+          {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"},
+          {"project", T::Path, "count frames in this project's frame rate"}},
+         cmdOverview},
         {"scenes", "Find scene changes (cuts) in a video file. Returns the 'cuts' and the 'scenes' between them as "
                    "ranges [from, to) in source frames, e.g. to pick shots for 'keep' or to look at them with `frames`. "
                    "With 'region' it finds events in one part of the picture instead ('changes': a new kill feed line, "
