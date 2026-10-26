@@ -87,7 +87,13 @@ bool RenderQueue::start(const QVector<int>& ids)
     if (m_pending.isEmpty()) return false;
     ++m_run;
     m_done = m_failed = 0;
-    for (int id : m_pending) setStatus(id, RenderStatus::Queued);
+    QVector<RenderJob> q = m_project->renderQueue(); // in one go: every change rebuilds the queue's cards
+    for (RenderJob& j : q)
+        if (m_pending.contains(j.id)) {
+            j.status = RenderStatus::Queued;
+            j.message.clear();
+        }
+    m_project->setRenderQueue(q);
     emit runningChanged(true);
     next();
     return true;

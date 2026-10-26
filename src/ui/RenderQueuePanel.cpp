@@ -143,8 +143,7 @@ protected:
             drag->setPixmap(picture);
             drag->setHotSpot(card->mapFromGlobal(QCursor::pos()));
         }
-        // Copy, not move: the view would remove the rows itself afterwards (the panel rebuilds them)
-        drag->exec(Qt::MoveAction | Qt::CopyAction, Qt::MoveAction);
+        drag->exec(Qt::MoveAction); // (not QAbstractItemView::startDrag: it would remove the moved rows itself)
     }
     void dropEvent(QDropEvent* e) override
     {
@@ -156,8 +155,7 @@ protected:
         for (QListWidgetItem* item : selectedItems())
             if (item->flags() & Qt::ItemIsDragEnabled) ids << item->data(kIdRole).toInt();
         const int before = dropTarget(e->position().toPoint());
-        e->setDropAction(Qt::CopyAction);
-        e->accept();
+        e->acceptProposedAction();
         stopAutoScroll();
         setState(NoState);
         // After the drag has ended: the move rebuilds the list
