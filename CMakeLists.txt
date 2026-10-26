@@ -98,6 +98,7 @@ add_library(schneidi_lib STATIC
     src/core/StreamPresets.h      src/core/StreamPresets.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
     src/core/ExportCheck.h        src/core/ExportCheck.cpp
+    src/core/Stutter.h            src/core/Stutter.cpp
     src/core/ContactSheet.h       src/core/ContactSheet.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
@@ -128,6 +129,7 @@ add_library(schneidi_lib STATIC
     src/engine/Stabilizer.h       src/engine/Stabilizer.cpp
     src/engine/Preroll.h          src/engine/Preroll.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
+    src/engine/FrameGaps.h        src/engine/FrameGaps.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
