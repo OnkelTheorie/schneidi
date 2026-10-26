@@ -11,7 +11,9 @@ also read [social.md](social.md).
   `region` + `color`. Without that, `highlights` uses the sound alone (bursts of loud moments) - fine for sports,
   events, vlogs.
 - Look at the top candidates (`frames` with `at` around each kill time, or a cropped sheet) before you trust them.
-  Drop near-duplicates and moments that only are loud.
+  Drop near-duplicates and moments that only are loud. Banners in the kill feed's colour (a yellow "BUY PHASE")
+  are not counted as kills but listed in `banners`; a `kill_feed_most_pct` far above the other files still means:
+  look at that file's kills.
 - **Lag**: game capture with `variable_frame_rate` stutters where the game lagged (the picture stands still).
   `highlights` marks such candidates with `stutter` and gives their `clean` parts (with the kills in them) and a
   `keep_clean` list; `probe` with `gaps` lists the jumps of any file. Cut out the lagging part, keep the moment -
@@ -36,15 +38,17 @@ also read [social.md](social.md).
 - `accent` puts them on many moments in one op, as keyframes: `{"op":"accent","at":["3.3s","7.2s"],"preset":"hit"}`
   (kill times from `highlights`, drops from `beats`). Presets: `punch`, `flash`, `shake`, `hit` (all three, a kill),
   `drop` (big, for the music drop), `pulse` (small, for beats); `strength` scales one, `effects` lists them. Don't
-  write punches and flashes as single `keyframe` ops.
+  write punches and flashes as single `keyframe` ops. A `transform` `zoom`/`x`/`y` without `at` afterwards moves
+  the accents along (no need to clear and redo them).
 - Vertical (9:16) from 16:9 gameplay: one track with `transform` `fit` `"blur"` on every clip (see
   [social.md](social.md)), not a blurred copy of each clip on a second track.
 - Optional intro/outro: `title` for 1.5-2 s (name of the player/event), not longer. A title that names a moment
   ("UNREAL", "ACE") appears on that moment, not before.
 
 ## Music
-- Cut to the song: `beats` gives bars, phrases, breaks and drops in one call (on the song file with `project`, or
-  on the project with `tracks` = the music track, then times are timeline frames). Beat k is at `beat_phase` +
+- Cut to the song: `beats` gives bars, phrases, breaks and drops in one call. Pick the part on the song file (with
+  `project`); once the song is on the timeline, run `beats` on the project with `tracks` = the music track: then
+  every time is a timeline frame, no offset to add. Beat k is at `beat_phase` +
   k * `beat_period`, bar ones every `downbeats.every_s`; `phrases` are the sections (4 or 8 bars) with their
   energy, `drops` the big moments (best first). Put the best moment on the top drop, change scenes on bar ones or
   phrase starts, let the end land on a phrase end. `apply` `"markers"` marks the phrase starts on the timeline.
