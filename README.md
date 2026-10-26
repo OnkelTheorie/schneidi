@@ -2,13 +2,17 @@
 
 **A fast, light video editor that an AI assistant can edit with you – live, in the project you have open.**
 
-schneidi has four pages – Media, Edit, Color and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box, which the free DaVinci Resolve does not. The UI is available in English, German, Spanish, French, Polish and Russian.
+schneidi has four pages – Media, Edit, Color and Deliver – and fewer features than the big editors, but it starts in under a second, plays a demanding 1080p60 project smoothly on four CPU cores and runs even on a Raspberry Pi. It opens H.264/H.265 video with AAC sound on Linux out of the box – no codec packs, no paid version. The UI is available in English, German, Spanish, French, Polish and Russian.
 
 [![Download](https://img.shields.io/github/v/release/OnkelTheorie/schneidi?label=Download&color=2ea44f)](https://github.com/OnkelTheorie/schneidi/releases/latest)
 
 **[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage or Debian package). Windows: no download yet – [build it yourself](#building) (tested less thoroughly than Linux); an installer is planned for 1.0.
 
+**Try the AI in two minutes:** make the AppImage executable (`chmod +x schneidi-*.AppImage`) and start it, open a video, click **✧ AI** at the top and pick a provider – a local model through [Ollama](https://ollama.com) needs no account (`ollama pull qwen3`), Claude or an OpenAI-compatible service needs a key. Then type what you want: "remove the pauses", "cut it to the beat".
+
 > Status: early development (0.x). The project file format may still change between versions.
+
+![An AI assistant edits live in schneidi: keeps the speech, adds b-roll with dissolves, subtitles, a title, ducked music and a grade](screenshots/demo.gif)
 
 <p align="center">
   <a href="https://github.com/ZenITDigital"><img src="https://github.com/ZenITDigital.png?size=160" width="80" height="80" alt="ZenITDigital"></a><br>
@@ -16,13 +20,11 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
   for sponsoring the Claude Max plan that schneidi is developed with.
 </p>
 
-![An AI assistant edits live in schneidi: keeps the speech, adds b-roll with dissolves, subtitles, a title, ducked music and a grade](screenshots/demo.gif)
-
 ## Why schneidi?
 
 - **Edit together with an AI – any AI, any way.** Tell it what to do in the [AI chat](#ai-chat-in-the-app) next to the timeline (Claude, an OpenAI-compatible service or a local model), connect Claude Code or Claude Desktop in one step, or let an assistant work through the [command line and MCP server](#command-line-and-ai-editing-mcp), also on a server. It finds pauses, scene changes, loud moments and the beats of a song, transcribes, cuts, grades, mixes and renders – and you see what it does: changed clips light up, the AI log lists every step, each change is an undo step. Or review first and accept or discard the whole request.
-- **A professional workflow on any computer.** Pages for each step, ripple, roll, slip and slide trims, compound clips, multicam, color wheels and scopes – with the shortcuts you know from the big editors (presets for DaVinci-style or beginner keys), but light enough for an older laptop.
-- **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, open source (GPL-3.0). The AI chat talks only to the provider you pick; with Ollama it stays on your computer too.
+- **A professional workflow on any computer.** Pages for each step, ripple, roll, slip and slide trims, compound clips, multicam, color wheels and scopes – with the shortcuts you know from the big editors (a standard and a beginner preset, every key changeable), but light enough for an older laptop.
+- **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, no telemetry, open source (GPL-3.0). The only request schneidi makes by itself is a check for a new release on GitHub, at most once a day (off in File › Settings). The AI chat talks only to the provider you pick; with Ollama it stays on your computer too.
 - **Long recordings of one event.** Sync hours of recordings from several PCs or cameras by their sound and cut them in a multicam view that shows up to 16 angles at once.
 
 ## Screenshots
@@ -39,7 +41,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - Multiple video and audio tracks: cut, trim, move, snapping, undo/redo
 - **Multicam:** a multicam clip from several recordings of one event, synced by sound, markers, In points or start; the viewer shows up to 16 angles at once (more on pages) – click or press 1–9 to cut, change angles later, flatten to normal clips
 - Timeline zoom and scroll change **only on user input** – nothing jumps when clips get shorter
-- Fully customizable keyboard shortcuts and mouse side buttons, two per function – presets (DaVinci-style or beginner) and whole sets to save and load; panel sets for the Edit page, panel sizes remembered per page
+- Fully customizable keyboard shortcuts and mouse side buttons, two per function – presets (standard or beginner) and whole sets to save and load; panel sets for the Edit page, panel sizes remembered per page
 - Titles, subtitles, fades, transitions, volume, loudness normalization
 - Color correction, curves, LUTs, effects with keyframes; copy and paste grades (`=`/`-`); green screen with an eyedropper in the viewer
 - **Vertical video from 16:9 on one track:** a blurred copy of the picture fills the space around it – no second track, smooth preview; **accents** (zoom punch, flash, shake) on hits and drops in one click
@@ -109,7 +111,7 @@ Thumbnails for the Media Storage (your Videos folder) are made by a separate ffm
 Click **✧ AI** in the top bar and tell an AI what to do in the open project – "remove every pause longer than a
 second", "put the subtitles on and make them bigger", "cut the clips to the beat of the song". It uses the same tools
 as every other AI ([below](#command-line-and-ai-editing-mcp)), looks at frames, measures the sound and works while
-you watch: changed clips light up, each change is an undo step. In **review mode** (Settings › AI) the changes of a
+you watch: changed clips light up, each change is an undo step. In **review mode** (File › Settings › AI) the changes of a
 request show in the timeline and preview first; then **Accept** keeps them as one undo step and **Discard** puts the
 project back.
 
@@ -164,8 +166,8 @@ clips, multicam clips (create, cut to an angle, change angles, flatten), several
 "34.2s"}`), so they stay right while earlier operations move clips. Output is JSON on stdout (exit code 0 = ok,
 1 = error, 2 = usage error); every save keeps a backup of the previous state (`backups`, `restore`). `schneidi-cli mcp` runs the same commands as an [MCP](https://modelcontextprotocol.io) server on stdio.
 
-**Connect Claude in one step:** `schneidi-cli setup claude` (AppImage: `schneidi.AppImage cli setup claude`) adds the
-MCP server to Claude Code and Claude Desktop with the path of this installation, and installs the editing guide as a
+**Connect Claude in one step:** `schneidi-cli setup claude` (AppImage: `./schneidi-<version>-x86_64.AppImage cli setup claude`,
+or File › Settings › AI › Connect with Claude…) adds the MCP server to Claude Code and Claude Desktop with the path of this installation (run it again when the AppImage has a new name after an update), and installs the editing guide as a
 skill for Claude Code ([skills/schneidi](skills/schneidi/SKILL.md): workflow and how-tos for highlight reels, talking
 heads, shorts, ads, subtitles, color, sound). `--only code` / `--only desktop` picks one, `--remove` takes it out again.
 Every other AI gets the same guide through the `guide` tool. By hand: `claude mcp add --scope user schneidi --
@@ -192,7 +194,7 @@ The AppImage contains the CLI too: `./schneidi-<version>-x86_64.AppImage cli hel
 devices and fully automatic pipelines can edit on a server: material goes in by `PUT /files/…` or the `upload` tool,
 results come back as download links, long renders turn into jobs (`jobs`), and nothing outside the work folder
 (`--root`) can be read or written. It listens on localhost by default; on the network a token is required. A Docker
-image with compose file is in [packaging/docker](packaging/docker/README.md).
+image (`ghcr.io/onkeltheorie/schneidi`, from 0.12.0) with compose file is in [packaging/docker](packaging/docker/README.md).
 
 ```bash
 schneidi-cli serve --root ~/videos                            # http://127.0.0.1:8642/mcp
@@ -262,4 +264,4 @@ schneidi is an independent open-source project. It is not affiliated with, endor
 
 ## License
 
-[GPL-3.0](LICENSE), with an [additional permission](LICENSE-EXCEPTION.md) for app store libraries (ads, in-app purchases) in schneidi's own code. The code is open; the name "schneidi" and the logo are protected – see [TRADEMARKS.md](TRADEMARKS.md).
+[GPL-3.0](LICENSE). The schneidi released here has no ads, no subscriptions and no telemetry; an [additional permission](LICENSE-EXCEPTION.md) in schneidi's own code only allows builds for mobile app stores to link the store's libraries (ads, in-app purchases, license checks). The code is open; the name "schneidi" and the logo are protected – see [TRADEMARKS.md](TRADEMARKS.md).

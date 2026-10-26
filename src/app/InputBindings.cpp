@@ -336,7 +336,7 @@ QStringList InputBindings::presetIds()
 QString InputBindings::presetName(const QString& id)
 {
     if (id == "beginner") return T("Einsteiger");
-    return T("Standard (wie DaVinci Resolve)");
+    return T("Standard");
 }
 
 void InputBindings::applyPreset(const QString& id)
