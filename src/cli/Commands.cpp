@@ -837,7 +837,8 @@ const QVector<Command>& commands()
          cmdExtensions},
         {"effects", "Video and audio effects for the 'effect' edit operation: all ids with their kind and parameter "
                     "names, or one effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
-                    "luma images (op 'transition') and effect presets (op 'effect' preset).",
+                    "luma images (op 'transition'), effect presets (op 'effect' preset) and accent presets (op "
+                    "'accent': zoom punch, flash, shake on kills, beats, drops).",
          {{"effect", T::String, "only this effect, with parameter details", false, true}}, cmdEffects},
         {"sync", "Line up recordings of the same event (camera angles, player POVs) by their sound: the offset "
                  "of each file to the first one (the reference), found by shared sounds like a round start or "

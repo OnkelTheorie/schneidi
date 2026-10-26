@@ -29,6 +29,12 @@ also read [social.md](social.md).
   after a break), a change of pace where the song changes, the end on the end of a phrase. Same scene length for
   every moment feels mechanical. `beats` tells you where those are (see Music).
 - Effects (zoom punch, flash, shake) for the big moments only; the same effect on every kill wears off.
+- `accent` puts them on many moments in one op, as keyframes: `{"op":"accent","at":["3.3s","7.2s"],"preset":"hit"}`
+  (kill times from `highlights`, drops from `beats`). Presets: `punch`, `flash`, `shake`, `hit` (all three, a kill),
+  `drop` (big, for the music drop), `pulse` (small, for beats); `strength` scales one, `effects` lists them. Don't
+  write punches and flashes as single `keyframe` ops.
+- Vertical (9:16) from 16:9 gameplay: one track with `transform` `fit` `"blur"` on every clip (see
+  [social.md](social.md)), not a blurred copy of each clip on a second track.
 - Optional intro/outro: `title` for 1.5-2 s (name of the player/event), not longer. A title that names a moment
   ("UNREAL", "ACE") appears on that moment, not before.
 
