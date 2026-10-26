@@ -1,6 +1,7 @@
 // App settings (File › Settings…, app/SettingsDialog): the AI page shows and returns AiSettings, sections can be
 // added (the AI chat adds its own), the settings survive a restart (QSettings), the main window applies them (AI
-// indicator modes, AI connections on/off with the reason for the AI) and a test run never saves them.
+// indicator modes, AI connections on/off with the reason for the AI) and a test run never saves them. "Connect with
+// Claude" runs the setup the app hands in (in a thread) and shows its answer per target.
 // SETTINGS_DUMP=<folder>: pictures of both tabs (settings-general.png, settings-ai.png).
 
 #include "check.h"
@@ -20,13 +21,25 @@
 #include <QElapsedTimer>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QJsonObject>
 #include <QLabel>
+#include <QPushButton>
+#include <QSpinBox>
 #include <QSettings>
 #include <QTabWidget>
 #include <QToolButton>
 #include <clocale>
+#include <functional>
 
 namespace {
+
+bool waitFor(const std::function<bool()>& done, int ms = 5000)
+{
+    QElapsedTimer t;
+    t.start();
+    while (!done() && t.elapsed() < ms) QApplication::processEvents(QEventLoop::AllEvents, 20);
+    return done();
+}
 
 QCheckBox* checkBox(QWidget* w, const QString& text)
 {
@@ -44,6 +57,8 @@ void testSettings()
     s.highlight = false;
     s.color = QColor("#30c0a0");
     s.highlightMs = 3500;
+    s.distinguish = false;
+    s.logLength = 50;
     s.indicator = AiSettings::Indicator::Always;
     s.save();
     CHECK(AiSettings::load() == s);
@@ -74,31 +89,62 @@ void testDialog()
     duration->setValue(4.5);
     indicator->setCurrentIndex(indicator->findData(int(AiSettings::Indicator::Always)));
     page->setColor(QColor("#ff8800"));
+    QCheckBox* distinguish = checkBox(page, T("Neue und bearbeitete Clips unterscheiden"));
+    auto* logLength = page->findChild<QSpinBox*>();
+    if (CHECK(distinguish && logLength)) {
+        distinguish->setChecked(false);
+        logLength->setValue(0);
+        CHECK_EQ(logLength->text(), T("Aus"));
+    }
     const AiSettings chosen = dlg.aiSettings();
     CHECK(!chosen.liveAllowed);
     CHECK(chosen.highlight);
     CHECK_EQ(chosen.highlightMs, 4500);
     CHECK(chosen.indicator == AiSettings::Indicator::Always);
     CHECK_EQ(chosen.color, QColor("#ff8800"));
+    CHECK(!chosen.distinguish);
+    CHECK_EQ(chosen.logLength, 0);
+
+    // "Connect with Claude": only with a setup handed in; answer per target, translated around the details
+    CHECK(!page->findChild<QPushButton*>("claude_connect"));
+    QStringList calls;
+    page->setClaudeSetup([&calls](bool remove) {
+        calls << (remove ? "remove" : "connect"); // runs in its own thread
+        return QJsonObject{{"claude_code", QJsonObject{{"state", "done"}, {"message", "MCP server added"}}},
+                           {"claude_desktop", QJsonObject{{"state", "skipped"}, {"message", "Claude Desktop not found"}}}};
+    });
+    auto* connectButton = page->findChild<QPushButton*>("claude_connect");
+    auto* result = page->findChild<QLabel*>("claude_result");
+    if (CHECK(connectButton && result)) {
+        page->runClaudeSetup(false);
+        CHECK(waitFor([&] { return connectButton->isEnabled(); }));
+        CHECK_EQ(calls, QStringList{"connect"});
+        CHECK(result->text().contains(T("%1: %2").arg("Claude Code", T("eingerichtet"))));
+        CHECK(result->text().contains("MCP server added"));
+        CHECK(result->text().contains(T("%1: %2").arg("Claude Desktop", T("nicht gefunden, übersprungen"))));
+        page->runClaudeSetup(true);
+        CHECK(waitFor([&] { return connectButton->isEnabled() && calls.size() == 2; }));
+        CHECK(result->text().contains(T("%1: %2").arg("Claude Code", T("entfernt"))));
+    }
 
     // The AI chat adds its own section, first on the page
     QGroupBox* chat = page->addSection("Chat", 0);
     AiSettingsPage::formOf(chat)->addRow(new QLabel("provider"));
     const auto boxes = page->findChildren<QGroupBox*>(Qt::FindDirectChildrenOnly);
     CHECK(!boxes.isEmpty());
+    dlg.resize(560, 560);
+    dlg.showTab(SettingsDialog::Tab::Ai); // laid out only while shown
+    dlg.show();
+    QApplication::processEvents();
     QGroupBox* first = nullptr;
     for (QGroupBox* b : boxes)
         if (!first || b->y() < first->y()) first = b;
-    dlg.resize(560, 560);
-    dlg.show();
-    QApplication::processEvents();
-    for (QGroupBox* b : boxes)
-        if (b->y() < first->y()) first = b;
     CHECK_EQ(first, chat);
     dlg.hide();
 
     if (const QString dump = qEnvironmentVariable("SETTINGS_DUMP"); !dump.isEmpty()) {
         SettingsDialog shot(AiSettings{});
+        shot.aiPage()->setClaudeSetup([](bool) { return QJsonObject{}; });
         shot.resize(560, 560);
         shot.show();
         QApplication::processEvents();
@@ -123,7 +169,7 @@ void testMainWindow()
     CHECK(calls.isEmpty()); // allowed by default: nothing refused at start
 
     auto* box = w.findChild<QWidget*>("live_indicator");
-    auto* label = w.findChild<QLabel*>("live_label");
+    auto* label = w.findChild<QToolButton*>("live_label");
     auto* button = w.findChild<QToolButton*>("live_button");
     if (!CHECK(box && label && button)) return;
     // Default: only while an AI is connected

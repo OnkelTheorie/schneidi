@@ -36,10 +36,37 @@ public:
     Tool tool() const { return m_tool; }
     bool snapping() const { return m_snap; }
     int playhead() const { return m_playhead; }
-    // Clips an AI just changed (live connection): they light up briefly
-    void flashClips(const QVector<int>& ids);
-    // How (Settings › AI): off, color, how long it stays lit
-    void setFlashStyle(bool on, const QColor& color, int durationMs);
+    // What an AI just changed (live connection) lights up and fades out: new clips filled, edited ones outlined,
+    // deleted ones as a ghost at their old place. Outside the visible area a small arrow at the edge points there;
+    // the view never scrolls to it (core rule). Several changes in a row each fade on their own.
+    struct AiMarks {
+        QVector<int> added, changed; // clip ids (others than in the shown timeline are ignored)
+        struct Ghost {
+            TrackRef track;
+            int start = 0, end = 0; // timeline frames, end exclusive
+        };
+        QVector<Ghost> removed; // in the shown timeline
+    };
+    // How (Settings › AI): off, color, how long it stays lit, new/edited told apart (else both filled)
+    struct AiMarkStyle {
+        bool on = true;
+        QColor color{0xb4, 0x82, 0xff};
+        int durationMs = 2000;
+        bool distinguish = true;
+    };
+    void markAiChanges(const AiMarks& marks);
+    void setAiMarkStyle(const AiMarkStyle& style);
+    int aiMarkCount() const { return int(m_aiClips.size() + m_aiGhosts.size()); } // lit right now
+    // Arrows at the edges of the view to lit changes outside it (where, which edge, how strong 0..1)
+    struct AiArrow {
+        QPoint at;
+        Qt::Edge edge;
+        double strength;
+    };
+    QVector<AiArrow> aiArrows() const;
+    // Scrolls so that frames [from, to) on `track` are in view, if they are not; only for a click of the user
+    // (AI log), never by itself
+    void revealRange(int from, int to, std::optional<TrackRef> track = std::nullopt);
 
     // For the scrollbars (scroll range is "endless" to the right)
     int visibleFrames() const;
@@ -253,6 +280,9 @@ private:
                       const QColor& color);
     void drawHeaders(QPainter& p);
     void drawPlayhead(QPainter& p);
+    void drawAiGhosts(QPainter& p);
+    void drawAiArrows(QPainter& p);
+    double aiStrength(qint64 start) const; // 1 just lit .. 0 faded out
     void drawLabel(QPainter& p, const QPoint& topLeft, const QString& text);
     QRect headerButton(const Row& row) const;
     // Track header like DaVinci: label "V1", name (double-click = rename), lock, eye/M
@@ -376,12 +406,19 @@ private:
     QSet<int> m_rubberBase;
     // Auto-scroll: last mouse position/keys while dragging
     QTimer* m_autoScroll = nullptr;
-    QSet<int> m_flash;              // flashClips
-    QTimer* m_flashTimer = nullptr;
-    qint64 m_flashStart = 0;        // ms (QDateTime::currentMSecsSinceEpoch)
-    bool m_flashOn = true;
-    QColor m_flashColor{0xb4, 0x82, 0xff};
-    int m_flashMs = 2000;
+    // markAiChanges: start (ms, QDateTime::currentMSecsSinceEpoch) per clip, and whether it is new
+    struct AiClipMark {
+        qint64 start = 0;
+        bool added = false;
+    };
+    QHash<int, AiClipMark> m_aiClips;
+    struct AiGhostMark {
+        AiMarks::Ghost ghost;
+        qint64 start = 0;
+    };
+    QVector<AiGhostMark> m_aiGhosts;
+    AiMarkStyle m_aiStyle;
+    QTimer* m_aiTimer = nullptr;
     QPoint m_dragPos;
     Qt::KeyboardModifiers m_dragMods;
 

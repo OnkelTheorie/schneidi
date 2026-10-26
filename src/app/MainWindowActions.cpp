@@ -638,6 +638,8 @@ void MainWindow::buildActions()
                [this] { applyPanelSet(true, true, true, true, true, true); });
     panels->addSeparator();
     makeAction(panels, "layout_reset", T("Panelgrößen zurücksetzen"), QKeySequence(), [this] { resetSizes(); });
+    // What AIs connected to the app did (also opens with a click on the AI indicator)
+    makeAction(workspace, "ai_log", T("KI-Protokoll…"), QKeySequence(), [this] { showAiLog(); });
     makeAction(workspace, "extensions", T("Erweiterungen…"), QKeySequence(), [this] {
         ExtensionsDialog dlg(this);
         dlg.exec();

@@ -27,6 +27,7 @@ QScrollArea* scrolling(QWidget* page)
     area->setWidget(page);
     area->setWidgetResizable(true);
     area->setFrameShape(QFrame::NoFrame);
+    area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // long hints wrap instead
     return area;
 }
 

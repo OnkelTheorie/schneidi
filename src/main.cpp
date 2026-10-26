@@ -5,6 +5,7 @@
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
 #include "cli/Live.h"
+#include "cli/Setup.h"
 #include "ui/MediaStorage.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
@@ -173,6 +174,12 @@ int main(int argc, char* argv[])
     // Test runs (--demo/--actions) leave the user's automatic backup alone
     const bool testRun = demo || !actions.isEmpty() || !screenshot.isEmpty();
     if (testRun) w.disableAutosave();
+    // Settings › AI › "Connect with Claude": the same as `schneidi-cli setup claude` (Claude Code and Desktop)
+    w.setClaudeSetup([](bool remove) {
+        Cli::Setup::Options o;
+        o.remove = remove;
+        return Cli::Setup::claude(o);
+    });
     // Live connection for schneidi-cli / MCP (cli/Live.h); test runs stay invisible to AIs unless SCHNEIDI_LIVE=1.
     // Started before the restore dialog: while it waits for the user, AIs hear that instead of "not running".
     std::unique_ptr<Cli::Live::Server> live;

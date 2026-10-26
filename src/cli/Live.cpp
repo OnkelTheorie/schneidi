@@ -9,6 +9,7 @@
 #include "core/Selection.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -18,6 +19,7 @@
 #include <QLocalSocket>
 #include <QRandomGenerator>
 #include <QStandardPaths>
+#include <QThread>
 #include <QTimer>
 #include <QUndoStack>
 
@@ -61,16 +63,41 @@ QString canonical(const QString& path)
 #endif
 }
 
-// Every clip (all timelines) as saved in the project file: tells which clips a command changed
-QHash<int, QByteArray> clipStates(const Project& p)
+// Every clip (all timelines) as saved in the project file, and where it is: tells which clips a command added,
+// changed or removed (and where a removed one was, for its "ghost" in the timeline)
+struct ClipState {
+    QByteArray json;
+    LiveChange::Removed place;
+};
+
+QHash<int, ClipState> clipStates(const Project& p)
 {
-    QHash<int, QByteArray> out;
+    QHash<int, ClipState> out;
     for (const Sequence& q : p.sequences())
-        for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
-            for (const Track& t : q.timeline.tracks(k))
-                for (const Clip& c : t.clips)
-                    out.insert(c.id, QJsonDocument(ProjectFile::clipJson(c)).toJson(QJsonDocument::Compact));
+        for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+            const QVector<Track>& tracks = q.timeline.tracks(k);
+            for (int i = 0; i < tracks.size(); ++i)
+                for (const Clip& c : tracks[i].clips)
+                    out.insert(c.id, {QJsonDocument(ProjectFile::clipJson(c)).toJson(QJsonDocument::Compact),
+                                      {c.id, q.id, {k, i}, c.start, c.end(), p.clipName(c)}});
+        }
     return out;
+}
+
+// What a command did to the clips (sorted ids, so the log and the tests see a stable order)
+void compareClips(const QHash<int, ClipState>& before, const QHash<int, ClipState>& after, LiveChange& change)
+{
+    for (auto it = after.begin(); it != after.end(); ++it) {
+        const auto old = before.find(it.key());
+        if (old == before.end()) change.added << it.key();
+        else if (old->json != it->json) change.changed << it.key();
+    }
+    for (auto it = before.begin(); it != before.end(); ++it)
+        if (!after.contains(it.key())) change.removed << it->place;
+    std::sort(change.added.begin(), change.added.end());
+    std::sort(change.changed.begin(), change.changed.end());
+    std::sort(change.removed.begin(), change.removed.end(),
+              [](const LiveChange::Removed& a, const LiveChange::Removed& b) { return a.id < b.id; });
 }
 
 // What a failed edit leaves behind outside the undo history (imported media, source In/Out, source markers, media
@@ -101,8 +128,8 @@ void restoreMedia(Project& p, const QVector<MediaInfo>& before)
     p.replaceMedia(media);
 }
 
-// Undo text: "KI: split, delete"
-QString undoText(const QJsonObject& args)
+// The ops of an edit: "split, delete"
+QString opNames(const QJsonObject& args)
 {
     QJsonValue v = args.value("ops");
     if (v.isObject()) v = QJsonArray{v};
@@ -110,7 +137,24 @@ QString undoText(const QJsonObject& args)
     for (const QJsonValue& op : v.toArray())
         if (const QString n = op.toObject().value("op").toString(); !n.isEmpty() && !names.contains(n)) names << n;
     if (names.size() > 4) names = names.mid(0, 4) << "…";
-    return T("KI: %1").arg(names.join(", "));
+    return names.join(", ");
+}
+
+// Undo text: "KI: split, delete"
+QString undoText(const QJsonObject& args) { return T("KI: %1").arg(opNames(args)); }
+
+// The step of a command for the app's AI log: the ops of an edit, the action of `app` ("seek 00:00:04:00",
+// "undo: KI: split") …
+QString stepText(const QString& command, const QJsonObject& args, const QJsonObject& result, const Project& p)
+{
+    if (command == "edit") return opNames(args);
+    if (command != "app") return command;
+    QString step = args.value("action").toString().trimmed().toLower();
+    if (const QString undone = result.value("undone").toString(result.value("redone").toString()); !undone.isEmpty())
+        step += ": " + undone;
+    else if (args.contains("at") && result.contains("app"))
+        step += " " + detail::tc(result["app"].toObject().value("playhead").toInt(), p.format());
+    return step;
 }
 
 struct HostScope {
@@ -281,6 +325,26 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         if (!m_allowed && !m_refusal.isEmpty()) o["refusal"] = m_refusal;
         return reply(o);
     }
+    // Work of the attached AI outside the app: shown there, never answered (the client does not wait for it)
+    if (type == "activity") {
+        if (m_attached != s || !m_waiting.isEmpty()) return;
+        static const QHash<QString, LiveActivity::State> states{{"start", LiveActivity::State::Started},
+                                                                 {"progress", LiveActivity::State::Progress},
+                                                                 {"end", LiveActivity::State::Finished},
+                                                                 {"failed", LiveActivity::State::Failed}};
+        const QString state = msg.value("state").toString();
+        if (!states.contains(state)) return;
+        LiveActivity a;
+        a.id = msg.value("id").toInt();
+        a.state = states.value(state);
+        a.tool = msg.value("tool").toString();
+        a.target = msg.value("target").toString();
+        a.percent = msg.value("percent").toInt(-1);
+        a.summary = msg.value("summary").toObject();
+        a.error = msg.value("error").toString();
+        m_host->liveActivity(a);
+        return;
+    }
     // The app waits for the user (restore dialog at start): its project is not the one the user will work on yet
     if (!m_waiting.isEmpty() && (type == "attach" || type == "snapshot" || type == "run"))
         return reply(errorReply("APP_WAITING", m_waiting));
@@ -328,7 +392,7 @@ QJsonObject Server::runCommand(const QJsonObject& msg)
     if (!cmd || !runsInApp(*cmd, args)) return errorReply("BAD_REQUEST", "command does not run in the app: " + name);
     HostScope scope(m_host);
     Project* p = m_host->liveProject();
-    const QHash<int, QByteArray> before = clipStates(*p);
+    const QHash<int, ClipState> before = clipStates(*p);
     const QVector<MediaInfo> mediaBefore = p->media();
     // One undo step per edit command; it never merges with the user's slider series before or after it
     QUndoStack* undo = p->undoStack();
@@ -340,6 +404,10 @@ QJsonObject Server::runCommand(const QJsonObject& msg)
     }
     QJsonObject result;
     Context ctx;
+    // Every step goes into the app's AI log (reading `app state` is not one)
+    const bool logged = !(name == "app" && args.value("action").toString().trimmed().toLower() == "state");
+    LiveChange change;
+    change.command = name;
     try {
         result = cmd->run(args, ctx);
     } catch (const Error& e) {
@@ -348,17 +416,21 @@ QJsonObject Server::runCommand(const QJsonObject& msg)
             if (undo->index() > index) undo->undo(); // all or nothing, like on the file
             restoreMedia(*p, mediaBefore);
         }
+        if (logged) {
+            change.step = stepText(name, args, {}, *p);
+            change.error = e.message;
+            m_host->liveChanged(change);
+        }
         return errorReply(e.code, e.message);
     }
     if (step) {
         undo->endMacro();
         p->closeMerge();
     }
-    QVector<int> changed;
-    const QHash<int, QByteArray> after = clipStates(*p);
-    for (auto it = after.begin(); it != after.end(); ++it)
-        if (before.value(it.key()) != it.value()) changed << it.key();
-    if (!changed.isEmpty()) m_host->liveClipsChanged(changed);
+    compareClips(before, clipStates(*p), change);
+    change.step = stepText(name, args, result, *p);
+    if (logged || !change.added.isEmpty() || !change.changed.isEmpty() || !change.removed.isEmpty())
+        m_host->liveChanged(change);
     return {{"ok", true}, {"result", result}};
 }
 
@@ -518,6 +590,151 @@ QJsonObject run(Connection* c, const QString& command, const QJsonObject& args)
     const QJsonObject r = c->request({{"type", "run"}, {"command", command}, {"args", args}}, 30 * 60 * 1000);
     if (!r.value("ok").toBool()) detail::fail(r["error"]["code"].toString(), r["error"]["message"].toString());
     return r.value("result").toObject();
+}
+
+// ---------- Work outside the app (schneidi-cli side) ----------
+
+namespace {
+
+// Commands worth showing while they run: they look at material or write files and may take a while
+bool isJob(const QString& command)
+{
+    static const QStringList jobs{"probe",      "silence", "scenes", "peaks",  "highlights",      "frames",    "transcribe",
+                                  "loudness",   "scopes",  "sync",   "render", "export_timeline", "extensions"};
+    return jobs.contains(command);
+}
+
+// What a job works on: a file or project ("@app" stays as it is, the app names its project), several files as the
+// first one plus their number
+QString targetOf(const QJsonObject& args)
+{
+    for (const char* key : {"file", "source"})
+        if (const QString v = args.value(key).toString(); !v.isEmpty()) return v;
+    for (const char* key : {"files", "sources"}) {
+        const QJsonArray list = args.value(key).toArray();
+        if (list.isEmpty()) continue;
+        const QJsonValue first = list.first();
+        const QString name = first.isObject() ? first["file"].toString() : first.toString();
+        return list.size() > 1 ? QString("%1 +%2").arg(name).arg(list.size() - 1) : name;
+    }
+    if (const QString v = args.value("project").toString(); !v.isEmpty()) return v;
+    return args.value("install").toString(); // extensions
+}
+
+// The app to report to: the one that has the command's project open (attaching like the command itself would), else
+// the one this process already talks to (an MCP session that used "@app"). nullptr = nobody to tell.
+Connection* reportingConnection(const QJsonObject& args)
+{
+    for (const char* key : {"project", "file", "source"}) {
+        const QString v = args.value(key).toString();
+        if (v.isEmpty() || !detail::isProjectFile(v)) continue;
+        try {
+            if (Connection* c = connectionFor(v)) return c;
+        } catch (const Error&) {
+            // The command runs into the same error itself and reports it
+        }
+        break;
+    }
+    for (auto& [key, conn] : connections())
+        if (conn->socket.state() == QLocalSocket::ConnectedState) return conn.get();
+    return nullptr;
+}
+
+// Things a job found: the first list of `keys` in the result, summed over the files of a multi-file result
+int countOf(const QJsonObject& r, const QStringList& keys)
+{
+    for (const char* list : {"files", "sources"})
+        if (r.value(list).isArray() && !keys.contains(list)) {
+            int n = 0;
+            for (const QJsonValue& v : r.value(list).toArray()) n += countOf(v.toObject(), keys);
+            return n;
+        }
+    for (const QString& k : keys)
+        if (r.value(k).isArray()) return int(r.value(k).toArray().size());
+    return 0;
+}
+
+} // namespace
+
+QJsonObject activitySummary(const QString& tool, const QJsonObject& r)
+{
+    static const QHash<QString, QStringList> counted{
+        {"silence", {"silence"}},       {"scenes", {"cuts", "changes"}}, {"peaks", {"peaks"}},
+        {"highlights", {"best", "candidates"}}, {"frames", {"frames"}},  {"transcribe", {"segments"}},
+    };
+    if (counted.contains(tool)) return {{"count", countOf(r, counted.value(tool))}};
+    if (tool == "sync") {
+        int found = 0;
+        for (const QJsonValue& f : r.value("files").toArray()) found += f.toObject().contains("offset_s") ? 1 : 0;
+        return {{"count", found}};
+    }
+    if (tool == "loudness") {
+        const QJsonValue lufs = r.value("loudness").toObject().value("integrated_lufs");
+        if (lufs.isDouble()) return {{"lufs", lufs}};
+        if (r.value("integrated_lufs").isDouble()) return {{"lufs", r.value("integrated_lufs")}};
+        return {{"count", countOf(r, {"clips"})}};
+    }
+    if (tool == "render" || tool == "export_timeline")
+        if (const QString out = r.value("out").toString(); !out.isEmpty()) return {{"file", out}};
+    return {};
+}
+
+Activity::Activity(const QString& command, const QJsonObject& args, Context& ctx) : m_ctx(ctx), m_tool(command)
+{
+    if (g_isApp || g_host || !isJob(command)) return;
+    m_conn = reportingConnection(args);
+    if (!m_conn) return;
+    static int jobs = 0;
+    m_id = ++jobs;
+    send({{"state", "start"}, {"target", targetOf(args)}});
+    m_progress = ctx.progress;
+    ctx.progress = [this](double p) { progress(p); };
+}
+
+Activity::~Activity()
+{
+    if (!m_conn) return;
+    m_ctx.progress = m_progress;
+    if (!m_done) send({{"state", "failed"}, {"error", "interrupted"}});
+}
+
+void Activity::finished(const QJsonObject& result)
+{
+    if (!m_conn || m_done) return;
+    m_done = true;
+    send({{"state", "end"}, {"summary", activitySummary(m_tool, result)}});
+}
+
+void Activity::failed(const Error& error)
+{
+    if (!m_conn || m_done) return;
+    m_done = true;
+    send({{"state", "failed"}, {"error", error.message}});
+}
+
+void Activity::progress(double p)
+{
+    if (m_progress) m_progress(p);
+    // Only from the thread that owns the connection (some analyses report from their worker threads)
+    if (!m_conn || QThread::currentThread() != m_conn->socket.thread()) return;
+    const int percent = std::clamp(int(p * 100), 0, 100);
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (percent == m_percent || (now - m_lastSent < 250 && percent < 100)) return;
+    m_percent = percent;
+    m_lastSent = now;
+    send({{"state", "progress"}, {"percent", percent}});
+}
+
+void Activity::send(QJsonObject msg)
+{
+    QLocalSocket& s = m_conn->socket;
+    if (s.state() != QLocalSocket::ConnectedState) return; // the app is gone: the command goes on
+    msg["type"] = "activity";
+    msg["id"] = m_id;
+    msg["tool"] = m_tool;
+    s.write(line(msg));
+    s.flush();
+    if (s.bytesToWrite() > 0) s.waitForBytesWritten(1000);
 }
 
 } // namespace Cli::Live

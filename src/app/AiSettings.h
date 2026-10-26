@@ -13,11 +13,14 @@ struct AiSettings {
     bool highlight = true;   // light up what an AI changes in the timeline
     QColor color = defaultColor();
     int highlightMs = 2000;  // how long it stays lit (fades out)
+    bool distinguish = true; // new clips filled, edited ones outlined (off: both filled)
     Indicator indicator = Indicator::WhileActive;
+    int logLength = 200;     // entries the AI log keeps (this session only; 0 = no log)
 
     static QColor defaultColor(); // violet, like the AI indicator
     static constexpr int kMinHighlightMs = 300;
     static constexpr int kMaxHighlightMs = 10000;
+    static constexpr int kMaxLogLength = 1000;
 
     static AiSettings load();
     void save() const;

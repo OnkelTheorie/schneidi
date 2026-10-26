@@ -28,6 +28,8 @@ AiSettings AiSettings::load()
     a.highlight = s.value("ai/highlight", a.highlight).toBool();
     if (const QColor c(s.value("ai/color").toString()); c.isValid()) a.color = c;
     a.highlightMs = std::clamp(s.value("ai/highlightMs", a.highlightMs).toInt(), kMinHighlightMs, kMaxHighlightMs);
+    a.distinguish = s.value("ai/distinguish", a.distinguish).toBool();
+    a.logLength = std::clamp(s.value("ai/logLength", a.logLength).toInt(), 0, kMaxLogLength);
     const QString ind = s.value("ai/indicator").toString();
     for (Indicator i : {Indicator::Always, Indicator::WhileActive, Indicator::Never})
         if (ind == indicatorKey(i)) a.indicator = i;
@@ -41,5 +43,7 @@ void AiSettings::save() const
     s.setValue("ai/highlight", highlight);
     s.setValue("ai/color", color.name());
     s.setValue("ai/highlightMs", highlightMs);
+    s.setValue("ai/distinguish", distinguish);
+    s.setValue("ai/logLength", logLength);
     s.setValue("ai/indicator", indicatorKey(indicator));
 }

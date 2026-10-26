@@ -1,6 +1,8 @@
 // MainWindow: settings of the app (File › Settings…) and applying them
 #include "app/MainWindow.h"
 
+#include "app/AiLog.h"
+#include "app/AiSettingsPage.h"
 #include "app/DesignDialog.h"
 #include "app/KeyBindingsDialog.h"
 #include "app/SettingsDialog.h"
@@ -23,6 +25,7 @@ void MainWindow::settingsDialog(int tab)
 {
     SettingsDialog dlg(m_aiSettings, this);
     dlg.showTab(tab == 1 ? SettingsDialog::Tab::Ai : SettingsDialog::Tab::General);
+    dlg.aiPage()->setClaudeSetup(m_claudeSetup);
     connect(&dlg, &SettingsDialog::designRequested, this, [this, &dlg] {
         if (DesignDialog(&dlg).exec() == QDialog::Accepted && Theme::restartNeeded())
             offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
@@ -45,7 +48,8 @@ void MainWindow::setAiSettings(const AiSettings& s)
     const AiSettings before = m_aiSettings;
     m_aiSettings = s;
     if (!m_autosaveDisabled && s != before) s.save(); // test runs leave the user's settings alone
-    m_timeline->view()->setFlashStyle(s.highlight, s.color, s.highlightMs);
+    applyAiMarkStyle();
+    m_aiLog->setLimit(s.logLength);
     // AI connections switched off/on in the settings ("Disconnect" in the indicator is only for this session)
     if (s.liveAllowed != before.liveAllowed) {
         m_liveRefused = false;
@@ -56,6 +60,12 @@ void MainWindow::setAiSettings(const AiSettings& s)
         }
     }
     updateLiveIndicator();
+}
+
+void MainWindow::applyAiMarkStyle()
+{
+    const AiSettings& s = m_aiSettings;
+    m_timeline->view()->setAiMarkStyle({s.highlight, s.color, s.highlightMs, s.distinguish});
 }
 
 // ---------- Update hint ----------

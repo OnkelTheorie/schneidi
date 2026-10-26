@@ -1,9 +1,15 @@
 #pragma once
 #include "app/AiSettings.h"
 
+#include <QJsonObject>
 #include <QWidget>
 
+#include <functional>
+
 class QCheckBox;
+class QLabel;
+class QPushButton;
+class QSpinBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
@@ -26,6 +32,14 @@ public:
 
     void setColor(const QColor& c); // also the test helper (without the color dialog)
 
+    // "Connect with Claude" (Claude Code + Claude Desktop, cli/Setup.h): the app hands in the setup (the page does not
+    // depend on the command layer); without it there is no such section. Result per target as Cli::Setup::claude
+    using ClaudeSetup = std::function<QJsonObject(bool remove)>;
+    void setClaudeSetup(const ClaudeSetup& setup);
+    // Runs it in a thread and shows the answer below the buttons (the buttons ask first; tests call this directly)
+    void runClaudeSetup(bool remove);
+    static QString claudeResultText(const QJsonObject& result, bool remove); // one line per target, translated
+
 private:
     void updateEnabled();
 
@@ -37,5 +51,11 @@ private:
     QToolButton* m_colorReset = nullptr;
     QColor m_color;
     QDoubleSpinBox* m_duration = nullptr;
+    QCheckBox* m_distinguish = nullptr;
     QComboBox* m_indicator = nullptr;
+    QSpinBox* m_logLength = nullptr;
+    ClaudeSetup m_claudeSetup;
+    QPushButton* m_claudeConnect = nullptr;
+    QPushButton* m_claudeRemove = nullptr;
+    QLabel* m_claudeResult = nullptr;
 };

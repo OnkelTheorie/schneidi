@@ -1,7 +1,9 @@
 // Live connection (cli/Live.h): a server on a fake app in this process, schneidi-cli as a real second process.
 // Reading commands see the app's (unsaved) project, edits change it as one undo step without touching the file,
 // `app` controls playhead/selection/undo, one AI session at a time, the user can disconnect it, while the app waits
-// for the user (restore dialog at start) AIs hear that and nothing runs.
+// for the user (restore dialog at start) AIs hear that and nothing runs. The app hears what every command did
+// (added/changed/removed clips with the place of the removed ones, the step, failures) and, while an AI session is
+// connected, its work outside the app (analyses: start, progress, end with a short result).
 #include "cli/Live.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
@@ -29,6 +31,8 @@ public:
     bool playing = false;
     QStringList events; // "attach <client>", "detach"
     QVector<int> flashed;
+    QVector<LiveChange> changes;
+    QVector<LiveActivity> activities;
     QStringList proxies;
 
     Project* liveProject() override { return &project; }
@@ -45,7 +49,12 @@ public:
     {
         events << (connected ? "attach " + client : QString("detach"));
     }
-    void liveClipsChanged(const QVector<int>& ids) override { flashed = ids; }
+    void liveChanged(const LiveChange& c) override
+    {
+        changes << c;
+        flashed = c.added + c.changed;
+    }
+    void liveActivity(const LiveActivity& a) override { activities << a; }
 };
 
 // Project with one 100-frame media file (not on disk: edits only need its length) on V1/A1
@@ -150,6 +159,51 @@ int main(int argc, char* argv[])
     CHECK(fake.project.undoStack()->undoText().startsWith("KI: split, marker"));
     CHECK_EQ(fileVideoClips(fake.path), 1);
     CHECK(fake.flashed.size() >= 2); // both halves of V1 (and A1)
+    {
+        // The app hears what changed: the right halves are new, the left ones changed, nothing removed
+        if (CHECK(!fake.changes.isEmpty())) {
+            const LiveChange& c = fake.changes.last();
+            CHECK_EQ(c.command, QString("edit"));
+            CHECK_EQ(c.step, QString("split, marker"));
+            CHECK_EQ(c.added.size(), 2);
+            CHECK_EQ(c.changed.size(), 2);
+            CHECK(c.removed.isEmpty());
+            CHECK(c.error.isEmpty());
+            CHECK(fake.project.timeline().video[0].clips.last().id == c.added.first()
+                  || fake.project.timeline().video[0].clips.last().id == c.added.last());
+        }
+        // Deleting: where the clip was (for its ghost in the timeline)
+        const Clip right = fake.project.timeline().video[0].clips.last();
+        fake.changes.clear();
+        r = cli({"edit", fake.path, "--ops", QString(R"([{"op":"delete","clips":[%1],"linked":false}])").arg(right.id)});
+        CHECK_EQ(code(r), QString("ok"));
+        if (CHECK_EQ(fake.changes.size(), 1) && CHECK_EQ(fake.changes[0].removed.size(), 1)) {
+            const LiveChange::Removed& gone = fake.changes[0].removed[0];
+            CHECK_EQ(gone.id, right.id);
+            CHECK_EQ(gone.start, right.start);
+            CHECK_EQ(gone.end, right.end());
+            CHECK(gone.track == (TrackRef{TrackKind::Video, 0}));
+            CHECK_EQ(gone.sequence, fake.project.currentSequence());
+            CHECK_EQ(gone.name, QString("a.mp4"));
+        }
+        CHECK_EQ(code(cli({"app", "undo"})), QString("ok"));
+        CHECK_EQ(videoClips(fake.project), 2);
+        if (CHECK(!fake.changes.isEmpty())) {
+            CHECK(fake.changes.last().step.startsWith("undo: KI: delete"));
+            CHECK_EQ(fake.changes.last().added, QVector<int>{right.id}); // back again
+        }
+        // A failing edit is a step too (with the reason), reading the app state is none
+        fake.changes.clear();
+        CHECK_EQ(code(cli({"edit", fake.path, "--ops", R"([{"op":"delete","clips":[999]}])"})), QString("NOT_FOUND"));
+        CHECK_EQ(code(cli({"app", "state"})), QString("ok"));
+        if (CHECK_EQ(fake.changes.size(), 1)) {
+            CHECK_EQ(fake.changes[0].step, QString("delete"));
+            CHECK(!fake.changes[0].error.isEmpty());
+            CHECK(fake.changes[0].added.isEmpty() && fake.changes[0].changed.isEmpty());
+        }
+        // No analysis without an app session: a file of its own reports nothing
+        CHECK(fake.activities.isEmpty());
+    }
 
     // Reading sees the unsaved change
     r = cli({"info", fake.path});
@@ -277,6 +331,42 @@ int main(int argc, char* argv[])
             QCoreApplication::processEvents();
         }
         CHECK_EQ(out.count("\\\"ok\\\":true"), qsizetype(2));
+        // Work outside the app while the session is connected: the app sees it start and end with its result
+        if (Check::haveFfmpeg()) {
+            const QString talk = Check::makeMedia(tmp.path() + "/talk.wav",
+                                                  {"-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-f", "lavfi",
+                                                   "-i", "anullsrc=r=44100:cl=mono:d=1.5", "-f", "lavfi", "-i",
+                                                   "sine=frequency=440:duration=1", "-filter_complex",
+                                                   "[0][1][2]concat=n=3:v=0:a=1"});
+            fake.activities.clear();
+            mcp.write(QByteArray(R"({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"silence","arguments":{"file":")")
+                      + talk.toUtf8() + R"("}}})" "\n");
+            mcp.write(R"({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"probe","arguments":{"file":"/nowhere/x.mp4"}}})" "\n");
+            for (int i = 0; i < 4000 && out.count('\n') < 5; ++i) {
+                mcp.waitForReadyRead(5);
+                out += mcp.readAllStandardOutput();
+                QCoreApplication::processEvents();
+            }
+            for (int i = 0; i < 20; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            QStringList seen;
+            for (const LiveActivity& a : fake.activities)
+                seen << QString("%1 %2").arg(a.tool).arg(int(a.state));
+            const auto first = [&](const QString& tool, LiveActivity::State st) -> const LiveActivity* {
+                for (const LiveActivity& a : fake.activities)
+                    if (a.tool == tool && a.state == st) return &a;
+                return nullptr;
+            };
+            const LiveActivity* start = first("silence", LiveActivity::State::Started);
+            const LiveActivity* end = first("silence", LiveActivity::State::Finished);
+            if (!CHECK(start && end)) std::printf("       activities: %s\n", qPrintable(seen.join(", ")));
+            if (start && end) {
+                CHECK_EQ(start->target, talk);
+                CHECK_EQ(end->id, start->id);
+                CHECK(end->summary.value("count").toInt() >= 1); // the 1.5 s pause
+            }
+            const LiveActivity* failed = first("probe", LiveActivity::State::Failed);
+            CHECK(failed && !failed->error.isEmpty());
+        }
         CHECK(!out.contains("APP_BUSY"));
         CHECK(server.attached());
         CHECK_EQ(server.client(), QString("schneidi-cli mcp"));

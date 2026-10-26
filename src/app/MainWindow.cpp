@@ -1,4 +1,5 @@
 #include "app/MainWindow.h"
+#include "app/AiLog.h"
 #include "app/ExtensionsDialog.h"
 #include "app/TranscribeDialog.h"
 #include "ui/TranscriptPanel.h"
@@ -88,6 +89,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     setWindowTitle(appName());
     resize(1600, 950);
     m_aiSettings = AiSettings::load(); // Settings › AI (MainWindowSettings.cpp)
+    m_aiLog = new AiLog(this);
+    m_aiLog->setLimit(m_aiSettings.logLength);
 
     m_project = new Project(this);
     m_selection = new Selection(this);
@@ -96,7 +99,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 
     buildLayout();
     buildActions();
-    m_timeline->view()->setFlashStyle(m_aiSettings.highlight, m_aiSettings.color, m_aiSettings.highlightMs);
+    applyAiMarkStyle();
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 
     // model -> engine

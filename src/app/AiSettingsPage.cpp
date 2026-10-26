@@ -6,11 +6,18 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QJsonObject>
 #include <QLabel>
+#include <QMessageBox>
+#include <QPointer>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QThread>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -72,6 +79,11 @@ AiSettingsPage::AiSettingsPage(const AiSettings& s, QWidget* parent) : QWidget(p
     m_duration->setSuffix(T(" s"));
     m_duration->setValue(s.highlightMs / 1000.0);
     f->addRow(T("Dauer"), m_duration);
+    m_distinguish = new QCheckBox(T("Neue und bearbeitete Clips unterscheiden"));
+    m_distinguish->setChecked(s.distinguish);
+    f->addRow(m_distinguish);
+    f->addRow(hint(T("Neu = gefüllt, bearbeitet = Rand, gelöscht = gestrichelter Umriss. Liegt eine Änderung "
+                     "außerhalb der Sicht, zeigt ein Pfeil am Rand dorthin; die Timeline scrollt nie von selbst.")));
     connect(m_highlight, &QCheckBox::toggled, this, &AiSettingsPage::updateEnabled);
 
     // The indicator next to the project name
@@ -82,6 +94,17 @@ AiSettingsPage::AiSettingsPage(const AiSettings& s, QWidget* parent) : QWidget(p
     m_indicator->addItem(T("Nie"), int(AiSettings::Indicator::Never));
     m_indicator->setCurrentIndex(std::max(0, m_indicator->findData(int(s.indicator))));
     f->addRow(T("KI-Anzeige"), m_indicator);
+
+    // The AI log behind the indicator
+    f = formOf(addSection(T("Protokoll")));
+    m_logLength = new QSpinBox;
+    m_logLength->setRange(0, AiSettings::kMaxLogLength);
+    m_logLength->setSingleStep(50);
+    m_logLength->setSpecialValueText(T("Aus"));
+    m_logLength->setValue(s.logLength);
+    f->addRow(T("Einträge behalten"), m_logLength);
+    f->addRow(hint(T("Klick auf die KI-Anzeige oben (oder Arbeitsbereich › KI-Protokoll) zeigt, was eine KI getan hat: "
+                     "Schritte, Clips, Analysen. Nur bis zum Beenden, nicht im Projekt.")));
 
     setColor(m_color);
     updateEnabled();
@@ -110,7 +133,9 @@ void AiSettingsPage::setColor(const QColor& c)
 void AiSettingsPage::updateEnabled()
 {
     const bool on = m_highlight->isChecked();
-    for (QWidget* w : {static_cast<QWidget*>(m_colorButton), static_cast<QWidget*>(m_duration)}) w->setEnabled(on);
+    for (QWidget* w : {static_cast<QWidget*>(m_colorButton), static_cast<QWidget*>(m_duration),
+                       static_cast<QWidget*>(m_distinguish)})
+        w->setEnabled(on);
     m_colorReset->setEnabled(on && m_color != AiSettings::defaultColor());
 }
 
@@ -121,6 +146,90 @@ AiSettings AiSettingsPage::settings() const
     s.highlight = m_highlight->isChecked();
     s.color = m_color;
     s.highlightMs = int(std::lround(m_duration->value() * 1000));
+    s.distinguish = m_distinguish->isChecked();
     s.indicator = AiSettings::Indicator(m_indicator->currentData().toInt());
+    s.logLength = m_logLength->value();
     return s;
+}
+
+void AiSettingsPage::setClaudeSetup(const ClaudeSetup& setup)
+{
+    m_claudeSetup = setup;
+    if (!setup || m_claudeConnect) return;
+    // Right below "Connection" (a chat section of its own goes first)
+    QGroupBox* box = addSection(T("Claude verbinden"), 1);
+    QFormLayout* f = formOf(box);
+    f->addRow(hint(T("Trägt schneidi in Claude Code und Claude Desktop ein (MCP-Server und Anleitung), dann kann "
+                     "Claude das offene Projekt bearbeiten. Ändert nur die Einstellungen von Claude.")));
+    auto* row = new QHBoxLayout;
+    m_claudeConnect = new QPushButton(T("Mit Claude verbinden…"));
+    m_claudeConnect->setObjectName("claude_connect");
+    m_claudeRemove = new QPushButton(T("Entfernen"));
+    m_claudeRemove->setObjectName("claude_remove");
+    m_claudeRemove->setToolTip(T("schneidi wieder aus Claude Code und Claude Desktop austragen"));
+    row->addWidget(m_claudeConnect);
+    row->addWidget(m_claudeRemove);
+    row->addStretch(1);
+    f->addRow(row);
+    m_claudeResult = new QLabel;
+    m_claudeResult->setObjectName("claude_result");
+    m_claudeResult->setWordWrap(true);
+    m_claudeResult->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_claudeResult->hide();
+    f->addRow(m_claudeResult);
+    connect(m_claudeConnect, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(this, T("Mit Claude verbinden"),
+                                  T("schneidi in Claude Code und Claude Desktop eintragen? Claude Desktop braucht "
+                                    "danach einen Neustart."))
+            == QMessageBox::Yes)
+            runClaudeSetup(false);
+    });
+    connect(m_claudeRemove, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(this, T("Mit Claude verbinden"),
+                                  T("schneidi aus Claude Code und Claude Desktop austragen?"))
+            == QMessageBox::Yes)
+            runClaudeSetup(true);
+    });
+}
+
+void AiSettingsPage::runClaudeSetup(bool remove)
+{
+    if (!m_claudeSetup || !m_claudeConnect->isEnabled()) return;
+    m_claudeConnect->setEnabled(false);
+    m_claudeRemove->setEnabled(false);
+    m_claudeResult->setText(remove ? T("Entferne…") : T("Verbinde…"));
+    m_claudeResult->show();
+    // Claude Code's own command may take a while: not in the GUI thread
+    QPointer<AiSettingsPage> page(this);
+    QThread* worker = QThread::create([page, setup = m_claudeSetup, remove] {
+        const QJsonObject result = setup(remove);
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [page, result, remove] {
+            if (!page) return;
+            page->m_claudeResult->setText(claudeResultText(result, remove));
+            page->m_claudeConnect->setEnabled(true);
+            page->m_claudeRemove->setEnabled(true);
+        });
+    });
+    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    worker->start();
+}
+
+QString AiSettingsPage::claudeResultText(const QJsonObject& result, bool remove)
+{
+    QStringList lines;
+    for (const auto& [key, name] : {std::pair{"claude_code", "Claude Code"}, std::pair{"claude_desktop", "Claude Desktop"}}) {
+        const QJsonObject r = result.value(key).toObject();
+        if (r.isEmpty()) continue;
+        const QString state = r.value("state").toString();
+        const QString word = state == "done"      ? (remove ? T("entfernt") : T("eingerichtet"))
+                             : state == "partly"  ? T("teilweise eingerichtet")
+                             : state == "skipped" ? T("nicht gefunden, übersprungen")
+                                                  : T("fehlgeschlagen");
+        QString line = T("%1: %2").arg(name, word);
+        // The details come from the setup in English (paths, Claude's own messages)
+        if (const QString msg = r.value("message").toString(); !msg.isEmpty() && state != "skipped")
+            line += " (" + msg + ")";
+        lines << line;
+    }
+    return lines.isEmpty() ? T("fehlgeschlagen") : lines.join("\n");
 }
