@@ -343,7 +343,13 @@ void Connection::finishAnswer()
         m_state = State::Body;
         m_sink = nullptr;
         armTimer();
-        consumeBody();
+        // Dropped from the event loop, not here inside the answer: with pipelined requests that are all answered
+        // early (401 without a token), each would otherwise go one call deeper until the stack overflows
+        QTimer::singleShot(0, this, [this] {
+            if (m_state != State::Body || !m_discard) return;
+            m_buf += m_socket->readAll();
+            consumeBody();
+        });
         return;
     }
     m_req = {};

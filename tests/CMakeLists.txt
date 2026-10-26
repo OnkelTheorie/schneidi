@@ -201,6 +201,10 @@ set_tests_properties(test_luts_c_locale PROPERTIES
     TIMEOUT 300
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;LC_ALL=C;LANG=C")
 
+# HTTP side of the server on a socket without a network (fuzz/FakeSocket.h): pipelining, dropped bodies, Range
+schneidi_test(test_http)
+target_link_libraries(test_http PRIVATE schneidi_cli_lib)
+
 # Fuzz targets (tests/fuzz) without libFuzzer: each one's code with its rules on its seeds and on every input that
 # once found a bug (fuzz/regressions/<target>: put the shrunk input of a finding there, next to the fix)
 set(fuzz_format_edl Edl)
