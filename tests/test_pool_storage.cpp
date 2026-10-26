@@ -415,8 +415,10 @@ void testHoverScrub(const QString& dir)
     list.setGridSize(QSize(160, 120));
     list.resize(400, 300);
     list.show();
-    auto* item = new QListWidgetItem("a", &list);
-    auto* sound = new QListWidgetItem("s", &list);
+    QPixmap thumb(144, 81);
+    thumb.fill(Qt::gray);
+    auto* item = new QListWidgetItem(QIcon(thumb), "a", &list);
+    auto* sound = new QListWidgetItem(QIcon(thumb), "s", &list);
     QImage shown;
     double at = -2;
     int calls = 0;
@@ -438,7 +440,9 @@ void testHoverScrub(const QString& dir)
     CHECK(shown.width() <= 144 && shown.height() <= 81 && shown.width() >= 140);
     const QImage first = shown;
     scrub.hover(QPoint(r.right() - 1, r.center().y()));
-    CHECK(at > 0.9);
+    if (!CHECK(at > 0.9))
+        std::printf("item rect %d,%d %dx%d, at %f, under the mouse %s\n", r.x(), r.y(), r.width(), r.height(), at,
+                    list.itemAt(QPoint(r.right() - 1, r.center().y())) == item ? "item" : "other");
     CHECK(waitFor([&] { return scrub.frames()->has(a, ScrubFrames::kSlots - 1); }));
     QApplication::processEvents();
     CHECK(shown != first); // testsrc2 moves: the end looks different from the start
@@ -547,15 +551,23 @@ int main(int argc, char** argv)
     InputBindings::instance().registerAction(&windowDelete, "test_window_delete", "Test", QKeySequence(Qt::Key_Delete));
     InputBindings::instance().registerAction(&windowDelete2, "test_window_delete2", "Test", QKeySequence(Qt::Key_Delete));
 
+    QElapsedTimer clock;
+    clock.start();
+    auto lap = [&](const char* what) { std::printf("%s: %lld ms\n", what, clock.restart()); };
     testFilterLogic();
     testFilterButton(dump);
     testPoolFilter(dump);
+    lap("filter");
     testPoolKeys(&window, &windowDeletes);
+    lap("keys");
     QTemporaryDir tmp;
     if (Check::haveFfmpeg() && CHECK(tmp.isValid())) {
         testStorageMarks(tmp.path(), dump);
+        lap("storage marks");
         testHoverScrub(tmp.path());
+        lap("hover scrub");
         testPreviewWithoutImport(tmp.path());
+        lap("preview");
     }
     return Check::result();
 }
