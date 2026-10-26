@@ -44,6 +44,20 @@ inline void init(const char* name)
     QStandardPaths::setTestModeEnabled(true);
 }
 
+// Two texts that should be the same: the first lines that differ to stderr (what a finding is about)
+inline bool sameText(const QByteArray& a, const QByteArray& b)
+{
+    if (a == b) return true;
+    const QList<QByteArray> x = a.split('\n'), y = b.split('\n');
+    for (int i = 0, shown = 0; i < std::max(x.size(), y.size()) && shown < 6; ++i)
+        if (x.value(i) != y.value(i)) {
+            std::fprintf(stderr, "line %d:\n  - %s\n  + %s\n", i + 1, x.value(i).left(300).constData(),
+                         y.value(i).left(300).constData());
+            ++shown;
+        }
+    return false;
+}
+
 // Reads the first bytes of the input as choices of the harness; the rest is the data
 struct Choices {
     const uint8_t* data;

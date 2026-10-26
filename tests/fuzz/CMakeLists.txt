@@ -18,6 +18,7 @@ function(schneidi_fuzzer name source lib)
     add_executable(${name} ${source} FuzzCommon.h)
     target_link_libraries(${name} PRIVATE ${lib})
     target_link_options(${name} PRIVATE -fsanitize=fuzzer)
+    target_compile_definitions(${name} PRIVATE SCHNEIDI_LIBFUZZER) # FuzzJson.h: own mutator for JSON inputs
     add_dependencies(fuzz_all ${name})
 endfunction()
 
@@ -30,3 +31,4 @@ foreach(format Edl Fcp7 Otio)
     schneidi_fuzzer(fuzz_${lower} fuzz_interchange.cpp schneidi_lib)
     target_compile_definitions(fuzz_${lower} PRIVATE FUZZ_FORMAT=${format})
 endforeach()
+target_compile_definitions(fuzz_otio PRIVATE FUZZ_JSON_INPUT)

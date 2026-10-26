@@ -6,6 +6,7 @@
 // Rules checked: every request gets exactly one JSON-RPC answer, and every path an argument check accepts is inside
 // the work folder (also through links).
 #include "FuzzCommon.h"
+#include "FuzzJson.h"
 
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
@@ -62,6 +63,8 @@ void checkArguments(const Command& cmd, const QJsonObject& args)
 }
 
 } // namespace
+
+FUZZ_JSON_MUTATOR
 
 extern "C" int LLVMFuzzerInitialize(int*, char***)
 {

@@ -6,6 +6,7 @@
 // Rule checked: saving is stable - what a saved file loads as is saved the same way again (nothing drifts or gets
 // lost with every save).
 #include "FuzzCommon.h"
+#include "FuzzJson.h"
 
 #include "cli/Commands.h"
 #include "cli/Sandbox.h"
@@ -36,6 +37,8 @@ QByteArray saveLoaded(const QByteArray& json)
 
 } // namespace
 
+FUZZ_JSON_MUTATOR
+
 extern "C" int LLVMFuzzerInitialize(int*, char***)
 {
     Fuzz::init("project");
@@ -63,7 +66,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     }
 
     const QByteArray once = ProjectFile::toJson(p.data(), projectPath());
-    FUZZ_ASSERT(saveLoaded(once) == once);
+    FUZZ_ASSERT(Fuzz::sameText(once, saveLoaded(once)));
 
     for (const Sequence& s : p.sequences())
         for (const Interchange::Format f : {Interchange::Format::Edl, Interchange::Format::Fcp7, Interchange::Format::Otio}) {

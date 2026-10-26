@@ -6,6 +6,7 @@
 // Rules checked: the imported timeline is a valid one (clips sorted, at least one frame long, not overlapping on a
 // track, inside the timeline), and the project with it saves and loads.
 #include "FuzzCommon.h"
+#include "FuzzJson.h"
 
 #include "core/Interchange.h"
 #include "core/Project.h"
@@ -43,6 +44,10 @@ void checkTimeline(const Timeline& tl)
 }
 
 } // namespace
+
+#ifdef FUZZ_JSON_INPUT // OTIO
+FUZZ_JSON_MUTATOR
+#endif
 
 extern "C" int LLVMFuzzerInitialize(int*, char***)
 {
