@@ -65,8 +65,10 @@ struct ClipTransform {
     bool transformOn = true, cropOn = true, compositeOn = true;
     // Around the fitted picture (FitFill): blur strength 0..100 like the blur effect (100 = 1/20 of the frame height)
     // and how much darker than the clip the background is (percent). Opacity and fades apply to the whole result.
+    // 70: at 40 edges and bright spots of the picture still showed (the blur effect at 40 on a copy zoomed to fill the
+    // frame, the usual two-track build, is about three times as soft)
     FitFill fill = FitFill::None;
-    double fillBlur = 40;
+    double fillBlur = 70;
     double fillDim = 20;
 
     bool hasBlurFill() const { return transformOn && fill == FitFill::Blur; }

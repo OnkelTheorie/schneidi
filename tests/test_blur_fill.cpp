@@ -379,7 +379,7 @@ void testCli(const QString& dir)
     const QJsonArray clips = info["timeline"]["tracks"][0]["clips"].toArray();
     CHECK_EQ(clips[0]["transform"]["fit"].toString(), QString("blur"));
     CHECK_EQ(clips[0]["transform"]["fit_dim"].toDouble(), 35.0);
-    CHECK_EQ(clips[0]["transform"]["fit_blur"].toDouble(), 40.0);
+    CHECK_EQ(clips[0]["transform"]["fit_blur"].toDouble(), 70.0);
     CHECK(!clips[1]["transform"].toObject().contains("fit")); // titles fill the frame
     CHECK_EQ(errorOf(QString(R"([{"op":"transform","clips":[%1],"fit":"smear"}])").arg(clip)), QString("BAD_ARGUMENT"));
     CHECK_EQ(errorOf(QString(R"([{"op":"transform","clips":[%1],"fit_blur":300}])").arg(clip)), QString("BAD_ARGUMENT"));

@@ -12,7 +12,7 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
     scene, and `transform` with `fit` `"blur"` on all of them in one op
     (`{"op":"transform","clips":[…],"fit":"blur","zoom":1.3}`): the bars above and below are filled with a blurred,
     enlarged copy of the same picture. `zoom` 1.2-1.5 crops the edges of the sharp picture (more cuts off the HUD,
-    e.g. the kill feed that proves a kill); `fit_blur` (0-100, default 40) and `fit_dim` (percent darker, default
+    e.g. the kill feed that proves a kill); `fit_blur` (0-100, default 70) and `fit_dim` (percent darker, default
     20) tune the background. Don't build it from a blurred second copy of every clip on the track below: twice the
     ops, every cut kept twice, and the preview stutters.
   - Material that is already vertical needs nothing.

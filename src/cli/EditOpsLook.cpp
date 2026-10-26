@@ -591,7 +591,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "material on ONE track (one clip per scene, decoded once, plays smoothly), instead of a blurred second "
                  "copy on the track below. The copy shows the clip's whole (cropped) picture and does not zoom or move "
                  "with it; zoom 1.2-1.5 crops the edges of the sharp picture and keeps a HUD readable. fit_blur 0..100 "
-                 "(default 40, like the blur effect), fit_dim 0..100 = percent darker than the clip (default 20); "
+                 "(default 70), fit_dim 0..100 = percent darker than the clip (default 20); "
                  "fit:'none' = transparent again (default). Opacity and fades act on the whole clip; titles do not "
                  "take it. reset:true sets all back first. "
                  "Values that have keyframes: with `at` a keyframe there; without `at` the whole curve follows (zoom "
