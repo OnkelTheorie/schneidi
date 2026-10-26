@@ -42,7 +42,12 @@ public:
     bool livePlaying() const override { return playing; }
     void liveSeek(int frame) override { playhead = frame; }
     void livePlay(bool play) override { playing = play; }
-    bool liveSave(QString* error) override { return ProjectFile::save(project.data(), path, error); }
+    bool liveSave(const QString& to, QString* error) override
+    {
+        if (!to.isEmpty()) path = to;
+        if (path.isEmpty()) return false;
+        return ProjectFile::save(project.data(), path, error);
+    }
     void liveGenerateProxies(const QStringList& files) override { proxies << files; }
     QJsonObject liveProxyState(const QString&) const override { return {{"state", "pending"}, {"percent", 0}}; }
     void liveConnectionChanged(bool connected, const QString& client) override
@@ -263,6 +268,19 @@ int main(int argc, char* argv[])
     CHECK_EQ(code(cli({"app", "redo"})), QString("ok"));
     CHECK_EQ(code(cli({"app", "save"})), QString("ok"));
     CHECK_EQ(fileVideoClips(fake.path), 2);
+    {
+        // `path` only names the file of a project that was never saved, and never overwrites
+        CHECK_EQ(code(cli({"app", "save", "--path", tmp.path() + "/elsewhere.schneidi"})), QString("BAD_ARGUMENT"));
+        const QString own = fake.path;
+        fake.path.clear();
+        CHECK_EQ(code(cli({"app", "save"})), QString("SAVE_FAILED"));
+        CHECK_EQ(code(cli({"app", "save", "--path", own})), QString("EXISTS"));
+        r = cli({"app", "save", "--path", tmp.path() + "/cut"});
+        CHECK_EQ(code(r), QString("ok"));
+        CHECK_EQ(r["saved"].toString(), tmp.path() + "/cut.schneidi");
+        CHECK_EQ(fileVideoClips(tmp.path() + "/cut.schneidi"), 2);
+        fake.path = own;
+    }
     CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
 
     // backups/restore: "@app" is the app's file; restore replaces the timelines in the app as one undo step

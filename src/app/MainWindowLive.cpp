@@ -12,6 +12,8 @@
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QJsonObject>
 #include <QLabel>
@@ -41,14 +43,16 @@ void MainWindow::livePlay(bool play)
     m_engine->play();
 }
 
-bool MainWindow::liveSave(QString* error)
+bool MainWindow::liveSave(const QString& path, QString* error)
 {
-    if (m_projectPath.isEmpty()) {
-        *error = "the project was never saved: the user has to save it once in the app (File > Save)";
+    const QString target = path.isEmpty() ? m_projectPath : path;
+    if (target.isEmpty()) {
+        *error = "the project was never saved: give 'path' (a new .schneidi file), or the user saves it in the app";
         return false;
     }
-    if (!saveTo(m_projectPath)) {
-        *error = "saving failed: " + m_projectPath;
+    QDir().mkpath(QFileInfo(target).absolutePath());
+    if (!saveTo(target)) {
+        *error = "saving failed: " + target;
         return false;
     }
     return true;

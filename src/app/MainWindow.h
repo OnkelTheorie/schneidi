@@ -74,7 +74,7 @@ public:
     bool livePlaying() const override;
     void liveSeek(int frame) override;
     void livePlay(bool play) override;
-    bool liveSave(QString* error) override;
+    bool liveSave(const QString& path, QString* error) override;
     void liveGenerateProxies(const QStringList& files) override;
     QJsonObject liveProxyState(const QString& file) const override;
     void liveConnectionChanged(bool connected, const QString& client) override;

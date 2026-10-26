@@ -553,8 +553,19 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
         o[undo ? "undone" : "redone"] = undo ? u->undoText() : u->redoText();
         undo ? u->undo() : u->redo();
     } else if (action == "save") {
+        // A new file only for a project that was never saved (Save As of the user's project stays the user's)
+        QString path;
+        if (a.contains("path")) {
+            path = absolute(a["path"].toString());
+            if (QFileInfo(path).suffix() != ProjectFile::Extension) path += QString(".%1").arg(ProjectFile::Extension);
+            const QString current = h->liveProjectPath();
+            if (!current.isEmpty() && QFileInfo(path).absoluteFilePath() != QFileInfo(current).absoluteFilePath())
+                fail("BAD_ARGUMENT", "the project already has a file (" + current
+                                         + "); 'path' is only for a project that was never saved");
+            if (current.isEmpty() && QFileInfo::exists(path)) fail("EXISTS", "there is a file already: " + path);
+        }
         QString error;
-        if (!h->liveSave(&error)) fail("SAVE_FAILED", error);
+        if (!h->liveSave(path, &error)) fail("SAVE_FAILED", error);
         o["saved"] = h->liveProjectPath();
     } else if (action == "proxies") {
         QStringList files;

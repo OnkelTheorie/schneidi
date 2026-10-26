@@ -56,7 +56,8 @@ public:
     virtual bool livePlaying() const = 0;
     virtual void liveSeek(int frame) = 0;
     virtual void livePlay(bool play) = 0;
-    virtual bool liveSave(QString* error) = 0; // only projects with a file
+    // Saves to the project's file, or to `path` (a project never saved; the caller checks it is a new file)
+    virtual bool liveSave(const QString& path, QString* error) = 0;
     // Proxy media: generate (in the background), and the state per file ("ready", "pending" with percent, "none")
     virtual void liveGenerateProxies(const QStringList& files) = 0;
     virtual QJsonObject liveProxyState(const QString& file) const = 0;

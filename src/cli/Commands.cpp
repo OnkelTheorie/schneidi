@@ -626,13 +626,14 @@ const QVector<Command>& commands()
         {"app", "The schneidi app (live, when it has the project open): see what the user sees (playhead, selection, "
                 "open timeline) and control it. `info`, `edit` and the other commands already work on the open "
                 "project there (an edit is one undo step in the app; the user saves).",
-         {{"action", T::String, "state, seek {at}, play {at?}, stop, select {clips}, undo, redo, save, proxies "
+         {{"action", T::String, "state, seek {at}, play {at?}, stop, select {clips}, undo, redo, save {path?}, proxies "
                                 "{files?, generate?} (preview proxies; default all video files)", true, true},
           {"project", T::Path, "project file open in the app (default \"@app\" = the project of the running app)"},
           {"at", T::Time, "seek/play: position in the open timeline"},
           {"clips", T::Times, "select: clip ids (empty = nothing selected)"},
           {"files", T::Paths, "proxies: media files (default: all video in the project)"},
-          {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"}},
+          {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"},
+          {"path", T::Path, "save: file for a project that was never saved (a new .schneidi file, never overwrites)"}},
          cmdApp},
         {"render", "Render the project timeline to a video, animated GIF, image sequence or audio file.",
          {{"project", T::Path, "project file", true, true},
