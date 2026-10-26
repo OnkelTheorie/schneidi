@@ -70,6 +70,7 @@ private:
     void updateBusy(bool busy);
     void updateUsage();
     void updateEmpty();
+    void updateWorking(); // "the AI works …" while nothing else shows it
     void scrollDown(bool force);
     QWidget* buildSetup();
     void setupProviderChanged();
@@ -88,6 +89,7 @@ private:
     QWidget* m_list = nullptr;
     QVBoxLayout* m_listLayout = nullptr;
     QLabel* m_empty = nullptr;
+    QLabel* m_working = nullptr;
     QVector<QWidget*> m_widgets; // one per chat entry
     QWidget* m_approval = nullptr;
     QLabel* m_approvalText = nullptr;

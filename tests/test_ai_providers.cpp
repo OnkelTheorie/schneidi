@@ -438,6 +438,14 @@ void testKeys()
     CHECK_EQ(keychain->reads, 1); // read once per session (unlocking may ask the user)
     CHECK(keys.hasStored("claude"));
     CHECK(!keys.hasStored("openai"));
+    // Whether a key is stored is known without asking the keychain (it could start its service or a prompt); one
+    // put there otherwise is still found when it is needed
+    keychain->keys["openai"] = "sk-elsewhere";
+    CHECK(!keys.hasStored("openai"));
+    CHECK_EQ(keys.resolve("openai", none).key, QString("sk-elsewhere"));
+    CHECK(keys.hasStored("openai"));
+    keys.remove("openai", nullptr);
+    CHECK(!keys.hasStored("openai"));
 
     // A company key for that provider (or for any, without "provider") comes before it, the environment first
     Ai::Company company;
@@ -605,6 +613,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QCoreApplication app(argc, argv);
     Check::initApp("ai_providers");
+    QSettings().remove("ai"); // from an earlier run
     I18n::install("de");
     testPresets();
     testAnthropicBody();

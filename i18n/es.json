@@ -366,6 +366,7 @@
  "Die Datei lässt sich nicht schreiben.": "No se puede escribir el archivo.",
  "Die Framerate lässt sich nicht mehr ändern, weil schon Clips in der Timeline liegen.": "La velocidad de fotogramas ya no se puede cambiar porque la línea de tiempo ya contiene clips.",
  "Die KI anhalten": "Detener la IA",
+ "Die KI arbeitet …": "La IA está trabajando …",
  "Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst.": "La IA edita tu proyecto abierto: cortar, quitar pausas, títulos, sonido, color … Puedes deshacer cada cambio. Elige con qué IA quieres trabajar.",
  "Die KI hat das Projekt geändert – zu sehen in Timeline und Vorschau. Übernehmen oder verwerfen? Bis dahin wartet sie.": "La IA cambió el proyecto – míralo en la línea de tiempo y la vista previa. ¿Aceptar o descartar? Hasta entonces espera.",
  "Die KI hat nichts geantwortet.": "La IA no respondió nada.",

@@ -91,6 +91,9 @@ Company company(const QStringList& dirs)
 namespace {
 
 const QString kSettingsGroup = QStringLiteral("ai/chat/keys/");
+// "A key of this provider is in the keychain" (no secret): showing it never asks the keychain, which could start its
+// service or a password prompt at the start of the app
+const QString kInKeychain = QStringLiteral("ai/chat/inKeychain/");
 
 class SettingsStore : public KeyStore {
 public:
@@ -440,11 +443,15 @@ KeySource Keys::resolve(const QString& provider, const Company& company)
     if (const auto it = m_cache.constFind(provider); it != m_cache.cend())
         return {it->kind, it->kind == KeySource::Kind::Keychain ? m_keychain->name() : m_settings->name(), it->key};
     QString error;
-    if (m_keychain && m_keychain->has(provider))
+    if (m_keychain && m_keychain->has(provider)) {
         if (const QString key = m_keychain->read(provider, &error); !key.isEmpty()) {
             m_cache.insert(provider, {key, KeySource::Kind::Keychain});
+            QSettings().setValue(kInKeychain + provider, true);
             return {KeySource::Kind::Keychain, m_keychain->name(), key};
         }
+    } else {
+        QSettings().remove(kInKeychain + provider); // deleted in the keychain meanwhile
+    }
     if (m_settings)
         if (const QString key = m_settings->read(provider, &error); !key.isEmpty()) {
             m_cache.insert(provider, {key, KeySource::Kind::Settings});
@@ -459,6 +466,7 @@ bool Keys::store(const QString& provider, const QString& key, QString* error)
     if (m_keychain) {
         if (!m_keychain->write(provider, key, error)) return false;
         if (m_settings) m_settings->remove(provider, nullptr); // no second, unencrypted copy
+        QSettings().setValue(kInKeychain + provider, true);
         return true;
     }
     return m_settings && m_settings->write(provider, key, error);
@@ -467,6 +475,7 @@ bool Keys::store(const QString& provider, const QString& key, QString* error)
 bool Keys::remove(const QString& provider, QString* error)
 {
     m_cache.remove(provider);
+    QSettings().remove(kInKeychain + provider);
     bool ok = true;
     if (m_keychain) ok = m_keychain->remove(provider, error);
     if (m_settings) ok = m_settings->remove(provider, error) && ok;
@@ -476,7 +485,7 @@ bool Keys::remove(const QString& provider, QString* error)
 bool Keys::hasStored(const QString& provider)
 {
     if (m_cache.contains(provider)) return true;
-    return (m_keychain && m_keychain->has(provider)) || (m_settings && m_settings->has(provider));
+    return (m_keychain && QSettings().value(kInKeychain + provider).toBool()) || (m_settings && m_settings->has(provider));
 }
 
 QString Keys::storeName() const { return m_keychain ? m_keychain->name() : m_settings ? m_settings->name() : QString(); }

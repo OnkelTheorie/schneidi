@@ -195,6 +195,8 @@ QString AiChat::systemPrompt() const
                       "- Every `edit` call is one undo step in the app: put one logical change into one call. Do not "
                       "save the project (`app` save) unless the user asks.\n")
                       .arg(m_language);
+    if (!m_guideText.isEmpty())
+        app += "- The editing guide above is the main text of the `guide` tool: call `guide` only with a topic.\n";
     app += m_review ? "- The user reviews your changes: when your answer is done, they accept all changes of the "
                       "request as one undo step or discard them. Do the whole request in one go instead of asking for "
                       "confirmation in between.\n"

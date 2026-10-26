@@ -79,7 +79,8 @@ public:
     KeySource resolve(const QString& provider, const Company& company);
     bool store(const QString& provider, const QString& key, QString* error);
     bool remove(const QString& provider, QString* error);
-    bool hasStored(const QString& provider); // in the keychain or the settings (does not unlock)
+    // In the keychain (as far as this app stored or read it there; the keychain itself is not asked) or the settings
+    bool hasStored(const QString& provider);
     bool secure() const { return m_keychain != nullptr; } // what store() uses
     QString storeName() const;
     void forget(); // drop the keys read so far (settings changed)

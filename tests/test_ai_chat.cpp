@@ -490,8 +490,12 @@ void test(const QString& dir)
     fake.script = {anthropicText("zu spät", 5000), anthropicText("Jetzt.")};
     panel->sendText("Langsam");
     CHECK(waitFor([&] { return fake.script.size() == 1; }, 10000));
+    settle(120);
+    auto* working = panel->findChild<QLabel*>("ai_working"); // nothing streams yet: "the AI is working"
+    if (CHECK(working)) CHECK(working->isVisible());
     chat->stop();
     CHECK(!chat->busy());
+    if (working) CHECK(!working->isVisible());
     if (const AiChat::Entry* n = lastOf(chat, AiChat::Entry::Kind::Notice); CHECK(n)) CHECK_EQ(n->text, T("Gestoppt."));
     panel->sendText("Und jetzt?");
     CHECK(waitFor([&] { return !chat->busy(); }));

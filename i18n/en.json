@@ -366,6 +366,7 @@
  "Die Datei lässt sich nicht schreiben.": "The file cannot be written.",
  "Die Framerate lässt sich nicht mehr ändern, weil schon Clips in der Timeline liegen.": "The timeline frame rate cannot be changed because the timeline already contains clips.",
  "Die KI anhalten": "Stop the AI",
+ "Die KI arbeitet …": "The AI is working …",
  "Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst.": "The AI edits your open project: cutting, removing pauses, titles, sound, color … You can undo every change. Choose which AI you want to work with.",
  "Die KI hat das Projekt geändert – zu sehen in Timeline und Vorschau. Übernehmen oder verwerfen? Bis dahin wartet sie.": "The AI changed the project – see the timeline and preview. Accept or discard? It waits until then.",
  "Die KI hat nichts geantwortet.": "The AI did not answer anything.",

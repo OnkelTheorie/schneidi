@@ -296,6 +296,11 @@ AiChatPanel::AiChatPanel(AiChat* chat, QWidget* parent) : QWidget(parent), m_cha
                          "oder „Mach daraus ein 30-Sekunden-Video im Hochformat“. Sie arbeitet direkt in deinem "
                          "offenen Projekt; jede Änderung kannst du rückgängig machen."));
     m_listLayout->addWidget(m_empty);
+    m_working = new QLabel(T("Die KI arbeitet …"));
+    m_working->setObjectName("ai_working");
+    m_working->setStyleSheet(QString("QLabel { color: %1; font-style: italic; }").arg(Theme::textDim.name()));
+    m_working->hide();
+    m_listLayout->addWidget(m_working);
     m_listLayout->addStretch(1);
     m_scroll->setWidget(m_list);
     lay->addWidget(m_scroll, 1);
@@ -411,9 +416,10 @@ void AiChatPanel::addEntry(int index)
     const Entry& e = m_chat->entries().value(index);
     auto* view = new EntryView(e.kind);
     view->set(e);
-    m_listLayout->insertWidget(m_listLayout->count() - 1, view); // above the stretch
+    m_listLayout->insertWidget(m_listLayout->indexOf(m_working), view); // above the working line and the stretch
     m_widgets << view;
     updateEmpty();
+    updateWorking();
     if (e.kind == Entry::Kind::User) scrollDown(true);
 }
 
@@ -428,6 +434,18 @@ void AiChatPanel::flush()
     const QVector<int> dirty = m_dirty;
     m_dirty.clear();
     for (int i : dirty) updateEntry(i);
+    if (!dirty.isEmpty()) updateWorking();
+}
+
+void AiChatPanel::updateWorking()
+{
+    // Thinking, waiting for the provider, starting the tools: nothing in the list moves meanwhile
+    bool shown = m_chat->busy();
+    if (shown && !m_chat->entries().isEmpty()) {
+        const Entry& last = m_chat->entries().last();
+        shown = last.state != Entry::State::Running; // a running tool or streaming text shows it itself
+    }
+    m_working->setVisible(shown);
 }
 
 void AiChatPanel::rebuild()
@@ -451,6 +469,7 @@ void AiChatPanel::scrollDown(bool force)
 
 void AiChatPanel::updateBusy(bool busy)
 {
+    updateWorking();
     m_sendButton->setText(busy ? T("Stopp") : T("Senden"));
     m_sendButton->setToolTip(busy ? T("Die KI anhalten") : T("Senden (Enter)"));
 }
