@@ -810,17 +810,27 @@ const QVector<Command>& commands()
          cmdLoudness},
         {"check", "Check before export or before handing a video over: what typically goes wrong. A project "
                   "(before rendering): missing media files, frames without any picture (a gap = black), subtitles too "
-                  "short/too fast to read or past the end, and the sound of the mix as exported: no sound, clipping, "
-                  "true peak above -1 dBTP, loudness off the target, silence at the end. A rendered file (after "
-                  "rendering): black stretches, frozen picture, no sound, the same sound checks. 'issues' (errors "
-                  "first, each with check id, message and time range), counts of 'errors'/'warnings' and the measured "
-                  "'sound'. Fix errors before handing over; warnings may be intended (a fade to black, a pause).",
+                  "short/too fast to read or past the end, recordings with stutter in the range a clip uses "
+                  "(stutter: jumps in the time stamps, see `probe` gaps), and the sound of the mix as exported: no "
+                  "sound, clipping, true peak above -1 dBTP, loudness off the target, silence at the end, and "
+                  "under_music: a track with events more than 15 LU under the music while its events play (music = "
+                  "a track named music/song/BGM, or one of sound files only that plays without pauses; events = the "
+                  "sound of a video recording, or a track named voice/mic/game; fix: raise that track or `duck` the "
+                  "music). Vertical videos (9:16): safe_area / subtitle_safe_area = text where TikTok, Reels and "
+                  "Shorts put their caption and buttons (bottom 20 %), their button column (right 12 %, from 35 % of "
+                  "the height down) or their top bar (top 8 %), or outside the picture; slow_hook (info, videos up to "
+                  "3 min) = hardly any motion in the first second. A rendered file (after rendering): black "
+                  "stretches, frozen picture, no sound, the same sound checks. 'issues' (errors first, each with check "
+                  "id, message, time range and 'clip' when it is about one), counts of 'errors'/'warnings' and the "
+                  "measured 'sound'. Fix errors before handing over; warnings may be intended (a fade to black, a "
+                  "pause).",
          {{"source", T::Path, "project (.schneidi) or rendered media file", true, true},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"from", T::Time, "for a project: start of the range to check (default: start)"},
           {"to", T::Time, "for a project: end of the range (default: end of the timeline)"},
           {"target_lufs", T::Number, "loudness target (default -14 for web/streaming; -23 broadcast, -16 podcasts)"},
-          {"sound", T::Boolean, "measure the sound (default true; false = only the quick checks, no mixing)"}},
+          {"sound", T::Boolean, "measure the sound (default true; false = no mixing: no sound and no under_music "
+                                "checks)"}},
          cmdCheck},
         {"scopes", "Video scopes of one frame like the Color page (waveform, RGB parade, vectorscope, histogram) as "
                    "one image, plus numbers to judge exposure and color: luma spread (10-bit, 0..1023), clipped "

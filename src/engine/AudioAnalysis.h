@@ -55,9 +55,11 @@ struct ClipLevels {
 std::optional<ClipLevels> measureClips(const ProjectFormat& format, const Timeline& timeline, const QVector<int>& ids,
                                        bool loudness, const std::function<bool(double)>& progress = {});
 
-// Loudness of the timeline mix [from, to) as it is exported (clip/track/master levels, mute/solo, limiter)
+// Loudness of the timeline mix [from, to) as it is exported (clip/track/master levels, mute/solo, limiter).
+// framePeaks: also the sample peak of every frame like timelineFramePeaks, in the same pass (the check before export)
 std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Timeline& timeline, int from, int to,
-                                         const std::function<bool(double)>& progress = {});
+                                         const std::function<bool(double)>& progress = {},
+                                         std::vector<float>* framePeaks = nullptr);
 
 // The same for measuring one timeline several times (fader changes). MLT audio path: keeps the opened files between
 // the measurements (opening the producers of an edit with speed ramps takes seconds); the own engine opens a file in
@@ -67,7 +69,8 @@ public:
     explicit MixMeter(const ProjectFormat& format);
     ~MixMeter();
     std::optional<Loudness> measure(const Timeline& timeline, int from, int to,
-                                    const std::function<bool(double)>& progress = {});
+                                    const std::function<bool(double)>& progress = {},
+                                    std::vector<float>* framePeaks = nullptr);
 
 private:
     ProjectFormat m_format;
