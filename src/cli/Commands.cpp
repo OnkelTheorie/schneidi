@@ -749,6 +749,8 @@ const QVector<Command>& commands()
           {"language", T::String, "spoken language: de, en, fr, … (default auto = detect)"},
           {"model", T::String, "turbo, small, base, tiny or a model file (default: best installed)"},
           {"words", T::Boolean, "also return every word with its time"},
+          {"music", T::Boolean, "sung words and shouts in music (a song, a chant): without voice detection, which "
+                                "hears no speech there; slower, may hear words a bit wrong (\"cracker\" for \"Kraken\")"},
           {"srt", T::Path, "also write the segments as an SRT file"},
           {"max_chars", T::Integer, "longest segment in characters (default 42, one subtitle line)"},
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"},

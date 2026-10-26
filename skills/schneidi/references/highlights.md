@@ -39,6 +39,8 @@ also read [social.md](social.md).
   of the song and of the game clips (a mastered song is often -4 to -8 LUFS, game sound -15 to -20). Then lower the
   music until it sits a few LU under the game sound at the moments, or let the sound lower it (`duck` with the
   music as `track`/`clips` and the game track as `under`). Never only turn the game sound down.
+- A title on the moment the song sings or shouts it: `transcribe` the song with `music` true and `words` true (only
+  the part you use, with `from`/`to` on a project, it is slow); whisper may hear it a bit wrong.
 - See [audio.md](audio.md) for loudness: master limiter on, about -14 LUFS.
 
 ## Check

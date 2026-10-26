@@ -289,6 +289,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         fail("NOT_INSTALLED", "whisper is not installed (see `extensions`, e.g. --install whisper,small)");
     req.language = a.contains("language") ? a["language"].toString() : "auto";
     req.threads = a["threads"].toInt();
+    req.music = a["music"].toBool();
     ProjectFormat f;
     int offset = 0, length = 0;
     if (isProjectFile(src)) {
@@ -337,7 +338,9 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     const Transcript::Result& r = t.result();
     const int maxChars = a.contains("max_chars") ? std::clamp(a["max_chars"].toInt(), 10, 200) : 42;
     QVector<SubtitleCue> cues = Transcript::toCues(r.words, f.rate.fps(), maxChars, 700, offset);
-    Transcript::startAtSound(cues, r.levels, f.rate.fps(), offset);
+    // Not for music: its "loud" is measured against the file, a quieter intro of a song counts as silence (the first
+    // shouted line was dropped while its words were there)
+    if (!req.music) Transcript::startAtSound(cues, r.levels, f.rate.fps(), offset);
     QJsonArray segments;
     for (const SubtitleCue& c : cues) {
         QJsonObject o = range(c.start, std::min(c.end, offset + length), f);
@@ -346,6 +349,8 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     }
     QJsonObject out{{"source", absolute(src)}, {"language", r.language}, {"fps", formatJson(f)["fps"]},
                     {"model", QFileInfo(req.model).fileName()}, {"segments", segments}};
+    if (segments.isEmpty() && !req.music)
+        out["notes"] = QJsonArray{"no speech found; singing or shouts in music: try again with music:true"};
     if (a["words"].toBool()) {
         // Word times for cutting: `to` is where the word is spoken to (pauses after it are left out)
         QJsonArray words;

@@ -24,6 +24,7 @@ struct TranscribeRequest {
     QVector<int> audioTracks; // timeline: only these audio tracks (also muted ones), e.g. the voice without music; empty = as heard
     QString model;               // model file (Extensions::whisperModelPath)
     QString language = "auto";   // "de", "en", … or "auto"
+    bool music = false;          // sung words and shouts in a song (no voice detection, see runWhisper)
     int threads = 0;             // 0 = half of the logical processors (the computer stays usable)
 };
 

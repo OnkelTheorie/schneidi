@@ -168,7 +168,11 @@ void Transcriber::runWhisper()
                      "-of", m_tmp->filePath("out"), "-np", "-pp"};
     // Without voice detection whisper puts the first words of a passage at the start of a pause before it
     // Threshold 0.35 instead of 0.5: keeps quiet or laughed words (measured: "Diese Scheiß-Pferd" instead of "Das")
-    if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty()) args << "--vad" << "-vm" << vad << "-vt" << "0.35";
+    // Music: voice detection hears no speech in a song (nothing found in a whole track, the shouted title and the
+    // singing without it); without the previous text as context whisper does not loop on repeated lines
+    if (m_request.music) args << "-mc" << "0";
+    else if (const QString vad = Extensions::whisperVadModel(); !vad.isEmpty())
+        args << "--vad" << "-vm" << vad << "-vt" << "0.35";
     m_process.start(Extensions::whisperProgram(), args);
 }
 
