@@ -20,9 +20,10 @@ OBS and similar recorders store e.g. "System" and "Mikrofon" separately. `probe`
 presets decide which ones land on the timeline (by default every stream, one track each). `audio_stream` changes what
 a clip plays; `tracks` in `silence`, `transcribe` and `loudness` picks what is analysed.
 
-A recording with a **Mix stream plus its single streams** then plays everything twice (too loud, clipping). Look at
-`info` after placing such a file: if "Mix" and its parts are all enabled, switch off one side with `enable` (usually
-the Mix, so the voice and game stay separately adjustable) and confirm with `loudness`.
+A recording with a **Mix stream plus its single streams** then plays everything twice (too loud, clipping). A project
+made with `new` `template` "game" mutes the Mix by itself (its own import presets, `info` shows `import_presets`). Else
+look at `info` after placing such a file: if "Mix" and its parts are all enabled, switch off one side with `enable`
+(usually the Mix, so the voice and game stay separately adjustable) and confirm with `loudness`.
 
 ## Check
 `loudness` on the rendered file: integrated within ±1 LU of the target, true peak ≤ -1 dBTP. If the music drowns

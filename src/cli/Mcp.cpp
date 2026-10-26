@@ -53,7 +53,8 @@ QJsonObject text(const QJsonObject& o)
 QString instructions(const Options& opt)
 {
     QString s = "schneidi is a video editor. `guide` explains how to edit well with it (workflow and "
-                "how-tos per task) - read it first. Edit projects (.schneidi) with these tools: `new` creates one, "
+                "how-tos per task) - read it first. Edit projects (.schneidi) with these tools: `new` creates one "
+                "(from a start template such as podcast or vertical; `templates` lists them), "
                 "`probe`/`silence`/`scenes`/`peaks`/`frames`/`transcribe`/`loudness`/`scopes` look at (and listen to) "
                 "the material (`sync` lines up recordings of the same event by their sound, `highlights` finds kills "
                 "and loud moments for a highlight video, `beats` gives a song's tempo, bars, phrases, breaks and "
