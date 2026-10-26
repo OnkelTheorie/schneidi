@@ -15,6 +15,9 @@
 class Project;
 class Selection;
 class RetimeMap;
+namespace Accents {
+struct Amounts;
+}
 
 // Editing operations at user level (what a click/shortcut triggers).
 // The UI only calls Editor methods, never TimelineOps directly -> new tools
@@ -263,6 +266,11 @@ public:
     // Target of a double click in the Effects Library: selected clips of the kind, else the top video clip (audio:
     // the clip on the first audio track) at the playhead
     QVector<int> effectTargets(int frame, TrackKind kind = TrackKind::Video) const;
+    // Accents (core/Accents.h: zoom punch, flash, shake as keyframes) at timeline frames, one undo step: on the video
+    // clips among `ids`, or with ids empty on every enabled media clip of a visible video track under each frame.
+    // Returns the frames that landed on a clip (sorted).
+    QVector<int> addAccents(const QVector<int>& ids, const QVector<int>& frames, const Accents::Amounts& amounts,
+                            const QString& text);
 
     // Color page (effect "grade", target like effectTargets): set values at timeline frame `frame`; creates the correction
     // if needed, animated values get a keyframe there (as in the Inspector). Same mergeKey = one undo step.

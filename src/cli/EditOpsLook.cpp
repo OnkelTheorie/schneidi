@@ -2,6 +2,7 @@
 // keyframes of any animatable value and Paste Attributes. Same Editor/Keys functions as the app.
 #include "cli/CommandsDetail.h"
 
+#include "core/Accents.h"
 #include "core/EffectRegistry.h"
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
@@ -12,6 +13,7 @@
 #include <QFileInfo>
 
 #include <cmath>
+#include <optional>
 
 namespace Cli::detail {
 
@@ -261,8 +263,25 @@ void opTransform(Session& s, const QJsonObject& op)
         if (!op.value(name).isBool()) fail("BAD_ARGUMENT", QString("%1 must be true or false").arg(name));
         anySwitch = true;
     }
-    if (values.isEmpty() && !reset && !anySwitch)
-        fail("BAD_ARGUMENT", "nothing to set (zoom, x, y, rotation, crop_*, opacity, *_on or reset)");
+    // Fill around the fitted picture: 'blur' = a blurred copy of the same picture (titles fill the frame: skipped)
+    std::optional<FitFill> fill;
+    if (op.contains("fit")) {
+        for (const FitFillInfo& f : kFitFills)
+            if (op.value("fit").toString() == QLatin1String(f.id)) fill = f.fill;
+        if (!fill) fail("BAD_ARGUMENT", "fit is 'blur' (a blurred copy of the picture around it) or 'none' (transparent)");
+    }
+    const std::optional<double> fillBlur = op.contains("fit_blur") ? std::optional(numberOf(op, "fit_blur", 0, 100))
+                                                                   : std::nullopt;
+    const std::optional<double> fillDim = op.contains("fit_dim") ? std::optional(numberOf(op, "fit_dim", 0, 100))
+                                                                 : std::nullopt;
+    const bool anyFill = fill || fillBlur || fillDim;
+    if (anyFill) {
+        const Timeline& tl = s.project.timeline();
+        if (std::all_of(ids.begin(), ids.end(), [&](int id) { return TimelineOps::findClip(tl, id)->isTitle(); }))
+            fail("BAD_ARGUMENT", "fit is for clips with a picture; titles fill the frame");
+    }
+    if (values.isEmpty() && !reset && !anySwitch && !anyFill)
+        fail("BAD_ARGUMENT", "nothing to set (zoom, x, y, rotation, crop_*, opacity, fit, fit_blur, fit_dim, *_on or reset)");
     const bool hasAt = op.contains("at");
     const int at = hasAt ? timeOf(s, op, "at") : 0;
     s.editor.modifyClips(ids, "Transform", [&](Clip& c) {
@@ -273,6 +292,11 @@ void opTransform(Session& s, const QJsonObject& op)
         for (const auto& [p, v] : values) Keys::setValue(c, p, hasAt ? localFrame(c, at) : 0, v);
         for (const auto& [name, member] : switches)
             if (op.contains(name)) c.transform.*member = op.value(name).toBool();
+        if (!c.isTitle()) {
+            if (fill) c.transform.fill = *fill;
+            if (fillBlur) c.transform.fillBlur = *fillBlur;
+            if (fillDim) c.transform.fillDim = *fillDim;
+        }
     });
 }
 
@@ -294,9 +318,16 @@ AnimParam parseParam(const QString& name)
             }
         fail("BAD_ARGUMENT", QString("effect %1 has no parameter '%2'").arg(effectId, key));
     }
-    QStringList names;
+    QStringList names{"zoom"};
     for (const NamedParam& n : kNamed) names << n.name;
     fail("BAD_ARGUMENT", QString("unknown parameter '%1' (use %2 or <effect>.<key> like grade.liftY)").arg(name, names.join(", ")));
+}
+
+// "zoom" = zoom_x and zoom_y together (like the linked Zoom fields in the Inspector), otherwise one parameter
+QVector<AnimParam> parseParams(const QString& name)
+{
+    if (name == QLatin1String("zoom")) return {AnimParam::ZoomX, AnimParam::ZoomY};
+    return {parseParam(name)};
 }
 
 KeyEase parseEase(const QJsonValue& v)
@@ -309,7 +340,8 @@ KeyEase parseEase(const QJsonValue& v)
 
 void opKeyframe(Session& s, const QJsonObject& op)
 {
-    const AnimParam p = parseParam(op.value("param").toString());
+    const QVector<AnimParam> params = parseParams(op.value("param").toString());
+    const AnimParam p = params.first(); // value checks: the parameters of "zoom" share their range
     const bool audioParam = p == AnimParam::Volume || p == AnimParam::Pan;
     const QVector<int> ids = clipsOn(s, op, audioParam ? TrackKind::Audio : TrackKind::Video, "these keyframes");
     QString effectId;
@@ -318,7 +350,9 @@ void opKeyframe(Session& s, const QJsonObject& op)
     if (EffectRegistry::paramFor(p, &effect, &ep)) effectId = effect->id;
 
     if (op.value("clear").toBool()) {
-        s.editor.modifyClips(ids, "Remove keyframes", [&](Clip& c) { Keys::clear(c, p); });
+        s.editor.modifyClips(ids, "Remove keyframes", [&](Clip& c) {
+            for (AnimParam q : params) Keys::clear(c, q);
+        });
         return;
     }
     // Several keyframes at once: keys:[{at, value, ease?}, …]; one: at, value?, ease?, remove?
@@ -346,7 +380,8 @@ void opKeyframe(Session& s, const QJsonObject& op)
             key.moveTo = timeOf(s, k, "move_to");
             for (int id : ids) {
                 const Clip* c = TimelineOps::findClip(s.project.timeline(), id);
-                if (c && !Keys::keyAt(*c, p, localFrame(*c, key.at)))
+                if (c && std::none_of(params.begin(), params.end(),
+                                      [&](AnimParam q) { return Keys::keyAt(*c, q, localFrame(*c, key.at)); }))
                     fail("NOT_FOUND", QString("clip %1 has no %2 keyframe at %3 to move")
                                           .arg(id).arg(op.value("param").toString(), tc(key.at, s.format())));
                 if (c && (*key.moveTo < c->start || *key.moveTo >= c->end()))
@@ -360,18 +395,68 @@ void opKeyframe(Session& s, const QJsonObject& op)
         for (const Key& k : list) {
             const int t = localFrame(c, k.at);
             if (k.remove) {
-                Keys::removeKey(c, p, t);
+                for (AnimParam q : params) Keys::removeKey(c, q, t);
                 continue;
             }
             if (k.moveTo) { // keeps value, ease and handles; a keyframe already at the target is replaced
-                Keys::move(c, {t}, localFrame(c, *k.moveTo) - t, {p});
+                Keys::move(c, {t}, localFrame(c, *k.moveTo) - t, params);
                 continue;
             }
             // Without a value: keyframe with the value the clip has there now (like clicking the diamond)
-            Keys::setKey(c, p, t, k.value ? *k.value : Keys::valueAt(c, p, t));
-            if (k.ease) Keys::setEase(c, {t}, *k.ease, {p});
+            for (AnimParam q : params) Keys::setKey(c, q, t, k.value ? *k.value : Keys::valueAt(c, q, t));
+            if (k.ease) Keys::setEase(c, {t}, *k.ease, params);
         }
     });
+}
+
+// ---------- accent ----------
+
+// Zoom punch / flash / shake on hits as keyframes (core/Accents.h), all times of one op in one go
+void opAccent(Session& s, const QJsonObject& op)
+{
+    const QString id = op.value("preset").toString("hit");
+    const Accents::Preset* preset = Accents::find(id);
+    if (!preset) {
+        QStringList ids;
+        for (const Accents::Preset& p : Accents::presets()) ids << p.id;
+        fail("BAD_ARGUMENT", QString("no accent preset '%1' (%2; `effects` lists them)").arg(id, ids.join(", ")));
+    }
+    Accents::Amounts a = preset->amounts;
+    if (op.contains("punch")) a.punch = numberOf(op, "punch", -0.5, 2);
+    if (op.contains("flash")) a.flash = numberOf(op, "flash", -4, 4);
+    if (op.contains("shake")) a.shake = numberOf(op, "shake", 0, 0.25);
+    if (op.contains("strength")) a = a.scaled(numberOf(op, "strength", 0, 5));
+    if (op.contains("length")) {
+        const int frames = timeOf(s, op, "length");
+        if (frames <= 0) fail("BAD_ARGUMENT", "'length' must be longer than 0");
+        a.length = seconds(frames, s.format());
+    }
+    if (!a.any()) fail("BAD_ARGUMENT", "nothing to do: punch, flash and shake are all 0");
+
+    QVector<int> frames;
+    const QJsonValue at = op.value("at");
+    const QJsonArray times = at.isArray() ? at.toArray() : at.isUndefined() ? QJsonArray{} : QJsonArray{at};
+    for (const QJsonValue& v : times) frames << timeOf(s, QJsonObject{{"at", v}}, "at");
+    if (op.value("markers").toBool()) frames += s.project.timeline().markers;
+    std::sort(frames.begin(), frames.end());
+    frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+    if (frames.isEmpty())
+        fail("BAD_ARGUMENT", op.value("markers").toBool() ? "the timeline has no markers"
+                                                           : "missing 'at' (a time or a list of times) or markers:true");
+
+    const bool given = op.contains("clips") || op.contains("clip");
+    const QVector<int> ids = given ? clipsOn(s, op, TrackKind::Video, "accents") : QVector<int>{};
+    const QVector<int> landed = s.editor.addAccents(ids, frames, a, "Accent");
+    if (landed.isEmpty())
+        fail("NOT_FOUND", given ? "none of the times lies inside the given clips"
+                                : "no video clip at those times (titles, disabled clips and hidden tracks are left out)");
+    QString note = QString("accent '%1' at %2 of %3 times").arg(id).arg(landed.size()).arg(frames.size());
+    QStringList missed;
+    for (int f : frames)
+        if (!landed.contains(f) && missed.size() < 8) missed << tc(f, s.format());
+    if (!missed.isEmpty())
+        note += QString("; no %1clip at %2").arg(given ? "given " : "video ", missed.join(", "));
+    s.notes << note;
 }
 
 // ---------- copy_attributes ----------
@@ -415,8 +500,11 @@ QString paramName(AnimParam p)
 QJsonObject keyframesJson(const Clip& c)
 {
     QJsonObject o;
+    // Zoom X and Y with the same keyframes (linked zoom, op 'keyframe' param zoom, accents) show once as "zoom"
+    const KeyTrack zx = c.keys.value(AnimParam::ZoomX), zy = c.keys.value(AnimParam::ZoomY);
+    const bool zoom = !zx.isEmpty() && zx == zy;
     for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
-        if (it.value().isEmpty()) continue;
+        if (it.value().isEmpty() || (zoom && it.key() == AnimParam::ZoomY)) continue;
         QJsonArray list;
         for (const Keyframe& k : it.value()) {
             QJsonObject ko{{"at", c.start + k.frame - c.in}};
@@ -425,7 +513,7 @@ QJsonObject keyframesJson(const Clip& c)
             if (k.ease != KeyEase::Linear) ko["ease"] = kEaseNames[int(k.ease)];
             list << ko;
         }
-        o[paramName(it.key())] = list;
+        o[zoom && it.key() == AnimParam::ZoomX ? QStringLiteral("zoom") : paramName(it.key())] = list;
     }
     return o;
 }
@@ -468,9 +556,9 @@ void addLookOps(QVector<OpDef>& ops)
                  "on the clip's picture before transform, speed changes included. Slow: ~10–40 frames per second.",
                  opTrack}
         << OpDef{"transform", "{op:'transform', clips, zoom?, zoom_x?, zoom_y?, x?, y?, rotation?, crop_left?, "
-                              "crop_right?, crop_top?, crop_bottom?, opacity?, transform_on?, crop_on?, opacity_on?, "
-                              "reset?, at?}",
-                 "Inspector transform/crop/opacity of video clips",
+                              "crop_right?, crop_top?, crop_bottom?, opacity?, fit?, fit_blur?, fit_dim?, transform_on?, "
+                              "crop_on?, opacity_on?, reset?, at?}",
+                 "Inspector transform/crop/opacity of video clips; fit:'blur' = blurred background (9:16 from 16:9)",
                  "zoom 1 = the clip's picture fitted into the frame keeping its shape (a 1920x1080 clip in a "
                  "1080x1920 timeline is 1080x607.5 wide/high, centered, with transparent bars above and below); x/y "
                  "in pixels of the timeline from the center, y up; rotation in degrees, counterclockwise. crop_* = "
@@ -478,7 +566,15 @@ void addLookOps(QVector<OpDef>& ops)
                  "the same unit at every zoom and timeline shape: crop px = source px * fitted width / source width "
                  "(1920x1080 clip: * 1 in a 1920x1080 timeline, * 0.5625 in 1080x1920, * 0.5 in 960x540). Crop "
                  "applies before zoom/position/rotation, so at zoom 2 a crop of 100 hides 200 timeline pixels; the "
-                 "cut area is transparent (tracks below show). opacity 0..100. reset:true sets all back first. "
+                 "cut area is transparent (tracks below show). opacity 0..100. "
+                 "fit:'blur' fills the frame around the fitted picture (bars, room left by zoom < 1, moves, rotation) "
+                 "with a blurred copy of the same picture, enlarged to cover the frame: a vertical video from 16:9 "
+                 "material on ONE track (one clip per scene, decoded once, plays smoothly), instead of a blurred second "
+                 "copy on the track below. The copy shows the clip's whole (cropped) picture and does not zoom or move "
+                 "with it; zoom 1.2-1.5 crops the edges of the sharp picture and keeps a HUD readable. fit_blur 0..100 "
+                 "(default 40, like the blur effect), fit_dim 0..100 = percent darker than the clip (default 20); "
+                 "fit:'none' = transparent again (default). Opacity and fades act on the whole clip; titles do not "
+                 "take it. reset:true sets all back first. "
                  "Values that have keyframes get one at `at`. transform_on/crop_on/opacity_on:false switch that "
                  "Inspector section off (its values and keyframes stay but do not apply, e.g. to compare), true on "
                  "again; `info` shows them when off.",
@@ -487,7 +583,8 @@ void addLookOps(QVector<OpDef>& ops)
                              "clips, param, keys:[{at, value?, ease?, remove?, move_to?}, …]} or {op:'keyframe', clips, "
                              "param, clear:true}",
                  "animate a value",
-                 "param: zoom_x, zoom_y, x, y, rotation, crop_left, crop_right, crop_top, crop_bottom, opacity, "
+                 "param: zoom (zoom_x and zoom_y together; `info` shows them as zoom while they match), zoom_x, "
+                 "zoom_y, x, y, rotation, crop_left, crop_right, crop_top, crop_bottom, opacity, "
                  "title_size, title_x, title_y, title_color (\"#rrggbb\"), volume (dB, audio clips), pan (-100..100, "
                  "audio clips) or an effect parameter \"<effect>.<key>\" (keys: `effects <id>`; grade values: "
                  "grade.liftY, grade.gainR, grade.saturation, …). at = timeline frame inside the clip, or {clip, offset} / "
@@ -496,11 +593,30 @@ void addLookOps(QVector<OpDef>& ops)
                  "ease_in_out. Between keyframes the value is interpolated; with no keyframes left the static value "
                  "applies. Times in `info` keyframes are timeline frames. Units as in op 'transform' (crop_*: timeline "
                  "pixels on the fitted picture). move_to = move the keyframe at `at` to this time inside the clip "
-                 "(value, ease and curve handles stay; one already there is replaced).",
+                 "(value, ease and curve handles stay; one already there is replaced). For a zoom punch, flash or "
+                 "shake on a hit use op 'accent' (one op for many times).",
                  opKeyframe}
+        << OpDef{"accent", "{op:'accent', at:[times]|markers:true, clips?, preset?, strength?, length?, punch?, flash?, "
+                           "shake?}",
+                 "zoom punch / flash / shake on hits (kills, beats, drops), written as keyframes",
+                 "at = the hit times (one time or a list, e.g. kill times from `highlights` or bar ones from `beats`); "
+                 "markers:true adds the timeline markers. Without clips: every enabled video clip with a picture "
+                 "under each time (no titles); clips: only these. preset (default hit; `effects` lists them): "
+                 "punch (zoom +15 %, lands back in 0.25 s), flash (exposure +2 stops, 0.2 s), shake (position jumps "
+                 "of up to 3 % of the frame, 0.25 s), hit (punch 12 % + flash 1.5 + shake 2 %, 0.3 s: a kill), drop "
+                 "(punch 25 % + flash 2.5, 0.5 s: the music drop), pulse (zoom +5 %, 0.15 s: beats). strength scales "
+                 "it (0.5 half, 2 double); length = how long it takes to fade (\"0.4s\"); punch (share: 0.15 = 15 % "
+                 "bigger, negative = smaller), flash (stops, negative = darker) and shake (share of the frame's "
+                 "shorter side) set one part directly, 0 leaves it out. The peak sits on the time, the rise starts "
+                 "~30 ms before. Writes ordinary keyframes (zoom, grade.exposure, x, y) on top of what the clip has "
+                 "there (a slow zoom keeps going) that add up for close hits; change or remove them with op "
+                 "'keyframe'. Shake moves the picture: on a clip that just fills the frame the edge shows (zoom a "
+                 "little, or fit:'blur'). Save the big accents for the big moments: the same one on every cut wears "
+                 "off; pulse suits beats.",
+                 opAccent}
         << OpDef{"copy_attributes", "{op:'copy_attributes', from, clips, attributes?}",
                  "Paste Attributes: copy values of clip `from` to the clips",
-                 "attributes (default all): zoom, position, rotation, crop, opacity, effects (video and audio), color "
+                 "attributes (default all): zoom (with fit), position, rotation, crop, opacity, effects (video and audio), color "
                  "(grade), speed, volume, pan, fades. Keyframes come along.",
                  opCopyAttributes};
 }

@@ -142,10 +142,15 @@ void Editor::pasteAttributes(int attrs)
             ClipTransform& t = c.transform;
             const ClipTransform& st = s->transform;
             if (attrs & (AttrZoom | AttrPosition | AttrRotation)) t.transformOn = st.transformOn;
-            if (attrs & AttrZoom) {
+            if (attrs & AttrZoom) { // with the fill around the fitted picture: both decide how it fills the frame
                 t.zoomX = st.zoomX;
                 t.zoomY = st.zoomY;
                 copyKeys(c, *s, {AnimParam::ZoomX, AnimParam::ZoomY});
+                if (!c.isTitle()) {
+                    t.fill = st.fill;
+                    t.fillBlur = st.fillBlur;
+                    t.fillDim = st.fillDim;
+                }
             }
             if (attrs & AttrPosition) {
                 t.posX = st.posX;

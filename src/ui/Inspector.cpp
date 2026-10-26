@@ -110,6 +110,9 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         c.transform.posX = d.posX;
         c.transform.posY = d.posY;
         c.transform.rotation = d.rotation;
+        c.transform.fill = d.fill;
+        c.transform.fillBlur = d.fillBlur;
+        c.transform.fillDim = d.fillDim;
         c.transform.transformOn = true;
         for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation})
             Keys::clear(c, p);
@@ -149,6 +152,42 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
           [](Clip& c) -> double& { return c.transform.posY; }, nullptr, AnimParam::PosX, AnimParam::PosY);
     addSlider(tr, "rotation", T("Rotation"), -360, 360, 0, 0.2, 3, [](Clip& c) -> double& { return c.transform.rotation; },
               AnimParam::Rotation);
+    // Around the fitted picture (bars of another shape, zoom < 1): transparent or a blurred copy of the same picture
+    // (a 16:9 clip in a 9:16 timeline without a second track); titles fill the frame and take none
+    auto* fillBox = new QComboBox;
+    fillBox->setObjectName("FitFill");
+    fillBox->setFocusPolicy(Qt::NoFocus);
+    fillBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    for (const FitFillInfo& f : kFitFills) fillBox->addItem(T(f.name), int(f.fill));
+    fillBox->setToolTip(T("Was die Fläche um das eingepasste Bild füllt: transparent (Spuren darunter sind zu sehen) "
+                          "oder dasselbe Bild vergrößert und unscharf, z. B. für Hochformat aus 16:9"));
+    auto setFill = [this](FitFill fill) {
+        apply(TrackKind::Video, {}, T("Hintergrund"), [fill](Clip& c) {
+            if (!c.isTitle()) c.transform.fill = fill;
+        });
+    };
+    connect(fillBox, &QComboBox::activated, this, [fillBox, setFill](int i) { setFill(FitFill(fillBox->itemData(i).toInt())); });
+    tr.grid->addWidget(rowLabel(T("Hintergrund")), tr.rows, 0);
+    tr.grid->addWidget(fillBox, tr.rows, 1);
+    tr.grid->addWidget(resetButton([setFill] { setFill(FitFill::None); }), tr.rows, 2);
+    ++tr.rows;
+    const ClipTransform defaults;
+    Param* fillBlur = addSlider(tr, "fillBlur", T("Unschärfe"), 0, 100, defaults.fillBlur, 0.5, 1,
+                                [](Clip& c) -> double& { return c.transform.fillBlur; });
+    Param* fillDim = addSlider(tr, "fillDim", T("Abdunkeln"), 0, 100, defaults.fillDim, 0.5, 1,
+                               [](Clip& c) -> double& { return c.transform.fillDim; });
+    m_refreshers << [this, fillBox, fillBlur, fillDim] {
+        const Clip* c = primary(TrackKind::Video);
+        if (!c) return;
+        const QSignalBlocker b(fillBox);
+        fillBox->setCurrentIndex(fillBox->findData(int(c->transform.fill)));
+        fillBox->setEnabled(!c->isTitle());
+        const bool blur = !c->isTitle() && c->transform.fill == FitFill::Blur;
+        for (Param* p : {fillBlur, fillDim}) {
+            p->slider->setEnabled(blur);
+            p->edit->setEnabled(blur);
+        }
+    };
 
     // ---- Crop ----
     Section crop = addSection(videoLay, V, T("Beschneiden"), [](Clip& c) {

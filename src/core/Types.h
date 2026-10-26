@@ -39,6 +39,17 @@ inline QString formatVolumeDb(double db)
     return QString("%1%2 dB").arg(db > 0.05 ? "+" : "").arg(db, 0, 'f', 1);
 }
 
+// What fills the frame around the fitted picture (bars of another shape, room left by zoom < 1, moves or rotation):
+// nothing (tracks below show through) or a scaled-up, blurred copy of the same picture (a 16:9 clip in a 9:16
+// timeline without a second track). Part of the Transform section (its switch turns it off too).
+enum class FitFill { None, Blur };
+// id = key in the project file and in the CLI (op 'transform' fit)
+struct FitFillInfo { FitFill fill; const char* id; const char* name; };
+inline constexpr FitFillInfo kFitFills[] = {
+    {FitFill::None, "none", N_("Transparent")},
+    {FitFill::Blur, "blur", N_("Unscharfes Bild")},
+};
+
 // Transform/Crop/Composite of the Inspector; pixel values are pixels of the project format (timeline)
 struct ClipTransform {
     double zoomX = 1.0, zoomY = 1.0; // 1 = the picture fitted into the frame, keeping its shape
@@ -52,10 +63,16 @@ struct ClipTransform {
     double opacity = 100;       // percent
     // Sections can be switched off individually (red dot in the Inspector); values are kept
     bool transformOn = true, cropOn = true, compositeOn = true;
+    // Around the fitted picture (FitFill): blur strength 0..100 like the blur effect (100 = 1/20 of the frame height)
+    // and how much darker than the clip the background is (percent). Opacity and fades apply to the whole result.
+    FitFill fill = FitFill::None;
+    double fillBlur = 40;
+    double fillDim = 20;
 
+    bool hasBlurFill() const { return transformOn && fill == FitFill::Blur; }
     bool hasTransform() const
     {
-        return transformOn && (zoomX != 1.0 || zoomY != 1.0 || posX != 0 || posY != 0 || rotation != 0);
+        return transformOn && (zoomX != 1.0 || zoomY != 1.0 || posX != 0 || posY != 0 || rotation != 0 || hasBlurFill());
     }
     bool hasCrop() const
     {

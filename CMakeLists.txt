@@ -56,6 +56,7 @@ add_library(schneidi_lib STATIC
     src/core/TimelineOps.h        src/core/TimelineOps.cpp
     src/core/TrimFrames.h         src/core/TrimFrames.cpp
     src/core/Keyframes.h          src/core/Keyframes.cpp
+    src/core/Accents.h            src/core/Accents.cpp
     src/core/MediaAspect.h        src/core/MediaAspect.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
     src/core/Retime.h             src/core/Retime.cpp
@@ -130,6 +131,7 @@ add_library(schneidi_lib STATIC
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
+    src/engine/BlurFill.h         src/engine/BlurFill.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/Frei0r.h           src/engine/Frei0r.cpp
@@ -228,7 +230,7 @@ add_library(schneidi_lib STATIC
 # Per-pixel loops run on every exported frame: full vectorization (GCC/Clang -O2 only vectorizes loops whose length
 # is a known multiple of the vector width). OutputColor: 3.5 -> 1.6 ms per 1080p frame.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set_source_files_properties(src/engine/OutputColor.cpp src/engine/video/Reader.cpp
+    set_source_files_properties(src/engine/OutputColor.cpp src/engine/video/Reader.cpp src/engine/BlurFill.cpp
                                 PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-O3>")
 endif()
 

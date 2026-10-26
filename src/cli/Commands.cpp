@@ -340,6 +340,11 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
         if (!t.transformOn) to["transform_on"] = false;
         if (!t.cropOn) to["crop_on"] = false;
         if (!t.compositeOn) to["opacity_on"] = false;
+        // Blurred fill around the fitted picture: with its strength and darkening, so the effective look is visible
+        const bool blur = t.fill == FitFill::Blur;
+        if (blur) to["fit"] = "blur";
+        if (blur || t.fillBlur != def.fillBlur) to["fit_blur"] = t.fillBlur;
+        if (blur || t.fillDim != def.fillDim) to["fit_dim"] = t.fillDim;
         if (!to.isEmpty()) o["transform"] = to;
     }
     if (const QJsonObject keys = keyframesJson(c); !keys.isEmpty()) o["keyframes"] = keys;
@@ -832,7 +837,8 @@ const QVector<Command>& commands()
          cmdExtensions},
         {"effects", "Video and audio effects for the 'effect' edit operation: all ids with their kind and parameter "
                     "names, or one effect with types, ranges and defaults. Also lists LUTs (op 'color' lut), transition types and "
-                    "luma images (op 'transition') and effect presets (op 'effect' preset).",
+                    "luma images (op 'transition'), effect presets (op 'effect' preset) and accent presets (op "
+                    "'accent': zoom punch, flash, shake on kills, beats, drops).",
          {{"effect", T::String, "only this effect, with parameter details", false, true}}, cmdEffects},
         {"sync", "Line up recordings of the same event (camera angles, player POVs) by their sound: the offset "
                  "of each file to the first one (the reference), found by shared sounds like a round start or "

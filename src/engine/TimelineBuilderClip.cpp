@@ -10,6 +10,7 @@
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/TimelineOps.h"
+#include "engine/BlurFill.h"
 #include "engine/ColorGrade.h"
 #include "engine/Denoise.h"
 #include "engine/Lumas.h"
@@ -378,7 +379,26 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, i
     const bool transform = Keys::hasTransform(c), crop = Keys::hasCrop(c);
     // The picture as it fits into the frame at zoom 1, keeping its aspect ratio (a portrait clip in a landscape
     // project gets room at the sides, as without transform and as in DaVinci); titles fill the frame
-    const QSizeF fit = MediaAspect::fit(c.isTitle() ? 0.0 : sourceAspect(clip), QSizeF(W, H));
+    const double aspect = c.isTitle() ? 0.0 : sourceAspect(clip);
+    const QSizeF fit = MediaAspect::fit(aspect, QSizeF(W, H));
+    // Blurred fill: the picture before crop and qtblend goes into a small blurred background (engine/BlurFill.h),
+    // laid under qtblend's result below; the crop (shares of the picture, keyframed like qtcrop's) limits its source
+    const bool blurFill = c.transform.hasBlurFill() && !c.isTitle();
+    if (blurFill) {
+        Mlt::Filter bf = BlurFill::captureFilter(profile, aspect, c.transform.fillBlur, c.transform.fillDim);
+        if (bf.is_valid()) {
+            auto shares = [&](double t) {
+                if (!crop) return mlt_rect{0, 0, 0, 0, 1.0};
+                return mlt_rect{val(AnimParam::CropLeft, t) / fit.width(), val(AnimParam::CropTop, t) / fit.height(),
+                                val(AnimParam::CropRight, t) / fit.width(), val(AnimParam::CropBottom, t) / fit.height(),
+                                1.0};
+            };
+            if (!crop || !animate(c, {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom},
+                                  a, len, [&](int pos, double t) { bf.anim_set("crop", shares(t), pos, len); }))
+                bf.set("crop", shares(a));
+            attachTo(clip, bf);
+        }
+    }
     if (crop) {
         // Cropping = the picture's edges become transparent, the picture stays in its place. Values are timeline
         // pixels on the fitted picture (ClipTransform), the same at every zoom and shape. The qtblend below always
@@ -399,17 +419,19 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, i
             attachTo(clip, cf);
         }
     }
-    if (Keys::hasOpacity(c)) {
-        // Opacity via the alpha channel (like Shotcut); the qtblend opacity only delivered black
+    // Opacity via the alpha channel (like Shotcut); the qtblend opacity only delivered black. With a blurred fill it
+    // comes after the fill: the whole clip turns see-through, not the picture over its own background.
+    auto opacity = [&] {
+        if (!Keys::hasOpacity(c)) return;
         Mlt::Filter op(profile, "brightness");
-        if (op.is_valid()) {
-            op.set("level", 1.0);
-            if (!animate(c, {AnimParam::Opacity}, a, len,
-                         [&](int pos, double t) { op.anim_set("alpha", val(AnimParam::Opacity, t) / 100.0, pos, len); }))
-                op.set("alpha", c.transform.opacity / 100.0);
-            attachTo(clip, op);
-        }
-    }
+        if (!op.is_valid()) return;
+        op.set("level", 1.0);
+        if (!animate(c, {AnimParam::Opacity}, a, len,
+                     [&](int pos, double t) { op.anim_set("alpha", val(AnimParam::Opacity, t) / 100.0, pos, len); }))
+            op.set("alpha", c.transform.opacity / 100.0);
+        attachTo(clip, op);
+    };
+    if (!blurFill) opacity();
     // A crop needs the qtblend too (even at zoom 1): without it qtcrop got the frame as MLT letterboxes it, so values
     // counted from the frame's edges and the bars inside the kept area turned opaque black
     if (!transform && !crop) return;
@@ -439,6 +461,10 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, i
     f.set("distort", 1);
     attachTo(clip, f);
     attachSourceCap(clip, c); // after qtblend: its get_image runs first
+    if (blurFill) {
+        if (Mlt::Filter bf = BlurFill::compositeFilter(); bf.is_valid()) clip.attach(bf);
+        opacity();
+    }
     attachOpaqueCheck(clip);  // after qtblend too: looks at its result
 }
 

@@ -59,7 +59,7 @@ QString instructions(const Options& opt)
                 "and loud moments for a highlight video, `beats` gives a song's tempo, bars, phrases, breaks and "
                 "drops), `edit` changes a "
                 "timeline (see its 'ops' description, `help` with command 'edit' and op '<name>' has details "
-                "per op; `effects` lists effects, LUTs and transitions), `info` shows the "
+                "per op; `effects` lists effects, LUTs, transitions and accents), `info` shows the "
                 "result (a project can have several timelines), `render` writes a video, `restore` undoes a "
                 "change (`backups` lists the saved states).";
     if (opt.app)

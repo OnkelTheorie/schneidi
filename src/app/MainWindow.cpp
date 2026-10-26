@@ -15,6 +15,7 @@
 #include "app/PasteAttributesDialog.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
+#include "core/Accents.h"
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
@@ -248,13 +249,27 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             }));
             k->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); }));
         }
-        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "normalize_audio",
-                               "audio_ducking", "stream_presets_learn", "",
+        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "accents",
+                               "normalize_audio", "audio_ducking", "stream_presets_learn", "",
                                "toggle_enabled", "link_clips",
                                "render_cache_clip", "save_effect_preset", "", "compound_create", "compound_open", "compound_decompose", "",
                                "delete", "ripple_delete"}) {
             if (!*id) {
                 menu.addSeparator();
+                continue;
+            }
+            if (QString(id) == "accents") { // zoom punch, flash, shake as keyframes on the selected clips there
+                const int frame = m_timeline->view()->playhead();
+                QVector<int> ids;
+                for (int cid : m_editor->clipIdsOf(m_selection->ids()))
+                    if (TrackRef r; const Clip* c = TimelineOps::findClip(m_project->timeline(), cid, &r))
+                        if (r.kind == TrackKind::Video && frame >= c->start && frame < c->end()) ids << cid;
+                QMenu* accents = menu.addMenu(T("Akzent am Playhead"));
+                accents->setEnabled(!ids.isEmpty());
+                for (const Accents::Preset& p : Accents::presets())
+                    connect(accents->addAction(T(p.name)), &QAction::triggered, this, [this, ids, frame, p] {
+                        m_editor->addAccents(ids, {frame}, p.amounts, T("Akzent: %1").arg(T(p.name)));
+                    });
                 continue;
             }
             QAction* a = InputBindings::instance().action(id);

@@ -2,6 +2,7 @@
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
 
+#include "core/Accents.h"
 #include "core/Editor.h"
 #include "core/StreamPresets.h"
 #include "core/EffectFolders.h"
@@ -531,11 +532,16 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
     if (!only.isEmpty()) return {{"effects", list}};
     QJsonArray types;
     for (const auto& t : kTransitionTypes) types << t.id;
+    // Accents on hits (op 'accent'): what each preset does, so a model picks one instead of writing keyframes
+    QJsonArray accents;
+    for (const Accents::Preset& p : Accents::presets())
+        accents << QJsonObject{{"preset", p.id}, {"description", p.description}};
     return {{"effects", list},
             {"luts", assetsJson(EffectFolders::builtinLuts() + EffectFolders::userLuts())},
             {"transition_types", types},
             {"lumas", assetsJson(EffectFolders::builtinTransitions() + EffectFolders::userTransitions())},
-            {"presets", assetsJson(EffectFolders::userPresets())}};
+            {"presets", assetsJson(EffectFolders::userPresets())},
+            {"accents", accents}};
 }
 
 QString presetHelp()

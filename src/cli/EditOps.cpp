@@ -412,8 +412,8 @@ const char* const kPresetsDetails =
     "presets:false places every stream as it is). A recording with a Mix stream plus its single streams then plays "
     "everything twice: turn off the Mix or the single streams with 'disable' (check with `loudness`). A stream never "
     "lands on a track named after another stream of the file: then the streams take free tracks with their names, "
-    "or new tracks below. Sound that already plays there (a second copy of the same moment, e.g. a blurred "
-    "background or picture-in-picture) comes in disabled: 'enable' turns it on";
+    "or new tracks below. Sound that already plays there (a second copy of the same moment, e.g. picture-in-picture; "
+    "a blurred background needs no copy: op 'transform' fit:'blur') comes in disabled: 'enable' turns it on";
 
 QVector<OpDef> makeOps()
 {

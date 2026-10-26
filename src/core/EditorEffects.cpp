@@ -1,6 +1,7 @@
 // Editor: effects and color grade.
 #include "core/Editor.h"
 
+#include "core/Accents.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/GradeWindows.h"
@@ -100,6 +101,42 @@ QVector<int> Editor::effectTargets(int frame, TrackKind kind) const
                 if (frame >= c.start && frame < c.end()) return {c.id};
     }
     return {};
+}
+
+QVector<int> Editor::addAccents(const QVector<int>& idsIn, const QVector<int>& frames, const Accents::Amounts& amounts,
+                                const QString& text)
+{
+    const Timeline& tl = m_project->timeline();
+    auto under = [&](const Clip& c) {
+        return std::any_of(frames.begin(), frames.end(), [&](int f) { return f >= c.start && f < c.end(); });
+    };
+    QVector<int> ids;
+    for (int id : idsIn)
+        if (TrackRef ref; TimelineOps::findClip(tl, id, &ref) && ref.kind == TrackKind::Video) ids << id;
+    if (idsIn.isEmpty())
+        for (const Track& t : std::as_const(tl.video)) {
+            if (t.hidden) continue;
+            for (const Clip& c : t.clips)
+                if (c.enabled && !c.isTitle() && under(c)) ids << c.id;
+        }
+    ids = editable(ids);
+    QSet<int> landed;
+    for (int id : ids) {
+        const Clip* c = TimelineOps::findClip(tl, id);
+        for (int f : frames)
+            if (c && f >= c->start && f < c->end()) landed.insert(f);
+    }
+    if (landed.isEmpty()) return {};
+    const ProjectFormat& fmt = m_project->format();
+    modifyClips(ids, text, [&](Clip& c) {
+        QVector<int> local;
+        for (int f : frames)
+            if (f >= c.start && f < c.end()) local << f - c.start;
+        Accents::apply(c, local, amounts, fmt.rate.fps(), QSizeF(fmt.width, fmt.height));
+    });
+    QVector<int> out(landed.begin(), landed.end());
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 namespace {
