@@ -261,9 +261,9 @@ void RenderQueuePanel::rebuild()
         auto* card = new JobCard;
         const QFileInfo fi(j.path);
         card->title->setFullText(T("Job %1").arg(j.id) + QStringLiteral(" · ") + fi.fileName());
-        QString tip = j.preset.isEmpty() ? T("Eigene Einstellungen") : j.preset;
-        if (j.status == RenderStatus::Done) tip += '\n' + T("Doppelklick: im Dateimanager zeigen");
-        item->setToolTip(tip); // the list shows it (the card lets the mouse through)
+        QString itemTip = j.preset.isEmpty() ? T("Eigene Einstellungen") : j.preset;
+        if (j.status == RenderStatus::Done) itemTip += '\n' + T("Doppelklick: im Dateimanager zeigen");
+        item->setToolTip(itemTip); // the list shows it (the card lets the mouse through)
         const bool current = j.status == RenderStatus::Rendering && m_queue->currentJob() == j.id;
         card->status->setText(current && m_queue->isPreparing() ? T("Wird vorbereitet …")
                               : current                         ? T("Rendert %1 %").arg(m_queue->currentProgress())
