@@ -156,6 +156,9 @@ void testRender()
                            }),
                            kTall, mlt_image_rgba, 5)),
              top + 10 - 30, bottom - 5 - 30, 80, 130, "crop with position");
+    // More than half from one side (the Inspector allows the whole frame): only the right strip stays
+    checkBox(redBox(render(overGreen([](Clip& c) { crop(c, 135, 0, 0, 0); }), kTall, mlt_image_rgba, 5)), top, bottom,
+             135, 180, "crop past the middle");
     checkBox(redBox(render(overGreen([](Clip& c) {
                                crop(c, 60, 70, 10, 5);
                                c.transform.cropOn = false;

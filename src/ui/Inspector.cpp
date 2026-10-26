@@ -196,13 +196,13 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
         for (AnimParam p : {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom})
             Keys::clear(c, p);
     }, [](Clip& c) -> bool& { return c.transform.cropOn; });
-    m_crop[0] = addSlider(crop, "cropLeft", T("Links"), 0, 960, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropLeft; },
+    m_crop[0] = addSlider(crop, "cropLeft", T("Links"), 0, 1920, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropLeft; },
                           AnimParam::CropLeft);
-    m_crop[1] = addSlider(crop, "cropRight", T("Rechts"), 0, 960, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropRight; },
+    m_crop[1] = addSlider(crop, "cropRight", T("Rechts"), 0, 1920, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropRight; },
                           AnimParam::CropRight);
-    m_crop[2] = addSlider(crop, "cropTop", T("Oben"), 0, 540, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropTop; },
+    m_crop[2] = addSlider(crop, "cropTop", T("Oben"), 0, 1080, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropTop; },
                           AnimParam::CropTop);
-    m_crop[3] = addSlider(crop, "cropBottom", T("Unten"), 0, 540, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropBottom; },
+    m_crop[3] = addSlider(crop, "cropBottom", T("Unten"), 0, 1080, 0, 1, 3, [](Clip& c) -> double& { return c.transform.cropBottom; },
                           AnimParam::CropBottom);
 
     // ---- Composite ----
@@ -381,7 +381,9 @@ void Inspector::setFrameSize(const QSize& size)
 {
     m_frameSize = size;
     for (int i = 0; i < 4; ++i) {
-        const double max = (i < 2 ? size.width() : size.height()) / 2.0;
+        // Up to the whole frame: keeping only a strip at one edge needs more than half from the other side (left and
+        // right together past the picture leave nothing, the builder keeps one pixel)
+        const double max = i < 2 ? size.width() : size.height();
         m_crop[i]->max = max;
         m_crop[i]->edit->setRange(0, max);
     }
