@@ -8,7 +8,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 
 **[Download the latest release](https://github.com/OnkelTheorie/schneidi/releases/latest)** (Linux AppImage or Debian package). Windows: no download yet – [build it yourself](#building) (tested less thoroughly than Linux); an installer is planned for 1.0.
 
-**Try the AI in two minutes:** make the AppImage executable (`chmod +x schneidi-*.AppImage`) and start it, open a video, click **✧ AI** at the top and pick a provider – a local model through [Ollama](https://ollama.com) needs no account (`ollama pull qwen3`), Claude or an OpenAI-compatible service needs a key. Then type what you want: "remove the pauses", "cut it to the beat".
+**Try the AI in two minutes:** make the AppImage executable (`chmod +x schneidi-*.AppImage`) and start it, open a video, click **✧ AI** at the top and pick a provider – a local model through [Ollama](https://ollama.com) needs no account (`ollama pull qwen3`, and start Ollama with `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`: the tools and the editing guide do not fit its default context), Claude or an OpenAI-compatible service needs a key. Then type what you want: "remove the pauses", "cut it to the beat".
 
 > Status: early development (0.x). The project file format may still change between versions.
 
@@ -116,7 +116,8 @@ request show in the timeline and preview first; then **Accept** keeps them as on
 project back.
 
 - **Providers:** Claude (Anthropic), OpenAI, OpenRouter, Ollama on your computer, or any address that speaks the
-  OpenAI chat API (LM Studio, vLLM, Mistral, Groq, a company proxy …). The model name is free to change.
+  OpenAI chat API (LM Studio, vLLM, Mistral, Groq, a company proxy …). The model name is free to change. A local model
+  needs a context of about 32k tokens for the tools and the editing guide (Ollama: `OLLAMA_CONTEXT_LENGTH=32768`).
 - **Keys:** from the environment (`SCHNEIDI_AI_KEY`, or `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY`
   for that provider only), else from the system keychain (Secret Service, Windows Credential Manager). Keys never go
   into logs or the chat.
