@@ -42,9 +42,19 @@ using namespace TimelineViewDetail;
 
 void TimelineView::flashClips(const QVector<int>& ids)
 {
+    if (!m_flashOn) return;
     m_flash = QSet<int>(ids.begin(), ids.end());
     m_flashStart = QDateTime::currentMSecsSinceEpoch();
     m_flashTimer->start();
+    update();
+}
+
+void TimelineView::setFlashStyle(bool on, const QColor& color, int durationMs)
+{
+    m_flashOn = on;
+    m_flashColor = color;
+    m_flashMs = std::max(1, durationMs);
+    if (!on) m_flash.clear();
     update();
 }
 
@@ -57,7 +67,7 @@ TimelineView::TimelineView(Editor* editor, QWidget* parent) : QWidget(parent), m
     m_flashTimer = new QTimer(this);
     m_flashTimer->setInterval(40);
     connect(m_flashTimer, &QTimer::timeout, this, [this] {
-        if (QDateTime::currentMSecsSinceEpoch() - m_flashStart > kFlashMs) {
+        if (QDateTime::currentMSecsSinceEpoch() - m_flashStart > m_flashMs) {
             m_flash.clear();
             m_flashTimer->stop();
         }

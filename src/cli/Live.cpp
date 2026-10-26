@@ -191,9 +191,10 @@ bool Server::start(QString* error)
     return true;
 }
 
-void Server::disconnectClient()
+void Server::disconnectClient(const QString& reason)
 {
     m_allowed = false;
+    m_refusal = reason;
     if (m_attached) m_attached->disconnectFromServer(); // detach() follows via disconnected()
     emit stateChanged();
 }
@@ -202,6 +203,7 @@ void Server::setAllowed(bool on)
 {
     if (m_allowed == on) return;
     m_allowed = on;
+    if (on) m_refusal.clear();
     emit stateChanged();
 }
 
@@ -276,13 +278,16 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
                       {"pid", QCoreApplication::applicationPid()},
                       {"version", QCoreApplication::applicationVersion()}};
         if (!m_waiting.isEmpty()) o["waiting"] = m_waiting;
+        if (!m_allowed && !m_refusal.isEmpty()) o["refusal"] = m_refusal;
         return reply(o);
     }
     // The app waits for the user (restore dialog at start): its project is not the one the user will work on yet
     if (!m_waiting.isEmpty() && (type == "attach" || type == "snapshot" || type == "run"))
         return reply(errorReply("APP_WAITING", m_waiting));
     if (type == "attach") {
-        if (!m_allowed) return reply(errorReply("APP_DISCONNECTED", "the user disconnected the AI in the schneidi app"));
+        if (!m_allowed)
+            return reply(errorReply("APP_DISCONNECTED", m_refusal.isEmpty() ? "the user disconnected the AI in the schneidi app"
+                                                                             : m_refusal));
         if (m_attached && m_attached != s)
             return reply(errorReply("APP_BUSY", "another AI session is connected to the schneidi app"));
         m_attached = s;
@@ -400,6 +405,7 @@ struct Candidate {
     std::unique_ptr<Connection> conn;
     bool busy = false;
     bool allowed = true;
+    QString refusal; // not allowed: why (empty = the user disconnected the AI)
     QString waiting; // the app waits for the user (why, for the AI)
 };
 
@@ -432,7 +438,7 @@ std::vector<Candidate> runningApps()
         if (!hello.value("ok").toBool()) continue;
         c->project = hello.value("project").toString();
         out.push_back({std::move(c), hello.value("busy").toBool(), hello.value("allowed").toBool(true),
-                       hello.value("waiting").toString()});
+                       hello.value("refusal").toString(), hello.value("waiting").toString()});
     }
     return out;
 }
@@ -477,8 +483,10 @@ Connection* connectionFor(const QString& project)
     }
     if (!pick->waiting.isEmpty()) detail::fail("APP_WAITING", pick->waiting);
     if (!pick->allowed)
-        detail::fail("APP_DISCONNECTED", "the project is open in the schneidi app and the user disconnected the AI "
-                                         "there (the app can allow it again)");
+        detail::fail("APP_DISCONNECTED", !pick->refusal.isEmpty()
+                                             ? pick->refusal
+                                             : "the project is open in the schneidi app and the user disconnected the "
+                                               "AI there (the app can allow it again)");
     if (pick->busy)
         detail::fail("APP_BUSY", "the project is open in the schneidi app and another AI session is connected to it");
     const QJsonObject r = pick->conn->request({{"type", "attach"}, {"client", g_clientName}}, 3000);

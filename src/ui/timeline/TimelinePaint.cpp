@@ -638,11 +638,11 @@ void TimelineView::drawClip(QPainter& p, const QRect& r, const Clip& c, TrackKin
 
     p.setPen(selected ? QPen(Theme::clipSelected, 2) : QPen(QColor(0, 0, 0, 120), 1));
     p.drawPath(path);
-    // Changed by the AI (live connection): violet glow that fades out
+    // Changed by the AI (live connection): glow (violet unless set otherwise) that fades out
     if (!ghost && m_flash.contains(c.id)) {
-        const double left = 1.0 - double(QDateTime::currentMSecsSinceEpoch() - m_flashStart) / kFlashMs;
+        const double left = 1.0 - double(QDateTime::currentMSecsSinceEpoch() - m_flashStart) / m_flashMs;
         if (left > 0) {
-            QColor glow(0xb4, 0x82, 0xff);
+            QColor glow = m_flashColor;
             glow.setAlphaF(0.45 * left);
             p.fillPath(path, glow);
             glow.setAlphaF(left);

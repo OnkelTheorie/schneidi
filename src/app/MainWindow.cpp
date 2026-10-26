@@ -87,6 +87,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 {
     setWindowTitle(appName());
     resize(1600, 950);
+    m_aiSettings = AiSettings::load(); // Settings › AI (MainWindowSettings.cpp)
 
     m_project = new Project(this);
     m_selection = new Selection(this);
@@ -95,6 +96,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
 
     buildLayout();
     buildActions();
+    m_timeline->view()->setFlashStyle(m_aiSettings.highlight, m_aiSettings.color, m_aiSettings.highlightMs);
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 
     // model -> engine

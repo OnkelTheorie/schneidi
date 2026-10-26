@@ -1,4 +1,5 @@
 #pragma once
+#include "app/AiSettings.h"
 #include "core/Editor.h"
 #include "core/LiveHost.h"
 #include "core/PlaybackMeter.h"
@@ -71,8 +72,13 @@ public:
     QJsonObject liveProxyState(const QString& file) const override;
     void liveConnectionChanged(bool connected, const QString& client) override;
     void liveClipsChanged(const QVector<int>& clipIds) override;
-    // Buttons of the AI indicator in the top bar: end the session (and refuse new ones) / allow again
-    void setLiveControls(const std::function<void()>& disconnect, const std::function<void()>& allow);
+    // Buttons of the AI indicator in the top bar and Settings › AI: end the session and refuse new ones (reason for
+    // the AI; empty = the user disconnected it) / allow again
+    void setLiveControls(const std::function<void(const QString& reason)>& disconnect, const std::function<void()>& allow);
+    // Settings (File › Settings…, MainWindowSettings.cpp); test runs apply them without saving
+    void settingsDialog(int tab = 0);
+    const AiSettings& aiSettings() const { return m_aiSettings; }
+    void setAiSettings(const AiSettings& s);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -247,6 +253,8 @@ private:
 
     // AI indicator in the top bar (MainWindowLive.cpp)
     void updateLiveIndicator();
+    AiSettings m_aiSettings; // Settings › AI
+    static QString liveOffReason(); // for the AI: connections are off in the settings
     QWidget* buildLiveIndicator();
     QWidget* m_liveBox = nullptr;
     class QLabel* m_liveLabel = nullptr;
@@ -255,5 +263,6 @@ private:
     bool m_liveConnected = false;
     bool m_liveRefused = false; // the user disconnected the AI
     QString m_liveClient;
-    std::function<void()> m_liveDisconnect, m_liveAllow;
+    std::function<void(const QString&)> m_liveDisconnect;
+    std::function<void()> m_liveAllow;
 };

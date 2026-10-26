@@ -234,6 +234,14 @@ int main(int argc, char* argv[])
     CHECK_EQ(code(cli({"info", fake.path})), QString("APP_DISCONNECTED"));
     server.setAllowed(true);
     CHECK_EQ(code(cli({"info", fake.path})), QString("ok"));
+    // ... or turned AI connections off in the settings: the AI hears why
+    server.disconnectClient("AI connections are turned off in the settings");
+    r = cli({"info", "@app"});
+    CHECK_EQ(code(r), QString("APP_DISCONNECTED"));
+    CHECK(r["error"].toObject()["message"].toString().contains("turned off in the settings"));
+    server.setAllowed(true);
+    r = cli({"info", fake.path});
+    CHECK_EQ(code(r), QString("ok"));
 
     // The app waits for the user (restore dialog at start, before the project is open): AIs hear that instead of
     // "not running", nothing runs meanwhile; afterwards everything works

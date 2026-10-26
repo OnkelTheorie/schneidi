@@ -123,6 +123,9 @@ void MainWindow::buildActions()
     file->addSeparator();
     makeAction(file, "project_settings", T("Projekteinstellungen…"), QKeySequence("Shift+9"), [this] { projectSettingsDialog(); });
     makeAction(file, "stream_presets", T("Import-Vorgaben für Ton-Streams…"), QKeySequence(), [this] { streamPresetsDialog(); });
+    // Settings of the app (all projects); on macOS the system puts it into the application menu
+    makeAction(file, "settings", T("Einstellungen…"), QKeySequence("Ctrl+,"), [this] { settingsDialog(); })
+        ->setMenuRole(QAction::PreferencesRole);
     file->addSeparator();
     makeAction(file, "quit", T("Beenden"), QKeySequence("Ctrl+Q"), [this] { close(); });
 

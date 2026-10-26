@@ -73,21 +73,31 @@ void MainWindow::liveConnectionChanged(bool connected, const QString& client)
 
 void MainWindow::liveClipsChanged(const QVector<int>& clipIds) { m_timeline->view()->flashClips(clipIds); }
 
-void MainWindow::setLiveControls(const std::function<void()>& disconnect, const std::function<void()>& allow)
+void MainWindow::setLiveControls(const std::function<void(const QString&)>& disconnect, const std::function<void()>& allow)
 {
     m_liveDisconnect = disconnect;
     m_liveAllow = allow;
+    if (!m_aiSettings.liveAllowed && m_liveDisconnect) m_liveDisconnect(liveOffReason());
+    updateLiveIndicator();
+}
+
+QString MainWindow::liveOffReason()
+{
+    return "the user turned AI connections off in the schneidi app (Settings > AI); only they can turn them on again";
 }
 
 QWidget* MainWindow::buildLiveIndicator()
 {
     // Like "Claude is using this tab" in a browser: visible while an AI works on the project
     m_liveBox = new QWidget;
+    m_liveBox->setObjectName("live_indicator");
     auto* lay = new QHBoxLayout(m_liveBox);
     lay->setContentsMargins(12, 0, 0, 0);
     lay->setSpacing(6);
     m_liveLabel = new QLabel;
+    m_liveLabel->setObjectName("live_label");
     m_liveButton = new QToolButton;
+    m_liveButton->setObjectName("live_button");
     lay->addWidget(m_liveLabel);
     lay->addWidget(m_liveButton);
     m_liveLinger.setSingleShot(true);
@@ -100,7 +110,7 @@ QWidget* MainWindow::buildLiveIndicator()
         } else {
             m_liveRefused = true;
             m_liveLinger.stop();
-            if (m_liveDisconnect) m_liveDisconnect();
+            if (m_liveDisconnect) m_liveDisconnect({});
         }
         updateLiveIndicator();
     });
@@ -112,16 +122,28 @@ void MainWindow::updateLiveIndicator()
 {
     if (!m_liveBox) return;
     const bool active = m_liveConnected || m_liveLinger.isActive();
-    m_liveBox->setVisible(active || m_liveRefused);
-    const QString violet = "#b482ff";
-    if (m_liveRefused) {
+    using Mode = AiSettings::Indicator;
+    const Mode mode = m_aiSettings.indicator;
+    m_liveBox->setVisible(mode == Mode::Always || (mode == Mode::WhileActive && (active || m_liveRefused)));
+    const QString dim = QString("color: %1;").arg(Theme::textDim.name());
+    m_liveButton->setVisible(m_aiSettings.liveAllowed && (active || m_liveRefused));
+    if (!m_aiSettings.liveAllowed) {
+        m_liveLabel->setText(T("KI aus"));
+        m_liveLabel->setStyleSheet(dim);
+        m_liveLabel->setToolTip(T("KI-Verbindungen sind ausgeschaltet (Einstellungen › KI)."));
+    } else if (m_liveRefused) {
         m_liveLabel->setText(T("KI getrennt"));
-        m_liveLabel->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+        m_liveLabel->setStyleSheet(dim);
         m_liveLabel->setToolTip(T("Eine KI kann dieses Projekt erst wieder bearbeiten, wenn du es erlaubst."));
         m_liveButton->setText(T("Erlauben"));
+    } else if (!active) { // "always": nothing connected right now
+        m_liveLabel->setText("○ " + T("KI"));
+        m_liveLabel->setStyleSheet(dim);
+        m_liveLabel->setToolTip(T("Keine KI verbunden. Eine KI (schneidi-cli, MCP) kann das offene Projekt bearbeiten; "
+                                  "jede Änderung ist ein Rückgängig-Schritt."));
     } else {
         m_liveLabel->setText("● " + T("KI verbunden"));
-        m_liveLabel->setStyleSheet(QString("color: %1; font-weight: 600;").arg(violet));
+        m_liveLabel->setStyleSheet(QString("color: %1; font-weight: 600;").arg(m_aiSettings.color.name()));
         m_liveLabel->setToolTip(T("%1 bearbeitet dieses Projekt. Jede Änderung ist ein Rückgängig-Schritt.")
                                     .arg(m_liveClient.isEmpty() ? QString("schneidi-cli") : m_liveClient));
         m_liveButton->setText(T("Trennen"));

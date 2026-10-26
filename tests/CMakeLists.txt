@@ -118,6 +118,7 @@ schneidi_test(test_multicam)
 schneidi_test(test_multicam_render)
 schneidi_test(test_multicam_viewer)
 schneidi_test(test_proxy_hint)
+schneidi_test(test_settings) # app settings (File › Settings…), AI page, indicator modes
 schneidi_test(test_multicam_cli)
 target_link_libraries(test_multicam_cli PRIVATE schneidi_cli_lib)
 schneidi_test(test_stream_presets)

@@ -12,6 +12,7 @@
 //   {"type":"snapshot"}                    -> {"ok":true,"data":project file JSON,"app":state}
 //   {"type":"run","command":…,"args":{…}} -> {"ok":true,"result":{…}} or {"ok":false,"error":{code,message}}
 // attach, snapshot and run while the app waits -> {"ok":false,"error":{"code":"APP_WAITING","message":text}}
+// hello of an app that refuses AIs has "allowed":false and "refusal": why (the user disconnected, or the setting)
 
 #include "cli/Commands.h"
 
@@ -49,8 +50,9 @@ public:
 
     bool attached() const { return m_attached; }
     QString client() const { return m_client; }
-    // The user disconnects the AI ("Trennen"): the session ends and new ones are refused until allowed again
-    void disconnectClient();
+    // The user disconnects the AI ("Trennen") or turned AI connections off in the settings: the session ends and
+    // new ones are refused until allowed again; `reason` tells the AI why (empty = "the user disconnected the AI")
+    void disconnectClient(const QString& reason = {});
     bool allowed() const { return m_allowed; }
     void setAllowed(bool on);
     // The app cannot take commands yet (its restore dialog at start waits for the user, a project is being opened):
@@ -81,6 +83,7 @@ private:
     QPointer<QLocalSocket> m_attached;
     QString m_client;
     bool m_allowed = true;
+    QString m_refusal; // why new sessions are refused (empty = the user disconnected the AI)
     QString m_waiting;
     bool m_running = false; // a command runs (it may spin the event loop: no second one meanwhile)
 };

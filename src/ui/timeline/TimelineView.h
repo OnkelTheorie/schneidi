@@ -38,6 +38,8 @@ public:
     int playhead() const { return m_playhead; }
     // Clips an AI just changed (live connection): they light up briefly
     void flashClips(const QVector<int>& ids);
+    // How (Settings › AI): off, color, how long it stays lit
+    void setFlashStyle(bool on, const QColor& color, int durationMs);
 
     // For the scrollbars (scroll range is "endless" to the right)
     int visibleFrames() const;
@@ -377,7 +379,9 @@ private:
     QSet<int> m_flash;              // flashClips
     QTimer* m_flashTimer = nullptr;
     qint64 m_flashStart = 0;        // ms (QDateTime::currentMSecsSinceEpoch)
-    static constexpr int kFlashMs = 1400;
+    bool m_flashOn = true;
+    QColor m_flashColor{0xb4, 0x82, 0xff};
+    int m_flashMs = 2000;
     QPoint m_dragPos;
     Qt::KeyboardModifiers m_dragMods;
 
