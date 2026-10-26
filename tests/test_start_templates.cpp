@@ -204,10 +204,10 @@ void testProjectFields()
     p.load(back);
     CHECK(p.fixedResolution() && p.fixedFrameRate() && p.importPresets() == own);
     CHECK(!p.isModified());
-    int signals = 0;
-    QObject::connect(&p, &Project::importPresetsChanged, [&signals] { ++signals; });
+    int emitted = 0;
+    QObject::connect(&p, &Project::importPresetsChanged, [&emitted] { ++emitted; });
     p.setImportPresets(std::nullopt);
-    CHECK(p.isModified() && signals == 1 && !p.undoStack()->canUndo());
+    CHECK(p.isModified() && emitted == 1 && !p.undoStack()->canUndo());
     CHECK(p.effectiveImportPresets() == StreamPresets::load()); // the settings' again
     p.setFixedFormat(false, true);
     CHECK(!p.data().fixedResolution && p.data().fixedFrameRate);

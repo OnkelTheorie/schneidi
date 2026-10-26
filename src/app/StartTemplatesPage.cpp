@@ -20,6 +20,7 @@
 #include <QPushButton>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace {
 
