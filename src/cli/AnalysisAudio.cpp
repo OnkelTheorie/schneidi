@@ -277,8 +277,9 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     const QString src = a["source"].toString();
     TranscribeRequest req;
     QString model = a["model"].toString();
-    // A model file (not the name of an installed model) is a path like any other (a server's work folder)
-    if (!model.isEmpty() && Extensions::whisperModelPath(model) == QFileInfo(model).absoluteFilePath())
+    // A model file (not the name of an installed model like "small") is a path like any other (a server's work folder:
+    // checked before looking whether it exists, so an answer never tells about files outside it)
+    if (model.contains('/') || model.contains('\\') || QFileInfo(model).suffix().compare("bin", Qt::CaseInsensitive) == 0)
         model = absolute(model);
     req.model = Extensions::whisperModelPath(model);
     if (req.model.isEmpty())
