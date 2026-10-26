@@ -9,6 +9,7 @@
 #include "app/InputBindings.h"
 #include "app/KeyBindingsDialog.h"
 #include "app/MainWindow.h"
+#include "app/Theme.h"
 #include "core/Editor.h"
 #include "core/PoolFilter.h"
 #include "core/Project.h"
@@ -384,6 +385,20 @@ void testStorageMarks(const QString& dir, const QString& dump)
     CHECK(ia->toolTip().contains(mark) && !ib->toolTip().contains(mark));
     CHECK(ia->icon().cacheKey() != before);
     if (!dump.isEmpty()) storage.grab().save(QDir(dump).filePath("storage-marks.png"));
+    // Hover scrub in the Media Storage: the thumbnail shows the picture under the mouse (with its pool mark)
+    {
+        const QImage normal = ia->icon().pixmap(QSize(144, 81)).toImage();
+        const QRect r = list->visualItemRect(ia);
+        storage.hoverScrub()->hover(QPoint(r.center().x() + r.width() / 4, r.top() + 20));
+        CHECK(storage.hoverScrub()->item() == ia);
+        CHECK(waitFor([&] { return storage.hoverScrub()->frames()->decoded() > 0; }));
+        QApplication::processEvents();
+        CHECK(ia->icon().pixmap(QSize(144, 81)).toImage() != normal);
+        CHECK(ia->toolTip().contains(mark));
+        if (!dump.isEmpty()) storage.grab().save(QDir(dump).filePath("storage-hover.png"));
+        storage.hoverScrub()->leave();
+        CHECK(!storage.hoverScrub()->item());
+    }
     storage.setPoolFiles({});
     CHECK(!ia->toolTip().contains(mark));
 
@@ -538,6 +553,10 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("pool_storage");
     const QString dump = qEnvironmentVariable("POOL_STORAGE_DUMP");
+    if (!dump.isEmpty()) { // pictures as in the app
+        Theme::load();
+        Theme::apply(app);
+    }
     QFile::remove(InputBindings::instance().filePath());
     InputBindings::instance().load();
     // Window key like the main window's Delete (deletes timeline clips; here it counts). The second one only for the
