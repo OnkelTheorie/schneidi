@@ -12,6 +12,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QVBoxLayout>
 
@@ -92,7 +93,9 @@ TimelineExportDialog::TimelineExportDialog(const QString& name, const QString& d
 
     QSettings settings;
     const QString folder = settings.value("interchange/dir", dir).toString();
-    m_path->setText(QDir(folder.isEmpty() ? QDir::homePath() : folder).filePath(name.isEmpty() ? QString("Timeline") : name));
+    QString file = name.isEmpty() ? QString("Timeline") : name;
+    file.replace(QRegularExpression(R"([/\\:*?"<>|])"), "-"); // a timeline "Intro/Outro" is no folder
+    m_path->setText(QDir(folder.isEmpty() ? QDir::homePath() : folder).filePath(file));
     selectTarget(settings.value("interchange/target", "premiere").toString());
     connect(m_group, &QButtonGroup::idToggled, this, [this](int, bool on) {
         if (on) updateTarget();

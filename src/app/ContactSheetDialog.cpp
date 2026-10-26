@@ -12,6 +12,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QSpinBox>
 
@@ -47,7 +48,9 @@ ContactSheetDialog::ContactSheetDialog(const QString& name, const QString& dir, 
     m_path = new QLineEdit;
     m_path->setMinimumWidth(360);
     const QString folder = s.value("sheet/dir", dir).toString();
-    m_path->setText(QDir::toNativeSeparators(QDir(folder).filePath(name + " – " + T("Kontaktbogen") + ".jpg")));
+    QString file = name + " – " + T("Kontaktbogen") + ".jpg";
+    file.replace(QRegularExpression(R"([/\\:*?"<>|])"), "-"); // a timeline "Intro/Outro" is no folder
+    m_path->setText(QDir::toNativeSeparators(QDir(folder).filePath(file)));
     row->addWidget(m_path, 1);
     auto* browse = new QPushButton(T("Durchsuchen…"));
     row->addWidget(browse);

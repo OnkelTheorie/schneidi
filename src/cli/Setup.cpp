@@ -39,6 +39,14 @@ QString claudeDesktopDir()
 #endif
 }
 
+// Claude Code's installer puts `claude` into ~/.local/bin (older ones: ~/.claude/local), which the PATH of an app
+// started from the desktop often lacks
+QString findClaude()
+{
+    if (const QString exe = QStandardPaths::findExecutable("claude"); !exe.isEmpty()) return exe;
+    return QStandardPaths::findExecutable("claude", {QDir::home().filePath(".local/bin"), QDir::home().filePath(".claude/local")});
+}
+
 // Runs `claude …`; false with the output as error when it fails
 bool runClaude(const QString& exe, const QStringList& args, QString* output)
 {
@@ -53,7 +61,7 @@ bool runClaude(const QString& exe, const QStringList& args, QString* output)
 
 QJsonObject setupCode(bool remove)
 {
-    const QString exe = QStandardPaths::findExecutable("claude");
+    const QString exe = findClaude();
     const QString dir = claudeCodeDir();
     if (exe.isEmpty() && !QFileInfo(dir).isDir()) return state("skipped", "Claude Code not found");
     const QString skillDir = QDir(dir).filePath("skills/" + kName);

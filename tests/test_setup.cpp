@@ -163,6 +163,18 @@ int main(int argc, char** argv)
         CHECK(!r.out.contains("claude_desktop"));
     }
 
+    // `claude` only in ~/.local/bin, where its installer puts it (an app started from the desktop lacks it in PATH)
+    {
+        QDir().mkpath(home + "/.local/bin");
+        writeFile(home + "/.local/bin/claude", "#!/bin/sh\necho \"$@\" >> \"$(dirname \"$0\")/calls.log\"\n");
+        QFile(home + "/.local/bin/claude").setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        const Run r = setup({"claude", "--only", "code"}, false);
+        CHECK_EQ(r.exit, 0);
+        CHECK_EQ(r.out["claude_code"]["state"].toString(), QString("done"));
+        CHECK(QString::fromUtf8(readFile(home + "/.local/bin/calls.log")).contains("mcp add --scope user schneidi"));
+        QFile::remove(home + "/.local/bin/claude");
+    }
+
     // A broken Desktop config is never overwritten
     {
         writeFile(desktopConfig, "{ \"mcpServers\": ");
