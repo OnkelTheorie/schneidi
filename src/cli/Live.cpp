@@ -208,15 +208,21 @@ Server::Server(LiveHost* host, QObject* parent) : QObject(parent), m_host(host)
 
 void Server::setIdleLimit(int ms)
 {
-    m_idleMs = ms;
-    if (m_idle->isActive()) m_idle->start(m_idleMs);
+    m_idleMs = std::max(0, ms);
+    if (m_idleMs == 0) m_idle->stop();
+    else if (m_attached) m_idle->start(m_idleMs);
+}
+
+void Server::restartIdle()
+{
+    if (m_idleMs > 0) m_idle->start(m_idleMs);
 }
 
 void Server::letGoIfIdle()
 {
     if (!m_attached) return;
     // Work it reported is still running (a long render): not idle
-    if (m_running || !m_peers.value(m_attached).jobs.isEmpty()) return m_idle->start(m_idleMs);
+    if (m_running || !m_peers.value(m_attached).jobs.isEmpty()) return restartIdle();
     detach(m_attached); // the socket stays open: its next request takes the app again if it is free
 }
 
@@ -309,7 +315,7 @@ void Server::attach(QLocalSocket* s, const QString& client)
     m_attached = s;
     m_client = client;
     m_peers[s].client = client;
-    m_idle->start(m_idleMs);
+    restartIdle();
     m_host->liveConnectionChanged(true, m_client);
     emit stateChanged();
 }
@@ -363,7 +369,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         peer.authed = true;
         peer.chat = chat;
     }
-    if (s == m_attached) m_idle->start(m_idleMs); // anything it sends shows it is still at work
+    if (s == m_attached) restartIdle(); // anything it sends shows it is still at work
     if (type == "hello") {
         // The app's own chat is always allowed and never waits for another AI
         QJsonObject o{{"ok", true},
@@ -447,7 +453,7 @@ void Server::handle(QLocalSocket* s, const QJsonObject& msg)
         const QJsonObject result = runCommand(msg, ownChat);
         m_host->liveCommandRunning(false, ownChat);
         m_running = false;
-        if (guard && guard == m_attached) m_idle->start(m_idleMs); // a long command counts from its end
+        if (guard && guard == m_attached) restartIdle(); // a long command counts from its end
         if (guard) guard->write(line(result));
         // Requests that came in meanwhile
         QTimer::singleShot(0, this, [this] {

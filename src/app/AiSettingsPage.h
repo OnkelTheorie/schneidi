@@ -60,6 +60,7 @@ private:
     AiSettings m_initial; // what the page does not show stays as it was
     QVBoxLayout* m_sections = nullptr;
     QCheckBox* m_liveAllowed = nullptr;
+    QSpinBox* m_release = nullptr;
     QCheckBox* m_highlight = nullptr;
     QToolButton* m_colorButton = nullptr;
     QToolButton* m_colorReset = nullptr;

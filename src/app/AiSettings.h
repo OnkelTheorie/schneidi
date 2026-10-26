@@ -12,6 +12,7 @@ struct AiSettings {
     enum class Indicator { Always, WhileActive, Never };
 
     bool liveAllowed = true; // AIs may work on the project open in the app (schneidi-cli, MCP)
+    int releaseMinutes = 2;  // an AI that sends nothing this long lets the app go for another one (0 = never)
     bool highlight = true;   // light up what an AI changes in the timeline
     QColor color = defaultColor();
     int highlightMs = 2000;  // how long it stays lit (fades out)
@@ -32,6 +33,7 @@ struct AiSettings {
     static constexpr int kMinHighlightMs = 300;
     static constexpr int kMaxHighlightMs = 10000;
     static constexpr int kMaxLogLength = 1000;
+    static constexpr int kMaxReleaseMinutes = 120;
 
     static AiSettings load();
     void save() const;

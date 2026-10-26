@@ -520,6 +520,15 @@ int main(int argc, char* argv[])
         talk(first, R"({"type":"activity","id":7,"state":"end","tool":"render"})" "\n", 0);
         idle(500);
         CHECK(!server.attached());
+        // Never let go (Settings › AI › "Nie"): stays attached however long it is silent
+        server.setIdleLimit(0);
+        CHECK(talk(first, snap, 1).contains("\"ok\":true"));
+        CHECK(server.attached());
+        idle(500);
+        CHECK(server.attached());
+        server.setIdleLimit(300);
+        idle(500);
+        CHECK(!server.attached());
         // Another AI attaches meanwhile: the first one hears so
         CHECK(talk(second, hello, 1).contains("\"busy\":false"));
         CHECK(talk(second, R"({"type":"attach","client":"second"})" "\n", 1).contains("\"ok\":true"));

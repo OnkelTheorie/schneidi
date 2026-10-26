@@ -189,7 +189,7 @@ int main(int argc, char* argv[])
         if (live->start(&liveError)) {
             Cli::Live::Server* server = live.get();
             w.setLiveControls([server](const QString& reason) { server->disconnectClient(reason); },
-                              [server] { server->setAllowed(true); });
+                              [server] { server->setAllowed(true); }, [server](int ms) { server->setIdleLimit(ms); });
         } else {
             qWarning("Live connection not available: %s", qPrintable(liveError));
             live.reset();

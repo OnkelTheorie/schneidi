@@ -190,10 +190,13 @@ void MainWindow::aiLogActivated(int entryId)
     m_timeline->view()->revealRange(from, std::max(from + 1, to), track);
 }
 
-void MainWindow::setLiveControls(const std::function<void(const QString&)>& disconnect, const std::function<void()>& allow)
+void MainWindow::setLiveControls(const std::function<void(const QString&)>& disconnect, const std::function<void()>& allow,
+                                 const std::function<void(int)>& idleLimit)
 {
     m_liveDisconnect = disconnect;
     m_liveAllow = allow;
+    m_liveIdleLimit = idleLimit;
+    if (m_liveIdleLimit) m_liveIdleLimit(m_aiSettings.releaseMinutes * 60 * 1000);
     if (!m_aiSettings.liveAllowed && m_liveDisconnect) m_liveDisconnect(liveOffReason());
     updateLiveIndicator();
 }

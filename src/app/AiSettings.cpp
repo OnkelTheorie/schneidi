@@ -25,6 +25,7 @@ AiSettings AiSettings::load()
     const QSettings s;
     AiSettings a;
     a.liveAllowed = s.value("ai/liveAllowed", a.liveAllowed).toBool();
+    a.releaseMinutes = std::clamp(s.value("ai/releaseMinutes", a.releaseMinutes).toInt(), 0, kMaxReleaseMinutes);
     a.highlight = s.value("ai/highlight", a.highlight).toBool();
     if (const QColor c(s.value("ai/color").toString()); c.isValid()) a.color = c;
     a.highlightMs = std::clamp(s.value("ai/highlightMs", a.highlightMs).toInt(), kMinHighlightMs, kMaxHighlightMs);
@@ -46,6 +47,7 @@ void AiSettings::save() const
 {
     QSettings s;
     s.setValue("ai/liveAllowed", liveAllowed);
+    s.setValue("ai/releaseMinutes", releaseMinutes);
     s.setValue("ai/highlight", highlight);
     s.setValue("ai/color", color.name());
     s.setValue("ai/highlightMs", highlightMs);

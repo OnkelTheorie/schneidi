@@ -87,8 +87,9 @@ public:
     // "Connect with Claude" in Settings › AI (cli/Setup.h; main.cpp hands it in, the app does not link the CLI)
     void setClaudeSetup(const std::function<QJsonObject(bool remove)>& setup) { m_claudeSetup = setup; }
     // Buttons of the AI indicator in the top bar and Settings › AI: end the session and refuse new ones (reason for
-    // the AI; empty = the user disconnected it) / allow again
-    void setLiveControls(const std::function<void(const QString& reason)>& disconnect, const std::function<void()>& allow);
+    // the AI; empty = the user disconnected it) / allow again / how long a silent AI keeps the app (ms, 0 = always)
+    void setLiveControls(const std::function<void(const QString& reason)>& disconnect, const std::function<void()>& allow,
+                         const std::function<void(int ms)>& idleLimit);
     // Settings (File › Settings…, MainWindowSettings.cpp); test runs apply them without saving
     void settingsDialog(int tab = 0);
     const AiSettings& aiSettings() const { return m_aiSettings; }
@@ -302,6 +303,7 @@ private:
     QString m_liveClient;
     std::function<void(const QString&)> m_liveDisconnect;
     std::function<void()> m_liveAllow;
+    std::function<void(int)> m_liveIdleLimit;
 
     // AI chat (MainWindowChat.cpp)
     void buildChat();      // panel, chat and the splitter beside the pages (before the top bar)

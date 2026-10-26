@@ -77,7 +77,8 @@ public:
     QString waiting() const { return m_waiting; }
     // For the app's own AI chat process (variable -> value): it connects to this app with the chat's secret
     QHash<QString, QString> chatEnvironment() const;
-    // How long an attached AI may stay silent before it is let go (see above; default 2 min)
+    // How long an attached AI may stay silent before it is let go (see above; default 2 min, 0 = never: it keeps
+    // the app until it disconnects; Settings › AI)
     int idleLimit() const { return m_idleMs; }
     void setIdleLimit(int ms);
 
@@ -100,6 +101,7 @@ private:
     void attach(QLocalSocket* s, const QString& client);
     void detach(QLocalSocket* s);
     void letGoIfIdle();
+    void restartIdle(); // the idle limit counts again from now
 
     LiveHost* m_host;
     QLocalServer* m_server = nullptr;

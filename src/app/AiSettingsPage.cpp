@@ -52,6 +52,17 @@ AiSettingsPage::AiSettingsPage(const AiSettings& s, QWidget* parent) : QWidget(p
     f->addRow(m_liveAllowed);
     f->addRow(hint(T("Aus: eine KI erreicht die App nicht mehr und bearbeitet nur Projektdateien, die hier nicht offen "
                      "sind. „Trennen“ oben neben dem Projektnamen gilt nur bis zum Neustart.")));
+    m_release = new QSpinBox;
+    m_release->setObjectName("ai_release");
+    m_release->setRange(0, AiSettings::kMaxReleaseMinutes);
+    m_release->setSuffix(T(" min"));
+    m_release->setSpecialValueText(T("Nie"));
+    m_release->setValue(s.releaseMinutes);
+    f->addRow(T("Freigeben nach"), m_release);
+    f->addRow(hint(T("Eine KI, die so lange nichts schickt, gibt die App frei: Eine andere darf dann ran, die erste "
+                     "holt sie sich mit ihrer nächsten Anfrage zurück, wenn sie frei ist. Laufende Arbeit (ein Render) "
+                     "zählt nicht als Pause. Nie = sie behält die App, bis sie sich trennt.")));
+    connect(m_liveAllowed, &QCheckBox::toggled, this, &AiSettingsPage::updateEnabled);
 
     // What an AI changes lights up in the timeline (never scrolls there)
     f = formOf(addSection(T("Änderungen in der Timeline")));
@@ -101,6 +112,7 @@ AiSettingsPage::AiSettingsPage(const AiSettings& s, QWidget* parent) : QWidget(p
     // The AI log behind the indicator
     f = formOf(addSection(T("Protokoll")));
     m_logLength = new QSpinBox;
+    m_logLength->setObjectName("ai_log_length");
     m_logLength->setRange(0, AiSettings::kMaxLogLength);
     m_logLength->setSingleStep(50);
     m_logLength->setSpecialValueText(T("Aus"));
@@ -135,6 +147,7 @@ void AiSettingsPage::setColor(const QColor& c)
 
 void AiSettingsPage::updateEnabled()
 {
+    m_release->setEnabled(m_liveAllowed->isChecked());
     const bool on = m_highlight->isChecked();
     for (QWidget* w : {static_cast<QWidget*>(m_colorButton), static_cast<QWidget*>(m_duration),
                        static_cast<QWidget*>(m_distinguish)})
@@ -146,6 +159,7 @@ AiSettings AiSettingsPage::settings() const
 {
     AiSettings s = m_initial;
     s.liveAllowed = m_liveAllowed->isChecked();
+    s.releaseMinutes = m_release->value();
     s.highlight = m_highlight->isChecked();
     s.color = m_color;
     s.highlightMs = int(std::lround(m_duration->value() * 1000));

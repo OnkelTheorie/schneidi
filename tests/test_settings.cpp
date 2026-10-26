@@ -63,10 +63,13 @@ void testSettings()
     s.distinguish = false;
     s.logLength = 50;
     s.indicator = AiSettings::Indicator::Always;
+    s.releaseMinutes = 0;
     s.save();
     CHECK(AiSettings::load() == s);
     QSettings().setValue("ai/highlightMs", 999999); // out of range from a hand-edited file
     CHECK_EQ(AiSettings::load().highlightMs, AiSettings::kMaxHighlightMs);
+    QSettings().setValue("ai/releaseMinutes", -5);
+    CHECK_EQ(AiSettings::load().releaseMinutes, 0);
     QSettings().remove("ai");
 }
 
@@ -93,11 +96,22 @@ void testDialog()
     indicator->setCurrentIndex(indicator->findData(int(AiSettings::Indicator::Always)));
     page->setColor(QColor("#ff8800"));
     QCheckBox* distinguish = checkBox(page, T("Neue und bearbeitete Clips unterscheiden"));
-    auto* logLength = page->findChild<QSpinBox*>();
+    auto* logLength = page->findChild<QSpinBox*>("ai_log_length");
     if (CHECK(distinguish && logLength)) {
         distinguish->setChecked(false);
         logLength->setValue(0);
         CHECK_EQ(logLength->text(), T("Aus"));
+    }
+    // How long a silent AI keeps the app: nothing to set while AIs are not allowed at all
+    auto* release = page->findChild<QSpinBox*>("ai_release");
+    if (CHECK(release)) {
+        CHECK_EQ(release->value(), 2);
+        CHECK(!release->isEnabled());
+        allowed->setChecked(true);
+        CHECK(release->isEnabled());
+        release->setValue(0);
+        CHECK_EQ(release->text(), T("Nie"));
+        allowed->setChecked(false);
     }
     const AiSettings chosen = dlg.aiSettings();
     CHECK(!chosen.liveAllowed);
@@ -107,6 +121,7 @@ void testDialog()
     CHECK_EQ(chosen.color, QColor("#ff8800"));
     CHECK(!chosen.distinguish);
     CHECK_EQ(chosen.logLength, 0);
+    CHECK_EQ(chosen.releaseMinutes, 0);
 
     // "Connect with Claude": only with a setup handed in; answer per target, translated around the details
     CHECK(!page->findChild<QPushButton*>("claude_connect"));
@@ -192,8 +207,11 @@ void testMainWindow()
     MainWindow w(&engine);
     w.disableAutosave(); // a test run: settings apply, but are not saved
     QStringList calls;
-    w.setLiveControls([&calls](const QString& reason) { calls << "disconnect " + reason; }, [&calls] { calls << "allow"; });
+    QList<int> limits;
+    w.setLiveControls([&calls](const QString& reason) { calls << "disconnect " + reason; }, [&calls] { calls << "allow"; },
+                      [&limits](int ms) { limits << ms; });
     CHECK(calls.isEmpty()); // allowed by default: nothing refused at start
+    CHECK(limits == QList<int>{2 * 60 * 1000}); // the release time from the settings reaches the server at start
 
     auto* box = w.findChild<QWidget*>("live_indicator");
     auto* label = w.findChild<QToolButton*>("live_label");
@@ -235,6 +253,10 @@ void testMainWindow()
     CHECK_EQ(calls.value(1), QString("allow"));
     w.setAiSettings(s); // unchanged: nothing called again
     CHECK_EQ(calls.size(), 2);
+    CHECK_EQ(limits.size(), qsizetype(1));
+    s.releaseMinutes = 0;
+    w.setAiSettings(s);
+    CHECK(limits == (QList<int>{2 * 60 * 1000, 0}));
 
     // Started with AI connections off: refused right away
     QSettings().setValue("ai/liveAllowed", false);
@@ -242,7 +264,7 @@ void testMainWindow()
         MainWindow w2(&engine);
         w2.disableAutosave();
         QStringList calls2;
-        w2.setLiveControls([&calls2](const QString& reason) { calls2 << reason; }, [] {});
+        w2.setLiveControls([&calls2](const QString& reason) { calls2 << reason; }, [] {}, [](int) {});
         CHECK_EQ(calls2.size(), 1);
     }
     QSettings().remove("ai");
