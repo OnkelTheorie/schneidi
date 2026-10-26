@@ -255,6 +255,18 @@ bool alternating(const QJsonObject& body)
     return true;
 }
 
+// The next request only adds to the one before (Claude's thinking blocks are valid only while everything before them
+// stays byte for byte: an edited history is a 400 for newer accounts)
+bool appendOnly(const QJsonObject& before, const QJsonObject& after)
+{
+    if (before["system"] != after["system"] || before["tools"] != after["tools"]) return false;
+    const QJsonArray a = before["messages"].toArray(), b = after["messages"].toArray();
+    if (b.size() < a.size()) return false;
+    for (int i = 0; i < a.size(); ++i)
+        if (a[i] != b[i]) return false;
+    return true;
+}
+
 // The network side alone: a redirect to another address gets neither the key nor the conversation
 void testClient()
 {
@@ -464,6 +476,9 @@ void test(const QString& dir)
     CHECK_EQ(clips(w), 5);
     s.approval = AiSettings::Approval::Auto;
     w.setAiSettings(s);
+    // The whole conversation so far (tool rounds, accepted, discarded, notes of the app): only ever appended to
+    for (qsizetype i = 1; i < fake.requests.size(); ++i)
+        if (!CHECK(appendOnly(fake.requests[i - 1].body, fake.requests[i].body))) std::printf("       request %lld\n", i);
 
     // ---- OpenAI-compatible server: pictures of `frames` follow the tool answers as a user message ----
     chat->clear();

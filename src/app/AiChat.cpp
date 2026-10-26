@@ -138,14 +138,19 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review
     m_rounds = 0;
     m_request = text.trimmed();
     // Pictures of earlier requests are not sent again: the model has seen them, and a long chat would outgrow what
-    // providers take per request (count and size of pictures). It can look again with `frames`.
-    for (Ai::Message& m : m_history)
-        for (Ai::ToolResult& t : m.results)
-            if (!t.images.isEmpty()) {
-                t.text += QString("\n[%1 picture(s) of this answer were in an earlier request and are not sent again]")
-                              .arg(t.images.size());
-                t.images.clear();
-            }
+    // providers take per request (count and size of pictures). It can look again with `frames`. Not once Claude's
+    // thinking blocks are in the history: they are only valid while everything before them stays byte for byte
+    // (an edited history is a 400 for newer Anthropic accounts), so that history only ever grows.
+    const bool bound =
+        std::any_of(m_history.begin(), m_history.end(), [](const Ai::Message& m) { return !m.anthropic.isEmpty(); });
+    if (!bound)
+        for (Ai::Message& m : m_history)
+            for (Ai::ToolResult& t : m.results)
+                if (!t.images.isEmpty()) {
+                    t.text += QString("\n[%1 picture(s) of this answer were in an earlier request and are not sent again]")
+                                  .arg(t.images.size());
+                    t.images.clear();
+                }
     add({Entry::Kind::User, m_request});
     QString message = m_request;
     if (!m_notes.isEmpty()) {
