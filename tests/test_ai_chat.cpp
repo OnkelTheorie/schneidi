@@ -722,6 +722,7 @@ int main(int argc, char** argv)
     Check::initApp("ai_chat");
     QSettings().remove("ai");
     Theme::apply(app);
+    I18n::setLanguage("de"); // the chat tells the AI the interface language; not the system's (C in a container)
     I18n::install("de");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg fehlt");
     testClient();
