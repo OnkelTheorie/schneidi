@@ -9,14 +9,16 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
   - **Fill and reframe** (people, one subject): `transform` `zoom` ≈ 3.16 fills the height; `x` moves the visible
     window left/right (pixels from the center, about ±1160 at that zoom). Look with `frames` where the subject is.
   - **Fit with blurred background** (gameplay, wide shots, HUD that must stay visible): the clip twice - V1 filled
-    (`zoom` ≈ 3.16) with the `blur` effect, V2 the same range fitted (`zoom` 1, maybe 1.2-1.5 to crop the edges).
+    (`zoom` ≈ 3.16) with the `blur` effect, V2 the same range fitted (`zoom` 1, maybe 1.2-1.5 to crop the edges;
+    more cuts off the HUD, e.g. the kill feed that proves a kill). This plays slowly in the preview (every clip
+    decoded twice, blur): for watching it in the app, the user turns on Playback › Render Cache › Smart.
   - Material that is already vertical needs nothing.
 - Keep text and faces inside the safe area: platforms cover roughly the bottom 20 % (caption, buttons) and a strip
   on the right. Titles and subtitles about 25-35 % up from the bottom, or in the upper third.
 
 ## Content
-- **Hook in the first 1-2 s**: start with the strongest moment or a bold question/claim as a `title`; no slow
-  intros, no logo first.
+- **Hook in the first 1-2 s**: start with the strongest moment or a bold question/claim as a `title`; the first
+  frame already moves and shows the payoff, not the build-up; no slow intros, no logo first.
 - Length: what the user asks; otherwise 15-45 s. Cut tight, every second must earn its place.
 - **Subtitles burned in** - most people watch muted ([subtitles.md](subtitles.md)): short lines (`max_chars` ~20-28),
   big font, outline or box.

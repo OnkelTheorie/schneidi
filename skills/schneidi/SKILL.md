@@ -59,7 +59,8 @@ Every command then works on what the app shows, unsaved changes included; `info`
   Seconds are the safest. Analysis commands on a media file count frames in the file's own rate unless you pass
   `project`, so pass it when you feed the result into `edit`.
 - **Never overwrite the user's material.** Renders and projects get new names (`trip-cut.mp4`, `trip-9x16.mp4`);
-  put them next to the material unless the user named a place.
+  put them where the user says, otherwise next to the project. Check renders that only you look at go to a
+  temporary folder, never into the user's folders.
 - **Decide with good defaults** instead of asking: a tight cut, -14 LUFS for the web, H.264 MP4, readable titles.
   Ask only when the answer changes the result a lot and you cannot find it in the material or the request (e.g.
   "music" requested but no music file anywhere).
