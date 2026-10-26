@@ -592,13 +592,16 @@ int main(int argc, char** argv)
                 list->clearSelection();
                 list->item(row)->setSelected(true);
                 bool seen = false;
-                QTimer::singleShot(200, &panel, [&] {
+                QTimer timer; // dies with this call: never fires later on a dead `seen`
+                timer.setSingleShot(true);
+                QObject::connect(&timer, &QTimer::timeout, [&] {
                     if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
                         seen = true;
                         look(menu);
                         menu->close();
                     }
                 });
+                timer.start(200);
                 emit list->customContextMenuRequested(list->visualItemRect(list->item(row)).center());
                 return seen;
             };

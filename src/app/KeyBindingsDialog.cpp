@@ -218,7 +218,7 @@ void KeyBindingsDialog::fill()
     // Key or mouse button -> number of actions (mark conflicts). Keys count per scope: a panel's key wins in the panel
     // (InputBindings::registerPanelAction), the same key in the window is no conflict
     const auto useKey = [](const InputBindings::Entry& e, const QString& in) {
-        return InputBindings::inputMouseButton(in) == Qt::NoButton ? e.scope + '\n' + in : in;
+        return InputBindings::inputMouseButton(in) == Qt::NoButton ? QString(e.scope + '\n' + in) : in;
     };
     QHash<QString, int> uses;
     for (const auto& e : entries)
