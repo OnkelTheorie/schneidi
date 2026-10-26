@@ -196,19 +196,20 @@ QWidget* MainWindow::buildTopBar()
                            .arg(Theme::topBar.name(), Theme::border.name()));
     auto* lay = m_topBarLayout = new QHBoxLayout(bar);
     lay->setContentsMargins(6, 2, 6, 2);
-    const bool chatLeft = m_chatSplit->indexOf(m_chatPanel) == 0; // the button sits on the panel's side
-    if (chatLeft) lay->addWidget(m_chatToggle);
+    // The AI button sits on the panel's side, on the inner end of the group: the buttons there stay where they were
+    const bool chatLeft = m_chatSplit->indexOf(m_chatPanel) == 0;
     lay->addWidget(m_storageToggle);
     lay->addWidget(m_poolToggle);
     lay->addWidget(m_effectsToggle);
+    if (chatLeft) lay->addWidget(m_chatToggle);
     lay->addStretch(1);
     lay->addWidget(title);
     lay->addWidget(buildLiveIndicator());
     lay->addStretch(1);
+    if (!chatLeft) lay->addWidget(m_chatToggle);
     lay->addWidget(m_transcriptToggle);
     lay->addWidget(m_mixerToggle);
     lay->addWidget(m_inspectorToggle);
-    if (!chatLeft) lay->addWidget(m_chatToggle);
     return bar;
 }
 

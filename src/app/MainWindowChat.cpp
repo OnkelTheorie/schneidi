@@ -112,10 +112,11 @@ void MainWindow::placeChat(bool left)
     m_chatSplit->setStretchFactor(m_chatSplit->indexOf(m_chatPanel), 0);
     applyChatWidth();
     m_chatPanel->setDockedLeft(left);
-    // The button sits on the panel's side of the top bar
+    // The button sits on the panel's side of the top bar, next to Effects or Transcript (as in buildTopBar)
     if (m_topBarLayout && m_chatToggle) {
         m_topBarLayout->removeWidget(m_chatToggle);
-        m_topBarLayout->insertWidget(left ? 0 : m_topBarLayout->count(), m_chatToggle);
+        const int next = m_topBarLayout->indexOf(left ? m_effectsToggle : m_transcriptToggle);
+        m_topBarLayout->insertWidget(left ? next + 1 : next, m_chatToggle);
     }
 }
 
