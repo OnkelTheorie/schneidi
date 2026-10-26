@@ -161,6 +161,7 @@ int main(int argc, char* argv[])
         std::fprintf(stderr, "{\"progress\":%d}\n", percent);
         std::fflush(stderr);
     };
+    ctx.line = [](const QJsonObject& o) { print(o, false); };
     QJsonObject args0;
     try {
         args0 = Cli::normalize(*cmd, parseArgs(*cmd, args));

@@ -5,6 +5,7 @@
 #include "core/ProjectFormat.h"
 #include "core/RenderJob.h"
 #include "core/Types.h"
+#include "core/WatchFolders.h"
 
 #include <QJsonObject>
 #include <QLockFile>
@@ -25,6 +26,11 @@ struct ProjectData {
     // Empty (old files) = only `timeline` as "Timeline 1".
     QVector<Sequence> sequences;
     int currentSequence = 0;
+    // Watch folders (core/WatchFolders.h, optional): what is watched, and the files they brought in (the newest
+    // WatchFolders::kLogSize) with the revision of the newest one
+    QVector<WatchFolder> watchFolders;
+    QVector<WatchArrival> watchLog;
+    int watchRevision = 0;
 };
 
 namespace ProjectFile {
