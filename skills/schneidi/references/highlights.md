@@ -27,12 +27,17 @@ also read [social.md](social.md).
 - Short `transition`s (cross dissolve 0.2-0.3 s) or hard cuts; hard cuts on the beat feel best.
 - With music, follow the song, not a fixed grid: the strongest moments on its accents (the drop, the first beat
   after a break), a change of pace where the song changes, the end on the end of a phrase. Same scene length for
-  every moment feels mechanical.
+  every moment feels mechanical. `beats` tells you where those are (see Music).
 - Effects (zoom punch, flash, shake) for the big moments only; the same effect on every kill wears off.
 - Optional intro/outro: `title` for 1.5-2 s (name of the player/event), not longer. A title that names a moment
   ("UNREAL", "ACE") appears on that moment, not before.
 
 ## Music
+- Cut to the song: `beats` gives bars, phrases, breaks and drops in one call (on the song file with `project`, or
+  on the project with `tracks` = the music track, then times are timeline frames). Beat k is at `beat_phase` +
+  k * `beat_period`, bar ones every `downbeats.every_s`; `phrases` are the sections (4 or 8 bars) with their
+  energy, `drops` the big moments (best first). Put the best moment on the top drop, change scenes on bar ones or
+  phrase starts, let the end land on a phrase end. `apply` `"markers"` marks the phrase starts on the timeline.
 - Put the music on its own audio track (`place` with `track` `"A2"` at 0, or a new track), cut it to the video
   length, `fade` out the last 1-2 s.
 - Keep the game/event sound - it carries the action: shots and kills must stay audible. Measure first: `loudness`

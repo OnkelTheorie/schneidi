@@ -111,6 +111,7 @@ schneidi-cli silence talk.mp4 --project talk.schneidi        # "sound" ranges wi
 schneidi-cli scenes broll.mp4 --project talk.schneidi        # shot changes
 schneidi-cli scenes game.mp4 --region 0.75,0.05,0.25,0.3     # events in a part of the picture (kill feed)
 schneidi-cli peaks game.mp4 --top 10                         # the loudest moments
+schneidi-cli beats song.mp3 --project talk.schneidi          # tempo, bars, phrases, breaks and drops of a song
 schneidi-cli highlights game.mp4 --region 0.70,0.04,0.22,0.23 --color "#e7e371"  # own kills (Valorant), best first
 schneidi-cli sync cam1.mp4 cam2.mp4 cam3.mp4                 # offsets of recordings of the same event
 schneidi-cli extensions --install whisper,small              # optional speech recognition (download, ~200 MB)
