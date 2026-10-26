@@ -186,6 +186,33 @@ const Sequence& multicamOf(Session& s, const QJsonObject& op)
     return *q;
 }
 
+// The reference recording of a multicam clip (first file of angle 1): offsets of all angles count from its start
+QString referenceOf(const Sequence& q)
+{
+    if (q.angles.isEmpty()) return {};
+    const MulticamAngle& a = q.angles.first();
+    QVector<const Track*> tracks;
+    if (a.videoTrack >= 0 && a.videoTrack < q.timeline.video.size()) tracks << &q.timeline.video[a.videoTrack];
+    for (int t : a.audioTracks)
+        if (t >= 0 && t < q.timeline.audio.size()) tracks << &q.timeline.audio[t];
+    for (const Track* t : tracks)
+        if (!t->clips.isEmpty()) return t->clips.first().mediaPath;
+    return {};
+}
+
+// Files of add_angle: the recording, several = split after a restart
+QStringList angleFiles(const QJsonObject& op)
+{
+    QStringList out;
+    const QJsonValue v = op.value("files");
+    for (const QJsonValue& f : v.isArray() ? v.toArray() : QJsonArray{v}) {
+        if (!f.isString() || f.toString().trimmed().isEmpty()) fail("BAD_ARGUMENT", "add_angle: 'files' are paths");
+        out << absolute(f.toString());
+    }
+    if (out.isEmpty()) fail("BAD_ARGUMENT", "add_angle: missing 'files' (the new recording)");
+    return out;
+}
+
 QString angleList(const Sequence& q)
 {
     QStringList names;
@@ -442,6 +469,42 @@ void opMulticamNudge(Session& s, const QJsonObject& op)
         s.notes << QString("angle %1 moved by %2 frame(s) only: it cannot start before the multicam clip").arg(angle + 1).arg(moved);
 }
 
+void opAddAngle(Session& s, const QJsonObject& op)
+{
+    const Sequence& q = multicamOf(s, op);
+    const int seq = q.id;
+    const QStringList files = angleFiles(op);
+    for (const QString& f : files) s.media(f); // imported into the Media Pool (fails if unreadable)
+    const QString name = op.value("name").toString().trimmed();
+    Multicam::Angle angle{name, {}};
+    if (op.contains("offset")) {
+        // Placed by hand: the first file `offset` after the reference's start, the others right after each other
+        int at = signedTime(s, op.value("offset"), "offset");
+        for (const QString& f : files) {
+            angle.files << Multicam::FilePlacement{f, at, true, SyncMethod::Start};
+            at += s.media(f).length;
+        }
+    } else {
+        const QString reference = referenceOf(q);
+        if (reference.isEmpty()) fail("FAILED", "the multicam clip has no reference recording to sync to; give 'offset'");
+        const QVector<Multicam::Source> sources{{{}, {reference}}, {name, files}};
+        const QVector<AudioSync::Match> sound = op.contains("_sound")
+                                                    ? matchesFrom(op.value("_sound").toArray())
+                                                    : SoundSync::align(soundInputs(sources, streamOf(op)));
+        angle = Multicam::resolve(s.project, sources, SyncMethod::Sound, sound).value(1);
+        angle.name = name;
+        for (const Multicam::FilePlacement& f : angle.files)
+            if (!f.synced)
+                s.notes << QString("%1 is not synced (its sound did not match the reference %2); placed %3. Fix with "
+                                   "multicam_nudge or give 'offset' (from `sync`)")
+                               .arg(QFileInfo(f.path).fileName(), QFileInfo(reference).fileName(),
+                                    f.offset == 0 ? "at the start" : "right after the previous file");
+    }
+    const int index = s.editor.addMulticamAngle(seq, angle);
+    if (index < 0) fail("FAILED", "none of the files can be used for an angle (stills, or no picture and sound)");
+    s.notes << QString("added angle %1 (%2)").arg(index + 1).arg(s.project.sequence(seq)->angles.value(index).name);
+}
+
 void opAngleName(Session& s, const QJsonObject& op)
 {
     const Sequence& q = multicamOf(s, op);
@@ -459,11 +522,22 @@ QJsonObject withSoundSync(const QJsonObject& editArgs, Context& ctx)
     bool any = false;
     for (int i = 0; i < ops.size(); ++i) {
         QJsonObject op = ops[i].toObject();
-        if (op.value("op").toString() != "multicam" || op.contains("_sound")) continue;
+        const QString name = op.value("op").toString();
+        if ((name != "multicam" && name != "add_angle") || op.contains("_sound")) continue;
         try {
-            if (syncOf(op) != SyncMethod::Sound) continue;
-            const QVector<Multicam::Source> sources = sourcesOf(op);
-            op["_sound"] = matchesJson(SoundSync::align(soundInputs(sources, streamOf(op)), {}, progressOf(&ctx)));
+            if (name == "multicam") {
+                if (syncOf(op) != SyncMethod::Sound) continue;
+                const QVector<Multicam::Source> sources = sourcesOf(op);
+                op["_sound"] = matchesJson(SoundSync::align(soundInputs(sources, streamOf(op)), {}, progressOf(&ctx)));
+            } else {
+                if (op.contains("offset")) continue;
+                // The reference recording comes from the project (a copy of what the app shows)
+                Session s(editArgs.value("project").toString());
+                const QString reference = referenceOf(multicamOf(s, op));
+                if (reference.isEmpty()) continue;
+                const QVector<Multicam::Source> sources{{{}, {reference}}, {{}, angleFiles(op)}};
+                op["_sound"] = matchesJson(SoundSync::align(soundInputs(sources, streamOf(op)), {}, progressOf(&ctx)));
+            }
         } catch (const Error&) {
             continue; // the op reports it where it runs
         }
@@ -563,6 +637,16 @@ void addMulticamOps(QVector<OpDef>& ops)
                  "timeline = id or name of the multicam clip, or clip = a segment of it. The angle cannot start before "
                  "the multicam clip.",
                  opMulticamNudge}
+        << OpDef{"add_angle", "{op:'add_angle', timeline|clip, files, name?, offset?, stream?}",
+                 "add an angle (another camera/POV) to an existing multicam clip, synced to it by sound",
+                 "timeline = id or name of the multicam clip, or clip = a segment of it. files = the recording "
+                 "(several = split after a restart). Synced by the sound against the reference (first file of angle "
+                 "1; stream = audio stream used, default 0), or placed by hand: offset = where its first file starts "
+                 "relative to the reference's start (frames or seconds, negative = earlier; `sync` with the reference "
+                 "first gives it), later files right after each other. The part before the multicam clip's start is "
+                 "cut off. name defaults to the file name. Segments in timelines are not changed: cut to the new angle "
+                 "with 'angle'.",
+                 opAddAngle}
         << OpDef{"angle_name", "{op:'angle_name', timeline|clip, angle, name}",
                  "rename an angle of a multicam clip (empty = file name)", {}, opAngleName};
 }

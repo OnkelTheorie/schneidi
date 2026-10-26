@@ -571,10 +571,11 @@ void removeAt(Clip& c, const QVector<int>& times, const QVector<AnimParam>& para
     }
 }
 
-void move(Clip& c, const QVector<int>& times, int delta)
+void move(Clip& c, const QVector<int>& times, int delta, const QVector<AnimParam>& params)
 {
     if (delta == 0) return;
     for (auto it = c.keys.begin(); it != c.keys.end(); ++it) {
+        if (!params.isEmpty() && !params.contains(it.key())) continue;
         KeyTrack moved, kept;
         for (const Keyframe& k : *it) {
             if (times.contains(k.frame - c.in)) {

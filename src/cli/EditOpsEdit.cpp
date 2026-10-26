@@ -10,6 +10,8 @@
 
 #include <QFileInfo>
 
+#include <algorithm>
+
 namespace Cli::detail {
 
 namespace {
@@ -376,6 +378,53 @@ int binOf(Session& s, const QString& path)
     return bin;
 }
 
+// An existing bin by path, -1 = none
+int findBin(const Session& s, const QString& path)
+{
+    int bin = 0;
+    for (const QString& part : path.split('/', Qt::SkipEmptyParts)) {
+        int found = -1;
+        for (int child : s.project.childBins(bin))
+            if (s.project.binName(child).compare(part.trimmed(), Qt::CaseInsensitive) == 0) found = child;
+        if (found < 0) return -1;
+        bin = found;
+    }
+    return bin;
+}
+
+void opBin(Session& s, const QJsonObject& op)
+{
+    const QString path = op.value("bin").toString();
+    if (path.split('/', Qt::SkipEmptyParts).isEmpty()) fail("BAD_ARGUMENT", "bin: the bin's name or path (\"A/B\")");
+    const bool change = op.contains("rename") || op.contains("remove") || op.contains("into");
+    if (!change) {
+        binOf(s, path); // create (with missing parents)
+        return;
+    }
+    const int bin = findBin(s, path);
+    if (bin <= 0) fail("NOT_FOUND", "no bin " + path + " (`info` lists the bins of the media)");
+    if (op.value("remove").toBool()) {
+        s.project.removeBin(bin); // its media and sub-bins move up into the parent
+        return;
+    }
+    if (op.contains("into")) {
+        const QString into = op.value("into").toString();
+        const int target = into.split('/', Qt::SkipEmptyParts).isEmpty() ? 0 : binOf(s, into);
+        for (int b = target; b != 0;) { // not into itself or below it
+            if (b == bin) fail("BAD_ARGUMENT", "a bin cannot move into itself or one of its sub-bins");
+            const auto it = std::find_if(s.project.bins().begin(), s.project.bins().end(),
+                                         [b](const MediaBin& x) { return x.id == b; });
+            b = it == s.project.bins().end() ? 0 : it->parent;
+        }
+        s.project.moveBin(bin, target);
+    }
+    if (op.contains("rename")) {
+        const QString name = op.value("rename").toString().trimmed();
+        if (name.isEmpty() || name.contains('/')) fail("BAD_ARGUMENT", "rename: a name without '/'");
+        s.project.renameBin(bin, name);
+    }
+}
+
 void opMedia(Session& s, const QJsonObject& op)
 {
     QStringList paths;
@@ -512,6 +561,13 @@ void addEditOps(QVector<OpDef>& ops)
                  "Media Pool: move into a bin (\"Name\" or \"A/B\", created if missing), clip color, flags, source "
                  "In/Out",
                  {}, opMedia}
+        << OpDef{"bin", "{op:'bin', bin, rename?, into?, remove?}",
+                 "Media Pool bins: create (with missing parents), rename, move into another bin (\"\" = top level) or "
+                 "remove",
+                 "bin = \"Name\" or \"A/B\" (not case-sensitive). Without rename/into/remove the bin is created. "
+                 "remove:true deletes the bin; its media and sub-bins move into its parent bin (nothing is deleted "
+                 "from disk). `info` media show their bin as a path.",
+                 opBin}
         << OpDef{"copy", "{op:'copy', clips, at}", "copy clips to `at` (same tracks, overwrites)", {}, opCopy}
         << OpDef{"insert", "{op:'insert'|'replace'|'place_on_top'|'ripple_overwrite', media, at, in?, out?, track?}",
                  "source edits like F9–F12: insert (later clips move right), replace (the clip under `at`, keeps its "

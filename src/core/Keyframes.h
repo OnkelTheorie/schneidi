@@ -76,7 +76,7 @@ void rescaleHandles(const KeyTrack& before, KeyTrack& after);
 // Timeline keyframe track: all parameters together at the times
 void setEase(Clip& c, const QVector<int>& times, KeyEase ease, const QVector<AnimParam>& params = {});
 void removeAt(Clip& c, const QVector<int>& times, const QVector<AnimParam>& params = {});
-void move(Clip& c, const QVector<int>& times, int delta);
+void move(Clip& c, const QVector<int>& times, int delta, const QVector<AnimParam>& params = {}); // {} = all
 // All keyframes by `delta` source frames, after Clip::in/out moved by it (slip): they keep their clip frame t, i.e.
 // their place in the clip and in the timeline, instead of riding along with the content (and out of the clip).
 // Except the place of Color page windows (GradeWindows::followsContent): a window sits on the content.

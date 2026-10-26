@@ -298,6 +298,22 @@ int main(int argc, char** argv)
         CHECK_EQ(c2["keyframes"]["opacity"].toArray().size(), 2);
         CHECK_EQ(c2["keyframes"]["opacity"][0]["at"].toInt(), 20);
         CHECK_EQ(c2["effects"][0]["params"]["gainY"].toDouble(), 1.0);
+        // Move a keyframe (value and ease stay); Inspector section switches (values stay, `info` shows them off)
+        edit(QString(R"([{"op":"keyframe","clips":[%1],"param":"opacity","at":20,"move_to":25},
+                         {"op":"transform","clips":[%1],"transform_on":false,"opacity_on":false}])").arg(v1).toUtf8().constData());
+        const QJsonObject c3 = firstClip();
+        CHECK_EQ(c3["keyframes"]["opacity"][0]["at"].toInt(), 25);
+        CHECK_EQ(c3["keyframes"]["opacity"][0]["value"].toDouble(), 50.0);
+        CHECK_EQ(c3["transform"]["transform_on"].toBool(true), false);
+        CHECK_EQ(c3["transform"]["opacity_on"].toBool(true), false);
+        CHECK(!c3["transform"].toObject().contains("crop_on"));
+        CHECK_EQ(c3["transform"]["zoom_x"].toDouble(), 1.5);
+        edit(QString(R"([{"op":"transform","clips":[%1],"transform_on":true,"opacity_on":true}])").arg(v1).toUtf8().constData());
+        CHECK(!firstClip()["transform"].toObject().contains("transform_on"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keyframe","clips":[%1],"param":"opacity","at":3,"move_to":9}])").arg(v1)}}),
+                 QString("NOT_FOUND"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"transform","clips":[%1],"crop_on":1}])").arg(v1)}}),
+                 QString("BAD_ARGUMENT"));
         // Copy the grade (only) to the second clip, then remove the first one's grade
         edit(QString(R"([{"op":"copy_attributes","from":%1,"clips":[%2],"attributes":["color"]},
                          {"op":"color","clips":[%1],"reset":true}])").arg(v1).arg(v2).toUtf8().constData());
@@ -420,7 +436,16 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(std::as_const(r)["timeline"]["markers"].toArray(), QJsonArray{7});
         CHECK_EQ(std::as_const(r)["timeline"]["mark_out"].toInt(), 12);
         const QJsonObject media = run("info", {{"project", g_path}})["media"][0].toObject();
-        CHECK_EQ(std::as_const(media)["bin"].toString(), QString("Day 1"));
+        CHECK_EQ(std::as_const(media)["bin"].toString(), QString("Interviews/Day 1"));
+        // Bins: rename, move to the top level, remove (the media move up, nothing is deleted)
+        ed(R"([{"op":"bin","bin":"interviews/day 1","rename":"Monday"},{"op":"bin","bin":"Archive"},
+               {"op":"bin","bin":"Interviews/Monday","into":"Archive"}])");
+        CHECK_EQ(run("info", {{"project", g_path}})["media"][0]["bin"].toString(), QString("Archive/Monday"));
+        ed(R"([{"op":"bin","bin":"Archive/Monday","remove":true}])");
+        CHECK_EQ(run("info", {{"project", g_path}})["media"][0]["bin"].toString(), QString("Archive"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"bin","bin":"Nope","remove":true}])"}}), QString("NOT_FOUND"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"bin","bin":"Archive","into":"Archive/Sub"}])"}}),
+                 QString("BAD_ARGUMENT"));
         CHECK_EQ(std::as_const(media)["color"].toString(), QString("orange"));
         CHECK_EQ(std::as_const(media)["mark_in"].toInt(), 5);
         // Copy and insert (insert moves the later clips; source marks of the media stay)

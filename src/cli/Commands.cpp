@@ -321,7 +321,8 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     if (ref.kind == TrackKind::Audio && c.volumeDb != 0) o["volume_db"] = c.volumeDb;
     if (ref.kind == TrackKind::Audio && c.pan != 0) o["pan"] = c.pan;
     if (ref.kind == TrackKind::Audio && c.audioStream != 0) o["audio_stream"] = c.audioStream;
-    if (ref.kind == TrackKind::Video && !c.transform.isIdentity()) {
+    if (ref.kind == TrackKind::Video) {
+        // Values also while their Inspector section is switched off (then they do not apply)
         const ClipTransform& t = c.transform;
         const ClipTransform def;
         QJsonObject to;
@@ -333,7 +334,10 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
                                    def.cropRight, def.cropTop, def.cropBottom, def.opacity};
         for (int i = 0; i < int(std::size(fields)); ++i)
             if (fields[i].second != defaults[i]) to[fields[i].first] = fields[i].second;
-        o["transform"] = to;
+        if (!t.transformOn) to["transform_on"] = false;
+        if (!t.cropOn) to["crop_on"] = false;
+        if (!t.compositeOn) to["opacity_on"] = false;
+        if (!to.isEmpty()) o["transform"] = to;
     }
     if (const QJsonObject keys = keyframesJson(c); !keys.isEmpty()) o["keyframes"] = keys;
     if (c.freeze) o["freeze"] = true;
@@ -501,6 +505,18 @@ QJsonArray timelinesJson(const Project& p, const QHash<int, QVector<Multicam::An
     return list;
 }
 
+QString binPath(const Project& p, int bin)
+{
+    QStringList parts;
+    for (int guard = 0; bin != 0 && guard < 64; ++guard) {
+        const auto it = std::find_if(p.bins().begin(), p.bins().end(), [bin](const MediaBin& b) { return b.id == bin; });
+        if (it == p.bins().end()) break;
+        parts.prepend(it->name);
+        bin = it->parent;
+    }
+    return parts.join('/');
+}
+
 QJsonObject projectJson(const Project& p, const QString& path)
 {
     QJsonArray media;
@@ -510,7 +526,7 @@ QJsonObject projectJson(const Project& p, const QString& path)
         if (m.isImage) o["image"] = true;
         if (!QFileInfo::exists(m.path)) o["offline"] = true;
         if (m.audioStreamCount() > 1) o["audio_streams"] = m.audioStreamCount();
-        if (m.bin) o["bin"] = p.binName(m.bin);
+        if (m.bin) o["bin"] = binPath(p, m.bin);
         if (!m.clipColor.isEmpty()) o["color"] = m.clipColor;
         if (!m.flags.isEmpty()) o["flags"] = QJsonArray::fromStringList(m.flags);
         if (m.markIn >= 0) o["mark_in"] = m.markIn;

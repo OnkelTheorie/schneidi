@@ -85,6 +85,8 @@ QString trackName(TrackRef r);
 int parseTrack(const QJsonValue& v, TrackKind* kind = nullptr);
 QJsonObject timelineJson(const Project& p);
 QJsonObject projectJson(const Project& p, const QString& path);
+// "Parent/Child" of a Media Pool bin (0 = top level: "")
+QString binPath(const Project& p, int bin);
 
 // sync = how the recordings of multicam clips were synced (Session::multicamSync), if known
 QJsonArray timelinesJson(const Project& p, const QHash<int, QVector<Multicam::Angle>>& sync = {});

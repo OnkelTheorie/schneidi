@@ -251,7 +251,18 @@ void opTransform(Session& s, const QJsonObject& op)
     for (const auto& [name, p] : fields)
         if (op.contains(name)) values.append({p, paramValue(p, op.value(name), name)});
     const bool reset = op.value("reset").toBool();
-    if (values.isEmpty() && !reset) fail("BAD_ARGUMENT", "nothing to set (zoom, x, y, rotation, crop_*, opacity or reset)");
+    // The Inspector's section switches: off keeps the values but does not apply them
+    const QPair<const char*, bool ClipTransform::*> switches[] = {
+        {"transform_on", &ClipTransform::transformOn}, {"crop_on", &ClipTransform::cropOn},
+        {"opacity_on", &ClipTransform::compositeOn}};
+    bool anySwitch = false;
+    for (const auto& [name, member] : switches) {
+        if (!op.contains(name)) continue;
+        if (!op.value(name).isBool()) fail("BAD_ARGUMENT", QString("%1 must be true or false").arg(name));
+        anySwitch = true;
+    }
+    if (values.isEmpty() && !reset && !anySwitch)
+        fail("BAD_ARGUMENT", "nothing to set (zoom, x, y, rotation, crop_*, opacity, *_on or reset)");
     const bool hasAt = op.contains("at");
     const int at = hasAt ? timeOf(s, op, "at") : 0;
     s.editor.modifyClips(ids, "Transform", [&](Clip& c) {
@@ -260,6 +271,8 @@ void opTransform(Session& s, const QJsonObject& op)
             c.transform = ClipTransform{};
         }
         for (const auto& [p, v] : values) Keys::setValue(c, p, hasAt ? localFrame(c, at) : 0, v);
+        for (const auto& [name, member] : switches)
+            if (op.contains(name)) c.transform.*member = op.value(name).toBool();
     });
 }
 
@@ -312,7 +325,7 @@ void opKeyframe(Session& s, const QJsonObject& op)
     QJsonArray keys = op.value("keys").toArray();
     if (keys.isEmpty()) {
         QJsonObject one{{"at", op.value("at")}};
-        for (const char* k : {"value", "ease", "remove"})
+        for (const char* k : {"value", "ease", "remove", "move_to"})
             if (op.contains(k)) one[k] = op.value(k);
         keys << one;
     }
@@ -321,13 +334,25 @@ void opKeyframe(Session& s, const QJsonObject& op)
         std::optional<double> value;
         std::optional<KeyEase> ease;
         bool remove;
+        std::optional<int> moveTo; // timeline frame the keyframe at `at` moves to
     };
     QVector<Key> list;
     for (const QJsonValue& v : keys) {
         const QJsonObject k = v.toObject();
-        Key key{timeOf(s, k, "at"), {}, {}, k.value("remove").toBool()};
+        Key key{timeOf(s, k, "at"), {}, {}, k.value("remove").toBool(), {}};
         if (k.contains("value")) key.value = paramValue(p, k.value("value"), "value");
         if (k.contains("ease")) key.ease = parseEase(k.value("ease"));
+        if (k.contains("move_to")) {
+            key.moveTo = timeOf(s, k, "move_to");
+            for (int id : ids) {
+                const Clip* c = TimelineOps::findClip(s.project.timeline(), id);
+                if (c && !Keys::keyAt(*c, p, localFrame(*c, key.at)))
+                    fail("NOT_FOUND", QString("clip %1 has no %2 keyframe at %3 to move")
+                                          .arg(id).arg(op.value("param").toString(), tc(key.at, s.format())));
+                if (c && (*key.moveTo < c->start || *key.moveTo >= c->end()))
+                    fail("BAD_ARGUMENT", QString("move_to %1 is outside clip %2").arg(tc(*key.moveTo, s.format())).arg(id));
+            }
+        }
         list << key;
     }
     s.editor.modifyClips(ids, "Keyframe", [&](Clip& c) {
@@ -336,6 +361,10 @@ void opKeyframe(Session& s, const QJsonObject& op)
             const int t = localFrame(c, k.at);
             if (k.remove) {
                 Keys::removeKey(c, p, t);
+                continue;
+            }
+            if (k.moveTo) { // keeps value, ease and handles; a keyframe already at the target is replaced
+                Keys::move(c, {t}, localFrame(c, *k.moveTo) - t, {p});
                 continue;
             }
             // Without a value: keyframe with the value the clip has there now (like clicking the diamond)
@@ -439,7 +468,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "on the clip's picture before transform, speed changes included. Slow: ~10–40 frames per second.",
                  opTrack}
         << OpDef{"transform", "{op:'transform', clips, zoom?, zoom_x?, zoom_y?, x?, y?, rotation?, crop_left?, "
-                              "crop_right?, crop_top?, crop_bottom?, opacity?, reset?, at?}",
+                              "crop_right?, crop_top?, crop_bottom?, opacity?, transform_on?, crop_on?, opacity_on?, "
+                              "reset?, at?}",
                  "Inspector transform/crop/opacity of video clips",
                  "zoom 1 = the clip's picture fitted into the frame keeping its shape (a 1920x1080 clip in a "
                  "1080x1920 timeline is 1080x607.5 wide/high, centered, with transparent bars above and below); x/y "
@@ -449,10 +479,13 @@ void addLookOps(QVector<OpDef>& ops)
                  "(1920x1080 clip: * 1 in a 1920x1080 timeline, * 0.5625 in 1080x1920, * 0.5 in 960x540). Crop "
                  "applies before zoom/position/rotation, so at zoom 2 a crop of 100 hides 200 timeline pixels; the "
                  "cut area is transparent (tracks below show). opacity 0..100. reset:true sets all back first. "
-                 "Values that have keyframes get one at `at`.",
+                 "Values that have keyframes get one at `at`. transform_on/crop_on/opacity_on:false switch that "
+                 "Inspector section off (its values and keyframes stay but do not apply, e.g. to compare), true on "
+                 "again; `info` shows them when off.",
                  opTransform}
-        << OpDef{"keyframe", "{op:'keyframe', clips, param, at, value?, ease?, remove?} or {op:'keyframe', clips, "
-                             "param, keys:[{at, value, ease?}, …]} or {op:'keyframe', clips, param, clear:true}",
+        << OpDef{"keyframe", "{op:'keyframe', clips, param, at, value?, ease?, remove?, move_to?} or {op:'keyframe', "
+                             "clips, param, keys:[{at, value?, ease?, remove?, move_to?}, …]} or {op:'keyframe', clips, "
+                             "param, clear:true}",
                  "animate a value",
                  "param: zoom_x, zoom_y, x, y, rotation, crop_left, crop_right, crop_top, crop_bottom, opacity, "
                  "title_size, title_x, title_y, title_color (\"#rrggbb\"), volume (dB, audio clips), pan (-100..100, "
@@ -462,7 +495,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "the keyframe keeps the current value there. ease (from this keyframe on): linear, ease_in, ease_out, "
                  "ease_in_out. Between keyframes the value is interpolated; with no keyframes left the static value "
                  "applies. Times in `info` keyframes are timeline frames. Units as in op 'transform' (crop_*: timeline "
-                 "pixels on the fitted picture).",
+                 "pixels on the fitted picture). move_to = move the keyframe at `at` to this time inside the clip "
+                 "(value, ease and curve handles stay; one already there is replaced).",
                  opKeyframe}
         << OpDef{"copy_attributes", "{op:'copy_attributes', from, clips, attributes?}",
                  "Paste Attributes: copy values of clip `from` to the clips",

@@ -226,6 +226,18 @@ void testFlattenNudgeAndAngleName()
         }
     CHECK_EQ(editError(R"([{"op":"multicam_nudge","timeline":"M","angle":3,"by":5}])"), QString("BAD_ARGUMENT"));
     CHECK_EQ(editError(R"([{"op":"angle_name","timeline":"Timeline 1","angle":1,"name":"x"}])"), QString("BAD_ARGUMENT"));
+    // Add an angle by hand (offset to the reference); the segments in the timeline stay
+    edit(R"([{"op":"add_angle","timeline":"M","files":["/x/pov3.mp4"],"name":"Cara","offset":"0.4s"}])");
+    for (const Sequence& s : saved().sequences)
+        if (s.id == seq) {
+            CHECK_EQ(s.angles.size(), 3);
+            CHECK_EQ(s.angles.value(2).name, QString("Cara"));
+            const int track = s.angles.value(2).videoTrack;
+            if (CHECK(track >= 0)) CHECK_EQ(s.timeline.video.value(track).clips.value(0).start, 10); // 0.4 s at 25 fps
+        }
+    CHECK_EQ(editError(R"([{"op":"add_angle","timeline":"M"}])"), QString("BAD_ARGUMENT"));
+    CHECK_EQ(editError(R"([{"op":"add_angle","timeline":"Timeline 1","files":["/x/pov3.mp4"],"offset":0}])"),
+             QString("BAD_ARGUMENT"));
 
     // Flatten: normal media clips of the angles
     const int second = saved().timeline.video.value(0).clips.value(1).id;
