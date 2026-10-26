@@ -62,7 +62,9 @@ QString instructions(const Options& opt)
                 "per op; `effects` lists effects, LUTs, transitions and accents), `info` shows the "
                 "result (a project can have several timelines), `check` finds what typically goes wrong before "
                 "rendering (gaps, sound, game sound buried under the music, stutter in recordings, text a phone app "
-                "covers), `render` writes a video, `restore` undoes a change (`backups` lists the saved states).";
+                "covers), `render` writes a video, `restore` undoes a change (`backups` lists the saved states), "
+                "`watch` takes new files of watched folders into the media pool (a recorder's output; for automated "
+                "work: new recording -> highlights -> render).";
     if (opt.app)
         s += " If the project is open in the schneidi app, all tools "
              "work live on what the app shows (unsaved changes included): `edit` changes it there as one "

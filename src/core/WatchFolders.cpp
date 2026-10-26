@@ -176,15 +176,15 @@ Scanner::Result Scanner::scan(const QVector<WatchFolder>& watches, const std::fu
                 s.unchangedSince = nowMs;
                 s.rejected = false;
             }
-            if (inPool(key) || ignored.contains(key) || s.rejected) continue;
+            // Empty: not even started (a recorder that created it, a placeholder) - looked at once it grows
+            if (f.size == 0 || inPool(key) || ignored.contains(key) || s.rejected) continue;
             // When it came: written, created, moved in, or seen appearing while watching
             const qint64 arrived = std::max({f.modified, f.created, s.appeared});
             if (w.since.isValid() && arrived < w.since.toMSecsSinceEpoch()) continue;
-            // Complete: not empty, and nothing written for a while (by its time, or as seen by an earlier scan - the
-            // clock of a network share may differ from this one)
-            const bool settled = f.size > 0
-                                 && (nowMs - f.modified >= m_settleMs
-                                     || (s.unchangedSince > 0 && nowMs - s.unchangedSince >= m_settleMs));
+            // Complete: nothing written for a while (by its time, or as seen by an earlier scan - the clock of a
+            // network share may differ from this one)
+            const bool settled = nowMs - f.modified >= m_settleMs
+                                 || (s.unchangedSince > 0 && nowMs - s.unchangedSince >= m_settleMs);
             if (settled) r.ready << Found{f.path, wi};
             else r.pending << f.path;
         }

@@ -157,6 +157,7 @@ QJsonObject cmdOverview(const QJsonObject& a, Context& ctx);
 QJsonObject cmdCheck(const QJsonObject& a, Context& ctx);
 QJsonObject cmdEffects(const QJsonObject& a, Context& ctx);
 QJsonObject cmdApp(const QJsonObject& a, Context& ctx);
+QJsonObject cmdWatch(const QJsonObject& a, Context& ctx); // CommandsWatch.cpp
 QString presetHelp(); // the app's Deliver presets for the `render` description
 
 // ---------- Analysis (Analysis*.cpp) ----------

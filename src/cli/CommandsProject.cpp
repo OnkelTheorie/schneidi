@@ -186,6 +186,9 @@ QJsonObject cmdInfo(const QJsonObject& a, Context&)
     s.selectTimeline(a["timeline"]);
     QJsonObject o = projectJson(s.project, s.path);
     if (s.live) o["app"] = s.app; // open in the app: what the user sees there
+    // Watch folders: how many, and the revision of the newest file they brought in (`watch` since)
+    if (!s.project.watchFolders().isEmpty() || s.project.watchRevision() > 0)
+        o["watch"] = QJsonObject{{"folders", int(s.project.watchFolders().size())}, {"revision", s.project.watchRevision()}};
     if (a["summary"].toBool()) {
         o["timeline"] = summarized(o["timeline"].toObject());
         o["media"] = o["media"].toArray().size();

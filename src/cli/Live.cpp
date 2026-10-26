@@ -148,6 +148,11 @@ QString undoText(const QJsonObject& args) { return T("KI: %1").arg(opNames(args)
 QString stepText(const QString& command, const QJsonObject& args, const QJsonObject& result, const Project& p)
 {
     if (command == "edit") return opNames(args);
+    if (command == "watch") { // set up a folder, or what one pass brought in
+        if (args.contains("add")) return "watch: add " + QFileInfo(args.value("add").toString()).fileName();
+        if (args.contains("remove")) return "watch: remove " + QFileInfo(args.value("remove").toString()).fileName();
+        return QString("watch: %1 new").arg(result.value("imported").toInt());
+    }
     if (command != "app") return command;
     QString step = args.value("action").toString().trimmed().toLower();
     if (const QString undone = result.value("undone").toString(result.value("redone").toString()); !undone.isEmpty())
@@ -510,7 +515,10 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
     }
     compareClips(before, clipStates(*p), change);
     change.step = stepText(name, args, result, *p);
-    if (logged || !change.added.isEmpty() || !change.changed.isEmpty() || !change.removed.isEmpty())
+    // A `watch` pass that found nothing new is no step (a follow runs one whenever a watched folder changes)
+    const bool quiet = name == "watch" && p->media().size() == mediaBefore.size() && !args.contains("add")
+                       && !args.contains("remove");
+    if ((logged && !quiet) || !change.added.isEmpty() || !change.changed.isEmpty() || !change.removed.isEmpty())
         m_host->liveChanged(change);
     return {{"ok", true}, {"result", result}};
 }
@@ -612,6 +620,15 @@ std::vector<Candidate> runningApps()
 void setClientName(const QString& name) { g_clientName = name; }
 
 void disable() { g_isApp = true; }
+
+void release()
+{
+    for (auto& [key, conn] : connections()) {
+        conn->socket.disconnectFromServer();
+        if (conn->socket.state() != QLocalSocket::UnconnectedState) conn->socket.waitForDisconnected(1000);
+    }
+    connections().clear();
+}
 
 Connection* connectionFor(const QString& project)
 {
