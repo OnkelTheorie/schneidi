@@ -3,7 +3,9 @@
 // how late it fires: the longest stall and the sum of all stalls over 50 ms, from the click to the first rendered frame
 // and from the last frame to the end of the job (closing the graph).
 // Run: QT_QPA_PLATFORM=offscreen ./build/tests/bench_render_start [--files 30] [--media <folder>] [--seconds 2]
-//   --media keeps the generated clips in that folder (and reuses them next time)
+//        [--encoder auto|software] [--runs 3]
+//   --media keeps the generated clips in that folder (and reuses them next time); --encoder auto (the default of a new
+//   job): the first run of the session also waits for the graphics card probe
 #include "check.h"
 
 #include "core/Project.h"
@@ -73,6 +75,8 @@ int main(int argc, char** argv)
     };
     const int files = std::max(1, option("--files", "30").toInt());
     const double seconds = std::max(0.2, option("--seconds", "2").toDouble());
+    const VideoEncoder encoder = videoEncoderFromId(option("--encoder", "auto"), VideoEncoder::Auto);
+    const int runs = std::max(1, option("--runs", "3").toInt());
     QTemporaryDir tmp;
     const QString mediaDir = option("--media", tmp.path());
     QDir().mkpath(mediaDir);
@@ -123,7 +127,7 @@ int main(int argc, char** argv)
     job.id = 1;
     job.path = QDir(tmp.path()).filePath("out.mp4");
     job.settings.format = "h264";
-    job.settings.encoder = VideoEncoder::Software;
+    job.settings.encoder = encoder;
     job.settings.quality = 2;
     job.size = QSize(1280, 720);
     job.inOut = true;
@@ -134,7 +138,7 @@ int main(int argc, char** argv)
     RenderQueuePanel* panel = deliver.queuePanel();
     RenderQueue* queue = deliver.renderQueue();
     StallMeter meter, whole;
-    for (int run = 0; run < 3; ++run) {
+    for (int run = 0; run < runs; ++run) {
         RenderJob j = job;
         j.path = QDir(tmp.path()).filePath(QString("out%1.mp4").arg(run));
         p.setRenderQueue({j});
@@ -183,6 +187,26 @@ int main(int argc, char** argv)
                     run, clickMs, frameMs, endMs, done.status == RenderStatus::Done ? "done" : qPrintable(done.message),
                     startWorst, startSum, whole.worst, whole.sum);
         std::fflush(stdout);
+    }
+
+    // Stop while the job is still being prepared (files being opened): how long the click blocks
+    {
+        RenderJob j = job;
+        j.path = QDir(tmp.path()).filePath("cancel.mp4");
+        p.setRenderQueue({j});
+        bool frames = false;
+        const auto c = QObject::connect(queue, &RenderQueue::progress, [&](int, int percent) { frames = frames || percent > 0; });
+        panel->renderClicked();
+        QEventLoop wait;
+        QTimer::singleShot(100, &wait, &QEventLoop::quit);
+        wait.exec();
+        QElapsedTimer clock;
+        clock.start();
+        queue->cancel();
+        const qint64 ms = clock.elapsed();
+        QObject::disconnect(c);
+        std::printf("stop after 100 ms (%s): blocked %lld ms, job %s\n", frames ? "rendering already" : "still preparing", ms,
+                    qPrintable(renderStatusText(p.renderQueue().first())));
     }
     return 0;
 }
