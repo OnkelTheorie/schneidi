@@ -161,6 +161,9 @@ Reply parseBody(Protocol p, const QJsonObject& body);
 // them, maybe in a ```json fence; or such objects in <tool_call> tags (text around them allowed). None when the answer
 // is anything else. Ids: idPrefix + "_1", "_2" …
 QVector<ToolCall> textCalls(const QString& text, const QString& idPrefix);
+// A final answer a small model wrote as JSON: {"text": "…"} ("answer", "response", "reply", "message", "content",
+// "final_answer"; maybe in a ```json fence, with "type"/"role" beside it) -> the text; else the answer as it is
+QString textAnswer(const QString& text);
 
 // An error answer: HTTP status, body and Retry-After -> what the user reads, whether trying again may help
 struct Failure {

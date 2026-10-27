@@ -682,6 +682,17 @@ void testTextCalls()
 }
 
 // Only on a private session bus with a Secret Service (see the top of the file)
+// Final answers a small model wrote as JSON: the text
+void testTextAnswer()
+{
+    CHECK_EQ(Ai::textAnswer(R"({"text": "Fertig."})"), QString("Fertig."));
+    CHECK_EQ(Ai::textAnswer("```json\n{\"answer\": \"Zwei Clips.\"}\n```"), QString("Zwei Clips."));
+    CHECK_EQ(Ai::textAnswer(R"({"type": "text", "text": "Ok"})"), QString("Ok"));
+    CHECK_EQ(Ai::textAnswer(R"({"text": "a", "clips": 3})"), QString(R"({"text": "a", "clips": 3})"));
+    CHECK_EQ(Ai::textAnswer(R"({"answer": 3})"), QString(R"({"answer": 3})"));
+    CHECK_EQ(Ai::textAnswer("Plain text."), QString("Plain text."));
+}
+
 void testSecretService()
 {
     if (qEnvironmentVariable("AI_KEYCHAIN_TEST") != "1") return;
@@ -719,6 +730,7 @@ int main(int argc, char** argv)
     testCompany();
     testChatHelpers();
     testTextCalls();
+    testTextAnswer();
     testSecretService();
     return Check::result();
 }

@@ -288,11 +288,15 @@ void AiChat::onReply(const Ai::Reply& reply)
     emit usageChanged();
     // A local server that cut the request to the model's context (Ollama does so silently, 4096 tokens unless set
     // otherwise): the model read only its end - without the tools and the guide, maybe without the request. Its
-    // answer is neither run nor kept (what the user writes next joins their message); the user learns why. Text has
-    // at least one token per 5 characters (about 4 here).
+    // answer is neither run nor kept nor shown (what the user writes next joins their message); the user learns why.
+    // Text has at least one token per 5 characters (about 4 here).
     if (m_endpoint.protocol == Ai::Protocol::OpenAi && Ai::isLocal(m_endpoint.address) && reply.usage.input > 0
         && m_sentChars > 5 * reply.usage.input + 4000) {
-        if (m_streaming >= 0) change(m_streaming, [](Entry& e) { e.state = Entry::State::Failed; });
+        if (m_streaming >= 0)
+            change(m_streaming, [](Entry& e) {
+                e.text.clear(); // what it wrote without the request (nonsense) is not shown
+                e.state = Entry::State::Failed;
+            });
         m_streaming = -1;
         addError(Ai::contextAdvice(reply.usage.input, m_sentChars / 4, true));
         finishTurn();
@@ -304,6 +308,7 @@ void AiChat::onReply(const Ai::Reply& reply)
     if (r.calls.isEmpty() && !r.cutOff() && m_endpoint.protocol == Ai::Protocol::OpenAi) {
         r.calls = Ai::textCalls(r.text, QString("text_%1").arg(m_history.size()));
         if (!r.calls.isEmpty()) r.text.clear();
+        else r.text = Ai::textAnswer(r.text); // {"text": "…"} as the final answer: the text
     }
     // The whole text (also when it did not stream)
     if (m_streaming >= 0) {
@@ -547,7 +552,9 @@ QString AiChat::transcript() const
     for (const Entry& e : m_entries) {
         switch (e.kind) {
         case Entry::Kind::User: out << T("Du: %1").arg(e.text); break;
-        case Entry::Kind::Assistant: out << T("KI: %1").arg(e.text); break;
+        case Entry::Kind::Assistant: // (calls written as text, a cut request's answer: not shown)
+            if (!e.text.isEmpty()) out << T("KI: %1").arg(e.text);
+            break;
         case Entry::Kind::Tool: out << "  › " + e.summary; break;
         case Entry::Kind::Notice:
         case Entry::Kind::Error: out << "  (" + e.text + ")"; break;

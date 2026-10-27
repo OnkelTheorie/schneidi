@@ -681,6 +681,8 @@ void test(const QString& dir)
         CHECK_EQ(count(chat, AiChat::Entry::Kind::Tool), tools);
         if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e))
             CHECK(e->text.contains("4096") && e->text.contains("OLLAMA_CONTEXT_LENGTH"));
+        for (const AiChat::Entry& e : chat->entries()) CHECK(!e.text.contains("\"trim\"")); // what it wrote: not shown
+        CHECK(!chat->transcript().contains("\"trim\""));
         // Not kept: the next request has the user's words, no answer of the model after them
         fake.script = {openAiText("Ok.")};
         panel->sendText("Und jetzt?");
@@ -688,6 +690,15 @@ void test(const QString& dir)
         const QJsonArray m = fake.last().body["messages"].toArray();
         CHECK_EQ(m.last()["role"].toString(), QString("user"));
         CHECK(m.last()["content"].toString().contains("10 Sekunden") && m.last()["content"].toString().contains("Und jetzt?"));
+    }
+
+    // ---- A final answer written as JSON ({"text": …}): the text is shown ----
+    {
+        fake.script = {openAiText(R"({"text": "Die Timeline ist 4 s lang."})")};
+        panel->sendText("Wie lang?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (const AiChat::Entry* a = lastOf(chat, AiChat::Entry::Kind::Assistant); CHECK(a))
+            CHECK_EQ(a->text, QString("Die Timeline ist 4 s lang."));
     }
 
     // ---- Arguments that are no JSON object ("social"): the answer says what to send, in English ----

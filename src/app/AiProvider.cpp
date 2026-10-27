@@ -655,6 +655,26 @@ QVector<ToolCall> textCalls(const QString& text, const QString& idPrefix)
     return calls;
 }
 
+QString textAnswer(const QString& text)
+{
+    QString t = text.trimmed();
+    if (t.startsWith("```")) {
+        t = t.section('\n', 1); // the fence line may name the language
+        if (t.trimmed().endsWith("```")) t = t.trimmed().chopped(3);
+        t = t.trimmed();
+    }
+    if (!t.startsWith('{')) return text;
+    const QJsonObject o = parseObject(t.toUtf8());
+    static const QStringList keys{"text", "answer", "response", "reply", "message", "content", "final_answer"};
+    QString found;
+    for (auto it = o.begin(); it != o.end(); ++it) {
+        if (it.key() == "type" || it.key() == "role") continue;
+        if (!keys.contains(it.key()) || !it.value().isString() || !found.isEmpty()) return text; // anything else: as it is
+        found = it.value().toString();
+    }
+    return found.trimmed().isEmpty() ? text : found;
+}
+
 QStringList parseModels(const QJsonObject& body)
 {
     QStringList ids;
