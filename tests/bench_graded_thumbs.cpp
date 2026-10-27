@@ -1,8 +1,9 @@
 // Benchmark (not a CTest test): timeline filmstrip with and without the Color page grade (engine/GradedThumbs).
-// 200 clips of four 1080p sources, every second clip graded with a LUT + saturation. Per zoom level (whole timeline,
-// ~20 clips) and mode (graded off = the filmstrip as before, on): time until the filmstrip is complete, then the
-// UI-thread time per paint; afterwards a grade pasted onto all graded clips (time of the first paint, until regraded);
-// at last scrolling through the whole timeline zoomed in (paint time while pictures/grades are still coming).
+// A long timeline: 1000 clips of 2 s (~33 min) from four 1080p sources, every second clip graded with a LUT +
+// saturation. Per zoom level (whole timeline, ~20 clips) and mode (graded off = the filmstrip as before, on): time
+// until the filmstrip is complete, then the UI-thread time per paint; afterwards a grade pasted onto all graded clips
+// (time of the first paint, until regraded); at last scrolling through the whole timeline zoomed in (paint time while
+// pictures and grades are still coming).
 // Run: ./build/tests/bench_graded_thumbs [media dir (reused if the files are there)]
 #include "check.h"
 
@@ -27,7 +28,7 @@
 
 namespace {
 
-constexpr int kClips = 200, kLen = 50, kSources = 4;
+constexpr int kClips = 1000, kLen = 50, kSources = 4;
 
 struct Model {
     Project project;
@@ -243,7 +244,7 @@ int main(int argc, char** argv)
         for (int i = 0; i < kRuns; ++i) GradedThumbs::apply(tile, spec);
         std::printf("grading one 160x90 tile: %.3f ms\n", t.nsecsElapsed() / 1e6 / kRuns);
     }
-    for (double zoom : {1.0, 10.0}) {
+    for (double zoom : {1.0, kClips / 20.0}) {
         std::printf("%s:\n", zoom == 1 ? "whole timeline (fit)" : "zoomed in (~20 clips)");
         for (bool graded : {false, true}) {
             const Run r = measure(m, graded, zoom);
