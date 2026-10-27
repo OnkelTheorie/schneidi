@@ -3,8 +3,8 @@
 Goal: a vertical video that works on a phone, muted, in the first two seconds.
 
 ## Format
-- New project `width` 1080, `height` 1920, frame rate of the material. (`render` `size` only letterboxes a
-  landscape timeline into a portrait file - that is not a vertical edit.)
+- New project `width` 1080, `height` 1920 (or `template` "vertical"), frame rate of the material. (`render` `size`
+  only letterboxes a landscape timeline into a portrait file - that is not a vertical edit.)
 - A 16:9 clip in a 9:16 project is fitted: full width, black above and below. Choose per clip:
   - **Fill and reframe** (people, one subject): `transform` `zoom` ≈ 3.16 fills the height; `x` moves the visible
     window left/right (pixels from the center, about ±1160 at that zoom). Look with `frames` where the subject is.

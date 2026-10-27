@@ -19,36 +19,88 @@
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
+#include <utility>
+
+void Editor::setPreviewSource(const MediaInfo& info)
+{
+    m_preview = info;
+    emit previewSourceChanged();
+}
+
+const MediaInfo* Editor::sourceMedia(const QString& path) const
+{
+    if (const MediaInfo* m = m_project->mediaInfo(path)) return m;
+    return !path.isEmpty() && path == m_preview.path ? &m_preview : nullptr;
+}
+
+bool Editor::importPreviewSource(const QString& path, int bin)
+{
+    if (m_project->mediaInfo(path)) return true;
+    if (path.isEmpty() || path != m_preview.path || m_preview.length <= 0 || (!m_preview.hasVideo && !m_preview.hasAudio))
+        return false;
+    MediaInfo info = std::exchange(m_preview, {}); // before addMedia: its mediaChanged finds no preview to adopt
+    info.bin = bin;
+    m_project->addMedia(info);
+    emit previewSourceChanged();
+    return m_project->mediaInfo(path) != nullptr;
+}
+
+void Editor::adoptPreviewSource()
+{
+    if (m_preview.path.isEmpty() || !m_project->mediaInfo(m_preview.path)) return;
+    const MediaInfo preview = std::exchange(m_preview, {});
+    const MediaInfo* m = m_project->mediaInfo(preview.path);
+    if (m->markIn < 0 && m->markOut < 0 && (preview.markIn >= 0 || preview.markOut >= 0))
+        m_project->setMediaMarks(preview.path, preview.markIn, preview.markOut);
+    if (m->markers.isEmpty() && !preview.markers.isEmpty()) m_project->setMediaMarkers(preview.path, preview.markers);
+    emit previewSourceChanged();
+}
+
+void Editor::setSourceMarks(const QString& path, int markIn, int markOut)
+{
+    if (m_project->mediaInfo(path)) {
+        m_project->setMediaMarks(path, markIn, markOut);
+    } else if (!path.isEmpty() && path == m_preview.path && (m_preview.markIn != markIn || m_preview.markOut != markOut)) {
+        m_preview.markIn = markIn;
+        m_preview.markOut = markOut;
+        emit previewSourceChanged();
+    }
+}
 
 void Editor::setSourceMarkIn(const QString& path, int frame)
 {
-    const MediaInfo* m = m_project->mediaInfo(path);
+    const MediaInfo* m = sourceMedia(path);
     if (!m) return;
     const int out = frame >= 0 && m->markOut >= 0 && m->markOut < frame ? -1 : m->markOut;
-    m_project->setMediaMarks(path, frame, out);
+    setSourceMarks(path, frame, out);
 }
 
 void Editor::toggleSourceMarker(const QString& path, int frame)
 {
-    const MediaInfo* m = m_project->mediaInfo(path);
+    const MediaInfo* m = sourceMedia(path);
     if (!m || frame < 0 || (m->length > 0 && frame >= m->length)) return;
     QVector<int> markers = m->markers;
     if (markers.contains(frame)) markers.removeAll(frame);
     else markers.insert(std::lower_bound(markers.begin(), markers.end(), frame) - markers.begin(), frame);
-    m_project->setMediaMarkers(path, markers);
+    if (m_project->mediaInfo(path)) {
+        m_project->setMediaMarkers(path, markers);
+    } else {
+        m_preview.markers = markers;
+        emit previewSourceChanged();
+    }
 }
 
 void Editor::setSourceMarkOut(const QString& path, int frame)
 {
-    const MediaInfo* m = m_project->mediaInfo(path);
+    const MediaInfo* m = sourceMedia(path);
     if (!m) return;
     const int in = frame >= 0 && m->markIn > frame ? -1 : m->markIn;
-    m_project->setMediaMarks(path, in, frame);
+    setSourceMarks(path, in, frame);
 }
 
 void Editor::clearSourceMarks(const QString& path)
 {
-    m_project->setMediaMarks(path, -1, -1);
+    setSourceMarks(path, -1, -1);
 }
 
 int Editor::streamTrackStart(const Timeline& tl, const MediaInfo& m, int aTrack, int start, int length) const
@@ -149,6 +201,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     using M = SourceEditMode;
     using namespace TimelineOps;
     Project* p = m_project;
+    importPreviewSource(path, m_preview.bin); // looked at in the Media Storage: into the Media Pool first
     const MediaInfo* info = p->mediaInfo(path);
     if (!info || info->length <= 0 || (!info->hasVideo && !info->hasAudio)) return -1;
     const MediaInfo m = *info;
@@ -324,6 +377,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
 
 void Editor::placeSourceRange(const QString& path, int in, int out, int frame, int track)
 {
+    importPreviewSource(path, m_preview.bin); // looked at in the Media Storage: into the Media Pool first
     const MediaInfo* info = m_project->mediaInfo(path);
     if (!info || info->length <= 0) return;
     const MediaInfo m = *info;

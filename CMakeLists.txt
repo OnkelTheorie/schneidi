@@ -97,10 +97,13 @@ add_library(schneidi_lib STATIC
     src/core/Interchange.h        src/core/Interchange.cpp
     src/core/InterchangeEdl.cpp   src/core/InterchangeFcp7.cpp  src/core/InterchangeOtio.cpp
     src/core/StreamPresets.h      src/core/StreamPresets.cpp
+    src/core/StartTemplates.h     src/core/StartTemplates.cpp
     src/core/Ducking.h            src/core/Ducking.cpp
     src/core/ExportCheck.h        src/core/ExportCheck.cpp
     src/core/Stutter.h            src/core/Stutter.cpp
     src/core/ContactSheet.h       src/core/ContactSheet.cpp
+    src/core/PoolFilter.h         src/core/PoolFilter.cpp
+    src/core/WatchFolders.h       src/core/WatchFolders.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Background.h       src/engine/Background.cpp
@@ -124,6 +127,7 @@ add_library(schneidi_lib STATIC
     src/engine/Transcriber.h      src/engine/Transcriber.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/StillFetcher.h     src/engine/StillFetcher.cpp
+    src/engine/ScrubFrames.h      src/engine/ScrubFrames.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
     src/engine/ProxyCleanup.h     src/engine/ProxyCleanup.cpp
     src/engine/MemoryRelease.h    src/engine/MemoryRelease.cpp
@@ -175,12 +179,14 @@ add_library(schneidi_lib STATIC
     src/app/MainWindowChat.cpp
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
+    src/app/MainWindowWatch.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
     src/app/ProxyCleanupDialog.h src/app/ProxyCleanupDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
     src/app/StreamPresetsDialog.h src/app/StreamPresetsDialog.cpp
+    src/app/StartTemplatesPage.h src/app/StartTemplatesPage.cpp
     src/app/DuckingDialog.h src/app/DuckingDialog.cpp
     src/app/MulticamDialog.h src/app/MulticamDialog.cpp
     src/app/ExtensionsDialog.h  src/app/ExtensionsDialog.cpp
@@ -191,12 +197,16 @@ add_library(schneidi_lib STATIC
     src/app/DynamicsDialog.h src/app/DynamicsDialog.cpp
     src/app/TimelineExportDialog.h src/app/TimelineExportDialog.cpp
     src/app/ContactSheetDialog.h src/app/ContactSheetDialog.cpp
+    src/app/FolderWatch.h src/app/FolderWatch.cpp
+    src/app/WatchFoldersDialog.h src/app/WatchFoldersDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
     src/app/CrashReport.h         src/app/CrashReport.cpp
 
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
+    src/ui/PoolFilterButton.h     src/ui/PoolFilterButton.cpp
+    src/ui/HoverScrub.h           src/ui/HoverScrub.cpp
     src/ui/FileManager.h          src/ui/FileManager.cpp
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
@@ -270,6 +280,7 @@ target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live con
 # Command line + MCP server (no window): for scripts and AIs, see src/cli/main.cpp
 add_library(schneidi_cli_lib STATIC
     src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h src/cli/CommandsProject.cpp
+    src/cli/CommandsWatch.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp

@@ -478,7 +478,7 @@ bool continuous(const Timeline& tl, int track, const std::vector<float>& framePe
     if (loud <= 1e-5f) return false; // silent
     const float limit = loud * 0.0316f; // -30 dB
     const auto quiet = std::count_if(v.begin(), v.end(), [limit](float p) { return p < limit; });
-    return quiet <= v.size() / 10;
+    return size_t(quiet) <= v.size() / 10;
 }
 
 QVector<Issue> mix(const Timeline& tl, const QVector<TrackSound>& sounds, int from, const ProjectFormat& f,

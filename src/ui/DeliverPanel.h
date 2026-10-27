@@ -58,6 +58,7 @@ private:
     void applyPreset(int comboIndex);
     void updateEncoders(); // encoder choices for the format (hardware ones once the graphics card probe is done)
     void updateRange();
+    void updateName();   // file name = the opened timeline's name, as long as the user has not typed another one
     void updateFormat(); // resolutions matching the project settings
     void updateControls(); // fields depending on the format (audio only, quality)
     void reloadPresets(const QString& select = {});
@@ -74,6 +75,7 @@ private:
     QComboBox* m_preset;
     QToolButton* m_presetMenu;
     QLineEdit* m_name;
+    QString m_autoName; // what updateName() put into m_name last (still that = not typed over)
     QLineEdit* m_folder;
     QComboBox* m_format;
     QComboBox* m_resolution; // data: QSize

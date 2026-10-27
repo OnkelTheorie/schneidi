@@ -862,6 +862,9 @@ struct ExportWriter::Impl {
     {
         if (audioFmt != mlt_audio_none) {
             mlt_producer_seek(soundSource, 0);
+            // A consumer that stopped (a writer before this one, e.g. a hardware encoder that failed) left it paused:
+            // its frames would carry silence
+            mlt_producer_set_speed(soundSource, 1);
             soundConsumer = newConsumer(MLT_PRODUCER_SERVICE(soundSource), false, true, 1);
             if (!soundConsumer || !startPiece(soundConsumer)) {
                 fail(QStringLiteral("sound workers cannot be started"));

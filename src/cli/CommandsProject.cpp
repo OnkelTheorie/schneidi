@@ -1,6 +1,7 @@
 // schneidi-cli: commands on projects (new, info, import, edit, backups, restore, render, effects) and the app
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
+#include "cli/Sandbox.h"
 
 #include "core/Accents.h"
 #include "core/Editor.h"
@@ -14,6 +15,7 @@
 #include "core/RenderJob.h"
 #include "core/Retime.h"
 #include "core/Selection.h"
+#include "core/StartTemplates.h"
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
@@ -154,6 +156,61 @@ QJsonObject changesJson(const QMap<QString, Shown>& before, const QMap<QString, 
     return o;
 }
 
+// The start template of a new project: id or name, a template file or another project; empty = the user's default
+StartTemplate startTemplate(const QString& given)
+{
+    const QString key = given.trimmed();
+    if (key.isEmpty()) return StartTemplates::defaultTemplate();
+    if (key.endsWith(".json", Qt::CaseInsensitive)
+        || key.endsWith("." + QString(ProjectFile::Extension), Qt::CaseInsensitive)) {
+        const QString path = absolute(key);
+        if (!QFileInfo::exists(path)) fail("NOT_FOUND", "template file not found: " + path);
+        QString error;
+        const std::optional<StartTemplate> t = StartTemplates::load(path, &error);
+        if (!t) fail("BAD_ARGUMENT", QString("template %1: %2").arg(path, error));
+        return *t;
+    }
+    if (const std::optional<StartTemplate> t = StartTemplates::find(key)) return *t;
+    QStringList ids;
+    for (const StartTemplate& t : StartTemplates::all()) ids << t.id;
+    fail("NOT_FOUND", QString("no start template '%1' (there are: %2; or a template file)").arg(key, ids.join(", ")));
+}
+
+// A start template as `templates` shows it: the project `new` makes from it, as `info` shows a project
+QJsonObject templateJson(const StartTemplate& t, const QString& defaultId)
+{
+    Project p;
+    p.load(StartTemplates::apply(t));
+    QJsonObject o{{"id", t.id}, {"name", t.displayName()}, {"built_in", t.builtIn}};
+    if (const QString d = t.displayDescription(); !d.isEmpty()) o["description"] = d;
+    if (t.id == defaultId) o["default"] = true;
+    if (!t.builtIn && !Sandbox::active()) o["file"] = t.path;
+    QJsonObject format = formatJson(p.format());
+    format["fixed_resolution"] = p.fixedResolution();
+    format["fixed_frame_rate"] = p.fixedFrameRate();
+    o["format"] = format;
+    const QJsonObject tl = summarized(timelineJson(p));
+    QJsonArray tracks;
+    for (const QJsonValue& v : tl["tracks"].toArray()) {
+        QJsonObject track = v.toObject();
+        track.remove("clips");
+        tracks << track;
+    }
+    o["tracks"] = tracks;
+    if (tl.contains("subtitles")) {
+        QJsonArray subtitles;
+        for (const QJsonValue& v : tl["subtitles"].toArray()) {
+            QJsonObject st = v.toObject();
+            st.remove("cues");
+            subtitles << st;
+        }
+        o["subtitles"] = subtitles;
+    }
+    o["master"] = tl["master"];
+    if (p.importPresets()) o["import_presets"] = importPresetsJson(*p.importPresets());
+    return o;
+}
+
 } // namespace
 
 // ---------- Commands ----------
@@ -165,9 +222,9 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
         fail("BAD_ARGUMENT", QString("project file must end in .%1").arg(ProjectFile::Extension));
     if (QFileInfo::exists(path) && !a["overwrite"].toBool())
         fail("EXISTS", "project already exists (pass overwrite to replace it): " + path);
-    ProjectData d;
-    d.format = parseFormat(a);
-    d.timeline = emptyTimeline();
+    const StartTemplate t = startTemplate(a["template"].toString());
+    ProjectData d = StartTemplates::apply(t);
+    d.format = parseFormat(a, d.format);
     Project p;
     p.load(d);
     for (const QJsonValue& v : a["media"].toArray()) {
@@ -178,7 +235,18 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
     QDir().mkpath(QFileInfo(path).absolutePath());
     QString error;
     if (!ProjectFile::save(p.data(), path, &error)) fail("SAVE_FAILED", error);
-    return projectJson(p, path);
+    QJsonObject o = projectJson(p, path);
+    o["template"] = QJsonObject{{"id", t.id}, {"name", t.displayName()}};
+    return o;
+}
+
+QJsonObject cmdTemplates(const QJsonObject& a, Context&)
+{
+    const QString def = StartTemplates::defaultTemplate().id;
+    if (!a["template"].toString().trimmed().isEmpty()) return templateJson(startTemplate(a["template"].toString()), def);
+    QJsonArray list;
+    for (const StartTemplate& t : StartTemplates::all()) list << templateJson(t, def);
+    return {{"default", def}, {"templates", list}};
 }
 
 QJsonObject cmdInfo(const QJsonObject& a, Context&)
@@ -187,6 +255,9 @@ QJsonObject cmdInfo(const QJsonObject& a, Context&)
     s.selectTimeline(a["timeline"]);
     QJsonObject o = projectJson(s.project, s.path);
     if (s.live) o["app"] = s.app; // open in the app: what the user sees there
+    // Watch folders: how many, and the revision of the newest file they brought in (`watch` since)
+    if (!s.project.watchFolders().isEmpty() || s.project.watchRevision() > 0)
+        o["watch"] = QJsonObject{{"folders", int(s.project.watchFolders().size())}, {"revision", s.project.watchRevision()}};
     if (a["summary"].toBool()) {
         o["timeline"] = summarized(o["timeline"].toObject());
         o["media"] = o["media"].toArray().size();
@@ -215,7 +286,7 @@ QJsonObject cmdImport(const QJsonObject& a, Context&)
     bool empty = TimelineOps::endFrame(s.project.timeline()) == 0;
     for (const Sequence& q : s.project.sequences())
         if (q.id != s.project.currentSequence()) empty = empty && TimelineOps::endFrame(q.timeline) == 0;
-    if (empty && !firstVideo.isEmpty()) {
+    if (empty && !firstVideo.isEmpty() && !s.project.fixedFrameRate()) { // fixed: the user's choice (start template)
         const ClipFormat cf = detectClipFormat(firstVideo);
         const double project = s.project.format().rate.fps();
         if (cf.ok && std::abs(cf.rate.fps() - project) > 0.01)

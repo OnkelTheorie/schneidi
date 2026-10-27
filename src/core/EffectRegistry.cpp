@@ -6,6 +6,8 @@
 
 #include <QColor>
 
+#include <algorithm>
+
 namespace EffectRegistry {
 
 namespace {
@@ -21,12 +23,14 @@ QVector<EffectDescriptor> withWindows(QVector<EffectDescriptor> effects)
 QVector<EffectDescriptor>& registry()
 {
     static QVector<EffectDescriptor> effects = withWindows({
-        // frei0r instead of avfilter.chromakey: delivers real transparency and does not crash on exit
+        // frei0r instead of avfilter.chromakey: delivers real transparency and does not crash on exit. Fixed stage
+        // after the grade: it keys the camera picture, the effects then work on the keyed picture
         {"chromakey", T("Green Screen"), "frei0r.bluescreen0r", true,
          {
              {"color", T("Farbe"), "0", EffectParam::Color, QColor(0, 255, 0), 0, 0},
              {"distance", T("Toleranz"), "1", EffectParam::Double, 0.3, 0.0, 1.0},
-         }},
+         },
+         false, {}, {}, true},
         // Simple color correction (all values -100..+100, 0 = unchanged). Engine: avfilter.colorchannelmixer
         // (temperature/tint as white balance, saturation) + avfilter.colorlevels (brightness, contrast)
         {"color", T("Farbkorrektur"), {}, true,
@@ -62,7 +66,8 @@ QVector<EffectDescriptor>& registry()
              {"accuracy", T("Genauigkeit"), {}, EffectParam::Double, 9.0, 1, 15, AnimParam::Count, 0.05, 0, {},
               T("Genauigkeit der Bewegungserkennung (höher = langsamere Analyse). Neue Analyse"), {}, {}, true},
          },
-         true, {}, T("Beruhigt verwackelte Aufnahmen. Analysiert den Clip im Hintergrund (Fortschritt im Inspector)")},
+         true, {}, T("Beruhigt verwackelte Aufnahmen. Analysiert den Clip im Hintergrund (Fortschritt im Inspector)"),
+         true},
         // Noise reduction for voice recordings (DaVinci: Fairlight FX → Noise Reduction). Engine: own spectral noise
         // suppression (engine/Denoise, real time); defaults work for typical hiss/hum under speech.
         {"denoise", T("Rauschunterdrückung"), {}, false,
@@ -74,7 +79,7 @@ QVector<EffectDescriptor>& registry()
              {"track", T("Rauschen verfolgen"), {}, EffectParam::Bool, true, 0, 0, AnimParam::Count, 1, 2, {},
               T("Misst das Rauschen laufend in der Aufnahme (in Sprechpausen) statt den festen Rauschpegel zu nehmen")},
          },
-         true, {}, T("Senkt gleichmäßiges Rauschen (Rauschen, Brummen, Lüfter) in Sprachaufnahmen ab")},
+         true, {}, T("Senkt gleichmäßiges Rauschen (Rauschen, Brummen, Lüfter) in Sprachaufnahmen ab"), true},
         // Color page (DaVinci "Primaries - Color Wheels", own area instead of Effects Library): values as in DaVinci
         // (Lift/Gamma 0 = neutral, Gain 1, Offset 25, Contrast 1, Pivot 0.435, Saturation 50), plus LUT (.cube).
         // Engine: own MLT filter (engine/ColorGrade), applied before all other effects.
@@ -103,7 +108,8 @@ QVector<EffectDescriptor>& registry()
              {"tint", T("Tönung"), {}, EffectParam::Double, 0.0, -100, 100, AnimParam::GradeTint, 0.1, 2},
              {"exposure", T("Belichtung"), {}, EffectParam::Double, 0.0, -4, 4, AnimParam::GradeExposure, 0.01, 2},
              {"lut", T("LUT"), {}, EffectParam::Path, QString(), 0, 0},
-         }},
+         },
+         false, {}, {}, true},
     });
     return effects;
 }
@@ -186,6 +192,37 @@ void remove(Clip& c, const QString& id)
     // Dynamic parameters also when the effect is unknown here (plugin missing)
     QString effectId;
     c.keys.removeIf([&](const auto& it) { return Keys::effectParamOf(it.key(), &effectId, nullptr) && effectId == id; });
+}
+
+bool movable(const QString& id)
+{
+    const EffectDescriptor* d = find(id);
+    return !d || !d->fixed;
+}
+
+QStringList order(const Clip& c)
+{
+    QStringList out;
+    for (const EffectInstance& e : c.effects)
+        if (movable(e.effectId)) out << e.effectId;
+    return out;
+}
+
+QVector<const EffectInstance*> renderOrder(const Clip& c)
+{
+    // Place of a fixed stage in the chain (TimelineBuilder applyEffects); the movable effects come after all of them
+    static const QStringList stages{"stabilize", "grade", "chromakey"};
+    auto rank = [](const EffectInstance& e) {
+        if (movable(e.effectId)) return int(stages.size()) + 1;
+        const int i = int(stages.indexOf(e.effectId));
+        return i >= 0 ? i : int(stages.size());
+    };
+    QVector<const EffectInstance*> out;
+    for (const EffectInstance& e : c.effects) out << &e;
+    std::stable_sort(out.begin(), out.end(), [&](const EffectInstance* a, const EffectInstance* b) {
+        return rank(*a) < rank(*b);
+    });
+    return out;
 }
 
 QVariant value(const Clip& c, const QString& id, const QString& key)

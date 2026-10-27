@@ -52,7 +52,7 @@ MulticamView::MulticamView(Project* project, Selection* selection, Editor* edito
     lay->setContentsMargins(4, 2, 4, 2);
     lay->setSpacing(2);
 
-    auto makeButton = [this, lay](const QString& name, const QString& text, const QString& tip) {
+    auto makeButton = [lay](const QString& name, const QString& text, const QString& tip) {
         auto* b = new QToolButton;
         b->setObjectName(name);
         b->setText(text);

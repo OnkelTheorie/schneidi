@@ -1,6 +1,7 @@
 #include "core/Subtitles.h"
 
 #include <QRegularExpression>
+#include <QSet>
 #include <QStringDecoder>
 
 #include <algorithm>
@@ -179,6 +180,32 @@ void place(SubtitleTrack& track, const SubtitleCue& cue)
     out << cue;
     std::sort(out.begin(), out.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });
     track.cues = out;
+}
+
+void move(Timeline& tl, const QVector<int>& ids, int delta, int trackDelta, const std::function<int()>& newId)
+{
+    QVector<QPair<int, SubtitleCue>> moving; // target track, entry
+    QSet<int> movingIds;
+    for (int id : ids) {
+        int t = -1;
+        if (const SubtitleCue* c = find(std::as_const(tl), id, &t); c && !movingIds.contains(id)) {
+            moving << qMakePair(t + trackDelta, *c);
+            movingIds.insert(id);
+        }
+    }
+    if (moving.isEmpty()) return;
+    // all out first, then placed anew: entries of the selection do not overwrite each other
+    for (SubtitleTrack& t : tl.subtitles)
+        t.cues.erase(std::remove_if(t.cues.begin(), t.cues.end(), [&](const SubtitleCue& c) { return movingIds.contains(c.id); }),
+                     t.cues.end());
+    for (auto m : moving) {
+        m.second.start += delta;
+        m.second.end += delta;
+        place(tl.subtitles[m.first], m.second);
+    }
+    for (SubtitleTrack& t : tl.subtitles) // split entries get their own id
+        for (SubtitleCue& c : t.cues)
+            if (c.id == 0) c.id = newId();
 }
 
 const SubtitleCue* find(const Timeline& tl, int id, int* trackIndex)

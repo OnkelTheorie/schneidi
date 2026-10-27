@@ -136,7 +136,7 @@ private:
 // One entry of the chat
 class EntryView : public QWidget {
 public:
-    explicit EntryView(Entry::Kind kind) : m_kind(kind)
+    explicit EntryView(Entry::Kind kind)
     {
         auto* lay = new QVBoxLayout(this);
         lay->setContentsMargins(0, 0, 0, 0);
@@ -244,7 +244,6 @@ private:
                                   .arg(c.name(), Theme::text.name()));
     }
 
-    Entry::Kind m_kind;
     Entry m_entry;
     QLabel* m_text = nullptr;
     QPushButton* m_head = nullptr;

@@ -5,10 +5,12 @@
 // (added/changed/removed clips with the place of the removed ones, the step, failures) and, while an AI session is
 // connected, its work outside the app (analyses: start, progress, end with a short result).
 #include "cli/Live.h"
+#include "core/EffectRegistry.h"
 #include "core/LiveHost.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
+#include "core/TimelineOps.h"
 #include "engine/ProxyCleanup.h"
 #include "engine/ProxyManager.h"
 
@@ -213,6 +215,18 @@ int main(int argc, char* argv[])
         }
         // No analysis without an app session: a file of its own reports nothing
         CHECK(fake.activities.isEmpty());
+        // Effect order in the app: two effects added and one moved in one edit = one undo step there
+        const int left = fake.project.timeline().video[0].clips.first().id;
+        const int steps = fake.project.undoStack()->index();
+        r = cli({"edit", fake.path, "--ops",
+                 QString(R"([{"op":"effect","clips":[%1],"effect":"blur"},{"op":"effect","clips":[%1],"effect":"color"},
+                             {"op":"effect","clips":[%1],"effect":"color","move":"first"}])").arg(left)});
+        CHECK_EQ(code(r), QString("ok"));
+        const Clip* moved = TimelineOps::findClip(fake.project.timeline(), left);
+        CHECK(moved && EffectRegistry::order(*moved) == (QStringList{"color", "blur"}));
+        CHECK_EQ(fake.project.undoStack()->index(), steps + 1);
+        CHECK_EQ(code(cli({"app", "undo"})), QString("ok"));
+        CHECK(fake.project.timeline().video[0].clips.first().effects.isEmpty());
     }
 
     // Reading sees the unsaved change

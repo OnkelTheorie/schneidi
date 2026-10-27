@@ -12,6 +12,8 @@
 #include <QVector>
 
 class QAction;
+class QKeyEvent;
+class QWidget;
 
 enum class WheelAction { None, ScrollVertical, ScrollHorizontal, Zoom, TrackHeight };
 
@@ -25,11 +27,19 @@ public:
         QString text;
         QKeySequence defaultKey;
         QPointer<QAction> action;
+        // Empty = the whole window. Otherwise the panel the keys belong to (e.g. "transcript", "render_queue", a Media
+        // Pool list): they only act while it has the focus and win there over the window's keys, so they only clash
+        // with keys of the same scope
+        QString scope = {};
+        QKeySequence defaultKey2 = {}; // default of the second slot
+        QPointer<QWidget> scopeWidget = {}; // registerScopedAction: the widget it acts in
     };
 
     void load();
-    // Register an action: gets the key from the file resp. its default
-    void registerAction(QAction* action, const QString& id, const QString& category, const QKeySequence& defaultKey);
+    // Register an action: gets the key from the file resp. its default. The same id again (a new window) replaces
+    // the old entry.
+    void registerAction(QAction* action, const QString& id, const QString& category, const QKeySequence& defaultKey,
+                        const QString& scope = {}, const QKeySequence& defaultKey2 = {});
     // After registering all actions: write the file if it is missing or entries are missing
     void saveIfIncomplete();
 
@@ -69,6 +79,26 @@ public:
 
     WheelAction wheelAction(Qt::KeyboardModifiers mods) const;
     QString filePath() const;
+
+    // An action that only acts inside `scope` (e.g. Delete in the Media Pool's bin list): its keys work while that
+    // widget has the focus and win there over window keys with the same input (Delete there never deletes timeline
+    // clips); a mouse button bound to it works over that widget. Never put such an action into a menu: that makes its
+    // keys global.
+    void registerScopedAction(QAction* action, const QString& id, const QString& category,
+                              const QKeySequence& defaultKey, QWidget* scope);
+    // Register an action of one panel (scope, e.g. "render_queue"): its keys only count while that panel has the focus
+    // and win there over the window's (Del deletes render jobs there, clips elsewhere). The panel checks them itself
+    // with matches() in its ShortcutOverride and KeyPress events; the action is not added to a widget (Qt would call the
+    // same key in the window ambiguous and do nothing). A mouse button bound to it only works over its parent widget.
+    void registerPanelAction(QAction* action, const QString& id, const QString& category, const QString& scope,
+                             const QKeySequence& defaultKey, const QKeySequence& defaultKey2 = {});
+    QString scope(const QString& id) const;    // empty = window-wide
+    QWidget* scopeOf(const QString& id) const; // the widget a scoped/panel action acts in; nullptr = whole window
+    // Is the key of this event one of the action's keys (enabled actions only)? A key of the number pad also counts
+    // as the same key without the pad (Enter, Delete, digits)
+    static bool matches(const QAction* action, const QKeyEvent* e);
+    // The action among `actions` whose keys match the key event, else nullptr
+    static QAction* matching(const QList<QAction*>& actions, const QKeyEvent* event);
 
 private:
     InputBindings();

@@ -2,6 +2,7 @@
 #include "check.h"
 
 #include "core/Editor.h"
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
@@ -20,6 +21,7 @@
 #include <QMouseEvent>
 #include <QTest>
 #include <QTimer>
+#include <QUndoStack>
 
 static Clip mk(int id, int start, int len, int link = 0, const QString& path = "/x/a.mp4")
 {
@@ -144,6 +146,71 @@ int main(int argc, char** argv)
     // Undo reverts the lock
     p.undoStack()->undo();
     CHECK(!p.timeline().video[0].locked);
+
+    // --- Lock key: the tracks of the selection, without one the target tracks; one undo step each
+    {
+        const ProjectData before = p.data(); // the rest of the test goes on from here
+        setup(p);
+        const auto locked = [&] {
+            QString s;
+            for (const Track& t : p.timeline().video) s += t.locked ? 'V' : '-';
+            for (const Track& t : p.timeline().audio) s += t.locked ? 'A' : '-';
+            for (const SubtitleTrack& t : p.timeline().subtitles) s += t.locked ? 'S' : '-';
+            return s;
+        };
+        QUndoStack* undo = p.undoStack();
+        int steps = undo->count();
+        sel.set({2, 12}); // linked pair on V1 + A1
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("V-A-"));
+        CHECK(sel.isEmpty()); // the clips left the selection with their tracks
+        CHECK_EQ(undo->count(), steps + 1);
+        CHECK_EQ(undo->undoText(), T("Spuren sperren"));
+        // No selection: target tracks (V1 + A2) - one of them unlocked -> both locked, then all locked -> unlocked
+        ed.setTargetTracks(0, 1);
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("V-AA"));
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("--A-"));
+        CHECK_EQ(undo->undoText(), T("Spuren entsperren"));
+        undo->undo();
+        CHECK_EQ(locked(), QString("V-AA"));
+        undo->undo();
+        undo->undo();
+        CHECK_EQ(locked(), QString("----"));
+        // One track: the text of the lock button; a selected transition counts as selection
+        sel.set({21});
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("---A"));
+        CHECK_EQ(undo->undoText(), T("Spur sperren"));
+        sel.setTransition({1, 2});
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("V--A"));
+        CHECK(sel.transition().isNull());
+        // Target tracks that do not exist: nothing (no undo step)
+        ed.setTargetTracks(5, 5);
+        sel.clear();
+        steps = undo->count();
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(undo->count(), steps);
+        ed.setTargetTracks(0, 0);
+        // A selected subtitle: its subtitle track (with clips: theirs too)
+        ed.addSubtitleTrack();
+        const int cue = ed.addSubtitle(10, 0);
+        CHECK(sel.ids() == QSet<int>{cue});
+        sel.set({cue, 12});
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("V-AAS"));
+        CHECK(sel.isEmpty());
+        // The lock button stays one track (shares the code): one step, its own text
+        ed.toggleTrackLock({TrackKind::Audio, 0});
+        CHECK_EQ(locked(), QString("V--AS"));
+        CHECK_EQ(undo->undoText(), T("Spur entsperren"));
+        ed.toggleSubtitleTrackLock(0);
+        CHECK_EQ(locked(), QString("V--A-"));
+        p.load(before);
+        sel.clear();
+    }
 
     // --- Rename / color
     ed.renameTrack({TrackKind::Audio, 1}, "  Musik  ");

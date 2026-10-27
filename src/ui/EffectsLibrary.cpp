@@ -118,6 +118,7 @@ QPixmap transitionIcon(TransitionType type)
     case TransitionType::WipeUp:
         wipe(QRect(0, cy, w, h - cy), QPolygon({{cx - 5, cy + 4}, {cx + 5, cy + 4}, {cx, cy - 4}}));
         break;
+    case TransitionType::Luma: break; // listed per image with its own preview (Lumas::preview)
     }
     p.setPen(QColor(0, 0, 0, 120));
     p.setBrush(Qt::NoBrush);

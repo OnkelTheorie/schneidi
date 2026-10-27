@@ -3,6 +3,7 @@
 #include "core/I18n.h"
 #include "core/TimelineOps.h"
 
+#include <QDateTime>
 #include <QFileInfo>
 #include <QSet>
 #include <QUndoCommand>
@@ -106,6 +107,25 @@ private:
     State m_before, m_after;
 };
 
+// Files of watch folders into the Media Pool (Project::addWatchedMedia); undo takes them out again
+class WatchImportCommand : public QUndoCommand {
+public:
+    WatchImportCommand(Project* p, const QString& text, QVector<WatchImport> files)
+        : QUndoCommand(text), m_project(p), m_files(std::move(files)) {}
+    void undo() override
+    {
+        // What changed meanwhile outside the undo history (source In/Out, transcript) comes back with a redo
+        for (WatchImport& f : m_files)
+            if (const MediaInfo* m = m_project->mediaInfo(f.media.path)) f.media = *m;
+        m_project->applyWatchedMedia(m_files, false);
+    }
+    void redo() override { m_project->applyWatchedMedia(m_files, true); }
+
+private:
+    Project* m_project;
+    QVector<WatchImport> m_files;
+};
+
 Track makeTrack(TrackKind kind)
 {
     Track t;
@@ -156,6 +176,12 @@ ProjectData Project::data() const
     d.lastLinkId = m_lastLinkId;
     d.sequences = m_sequences;
     d.currentSequence = m_current;
+    d.fixedResolution = m_fixedResolution;
+    d.fixedFrameRate = m_fixedFrameRate;
+    d.importPresets = m_importPresets;
+    d.watchFolders = m_watchFolders;
+    d.watchLog = m_watchLog;
+    d.watchRevision = m_watchRevision;
     return d;
 }
 
@@ -227,6 +253,15 @@ void Project::load(const ProjectData& d)
     m_lastClipId = d.lastClipId;
     m_lastLinkId = d.lastLinkId;
     m_renderQueue = d.renderQueue;
+    m_fixedResolution = d.fixedResolution;
+    m_fixedFrameRate = d.fixedFrameRate;
+    m_importPresets = d.importPresets;
+    m_watchFolders = d.watchFolders;
+    for (WatchFolder& w : m_watchFolders)
+        if (w.bin != 0 && !bin(w.bin)) w.bin = 0;
+    m_watchLog = d.watchLog;
+    m_watchRevision = d.watchRevision;
+    for (const WatchArrival& a : m_watchLog) m_watchRevision = std::max(m_watchRevision, a.revision);
     markSaved();
     emit formatChanged();
     emit mediaChanged();
@@ -235,6 +270,8 @@ void Project::load(const ProjectData& d)
     emit currentSequenceChanged();
     emit timelineChanged();
     emit renderQueueChanged();
+    emit importPresetsChanged();
+    emit watchFoldersChanged();
 }
 
 void Project::reset()
@@ -617,6 +654,88 @@ void Project::setRenderQueue(const QVector<RenderJob>& jobs)
     m_renderQueue = jobs;
     emit renderQueueChanged();
     markModified();
+}
+
+void Project::setFixedFormat(bool resolution, bool frameRate)
+{
+    if (resolution == m_fixedResolution && frameRate == m_fixedFrameRate) return;
+    m_fixedResolution = resolution;
+    m_fixedFrameRate = frameRate;
+    markModified();
+}
+
+void Project::setImportPresets(const std::optional<StreamPresets>& presets)
+{
+    if (presets == m_importPresets) return;
+    m_importPresets = presets;
+    emit importPresetsChanged();
+    markModified();
+}
+
+void Project::setWatchFolders(const QVector<WatchFolder>& list)
+{
+    if (list == m_watchFolders) return;
+    m_watchFolders = list;
+    emit watchFoldersChanged();
+    markModified();
+}
+
+QVector<WatchArrival> Project::addWatchedMedia(const QVector<WatchImport>& files)
+{
+    QSet<QString> known;
+    for (const MediaInfo& m : m_media) known.insert(WatchFolders::pathKey(m.path));
+    QVector<WatchImport> add;
+    for (WatchImport f : files) {
+        const QString key = WatchFolders::pathKey(f.media.path);
+        if (f.media.path.isEmpty() || known.contains(key)) continue;
+        known.insert(key);
+        const int w = WatchFolders::indexOf(m_watchFolders, f.folder);
+        f.media.bin = w >= 0 && bin(m_watchFolders[w].bin) ? m_watchFolders[w].bin : 0;
+        add << f;
+    }
+    if (add.isEmpty()) return {};
+    QVector<WatchArrival> arrivals;
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    for (const WatchImport& f : add) arrivals << WatchArrival{++m_watchRevision, f.media.path, f.folder, now};
+    m_watchLog << arrivals;
+    if (m_watchLog.size() > WatchFolders::kLogSize) m_watchLog.remove(0, m_watchLog.size() - WatchFolders::kLogSize);
+    QString folder = QFileInfo(add.first().folder).fileName();
+    if (folder.isEmpty()) folder = add.first().folder;
+    closeMerge(); // never part of a slider series of the user
+    m_undo.push(new WatchImportCommand(this, T("Überwachter Ordner „%1“: %2 neue Datei(en)").arg(folder, QString::number(add.size())),
+                                       add)); // push calls redo()
+    closeMerge();
+    return arrivals;
+}
+
+void Project::applyWatchedMedia(const QVector<WatchImport>& files, bool in)
+{
+    bool watches = false;
+    for (const WatchImport& f : files) {
+        const int w = WatchFolders::indexOf(m_watchFolders, f.folder);
+        QStringList* ignored = w >= 0 ? &m_watchFolders[w].ignored : nullptr;
+        if (in) {
+            if (!mediaInfo(f.media.path)) {
+                m_media << f.media;
+                if (m_media.last().bin != 0 && !bin(m_media.last().bin)) m_media.last().bin = 0;
+            }
+            if (ignored)
+                watches = ignored->removeIf([&](const QString& p) { return WatchFolders::samePath(p, f.media.path); }) > 0
+                          || watches;
+        } else {
+            m_media.removeIf([&](const MediaInfo& m) { return m.path == f.media.path; });
+            if (ignored && std::none_of(ignored->cbegin(), ignored->cend(),
+                                        [&](const QString& p) { return WatchFolders::samePath(p, f.media.path); })) {
+                *ignored << f.media.path;
+                watches = true;
+            }
+        }
+    }
+    // The ignored list is part of the file, also when the undo history comes back to its clean state
+    if (!in) m_mediaDirty = true;
+    emit mediaChanged();
+    if (watches) emit watchFoldersChanged();
+    emit modifiedChanged(isModified());
 }
 
 void Project::markModified()

@@ -13,9 +13,14 @@ RenderQueue::RenderQueue(Project* project, QObject* parent)
     : QObject(parent), m_project(project), m_exporter(new Exporter(this))
 {
     connect(m_exporter, &Exporter::progress, this, [this](int percent) {
-        if (!m_current) return;
+        if (!m_current || m_preparing) return;
         m_percent = percent;
         emit progress(m_current, percent);
+    });
+    connect(m_exporter, &Exporter::started, this, [this] {
+        if (!m_current) return;
+        m_preparing = false;
+        emit progress(m_current, 0);
     });
     connect(m_exporter, &Exporter::finished, this, &RenderQueue::onExportFinished);
 }
@@ -82,7 +87,13 @@ bool RenderQueue::start(const QVector<int>& ids)
     if (m_pending.isEmpty()) return false;
     ++m_run;
     m_done = m_failed = 0;
-    for (int id : m_pending) setStatus(id, RenderStatus::Queued);
+    QVector<RenderJob> q = m_project->renderQueue(); // in one go: every change rebuilds the queue's cards
+    for (RenderJob& j : q)
+        if (m_pending.contains(j.id)) {
+            j.status = RenderStatus::Queued;
+            j.message.clear();
+        }
+    m_project->setRenderQueue(q);
     emit runningChanged(true);
     next();
     return true;
@@ -91,31 +102,62 @@ bool RenderQueue::start(const QVector<int>& ids)
 void RenderQueue::next()
 {
     while (!m_pending.isEmpty()) {
-        const int id = m_pending.takeFirst();
+        // The first job of this run in the queue's order as it is now (jobs may have been dragged meanwhile)
         const auto& q = m_project->renderQueue();
-        const auto it = std::find_if(q.cbegin(), q.cend(), [id](const RenderJob& j) { return j.id == id; });
-        if (it == q.cend()) continue; // deleted in the meantime
+        const auto it = std::find_if(q.cbegin(), q.cend(), [this](const RenderJob& j) { return m_pending.contains(j.id); });
+        if (it == q.cend()) { // the rest was deleted meanwhile
+            m_pending.clear();
+            break;
+        }
         const RenderJob job = *it;
+        const int id = job.id;
+        m_pending.removeOne(id);
         m_current = id;
         m_percent = 0;
+        m_preparing = true;
         setStatus(id, RenderStatus::Rendering);
         m_clock.start();
         emit preparing(id);
-        QString error;
-        if (job.sequence && !m_project->sequence(job.sequence)) {
-            error = T("Die Timeline gibt es nicht mehr.");
-        } else if (m_exporter->start(m_project->renderTimeline(job.sequence), exportSettings(job, *m_project), &error)) {
-            emit progress(id, 0);
-            return; // continues in onExportFinished
+        // Auto or a hardware encoder needs the graphics card probe (once per session, a few seconds): wait for it
+        // without blocking the window, then start
+        if (renderFormat(job.settings.format).hardware && job.settings.encoder != VideoEncoder::Software
+            && !HardwareEncoders::probed()) {
+            HardwareEncoders::probeInBackground(); // no-op when it runs already
+            m_probeWait = connect(HardwareEncoders::notifier(), &HardwareEncoders::Notifier::probed, this, [this] {
+                disconnect(m_probeWait);
+                if (!launch()) next();
+            });
+            if (!HardwareEncoders::probed()) return; // continues when the probe has finished
+            disconnect(m_probeWait); // finished in between
         }
-        m_current = 0;
-        ++m_failed;
-        setStatus(id, RenderStatus::Failed, error);
-        emit jobFinished(id, RenderStatus::Failed);
+        if (launch()) return; // continues in onExportFinished
     }
     m_current = 0;
+    m_preparing = false;
     emit runningChanged(false);
     emit finished(m_done, m_failed);
+}
+
+bool RenderQueue::launch()
+{
+    const int id = m_current;
+    const auto& q = m_project->renderQueue();
+    const auto it = std::find_if(q.cbegin(), q.cend(), [id](const RenderJob& j) { return j.id == id; });
+    QString error;
+    if (it == q.cend()) { // cannot happen: the running job is not deleted (RenderQueuePanel::removeJobs)
+        error = T("Export abgebrochen.");
+    } else if (it->sequence && !m_project->sequence(it->sequence)) {
+        error = T("Die Timeline gibt es nicht mehr.");
+    } else if (m_exporter->start(m_project->renderTimeline(it->sequence), exportSettings(*it, *m_project), &error)) {
+        // Preparing (opening the files) goes on in the background until the exporter reports started()
+        return true;
+    }
+    m_current = 0;
+    m_preparing = false;
+    ++m_failed;
+    setStatus(id, RenderStatus::Failed, error);
+    emit jobFinished(id, RenderStatus::Failed);
+    return false;
 }
 
 void RenderQueue::onExportFinished(bool ok, const QString& message)
@@ -124,6 +166,7 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
     if (!id) return;
     const int run = m_run; // cancel() from within jobFinished already ends the run itself
     m_current = 0;
+    m_preparing = false;
     RenderStatus status = RenderStatus::Done;
     if (m_canceling) {
         status = RenderStatus::Canceled;
@@ -163,6 +206,11 @@ void RenderQueue::cancel()
         return;
     }
     m_canceling = true;
+    if (m_probeWait) { // still waiting for the graphics card probe: the exporter has not started
+        disconnect(m_probeWait);
+        onExportFinished(false, {});
+        return;
+    }
     m_exporter->cancel(); // reports finished() immediately
 }
 
