@@ -13,7 +13,8 @@
 // test runs that never send; the chat section in Settings › AI (test connection, model list, key stored, short
 // request). Claude gets the full request; a server on this computer the short one (every tool, shorter texts, `help`
 // has the details), its context asked once (llama.cpp's /props, Ollama's num_ctx): too small = not sent, tight = said;
-// a cut request's answer is not shown, a final answer written as JSON shows its text.
+// a cut request's answer is not shown (a big tool call in the history is no sign of one), a final answer written as
+// JSON shows its text.
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
 
 #include "check.h"
@@ -767,6 +768,28 @@ void test(const QString& dir)
         CHECK(waitFor([&] { return !chat->busy(); }));
         if (const AiChat::Entry* a = lastOf(chat, AiChat::Entry::Kind::Assistant); CHECK(a))
             CHECK_EQ(a->text, QString("Die Timeline ist 4 s lang."));
+    }
+
+    // ---- A big tool call counts as it is sent (compact JSON): a local server that read all of it is not taken for
+    // one that cut the request ----
+    {
+        chat->clear();
+        QJsonArray ops; // fails as a whole (unknown op): nothing changes in the project
+        for (int i = 0; i < 300; ++i)
+            ops << QJsonObject{{"op", "no_such_op"}, {"clip", 1}, {"param", "opacity"}, {"at", QJsonArray{i, i + 1}}};
+        fake.script = {openAiTool("call_big", "edit", {{"project", "@app"}, {"ops", ops}}), openAiText("Fertig.", 1000000)};
+        panel->sendText("Setz viele Keyframes");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        // The next request is about as long as this one: the server says it read a token per 4 characters of it
+        // (the whole JSON body; our requests have 3.6-4 characters per token of their text)
+        const qint64 body = QJsonDocument(fake.last().body).toJson(QJsonDocument::Compact).size();
+        CHECK(chat->requestTokens() * 4 <= body); // the estimate holds no more than was sent
+        const int errors = count(chat, AiChat::Entry::Kind::Error);
+        fake.script = {openAiText("Ja.", int(body / 4))};
+        panel->sendText("Und?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(count(chat, AiChat::Entry::Kind::Error), errors);
+        if (const AiChat::Entry* a = lastOf(chat, AiChat::Entry::Kind::Assistant); CHECK(a)) CHECK_EQ(a->text, QString("Ja."));
     }
 
     // ---- A context the server names (llama.cpp's /props, Ollama's num_ctx): too small = not sent, tight = said ----
