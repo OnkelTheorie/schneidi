@@ -73,11 +73,15 @@
 #include <QSaveFile>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSettings>
 #include <QShortcut>
 #include <QInputDialog>
 #include <QStandardPaths>
 #include <QTimer>
+#include <algorithm>
+#include <numeric>
+#include <tuple>
 #include <utility>
 
 void MainWindow::buildLayout()
@@ -389,9 +393,12 @@ void MainWindow::setViewerLarge(bool on)
             const LargeViewer was = std::exchange(m_large, {});
             for (const QPointer<QWidget>& w : was.hidden)
                 if (w) w->show();
-            auto restore = [sizes = was.sizes] {
+            // Scroll positions too: a panel laid out at another size on the way back loses them (the Inspector)
+            auto restore = [sizes = was.sizes, scrolls = was.scrolls] {
                 for (const auto& [splitter, list] : sizes)
                     if (splitter) splitter->setSizes(list);
+                for (const auto& [bar, value] : scrolls)
+                    if (bar) bar->setValue(value);
             };
             restore();
             // Panels that size themselves when shown (the mixer grows to fit its strips) do it in a zero timer: once
@@ -408,26 +415,52 @@ void MainWindow::setViewerLarge(bool on)
                 for (QWidget* w = k->parentWidget(); w && w != this; w = w->parentWidget())
                     if (auto* s = qobject_cast<QSplitter*>(w); s && !splitters.contains(s)) splitters << s;
             m_large.active = true;
+            QSize viewer = m_viewer->size(); // its size once the room is given (the layout follows later)
+            QSplitter* shared = nullptr;     // the splitter with the viewer above the timeline
+            int viewerAt = -1, timelineAt = -1;
             for (QSplitter* s : splitters) {
                 const QList<int> before = s->sizes();
                 QList<int> after = before;
-                int freed = 0, gainer = -1;
+                int freed = 0, gainer = -1, timelineIndex = -1;
                 for (int i = 0; i < s->count(); ++i) {
                     QWidget* w = s->widget(i);
                     if (holds(w, m_viewer)) gainer = i;
-                    else if (keep.size() > 1 && holds(w, m_timeline)) {
-                        if (gainer < 0) gainer = i;
-                    } else if (!w->isHidden()) {
+                    else if (keep.size() > 1 && holds(w, m_timeline)) timelineIndex = i;
+                    else if (!w->isHidden()) {
                         freed += after[i] + s->handleWidth();
                         after[i] = 0;
+                        for (QScrollBar* bar : w->findChildren<QScrollBar*>()) m_large.scrolls.append({bar, bar->value()});
                         w->hide();
                         m_large.hidden << w;
                     }
                 }
+                if (gainer >= 0 && timelineIndex >= 0 && s->orientation() == Qt::Vertical)
+                    std::tie(shared, viewerAt, timelineAt) = std::tuple(s, gainer, timelineIndex);
+                if (gainer < 0) gainer = timelineIndex;
                 if (freed == 0 || gainer < 0) continue;
                 m_large.sizes.append({s, before});
                 after[gainer] += freed;
                 s->setSizes(after);
+                if (s->widget(gainer)->isAncestorOf(m_viewer) || s->widget(gainer) == m_viewer)
+                    (s->orientation() == Qt::Horizontal ? viewer.rwidth() : viewer.rheight()) += freed;
+            }
+            // With the room beside it the picture is often limited by the height (one viewer, 16:9 on a wide
+            // screen): then the timeline gives the viewer height too, as much as the picture can use, but keeps a
+            // third of the column (or its own height if that is less)
+            if (shared) {
+                QList<int> sizes = shared->sizes();
+                const int total = std::accumulate(sizes.begin(), sizes.end(), 0);
+                const int floor = std::max(total / 3, m_timeline->minimumSizeHint().height());
+                const int take = std::min(m_viewer->heightFor(viewer.width()) - viewer.height(),
+                                          sizes[timelineAt] - floor);
+                if (take > 0) {
+                    if (std::none_of(m_large.sizes.begin(), m_large.sizes.end(),
+                                     [shared](const auto& entry) { return entry.first == shared; }))
+                        m_large.sizes.append({shared, sizes});
+                    sizes[timelineAt] -= take;
+                    sizes[viewerAt] += take;
+                    shared->setSizes(sizes);
+                }
             }
         }
     }

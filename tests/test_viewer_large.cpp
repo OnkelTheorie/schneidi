@@ -1,7 +1,7 @@
 // Large and full-screen viewer.
 // Large viewer (Workspace › Large Viewer, the viewer's button, MainWindow::setViewerLarge): on every page the panels
-// beside the viewer and the timeline hide, the viewer gets their room, the timeline keeps its size and its zoom/scroll
-// (core rule); the same action, Esc, a panel button or a page switch bring back exactly the layout before (which
+// beside the viewer and the timeline hide, the viewer gets their room; a picture limited by the height takes height
+// from the timeline, which keeps a third of the column and its zoom/scroll (core rule); the same action, Esc, a panel button or a page switch bring back exactly the layout before (which
 // panels, splitter sizes), the saved layout settings stay untouched. With the Green Screen pipette on, Esc cancels the
 // pipette first.
 // Full-screen viewer (Workspace › Full-Screen Viewer, Ctrl+F, MainWindow::setViewerFullScreen): a window of its own
@@ -31,6 +31,7 @@
 #include <QApplication>
 #include <QMenuBar>
 #include <QPointer>
+#include <QScrollBar>
 #include <QSet>
 #include <QSettings>
 #include <QSplitter>
@@ -52,6 +53,7 @@ void dump(QWidget* w, const QString& name)
 struct Layout {
     QHash<QWidget*, bool> hidden;
     QHash<QSplitter*, QList<int>> sizes;
+    QHash<QScrollBar*, int> scrolls;
     QList<QPointer<QWidget>> alive; // widgets a panel rebuilt meanwhile are not compared
     static Layout of(QWidget* w)
     {
@@ -62,6 +64,8 @@ struct Layout {
         }
         for (QSplitter* s : w->findChildren<QSplitter*>())
             if (s->isVisible()) l.sizes[s] = s->sizes(); // the other pages' splitters are laid out when shown
+        for (QScrollBar* b : w->findChildren<QScrollBar*>())
+            if (b->isVisible()) l.scrolls[b] = b->value();
         return l;
     }
 };
@@ -96,6 +100,14 @@ bool sameLayout(const Layout& a, const Layout& b, const char* where)
             for (int v : b.sizes.value(it.key())) y << QString::number(v);
             Check::report(false, "splitter sizes changed", __FILE__, __LINE__,
                           QString("%1: %2 %3 -> %4").arg(where, it.key()->objectName(), x.join(' '), y.join(' ')));
+            same = false;
+        }
+    for (auto it = a.scrolls.begin(); it != a.scrolls.end(); ++it)
+        if (alive.contains(it.key()) && b.scrolls.contains(it.key()) && b.scrolls.value(it.key()) != it.value()) {
+            Check::report(false, "scroll position changed", __FILE__, __LINE__,
+                          QString("%1: %2 in %3: %4 -> %5").arg(where, it.key()->objectName(),
+                                                                it.key()->parentWidget()->parentWidget()->metaObject()->className())
+                              .arg(it.value()).arg(b.scrolls.value(it.key())));
             same = false;
         }
     return same;
@@ -164,13 +176,23 @@ void testEditPage(MainWindow& w, Engine& engine)
         if (QToolButton* tb = toggleNamed(w, T(t))) tb->setChecked(true);
     w.showAiChat(true);
     settle();
+    // The clip selected (the Inspector shows its sections) and the Inspector scrolled down
+    if (const Clip* c = w.liveProject()->timeline().video.value(0).clips.isEmpty()
+            ? nullptr : &w.liveProject()->timeline().video[0].clips.first())
+        w.liveSelection()->set({c->id});
+    settle();
+    QScrollBar* inspectorScroll = nullptr;
+    for (QScrollBar* b : inspector->findChildren<QScrollBar*>())
+        if (b->orientation() == Qt::Vertical && b->maximum() > 100) inspectorScroll = b;
+    if (CHECK(inspectorScroll)) inspectorScroll->setValue(inspectorScroll->maximum());
     // A zoom and scroll of the user's own
     TimelineView* tv = timeline->view();
     tv->setZoomAndScroll(7.5, 12.0, 0);
     const ViewState view = tv->view();
     const Layout before = Layout::of(&w);
     const QVariantMap settings = savedSettings();
-    const int viewerWidth = viewer->width(), timelineHeight = timeline->height(), timelineWidth = timeline->width();
+    const int viewerWidth = viewer->width(), viewerHeight = viewer->height(), timelineHeight = timeline->height(),
+              timelineWidth = timeline->width();
     dump(&w, "edit-before");
 
     button->click();
@@ -179,10 +201,13 @@ void testEditPage(MainWindow& w, Engine& engine)
     CHECK(inspector->isHidden() || !inspector->isVisible());
     CHECK(!pool->isVisible() && !inspector->isVisible() && !w.aiChatPanel()->isVisible());
     CHECK(viewer->isVisible() && timeline->isVisible());
-    // The viewer takes the room beside it (almost the whole width), the timeline its height (± a handle)
+    // The viewer takes the room beside it (almost the whole width); its 16:9 picture is then limited by the height,
+    // so it takes height from the timeline too, which keeps a third of the column
     CHECK(viewer->width() > viewerWidth + 300);
     CHECK(viewer->width() > w.width() - 20);
-    CHECK(std::abs(timeline->height() - timelineHeight) <= 2);
+    CHECK(viewer->height() > viewerHeight + 100);
+    CHECK(timeline->height() < timelineHeight);
+    CHECK(timeline->height() >= (viewer->height() + timeline->height()) / 3 - 4);
     CHECK(timeline->width() >= timelineWidth);
     dump(&w, "edit-large");
     // Zoom and scroll stay (core rule), the saved layout too
@@ -261,7 +286,8 @@ void testOtherPages(MainWindow& w)
     auto* timeline = w.findChild<TimelinePanel*>();
     if (!CHECK(large && viewer && timeline)) return;
 
-    // Color page: the wheels and scopes below hide, the viewer gets their height, the timeline keeps its own
+    // Color page: the wheels and scopes below hide, the viewer gets their height; the timeline keeps its own (it is
+    // less than a third there)
     w.showPage(MainWindow::Page::Color);
     settle();
     const Layout color = Layout::of(&w);

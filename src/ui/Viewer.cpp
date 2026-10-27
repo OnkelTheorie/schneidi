@@ -25,6 +25,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <utility>
 
@@ -402,6 +403,13 @@ QToolButton* Viewer::addViewAction(QAction* action, ViewIcon icon)
 QImage Viewer::picture() const
 {
     return m_screen->image();
+}
+
+int Viewer::heightFor(int width) const
+{
+    const QSize frame = m_engine->frameSize();
+    if (frame.isEmpty()) return 0;
+    return height() - m_stack->height() + int(std::ceil(double(width) * frame.height() / frame.width()));
 }
 
 void Viewer::setHint(const QString& text, const QString& button)

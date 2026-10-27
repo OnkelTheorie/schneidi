@@ -59,6 +59,8 @@ public:
     QToolButton* addViewAction(QAction* action, ViewIcon icon);
     // The picture shown last (the engine's preview frame)
     QImage picture() const;
+    // Height of the whole viewer (bars included) at which the picture fills `width` (0 = no frame size known)
+    int heightFor(int width) const;
 
 signals:
     void hintAccepted(); // the hint's button
