@@ -9,11 +9,15 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
+#include "engine/ProxyCleanup.h"
+#include "engine/ProxyManager.h"
 
 #include "check.h"
 
 #include <QGuiApplication>
+#include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalSocket>
@@ -131,6 +135,7 @@ int main(int argc, char* argv[])
 {
     QTemporaryDir tmp;
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8()); // own registry of running apps (and backups)
+    qputenv("XDG_CACHE_HOME", (tmp.path() + "/cache").toUtf8()); // own proxy folder (clean_proxies deletes there)
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("schneidi");
 
@@ -265,6 +270,41 @@ int main(int argc, char* argv[])
     r = cli({"app", "proxies"});
     CHECK_EQ(fake.proxies, QStringList({"/x/a.mp4"}));
     CHECK_EQ(r["proxies"].toArray().size(), 1);
+    {
+        // clean_proxies: lists the proxy files neither the app's project nor a recent one needs (dry run), deletes
+        // them only with --delete; the app project's proxy stays
+        QDir().mkpath(ProxyManager::cacheDir());
+        auto write = [](const QString& path, int bytes) {
+            QFile f(path);
+            if (f.open(QIODevice::WriteOnly)) f.write(QByteArray(bytes, 'x'));
+        };
+        const QString mine = ProxyManager::proxyPath("/x/a.mp4");
+        write(mine, 100);
+        const QString goneOriginal = tmp.path() + "/gone.mp4";
+        write(goneOriginal, 10);
+        const QString old = ProxyManager::proxyPath(goneOriginal);
+        write(old, 300);
+        ProxyCleanup::writeNote(old, goneOriginal, ProxyManager::kMaxSize);
+        QFile::remove(goneOriginal);
+        r = cli({"app", "clean_proxies"});
+        CHECK_EQ(code(r), QString("ok"));
+        CHECK(r["dry_run"].toBool());
+        const QJsonArray files = r["files"].toArray();
+        if (CHECK_EQ(files.size(), 1)) {
+            CHECK_EQ(files[0].toObject()["file"].toString(), old);
+            CHECK_EQ(files[0].toObject()["reason"].toString(), QString("missing"));
+            CHECK_EQ(files[0].toObject()["original"].toString(), goneOriginal);
+        }
+        CHECK_EQ(r["kept"].toInt(), 1);
+        CHECK(QFileInfo::exists(old));
+        r = cli({"app", "clean_proxies", "--delete"});
+        CHECK_EQ(code(r), QString("ok"));
+        CHECK(r["freed_bytes"].toInteger() >= 300);
+        CHECK_EQ(r["freed_bytes"].toInteger(), r["bytes"].toInteger());
+        CHECK(!QFileInfo::exists(old));
+        CHECK(!QFileInfo::exists(ProxyCleanup::notePath(old)));
+        CHECK(QFileInfo::exists(mine));
+    }
     CHECK_EQ(code(cli({"app", "redo"})), QString("ok"));
     CHECK_EQ(code(cli({"app", "save"})), QString("ok"));
     CHECK_EQ(fileVideoClips(fake.path), 2);

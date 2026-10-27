@@ -1,0 +1,287 @@
+// Benchmark (not a CTest test): how much memory the preview engine keeps after playback, edits, thumbnails and stills,
+// how much of it is MLT's frame pool (mlt_pool keeps every image buffer it ever handed out), and what giving it back
+// frees (mlt_pool_purge, then malloc_trim on glibc). Also the time from play() to the first new picture, with a warm
+// pool and right after a purge (giving memory back must not make playback start slower).
+// Run: env SDL_AUDIODRIVER=dummy QT_QPA_PLATFORM=offscreen ./build/tests/bench_memory [--seconds N] [--edits N]
+//      [--format WxH@fps] <video>...
+//      (the files go one after the other on V1/A1, the same again half a clip later on V2 at 60 % opacity, zoomed)
+#include "check.h"
+
+#include "engine/Engine.h"
+#include "engine/MediaCache.h"
+#include "engine/StillFetcher.h"
+
+#include <framework/mlt.h>
+
+#include <QApplication>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QFile>
+#include <QRegularExpression>
+#include <QTimer>
+#include <algorithm>
+#include <cstdarg>
+#include <cstdio>
+
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+
+namespace {
+
+void wait(int ms)
+{
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
+// VmRSS / VmHWM in MB (Linux), -1 elsewhere
+double procMb(const char* key)
+{
+    QFile f("/proc/self/status");
+    if (!f.open(QIODevice::ReadOnly)) return -1;
+    for (const QByteArray& line : f.readAll().split('\n'))
+        if (line.startsWith(key)) return line.mid(int(qstrlen(key))).trimmed().split(' ').value(0).toDouble() / 1024;
+    return -1;
+}
+
+// mlt_pool_stat() only logs (verbose level): catch its summary line
+qint64 g_poolAllocated = -1, g_poolUsed = -1;
+void poolLog(void*, int, const char* fmt, va_list args)
+{
+    char buf[512];
+    std::vsnprintf(buf, sizeof buf, fmt, args);
+    static const QRegularExpression re("allocated (\\d+) bytes, used (\\d+) bytes");
+    if (const auto m = re.match(QString::fromLatin1(buf)); m.hasMatch()) {
+        g_poolAllocated = m.captured(1).toLongLong();
+        g_poolUsed = m.captured(2).toLongLong();
+    }
+}
+
+void poolStat(double* allocatedMb, double* usedMb)
+{
+    const int level = mlt_log_get_level();
+    mlt_log_set_callback(poolLog);
+    mlt_log_set_level(MLT_LOG_VERBOSE);
+    mlt_pool_stat();
+    mlt_log_set_level(level);
+    Bundle::configureMltLogging(); // MLT's own callback back
+    *allocatedMb = g_poolAllocated / 1048576.0;
+    *usedMb = g_poolUsed / 1048576.0;
+}
+
+void snap(const char* label)
+{
+    double alloc = 0, used = 0;
+    poolStat(&alloc, &used);
+    std::printf("%-34s RSS %7.0f MB  (peak %7.0f)  pool %6.0f MB allocated, %6.0f in use\n", label, procMb("VmRSS:"),
+                procMb("VmHWM:"), alloc, used);
+    std::fflush(stdout);
+}
+
+Clip mk(int id, const QString& path, int start, int in, int length)
+{
+    Clip c;
+    c.id = id;
+    c.mediaPath = path;
+    c.start = start;
+    c.in = in;
+    c.out = in + length - 1;
+    return c;
+}
+
+void release(bool purge, bool trim, bool quiet = false);
+
+// ms from play() until `frames` new pictures arrived (-1 = none within 5 s); then pauses. purge: give the pool back
+// right before play() (what the app does a few seconds after stopping)
+double playStart(Engine& engine, int at, int frames = 1, bool purge = false)
+{
+    engine.seek(at);
+    wait(400);
+    if (purge) release(true, true, true);
+    QElapsedTimer t;
+    int got = 0;
+    double ms = -1;
+    QEventLoop loop;
+    const auto c = QObject::connect(&engine, &Engine::frameReady, &loop, [&] {
+        if (++got == frames) {
+            ms = t.nsecsElapsed() / 1e6;
+            loop.quit();
+        }
+    });
+    QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+    t.start();
+    engine.play();
+    loop.exec();
+    QObject::disconnect(c);
+    engine.pause();
+    wait(300);
+    return ms;
+}
+
+void release(bool purge, bool trim, bool quiet)
+{
+    QElapsedTimer t;
+    t.start();
+    if (purge) mlt_pool_purge();
+#ifdef __GLIBC__
+    if (trim) malloc_trim(0);
+#else
+    Q_UNUSED(trim);
+#endif
+    if (!quiet) std::printf("  (release took %.1f ms)\n", t.nsecsElapsed() / 1e6);
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    Check::initEnv();
+    QApplication app(argc, argv);
+    Check::initApp("bench-memory");
+    double seconds = 20;
+    int edits = 40;
+    ProjectFormat format{1920, 1080, {30, 1}};
+    QStringList files;
+    for (int i = 1; i < argc; ++i) {
+        const QString a = QString::fromLocal8Bit(argv[i]);
+        if (a == "--seconds" && i + 1 < argc) seconds = atof(argv[++i]);
+        else if (a == "--edits" && i + 1 < argc) edits = atoi(argv[++i]);
+        else if (a == "--format" && i + 1 < argc) {
+            const QStringList p = QString(argv[++i]).split(QRegularExpression("[x@]"));
+            format = ProjectFormat{p.value(0).toInt(), p.value(1).toInt(), {p.value(2).toInt(), 1}};
+        } else files << a;
+    }
+    if (files.isEmpty()) {
+        std::printf("usage: bench_memory [--seconds N] [--edits N] [--format WxH@fps] <video>...\n");
+        return 2;
+    }
+
+    snap("start");
+    Engine engine;
+    QString error;
+    if (!engine.init(&error)) {
+        std::printf("Engine init failed: %s\n", qPrintable(error));
+        return 77;
+    }
+    engine.setFormat(format);
+    snap("engine ready");
+
+    const int fps = format.rate.timebase();
+    const int clipLen = 8 * fps;
+    Timeline tl;
+    tl.video.resize(2);
+    tl.audio.resize(1);
+    int id = 1;
+    for (int i = 0; i < files.size(); ++i) {
+        tl.video[0].clips << mk(id++, files[i], i * clipLen, 0, clipLen);
+        tl.audio[0].clips << mk(id++, files[i], i * clipLen, 0, clipLen);
+        Clip over = mk(id++, files[i], i * clipLen + clipLen / 2, fps, clipLen / 2);
+        over.transform.opacity = 60;
+        over.transform.zoomX = over.transform.zoomY = 0.6;
+        tl.video[1].clips << over;
+    }
+    const int end = int(files.size()) * clipLen;
+    engine.updateTimeline(tl);
+    engine.showTimeline(0);
+    wait(1500);
+    snap("timeline built");
+
+    std::printf("first picture after play (warm decoders, cold pool): %.1f ms\n", playStart(engine, 0));
+    {
+        engine.seek(0);
+        wait(300);
+        int shown = 0;
+        const auto c = QObject::connect(&engine, &Engine::frameReady, &app, [&] { ++shown; });
+        engine.play();
+        // Playback stops at the end: start again from the front until the time is over
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < seconds * 1000) {
+            wait(200);
+            if (engine.speed() == 0.0) {
+                engine.seek(0);
+                engine.play();
+            }
+        }
+        engine.pause();
+        QObject::disconnect(c);
+        std::printf("played %.0f s: %d pictures (%.1f fps)\n", seconds, shown, shown / seconds);
+    }
+    wait(500);
+    snap("after playback");
+
+    // Edits like an AI session: every change rebuilds the timeline, the preview shows the playhead's picture
+    for (int i = 0; i < edits; ++i) {
+        Timeline e = tl;
+        Clip& c = e.video[1].clips[i % e.video[1].clips.size()];
+        c.start += (i % 2) ? 1 : 0;
+        c.transform.posX = 10 * i;
+        engine.updateTimeline(e);
+        engine.seek((i * 37) % std::max(1, end));
+        wait(120);
+    }
+    wait(800);
+    snap("after edits");
+
+    {
+        MediaCache cache;
+        cache.setFormat(format);
+        int wanted = 0;
+        for (const QString& f : files)
+            for (int frame = 0; frame < clipLen; frame += fps / 2) {
+                cache.thumbnail(f, frame, 0);
+                ++wanted;
+            }
+        QElapsedTimer t;
+        t.start();
+        int have = 0;
+        while (t.elapsed() < 60000) {
+            wait(250);
+            have = 0;
+            for (const QString& f : files)
+                for (int frame = 0; frame < clipLen; frame += fps / 2) have += !cache.cachedThumbnail(f, frame).isNull();
+            if (have == wanted) break;
+        }
+        std::printf("thumbnails: %d of %d\n", have, wanted);
+        snap("after thumbnails (cache alive)");
+
+        StillFetcher stills;
+        stills.setFormat(format);
+        QVector<StillFetcher::Request> reqs;
+        for (const QString& f : files)
+            for (int frame = 0; frame < clipLen; frame += fps) reqs.push_back({f, frame});
+        int ready = 0;
+        QObject::connect(&stills, &StillFetcher::ready, &app, [&] { ++ready; });
+        stills.request(reqs);
+        t.restart();
+        while (ready < reqs.size() && t.elapsed() < 60000) wait(100);
+        std::printf("stills: %d of %d\n", ready, int(reqs.size()));
+        snap("after stills (cache alive)");
+        wait(6000);
+        snap("idle 6 s (caches alive)");
+    }
+    wait(300);
+    snap("thumbnail/still caches deleted");
+
+    release(false, true);
+    snap("malloc_trim only");
+    release(true, false);
+    snap("mlt_pool_purge");
+    release(false, true);
+    snap("+ malloc_trim");
+
+    // Playback start: warm pool against a pool purged right before
+    double warm = 0, cold = 0;
+    const int runs = 5;
+    for (int i = 0; i < runs; ++i) {
+        const int at = (i * 53) % std::max(1, end - 2 * fps);
+        warm += playStart(engine, at, 3); // pool filled by the runs before
+        cold += playStart(engine, at, 3, true);
+    }
+    std::printf("3 pictures after play: warm pool %.1f ms, purged pool %.1f ms (average of %d)\n", warm / runs,
+                cold / runs, runs);
+    snap("end");
+    return 0;
+}

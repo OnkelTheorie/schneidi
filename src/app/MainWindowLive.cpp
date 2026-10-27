@@ -68,6 +68,8 @@ QJsonObject MainWindow::liveProxyState(const QString& file) const
     return {{"state", "none"}};
 }
 
+QString MainWindow::liveProxyWriting() const { return m_engine->proxies()->writing(); }
+
 void MainWindow::liveConnectionChanged(bool connected, const QString& client)
 {
     m_liveConnected = connected;

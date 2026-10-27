@@ -4,23 +4,18 @@
 
 #include "cli/Commands.h"
 #include "cli/Sandbox.h"
+#include "engine/MemoryRelease.h"
 
 #include <QBuffer>
 #include <QCoreApplication>
 #include <QJsonDocument>
 #include <QThread>
 
-#include <framework/mlt.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
 #include <memory>
 #include <string>
-
-#if defined(__GLIBC__)
-#include <malloc.h>
-#endif
 
 namespace Cli::Mcp {
 
@@ -30,10 +25,7 @@ namespace {
 // every image buffer it freed for reuse (a 3-s render of a 1080x1920 timeline left 1.3 GB behind, 0.4 GB after this).
 void releaseMemory()
 {
-    if (mlt_factory_repository()) mlt_pool_purge();
-#if defined(__GLIBC__)
-    malloc_trim(0);
-#endif
+    MemoryRelease::release();
 }
 
 QString imageBase64(const QImage& img)
@@ -67,8 +59,8 @@ QString instructions(const Options& opt)
         s += " If the project is open in the schneidi app, all tools "
              "work live on what the app shows (unsaved changes included): `edit` changes it there as one "
              "undo step and does not save, `info` adds the user's playhead and selection, `app` controls "
-             "the app (play, seek, select, undo, save, proxies). \"@app\" as project = the project open "
-             "in the running app.";
+             "the app (play, seek, select, undo, save, proxies, cleaning up old proxy files). \"@app\" as "
+             "project = the project open in the running app.";
     if (opt.root.isEmpty())
         s += " Use absolute file paths.";
     else

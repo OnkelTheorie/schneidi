@@ -1102,6 +1102,7 @@ void MediaPool::showContextMenu(const QPoint& pos)
             ->setEnabled(!withProxy.isEmpty());
         if (!pending.isEmpty())
             menu.addAction(T("Proxy-Erzeugung abbrechen"), this, [proxies, pending] { proxies->cancel(pending); });
+        menu.addAction(T("Proxy-Medien aufräumen…"), this, &MediaPool::proxyCleanupRequested);
         menu.addSeparator();
         QString file = paths.first(); // the one right-clicked, else the first selected
         if (QListWidgetItem* it = m_list->itemAt(pos); it && paths.contains(it->data(Qt::UserRole).toString()))
