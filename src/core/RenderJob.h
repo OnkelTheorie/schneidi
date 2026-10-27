@@ -138,3 +138,13 @@ QVector<RenderJob> fromJson(const QJsonArray& arr);
 } // namespace RenderQueueJson
 
 QString renderStatusText(const RenderJob& job); // "Wartet", "Fertig (0:12)", "Fehler: ..."
+
+// Order of the queue (dragging jobs in the queue): the jobs `ids` move in front of the job `beforeId` (0 = to the end),
+// in the order they have in the queue. `fixedId` (the job being rendered) never moves; a target among the moved jobs
+// means the next job after it that stays. The queue renders waiting jobs from top to bottom (engine/RenderQueue).
+QVector<RenderJob> moveRenderJobs(const QVector<RenderJob>& jobs, const QVector<int>& ids, int beforeId, int fixedId = 0);
+
+// File name (without extension) for an export of the timeline `name`, valid on Windows, macOS and Linux: characters
+// < > : " / \ | ? * and control characters become "_", no dot or space at the end, no reserved Windows device name
+// (CON, NUL, COM1 … get a "_"), at most 200 characters. Empty -> "Export".
+QString renderFileBaseName(const QString& name);

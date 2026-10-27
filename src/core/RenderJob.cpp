@@ -453,3 +453,42 @@ QString renderStatusText(const RenderJob& job)
     }
     return {};
 }
+
+QVector<RenderJob> moveRenderJobs(const QVector<RenderJob>& jobs, const QVector<int>& ids, int beforeId, int fixedId)
+{
+    QVector<RenderJob> moved, rest;
+    int target = -1;         // index in rest to insert at (-1 = the end)
+    bool reached = false;    // the drop target has been passed (a moved target: the next job that stays)
+    for (const RenderJob& j : jobs) {
+        if (j.id == beforeId) reached = true;
+        if (ids.contains(j.id) && j.id != fixedId) {
+            moved << j;
+            continue;
+        }
+        if (reached && target < 0) target = int(rest.size());
+        rest << j;
+    }
+    if (moved.isEmpty()) return jobs;
+    if (target < 0) target = int(rest.size());
+    for (int i = 0; i < moved.size(); ++i) rest.insert(target + i, moved[i]);
+    return rest;
+}
+
+QString renderFileBaseName(const QString& name)
+{
+    QString s;
+    for (const QChar c : name) s += c.unicode() < 0x20 || QStringLiteral("<>:\"/\\|?*").contains(c) ? QChar('_') : c;
+    s = s.trimmed();
+    if (s.size() > 200) s = s.left(200);
+    // Windows drops a dot or space at the end (another name than shown)
+    while (s.endsWith('.') || s.endsWith(' ')) s.chop(1);
+    if (s.isEmpty()) return QStringLiteral("Export");
+    // Windows device names are no files there, also with an extension ("NUL.mp4")
+    const QString stem = s.section('.', 0, 0);
+    const QString upper = stem.trimmed().toUpper();
+    const bool device = QStringList{"CON", "PRN", "AUX", "NUL"}.contains(upper)
+                        || (upper.size() == 4 && (upper.startsWith("COM") || upper.startsWith("LPT")) && upper[3] >= '1'
+                            && upper[3] <= '9');
+    if (device) s.insert(stem.size(), '_');
+    return s;
+}

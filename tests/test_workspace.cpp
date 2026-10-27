@@ -198,5 +198,53 @@ int main(int argc, char** argv)
             dlg.grab().save(shot);
         }
     }
+
+    // A panel's key (render queue: Del deletes jobs): two default slots, its own scope. The panel checks its keys
+    // itself (matches), Qt never fires them; the same key as a window action is no conflict, within a scope it is.
+    {
+        QAction windowDel, panelDel, panelOther;
+        b.registerAction(&windowDel, "delete_alt", "Edit", QKeySequence(Qt::Key_Delete));
+        b.registerPanelAction(&panelDel, "render_queue_delete", "Render", "render_queue", QKeySequence(Qt::Key_Delete),
+                              QKeySequence(Qt::Key_Backspace));
+        b.registerPanelAction(&panelOther, "render_queue_other", "Render", "render_queue", QKeySequence());
+        CHECK_EQ(b.inputs("render_queue_delete"), QStringList({"Del", "Backspace"}));
+        CHECK_EQ(b.defaultInputs("render_queue_delete"), QStringList({"Del", "Backspace"}));
+        CHECK_EQ(panelDel.shortcuts(), QList<QKeySequence>({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)}));
+        CHECK(panelDel.shortcutContext() == Qt::WidgetShortcut);
+        CHECK_EQ(b.scope("render_queue_delete"), QString("render_queue"));
+        CHECK(b.scope("delete_alt").isEmpty());
+        QKeyEvent del(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
+        QKeyEvent keypadDel(QEvent::KeyPress, Qt::Key_Delete, Qt::KeypadModifier);
+        QKeyEvent ctrlDel(QEvent::KeyPress, Qt::Key_Delete, Qt::ControlModifier);
+        QKeyEvent ctrlD(QEvent::KeyPress, Qt::Key_D, Qt::ControlModifier);
+        CHECK(InputBindings::matches(&panelDel, &del));
+        CHECK(InputBindings::matches(&panelDel, &keypadDel));
+        CHECK(!InputBindings::matches(&panelDel, &ctrlDel));
+        b.setInput("render_queue_delete", 0, "Ctrl+D");
+        CHECK(!InputBindings::matches(&panelDel, &del));
+        CHECK(InputBindings::matches(&panelDel, &ctrlD));
+        panelDel.setEnabled(false);
+        CHECK(!InputBindings::matches(&panelDel, &ctrlD));
+        panelDel.setEnabled(true);
+        b.setInputs("render_queue_delete", b.defaultInputs("render_queue_delete"));
+
+        KeyBindingsDialog dlg;
+        auto* table = dlg.findChild<QTableWidget*>();
+        if (!CHECK(table)) return Check::result();
+        const auto conflict = [&](const QString& id) {
+            for (int r = 0; r < table->rowCount(); ++r)
+                if (table->item(r, 1)->data(Qt::UserRole).toString() == id) return !table->item(r, 2)->toolTip().isEmpty();
+            return false;
+        };
+        CHECK(!conflict("delete_alt"));
+        CHECK(!conflict("render_queue_delete"));
+        b.setInput("render_queue_other", 0, "Del"); // the same key twice in the panel: marked
+        dlg.close();
+        KeyBindingsDialog again;
+        table = again.findChild<QTableWidget*>();
+        CHECK(conflict("render_queue_other"));
+        CHECK(!conflict("delete_alt"));
+        b.setInputs("render_queue_other", {});
+    }
     return Check::result();
 }

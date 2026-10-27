@@ -710,6 +710,10 @@ void MainWindow::buildActions()
     // list removes the bin, never timeline clips)
     for (const MediaPool::KeyAction& k : m_mediaPool->keyActions())
         InputBindings::instance().registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope);
+    // Panel keys: only while the panel has the focus, there they win over the window's (InputBindings::registerPanelAction)
+    InputBindings::instance().registerPanelAction(m_deliver->queuePanel()->deleteAction(), "render_queue_delete",
+                                                  T("Render-Warteschlange"), "render_queue", QKeySequence(Qt::Key_Delete),
+                                                  QKeySequence(Qt::Key_Backspace));
 
     InputBindings::instance().saveIfIncomplete();
 }

@@ -4,11 +4,11 @@
 
 #include <QAction>
 #include <QDir>
-#include <QKeyEvent>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QStandardPaths>
 #include <QWidget>
 #include <algorithm>
