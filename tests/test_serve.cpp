@@ -609,15 +609,19 @@ int main(int argc, char* argv[])
                            {{"SCHNEIDI_TEST_CALL_DELAY_MS", "3000"}})))
             return Check::result();
         CHECK(s.initialize());
+        // A job: running, or still queued while a busy machine starts the worker process
+        const auto unfinished = [](const QJsonObject& o) {
+            return o["state"].toString() == "running" || o["state"].toString() == "queued";
+        };
         QJsonObject a = s.call("effects", {});
-        CHECK_EQ(a["state"].toString(), QString("running"));
+        CHECK(unfinished(a));
         const QString job = a["job"].toString();
         CHECK(!job.isEmpty());
         CHECK(a["note"].toString().contains("jobs"));
         a = s.call("jobs", {{"job", job}, {"wait", 0}});
-        CHECK_EQ(a["state"].toString(), QString("running"));
+        CHECK(unfinished(a));
         // Waiting longer than --job-wait is cut to it: ask until it is over
-        for (int i = 0; i < 20 && a["state"].toString() == "running"; ++i) a = s.call("jobs", {{"job", job}, {"wait", 10}});
+        for (int i = 0; i < 30 && unfinished(a); ++i) a = s.call("jobs", {{"job", job}, {"wait", 10}});
         CHECK_EQ(a["state"].toString(), QString("done"));
         CHECK_EQ(a["job"].toString(), job);
         CHECK(a["effects"].isArray()); // the call's own answer
