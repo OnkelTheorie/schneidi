@@ -17,7 +17,9 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QSet>
+#include <QUndoStack>
 #include <climits>
+#include <utility>
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
@@ -90,13 +92,28 @@ void Editor::toggleSelectionTracksLock()
     QVector<int> subtitles;
     for (int id : ids)
         if (int index = -1; Subtitles::find(tl, id, &index) && !subtitles.contains(index)) subtitles << index;
-    if (tracks.isEmpty() && subtitles.isEmpty())
-        for (TrackRef ref : {TrackRef{TrackKind::Video, m_targetVideo}, TrackRef{TrackKind::Audio, m_targetAudio}})
-            if (ref.index < tl.tracks(ref.kind).size()) tracks << ref;
+    const bool fromSelection = !tracks.isEmpty() || !subtitles.isEmpty();
+    const KeyLocked last = std::exchange(m_keyLocked, KeyLocked{});
+    if (!fromSelection) {
+        // Pressed again right after it locked a selection (which left the selection with its tracks): those tracks
+        // once more, so the key unlocks what it just locked. Anything changed meanwhile: the target tracks.
+        if (last.undoIndex >= 0 && last.undoIndex == m_project->undoStack()->index()
+            && last.sequence == m_project->currentSequence() && last.targetVideo == m_targetVideo
+            && last.targetAudio == m_targetAudio) {
+            tracks = last.tracks;
+            subtitles = last.subtitles;
+        } else {
+            for (TrackRef ref : {TrackRef{TrackKind::Video, m_targetVideo}, TrackRef{TrackKind::Audio, m_targetAudio}})
+                if (ref.index < tl.tracks(ref.kind).size()) tracks << ref;
+        }
+    }
     bool anyUnlocked = false;
     for (TrackRef ref : tracks) anyUnlocked |= !tl.track(ref).locked;
     for (int i : subtitles) anyUnlocked |= !tl.subtitles[i].locked;
     setTracksLocked(tracks, subtitles, anyUnlocked);
+    if (fromSelection && anyUnlocked)
+        m_keyLocked = {tracks, subtitles, m_project->undoStack()->index(), m_project->currentSequence(), m_targetVideo,
+                       m_targetAudio};
 }
 
 void Editor::renameTrack(TrackRef ref, const QString& name)

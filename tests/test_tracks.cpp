@@ -212,6 +212,49 @@ int main(int argc, char** argv)
         sel.clear();
     }
 
+    // --- Lock key twice: it locks the selection's tracks (the selection empties with them), pressed again right away
+    // it unlocks those tracks - not the target tracks (before, the second press locked V1 + A1 as well)
+    {
+        const ProjectData before = p.data();
+        setup(p);
+        const auto locked = [&] {
+            QString s;
+            for (const Track& t : p.timeline().video) s += t.locked ? 'V' : '-';
+            for (const Track& t : p.timeline().audio) s += t.locked ? 'A' : '-';
+            return s;
+        };
+        QUndoStack* undo = p.undoStack();
+        ed.setTargetTracks(0, 0);
+        sel.set({21}); // on A2, not a target track
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("---A"));
+        CHECK(sel.isEmpty());
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("----"));
+        CHECK_EQ(undo->undoText(), T("Spur entsperren"));
+        // Once more without a selection: nothing to toggle back any more -> the target tracks
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("V-A-"));
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("----"));
+        // Something else changed in between (another undo step, other target tracks): the target tracks
+        sel.set({21});
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("---A"));
+        ed.toggleTrackMute({TrackKind::Audio, 0});
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("V-AA"));
+        undo->undo();
+        undo->undo();
+        CHECK_EQ(locked(), QString("---A"));
+        ed.setTargetTracks(1, 0);
+        ed.toggleSelectionTracksLock();
+        CHECK_EQ(locked(), QString("-VAA"));
+        ed.setTargetTracks(0, 0);
+        p.load(before);
+        sel.clear();
+    }
+
     // --- Rename / color
     ed.renameTrack({TrackKind::Audio, 1}, "  Musik  ");
     CHECK(p.timeline().audio[1].name == "Musik");
