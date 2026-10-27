@@ -24,6 +24,7 @@ class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QThreadPool;
+class TimelinePosters;
 
 // Media Pool (top left like in DaVinci): on the left the bin list (Master with sub-bins), on the right the clips of the
 // selected bin with thumbnail (icon or list view). Double-click -> view in the Viewer as source,
@@ -149,6 +150,7 @@ private:
     QSet<QString> m_offline;                  // showing "Media Offline" (computed anew when the file is back)
     int m_thumbGeneration = 0;                // project format changed: older results are dropped
     QThreadPool* m_thumbPool;
+    TimelinePosters* m_posters = nullptr; // pictures of the timeline entries (first frame with its grade)
     int m_currentBin = 0;
     int m_editBin = 0; // newly created: edit the name after the rebuild
     ViewMode m_viewMode = ViewMode::Thumbnails;

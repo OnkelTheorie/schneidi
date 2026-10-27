@@ -21,6 +21,7 @@
 #include <deque>
 #include <memory>
 
+class GradedThumbs;
 class QThread;
 
 struct Waveform {
@@ -52,6 +53,9 @@ public:
     // Project settings changed: frames count in the new frame rate, images in the new aspect ratio
     // -> discard everything computed (waveforms on disk are separated by frame rate)
     void setFormat(const ProjectFormat& format);
+
+    // Filmstrip tiles with each clip's Color page grade (engine/GradedThumbs); its updates come as updated()
+    GradedThumbs* graded() const { return m_graded; }
 
 signals:
     void updated(); // queued from the worker threads
@@ -94,4 +98,5 @@ private:
     QThread* m_thumbThread = nullptr;
     QThread* m_stripThread = nullptr;
     QThread* m_waveThread = nullptr;
+    GradedThumbs* m_graded = nullptr;
 };
