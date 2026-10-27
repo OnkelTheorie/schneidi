@@ -204,6 +204,7 @@ add_library(schneidi_lib STATIC
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
     src/ui/PoolFilterButton.h     src/ui/PoolFilterButton.cpp
     src/ui/HoverScrub.h           src/ui/HoverScrub.cpp
+    src/ui/ElidedLabel.h
     src/ui/FileManager.h          src/ui/FileManager.cpp
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp

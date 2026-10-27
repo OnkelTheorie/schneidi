@@ -6,6 +6,7 @@
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "engine/RenderQueue.h"
+#include "ui/ElidedLabel.h"
 
 #include <QAction>
 #include <QApplication>
@@ -29,35 +30,6 @@
 #include <functional>
 
 namespace {
-
-// Single-line label that adapts to the card width (too long = "…", full text in the tooltip)
-class ElidedLabel : public QLabel {
-public:
-    explicit ElidedLabel(Qt::TextElideMode mode = Qt::ElideRight) : m_mode(mode) {}
-    void setFullText(const QString& text)
-    {
-        m_text = text;
-        setToolTip(text);
-        updateGeometry();
-        update();
-    }
-    QSize minimumSizeHint() const override { return {0, fontMetrics().height()}; }
-    QSize sizeHint() const override { return {fontMetrics().horizontalAdvance(m_text), fontMetrics().height()}; }
-
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter p(this);
-        p.setPen(palette().color(foregroundRole()));
-        p.setFont(font());
-        p.drawText(rect(), int(alignment() | Qt::AlignVCenter),
-                   fontMetrics().elidedText(m_text, m_mode, width()));
-    }
-
-private:
-    QString m_text;
-    Qt::TextElideMode m_mode;
-};
 
 // One card per job
 class JobCard : public QWidget {

@@ -9,6 +9,7 @@
 #include <QWidget>
 
 class Project;
+class ElidedLabel;
 class Engine;
 class HoverScrub;
 class PoolFilterButton;
@@ -127,7 +128,7 @@ private:
     Project* m_project;
     Engine* m_engine;
     QTreeWidget* m_bins;
-    QLabel* m_binTitle;
+    ElidedLabel* m_binTitle;
     QListWidget* m_list;
     QLabel* m_proxyStatus;
     QToolButton* m_proxyCancel;
