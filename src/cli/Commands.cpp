@@ -209,6 +209,19 @@ int Session::sequenceOf(const QJsonValue& v) const
     fail("NOT_FOUND", QString("no timeline '%1' (there are: %2)").arg(name, names.join(", ")));
 }
 
+void Session::failEmpty() const
+{
+    QStringList full;
+    for (const Sequence& q : project.sequences())
+        if (q.id != project.currentSequence() && !q.compound && TimelineOps::endFrame(q.timeline) > 0)
+            full << QString("%1 \"%2\"").arg(q.id).arg(q.name);
+    QString message = QString("the timeline %1 \"%2\" is empty")
+                          .arg(project.currentSequence())
+                          .arg(project.sequenceName(project.currentSequence()));
+    if (!full.isEmpty()) message += " - timelines with clips: " + full.join(", ") + " (pass 'timeline': id or name)";
+    fail("EMPTY", message);
+}
+
 void Session::selectTimeline(const QJsonValue& v, bool open)
 {
     if (v.isUndefined() || v.isNull()) return;
@@ -687,8 +700,9 @@ const QVector<Command>& commands()
                   "recorder's or game clip tool's output, renders of another program, a pipeline that drops "
                   "recordings). Nothing is watched unless you add a folder. Without add/remove/list: one pass - "
                   "imports the files that are new and complete (unchanged for settle_s, readable; still recording "
-                  "= 'pending', look again later) and answers them in 'new' (with their length and bin). The app "
-                  "watches the folders itself while it has the project open (one undo step per batch); 'revision' "
+                  "= 'pending', look again later) and answers them in 'new' (with their length and bin; 'note' when "
+                  "the first recording's frame rate differs from the still empty project's). The app watches the "
+                  "folders itself while it has the project open (one undo step per batch); 'revision' "
                   "counts every file a watch folder brought in, so 'since' with the revision of your last answer "
                   "shows what arrived since (also what the app took in). Command line: --follow keeps running and "
                   "prints one JSON line per new file (react to it: `highlights`, `edit`, `render`).",
@@ -838,9 +852,12 @@ const QVector<Command>& commands()
          {{"file", T::Path, "video file", false, true},
           {"files", T::Paths, "several video files (one result each, plus 'best': all candidates by score)"},
           {"region", T::String, "where the kill feed is, \"x,y,w,h\" (fractions 0..1 or pixels; look with `frames` "
-                                "crop first). Only the part with the player's mark: e.g. Valorant \"0.70,0.04,0.22,0.23\""},
-          {"color", T::String, "the mark of the player's own kill feed lines, e.g. Valorant \"#e7e371\" (yellow)"},
-          {"tolerance", T::Integer, "with color: largest difference per channel, 0..255 (default 25)"},
+                                "crop first). Only the part with the player's mark: e.g. Valorant \"0.70,0.04,0.22,0.23\", "
+                                "CS2 \"0.72,0.04,0.28,0.2\""},
+          {"color", T::String, "the mark of the player's own kill feed lines, e.g. Valorant \"#e7e371\" (yellow), "
+                               "CS2 \"#d8444a\" (a thin red frame: tolerance 40)"},
+          {"tolerance", T::Integer, "with color: largest difference per channel, 0..255 (default 25; thin marks such as "
+                                    "a frame need more, ~40: fewer kills than the kill feed shows = raise it)"},
           {"min_area", T::Number, "with color: smallest new mark as a part of the whole picture (default 0.0001)"},
           {"pre", T::Time, "lead-in before the first kill / loud moment (default 2s)"},
           {"post", T::Time, "lead-out after the last one (default 1s)"},
@@ -953,12 +970,12 @@ const QVector<Command>& commands()
           {"to", T::Time, "every/count: end of the range (default: end)"},
           {"crop", T::String, "only this region \"x,y,w,h\" in pixels of the full picture, or fractions 0..1 "
                               "(\"0.75,0.05,0.25,0.3\" = top right); shown at its own size up to 'width'"},
-          {"out", T::Path, "folder for the images (with sheet: image file)"},
+          {"out", T::Path, "folder for the images (with sheet: the image file, .jpg or .png)"},
           {"sheet", T::Boolean, "one contact sheet image instead of single images"},
           {"columns", T::Integer, "sheet: number of columns (default: 2–4 depending on the count)"},
           {"tile_width", T::Integer, "width of every image/tile in pixels (instead of 'width'; e.g. 320 for many tiles, "
                                      "800 to read small HUD text)"},
-          {"width", T::Integer, "longer image edge in pixels (default 640, MCP 480)"},
+          {"width", T::Integer, "longer edge of each image in pixels, on a sheet of each tile (default 640, MCP 480)"},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"}},
          cmdFrames},
@@ -1210,14 +1227,15 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
         list << o;
     }
     if (list.isEmpty()) fail("NOT_FOUND", "no command " + a["command"].toString());
-    return {{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
-            {"api_version", ApiVersion},
-            {"usage", "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, "
-                      "exit code 0 = ok, 1 = error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio, "
-                      "`schneidi-cli serve` one over HTTP (see 'servers'); `schneidi-cli setup claude` connects Claude "
-                      "Code and Claude Desktop to it. "
-                      "--verbose: progress notes and engine messages on stderr."},
-            {"commands", list}, {"servers", servers}};
+    QJsonObject o{{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
+                  {"api_version", ApiVersion}, {"commands", list}};
+    if (a.contains("command")) return o; // one command (or op): only that, an AI asks for it in the middle of work
+    o["usage"] = "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, exit code 0 = ok, 1 = "
+                 "error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio, `schneidi-cli serve` one over "
+                 "HTTP (see 'servers'); `schneidi-cli setup claude` connects Claude Code and Claude Desktop to it. "
+                 "--verbose: progress notes and engine messages on stderr.";
+    o["servers"] = servers;
+    return o;
 }
 
 } // namespace

@@ -281,25 +281,30 @@ QJsonObject cmdImport(const QJsonObject& a, Context&)
     o.remove("timeline");
     for (auto it = imported.begin(); it != imported.end(); ++it) o[it.key()] = it.value();
     if (!backup.isEmpty()) o["backup"] = backup;
-    // Material in another frame rate than the project, which can only change while every timeline is empty (an AI
-    // once cut 60-fps gameplay in a 25-fps project). The first new video only: detecting runs ffprobe.
-    bool empty = TimelineOps::endFrame(s.project.timeline()) == 0;
-    for (const Sequence& q : s.project.sequences())
-        if (q.id != s.project.currentSequence()) empty = empty && TimelineOps::endFrame(q.timeline) == 0;
-    if (empty && !firstVideo.isEmpty() && !s.project.fixedFrameRate()) { // fixed: the user's choice (start template)
-        const ClipFormat cf = detectClipFormat(firstVideo);
-        const double project = s.project.format().rate.fps();
-        if (cf.ok && std::abs(cf.rate.fps() - project) > 0.01)
-            o["notes"] = QJsonArray{QString("%1 has %2 fps%3, the project %4 fps: while the timeline is empty, the "
-                                            "edit op `format` with fps %5 matches the material (later it cannot change)")
-                                        .arg(QFileInfo(firstVideo).fileName())
-                                        .arg(std::round(cf.rate.fps() * 1000) / 1000)
-                                        .arg(cf.variable ? " (variable frame rate)" : "")
-                                        .arg(std::round(project * 1000) / 1000)
-                                        .arg(std::round(cf.suggested.fps() * 1000) / 1000)};
-    }
+    if (const QString note = frameRateNote(s.project, firstVideo); !note.isEmpty()) o["notes"] = QJsonArray{note};
     if (s.live) o["live"] = true;
     return o;
+}
+
+QString frameRateNote(const Project& p, const QString& video)
+{
+    // Material in another frame rate than the project, which can only change while every timeline is empty (an AI
+    // once cut 60-fps gameplay in a 25-fps project). The first new video only: detecting runs ffprobe.
+    if (video.isEmpty() || p.fixedFrameRate()) return {}; // fixed: the user's choice (start template)
+    bool empty = TimelineOps::endFrame(p.timeline()) == 0;
+    for (const Sequence& q : p.sequences())
+        if (q.id != p.currentSequence()) empty = empty && TimelineOps::endFrame(q.timeline) == 0;
+    if (!empty) return {};
+    const ClipFormat cf = detectClipFormat(video);
+    const double project = p.format().rate.fps();
+    if (!cf.ok || std::abs(cf.rate.fps() - project) <= 0.01) return {};
+    return QString("%1 has %2 fps%3, the project %4 fps: while the timeline is empty, the edit op `format` with fps %5 "
+                   "matches the material (later it cannot change)")
+        .arg(QFileInfo(video).fileName())
+        .arg(std::round(cf.rate.fps() * 1000) / 1000)
+        .arg(cf.variable ? " (variable frame rate)" : "")
+        .arg(std::round(project * 1000) / 1000)
+        .arg(std::round(cf.suggested.fps() * 1000) / 1000);
 }
 
 QJsonObject cmdEdit(const QJsonObject& a, Context&)
@@ -507,7 +512,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     job.size = job.settings.outputSize(s.format().size());
     const Timeline tl = s.project.renderTimeline();
     const int end = TimelineOps::endFrame(tl);
-    if (end <= 0) fail("EMPTY", "the timeline is empty");
+    if (end <= 0) s.failEmpty();
     if (a.contains("from") || a.contains("to")) {
         job.inOut = true;
         job.from = a.contains("from") ? parseTime(a["from"], s.format(), "from") : 0;

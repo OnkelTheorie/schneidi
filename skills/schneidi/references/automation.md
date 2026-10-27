@@ -8,11 +8,17 @@ and every new recording becomes a cut without anyone clicking - e.g. "new clip â
   them into a bin (`"Recordings"`, created if missing), `types` `video` skips sound files and images, `subfolders`
   takes those too. Only files that arrive from then on; `existing` true also takes the ones already there.
 - Nothing is watched unless a folder is added (`list` shows them, `remove` stops one; imported files stay).
+- The project comes first, before any recording: `new` with the recorder's frame rate as `fps` (most game clip
+  tools record 60). Game recordings with a Mix stream next to the single streams (OBS, clip tools): `template`
+  `game` mutes the Mix; for shorts add `width` 1080, `height` 1920. If the first recording has another frame rate
+  while the project is still empty, its `watch` line has a `note`: `edit` op `format` with that `fps` (later it
+  cannot change).
 
 ## Get the new files
 - **One pass** (MCP tool or `schneidi-cli watch project.schneidi`): imports what is new and complete and lists it in
   `new` (file, `seconds`, `frames`, `bin`). Files still being written are `pending` - call again in a few seconds;
-  a recorder writes for minutes, a file counts as complete once it stays unchanged for `settle_s` (default 3).
+  a recorder writes for minutes, a file counts as complete once it stays unchanged for `settle_s` (default 3; more
+  for copies over a slow network, which can stall longer).
 - **Polling**: every answer has `revision` (counts every file a watch folder brought in). Pass it back as `since`
   next time: `new` then lists everything that arrived after it, also what the app imported on its own.
 - **Scripts**: `schneidi-cli watch project.schneidi --follow` keeps running and prints one JSON line per new
@@ -24,9 +30,12 @@ and every new recording becomes a cut without anyone clicking - e.g. "new clip â
 
 ## Per new file (e.g. a highlight short)
 1. `highlights` on the file (with `region` + `color` for a game's kill feed, else loud moments), `project` passed
-   ([highlights.md](highlights.md)). Nothing good in it: skip the file, don't force a video out of it.
+   ([highlights.md](highlights.md)). Nothing good in it: skip the file, don't force a video out of it (`edit` op
+   `remove_media` takes it out of the media pool, not from disk; the watch does not bring it back).
 2. A new timeline per clip (`edit` op `new_timeline`) or a new project per clip (`new`, 9:16 for a short:
-   [social.md](social.md)); `keep` with the best candidates' ranges.
+   [social.md](social.md)); `keep` with the best candidates' ranges. A project file keeps opening the timeline the
+   user had open: give `check`, `frames`, `loudness` and `render` the new one as `timeline` (id or name from the
+   `edit` answer).
 3. `check` the project, `render` with a new name per clip (preset "Phone / Vertical 9:16" for a short).
 4. Look at the result (`check` on the rendered file) before anything is uploaded; report what you made.
 

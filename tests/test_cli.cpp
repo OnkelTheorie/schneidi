@@ -15,6 +15,7 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QTemporaryDir>
@@ -51,6 +52,18 @@ QString errorOf(const QString& name, const QJsonObject& raw)
         cmd->run(Cli::normalize(*cmd, raw), ctx);
     } catch (const Cli::Error& e) {
         return e.code;
+    }
+    return "none";
+}
+
+QString messageOf(const QString& name, const QJsonObject& raw)
+{
+    try {
+        const Cli::Command* cmd = Cli::find(name);
+        Cli::Context ctx;
+        cmd->run(Cli::normalize(*cmd, raw), ctx);
+    } catch (const Cli::Error& e) {
+        return e.code + ": " + e.message;
     }
     return "none";
 }
@@ -147,6 +160,10 @@ int main(int argc, char** argv)
     }
     const QJsonObject help = run("help", {});
     CHECK_EQ(help["commands"].toArray().size(), int(Cli::commands().size()));
+    CHECK(help.contains("servers") && help.contains("usage"));
+    // One command: only that (the MCP/HTTP server options were 2.5 KB of every `help edit --op …` answer)
+    const QJsonObject one = run("help", {{"command", "watch"}});
+    CHECK(one["commands"].toArray().size() == 1 && !one.contains("servers") && !one.contains("usage"));
 
     writeProject();
     const QString start = "V1: a[0-100|0-99]  V2:  A1: a[0-100|0-99]  A2:";
@@ -240,6 +257,14 @@ int main(int argc, char** argv)
     CHECK_EQ(cues.size(), 3);
     CHECK_EQ(cues[1]["end"].toInt(), 25);
     CHECK_EQ(cues[2]["end"].toInt(), 130);
+    // A cue stretched over the next one stops at it, and the answer says so (an AI merging two cues extended the
+    // first before deleting the second and saw nothing happen)
+    const QJsonObject stretched = run("edit", {{"project", g_path}, {"dry_run", true},
+                                               {"ops", QString(R"([{"op":"subtitle","id":%1,"to":28}])").arg(cues[0]["id"].toInt())}});
+    CHECK(stretched["notes"].toArray().at(0).toString().contains("is 0-20 instead of 0-28"));
+    CHECK(!run("edit", {{"project", g_path}, {"dry_run", true},
+                        {"ops", QString(R"([{"op":"subtitle","id":%1,"to":15}])").arg(cues[0]["id"].toInt())}})
+               .contains("notes"));
     CHECK_EQ(tl["tracks"].toArray().size(), 4); // V1, A1, A2, A3
     const int firstId = tl["tracks"][0]["clips"][0]["id"].toInt();
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"effect","clips":[%1],"effect":"blur",
@@ -288,6 +313,15 @@ int main(int argc, char** argv)
         QJsonObject other = run("info", {{"project", g_path}, {"timeline", "short"}})["timeline"].toObject();
         CHECK_EQ(other["length"].toInt(), 20);
         const int shortId = other["id"].toInt();
+        // The open timeline empty, the cut in the new one: `check` and `render` name both (an AI got "the timeline is
+        // empty" and had to guess that the file still opens Timeline 1)
+        const QString emptyOpen = g_path + ".empty.schneidi";
+        QFile::remove(emptyOpen);
+        QFile::copy(g_path, emptyOpen);
+        run("edit", {{"project", emptyOpen}, {"ops", R"([{"op":"clear"}])"}});
+        const QString empty = messageOf("check", {{"project", emptyOpen}});
+        CHECK(empty.startsWith("EMPTY: the timeline 1 ") && empty.contains(QString("%1 \"Short\"").arg(shortId)));
+        CHECK(messageOf("render", {{"project", emptyOpen}, {"out", g_path + ".mp4"}}).contains("pass 'timeline'"));
 
         edit(R"([{"op":"clear"},{"op":"place_timeline","timeline":"Short","at":0}])");
         QJsonObject tl = run("info", {{"project", g_path}})["timeline"].toObject();
@@ -646,7 +680,8 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         if (CHECK(!multi.isEmpty())) {
             const QString proj = dir.filePath("streams.schneidi");
             run("new", {{"project", proj}});
-            run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(multi)}});
+            const QJsonObject placed = run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(multi)}});
+            CHECK(!placed.contains("notes")); // two streams, no Mix among them
             QHash<QString, int> ids; // track -> its clip
             for (const QJsonValue& t : run("info", {{"project", proj}})["timeline"]["tracks"].toArray())
                 if (!t["clips"].toArray().isEmpty()) ids[t["track"].toString()] = t["clips"][0]["id"].toInt();
@@ -673,6 +708,32 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                 CHECK(a1 && a1->volumeDb == -3.0 && a2 && a2->volumeDb == -3.0);
                 CHECK(a2 && !EffectRegistry::has(*a2, "denoise"));
             }
+        }
+    }
+    // A recording with a Mix stream next to its single streams (OBS, clip tools): placed with every stream playing,
+    // the answer says that everything is heard twice and which clips turn the Mix off; the game template mutes it
+    // (an AI cut a 9:16 short from such a clip in the vertical template, measured -14 LUFS and never noticed)
+    {
+        const QString mixed = Check::makeMedia(
+            dir.filePath("mixed.mkv"),
+            {"-f", "lavfi", "-i", "color=c=gray:s=320x240:r=25:d=2", "-f", "lavfi", "-i", "sine=f=440:d=2", "-f", "lavfi",
+             "-i", "sine=f=660:d=2", "-f", "lavfi", "-i", "sine=f=880:d=2", "-map", "0", "-map", "1", "-map", "2", "-map", "3",
+             "-c:v", "libx264", "-c:a", "aac", "-metadata:s:a:0", "title=Mix", "-metadata:s:a:1", "title=Game",
+             "-metadata:s:a:2", "title=Mic"});
+        if (CHECK(!mixed.isEmpty())) {
+            const QString proj = dir.filePath("mixed.schneidi");
+            run("new", {{"project", proj}, {"template", "vertical"}});
+            const QJsonObject r = run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"keep","media":"%1","ranges":[[0,10],[20,30]]}])").arg(mixed)}});
+            const QString note = r["notes"].toArray().at(0).toString();
+            int mixA = 0, mixB = 0;
+            for (const QJsonValue& c : r["changes"]["added"].toArray())
+                if (c["track"].toString() == "A1") (mixA ? mixB : mixA) = c["id"].toInt();
+            if (!CHECK(note.contains("mixed.mkv: its Mix stream plays together with its single streams (Game, Mic)")
+                       && note.contains(QString("{op:'disable', clips:[%1,%2]}").arg(std::min(mixA, mixB)).arg(std::max(mixA, mixB)))))
+                std::printf("       note: %s\n", qPrintable(note));
+            const QString gameProj = dir.filePath("mixed-game.schneidi");
+            run("new", {{"project", gameProj}, {"template", "game"}});
+            CHECK(!run("edit", {{"project", gameProj}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(mixed)}}).contains("notes"));
         }
     }
     {
@@ -754,6 +815,13 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             const double otherBefore = part("3s", "6s");
             const double faintLufs = run("loudness", {{"source", tp}, {"clips", QJsonArray{quiet}}})["clips"][0]["loudness"]["integrated_lufs"].toDouble();
             const double target = faintLufs + 18; // 6 dB more than the clip volume can give
+            // relative (several voice clips evened out together): the same note, not silently 6 dB short (an AI
+            // normalized a whispering interview to -16 and only the master fader showed it)
+            const QJsonObject rel = run("edit", {{"project", tp}, {"dry_run", true}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":%2,"relative":true}])").arg(quiet).arg(target)}});
+            const QString relNote = rel["notes"].toArray().at(0).toString();
+            if (!CHECK(relNote.contains("clip volume ends at +12 dB: they stay 6.0 dB under the target")
+                       || relNote.contains("they stay 5.9 dB") || relNote.contains("they stay 6.1 dB")))
+                std::printf("       note: %s\n", qPrintable(relNote));
             const QJsonObject r = run("edit", {{"project", tp}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":%2,"allow_track_gain":true}])").arg(quiet).arg(target)}});
             CHECK(QJsonDocument(r["notes"].toArray()).toJson().contains("allow_track_gain"));
             const QJsonObject track = run("info", {{"project", tp}})["timeline"]["tracks"][2].toObject();
@@ -900,6 +968,15 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         }
         CHECK_EQ(errorOf("frames", {{"sources", QJsonArray{QJsonObject{{"file", clip}, {"width", 10}}}}, {"at", QJsonArray{0}}}),
                  QString("BAD_ARGUMENT"));
+        // A sheet named .png is a PNG (it was JPEG data under that name), any other name stays JPEG
+        const auto magic = [](const QString& path) {
+            QFile f(path);
+            return f.open(QIODevice::ReadOnly) ? f.read(4) : QByteArray();
+        };
+        run("frames", {{"source", clip}, {"count", 2}, {"sheet", true}, {"out", dir.filePath("sheet.png")}});
+        CHECK_EQ(magic(dir.filePath("sheet.png")), QByteArray("\x89PNG"));
+        run("frames", {{"source", clip}, {"count", 2}, {"sheet", true}, {"out", dir.filePath("sheet.jpg")}});
+        CHECK(magic(dir.filePath("sheet.jpg")).startsWith("\xff\xd8"));
 
         const QJsonObject pr = run("probe", {{"files", QJsonArray{clip, dir.filePath("missing.mp4")}}});
         CHECK_EQ(pr["files"].toArray().size(), 2);
@@ -913,6 +990,31 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         }
         const QJsonArray changes = run("scenes", {{"file", clip}, {"region", "0.7,0,0.3,0.3"}})["changes"].toArray();
         if (CHECK_EQ(changes.size(), 1)) CHECK(std::abs(changes[0]["s"].toDouble() - 4.0) < 0.3);
+        // Looked at with a 9:16 project (an AI cutting a short passes it for the frame rate): the recording keeps its
+        // own picture - a crop, a region and the scopes are parts of it, not of a letterboxed 9:16 frame (the crop of
+        // the kill feed came out black)
+        const QString tall = dir.filePath("tall.schneidi");
+        run("new", {{"project", tall}, {"fps", 50}, {"width", 1080}, {"height", 1920}});
+        Cli::Context ctxTall;
+        ctxTall.mcp = true;
+        const QJsonObject inTall = frames->run(
+            Cli::normalize(*frames, {{"source", clip}, {"project", tall}, {"at", QJsonArray{"5s"}}, {"crop", "240,10,60,30"}}),
+            ctxTall);
+        CHECK_EQ(inTall["frames"][0]["frame"].toInt(), 250); // frames count in the project's rate
+        if (CHECK(ctxTall.images.size() == 1)) {
+            CHECK_EQ(ctxTall.images[0].width(), 60);
+            CHECK(qGray(ctxTall.images[0].pixel(30, 15)) > 200); // the white box
+        }
+        Cli::Context ctxWide;
+        ctxWide.mcp = true;
+        frames->run(Cli::normalize(*frames, {{"source", clip}, {"project", tall}, {"at", QJsonArray{"5s"}}}), ctxWide);
+        if (CHECK(ctxWide.images.size() == 1)) CHECK(ctxWide.images[0].width() > ctxWide.images[0].height());
+        const QJsonArray tallChanges =
+            run("scenes", {{"file", clip}, {"region", "240,10,60,30"}, {"project", tall}})["changes"].toArray();
+        if (CHECK_EQ(tallChanges.size(), 1)) CHECK(std::abs(tallChanges[0]["s"].toDouble() - 4.0) < 0.3);
+        const QJsonObject tallScopes =
+            run("scopes", {{"source", clip}, {"project", tall}, {"at", "2s"}, {"out", dir.filePath("tall-scopes.png")}});
+        CHECK_EQ(tallScopes["stats"]["black_clipped_pct"].toDouble(), 0.0); // no letterbox bars in the numbers
         // peaks group (0.10): each tone burst is one group
         const QJsonArray groups = run("peaks", {{"file", clip}, {"threshold_db", -20}, {"group", "1s"}})["groups"].toArray();
         if (CHECK_EQ(groups.size(), 2)) {
