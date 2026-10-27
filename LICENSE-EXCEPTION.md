@@ -1,6 +1,6 @@
-# Additional permission under GNU GPL version 3, section 7
+# Additional permission under GNU AGPL version 3, section 7
 
-schneidi is licensed under the GNU General Public License version 3 ([LICENSE](LICENSE)). The copyright holders of
+schneidi is licensed under the GNU Affero General Public License version 3 ([LICENSE](LICENSE)). The copyright holders of
 schneidi grant the following additional permission:
 
 If you modify schneidi, or any covered work, by linking or combining it with a proprietary library that a mobile app
@@ -18,7 +18,7 @@ third-party component whose license does not allow the combination.
 You may extend this permission to your version of schneidi, but you are not obliged to do so. If you do not wish to,
 delete this permission from your version.
 
-Contributions to schneidi are accepted under GPL-3.0 together with this permission.
+Contributions to schneidi are accepted under AGPL-3.0 together with this permission.
 
 This permission is about copyright only. It grants no rights to the name "schneidi" or its logo; see
 [TRADEMARKS.md](TRADEMARKS.md).

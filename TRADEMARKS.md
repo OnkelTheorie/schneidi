@@ -1,6 +1,6 @@
 # The schneidi name and logo
 
-The code of schneidi is free software ([GPL-3.0](LICENSE)). The name "schneidi" and the schneidi logo are not part of
+The code of schneidi is free software ([AGPL-3.0](LICENSE)). The name "schneidi" and the schneidi logo are not part of
 that license. The rules below keep it clear which builds are official, so nobody gets a copy with ads or malware
 under the schneidi name.
 
