@@ -12,6 +12,7 @@
 //   pre-echo  drums: level in the 25 ms before each hit against the hit (dB, ideal in brackets) - lower is better
 //   length    output samples against the requested length
 //   us/block  time per 512-sample stereo block (one core)
+// Environment: STRETCH_WINDOW=<n> other FFT size for the own stretcher, STRETCH_OWN_ONLY=1 without Rubber Band.
 // bench_stretch <file> [seconds]: real material (e.g. speech) - stretched by s and back by 1/s, LSD to the original
 // (round trip, both stretchers the same way).
 
@@ -175,6 +176,8 @@ Stereo drums(double scale, double seconds)
 Stereo ownStretch(const Stereo& in, double speed, size_t length, double* usPerBlock = nullptr)
 {
     const int64_t size = int64_t(in[0].size());
+    Audio::Stretch::Options options;
+    options.window = qEnvironmentVariableIntValue("STRETCH_WINDOW");
     Audio::Stretch st(2, kRate,
                       [&](int64_t from, int count, float* const* out) {
                           for (int c = 0; c < 2; ++c)
@@ -183,7 +186,7 @@ Stereo ownStretch(const Stereo& in, double speed, size_t length, double* usPerBl
                                   out[c][i] = k >= 0 && k < size ? in[size_t(c)][size_t(k)] : 0.f;
                               }
                       },
-                      [speed](double t) { return t * speed; });
+                      [speed](double t) { return t * speed; }, options);
     Stereo out = make(0);
     out[0].resize(length);
     out[1].resize(length);
@@ -196,6 +199,7 @@ Stereo ownStretch(const Stereo& in, double speed, size_t length, double* usPerBl
         st.read(int64_t(pos), n, buf);
     }
     if (usPerBlock) *usPerBlock = double(timer.nsecsElapsed()) / 1000.0 / blocks;
+    if (qEnvironmentVariableIsSet("STRETCH_ONSETS")) std::printf("    (%d onsets at %.2fx)\n", st.transients(), speed);
     return out;
 }
 
@@ -435,13 +439,13 @@ int main(int argc, char** argv)
         std::printf("Round trip (LSD dB to the original, lower is better): %s\n", argv[1]);
         roundTrip("own", own, in);
 #if SCHNEIDI_HAVE_RUBBERBAND
-        roundTrip("Rubber Band", rb, in);
+        if (!qEnvironmentVariableIsSet("STRETCH_OWN_ONLY")) roundTrip("Rubber Band", rb, in);
 #endif
         return 0;
     }
     report("Own stretcher (engine/audio/Stretch)", own);
 #if SCHNEIDI_HAVE_RUBBERBAND
-    report("Rubber Band (R3, real-time, channels together)", rb);
+    if (!qEnvironmentVariableIsSet("STRETCH_OWN_ONLY")) report("Rubber Band (R3, real-time, channels together)", rb);
 #else
     std::printf("\nRubber Band not installed: no comparison\n");
 #endif
