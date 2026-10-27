@@ -10,6 +10,7 @@
 #include "engine/Exporter.h"
 #include "engine/Frei0r.h"
 #include "engine/LiveUpdate.h"
+#include "engine/MediaProbe.h"
 #include "engine/MemoryRelease.h"
 #include "engine/Preroll.h"
 #include "engine/PreviewConsumer.h"
@@ -277,6 +278,12 @@ MediaInfo Engine::probe(const QString& path)
 
 MediaInfo Engine::probe(const ProjectFormat& format, const QString& path)
 {
+    if (std::optional<MediaInfo> own = MediaProbe::read(path, format.rate)) return *std::move(own);
+    return probeMlt(format, path);
+}
+
+MediaInfo Engine::probeMlt(const ProjectFormat& format, const QString& path)
+{
     MediaInfo info;
     info.path = path;
     info.name = QFileInfo(path).fileName();
@@ -292,9 +299,7 @@ MediaInfo Engine::probe(const ProjectFormat& format, const QString& path)
         info.length = 5 * fps; // Still image: 5 seconds as in DaVinci
     } else {
         // Audio files with embedded cover do not count as video
-        static const QStringList audioExt{"mp3", "wav", "flac", "ogg", "opus", "m4a", "aac", "wma", "aiff"};
-        const bool audioFile = audioExt.contains(QFileInfo(path).suffix().toLower());
-        info.hasVideo = !audioFile && p.get_int("video_index") >= 0;
+        info.hasVideo = !MediaProbe::isAudioFile(path) && p.get_int("video_index") >= 0;
         info.hasAudio = p.get_int("audio_index") >= 0;
         if (info.hasAudio) info.audioStreams = audioStreamsOf(p);
         info.length = p.get_length();

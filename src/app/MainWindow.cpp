@@ -541,7 +541,8 @@ void MainWindow::previewFile(const QString& path)
     m_engine->pause();
     m_engine->showSource(path, m_sourcePos.value(path, 0));
     if (cached != m_probeCache.cend()) return;
-    // Probing opens the file once more (~0.5 s with several audio streams): in the background, the window stays usable
+    // Probing opens the file once more (mostly ~1 ms, still images and odd files through MLT: up to ~0.5 s): in the
+    // background, the window stays usable
     QThreadPool::globalInstance()->start([guard = QPointer<MainWindow>(this), format = m_project->format(), path] {
         const MediaInfo probed = Engine::probe(format, path);
         QMetaObject::invokeMethod(qApp, [guard, format, probed] {
