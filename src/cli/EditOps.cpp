@@ -4,6 +4,7 @@
 #include "core/EffectRegistry.h"
 #include "core/Presets.h"
 #include "core/Retime.h"
+#include "core/StreamPresets.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 
@@ -11,6 +12,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 
 #include <algorithm>
 #include <cmath>
@@ -245,6 +247,30 @@ struct PresetsScope {
     ~PresetsScope() { editor.setStreamPresets(saved); }
 };
 
+// A recording with a Mix stream plus its single streams (OBS, game clip tools) placed with all of them playing in
+// [from, to): everything is heard twice, too loud - say so with the Mix clips to turn off (the user's import presets
+// or the game template mute the Mix; the default plays every stream)
+void noteDoubledMix(Session& s, const MediaInfo& m, int from, int to)
+{
+    if (m.audioStreamCount() < 2) return;
+    QJsonArray mixClips;
+    QStringList singles;
+    for (const Track& t : s.project.timeline().audio) {
+        if (t.muted) continue;
+        for (const Clip& c : t.clips) {
+            if (!c.enabled || c.mediaPath != m.path || c.end() <= from || c.start >= to) continue;
+            const QString title = m.audioStreamName(c.audioStream);
+            if (StreamPresets::isMixTitle(title)) mixClips << c.id;
+            else if (!singles.contains(title)) singles << title;
+        }
+    }
+    if (mixClips.isEmpty() || singles.isEmpty()) return;
+    s.notes << QString("%1: its Mix stream plays together with its single streams (%2) - everything is heard twice; "
+                       "{op:'disable', clips:%3} turns the Mix off (or `new` with template game mutes it on import)")
+                   .arg(QFileInfo(m.path).fileName(), singles.join(", "),
+                        QString::fromUtf8(QJsonDocument(mixClips).toJson(QJsonDocument::Compact)));
+}
+
 void opPlace(Session& s, const QJsonObject& op, bool append)
 {
     const PresetsScope presets(s, op);
@@ -253,6 +279,7 @@ void opPlace(Session& s, const QJsonObject& op, bool append)
     sourceRange(s, op, m, &in, &out);
     const int at = append ? timeOf(s, op, "at", endOf(s)) : timeOf(s, op, "at");
     s.editor.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")));
+    noteDoubledMix(s, m, at, at + out - in);
 }
 
 void opKeep(Session& s, const QJsonObject& op)
@@ -260,6 +287,7 @@ void opKeep(Session& s, const QJsonObject& op)
     const PresetsScope presets(s, op);
     const MediaInfo m = s.media(op.value("media").toString());
     int at = timeOf(s, op, "at", endOf(s));
+    const int start = at;
     const int track = parseTrack(op.value("track"));
     const QJsonArray ranges = op.value("ranges").toArray();
     if (ranges.isEmpty()) fail("BAD_ARGUMENT", "missing 'ranges' ([[from, to], …] in the source)");
@@ -272,6 +300,7 @@ void opKeep(Session& s, const QJsonObject& op)
         s.editor.placeSourceRange(m.path, in, out - 1, at, track);
         at += out - in;
     }
+    noteDoubledMix(s, m, start, at);
 }
 
 void opDelete(Session& s, const QJsonObject& op)
