@@ -3,7 +3,7 @@
 // sample() averages the covered pixels; in the main window the button opens the clip without its key large in a window
 // of its own (the picture's shape, at most 90 % of the screen), a click there sets the key color (one undo step) and
 // closes it; right-click, Esc, closing the window and another selection cancel without changing anything. Beside the
-// cursor a square shows the color a click takes.
+// cursor a square shows the color a click takes; the wheel zooms around the cursor, the middle button drags.
 // KEY_PICK_DUMP=<png>: picture of the pipette window.
 
 #include "check.h"
@@ -25,6 +25,7 @@
 #include <QPainter>
 #include <QTemporaryDir>
 #include <QToolButton>
+#include <QWheelEvent>
 #include <clocale>
 #include <cmath>
 
@@ -85,6 +86,62 @@ void testWindowSize()
     CHECK_EQ(KeyPickWindow::sizeFor(QSize(1920, 1080), QSize(1920, 1040)), QSize(1664, 936));
     CHECK_EQ(KeyPickWindow::sizeFor(QSize(1080, 1920), QSize(2560, 1400)), QSize(708, 1260));
     CHECK_EQ(KeyPickWindow::sizeFor(QSize(320, 180), QSize(800, 600)), QSize(720, 405)); // small clips grow too
+}
+
+void testZoom()
+{
+    // A 320x180 green frame with one red pixel; the window shows it 2x (640x360)
+    QImage img(320, 180, QImage::Format_RGBA8888);
+    img.fill(QColor(0, 200, 40));
+    img.setPixelColor(200, 100, QColor(230, 20, 20));
+    KeyColorPicker picker(img);
+    QColor picked;
+    QObject::connect(&picker, &KeyColorPicker::picked, [&picked](const QColor& c) { picked = c; });
+    KeyPickWindow window(&picker, img.size());
+    window.resize(640, 360);
+    CHECK_EQ(window.pictureRect(), QRectF(0, 0, 640, 360));
+    const auto wheel = [&window](QPointF at, int notches) {
+        QWheelEvent e(at, window.mapToGlobal(at), QPoint(), QPoint(0, 120 * notches), Qt::NoButton, Qt::NoModifier,
+                      Qt::NoScrollPhase, false);
+        QApplication::sendEvent(&window, &e);
+    };
+    const auto pictureAt = [&window](QPointF at) { // picture point under a window point
+        const QRectF r = window.pictureRect();
+        return QPointF((at.x() - r.x()) / r.width() * 320, (at.y() - r.y()) / r.height() * 180);
+    };
+    // Zoom in around the red pixel: it stays under the cursor
+    const QPointF cursor(401, 201); // picture (200.5, 100.5)
+    wheel(cursor, 3);
+    CHECK(std::abs(window.zoom() - std::pow(KeyPickWindow::kZoomStep, 3)) < 1e-9);
+    const QPointF under = pictureAt(cursor);
+    CHECK(std::abs(under.x() - 200.5) < 0.01 && std::abs(under.y() - 100.5) < 0.01);
+    CHECK(window.pictureRect().contains(QRectF(window.rect()))); // zoomed in, no black beyond the edges
+    wheel(cursor, 40);
+    CHECK_EQ(window.zoom(), KeyPickWindow::kMaxZoom);
+    picker.hover(cursor, window.pictureRect());
+    if (const QString dump = qEnvironmentVariable("KEY_PICK_DUMP"); !dump.isEmpty())
+        window.grab().save(QString(dump).replace(".png", "-zoom.png"));
+    // A click there takes the red pixel's area (7x7 average around it: mostly green, some red)
+    QMouseEvent click(QEvent::MouseButtonPress, cursor, window.mapToGlobal(cursor), Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QApplication::sendEvent(&window, &click);
+    CHECK(picked.isValid() && picked.red() > 0 && picked.red() < 40);
+    // The middle button drags the picture
+    const QPointF centerBefore = pictureAt(QPointF(320, 180));
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(320, 180), window.mapToGlobal(QPointF(320, 180)),
+                      Qt::MiddleButton, Qt::MiddleButton, Qt::NoModifier);
+    QMouseEvent move(QEvent::MouseMove, QPointF(300, 180), window.mapToGlobal(QPointF(300, 180)), Qt::NoButton,
+                     Qt::MiddleButton, Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(300, 180), window.mapToGlobal(QPointF(300, 180)),
+                        Qt::MiddleButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&window, &press);
+    QApplication::sendEvent(&window, &move);
+    QApplication::sendEvent(&window, &release);
+    CHECK(pictureAt(QPointF(320, 180)).x() > centerBefore.x()); // the picture moved left with the mouse
+    // All the way out: the whole picture again, in the middle
+    wheel(cursor, -60);
+    CHECK_EQ(window.zoom(), 1.0);
+    CHECK_EQ(window.pictureRect(), QRectF(0, 0, 640, 360));
 }
 
 void testIsolate()
@@ -286,6 +343,7 @@ int main(int argc, char** argv)
     testSample();
     testSwatch();
     testWindowSize();
+    testZoom();
     testIsolate();
     testMainWindow(dir.path());
     return Check::result();

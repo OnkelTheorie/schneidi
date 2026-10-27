@@ -88,15 +88,19 @@ void KeyColorPicker::paint(QPainter& p, const QRectF& frame)
 {
     p.save();
     p.fillRect(frame, Qt::black);
-    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    // Zoomed in far (4 screen pixels per picture pixel and more): sharp pixels, the exact colors to aim at
+    p.setRenderHint(QPainter::SmoothPixmapTransform, m_picture.isNull() || frame.width() < 4.0 * m_picture.width());
     p.drawImage(frame, m_picture);
+    // The part of the picture on screen (zoomed in, the frame is larger than the window): hint and square stay in it
+    const QRectF visible = frame.intersected(QRectF(p.viewport()));
 
     // Hint at the top
-    const QString text = T("Pipette: Klick ins Bild übernimmt die Key-Farbe, Rechtsklick oder Esc bricht ab");
+    const QString text = T("Pipette: Klick ins Bild übernimmt die Key-Farbe, Mausrad zoomt, mittlere Maustaste "
+                           "verschiebt, Rechtsklick oder Esc bricht ab");
     QFont font = p.font();
     font.setPointSizeF(std::max(7.0, font.pointSizeF() - 1));
     p.setFont(font);
-    const QRectF hint = p.boundingRect(frame.adjusted(8, 8, -8, -8), Qt::AlignTop | Qt::AlignHCenter | Qt::TextWordWrap,
+    const QRectF hint = p.boundingRect(visible.adjusted(8, 8, -8, -8), Qt::AlignTop | Qt::AlignHCenter | Qt::TextWordWrap,
                                        text).adjusted(-6, -3, 6, 3);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
@@ -106,8 +110,8 @@ void KeyColorPicker::paint(QPainter& p, const QRectF& frame)
     p.drawText(hint, Qt::AlignCenter | Qt::TextWordWrap, text);
 
     // Beside the cursor (flipped at the edges): the color a click takes
-    if (m_hover.x() >= 0 && frame.contains(m_hover) && m_hoverColor.isValid()) {
-        const QRectF box = swatchRect(m_hover, frame);
+    if (m_hover.x() >= 0 && visible.contains(m_hover) && m_hoverColor.isValid()) {
+        const QRectF box = swatchRect(m_hover, visible);
         p.setBrush(m_hoverColor);
         p.setPen(QPen(Qt::black, 3));
         p.drawRoundedRect(box, 3, 3);
