@@ -55,6 +55,19 @@ MediaSource openMedia(const QJsonObject& a)
     return m;
 }
 
+ProjectFormat pictureFormat(const MediaSource& m)
+{
+    ProjectFormat f = m.format;
+    if (!m.info.hasVideo || m.info.isImage) return f;
+    // Without a project openMedia detected it already (and took its size)
+    const ClipFormat cf = m.clip.ok ? m.clip : detectClipFormat(m.info.path);
+    if (cf.ok) {
+        f.width = cf.width;
+        f.height = cf.height;
+    }
+    return f;
+}
+
 // Audio tracks of `tl`: "A3", "A2,A5", numbers, track names or the audio stream names of their clips
 // ("Discord,Mikrofon", as `probe` lists them); empty = none given
 QVector<int> audioTracksOf(const Project& p, const Timeline& tl, const QJsonValue& list)

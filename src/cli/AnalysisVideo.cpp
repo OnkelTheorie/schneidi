@@ -48,7 +48,7 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
         QJsonObject ma{{"file", src}};
         if (a.contains("project")) ma["project"] = a["project"];
         media = openMedia(ma);
-        f = media.format;
+        f = pictureFormat(media);
         length = media.info.length;
     }
     if (length <= 0) fail("EMPTY", "nothing to show (empty timeline): " + src);
@@ -101,7 +101,7 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
 // counts when it was steady just before, differs afterwards and is steady again (a new line that appeared).
 QJsonObject regionChanges(const MediaSource& m, const QJsonObject& a, Context& ctx)
 {
-    const ProjectFormat& f = m.format;
+    const ProjectFormat f = pictureFormat(m);
     const QSize full(std::max(2, f.width), std::max(2, f.height));
     const QRect r = cropRect(a["region"].toString(), full);
     constexpr int kRate = 10; // samples per second
@@ -238,7 +238,7 @@ int unexplainedColor(const std::vector<int>& from, const int* to, int margin, do
 // in rows it was not in just before (a new line, not the same line on a brighter background).
 ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::function<void(double)>& progress)
 {
-    const ProjectFormat& f = m.format;
+    const ProjectFormat f = pictureFormat(m);
     const QSize full(std::max(2, f.width), std::max(2, f.height));
     const QRect r = cropRect(a["region"].toString(), full);
     const QColor color = colorOf(a["color"], "color");
@@ -684,7 +684,7 @@ QJsonObject cmdScopes(const QJsonObject& a, Context& ctx)
         QJsonObject ma{{"file", src}};
         if (a.contains("project")) ma["project"] = a["project"];
         media = openMedia(ma);
-        f = media.format;
+        f = pictureFormat(media);
         length = media.info.length;
         if (!media.info.hasVideo) fail("NO_VIDEO", "the file has no picture");
     }

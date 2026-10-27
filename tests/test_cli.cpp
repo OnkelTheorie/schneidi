@@ -913,6 +913,31 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         }
         const QJsonArray changes = run("scenes", {{"file", clip}, {"region", "0.7,0,0.3,0.3"}})["changes"].toArray();
         if (CHECK_EQ(changes.size(), 1)) CHECK(std::abs(changes[0]["s"].toDouble() - 4.0) < 0.3);
+        // Looked at with a 9:16 project (an AI cutting a short passes it for the frame rate): the recording keeps its
+        // own picture - a crop, a region and the scopes are parts of it, not of a letterboxed 9:16 frame (the crop of
+        // the kill feed came out black)
+        const QString tall = dir.filePath("tall.schneidi");
+        run("new", {{"project", tall}, {"fps", 50}, {"width", 1080}, {"height", 1920}});
+        Cli::Context ctxTall;
+        ctxTall.mcp = true;
+        const QJsonObject inTall = frames->run(
+            Cli::normalize(*frames, {{"source", clip}, {"project", tall}, {"at", QJsonArray{"5s"}}, {"crop", "240,10,60,30"}}),
+            ctxTall);
+        CHECK_EQ(inTall["frames"][0]["frame"].toInt(), 250); // frames count in the project's rate
+        if (CHECK(ctxTall.images.size() == 1)) {
+            CHECK_EQ(ctxTall.images[0].width(), 60);
+            CHECK(qGray(ctxTall.images[0].pixel(30, 15)) > 200); // the white box
+        }
+        Cli::Context ctxWide;
+        ctxWide.mcp = true;
+        frames->run(Cli::normalize(*frames, {{"source", clip}, {"project", tall}, {"at", QJsonArray{"5s"}}}), ctxWide);
+        if (CHECK(ctxWide.images.size() == 1)) CHECK(ctxWide.images[0].width() > ctxWide.images[0].height());
+        const QJsonArray tallChanges =
+            run("scenes", {{"file", clip}, {"region", "240,10,60,30"}, {"project", tall}})["changes"].toArray();
+        if (CHECK_EQ(tallChanges.size(), 1)) CHECK(std::abs(tallChanges[0]["s"].toDouble() - 4.0) < 0.3);
+        const QJsonObject tallScopes =
+            run("scopes", {{"source", clip}, {"project", tall}, {"at", "2s"}, {"out", dir.filePath("tall-scopes.png")}});
+        CHECK_EQ(tallScopes["stats"]["black_clipped_pct"].toDouble(), 0.0); // no letterbox bars in the numbers
         // peaks group (0.10): each tone burst is one group
         const QJsonArray groups = run("peaks", {{"file", clip}, {"threshold_db", -20}, {"group", "1s"}})["groups"].toArray();
         if (CHECK_EQ(groups.size(), 2)) {
