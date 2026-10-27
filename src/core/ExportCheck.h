@@ -63,6 +63,19 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
 QVector<Issue> sound(const std::vector<float>& framePeaks, int offset, double integratedLufs, double truePeakDb,
                      const ProjectFormat& f, const Options& o = {}, bool limiter = false);
 
+// What the master needs so the sound issues of sound() go away (the Deliver page's Fix button, `check`'s "fix"): the
+// limiter at the true-peak ceiling (peaks, or the fader goes up) and the master fader by the difference to the
+// target loudness, as far as it goes
+struct SoundFix {
+    bool limiter = false;  // switch the master limiter on at `ceiling` (dBTP)
+    double ceiling = -1;
+    bool level = false;    // set the master fader to `volumeDb` (rounded to 0.1 dB), `change` = the difference
+    double volumeDb = 0;
+    double change = 0;
+    bool any() const { return limiter || level; }
+};
+SoundFix soundFix(const QVector<Issue>& sound, double integratedLufs, const Timeline& tl, const Options& o = {});
+void apply(const SoundFix& fix, Timeline& tl);
 // Stretches longer than minFrames where the per-frame peak stays below thresholdDb, as [from, to) with `offset`
 QVector<QPair<int, int>> silentStretches(const std::vector<float>& framePeaks, int offset, double thresholdDb,
                                          int minFrames);

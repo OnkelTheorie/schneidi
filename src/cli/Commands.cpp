@@ -924,8 +924,10 @@ const QVector<Command>& commands()
                   "3 min) = hardly any motion in the first second. A rendered file (after rendering): black "
                   "stretches, frozen picture, no sound, the same sound checks. 'issues' (errors first, each with check "
                   "id, message, time range and 'clip' when it is about one), counts of 'errors'/'warnings' and the "
-                  "measured 'sound'. Fix errors before handing over; warnings may be intended (a fade to black, a "
-                  "pause).",
+                  "measured 'sound'; for a project with clipping, true peak or loudness off the target also 'fix': the "
+                  "ops for `edit` that solve them (master limiter at -1 dBTP, master fader by the difference) - apply "
+                  "them, don't judge the numbers yourself. Fix errors before handing over; warnings may be intended "
+                  "(a fade to black, a pause).",
          {{"source", T::Path, "project (.schneidi) or rendered media file", true, true},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"from", T::Time, "for a project: start of the range to check (default: start)"},

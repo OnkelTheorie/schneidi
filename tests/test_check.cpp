@@ -16,8 +16,10 @@
 
 #include "check.h"
 
+#include <QFile>
 #include <QGuiApplication>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 
 #include <cmath>
@@ -160,6 +162,22 @@ int main(int argc, char** argv)
         const QString advice = issues[0].message;
         issues = ExportCheck::sound(normal, 0, -14, -0.5, f, {}, true);
         CHECK(issues[0].message.size() < advice.size());
+        // The fix (Fix button, `check`'s "fix"). Too quiet with peaks near 0 (a colleague's Valorant clip: -17.1 LUFS,
+        // -0.1 dBTP): fader up by the difference and the limiter at -1; peaks only: the limiter; too loud with the
+        // limiter already on: the fader down only; nothing off: no fix
+        Timeline mix;
+        auto fix = ExportCheck::soundFix(ExportCheck::sound(normal, 0, -17.1, -0.1, f), -17.1, mix);
+        CHECK(fix.limiter && fix.ceiling == -1 && fix.level);
+        CHECK(std::abs(fix.volumeDb - 3.1) < 1e-9 && std::abs(fix.change - 3.1) < 1e-9);
+        fix = ExportCheck::soundFix(ExportCheck::sound(normal, 0, -14, -0.5, f), -14, mix);
+        CHECK(fix.limiter && !fix.level);
+        mix.masterLimiter = true;
+        mix.masterVolumeDb = 2;
+        fix = ExportCheck::soundFix(ExportCheck::sound(normal, 0, -10, -1.5, f, {}, true), -10, mix);
+        CHECK(!fix.limiter && fix.level && std::abs(fix.volumeDb + 2) < 1e-9 && std::abs(fix.change + 4) < 1e-9);
+        ExportCheck::apply(fix, mix);
+        CHECK(mix.masterVolumeDb == -2 && mix.masterLimiter);
+        CHECK(!ExportCheck::soundFix(ExportCheck::sound(normal, 0, -14.2, -2.0, f), -14.2, Timeline{}).any());
         // No sound at all
         CHECK_EQ(checks(ExportCheck::sound(std::vector<float>(250, 0.f), 0, -200, -200, f)), QStringList({"no_sound"}));
         CHECK_EQ(checks(ExportCheck::sound({}, 0, -200, -200, f)), QStringList({"no_sound"}));
@@ -455,6 +473,32 @@ int main(int argc, char** argv)
     CHECK(!r.contains("sound"));
     r = run("check", {{"source", project}, {"target_lufs", lufs}, {"from", "2s"}, {"to", "3.9s"}});
     CHECK(checksOf(r).isEmpty());
+    CHECK(!r.contains("fix"));
+    // Too quiet: `fix` has the ops for `edit` (on a copy); applied, the loudness meets the target
+    {
+        const QString copy = dir.filePath("fix.schneidi");
+        QFile::copy(project, copy);
+        r = run("check", {{"source", copy}});
+        const QJsonObject fix = r["fix"].toObject();
+        const QJsonArray ops = fix["ops"].toArray();
+        if (CHECK_EQ(ops.size(), 1)) {
+            const QJsonObject mixer = ops[0].toObject();
+            CHECK_EQ(mixer["op"].toString(), QString("mixer"));
+            CHECK_EQ(mixer["track"].toString(), QString("master"));
+            CHECK(mixer["volume_db"].toDouble() > 2 && mixer["limiter"].toBool());
+        }
+        CHECK(fix["what"].toString().contains("master fader +"));
+        // With a timeline named, the ops start by choosing it
+        const QJsonObject info = run("info", {{"project", copy}});
+        const QString name = info["timelines"].toArray().at(0).toObject()["name"].toString();
+        const QJsonObject named = run("check", {{"source", copy}, {"timeline", name}})["fix"].toObject();
+        const QJsonArray namedOps = named["ops"].toArray();
+        if (CHECK_EQ(namedOps.size(), 2)) CHECK_EQ(namedOps[0].toObject()["op"].toString(), QString("timeline"));
+        run("edit", {{"project", copy}, {"ops", QString::fromUtf8(QJsonDocument(ops).toJson())}});
+        r = run("check", {{"source", copy}});
+        CHECK(!checksOf(r).contains("loudness"));
+        CHECK(!r.contains("fix"));
+    }
 
     // The rendered file: the sound checks again; the gap of one frame is too short for the picture check of a file
     run("render", {{"project", project}, {"out", out}});

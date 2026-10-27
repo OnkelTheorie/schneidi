@@ -687,35 +687,17 @@ bool DeliverPanel::addToQueue(bool confirm)
 
 void DeliverPanel::prepareFix(const QVector<ExportCheck::Issue>& sound, double integratedLufs, const Timeline& tl)
 {
-    const ExportCheck::Options o;
-    const auto has = [&sound](const char* check) {
-        return std::any_of(sound.begin(), sound.end(), [check](const ExportCheck::Issue& i) { return i.check == check; });
-    };
-    const double ceiling = std::min(tl.masterLimiterDb, o.maxTruePeakDb);
-    const bool limiterOn = tl.masterLimiter && tl.masterLimiterDb <= o.maxTruePeakDb;
-    // Loudness: the master fader by the difference to the target (as far as it goes); up = the limiter catches the
-    // peaks that grow with it
-    double volume = tl.masterVolumeDb;
-    if (has("loudness"))
-        volume = std::clamp(tl.masterVolumeDb + (o.targetLufs - integratedLufs), kMinVolumeDb, kMaxVolumeDb);
-    const bool louder = volume > tl.masterVolumeDb + 0.05, quieter = volume < tl.masterVolumeDb - 0.05;
-    const bool limiter = !limiterOn && (has("clipping") || has("true_peak") || louder);
-    if (!limiter && !louder && !quieter) return;
-    volume = std::round(volume * 10) / 10;
+    const ExportCheck::SoundFix fix = ExportCheck::soundFix(sound, integratedLufs, tl);
+    if (!fix.any()) return;
     QStringList what;
-    if (limiter) what << T("Limiter an (%1 dBTP)").arg(QString::number(ceiling, 'f', 1).replace('.', I18n::decimalPoint()));
-    if (louder || quieter)
-        what << T("Master %1%2 dB").arg(volume > tl.masterVolumeDb ? "+" : "")
-                    .arg(QString::number(volume - tl.masterVolumeDb, 'f', 1).replace('.', I18n::decimalPoint()));
+    if (fix.limiter)
+        what << T("Limiter an (%1 dBTP)").arg(QString::number(fix.ceiling, 'f', 1).replace('.', I18n::decimalPoint()));
+    if (fix.level)
+        what << T("Master %1%2 dB").arg(fix.change > 0 ? "+" : "")
+                    .arg(QString::number(fix.change, 'f', 1).replace('.', I18n::decimalPoint()));
     m_fixBtn->setText(T("Beheben: %1").arg(what.join(", ")));
     m_fixBtn->setToolTip(T("Ein Rückgängig-Schritt im Mixer: %1. Danach wird neu geprüft.").arg(what.join(", ")));
-    m_fix = [limiter, ceiling, volume, level = louder || quieter](Timeline& t) {
-        if (limiter) {
-            t.masterLimiter = true;
-            t.masterLimiterDb = ceiling;
-        }
-        if (level) t.masterVolumeDb = volume;
-    };
+    m_fix = [fix](Timeline& t) { ExportCheck::apply(fix, t); };
     m_fixSequence = m_project->currentSequence();
     m_fixBtn->show();
 }

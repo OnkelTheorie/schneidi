@@ -109,6 +109,28 @@ QJsonObject issueJson(const ExportCheck::Issue& i, const ProjectFormat& f)
     return o;
 }
 
+// The Deliver page's Fix button as ops for `edit`: the model applies them instead of judging the numbers itself
+// (a small one called a true peak of -0.1 dBTP "ok for H.264"). Empty when the sound needs no such fix.
+QJsonObject fixJson(const ExportCheck::SoundFix& fix, const QJsonValue& timeline)
+{
+    if (!fix.any()) return {};
+    QJsonObject mixer{{"op", "mixer"}, {"track", "master"}};
+    QStringList what;
+    if (fix.limiter) {
+        mixer["limiter"] = true;
+        mixer["limiter_db"] = fix.ceiling;
+        what << QString("master limiter on at %1 dBTP").arg(fix.ceiling, 0, 'f', 1);
+    }
+    if (fix.level) {
+        mixer["volume_db"] = fix.volumeDb;
+        what << QString("master fader %1%2 dB").arg(fix.change > 0 ? "+" : "").arg(fix.change, 0, 'f', 1);
+    }
+    QJsonArray ops;
+    if (!timeline.isUndefined() && !timeline.isNull()) ops << QJsonObject{{"op", "timeline"}, {"timeline", timeline}};
+    ops << mixer;
+    return {{"what", what.join(", ")}, {"ops", ops}, {"how", "apply with `edit` (one undo step), then `check` again"}};
+}
+
 } // namespace
 
 QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
@@ -125,6 +147,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
     QVector<ExportCheck::Issue> issues;
     Measured measured;
     QJsonObject result{{"source", absolute(src)}};
+    QJsonObject fix;
     ProjectFormat f;
 
     if (isProjectFile(src)) {
@@ -153,7 +176,10 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             const auto loud = AudioAnalysis::timelineLoudness(f, render, from, to, progress(scanned, 0.55), &peaks);
             if (!loud) fail("DECODE_FAILED", "could not mix the sound");
             measured = {peaks, *loud};
-            issues += ExportCheck::sound(measured.peaks, from, loud->integrated, loud->truePeakDb, f, opt, render.masterLimiter);
+            const QVector<ExportCheck::Issue> heard =
+                ExportCheck::sound(measured.peaks, from, loud->integrated, loud->truePeakDb, f, opt, render.masterLimiter);
+            issues += heard;
+            fix = fixJson(ExportCheck::soundFix(heard, loud->integrated, tl, opt), a["timeline"]);
             const auto picture = [&](const QString& p) { return media(p) && media(p)->hasVideo && !media(p)->isImage; };
             if (const auto balance = CheckMeasure::mix(f, render, from, to, picture, opt, progress(0.55, 1)))
                 issues += *balance;
@@ -197,6 +223,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         m["target_lufs"] = opt.targetLufs;
         result["sound"] = m;
     }
+    if (!fix.isEmpty()) result["fix"] = fix;
     return result;
 }
 

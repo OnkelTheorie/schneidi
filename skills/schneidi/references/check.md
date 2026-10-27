@@ -6,7 +6,9 @@ again, check again.
 Before rendering, **`check` the project**: missing media, gaps without picture (a forgotten frame between two
 clips is black in the video), subtitles too short or too fast to read or past the end, and the sound of the mix
 (no sound, clipping, true peak, loudness off the target, silence at the end). Fix the errors; decide on each
-warning (a fade to black or a pause can be intended). `target_lufs` for other targets (-23 broadcast, -16 podcast).
+warning (a fade to black or a pause can be intended). For clipping, true peak and loudness the answer has `fix`:
+ready ops (master limiter, master fader) - pass them to `edit` and `check` again; a true peak above -1 dBTP is not
+"ok for the codec", it clips after encoding. `target_lufs` for other targets (-23 broadcast, -16 podcast).
 It also finds:
 - `under_music`: a track with events (game sound, speech) more than 15 LU under the music while its events play -
   raise that track or `duck` the music under it. Name the music track "Music" if it is not a plain sound file.

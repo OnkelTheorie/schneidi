@@ -280,6 +280,36 @@ QVector<QPair<int, int>> silentStretches(const std::vector<float>& framePeaks, i
     return out;
 }
 
+SoundFix soundFix(const QVector<Issue>& sound, double integratedLufs, const Timeline& tl, const Options& o)
+{
+    const auto has = [&sound](const char* check) {
+        return std::any_of(sound.begin(), sound.end(), [check](const Issue& i) { return i.check == check; });
+    };
+    SoundFix fix;
+    fix.ceiling = std::min(tl.masterLimiterDb, o.maxTruePeakDb);
+    const bool limiterOn = tl.masterLimiter && tl.masterLimiterDb <= o.maxTruePeakDb;
+    // Loudness: the master fader by the difference to the target (as far as it goes); up = the limiter catches the
+    // peaks that grow with it
+    double volume = tl.masterVolumeDb;
+    if (has("loudness"))
+        volume = std::clamp(tl.masterVolumeDb + (o.targetLufs - integratedLufs), kMinVolumeDb, kMaxVolumeDb);
+    const bool louder = volume > tl.masterVolumeDb + 0.05, quieter = volume < tl.masterVolumeDb - 0.05;
+    fix.limiter = !limiterOn && (has("clipping") || has("true_peak") || louder);
+    fix.level = louder || quieter;
+    fix.volumeDb = std::round(volume * 10) / 10;
+    fix.change = fix.volumeDb - tl.masterVolumeDb;
+    return fix;
+}
+
+void apply(const SoundFix& fix, Timeline& tl)
+{
+    if (fix.limiter) {
+        tl.masterLimiter = true;
+        tl.masterLimiterDb = fix.ceiling;
+    }
+    if (fix.level) tl.masterVolumeDb = fix.volumeDb;
+}
+
 QVector<Issue> sound(const std::vector<float>& framePeaks, int offset, double integratedLufs, double truePeakDb,
                      const ProjectFormat& f, const Options& o, bool limiter)
 {
