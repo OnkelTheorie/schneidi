@@ -852,8 +852,6 @@ void applyReference(uint8_t* rgba, int width, int height, const Params& p, const
     for (int c = 0; c < 3; ++c)
         for (int i = 0; i < 256; ++i) table[c][i] = float(curve(c, i / 255.0));
     const float sf = float(s);
-    // 0..1 -> 0..255, rounded (std::lround per channel made a 1080p frame take ~25 ms)
-    auto byte = [](float x) { return uint8_t(int((x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x) * 255.0f + 0.5f)); };
     if (!lut) {
         // Saturation: mix with the brightness (Rec. 709), y + (v - y) * s = y * (1 - s) + v * s. Both parts come
         // from tables in 16-bit fixed point (byte value << 16), so a pixel is a few additions
@@ -882,7 +880,7 @@ void applyReference(uint8_t* rgba, int width, int height, const Params& p, const
         // LUT after the correction (like a LUT on a DaVinci node)
         if (lut->is3d) sample3d(*lut, v);
         else sample1d(*lut, v);
-        for (int c = 0; c < 3; ++c) rgba[c] = byte(v[c]);
+        for (int c = 0; c < 3; ++c) rgba[c] = toByte(v[c]);
     }
 }
 
