@@ -6,6 +6,9 @@
 // release() empties MLT's pool of the buffers nobody holds (mlt_pool_purge locks each pool, so MLT threads may keep
 // running) and trims glibc's heap. IdleRelease does that once nothing renders: not while the preview plays, an export
 // runs or the render cache renders (purging then only makes MLT allocate the same buffers again).
+// What stays (tests/bench_memory): malloc_trim gives back free pages inside every arena, but the free top of a thread's
+// own arena only above glibc's trim threshold (raised up to 64 MB per arena): with many decoder/render threads a few
+// hundred MB (3 HD sources after an export: 1490 MB -> 596 MB, with GLIBC_TUNABLES=glibc.malloc.arena_max=2 -> 142 MB).
 
 #include <QObject>
 #include <QTimer>
