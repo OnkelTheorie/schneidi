@@ -566,6 +566,9 @@ void test(const QString& dir)
     if (CHECK_EQ(fake.requests.size(), before + 2)) {
         const FakeProvider::Request& o1 = fake.requests[before];
         CHECK_EQ(o1.path, QByteArray("/v1/chat/completions"));
+        // Small models: look instead of asking for paths (not in Claude's prompt)
+        CHECK(o1.body["messages"][0]["content"].toString().contains("Never ask the user for file paths"));
+        CHECK(!fake.requests[0].body["system"][0]["text"].toString().contains("Never ask the user for file paths"));
         CHECK_EQ(o1.headers.value("authorization"), "Bearer " + kKey);
         CHECK(!o1.headers.contains("x-api-key"));
         CHECK_EQ(o1.body["model"].toString(), QString("test-model"));

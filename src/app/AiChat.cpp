@@ -228,6 +228,10 @@ QString AiChat::systemPrompt() const
                       .arg(m_language);
     if (!m_guideText.isEmpty())
         app += "- The editing guide above is the main text of the `guide` tool: call `guide` only with a topic.\n";
+    // Small local models ask the user for the video's path (gemma4) or describe calls instead of making them
+    if (m_endpoint.protocol != Ai::Protocol::Anthropic)
+        app += "- Never ask the user for file paths or clip ids: `info` with \"@app\" lists the project's media files "
+               "(absolute paths) and its clips with their ids. Make tool calls; do not write them as text.\n";
     app += m_review ? "- The user reviews your changes: when your answer is done, they accept all changes of the "
                       "request as one undo step or discard them. Do the whole request in one go instead of asking for "
                       "confirmation in between.\n"
