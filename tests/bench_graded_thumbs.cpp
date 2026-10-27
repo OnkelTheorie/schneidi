@@ -19,6 +19,7 @@
 #include <QFileInfo>
 #include <QPainter>
 #include <QTemporaryDir>
+#include <QThread>
 #include <algorithm>
 #include <clocale>
 #include <cstdio>

@@ -22,6 +22,7 @@
 #include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTest>
 #include <clocale>
 #include <cmath>
@@ -491,13 +492,15 @@ int main(int argc, char** argv)
         std::printf("Hinweis: ffmpeg fehlt, Timeline-/Media-Pool-Test übersprungen\n");
         return Check::result();
     }
-    g_media = Check::makeMedia(tmp.filePath("src.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=5",
-                                                         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+    // With a dump folder the medium stays there (the saved project refers to it)
+    const QString dump = qEnvironmentVariable("GRADED_THUMBS_DUMP");
+    if (!dump.isEmpty()) QDir().mkpath(dump);
+    g_media = Check::makeMedia(QDir(dump.isEmpty() ? tmp.path() : dump).filePath("src.mp4"),
+                               {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=5", "-c:v", "libx264",
+                                "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (!CHECK(!g_media.isEmpty())) return Check::result();
     Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");
-    const QString dump = qEnvironmentVariable("GRADED_THUMBS_DUMP");
-    if (!dump.isEmpty()) QDir().mkpath(dump);
     testTimeline(dump);
     testPosters();
     return Check::result();
