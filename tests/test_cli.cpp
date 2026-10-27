@@ -285,6 +285,18 @@ int main(int argc, char** argv)
              {"op":"title","text":"Hi","at":5,"duration":10}])");
     CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-20|30-39] a[20-45|50-74]  V2: T[5-15|0-9]  "
                               "A1: a[0-10|0-9] a[10-20|30-39] a[20-45|50-74]  A2:"));
+    // One clip under 'clips' (gemma4: trim clips:[1]) is that clip, with a note; several: one op each; "7" is 7
+    {
+        const int first = run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"][0]["id"].toInt();
+        const QJsonObject list = run("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"trim","clips":[%1],"edge":"end","to":5}])").arg(first)},
+                                              {"dry_run", true}});
+        CHECK(!list["changes"]["changed"].toArray().isEmpty() && list["notes"][0].toString().contains("read as clip:"));
+        const QJsonObject text = run("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"trim","clip":"%1","edge":"end","to":5}])").arg(first)},
+                                              {"dry_run", true}});
+        CHECK(!text["changes"]["changed"].toArray().isEmpty());
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"trim","clips":[1,2],"edge":"end","to":5}])"}})
+                  .contains("trim takes one clip: 'clip'"));
+    }
     // keep with one range written another way (small models): taken with a note; no range at all: a whole example
     for (const char* op : {R"({"op":"keep","media":"/x/a.mp4","ranges":[0,10]})", R"({"op":"keep","media":"/x/a.mp4","range":[0,10]})",
                             R"({"op":"keep","media":"/x/a.mp4","from":0,"to":10})"}) {

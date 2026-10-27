@@ -22,8 +22,20 @@ namespace Cli::detail {
 
 const Clip& clipOf(Session& s, const QJsonObject& op, const char* key)
 {
-    if (!op.contains(key)) fail("BAD_ARGUMENT", QString("missing '%1' (clip id)").arg(key));
-    const int id = op[key].toInt();
+    QJsonValue v = op.value(key);
+    // A list of one under 'clips' (the key of ops for several; gemma4 sent trim clips:[1]): that clip, with a note
+    if (v.isUndefined() && QString(key) == "clip" && op.value("clips").isArray()) {
+        const QJsonArray list = op.value("clips").toArray();
+        if (list.size() != 1)
+            fail("BAD_ARGUMENT", QString("%1 takes one clip: 'clip' (a clip id); for several clips one op each")
+                                     .arg(op.value("op").toString()));
+        v = list.first();
+        s.notes << QString("%1: clips:[%2] read as clip:%2").arg(op.value("op").toString()).arg(v.toVariant().toString());
+    }
+    if (v.isUndefined()) fail("BAD_ARGUMENT", QString("missing '%1' (clip id)").arg(key));
+    bool number = v.isDouble();
+    const int id = number ? v.toInt() : v.toString().trimmed().toInt(&number); // "7" is 7
+    if (!number) fail("BAD_ARGUMENT", QString("'%1': %2 is no clip id (a number, as `info` lists them)").arg(key, v.toVariant().toString()));
     const Clip* c = TimelineOps::findClip(s.project.timeline(), id);
     if (!c) fail("NOT_FOUND", QString("no clip with id %1").arg(id));
     return *c;
