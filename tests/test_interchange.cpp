@@ -496,6 +496,15 @@ int main(int argc, char** argv)
             const Item& it = s.video[0].items[0];
             CHECK(it.start == 0 && it.in == 10 && it.length == 10);
         }
+        // After a transition that ends before it starts (its cut at 5, 10 frames before its start): the clip would
+        // begin 5 frames before the file; it begins 5 frames later instead
+        const Seq t = readFcp7(R"(<xmeml><sequence><media><video><track><transitionitem><start>10</start><end>0</end>
+            </transitionitem><clipitem><in>0</in><out>20</out><file><pathurl>file:///m/a.mp4</pathurl></file>
+            </clipitem></track></video></media></sequence></xmeml>)");
+        if (CHECK(t.video.size() == 1 && t.video[0].items.size() == 1)) {
+            const Item& it = t.video[0].items[0];
+            CHECK(it.start == 10 && it.in == 0 && it.length == 15);
+        }
     }
     return Check::result();
 }

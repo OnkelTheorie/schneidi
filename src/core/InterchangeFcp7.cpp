@@ -466,10 +466,11 @@ Sequence readFcp7(const QByteArray& data)
                 if (end < 0 && after) end = cutOf(*after);
                 if (start < 0) start = end >= 0 ? end - (out - in) : 0;
                 if (end < 0) end = start + (out - in);
-                if (start < 0) { // ending at a transition near the timeline's start: the part before it is cut off
-                    it.in -= start;
-                    start = 0;
-                }
+                // Nothing before the timeline's start (a clip ending at a transition close to it) or before the
+                // file's (a transition that ends before it starts): that part is cut off
+                const int cut = std::max({0, -start, -it.in});
+                start += cut;
+                it.in += cut;
                 it.start = start;
                 it.length = std::max(0, end - start);
                 if (it.name.isEmpty()) it.name = QFileInfo(it.path).fileName();
