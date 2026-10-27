@@ -345,6 +345,23 @@ Stabilizer::Result Stabilizer::find(const Request& r)
     return best;
 }
 
+bool Stabilizer::needsFrameOrder(const Timeline& tl)
+{
+    auto keeps = [](const Timeline& t) {
+        for (const Track& track : t.video)
+            for (const Clip& c : track.clips)
+                if (const EffectInstance* e = EffectRegistry::instance(c, EffectId);
+                    c.enabled && e && e->enabled && EffectRegistry::value(c, EffectId, "border").toString() == "keep")
+                    return true;
+        return false;
+    };
+    if (keeps(tl)) return true;
+    if (tl.nested)
+        for (const Timeline& n : *tl.nested)
+            if (keeps(n)) return true;
+    return false;
+}
+
 QVector<Stabilizer::Request> Stabilizer::missing(const Timeline& tl, const ProjectFormat& format)
 {
     QVector<Request> out;

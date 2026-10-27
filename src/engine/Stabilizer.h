@@ -65,6 +65,8 @@ public:
     static QString unsupportedReason(const Clip& c);
     // Cached result covering the request (thread-safe); invalid = analysis missing
     static Result find(const Request& r);
+    // Does a clip use border "keep" (the picture before fills the uncovered parts)? Then frames must render in order
+    static bool needsFrameOrder(const Timeline& tl);
     // Requests of all enabled stabilizations in the timeline (and its nested sequences) without a result
     static QVector<Request> missing(const Timeline& tl, const ProjectFormat& format);
     // Analyze synchronously in the calling thread (any thread). progress: 0..1000

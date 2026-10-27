@@ -176,6 +176,7 @@ int Exporter::parallelFrames(const Timeline& tl, int threads)
     bool frei0r = usesFrei0r(tl);
     if (tl.nested)
         for (const Timeline& n : *tl.nested) frei0r = frei0r || usesFrei0r(n);
+    if (Stabilizer::needsFrameOrder(tl)) return 1; // border "keep": each frame takes over parts of the one before
     return frei0r ? 1 : (threads > 0 ? threads : availableThreads());
 }
 

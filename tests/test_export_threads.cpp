@@ -1,4 +1,5 @@
-// Export with several threads: frames in parallel (except frei0r/Green Screen), same result as with one thread.
+// Export with several threads: frames in parallel (except frei0r/Green Screen/stabilize border "keep"), same result
+// as with one thread.
 // Prints the render times (1 thread / all threads) so that the gain can be measured afterwards.
 
 #include "check.h"
@@ -67,6 +68,12 @@ void testParallelFrames()
     nested->insert(7, one(effectClip(true)));
     outer.nested = nested;
     CHECK_EQ(Exporter::parallelFrames(outer, 4), 1);
+    // Stabilization with border "keep" needs the frames in order (the other borders do not)
+    Clip st = effectClip(false);
+    EffectRegistry::add(st, "stabilize");
+    CHECK_EQ(Exporter::parallelFrames(one(st), 4), 4);
+    EffectRegistry::instance(st, "stabilize")->params["border"] = QString("keep");
+    CHECK_EQ(Exporter::parallelFrames(one(st), 4), 1);
 }
 
 // CPU time of the process (all threads) in s; 0 = unknown
