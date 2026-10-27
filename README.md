@@ -73,29 +73,29 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 
 ## How light is it?
 
-Measured with 0.11 on a Ryzen 5 5600X restricted with Linux cgroups (cores, RAM, no swap) – a stand-in for old hardware, not a real old laptop.
+Measured on two desktop CPUs restricted with Linux cgroups (cores, RAM, no swap) – stand-ins for old hardware, not a real old laptop: a Ryzen 5 5600X (with 0.11) and a Ryzen 5 PRO 2400G (2018, 4 cores, built-in Vega graphics; with 0.13). Each cell: **5600X / 2400G**.
 
 **Starting:**
 
-| | Empty project | Project with a 1080p clip |
+| 5600X / 2400G | Empty project | Project with a 1080p clip |
 |---|---|---|
-| Least RAM it starts and keeps running with | 128 MB | 288 MB |
-| Window visible, one full core | 0.6 s | 0.5 s |
-| Window visible, 10 % of one core | 6 s | 6 s |
-| Window visible, 5 % of one core | 11 s | 15 s |
+| Least RAM it starts and keeps running with | 128 / 112 MB | 288 / 288 MB |
+| Window visible, one full core | 0.6 / 0.7 s | 0.5 / 0.8 s |
+| Window visible, 10 % of one core | 6 / 11 s | 6 / 12 s |
+| Window visible, 5 % of one core | 11 / 25 s | 15 / 25 s |
 
-Thumbnails for the Media Storage (your Videos folder) are made by a separate ffmpeg at the start; for a large file that takes up to ~100 MB more for a moment.
+RAM in steps of 16 MB (the 2400G was measured in a Docker container, the 5600X in a systemd scope). Thumbnails for the Media Storage (your Videos folder) are made by a separate ffmpeg at the start; for a large file that takes up to ~100 MB more for a moment.
 
-**But starting is not the same as editing smoothly.** Playback of a demanding project (12 gaming clips, 1080p60 at 140 Mbit/s, a grade on every clip), frames per second out of 60:
+**But starting is not the same as editing smoothly.** Playback of a demanding project (12 gaming clips, 1080p60 at 140 Mbit/s, a grade on every clip), frames per second out of 60 over 15 s, the start-up included – from about 52 on it plays a steady 60 after the first second or two:
 
-| CPU | From the original files | Originals, decoded on the graphics card | From proxies |
+| CPU (5600X / 2400G) | From the original files | Originals, decoded on the graphics card | From proxies |
 |---|---|---|---|
-| 1 core | 12 – stutters | 55 | 57 |
-| 2 cores | 44 | 59 – smooth | 57 |
-| 4 cores | 57 – smooth | | |
-| 6 cores | 58 – smooth | | |
+| 1 core | 12 / 11 – stutters | 55 / 53 | 57 / 53 |
+| 2 cores | 44 / 16 – stutters on the 2400G | 59 / 54 – smooth | 57 / 57 |
+| 4 cores | 57 / 53 – smooth | | |
+| All cores (6 / 4 with SMT) | 58 / 57 – smooth | | |
 
-0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media). Playback › Clean Up Proxy Media… lists the proxy files no open or recent project needs (original deleted or changed, project gone) and frees their space. A few seconds after playback stops or an export ends, schneidi gives the memory it no longer needs back to the system (after a 1080p export about 1450 → 590 MB).
+0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070 and the 2400G's built-in Vega 11) is on by default – with it one core is enough even on the 2400G. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media). Playback › Clean Up Proxy Media… lists the proxy files no open or recent project needs (original deleted or changed, project gone) and frees their space. A few seconds after playback stops or an export ends, schneidi gives the memory it no longer needs back to the system (after a 1080p export about 1450 → 590 MB).
 
 **And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet). DaVinci Resolve, Premiere Pro and Final Cut Pro are not available for this computer at all. Material: 15 s of a 1080p60 gaming clip.
 
