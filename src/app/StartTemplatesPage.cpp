@@ -24,6 +24,13 @@
 
 namespace {
 
+// The template list asks for little room (a handful of rows) and grows with the dialog: the settings page with its
+// wrapped hints keeps its buttons visible without scrolling (QListWidget asks for 192 px by default)
+class TemplateList : public QListWidget {
+public:
+    QSize sizeHint() const override { return {QListWidget::sizeHint().width(), 110}; }
+};
+
 QLabel* hint(const QString& text)
 {
     auto* l = new QLabel(text);
@@ -56,7 +63,7 @@ StartTemplatesPage::StartTemplatesPage(QWidget* parent) : QWidget(parent)
 
     auto* box = new QGroupBox(T("Vorlagen"));
     auto* v = new QVBoxLayout(box);
-    m_list = new QListWidget;
+    m_list = new TemplateList;
     m_list->setObjectName("template_list");
     m_list->setMinimumHeight(110);
     v->addWidget(m_list, 1);
