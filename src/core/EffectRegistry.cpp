@@ -20,15 +20,105 @@ QVector<EffectDescriptor> withWindows(QVector<EffectDescriptor> effects)
     return effects;
 }
 
+// Number parameter of an effect that replaced a frei0r plugin: key and property = the plugin's index, keyframes like
+// the plugin's (Keys::effectParam), mltName = the plugin's name (Kdenlive presets)
+EffectParam f0rNumber(const char* effect, const char* index, const QString& label, const char* name, double def,
+                      const QString& description = {})
+{
+    EffectParam p{index, label, index, EffectParam::Double, def, 0.0, 1.0, Keys::effectParam(effect, index), 0.002, 3};
+    p.mltName = QString::fromLatin1(name);
+    p.description = description;
+    return p;
+}
+EffectParam f0rOther(EffectParam::Type type, const char* index, const QString& label, const char* name, QVariant def)
+{
+    EffectParam p{index, label, index, type, std::move(def), 0, 0};
+    p.mltName = QString::fromLatin1(name);
+    return p;
+}
+
+// Own picture effects in place of the frei0r plugins schneidi offered (engine/VideoEffects). Same ids, parameter keys
+// and value ranges as the plugins, so old projects, keyframes and Kdenlive/Shotcut presets keep working; the
+// service stays the frei0r name for the preset files.
+QVector<EffectDescriptor> ownLooks()
+{
+    QVector<EffectDescriptor> out;
+    auto add = [&](const char* id, const QString& name, const QString& description, QVector<EffectParam> params) {
+        EffectDescriptor d;
+        d.id = QString::fromLatin1(id);
+        d.name = name;
+        d.mltService = d.id;
+        d.params = std::move(params);
+        d.library = true;
+        d.description = description;
+        out << d;
+    };
+    add("frei0r.glow", T("Glühen"), T("Weicher, heller Schein um helle Stellen"),
+        {f0rNumber("frei0r.glow", "0", T("Unschärfe"), "Blur", 0.0)});
+    add("frei0r.colorhalftone", T("Rasterdruck"), T("Farbige Rasterpunkte wie im Zeitungsdruck"),
+        {f0rNumber("frei0r.colorhalftone", "0", T("Punktgröße"), "dot radius", 0.4),
+         f0rNumber("frei0r.colorhalftone", "1", T("Winkel Cyan"), "cyan angle", 0.3),
+         f0rNumber("frei0r.colorhalftone", "2", T("Winkel Magenta"), "magenta angle", 0.45),
+         f0rNumber("frei0r.colorhalftone", "3", T("Winkel Gelb"), "yellow angle", 0.25)});
+    add("frei0r.rgbnoise", T("Bildrauschen"), T("Farbiges Rauschen, in jedem Bild anders"),
+        {f0rNumber("frei0r.rgbnoise", "0", T("Stärke"), "noise", 0.2)});
+    add("frei0r.scanline0r", T("Fernsehzeilen"), T("Jede zweite Zeile dunkler, wie ein altes Fernsehbild"), {});
+    add("frei0r.nosync0r", T("Gestörter Bildlauf"), T("Bild seitlich verschoben wie bei einem Fernseher ohne Synchronisation"),
+        {f0rNumber("frei0r.nosync0r", "0", T("Versatz"), "HSync", 0.0)});
+    {
+        EffectParam shape = f0rOther(EffectParam::Choice, "0", T("Form"), "pattern", QString("gradient_linear"));
+        shape.choices = {"gradient_linear", "gradient_radial"};
+        shape.choiceLabels = {T("Linear"), T("Radial")};
+        EffectParam blend = f0rOther(EffectParam::Choice, "10", T("Mischmodus"), "blend mode", QString("normal"));
+        blend.choices = {"normal",     "add",       "saturate",   "multiply",   "screen",        "overlay",
+                         "darken",     "lighten",   "colordodge", "colorburn",  "hardlight",     "softlight",
+                         "difference", "exclusion", "hslhue",     "hslsaturation", "hslcolor",   "hslluminosity"};
+        blend.choiceLabels = {T("Normal"),        T("Addieren"),        T("Sättigen"),      T("Multiplizieren"),
+                              T("Negativ multiplizieren"), T("Überlagern"), T("Abdunkeln"), T("Aufhellen"),
+                              T("Farbig abwedeln"), T("Farbig nachbelichten"), T("Hartes Licht"), T("Weiches Licht"),
+                              T("Differenz"),     T("Ausschluss"),      T("Farbton"),       T("Sättigung"),
+                              T("Farbe"),         T("Luminanz")};
+        const char* g = "frei0r.cairogradient";
+        add(g, T("Verlauf"), T("Farbverlauf über dem Bild (linear oder rund), mit Deckkraft und Mischmodus"),
+            {shape, f0rOther(EffectParam::Color, "1", T("Startfarbe"), "start color", QColor(0, 0, 0)),
+             f0rNumber(g, "2", T("Deckkraft Start"), "start opacity", 0.5),
+             f0rOther(EffectParam::Color, "3", T("Endfarbe"), "end color", QColor(255, 255, 255)),
+             f0rNumber(g, "4", T("Deckkraft Ende"), "end opacity", 0.5), f0rNumber(g, "5", T("Start X"), "start x", 0.5),
+             f0rNumber(g, "6", T("Start Y"), "start y", 0.0), f0rNumber(g, "7", T("Ende X"), "end x", 0.5),
+             f0rNumber(g, "8", T("Ende Y"), "end y", 1.0),
+             f0rNumber(g, "9", T("Versatz"), "offset", 0.0, T("Wo auf der Linie die erste Farbe beginnt")), blend});
+    }
+    {
+        const char* a = "frei0r.alpha0ps_alpha0ps";
+        add(a, T("Alphakanal"), T("Kante der Transparenz verkleinern, vergrößern, weich machen oder anzeigen"),
+            {f0rNumber(a, "0", T("Anzeige"), "Display", 0.0,
+                       T("0 Bild, 0,21 Alpha als Grau, 0,36 Grau + Rot, 0,5/0,64/0,79/1 Auswahl auf Schwarz/Grau/Weiß/Karos")),
+             f0rOther(EffectParam::Bool, "1", T("Eingangs-Alpha zeigen"), "Display input alpha", false),
+             f0rNumber(a, "2", T("Operation"), "Operation", 0.0,
+                       T("0 nichts, 0,2 rasieren, 0,3/0,4 verkleinern hart/weich, 0,6/0,7 vergrößern hart/weich, "
+                         "0,8 Schwelle, 1 weichzeichnen")),
+             f0rNumber(a, "3", T("Schwelle"), "Threshold", 0.5),
+             f0rNumber(a, "4", T("Stärke"), "Shrink/Grow/Blur amount", 0.333),
+             f0rOther(EffectParam::Bool, "5", T("Umkehren"), "Invert", false)});
+    }
+    return out;
+}
+
 QVector<EffectDescriptor>& registry()
 {
     static QVector<EffectDescriptor> effects = withWindows({
-        // frei0r instead of avfilter.chromakey: delivers real transparency and does not crash on exit. Fixed stage
-        // after the grade: it keys the camera picture, the effects then work on the keyed picture
+        // Own keyer (engine/VideoEffects): distance in the chroma plane, soft edge, spill suppression; real
+        // transparency. Fixed stage after the grade: it keys the camera picture, the effects then work on the keyed
+        // picture. The service and the properties "0"/"1" are those of frei0r.bluescreen0r it replaced (presets).
         {"chromakey", T("Green Screen"), "frei0r.bluescreen0r", true,
          {
              {"color", T("Farbe"), "0", EffectParam::Color, QColor(0, 255, 0), 0, 0},
-             {"distance", T("Toleranz"), "1", EffectParam::Double, 0.3, 0.0, 1.0},
+             {"distance", T("Toleranz"), "1", EffectParam::Double, 0.3, 0.0, 1.0, AnimParam::Count, 0.002, 3, {},
+              T("Wie weit eine Farbe von der Key-Farbe entfernt sein darf und noch durchsichtig wird")},
+             {"softness", T("Weiche Kante"), "softness", EffectParam::Double, 0.2, 0.0, 1.0, AnimParam::Count, 0.002, 3,
+              {}, T("Breite des Übergangs zwischen durchsichtig und sichtbar")},
+             {"spill", T("Farbsaum entfernen"), "spill", EffectParam::Double, 0.8, 0.0, 1.0, AnimParam::Count, 0.002, 3,
+              {}, T("Nimmt den Schimmer der Key-Farbe (grüner Rand, Widerschein) aus dem, was sichtbar bleibt")},
          },
          false, {}, {}, true},
         // Simple color correction (all values -100..+100, 0 = unchanged). Engine: avfilter.colorchannelmixer
@@ -110,7 +200,7 @@ QVector<EffectDescriptor>& registry()
              {"lut", T("LUT"), {}, EffectParam::Path, QString(), 0, 0},
          },
          false, {}, {}, true},
-    });
+    }) + ownLooks(); // after the built-in ones: the Effects Library lists them behind blur and color correction
     return effects;
 }
 

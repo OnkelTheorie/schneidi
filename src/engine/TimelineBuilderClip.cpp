@@ -17,6 +17,7 @@
 #include "engine/PitchLatency.h"
 #include "engine/RampProducer.h"
 #include "engine/Stabilizer.h"
+#include "engine/VideoEffects.h"
 
 #include <Mlt.h>
 #include <QColor>
@@ -223,9 +224,17 @@ void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, Tra
 void applyGeneric(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, const EffectInstance& inst,
                   const EffectDescriptor& d, int a, int len)
 {
-    if (d.mltService.isEmpty()) return;
-    Mlt::Filter f(profile, d.mltService.toUtf8().constData());
-    if (!f.is_valid()) return;
+    // Own picture effects (Green Screen, the former frei0r looks) are built by id; their service is only the
+    // frei0r name for preset files
+    std::unique_ptr<Mlt::Filter> made;
+    if (mlt_filter own = VideoEffects::create(d.id)) {
+        made = std::make_unique<Mlt::Filter>(own); // holds its own reference
+        mlt_filter_close(own);
+    } else if (!d.mltService.isEmpty()) {
+        made = std::make_unique<Mlt::Filter>(profile, d.mltService.toUtf8().constData());
+    }
+    if (!made || !made->is_valid()) return;
+    Mlt::Filter& f = *made;
     for (const auto& p : d.params) {
         const QVariant v = inst.params.value(p.key, p.defaultValue);
         const QByteArray prop = p.mltProperty.toUtf8();

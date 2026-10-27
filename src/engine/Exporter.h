@@ -88,7 +88,7 @@ public:
     static void setSavedThreads(int threads);
     static int availableThreads(); // logical processors (QThread::idealThreadCount) (at least 1)
     // How many images are rendered at once: threads (0 = all), but 1 if the timeline (also nested
-    // sequences) uses a frei0r effect (Green Screen) – those are not thread-safe
+    // sequences) uses a frei0r plugin (Open FX › frei0r, opt-in) – those are not thread-safe
     static int parallelFrames(const Timeline& tl, int threads);
     // Does the timeline (also nested sequences) read this file? Then the export must not overwrite it
     // (source and output destroyed) – refuse like DaVinci instead of asking.

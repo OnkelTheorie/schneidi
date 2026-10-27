@@ -65,7 +65,7 @@ bool usesFrei0r(const Timeline& tl)
         for (const Clip& c : t.clips)
             for (const EffectInstance& e : c.effects) {
                 const EffectDescriptor* d = EffectRegistry::find(e.effectId);
-                if (e.enabled && d && d->mltService.startsWith("frei0r.")) return true;
+                if (e.enabled && d && d->category == QLatin1String(EffectRegistry::Frei0rCategory)) return true;
             }
     return false;
 }

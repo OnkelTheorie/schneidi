@@ -30,6 +30,7 @@ public:
     QString language() const; // code, as I18n::language()
     bool updateHint() const;  // look for new versions at the start (UpdateCheck::enabled)
     int backgroundThreads() const; // Background::chosenThreads (0 = automatic)
+    bool frei0r() const;           // offer installed frei0r plugins (Frei0r::enabled, after a restart)
     AiSettingsPage* aiPage() const { return m_aiPage; }
     StartTemplatesPage* startTemplatesPage() const { return m_templatesPage; }
 
@@ -50,6 +51,7 @@ private:
     QComboBox* m_language = nullptr;
     QComboBox* m_threads = nullptr;
     QCheckBox* m_updateHint = nullptr;
+    QCheckBox* m_frei0r = nullptr;
     QPushButton* m_checkNow = nullptr;
     QLabel* m_updateResult = nullptr;
     UpdateCheck* m_updates = nullptr;

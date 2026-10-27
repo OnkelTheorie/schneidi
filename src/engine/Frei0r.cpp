@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QSet>
 
 #include <framework/mlt.h>
@@ -27,7 +28,8 @@ const char* const kSystemDirs[] = {"/usr/lib/frei0r-1", "/usr/lib/x86_64-linux-g
                                    "/usr/local/lib/frei0r-1", "/opt/local/lib/frei0r-1"};
 #endif
 
-// Not offered: Green Screen has its own section; face detection needs paths to OpenCV models
+// Not offered: Green Screen has its own keyer; face detection needs paths to OpenCV models (blurring a face: a
+// tracked window with blur on the Color page)
 const QSet<QString> kHidden{"frei0r.bluescreen0r", "frei0r.facebl0r", "frei0r.facedetect"};
 
 // Old names from MLT's aliases.yaml ("  - frei0r.pr0be"): same plugins as the new names, show them only once
@@ -125,10 +127,25 @@ bool describe(mlt_repository repo, const QString& service, EffectDescriptor* d)
     return true;
 }
 
+constexpr const char* kSettingsKey = "effects/frei0r";
+
 } // namespace
+
+bool enabled() { return qEnvironmentVariableIntValue("SCHNEIDI_FREI0R") > 0 || QSettings().value(kSettingsKey, false).toBool(); }
+
+void setEnabled(bool on)
+{
+    if (on) QSettings().setValue(kSettingsKey, true);
+    else QSettings().remove(kSettingsKey);
+}
 
 void prepareEnvironment()
 {
+    if (!enabled()) {
+        // A folder that does not exist (an empty value would mean "unset" on Windows and MLT's default folders)
+        qputenv("FREI0R_PATH", Bundle::pathForMlt(QDir(EffectFolders::root()).filePath("frei0r-off")));
+        return;
+    }
     const QString own = EffectFolders::frei0rDir();
     QDir().mkpath(own);
     QByteArray list = qgetenv("FREI0R_PATH");
@@ -148,6 +165,7 @@ void prepareEnvironment()
 
 int registerEffects()
 {
+    if (!enabled()) return 0;
     mlt_repository repo = mlt_factory_repository();
     if (!repo) return 0;
     const QSet<QString> old = aliases();

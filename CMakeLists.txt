@@ -122,6 +122,7 @@ add_library(schneidi_lib STATIC
     src/engine/TimelineBuilderAudio.cpp src/engine/TimelineBuilderTransitions.cpp
     src/engine/TimelineBuilderMulticam.cpp
     src/engine/LiveUpdate.h       src/engine/LiveUpdate.cpp
+    src/engine/VideoEffects.h     src/engine/VideoEffects.cpp
     src/engine/RampProducer.h     src/engine/RampProducer.cpp
     src/engine/PitchLatency.h     src/engine/PitchLatency.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
