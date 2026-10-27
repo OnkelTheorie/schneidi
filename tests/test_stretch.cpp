@@ -1,5 +1,5 @@
 // Own time stretcher (engine/audio/Stretch): the pitch stays at every speed the app allows, sounds land where the
-// map puts them (no drift, also on a ramp), no clicks (the output does not depend on the block size, a sine stays a
+// map puts them (no drift, also on a ramp) without pre-echo, no clicks (the output does not depend on the block size, a sine stays a
 // clean sine), the channels keep their phase and level difference, onsets are found in hits but not in a tone.
 // Quality against Rubber Band and the speed: tests/bench_stretch.
 
@@ -159,7 +159,7 @@ void testTiming()
         int found = 0;
         const auto out = stretch(1, sig, c.map, length, {512}, &found);
         // Energy centroid around each expected place (+-20 ms)
-        double worst = 0, lo = 1e9, hi = -1e9;
+        double worst = 0, lo = 1e9, hi = -1e9, preEcho = 0;
         int seen = 0;
         for (int k = 0; k < kClicks; ++k) {
             const double want = c.inverse(double(clickAt(k)) + 48);
@@ -172,16 +172,24 @@ void testTiming()
             }
             if (e <= 0) continue;
             ++seen;
+            // Pre-echo: level 25..3 ms before the click against the click (onsets cut the windows before them)
+            double pre = 0;
+            for (int64_t i = int64_t(want) - kRate / 40; i < int64_t(want) - 3 * kRate / 1000; ++i)
+                if (i >= 0) pre += double(out[0][size_t(i)]) * out[0][size_t(i)];
+            preEcho += pre / e;
             const double off = et / e - want;
             worst = std::max(worst, std::abs(off));
             lo = std::min(lo, off);
             hi = std::max(hi, off);
         }
-        std::printf("  Klicks %-14s %2d/%d  größte Abweichung %6.1f Samples (%+.1f..%+.1f), Einsätze %d\n", c.name, seen,
-                    kClicks, worst, lo, hi, found);
+        preEcho = 10 * std::log10(preEcho / std::max(1, seen) + 1e-20); // mean energy
+        std::printf("  Klicks %-14s %2d/%d  größte Abweichung %6.1f Samples (%+.1f..%+.1f), Einsätze %d, Vorecho %.1f dB\n",
+                    c.name, seen, kClicks, worst, lo, hi, found, preEcho);
         CHECK(seen == kClicks);
         CHECK(worst < 0.006 * kRate); // RB placed them within 15 ms
         CHECK(found >= kClicks / 2);
+        // mean over the clicks; Rubber Band (up to 0.13) had -9..-31 dB before drum hits at these speeds (bench_stretch)
+        CHECK(preEcho < -30);
     }
     // A steady tone has no onsets
     int found = -1;

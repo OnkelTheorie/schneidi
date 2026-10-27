@@ -11,7 +11,6 @@ extern "C" {
 #include <complex>
 #include <numbers>
 #include <vector>
-#include <QString>
 
 namespace Audio {
 
@@ -37,6 +36,8 @@ struct Analysis {
     int64_t centre = 0;     // source sample the window is centred on
     int64_t cut = kNoCut;   // the window ends before this source sample (an onset ahead of the centre)
     bool onset = false;     // the first frame with an onset at or behind its centre: phases start over
+    double onsetAt = 0;     // there: the onset relative to the centre (<= 0)
+    double speed = 1;       // source samples per output sample around the frame
 };
 
 struct Onset {
@@ -136,6 +137,7 @@ struct Stretch::Impl {
     bool havePrev = false;
     std::vector<float> theta, thetaPrev; // phase rotation per bin (synthesis - analysis), the same for all channels
     std::vector<int> peaks;
+    std::vector<float> amp; // gain per bin (reset regions of an onset frame)
 
     // Overlap-add of the output samples [accStart, accStart + accWin.size()): per channel the frames, and the sum of
     // analysis x synthesis window (flat 1.5 at 4x overlap; less where a window was cut before an onset)
@@ -150,16 +152,17 @@ struct Stretch::Impl {
         : ch(std::max(1, channels)), source(std::move(s)), map(std::move(m))
     {
         n = o.window;
-        if (n <= 0) { // ~43 ms: 2048 at 44.1/48 kHz, 4096 at 96 kHz
+        if (n <= 0) { // ~85 ms: 4096 at 44.1/48 kHz (bench_stretch: clearer bass and chords than 2048, speech alike)
             n = 256;
-            while (n < rate * 0.04) n *= 2;
+            while (n < rate * 0.07) n *= 2;
         }
         hop = n / kOverlap;
         bins = n / 2 + 1;
         fft = std::make_unique<Fft>(n);
         win = hann(n);
-        det = n / 4;
-        grid = hop / 4;
+        det = 128; // ~11 ms whatever the frame window: 512 at 44.1/48 kHz
+        while (det < rate * 0.01) det *= 2;
+        grid = det / 4;
         detFft = std::make_unique<Fft>(det);
         detWin = hann(det);
         detPower.assign(5, std::vector<float>(size_t(det / 2 + 1), 0.f));
@@ -175,6 +178,7 @@ struct Stretch::Impl {
             a->power2.resize(size_t(bins));
         }
         theta.assign(size_t(bins), 0.f);
+        amp.assign(size_t(bins), 1.f);
         thetaPrev.assign(size_t(bins), 0.f);
     }
 
@@ -242,16 +246,14 @@ struct Stretch::Impl {
                 const std::vector<float>&a = detPower[slot(detNext - 2, 5)], &b = detPower[slot(detNext - 3, 5)],
                                          &c = detPower[slot(detNext - 4, 5)];
                 for (size_t i = 0; i < detBefore.size(); ++i) detBefore[i] = std::max({a[i], b[i], c[i]});
-                static const float dr = qEnvironmentVariableIsSet("DR") ? float(qEnvironmentVariable("DR").toDouble()) : kDetRise;
-                r = rise(p, detBefore, det, dr);
+                r = rise(p, detBefore, det, kDetRise);
             }
             detRise[slot(detNext, span)] = r;
             if (detValid < 4 + span) continue;
             // The point kDetSpan steps back: the largest within the span (ties: the first)
             const int64_t g = detNext - kDetSpan;
             const double v = detRise[slot(g, span)];
-            static const double ko = qEnvironmentVariableIsSet("KO") ? qEnvironmentVariable("KO").toDouble() : kOnset;
-            if (v < ko) continue;
+            if (v < kOnset) continue;
             bool top = true;
             for (int64_t j = g - kDetSpan; j <= detNext && top; ++j)
                 if (j != g) top = j < g ? detRise[slot(j, span)] < v : detRise[slot(j, span)] <= v;
@@ -335,9 +337,10 @@ struct Stretch::Impl {
         for (const Onset& o : onsets)
             if (o.at >= from && double(o.at) <= p && (!best || o.strength > best->strength)) best = &o;
         if (best) {
-            const double speed = std::max(1e-6, (p - before) / hop);
             a.onset = true;
-            a.centre = std::llround(double(best->at) - (double(best->at) - p) / speed);
+            a.speed = std::max(1e-6, (p - before) / hop);
+            a.centre = std::llround(double(best->at) - (double(best->at) - p) / a.speed);
+            a.onsetAt = double(best->at - a.centre);
         }
         // The first onset ahead of the centre ends the window before it (no pre-echo of what comes)
         a.cut = kNoCut;
@@ -374,13 +377,37 @@ struct Stretch::Impl {
         }
     }
 
+    // Gain for the onset in a reset frame. The frames after it carry the onset on (their phases follow), each with
+    // its analysis window where the onset lies in it times its synthesis window there; the overlap-add expects the
+    // sum of squared windows. Faster than 1x the onset lies in fewer frames (further apart in the source) and would
+    // come out up to 3.5 dB too soft: the reset frame makes up the difference (never quieter: slower it adds up).
+    float onsetGain(const Analysis& a) const
+    {
+        auto w = [this](double x) {
+            return std::abs(x) >= n / 2 ? 0.0 : std::pow(std::cos(std::numbers::pi * x / n), 2);
+        };
+        const double e = a.onsetAt, ha = a.speed * hop;
+        double want = 0, tail = 0;
+        for (int j = 0; j < kOverlap; ++j) {
+            want += w(e - j * hop) * w(e - j * hop);
+            if (j > 0) tail += w(e - j * ha) * w(e - j * hop);
+        }
+        const double self = w(e) * w(e);
+        if (self < 0.1) return 1.f;
+        return float(std::clamp((want - tail) / self, 1.0, 2.0));
+    }
+
     // Frame `frame` from cur into the overlap-add
     void synthesize()
     {
         const bool onset = havePrev && cur.onset;
         if (onset) ++transients;
+        const float boost = onset ? onsetGain(cur) : 1.f;
         findPeaks(cur.power);
-        if (peaks.empty()) std::fill(theta.begin(), theta.end(), 0.f);
+        if (peaks.empty()) {
+            std::fill(theta.begin(), theta.end(), 0.f);
+            std::fill(amp.begin(), amp.end(), 1.f);
+        }
         for (size_t i = 0; i < peaks.size(); ++i) {
             const int p = peaks[i];
             // Region of the peak: up to the lowest bin between it and its neighbours
@@ -389,7 +416,9 @@ struct Stretch::Impl {
             if (i + 1 < peaks.size())
                 hi = int(std::min_element(cur.power.begin() + p, cur.power.begin() + peaks[i + 1]) - cur.power.begin()) + 1;
             float th = 0; // reset: the analysis phases (the regions the onset brought)
-            if (havePrev && !(onset && cur.power[size_t(p)] > kRise * cur.power2[size_t(p)])) {
+            const bool reset = onset && cur.power[size_t(p)] > kRise * cur.power2[size_t(p)];
+            std::fill(amp.begin() + lo, amp.begin() + hi, reset ? boost : 1.f);
+            if (havePrev && !reset) {
                 int c0 = 0; // the channel loudest at the peak carries the phase
                 for (int c = 1; c < ch; ++c)
                     if (std::norm(cur.x[size_t(c * bins + p)]) > std::norm(cur.x[size_t(c0 * bins + p)])) c0 = c;
@@ -421,7 +450,7 @@ struct Stretch::Impl {
                     lastTh = theta[size_t(b)];
                     rot = Cpx(std::cos(lastTh), std::sin(lastTh));
                 }
-                spec[b] = x[b] * rot;
+                spec[b] = x[b] * rot * amp[size_t(b)];
             }
             fft->inverse();
             const float* real = fft->real();

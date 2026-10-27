@@ -8,7 +8,7 @@
 //   the speed, with anti-aliasing when faster. Ramps change the speed smoothly, sample by sample.
 // - Keep pitch: the own phase vocoder (Stretch) reads the source in playback direction around the position the map
 //   gives for each of its frames, so the sound stays in place without a delay to compensate, and ramps change the
-//   speed frame by frame (every hop of ~11 ms).
+//   speed frame by frame (every hop of ~21 ms).
 // A reverse clip at 100 % needs neither (samples copied backwards).
 //
 // Not thread-safe. read() is meant for increasing positions; a jump starts over (primes again).
