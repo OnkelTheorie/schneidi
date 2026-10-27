@@ -51,7 +51,10 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
         f = pictureFormat(media);
         length = media.info.length;
     }
-    if (length <= 0) fail("EMPTY", "nothing to show (empty timeline): " + src);
+    if (length <= 0) {
+        if (session) session->failEmpty();
+        fail("EMPTY", "nothing to show: " + src);
+    }
     QVector<int> at;
     for (const QJsonValue& v : a["at"].toArray()) at << parseTime(v, f, "at");
     const int from = a.contains("from") ? std::clamp(parseTime(a["from"], f, "from"), 0, length - 1) : 0;
@@ -690,7 +693,10 @@ QJsonObject cmdScopes(const QJsonObject& a, Context& ctx)
         length = media.info.length;
         if (!media.info.hasVideo) fail("NO_VIDEO", "the file has no picture");
     }
-    if (length <= 0) fail("EMPTY", "nothing to show (empty timeline)");
+    if (length <= 0) {
+        if (session) session->failEmpty();
+        fail("EMPTY", "nothing to show: " + src);
+    }
     const int at = std::clamp(a.contains("at") ? parseTime(a["at"], f, "at") : 0, 0, length - 1);
     const QImage frame = session ? Snapshot::timeline(f, session->project.renderTimeline(), at, 960)
                                  : Snapshot::media(f, media.info.path, at, 960);

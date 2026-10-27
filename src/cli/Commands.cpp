@@ -209,6 +209,19 @@ int Session::sequenceOf(const QJsonValue& v) const
     fail("NOT_FOUND", QString("no timeline '%1' (there are: %2)").arg(name, names.join(", ")));
 }
 
+void Session::failEmpty() const
+{
+    QStringList full;
+    for (const Sequence& q : project.sequences())
+        if (q.id != project.currentSequence() && !q.compound && TimelineOps::endFrame(q.timeline) > 0)
+            full << QString("%1 \"%2\"").arg(q.id).arg(q.name);
+    QString message = QString("the timeline %1 \"%2\" is empty")
+                          .arg(project.currentSequence())
+                          .arg(project.sequenceName(project.currentSequence()));
+    if (!full.isEmpty()) message += " - timelines with clips: " + full.join(", ") + " (pass 'timeline': id or name)";
+    fail("EMPTY", message);
+}
+
 void Session::selectTimeline(const QJsonValue& v, bool open)
 {
     if (v.isUndefined() || v.isNull()) return;

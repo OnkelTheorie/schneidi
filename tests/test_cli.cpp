@@ -56,6 +56,18 @@ QString errorOf(const QString& name, const QJsonObject& raw)
     return "none";
 }
 
+QString messageOf(const QString& name, const QJsonObject& raw)
+{
+    try {
+        const Cli::Command* cmd = Cli::find(name);
+        Cli::Context ctx;
+        cmd->run(Cli::normalize(*cmd, raw), ctx);
+    } catch (const Cli::Error& e) {
+        return e.code + ": " + e.message;
+    }
+    return "none";
+}
+
 QJsonObject edit(const char* ops, bool dry = false)
 {
     return run("edit", {{"project", g_path}, {"ops", QString(ops)}, {"dry_run", dry}});
@@ -289,6 +301,15 @@ int main(int argc, char** argv)
         QJsonObject other = run("info", {{"project", g_path}, {"timeline", "short"}})["timeline"].toObject();
         CHECK_EQ(other["length"].toInt(), 20);
         const int shortId = other["id"].toInt();
+        // The open timeline empty, the cut in the new one: `check` and `render` name both (an AI got "the timeline is
+        // empty" and had to guess that the file still opens Timeline 1)
+        const QString emptyOpen = g_path + ".empty.schneidi";
+        QFile::remove(emptyOpen);
+        QFile::copy(g_path, emptyOpen);
+        run("edit", {{"project", emptyOpen}, {"ops", R"([{"op":"clear"}])"}});
+        const QString empty = messageOf("check", {{"project", emptyOpen}});
+        CHECK(empty.startsWith("EMPTY: the timeline 1 ") && empty.contains(QString("%1 \"Short\"").arg(shortId)));
+        CHECK(messageOf("render", {{"project", emptyOpen}, {"out", g_path + ".mp4"}}).contains("pass 'timeline'"));
 
         edit(R"([{"op":"clear"},{"op":"place_timeline","timeline":"Short","at":0}])");
         QJsonObject tl = run("info", {{"project", g_path}})["timeline"].toObject();

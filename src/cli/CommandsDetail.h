@@ -73,6 +73,9 @@ public:
     void selectTimeline(const QJsonValue& v, bool open = false);
     int sequenceOf(const QJsonValue& v) const; // sequence id from an id or a name; throws if there is none
     QString save(); // path of the backup copy (empty = none)
+    // EMPTY for the timeline looked at, naming it and the timelines that have clips (on a file the open timeline
+    // stays the user's: an AI that made a new one has to pass 'timeline')
+    [[noreturn]] void failEmpty() const;
     // Media in the project (imported on first use); throws if the file cannot be read
     const MediaInfo& media(const QString& file);
 

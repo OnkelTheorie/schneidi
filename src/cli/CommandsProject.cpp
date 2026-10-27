@@ -506,7 +506,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     job.size = job.settings.outputSize(s.format().size());
     const Timeline tl = s.project.renderTimeline();
     const int end = TimelineOps::endFrame(tl);
-    if (end <= 0) fail("EMPTY", "the timeline is empty");
+    if (end <= 0) s.failEmpty();
     if (a.contains("from") || a.contains("to")) {
         job.inOut = true;
         job.from = a.contains("from") ? parseTime(a["from"], s.format(), "from") : 0;

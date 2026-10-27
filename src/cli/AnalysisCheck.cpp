@@ -133,7 +133,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         f = s.format();
         const Timeline& tl = s.project.timeline();
         const int end = TimelineOps::endFrame(tl);
-        if (end <= 0) fail("EMPTY", "the timeline is empty");
+        if (end <= 0) s.failEmpty();
         const int from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
         const int to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
         if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");

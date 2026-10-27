@@ -73,7 +73,7 @@ void mixToLoudness(Session& s, int track, double target)
     for (int round = 0; round < 3; ++round) {
         Timeline tl = s.project.renderTimeline();
         const int end = TimelineOps::endFrame(tl);
-        if (end <= 0) fail("EMPTY", "the timeline is empty");
+        if (end <= 0) s.failEmpty();
         if (track >= 0)
             for (int i = 0; i < tl.audio.size(); ++i) {
                 tl.audio[i].muted = i != track;
@@ -344,7 +344,7 @@ void opDuck(Session& s, const QJsonObject& op)
     if (op.contains("attack")) params.attack = timeOf(s, op, "attack");
     if (op.contains("release")) params.release = timeOf(s, op, "release");
     if (op.contains("hold")) params.hold = timeOf(s, op, "hold");
-    if (TimelineOps::endFrame(tl) <= 0) fail("EMPTY", "the timeline is empty");
+    if (TimelineOps::endFrame(tl) <= 0) s.failEmpty();
     const auto ranges = AudioAnalysis::soundRanges(f, tl, voice, params);
     if (!ranges) fail("DECODE_FAILED", "could not mix the sound");
     if (!op.value("replace").toBool(true)) // keep clips that already have volume keyframes

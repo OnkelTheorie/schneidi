@@ -217,7 +217,7 @@ QJsonObject overviewProject(const QJsonObject& a, Context& ctx)
     const ProjectFormat& f = s.format();
     const Timeline& tl = s.project.timeline();
     const int length = TimelineOps::endFrame(tl);
-    if (length <= 0) fail("EMPTY", "the timeline is empty");
+    if (length <= 0) s.failEmpty();
     const int w = windowFrames(a, length, f);
     const auto peaks = AudioAnalysis::timelineFramePeaks(f, s.project.renderTimeline(), 0, length, [&ctx](double p) {
         if (ctx.progress) ctx.progress(p);
