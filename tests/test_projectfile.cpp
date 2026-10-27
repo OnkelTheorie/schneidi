@@ -4,6 +4,7 @@
 #include "check.h"
 
 #include "core/EffectRegistry.h"
+#include "core/Interchange.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -468,6 +469,24 @@ int main(int argc, char** argv)
             // The open one is the multicam clip: it becomes a normal timeline
             CHECK(!opened(R"({"app":"schneidi","currentSequence":3,"sequences":[{"id":3,"multicam":true}]})", p).isEmpty());
             CHECK(p.sequence(3) && !p.sequence(3)->compound && !p.sequence(3)->multicam);
+        }
+        // A frame rate or size no program makes (2^31 fps overflowed the EDL timecodes): brought inside the limits,
+        // a rate the app does not offer but other programs do (48 fps) stays
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","format":{"width":0,"height":100000,"fpsNum":2147483647}})";
+            CHECK(!opened(json, p).isEmpty());
+            CHECK(p.format().width == kMinFrameSize && p.format().height == kMaxFrameSize);
+            CHECK(p.format().rate.fps() >= 1 && p.format().rate.fps() <= 1000);
+            CHECK(stable(json));
+            Interchange::Sequence seq = Interchange::fromTimeline(p, p.sequences().first().id);
+            CHECK(Interchange::write(seq, Interchange::Format::Edl).contains("FCM:"));
+            for (const char* rate : {R"("fpsNum":1,"fpsDen":1000)", R"("fpsNum":-25)", R"("fpsNum":25,"fpsDen":0)"}) {
+                CHECK(!opened(QByteArray(R"({"app":"schneidi","format":{)") + rate + "}}", p).isEmpty());
+                CHECK(p.format().rate.fps() >= 1 && p.format().rate.fps() <= 1000);
+            }
+            CHECK(!opened(R"({"app":"schneidi","format":{"fpsNum":48,"fpsDen":1}})", p).isEmpty());
+            CHECK(p.format().rate == (FrameRate{48, 1}));
         }
     }
     return Check::result();

@@ -697,10 +697,11 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     ProjectData d;
     // Project settings; older files know only "fps" (integer) and were always 1920 x 1080
     const QJsonObject fmt = root.value("format").toObject();
-    d.format.width = std::max(16, fmt.value("width").toInt(1920));
-    d.format.height = std::max(16, fmt.value("height").toInt(1080));
-    d.format.rate.num = std::max(1, fmt.value("fpsNum").toInt(root.value("fps").toInt(25)));
-    d.format.rate.den = std::max(1, fmt.value("fpsDen").toInt(1));
+    d.format.width = fmt.value("width").toInt(1920);
+    d.format.height = fmt.value("height").toInt(1080);
+    d.format.rate.num = fmt.value("fpsNum").toInt(root.value("fps").toInt(25));
+    d.format.rate.den = fmt.value("fpsDen").toInt(1);
+    d.format = withinLimits(d.format);
     d.playhead = root.value("playhead").toInt();
     d.lastClipId = root.value("lastClipId").toInt();
     d.lastLinkId = root.value("lastLinkId").toInt();

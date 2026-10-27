@@ -43,6 +43,12 @@ struct ProjectFormat {
     bool operator!=(const ProjectFormat& o) const { return !(*this == o); }
 };
 
+// What a project's format may be (settings dialog, `new`/`format` op): a format from a file (edited by hand, another
+// program's timeline) is brought inside - sizes clamped, a frame rate below 1 or above 1000 fps becomes the nearest
+// standard one (other rates, e.g. 48 fps from an imported timeline, stay)
+inline constexpr int kMinFrameSize = 16, kMaxFrameSize = 8192;
+ProjectFormat withinLimits(ProjectFormat f);
+
 // Presets for "Timeline resolution" (order = display order); name is translated with T()
 struct ResolutionPreset { int width, height; const char* name; };
 inline constexpr ResolutionPreset kResolutionPresets[] = {
