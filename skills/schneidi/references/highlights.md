@@ -43,7 +43,8 @@ also read [social.md](social.md).
   loud and clip. Keep them overlapping only when the user asks for it.
 - `accent` puts them on many moments in one op, as keyframes: `{"op":"accent","at":["3.3s","7.2s"],"preset":"hit"}`
   (kill times from `highlights`, drops from `beats`). Presets: `punch`, `flash`, `shake`, `hit` (all three, a kill),
-  `drop` (big, for the music drop), `pulse` (small, for beats); `strength` scales one, `effects` lists them. Don't
+  `drop` (big, for the music drop), `pulse` (small, for beats); `strength` scales one, `effects` lists them.
+  Flashes keep 0.5 s apart by themselves (a burst of kills would strobe); the quiet choice is `shake` alone. Don't
   write punches and flashes as single `keyframe` ops. A `transform` `zoom`/`x`/`y` without `at` afterwards moves
   the accents along (no need to clear and redo them).
 - Vertical (9:16) from 16:9 gameplay: one track with `transform` `fit` `"blur"` on every clip (see
