@@ -48,11 +48,10 @@ qint64 residentBytes()
 {
 #ifdef Q_OS_LINUX
     QFile f("/proc/self/status");
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return -1;
-    while (!f.atEnd()) {
-        const QByteArray line = f.readLine();
+    if (!f.open(QIODevice::ReadOnly)) return -1;
+    // readAll, not atEnd()/readLine(): /proc files report size 0, so atEnd() is true before the first line
+    for (const QByteArray& line : f.readAll().split('\n'))
         if (line.startsWith("VmRSS:")) return line.mid(6).trimmed().split(' ').value(0).toLongLong() * 1024;
-    }
 #endif
     return -1;
 }

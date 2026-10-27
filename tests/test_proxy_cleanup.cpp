@@ -259,10 +259,11 @@ int main(int argc, char** argv)
     {
         const QString part = ProxyManager::proxyPath(small).chopped(4) + ".part.mp4";
         writeFile(part, 100);
-        const ProxyCleanup::Plan p = ProxyCleanup::plan(keep);
+        const ProxyCleanup::Plan p = ProxyCleanup::plan(keep, {busyPart});
         CHECK(find(p, part));
-        CHECK_EQ(ProxyCleanup::apply(p, {part}), 0);
-        CHECK(QFileInfo::exists(part));
+        CHECK_EQ(p.items.size(), 1);
+        CHECK_EQ(ProxyCleanup::apply(p, {part, busyPart}), 0);
+        CHECK(QFileInfo::exists(part) && QFileInfo::exists(busyPart));
         QFile::remove(part);
     }
 

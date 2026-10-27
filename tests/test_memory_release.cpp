@@ -112,6 +112,9 @@ void testIdleRelease()
 void testRelease()
 {
     const qint64 base = MemoryRelease::residentBytes();
+#ifdef Q_OS_LINUX
+    CHECK(base > 0); // /proc/self/status (reported size 0: read to the end, not line by line until atEnd())
+#endif
     if (base < 0) {
         std::printf("       resident memory unknown here: release() only checked for not crashing\n");
         MemoryRelease::release();
