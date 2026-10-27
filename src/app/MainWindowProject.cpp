@@ -11,6 +11,7 @@
 #include "app/PasteAttributesDialog.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
+#include "app/StartTemplatesPage.h"
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
@@ -19,6 +20,7 @@
 #include "core/Presets.h"
 #include "core/Project.h"
 #include "core/Selection.h"
+#include "core/StartTemplates.h"
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
@@ -72,6 +74,7 @@
 #include <QSettings>
 #include <QInputDialog>
 #include <QStandardPaths>
+#include <QStatusBar>
 #include <QTimer>
 
 // ---- Project file ---------------------------------------------------------------
@@ -199,16 +202,87 @@ bool MainWindow::maybeLeaveProject()
 
 void MainWindow::newProject()
 {
+    StartTemplate t = StartTemplates::defaultTemplate();
+    if (StartTemplates::askOnNew()) { // only when the user chose to be asked (Settings › Start Templates)
+        const QVector<StartTemplate> list = StartTemplates::all();
+        QStringList names;
+        int current = 0;
+        for (int i = 0; i < list.size(); ++i) {
+            names << list[i].displayName();
+            if (list[i].id == t.id) current = i;
+        }
+        bool ok = false;
+        const QString chosen = QInputDialog::getItem(this, T("Neues Projekt"), T("Startvorlage:"), names, current,
+                                                     false, &ok);
+        if (!ok) return;
+        t = list.value(names.indexOf(chosen), t);
+    }
+    newProjectFromTemplate(t);
+}
+
+void MainWindow::newProjectFromTemplate(const StartTemplate& t)
+{
     if (!maybeLeaveProject()) return;
     m_engine->pause();
     m_selection->clear();
     m_colorPanel->discardTracking();
-    m_engine->setFormat(ProjectFormat{}); // media lengths already fit (empty) -> do not re-read
-    m_project->reset();
+    const ProjectData d = StartTemplates::apply(t); // Neutral: the empty project as always
+    m_engine->setFormat(d.format); // media lengths already fit (empty) -> do not re-read
+    m_project->load(d);
     m_sourcePos.clear();
     m_engine->showTimeline(0);
     setProjectPath({});
     removeAutosave();
+}
+
+QString MainWindow::saveStartTemplate(QWidget* parent, bool* madeDefault)
+{
+    if (madeDefault) *madeDefault = false;
+    if (!parent) parent = this;
+    // Suggested name: the project's
+    const QString suggestion = m_projectPath.isEmpty() ? QString() : QFileInfo(m_projectPath).completeBaseName();
+    StartTemplate t = StartTemplates::fromProject(m_project->data(), suggestion);
+    SaveStartTemplateDialog dlg(t, parent);
+    if (dlg.exec() != QDialog::Accepted) return {};
+    t.name = dlg.name();
+    t.description = dlg.description();
+    const QString path = QDir(StartTemplates::dir()).filePath(StartTemplates::idForName(t.name) + ".json");
+    if (QFileInfo::exists(path)
+        && QMessageBox::question(parent, T("Als Startvorlage speichern"),
+                                 T("Eine Vorlage „%1“ gibt es schon. Ersetzen?").arg(t.name)) != QMessageBox::Yes)
+        return {};
+    QString error;
+    if (!StartTemplates::save(t, &error)) {
+        QMessageBox::warning(parent, T("Als Startvorlage speichern"),
+                             T("%1 konnte nicht gespeichert werden:\n%2").arg(QDir::toNativeSeparators(t.path), error));
+        return {};
+    }
+    if (dlg.makeDefault()) {
+        if (!m_autosaveDisabled) StartTemplates::setDefaultId(t.id); // test runs leave the user's settings alone
+        if (madeDefault) *madeDefault = true;
+    }
+    statusBar()->showMessage(T("Startvorlage „%1“ gespeichert").arg(t.name), 5000);
+    return t.id;
+}
+
+void MainWindow::rebuildTemplateMenu()
+{
+    if (!m_templateMenu) return;
+    m_templateMenu->clear();
+    const QString def = StartTemplates::defaultTemplate().id;
+    bool own = false;
+    for (const StartTemplate& t : StartTemplates::all()) {
+        if (!t.builtIn && !own) {
+            m_templateMenu->addSeparator();
+            own = true;
+        }
+        QString text = t.displayName().replace('&', "&&");
+        if (t.id == def) text = T("%1 (Standard)").arg(text);
+        QAction* a = m_templateMenu->addAction(text, this, [this, t] { newProjectFromTemplate(t); });
+        a->setToolTip(t.displayDescription());
+    }
+    m_templateMenu->addSeparator();
+    m_templateMenu->addAction(T("Startvorlagen verwalten…"), this, [this] { settingsDialog(2); });
 }
 
 void MainWindow::openProjectDialog()

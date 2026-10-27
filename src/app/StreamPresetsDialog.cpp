@@ -26,6 +26,12 @@ StreamPresetsDialog::StreamPresetsDialog(const StreamPresets& presets, QWidget* 
     intro->setWordWrap(true);
     layout->addWidget(intro);
 
+    m_projectOnly = new QCheckBox(T("Nur für dieses Projekt (im Projekt gespeichert)"));
+    m_projectOnly->setObjectName("projectOnly");
+    m_projectOnly->setToolTip(T("Aus: gilt für alle Projekte ohne eigene Vorgaben (Einstellung von schneidi). Projekte aus "
+                                "einer Startvorlage mit Import-Vorgaben haben eigene."));
+    layout->addWidget(m_projectOnly);
+
     m_muteMix = new QCheckBox(T("Mix-Stream stumm schalten, wenn Einzelspuren da sind"));
     m_muteMix->setObjectName("muteMix");
     m_muteMix->setToolTip(T("Streams mit dem Titel „Mix“, „Mix 1“ … kommen deaktiviert in die Timeline, "
@@ -86,6 +92,10 @@ void StreamPresetsDialog::addRow(const StreamRule& rule)
     m_rules->setCellWidget(row, Volume, volume);
     m_rules->setItem(row, TrackName, new QTableWidgetItem(rule.trackName));
 }
+
+void StreamPresetsDialog::setProjectOnly(bool on) { m_projectOnly->setChecked(on); }
+
+bool StreamPresetsDialog::projectOnly() const { return m_projectOnly->isChecked(); }
 
 StreamPresets StreamPresetsDialog::presets() const
 {

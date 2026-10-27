@@ -37,6 +37,7 @@ class QStackedWidget;
 class QButtonGroup;
 class QToolButton;
 class DeliverPanel;
+struct StartTemplate;
 
 namespace Ai {
 struct Endpoint;
@@ -59,6 +60,8 @@ public:
 
     // Project file (.schneidi): only references to the original media + edit
     bool openProject(const QString& path);
+    // New project from a start template (core/StartTemplates.h; asks about unsaved changes first)
+    void newProjectFromTemplate(const StartTemplate& t);
     bool offerAutosaveRestore(); // after a crash: offer the last automatic backup (true = restored)
     void disableAutosave();      // test runs: do not write/delete a backup
     // Set project settings (one undo step); test helper --format
@@ -169,8 +172,12 @@ private:
     void stepFrames(int frames);
     void shuttle(int direction);
 
-    void newProject();
+    void newProject(); // the default start template (or the user's choice, if they want to be asked)
     void openProjectDialog();
+    // File › Save as Start Template…: the open project's format, tracks and import presets; returns the saved id (empty
+    // = not saved), madeDefault = new projects start with it now
+    QString saveStartTemplate(QWidget* parent, bool* madeDefault = nullptr);
+    void rebuildTemplateMenu(); // File › New Project from Template
     bool save();
     bool saveAs();
     void openBackupDialog();
@@ -278,6 +285,7 @@ private:
     QTimer m_projectCheck;            // waits until an outside save is done
     QByteArray m_projectFingerprint;  // project file as last loaded/saved here (ProjectFile::fingerprint)
     QMenu* m_recentMenu = nullptr;
+    QMenu* m_templateMenu = nullptr;
     class QLabel* m_titleLabel = nullptr;
     class QTimer* m_autosaveTimer = nullptr;
     bool m_autosaveDisabled = false;

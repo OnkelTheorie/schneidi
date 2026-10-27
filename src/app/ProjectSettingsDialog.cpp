@@ -3,6 +3,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -55,6 +56,18 @@ ProjectSettingsDialog::ProjectSettingsDialog(const ProjectFormat& current, bool 
     form->addRow(T("Timeline-Auflösung"), m_resolution);
     form->addRow(T("Größe"), sizeRow);
     form->addRow(T("Timeline-Framerate"), m_rate);
+    // Checked = the first clip in an empty timeline may change it (as always); start templates can fix it
+    m_clipResolution = new QCheckBox(T("Auflösung"));
+    m_clipResolution->setObjectName("clip_resolution");
+    m_clipResolution->setChecked(true);
+    m_clipRate = new QCheckBox(T("Framerate"));
+    m_clipRate->setObjectName("clip_rate");
+    m_clipRate->setChecked(true);
+    auto* clipRow = new QHBoxLayout;
+    clipRow->addWidget(m_clipResolution);
+    clipRow->addWidget(m_clipRate);
+    clipRow->addStretch(1);
+    form->addRow(T("Vom ersten Clip anbieten"), clipRow);
 
     auto* hint = new QLabel;
     hint->setWordWrap(true);
@@ -108,6 +121,16 @@ void ProjectSettingsDialog::sizeEdited()
     const int i = m_resolution->findData(QSize(m_width->value(), m_height->value()));
     m_resolution->setCurrentIndex(i >= 0 ? i : m_resolution->count() - 1);
 }
+
+void ProjectSettingsDialog::setFixed(bool resolution, bool frameRate)
+{
+    m_clipResolution->setChecked(!resolution);
+    m_clipRate->setChecked(!frameRate);
+}
+
+bool ProjectSettingsDialog::fixedResolution() const { return !m_clipResolution->isChecked(); }
+
+bool ProjectSettingsDialog::fixedFrameRate() const { return !m_clipRate->isChecked(); }
 
 ProjectFormat ProjectSettingsDialog::format() const
 {

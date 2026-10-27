@@ -104,11 +104,18 @@ void MainWindow::buildActions()
     // Bindings after DaVinci Resolve (defaults), overridable in keybindings.json
     QMenu* file = menuBar()->addMenu(T("&Datei"));
     makeAction(file, "project_new", T("Neues Projekt"), QKeySequence("Ctrl+N"), [this] { newProject(); });
+    // Start templates (core/StartTemplates.h): built-in and own ones, built when the menu opens
+    m_templateMenu = file->addMenu(T("Neues Projekt aus Vorlage"));
+    m_templateMenu->setObjectName("template_menu");
+    m_templateMenu->setToolTipsVisible(true);
+    connect(m_templateMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTemplateMenu);
+    rebuildTemplateMenu();
     makeAction(file, "project_open", T("Projekt öffnen…"), QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
     m_recentMenu = file->addMenu(T("Zuletzt geöffnet"));
     rebuildRecentMenu();
     makeAction(file, "project_save", T("Projekt speichern"), QKeySequence("Ctrl+S"), [this] { save(); });
     makeAction(file, "project_save_as", T("Projekt speichern unter…"), QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
+    makeAction(file, "template_save", T("Als Startvorlage speichern…"), QKeySequence(), [this] { saveStartTemplate(this); });
     makeAction(file, "project_backup_open", T("Sicherungskopie öffnen…"), QKeySequence(), [this] { openBackupDialog(); });
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });

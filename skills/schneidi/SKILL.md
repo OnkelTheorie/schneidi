@@ -31,7 +31,9 @@ names cost a failed call.
 2. **Say the plan in 2-3 sentences** (length, structure, format), then go ahead. Don't wait for approval unless the
    plan rests on a guess about something important that the user can easily answer.
 3. **Build it in small steps.** Create the project with `new` (match the frame rate of the main material; vertical
-   = width 1080, height 1920), then `edit` with a list of ops. Its answer lists the clips it added and changed
+   = width 1080, height 1920). `new` starts from the user's default start template; name one with `template` when it
+   fits the task: `podcast` (tracks Voice 1, Voice 2, Music), `vertical` (9:16), `game` (multi-stream recordings:
+   the Mix stream comes in muted). `templates` lists them with the user's own. Then `edit` with a list of ops. Its answer lists the clips it added and changed
    (`changes`, with their new ids) and the timeline as a summary; take ids from there or from `info`, never guess
    them - they change when clips are split. Positions relative to a clip or to source time
    (`{"clip": 3, "source": "12.4s"}`) stay correct while earlier ops move things.

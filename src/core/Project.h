@@ -132,6 +132,17 @@ public:
     const QVector<RenderJob>& renderQueue() const { return m_renderQueue; }
     void setRenderQueue(const QVector<RenderJob>& jobs);
 
+    // From the start template (core/StartTemplates.h) or Project Settings: the first clip in an empty timeline leaves
+    // the resolution / frame rate as they are. No undo, but counts as a change (saved in the project).
+    bool fixedResolution() const { return m_fixedResolution; }
+    bool fixedFrameRate() const { return m_fixedFrameRate; }
+    void setFixedFormat(bool resolution, bool frameRate);
+    // The project's own import presets for audio streams (core/StreamPresets.h); none = those of the settings (all
+    // projects). No undo, but counts as a change. effectiveImportPresets(): what applies to this project.
+    const std::optional<StreamPresets>& importPresets() const { return m_importPresets; }
+    void setImportPresets(const std::optional<StreamPresets>& presets);
+    StreamPresets effectiveImportPresets() const { return m_importPresets ? *m_importPresets : StreamPresets::load(); }
+
     // Save/load (.schneidi). load() clears the undo history like a freshly opened project.
     ProjectData data() const;
     void load(const ProjectData& d);
@@ -154,6 +165,7 @@ signals:
     void transcriptChanged(const QString& path);
     void modifiedChanged(bool modified);
     void renderQueueChanged();
+    void importPresetsChanged(); // own import presets set/removed, or another project loaded
 
 private:
     ProjectFormat m_format;
@@ -165,6 +177,9 @@ private:
     QVector<MediaInfo> m_media;
     QVector<MediaBin> m_bins;
     QVector<RenderJob> m_renderQueue;
+    bool m_fixedResolution = false;
+    bool m_fixedFrameRate = false;
+    std::optional<StreamPresets> m_importPresets;
     int m_lastBinId = 0;
     QUndoStack m_undo;
     int m_lastClipId = 0;

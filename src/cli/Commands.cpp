@@ -95,9 +95,8 @@ QJsonObject range(int from, int to, const ProjectFormat& fmt)
             {"from_tc", tc(from, fmt)}, {"to_tc", tc(to, fmt)}};
 }
 
-ProjectFormat parseFormat(const QJsonObject& a)
+ProjectFormat parseFormat(const QJsonObject& a, ProjectFormat f)
 {
-    ProjectFormat f;
     if (a.contains("width")) f.width = a["width"].toInt();
     if (a.contains("height")) f.height = a["height"].toInt();
     if (f.width < 16 || f.height < 16 || f.width > 8192 || f.height > 8192 || f.width % 2 || f.height % 2)
@@ -189,7 +188,8 @@ Session::Session(Opened&& o)
       live(o.live), app(o.app), m_inApp(o.inApp != nullptr)
 {
     m_open = project.currentSequence();
-    editor.setStreamPresets(StreamPresets::load()); // the same import presets as the app
+    // The same import presets as the app: the project's own (from its start template) or the settings'
+    editor.setStreamPresets(project.effectiveImportPresets());
 }
 
 Session::~Session()
@@ -524,6 +524,21 @@ QString binPath(const Project& p, int bin)
     return parts.join('/');
 }
 
+QJsonObject importPresetsJson(const StreamPresets& p)
+{
+    QJsonArray rules;
+    for (const StreamRule& r : p.rules) {
+        QJsonObject o{{"title", r.title},
+                      {"action", r.action == StreamRule::Action::Mute   ? "mute"
+                                 : r.action == StreamRule::Action::Skip ? "skip"
+                                                                        : "place"}};
+        if (r.volumeDb != 0) o["volume_db"] = r.volumeDb;
+        if (!r.trackName.isEmpty()) o["track"] = r.trackName;
+        rules << o;
+    }
+    return {{"mute_mix", p.muteMix}, {"rules", rules}};
+}
+
 QJsonObject projectJson(const Project& p, const QString& path)
 {
     QJsonArray media;
@@ -545,8 +560,13 @@ QJsonObject projectJson(const Project& p, const QString& path)
         }
         media << o;
     }
-    return {{"project", path}, {"format", formatJson(p.format())}, {"media", media}, {"timelines", timelinesJson(p)},
-            {"timeline", timelineJson(p)}};
+    QJsonObject format = formatJson(p.format());
+    if (p.fixedResolution()) format["fixed_resolution"] = true; // from the start template: the first clip keeps it
+    if (p.fixedFrameRate()) format["fixed_frame_rate"] = true;
+    QJsonObject o{{"project", path}, {"format", format}, {"media", media}, {"timelines", timelinesJson(p)},
+                  {"timeline", timelineJson(p)}};
+    if (p.importPresets()) o["import_presets"] = importPresetsJson(*p.importPresets());
+    return o;
 }
 
 } // namespace detail
@@ -572,14 +592,28 @@ const QVector<Command>& commands()
                   "before; without a topic: the main guide and the list of topics.",
          {{"topic", T::String, "one task guide, e.g. \"highlights\" or \"ad\" (see 'topics')", false, true}},
          cmdGuide},
-        {"new", "Create a new empty project (.schneidi), optionally with media already in the media pool.",
+        {"new", "Create a new empty project (.schneidi), optionally with media already in the media pool. It starts "
+                "from a start template: the user's default (set in the app; \"neutral\" unless they chose another) or "
+                "the one you name. Built-in: neutral (2 video + 2 audio tracks, nothing muted), game (recordings with "
+                "several audio streams, e.g. OBS: the Mix stream comes in muted when single streams exist; master "
+                "limiter), podcast (audio tracks named Voice 1, Voice 2, Music; master limiter), vertical (1080x1920 "
+                "for shorts/reels/TikTok, frame rate from the material). `templates` lists them with the user's own.",
          {{"project", T::Path, "project file to create (.schneidi)", true, true},
-          {"width", T::Integer, "timeline width (default 1920)"},
-          {"height", T::Integer, "timeline height (default 1080)"},
-          {"fps", T::Number, "frame rate (default 25; 23.976, 24, 25, 29.97, 30, 50, 59.94, 60)"},
+          {"template", T::String, "start template: id or name from `templates` (e.g. \"podcast\"), or a template "
+                                  "file (.json) or another project (.schneidi) whose format and tracks to take "
+                                  "(default: the user's default template)"},
+          {"width", T::Integer, "timeline width (default: the template's, 1920)"},
+          {"height", T::Integer, "timeline height (default: the template's, 1080)"},
+          {"fps", T::Number, "frame rate (default: the template's, 25; 23.976, 24, 25, 29.97, 30, 50, 59.94, 60)"},
           {"media", T::Paths, "media files to import"},
           {"overwrite", T::Boolean, "replace an existing project"}},
          cmdNew},
+        {"templates", "List the start templates for `new`: built-in ones and the user's own (made in the app: File › "
+                      "Save as Start Template), which one is the default, and what each sets: format (fixed_resolution "
+                      "/ fixed_frame_rate: the first clip does not change it), tracks with names and states, master, "
+                      "import_presets (own import presets for audio streams; absent = the user's settings).",
+         {{"template", T::String, "only this one (id, name or file)", false, true}},
+         cmdTemplates},
         {"info", "Show a project: format, media, its timelines and one timeline's tracks and clips (ids, positions, "
                  "source ranges). Each track shows its header and mixer state when not default: name, color, muted, "
                  "solo, hidden, locked; audio tracks volume_db, pan, compressor, eq. 'master': volume_db, limiter "

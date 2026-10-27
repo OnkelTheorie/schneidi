@@ -7,9 +7,11 @@
 #include "app/DesignDialog.h"
 #include "app/KeyBindingsDialog.h"
 #include "app/SettingsDialog.h"
+#include "app/StartTemplatesPage.h"
 #include "app/Theme.h"
 #include "app/UpdateCheck.h"
 #include "core/I18n.h"
+#include "core/StartTemplates.h"
 #include "engine/Background.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
@@ -26,7 +28,7 @@
 void MainWindow::settingsDialog(int tab)
 {
     SettingsDialog dlg(m_aiSettings, this);
-    dlg.showTab(tab == 1 ? SettingsDialog::Tab::Ai : SettingsDialog::Tab::General);
+    dlg.showTab(tab == 1 ? SettingsDialog::Tab::Ai : tab == 2 ? SettingsDialog::Tab::Templates : SettingsDialog::Tab::General);
     dlg.aiPage()->setClaudeSetup(m_claudeSetup);
     dlg.aiPage()->addChatSection(m_aiKeys.get());
     connect(&dlg, &SettingsDialog::designRequested, this, [this, &dlg] {
@@ -34,7 +36,18 @@ void MainWindow::settingsDialog(int tab)
             offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
     });
     connect(&dlg, &SettingsDialog::keyBindingsRequested, this, [&dlg] { KeyBindingsDialog(&dlg).exec(); });
+    StartTemplatesPage* templates = dlg.startTemplatesPage();
+    connect(templates, &StartTemplatesPage::saveRequested, this, [this, &dlg, templates] {
+        bool madeDefault = false;
+        const QString id = saveStartTemplate(&dlg, &madeDefault);
+        if (!id.isEmpty()) templates->reload(madeDefault ? id : QString());
+    });
     if (dlg.exec() != QDialog::Accepted) return;
+    // Start templates: the template new projects start with, whether New Project asks (test runs keep the settings)
+    if (!m_autosaveDisabled) {
+        StartTemplates::setDefaultId(templates->defaultId());
+        StartTemplates::setAskOnNew(templates->askOnNew());
+    }
     if (QString error; !dlg.aiPage()->applyChatKey(&error))
         QMessageBox::warning(this, T("Einstellungen"), T("Schlüssel nicht gespeichert: %1").arg(error));
     setAiSettings(dlg.aiSettings());

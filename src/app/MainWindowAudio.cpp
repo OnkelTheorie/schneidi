@@ -18,10 +18,17 @@
 
 void MainWindow::streamPresetsDialog()
 {
-    StreamPresetsDialog dlg(m_editor->streamPresets(), this);
+    // What applies here: the project's own presets (e.g. from its start template) or the settings' (all projects)
+    StreamPresetsDialog dlg(m_project->effectiveImportPresets(), this);
+    dlg.setProjectOnly(m_project->importPresets().has_value());
     if (dlg.exec() != QDialog::Accepted) return;
     const StreamPresets p = dlg.presets();
-    p.save();
+    if (dlg.projectOnly()) {
+        m_project->setImportPresets(p);
+    } else {
+        p.save();
+        m_project->setImportPresets(std::nullopt);
+    }
     m_editor->setStreamPresets(p);
 }
 
@@ -48,10 +55,15 @@ void MainWindow::rememberStreamSettings()
         QApplication::beep(); // no clip of a file with several titled streams selected
         return;
     }
-    StreamPresets p = m_editor->streamPresets();
+    // Remembered for every project (the settings) and, if this one has its own presets, there too
+    StreamPresets p = StreamPresets::load();
     p.merge(learned);
     p.save();
-    m_editor->setStreamPresets(p);
+    if (std::optional<StreamPresets> own = m_project->importPresets()) {
+        own->merge(learned);
+        m_project->setImportPresets(own);
+    }
+    m_editor->setStreamPresets(m_project->effectiveImportPresets());
     statusBar()->showMessage(T("Spur-Einstellungen für %1 Streams gemerkt (gilt für neu eingefügte Clips)").arg(learned.size()),
                              5000);
 }
