@@ -57,14 +57,15 @@ bool isTemporary(const QString& fileName)
     // Hidden (rsync, Syncthing and many recorders write ".name" first), Office/backup style "~name", "name~", "$name"
     if (fileName.startsWith('.') || fileName.startsWith('~') || fileName.startsWith('$') || fileName.endsWith('~'))
         return true;
-    // Browsers and download tools: "clip.mp4.part", "clip.mp4.crdownload"; some tools put the mark before the
-    // extension ("clip.part.mp4", "clip.tmp.mkv")
+    // Browsers and download tools: "clip.mp4.part", "clip.mp4.crdownload" (the mark is the extension); some tools put
+    // a short mark right before the extension ("clip.part.mp4", "clip.tmp.mkv"). Only there: "Talk.Part.1.mp4" or
+    // "Clip.Download.mp4" are normal names
     static const QStringList marks{"part", "partial", "tmp", "temp", "crdownload", "download", "opdownload",
                                    "filepart", "inprogress", "aria2", "!ut", "!qb"};
+    static const QStringList beforeExtension{"part", "partial", "tmp", "temp"};
     const QStringList parts = fileName.toLower().split('.');
-    for (int i = 1; i < parts.size(); ++i)
-        if (marks.contains(parts[i])) return true;
-    return false;
+    const int n = int(parts.size());
+    return (n >= 2 && marks.contains(parts[n - 1])) || (n >= 3 && beforeExtension.contains(parts[n - 2]));
 }
 
 QString pathKey(const QString& path)

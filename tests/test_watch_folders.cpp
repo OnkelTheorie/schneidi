@@ -97,7 +97,8 @@ void testRules()
     for (const char* name : {".clip.mp4", "~clip.mp4", "clip.mp4~", "$clip.mp4", "clip.mp4.part", "clip.crdownload",
                              "clip.part.mp4", "clip.tmp.mkv", "clip.mkv.download", ".syncthing.clip.mp4.tmp"})
         Check::report(WatchFolders::isTemporary(name), name, __FILE__, __LINE__);
-    for (const char* name : {"clip.mp4", "Replay 2026-10-26 21-03-11.mkv", "my.final.cut.mov", "partner.mp4"})
+    for (const char* name : {"clip.mp4", "Replay 2026-10-26 21-03-11.mkv", "my.final.cut.mov", "partner.mp4",
+                             "Talk.Part.1.mp4", "Clip.Download.mp4", "temp.mp4"})
         Check::report(!WatchFolders::isTemporary(name), name, __FILE__, __LINE__);
     CHECK(WatchFolders::kindOf("/a/b.MKV") == WatchFolders::Kind::Video);
     CHECK(WatchFolders::kindOf("/a/b.wav") == WatchFolders::Kind::Audio);
