@@ -160,6 +160,10 @@ int main(int argc, char** argv)
     }
     const QJsonObject help = run("help", {});
     CHECK_EQ(help["commands"].toArray().size(), int(Cli::commands().size()));
+    CHECK(help.contains("servers") && help.contains("usage"));
+    // One command: only that (the MCP/HTTP server options were 2.5 KB of every `help edit --op …` answer)
+    const QJsonObject one = run("help", {{"command", "watch"}});
+    CHECK(one["commands"].toArray().size() == 1 && !one.contains("servers") && !one.contains("usage"));
 
     writeProject();
     const QString start = "V1: a[0-100|0-99]  V2:  A1: a[0-100|0-99]  A2:";

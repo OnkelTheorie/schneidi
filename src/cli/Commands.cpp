@@ -1220,14 +1220,15 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
         list << o;
     }
     if (list.isEmpty()) fail("NOT_FOUND", "no command " + a["command"].toString());
-    return {{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
-            {"api_version", ApiVersion},
-            {"usage", "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, "
-                      "exit code 0 = ok, 1 = error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio, "
-                      "`schneidi-cli serve` one over HTTP (see 'servers'); `schneidi-cli setup claude` connects Claude "
-                      "Code and Claude Desktop to it. "
-                      "--verbose: progress notes and engine messages on stderr."},
-            {"commands", list}, {"servers", servers}};
+    QJsonObject o{{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
+                  {"api_version", ApiVersion}, {"commands", list}};
+    if (a.contains("command")) return o; // one command (or op): only that, an AI asks for it in the middle of work
+    o["usage"] = "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, exit code 0 = ok, 1 = "
+                 "error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio, `schneidi-cli serve` one over "
+                 "HTTP (see 'servers'); `schneidi-cli setup claude` connects Claude Code and Claude Desktop to it. "
+                 "--verbose: progress notes and engine messages on stderr.";
+    o["servers"] = servers;
+    return o;
 }
 
 } // namespace
