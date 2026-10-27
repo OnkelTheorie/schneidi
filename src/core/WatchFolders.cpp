@@ -86,6 +86,20 @@ int indexOf(const QVector<WatchFolder>& list, const QString& folder)
     return -1;
 }
 
+int covering(const QVector<WatchFolder>& list, const QString& file)
+{
+    const QString key = pathKey(file);
+    const QString dir = pathKey(QFileInfo(key).path());
+    for (int i = 0; i < list.size(); ++i) {
+        if (list[i].path.isEmpty() || !takes(list[i], file)) continue;
+        QString root = pathKey(list[i].path);
+        if (dir == root) return i;
+        if (!root.endsWith('/')) root += '/';
+        if (list[i].subfolders && key.startsWith(root)) return i;
+    }
+    return -1;
+}
+
 QStringList typeNames(const WatchFolder& w)
 {
     QStringList out;

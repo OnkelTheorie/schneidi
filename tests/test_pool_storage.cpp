@@ -291,7 +291,7 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
     pool.setSaveSettings(false);
     InputBindings& b = InputBindings::instance();
     for (const MediaPool::KeyAction& k : pool.keyActions())
-        b.registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope);
+        b.registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope, k.defaultKey2);
     // The timeline's Delete as a window key in the same window
     windowKeys->resize(700, 400);
     pool.setParent(windowKeys);
@@ -322,8 +322,22 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
     CHECK(sendKey(tree, Qt::Key_D, Qt::ControlModifier));
     CHECK(!p.bin(bin));
     b.setInputs("pool_remove_bin", b.defaultInputs("pool_remove_bin"));
-    CHECK_EQ(b.inputs("pool_remove_bin"), QStringList({"Del", ""}));
+    // Delete and Backspace are the two keys of one action (Key 1 / Key 2 in the key dialog)
+    CHECK_EQ(b.inputs("pool_remove_bin"), QStringList({"Del", "Backspace"}));
     CHECK_EQ(b.inputs("pool_close_search"), QStringList({"Esc", ""}));
+    CHECK_EQ(b.inputs("pool_remove_clips"), QStringList({"Del", "Backspace"}));
+    // 0.13 test builds had Backspace in the bin list as an action of its own: its key becomes the second one
+    {
+        b.setInputs("pool_remove_bin", {"Del", ""}); // (writes the file)
+        QFile f(b.filePath());
+        if (CHECK(f.open(QIODevice::WriteOnly)))
+            f.write(R"({"version":3,"shortcuts":{"pool_remove_bin":"Del","pool_remove_bin_alt":"Backspace"}})");
+        f.close();
+        b.load();
+        CHECK_EQ(b.inputs("pool_remove_bin"), QStringList({"Del", "Backspace"}));
+        b.setInputs("pool_remove_bin", b.defaultInputs("pool_remove_bin")); // saves the file
+        if (CHECK(f.open(QIODevice::ReadOnly))) CHECK(!f.readAll().contains("pool_remove_bin_alt"));
+    }
 
     // Esc in the search field clears and closes it
     pool.setSearch("abc");
@@ -364,6 +378,8 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
             for (int r = 0; r < table->rowCount(); ++r) {
                 const QString id = table->item(r, 1)->data(Qt::UserRole).toString();
                 if (id == "pool_remove_bin") poolTip = table->item(r, 2)->toolTip();
+                if (id == "pool_remove_bin") CHECK_EQ(table->item(r, 3)->text(), QKeySequence(Qt::Key_Backspace).toString(QKeySequence::NativeText));
+                CHECK(id != "pool_remove_bin_alt");
                 if (id == "test_window_delete") windowTip = table->item(r, 2)->toolTip();
                 if (id == "pool_remove_bin") CHECK_EQ(table->item(r, 0)->text(), T("Media Pool"));
             }

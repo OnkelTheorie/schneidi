@@ -60,6 +60,8 @@ bool isTemporary(const QString& fileName);
 QString pathKey(const QString& path);
 bool samePath(const QString& a, const QString& b);
 int indexOf(const QVector<WatchFolder>& list, const QString& folder); // -1 = not watched
+// The first watch folder that takes this file (in its folder, or below it with subfolders, of a kind it wants); -1 = none
+int covering(const QVector<WatchFolder>& list, const QString& file);
 QStringList typeNames(const WatchFolder& w); // "video", "audio", "image"
 // "video,audio" -> kinds of w; false = an unknown name (w unchanged)
 bool setTypes(WatchFolder& w, const QStringList& names);

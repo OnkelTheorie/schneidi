@@ -85,7 +85,7 @@ public:
     // clips); a mouse button bound to it works over that widget. Never put such an action into a menu: that makes its
     // keys global.
     void registerScopedAction(QAction* action, const QString& id, const QString& category,
-                              const QKeySequence& defaultKey, QWidget* scope);
+                              const QKeySequence& defaultKey, QWidget* scope, const QKeySequence& defaultKey2 = {});
     // Register an action of one panel (scope, e.g. "render_queue"): its keys only count while that panel has the focus
     // and win there over the window's (Del deletes render jobs there, clips elsewhere). The panel checks them itself
     // with matches() in its ShortcutOverride and KeyPress events; the action is not added to a widget (Qt would call the

@@ -152,6 +152,21 @@ void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
         else binds << normalizeInput(it.value().toString());
         m_inputs[it.key()] = padded(binds);
     }
+    // Actions that became the second key of another one (0.13 test builds had Backspace in the bin list as an action of
+    // its own): its key moves into the free slot, the old id is gone
+    static const QHash<QString, QString> merged{{"pool_remove_bin_alt", "pool_remove_bin"}};
+    for (auto it = merged.begin(); it != merged.end(); ++it) {
+        if (!m_inputs.contains(it.key())) continue;
+        const QStringList old = m_inputs.take(it.key());
+        if (!m_inputs.contains(it.value())) continue; // not in the file: its defaults have both keys
+        QStringList binds = m_inputs.value(it.value());
+        for (const QString& in : old) {
+            const qsizetype free = binds.indexOf(QString());
+            if (!in.isEmpty() && !binds.contains(in) && free >= 0) binds[free] = in;
+        }
+        m_inputs[it.value()] = binds;
+        m_fileExisted = false; // written anew without the old id
+    }
 
     // Before version 3 mouse buttons had their own section {"back": "split"} (missing = the default)
     if (root.value("version").toInt() < 3) {
@@ -492,10 +507,10 @@ void InputBindings::shieldWindowKeys(QWidget* panel, const QStringList& ids)
 }
 
 void InputBindings::registerScopedAction(QAction* action, const QString& id, const QString& category,
-                                         const QKeySequence& defaultKey, QWidget* scope)
+                                         const QKeySequence& defaultKey, QWidget* scope, const QKeySequence& defaultKey2)
 {
     // Scope for conflicts: the widget itself, so keys of different widgets never clash
-    registerAction(action, id, category, defaultKey, "widget:" + QString::number(quintptr(scope), 16));
+    registerAction(action, id, category, defaultKey, "widget:" + QString::number(quintptr(scope), 16), defaultKey2);
     for (Entry& e : m_entries)
         if (e.id == id) e.scopeWidget = scope;
     auto* keys = dynamic_cast<ScopeKeys*>(scope->findChild<QObject*>(ScopeKeys::Name, Qt::FindDirectChildrenOnly));

@@ -33,6 +33,7 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSplitter>
@@ -455,16 +456,16 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     // Keys (bindable, MainWindow registers them): they act only in their widget, Delete in the bin list never
     // reaches the timeline
     m_removeBinKey = new QAction(T("Ausgewählten Bin entfernen"), this);
-    m_removeBinKey->setShortcut(QKeySequence(Qt::Key_Delete));
-    m_removeBinKeyAlt = new QAction(T("Ausgewählten Bin entfernen (Rücktaste)"), this);
-    m_removeBinKeyAlt->setShortcut(QKeySequence(Qt::Key_Backspace));
-    for (QAction* a : {m_removeBinKey, m_removeBinKeyAlt})
-        connect(a, &QAction::triggered, this, [this] {
-            if (QTreeWidgetItem* it = m_bins->currentItem()) removeBin(it->data(0, Qt::UserRole).toInt());
-        });
+    m_removeBinKey->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
+    connect(m_removeBinKey, &QAction::triggered, this, [this] {
+        if (QTreeWidgetItem* it = m_bins->currentItem()) removeBin(it->data(0, Qt::UserRole).toInt());
+    });
     m_closeSearchKey = new QAction(T("Suche schließen"), this);
     m_closeSearchKey->setShortcut(QKeySequence(Qt::Key_Escape));
     connect(m_closeSearchKey, &QAction::triggered, this, [this] { m_searchBtn->setChecked(false); }); // clears and closes
+    m_removeClipsKey = new QAction(T("Aus dem Media Pool entfernen"), this);
+    m_removeClipsKey->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
+    connect(m_removeClipsKey, &QAction::triggered, this, &MediaPool::removeSelected);
 
     // Hover scrub over video thumbnails (proxy if there is one: much faster to decode)
     m_scrub = new HoverScrub(
@@ -673,9 +674,9 @@ void MediaPool::setFilter(const PoolFilter& filter)
 
 QVector<MediaPool::KeyAction> MediaPool::keyActions() const
 {
-    return {{m_removeBinKey, "pool_remove_bin", QKeySequence(Qt::Key_Delete), m_bins},
-            {m_removeBinKeyAlt, "pool_remove_bin_alt", QKeySequence(Qt::Key_Backspace), m_bins},
-            {m_closeSearchKey, "pool_close_search", QKeySequence(Qt::Key_Escape), m_search}};
+    return {{m_removeBinKey, "pool_remove_bin", QKeySequence(Qt::Key_Delete), m_bins, QKeySequence(Qt::Key_Backspace)},
+            {m_closeSearchKey, "pool_close_search", QKeySequence(Qt::Key_Escape), m_search},
+            {m_removeClipsKey, "pool_remove_clips", QKeySequence(Qt::Key_Delete), m_list, QKeySequence(Qt::Key_Backspace)}};
 }
 
 void MediaPool::saveSettings() const
@@ -1105,6 +1106,50 @@ void MediaPool::renameSequence(int id)
     if (ok) m_project->renameSequence(id, name);
 }
 
+void MediaPool::removeSelected()
+{
+    const QStringList paths = selectedMedia();
+    const QVector<int> sequences = selectedSequences();
+    if (paths.isEmpty() && sequences.isEmpty()) return;
+    // Timelines that go anyway do not count as using the media
+    QVector<QPair<int, int>> usage;
+    for (const QPair<int, int>& u : m_project->mediaUsage(paths))
+        if (!sequences.contains(u.first) || !m_project->canRemoveSequence(u.first)) usage << u;
+    if (!usage.isEmpty()) {
+        QSet<QString> used;
+        for (const Sequence& s : m_project->sequences())
+            if (std::any_of(usage.cbegin(), usage.cend(), [&](const QPair<int, int>& u) { return u.first == s.id; }))
+                for (const auto* tracks : {&s.timeline.video, &s.timeline.audio})
+                    for (const Track& t : *tracks)
+                        for (const Clip& c : t.clips)
+                            if (c.kind == ClipKind::Media && paths.contains(c.mediaPath)) used.insert(c.mediaPath);
+        QString text = used.size() == 1 ? T("„%1“ wird noch benutzt:").arg(QFileInfo(*used.cbegin()).fileName())
+                                        : T("%1 der ausgewählten Clips werden noch benutzt:").arg(used.size());
+        for (const auto& [sequence, clips] : usage)
+            text += "\n• " + (clips == 1 ? T("%1: 1 Clip").arg(m_project->sequenceName(sequence))
+                                         : T("%1: %2 Clips").arg(m_project->sequenceName(sequence)).arg(clips));
+        QMessageBox box(QMessageBox::Question, T("Aus dem Media Pool entfernen"), text, QMessageBox::NoButton, this);
+        box.setInformativeText(T("„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein "
+                                 "Rückgängig-Schritt holt alles zurück)."));
+        QPushButton* withClips = box.addButton(T("Mit ihren Clips entfernen"), QMessageBox::DestructiveRole);
+        box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::Cancel);
+        box.exec();
+        if (box.clickedButton() != withClips) return;
+    }
+    QUndoStack* undo = m_project->undoStack();
+    const bool several = !sequences.isEmpty() && (sequences.size() > 1 || !paths.isEmpty());
+    if (several) undo->beginMacro(T("Aus dem Media Pool entfernen"));
+    // A compound clip inside a timeline that goes too can go after that timeline
+    for (bool progress = true; progress;) {
+        progress = false;
+        for (int id : sequences)
+            if (m_project->sequence(id) && m_project->canRemoveSequence(id)) progress = m_project->removeSequence(id) || progress;
+    }
+    if (!paths.isEmpty()) m_project->removeMedia(paths, true);
+    if (several) undo->endMacro();
+}
+
 void MediaPool::addClipColorMenu(QMenu* menu, Project* project, const QStringList& paths)
 {
     QMenu* colors = menu->addMenu(T("Clipfarbe"));
@@ -1220,6 +1265,9 @@ void MediaPool::showContextMenu(const QPoint& pos)
         const bool exists = QFileInfo::exists(file);
         menu.addAction(T("Mit Standardprogramm öffnen"), this, [file] { FileManager::open(file); })->setEnabled(exists);
         menu.addAction(T("Im Dateimanager zeigen"), this, [file] { FileManager::reveal(file); })->setEnabled(exists);
+        menu.addSeparator();
+        QAction* remove = menu.addAction(T("Aus dem Media Pool entfernen"), this, &MediaPool::removeSelected);
+        remove->setShortcuts(m_removeClipsKey->shortcuts()); // shows the key (acts only while the menu is open)
     }
     menu.addSeparator();
     menu.addAction(T("Medien importieren…"), this, &MediaPool::importDialog);

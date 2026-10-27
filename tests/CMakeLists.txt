@@ -47,6 +47,8 @@ schneidi_test(test_preview_audio)
 set_tests_properties(test_preview_audio PROPERTIES RUN_SERIAL TRUE)
 schneidi_test(test_mediapool)
 schneidi_test(test_pool_storage) # Media Pool filter + keys, Media Storage marks, hover scrub, look before import
+schneidi_test(test_pool_remove) # removing clips from the Media Pool: core op, undo, watch, AI turn, CLI op, keys, question
+target_link_libraries(test_pool_remove PRIVATE schneidi_cli_lib)
 schneidi_test(test_color)
 schneidi_test(test_grade_windows)
 schneidi_test(test_workspace)
