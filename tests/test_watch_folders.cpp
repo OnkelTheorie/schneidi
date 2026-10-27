@@ -25,6 +25,7 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUndoStack>
@@ -649,6 +650,29 @@ void testFolderWatch(const QString& root, const QString& clip)
     CHECK(waitFor([&] { return fw2.watchedDirectories().isEmpty() && fw2.idle(); }, 5000));
 }
 
+// The "Watch Folder" dialog is as tall as its text needs in every language (English had an empty gap above the intro:
+// its height came from a narrower width than the dialog's)
+void testDialogHeight()
+{
+    Project p;
+    emptyProject(p);
+    for (const char* lang : {"en", "de", "fr"}) {
+        I18n::install(lang);
+        WatchFolder n;
+        n.path = QDir::tempPath();
+        n.bin = WatchFolderDialog::kNewBin;
+        WatchFolderDialog add(p, n, true);
+        add.show();
+        QCoreApplication::processEvents();
+        auto* intro = add.findChild<QLabel*>("watchIntro");
+        if (!CHECK(intro)) continue;
+        Check::report(intro->height() <= intro->heightForWidth(intro->width()) + 4, "intro taller than its text",
+                      __FILE__, __LINE__, QString("%1: %2 px for %3").arg(lang).arg(intro->height())
+                                              .arg(intro->heightForWidth(intro->width())));
+    }
+    I18n::install("de");
+}
+
 void screenshots(const QString& folder)
 {
     Project p;
@@ -717,6 +741,7 @@ int main(int argc, char** argv)
     testCliProcess(root, clip, longClip);
     testLive(root, clip);
     testFolderWatch(root, clip);
+    testDialogHeight();
     if (!shot.isEmpty()) screenshots(shot); // last: it switches the language
     return Check::result();
 }

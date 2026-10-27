@@ -71,6 +71,7 @@ WatchFolderDialog::WatchFolderDialog(const Project& project, const WatchFolder& 
                                "Spiele-Tools. Überwacht wird, solange das Projekt offen ist; was in der Zwischenzeit "
                                "dazukommt, wird beim Öffnen nachgeholt."));
     intro->setWordWrap(true);
+    intro->setObjectName("watchIntro");
     intro->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
     layout->addWidget(intro);
 
@@ -133,7 +134,10 @@ WatchFolderDialog::WatchFolderDialog(const Project& project, const WatchFolder& 
         updateOk();
     });
     updateOk();
-    resize(560, sizeHint().height());
+    // The height for this width: sizeHint() wraps the intro for the narrower hint width (English: one line more than it
+    // takes at 560 px, shown as an empty gap above the text)
+    const int width = std::max(560, sizeHint().width());
+    resize(width, hasHeightForWidth() ? heightForWidth(width) : sizeHint().height());
 }
 
 void WatchFolderDialog::fillBins()
