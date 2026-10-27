@@ -141,7 +141,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("presets");
-    Check::initMlt();
+    Check::initMlt(true); // frei0r plugins (opt-in) as well
     std::setlocale(LC_NUMERIC, "C");
     if (!EffectRegistry::find("frei0r.glow") || !EffectRegistry::find("frei0r.levels"))
         return Check::skip("frei0r plugins not installed");

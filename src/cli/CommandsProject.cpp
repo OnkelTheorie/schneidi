@@ -597,6 +597,10 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         if (!d.category.isEmpty()) o["category"] = d.category;
         if (d.id == "grade")
             o["note"] = "the Color page grade (lift/gamma/gain/offset, LUT); windows (shape masks) via the `window` op";
+        if (d.id == "chromakey")
+            o["note"] = "own keyer (chroma distance, soft edge, spill suppression); fixed stage after the grade";
+        else if (d.category == EffectRegistry::Frei0rCategory)
+            o["note"] = "frei0r plugin of this computer (offered when switched on in the app's settings); not thread-safe";
         if (d.id == Stabilizer::EffectId)
             o["note"] = Stabilizer::available()
                             ? "needs an analysis pass (background in the app, before encoding in `render`)"

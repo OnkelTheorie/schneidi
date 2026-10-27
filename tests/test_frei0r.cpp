@@ -108,7 +108,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("frei0r");
-    Check::initMlt();
+    Check::initMlt(true); // frei0r plugins (opt-in) as well
     std::setlocale(LC_NUMERIC, "C");
 
     // ---- Registry ----
@@ -126,8 +126,9 @@ int main(int argc, char** argv)
     CHECK(!EffectRegistry::find("frei0r.bluescreen0r")); // own section "Green Screen"
     CHECK(EffectRegistry::find("chromakey"));
     if (EffectRegistry::find("frei0r.measure_pr0be")) CHECK(!EffectRegistry::find("frei0r.pr0be")); // Alias
+    // Plugins schneidi has its own effect for (engine/VideoEffects) stay the own effect, same id and parameters
     if (const EffectDescriptor* d = EffectRegistry::find("frei0r.glow"); CHECK(d)) {
-        CHECK_EQ(d->name, QString("Glow"));
+        CHECK(d->category.isEmpty() && d->name == T("Glühen"));
         const EffectParam* p = param(d, EffectParam::Double);
         if (CHECK(p)) CHECK(p->key == "0" && p->mltProperty == "0" && p->min == 0 && p->max == 1);
     }

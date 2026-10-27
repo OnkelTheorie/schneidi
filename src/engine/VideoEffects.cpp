@@ -47,7 +47,10 @@ struct KeyGeometry {
             return std::sqrt(dr * dr + dg * dg + db * db) / 255.0f;
         }
         const float y = kR * r + kG * g + kB * b;
-        const float cb = (b - y) / kCb, cr = (r - y) / kCr;
+        return chromaDistance((b - y) / kCb, (r - y) / kCr, along);
+    }
+    float chromaDistance(float cb, float cr, float* along) const
+    {
         const float p = (cb * kb + cr * kr) / kk;                          // along the key's hue (1 = as the key)
         const float q2 = std::max(0.0f, (cb * cb + cr * cr) / kk - p * p); // away from it (hue difference)
         const float less = 0.6f * std::max(0.0f, 1.0f - p);               // paler or darker than the key
@@ -232,11 +235,8 @@ struct KeyTable {
         entries.resize(size_t(kChroma) * kChroma);
         for (int i = 0; i < kChroma; ++i)
             for (int j = 0; j < kChroma; ++j) {
-                const float cb = float(i - 128), cr = float(j - 128);
-                const float p = (cb * g.kb + cr * g.kr) / g.kk;
-                const float q2 = std::max(0.0f, (cb * cb + cr * cr) / g.kk - p * p);
-                const float less = 0.6f * std::max(0.0f, 1.0f - p);
-                const float d = std::sqrt(q2 + less * less);
+                float p = 0;
+                const float d = g.chromaDistance(float(i - 128), float(j - 128), &p);
                 KeyEntry& e = entries[size_t(i) * kChroma + j];
                 e.alpha = byte(255.0f * smoothstep(inner, outer, d));
                 e.dr = e.dg = e.db = 0;

@@ -61,9 +61,11 @@ inline void initApp(const char* name)
     QStandardPaths::setTestModeEnabled(true);
 }
 
-// Start MLT like the program (bundled modules, or the MSYS2 modules on Windows)
-inline void initMlt()
+// Start MLT like the program (bundled modules, or the MSYS2 modules on Windows). frei0r: switch the opt-in on
+// (Frei0r::enabled) to test the installed frei0r plugins
+inline void initMlt(bool frei0r = false)
 {
+    if (frei0r) qputenv("SCHNEIDI_FREI0R", "1");
     Bundle::prepareMltEnvironment();
     Frei0r::prepareEnvironment();
     const QString modules = Bundle::mltModuleDir();

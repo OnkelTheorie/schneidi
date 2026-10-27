@@ -63,7 +63,7 @@ QVector<EffectDescriptor> ownLooks()
     add("frei0r.rgbnoise", T("Bildrauschen"), T("Farbiges Rauschen, in jedem Bild anders"),
         {f0rNumber("frei0r.rgbnoise", "0", T("Stärke"), "noise", 0.2)});
     add("frei0r.scanline0r", T("Fernsehzeilen"), T("Jede zweite Zeile dunkler, wie ein altes Fernsehbild"), {});
-    add("frei0r.nosync0r", T("Gestörter Bildlauf"), T("Bild seitlich verschoben wie bei einem Fernseher ohne Synchronisation"),
+    add("frei0r.nosync0r", T("Gestörter Bildlauf"), T("Bild rollt nach oben weg wie bei einem Fernseher ohne Bildfang"),
         {f0rNumber("frei0r.nosync0r", "0", T("Versatz"), "HSync", 0.0)});
     {
         EffectParam shape = f0rOther(EffectParam::Choice, "0", T("Form"), "pattern", QString("gradient_linear"));

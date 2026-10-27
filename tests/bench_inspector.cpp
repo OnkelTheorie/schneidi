@@ -92,7 +92,7 @@ int main(int argc, char** argv)
                                {"-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=25:duration=4", "-c:v", "libx264",
                                 "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     Frei0r::prepareEnvironment();
-    Check::initMlt();
+    Check::initMlt(true); // frei0r plugins (opt-in) as well
     std::setlocale(LC_NUMERIC, "C");
     Frei0r::registerEffects();
     QStringList frei0r;

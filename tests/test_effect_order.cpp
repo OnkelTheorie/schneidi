@@ -571,7 +571,7 @@ int main(int argc, char** argv)
 
     testCore(tmp.path());
     testCli(tmp.path());
-    Check::initMlt();
+    Check::initMlt(true); // frei0r plugins (opt-in) as well
     testInspector(app);
 
     if (!Check::haveFfmpeg()) {

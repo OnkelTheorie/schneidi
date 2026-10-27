@@ -77,6 +77,7 @@ int main(int argc, char** argv)
     qputenv("SDL_AUDIODRIVER", "dummy");
     QApplication app(argc, argv);
     Check::initApp("bench-engine");
+    qputenv("SCHNEIDI_FREI0R", "1"); // frei0r plugins (opt-in) for the "frei0r effects" argument
     const int clips = argc > 1 ? atoi(argv[1]) : 5;
     const int nFrei0r = argc > 2 ? atoi(argv[2]) : 3;
     QTemporaryDir tmp;
