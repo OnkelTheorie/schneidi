@@ -91,7 +91,7 @@ Thumbnails for the Media Storage (your Videos folder) are made by a separate ffm
 | 4 cores | 57 – smooth | | |
 | 6 cores | 58 – smooth | | |
 
-0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media).
+0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media). Playback › Clean Up Proxy Media… lists the proxy files no open or recent project needs (original deleted or changed, project gone) and frees their space.
 
 **And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet). DaVinci Resolve, Premiere Pro and Final Cut Pro are not available for this computer at all. Material: 15 s of a 1080p60 gaming clip.
 
@@ -180,7 +180,7 @@ schneidi-cli mcp`, or in Claude Desktop's `claude_desktop_config.json`:
 
 **Live with the app:** if the project is open in schneidi, every command works on what the app shows (unsaved
 changes included). An `edit` changes the open project as one undo step and does not save; `info` adds the playhead
-and the selection; `app` plays, seeks, selects, undoes, saves and generates proxies. The app shows "AI connected"
+and the selection; `app` plays, seeks, selects, undoes, saves, generates proxies and cleans up old ones. The app shows "AI connected"
 while a session is active, lights up the clips it changed and has a button to disconnect it. `@app` as the project
 means the project of the running app. Without the app (or on a server) the CLI works on the file as before.
 
