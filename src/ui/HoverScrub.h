@@ -6,6 +6,7 @@
 
 class QListWidget;
 class QListWidgetItem;
+class QWidget;
 class ScrubFrames;
 
 // Hover scrub over the thumbnails of a list (Media Storage, Media Pool): moving the mouse across a video's thumbnail
@@ -38,6 +39,7 @@ private:
     void refresh();
 
     QListWidget* m_list;
+    QWidget* m_viewport; // m_list's, where the events come from
     ScrubFrames* m_frames;
     FileOf m_fileOf;
     Show m_show;
