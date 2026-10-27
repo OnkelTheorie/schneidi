@@ -670,8 +670,9 @@ bool DeliverPanel::addToQueue(bool confirm)
 bool DeliverPanel::runCheck()
 {
     const RenderJob job = makeJob();
-    const ProjectFormat& f = m_project->format();
-    const Timeline& tl = m_project->timeline();
+    // Copies (cheap, shared data): the progress dialog lets events run, an AI command may change the project meanwhile
+    const ProjectFormat f = m_project->format();
+    const Timeline tl = m_project->timeline();
     const int end = TimelineOps::endFrame(tl);
     const int from = job.inOut ? job.from : 0;
     const int to = job.inOut && job.to >= 0 ? std::min(end, job.to + 1) : end;
