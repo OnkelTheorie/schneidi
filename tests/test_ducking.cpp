@@ -239,6 +239,63 @@ void testCliDuckMatchesEditor(const QString& dir)
     CHECK(!keys(*app).isEmpty());
 }
 
+// Music ducked under speech from start to end (a podcast without pauses) has no key at its own level: a new volume
+// moves the curve from the clip's volume, not from the ducked level (an AI lowering the music to -8 from -4 made it
+// 8 dB louder: the flat -16 became the "loudest key")
+void testVolumeOfDuckedClip(const QString& dir)
+{
+    Clip c = music(0, 100, -4);
+    Ducking::apply(c, {{0, 100}}, Ducking::defaults(25));
+    CHECK_EQ(keys(c), QString("0:-16 99:-16"));
+    Clip lower = c;
+    CHECK_EQ(Keys::setVolumeLevel(lower, -8), -4.0);
+    CHECK_EQ(keys(lower), QString("0:-20 99:-20"));
+    CHECK_EQ(lower.volumeDb, -8.0); // moves along: a new ducking dips from it
+    // Partly ducked: the loudest key is the clip's level as before; a drawn curve above the static volume too
+    Clip part = music(0, 100, -4);
+    Ducking::apply(part, {{40, 60}}, Ducking::defaults(25));
+    Keys::setVolumeLevel(part, -8);
+    CHECK_EQ(Keys::valueAt(part, AnimParam::Volume, 0), -8.0);
+    CHECK_EQ(Keys::valueAt(part, AnimParam::Volume, 50), -20.0);
+    Clip drawn = music(0, 100);
+    Keys::setKey(drawn, AnimParam::Volume, 0, -30);
+    Keys::setKey(drawn, AnimParam::Volume, 50, -10);
+    Keys::setVolumeLevel(drawn, -6);
+    CHECK_EQ(keys(drawn), QString("0:-26 50:-6"));
+
+    // Normalize in the app and the CLI op `volume` use it
+    Project p;
+    ProjectData d;
+    d.timeline = emptyTimeline();
+    d.timeline.audio[0].clips << c;
+    d.lastClipId = 1;
+    p.load(d);
+    Selection sel;
+    Editor ed(&p, &sel);
+    ed.normalizeAudio({{1, -2.0}}, -6.0, false); // the file -2 -> the clip at -4: as it is
+    CHECK_EQ(keys(*TimelineOps::findClip(p.timeline(), 1)), QString("0:-16 99:-16"));
+    const QString path = dir + "/ducked.schneidi";
+    QString error;
+    if (!CHECK(ProjectFile::save(d, path, &error))) return;
+    const Cli::Command* cmd = Cli::find("edit");
+    Cli::Context ctx;
+    try {
+        const QJsonObject r = cmd->run(
+            Cli::normalize(*cmd, {{"project", path}, {"ops", R"([{"op":"volume","clips":[1],"db":-8}])"}}), ctx);
+        CHECK(r["notes"].toArray().at(0).toString().contains("moved down by 4.0 dB"));
+    } catch (const Cli::Error& e) {
+        CHECK(false);
+        qWarning().noquote() << e.code << e.message;
+    }
+    ProjectData back;
+    if (!CHECK(ProjectFile::load(path, &back, &error))) return;
+    const Clip* saved = TimelineOps::findClip(back.timeline, 1);
+    if (CHECK(saved)) {
+        CHECK_EQ(keys(*saved), QString("0:-20 99:-20"));
+        CHECK_EQ(saved->volumeDb, -8.0);
+    }
+}
+
 // ---- Dialog ----
 
 void testDialogDefaultsAndTracks()
@@ -307,6 +364,7 @@ int main(int argc, char** argv)
     testSoundRanges();
     testApplyKeys();
     testEditorDuckOneUndoStep();
+    testVolumeOfDuckedClip(dir.path());
     testDialogDefaultsAndTracks();
 
     if (!Check::haveFfmpeg()) return Check::result();

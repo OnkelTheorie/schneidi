@@ -34,15 +34,15 @@ void opVolume(Session& s, const QJsonObject& op)
                 s.editor.setClipVolume(id, db);
                 continue;
             }
-            // Volume keyframes: the static volume does nothing, move the whole curve (its loudest key becomes db),
-            // like dragging the volume line in the app
-            double top = kMinVolumeDb;
-            for (const Keyframe& k : c.keys.value(AnimParam::Volume)) top = std::max(top, k.value);
-            const double delta = db - top;
-            s.editor.modifyClips({id}, "Volume", [delta](Clip& x) {
-                for (Keyframe& k : x.keys[AnimParam::Volume]) k.value = std::clamp(k.value + delta, kMinVolumeDb, kMaxVolumeDb);
-            });
-            s.notes << QString("clip %1 has volume keyframes: the whole curve moved by %2 dB").arg(id).arg(delta, 0, 'f', 1);
+            // Volume keyframes: the static volume does nothing, move the whole curve (its level becomes db), like
+            // dragging the volume line in the app
+            Clip moved = c;
+            const double delta = Keys::setVolumeLevel(moved, db);
+            s.editor.modifyClips({id}, "Volume", [db](Clip& x) { Keys::setVolumeLevel(x, db); });
+            s.notes << QString("clip %1 has volume keyframes: the whole curve moved %2 by %3 dB")
+                           .arg(id)
+                           .arg(delta > 0 ? "up" : "down")
+                           .arg(std::abs(delta), 0, 'f', 1);
         }
     }
     if (op.contains("pan")) {
