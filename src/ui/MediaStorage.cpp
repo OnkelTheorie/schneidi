@@ -1,10 +1,10 @@
 #include "ui/MediaStorage.h"
-#include "engine/Bundle.h"
 
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/ProxyManager.h"
+#include "engine/video/Thumbnails.h"
 #include "ui/FileManager.h"
 #include "ui/HoverScrub.h"
 
@@ -23,10 +23,11 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QPainterPath>
-#include <QProcess>
 #include <QSettings>
 #include <QSplitter>
 #include <QStandardPaths>
+#include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -148,6 +149,9 @@ bool MediaStorage::isMediaFile(const QString& path)
 MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
 {
     setObjectName("Panel");
+    m_thumbPool = new QThreadPool(this);
+    m_thumbPool->setMaxThreadCount(1);
+    m_thumbPool->setThreadPriority(QThread::LowPriority);
 
     auto* title = new QLabel(T("Media Storage"));
     title->setObjectName("PanelTitle");
@@ -298,11 +302,9 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
 
 MediaStorage::~MediaStorage()
 {
-    if (m_ffmpeg) {
-        m_ffmpeg->disconnect(this);
-        m_ffmpeg->kill();
-        m_ffmpeg->waitForFinished(1000);
-    }
+    // Finish a running thumbnail while this object is complete (it reports back to it)
+    m_thumbPool->clear();
+    m_thumbPool->waitForDone();
 }
 
 void MediaStorage::setListMode(bool list)
@@ -613,7 +615,7 @@ int MediaStorage::nextInView() const
 
 void MediaStorage::nextThumb()
 {
-    if (Background::foregroundBusy() && !m_ffmpeg && !m_thumbQueue.isEmpty()) { // later, the preview first
+    if (Background::foregroundBusy() && m_thumbPath.isEmpty() && !m_thumbQueue.isEmpty()) { // later, the preview first
         if (!m_thumbRetry) {
             m_thumbRetry = true;
             QTimer::singleShot(200, this, [this] {
@@ -623,7 +625,7 @@ void MediaStorage::nextThumb()
         }
         return;
     }
-    while (!m_ffmpeg && !m_thumbQueue.isEmpty()) {
+    while (m_thumbPath.isEmpty() && !m_thumbQueue.isEmpty()) {
         const QString path = m_thumbQueue.takeAt(nextInView());
         if (!m_items.contains(path)) continue; // folder changed in the meantime
         const QString ext = QFileInfo(path).suffix().toLower();
@@ -636,41 +638,21 @@ void MediaStorage::nextThumb()
             thumbDone(path, img.isNull() ? placeholder("?") : framed(img));
             continue;
         }
-        // Video: one frame at 1 s (for very short clips the first one), ffmpeg rotates phone videos correctly on its own
+        // Video: the frame at 1 s (for very short clips the first one), upright, in its own thread (no process per file)
         m_thumbPath = path;
-        m_ffmpeg = new QProcess(this);
-        Background::lowerProcess(*m_ffmpeg);
-        auto run = [this, path](bool atStart) {
-            QStringList args{"-hide_banner", "-nostdin", "-loglevel", "error"};
-            if (!atStart) args << "-ss" << "1";
-            args << "-i" << ProxyManager::decodeSource(path) << "-frames:v" << "1" << "-vf"
-                 << QString("scale=%1:%2:force_original_aspect_ratio=decrease").arg(kThumb.width()).arg(kThumb.height())
-                 << "-f" << "image2pipe" << "-c:v" << "png" << "-";
-            m_ffmpeg->start(Bundle::tool("ffmpeg"), args);
-        };
-        connect(m_ffmpeg, &QProcess::finished, this, [this, path, run] {
-            QImage img;
-            img.loadFromData(m_ffmpeg->readAllStandardOutput(), "PNG");
-            if (img.isNull() && !m_ffmpeg->property("atStart").toBool()) {
-                m_ffmpeg->setProperty("atStart", true);
-                run(true); // shorter than 1 s
-                return;
-            }
-            m_ffmpeg->deleteLater();
-            m_ffmpeg = nullptr;
-            m_thumbPath.clear();
-            thumbDone(path, img.isNull() ? placeholder("?") : framed(img));
-            nextThumb();
+        const QString source = ProxyManager::decodeSource(path);
+        m_thumbPool->start([this, path, source] {
+            Background::lowerThisThread(Background::Level::Low); // own pool: its thread does nothing else
+            const QImage img = Video::stillAt(source, 1.0, kThumb);
+            QMetaObject::invokeMethod(
+                this,
+                [this, path, img] {
+                    m_thumbPath.clear();
+                    thumbDone(path, img.isNull() ? placeholder("?") : framed(img));
+                    nextThumb();
+                },
+                Qt::QueuedConnection);
         });
-        connect(m_ffmpeg, &QProcess::errorOccurred, this, [this, path](QProcess::ProcessError e) {
-            if (e != QProcess::FailedToStart) return; // crash or similar reports finished
-            m_ffmpeg->deleteLater();
-            m_ffmpeg = nullptr;
-            m_thumbPath.clear();
-            // no ffmpeg -> do not even try further
-            for (const QString& p : std::exchange(m_thumbQueue, {}) << path) thumbDone(p, placeholder(T("Video")));
-        });
-        run(false);
     }
 }
 

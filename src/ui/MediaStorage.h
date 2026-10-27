@@ -10,7 +10,7 @@ class QFileSystemWatcher;
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
-class QProcess;
+class QThreadPool;
 class QTreeWidget;
 class QToolButton;
 class QTreeWidgetItem;
@@ -60,7 +60,8 @@ private:
     void saveLocations();
     void setListMode(bool list);
     void updatePathLabel();
-    // Thumbnails: one after another via ffmpeg (videos) resp. QImageReader (images), remembered in memory
+    // Thumbnails: one after another via engine/video/Thumbnails (videos, in m_thumbPool) resp. QImageReader (images),
+    // remembered in memory
     void queueThumb(const QString& path);
     void nextThumb();
     int nextInView() const; // index in m_thumbQueue to make next
@@ -88,6 +89,6 @@ private:
     QPixmap m_hoverPixmap;
     QStringList m_thumbQueue;
     bool m_thumbRetry = false; // nextThumb() waits for foreground work (Background::foregroundBusy)
-    QProcess* m_ffmpeg = nullptr;
-    QString m_thumbPath;
+    QThreadPool* m_thumbPool; // one video thumbnail at a time
+    QString m_thumbPath;      // video whose thumbnail is being made
 };

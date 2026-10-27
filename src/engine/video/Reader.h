@@ -27,6 +27,7 @@ extern "C" {
 
 struct AVFormatContext;
 struct AVFrame;
+struct AVStream;
 
 namespace Video {
 
@@ -54,6 +55,9 @@ struct Picture {
     bool topFieldFirst = false;
     ~Picture();
 };
+
+// Degrees clockwise the stream's pictures are turned to show them upright (rotation tag or display matrix), in [0, 360)
+double streamRotation(const AVStream* stream);
 
 class Reader {
 public:
