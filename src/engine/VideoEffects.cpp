@@ -56,36 +56,56 @@ struct KeyGeometry {
     }
 };
 
-// Box blur of radius r over the RGB of an RGBA buffer along lines (step = pixel distance of neighbors, n pixels per
-// line); the edge pixel repeats
-void boxLine(const uint8_t* src, uint8_t* dst, int n, int lines, int step, int lineStep, int r, int channels)
+// ---- Blur (three box blurs in a row approximate a Gaussian) on interleaved 8-bit channels (ch bytes per pixel) ----
+
+// Box blur of radius r along the rows; the edge pixel repeats
+void boxRows(const uint8_t* src, uint8_t* dst, int w, int h, int ch, int r)
 {
     const int div = 2 * r + 1;
-    for (int l = 0; l < lines; ++l) {
-        const uint8_t* s = src + size_t(l) * lineStep * 4;
-        uint8_t* d = dst + size_t(l) * lineStep * 4;
-        const auto px = [&](int i) { return s + size_t(std::clamp(i, 0, n - 1)) * step * 4; };
-        int sum[4] = {0, 0, 0, 0};
-        for (int i = -r; i <= r; ++i)
-            for (int c = 0; c < channels; ++c) sum[c] += px(i)[c];
-        for (int i = 0; i < n; ++i) {
-            uint8_t* o = d + size_t(i) * step * 4;
-            for (int c = 0; c < channels; ++c) o[c] = uint8_t((sum[c] + div / 2) / div);
-            if (channels < 4) o[3] = px(i)[3];
-            const uint8_t* add = px(i + r + 1);
-            const uint8_t* sub = px(i - r);
-            for (int c = 0; c < channels; ++c) sum[c] += add[c] - sub[c];
+    const uint32_t inv = (65536u + uint32_t(div) / 2) / uint32_t(div);
+    for (int y = 0; y < h; ++y) {
+        const uint8_t* s = src + size_t(y) * w * ch;
+        uint8_t* d = dst + size_t(y) * w * ch;
+        for (int c = 0; c < ch; ++c) {
+            uint32_t sum = 0;
+            for (int i = -r; i <= r; ++i) sum += s[std::clamp(i, 0, w - 1) * ch + c];
+            for (int x = 0; x < w; ++x) {
+                d[x * ch + c] = uint8_t(std::min<uint32_t>(255, (sum * inv + 32768) >> 16));
+                sum += s[std::min(x + r + 1, w - 1) * ch + c];
+                sum -= s[std::max(x - r, 0) * ch + c];
+            }
         }
     }
 }
 
-// Gaussian blur approximated by three box blurs (channels 3 = RGB, 4 = RGBA)
-void blur(uint8_t* buf, int w, int h, double sigma, int channels = 3)
+// Box blur of radius r along the columns: all columns of a row at once (contiguous memory, vectorizable)
+void boxCols(const uint8_t* src, uint8_t* dst, int w, int h, int ch, int r)
+{
+    const int div = 2 * r + 1;
+    const uint32_t inv = (65536u + uint32_t(div) / 2) / uint32_t(div);
+    const size_t line = size_t(w) * ch;
+    std::vector<uint32_t> sum(line, 0);
+    auto row = [&](int y) { return src + size_t(std::clamp(y, 0, h - 1)) * line; };
+    for (int k = -r; k <= r; ++k) {
+        const uint8_t* s = row(k);
+        for (size_t i = 0; i < line; ++i) sum[i] += s[i];
+    }
+    for (int y = 0; y < h; ++y) {
+        uint8_t* d = dst + size_t(y) * line;
+        for (size_t i = 0; i < line; ++i) d[i] = uint8_t(std::min<uint32_t>(255, (sum[i] * inv + 32768) >> 16));
+        const uint8_t* add = row(y + r + 1);
+        const uint8_t* sub = row(y - r);
+        for (size_t i = 0; i < line; ++i) sum[i] += uint32_t(add[i]) - sub[i];
+    }
+}
+
+// Gaussian blur with sigma (pixels) on interleaved channels
+void blur(uint8_t* buf, int w, int h, int ch, double sigma)
 {
     if (sigma < 0.5 || w <= 0 || h <= 0) return;
     // Radii of three boxes with the same variance as the Gaussian (box of width 2r+1: variance r(r+1)/3)
     const double target = sigma * sigma;
-    int r = std::max(1, int(std::floor((std::sqrt(1 + 4 * target) - 1) / 2)));
+    const int r = std::max(1, int(std::floor((std::sqrt(1 + 4 * target) - 1) / 2)));
     int radii[3] = {r, r, r};
     for (int i = 0; i < 3; ++i) { // widen single boxes until the sum of the variances reaches the target
         double sum = 0;
@@ -93,10 +113,10 @@ void blur(uint8_t* buf, int w, int h, double sigma, int channels = 3)
         if (sum >= target) break;
         ++radii[i];
     }
-    std::vector<uint8_t> tmp(size_t(w) * h * 4);
+    std::vector<uint8_t> tmp(size_t(w) * h * ch);
     for (int rad : radii) {
-        boxLine(buf, tmp.data(), w, h, 1, w, rad, channels);
-        boxLine(tmp.data(), buf, h, w, w, 1, rad, channels);
+        boxRows(buf, tmp.data(), w, h, ch, std::min(rad, w));
+        boxCols(tmp.data(), buf, w, h, ch, std::min(rad, h));
     }
 }
 
@@ -182,6 +202,58 @@ double keyDistance(const QColor& key, const QColor& pixel)
     return KeyGeometry(key).distance(float(pixel.red()), float(pixel.green()), float(pixel.blue()), &along);
 }
 
+namespace {
+
+// Integer chroma of an 8-bit color (Rec. 709, 16-bit fixed point, -128..128): the coefficients of each row add up to 0
+inline int chromaB(int r, int g, int b) { return (-7509 * r - 25259 * g + 32768 * b + 32768) >> 16; }
+inline int chromaR(int r, int g, int b) { return (32768 * r - 29763 * g - 3005 * b + 32768) >> 16; }
+constexpr int kChroma = 257; // table side: chroma -128..128
+
+// What the key does to a color, by its chroma alone (the keyer ignores brightness): alpha and the change of the
+// color that takes the spill out (the same for every brightness, since only the chroma moves), in steps of 2 levels.
+// 4 bytes, so the table (264 KB) stays in the cache
+struct KeyEntry {
+    uint8_t alpha;
+    int8_t dr, dg, db;
+};
+
+// Spill weight: full up to the end of the soft edge, falling to none at the distance of a pale gray and beyond
+// (a yellow shirt keeps its yellow, a green fringe loses its green)
+inline float spillWeight(float d, float outer) { return std::clamp((1.0f - d) / std::max(0.05f, 1.0f - outer), 0.0f, 1.0f); }
+inline int8_t halfStep(float v) { return int8_t(std::clamp(std::lround(v / 2), -128L, 127L)); }
+
+struct KeyTable {
+    QRgb color = 0;
+    float inner = -1, outer = -1, spill = -1;
+    std::vector<KeyEntry> entries;
+    void build(const KeyGeometry& g, float in, float out, float sp)
+    {
+        inner = in, outer = out, spill = sp;
+        entries.resize(size_t(kChroma) * kChroma);
+        for (int i = 0; i < kChroma; ++i)
+            for (int j = 0; j < kChroma; ++j) {
+                const float cb = float(i - 128), cr = float(j - 128);
+                const float p = (cb * g.kb + cr * g.kr) / g.kk;
+                const float q2 = std::max(0.0f, (cb * cb + cr * cr) / g.kk - p * p);
+                const float less = 0.6f * std::max(0.0f, 1.0f - p);
+                const float d = std::sqrt(q2 + less * less);
+                KeyEntry& e = entries[size_t(i) * kChroma + j];
+                e.alpha = byte(255.0f * smoothstep(inner, outer, d));
+                e.dr = e.dg = e.db = 0;
+                if (spill > 0 && p > 0 && e.alpha > 0) {
+                    const float f = spill * spillWeight(d, outer) * std::min(p, 1.0f);
+                    const float dR = -kCr * f * g.kr, dB = -kCb * f * g.kb;
+                    const float dG = -(kR * dR + kB * dB) / kG;
+                    e.dr = halfStep(dR), e.dg = halfStep(dG), e.db = halfStep(dB);
+                }
+            }
+    }
+};
+
+inline uint8_t clampByte(int v) { return uint8_t(v < 0 ? 0 : v > 255 ? 255 : v); }
+
+} // namespace
+
 void key(uint8_t* rgba, int width, int height, const KeyParams& p)
 {
     if (!rgba || width <= 0 || height <= 0) return;
@@ -190,26 +262,28 @@ void key(uint8_t* rgba, int width, int height, const KeyParams& p)
     const float outer = inner + float(std::clamp(p.softness, 0.0, 1.0));
     const float spill = float(std::clamp(p.spill, 0.0, 1.0));
     const size_t n = size_t(width) * height;
-    for (size_t i = 0; i < n; ++i, rgba += 4) {
-        if (rgba[3] == 0) continue;
-        const float r = rgba[0], gr = rgba[1], b = rgba[2];
-        float along = 0;
-        const float d = g.distance(r, gr, b, &along);
-        const float a = smoothstep(inner, outer, d);
-        if (a <= 0) {
-            rgba[3] = 0;
-            continue;
+    if (!g.chroma) { // (almost) gray key: distance in RGB, no spill
+        for (size_t i = 0; i < n; ++i, rgba += 4) {
+            float along = 0;
+            const float a = smoothstep(inner, outer, g.distance(rgba[0], rgba[1], rgba[2], &along));
+            rgba[3] = byte(rgba[3] * a);
         }
-        rgba[3] = byte(rgba[3] * a);
-        // Spill: take the key's hue out of what stays (brightness kept), as far as the color has it
-        if (spill > 0 && g.chroma && along > 0) {
-            const float y = kR * r + kG * gr + kB * b;
-            const float k = spill * std::min(along, 1.0f);
-            const float cb = (b - y) / kCb - k * g.kb, cr = (r - y) / kCr - k * g.kr;
-            const float nr = y + kCr * cr, nb = y + kCb * cb;
-            const float ng = (y - kR * nr - kB * nb) / kG;
-            rgba[0] = byte(nr), rgba[1] = byte(ng), rgba[2] = byte(nb);
-        }
+        return;
+    }
+    // Table over the chroma plane, built once per setting per thread (~0.5 ms); the pixel loop is integer only
+    thread_local KeyTable table;
+    if (table.color != p.color.rgb() || table.inner != inner || table.outer != outer || table.spill != spill) {
+        table.color = p.color.rgb();
+        table.build(g, inner, outer, spill);
+    }
+    const KeyEntry* entries = table.entries.data();
+    for (size_t i = 0; i < n; ++i, rgba += 4) { // without branches: same speed for every picture
+        const int r = rgba[0], gr = rgba[1], b = rgba[2];
+        const KeyEntry e = entries[(chromaB(r, gr, b) + 128) * kChroma + chromaR(r, gr, b) + 128];
+        rgba[0] = clampByte(r + 2 * e.dr);
+        rgba[1] = clampByte(gr + 2 * e.dg);
+        rgba[2] = clampByte(b + 2 * e.db);
+        rgba[3] = uint8_t((rgba[3] * e.alpha * 257 + 32896) >> 16); // a * alpha / 255, rounded
     }
 }
 
@@ -218,14 +292,69 @@ void key(uint8_t* rgba, int width, int height, const KeyParams& p)
 void glow(uint8_t* rgba, int width, int height, double amount)
 {
     if (!rgba || width <= 0 || height <= 0) return;
-    const size_t n = size_t(width) * height * 4;
-    std::vector<uint8_t> soft(rgba, rgba + n);
-    blur(soft.data(), width, height, std::clamp(amount, 0.0, 1.0) * height / 20.0);
-    for (size_t i = 0; i < n; i += 4)
-        for (int c = 0; c < 3; ++c) { // screen
-            const int a = rgba[i + c], b = soft[i + c];
-            rgba[i + c] = uint8_t(a + b - (a * b + 127) / 255);
+    const double sigma = std::clamp(amount, 0.0, 1.0) * height / 20.0;
+    const size_t n = size_t(width) * height;
+    auto screen = [](int a, int b) { return uint8_t(a + b - (a * b + 127) / 255); };
+    if (sigma < 1) { // no blur: the picture screened with itself
+        for (size_t i = 0; i < n * 4; i += 4)
+            for (int c = 0; c < 3; ++c) rgba[i + c] = screen(rgba[i + c], rgba[i + c]);
+        return;
+    }
+    // The glow is soft anyway: blur a picture reduced by f (block means), enlarge it again bilinearly
+    const int f = std::clamp(int(sigma / 3), 2, 16);
+    const int sw = (width + f - 1) / f, sh = (height + f - 1) / f;
+    std::vector<uint8_t> small(size_t(sw) * sh * 3);
+    {
+        std::vector<uint32_t> acc(size_t(sw) * 3);
+        for (int by = 0; by < sh; ++by) {
+            std::fill(acc.begin(), acc.end(), 0);
+            const int y1 = std::min(height, (by + 1) * f);
+            for (int y = by * f; y < y1; ++y) {
+                const uint8_t* row = rgba + size_t(y) * width * 4;
+                for (int x = 0; x < width; ++x)
+                    for (int c = 0; c < 3; ++c) acc[size_t(x / f) * 3 + c] += row[x * 4 + c];
+            }
+            for (int bx = 0; bx < sw; ++bx) {
+                const uint32_t count = uint32_t(std::min(width, (bx + 1) * f) - bx * f) * uint32_t(y1 - by * f);
+                for (int c = 0; c < 3; ++c) small[(size_t(by) * sw + bx) * 3 + c] = uint8_t((acc[size_t(bx) * 3 + c] + count / 2) / count);
+            }
         }
+    }
+    blur(small.data(), sw, sh, 3, sigma / f);
+    // Bilinear: per output column the source column and weight (0..256); two horizontally enlarged source rows
+    std::vector<int> x0(width), wx(width);
+    for (int x = 0; x < width; ++x) {
+        const double sx = std::clamp((x + 0.5) / f - 0.5, 0.0, double(sw - 1));
+        x0[x] = std::min(int(sx), std::max(0, sw - 2));
+        wx[x] = sw > 1 ? int(std::lround((sx - x0[x]) * 256)) : 0;
+    }
+    std::vector<uint16_t> rowA(size_t(width) * 3), rowB(size_t(width) * 3); // 8.8 fixed point
+    int haveA = -1, haveB = -1;
+    auto widen = [&](int sy, std::vector<uint16_t>& out) {
+        const uint8_t* s = small.data() + size_t(sy) * sw * 3;
+        const int next = sw > 1 ? 3 : 0;
+        for (int x = 0; x < width; ++x) {
+            const uint8_t* p = s + size_t(x0[x]) * 3;
+            for (int c = 0; c < 3; ++c) out[size_t(x) * 3 + c] = uint16_t(p[c] * (256 - wx[x]) + p[c + next] * wx[x]);
+        }
+    };
+    for (int y = 0; y < height; ++y) {
+        const double sy = std::clamp((y + 0.5) / f - 0.5, 0.0, double(sh - 1));
+        const int y0 = std::min(int(sy), std::max(0, sh - 2)), y1 = std::min(y0 + 1, sh - 1);
+        const int wy = sh > 1 ? int(std::lround((sy - y0) * 256)) : 0;
+        if (haveA != y0) {
+            if (haveB == y0) std::swap(rowA, rowB), std::swap(haveA, haveB);
+            else widen(y0, rowA), haveA = y0;
+        }
+        if (haveB != y1) widen(y1, rowB), haveB = y1;
+        uint8_t* row = rgba + size_t(y) * width * 4;
+        for (int x = 0; x < width; ++x)
+            for (int c = 0; c < 3; ++c) {
+                const size_t i = size_t(x) * 3 + c;
+                const int b = int((uint32_t(rowA[i]) * uint32_t(256 - wy) + uint32_t(rowB[i]) * uint32_t(wy) + 32768) >> 16);
+                row[x * 4 + c] = screen(row[x * 4 + c], b);
+            }
+    }
 }
 
 void halftone(uint8_t* rgba, int width, int height, double dot, double cyan, double magenta, double yellow)
@@ -233,33 +362,83 @@ void halftone(uint8_t* rgba, int width, int height, double dot, double cyan, dou
     if (!rgba || width <= 0 || height <= 0) return;
     // Cell size relative to the picture height (same look in preview and export): 0.4 = 1/90 of 1080 lines
     const float cell = std::max(2.0f, float(std::clamp(dot, 0.0, 1.0) * height / 36.0) + 1.0f);
-    const std::vector<uint8_t> src(rgba, rgba + size_t(width) * height * 4);
     const double angles[3] = {cyan, magenta, yellow};
+    // Per channel: the rotated grid of cells over the picture and the dot radius of every cell (pixels + 0.5, the
+    // antialiased edge), from the ink at the cell's center (cyan = 1 - red …)
+    struct Grid {
+        float ca, sa;  // rotation
+        float u0, v0;  // grid coordinate of the picture corner's cell row/column 0 (cell units)
+        int cols, rows;
+        std::vector<float> radius;
+    } grids[3];
     for (int ch = 0; ch < 3; ++ch) {
+        Grid& g = grids[ch];
         const double a = angles[ch] * 2 * kPi;
-        const float ca = float(std::cos(a)), sa = float(std::sin(a));
-        for (int y = 0; y < height; ++y) {
-            uint8_t* row = rgba + size_t(y) * width * 4;
-            for (int x = 0; x < width; ++x) {
-                // position in the rotated grid (cell units)
-                const float u = (ca * x + sa * y) / cell, v = (-sa * x + ca * y) / cell;
-                const float u0 = std::floor(u - 0.5f), v0 = std::floor(v - 0.5f);
-                float ink = 0;
-                for (int j = 0; j < 2; ++j)
-                    for (int i = 0; i < 2; ++i) { // the four nearest cell centers
-                        const float cu = u0 + i + 0.5f, cv = v0 + j + 0.5f;
-                        // ink of this channel at the cell center (cyan = 1 - red …)
-                        const int sx = std::clamp(int(std::lround((ca * cu - sa * cv) * cell)), 0, width - 1);
-                        const int sy = std::clamp(int(std::lround((sa * cu + ca * cv) * cell)), 0, height - 1);
-                        const float amount = 1.0f - src[(size_t(sy) * width + sx) * 4 + ch] / 255.0f;
-                        const float radius = std::sqrt(amount / float(kPi)) * 1.15f * cell; // dot area ~ ink
-                        const float dist = std::hypot(u - cu, v - cv) * cell;
-                        ink = std::max(ink, std::clamp(radius - dist + 0.5f, 0.0f, 1.0f));
-                    }
-                row[x * 4 + ch] = byte(255.0f * (1.0f - ink));
-            }
+        g.ca = float(std::cos(a)), g.sa = float(std::sin(a));
+        float umin = 1e9f, umax = -1e9f, vmin = 1e9f, vmax = -1e9f;
+        for (const auto& [x, y] : {std::pair{0.0f, 0.0f}, {float(width), 0.0f}, {0.0f, float(height)},
+                                   {float(width), float(height)}}) {
+            const float u = (g.ca * x + g.sa * y) / cell, v = (-g.sa * x + g.ca * y) / cell;
+            umin = std::min(umin, u), umax = std::max(umax, u), vmin = std::min(vmin, v), vmax = std::max(vmax, v);
         }
+        g.u0 = std::floor(umin) - 1, g.v0 = std::floor(vmin) - 1;
+        g.cols = int(std::ceil(umax) - g.u0) + 3, g.rows = int(std::ceil(vmax) - g.v0) + 3;
+        g.radius.resize(size_t(g.cols) * g.rows);
+        for (int j = 0; j < g.rows; ++j)
+            for (int i = 0; i < g.cols; ++i) {
+                const float cu = g.u0 + i + 0.5f, cv = g.v0 + j + 0.5f;
+                const int sx = std::clamp(int(std::lround((g.ca * cu - g.sa * cv) * cell)), 0, width - 1);
+                const int sy = std::clamp(int(std::lround((g.sa * cu + g.ca * cv) * cell)), 0, height - 1);
+                const float ink = 1.0f - rgba[(size_t(sy) * width + sx) * 4 + ch] / 255.0f;
+                // dot area ~ ink; a little larger than the cell's share so that full ink covers the paper
+                g.radius[size_t(j) * g.cols + i] = std::sqrt(ink / float(kPi)) * 1.15f * cell + 0.5f;
+            }
     }
+    // Draw every dot into an ink plane per channel: rows of the circle, the inside filled, the antialiased edge
+    // pixels computed (coverage = radius + 0.5 - distance); overlapping dots take the larger ink
+    const size_t n = size_t(width) * height;
+    std::vector<uint8_t> ink(n * 3, 0);
+    for (int ch = 0; ch < 3; ++ch) {
+        const Grid& g = grids[ch];
+        uint8_t* plane = ink.data() + n * ch;
+        for (int j = 0; j < g.rows; ++j)
+            for (int i = 0; i < g.cols; ++i) {
+                const float R = g.radius[size_t(j) * g.cols + i]; // radius + 0.5
+                if (R <= 0.5f) continue;                            // no ink
+                const float cu = g.u0 + i + 0.5f, cv = g.v0 + j + 0.5f;
+                const float cx = (g.ca * cu - g.sa * cv) * cell, cy = (g.sa * cu + g.ca * cv) * cell;
+                const int ya = std::max(0, int(std::ceil(cy - R))), yb = std::min(height - 1, int(std::floor(cy + R)));
+                for (int y = ya; y <= yb; ++y) {
+                    const float dy = y - cy;
+                    const float outer2 = R * R - dy * dy;
+                    if (outer2 <= 0) continue;
+                    const float xo = std::sqrt(outer2);
+                    const float inner2 = R >= 1 ? (R - 1) * (R - 1) - dy * dy : -1;
+                    const float xi = inner2 > 0 ? std::sqrt(inner2) : -1;
+                    uint8_t* row = plane + size_t(y) * width;
+                    const int xa = std::max(0, int(std::ceil(cx - xo))), xb = std::min(width - 1, int(std::floor(cx + xo)));
+                    int ca = xb + 1, cb = xb; // full ink between ca and cb
+                    if (xi >= 0) {
+                        ca = std::max(xa, int(std::ceil(cx - xi)));
+                        cb = std::min(xb, int(std::floor(cx + xi)));
+                        if (ca <= cb) std::memset(row + ca, 255, size_t(cb - ca + 1));
+                    }
+                    auto edge = [&](int x) {
+                        const float dx = x - cx;
+                        const float cov = std::min(1.0f, R - std::sqrt(dx * dx + dy * dy));
+                        if (cov > 0) row[x] = std::max(row[x], uint8_t(cov * 255.0f + 0.5f));
+                    };
+                    if (ca > cb) { // no full part in this row
+                        for (int x = xa; x <= xb; ++x) edge(x);
+                    } else {
+                        for (int x = xa; x < ca; ++x) edge(x);
+                        for (int x = cb + 1; x <= xb; ++x) edge(x);
+                    }
+                }
+            }
+    }
+    for (size_t i = 0; i < n; ++i)
+        for (int ch = 0; ch < 3; ++ch) rgba[i * 4 + ch] = uint8_t(255 - ink[n * ch + i]);
 }
 
 void noise(uint8_t* rgba, int width, int height, double amount, uint32_t seed)
@@ -352,6 +531,53 @@ void gradient(uint8_t* rgba, int width, int height, const GradientParams& p)
     }
 }
 
+namespace {
+
+// Minimum/maximum over 2r+1 neighbors along the rows of a plane, O(1) per pixel (van Herk / Gil-Werman: running
+// extremes forward and backward within blocks of 2r+1)
+void minMaxRows(uint8_t* plane, int w, int h, int r, bool grow)
+{
+    const int k = 2 * r + 1;
+    const auto pick = [grow](uint8_t a, uint8_t b) { return grow ? std::max(a, b) : std::min(a, b); };
+    const uint8_t pad = grow ? 0 : 255; // outside the picture: neutral for the operation
+    std::vector<uint8_t> line(size_t(w) + 2 * r + k), fwd(line.size()), bwd(line.size());
+    for (int y = 0; y < h; ++y) {
+        uint8_t* row = plane + size_t(y) * w;
+        std::fill(line.begin(), line.end(), pad);
+        std::copy(row, row + w, line.begin() + r);
+        const size_t n = line.size();
+        for (size_t b0 = 0; b0 < n; b0 += size_t(k)) {
+            const size_t b1 = std::min(n, b0 + size_t(k));
+            fwd[b0] = line[b0];
+            for (size_t i = b0 + 1; i < b1; ++i) fwd[i] = pick(fwd[i - 1], line[i]);
+            bwd[b1 - 1] = line[b1 - 1];
+            for (size_t i = b1 - 1; i > b0; --i) bwd[i - 1] = pick(bwd[i], line[i - 1]);
+        }
+        for (int x = 0; x < w; ++x) row[x] = pick(bwd[size_t(x)], fwd[size_t(x) + 2 * r]); // window x-r..x+r
+    }
+}
+
+void transpose(const uint8_t* src, uint8_t* dst, int w, int h)
+{
+    constexpr int B = 32; // in tiles (cache)
+    for (int y0 = 0; y0 < h; y0 += B)
+        for (int x0 = 0; x0 < w; x0 += B)
+            for (int y = y0; y < std::min(h, y0 + B); ++y)
+                for (int x = x0; x < std::min(w, x0 + B); ++x) dst[size_t(x) * h + y] = src[size_t(y) * w + x];
+}
+
+// Square minimum (shrink) or maximum (grow) filter of radius r on a plane
+void minMax(std::vector<uint8_t>& plane, int w, int h, int r, bool grow)
+{
+    std::vector<uint8_t> t(plane.size());
+    minMaxRows(plane.data(), w, h, r, grow);
+    transpose(plane.data(), t.data(), w, h);
+    minMaxRows(t.data(), h, w, r, grow);
+    transpose(t.data(), plane.data(), h, w);
+}
+
+} // namespace
+
 void alphaOps(uint8_t* rgba, int width, int height, const AlphaParams& p)
 {
     if (!rgba || width <= 0 || height <= 0) return;
@@ -359,52 +585,41 @@ void alphaOps(uint8_t* rgba, int width, int height, const AlphaParams& p)
     std::vector<uint8_t> in(n);
     for (size_t i = 0; i < n; ++i) in[i] = rgba[i * 4 + 3];
     std::vector<uint8_t> alpha = in;
-    // Operation (ranges of the frei0r plugin's value: below 0.1 none, …)
+    // Operation (ranges of the frei0r plugin's value: below 0.1 none, …); amount relative to the picture height
     const double op = p.operation;
     const int radius = std::max(1, int(std::lround(std::clamp(p.amount, 0.0, 1.0) * height / 72.0)));
-    auto minMax = [&](bool grow, int r) { // square min/max filter, separable
-        std::vector<uint8_t> tmp(n);
-        for (int y = 0; y < height; ++y)
-            for (int x = 0; x < width; ++x) {
-                uint8_t v = alpha[size_t(y) * width + x];
-                for (int k = std::max(0, x - r); k <= std::min(width - 1, x + r); ++k)
-                    v = grow ? std::max(v, alpha[size_t(y) * width + k]) : std::min(v, alpha[size_t(y) * width + k]);
-                tmp[size_t(y) * width + x] = v;
-            }
-        for (int y = 0; y < height; ++y)
-            for (int x = 0; x < width; ++x) {
-                uint8_t v = tmp[size_t(y) * width + x];
-                for (int k = std::max(0, y - r); k <= std::min(height - 1, y + r); ++k)
-                    v = grow ? std::max(v, tmp[size_t(k) * width + x]) : std::min(v, tmp[size_t(k) * width + x]);
-                alpha[size_t(y) * width + x] = v;
-            }
-    };
-    auto soften = [&](double sigma) {
-        std::vector<uint8_t> buf(n * 4, 0);
-        for (size_t i = 0; i < n; ++i) buf[i * 4] = alpha[i];
-        blur(buf.data(), width, height, sigma, 1 + 0); // only the first channel is used
-        for (size_t i = 0; i < n; ++i) alpha[i] = buf[i * 4];
-    };
+    const auto soften = [&](double sigma) { blur(alpha.data(), width, height, 1, sigma); };
     if (op >= 0.1 && op < 0.25) { // shave: remove single pixels and thin hairs at the edge (opening by one pixel)
-        minMax(false, 1);
-        minMax(true, 1);
-    } else if (op < 0.35 && op >= 0.25) minMax(false, radius);         // shrink hard
-    else if (op < 0.5 && op >= 0.35) { minMax(false, radius); soften(radius / 2.0); } // shrink soft
-    else if (op < 0.65 && op >= 0.5) minMax(true, radius);             // grow hard
-    else if (op < 0.75 && op >= 0.65) { minMax(true, radius); soften(radius / 2.0); }  // grow soft
-    else if (op < 0.9 && op >= 0.75) { // threshold
+        minMax(alpha, width, height, 1, false);
+        minMax(alpha, width, height, 1, true);
+    } else if (op >= 0.25 && op < 0.35) {
+        minMax(alpha, width, height, radius, false); // shrink hard
+    } else if (op >= 0.35 && op < 0.5) {
+        minMax(alpha, width, height, radius, false); // shrink soft
+        soften(radius / 2.0);
+    } else if (op >= 0.5 && op < 0.65) {
+        minMax(alpha, width, height, radius, true); // grow hard
+    } else if (op >= 0.65 && op < 0.75) {
+        minMax(alpha, width, height, radius, true); // grow soft
+        soften(radius / 2.0);
+    } else if (op >= 0.75 && op < 0.9) { // threshold
         const int t = int(std::lround(std::clamp(p.threshold, 0.0, 1.0) * 255));
         for (uint8_t& a : alpha) a = a > t ? 255 : 0;
-    } else if (op >= 0.9) soften(radius);
+    } else if (op >= 0.9) {
+        soften(radius); // blur
+    }
     if (p.invert)
         for (uint8_t& a : alpha) a = uint8_t(255 - a);
     const std::vector<uint8_t>& shown = p.inputAlpha ? in : alpha;
     const double d = p.display;
+    if (d < 0.1) { // the picture with the new alpha
+        for (size_t i = 0; i < n; ++i) rgba[i * 4 + 3] = alpha[i];
+        return;
+    }
     for (size_t i = 0; i < n; ++i) {
         uint8_t* o = rgba + i * 4;
         const uint8_t a = shown[i];
-        if (d < 0.1) { // image
-        } else if (d < 0.3) { // alpha as gray
+        if (d < 0.3) { // alpha as gray
             o[0] = o[1] = o[2] = a;
         } else if (d < 0.43) { // gray + red: the picture in gray, transparent parts red
             const int y = (o[0] * 54 + o[1] * 183 + o[2] * 19) >> 8;
@@ -418,8 +633,7 @@ void alphaOps(uint8_t* rgba, int width, int height, const AlphaParams& p)
             else bg = ((i % width) / 16 + (i / width) / 16) % 2 ? 155 : 100;
             for (int c = 0; c < 3; ++c) o[c] = uint8_t((o[c] * a + bg * (255 - a)) / 255);
         }
-        if (d >= 0.1) o[3] = 255;
-        else o[3] = alpha[i];
+        o[3] = 255;
     }
 }
 

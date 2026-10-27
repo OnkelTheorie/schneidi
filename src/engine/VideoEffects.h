@@ -21,7 +21,8 @@ struct KeyParams {
     QColor color{0, 255, 0}; // key color (picked with the eyedropper)
     double tolerance = 0.3;  // 0..1: how far from the key color still counts as background (chroma distance)
     double softness = 0.2;   // 0..1: width of the soft edge between keyed and kept
-    double spill = 0.5;      // 0..1: how much of the key color's tint is taken out of what stays (green fringe)
+    double spill = 1.0;      // 0..1: how much of the key color's tint is taken out of what stays near the key
+                             // (green fringe, green light on the subject; colors far from the key keep theirs)
 };
 // Distance of a color from the key in the chroma plane (YCbCr, brightness left out), in units of the key's own
 // chroma: 0 = key color, ~0.6 = gray/white/black, skin ~0.75. Darker or brighter shades of the key count as close.

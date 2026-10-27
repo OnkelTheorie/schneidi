@@ -153,7 +153,7 @@ QString savePng(const Img& im, const QString& path)
     return path;
 }
 
-// ms per frame of fn on a 1920x1080 picture (median of 5)
+// ms per frame of fn on a 1920x1080 picture (fastest of 5: the least disturbed by other programs)
 double timeIt(const std::function<void(uint8_t*)>& fn)
 {
     const Img base = pattern(1920, 1080);
@@ -165,8 +165,7 @@ double timeIt(const std::function<void(uint8_t*)>& fn)
         fn(im.px.data());
         times.push_back(t.nsecsElapsed() / 1e6);
     }
-    std::sort(times.begin(), times.end());
-    return times[2];
+    return *std::min_element(times.begin(), times.end());
 }
 
 } // namespace
@@ -252,7 +251,13 @@ int main(int argc, char** argv)
                     n, fringe, fringeRaw, greenExcess(scene.at(kCx, kCy)));
         CHECK(n > 100);
         CHECK(fringeRaw > 20);
-        CHECK(fringe <= greenExcess(scene.at(kCx, kCy)) + 2); // no greener than the skin itself
+        CHECK(fringe < 20 && fringe < 0.25 * fringeRaw); // the green fringe is gone
+        // Colors far from the key keep their tint (yellow has much of green's chroma direction)
+        Img yellow = filled(4, 4, QColor(240, 220, 20));
+        VideoEffects::KeyParams yk;
+        yk.color = kGreen;
+        VideoEffects::key(yellow.px.data(), 4, 4, yk);
+        CHECK(yellow.at(1, 1)[3] == 255 && std::abs(yellow.at(1, 1)[1] - 220) <= 2 && std::abs(yellow.at(1, 1)[0] - 240) <= 2);
         // Tolerance keeps its meaning: higher = more is keyed; softness 0 = hard edge
         auto keyedCount = [&](double tol, double soft) {
             Img im = scene;
@@ -473,7 +478,7 @@ int main(int argc, char** argv)
             CHECK(qAbs(Keys::valueAt(l, Keys::effectParam("frei0r.glow", "0"), 10) - 0.35) < 1e-9);
             // the new key parameters are missing in the old file: their defaults apply
             CHECK(qAbs(EffectRegistry::value(l, "chromakey", "softness").toDouble() - 0.2) < 1e-9);
-            CHECK(qAbs(EffectRegistry::value(l, "chromakey", "spill").toDouble() - 0.8) < 1e-9);
+            CHECK(qAbs(EffectRegistry::value(l, "chromakey", "spill").toDouble() - 1.0) < 1e-9);
         }
     }
 

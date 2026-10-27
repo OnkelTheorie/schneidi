@@ -117,7 +117,7 @@ QVector<EffectDescriptor>& registry()
               T("Wie weit eine Farbe von der Key-Farbe entfernt sein darf und noch durchsichtig wird")},
              {"softness", T("Weiche Kante"), "softness", EffectParam::Double, 0.2, 0.0, 1.0, AnimParam::Count, 0.002, 3,
               {}, T("Breite des Übergangs zwischen durchsichtig und sichtbar")},
-             {"spill", T("Farbsaum entfernen"), "spill", EffectParam::Double, 0.8, 0.0, 1.0, AnimParam::Count, 0.002, 3,
+             {"spill", T("Farbsaum entfernen"), "spill", EffectParam::Double, 1.0, 0.0, 1.0, AnimParam::Count, 0.002, 3,
               {}, T("Nimmt den Schimmer der Key-Farbe (grüner Rand, Widerschein) aus dem, was sichtbar bleibt")},
          },
          false, {}, {}, true},
