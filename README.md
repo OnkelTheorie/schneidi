@@ -33,7 +33,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 
 | | |
 |---|---|
-| [![Media page: Media Storage and Media Pool](screenshots/media.png)](screenshots/media.png)<br>**Media** – browse folders, import into the Media Pool | [![Color page: a window darkens everything outside an ellipse, color wheels and RGB parade](screenshots/color.png)](screenshots/color.png)<br>**Color** – color wheels, windows, LUTs, scopes |
+| [![Media page: Media Storage and Media Pool](screenshots/media.png)](screenshots/media.png)<br>**Media** – browse and skim folders, import into the Media Pool | [![Color page: a window darkens everything outside an ellipse, color wheels and RGB parade](screenshots/color.png)](screenshots/color.png)<br>**Color** – color wheels, windows, LUTs, scopes |
 | [![Deliver page: render settings and render queue](screenshots/deliver.png)](screenshots/deliver.png)<br>**Deliver** – presets and render queue | [![Multicam view: nine angles of one event side by side](screenshots/multicam.png)](screenshots/multicam.png)<br>**Multicam** – click an angle or press 1–9 to cut to it |
 
 ## Features
@@ -42,14 +42,18 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - **Multicam:** a multicam clip from several recordings of one event, synced by sound, markers, In points or start; the viewer shows up to 16 angles at once (more on pages) – click or press 1–9 to cut, change angles later, flatten to normal clips
 - Timeline zoom and scroll change **only on user input** – nothing jumps when clips get shorter
 - Fully customizable keyboard shortcuts and mouse side buttons, two per function – presets (standard or beginner) and whole sets to save and load; panel sets for the Edit page, panel sizes remembered per page
+- **Start templates:** begin a project as a game recording, a podcast/interview or a vertical 9:16 video – or save your own setup (tracks, names, muted mix) as the start of every new project
+- **Media Storage and Media Pool:** look at a file and skim through it before importing, set In/Out and insert; filter the pool by flag, clip color and type; remove clips together with their uses in the timeline in one undo step
+- **Watch folders:** new files in a folder (your screen recorder's, for example) come into the Media Pool by themselves – only once they are finished; `schneidi-cli watch` for automatic workflows
+- Large viewer (one click hides the panels beside it) and full-screen viewer
 - Titles, subtitles, fades, transitions, volume, loudness normalization
-- Color correction, curves, LUTs, effects with keyframes; copy and paste grades (`=`/`-`); green screen with an eyedropper in the viewer
+- Color correction, curves, LUTs, effects with keyframes in any order; copy and paste grades (`=`/`-`); the timeline filmstrip and the Media Pool show the grade; green screen with an eyedropper and a loupe in the viewer
 - **Vertical video from 16:9 on one track:** a blurred copy of the picture fills the space around it – no second track, smooth preview; **accents** (zoom punch, flash, shake) on hits and drops in one click
 - **Windows** on the Color page (rectangle, ellipse, soft edge, invert): grade only part of the picture, or blur, pixelate or cover a region (a face, a name, an overlay); **tracking** makes a window follow a moving object
 - Video stabilization (vid.stab) and audio noise reduction
 - frei0r effects; import effect presets from Kdenlive and Shotcut
 - Video scopes: waveform, RGB parade, vectorscope, histogram
-- Two-up/four-up trim view while dragging an edit
+- Slip and slide tools; two-up/four-up trim view while dragging an edit
 - **Own audio engine (SMT):** sound is read, mixed and played sample-exact – lips in sync within about 1 ms in the viewer, no clicks when stopping, jumping or moving faders, real 24-bit export; choose the output device, survives an unplugged headset
 - Loudness and true-peak meters, master limiter that holds a true-peak ceiling
 - Per-track EQ (6 bands) and compressor in the mixer, ducking (music goes down while someone speaks)
@@ -91,7 +95,7 @@ Thumbnails for the Media Storage (your Videos folder) are made by a separate ffm
 | 4 cores | 57 – smooth | | |
 | 6 cores | 58 – smooth | | |
 
-0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media). Playback › Clean Up Proxy Media… lists the proxy files no open or recent project needs (original deleted or changed, project gone) and frees their space.
+0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media). Playback › Clean Up Proxy Media… lists the proxy files no open or recent project needs (original deleted or changed, project gone) and frees their space. A few seconds after playback stops or an export ends, schneidi gives the memory it no longer needs back to the system (after a 1080p export about 1450 → 590 MB).
 
 **And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet). DaVinci Resolve, Premiere Pro and Final Cut Pro are not available for this computer at all. Material: 15 s of a 1080p60 gaming clip.
 
@@ -206,22 +210,24 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.12.x – bug fixes
-Only fixes for problems found in 0.12.0 – new features wait for the next version.
+### 0.13.x – bug fixes
+Only fixes for problems found in 0.13.0 – new features wait for the next version.
 
-### 0.13 – Everyday Update
+### 0.14 – Freedom Update
+schneidi's own building blocks instead of outside libraries – faster, fewer dependencies.
 | Feature | What it does |
 |---|---|
-| **Effect order** | Drag effects into another order – a blur before or after the grade makes a difference |
-| **Slip and slide tools** | Own tools in the toolbar to slip a clip's content or slide a clip between its neighbors |
-| **Grades in the filmstrip and Media Pool** | Thumbnails show the clip as it looks after color correction |
-| **Media Pool filters** | Show only flagged clips, a clip color or a media type |
-| **Every key customizable** | The last fixed shortcuts (Media Pool, Transcript, Render Queue) move into the keyboard settings |
+| **Own time stretching** | Speed changes keep the pitch – much faster than before, cleaner on music and speech |
+| **Own effects** | Green Screen with spill removal, glow, halftone and more built in – the key several times faster |
+| **Own stabilization** | Steadier pictures; HUDs, logos and black bars no longer confuse it, pans are kept |
+| **Faster import and thumbnails** | Files are read and thumbnails made inside schneidi instead of one outside program per file |
 
 ### Later
-- **0.14 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, voiceover recording, text to speech
-- **0.15 – Template Update:** templates with placeholders filled from a list, brand kit
-- **0.16 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
+- **0.15 – Speed Update:** schneidi's own picture engine on the graphics card – mixing, transitions, titles and effects there, the preview looks exactly like the export, faster start and analyses
+- **0.16 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, voiceover recording, text to speech
+- **0.17 – Template Update:** templates with placeholders filled from a list, brand kit
+- **0.18 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
+- **0.19 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
 
 ## Building
 
