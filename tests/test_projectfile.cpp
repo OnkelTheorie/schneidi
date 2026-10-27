@@ -488,6 +488,23 @@ int main(int argc, char** argv)
             CHECK(!opened(R"({"app":"schneidi","format":{"fpsNum":48,"fpsDen":1}})", p).isEmpty());
             CHECK(p.format().rate == (FrameRate{48, 1}));
         }
+        // Frame numbers and ids near 2^31 (start + fade, the id of the next clip overflowed): kept inside +-2^30
+        {
+            Project p;
+            const QByteArray start = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "length":300}],"timeline":{"video":[{"clips":[{"id":1,"media":0,"start":2147483647,"in":0,"out":10,
+                "fadeIn":5}]}]}})";
+            CHECK(!opened(start, p).isEmpty());
+            if (CHECK(!p.timeline().video.isEmpty() && p.timeline().video[0].clips.size() == 1))
+                CHECK_EQ(p.timeline().video[0].clips[0].start, 1 << 30);
+            CHECK(stable(start));
+            const QByteArray id = R"({"app":"schneidi","timeline":{"video":[{"clips":[{"id":2147483647,"title":{"text":"x"},
+                "start":0,"in":0,"out":10}]}],"subtitles":[{"cues":[{"start":0,"end":10,"text":"a"}]}]}})";
+            CHECK(!opened(id, p).isEmpty());
+            if (CHECK(p.timeline().subtitles.size() == 1 && p.timeline().subtitles[0].cues.size() == 1))
+                CHECK(p.timeline().subtitles[0].cues[0].id > p.timeline().video[0].clips[0].id);
+            CHECK(stable(id));
+        }
     }
     return Check::result();
 }
