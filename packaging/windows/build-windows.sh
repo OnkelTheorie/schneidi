@@ -48,6 +48,14 @@ done
 windeployqt6 --release --no-translations --no-system-d3d-compiler --no-opengl-sw --no-compiler-runtime \
     --dir "$OUT" "$OUT/schneidi.exe"
 
+# Qt's own texts (Save/Discard/Cancel, context menus) in the UI languages: the app looks in translations/ next to
+# the exe (core/I18n.cpp); windeployqt runs with --no-translations (it would take every language there is)
+mkdir -p "$OUT/translations"
+for lang in de es fr pl ru; do
+    qm="$UCRT/share/qt6/translations/qtbase_$lang.qm"
+    if [ -f "$qm" ]; then cp "$qm" "$OUT/translations/"; else echo "!! Qt-Übersetzung fehlt: $qm (pacman -S mingw-w64-ucrt-x86_64-qt6-translations)" >&2; fi
+done
+
 # offscreen: für den unsichtbaren Testlauf (--screenshot), wie im AppImage
 cp "$UCRT/share/qt6/plugins/platforms/qoffscreen.dll" "$OUT/platforms/"
 

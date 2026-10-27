@@ -116,9 +116,11 @@ void install(const QString& override)
         QCoreApplication::installTranslator(new MapTranslator(std::move(map), app));
         if (lang == "en") return;
     }
-    // Qt's own texts (dialog buttons, file dialog) in the same language, if installed
+    // Qt's own texts (dialog buttons like Save/Discard, the context menu of text fields) in the same language: where
+    // Qt keeps them, else next to the program (Windows package: windeployqt's Qt has none of its own)
     auto* qt = new QTranslator(app);
-    if (qt->load(QLocale(lang), "qtbase", "_", QLibraryInfo::path(QLibraryInfo::TranslationsPath)))
+    if (qt->load(QLocale(lang), "qtbase", "_", QLibraryInfo::path(QLibraryInfo::TranslationsPath))
+        || qt->load(QLocale(lang), "qtbase", "_", QCoreApplication::applicationDirPath() + "/translations"))
         QCoreApplication::installTranslator(qt);
     else
         delete qt;
