@@ -6,7 +6,8 @@
 // The grade is the pure pixel function of engine/ColorGrade (correction, LUT, windows) applied to the small source
 // thumbnail, never an MLT graph. Graded images are made in a worker thread and cached by (source thumbnail, evaluated
 // grade): scrolling and zooming reuse them, undo finds the previous look again. Until a graded image is ready a tile
-// keeps what it showed before (its previous look, else the ungraded thumbnail), so nothing flickers or goes blank.
+// keeps what it showed before (its previous look; a new tile a graded neighbor of the clip, else the ungraded
+// thumbnail), so nothing flickers or goes blank.
 // A changed grade is picked up once it has been still for kSettleMs: dragging a color wheel does not regrade on every
 // step, pasting a grade onto many clips only queues work. Other effects (color, blur, frei0r …) are not shown.
 
@@ -81,6 +82,12 @@ public:
     int computed() const;      // graded images made so far
     bool idle() const;         // nothing queued or being computed
     int cacheCount() const { return int(m_done.count()); }
+    // Tiles drawn so far: with their graded picture; while theirs is computed with their previous look, a graded
+    // neighbor of the clip, or ungraded
+    int tilesGraded() const { return m_tilesGraded; }
+    int tilesPrevious() const { return m_tilesPrevious; }
+    int tilesNeighbor() const { return m_tilesNeighbor; }
+    int tilesUngraded() const { return m_tilesUngraded; }
 
 signals:
     void updated(); // new graded images, or a changed grade has settled: redraw
@@ -123,8 +130,14 @@ private:
     QHash<int, Memo> m_memos;            // by clip id (UI thread)
     QCache<Key, QImage> m_done;           // graded images (UI thread)
     QCache<TileKey, QImage> m_shown;      // last graded image per tile, shown while its new one is computed
+    struct Look {
+        quint64 grade;
+        QImage image;
+    };
+    QCache<int, Look> m_looks; // by clip id: its last graded tile, shown on its new tiles until theirs are computed
     QTimer* m_settle;                     // repaint once a changed grade has settled
     int m_generation = 0;
+    int m_tilesGraded = 0, m_tilesPrevious = 0, m_tilesNeighbor = 0, m_tilesUngraded = 0;
 
     mutable QMutex m_mutex; // guards the members below
     QWaitCondition m_cond;

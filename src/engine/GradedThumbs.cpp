@@ -18,6 +18,7 @@ namespace {
 constexpr size_t kMaxJobs = 256;        // older requests are dropped (scrolled past), asked for again when visible
 constexpr int kDoneCacheKB = 64 * 1024; // ~1100 graded 160x90 tiles
 constexpr int kShownCacheKB = 32 * 1024;
+constexpr int kLooksCacheKB = 8 * 1024; // ~140 clips
 constexpr int kMaxMemos = 20000;
 
 std::atomic<bool> g_enabled{true};
@@ -117,6 +118,7 @@ GradedThumbs::GradedThumbs(QObject* parent) : QObject(parent)
     m_clock.start();
     m_done.setMaxCost(kDoneCacheKB);
     m_shown.setMaxCost(kShownCacheKB);
+    m_looks.setMaxCost(kLooksCacheKB);
     m_settle = new QTimer(this);
     m_settle->setSingleShot(true);
     m_settle->setTimerType(Qt::PreciseTimer); // a coarse timer may fire early: the redraw would still find it moving
@@ -188,6 +190,10 @@ QImage GradedThumbs::image(const ClipGrade& g, const QImage& raw, int t)
     if (const QImage* done = m_done.object(key)) {
         const QImage* shown = m_shown.object(tile);
         if (!shown || shown->cacheKey() != done->cacheKey()) m_shown.insert(tile, new QImage(*done), costKB(*done));
+        const Look* look = m_looks.object(tile.clip);
+        if (!look || look->grade != spec.hash || look->image.cacheKey() != done->cacheKey())
+            m_looks.insert(tile.clip, new Look{spec.hash, *done}, costKB(*done));
+        ++m_tilesGraded;
         return *done;
     }
     const qint64 now = m_clock.elapsed();
@@ -197,8 +203,18 @@ QImage GradedThumbs::image(const ClipGrade& g, const QImage& raw, int t)
     } else {
         queue(key, raw, spec);
     }
-    const QImage* shown = m_shown.object(tile);
-    return shown ? *shown : raw;
+    if (const QImage* shown = m_shown.object(tile)) {
+        ++m_tilesPrevious;
+        return *shown;
+    }
+    // A tile seen for the first time (scrolled or zoomed into view): a neighbor's picture with the same look, which
+    // is closer than the ungraded one; for one frame or two, like the coarser thumbnails before the exact ones
+    if (const Look* look = m_looks.object(tile.clip); look && look->grade == spec.hash) {
+        ++m_tilesNeighbor;
+        return look->image;
+    }
+    ++m_tilesUngraded;
+    return raw;
 }
 
 void GradedThumbs::queue(const Key& key, const QImage& raw, const Spec& spec)
@@ -254,6 +270,7 @@ void GradedThumbs::clear()
     ++m_generation;
     m_done.clear();
     m_shown.clear();
+    m_looks.clear();
     m_memos.clear();
     QMutexLocker lock(&m_mutex);
     m_jobs.clear();

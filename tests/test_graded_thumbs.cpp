@@ -234,37 +234,53 @@ void testCacheAndSettle()
     idle(50);
     CHECK_EQ(thumbs.computed(), 1);
 
+    // A tile of the clip seen for the first time (scrolled into view): a graded neighbor until its own is there,
+    // not the ungraded picture
+    const QImage next = pattern(160, 90, 2);
+    CHECK_EQ(thumbs.forClip(a).image(next, 40).cacheKey(), g1.cacheKey());
+    CHECK(waitFor([&] { return thumbs.idle() && thumbs.computed() == 2; }, 10000));
+    idle(20);
+    const QImage gNext = thumbs.forClip(a).image(next, 40);
+    CHECK(gNext.cacheKey() != g1.cacheKey() && chroma(gNext) < 2);
+    Clip c = clip(4, 600, 0, 100); // another clip with that grade but nothing drawn yet: ungraded meanwhile
+    setGrade(c, "saturation", 0.0);
+    const QImage other = pattern(160, 90, 3);
+    CHECK_EQ(thumbs.forClip(c).image(other, 0).cacheKey(), other.cacheKey());
+    CHECK(waitFor([&] { return thumbs.idle() && thumbs.computed() == 3; }, 10000));
+    idle(20);
+
     // Changed grade (dragging a wheel): the previous look stays, nothing is computed until it has been still
     const Clip before = a;
     const int redraws = int(updated.count());
+    const int base = thumbs.computed();
     for (int i = 1; i <= 6; ++i) { // 6 steps 40 ms apart
         setGrade(a, "saturation", 50.0 + i * 8);
         CHECK_EQ(thumbs.forClip(a).image(raw, 0).cacheKey(), g1.cacheKey()); // no flicker back to ungraded
         idle(40);
     }
-    CHECK_EQ(thumbs.computed(), 1);
+    CHECK_EQ(thumbs.computed(), base);
     CHECK(thumbs.idle());
     // Settled: the timer asks for a redraw, the redraw queues one picture for the last state
     CHECK(waitFor([&] { return updated.count() > redraws; }, 3000));
     CHECK_EQ(thumbs.forClip(a).image(raw, 0).cacheKey(), g1.cacheKey()); // still the old one until computed
-    CHECK(waitFor([&] { return thumbs.idle() && thumbs.computed() == 2; }, 10000));
+    CHECK(waitFor([&] { return thumbs.idle() && thumbs.computed() == base + 1; }, 10000));
     idle(20);
     const QImage g2 = thumbs.forClip(a).image(raw, 0);
     CHECK(g2.cacheKey() != g1.cacheKey());
     CHECK(chroma(g2) > chroma(raw)); // saturation 98: more colorful
-    CHECK_EQ(thumbs.computed(), 2);  // one picture for six changes
+    CHECK_EQ(thumbs.computed(), base + 1); // one picture for six changes
 
     // Undo: the old grade is still cached -> back at once, nothing computed
     a = before;
     CHECK_EQ(thumbs.forClip(a).image(raw, 0).cacheKey(), g1.cacheKey());
     idle(GradedThumbs::kSettleMs + 100);
-    CHECK_EQ(thumbs.computed(), 2);
+    CHECK_EQ(thumbs.computed(), base + 1);
 
     // A new source picture (the exact frame replaces the keyframe one): the tile keeps its graded picture until the
     // new one is graded (here right away: the grade has not changed)
     const QImage raw2 = pattern(160, 90, 1);
     CHECK_EQ(thumbs.forClip(a).image(raw2, 0).cacheKey(), g1.cacheKey());
-    CHECK(waitFor([&] { return thumbs.idle() && thumbs.computed() == 3; }, 10000));
+    CHECK(waitFor([&] { return thumbs.idle() && thumbs.computed() == base + 2; }, 10000));
     idle(20);
     CHECK(thumbs.forClip(a).image(raw2, 0).cacheKey() != g1.cacheKey());
 
@@ -278,7 +294,7 @@ void testCacheAndSettle()
     thumbs.clear();
     CHECK_EQ(thumbs.cacheCount(), 0);
     CHECK_EQ(thumbs.forClip(a).image(raw, 0).cacheKey(), raw.cacheKey());
-    CHECK(waitFor([&] { return thumbs.idle() && thumbs.computed() == 4; }, 10000));
+    CHECK(waitFor([&] { return thumbs.idle() && thumbs.computed() == base + 3; }, 10000));
 }
 
 struct Model {
