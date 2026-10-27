@@ -1,6 +1,7 @@
 // Own time stretcher (engine/audio/Stretch): the pitch stays at every speed the app allows, sounds land where the
 // map puts them (no drift, also on a ramp) without pre-echo, no clicks (the output does not depend on the block size, a sine stays a
-// clean sine), the channels keep their phase and level difference, onsets are found in hits but not in a tone.
+// clean sine), the channels keep their phase and level difference, onsets are found in hits but not in a tone, every
+// window reads source the stretcher fetched.
 // Quality against Rubber Band and the speed: tests/bench_stretch.
 
 #include "check.h"
@@ -24,7 +25,8 @@ using Signal = std::function<float(int channel, int64_t sample)>;
 using Map = std::function<double(double)>;
 
 std::vector<std::vector<float>> stretch(int channels, const Signal& sig, const Map& map, int64_t length,
-                                        const std::vector<int>& blocks = {512}, int* transients = nullptr)
+                                        const std::vector<int>& blocks = {512}, int* transients = nullptr,
+                                        int* refetches = nullptr)
 {
     Audio::Stretch st(channels, kRate,
                       [&](int64_t from, int count, float* const* out) {
@@ -42,6 +44,7 @@ std::vector<std::vector<float>> stretch(int channels, const Signal& sig, const M
         pos += n;
     }
     if (transients) *transients = st.transients();
+    if (refetches) *refetches = st.refetches();
     return out;
 }
 
@@ -197,6 +200,38 @@ void testTiming()
     CHECK_EQ(found, 0);
 }
 
+// Every window reads source the stretcher fetched (its cache): faster than 1x a reset frame's centre moves back
+// towards its onset and its second analysis reads a hop before that. That once reached before the cache, into memory
+// that was not the source: the output depended on the heap (offsets that changed from run to run, NaN that silenced
+// the rest of a clip).
+void testCache()
+{
+    const Signal sig = [](int c, int64_t i) {
+        const int64_t d = i % 17713; // clicks over a quiet tone, the click at every place relative to the frame grid
+        const double click = d < 96 ? 0.8 * std::sin(2 * kPi * 3000 * double(d) / kRate) * std::sin(kPi * double(d) / 96) : 0;
+        return float(click + 0.05 * std::sin(0.02 * double(i) + c));
+    };
+    const double T = 2.0 * kRate;
+    const Map ramp = [T](double t) { return t < T ? 0.5 * t + 1.75 * t * t / T : 2.25 * T + 4 * (t - T); }; // 0.5x -> 4x
+    const std::vector<std::pair<const char*, Map>> cases = {
+        {"0.5x", [](double t) { return 0.5 * t; }}, {"1.5x", [](double t) { return 1.5 * t; }},
+        {"2x", [](double t) { return 2.0 * t; }},   {"4x", [](double t) { return 4.0 * t; }},
+        {"10x", [](double t) { return 10.0 * t; }}, {"100x", [](double t) { return 100.0 * t; }},
+        {"Rampe 0.5x-4x", ramp},
+    };
+    for (const auto& [name, map] : cases) {
+        int found = 0, refetches = -1;
+        const auto out = stretch(2, sig, map, 3 * kRate, {512, 1919}, &found, &refetches);
+        bool finite = true;
+        for (const auto& ch : out) finite = finite && std::all_of(ch.begin(), ch.end(), [](float v) { return std::isfinite(v); });
+        std::printf("  Quelle %-14s Einsätze %3d, außerhalb des Zwischenspeichers %d%s\n", name, found, refetches,
+                    finite ? "" : ", NICHT ENDLICH");
+        CHECK(found > 0);
+        CHECK_EQ(refetches, 0);
+        CHECK(finite);
+    }
+}
+
 // Phase and level difference between the channels stay; mono and 6 channels work
 void testChannels()
 {
@@ -233,6 +268,7 @@ int main(int argc, char** argv)
     testSine();
     testBlocks();
     testTiming();
+    testCache();
     testChannels();
     return Check::result();
 }

@@ -60,6 +60,8 @@ public:
 
     // Onsets that reset phases so far (tests, bench)
     int transients() const;
+    // Windows that reached outside the source cache planned for them and read it again (tests: always 0)
+    int refetches() const;
 
 private:
     struct Impl;
