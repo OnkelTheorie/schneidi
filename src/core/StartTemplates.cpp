@@ -2,6 +2,7 @@
 
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "core/RenderJob.h"
 
 #include <QDir>
 #include <QFile>
@@ -232,8 +233,10 @@ QString idForName(const QString& name)
     id.replace(bad, QStringLiteral("_"));
     id = id.trimmed();
     while (id.startsWith('.')) id.remove(0, 1); // no hidden files
-    while (id.endsWith('.')) id.chop(1);        // Windows drops trailing dots
     if (id.isEmpty()) id = QStringLiteral("template");
+    // The rules of render file names: no trailing dot or space (Windows drops them), no Windows device name ("Aux",
+    // "NUL.v2" …), at most 200 characters
+    id = renderFileBaseName(id);
     for (const char* builtInId : kBuiltInIds)
         if (id.compare(QLatin1String(builtInId), Qt::CaseInsensitive) == 0) id += QStringLiteral("-own");
     return id;

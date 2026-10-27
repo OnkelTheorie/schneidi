@@ -97,7 +97,8 @@ void testRules()
     for (const char* name : {".clip.mp4", "~clip.mp4", "clip.mp4~", "$clip.mp4", "clip.mp4.part", "clip.crdownload",
                              "clip.part.mp4", "clip.tmp.mkv", "clip.mkv.download", ".syncthing.clip.mp4.tmp"})
         Check::report(WatchFolders::isTemporary(name), name, __FILE__, __LINE__);
-    for (const char* name : {"clip.mp4", "Replay 2026-10-26 21-03-11.mkv", "my.final.cut.mov", "partner.mp4"})
+    for (const char* name : {"clip.mp4", "Replay 2026-10-26 21-03-11.mkv", "my.final.cut.mov", "partner.mp4",
+                             "Talk.Part.1.mp4", "Clip.Download.mp4", "temp.mp4"})
         Check::report(!WatchFolders::isTemporary(name), name, __FILE__, __LINE__);
     CHECK(WatchFolders::kindOf("/a/b.MKV") == WatchFolders::Kind::Video);
     CHECK(WatchFolders::kindOf("/a/b.wav") == WatchFolders::Kind::Audio);
@@ -287,6 +288,28 @@ void testProjectFile(const QString& root)
     CHECK(back.watchLog == d.watchLog);
     CHECK_EQ(back.watchRevision, 7);
     CHECK(ProjectFile::toJson(back, path) == json); // stable
+
+    // A newer version's kind of media this one does not know: the watch stays with the kinds it knows; only a watch
+    // with none of them is left out
+    {
+        QJsonObject root = o;
+        QJsonArray watches = root["watchFolders"].toArray();
+        QJsonObject first = watches[0].toObject();
+        first["types"] = QJsonArray{"video", "hologram"};
+        watches[0] = first;
+        QJsonObject second = watches[1].toObject();
+        second["types"] = QJsonArray{"hologram"};
+        watches[1] = second;
+        root["watchFolders"] = watches;
+        ProjectData newer;
+        CHECK(ProjectFile::fromJson(QJsonDocument(root).toJson(), path, &newer, &error));
+        if (CHECK_EQ(newer.watchFolders.size(), 1)) {
+            CHECK(WatchFolders::samePath(newer.watchFolders[0].path, w.path));
+            CHECK(newer.watchFolders[0].video && !newer.watchFolders[0].audio && !newer.watchFolders[0].images);
+            CHECK_EQ(newer.watchFolders[0].bin, 3);
+            CHECK(newer.watchFolders[0].since == w.since);
+        }
+    }
 
     // Old files (and projects without watch folders) have no field: nothing watched, nothing written
     ProjectData plain;

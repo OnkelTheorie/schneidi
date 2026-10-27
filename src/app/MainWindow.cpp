@@ -29,6 +29,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
+#include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
@@ -747,6 +748,9 @@ void MainWindow::onFormatChanged()
     const FrameRate oldRate = m_engine->format().rate;
     m_engine->setFormat(f); // timeline rebuilds in the following timelineChanged()
     m_mediaCache->setFormat(f);
+    // Every load comes here (also with the same format): graded tiles are kept by clip id, and the next project has
+    // clips with the same ids
+    m_mediaCache->graded()->clear();
     m_inspector->setFrameSize(f.size());
     m_probeCache.clear();
     m_editor->setPreviewSource({}); // its length counts in the old frame rate; the Viewer shows the timeline now
