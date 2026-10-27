@@ -1,7 +1,8 @@
 // Thumbnails with the Color page grade (engine/GradedThumbs): the grade applied to a small picture (saturation, LUT,
 // windows), the cache keyed by source thumbnail + evaluated grade, the settle time after a change (dragging a wheel),
-// ungraded clips untouched, the cost of many graded clips on the UI thread, the timeline filmstrip offscreen (graded
-// and ungraded clip of one source) and the Media Pool pictures of timelines (TimelinePosters).
+// undo through the Editor, ungraded clips untouched, the cost of many graded clips on the UI thread, the timeline
+// filmstrip offscreen (graded and ungraded clip of one source, undo, a wheel drag) and the Media Pool pictures of
+// timelines (TimelinePosters, the MediaPool entries: timeline graded, source neutral).
 // GRADED_THUMBS_DUMP=<dir> saves the timeline before/after and a project file for an app screenshot.
 #include "check.h"
 
@@ -13,13 +14,17 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
+#include "core/TimelineOps.h"
+#include "engine/Engine.h"
 #include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
+#include "ui/MediaPool.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QListWidget>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QThread>
@@ -276,6 +281,76 @@ void testCacheAndSettle()
     CHECK(waitFor([&] { return thumbs.idle() && thumbs.computed() == 4; }, 10000));
 }
 
+struct Model {
+    Project project;
+    Selection sel;
+    Editor editor{&project, &sel};
+};
+
+// Grade changes through the Editor (one undo step each, a wheel drag merged into one): the drag makes one picture,
+// undo/redo show the earlier look at once from the cache
+void testEditorUndo()
+{
+    Model m;
+    m.project.addMedia(MediaInfo{"/x/a.mp4", "a.mp4", 3000, true, false, false});
+    Timeline tl;
+    tl.video.resize(1);
+    tl.video[0].clips << clip(1, 0, 0, 100);
+    m.project.load(ProjectData{ProjectFormat{}, 0, m.project.media(), {}, tl, 10, 0});
+    GradedThumbs thumbs;
+    const QImage raw = pattern();
+    // What the filmstrip draws for the clip's first tile right now
+    auto draw = [&] {
+        const Clip c = *TimelineOps::findClip(m.project.timeline(), 1);
+        const GradedThumbs::ClipGrade g = thumbs.forClip(c);
+        return g ? g.image(raw, 0) : raw;
+    };
+    auto computedNow = [&](int n) { return waitFor([&] { return thumbs.idle() && thumbs.computed() == n; }, 10000); };
+    CHECK_EQ(draw().cacheKey(), raw.cacheKey());
+
+    m.editor.setGradeValues({1}, {{AnimParam::GradeSaturation, 0.0}}, 0, "saturation");
+    draw(); // first sight of the grade: queued right away
+    CHECK(computedNow(1));
+    const QImage gray = draw();
+    CHECK(chroma(gray) < 2);
+
+    // Wheel drag: 10 steps 30 ms apart, merged into one undo step; meanwhile the previous look, then one picture
+    const int steps = m.project.undoStack()->count();
+    for (int i = 1; i <= 10; ++i) {
+        m.editor.setGradeValues({1}, {{AnimParam::GradeSaturation, 50.0 + i * 5}}, 0, "saturation", "drag");
+        CHECK_EQ(draw().cacheKey(), gray.cacheKey());
+        idle(30);
+    }
+    CHECK_EQ(m.project.undoStack()->count(), steps + 1);
+    CHECK_EQ(thumbs.computed(), 1);
+    CHECK(waitFor([&] { return draw().cacheKey() != gray.cacheKey(); }, 5000)); // settled: queued, then computed
+    CHECK(computedNow(2));
+    const QImage vivid = draw();
+    CHECK(chroma(vivid) > chroma(raw));
+    idle(GradedThumbs::kSettleMs + 100);
+    CHECK_EQ(thumbs.computed(), 2); // one picture for the whole drag
+
+    // Undo: the gray look at once (cached), then ungraded; redo: back to the vivid one; nothing computed anew
+    m.project.undoStack()->undo();
+    CHECK_EQ(draw().cacheKey(), gray.cacheKey());
+    m.project.undoStack()->undo();
+    CHECK_EQ(draw().cacheKey(), raw.cacheKey());
+    m.project.undoStack()->redo();
+    CHECK_EQ(draw().cacheKey(), gray.cacheKey());
+    m.project.undoStack()->redo();
+    CHECK_EQ(draw().cacheKey(), vivid.cacheKey());
+    idle(GradedThumbs::kSettleMs + 100);
+    draw();
+    idle(50);
+    CHECK_EQ(thumbs.computed(), 2);
+
+    // Grade switched off (bypass on the Color page): the source picture; on again: the graded one from the cache
+    m.editor.setGradeEnabled({1}, false);
+    CHECK_EQ(draw().cacheKey(), raw.cacheKey());
+    m.project.undoStack()->undo();
+    CHECK_EQ(draw().cacheKey(), vivid.cacheKey());
+}
+
 // Paste a grade onto 200 clips: the UI thread only looks up and queues
 void testManyClips()
 {
@@ -312,12 +387,6 @@ void testManyClips()
 }
 
 // ---------- offscreen: the timeline and the Media Pool picture ----------
-
-struct Model {
-    Project project;
-    Selection sel;
-    Editor editor{&project, &sel};
-};
 
 // V1: clip 1 (ungraded) | clip 2 (saturation 0), both the same source
 void loadTwoClips(Model& m)
@@ -401,6 +470,51 @@ void testTimeline(const QString& dump)
     CHECK(changed2 && chromaOn / changed2 < 3);  // … to gray
     CHECK(changed2 && chromaOff / changed2 > 30); // from the colorful source
 
+    // Pixels of clip 2 that differ between two grabs
+    auto differs = [&](const QImage& a, const QImage& b) {
+        int n = 0;
+        for (int yy = 0; yy < a.height(); ++yy)
+            for (int xx = c2.left(); xx <= c2.right(); ++xx) n += a.pixel(xx, yy) != b.pixel(xx, yy);
+        return n;
+    };
+    auto grabNow = [&] {
+        QApplication::processEvents();
+        return view.grab().toImage().convertToFormat(QImage::Format_RGB32);
+    };
+    // Grade reset: the source pictures at once; undo: the graded ones at once (cached, nothing to wait for)
+    const int computedBefore = cache.graded()->computed();
+    m.editor.resetGrade({2}, {}, 0, "reset");
+    CHECK_EQ(differs(grabNow(), off), 0);
+    m.project.undoStack()->undo();
+    CHECK_EQ(differs(grabNow(), on), 0);
+    CHECK(settle(GradedThumbs::kSettleMs + 300));
+    CHECK_EQ(cache.graded()->computed(), computedBefore);
+
+    // One grade change regrades each tile of clip 2 once; a wheel drag of 10 steps (repainted after each, like the
+    // app; saturation 22 … 40, 50 would be neutral = no grade) costs the same: only its final state is graded
+    m.editor.setGradeValues({2}, {{AnimParam::GradeSaturation, 20.0}}, 125, "saturation");
+    view.repaint();
+    CHECK(settle(GradedThumbs::kSettleMs + 300));
+    const int perChange = cache.graded()->computed() - computedBefore;
+    CHECK(perChange > 0);
+    const QImage dull = grabNow();
+    CHECK(differs(dull, on) > 2000);
+    const int beforeDrag = cache.graded()->computed();
+    for (int i = 1; i <= 10; ++i) {
+        m.editor.setGradeValues({2}, {{AnimParam::GradeSaturation, 20.0 + i * 2}}, 125, "saturation", "drag");
+        view.repaint();
+        CHECK_EQ(differs(view.grab().toImage().convertToFormat(QImage::Format_RGB32), dull), 0); // no flicker
+        idle(30);
+    }
+    CHECK(settle(GradedThumbs::kSettleMs + 300));
+    std::printf("timeline: one grade change graded %d tiles, a drag of 10 steps %d\n", perChange,
+                cache.graded()->computed() - beforeDrag);
+    CHECK_EQ(cache.graded()->computed() - beforeDrag, perChange);
+    CHECK(differs(grabNow(), dull) > 2000);
+    m.project.undoStack()->undo();
+    m.project.undoStack()->undo();
+    CHECK_EQ(differs(grabNow(), on), 0); // back to gray, from the cache
+
     if (!dump.isEmpty()) { // project for an app screenshot (timeline + Media Pool)
         ProjectData d{m.project.format(), 0, m.project.media(), {}, m.project.timeline(), 10, 0};
         QString error;
@@ -470,6 +584,55 @@ void testPosters()
     m.project.setTimeline(marked);
     idle(GradedThumbs::kSettleMs + 300);
     CHECK_EQ(changed.count(), 0);
+    // Wheel drag on the first clip (10 changes 30 ms apart): one new picture once it is still
+    for (int i = 0; i < 10; ++i) {
+        Timeline step = m.project.timeline();
+        setGrade(step.video[0].clips[0], "saturation", 36.0 - i * 4);
+        m.project.setTimeline(step);
+        idle(30);
+    }
+    CHECK(changed.wait(30000));
+    idle(GradedThumbs::kSettleMs + 300);
+    CHECK_EQ(changed.count(), 1);
+    CHECK(chroma(posters.poster(seq)) < 3); // the last state: saturation 0
+}
+
+// The Media Pool: the timeline entry shows its first picture graded, the entry of the source stays neutral
+void testMediaPool()
+{
+    Model m;
+    loadTwoClips(m);
+    Timeline swapped = m.project.timeline(); // graded clip first
+    std::swap(swapped.video[0].clips[0].start, swapped.video[0].clips[1].start);
+    std::swap(swapped.video[0].clips[0], swapped.video[0].clips[1]);
+    m.project.setTimeline(swapped);
+    Engine engine;
+    MediaPool pool(&m.project, &engine);
+    pool.setSaveSettings(false);
+    pool.resize(700, 400);
+    pool.show();
+    auto* list = pool.findChild<QListWidget*>();
+    if (!CHECK(list)) return;
+    auto icon = [&](const QString& item) {
+        for (int i = 0; i < list->count(); ++i)
+            if (list->item(i)->data(Qt::UserRole).toString() == item)
+                return list->item(i)->icon().pixmap(QSize(144, 81)).toImage().convertToFormat(QImage::Format_RGB32);
+        return QImage();
+    };
+    // Below/right of the type badge (top left): only the picture
+    const QRect picture(60, 36, 80, 42);
+    const QString timeline = MediaPool::sequenceItem(m.project.currentSequence());
+    auto timelineChroma = [&] { const QImage i = icon(timeline); return i.isNull() ? -1.0 : chroma(i, picture); };
+    auto sourceChroma = [&] { const QImage i = icon(g_media); return i.isNull() ? -1.0 : chroma(i, picture); };
+    CHECK(waitFor([&] { return timelineChroma() >= 0 && timelineChroma() < 3 && sourceChroma() > 30; }, 30000));
+    std::printf("Media Pool: timeline picture chroma %.1f, source %.1f\n", timelineChroma(), sourceChroma());
+    // Grade undone (here: removed): the timeline picture in color, the source as before
+    const double source = sourceChroma();
+    m.editor.resetGrade({2}, {}, 0, "reset");
+    CHECK(waitFor([&] { return timelineChroma() > 30; }, 30000));
+    CHECK_EQ(sourceChroma(), source);
+    m.project.undoStack()->undo();
+    CHECK(waitFor([&] { return timelineChroma() >= 0 && timelineChroma() < 3; }, 30000));
 }
 
 } // namespace
@@ -486,6 +649,7 @@ int main(int argc, char** argv)
 
     testSpecAndApply(tmp.path());
     testCacheAndSettle();
+    testEditorUndo();
     testManyClips();
 
     if (!Check::haveFfmpeg()) {
@@ -503,5 +667,6 @@ int main(int argc, char** argv)
     std::setlocale(LC_NUMERIC, "C");
     testTimeline(dump);
     testPosters();
+    testMediaPool();
     return Check::result();
 }
