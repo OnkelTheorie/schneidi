@@ -29,6 +29,15 @@ FrameRate nearestFrameRate(double fps, bool integerOnly)
     return best;
 }
 
+ProjectFormat withinLimits(ProjectFormat f)
+{
+    f.width = std::clamp(f.width, kMinFrameSize, kMaxFrameSize);
+    f.height = std::clamp(f.height, kMinFrameSize, kMaxFrameSize);
+    if (f.rate.num <= 0 || f.rate.den <= 0 || f.rate.fps() < 1 || f.rate.fps() > 1000)
+        f.rate = nearestFrameRate(f.rate.num > 0 && f.rate.den > 0 ? f.rate.fps() : 25);
+    return f;
+}
+
 QString resolutionLabel(int width, int height)
 {
     const QString size = QString("%1 × %2").arg(width).arg(height);

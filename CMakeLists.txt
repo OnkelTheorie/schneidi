@@ -22,6 +22,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Fuzz targets (libFuzzer, tests/fuzz): clang only, in a build folder of their own. Everything is built with coverage,
+# AddressSanitizer and UndefinedBehaviorSanitizer (any finding stops the run), so the targets see into the libraries.
+#   cmake -S . -B build-fuzz -G Ninja -DSCHNEIDI_FUZZ=ON -DCMAKE_CXX_COMPILER=clang++
+#   cmake --build build-fuzz --target fuzz_all
+option(SCHNEIDI_FUZZ "libFuzzer targets (tests/fuzz, clang only)" OFF)
+if(SCHNEIDI_FUZZ)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "SCHNEIDI_FUZZ needs clang (libFuzzer): -DCMAKE_CXX_COMPILER=clang++")
+    endif()
+    add_compile_options(-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 # Linux: "show in file manager" over the freedesktop D-Bus interface (src/ui/FileManager.cpp); without it the folder opens
 if(UNIX AND NOT APPLE)
@@ -374,4 +387,7 @@ option(SCHNEIDI_TESTS "Tests bauen" OFF)
 if(SCHNEIDI_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+if(SCHNEIDI_FUZZ)
+    add_subdirectory(tests/fuzz)
 endif()

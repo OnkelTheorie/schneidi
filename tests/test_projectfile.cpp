@@ -4,7 +4,9 @@
 #include "check.h"
 
 #include "core/EffectRegistry.h"
+#include "core/Interchange.h"
 #include "core/Keyframes.h"
+#include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
 
@@ -438,6 +440,88 @@ int main(int argc, char** argv)
         CHECK(d.timeline.markIn == -1 && d.media[0].markIn == -1);
         const Clip& c = d.timeline.video[0].clips[0];
         CHECK(c.transOutStyle.type == TransitionType::DipToColor && c.transOutStyle.color == QColor(Qt::white));
+    }
+
+    // --- Broken files (edited by hand or by an AI; found by fuzzing, tests/fuzz): opened as a valid project, and
+    // saving it again gives the same file
+    {
+        // Opened like the app does; the saved file of the opened project
+        const auto opened = [&](const QByteArray& json, Project& p) {
+            ProjectData d;
+            if (!ProjectFile::fromJson(json, path, &d, &err)) return QByteArray();
+            p.load(d);
+            return ProjectFile::toJson(p.data(), path);
+        };
+        const auto stable = [&](const QByteArray& json) {
+            Project a, b;
+            const QByteArray once = opened(json, a);
+            return !once.isEmpty() && opened(once, b) == once;
+        };
+        // Only compound and multicam clips (a multicam one without "compound"): one of them is a normal timeline
+        {
+            const QByteArray json = R"({"app":"schneidi","currentSequence":1,"sequences":[{"compound":true,"id":1},
+                                        {"id":3,"multicam":true}]})";
+            Project p;
+            CHECK(!opened(json, p).isEmpty());
+            CHECK(p.sequence(1) && !p.sequence(1)->compound && !p.sequence(1)->multicam);
+            CHECK(p.sequence(3) && p.sequence(3)->compound && p.sequence(3)->multicam);
+            CHECK(stable(json));
+            // The open one is the multicam clip: it becomes a normal timeline
+            CHECK(!opened(R"({"app":"schneidi","currentSequence":3,"sequences":[{"id":3,"multicam":true}]})", p).isEmpty());
+            CHECK(p.sequence(3) && !p.sequence(3)->compound && !p.sequence(3)->multicam);
+        }
+        // A frame rate or size no program makes (2^31 fps overflowed the EDL timecodes): brought inside the limits,
+        // a rate the app does not offer but other programs do (48 fps) stays
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","format":{"width":0,"height":100000,"fpsNum":2147483647}})";
+            CHECK(!opened(json, p).isEmpty());
+            CHECK(p.format().width == kMinFrameSize && p.format().height == kMaxFrameSize);
+            CHECK(p.format().rate.fps() >= 1 && p.format().rate.fps() <= 1000);
+            CHECK(stable(json));
+            Interchange::Sequence seq = Interchange::fromTimeline(p, p.sequences().first().id);
+            CHECK(Interchange::write(seq, Interchange::Format::Edl).contains("FCM:"));
+            for (const char* rate : {R"("fpsNum":1,"fpsDen":1000)", R"("fpsNum":-25)", R"("fpsNum":25,"fpsDen":0)"}) {
+                CHECK(!opened(QByteArray(R"({"app":"schneidi","format":{)") + rate + "}}", p).isEmpty());
+                CHECK(p.format().rate.fps() >= 1 && p.format().rate.fps() <= 1000);
+            }
+            CHECK(!opened(R"({"app":"schneidi","format":{"fpsNum":48,"fpsDen":1}})", p).isEmpty());
+            CHECK(p.format().rate == (FrameRate{48, 1}));
+        }
+        // Frame numbers and ids near 2^31 (start + fade, the id of the next clip overflowed): kept inside +-2^30
+        {
+            Project p;
+            const QByteArray start = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "length":300}],"timeline":{"video":[{"clips":[{"id":1,"media":0,"start":2147483647,"in":0,"out":10,
+                "fadeIn":5}]}]}})";
+            CHECK(!opened(start, p).isEmpty());
+            if (CHECK(!p.timeline().video.isEmpty() && p.timeline().video[0].clips.size() == 1))
+                CHECK_EQ(p.timeline().video[0].clips[0].start, 1 << 30);
+            CHECK(stable(start));
+            const QByteArray id = R"({"app":"schneidi","timeline":{"video":[{"clips":[{"id":2147483647,"title":{"text":"x"},
+                "start":0,"in":0,"out":10}]}],"subtitles":[{"cues":[{"start":0,"end":10,"text":"a"}]}]}})";
+            CHECK(!opened(id, p).isEmpty());
+            if (CHECK(p.timeline().subtitles.size() == 1 && p.timeline().subtitles[0].cues.size() == 1))
+                CHECK(p.timeline().subtitles[0].cues[0].id > p.timeline().video[0].clips[0].id);
+            CHECK(stable(id));
+            // A transcript word at 10^60 ms (no qint64)
+            const QByteArray words = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasAudio":true,
+                "length":300,"transcripts":[{"words":[[1e60,900,"x"]]}]}]})";
+            CHECK(!opened(words, p).isEmpty());
+            if (CHECK(p.media().size() == 1 && p.media()[0].transcripts.size() == 1))
+                CHECK(p.media()[0].transcripts[0].words.value(0).from == qint64(1) << 50);
+        }
+        // A still frame before the file's start: its first frame (was saved without it and came back as `in`)
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "length":300}],"timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":5,"out":10,"freeze":true,
+                "freezeFrame":-20}]}]}})";
+            CHECK(!opened(json, p).isEmpty());
+            if (CHECK(!p.timeline().video.isEmpty() && p.timeline().video[0].clips.size() == 1))
+                CHECK_EQ(p.timeline().video[0].clips[0].freezeFrame, 0);
+            CHECK(stable(json));
+        }
     }
     return Check::result();
 }

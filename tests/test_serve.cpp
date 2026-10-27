@@ -6,6 +6,7 @@
 // Slow calls without slow media: the workers' test hooks SCHNEIDI_TEST_CALL_DELAY_MS / SCHNEIDI_TEST_CRASH_TOOL
 // (cli/Mcp.cpp).
 #include "cli/Commands.h"
+#include "cli/Mcp.h"
 #include "cli/Sandbox.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -375,6 +376,15 @@ int main(int argc, char* argv[])
         CHECK_EQ(http("POST", s.base + "/mcp", R"({"jsonrpc":"2.0","method":"notifications/initialized"})", s.headers()).status, 202);
         CHECK_EQ(http("GET", s.base + "/mcp", {}, s.headers()).status, 405);
         CHECK_EQ(http("POST", s.base + "/mcp", "{not json", s.headers()).status, 400);
+        // A key with U+0000 (Qt may read "id\u0000" as "id", found by fuzz_mcp): refused here and on stdio
+        CHECK_EQ(http("POST", s.base + "/mcp", R"({"jsonrpc":"2.0","id\u0000":1,"method":"ping"})", s.headers()).status, 400);
+        {
+            QJsonObject answer;
+            const QJsonObject msg = QJsonDocument::fromJson(R"({"jsonrpc":"2.0","id":7,"method":"tools/call",
+                                                               "params":{"name":"probe","arguments":{"file\u0000":"x"}}})").object();
+            CHECK(Cli::Mcp::handle(msg, {}, {}, [&answer](const QJsonObject& a) { answer = a; }));
+            CHECK(answer.value("id").isNull() && answer.value("error").toObject().value("code").toInt() == -32600);
+        }
         {
             Server other;
             other.base = s.base;

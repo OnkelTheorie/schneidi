@@ -1,0 +1,1 @@
+[{"id\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000":{},"method":"%"},{"id\u0000":1,"method":"ping"},{"id":2,"method":"tools/call","params":{"name":"probe","arguments":{"file\u0000":"../../outside/secret"}}}]

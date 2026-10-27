@@ -1,0 +1,1 @@
+<xmeml><sequence><rate><timebase>3000000</timebase><ntsc>TRUE</ntsc></rate><media><video><track><clipitem><in>0</in><out>20</out><start>0</start><end>20</end><file><pathurl>file:///m/a.mp4</pathurl></file></clipitem></track></video></media></sequence></xmeml>

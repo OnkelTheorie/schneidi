@@ -1729,6 +1729,7 @@
  "Wörter markieren und %1 drücken schneidet sie heraus. Klick = zum Wort springen.": "Zaznacz słowa i naciśnij %1, aby je wyciąć. Klik = przejdź do słowa.",
  "Wörter markieren und per Rechtsklick herausschneiden. Klick = zum Wort springen.": "Zaznacz słowa i wytnij je prawym przyciskiem myszy. Klik = przejdź do słowa.",
  "Zeit": "Czas",
+ "Zeitangabe außerhalb des möglichen Bereichs": "Wartość czasu poza możliwym zakresem",
  "Zentriert": "Wyśrodkowane",
  "Ziehen = Farbbalance (Shift = fein), Doppelklick = zurücksetzen": "Przeciągnij = balans kolorów (Shift = precyzyjnie), dwuklik = zresetuj",
  "Ziehen ändert die Reihenfolge: oben wird zuerst berechnet": "Przeciągnij, aby zmienić kolejność: górny jest stosowany jako pierwszy",

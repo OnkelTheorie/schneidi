@@ -294,6 +294,13 @@ void testProjectFile(const QString& root)
     CHECK(back.watchFolders == d.watchFolders);
     CHECK(back.watchLog == d.watchLog);
     CHECK_EQ(back.watchRevision, 7);
+    { // A revision at INT_MAX (a file edited by hand or an AI) stays inside the limits: the next import adds 1
+        QJsonObject root = QJsonDocument::fromJson(json).object();
+        root["watchLog"] = QJsonObject{{"revision", 2147483647}, {"files", QJsonArray{}}};
+        ProjectData huge;
+        CHECK(ProjectFile::fromJson(QJsonDocument(root).toJson(), path, &huge, &error));
+        CHECK_EQ(huge.watchRevision, 1 << 30);
+    }
     CHECK(ProjectFile::toJson(back, path) == json); // stable
 
     // A newer version's kind of media this one does not know: the watch stays with the kinds it knows; only a watch

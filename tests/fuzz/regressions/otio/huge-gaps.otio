@@ -1,0 +1,1 @@
+{"OTIO_SCHEMA":"Timeline.1","global_start_time":{"rate":25,"value":0},"tracks":{"children":[{"OTIO_SCHEMA":"Track.1","kind":"Video","children":[{"OTIO_SCHEMA":"Gap.1","source_range":{"duration":{"rate":25,"value":2000000000}}},{"OTIO_SCHEMA":"Gap.1","source_range":{"duration":{"rate":25,"value":2000000000}}}]}]}}

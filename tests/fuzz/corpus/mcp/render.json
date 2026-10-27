@@ -1,0 +1,1 @@
+{"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "render", "arguments": {"project": "sub/p.schneidi", "output": "Z:\\Clips\\out.mp4", "from": "2.5s", "to": 120}}}

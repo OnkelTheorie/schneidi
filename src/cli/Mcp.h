@@ -31,6 +31,9 @@ using ToolCall = std::function<void(const QJsonObject& params, const Send& notif
 // Answers one JSON-RPC message: a request gets its response through `send` (tools/call through `call`, maybe
 // later), notifications and responses get none (returns false: nothing will be sent)
 bool handle(const QJsonObject& msg, const Options& opt, const ToolCall& call, const Send& send);
+// A key with U+0000 in it, anywhere inside: such messages are refused. Qt (6.8) finds "id\u0000…" under "id" or not,
+// depending on what lies in memory after the key, so one message could be read two ways (found by fuzz_mcp)
+bool hasNulKey(const QJsonValue& v);
 
 // Runs a tool in this process; progress notifications through `notify` when the client gave a progress token
 QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& notify);

@@ -1,0 +1,10 @@
+PUT /files/a HTTP/1.1
+Content-Length: 5
+
+abcdePUT /files/b HTTP/1.1
+Content-Length: 3
+
+xyzPUT /files/c HTTP/1.1
+Content-Length: 2
+
+ok
