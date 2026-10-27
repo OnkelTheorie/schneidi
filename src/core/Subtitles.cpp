@@ -41,16 +41,19 @@ QString decode(const QByteArray& data)
     return out;
 }
 
-// "01:02:03,456" (also "." and hours without leading zero) -> ms, -1 = invalid
+// "01:02:03,456" (also "." and hours without leading zero) -> ms, -1 = invalid (also beyond 100000 hours: in ms
+// they would not even fit into 64 bits)
 qint64 parseTime(const QString& s)
 {
     static const QRegularExpression re(QStringLiteral("^\\s*(\\d+):(\\d{1,2}):(\\d{1,2})(?:[,.](\\d{1,3}))?\\s*$"));
     const auto m = re.match(s);
     if (!m.hasMatch()) return -1;
+    bool ok = false;
+    const qint64 hours = m.captured(1).toLongLong(&ok);
+    if (!ok || hours > 100000) return -1;
     QString frac = m.captured(4);
     while (frac.size() < 3) frac += '0'; // ",5" = 500 ms
-    return ((m.captured(1).toLongLong() * 60 + m.captured(2).toInt()) * 60 + m.captured(3).toInt()) * 1000
-           + frac.toInt();
+    return ((hours * 60 + m.captured(2).toInt()) * 60 + m.captured(3).toInt()) * 1000 + frac.toInt();
 }
 
 QString stripFormatting(QString text)
@@ -98,7 +101,8 @@ QVector<SubtitleCue> parseSrt(const QByteArray& data, double fps, int* skipped)
         const qint64 from = parseTime(timing.left(arrow));
         const qint64 to = parseTime(timing.mid(arrow + 3).trimmed().section(' ', 0, 0));
         const QString t = stripFormatting(body.join('\n'));
-        if (from < 0 || to < 0 || t.isEmpty()) {
+        // Beyond 2^30 frames (years) the frame numbers would overflow: broken as well
+        if (from < 0 || to < 0 || t.isEmpty() || std::max(from, to) * fps / 1000.0 > (1 << 30)) {
             ++bad;
             continue;
         }
@@ -135,9 +139,11 @@ QByteArray toSrt(const QVector<SubtitleCue>& cues, double fps, int offset, int u
         if (end <= start) continue;
         out += QString::number(++n) + "\r\n";
         out += srtTime(frameToMs(start - offset, fps)) + " --> " + srtTime(frameToMs(end - offset, fps)) + "\r\n";
-        QString text = c.text.trimmed();
-        text.replace('\n', QLatin1String("\r\n"));
-        out += text + "\r\n\r\n";
+        // A blank line ends an entry: empty lines inside the text (typed, or left by removed formatting) are left
+        // out, else the rest of the text would become a broken entry of its own
+        QStringList lines = c.text.trimmed().split('\n');
+        lines.removeIf([](const QString& line) { return line.trimmed().isEmpty(); });
+        out += lines.join(QLatin1String("\r\n")) + "\r\n\r\n";
     }
     return out.toUtf8();
 }

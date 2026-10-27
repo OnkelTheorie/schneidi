@@ -29,6 +29,21 @@
 
 namespace {
 
+// Frame numbers and ids from the file (edited by hand or by an AI: may say anything) stay inside +-2^30, so that the
+// sum of two (start + length, the next id) cannot overflow
+int intOf(const QJsonValue& v, int fallback = 0)
+{
+    constexpr int kLimit = 1 << 30;
+    return std::clamp(v.toInt(fallback), -kLimit, kLimit);
+}
+
+// Milliseconds (transcript words), likewise: a double beyond qint64 would not even convert
+qint64 msOf(const QJsonValue& v)
+{
+    constexpr double kLimit = double(qint64(1) << 50);
+    return qint64(std::clamp(v.toDouble(), -kLimit, kLimit));
+}
+
 // Track EQ/compressor: only written when not the default; loading clamps the values (hand-edited files)
 QJsonObject eqToJson(const TrackEq& eq)
 {
@@ -322,7 +337,7 @@ void keysFromJson(Clip& c, const QJsonObject& o)
         for (const QJsonValue& v : it.value().toArray()) {
             const QJsonArray e = v.toArray();
             if (e.size() < 2) continue;
-            Keyframe k{e.at(0).toInt(), e.at(1).toDouble(), KeyEase::Linear};
+            Keyframe k{intOf(e.at(0)), e.at(1).toDouble(), KeyEase::Linear};
             const QString ease = e.at(2).toString();
             for (int i = 0; i < 5; ++i)
                 if (ease == QLatin1String(kEaseIds[i])) k.ease = KeyEase(i);
@@ -454,43 +469,44 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
 Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const QDir& projectDir)
 {
     Clip c;
-    c.id = o.value("id").toInt();
+    c.id = intOf(o.value("id"));
     if (o.contains("title")) {
         c.kind = ClipKind::Title;
         c.title = titleFromJson(o.value("title").toObject());
     } else if (o.contains("sequence")) {
         c.kind = ClipKind::Compound;
-        c.sequenceId = o.value("sequence").toInt();
+        c.sequenceId = intOf(o.value("sequence"));
     } else if (o.contains("multicam")) {
         c.kind = ClipKind::Multicam;
-        c.sequenceId = o.value("multicam").toInt();
+        c.sequenceId = intOf(o.value("multicam"));
         c.angle = std::max(0, o.value("angle").toInt());
     } else {
         c.mediaPath = media.value(o.value("media").toInt(-1)).path;
     }
-    c.start = std::max(0, o.value("start").toInt());
-    c.in = o.value("in").toInt();
-    c.out = std::max(c.in, o.value("out").toInt()); // file edited by hand: at least 1 frame long
-    c.linkId = o.value("link").toInt();
+    c.start = std::max(0, intOf(o.value("start")));
+    c.in = intOf(o.value("in"));
+    c.out = std::max(c.in, intOf(o.value("out"))); // file edited by hand: at least 1 frame long
+    c.linkId = intOf(o.value("link"));
     c.volumeDb = o.value("volumeDb").toDouble(0.0);
     c.pan = o.value("pan").toDouble(0.0);
     c.audioStream = std::max(0, o.value("audioStream").toInt());
     c.subframe = std::clamp(o.value("subframe").toInt(), 0, 99);
     c.enabled = o.value("enabled").toBool(true);
-    c.transIn = std::max(0, o.value("transIn").toInt());
-    c.transOut = std::max(0, o.value("transOut").toInt());
+    c.transIn = std::max(0, intOf(o.value("transIn")));
+    c.transOut = std::max(0, intOf(o.value("transOut")));
     c.transInAlone = c.transIn > 0 && o.value("transInAlone").toBool();
     c.transOutAlone = c.transOut > 0 && o.value("transOutAlone").toBool();
     c.transInStyle = transitionStyleFromJson(o.value("transInStyle").toObject(), projectDir);
     c.transOutStyle = transitionStyleFromJson(o.value("transOutStyle").toObject(), projectDir);
-    c.fadeIn = std::max(0, o.value("fadeIn").toInt());
-    c.fadeOut = std::max(0, o.value("fadeOut").toInt());
+    c.fadeIn = std::max(0, intOf(o.value("fadeIn")));
+    c.fadeOut = std::max(0, intOf(o.value("fadeOut")));
     c.speed = o.value("speed").toDouble(1.0);
     if (c.speed <= 0) c.speed = 1.0;
     c.reverse = o.value("reverse").toBool();
     c.freeze = o.value("freeze").toBool();
-    // Older files without freezeFrame: pin the frame = `in` on loading (splitting/trimming shifts `in` later)
-    c.freezeFrame = c.freeze ? o.value("freezeFrame").toInt(c.in) : -1;
+    // Older files without freezeFrame: pin the frame = `in` on loading (splitting/trimming shifts `in` later); a frame
+    // before the file's start (edited by hand) is its first one - a negative one is not saved and came back as `in`
+    c.freezeFrame = c.freeze ? std::max(0, intOf(o.value("freezeFrame"), c.in)) : -1;
     c.keepPitch = o.value("keepPitch").toBool(true);
     for (const QJsonValue& v : o.value("ramp").toArray()) {
         const QJsonObject j = v.toObject();
@@ -726,13 +742,14 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     ProjectData d;
     // Project settings; older files know only "fps" (integer) and were always 1920 x 1080
     const QJsonObject fmt = root.value("format").toObject();
-    d.format.width = std::max(16, fmt.value("width").toInt(1920));
-    d.format.height = std::max(16, fmt.value("height").toInt(1080));
-    d.format.rate.num = std::max(1, fmt.value("fpsNum").toInt(root.value("fps").toInt(25)));
-    d.format.rate.den = std::max(1, fmt.value("fpsDen").toInt(1));
-    d.playhead = root.value("playhead").toInt();
-    d.lastClipId = root.value("lastClipId").toInt();
-    d.lastLinkId = root.value("lastLinkId").toInt();
+    d.format.width = fmt.value("width").toInt(1920);
+    d.format.height = fmt.value("height").toInt(1080);
+    d.format.rate.num = fmt.value("fpsNum").toInt(root.value("fps").toInt(25));
+    d.format.rate.den = fmt.value("fpsDen").toInt(1);
+    d.format = withinLimits(d.format);
+    d.playhead = intOf(root.value("playhead"));
+    d.lastClipId = intOf(root.value("lastClipId"));
+    d.lastLinkId = intOf(root.value("lastLinkId"));
     // All entries resolve the clip references; "notInPool" (file only in the timeline) does not go into the Media Pool
     QVector<MediaInfo> allMedia;
     for (const QJsonValue& v : root.value("media").toArray()) {
@@ -740,14 +757,14 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         MediaInfo m;
         m.path = resolvePath(o, projectDir);
         m.name = o.value("name").toString(fileNameAnyOs(m.path));
-        m.length = o.value("length").toInt();
+        m.length = intOf(o.value("length"));
         m.hasVideo = o.value("hasVideo").toBool();
         m.hasAudio = o.value("hasAudio").toBool();
         m.isImage = o.value("isImage").toBool();
-        m.markIn = o.value("markIn").toInt(-1);
-        m.markOut = o.value("markOut").toInt(-1);
+        m.markIn = intOf(o.value("markIn"), -1);
+        m.markOut = intOf(o.value("markOut"), -1);
         for (const QJsonValue& f : o.value("markers").toArray())
-            if (f.toInt(-1) >= 0 && !m.markers.contains(f.toInt())) m.markers << f.toInt();
+            if (intOf(f, -1) >= 0 && !m.markers.contains(intOf(f))) m.markers << intOf(f);
         std::sort(m.markers.begin(), m.markers.end());
         m.bin = std::max(0, o.value("bin").toInt()); // missing bins are set to Master by Project::load
         if (trackColorInfo(o.value("clipColor").toString())) m.clipColor = o.value("clipColor").toString();
@@ -764,7 +781,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.language = to.value("language").toString();
             for (const QJsonValue& w : to.value("words").toArray()) {
                 const QJsonArray a = w.toArray();
-                if (a.size() >= 3) t.words << TranscriptWord{qint64(a[0].toDouble()), qint64(a[1].toDouble()), a[2].toString()};
+                if (a.size() >= 3) t.words << TranscriptWord{msOf(a[0]), msOf(a[1]), a[2].toString()};
             }
             if (!t.words.isEmpty() && !m.transcript(t.audioStream)) m.transcripts << t;
         }
@@ -773,7 +790,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     }
     for (const QJsonValue& v : root.value("bins").toArray()) {
         const QJsonObject o = v.toObject();
-        const MediaBin b{o.value("id").toInt(), std::max(0, o.value("parent").toInt()), o.value("name").toString()};
+        const MediaBin b{intOf(o.value("id")), std::max(0, intOf(o.value("parent"))), o.value("name").toString()};
         if (b.id <= 0 || b.name.isEmpty()) continue;
         if (std::any_of(d.bins.cbegin(), d.bins.cend(), [&](const MediaBin& x) { return x.id == b.id; })) continue;
         d.bins << b;
@@ -829,7 +846,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             }
             for (const QJsonValue& cv : o.value("cues").toArray()) {
                 const QJsonObject c = cv.toObject();
-                SubtitleCue cue{c.value("id").toInt(), c.value("start").toInt(), c.value("end").toInt(),
+                SubtitleCue cue{intOf(c.value("id")), intOf(c.value("start")), intOf(c.value("end")),
                                 c.value("text").toString()};
                 if (cue.end <= cue.start) continue;
                 t.cues << cue;
@@ -854,20 +871,20 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         for (SubtitleTrack& t : timeline.subtitles)
             for (SubtitleCue& c : t.cues)
                 if (c.id < 0) c.id = ++d.lastClipId;
-        for (const QJsonValue& v : tl.value("markers").toArray()) timeline.markers << v.toInt();
+        for (const QJsonValue& v : tl.value("markers").toArray()) timeline.markers << intOf(v);
         timeline.masterVolumeDb = tl.value("masterVolumeDb").toDouble(0.0);
         timeline.masterLimiter = tl.value("masterLimiter").toBool(false);
         timeline.masterLimiterDb = std::clamp(tl.value("masterLimiterDb").toDouble(kDefaultLimiterDb), -24.0, 0.0);
         std::sort(timeline.markers.begin(), timeline.markers.end());
-        timeline.markIn = tl.value("markIn").toInt(-1);
-        timeline.markOut = tl.value("markOut").toInt(-1);
+        timeline.markIn = intOf(tl.value("markIn"), -1);
+        timeline.markOut = intOf(tl.value("markOut"), -1);
         return timeline;
     };
     d.timeline = readTimeline(root.value("timeline").toObject());
     for (const QJsonValue& v : root.value("sequences").toArray()) {
         const QJsonObject o = v.toObject();
         Sequence seq;
-        seq.id = o.value("id").toInt();
+        seq.id = intOf(o.value("id"));
         seq.name = o.value("name").toString();
         seq.compound = o.value("compound").toBool();
         seq.multicam = o.value("multicam").toBool();
@@ -882,7 +899,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         if (o.contains("timeline")) seq.timeline = readTimeline(o.value("timeline").toObject());
         d.sequences << seq;
     }
-    d.currentSequence = root.value("currentSequence").toInt();
+    d.currentSequence = intOf(root.value("currentSequence"));
     d.renderQueue = RenderQueueJson::fromJson(root.value("renderQueue").toArray());
     const QJsonObject fixed = root.value("fixedFormat").toObject();
     d.fixedResolution = fixed.value("resolution").toBool();

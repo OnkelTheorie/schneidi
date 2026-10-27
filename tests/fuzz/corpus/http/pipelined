@@ -1,0 +1,9 @@
+GET /files HTTP/1.1
+Host: localhost
+
+GET /files/sub/ HTTP/1.1
+
+DELETE /mcp HTTP/1.1
+Mcp-Session-Id: x
+Connection: close
+

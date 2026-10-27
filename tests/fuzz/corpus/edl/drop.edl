@@ -1,0 +1,8 @@
+TITLE: drop frame
+FCM: DROP FRAME
+
+001  AX       V     C        00:59:59;28 01:00:00;04 00:00:00;00 00:00:00;06
+* FROM CLIP NAME: clip one.mp4
+002  AX       AA/V  C        00:00:10;00 00:00:12;00 00:00:00;06 00:00:02;08
+M2   AX         -025.0               00:00:10;00
+* FROM CLIP NAME: clip two.mp4

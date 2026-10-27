@@ -147,7 +147,7 @@ FrameRate rateOf(const Node& n, FrameRate fallback)
     const Node* r = n.child("rate");
     if (!r) return fallback;
     const int tb = r->num("timebase");
-    if (tb <= 0) return fallback;
+    if (tb <= 0 || tb > 1000) return fallback; // more than 1000 frames per second: no program's, tb * 1000 overflowed
     if (r->at("ntsc").toUpper() == "TRUE") return FrameRate{tb * 1000, 1001};
     return FrameRate{tb, 1};
 }
@@ -316,7 +316,7 @@ QByteArray writeFcp7(Sequence& seq)
                 if (!video) {
                     x.writeStartElement("sourcetrack");
                     x.writeTextElement("mediatype", "audio");
-                    x.writeTextElement("trackindex", QString::number(it.audioStream + 1));
+                    x.writeTextElement("trackindex", QString::number(qint64(it.audioStream) + 1)); // any number from a file
                     x.writeEndElement();
                 }
                 if (it.speed != 1.0 || it.reverse) {
@@ -400,6 +400,7 @@ Sequence readFcp7(const QByteArray& data)
         seq.format.height = sc->num("height");
         seq.hasSize = true;
     }
+    seq.format = withinLimits(seq.format); // an empty project takes it
     QHash<QString, const Node*> files;
     collectFiles(root, files);
     for (const Node* m : sq->all("marker")) seq.markers << m->num("in");
@@ -466,10 +467,15 @@ Sequence readFcp7(const QByteArray& data)
                 if (end < 0 && after) end = cutOf(*after);
                 if (start < 0) start = end >= 0 ? end - (out - in) : 0;
                 if (end < 0) end = start + (out - in);
+                // Nothing before the timeline's start (a clip ending at a transition close to it) or before the
+                // file's (a transition that ends before it starts): that part is cut off
+                const int cut = std::max({0, -start, -it.in});
+                start += cut;
+                it.in += cut;
                 it.start = start;
                 it.length = std::max(0, end - start);
                 if (it.name.isEmpty()) it.name = QFileInfo(it.path).fileName();
-                if (!video) it.audioStream = std::max(0, el.num("sourcetrack/trackindex", 1) - 1);
+                if (!video) it.audioStream = std::max(1, el.num("sourcetrack/trackindex", 1)) - 1;
                 for (const Node* filter : el.all("filter")) {
                     const Node* eff = filter->child("effect");
                     if (!eff) continue;

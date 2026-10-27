@@ -472,5 +472,74 @@ int main(int argc, char** argv)
         threw = true;
     }
     CHECK(threw);
+    // Numbers no program writes (found by fuzzing, tests/fuzz): track index -2^31 is the first audio stream, stream
+    // 2^31 - 1 (a project file edited by hand) is written as track index 2^31
+    {
+        Seq s = readFcp7(R"(<xmeml version="4"><sequence><name>s</name><rate><timebase>25</timebase></rate><media><audio>
+            <track><clipitem id="c"><name>a.mp4</name><start>0</start><end>10</end><in>0</in><out>10</out>
+            <file id="f"><name>a.mp4</name><pathurl>file:///m/a.mp4</pathurl></file>
+            <sourcetrack><mediatype>audio</mediatype><trackindex>-2147483648</trackindex></sourcetrack>
+            </clipitem></track></audio></media></sequence></xmeml>)");
+        if (CHECK(s.audio.size() == 1 && s.audio[0].items.size() == 1)) {
+            CHECK_EQ(s.audio[0].items[0].audioStream, 0);
+            s.audio[0].items[0].audioStream = 2147483647;
+            CHECK(writeFcp7(s).contains("<trackindex>2147483648</trackindex>"));
+        }
+    }
+    // A clip without start that ends at a transition at frame 10 but is 20 frames long: begins at frame 0, its first
+    // 10 frames cut off (it began before the timeline)
+    {
+        const Seq s = readFcp7(R"(<xmeml><sequence><media><video><track><clipitem><in>0</in><out>20</out>
+            <file><pathurl>file:///m/a.mp4</pathurl></file></clipitem><transitionitem><start>5</start><end>15</end>
+            </transitionitem></track></video></media></sequence></xmeml>)");
+        if (CHECK(s.video.size() == 1 && s.video[0].items.size() == 1)) {
+            const Item& it = s.video[0].items[0];
+            CHECK(it.start == 0 && it.in == 10 && it.length == 10);
+        }
+        // After a transition that ends before it starts (its cut at 5, 10 frames before its start): the clip would
+        // begin 5 frames before the file; it begins 5 frames later instead
+        const Seq t = readFcp7(R"(<xmeml><sequence><media><video><track><transitionitem><start>10</start><end>0</end>
+            </transitionitem><clipitem><in>0</in><out>20</out><file><pathurl>file:///m/a.mp4</pathurl></file>
+            </clipitem></track></video></media></sequence></xmeml>)");
+        if (CHECK(t.video.size() == 1 && t.video[0].items.size() == 1)) {
+            const Item& it = t.video[0].items[0];
+            CHECK(it.start == 10 && it.in == 0 && it.length == 15);
+        }
+    }
+    // FCP7: a timebase of 3 * 10^6 (NTSC: * 1000 overflowed) is not taken, a size of 10^9 pixels is brought inside
+    {
+        const Seq s = readFcp7(R"(<xmeml><sequence><rate><timebase>3000000</timebase><ntsc>TRUE</ntsc></rate><media><video>
+            <format><samplecharacteristics><width>1000000000</width><height>1080</height></samplecharacteristics></format>
+            <track><clipitem><in>0</in><out>20</out><start>0</start><end>20</end><file><pathurl>file:///m/a.mp4</pathurl>
+            </file></clipitem></track></video></media></sequence></xmeml>)");
+        CHECK(s.format.rate == (FrameRate{25, 1}));
+        CHECK(s.format.width == kMaxFrameSize && s.format.height == 1080);
+    }
+    // OTIO: gaps of 2 * 10^9 frames (the track's end overflowed) make the file a broken one; a frame rate of 2^31 fps
+    // becomes a possible one
+    threw = false;
+    try {
+        readOtio(R"({"OTIO_SCHEMA":"Timeline.1","tracks":{"children":[{"OTIO_SCHEMA":"Track.1","kind":"Video","children":[
+            {"OTIO_SCHEMA":"Gap.1","source_range":{"duration":{"rate":25,"value":2000000000}}},
+            {"OTIO_SCHEMA":"Gap.1","source_range":{"duration":{"rate":25,"value":2000000000}}}]}]}})");
+    } catch (const Error&) {
+        threw = true;
+    }
+    CHECK(threw);
+    {
+        const Seq s = readOtio(R"({"OTIO_SCHEMA":"Timeline.1","metadata":{"schneidi":{"rate_num":2147483647,"rate_den":1}},
+            "global_start_time":{"rate":2147483647,"value":0},"tracks":{"children":[]}})");
+        CHECK(s.format.rate.fps() >= 1 && s.format.rate.fps() <= 1000);
+    }
+    // A clip of -100 frames (moved the next one before the timeline's start): left out
+    {
+        const Seq s = readOtio(R"({"OTIO_SCHEMA":"Timeline.1","tracks":{"children":[{"OTIO_SCHEMA":"Track.1","kind":"Video",
+            "children":[{"OTIO_SCHEMA":"Clip.1","name":"a","media_reference":{"target_url":"file:///m/a.mp4"},
+            "source_range":{"duration":{"rate":25,"value":-100},"start_time":{"rate":25,"value":0}}},
+            {"OTIO_SCHEMA":"Clip.1","name":"b","media_reference":{"target_url":"file:///m/b.mp4"},
+            "source_range":{"duration":{"rate":25,"value":50},"start_time":{"rate":25,"value":0}}}]}]}})");
+        if (CHECK(s.video.size() == 1 && s.video[0].items.size() == 2))
+            CHECK(s.video[0].items[0].length == 0 && s.video[0].items[1].start == 0 && s.video[0].items[1].length == 50);
+    }
     return Check::result();
 }

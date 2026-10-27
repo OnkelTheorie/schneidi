@@ -188,8 +188,26 @@ QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& 
     return out;
 }
 
+bool hasNulKey(const QJsonValue& v)
+{
+    if (v.isObject()) {
+        const QJsonObject o = v.toObject();
+        for (auto it = o.begin(); it != o.end(); ++it)
+            if (it.key().contains(QChar(0)) || hasNulKey(it.value())) return true;
+    } else if (v.isArray()) {
+        const QJsonArray a = v.toArray();
+        return std::any_of(a.begin(), a.end(), [](const QJsonValue& x) { return hasNulKey(x); });
+    }
+    return false;
+}
+
 bool handle(const QJsonObject& msg, const Options& opt, const ToolCall& call, const Send& send)
 {
+    if (hasNulKey(msg)) { // its id cannot be read for sure either
+        send({{"jsonrpc", "2.0"}, {"id", QJsonValue::Null},
+              {"error", QJsonObject{{"code", -32600}, {"message", "invalid request: a key contains U+0000"}}}});
+        return true;
+    }
     const QString method = msg["method"].toString();
     // Notifications (initialized, cancelled …) and responses need no answer
     if (!msg.contains("id") || method.isEmpty()) return false;

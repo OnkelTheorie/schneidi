@@ -262,8 +262,11 @@ void Project::load(const ProjectData& d)
         m_sequences.prepend(Sequence{m_current, T("Timeline %1").arg(1), false, 0, {}});
     }
     current().timeline = d.timeline;
-    if (std::none_of(m_sequences.begin(), m_sequences.end(), [](const Sequence& s) { return !s.compound; }))
+    for (Sequence& s : m_sequences) s.compound = s.compound || s.multicam; // a multicam clip is a compound clip
+    if (std::none_of(m_sequences.begin(), m_sequences.end(), [](const Sequence& s) { return !s.compound; })) {
         current().compound = false; // there is always at least one normal timeline
+        current().multicam = false;
+    }
     m_lastSequenceId = 0;
     for (Sequence& s : m_sequences) {
         m_lastSequenceId = std::max(m_lastSequenceId, s.id);

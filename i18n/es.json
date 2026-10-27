@@ -1676,6 +1676,7 @@
  "Wörter markieren und %1 drücken schneidet sie heraus. Klick = zum Wort springen.": "Selecciona palabras y pulsa %1 para cortarlas. Clic = ir a la palabra.",
  "Wörter markieren und per Rechtsklick herausschneiden. Klick = zum Wort springen.": "Selecciona palabras y córtalas con clic derecho. Clic = ir a la palabra.",
  "Zeit": "Hora",
+ "Zeitangabe außerhalb des möglichen Bereichs": "Valor de tiempo fuera del rango posible",
  "Zentriert": "Centrado",
  "Ziehen = Farbbalance (Shift = fein), Doppelklick = zurücksetzen": "Arrastrar = balance de color (Mayús = fino), doble clic = restablecer",
  "Ziehen ändert die Reihenfolge: oben wird zuerst berechnet": "Arrastra para cambiar el orden: el de arriba se aplica primero",

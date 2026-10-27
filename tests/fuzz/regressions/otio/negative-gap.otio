@@ -1,0 +1,1 @@
+{"OTIO_SCHEMA":"Timeline","tracks":{"children":[{"OTIO_SCHEMA":"Track","children":[{"source_range":{"duration":{"value":-1}}},{"OTIO_SCHEMA":"Clip","media_reference":{"target_url":"%"},"source_range":{"duration":{"value":1}}}]}]}}

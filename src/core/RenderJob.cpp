@@ -407,7 +407,7 @@ QVector<RenderJob> fromJson(const QJsonArray& arr)
     for (const QJsonValue& v : arr) {
         const QJsonObject o = v.toObject();
         RenderJob j;
-        j.id = o.value("id").toInt();
+        j.id = std::clamp(o.value("id").toInt(), 0, 1 << 30); // edited by hand: the next id (+ 1) must still fit
         j.path = o.value("path").toString();
         if (j.path.isEmpty()) continue;
         if (j.id <= 0 || std::any_of(jobs.cbegin(), jobs.cend(), [&](const RenderJob& x) { return x.id == j.id; })) {
@@ -430,7 +430,7 @@ QVector<RenderJob> fromJson(const QJsonArray& arr)
             if (st == QLatin1String(kStatusIds[i])) j.status = RenderStatus(i);
         if (j.status == RenderStatus::Rendering) j.status = RenderStatus::Queued;
         j.message = o.value("message").toString();
-        j.renderMs = qint64(o.value("renderMs").toDouble());
+        j.renderMs = qint64(std::clamp(o.value("renderMs").toDouble(), 0.0, 1e15)); // beyond qint64 would be undefined
         j.encoderUsed = o.value("encoderUsed").toString();
         jobs << j;
     }

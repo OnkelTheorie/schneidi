@@ -1676,6 +1676,7 @@
  "Wörter markieren und %1 drücken schneidet sie heraus. Klick = zum Wort springen.": "Sélectionnez des mots et appuyez sur %1 pour les couper. Clic = aller au mot.",
  "Wörter markieren und per Rechtsklick herausschneiden. Klick = zum Wort springen.": "Sélectionnez des mots et coupez-les par un clic droit. Clic = aller au mot.",
  "Zeit": "Heure",
+ "Zeitangabe außerhalb des möglichen Bereichs": "Valeur de temps hors de la plage possible",
  "Zentriert": "Centré",
  "Ziehen = Farbbalance (Shift = fein), Doppelklick = zurücksetzen": "Glisser = balance des couleurs (Maj = fin), double-clic = réinitialiser",
  "Ziehen ändert die Reihenfolge: oben wird zuerst berechnet": "Faites glisser pour changer l'ordre : celui du haut est appliqué en premier",

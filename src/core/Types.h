@@ -537,7 +537,7 @@ struct MediaInfo {
     QString audioStreamName(int stream) const
     {
         const QString t = stream < audioStreams.size() ? audioStreams[stream].title : QString();
-        return t.isEmpty() ? T("Spur %1").arg(stream + 1) : t;
+        return t.isEmpty() ? T("Spur %1").arg(qint64(stream) + 1) : t; // a project file may say any stream
     }
     // Track label for a stream placed on its own audio track: the file's stream title, but only for multi-stream
     // files with a real title (otherwise empty = the track keeps its default "Audio N")
