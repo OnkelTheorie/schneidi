@@ -267,6 +267,7 @@ private:
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
     QPointer<class KeyColorPicker> m_keyPicker; // while the pipette is on
+    QPointer<class KeyPickWindow> m_keyPickWindow; // its large picture, while the pipette is on
     TranscriptPanel* m_transcript = nullptr;
     ScopesPanel* m_scopes = nullptr; // Color page, right of the wheels (like DaVinci)
     Mixer* m_mixer = nullptr;

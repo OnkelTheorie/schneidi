@@ -1,10 +1,10 @@
-// Green Screen pipette (ui/KeyColorPicker, Inspector button "KeyPipette", MainWindow::startKeyPick): isolate() leaves
-// one clip as its key sees it (fixed stages before the key, no fades/opacity, other tracks empty), sample() averages the
-// covered pixels; in the main window the button shows the clip without its key in the viewer, a click there sets
-// the key color (one undo step) and gives the viewer back to the Color page; right-click, Esc and another selection
-// cancel without changing anything. The loupe beside the cursor shows the pixels of the full-resolution frame (a single
-// pixel the scaled viewer picture loses is there, magnified, the one under the cursor in the middle).
-// KEY_PICK_DUMP=<png>: picture of the viewer while the pipette is on (and <png>-loupe.png: the loupe on a small viewer).
+// Green Screen pipette (ui/KeyColorPicker, ui/KeyPickWindow, Inspector button "KeyPipette", MainWindow::startKeyPick):
+// isolate() leaves one clip as its key sees it (fixed stages before the key, no fades/opacity, other tracks empty),
+// sample() averages the covered pixels; in the main window the button opens the clip without its key large in a window
+// of its own (the picture's shape, at most 90 % of the screen), a click there sets the key color (one undo step) and
+// closes it; right-click, Esc, closing the window and another selection cancel without changing anything. Beside the
+// cursor a square shows the color a click takes.
+// KEY_PICK_DUMP=<png>: picture of the pipette window.
 
 #include "check.h"
 
@@ -16,6 +16,7 @@
 #include "engine/Engine.h"
 #include "ui/Inspector.h"
 #include "ui/KeyColorPicker.h"
+#include "ui/KeyPickWindow.h"
 #include "ui/Viewer.h"
 
 #include <QApplication>
@@ -25,6 +26,7 @@
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <clocale>
+#include <cmath>
 
 namespace {
 
@@ -46,70 +48,43 @@ void testSample()
     CHECK(!KeyColorPicker::sample(img, QPointF(-20, 0), 3).isValid());
 }
 
-void testLoupe()
+void testSwatch()
 {
-    // A 1920x1080 green frame with one red and one blue pixel side by side
+    // A green frame with a red square: the color square beside the cursor is the average a click takes
     QImage img(1920, 1080, QImage::Format_RGBA8888);
     img.fill(QColor(0, 200, 40));
-    img.setPixelColor(961, 541, QColor(230, 20, 20));
-    img.setPixelColor(962, 541, QColor(20, 20, 230));
-    const QImage patch = KeyColorPicker::loupe(img, QPointF(961.6, 541.2));
-    CHECK_EQ(patch.size(), QSize(11, 11));
-    CHECK_EQ(patch.pixelColor(5, 5), QColor(230, 20, 20)); // the pixel under the cursor in the middle
-    CHECK_EQ(patch.pixelColor(6, 5), QColor(20, 20, 230));
-    CHECK_EQ(patch.pixelColor(0, 0), QColor(0, 200, 40));
-    const QImage corner = KeyColorPicker::loupe(img, QPointF(0.5, 0.5)); // outside the picture: transparent
-    CHECK(corner.pixelColor(0, 0).alpha() == 0 && corner.pixelColor(5, 5).alpha() == 255);
-
-    // Drawn on a viewer a quarter as large (where these pixels are gone in the scaled picture): magnified 8 times
+    for (int y = 500; y < 580; ++y)
+        for (int x = 900; x < 1000; ++x) img.setPixelColor(x, y, QColor(230, 20, 20));
     KeyColorPicker picker(img);
-    QImage view(480, 270, QImage::Format_RGB32);
+    QImage view(960, 540, QImage::Format_RGB32);
     view.fill(Qt::black);
-    const QRectF frame(0, 0, 480, 270);
-    const QPointF cursor(961.5 / 4, 541.5 / 4);
+    const QRectF frame(0, 0, 960, 540);
+    const QPointF cursor(475, 270); // over the red square (image 950, 540)
     picker.hover(cursor, frame);
     {
         QPainter p(&view);
         picker.paint(p, frame);
     }
-    const QRectF lens = KeyColorPicker::loupeRect(cursor, frame);
-    CHECK(frame.contains(lens));
-    CHECK_EQ(lens.size(), QSizeF(88, 88));
     if (const QString dump = qEnvironmentVariable("KEY_PICK_DUMP"); !dump.isEmpty())
-        view.save(QString(dump).replace(".png", "-loupe.png"));
-    auto cellColor = [&](int cx, int cy) { // middle of a magnified pixel
-        return view.pixelColor(int(lens.x()) + cx * 8 + 4, int(lens.y()) + cy * 8 + 4);
-    };
-    auto near = [](const QColor& a, const QColor& b) {
-        return std::abs(a.red() - b.red()) < 4 && std::abs(a.green() - b.green()) < 4 && std::abs(a.blue() - b.blue()) < 4;
-    };
-    CHECK(near(cellColor(5, 5), QColor(230, 20, 20)));
-    CHECK(near(cellColor(6, 5), QColor(20, 20, 230)));
-    CHECK(near(cellColor(2, 8), QColor(0, 200, 40)));
-    // The whole magnified pixel is the one color (no smoothing), the one under the cursor framed
-    const int x0 = int(lens.x()) + 40, y0 = int(lens.y()) + 40;
-    bool solid = true;
-    for (int y = 0; y < 8; ++y)
-        for (int x = 0; x < 8; ++x) solid &= near(view.pixelColor(x0 + x, y0 + y), QColor(230, 20, 20));
-    CHECK(solid);
-    CHECK(view.pixelColor(x0 - 1, y0 + 4) == QColor(Qt::black) && view.pixelColor(x0 - 2, y0 + 4) == QColor(Qt::white));
-    // The color square beside it: the average a click takes (7x7 around the cursor)
-    const QColor avg = KeyColorPicker::sample(img, QPointF(961.5, 541.5));
-    CHECK(near(view.pixelColor(int(lens.right()) + 4 + 15, int(lens.bottom()) - 15), avg));
-    // At the picture's corner the pixels outside it show a checkerboard
-    picker.hover(QPointF(0.2, 0.2), frame);
-    {
-        QPainter p(&view);
-        picker.paint(p, frame);
-    }
-    const QRectF cornerLens = KeyColorPicker::loupeRect(QPointF(0.2, 0.2), frame);
-    const QColor outside = view.pixelColor(int(cornerLens.x()) + 6, int(cornerLens.y()) + 6);
-    CHECK(outside.red() == outside.green() && outside.green() == outside.blue()
-          && (outside.red() == 70 || outside.red() == 110));
-    CHECK(near(view.pixelColor(int(cornerLens.x()) + 5 * 8 + 4, int(cornerLens.y()) + 5 * 8 + 4), QColor(0, 200, 40)));
+        view.save(QString(dump).replace(".png", "-swatch.png"));
+    const QRectF box = KeyColorPicker::swatchRect(cursor, frame);
+    CHECK(frame.contains(box) && box.left() > cursor.x() && box.top() > cursor.y());
+    const QColor shown = view.pixelColor(box.center().toPoint());
+    CHECK(shown.red() > 220 && shown.green() < 30 && shown.blue() < 30);
+    // The picture itself is not covered next to the square (no loupe any more)
+    const QColor beside = view.pixelColor(int(box.right()) + 40, int(box.bottom()) + 40);
+    CHECK(beside.green() > 190 && beside.red() < 10);
     // Near the right and bottom edge it flips to the other side of the cursor
-    const QRectF flipped = KeyColorPicker::loupeRect(QPointF(470, 260), frame);
-    CHECK(flipped.right() < 470 && flipped.bottom() < 260);
+    const QRectF flipped = KeyColorPicker::swatchRect(QPointF(950, 530), frame);
+    CHECK(flipped.right() < 950 && flipped.bottom() < 530 && frame.contains(flipped));
+}
+
+void testWindowSize()
+{
+    // The picture's shape, at most 90 % of the screen area
+    CHECK_EQ(KeyPickWindow::sizeFor(QSize(1920, 1080), QSize(1920, 1040)), QSize(1664, 936));
+    CHECK_EQ(KeyPickWindow::sizeFor(QSize(1080, 1920), QSize(2560, 1400)), QSize(708, 1260));
+    CHECK_EQ(KeyPickWindow::sizeFor(QSize(320, 180), QSize(800, 600)), QSize(720, 405)); // small clips grow too
 }
 
 void testIsolate()
@@ -198,6 +173,13 @@ void testMainWindow(const QString& dir)
     const int id = clip->id;
     ViewerOverlay* colorOverlay = viewer->overlay();
     CHECK(colorOverlay != nullptr);
+    // The pipette's window while it is on (a closed one waits hidden for its deletion)
+    const auto pickWindow = [&w]() -> KeyPickWindow* {
+        for (KeyPickWindow* k : w.findChildren<KeyPickWindow*>())
+            if (k->isVisible()) return k;
+        return nullptr;
+    };
+    const auto picking = [&]() -> KeyColorPicker* { return pickWindow() ? pickWindow()->picker() : nullptr; };
     w.liveSelection()->set({id});
     engine.seek(10);
     QApplication::processEvents();
@@ -210,29 +192,35 @@ void testMainWindow(const QString& dir)
         CHECK(!keyed.isNull() && keyed.pixelColor(60, 90).alpha() < 50 && keyed.pixelColor(260, 90).alpha() > 200);
     }
 
-    // Pipette: the viewer shows the clip without its key
+    // Pipette: a large window shows the clip without its key, the viewer keeps the Color page's outline
     pipette->click();
-    auto* picker = qobject_cast<KeyColorPicker*>(viewer->overlay());
-    if (!CHECK(picker)) return;
-    CHECK(pipette->isChecked());
+    KeyPickWindow* window = pickWindow();
+    KeyColorPicker* picker = picking();
+    if (!CHECK(window && picker)) return;
+    CHECK(pipette->isChecked() && window->isModal() && viewer->overlay() == colorOverlay);
+    CHECK_EQ(picker->pictureSize(), QSize(320, 180));
+    const QRectF shown = window->pictureRect();
+    CHECK(shown.width() > 320 && std::abs(shown.width() / shown.height() - 16.0 / 9) < 0.02);
     if (const QString dump = qEnvironmentVariable("KEY_PICK_DUMP"); !dump.isEmpty()) {
-        viewer->grab().save(dump);
+        window->grab().save(dump);
         pipette->parentWidget()->grab().save(QString(dump).replace(".png", "-inspector.png"));
     }
-    const QRectF frame(0, 0, 320, 180);
-    // A click on the red half sets red (the green one is there to pick even though the key removes it)
-    QMouseEvent red(QEvent::MouseButtonPress, QPointF(240, 90), QPointF(240, 90), Qt::LeftButton, Qt::LeftButton,
+    // A real click on the red half of the window sets red (the green one is there to pick even though the key removes
+    // it) and closes the window
+    const QPointF onRed = shown.topLeft() + QPointF(shown.width() * 0.75, shown.height() / 2);
+    QMouseEvent red(QEvent::MouseButtonPress, onRed, window->mapToGlobal(onRed), Qt::LeftButton, Qt::LeftButton,
                     Qt::NoModifier);
-    CHECK(picker->mousePress(&red, frame));
+    QApplication::sendEvent(window, &red);
     QApplication::processEvents();
     QColor c = keyColor(project);
     CHECK(c.red() > 170 && c.green() < 70 && c.blue() < 70);
     CHECK_EQ(project->undoStack()->count(), steps + 1);
-    CHECK(viewer->overlay() == colorOverlay); // back to the Color page's window outline
+    CHECK(viewer->overlay() == colorOverlay && !pickWindow());
     CHECK(!pipette->isChecked());
 
+    const QRectF frame(0, 0, 320, 180);
     pipette->click();
-    picker = qobject_cast<KeyColorPicker*>(viewer->overlay());
+    picker = picking();
     if (!CHECK(picker)) return;
     QMouseEvent green(QEvent::MouseButtonPress, QPointF(80, 90), QPointF(80, 90), Qt::LeftButton, Qt::LeftButton,
                       Qt::NoModifier);
@@ -243,33 +231,40 @@ void testMainWindow(const QString& dir)
     CHECK_EQ(project->undoStack()->count(), steps + 2);
     const Clip* now = videoClip(project);
     CHECK(now && EffectRegistry::instance(*now, "chromakey")->enabled);
+    CHECK(!pickWindow());
 
-    // Right-click, Esc, another selection and the button again cancel without a change
+    // Right-click, Esc, closing the window, another selection and the button again cancel without a change
     const QColor before = keyColor(project);
     pipette->click();
-    picker = qobject_cast<KeyColorPicker*>(viewer->overlay());
+    picker = picking();
     QMouseEvent right(QEvent::MouseButtonPress, QPointF(240, 90), QPointF(240, 90), Qt::RightButton, Qt::RightButton,
                       Qt::NoModifier);
     if (CHECK(picker)) picker->mousePress(&right, frame);
     QApplication::processEvents();
-    CHECK(viewer->overlay() == colorOverlay && !pipette->isChecked());
+    CHECK(!pickWindow() && !pipette->isChecked());
     pipette->click();
-    CHECK(qobject_cast<KeyColorPicker*>(viewer->overlay()));
-    QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QApplication::sendEvent(viewer, &esc);
+    if (CHECK(pickWindow())) {
+        QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(pickWindow(), &esc);
+        QApplication::processEvents();
+    }
+    CHECK(!pickWindow() && !pipette->isChecked());
+    pipette->click();
+    if (CHECK(pickWindow())) pickWindow()->close();
     QApplication::processEvents();
-    CHECK(viewer->overlay() == colorOverlay && !pipette->isChecked());
+    CHECK(!pickWindow() && !pipette->isChecked());
     pipette->click();
-    CHECK(qobject_cast<KeyColorPicker*>(viewer->overlay()));
+    CHECK(pickWindow());
     w.liveSelection()->clear();
     QApplication::processEvents();
-    CHECK(viewer->overlay() == colorOverlay && !pipette->isChecked());
+    CHECK(!pickWindow() && !pipette->isChecked());
     w.liveSelection()->set({id});
     pipette->click();
-    CHECK(qobject_cast<KeyColorPicker*>(viewer->overlay()));
+    CHECK(pickWindow());
     pipette->click();
     QApplication::processEvents();
-    CHECK(viewer->overlay() == colorOverlay && !pipette->isChecked());
+    CHECK(!pickWindow() && !pipette->isChecked());
+    CHECK(viewer->overlay() == colorOverlay);
     CHECK(keyColor(project) == before);
     CHECK_EQ(project->undoStack()->count(), steps + 2);
 
@@ -277,7 +272,7 @@ void testMainWindow(const QString& dir)
     w.liveSelection()->clear();
     QApplication::processEvents();
     pipette->click();
-    CHECK(!pipette->isChecked() && viewer->overlay() == colorOverlay);
+    CHECK(!pipette->isChecked() && !pickWindow());
 }
 
 } // namespace
@@ -289,7 +284,8 @@ int main(int argc, char** argv)
     Check::initApp("key-pick");
     QTemporaryDir dir;
     testSample();
-    testLoupe();
+    testSwatch();
+    testWindowSize();
     testIsolate();
     testMainWindow(dir.path());
     return Check::result();

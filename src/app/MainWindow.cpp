@@ -45,6 +45,7 @@
 #include "ui/ScopesPanel.h"
 #include "ui/Inspector.h"
 #include "ui/KeyColorPicker.h"
+#include "ui/KeyPickWindow.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
@@ -86,6 +87,7 @@
 #include <QThreadPool>
 #include <QTimer>
 #include <algorithm>
+#include <utility>
 
 QString MainWindow::appName()
 {
@@ -679,16 +681,24 @@ void MainWindow::startKeyPick(int clipId)
         stopKeyPick();
     });
     connect(m_keyPicker, &KeyColorPicker::cancelled, this, &MainWindow::stopKeyPick);
-    m_viewer->setOverlay(m_keyPicker);
+    // The picture large in a window of its own (the viewer is often too small to hit the exact green)
+    m_keyPickWindow = new KeyPickWindow(m_keyPicker, picture.size(), this);
+    connect(m_keyPickWindow, &KeyPickWindow::closeRequested, this, &MainWindow::stopKeyPick);
+    m_keyPickWindow->showOn(screen());
     m_inspector->setKeyPicking(true); // the stopKeyPick() above switched the button off
 }
 
 void MainWindow::stopKeyPick()
 {
     m_inspector->setKeyPicking(false);
+    if (KeyPickWindow* window = std::exchange(m_keyPickWindow, nullptr)) {
+        window->disconnect(this);
+        window->hide();
+        window->deleteLater();
+        activateWindow();
+    }
     if (!m_keyPicker) return;
     qApp->removeEventFilter(m_keyPicker); // its Esc filter ends now, not when deleteLater gets to it
-    m_viewer->setOverlay(m_colorPanel->overlay());
     m_keyPicker->deleteLater();
     m_keyPicker = nullptr;
 }

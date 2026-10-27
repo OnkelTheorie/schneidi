@@ -236,6 +236,7 @@ add_library(schneidi_lib STATIC
     src/ui/FullScreenViewer.h     src/ui/FullScreenViewer.cpp
     src/ui/ViewerOverlay.h
     src/ui/KeyColorPicker.h       src/ui/KeyColorPicker.cpp
+    src/ui/KeyPickWindow.h        src/ui/KeyPickWindow.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp

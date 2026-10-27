@@ -98,6 +98,7 @@ QVector<StartTemplate> builtIn()
     presets.muteMix = true;
     game.data.importPresets = presets;
     game.data.timeline.masterLimiter = true;
+    game.data.format.rate = {60, 1}; // until the first clip brings its own (titles made before it)
     list << game;
 
     // Names `check` and the AI understand (voice and music tracks: under_music, duck) in every language
@@ -321,7 +322,7 @@ QStringList summary(const StartTemplate& t)
     if (d.fixedResolution && d.fixedFrameRate) lines << T("Format: %1, %2 fps (bleibt)").arg(size, rate);
     else if (d.fixedResolution) lines << T("Format: %1 (bleibt), Framerate vom ersten Clip").arg(size);
     else if (d.fixedFrameRate) lines << T("Format: Auflösung vom ersten Clip, %1 fps (bleibt)").arg(rate);
-    else lines << T("Format vom ersten Clip (bis dahin %1, %2 fps)").arg(size, rate);
+    else lines << T("Format: Auflösung und Framerate vom ersten Clip");
 
     QStringList tracks;
     const auto describe = [&tracks](TrackKind kind, const QVector<Track>& list) {
