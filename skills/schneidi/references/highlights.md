@@ -9,7 +9,9 @@ also read [social.md](social.md).
 - **Games with a kill feed**: look at the kill feed first with `frames` + `crop` (e.g. `"0.7,0.0,0.3,0.3"` = top
   right) on a moment with a kill, pick the region and the color that marks the player's *own* kills, then pass
   `region` + `color`. Without that, `highlights` uses the sound alone (bursts of loud moments) - fine for sports,
-  events, vlogs.
+  events, vlogs. A thin mark needs a higher `tolerance` than a filled one: CS2 frames the player's own kills in red
+  (`region` "0.72,0.04,0.28,0.2", `color` "#d8444a", `tolerance` 40). Fewer `kills` than you saw in the kill feed:
+  raise `tolerance` step by step (too high counts red walls and blood as kills).
 - Look at the top candidates (`frames` with `at` around each kill time, or a cropped sheet) before you trust them.
   Drop near-duplicates and moments that only are loud. Banners in the kill feed's colour (a yellow "BUY PHASE")
   are not counted as kills but listed in `banners`; a `kill_feed_most_pct` far above the other files still means:
