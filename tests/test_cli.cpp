@@ -2,6 +2,7 @@
 // dry run, errors leave the file untouched
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "cli/Mcp.h"
 #include "core/Project.h"
 #include "core/EffectRegistry.h"
 #include "core/ProjectFile.h"
@@ -225,6 +226,19 @@ int main(int argc, char** argv)
             cue |= v.toObject().value("track").toString() == "ST1" && v.toObject().value("text").toString() == "Hi";
         CHECK(cue);
         CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-90|20-99]  V2:  A1: a[0-10|0-9] a[10-90|20-99]  A2:"));
+    }
+
+    // A tool that is an op of edit (small models call "new_timeline"): the error has the call to make; others list the tools
+    {
+        const auto message = [](const QString& tool, const QJsonObject& args) {
+            const QJsonObject r = Cli::Mcp::callTool({{"name", tool}, {"arguments", args}}, {}, {});
+            return QJsonDocument::fromJson(r["content"][0]["text"].toString().toUtf8())["error"]["message"].toString();
+        };
+        const QString op = message("new_timeline", {{"project", "/x/p.schneidi"}, {"name", "Kills"}});
+        CHECK(op.contains("an op of the edit tool"));
+        CHECK(op.contains(R"({"ops":[{"name":"Kills","op":"new_timeline"}],"project":"/x/p.schneidi"})"));
+        const QString other = message("cut_all", {});
+        CHECK(other.startsWith("unknown tool cut_all (tools: ") && other.contains("edit") && other.contains("highlights"));
     }
 
     // No media file: the error says what 'media' is; "file"/"path" (other commands' names) are taken as 'media'
