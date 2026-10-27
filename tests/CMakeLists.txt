@@ -50,6 +50,7 @@ schneidi_test(test_pool_storage) # Media Pool filter + keys, Media Storage marks
 schneidi_test(test_pool_remove) # removing clips from the Media Pool: core op, undo, watch, AI turn, CLI op, keys, question
 target_link_libraries(test_pool_remove PRIVATE schneidi_cli_lib)
 schneidi_test(test_color)
+schneidi_test(test_color_bake)
 schneidi_test(test_grade_windows)
 schneidi_test(test_workspace)
 schneidi_test(test_luts)

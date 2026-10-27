@@ -175,9 +175,10 @@ inline uint64_t lerp(uint64_t a, uint64_t b, uint32_t f)
 struct LutTables {
     int n = 0;                   // 3D grid size, 0 = no nodes (too big, per pixel)
     std::vector<uint64_t> nodes; // R | G << 21 | B << 42, padded so the neighbor of the last node can be read
-    // Per channel input 0..1 in kSteps steps -> 3D: node offset << 8 | fraction (1/256 of a cell); 1D: output byte
+    // Per channel input 0..1 in kSteps steps -> 3D: node offset << 8 | fraction (1/256 of a cell); 1D: output
+    // in 1/65536 of 0..1 (+ one entry, interpolated between the steps)
     std::vector<int32_t> coord[3];
-    std::vector<uint8_t> out1d[3];
+    std::vector<int32_t> out1d[3];
 };
 
 struct Baked {
@@ -231,8 +232,10 @@ std::shared_ptr<const LutTables> makeTables(const Lut& lut)
         }
     } else {
         for (int c = 0; c < 3; ++c) {
-            t->out1d[c].resize(kSteps + 1);
-            for (int k = 0; k <= kSteps; ++k) t->out1d[c][k] = toByte(sample1d(lut, c, float(k) / kSteps));
+            t->out1d[c].resize(kSteps + 2);
+            for (int k = 0; k <= kSteps; ++k)
+                t->out1d[c][k] = int32_t(std::lround(std::clamp(sample1d(lut, c, float(k) / kSteps), 0.0f, 1.0f) * 65536.0f));
+            t->out1d[c][kSteps + 1] = t->out1d[c][kSteps];
         }
     }
     return t;
@@ -311,13 +314,20 @@ void applyRows(uint8_t* rgba, size_t count, const Baked& b)
         auto step = [](int v) { return (std::clamp(v, 0, 1 << 24) + (1 << 11)) >> 12; };
         const LutTables& t = *b.lut;
         if (b.kind == Baked::MixLut1d) {
-            const uint8_t *o0 = t.out1d[0].data(), *o1 = t.out1d[1].data(), *o2 = t.out1d[2].data();
+            // Between the steps linearly (steep curves near black would show the steps)
+            const int32_t* o[3] = {t.out1d[0].data(), t.out1d[1].data(), t.out1d[2].data()};
+            auto out = [](const int32_t* t, int v) {
+                v = std::clamp(v, 0, 1 << 24);
+                const int k = v >> 12, f = v & 4095;
+                const int x = t[k] + int((int64_t(t[k + 1] - t[k]) * f) >> 12);
+                return uint8_t((x * 255 + 32768) >> 16);
+            };
             for (size_t i = 0; i < count; ++i, rgba += 4) {
                 const int r = rgba[0], g = rgba[1], bl = rgba[2];
                 const int y = ys[0][r] + ys[1][g] + ys[2][bl];
-                rgba[0] = o0[step(y + vs[0][r])];
-                rgba[1] = o1[step(y + vs[1][g])];
-                rgba[2] = o2[step(y + vs[2][bl])];
+                rgba[0] = out(o[0], y + vs[0][r]);
+                rgba[1] = out(o[1], y + vs[1][g]);
+                rgba[2] = out(o[2], y + vs[2][bl]);
             }
             break;
         }
