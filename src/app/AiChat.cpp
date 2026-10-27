@@ -375,8 +375,15 @@ void AiChat::nextTool()
     e.details = pretty(call.input);
     e.state = Entry::State::Running;
     const int entry = add(e);
-    if (!call.error.isEmpty()) { // never reached the tool
-        toolDone(entry, call, QString("could not read the arguments of this call: %1").arg(call.error), {}, true);
+    if (!call.error.isEmpty()) { // never reached the tool; what to send instead (small models write "social")
+        QStringList params;
+        for (const QJsonValue& t : m_mcp->tools())
+            if (t["name"].toString() == call.name) params = t["inputSchema"]["properties"].toObject().keys();
+        const QString how = params.isEmpty() ? QString("send them as one JSON object")
+                                             : QString("send them as one JSON object of the tool's parameters, e.g. "
+                                                       "{\"%1\": …} (%2 takes: %3)")
+                                                   .arg(params.first(), call.name, params.join(", "));
+        toolDone(entry, call, QString("could not read the arguments of this call: %1; %2").arg(call.error, how), {}, true);
         return;
     }
     m_mcp->call(

@@ -37,7 +37,9 @@ QJsonObject readArguments(const QString& text, QString* error)
     QJsonParseError err;
     const QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8(), &err);
     if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-        *error = QString("the arguments are not a JSON object (%1)").arg(err.errorString());
+        // In English (the model reads it; Qt's own error text follows the interface language)
+        *error = err.error == QJsonParseError::NoError ? QString("the arguments are not a JSON object")
+                                                       : QString("the arguments are no valid JSON (at character %1)").arg(err.offset);
         return {};
     }
     return doc.object();
