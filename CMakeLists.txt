@@ -32,8 +32,6 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
 # Own audio engine (src/engine/audio): FFmpeg libraries directly, see docs/archiv/plan-0.10-ton.md
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libswscale libavutil)
-# Time stretching with pitch correction (own audio engine)
-pkg_check_modules(RUBBERBAND REQUIRED IMPORTED_TARGET rubberband)
 # Sound devices of the own audio engine: miniaudio, a single header (Debian libminiaudio-dev, MSYS2 miniaudio)
 find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h PATH_SUFFIXES miniaudio REQUIRED)
 find_package(Threads REQUIRED)
@@ -161,6 +159,7 @@ add_library(schneidi_lib STATIC
     src/engine/video/Hardware.h   src/engine/video/Hardware.cpp
     src/engine/audio/Mixer.h      src/engine/audio/Mixer.cpp
     src/engine/audio/Retimer.h    src/engine/audio/Retimer.cpp
+    src/engine/audio/Stretch.h    src/engine/audio/Stretch.cpp
     src/engine/audio/Path.h       src/engine/audio/Path.cpp
     src/engine/audio/Device.h     src/engine/audio/Device.cpp
     src/engine/audio/Player.h     src/engine/audio/Player.cpp
@@ -270,7 +269,7 @@ file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJE
 qt_add_resources(schneidi_lib "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
 target_include_directories(schneidi_lib PUBLIC src)
 target_include_directories(schneidi_lib PRIVATE ${MINIAUDIO_INCLUDE_DIR})
-target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::MLT PkgConfig::FFMPEG PkgConfig::RUBBERBAND
+target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::MLT PkgConfig::FFMPEG
                       Threads::Threads ${CMAKE_DL_LIBS})
 if(TARGET Qt6::DBus)
     target_link_libraries(schneidi_lib PUBLIC Qt6::DBus)
