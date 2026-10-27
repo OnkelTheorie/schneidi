@@ -5,11 +5,14 @@
 #   fuzz_project  project files (.schneidi): reading, migrations, saving again
 #   fuzz_edl, fuzz_fcp7, fuzz_otio   timelines of other programs, imported into a project
 #   fuzz_srt      subtitle files
-# Run one (from the build folder; the first folder collects new inputs, the others are seeds):
-#   mkdir -p fuzz-corpus/http && tests/fuzz/fuzz_http -dict=../tests/fuzz/dict/http.dict -max_len=8192 \
-#       -rss_limit_mb=2048 -timeout=10 fuzz-corpus/http ../tests/fuzz/corpus/http
-# A finding is saved as crash-*/timeout-*/oom-*; shrink it with -minimize_crash=1 -runs=10000 <file>, and replay it
-# by passing the file instead of folders.
+# Run one (from the build folder; the first folder collects new inputs, the others are seeds). All paths absolute:
+# fuzz_http, fuzz_mcp and fuzz_project change into their work folder (like the server) before reading them.
+#   mkdir -p fuzz-corpus/http fuzz-findings/http && tests/fuzz/fuzz_http -dict=$PWD/../tests/fuzz/dict/http.dict \
+#       -max_len=8192 -rss_limit_mb=2048 -timeout=10 -max_total_time=1800 -artifact_prefix=$PWD/fuzz-findings/http/ \
+#       $PWD/fuzz-corpus/http $PWD/../tests/fuzz/corpus/http
+# A finding is saved as crash-*/timeout-*/oom-* in the -artifact_prefix folder; replay it by passing the file instead
+# of folders. Shrink it with -minimize_crash=1 -max_total_time=90 -exact_artifact_path=<out> <file> (did not work for
+# fuzz_project, whose inputs are shrunk by hand).
 
 add_custom_target(fuzz_all)
 
