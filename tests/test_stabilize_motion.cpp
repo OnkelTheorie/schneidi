@@ -261,6 +261,25 @@ int main(int argc, char** argv)
         CHECK(tripod < b2 * 0.1);
     }
 
+    // --- A fast turn (30 px per frame for 10 frames) amid shake: followed instead of zooming the whole clip
+    {
+        auto cams = shakyCameras(80, 8, 0.5, 0, 0, 9);
+        for (int k = 0; k < 80; ++k) cams[size_t(k)].u += Complex(std::clamp(k - 35, 0, 10) * 30.0 / W, 0);
+        std::vector<Motion> motions;
+        run(scene, cams, &motions);
+        PathParams p;
+        p.aspect = double(W) / H;
+        const auto corr = corrections(motions, p);
+        const double zoom = 1 / std::abs(corr[0].a);
+        // frames well before it (the smooth path starts to turn one smoothing radius early)
+        const std::vector<Camera> calm(cams.begin(), cams.begin() + 18);
+        const std::vector<Similarity> calmCorr(corr.begin(), corr.begin() + 18);
+        const double before = residual(calm, {}), after = residual(calm, calmCorr);
+        std::printf("fast turn: zoom %.3f, shake before it %.2f -> %.3f px\n", zoom, before, after);
+        CHECK(zoom < 1.21);
+        CHECK(after < before * 0.1);
+    }
+
     // --- Warps
     {
         std::vector<uint8_t> src(size_t(64) * 48), dst(src.size(), 0);

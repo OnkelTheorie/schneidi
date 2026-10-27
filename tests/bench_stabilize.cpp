@@ -128,13 +128,23 @@ Measure measure(const std::vector<std::vector<uint8_t>>& frames, int w, int h, i
     return m;
 }
 
+// Luma plane at w x h (a bare producer may answer in its own size: 2 x 2 average or nearest pixel)
 std::vector<uint8_t> luma(Mlt::Frame& f, int w, int h)
 {
     mlt_image_format fmt = mlt_image_yuv420p;
     int ww = w, hh = h;
     const uint8_t* d = f.get_image(fmt, ww, hh);
-    if (!d || ww != w || hh != h) return {};
-    return {d, d + size_t(w) * h};
+    std::vector<uint8_t> out(size_t(w) * h, 0);
+    if (!d || ww < 1 || hh < 1) return out;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            if (ww == w && hh == h) out[size_t(y) * w + x] = d[size_t(y) * ww + x];
+            else if (ww == 2 * w && hh == 2 * h) {
+                const uint8_t* r = d + size_t(2 * y) * ww + 2 * x;
+                out[size_t(y) * w + x] = uint8_t((r[0] + r[1] + r[ww] + r[ww + 1] + 2) / 4);
+            } else out[size_t(y) * w + x] = d[size_t(y * hh / h) * ww + x * ww / w];
+        }
+    return out;
 }
 
 // Own: analysis (timed) + timeline render at w x h
@@ -251,6 +261,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("bench-stabilize");
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     Check::initMlt();
     std::setlocale(LC_NUMERIC, "C");

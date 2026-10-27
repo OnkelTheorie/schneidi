@@ -394,6 +394,9 @@ Motion Estimator::push(const uint8_t* luma, int stride)
 namespace {
 
 constexpr double kMaxZoom = 2.0;
+// The correction never needs more zoom than this: where the camera moves more (a pan, a fast turn) the smooth path
+// follows it instead of fighting it (one big move would otherwise zoom the whole clip)
+constexpr double kCorridorZoom = 1.2;
 
 // Zoom so that the output corners map inside the input picture (1 = none needed)
 double neededZoom(const Similarity& s, double aspect)
@@ -435,18 +438,34 @@ std::vector<Similarity> corrections(const std::vector<Motion>& motions, const Pa
         tx[size_t(k)] = t.real();
         ty[size_t(k)] = t.imag();
     }
-    // Smoothed camera
-    std::vector<double> sth, ssg, stx, sty;
-    if (p.smoothing <= 0) { // still camera: its mean position (needs the least zoom)
-        auto mean = [n](const std::vector<double>& v) {
-            double s = 0;
-            for (double x : v) s += x;
-            return std::vector<double>(size_t(n), s / n);
-        };
-        sth = mean(th), ssg = mean(sg), stx = mean(tx), sty = mean(ty);
-    } else {
-        sth = gaussian(th, p.smoothing), ssg = gaussian(sg, p.smoothing);
-        stx = gaussian(tx, p.smoothing), sty = gaussian(ty, p.smoothing);
+    // Smoothed camera, kept within a corridor around the real one: smoothing and clamping in turns (the
+    // difference real - smooth is the correction; its limits leave the zoom at most kCorridorZoom)
+    const double margin = 0.5 * (1 - 1 / kCorridorZoom); // per side, in widths
+    const double hy = 0.5 / std::max(0.1, p.aspect);
+    const double limX = 0.6 * margin, limY = 0.6 * margin * 2 * hy, limScale = 0.2 * margin;
+    const double limAngle = 0.4 * margin * 2 * hy / std::hypot(0.5, hy);
+    std::vector<double> sth = th, ssg = sg, stx = tx, sty = ty;
+    auto clampTo = [n](std::vector<double>& smooth, const std::vector<double>& real, double lim) {
+        for (int k = 0; k < n; ++k)
+            smooth[size_t(k)] = real[size_t(k)] - std::clamp(real[size_t(k)] - smooth[size_t(k)], -lim, lim);
+    };
+    auto mean = [n](const std::vector<double>& v) {
+        double s = 0;
+        for (double x : v) s += x;
+        return std::vector<double>(size_t(n), s / n);
+    };
+    for (int it = 0; it < 12; ++it) {
+        if (p.smoothing <= 0) { // still camera: its mean position (needs the least zoom)
+            if (it == 0) sth = mean(th), ssg = mean(sg), stx = mean(tx), sty = mean(ty);
+            else sth = gaussian(sth, 12), ssg = gaussian(ssg, 12), stx = gaussian(stx, 12), sty = gaussian(sty, 12);
+        } else {
+            sth = gaussian(sth, p.smoothing), ssg = gaussian(ssg, p.smoothing);
+            stx = gaussian(stx, p.smoothing), sty = gaussian(sty, p.smoothing);
+        }
+        clampTo(sth, th, limAngle);
+        clampTo(ssg, sg, limScale);
+        clampTo(stx, tx, limX);
+        clampTo(sty, ty, limY);
     }
     // Output -> input: C_k after S_k^-1 (the smooth camera's picture, taken from the real frame)
     std::vector<double> zoom(out.size(), 1.0);
