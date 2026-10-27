@@ -618,30 +618,30 @@ void testSelectAllMixed()
     CHECK_EQ(f.v1(), v1);
 
     // Delete: everything selected in one undo step, the locked track stays
-    int steps = undo->count();
+    int steps = undo->index();
     f.ed.selectAll();
     f.ed.deleteSelection();
     CHECK(f.v1().isEmpty() && f.st(0).isEmpty());
     CHECK_EQ(f.st(1), st2);
-    CHECK_EQ(undo->count(), steps + 1);
+    CHECK_EQ(undo->index(), steps + 1);
     undo->undo();
     CHECK(f.v1() == v1 && f.st(0) == st1);
 
     // Move: the subtitles go along in time (one undo step), also when a subtitle is moved with clips selected
     f.ed.selectAll();
-    steps = undo->count();
+    steps = undo->index();
     f.ed.moveClips(f.sel.ids().values().toVector(), 20, TrackKind::Video, 0);
     CHECK_EQ(f.v1(), QString("20-70 70-120 120-170"));
     CHECK_EQ(f.st(0), QString("30-60:a 80-110:b"));
     CHECK_EQ(f.st(1), st2);
-    CHECK_EQ(undo->count(), steps + 1);
+    CHECK_EQ(undo->index(), steps + 1);
     f.ed.moveSubtitles(f.sel.ids().values().toVector(), -40, 0); // not before frame 0: by -20
     CHECK(f.v1() == v1 && f.st(0) == st1);
-    CHECK_EQ(undo->count(), steps + 2);
+    CHECK_EQ(undo->index(), steps + 2);
 
     // Nudge (, and .) likewise; nothing selected = no (empty) undo step; subtitles alone move too
     f.ed.nudgeSelection(-5); // a clip starts at 0
-    CHECK_EQ(undo->count(), steps + 2);
+    CHECK_EQ(undo->index(), steps + 2);
     f.ed.nudgeSelection(5);
     CHECK_EQ(f.v1(), QString("5-55 55-105 105-155"));
     CHECK_EQ(f.st(0), QString("15-45:a 65-95:b"));
@@ -649,9 +649,9 @@ void testSelectAllMixed()
     f.ed.nudgeSelection(5);
     CHECK_EQ(f.st(0), QString("20-50:a 65-95:b"));
     f.sel.clear();
-    steps = undo->count();
+    steps = undo->index();
     f.ed.nudgeSelection(5);
-    CHECK_EQ(undo->count(), steps);
+    CHECK_EQ(undo->index(), steps);
     undo->undo();
     undo->undo();
     CHECK(f.v1() == v1 && f.st(0) == st1);
@@ -669,7 +669,9 @@ void testSelectAllMixed()
     while (undo->canUndo()) undo->undo();
     CHECK(f.v1() == v1 && f.st(0) == st1);
 
-    // Mouse: dragging a clip of the selection takes the subtitles along, dragging a subtitle the clips
+    // Mouse: dragging a clip of the selection takes the subtitles along, dragging a subtitle the clips. One video
+    // track only, so V1 lies right below the subtitle tracks
+    f.p.edit("one video track", [](Timeline& tl) { tl.video.resize(1); });
     TimelineView tv(&f.ed);
     tv.resize(1200, 400);
     tv.show();
@@ -678,16 +680,16 @@ void testSelectAllMixed()
     auto x = [&](double frame) { return int(std::lround(TimelineView::kHeaderW + frame * ppf)); };
     // ST2 at the top (y 30), ST1 below (64), separator, V1 from 104
     f.ed.selectAll();
-    steps = undo->count();
+    steps = undo->index();
     drag(tv, {x(75), 140}, {x(75) + int(std::lround(10 * ppf)), 140});
     CHECK_EQ(f.v1(), QString("10-60 60-110 110-160"));
     CHECK_EQ(f.st(0), QString("20-50:a 70-100:b"));
     CHECK_EQ(f.st(1), st2);
-    CHECK_EQ(undo->count(), steps + 1);
+    CHECK_EQ(undo->index(), steps + 1);
     CHECK_EQ(f.sel.ids().size(), 5);
     drag(tv, {x(35), 81}, {x(35) - int(std::lround(10 * ppf)), 81});
     CHECK(f.v1() == v1 && f.st(0) == st1);
-    CHECK_EQ(undo->count(), steps + 2);
+    CHECK_EQ(undo->index(), steps + 2);
 }
 
 } // namespace
