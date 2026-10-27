@@ -1,11 +1,12 @@
 // AI chat providers without network (app/AiProvider.h, app/AiKeys.h): requests of both protocols (Anthropic Messages
-// API, OpenAI-compatible chat completions) from one conversation – tools, tool results with pictures (OpenAI: as a
-// user message after the tool answers), the Anthropic content sent back unchanged (thinking blocks), caching, the
-// headers with the key; streamed answers split anywhere (text, tool calls, usage, errors in the stream, servers
-// without blank lines, Ollama's whole calls); error answers to messages (401, 429 with Retry-After, overloaded, 404 …);
-// model lists; where a key comes from (environment > company file > keychain > settings, never another provider's
-// variable), storing it (keychain first, no second plain copy), the company file (merged, locked, broken) and the
-// provider choice; what goes back to the model from long tool answers; the chat's one-line tool steps.
+// API, OpenAI-compatible chat completions) from one conversation – tools, tool results with pictures (OpenAI: as a user
+// message after the tool answers), the Anthropic content sent back unchanged (thinking blocks), caching, the headers
+// with the key; streamed answers split anywhere (text, tool calls, usage, errors in the stream, servers without blank
+// lines, Ollama's whole calls); error answers to messages (401, 429 with Retry-After, overloaded, 404, a request larger
+// than the model's context …); model lists; where a key comes from (environment > company file > keychain > settings,
+// never another provider's variable), storing it (keychain first, no second plain copy), the company file (merged,
+// locked, broken) and the provider choice; what goes back to the model from long tool answers; the chat's one-line tool
+// steps; tool calls a model wrote as text.
 // AI_KEYCHAIN_TEST=1 also writes, reads and deletes a key in the Secret Service of the session bus – only on a
 // private bus: dbus-run-session -- sh -c 'echo -n x | gnome-keyring-daemon --unlock; build-tests/tests/test_ai_providers'
 
@@ -387,6 +388,27 @@ void testBodiesAndErrors()
     CHECK(f.message.contains("Bad Gateway"));
     CHECK(Ai::httpFailure(400, R"({"error":{"message":"bad"}})").kind == Ai::Failure::Kind::Request);
     CHECK(Ai::httpFailure(413, "{}").kind == Ai::Failure::Kind::TooLarge);
+    // A request larger than the model's context, in the words of local servers: the numbers and what helps
+    {
+        const Ai::Failure llama = Ai::httpFailure(
+            400, R"({"error":{"code":400,"message":"request (15768 tokens) exceeds the available context size (4096 tokens), try increasing it","type":"exceed_context_size_error"}})");
+        CHECK(llama.kind == Ai::Failure::Kind::TooLarge && !llama.retry);
+        CHECK(llama.message.contains("4096") && llama.message.contains("15768") && llama.message.contains("32 768"));
+        qint64 context = 0, request = 0;
+        CHECK(Ai::contextOverflow("This model's maximum context length is 8192 tokens. However, your messages resulted in "
+                                  "15768 tokens. Please reduce the length of the messages.",
+                                  &context, &request));
+        CHECK(context == 8192 && request == 15768);
+        CHECK(Ai::contextOverflow("Trying to keep the first 15768 tokens when context the overflows. However, the model is "
+                                  "loaded with context length of only 4096 tokens, which is not enough.",
+                                  &context, &request));
+        CHECK(context == 4096 && request == 0);
+        CHECK(!Ai::contextOverflow("model 'qwen' not found", &context, &request));
+        // A large context that is full: a new chat helps, not the server's settings
+        CHECK(Ai::contextAdvice(131072, 140000).contains(T("„Neuer Chat“ fängt frisch an.")));
+        CHECK(!Ai::contextAdvice(131072, 140000).contains("32 768"));
+        CHECK(Ai::httpFailure(400, R"({"error":{"message":"bad tool schema"}})").kind == Ai::Failure::Kind::Request);
+    }
 
     CHECK_EQ(Ai::parseModels(QJsonDocument::fromJson(R"({"data":[{"id":"gpt-5"},{"id":"gpt-4.1"}],"has_more":false})").object()),
              QStringList({"gpt-4.1", "gpt-5"}));
@@ -607,6 +629,58 @@ void testChatHelpers()
     CHECK_EQ(AiChat::toolLine("app", {{"action", "seek"}}), T("Steuert die App: %1").arg("seek"));
 }
 
+// Tool calls a small local model wrote as text: whole answers of calls only (also fenced, listed, in <tool_call> tags,
+// arguments as a string, OpenAI's own shape); prose, other JSON and unknown keys are no calls
+void testTextCalls()
+{
+    const auto one = [](const QString& text) {
+        const QVector<Ai::ToolCall> calls = Ai::textCalls(text, "text_3");
+        return calls.size() == 1 ? calls.first() : Ai::ToolCall{};
+    };
+    Ai::ToolCall c = one(R"({"name": "edit", "arguments": {"ops": [{"op": "trim", "clip": 1}]}})");
+    CHECK_EQ(c.name, QString("edit"));
+    CHECK_EQ(c.id, QString("text_3_1"));
+    CHECK_EQ(c.input["ops"][0]["op"].toString(), QString("trim"));
+    CHECK(c.error.isEmpty());
+    c = one("```json\n{\"name\":\"info\",\"parameters\":{\"project\":\"@app\"}}\n```");
+    CHECK_EQ(c.name, QString("info"));
+    CHECK_EQ(c.input["project"].toString(), QString("@app"));
+    c = one("{\"name\": \"edit\", \"arguments\": {\"project\": \"@app\"}}\n```"); // a stray closing fence
+    CHECK_EQ(c.input["project"].toString(), QString("@app"));
+    c = one("<|im_start|>\n{\"name\": \"guide\", \"arguments\": {\"topic\":\"social\"}}\n```"); // a leaked marker
+    CHECK_EQ(c.input["topic"].toString(), QString("social"));
+    c = one("<tool_response>\n{\"name\": \"new\", \"arguments\": {\"template\": \"vertical\"}}\n</tool_response>"); // another tag
+    CHECK_EQ(c.name, QString("new"));
+    c = one(R"({"type":"function","function":{"name":"info","arguments":"{\"summary\":true}"}})");
+    CHECK_EQ(c.name, QString("info"));
+    CHECK_EQ(c.input["summary"].toBool(), true);
+    c = one(R"({"name":"info","arguments":"{\"summary\":"})"); // broken arguments: still a call, with the error
+    CHECK_EQ(c.name, QString("info"));
+    CHECK(!c.error.isEmpty());
+    const QVector<Ai::ToolCall> tagged = Ai::textCalls(
+        "Ich sehe mir das an.\n<tool_call>\n{\"name\":\"info\",\"arguments\":{}}\n</tool_call>\n<tool_call>{\"name\":"
+        "\"frames\",\"arguments\":{\"source\":\"@app\"}}",
+        "t");
+    if (CHECK_EQ(tagged.size(), 2)) {
+        CHECK_EQ(tagged[1].name, QString("frames"));
+        CHECK_EQ(tagged[1].id, QString("t_2"));
+    }
+    CHECK_EQ(Ai::textCalls(R"([{"name":"info","arguments":{}},{"name":"check","arguments":{}}])", "t").size(), 2);
+    CHECK_EQ(Ai::textCalls("{\"name\":\"info\",\"arguments\":{}}\n{\"name\":\"check\",\"arguments\":{}}", "t").size(), 2);
+    // A plan of several calls over several lines each (qwen-coder): all of them, in order
+    const QVector<Ai::ToolCall> plan = Ai::textCalls(
+        "```json\n{\"name\": \"new_timeline\", \"arguments\": {\"name\": \"Kills\"}}\n{\"name\": \"edit\", \"arguments\": {\n"
+        "    \"ops\": [\n        {\"op\": \"keep\", \"ranges\": [[\"0s\", \"1m\"]]}\n    ]\n}}\n```",
+        "t");
+    if (CHECK_EQ(plan.size(), 2)) CHECK(plan[0].name == "new_timeline" && plan[1].input["ops"][0]["op"] == "keep");
+    // No calls
+    for (const char* text : {"Fertig: der Clip ist 10 s lang.", R"(So geht es: {"name":"info","arguments":{}})",
+                             R"({"name":"Timeline 1","length":120})", R"({"name":"info"})",
+                             R"({"name":"info","arguments":{},"extra":1})", R"([{"name":"info","arguments":{}}, 5])", "{}",
+                             "<tool_call>kein JSON</tool_call>", ""})
+        CHECK(Ai::textCalls(QString::fromUtf8(text), "t").isEmpty());
+}
+
 // Only on a private session bus with a Secret Service (see the top of the file)
 void testSecretService()
 {
@@ -644,6 +718,7 @@ int main(int argc, char** argv)
     testKeys();
     testCompany();
     testChatHelpers();
+    testTextCalls();
     testSecretService();
     return Check::result();
 }

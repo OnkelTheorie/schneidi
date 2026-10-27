@@ -8,6 +8,7 @@
 
 #include "app/AiProvider.h"
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QImage>
 #include <QObject>
@@ -62,6 +63,10 @@ public:
     const QVector<Ai::Message>& history() const { return m_history; }
     Ai::Usage usage() const { return m_usage; }
     QString transcript() const; // the whole chat as text ("Copy")
+    // Waiting for the model's first word of its answer: since when (ms), -1 = not waiting (tools run, it writes, idle)
+    qint64 waitingMs() const { return m_busy && m_waiting.isValid() ? m_waiting.elapsed() : -1; }
+    bool localModel() const { return Ai::isLocal(m_endpoint.address); } // a server on this computer
+    qint64 requestTokens() const { return m_sentChars / 4; }             // about, of the last request
     McpClient* tools() const { return m_mcp; }
     AiClient* client() const { return m_client; }
 
@@ -74,6 +79,7 @@ public:
     static constexpr int kMaxImages = 8;
     static constexpr int kMaxImageEdge = 2000; // pixels, longer edges are scaled down
     static constexpr int kMaxRounds = 40; // tool rounds per request
+    static constexpr int kMaxRepeats = 2; // a failed call sent again this often ends the request (OpenAI protocol)
 
 signals:
     void entryAdded(int index);
@@ -113,10 +119,15 @@ private:
     bool m_review = false;
     QString m_system; // fixed for the chat (providers cache it with the tools)
     QString m_guideText; // the editing guide (the `guide` tool), read once
+    QStringList m_guideTopics; // its task guides ("social" …)
     enum class Guide { No, Asking, Read } m_guide = Guide::No;
     Ai::Usage m_usage;
     int m_rounds = 0;
     bool m_nudged = false; // an empty answer was answered with "go on" in this request
+    QHash<QString, QString> m_failedCalls; // calls that failed in this request (name + arguments) -> their error
+    int m_repeats = 0; // failed calls sent again in this request
+    qint64 m_sentChars = 0; // text of the last request to the model (system, tools, history; no pictures)
+    QElapsedTimer m_waiting; // since the request to the model went out, until its first word
     int m_streaming = -1; // entry of the answer that streams in
     QVector<Ai::ToolCall> m_calls; // of the last answer
     QVector<Ai::ToolResult> m_results;

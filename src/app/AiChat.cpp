@@ -26,6 +26,12 @@ QString errorOf(const QString& text)
     return (m.isEmpty() ? text : m).simplified();
 }
 
+// A call by what it does (name and arguments; the keys of a JSON object are sorted)
+QString callKey(const Ai::ToolCall& c)
+{
+    return c.name + QString::fromUtf8(QJsonDocument(c.input).toJson(QJsonDocument::Compact));
+}
+
 QString capitalized(QString s)
 {
     if (!s.isEmpty()) s[0] = s[0].toUpper();
@@ -137,6 +143,8 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review
     m_stopped = false;
     m_rounds = 0;
     m_nudged = false;
+    m_failedCalls.clear();
+    m_repeats = 0;
     m_request = text.trimmed();
     // Pictures of earlier requests are not sent again: the model has seen them, and a long chat would outgrow what
     // providers take per request (count and size of pictures). It can look again with `frames`. Not once Claude's
@@ -189,8 +197,11 @@ void AiChat::toolsReady()
             const QJsonObject o = QJsonDocument::fromJson(r.text.toUtf8()).object();
             m_guideText = o["guide"].toString();
             QStringList topics;
-            for (const QJsonValue& t : o["topics"].toArray())
+            m_guideTopics.clear();
+            for (const QJsonValue& t : o["topics"].toArray()) {
                 topics << QString("- %1: %2").arg(t["topic"].toString(), t["title"].toString());
+                m_guideTopics << t["topic"].toString();
+            }
             if (!topics.isEmpty())
                 m_guideText += "\n\nTask guides (call `guide` with the topic before such a task):\n" + topics.join('\n');
         }
@@ -217,6 +228,10 @@ QString AiChat::systemPrompt() const
                       .arg(m_language);
     if (!m_guideText.isEmpty())
         app += "- The editing guide above is the main text of the `guide` tool: call `guide` only with a topic.\n";
+    // Small local models ask the user for the video's path (gemma4) or describe calls instead of making them
+    if (m_endpoint.protocol != Ai::Protocol::Anthropic)
+        app += "- Never ask the user for file paths or clip ids: `info` with \"@app\" lists the project's media files "
+               "(absolute paths) and its clips with their ids. Make tool calls; do not write them as text.\n";
     app += m_review ? "- The user reviews your changes: when your answer is done, they accept all changes of the "
                       "request as one undo step or discard them. Do the whole request in one go instead of asking for "
                       "confirmation in between.\n"
@@ -240,13 +255,22 @@ void AiChat::requestModel()
     r.tools = m_mcp->tools();
     r.messages = m_history;
     r.fallbacks = Ai::fallbacksFor(m_endpoint);
+    // The text it has (pictures aside): a server that read much less cut the request (see onReply)
+    m_sentChars = m_system.size() + QJsonDocument(r.tools).toJson(QJsonDocument::Compact).size();
+    for (const Ai::Message& m : m_history) {
+        m_sentChars += m.text.size();
+        for (const Ai::ToolCall& c : m.calls) m_sentChars += c.name.size() + QJsonDocument(c.input).toJson().size();
+        for (const Ai::ToolResult& t : m.results) m_sentChars += t.text.size();
+    }
     m_streaming = -1;
+    m_waiting.start();
     m_client->send(m_endpoint, r);
 }
 
 void AiChat::onText(const QString& delta)
 {
     if (!m_busy) return;
+    m_waiting.invalidate();
     if (m_streaming < 0) {
         Entry e{Entry::Kind::Assistant, delta};
         e.state = Entry::State::Running;
@@ -259,19 +283,39 @@ void AiChat::onText(const QString& delta)
 void AiChat::onReply(const Ai::Reply& reply)
 {
     if (!m_busy) return;
+    m_waiting.invalidate();
     m_usage += reply.usage;
     emit usageChanged();
+    // A local server that cut the request to the model's context (Ollama does so silently, 4096 tokens unless set
+    // otherwise): the model read only its end - without the tools and the guide, maybe without the request. Its
+    // answer is neither run nor kept (what the user writes next joins their message); the user learns why. Text has
+    // at least one token per 5 characters (about 4 here).
+    if (m_endpoint.protocol == Ai::Protocol::OpenAi && Ai::isLocal(m_endpoint.address) && reply.usage.input > 0
+        && m_sentChars > 5 * reply.usage.input + 4000) {
+        if (m_streaming >= 0) change(m_streaming, [](Entry& e) { e.state = Entry::State::Failed; });
+        m_streaming = -1;
+        addError(Ai::contextAdvice(reply.usage.input, m_sentChars / 4, true));
+        finishTurn();
+        return;
+    }
+    Ai::Reply r = reply;
+    // Small local models often write their tool calls as text ({"name":"edit","arguments":{…}}): run as if made (and
+    // so kept in the history: the model sees them answered like real calls); the text is not shown
+    if (r.calls.isEmpty() && !r.cutOff() && m_endpoint.protocol == Ai::Protocol::OpenAi) {
+        r.calls = Ai::textCalls(r.text, QString("text_%1").arg(m_history.size()));
+        if (!r.calls.isEmpty()) r.text.clear();
+    }
     // The whole text (also when it did not stream)
     if (m_streaming >= 0) {
-        change(m_streaming, [&reply](Entry& e) {
-            e.text = reply.text;
+        change(m_streaming, [&r](Entry& e) {
+            e.text = r.text;
             e.state = Entry::State::Done;
         });
-    } else if (!reply.text.trimmed().isEmpty()) {
-        add({Entry::Kind::Assistant, reply.text});
+    } else if (!r.text.trimmed().isEmpty()) {
+        add({Entry::Kind::Assistant, r.text});
     }
     m_streaming = -1;
-    if (reply.refused()) {
+    if (r.refused()) {
         // The refused answer is not kept: its tool calls would stay unanswered and break every later request (the
         // providers want the partial output dropped); what the user writes next joins their last message
         addError(T("Das Modell hat die Anfrage abgelehnt."));
@@ -280,15 +324,15 @@ void AiChat::onReply(const Ai::Reply& reply)
     }
     Ai::Message m;
     m.role = Ai::Message::Role::Assistant;
-    m.text = reply.text;
-    m.calls = reply.calls;
-    if (m_endpoint.protocol == Ai::Protocol::Anthropic) m.anthropic = reply.anthropic;
+    m.text = r.text;
+    m.calls = r.calls;
+    if (m_endpoint.protocol == Ai::Protocol::Anthropic) m.anthropic = r.anthropic;
     m_history << m;
-    if (reply.calls.isEmpty()) {
-        const bool empty = reply.text.trimmed().isEmpty();
+    if (r.calls.isEmpty()) {
+        const bool empty = r.text.trimmed().isEmpty();
         // Small local models sometimes stop with nothing after a failed tool step: asked once to go on (OpenAI
         // protocol only: there an empty assistant turn followed by a user turn is valid, the history only grows)
-        if (empty && !reply.cutOff() && !m_nudged && m_endpoint.protocol != Ai::Protocol::Anthropic) {
+        if (empty && !r.cutOff() && !m_nudged && m_endpoint.protocol != Ai::Protocol::Anthropic) {
             m_nudged = true;
             addNotice(T("Leere Antwort – die KI wird gebeten weiterzumachen …"));
             appendUser("[Note from the schneidi app: your last answer was empty. Go on with the request: fix the step "
@@ -296,15 +340,15 @@ void AiChat::onReply(const Ai::Reply& reply)
             requestModel();
             return;
         }
-        if (reply.stop == "model_context_window_exceeded" || (empty && reply.cutOff()))
+        if (r.stop == "model_context_window_exceeded" || (empty && r.cutOff()))
             addNotice(T("Der Chat ist zu lang für das Modell geworden: „Neuer Chat“ fängt frisch an (bei Ollama hilft "
                         "auch mehr Kontext, OLLAMA_CONTEXT_LENGTH)."));
-        else if (reply.cutOff()) addNotice(T("Die Antwort wurde abgeschnitten (zu lang)."));
+        else if (r.cutOff()) addNotice(T("Die Antwort wurde abgeschnitten (zu lang)."));
         else if (empty) addNotice(T("Die KI hat nichts geantwortet."));
         finishTurn();
         return;
     }
-    m_calls = reply.calls;
+    m_calls = r.calls;
     m_results.clear();
     nextTool();
 }
@@ -345,8 +389,46 @@ void AiChat::nextTool()
     e.details = pretty(call.input);
     e.state = Entry::State::Running;
     const int entry = add(e);
-    if (!call.error.isEmpty()) { // never reached the tool
-        toolDone(entry, call, QString("could not read the arguments of this call: %1").arg(call.error), {}, true);
+    if (!call.error.isEmpty()) { // never reached the tool; what to send instead (small models write "social")
+        QStringList params;
+        for (const QJsonValue& t : m_mcp->tools())
+            if (t["name"].toString() == call.name) params = t["inputSchema"]["properties"].toObject().keys();
+        const QString how = params.isEmpty() ? QString("send them as one JSON object")
+                                             : QString("send them as one JSON object of the tool's parameters, e.g. "
+                                                       "{\"%1\": …} (%2 takes: %3)")
+                                                   .arg(params.first(), call.name, params.join(", "));
+        toolDone(entry, call, QString("could not read the arguments of this call: %1; %2").arg(call.error, how), {},
+                 true);
+        return;
+    }
+    // The main guide is in the instructions already; small models ask for it again and again (~2,500 tokens each)
+    if (call.name == "guide" && call.input.value("topic").toString().trimmed().isEmpty() && !m_guideText.isEmpty()
+        && m_endpoint.protocol != Ai::Protocol::Anthropic) {
+        const QJsonObject answer{{"ok", true},
+                                 {"note", "the main guide is already in your instructions (not sent again); for a task "
+                                          "call guide with its topic: " + m_guideTopics.join(", ")}};
+        toolDone(entry, call, QString::fromUtf8(QJsonDocument(answer).toJson(QJsonDocument::Compact)), {}, false);
+        return;
+    }
+    // The same call as one that failed in this request (small models send it again unchanged, round after round): not
+    // run again, the model is told; the second time the request ends
+    if (m_endpoint.protocol != Ai::Protocol::Anthropic && m_failedCalls.contains(callKey(call))) {
+        if (++m_repeats >= kMaxRepeats) {
+            change(entry, [](Entry& x) { x.state = Entry::State::Failed; });
+            for (int i = int(m_results.size()); i < m_calls.size(); ++i)
+                m_results << Ai::ToolResult{m_calls[i].id, m_calls[i].name,
+                                            "not run: the request was ended (the same failed call again)", {}, true};
+            appendUser({}, m_results);
+            addNotice(T("Die KI wiederholt einen Schritt, der schon fehlgeschlagen ist – angehalten. Schreib, wie es "
+                        "weitergehen soll."));
+            finishTurn();
+            return;
+        }
+        toolDone(entry, call,
+                 QString("not run again: this exact call failed before in this request (%1). Do not repeat it: change "
+                         "what the error says, try another way, or tell the user what went wrong.")
+                     .arg(m_failedCalls.value(callKey(call))),
+                 {}, true);
         return;
     }
     m_mcp->call(
@@ -367,6 +449,8 @@ void AiChat::toolDone(int entry, const Ai::ToolCall& call, const QString& text, 
             if (QImage pic = QImage::fromData(QByteArray::fromBase64(img.base64)); !pic.isNull())
                 e.images << pic.scaledToHeight(std::min(pic.height(), 360), Qt::SmoothTransformation);
     });
+    if (error && !m_stopped && !m_failedCalls.contains(callKey(call)))
+        m_failedCalls.insert(callKey(call), cut(errorOf(text), 300));
     // The model reads English; a stopped call may still have happened inside the app
     const QString answer = m_stopped ? QString("stopped by the user (the call may have finished in the app anyway)") : text;
     m_results << capped({call.id, call.name, answer, m_stopped ? QVector<Ai::Image>() : images, error || m_stopped});
@@ -406,6 +490,7 @@ Ai::ToolResult AiChat::capped(Ai::ToolResult r)
 void AiChat::finishTurn()
 {
     if (!m_busy) return;
+    m_waiting.invalidate();
     m_calls.clear();
     m_results.clear();
     m_streaming = -1;

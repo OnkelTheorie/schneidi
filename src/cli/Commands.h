@@ -70,5 +70,8 @@ bool runsInApp(const Command& cmd, const QJsonObject& args);
 QJsonObject inputSchema(const Command& cmd);
 // Convert/validate raw arguments (command line strings or MCP JSON) to the declared types; throws Error
 QJsonObject normalize(const Command& cmd, const QJsonObject& raw);
+// The app's own AI chat (its tool server has Live::ChatServerEnv): a command that needs a project and got none (not
+// under another name either) works on the project open in the app - "@app" is put in; true when it was
+bool defaultToAppProject(const Command& cmd, QJsonObject& raw);
 
 } // namespace Cli

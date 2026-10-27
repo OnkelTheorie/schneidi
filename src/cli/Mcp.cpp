@@ -3,6 +3,8 @@
 #include "cli/Mcp.h"
 
 #include "cli/Commands.h"
+#include "cli/CommandsDetail.h"
+#include "cli/Live.h"
 #include "cli/Sandbox.h"
 #include "engine/MemoryRelease.h"
 
@@ -152,11 +154,37 @@ QJsonObject toolError(const QString& code, const QString& message)
     return {{"isError", true}, {"content", QJsonArray{text(QJsonObject{{"ok", false}, {"error", error}})}}};
 }
 
+namespace {
+
+// A tool that is not there: the call to make instead when it is an op of `edit` (small models call "trim" or
+// "new_timeline" as tools), else the tools there are
+QString unknownTool(const QString& name, const QJsonObject& args, const Options& opt)
+{
+    for (const detail::OpDef& d : detail::editOps()) {
+        if (d.name != name) continue;
+        QJsonObject op = args;
+        const QJsonValue project = op.take("project");
+        QJsonObject fields{{"op", name}};
+        for (auto it = op.begin(); it != op.end(); ++it) fields.insert(it.key(), it.value());
+        const QString fallback = qEnvironmentVariable(Live::ChatServerEnv).isEmpty() ? "<project file>" : Live::AppProject;
+        const QJsonObject call{{"project", project.isString() ? project : QJsonValue(fallback)}, {"ops", QJsonArray{fields}}};
+        return QString("unknown tool %1: '%1' is an op of the edit tool - call edit with %2 (op %3)")
+            .arg(name, QString::fromUtf8(QJsonDocument(call).toJson(QJsonDocument::Compact)), d.usage);
+    }
+    QStringList tools;
+    for (const Command& c : commands())
+        if (offered(c.name, opt)) tools << c.name;
+    return QString("unknown tool %1 (tools: %2)").arg(name, tools.join(", "));
+}
+
+} // namespace
+
 QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& notify)
 {
     const QString name = params["name"].toString();
     const Command* cmd = find(name);
-    if (!cmd || !offered(name, opt)) return toolError("NOT_FOUND", "unknown tool " + name);
+    if (!cmd || !offered(name, opt))
+        return toolError("NOT_FOUND", unknownTool(name, params["arguments"].toObject(), opt));
     Context ctx;
     ctx.mcp = true;
     // Long jobs (render, transcribe, loudness …) report progress when the client asked for it
@@ -174,8 +202,15 @@ QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& 
     QJsonObject out;
     try {
         testHooks(name, ctx.progress);
-        QJsonObject result = execute(*cmd, normalize(*cmd, params["arguments"].toObject()), ctx);
+        QJsonObject args = params["arguments"].toObject();
+        const bool appProject = defaultToAppProject(*cmd, args);
+        QJsonObject result = execute(*cmd, normalize(*cmd, args), ctx);
         result = Sandbox::mapBack(result).toObject(); // paths as the client knows them (--map)
+        if (appProject) {
+            QJsonArray notes = result["notes"].toArray();
+            notes << "no 'project' given: worked on \"@app\", the project open in the app (give it in every call)";
+            result["notes"] = notes;
+        }
         out = toolResult(result);
         QJsonArray content = out["content"].toArray();
         for (const QImage& img : ctx.images)

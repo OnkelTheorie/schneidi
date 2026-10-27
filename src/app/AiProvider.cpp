@@ -4,6 +4,7 @@
 
 #include <QHostAddress>
 #include <QJsonDocument>
+#include <QRegularExpression>
 
 #include <algorithm>
 
@@ -36,7 +37,10 @@ QJsonObject readArguments(const QString& text, QString* error)
     QJsonParseError err;
     const QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8(), &err);
     if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-        *error = QString("the arguments are not a JSON object (%1)").arg(err.errorString());
+        // In English (the model reads it; Qt's own error text follows the interface language)
+        *error = err.error == QJsonParseError::NoError
+                     ? QString("the arguments are not a JSON object")
+                     : QString("the arguments are no valid JSON (at character %1)").arg(err.offset);
         return {};
     }
     return doc.object();
@@ -483,6 +487,58 @@ QString providerMessage(const QByteArray& body)
     return m.trimmed();
 }
 
+bool contextOverflow(const QString& said, qint64* context, qint64* request)
+{
+    *context = *request = 0;
+    const auto match = [&said](const char* pattern) {
+        return QRegularExpression(pattern, QRegularExpression::CaseInsensitiveOption
+                                               | QRegularExpression::DotMatchesEverythingOption)
+            .match(said);
+    };
+    // llama.cpp: "request (15768 tokens) exceeds the available context size (4096 tokens), try increasing it"
+    if (const auto m = match(R"(request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\))");
+        m.hasMatch()) {
+        *request = m.captured(1).toLongLong();
+        *context = m.captured(2).toLongLong();
+        return true;
+    }
+    // OpenAI, vLLM: "This model's maximum context length is 8192 tokens. However, your messages resulted in 15768
+    // tokens"
+    if (const auto m = match(R"(maximum context length is (\d+) tokens.*?(?:resulted in|requested) (\d+) tokens)");
+        m.hasMatch()) {
+        *context = m.captured(1).toLongLong();
+        *request = m.captured(2).toLongLong();
+        return true;
+    }
+    // LM Studio: "… the model is loaded with context length of only 4096 tokens, which is not enough"
+    if (const auto m = match(R"(context length of only (\d+) tokens)"); m.hasMatch()) {
+        *context = m.captured(1).toLongLong();
+        return true;
+    }
+    return match(R"(context_length_exceeded|exceeds? the (?:available )?context (?:size|length|window))").hasMatch();
+}
+
+QString contextAdvice(qint64 context, qint64 request, bool silent)
+{
+    QString what;
+    if (silent)
+        what = T("Der KI-Server hat die Anfrage gekürzt, ohne es zu melden: das Modell nimmt %1 Token, die Anfrage hat "
+                 "etwa %2.")
+                   .arg(context)
+                   .arg(request);
+    else if (context > 0 && request > 0)
+        what = T("Die Anfrage passt nicht in den Kontext des Modells: es nimmt %1 Token, die Anfrage hat %2.")
+                   .arg(context)
+                   .arg(request);
+    else what = T("Die Anfrage passt nicht in den Kontext des Modells.");
+    // A large context is full: the chat grew too long; a small one cannot even take the tools
+    if (context >= 32768) return what + " " + T("„Neuer Chat“ fängt frisch an.");
+    return what + " "
+           + T("In den Einstellungen des KI-Servers die Kontextlänge auf mindestens 32 768 Token stellen – schneidis "
+               "Werkzeuge und Anleitung allein brauchen etwa 15 000 (Ollama: OLLAMA_CONTEXT_LENGTH, LM Studio, AtomicChat "
+               "und andere: Kontextlänge des Modells).");
+}
+
 Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryAfter)
 {
     Failure f;
@@ -490,7 +546,11 @@ Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryA
     const QString type = parseObject(body).value("error").toObject().value("type").toString();
     const auto with = [&said](const QString& text) { return said.isEmpty() ? text : T("%1 (%2)").arg(text, said); };
     f.retryAfterS = std::clamp(retryAfter.trimmed().toInt(), 0, 600);
-    if (status == 401 || status == 403) {
+    qint64 context = 0, request = 0;
+    if ((status == 400 || status == 413 || status >= 500) && contextOverflow(said, &context, &request)) {
+        f.kind = Failure::Kind::TooLarge;
+        f.message = contextAdvice(context, request);
+    } else if (status == 401 || status == 403) {
         f.kind = Failure::Kind::Key;
         f.message = with(status == 401 ? T("Der Schlüssel wurde abgelehnt. Prüfe ihn in Einstellungen › KI.")
                                        : T("Der Anbieter verweigert den Zugriff mit diesem Schlüssel."));
@@ -522,6 +582,77 @@ Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryA
         f.message = with(T("Unerwartete Antwort (HTTP %1).").arg(status));
     }
     return f;
+}
+
+QVector<ToolCall> textCalls(const QString& text, const QString& idPrefix)
+{
+    // One written call: exactly a name and its arguments (an id or "type" may come along), or OpenAI's own shape
+    // {"type":"function","function":{…}}; anything else in the object = not a call
+    const auto call = [](QJsonObject o, ToolCall* out) {
+        if (o.value("function").isObject() && o.size() <= 3) o = o.value("function").toObject();
+        const QString args = o.contains("arguments") ? "arguments" : "parameters";
+        static const QStringList known{"name", "arguments", "parameters", "id", "type"};
+        const QString name = o.value("name").toString().trimmed();
+        if (name.isEmpty() || !o.contains(args)) return false;
+        for (const QString& k : o.keys())
+            if (!known.contains(k)) return false;
+        out->name = name;
+        const QJsonValue a = o.value(args);
+        if (a.isObject()) out->input = a.toObject();
+        else if (a.isString()) out->input = readArguments(a.toString(), &out->error);
+        else if (!a.isNull()) out->error = "the arguments are not a JSON object";
+        return true;
+    };
+    // A block of JSON: one object, a list of them, or several one after the other (also over several lines each)
+    const auto block = [&call](const QString& json, QVector<ToolCall>* out) {
+        QJsonArray objects;
+        QByteArray rest = json.toUtf8().trimmed();
+        while (!rest.isEmpty()) {
+            QJsonParseError err;
+            QJsonDocument doc = QJsonDocument::fromJson(rest, &err);
+            qsizetype used = rest.size();
+            if (err.error == QJsonParseError::GarbageAtEnd) { // the next value follows: this one ends there
+                used = err.offset;
+                doc = QJsonDocument::fromJson(rest.left(used), &err);
+            }
+            if (err.error != QJsonParseError::NoError || used <= 0) return false;
+            if (doc.isArray())
+                for (const QJsonValue& v : doc.array()) objects << v;
+            else objects << doc.object();
+            rest = rest.mid(used).trimmed();
+        }
+        if (objects.isEmpty()) return false;
+        for (const QJsonValue& v : objects) {
+            ToolCall c;
+            if (!v.isObject() || !call(v.toObject(), &c)) return false;
+            *out << c;
+        }
+        return true;
+    };
+    QVector<ToolCall> calls;
+    // Chat template markers that leaked into the text (seen: "<|im_start|>" before a call)
+    static const QRegularExpression marker("<\\|[a-z_]+\\|>");
+    QString t = QString(text).remove(marker).trimmed();
+    // The whole answer in one other tag (seen: a call inside <tool_response>)
+    static const QRegularExpression wrapped(R"(^<([a-z_]+)>(.*)</\1>$)", QRegularExpression::DotMatchesEverythingOption);
+    if (const auto m = wrapped.match(t); m.hasMatch() && m.captured(1) != "tool_call") t = m.captured(2).trimmed();
+    if (t.contains("<tool_call>")) {
+        // Hermes/Qwen style: every tag is a call (the closing tag may be missing at the end)
+        for (QString part : t.split("<tool_call>").mid(1)) {
+            part = part.section("</tool_call>", 0, 0).trimmed();
+            if (part.startsWith("```")) part = part.section('\n', 1).section("```", 0, 0);
+            if (!block(part.trimmed(), &calls)) return {};
+        }
+    } else {
+        // A ```json fence, also only half of one (seen: a call followed by a lone closing fence)
+        QString json = t;
+        if (json.startsWith("```")) json = json.section('\n', 1); // the fence line may name the language
+        if (json.endsWith("```")) json.chop(3);
+        if (!json.trimmed().startsWith('{') && !json.trimmed().startsWith('[')) return {};
+        if (!block(json.trimmed(), &calls)) return {};
+    }
+    for (int i = 0; i < calls.size(); ++i) calls[i].id = QString("%1_%2").arg(idPrefix).arg(i + 1);
+    return calls;
 }
 
 QStringList parseModels(const QJsonObject& body)

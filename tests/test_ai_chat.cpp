@@ -5,10 +5,12 @@
 // outside are switched off; what the provider gets (key header, guide in the system prompt, tools, the thinking block
 // sent back unchanged, tool results, pictures of `frames` as a user message after the tool answers); review mode
 // (accept = one undo step, discard = all back and the AI is told, editing meanwhile keeps the single steps, a file of a
-// watch folder waits until the user has chosen); what the user changed between two answers comes with the next
-// request (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on; errors
-// (bad key, overloaded then fine, no server), stopping a request, test runs that never send; the chat section in
-// Settings › AI (test connection, model list, key stored).
+// watch folder waits until the user has chosen); what the user changed between two answers comes with the next request
+// (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on, tool calls it
+// wrote as text are run, a call without a project works on the open one, a request a local server cut is not run,
+// unreadable arguments are answered with what to send, `guide` without a topic gets the topics only, a failed call sent
+// again is not run (twice: the request ends); errors (bad key, overloaded then fine, no server), stopping a request,
+// test runs that never send; the chat section in Settings › AI (test connection, model list, key stored).
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
 
 #include "check.h"
@@ -193,9 +195,9 @@ FakeProvider::Response anthropicText(const QString& text, int delayMs = 0)
             delayMs};
 }
 
-FakeProvider::Response openAiTool(const QString& id, const QString& name, const QJsonObject& args)
+// json: the arguments as the model wrote them (also no JSON at all)
+FakeProvider::Response openAiToolText(const QString& id, const QString& name, const QString& json)
 {
-    const QString json = QString::fromUtf8(QJsonDocument(args).toJson(QJsonDocument::Compact));
     const auto chunk = [](const QJsonObject& o) { return "data: " + QJsonDocument(o).toJson(QJsonDocument::Compact) + "\n\n"; };
     const auto call = [](const QJsonObject& c) {
         return QJsonObject{{"choices", QJsonArray{QJsonObject{{"index", 0}, {"delta", QJsonObject{{"tool_calls", QJsonArray{c}}}}}}}};
@@ -207,13 +209,19 @@ FakeProvider::Response openAiTool(const QString& id, const QString& name, const 
     return {200, "text/event-stream", body};
 }
 
-FakeProvider::Response openAiText(const QString& text)
+FakeProvider::Response openAiTool(const QString& id, const QString& name, const QJsonObject& args)
+{
+    return openAiToolText(id, name, QString::fromUtf8(QJsonDocument(args).toJson(QJsonDocument::Compact)));
+}
+
+// prompt: the tokens the server says it read (Ollama: at most its context, the rest is cut silently)
+FakeProvider::Response openAiText(const QString& text, int prompt = 20000)
 {
     const auto chunk = [](const QJsonObject& o) { return "data: " + QJsonDocument(o).toJson(QJsonDocument::Compact) + "\n\n"; };
     return {200, "text/event-stream",
             chunk({{"choices", QJsonArray{QJsonObject{{"index", 0}, {"delta", QJsonObject{{"content", text}}}}}}})
                 + chunk({{"choices", QJsonArray{QJsonObject{{"index", 0}, {"delta", QJsonObject{}}, {"finish_reason", "stop"}}}}})
-                + chunk({{"choices", QJsonArray{}}, {"usage", QJsonObject{{"prompt_tokens", 500}, {"completion_tokens", 7}}}})
+                + chunk({{"choices", QJsonArray{}}, {"usage", QJsonObject{{"prompt_tokens", prompt}, {"completion_tokens", 7}}}})
                 + "data: [DONE]\n\n"};
 }
 
@@ -558,6 +566,9 @@ void test(const QString& dir)
     if (CHECK_EQ(fake.requests.size(), before + 2)) {
         const FakeProvider::Request& o1 = fake.requests[before];
         CHECK_EQ(o1.path, QByteArray("/v1/chat/completions"));
+        // Small models: look instead of asking for paths (not in Claude's prompt)
+        CHECK(o1.body["messages"][0]["content"].toString().contains("Never ask the user for file paths"));
+        CHECK(!fake.requests[0].body["system"][0]["text"].toString().contains("Never ask the user for file paths"));
         CHECK_EQ(o1.headers.value("authorization"), "Bearer " + kKey);
         CHECK(!o1.headers.contains("x-api-key"));
         CHECK_EQ(o1.body["model"].toString(), QString("test-model"));
@@ -579,7 +590,7 @@ void test(const QString& dir)
         CHECK_EQ(t->images.size(), 2);
         CHECK(t->state == AiChat::Entry::State::Done);
     }
-    CHECK_EQ(chat->usage().input, qint64(500));
+    CHECK_EQ(chat->usage().input, qint64(20000));
 
     // A click on a picture shows it bigger in a window of its own; never a popup (on X11 a popup grabs mouse and
     // keyboard, and one opened from a press kept the grab: the whole desktop stopped answering). Click/Escape close it.
@@ -635,6 +646,130 @@ void test(const QString& dir)
         CHECK_EQ(int(fake.requests.size()), sent + 4);
         if (const AiChat::Entry* n = lastOf(chat, AiChat::Entry::Kind::Notice); CHECK(n))
             CHECK_EQ(n->text, T("Die KI hat nichts geantwortet."));
+    }
+
+    // ---- Tool calls written as text (small local models): run like real ones, the JSON not shown as the answer ----
+    {
+        fake.script = {openAiText(R"({"name": "info", "arguments": {"project": "@app", "summary": true}})"),
+                       openAiText("Zwei Clips.")};
+        const int sent = int(fake.requests.size());
+        const int tools = count(chat, AiChat::Entry::Kind::Tool);
+        panel->sendText("Was ist im Projekt?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 2)) {
+            const QJsonArray m = fake.last().body["messages"].toArray();
+            const QJsonObject call = m[m.size() - 2].toObject();
+            CHECK_EQ(call["tool_calls"][0]["function"]["name"].toString(), QString("info"));
+            CHECK_EQ(m.last()["role"].toString(), QString("tool"));
+            CHECK_EQ(m.last()["tool_call_id"].toString(), call["tool_calls"][0]["id"].toString());
+            CHECK(m.last()["content"].toString().contains("\"ok\":true"));
+        }
+        CHECK_EQ(count(chat, AiChat::Entry::Kind::Tool), tools + 1);
+        for (const AiChat::Entry& e : chat->entries()) CHECK(!e.text.contains("\"arguments\""));
+        if (const AiChat::Entry* a = lastOf(chat, AiChat::Entry::Kind::Assistant); CHECK(a))
+            CHECK_EQ(a->text, QString("Zwei Clips."));
+    }
+
+    // ---- A local server that read only the end of the request (Ollama's 4096 tokens): not run, the user told why ----
+    {
+        fake.script = {openAiText(R"({"name": "edit", "arguments": {"ops": [{"op": "trim"}]}})", 4096)};
+        const int sent = int(fake.requests.size());
+        const int tools = count(chat, AiChat::Entry::Kind::Tool);
+        panel->sendText("Schneide den ersten Clip auf 10 Sekunden");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent + 1);
+        CHECK_EQ(count(chat, AiChat::Entry::Kind::Tool), tools);
+        if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e))
+            CHECK(e->text.contains("4096") && e->text.contains("OLLAMA_CONTEXT_LENGTH"));
+        // Not kept: the next request has the user's words, no answer of the model after them
+        fake.script = {openAiText("Ok.")};
+        panel->sendText("Und jetzt?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        const QJsonArray m = fake.last().body["messages"].toArray();
+        CHECK_EQ(m.last()["role"].toString(), QString("user"));
+        CHECK(m.last()["content"].toString().contains("10 Sekunden") && m.last()["content"].toString().contains("Und jetzt?"));
+    }
+
+    // ---- Arguments that are no JSON object ("social"): the answer says what to send, in English ----
+    {
+        fake.script = {openAiToolText("call_bad", "guide", "social"), openAiText("Ok.")};
+        const int sent = int(fake.requests.size());
+        panel->sendText("Wie geht ein TikTok?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 2)) {
+            const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
+            CHECK(answer.contains("no valid JSON"));
+            CHECK(answer.contains("{\"topic\": …}") && answer.contains("guide takes: topic"));
+        }
+    }
+
+    // ---- `guide` without a topic (the main guide is in the instructions): not sent again, the topics instead ----
+    {
+        fake.script = {openAiTool("call_g", "guide", QJsonObject{}), openAiText("Ok.")};
+        const int sent = int(fake.requests.size());
+        panel->sendText("Lies die Anleitung");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 2)) {
+            const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
+            CHECK(answer.contains("already in your instructions") && answer.contains("social"));
+            CHECK(!answer.contains("Editing video with schneidi"));
+        }
+    }
+
+    // ---- The same failing call again: not run, the model told; the second time the request ends ----
+    {
+        const QJsonObject bad{{"project", "@app"}, {"ops", QJsonArray{QJsonObject{{"op", "trim"}, {"clip", 999}}}}};
+        fake.script = {openAiTool("call_r1", "edit", bad), openAiTool("call_r2", "edit", bad), openAiTool("call_r3", "edit", bad),
+                       openAiText("nie erreicht")};
+        const int sent = int(fake.requests.size());
+        panel->sendText("Kürze Clip 999");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent + 3);
+        const QJsonArray m = fake.last().body["messages"].toArray();
+        CHECK(m.last()["content"].toString().contains("not run again: this exact call failed before"));
+        CHECK(m.last()["content"].toString().contains("999"));
+        if (const AiChat::Entry* n = lastOf(chat, AiChat::Entry::Kind::Notice); CHECK(n))
+            CHECK(n->text.startsWith(T("Die KI wiederholt einen Schritt, der schon fehlgeschlagen ist – angehalten. Schreib, wie "
+                                       "es weitergehen soll.")));
+        fake.script.clear();
+        // The next request starts afresh (and the unanswered call got its answer: the history stays valid)
+        fake.script = {openAiTool("call_r4", "edit", bad), openAiText("Ok.")};
+        panel->sendText("Nochmal");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        const QJsonArray m2 = fake.last().body["messages"].toArray();
+        CHECK(m2.last()["content"].toString().contains("no clip with id 999"));
+        for (int i = 0; i + 1 < m2.size(); ++i)
+            if (m2[i]["tool_calls"][0]["id"].toString() == "call_r3")
+                CHECK(m2[i + 1]["content"].toString().contains("the request was ended"));
+    }
+
+    // ---- A local model that stays silent (it reads the whole request first): the working line says why ----
+    {
+        FakeProvider::Response slow = openAiText("Da bin ich.");
+        slow.delayMs = 2500;
+        fake.script = {slow};
+        panel->setSlowHintMs(300);
+        panel->sendText("Hallo?");
+        settle(1600);
+        CHECK(panel->workingText().contains(T("Die KI arbeitet …")));
+        CHECK(panel->workingText().contains("Ein Modell auf diesem Rechner liest zuerst die ganze Anfrage"));
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK(panel->workingText().isEmpty());
+        CHECK_EQ(chat->waitingMs(), qint64(-1));
+        panel->setSlowHintMs(30000);
+    }
+
+    // ---- A call without a project (small models forget it): the chat's tools take the open project, with a note ----
+    {
+        fake.script = {openAiTool("call_np", "info", {{"summary", true}}), openAiText("Ok.")};
+        const int sent = int(fake.requests.size());
+        panel->sendText("Wie lang ist die Timeline?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 2)) {
+            const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
+            CHECK(answer.contains("\"ok\":true"));
+            CHECK(answer.contains("no 'project' given: worked on \\\"@app\\\""));
+        }
     }
 
     // ---- Errors ----

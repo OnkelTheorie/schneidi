@@ -1083,6 +1083,23 @@ const QHash<QString, QStringList>& parameterAliases()
 
 } // namespace
 
+bool defaultToAppProject(const Command& cmd, QJsonObject& raw)
+{
+    if (qEnvironmentVariable(Live::ChatServerEnv).isEmpty() || cmd.name == "new") return false; // new: a new file
+    const auto param = [&cmd](const QString& name) -> const Param* {
+        for (const Param& p : cmd.params)
+            if (p.name == name) return &p;
+        return nullptr;
+    };
+    const Param* project = param("project");
+    if (!project || !project->required || (raw.contains("project") && !raw["project"].isNull())) return false;
+    // Under another name ("path"): normalize takes it
+    for (auto it = raw.begin(); it != raw.end(); ++it)
+        if (!param(it.key()) && parameterAliases().value(it.key()).contains("project")) return false;
+    raw["project"] = Live::AppProject;
+    return true;
+}
+
 QJsonObject normalize(const Command& cmd, const QJsonObject& given)
 {
     const auto has = [&cmd](const QString& name) {

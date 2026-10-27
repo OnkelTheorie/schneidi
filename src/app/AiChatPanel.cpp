@@ -206,6 +206,10 @@ public:
         m_entry = e;
         if (m_text) {
             m_text->setText(e.kind == Entry::Kind::Error ? "⚠ " + e.text : e.text);
+            // An answer that turned out to be tool calls written as text (AiChat) is not shown; never a window of its
+            // own (set() comes before the view is in the list)
+            if (e.text.isEmpty()) hide();
+            else if (parentWidget() && isHidden()) show();
             return;
         }
         // Long answers (a project's clip list …): the start; the model got its own cut version (AiChat::capped)
@@ -323,6 +327,7 @@ AiChatPanel::AiChatPanel(AiChat* chat, QWidget* parent) : QWidget(parent), m_cha
     m_listLayout->addWidget(m_empty);
     m_working = new QLabel(T("Die KI arbeitet …"));
     m_working->setObjectName("ai_working");
+    m_working->setWordWrap(true);
     m_working->setStyleSheet(QString("QLabel { color: %1; font-style: italic; }").arg(Theme::textDim.name()));
     m_working->hide();
     m_listLayout->addWidget(m_working);
@@ -406,6 +411,9 @@ AiChatPanel::AiChatPanel(AiChat* chat, QWidget* parent) : QWidget(parent), m_cha
     m_flush->setSingleShot(true);
     m_flush->setInterval(50);
     connect(m_flush, &QTimer::timeout, this, &AiChatPanel::flush);
+    m_tick = new QTimer(this);
+    m_tick->setInterval(1000);
+    connect(m_tick, &QTimer::timeout, this, &AiChatPanel::updateWorking);
     connect(m_chat, &AiChat::entryAdded, this, &AiChatPanel::addEntry);
     connect(m_chat, &AiChat::entryChanged, this, [this](int i) {
         if (!m_dirty.contains(i)) m_dirty << i;
@@ -471,7 +479,18 @@ void AiChatPanel::updateWorking()
         shown = last.state != Entry::State::Running; // a running tool or streaming text shows it itself
     }
     m_working->setVisible(shown);
+    // The model is silent: for how long; a local one may first read ~15,000 tokens for minutes on a weak computer
+    QString text = T("Die KI arbeitet …");
+    const qint64 ms = m_chat->waitingMs();
+    if (ms >= 5000) text += QString(" %1 s").arg(ms / 1000);
+    if (ms >= m_slowHintMs && m_chat->localModel())
+        text += "\n" + T("Ein Modell auf diesem Rechner liest zuerst die ganze Anfrage (etwa %1 Token, mit den Werkzeugen "
+                         "und der Anleitung) – auf schwacher Hardware dauert das Minuten.")
+                           .arg(m_chat->requestTokens());
+    m_working->setText(text);
 }
+
+QString AiChatPanel::workingText() const { return m_working->isVisible() ? m_working->text() : QString(); }
 
 void AiChatPanel::rebuild()
 {
@@ -494,6 +513,8 @@ void AiChatPanel::scrollDown(bool force)
 
 void AiChatPanel::updateBusy(bool busy)
 {
+    if (busy) m_tick->start();
+    else m_tick->stop();
     updateWorking();
     m_sendButton->setText(busy ? T("Stopp") : T("Senden"));
     m_sendButton->setToolTip(busy ? T("Die KI anhalten") : T("Senden (Enter)"));

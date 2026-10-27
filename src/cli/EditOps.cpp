@@ -22,8 +22,24 @@ namespace Cli::detail {
 
 const Clip& clipOf(Session& s, const QJsonObject& op, const char* key)
 {
-    if (!op.contains(key)) fail("BAD_ARGUMENT", QString("missing '%1' (clip id)").arg(key));
-    const int id = op[key].toInt();
+    QJsonValue v = op.value(key);
+    // A list of one under 'clips' (the key of ops for several; gemma4 sent trim clips:[1]): that clip, with a note
+    if (v.isUndefined() && QString(key) == "clip" && op.value("clips").isArray()) {
+        const QJsonArray list = op.value("clips").toArray();
+        if (list.size() != 1)
+            fail("BAD_ARGUMENT", QString("%1 takes one clip: 'clip' (a clip id); for several clips one op each")
+                                     .arg(op.value("op").toString()));
+        v = list.first();
+        s.notes << QString("%1: clips:[%2] read as clip:%2")
+                       .arg(op.value("op").toString())
+                       .arg(v.toVariant().toString());
+    }
+    if (v.isUndefined()) fail("BAD_ARGUMENT", QString("missing '%1' (clip id)").arg(key));
+    bool number = v.isDouble();
+    const int id = number ? v.toInt() : v.toString().trimmed().toInt(&number); // "7" is 7
+    if (!number)
+        fail("BAD_ARGUMENT",
+             QString("'%1': %2 is no clip id (a number, as `info` lists them)").arg(key, v.toVariant().toString()));
     const Clip* c = TimelineOps::findClip(s.project.timeline(), id);
     if (!c) fail("NOT_FOUND", QString("no clip with id %1").arg(id));
     return *c;
@@ -289,12 +305,29 @@ void opKeep(Session& s, const QJsonObject& op)
     int at = timeOf(s, op, "at", endOf(s));
     const int start = at;
     const int track = parseTrack(op.value("track"));
-    const QJsonArray ranges = op.value("ranges").toArray();
-    if (ranges.isEmpty()) fail("BAD_ARGUMENT", "missing 'ranges' ([[from, to], …] in the source)");
+    QJsonArray ranges = op.value("ranges").toArray();
+    // One range written another way (small models): a flat pair, 'range', or from/to on the op itself
+    const auto pair = [](const QJsonArray& a) { return a.size() == 2 && !a[0].isArray() && !a[0].isObject(); };
+    QString other;
+    if (pair(ranges)) other = "ranges:[from, to]";
+    else if (ranges.isEmpty() && op.value("range").isArray()) other = "range";
+    else if (ranges.isEmpty() && op.contains("from") && op.contains("to")) other = "from/to";
+    if (!other.isEmpty()) {
+        ranges = QJsonArray{other == "range"     ? op.value("range").toArray()
+                            : other == "from/to" ? QJsonArray{op.value("from"), op.value("to")}
+                                                 : ranges};
+        s.notes << QString("keep: %1 read as ranges:[[from, to]] (one range; several: [[from, to], [from, to]])")
+                       .arg(other);
+    }
+    if (ranges.isEmpty())
+        fail("BAD_ARGUMENT", "missing 'ranges': the parts of the source to keep in order, e.g. "
+                             "{\"op\":\"keep\",\"media\":\"/path/to/clip.mkv\",\"ranges\":[[\"2s\",\"5.5s\"],[\"10s\",\"12s\"]]}");
     for (const QJsonValue& r : ranges) {
         QJsonObject sub;
+        const QJsonObject o = r.toObject();
         if (r.isArray()) sub = {{"in", r.toArray().at(0)}, {"out", r.toArray().at(1)}};
-        else sub = {{"in", r.toObject().value("from")}, {"out", r.toObject().value("to")}};
+        else if (o.contains("start")) sub = {{"in", o.value("start")}, {"out", o.value("end")}}; // as answers name ranges
+        else sub = {{"in", o.value("from")}, {"out", o.value("to")}};
         int in = 0, out = 0;
         sourceRange(s, sub, m, &in, &out);
         s.editor.placeSourceRange(m.path, in, out - 1, at, track);

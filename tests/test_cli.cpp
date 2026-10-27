@@ -2,6 +2,7 @@
 // dry run, errors leave the file untouched
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "cli/Mcp.h"
 #include "core/Project.h"
 #include "core/EffectRegistry.h"
 #include "core/ProjectFile.h"
@@ -227,6 +228,36 @@ int main(int argc, char** argv)
         CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-90|20-99]  V2:  A1: a[0-10|0-9] a[10-90|20-99]  A2:"));
     }
 
+    // In the app's own chat a command without a project works on "@app" - not `new` (it makes a file)
+    {
+        qputenv("SCHNEIDI_LIVE_SERVER", "test");
+        QJsonObject args{{"summary", true}};
+        CHECK(Cli::defaultToAppProject(*Cli::find("info"), args) && args["project"] == "@app");
+        QJsonObject path{{"path", "/x/p.schneidi"}}; // under another name: normalize takes it
+        CHECK(!Cli::defaultToAppProject(*Cli::find("info"), path));
+        QJsonObject fresh{{"template", "vertical"}};
+        CHECK(!Cli::defaultToAppProject(*Cli::find("new"), fresh) && !fresh.contains("project"));
+        qunsetenv("SCHNEIDI_LIVE_SERVER");
+        QJsonObject outside{{"summary", true}};
+        CHECK(!Cli::defaultToAppProject(*Cli::find("info"), outside));
+    }
+
+    // An analysis without a file (small models in the app's chat): the error lists the project's media to copy
+    CHECK(messageOf("highlights", {{"project", g_path}}).contains("; the media of the project: /x/a.mp4"));
+
+    // A tool that is an op of edit (small models call "new_timeline"): the error has the call to make; others list the tools
+    {
+        const auto message = [](const QString& tool, const QJsonObject& args) {
+            const QJsonObject r = Cli::Mcp::callTool({{"name", tool}, {"arguments", args}}, {}, {});
+            return QJsonDocument::fromJson(r["content"][0]["text"].toString().toUtf8())["error"]["message"].toString();
+        };
+        const QString op = message("new_timeline", {{"project", "/x/p.schneidi"}, {"name", "Kills"}});
+        CHECK(op.contains("an op of the edit tool"));
+        CHECK(op.contains(R"({"ops":[{"name":"Kills","op":"new_timeline"}],"project":"/x/p.schneidi"})"));
+        const QString other = message("cut_all", {});
+        CHECK(other.startsWith("unknown tool cut_all (tools: ") && other.contains("edit") && other.contains("highlights"));
+    }
+
     // No media file: the error says what 'media' is; "file"/"path" (other commands' names) are taken as 'media'
     CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"place","at":0}])"}}).contains("'media' is the file"));
     {
@@ -254,6 +285,29 @@ int main(int argc, char** argv)
              {"op":"title","text":"Hi","at":5,"duration":10}])");
     CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-20|30-39] a[20-45|50-74]  V2: T[5-15|0-9]  "
                               "A1: a[0-10|0-9] a[10-20|30-39] a[20-45|50-74]  A2:"));
+    // One clip under 'clips' (gemma4: trim clips:[1]) is that clip, with a note; several: one op each; "7" is 7
+    {
+        const int first = run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"][0]["id"].toInt();
+        const QJsonObject list = run("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"trim","clips":[%1],"edge":"end","to":5}])").arg(first)},
+                                              {"dry_run", true}});
+        CHECK(!list["changes"]["changed"].toArray().isEmpty() && list["notes"][0].toString().contains("read as clip:"));
+        const QJsonObject text = run("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"trim","clip":"%1","edge":"end","to":5}])").arg(first)},
+                                              {"dry_run", true}});
+        CHECK(!text["changes"]["changed"].toArray().isEmpty());
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"trim","clips":[1,2],"edge":"end","to":5}])"}})
+                  .contains("trim takes one clip: 'clip'"));
+    }
+    // keep with one range written another way (small models): taken with a note; no range at all: a whole example
+    for (const char* op : {R"({"op":"keep","media":"/x/a.mp4","ranges":[0,10]})", R"({"op":"keep","media":"/x/a.mp4","range":[0,10]})",
+                            R"({"op":"keep","media":"/x/a.mp4","from":0,"to":10})"}) {
+        const QJsonObject r = run("edit", {{"project", g_path}, {"ops", QString("[%1]").arg(op)}, {"dry_run", true}});
+        CHECK_EQ(r["changes"]["added"].toArray().size(), 2); // V1 and A1
+        CHECK(r["notes"][0].toString().contains("read as ranges:[[from, to]]"));
+    }
+    CHECK(run("edit", {{"project", g_path}, {"ops", R"([{"op":"keep","media":"/x/a.mp4","ranges":[{"start":0,"end":10}]}])"},
+                       {"dry_run", true}})["changes"]["added"].toArray().size() == 2);
+    CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"keep","media":"/x/a.mp4"}])"}})
+              .contains(R"("ranges":[["2s","5.5s"],["10s","12s"]])"));
     const QJsonObject info = run("info", {{"project", g_path}});
     const int secondId = info["timeline"]["tracks"][0]["clips"][1]["id"].toInt();
     edit(QString(R"([{"op":"delete","clips":[%1],"ripple":true}])").arg(secondId).toUtf8().constData());

@@ -156,6 +156,12 @@ private:
 // One answer as a JSON body (not streamed)
 Reply parseBody(Protocol p, const QJsonObject& body);
 
+// Tool calls a model wrote into its answer instead of making them (small local models over the OpenAI protocol): the
+// whole answer is {"name":…,"arguments":{…}} ("parameters" too, arguments also as a JSON string), a list or lines of
+// them, maybe in a ```json fence; or such objects in <tool_call> tags (text around them allowed). None when the answer
+// is anything else. Ids: idPrefix + "_1", "_2" …
+QVector<ToolCall> textCalls(const QString& text, const QString& idPrefix);
+
 // An error answer: HTTP status, body and Retry-After -> what the user reads, whether trying again may help
 struct Failure {
     enum class Kind { Key, RateLimit, Overloaded, NotFound, TooLarge, Request, Server, Network, Timeout, Other };
@@ -167,6 +173,12 @@ struct Failure {
 Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryAfter = {});
 // The provider's message inside an error body (Anthropic, OpenAI, Ollama shapes); empty = none
 QString providerMessage(const QByteArray& body);
+// A request too large for the model's context in the words of llama.cpp servers, OpenAI/vLLM or LM Studio: the
+// context and the request in tokens (0 = not said); false = no such message
+bool contextOverflow(const QString& said, qint64* context, qint64* request);
+// What the user reads then: the numbers and what helps (a small context: more of it in the server's settings, else a
+// new chat). silent = the server cut the request without saying so (Ollama), request is an estimate then
+QString contextAdvice(qint64 context, qint64 request, bool silent = false);
 
 // Model ids from a model list answer, sorted
 QStringList parseModels(const QJsonObject& body);
