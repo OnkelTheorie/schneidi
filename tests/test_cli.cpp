@@ -228,6 +228,9 @@ int main(int argc, char** argv)
         CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-90|20-99]  V2:  A1: a[0-10|0-9] a[10-90|20-99]  A2:"));
     }
 
+    // An analysis without a file (small models in the app's chat): the error lists the project's media to copy
+    CHECK(messageOf("highlights", {{"project", g_path}}).contains("; the media of the project: /x/a.mp4"));
+
     // A tool that is an op of edit (small models call "new_timeline"): the error has the call to make; others list the tools
     {
         const auto message = [](const QString& tool, const QJsonObject& args) {

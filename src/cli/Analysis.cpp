@@ -1,6 +1,7 @@
 // schneidi-cli: commands that look at the material without changing a project – shared parts (opening media,
 // several files in parallel, regions), probe and extensions. Audio: AnalysisAudio.cpp, picture: AnalysisVideo.cpp
 #include "cli/AnalysisDetail.h"
+#include "cli/Live.h"
 
 #include "core/I18n.h"
 #include "engine/Background.h"
@@ -130,7 +131,20 @@ QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const
     QStringList files;
     if (a.contains("file")) files << a["file"].toString();
     for (const QJsonValue& v : a["files"].toArray()) files << v.toString();
-    if (files.isEmpty()) fail("BAD_ARGUMENT", "give 'file' (or 'files', several)");
+    if (files.isEmpty()) {
+        // The project's media to copy from (a small model in the app's chat sent none): the one given, else the app's
+        QString project = a["project"].toString();
+        if (project.isEmpty() && !qEnvironmentVariable(Live::ChatServerEnv).isEmpty()) project = Live::AppProject;
+        QStringList media;
+        if (!project.isEmpty()) {
+            try {
+                for (const MediaInfo& m : Session(project).project.media()) media << m.path;
+            } catch (const Error&) {
+            }
+        }
+        fail("BAD_ARGUMENT", "give 'file' (a media file's absolute path; several: 'files')"
+                                 + (media.isEmpty() ? QString() : "; the media of the project: " + media.join(", ")));
+    }
     if (files.size() == 1 && !a.contains("files")) return one(a, ctx);
     std::optional<ProjectFormat> format;
     if (a.contains("project")) format = Session(a["project"].toString()).format();
