@@ -472,5 +472,19 @@ int main(int argc, char** argv)
         threw = true;
     }
     CHECK(threw);
+    // Numbers no program writes (found by fuzzing, tests/fuzz): track index -2^31 is the first audio stream, stream
+    // 2^31 - 1 (a project file edited by hand) is written as track index 2^31
+    {
+        Seq s = readFcp7(R"(<xmeml version="4"><sequence><name>s</name><rate><timebase>25</timebase></rate><media><audio>
+            <track><clipitem id="c"><name>a.mp4</name><start>0</start><end>10</end><in>0</in><out>10</out>
+            <file id="f"><name>a.mp4</name><pathurl>file:///m/a.mp4</pathurl></file>
+            <sourcetrack><mediatype>audio</mediatype><trackindex>-2147483648</trackindex></sourcetrack>
+            </clipitem></track></audio></media></sequence></xmeml>)");
+        if (CHECK(s.audio.size() == 1 && s.audio[0].items.size() == 1)) {
+            CHECK_EQ(s.audio[0].items[0].audioStream, 0);
+            s.audio[0].items[0].audioStream = 2147483647;
+            CHECK(writeFcp7(s).contains("<trackindex>2147483648</trackindex>"));
+        }
+    }
     return Check::result();
 }

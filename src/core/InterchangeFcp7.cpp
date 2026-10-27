@@ -316,7 +316,7 @@ QByteArray writeFcp7(Sequence& seq)
                 if (!video) {
                     x.writeStartElement("sourcetrack");
                     x.writeTextElement("mediatype", "audio");
-                    x.writeTextElement("trackindex", QString::number(it.audioStream + 1));
+                    x.writeTextElement("trackindex", QString::number(qint64(it.audioStream) + 1)); // any number from a file
                     x.writeEndElement();
                 }
                 if (it.speed != 1.0 || it.reverse) {
@@ -469,7 +469,7 @@ Sequence readFcp7(const QByteArray& data)
                 it.start = start;
                 it.length = std::max(0, end - start);
                 if (it.name.isEmpty()) it.name = QFileInfo(it.path).fileName();
-                if (!video) it.audioStream = std::max(0, el.num("sourcetrack/trackindex", 1) - 1);
+                if (!video) it.audioStream = std::max(1, el.num("sourcetrack/trackindex", 1)) - 1;
                 for (const Node* filter : el.all("filter")) {
                     const Node* eff = filter->child("effect");
                     if (!eff) continue;
