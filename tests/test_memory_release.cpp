@@ -16,6 +16,7 @@
 #include <QEventLoop>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <chrono>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -178,9 +179,35 @@ void testEngine(const QString& media)
     }
     CHECK(engine.speed() != 0.0);
     CHECK_EQ(MemoryRelease::releases(), playing);
+
+    // Called directly while it plays (schneidi-cli releases after every MCP tool, whatever else runs): MLT's threads
+    // keep taking and returning pool buffers meanwhile – no crash, the pictures keep coming
+    {
+        int shown = 0;
+        const auto counter = QObject::connect(&engine, &Engine::frameReady, [&] { ++shown; });
+        std::thread other([] {
+            for (int i = 0; i < 20; ++i) {
+                MemoryRelease::release();
+                std::this_thread::sleep_for(std::chrono::milliseconds(15));
+            }
+        });
+        for (int i = 0; i < 10; ++i) {
+            MemoryRelease::release();
+            wait(30);
+        }
+        other.join();
+        const int during = shown;
+        wait(300);
+        QObject::disconnect(counter);
+        std::printf("       %d pictures while releasing, %d in the 300 ms after\n", during, shown - during);
+        CHECK(during > 0);
+        CHECK(shown > during);
+        CHECK(engine.speed() != 0.0);
+    }
+    const int beforeStop = MemoryRelease::releases();
     engine.pause();
     CHECK(!engine.activity().playing);
-    CHECK(releasedWithin(playing + 1, 3000));
+    CHECK(releasedWithin(beforeStop + 1, 3000));
     CHECK(!engine.activity().exporting);
 }
 
