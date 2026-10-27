@@ -191,6 +191,10 @@ int main(int argc, char** argv)
             R"([{"id":1,"path":"/a.mp4"},{"id":1,"path":"/b.mp4"},{"path":"/c.mp4"},{"id":4}])").array());
         CHECK_EQ(fixed.size(), 3);
         if (fixed.size() == 3) CHECK(fixed[0].id == 1 && fixed[1].id == 2 && fixed[2].id == 3);
+        // Numbers no program writes (found by fuzzing, tests/fuzz): id 2^31 - 1 (the next one overflowed), 10^60 ms
+        const auto huge = RenderQueueJson::fromJson(QJsonDocument::fromJson(
+            R"([{"id":2147483647,"path":"/a.mp4"},{"path":"/b.mp4","renderMs":1e60}])").array());
+        if (CHECK(huge.size() == 2)) CHECK(huge[0].id == 1 << 30 && huge[1].id == (1 << 30) + 1 && huge[1].renderMs > 0);
 
         // Project: change counts as a change, but without an undo step (like DaVinci)
         Project p;
