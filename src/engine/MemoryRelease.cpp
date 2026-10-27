@@ -117,7 +117,7 @@ void IdleRelease::check()
         delete m_worker;
         m_worker = nullptr;
         const qint64 after = MemoryRelease::residentBytes();
-        if (m_before > 0 && after > 0)
+        if (m_before > 0 && after > 0 && m_before - after >= 32 * 1048576) // only what is worth a line in the log
             qInfo("Memory given back while idle: %lld -> %lld MB resident", m_before / 1048576, after / 1048576);
         emit released(m_before, after);
     });
