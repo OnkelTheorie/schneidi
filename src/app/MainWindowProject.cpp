@@ -205,10 +205,20 @@ void MainWindow::newProject()
     StartTemplate t = StartTemplates::defaultTemplate();
     if (StartTemplates::askOnNew()) { // only when the user chose to be asked (Settings › Start Templates)
         const QVector<StartTemplate> list = StartTemplates::all();
+        // The choice comes back as its text: names told apart (an own template named like a built-in one; two own
+        // ones of one name, files made by hand)
+        const auto named = [&](int i, bool own) {
+            for (int j = 0; j < list.size(); ++j)
+                if (j != i && (!own || !list[j].builtIn) && list[j].displayName() == list[i].displayName()) return true;
+            return false;
+        };
         QStringList names;
         int current = 0;
         for (int i = 0; i < list.size(); ++i) {
-            names << list[i].displayName();
+            QString name = list[i].displayName();
+            if (list[i].builtIn && named(i, false)) name = T("%1 (eingebaut)").arg(name);
+            else if (!list[i].builtIn && named(i, true)) name = QString("%1 (%2)").arg(name, list[i].id);
+            names << name;
             if (list[i].id == t.id) current = i;
         }
         bool ok = false;

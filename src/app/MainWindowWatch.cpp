@@ -14,9 +14,9 @@
 void MainWindow::setupWatchFolders()
 {
     m_folderWatch = new FolderWatch(m_project, this);
-    // Imports wait while an AI command runs in the app or the AI chat works on a request (its changes would no longer
-    // be one step to accept or discard)
-    m_folderWatch->setBusy([this] { return m_liveCommand || (m_review.active && !m_review.pending); });
+    // Imports wait while an AI command runs in the app, the AI chat works on a request or its changes wait to be
+    // accepted or discarded (an import in between would end the review as if the user had edited)
+    m_folderWatch->setBusy([this] { return m_liveCommand || m_review.active; });
     connect(m_folderWatch, &FolderWatch::imported, this, [this](const QStringList& paths, const QString& folder) {
         const MediaInfo* m = m_project->mediaInfo(paths.first());
         statusBar()->showMessage(T("%1 neue Datei(en) aus „%2“ im Bin „%3“")

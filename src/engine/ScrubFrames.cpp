@@ -3,6 +3,7 @@
 #include "engine/Background.h"
 #include "engine/video/Reader.h"
 
+#include <QFileInfo>
 #include <QThread>
 
 extern "C" {
@@ -71,9 +72,15 @@ ScrubFrames::~ScrubFrames()
     delete m_thread;
 }
 
-QString ScrubFrames::key(const QString& path, int slot)
+QString ScrubFrames::fileKey(const QString& path)
 {
-    return path + '#' + QString::number(slot);
+    const QFileInfo fi(path);
+    return path + '|' + QString::number(fi.lastModified().toMSecsSinceEpoch()) + '|' + QString::number(fi.size());
+}
+
+QString ScrubFrames::key(const QString& file, int slot)
+{
+    return file + '#' + QString::number(slot);
 }
 
 int ScrubFrames::slotAt(double fraction)
@@ -84,15 +91,16 @@ int ScrubFrames::slotAt(double fraction)
 QImage ScrubFrames::picture(const QString& path, int slot)
 {
     slot = std::clamp(slot, 0, kSlots - 1);
+    const QString file = fileKey(path);
     QMutexLocker lock(&m_mutex);
-    if (const QImage* img = m_pictures.object(key(path, slot))) return *img;
-    if (m_failed.contains(path)) return {};
-    const QString k = key(path, slot);
+    const QString k = key(file, slot);
+    if (const QImage* img = m_pictures.object(k)) return *img;
+    if (m_failed.contains(file)) return {};
     if (!m_pending.contains(k)) {
         m_pending.insert(k);
-        m_jobs.push_front({path, slot});
+        m_jobs.push_front({path, file, slot});
         while (m_jobs.size() > kMaxJobs) { // the mouse has moved on long ago
-            m_pending.remove(key(m_jobs.back().path, m_jobs.back().slot));
+            m_pending.remove(key(m_jobs.back().file, m_jobs.back().slot));
             m_jobs.pop_back();
         }
         m_wake.wakeOne();
@@ -101,20 +109,22 @@ QImage ScrubFrames::picture(const QString& path, int slot)
     for (int d = 1; d < kSlots; ++d)
         for (const int s : {slot - d, slot + d})
             if (s >= 0 && s < kSlots)
-                if (const QImage* img = m_pictures.object(key(path, s))) return *img;
+                if (const QImage* img = m_pictures.object(key(file, s))) return *img;
     return {};
 }
 
 bool ScrubFrames::has(const QString& path, int slot)
 {
+    const QString file = fileKey(path);
     QMutexLocker lock(&m_mutex);
-    return m_pictures.contains(key(path, slot));
+    return m_pictures.contains(key(file, slot));
 }
 
 bool ScrubFrames::failed(const QString& path)
 {
+    const QString file = fileKey(path);
     QMutexLocker lock(&m_mutex);
-    return m_failed.contains(path);
+    return m_failed.contains(file);
 }
 
 int ScrubFrames::decoded() const
@@ -139,14 +149,14 @@ void ScrubFrames::run()
             m_jobs.pop_front();
         }
         Background::yieldToForeground(); // playback and opening files first
-        if (job.path != open) {
+        if (job.file != open) { // another file, or the same one changed
             Video::Reader::Options options;
             options.threads = 2;
             options.hardware = false; // one picture now and then: setting up the graphics card costs more
             options.ahead = 0;
             options.behind = 0;
             reader = Video::Reader::open(job.path, options);
-            open = job.path;
+            open = job.file;
             fps = reader ? av_q2d(reader->info().frameRate) : 0;
             seconds = reader ? reader->info().duration / double(AV_TIME_BASE) : 0;
             if (fps <= 0) fps = 25;
@@ -158,13 +168,13 @@ void ScrubFrames::run()
         }
         {
             QMutexLocker lock(&m_mutex);
-            m_pending.remove(key(job.path, job.slot));
+            m_pending.remove(key(job.file, job.slot));
             if (img.isNull()) {
-                // Nothing to show for the whole file: no more requests for it
-                m_failed.insert(job.path);
+                // Nothing to show for the whole file as it is: no more requests for it until it changes
+                m_failed.insert(job.file);
                 for (auto it = m_jobs.begin(); it != m_jobs.end();) {
-                    if (it->path == job.path) {
-                        m_pending.remove(key(it->path, it->slot));
+                    if (it->file == job.file) {
+                        m_pending.remove(key(it->file, it->slot));
                         it = m_jobs.erase(it);
                     } else {
                         ++it;
@@ -172,7 +182,7 @@ void ScrubFrames::run()
                 }
             } else {
                 ++m_decoded;
-                m_pictures.insert(key(job.path, job.slot), new QImage(img), int(img.sizeInBytes() / 1024) + 1);
+                m_pictures.insert(key(job.file, job.slot), new QImage(img), int(img.sizeInBytes() / 1024) + 1);
             }
         }
         emit ready(job.path, job.slot);
