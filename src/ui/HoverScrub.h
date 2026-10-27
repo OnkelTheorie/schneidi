@@ -11,7 +11,8 @@ class ScrubFrames;
 // Hover scrub over the thumbnails of a list (Media Storage, Media Pool): moving the mouse across a video's thumbnail
 // shows the picture at that point of the file (left edge = start, right edge = end) with a thin position bar. The
 // pictures come from ScrubFrames in the background; the window never waits, until one is there the thumbnail stays.
-// Only in the icon view, not while a button is held (dragging).
+// Only in the icon view, not while a button is held (dragging). While it scrubs, no item tooltip covers the picture (over
+// the name below it the tooltip still shows).
 class HoverScrub : public QObject {
     Q_OBJECT
 public:
@@ -36,6 +37,7 @@ protected:
 
 private:
     void refresh();
+    QRect pictureRect(QListWidgetItem* item) const; // the thumbnail in its cell (viewport coordinates)
 
     QListWidget* m_list;
     ScrubFrames* m_frames;

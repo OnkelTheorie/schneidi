@@ -33,6 +33,8 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QHelpEvent>
+#include <QToolTip>
 #include <QToolButton>
 #include <QTest>
 #include <QThread>
@@ -509,6 +511,24 @@ void testHoverScrub(const QString& dir)
     CHECK(waitFor([&] { return scrub.frames()->has(a, ScrubFrames::kSlots - 1); }));
     QApplication::processEvents();
     CHECK(shown != first); // testsrc2 moves: the end looks different from the start
+    // While scrubbing no item tooltip covers the picture; over the name below it the tooltip still shows, and moving
+    // back onto the picture hides it
+    {
+        item->setToolTip("a.mp4 – info");
+        const auto tip = [&](const QPoint& pos) {
+            QHelpEvent help(QEvent::ToolTip, pos, list.viewport()->mapToGlobal(pos));
+            QApplication::sendEvent(list.viewport(), &help);
+            QApplication::processEvents();
+            return QToolTip::isVisible() && QToolTip::text() == item->toolTip();
+        };
+        const QPoint picture(r.center().x(), r.top() + 30), name(r.center().x(), r.bottom() - 4);
+        scrub.hover(picture);
+        CHECK(!tip(picture));
+        scrub.hover(name);
+        CHECK(tip(name));
+        scrub.hover(picture);
+        CHECK(waitFor([] { return !QToolTip::isVisible(); })); // Qt hides it after a short moment
+    }
     scrub.leave();
     CHECK(at < 0);
     // A file without pictures: given up after one try, the thumbnail stays
