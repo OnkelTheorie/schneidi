@@ -170,6 +170,9 @@ schneidi_test(test_speed)
 target_compile_definitions(test_speed PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 set_tests_properties(test_speed PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
 schneidi_test(test_file_manager) # show in file manager / open with the default program, also without a D-Bus session
+# Background workers stopped/reset/canceled while busy (ScrubFrames, GradedThumbs, FolderWatch, render cache/queue):
+# a stress test for the thread sanitizer and ASan, a few seconds in the normal suite
+schneidi_test(test_thread_teardown)
 
 # Number format regressions (German decimal comma, e.g. 0.7.0: MLT reset LC_NUMERIC and stabilization did nothing):
 # run tests that pass numbers to MLT/FFmpeg a second time under de_DE.UTF-8 (CI generates the locale)

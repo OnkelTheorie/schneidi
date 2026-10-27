@@ -160,6 +160,9 @@ private:
     QThread* m_build = nullptr;
     std::shared_ptr<std::atomic<bool>> m_buildCancel;
     void stopBuild(); // cancel and wait for m_build (only files being opened right now still finish)
+    // Counts the build and analysis threads started and stopped. Stopping one right as it ends leaves its finished()
+    // queued (disconnecting does not take back what is queued already): that one is stale and must do nothing.
+    quint64 m_threadRun = 0;
 
     std::unique_ptr<Mlt::Profile> m_profile;
     std::unique_ptr<TimelineBuilder> m_builder;

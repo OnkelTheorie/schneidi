@@ -429,7 +429,9 @@ void testTimeline(const QString& dump)
     view.show();
     QApplication::processEvents();
     view.zoomToFit();
-    QSignalSpy updates(&cache, &MediaCache::updated);
+    // Counted in this thread (updated() also comes from the cache's worker threads: a QSignalSpy would be filled there)
+    int updates = 0;
+    QObject::connect(&cache, &MediaCache::updated, &cache, [&] { ++updates; });
     // Settled = no new picture for a while
     auto settle = [&](int quietMs) {
         QElapsedTimer total;
@@ -440,8 +442,8 @@ void testTimeline(const QString& dump)
         while (total.elapsed() < 60000) {
             QApplication::processEvents(QEventLoop::AllEvents, 20);
             QThread::msleep(10);
-            if (updates.count() != seen) {
-                seen = updates.count();
+            if (updates != seen) {
+                seen = updates;
                 quiet.restart();
             } else if (quiet.elapsed() > quietMs && cache.graded()->idle()) {
                 return true;

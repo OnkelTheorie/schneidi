@@ -22,12 +22,14 @@
 #include <Mlt.h>
 #include <QApplication>
 #include <QComboBox>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QLabel>
 #include <QListWidget>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QUndoStack>
 #include <clocale>
@@ -445,6 +447,27 @@ int main(int argc, char** argv)
         CHECK(ex.start(videoTimeline(e), s, &error));
         ex.cancel();
         CHECK(done && !ok && !ex.isRunning());
+
+        // Cancel right as the analysis ends (the window was busy meanwhile): its finished() waits in the event queue
+        // when cancel() stops it; it must do nothing then (it used the deleted thread: crash) and never export
+        EffectRegistry::instance(e, "stabilize")->params["shakiness"] = 8.0;
+        const auto r8 = Stabilizer::request(e, fmt);
+        s.path = tmp.filePath("canceled.mp4");
+        done = false;
+        int finishedCount = 0;
+        QObject::connect(&ex, &Exporter::finished, &app, [&] { ++finishedCount; });
+        CHECK(ex.start(videoTimeline(e), s, &error));
+        QElapsedTimer analyzing; // no events meanwhile: the result of the thread stays queued
+        analyzing.start();
+        while (!Stabilizer::find(*r8).valid() && analyzing.elapsed() < 120000) QThread::msleep(20);
+        CHECK(Stabilizer::find(*r8).valid());
+        QThread::msleep(300); // the thread has ended
+        ex.cancel();
+        CHECK(done && !ok && !ex.isRunning());
+        waitFor([] { return false; }, 500);
+        CHECK_EQ(finishedCount, 1);
+        CHECK(!ex.isRunning() && !Exporter::anyRunning());
+        CHECK(!QFileInfo::exists(s.path));
     }
 
     // Inspector (stabilization state, border choice with labels; noise reduction in the Audio tab) and Effects
