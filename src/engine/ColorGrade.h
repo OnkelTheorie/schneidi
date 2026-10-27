@@ -33,6 +33,7 @@ struct Params {
     double tint = 0;         // -100..100, + = Magenta
     double exposure = 0;     // in stops
     bool isNeutral() const;
+    bool operator==(const Params&) const = default;
 };
 
 // Animatable parameters in the order of Params (wheels each Y/R/G/B, then the sliders)
@@ -58,6 +59,8 @@ struct Window {
 QVector<Window> windowsAt(const Clip& c, double t);
 QString lutPath(const Clip& c); // empty = no LUT
 
+struct LutTables; // a LUT prepared for the baked correction (fixed-point nodes, input mapping), see bake()
+
 // 3D LUT resp. 1D LUT; values R fastest index
 struct Lut {
     int size = 0;
@@ -66,7 +69,11 @@ struct Lut {
     QVector<float> data; // size^3 * 3 (3D) resp. size * 3 (1D)
     // Pre-curve per channel (.csp "preLUT"): control points input -> output 0..1, empty = none
     QVector<float> shaperIn[3], shaperOut[3];
+    // Made by parseLut/loadLut (prepare()); without them (a LUT built by hand) bake() makes its own each time
+    std::shared_ptr<const LutTables> tables;
 };
+// Fills lut.tables (after changing size/data/domain/shaper by hand, so bake() does not redo it per call)
+void prepare(Lut& lut);
 // Formats: .cube (Adobe/Resolve), .3dl (Lustre/Flame/Nuke), .csp (cineSpace), Hald CLUT as image (.png/.tif/.bmp),
 // For extensions see EffectFolders::lutSuffixes.
 // Reads a LUT file (format by extension, also Qt resources ":/…") without a cache; nullptr + error on failure
@@ -74,8 +81,20 @@ std::shared_ptr<const Lut> parseLut(const QString& path, QString* error = nullpt
 // Like parseLut, but cached by path + modification time (preview/export)
 std::shared_ptr<const Lut> loadLut(const QString& path, QString* error = nullptr);
 
-// Apply the correction to an RGBA image (8 bit, rows without gaps); alpha stays. lut may be nullptr.
+// The per-pixel correction (params + LUT) computed once into tables: per channel what depends on one channel
+// (exact for 8-bit input), saturation in fixed point, a 3D LUT as fixed-point nodes interpolated trilinearly.
+// Cheap to make (~0.1 ms), so animated params get a new one per frame; holds the LUT's tables (a 3D LUT too big
+// for them is computed per pixel, then the LUT must outlive the result).
+struct Baked;
+std::shared_ptr<const Baked> bake(const Params& p, const Lut* lut);
+// Apply baked tables to an RGBA image (8 bit, rows without gaps); alpha stays. threads: 0 = a few for big
+// pictures, otherwise this many
+void apply(uint8_t* rgba, int width, int height, const Baked& b, int threads = 0);
+// Apply the correction (= bake + apply). lut may be nullptr.
 void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut);
+// The same without baking (the previous per-pixel code, floating point with a LUT): the reference for tests and
+// benches. The baked result differs from it by at most about 1 code value, and only with a LUT.
+void applyReference(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut);
 // Apply a window on top: inside its mask the picture gets the window's correction and fill (blur/pixelate/color),
 // mixed by the soft edge. Only the window's area is computed.
 void applyWindow(uint8_t* rgba, int width, int height, const Window& w);
