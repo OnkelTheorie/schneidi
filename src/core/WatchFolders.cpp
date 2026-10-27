@@ -1,5 +1,7 @@
 #include "core/WatchFolders.h"
 
+#include "core/I18n.h"
+
 #include <QDir>
 #include <QFileInfo>
 
@@ -85,6 +87,29 @@ int indexOf(const QVector<WatchFolder>& list, const QString& folder)
     for (int i = 0; i < list.size(); ++i)
         if (samePath(list[i].path, folder)) return i;
     return -1;
+}
+
+int covering(const QVector<WatchFolder>& list, const QString& file)
+{
+    const QString key = pathKey(file);
+    const QString dir = pathKey(QFileInfo(key).path());
+    for (int i = 0; i < list.size(); ++i) {
+        if (list[i].path.isEmpty() || !takes(list[i], file)) continue;
+        QString root = pathKey(list[i].path);
+        if (dir == root) return i;
+        if (!root.endsWith('/')) root += '/';
+        if (list[i].subfolders && key.startsWith(root)) return i;
+    }
+    return -1;
+}
+
+QString importedNote(const QStringList& paths, const QString& folder, const QString& bin)
+{
+    QString name = QFileInfo(QDir::cleanPath(folder)).fileName();
+    if (name.isEmpty()) name = QDir::toNativeSeparators(folder); // a drive or the root
+    if (paths.size() == 1)
+        return T("Neue Datei „%1“ aus „%2“ im Bin „%3“").arg(QFileInfo(paths.first()).fileName(), name, bin);
+    return T("%1 neue Dateien aus „%2“ im Bin „%3“").arg(QString::number(paths.size()), name, bin);
 }
 
 QStringList typeNames(const WatchFolder& w)

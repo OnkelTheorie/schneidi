@@ -20,6 +20,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
+#include <QMimeData>
 #include <QMenu>
 #include <QPainter>
 #include <QProgressBar>
@@ -118,9 +119,21 @@ protected:
         }
         drag->exec(Qt::MoveAction); // (not QAbstractItemView::startDrag: it would remove the moved rows itself)
     }
+    // Only a drag that started in this list (files or another list's items are ignored). QDrag cannot run without a
+    // display: a test's synthetic drag names the list in its data's property "schneidi_drag_source" instead.
+    bool fromHere(const QDropEvent* e) const
+    {
+        return e->source() == this
+               || (e->mimeData() && e->mimeData()->property("schneidi_drag_source").value<QObject*>() == this);
+    }
+    void dragEnterEvent(QDragEnterEvent* e) override
+    {
+        QListWidget::dragEnterEvent(e); // takes its own drags (InternalMove)
+        if (!e->isAccepted() && fromHere(e)) e->acceptProposedAction(); // a test's synthetic one (see fromHere)
+    }
     void dropEvent(QDropEvent* e) override
     {
-        if (e->source() != this) {
+        if (!fromHere(e)) {
             e->ignore();
             return;
         }

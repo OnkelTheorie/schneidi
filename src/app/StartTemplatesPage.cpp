@@ -258,3 +258,85 @@ QString SaveStartTemplateDialog::name() const { return m_name->text().trimmed();
 QString SaveStartTemplateDialog::description() const { return m_description->text().trimmed(); }
 
 bool SaveStartTemplateDialog::makeDefault() const { return m_default->isChecked(); }
+
+// ---- Choose a start template (File › New Project) ----
+
+ChooseStartTemplateDialog::ChooseStartTemplateDialog(const QVector<StartTemplate>& templates, const QString& defaultId,
+                                                     QWidget* parent)
+    : QDialog(parent), m_templates(templates)
+{
+    setWindowTitle(T("Neues Projekt"));
+    auto* lay = new QVBoxLayout(this);
+    auto* form = new QFormLayout;
+    form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_combo = new QComboBox;
+    m_combo->setObjectName("choose_template");
+    m_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents); // long names whole ("Podcast / Interview")
+    // Names told apart: a built-in template an own one is named like ("Neutral (eingebaut)"), two own ones of one name
+    // (files made by hand: their file name)
+    const auto named = [this](int i, bool own) {
+        for (int j = 0; j < m_templates.size(); ++j)
+            if (j != i && (!own || !m_templates[j].builtIn) && m_templates[j].displayName() == m_templates[i].displayName())
+                return true;
+        return false;
+    };
+    bool own = false;
+    for (int i = 0; i < m_templates.size(); ++i) {
+        const StartTemplate& t = m_templates[i];
+        if (!t.builtIn && !own && i > 0) m_combo->insertSeparator(m_combo->count()); // own ones below, like the menu
+        own = own || !t.builtIn;
+        QString name = t.displayName();
+        if (t.builtIn && named(i, false)) name = T("%1 (eingebaut)").arg(name);
+        else if (!t.builtIn && named(i, true)) name = QString("%1 (%2)").arg(name, t.id);
+        m_combo->addItem(t.id == defaultId ? T("%1 (Standard)").arg(name) : name, i);
+        if (t.id == defaultId) m_combo->setCurrentIndex(m_combo->count() - 1);
+    }
+    form->addRow(T("Startvorlage:"), m_combo);
+    lay->addLayout(form);
+    m_details = new QLabel;
+    m_details->setObjectName("choose_template_details");
+    m_details->setWordWrap(true);
+    m_details->setTextFormat(Qt::PlainText);
+    m_details->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    m_details->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    lay->addWidget(m_details, 1);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    lay->addWidget(buttons);
+    connect(m_combo, &QComboBox::currentIndexChanged, this, &ChooseStartTemplateDialog::showDetails);
+    // Room for the longest description, so the dialog does not jump while choosing
+    constexpr int kWidth = 460;
+    const int labelWidth = kWidth - lay->contentsMargins().left() - lay->contentsMargins().right();
+    int height = 0;
+    for (int i = 0; i < m_combo->count(); ++i) {
+        if (!m_combo->itemData(i).isValid()) continue; // separator
+        m_combo->setCurrentIndex(i);
+        height = std::max(height, m_details->heightForWidth(labelWidth));
+    }
+    m_details->setMinimumHeight(std::min(height, 400));
+    for (int i = 0; i < m_combo->count(); ++i)
+        if (m_combo->itemData(i).isValid() && m_templates.value(m_combo->itemData(i).toInt()).id == defaultId)
+            m_combo->setCurrentIndex(i);
+    showDetails();
+    resize(kWidth, sizeHint().height());
+}
+
+int ChooseStartTemplateDialog::chosenIndex() const
+{
+    const QVariant v = m_combo->currentData();
+    return v.isValid() ? v.toInt() : -1;
+}
+
+StartTemplate ChooseStartTemplateDialog::chosen() const { return m_templates.value(chosenIndex()); }
+
+void ChooseStartTemplateDialog::showDetails()
+{
+    const int i = chosenIndex();
+    if (i < 0 || i >= m_templates.size()) return m_details->clear();
+    const StartTemplate& t = m_templates[i];
+    QStringList lines;
+    if (!t.displayDescription().isEmpty()) lines << t.displayDescription() << QString();
+    lines << StartTemplates::summary(t);
+    m_details->setText(lines.join('\n'));
+}

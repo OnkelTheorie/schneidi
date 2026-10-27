@@ -24,6 +24,15 @@ struct PoolState {
     QHash<int, int> sequenceBins; // sequence id -> bin (timelines/compound clips in the Media Pool)
     bool operator==(const PoolState&) const = default;
 };
+// What undo steps change in the media list (removing from the Media Pool, files of watch folders): files that leave
+// the pool or come into it at their place in the list, and files put on or taken off a watch folder's ignored list.
+// Everything else about the media (imports, source marks, transcripts) is not in the history and stays as it is.
+struct MediaChange {
+    QVector<QPair<int, MediaInfo>> out;                // leave the pool (index in the list before)
+    QVector<QPair<int, MediaInfo>> in;                 // come into the pool (index in the list after)
+    QVector<QPair<QString, QString>> ignore, unignore; // (watch folder, file) onto / off its ignored list
+    bool isEmpty() const { return out.isEmpty() && in.isEmpty() && ignore.isEmpty() && unignore.isEmpty(); }
+};
 
 // Holds the project (media + timeline). Every change of the timeline goes through edit()
 // and is thus automatically undoable (snapshot undo - simple and robust;
@@ -56,7 +65,8 @@ public:
     void closeMerge() { ++m_mergeSession; }
     // The undo steps after `fromIndex` (QUndoStack::index()) become one step called `text`, e.g. an AI chat turn the
     // user accepted: the state before them and the state now, everything the history covers (timelines, the open
-    // one, project settings, Media Pool organization). Nothing to combine (index <= fromIndex): no step.
+    // one, project settings, Media Pool organization, files removed from or brought into the pool by those steps).
+    // Nothing to combine (index <= fromIndex): no step.
     void combineSteps(int fromIndex, const QString& text);
     void setTimeline(const Timeline& tl); // only for undo/loading (current sequence)
     // Undo: set the timeline of a sequence; if it is not open, it gets opened (you see what changes)
@@ -109,6 +119,16 @@ public:
     // counted anew. `probeLength` = a file's real length in the new rate (0 = unknown: offline files are scaled).
     // App and CLI both call this after setFormat.
     void recountMedia(FrameRate oldRate, const std::function<int(const QString& path)>& probeLength);
+    // The clips that use these media, per timeline (every sequence, compound and multicam clips included): sequence
+    // id -> number of clips, in sequence order; empty = no timeline uses them
+    QVector<QPair<int, int>> mediaUsage(const QStringList& paths) const;
+    // Remove media from the Media Pool as one undo step. Media a timeline uses only go with `withClips`: then their
+    // clips leave every timeline in the same step (a gap stays); without it nothing changes and it returns false, so
+    // no clip ever points to a file missing in the pool. A file of a watch folder goes on its ignored list (the watch
+    // does not bring it back). Undo brings everything back as it was: place in the pool, bin, color, flags, source
+    // marks, transcripts, the clips. Paths not in the pool are left out; false = nothing removed.
+    bool removeMedia(const QStringList& paths, bool withClips);
+    void applyMediaChange(MediaChange& change, bool forward); // only for undo (forward = as the step did it)
 
     // Media Pool like DaVinci: bins (Master = 0), clip colors, flags. Every change is an undo step
     // (affects only the organization, not the media list itself).

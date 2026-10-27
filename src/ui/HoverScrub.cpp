@@ -3,8 +3,10 @@
 #include "engine/ScrubFrames.h"
 
 #include <QEvent>
+#include <QHelpEvent>
 #include <QListWidget>
 #include <QMouseEvent>
+#include <QToolTip>
 
 #include <algorithm>
 
@@ -41,9 +43,20 @@ bool HoverScrub::eventFilter(QObject* obj, QEvent* e)
             else leave(); // dragging: the thumbnail as it is
         } else if (e->type() == QEvent::Leave || e->type() == QEvent::MouseButtonPress || e->type() == QEvent::Wheel) {
             leave();
+        } else if (e->type() == QEvent::ToolTip && m_item
+                   && pictureRect(m_item).contains(static_cast<QHelpEvent*>(e)->pos())) {
+            return true; // the picture being scrubbed stays free (the name below it still shows the tooltip)
         }
     }
     return QObject::eventFilter(obj, e);
+}
+
+QRect HoverScrub::pictureRect(QListWidgetItem* item) const
+{
+    const QRect cell = m_list->visualItemRect(item);
+    const QSize icon = m_list->iconSize();
+    const int inset = std::max(0, (cell.width() - icon.width()) / 2);
+    return QRect(cell.left() + inset, cell.top(), cell.width() - 2 * inset, icon.height() + 6).intersected(cell);
 }
 
 void HoverScrub::hover(const QPoint& pos)
@@ -57,6 +70,7 @@ void HoverScrub::hover(const QPoint& pos)
         m_path = path;
     }
     if (!m_item) return;
+    if (QToolTip::isVisible() && pictureRect(m_item).contains(pos)) QToolTip::hideText(); // one shown over the name
     // Across the thumbnail (the cell is a little wider than the picture)
     const QRect cell = m_list->visualItemRect(m_item);
     const int inset = std::max(0, (cell.width() - m_list->iconSize().width()) / 2);

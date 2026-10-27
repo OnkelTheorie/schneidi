@@ -28,7 +28,6 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
-#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
@@ -349,6 +348,22 @@ void testIdForName()
     CHECK_EQ(StartTemplates::idForName("Console"), QString("Console"));
     const QString longId = StartTemplates::idForName(QString(300, QChar(0x00e4)) + " .");
     CHECK(longId.size() <= 200 && !longId.endsWith('.') && !longId.endsWith(' '));
+
+    // Names that share a file: saving or renaming says which template is there
+    clean();
+    StartTemplate shorts = StartTemplates::fromProject(StartTemplates::apply(builtIn("vertical")), "Shorts 9:16");
+    QString error;
+    CHECK(StartTemplates::save(shorts, &error));
+    const std::optional<StartTemplate> there = StartTemplates::sameFile("Shorts 9_16");
+    CHECK(there && there->name == QString("Shorts 9:16") && there->id == shorts.id);
+    CHECK(!StartTemplates::sameFile("Shorts 9-16"));
+    StartTemplate other = StartTemplates::fromProject(StartTemplates::apply(builtIn("podcast")), "Anders");
+    CHECK(StartTemplates::save(other, &error));
+    CHECK(!StartTemplates::rename(other.id, "Shorts 9_16", &error));
+    CHECK_EQ(error, T("„%1“ bekäme denselben Dateinamen wie die Vorlage „%2“.").arg("Shorts 9_16", "Shorts 9:16"));
+    CHECK(!StartTemplates::rename(other.id, "Shorts 9:16", &error));
+    CHECK_EQ(error, T("Eine Vorlage „%1“ gibt es schon.").arg("Shorts 9:16"));
+    clean();
 }
 
 // schneidi-cli: `new` with a template (id, name, file, project), the default, `templates`
@@ -543,6 +558,48 @@ void testDialogs()
     CHECK_EQ(save.name(), QString("Show"));
     CHECK(!save.makeDefault());
 
+    // File › New Project when it asks: the default preselected, the description of the chosen one shown, chosen by
+    // its place (an own template named "Neutral" is not the built-in Neutral)
+    {
+        StartTemplate mine = StartTemplates::fromProject(StartTemplates::apply(builtIn("vertical")), "Neutral",
+                                                         "Meine Neutral-Vorlage");
+        CHECK(StartTemplates::save(mine, &error));
+        const QVector<StartTemplate> list = StartTemplates::all();
+        ChooseStartTemplateDialog choose(list, "vertical");
+        auto* box = choose.findChild<QComboBox*>("choose_template");
+        auto* text = choose.findChild<QLabel*>("choose_template_details");
+        if (CHECK(box && text)) {
+            CHECK_EQ(choose.chosen().id, QString("vertical"));
+            CHECK_EQ(box->currentText(), T("%1 (Standard)").arg(T("Hochformat 9:16")));
+            CHECK(text->text().startsWith(builtIn("vertical").displayDescription()));
+            int row = -1, neutral = -1;
+            for (int i = 0; i < box->count(); ++i) {
+                if (!box->itemData(i).isValid()) continue;
+                const StartTemplate& t = list[box->itemData(i).toInt()];
+                if (t.id == mine.id) row = i;
+                if (t.id == StartTemplates::NeutralId) neutral = i;
+            }
+            CHECK(row >= 0 && neutral >= 0);
+            CHECK_EQ(box->itemText(neutral), T("%1 (eingebaut)").arg(T("Neutral"))); // told apart
+            CHECK_EQ(box->itemText(row), QString("Neutral"));
+            box->setCurrentIndex(row);
+            CHECK_EQ(choose.chosen().id, mine.id);
+            CHECK(!choose.chosen().builtIn);
+            CHECK(text->text().startsWith("Meine Neutral-Vorlage"));
+            CHECK(text->text().contains("1080 × 1920"));
+            box->setCurrentIndex(neutral);
+            CHECK_EQ(choose.chosen().id, QString(StartTemplates::NeutralId));
+            CHECK(text->text().startsWith(builtIn(StartTemplates::NeutralId).displayDescription()));
+            if (const QString dump = qEnvironmentVariable("TEMPLATES_DUMP"); !dump.isEmpty()) {
+                box->setCurrentIndex(row);
+                choose.show();
+                QApplication::processEvents();
+                choose.grab().save(dump + "/choose-template.png");
+            }
+        }
+        StartTemplates::remove(mine.id);
+    }
+
     // Settings › Start Templates at the dialog's first size: the whole page, its buttons (rename, delete …) without
     // scrolling (at 560 × 560 they were below the edge)
     {
@@ -650,11 +707,12 @@ void testMainWindow(const QString& dir)
         QTimer answer;
         answer.setInterval(20);
         QObject::connect(&answer, &QTimer::timeout, [&] {
-            auto* dlg = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
-            auto* box = dlg ? dlg->findChild<QComboBox*>() : nullptr;
+            auto* dlg = qobject_cast<ChooseStartTemplateDialog*>(QApplication::activeModalWidget());
+            auto* box = dlg ? dlg->findChild<QComboBox*>("choose_template") : nullptr;
             if (!box) return;
             answer.stop();
-            for (int i = 0; i < box->count(); ++i) offered << box->itemText(i);
+            for (int i = 0; i < box->count(); ++i)
+                if (box->itemData(i).isValid()) offered << box->itemText(i); // not the line above the own ones
             box->setCurrentIndex(box->count() - 1); // the own one (after the built-in ones)
             dlg->accept();
         });

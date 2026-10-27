@@ -25,11 +25,13 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMimeData>
 #include <QPainter>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QUndoStack>
+#include <QUrl>
 #include <clocale>
 #include <functional>
 
@@ -281,13 +283,93 @@ int main(int argc, char** argv)
         CHECK(!press(Qt::Key_A)); // other keys stay the list's
     }
 
+    // --- Dropping dragged jobs (JobList::dropEvent): in front of the card under the mouse (its upper half), behind it
+    // (lower half), between two cards in front of the lower one, below the last one at the end; a drop that did not
+    // start in the list (files, another list) moves nothing. QDrag cannot run offscreen: synthetic drag/drop events,
+    // the drop's data names the list as the drag's source (as a real drag from it is).
+    {
+        QVector<RenderJob> q;
+        for (int i = 1; i <= 5; ++i) {
+            RenderJob j;
+            j.id = i;
+            j.path = QString("/x/%1.mp4").arg(i);
+            q << j;
+        }
+        Project p;
+        RenderQueue queue(&p);
+        RenderQueuePanel panel(&p, &queue);
+        p.setRenderQueue(q);
+        panel.resize(340, 900);
+        panel.show();
+        QApplication::processEvents();
+        auto* list = panel.findChild<QListWidget*>();
+        if (!CHECK(list && list->isVisible() && list->count() == 5)) return Check::result();
+        const auto card = [&](int id) {
+            for (int i = 0; i < list->count(); ++i)
+                if (list->item(i)->data(Qt::UserRole + 1).toInt() == id) return list->item(i);
+            return static_cast<QListWidgetItem*>(nullptr);
+        };
+        const auto select = [&](const QVector<int>& selected) {
+            list->clearSelection();
+            for (int id : selected) card(id)->setSelected(true);
+        };
+        const auto drop = [&](const QPoint& pos, bool fromList) {
+            QMimeData data;
+            data.setData("application/x-qabstractitemmodeldatalist", {});
+            if (fromList) data.setProperty("schneidi_drag_source", QVariant::fromValue<QObject*>(list));
+            // As Qt delivers a drag: the widget that takes the enter gets the moves and the drop
+            QDragEnterEvent enter(pos, Qt::MoveAction, &data, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(list->viewport(), &enter);
+            QDragMoveEvent move(pos, Qt::MoveAction, &data, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(list->viewport(), &move);
+            QDropEvent e(QPointF(pos), Qt::MoveAction, &data, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(list->viewport(), &e);
+            QApplication::processEvents(); // the move comes after the drag has ended
+            return e.isAccepted();
+        };
+        const auto rect = [&](int id) { return list->visualItemRect(card(id)); };
+        select({4});
+        CHECK(drop(QPoint(rect(2).center().x(), rect(2).top() + 3), true)); // upper half of 2: in front of it
+        CHECK_EQ(ids(p.renderQueue()), (QVector<int>{1, 4, 2, 3, 5}));
+        select({1});
+        CHECK(drop(QPoint(rect(3).center().x(), rect(3).bottom() - 3), true)); // lower half of 3: behind it
+        CHECK_EQ(ids(p.renderQueue()), (QVector<int>{4, 2, 3, 1, 5}));
+        select({5, 4});
+        const QRect last = rect(ids(p.renderQueue()).last());
+        CHECK(drop(QPoint(last.center().x(), last.bottom() + 20), true)); // below the last card: at the end
+        CHECK_EQ(ids(p.renderQueue()), (QVector<int>{2, 3, 1, 4, 5}));
+        select({5});
+        const QPoint gap(rect(2).center().x(), (rect(2).bottom() + rect(3).top()) / 2 + 1); // the spacing between
+        if (!list->itemAt(gap)) {
+            CHECK(drop(gap, true));
+            CHECK_EQ(ids(p.renderQueue()), (QVector<int>{2, 5, 3, 1, 4}));
+        } else {
+            std::printf("no gap between the cards at this size: spacing drop not tested\n");
+        }
+        // Not from the list: nothing moves, the drop is not taken
+        const QVector<int> before = ids(p.renderQueue());
+        select({before.last()});
+        CHECK(!drop(QPoint(rect(before.first()).center().x(), rect(before.first()).top() + 3), false));
+        CHECK_EQ(ids(p.renderQueue()), before);
+        QMimeData files;
+        files.setUrls({QUrl::fromLocalFile("/x/clip.mp4")});
+        QDragEnterEvent foreign(rect(before.first()).center(), Qt::CopyAction | Qt::MoveAction, &files, Qt::LeftButton,
+                                Qt::NoModifier);
+        QApplication::sendEvent(list->viewport(), &foreign);
+        CHECK(!foreign.isAccepted()); // files are not taken
+    }
+
     // --- File name from the timeline's name: valid on Windows, macOS and Linux
     {
         CHECK_EQ(renderFileBaseName("Timeline 1"), QString("Timeline 1"));
-        CHECK_EQ(renderFileBaseName("Intro: Teil 1/2"), QString("Intro_ Teil 1_2"));
-        CHECK_EQ(renderFileBaseName("a<b>c\"d\\e|f?g*h"), QString("a_b_c_d_e_f_g_h"));
-        CHECK_EQ(renderFileBaseName("Tab\there\n"), QString("Tab_here_"));
+        CHECK_EQ(renderFileBaseName("Intro: Teil 1/2"), QString("Intro - Teil 1-2"));
+        CHECK_EQ(renderFileBaseName("Mein Video: Teil 2?"), QString("Mein Video - Teil 2")); // no "Teil 2_"
+        CHECK_EQ(renderFileBaseName("Shorts 9:16"), QString("Shorts 9-16"));
+        CHECK_EQ(renderFileBaseName("a<b>c\"d\\e|f?g*h"), QString("a_b_c'd-e_f_g_h"));
+        CHECK_EQ(renderFileBaseName("Tab\there\n"), QString("Tab here"));
         CHECK_EQ(renderFileBaseName("  Ende. . "), QString("Ende"));
+        CHECK_EQ(renderFileBaseName(".versteckt"), QString("versteckt"));
+        CHECK_EQ(renderFileBaseName("Was?"), QString("Was"));
         CHECK_EQ(renderFileBaseName(" ... "), QString("Export"));
         CHECK_EQ(renderFileBaseName(""), QString("Export"));
         CHECK_EQ(renderFileBaseName("con"), QString("con_"));
@@ -440,9 +522,9 @@ int main(int argc, char** argv)
         CHECK_EQ(name->text(), first); // "Timeline 1" as before
         const int intro = p.addTimeline("Intro: Teil 1/2"); // gets opened
         CHECK_EQ(p.currentSequence(), intro);
-        CHECK_EQ(name->text(), QString("Intro_ Teil 1_2"));
+        CHECK_EQ(name->text(), QString("Intro - Teil 1-2"));
         const RenderJob j = panel.makeJob();
-        CHECK_EQ(j.path, QDir(tmp.path()).filePath("Intro_ Teil 1_2.mp4"));
+        CHECK_EQ(j.path, QDir(tmp.path()).filePath("Intro - Teil 1-2.mp4"));
         CHECK_EQ(j.sequence, intro);
         p.renameSequence(intro, "Outro");
         CHECK_EQ(name->text(), QString("Outro"));
@@ -451,7 +533,7 @@ int main(int argc, char** argv)
         name->setText("Mein Film?"); // typed: stays when another timeline is opened, made valid in the job
         p.setCurrentSequence(intro);
         CHECK_EQ(name->text(), QString("Mein Film?"));
-        CHECK_EQ(QFileInfo(panel.makeJob().path).fileName(), QString("Mein Film_.mp4"));
+        CHECK_EQ(QFileInfo(panel.makeJob().path).fileName(), QString("Mein Film.mp4"));
         name->clear(); // empty: the opened timeline again
         CHECK_EQ(QFileInfo(panel.makeJob().path).fileName(), QString("Outro.mp4"));
         p.setCurrentSequence(1);

@@ -377,15 +377,14 @@ void TranscriptPanel::startNext()
 
 bool TranscriptPanel::eventFilter(QObject* obj, QEvent* e)
 {
-    if (obj == m_text && e->type() == QEvent::KeyPress && isCutKey(static_cast<QKeyEvent*>(e)) && cutSelection())
+    // The cut keys belong to the text (otherwise the window's action on the same key, e.g. the timeline's Delete, would
+    // take them): with words selected they cut them, without they do nothing - a click into the text clears the
+    // selection, and the timeline clips the user does not look at must never go
+    if (obj == m_text && (e->type() == QEvent::KeyPress || e->type() == QEvent::ShortcutOverride)
+        && isCutKey(static_cast<QKeyEvent*>(e))) {
+        e->accept();
+        if (e->type() == QEvent::KeyPress) cutSelection();
         return true;
-    if (obj == m_text && e->type() == QEvent::ShortcutOverride) {
-        // The cut keys belong to the text while words are selected (otherwise the window's action on the same key,
-        // e.g. the timeline's Delete, would take them); without selected words they go on to the window
-        if (isCutKey(static_cast<QKeyEvent*>(e)) && selectedWords().first >= 0) {
-            e->accept();
-            return true;
-        }
     }
     if (obj == m_text->viewport() && e->type() == QEvent::MouseButtonRelease) {
         const auto* me = static_cast<QMouseEvent*>(e);

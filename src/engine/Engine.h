@@ -84,8 +84,12 @@ public:
     // initMlt() installs it as MediaAspect's probe (core: converting crop values).
     static double pictureAspect(const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);
-    // Same without an Engine instance (own profile; usable from worker threads), image in the aspect ratio of `format`
-    static QImage thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size);
+    // Same without an Engine instance (own profile; usable from worker threads): the picture in the shape of `format`
+    // (as a timeline shows it at zoom 1), with ownShape in the file's own shape (pixel aspect and rotation included:
+    // Media Pool tiles, where a landscape clip fills its 16:9 tile also in a 9:16 project), centered in `size` with
+    // black borders
+    static QImage thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size,
+                            bool ownShape = false);
 
     // Still (Grab Still) of the currently shown image (timeline resp. source) at full project resolution,
     // always from the originals (not from proxies)

@@ -70,6 +70,7 @@ public:
         const char* id; // key in keybindings.json
         QKeySequence defaultKey;
         QWidget* scope;
+        QKeySequence defaultKey2 = {}; // second slot (Backspace beside Delete)
     };
     QVector<KeyAction> keyActions() const;
     // do not save view/sorting in the settings (test runs)
@@ -92,6 +93,10 @@ public slots:
     void newBin();                               // in the selected bin, edit the name right away (Ctrl+Shift+N)
     void newTimeline();                          // new empty timeline in the selected bin, gets opened
     void renameSequence(int id);                 // ask for the name
+    // Delete/Backspace on the clips (right-click "Remove from Media Pool"): the selected media leave the pool, the
+    // selected timelines are deleted (like their "Delete"), one undo step. Media a timeline uses: a question names how
+    // many clips in which timelines, "Remove with Their Clips" takes those clips out too, Cancel keeps everything.
+    void removeSelected();
 
 signals:
     void sourceRequested(const QString& path);
@@ -140,9 +145,10 @@ private:
     QLineEdit* m_search;
     PoolFilterButton* m_filterBtn;
     QToolButton* m_filterReset; // beside the bin title while a filter is active
-    QAction* m_removeBinKey;    // Delete in the bin list
-    QAction* m_removeBinKeyAlt; // Backspace in the bin list
-    QAction* m_closeSearchKey;  // Esc in the search field
+    QLabel* m_emptyHint;        // over the empty list: nothing matches the search or filter
+    QAction* m_removeBinKey;   // Delete/Backspace in the bin list
+    QAction* m_closeSearchKey; // Esc in the search field
+    QAction* m_removeClipsKey; // Delete/Backspace on the clips
     HoverScrub* m_scrub;        // pictures of the clip under the mouse (icon view)
     QHash<QString, QPixmap> m_scrubPicture; // path -> picture shown instead of the thumbnail while hovering
     QHash<QString, QListWidgetItem*> m_items; // path -> entry

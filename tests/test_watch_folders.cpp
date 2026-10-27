@@ -25,6 +25,7 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUndoStack>
@@ -231,7 +232,7 @@ void testProject()
     CHECK_EQ(p.watchRevision(), 2);
     CHECK_EQ(a.last().revision, 2);
     CHECK_EQ(undo->index(), index + 1);
-    CHECK(undo->undoText().contains("rec"));
+    CHECK_EQ(undo->undoText(), T("Überwachter Ordner „%1“: %2 neue Dateien").arg("rec").arg(2));
     CHECK_EQ(p.media().size(), 2);
     CHECK_EQ(p.mediaInfo("/rec/b.mp4")->bin, bin);
     CHECK(p.isModified());
@@ -257,6 +258,12 @@ void testProject()
     p.addWatchedMedia({{media("/rec/c.mp4"), "/rec"}});
     CHECK_EQ(p.mediaInfo("/rec/c.mp4")->bin, 0);
     CHECK_EQ(p.watchRevision(), 3);
+    // One file: named, no "file(s)"
+    CHECK_EQ(undo->undoText(), T("Überwachter Ordner „%1“: neue Datei „%2“").arg("rec", "c.mp4"));
+    CHECK_EQ(WatchFolders::importedNote({"/rec/c.mp4"}, "/rec", "Master"),
+             T("Neue Datei „%1“ aus „%2“ im Bin „%3“").arg("c.mp4", "rec", "Master"));
+    CHECK_EQ(WatchFolders::importedNote({"/rec/a.mp4", "/rec/b.mp4"}, "/rec/", "Aufnahmen"),
+             T("%1 neue Dateien aus „%2“ im Bin „%3“").arg("2", "rec", "Aufnahmen"));
 }
 
 void testProjectFile(const QString& root)
@@ -666,6 +673,29 @@ void testFolderWatch(const QString& root, const QString& clip)
     CHECK(waitFor([&] { return fw2.watchedDirectories().isEmpty() && fw2.idle(); }, 5000));
 }
 
+// The "Watch Folder" dialog is as tall as its text needs in every language (English had an empty gap above the intro:
+// its height came from a narrower width than the dialog's)
+void testDialogHeight()
+{
+    Project p;
+    emptyProject(p);
+    for (const char* lang : {"en", "de", "fr"}) {
+        I18n::install(lang);
+        WatchFolder n;
+        n.path = QDir::tempPath();
+        n.bin = WatchFolderDialog::kNewBin;
+        WatchFolderDialog add(p, n, true);
+        add.show();
+        QCoreApplication::processEvents();
+        auto* intro = add.findChild<QLabel*>("watchIntro");
+        if (!CHECK(intro)) continue;
+        Check::report(intro->height() <= intro->heightForWidth(intro->width()) + 4, "intro taller than its text",
+                      __FILE__, __LINE__, QString("%1: %2 px for %3").arg(lang).arg(intro->height())
+                                              .arg(intro->heightForWidth(intro->width())));
+    }
+    I18n::install("de");
+}
+
 void screenshots(const QString& folder)
 {
     Project p;
@@ -734,6 +764,7 @@ int main(int argc, char** argv)
     testCliProcess(root, clip, longClip);
     testLive(root, clip);
     testFolderWatch(root, clip);
+    testDialogHeight();
     if (!shot.isEmpty()) screenshots(shot); // last: it switches the language
     return Check::result();
 }

@@ -202,37 +202,25 @@ bool MainWindow::maybeLeaveProject()
 
 void MainWindow::newProject()
 {
+    // "Save changes?" first: cancelled there, nobody asks for a template
+    if (!maybeLeaveProject()) return;
     StartTemplate t = StartTemplates::defaultTemplate();
     if (StartTemplates::askOnNew()) { // only when the user chose to be asked (Settings › Start Templates)
-        const QVector<StartTemplate> list = StartTemplates::all();
-        // The choice comes back as its text: names told apart (an own template named like a built-in one; two own
-        // ones of one name, files made by hand)
-        const auto named = [&](int i, bool own) {
-            for (int j = 0; j < list.size(); ++j)
-                if (j != i && (!own || !list[j].builtIn) && list[j].displayName() == list[i].displayName()) return true;
-            return false;
-        };
-        QStringList names;
-        int current = 0;
-        for (int i = 0; i < list.size(); ++i) {
-            QString name = list[i].displayName();
-            if (list[i].builtIn && named(i, false)) name = T("%1 (eingebaut)").arg(name);
-            else if (!list[i].builtIn && named(i, true)) name = QString("%1 (%2)").arg(name, list[i].id);
-            names << name;
-            if (list[i].id == t.id) current = i;
-        }
-        bool ok = false;
-        const QString chosen = QInputDialog::getItem(this, T("Neues Projekt"), T("Startvorlage:"), names, current,
-                                                     false, &ok);
-        if (!ok) return;
-        t = list.value(names.indexOf(chosen), t);
+        ChooseStartTemplateDialog dlg(StartTemplates::all(), t.id, this);
+        if (dlg.exec() != QDialog::Accepted) return;
+        t = dlg.chosen();
     }
-    newProjectFromTemplate(t);
+    startProject(t);
 }
 
 void MainWindow::newProjectFromTemplate(const StartTemplate& t)
 {
     if (!maybeLeaveProject()) return;
+    startProject(t);
+}
+
+void MainWindow::startProject(const StartTemplate& t)
+{
     m_engine->pause();
     m_selection->clear();
     m_colorPanel->discardTracking();
@@ -256,11 +244,13 @@ QString MainWindow::saveStartTemplate(QWidget* parent, bool* madeDefault)
     if (dlg.exec() != QDialog::Accepted) return {};
     t.name = dlg.name();
     t.description = dlg.description();
-    const QString path = QDir(StartTemplates::dir()).filePath(StartTemplates::idForName(t.name) + ".json");
-    if (QFileInfo::exists(path)
-        && QMessageBox::question(parent, T("Als Startvorlage speichern"),
-                                 T("Eine Vorlage „%1“ gibt es schon. Ersetzen?").arg(t.name)) != QMessageBox::Yes)
-        return {};
+    // Names that become the same file ("Shorts 9:16" / "Shorts 9_16"): the question names the one that is replaced
+    if (const std::optional<StartTemplate> old = StartTemplates::sameFile(t.name)) {
+        const QString question = old->name == t.name
+                                     ? T("Eine Vorlage „%1“ gibt es schon. Ersetzen?").arg(t.name)
+                                     : T("„%1“ ersetzt die Vorlage „%2“ (gleicher Dateiname). Ersetzen?").arg(t.name, old->name);
+        if (QMessageBox::question(parent, T("Als Startvorlage speichern"), question) != QMessageBox::Yes) return {};
+    }
     QString error;
     if (!StartTemplates::save(t, &error)) {
         QMessageBox::warning(parent, T("Als Startvorlage speichern"),
@@ -372,7 +362,8 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     for (QStringList missing = ask ? ProjectFile::missingMedia(data) : QStringList{}; !missing.isEmpty();
          missing = ProjectFile::missingMedia(data)) {
         QMessageBox box(QMessageBox::Warning, T("Medien fehlen"),
-                        T("%1 Datei(en) nicht gefunden (verschoben oder umbenannt?):").arg(missing.size()),
+                        missing.size() == 1 ? T("1 Datei nicht gefunden (verschoben oder umbenannt?):")
+                                            : T("%1 Dateien nicht gefunden (verschoben oder umbenannt?):").arg(missing.size()),
                         QMessageBox::NoButton, this);
         QStringList names;
         for (const QString& p : missing.mid(0, 15)) names << p;

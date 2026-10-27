@@ -192,6 +192,7 @@ private:
     // Before New/Open: if the render queue is running, ask and cancel (otherwise it writes its status
     // into the queue of the next project), then maybeSave(). false = cancel
     bool maybeLeaveProject();
+    void startProject(const StartTemplate& t); // the new project (after maybeLeaveProject)
     void offerRestart(const QString& message, const QString& now, const QString& later);
     // ask = offer relinking missing media / list missing effects (not when reloading after an outside change)
     bool applyLoaded(ProjectData data, const QString& path, bool ask = true);

@@ -34,6 +34,8 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QHelpEvent>
+#include <QToolTip>
 #include <QToolButton>
 #include <QTest>
 #include <QThread>
@@ -219,6 +221,23 @@ void testPoolFilter(const QString& dump)
         f.kinds = PoolFilter::Image;
         pool.setFilter(f);
         CHECK_EQ(list->count(), 1);
+        // Nothing matches: a hint instead of an empty list
+        auto* hint = pool.findChild<QLabel*>("pool_empty_hint");
+        if (CHECK(hint)) {
+            CHECK(hint->isHidden());
+            f.flags = {"red"}; // no red still image
+            pool.setFilter(f);
+            CHECK_EQ(list->count(), 0);
+            CHECK(hint->isVisible() && hint->text() == T("Nichts passt zum Filter"));
+            if (mode == MediaPool::ViewMode::Thumbnails && !dump.isEmpty())
+                pool.grab().save(QDir(dump).filePath("pool-filter-empty.png"));
+            pool.setFilter({});
+            pool.setSearch("gibtsnicht");
+            CHECK(hint->isVisible() && hint->text() == T("Nichts passt zur Suche"));
+            pool.setSearch("");
+            CHECK(hint->isHidden());
+            CHECK_EQ(list->count(), 6);
+        }
         // Combined with the search and with the bins
         f = {};
         f.flags = {"red"};
@@ -284,6 +303,41 @@ void testPoolFilter(const QString& dump)
     CHECK_EQ(bigList->count(), 200);
 }
 
+// A bin a watch folder fills is marked in the bin list (icon with a dot, the folders in the tooltip)
+void testWatchedBins(const QString& dump)
+{
+    Project p;
+    const int rec = p.addBin(0, "Aufnahmen");
+    const int other = p.addBin(0, "Sonstiges");
+    Engine engine;
+    MediaPool pool(&p, &engine);
+    pool.setSaveSettings(false);
+    pool.resize(500, 250);
+    pool.show();
+    QApplication::processEvents();
+    auto* tree = pool.findChild<QTreeWidget*>();
+    if (!CHECK(tree)) return;
+    const auto item = [&](int bin) -> QTreeWidgetItem* {
+        for (QTreeWidgetItemIterator it(tree); *it; ++it)
+            if ((*it)->data(0, Qt::UserRole).toInt() == bin) return *it;
+        return nullptr;
+    };
+    CHECK(item(rec)->toolTip(0).isEmpty());
+    WatchFolder w;
+    w.path = QDir::tempPath() + "/OBS";
+    w.bin = rec;
+    p.setWatchFolders({w});
+    QApplication::processEvents();
+    CHECK(item(rec)->toolTip(0).contains(QDir::toNativeSeparators(w.path)));
+    CHECK(item(rec)->icon(0).cacheKey() != item(other)->icon(0).cacheKey());
+    CHECK(item(0)->toolTip(0).isEmpty() && item(other)->toolTip(0).isEmpty());
+    if (!dump.isEmpty()) pool.grab().save(QDir(dump).filePath("pool-watched-bin.png"));
+    p.setWatchFolders({});
+    QApplication::processEvents();
+    CHECK(item(rec)->toolTip(0).isEmpty());
+    CHECK_EQ(item(rec)->icon(0).cacheKey(), item(other)->icon(0).cacheKey());
+}
+
 void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
 {
     Project p;
@@ -292,7 +346,7 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
     pool.setSaveSettings(false);
     InputBindings& b = InputBindings::instance();
     for (const MediaPool::KeyAction& k : pool.keyActions())
-        b.registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope);
+        b.registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope, k.defaultKey2);
     // The timeline's Delete as a window key in the same window
     windowKeys->resize(700, 400);
     pool.setParent(windowKeys);
@@ -323,8 +377,22 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
     CHECK(sendKey(tree, Qt::Key_D, Qt::ControlModifier));
     CHECK(!p.bin(bin));
     b.setInputs("pool_remove_bin", b.defaultInputs("pool_remove_bin"));
-    CHECK_EQ(b.inputs("pool_remove_bin"), QStringList({"Del", ""}));
+    // Delete and Backspace are the two keys of one action (Key 1 / Key 2 in the key dialog)
+    CHECK_EQ(b.inputs("pool_remove_bin"), QStringList({"Del", "Backspace"}));
     CHECK_EQ(b.inputs("pool_close_search"), QStringList({"Esc", ""}));
+    CHECK_EQ(b.inputs("pool_remove_clips"), QStringList({"Del", "Backspace"}));
+    // 0.13 test builds had Backspace in the bin list as an action of its own: its key becomes the second one
+    {
+        b.setInputs("pool_remove_bin", {"Del", ""}); // (writes the file)
+        QFile f(b.filePath());
+        if (CHECK(f.open(QIODevice::WriteOnly)))
+            f.write(R"({"version":3,"shortcuts":{"pool_remove_bin":"Del","pool_remove_bin_alt":"Backspace"}})");
+        f.close();
+        b.load();
+        CHECK_EQ(b.inputs("pool_remove_bin"), QStringList({"Del", "Backspace"}));
+        b.setInputs("pool_remove_bin", b.defaultInputs("pool_remove_bin")); // saves the file
+        if (CHECK(f.open(QIODevice::ReadOnly))) CHECK(!f.readAll().contains("pool_remove_bin_alt"));
+    }
 
     // Esc in the search field clears and closes it
     pool.setSearch("abc");
@@ -365,6 +433,8 @@ void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
             for (int r = 0; r < table->rowCount(); ++r) {
                 const QString id = table->item(r, 1)->data(Qt::UserRole).toString();
                 if (id == "pool_remove_bin") poolTip = table->item(r, 2)->toolTip();
+                if (id == "pool_remove_bin") CHECK_EQ(table->item(r, 3)->text(), QKeySequence(Qt::Key_Backspace).toString(QKeySequence::NativeText));
+                CHECK(id != "pool_remove_bin_alt");
                 if (id == "test_window_delete") windowTip = table->item(r, 2)->toolTip();
                 if (id == "pool_remove_bin") CHECK_EQ(table->item(r, 0)->text(), T("Media Pool"));
             }
@@ -477,6 +547,24 @@ void testHoverScrub(const QString& dir)
     CHECK(waitFor([&] { return scrub.frames()->has(a, ScrubFrames::kSlots - 1); }));
     QApplication::processEvents();
     CHECK(shown != first); // testsrc2 moves: the end looks different from the start
+    // While scrubbing no item tooltip covers the picture; over the name below it the tooltip still shows, and moving
+    // back onto the picture hides it
+    {
+        item->setToolTip("a.mp4 – info");
+        const auto tip = [&](const QPoint& pos) {
+            QHelpEvent help(QEvent::ToolTip, pos, list.viewport()->mapToGlobal(pos));
+            QApplication::sendEvent(list.viewport(), &help);
+            QApplication::processEvents();
+            return QToolTip::isVisible() && QToolTip::text() == item->toolTip();
+        };
+        const QPoint picture(r.center().x(), r.top() + 30), name(r.center().x(), r.bottom() - 4);
+        scrub.hover(picture);
+        CHECK(!tip(picture));
+        scrub.hover(name);
+        CHECK(tip(name));
+        scrub.hover(picture);
+        CHECK(waitFor([] { return !QToolTip::isVisible(); })); // Qt hides it after a short moment
+    }
     scrub.leave();
     CHECK(at < 0);
     // A file without pictures: given up after one try, the thumbnail stays
@@ -631,6 +719,7 @@ int main(int argc, char** argv)
     testFilterLogic();
     testFilterButton(dump);
     testPoolFilter(dump);
+    testWatchedBins(dump);
     lap("filter");
     testPoolKeys(&window, &windowDeletes);
     lap("keys");

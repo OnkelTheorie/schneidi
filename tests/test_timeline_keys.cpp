@@ -19,6 +19,7 @@
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaPool.h"
 #include "ui/MediaStorage.h"
+#include "ui/RenderQueuePanel.h"
 #include "ui/TranscriptPanel.h"
 #include "ui/TrimView.h"
 #include "ui/Viewer.h"
@@ -264,7 +265,7 @@ void testWindow(const QString& media, const QString& shots)
     action("toggle_media_storage")->trigger();
 
     // Transcript next to the timeline: with words selected Delete cuts them (the selected clip stays), without
-    // words it is the timeline's Delete
+    // words Delete and the other keys that remove timeline clips do nothing (a click into the text clears the words)
     MediaTranscript t;
     t.words = {{1100, 1500, "eins"}, {1500, 2000, "zwei"}, {4200, 4800, "drei"}, {7200, 7800, "vier"}};
     p->setTranscript(media, t);
@@ -285,11 +286,43 @@ void testWindow(const QString& media, const QString& shots)
     CHECK_EQ(p->undoStack()->undoText(), T("Wörter herausschneiden"));
     CHECK(TimelineOps::findClip(p->timeline(), last));
     CHECK_EQ(int(transcript->words().size()), words - 1);
-    sel->set({last});
-    QTest::keyClick(text, Qt::Key_Delete); // no words selected
+    const int cutSteps = p->undoStack()->index();
+    for (const auto& [key, mods] : removing) { // no words selected
+        sel->set({last});
+        QTest::keyClick(text, Qt::Key(key), mods);
+        QApplication::processEvents();
+    }
+    CHECK_EQ(p->undoStack()->index(), cutSteps);
+    CHECK(TimelineOps::findClip(p->timeline(), last));
+    CHECK_EQ(int(transcript->words().size()), words - 1);
+
+    // Deliver page (the timeline is there too): on a render job the timeline's ripple delete and cut stay quiet,
+    // Delete removes the job
+    action("page_deliver")->trigger();
+    RenderJob job;
+    job.id = 1;
+    job.path = QDir::temp().filePath("schneidi-keys-test.mp4");
+    p->setRenderQueue({job});
     QApplication::processEvents();
-    CHECK_EQ(p->undoStack()->undoText(), T("Löschen"));
-    CHECK(!TimelineOps::findClip(p->timeline(), last));
+    auto* jobs = w.findChild<RenderQueuePanel*>() ? w.findChild<RenderQueuePanel*>()->findChild<QListWidget*>() : nullptr;
+    if (CHECK(jobs && jobs->isVisible() && jobs->count() == 1)) {
+        jobs->setFocus();
+        jobs->item(0)->setSelected(true);
+        for (const auto& [key, mods] : removing) {
+            if (key == Qt::Key_Delete && mods == Qt::NoModifier) continue; // the job's own key, below
+            if (key == Qt::Key_Backspace) continue;
+            sel->set({last});
+            QTest::keyClick(jobs, Qt::Key(key), mods);
+            QApplication::processEvents();
+        }
+        CHECK(TimelineOps::findClip(p->timeline(), last));
+        sel->set({last});
+        QTest::keyClick(jobs, Qt::Key_Delete);
+        QApplication::processEvents();
+        CHECK(p->renderQueue().isEmpty());
+        CHECK(TimelineOps::findClip(p->timeline(), last));
+    }
+    CHECK_EQ(p->undoStack()->index(), cutSteps);
 }
 
 } // namespace

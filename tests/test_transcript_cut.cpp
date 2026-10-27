@@ -161,8 +161,9 @@ void testPanel()
 }
 
 // The cut keys are a bindable action ("transcript_cut", scope "transcript"): in the text with words selected they
-// cut and the window's action on the same key (the timeline's Delete) stays quiet; without words the key goes on
-// to the window; rebinding takes effect at once (also in the hint)
+// cut and the window's action on the same key (the timeline's Delete) stays quiet; without words they do nothing
+// (a click into the text clears the selection: the timeline clips must not go); rebinding takes effect at once (also
+// in the hint)
 void testPanelKeys()
 {
     Fixture f;
@@ -197,10 +198,14 @@ void testPanelKeys()
     QCoreApplication::processEvents();
     CHECK_EQ(panel->words().size(), 3);
     CHECK_EQ(windowDeletes, 0);
-    // No words selected: the window's Delete
+    // No words selected: nothing (neither words nor the window's Delete)
+    const int steps = f.project.undoStack()->index();
     QTest::keyClick(text, Qt::Key_Delete);
-    CHECK_EQ(windowDeletes, 1);
+    QTest::keyClick(text, Qt::Key_Backspace);
+    QCoreApplication::processEvents();
+    CHECK_EQ(windowDeletes, 0);
     CHECK_EQ(panel->words().size(), 3);
+    CHECK_EQ(f.project.undoStack()->index(), steps);
 
     // Rebound (key dialog) to X: X cuts in the text, Delete goes to the window even with words selected
     InputBindings& b = InputBindings::instance();
@@ -212,13 +217,17 @@ void testPanelKeys()
     panel->selectWords(0, 0);
     QTest::keyClick(text, Qt::Key_Delete);
     QCoreApplication::processEvents();
-    CHECK_EQ(windowDeletes, 2);
+    CHECK_EQ(windowDeletes, 1);
     CHECK_EQ(panel->words().size(), 3);
     panel->selectWords(0, 0);
     QTest::keyClick(text, Qt::Key_X);
     QCoreApplication::processEvents();
     CHECK_EQ(panel->words().size(), 2);
-    CHECK_EQ(windowDeletes, 2);
+    CHECK_EQ(windowDeletes, 1);
+    QTest::keyClick(text, Qt::Key_X); // nothing selected: X stays in the text too
+    QCoreApplication::processEvents();
+    CHECK_EQ(panel->words().size(), 2);
+    CHECK_EQ(windowDeletes, 1);
     bool hint = false;
     for (const QLabel* l : panel->findChildren<QLabel*>())
         hint |= l->text() == T("Wörter markieren und %1 drücken schneidet sie heraus. Klick = zum Wort springen.")
