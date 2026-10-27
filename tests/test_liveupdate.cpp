@@ -59,7 +59,7 @@ int main(int argc, char** argv)
                                            {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=4", "-c:v",
                                             "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (media.isEmpty()) return Check::skip("Testmedium");
-    Check::initMlt();
+    Check::initMlt(true); // frei0r plugins (opt-in) as well
     std::setlocale(LC_NUMERIC, "C");
 
     // a frei0r filter with a number parameter (optional: frei0r may be missing)

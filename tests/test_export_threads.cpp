@@ -1,4 +1,5 @@
-// Export with several threads: frames in parallel (except frei0r/Green Screen), same result as with one thread.
+// Export with several threads: frames in parallel (except with a frei0r plugin; the own Green Screen keyer runs in
+// parallel too), same result as with one thread.
 // Prints the render times (1 thread / all threads) so that the gain can be measured afterwards.
 
 #include "check.h"
@@ -29,7 +30,10 @@ QString g_media;
 ProjectFormat kFmt{1920, 1080, {25, 1}};
 constexpr int kFrames = 100;
 
-Clip effectClip(bool chromakey)
+// Stand-in for a frei0r plugin (Open FX › frei0r, opt-in): only its category counts
+constexpr const char* kPlugin = "frei0r.stand_in";
+
+Clip effectClip(bool chromakey, bool plugin = false)
 {
     Clip c;
     c.id = 1;
@@ -40,6 +44,7 @@ Clip effectClip(bool chromakey)
     EffectRegistry::instance(c, "color")->params["saturation"] = 40.0;
     EffectRegistry::add(c, "blur");
     if (chromakey) EffectRegistry::add(c, "chromakey");
+    if (plugin) EffectRegistry::add(c, kPlugin);
     return c;
 }
 
@@ -56,15 +61,21 @@ void testParallelFrames()
     const Timeline plain = one(effectClip(false));
     CHECK_EQ(Exporter::parallelFrames(plain, 0), Exporter::availableThreads());
     CHECK_EQ(Exporter::parallelFrames(plain, 3), 3);
-    CHECK_EQ(Exporter::parallelFrames(one(effectClip(true)), 0), 1);
-    // disabled Green Screen does not count
-    Clip off = effectClip(true);
-    EffectRegistry::instance(off, "chromakey")->enabled = false;
+    CHECK_EQ(Exporter::parallelFrames(one(effectClip(true)), 3), 3); // own keyer: thread-safe
+    EffectDescriptor d;
+    d.id = d.mltService = kPlugin;
+    d.category = EffectRegistry::Frei0rCategory;
+    d.library = true;
+    EffectRegistry::registerEffects({d});
+    CHECK_EQ(Exporter::parallelFrames(one(effectClip(false, true)), 0), 1);
+    // disabled plugin does not count
+    Clip off = effectClip(false, true);
+    EffectRegistry::instance(off, kPlugin)->enabled = false;
     CHECK_EQ(Exporter::parallelFrames(one(off), 4), 4);
-    // Green Screen in a nested sequence (compound clip)
+    // plugin in a nested sequence (compound clip)
     Timeline outer = plain;
     auto nested = std::make_shared<NestedTimelines>();
-    nested->insert(7, one(effectClip(true)));
+    nested->insert(7, one(effectClip(false, true)));
     outer.nested = nested;
     CHECK_EQ(Exporter::parallelFrames(outer, 4), 1);
 }
@@ -158,11 +169,13 @@ void testRender(const QString& dir)
     Mlt::Producer p(*prof, all.toUtf8().constData());
     CHECK_EQ(p.get_length(), kFrames);
 
-    // Green Screen: runs through cleanly despite "all threads" (one frame after the other)
+    // Green Screen: frames in parallel, the same pictures as with one thread
     Timeline key = one(effectClip(true));
     key.video[0].clips[0].out = 24;
+    const qint64 tk1 = render(key, dir + "/key1.mp4", 1);
     const qint64 tk = render(key, dir + "/key.mp4", 0);
-    std::printf("Export mit Green Screen (25 Bilder): %lld ms\n", tk);
+    std::printf("Export mit Green Screen (25 Bilder): 1 Thread %lld ms, alle %lld ms\n", tk1, tk);
+    for (int pos : {0, 12, 24}) CHECK(diff(grab(dir + "/key1.mp4", pos), grab(dir + "/key.mp4", pos)) < 2.0);
 }
 
 // Measurement with a real file (not part of the normal test run):

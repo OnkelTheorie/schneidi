@@ -6,6 +6,7 @@
 #include "core/Presets.h"
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
+#include "engine/VideoEffects.h"
 #include "ui/MediaPool.h"
 
 #include <QDateTime>
@@ -15,6 +16,7 @@
 #include <QFileSystemWatcher>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineF>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMimeData>
@@ -28,6 +30,7 @@
 #include <QTreeWidgetItemIterator>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -156,9 +159,48 @@ QPixmap titleIcon()
     return pm;
 }
 
+// Own picture effects (engine/VideoEffects): the effect itself applied to a small colorful picture
+QPixmap ownLookIcon(const QString& id)
+{
+    QImage img(kIcon * 4, QImage::Format_RGBA8888);
+    for (int y = 0; y < img.height(); ++y)
+        for (int x = 0; x < img.width(); ++x) {
+            const bool sun = QLineF(x, y, img.width() * 0.68, img.height() * 0.42).length() < img.height() * 0.22;
+            img.setPixelColor(x, y, sun ? QColor(0xf8, 0xe8, 0xb0)
+                                        : QColor::fromHsvF(0.55 + 0.25 * x / img.width(), 0.55, 0.35 + 0.5 * y / img.height()));
+        }
+    uint8_t* px = img.bits();
+    const int w = img.width(), h = img.height();
+    if (id == "frei0r.glow") VideoEffects::glow(px, w, h, 0.3);
+    else if (id == "frei0r.colorhalftone") VideoEffects::halftone(px, w, h, 0.6, 0.3, 0.45, 0.25);
+    else if (id == "frei0r.rgbnoise") VideoEffects::noise(px, w, h, 0.35, 1);
+    else if (id == "frei0r.scanline0r") {
+        for (int y = 0; y < h; y += 4) // lines of the icon size, not of the picture
+            for (int k = 2; k < 4 && y + k < h; ++k)
+                for (int x = 0; x < w; ++x) img.setPixelColor(x, y + k, img.pixelColor(x, y + k).darker(200));
+    } else if (id == "frei0r.nosync0r") VideoEffects::noSync(px, w, h, 0.3);
+    else if (id == "frei0r.cairogradient") {
+        VideoEffects::GradientParams g;
+        g.startColor = QColor(0xff, 0x60, 0x20);
+        g.endColor = QColor(0x20, 0x40, 0xff);
+        g.startOpacity = g.endOpacity = 0.7;
+        g.startX = 0, g.endX = 1, g.startY = g.endY = 0.5;
+        VideoEffects::gradient(px, w, h, g);
+    } else if (id == "frei0r.alpha0ps_alpha0ps") {
+        for (int y = 0; y < h; ++y) // alpha shown as gray: the sun
+            for (int x = 0; x < w; ++x) {
+                const bool sun = QLineF(x, y, w * 0.68, h * 0.42).length() < h * 0.22;
+                const int v = sun ? 235 : 25;
+                img.setPixelColor(x, y, QColor(v, v, v));
+            }
+    }
+    return QPixmap::fromImage(img.scaled(kIcon, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+}
+
 // Filter icons: color correction = color gradient with brightness wedge, blur = soft circle
 QPixmap effectIcon(const QString& id)
 {
+    if (VideoEffects::isOwn(id) && id != "chromakey") return ownLookIcon(id);
     QPixmap pm(kIcon);
     pm.fill(QColor(0x2a, 0x2a, 0x30));
     QPainter p(&pm);
@@ -174,7 +216,8 @@ QPixmap effectIcon(const QString& id)
         shade.setColorAt(0, QColor(255, 255, 255, 90));
         shade.setColorAt(1, QColor(0, 0, 0, 150));
         p.fillRect(r, shade);
-    } else if (id.startsWith("frei0r.")) { // frei0r: tile with a short tag (over a hundred filters, no picture per filter)
+    } else if (id.startsWith("frei0r.")) { // frei0r plugin (opt-in): tile with a short tag (over a hundred filters, no
+                                           // picture per filter)
         QLinearGradient g(r.topLeft(), r.bottomRight());
         g.setColorAt(0, QColor(0x3a, 0x40, 0x52));
         g.setColorAt(1, QColor(0x22, 0x24, 0x2c));
@@ -311,7 +354,8 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     import->setText(T("Effekte importieren…"));
     import->setToolTip(T("Öffnet den Effekte-Ordner. LUTs (.cube, .3dl, .csp, Hald-CLUT) in den Ordner „LUTs“, "
                          "Übergänge (Graustufenbilder) in den Ordner „Transitions“ legen, Unterordner werden zu "
-                         "Kategorien. frei0r-Plugins in den Ordner „frei0r“ (wirken nach Neustart), Presets aus "
+                         "Kategorien. frei0r-Plugins in den Ordner „frei0r“ (wenn in den Einstellungen eingeschaltet, "
+                         "wirken nach Neustart), Presets aus "
                          "Kdenlive/Shotcut in den Ordner „Presets“.\n%1")
                            .arg(QDir::toNativeSeparators(EffectFolders::root())));
     connect(import, &QToolButton::clicked, this, [] {
@@ -340,7 +384,11 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     // Open FX → Filters (like DaVinci: the ResolveFX filters live there)
     auto* openFx = add(m_categories, QStringLiteral("Open FX"), OpenFx);
     add(openFx, T("Filter"), Filters);
-    add(openFx, QStringLiteral("frei0r"), Frei0rFilters)->setToolTip(0, T("frei0r-Plugins (eigene im Effekte-Ordner unter „frei0r“)"));
+    // frei0r plugins only when switched on (Settings → General) and installed
+    if (std::any_of(EffectRegistry::all().begin(), EffectRegistry::all().end(),
+                    [](const EffectDescriptor& d) { return d.category == EffectRegistry::Frei0rCategory; }))
+        add(openFx, QStringLiteral("frei0r"), Frei0rFilters)
+            ->setToolTip(0, T("frei0r-Plugins (eigene im Effekte-Ordner unter „frei0r“)"));
     add(m_categories, QStringLiteral("Audio FX"), AudioFx)->setToolTip(0, T("Effekte für Audioclips"));
     // Sorted by kind, below that bundled and custom effects folder each (subfolder = subcategories)
     auto* luts = add(m_categories, QStringLiteral("LUTs"), LutsAll);

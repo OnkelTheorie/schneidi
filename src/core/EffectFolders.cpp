@@ -131,7 +131,7 @@ void ensure()
               "Auf einen Schnitt ziehen wie die anderen Übergänge.\n"
               "\n"
               "frei0r: zusätzliche frei0r-Plugins (.so unter Linux, .dll unter Windows) in den Ordner „frei0r“ legen.\n"
-              "Sie erscheinen nach einem Neustart unter Open FX → frei0r.\n"
+              "Sie erscheinen nach einem Neustart unter Open FX → frei0r, wenn in den Einstellungen eingeschaltet.\n"
               "\n"
               "Presets: Effekt-Presets aus Kdenlive (eigene Effekte .xml, Effektgruppen) und Shotcut-Filter-Sets\n"
               "in den Ordner „Presets“ legen. Shotcut-Filter-Presets samt ihrem Ordner kopieren (der Ordnername\n"

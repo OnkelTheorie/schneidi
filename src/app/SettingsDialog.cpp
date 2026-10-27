@@ -6,6 +6,7 @@
 #include "app/UpdateCheck.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
+#include "engine/Frei0r.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -150,11 +151,24 @@ QWidget* SettingsDialog::buildGeneral()
                          "Musik, Spiele und andere Programme laufen nebenbei flüssiger, die Arbeit dauert länger. "
                          "Den Export stellst du auf der Deliver-Seite ein.")));
     lay->addWidget(performance);
+
+    // frei0r plugins: opt-in, schneidi's own effects cover the ones it offered before
+    auto* effects = new QGroupBox(T("Effekte"));
+    auto* eform = new QFormLayout(effects);
+    m_frei0r = new QCheckBox(T("Installierte frei0r-Plugins anbieten (Open FX → frei0r)"));
+    m_frei0r->setObjectName("frei0r_plugins");
+    m_frei0r->setChecked(Frei0r::enabled());
+    eform->addRow(m_frei0r);
+    eform->addRow(hint(T("Lädt die frei0r-Plugins dieses Computers als zusätzliche Effekte (nach dem Neustart von "
+                         "schneidi). Alle eingebauten Effekte gibt es auch ohne frei0r.")));
+    lay->addWidget(effects);
     lay->addStretch(1);
     return page;
 }
 
 bool SettingsDialog::updateHint() const { return m_updateHint->isChecked(); }
+
+bool SettingsDialog::frei0r() const { return m_frei0r->isChecked(); }
 
 int SettingsDialog::backgroundThreads() const { return m_threads->currentData().toInt(); }
 

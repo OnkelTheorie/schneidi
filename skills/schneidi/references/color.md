@@ -18,9 +18,16 @@ check each with `scopes` and adjust the outliers - same scene, same look.
 ## Looks (second)
 `effects` lists the built-in LUTs (`lut` in the `color` op; also `.cube`/`.3dl` files). Log footage needs its
 conversion LUT first. A look on top of a bad correction stays bad.
-Effects (`effect` op: blur, frei0r looks …) render after the grade, in the clip's order as `info` lists them; the
-order changes the picture (blur then pixelate ≠ pixelate then blur). `effect` with `move` ('up', 'down', 'first',
-'last' or a place) reorders them.
+Effects (`effect` op: blur, glow, halftone, noise, scan lines, gradient …; ids in `effects`) render after the grade,
+in the clip's order as `info` lists them; the order changes the picture (blur then pixelate ≠ pixelate then blur).
+`effect` with `move` ('up', 'down', 'first', 'last' or a place) reorders them.
+
+## Green screen and hiding things
+`chromakey` (Green Screen) keys the graded picture: `color` = the screen's color (pick it from a `frames` image of
+the background, not pure green), `distance` = tolerance (raise it until shaded parts of the screen go, ~0.3–0.45),
+`softness` = soft edge, `spill` = takes the green fringe off the subject (default full). Check with `frames`
+over a contrasting clip below. Blurring a face or a plate: a `window` with fill 'blur' (or 'pixelate') on the
+clip, then `track_window` so it follows the face – there is no automatic face detection.
 
 ## Limits
 Phone footage in HDR (iPhone HLG/Dolby Vision, many Android phones) can look pale in schneidi. Raise contrast and
