@@ -142,6 +142,7 @@ add_library(schneidi_lib STATIC
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
     src/engine/Denoise.h          src/engine/Denoise.cpp
     src/engine/Stabilizer.h       src/engine/Stabilizer.cpp
+    src/engine/StabilizeMotion.h  src/engine/StabilizeMotion.cpp
     src/engine/Preroll.h          src/engine/Preroll.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/CheckMeasure.h     src/engine/CheckMeasure.cpp

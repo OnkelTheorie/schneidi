@@ -29,7 +29,7 @@ struct EffectParam {
     QString mltName;
     // Choice: texts shown instead of `choices` (same order; the values stay in the project file). Empty = the values
     QStringList choiceLabels;
-    // Changing it needs a new analysis pass (stabilization: what vid.stab measures, not how it applies)
+    // Changing it needs a new analysis pass (stabilization: what the analysis measures, not how it applies)
     bool analysis = false;
     // Not written into a new instance (missing = default): many optional values that are mostly unused, like the
     // windows of the Color page (core/GradeWindows)

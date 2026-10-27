@@ -14,8 +14,8 @@ VERSION="$(sed -n 's/^project(schneidi VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeL
 VERSION="${VERSION:-0.1.0}"
 OUT="$BUILD/schneidi"
 
-# Only the MLT modules schneidi uses (like the AppImage); vidstab = Stabilize effect (MSYS2 package vid.stab)
-MODULES=(core avformat qt6 sdl2 rtaudio frei0r rubberband xml resample plus normalize vidstab)
+# Only the MLT modules schneidi uses (like the AppImage)
+MODULES=(core avformat qt6 sdl2 rtaudio frei0r rubberband xml resample plus normalize)
 # frei0r: all plugins (Effects Library, Open FX → frei0r) except face detection (would pull in OpenCV)
 FREI0R_SKIP=(facebl0r facedetect)
 

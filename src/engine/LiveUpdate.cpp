@@ -1,6 +1,7 @@
 #include "engine/LiveUpdate.h"
 
 #include "engine/ColorGrade.h"
+#include "engine/Stabilizer.h"
 
 #include <Mlt.h>
 #include <cstring>
@@ -162,11 +163,6 @@ struct Walk {
     void apply()
     {
         for (auto [live, fresh] : copies) {
-            // vid.stab reads its analysis file once: a new one (other shakiness/accuracy, cached already) needs a reload;
-            // smoothing/zoom/border it picks up by itself
-            const char* service = mlt_properties_get(fresh, "mlt_service");
-            if (service && std::strcmp(service, "vidstab") == 0 && !sameText(fresh, live, "results"))
-                mlt_properties_set_int(live, "reload", 1);
             for (int i = 0, n = mlt_properties_count(fresh); i < n; ++i) {
                 const char* name = mlt_properties_get_name(fresh, i);
                 if (!name || isUnderscore(name)) continue;
@@ -176,7 +172,8 @@ struct Walk {
                 if (!w || std::strcmp(v, w) != 0) mlt_properties_set(live, name, v);
             }
         }
-        for (auto [live, fresh] : filterPairs) ColorGrade::transfer(live, fresh); // no-op for other filters
+        for (auto [live, fresh] : filterPairs) // no-op for other filters
+            if (!ColorGrade::transfer(live, fresh)) Stabilizer::transfer(live, fresh);
     }
 };
 

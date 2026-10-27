@@ -843,7 +843,6 @@ void Exporter::finishGif(bool ok, const QString& log)
 
 bool Exporter::runAnalyses(const Timeline& tl, const ExportSettings& s)
 {
-    if (!Stabilizer::available()) return false; // the effect does nothing here (Inspector says so)
     if (s.videoCodec.isEmpty()) return false;   // audio only (also transcribe/loudness): no picture to stabilize
     const QVector<Stabilizer::Request> todo = Stabilizer::missing(tl, s.format);
     if (todo.isEmpty()) return false;

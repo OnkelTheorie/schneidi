@@ -598,9 +598,7 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         if (d.id == "grade")
             o["note"] = "the Color page grade (lift/gamma/gain/offset, LUT); windows (shape masks) via the `window` op";
         if (d.id == Stabilizer::EffectId)
-            o["note"] = Stabilizer::available()
-                            ? "needs an analysis pass (background in the app, before encoding in `render`)"
-                            : "MLT module vid.stab is missing: the effect does nothing on this computer";
+            o["note"] = "needs an analysis pass (background in the app, before encoding in `render`)";
         if (only.isEmpty()) {
             QJsonArray keys;
             for (const EffectParam& p : d.params)

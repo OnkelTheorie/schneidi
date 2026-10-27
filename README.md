@@ -46,7 +46,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - Color correction, curves, LUTs, effects with keyframes; copy and paste grades (`=`/`-`); green screen with an eyedropper in the viewer
 - **Vertical video from 16:9 on one track:** a blurred copy of the picture fills the space around it – no second track, smooth preview; **accents** (zoom punch, flash, shake) on hits and drops in one click
 - **Windows** on the Color page (rectangle, ellipse, soft edge, invert): grade only part of the picture, or blur, pixelate or cover a region (a face, a name, an overlay); **tracking** makes a window follow a moving object
-- Video stabilization (vid.stab) and audio noise reduction
+- Video stabilization and audio noise reduction (own implementations)
 - frei0r effects; import effect presets from Kdenlive and Shotcut
 - Video scopes: waveform, RGB parade, vectorscope, histogram
 - Two-up/four-up trim view while dragging an edit

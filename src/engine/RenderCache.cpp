@@ -242,7 +242,7 @@ void RenderCache::sync(const Timeline& tl)
             if (!wanted(*c) || !QFileInfo::exists(c->mediaPath)) continue;
             // Stabilization still analyzing: the output would be unstabilized (rendered once the result is there)
             if (const EffectInstance* st = EffectRegistry::instance(*c, Stabilizer::EffectId);
-                st && st->enabled && Stabilizer::available())
+                st && st->enabled)
                 if (const auto r = Stabilizer::request(*c, m_format); r && !Stabilizer::find(*r).valid()) continue;
             const QString k = key(*c, m_format);
             inUse.insert(k);

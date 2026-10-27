@@ -87,6 +87,8 @@ schneidi_test(test_paste_attributes)
 schneidi_test(test_scopes)
 schneidi_test(test_graded_thumbs)
 schneidi_test(test_stabilize_denoise)
+# Own stabilizer core: known camera motion recovered (moving object, still overlay), smoothed path, warp speed
+schneidi_test(test_stabilize_motion)
 schneidi_test(test_cli)
 target_link_libraries(test_cli PRIVATE schneidi_cli_lib)
 schneidi_test(test_live)

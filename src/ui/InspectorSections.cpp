@@ -392,10 +392,7 @@ void Inspector::addStabilizeRow(Section& s)
         QString action;
         QColor color = Theme::textDim;
         const auto r = current();
-        if (!Stabilizer::available()) {
-            text = T("Das MLT-Modul „vid.stab“ fehlt – der Effekt wirkt nicht, bleibt aber mit seinen Werten im Projekt.");
-            color = Theme::warning;
-        } else if (!r) {
+        if (!r) {
             text = Stabilizer::unsupportedReason(*c);
             color = Theme::warning;
         } else {
