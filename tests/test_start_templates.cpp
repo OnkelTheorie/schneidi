@@ -33,6 +33,8 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <clocale>
@@ -529,6 +531,24 @@ void testDialogs()
     SaveStartTemplateDialog save(own);
     CHECK_EQ(save.name(), QString("Show"));
     CHECK(!save.makeDefault());
+
+    // Settings › Start Templates at the dialog's first size: the whole page, its buttons (rename, delete …) without
+    // scrolling (at 560 × 560 they were below the edge)
+    {
+        SettingsDialog dlg(AiSettings{});
+        dlg.showTab(SettingsDialog::Tab::Templates);
+        dlg.show();
+        QApplication::processEvents();
+        int pages = 0;
+        for (QScrollArea* area : dlg.findChildren<QScrollArea*>())
+            if (qobject_cast<StartTemplatesPage*>(area->widget())) {
+                ++pages;
+                Check::report(area->verticalScrollBar()->maximum() == 0, "templates page scrolls", __FILE__, __LINE__,
+                              QString("page %1, room %2, scroll %3").arg(area->widget()->heightForWidth(area->viewport()->width()))
+                                  .arg(area->viewport()->height()).arg(area->verticalScrollBar()->maximum()));
+            }
+        CHECK_EQ(pages, 1);
+    }
     clean();
 }
 
