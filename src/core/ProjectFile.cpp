@@ -895,9 +895,11 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         w.path = resolvePath(o, projectDir);
         if (w.path.isEmpty() || WatchFolders::indexOf(d.watchFolders, w.path) >= 0) continue;
         w.subfolders = o.value("subfolders").toBool();
+        // Kinds of a newer version are left out; a watch with none this version knows is no watch here
         QStringList types;
-        for (const QJsonValue& t : o.value("types").toArray()) types << t.toString();
-        if (o.contains("types") && !WatchFolders::setTypes(w, types)) continue; // nothing it knows: not a watch
+        for (const QJsonValue& t : o.value("types").toArray())
+            if (WatchFolder known; WatchFolders::setTypes(known, {t.toString()})) types << t.toString();
+        if (o.contains("types") && !WatchFolders::setTypes(w, types)) continue;
         w.bin = std::max(0, o.value("bin").toInt()); // a missing bin is set to Master by Project::load
         w.since = QDateTime::fromString(o.value("since").toString(), Qt::ISODateWithMs);
         for (const QJsonValue& f : o.value("ignored").toArray())

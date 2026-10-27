@@ -4,7 +4,8 @@
 // look at the project and split a clip in the app (one undo step, lit up, in the AI log) while AI connections from
 // outside are switched off; what the provider gets (key header, guide in the system prompt, tools, the thinking block
 // sent back unchanged, tool results, pictures of `frames` as a user message after the tool answers); review mode
-// (accept = one undo step, discard = all back and the AI is told, editing meanwhile keeps the single steps); errors
+// (accept = one undo step, discard = all back and the AI is told, editing meanwhile keeps the single steps, a file of a
+// watch folder waits until the user has chosen); errors
 // (bad key, overloaded then fine, no server), stopping a request, test runs that never send; the chat section in
 // Settings › AI (test connection, model list, key stored).
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
@@ -17,6 +18,7 @@
 #include "app/AiKeys.h"
 #include "app/AiLog.h"
 #include "app/AiSettingsPage.h"
+#include "app/FolderWatch.h"
 #include "app/MainWindow.h"
 #include "app/McpClient.h"
 #include "app/SettingsDialog.h"
@@ -28,7 +30,9 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeyEvent>
@@ -476,6 +480,42 @@ void test(const QString& dir)
     CHECK(!panel->approvalShown());
     CHECK_EQ(undoIndex(w), undo3 + 2);
     CHECK_EQ(clips(w), 5);
+
+    // ---- A watch folder brings a file while the bar waits: the import waits for the user's choice (it is not the
+    // user editing, and it must not end the review) ----
+    {
+        const QString watched = dir + "/watched";
+        QDir().mkpath(watched);
+        FolderWatch* fw = w.folderWatch();
+        fw->setSettleMs(0);
+        fw->setRescanMs(100);
+        WatchFolder wf;
+        wf.path = watched;
+        wf.since = QDateTime::currentDateTimeUtc().addSecs(-60);
+        w.liveProject()->setWatchFolders({wf});
+        fake.script = {anthropicTool("toolu_7", "edit", {{"project", "@app"}, {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "2.5s"}}}}}),
+                       anthropicText("Geteilt.")};
+        const int undo4 = undoIndex(w);
+        panel->sendText("Teile bei 2,5 s");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK(panel->approvalShown());
+        const int notices = count(chat, AiChat::Entry::Kind::Notice);
+        const QString arrived = watched + "/new.mp4";
+        QFile::copy(media, arrived);
+        settle(1500); // the watcher sees it at once (settle 0, rescan 100 ms)
+        CHECK(panel->approvalShown());
+        CHECK(!w.liveProject()->mediaInfo(arrived));
+        CHECK_EQ(count(chat, AiChat::Entry::Kind::Notice), notices); // no "you kept editing"
+        if (auto* accept = panel->findChild<QPushButton*>("ai_accept"); CHECK(accept)) accept->click();
+        CHECK_EQ(undoIndex(w), undo4 + 1);
+        CHECK(w.liveProject()->undoStack()->undoText().startsWith(T("KI-Chat: %1").arg("Teile bei 2,5")));
+        // Then the file comes in, a step of its own
+        CHECK(waitFor([&] { return w.liveProject()->mediaInfo(arrived) != nullptr; }, 10000));
+        CHECK_EQ(undoIndex(w), undo4 + 2);
+        CHECK_EQ(clips(w), 6);
+        w.liveProject()->setWatchFolders({});
+    }
+
     s.approval = AiSettings::Approval::Auto;
     w.setAiSettings(s);
     // The whole conversation so far (tool rounds, accepted, discarded, notes of the app): only ever appended to

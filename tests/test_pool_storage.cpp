@@ -1,7 +1,7 @@
 // Test Media Pool filter and Media Storage (0.13): filter by kind/flag/clip color (core/PoolFilter.h, filter button,
 // combined with search and bins, icon and list view, hundreds of clips), the pool's bindable keys (scoped: Delete in
 // the bin list never reaches the timeline), Media Storage marks for files in the Media Pool, hover scrub pictures
-// (engine/ScrubFrames.h, ui/HoverScrub.h: never waits), and looking at a Media Storage file in the source view
+// (engine/ScrubFrames.h, ui/HoverScrub.h: never waits; a file that changed is decoded anew), and looking at a Media Storage file in the source view
 // without importing it; an edit from there imports it first (one undo step), marks set there go along.
 // POOL_STORAGE_DUMP=<folder>: pictures of the filter menu, the active filter and the storage marks.
 #include "check.h"
@@ -22,6 +22,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
@@ -579,6 +580,45 @@ void testHoverScrub(const QString& dir)
     CHECK_EQ(calls, n);
 }
 
+// A file that changes under the same name (rendered again, a recording not readable until it is finished): hover
+// scrub shows its new pictures, not the old ones or none
+void testScrubFileChanged(const QString& dir)
+{
+    const auto color = [&](const QString& name, const char* c) {
+        return Check::makeMedia(dir + "/" + name, {"-f", "lavfi", "-i", QString("color=c=%1:size=160x90:rate=25:duration=1").arg(c),
+                                                   "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+    };
+    const QString red = color("red.mp4", "red"), blue = color("blue.mp4", "blue");
+    if (!CHECK(!red.isEmpty() && !blue.isEmpty())) return;
+    const QString path = dir + "/render.mp4";
+    QDateTime time = QDateTime::currentDateTime().addSecs(-100);
+    const auto put = [&](const QString& from, bool half) {
+        QFile in(from);
+        in.open(QIODevice::ReadOnly);
+        const QByteArray bytes = in.readAll();
+        QFile out(path);
+        out.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        out.write(half ? bytes.left(bytes.size() / 2) : bytes); // MP4: the index comes last
+        out.flush();
+        time = time.addSecs(10);
+        out.setFileTime(time, QFileDevice::FileModificationTime);
+    };
+    const auto shows = [](const QImage& img, auto test) {
+        return !img.isNull() && test(img.pixelColor(img.width() / 2, img.height() / 2));
+    };
+    ScrubFrames frames(QSize(144, 81));
+    put(red, true);
+    frames.picture(path, 0);
+    CHECK(waitFor([&] { return frames.failed(path); }));
+    // Finished: decoded now
+    put(red, false);
+    CHECK(!frames.failed(path));
+    CHECK(waitFor([&] { return shows(frames.picture(path, 0), [](const QColor& c) { return c.red() > 200 && c.blue() < 80; }); }));
+    // Rendered again: the new pictures
+    put(blue, false);
+    CHECK(waitFor([&] { return shows(frames.picture(path, 0), [](const QColor& c) { return c.blue() > 200 && c.red() < 80; }); }));
+}
+
 void testPreviewWithoutImport(const QString& dir)
 {
     const QString a = dir + "/a.mp4", b = dir + "/b.mp4";
@@ -688,6 +728,7 @@ int main(int argc, char** argv)
         testStorageMarks(tmp.path(), dump);
         lap("storage marks");
         testHoverScrub(tmp.path());
+        testScrubFileChanged(tmp.path());
         lap("hover scrub");
         testPreviewWithoutImport(tmp.path());
         lap("preview");

@@ -272,12 +272,23 @@ ChooseStartTemplateDialog::ChooseStartTemplateDialog(const QVector<StartTemplate
     m_combo = new QComboBox;
     m_combo->setObjectName("choose_template");
     m_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents); // long names whole ("Podcast / Interview")
+    // Names told apart: a built-in template an own one is named like ("Neutral (eingebaut)"), two own ones of one name
+    // (files made by hand: their file name)
+    const auto named = [this](int i, bool own) {
+        for (int j = 0; j < m_templates.size(); ++j)
+            if (j != i && (!own || !m_templates[j].builtIn) && m_templates[j].displayName() == m_templates[i].displayName())
+                return true;
+        return false;
+    };
     bool own = false;
     for (int i = 0; i < m_templates.size(); ++i) {
         const StartTemplate& t = m_templates[i];
         if (!t.builtIn && !own && i > 0) m_combo->insertSeparator(m_combo->count()); // own ones below, like the menu
         own = own || !t.builtIn;
-        m_combo->addItem(t.id == defaultId ? T("%1 (Standard)").arg(t.displayName()) : t.displayName(), i);
+        QString name = t.displayName();
+        if (t.builtIn && named(i, false)) name = T("%1 (eingebaut)").arg(name);
+        else if (!t.builtIn && named(i, true)) name = QString("%1 (%2)").arg(name, t.id);
+        m_combo->addItem(t.id == defaultId ? T("%1 (Standard)").arg(name) : name, i);
         if (t.id == defaultId) m_combo->setCurrentIndex(m_combo->count() - 1);
     }
     form->addRow(T("Startvorlage:"), m_combo);
