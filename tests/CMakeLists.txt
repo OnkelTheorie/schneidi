@@ -78,6 +78,7 @@ schneidi_test(test_export_writer)
 schneidi_test(test_smart_render)
 schneidi_test(test_video_decoder)
 schneidi_test(test_occlusion)
+schneidi_test(test_compose) # own compositing (qtblend replacement) against the picture of MLT's Qt module
 schneidi_test(test_crop)
 schneidi_test(test_transition_size)
 schneidi_test(test_hw_encoders)
@@ -184,7 +185,7 @@ schneidi_test(test_thread_teardown)
 foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_order test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
-             test_ducking test_crop test_blur_fill)
+             test_ducking test_crop test_blur_fill test_compose)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77
@@ -270,6 +271,8 @@ add_executable(bench_playback bench_playback.cpp check.h)
 target_link_libraries(bench_playback PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_seek bench_seek.cpp check.h)
 target_link_libraries(bench_seek PRIVATE schneidi_lib Qt6::Test)
+add_executable(bench_compose bench_compose.cpp check.h)
+target_link_libraries(bench_compose PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_multicam bench_multicam.cpp check.h)
 target_link_libraries(bench_multicam PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_export bench_export.cpp check.h)

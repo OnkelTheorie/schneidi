@@ -163,6 +163,9 @@ add_library(schneidi_lib STATIC
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
     src/engine/GradedThumbs.h     src/engine/GradedThumbs.cpp
     src/engine/BlurFill.h         src/engine/BlurFill.cpp
+    src/engine/video/Compose.h    src/engine/video/Compose.cpp
+    src/engine/video/Still.h      src/engine/video/Still.cpp
+    src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/Frei0r.h           src/engine/Frei0r.cpp
@@ -274,6 +277,7 @@ add_library(schneidi_lib STATIC
 # is a known multiple of the vector width). OutputColor: 3.5 -> 1.6 ms per 1080p frame.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/engine/OutputColor.cpp src/engine/video/Reader.cpp src/engine/BlurFill.cpp
+                                src/engine/video/Compose.cpp
                                 src/engine/VideoEffects.cpp PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-O3>")
 endif()
 

@@ -1,5 +1,9 @@
 #include "engine/Bundle.h"
 
+#include "engine/video/Compose.h"
+#include "engine/video/Still.h"
+#include "engine/video/Text.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -85,19 +89,22 @@ void prepareMltEnvironment()
             qputenv("MLT_REPOSITORY_DENY", list.isEmpty() ? module : list + ':' + module);
     };
     deny("libmltjackrack");
-    // Systems with MLT for Qt 5 and Qt 6 side by side (Debian, Ubuntu): both Qt modules offer qimage, qtblend, qtext …
-    // and the Qt 5 one won. It pulled Qt 5 into this Qt 6 program, and without Qt 5's WebP plugin a .webp picture
-    // fell through to avformat: a 10-minute "video" with one picture and then nothing. Only the Qt 6 modules (as in
-    // the AppImage); a system with nothing but the Qt 5 module keeps it.
-    QString modules = mltModuleDir();
-    if (modules.isEmpty()) modules = qEnvironmentVariable("MLT_REPOSITORY", QStringLiteral(SCHNEIDI_MLT_MODULE_DIR));
-    if (!QDir(modules).entryList({"libmltqt6.*"}, QDir::Files).isEmpty()) {
-        deny("libmltqt");
-        deny("libmltglaxnimate");
-    }
+    // MLT's Qt modules are GPL as a whole (0.14: no third-party GPL code in the bundled build). Their services that
+    // schneidi used have own replacements registered under the same names (qtblend, qtcrop: engine/video/Compose;
+    // qimage: Still; qtext: Text), so nothing of them is loaded. glaxnimate (Lottie, a Qt module too) and plusgpl
+    // (burningtv, lumaliftgaingamma, rotoscoping, cbrts) are not used. SCHNEIDI_MLT_QT=1 loads the Qt 6 module anyway:
+    // the image comparison against the old services (tests/test_compose).
+    // Without that, systems with MLT for Qt 5 and Qt 6 side by side (Debian, Ubuntu): both Qt modules offer qimage,
+    // qtblend, qtext … and the Qt 5 one won. It pulled Qt 5 into this Qt 6 program (a .webp picture then fell through
+    // to avformat without Qt 5's WebP plugin): the Qt 5 one stays denied in any case.
+    deny("libmltqt");
+    deny("libmltglaxnimate");
+    deny("libmltglaxnimate-qt6");
+    deny("libmltplusgpl");
+    if (!qEnvironmentVariableIsSet("SCHNEIDI_MLT_QT")) deny("libmltqt6");
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    // MLT's Qt module (qtblend, qtext, …) refuses to load without $DISPLAY / $WAYLAND_DISPLAY, even when a Qt
+    // MLT's Qt module (only with SCHNEIDI_MLT_QT) refuses to load without $DISPLAY / $WAYLAND_DISPLAY, even when a Qt
     // application already exists – then the timeline gets invalid transitions and crashes. On a server (no display,
     // QT_QPA_PLATFORM=offscreen) our application is already there and MLT uses it instead of opening one itself, so
     // the check only has to be passed: a placeholder name that nobody connects to.
@@ -158,6 +165,10 @@ void pinNumericLocale()
 
 void prepareMltCaches()
 {
+    // Own services first: the loader below reads its tables, and with them the producer for pictures
+    Compose::registerServices();
+    Still::registerService();
+    Text::registerService();
     // every name MLT 7.30 uses with mlt_service_cache_* (grep over src/)
     for (const char* name : {"producer_avformat", "link_avdeinterlace", "link_swresample", "qimage.image", "qimage.alpha",
                              "qimage.qimage", "pixbuf.image", "pixbuf.alpha", "pixbuf.pixbuf", "pango.image"})

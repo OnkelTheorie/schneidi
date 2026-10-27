@@ -18,6 +18,8 @@
 #include "engine/RampProducer.h"
 #include "engine/Stabilizer.h"
 #include "engine/VideoEffects.h"
+#include "engine/video/Compose.h"
+#include "engine/video/Text.h"
 
 #include <Mlt.h>
 #include <QColor>
@@ -416,7 +418,7 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, i
         // pixels on the fitted picture (ClipTransform), the same at every zoom and shape. The qtblend below always
         // hands qtcrop the whole source picture (distort=1, never letterboxed), and qtcrop scales absolute values by
         // image size / profile size -> give it the share of the picture times the profile size.
-        Mlt::Filter cf(profile, "qtcrop");
+        Mlt::Filter cf = Compose::cropFilter(profile);
         if (cf.is_valid()) {
             auto rect = [&](double t) {
                 const double l = val(AnimParam::CropLeft, t) / fit.width(), r = val(AnimParam::CropRight, t) / fit.width();
@@ -447,7 +449,7 @@ void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, i
     // A crop needs the qtblend too (even at zoom 1): without it qtcrop got the frame as MLT letterboxes it, so values
     // counted from the frame's edges and the bars inside the kept area turned opaque black
     if (!transform && !crop) return;
-    Mlt::Filter f(profile, "qtblend");
+    Mlt::Filter f = Compose::transformFilter(profile);
     if (!f.is_valid()) return;
     // distort=1 (below) stretches the source onto the rectangle -> the rectangle itself is the fitted picture
     auto rect = [&](double t) {
@@ -488,7 +490,7 @@ void decorate(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c, TrackKin
     if (c.isTitle() && !Keys::hasTransform(c) && !Keys::hasCrop(c) && !Keys::animated(c, AnimParam::TitleSize)) {
         // qtext draws at the requested size but does not scale the outline along (preview 960 px:
         // outline three times as thick). qtblend with distort=1 always fetches the image at full project size.
-        Mlt::Filter f(profile, "qtblend");
+        Mlt::Filter f = Compose::transformFilter(profile);
         if (f.is_valid()) {
             f.set("rect", mlt_rect{0, 0, double(profile.width()), double(profile.height()), 1.0});
             f.set("distort", 1);
@@ -543,7 +545,7 @@ Mlt::Producer* titleCut(Mlt::Profile& profile, const Clip& c, int a, int len)
     };
     const bool outline = t.outlineOn && t.outlineWidth > 0;
     auto textFilter = [&](bool outlineLayer) {
-        Mlt::Filter f(profile, "qtext");
+        Mlt::Filter f = Text::filter(profile);
         if (!f.is_valid()) return false;
         f.set("argument", t.text.toUtf8().constData());
         // Rectangle as mlt_rect (number format, see applyTransform)
@@ -583,7 +585,7 @@ Mlt::Producer* titleCut(Mlt::Profile& profile, const Clip& c, int a, int len)
     if (sizeAnim) {
         // Scale s = size/largest size around the text center; product of size and position -> frame by frame.
         // qtblend (distort=1) also always fetches the image at project size (outline, see decorate).
-        Mlt::Filter scale(profile, "qtblend");
+        Mlt::Filter scale = Compose::transformFilter(profile);
         if (scale.is_valid()) {
             animate(c, {AnimParam::TitleSize, AnimParam::TitlePosX, AnimParam::TitlePosY}, a, len, [&](int pos, double tt) {
                 const double k = std::max(0.001, Keys::valueAt(c, AnimParam::TitleSize, tt) / size);
@@ -668,7 +670,7 @@ Mlt::Producer* subtitleCut(Mlt::Profile& profile, const TitleStyle& t, const QSt
     const bool outline = t.outlineOn && t.outlineWidth > 0;
     // Outline outside the letters like titles (titleCut): a layer behind with twice the width, the text on top
     auto textFilter = [&](bool outlineLayer) {
-        Mlt::Filter f(profile, "qtext");
+        Mlt::Filter f = Text::filter(profile);
         if (!f.is_valid()) return false;
         f.set("argument", lines.join('\n').toUtf8().constData());
         f.set("geometry", mlt_rect{(W - w) / 2 + t.posX, 0, w, bottom, 1.0});
@@ -690,7 +692,7 @@ Mlt::Producer* subtitleCut(Mlt::Profile& profile, const TitleStyle& t, const QSt
     if (outline && !textFilter(true)) return cut;
     if (!textFilter(false)) return cut;
     // as with titles: always draw at full project size (otherwise the outline does not scale in the preview)
-    Mlt::Filter full(profile, "qtblend");
+    Mlt::Filter full = Compose::transformFilter(profile);
     if (full.is_valid()) {
         full.set("rect", mlt_rect{0, 0, W, H, 1.0});
         full.set("distort", 1);
