@@ -15,7 +15,7 @@ VERSION="${VERSION:-0.1.0}"
 OUT="$BUILD/schneidi"
 
 # Only the MLT modules schneidi uses (like the AppImage); vidstab = Stabilize effect (MSYS2 package vid.stab)
-MODULES=(core avformat qt6 sdl2 rtaudio frei0r rubberband xml resample plus normalize vidstab)
+MODULES=(core avformat qt6 sdl2 rtaudio frei0r xml resample plus normalize vidstab)
 # frei0r: all plugins (Effects Library, Open FX → frei0r) except face detection (would pull in OpenCV)
 FREI0R_SKIP=(facebl0r facedetect)
 

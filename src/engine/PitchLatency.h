@@ -2,7 +2,9 @@
 
 #include <mlt++/Mlt.h>
 
-// Delay of the audio caused by "keep pitch" (MLT timewarp with warp_pitch -> Rubberband filter rbpitch). MLT does not
+// MLT audio path only (fallback, Audio::ownPath() false; the own engine stretches with engine/audio/Stretch):
+// delay of the audio caused by "keep pitch" (MLT timewarp with warp_pitch -> MLT's Rubberband filter rbpitch, only if
+// that module is installed - the bundled builds leave it out, then there is no pitch correction and no delay). MLT does not
 // compensate for it: depending on the speed the audio runs 2–10 frames behind the video. It is fixed per speed/sample rate (also after
 // seeks), but depends on the Rubberband version -> measure once at runtime instead of a table.
 // Compensation: fetch the audio that many source frames earlier from the timewarp producer (cut-in + frames()).

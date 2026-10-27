@@ -1,7 +1,7 @@
 // Own audio engine, step 2 (docs/archiv/plan-0.10-ton.md): Audio::Mixer mixes a timeline offline.
 // Retimed clips against generated sources (always): bursts at known times land where the clip's RetimeMap puts
 // them (sample-exact without pitch correction, within a few ms with it), the pitch follows the speed (tape) or stays
-// (Rubber Band), level kept, reverse at 100 % = the samples backwards, block size does not matter.
+// (own stretcher, engine/audio/Stretch), level kept, reverse at 100 % = the samples backwards, block size does not matter.
 // Against the sound references of step 0 (test_audio_reference, private docs folder; skipped without it):
 // - MLT compatibility mode (curves frame-late like MLT, no latency compensation): every case the same samples as the
 //   reference rendered through MLT (2 LSB at 24 bit), except where MLT itself is wrong or works differently
@@ -688,9 +688,9 @@ void checkRetimed(const Synth& src)
         const double speedThere = t.ramp.isEmpty() ? t.speed : 1.0;
         const double hz = frequency(sound, a, b), wantHz = t.pitch ? 1000 : 1000 * speedThere;
         const double level = rmsDb(sound, a, b), wantLevel = 20 * std::log10(0.25 / std::sqrt(2.0));
-        // Interpolation: a sample. Rubber Band (R3) places stretched bursts by itself 7 ms early at 50 % and 1 ms late at
-        // 200 % (the library alone does the same with its documented start pad/delay) and jitters +-1.5 ms with its
-        // hops; after a hard speed change another 5 ms. The spread checks that nothing drifts.
+        // Interpolation: a sample. The own stretcher places stretched bursts within ~3 ms (it reads each onset's frame
+        // so that the onset lands where the map puts it; Rubber Band, used up to 0.13: 7 ms early at 50 %, 1 ms late
+        // at 200 %, +-1.5 ms jitter). The spread checks that nothing drifts.
         const double posTol = t.pitch ? 0.015 * kRate : 1.0;
         double lo = 1e9, hi = -1e9;
         if (countOk)

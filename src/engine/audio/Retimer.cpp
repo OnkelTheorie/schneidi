@@ -2,11 +2,9 @@
 
 #include "core/Retime.h"
 #include "engine/audio/Reader.h"
-
-#include <rubberband/RubberBandStretcher.h>
+#include "engine/audio/Stretch.h"
 
 #include <algorithm>
-#include <climits>
 #include <cmath>
 #include <vector>
 
@@ -59,18 +57,14 @@ struct Retimer::Impl {
     int64_t fileSamples = 0;  // reverse: playback index k = file sample fileSamples - 1 - k
     int ch = 2;
     bool reverse = false;
-    bool pitch = false;       // Rubber Band
+    bool pitch = false;       // own stretcher (Stretch)
     bool plainReverse = false; // reverse at 100 %: copy
 
     // Playback-direction source (y[k]): window read from the reader
     std::vector<std::vector<float>> window;
     int64_t windowStart = 0, windowEnd = 0;
 
-    // Rubber Band
-    std::unique_ptr<RubberBand::RubberBandStretcher> rb;
-    int64_t feedAt = 0;   // next playback index to feed
-    int lag = 0;          // the stretcher works on input this far behind the newest (half its longest window)
-    int64_t nextMu = INT64_MIN;
+    std::unique_ptr<Stretch> stretch;
 
     Impl(std::unique_ptr<Reader> r, const Clip& c, int fileFrames, double samplesPerFrame)
         : reader(std::move(r)), clip(c), map(c, fileFrames), spf(samplesPerFrame)
@@ -81,6 +75,10 @@ struct Retimer::Impl {
         const bool constant = !c.hasRamp();
         pitch = c.keepPitch && !(constant && c.speed == 1.0);
         plainReverse = reverse && constant && c.speed == 1.0;
+        if (pitch)
+            stretch = std::make_unique<Stretch>(
+                ch, reader->rate(), [this](int64_t from, int n, float* const* out) { readSource(from, n, out); },
+                [this](double mu) { return position(mu); });
     }
 
     // Position in playback-direction source samples of material sample mu, and the speed there
@@ -97,13 +95,19 @@ struct Retimer::Impl {
         if (n <= 0) return;
         std::vector<float*> out(static_cast<size_t>(ch));
         for (int c = 0; c < ch; ++c) out[size_t(c)] = window[size_t(c)].data();
+        readSource(from, n, out.data());
+    }
+
+    // y[from, from + n) into out
+    void readSource(int64_t from, int n, float* const* out)
+    {
         if (!reverse) {
-            reader->read(from, n, out.data());
+            reader->read(from, n, out);
             return;
         }
-        // y[k] = x[fileSamples - 1 - k]: read x[fileSamples - to, fileSamples - from) and turn it around
-        reader->read(fileSamples - to, n, out.data());
-        for (auto& w : window) std::reverse(w.begin(), w.end());
+        // y[k] = x[fileSamples - 1 - k]: read x[fileSamples - from - n, fileSamples - from) and turn it around
+        reader->read(fileSamples - from - n, n, out);
+        for (int c = 0; c < ch; ++c) std::reverse(out[c], out[c] + n);
     }
 
     void readCopy(int64_t mu, int count, float* const* out)
@@ -145,69 +149,6 @@ struct Retimer::Impl {
             for (int cc = 0; cc < ch; ++cc) out[cc][i] = float(cc < 8 ? acc[cc] : 0.0);
         }
     }
-
-    // Material sample at playback index q (inverse of position()); before the source start at the first speed
-    double material(double q) const
-    {
-        if (q < 0) return q / speed(0);
-        return map.materialAt(q / spf) * spf;
-    }
-
-    // Feeds y[feedAt, feedAt + n) to Rubber Band. The ratio given with a block acts on the input the stretcher is
-    // working on, half its longest window behind the newest: it is set so that this stretch of source becomes exactly
-    // the material it covers (integral, so ramps do not drift). Set from the output side it would act a whole delay
-    // late and smear every speed change.
-    void feedStretcher(int n)
-    {
-        // (exactly 1/speed where it is constant: the stretcher rounds its hops, a ratio off in the last bit drifts)
-        const double from = double(feedAt - lag), a = material(from), b = material(from + n);
-        const double va = speed(a), vb = speed(b);
-        rb->setTimeRatio(std::clamp(va == vb || b <= a ? 1.0 / va : (b - a) / n, 0.01, 100.0));
-        load(feedAt, feedAt + n);
-        std::vector<const float*> in(static_cast<size_t>(ch));
-        for (int c = 0; c < ch; ++c) in[size_t(c)] = window[size_t(c)].data();
-        rb->process(in.data(), size_t(n), false);
-        feedAt += n;
-    }
-
-    void startStretcher(int64_t mu)
-    {
-        using RB = RubberBand::RubberBandStretcher;
-        if (!rb)
-            rb = std::make_unique<RB>(size_t(reader->rate()), size_t(ch),
-                                      RB::OptionProcessRealTime | RB::OptionEngineFiner | RB::OptionChannelsTogether);
-        rb->reset();
-        rb->setTimeRatio(1.0 / speed(double(mu)));
-        // Primed with the material before the start (real sound instead of silence), then its delay discarded:
-        // the first output sample lines up with position(mu)
-        const int pad = int(rb->getPreferredStartPad());
-        lag = pad;
-        feedAt = std::llround(position(double(mu))) - pad;
-        if (pad > 0) feedStretcher(pad);
-        int discard = int(rb->getStartDelay());
-        std::vector<std::vector<float>> trash(size_t(ch), std::vector<float>(4096));
-        std::vector<float*> out(static_cast<size_t>(ch));
-        for (int c = 0; c < ch; ++c) out[size_t(c)] = trash[size_t(c)].data();
-        while (discard > 0) {
-            while (rb->available() <= 0) feedStretcher(int(std::max<size_t>(1, rb->getSamplesRequired())));
-            const int n = std::min({discard, rb->available(), 4096});
-            rb->retrieve(out.data(), size_t(n));
-            discard -= n;
-        }
-    }
-
-    void readStretched(int64_t mu, int count, float* const* out)
-    {
-        if (mu != nextMu) startStretcher(mu);
-        nextMu = mu + count;
-        int done = 0;
-        std::vector<float*> dst(static_cast<size_t>(ch));
-        while (done < count) {
-            while (rb->available() <= 0) feedStretcher(int(std::max<size_t>(1, rb->getSamplesRequired())));
-            for (int c = 0; c < ch; ++c) dst[size_t(c)] = out[c] + done;
-            done += int(rb->retrieve(dst.data(), size_t(std::min(count - done, rb->available()))));
-        }
-    }
 };
 
 Retimer::Retimer(std::unique_ptr<Reader> reader, const Clip& clip, int fileFrames, double samplesPerFrame)
@@ -223,7 +164,7 @@ void Retimer::read(int64_t mu, int count, float* const* out)
 {
     if (count <= 0) return;
     if (d->plainReverse) d->readCopy(mu, count, out);
-    else if (d->pitch) d->readStretched(mu, count, out);
+    else if (d->pitch) d->stretch->read(mu, count, out);
     else d->readInterpolated(mu, count, out);
 }
 

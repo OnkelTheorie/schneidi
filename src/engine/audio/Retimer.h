@@ -6,9 +6,9 @@
 // clip's RetimeMap. Reverse reads the file backwards from its end (material 0 = the file's last sample).
 // - Without pitch correction: band-limited interpolation (windowed sinc) at that position, like tape: the pitch follows
 //   the speed, with anti-aliasing when faster. Ramps change the speed smoothly, sample by sample.
-// - Keep pitch: Rubber Band (R3 engine, real-time mode) stretches the source in playback direction; its start delay is
-//   compensated by priming it with the material before the start, so the sound stays in place. Ramps change the
-//   stretch ratio block by block.
+// - Keep pitch: the own phase vocoder (Stretch) reads the source in playback direction around the position the map
+//   gives for each of its frames, so the sound stays in place without a delay to compensate, and ramps change the
+//   speed frame by frame (every hop of ~21 ms).
 // A reverse clip at 100 % needs neither (samples copied backwards).
 //
 // Not thread-safe. read() is meant for increasing positions; a jump starts over (primes again).
