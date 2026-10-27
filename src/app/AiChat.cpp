@@ -302,7 +302,9 @@ void AiChat::requestModel()
     r.fixedTokens = m_sentChars / 4;
     for (const Ai::Message& m : m_history) {
         m_sentChars += m.text.size();
-        for (const Ai::ToolCall& c : m.calls) m_sentChars += c.name.size() + QJsonDocument(c.input).toJson().size();
+        // Compact, as the arguments are sent (indented they are ~2.5x as long: a big edit looked like a cut request)
+        for (const Ai::ToolCall& c : m.calls)
+            m_sentChars += c.name.size() + QJsonDocument(c.input).toJson(QJsonDocument::Compact).size();
         for (const Ai::ToolResult& t : m.results) m_sentChars += t.text.size();
     }
     // A context the server named: a request larger than it is not sent (it would be cut or refused); a tight one is
