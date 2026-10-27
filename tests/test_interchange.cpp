@@ -506,5 +506,21 @@ int main(int argc, char** argv)
             CHECK(it.start == 10 && it.in == 0 && it.length == 15);
         }
     }
+    // OTIO: gaps of 2 * 10^9 frames (the track's end overflowed) make the file a broken one; a frame rate of 2^31 fps
+    // becomes a possible one
+    threw = false;
+    try {
+        readOtio(R"({"OTIO_SCHEMA":"Timeline.1","tracks":{"children":[{"OTIO_SCHEMA":"Track.1","kind":"Video","children":[
+            {"OTIO_SCHEMA":"Gap.1","source_range":{"duration":{"rate":25,"value":2000000000}}},
+            {"OTIO_SCHEMA":"Gap.1","source_range":{"duration":{"rate":25,"value":2000000000}}}]}]}})");
+    } catch (const Error&) {
+        threw = true;
+    }
+    CHECK(threw);
+    {
+        const Seq s = readOtio(R"({"OTIO_SCHEMA":"Timeline.1","metadata":{"schneidi":{"rate_num":2147483647,"rate_den":1}},
+            "global_start_time":{"rate":2147483647,"value":0},"tracks":{"children":[]}})");
+        CHECK(s.format.rate.fps() >= 1 && s.format.rate.fps() <= 1000);
+    }
     return Check::result();
 }

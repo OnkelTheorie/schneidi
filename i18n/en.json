@@ -1534,6 +1534,7 @@
  "Wörter herausschneiden": "Cut out words",
  "Wörter markieren und Entf drücken schneidet sie heraus. Klick = zum Wort springen.": "Select words and press Delete to cut them out. Click = jump to the word.",
  "Zeit": "Time",
+ "Zeitangabe außerhalb des möglichen Bereichs": "Time value outside the possible range",
  "Zentriert": "Center",
  "Ziehen = Farbbalance (Shift = fein), Doppelklick = zurücksetzen": "Drag = color balance (Shift = fine), double-click = reset",
  "Ziellautheit": "Target Loudness",

@@ -1534,6 +1534,7 @@
  "Wörter herausschneiden": "Вырезать слова",
  "Wörter markieren und Entf drücken schneidet sie heraus. Klick = zum Wort springen.": "Выделите слова и нажмите Delete, чтобы вырезать их. Щелчок — перейти к слову.",
  "Zeit": "Время",
+ "Zeitangabe außerhalb des möglichen Bereichs": "Значение времени вне допустимого диапазона",
  "Zentriert": "По центру",
  "Ziehen = Farbbalance (Shift = fein), Doppelklick = zurücksetzen": "Перетаскивание = баланс цвета (Shift = точно), двойной щелчок = сброс",
  "Ziellautheit": "Целевая громкость (LUFS)",

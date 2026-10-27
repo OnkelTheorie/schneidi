@@ -42,12 +42,22 @@ QJsonObject transition(int before, int after, double rate, const Transition& tr)
             {"out_offset", rationalTime(after, rate)}, {"metadata", meta}};
 }
 
+// No timeline reaches 2^29 frames (6 days at 1000 fps): a time beyond is broken, and the sums of times stay inside int
+constexpr int kMaxFrames = 1 << 29;
+
+void checkFrames(double f)
+{
+    if (!(std::abs(f) <= kMaxFrames)) throw Error{T("Zeitangabe außerhalb des möglichen Bereichs")};
+}
+
 // Frames of a RationalTime in the sequence's rate
 int frames(const QJsonValue& rt, double rate)
 {
     const QJsonObject o = rt.toObject();
     const double r = o["rate"].toDouble(rate);
-    return int(std::lround(o["value"].toDouble() * (r > 0 ? rate / r : 1.0)));
+    const double f = std::round(o["value"].toDouble() * (r > 0 ? rate / r : 1.0));
+    checkFrames(f);
+    return int(f);
 }
 
 } // namespace
@@ -159,13 +169,14 @@ Sequence readOtio(const QByteArray& data)
     if (rate <= 0) rate = 25;
     seq.format.rate = own.contains("rate_num") ? FrameRate{own["rate_num"].toInt(), std::max(1, own["rate_den"].toInt())}
                                                : nearestFrameRate(rate);
-    if (std::abs(seq.format.rate.fps() - rate) > 0.01) seq.format.rate = FrameRate{int(std::lround(rate)), 1};
-    rate = seq.format.rate.fps();
+    if (std::abs(seq.format.rate.fps() - rate) > 0.01) seq.format.rate = FrameRate{int(std::lround(std::min(rate, 1e6))), 1};
     if (own.contains("width")) {
         seq.format.width = own["width"].toInt(1920);
         seq.format.height = own["height"].toInt(1080);
         seq.hasSize = true;
     }
+    seq.format = withinLimits(seq.format); // a rate or size no program writes (0 or 10^9 fps …): the nearest possible
+    rate = seq.format.rate.fps();
     const int offset = frames(std::as_const(tl)["global_start_time"], rate);
     for (const QJsonValue& m : std::as_const(tl)["tracks"]["markers"].toArray()) seq.markers << frames(m["marked_range"]["start_time"], rate) - offset;
     QStringList skipped, generators;
@@ -226,6 +237,7 @@ Sequence readOtio(const QByteArray& data)
                     pending.reset();
                 }
                 pos += length;
+                checkFrames(pos);
                 lastItem = -1;
                 continue;
             }
@@ -272,6 +284,7 @@ Sequence readOtio(const QByteArray& data)
                 pending.reset();
             }
             pos += length;
+            checkFrames(pos);
             lastItem = index;
         }
         if (pending && pending->leftItem >= 0) { // fade out at the end of the track

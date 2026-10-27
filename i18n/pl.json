@@ -1534,6 +1534,7 @@
  "Wörter herausschneiden": "Wytnij słowa",
  "Wörter markieren und Entf drücken schneidet sie heraus. Klick = zum Wort springen.": "Zaznacz słowa i naciśnij Delete, aby je wyciąć. Klik = przejdź do słowa.",
  "Zeit": "Czas",
+ "Zeitangabe außerhalb des möglichen Bereichs": "Wartość czasu poza możliwym zakresem",
  "Zentriert": "Wyśrodkowane",
  "Ziehen = Farbbalance (Shift = fein), Doppelklick = zurücksetzen": "Przeciągnij = balans kolorów (Shift = precyzyjnie), dwuklik = zresetuj",
  "Ziellautheit": "Docelowa głośność odbioru",
