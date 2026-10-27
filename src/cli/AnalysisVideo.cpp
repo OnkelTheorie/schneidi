@@ -551,8 +551,11 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
         const QImage s = ContactSheet::compose(images, labels, a["columns"].toInt());
         result["sheet_size"] = QJsonArray{s.width(), s.height()};
         if (!outDir.isEmpty()) {
+            // A folder (also one to be made: no extension, like "C:/tmp/check" from a model) gets sheet.jpg; the
+            // folders on the way are made, as for single images
             QString file = absolute(outDir);
-            if (QFileInfo(file).isDir()) file = QDir(file).filePath("sheet.jpg");
+            if (QFileInfo(file).isDir() || QFileInfo(file).suffix().isEmpty()) file = QDir(file).filePath("sheet.jpg");
+            QDir().mkpath(QFileInfo(file).absolutePath());
             // What the name says (JPEG bytes in a .png file confuse programs that go by the name), else JPEG
             const char* format = QFileInfo(file).suffix().compare("png", Qt::CaseInsensitive) == 0 ? "PNG" : "JPG";
             if (!s.save(file, format, 85)) fail("WRITE_FAILED", "cannot write " + file);

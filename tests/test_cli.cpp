@@ -998,6 +998,11 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(magic(dir.filePath("sheet.png")), QByteArray("\x89PNG"));
         run("frames", {{"source", clip}, {"count", 2}, {"sheet", true}, {"out", dir.filePath("sheet.jpg")}});
         CHECK(magic(dir.filePath("sheet.jpg")).startsWith("\xff\xd8"));
+        // Folders on the way are made; a name without extension is a folder (a model wrote "C:/tmp/super_clip_check")
+        run("frames", {{"source", clip}, {"count", 2}, {"sheet", true}, {"out", dir.filePath("new/check")}});
+        CHECK(magic(dir.filePath("new/check/sheet.jpg")).startsWith("\xff\xd8"));
+        run("frames", {{"source", clip}, {"count", 2}, {"sheet", true}, {"out", dir.filePath("more/s.png")}});
+        CHECK_EQ(magic(dir.filePath("more/s.png")), QByteArray("\x89PNG"));
 
         const QJsonObject pr = run("probe", {{"files", QJsonArray{clip, dir.filePath("missing.mp4")}}});
         CHECK_EQ(pr["files"].toArray().size(), 2);
