@@ -1,5 +1,4 @@
 #include "engine/MediaCache.h"
-#include "engine/Bundle.h"
 
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
@@ -7,6 +6,7 @@
 #include "engine/audio/Reader.h"
 #include "engine/Background.h"
 #include "engine/GradedThumbs.h"
+#include "engine/video/Thumbnails.h"
 
 #include <Mlt.h>
 #include <QCryptographicHash>
@@ -15,8 +15,6 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
-#include <QProcess>
-#include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QThread>
@@ -115,7 +113,7 @@ MediaCache::MediaCache(QObject* parent) : QObject(parent)
         thumbLoop();
     });
     m_stripThread = QThread::create([this] {
-        Background::lowerThisThread(Background::Level::Low); // also the ffmpeg it starts (inherits the nice value)
+        Background::lowerThisThread(Background::Level::Low); // also the decoder threads it starts (inherit the nice value)
         stripLoop();
     });
     m_waveThread = QThread::create([this] {
@@ -301,7 +299,8 @@ void MediaCache::thumbLoop()
 
 void MediaCache::stripLoop()
 {
-    static const QRegularExpression ptsRe(QStringLiteral("\\bn:\\s*\\d+.*\\bpts_time:(-?[0-9.]+)"));
+    // Decoder threads: independent key frames decode in parallel; more would only hold more pictures in memory
+    const int threads = std::clamp(QThread::idealThreadCount() / 2, 1, 4);
     for (;;) {
         QString path;
         ProjectFormat format;
@@ -316,75 +315,40 @@ void MediaCache::stripLoop()
             gen = m_generation;
         }
         Background::yieldToForeground();
-        const QSize size = thumbSize(format);
         const double fps = format.rate.fps();
-        // Only decode keyframes, unsqueeze anamorphic pixels, fit into the project format centered with black borders like MLT;
-        // showinfo reports the time of each image on stderr (ffmpeg rotates on its own)
-        const QString vf = QString("scale='if(gt(sar,0),iw*sar,iw)':ih,scale=%1:%2:force_original_aspect_ratio=decrease,"
-                                   "pad=%1:%2:(ow-iw)/2:(oh-ih)/2:black,setsar=1,showinfo")
-                               .arg(size.width())
-                               .arg(size.height());
-        QProcess ff;
-        ff.start(Bundle::tool("ffmpeg"), {"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-skip_frame", "nokey", "-i",
-                            ProxyManager::decodeSource(path), "-map", "0:v:0", "-an", "-sn", "-vf", vf, "-fps_mode", "passthrough",
-                            "-f", "rawvideo", "-pix_fmt", "rgba", "-"});
-        const qint64 frameBytes = qint64(size.width()) * size.height() * 4;
-        QByteArray out, err;
-        std::deque<int> times; // source frames from showinfo, still without image
+        // Only key frames, upright, square pixels, fitted into the project format centered with black borders like MLT
         int count = 0;
         bool aborted = false;
-        auto takeFrames = [&] {
-            err += ff.readAllStandardError();
-            int nl;
-            while ((nl = err.indexOf('\n')) >= 0) {
-                const QString line = QString::fromUtf8(err.left(nl));
-                err.remove(0, nl + 1);
-                if (!line.contains("showinfo")) continue;
-                const auto m = ptsRe.match(line);
-                if (m.hasMatch()) times.push_back(int(std::lround(m.captured(1).toDouble() * fps)));
-            }
-            out += ff.readAllStandardOutput();
-            while (out.size() >= frameBytes && !times.empty()) {
-                QImage raw(reinterpret_cast<const uchar*>(out.constData()), size.width(), size.height(), QImage::Format_RGBA8888);
-                const QImage img = raw.convertToFormat(QImage::Format_RGB32); // copied, faster to draw
-                out.remove(0, int(frameBytes));
-                const int frame = std::max(0, times.front());
-                times.pop_front();
+        QElapsedTimer sinceUpdate;
+        sinceUpdate.start();
+        Video::keyFrames(ProxyManager::decodeSource(path), {thumbSize(format), threads}, [&](double seconds, const QImage& img) {
+            const int frame = std::max(0, int(std::lround(seconds * fps)));
+            {
                 QMutexLocker lock(&m_mutex);
                 if (m_quit || gen != m_generation) {
                     aborted = true;
-                    return;
+                    return false;
                 }
                 KeyIndex& ki = m_keys[path];
                 const auto pos = std::lower_bound(ki.frames.begin(), ki.frames.end(), frame);
                 if (pos == ki.frames.end() || *pos != frame) ki.frames.insert(pos, frame);
                 m_thumbs.insert(thumbKey(path, frame), new QImage(img), int(img.sizeInBytes() / 1024) + 1);
-                ++count;
             }
-        };
-        if (ff.waitForStarted(5000)) {
-            while (!aborted) {
-                const bool running = ff.state() != QProcess::NotRunning;
-                if (running) ff.waitForReadyRead(100);
-                const int before = count;
-                takeFrames();
-                if (count != before) emit updated();
-                if (!running) break;
-                QMutexLocker lock(&m_mutex);
-                if (m_quit || gen != m_generation) aborted = true;
+            // The first picture at once, then at most ten times a second (each update repaints the timeline)
+            if (count++ == 0 || sinceUpdate.elapsed() >= 100) {
+                emit updated();
+                sinceUpdate.restart();
             }
-            if (aborted) {
-                ff.kill();
-                ff.waitForFinished(1000);
-            }
-        }
+            Background::yieldToForeground();
+            return true;
+        });
         if (aborted) continue;
         {
             QMutexLocker lock(&m_mutex);
             if (gen != m_generation) continue;
             KeyIndex& ki = m_keys[path];
             ki.done = true;
-            ki.failed = count == 0; // no ffmpeg / unreadable -> via MLT as before
+            ki.failed = count == 0; // no video / unreadable -> exact frames via MLT as before
         }
         emit updated();
     }

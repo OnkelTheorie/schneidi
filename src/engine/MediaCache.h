@@ -3,9 +3,9 @@
 // Computed asynchronously in own threads, the UI only queries and
 // is notified via updated() when something new is ready.
 //
-// Filmstrips fast: one ffmpeg pass per file that only decodes the keyframes (one image per
-// keyframe, ~20 ms instead of ~150–700 ms for an exactly sought 4K frame). Exact frames are only
-// loaded afterwards if the keyframe is further away than the tile spacing (zoomed in far).
+// Filmstrips fast: one pass per file that only decodes the keyframes (engine/video/Thumbnails, inside the program: no
+// process per file; one image per keyframe, ~20 ms instead of ~150–700 ms for an exactly sought 4K frame). One file at a
+// time. Exact frames are only loaded afterwards if the keyframe is further away than the tile spacing (zoomed in far).
 
 #include "core/ProjectFormat.h"
 
@@ -68,7 +68,7 @@ private:
     struct KeyIndex {
         QVector<int> frames; // source frames of the already decoded keyframes (ascending)
         bool done = false;
-        bool failed = false; // ffmpeg did not work -> exact frames only
+        bool failed = false; // no key frame pictures (no video, unreadable) -> exact frames only
     };
     static QString thumbKey(const QString& path, int frame);
     void queueThumb(const QString& path, int frame);

@@ -78,6 +78,7 @@ schneidi_test(test_export_formats)
 schneidi_test(test_export_writer)
 schneidi_test(test_smart_render)
 schneidi_test(test_video_decoder)
+schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the own decoder: same pictures as the ffmpeg command
 schneidi_test(test_occlusion)
 schneidi_test(test_crop)
 schneidi_test(test_transition_size)
@@ -263,6 +264,8 @@ foreach(target http mcp project srt edl fcp7 otio)
 endforeach()
 
 # Benchmark, not run by CTest
+add_executable(bench_filmstrips bench_filmstrips.cpp)
+target_link_libraries(bench_filmstrips PRIVATE schneidi_lib)
 add_executable(bench_inspector bench_inspector.cpp check.h)
 target_link_libraries(bench_inspector PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_engine bench_engine.cpp check.h)

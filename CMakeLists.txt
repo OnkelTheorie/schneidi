@@ -172,6 +172,7 @@ add_library(schneidi_lib STATIC
     src/engine/video/Reader.h     src/engine/video/Reader.cpp
     src/engine/video/Producer.h   src/engine/video/Producer.cpp
     src/engine/video/Hardware.h   src/engine/video/Hardware.cpp
+    src/engine/video/Thumbnails.h src/engine/video/Thumbnails.cpp
     src/engine/audio/Mixer.h      src/engine/audio/Mixer.cpp
     src/engine/audio/Retimer.h    src/engine/audio/Retimer.cpp
     src/engine/audio/Stretch.h    src/engine/audio/Stretch.cpp

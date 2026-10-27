@@ -912,6 +912,11 @@ struct Reader::Impl {
     }
 };
 
+double streamRotation(const AVStream* stream)
+{
+    return rotationOf(stream);
+}
+
 Reader::Reader() : d(std::make_unique<Impl>()) {}
 Reader::~Reader() = default;
 

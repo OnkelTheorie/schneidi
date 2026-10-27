@@ -10,7 +10,7 @@ class QFileSystemWatcher;
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
-class QProcess;
+class QThreadPool;
 class QTreeWidget;
 class QToolButton;
 class QTreeWidgetItem;
@@ -88,6 +88,6 @@ private:
     QPixmap m_hoverPixmap;
     QStringList m_thumbQueue;
     bool m_thumbRetry = false; // nextThumb() waits for foreground work (Background::foregroundBusy)
-    QProcess* m_ffmpeg = nullptr;
-    QString m_thumbPath;
+    QThreadPool* m_thumbPool; // one video thumbnail at a time
+    QString m_thumbPath;      // video whose thumbnail is being made
 };
