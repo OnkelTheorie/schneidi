@@ -60,7 +60,8 @@ private:
     void saveLocations();
     void setListMode(bool list);
     void updatePathLabel();
-    // Thumbnails: one after another via ffmpeg (videos) resp. QImageReader (images), remembered in memory
+    // Thumbnails: one after another via engine/video/Thumbnails (videos, in m_thumbPool) resp. QImageReader (images),
+    // remembered in memory
     void queueThumb(const QString& path);
     void nextThumb();
     int nextInView() const; // index in m_thumbQueue to make next

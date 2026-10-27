@@ -145,7 +145,8 @@ struct Source {
     }
 };
 
-// keyPackets: only the packets marked as key frames reach the decoder (it skips the others in any case)
+// keyPackets: only the packets marked as key frames reach the decoder (it is set to skip all other frames anyway, but
+// would still parse them)
 int keyFramePass(const QString& path, const KeyFrameOptions& options, bool keyPackets, bool& sawKeys,
                  const std::function<bool(double, const QImage&)>& onPicture)
 {
