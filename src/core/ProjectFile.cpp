@@ -924,10 +924,10 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         d.watchFolders << w;
     }
     const QJsonObject watchLog = root.value("watchLog").toObject();
-    d.watchRevision = std::max(0, watchLog.value("revision").toInt());
+    d.watchRevision = std::max(0, intOf(watchLog.value("revision"))); // the next arrival adds 1
     for (const QJsonValue& v : watchLog.value("files").toArray()) {
         const QJsonObject o = v.toObject();
-        const WatchArrival a{o.value("revision").toInt(), o.value("path").toString(), o.value("folder").toString(),
+        const WatchArrival a{intOf(o.value("revision")), o.value("path").toString(), o.value("folder").toString(),
                              QDateTime::fromString(o.value("time").toString(), Qt::ISODateWithMs)};
         if (a.revision > 0 && a.revision <= d.watchRevision && !a.path.isEmpty()) d.watchLog << a;
     }
