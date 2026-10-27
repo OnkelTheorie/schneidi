@@ -73,7 +73,12 @@ Sound soundOf(const AVCodecParameters* p, const AVCodec* codec)
     list = codec->sample_fmts;
     for (const AVSampleFormat* f = codec->sample_fmts; f && *f != AV_SAMPLE_FMT_NONE; ++f) ++n;
 #endif
-    if (!list || n <= 0) return Sound::Unknown;
+    if (!list || n <= 0) {
+        // Common decoders that declare nothing but only deliver playable formats (Opus: float, ALAC: 16/32-bit
+        // integer); test_media_probe holds both against MLT
+        const AVCodecID id = p->codec_id;
+        return id == AV_CODEC_ID_OPUS || id == AV_CODEC_ID_ALAC ? Sound::Playable : Sound::Unknown;
+    }
     const auto* formats = static_cast<const AVSampleFormat*>(list);
     const int good = int(std::count_if(formats, formats + n, [](AVSampleFormat f) { return playable(f); }));
     return good == n ? Sound::Playable : good == 0 ? Sound::NotPlayable : Sound::Unknown;

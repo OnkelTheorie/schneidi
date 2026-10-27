@@ -81,7 +81,7 @@ int binByPath(Project& p, const QString& path)
     return bin;
 }
 
-// Probes files side by side (a recording with several audio streams takes ~0.5 s)
+// Probes files side by side (mostly ~1 ms from the header, still images and odd files through MLT: up to ~0.5 s)
 QVector<MediaInfo> probeAll(const ProjectFormat& format, const QStringList& paths)
 {
     QVector<MediaInfo> infos(paths.size());

@@ -87,6 +87,8 @@ int main(int argc, char** argv)
         {"sound.flac", a + QStringList{"-c:a", "flac"}},
         {"sound.mp3", a + QStringList{"-c:a", "libmp3lame"}},
         {"sound.m4a", a + QStringList{"-c:a", "aac"}},
+        {"alac.m4a", a + QStringList{"-c:a", "alac"}},
+        {"opus.mkv", v + a + x264 + QStringList{"-c:a", "libopus"}},
         {"sound.opus", a + QStringList{"-c:a", "libopus"}},
         {"sound.ogg", a + QStringList{"-c:a", "libvorbis"}},
         {"cover.png", QStringList{"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=1", "-frames:v", "1"}, false},
