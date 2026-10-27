@@ -191,6 +191,7 @@ WatchFoldersDialog::WatchFoldersDialog(const Project& project, QWidget* parent)
     m_table = new QTreeWidget;
     m_table->setObjectName("watchList");
     m_table->setRootIsDecorated(false);
+    m_table->setTextElideMode(Qt::ElideMiddle); // a long path keeps its end: the folder's own name
     m_table->setHeaderLabels({T("Ordner"), T("Ziel-Bin"), T("Medien"), T("Unterordner")});
     m_table->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_table->header()->setStretchLastSection(false);
