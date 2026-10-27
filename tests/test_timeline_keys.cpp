@@ -31,8 +31,10 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QListWidget>
+#include <QMenuBar>
 #include <QMouseEvent>
 #include <QRegularExpression>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextEdit>
@@ -118,6 +120,37 @@ void testBindings()
     b.applyPreset("standard");
 }
 
+// Alt+<letter> of a main menu's title (its mnemonic) is a window shortcut of the menu bar: in no language may two menus
+// share one or a key of a built-in set be one (Qt takes turns between them, the action never fires: Polish Alt+O)
+void testMnemonics(MainWindow& w)
+{
+    InputBindings& b = InputBindings::instance();
+    QSet<QString> keys;
+    for (const QString& preset : InputBindings::presetIds()) {
+        b.applyPreset(preset);
+        for (const auto& e : b.entries())
+            if (e.scope.isEmpty())
+                for (const QString& in : b.inputs(e.id)) keys.insert(in);
+    }
+    b.applyPreset("standard");
+    QStringList titles; // German keys (tests run in German)
+    for (QAction* a : w.menuBar()->actions()) titles << a->text();
+    CHECK(titles.contains("&Datei") && titles.contains("&Hilfe"));
+    for (const I18n::Language& l : I18n::languages()) {
+        QHash<QString, QString> seen; // mnemonic -> menu
+        for (const QString& t : titles) {
+            const QString text = I18n::translate(l.code, t.toUtf8().constData());
+            const QString m = QKeySequence::mnemonic(text).toString(QKeySequence::PortableText);
+            if (m.isEmpty()) continue;
+            Check::report(!seen.contains(m), "menu mnemonic twice", __FILE__, __LINE__,
+                          QString("%1: %2 (%3, %4)").arg(l.code, m, seen.value(m), text));
+            Check::report(!keys.contains(m), "menu mnemonic is a key", __FILE__, __LINE__,
+                          QString("%1: %2 (%3)").arg(l.code, m, text));
+            seen[m] = text;
+        }
+    }
+}
+
 void testWindow(const QString& media, const QString& shots)
 {
     Engine engine;
@@ -131,6 +164,7 @@ void testWindow(const QString& media, const QString& shots)
     w.activateWindow();
     CHECK(QTest::qWaitForWindowActive(&w));
     testBindings();
+    testMnemonics(w);
 
     auto* tv = w.findChild<TimelineView*>();
     auto* panel = w.findChild<TimelinePanel*>();
