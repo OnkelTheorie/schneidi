@@ -8,6 +8,7 @@
 
 #include "app/AiProvider.h"
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QImage>
 #include <QObject>
@@ -62,6 +63,10 @@ public:
     const QVector<Ai::Message>& history() const { return m_history; }
     Ai::Usage usage() const { return m_usage; }
     QString transcript() const; // the whole chat as text ("Copy")
+    // Waiting for the model's first word of its answer: since when (ms), -1 = not waiting (tools run, it writes, idle)
+    qint64 waitingMs() const { return m_busy && m_waiting.isValid() ? m_waiting.elapsed() : -1; }
+    bool localModel() const { return Ai::isLocal(m_endpoint.address); } // a server on this computer
+    qint64 requestTokens() const { return m_sentChars / 4; }             // about, of the last request
     McpClient* tools() const { return m_mcp; }
     AiClient* client() const { return m_client; }
 
@@ -121,7 +126,8 @@ private:
     bool m_nudged = false; // an empty answer was answered with "go on" in this request
     QHash<QString, QString> m_failedCalls; // calls that failed in this request (name + arguments) -> their error
     int m_repeats = 0; // failed calls sent again in this request
-    qint64 m_sentChars = 0; // text of the last request to the model (system, tools, history; no pictures)
+    qint64 m_sentChars = 0;
+    QElapsedTimer m_waiting; // since the request to the model went out, until its first word // text of the last request to the model (system, tools, history; no pictures)
     int m_streaming = -1; // entry of the answer that streams in
     QVector<Ai::ToolCall> m_calls; // of the last answer
     QVector<Ai::ToolResult> m_results;

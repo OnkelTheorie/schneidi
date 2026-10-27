@@ -431,6 +431,7 @@
  "Die Framerate lässt sich nicht mehr ändern, weil schon Clips in der Timeline liegen.": "La cadence d’images ne peut plus être modifiée car la timeline contient déjà des clips.",
  "Die KI anhalten": "Arrêter l’IA",
  "Die KI arbeitet …": "L’IA travaille …",
+ "Ein Modell auf diesem Rechner liest zuerst die ganze Anfrage (etwa %1 Token, mit den Werkzeugen und der Anleitung) – auf schwacher Hardware dauert das Minuten.": "Un modèle sur cet ordinateur lit d’abord toute la demande (environ %1 jetons, avec les outils et le guide) – sur un matériel modeste, cela prend des minutes.",
  "Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst.": "L’IA modifie ton projet ouvert : couper, enlever les pauses, titres, son, couleur … Tu peux annuler chaque modification. Choisis avec quelle IA tu veux travailler.",
  "Die KI hat das Projekt geändert – zu sehen in Timeline und Vorschau. Übernehmen oder verwerfen? Bis dahin wartet sie.": "L’IA a modifié le projet – à voir dans la timeline et l’aperçu. Accepter ou rejeter ? D’ici là, elle attend.",
  "Die KI hat nichts geantwortet.": "L’IA n’a rien répondu.",

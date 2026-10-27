@@ -431,6 +431,7 @@
  "Die Framerate lässt sich nicht mehr ändern, weil schon Clips in der Timeline liegen.": "Liczby klatek nie można już zmienić, ponieważ na osi czasu są już klipy.",
  "Die KI anhalten": "Zatrzymaj SI",
  "Die KI arbeitet …": "SI pracuje …",
+ "Ein Modell auf diesem Rechner liest zuerst die ganze Anfrage (etwa %1 Token, mit den Werkzeugen und der Anleitung) – auf schwacher Hardware dauert das Minuten.": "Model na tym komputerze najpierw czyta całe zapytanie (około %1 tokenów, z narzędziami i przewodnikiem) – na słabym sprzęcie trwa to minuty.",
  "Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst.": "SI edytuje twój otwarty projekt: cięcie, usuwanie pauz, tytuły, dźwięk, kolor … Każdą zmianę możesz cofnąć. Wybierz, z którą SI chcesz pracować.",
  "Die KI hat das Projekt geändert – zu sehen in Timeline und Vorschau. Übernehmen oder verwerfen? Bis dahin wartet sie.": "SI zmieniła projekt – widać to na osi czasu i w podglądzie. Przyjąć czy odrzucić? Do tego czasu czeka.",
  "Die KI hat nichts geantwortet.": "SI nic nie odpowiedziała.",

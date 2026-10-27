@@ -259,12 +259,14 @@ void AiChat::requestModel()
         for (const Ai::ToolResult& t : m.results) m_sentChars += t.text.size();
     }
     m_streaming = -1;
+    m_waiting.start();
     m_client->send(m_endpoint, r);
 }
 
 void AiChat::onText(const QString& delta)
 {
     if (!m_busy) return;
+    m_waiting.invalidate();
     if (m_streaming < 0) {
         Entry e{Entry::Kind::Assistant, delta};
         e.state = Entry::State::Running;
@@ -277,6 +279,7 @@ void AiChat::onText(const QString& delta)
 void AiChat::onReply(const Ai::Reply& reply)
 {
     if (!m_busy) return;
+    m_waiting.invalidate();
     m_usage += reply.usage;
     emit usageChanged();
     // A local server that cut the request to the model's context (Ollama does so silently, 4096 tokens unless set
@@ -481,6 +484,7 @@ Ai::ToolResult AiChat::capped(Ai::ToolResult r)
 void AiChat::finishTurn()
 {
     if (!m_busy) return;
+    m_waiting.invalidate();
     m_calls.clear();
     m_results.clear();
     m_streaming = -1;

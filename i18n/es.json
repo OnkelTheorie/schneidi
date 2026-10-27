@@ -431,6 +431,7 @@
  "Die Framerate lässt sich nicht mehr ändern, weil schon Clips in der Timeline liegen.": "La velocidad de fotogramas ya no se puede cambiar porque la línea de tiempo ya contiene clips.",
  "Die KI anhalten": "Detener la IA",
  "Die KI arbeitet …": "La IA está trabajando …",
+ "Ein Modell auf diesem Rechner liest zuerst die ganze Anfrage (etwa %1 Token, mit den Werkzeugen und der Anleitung) – auf schwacher Hardware dauert das Minuten.": "Un modelo en este ordenador lee primero toda la petición (unos %1 tokens, con las herramientas y la guía): en hardware débil eso tarda minutos.",
  "Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst.": "La IA edita tu proyecto abierto: cortar, quitar pausas, títulos, sonido, color … Puedes deshacer cada cambio. Elige con qué IA quieres trabajar.",
  "Die KI hat das Projekt geändert – zu sehen in Timeline und Vorschau. Übernehmen oder verwerfen? Bis dahin wartet sie.": "La IA cambió el proyecto – míralo en la línea de tiempo y la vista previa. ¿Aceptar o descartar? Hasta entonces espera.",
  "Die KI hat nichts geantwortet.": "La IA no respondió nada.",

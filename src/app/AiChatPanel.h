@@ -32,6 +32,9 @@ public:
     void setSender(const std::function<bool(const QString& text)>& send) { m_send = send; }
     void sendText(const QString& text); // like typing it and pressing Enter (tests)
     QPlainTextEdit* input() const { return m_input; }
+    QString workingText() const; // the working line (tests)
+    // A local model silent this long gets the line why (it reads the whole request first); tests set less
+    void setSlowHintMs(int ms) { m_slowHintMs = ms; }
 
     // Setup page instead of the chat (no provider yet, or its key is missing). keyHint(provider): where the key
     // comes from when the user types none ("from ANTHROPIC_API_KEY"), empty = they have to give one
@@ -97,8 +100,10 @@ private:
     QToolButton* m_sendButton = nullptr;
     QLabel* m_usage = nullptr;
     QTimer* m_flush = nullptr;
+    QTimer* m_tick = nullptr; // the working line's seconds while the model is silent
     QVector<int> m_dirty;
     bool m_follow = true; // the list sticks to the newest message
+    int m_slowHintMs = 30000;
     // Setup page
     QComboBox* m_setupProvider = nullptr;
     QLineEdit* m_setupKey = nullptr;

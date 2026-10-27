@@ -431,6 +431,7 @@
  "Die Framerate lässt sich nicht mehr ändern, weil schon Clips in der Timeline liegen.": "Частоту кадров больше нельзя изменить, так как на монтажном столе уже есть клипы.",
  "Die KI anhalten": "Остановить ИИ",
  "Die KI arbeitet …": "ИИ работает …",
+ "Ein Modell auf diesem Rechner liest zuerst die ganze Anfrage (etwa %1 Token, mit den Werkzeugen und der Anleitung) – auf schwacher Hardware dauert das Minuten.": "Модель на этом компьютере сначала читает весь запрос (около %1 токенов, с инструментами и руководством) — на слабом оборудовании это занимает минуты.",
  "Die KI bearbeitet dein offenes Projekt: schneiden, Pausen entfernen, Titel, Ton, Farbe … Jede Änderung kannst du rückgängig machen. Wähle, mit welcher KI du arbeiten willst.": "ИИ редактирует твой открытый проект: монтаж, удаление пауз, титры, звук, цвет … Любое изменение можно отменить. Выбери, с каким ИИ ты хочешь работать.",
  "Die KI hat das Projekt geändert – zu sehen in Timeline und Vorschau. Übernehmen oder verwerfen? Bis dahin wartet sie.": "ИИ изменил проект – это видно на монтажном столе и в предпросмотре. Принять или отклонить? До тех пор ИИ ждёт.",
  "Die KI hat nichts geantwortet.": "ИИ ничего не ответил.",

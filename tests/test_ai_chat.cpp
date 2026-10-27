@@ -740,6 +740,22 @@ void test(const QString& dir)
                 CHECK(m2[i + 1]["content"].toString().contains("the request was ended"));
     }
 
+    // ---- A local model that stays silent (it reads the whole request first): the working line says why ----
+    {
+        FakeProvider::Response slow = openAiText("Da bin ich.");
+        slow.delayMs = 2500;
+        fake.script = {slow};
+        panel->setSlowHintMs(300);
+        panel->sendText("Hallo?");
+        settle(1600);
+        CHECK(panel->workingText().contains(T("Die KI arbeitet …")));
+        CHECK(panel->workingText().contains("Ein Modell auf diesem Rechner liest zuerst die ganze Anfrage"));
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK(panel->workingText().isEmpty());
+        CHECK_EQ(chat->waitingMs(), qint64(-1));
+        panel->setSlowHintMs(30000);
+    }
+
     // ---- A call without a project (small models forget it): the chat's tools take the open project, with a note ----
     {
         fake.script = {openAiTool("call_np", "info", {{"summary", true}}), openAiText("Ok.")};
