@@ -696,8 +696,9 @@ const QVector<Command>& commands()
                   "recorder's or game clip tool's output, renders of another program, a pipeline that drops "
                   "recordings). Nothing is watched unless you add a folder. Without add/remove/list: one pass - "
                   "imports the files that are new and complete (unchanged for settle_s, readable; still recording "
-                  "= 'pending', look again later) and answers them in 'new' (with their length and bin). The app "
-                  "watches the folders itself while it has the project open (one undo step per batch); 'revision' "
+                  "= 'pending', look again later) and answers them in 'new' (with their length and bin; 'note' when "
+                  "the first recording's frame rate differs from the still empty project's). The app watches the "
+                  "folders itself while it has the project open (one undo step per batch); 'revision' "
                   "counts every file a watch folder brought in, so 'since' with the revision of your last answer "
                   "shows what arrived since (also what the app took in). Command line: --follow keeps running and "
                   "prints one JSON line per new file (react to it: `highlights`, `edit`, `render`).",
