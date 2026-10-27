@@ -415,9 +415,20 @@ int blendGetImage(mlt_frame a, uint8_t** image, mlt_image_format* format, int* w
     mlt_properties_copy(bp, ap, "consumer.");
     mlt_properties_pass_list(bp, ap, "consumer_aspect_ratio,consumer_deinterlace,deinterlace_method");
     const Place pl = placeAt(tp, pos, len, pw, ph, w, h);
-    // RGBA asked (preview): b in RGBA right away. Else b as it comes (no conversion): an opaque one is handed on as it
-    // is (export: no conversion at all), a transparent one is mixed in RGBA, converted at most once
-    mlt_image_format bf = *format == mlt_image_rgba ? mlt_image_rgba : mlt_image_none;
+    // RGBA asked (preview), an RGBA source (pictures, titles) or one MLT's resizer will put bars around: b in RGBA
+    // right away (bars in YUV 4:2:0 came out with soft, shifted edges). Else b as it comes, no conversion: an opaque
+    // one is handed on as it is (export of a plain video: no conversion at all), a transparent one mixed in RGBA.
+    const auto bars = [&] {
+        const int fw = mlt_properties_get_int(bp, "width"), fh = mlt_properties_get_int(bp, "height");
+        double sar = mlt_properties_get_double(bp, "aspect_ratio");
+        if (sar <= 0) sar = 1.0;
+        if (fw <= 0 || fh <= 0 || !profile) return false;
+        const double own = fw * sar / fh, frame = mlt_profile_dar(profile);
+        return std::abs(own - frame) > 0.005 * frame;
+    };
+    mlt_image_format bf = *format == mlt_image_rgba || mlt_properties_get_int(bp, "format") == mlt_image_rgba || bars()
+                              ? mlt_image_rgba
+                              : mlt_image_none;
     uint8_t* bi = nullptr;
     int bw = w, bh = h;
     int error = mlt_frame_get_image(b, &bi, &bf, &bw, &bh, 0);

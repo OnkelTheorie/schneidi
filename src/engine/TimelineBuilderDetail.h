@@ -44,7 +44,7 @@ double sourceAspect(Mlt::Producer& cut);
 // Request the source below a qtblend (distort) only as large as the output needs: requested size times maxZoom
 // (qtblend otherwise fetches the full media size and lets Qt shrink it, which is slow and drops fine detail)
 void attachSourceCap(Mlt::Producer& clip, double maxZoom);
-// Plant a qtblend track transition; an invalid one (MLT's Qt module did not load) is skipped with a warning instead
+// Plant a track blend transition (Compose::blendTransition); an invalid one is skipped with a warning instead
 // of crashing in mlt_service_connect_producer – the upper tracks are then not composited
 void plantBlend(Mlt::Tractor& tractor, Mlt::Transition& blend, int track);
 // Effects, transform, volume, pan of a clip on a section; a/len: section (clip frame at the start, length) for keyframes

@@ -14,12 +14,11 @@ struct Data {
     QString path;
     QSize size; // as shown (EXIF orientation applied)
     std::mutex mutex;
-    QImage full;   // decoded on first use, RGBA8888 (straight alpha)
-    QImage scaled; // the last other size asked for
+    QImage full; // decoded on first use, RGBA8888 (straight alpha)
     bool failed = false;
 
-    // The picture at w x h (w/h <= 0: its own size); null = unreadable. Implicitly shared copy: usable unlocked.
-    QImage at(int w, int h)
+    // The picture; null = unreadable. Implicitly shared copy: usable unlocked.
+    QImage picture()
     {
         std::lock_guard lock(mutex);
         if (full.isNull() && !failed) {
@@ -29,12 +28,7 @@ struct Data {
             failed = img.isNull();
             if (!failed) full = img.convertToFormat(QImage::Format_RGBA8888);
         }
-        if (full.isNull()) return {};
-        if (w <= 0 || h <= 0 || (w == full.width() && h == full.height())) return full;
-        if (scaled.width() != w || scaled.height() != h)
-            scaled = full.scaled(w, h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
-                         .convertToFormat(QImage::Format_RGBA8888);
-        return scaled;
+        return full;
     }
 };
 
@@ -43,11 +37,9 @@ int getImage(mlt_frame frame, uint8_t** buffer, mlt_image_format* format, int* w
     auto producer = static_cast<mlt_producer>(mlt_frame_pop_service(frame));
     auto* d = static_cast<Data*>(producer->child);
     mlt_properties fp = MLT_FRAME_PROPERTIES(frame);
-    // The rescaler above (loader normalizers) tells the size it will scale to: hand that out directly, once scaled
-    int w = mlt_properties_get_int(fp, "rescale_width"), h = mlt_properties_get_int(fp, "rescale_height");
-    const char* interp = mlt_properties_get(fp, "consumer.rescale");
-    if ((interp && std::strcmp(interp, "none") == 0) || !qEnvironmentVariableIsSet("SCHNEIDI_STILL_SCALED")) w = h = 0;
-    const QImage img = d->at(w, h);
+    // At its own size: the loader's rescaler scales it like any picture (scaling here with Qt instead gave other
+    // pixels than MLT's qimage, tests/test_compose)
+    const QImage img = d->picture();
     if (img.isNull()) return 1;
     const int iw = img.width(), ih = img.height();
     const int size = mlt_image_format_size(mlt_image_rgba, iw, ih, nullptr);

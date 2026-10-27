@@ -383,7 +383,7 @@ void plantBlend(Mlt::Tractor& tractor, Mlt::Transition& blend, int track)
         return;
     }
     static std::once_flag warned;
-    std::call_once(warned, [] { qWarning("MLT transition qtblend is missing (Qt module not loaded): video tracks are not composited"); });
+    std::call_once(warned, [] { qWarning("Track blend transition could not be made: video tracks are not composited"); });
 }
 
 void applyTransform(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, int a, int len)
