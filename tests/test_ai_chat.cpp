@@ -5,7 +5,8 @@
 // outside are switched off; what the provider gets (key header, guide in the system prompt, tools, the thinking block
 // sent back unchanged, tool results, pictures of `frames` as a user message after the tool answers); review mode
 // (accept = one undo step, discard = all back and the AI is told, editing meanwhile keeps the single steps, a file of a
-// watch folder waits until the user has chosen); errors
+// watch folder waits until the user has chosen); what the user changed between two answers comes with the next
+// request (clips added, changed, removed); errors
 // (bad key, overloaded then fine, no server), stopping a request, test runs that never send; the chat section in
 // Settings › AI (test connection, model list, key stored).
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
@@ -514,6 +515,26 @@ void test(const QString& dir)
         CHECK_EQ(undoIndex(w), undo4 + 2);
         CHECK_EQ(clips(w), 6);
         w.liveProject()->setWatchFolders({});
+    }
+
+    // ---- The user edits between two answers: the next request says what changed, so a rework keeps it ----
+    {
+        int id = -1;
+        w.liveProject()->edit("user trim", [&id](Timeline& tl) {
+            Clip& c = tl.video[0].clips.last();
+            c.out -= 10;
+            id = c.id;
+        });
+        fake.script = {anthropicText("Gesehen.")};
+        panel->sendText("Und jetzt?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        const QString text = lastUserText(fake.last().body);
+        CHECK(text.contains("the user changed clips") && text.contains("\"changed\"") && text.contains("\"was\""));
+        CHECK(text.contains(QString("\"id\":%1").arg(id)) && text.contains("Und jetzt?"));
+        fake.script = {anthropicText("Ok.")};
+        panel->sendText("Nichts geändert");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK(!lastUserText(fake.last().body).contains("the user changed"));
     }
 
     s.approval = AiSettings::Approval::Auto;

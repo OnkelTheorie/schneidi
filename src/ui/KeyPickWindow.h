@@ -4,10 +4,11 @@
 // right-click or Esc cancel (the picker's signals); closing the window asks to cancel (closeRequested). MainWindow
 // opens it over the main window and closes it when the pick ends.
 
+#include "ui/KeyColorPicker.h"
+
 #include <QPointer>
 #include <QWidget>
 
-class KeyColorPicker;
 class QScreen;
 
 class KeyPickWindow : public QWidget {

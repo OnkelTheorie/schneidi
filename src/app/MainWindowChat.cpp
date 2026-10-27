@@ -10,6 +10,8 @@
 #include "core/Project.h"
 
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QMessageBox>
 #include <QSettings>
 #include <QSplitter>
@@ -17,6 +19,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QUndoStack>
+#include <algorithm>
 
 namespace {
 
@@ -94,6 +97,7 @@ void MainWindow::setupChat()
         // A new chat while the bar waits: the changes stay (one step each), nothing is thrown away unasked
         if (m_review.pending) m_chatPanel->hideApproval();
         m_review = {};
+        m_chatSeen.reset();
     });
     connect(m_project->undoStack(), &QUndoStack::indexChanged, this, &MainWindow::chatUndoChanged);
     updateChatPanel();
@@ -223,6 +227,7 @@ bool MainWindow::sendChat(const QString& text)
         known << accepted;
         if (!m_autosaveDisabled) QSettings().setValue("ai/chat/privacyAccepted", known);
     }
+    if (const QString note = chatChangesNote(); !note.isEmpty()) m_chat->addNote(note);
     const bool review = m_aiSettings.approval == AiSettings::Approval::Review;
     if (review) m_review = {true, m_project->undoStack()->index(), false, false};
     if (!m_chat->send(text, e, review)) {
@@ -250,8 +255,103 @@ void MainWindow::chatUndoChanged()
     m_chat->addNotice(T("Du hast weiterbearbeitet: die Änderungen der KI bleiben als einzelne Rückgängig-Schritte."));
 }
 
+void MainWindow::rememberChatState()
+{
+    m_chatSeen = m_project->timeline();
+    m_chatSeenSequence = m_project->currentSequence();
+    m_chatSeenProject = m_projectPath;
+}
+
+namespace {
+
+// A clip as the chat's AI knows it from `info`, with the values a user changes by hand (place, length, source range,
+// volume, fades, speed); by id
+QHash<int, QJsonObject> chatClips(const Project& p, const Timeline& tl)
+{
+    QHash<int, QJsonObject> out;
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (int i = 0; i < tl.tracks(k).size(); ++i)
+            for (const Clip& c : tl.tracks(k)[i].clips) {
+                QJsonObject o{{"id", c.id}, {"track", trackShortName({k, i})}, {"name", p.clipName(c)},
+                              {"start", c.start}, {"end", c.end()}};
+                if (c.kind == ClipKind::Media) {
+                    o["src_in"] = c.in;
+                    o["src_out"] = c.out + 1;
+                }
+                if (!c.enabled) o["enabled"] = false;
+                if (k == TrackKind::Audio && c.volumeDb != 0) o["volume_db"] = c.volumeDb;
+                if (c.speed != 1.0) o["speed"] = c.speed;
+                if (c.fadeIn) o["fade_in"] = c.fadeIn;
+                if (c.fadeOut) o["fade_out"] = c.fadeOut;
+                out.insert(c.id, o);
+            }
+    return out;
+}
+
+const Clip* findClip(const Timeline& tl, int id)
+{
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
+        for (const Track& t : tl.tracks(k))
+            for (const Clip& c : t.clips)
+                if (c.id == id) return &c;
+    return nullptr;
+}
+
+} // namespace
+
+QString MainWindow::chatChangesNote() const
+{
+    if (!m_chatSeen || m_chatSeenProject != m_projectPath) return {};
+    if (m_chatSeenSequence != m_project->currentSequence())
+        return "since your last answer the user opened another timeline; look at `info` before you edit";
+    const Timeline& now = m_project->timeline();
+    const QHash<int, QJsonObject> before = chatClips(*m_project, *m_chatSeen), after = chatClips(*m_project, now);
+    QJsonArray added, changed, removed;
+    QList<int> ids = after.keys();
+    std::sort(ids.begin(), ids.end());
+    for (int id : ids) {
+        const QJsonObject& o = after[id];
+        if (!before.contains(id)) {
+            added << o;
+            continue;
+        }
+        const QJsonObject& old = before[id];
+        QJsonObject was; // the values before, of those that changed
+        for (auto it = o.begin(); it != o.end(); ++it)
+            if (old.value(it.key()) != it.value()) was[it.key()] = old.contains(it.key()) ? old[it.key()] : QJsonValue();
+        for (auto it = old.begin(); it != old.end(); ++it)
+            if (!o.contains(it.key())) was[it.key()] = it.value();
+        const Clip* a = findClip(*m_chatSeen, id);
+        const Clip* b = findClip(now, id);
+        const bool other = a && b && !(*a == *b) && was.isEmpty(); // effects, keyframes, transform …
+        if (was.isEmpty() && !other) continue;
+        QJsonObject c = o;
+        if (!was.isEmpty()) c["was"] = was;
+        if (other) c["other"] = "effects, keyframes or transform changed";
+        changed << c;
+    }
+    QList<int> gone = before.keys();
+    std::sort(gone.begin(), gone.end());
+    for (int id : gone)
+        if (!after.contains(id))
+            removed << QJsonObject{{"id", id}, {"track", before[id]["track"]}, {"name", before[id]["name"]}};
+    if (added.isEmpty() && changed.isEmpty() && removed.isEmpty()) return {};
+    QJsonObject changes;
+    if (!added.isEmpty()) changes["added"] = added;
+    if (!changed.isEmpty()) changes["changed"] = changed;
+    if (!removed.isEmpty()) changes["removed"] = removed;
+    QString list = QString::fromUtf8(QJsonDocument(changes).toJson(QJsonDocument::Compact));
+    if (list.size() > 6000) // a big change (a new format touches every clip): the counts, `info` has the rest
+        list = QString("%1 clip(s) added, %2 changed, %3 removed - look at `info` before you edit")
+                   .arg(added.size()).arg(changed.size()).arg(removed.size());
+    return "since your last answer the user changed clips of the open timeline by hand (frames in the project's "
+           "rate, `was` = the values before): " + list + ". Build on these changes: keep them when you rework "
+           "something.";
+}
+
 void MainWindow::chatTurnFinished()
 {
+    rememberChatState();
     if (!m_review.active) return;
     const int index = m_project->undoStack()->index();
     if (m_review.broken || index <= m_review.start) {
@@ -285,6 +385,7 @@ void MainWindow::discardChatChanges()
     const int start = m_review.start;
     m_review = {};
     m_project->undoStack()->setIndex(start);
+    rememberChatState(); // the note below says it; the removed changes are not the user's edits
     m_chatPanel->hideApproval();
     m_chat->addNotice(T("Verworfen: das Projekt ist wieder wie vor der Anfrage."));
     m_chat->addNote("the user discarded all changes of your last request; the project is back as it was before it");

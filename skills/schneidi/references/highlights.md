@@ -37,6 +37,10 @@ also read [social.md](social.md).
   after a break), a change of pace where the song changes, the end on the end of a phrase. Same scene length for
   every moment feels mechanical. `beats` tells you where those are (see Music).
 - Effects (zoom punch, flash, shake) for the big moments only; the same effect on every kill wears off.
+- A sound on every kill (or hit, beat): all copies on **one** track, each starting on its moment (cut off silence at
+  the file's start first, `silence` shows it). When a kill comes before the previous sound has ended, end the
+  previous copy there (`trim`), like a sampler starting the sound again - copies on separate tracks pile up, get
+  loud and clip. Keep them overlapping only when the user asks for it.
 - `accent` puts them on many moments in one op, as keyframes: `{"op":"accent","at":["3.3s","7.2s"],"preset":"hit"}`
   (kill times from `highlights`, drops from `beats`). Presets: `punch`, `flash`, `shake`, `hit` (all three, a kill),
   `drop` (big, for the music drop), `pulse` (small, for beats); `strength` scales one, `effects` lists them. Don't
