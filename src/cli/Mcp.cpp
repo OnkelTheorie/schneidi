@@ -166,10 +166,8 @@ QString unknownTool(const QString& name, const QJsonObject& args, const Options&
         const QJsonValue project = op.take("project");
         QJsonObject fields{{"op", name}};
         for (auto it = op.begin(); it != op.end(); ++it) fields.insert(it.key(), it.value());
-        const QJsonObject call{{"project", project.isString() ? project : QJsonValue(qEnvironmentVariable(Live::ChatServerEnv).isEmpty()
-                                                                                           ? "<project file>"
-                                                                                           : Live::AppProject)},
-                               {"ops", QJsonArray{fields}}};
+        const QString fallback = qEnvironmentVariable(Live::ChatServerEnv).isEmpty() ? "<project file>" : Live::AppProject;
+        const QJsonObject call{{"project", project.isString() ? project : QJsonValue(fallback)}, {"ops", QJsonArray{fields}}};
         return QString("unknown tool %1: '%1' is an op of the edit tool - call edit with %2 (op %3)")
             .arg(name, QString::fromUtf8(QJsonDocument(call).toJson(QJsonDocument::Compact)), d.usage);
     }
@@ -185,7 +183,8 @@ QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& 
 {
     const QString name = params["name"].toString();
     const Command* cmd = find(name);
-    if (!cmd || !offered(name, opt)) return toolError("NOT_FOUND", unknownTool(name, params["arguments"].toObject(), opt));
+    if (!cmd || !offered(name, opt))
+        return toolError("NOT_FOUND", unknownTool(name, params["arguments"].toObject(), opt));
     Context ctx;
     ctx.mcp = true;
     // Long jobs (render, transcribe, loudness …) report progress when the client asked for it

@@ -30,12 +30,16 @@ const Clip& clipOf(Session& s, const QJsonObject& op, const char* key)
             fail("BAD_ARGUMENT", QString("%1 takes one clip: 'clip' (a clip id); for several clips one op each")
                                      .arg(op.value("op").toString()));
         v = list.first();
-        s.notes << QString("%1: clips:[%2] read as clip:%2").arg(op.value("op").toString()).arg(v.toVariant().toString());
+        s.notes << QString("%1: clips:[%2] read as clip:%2")
+                       .arg(op.value("op").toString())
+                       .arg(v.toVariant().toString());
     }
     if (v.isUndefined()) fail("BAD_ARGUMENT", QString("missing '%1' (clip id)").arg(key));
     bool number = v.isDouble();
     const int id = number ? v.toInt() : v.toString().trimmed().toInt(&number); // "7" is 7
-    if (!number) fail("BAD_ARGUMENT", QString("'%1': %2 is no clip id (a number, as `info` lists them)").arg(key, v.toVariant().toString()));
+    if (!number)
+        fail("BAD_ARGUMENT",
+             QString("'%1': %2 is no clip id (a number, as `info` lists them)").arg(key, v.toVariant().toString()));
     const Clip* c = TimelineOps::findClip(s.project.timeline(), id);
     if (!c) fail("NOT_FOUND", QString("no clip with id %1").arg(id));
     return *c;
@@ -312,7 +316,8 @@ void opKeep(Session& s, const QJsonObject& op)
         ranges = QJsonArray{other == "range"     ? op.value("range").toArray()
                             : other == "from/to" ? QJsonArray{op.value("from"), op.value("to")}
                                                  : ranges};
-        s.notes << QString("keep: %1 read as ranges:[[from, to]] (one range; several: [[from, to], [from, to]])").arg(other);
+        s.notes << QString("keep: %1 read as ranges:[[from, to]] (one range; several: [[from, to], [from, to]])")
+                       .arg(other);
     }
     if (ranges.isEmpty())
         fail("BAD_ARGUMENT", "missing 'ranges': the parts of the source to keep in order, e.g. "
@@ -321,7 +326,7 @@ void opKeep(Session& s, const QJsonObject& op)
         QJsonObject sub;
         const QJsonObject o = r.toObject();
         if (r.isArray()) sub = {{"in", r.toArray().at(0)}, {"out", r.toArray().at(1)}};
-        else if (o.contains("start")) sub = {{"in", o.value("start")}, {"out", o.value("end")}}; // as other answers name a range
+        else if (o.contains("start")) sub = {{"in", o.value("start")}, {"out", o.value("end")}}; // as answers name ranges
         else sub = {{"in", o.value("from")}, {"out", o.value("to")}};
         int in = 0, out = 0;
         sourceRange(s, sub, m, &in, &out);

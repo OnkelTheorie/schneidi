@@ -393,7 +393,8 @@ void AiChat::nextTool()
                                              : QString("send them as one JSON object of the tool's parameters, e.g. "
                                                        "{\"%1\": …} (%2 takes: %3)")
                                                    .arg(params.first(), call.name, params.join(", "));
-        toolDone(entry, call, QString("could not read the arguments of this call: %1; %2").arg(call.error, how), {}, true);
+        toolDone(entry, call, QString("could not read the arguments of this call: %1; %2").arg(call.error, how), {},
+                 true);
         return;
     }
     // The main guide is in the instructions already; small models ask for it again and again (~2,500 tokens each)
@@ -444,7 +445,8 @@ void AiChat::toolDone(int entry, const Ai::ToolCall& call, const QString& text, 
             if (QImage pic = QImage::fromData(QByteArray::fromBase64(img.base64)); !pic.isNull())
                 e.images << pic.scaledToHeight(std::min(pic.height(), 360), Qt::SmoothTransformation);
     });
-    if (error && !m_stopped && !m_failedCalls.contains(callKey(call))) m_failedCalls.insert(callKey(call), cut(errorOf(text), 300));
+    if (error && !m_stopped && !m_failedCalls.contains(callKey(call)))
+        m_failedCalls.insert(callKey(call), cut(errorOf(text), 300));
     // The model reads English; a stopped call may still have happened inside the app
     const QString answer = m_stopped ? QString("stopped by the user (the call may have finished in the app anyway)") : text;
     m_results << capped({call.id, call.name, answer, m_stopped ? QVector<Ai::Image>() : images, error || m_stopped});

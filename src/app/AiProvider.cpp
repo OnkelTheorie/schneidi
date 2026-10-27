@@ -38,8 +38,9 @@ QJsonObject readArguments(const QString& text, QString* error)
     const QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8(), &err);
     if (err.error != QJsonParseError::NoError || !doc.isObject()) {
         // In English (the model reads it; Qt's own error text follows the interface language)
-        *error = err.error == QJsonParseError::NoError ? QString("the arguments are not a JSON object")
-                                                       : QString("the arguments are no valid JSON (at character %1)").arg(err.offset);
+        *error = err.error == QJsonParseError::NoError
+                     ? QString("the arguments are not a JSON object")
+                     : QString("the arguments are no valid JSON (at character %1)").arg(err.offset);
         return {};
     }
     return doc.object();
@@ -490,17 +491,21 @@ bool contextOverflow(const QString& said, qint64* context, qint64* request)
 {
     *context = *request = 0;
     const auto match = [&said](const char* pattern) {
-        return QRegularExpression(pattern, QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption)
+        return QRegularExpression(pattern, QRegularExpression::CaseInsensitiveOption
+                                               | QRegularExpression::DotMatchesEverythingOption)
             .match(said);
     };
     // llama.cpp: "request (15768 tokens) exceeds the available context size (4096 tokens), try increasing it"
-    if (const auto m = match(R"(request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\))"); m.hasMatch()) {
+    if (const auto m = match(R"(request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\))");
+        m.hasMatch()) {
         *request = m.captured(1).toLongLong();
         *context = m.captured(2).toLongLong();
         return true;
     }
-    // OpenAI, vLLM: "This model's maximum context length is 8192 tokens. However, your messages resulted in 15768 tokens"
-    if (const auto m = match(R"(maximum context length is (\d+) tokens.*?(?:resulted in|requested) (\d+) tokens)"); m.hasMatch()) {
+    // OpenAI, vLLM: "This model's maximum context length is 8192 tokens. However, your messages resulted in 15768
+    // tokens"
+    if (const auto m = match(R"(maximum context length is (\d+) tokens.*?(?:resulted in|requested) (\d+) tokens)");
+        m.hasMatch()) {
         *context = m.captured(1).toLongLong();
         *request = m.captured(2).toLongLong();
         return true;
@@ -517,11 +522,14 @@ QString contextAdvice(qint64 context, qint64 request, bool silent)
 {
     QString what;
     if (silent)
-        what = T("Der KI-Server hat die Anfrage gekürzt, ohne es zu melden: das Modell nimmt %1 Token, die Anfrage hat etwa %2.")
+        what = T("Der KI-Server hat die Anfrage gekürzt, ohne es zu melden: das Modell nimmt %1 Token, die Anfrage hat "
+                 "etwa %2.")
                    .arg(context)
                    .arg(request);
     else if (context > 0 && request > 0)
-        what = T("Die Anfrage passt nicht in den Kontext des Modells: es nimmt %1 Token, die Anfrage hat %2.").arg(context).arg(request);
+        what = T("Die Anfrage passt nicht in den Kontext des Modells: es nimmt %1 Token, die Anfrage hat %2.")
+                   .arg(context)
+                   .arg(request);
     else what = T("Die Anfrage passt nicht in den Kontext des Modells.");
     // A large context is full: the chat grew too long; a small one cannot even take the tools
     if (context >= 32768) return what + " " + T("„Neuer Chat“ fängt frisch an.");

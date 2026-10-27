@@ -126,8 +126,8 @@ private:
     bool m_nudged = false; // an empty answer was answered with "go on" in this request
     QHash<QString, QString> m_failedCalls; // calls that failed in this request (name + arguments) -> their error
     int m_repeats = 0; // failed calls sent again in this request
-    qint64 m_sentChars = 0;
-    QElapsedTimer m_waiting; // since the request to the model went out, until its first word // text of the last request to the model (system, tools, history; no pictures)
+    qint64 m_sentChars = 0; // text of the last request to the model (system, tools, history; no pictures)
+    QElapsedTimer m_waiting; // since the request to the model went out, until its first word
     int m_streaming = -1; // entry of the answer that streams in
     QVector<Ai::ToolCall> m_calls; // of the last answer
     QVector<Ai::ToolResult> m_results;
