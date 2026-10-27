@@ -224,6 +224,7 @@ void MainWindow::startProject(const StartTemplate& t)
     m_engine->pause();
     m_selection->clear();
     m_colorPanel->discardTracking();
+    m_chatSeen.reset(); // the chat's AI has not seen this project: no "the user changed" against the old one
     const ProjectData d = StartTemplates::apply(t); // Neutral: the empty project as always
     m_engine->setFormat(d.format); // media lengths already fit (empty) -> do not re-read
     m_project->load(d);
@@ -395,6 +396,7 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     m_engine->pause();
     m_selection->clear();
     m_colorPanel->discardTracking();
+    m_chatSeen.reset();
     m_probeCache.clear();
     m_engine->setFormat(data.format); // media lengths in the file already count at this frame rate
     m_project->load(data);

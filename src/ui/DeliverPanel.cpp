@@ -254,8 +254,14 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     connect(m_smart, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
     connect(m_addBtn, &QPushButton::clicked, this, [this] { addToQueue(true); });
     connect(m_checkBtn, &QPushButton::clicked, this, [this] { runCheck(); });
+    connect(m_project, &Project::currentSequenceChanged, this, [this] {
+        if (m_fix && m_project->currentSequence() != m_fixSequence) {
+            m_fix = {};
+            m_fixBtn->hide();
+        }
+    });
     connect(m_fixBtn, &QPushButton::clicked, this, [this] {
-        if (!m_fix) return;
+        if (!m_fix || m_project->currentSequence() != m_fixSequence) return;
         m_project->edit(T("Prüfung: Ton behoben"), m_fix);
         m_fix = {};
         m_fixBtn->hide();
@@ -710,6 +716,7 @@ void DeliverPanel::prepareFix(const QVector<ExportCheck::Issue>& sound, double i
         }
         if (level) t.masterVolumeDb = volume;
     };
+    m_fixSequence = m_project->currentSequence();
     m_fixBtn->show();
 }
 

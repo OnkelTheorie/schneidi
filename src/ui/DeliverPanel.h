@@ -110,5 +110,6 @@ private:
     QListWidget* m_checkList; // results of the last check (hidden until one ran)
     QPushButton* m_fixBtn;
     std::function<void(Timeline&)> m_fix; // what the fix button changes (from the last check)
+    int m_fixSequence = 0;                 // on that timeline (another one opened: the button goes)
     QLabel* m_status;
 };
