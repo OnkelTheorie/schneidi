@@ -11,8 +11,8 @@ to include the source code of that library, but must include the source code of 
 that connects schneidi to the library.
 
 This permission covers only code whose copyright holders grant it: all code in this repository, unless a file says
-otherwise. It does not cover third-party libraries that schneidi uses (for example Rubber Band, x264, frei0r or
-vid.stab); their own licenses still apply. A build that includes such a library must leave out or replace every
+otherwise. It does not cover third-party libraries that schneidi can use (for example x264 or another GPL part of an
+FFmpeg build, or frei0r plugins); their own licenses still apply. A build that includes such a library must leave out or replace every
 third-party component whose license does not allow the combination.
 
 You may extend this permission to your version of schneidi, but you are not obliged to do so. If you do not wish to,
