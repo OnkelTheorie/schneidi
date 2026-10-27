@@ -776,6 +776,13 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             const double otherBefore = part("3s", "6s");
             const double faintLufs = run("loudness", {{"source", tp}, {"clips", QJsonArray{quiet}}})["clips"][0]["loudness"]["integrated_lufs"].toDouble();
             const double target = faintLufs + 18; // 6 dB more than the clip volume can give
+            // relative (several voice clips evened out together): the same note, not silently 6 dB short (an AI
+            // normalized a whispering interview to -16 and only the master fader showed it)
+            const QJsonObject rel = run("edit", {{"project", tp}, {"dry_run", true}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":%2,"relative":true}])").arg(quiet).arg(target)}});
+            const QString relNote = rel["notes"].toArray().at(0).toString();
+            if (!CHECK(relNote.contains("clip volume ends at +12 dB: they stay 6.0 dB under the target")
+                       || relNote.contains("they stay 5.9 dB") || relNote.contains("they stay 6.1 dB")))
+                std::printf("       note: %s\n", qPrintable(relNote));
             const QJsonObject r = run("edit", {{"project", tp}, {"ops", QString(R"([{"op":"normalize","clips":[%1],"mode":"lufs","target":%2,"allow_track_gain":true}])").arg(quiet).arg(target)}});
             CHECK(QJsonDocument(r["notes"].toArray()).toJson().contains("allow_track_gain"));
             const QJsonObject track = run("info", {{"project", tp}})["timeline"]["tracks"][2].toObject();

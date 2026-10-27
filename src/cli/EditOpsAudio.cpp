@@ -290,8 +290,18 @@ void opNormalize(Session& s, const QJsonObject& op)
                                .arg(it.key() + 1)
                                .arg(it.value(), 0, 'f', 1);
     }
-    // The clip fader ends at +12 dB: quiet clips may not reach the target
-    if (!relative)
+    // The clip fader ends at +12 dB: quiet clips may not reach the target (relative: all of them together)
+    if (relative) {
+        double loudest = -1000;
+        for (const double l : levels) loudest = std::max(loudest, l);
+        const double reference = ref ? *ref : loudest, need = target - reference;
+        if (reference > -100.0 && need > kMaxVolumeDb + 0.05)
+            s.notes << QString("the clips need %1 dB together but clip volume ends at +%2 dB: they stay %3 dB under "
+                               "the target (allow_track_gain:true puts the rest on their tracks, or raise the master)")
+                           .arg(need, 0, 'f', 1)
+                           .arg(kMaxVolumeDb, 0, 'f', 0)
+                           .arg(need - kMaxVolumeDb, 0, 'f', 1);
+    } else {
         for (auto it = levels.begin(); it != levels.end(); ++it)
             if (it.value() > -100.0 && target - it.value() > kMaxVolumeDb + 0.05)
                 s.notes << QString("clip %1 needs %2 dB but clip volume ends at +%3 dB: it stays %4 dB under the target "
@@ -300,6 +310,7 @@ void opNormalize(Session& s, const QJsonObject& op)
                                .arg(target - it.value(), 0, 'f', 1)
                                .arg(kMaxVolumeDb, 0, 'f', 0)
                                .arg(target - it.value() - kMaxVolumeDb, 0, 'f', 1);
+    }
     // Loudness up can push the peaks over 0 dB: say so (the mix of several clips may peak higher still)
     const Timeline& after = s.project.timeline();
     for (auto it = truePeaks.begin(); it != truePeaks.end(); ++it) {
