@@ -289,12 +289,28 @@ void opKeep(Session& s, const QJsonObject& op)
     int at = timeOf(s, op, "at", endOf(s));
     const int start = at;
     const int track = parseTrack(op.value("track"));
-    const QJsonArray ranges = op.value("ranges").toArray();
-    if (ranges.isEmpty()) fail("BAD_ARGUMENT", "missing 'ranges' ([[from, to], …] in the source)");
+    QJsonArray ranges = op.value("ranges").toArray();
+    // One range written another way (small models): a flat pair, 'range', or from/to on the op itself
+    const auto pair = [](const QJsonArray& a) { return a.size() == 2 && !a[0].isArray() && !a[0].isObject(); };
+    QString other;
+    if (pair(ranges)) other = "ranges:[from, to]";
+    else if (ranges.isEmpty() && op.value("range").isArray()) other = "range";
+    else if (ranges.isEmpty() && op.contains("from") && op.contains("to")) other = "from/to";
+    if (!other.isEmpty()) {
+        ranges = QJsonArray{other == "range"     ? op.value("range").toArray()
+                            : other == "from/to" ? QJsonArray{op.value("from"), op.value("to")}
+                                                 : ranges};
+        s.notes << QString("keep: %1 read as ranges:[[from, to]] (one range; several: [[from, to], [from, to]])").arg(other);
+    }
+    if (ranges.isEmpty())
+        fail("BAD_ARGUMENT", "missing 'ranges': the parts of the source to keep in order, e.g. "
+                             "{\"op\":\"keep\",\"media\":\"/path/to/clip.mkv\",\"ranges\":[[\"2s\",\"5.5s\"],[\"10s\",\"12s\"]]}");
     for (const QJsonValue& r : ranges) {
         QJsonObject sub;
+        const QJsonObject o = r.toObject();
         if (r.isArray()) sub = {{"in", r.toArray().at(0)}, {"out", r.toArray().at(1)}};
-        else sub = {{"in", r.toObject().value("from")}, {"out", r.toObject().value("to")}};
+        else if (o.contains("start")) sub = {{"in", o.value("start")}, {"out", o.value("end")}}; // as other answers name a range
+        else sub = {{"in", o.value("from")}, {"out", o.value("to")}};
         int in = 0, out = 0;
         sourceRange(s, sub, m, &in, &out);
         s.editor.placeSourceRange(m.path, in, out - 1, at, track);

@@ -268,6 +268,17 @@ int main(int argc, char** argv)
              {"op":"title","text":"Hi","at":5,"duration":10}])");
     CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-20|30-39] a[20-45|50-74]  V2: T[5-15|0-9]  "
                               "A1: a[0-10|0-9] a[10-20|30-39] a[20-45|50-74]  A2:"));
+    // keep with one range written another way (small models): taken with a note; no range at all: a whole example
+    for (const char* op : {R"({"op":"keep","media":"/x/a.mp4","ranges":[0,10]})", R"({"op":"keep","media":"/x/a.mp4","range":[0,10]})",
+                            R"({"op":"keep","media":"/x/a.mp4","from":0,"to":10})"}) {
+        const QJsonObject r = run("edit", {{"project", g_path}, {"ops", QString("[%1]").arg(op)}, {"dry_run", true}});
+        CHECK_EQ(r["changes"]["added"].toArray().size(), 2); // V1 and A1
+        CHECK(r["notes"][0].toString().contains("read as ranges:[[from, to]]"));
+    }
+    CHECK(run("edit", {{"project", g_path}, {"ops", R"([{"op":"keep","media":"/x/a.mp4","ranges":[{"start":0,"end":10}]}])"},
+                       {"dry_run", true}})["changes"]["added"].toArray().size() == 2);
+    CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"keep","media":"/x/a.mp4"}])"}})
+              .contains(R"("ranges":[["2s","5.5s"],["10s","12s"]])"));
     const QJsonObject info = run("info", {{"project", g_path}});
     const int secondId = info["timeline"]["tracks"][0]["clips"][1]["id"].toInt();
     edit(QString(R"([{"op":"delete","clips":[%1],"ripple":true}])").arg(secondId).toUtf8().constData());
