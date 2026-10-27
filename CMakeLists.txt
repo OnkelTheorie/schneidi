@@ -196,6 +196,7 @@ add_library(schneidi_lib STATIC
     src/app/AiLog.h src/app/AiLog.cpp
     src/app/AiProvider.h src/app/AiProvider.cpp
     src/app/AiClient.h src/app/AiClient.cpp
+    src/app/AiContext.h src/app/AiContext.cpp
     src/app/AiKeys.h src/app/AiKeys.cpp
     src/app/McpClient.h src/app/McpClient.cpp
     src/app/AiChat.h src/app/AiChat.cpp

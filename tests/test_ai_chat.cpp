@@ -10,7 +10,10 @@
 // wrote as text are run, a call without a project works on the open one, a request a local server cut is not run,
 // unreadable arguments are answered with what to send, `guide` without a topic gets the topics only, a failed call sent
 // again is not run (twice: the request ends); errors (bad key, overloaded then fine, no server), stopping a request,
-// test runs that never send; the chat section in Settings › AI (test connection, model list, key stored).
+// test runs that never send; the chat section in Settings › AI (test connection, model list, key stored, short
+// request). Claude gets the full request; a server on this computer the short one (every tool, shorter texts, `help`
+// has the details), its context asked once (llama.cpp's /props, Ollama's num_ctx): too small = not sent, tight = said;
+// a cut request's answer is not shown, a final answer written as JSON shows its text.
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
 
 #include "check.h"
@@ -90,6 +93,10 @@ public:
     };
     QVector<Request> requests;
     QVector<Response> script;
+    // GET requests and Ollama's /api/show (the chat's context probe, model lists) are answered from here, not from the
+    // script, and recorded apart: path without query -> JSON body (missing: 404)
+    QHash<QByteArray, QByteArray> gets;
+    QVector<Request> probes;
 
     FakeProvider()
     {
@@ -124,9 +131,17 @@ private:
         if (buf.size() < end + 4 + length) return;
         r.body = QJsonDocument::fromJson(buf.mid(end + 4, length)).object();
         m_buffers.remove(s);
-        requests << r;
-        const Response answer = script.isEmpty() ? Response{500, "application/json", R"({"error":{"message":"no script"}})"}
-                                                 : script.takeFirst();
+        Response answer;
+        if (r.method == "GET" || r.path == "/api/show") {
+            probes << r;
+            const QByteArray path = r.path.split('?').first();
+            answer = gets.contains(path) ? Response{200, "application/json", gets.value(path)}
+                                         : Response{404, "application/json", R"({"error":"not found"})"};
+        } else {
+            requests << r;
+            answer = script.isEmpty() ? Response{500, "application/json", R"({"error":{"message":"no script"}})"}
+                                      : script.takeFirst();
+        }
         QPointer<QTcpSocket> guard(s);
         QTimer::singleShot(answer.delayMs, this, [guard, answer] {
             if (!guard || guard->state() != QAbstractSocket::ConnectedState) return;
@@ -396,6 +411,18 @@ void test(const QString& dir)
     QStringList tools;
     for (const QJsonValue& t : r1.body["tools"].toArray()) tools << t["name"].toString();
     CHECK(tools.contains("edit") && tools.contains("info") && tools.contains("frames") && tools.contains("guide"));
+    // Claude gets the full request: every tool as the tool server gives it, no context probe
+    CHECK(!chat->compact());
+    CHECK_EQ(r1.body["tools"].toArray().size(), chat->tools()->tools().size());
+    for (const QJsonValue& t : r1.body["tools"].toArray())
+        if (t["name"].toString() == "edit")
+            CHECK(t["input_schema"]["properties"]["ops"]["description"].toString().contains("A timeline position"));
+    CHECK(fake.probes.isEmpty());
+    const qint64 fullChars = system.size() + QJsonDocument(r1.body["tools"].toArray()).toJson(QJsonDocument::Compact).size();
+    if (const QString d = qEnvironmentVariable("AI_CHAT_DUMP"); !d.isEmpty()) {
+        QFile f(d + "/request-full.json");
+        if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(r1.body).toJson());
+    }
     CHECK_EQ(lastUserText(r1.body), QString("Teile den Clip bei 2 Sekunden"));
     // The thinking block goes back unchanged, the tool answer with it
     const QJsonArray m2 = fake.requests[1].body["messages"].toArray();
@@ -574,6 +601,32 @@ void test(const QString& dir)
         CHECK_EQ(o1.body["model"].toString(), QString("test-model"));
         CHECK_EQ(o1.body["messages"][0]["role"].toString(), QString("system"));
         CHECK(!o1.body.contains("stream_options")); // an unknown server
+        // A server on this computer gets the short request: every tool, shorter texts, the guide's main points
+        CHECK(chat->compact());
+        const QString sys = o1.body["messages"][0]["content"].toString();
+        CHECK(sys.contains("the main points of the guide") && !sys.contains("Editing video with schneidi"));
+        CHECK(sys.contains("- social: "));
+        QStringList names;
+        for (const QJsonValue& t : o1.body["tools"].toArray()) {
+            names << t["function"]["name"].toString();
+            if (t["function"]["name"].toString() == "edit") {
+                const QString ops = t["function"]["parameters"]["properties"]["ops"]["description"].toString();
+                CHECK(ops.contains("{op:'split', at, clip?}") && !ops.contains("A timeline position"));
+            }
+        }
+        CHECK_EQ(names, tools);
+        const qint64 compactChars = sys.size() + QJsonDocument(o1.body["tools"].toArray()).toJson(QJsonDocument::Compact).size();
+        std::printf("       request: full %lld, short %lld characters\n", (long long)fullChars, (long long)compactChars);
+        CHECK(compactChars * 2 < fullChars);
+        if (const QString d = qEnvironmentVariable("AI_CHAT_DUMP"); !d.isEmpty()) {
+            QFile f(d + "/request-compact.json");
+            if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(o1.body).toJson());
+        }
+        // The context was asked once (no server here says it: no warning, nothing waits)
+        QStringList asked;
+        for (const FakeProvider::Request& p : fake.probes) asked << QString::fromUtf8(p.path);
+        CHECK(asked.contains("/props") && asked.contains("/api/show") && asked.contains("/api/ps")
+              && asked.contains("/api/v0/models") && asked.contains("/v1/models"));
         const QJsonArray m = fake.requests[before + 1].body["messages"].toArray();
         QStringList roles;
         for (const QJsonValue& v : m) roles << v["role"].toString();
@@ -591,6 +644,16 @@ void test(const QString& dir)
         CHECK(t->state == AiChat::Entry::State::Done);
     }
     CHECK_EQ(chat->usage().input, qint64(20000));
+    {
+        // Asked once per address and model; `help` has an op's details for the short request
+        const int probes = int(fake.probes.size());
+        fake.script = {openAiTool("call_h", "help", {{"command", "edit"}, {"op", "trim"}}), openAiText("Ok.")};
+        panel->sendText("Wie geht trim?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.probes.size()), probes);
+        const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
+        CHECK(answer.contains("\"op\":\"trim\"") && answer.contains("details"));
+    }
 
     // A click on a picture shows it bigger in a window of its own; never a popup (on X11 a popup grabs mouse and
     // keyboard, and one opened from a press kept the grab: the whole desktop stopped answering). Click/Escape close it.
@@ -679,15 +742,72 @@ void test(const QString& dir)
         CHECK(waitFor([&] { return !chat->busy(); }));
         CHECK_EQ(int(fake.requests.size()), sent + 1);
         CHECK_EQ(count(chat, AiChat::Entry::Kind::Tool), tools);
-        if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e))
+        if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e)) {
             CHECK(e->text.contains("4096") && e->text.contains("OLLAMA_CONTEXT_LENGTH"));
-        // Not kept: the next request has the user's words, no answer of the model after them
+            CHECK(e->text.contains("16384")); // enough for the short request
+        }
+        for (const AiChat::Entry& e : chat->entries()) CHECK(!e.text.contains("\"trim\"")); // what it wrote: not shown
+        CHECK(!chat->transcript().contains("\"trim\""));
+        // Not kept: the next request has the user's words, no answer of the model after them; the context is asked
+        // again before it (Ollama names it once the model is loaded)
+        const int probes = int(fake.probes.size());
         fake.script = {openAiText("Ok.")};
         panel->sendText("Und jetzt?");
         CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK(int(fake.probes.size()) > probes);
         const QJsonArray m = fake.last().body["messages"].toArray();
         CHECK_EQ(m.last()["role"].toString(), QString("user"));
         CHECK(m.last()["content"].toString().contains("10 Sekunden") && m.last()["content"].toString().contains("Und jetzt?"));
+    }
+
+    // ---- A final answer written as JSON ({"text": …}): the text is shown ----
+    {
+        fake.script = {openAiText(R"({"text": "Die Timeline ist 4 s lang."})")};
+        panel->sendText("Wie lang?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (const AiChat::Entry* a = lastOf(chat, AiChat::Entry::Kind::Assistant); CHECK(a))
+            CHECK_EQ(a->text, QString("Die Timeline ist 4 s lang."));
+    }
+
+    // ---- A context the server names (llama.cpp's /props, Ollama's num_ctx): too small = not sent, tight = said ----
+    {
+        chat->clear(); // a fresh chat: only the fixed part counts
+        AiSettings small = w.aiSettings();
+        small.chatModels.insert("custom", "tiny-model");
+        w.setAiSettings(small);
+        fake.gets["/props"] = R"({"default_generation_settings":{"n_ctx":4096},"total_slots":1})";
+        const int sent = int(fake.requests.size());
+        panel->sendText("Hallo");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent); // never sent
+        if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e))
+            CHECK(e->text.contains("4096") && e->text.contains("16384"));
+        // Asked again (the user may have changed the server): now 8192 = it fits, but tight
+        fake.gets.remove("/props");
+        fake.gets["/api/show"] = R"({"parameters":"num_ctx                        8192","model_info":{}})";
+        fake.script = {openAiText("Hallo!")};
+        panel->sendText("Hallo?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent + 1);
+        const Ai::Endpoint tiny{Ai::Protocol::OpenAi, fake.address() + "/v1", {}, "tiny-model", "custom"};
+        CHECK_EQ(chat->context(tiny), qint64(0)); // not kept: asked again next time
+        bool tight = false;
+        for (const AiChat::Entry& e : chat->entries()) tight |= e.kind == AiChat::Entry::Kind::Notice && e.text.contains("knapp") && e.text.contains("8192");
+        CHECK(tight);
+        // Off: the full request also for a server on this computer
+        fake.gets.remove("/api/show");
+        chat->clear();
+        small.compact = Ai::Compact::Off;
+        small.chatModels.insert("custom", "test-model");
+        w.setAiSettings(small);
+        fake.script = {openAiText("Ok.")};
+        panel->sendText("Hallo");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK(!chat->compact());
+        CHECK(fake.last().body["messages"][0]["content"].toString().contains("Editing video with schneidi"));
+        small.compact = Ai::Compact::Auto;
+        w.setAiSettings(small);
+        chat->clear();
     }
 
     // ---- Arguments that are no JSON object ("social"): the answer says what to send, in English ----
@@ -886,11 +1006,11 @@ void test(const QString& dir)
     CHECK_EQ(result->text(), T("Verbindung steht: %1 antwortet.").arg("claude-sonnet-5-5"));
     CHECK_EQ(fake.last().body["max_tokens"].toInt(), 64);
     CHECK(!fake.last().body["stream"].toBool());
-    fake.script = {{200, "application/json", R"({"data":[{"id":"claude-sonnet-5-5"},{"id":"claude-opus-5-5"}]})"}};
+    fake.gets["/v1/models"] = R"({"data":[{"id":"claude-sonnet-5-5"},{"id":"claude-opus-5-5"}]})";
     dlg.aiPage()->findChild<QPushButton*>("ai_chat_models")->click();
     CHECK(waitFor([&] { return model->count() == 2; }, 10000));
-    CHECK(fake.last().path.startsWith("/v1/models"));
-    CHECK_EQ(fake.last().method, QByteArray("GET"));
+    CHECK(fake.probes.last().path.startsWith("/v1/models"));
+    CHECK_EQ(fake.probes.last().method, QByteArray("GET"));
     model->setCurrentText("claude-opus-5-5");
     // Switching the provider and back keeps what was typed; the approval mode
     provider->setCurrentIndex(provider->findData("ollama"));
@@ -902,7 +1022,13 @@ void test(const QString& dir)
     address->setText(fake.address());
     auto* approval = dlg.aiPage()->findChild<QComboBox*>("ai_chat_approval");
     if (CHECK(approval)) approval->setCurrentIndex(approval->findData(int(AiSettings::Approval::Review)));
+    auto* compact = dlg.aiPage()->findChild<QComboBox*>("ai_chat_compact");
+    if (CHECK(compact)) {
+        CHECK_EQ(compact->currentData().toInt(), int(Ai::Compact::Auto)); // neutral default
+        compact->setCurrentIndex(compact->findData(int(Ai::Compact::On)));
+    }
     const AiSettings chosen = dlg.aiSettings();
+    CHECK(chosen.compact == Ai::Compact::On);
     CHECK_EQ(chosen.chatProvider, QString("claude"));
     CHECK_EQ(chosen.chatModel(), QString("claude-opus-5-5"));
     CHECK(chosen.approval == AiSettings::Approval::Review);

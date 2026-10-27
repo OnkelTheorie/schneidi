@@ -6,6 +6,7 @@
 // The history lives only in memory (never in the project, never on disk) and is only ever appended to (providers
 // tie their thinking blocks to it).
 
+#include "app/AiContext.h"
 #include "app/AiProvider.h"
 
 #include <QElapsedTimer>
@@ -43,6 +44,11 @@ public:
     // The tool server: program + arguments, extra environment (the live connection to this app)
     void setTools(const QStringList& command, const QHash<QString, QString>& environment);
     void setLanguage(const QString& englishName); // the model answers in it ("German")
+    // The short request for small or local models (app/AiContext.h); chosen at the first request of a chat
+    void setCompact(Ai::Compact mode) { m_compactMode = mode; }
+    bool compact() const { return m_compact; } // the running chat has the short request
+    // The context of the endpoint's model as its server said it (asked once per address and model; 0 = not known)
+    qint64 context(const Ai::Endpoint& e) const { return m_contexts.value(contextKey(e), 0); }
     // Test runs (--screenshot, --demo, --actions, offscreen): nothing is ever sent
     void setOffline(bool on) { m_offline = on; }
     bool offline() const { return m_offline; }
@@ -95,6 +101,8 @@ private:
     void change(int index, const std::function<void(Entry&)>& fn);
     void setBusy(bool on);
     void toolsReady();
+    void prepare(); // what the first request of a turn needs (context, guide, ops of `edit`), then the request
+    static QString contextKey(const Ai::Endpoint& e) { return e.address.trimmed() + '|' + e.model.trimmed(); }
     void requestModel();
     void onText(const QString& delta);
     void onReply(const Ai::Reply& reply);
@@ -119,8 +127,20 @@ private:
     bool m_review = false;
     QString m_system; // fixed for the chat (providers cache it with the tools)
     QString m_guideText; // the editing guide (the `guide` tool), read once
-    QStringList m_guideTopics; // its task guides ("social" …)
-    enum class Guide { No, Asking, Read } m_guide = Guide::No;
+    QString m_guideTopicList; // its task guides, one "- social: Short, Reel …" line each
+    QStringList m_guideTopics; // their names ("social" …)
+    enum class Guide { No, Read } m_guide = Guide::No;
+    bool m_asking = false;     // the guide or the ops of `edit` are being read
+    bool m_guideAsked = false; // in this turn (failed: asked again with the next one)
+    QJsonArray m_editOps;      // `help` with command 'edit': the ops with their signatures, read once (short request)
+    bool m_opsAsked = false;   // in this turn
+    Ai::Compact m_compactMode = Ai::Compact::Auto;
+    bool m_compact = false;    // the chat's request is the short one
+    QJsonArray m_chatTools;    // the tools of the chat (fixed with m_system)
+    QHash<QString, qint64> m_contexts; // contextKey -> tokens (0 = the server did not say)
+    bool m_probing = false;    // the context is being asked
+    QString m_probeKey;
+    bool m_warned = false;     // a tight context was said in this chat
     Ai::Usage m_usage;
     int m_rounds = 0;
     bool m_nudged = false; // an empty answer was answered with "go on" in this request

@@ -51,6 +51,7 @@ void MainWindow::buildChat()
     m_aiKeys = std::make_unique<Ai::Keys>();
     m_chat = new AiChat(this);
     m_chat->setLanguage(languageName(I18n::language()));
+    m_chat->setCompact(m_aiSettings.compact);
     m_chatPanel = new AiChatPanel(m_chat);
     m_chatPanel->setKeyHint([this](const QString& provider) { return chatKeyHint(provider); });
     m_chatPanel->setSender([this](const QString& text) { return sendChat(text); });

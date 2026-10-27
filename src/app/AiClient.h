@@ -7,6 +7,7 @@
 #include "app/AiProvider.h"
 
 #include <QNetworkReply>
+#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -26,6 +27,9 @@ public:
 
     void listModels(const Ai::Endpoint& e); // -> models() or modelsFailed()
     void test(const Ai::Endpoint& e);       // a tiny request -> tested()
+    // How large the model's context is, as the server says it (app/AiContext.h): every probe at once, each at most
+    // timeoutMs -> contextProbed() once (0 = not said); a newer probe replaces a running one
+    void probeContext(const Ai::Endpoint& e, int timeoutMs = 2000);
 
     // No data for this long: the request counts as hanging (tests make it short)
     void setTimeoutMs(int ms) { m_timeoutMs = ms; }
@@ -40,6 +44,7 @@ signals:
     void models(const QStringList& ids);
     void modelsFailed(const QString& message);
     void tested(bool ok, const QString& message);
+    void contextProbed(qint64 tokens);
 
 private:
     void start();
@@ -61,4 +66,6 @@ private:
     int m_timeoutMs = 180000;
     QVector<int> m_retryDelays{3000, 10000};
     QPointer<QNetworkReply> m_models, m_test; // model list, test
+    QVector<QPointer<QNetworkReply>> m_probes; // the context probe's requests still running
+    QHash<QString, qint64> m_probed;           // their answers so far (kind -> tokens)
 };
