@@ -46,6 +46,8 @@ struct Context {
     bool mcp = false;
     QVector<QImage> images; // frames tool: shown to the AI directly
     std::function<void(double)> progress; // 0..1, may be empty
+    // Command line only (empty in MCP): results printed as they come, one JSON line each (`watch` follow)
+    std::function<void(const QJsonObject&)> line;
 };
 
 struct Command {

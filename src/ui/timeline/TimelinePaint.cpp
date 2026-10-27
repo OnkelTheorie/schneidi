@@ -14,6 +14,7 @@
 #include "core/Subtitles.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
+#include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/MediaPool.h"
@@ -174,7 +175,8 @@ void TimelineView::drawTracks(QPainter& p)
     const Timeline& tl = trimEdit ? *m_trimPreview : m_editor->project()->timeline();
     const auto& sel = m_editor->selection()->ids();
     const QSet<int> dragSet(m_dragIds.begin(), m_dragIds.end());
-    const bool moving = m_drag == Drag::Move;
+    // also while subtitles are dragged: the selected clips move along
+    const bool moving = m_drag == Drag::Move || (m_drag == Drag::CueMove && !m_dragIds.isEmpty());
 
     p.save();
     p.setClipRect(kHeaderW, kRulerH, width() - kHeaderW, height() - kRulerH);
@@ -729,6 +731,7 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
     const int fileLen = info ? info->length : 0;
     const std::optional<RetimeMap> map = c.isRetimed() && fileLen > 0 ? std::optional<RetimeMap>(RetimeMap(c, fileLen))
                                                                        : std::nullopt;
+    const GradedThumbs::ClipGrade grade = m_cache->graded()->forClip(c); // Color page look (false = none)
     for (int i = first; i <= last; ++i) {
         int src = still ? 0 : std::min(c.out, c.in + int(i * framesPerTile));
         if (map && !still)
@@ -738,6 +741,7 @@ void TimelineView::drawFilmstrip(QPainter& p, const QRect& body, const Clip& c)
         for (int s = step * 2; img.isNull() && s <= step * 64; s *= 2)
             img = m_cache->cachedThumbnail(c.mediaPath, src / s * s);
         if (img.isNull()) continue;
+        if (grade) img = grade.image(img, std::min(c.length() - 1, int(i * framesPerTile)) / step * step);
 
         const QRect target(int(clipX) + i * tileW, body.top(), tileW, tileH);
         // Crop the tile's aspect ratio centered from the image

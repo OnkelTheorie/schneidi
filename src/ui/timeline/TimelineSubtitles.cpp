@@ -143,7 +143,8 @@ void TimelineView::drawSubtitleTracks(QPainter& p)
         p.setRenderHint(QPainter::Antialiasing, false);
     };
 
-    const bool moving = m_drag == Drag::CueMove;
+    // also while clips are dragged: the selected subtitles move along
+    const bool moving = m_drag == Drag::CueMove || (m_drag == Drag::Move && !m_cueIds.isEmpty());
     for (const SubRow& row : subRows()) {
         const SubtitleTrack& t = tl.subtitles[row.index];
         p.fillRect(QRect(kHeaderW, row.y, width() - kHeaderW, row.h), row.index % 2 ? Theme::trackBgAlt : Theme::trackBg);
@@ -338,6 +339,9 @@ bool TimelineView::subtitlePress(QMouseEvent* e, const QPoint& pos)
     }
     if (!ids.contains(id)) sel->set({id});
     m_cueIds = m_editor->selectedSubtitles();
+    m_dragIds = m_editor->editable(m_editor->clipIdsOf(sel->ids())); // selected clips move along in time
+    m_dragFine = 0;
+    m_dragTrackDelta = 0;
     m_cueAnchor = row->index;
     m_cueDelta = 0;
     m_cueTrackDelta = 0;

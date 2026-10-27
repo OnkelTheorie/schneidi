@@ -579,7 +579,8 @@ QByteArray toXml(const Clip& c, const QString& name, QStringList* skipped)
     // only as a custom effect (<effect tag=…> with its <parameter> definitions). schneidi's own effects go into
     // <schneidi-effect> elements, which Kdenlive ignores.
     QVector<QPair<const EffectInstance*, const EffectDescriptor*>> mlt, own;
-    for (const EffectInstance& e : c.effects) {
+    for (const EffectInstance* fx : EffectRegistry::renderOrder(c)) {
+        const EffectInstance& e = *fx;
         const EffectDescriptor* d = EffectRegistry::find(e.effectId);
         if (!d || e.effectId == kGrade || !d->video) {
             if (skipped) *skipped << (d ? d->name : e.effectId);
@@ -662,7 +663,8 @@ QByteArray toXml(const Clip& c, const QString& name, QStringList* skipped)
         x.writeStartElement("effectgroup");
         x.writeAttribute("id", name);
         x.writeAttribute("parentIn", "0"); // keyframes count from the clip start
-        for (const EffectInstance& e : c.effects) { // clip order, own effects in between
+        for (const EffectInstance* fx : EffectRegistry::renderOrder(c)) { // render order, own effects in between
+            const EffectInstance& e = *fx;
             const EffectDescriptor* d = EffectRegistry::find(e.effectId);
             if (!d || e.effectId == kGrade || !d->video) continue;
             const bool isOwn = !kdenliveKnows(*d);

@@ -53,6 +53,10 @@ struct EffectDescriptor {
     bool library = false;
     QString category;    // Effects Library: empty = Open FX → Filter, "frei0r" = Open FX → frei0r
     QString description; // Tooltip
+    // Fixed stage: rendered at its own place in the chain, wherever it sits in Clip::effects (stabilization first,
+    // then the Color page grade, then the Green Screen key; noise reduction per audio clip). It cannot be moved; all
+    // other effects render after the fixed stages in the clip's order (Editor::moveEffect)
+    bool fixed = false;
 };
 
 namespace EffectRegistry {
@@ -74,6 +78,13 @@ bool has(const Clip& c, const QString& id);
 bool add(Clip& c, const QString& id);
 // Removes the instance together with the keyframes of its parameters
 void remove(Clip& c, const QString& id);
+// The user sets its place in the effect order: not a fixed stage (also an effect whose plugin is missing here)
+bool movable(const QString& id);
+// The movable effects of the clip in render order
+QStringList order(const Clip& c);
+// All effects of the clip in render order: the fixed stages (stabilize, grade, chromakey, then the audio ones), then
+// the movable effects in the clip's order
+QVector<const EffectInstance*> renderOrder(const Clip& c);
 // Value of a parameter (missing = default)
 QVariant value(const Clip& c, const QString& id, const QString& key);
 } // namespace EffectRegistry

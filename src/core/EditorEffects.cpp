@@ -77,6 +77,57 @@ void Editor::removeAllEffects(const QVector<int>& ids)
     });
 }
 
+namespace {
+
+// `fx` with the effect `id` at place `to` among the movable effects (clamped); the fixed stages keep their slots
+QVector<EffectInstance> withEffectAt(const QVector<EffectInstance>& fx, const QString& id, int to)
+{
+    QVector<int> at; // indices of the movable effects in fx
+    QVector<EffectInstance> list;
+    for (int i = 0; i < fx.size(); ++i)
+        if (EffectRegistry::movable(fx[i].effectId)) {
+            at << i;
+            list << fx[i];
+        }
+    const auto it = std::find_if(list.begin(), list.end(), [&](const EffectInstance& e) { return e.effectId == id; });
+    if (it == list.end()) return fx;
+    list.move(int(it - list.begin()), std::clamp(to, 0, int(list.size()) - 1));
+    QVector<EffectInstance> out = fx;
+    for (int k = 0; k < at.size(); ++k) out[at[k]] = list[k];
+    return out;
+}
+
+// moveEffect/moveEffectBy: place(from) = new place of the effect in a clip where it is at `from` (movable effects)
+bool moveEffectWith(Editor& ed, const QVector<int>& ids, const QString& effectId, const std::function<int(int)>& place)
+{
+    if (!EffectRegistry::movable(effectId)) return false;
+    const Timeline& tl = ed.project()->timeline();
+    QVector<int> targets;
+    for (int id : ed.editable(ids))
+        if (const Clip* c = TimelineOps::findClip(tl, id)) {
+            const int from = int(EffectRegistry::order(*c).indexOf(effectId));
+            if (from >= 0 && withEffectAt(c->effects, effectId, place(from)) != c->effects) targets << id;
+        }
+    if (targets.isEmpty()) return false;
+    const EffectDescriptor* d = EffectRegistry::find(effectId);
+    ed.modifyClips(targets, T("%1 verschieben").arg(d ? d->name : effectId), [&](Clip& c) {
+        c.effects = withEffectAt(c.effects, effectId, place(int(EffectRegistry::order(c).indexOf(effectId))));
+    });
+    return true;
+}
+
+} // namespace
+
+bool Editor::moveEffect(const QVector<int>& ids, const QString& effectId, int to)
+{
+    return moveEffectWith(*this, ids, effectId, [to](int) { return to; });
+}
+
+bool Editor::moveEffectBy(const QVector<int>& ids, const QString& effectId, int steps)
+{
+    return moveEffectWith(*this, ids, effectId, [steps](int from) { return from + steps; });
+}
+
 TrackKind Editor::effectKind(const QString& effectId)
 {
     const EffectDescriptor* d = EffectRegistry::find(effectId);

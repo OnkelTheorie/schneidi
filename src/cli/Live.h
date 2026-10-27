@@ -143,6 +143,9 @@ QJsonObject run(Connection* c, const QString& command, const QJsonObject& args);
 void setClientName(const QString& name);
 // Never connect to an app (server, work folder: cli/Sandbox.h): projects are always files
 void disable();
+// Closes this process's connections to apps (the app lets go at once, another AI may attach): a long-running
+// `watch` follow that only now and then runs a command there must not keep the app
+void release();
 
 // Work an AI does outside the app while it is connected to it (analyses, check, render, transcribe … here in
 // schneidi-cli): reported to the app so the user sees it working, with progress and a short result

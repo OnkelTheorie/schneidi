@@ -7,6 +7,8 @@
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
 #include <QEventLoop>
+#include <QThread>
+#include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QFile>
@@ -323,6 +325,57 @@ int main(int argc, char** argv)
             qputenv("PATH", path);
         }
     }
+    // Media Pool thumbnails show a clip in its own shape: a landscape clip fills its 16:9 tile also in a 9:16 project
+    // (it used to be letterboxed into 9:16 and that again into the tile), a portrait clip stands in the middle
+    if (Check::haveFfmpeg()) {
+        QTemporaryDir tmp;
+        const QString wide = Check::makeMedia(tmp.filePath("wide.mp4"), {"-f", "lavfi", "-i", "color=c=red:size=320x180:rate=25:duration=1",
+                                                                       "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+        const QString tall = Check::makeMedia(tmp.filePath("tall.mp4"), {"-f", "lavfi", "-i", "color=c=red:size=180x320:rate=25:duration=1",
+                                                                       "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+        Engine engine;
+        QString err;
+        if (CHECK(!wide.isEmpty() && !tall.isEmpty()) && CHECK(engine.init(&err))) {
+            ProjectFormat vertical;
+            vertical.width = 1080;
+            vertical.height = 1920;
+            const QSize tile(144, 81);
+            const auto red = [](const QImage& img, int x, int y) { return QColor(img.pixel(x, y)).red() > 150; };
+            const QImage own = Engine::thumbnail(vertical, wide, 0, tile, true);
+            if (CHECK_EQ(own.size(), tile)) {
+                CHECK(red(own, 3, 40) && red(own, 140, 40) && red(own, 72, 3) && red(own, 72, 78)); // fills it
+            }
+            const QImage project = Engine::thumbnail(vertical, wide, 0, tile); // as the 9:16 timeline shows it
+            if (CHECK_EQ(project.size(), tile)) CHECK(!red(project, 3, 40) && !red(project, 72, 10) && red(project, 72, 40));
+            const QImage portrait = Engine::thumbnail(vertical, tall, 0, tile, true);
+            if (CHECK_EQ(portrait.size(), tile)) CHECK(!red(portrait, 3, 40) && red(portrait, 72, 3) && red(portrait, 72, 78));
+            // The pool asks for them like that
+            Project q;
+            q.setFormat(vertical);
+            q.addMedia(Engine::probe(vertical, wide));
+            MediaPool pool(&q, &engine);
+            pool.setSaveSettings(false);
+            pool.resize(600, 300);
+            pool.show();
+            auto* list = pool.findChild<QListWidget*>();
+            QListWidgetItem* item = nullptr;
+            for (int i = 0; list && i < list->count(); ++i)
+                if (list->item(i)->data(Qt::UserRole).toString() == wide) item = list->item(i);
+            if (CHECK(item)) {
+                QElapsedTimer t;
+                t.start();
+                QImage icon;
+                while (t.elapsed() < 10000) {
+                    app.processEvents();
+                    icon = item->icon().pixmap(tile).toImage();
+                    if (!icon.isNull() && red(icon, 72, 20)) break;
+                    QThread::msleep(20);
+                }
+                CHECK(!icon.isNull() && red(icon, 3, 30) && red(icon, 140, 30));
+            }
+        }
+    }
+
     // New frame rate (empty timelines): lengths, source in/out and source markers counted anew; a file that cannot
     // be read again is scaled
     {

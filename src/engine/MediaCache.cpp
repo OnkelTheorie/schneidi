@@ -6,6 +6,7 @@
 #include "engine/audio/Path.h"
 #include "engine/audio/Reader.h"
 #include "engine/Background.h"
+#include "engine/GradedThumbs.h"
 
 #include <Mlt.h>
 #include <QCryptographicHash>
@@ -107,6 +108,8 @@ QSize thumbSize(const ProjectFormat& format)
 MediaCache::MediaCache(QObject* parent) : QObject(parent)
 {
     m_thumbs.setMaxCost(kThumbCacheKB);
+    m_graded = new GradedThumbs(this);
+    connect(m_graded, &GradedThumbs::updated, this, &MediaCache::updated);
     m_thumbThread = QThread::create([this] {
         Background::lowerThisThread(Background::Level::Low);
         thumbLoop();
@@ -211,6 +214,7 @@ void MediaCache::setFormat(const ProjectFormat& format)
         m_waveJobs.clear();
         m_waveRequested.clear();
     }
+    m_graded->clear();
     emit updated();
 }
 

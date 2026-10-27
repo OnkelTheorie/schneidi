@@ -105,6 +105,14 @@ void Editor::slipSelection(int frames)
     applyTrimEdit(e, frames);
 }
 
+void Editor::slideSelection(int frames)
+{
+    TimelineOps::TrimEdit e;
+    e.kind = TimelineOps::TrimKind::Slide;
+    e.ids = withLinked(clipIdsOf(m_selection->ids()));
+    applyTrimEdit(e, frames);
+}
+
 void Editor::selectNearestEditPoint(int frame)
 {
     const Timeline& tl = m_project->timeline();

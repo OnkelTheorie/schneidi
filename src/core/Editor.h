@@ -58,6 +58,14 @@ public:
     // Lock track (lock like DaVinci): clips on it can no longer be selected or changed,
     // Ripple leaves the track alone. Selected clips of the track are deselected.
     void toggleTrackLock(TrackRef ref);
+    // Lock/unlock several tracks and subtitle tracks (by index) in one undo step, with the deselection of
+    // toggleTrackLock (which uses it, as does toggleSubtitleTrackLock)
+    void setTracksLocked(const QVector<TrackRef>& tracks, const QVector<int>& subtitleTracks, bool lock);
+    // Lock key: the tracks of the selection (clips, subtitles, a selected transition or edit point), without a
+    // selection the target tracks (V and A, the rule of selectFromPlayhead). One of them unlocked -> all get locked,
+    // else all unlocked; one undo step. Pressed again right after locking a selection (nothing changed, the lock left
+    // the selection empty): it unlocks those tracks again, not the target tracks.
+    void toggleSelectionTracksLock();
     // Track name (empty = default "Video 1" etc.) and track color (id from kTrackColors, empty = default)
     void renameTrack(TrackRef ref, const QString& name);
     void setTrackColor(TrackRef ref, const QString& colorId);
@@ -84,6 +92,7 @@ public:
     // Move a track within its type to index `to` (dragging the track header); clips, name, mute/solo/level etc.
     // move along, target tracks follow. One undo step.
     void moveTrack(TrackKind kind, int from, int to);
+    // Subtitles among `ids` (a selection of clips and subtitles) move along by the frames, on their own tracks
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);
     // Move in 1/100 frame (fine position of audio clips, Clip::subframe); whole frames like moveClips
     void moveClipsFine(const QVector<int>& ids, int fine, TrackKind kind, int trackDelta);
@@ -99,6 +108,8 @@ public:
     void applyTrimEdit(const TimelineOps::TrimEdit& e, int delta);
     // Trim mode + , / . like DaVinci: slip selected clips by `frames`
     void slipSelection(int frames);
+    // Slide tool + , / .: slide selected clips by `frames` between their neighbours (one edit like a slide drag)
+    void slideSelection(int frames);
     // Volume of an audio clip (dB, limited to kMinVolumeDb..kMaxVolumeDb)
     void setClipVolume(int clipId, double db);
     // Normalize audio levels (DaVinci Normalize Audio Levels, sample peak): peakDb = measured peak level per
@@ -132,6 +143,7 @@ public:
     void deleteRange(int from, int to, bool ripple);
     // Several ranges [from, to) in one undo step `text` (Transcript panel: removed words, pauses); ranges may overlap
     void deleteRanges(const QVector<QPair<int, int>>& ranges, bool ripple, const QString& text);
+    // Ctrl+A: every clip and subtitle on unlocked tracks
     void selectAll();
     // Select clips from the playhead (DaVinci Y / Ctrl+Y / Alt+Y / Ctrl+Alt+Y): forward = playhead and right of it,
     // otherwise playhead and left of it. allTracks = all tracks, otherwise the tracks of the selection (without selection: target tracks)
@@ -142,7 +154,7 @@ public:
     void selectNearestEditPoint(int frame);
     void cycleEditPointSide();
     bool nudgeEditPoint(int frames, bool ripple);
-    // Move selection by `frames` (nudge, like , and . in DaVinci)
+    // Move selection (clips and subtitles) by `frames` (nudge, like , and . in DaVinci)
     void nudgeSelection(int frames);
     // Trim start/end up to the playhead (Shift+[ / Shift+]); selection or clips under the playhead
     void trimToPlayhead(TimelineOps::Edge edge, int frame);
@@ -214,7 +226,20 @@ public:
     void setSegmentSpeed(int clipId, int segment, double speed);
     void setSpeedPointSmooth(int clipId, int index, int frames);
 
-    // Source in/out (I/O in the source viewer) of a Media Pool clip, -1 = remove; rules like setMarkIn/setMarkOut
+    // Look at a file before importing it (click in the Media Storage): the source viewer shows it, In/Out and markers
+    // set there stay here, not in the project. The first edit from it (sourceEdit, placeSourceRange) imports it into
+    // the Media Pool first (bin `info.bin`, with these marks) – the import is no undo step, like every import; the edit
+    // is one. Imported another way meanwhile (double-click in the Media Storage): the marks go to the Media Pool clip
+    // if it has none, and the preview ends. Empty path = no preview.
+    void setPreviewSource(const MediaInfo& info);
+    const MediaInfo& previewSource() const { return m_preview; }
+    // The source clip of `path`: the Media Pool clip, else the preview source with that path, else nullptr
+    const MediaInfo* sourceMedia(const QString& path) const;
+    // Imports the preview source into `bin` if `path` is it (and readable); true if `path` is in the Media Pool now
+    bool importPreviewSource(const QString& path, int bin);
+
+    // Source in/out (I/O in the source viewer) of a Media Pool clip (or the preview source), -1 = remove; rules like
+    // setMarkIn/setMarkOut
     void setSourceMarkIn(const QString& path, int frame);
     void setSourceMarkOut(const QString& path, int frame);
     void clearSourceMarks(const QString& path);
@@ -261,6 +286,13 @@ public:
     // Every effect of the clips (Effects Library, Color page grade/LUT) in one undo step; the Green Screen of the
     // Video tab stays
     void removeAllEffects(const QVector<int>& ids);
+    // Effect order: the movable effects (EffectRegistry::movable) render in the clip's order, after the fixed stages.
+    // Puts `effectId` at place `to` among them (0 = rendered first, past the end = last) in every clip that has it;
+    // the fixed stages keep their place. One undo step; false = nothing moved (a fixed stage, no clip has it, or it
+    // is there already)
+    bool moveEffect(const QVector<int>& ids, const QString& effectId, int to);
+    // The same by `steps` places per clip (-1 = one earlier, up in the Inspector), stopping at the ends
+    bool moveEffectBy(const QVector<int>& ids, const QString& effectId, int steps);
     // Kind of clip an effect id goes on (audio effects, else video: filters, LUTs, presets)
     static TrackKind effectKind(const QString& effectId);
     // Target of a double click in the Effects Library: selected clips of the kind, else the top video clip (audio:
@@ -345,7 +377,8 @@ public:
     void setSubtitleText(int id, const QString& text, const QString& mergeKey = {});
     // Start/end (Inspector): limited to the neighbors, at least 1 frame
     void setSubtitleTiming(int id, int start, int end);
-    // Move (also onto other subtitle tracks); overwrites what is there (like clips)
+    // Move (also onto other subtitle tracks); overwrites what is there (like clips). Clips among `ids` (a selection
+    // of clips and subtitles) move along in time on their tracks, in the same undo step.
     void moveSubtitles(const QVector<int>& ids, int delta, int trackDelta);
     int clampSubtitleTrackDelta(const QVector<int>& ids, int trackDelta) const;
     // Drag edge: limited to the neighbors and at least 1 frame
@@ -402,6 +435,7 @@ public:
 signals:
     void targetTracksChanged(); // target tracks (redraw track header marking)
     void mixerOnlyEdit();       // next change affects only the mixer (live preview, without rebuild)
+    void previewSourceChanged(); // preview source set, its marks changed, or it was imported
 
 private:
     TimelineOps::SourceLength sourceLength() const;
@@ -430,6 +464,10 @@ private:
 
     // Clips under the playhead or the selection (with partners), like DaVinci for Ctrl+B
     QVector<int> targetIds(int frame) const;
+    // Subtitle entries among `ids` on unlocked tracks, and their earliest start (INT_MAX = none)
+    QVector<int> unlockedSubtitles(const QVector<int>& ids, int* minStart = nullptr) const;
+    void setSourceMarks(const QString& path, int markIn, int markOut); // Media Pool clip or preview source
+    void adoptPreviewSource(); // the preview file arrived in the Media Pool: marks along, preview ends
 
     struct ClipboardItem {
         Clip clip;
@@ -443,7 +481,18 @@ private:
     bool m_linkedSelection = true;
     bool m_splitOnSelectedTracks = true;
     int m_targetVideo = 0, m_targetAudio = 0;
+    // What the lock key last locked from a selection, valid while the undo stack, the open timeline and the target
+    // tracks stay as they were then (toggleSelectionTracksLock)
+    struct KeyLocked {
+        QVector<TrackRef> tracks;
+        QVector<int> subtitles;
+        int undoIndex = -1;
+        int sequence = -1;
+        int targetVideo = -1, targetAudio = -1;
+    };
+    KeyLocked m_keyLocked;
     StreamPresets m_streamPresets;
     QVector<ClipboardItem> m_clipboard; // starts relative to the earliest clip
     std::optional<Clip> m_gradeClipboard; // copyGrade: the source clip (only its grade is used)
+    MediaInfo m_preview; // setPreviewSource: a file shown in the source viewer that is not in the Media Pool
 };

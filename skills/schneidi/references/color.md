@@ -18,6 +18,9 @@ check each with `scopes` and adjust the outliers - same scene, same look.
 ## Looks (second)
 `effects` lists the built-in LUTs (`lut` in the `color` op; also `.cube`/`.3dl` files). Log footage needs its
 conversion LUT first. A look on top of a bad correction stays bad.
+Effects (`effect` op: blur, frei0r looks …) render after the grade, in the clip's order as `info` lists them; the
+order changes the picture (blur then pixelate ≠ pixelate then blur). `effect` with `move` ('up', 'down', 'first',
+'last' or a place) reorders them.
 
 ## Limits
 Phone footage in HDR (iPhone HLG/Dolby Vision, many Android phones) can look pale in schneidi. Raise contrast and

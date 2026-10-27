@@ -25,6 +25,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
+#include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
@@ -42,6 +43,7 @@
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
 #include "ui/ScopesPanel.h"
+#include "ui/TranscriptPanel.h"
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
@@ -104,11 +106,18 @@ void MainWindow::buildActions()
     // Bindings after DaVinci Resolve (defaults), overridable in keybindings.json
     QMenu* file = menuBar()->addMenu(T("&Datei"));
     makeAction(file, "project_new", T("Neues Projekt"), QKeySequence("Ctrl+N"), [this] { newProject(); });
+    // Start templates (core/StartTemplates.h): built-in and own ones, built when the menu opens
+    m_templateMenu = file->addMenu(T("Neues Projekt aus Vorlage"));
+    m_templateMenu->setObjectName("template_menu");
+    m_templateMenu->setToolTipsVisible(true);
+    connect(m_templateMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTemplateMenu);
+    rebuildTemplateMenu();
     makeAction(file, "project_open", T("Projekt öffnen…"), QKeySequence("Ctrl+O"), [this] { openProjectDialog(); });
     m_recentMenu = file->addMenu(T("Zuletzt geöffnet"));
     rebuildRecentMenu();
     makeAction(file, "project_save", T("Projekt speichern"), QKeySequence("Ctrl+S"), [this] { save(); });
     makeAction(file, "project_save_as", T("Projekt speichern unter…"), QKeySequence("Ctrl+Shift+S"), [this] { saveAs(); });
+    makeAction(file, "template_save", T("Als Startvorlage speichern…"), QKeySequence(), [this] { saveStartTemplate(this); });
     makeAction(file, "project_backup_open", T("Sicherungskopie öffnen…"), QKeySequence(), [this] { openBackupDialog(); });
     file->addSeparator();
     makeAction(file, "import", T("Medien importieren…"), QKeySequence("Ctrl+I"), [this] { m_mediaPool->importDialog(); });
@@ -124,6 +133,7 @@ void MainWindow::buildActions()
     file->addSeparator();
     makeAction(file, "project_settings", T("Projekteinstellungen…"), QKeySequence("Shift+9"), [this] { projectSettingsDialog(); });
     makeAction(file, "stream_presets", T("Import-Vorgaben für Ton-Streams…"), QKeySequence(), [this] { streamPresetsDialog(); });
+    makeAction(file, "watch_folders", T("Überwachte Ordner…"), QKeySequence(), [this] { watchFoldersDialog(); });
     // Settings of the app (all projects); on macOS the system puts it into the application menu
     makeAction(file, "settings", T("Einstellungen…"), QKeySequence("Ctrl+,"), [this] { settingsDialog(); })
         ->setMenuRole(QAction::PreferencesRole);
@@ -230,6 +240,9 @@ void MainWindow::buildActions()
     QMenu* toolsMenu = timeline->addMenu(T("Werkzeuge"));
     makeAction(toolsMenu, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
     makeAction(toolsMenu, "tool_trim", T("Trim-Modus"), QKeySequence("T"), [tv] { tv->setTool(TimelineView::Tool::Trim); });
+    // No default keys: Y and U (Premiere's) select from the playhead and switch the edit point side here
+    makeAction(toolsMenu, "tool_slip", T("Slip-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slip); });
+    makeAction(toolsMenu, "tool_slide", T("Slide-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slide); });
     makeAction(toolsMenu, "tool_blade", T("Klingen-Werkzeug"), QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
     makeAction(toolsMenu, "snapping", T("Snapping an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
     auto* linked = makeAction(toolsMenu, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
@@ -260,14 +273,17 @@ void MainWindow::buildActions()
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
     makeAction(trimMenu, "trim_end", T("Ende bis Playhead trimmen"), QKeySequence("Shift+]"),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
-    // Selected edit point (V): , and . trim it. Otherwise trim mode: slip the selection (like DaVinci), otherwise move
+    // Selected edit point (V): , and . trim it. Otherwise trim mode and slip tool: slip the selection (like DaVinci),
+    // slide tool: slide it, otherwise move
     makeAction(trimMenu, "select_edit_point", T("Nächsten Schnittpunkt auswählen"), QKeySequence("V"),
                [this, tv] { m_editor->selectNearestEditPoint(tv->playhead()); });
     makeAction(trimMenu, "edit_point_type", T("Schnittpunkt-Seite wechseln"), QKeySequence("U"),
                [this] { m_editor->cycleEditPointSide(); });
     auto nudge = [this, tv](int frames) {
-        if (m_editor->nudgeEditPoint(frames, tv->tool() == TimelineView::Tool::Trim)) return;
-        if (tv->tool() == TimelineView::Tool::Trim) m_editor->slipSelection(frames);
+        using Tool = TimelineView::Tool;
+        if (m_editor->nudgeEditPoint(frames, tv->tool() == Tool::Trim)) return;
+        if (tv->tool() == Tool::Trim || tv->tool() == Tool::Slip) m_editor->slipSelection(frames);
+        else if (tv->tool() == Tool::Slide) m_editor->slideSelection(frames);
         else m_editor->nudgeSelection(frames);
     };
     makeAction(trimMenu, "nudge_left", T("1 Frame nach links schieben"), QKeySequence(","), [nudge] { nudge(-1); });
@@ -375,7 +391,7 @@ void MainWindow::buildActions()
     };
     auto gotoMark = [this](bool in) {
         if (sourceActive()) {
-            const MediaInfo* m = m_project->mediaInfo(m_engine->sourcePath());
+            const MediaInfo* m = m_editor->sourceMedia(m_engine->sourcePath());
             const int f = in ? m->markIn : m->markOut;
             if (f < 0) return;
             m_engine->pause();
@@ -413,10 +429,20 @@ void MainWindow::buildActions()
                   [tv](bool on) { tv->setShowClipNames(on); });
     addViewOption("show_clip_durations", T("Clipdauer anzeigen"), "timeline/showClipDurations", false,
                   [tv](bool on) { tv->setShowClipDurations(on); });
+    // Filmstrip with each clip's Color page grade (engine/GradedThumbs); off = the source pictures
+    addViewOption("show_graded_thumbnails", T("Farbkorrektur in Miniaturen anzeigen"), "timeline/gradedThumbnails", true,
+                  [tv](bool on) {
+                      GradedThumbs::setEnabled(on);
+                      tv->update();
+                  });
     viewOpts->addSeparator();
     makeAction(viewOpts, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
     makeAction(viewOpts, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
     makeAction(viewOpts, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [tv] { tv->zoomToFit(); });
+    // No default key: editors share none for it (Kdenlive's Shift+L sits in the J/K/L transport family)
+    timeline->addSeparator();
+    makeAction(timeline, "lock_tracks", T("Spuren sperren/entsperren (Auswahl, sonst Zielspuren)"), QKeySequence(),
+               [this] { m_editor->toggleSelectionTracksLock(); });
 
     QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
     makeAction(play, "play_pause", T("Play/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
@@ -684,6 +710,26 @@ void MainWindow::buildActions()
     makeAction(help, "open_log_folder", T("Log-Ordner öffnen"), QKeySequence(),
                [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
     makeAction(help, "check_updates", T("Nach Updates suchen…"), QKeySequence(), [this] { checkForUpdates(true); });
+
+    // Keys of panels (scope): only while the panel has the focus, there before the window's keys (Delete)
+    InputBindings::instance().registerAction(m_transcript->cutAction(), "transcript_cut", T("Transkript"),
+                                             QKeySequence(Qt::Key_Delete), "transcript", QKeySequence(Qt::Key_Backspace));
+    // Media Pool keys: only while their widget has the focus, there they win over the window's keys (Delete in the bin
+    // list removes the bin, never timeline clips)
+    for (const MediaPool::KeyAction& k : m_mediaPool->keyActions())
+        InputBindings::instance().registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope,
+                                                       k.defaultKey2);
+    // Panel keys: only while the panel has the focus, there they win over the window's (InputBindings::registerPanelAction)
+    InputBindings::instance().registerPanelAction(m_deliver->queuePanel()->deleteAction(), "render_queue_delete",
+                                                  T("Render-Warteschlange"), "render_queue", QKeySequence(Qt::Key_Delete),
+                                                  QKeySequence(Qt::Key_Backspace));
+    // Panels with items of their own: the keys that remove timeline clips do nothing there (Delete on a Media Pool
+    // clip, an effect, a Media Storage file, in the transcript, on a render job or an export check never deletes the
+    // clips selected in the timeline)
+    const QStringList removing{"delete", "delete_alt", "ripple_delete", "ripple_delete_alt", "cut"};
+    for (QWidget* panel : std::initializer_list<QWidget*>{m_mediaPool, m_storage, m_effects, m_transcript, m_deliver,
+                                                          m_deliver->queuePanel()})
+        InputBindings::instance().shieldWindowKeys(panel, removing);
 
     InputBindings::instance().saveIfIncomplete();
 }

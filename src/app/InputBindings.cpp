@@ -8,7 +8,10 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QStandardPaths>
+#include <QWidget>
+#include <algorithm>
 
 namespace {
 
@@ -149,6 +152,21 @@ void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
         else binds << normalizeInput(it.value().toString());
         m_inputs[it.key()] = padded(binds);
     }
+    // Actions that became the second key of another one (0.13 test builds had Backspace in the bin list as an action of
+    // its own): its key moves into the free slot, the old id is gone
+    static const QHash<QString, QString> merged{{"pool_remove_bin_alt", "pool_remove_bin"}};
+    for (auto it = merged.begin(); it != merged.end(); ++it) {
+        if (!m_inputs.contains(it.key())) continue;
+        const QStringList old = m_inputs.take(it.key());
+        if (!m_inputs.contains(it.value())) continue; // not in the file: its defaults have both keys
+        QStringList binds = m_inputs.value(it.value());
+        for (const QString& in : old) {
+            const qsizetype free = binds.indexOf(QString());
+            if (!in.isEmpty() && !binds.contains(in) && free >= 0) binds[free] = in;
+        }
+        m_inputs[it.value()] = binds;
+        m_fileExisted = false; // written anew without the old id
+    }
 
     // Before version 3 mouse buttons had their own section {"back": "split"} (missing = the default)
     if (root.value("version").toInt() < 3) {
@@ -176,10 +194,13 @@ void InputBindings::applyJson(const QJsonObject& root, bool withWheel)
 }
 
 void InputBindings::registerAction(QAction* action, const QString& id, const QString& category,
-                                   const QKeySequence& defaultKey)
+                                   const QKeySequence& defaultKey, const QString& scope, const QKeySequence& defaultKey2)
 {
-    m_entries.append({id, category, action->text(), defaultKey, action});
-    apply(m_entries.last());
+    const Entry entry{id, category, action->text(), defaultKey, action, scope, defaultKey2};
+    const auto it = std::find_if(m_entries.begin(), m_entries.end(), [&](const Entry& e) { return e.id == id; });
+    if (it != m_entries.end()) *it = entry;
+    else m_entries.append(entry);
+    apply(entry);
     rebuildMouse();
 }
 
@@ -187,7 +208,9 @@ QStringList InputBindings::defaultInputs(const QString& id) const
 {
     QStringList binds;
     for (const Entry& e : m_entries)
-        if (e.id == id && !e.defaultKey.isEmpty()) binds << e.defaultKey.toString(QKeySequence::PortableText);
+        if (e.id == id)
+            for (const QKeySequence& key : {e.defaultKey, e.defaultKey2})
+                if (!key.isEmpty()) binds << key.toString(QKeySequence::PortableText);
     if (defaultMouse().contains(id)) binds << defaultMouse().value(id);
     return padded(binds);
 }
@@ -425,5 +448,115 @@ QAction* InputBindings::action(const QString& id) const
 {
     for (const Entry& e : m_entries)
         if (e.id == id) return e.action;
+    return nullptr;
+}
+
+namespace {
+
+// Keys of the scoped actions of one widget: while it has the focus they win over the window's shortcuts
+class ScopeKeys : public QObject {
+public:
+    static constexpr const char* Name = "schneidi_scope_keys";
+    explicit ScopeKeys(QWidget* scope) : QObject(scope)
+    {
+        setObjectName(Name);
+        scope->installEventFilter(this);
+    }
+    QList<QAction*> actions;
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override
+    {
+        if (e->type() != QEvent::ShortcutOverride && e->type() != QEvent::KeyPress) return QObject::eventFilter(obj, e);
+        QAction* a = InputBindings::matching(actions, static_cast<QKeyEvent*>(e));
+        if (!a) return QObject::eventFilter(obj, e);
+        if (e->type() == QEvent::ShortcutOverride) e->accept(); // the window's shortcut stays quiet, the key comes here
+        else a->trigger();
+        return true;
+    }
+};
+
+// Window keys that stay quiet inside one panel (shieldWindowKeys). Key events a child does not take itself come up to
+// the panel: the ShortcutOverride is accepted (no window shortcut), the key press that follows ends here.
+class ShieldKeys : public QObject {
+public:
+    ShieldKeys(QWidget* panel, const QStringList& ids) : QObject(panel), m_ids(ids) { panel->installEventFilter(this); }
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override
+    {
+        if (e->type() != QEvent::ShortcutOverride && e->type() != QEvent::KeyPress) return QObject::eventFilter(obj, e);
+        const auto* key = static_cast<QKeyEvent*>(e);
+        for (const QString& id : m_ids)
+            if (InputBindings::matches(InputBindings::instance().action(id), key)) {
+                e->accept();
+                return true;
+            }
+        return QObject::eventFilter(obj, e);
+    }
+
+private:
+    QStringList m_ids;
+};
+
+} // namespace
+
+void InputBindings::shieldWindowKeys(QWidget* panel, const QStringList& ids)
+{
+    new ShieldKeys(panel, ids);
+}
+
+void InputBindings::registerScopedAction(QAction* action, const QString& id, const QString& category,
+                                         const QKeySequence& defaultKey, QWidget* scope, const QKeySequence& defaultKey2)
+{
+    // Scope for conflicts: the widget itself, so keys of different widgets never clash
+    registerAction(action, id, category, defaultKey, "widget:" + QString::number(quintptr(scope), 16), defaultKey2);
+    for (Entry& e : m_entries)
+        if (e.id == id) e.scopeWidget = scope;
+    auto* keys = dynamic_cast<ScopeKeys*>(scope->findChild<QObject*>(ScopeKeys::Name, Qt::FindDirectChildrenOnly));
+    if (!keys) keys = new ScopeKeys(scope);
+    keys->actions << action;
+}
+
+void InputBindings::registerPanelAction(QAction* action, const QString& id, const QString& category, const QString& scope,
+                                        const QKeySequence& defaultKey, const QKeySequence& defaultKey2)
+{
+    action->setShortcutContext(Qt::WidgetShortcut); // never fires through Qt (not added to a widget), see matches()
+    registerAction(action, id, category, defaultKey, scope, defaultKey2);
+}
+
+QString InputBindings::scope(const QString& id) const
+{
+    for (const Entry& e : m_entries)
+        if (e.id == id) return e.scope;
+    return {};
+}
+
+QWidget* InputBindings::scopeOf(const QString& id) const
+{
+    for (const Entry& e : m_entries)
+        if (e.id == id) {
+            if (e.scopeWidget || e.scope.isEmpty() || !e.action) return e.scopeWidget;
+            return qobject_cast<QWidget*>(e.action->parent()); // a panel action: the panel that owns it
+        }
+    return nullptr;
+}
+
+bool InputBindings::matches(const QAction* action, const QKeyEvent* e)
+{
+    if (!action || !action->isEnabled() || !e || e->key() == 0 || e->key() == Qt::Key_unknown) return false;
+    const QKeySequence key(e->keyCombination());
+    const Qt::KeyboardModifiers mods =
+        e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+    const QKeySequence plain(QKeyCombination(mods, Qt::Key(e->key())));
+    for (const QKeySequence& s : action->shortcuts())
+        if (s == key || s == plain) return true;
+    return false;
+}
+
+QAction* InputBindings::matching(const QList<QAction*>& actions, const QKeyEvent* event)
+{
+    for (QAction* a : actions)
+        if (matches(a, event)) return a;
     return nullptr;
 }

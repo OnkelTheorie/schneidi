@@ -160,6 +160,13 @@ void testKeys()
         EffectRegistry::instance(b, "blur")->enabled = false;
         CHECK(RenderCache::key(a, kFmt) != RenderCache::key(b, kFmt)); // effect off
     }
+    {
+        // Effect order: the same effects in another order render differently
+        Clip a = c, b = c;
+        for (const char* id : {"blur", "color"}) EffectRegistry::add(a, id);
+        for (const char* id : {"color", "blur"}) EffectRegistry::add(b, id);
+        CHECK(RenderCache::key(a, kFmt) != RenderCache::key(b, kFmt));
+    }
     // Project format and changed source file
     CHECK(RenderCache::key(c, ProjectFormat{1280, 720, {25, 1}}) != k);
     CHECK(RenderCache::key(c, ProjectFormat{640, 360, {50, 1}}) != k);

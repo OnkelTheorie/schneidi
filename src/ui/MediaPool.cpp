@@ -6,11 +6,16 @@
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "engine/GradedThumbs.h"
 #include "engine/ProxyManager.h"
 #include "ui/FileManager.h"
+#include "ui/HoverScrub.h"
 #include "ui/MediaStorage.h"
+#include "ui/ElidedLabel.h"
+#include "ui/PoolFilterButton.h"
 #include "engine/Background.h"
 
+#include <QAction>
 #include <QActionGroup>
 #include <QDateTime>
 #include <QDir>
@@ -28,6 +33,7 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSplitter>
@@ -71,13 +77,12 @@ protected:
     QStringList mimeTypes() const override { return {MediaPool::MimeType, MediaPool::ListMimeType}; }
 };
 
-// Bin list: drag clips or bins onto it = move; Del removes the selected bin
+// Bin list: drag clips or bins onto it = move (Delete removes the selected bin: MediaPool::keyActions)
 class BinTree : public QTreeWidget {
 public:
     std::function<void(const QStringList&, int)> mediaDropped;
     std::function<void(int, int)> binDropped;
     std::function<bool(int, int)> canMoveBin; // (bin, target)
-    std::function<void()> deletePressed;
 
     explicit BinTree(QWidget* parent = nullptr) : QTreeWidget(parent)
     {
@@ -138,26 +143,6 @@ protected:
         else
             mediaDropped(QString::fromUtf8(mime->data(MediaPool::ListMimeType)).split('\n', Qt::SkipEmptyParts), bin);
     }
-    bool event(QEvent* e) override
-    {
-        // Del/Backspace belong to the bin here, not to timeline deletion (window shortcut)
-        if (e->type() == QEvent::ShortcutOverride && state() != EditingState) {
-            const int key = static_cast<QKeyEvent*>(e)->key();
-            if (key == Qt::Key_Delete || key == Qt::Key_Backspace) {
-                e->accept();
-                return true;
-            }
-        }
-        return QTreeWidget::event(e);
-    }
-    void keyPressEvent(QKeyEvent* e) override
-    {
-        if ((e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) && state() != EditingState) {
-            deletePressed();
-            return;
-        }
-        QTreeWidget::keyPressEvent(e);
-    }
 
 private:
     void setHover(QTreeWidgetItem* it)
@@ -180,6 +165,42 @@ QPixmap placeholderThumb(const QString& label)
     return pm;
 }
 
+// Hover scrub picture in the thumbnail frame (black borders), position bar above the clip color stripe
+QPixmap scrubThumb(const QImage& picture, const QPixmap& normal, double fraction)
+{
+    QPixmap pm(kThumb);
+    if (picture.isNull()) {
+        if (normal.isNull()) pm.fill(Theme::thumbBg);
+        else pm = normal;
+    } else {
+        pm.fill(Qt::black);
+        QPainter p(&pm);
+        p.drawImage((kThumb.width() - picture.width()) / 2, (kThumb.height() - picture.height()) / 2, picture);
+    }
+    QPainter p(&pm);
+    const int y = pm.height() - kColorBarH - 4;
+    p.fillRect(QRect(0, y, pm.width(), 3), QColor(0, 0, 0, 150));
+    p.fillRect(QRect(0, y, int(pm.width() * fraction + 0.5), 3), Theme::primary);
+    return pm;
+}
+
+// Bin icon with a small accent dot at the bottom right: a watch folder brings its new files into this bin
+QIcon watchedIcon(const QIcon& folder)
+{
+    constexpr int kSize = 32; // drawn at twice the list's size: sharp on HiDPI, scaled down otherwise
+    QPixmap pm = folder.pixmap(kSize, kSize);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF dot(kSize * 0.52, kSize * 0.52, kSize * 0.46, kSize * 0.46);
+    p.setPen(QPen(QColor(0x18, 0x18, 0x1b), 2.5));
+    p.setBrush(Theme::primary);
+    p.drawEllipse(dot);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x18, 0x18, 0x1b));
+    p.drawEllipse(dot.center(), dot.width() * 0.17, dot.width() * 0.17);
+    return QIcon(pm);
+}
+
 QPixmap swatch(const QColor& c)
 {
     QPixmap pm(12, 12);
@@ -194,6 +215,55 @@ QPixmap flagIcon(const QColor& c)
     QPainter p(&pm);
     MediaPool::drawFlag(p, QRectF(1, 1, 12, 12), c);
     return pm;
+}
+
+// Entry of a timeline/compound/multicam clip: the type icon, or the timeline's picture (TimelinePosters: first frame
+// with its grade) with the type icon as a small badge at the top left
+QPixmap sequenceThumb(const Sequence& q, const QImage& picture)
+{
+    const QColor bg = (q.compound ? Theme::compoundClip : Theme::videoClip).darker(170);
+    QPixmap thumb(kThumb);
+    thumb.fill(bg);
+    QPainter p(&thumb);
+    p.setRenderHint(QPainter::Antialiasing);
+    if (!picture.isNull()) {
+        p.drawImage(QRect(QPoint(0, 0), kThumb), picture);
+        constexpr double kBadge = 0.3;
+        const QPointF at(4, 4);
+        p.setPen(QPen(QColor(0, 0, 0, 140), 1));
+        p.setBrush(bg);
+        p.drawRoundedRect(QRectF(at, QSizeF(kThumb) * kBadge), 3, 3);
+        p.translate(at);
+        p.scale(kBadge, kBadge);
+    }
+    // Icon: timeline = track bars, compound clip = stacked layers, multicam clip = grid of angles
+    const QColor fg(0xe8, 0xe8, 0xec);
+    if (q.multicam) {
+        for (int i = 0; i < 4; ++i) {
+            const QRectF r(34 + (i % 2) * 31, 14 + (i / 2) * 27, 29, 25);
+            p.setPen(QPen(i == 0 ? Theme::multicamActive : fg, i == 0 ? 2.0 : 1.0));
+            p.setBrush(Theme::compoundClip.darker(110 + 20 * i));
+            p.drawRect(r);
+        }
+    } else if (q.compound) {
+        for (int i = 2; i >= 0; --i) {
+            const QRectF r(46 + i * 8, 20 + (2 - i) * 8, 36, 24);
+            p.setPen(QPen(fg, 1.2));
+            p.setBrush(Theme::compoundClip.darker(100 + 25 * i));
+            p.drawRoundedRect(r, 2, 2);
+        }
+    } else {
+        p.setPen(Qt::NoPen);
+        const QColor bars[] = {Theme::videoClip, Theme::videoClip.lighter(120), Theme::audioClip};
+        const int x0[] = {30, 50, 30}, w[] = {60, 70, 84};
+        for (int i = 0; i < 3; ++i) {
+            p.setBrush(bars[i]);
+            p.drawRoundedRect(QRectF(x0[i], 18 + i * 16, w[i], 11), 2, 2);
+        }
+        p.setBrush(Theme::playhead);
+        p.drawRect(QRectF(72, 12, 2, 58)); // Playhead
+    }
+    return thumb;
 }
 
 } // namespace
@@ -270,19 +340,23 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_search->setPlaceholderText(T("Suchen…"));
     m_search->setClearButtonEnabled(true);
     m_search->setVisible(false);
-    m_search->setMinimumWidth(60);
-    m_search->installEventFilter(this);
+    title->ensurePolished(); // the field is at least as wide as the title it replaces: the Viewer beside stays put
+    m_search->setMinimumWidth(std::max(60, title->sizeHint().width()));
     connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildClips(); });
     m_searchBtn = new QToolButton;
     m_searchBtn->setText("🔍︎"); // U+FE0E: as text, not as a colored emoji (Windows)
     m_searchBtn->setToolTip(T("Clips suchen"));
     m_searchBtn->setAutoRaise(true);
     m_searchBtn->setCheckable(true);
-    connect(m_searchBtn, &QToolButton::toggled, this, [this](bool on) {
+    // The open field takes the title's place: the header stays as narrow as before (the pool does not widen)
+    connect(m_searchBtn, &QToolButton::toggled, this, [this, title](bool on) {
+        title->setVisible(!on);
         m_search->setVisible(on);
         if (on) m_search->setFocus();
         else m_search->clear();
     });
+    m_filterBtn = new PoolFilterButton;
+    connect(m_filterBtn, &PoolFilterButton::changed, this, [this] { rebuildClips(); });
 
     auto* header = new QHBoxLayout;
     header->setContentsMargins(0, 0, 4, 0);
@@ -292,6 +366,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     header->addWidget(m_proxyCancel);
     header->addWidget(m_search, 1);
     header->addWidget(m_searchBtn);
+    header->addWidget(m_filterBtn);
     header->addWidget(m_thumbView);
     header->addWidget(m_listView);
     header->addWidget(m_sortBtn);
@@ -322,9 +397,6 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
         const MediaBin* b = m_project->bin(id);
         return b && b->parent != target && !m_project->binInside(target, id);
     };
-    bins->deletePressed = [this] {
-        if (QTreeWidgetItem* it = m_bins->currentItem()) removeBin(it->data(0, Qt::UserRole).toInt());
-    };
     connect(m_bins, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* it) {
         if (!it || m_bins->signalsBlocked()) return;
         const int id = it->data(0, Qt::UserRole).toInt();
@@ -345,8 +417,24 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     });
     connect(m_bins, &QTreeWidget::customContextMenuRequested, this, &MediaPool::showBinMenu);
 
-    m_binTitle = new QLabel;
-    m_binTitle->setStyleSheet(QString("color: %1; padding: 2px 6px;").arg(Theme::textDim.name()));
+    m_binTitle = new ElidedLabel; // long search/filter texts end in "…" (all in the tooltip), never widen the pool
+    m_binTitle->setObjectName("pool_bin_title");
+    m_binTitle->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    m_binTitle->setContentsMargins(6, 2, 6, 2);
+    m_binTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    // Only the cross, like on a filter chip: the narrow pool keeps its room for what is filtered
+    m_filterReset = new QToolButton;
+    m_filterReset->setObjectName("pool_filter_reset");
+    m_filterReset->setText("✕");
+    m_filterReset->setToolTip(T("Filter zurücksetzen"));
+    m_filterReset->setAutoRaise(true);
+    m_filterReset->setVisible(false);
+    connect(m_filterReset, &QToolButton::clicked, this, [this] { setFilter({}); });
+    auto* titleRow = new QHBoxLayout;
+    titleRow->setContentsMargins(0, 0, 4, 0);
+    titleRow->setSpacing(2);
+    titleRow->addWidget(m_binTitle, 1);
+    titleRow->addWidget(m_filterReset);
 
     m_list = new MediaList;
     m_list->setMovement(QListView::Static);
@@ -356,6 +444,16 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_list->setSelectionMode(QAbstractItemView::ExtendedSelection); // several clips for proxy commands, bins, colors
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_list, &QListWidget::customContextMenuRequested, this, &MediaPool::showContextMenu);
+    // Search or filter without a match: says so instead of an empty list (mouse goes through to the list)
+    m_emptyHint = new QLabel;
+    m_emptyHint->setObjectName("pool_empty_hint");
+    m_emptyHint->setAlignment(Qt::AlignCenter);
+    m_emptyHint->setWordWrap(true);
+    m_emptyHint->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    m_emptyHint->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_emptyHint->hide();
+    auto* hintLay = new QVBoxLayout(m_list->viewport());
+    hintLay->addWidget(m_emptyHint);
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString path = it->data(Qt::UserRole).toString();
         if (const int seq = sequenceOfItem(path)) emit sequenceOpenRequested(seq);
@@ -366,7 +464,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     auto* clipLay = new QVBoxLayout(clipArea);
     clipLay->setContentsMargins(0, 0, 0, 0);
     clipLay->setSpacing(0);
-    clipLay->addWidget(m_binTitle);
+    clipLay->addLayout(titleRow);
     clipLay->addWidget(m_list, 1);
 
     auto* split = new QSplitter(Qt::Horizontal);
@@ -382,11 +480,48 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     lay->addLayout(header);
     lay->addWidget(split, 1);
 
+    // Keys (bindable, MainWindow registers them): they act only in their widget, Delete in the bin list never
+    // reaches the timeline
+    m_removeBinKey = new QAction(T("Ausgewählten Bin entfernen"), this);
+    m_removeBinKey->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
+    connect(m_removeBinKey, &QAction::triggered, this, [this] {
+        if (QTreeWidgetItem* it = m_bins->currentItem()) removeBin(it->data(0, Qt::UserRole).toInt());
+    });
+    m_closeSearchKey = new QAction(T("Suche schließen"), this);
+    m_closeSearchKey->setShortcut(QKeySequence(Qt::Key_Escape));
+    connect(m_closeSearchKey, &QAction::triggered, this, [this] { m_searchBtn->setChecked(false); }); // clears and closes
+    m_removeClipsKey = new QAction(T("Aus dem Media Pool entfernen"), this);
+    m_removeClipsKey->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
+    connect(m_removeClipsKey, &QAction::triggered, this, &MediaPool::removeSelected);
+
+    // Hover scrub over video thumbnails (proxy if there is one: much faster to decode)
+    m_scrub = new HoverScrub(
+        m_list, kThumb,
+        [this](QListWidgetItem* it) {
+            const QString path = it->data(Qt::UserRole).toString();
+            const MediaInfo* m = m_project->mediaInfo(path);
+            return m && m->hasVideo && !m->isImage && !m_offline.contains(path) ? ProxyManager::decodeSource(path) : QString();
+        },
+        [this](QListWidgetItem* it, const QImage& picture, double fraction) {
+            const QString path = it->data(Qt::UserRole).toString();
+            if (fraction < 0) m_scrubPicture.remove(path);
+            else m_scrubPicture.insert(path, scrubThumb(picture, m_thumbs.value(path), fraction));
+            updateItem(path);
+        });
+
     m_thumbPool = new QThreadPool(this);
     m_thumbPool->setMaxThreadCount(2);
     m_thumbPool->setThreadPriority(QThread::LowPriority);
     connect(m_project, &Project::mediaChanged, this, &MediaPool::rebuild);
-    connect(m_project, &Project::formatChanged, this, [this] { // thumbnails in the new aspect ratio
+    // Timelines show their first picture with its grade (sources stay neutral); before the formatChanged below
+    m_posters = new TimelinePosters(m_project, kThumb, this);
+    connect(m_posters, &TimelinePosters::changed, this, [this](int id) {
+        const Sequence* q = m_project->sequence(id);
+        for (int i = 0; q && !q->multicam && i < m_list->count(); ++i)
+            if (sequenceOfItem(m_list->item(i)->data(Qt::UserRole).toString()) == id)
+                m_list->item(i)->setIcon(QIcon(sequenceThumb(*q, m_posters->poster(id))));
+    });
+    connect(m_project, &Project::formatChanged, this, [this] { // thumbnails anew (frames counted in the new rate)
         ++m_thumbGeneration;
         m_thumbs.clear();
         m_thumbPending.clear();
@@ -403,6 +538,9 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
             rebuildBins();
             rebuildClips();
         });
+    });
+    connect(m_project, &Project::watchFoldersChanged, this, [this] { // the marks of watched bins
+        QTimer::singleShot(0, this, [this] { rebuildBins(); });
     });
     ProxyManager* proxies = m_engine->proxies();
     connect(proxies, &ProxyManager::progress, this, [this](const QString& path, int) { updateItem(path); });
@@ -554,13 +692,21 @@ void MediaPool::setSearch(const QString& text)
     m_search->setText(text);
 }
 
-bool MediaPool::eventFilter(QObject* obj, QEvent* e)
+const PoolFilter& MediaPool::filter() const
 {
-    if (obj == m_search && e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {
-        m_searchBtn->setChecked(false); // clears and closes
-        return true;
-    }
-    return QWidget::eventFilter(obj, e);
+    return m_filterBtn->filter();
+}
+
+void MediaPool::setFilter(const PoolFilter& filter)
+{
+    m_filterBtn->setFilter(filter); // changed() rebuilds
+}
+
+QVector<MediaPool::KeyAction> MediaPool::keyActions() const
+{
+    return {{m_removeBinKey, "pool_remove_bin", QKeySequence(Qt::Key_Delete), m_bins, QKeySequence(Qt::Key_Backspace)},
+            {m_closeSearchKey, "pool_close_search", QKeySequence(Qt::Key_Escape), m_search},
+            {m_removeClipsKey, "pool_remove_clips", QKeySequence(Qt::Key_Delete), m_list, QKeySequence(Qt::Key_Backspace)}};
 }
 
 void MediaPool::saveSettings() const
@@ -590,6 +736,7 @@ void MediaPool::applyViewMode()
         m_list->setWordWrap(true);
         m_list->setSpacing(0);
     }
+    m_scrub->setEnabled(!list); // the list view's icons are too small for it
     m_list->setMovement(QListView::Static);
     m_list->setResizeMode(QListView::Adjust);
     m_list->setDragEnabled(true);
@@ -623,7 +770,7 @@ void MediaPool::requestThumb(const QString& path, int frame)
     m_thumbPool->start([this, format, path, frame, generation] {
         Background::lowerThisThread(Background::Level::Low); // own pool: its threads do nothing else
         Background::yieldToForeground();
-        const QImage img = Engine::thumbnail(format, path, frame, kThumb);
+        const QImage img = Engine::thumbnail(format, path, frame, kThumb, true); // in the clip's own shape
         QMetaObject::invokeMethod(this, [this, path, img, generation] { thumbReady(path, img, generation); },
                                   Qt::QueuedConnection);
     });
@@ -650,6 +797,16 @@ void MediaPool::rebuildBins()
     const QSignalBlocker block(m_bins);
     m_bins->clear();
     const QIcon folder = style()->standardIcon(QStyle::SP_DirIcon);
+    // Bins a watch folder fills: marked, the folders in the tooltip
+    QHash<int, QStringList> watched;
+    for (const WatchFolder& w : m_project->watchFolders())
+        watched[w.bin != 0 && m_project->bin(w.bin) ? w.bin : 0] << QDir::toNativeSeparators(w.path);
+    const QIcon watchedFolder = watched.isEmpty() ? QIcon() : watchedIcon(folder);
+    const auto mark = [&](QTreeWidgetItem* it, int id) {
+        if (!watched.contains(id)) return;
+        it->setIcon(0, watchedFolder);
+        it->setToolTip(0, T("Überwacht – neue Dateien aus:") + "\n" + watched.value(id).join('\n'));
+    };
     QTreeWidgetItem* current = nullptr;
     QTreeWidgetItem* edit = nullptr;
     std::function<void(QTreeWidgetItem*, int)> addChildren = [&](QTreeWidgetItem* parent, int parentId) {
@@ -658,6 +815,7 @@ void MediaPool::rebuildBins()
             it->setData(0, Qt::UserRole, id);
             it->setIcon(0, folder);
             it->setFlags(it->flags() | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
+            mark(it, id);
             if (id == m_currentBin) current = it;
             if (id == m_editBin) edit = it;
             addChildren(it, id);
@@ -668,6 +826,7 @@ void MediaPool::rebuildBins()
     master->setData(0, Qt::UserRole, 0);
     master->setIcon(0, folder);
     master->setFlags((master->flags() | Qt::ItemIsDropEnabled) & ~Qt::ItemIsDragEnabled);
+    mark(master, 0);
     addChildren(master, 0);
     master->setExpanded(!collapsed.contains(0));
     m_bins->setCurrentItem(current ? current : master);
@@ -689,14 +848,27 @@ void MediaPool::rebuildClips()
     QSet<QString> selected;
     for (QListWidgetItem* it : m_list->selectedItems()) selected.insert(it->data(Qt::UserRole).toString());
     const int scroll = m_list->verticalScrollBar()->value();
+    m_scrub->forget();
+    m_scrubPicture.clear();
     m_list->clear();
     m_items.clear();
     const QString search = m_search->text().trimmed();
-    m_binTitle->setText(search.isEmpty() ? m_project->binName(m_currentBin)
-                                         : T("Suche in „%1“: %2").arg(m_project->binName(m_currentBin), search));
+    const PoolFilter& filter = m_filterBtn->filter();
+    // Search and filter look into the sub-bins too
+    const bool narrowed = !search.isEmpty() || filter.active();
+    const QString bin = m_project->binName(m_currentBin);
+    QString title = search.isEmpty() ? bin : T("Suche in „%1“: %2").arg(bin, search);
+    if (filter.active())
+        title = search.isEmpty() ? T("Filter in „%1“: %2").arg(bin, filter.summary()) : title + " · " + filter.summary();
+    m_binTitle->setFullText(title);
+    m_filterReset->setVisible(filter.active());
     const bool list = m_viewMode == ViewMode::List;
+    auto found = [&](int itemBin, const QString& name) {
+        return narrowed ? m_project->binInside(itemBin, m_currentBin) && name.contains(search, Qt::CaseInsensitive)
+                        : itemBin == m_currentBin;
+    };
 
-    if (m_currentBin == 0 && search.isEmpty()) {
+    if (m_currentBin == 0 && !narrowed) {
         // Title generator at the front of the Master (in DaVinci under Effects > Titles > "Text"); drag = 5 s title
         QPixmap titleThumb(kThumb);
         titleThumb.fill(Theme::titleClip.darker(135));
@@ -718,49 +890,16 @@ void MediaPool::rebuildClips()
     // Timelines and compound clips of the bin (like DaVinci among the clips; here at the front, by name)
     QVector<const Sequence*> seqs;
     for (const Sequence& q : m_project->sequences())
-        if (search.isEmpty() ? q.bin == m_currentBin
-                             : m_project->binInside(q.bin, m_currentBin) && q.name.contains(search, Qt::CaseInsensitive))
-            seqs << &q;
+        if (found(q.bin, q.name) && filter.matches(q)) seqs << &q;
     std::stable_sort(seqs.begin(), seqs.end(), [&](const Sequence* a, const Sequence* b) {
         const int c = I18n::compareNames(a->name, b->name);
         return m_sortAscending ? c < 0 : c > 0;
     });
     for (const Sequence* q : seqs) {
-        QPixmap thumb(kThumb);
-        thumb.fill((q->compound ? Theme::compoundClip : Theme::videoClip).darker(170));
-        {
-            QPainter p(&thumb);
-            p.setRenderHint(QPainter::Antialiasing);
-            // Icon: timeline = track bars, compound clip = stacked layers, multicam clip = grid of angles
-            const QColor fg(0xe8, 0xe8, 0xec);
-            if (q->multicam) {
-                for (int i = 0; i < 4; ++i) {
-                    const QRectF r(34 + (i % 2) * 31, 14 + (i / 2) * 27, 29, 25);
-                    p.setPen(QPen(i == 0 ? Theme::multicamActive : fg, i == 0 ? 2.0 : 1.0));
-                    p.setBrush(Theme::compoundClip.darker(110 + 20 * i));
-                    p.drawRect(r);
-                }
-            } else if (q->compound) {
-                for (int i = 2; i >= 0; --i) {
-                    const QRectF r(46 + i * 8, 20 + (2 - i) * 8, 36, 24);
-                    p.setPen(QPen(fg, 1.2));
-                    p.setBrush(Theme::compoundClip.darker(100 + 25 * i));
-                    p.drawRoundedRect(r, 2, 2);
-                }
-            } else {
-                p.setPen(Qt::NoPen);
-                const QColor bars[] = {Theme::videoClip, Theme::videoClip.lighter(120), Theme::audioClip};
-                const int x0[] = {30, 50, 30}, w[] = {60, 70, 84};
-                for (int i = 0; i < 3; ++i) {
-                    p.setBrush(bars[i]);
-                    p.drawRoundedRect(QRectF(x0[i], 18 + i * 16, w[i], 11), 2, 2);
-                }
-                p.setBrush(Theme::playhead);
-                p.drawRect(QRectF(72, 12, 2, 58)); // Playhead
-            }
-        }
         const QString item = sequenceItem(q->id);
-        auto* it = new QListWidgetItem(QIcon(thumb), QString());
+        // Multicam clips keep their grid of angles (which angle would be "the" picture?)
+        const QImage picture = q->multicam ? QImage() : m_posters->poster(q->id);
+        auto* it = new QListWidgetItem(QIcon(sequenceThumb(*q, picture)), QString());
         it->setData(Qt::UserRole, item);
         it->setToolTip(q->multicam ? T("Multicam-Clip – in die Timeline ziehen legt ihn ab, Doppelklick öffnet die Winkel")
                        : q->compound ? T("Compound Clip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
@@ -770,11 +909,8 @@ void MediaPool::rebuildClips()
     updateSequenceItems();
 
     QVector<const MediaInfo*> media;
-    for (const MediaInfo& m : m_project->media()) {
-        if (search.isEmpty() ? m.bin == m_currentBin
-                             : m_project->binInside(m.bin, m_currentBin) && m.name.contains(search, Qt::CaseInsensitive))
-            media << &m;
-    }
+    for (const MediaInfo& m : m_project->media())
+        if (found(m.bin, m.name) && filter.matches(m)) media << &m;
     QHash<QString, QDateTime> dates;
     if (m_sortKey == SortKey::Date)
         for (const MediaInfo* m : media) dates.insert(m->path, QFileInfo(m->path).lastModified());
@@ -814,6 +950,8 @@ void MediaPool::rebuildClips()
     for (int i = 0; i < m_list->count(); ++i)
         if (selected.contains(m_list->item(i)->data(Qt::UserRole).toString())) m_list->item(i)->setSelected(true);
     m_list->verticalScrollBar()->setValue(scroll);
+    m_emptyHint->setText(filter.active() ? T("Nichts passt zum Filter") : T("Nichts passt zur Suche"));
+    m_emptyHint->setVisible(narrowed && m_list->count() == 0);
 }
 
 void MediaPool::drawFlag(QPainter& p, const QRectF& r, const QColor& color)
@@ -840,7 +978,7 @@ void MediaPool::updateItem(const QString& path)
     if (!item) return;
     const MediaInfo* info = m_project->mediaInfo(path);
     const ProxyManager* proxies = m_engine->proxies();
-    QPixmap pm = m_thumbs.value(path);
+    QPixmap pm = m_scrubPicture.contains(path) ? m_scrubPicture.value(path) : m_thumbs.value(path);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
     QString tip = path;
@@ -914,9 +1052,27 @@ void MediaPool::updateItem(const QString& path)
             tip += "\n" + T("%1 Audiospuren: %2").arg(n).arg(streams.join(", "));
         }
     }
+    if (m_fresh.contains(path)) { // new from a watch folder (markFresh)
+        p.setPen(QPen(Theme::primary, 3));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(pm.rect()).adjusted(1.5, 1.5, -1.5, -1.5));
+        tip += "\n" + T("Neu aus einem überwachten Ordner");
+    }
     p.end();
     item->setIcon(QIcon(pm));
     item->setToolTip(tip);
+}
+
+void MediaPool::markFresh(const QStringList& paths)
+{
+    for (const QString& path : paths) {
+        m_fresh.insert(path);
+        updateItem(path);
+    }
+    QTimer::singleShot(10000, this, [this, paths] {
+        for (const QString& path : paths)
+            if (m_fresh.remove(path)) updateItem(path);
+    });
 }
 
 void MediaPool::updateProxyStatus()
@@ -992,6 +1148,50 @@ void MediaPool::renameSequence(int id)
     const QString name = QInputDialog::getText(this, q->compound ? T("Compound Clip umbenennen") : T("Timeline umbenennen"),
                                                T("Name:"), QLineEdit::Normal, q->name, &ok);
     if (ok) m_project->renameSequence(id, name);
+}
+
+void MediaPool::removeSelected()
+{
+    const QStringList paths = selectedMedia();
+    const QVector<int> sequences = selectedSequences();
+    if (paths.isEmpty() && sequences.isEmpty()) return;
+    // Timelines that go anyway do not count as using the media
+    QVector<QPair<int, int>> usage;
+    for (const QPair<int, int>& u : m_project->mediaUsage(paths))
+        if (!sequences.contains(u.first) || !m_project->canRemoveSequence(u.first)) usage << u;
+    if (!usage.isEmpty()) {
+        QSet<QString> used;
+        for (const Sequence& s : m_project->sequences())
+            if (std::any_of(usage.cbegin(), usage.cend(), [&](const QPair<int, int>& u) { return u.first == s.id; }))
+                for (const auto* tracks : {&s.timeline.video, &s.timeline.audio})
+                    for (const Track& t : *tracks)
+                        for (const Clip& c : t.clips)
+                            if (c.kind == ClipKind::Media && paths.contains(c.mediaPath)) used.insert(c.mediaPath);
+        QString text = used.size() == 1 ? T("„%1“ wird noch benutzt:").arg(QFileInfo(*used.cbegin()).fileName())
+                                        : T("%1 der ausgewählten Clips werden noch benutzt:").arg(used.size());
+        for (const auto& [sequence, clips] : usage)
+            text += "\n• " + (clips == 1 ? T("%1: 1 Clip").arg(m_project->sequenceName(sequence))
+                                         : T("%1: %2 Clips").arg(m_project->sequenceName(sequence)).arg(clips));
+        QMessageBox box(QMessageBox::Question, T("Aus dem Media Pool entfernen"), text, QMessageBox::NoButton, this);
+        box.setInformativeText(T("„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein "
+                                 "Rückgängig-Schritt holt alles zurück)."));
+        QPushButton* withClips = box.addButton(T("Mit ihren Clips entfernen"), QMessageBox::DestructiveRole);
+        box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::Cancel);
+        box.exec();
+        if (box.clickedButton() != withClips) return;
+    }
+    QUndoStack* undo = m_project->undoStack();
+    const bool several = !sequences.isEmpty() && (sequences.size() > 1 || !paths.isEmpty());
+    if (several) undo->beginMacro(T("Aus dem Media Pool entfernen"));
+    // A compound clip inside a timeline that goes too can go after that timeline
+    for (bool progress = true; progress;) {
+        progress = false;
+        for (int id : sequences)
+            if (m_project->sequence(id) && m_project->canRemoveSequence(id)) progress = m_project->removeSequence(id) || progress;
+    }
+    if (!paths.isEmpty()) m_project->removeMedia(paths, true);
+    if (several) undo->endMacro();
 }
 
 void MediaPool::addClipColorMenu(QMenu* menu, Project* project, const QStringList& paths)
@@ -1109,6 +1309,9 @@ void MediaPool::showContextMenu(const QPoint& pos)
         const bool exists = QFileInfo::exists(file);
         menu.addAction(T("Mit Standardprogramm öffnen"), this, [file] { FileManager::open(file); })->setEnabled(exists);
         menu.addAction(T("Im Dateimanager zeigen"), this, [file] { FileManager::reveal(file); })->setEnabled(exists);
+        menu.addSeparator();
+        QAction* remove = menu.addAction(T("Aus dem Media Pool entfernen"), this, &MediaPool::removeSelected);
+        remove->setShortcuts(m_removeClipsKey->shortcuts()); // shows the key (acts only while the menu is open)
     }
     menu.addSeparator();
     menu.addAction(T("Medien importieren…"), this, &MediaPool::importDialog);
@@ -1126,6 +1329,8 @@ void MediaPool::showBinMenu(const QPoint& pos)
         menu.addAction(T("Bin umbenennen"), this, [this, it] { m_bins->editItem(it); });
         menu.addAction(T("Bin entfernen"), this, [this, id] { removeBin(id); });
     }
+    menu.addSeparator();
+    menu.addAction(T("Ordner überwachen…"), this, [this, id] { emit watchFolderRequested(id); });
     menu.exec(m_bins->viewport()->mapToGlobal(pos));
 }
 

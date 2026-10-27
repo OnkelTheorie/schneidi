@@ -7,6 +7,7 @@
 #include "core/Timecode.h"
 #include "engine/Extensions.h"
 
+#include <QAction>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileInfo>
@@ -108,11 +109,16 @@ TranscriptPanel::TranscriptPanel(Project* project, Editor* editor, QWidget* pare
                               .arg(Theme::field.name(), Theme::text.name()));
     m_text->installEventFilter(this);
     m_text->viewport()->installEventFilter(this);
+    m_cutAction = new QAction(T("Ausgewählte Wörter herausschneiden"), this);
+    m_cutAction->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
+    connect(m_cutAction, &QAction::triggered, this, [this] { cutSelection(); });
+    connect(m_cutAction, &QAction::changed, this, [this] { updateState(); }); // keys rebound: the hint names them
     connect(m_text, &QTextEdit::customContextMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu;
-        QAction* cut = menu.addAction(T("Ausgewählte Wörter herausschneiden"));
-        cut->setEnabled(selectedWords().first >= 0);
-        if (menu.exec(m_text->viewport()->mapToGlobal(pos)) == cut) cutSelection();
+        menu.addAction(m_cutAction);
+        m_cutAction->setEnabled(selectedWords().first >= 0);
+        menu.exec(m_text->viewport()->mapToGlobal(pos));
+        m_cutAction->setEnabled(true);
     });
     lay->addWidget(m_text, 1);
 
@@ -240,6 +246,13 @@ void TranscriptPanel::selectWords(int first, int last)
     m_text->setTextCursor(c);
 }
 
+bool TranscriptPanel::isCutKey(const QKeyEvent* e) const
+{
+    const QKeyCombination key(e->modifiers() & ~Qt::KeypadModifier, Qt::Key(e->key()));
+    const QList<QKeySequence> keys = m_cutAction->shortcuts();
+    return std::any_of(keys.begin(), keys.end(), [&](const QKeySequence& s) { return s.count() == 1 && s[0] == key; });
+}
+
 bool TranscriptPanel::cutSelection()
 {
     const auto [first, last] = selectedWords();
@@ -318,8 +331,11 @@ void TranscriptPanel::updateState()
         hint = T("Noch kein Transkript. „Transkribieren“ erkennt, was in den Tonclips gesagt wird.");
     else if (!missing.isEmpty())
         hint = T("Clips ohne Transkript: %1").arg(missing.size());
+    else if (const QKeySequence key = m_cutAction->shortcut(); !key.isEmpty())
+        hint = T("Wörter markieren und %1 drücken schneidet sie heraus. Klick = zum Wort springen.")
+                   .arg(key.toString(QKeySequence::NativeText));
     else
-        hint = T("Wörter markieren und Entf drücken schneidet sie heraus. Klick = zum Wort springen.");
+        hint = T("Wörter markieren und per Rechtsklick herausschneiden. Klick = zum Wort springen.");
     m_hint->setText(hint);
 }
 
@@ -361,17 +377,14 @@ void TranscriptPanel::startNext()
 
 bool TranscriptPanel::eventFilter(QObject* obj, QEvent* e)
 {
-    if (obj == m_text && e->type() == QEvent::KeyPress) {
-        const auto* k = static_cast<QKeyEvent*>(e);
-        if ((k->key() == Qt::Key_Delete || k->key() == Qt::Key_Backspace) && cutSelection()) return true;
-    }
-    if (obj == m_text && e->type() == QEvent::ShortcutOverride) {
-        // Delete/Backspace belong to the text here (otherwise the timeline's delete action would take them)
-        const auto* k = static_cast<QKeyEvent*>(e);
-        if ((k->key() == Qt::Key_Delete || k->key() == Qt::Key_Backspace) && selectedWords().first >= 0) {
-            e->accept();
-            return true;
-        }
+    // The cut keys belong to the text (otherwise the window's action on the same key, e.g. the timeline's Delete, would
+    // take them): with words selected they cut them, without they do nothing - a click into the text clears the
+    // selection, and the timeline clips the user does not look at must never go
+    if (obj == m_text && (e->type() == QEvent::KeyPress || e->type() == QEvent::ShortcutOverride)
+        && isCutKey(static_cast<QKeyEvent*>(e))) {
+        e->accept();
+        if (e->type() == QEvent::KeyPress) cutSelection();
+        return true;
     }
     if (obj == m_text->viewport() && e->type() == QEvent::MouseButtonRelease) {
         const auto* me = static_cast<QMouseEvent*>(e);

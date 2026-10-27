@@ -33,6 +33,9 @@ schneidi_test(test_undo)
 schneidi_test(test_tracks)
 schneidi_test(test_source_edits)
 schneidi_test(test_effects)
+# Effect order: Editor::moveEffect, op 'effect' move, Inspector (menu, dragging the header), render follows the order
+schneidi_test(test_effect_order)
+target_link_libraries(test_effect_order PRIVATE schneidi_cli_lib)
 schneidi_test(test_i18n)
 schneidi_test(test_effects_render)
 schneidi_test(test_output_color)
@@ -43,6 +46,9 @@ schneidi_test(test_preview_audio)
 # plays in real time: under parallel load the preview could fall behind (gaps in the sound = false clicks)
 set_tests_properties(test_preview_audio PROPERTIES RUN_SERIAL TRUE)
 schneidi_test(test_mediapool)
+schneidi_test(test_pool_storage) # Media Pool filter + keys, Media Storage marks, hover scrub, look before import
+schneidi_test(test_pool_remove) # removing clips from the Media Pool: core op, undo, watch, AI turn, CLI op, keys, question
+target_link_libraries(test_pool_remove PRIVATE schneidi_cli_lib)
 schneidi_test(test_color)
 schneidi_test(test_grade_windows)
 schneidi_test(test_workspace)
@@ -75,9 +81,11 @@ schneidi_test(test_transition_size)
 schneidi_test(test_hw_encoders)
 schneidi_test(test_export_opus)
 schneidi_test(test_timeline_mouse)
+schneidi_test(test_timeline_keys) # key bindings of the window (no clashes per set), slip/slide tools, lock, transcript keys
 schneidi_test(test_trimview)
 schneidi_test(test_paste_attributes)
 schneidi_test(test_scopes)
+schneidi_test(test_graded_thumbs)
 schneidi_test(test_stabilize_denoise)
 schneidi_test(test_cli)
 target_link_libraries(test_cli PRIVATE schneidi_cli_lib)
@@ -141,6 +149,8 @@ schneidi_test(test_multicam_cli)
 target_link_libraries(test_multicam_cli PRIVATE schneidi_cli_lib)
 schneidi_test(test_stream_presets)
 target_link_libraries(test_stream_presets PRIVATE schneidi_cli_lib)
+schneidi_test(test_start_templates) # how new projects look: start templates (app, settings page, CLI new/templates)
+target_link_libraries(test_start_templates PRIVATE schneidi_cli_lib)
 schneidi_test(test_ducking)
 target_link_libraries(test_ducking PRIVATE schneidi_cli_lib)
 schneidi_test(test_blur_fill) # blurred fill around the fitted picture (op 'transform' fit:'blur')
@@ -148,13 +158,20 @@ target_link_libraries(test_blur_fill PRIVATE schneidi_cli_lib)
 schneidi_test(test_accents) # zoom punch / flash / shake as keyframes (op 'accent', clip menu), param zoom
 target_link_libraries(test_accents PRIVATE schneidi_cli_lib)
 # Speed brake: alone (parallel tests would distort the times), baseline per machine in data/speed-baseline.json
+# Watch folders: rules, project, `watch` command, schneidi-cli (--follow with a file written in chunks), live, app watcher
+schneidi_test(test_watch_folders)
+target_link_libraries(test_watch_folders PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_watch_folders PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>"
+                           SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
+add_dependencies(test_watch_folders schneidi-cli)
 schneidi_test(test_speed)
 target_compile_definitions(test_speed PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 set_tests_properties(test_speed PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
+schneidi_test(test_file_manager) # show in file manager / open with the default program, also without a D-Bus session
 
 # Number format regressions (German decimal comma, e.g. 0.7.0: MLT reset LC_NUMERIC and stabilization did nothing):
 # run tests that pass numbers to MLT/FFmpeg a second time under de_DE.UTF-8 (CI generates the locale)
-foreach(name test_stabilize_denoise test_retime test_effects_render test_cli test_export_formats test_audio
+foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_order test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
              test_ducking test_crop test_blur_fill)
@@ -244,8 +261,12 @@ add_executable(bench_audio_reader bench_audio_reader.cpp check.h)
 target_link_libraries(bench_audio_reader PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_device_loss bench_device_loss.cpp check.h)
 target_link_libraries(bench_device_loss PRIVATE schneidi_lib Qt6::Test)
+add_executable(bench_graded_thumbs bench_graded_thumbs.cpp check.h)
+target_link_libraries(bench_graded_thumbs PRIVATE schneidi_lib Qt6::Test)
 if(WIN32) # WASAPI loopback: what the system sends to the sound card
     add_executable(bench_soundcard bench_soundcard.cpp check.h)
     target_link_libraries(bench_soundcard PRIVATE schneidi_lib Qt6::Test)
     target_include_directories(bench_soundcard PRIVATE ${MINIAUDIO_INCLUDE_DIR})
 endif()
+add_executable(bench_render_start bench_render_start.cpp check.h)
+target_link_libraries(bench_render_start PRIVATE schneidi_lib Qt6::Test)

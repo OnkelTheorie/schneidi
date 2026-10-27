@@ -9,8 +9,8 @@ Goal: same content, no dead air, no slips - but still natural, not robotic.
   where are slips, repetitions, false starts?
 
 ## Remove pauses
-- **From a media file** (new project): `silence` on the file with `project` set → the `sound` ranges go straight
-  into `keep` (jump cut).
+- **From a media file** (new project; `template` "podcast" names the tracks Voice 1, Voice 2, Music, so `check` and
+  `duck` know them): `silence` on the file with `project` set → the `sound` ranges go straight into `keep` (jump cut).
 - **On an existing timeline** (also live in the app): `silence` on the project → its `silence` ranges are timeline
   ranges → `delete_range` with `ranges` (ripple) removes them all in one op. Don't cut piece by piece - every cut
   moves the later times; `delete_range` applies all ranges together.

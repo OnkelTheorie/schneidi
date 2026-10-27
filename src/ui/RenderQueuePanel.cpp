@@ -1,18 +1,26 @@
 #include "ui/RenderQueuePanel.h"
 
+#include "app/InputBindings.h"
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "engine/RenderQueue.h"
+#include "ui/ElidedLabel.h"
 
+#include <QAction>
+#include <QApplication>
+#include <QCursor>
 #include <QDir>
+#include <QDrag>
+#include <QDropEvent>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
+#include <QMimeData>
 #include <QMenu>
 #include <QPainter>
 #include <QProgressBar>
@@ -20,37 +28,9 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
 
 namespace {
-
-// Single-line label that adapts to the card width (too long = "…", full text in the tooltip)
-class ElidedLabel : public QLabel {
-public:
-    explicit ElidedLabel(Qt::TextElideMode mode = Qt::ElideRight) : m_mode(mode) {}
-    void setFullText(const QString& text)
-    {
-        m_text = text;
-        setToolTip(text);
-        updateGeometry();
-        update();
-    }
-    QSize minimumSizeHint() const override { return {0, fontMetrics().height()}; }
-    QSize sizeHint() const override { return {fontMetrics().horizontalAdvance(m_text), fontMetrics().height()}; }
-
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter p(this);
-        p.setPen(palette().color(foregroundRole()));
-        p.setFont(font());
-        p.drawText(rect(), int(alignment() | Qt::AlignVCenter),
-                   fontMetrics().elidedText(m_text, m_mode, width()));
-    }
-
-private:
-    QString m_text;
-    Qt::TextElideMode m_mode;
-};
 
 // One card per job
 class JobCard : public QWidget {
@@ -102,6 +82,74 @@ QString statusColor(RenderStatus s)
 
 constexpr int kIdRole = Qt::UserRole + 1;
 
+// The job list: dragging jobs reorders the queue. The list does not move its items itself, the panel changes the
+// project's queue and rebuilds the cards in the new order.
+class JobList : public QListWidget {
+public:
+    std::function<void(const QVector<int>& ids, int beforeId)> moveRequested;
+
+    // Job in front of which a drop at pos lands (upper/lower half of a card), 0 = at the end
+    int dropTarget(const QPoint& pos) const
+    {
+        QListWidgetItem* item = itemAt(pos);
+        if (!item) { // between two cards (spacing) or below the last one: the next card below pos
+            for (int i = 0; i < count(); ++i)
+                if (visualItemRect(this->item(i)).top() > pos.y()) return this->item(i)->data(kIdRole).toInt();
+            return 0;
+        }
+        const int row = this->row(item) + (pos.y() > visualItemRect(item).center().y() ? 1 : 0);
+        return row < count() ? this->item(row)->data(kIdRole).toInt() : 0;
+    }
+
+protected:
+    void startDrag(Qt::DropActions) override
+    {
+        QModelIndexList indexes;
+        for (const QModelIndex& index : selectedIndexes())
+            if (index.flags() & Qt::ItemIsDragEnabled) indexes << index;
+        if (indexes.isEmpty()) return;
+        std::sort(indexes.begin(), indexes.end(), [](const QModelIndex& a, const QModelIndex& b) { return a.row() < b.row(); });
+        auto* drag = new QDrag(this);
+        drag->setMimeData(model()->mimeData(indexes));
+        // The cards are widgets the item delegate does not paint: the first one as the picture
+        if (QWidget* card = itemWidget(item(indexes.first().row()))) {
+            const QPixmap picture = card->grab();
+            drag->setPixmap(picture);
+            drag->setHotSpot(card->mapFromGlobal(QCursor::pos()));
+        }
+        drag->exec(Qt::MoveAction); // (not QAbstractItemView::startDrag: it would remove the moved rows itself)
+    }
+    // Only a drag that started in this list (files or another list's items are ignored). QDrag cannot run without a
+    // display: a test's synthetic drag names the list in its data's property "schneidi_drag_source" instead.
+    bool fromHere(const QDropEvent* e) const
+    {
+        return e->source() == this
+               || (e->mimeData() && e->mimeData()->property("schneidi_drag_source").value<QObject*>() == this);
+    }
+    void dragEnterEvent(QDragEnterEvent* e) override
+    {
+        QListWidget::dragEnterEvent(e); // takes its own drags (InternalMove)
+        if (!e->isAccepted() && fromHere(e)) e->acceptProposedAction(); // a test's synthetic one (see fromHere)
+    }
+    void dropEvent(QDropEvent* e) override
+    {
+        if (!fromHere(e)) {
+            e->ignore();
+            return;
+        }
+        QVector<int> ids;
+        for (QListWidgetItem* item : selectedItems())
+            if (item->flags() & Qt::ItemIsDragEnabled) ids << item->data(kIdRole).toInt();
+        const int before = dropTarget(e->position().toPoint());
+        e->acceptProposedAction();
+        stopAutoScroll();
+        setState(NoState);
+        // After the drag has ended: the move rebuilds the list
+        QMetaObject::invokeMethod(this, [this, ids, before] { if (moveRequested) moveRequested(ids, before); },
+                                  Qt::QueuedConnection);
+    }
+};
+
 } // namespace
 
 RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget* parent)
@@ -112,8 +160,13 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
     m_title = new QLabel;
     m_title->setObjectName("PanelTitle");
 
-    m_list = new QListWidget;
+    auto* list = new JobList;
+    list->moveRequested = [this](const QVector<int>& ids, int beforeId) { moveJobs(ids, beforeId); };
+    m_list = list;
     m_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_list->setDragDropMode(QAbstractItemView::InternalMove);
+    m_list->setDefaultDropAction(Qt::MoveAction);
+    m_list->setDropIndicatorShown(true);
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_list->setFrameShape(QFrame::NoFrame);
     m_list->setSpacing(2);
@@ -148,7 +201,11 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
     connect(m_renderBtn, &QPushButton::clicked, this, &RenderQueuePanel::renderClicked);
     connect(m_list, &QListWidget::itemSelectionChanged, this, &RenderQueuePanel::updateButton);
     connect(m_list, &QListWidget::itemDoubleClicked, this,
-            [this](QListWidgetItem* item) { emit loadJobRequested(item->data(kIdRole).toInt()); });
+            [this](QListWidgetItem* item) { jobDoubleClicked(item->data(kIdRole).toInt()); });
+    m_deleteAction = new QAction(T("Aufträge löschen"), this);
+    m_deleteAction->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)}); // InputBindings may change them
+    m_deleteAction->setShortcutContext(Qt::WidgetShortcut);
+    connect(m_deleteAction, &QAction::triggered, this, [this] { removeJobs(selectedJobs()); });
     connect(m_list, &QWidget::customContextMenuRequested, this, &RenderQueuePanel::contextMenu);
     connect(m_project, &Project::renderQueueChanged, this, &RenderQueuePanel::rebuild);
     connect(m_project, &Project::sequencesChanged, this, &RenderQueuePanel::rebuild); // timeline name
@@ -162,15 +219,13 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
                 }
         updateButton(); // after "preparing"
     });
+    // Preparing runs in the background (RenderQueue::isPreparing): the button stops it like a running render
     connect(m_queue, &RenderQueue::preparing, this, [this](int id) {
         for (int i = 0; i < m_list->count(); ++i)
             if (m_list->item(i)->data(kIdRole).toInt() == id)
                 if (auto* card = static_cast<JobCard*>(m_list->itemWidget(m_list->item(i))))
                     card->status->setText(T("Wird vorbereitet …"));
-        m_renderBtn->setText(T("Wird vorbereitet …"));
-        m_renderBtn->setEnabled(false);
-        // Paint now: until the job runs, the event loop does not get to it
-        if (QWidget* w = window()) w->repaint();
+        updateButton();
     });
     rebuild();
 }
@@ -185,12 +240,18 @@ void RenderQueuePanel::rebuild()
         const RenderJob& j = jobs[n];
         auto* item = new QListWidgetItem(m_list);
         item->setData(kIdRole, j.id);
+        // The job being rendered stays where it is; the others can be dragged
+        item->setFlags((item->flags() | Qt::ItemIsDragEnabled) & ~Qt::ItemIsDropEnabled);
+        if (m_queue->isRunning() && m_queue->currentJob() == j.id) item->setFlags(item->flags() & ~Qt::ItemIsDragEnabled);
         auto* card = new JobCard;
         const QFileInfo fi(j.path);
         card->title->setFullText(T("Job %1").arg(j.id) + QStringLiteral(" · ") + fi.fileName());
-        card->setToolTip(j.preset.isEmpty() ? T("Eigene Einstellungen") : j.preset);
-        card->status->setText(j.status == RenderStatus::Rendering && m_queue->currentJob() == j.id
-                                  ? T("Rendert %1 %").arg(m_queue->currentProgress())
+        QString itemTip = j.preset.isEmpty() ? T("Eigene Einstellungen") : j.preset;
+        if (j.status == RenderStatus::Done) itemTip += '\n' + T("Doppelklick: im Dateimanager zeigen");
+        item->setToolTip(itemTip); // the list shows it (the card lets the mouse through)
+        const bool current = j.status == RenderStatus::Rendering && m_queue->currentJob() == j.id;
+        card->status->setText(current && m_queue->isPreparing() ? T("Wird vorbereitet …")
+                              : current                         ? T("Rendert %1 %").arg(m_queue->currentProgress())
                               : j.status == RenderStatus::Failed ? T("Fehler")
                                                                  : renderStatusText(j));
         card->message->setFullText(j.message);
@@ -259,7 +320,8 @@ void RenderQueuePanel::renderClicked()
     QElapsedTimer busy;
     busy.start();
     m_queue->start(selectedJobs());
-    m_ignoreClicksBefore = m_clickTime + quint64(busy.elapsed());
+    // The button says "Stop" at once: the second click of a double-click must not stop the render just started
+    m_ignoreClicksBefore = m_clickTime + quint64(busy.elapsed()) + quint64(QApplication::doubleClickInterval());
 }
 
 void RenderQueuePanel::removeJobs(const QVector<int>& ids)
@@ -272,10 +334,28 @@ void RenderQueuePanel::removeJobs(const QVector<int>& ids)
     m_project->setRenderQueue(q);
 }
 
+void RenderQueuePanel::moveJobs(const QVector<int>& ids, int beforeId)
+{
+    const int running = m_queue->isRunning() ? m_queue->currentJob() : 0;
+    m_project->setRenderQueue(moveRenderJobs(m_project->renderQueue(), ids, beforeId, running));
+}
+
+void RenderQueuePanel::jobDoubleClicked(int id)
+{
+    for (const RenderJob& j : m_project->renderQueue())
+        if (j.id == id) {
+            // Finished: where the file is (what one wants next); otherwise take the settings over
+            const QString file = firstOutputFile(j.path, j.settings);
+            if (j.status == RenderStatus::Done && QFileInfo::exists(file)) emit revealFileRequested(file);
+            else emit loadJobRequested(id);
+            return;
+        }
+}
+
 void RenderQueuePanel::keyPressEvent(QKeyEvent* e)
 {
-    if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
-        removeJobs(selectedJobs());
+    if (InputBindings::matches(m_deleteAction, e)) {
+        m_deleteAction->trigger();
         return;
     }
     QWidget::keyPressEvent(e);
@@ -283,7 +363,8 @@ void RenderQueuePanel::keyPressEvent(QKeyEvent* e)
 
 bool RenderQueuePanel::eventFilter(QObject* obj, QEvent* e)
 {
-    // Del in the list deletes jobs, not clips (do not trigger the timeline shortcut)
+    // The panel's keys (Del deletes jobs) win over the window's while the list has the focus: the timeline's Del
+    // must not delete clips (registerPanelAction)
     // keep cards at list width
     if (obj == m_list->viewport() && e->type() == QEvent::Resize)
         for (int i = 0; i < m_list->count(); ++i) {
@@ -296,9 +377,11 @@ bool RenderQueuePanel::eventFilter(QObject* obj, QEvent* e)
         if (time < m_ignoreClicksBefore) return true; // clicked while the start blocked the window
         if (e->type() == QEvent::MouseButtonRelease) m_clickTime = time; // the release triggers clicked()
     }
-    if (obj == m_list && e->type() == QEvent::ShortcutOverride) {
-        const int key = static_cast<QKeyEvent*>(e)->key();
-        if (key == Qt::Key_Delete || key == Qt::Key_Backspace) e->accept();
+    if ((obj == m_list || obj == m_renderBtn) && (e->type() == QEvent::ShortcutOverride || e->type() == QEvent::KeyPress)
+        && InputBindings::matches(m_deleteAction, static_cast<QKeyEvent*>(e))) {
+        e->accept(); // ShortcutOverride: no window shortcut, it comes as a key press instead
+        if (e->type() == QEvent::KeyPress) m_deleteAction->trigger();
+        return e->type() == QEvent::KeyPress;
     }
     return QWidget::eventFilter(obj, e);
 }
@@ -326,9 +409,21 @@ void RenderQueuePanel::contextMenu(const QPoint& pos)
     reset->setEnabled(std::any_of(queue.begin(), queue.end(), [&](const RenderJob& j) {
         return ids.contains(j.id) && j.status != RenderStatus::Queued && j.status != RenderStatus::Rendering;
     }));
+    // The rendered file of a finished job (image sequences: the first frame in their folder)
+    QString file;
+    for (const RenderJob& j : queue)
+        if (ids.size() == 1 && j.id == ids.first() && j.status == RenderStatus::Done) file = firstOutputFile(j.path, j.settings);
+    const bool exists = !file.isEmpty() && QFileInfo::exists(file);
+    menu.addSeparator();
+    QAction* reveal = menu.addAction(T("Im Dateimanager zeigen"), this, [this, file] { emit revealFileRequested(file); });
+    reveal->setObjectName("revealJob");
+    reveal->setEnabled(exists);
+    QAction* open = menu.addAction(T("Mit Standardprogramm öffnen"), this, [this, file] { emit openFileRequested(file); });
+    open->setObjectName("openJob");
+    open->setEnabled(exists);
     menu.addSeparator();
     QAction* del = menu.addAction(T("Löschen"), this, [this, ids] { removeJobs(ids); });
-    del->setShortcut(QKeySequence::Delete);
+    del->setShortcuts(m_deleteAction->shortcuts()); // shows the bound key (and works while the menu is open)
     del->setEnabled(!ids.isEmpty());
     menu.addAction(T("Fertige Aufträge entfernen"), this, [this] {
         QVector<int> done;

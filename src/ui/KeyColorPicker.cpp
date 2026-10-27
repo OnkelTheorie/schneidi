@@ -1,6 +1,7 @@
 #include "ui/KeyColorPicker.h"
 
 #include "app/Theme.h"
+#include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 
@@ -28,9 +29,10 @@ Timeline KeyColorPicker::isolate(const Timeline& tl, int clipId)
         t.hidden = false;
         Clip& c = t.clips.first();
         c.enabled = true;
-        const auto key = std::find_if(c.effects.begin(), c.effects.end(),
-                                      [](const EffectInstance& e) { return e.effectId == "chromakey"; });
-        c.effects.erase(key, c.effects.end());
+        // The key renders after the other fixed stages (stabilization, grade) and before the movable effects
+        c.effects.removeIf([](const EffectInstance& e) {
+            return e.effectId == "chromakey" || EffectRegistry::movable(e.effectId);
+        });
         c.transform.opacity = 100;
         c.transform.compositeOn = true;
         Keys::clear(c, AnimParam::Opacity);

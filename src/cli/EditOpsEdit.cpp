@@ -451,6 +451,38 @@ void opMedia(Session& s, const QJsonObject& op)
     }
 }
 
+// Out of the Media Pool (the files stay on disk); media a timeline uses only with with_clips (their clips go too)
+void opRemoveMedia(Session& s, const QJsonObject& op)
+{
+    if (!op.contains("media")) fail("BAD_ARGUMENT", "missing 'media' (a file or a list of files in the Media Pool)");
+    QStringList paths;
+    const QJsonValue v = op.value("media");
+    for (const QJsonValue& x : v.isArray() ? v.toArray() : QJsonArray{v}) {
+        const QString path = absolute(x.toString());
+        if (!s.project.mediaInfo(path)) fail("NOT_FOUND", "not in the Media Pool: " + path + " (`info` lists the media)");
+        paths << path;
+    }
+    if (paths.isEmpty()) fail("BAD_ARGUMENT", "media: an empty list");
+    const QVector<QPair<int, int>> usage = s.project.mediaUsage(paths);
+    const bool withClips = op.value("with_clips").toBool();
+    if (!usage.isEmpty() && !withClips) {
+        QStringList where;
+        int clips = 0;
+        for (const auto& [sequence, n] : usage) {
+            where << QString("'%1' (id %2): %3").arg(s.project.sequenceName(sequence)).arg(sequence).arg(n);
+            clips += n;
+        }
+        fail("IN_USE", QString("%1 clip(s) use this media (%2); with_clips:true removes those clips too")
+                           .arg(clips).arg(where.join(", ")));
+    }
+    if (withClips && !usage.isEmpty()) {
+        int clips = 0;
+        for (const auto& u : usage) clips += u.second;
+        s.notes << QString("remove_media: %1 clip(s) in %2 timeline(s) removed with the media").arg(clips).arg(usage.size());
+    }
+    s.project.removeMedia(paths, withClips);
+}
+
 // ---------- copy, insert ----------
 
 void opCopy(Session& s, const QJsonObject& op)
@@ -561,6 +593,14 @@ void addEditOps(QVector<OpDef>& ops)
                  "Media Pool: move into a bin (\"Name\" or \"A/B\", created if missing), clip color, flags, source "
                  "In/Out",
                  {}, opMedia}
+        << OpDef{"remove_media", "{op:'remove_media', media, with_clips?:false}",
+                 "Media Pool: take files out (not from disk); media a timeline uses only with with_clips:true (their "
+                 "clips leave every timeline too)",
+                 "media = a file or a list of files in the Media Pool. Without with_clips the op fails with IN_USE if "
+                 "any timeline (compound and multicam clips included) uses one of them and says how many clips where. "
+                 "with_clips:true removes those clips too (a gap stays, nothing moves up). A file of a watch folder is "
+                 "not taken again by its watch. In the app it is one undo step that brings everything back.",
+                 opRemoveMedia}
         << OpDef{"bin", "{op:'bin', bin, rename?, into?, remove?}",
                  "Media Pool bins: create (with missing parents), rename, move into another bin (\"\" = top level) or "
                  "remove",

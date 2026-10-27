@@ -25,6 +25,7 @@
 #include <QMouseEvent>
 #include <QUrl>
 #include <QContextMenuEvent>
+#include <QCursor>
 #include <QHash>
 #include <QInputDialog>
 #include <QMenu>
@@ -269,6 +270,9 @@ std::optional<TimelineView::TrimHit> TimelineView::trimHitAt(const QPoint& pos) 
         const QRect r = clipRect(*row, c);
         const double x1 = frameToX(c.pos()), x2 = frameToX(c.endPos());
         if (pos.x() < x1 || pos.x() >= x2 || pos.y() > r.bottom()) continue;
+        // Slip/Slide tool: anywhere on the clip, edges and cuts included
+        if (m_tool == Tool::Slip || m_tool == Tool::Slide)
+            return TrimHit{m_tool == Tool::Slip ? TrimKind::Slip : TrimKind::Slide, c.id, Edge::End};
         // exactly at the cut of two adjacent clips: Roll
         const bool prevAdj = i > 0 && clips[i - 1].end() == c.start;
         const bool nextAdj = i + 1 < clips.size() && clips[i + 1].start == c.end();
@@ -435,7 +439,7 @@ void TimelineView::updateHoverCursor(const QPoint& pos)
         setCursor(h->part == 2 ? Qt::PointingHandCursor : h->index >= 0 ? Qt::SizeAllCursor : Qt::ArrowCursor);
         return;
     }
-    if (m_tool == Tool::Trim) {
+    if (trimTool()) {
         if (keyIconAt(pos)) setCursor(Qt::PointingHandCursor);
         else if (keyframeAt(pos)) setCursor(Qt::SizeHorCursor);
         else if (const auto h = trimHitAt(pos)) setCursor(trimCursor(h->kind, h->edge));
@@ -574,6 +578,8 @@ void TimelineView::setTool(Tool tool)
     setCursor(tool == Tool::Blade ? Qt::IBeamCursor : Qt::ArrowCursor);
     if (m_hoverClip) m_hoverClip = 0; // Fade handles only in the selection tool
     m_hoverFrame = -1;
+    // Switched by key with the mouse over a clip: its cursor at once (slip/slide frame), not only after a move
+    if (m_drag == Drag::None && underMouse()) updateHoverCursor(mapFromGlobal(QCursor::pos()));
     update();
     emit toolChanged(tool);
 }

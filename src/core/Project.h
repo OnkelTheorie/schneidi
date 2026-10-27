@@ -24,6 +24,15 @@ struct PoolState {
     QHash<int, int> sequenceBins; // sequence id -> bin (timelines/compound clips in the Media Pool)
     bool operator==(const PoolState&) const = default;
 };
+// What undo steps change in the media list (removing from the Media Pool, files of watch folders): files that leave
+// the pool or come into it at their place in the list, and files put on or taken off a watch folder's ignored list.
+// Everything else about the media (imports, source marks, transcripts) is not in the history and stays as it is.
+struct MediaChange {
+    QVector<QPair<int, MediaInfo>> out;                // leave the pool (index in the list before)
+    QVector<QPair<int, MediaInfo>> in;                 // come into the pool (index in the list after)
+    QVector<QPair<QString, QString>> ignore, unignore; // (watch folder, file) onto / off its ignored list
+    bool isEmpty() const { return out.isEmpty() && in.isEmpty() && ignore.isEmpty() && unignore.isEmpty(); }
+};
 
 // Holds the project (media + timeline). Every change of the timeline goes through edit()
 // and is thus automatically undoable (snapshot undo - simple and robust;
@@ -56,7 +65,8 @@ public:
     void closeMerge() { ++m_mergeSession; }
     // The undo steps after `fromIndex` (QUndoStack::index()) become one step called `text`, e.g. an AI chat turn the
     // user accepted: the state before them and the state now, everything the history covers (timelines, the open
-    // one, project settings, Media Pool organization). Nothing to combine (index <= fromIndex): no step.
+    // one, project settings, Media Pool organization, files removed from or brought into the pool by those steps).
+    // Nothing to combine (index <= fromIndex): no step.
     void combineSteps(int fromIndex, const QString& text);
     void setTimeline(const Timeline& tl); // only for undo/loading (current sequence)
     // Undo: set the timeline of a sequence; if it is not open, it gets opened (you see what changes)
@@ -109,6 +119,16 @@ public:
     // counted anew. `probeLength` = a file's real length in the new rate (0 = unknown: offline files are scaled).
     // App and CLI both call this after setFormat.
     void recountMedia(FrameRate oldRate, const std::function<int(const QString& path)>& probeLength);
+    // The clips that use these media, per timeline (every sequence, compound and multicam clips included): sequence
+    // id -> number of clips, in sequence order; empty = no timeline uses them
+    QVector<QPair<int, int>> mediaUsage(const QStringList& paths) const;
+    // Remove media from the Media Pool as one undo step. Media a timeline uses only go with `withClips`: then their
+    // clips leave every timeline in the same step (a gap stays); without it nothing changes and it returns false, so
+    // no clip ever points to a file missing in the pool. A file of a watch folder goes on its ignored list (the watch
+    // does not bring it back). Undo brings everything back as it was: place in the pool, bin, color, flags, source
+    // marks, transcripts, the clips. Paths not in the pool are left out; false = nothing removed.
+    bool removeMedia(const QStringList& paths, bool withClips);
+    void applyMediaChange(MediaChange& change, bool forward); // only for undo (forward = as the step did it)
 
     // Media Pool like DaVinci: bins (Master = 0), clip colors, flags. Every change is an undo step
     // (affects only the organization, not the media list itself).
@@ -132,6 +152,30 @@ public:
     const QVector<RenderJob>& renderQueue() const { return m_renderQueue; }
     void setRenderQueue(const QVector<RenderJob>& jobs);
 
+    // From the start template (core/StartTemplates.h) or Project Settings: the first clip in an empty timeline leaves
+    // the resolution / frame rate as they are. No undo, but counts as a change (saved in the project).
+    bool fixedResolution() const { return m_fixedResolution; }
+    bool fixedFrameRate() const { return m_fixedFrameRate; }
+    void setFixedFormat(bool resolution, bool frameRate);
+    // The project's own import presets for audio streams (core/StreamPresets.h); none = those of the settings (all
+    // projects). No undo, but counts as a change. effectiveImportPresets(): what applies to this project.
+    const std::optional<StreamPresets>& importPresets() const { return m_importPresets; }
+    void setImportPresets(const std::optional<StreamPresets>& presets);
+    StreamPresets effectiveImportPresets() const { return m_importPresets ? *m_importPresets : StreamPresets::load(); }
+    // Watch folders (core/WatchFolders.h): new media files of these folders come into the Media Pool on their own.
+    // Setting them up is not in the undo history (like the render queue), but counts as a change.
+    const QVector<WatchFolder>& watchFolders() const { return m_watchFolders; }
+    void setWatchFolders(const QVector<WatchFolder>& list);
+    // The files watch folders brought in (the newest WatchFolders::kLogSize, oldest first); watchRevision() = the
+    // revision of the newest one (0 = none yet), it only counts up
+    const QVector<WatchArrival>& watchLog() const { return m_watchLog; }
+    int watchRevision() const { return m_watchRevision; }
+    // New files of watch folders into the Media Pool (in their watch's bin) as one undo step; every file gets the next
+    // revision in the watch log. Files already in the pool are left out. Undo takes them out of the pool again and
+    // puts them on their watch's `ignored` list (a watch does not bring them back). Returns the arrivals.
+    QVector<WatchArrival> addWatchedMedia(const QVector<WatchImport>& files);
+    void applyWatchedMedia(const QVector<WatchImport>& files, bool in); // only for undo (in = into the pool)
+
     // Save/load (.schneidi). load() clears the undo history like a freshly opened project.
     ProjectData data() const;
     void load(const ProjectData& d);
@@ -154,6 +198,8 @@ signals:
     void transcriptChanged(const QString& path);
     void modifiedChanged(bool modified);
     void renderQueueChanged();
+    void importPresetsChanged(); // own import presets set/removed, or another project loaded
+    void watchFoldersChanged(); // the list of watch folders (also after load())
 
 private:
     ProjectFormat m_format;
@@ -165,6 +211,9 @@ private:
     QVector<MediaInfo> m_media;
     QVector<MediaBin> m_bins;
     QVector<RenderJob> m_renderQueue;
+    bool m_fixedResolution = false;
+    bool m_fixedFrameRate = false;
+    std::optional<StreamPresets> m_importPresets;
     int m_lastBinId = 0;
     QUndoStack m_undo;
     int m_lastClipId = 0;
@@ -173,4 +222,7 @@ private:
     void editPool(const QString& text, const std::function<void(PoolState&)>& fn);
     void sanitizePool(); // references to missing bins -> Master, resolve parent cycles
     bool m_mediaDirty = false;
+    QVector<WatchFolder> m_watchFolders;
+    QVector<WatchArrival> m_watchLog;
+    int m_watchRevision = 0;
 };

@@ -219,7 +219,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
         update();
         return;
     }
-    if (m_tool == Tool::Trim) {
+    if (trimTool()) {
         const auto hit = trimHitAt(pos);
         if (!hit) {
             if (!(e->modifiers() & Qt::ControlModifier)) sel->clear();
@@ -297,6 +297,9 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
 
     TimelineOps::findClip(m_editor->project()->timeline(), id, &m_anchorRef);
     m_dragIds = m_editor->editable(sel->ids().values().toVector());
+    m_cueIds = m_editor->selectedSubtitles(); // selected subtitles move along in time (also among m_dragIds)
+    m_cueDelta = 0;
+    m_cueTrackDelta = 0;
     m_dragDelta = 0;
     m_dragFine = 0;
     m_dragAnchorId = id;
@@ -371,6 +374,10 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
                 minStart = std::min(minStart, c->start);
                 if (ref.kind != TrackKind::Audio || (sub >= 0 && sub != c->subframe)) fine = false;
                 sub = c->subframe;
+            } else if (const SubtitleCue* q = Subtitles::find(tl, id); q && m_cueIds.contains(id)) {
+                edges << q->start + delta << q->end + delta;
+                minStart = std::min(minStart, q->start);
+                fine = false; // subtitles move in whole frames
             }
         }
         const QSet<int> exclude(m_dragIds.begin(), m_dragIds.end());
@@ -378,6 +385,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         delta += snapDelta(edges, exclude, &snapped);
         if (minStart != INT_MAX) delta = std::max(delta, -minStart);
         m_dragDelta = delta;
+        m_cueDelta = delta;
         m_dragFine = delta * 100;
         if (fine && sub >= 0) {
             // snapped: exactly onto the frame (sub-frame position gone), otherwise free in 1/100 frame
@@ -408,9 +416,17 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
                 edges << c->start + delta << c->end + delta;
                 minStart = std::min(minStart, c->start);
             }
-        delta += snapDelta(edges, QSet<int>(m_cueIds.begin(), m_cueIds.end()));
+        for (int id : m_dragIds) // selected clips move along in time
+            if (const Clip* c = TimelineOps::findClip(tl, id)) {
+                edges << c->start + delta << c->end() + delta;
+                minStart = std::min(minStart, c->start);
+            }
+        QSet<int> exclude(m_cueIds.begin(), m_cueIds.end());
+        for (int id : m_dragIds) exclude.insert(id);
+        delta += snapDelta(edges, exclude);
         if (minStart != INT_MAX) delta = std::max(delta, -minStart);
         m_cueDelta = delta;
+        m_dragFine = delta * 100;
         m_cueTrackDelta = 0;
         if (const auto row = subRowAt(pos.y())) {
             m_cueTrackDelta = m_editor->clampSubtitleTrackDelta(m_cueIds, row->index - m_cueAnchor);
@@ -599,7 +615,7 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* e)
     if (m_drag == Drag::CueMove || m_drag == Drag::CueTrim) {
         const Drag d = m_drag;
         m_drag = Drag::None; // before the change, so the preview does not apply twice
-        if (d == Drag::CueMove) m_editor->moveSubtitles(m_cueIds, m_cueDelta, m_cueTrackDelta);
+        if (d == Drag::CueMove) m_editor->moveSubtitles(m_cueIds + m_dragIds, m_cueDelta, m_cueTrackDelta);
         else m_editor->trimSubtitle(m_cueTrim.clipId, m_cueTrim.edge, m_cueDelta);
     }
     if (m_drag == Drag::CueMaybeMove) m_drag = Drag::None;

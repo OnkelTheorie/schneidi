@@ -90,13 +90,7 @@ void Editor::toggleSubtitleTrackLock(int index)
 {
     const Timeline& cur = m_project->timeline();
     if (!validTrack(cur, index)) return;
-    const bool lock = !cur.subtitles[index].locked;
-    if (lock) {
-        QSet<int> ids;
-        for (const SubtitleCue& c : cur.subtitles[index].cues) ids.insert(c.id);
-        if (m_selection->ids().intersects(ids)) m_selection->set(m_selection->ids() - ids);
-    }
-    m_project->edit(lock ? T("Spur sperren") : T("Spur entsperren"), [&](Timeline& tl) { tl.subtitles[index].locked = lock; });
+    setTracksLocked({}, {index}, !cur.subtitles[index].locked);
 }
 
 void Editor::renameSubtitleTrack(int index, const QString& name)
@@ -194,35 +188,29 @@ int Editor::clampSubtitleTrackDelta(const QVector<int>& ids, int trackDelta) con
 void Editor::moveSubtitles(const QVector<int>& ids, int delta, int trackDelta)
 {
     const Timeline& cur = m_project->timeline();
-    QVector<QPair<int, SubtitleCue>> moving; // target track, entry
+    QVector<int> cues;
     int minStart = INT_MAX;
     trackDelta = clampSubtitleTrackDelta(ids, trackDelta);
     for (int id : ids) {
         int t = -1;
         const SubtitleCue* c = Subtitles::find(cur, id, &t);
         if (!c || cur.subtitles[t].locked || (trackDelta && cur.subtitles[t + trackDelta].locked)) continue;
-        moving << qMakePair(t + trackDelta, *c);
+        cues << id;
         minStart = std::min(minStart, c->start);
     }
-    if (moving.isEmpty()) return;
+    if (cues.isEmpty()) return;
+    // Clips of a mixed selection move along in time, on their own tracks
+    QVector<int> clips = editable(clipIdsOf(QSet<int>(ids.begin(), ids.end())));
+    for (int id : clips) minStart = std::min(minStart, TimelineOps::findClip(cur, id)->start);
     delta = std::max(delta, -minStart);
     if (delta == 0 && trackDelta == 0) return;
+    if (delta == 0) clips.clear();
     Project* p = m_project;
-    m_project->edit(T("Untertitel verschieben"), [&](Timeline& tl) {
-        QSet<int> movingIds;
-        for (const auto& m : moving) movingIds.insert(m.second.id);
-        for (SubtitleTrack& t : tl.subtitles)
-            t.cues.erase(std::remove_if(t.cues.begin(), t.cues.end(),
-                                        [&](const SubtitleCue& c) { return movingIds.contains(c.id); }),
-                         t.cues.end());
-        for (auto m : moving) {
-            m.second.start += delta;
-            m.second.end += delta;
-            Subtitles::place(tl.subtitles[m.first], m.second);
-        }
-        for (SubtitleTrack& t : tl.subtitles) // split entries get their own id
-            for (SubtitleCue& c : t.cues)
-                if (c.id == 0) c.id = p->newClipId();
+    m_project->edit(clips.isEmpty() ? T("Untertitel verschieben") : T("Clips verschieben"), [&](Timeline& tl) {
+        Subtitles::move(tl, cues, delta, trackDelta, [p] { return p->newClipId(); });
+        if (clips.isEmpty()) return;
+        TimelineOps::detachTransitions(tl, clips);
+        TimelineOps::moveClips(tl, clips, delta, TrackKind::Video, 0, [p] { return p->newClipId(); });
     });
 }
 

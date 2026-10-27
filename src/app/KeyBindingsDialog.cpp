@@ -215,10 +215,16 @@ void KeyBindingsDialog::fill()
     const auto& bindings = InputBindings::instance();
     const auto& entries = bindings.entries();
 
-    QHash<QString, int> uses; // key or mouse button -> number of actions (mark conflicts)
+    // Key or mouse button -> number of actions (mark conflicts). Keys count per scope: a panel's key wins in the panel
+    // (InputBindings::registerPanelAction/registerScopedAction), the same key in the window is no conflict. A mouse
+    // button belongs to one action only, whatever its scope.
+    const auto useKey = [](const InputBindings::Entry& e, const QString& in) {
+        return InputBindings::inputMouseButton(in) == Qt::NoButton ? QString(e.scope + '\n' + in) : in;
+    };
+    QHash<QString, int> uses;
     for (const auto& e : entries)
         for (const QString& in : bindings.inputs(e.id))
-            if (!in.isEmpty()) ++uses[in];
+            if (!in.isEmpty()) ++uses[useKey(e, in)];
 
     for (int r = 0; r < m_table->rowCount(); ++r)
         for (int c = ColSlot1; c <= ColSlot2; ++c) m_table->removeCellWidget(r, c);
@@ -241,7 +247,7 @@ void KeyBindingsDialog::fill()
                 f.setBold(true); // own binding
                 item->setFont(f);
             }
-            if (uses.value(inputs[s]) > 1) {
+            if (uses.value(useKey(e, inputs[s])) > 1) {
                 item->setForeground(Theme::warning);
                 item->setToolTip(T("Diese Taste ist mehrfach belegt"));
             }

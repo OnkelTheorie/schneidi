@@ -1,6 +1,7 @@
 #include "app/SettingsDialog.h"
 
 #include "app/AiSettingsPage.h"
+#include "app/StartTemplatesPage.h"
 #include "app/Theme.h"
 #include "app/UpdateCheck.h"
 #include "core/I18n.h"
@@ -47,9 +48,14 @@ SettingsDialog::SettingsDialog(const AiSettings& ai, QWidget* parent) : QDialog(
 {
     setWindowTitle(T("Einstellungen"));
     m_tabs = new QTabWidget;
-    m_tabs->addTab(scrolling(buildGeneral()), T("Allgemein"));
+    m_generalTab = scrolling(buildGeneral());
+    m_tabs->addTab(m_generalTab, T("Allgemein"));
+    m_templatesPage = new StartTemplatesPage;
+    m_templatesTab = scrolling(m_templatesPage);
+    m_tabs->addTab(m_templatesTab, T("Startvorlagen"));
     m_aiPage = new AiSettingsPage(ai);
-    m_tabs->addTab(scrolling(m_aiPage), T("KI"));
+    m_aiTab = scrolling(m_aiPage);
+    m_tabs->addTab(m_aiTab, T("KI"));
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -58,7 +64,8 @@ SettingsDialog::SettingsDialog(const AiSettings& ai, QWidget* parent) : QDialog(
     auto* lay = new QVBoxLayout(this);
     lay->addWidget(m_tabs, 1);
     lay->addWidget(buttons);
-    resize(560, 560);
+    // Room for the longest page without scrolling (Start Templates with its buttons below the list); fits a 768 screen
+    resize(640, 680);
 }
 
 QWidget* SettingsDialog::buildGeneral()
@@ -151,7 +158,10 @@ bool SettingsDialog::updateHint() const { return m_updateHint->isChecked(); }
 
 int SettingsDialog::backgroundThreads() const { return m_threads->currentData().toInt(); }
 
-void SettingsDialog::showTab(Tab tab) { m_tabs->setCurrentIndex(tab == Tab::Ai ? 1 : 0); }
+void SettingsDialog::showTab(Tab tab)
+{
+    m_tabs->setCurrentWidget(tab == Tab::Ai ? m_aiTab : tab == Tab::Templates ? m_templatesTab : m_generalTab);
+}
 
 AiSettings SettingsDialog::aiSettings() const { return m_aiPage->settings(); }
 
