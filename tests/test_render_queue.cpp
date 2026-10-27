@@ -2,6 +2,7 @@
 // render one after another with status, error, cancel). Rendering is small and short (ffmpeg/ffprobe needed).
 #include "check.h"
 
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
@@ -27,6 +28,7 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QPainter>
+#include <QPushButton>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QThread>
@@ -929,6 +931,60 @@ int main(int argc, char** argv)
             if (!seek.isEmpty()) CHECK_EQ(seek.first().first().toInt(), 25);
         }
         if (const QByteArray dump = qgetenv("CHECK_DUMP"); !dump.isEmpty()) panel.grab().save(QString::fromLocal8Bit(dump));
+    }
+
+    // --- Fix: a quiet sound (a sine at 1/8 full scale, about -21 LUFS) gets the master fader raised by the difference and the
+    // limiter on, one undo step; the check runs again and finds the loudness fine. Nothing to fix: no button.
+    {
+        const QString quiet = Check::makeMedia(tmp.filePath("quiet.wav"),
+                                               {"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3",
+                                                "-c:a", "pcm_s16le"});
+        if (CHECK(!quiet.isEmpty())) {
+            Project q;
+            ProjectData d;
+            d.format.width = 320;
+            d.format.height = 180;
+            TimelineOps::ensureTracks(d.timeline, TrackKind::Video, 1);
+            TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 1);
+            Clip v;
+            v.id = 1;
+            v.mediaPath = clip;
+            v.out = 49;
+            d.timeline.video[0].clips << v;
+            Clip a;
+            a.id = 2;
+            a.mediaPath = quiet;
+            a.out = 49;
+            d.timeline.audio[0].clips << a;
+            d.lastClipId = 2;
+            q.load(d);
+            DeliverPanel panel(&q);
+            panel.resize(340, 700);
+            CHECK(panel.runCheck());
+            const auto loudnessListed = [&panel] {
+                for (int i = 0; i < panel.checkList()->count(); ++i)
+                    if (panel.checkList()->item(i)->text().contains(T("zu leise"))) return true;
+                return false;
+            };
+            CHECK(loudnessListed());
+            QPushButton* fix = panel.fixButton();
+            if (const QByteArray dump = qgetenv("CHECK_DUMP"); !dump.isEmpty())
+                panel.grab().save(QString::fromLocal8Bit(dump).replace(".png", "-fix.png"));
+            if (CHECK(fix && !fix->isHidden())) {
+                CHECK(fix->text().contains(T("Limiter an (%1 dBTP)").arg(QString("-1,0").replace(',', I18n::decimalPoint()))));
+                const int steps = q.undoStack()->count();
+                fix->click();
+                QApplication::processEvents(); // the check runs again
+                const Timeline& tl = q.timeline();
+                CHECK(tl.masterLimiter && tl.masterLimiterDb == -1);
+                CHECK(tl.masterVolumeDb > 2 && tl.masterVolumeDb < 12);
+                CHECK_EQ(q.undoStack()->count(), steps + 1);
+                CHECK(!loudnessListed());
+                CHECK(fix->isHidden());
+                q.undoStack()->undo();
+                CHECK(!q.timeline().masterLimiter && q.timeline().masterVolumeDb == 0);
+            }
+        }
     }
 
     // --- The same check for a vertical video: a title in the zone TikTok/Reels/Shorts cover is listed with its time

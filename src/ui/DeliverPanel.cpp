@@ -33,6 +33,7 @@
 #include <QPushButton>
 #include <QStandardItemModel>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -222,6 +223,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_checkList->setWordWrap(true);
     m_checkList->setMaximumHeight(200);
     m_checkList->hide();
+    m_fixBtn = new QPushButton;
+    m_fixBtn->setObjectName("check_fix");
+    m_fixBtn->hide();
     m_status = new QLabel;
     m_status->setWordWrap(true);
     m_status->setStyleSheet(QString("color: %1; padding: 0 12px;").arg(Theme::textDim.name()));
@@ -235,6 +239,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     auto* bottom = new QVBoxLayout;
     bottom->setContentsMargins(12, 0, 12, 0);
     bottom->addWidget(m_checkList);
+    bottom->addWidget(m_fixBtn);
     bottom->addWidget(m_checkBtn);
     bottom->addWidget(m_addBtn);
     lay->addLayout(bottom);
@@ -249,6 +254,13 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     connect(m_smart, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
     connect(m_addBtn, &QPushButton::clicked, this, [this] { addToQueue(true); });
     connect(m_checkBtn, &QPushButton::clicked, this, [this] { runCheck(); });
+    connect(m_fixBtn, &QPushButton::clicked, this, [this] {
+        if (!m_fix) return;
+        m_project->edit(T("Prüfung: Ton behoben"), m_fix);
+        m_fix = {};
+        m_fixBtn->hide();
+        QTimer::singleShot(0, this, [this] { runCheck(); }); // the result of the fix
+    });
     connect(m_checkList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
         const int frame = item->data(Qt::UserRole).toInt();
         if (frame >= 0) emit seekRequested(frame);
@@ -667,6 +679,40 @@ bool DeliverPanel::addToQueue(bool confirm)
     return true;
 }
 
+void DeliverPanel::prepareFix(const QVector<ExportCheck::Issue>& sound, double integratedLufs, const Timeline& tl)
+{
+    const ExportCheck::Options o;
+    const auto has = [&sound](const char* check) {
+        return std::any_of(sound.begin(), sound.end(), [check](const ExportCheck::Issue& i) { return i.check == check; });
+    };
+    const double ceiling = std::min(tl.masterLimiterDb, o.maxTruePeakDb);
+    const bool limiterOn = tl.masterLimiter && tl.masterLimiterDb <= o.maxTruePeakDb;
+    // Loudness: the master fader by the difference to the target (as far as it goes); up = the limiter catches the
+    // peaks that grow with it
+    double volume = tl.masterVolumeDb;
+    if (has("loudness"))
+        volume = std::clamp(tl.masterVolumeDb + (o.targetLufs - integratedLufs), kMinVolumeDb, kMaxVolumeDb);
+    const bool louder = volume > tl.masterVolumeDb + 0.05, quieter = volume < tl.masterVolumeDb - 0.05;
+    const bool limiter = !limiterOn && (has("clipping") || has("true_peak") || louder);
+    if (!limiter && !louder && !quieter) return;
+    volume = std::round(volume * 10) / 10;
+    QStringList what;
+    if (limiter) what << T("Limiter an (%1 dBTP)").arg(QString::number(ceiling, 'f', 1).replace('.', I18n::decimalPoint()));
+    if (louder || quieter)
+        what << T("Master %1%2 dB").arg(volume > tl.masterVolumeDb ? "+" : "")
+                    .arg(QString::number(volume - tl.masterVolumeDb, 'f', 1).replace('.', I18n::decimalPoint()));
+    m_fixBtn->setText(T("Beheben: %1").arg(what.join(", ")));
+    m_fixBtn->setToolTip(T("Ein Rückgängig-Schritt im Mixer: %1. Danach wird neu geprüft.").arg(what.join(", ")));
+    m_fix = [limiter, ceiling, volume, level = louder || quieter](Timeline& t) {
+        if (limiter) {
+            t.masterLimiter = true;
+            t.masterLimiterDb = ceiling;
+        }
+        if (level) t.masterVolumeDb = volume;
+    };
+    m_fixBtn->show();
+}
+
 bool DeliverPanel::runCheck()
 {
     const RenderJob job = makeJob();
@@ -677,6 +723,8 @@ bool DeliverPanel::runCheck()
     const int from = job.inOut ? job.from : 0;
     const int to = job.inOut && job.to >= 0 ? std::min(end, job.to + 1) : end;
     m_checkList->clear();
+    m_fix = {};
+    m_fixBtn->hide();
     if (to <= from) {
         m_checkList->hide();
         m_status->setText(T("Die Timeline ist leer."));
@@ -717,7 +765,10 @@ bool DeliverPanel::runCheck()
         std::vector<float> peaks;
         const auto loud = AudioAnalysis::timelineLoudness(f, render, from, to, step(picture, 0.6), &peaks);
         if (loud && !progress.wasCanceled()) {
-            issues += ExportCheck::sound(peaks, from, loud->integrated, loud->truePeakDb, f, {}, render.masterLimiter);
+            const QVector<ExportCheck::Issue> heard =
+                ExportCheck::sound(peaks, from, loud->integrated, loud->truePeakDb, f, {}, render.masterLimiter);
+            issues += heard;
+            prepareFix(heard, loud->integrated, tl);
             if (loud->integrated > -200)
                 sound = T("Lautheit %1 LUFS, True Peak %2 dBTP")
                             .arg(QString::number(loud->integrated, 'f', 1).replace('.', I18n::decimalPoint()),

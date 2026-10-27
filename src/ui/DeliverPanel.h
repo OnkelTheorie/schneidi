@@ -5,7 +5,13 @@
 #include <QSize>
 #include <QWidget>
 
+#include <functional>
+
 class Project;
+struct Timeline;
+namespace ExportCheck {
+struct Issue;
+}
 class RenderQueue;
 class RenderQueuePanel;
 class QCheckBox;
@@ -47,6 +53,10 @@ public:
     // measured with progress (engine/CheckMeasure, cancelable); the result as a list under the buttons. false = canceled.
     bool runCheck();
     QListWidget* checkList() const { return m_checkList; }
+    // "Fix" under the results, for what has one clear remedy: peaks (master limiter on at -1 dBTP) and loudness off
+    // the target (the master fader by the difference, the limiter on when it goes up). One undo step, then the check
+    // runs again. Hidden when nothing can be fixed this way.
+    QPushButton* fixButton() const { return m_fixBtn; }
 
 signals:
     void seekRequested(int frame); // a check result was clicked
@@ -63,6 +73,8 @@ private:
     void updateControls(); // fields depending on the format (audio only, quality)
     void reloadPresets(const QString& select = {});
     void syncPresetToSettings(); // setting changed -> matching preset or "Eigene Einstellungen"
+    // The fix button for the sound findings of a check (loudness measured on the checked timeline `tl`)
+    void prepareFix(const QVector<ExportCheck::Issue>& sound, double integratedLufs, const Timeline& tl);
     void presetMenu();
     void browse();
     int selectSize(QSize s); // choose resolution (add if needed)
@@ -96,5 +108,7 @@ private:
     QPushButton* m_addBtn;
     QPushButton* m_checkBtn;
     QListWidget* m_checkList; // results of the last check (hidden until one ran)
+    QPushButton* m_fixBtn;
+    std::function<void(Timeline&)> m_fix; // what the fix button changes (from the last check)
     QLabel* m_status;
 };
