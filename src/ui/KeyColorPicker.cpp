@@ -139,8 +139,12 @@ void KeyColorPicker::leave()
 
 bool KeyColorPicker::eventFilter(QObject* watched, QEvent* event)
 {
-    if (event->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
-        emit cancelled();
+    const bool key = event->type() == QEvent::KeyPress || event->type() == QEvent::ShortcutOverride;
+    if (key && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+        // Esc is the pipette's while it is on: taken before the window's shortcuts (the large viewer's Esc), which
+        // would otherwise get it first
+        if (event->type() == QEvent::ShortcutOverride) event->accept();
+        else emit cancelled();
         return true;
     }
     return ViewerOverlay::eventFilter(watched, event);

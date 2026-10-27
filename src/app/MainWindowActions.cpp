@@ -82,6 +82,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
+#include <QShortcut>
 #include <QInputDialog>
 #include <QStandardPaths>
 #include <QTimer>
@@ -659,6 +660,15 @@ void MainWindow::buildActions()
         QSettings().setValue("color/scopesVisible", m_scopes->isVisibleTo(m_colorBottom));
         if (m_scopes->isVisibleTo(m_colorBottom)) showPage(Page::Color);
     });
+    workspace->addSeparator();
+    // Large viewer (DaVinci: Enhanced Viewer, Premiere: Maximize Frame): the side panels hide, the viewer takes their
+    // room. No default key: DaVinci's Alt+F opens the File menu where it is "&File" (English, French)
+    m_largeAction = makeAction(workspace, "viewer_large", T("Großer Viewer"), QKeySequence(),
+                               [this] { setViewerLarge(m_largeAction->isChecked()); });
+    m_largeAction->setCheckable(true);
+    m_viewer->addViewAction(m_largeAction, Viewer::ViewIcon::Large);
+    m_largeEscape = new QShortcut(QKeySequence(Qt::Key_Escape), this, [this] { setViewerLarge(false); });
+    m_largeEscape->setEnabled(false);
     // Panel sets of the Edit page and panel sizes (remembered per page, MainWindow::applySizes)
     QMenu* panels = workspace->addMenu(T("Panels"));
     makeAction(panels, "panels_standard", T("Standard (Media Pool, Inspector)"), QKeySequence(),

@@ -73,6 +73,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
+#include <QShortcut>
 #include <QInputDialog>
 #include <QStandardPaths>
 #include <QTimer>
@@ -168,6 +169,7 @@ QWidget* MainWindow::buildTopBar()
         // Only hide panels not yet inserted (show() without a parent opened its own window)
         if (panel->parentWidget() || !b->isChecked()) panel->setVisible(b->isChecked());
         connect(b, &QToolButton::toggled, this, [this, key, panel](bool on) {
+            setViewerLarge(false); // the layout comes back, with this panel as asked
             panel->setVisible(on);
             updateLeftColumn();
             if (!m_autosaveDisabled) QSettings().setValue("panels/" + key, on);
@@ -259,6 +261,7 @@ QWidget* MainWindow::buildPageBar()
 
 void MainWindow::showPage(Page page)
 {
+    setViewerLarge(false); // the page's own layout first, then the switch
     m_page = page;
     switch (page) {
     case Page::Media:
@@ -374,4 +377,58 @@ void MainWindow::updateLeftColumn()
 {
     if (m_page == Page::Edit) m_editLeft->setVisible(m_poolToggle->isChecked() || m_effectsToggle->isChecked()
                                                   || m_storageToggle->isChecked());
+}
+
+void MainWindow::setViewerLarge(bool on)
+{
+    if (on != m_large.active) {
+        if (!on) {
+            // Back as it was: the panels it hid, then the sizes (no splitterMoved: the saved layout stays as it is)
+            const LargeViewer was = std::exchange(m_large, {});
+            for (const QPointer<QWidget>& w : was.hidden)
+                if (w) w->show();
+            auto restore = [sizes = was.sizes] {
+                for (const auto& [splitter, list] : sizes)
+                    if (splitter) splitter->setSizes(list);
+            };
+            restore();
+            // Panels that size themselves when shown (the mixer grows to fit its strips) do it in a zero timer: once
+            // more after that, the layout is the one from before
+            QTimer::singleShot(0, this, restore);
+        } else {
+            // What stays: the viewer and the timeline (if it is on this page); every splitter above them hides its
+            // other panels and gives their room (and their handles) to the viewer's side, else the timeline's
+            QList<QWidget*> keep{m_viewer};
+            if (m_pages->currentWidget()->isAncestorOf(m_timeline)) keep << m_timeline;
+            auto holds = [](QWidget* w, QWidget* k) { return w == k || w->isAncestorOf(k); };
+            QList<QSplitter*> splitters;
+            for (QWidget* k : keep)
+                for (QWidget* w = k->parentWidget(); w && w != this; w = w->parentWidget())
+                    if (auto* s = qobject_cast<QSplitter*>(w); s && !splitters.contains(s)) splitters << s;
+            m_large.active = true;
+            for (QSplitter* s : splitters) {
+                const QList<int> before = s->sizes();
+                QList<int> after = before;
+                int freed = 0, gainer = -1;
+                for (int i = 0; i < s->count(); ++i) {
+                    QWidget* w = s->widget(i);
+                    if (holds(w, m_viewer)) gainer = i;
+                    else if (keep.size() > 1 && holds(w, m_timeline)) {
+                        if (gainer < 0) gainer = i;
+                    } else if (!w->isHidden()) {
+                        freed += after[i] + s->handleWidth();
+                        after[i] = 0;
+                        w->hide();
+                        m_large.hidden << w;
+                    }
+                }
+                if (freed == 0 || gainer < 0) continue;
+                m_large.sizes.append({s, before});
+                after[gainer] += freed;
+                s->setSizes(after);
+            }
+        }
+    }
+    if (m_largeAction) m_largeAction->setChecked(m_large.active);
+    if (m_largeEscape) m_largeEscape->setEnabled(m_large.active);
 }

@@ -9,13 +9,16 @@
 #include "ui/MediaPool.h"
 #include "ui/ViewerOverlay.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QDrag>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPixmap>
 #include <QPointer>
 #include <QSignalBlocker>
 #include <QStackedWidget>
@@ -23,6 +26,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <functional>
+#include <utility>
 
 // Draws the current frame, aspect-ratio preserving, on a black background, and an overlay on top (on-screen controls).
 // With the dragData function set, the image can be dragged into the timeline.
@@ -44,6 +48,7 @@ public:
         update();
     }
     ViewerOverlay* overlay() const { return m_overlay; }
+    const QImage& image() const { return m_image; }
 
 protected:
     // Area of the frame in the widget (picture without the bars)
@@ -306,8 +311,14 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     transport->addWidget(m_playBtn);
     transport->addWidget(fwdBtn);
     transport->addStretch(1);
-    transport->addSpacing(std::max(0, m_timecode->sizeHint().width() - bypass->sizeHint().width()));
-    transport->addWidget(bypass);
+    m_barBalance = new QSpacerItem(0, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
+    transport->addSpacerItem(m_barBalance);
+    m_barRight = new QHBoxLayout;
+    m_barRight->setSpacing(0);
+    m_barRight->addWidget(bypass);
+    transport->addLayout(m_barRight);
+    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
+                             QSizePolicy::Fixed, QSizePolicy::Minimum);
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -323,6 +334,74 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     connect(m_engine, &Engine::speedChanged, this,
             [this](double s) { m_playBtn->setText(s == 0.0 ? "▶" : "⏸"); });
     updateTimecode(0);
+}
+
+namespace {
+
+// Line icons for the view buttons (font glyphs for these differ too much between systems): off dim, on orange
+QIcon viewIcon(Viewer::ViewIcon kind)
+{
+    QIcon icon;
+    for (const auto& [state, color] : {std::pair{QIcon::Off, Theme::textDim}, std::pair{QIcon::On, Theme::primary}}) {
+        QPixmap pm(36, 36);
+        pm.setDevicePixelRatio(2);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(color, 1.4, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+        const QRectF r(2.5, 4.5, 13, 9);
+        if (kind == Viewer::ViewIcon::FullScreen) {
+            // Four corners: the picture to the screen's edges
+            constexpr double c = 3.5;
+            p.drawPolyline(QPolygonF({{r.left(), r.top() + c}, r.topLeft(), {r.left() + c, r.top()}}));
+            p.drawPolyline(QPolygonF({{r.right() - c, r.top()}, r.topRight(), {r.right(), r.top() + c}}));
+            p.drawPolyline(QPolygonF({{r.left(), r.bottom() - c}, r.bottomLeft(), {r.left() + c, r.bottom()}}));
+            p.drawPolyline(QPolygonF({{r.right() - c, r.bottom()}, r.bottomRight(), {r.right(), r.bottom() - c}}));
+        } else {
+            // The frame with the picture pushing out to both sides
+            p.drawRect(r);
+            const double y = r.center().y();
+            p.drawLine(QPointF(r.left() + 2.5, y), QPointF(r.right() - 2.5, y));
+            p.drawPolyline(QPolygonF({{r.left() + 4.5, y - 2}, {r.left() + 2.5, y}, {r.left() + 4.5, y + 2}}));
+            p.drawPolyline(QPolygonF({{r.right() - 4.5, y - 2}, {r.right() - 2.5, y}, {r.right() - 4.5, y + 2}}));
+        }
+        p.end();
+        icon.addPixmap(pm, QIcon::Normal, state);
+    }
+    return icon;
+}
+
+} // namespace
+
+QToolButton* Viewer::addViewAction(QAction* action, ViewIcon icon)
+{
+    auto* b = new QToolButton;
+    b->setObjectName(icon == ViewIcon::Large ? "viewer_large" : "viewer_full_screen");
+    b->setIcon(viewIcon(icon));
+    b->setIconSize(QSize(18, 18));
+    b->setCheckable(true);
+    b->setChecked(action->isChecked());
+    b->setAutoRaise(true);
+    b->setFocusPolicy(Qt::NoFocus);
+    b->setToolTip(icon == ViewIcon::Large
+                      ? T("Großer Viewer: Panels ausblenden, das Bild bekommt ihren Platz (Esc: zurück)")
+                      : T("Viewer im Vollbild: nur das Bild auf dem ganzen Bildschirm (Esc: zurück)"));
+    // The action decides (it may refuse); the button only shows its state
+    connect(b, &QToolButton::clicked, action, [b, action] {
+        b->setChecked(action->isChecked());
+        action->trigger();
+    });
+    connect(action, &QAction::toggled, b, &QToolButton::setChecked);
+    m_barRight->addWidget(b);
+    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
+                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    layout()->invalidate();
+    return b;
+}
+
+QImage Viewer::picture() const
+{
+    return m_screen->image();
 }
 
 void Viewer::setHint(const QString& text, const QString& button)

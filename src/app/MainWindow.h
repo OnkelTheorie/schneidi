@@ -113,6 +113,13 @@ public:
     // Watch folders of the open project (MainWindowWatch.cpp): File › Watch Folders…, the watcher
     void watchFoldersDialog();
     class FolderWatch* folderWatch() const { return m_folderWatch; }
+    // Large viewer (Workspace › Large Viewer, the viewer's button; MainWindowLayout.cpp): on every page the panels
+    // beside the viewer and the timeline hide (Media Pool/Storage, Effects, Inspector, Transcript, Mixer, color
+    // wheels, render settings, AI chat), the viewer gets their room, the timeline keeps its size. Off (same key, Esc)
+    // brings back exactly what was there (which panels, splitter sizes); a page switch or a panel button ends it first.
+    // Never touches the settings (panels/…, layout/…) or the timeline's zoom/scroll.
+    void setViewerLarge(bool on);
+    bool viewerLarge() const { return m_large.active; }
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -280,6 +287,13 @@ private:
     QToolButton* m_mixerToggle = nullptr;
     QToolButton* m_transcriptToggle = nullptr;
     Page m_page = Page::Edit;
+    struct LargeViewer {
+        bool active = false;
+        QVector<QPointer<QWidget>> hidden;                     // panels it hid, shown again when it ends
+        QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes; // splitter sizes before
+    } m_large;
+    QAction* m_largeAction = nullptr;
+    class QShortcut* m_largeEscape = nullptr; // Esc ends the large viewer (only enabled while it is on)
 
     QHash<QString, MediaInfo> m_probeCache;
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)
