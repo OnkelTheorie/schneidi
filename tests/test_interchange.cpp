@@ -506,6 +506,15 @@ int main(int argc, char** argv)
             CHECK(it.start == 10 && it.in == 0 && it.length == 15);
         }
     }
+    // FCP7: a timebase of 3 * 10^6 (NTSC: * 1000 overflowed) is not taken, a size of 10^9 pixels is brought inside
+    {
+        const Seq s = readFcp7(R"(<xmeml><sequence><rate><timebase>3000000</timebase><ntsc>TRUE</ntsc></rate><media><video>
+            <format><samplecharacteristics><width>1000000000</width><height>1080</height></samplecharacteristics></format>
+            <track><clipitem><in>0</in><out>20</out><start>0</start><end>20</end><file><pathurl>file:///m/a.mp4</pathurl>
+            </file></clipitem></track></video></media></sequence></xmeml>)");
+        CHECK(s.format.rate == (FrameRate{25, 1}));
+        CHECK(s.format.width == kMaxFrameSize && s.format.height == 1080);
+    }
     // OTIO: gaps of 2 * 10^9 frames (the track's end overflowed) make the file a broken one; a frame rate of 2^31 fps
     // becomes a possible one
     threw = false;

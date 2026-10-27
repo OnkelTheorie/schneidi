@@ -147,7 +147,7 @@ FrameRate rateOf(const Node& n, FrameRate fallback)
     const Node* r = n.child("rate");
     if (!r) return fallback;
     const int tb = r->num("timebase");
-    if (tb <= 0) return fallback;
+    if (tb <= 0 || tb > 1000) return fallback; // more than 1000 frames per second: no program's, tb * 1000 overflowed
     if (r->at("ntsc").toUpper() == "TRUE") return FrameRate{tb * 1000, 1001};
     return FrameRate{tb, 1};
 }
@@ -400,6 +400,7 @@ Sequence readFcp7(const QByteArray& data)
         seq.format.height = sc->num("height");
         seq.hasSize = true;
     }
+    seq.format = withinLimits(seq.format); // an empty project takes it
     QHash<QString, const Node*> files;
     collectFiles(root, files);
     for (const Node* m : sq->all("marker")) seq.markers << m->num("in");
