@@ -91,10 +91,12 @@ void poolStat(double* allocatedMb, double* usedMb)
 void heapStat(double* usedMb, double* freeMb)
 {
     *usedMb = *freeMb = -1;
-#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+#ifdef __GLIBC__ // nested: __GLIBC_PREREQ(…) is a syntax error in #if where it is not defined (Windows)
+#if __GLIBC_PREREQ(2, 33)
     const struct mallinfo2 mi = mallinfo2();
     *usedMb = (mi.uordblks + mi.hblkhd) / 1048576.0;
     *freeMb = mi.fordblks / 1048576.0;
+#endif
 #endif
 }
 
@@ -172,7 +174,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("bench-memory");
-    std::setvbuf(stdout, nullptr, _IOLBF, 0); // lines reach a pipe even if it crashes
+    std::setvbuf(stdout, nullptr, _IONBF, 0); // lines reach a pipe even if it crashes (_IOLBF with size 0: invalid on Windows)
     double seconds = 20;
     int edits = 40;
     bool exportPhase = true;
