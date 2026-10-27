@@ -20,6 +20,7 @@
 #include <QTemporaryDir>
 #include <clocale>
 #include <cmath>
+#include <cstring>
 #include <functional>
 
 namespace {
@@ -124,6 +125,46 @@ Clip title(int id, const std::function<void(TitleStyle&)>& setup)
     return t;
 }
 
+// The pixel kernels on their own (no MLT module needed): exact cases of drawing, mixing and cropping
+void testKernels()
+{
+    // A 1:1 draw at an integer offset copies the picture (opaque texels land on pixel centers)
+    QVector<uint8_t> src(16 * 8 * 4), dst(32 * 16 * 4, 0);
+    for (int i = 0; i < src.size(); i += 4) {
+        src[i] = uint8_t(i * 7), src[i + 1] = uint8_t(255 - i), src[i + 2] = uint8_t(i * 3), src[i + 3] = 255;
+    }
+    Compose::Affine m;
+    m.c = 5;
+    m.f = 3;
+    Compose::draw(dst.data(), 32, 16, src.data(), 16, 8, m, 1.0);
+    bool same = true;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 16; ++x)
+            same &= std::memcmp(&dst[((y + 3) * 32 + x + 5) * 4], &src[(y * 16 + x) * 4], 4) == 0;
+    CHECK(same);
+    CHECK_EQ(int(dst[(2 * 32 + 5) * 4 + 3]), 0);  // above: untouched
+    CHECK_EQ(int(dst[(3 * 32 + 21) * 4 + 3]), 0); // right of it: untouched
+    // Half opacity over transparent: alpha halves, color stays (straight alpha)
+    std::fill(dst.begin(), dst.end(), 0);
+    Compose::draw(dst.data(), 32, 16, src.data(), 16, 8, m, 0.5);
+    const uint8_t* p = &dst[(4 * 32 + 7) * 4];
+    const uint8_t* q = &src[(1 * 16 + 2) * 4];
+    CHECK(std::abs(p[3] - 128) <= 1 && std::abs(p[0] - q[0]) <= 1 && std::abs(p[1] - q[1]) <= 1);
+    // over: transparent keeps, opaque replaces, half mixes
+    uint8_t a[12] = {10, 20, 30, 255, 10, 20, 30, 255, 0, 0, 0, 255};
+    const uint8_t b[12] = {200, 100, 50, 0, 200, 100, 50, 255, 255, 255, 255, 128};
+    Compose::over(a, b, 3, 1, 1.0);
+    CHECK(a[0] == 10 && a[1] == 20 && a[2] == 30 && a[3] == 255);
+    CHECK(a[4] == 200 && a[5] == 100 && a[6] == 50 && a[7] == 255);
+    CHECK(a[8] == 128 && a[11] == 255);
+    // crop: outside becomes the color, a half-covered column half transparent
+    uint8_t row[4 * 4];
+    std::fill(std::begin(row), std::end(row), 255);
+    const uint8_t clear[4] = {0, 0, 0, 0};
+    Compose::crop(row, 4, 1, 1.5, 0, 4, 1, clear);
+    CHECK(row[3] == 0 && std::abs(row[7] - 128) <= 1 && row[11] == 255 && row[15] == 255);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -131,6 +172,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("compose");
+    testKernels();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();

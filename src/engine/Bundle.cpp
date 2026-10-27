@@ -92,8 +92,9 @@ void prepareMltEnvironment()
     // MLT's Qt modules are GPL as a whole (0.14: no third-party GPL code in the bundled build). Their services that
     // schneidi used have own replacements registered under the same names (qtblend, qtcrop: engine/video/Compose;
     // qimage: Still; qtext: Text), so nothing of them is loaded. glaxnimate (Lottie, a Qt module too) and plusgpl
-    // (burningtv, lumaliftgaingamma, rotoscoping, cbrts) are not used. SCHNEIDI_MLT_QT=1 loads the Qt 6 module anyway:
-    // the image comparison against the old services (tests/test_compose).
+    // (burningtv, lumaliftgaingamma, rotoscoping, cbrts) are not used. xine (GPL, deinterlace: the loader's first
+    // choice) is not bundled but stays allowed on systems: denying it changed frames in tests (test_retime, test_compose).
+    // SCHNEIDI_MLT_QT=1 loads the Qt 6 module anyway: the image comparison against the old services (tests/test_compose).
     // Without that, systems with MLT for Qt 5 and Qt 6 side by side (Debian, Ubuntu): both Qt modules offer qimage,
     // qtblend, qtext … and the Qt 5 one won. It pulled Qt 5 into this Qt 6 program (a .webp picture then fell through
     // to avformat without Qt 5's WebP plugin): the Qt 5 one stays denied in any case.

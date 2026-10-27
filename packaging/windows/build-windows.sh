@@ -15,7 +15,7 @@ VERSION="${VERSION:-0.1.0}"
 OUT="$BUILD/schneidi"
 
 # Only the MLT modules schneidi uses (like the AppImage)
-MODULES=(core avformat qt6 sdl2 rtaudio frei0r xml resample plus normalize)
+MODULES=(core avformat sdl2 rtaudio frei0r xml resample plus normalize)
 # frei0r: all plugins (Effects Library, Open FX → frei0r) except face detection (would pull in OpenCV)
 FREI0R_SKIP=(facebl0r facedetect)
 
