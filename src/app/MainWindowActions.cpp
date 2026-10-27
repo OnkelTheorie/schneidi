@@ -26,6 +26,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
+#include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyCleanup.h"
@@ -430,6 +431,12 @@ void MainWindow::buildActions()
                   [tv](bool on) { tv->setShowClipNames(on); });
     addViewOption("show_clip_durations", T("Clipdauer anzeigen"), "timeline/showClipDurations", false,
                   [tv](bool on) { tv->setShowClipDurations(on); });
+    // Filmstrip with each clip's Color page grade (engine/GradedThumbs); off = the source pictures
+    addViewOption("show_graded_thumbnails", T("Farbkorrektur in Miniaturen anzeigen"), "timeline/gradedThumbnails", true,
+                  [tv](bool on) {
+                      GradedThumbs::setEnabled(on);
+                      tv->update();
+                  });
     viewOpts->addSeparator();
     makeAction(viewOpts, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
     makeAction(viewOpts, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
@@ -723,6 +730,11 @@ void MainWindow::buildActions()
     InputBindings::instance().registerPanelAction(m_deliver->queuePanel()->deleteAction(), "render_queue_delete",
                                                   T("Render-Warteschlange"), "render_queue", QKeySequence(Qt::Key_Delete),
                                                   QKeySequence(Qt::Key_Backspace));
+    // Panels with items of their own: the keys that remove timeline clips do nothing there (Delete on a Media Pool
+    // clip, an effect or a Media Storage file never deletes the clips selected in the timeline)
+    const QStringList removing{"delete", "delete_alt", "ripple_delete", "ripple_delete_alt", "cut"};
+    for (QWidget* panel : std::initializer_list<QWidget*>{m_mediaPool, m_storage, m_effects})
+        InputBindings::instance().shieldWindowKeys(panel, removing);
 
     InputBindings::instance().saveIfIncomplete();
 }

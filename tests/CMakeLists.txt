@@ -83,6 +83,7 @@ schneidi_test(test_timeline_keys) # key bindings of the window (no clashes per s
 schneidi_test(test_trimview)
 schneidi_test(test_paste_attributes)
 schneidi_test(test_scopes)
+schneidi_test(test_graded_thumbs)
 schneidi_test(test_stabilize_denoise)
 schneidi_test(test_cli)
 target_link_libraries(test_cli PRIVATE schneidi_cli_lib)
@@ -166,6 +167,7 @@ add_dependencies(test_watch_folders schneidi-cli)
 schneidi_test(test_speed)
 target_compile_definitions(test_speed PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 set_tests_properties(test_speed PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
+schneidi_test(test_file_manager) # show in file manager / open with the default program, also without a D-Bus session
 
 # Number format regressions (German decimal comma, e.g. 0.7.0: MLT reset LC_NUMERIC and stabilization did nothing):
 # run tests that pass numbers to MLT/FFmpeg a second time under de_DE.UTF-8 (CI generates the locale)
@@ -235,6 +237,8 @@ add_executable(bench_audio_reader bench_audio_reader.cpp check.h)
 target_link_libraries(bench_audio_reader PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_device_loss bench_device_loss.cpp check.h)
 target_link_libraries(bench_device_loss PRIVATE schneidi_lib Qt6::Test)
+add_executable(bench_graded_thumbs bench_graded_thumbs.cpp check.h)
+target_link_libraries(bench_graded_thumbs PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_memory bench_memory.cpp check.h)
 target_link_libraries(bench_memory PRIVATE schneidi_lib Qt6::Test)
 if(WIN32) # WASAPI loopback: what the system sends to the sound card

@@ -578,6 +578,7 @@
  "Farbkorrektur aus": "Color Grade Off",
  "Farbkorrektur der Color-Seite": "Color page grade",
  "Farbkorrektur des Clips an/aus": "Enable/disable the clip's color grade",
+ "Farbkorrektur in Miniaturen anzeigen": "Show Color Grade in Thumbnails",
  "Farbkorrektur umgehen (Vorher/Nachher)": "Bypass Color Grades (Before/After)",
  "Farbkorrektur zurücksetzen": "Reset Grade",
  "Farbkorrektur zurücksetzen (alles, auch LUT, Fenster und Keyframes)": "Reset the grade (everything, including LUT, windows and keyframes)",

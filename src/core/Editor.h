@@ -63,7 +63,8 @@ public:
     void setTracksLocked(const QVector<TrackRef>& tracks, const QVector<int>& subtitleTracks, bool lock);
     // Lock key: the tracks of the selection (clips, subtitles, a selected transition or edit point), without a
     // selection the target tracks (V and A, the rule of selectFromPlayhead). One of them unlocked -> all get locked,
-    // else all unlocked; one undo step.
+    // else all unlocked; one undo step. Pressed again right after locking a selection (nothing changed, the lock left
+    // the selection empty): it unlocks those tracks again, not the target tracks.
     void toggleSelectionTracksLock();
     // Track name (empty = default "Video 1" etc.) and track color (id from kTrackColors, empty = default)
     void renameTrack(TrackRef ref, const QString& name);
@@ -480,6 +481,16 @@ private:
     bool m_linkedSelection = true;
     bool m_splitOnSelectedTracks = true;
     int m_targetVideo = 0, m_targetAudio = 0;
+    // What the lock key last locked from a selection, valid while the undo stack, the open timeline and the target
+    // tracks stay as they were then (toggleSelectionTracksLock)
+    struct KeyLocked {
+        QVector<TrackRef> tracks;
+        QVector<int> subtitles;
+        int undoIndex = -1;
+        int sequence = -1;
+        int targetVideo = -1, targetAudio = -1;
+    };
+    KeyLocked m_keyLocked;
     StreamPresets m_streamPresets;
     QVector<ClipboardItem> m_clipboard; // starts relative to the earliest clip
     std::optional<Clip> m_gradeClipboard; // copyGrade: the source clip (only its grade is used)

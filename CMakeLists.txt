@@ -140,6 +140,7 @@ add_library(schneidi_lib STATIC
     src/engine/FrameGaps.h        src/engine/FrameGaps.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
+    src/engine/GradedThumbs.h     src/engine/GradedThumbs.cpp
     src/engine/BlurFill.h         src/engine/BlurFill.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
@@ -207,6 +208,7 @@ add_library(schneidi_lib STATIC
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
     src/ui/PoolFilterButton.h     src/ui/PoolFilterButton.cpp
     src/ui/HoverScrub.h           src/ui/HoverScrub.cpp
+    src/ui/ElidedLabel.h
     src/ui/FileManager.h          src/ui/FileManager.cpp
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp

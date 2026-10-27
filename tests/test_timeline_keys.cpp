@@ -1,7 +1,8 @@
 // Keys of the timeline in the real window: every action id once, no key used twice within a scope in any built-in
 // set (the multicam angle keys share Alt+1-8 with the video target tracks on purpose: only one of them is on at a
 // time), the Slip/Slide tools (menu, toolbar, a slip in progress shows four-up in the viewer), the track lock
-// action and the transcript's cut keys next to the timeline's Delete.
+// action, the transcript's cut keys next to the timeline's Delete, and Delete & co. in the Media Pool, Media Storage
+// and Effects never removing timeline clips.
 // SLIPSLIDE_SHOT=<dir> saves screenshots (toolbar, slip in progress).
 #include "check.h"
 
@@ -15,6 +16,9 @@
 #include "core/TimelineOps.h"
 #include "core/TrimFrames.h"
 #include "engine/Engine.h"
+#include "ui/EffectsLibrary.h"
+#include "ui/MediaPool.h"
+#include "ui/MediaStorage.h"
 #include "ui/TranscriptPanel.h"
 #include "ui/TrimView.h"
 #include "ui/Viewer.h"
@@ -25,12 +29,14 @@
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QListWidget>
 #include <QMouseEvent>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextEdit>
 #include <QToolButton>
+#include <QTreeWidget>
 #include <QUndoStack>
 #include <clocale>
 #include <cmath>
@@ -200,6 +206,62 @@ void testWindow(const QString& media, const QString& shots)
     const Clip* c = TimelineOps::findClip(p->timeline(), middle);
     CHECK(c && c->start == 50 && c->length() == 50 && c->in != 100);
     action("tool_select")->trigger();
+
+    // Panels with items of their own: the keys that remove timeline clips (Delete, Backspace, ripple delete, cut) do
+    // nothing on a Media Pool clip, an effect or a Media Storage file, whatever is selected in the timeline; Delete in
+    // the bin list still removes the bin, in the timeline Delete deletes
+    action("toggle_effects")->trigger();
+    action("toggle_media_storage")->trigger();
+    QApplication::processEvents();
+    const auto timelineIds = [&] {
+        QSet<int> ids;
+        for (const Track& t : p->timeline().video + p->timeline().audio)
+            for (const Clip& cl : t.clips) ids.insert(cl.id);
+        return ids;
+    };
+    const QSet<int> placed = timelineIds();
+    const int undoBefore = p->undoStack()->count();
+    const QVector<QPair<int, Qt::KeyboardModifiers>> removing = {{Qt::Key_Delete, Qt::NoModifier},
+                                                                 {Qt::Key_Backspace, Qt::NoModifier},
+                                                                 {Qt::Key_Delete, Qt::ShiftModifier},
+                                                                 {Qt::Key_X, Qt::ControlModifier}};
+    auto* pool = w.findChild<MediaPool*>();
+    auto* storage = w.findChild<MediaStorage*>();
+    auto* effects = w.findChild<EffectsLibrary*>();
+    if (!CHECK(pool && storage && effects)) return;
+    for (QWidget* panelWidget : std::initializer_list<QWidget*>{pool, storage, effects}) {
+        auto* list = panelWidget->findChild<QListWidget*>();
+        if (!CHECK(list && list->isVisible())) continue;
+        list->setFocus();
+        for (const auto& [key, mods] : removing) {
+            sel->set(placed);
+            QTest::keyClick(list, Qt::Key(key), mods);
+            QApplication::processEvents();
+        }
+        Check::report(timelineIds() == placed, "panel key removed timeline clips", __FILE__, __LINE__,
+                      QString::fromLatin1(panelWidget->metaObject()->className()));
+    }
+    CHECK_EQ(p->undoStack()->count(), undoBefore);
+    const int bin = p->addBin(0);
+    pool->setCurrentBin(0);
+    auto* bins = pool->findChild<QTreeWidget*>();
+    if (CHECK(bins)) {
+        for (QTreeWidgetItem* it : bins->findItems(p->binName(bin), Qt::MatchExactly | Qt::MatchRecursive))
+            bins->setCurrentItem(it);
+        bins->setFocus();
+        sel->set(placed);
+        QTest::keyClick(bins, Qt::Key_Delete);
+        CHECK(!p->bin(bin));
+        CHECK(timelineIds() == placed);
+    }
+    tv->setFocus();
+    sel->set(placed);
+    QTest::keyClick(tv, Qt::Key_Delete);
+    CHECK(timelineIds().isEmpty());
+    p->undoStack()->undo();
+    CHECK(timelineIds() == placed);
+    action("toggle_effects")->trigger();
+    action("toggle_media_storage")->trigger();
 
     // Transcript next to the timeline: with words selected Delete cuts them (the selected clip stays), without
     // words it is the timeline's Delete

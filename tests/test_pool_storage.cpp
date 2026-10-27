@@ -26,6 +26,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
@@ -183,11 +184,7 @@ void testPoolFilter(const QString& dump)
     pool.show();
     QApplication::processEvents();
     auto* list = pool.findChild<QListWidget*>();
-    auto* reset = [&]() -> QToolButton* {
-        for (QToolButton* b : pool.findChildren<QToolButton*>())
-            if (b->text().contains(T("Filter zurücksetzen"))) return b;
-        return nullptr;
-    }();
+    auto* reset = pool.findChild<QToolButton*>("pool_filter_reset");
     if (!CHECK(list && reset)) return;
     CHECK_EQ(list->count(), 6); // Text title, Timeline 1, v1, v2, a1, i1 (v3 is in the sub-bin)
     CHECK(reset->isHidden());
@@ -231,6 +228,12 @@ void testPoolFilter(const QString& dump)
         pool.setCurrentBin(sub);
         CHECK_EQ(list->count(), 1);
         pool.setCurrentBin(0);
+        // The title says what is filtered (all of it in the tooltip, cut with "…" when the pool is narrow); the reset
+        // button is only a cross with a tooltip, so the narrow pool keeps its room for the title
+        if (auto* title = pool.findChild<QLabel*>("pool_bin_title"); CHECK(title))
+            CHECK_EQ(title->toolTip(), T("Filter in „%1“: %2").arg(p.binName(0), f.summary()));
+        CHECK_EQ(reset->toolTip(), T("Filter zurücksetzen"));
+        CHECK(reset->sizeHint().width() < 60);
         // Reset with the button beside the bin title
         if (mode == MediaPool::ViewMode::Thumbnails && !dump.isEmpty()) pool.grab().save(QDir(dump).filePath("pool-filter-active.png"));
         reset->click();
@@ -239,6 +242,18 @@ void testPoolFilter(const QString& dump)
         CHECK(reset->isHidden());
     }
     pool.setViewMode(MediaPool::ViewMode::Thumbnails);
+    // The open search field takes the place of the panel title: the pool needs no more room than before (the filter
+    // button had made the header too wide, opening the search pushed the Viewer aside)
+    {
+        QApplication::processEvents();
+        const int closed = pool.minimumSizeHint().width();
+        pool.setSearch("v");
+        QApplication::processEvents();
+        CHECK(pool.minimumSizeHint().width() <= closed);
+        pool.setSearch("");
+        QApplication::processEvents();
+        CHECK_EQ(pool.minimumSizeHint().width(), closed);
+    }
 
     // Hundreds of clips: filtering stays instant
     Project big;

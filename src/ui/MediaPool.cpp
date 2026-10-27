@@ -6,10 +6,12 @@
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
+#include "engine/GradedThumbs.h"
 #include "engine/ProxyManager.h"
 #include "ui/FileManager.h"
 #include "ui/HoverScrub.h"
 #include "ui/MediaStorage.h"
+#include "ui/ElidedLabel.h"
 #include "ui/PoolFilterButton.h"
 #include "engine/Background.h"
 
@@ -197,6 +199,55 @@ QPixmap flagIcon(const QColor& c)
     return pm;
 }
 
+// Entry of a timeline/compound/multicam clip: the type icon, or the timeline's picture (TimelinePosters: first frame
+// with its grade) with the type icon as a small badge at the top left
+QPixmap sequenceThumb(const Sequence& q, const QImage& picture)
+{
+    const QColor bg = (q.compound ? Theme::compoundClip : Theme::videoClip).darker(170);
+    QPixmap thumb(kThumb);
+    thumb.fill(bg);
+    QPainter p(&thumb);
+    p.setRenderHint(QPainter::Antialiasing);
+    if (!picture.isNull()) {
+        p.drawImage(QRect(QPoint(0, 0), kThumb), picture);
+        constexpr double kBadge = 0.3;
+        const QPointF at(4, 4);
+        p.setPen(QPen(QColor(0, 0, 0, 140), 1));
+        p.setBrush(bg);
+        p.drawRoundedRect(QRectF(at, QSizeF(kThumb) * kBadge), 3, 3);
+        p.translate(at);
+        p.scale(kBadge, kBadge);
+    }
+    // Icon: timeline = track bars, compound clip = stacked layers, multicam clip = grid of angles
+    const QColor fg(0xe8, 0xe8, 0xec);
+    if (q.multicam) {
+        for (int i = 0; i < 4; ++i) {
+            const QRectF r(34 + (i % 2) * 31, 14 + (i / 2) * 27, 29, 25);
+            p.setPen(QPen(i == 0 ? Theme::multicamActive : fg, i == 0 ? 2.0 : 1.0));
+            p.setBrush(Theme::compoundClip.darker(110 + 20 * i));
+            p.drawRect(r);
+        }
+    } else if (q.compound) {
+        for (int i = 2; i >= 0; --i) {
+            const QRectF r(46 + i * 8, 20 + (2 - i) * 8, 36, 24);
+            p.setPen(QPen(fg, 1.2));
+            p.setBrush(Theme::compoundClip.darker(100 + 25 * i));
+            p.drawRoundedRect(r, 2, 2);
+        }
+    } else {
+        p.setPen(Qt::NoPen);
+        const QColor bars[] = {Theme::videoClip, Theme::videoClip.lighter(120), Theme::audioClip};
+        const int x0[] = {30, 50, 30}, w[] = {60, 70, 84};
+        for (int i = 0; i < 3; ++i) {
+            p.setBrush(bars[i]);
+            p.drawRoundedRect(QRectF(x0[i], 18 + i * 16, w[i], 11), 2, 2);
+        }
+        p.setBrush(Theme::playhead);
+        p.drawRect(QRectF(72, 12, 2, 58)); // Playhead
+    }
+    return thumb;
+}
+
 } // namespace
 
 MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
@@ -271,14 +322,17 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_search->setPlaceholderText(T("Suchen…"));
     m_search->setClearButtonEnabled(true);
     m_search->setVisible(false);
-    m_search->setMinimumWidth(60);
+    title->ensurePolished(); // the field is at least as wide as the title it replaces: the Viewer beside stays put
+    m_search->setMinimumWidth(std::max(60, title->sizeHint().width()));
     connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildClips(); });
     m_searchBtn = new QToolButton;
     m_searchBtn->setText("🔍︎"); // U+FE0E: as text, not as a colored emoji (Windows)
     m_searchBtn->setToolTip(T("Clips suchen"));
     m_searchBtn->setAutoRaise(true);
     m_searchBtn->setCheckable(true);
-    connect(m_searchBtn, &QToolButton::toggled, this, [this](bool on) {
+    // The open field takes the title's place: the header stays as narrow as before (the pool does not widen)
+    connect(m_searchBtn, &QToolButton::toggled, this, [this, title](bool on) {
+        title->setVisible(!on);
         m_search->setVisible(on);
         if (on) m_search->setFocus();
         else m_search->clear();
@@ -345,11 +399,16 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     });
     connect(m_bins, &QTreeWidget::customContextMenuRequested, this, &MediaPool::showBinMenu);
 
-    m_binTitle = new QLabel;
-    m_binTitle->setStyleSheet(QString("color: %1; padding: 2px 6px;").arg(Theme::textDim.name()));
-    m_binTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); // long filter texts do not widen the pool
+    m_binTitle = new ElidedLabel; // long search/filter texts end in "…" (all in the tooltip), never widen the pool
+    m_binTitle->setObjectName("pool_bin_title");
+    m_binTitle->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    m_binTitle->setContentsMargins(6, 2, 6, 2);
+    m_binTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    // Only the cross, like on a filter chip: the narrow pool keeps its room for what is filtered
     m_filterReset = new QToolButton;
-    m_filterReset->setText("✕ " + T("Filter zurücksetzen"));
+    m_filterReset->setObjectName("pool_filter_reset");
+    m_filterReset->setText("✕");
+    m_filterReset->setToolTip(T("Filter zurücksetzen"));
     m_filterReset->setAutoRaise(true);
     m_filterReset->setVisible(false);
     connect(m_filterReset, &QToolButton::clicked, this, [this] { setFilter({}); });
@@ -426,6 +485,14 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_thumbPool->setMaxThreadCount(2);
     m_thumbPool->setThreadPriority(QThread::LowPriority);
     connect(m_project, &Project::mediaChanged, this, &MediaPool::rebuild);
+    // Timelines show their first picture with its grade (sources stay neutral); before the formatChanged below
+    m_posters = new TimelinePosters(m_project, kThumb, this);
+    connect(m_posters, &TimelinePosters::changed, this, [this](int id) {
+        const Sequence* q = m_project->sequence(id);
+        for (int i = 0; q && !q->multicam && i < m_list->count(); ++i)
+            if (sequenceOfItem(m_list->item(i)->data(Qt::UserRole).toString()) == id)
+                m_list->item(i)->setIcon(QIcon(sequenceThumb(*q, m_posters->poster(id))));
+    });
     connect(m_project, &Project::formatChanged, this, [this] { // thumbnails in the new aspect ratio
         ++m_thumbGeneration;
         m_thumbs.clear();
@@ -750,8 +817,7 @@ void MediaPool::rebuildClips()
     QString title = search.isEmpty() ? bin : T("Suche in „%1“: %2").arg(bin, search);
     if (filter.active())
         title = search.isEmpty() ? T("Filter in „%1“: %2").arg(bin, filter.summary()) : title + " · " + filter.summary();
-    m_binTitle->setText(title);
-    m_binTitle->setToolTip(title);
+    m_binTitle->setFullText(title);
     m_filterReset->setVisible(filter.active());
     const bool list = m_viewMode == ViewMode::List;
     auto found = [&](int itemBin, const QString& name) {
@@ -787,41 +853,10 @@ void MediaPool::rebuildClips()
         return m_sortAscending ? c < 0 : c > 0;
     });
     for (const Sequence* q : seqs) {
-        QPixmap thumb(kThumb);
-        thumb.fill((q->compound ? Theme::compoundClip : Theme::videoClip).darker(170));
-        {
-            QPainter p(&thumb);
-            p.setRenderHint(QPainter::Antialiasing);
-            // Icon: timeline = track bars, compound clip = stacked layers, multicam clip = grid of angles
-            const QColor fg(0xe8, 0xe8, 0xec);
-            if (q->multicam) {
-                for (int i = 0; i < 4; ++i) {
-                    const QRectF r(34 + (i % 2) * 31, 14 + (i / 2) * 27, 29, 25);
-                    p.setPen(QPen(i == 0 ? Theme::multicamActive : fg, i == 0 ? 2.0 : 1.0));
-                    p.setBrush(Theme::compoundClip.darker(110 + 20 * i));
-                    p.drawRect(r);
-                }
-            } else if (q->compound) {
-                for (int i = 2; i >= 0; --i) {
-                    const QRectF r(46 + i * 8, 20 + (2 - i) * 8, 36, 24);
-                    p.setPen(QPen(fg, 1.2));
-                    p.setBrush(Theme::compoundClip.darker(100 + 25 * i));
-                    p.drawRoundedRect(r, 2, 2);
-                }
-            } else {
-                p.setPen(Qt::NoPen);
-                const QColor bars[] = {Theme::videoClip, Theme::videoClip.lighter(120), Theme::audioClip};
-                const int x0[] = {30, 50, 30}, w[] = {60, 70, 84};
-                for (int i = 0; i < 3; ++i) {
-                    p.setBrush(bars[i]);
-                    p.drawRoundedRect(QRectF(x0[i], 18 + i * 16, w[i], 11), 2, 2);
-                }
-                p.setBrush(Theme::playhead);
-                p.drawRect(QRectF(72, 12, 2, 58)); // Playhead
-            }
-        }
         const QString item = sequenceItem(q->id);
-        auto* it = new QListWidgetItem(QIcon(thumb), QString());
+        // Multicam clips keep their grid of angles (which angle would be "the" picture?)
+        const QImage picture = q->multicam ? QImage() : m_posters->poster(q->id);
+        auto* it = new QListWidgetItem(QIcon(sequenceThumb(*q, picture)), QString());
         it->setData(Qt::UserRole, item);
         it->setToolTip(q->multicam ? T("Multicam-Clip – in die Timeline ziehen legt ihn ab, Doppelklick öffnet die Winkel")
                        : q->compound ? T("Compound Clip – Doppelklick öffnet ihn, in die Timeline ziehen legt ihn ab")
