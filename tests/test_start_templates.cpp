@@ -157,7 +157,12 @@ void testBuiltIns()
     CHECK(game.importPresets && game.importPresets->rules == user.rules);
     CHECK(game.timeline.masterLimiter);
     CHECK(!game.fixedResolution && !game.fixedFrameRate);
-    CHECK(game.format == ProjectFormat{});
+    // 60 fps until the first clip brings its own frame rate (titles made before it); the rest as a new project
+    CHECK(game.format.rate == (FrameRate{60, 1}));
+    ProjectFormat gameRest = game.format;
+    gameRest.rate = ProjectFormat{}.rate;
+    CHECK(gameRest == ProjectFormat{});
+    CHECK_EQ(StartTemplates::summary(builtIn("game")).value(0), T("Format: Auflösung und Framerate vom ersten Clip"));
     CHECK_EQ(game.timeline.audio.size(), qsizetype(2));
     QSettings().remove("import/streamPresets");
 

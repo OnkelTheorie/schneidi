@@ -32,10 +32,17 @@ struct Preset {
 const QVector<Preset>& presets();
 const Preset* find(const QString& id);
 
-// Writes the accents at clip frames `hits` (0 = the clip's first frame; hits outside the clip are ignored) into c and
-// returns how many landed. Values build on what the clip has there (a zoom animation keeps its course, a grade its
-// exposure) and close hits add up. The value starts rising ~30 ms before the hit and peaks on it. fps = timeline
-// frame rate, frame = timeline size (shake amplitude). A missing grade is added for the flash.
+// Seconds between two flashes at least: a burst of kills (three in 0.8 s) strobes - tiring to watch and against the
+// photosensitivity guidelines (at most 3 flashes a second). Punch and shake still mark every hit.
+constexpr double kFlashGap = 0.5;
+// The hits (frames) that get a flash: the first one, then each one at least kFlashGap after the last flash
+QVector<int> flashHits(QVector<int> hits, double fps);
+
+// Writes the accents at clip frames `hits` (0 = the clip's first frame; hits outside the clip only count for the
+// spacing of flashes) into c and returns how many landed. Values build on what the clip has there (a zoom animation
+// keeps its course, a grade its exposure) and close hits add up. The value starts rising ~30 ms before the hit and
+// peaks on it. fps = timeline frame rate, frame = timeline size (shake amplitude). A missing grade is added for the
+// flash.
 int apply(Clip& c, const QVector<int>& hits, const Amounts& a, double fps, QSizeF frame);
 
 } // namespace Accents

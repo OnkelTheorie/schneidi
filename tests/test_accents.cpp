@@ -1,7 +1,8 @@
 // Accents on hits (core/Accents, Editor::addAccents, op 'accent'): a zoom punch, an exposure flash, a position shake
 // and their mixes are ordinary keyframes on top of the clip's values, close hits add up, the curve between the
 // written keyframes is the accent's own shape; the clips under the times are found without a list, one undo step;
-// op 'keyframe' takes param zoom (both axes) and `info` shows matching zoom tracks once; `effects` lists the presets.
+// op 'keyframe' takes param zoom (both axes) and `info` shows matching zoom tracks once; `effects` lists the presets;
+// a burst of hits gets a flash at most every 0.5 s.
 #include "check.h"
 
 #include "cli/Commands.h"
@@ -129,6 +130,19 @@ void testFlashShake()
     for (AnimParam p : {AnimParam::ZoomX, AnimParam::GradeExposure, AnimParam::PosX}) CHECK(Keys::animated(h, p));
     for (const Accents::Preset& p : Accents::presets()) CHECK(p.amounts.any() && *p.description && *p.name);
     CHECK(!Accents::find("nope"));
+
+    // A burst of kills does not strobe: a flash at most every 0.5 s (13 frames), punch and shake on every hit
+    CHECK_EQ(Accents::flashHits({40, 20, 25, 20, 35}, kFps), (QVector<int>{20, 35}));
+    Clip burst = clip();
+    CHECK_EQ(Accents::apply(burst, {20, 25, 35, 40}, Accents::find("hit")->amounts, kFps, kFrame), 4);
+    CHECK_EQ(Keys::keyTimes(burst, {AnimParam::GradeExposure}), (QVector<int>{19, 20, 28, 34, 35, 43}));
+    CHECK(near(Keys::valueAt(burst, AnimParam::GradeExposure, 35), 1.5));
+    CHECK(Keys::valueAt(burst, AnimParam::GradeExposure, 25) < 1.5 * 0.5);
+    for (int t : {20, 25, 35, 40}) CHECK(Keys::keyAt(burst, AnimParam::ZoomX, t) && Keys::keyAt(burst, AnimParam::PosX, t));
+    // Hits outside the clip space its flashes too (a burst across a cut), but write nothing
+    Clip after = clip();
+    Accents::apply(after, {-5, 3, 30}, Accents::find("flash")->amounts, kFps, kFrame);
+    CHECK_EQ(Keys::keyTimes(after, {AnimParam::GradeExposure}), (QVector<int>{29, 30, 35}));
 }
 
 void testEditor()
@@ -172,6 +186,10 @@ void testEditor()
     CHECK_EQ(ed.addAccents({3}, {10, 60}, Accents::find("pulse")->amounts, "Accent"), (QVector<int>{10, 60}));
     CHECK(Keys::animated(find(3), AnimParam::ZoomX) && !Keys::hasKeys(find(1)));
     CHECK(ed.addAccents({2}, {10}, Accents::find("pulse")->amounts, "Accent").isEmpty());
+    // A burst across the cut flashes once: the kill 7 frames later in the next clip gets punch and shake only
+    CHECK_EQ(ed.addAccents({}, {45, 52}, Accents::find("hit")->amounts, "Accent"), (QVector<int>{45, 52}));
+    CHECK(Keys::animated(find(1), AnimParam::GradeExposure));
+    CHECK(Keys::animated(find(2), AnimParam::ZoomX) && !Keys::animated(find(2), AnimParam::GradeExposure));
 }
 
 QString g_path;
@@ -281,6 +299,12 @@ void testCli(const QString& dir)
     CHECK_EQ(std::as_const(c)["keyframes"]["zoom_y"][1]["value"].toDouble(), 3.0);
     CHECK_EQ(std::as_const(c)["keyframes"]["zoom_x"][0]["at"].toInt(), 5);
     CHECK_EQ(std::as_const(c)["keyframes"]["zoom_y"][0]["at"].toInt(), 5);
+
+    // The answer says when a burst got fewer flashes
+    const QJsonObject b = run("edit", {{"project", g_path}, {"ops", R"([{"op":"accent","at":[10,13],"flash":1}])"}});
+    bool thinned = false;
+    for (const QJsonValue& n : b["notes"].toArray()) thinned |= n.toString().contains("the flash on 1 of them");
+    CHECK(thinned);
 
     // `effects` lists the presets with what they do; the op help points to them
     const QJsonArray accents = run("effects", {})["accents"].toArray();

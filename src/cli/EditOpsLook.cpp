@@ -12,6 +12,7 @@
 
 #include <QFileInfo>
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 
@@ -475,6 +476,14 @@ void opAccent(Session& s, const QJsonObject& op)
         if (!landed.contains(f) && missed.size() < 8) missed << tc(f, s.format());
     if (!missed.isEmpty())
         note += QString("; no %1clip at %2").arg(given ? "given " : "video ", missed.join(", "));
+    if (a.flash != 0) {
+        const QVector<int> flashes = Accents::flashHits(frames, s.format().rate.fps());
+        const auto lit = std::count_if(landed.begin(), landed.end(), [&](int f) { return flashes.contains(f); });
+        if (lit < landed.size())
+            note += QString("; the flash on %1 of them (at most one every %2 s, a burst would strobe)")
+                        .arg(lit)
+                        .arg(Accents::kFlashGap);
+    }
     s.notes << note;
 }
 
@@ -630,7 +639,8 @@ void addLookOps(QVector<OpDef>& ops)
                  "bigger, negative = smaller), flash (stops, negative = darker) and shake (share of the frame's "
                  "shorter side) set one part directly, 0 leaves it out. The peak sits on the time, the rise starts "
                  "~30 ms before. Writes ordinary keyframes (zoom, grade.exposure, x, y) on top of what the clip has "
-                 "there (a slow zoom keeps going) that add up for close hits; change or remove them with op "
+                 "there (a slow zoom keeps going) that add up for close hits; flashes keep 0.5 s apart (a burst of "
+                 "kills would strobe), the hits in between get punch and shake only. Change or remove them with op "
                  "'keyframe'. Shake moves the picture: on a clip that just fills the frame the edge shows (zoom a "
                  "little, or fit:'blur'). Save the big accents for the big moments: the same one on every cut wears "
                  "off; pulse suits beats.",

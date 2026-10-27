@@ -17,6 +17,7 @@
 #include <QUrl>
 #include <functional>
 #include <memory>
+#include <optional>
 
 class Engine;
 class Project;
@@ -267,6 +268,7 @@ private:
     Inspector* m_inspector = nullptr;
     ColorPanel* m_colorPanel = nullptr;
     QPointer<class KeyColorPicker> m_keyPicker; // while the pipette is on
+    QPointer<class KeyPickWindow> m_keyPickWindow; // its large picture, while the pipette is on
     TranscriptPanel* m_transcript = nullptr;
     ScopesPanel* m_scopes = nullptr; // Color page, right of the wheels (like DaVinci)
     Mixer* m_mixer = nullptr;
@@ -380,6 +382,14 @@ private:
         bool broken = false;
         bool pending = false;
     } m_review;
+    // The project as the chat's AI left it (after its last answer, or after accepting or discarding it): the next
+    // message tells it what was changed outside the chat since - the user's own trims and moves, which a rework
+    // must not undo. Empty before the first answer and after a new chat.
+    std::optional<Timeline> m_chatSeen;
+    int m_chatSeenSequence = 0;
+    QString m_chatSeenProject;
+    void rememberChatState();
+    QString chatChangesNote() const; // empty: nothing changed (or another project is open)
 
     void setupWatchFolders(); // after the layout (Media Pool, Media Storage)
     class FolderWatch* m_folderWatch = nullptr;

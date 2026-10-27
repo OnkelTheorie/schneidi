@@ -412,6 +412,16 @@ bool Exporter::launch(QString* error)
     // Hardware encoder: test it with the output size first (MLT's avformat consumer crashes when the encoder cannot
     // be opened, e.g. no such card, too large for the card, all its sessions busy). Runs ffmpeg in the background.
     // The own path opens the encoder itself and reports when it cannot (fallback in pollWriter): no test needed
+    // Own path with a hardware encoder that already failed in this session (could not be opened): software right away
+    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && useWriter(s.videoCodec)) {
+        const Mlt::Profile& p = m_convertRate ? *m_outProfile : *m_profile;
+        if (HardwareEncoders::cachedResult(s.videoCodec, QSize(p.width(), p.height())) < 0) {
+            if (!fallBackToSoftware(error)) return false;
+            ++g_running;
+            m_timer.start();
+            return true;
+        }
+    }
     if (HardwareEncoders::isHardwareCodec(s.videoCodec) && !useWriter(s.videoCodec)) {
         Mlt::Profile& p = m_convertRate ? *m_outProfile : *m_profile;
         const QSize size(p.width(), p.height());
@@ -641,8 +651,17 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     m_writer = std::make_unique<ExportWriter>(outProfile, *m_source, w, m_soundSource.get());
     m_writer->start();
     if (m_writer->state() == ExportWriter::State::Failed) {
-        if (error) *error = T("Export konnte nicht gestartet werden.");
         qWarning("Export: %s", qPrintable(m_writer->error()));
+        // A hardware encoder that cannot be opened may fail this early (a fast machine) or later (pollWriter):
+        // the same fallback to software both times
+        const bool hardware = HardwareEncoders::isHardwareCodec(codec) && !s.softwareCodec.isEmpty();
+        if (hardware && m_writer->encoderFailed()) {
+            m_writer.reset();
+            HardwareEncoders::remember(codec, QSize(outProfile.width(), outProfile.height()), false); // not again
+            QFile::remove(m_path);
+            return fallBackToSoftware(error);
+        }
+        if (error) *error = T("Export konnte nicht gestartet werden.");
         m_writer.reset();
         return false;
     }

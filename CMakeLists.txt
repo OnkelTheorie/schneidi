@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
-project(schneidi VERSION 0.12.0 LANGUAGES CXX)
+project(schneidi VERSION 0.13.1 LANGUAGES CXX)
 # Version being worked on. While it differs from the released version above, the app shows "0.11.0 → 0.12.0".
 # On release set both to the same number; after that, set this one to the next target.
-set(SCHNEIDI_NEXT_VERSION 0.13.0)
+set(SCHNEIDI_NEXT_VERSION 0.14.0)
 
 # Build optimized when nothing is given (debug builds stutter in playback: own filters run per frame)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -237,6 +237,7 @@ add_library(schneidi_lib STATIC
     src/ui/FullScreenViewer.h     src/ui/FullScreenViewer.cpp
     src/ui/ViewerOverlay.h
     src/ui/KeyColorPicker.h       src/ui/KeyColorPicker.cpp
+    src/ui/KeyPickWindow.h        src/ui/KeyPickWindow.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp
     src/ui/EqCurve.h              src/ui/EqCurve.cpp
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp

@@ -33,7 +33,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 
 | | |
 |---|---|
-| [![Media page: Media Storage and Media Pool](screenshots/media.png)](screenshots/media.png)<br>**Media** – browse folders, import into the Media Pool | [![Color page: a window darkens everything outside an ellipse, color wheels and RGB parade](screenshots/color.png)](screenshots/color.png)<br>**Color** – color wheels, windows, LUTs, scopes |
+| [![Media page: Media Storage and Media Pool](screenshots/media.png)](screenshots/media.png)<br>**Media** – browse and skim folders, import into the Media Pool | [![Color page: a window darkens everything outside an ellipse, color wheels and RGB parade](screenshots/color.png)](screenshots/color.png)<br>**Color** – color wheels, windows, LUTs, scopes |
 | [![Deliver page: render settings and render queue](screenshots/deliver.png)](screenshots/deliver.png)<br>**Deliver** – presets and render queue | [![Multicam view: nine angles of one event side by side](screenshots/multicam.png)](screenshots/multicam.png)<br>**Multicam** – click an angle or press 1–9 to cut to it |
 
 ## Features
@@ -42,14 +42,18 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - **Multicam:** a multicam clip from several recordings of one event, synced by sound, markers, In points or start; the viewer shows up to 16 angles at once (more on pages) – click or press 1–9 to cut, change angles later, flatten to normal clips
 - Timeline zoom and scroll change **only on user input** – nothing jumps when clips get shorter
 - Fully customizable keyboard shortcuts and mouse side buttons, two per function – presets (standard or beginner) and whole sets to save and load; panel sets for the Edit page, panel sizes remembered per page
+- **Start templates:** begin a project as a game recording, a podcast/interview or a vertical 9:16 video – or save your own setup (tracks, names, muted mix) as the start of every new project
+- **Media Storage and Media Pool:** look at a file and skim through it before importing, set In/Out and insert; filter the pool by flag, clip color and type; remove clips together with their uses in the timeline in one undo step
+- **Watch folders:** new files in a folder (your screen recorder's, for example) come into the Media Pool by themselves – only once they are finished; `schneidi-cli watch` for automatic workflows
+- Large viewer (one click hides the panels beside it) and full-screen viewer
 - Titles, subtitles, fades, transitions, volume, loudness normalization
-- Color correction, curves, LUTs, effects with keyframes; copy and paste grades (`=`/`-`); green screen with an eyedropper in the viewer
+- Color correction, curves, LUTs, effects with keyframes in any order; copy and paste grades (`=`/`-`); the timeline filmstrip and the Media Pool show the grade; green screen with an eyedropper on a large picture of the clip
 - **Vertical video from 16:9 on one track:** a blurred copy of the picture fills the space around it – no second track, smooth preview; **accents** (zoom punch, flash, shake) on hits and drops in one click
 - **Windows** on the Color page (rectangle, ellipse, soft edge, invert): grade only part of the picture, or blur, pixelate or cover a region (a face, a name, an overlay); **tracking** makes a window follow a moving object
 - Video stabilization and audio noise reduction (own implementations)
 - frei0r effects; import effect presets from Kdenlive and Shotcut
 - Video scopes: waveform, RGB parade, vectorscope, histogram
-- Two-up/four-up trim view while dragging an edit
+- Slip and slide tools; two-up/four-up trim view while dragging an edit
 - **Own audio engine (SMT):** sound is read, mixed and played sample-exact – lips in sync within about 1 ms in the viewer, no clicks when stopping, jumping or moving faders, real 24-bit export; choose the output device, survives an unplugged headset
 - Loudness and true-peak meters, master limiter that holds a true-peak ceiling
 - Per-track EQ (6 bands) and compressor in the mixer, ducking (music goes down while someone speaks)
@@ -60,7 +64,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - Export and render queue via FFmpeg: H.264, H.265, AV1, VP9 (WebM), ProRes and DNxHR, animated GIF, PNG/TIFF/JPEG image sequences and audio only (AAC, MP3, Opus, WAV, AIFF, FLAC, Apple Lossless); hardware encoders (NVENC, VAAPI, Quick Sync) when available; YouTube/phone presets cap the bit rate; **Smart Render** copies unchanged parts of H.264/H.265 recordings instead of encoding them again
 - Subtitles from speech (whisper.cpp, offline) – pick the voice tracks, one subtitle track each; an optional download under Workspace → Extensions
 - Text-based editing: the Transcript panel shows what is said – delete words to cut them, remove pauses
-- **Check before export:** one click on the Deliver page (or `check` for an AI) finds what often goes wrong in finished videos – a forgotten frame between two clips, missing files, subtitles too short or too fast to read, clipping, loudness off the target, silence at the end, game sound buried under the music, text that TikTok/Reels/Shorts cover, stutter in recordings
+- **Check before export:** one click on the Deliver page (or `check` for an AI) finds what often goes wrong in finished videos – a forgotten frame between two clips, missing files, subtitles too short or too fast to read, clipping, loudness off the target, silence at the end, game sound buried under the music, text that TikTok/Reels/Shorts cover, stutter in recordings; one click fixes peaks and loudness (master limiter and fader)
 - Contact sheet: stills of the timeline with timecodes as one picture (File › Save Contact Sheet)
 - **AI chat in the app:** tell an AI what to do in the open project – Claude, OpenAI-compatible services (OpenAI, OpenRouter, LM Studio, your company's proxy …) or a local model with Ollama; automatic or review mode ([details](#ai-chat-in-the-app))
 - **See what an AI does:** clips it adds or changes light up in the timeline, the AI log lists every step (a click jumps there), its analyses and renders show with progress
@@ -69,29 +73,29 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 
 ## How light is it?
 
-Measured with 0.11 on a Ryzen 5 5600X restricted with Linux cgroups (cores, RAM, no swap) – a stand-in for old hardware, not a real old laptop.
+Measured on two desktop CPUs restricted with Linux cgroups (cores, RAM, no swap) – stand-ins for old hardware, not a real old laptop: a Ryzen 5 5600X (with 0.11) and a Ryzen 5 PRO 2400G (2018, 4 cores, built-in Vega graphics; with 0.13). Each cell: **5600X / 2400G**.
 
 **Starting:**
 
-| | Empty project | Project with a 1080p clip |
+| 5600X / 2400G | Empty project | Project with a 1080p clip |
 |---|---|---|
-| Least RAM it starts and keeps running with | 128 MB | 288 MB |
-| Window visible, one full core | 0.6 s | 0.5 s |
-| Window visible, 10 % of one core | 6 s | 6 s |
-| Window visible, 5 % of one core | 11 s | 15 s |
+| Least RAM it starts and keeps running with | 128 / 112 MB | 288 / 288 MB |
+| Window visible, one full core | 0.6 / 0.7 s | 0.5 / 0.8 s |
+| Window visible, 10 % of one core | 6 / 11 s | 6 / 12 s |
+| Window visible, 5 % of one core | 11 / 25 s | 15 / 25 s |
 
-Thumbnails for the Media Storage (your Videos folder) are made by a separate ffmpeg at the start; for a large file that takes up to ~100 MB more for a moment.
+RAM in steps of 16 MB (the 2400G was measured in a Docker container, the 5600X in a systemd scope). Thumbnails for the Media Storage (your Videos folder) are made by a separate ffmpeg at the start; for a large file that takes up to ~100 MB more for a moment.
 
-**But starting is not the same as editing smoothly.** Playback of a demanding project (12 gaming clips, 1080p60 at 140 Mbit/s, a grade on every clip), frames per second out of 60:
+**But starting is not the same as editing smoothly.** Playback of a demanding project (12 gaming clips, 1080p60 at 140 Mbit/s, a grade on every clip), frames per second out of 60 over 15 s, the start-up included – from about 52 on it plays a steady 60 after the first second or two:
 
-| CPU | From the original files | Originals, decoded on the graphics card | From proxies |
+| CPU (5600X / 2400G) | From the original files | Originals, decoded on the graphics card | From proxies |
 |---|---|---|---|
-| 1 core | 12 – stutters | 55 | 57 |
-| 2 cores | 44 | 59 – smooth | 57 |
-| 4 cores | 57 – smooth | | |
-| 6 cores | 58 – smooth | | |
+| 1 core | 12 / 11 – stutters | 55 / 53 | 57 / 53 |
+| 2 cores | 44 / 16 – stutters on the 2400G | 59 / 54 – smooth | 57 / 57 |
+| 4 cores | 57 / 53 – smooth | | |
+| All cores (6 / 4 with SMT) | 58 / 57 – smooth | | |
 
-0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media). Playback › Clean Up Proxy Media… lists the proxy files no open or recent project needs (original deleted or changed, project gone) and frees their space.
+0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070 and the 2400G's built-in Vega 11) is on by default – with it one core is enough even on the 2400G. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media). Playback › Clean Up Proxy Media… lists the proxy files no open or recent project needs (original deleted or changed, project gone) and frees their space. A few seconds after playback stops or an export ends, schneidi gives the memory it no longer needs back to the system (after a 1080p export about 1450 → 590 MB).
 
 **And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet). DaVinci Resolve, Premiere Pro and Final Cut Pro are not available for this computer at all. Material: 15 s of a 1080p60 gaming clip.
 
@@ -206,22 +210,24 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.12.x – bug fixes
-Only fixes for problems found in 0.12.0 – new features wait for the next version.
+### 0.13.x – bug fixes
+Only fixes for problems found in 0.13.0 – new features wait for the next version.
 
-### 0.13 – Everyday Update
+### 0.14 – Freedom Update
+schneidi's own building blocks instead of outside libraries – faster, fewer dependencies.
 | Feature | What it does |
 |---|---|
-| **Effect order** | Drag effects into another order – a blur before or after the grade makes a difference |
-| **Slip and slide tools** | Own tools in the toolbar to slip a clip's content or slide a clip between its neighbors |
-| **Grades in the filmstrip and Media Pool** | Thumbnails show the clip as it looks after color correction |
-| **Media Pool filters** | Show only flagged clips, a clip color or a media type |
-| **Every key customizable** | The last fixed shortcuts (Media Pool, Transcript, Render Queue) move into the keyboard settings |
+| **Own time stretching** | Speed changes keep the pitch – much faster than before, cleaner on music and speech |
+| **Own effects** | Green Screen with spill removal, glow, halftone and more built in – the key several times faster |
+| **Own stabilization** | Steadier pictures; HUDs, logos and black bars no longer confuse it, pans are kept |
+| **Faster import and thumbnails** | Files are read and thumbnails made inside schneidi instead of one outside program per file |
 
 ### Later
-- **0.14 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, voiceover recording, text to speech
-- **0.15 – Template Update:** templates with placeholders filled from a list, brand kit
-- **0.16 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
+- **0.15 – Speed Update:** schneidi's own picture engine on the graphics card – mixing, transitions, titles and effects there, the preview looks exactly like the export, faster start and analyses
+- **0.16 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, voiceover recording, text to speech
+- **0.17 – Template Update:** templates with placeholders filled from a list, brand kit
+- **0.18 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
+- **0.19 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
 
 ## Building
 

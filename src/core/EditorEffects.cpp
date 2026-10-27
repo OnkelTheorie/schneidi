@@ -180,9 +180,9 @@ QVector<int> Editor::addAccents(const QVector<int>& idsIn, const QVector<int>& f
     if (landed.isEmpty()) return {};
     const ProjectFormat& fmt = m_project->format();
     modifyClips(ids, text, [&](Clip& c) {
+        // All times, not only the clip's own: the ones outside space its flashes
         QVector<int> local;
-        for (int f : frames)
-            if (f >= c.start && f < c.end()) local << f - c.start;
+        for (int f : frames) local << f - c.start;
         Accents::apply(c, local, amounts, fmt.rate.fps(), QSizeF(fmt.width, fmt.height));
     });
     QVector<int> out(landed.begin(), landed.end());

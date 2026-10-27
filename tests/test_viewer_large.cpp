@@ -21,7 +21,7 @@
 #include "engine/Engine.h"
 #include "ui/FullScreenViewer.h"
 #include "ui/Inspector.h"
-#include "ui/KeyColorPicker.h"
+#include "ui/KeyPickWindow.h"
 #include "ui/MediaPool.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
@@ -276,10 +276,15 @@ void testEditPage(MainWindow& w, Engine& engine)
         if (CHECK(pipette)) {
             pipette->click();
             settle();
-            CHECK(qobject_cast<KeyColorPicker*>(viewer->overlay()) != nullptr);
-            QTest::keyClick(&w, Qt::Key_Escape);
+            const auto pickWindow = [&w]() -> KeyPickWindow* { // the pipette's window while it is open
+                for (KeyPickWindow* k : w.findChildren<KeyPickWindow*>())
+                    if (k->isVisible()) return k;
+                return nullptr;
+            };
+            KeyPickWindow* window = pickWindow();
+            if (CHECK(window)) QTest::keyClick(window, Qt::Key_Escape);
             settle();
-            CHECK(!qobject_cast<KeyColorPicker*>(viewer->overlay()) && w.viewerLarge());
+            CHECK(!pickWindow() && w.viewerLarge());
             QTest::keyClick(&w, Qt::Key_Escape);
             settle();
             CHECK(!w.viewerLarge());

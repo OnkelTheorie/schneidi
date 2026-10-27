@@ -52,10 +52,18 @@ When the user talks about "the open project", "in the app" or "what I'm looking 
 Every command then works on what the app shows, unsaved changes included; `info` adds the playhead and selection,
 `app` can seek, play, select, undo and save.
 
+- **The result belongs in the open project**, not in a project file beside it that the user never sees: a new
+  version (another format, a short from a long edit) goes into a new timeline (`new_timeline`). The resolution
+  belongs to the whole project (`format` changes every timeline): before changing it while other timelines hold
+  clips, ask in one sentence - switch the project (the other timelines get bars) or make a separate project.
 - One `edit` call = one undo step in the app. Put a logical change (e.g. "remove all pauses") into one call so the
   user can take it back with one Ctrl+Z.
 - Don't save (`app` save) unless the user asks - they decide when their file changes.
 - The app lights up the clips you changed; mention what you changed so the user knows where to look.
+- **The user edits too.** Between your answers they trim, move, mute or delete clips by hand (in the app chat a
+  "[Note from the schneidi app: the user changed …]" lists it). Build on their changes: when you rework something
+  they adjusted, change the existing clips (`trim`, `move`, volume) instead of deleting and placing them again - a
+  new `place` loses their trims, fades and levels. Ids you remember may be gone; take them from `info`.
 
 ## Ground rules
 
@@ -66,6 +74,8 @@ Every command then works on what the app shows, unsaved changes included; `info`
 - **Never overwrite the user's material.** Renders and projects get new names (`trip-cut.mp4`, `trip-9x16.mp4`);
   put them where the user says, otherwise next to the project. Check renders that only you look at go to a
   temporary folder, never into the user's folders.
+- **Do what was asked, the way it was asked.** "On every kill" means on every kill, "shorter" means shorter. If you
+  think another way is better, do the request first and offer the other way in one sentence - not the reverse.
 - **Decide with good defaults** instead of asking: a tight cut, -14 LUFS for the web, H.264 MP4, readable titles.
   Ask only when the answer changes the result a lot and you cannot find it in the material or the request (e.g.
   "music" requested but no music file anywhere).

@@ -110,7 +110,47 @@ void write(Clip& c, const Clip& before, AnimParam p, QVector<int> times, const Q
     }
 }
 
+// The hits at clip frames `at` that lie inside a clip of `length` frames, sorted
+QVector<Hit> hitsIn(const QVector<int>& at, int length, int rise, int fade)
+{
+    QVector<Hit> hits;
+    for (int t : at)
+        if (t >= 0 && t < length) hits.append({std::max(0, t - rise), t, t + fade});
+    std::sort(hits.begin(), hits.end(), [](const Hit& x, const Hit& y) { return x.t < y.t; });
+    return hits;
+}
+
+// Keyframe times of the hits: start, peak and landing (cut at the clip's last frame); the landings into `landing`
+QVector<int> keyTimes(const QVector<Hit>& hits, int length, QSet<int>* landing)
+{
+    QVector<int> times;
+    for (const Hit& h : hits) {
+        const int end = std::min(h.end, length - 1);
+        times << h.t0 << h.t << end;
+        landing->insert(end);
+    }
+    return times;
+}
+
+double sum(const QVector<Hit>& hits, int t, double amount)
+{
+    double s = 0;
+    for (const Hit& h : hits) s += amount * envelope(h, t);
+    return s;
+}
+
 } // namespace
+
+QVector<int> flashHits(QVector<int> hits, double fps)
+{
+    std::sort(hits.begin(), hits.end());
+    hits.erase(std::unique(hits.begin(), hits.end()), hits.end());
+    const int gap = std::max(1, int(std::lround(std::max(1.0, fps) * kFlashGap)));
+    QVector<int> out;
+    for (int t : hits)
+        if (out.isEmpty() || t - out.last() >= gap) out << t;
+    return out;
+}
 
 int apply(Clip& c, const QVector<int>& hitTimes, const Amounts& a, double fps, QSizeF frame)
 {
@@ -118,30 +158,22 @@ int apply(Clip& c, const QVector<int>& hitTimes, const Amounts& a, double fps, Q
     fps = std::max(1.0, fps);
     const int rise = std::max(1, int(std::lround(fps * 0.03)));
     const int fade = std::max(2, int(std::lround(std::max(0.0, a.length) * fps)));
-    QVector<Hit> hits;
-    for (int t : hitTimes)
-        if (t >= 0 && t < c.length()) hits.append({std::max(0, t - rise), t, t + fade});
+    const QVector<Hit> hits = hitsIn(hitTimes, c.length(), rise, fade);
     if (hits.isEmpty()) return 0;
-    std::sort(hits.begin(), hits.end(), [](const Hit& x, const Hit& y) { return x.t < y.t; });
     const Clip before = c;
-    QVector<int> times;
     QSet<int> landing;
-    for (const Hit& h : hits) {
-        times << h.t0 << h.t << std::min(h.end, c.length() - 1);
-        landing << std::min(h.end, c.length() - 1);
-    }
-    const auto sum = [&](int t, double amount) {
-        double s = 0;
-        for (const Hit& h : hits) s += amount * envelope(h, t);
-        return s;
-    };
+    const QVector<int> times = keyTimes(hits, c.length(), &landing);
     if (a.punch != 0)
         for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY})
-            write(c, before, p, times, hits, [&](double base, int t) { return base * (1 + sum(t, a.punch)); }, landing);
-    if (a.flash != 0) {
+            write(c, before, p, times, hits, [&](double base, int t) { return base * (1 + sum(hits, t, a.punch)); },
+                  landing);
+    // Spaced on all hits, also those outside this clip: a burst across a cut flashes once too
+    const QVector<Hit> flashes = a.flash != 0 ? hitsIn(flashHits(hitTimes, fps), c.length(), rise, fade) : QVector<Hit>{};
+    if (!flashes.isEmpty()) {
         if (!EffectRegistry::has(c, "grade")) EffectRegistry::add(c, "grade");
-        write(c, before, AnimParam::GradeExposure, times, hits,
-              [&](double base, int t) { return base + sum(t, a.flash); }, landing);
+        QSet<int> flashLanding;
+        write(c, before, AnimParam::GradeExposure, keyTimes(flashes, c.length(), &flashLanding), flashes,
+              [&](double base, int t) { return base + sum(flashes, t, a.flash); }, flashLanding);
     }
     if (a.shake != 0) {
         const int step = std::max(1, int(std::lround(fps / 30)));
