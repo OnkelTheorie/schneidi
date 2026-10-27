@@ -521,7 +521,7 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
             if (sequenceOfItem(m_list->item(i)->data(Qt::UserRole).toString()) == id)
                 m_list->item(i)->setIcon(QIcon(sequenceThumb(*q, m_posters->poster(id))));
     });
-    connect(m_project, &Project::formatChanged, this, [this] { // thumbnails in the new aspect ratio
+    connect(m_project, &Project::formatChanged, this, [this] { // thumbnails anew (frames counted in the new rate)
         ++m_thumbGeneration;
         m_thumbs.clear();
         m_thumbPending.clear();
@@ -770,7 +770,7 @@ void MediaPool::requestThumb(const QString& path, int frame)
     m_thumbPool->start([this, format, path, frame, generation] {
         Background::lowerThisThread(Background::Level::Low); // own pool: its threads do nothing else
         Background::yieldToForeground();
-        const QImage img = Engine::thumbnail(format, path, frame, kThumb);
+        const QImage img = Engine::thumbnail(format, path, frame, kThumb, true); // in the clip's own shape
         QMetaObject::invokeMethod(this, [this, path, img, generation] { thumbReady(path, img, generation); },
                                   Qt::QueuedConnection);
     });

@@ -336,7 +336,7 @@ QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
     return thumbnail(m_format, path, frame, size);
 }
 
-QImage Engine::thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size)
+QImage Engine::thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size, bool ownShape)
 {
     const auto profile = makeProfile(format);
     ProducerFactory factory(*profile);
@@ -347,8 +347,11 @@ QImage Engine::thumbnail(const ProjectFormat& format, const QString& path, int f
     p.seek(frame);
     std::unique_ptr<Mlt::Frame> f(p.get_frame());
     if (!f) return {};
-    // Fetch in the project's aspect ratio and center at the desired size (black borders)
-    const QSize fit = format.size().scaled(size, Qt::KeepAspectRatio);
+    // Fetch in the project's (or the file's) aspect ratio and center at the desired size (black borders); MLT fits the
+    // picture into the size asked for, so asking in the file's shape gives it without borders
+    QSize fit = format.size().scaled(size, Qt::KeepAspectRatio);
+    if (const double aspect = ownShape ? TimelineBuilderDetail::sourceAspect(p) : 0; aspect > 0)
+        fit = QSizeF(aspect * size.height(), size.height()).scaled(QSizeF(size), Qt::KeepAspectRatio).toSize();
     mlt_image_format fmt = mlt_image_rgba;
     int w = std::max(2, fit.width()), h = std::max(2, fit.height());
     const uint8_t* data = f->get_image(fmt, w, h);
