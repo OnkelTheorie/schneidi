@@ -15,12 +15,17 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QDateTime>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QLabel>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QTreeWidget>
+#include <functional>
 
 namespace {
 
@@ -56,8 +61,9 @@ Clip clip(int id, const QString& path)
     return c;
 }
 
-// The dialog (Playback › Clean Up Proxy Media…, Media Pool): says what goes and how much, lists why; Cancel deletes
-// nothing, the button with the size deletes exactly that. PROXY_CLEANUP_DUMP=<png>: picture of it, details open.
+// The dialog (Playback › Clean Up Proxy Media…, Media Pool): says what goes and how much, lists each file with why and
+// its size; Cancel deletes nothing, the button with the size deletes exactly that, nothing to do is said.
+// PROXY_CLEANUP_DUMP=<png>: picture of the dialog.
 void testDialog(const QString& folder)
 {
     QDir(ProxyManager::cacheDir()).removeRecursively();
@@ -80,44 +86,64 @@ void testDialog(const QString& folder)
     open.media << MediaInfo{kept, "dialog-open.mp4", 25, true, true, false};
     ProxyManager pm;
 
-    QString text, details;
+    QString text;
+    QStringList rows; // "file|reason|size"
     bool shown = false;
-    auto answer = [&](QMessageBox::ButtonRole role) {
+    // while: runs inside the dialog before answering (the project changing while it is open)
+    auto answer = [&](const char* button, std::function<void()> whileOpen = {}) {
         shown = false;
-        QTimer::singleShot(300, [&, role] {
-            auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
-            if (!box) return;
+        rows.clear();
+        QTimer::singleShot(300, [&, button, whileOpen] {
+            QWidget* w = QApplication::activeModalWidget();
+            if (!w) return;
             shown = true;
-            text = box->text();
-            details = box->detailedText();
-            for (QAbstractButton* button : box->buttons())
-                if (box->buttonRole(button) == QMessageBox::ActionRole) button->click(); // "Show Details…"
-            if (const QByteArray dump = qgetenv("PROXY_CLEANUP_DUMP"); !dump.isEmpty() && !details.isEmpty()) {
-                QApplication::processEvents();
-                box->grab().save(QString::fromLocal8Bit(dump));
+            if (auto* box = qobject_cast<QMessageBox*>(w)) { // nothing to do
+                text = box->text();
+                for (QAbstractButton* b : box->buttons()) return b->click();
             }
-            for (QAbstractButton* button : box->buttons())
-                if (box->buttonRole(button) == role) return button->click();
+            auto* dialog = qobject_cast<QDialog*>(w);
+            if (auto* summary = w->findChild<QLabel*>("summary")) text = summary->text();
+            if (auto* list = w->findChild<QTreeWidget*>("items"))
+                for (int i = 0; i < list->topLevelItemCount(); ++i) {
+                    const QTreeWidgetItem* it = list->topLevelItem(i);
+                    rows << it->text(0) + "|" + it->text(1) + "|" + it->text(2);
+                }
+            if (const QByteArray dump = qgetenv("PROXY_CLEANUP_DUMP"); !dump.isEmpty()) {
+                QApplication::processEvents();
+                w->grab().save(QString::fromLocal8Bit(dump));
+            }
+            if (whileOpen) whileOpen();
+            if (auto* free = w->findChild<QPushButton*>("free"); free && qstrcmp(button, "free") == 0) free->click();
+            else if (dialog) dialog->reject();
         });
     };
-    answer(QMessageBox::RejectRole);
+    answer("cancel");
     CHECK_EQ(ProxyCleanupDialog::run(nullptr, open, &pm), 0);
     CHECK(shown);
-    std::printf("       %s\n%s\n", qPrintable(text), qPrintable(details));
+    std::printf("       %s\n       %s\n", qPrintable(text), qPrintable(rows.join("\n       ")));
     CHECK(text.startsWith("2 von 3"));
     CHECK(text.contains(ProxyCleanup::sizeText(expected)));
-    CHECK(details.contains("dialog-a.mp4") && details.contains("dialog-b.mp4"));
-    CHECK(details.contains(ProxyCleanup::reasonText(ProxyCleanup::Reason::Missing)));
-    CHECK(!details.contains("dialog-open.mp4"));
+    if (CHECK_EQ(rows.size(), 2)) { // largest first
+        CHECK(rows[0].startsWith("dialog-a.mp4|" + ProxyCleanup::reasonText(ProxyCleanup::Reason::Unused) + "|"));
+        CHECK(rows[1].startsWith("dialog-b.mp4|" + ProxyCleanup::reasonText(ProxyCleanup::Reason::Missing) + "|"));
+        CHECK(rows[0].endsWith(ProxyCleanup::sizeText(QFileInfo(pa).size() + QFileInfo(ProxyCleanup::notePath(pa)).size())));
+    }
     CHECK(QFileInfo::exists(pa) && QFileInfo::exists(pb)); // canceled: nothing deleted
 
-    answer(QMessageBox::DestructiveRole);
-    CHECK_EQ(ProxyCleanupDialog::run(nullptr, open, &pm), expected);
+    // The project takes dialog-a.mp4 while the dialog is open (an AI session imports it): its proxy stays
+    answer("free", [&] { open.media << MediaInfo{a, "dialog-a.mp4", 25, true, true, false}; });
+    CHECK_EQ(ProxyCleanupDialog::run(nullptr, open, &pm),
+             QFileInfo(pb).size() + QFileInfo(ProxyCleanup::notePath(pb)).size());
+    CHECK(QFileInfo::exists(pa) && !QFileInfo::exists(pb));
+    open.media.removeLast();
+
+    answer("free");
+    CHECK_EQ(ProxyCleanupDialog::run(nullptr, open, &pm), QFileInfo(pa).size() + QFileInfo(ProxyCleanup::notePath(pa)).size());
     CHECK(!QFileInfo::exists(pa) && !QFileInfo::exists(pb));
     CHECK(QFileInfo::exists(keptProxy));
 
     // Nothing left to do: says so
-    answer(QMessageBox::AcceptRole);
+    answer("cancel");
     CHECK_EQ(ProxyCleanupDialog::run(nullptr, open, &pm), 0);
     CHECK(shown);
     CHECK(text.startsWith("Nichts aufzuräumen"));
@@ -218,6 +244,17 @@ int main(int argc, char** argv)
     const ProxyCleanup::Plan again = ProxyCleanup::plan(keep, {busyPart});
     CHECK(again.items.isEmpty());
     CHECK_EQ(again.kept, 2);
+    // Needed by the time it is applied (the open project took the file meanwhile): apply skips it and its note
+    {
+        const QString p = makeProxy(unused, 300);
+        const ProxyCleanup::Plan stale = ProxyCleanup::plan(keep, {busyPart});
+        CHECK(find(stale, p));
+        CHECK_EQ(stale.items.size(), 1);
+        CHECK_EQ(ProxyCleanup::apply(stale, {busyPart}, QStringList(keep) << unused), 0);
+        CHECK(QFileInfo::exists(p) && QFileInfo::exists(ProxyCleanup::notePath(p)));
+        QFile::remove(p);
+        QFile::remove(ProxyCleanup::notePath(p));
+    }
     // Leftover written meanwhile (busy by now): skipped by apply
     {
         const QString part = ProxyManager::proxyPath(small).chopped(4) + ".part.mp4";

@@ -45,9 +45,10 @@ struct Plan {
 // What would be deleted in `dir`. keep: originals whose proxies stay (open + recent projects); busy: files being written
 // right now (ProxyManager's current generation), never touched
 Plan plan(const QStringList& keep, const QStringList& busy = {}, const QString& dir = {});
-// Deletes the plan's files (proxies with their notes); returns the bytes freed. Files being written by now (busy) and
-// files that cannot be deleted (gone already, open elsewhere) are skipped.
-qint64 apply(const Plan& plan, const QStringList& busy = {});
+// Deletes the plan's files (proxies with their notes); returns the bytes freed. Files being written by now (busy),
+// proxies of originals in `keep` (checked again right before deleting: the project may have changed since the plan)
+// and files that cannot be deleted (gone already, open elsewhere) are skipped.
+qint64 apply(const Plan& plan, const QStringList& busy = {}, const QStringList& keep = {});
 
 // Every media file a project uses: media pool and the clips of all timelines (compound and multicam contents too)
 QStringList projectMedia(const ProjectData& data);

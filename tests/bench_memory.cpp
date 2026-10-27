@@ -1,14 +1,19 @@
-// Benchmark (not a CTest test): how much memory the preview engine keeps after playback, edits, thumbnails and stills,
-// how much of it is MLT's frame pool (mlt_pool keeps every image buffer it ever handed out), and what giving it back
-// frees (mlt_pool_purge, then malloc_trim on glibc). Also the time from play() to the first new picture, with a warm
-// pool and right after a purge (giving memory back must not make playback start slower).
+// Benchmark (not a CTest test): how much memory the preview engine keeps after playback, scrubbing, edits, an export,
+// thumbnails and stills, how much of it is MLT's frame pool (mlt_pool keeps every image buffer it ever handed out), and
+// what giving it back frees (mlt_pool_purge, then malloc_trim on glibc). Also the time from play() to the first new
+// picture, with a warm pool and right after a purge (giving memory back must not make playback start slower).
+// Default: the engine's IdleRelease is held back, each step is measured by hand. --auto: the app's own behaviour
+// (IdleRelease after its delay), every phase measured after a few idle seconds.
 // Run: env SDL_AUDIODRIVER=dummy QT_QPA_PLATFORM=offscreen ./build/tests/bench_memory [--seconds N] [--edits N]
-//      [--format WxH@fps] <video>...
+//      [--format WxH@fps] [--no-export] [--auto] <video>...
 //      (the files go one after the other on V1/A1, the same again half a clip later on V2 at 60 % opacity, zoomed)
 #include "check.h"
 
+#include "engine/Bundle.h"
 #include "engine/Engine.h"
+#include "engine/Exporter.h"
 #include "engine/MediaCache.h"
+#include "engine/MemoryRelease.h"
 #include "engine/StillFetcher.h"
 
 #include <framework/mlt.h>
@@ -18,6 +23,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QRegularExpression>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <algorithm>
 #include <cstdarg>
@@ -71,8 +77,12 @@ void poolStat(double* allocatedMb, double* usedMb)
     *usedMb = g_poolUsed / 1048576.0;
 }
 
+bool g_auto = false; // --auto: the app's IdleRelease runs, every phase is measured after this many idle ms
+constexpr int kAutoIdleMs = 6000;
+
 void snap(const char* label)
 {
+    if (g_auto) wait(kAutoIdleMs);
     double alloc = 0, used = 0;
     poolStat(&alloc, &used);
     std::printf("%-34s RSS %7.0f MB  (peak %7.0f)  pool %6.0f MB allocated, %6.0f in use\n", label, procMb("VmRSS:"),
@@ -142,12 +152,15 @@ int main(int argc, char** argv)
     Check::initApp("bench-memory");
     double seconds = 20;
     int edits = 40;
+    bool exportPhase = true;
     ProjectFormat format{1920, 1080, {30, 1}};
     QStringList files;
     for (int i = 1; i < argc; ++i) {
         const QString a = QString::fromLocal8Bit(argv[i]);
         if (a == "--seconds" && i + 1 < argc) seconds = atof(argv[++i]);
         else if (a == "--edits" && i + 1 < argc) edits = atoi(argv[++i]);
+        else if (a == "--no-export") exportPhase = false;
+        else if (a == "--auto") g_auto = true;
         else if (a == "--format" && i + 1 < argc) {
             const QStringList p = QString(argv[++i]).split(QRegularExpression("[x@]"));
             format = ProjectFormat{p.value(0).toInt(), p.value(1).toInt(), {p.value(2).toInt(), 1}};
@@ -166,6 +179,10 @@ int main(int argc, char** argv)
         return 77;
     }
     engine.setFormat(format);
+    // By hand: the engine must not give memory back on its own between the measurements
+    if (!g_auto) engine.idleRelease()->setDelayMs(24 * 3600 * 1000);
+    std::printf("mode: %s\n", g_auto ? "automatic (the app's IdleRelease, phases measured after 6 s idle)"
+                                       : "by hand (IdleRelease held back)");
     snap("engine ready");
 
     const int fps = format.rate.timebase();
@@ -212,6 +229,14 @@ int main(int argc, char** argv)
     wait(500);
     snap("after playback");
 
+    // Scrubbing: the playhead jumps around (dragging it, J/K/L, an AI seeking to look at frames)
+    for (int i = 0; i < 120; ++i) {
+        engine.seek((i * 97) % std::max(1, end));
+        wait(40);
+    }
+    wait(500);
+    snap("after scrubbing");
+
     // Edits like an AI session: every change rebuilds the timeline, the preview shows the playhead's picture
     for (int i = 0; i < edits; ++i) {
         Timeline e = tl;
@@ -224,6 +249,33 @@ int main(int argc, char** argv)
     }
     wait(800);
     snap("after edits");
+
+    if (exportPhase) {
+        // Export of the whole timeline (own producers, own MLT graph) while the preview stands still
+        QTemporaryDir out;
+        ExportSettings es;
+        es.path = out.filePath("bench.mp4");
+        es.format = format;
+        es.preset = "ultrafast";
+        Exporter ex;
+        QEventLoop loop;
+        bool ok = false;
+        QObject::connect(&ex, &Exporter::finished, &loop, [&](bool success, const QString&) {
+            ok = success;
+            loop.quit();
+        });
+        QElapsedTimer t;
+        t.start();
+        QString err;
+        if (ex.start(tl, es, &err)) {
+            QTimer::singleShot(600000, &loop, &QEventLoop::quit);
+            loop.exec();
+        }
+        std::printf("export: %s in %.1f s%s\n", ok ? "ok" : "FAILED", t.elapsed() / 1000.0,
+                    err.isEmpty() ? "" : qPrintable(" – " + err));
+        wait(500);
+        snap("after export");
+    }
 
     {
         MediaCache cache;
@@ -283,5 +335,24 @@ int main(int argc, char** argv)
     std::printf("3 pictures after play: warm pool %.1f ms, purged pool %.1f ms (average of %d)\n", warm / runs,
                 cold / runs, runs);
     snap("end");
+
+    // The app's own release: play once more, stop, IdleRelease gives it back after its delay
+    {
+        engine.seek(0);
+        wait(300);
+        engine.play();
+        wait(5000);
+        engine.pause();
+        wait(300);
+        snap("played 5 s again");
+        engine.idleRelease()->setDelayMs(1000);
+        engine.idleRelease()->request();
+        const int before = MemoryRelease::releases();
+        QElapsedTimer t;
+        t.start();
+        while (MemoryRelease::releases() == before && t.elapsed() < 10000) wait(50);
+        wait(200);
+        snap("IdleRelease after stopping");
+    }
     return 0;
 }

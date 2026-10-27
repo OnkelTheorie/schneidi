@@ -38,6 +38,24 @@ Note readNote(const QString& path)
     return {o.value("original").toString(), o.value("maxSize").toInt()};
 }
 
+// Proxy names (<hash>) of these originals: compared by name, the proxy of an original is <hash>.mp4 in whatever folder
+// holds the proxies
+QSet<QString> proxyNames(const QStringList& originals)
+{
+    QSet<QString> out;
+    for (const QString& original : originals)
+        if (!original.isEmpty()) out.insert(QFileInfo(ProxyManager::proxyPath(original)).completeBaseName());
+    return out;
+}
+
+QSet<QString> fileNames(const QStringList& files)
+{
+    QSet<QString> out;
+    for (const QString& f : files)
+        if (!f.isEmpty()) out.insert(QFileInfo(f).fileName());
+    return out;
+}
+
 void addClips(const Timeline& tl, QStringList* out)
 {
     for (const QVector<Track>* tracks : {&tl.video, &tl.audio})
@@ -52,13 +70,8 @@ Plan plan(const QStringList& keep, const QStringList& busy, const QString& dirPa
 {
     Plan p;
     const QDir dir(dirPath.isEmpty() ? ProxyManager::cacheDir() : dirPath);
-    // Compared by name: the proxy of an original is <hash>.mp4 in whatever folder holds the proxies
-    QSet<QString> kept; // hashes
-    for (const QString& original : keep)
-        if (!original.isEmpty()) kept.insert(QFileInfo(ProxyManager::proxyPath(original)).completeBaseName());
-    QSet<QString> writing;
-    for (const QString& b : busy)
-        if (!b.isEmpty()) writing.insert(QFileInfo(b).fileName());
+    const QSet<QString> kept = proxyNames(keep);
+    const QSet<QString> writing = fileNames(busy);
 
     const QFileInfoList files = dir.entryInfoList(QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot);
     QSet<QString> names;
@@ -102,15 +115,16 @@ Plan plan(const QStringList& keep, const QStringList& busy, const QString& dirPa
     return p;
 }
 
-qint64 apply(const Plan& plan, const QStringList& busy)
+qint64 apply(const Plan& plan, const QStringList& busy, const QStringList& keep)
 {
-    QSet<QString> writing;
-    for (const QString& b : busy)
-        if (!b.isEmpty()) writing.insert(QFileInfo(b).fileName());
+    const QSet<QString> writing = fileNames(busy);
+    const QSet<QString> kept = proxyNames(keep);
     qint64 freed = 0;
     for (const Item& item : plan.items) {
         const QFileInfo f(item.file);
         if (writing.contains(f.fileName())) continue; // started meanwhile
+        const QString hash = f.fileName().left(40);
+        if (kept.contains(hash) && !item.file.endsWith(".json")) continue; // needed by now (a note goes with its proxy)
         const qint64 size = f.size();
         if (!QFile::remove(item.file)) continue; // gone already, or open elsewhere (Windows)
         freed += size;
