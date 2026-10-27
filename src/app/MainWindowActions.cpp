@@ -389,7 +389,7 @@ void MainWindow::buildActions()
     };
     auto gotoMark = [this](bool in) {
         if (sourceActive()) {
-            const MediaInfo* m = m_project->mediaInfo(m_engine->sourcePath());
+            const MediaInfo* m = m_editor->sourceMedia(m_engine->sourcePath());
             const int f = in ? m->markIn : m->markOut;
             if (f < 0) return;
             m_engine->pause();
@@ -706,6 +706,10 @@ void MainWindow::buildActions()
     // Keys of panels (scope): only while the panel has the focus, there before the window's keys (Delete)
     InputBindings::instance().registerAction(m_transcript->cutAction(), "transcript_cut", T("Transkript"),
                                              QKeySequence(Qt::Key_Delete), "transcript", QKeySequence(Qt::Key_Backspace));
+    // Media Pool keys: only while their widget has the focus, there they win over the window's keys (Delete in the bin
+    // list removes the bin, never timeline clips)
+    for (const MediaPool::KeyAction& k : m_mediaPool->keyActions())
+        InputBindings::instance().registerScopedAction(k.action, k.id, T("Media Pool"), k.defaultKey, k.scope);
 
     InputBindings::instance().saveIfIncomplete();
 }

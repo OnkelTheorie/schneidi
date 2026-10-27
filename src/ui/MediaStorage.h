@@ -1,9 +1,11 @@
 #pragma once
 #include <QHash>
 #include <QPixmap>
+#include <QSet>
 #include <QStringList>
 #include <QWidget>
 
+class HoverScrub;
 class QFileSystemWatcher;
 class QLabel;
 class QListWidget;
@@ -16,8 +18,10 @@ class QTreeWidgetItem;
 // Media Storage like DaVinci: file browser over fixed storage locations (folders). On the left the locations with their
 // subfolders, on the right the contents of the selected folder (subfolders + media files with thumbnail).
 // Clips can be dragged directly into the Media Pool or timeline (file URLs as from the file manager) –
-// without a second monitor/file manager next to it. Double-click resp. right-click imports into the Media Pool.
-// The folder is watched: new files appear on their own.
+// without a second monitor/file manager next to it. A click shows a file in the Viewer without importing it,
+// double-click resp. right-click imports into the Media Pool. Moving the mouse across a video's thumbnail shows its
+// pictures (hover scrub). Files already in the Media Pool carry a check mark. The folder is watched: new files appear
+// on their own.
 class MediaStorage : public QWidget {
     Q_OBJECT
 public:
@@ -28,6 +32,10 @@ public:
     QString currentFolder() const { return m_folder; }
     void setFolder(const QString& dir);
     void setPersistent(bool on) { m_persistent = on; } // test runs: do not touch the settings
+    // The Media Pool's files: they get a check mark (and say so in the tooltip). Call again when the pool changes.
+    void setPoolFiles(const QStringList& paths);
+    bool inPool(const QString& path) const;
+    HoverScrub* hoverScrub() const { return m_scrub; }
 
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
@@ -35,6 +43,7 @@ protected:
 signals:
     void importRequested(const QStringList& paths); // into the selected bin of the Media Pool
     void folderImportRequested(const QString& dir);  // including subfolders as bins
+    void previewRequested(const QString& path);      // click on a file: show it in the Viewer, not imported
 
 private:
     void addLocation();
@@ -55,6 +64,8 @@ private:
     void nextThumb();
     int nextInView() const; // index in m_thumbQueue to make next
     void thumbDone(const QString& path, const QPixmap& pm);
+    void updateItem(QListWidgetItem* it); // icon (thumbnail or hover picture + pool mark) and tooltip of a file
+    static QString poolKey(const QString& path);
 
     QStringList m_locations;
     QString m_folder;
@@ -69,6 +80,11 @@ private:
     QFileSystemWatcher* m_watcher;
     QHash<QString, QListWidgetItem*> m_items;
     QHash<QString, QPixmap> m_thumbs; // key: path + modification time
+    QHash<QString, QPixmap> m_shown;  // path -> thumbnail resp. placeholder of the entry (without the pool mark)
+    QSet<QString> m_inPool;           // poolKey() of the Media Pool's files
+    HoverScrub* m_scrub = nullptr;
+    QString m_hoverPath;   // entry showing a hover picture
+    QPixmap m_hoverPixmap;
     QStringList m_thumbQueue;
     bool m_thumbRetry = false; // nextThumb() waits for foreground work (Background::foregroundBusy)
     QProcess* m_ffmpeg = nullptr;

@@ -40,7 +40,10 @@ QVector<int> Editor::clipIdsOf(const QSet<int>& ids) const
 }
 
 Editor::Editor(Project* project, Selection* selection, QObject* parent)
-    : QObject(parent), m_project(project), m_selection(selection) {}
+    : QObject(parent), m_project(project), m_selection(selection)
+{
+    connect(m_project, &Project::mediaChanged, this, &Editor::adoptPreviewSource);
+}
 
 QVector<int> Editor::withLinked(const QVector<int>& ids) const
 {

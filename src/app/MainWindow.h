@@ -161,6 +161,9 @@ private:
                        const std::function<void()>& fn);
     // Source view (double-click in the Media Pool): open at the last shown position of the file
     void showSource(const QString& path);
+    // Click in the Media Storage: the file in the source view without importing it (Editor::setPreviewSource; a pool
+    // clip shows as with showSource). Its length comes from a probe in the background, the picture right away.
+    void previewFile(const QString& path);
     bool sourceActive() const; // Viewer shows the source -> I/O apply to the source In/Out
     QString editSource() const; // source for F9/F10 …: source view, otherwise selection in the Media Pool
     void sourceEdit(Editor::SourceEditMode mode);

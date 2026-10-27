@@ -46,6 +46,7 @@ schneidi_test(test_preview_audio)
 # plays in real time: under parallel load the preview could fall behind (gaps in the sound = false clicks)
 set_tests_properties(test_preview_audio PROPERTIES RUN_SERIAL TRUE)
 schneidi_test(test_mediapool)
+schneidi_test(test_pool_storage) # Media Pool filter + keys, Media Storage marks, hover scrub, look before import
 schneidi_test(test_color)
 schneidi_test(test_grade_windows)
 schneidi_test(test_workspace)

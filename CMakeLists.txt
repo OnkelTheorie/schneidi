@@ -102,6 +102,7 @@ add_library(schneidi_lib STATIC
     src/core/ExportCheck.h        src/core/ExportCheck.cpp
     src/core/Stutter.h            src/core/Stutter.cpp
     src/core/ContactSheet.h       src/core/ContactSheet.cpp
+    src/core/PoolFilter.h         src/core/PoolFilter.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Background.h       src/engine/Background.cpp
@@ -125,6 +126,7 @@ add_library(schneidi_lib STATIC
     src/engine/Transcriber.h      src/engine/Transcriber.cpp
     src/engine/MediaCache.h       src/engine/MediaCache.cpp
     src/engine/StillFetcher.h     src/engine/StillFetcher.cpp
+    src/engine/ScrubFrames.h      src/engine/ScrubFrames.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
     src/engine/Denoise.h          src/engine/Denoise.cpp
@@ -196,6 +198,8 @@ add_library(schneidi_lib STATIC
     src/ui/MediaPool.h            src/ui/MediaPool.cpp
     src/ui/EffectsLibrary.h       src/ui/EffectsLibrary.cpp
     src/ui/MediaStorage.h         src/ui/MediaStorage.cpp
+    src/ui/PoolFilterButton.h     src/ui/PoolFilterButton.cpp
+    src/ui/HoverScrub.h           src/ui/HoverScrub.cpp
     src/ui/FileManager.h          src/ui/FileManager.cpp
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp

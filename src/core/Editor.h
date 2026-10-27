@@ -225,7 +225,20 @@ public:
     void setSegmentSpeed(int clipId, int segment, double speed);
     void setSpeedPointSmooth(int clipId, int index, int frames);
 
-    // Source in/out (I/O in the source viewer) of a Media Pool clip, -1 = remove; rules like setMarkIn/setMarkOut
+    // Look at a file before importing it (click in the Media Storage): the source viewer shows it, In/Out and markers
+    // set there stay here, not in the project. The first edit from it (sourceEdit, placeSourceRange) imports it into
+    // the Media Pool first (bin `info.bin`, with these marks) – the import is no undo step, like every import; the edit
+    // is one. Imported another way meanwhile (double-click in the Media Storage): the marks go to the Media Pool clip
+    // if it has none, and the preview ends. Empty path = no preview.
+    void setPreviewSource(const MediaInfo& info);
+    const MediaInfo& previewSource() const { return m_preview; }
+    // The source clip of `path`: the Media Pool clip, else the preview source with that path, else nullptr
+    const MediaInfo* sourceMedia(const QString& path) const;
+    // Imports the preview source into `bin` if `path` is it (and readable); true if `path` is in the Media Pool now
+    bool importPreviewSource(const QString& path, int bin);
+
+    // Source in/out (I/O in the source viewer) of a Media Pool clip (or the preview source), -1 = remove; rules like
+    // setMarkIn/setMarkOut
     void setSourceMarkIn(const QString& path, int frame);
     void setSourceMarkOut(const QString& path, int frame);
     void clearSourceMarks(const QString& path);
@@ -421,6 +434,7 @@ public:
 signals:
     void targetTracksChanged(); // target tracks (redraw track header marking)
     void mixerOnlyEdit();       // next change affects only the mixer (live preview, without rebuild)
+    void previewSourceChanged(); // preview source set, its marks changed, or it was imported
 
 private:
     TimelineOps::SourceLength sourceLength() const;
@@ -451,6 +465,8 @@ private:
     QVector<int> targetIds(int frame) const;
     // Subtitle entries among `ids` on unlocked tracks, and their earliest start (INT_MAX = none)
     QVector<int> unlockedSubtitles(const QVector<int>& ids, int* minStart = nullptr) const;
+    void setSourceMarks(const QString& path, int markIn, int markOut); // Media Pool clip or preview source
+    void adoptPreviewSource(); // the preview file arrived in the Media Pool: marks along, preview ends
 
     struct ClipboardItem {
         Clip clip;
@@ -467,4 +483,5 @@ private:
     StreamPresets m_streamPresets;
     QVector<ClipboardItem> m_clipboard; // starts relative to the earliest clip
     std::optional<Clip> m_gradeClipboard; // copyGrade: the source clip (only its grade is used)
+    MediaInfo m_preview; // setPreviewSource: a file shown in the source viewer that is not in the Media Pool
 };
