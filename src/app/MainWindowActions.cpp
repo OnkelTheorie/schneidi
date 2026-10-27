@@ -669,6 +669,11 @@ void MainWindow::buildActions()
     m_viewer->addViewAction(m_largeAction, Viewer::ViewIcon::Large);
     m_largeEscape = new QShortcut(QKeySequence(Qt::Key_Escape), this, [this] { setViewerLarge(false); });
     m_largeEscape->setEnabled(false);
+    // Full-screen viewer (DaVinci: Cinema Viewer, Ctrl+F there too): only the picture on the whole screen
+    m_fullScreenAction = makeAction(workspace, "viewer_full_screen", T("Viewer im Vollbild"), QKeySequence("Ctrl+F"),
+                                    [this] { setViewerFullScreen(m_fullScreenAction->isChecked()); });
+    m_fullScreenAction->setCheckable(true);
+    m_viewer->addViewAction(m_fullScreenAction, Viewer::ViewIcon::FullScreen);
     // Panel sets of the Edit page and panel sizes (remembered per page, MainWindow::applySizes)
     QMenu* panels = workspace->addMenu(T("Panels"));
     makeAction(panels, "panels_standard", T("Standard (Media Pool, Inspector)"), QKeySequence(),

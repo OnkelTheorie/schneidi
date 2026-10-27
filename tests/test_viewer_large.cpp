@@ -1,9 +1,14 @@
+// Large and full-screen viewer.
 // Large viewer (Workspace › Large Viewer, the viewer's button, MainWindow::setViewerLarge): on every page the panels
 // beside the viewer and the timeline hide, the viewer gets their room, the timeline keeps its size and its zoom/scroll
 // (core rule); the same action, Esc, a panel button or a page switch bring back exactly the layout before (which
 // panels, splitter sizes), the saved layout settings stay untouched. With the Green Screen pipette on, Esc cancels the
 // pipette first.
-// VIEWER_LARGE_DUMP=<folder>: pictures of the window before/with the large viewer (Edit and Color page).
+// Full-screen viewer (Workspace › Full-Screen Viewer, Ctrl+F, MainWindow::setViewerFullScreen): a window of its own
+// over the screen with only the picture; Space/J/K/L/arrows act there, playback goes on across the switch, Esc, the same
+// key and closing the window leave; the main window's layout stays as it was.
+// VIEWER_LARGE_DUMP=<folder>: pictures of the window before/with the large viewer (Edit and Color page) and of the
+// full-screen viewer.
 
 #include "check.h"
 
@@ -14,6 +19,7 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "engine/Engine.h"
+#include "ui/FullScreenViewer.h"
 #include "ui/Inspector.h"
 #include "ui/KeyColorPicker.h"
 #include "ui/MediaPool.h"
@@ -131,6 +137,16 @@ void testKeys(MainWindow& w)
     for (const char* lang : {"en", "fr"})
         fileMenu |= QKeySequence::mnemonic(I18n::translate(lang, "&Datei")) == QKeySequence("Alt+F");
     CHECK(fileMenu);
+
+    // Full screen: Ctrl+F (DaVinci's Cinema Viewer key) in every built-in set, used by nothing else there
+    CHECK(b.action("viewer_full_screen") != nullptr);
+    for (const QString& preset : InputBindings::presetIds()) {
+        b.applyPreset(preset);
+        CHECK_EQ(b.inputs("viewer_full_screen").value(0), QString("Ctrl+F"));
+        for (const auto& e : b.entries())
+            if (e.id != "viewer_full_screen" && e.scope.isEmpty()) CHECK(!b.inputs(e.id).contains("Ctrl+F"));
+    }
+    b.applyPreset("standard");
 }
 
 void testEditPage(MainWindow& w, Engine& engine)
@@ -287,6 +303,82 @@ void testOtherPages(MainWindow& w)
     w.showPage(MainWindow::Page::Edit);
 }
 
+void testFullScreen(MainWindow& w, Engine& engine)
+{
+    QAction* full = InputBindings::instance().action("viewer_full_screen");
+    auto* viewer = w.findChild<Viewer*>();
+    auto* button = viewer ? viewer->findChild<QToolButton*>("viewer_full_screen") : nullptr;
+    if (!CHECK(full && viewer && button)) return;
+    w.showPage(MainWindow::Page::Edit);
+    engine.seek(10);
+    QTest::qWait(300);
+    const Layout before = Layout::of(&w);
+    const QImage shown = viewer->picture();
+
+    // On with the button: a window of its own over the whole screen, the picture of the viewer in it
+    button->click();
+    settle();
+    FullScreenViewer* fs = w.fullScreenViewer();
+    if (!CHECK(fs)) return;
+    CHECK(full->isChecked() && button->isChecked());
+    CHECK(fs->isWindow() && fs->isVisible() && fs->isFullScreen());
+    CHECK(fs->screen() == w.screen() && fs->geometry() == w.screen()->geometry());
+    CHECK(QTest::qWaitForWindowActive(fs));
+    CHECK(fs->picture().size() == shown.size() && !fs->picture().isNull());
+    const QRectF r = fs->pictureRect();
+    CHECK(r.width() >= fs->width() - 1 || r.height() >= fs->height() - 1); // as large as the screen allows
+    if (!dumpDir().isEmpty()) fs->grab().save(dumpDir() + "/full-screen.png");
+
+    // Keys of the window act here: Space plays, K stops, the arrows step, L plays forward
+    const int at = engine.position();
+    QTest::keyClick(fs, Qt::Key_Right);
+    settle();
+    CHECK_EQ(engine.position(), at + 1);
+    QTest::keyClick(fs, Qt::Key_Left);
+    settle();
+    CHECK_EQ(engine.position(), at);
+    QTest::keyClick(fs, Qt::Key_Space);
+    settle();
+    CHECK(engine.speed() != 0.0);
+    QTest::keyClick(fs, Qt::Key_K);
+    settle();
+    CHECK(engine.speed() == 0.0);
+    QTest::keyClick(fs, Qt::Key_L);
+    settle();
+    CHECK(engine.speed() > 0.0);
+    // Playback goes on across the switch (not stopped, not started again)
+    QTest::keyClick(fs, Qt::Key_Escape);
+    QTest::qWait(50);
+    CHECK(!w.fullScreenViewer() && !full->isChecked() && !button->isChecked());
+    CHECK(engine.speed() > 0.0);
+    engine.pause();
+    settle();
+    sameLayout(before, Layout::of(&w), "full screen");
+
+    // The same key leaves too; while playing in it
+    engine.seek(0);
+    engine.togglePlay();
+    full->trigger();
+    settle();
+    fs = w.fullScreenViewer();
+    if (CHECK(fs && QTest::qWaitForWindowActive(fs))) {
+        CHECK(engine.speed() != 0.0);
+        QTest::keyClick(fs, Qt::Key_F, Qt::ControlModifier);
+        QTest::qWait(50);
+        CHECK(!w.fullScreenViewer() && !full->isChecked());
+        CHECK(engine.speed() != 0.0);
+    }
+    engine.pause();
+    // Closing the window (window manager) ends it as well
+    full->trigger();
+    settle();
+    if (CHECK(w.fullScreenViewer())) {
+        w.fullScreenViewer()->close();
+        QTest::qWait(50);
+        CHECK(!w.fullScreenViewer() && !full->isChecked());
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -314,5 +406,6 @@ int main(int argc, char** argv)
     testKeys(w);
     testEditPage(w, engine);
     testOtherPages(w);
+    testFullScreen(w, engine);
     return Check::result();
 }

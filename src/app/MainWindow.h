@@ -120,6 +120,11 @@ public:
     // Never touches the settings (panels/…, layout/…) or the timeline's zoom/scroll.
     void setViewerLarge(bool on);
     bool viewerLarge() const { return m_large.active; }
+    // Full-screen viewer (Workspace › Full-Screen Viewer, Ctrl+F, the viewer's button): only the picture, black around
+    // it, on the screen the window is on (ui/FullScreenViewer); the playback keys work there, Esc or the same key leave.
+    // Playback goes on across the switch.
+    void setViewerFullScreen(bool on);
+    class FullScreenViewer* fullScreenViewer() const; // nullptr while it is off
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -294,6 +299,8 @@ private:
     } m_large;
     QAction* m_largeAction = nullptr;
     class QShortcut* m_largeEscape = nullptr; // Esc ends the large viewer (only enabled while it is on)
+    QAction* m_fullScreenAction = nullptr;
+    QPointer<class FullScreenViewer> m_fullScreen; // while the full-screen viewer is on
 
     QHash<QString, MediaInfo> m_probeCache;
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)

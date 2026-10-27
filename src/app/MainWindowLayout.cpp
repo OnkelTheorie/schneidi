@@ -42,6 +42,7 @@
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
 #include "ui/MulticamView.h"
+#include "ui/FullScreenViewer.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
@@ -77,6 +78,7 @@
 #include <QInputDialog>
 #include <QStandardPaths>
 #include <QTimer>
+#include <utility>
 
 void MainWindow::buildLayout()
 {
@@ -431,4 +433,30 @@ void MainWindow::setViewerLarge(bool on)
     }
     if (m_largeAction) m_largeAction->setChecked(m_large.active);
     if (m_largeEscape) m_largeEscape->setEnabled(m_large.active);
+}
+
+void MainWindow::setViewerFullScreen(bool on)
+{
+    if (on && !m_fullScreen) {
+        m_fullScreen = new FullScreenViewer(m_engine, m_viewer->picture(), this);
+        connect(m_fullScreen, &FullScreenViewer::exitRequested, this, [this] { setViewerFullScreen(false); });
+        // The keys of these window actions work in the full-screen window too (an action's window shortcut counts in
+        // every window it is added to)
+        for (const char* id : {"play_pause", "shuttle_back", "stop", "shuttle_fwd", "frame_prev", "frame_next",
+                               "second_prev", "second_next", "edit_prev", "edit_next", "go_start", "go_end", "mark_in",
+                               "mark_out", "viewer_full_screen"})
+            if (QAction* a = InputBindings::instance().action(id)) m_fullScreen->addAction(a);
+        m_fullScreen->showOn(screen());
+    } else if (!on && m_fullScreen) {
+        FullScreenViewer* fs = std::exchange(m_fullScreen, nullptr);
+        fs->hide();
+        fs->deleteLater();
+        activateWindow();
+    }
+    if (m_fullScreenAction) m_fullScreenAction->setChecked(m_fullScreen != nullptr);
+}
+
+FullScreenViewer* MainWindow::fullScreenViewer() const
+{
+    return m_fullScreen;
 }
