@@ -189,8 +189,11 @@ void AiChat::toolsReady()
             const QJsonObject o = QJsonDocument::fromJson(r.text.toUtf8()).object();
             m_guideText = o["guide"].toString();
             QStringList topics;
-            for (const QJsonValue& t : o["topics"].toArray())
+            m_guideTopics.clear();
+            for (const QJsonValue& t : o["topics"].toArray()) {
                 topics << QString("- %1: %2").arg(t["topic"].toString(), t["title"].toString());
+                m_guideTopics << t["topic"].toString();
+            }
             if (!topics.isEmpty())
                 m_guideText += "\n\nTask guides (call `guide` with the topic before such a task):\n" + topics.join('\n');
         }
@@ -384,6 +387,15 @@ void AiChat::nextTool()
                                                        "{\"%1\": …} (%2 takes: %3)")
                                                    .arg(params.first(), call.name, params.join(", "));
         toolDone(entry, call, QString("could not read the arguments of this call: %1; %2").arg(call.error, how), {}, true);
+        return;
+    }
+    // The main guide is in the instructions already; small models ask for it again and again (~2,500 tokens each)
+    if (call.name == "guide" && call.input.value("topic").toString().trimmed().isEmpty() && !m_guideText.isEmpty()
+        && m_endpoint.protocol != Ai::Protocol::Anthropic) {
+        const QJsonObject answer{{"ok", true},
+                                 {"note", "the main guide is already in your instructions (not sent again); for a task "
+                                          "call guide with its topic: " + m_guideTopics.join(", ")}};
+        toolDone(entry, call, QString::fromUtf8(QJsonDocument(answer).toJson(QJsonDocument::Compact)), {}, false);
         return;
     }
     m_mcp->call(

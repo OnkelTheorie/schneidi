@@ -113,6 +113,7 @@ private:
     bool m_review = false;
     QString m_system; // fixed for the chat (providers cache it with the tools)
     QString m_guideText; // the editing guide (the `guide` tool), read once
+    QStringList m_guideTopics; // its task guides ("social" …)
     enum class Guide { No, Asking, Read } m_guide = Guide::No;
     Ai::Usage m_usage;
     int m_rounds = 0;

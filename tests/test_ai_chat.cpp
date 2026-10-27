@@ -8,8 +8,9 @@
 // watch folder waits until the user has chosen); what the user changed between two answers comes with the next request
 // (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on, tool calls it
 // wrote as text are run, a call without a project works on the open one, a request a local server cut is not run,
-// unreadable arguments are answered with what to send; errors (bad key, overloaded then fine, no server), stopping a
-// request, test runs that never send; the chat section in Settings › AI (test connection, model list, key stored).
+// unreadable arguments are answered with what to send, `guide` without a topic gets the topics only; errors (bad key,
+// overloaded then fine, no server), stopping a request, test runs that never send; the chat section in Settings › AI
+// (test connection, model list, key stored).
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
 
 #include "check.h"
@@ -194,7 +195,7 @@ FakeProvider::Response anthropicText(const QString& text, int delayMs = 0)
             delayMs};
 }
 
-// args: the arguments as the model wrote them (also no JSON at all)
+// json: the arguments as the model wrote them (also no JSON at all)
 FakeProvider::Response openAiToolText(const QString& id, const QString& name, const QString& json)
 {
     const auto chunk = [](const QJsonObject& o) { return "data: " + QJsonDocument(o).toJson(QJsonDocument::Compact) + "\n\n"; };
@@ -696,6 +697,19 @@ void test(const QString& dir)
             const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
             CHECK(answer.contains("no valid JSON"));
             CHECK(answer.contains("{\"topic\": …}") && answer.contains("guide takes: topic"));
+        }
+    }
+
+    // ---- `guide` without a topic (the main guide is in the instructions): not sent again, the topics instead ----
+    {
+        fake.script = {openAiTool("call_g", "guide", QJsonObject{}), openAiText("Ok.")};
+        const int sent = int(fake.requests.size());
+        panel->sendText("Lies die Anleitung");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 2)) {
+            const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
+            CHECK(answer.contains("already in your instructions") && answer.contains("social"));
+            CHECK(!answer.contains("Editing video with schneidi"));
         }
     }
 
