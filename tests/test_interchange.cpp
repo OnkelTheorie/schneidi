@@ -522,5 +522,15 @@ int main(int argc, char** argv)
             "global_start_time":{"rate":2147483647,"value":0},"tracks":{"children":[]}})");
         CHECK(s.format.rate.fps() >= 1 && s.format.rate.fps() <= 1000);
     }
+    // A clip of -100 frames (moved the next one before the timeline's start): left out
+    {
+        const Seq s = readOtio(R"({"OTIO_SCHEMA":"Timeline.1","tracks":{"children":[{"OTIO_SCHEMA":"Track.1","kind":"Video",
+            "children":[{"OTIO_SCHEMA":"Clip.1","name":"a","media_reference":{"target_url":"file:///m/a.mp4"},
+            "source_range":{"duration":{"rate":25,"value":-100},"start_time":{"rate":25,"value":0}}},
+            {"OTIO_SCHEMA":"Clip.1","name":"b","media_reference":{"target_url":"file:///m/b.mp4"},
+            "source_range":{"duration":{"rate":25,"value":50},"start_time":{"rate":25,"value":0}}}]}]}})");
+        if (CHECK(s.video.size() == 1 && s.video[0].items.size() == 2))
+            CHECK(s.video[0].items[0].length == 0 && s.video[0].items[1].start == 0 && s.video[0].items[1].length == 50);
+    }
     return Check::result();
 }

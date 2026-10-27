@@ -222,7 +222,7 @@ Sequence readOtio(const QByteArray& data)
             }
             // Without a source range a clip plays all of its media
             const QJsonValue range = cv["source_range"].isObject() ? cv["source_range"] : ref["available_range"];
-            const int length = frames(range["duration"], rate);
+            const int length = std::max(0, frames(range["duration"], rate)); // negative: broken, left out (0)
             const bool generator = ref["OTIO_SCHEMA"].toString().startsWith("GeneratorReference");
             if (generator) generators << cv["name"].toString(ref["generator_kind"].toString());
             if (schema.startsWith("Gap") || !schema.startsWith("Clip") || generator) {
