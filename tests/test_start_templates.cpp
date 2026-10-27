@@ -2,13 +2,14 @@
 // started with and the default; the built-in ones (game, podcast, vertical) are only offered and never mute, hide or
 // lock a track. Own templates are files in the app data folder (save, list, find, rename, delete, default follows),
 // projects carry the fixed format and their own import presets in optional fields, the app starts and makes new
-// projects from the default, the first clip keeps a fixed resolution, the CLI `new` takes a template and `templates`
-// lists them. Everything stays in the test's own settings and folders.
+// projects from the default (or the one chosen when it asks, own ones named like built-in ones included), the first
+// clip keeps a fixed resolution, the CLI `new` takes a template and `templates` lists them. Everything stays in the test's own settings and folders.
 // TEMPLATES_DUMP=<folder>: pictures of Settings › Start Templates and the File menu (settings-templates.png,
 // file-menu.png, template-menu.png, save-template.png).
 
 #include "check.h"
 
+#include "app/InputBindings.h"
 #include "app/MainWindow.h"
 #include "app/ProjectSettingsDialog.h"
 #include "app/SettingsDialog.h"
@@ -27,14 +28,17 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
+#include <QSet>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <clocale>
 #include <utility>
 
@@ -611,6 +615,37 @@ void testMainWindow(const QString& dir)
         CHECK(texts.contains(T("%1 (Standard)").arg(T("Hochformat 9:16"))));
         CHECK(texts.contains(T("Spielaufnahme")) && texts.contains(T("Neutral")));
         CHECK(texts.contains(T("Startvorlagen verwalten…")));
+    }
+
+    // File › New Project asking for the template: an own template named like a built-in one is the one chosen
+    {
+        StartTemplate mine = StartTemplates::fromProject(StartTemplates::apply(builtIn(StartTemplates::NeutralId)), T("Neutral"));
+        Track third;
+        third.kind = TrackKind::Video;
+        mine.data.timeline.video << third;
+        QString error;
+        CHECK(StartTemplates::save(mine, &error));
+        StartTemplates::setAskOnNew(true);
+        QStringList offered;
+        QTimer answer;
+        answer.setInterval(20);
+        QObject::connect(&answer, &QTimer::timeout, [&] {
+            auto* dlg = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+            auto* box = dlg ? dlg->findChild<QComboBox*>() : nullptr;
+            if (!box) return;
+            answer.stop();
+            for (int i = 0; i < box->count(); ++i) offered << box->itemText(i);
+            box->setCurrentIndex(box->count() - 1); // the own one (after the built-in ones)
+            dlg->accept();
+        });
+        answer.start();
+        if (QAction* action = InputBindings::instance().action("project_new"); CHECK(action)) action->trigger();
+        answer.stop();
+        CHECK_EQ(offered.size(), int(StartTemplates::all().size()));
+        CHECK_EQ(int(QSet<QString>(offered.begin(), offered.end()).size()), int(offered.size())); // all told apart
+        CHECK_EQ(p->timeline().video.size(), 3);
+        StartTemplates::setAskOnNew(false);
+        CHECK(StartTemplates::remove(mine.id));
     }
 
     if (const QString dump = qEnvironmentVariable("TEMPLATES_DUMP"); !dump.isEmpty()) {
