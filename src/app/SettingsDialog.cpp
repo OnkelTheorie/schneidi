@@ -64,7 +64,8 @@ SettingsDialog::SettingsDialog(const AiSettings& ai, QWidget* parent) : QDialog(
     auto* lay = new QVBoxLayout(this);
     lay->addWidget(m_tabs, 1);
     lay->addWidget(buttons);
-    resize(560, 560);
+    // Room for the longest page without scrolling (Start Templates with its buttons below the list); fits a 768 screen
+    resize(640, 680);
 }
 
 QWidget* SettingsDialog::buildGeneral()

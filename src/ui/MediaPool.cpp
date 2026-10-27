@@ -11,6 +11,7 @@
 #include "ui/FileManager.h"
 #include "ui/HoverScrub.h"
 #include "ui/MediaStorage.h"
+#include "ui/ElidedLabel.h"
 #include "ui/PoolFilterButton.h"
 #include "engine/Background.h"
 
@@ -321,14 +322,17 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_search->setPlaceholderText(T("Suchen…"));
     m_search->setClearButtonEnabled(true);
     m_search->setVisible(false);
-    m_search->setMinimumWidth(60);
+    title->ensurePolished(); // the field is at least as wide as the title it replaces: the Viewer beside stays put
+    m_search->setMinimumWidth(std::max(60, title->sizeHint().width()));
     connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildClips(); });
     m_searchBtn = new QToolButton;
     m_searchBtn->setText("🔍︎"); // U+FE0E: as text, not as a colored emoji (Windows)
     m_searchBtn->setToolTip(T("Clips suchen"));
     m_searchBtn->setAutoRaise(true);
     m_searchBtn->setCheckable(true);
-    connect(m_searchBtn, &QToolButton::toggled, this, [this](bool on) {
+    // The open field takes the title's place: the header stays as narrow as before (the pool does not widen)
+    connect(m_searchBtn, &QToolButton::toggled, this, [this, title](bool on) {
+        title->setVisible(!on);
         m_search->setVisible(on);
         if (on) m_search->setFocus();
         else m_search->clear();
@@ -395,11 +399,16 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     });
     connect(m_bins, &QTreeWidget::customContextMenuRequested, this, &MediaPool::showBinMenu);
 
-    m_binTitle = new QLabel;
-    m_binTitle->setStyleSheet(QString("color: %1; padding: 2px 6px;").arg(Theme::textDim.name()));
-    m_binTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); // long filter texts do not widen the pool
+    m_binTitle = new ElidedLabel; // long search/filter texts end in "…" (all in the tooltip), never widen the pool
+    m_binTitle->setObjectName("pool_bin_title");
+    m_binTitle->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    m_binTitle->setContentsMargins(6, 2, 6, 2);
+    m_binTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    // Only the cross, like on a filter chip: the narrow pool keeps its room for what is filtered
     m_filterReset = new QToolButton;
-    m_filterReset->setText("✕ " + T("Filter zurücksetzen"));
+    m_filterReset->setObjectName("pool_filter_reset");
+    m_filterReset->setText("✕");
+    m_filterReset->setToolTip(T("Filter zurücksetzen"));
     m_filterReset->setAutoRaise(true);
     m_filterReset->setVisible(false);
     connect(m_filterReset, &QToolButton::clicked, this, [this] { setFilter({}); });
@@ -808,8 +817,7 @@ void MediaPool::rebuildClips()
     QString title = search.isEmpty() ? bin : T("Suche in „%1“: %2").arg(bin, search);
     if (filter.active())
         title = search.isEmpty() ? T("Filter in „%1“: %2").arg(bin, filter.summary()) : title + " · " + filter.summary();
-    m_binTitle->setText(title);
-    m_binTitle->setToolTip(title);
+    m_binTitle->setFullText(title);
     m_filterReset->setVisible(filter.active());
     const bool list = m_viewMode == ViewMode::List;
     auto found = [&](int itemBin, const QString& name) {
