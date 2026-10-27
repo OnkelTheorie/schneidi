@@ -9,6 +9,14 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build-Typ" FORCE)
 endif()
 
+# Faster rebuilds when ccache is installed (sharing between git worktrees: base_dir and hash_dir in ccache's own
+# config, see docs). A launcher given on the command line wins.
+find_program(SCHNEIDI_CCACHE ccache)
+if(SCHNEIDI_CCACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    set(CMAKE_CXX_COMPILER_LAUNCHER ${SCHNEIDI_CCACHE})
+    set(CMAKE_C_COMPILER_LAUNCHER ${SCHNEIDI_CCACHE})
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)

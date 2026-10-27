@@ -198,6 +198,15 @@ endforeach()
 set_tests_properties(test_av_sync test_preview_audio test_picture_catchup test_play_end test_av_sync_mlt_audio test_preview_audio_mlt_audio test_play_end_mlt_audio
                      PROPERTIES RUN_SERIAL TRUE) # preview timing
 
+# Label "timing": tests that measure real time or wait for other processes. They fail when the machine is busy (other
+# builds, a game, a parallel ctest), not when the code is wrong. tools/run_tests.py runs everything else in parallel,
+# then these one by one, and once more what failed (ctest -LE timing / -L timing work by hand too).
+set_tests_properties(test_av_sync test_preview_audio test_picture_catchup test_play_end test_audio_player test_speed
+                     test_av_sync_mlt_audio test_preview_audio_mlt_audio test_play_end_mlt_audio test_serve
+                     test_video_decoder test_watch_folders
+                     PROPERTIES LABELS timing)
+set_tests_properties(test_video_decoder PROPERTIES TIMEOUT 600) # ~100 s alone, over 300 s on a loaded machine
+
 # Server/container without a display: MLT's Qt module (qtblend, qtext) must still load – it used to refuse without
 # $DISPLAY and the timeline crashed on the invalid transition (see Bundle::prepareMltEnvironment)
 foreach(name test_cli test_multicam_render)
