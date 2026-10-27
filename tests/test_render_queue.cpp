@@ -28,6 +28,7 @@
 #include <QPainter>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QUndoStack>
 #include <clocale>
@@ -719,6 +720,29 @@ int main(int argc, char** argv)
         CHECK_EQ(finishedCount, 1);
         CHECK(!Exporter::anyRunning());
         CHECK(!QFileInfo::exists(tmp.filePath("prepcancel.mp4")) && !QFileInfo::exists(tmp.filePath("prepnext.mp4")));
+    }
+
+    // Cancel right as preparing ends (the window was busy meanwhile): the finished build waits in the event queue when
+    // cancel() stops it; it must do nothing then (it used the deleted thread: crash) and never start the export
+    {
+        RenderJob done = mk(17, "prepdone.mp4", "h264");
+        done.settings.encoder = VideoEncoder::Software; // the build starts at once (no graphics card probe)
+        p.setRenderQueue({done});
+        int finishedCount = 0;
+        const auto c = QObject::connect(&q, &RenderQueue::finished, [&] { ++finishedCount; });
+        CHECK(q.start());
+        CHECK(q.isPreparing());
+        QThread::msleep(3000); // no events: the build thread ends, its result stays queued
+        q.cancel();
+        CHECK(!q.isRunning());
+        QEventLoop settle;
+        QTimer::singleShot(500, &settle, &QEventLoop::quit);
+        settle.exec();
+        QObject::disconnect(c);
+        CHECK_EQ(finishedCount, 1);
+        CHECK(job(p, 17)->status == RenderStatus::Canceled);
+        CHECK(!Exporter::anyRunning());
+        CHECK(!QFileInfo::exists(tmp.filePath("prepdone.mp4")));
     }
 
     // Encoder "Auto" in the first job of a session waits for the graphics card probe: in the background too, cancel
