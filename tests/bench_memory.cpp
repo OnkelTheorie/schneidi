@@ -125,13 +125,13 @@ Clip mk(int id, const QString& path, int start, int in, int length)
 
 void release(bool purge, bool trim, bool quiet = false);
 
-// ms from play() until `frames` new pictures arrived (-1 = none within 5 s); then pauses. purge: give the pool back
-// right before play() (what the app does a few seconds after stopping)
-double playStart(Engine& engine, int at, int frames = 1, bool purge = false)
+// ms from play() until `frames` new pictures arrived (-1 = none within 5 s); then pauses. purge/trim: give the pool /
+// the free heap back right before play() (what the app does a few seconds after stopping)
+double playStart(Engine& engine, int at, int frames = 1, bool purge = false, bool trim = false)
 {
     engine.seek(at);
     wait(400);
-    if (purge) release(true, true, true);
+    if (purge || trim) release(purge, trim, true);
     QElapsedTimer t;
     int got = 0;
     double ms = -1;
@@ -347,16 +347,20 @@ int main(int argc, char** argv)
     release(false, true);
     snap("+ malloc_trim");
 
-    // Playback start: warm pool against a pool purged right before
-    double warm = 0, cold = 0;
-    const int runs = 5;
+    // Playback start: warm pool against giving back right before (pool, heap, both), in turns
+    double warm = 0, purged = 0, trimmed = 0, both = 0;
+    const int runs = 6;
     for (int i = 0; i < runs; ++i) {
         const int at = (i * 53) % std::max(1, end - 2 * fps);
         warm += playStart(engine, at, 3); // pool filled by the runs before
-        cold += playStart(engine, at, 3, true);
+        purged += playStart(engine, at, 3, true, false);
+        warm += playStart(engine, at, 3);
+        trimmed += playStart(engine, at, 3, false, true);
+        warm += playStart(engine, at, 3);
+        both += playStart(engine, at, 3, true, true);
     }
-    std::printf("3 pictures after play: warm pool %.1f ms, purged pool %.1f ms (average of %d)\n", warm / runs,
-                cold / runs, runs);
+    std::printf("3 pictures after play (average of %d): warm %.1f ms, pool purged %.1f ms, heap trimmed %.1f ms, "
+                "both %.1f ms\n", runs, warm / (3 * runs), purged / runs, trimmed / runs, both / runs);
     snap("end");
 
     // The app's own release: play once more, stop, IdleRelease gives it back after its delay
