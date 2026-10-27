@@ -98,7 +98,7 @@ private:
     QVector<Wheel> m_wheels;
     QVector<Slider> m_sliders;
     QLabel* m_clipName = nullptr;
-    QLabel* m_lutName = nullptr;
+    class ElidedLabel* m_lutName = nullptr;
     QToolButton* m_lutClear = nullptr;
     QToolButton* m_enabled = nullptr;
     QToolButton* m_keyPrev = nullptr;

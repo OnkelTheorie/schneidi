@@ -13,6 +13,7 @@
 #include "core/Timecode.h"
 #include "engine/ColorGrade.h"
 #include "engine/Tracker.h"
+#include "ui/ElidedLabel.h"
 #include "ui/ScrubField.h"
 #include "ui/WindowOverlay.h"
 
@@ -22,6 +23,7 @@
 #include <QConicalGradient>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -235,54 +237,74 @@ ColorPanel::ColorPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     head->addSpacing(6);
     head->addWidget(resetAll);
 
-    // Wheels
-    auto* wheels = new QHBoxLayout;
-    wheels->setSpacing(12);
-    wheels->addStretch(1);
-    for (Wheel& w : m_wheels) wheels->addWidget(buildWheel(w));
-    wheels->addStretch(1);
-
-    // Sliders below (like the bar under the DaVinci wheels)
+    // Sliders below the wheels (like the bar under the DaVinci wheels), two under each wheel, the LUT under Offset
     m_sliders = {{P::GradeContrast}, {P::GradePivot}, {P::GradeSaturation},
                  {P::GradeTemp},     {P::GradeTint},  {P::GradeExposure}};
-    auto* bar = new QHBoxLayout;
-    bar->setSpacing(14);
-    bar->addStretch(1);
-    bar->addWidget(buildSlider(m_sliders[0], T("Kontrast"), 0, 2, 0.002, 3));
-    bar->addWidget(buildSlider(m_sliders[1], T("Pivot"), 0, 1, 0.001, 3));
-    bar->addWidget(buildSlider(m_sliders[2], T("Sättigung"), 0, 100, 0.1, 2));
-    bar->addWidget(buildSlider(m_sliders[3], T("Temperatur"), -4000, 4000, 5, 1));
-    bar->addWidget(buildSlider(m_sliders[4], T("Tönung"), -100, 100, 0.1, 2));
-    bar->addWidget(buildSlider(m_sliders[5], T("Belichtung"), -4, 4, 0.01, 2));
+    const QString sliderNames[] = {T("Kontrast"), T("Pivot"), T("Sättigung"), T("Temperatur"), T("Tönung"), T("Belichtung")};
+    const double ranges[][4] = {{0, 2, 0.002, 3}, {0, 1, 0.001, 3}, {0, 100, 0.1, 2},
+                                {-4000, 4000, 5, 1}, {-100, 100, 0.1, 2}, {-4, 4, 0.01, 2}};
 
-    // LUT
+    // LUT: label above like the sliders, the file name with its buttons below
+    auto* lutBox = new QWidget;
+    auto* lutLay = new QVBoxLayout(lutBox);
+    lutLay->setContentsMargins(0, 0, 0, 0);
+    lutLay->setSpacing(1);
     auto* lutLabel = new QLabel(T("LUT"));
-    lutLabel->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
-    m_lutName = new QLabel;
-    m_lutName->setMinimumWidth(120);
+    lutLabel->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::textDim.name()));
+    lutLabel->setAlignment(Qt::AlignCenter);
+    m_lutName = new ElidedLabel; // a long file name ends in "…" instead of widening Offset's column
+    m_lutName->setMaximumWidth(110);
     auto* lutLoad = new QToolButton;
     lutLoad->setText(T("Laden…"));
     lutLoad->setToolTip(T("LUT (.cube, .3dl, .csp, Hald-CLUT) für diesen Clip laden, wird nach der Korrektur angewendet"));
     connect(lutLoad, &QToolButton::clicked, this, &ColorPanel::loadLut);
     m_lutClear = smallButton("✕", T("LUT entfernen"));
     connect(m_lutClear, &QToolButton::clicked, this, [this] { m_editor->setGradeLut(targets(), {}); });
-    bar->addSpacing(20);
-    bar->addWidget(lutLabel);
-    bar->addWidget(m_lutName);
-    bar->addWidget(lutLoad);
-    bar->addWidget(m_lutClear);
-    bar->addStretch(1);
+    auto* lutRow = new QHBoxLayout;
+    lutRow->setSpacing(4);
+    lutRow->addWidget(m_lutName);
+    lutRow->addWidget(lutLoad);
+    lutRow->addWidget(m_lutClear);
+    lutLay->addWidget(lutLabel);
+    lutLay->addLayout(lutRow);
+
+    // One grid: the wheels spread over the width (the first at the left edge, the last at the right one, even gaps
+    // in the stretching columns between them), each wheel's sliders centered in its column below
+    auto* grid = new QGridLayout;
+    grid->setHorizontalSpacing(12);
+    grid->setVerticalSpacing(10);
+    for (int i = 0; i < m_wheels.size(); ++i) {
+        const int col = 2 * i;
+        if (i) grid->setColumnStretch(col - 1, 1);
+        grid->addWidget(buildWheel(m_wheels[i]), 0, col);
+        auto* under = new QHBoxLayout;
+        under->setSpacing(14);
+        if (2 * i + 1 < m_sliders.size()) {
+            under->addWidget(buildSlider(m_sliders[2 * i], sliderNames[2 * i], ranges[2 * i][0], ranges[2 * i][1],
+                                         ranges[2 * i][2], int(ranges[2 * i][3])));
+            under->addWidget(buildSlider(m_sliders[2 * i + 1], sliderNames[2 * i + 1], ranges[2 * i + 1][0],
+                                         ranges[2 * i + 1][1], ranges[2 * i + 1][2], int(ranges[2 * i + 1][3])));
+        } else {
+            under->addWidget(lutBox);
+        }
+        grid->addLayout(under, 1, col, Qt::AlignHCenter);
+    }
 
     m_body = new QWidget;
     auto* outer = new QHBoxLayout(m_body);
     outer->setContentsMargins(8, 8, 8, 8);
     outer->setSpacing(10);
     auto* bl = new QVBoxLayout;
-    bl->setSpacing(10);
-    bl->addLayout(wheels);
-    bl->addLayout(bar);
+    bl->addLayout(grid);
     bl->addStretch(1);
     outer->addLayout(bl, 1);
+    // The windows as a section of their own beside the wheels
+    auto* line = new QFrame;
+    line->setFrameShape(QFrame::VLine);
+    line->setFixedWidth(1);
+    line->setStyleSheet(QString("background: %1; border: none;").arg(Theme::border.name()));
+    outer->addSpacing(6);
+    outer->addWidget(line);
     outer->addWidget(buildWindows());
 
     m_empty = new QLabel(T("Kein Videoclip ausgewählt oder am Playhead"));
@@ -551,7 +573,7 @@ void ColorPanel::refresh()
 
     const QString lut = ColorGrade::lutPath(*c);
     const bool lutOk = lut.isEmpty() || QFileInfo::exists(lut);
-    m_lutName->setText(lut.isEmpty() ? T("Keine") : EffectFolders::displayName(lut) + (lutOk ? QString() : T(" (fehlt)")));
+    m_lutName->setFullText(lut.isEmpty() ? T("Keine") : EffectFolders::displayName(lut) + (lutOk ? QString() : T(" (fehlt)")));
     m_lutName->setToolTip(lut);
     m_lutName->setStyleSheet(QString("color: %1;").arg((lutOk ? Theme::text : Theme::warning).name()));
     m_lutClear->setEnabled(!lut.isEmpty());
