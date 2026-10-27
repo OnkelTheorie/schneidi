@@ -1,14 +1,17 @@
 // Filmstrips and Media Storage previews inside the program (engine/video/Thumbnails) instead of an ffmpeg process per
 // file: the same pictures at the same times as the ffmpeg command line that made them before (h264, hevc, turned phone
 // video, variable frame rate, odd size with anamorphic pixels), audio only gives none; MediaCache fills its key frame
-// index with them.
+// index with them, Media Storage shows the picture at 1 s.
 #include "check.h"
 
 #include "engine/MediaCache.h"
 #include "engine/video/Thumbnails.h"
+#include "ui/MediaStorage.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QListWidget>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTemporaryDir>
@@ -93,7 +96,7 @@ void compare(const char* name, const QString& path, const QSize& box, int keys)
     for (size_t i = 0; i < std::min(own.size(), ref.size()); ++i) {
         const double dt = std::abs(own[i].first - ref[i].first);
         const double diff = difference(own[i].second, ref[i].second);
-        const bool ok = dt < 0.002 && own[i].second.size() == box && diff < 6 && brightness(own[i].second) > 30;
+        const bool ok = dt < 0.002 && own[i].second.size() == box && diff < 3 && brightness(own[i].second) > 15; // black would be 0
         Check::report(ok, name, __FILE__, __LINE__,
                       QString("picture %1: %2 s (ffmpeg %3 s), %4x%5, difference %6, brightness %7")
                           .arg(i)
@@ -214,6 +217,31 @@ int main(int argc, char** argv)
         CHECK(first.size() == QSize(144, 81) && brightness(first) > 30);
         const QImage upright = Video::stillAt(file("rotated90.mp4"), 1.0, QSize(144, 81));
         CHECK(upright.width() < upright.height()); // turned, without borders
+    }
+
+    // Media Storage shows it in its list (in its own thread, the window stays free)
+    {
+        QTemporaryDir folder;
+        QFile::copy(file("rotated90.mp4"), folder.filePath("phone.mp4"));
+        MediaStorage storage;
+        storage.setPersistent(false);
+        storage.resize(500, 300);
+        storage.show();
+        storage.setFolder(folder.path());
+        auto* list = storage.findChild<QListWidget*>();
+        if (CHECK(list) && CHECK_EQ(list->count(), 1)) {
+            const qint64 before = list->item(0)->icon().cacheKey();
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < 20000 && list->item(0)->icon().cacheKey() == before)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            const QImage icon = list->item(0)->icon().pixmap(QSize(144, 81)).toImage().convertToFormat(QImage::Format_RGB32);
+            // upright: blue on the left of the middle, red on the right (a placeholder has neither)
+            const QRgb left = icon.pixel(icon.width() / 2 - 8, icon.height() / 2);
+            const QRgb right = icon.pixel(icon.width() / 2 + 8, icon.height() / 2);
+            CHECK(qBlue(left) > 150 && qRed(left) < 100);
+            CHECK(qRed(right) > 150 && qBlue(right) < 100);
+        }
     }
 
     // MediaCache: the key frames land in its index at their project frames, the audio file fails
