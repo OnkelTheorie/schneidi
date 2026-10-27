@@ -50,6 +50,7 @@ schneidi_test(test_pool_storage) # Media Pool filter + keys, Media Storage marks
 schneidi_test(test_pool_remove) # removing clips from the Media Pool: core op, undo, watch, AI turn, CLI op, keys, question
 target_link_libraries(test_pool_remove PRIVATE schneidi_cli_lib)
 schneidi_test(test_color)
+schneidi_test(test_color_bake)
 schneidi_test(test_grade_windows)
 schneidi_test(test_workspace)
 schneidi_test(test_luts)
@@ -294,6 +295,9 @@ if(WIN32) # WASAPI loopback: what the system sends to the sound card
 endif()
 add_executable(bench_render_start bench_render_start.cpp check.h)
 target_link_libraries(bench_render_start PRIVATE schneidi_lib Qt6::Test)
+# Color page correction: baked tables against the per-pixel reference (speed and deviation, 1080p)
+add_executable(bench_color_grade bench_color_grade.cpp check.h)
+target_link_libraries(bench_color_grade PRIVATE schneidi_lib)
 # Own time stretcher: quality/speed, against Rubber Band when it is installed (comparison only, the app does not use it)
 add_executable(bench_stretch bench_stretch.cpp check.h)
 target_link_libraries(bench_stretch PRIVATE schneidi_lib)

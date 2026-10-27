@@ -17,6 +17,8 @@
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include <thread>
+#include <vector>
 
 namespace ColorGrade {
 
@@ -109,17 +111,253 @@ inline void sample3d(const Lut& lut, float rgb[3])
     }
 }
 
-inline void sample1d(const Lut& lut, float rgb[3])
+inline float sample1d(const Lut& lut, int c, float x)
 {
     const int n = lut.size;
-    for (int c = 0; c < 3; ++c) {
-        const float span = lut.domainMax[c] - lut.domainMin[c];
-        const float x = shape(lut, c, rgb[c]);
-        float v = span > 0 ? (x - lut.domainMin[c]) / span : x;
-        v = std::clamp(v, 0.0f, 1.0f) * float(n - 1);
-        const int i0 = std::min(int(v), n - 1), i1 = std::min(i0 + 1, n - 1);
-        const float f = v - float(i0);
-        rgb[c] = lut.data[i0 * 3 + c] * (1 - f) + lut.data[i1 * 3 + c] * f;
+    const float span = lut.domainMax[c] - lut.domainMin[c];
+    x = shape(lut, c, x);
+    float v = span > 0 ? (x - lut.domainMin[c]) / span : x;
+    v = std::clamp(v, 0.0f, 1.0f) * float(n - 1);
+    const int i0 = std::min(int(v), n - 1), i1 = std::min(i0 + 1, n - 1);
+    const float f = v - float(i0);
+    return lut.data[i0 * 3 + c] * (1 - f) + lut.data[i1 * 3 + c] * f;
+}
+
+inline void sample1d(const Lut& lut, float rgb[3])
+{
+    for (int c = 0; c < 3; ++c) rgb[c] = sample1d(lut, c, rgb[c]);
+}
+
+// 0..1 -> 0..255, rounded (std::lround per channel made a 1080p frame take ~25 ms)
+inline uint8_t toByte(float x) { return uint8_t(int((x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x) * 255.0f + 0.5f)); }
+
+bool usable(const Lut* lut)
+{
+    if (!lut || lut->size < 2) return false;
+    const qsizetype n = lut->size;
+    return lut->data.size() == (lut->is3d ? n * n * n : n) * 3;
+}
+
+// ---- Baked correction ----
+// A pixel goes through: curve per channel (exact table per input byte) -> saturation (mixes the channels, fixed
+// point) -> LUT. A 1D LUT is per channel again; a 3D LUT keeps its own grid: its nodes in fixed point, three
+// channels in one 64-bit word (lanes of 21 bits), so a trilinear step is two multiplications for all three.
+
+constexpr int kLane = 21;
+constexpr uint64_t kLaneMask = 0x1FFF | (uint64_t(0x1FFF) << kLane) | (uint64_t(0x1FFF) << 2 * kLane);
+constexpr uint64_t kLaneHalf = 128 | (uint64_t(128) << kLane) | (uint64_t(128) << 2 * kLane);
+constexpr int kNodeOffset = 2048; // node = (value + 0.5) * 4096: values -0.5..1.5 (LUTs may leave 0..1 a bit)
+constexpr int kMaxPacked = 129;   // bigger 3D LUTs (huge Hald CLUTs) stay per pixel
+constexpr int kSteps = 4096;      // input resolution of the LUT mapping after the saturation (0..1)
+
+// Lane value (0..8191) -> output byte
+const std::array<uint8_t, 8192>& laneByte()
+{
+    static const auto table = [] {
+        std::array<uint8_t, 8192> t{};
+        for (int v = 0; v < 8192; ++v) {
+            const int x = std::clamp(v - kNodeOffset, 0, kSteps);
+            t[v] = uint8_t((x * 255 + kSteps / 2) / kSteps);
+        }
+        return t;
+    }();
+    return table;
+}
+
+// Interpolate two nodes (all three lanes), f = 0..256
+inline uint64_t lerp(uint64_t a, uint64_t b, uint32_t f)
+{
+    return ((a * (256 - f) + b * f + kLaneHalf) >> 8) & kLaneMask;
+}
+
+} // namespace
+
+struct LutTables {
+    int n = 0;                   // 3D grid size, 0 = no nodes (too big, per pixel)
+    std::vector<uint64_t> nodes; // R | G << 21 | B << 42, padded so the neighbor of the last node can be read
+    // Per channel input 0..1 in kSteps steps -> 3D: node offset << 8 | fraction (1/256 of a cell); 1D: output
+    // in 1/65536 of 0..1 (+ one entry, interpolated between the steps)
+    std::vector<int32_t> coord[3];
+    std::vector<int32_t> out1d[3];
+};
+
+struct Baked {
+    enum Kind { Direct, Mix, MixLut1d, Cube, MixCube, PerPixel } kind = Direct;
+    uint8_t direct[3][256];          // Direct: output byte per input byte
+    int32_t ys[3][256], vs[3][256];  // Mix: brightness and own part (byte << 16); Mix*: in 1/2^24 of 0..1
+    int32_t coord[3][256];           // Cube: node offset << 8 | fraction per input byte
+    std::shared_ptr<const LutTables> lut;
+    Params params;                   // PerPixel
+    const Lut* raw = nullptr;        // PerPixel
+};
+
+namespace {
+
+// Position of x (after the correction, 0..1) in the 3D LUT: node offset << 8 | fraction, like sample3d
+int32_t cubeCoord(const Lut& lut, int c, float x)
+{
+    const int n = lut.size;
+    const float span = lut.domainMax[c] - lut.domainMin[c];
+    x = shape(lut, c, x);
+    float v = span > 0 ? (x - lut.domainMin[c]) / span : x;
+    v = std::clamp(v, 0.0f, 1.0f) * float(n - 1);
+    const int q = std::clamp(int(std::lround(v * 256.0f)), 0, (n - 1) * 256);
+    const int stride = c == 0 ? 1 : c == 1 ? n : n * n;
+    return int32_t(((q >> 8) * stride) << 8 | (q & 255));
+}
+
+std::shared_ptr<const LutTables> makeTables(const Lut& lut)
+{
+    auto t = std::make_shared<LutTables>();
+    if (!usable(&lut)) return t;
+    const int n = lut.size;
+    if (lut.is3d) {
+        if (n <= kMaxPacked) {
+            t->n = n;
+            const size_t count = size_t(n) * n * n;
+            t->nodes.assign(count + size_t(n) * n + n + 1, 0);
+            for (size_t i = 0; i < count; ++i) {
+                uint64_t w = 0;
+                for (int c = 0; c < 3; ++c) {
+                    const float v = lut.data[qsizetype(i * 3 + c)];
+                    const long q = std::lround((double(v) + 0.5) * kSteps);
+                    w |= uint64_t(std::clamp(q, 0L, 8191L)) << (kLane * c);
+                }
+                t->nodes[i] = w;
+            }
+            for (int c = 0; c < 3; ++c) {
+                t->coord[c].resize(kSteps + 1);
+                for (int k = 0; k <= kSteps; ++k) t->coord[c][k] = cubeCoord(lut, c, float(k) / kSteps);
+            }
+        }
+    } else {
+        for (int c = 0; c < 3; ++c) {
+            t->out1d[c].resize(kSteps + 2);
+            for (int k = 0; k <= kSteps; ++k)
+                t->out1d[c][k] = int32_t(std::lround(std::clamp(sample1d(lut, c, float(k) / kSteps), 0.0f, 1.0f) * 65536.0f));
+            t->out1d[c][kSteps + 1] = t->out1d[c][kSteps];
+        }
+    }
+    return t;
+}
+
+// Rows [0, h) in a few threads for big pictures (memory-bound: a few are enough)
+template <typename F>
+void parallelRows(int w, int h, int threads, F rows)
+{
+    int n = threads;
+    if (n <= 0) n = int64_t(w) * h < 500'000 ? 1 : std::clamp(int(std::thread::hardware_concurrency()) / 2, 1, 4);
+    n = std::clamp(n, 1, std::max(1, h));
+    if (n < 2) {
+        rows(0, h);
+        return;
+    }
+    std::vector<std::thread> pool;
+    pool.reserve(n - 1);
+    for (int i = 1; i < n; ++i) pool.emplace_back(rows, h * i / n, h * (i + 1) / n);
+    rows(0, h / n);
+    for (std::thread& t : pool) t.join();
+}
+
+// Trilinear in the packed nodes: base = node offset, f* = fractions 0..255; result lanes
+inline uint64_t trilinear(const uint64_t* q, int n, uint32_t fr, uint32_t fg, uint32_t fb)
+{
+    const size_t g = size_t(n), b = size_t(n) * n;
+    const uint64_t c00 = lerp(q[0], q[1], fr), c10 = lerp(q[g], q[g + 1], fr);
+    const uint64_t c01 = lerp(q[b], q[b + 1], fr), c11 = lerp(q[b + g], q[b + g + 1], fr);
+    return lerp(lerp(c00, c10, fg), lerp(c01, c11, fg), fb);
+}
+
+// The three lanes as output bytes R, G, B
+inline void writeLanes(uint8_t* px, const uint8_t* lanes, uint64_t o)
+{
+    px[0] = lanes[o & 0x1FFF];
+    px[1] = lanes[(o >> kLane) & 0x1FFF];
+    px[2] = lanes[(o >> 2 * kLane) & 0x1FFF];
+}
+
+// The loops read the tables through local pointers/copies: a store through uint8_t* may alias anything, so
+// members would be read again for every pixel
+void applyRows(uint8_t* rgba, size_t count, const Baked& b)
+{
+    switch (b.kind) {
+    case Baked::Direct: {
+        uint8_t d[3][256];
+        std::memcpy(d, b.direct, sizeof d);
+        for (size_t i = 0; i < count; ++i, rgba += 4) {
+            rgba[0] = d[0][rgba[0]];
+            rgba[1] = d[1][rgba[1]];
+            rgba[2] = d[2][rgba[2]];
+        }
+        break;
+    }
+    case Baked::Mix: {
+        int32_t ys[3][256], vs[3][256];
+        std::memcpy(ys, b.ys, sizeof ys);
+        std::memcpy(vs, b.vs, sizeof vs);
+        auto clampByte = [](int v) { return uint8_t(v < 0 ? 0 : v > (255 << 16) ? 255 : v >> 16); };
+        for (size_t i = 0; i < count; ++i, rgba += 4) {
+            const int r = rgba[0], g = rgba[1], bl = rgba[2];
+            const int y = ys[0][r] + ys[1][g] + ys[2][bl];
+            rgba[0] = clampByte(y + vs[0][r]);
+            rgba[1] = clampByte(y + vs[1][g]);
+            rgba[2] = clampByte(y + vs[2][bl]);
+        }
+        break;
+    }
+    case Baked::MixLut1d:
+    case Baked::MixCube: {
+        // Saturation in 1/2^24 of 0..1, then to the kSteps grid of the LUT mapping
+        int32_t ys[3][256], vs[3][256];
+        std::memcpy(ys, b.ys, sizeof ys);
+        std::memcpy(vs, b.vs, sizeof vs);
+        auto step = [](int v) { return (std::clamp(v, 0, 1 << 24) + (1 << 11)) >> 12; };
+        const LutTables& t = *b.lut;
+        if (b.kind == Baked::MixLut1d) {
+            // Between the steps linearly (steep curves near black would show the steps)
+            const int32_t* o[3] = {t.out1d[0].data(), t.out1d[1].data(), t.out1d[2].data()};
+            auto out = [](const int32_t* t, int v) {
+                v = std::clamp(v, 0, 1 << 24);
+                const int k = v >> 12, f = v & 4095;
+                const int x = t[k] + int((int64_t(t[k + 1] - t[k]) * f) >> 12);
+                return uint8_t((x * 255 + 32768) >> 16);
+            };
+            for (size_t i = 0; i < count; ++i, rgba += 4) {
+                const int r = rgba[0], g = rgba[1], bl = rgba[2];
+                const int y = ys[0][r] + ys[1][g] + ys[2][bl];
+                rgba[0] = out(o[0], y + vs[0][r]);
+                rgba[1] = out(o[1], y + vs[1][g]);
+                rgba[2] = out(o[2], y + vs[2][bl]);
+            }
+            break;
+        }
+        const int32_t *c0 = t.coord[0].data(), *c1 = t.coord[1].data(), *c2 = t.coord[2].data();
+        const uint64_t* nodes = t.nodes.data();
+        const int n = t.n;
+        const uint8_t* lanes = laneByte().data();
+        for (size_t i = 0; i < count; ++i, rgba += 4) {
+            const int r = rgba[0], g = rgba[1], bl = rgba[2];
+            const int y = ys[0][r] + ys[1][g] + ys[2][bl];
+            const int32_t cr = c0[step(y + vs[0][r])], cg = c1[step(y + vs[1][g])], cb = c2[step(y + vs[2][bl])];
+            const uint64_t o = trilinear(nodes + ((cr >> 8) + (cg >> 8) + (cb >> 8)), n, cr & 255, cg & 255, cb & 255);
+            writeLanes(rgba, lanes, o);
+        }
+        break;
+    }
+    case Baked::Cube: {
+        int32_t coord[3][256];
+        std::memcpy(coord, b.coord, sizeof coord);
+        const uint64_t* nodes = b.lut->nodes.data();
+        const int n = b.lut->n;
+        const uint8_t* lanes = laneByte().data();
+        for (size_t i = 0; i < count; ++i, rgba += 4) {
+            const int32_t cr = coord[0][rgba[0]], cg = coord[1][rgba[1]], cb = coord[2][rgba[2]];
+            const uint64_t o = trilinear(nodes + ((cr >> 8) + (cg >> 8) + (cb >> 8)), n, cr & 255, cg & 255, cb & 255);
+            writeLanes(rgba, lanes, o);
+        }
+        break;
+    }
+    case Baked::PerPixel: break; // see apply()
     }
 }
 
@@ -133,6 +371,23 @@ struct State {
     Params fixed;
     std::shared_ptr<const Lut> lut;
     std::shared_ptr<std::atomic<bool>> bypass;
+    // Baked tables of the last values (keyframes: made again only when the values change)
+    mutable std::mutex bakeMutex;
+    mutable Params bakedParams;
+    mutable std::shared_ptr<const Baked> baked;
+
+    std::shared_ptr<const Baked> tables(const Params& p) const
+    {
+        {
+            std::lock_guard<std::mutex> lock(bakeMutex);
+            if (baked && bakedParams == p) return baked;
+        }
+        std::shared_ptr<const Baked> b = bake(p, lut.get());
+        std::lock_guard<std::mutex> lock(bakeMutex);
+        bakedParams = p;
+        baked = b;
+        return b;
+    }
 };
 
 // The state can be swapped while the preview renders (transfer(), Inspector changes without a rebuild)
@@ -156,7 +411,9 @@ int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* wi
     const int err = mlt_frame_get_image(frame, image, format, width, height, 1);
     if (err || !*image || *format != mlt_image_rgba) return err;
     const Params p = d->animated ? at(d->clip, d->a + pos) : d->fixed;
-    if (!p.isNeutral() || d->lut) apply(*image, *width, *height, p, d->lut.get());
+    // Rows in threads for the preview only (one frame at a time there); the export renders several frames at once
+    // (no Before/After switch there), where more threads per frame would only compete for the cores
+    if (!p.isNeutral() || d->lut) apply(*image, *width, *height, *d->tables(p), d->bypass ? 0 : 1);
     if (d->windows)
         for (const Window& w : windowsAt(d->clip, d->a + pos)) applyWindow(*image, *width, *height, w);
     return 0;
@@ -458,7 +715,9 @@ LutPtr parseHald(const QString& path, QString* error)
 
 } // namespace
 
-std::shared_ptr<const Lut> parseLut(const QString& path, QString* error)
+namespace {
+
+LutPtr parseLutFile(const QString& path, QString* error)
 {
     const QString suffix = QFileInfo(path).suffix().toLower();
     if (!EffectFolders::isLutFile(path)) return failLut(error, QStringLiteral("unbekanntes LUT-Format"));
@@ -471,6 +730,15 @@ std::shared_ptr<const Lut> parseLut(const QString& path, QString* error)
     if (suffix == "3dl") return parse3dl(f, error);
     if (suffix == "csp") return parseCsp(f, error);
     return parseCube(f, error);
+}
+
+} // namespace
+
+std::shared_ptr<const Lut> parseLut(const QString& path, QString* error)
+{
+    LutPtr lut = parseLutFile(path, error);
+    if (lut) prepare(*lut);
+    return lut;
 }
 
 std::shared_ptr<const Lut> loadLut(const QString& path, QString* error)
@@ -495,7 +763,77 @@ std::shared_ptr<const Lut> loadLut(const QString& path, QString* error)
     return lut;
 }
 
+void prepare(Lut& lut) { lut.tables = makeTables(lut); }
+
+std::shared_ptr<const Baked> bake(const Params& p, const Lut* lut)
+{
+    auto b = std::make_shared<Baked>();
+    if (!usable(lut)) lut = nullptr;
+    const Curve curve(p);
+    const double s = std::max(0.0, p.saturation / 50.0);
+    const float sf = float(s);
+    if (!lut && s == 1.0) {
+        for (int c = 0; c < 3; ++c)
+            for (int i = 0; i < 256; ++i) b->direct[c][i] = uint8_t(std::lround(curve(c, i / 255.0) * 255.0));
+        return b;
+    }
+    float table[3][256];
+    for (int c = 0; c < 3; ++c)
+        for (int i = 0; i < 256; ++i) table[c][i] = float(curve(c, i / 255.0));
+    const float w[3] = {0.2126f, 0.7152f, 0.0722f};
+    if (!lut) { // same tables as applyReference
+        b->kind = Baked::Mix;
+        for (int c = 0; c < 3; ++c)
+            for (int i = 0; i < 256; ++i) {
+                b->ys[c][i] = int(std::lround(table[c][i] * w[c] * (1.0f - sf) * 255.0f * 65536.0f));
+                b->vs[c][i] = int(std::lround(table[c][i] * sf * 255.0f * 65536.0f)) + 32768; // + 0.5 for rounding
+            }
+        return b;
+    }
+    if (!lut->is3d && sf == 1.0f) { // all per channel
+        for (int c = 0; c < 3; ++c)
+            for (int i = 0; i < 256; ++i) b->direct[c][i] = toByte(sample1d(*lut, c, table[c][i]));
+        return b;
+    }
+    b->lut = lut->tables ? lut->tables : makeTables(*lut);
+    if (lut->is3d && !b->lut->n) {
+        b->kind = Baked::PerPixel;
+        b->params = p;
+        b->raw = lut;
+        return b;
+    }
+    if (sf == 1.0f) {
+        b->kind = Baked::Cube;
+        for (int c = 0; c < 3; ++c)
+            for (int i = 0; i < 256; ++i) b->coord[c][i] = cubeCoord(*lut, c, table[c][i]);
+        return b;
+    }
+    b->kind = lut->is3d ? Baked::MixCube : Baked::MixLut1d;
+    for (int c = 0; c < 3; ++c)
+        for (int i = 0; i < 256; ++i) {
+            b->ys[c][i] = int(std::lround(double(table[c][i]) * w[c] * (1.0 - sf) * (1 << 24)));
+            b->vs[c][i] = int(std::lround(double(table[c][i]) * sf * (1 << 24)));
+        }
+    return b;
+}
+
+void apply(uint8_t* rgba, int width, int height, const Baked& b, int threads)
+{
+    if (!rgba || width <= 0 || height <= 0) return;
+    parallelRows(width, height, threads, [&](int from, int to) {
+        uint8_t* p = rgba + size_t(from) * width * 4;
+        if (b.kind == Baked::PerPixel) applyReference(p, width, to - from, b.params, b.raw);
+        else applyRows(p, size_t(width) * (to - from), b);
+    });
+}
+
 void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut)
+{
+    if (!rgba || width <= 0 || height <= 0) return;
+    apply(rgba, width, height, *bake(p, lut));
+}
+
+void applyReference(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut)
 {
     if (!rgba || width <= 0 || height <= 0) return;
     const Curve curve(p);
@@ -516,8 +854,6 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
     for (int c = 0; c < 3; ++c)
         for (int i = 0; i < 256; ++i) table[c][i] = float(curve(c, i / 255.0));
     const float sf = float(s);
-    // 0..1 -> 0..255, rounded (std::lround per channel made a 1080p frame take ~25 ms)
-    auto byte = [](float x) { return uint8_t(int((x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x) * 255.0f + 0.5f)); };
     if (!lut) {
         // Saturation: mix with the brightness (Rec. 709), y + (v - y) * s = y * (1 - s) + v * s. Both parts come
         // from tables in 16-bit fixed point (byte value << 16), so a pixel is a few additions
@@ -546,7 +882,7 @@ void apply(uint8_t* rgba, int width, int height, const Params& p, const Lut* lut
         // LUT after the correction (like a LUT on a DaVinci node)
         if (lut->is3d) sample3d(*lut, v);
         else sample1d(*lut, v);
-        for (int c = 0; c < 3; ++c) rgba[c] = byte(v[c]);
+        for (int c = 0; c < 3; ++c) rgba[c] = toByte(v[c]);
     }
 }
 
