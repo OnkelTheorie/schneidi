@@ -475,11 +475,16 @@ void opRemoveMedia(Session& s, const QJsonObject& op)
         fail("IN_USE", QString("%1 clip(s) use this media (%2); with_clips:true removes those clips too")
                            .arg(clips).arg(where.join(", ")));
     }
+    // The answer lists clips only: say what left the pool (the file stays on disk)
+    QStringList names;
+    for (const QString& path : paths) names << QFileInfo(path).fileName();
+    QString note = QString("remove_media: %1 out of the Media Pool (not deleted from disk)").arg(names.join(", "));
     if (withClips && !usage.isEmpty()) {
         int clips = 0;
         for (const auto& u : usage) clips += u.second;
-        s.notes << QString("remove_media: %1 clip(s) in %2 timeline(s) removed with the media").arg(clips).arg(usage.size());
+        note += QString("; %1 clip(s) in %2 timeline(s) removed with the media").arg(clips).arg(usage.size());
     }
+    s.notes << note;
     s.project.removeMedia(paths, withClips);
 }
 
