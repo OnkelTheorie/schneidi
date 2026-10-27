@@ -461,7 +461,35 @@ protected:
     }
 };
 
+// Window keys that stay quiet inside one panel (shieldWindowKeys). Key events a child does not take itself come up to
+// the panel: the ShortcutOverride is accepted (no window shortcut), the key press that follows ends here.
+class ShieldKeys : public QObject {
+public:
+    ShieldKeys(QWidget* panel, const QStringList& ids) : QObject(panel), m_ids(ids) { panel->installEventFilter(this); }
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override
+    {
+        if (e->type() != QEvent::ShortcutOverride && e->type() != QEvent::KeyPress) return QObject::eventFilter(obj, e);
+        const auto* key = static_cast<QKeyEvent*>(e);
+        for (const QString& id : m_ids)
+            if (InputBindings::matches(InputBindings::instance().action(id), key)) {
+                e->accept();
+                return true;
+            }
+        return QObject::eventFilter(obj, e);
+    }
+
+private:
+    QStringList m_ids;
+};
+
 } // namespace
+
+void InputBindings::shieldWindowKeys(QWidget* panel, const QStringList& ids)
+{
+    new ShieldKeys(panel, ids);
+}
 
 void InputBindings::registerScopedAction(QAction* action, const QString& id, const QString& category,
                                          const QKeySequence& defaultKey, QWidget* scope)

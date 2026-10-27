@@ -92,6 +92,10 @@ public:
     // same key in the window ambiguous and do nothing). A mouse button bound to it only works over its parent widget.
     void registerPanelAction(QAction* action, const QString& id, const QString& category, const QString& scope,
                              const QKeySequence& defaultKey, const QKeySequence& defaultKey2 = {});
+    // The keys of these window actions (whatever they are bound to) do nothing while the focus is inside `panel`: a
+    // panel with items of its own (Media Pool clips, Effects, Media Storage files), where Delete must not delete the
+    // timeline clips the user does not look at. Keys a child takes itself (text fields, scoped actions) stay its own.
+    void shieldWindowKeys(QWidget* panel, const QStringList& ids);
     QString scope(const QString& id) const;    // empty = window-wide
     QWidget* scopeOf(const QString& id) const; // the widget a scoped/panel action acts in; nullptr = whole window
     // Is the key of this event one of the action's keys (enabled actions only)? A key of the number pad also counts
