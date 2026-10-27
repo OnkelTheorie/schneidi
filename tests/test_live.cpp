@@ -284,7 +284,11 @@ int main(int argc, char* argv[])
     r = cli({"app", "proxies"});
     CHECK_EQ(fake.proxies, QStringList({"/x/a.mp4"}));
     CHECK_EQ(r["proxies"].toArray().size(), 1);
-    {
+    if (!ProxyManager::cacheDir().startsWith(tmp.path())) {
+        // Windows ignores XDG_CACHE_HOME: never clean up the real proxy folder of whoever runs the tests
+        std::printf("       clean_proxies skipped: the proxy folder is not in the test folder (%s)\n",
+                    qPrintable(ProxyManager::cacheDir()));
+    } else {
         // clean_proxies: lists the proxy files neither the app's project nor a recent one needs (dry run), deletes
         // them only with --delete; the app project's proxy stays
         QDir().mkpath(ProxyManager::cacheDir());
