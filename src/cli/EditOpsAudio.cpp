@@ -390,7 +390,10 @@ void opDuck(Session& s, const QJsonObject& op)
 void addAudioOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"volume", "{op:'volume', clips, db?, pan?}",
-                 "clip volume in dB (-60 = silent, max +12) and pan (-100 left … 100 right)", {}, opVolume}
+                 "clip volume in dB (-60 = silent, max +12) and pan (-100 left … 100 right)",
+                 "A clip with volume keyframes (ducked music, a drawn curve) keeps its shape: the whole curve moves so "
+                 "that the clip's level becomes db - its loudest key, or its volume when `duck` lowered all of it.",
+                 opVolume}
         << OpDef{"audio_stream", "{op:'audio_stream', clips, stream}",
                  "which audio stream of the file the clips play (0 = first; `probe` lists them)", {}, opAudioStream}
         << OpDef{"mixer", "{op:'mixer', track:'A1'|'master', volume_db?|target_lufs?, pan?, mute?, solo?, limiter?, "
