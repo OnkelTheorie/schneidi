@@ -476,12 +476,25 @@ QVector<RenderJob> moveRenderJobs(const QVector<RenderJob>& jobs, const QVector<
 
 QString renderFileBaseName(const QString& name)
 {
+    // Readable replacements where one exists: "Mein Video: Teil 2" -> "Mein Video - Teil 2", "9:16" -> "9-16",
+    // "Teil 1/2" -> "Teil 1-2"
     QString s;
-    for (const QChar c : name) s += c.unicode() < 0x20 || QStringLiteral("<>:\"/\\|?*").contains(c) ? QChar('_') : c;
-    s = s.trimmed();
+    for (qsizetype i = 0; i < name.size(); ++i) {
+        const QChar c = name[i];
+        if (c.unicode() < 0x20) s += ' '; // tab, line break
+        else if (c == ':') s += i + 1 < name.size() && name[i + 1].isSpace() ? QStringLiteral(" -") : QStringLiteral("-");
+        else if (c == '/' || c == '\\') s += '-';
+        else if (c == '"') s += '\'';
+        else if (QStringLiteral("<>|?*").contains(c)) s += '_';
+        else s += c;
+    }
+    s = s.simplified();
     if (s.size() > 200) s = s.left(200);
-    // Windows drops a dot or space at the end (another name than shown)
-    while (s.endsWith('.') || s.endsWith(' ')) s.chop(1);
+    // Nothing that reads as junk at the ends ("Teil 2?" -> "Teil 2", not "Teil 2_"); Windows drops a dot or space at the
+    // end (another name than shown), a leading dot hides the file on Linux and macOS
+    static const QString junk = QStringLiteral(". _-");
+    while (!s.isEmpty() && junk.contains(s.back())) s.chop(1);
+    while (!s.isEmpty() && junk.contains(s.front())) s.remove(0, 1);
     if (s.isEmpty()) return QStringLiteral("Export");
     // Windows device names are no files there, also with an extension ("NUL.mp4")
     const QString stem = s.section('.', 0, 0);

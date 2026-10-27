@@ -284,10 +284,14 @@ int main(int argc, char** argv)
     // --- File name from the timeline's name: valid on Windows, macOS and Linux
     {
         CHECK_EQ(renderFileBaseName("Timeline 1"), QString("Timeline 1"));
-        CHECK_EQ(renderFileBaseName("Intro: Teil 1/2"), QString("Intro_ Teil 1_2"));
-        CHECK_EQ(renderFileBaseName("a<b>c\"d\\e|f?g*h"), QString("a_b_c_d_e_f_g_h"));
-        CHECK_EQ(renderFileBaseName("Tab\there\n"), QString("Tab_here_"));
+        CHECK_EQ(renderFileBaseName("Intro: Teil 1/2"), QString("Intro - Teil 1-2"));
+        CHECK_EQ(renderFileBaseName("Mein Video: Teil 2?"), QString("Mein Video - Teil 2")); // no "Teil 2_"
+        CHECK_EQ(renderFileBaseName("Shorts 9:16"), QString("Shorts 9-16"));
+        CHECK_EQ(renderFileBaseName("a<b>c\"d\\e|f?g*h"), QString("a_b_c'd-e_f_g_h"));
+        CHECK_EQ(renderFileBaseName("Tab\there\n"), QString("Tab here"));
         CHECK_EQ(renderFileBaseName("  Ende. . "), QString("Ende"));
+        CHECK_EQ(renderFileBaseName(".versteckt"), QString("versteckt"));
+        CHECK_EQ(renderFileBaseName("Was?"), QString("Was"));
         CHECK_EQ(renderFileBaseName(" ... "), QString("Export"));
         CHECK_EQ(renderFileBaseName(""), QString("Export"));
         CHECK_EQ(renderFileBaseName("con"), QString("con_"));
@@ -440,9 +444,9 @@ int main(int argc, char** argv)
         CHECK_EQ(name->text(), first); // "Timeline 1" as before
         const int intro = p.addTimeline("Intro: Teil 1/2"); // gets opened
         CHECK_EQ(p.currentSequence(), intro);
-        CHECK_EQ(name->text(), QString("Intro_ Teil 1_2"));
+        CHECK_EQ(name->text(), QString("Intro - Teil 1-2"));
         const RenderJob j = panel.makeJob();
-        CHECK_EQ(j.path, QDir(tmp.path()).filePath("Intro_ Teil 1_2.mp4"));
+        CHECK_EQ(j.path, QDir(tmp.path()).filePath("Intro - Teil 1-2.mp4"));
         CHECK_EQ(j.sequence, intro);
         p.renameSequence(intro, "Outro");
         CHECK_EQ(name->text(), QString("Outro"));
@@ -451,7 +455,7 @@ int main(int argc, char** argv)
         name->setText("Mein Film?"); // typed: stays when another timeline is opened, made valid in the job
         p.setCurrentSequence(intro);
         CHECK_EQ(name->text(), QString("Mein Film?"));
-        CHECK_EQ(QFileInfo(panel.makeJob().path).fileName(), QString("Mein Film_.mp4"));
+        CHECK_EQ(QFileInfo(panel.makeJob().path).fileName(), QString("Mein Film.mp4"));
         name->clear(); // empty: the opened timeline again
         CHECK_EQ(QFileInfo(panel.makeJob().path).fileName(), QString("Outro.mp4"));
         p.setCurrentSequence(1);
