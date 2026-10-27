@@ -302,6 +302,41 @@ void testPoolFilter(const QString& dump)
     CHECK_EQ(bigList->count(), 200);
 }
 
+// A bin a watch folder fills is marked in the bin list (icon with a dot, the folders in the tooltip)
+void testWatchedBins(const QString& dump)
+{
+    Project p;
+    const int rec = p.addBin(0, "Aufnahmen");
+    const int other = p.addBin(0, "Sonstiges");
+    Engine engine;
+    MediaPool pool(&p, &engine);
+    pool.setSaveSettings(false);
+    pool.resize(500, 250);
+    pool.show();
+    QApplication::processEvents();
+    auto* tree = pool.findChild<QTreeWidget*>();
+    if (!CHECK(tree)) return;
+    const auto item = [&](int bin) -> QTreeWidgetItem* {
+        for (QTreeWidgetItemIterator it(tree); *it; ++it)
+            if ((*it)->data(0, Qt::UserRole).toInt() == bin) return *it;
+        return nullptr;
+    };
+    CHECK(item(rec)->toolTip(0).isEmpty());
+    WatchFolder w;
+    w.path = QDir::tempPath() + "/OBS";
+    w.bin = rec;
+    p.setWatchFolders({w});
+    QApplication::processEvents();
+    CHECK(item(rec)->toolTip(0).contains(QDir::toNativeSeparators(w.path)));
+    CHECK(item(rec)->icon(0).cacheKey() != item(other)->icon(0).cacheKey());
+    CHECK(item(0)->toolTip(0).isEmpty() && item(other)->toolTip(0).isEmpty());
+    if (!dump.isEmpty()) pool.grab().save(QDir(dump).filePath("pool-watched-bin.png"));
+    p.setWatchFolders({});
+    QApplication::processEvents();
+    CHECK(item(rec)->toolTip(0).isEmpty());
+    CHECK_EQ(item(rec)->icon(0).cacheKey(), item(other)->icon(0).cacheKey());
+}
+
 void testPoolKeys(QWidget* windowKeys, const int* windowDeletes)
 {
     Project p;
@@ -644,6 +679,7 @@ int main(int argc, char** argv)
     testFilterLogic();
     testFilterButton(dump);
     testPoolFilter(dump);
+    testWatchedBins(dump);
     lap("filter");
     testPoolKeys(&window, &windowDeletes);
     lap("keys");

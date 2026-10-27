@@ -1778,6 +1778,7 @@
  "Übersteuert: True Peak %1 dBTP (über 0 dB verzerrt) – Limiter im Mixer einschalten oder leiser mischen": "Clipping: true peak %1 dBTP (distorts above 0 dB) – turn on the limiter in the mixer or mix quieter",
  "Übersteuerung / Fehler": "Clipping / error",
  "Überwachen": "Watch",
+ "Überwacht – neue Dateien aus:": "Watched – new files from:",
  "Überwachte Ordner": "Watch Folders",
  "Überwachte Ordner…": "Watch Folders…",
  "Überwachten Ordner bearbeiten": "Edit Watch Folder",

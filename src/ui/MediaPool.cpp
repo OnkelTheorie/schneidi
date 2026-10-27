@@ -184,6 +184,23 @@ QPixmap scrubThumb(const QImage& picture, const QPixmap& normal, double fraction
     return pm;
 }
 
+// Bin icon with a small accent dot at the bottom right: a watch folder brings its new files into this bin
+QIcon watchedIcon(const QIcon& folder)
+{
+    constexpr int kSize = 32; // drawn at twice the list's size: sharp on HiDPI, scaled down otherwise
+    QPixmap pm = folder.pixmap(kSize, kSize);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF dot(kSize * 0.52, kSize * 0.52, kSize * 0.46, kSize * 0.46);
+    p.setPen(QPen(QColor(0x18, 0x18, 0x1b), 2.5));
+    p.setBrush(Theme::primary);
+    p.drawEllipse(dot);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x18, 0x18, 0x1b));
+    p.drawEllipse(dot.center(), dot.width() * 0.17, dot.width() * 0.17);
+    return QIcon(pm);
+}
+
 QPixmap swatch(const QColor& c)
 {
     QPixmap pm(12, 12);
@@ -522,6 +539,9 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
             rebuildClips();
         });
     });
+    connect(m_project, &Project::watchFoldersChanged, this, [this] { // the marks of watched bins
+        QTimer::singleShot(0, this, [this] { rebuildBins(); });
+    });
     ProxyManager* proxies = m_engine->proxies();
     connect(proxies, &ProxyManager::progress, this, [this](const QString& path, int) { updateItem(path); });
     connect(proxies, &ProxyManager::proxyChanged, this, &MediaPool::updateItem);
@@ -777,6 +797,16 @@ void MediaPool::rebuildBins()
     const QSignalBlocker block(m_bins);
     m_bins->clear();
     const QIcon folder = style()->standardIcon(QStyle::SP_DirIcon);
+    // Bins a watch folder fills: marked, the folders in the tooltip
+    QHash<int, QStringList> watched;
+    for (const WatchFolder& w : m_project->watchFolders())
+        watched[w.bin != 0 && m_project->bin(w.bin) ? w.bin : 0] << QDir::toNativeSeparators(w.path);
+    const QIcon watchedFolder = watched.isEmpty() ? QIcon() : watchedIcon(folder);
+    const auto mark = [&](QTreeWidgetItem* it, int id) {
+        if (!watched.contains(id)) return;
+        it->setIcon(0, watchedFolder);
+        it->setToolTip(0, T("Überwacht – neue Dateien aus:") + "\n" + watched.value(id).join('\n'));
+    };
     QTreeWidgetItem* current = nullptr;
     QTreeWidgetItem* edit = nullptr;
     std::function<void(QTreeWidgetItem*, int)> addChildren = [&](QTreeWidgetItem* parent, int parentId) {
@@ -785,6 +815,7 @@ void MediaPool::rebuildBins()
             it->setData(0, Qt::UserRole, id);
             it->setIcon(0, folder);
             it->setFlags(it->flags() | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
+            mark(it, id);
             if (id == m_currentBin) current = it;
             if (id == m_editBin) edit = it;
             addChildren(it, id);
@@ -795,6 +826,7 @@ void MediaPool::rebuildBins()
     master->setData(0, Qt::UserRole, 0);
     master->setIcon(0, folder);
     master->setFlags((master->flags() | Qt::ItemIsDropEnabled) & ~Qt::ItemIsDragEnabled);
+    mark(master, 0);
     addChildren(master, 0);
     master->setExpanded(!collapsed.contains(0));
     m_bins->setCurrentItem(current ? current : master);
