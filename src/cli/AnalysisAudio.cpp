@@ -164,7 +164,7 @@ QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
         const ProjectFormat& f = s.format();
         Timeline tl = s.project.renderTimeline();
         const int end = TimelineOps::endFrame(tl);
-        if (end <= 0) fail("EMPTY", "the timeline is empty");
+        if (end <= 0) s.failEmpty();
         const int from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
         const int to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
         if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
@@ -255,7 +255,7 @@ QJsonObject cmdLoudness(const QJsonObject& a, Context& ctx)
     // The mix as exported, optionally only some audio tracks
     Timeline tl = s.project.renderTimeline();
     const int end = TimelineOps::endFrame(tl);
-    if (end <= 0) fail("EMPTY", "the timeline is empty");
+    if (end <= 0) s.failEmpty();
     const int from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
     const int to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
     if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
@@ -300,7 +300,7 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         req.timeline = s.project.renderTimeline();
         req.format = f;
         const int end = TimelineOps::endFrame(req.timeline);
-        if (end <= 0) fail("EMPTY", "the timeline is empty");
+        if (end <= 0) s.failEmpty();
         req.from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
         req.to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
         if (req.to <= req.from) fail("BAD_ARGUMENT", "'to' must be after 'from'");

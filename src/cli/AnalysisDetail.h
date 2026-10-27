@@ -23,6 +23,11 @@ struct MediaSource {
 // `file` (+ optional `project` for its frame rate); throws if it cannot be read
 MediaSource openMedia(const QJsonObject& a);
 
+// The format to look at the file's picture in: its own size, the frame rate frames count in. A project only gives
+// the rate - a 16:9 recording looked at with a 9:16 project is not letterboxed into the project's frame, so crops
+// and regions are parts of the recording's picture
+ProjectFormat pictureFormat(const MediaSource& m);
+
 // "x,y,w,h" in pixels of the full picture, or fractions of it when all four are <= 1 ("0.75,0,0.25,0.3")
 QRect cropRect(const QString& spec, QSize full);
 

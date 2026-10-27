@@ -48,10 +48,13 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
         QJsonObject ma{{"file", src}};
         if (a.contains("project")) ma["project"] = a["project"];
         media = openMedia(ma);
-        f = media.format;
+        f = pictureFormat(media);
         length = media.info.length;
     }
-    if (length <= 0) fail("EMPTY", "nothing to show (empty timeline): " + src);
+    if (length <= 0) {
+        if (session) session->failEmpty();
+        fail("EMPTY", "nothing to show: " + src);
+    }
     QVector<int> at;
     for (const QJsonValue& v : a["at"].toArray()) at << parseTime(v, f, "at");
     const int from = a.contains("from") ? std::clamp(parseTime(a["from"], f, "from"), 0, length - 1) : 0;
@@ -101,7 +104,7 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
 // counts when it was steady just before, differs afterwards and is steady again (a new line that appeared).
 QJsonObject regionChanges(const MediaSource& m, const QJsonObject& a, Context& ctx)
 {
-    const ProjectFormat& f = m.format;
+    const ProjectFormat f = pictureFormat(m);
     const QSize full(std::max(2, f.width), std::max(2, f.height));
     const QRect r = cropRect(a["region"].toString(), full);
     constexpr int kRate = 10; // samples per second
@@ -238,7 +241,7 @@ int unexplainedColor(const std::vector<int>& from, const int* to, int margin, do
 // in rows it was not in just before (a new line, not the same line on a brighter background).
 ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::function<void(double)>& progress)
 {
-    const ProjectFormat& f = m.format;
+    const ProjectFormat f = pictureFormat(m);
     const QSize full(std::max(2, f.width), std::max(2, f.height));
     const QRect r = cropRect(a["region"].toString(), full);
     const QColor color = colorOf(a["color"], "color");
@@ -550,7 +553,9 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
         if (!outDir.isEmpty()) {
             QString file = absolute(outDir);
             if (QFileInfo(file).isDir()) file = QDir(file).filePath("sheet.jpg");
-            if (!s.save(file, "JPG", 85)) fail("WRITE_FAILED", "cannot write " + file);
+            // What the name says (JPEG bytes in a .png file confuse programs that go by the name), else JPEG
+            const char* format = QFileInfo(file).suffix().compare("png", Qt::CaseInsensitive) == 0 ? "PNG" : "JPG";
+            if (!s.save(file, format, 85)) fail("WRITE_FAILED", "cannot write " + file);
             result["sheet"] = file;
         }
         if (ctx.mcp) ctx.images = {s};
@@ -684,11 +689,14 @@ QJsonObject cmdScopes(const QJsonObject& a, Context& ctx)
         QJsonObject ma{{"file", src}};
         if (a.contains("project")) ma["project"] = a["project"];
         media = openMedia(ma);
-        f = media.format;
+        f = pictureFormat(media);
         length = media.info.length;
         if (!media.info.hasVideo) fail("NO_VIDEO", "the file has no picture");
     }
-    if (length <= 0) fail("EMPTY", "nothing to show (empty timeline)");
+    if (length <= 0) {
+        if (session) session->failEmpty();
+        fail("EMPTY", "nothing to show: " + src);
+    }
     const int at = std::clamp(a.contains("at") ? parseTime(a["at"], f, "at") : 0, 0, length - 1);
     const QImage frame = session ? Snapshot::timeline(f, session->project.renderTimeline(), at, 960)
                                  : Snapshot::media(f, media.info.path, at, 960);

@@ -49,6 +49,12 @@ double valueAt(const Clip& c, AnimParam p, double t);
 // Keyframe exactly at clip frame t (nullptr = none)
 const Keyframe* keyAt(const Clip& c, AnimParam p, int t);
 
+// A new volume for a clip with volume keyframes (they replace its static volume): the whole curve moves so that the
+// clip's level becomes db. The level is its loudest key - or its static volume when the curve is flat below it
+// (music ducked under speech from start to end has no key at its own level: "-8 dB" for music at -4 made it 8 dB
+// louder). The static volume moves along, so it stays the level a new ducking dips from. Returns the shift in dB.
+double setVolumeLevel(Clip& c, double db);
+
 void setKey(Clip& c, AnimParam p, int t, double v);  // sets or replaces (interpolation stays)
 void removeKey(Clip& c, AnimParam p, int t);         // last one removed -> value stays as static value
 // Change a value as in the DaVinci Inspector: animated -> keyframe at t (new or replaced), otherwise static value

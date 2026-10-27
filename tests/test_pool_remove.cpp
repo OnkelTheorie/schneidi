@@ -279,9 +279,11 @@ void testCli(const QString& dir)
     edit(project, QString(R"([{"op":"remove_media","media":"%1"}])").arg(QDir(dir).filePath("fehlt.mp4")));
     CHECK(cliError.startsWith("NOT_FOUND:"));
     // Unused, and used with with_clips
-    edit(project, QString(R"([{"op":"remove_media","media":["%1"]}])").arg(dd));
+    const QJsonObject unused = edit(project, QString(R"([{"op":"remove_media","media":["%1"]}])").arg(dd));
     CHECK(cliError.isEmpty());
     CHECK_EQ(load().media.size(), 3);
+    // No clip changes: the note is what tells the AI it worked
+    CHECK_EQ(unused["notes"].toArray().at(0).toString(), QString("remove_media: d.mp4 out of the Media Pool (not deleted from disk)"));
     const QJsonObject r = edit(project, QString(R"([{"op":"remove_media","media":"%1","with_clips":true}])").arg(a));
     CHECK(cliError.isEmpty());
     const ProjectData back = load();

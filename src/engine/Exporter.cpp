@@ -8,6 +8,7 @@
 #include "engine/Bundle.h"
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/MemoryRelease.h"
 #include "engine/MixedSound.h"
 #include "engine/OutputColor.h"
 #include "engine/Profiles.h"
@@ -368,7 +369,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
             else g.source->attach(*g.sound);
         }
     });
-    connect(m_build, &QThread::finished, this, [this, graph] {
+    const quint64 run = ++m_threadRun;
+    connect(m_build, &QThread::finished, this, [this, graph, run] {
+        if (run != m_threadRun) return; // canceled as it ended: m_build is gone (stopBuild), maybe another one runs
         m_build->wait();
         delete m_build;
         m_build = nullptr;
@@ -859,7 +862,9 @@ bool Exporter::runAnalyses(const Timeline& tl, const ExportSettings& s)
             if (!(*ok = Stabilizer::analyze(r, error.get(), cancel.get()))) return;
         }
     });
-    connect(m_analysis, &QThread::finished, this, [this, ok, error] {
+    const quint64 run = ++m_threadRun;
+    connect(m_analysis, &QThread::finished, this, [this, ok, error, run] {
+        if (run != m_threadRun) return; // canceled as it ended: m_analysis is gone (cancel)
         m_analysis->wait();
         delete m_analysis;
         m_analysis = nullptr;
@@ -883,6 +888,7 @@ void Exporter::stopBuild()
 {
     // Not left running detached: it would still open files while the program ends (MLT closed: crash)
     *m_buildCancel = true;
+    ++m_threadRun; // its finished() may be queued already
     m_build->disconnect(this);
     m_build->wait();
     delete m_build;
@@ -899,6 +905,7 @@ void Exporter::cancel()
     }
     if (m_analysis) { // still analyzing for stabilization
         *m_analysisCancel = true;
+        ++m_threadRun; // its finished() may be queued already
         m_analysis->disconnect(this);
         m_analysis->wait();
         delete m_analysis;
@@ -952,4 +959,5 @@ void Exporter::cleanup()
     m_tractor.reset();
     m_builder.reset();
     m_profile.reset();
+    MemoryRelease::requestRelease(); // the app gives MLT's pool back once nothing renders any more
 }

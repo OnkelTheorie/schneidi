@@ -136,6 +136,8 @@ schneidi_test(test_multicam)
 schneidi_test(test_multicam_render)
 schneidi_test(test_multicam_viewer)
 schneidi_test(test_proxy_hint)
+schneidi_test(test_proxy_cleanup) # which proxy files cleaning up deletes, which stay, dry run
+schneidi_test(test_memory_release) # MLT's pool and the heap given back while idle, never during playback
 schneidi_test(test_settings) # app settings (File › Settings…), AI page, indicator modes
 schneidi_test(test_update_check) # update hint against a local HTTP server
 schneidi_test(test_ai_activity) # AI changes light up, AI log, indicator with the AI's work
@@ -168,6 +170,9 @@ schneidi_test(test_speed)
 target_compile_definitions(test_speed PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 set_tests_properties(test_speed PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
 schneidi_test(test_file_manager) # show in file manager / open with the default program, also without a D-Bus session
+# Background workers stopped/reset/canceled while busy (ScrubFrames, GradedThumbs, FolderWatch, render cache/queue):
+# a stress test for the thread sanitizer and ASan, a few seconds in the normal suite
+schneidi_test(test_thread_teardown)
 
 # Number format regressions (German decimal comma, e.g. 0.7.0: MLT reset LC_NUMERIC and stabilization did nothing):
 # run tests that pass numbers to MLT/FFmpeg a second time under de_DE.UTF-8 (CI generates the locale)
@@ -197,6 +202,15 @@ foreach(name test_av_sync test_preview_audio test_play_end test_open_background 
 endforeach()
 set_tests_properties(test_av_sync test_preview_audio test_picture_catchup test_play_end test_av_sync_mlt_audio test_preview_audio_mlt_audio test_play_end_mlt_audio
                      PROPERTIES RUN_SERIAL TRUE) # preview timing
+
+# Label "timing": tests that measure real time or wait for other processes. They fail when the machine is busy (other
+# builds, a game, a parallel ctest), not when the code is wrong. tools/run_tests.py runs everything else in parallel,
+# then these one by one, and once more what failed (ctest -LE timing / -L timing work by hand too).
+set_tests_properties(test_av_sync test_preview_audio test_picture_catchup test_play_end test_audio_player test_speed
+                     test_av_sync_mlt_audio test_preview_audio_mlt_audio test_play_end_mlt_audio test_serve
+                     test_video_decoder test_watch_folders
+                     PROPERTIES LABELS timing)
+set_tests_properties(test_video_decoder PROPERTIES TIMEOUT 600) # ~100 s alone, over 300 s on a loaded machine
 
 # Server/container without a display: MLT's Qt module (qtblend, qtext) must still load – it used to refuse without
 # $DISPLAY and the timeline crashed on the invalid transition (see Bundle::prepareMltEnvironment)
@@ -263,6 +277,8 @@ add_executable(bench_device_loss bench_device_loss.cpp check.h)
 target_link_libraries(bench_device_loss PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_graded_thumbs bench_graded_thumbs.cpp check.h)
 target_link_libraries(bench_graded_thumbs PRIVATE schneidi_lib Qt6::Test)
+add_executable(bench_memory bench_memory.cpp check.h)
+target_link_libraries(bench_memory PRIVATE schneidi_lib Qt6::Test)
 if(WIN32) # WASAPI loopback: what the system sends to the sound card
     add_executable(bench_soundcard bench_soundcard.cpp check.h)
     target_link_libraries(bench_soundcard PRIVATE schneidi_lib Qt6::Test)

@@ -81,6 +81,7 @@ public:
     bool liveSave(const QString& path, QString* error) override;
     void liveGenerateProxies(const QStringList& files) override;
     QJsonObject liveProxyState(const QString& file) const override;
+    QString liveProxyWriting() const override;
     void liveConnectionChanged(bool connected, const QString& client) override;
     void liveChanged(const LiveChange& change) override;
     void liveActivity(const LiveActivity& activity) override;

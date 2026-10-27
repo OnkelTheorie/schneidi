@@ -381,7 +381,9 @@ void testFetcher(const QString& ramp)
     fmt.height = 180;
     f.setFormat(fmt);
     QVector<QPair<int, QImage>> got;
-    QObject::connect(&f, &StillFetcher::ready, [&](const QString&, int frame, const QImage& img) { got << qMakePair(frame, img); });
+    // With a context object: queued into this thread (ready comes from the worker thread)
+    QObject::connect(&f, &StillFetcher::ready, &f,
+                     [&](const QString&, int frame, const QImage& img) { got << qMakePair(frame, img); });
     f.request({{ramp, 10}, {ramp, 60}});
     CHECK(waitUntil([&] { return got.size() == 2; }));
     for (const auto& [frame, img] : got) {

@@ -513,10 +513,9 @@ void testTrack(const QString& media)
                 if (frame > 0) Keys::removeKey(*c, k, frame);
     });
     panel.startTracking(true);
-    if (QThread* worker = panel.findChild<QThread*>()) { // let it finish first: its whole result is waiting
-        QSignalSpy finished(worker, &QThread::finished);
-        for (int i = 0; i < 12000 && finished.isEmpty(); ++i) QThread::msleep(10);
-    }
+    // Let it finish first: its whole result is waiting. QThread::wait, not a QSignalSpy on finished() polled from here:
+    // the spy is filled in the worker thread itself (thread sanitizer: data race)
+    if (QThread* worker = panel.findChild<QThread*>()) worker->wait(120000);
     panel.discardTracking();
     CHECK(spy.wait(120000));
     CHECK(!panel.tracking());

@@ -5,23 +5,23 @@ Source: @SCHNEIDI_HOMEPAGE@
 
 Files: *
 Copyright: 2026 schneidi contributors
-License: GPL-3.0-or-later with app-store exception
+License: AGPL-3.0-or-later with app-store exception
 
-License: GPL-3.0-or-later with app-store exception
+License: AGPL-3.0-or-later with app-store exception
  This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
+ it under the terms of the GNU Affero General Public License as published by
  the Free Software Foundation, either version 3 of the License, or
  (at your option) any later version.
  .
  This program is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
+ GNU Affero General Public License for more details.
  .
- On Debian systems, the complete text of the GNU General Public
- License version 3 can be found in "/usr/share/common-licenses/GPL-3".
+ On Debian systems, the complete text of the GNU Affero General Public
+ License version 3 can be found in "/usr/share/common-licenses/AGPL-3.0".
  .
- As an additional permission under GPL version 3 section 7, schneidi's own
+ As an additional permission under AGPL version 3 section 7, schneidi's own
  code may be combined with proprietary app store libraries for ads, in-app
  purchases or license checks (full text: LICENSE-EXCEPTION.md in the source).
  The name "schneidi" and its logo are not covered by the license

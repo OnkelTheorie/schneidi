@@ -293,11 +293,7 @@ void Editor::normalizeAudio(const QHash<int, double>& peakDb, double targetDb, b
             Clip* c = TimelineOps::findClip(tl, it.key());
             if (!c) continue;
             if (Keys::animated(*c, AnimParam::Volume)) {
-                KeyTrack& keys = c->keys[AnimParam::Volume];
-                double top = kMinVolumeDb;
-                for (const Keyframe& k : keys) top = std::max(top, k.value);
-                const double delta = it.value() - top;
-                for (Keyframe& k : keys) k.value = std::clamp(k.value + delta, kMinVolumeDb, kMaxVolumeDb);
+                Keys::setVolumeLevel(*c, it.value()); // the whole curve moves
             } else {
                 c->volumeDb = it.value();
             }

@@ -9,6 +9,14 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build-Typ" FORCE)
 endif()
 
+# Faster rebuilds when ccache is installed (sharing between git worktrees: base_dir and hash_dir in ccache's own
+# config, see docs). A launcher given on the command line wins.
+find_program(SCHNEIDI_CCACHE ccache)
+if(SCHNEIDI_CCACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    set(CMAKE_CXX_COMPILER_LAUNCHER ${SCHNEIDI_CCACHE})
+    set(CMAKE_C_COMPILER_LAUNCHER ${SCHNEIDI_CCACHE})
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -142,6 +150,8 @@ add_library(schneidi_lib STATIC
     src/engine/StillFetcher.h     src/engine/StillFetcher.cpp
     src/engine/ScrubFrames.h      src/engine/ScrubFrames.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
+    src/engine/ProxyCleanup.h     src/engine/ProxyCleanup.cpp
+    src/engine/MemoryRelease.h    src/engine/MemoryRelease.cpp
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
     src/engine/Denoise.h          src/engine/Denoise.cpp
     src/engine/Stabilizer.h       src/engine/Stabilizer.cpp
@@ -195,6 +205,7 @@ add_library(schneidi_lib STATIC
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
+    src/app/ProxyCleanupDialog.h src/app/ProxyCleanupDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
     src/app/StreamPresetsDialog.h src/app/StreamPresetsDialog.cpp
     src/app/StartTemplatesPage.h src/app/StartTemplatesPage.cpp

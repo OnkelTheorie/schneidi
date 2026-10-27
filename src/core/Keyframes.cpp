@@ -394,6 +394,22 @@ const Keyframe* keyAt(const Clip& c, AnimParam p, int t)
     return nullptr;
 }
 
+double setVolumeLevel(Clip& c, double db)
+{
+    KeyTrack& keys = c.keys[AnimParam::Volume];
+    double top = kMinVolumeDb, low = kMaxVolumeDb;
+    for (const Keyframe& k : keys) {
+        top = std::max(top, k.value);
+        low = std::min(low, k.value);
+    }
+    const double level = keys.isEmpty() || (top - low < 1e-9 && top < c.volumeDb) ? c.volumeDb : top;
+    const double delta = db - level;
+    for (Keyframe& k : keys) k.value = std::clamp(k.value + delta, kMinVolumeDb, kMaxVolumeDb);
+    if (keys.isEmpty()) c.keys.remove(AnimParam::Volume);
+    c.volumeDb = std::clamp(c.volumeDb + delta, kMinVolumeDb, kMaxVolumeDb);
+    return delta;
+}
+
 void setKey(Clip& c, AnimParam p, int t, double v)
 {
     KeyTrack& k = c.keys[p];

@@ -73,6 +73,9 @@ public:
     void selectTimeline(const QJsonValue& v, bool open = false);
     int sequenceOf(const QJsonValue& v) const; // sequence id from an id or a name; throws if there is none
     QString save(); // path of the backup copy (empty = none)
+    // EMPTY for the timeline looked at, naming it and the timelines that have clips (on a file the open timeline
+    // stays the user's: an AI that made a new one has to pass 'timeline')
+    [[noreturn]] void failEmpty() const;
     // Media in the project (imported on first use); throws if the file cannot be read
     const MediaInfo& media(const QString& file);
 
@@ -162,6 +165,9 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx);
 QJsonObject cmdEffects(const QJsonObject& a, Context& ctx);
 QJsonObject cmdApp(const QJsonObject& a, Context& ctx);
 QJsonObject cmdWatch(const QJsonObject& a, Context& ctx); // CommandsWatch.cpp
+// What `import` and `watch` say when a video arrives in a project whose timelines are all empty and whose frame rate
+// differs from the video's (the `format` op can still match it); empty = nothing to say
+QString frameRateNote(const Project& p, const QString& video);
 QString presetHelp(); // the app's Deliver presets for the `render` description
 
 // ---------- Analysis (Analysis*.cpp) ----------

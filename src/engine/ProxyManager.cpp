@@ -3,6 +3,7 @@
 
 #include "core/I18n.h"
 #include "engine/Background.h"
+#include "engine/ProxyCleanup.h"
 
 #include <Mlt.h>
 #include <QCryptographicHash>
@@ -208,7 +209,9 @@ void ProxyManager::remove(const QStringList& originals)
 {
     cancel(originals);
     for (const QString& p : originals) {
-        if (QFile::remove(proxyPath(p))) emit proxyChanged(p);
+        const QString proxy = proxyPath(p);
+        QFile::remove(ProxyCleanup::notePath(proxy));
+        if (QFile::remove(proxy)) emit proxyChanged(p);
     }
 }
 
@@ -346,6 +349,7 @@ void ProxyManager::onFinished(int exitCode, bool crashed)
     if (!crashed && exitCode == 0 && QFileInfo(part).size() > 0) {
         QFile::remove(target);
         QFile::rename(part, target); // only now visible -> never half-finished proxies in the preview
+        ProxyCleanup::writeNote(target, original, kMaxSize); // which file it is for (cleaning up tells why it goes)
     } else {
         QFile::remove(part);
         qWarning("Proxy fehlgeschlagen (%s, Code %d): %s", qPrintable(original), exitCode, qPrintable(tail));

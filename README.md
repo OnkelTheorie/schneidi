@@ -24,7 +24,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 
 - **Edit together with an AI – any AI, any way.** Tell it what to do in the [AI chat](#ai-chat-in-the-app) next to the timeline (Claude, an OpenAI-compatible service or a local model), connect Claude Code or Claude Desktop in one step, or let an assistant work through the [command line and MCP server](#command-line-and-ai-editing-mcp), also on a server. It finds pauses, scene changes, loud moments and the beats of a song, transcribes, cuts, grades, mixes and renders – and you see what it does: changed clips light up, the AI log lists every step, each change is an undo step. Or review first and accept or discard the whole request.
 - **A professional workflow on any computer.** Pages for each step, ripple, roll, slip and slide trims, compound clips, multicam, color wheels and scopes – with the shortcuts you know from the big editors (a standard and a beginner preset, every key changeable), but light enough for an older laptop.
-- **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, no telemetry, open source (GPL-3.0). The only request schneidi makes by itself is a check for a new release on GitHub, at most once a day (off in File › Settings). The AI chat talks only to the provider you pick; with Ollama it stays on your computer too.
+- **Everything stays on your computer.** Speech recognition (whisper.cpp), text-based editing, sync by sound and rendering work offline – no account, no cloud, no telemetry, open source (AGPL-3.0). The only request schneidi makes by itself is a check for a new release on GitHub, at most once a day (off in File › Settings). The AI chat talks only to the provider you pick; with Ollama it stays on your computer too.
 - **Long recordings of one event.** Sync hours of recordings from several PCs or cameras by their sound and cut them in a multicam view that shows up to 16 angles at once.
 
 ## Screenshots
@@ -91,7 +91,7 @@ Thumbnails for the Media Storage (your Videos folder) are made by a separate ffm
 | 4 cores | 57 – smooth | | |
 | 6 cores | 58 – smooth | | |
 
-0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media).
+0.10 managed 3.6 frames/s on one core and 9 on two: 0.11 decodes the video itself instead of through MLT. Decoding on the graphics card (NVIDIA, AMD/Intel via VA-API; here a GTX 1070) is on by default. On a computer too slow for the originals, schneidi notices it during playback and offers to generate proxy media (also by hand: right-click a clip in the Media Pool › Generate Proxy Media). Playback › Clean Up Proxy Media… lists the proxy files no open or recent project needs (original deleted or changed, project gone) and frees their space.
 
 **And on real weak hardware: a Raspberry Pi Zero 2 W** (4 × 1 GHz Cortex-A53, 512 MB RAM, Debian 13 ARM64, no hardware decoding; built from source, there is no ARM download yet). DaVinci Resolve, Premiere Pro and Final Cut Pro are not available for this computer at all. Material: 15 s of a 1080p60 gaming clip.
 
@@ -180,7 +180,7 @@ schneidi-cli mcp`, or in Claude Desktop's `claude_desktop_config.json`:
 
 **Live with the app:** if the project is open in schneidi, every command works on what the app shows (unsaved
 changes included). An `edit` changes the open project as one undo step and does not save; `info` adds the playhead
-and the selection; `app` plays, seeks, selects, undoes, saves and generates proxies. The app shows "AI connected"
+and the selection; `app` plays, seeks, selects, undoes, saves, generates proxies and cleans up old ones. The app shows "AI connected"
 while a session is active, lights up the clips it changed and has a button to disconnect it. `@app` as the project
 means the project of the running app. Without the app (or on a server) the CLI works on the file as before.
 
@@ -265,4 +265,4 @@ schneidi is an independent open-source project. It is not affiliated with, endor
 
 ## License
 
-[GPL-3.0](LICENSE). The schneidi released here has no ads, no subscriptions and no telemetry; an [additional permission](LICENSE-EXCEPTION.md) in schneidi's own code only allows builds for mobile app stores to link the store's libraries (ads, in-app purchases, license checks). The code is open; the name "schneidi" and the logo are protected – see [TRADEMARKS.md](TRADEMARKS.md).
+[AGPL-3.0](LICENSE): use schneidi for anything, change it, share it – if you publish a changed version, or offer it to others as an online service, publish your source code too (versions up to 0.12 are GPL-3.0). The schneidi released here has no ads, no subscriptions and no telemetry; an [additional permission](LICENSE-EXCEPTION.md) in schneidi's own code only allows builds for mobile app stores to link the store's libraries (ads, in-app purchases, license checks). The code is open; the name "schneidi" and the logo are protected – see [TRADEMARKS.md](TRADEMARKS.md).

@@ -191,18 +191,33 @@ QJsonObject watchOnce(const QJsonObject& a)
         const bool since = a.contains("since");
         QSet<int> now;
         for (const WatchArrival& x : pass.arrivals) now.insert(x.revision);
+        // The first recording in a still empty project: its frame rate (a vertical project waiting for game clips is
+        // 25 fps until someone matches it); on the line of that file too, `follow` prints only the files
+        QString rateNote, rateFile;
+        for (const WatchArrival& x : pass.arrivals)
+            if (const MediaInfo* m = p.mediaInfo(x.path); m && m->hasVideo && !m->isImage) {
+                rateNote = frameRateNote(p, x.path);
+                rateFile = x.path;
+                break;
+            }
         QJsonArray news;
         for (const WatchArrival& x : p.watchLog())
-            if (since ? x.revision > a["since"].toInt() : now.contains(x.revision)) news << arrivalJson(p, x);
+            if (since ? x.revision > a["since"].toInt() : now.contains(x.revision)) {
+                QJsonObject n = arrivalJson(p, x);
+                if (!rateNote.isEmpty() && x.path == rateFile) n["note"] = rateNote;
+                news << n;
+            }
         o["new"] = news;
         o["imported"] = int(pass.arrivals.size());
         if (!pass.pending.isEmpty()) o["pending"] = QJsonArray::fromStringList(pass.pending);
         if (!pass.unreadable.isEmpty()) o["unreadable"] = QJsonArray::fromStringList(pass.unreadable);
+        QJsonArray notes = o.value("notes").toArray();
+        if (!rateNote.isEmpty()) notes << rateNote;
         if (since && !p.watchLog().isEmpty() && a["since"].toInt() < p.watchLog().first().revision - 1)
-            o["notes"] = QJsonArray{QString("only the newest %1 files are remembered: some after revision %2 are not "
-                                            "listed")
-                                        .arg(WatchFolders::kLogSize)
-                                        .arg(a["since"].toInt())};
+            notes << QString("only the newest %1 files are remembered: some after revision %2 are not listed")
+                         .arg(WatchFolders::kLogSize)
+                         .arg(a["since"].toInt());
+        if (!notes.isEmpty()) o["notes"] = notes;
     }
     if (changed || !pass.arrivals.isEmpty()) {
         const QString backup = s.save();

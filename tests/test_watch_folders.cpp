@@ -400,6 +400,7 @@ void testCommand(const QString& root, const QString& clip)
         CHECK_EQ(n["frames"].toInt(), 50); // 2 s at 25 fps
         CHECK_EQ(n["bin"].toString(), QString("Recordings/Raw"));
         CHECK(n["video"].toBool() && n["audio"].toBool());
+        CHECK(!n.contains("note")); // the project's frame rate
     }
     CHECK_EQ(r["imported"].toInt(), 1);
     CHECK_EQ(r["unreadable"].toArray(), QJsonArray{dir + "/broken.mp4"});
@@ -431,6 +432,31 @@ void testCommand(const QString& root, const QString& clip)
     CHECK(d.watchFolders.isEmpty() && d.media.size() == 1);
     r = run("watch", {{"project", project}});
     CHECK(r["notes"].toArray().size() == 1 && r["new"].toArray().isEmpty());
+}
+
+// The first recording in a still empty project of another frame rate: the answer (and its `follow` line) says how
+// to match it - an AI set up a 9:16 project for game clips, the watch brought in 60-fps recordings and nothing said
+// that the project was 25 fps
+void testFrameRateNote(const QString& root)
+{
+    const QString dir = root + "/rate";
+    const QString project = root + "/rate.schneidi";
+    QDir().mkpath(dir);
+    const QString fifty = Check::makeMedia(root + "/fifty.mp4", {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=50:duration=1",
+                                                                 "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+    CHECK(!run("new", {{"project", project}, {"template", "vertical"}}).contains("error"));
+    run("watch", {{"project", project}, {"add", dir}});
+    QThread::msleep(20);
+    copyNow(fifty, dir + "/game.mp4");
+    QJsonObject r = run("watch", {{"project", project}, {"settle_s", 0}});
+    CHECK(item(r, "new", 0)["note"].toString().contains("`format` with fps 50"));
+    CHECK(r["notes"].toArray().at(0).toString().contains("game.mp4 has 50 fps, the project 25 fps"));
+    // Matched (or clips placed): nothing more to say
+    run("edit", {{"project", project}, {"ops", R"([{"op":"format","fps":50}])"}});
+    copyNow(fifty, dir + "/game2.mp4");
+    r = run("watch", {{"project", project}, {"settle_s", 0}});
+    CHECK_EQ(r["new"].toArray().size(), 1);
+    CHECK(!item(r, "new", 0).contains("note") && !r.contains("notes"));
 }
 
 // ---------- schneidi-cli as a process ----------
@@ -761,6 +787,7 @@ int main(int argc, char** argv)
                                                                    "-shortest"});
     if (!CHECK(!clip.isEmpty() && !longClip.isEmpty())) return Check::result();
     testCommand(root, clip);
+    testFrameRateNote(root);
     testCliProcess(root, clip, longClip);
     testLive(root, clip);
     testFolderWatch(root, clip);

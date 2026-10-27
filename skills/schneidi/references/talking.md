@@ -14,8 +14,9 @@ Goal: same content, no dead air, no slips - but still natural, not robotic.
 - **On an existing timeline** (also live in the app): `silence` on the project → its `silence` ranges are timeline
   ranges → `delete_range` with `ranges` (ripple) removes them all in one op. Don't cut piece by piece - every cut
   moves the later times; `delete_range` applies all ranges together.
-- Defaults that sound natural: `min` 0.5-0.7 s (shorter pauses are breathing), `pad` 0.1-0.15 s. A fast vlog may go
-  tighter (`min` 0.3 s); interviews and podcasts stay looser so answers can breathe.
+- Defaults that sound natural: `min` "0.5s"-"0.7s" (shorter pauses are breathing), `pad` "0.1s"-"0.15s" (times:
+  a plain number counts frames). A fast vlog may go tighter (`min` "0.3s"); interviews and podcasts stay looser so
+  answers can breathe; "only the long pauses" = `min` "0.8s"-"1s".
 - If the result removes much more than expected (e.g. half of the length), the threshold may be catching quiet
   speech: try `threshold_db` -40 or -45 and compare `kept_s`.
 

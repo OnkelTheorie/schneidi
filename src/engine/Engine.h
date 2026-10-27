@@ -30,6 +30,10 @@ class Player;
 }
 class ProxyManager;
 class RenderCache;
+class IdleRelease;
+namespace MemoryRelease {
+struct Activity;
+}
 class Preroll;
 class StillFetcher;
 struct MixerHooks;
@@ -74,6 +78,10 @@ public:
     RenderCache* renderCache() const { return m_renderCache; }
     // Single frames from media files in their own thread (trim view while dragging an edit); follows setFormat()
     StillFetcher* stills() const { return m_stills; }
+    // Gives MLT's frame pool and the free heap back once nothing renders (after stopping, rebuilds, exports)
+    IdleRelease* idleRelease() const { return m_idleRelease; }
+    // What renders right now: playback, an export, the render cache (MemoryRelease's policy)
+    MemoryRelease::Activity activity() const;
 
     MediaInfo probe(const QString& path);
     // Same without an Engine instance: lengths count in the frame rate of `format`
@@ -200,6 +208,7 @@ private:
     ProxyManager* m_proxies;
     RenderCache* m_renderCache;
     StillFetcher* m_stills;
+    IdleRelease* m_idleRelease;
     ProjectFormat m_format;
     std::unique_ptr<Mlt::Profile> m_profile;
     // The preview consumer's own copy: setting its width/height writes them into its profile (mlt_consumer.c), which

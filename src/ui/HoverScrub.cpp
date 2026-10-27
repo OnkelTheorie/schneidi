@@ -11,11 +11,11 @@
 #include <algorithm>
 
 HoverScrub::HoverScrub(QListWidget* list, const QSize& thumbSize, FileOf fileOf, Show show)
-    : QObject(list), m_list(list), m_frames(new ScrubFrames(thumbSize, this)), m_fileOf(std::move(fileOf)),
-      m_show(std::move(show))
+    : QObject(list), m_list(list), m_viewport(list->viewport()), m_frames(new ScrubFrames(thumbSize, this)),
+      m_fileOf(std::move(fileOf)), m_show(std::move(show))
 {
-    m_list->viewport()->setMouseTracking(true);
-    m_list->viewport()->installEventFilter(this);
+    m_viewport->setMouseTracking(true);
+    m_viewport->installEventFilter(this);
     connect(m_frames, &ScrubFrames::ready, this, [this](const QString& path, int) {
         if (path == m_path) refresh();
     });
@@ -36,7 +36,9 @@ void HoverScrub::forget()
 
 bool HoverScrub::eventFilter(QObject* obj, QEvent* e)
 {
-    if (obj == m_list->viewport()) {
+    // Compared by pointer: the viewport's last events (QEvent::Destroy) come while the list is half destroyed, when
+    // m_list->viewport() is a call on a QAbstractScrollArea that is not one any more (UBSan: undefined behavior)
+    if (obj == m_viewport) {
         if (e->type() == QEvent::MouseMove) {
             const auto* me = static_cast<QMouseEvent*>(e);
             if (me->buttons() == Qt::NoButton) hover(me->position().toPoint());

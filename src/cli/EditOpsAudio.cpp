@@ -34,15 +34,15 @@ void opVolume(Session& s, const QJsonObject& op)
                 s.editor.setClipVolume(id, db);
                 continue;
             }
-            // Volume keyframes: the static volume does nothing, move the whole curve (its loudest key becomes db),
-            // like dragging the volume line in the app
-            double top = kMinVolumeDb;
-            for (const Keyframe& k : c.keys.value(AnimParam::Volume)) top = std::max(top, k.value);
-            const double delta = db - top;
-            s.editor.modifyClips({id}, "Volume", [delta](Clip& x) {
-                for (Keyframe& k : x.keys[AnimParam::Volume]) k.value = std::clamp(k.value + delta, kMinVolumeDb, kMaxVolumeDb);
-            });
-            s.notes << QString("clip %1 has volume keyframes: the whole curve moved by %2 dB").arg(id).arg(delta, 0, 'f', 1);
+            // Volume keyframes: the static volume does nothing, move the whole curve (its level becomes db), like
+            // dragging the volume line in the app
+            Clip moved = c;
+            const double delta = Keys::setVolumeLevel(moved, db);
+            s.editor.modifyClips({id}, "Volume", [db](Clip& x) { Keys::setVolumeLevel(x, db); });
+            s.notes << QString("clip %1 has volume keyframes: the whole curve moved %2 by %3 dB")
+                           .arg(id)
+                           .arg(delta > 0 ? "up" : "down")
+                           .arg(std::abs(delta), 0, 'f', 1);
         }
     }
     if (op.contains("pan")) {
@@ -73,7 +73,7 @@ void mixToLoudness(Session& s, int track, double target)
     for (int round = 0; round < 3; ++round) {
         Timeline tl = s.project.renderTimeline();
         const int end = TimelineOps::endFrame(tl);
-        if (end <= 0) fail("EMPTY", "the timeline is empty");
+        if (end <= 0) s.failEmpty();
         if (track >= 0)
             for (int i = 0; i < tl.audio.size(); ++i) {
                 tl.audio[i].muted = i != track;
@@ -290,8 +290,18 @@ void opNormalize(Session& s, const QJsonObject& op)
                                .arg(it.key() + 1)
                                .arg(it.value(), 0, 'f', 1);
     }
-    // The clip fader ends at +12 dB: quiet clips may not reach the target
-    if (!relative)
+    // The clip fader ends at +12 dB: quiet clips may not reach the target (relative: all of them together)
+    if (relative) {
+        double loudest = -1000;
+        for (const double l : levels) loudest = std::max(loudest, l);
+        const double reference = ref ? *ref : loudest, need = target - reference;
+        if (reference > -100.0 && need > kMaxVolumeDb + 0.05)
+            s.notes << QString("the clips need %1 dB together but clip volume ends at +%2 dB: they stay %3 dB under "
+                               "the target (allow_track_gain:true puts the rest on their tracks, or raise the master)")
+                           .arg(need, 0, 'f', 1)
+                           .arg(kMaxVolumeDb, 0, 'f', 0)
+                           .arg(need - kMaxVolumeDb, 0, 'f', 1);
+    } else {
         for (auto it = levels.begin(); it != levels.end(); ++it)
             if (it.value() > -100.0 && target - it.value() > kMaxVolumeDb + 0.05)
                 s.notes << QString("clip %1 needs %2 dB but clip volume ends at +%3 dB: it stays %4 dB under the target "
@@ -300,6 +310,7 @@ void opNormalize(Session& s, const QJsonObject& op)
                                .arg(target - it.value(), 0, 'f', 1)
                                .arg(kMaxVolumeDb, 0, 'f', 0)
                                .arg(target - it.value() - kMaxVolumeDb, 0, 'f', 1);
+    }
     // Loudness up can push the peaks over 0 dB: say so (the mix of several clips may peak higher still)
     const Timeline& after = s.project.timeline();
     for (auto it = truePeaks.begin(); it != truePeaks.end(); ++it) {
@@ -344,7 +355,7 @@ void opDuck(Session& s, const QJsonObject& op)
     if (op.contains("attack")) params.attack = timeOf(s, op, "attack");
     if (op.contains("release")) params.release = timeOf(s, op, "release");
     if (op.contains("hold")) params.hold = timeOf(s, op, "hold");
-    if (TimelineOps::endFrame(tl) <= 0) fail("EMPTY", "the timeline is empty");
+    if (TimelineOps::endFrame(tl) <= 0) s.failEmpty();
     const auto ranges = AudioAnalysis::soundRanges(f, tl, voice, params);
     if (!ranges) fail("DECODE_FAILED", "could not mix the sound");
     if (!op.value("replace").toBool(true)) // keep clips that already have volume keyframes
@@ -379,7 +390,10 @@ void opDuck(Session& s, const QJsonObject& op)
 void addAudioOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"volume", "{op:'volume', clips, db?, pan?}",
-                 "clip volume in dB (-60 = silent, max +12) and pan (-100 left … 100 right)", {}, opVolume}
+                 "clip volume in dB (-60 = silent, max +12) and pan (-100 left … 100 right)",
+                 "A clip with volume keyframes (ducked music, a drawn curve) keeps its shape: the whole curve moves so "
+                 "that the clip's level becomes db - its loudest key, or its volume when `duck` lowered all of it.",
+                 opVolume}
         << OpDef{"audio_stream", "{op:'audio_stream', clips, stream}",
                  "which audio stream of the file the clips play (0 = first; `probe` lists them)", {}, opAudioStream}
         << OpDef{"mixer", "{op:'mixer', track:'A1'|'master', volume_db?|target_lufs?, pan?, mute?, solo?, limiter?, "

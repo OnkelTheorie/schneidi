@@ -7,8 +7,10 @@
 #include "core/TimelineOps.h"
 #include "engine/Background.h"
 #include "engine/Bundle.h"
+#include "engine/Exporter.h"
 #include "engine/Frei0r.h"
 #include "engine/LiveUpdate.h"
+#include "engine/MemoryRelease.h"
 #include "engine/Preroll.h"
 #include "engine/PreviewConsumer.h"
 #include "engine/Profiles.h"
@@ -37,20 +39,14 @@
 #include <thread>
 #include <utility>
 
-#ifdef __GLIBC__
-#include <malloc.h>
-#endif
-
 namespace {
 
-// Hands freed memory back to the system. glibc raises its mmap threshold after the first freed frame buffer (several
-// MB each), from then on frames come from the heap and stay there when freed: every multicam grid built (one decoder
-// per cell) left hundreds of MB behind (4 GB after flipping the pages of 20 angles a few times).
+// Hands freed memory back to the system right away. glibc raises its mmap threshold after the first freed frame buffer
+// (several MB each), from then on frames come from the heap and stay there when freed: every multicam grid built (one
+// decoder per cell) left hundreds of MB behind (4 GB after flipping the pages of 20 angles a few times).
 void releaseFreedMemory()
 {
-#ifdef __GLIBC__
-    malloc_trim(0);
-#endif
+    MemoryRelease::trimHeap();
 }
 
 constexpr int kSoundRate = 48000; // the own audio engine's rate (the device converts if it runs at another)
@@ -85,10 +81,16 @@ struct EngineCallbacks {
 Engine::Engine(QObject* parent)
     : QObject(parent), m_proxies(new ProxyManager(this)), m_renderCache(new RenderCache(this)),
       m_stills(new StillFetcher(this)),
+      m_idleRelease(new IdleRelease([this] { return activity(); }, this)),
       m_loudness(std::make_unique<SharedLoudness>()), m_seekFade(std::make_unique<SeekFade>()), m_preroll(std::make_unique<Preroll>())
 {
     // Render cache pauses during playback
     connect(this, &Engine::speedChanged, m_renderCache, [this](double s) { m_renderCache->setPlaying(s != 0.0); });
+    // MLT's pool and the heap keep what playback, rebuilds and rendered clips used: given back once all is idle
+    connect(this, &Engine::speedChanged, m_idleRelease, [this](double s) {
+        if (s == 0.0) m_idleRelease->request();
+    });
+    connect(m_renderCache, &RenderCache::cacheChanged, m_idleRelease, &IdleRelease::request);
     m_seekRelease = new QTimer(this);
     m_seekRelease->setSingleShot(true);
     m_seekRelease->setInterval(120);
@@ -431,6 +433,16 @@ void Engine::updateTimeline(const Timeline& tl)
     }
     applyTimeline(tl, hinted);
     stopAtEnd(); // deleted while playing: the playhead may lie behind the new end
+    m_idleRelease->request(); // the old graph's frames are free now (an AI session rebuilds a lot)
+}
+
+MemoryRelease::Activity Engine::activity() const
+{
+    MemoryRelease::Activity a;
+    a.playing = m_speed != 0.0;
+    a.exporting = Exporter::anyRunning();
+    a.caching = m_renderCache->isRendering();
+    return a;
 }
 
 struct Engine::Opening {

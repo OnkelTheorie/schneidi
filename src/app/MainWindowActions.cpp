@@ -11,6 +11,7 @@
 #include "app/Log.h"
 #include "app/NormalizeDialog.h"
 #include "app/PasteAttributesDialog.h"
+#include "app/ProxyCleanupDialog.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
 #include "core/Editor.h"
@@ -28,6 +29,7 @@
 #include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
 #include "engine/Profiles.h"
+#include "engine/ProxyCleanup.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
 #include "engine/audio/Device.h"
@@ -474,6 +476,12 @@ void MainWindow::buildActions()
     useProxy->setCheckable(true);
     useProxy->setChecked(m_engine->proxies()->enabled());
     connect(useProxy, &QAction::toggled, m_engine->proxies(), &ProxyManager::setEnabled);
+    // Proxy files no open or recent project needs: list, size, delete after asking (also in the Media Pool's menu)
+    auto* cleanProxies = makeAction(play, "proxy_cleanup", T("Proxy-Medien aufräumen…"), QKeySequence(), [this] {
+        if (const qint64 freed = ProxyCleanupDialog::run(this, m_project->data(), m_engine->proxies()); freed > 0)
+            statusBar()->showMessage(T("Proxy-Medien aufgeräumt: %1 frei").arg(ProxyCleanup::sizeText(freed)), 8000);
+    });
+    connect(m_mediaPool, &MediaPool::proxyCleanupRequested, cleanProxies, &QAction::trigger);
     // Before/After like DaVinci (Shift+D, Bypass Color Grades): preview only, export always with correction
     auto* bypass = makeAction(play, "color_bypass", T("Farbkorrektur umgehen (Vorher/Nachher)"), QKeySequence("Shift+D"),
                               [] {});
