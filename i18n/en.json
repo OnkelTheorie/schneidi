@@ -398,6 +398,7 @@
  "Der Anbieter verweigert den Zugriff mit diesem Schlüssel.": "The provider denies access with this key.",
  "Der Audiotreiber ändert sich nach dem Neustart von schneidi.": "The audio driver changes after restarting schneidi.",
  "Der Chat ist zu lang für das Modell geworden: „Neuer Chat“ fängt frisch an (bei Ollama hilft auch mehr Kontext, OLLAMA_CONTEXT_LENGTH).": "The chat has grown too long for the model: “New Chat” starts afresh (with Ollama more context helps too, OLLAMA_CONTEXT_LENGTH).",
+ "Das Modell hat nur das Ende der Anfrage gelesen: es nimmt %1 Token, die Anfrage hat etwa %2 (schneidis Werkzeuge und Anleitung allein etwa 15 000). Mehr Kontext einstellen, bei Ollama z. B. OLLAMA_CONTEXT_LENGTH=32768 oder ein Modell mit num_ctx 32768.": "The model read only the end of the request: it takes %1 tokens, the request has about %2 (schneidi's tools and guide alone about 15,000). Give it more context, with Ollama e.g. OLLAMA_CONTEXT_LENGTH=32768 or a model with num_ctx 32768.",
  "Der Clip hat kein Fenster %1": "The clip has no window %1",
  "Der Clip hat keine Effekte.": "The clip has no effects.",
  "Der Clip ist zu kurz zum Stabilisieren.": "The clip is too short to stabilize.",

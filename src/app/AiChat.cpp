@@ -240,6 +240,13 @@ void AiChat::requestModel()
     r.tools = m_mcp->tools();
     r.messages = m_history;
     r.fallbacks = Ai::fallbacksFor(m_endpoint);
+    // The text it has (pictures aside): a server that read much less cut the request (see onReply)
+    m_sentChars = m_system.size() + QJsonDocument(r.tools).toJson(QJsonDocument::Compact).size();
+    for (const Ai::Message& m : m_history) {
+        m_sentChars += m.text.size();
+        for (const Ai::ToolCall& c : m.calls) m_sentChars += c.name.size() + QJsonDocument(c.input).toJson().size();
+        for (const Ai::ToolResult& t : m.results) m_sentChars += t.text.size();
+    }
     m_streaming = -1;
     m_client->send(m_endpoint, r);
 }
@@ -261,6 +268,22 @@ void AiChat::onReply(const Ai::Reply& reply)
     if (!m_busy) return;
     m_usage += reply.usage;
     emit usageChanged();
+    // A local server that cut the request to the model's context (Ollama does so silently, 4096 tokens unless set
+    // otherwise): the model read only its end - without the tools and the guide, maybe without the request. Its
+    // answer is neither run nor kept (what the user writes next joins their message); the user learns why. Text has
+    // at least one token per 5 characters (about 4 here).
+    if (m_endpoint.protocol == Ai::Protocol::OpenAi && Ai::isLocal(m_endpoint.address) && reply.usage.input > 0
+        && m_sentChars > 5 * reply.usage.input + 4000) {
+        if (m_streaming >= 0) change(m_streaming, [](Entry& e) { e.state = Entry::State::Failed; });
+        m_streaming = -1;
+        addError(T("Das Modell hat nur das Ende der Anfrage gelesen: es nimmt %1 Token, die Anfrage hat etwa %2 "
+                   "(schneidis Werkzeuge und Anleitung allein etwa 15 000). Mehr Kontext einstellen, bei Ollama z. B. "
+                   "OLLAMA_CONTEXT_LENGTH=32768 oder ein Modell mit num_ctx 32768.")
+                     .arg(reply.usage.input)
+                     .arg(m_sentChars / 4));
+        finishTurn();
+        return;
+    }
     Ai::Reply r = reply;
     // Small local models often write their tool calls as text ({"name":"edit","arguments":{…}}): run as if made (and
     // so kept in the history: the model sees them answered like real calls); the text is not shown

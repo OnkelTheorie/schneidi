@@ -7,9 +7,9 @@
 // (accept = one undo step, discard = all back and the AI is told, editing meanwhile keeps the single steps, a file of a
 // watch folder waits until the user has chosen); what the user changed between two answers comes with the next request
 // (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on, tool calls it
-// wrote as text are run, a call without a project works on the open one; errors (bad key, overloaded then fine, no
-// server), stopping a request, test runs that never send; the chat section in Settings › AI (test connection, model
-// list, key stored).
+// wrote as text are run, a call without a project works on the open one, a request a local server cut is not run;
+// errors (bad key, overloaded then fine, no server), stopping a request, test runs that never send; the chat section in
+// Settings › AI (test connection, model list, key stored).
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
 
 #include "check.h"
@@ -208,13 +208,14 @@ FakeProvider::Response openAiTool(const QString& id, const QString& name, const 
     return {200, "text/event-stream", body};
 }
 
-FakeProvider::Response openAiText(const QString& text)
+// prompt: the tokens the server says it read (Ollama: at most its context, the rest is cut silently)
+FakeProvider::Response openAiText(const QString& text, int prompt = 20000)
 {
     const auto chunk = [](const QJsonObject& o) { return "data: " + QJsonDocument(o).toJson(QJsonDocument::Compact) + "\n\n"; };
     return {200, "text/event-stream",
             chunk({{"choices", QJsonArray{QJsonObject{{"index", 0}, {"delta", QJsonObject{{"content", text}}}}}}})
                 + chunk({{"choices", QJsonArray{QJsonObject{{"index", 0}, {"delta", QJsonObject{}}, {"finish_reason", "stop"}}}}})
-                + chunk({{"choices", QJsonArray{}}, {"usage", QJsonObject{{"prompt_tokens", 500}, {"completion_tokens", 7}}}})
+                + chunk({{"choices", QJsonArray{}}, {"usage", QJsonObject{{"prompt_tokens", prompt}, {"completion_tokens", 7}}}})
                 + "data: [DONE]\n\n"};
 }
 
@@ -580,7 +581,7 @@ void test(const QString& dir)
         CHECK_EQ(t->images.size(), 2);
         CHECK(t->state == AiChat::Entry::State::Done);
     }
-    CHECK_EQ(chat->usage().input, qint64(500));
+    CHECK_EQ(chat->usage().input, qint64(20000));
 
     // A click on a picture shows it bigger in a window of its own; never a popup (on X11 a popup grabs mouse and
     // keyboard, and one opened from a press kept the grab: the whole desktop stopped answering). Click/Escape close it.
@@ -658,6 +659,26 @@ void test(const QString& dir)
         for (const AiChat::Entry& e : chat->entries()) CHECK(!e.text.contains("\"arguments\""));
         if (const AiChat::Entry* a = lastOf(chat, AiChat::Entry::Kind::Assistant); CHECK(a))
             CHECK_EQ(a->text, QString("Zwei Clips."));
+    }
+
+    // ---- A local server that read only the end of the request (Ollama's 4096 tokens): not run, the user told why ----
+    {
+        fake.script = {openAiText(R"({"name": "edit", "arguments": {"ops": [{"op": "trim"}]}})", 4096)};
+        const int sent = int(fake.requests.size());
+        const int tools = count(chat, AiChat::Entry::Kind::Tool);
+        panel->sendText("Schneide den ersten Clip auf 10 Sekunden");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent + 1);
+        CHECK_EQ(count(chat, AiChat::Entry::Kind::Tool), tools);
+        if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e))
+            CHECK(e->text.contains("4096") && e->text.contains("OLLAMA_CONTEXT_LENGTH"));
+        // Not kept: the next request has the user's words, no answer of the model after them
+        fake.script = {openAiText("Ok.")};
+        panel->sendText("Und jetzt?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        const QJsonArray m = fake.last().body["messages"].toArray();
+        CHECK_EQ(m.last()["role"].toString(), QString("user"));
+        CHECK(m.last()["content"].toString().contains("10 Sekunden") && m.last()["content"].toString().contains("Und jetzt?"));
     }
 
     // ---- A call without a project (small models forget it): the chat's tools take the open project, with a note ----

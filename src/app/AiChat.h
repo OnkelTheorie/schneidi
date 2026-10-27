@@ -117,6 +117,7 @@ private:
     Ai::Usage m_usage;
     int m_rounds = 0;
     bool m_nudged = false; // an empty answer was answered with "go on" in this request
+    qint64 m_sentChars = 0; // text of the last request to the model (system, tools, history; no pictures)
     int m_streaming = -1; // entry of the answer that streams in
     QVector<Ai::ToolCall> m_calls; // of the last answer
     QVector<Ai::ToolResult> m_results;
