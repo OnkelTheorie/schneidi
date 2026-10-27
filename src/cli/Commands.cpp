@@ -949,7 +949,7 @@ const QVector<Command>& commands()
           {"to", T::Time, "every/count: end of the range (default: end)"},
           {"crop", T::String, "only this region \"x,y,w,h\" in pixels of the full picture, or fractions 0..1 "
                               "(\"0.75,0.05,0.25,0.3\" = top right); shown at its own size up to 'width'"},
-          {"out", T::Path, "folder for the images (with sheet: image file)"},
+          {"out", T::Path, "folder for the images (with sheet: the image file, .jpg or .png)"},
           {"sheet", T::Boolean, "one contact sheet image instead of single images"},
           {"columns", T::Integer, "sheet: number of columns (default: 2–4 depending on the count)"},
           {"tile_width", T::Integer, "width of every image/tile in pixels (instead of 'width'; e.g. 320 for many tiles, "

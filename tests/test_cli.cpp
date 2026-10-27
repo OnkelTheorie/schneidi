@@ -15,6 +15,7 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QTemporaryDir>
@@ -900,6 +901,15 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         }
         CHECK_EQ(errorOf("frames", {{"sources", QJsonArray{QJsonObject{{"file", clip}, {"width", 10}}}}, {"at", QJsonArray{0}}}),
                  QString("BAD_ARGUMENT"));
+        // A sheet named .png is a PNG (it was JPEG data under that name), any other name stays JPEG
+        const auto magic = [](const QString& path) {
+            QFile f(path);
+            return f.open(QIODevice::ReadOnly) ? f.read(4) : QByteArray();
+        };
+        run("frames", {{"source", clip}, {"count", 2}, {"sheet", true}, {"out", dir.filePath("sheet.png")}});
+        CHECK_EQ(magic(dir.filePath("sheet.png")), QByteArray("\x89PNG"));
+        run("frames", {{"source", clip}, {"count", 2}, {"sheet", true}, {"out", dir.filePath("sheet.jpg")}});
+        CHECK(magic(dir.filePath("sheet.jpg")).startsWith("\xff\xd8"));
 
         const QJsonObject pr = run("probe", {{"files", QJsonArray{clip, dir.filePath("missing.mp4")}}});
         CHECK_EQ(pr["files"].toArray().size(), 2);

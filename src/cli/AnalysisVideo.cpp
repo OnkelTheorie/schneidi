@@ -550,7 +550,9 @@ QJsonObject cmdFrames(const QJsonObject& a, Context& ctx)
         if (!outDir.isEmpty()) {
             QString file = absolute(outDir);
             if (QFileInfo(file).isDir()) file = QDir(file).filePath("sheet.jpg");
-            if (!s.save(file, "JPG", 85)) fail("WRITE_FAILED", "cannot write " + file);
+            // What the name says (JPEG bytes in a .png file confuse programs that go by the name), else JPEG
+            const char* format = QFileInfo(file).suffix().compare("png", Qt::CaseInsensitive) == 0 ? "PNG" : "JPG";
+            if (!s.save(file, format, 85)) fail("WRITE_FAILED", "cannot write " + file);
             result["sheet"] = file;
         }
         if (ctx.mcp) ctx.images = {s};
