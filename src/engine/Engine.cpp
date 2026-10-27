@@ -23,6 +23,7 @@
 #include "engine/TimelineBuilderDetail.h"
 #include "engine/audio/Path.h"
 #include "engine/audio/Player.h"
+#include "engine/video/Still.h"
 #include "ui/MulticamGrid.h"
 
 #include <Mlt.h>
@@ -293,7 +294,7 @@ MediaInfo Engine::probeMlt(const ProjectFormat& format, const QString& path)
     if (!p.is_valid()) return info;
 
     const QString service = p.get("mlt_service");
-    info.isImage = service == "qimage" || service == "pixbuf";
+    info.isImage = Still::isStillService(service.toUtf8().constData());
     if (info.isImage) {
         info.hasVideo = true;
         info.length = 5 * fps; // Still image: 5 seconds as in DaVinci

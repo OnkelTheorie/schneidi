@@ -16,6 +16,7 @@
 #include "engine/PitchLatency.h"
 #include "engine/RampProducer.h"
 #include "engine/Stabilizer.h"
+#include "engine/video/Compose.h"
 
 #include <Mlt.h>
 
@@ -130,7 +131,7 @@ void addWipeBorder(Mlt::Profile& profile, Mlt::Tractor& mix, int track, int len,
     if (!strip.is_valid()) return;
     strip.set("length", len);
     strip.set_in_and_out(0, len - 1);
-    Mlt::Filter crop(profile, "qtcrop");
+    Mlt::Filter crop = Compose::cropFilter(profile);
     if (!crop.is_valid()) return;
     const double W = profile.width(), H = profile.height();
     const bool horizontal = st.type == TransitionType::WipeRight || st.type == TransitionType::WipeLeft;
@@ -148,7 +149,7 @@ void addWipeBorder(Mlt::Profile& profile, Mlt::Tractor& mix, int track, int len,
     crop.set_in_and_out(0, len - 1);
     strip.attach(crop);
     mix.set_track(strip, track);
-    Mlt::Transition t(profile, "qtblend");
+    Mlt::Transition t = Compose::blendTransition(profile);
     t.set("always_active", 1);
     mix.plant_transition(t, 0, track);
 }
@@ -262,7 +263,7 @@ std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Produ
             if (p == a) applyAlphaKeys(profile, *p, len, {{0, 1.0}, {(b ? half : len) - 1, 0.0}, {len - 1, 0.0}});
             else applyAlphaKeys(profile, *p, len, {{0, 0.0}, {half, 0.0}, {len - 1, 1.0}});
             mix->set_track(*p, track);
-            Mlt::Transition t(profile, "qtblend");
+            Mlt::Transition t = Compose::blendTransition(profile);
             t.set("always_active", 1);
             mix->plant_transition(t, 0, track);
             ++track;
@@ -290,7 +291,7 @@ std::unique_ptr<Mlt::Tractor> styledTransition(Mlt::Profile& profile, Mlt::Produ
         const bool fromStart = (type == TransitionType::WipeRight || type == TransitionType::WipeDown) == !a;
         const bool horizontal = type == TransitionType::WipeRight || type == TransitionType::WipeLeft;
         double edges[2] = {0, 0}; // Position of the edge for the border (fraction in wipe direction)
-        Mlt::Filter crop(profile, "qtcrop");
+        Mlt::Filter crop = Compose::cropFilter(profile);
         if (crop.is_valid()) {
             const double W = profile.width(), H = profile.height();
             for (int k = 0; k < 2; ++k) {

@@ -44,6 +44,8 @@
 #include <utility>
 
 #include "engine/TimelineBuilderDetail.h"
+#include "engine/video/Compose.h"
+#include "engine/video/Still.h"
 
 using namespace TimelineBuilderDetail;
 
@@ -246,7 +248,7 @@ Mlt::Producer* TimelineBuilder::producerFor(const QString& path, TrackKind kind,
         PitchLatency::extend(*p, lead);
     }
     // Still images can be stretched arbitrarily long (otherwise MLT limits to the default length)
-    if (const QByteArray svc = p->get("mlt_service"); svc == "qimage" || svc == "pixbuf") {
+    if (Still::isStillService(p->get("mlt_service"))) {
         const int len = 24 * 3600 * qRound(m_profile.fps());
         p->set("length", len);
         p->set("out", len - 1);
@@ -478,10 +480,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
     int mltIndex = 1;
     auto fill = [&](const Track& track, TrackKind kind, int trackIndex) {
         Mlt::Playlist pl(m_profile);
-        auto isStill = [](Mlt::Producer* p) {
-            const QByteArray svc = p->get("mlt_service");
-            return svc == "qimage" || svc == "pixbuf";
-        };
+        auto isStill = [](Mlt::Producer* p) { return Still::isStillService(p->get("mlt_service")); };
         const TimelineOps::SourceLength srcLen = [&](const Clip& c) {
             if (c.isNested()) {
                 if (!m_nested) return 0;
@@ -679,7 +678,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
         tractor->set_track(pl, mltIndex);
 
         if (kind == TrackKind::Video) {
-            Mlt::Transition t(m_profile, "qtblend");
+            Mlt::Transition t = Compose::blendTransition(m_profile);
             t.set("always_active", 1);
             TimelineBuilderDetail::plantBlend(*tractor, t, mltIndex);
         } else {
@@ -708,7 +707,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             }
             pl.set("hide", 2); // no audio
             tractor->set_track(pl, mltIndex);
-            Mlt::Transition t(m_profile, "qtblend");
+            Mlt::Transition t = Compose::blendTransition(m_profile);
             t.set("always_active", 1);
             TimelineBuilderDetail::plantBlend(*tractor, t, mltIndex);
             ++mltIndex;

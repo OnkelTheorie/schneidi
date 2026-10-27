@@ -2,6 +2,7 @@
 #include "engine/Bundle.h"
 #include "engine/audio/Path.h"
 #include "engine/video/Producer.h"
+#include "engine/video/Still.h"
 
 #include <Mlt.h>
 #include <QByteArray>
@@ -143,7 +144,7 @@ ClipFormat detectClipFormat(const QString& path)
     Mlt::Producer p(profile, path.toUtf8().constData());
     if (!p.is_valid()) return cf;
     const QByteArray svc = p.get("mlt_service");
-    if (svc == "qimage" || svc == "pixbuf") return cf; // still images have no format of their own
+    if (Still::isStillService(svc.constData())) return cf; // still images have no format of their own
     static const QStringList audioExt{"mp3", "wav", "flac", "ogg", "opus", "m4a", "aac", "wma", "aiff"};
     const int vi = p.get_int("video_index");
     if (vi < 0 || audioExt.contains(QFileInfo(path).suffix().toLower())) return cf;

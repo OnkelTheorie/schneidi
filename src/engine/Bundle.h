@@ -19,7 +19,8 @@ bool verboseLogging();
 // Right after Mlt::Factory::init: log levels of MLT and FFmpeg. Normal: MLT from warning, FFmpeg errors only;
 // verbose: MLT from info, FFmpeg from warning
 void configureMltLogging();
-// Directly after Mlt::Factory::init: MLT's qt module (Qt 5) creates its own QApplication the first time one of its
+// Directly after Mlt::Factory::init: MLT's qt module (only loaded with SCHNEIDI_MLT_QT, see prepareMltEnvironment;
+// Qt 5) creates its own QApplication the first time one of its
 // services is made, which calls setlocale(LC_ALL, "") and puts LC_NUMERIC back to e.g. German. MLT modules read
 // numbers with sscanf/atof (timewarp speed) -> create it now and keep LC_NUMERIC at "C"
 void pinNumericLocale();
@@ -27,7 +28,8 @@ void pinNumericLocale();
 // without a lock (mlt_service.c get_cache). The first producers opened in parallel (Media Pool thumbnails, parallel
 // opening before an export) raced on it and crashed – about 1 in 10 starts with a project (2026-10-21). Same for the
 // producers' metadata, which timewarp reads while opening, and the loader's tables (speed clips opened in parallel
-// crashed, 2026-10-22)
+// crashed, 2026-10-22). Registers schneidi's own MLT services first (engine/video Compose, Still, Text: they stand in
+// for MLT's Qt module under its names)
 void prepareMltCaches();
 // Path as MLT expects it for the module folder/environment variables (Windows: ANSI code page resp. 8.3 path)
 QByteArray pathForMlt(const QString& path);

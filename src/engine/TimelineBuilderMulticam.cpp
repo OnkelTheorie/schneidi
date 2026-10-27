@@ -4,6 +4,7 @@
 #include "core/TimelineOps.h"
 #include "engine/TimelineBuilder.h"
 #include "engine/TimelineBuilderDetail.h"
+#include "engine/video/Compose.h"
 #include "ui/MulticamGrid.h"
 
 #include <Mlt.h>
@@ -54,7 +55,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildMulticamGrid(const Timeline&
         std::unique_ptr<Mlt::Playlist> pl = part(angle, TrackKind::Video);
         if (!pl) continue; // sound-only angle: its cell stays black
         const QRect cell = MulticamGrid::cell(frame, n, i, o.columns);
-        Mlt::Filter place(m_profile, "qtblend");
+        Mlt::Filter place = Compose::transformFilter(m_profile);
         if (place.is_valid()) {
             place.set("rect", mlt_rect{double(cell.x()), double(cell.y()), double(cell.width()), double(cell.height()), 1.0});
             place.set("distort", 1);
@@ -64,7 +65,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildMulticamGrid(const Timeline&
         }
         pl->set("hide", 2); // no audio
         tractor->set_track(*pl, track);
-        Mlt::Transition t(m_profile, "qtblend");
+        Mlt::Transition t = Compose::blendTransition(m_profile);
         t.set("always_active", 1);
         TimelineBuilderDetail::plantBlend(*tractor, t, track);
         ++track;

@@ -4,6 +4,7 @@
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/ProxyCleanup.h"
+#include "engine/video/Still.h"
 
 #include <Mlt.h>
 #include <QCryptographicHash>
@@ -45,7 +46,7 @@ SourceInfo probeSource(const QString& path)
     Mlt::Producer p(profile, path.toUtf8().constData());
     if (!p.is_valid()) return s;
     const QByteArray svc = p.get("mlt_service");
-    if (svc == "qimage" || svc == "pixbuf") return s; // still images need no proxy
+    if (Still::isStillService(svc.constData())) return s; // still images need no proxy
     s.ok = true;
     s.hasVideo = p.get_int("video_index") >= 0;
     // MLT only sets meta.media.frame_rate_*/colorspace at the first frame
