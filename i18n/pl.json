@@ -1779,6 +1779,8 @@
  "Überwachten Ordner bearbeiten": "Edytuj obserwowany folder",
  "Überwachter Ordner „%1“: %2 neue Datei(en)": "Obserwowany folder „%1”: nowych plików: %2",
  "„%1“ aus dem Media Pool entfernen": "Usuń „%1” z biblioteki multimediów",
+ "„%1“ bekäme denselben Dateinamen wie die Vorlage „%2“.": "„%1” miałby tę samą nazwę pliku co szablon „%2”.",
+ "„%1“ ersetzt die Vorlage „%2“ (gleicher Dateiname). Ersetzen?": "„%1” zastąpi szablon „%2” (ta sama nazwa pliku). Zastąpić go?",
  "„%1“ konnte nicht gespeichert werden (eingebaute Vorlagen lassen sich nicht ersetzen).": "Nie można zapisać „%1” (wbudowanych presetów nie można zastąpić).",
  "„%1“ wird noch benutzt:": "„%1” jest nadal używany:",
  "„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein Rückgängig-Schritt holt alles zurück).": "„Usuń razem z klipami” usuwa te klipy także z osi czasu (jedno cofnięcie przywraca wszystko).",

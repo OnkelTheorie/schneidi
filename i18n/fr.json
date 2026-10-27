@@ -1779,6 +1779,8 @@
  "Überwachten Ordner bearbeiten": "Modifier le dossier surveillé",
  "Überwachter Ordner „%1“: %2 neue Datei(en)": "Dossier surveillé « %1 » : %2 nouveau(x) fichier(s)",
  "„%1“ aus dem Media Pool entfernen": "Retirer « %1 » de la médiathèque",
+ "„%1“ bekäme denselben Dateinamen wie die Vorlage „%2“.": "« %1 » aurait le même nom de fichier que le modèle « %2 ».",
+ "„%1“ ersetzt die Vorlage „%2“ (gleicher Dateiname). Ersetzen?": "« %1 » remplace le modèle « %2 » (même nom de fichier). Le remplacer ?",
  "„%1“ konnte nicht gespeichert werden (eingebaute Vorlagen lassen sich nicht ersetzen).": "Impossible d’enregistrer « %1 » (les préréglages intégrés ne peuvent pas être remplacés).",
  "„%1“ wird noch benutzt:": "« %1 » est encore utilisé :",
  "„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein Rückgängig-Schritt holt alles zurück).": "« Retirer avec leurs clips » retire aussi ces clips des timelines (une seule annulation remet tout en place).",

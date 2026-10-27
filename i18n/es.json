@@ -1779,6 +1779,8 @@
  "Überwachten Ordner bearbeiten": "Editar carpeta vigilada",
  "Überwachter Ordner „%1“: %2 neue Datei(en)": "Carpeta vigilada «%1»: %2 archivo(s) nuevo(s)",
  "„%1“ aus dem Media Pool entfernen": "Quitar «%1» de la biblioteca de medios",
+ "„%1“ bekäme denselben Dateinamen wie die Vorlage „%2“.": "«%1» tendría el mismo nombre de archivo que la plantilla «%2».",
+ "„%1“ ersetzt die Vorlage „%2“ (gleicher Dateiname). Ersetzen?": "«%1» reemplaza la plantilla «%2» (mismo nombre de archivo). ¿Reemplazarla?",
  "„%1“ konnte nicht gespeichert werden (eingebaute Vorlagen lassen sich nicht ersetzen).": "No se pudo guardar «%1» (los preajustes integrados no se pueden reemplazar).",
  "„%1“ wird noch benutzt:": "«%1» todavía se usa:",
  "„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein Rückgängig-Schritt holt alles zurück).": "«Quitar con sus clips» también saca estos clips de las líneas de tiempo (un paso de deshacer lo devuelve todo).",

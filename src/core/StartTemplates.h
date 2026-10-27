@@ -58,6 +58,9 @@ ProjectData apply(const StartTemplate& t);
 
 // File name (without .json) of an own template of this name: safe on every system, never a built-in id
 QString idForName(const QString& name);
+// The own template that saving one named `name` would replace: the same file ("Shorts 9:16" and "Shorts 9_16" share
+// one, on Windows and macOS also "Show" and "show"), with the name it was saved under; none = nothing is replaced
+std::optional<StartTemplate> sameFile(const QString& name);
 // Own templates: save under t.name (replaces one of the same id; sets id/path), rename (a default follows), delete
 // (the default falls back to Neutral)
 bool save(StartTemplate& t, QString* error = nullptr);

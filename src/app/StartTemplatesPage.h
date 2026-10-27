@@ -62,3 +62,20 @@ private:
     QLineEdit* m_description = nullptr;
     QCheckBox* m_default = nullptr;
 };
+
+// File › New Project when Settings › Start Templates asks each time: which template (the default preselected), with
+// its description and what it sets. Chosen by its place in the list, so an own template named like a built-in one
+// ("Neutral") is the one picked.
+class ChooseStartTemplateDialog : public QDialog {
+    Q_OBJECT
+public:
+    ChooseStartTemplateDialog(const QVector<StartTemplate>& templates, const QString& defaultId, QWidget* parent = nullptr);
+    StartTemplate chosen() const;
+    int chosenIndex() const; // in `templates`
+
+private:
+    void showDetails();
+    QVector<StartTemplate> m_templates;
+    QComboBox* m_combo = nullptr;
+    QLabel* m_details = nullptr;
+};

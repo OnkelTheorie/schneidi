@@ -1779,6 +1779,8 @@
  "Überwachten Ordner bearbeiten": "Edit Watch Folder",
  "Überwachter Ordner „%1“: %2 neue Datei(en)": "Watch folder “%1”: %2 new file(s)",
  "„%1“ aus dem Media Pool entfernen": "Remove “%1” from Media Pool",
+ "„%1“ bekäme denselben Dateinamen wie die Vorlage „%2“.": "“%1” would get the same file name as the template “%2”.",
+ "„%1“ ersetzt die Vorlage „%2“ (gleicher Dateiname). Ersetzen?": "“%1” replaces the template “%2” (same file name). Replace it?",
  "„%1“ konnte nicht gespeichert werden (eingebaute Vorlagen lassen sich nicht ersetzen).": "“%1” could not be saved (built-in presets cannot be replaced).",
  "„%1“ wird noch benutzt:": "“%1” is still in use:",
  "„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein Rückgängig-Schritt holt alles zurück).": "“Remove with Their Clips” takes these clips out of the timelines too (one undo step brings everything back).",

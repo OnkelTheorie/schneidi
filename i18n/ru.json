@@ -1779,6 +1779,8 @@
  "Überwachten Ordner bearbeiten": "Изменить отслеживаемую папку",
  "Überwachter Ordner „%1“: %2 neue Datei(en)": "Отслеживаемая папка «%1»: новых файлов: %2",
  "„%1“ aus dem Media Pool entfernen": "Убрать «%1» из медиатеки",
+ "„%1“ bekäme denselben Dateinamen wie die Vorlage „%2“.": "У «%1» было бы то же имя файла, что и у шаблона «%2».",
+ "„%1“ ersetzt die Vorlage „%2“ (gleicher Dateiname). Ersetzen?": "«%1» заменит шаблон «%2» (то же имя файла). Заменить его?",
  "„%1“ konnte nicht gespeichert werden (eingebaute Vorlagen lassen sich nicht ersetzen).": "Не удалось сохранить «%1» (встроенные пресеты нельзя заменить).",
  "„%1“ wird noch benutzt:": "«%1» ещё используется:",
  "„Mit ihren Clips entfernen“ nimmt diese Clips auch aus den Timelines (ein Rückgängig-Schritt holt alles zurück).": "«Убрать вместе с клипами» убирает эти клипы и с монтажных столов (одна отмена возвращает всё).",

@@ -239,6 +239,19 @@ QString idForName(const QString& name)
     return id;
 }
 
+std::optional<StartTemplate> sameFile(const QString& name)
+{
+    const QString id = idForName(name.trimmed());
+    const QString path = QDir(dir()).filePath(id + ".json");
+    if (!QFileInfo::exists(path)) return std::nullopt;
+    if (std::optional<StartTemplate> t = load(path)) return t;
+    StartTemplate t; // unreadable: known by its file name
+    t.id = id;
+    t.name = QFileInfo(path).completeBaseName();
+    t.path = path;
+    return t;
+}
+
 bool save(StartTemplate& t, QString* error)
 {
     t.name = t.name.trimmed();
@@ -268,7 +281,13 @@ bool rename(const QString& id, const QString& name, QString* error)
     const QString newPath = QDir(dir()).filePath(newId + ".json");
     // Another file of that name (only the case changes: the same file on Windows and macOS)
     if (newId.compare(id, Qt::CaseInsensitive) != 0 && QFileInfo::exists(newPath)) {
-        if (error) *error = T("Eine Vorlage „%1“ gibt es schon.").arg(clean);
+        // Named after the one there ("Shorts 9_16" is taken by "Shorts 9:16": the same file)
+        const std::optional<StartTemplate> other = sameFile(clean);
+        const QString existing = other ? other->name : clean;
+        if (error)
+            *error = existing.compare(clean, Qt::CaseInsensitive) == 0
+                         ? T("Eine Vorlage „%1“ gibt es schon.").arg(existing)
+                         : T("„%1“ bekäme denselben Dateinamen wie die Vorlage „%2“.").arg(clean, existing);
         return false;
     }
     const bool wasDefault = defaultId() == id;
