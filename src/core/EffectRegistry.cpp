@@ -138,9 +138,9 @@ QVector<EffectDescriptor>& registry()
              {"strength", T("Stärke"), {}, EffectParam::Double, 25.0, 0, 100, AnimParam::FxBlur, 0.25, 2},
          },
          true},
-        // Stabilization (DaVinci: Inspector → Stabilization). Engine: MLT vid.stab (engine/Stabilizer) – needs an
-        // analysis pass that runs in the background; until it is done the clip plays unstabilized. Smoothing, zoom and
-        // border apply live, shakiness/accuracy start a new analysis.
+        // Stabilization. Engine: own analysis and warp (engine/Stabilizer, engine/StabilizeMotion) – needs an analysis
+        // pass that runs in the background; until it is done the clip plays unstabilized. Smoothing, zoom and border
+        // apply live, shakiness/accuracy start a new analysis.
         {"stabilize", T("Stabilisieren"), {}, true,
          {
              {"smoothing", T("Glättung"), {}, EffectParam::Double, 15.0, 0, 100, AnimParam::Count, 0.25, 0, {},

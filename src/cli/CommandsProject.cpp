@@ -602,9 +602,7 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         else if (d.category == EffectRegistry::Frei0rCategory)
             o["note"] = "frei0r plugin of this computer (offered when switched on in the app's settings); not thread-safe";
         if (d.id == Stabilizer::EffectId)
-            o["note"] = Stabilizer::available()
-                            ? "needs an analysis pass (background in the app, before encoding in `render`)"
-                            : "MLT module vid.stab is missing: the effect does nothing on this computer";
+            o["note"] = "needs an analysis pass (background in the app, before encoding in `render`)";
         if (only.isEmpty()) {
             QJsonArray keys;
             for (const EffectParam& p : d.params)

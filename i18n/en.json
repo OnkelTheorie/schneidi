@@ -374,8 +374,6 @@
  "Das Bild konnte nicht erzeugt werden.": "The image could not be created.",
  "Das Design ändert sich nach dem Neustart von schneidi.": "The design changes after restarting schneidi.",
  "Das Format des Clips passt nicht zu den Projekteinstellungen. Projekt an den Clip anpassen?": "The clip's format does not match the project settings. Change the project settings to match the clip?",
- "Das MLT-Modul „vid.stab“ fehlt – Stabilisieren ist nicht möglich.": "The MLT module “vid.stab” is missing – stabilizing is not possible.",
- "Das MLT-Modul „vid.stab“ fehlt – der Effekt wirkt nicht, bleibt aber mit seinen Werten im Projekt.": "The MLT module “vid.stab” is missing – the effect does nothing but stays in the project with its values.",
  "Das Modell hat die Anfrage abgelehnt.": "The model declined the request.",
  "Das Projekt wurde außerhalb von schneidi geändert (z. B. mit schneidi-cli).": "The project was changed outside of schneidi (e.g. with schneidi-cli).",
  "Das Protokoll ist aus (Einstellungen › KI).": "The log is off (Settings › AI).",

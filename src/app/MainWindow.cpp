@@ -167,7 +167,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         updateRenderCacheBar();
     });
     connect(renderCache, &RenderCache::progressChanged, this, &MainWindow::updateRenderCacheBar);
-    // Stabilization analysis done -> build the preview again (now with vid.stab); also lets the render cache start
+    // Stabilization analysis done -> build the preview again (now stabilized); also lets the render cache start
     connect(Stabilizer::instance(), &Stabilizer::resultReady, this, [this, proxiesChanged] {
         proxiesChanged();
         updateRenderCacheBar();

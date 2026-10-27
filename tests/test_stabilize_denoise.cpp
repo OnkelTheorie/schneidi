@@ -1,4 +1,4 @@
-// Test stabilization (effect "stabilize", MLT vid.stab with an analysis pass, engine/Stabilizer) and noise reduction
+// Test stabilization (effect "stabilize", own analysis pass + own MLT filter, engine/Stabilizer) and noise reduction
 // (effect "denoise", afftdn): registry, editor (clip kinds, undo), project file, paste attributes; analysis of a
 // synthetic shaky clip (a still image with jittering crop) -> rendered frames move less, cache reuse, speed change,
 // background queue (cancel), export runs a missing analysis first; noise reduction lowers the noise of sine + noise.
@@ -267,7 +267,7 @@ int main(int argc, char** argv)
     const ProjectFormat fmt; // 1920x1080, 25 fps
 
     // The first qt module service (qtblend: transform/opacity) must not put LC_NUMERIC back to the user's locale:
-    // vid.stab then could not read its results ("0.48" with a German locale) and exported unstabilized
+    // (MLT and FFmpeg parse numbers with the C library, e.g. the timewarp speed)
     {
         Mlt::Profile profile;
         Mlt::Transition blend(profile, "qtblend");
@@ -306,10 +306,6 @@ int main(int argc, char** argv)
     }
 
     // --- Stabilization
-    if (!Stabilizer::available()) {
-        std::printf("vid.stab fehlt: Stabilisieren nicht geprüft\n");
-        return Check::result();
-    }
     QDir(Stabilizer::cacheDir()).removeRecursively(); // test paths: results of earlier runs (other temp files)
     // A still image with a jittering crop = camera shake over a static scene (slightly blurred: sub-pixel
     // interpolation of the sharp test pattern would dominate the frame differences)
@@ -324,10 +320,18 @@ int main(int argc, char** argv)
     Clip c = mk(1, shaky, 0, 10, 79);
     EffectRegistry::add(c, "stabilize");
     const auto req = Stabilizer::request(c, fmt);
-    CHECK(req && req->width == 1280 && req->height == 720 && req->needFrom == 10 && req->needTo == 79);
+    CHECK(req && req->width == 960 && req->height == 540 && req->needFrom == 10 && req->needTo == 79);
     if (!req) return Check::result();
     CHECK(!Stabilizer::find(*req).valid());
     CHECK_EQ(Stabilizer::missing(videoTimeline(c), fmt).size(), 1);
+    // A result of vid.stab (schneidi before 0.14) is not used: the clip is analyzed again, the old file goes away
+    const QString oldResult = QDir(Stabilizer::cacheDir()).filePath(req->base() + "_10_79.trf");
+    QDir().mkpath(Stabilizer::cacheDir());
+    {
+        QFile f(oldResult);
+        CHECK(f.open(QIODevice::WriteOnly) && f.write("VID.STAB-DEFAULT-TRANSFORMS 1\n") > 0);
+    }
+    CHECK(!Stabilizer::find(*req).valid());
     {
         Clip title;
         title.kind = ClipKind::Title;
@@ -346,7 +350,8 @@ int main(int argc, char** argv)
     CHECK(Stabilizer::analyze(*req, &error, nullptr, &progress));
     CHECK_EQ(progress.load(), 1000);
     const Stabilizer::Result res = Stabilizer::find(*req);
-    CHECK(res.valid() && res.from == 10 && res.to == 79);
+    CHECK(res.valid() && res.from == 10 && res.to == 79 && res.path.endsWith(".stab"));
+    CHECK(!QFileInfo::exists(oldResult));
     CHECK(Stabilizer::missing(videoTimeline(c), fmt).isEmpty());
     const double stabJitter = jitter(videoTimeline(c), 0, 40, 640, 360);
     std::printf("stabilization: frame difference %.2f -> %.2f\n", rawJitter, stabJitter);

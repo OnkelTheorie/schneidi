@@ -21,7 +21,7 @@ bool verboseLogging();
 void configureMltLogging();
 // Directly after Mlt::Factory::init: MLT's qt module (Qt 5) creates its own QApplication the first time one of its
 // services is made, which calls setlocale(LC_ALL, "") and puts LC_NUMERIC back to e.g. German. MLT modules read
-// numbers with sscanf/atof (vid.stab results, timewarp speed) -> create it now and keep LC_NUMERIC at "C"
+// numbers with sscanf/atof (timewarp speed) -> create it now and keep LC_NUMERIC at "C"
 void pinNumericLocale();
 // Directly after Mlt::Factory::init, in one thread: MLT creates its service caches (one per producer kind) lazily and
 // without a lock (mlt_service.c get_cache). The first producers opened in parallel (Media Pool thumbnails, parallel

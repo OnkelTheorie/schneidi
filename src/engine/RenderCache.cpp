@@ -39,6 +39,8 @@ constexpr const char* kCropVersion = "crop2";
 // Since 0.13 the Green Screen key renders right after the grade, before the other effects (before: at its place in
 // the clip's effect list): only cache files of keyed clips are stale
 constexpr const char* kKeyVersion = "key2";
+// Since 0.14 stabilization is schneidi's own (before: vid.stab): only cache files of stabilized clips are stale
+constexpr const char* kStabilizeVersion = "stab2";
 
 QString modeId(RenderCache::Mode m)
 {
@@ -192,7 +194,8 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
                            .arg(f.rate.den);
     const QByteArray crop = Keys::hasCrop(c) ? QByteArray(kCropVersion) : QByteArray();
     const QByteArray key = EffectRegistry::has(c, "chromakey") ? QByteArray(kKeyVersion) : QByteArray();
-    return QCryptographicHash::hash(id.toUtf8() + crop + key + clip, QCryptographicHash::Sha1).toHex();
+    const QByteArray stab = EffectRegistry::has(c, Stabilizer::EffectId) ? QByteArray(kStabilizeVersion) : QByteArray();
+    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + clip, QCryptographicHash::Sha1).toHex();
 }
 
 QString RenderCache::path(const Clip& c) const
@@ -242,7 +245,7 @@ void RenderCache::sync(const Timeline& tl)
             if (!wanted(*c) || !QFileInfo::exists(c->mediaPath)) continue;
             // Stabilization still analyzing: the output would be unstabilized (rendered once the result is there)
             if (const EffectInstance* st = EffectRegistry::instance(*c, Stabilizer::EffectId);
-                st && st->enabled && Stabilizer::available())
+                st && st->enabled)
                 if (const auto r = Stabilizer::request(*c, m_format); r && !Stabilizer::find(*r).valid()) continue;
             const QString k = key(*c, m_format);
             inUse.insert(k);

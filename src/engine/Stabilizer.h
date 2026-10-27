@@ -1,17 +1,21 @@
 #pragma once
-// Video stabilization (effect "stabilize", like DaVinci's Inspector → Stabilization) with MLT's vid.stab filter.
-// vid.stab needs an analysis pass over the frames before it can apply anything. The analysis runs in the background
-// (one at a time, own MLT producer, no preview involved); its result (.trf) is cached in
-// QStandardPaths::CacheLocation/stabilize, named after everything that changes it (source file + size/time, speed,
-// frame rate, aspect ratio, shakiness/accuracy) plus the analyzed range. A cached range that covers the clip is
-// reused (trimming shorter, moving, splitting need no new analysis). Until the result exists the clip plays
-// unstabilized; export runs missing analyses first (Exporter), never silently without.
+// Video stabilization (effect "stabilize") with schneidi's own analysis and warp (engine/StabilizeMotion).
+// An analysis pass measures the camera motion from frame to frame before anything can be applied. It runs in the
+// background (one at a time, own MLT producer, no preview involved); its result (.stab: one motion per frame) is
+// cached in QStandardPaths::CacheLocation/stabilize, named after everything that changes it (source file +
+// size/time, speed, frame rate, aspect ratio, shakiness/accuracy) plus the analyzed range. A cached range that covers
+// the clip is reused (trimming shorter, moving, splitting need no new analysis). Until the result exists the clip
+// plays unstabilized; export runs missing analyses first (Exporter), never silently without. Smoothing, zoom and
+// border are applied by an own MLT filter on the clip (attach) and change live, without a new analysis.
+// Results of older versions (vid.stab's .trf) are not read: such clips are analyzed again by themselves.
 //
 // Frames: positions of the producer the timeline reads (the timewarp producer for speed changes, so speed and
 // reverse work too). Not supported: speed ramps, freeze frames, titles, compound clips.
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
+
+#include <framework/mlt_types.h>
 
 #include <QHash>
 #include <QObject>
@@ -38,7 +42,7 @@ public:
         QString file;            // original media file (never the proxy)
         double speed = 1.0;      // timewarp speed (negative = reverse), 1 = original
         FrameRate rate;          // project frame rate (frames of the producer)
-        int width = 1280, height = 720; // analysis size: aspect ratio of the project, longer side 1280
+        int width = 960, height = 540; // analysis size: aspect ratio of the project, longer side 960
         int from = 0, to = 0;    // range to analyze (producer frames, inclusive; `to` is clamped to the file)
         int needFrom = 0, needTo = 0; // a cached result must cover at least this (the clip's in..out)
         int shakiness = 5, accuracy = 9;
@@ -53,8 +57,6 @@ public:
     };
     enum class State { Unsupported, Missing, Queued, Running, Done, Failed, Cancelled };
 
-    // MLT module vid.stab present (after MLT init); without it the effect stays in the project but does nothing
-    static bool available();
     static QString cacheDir();
     // Request for a stabilized clip (effect present, also when switched off); nullopt = not possible for this clip
     static std::optional<Request> request(const Clip& c, const ProjectFormat& format);
@@ -63,13 +65,18 @@ public:
     static QString unsupportedReason(const Clip& c);
     // Cached result covering the request (thread-safe); invalid = analysis missing
     static Result find(const Request& r);
+    // Does a clip use border "keep" (the picture before fills the uncovered parts)? Then frames must render in order
+    static bool needsFrameOrder(const Timeline& tl);
     // Requests of all enabled stabilizations in the timeline (and its nested sequences) without a result
     static QVector<Request> missing(const Timeline& tl, const ProjectFormat& format);
     // Analyze synchronously in the calling thread (any thread). progress: 0..1000
     static bool analyze(const Request& r, QString* error, const std::atomic<bool>* cancel = nullptr,
                         std::atomic<int>* progress = nullptr);
-    // Timeline: vid.stab on the cut of clip c (its first filter); false = no result (yet) or not possible
+    // Timeline: the stabilizing filter on the cut of clip c (its first filter); false = no result (yet) or not possible
     static bool attach(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c);
+    // Live update (LiveUpdate): takes over the fresh filter's values (smoothing, zoom, border, a new result) without a
+    // rebuild; false = not two stabilizing filters
+    static bool transfer(mlt_filter live, mlt_filter fresh);
 
     // Background analyses of the preview (main thread). Created on first use.
     static Stabilizer* instance();
