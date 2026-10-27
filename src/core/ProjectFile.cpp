@@ -504,8 +504,9 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     if (c.speed <= 0) c.speed = 1.0;
     c.reverse = o.value("reverse").toBool();
     c.freeze = o.value("freeze").toBool();
-    // Older files without freezeFrame: pin the frame = `in` on loading (splitting/trimming shifts `in` later)
-    c.freezeFrame = c.freeze ? intOf(o.value("freezeFrame"), c.in) : -1;
+    // Older files without freezeFrame: pin the frame = `in` on loading (splitting/trimming shifts `in` later); a frame
+    // before the file's start (edited by hand) is its first one - a negative one is not saved and came back as `in`
+    c.freezeFrame = c.freeze ? std::max(0, intOf(o.value("freezeFrame"), c.in)) : -1;
     c.keepPitch = o.value("keepPitch").toBool(true);
     for (const QJsonValue& v : o.value("ramp").toArray()) {
         const QJsonObject j = v.toObject();

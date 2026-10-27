@@ -511,6 +511,17 @@ int main(int argc, char** argv)
             if (CHECK(p.media().size() == 1 && p.media()[0].transcripts.size() == 1))
                 CHECK(p.media()[0].transcripts[0].words.value(0).from == qint64(1) << 50);
         }
+        // A still frame before the file's start: its first frame (was saved without it and came back as `in`)
+        {
+            Project p;
+            const QByteArray json = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "length":300}],"timeline":{"video":[{"clips":[{"id":1,"media":0,"start":0,"in":5,"out":10,"freeze":true,
+                "freezeFrame":-20}]}]}})";
+            CHECK(!opened(json, p).isEmpty());
+            if (CHECK(!p.timeline().video.isEmpty() && p.timeline().video[0].clips.size() == 1))
+                CHECK_EQ(p.timeline().video[0].clips[0].freezeFrame, 0);
+            CHECK(stable(json));
+        }
     }
     return Check::result();
 }
