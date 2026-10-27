@@ -105,13 +105,18 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     for (const QJsonValue& m : messages) {
         if (!m.isObject()) continue;
         const QJsonObject msg = m.toObject();
+        // A key with U+0000 (Qt may read "id\u0000" as "id"): refused, the answer has no id
+        const QJsonValue id = Mcp::hasNulKey(msg) ? QJsonValue(QJsonValue::Null) : msg.value("id");
         int answers = 0;
         const Mcp::Send send = [&](const QJsonObject& answer) {
             ++answers;
+            const QByteArray text = QJsonDocument(answer).toJson(QJsonDocument::Compact);
+            if (answer.value("id") != id)
+                std::fprintf(stderr, "message: %s\nanswer: %s\n", QJsonDocument(msg).toJson(QJsonDocument::Compact).constData(),
+                             text.constData());
             FUZZ_ASSERT(answer["jsonrpc"] == "2.0");
             FUZZ_ASSERT(answer.contains("result") != answer.contains("error"));
-            FUZZ_ASSERT(answer.value("id") == msg.value("id"));
-            (void)QJsonDocument(answer).toJson(QJsonDocument::Compact);
+            FUZZ_ASSERT(answer.value("id") == id);
         };
         const bool request = Mcp::handle(msg, options(), call, send);
         FUZZ_ASSERT(answers == (request ? 1 : 0));

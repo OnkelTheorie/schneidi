@@ -317,6 +317,8 @@ void Server::mcpPost(Http::Connection* c)
     QJsonParseError err;
     const QJsonDocument doc = QJsonDocument::fromJson(r.body, &err);
     if (!doc.isObject() && !doc.isArray()) return rpcError(400, -32700, "parse error: " + err.errorString());
+    if (Mcp::hasNulKey(doc.isArray() ? QJsonValue(doc.array()) : QJsonValue(doc.object())))
+        return rpcError(400, -32600, "invalid request: a key contains U+0000");
     const bool batch = doc.isArray(); // 2025-03-26 clients may send several messages at once
     const QJsonArray messages = batch ? doc.array() : QJsonArray{doc.object()};
     if (messages.isEmpty()) return rpcError(400, -32600, "empty batch");
