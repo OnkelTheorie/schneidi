@@ -23,6 +23,7 @@
 #include "engine/Engine.h"
 #include "engine/Exporter.h"
 #include "engine/Profiles.h"
+#include "engine/ProxyCleanup.h"
 #include "engine/RenderQueue.h"
 #include "engine/Snapshot.h"
 #include "engine/Stabilizer.h"
@@ -645,7 +646,8 @@ QString presetHelp()
     return "Deliver preset of the app (other parameters override it): " + names.join(", ");
 }
 
-// The running app: state (playhead, selection …) and control (play, seek, select, undo, save, proxies)
+// The running app: state (playhead, selection …) and control (play, seek, select, undo, save, proxies, cleaning up
+// proxy files)
 QJsonObject cmdApp(const QJsonObject& a, Context&)
 {
     LiveHost* h = Live::host();
@@ -703,8 +705,27 @@ QJsonObject cmdApp(const QJsonObject& a, Context&)
             list << st;
         }
         o["proxies"] = list;
+    } else if (action == "clean_proxies") {
+        // Proxy files neither the app's project (unsaved changes included) nor a recent project needs
+        // (engine/ProxyCleanup): listed, deleted only with delete:true
+        const QStringList keep =
+            ProxyCleanup::projectMedia(p->data()) + ProxyCleanup::mediaOfProjects(ProxyCleanup::recentProjects());
+        const QStringList busy{h->liveProxyWriting()};
+        const ProxyCleanup::Plan plan = ProxyCleanup::plan(keep, busy);
+        QJsonArray files;
+        for (const ProxyCleanup::Item& it : plan.items) {
+            QJsonObject f{{"file", it.file}, {"reason", ProxyCleanup::reasonId(it.reason)}, {"bytes", it.bytes}};
+            if (!it.original.isEmpty()) f["original"] = it.original;
+            files << f;
+        }
+        o["files"] = files;
+        o["bytes"] = plan.bytes;
+        o["kept"] = plan.kept;
+        o["kept_bytes"] = plan.keptBytes;
+        if (a["delete"].toBool()) o["freed_bytes"] = ProxyCleanup::apply(plan, busy);
+        else o["dry_run"] = true;
     } else {
-        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, undo, redo, save or proxies");
+        fail("BAD_ARGUMENT", "action must be state, seek, play, stop, select, undo, redo, save, proxies or clean_proxies");
     }
     o["app"] = Live::appState(h);
     return o;

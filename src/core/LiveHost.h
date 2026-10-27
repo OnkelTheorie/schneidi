@@ -61,6 +61,8 @@ public:
     // Proxy media: generate (in the background), and the state per file ("ready", "pending" with percent, "none")
     virtual void liveGenerateProxies(const QStringList& files) = 0;
     virtual QJsonObject liveProxyState(const QString& file) const = 0;
+    // Proxy file being written right now (empty = none): cleaning up the proxy folder leaves it alone
+    virtual QString liveProxyWriting() const { return {}; }
 
     // Shown to the user: an AI session is connected (client = its name) or not anymore
     virtual void liveConnectionChanged(bool connected, const QString& client) = 0;

@@ -671,12 +671,16 @@ const QVector<Command>& commands()
                 "open timeline) and control it. `info`, `edit` and the other commands already work on the open "
                 "project there (an edit is one undo step in the app; the user saves).",
          {{"action", T::String, "state, seek {at}, play {at?}, stop, select {clips}, undo, redo, save {path?}, proxies "
-                                "{files?, generate?} (preview proxies; default all video files)", true, true},
+                                "{files?, generate?} (preview proxies; default all video files), clean_proxies "
+                                "{delete?} (proxy files neither this project nor a recently opened one needs, with the "
+                                "reason: missing/changed original, unused, other size, leftover; a dry run unless "
+                                "delete is true)", true, true},
           {"project", T::Path, "project file open in the app (default \"@app\" = the project of the running app)"},
           {"at", T::Time, "seek/play: position in the open timeline"},
           {"clips", T::Times, "select: clip ids (empty = nothing selected)"},
           {"files", T::Paths, "proxies: media files (default: all video in the project)"},
           {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"},
+          {"delete", T::Boolean, "clean_proxies: really delete the listed files (default false = only list them)"},
           {"path", T::Path, "save: file for a project that was never saved (a new .schneidi file, never overwrites)"}},
          cmdApp},
         {"watch", "Watch folders: new media files in a folder come into the project's media pool on their own (a screen "

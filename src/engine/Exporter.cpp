@@ -8,6 +8,7 @@
 #include "engine/Bundle.h"
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/MemoryRelease.h"
 #include "engine/MixedSound.h"
 #include "engine/OutputColor.h"
 #include "engine/Profiles.h"
@@ -952,4 +953,5 @@ void Exporter::cleanup()
     m_tractor.reset();
     m_builder.reset();
     m_profile.reset();
+    MemoryRelease::requestRelease(); // the app gives MLT's pool back once nothing renders any more
 }

@@ -108,6 +108,8 @@ signals:
     void multicamRequested(const QStringList& paths);
     // Right-click on a bin "Watch Folder…": a folder whose new files come into this bin on their own
     void watchFolderRequested(int bin);
+    // Right-click "Clean up proxy media…": the main window asks and deletes (app/ProxyCleanupDialog)
+    void proxyCleanupRequested();
 
 protected:
     void dragEnterEvent(QDragEnterEvent* e) override;

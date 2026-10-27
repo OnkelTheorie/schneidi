@@ -3,6 +3,7 @@
 // for a smooth preview. Created in the background via ffmpeg (QProcess, one file after the other),
 // stored in ~/.cache/schneidi/proxies. The file name derives from path, size and modification time
 // of the original -> the project file does not need to know anything about proxies. Export always uses the originals.
+// A note next to each proxy (<hash>.json) names its original; cleaning up the folder: engine/ProxyCleanup.
 
 #include <QHash>
 #include <QObject>
@@ -42,6 +43,8 @@ public:
     int progressOf(const QString& original) const; // 0..100, -1 = not in progress
     int pendingCount() const { return m_queue.size() + (m_current.isEmpty() ? 0 : 1); }
     QString current() const { return m_current; }
+    // File being written right now (half-finished proxy; empty = none): cleaning up never touches it
+    QString writing() const { return m_currentPart; }
 
 signals:
     void progress(const QString& original, int percent);

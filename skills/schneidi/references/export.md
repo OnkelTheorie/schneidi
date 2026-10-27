@@ -25,6 +25,8 @@ carry over (titles, effects, color). `import` with a timeline file brings a cut 
 
 ## Weak computers
 Editing in the app: proxies (`app` `proxies`) make playback smooth; renders always use the original files.
+`app` `clean_proxies` lists proxy files no open or recent project needs and the space they take; with `delete: true`
+it deletes them (ask the user first).
 
 ## Afterwards
 [check.md](check.md).

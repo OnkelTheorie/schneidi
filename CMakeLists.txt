@@ -137,6 +137,8 @@ add_library(schneidi_lib STATIC
     src/engine/StillFetcher.h     src/engine/StillFetcher.cpp
     src/engine/ScrubFrames.h      src/engine/ScrubFrames.cpp
     src/engine/ProxyManager.h     src/engine/ProxyManager.cpp
+    src/engine/ProxyCleanup.h     src/engine/ProxyCleanup.cpp
+    src/engine/MemoryRelease.h    src/engine/MemoryRelease.cpp
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
     src/engine/Denoise.h          src/engine/Denoise.cpp
     src/engine/Stabilizer.h       src/engine/Stabilizer.cpp
@@ -190,6 +192,7 @@ add_library(schneidi_lib STATIC
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
+    src/app/ProxyCleanupDialog.h src/app/ProxyCleanupDialog.cpp
     src/app/NormalizeDialog.h src/app/NormalizeDialog.cpp
     src/app/StreamPresetsDialog.h src/app/StreamPresetsDialog.cpp
     src/app/StartTemplatesPage.h src/app/StartTemplatesPage.cpp

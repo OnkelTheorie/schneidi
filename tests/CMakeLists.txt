@@ -136,6 +136,8 @@ schneidi_test(test_multicam)
 schneidi_test(test_multicam_render)
 schneidi_test(test_multicam_viewer)
 schneidi_test(test_proxy_hint)
+schneidi_test(test_proxy_cleanup) # which proxy files cleaning up deletes, which stay, dry run
+schneidi_test(test_memory_release) # MLT's pool and the heap given back while idle, never during playback
 schneidi_test(test_settings) # app settings (File › Settings…), AI page, indicator modes
 schneidi_test(test_update_check) # update hint against a local HTTP server
 schneidi_test(test_ai_activity) # AI changes light up, AI log, indicator with the AI's work
@@ -248,6 +250,8 @@ add_executable(bench_device_loss bench_device_loss.cpp check.h)
 target_link_libraries(bench_device_loss PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_graded_thumbs bench_graded_thumbs.cpp check.h)
 target_link_libraries(bench_graded_thumbs PRIVATE schneidi_lib Qt6::Test)
+add_executable(bench_memory bench_memory.cpp check.h)
+target_link_libraries(bench_memory PRIVATE schneidi_lib Qt6::Test)
 if(WIN32) # WASAPI loopback: what the system sends to the sound card
     add_executable(bench_soundcard bench_soundcard.cpp check.h)
     target_link_libraries(bench_soundcard PRIVATE schneidi_lib Qt6::Test)
