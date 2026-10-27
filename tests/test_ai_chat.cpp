@@ -748,10 +748,13 @@ void test(const QString& dir)
         }
         for (const AiChat::Entry& e : chat->entries()) CHECK(!e.text.contains("\"trim\"")); // what it wrote: not shown
         CHECK(!chat->transcript().contains("\"trim\""));
-        // Not kept: the next request has the user's words, no answer of the model after them
+        // Not kept: the next request has the user's words, no answer of the model after them; the context is asked
+        // again before it (Ollama names it once the model is loaded)
+        const int probes = int(fake.probes.size());
         fake.script = {openAiText("Ok.")};
         panel->sendText("Und jetzt?");
         CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK(int(fake.probes.size()) > probes);
         const QJsonArray m = fake.last().body["messages"].toArray();
         CHECK_EQ(m.last()["role"].toString(), QString("user"));
         CHECK(m.last()["content"].toString().contains("10 Sekunden") && m.last()["content"].toString().contains("Und jetzt?"));

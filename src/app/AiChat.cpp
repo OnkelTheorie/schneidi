@@ -362,6 +362,9 @@ void AiChat::onReply(const Ai::Reply& reply)
                 e.state = Entry::State::Failed;
             });
         m_streaming = -1;
+        // Asked again with the next request: Ollama has loaded the model now and names its context (/api/ps), so the
+        // next request is checked before it goes out
+        m_contexts.remove(contextKey(m_endpoint));
         addError(Ai::contextAdvice(reply.usage.input, m_sentChars / 4, true,
                                    m_system.size() / 4 + QJsonDocument(m_chatTools).toJson(QJsonDocument::Compact).size() / 4));
         finishTurn();
