@@ -322,7 +322,18 @@ void opSubtitle(Session& s, const QJsonObject& op)
     int stop = op.contains("to") ? timeOf(s, op, "to") : start + c.length();
     if (op.contains("duration")) stop = start + timeOf(s, op, "duration");
     if (stop <= start) fail("BAD_ARGUMENT", "'to' must be after 'at'");
-    if (start != c.start || stop != c.end) ed.setSubtitleTiming(id, start, stop); // stops at the neighbours
+    if (start == c.start && stop == c.end) return;
+    ed.setSubtitleTiming(id, start, stop); // stops at the neighbours
+    // Cues never overlap: say where it stopped (a merge has to delete the next cue before it extends this one)
+    const SubtitleCue* now = Subtitles::find(s.project.timeline(), id);
+    if (now && (now->start != start || now->end != stop))
+        s.notes << QString("subtitle %1 is %2-%3 instead of %4-%5: cues on a track do not overlap, it stops at its "
+                           "neighbour (delete or move that one first)")
+                       .arg(id)
+                       .arg(now->start)
+                       .arg(now->end)
+                       .arg(start)
+                       .arg(stop);
 }
 
 void opSubtitles(Session& s, const QJsonObject& op)

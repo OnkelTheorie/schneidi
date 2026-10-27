@@ -253,6 +253,14 @@ int main(int argc, char** argv)
     CHECK_EQ(cues.size(), 3);
     CHECK_EQ(cues[1]["end"].toInt(), 25);
     CHECK_EQ(cues[2]["end"].toInt(), 130);
+    // A cue stretched over the next one stops at it, and the answer says so (an AI merging two cues extended the
+    // first before deleting the second and saw nothing happen)
+    const QJsonObject stretched = run("edit", {{"project", g_path}, {"dry_run", true},
+                                               {"ops", QString(R"([{"op":"subtitle","id":%1,"to":28}])").arg(cues[0]["id"].toInt())}});
+    CHECK(stretched["notes"].toArray().at(0).toString().contains("is 0-20 instead of 0-28"));
+    CHECK(!run("edit", {{"project", g_path}, {"dry_run", true},
+                        {"ops", QString(R"([{"op":"subtitle","id":%1,"to":15}])").arg(cues[0]["id"].toInt())}})
+               .contains("notes"));
     CHECK_EQ(tl["tracks"].toArray().size(), 4); // V1, A1, A2, A3
     const int firstId = tl["tracks"][0]["clips"][0]["id"].toInt();
     CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"effect","clips":[%1],"effect":"blur",
