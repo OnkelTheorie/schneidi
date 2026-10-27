@@ -422,14 +422,16 @@ std::vector<Similarity> corrections(const std::vector<Motion>& motions, const Pa
     const int n = int(motions.size());
     std::vector<Similarity> out(motions.size());
     if (n == 0) return out;
-    // Camera: where a point of frame 0 is in frame k (C_k = motion_k after C_k-1), as angle, log scale, shift
+    // Camera trajectory: the frame motions summed up (angle, log scale, shift). Not composed exactly: a camera that
+    // turns around runs up shifts of many picture widths, where the exact composition would turn small angle
+    // corrections into big shifts.
     std::vector<double> th(out.size()), sg(out.size()), tx(out.size()), ty(out.size());
     Complex t = 0;
     double theta = 0, sigma = 0;
     for (int k = 0; k < n; ++k) {
         const Motion& m = motions[size_t(k)];
         if (k > 0 && m.valid) {
-            t = std::polar(m.scale, m.angle) * t + Complex(m.dx, m.dy);
+            t += Complex(m.dx, m.dy);
             theta += m.angle;
             sigma += std::log(m.scale);
         }
@@ -467,14 +469,13 @@ std::vector<Similarity> corrections(const std::vector<Motion>& motions, const Pa
         clampTo(stx, tx, limX);
         clampTo(sty, ty, limY);
     }
-    // Output -> input: C_k after S_k^-1 (the smooth camera's picture, taken from the real frame)
+    // Output -> input: the difference real - smooth (rotation and scale about the picture center, then the shift)
     std::vector<double> zoom(out.size(), 1.0);
     for (int k = 0; k < n; ++k) {
         const size_t i = size_t(k);
-        const Complex a = std::exp(Complex(sg[i] - ssg[i], th[i] - sth[i]));
         Similarity& s = out[i];
-        s.a = a;
-        s.t = Complex(tx[i], ty[i]) - a * Complex(stx[i], sty[i]);
+        s.a = std::exp(Complex(sg[i] - ssg[i], th[i] - sth[i]));
+        s.t = Complex(tx[i] - stx[i], ty[i] - sty[i]);
         zoom[i] = neededZoom(s, p.aspect);
     }
     if (p.border == Border::Auto) {
