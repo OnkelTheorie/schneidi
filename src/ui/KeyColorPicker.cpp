@@ -133,11 +133,18 @@ void KeyColorPicker::paint(QPainter& p, const QRectF& frame)
         p.setRenderHint(QPainter::Antialiasing, false);
         p.setRenderHint(QPainter::SmoothPixmapTransform, false);
         // Checkerboard where the clip does not cover the frame (as transparency is shown elsewhere)
-        constexpr int cell = kLoupeZoom / 2;
-        for (int y = 0; y < lens.height(); y += cell)
-            for (int x = 0; x < lens.width(); x += cell)
-                p.fillRect(QRectF(lens.x() + x, lens.y() + y, cell, cell),
-                           (x / cell + y / cell) % 2 ? QColor(70, 70, 70) : QColor(110, 110, 110));
+        static const QBrush checker = [] {
+            constexpr int cell = kLoupeZoom / 2;
+            QImage tile(2 * cell, 2 * cell, QImage::Format_RGB32);
+            tile.fill(QColor(110, 110, 110));
+            QPainter tp(&tile);
+            tp.fillRect(cell, 0, cell, cell, QColor(70, 70, 70));
+            tp.fillRect(0, cell, cell, cell, QColor(70, 70, 70));
+            tp.end();
+            return QBrush(tile);
+        }();
+        p.setBrushOrigin(lens.topLeft());
+        p.fillRect(lens, checker);
         p.drawImage(lens, patch);
         auto cellRect = [&](int radius) {
             const double c = kLoupeRadius - radius;

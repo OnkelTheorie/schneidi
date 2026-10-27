@@ -96,6 +96,17 @@ void testLoupe()
     // The color square beside it: the average a click takes (7x7 around the cursor)
     const QColor avg = KeyColorPicker::sample(img, QPointF(961.5, 541.5));
     CHECK(near(view.pixelColor(int(lens.right()) + 4 + 15, int(lens.bottom()) - 15), avg));
+    // At the picture's corner the pixels outside it show a checkerboard
+    picker.hover(QPointF(0.2, 0.2), frame);
+    {
+        QPainter p(&view);
+        picker.paint(p, frame);
+    }
+    const QRectF cornerLens = KeyColorPicker::loupeRect(QPointF(0.2, 0.2), frame);
+    const QColor outside = view.pixelColor(int(cornerLens.x()) + 6, int(cornerLens.y()) + 6);
+    CHECK(outside.red() == outside.green() && outside.green() == outside.blue()
+          && (outside.red() == 70 || outside.red() == 110));
+    CHECK(near(view.pixelColor(int(cornerLens.x()) + 5 * 8 + 4, int(cornerLens.y()) + 5 * 8 + 4), QColor(0, 200, 40)));
     // Near the right and bottom edge it flips to the other side of the cursor
     const QRectF flipped = KeyColorPicker::loupeRect(QPointF(470, 260), frame);
     CHECK(flipped.right() < 470 && flipped.bottom() < 260);

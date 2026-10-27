@@ -402,8 +402,10 @@ void MainWindow::setViewerLarge(bool on)
             };
             restore();
             // Panels that size themselves when shown (the mixer grows to fit its strips) do it in a zero timer: once
-            // more after that, the layout is the one from before
-            QTimer::singleShot(0, this, restore);
+            // more after that, the layout is the one from before (unless the large viewer is on again meanwhile)
+            QTimer::singleShot(0, this, [this, restore] {
+                if (!m_large.active) restore();
+            });
         } else {
             // What stays: the viewer and the timeline (if it is on this page); every splitter above them hides its
             // other panels and gives their room (and their handles) to the viewer's side, else the timeline's
