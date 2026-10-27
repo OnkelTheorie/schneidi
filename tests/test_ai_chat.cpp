@@ -6,7 +6,7 @@
 // sent back unchanged, tool results, pictures of `frames` as a user message after the tool answers); review mode
 // (accept = one undo step, discard = all back and the AI is told, editing meanwhile keeps the single steps, a file of a
 // watch folder waits until the user has chosen); what the user changed between two answers comes with the next
-// request (clips added, changed, removed); errors
+// request (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on; errors
 // (bad key, overloaded then fine, no server), stopping a request, test runs that never send; the chat section in
 // Settings › AI (test connection, model list, key stored).
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
@@ -618,6 +618,24 @@ void test(const QString& dir)
     }
     dump(panel, "ai-conversation.png");
     dump(&w, "ai-window.png");
+
+    // ---- An empty answer (small local models after a failed step): asked once to go on; empty twice = the notice ----
+    {
+        fake.script = {openAiText(""), openAiText("Weiter geht's.")};
+        const int sent = int(fake.requests.size());
+        panel->sendText("Mach was");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent + 2);
+        CHECK(lastUserText(fake.last().body).contains("your last answer was empty"));
+        if (const AiChat::Entry* a = lastOf(chat, AiChat::Entry::Kind::Assistant); CHECK(a))
+            CHECK_EQ(a->text, QString("Weiter geht's."));
+        fake.script = {openAiText(""), openAiText("")};
+        panel->sendText("Und?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent + 4);
+        if (const AiChat::Entry* n = lastOf(chat, AiChat::Entry::Kind::Notice); CHECK(n))
+            CHECK_EQ(n->text, T("Die KI hat nichts geantwortet."));
+    }
 
     // ---- Errors ----
     s.chatProvider = "claude";

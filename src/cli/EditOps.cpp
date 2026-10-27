@@ -602,9 +602,18 @@ const QVector<OpDef>& editOps()
     return ops;
 }
 
-void applyOp(Session& s, const QJsonObject& op)
+void applyOp(Session& s, const QJsonObject& given)
 {
+    QJsonObject op = given;
     const QString name = op.value("op").toString();
+    // The file under the name other commands give it ("file", "path"; no op has such a key): taken as 'media'
+    if (!op.contains("media"))
+        for (const char* alias : {"file", "path"})
+            if (op.value(alias).isString()) {
+                op["media"] = op.value(alias);
+                s.notes << QString("%1: '%2' read as 'media' (the name of the file key in edit ops)").arg(name, alias);
+                break;
+            }
     s.selection.clear();
     for (const OpDef& d : editOps())
         if (d.name == name) return d.run(s, op);

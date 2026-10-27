@@ -116,6 +116,7 @@ private:
     enum class Guide { No, Asking, Read } m_guide = Guide::No;
     Ai::Usage m_usage;
     int m_rounds = 0;
+    bool m_nudged = false; // an empty answer was answered with "go on" in this request
     int m_streaming = -1; // entry of the answer that streams in
     QVector<Ai::ToolCall> m_calls; // of the last answer
     QVector<Ai::ToolResult> m_results;

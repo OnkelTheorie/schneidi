@@ -157,6 +157,16 @@ int main(int argc, char** argv)
         CHECK_EQ(Cli::detail::parseTime(QJsonValue("4.5s"), fmt, "at"), int(std::lround(4.5 * fmt.rate.fps())));
         CHECK_EQ(timeError(QJsonValue(1e12)), QString("BAD_ARGUMENT"));
         CHECK_EQ(timeError(QJsonValue("1e10s")), QString("BAD_ARGUMENT"));
+        // A number with a fraction (a small model's seconds): the error says how to write it
+        for (const QJsonValue& v : {QJsonValue(6.95), QJsonValue("6.95")}) {
+            QString message;
+            try {
+                Cli::detail::parseTime(v, fmt, "by");
+            } catch (const Cli::Error& e) {
+                message = e.message;
+            }
+            CHECK(message.contains("\"6.95s\"") && message.contains("whole numbers"));
+        }
     }
     const QJsonObject help = run("help", {});
     CHECK_EQ(help["commands"].toArray().size(), int(Cli::commands().size()));
@@ -214,6 +224,17 @@ int main(int argc, char** argv)
         for (const QJsonValue& v : r["changes"].toObject().value("added").toArray())
             cue |= v.toObject().value("track").toString() == "ST1" && v.toObject().value("text").toString() == "Hi";
         CHECK(cue);
+        CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-90|20-99]  V2:  A1: a[0-10|0-9] a[10-90|20-99]  A2:"));
+    }
+
+    // No media file: the error says what 'media' is; "file"/"path" (other commands' names) are taken as 'media'
+    CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"place","at":0}])"}}).contains("'media' is the file"));
+    {
+        const QJsonObject r = run("edit", {{"project", g_path}, {"ops", R"([{"op":"append","file":"/x/a.mp4","in":0,"out":5}])"},
+                                           {"dry_run", true}});
+        bool aliased = false;
+        for (const QJsonValue& n : r["notes"].toArray()) aliased |= n.toString().contains("'file' read as 'media'");
+        CHECK(aliased && r["changes"].toObject().contains("added"));
         CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-90|20-99]  V2:  A1: a[0-10|0-9] a[10-90|20-99]  A2:"));
     }
 

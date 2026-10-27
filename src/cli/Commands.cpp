@@ -64,9 +64,15 @@ QString absolute(const QString& path)
 int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what)
 {
     constexpr double kMax = 2e9; // as Timecode::parse: beyond that the cast to int would be undefined
+    // A number with a fraction is no frame count; small models mean seconds there - the error says how to write them
+    const auto fraction = [&what](double d) {
+        fail("BAD_ARGUMENT", QString("%1: %2 is not a frame count (frames are whole numbers); for seconds write \"%2s\"")
+                                 .arg(what).arg(d));
+    };
     if (v.isDouble()) {
         const double d = v.toDouble();
-        if (d < 0 || d != std::floor(d) || d > kMax)
+        if (d >= 0 && d != std::floor(d) && d <= kMax) fraction(d);
+        if (d < 0 || d > kMax)
             fail("BAD_ARGUMENT", QString("%1: frames must be a whole number >= 0, got %2").arg(what).arg(d));
         return int(d);
     }
@@ -81,6 +87,7 @@ int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what
         if (ok && frames >= 0) return frames;
         const int tc = Timecode::parse(s, fmt.rate.timebase());
         if (tc >= 0 && s.contains(':')) return tc;
+        if (const double d = s.toDouble(&ok); ok && d >= 0 && d != std::floor(d) && d <= kMax) fraction(d);
     }
     fail("BAD_ARGUMENT", QString("%1: '%2' is not a time (use frames, \"4.5s\" or \"HH:MM:SS:FF\")").arg(what, s));
 }
@@ -245,6 +252,8 @@ QString Session::save()
 
 const MediaInfo& Session::media(const QString& file)
 {
+    if (file.trimmed().isEmpty())
+        fail("BAD_ARGUMENT", "no media file given: 'media' is the file's absolute path (as `info` lists the media)");
     const QString path = absolute(file);
     if (const MediaInfo* m = project.mediaInfo(path)) return *m;
     if (!QFileInfo::exists(path)) fail("NOT_FOUND", "media not found: " + path);

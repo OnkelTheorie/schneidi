@@ -136,6 +136,7 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review
     m_endpoint = endpoint;
     m_stopped = false;
     m_rounds = 0;
+    m_nudged = false;
     m_request = text.trimmed();
     // Pictures of earlier requests are not sent again: the model has seen them, and a long chat would outgrow what
     // providers take per request (count and size of pictures). It can look again with `frames`. Not once Claude's
@@ -283,10 +284,22 @@ void AiChat::onReply(const Ai::Reply& reply)
     if (m_endpoint.protocol == Ai::Protocol::Anthropic) m.anthropic = reply.anthropic;
     m_history << m;
     if (reply.calls.isEmpty()) {
-        if (reply.stop == "model_context_window_exceeded")
-            addNotice(T("Der Chat ist zu lang für das Modell geworden: „Neuer Chat“ fängt frisch an."));
+        const bool empty = reply.text.trimmed().isEmpty();
+        // Small local models sometimes stop with nothing after a failed tool step: asked once to go on (OpenAI
+        // protocol only: there an empty assistant turn followed by a user turn is valid, the history only grows)
+        if (empty && !reply.cutOff() && !m_nudged && m_endpoint.protocol != Ai::Protocol::Anthropic) {
+            m_nudged = true;
+            addNotice(T("Leere Antwort – die KI wird gebeten weiterzumachen …"));
+            appendUser("[Note from the schneidi app: your last answer was empty. Go on with the request: fix the step "
+                       "that failed (its error says how), or tell the user what went wrong.]");
+            requestModel();
+            return;
+        }
+        if (reply.stop == "model_context_window_exceeded" || (empty && reply.cutOff()))
+            addNotice(T("Der Chat ist zu lang für das Modell geworden: „Neuer Chat“ fängt frisch an (bei Ollama hilft "
+                        "auch mehr Kontext, OLLAMA_CONTEXT_LENGTH)."));
         else if (reply.cutOff()) addNotice(T("Die Antwort wurde abgeschnitten (zu lang)."));
-        else if (reply.text.trimmed().isEmpty()) addNotice(T("Die KI hat nichts geantwortet."));
+        else if (empty) addNotice(T("Die KI hat nichts geantwortet."));
         finishTurn();
         return;
     }
