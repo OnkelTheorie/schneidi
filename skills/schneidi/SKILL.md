@@ -52,6 +52,10 @@ When the user talks about "the open project", "in the app" or "what I'm looking 
 Every command then works on what the app shows, unsaved changes included; `info` adds the playhead and selection,
 `app` can seek, play, select, undo and save.
 
+- **The result belongs in the open project**, not in a project file beside it that the user never sees: a new
+  version (another format, a short from a long edit) goes into a new timeline (`new_timeline`). The resolution
+  belongs to the whole project (`format` changes every timeline): before changing it while other timelines hold
+  clips, ask in one sentence - switch the project (the other timelines get bars) or make a separate project.
 - One `edit` call = one undo step in the app. Put a logical change (e.g. "remove all pauses") into one call so the
   user can take it back with one Ctrl+Z.
 - Don't save (`app` save) unless the user asks - they decide when their file changes.
