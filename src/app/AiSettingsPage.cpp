@@ -182,6 +182,7 @@ AiSettings AiSettingsPage::settings() const
             it = plain ? s.chatModels.erase(it) : std::next(it);
         }
         s.approval = AiSettings::Approval(m_approval->currentData().toInt());
+        s.compact = Ai::Compact(m_compact->currentData().toInt());
     }
     return s;
 }
@@ -326,6 +327,16 @@ void AiSettingsPage::addChatSection(Ai::Keys* keys)
     f->addRow(hint(T("Automatisch: jede Änderung der KI ist ein eigener Rückgängig-Schritt. Annehmen: die Änderungen einer "
                      "Anfrage sind sofort in Timeline und Vorschau zu sehen; danach übernimmst du sie als einen Schritt "
                      "oder verwirfst sie.")));
+    m_compact = new QComboBox;
+    m_compact->setObjectName("ai_chat_compact");
+    m_compact->addItem(T("Automatisch"), int(Ai::Compact::Auto));
+    m_compact->addItem(T("Immer"), int(Ai::Compact::On));
+    m_compact->addItem(T("Nie"), int(Ai::Compact::Off));
+    m_compact->setCurrentIndex(m_compact->findData(int(m_initial.compact)));
+    f->addRow(T("Kurze Anfrage für kleine Modelle"), m_compact);
+    f->addRow(hint(T("Werkzeuge und Anleitung in Kurzform: etwa halb so viele Token, für Modelle mit wenig Kontext und "
+                     "Modelle auf diesem Rechner (die lesen langsam). Die Einzelheiten holt sich die KI bei Bedarf. "
+                     "Automatisch: für Server auf diesem Rechner und Modelle mit weniger als 32768 Token Kontext.")));
     auto* testRow = new QHBoxLayout;
     auto* test = new QPushButton(T("Verbindung testen"));
     test->setObjectName("ai_chat_test");

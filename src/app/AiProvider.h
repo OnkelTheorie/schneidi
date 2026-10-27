@@ -102,6 +102,8 @@ struct Request {
     bool fallbacks = false; // Anthropic: fallbacksFor()
     bool autoCache = true;  // Anthropic: cache marks (the system prompt and, top-level, the growing conversation)
     QString provider;       // preset id
+    qint64 fixedTokens = 0; // about, the system prompt and the tools: what a too small context is told (0 = the full
+                            // request's ~15,000)
 };
 QJsonObject anthropicBody(const Request& r);
 QJsonObject openAiBody(const Request& r);
@@ -173,15 +175,17 @@ struct Failure {
     bool retry = false;
     int retryAfterS = 0;
 };
-Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryAfter = {});
+// fixedTokens: see Request
+Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryAfter = {}, qint64 fixedTokens = 0);
 // The provider's message inside an error body (Anthropic, OpenAI, Ollama shapes); empty = none
 QString providerMessage(const QByteArray& body);
 // A request too large for the model's context in the words of llama.cpp servers, OpenAI/vLLM or LM Studio: the
 // context and the request in tokens (0 = not said); false = no such message
 bool contextOverflow(const QString& said, qint64* context, qint64* request);
 // What the user reads then: the numbers and what helps (a small context: more of it in the server's settings, else a
-// new chat). silent = the server cut the request without saying so (Ollama), request is an estimate then
-QString contextAdvice(qint64 context, qint64 request, bool silent = false);
+// new chat). silent = the server cut the request without saying so (Ollama), request is an estimate then. fixed: the
+// tokens of instructions and tools (0 = the full request's ~15,000)
+QString contextAdvice(qint64 context, qint64 request, bool silent = false, qint64 fixed = 0);
 
 // Model ids from a model list answer, sorted
 QStringList parseModels(const QJsonObject& body);

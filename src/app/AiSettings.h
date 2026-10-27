@@ -3,6 +3,8 @@
 // after the settings dialog; test runs change them only in memory (MainWindow does not save them then).
 // The AI chat's key is not here: it lives in the system keychain (app/AiKeys.h).
 
+#include "app/AiContext.h"
+
 #include <QColor>
 #include <QHash>
 #include <QString>
@@ -27,6 +29,8 @@ struct AiSettings {
     QString chatAddress;                // base URL; empty = the provider's own
     QHash<QString, QString> chatModels; // model per provider (empty/missing = the provider's default)
     Approval approval = Approval::Auto;
+    // The short request for small or local models (app/AiContext.h): automatic, always, never
+    Ai::Compact compact = Ai::Compact::Auto;
     QString chatModel() const { return chatModels.value(chatProvider); } // of the chosen provider
 
     static QColor defaultColor(); // violet, like the AI indicator

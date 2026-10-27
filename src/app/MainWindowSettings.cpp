@@ -1,6 +1,7 @@
 // MainWindow: settings of the app (File › Settings…) and applying them
 #include "app/MainWindow.h"
 
+#include "app/AiChat.h"
 #include "app/AiKeys.h"
 #include "app/AiLog.h"
 #include "app/AiSettingsPage.h"
@@ -72,6 +73,7 @@ void MainWindow::setAiSettings(const AiSettings& s)
     if (!m_autosaveDisabled && s != before) s.save(); // test runs leave the user's settings alone
     applyAiMarkStyle();
     m_aiLog->setLimit(s.logLength);
+    if (m_chat) m_chat->setCompact(s.compact);
     if (m_liveIdleLimit && s.releaseMinutes != before.releaseMinutes) m_liveIdleLimit(s.releaseMinutes * 60 * 1000);
     // AI connections switched off/on in the settings ("Disconnect" in the indicator is only for this session)
     if (s.liveAllowed != before.liveAllowed) {

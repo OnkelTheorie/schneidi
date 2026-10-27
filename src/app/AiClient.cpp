@@ -1,5 +1,6 @@
 #include "app/AiClient.h"
 
+#include "app/AiContext.h"
 #include "core/I18n.h"
 
 #include <QJsonDocument>
@@ -58,6 +59,7 @@ AiClient::~AiClient()
     abort();
     dropSide(m_models);
     dropSide(m_test);
+    for (QPointer<QNetworkReply>& p : m_probes) dropSide(p);
 }
 
 void AiClient::send(const Ai::Endpoint& e, const Ai::Request& r)
@@ -175,7 +177,7 @@ void AiClient::onFinished()
         return;
     }
     if (status != 200) {
-        const Ai::Failure f = Ai::httpFailure(status, m_errorBody, reply->rawHeader("retry-after"));
+        const Ai::Failure f = Ai::httpFailure(status, m_errorBody, reply->rawHeader("retry-after"), m_request.fixedTokens);
         // A proxy or older server that does not know the optional parts of the Anthropic request: once without them
         const QString said = Ai::providerMessage(m_errorBody).toLower();
         if (status == 400 && m_endpoint.protocol == Ai::Protocol::Anthropic && !m_compat
@@ -247,4 +249,31 @@ void AiClient::test(const Ai::Endpoint& e)
             emit tested(false, redirectError(reply));
         else emit tested(false, status ? Ai::httpFailure(status, body).message : networkError(reply, e));
     });
+}
+
+void AiClient::probeContext(const Ai::Endpoint& e, int timeoutMs)
+{
+    for (QPointer<QNetworkReply>& p : m_probes) dropSide(p);
+    m_probes.clear();
+    m_probed.clear();
+    const QVector<Ai::ContextProbe> probes = Ai::contextProbes(e);
+    if (probes.isEmpty()) {
+        QTimer::singleShot(0, this, [this] { emit contextProbed(0); });
+        return;
+    }
+    for (const Ai::ContextProbe& p : probes) {
+        QNetworkRequest req = request(e, p.url, false, timeoutMs);
+        QNetworkReply* reply = p.method == "POST" ? m_nam->post(req, p.body) : m_nam->get(req);
+        m_probes << reply;
+        connect(reply, &QNetworkReply::finished, this, [this, reply, kind = p.kind, model = e.model] {
+            reply->deleteLater();
+            const QByteArray body = reply->readAll();
+            if (reply->property("dropped").toBool()) return;
+            m_probed.insert(kind, statusOf(reply) == 200
+                                      ? Ai::contextOf(kind, QJsonDocument::fromJson(body).object(), model)
+                                      : 0);
+            m_probes.removeAll(reply);
+            if (m_probes.isEmpty()) emit contextProbed(Ai::contextFrom(m_probed));
+        });
+    }
 }

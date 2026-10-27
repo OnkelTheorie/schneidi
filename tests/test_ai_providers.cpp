@@ -6,13 +6,15 @@
 // than the model's context …); model lists; where a key comes from (environment > company file > keychain > settings,
 // never another provider's variable), storing it (keychain first, no second plain copy), the company file (merged,
 // locked, broken) and the provider choice; what goes back to the model from long tool answers; the chat's one-line tool
-// steps; tool calls a model wrote as text.
+// steps; tool calls and final answers a model wrote as JSON; the short request for small contexts (when, the tools in
+// short) and the context servers name (llama.cpp, Ollama, LM Studio, vLLM).
 // AI_KEYCHAIN_TEST=1 also writes, reads and deletes a key in the Secret Service of the session bus – only on a
 // private bus: dbus-run-session -- sh -c 'echo -n x | gnome-keyring-daemon --unlock; build-tests/tests/test_ai_providers'
 
 #include "check.h"
 
 #include "app/AiChat.h"
+#include "app/AiContext.h"
 #include "app/AiKeys.h"
 #include "app/AiProvider.h"
 #include "core/I18n.h"
@@ -393,7 +395,11 @@ void testBodiesAndErrors()
         const Ai::Failure llama = Ai::httpFailure(
             400, R"({"error":{"code":400,"message":"request (15768 tokens) exceeds the available context size (4096 tokens), try increasing it","type":"exceed_context_size_error"}})");
         CHECK(llama.kind == Ai::Failure::Kind::TooLarge && !llama.retry);
-        CHECK(llama.message.contains("4096") && llama.message.contains("15768") && llama.message.contains("32 768"));
+        CHECK(llama.message.contains("4096") && llama.message.contains("15768") && llama.message.contains("32768"));
+        // The short request: less is needed and said
+        const Ai::Failure small = Ai::httpFailure(
+            400, R"x({"error":{"message":"request (6400 tokens) exceeds the available context size (4096 tokens)"}})x", {}, 6400);
+        CHECK(small.message.contains("16384") && small.message.contains("6400") && !small.message.contains("32768"));
         qint64 context = 0, request = 0;
         CHECK(Ai::contextOverflow("This model's maximum context length is 8192 tokens. However, your messages resulted in "
                                   "15768 tokens. Please reduce the length of the messages.",
@@ -406,7 +412,8 @@ void testBodiesAndErrors()
         CHECK(!Ai::contextOverflow("model 'qwen' not found", &context, &request));
         // A large context that is full: a new chat helps, not the server's settings
         CHECK(Ai::contextAdvice(131072, 140000).contains(T("„Neuer Chat“ fängt frisch an.")));
-        CHECK(!Ai::contextAdvice(131072, 140000).contains("32 768"));
+        CHECK(!Ai::contextAdvice(131072, 140000).contains("32768"));
+        CHECK(Ai::contextAdvice(16384, 17000, false, 6000).contains(T("„Neuer Chat“ fängt frisch an.")));
         CHECK(Ai::httpFailure(400, R"({"error":{"message":"bad tool schema"}})").kind == Ai::Failure::Kind::Request);
     }
 
@@ -682,6 +689,108 @@ void testTextCalls()
 }
 
 // Only on a private session bus with a Secret Service (see the top of the file)
+// The short request and the context of the model (app/AiContext.h)
+void testContext()
+{
+    // When the short request is taken
+    Ai::Endpoint local{Ai::Protocol::OpenAi, "http://localhost:11434/v1", {}, "qwen3", "ollama"};
+    Ai::Endpoint remote{Ai::Protocol::OpenAi, "https://llm.example.com/v1", "k", "big", "custom"};
+    Ai::Endpoint claude{Ai::Protocol::Anthropic, "https://api.anthropic.com", "k", "claude-sonnet-5-5", "claude"};
+    CHECK(Ai::useCompact(Ai::Compact::Auto, local, 0));
+    CHECK(Ai::useCompact(Ai::Compact::Auto, local, 131072)); // on this computer: speed first
+    CHECK(!Ai::useCompact(Ai::Compact::Auto, remote, 0));
+    CHECK(!Ai::useCompact(Ai::Compact::Auto, remote, 131072));
+    CHECK(Ai::useCompact(Ai::Compact::Auto, remote, 16384));
+    CHECK(!Ai::useCompact(Ai::Compact::Auto, claude, 0));
+    CHECK(!Ai::useCompact(Ai::Compact::Off, local, 4096));
+    CHECK(Ai::useCompact(Ai::Compact::On, claude, 0));
+    CHECK_EQ(Ai::recommendedContext(6500), qint64(16384));
+    CHECK_EQ(Ai::recommendedContext(15000), qint64(32768));
+    CHECK_EQ(Ai::recommendedContext(100), qint64(8192));
+
+    // First sentences: "e.g." ends nothing, long ones end at a clause outside brackets
+    CHECK_EQ(Ai::firstSentence("Find pauses in the audio. Ranges are frames."), QString("Find pauses in the audio."));
+    CHECK_EQ(Ai::firstSentence("Show a project, e.g. its clips. More."), QString("Show a project, e.g. its clips."));
+    CHECK_EQ(Ai::firstSentence("Tempo of a song in one call, to cut to the music (not to a grid): bpm (70-220 by "
+                               "default, half/double tempo resolved by which beats are loud) with a confidence, the "
+                               "beat grid and more and more and more."),
+             QString("Tempo of a song in one call, to cut to the music (not to a grid)."));
+    CHECK(Ai::firstSentence(QString(400, 'x')).size() <= 182);
+
+    // The tools in short: all of them, in order; `edit` lists its ops' signatures, rare tools only parameter names
+    const auto tool = [](const QString& name, const QString& description, const QJsonObject& props) {
+        return QJsonObject{{"name", name}, {"description", description},
+                           {"inputSchema", QJsonObject{{"type", "object"}, {"properties", props}}}};
+    };
+    const QString longText = "where the kill feed is, \"x,y,w,h\" (fractions 0..1 or pixels; look with `frames` crop "
+                             "first). Only the part with the player's mark";
+    const QJsonArray tools{
+        tool("help", "Details of the edit ops.", {{"command", QJsonObject{{"type", "string"}, {"description", "x"}}}}),
+        tool("edit", "Apply edit operations to a project and save it. Answer: lots.",
+             {{"ops", QJsonObject{{"type", "array"}, {"description", QString(10000, 'o')}}},
+              {"project", QJsonObject{{"type", "string"}, {"description", "project file"}}}}),
+        tool("highlights", "Candidates for a highlight video. More text.",
+             {{"region", QJsonObject{{"type", "string"}, {"description", longText}}}}),
+        tool("watch", "Watch folders: new files come in. More.",
+             {{"folder", QJsonObject{{"type", "string"}, {"description", "the folder to watch"}}}}),
+    };
+    const QJsonArray ops{QJsonObject{{"op", "split"}, {"usage", "{op:'split', at, clip?}"}, {"summary", "cut"}},
+                         QJsonObject{{"op", "trim"}, {"usage", "{op:'trim', clip, edge?, by|to}"}}};
+    const QJsonArray c = Ai::compactTools(tools, ops);
+    if (CHECK_EQ(c.size(), 4)) {
+        CHECK_EQ(c[0]["name"].toString(), QString("help"));
+        CHECK(c[0]["description"].toString().contains("command '<tool>'"));
+        const QString edit = c[1]["inputSchema"]["properties"]["ops"]["description"].toString();
+        CHECK(edit.contains("{op:'split', at, clip?}; {op:'trim', clip, edge?, by|to}"));
+        CHECK(edit.contains("`help` with command 'edit' and op '<name>'") && edit.size() < 1000);
+        CHECK_EQ(c[1]["description"].toString(), QString("Apply edit operations to a project and save it."));
+        CHECK_EQ(c[1]["inputSchema"]["properties"]["project"]["description"].toString(), QString("project file"));
+        CHECK_EQ(c[2]["inputSchema"]["properties"]["region"]["description"].toString(),
+                 QString("where the kill feed is, \"x,y,w,h\""));
+        CHECK(!c[3]["inputSchema"]["properties"]["folder"].toObject().contains("description"));
+        CHECK_EQ(c[3]["inputSchema"]["properties"]["folder"]["type"].toString(), QString("string"));
+        CHECK(c[3]["description"].toString().contains("`help` with command 'watch'"));
+    }
+    // Without the ops `edit` stays whole (the model could not edit otherwise)
+    CHECK_EQ(Ai::compactTools(tools, {})[1].toObject(), tools[1].toObject());
+    CHECK(Ai::compactGuide("- social: Short").contains("call `guide` with the topic before such a task):\n- social: Short"));
+
+    // Who is asked for the context, and how
+    const auto kinds = [](const Ai::Endpoint& e) {
+        QStringList k;
+        for (const Ai::ContextProbe& p : Ai::contextProbes(e)) k << p.kind;
+        return k;
+    };
+    CHECK(kinds(claude).isEmpty());
+    CHECK(kinds(Ai::Endpoint{Ai::Protocol::OpenAi, "https://api.openai.com/v1", "k", "gpt-5", "openai"}).isEmpty());
+    CHECK_EQ(kinds(local), QStringList({"ollama-show", "ollama-ps"}));
+    CHECK_EQ(kinds(remote), QStringList({"ollama-show", "ollama-ps", "llama.cpp", "lmstudio", "models"}));
+    for (const Ai::ContextProbe& p : Ai::contextProbes(remote)) {
+        if (p.kind == "llama.cpp") CHECK_EQ(p.url.toString(), QString("https://llm.example.com/props"));
+        if (p.kind == "models") CHECK_EQ(p.url.toString(), QString("https://llm.example.com/v1/models"));
+        if (p.kind == "ollama-show") {
+            CHECK_EQ(p.method, QByteArray("POST"));
+            CHECK_EQ(QJsonDocument::fromJson(p.body).object()["model"].toString(), QString("big"));
+        }
+    }
+    const auto json = [](const char* text) { return QJsonDocument::fromJson(text).object(); };
+    CHECK_EQ(Ai::contextOf("ollama-show", json(R"({"parameters":"stop \"<|im_end|>\"\nnum_ctx                        16384","model_info":{"qwen2.context_length":32768}})"), "qwen3"),
+             qint64(16384));
+    CHECK_EQ(Ai::contextOf("ollama-show", json(R"({"model_info":{"qwen2.context_length":32768}})"), "qwen3"), qint64(0));
+    CHECK_EQ(Ai::contextOf("ollama-ps", json(R"({"models":[{"name":"other:7b","context_length":2048},{"name":"qwen3:latest","model":"qwen3:latest","context_length":4096}]})"), "qwen3"),
+             qint64(4096));
+    CHECK_EQ(Ai::contextOf("ollama-ps", json(R"({"models":[]})"), "qwen3"), qint64(0));
+    CHECK_EQ(Ai::contextOf("llama.cpp", json(R"({"default_generation_settings":{"n_ctx":8192},"total_slots":1})"), "x"), qint64(8192));
+    CHECK_EQ(Ai::contextOf("llama.cpp", json(R"({"n_ctx":16384})"), "x"), qint64(16384));
+    CHECK_EQ(Ai::contextOf("lmstudio", json(R"({"data":[{"id":"qwen3","state":"loaded","max_context_length":131072,"loaded_context_length":4096}]})"), "qwen3"),
+             qint64(4096));
+    CHECK_EQ(Ai::contextOf("models", json(R"({"data":[{"id":"big","max_model_len":32768}]})"), "big"), qint64(32768));
+    CHECK_EQ(Ai::contextOf("models", json(R"({"data":[{"id":"other","max_model_len":32768}]})"), "big"), qint64(0));
+    CHECK_EQ(Ai::contextFrom({{"ollama-ps", 4096}, {"ollama-show", 16384}}), qint64(16384)); // num_ctx counts
+    CHECK_EQ(Ai::contextFrom({{"ollama-ps", 4096}, {"ollama-show", 0}}), qint64(4096));
+    CHECK_EQ(Ai::contextFrom({{"llama.cpp", 0}}), qint64(0));
+}
+
 // Final answers a small model wrote as JSON: the text
 void testTextAnswer()
 {
@@ -731,6 +840,7 @@ int main(int argc, char** argv)
     testChatHelpers();
     testTextCalls();
     testTextAnswer();
+    testContext();
     testSecretService();
     return Check::result();
 }

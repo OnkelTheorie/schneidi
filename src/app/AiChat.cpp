@@ -76,6 +76,11 @@ AiChat::AiChat(QObject* parent) : QObject(parent), m_client(new AiClient(this)),
     connect(m_client, &AiClient::retrying, this, [this](int seconds, const QString& why) {
         addNotice(T("%1 Neuer Versuch in %2 s …").arg(why).arg(seconds));
     });
+    connect(m_client, &AiClient::contextProbed, this, [this](qint64 tokens) {
+        m_contexts.insert(m_probeKey, tokens);
+        m_probing = false;
+        prepare();
+    });
     connect(m_mcp, &McpClient::ready, this, &AiChat::toolsReady);
     connect(m_mcp, &McpClient::failed, this, [this](const QString& message) {
         if (!m_busy) return;
@@ -145,6 +150,8 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review
     m_nudged = false;
     m_failedCalls.clear();
     m_repeats = 0;
+    m_guideAsked = false;
+    m_opsAsked = false;
     m_request = text.trimmed();
     // Pictures of earlier requests are not sent again: the model has seen them, and a long chat would outgrow what
     // providers take per request (count and size of pictures). It can look again with `frames`. Not once Claude's
@@ -177,43 +184,69 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review
     m_review = review;
     appendUser(message);
     setBusy(true);
+    // The model's context, once per address and model, while the tools start (a short timeout: no server says it = 0)
+    if (!m_probing && !m_contexts.contains(contextKey(endpoint)) && !Ai::contextProbes(endpoint).isEmpty()) {
+        m_probing = true;
+        m_probeKey = contextKey(endpoint);
+        m_client->probeContext(endpoint);
+    }
     if (m_mcp->isReady()) toolsReady();
     else m_mcp->start();
     return true;
 }
 
-void AiChat::toolsReady()
+void AiChat::toolsReady() { prepare(); }
+
+void AiChat::prepare()
 {
-    if (!m_busy || m_stopped || m_guide == Guide::Asking) return; // the guide's answer goes on
-    if (m_guide == Guide::Read) {
-        requestModel();
+    if (!m_busy || m_stopped || m_probing || m_asking || !m_mcp->isReady()) return;
+    // The editing guide, once: it is the heart of the instructions (the same text as the `guide` tool)
+    if (m_guide != Guide::Read && !m_guideAsked) {
+        m_guideAsked = true;
+        m_asking = true;
+        m_mcp->call("guide", {}, {}, [this](const McpClient::Result& r) {
+            m_asking = false;
+            if (!r.error) { // (stopped while it was read: asked again with the next request)
+                m_guide = Guide::Read;
+                const QJsonObject o = QJsonDocument::fromJson(r.text.toUtf8()).object();
+                m_guideText = o["guide"].toString();
+                QStringList topics;
+                m_guideTopics.clear();
+                for (const QJsonValue& t : o["topics"].toArray()) {
+                    topics << QString("- %1: %2").arg(t["topic"].toString(), t["title"].toString());
+                    m_guideTopics << t["topic"].toString();
+                }
+                m_guideTopicList = topics.join('\n');
+            }
+            prepare();
+        });
         return;
     }
-    // The editing guide, once: it is the heart of the instructions (the same text as the `guide` tool)
-    m_guide = Guide::Asking;
-    m_mcp->call("guide", {}, {}, [this](const McpClient::Result& r) {
-        m_guide = r.error ? Guide::No : Guide::Read; // stopped while it was read: asked again next time
-        if (!r.error) {
-            const QJsonObject o = QJsonDocument::fromJson(r.text.toUtf8()).object();
-            m_guideText = o["guide"].toString();
-            QStringList topics;
-            m_guideTopics.clear();
-            for (const QJsonValue& t : o["topics"].toArray()) {
-                topics << QString("- %1: %2").arg(t["topic"].toString(), t["title"].toString());
-                m_guideTopics << t["topic"].toString();
-            }
-            if (!topics.isEmpty())
-                m_guideText += "\n\nTask guides (call `guide` with the topic before such a task):\n" + topics.join('\n');
-        }
-        if (m_busy && !m_stopped) requestModel();
-    });
+    // The short request lists the ops of `edit` by their signatures (from `help`, read once)
+    if (m_system.isEmpty() && m_editOps.isEmpty() && !m_opsAsked
+        && Ai::useCompact(m_compactMode, m_endpoint, context(m_endpoint))) {
+        m_opsAsked = true;
+        m_asking = true;
+        m_mcp->call("help", {{"command", "edit"}}, {}, [this](const McpClient::Result& r) {
+            m_asking = false;
+            if (!r.error) m_editOps = QJsonDocument::fromJson(r.text.toUtf8()).object()["commands"][0]["ops"].toArray();
+            prepare();
+        });
+        return;
+    }
+    requestModel();
 }
 
 QString AiChat::systemPrompt() const
 {
     QStringList parts;
     if (!m_mcp->instructions().isEmpty()) parts << m_mcp->instructions();
-    if (!m_guideText.isEmpty()) parts << m_guideText;
+    // The short request: the guide's main points instead of its whole main text (~7,500 characters)
+    if (m_compact) parts << Ai::compactGuide(m_guideTopicList);
+    else if (!m_guideText.isEmpty())
+        parts << (m_guideTopicList.isEmpty() ? m_guideText
+                                             : m_guideText + "\n\nTask guides (call `guide` with the topic before such "
+                                                             "a task):\n" + m_guideTopicList);
     QString app = QString(
                       "# You are the AI chat inside the schneidi app\n"
                       "The user writes to you in the AI panel of the schneidi app while their project is open there.\n"
@@ -226,7 +259,10 @@ QString AiChat::systemPrompt() const
                       "- Every `edit` call is one undo step in the app: put one logical change into one call. Do not "
                       "save the project (`app` save) unless the user asks.\n")
                       .arg(m_language);
-    if (!m_guideText.isEmpty())
+    if (m_compact)
+        app += "- The main points above stand for the main text of the `guide` tool: call `guide` only with a topic. "
+               "The tool descriptions are short: `help` has the details of a tool or an edit op.\n";
+    else if (!m_guideText.isEmpty())
         app += "- The editing guide above is the main text of the `guide` tool: call `guide` only with a topic.\n";
     // Small local models ask the user for the video's path (gemma4) or describe calls instead of making them
     if (m_endpoint.protocol != Ai::Protocol::Anthropic)
@@ -247,20 +283,48 @@ void AiChat::requestModel()
         finishTurn();
         return;
     }
-    if (m_system.isEmpty()) m_system = systemPrompt();
+    const qint64 context = this->context(m_endpoint);
+    if (m_system.isEmpty()) { // fixed for the chat: the full request or the short one
+        m_compact = Ai::useCompact(m_compactMode, m_endpoint, context);
+        m_system = systemPrompt();
+        m_chatTools = m_compact ? Ai::compactTools(m_mcp->tools(), m_editOps) : m_mcp->tools();
+        m_warned = false;
+    }
     Ai::Request r;
     r.model = m_endpoint.model;
     r.provider = m_endpoint.provider;
     r.system = m_system;
-    r.tools = m_mcp->tools();
+    r.tools = m_chatTools;
     r.messages = m_history;
     r.fallbacks = Ai::fallbacksFor(m_endpoint);
     // The text it has (pictures aside): a server that read much less cut the request (see onReply)
     m_sentChars = m_system.size() + QJsonDocument(r.tools).toJson(QJsonDocument::Compact).size();
+    r.fixedTokens = m_sentChars / 4;
     for (const Ai::Message& m : m_history) {
         m_sentChars += m.text.size();
         for (const Ai::ToolCall& c : m.calls) m_sentChars += c.name.size() + QJsonDocument(c.input).toJson().size();
         for (const Ai::ToolResult& t : m.results) m_sentChars += t.text.size();
+    }
+    // A context the server named: a request larger than it is not sent (it would be cut or refused); a tight one is
+    // said once. Either is asked again next time (the user may change the server's setting meanwhile)
+    if (context > 0) {
+        const qint64 tokens = m_sentChars / 4; // about (our requests have 3.6-4 characters per token)
+        if (tokens > context) {
+            m_contexts.remove(contextKey(m_endpoint));
+            addError(Ai::contextAdvice(context, tokens, false, r.fixedTokens));
+            finishTurn();
+            return;
+        }
+        if (tokens + Ai::kChatRoom > context && !m_warned) {
+            m_warned = true;
+            m_contexts.remove(contextKey(m_endpoint));
+            addNotice(T("Der Kontext des Modells ist knapp: es nimmt %1 Token, die Anfrage hat schon etwa %2. Für "
+                        "Ergebnisse der Werkzeuge und Antworten bleibt wenig Platz – in den Einstellungen des "
+                        "KI-Servers die Kontextlänge auf mindestens %3 Token stellen.")
+                          .arg(context)
+                          .arg(tokens)
+                          .arg(Ai::recommendedContext(r.fixedTokens)));
+        }
     }
     m_streaming = -1;
     m_waiting.start();
@@ -289,16 +353,17 @@ void AiChat::onReply(const Ai::Reply& reply)
     // A local server that cut the request to the model's context (Ollama does so silently, 4096 tokens unless set
     // otherwise): the model read only its end - without the tools and the guide, maybe without the request. Its
     // answer is neither run nor kept nor shown (what the user writes next joins their message); the user learns why.
-    // Text has at least one token per 5 characters (about 4 here).
+    // Our requests have 3.6-4 characters per token (Qwen, Gemma): far more than 4.5 per token read = cut.
     if (m_endpoint.protocol == Ai::Protocol::OpenAi && Ai::isLocal(m_endpoint.address) && reply.usage.input > 0
-        && m_sentChars > 5 * reply.usage.input + 4000) {
+        && m_sentChars > 9 * reply.usage.input / 2 + 2000) {
         if (m_streaming >= 0)
             change(m_streaming, [](Entry& e) {
                 e.text.clear(); // what it wrote without the request (nonsense) is not shown
                 e.state = Entry::State::Failed;
             });
         m_streaming = -1;
-        addError(Ai::contextAdvice(reply.usage.input, m_sentChars / 4, true));
+        addError(Ai::contextAdvice(reply.usage.input, m_sentChars / 4, true,
+                                   m_system.size() / 4 + QJsonDocument(m_chatTools).toJson(QJsonDocument::Compact).size() / 4));
         finishTurn();
         return;
     }
@@ -406,12 +471,15 @@ void AiChat::nextTool()
                  true);
         return;
     }
-    // The main guide is in the instructions already; small models ask for it again and again (~2,500 tokens each)
+    // The main guide (or its main points) is in the instructions already; small models ask for it again and again
+    // (~2,500 tokens each)
     if (call.name == "guide" && call.input.value("topic").toString().trimmed().isEmpty() && !m_guideText.isEmpty()
         && m_endpoint.protocol != Ai::Protocol::Anthropic) {
+        const QString what = m_compact ? "the main points of the guide are already in your instructions"
+                                       : "the main guide is already in your instructions";
         const QJsonObject answer{{"ok", true},
-                                 {"note", "the main guide is already in your instructions (not sent again); for a task "
-                                          "call guide with its topic: " + m_guideTopics.join(", ")}};
+                                 {"note", what + " (not sent again); for a task call guide with its topic: "
+                                              + m_guideTopics.join(", ")}};
         toolDone(entry, call, QString::fromUtf8(QJsonDocument(answer).toJson(QJsonDocument::Compact)), {}, false);
         return;
     }
@@ -540,6 +608,8 @@ void AiChat::clear()
     m_entries.clear();
     m_notes.clear();
     m_system.clear();
+    m_chatTools = {};
+    m_compact = false;
     m_usage = {};
     m_request.clear();
     emit cleared();

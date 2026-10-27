@@ -1,5 +1,6 @@
 #include "app/AiProvider.h"
 
+#include "app/AiContext.h"
 #include "core/I18n.h"
 
 #include <QHostAddress>
@@ -518,7 +519,7 @@ bool contextOverflow(const QString& said, qint64* context, qint64* request)
     return match(R"(context_length_exceeded|exceeds? the (?:available )?context (?:size|length|window))").hasMatch();
 }
 
-QString contextAdvice(qint64 context, qint64 request, bool silent)
+QString contextAdvice(qint64 context, qint64 request, bool silent, qint64 fixed)
 {
     QString what;
     if (silent)
@@ -532,14 +533,18 @@ QString contextAdvice(qint64 context, qint64 request, bool silent)
                    .arg(request);
     else what = T("Die Anfrage passt nicht in den Kontext des Modells.");
     // A large context is full: the chat grew too long; a small one cannot even take the tools
-    if (context >= 32768) return what + " " + T("„Neuer Chat“ fängt frisch an.");
+    if (fixed <= 0) fixed = 15000;
+    const qint64 needed = recommendedContext(fixed);
+    if (context >= needed) return what + " " + T("„Neuer Chat“ fängt frisch an.");
     return what + " "
-           + T("In den Einstellungen des KI-Servers die Kontextlänge auf mindestens 32 768 Token stellen – schneidis "
-               "Werkzeuge und Anleitung allein brauchen etwa 15 000 (Ollama: OLLAMA_CONTEXT_LENGTH, LM Studio, AtomicChat "
-               "und andere: Kontextlänge des Modells).");
+           + T("In den Einstellungen des KI-Servers die Kontextlänge auf mindestens %1 Token stellen – schneidis "
+               "Werkzeuge und Anleitung allein brauchen etwa %2 (Ollama: OLLAMA_CONTEXT_LENGTH, LM Studio, AtomicChat "
+               "und andere: Kontextlänge des Modells).")
+                 .arg(needed)
+                 .arg((fixed + 50) / 100 * 100);
 }
 
-Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryAfter)
+Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryAfter, qint64 fixedTokens)
 {
     Failure f;
     const QString said = providerMessage(body);
@@ -549,7 +554,7 @@ Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryA
     qint64 context = 0, request = 0;
     if ((status == 400 || status == 413 || status >= 500) && contextOverflow(said, &context, &request)) {
         f.kind = Failure::Kind::TooLarge;
-        f.message = contextAdvice(context, request);
+        f.message = contextAdvice(context, request, false, fixedTokens);
     } else if (status == 401 || status == 403) {
         f.kind = Failure::Kind::Key;
         f.message = with(status == 401 ? T("Der Schlüssel wurde abgelehnt. Prüfe ihn in Einstellungen › KI.")

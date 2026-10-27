@@ -83,6 +83,7 @@ private:
     QLabel* m_keyState = nullptr;
     QPushButton* m_keyRemove = nullptr;
     QComboBox* m_approval = nullptr;
+    QComboBox* m_compact = nullptr;
     QLabel* m_chatResult = nullptr;
     AiClient* m_client = nullptr;
     QHash<QString, QString> m_models; // per provider, as edited on the page
