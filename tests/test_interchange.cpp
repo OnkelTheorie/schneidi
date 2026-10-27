@@ -486,5 +486,16 @@ int main(int argc, char** argv)
             CHECK(writeFcp7(s).contains("<trackindex>2147483648</trackindex>"));
         }
     }
+    // A clip without start that ends at a transition at frame 10 but is 20 frames long: begins at frame 0, its first
+    // 10 frames cut off (it began before the timeline)
+    {
+        const Seq s = readFcp7(R"(<xmeml><sequence><media><video><track><clipitem><in>0</in><out>20</out>
+            <file><pathurl>file:///m/a.mp4</pathurl></file></clipitem><transitionitem><start>5</start><end>15</end>
+            </transitionitem></track></video></media></sequence></xmeml>)");
+        if (CHECK(s.video.size() == 1 && s.video[0].items.size() == 1)) {
+            const Item& it = s.video[0].items[0];
+            CHECK(it.start == 0 && it.in == 10 && it.length == 10);
+        }
+    }
     return Check::result();
 }
