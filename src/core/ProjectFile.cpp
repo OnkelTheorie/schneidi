@@ -37,6 +37,13 @@ int intOf(const QJsonValue& v, int fallback = 0)
     return std::clamp(v.toInt(fallback), -kLimit, kLimit);
 }
 
+// Milliseconds (transcript words), likewise: a double beyond qint64 would not even convert
+qint64 msOf(const QJsonValue& v)
+{
+    constexpr double kLimit = double(qint64(1) << 50);
+    return qint64(std::clamp(v.toDouble(), -kLimit, kLimit));
+}
+
 // Track EQ/compressor: only written when not the default; loading clamps the values (hand-edited files)
 QJsonObject eqToJson(const TrackEq& eq)
 {
@@ -744,7 +751,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.language = to.value("language").toString();
             for (const QJsonValue& w : to.value("words").toArray()) {
                 const QJsonArray a = w.toArray();
-                if (a.size() >= 3) t.words << TranscriptWord{qint64(a[0].toDouble()), qint64(a[1].toDouble()), a[2].toString()};
+                if (a.size() >= 3) t.words << TranscriptWord{msOf(a[0]), msOf(a[1]), a[2].toString()};
             }
             if (!t.words.isEmpty() && !m.transcript(t.audioStream)) m.transcripts << t;
         }

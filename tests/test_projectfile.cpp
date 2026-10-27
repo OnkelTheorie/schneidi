@@ -504,6 +504,12 @@ int main(int argc, char** argv)
             if (CHECK(p.timeline().subtitles.size() == 1 && p.timeline().subtitles[0].cues.size() == 1))
                 CHECK(p.timeline().subtitles[0].cues[0].id > p.timeline().video[0].clips[0].id);
             CHECK(stable(id));
+            // A transcript word at 10^60 ms (no qint64)
+            const QByteArray words = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasAudio":true,
+                "length":300,"transcripts":[{"words":[[1e60,900,"x"]]}]}]})";
+            CHECK(!opened(words, p).isEmpty());
+            if (CHECK(p.media().size() == 1 && p.media()[0].transcripts.size() == 1))
+                CHECK(p.media()[0].transcripts[0].words.value(0).from == qint64(1) << 50);
         }
     }
     return Check::result();
