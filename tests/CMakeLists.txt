@@ -56,6 +56,7 @@ schneidi_test(test_luts)
 schneidi_test(test_lumas)
 schneidi_test(test_frei0r)
 schneidi_test(test_key_pick)
+schneidi_test(test_viewer_large) # large viewer: panels hide and come back exactly, timeline zoom/scroll untouched
 schneidi_test(test_presets)
 schneidi_test(test_rendercache)
 schneidi_test(test_loudness)

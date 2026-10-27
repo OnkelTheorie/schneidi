@@ -687,6 +687,7 @@ void MainWindow::stopKeyPick()
 {
     m_inspector->setKeyPicking(false);
     if (!m_keyPicker) return;
+    qApp->removeEventFilter(m_keyPicker); // its Esc filter ends now, not when deleteLater gets to it
     m_viewer->setOverlay(m_colorPanel->overlay());
     m_keyPicker->deleteLater();
     m_keyPicker = nullptr;

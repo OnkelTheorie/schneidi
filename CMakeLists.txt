@@ -220,6 +220,7 @@ add_library(schneidi_lib STATIC
     src/ui/FileManager.h          src/ui/FileManager.cpp
     src/engine/Bundle.h           src/engine/Bundle.cpp
     src/ui/Viewer.h               src/ui/Viewer.cpp
+    src/ui/FullScreenViewer.h     src/ui/FullScreenViewer.cpp
     src/ui/ViewerOverlay.h
     src/ui/KeyColorPicker.h       src/ui/KeyColorPicker.cpp
     src/ui/WindowOverlay.h        src/ui/WindowOverlay.cpp

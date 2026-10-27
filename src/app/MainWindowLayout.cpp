@@ -42,6 +42,7 @@
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
 #include "ui/MulticamView.h"
+#include "ui/FullScreenViewer.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
@@ -72,10 +73,16 @@
 #include <QSaveFile>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSettings>
+#include <QShortcut>
 #include <QInputDialog>
 #include <QStandardPaths>
 #include <QTimer>
+#include <algorithm>
+#include <numeric>
+#include <tuple>
+#include <utility>
 
 void MainWindow::buildLayout()
 {
@@ -168,6 +175,7 @@ QWidget* MainWindow::buildTopBar()
         // Only hide panels not yet inserted (show() without a parent opened its own window)
         if (panel->parentWidget() || !b->isChecked()) panel->setVisible(b->isChecked());
         connect(b, &QToolButton::toggled, this, [this, key, panel](bool on) {
+            setViewerLarge(false); // the layout comes back, with this panel as asked
             panel->setVisible(on);
             updateLeftColumn();
             if (!m_autosaveDisabled) QSettings().setValue("panels/" + key, on);
@@ -259,6 +267,7 @@ QWidget* MainWindow::buildPageBar()
 
 void MainWindow::showPage(Page page)
 {
+    setViewerLarge(false); // the page's own layout first, then the switch
     m_page = page;
     switch (page) {
     case Page::Media:
@@ -374,4 +383,115 @@ void MainWindow::updateLeftColumn()
 {
     if (m_page == Page::Edit) m_editLeft->setVisible(m_poolToggle->isChecked() || m_effectsToggle->isChecked()
                                                   || m_storageToggle->isChecked());
+}
+
+void MainWindow::setViewerLarge(bool on)
+{
+    if (on != m_large.active) {
+        if (!on) {
+            // Back as it was: the panels it hid, then the sizes (no splitterMoved: the saved layout stays as it is)
+            const LargeViewer was = std::exchange(m_large, {});
+            for (const QPointer<QWidget>& w : was.hidden)
+                if (w) w->show();
+            // Scroll positions too: a panel laid out at another size on the way back loses them (the Inspector)
+            auto restore = [sizes = was.sizes, scrolls = was.scrolls] {
+                for (const auto& [splitter, list] : sizes)
+                    if (splitter) splitter->setSizes(list);
+                for (const auto& [bar, value] : scrolls)
+                    if (bar) bar->setValue(value);
+            };
+            restore();
+            // Panels that size themselves when shown (the mixer grows to fit its strips) do it in a zero timer: once
+            // more after that, the layout is the one from before (unless the large viewer is on again meanwhile)
+            QTimer::singleShot(0, this, [this, restore] {
+                if (!m_large.active) restore();
+            });
+        } else {
+            // What stays: the viewer and the timeline (if it is on this page); every splitter above them hides its
+            // other panels and gives their room (and their handles) to the viewer's side, else the timeline's
+            QList<QWidget*> keep{m_viewer};
+            if (m_pages->currentWidget()->isAncestorOf(m_timeline)) keep << m_timeline;
+            auto holds = [](QWidget* w, QWidget* k) { return w == k || w->isAncestorOf(k); };
+            QList<QSplitter*> splitters;
+            for (QWidget* k : keep)
+                for (QWidget* w = k->parentWidget(); w && w != this; w = w->parentWidget())
+                    if (auto* s = qobject_cast<QSplitter*>(w); s && !splitters.contains(s)) splitters << s;
+            m_large.active = true;
+            QSize viewer = m_viewer->size(); // its size once the room is given (the layout follows later)
+            QSplitter* shared = nullptr;     // the splitter with the viewer above the timeline
+            int viewerAt = -1, timelineAt = -1;
+            for (QSplitter* s : splitters) {
+                const QList<int> before = s->sizes();
+                QList<int> after = before;
+                int freed = 0, gainer = -1, timelineIndex = -1;
+                for (int i = 0; i < s->count(); ++i) {
+                    QWidget* w = s->widget(i);
+                    if (holds(w, m_viewer)) gainer = i;
+                    else if (keep.size() > 1 && holds(w, m_timeline)) timelineIndex = i;
+                    else if (!w->isHidden()) {
+                        freed += after[i] + s->handleWidth();
+                        after[i] = 0;
+                        for (QScrollBar* bar : w->findChildren<QScrollBar*>()) m_large.scrolls.append({bar, bar->value()});
+                        w->hide();
+                        m_large.hidden << w;
+                    }
+                }
+                if (gainer >= 0 && timelineIndex >= 0 && s->orientation() == Qt::Vertical)
+                    std::tie(shared, viewerAt, timelineAt) = std::tuple(s, gainer, timelineIndex);
+                if (gainer < 0) gainer = timelineIndex;
+                if (freed == 0 || gainer < 0) continue;
+                m_large.sizes.append({s, before});
+                after[gainer] += freed;
+                s->setSizes(after);
+                if (s->widget(gainer)->isAncestorOf(m_viewer) || s->widget(gainer) == m_viewer)
+                    (s->orientation() == Qt::Horizontal ? viewer.rwidth() : viewer.rheight()) += freed;
+            }
+            // With the room beside it the picture is often limited by the height (one viewer, 16:9 on a wide
+            // screen): then the timeline gives the viewer height too, as much as the picture can use, but keeps a
+            // third of the column (or its own height if that is less)
+            if (shared) {
+                QList<int> sizes = shared->sizes();
+                const int total = std::accumulate(sizes.begin(), sizes.end(), 0);
+                const int floor = std::max(total / 3, m_timeline->minimumSizeHint().height());
+                const int take = std::min(m_viewer->heightFor(viewer.width()) - viewer.height(),
+                                          sizes[timelineAt] - floor);
+                if (take > 0) {
+                    if (std::none_of(m_large.sizes.begin(), m_large.sizes.end(),
+                                     [shared](const auto& entry) { return entry.first == shared; }))
+                        m_large.sizes.append({shared, sizes});
+                    sizes[timelineAt] -= take;
+                    sizes[viewerAt] += take;
+                    shared->setSizes(sizes);
+                }
+            }
+        }
+    }
+    if (m_largeAction) m_largeAction->setChecked(m_large.active);
+    if (m_largeEscape) m_largeEscape->setEnabled(m_large.active);
+}
+
+void MainWindow::setViewerFullScreen(bool on)
+{
+    if (on && !m_fullScreen) {
+        m_fullScreen = new FullScreenViewer(m_engine, m_viewer->picture(), this);
+        connect(m_fullScreen, &FullScreenViewer::exitRequested, this, [this] { setViewerFullScreen(false); });
+        // The keys of these window actions work in the full-screen window too (an action's window shortcut counts in
+        // every window it is added to)
+        for (const char* id : {"play_pause", "shuttle_back", "stop", "shuttle_fwd", "frame_prev", "frame_next",
+                               "second_prev", "second_next", "edit_prev", "edit_next", "go_start", "go_end", "mark_in",
+                               "mark_out", "viewer_full_screen"})
+            if (QAction* a = InputBindings::instance().action(id)) m_fullScreen->addAction(a);
+        m_fullScreen->showOn(screen());
+    } else if (!on && m_fullScreen) {
+        FullScreenViewer* fs = std::exchange(m_fullScreen, nullptr);
+        fs->hide();
+        fs->deleteLater();
+        activateWindow();
+    }
+    if (m_fullScreenAction) m_fullScreenAction->setChecked(m_fullScreen != nullptr);
+}
+
+FullScreenViewer* MainWindow::fullScreenViewer() const
+{
+    return m_fullScreen;
 }

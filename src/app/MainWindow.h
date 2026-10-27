@@ -113,6 +113,19 @@ public:
     // Watch folders of the open project (MainWindowWatch.cpp): File › Watch Folders…, the watcher
     void watchFoldersDialog();
     class FolderWatch* folderWatch() const { return m_folderWatch; }
+    // Large viewer (Workspace › Large Viewer, the viewer's button; MainWindowLayout.cpp): on every page the panels
+    // beside the viewer and the timeline hide (Media Pool/Storage, Effects, Inspector, Transcript, Mixer, color
+    // wheels, render settings, AI chat), the viewer gets their room; where the picture is then limited by the height,
+    // the timeline below gives it height too, down to a third of the column. Off (same key, Esc)
+    // brings back exactly what was there (which panels, splitter sizes); a page switch or a panel button ends it first.
+    // Never touches the settings (panels/…, layout/…) or the timeline's zoom/scroll.
+    void setViewerLarge(bool on);
+    bool viewerLarge() const { return m_large.active; }
+    // Full-screen viewer (Workspace › Full-Screen Viewer, Ctrl+F, the viewer's button): only the picture, black around
+    // it, on the screen the window is on (ui/FullScreenViewer); the playback keys work there, Esc or the same key leave.
+    // Playback goes on across the switch.
+    void setViewerFullScreen(bool on);
+    class FullScreenViewer* fullScreenViewer() const; // nullptr while it is off
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -280,6 +293,16 @@ private:
     QToolButton* m_mixerToggle = nullptr;
     QToolButton* m_transcriptToggle = nullptr;
     Page m_page = Page::Edit;
+    struct LargeViewer {
+        bool active = false;
+        QVector<QPointer<QWidget>> hidden;                     // panels it hid, shown again when it ends
+        QVector<QPair<QPointer<QSplitter>, QList<int>>> sizes; // splitter sizes before
+        QVector<QPair<QPointer<class QScrollBar>, int>> scrolls; // scroll positions in the hidden panels
+    } m_large;
+    QAction* m_largeAction = nullptr;
+    class QShortcut* m_largeEscape = nullptr; // Esc ends the large viewer (only enabled while it is on)
+    QAction* m_fullScreenAction = nullptr;
+    QPointer<class FullScreenViewer> m_fullScreen; // while the full-screen viewer is on
 
     QHash<QString, MediaInfo> m_probeCache;
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)

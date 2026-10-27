@@ -5,6 +5,8 @@
 #include <QWidget>
 
 class Engine;
+class QAction;
+class QHBoxLayout;
 class QLabel;
 class QMimeData;
 class QStackedWidget;
@@ -51,6 +53,15 @@ public:
     void setHint(const QString& text, const QString& button = {});
     QString hint() const;
 
+    // Button for a checkable view action (large viewer, full screen) at the right end of the transport bar, beside
+    // Before/After: a click triggers it, it shows the action's state
+    enum class ViewIcon { Large, FullScreen };
+    QToolButton* addViewAction(QAction* action, ViewIcon icon);
+    // The picture shown last (the engine's preview frame)
+    QImage picture() const;
+    // Height of the whole viewer (bars included) at which the picture fills `width` (0 = no frame size known)
+    int heightFor(int width) const;
+
 signals:
     void hintAccepted(); // the hint's button
     void hintClosed();   // the hint's close button
@@ -71,6 +82,8 @@ private:
     QToolButton* m_hintButton;
     QLabel* m_timecode;
     QToolButton* m_playBtn;
+    QHBoxLayout* m_barRight;        // Before/After and the view buttons
+    class QSpacerItem* m_barBalance; // keeps the transport buttons centered (left: timecode, right: m_barRight)
     QWidget* m_multicam = nullptr;
     bool m_multicamOn = false;
     QString m_sourcePath, m_sourceName;
