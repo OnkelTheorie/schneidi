@@ -328,7 +328,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
     streamBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     streamBox->setMinimumContentsLength(8);
     streamBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    connect(streamBox, &QComboBox::activated, this, [this, streamBox, A](int stream) {
+    connect(streamBox, &QComboBox::activated, this, [this, A](int stream) {
         const Project* project = m_editor->project();
         apply(A, {}, T("Quell-Tonspur"), [project, stream](Clip& c) {
             const MediaInfo* m = project->mediaInfo(c.mediaPath);
