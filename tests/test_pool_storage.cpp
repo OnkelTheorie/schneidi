@@ -218,6 +218,23 @@ void testPoolFilter(const QString& dump)
         f.kinds = PoolFilter::Image;
         pool.setFilter(f);
         CHECK_EQ(list->count(), 1);
+        // Nothing matches: a hint instead of an empty list
+        auto* hint = pool.findChild<QLabel*>("pool_empty_hint");
+        if (CHECK(hint)) {
+            CHECK(hint->isHidden());
+            f.flags = {"red"}; // no red still image
+            pool.setFilter(f);
+            CHECK_EQ(list->count(), 0);
+            CHECK(hint->isVisible() && hint->text() == T("Nichts passt zum Filter"));
+            if (mode == MediaPool::ViewMode::Thumbnails && !dump.isEmpty())
+                pool.grab().save(QDir(dump).filePath("pool-filter-empty.png"));
+            pool.setFilter({});
+            pool.setSearch("gibtsnicht");
+            CHECK(hint->isVisible() && hint->text() == T("Nichts passt zur Suche"));
+            pool.setSearch("");
+            CHECK(hint->isHidden());
+            CHECK_EQ(list->count(), 6);
+        }
         // Combined with the search and with the bins
         f = {};
         f.flags = {"red"};

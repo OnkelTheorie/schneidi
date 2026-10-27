@@ -145,6 +145,7 @@ private:
     QLineEdit* m_search;
     PoolFilterButton* m_filterBtn;
     QToolButton* m_filterReset; // beside the bin title while a filter is active
+    QLabel* m_emptyHint;        // over the empty list: nothing matches the search or filter
     QAction* m_removeBinKey;   // Delete/Backspace in the bin list
     QAction* m_closeSearchKey; // Esc in the search field
     QAction* m_removeClipsKey; // Delete/Backspace on the clips

@@ -427,6 +427,16 @@ MediaPool::MediaPool(Project* project, Engine* engine, QWidget* parent)
     m_list->setSelectionMode(QAbstractItemView::ExtendedSelection); // several clips for proxy commands, bins, colors
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_list, &QListWidget::customContextMenuRequested, this, &MediaPool::showContextMenu);
+    // Search or filter without a match: says so instead of an empty list (mouse goes through to the list)
+    m_emptyHint = new QLabel;
+    m_emptyHint->setObjectName("pool_empty_hint");
+    m_emptyHint->setAlignment(Qt::AlignCenter);
+    m_emptyHint->setWordWrap(true);
+    m_emptyHint->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
+    m_emptyHint->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_emptyHint->hide();
+    auto* hintLay = new QVBoxLayout(m_list->viewport());
+    hintLay->addWidget(m_emptyHint);
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString path = it->data(Qt::UserRole).toString();
         if (const int seq = sequenceOfItem(path)) emit sequenceOpenRequested(seq);
@@ -908,6 +918,8 @@ void MediaPool::rebuildClips()
     for (int i = 0; i < m_list->count(); ++i)
         if (selected.contains(m_list->item(i)->data(Qt::UserRole).toString())) m_list->item(i)->setSelected(true);
     m_list->verticalScrollBar()->setValue(scroll);
+    m_emptyHint->setText(filter.active() ? T("Nichts passt zum Filter") : T("Nichts passt zur Suche"));
+    m_emptyHint->setVisible(narrowed && m_list->count() == 0);
 }
 
 void MediaPool::drawFlag(QPainter& p, const QRectF& r, const QColor& color)
