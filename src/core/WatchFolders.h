@@ -62,6 +62,9 @@ bool samePath(const QString& a, const QString& b);
 int indexOf(const QVector<WatchFolder>& list, const QString& folder); // -1 = not watched
 // The first watch folder that takes this file (in its folder, or below it with subfolders, of a kind it wants); -1 = none
 int covering(const QVector<WatchFolder>& list, const QString& file);
+// The note after an import of `paths` from a watch folder into `bin` (UI language): "New file “clip.mp4” from “OBS” in
+// bin “Master”", "3 new files from …"
+QString importedNote(const QStringList& paths, const QString& folder, const QString& bin);
 QStringList typeNames(const WatchFolder& w); // "video", "audio", "image"
 // "video,audio" -> kinds of w; false = an unknown name (w unchanged)
 bool setTypes(WatchFolder& w, const QStringList& names);

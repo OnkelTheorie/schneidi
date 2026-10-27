@@ -230,7 +230,7 @@ void testProject()
     CHECK_EQ(p.watchRevision(), 2);
     CHECK_EQ(a.last().revision, 2);
     CHECK_EQ(undo->index(), index + 1);
-    CHECK(undo->undoText().contains("rec"));
+    CHECK_EQ(undo->undoText(), T("Überwachter Ordner „%1“: %2 neue Dateien").arg("rec").arg(2));
     CHECK_EQ(p.media().size(), 2);
     CHECK_EQ(p.mediaInfo("/rec/b.mp4")->bin, bin);
     CHECK(p.isModified());
@@ -256,6 +256,12 @@ void testProject()
     p.addWatchedMedia({{media("/rec/c.mp4"), "/rec"}});
     CHECK_EQ(p.mediaInfo("/rec/c.mp4")->bin, 0);
     CHECK_EQ(p.watchRevision(), 3);
+    // One file: named, no "file(s)"
+    CHECK_EQ(undo->undoText(), T("Überwachter Ordner „%1“: neue Datei „%2“").arg("rec", "c.mp4"));
+    CHECK_EQ(WatchFolders::importedNote({"/rec/c.mp4"}, "/rec", "Master"),
+             T("Neue Datei „%1“ aus „%2“ im Bin „%3“").arg("c.mp4", "rec", "Master"));
+    CHECK_EQ(WatchFolders::importedNote({"/rec/a.mp4", "/rec/b.mp4"}, "/rec/", "Aufnahmen"),
+             T("%1 neue Dateien aus „%2“ im Bin „%3“").arg("2", "rec", "Aufnahmen"));
 }
 
 void testProjectFile(const QString& root)

@@ -362,7 +362,8 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
     for (QStringList missing = ask ? ProjectFile::missingMedia(data) : QStringList{}; !missing.isEmpty();
          missing = ProjectFile::missingMedia(data)) {
         QMessageBox box(QMessageBox::Warning, T("Medien fehlen"),
-                        T("%1 Datei(en) nicht gefunden (verschoben oder umbenannt?):").arg(missing.size()),
+                        missing.size() == 1 ? T("1 Datei nicht gefunden (verschoben oder umbenannt?):")
+                                            : T("%1 Dateien nicht gefunden (verschoben oder umbenannt?):").arg(missing.size()),
                         QMessageBox::NoButton, this);
         QStringList names;
         for (const QString& p : missing.mid(0, 15)) names << p;

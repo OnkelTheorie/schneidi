@@ -867,9 +867,11 @@ QVector<WatchArrival> Project::addWatchedMedia(const QVector<WatchImport>& files
     if (m_watchLog.size() > WatchFolders::kLogSize) m_watchLog.remove(0, m_watchLog.size() - WatchFolders::kLogSize);
     QString folder = QFileInfo(add.first().folder).fileName();
     if (folder.isEmpty()) folder = add.first().folder;
+    const QString text = add.size() == 1
+                             ? T("Überwachter Ordner „%1“: neue Datei „%2“").arg(folder, QFileInfo(add.first().media.path).fileName())
+                             : T("Überwachter Ordner „%1“: %2 neue Dateien").arg(folder, QString::number(add.size()));
     closeMerge(); // never part of a slider series of the user
-    m_undo.push(new WatchImportCommand(this, T("Überwachter Ordner „%1“: %2 neue Datei(en)").arg(folder, QString::number(add.size())),
-                                       add)); // push calls redo()
+    m_undo.push(new WatchImportCommand(this, text, add)); // push calls redo()
     closeMerge();
     return arrivals;
 }
