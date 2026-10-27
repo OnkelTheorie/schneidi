@@ -228,6 +228,20 @@ int main(int argc, char** argv)
         CHECK_EQ(saved(), QString("V1: a[0-10|0-9] a[10-90|20-99]  V2:  A1: a[0-10|0-9] a[10-90|20-99]  A2:"));
     }
 
+    // In the app's own chat a command without a project works on "@app" - not `new` (it makes a file)
+    {
+        qputenv("SCHNEIDI_LIVE_SERVER", "test");
+        QJsonObject args{{"summary", true}};
+        CHECK(Cli::defaultToAppProject(*Cli::find("info"), args) && args["project"] == "@app");
+        QJsonObject path{{"path", "/x/p.schneidi"}}; // under another name: normalize takes it
+        CHECK(!Cli::defaultToAppProject(*Cli::find("info"), path));
+        QJsonObject fresh{{"template", "vertical"}};
+        CHECK(!Cli::defaultToAppProject(*Cli::find("new"), fresh) && !fresh.contains("project"));
+        qunsetenv("SCHNEIDI_LIVE_SERVER");
+        QJsonObject outside{{"summary", true}};
+        CHECK(!Cli::defaultToAppProject(*Cli::find("info"), outside));
+    }
+
     // An analysis without a file (small models in the app's chat): the error lists the project's media to copy
     CHECK(messageOf("highlights", {{"project", g_path}}).contains("; the media of the project: /x/a.mp4"));
 

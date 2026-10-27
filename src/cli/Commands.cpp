@@ -1083,7 +1083,7 @@ const QHash<QString, QStringList>& parameterAliases()
 
 bool defaultToAppProject(const Command& cmd, QJsonObject& raw)
 {
-    if (qEnvironmentVariable(Live::ChatServerEnv).isEmpty()) return false;
+    if (qEnvironmentVariable(Live::ChatServerEnv).isEmpty() || cmd.name == "new") return false; // new: a new file
     const auto param = [&cmd](const QString& name) -> const Param* {
         for (const Param& p : cmd.params)
             if (p.name == name) return &p;
