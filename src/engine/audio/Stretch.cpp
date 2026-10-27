@@ -304,8 +304,8 @@ struct Stretch::Impl {
         std::copy(fft->spec(), fft->spec() + bins, out);
     }
 
-    // The onset estimate lies within half a grid step of the real one: the cut fades out over a grid step and ends
-    // half a step before it
+    // Onsets are located to 16 samples: the cut fades out over a grid step and ends half a step (~1.3 ms) before
+    // the onset
     float cutGain(int64_t x, int64_t cut) const
     {
         const int64_t end = cut - grid / 2, start = end - grid;

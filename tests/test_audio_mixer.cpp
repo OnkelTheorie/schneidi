@@ -688,9 +688,9 @@ void checkRetimed(const Synth& src)
         const double speedThere = t.ramp.isEmpty() ? t.speed : 1.0;
         const double hz = frequency(sound, a, b), wantHz = t.pitch ? 1000 : 1000 * speedThere;
         const double level = rmsDb(sound, a, b), wantLevel = 20 * std::log10(0.25 / std::sqrt(2.0));
-        // Interpolation: a sample. The own stretcher places stretched bursts exactly when slower; faster, a frame plays
-        // the source unstretched around its centre, so a burst lands up to ~3.5 ms early (Rubber Band, used up to
-        // 0.13: 7 ms early at 50 %, 1 ms late at 200 %, +-1.5 ms jitter). The spread checks that nothing drifts.
+        // Interpolation: a sample. The own stretcher places stretched bursts within ~3 ms (it reads each onset's frame
+        // so that the onset lands where the map puts it; Rubber Band, used up to 0.13: 7 ms early at 50 %, 1 ms late
+        // at 200 %, +-1.5 ms jitter). The spread checks that nothing drifts.
         const double posTol = t.pitch ? 0.015 * kRate : 1.0;
         double lo = 1e9, hi = -1e9;
         if (countOk)
