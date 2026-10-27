@@ -42,6 +42,7 @@
 #include "ui/MediaStorage.h"
 #include "ui/ColorPanel.h"
 #include "ui/ScopesPanel.h"
+#include "ui/TranscriptPanel.h"
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
@@ -237,6 +238,9 @@ void MainWindow::buildActions()
     QMenu* toolsMenu = timeline->addMenu(T("Werkzeuge"));
     makeAction(toolsMenu, "tool_select", T("Auswahl-Werkzeug"), QKeySequence("A"), [tv] { tv->setTool(TimelineView::Tool::Select); });
     makeAction(toolsMenu, "tool_trim", T("Trim-Modus"), QKeySequence("T"), [tv] { tv->setTool(TimelineView::Tool::Trim); });
+    // No default keys: Y and U (Premiere's) select from the playhead and switch the edit point side here
+    makeAction(toolsMenu, "tool_slip", T("Slip-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slip); });
+    makeAction(toolsMenu, "tool_slide", T("Slide-Werkzeug"), QKeySequence(), [tv] { tv->setTool(TimelineView::Tool::Slide); });
     makeAction(toolsMenu, "tool_blade", T("Klingen-Werkzeug"), QKeySequence("B"), [tv] { tv->setTool(TimelineView::Tool::Blade); });
     makeAction(toolsMenu, "snapping", T("Snapping an/aus"), QKeySequence("N"), [tv] { tv->setSnapping(!tv->snapping()); });
     auto* linked = makeAction(toolsMenu, "linked_selection", T("Verknüpfte Auswahl"), QKeySequence("Ctrl+Shift+L"), [] {});
@@ -267,14 +271,17 @@ void MainWindow::buildActions()
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::Start, tv->playhead()); });
     makeAction(trimMenu, "trim_end", T("Ende bis Playhead trimmen"), QKeySequence("Shift+]"),
                [this, tv] { m_editor->trimToPlayhead(TimelineOps::Edge::End, tv->playhead()); });
-    // Selected edit point (V): , and . trim it. Otherwise trim mode: slip the selection (like DaVinci), otherwise move
+    // Selected edit point (V): , and . trim it. Otherwise trim mode and slip tool: slip the selection (like DaVinci),
+    // slide tool: slide it, otherwise move
     makeAction(trimMenu, "select_edit_point", T("Nächsten Schnittpunkt auswählen"), QKeySequence("V"),
                [this, tv] { m_editor->selectNearestEditPoint(tv->playhead()); });
     makeAction(trimMenu, "edit_point_type", T("Schnittpunkt-Seite wechseln"), QKeySequence("U"),
                [this] { m_editor->cycleEditPointSide(); });
     auto nudge = [this, tv](int frames) {
-        if (m_editor->nudgeEditPoint(frames, tv->tool() == TimelineView::Tool::Trim)) return;
-        if (tv->tool() == TimelineView::Tool::Trim) m_editor->slipSelection(frames);
+        using Tool = TimelineView::Tool;
+        if (m_editor->nudgeEditPoint(frames, tv->tool() == Tool::Trim)) return;
+        if (tv->tool() == Tool::Trim || tv->tool() == Tool::Slip) m_editor->slipSelection(frames);
+        else if (tv->tool() == Tool::Slide) m_editor->slideSelection(frames);
         else m_editor->nudgeSelection(frames);
     };
     makeAction(trimMenu, "nudge_left", T("1 Frame nach links schieben"), QKeySequence(","), [nudge] { nudge(-1); });
@@ -424,6 +431,10 @@ void MainWindow::buildActions()
     makeAction(viewOpts, "zoom_in", T("Hineinzoomen"), QKeySequence("Ctrl+="), [tv] { tv->zoomBy(1.5); });
     makeAction(viewOpts, "zoom_out", T("Herauszoomen"), QKeySequence("Ctrl+-"), [tv] { tv->zoomBy(1 / 1.5); });
     makeAction(viewOpts, "zoom_fit", T("Ganze Timeline zeigen"), QKeySequence("Shift+Z"), [tv] { tv->zoomToFit(); });
+    // No default key: editors share none for it (Kdenlive's Shift+L sits in the J/K/L transport family)
+    timeline->addSeparator();
+    makeAction(timeline, "lock_tracks", T("Spuren sperren/entsperren (Auswahl, sonst Zielspuren)"), QKeySequence(),
+               [this] { m_editor->toggleSelectionTracksLock(); });
 
     QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
     makeAction(play, "play_pause", T("Play/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });
@@ -691,6 +702,10 @@ void MainWindow::buildActions()
     makeAction(help, "open_log_folder", T("Log-Ordner öffnen"), QKeySequence(),
                [] { QDesktopServices::openUrl(QUrl::fromLocalFile(Log::directory())); });
     makeAction(help, "check_updates", T("Nach Updates suchen…"), QKeySequence(), [this] { checkForUpdates(true); });
+
+    // Keys of panels (scope): only while the panel has the focus, there before the window's keys (Delete)
+    InputBindings::instance().registerAction(m_transcript->cutAction(), "transcript_cut", T("Transkript"),
+                                             QKeySequence(Qt::Key_Delete), "transcript", QKeySequence(Qt::Key_Backspace));
 
     InputBindings::instance().saveIfIncomplete();
 }

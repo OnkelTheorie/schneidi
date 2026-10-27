@@ -58,6 +58,13 @@ public:
     // Lock track (lock like DaVinci): clips on it can no longer be selected or changed,
     // Ripple leaves the track alone. Selected clips of the track are deselected.
     void toggleTrackLock(TrackRef ref);
+    // Lock/unlock several tracks and subtitle tracks (by index) in one undo step, with the deselection of
+    // toggleTrackLock (which uses it, as does toggleSubtitleTrackLock)
+    void setTracksLocked(const QVector<TrackRef>& tracks, const QVector<int>& subtitleTracks, bool lock);
+    // Lock key: the tracks of the selection (clips, subtitles, a selected transition or edit point), without a
+    // selection the target tracks (V and A, the rule of selectFromPlayhead). One of them unlocked -> all get locked,
+    // else all unlocked; one undo step.
+    void toggleSelectionTracksLock();
     // Track name (empty = default "Video 1" etc.) and track color (id from kTrackColors, empty = default)
     void renameTrack(TrackRef ref, const QString& name);
     void setTrackColor(TrackRef ref, const QString& colorId);
@@ -84,6 +91,7 @@ public:
     // Move a track within its type to index `to` (dragging the track header); clips, name, mute/solo/level etc.
     // move along, target tracks follow. One undo step.
     void moveTrack(TrackKind kind, int from, int to);
+    // Subtitles among `ids` (a selection of clips and subtitles) move along by the frames, on their own tracks
     void moveClips(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta);
     // Move in 1/100 frame (fine position of audio clips, Clip::subframe); whole frames like moveClips
     void moveClipsFine(const QVector<int>& ids, int fine, TrackKind kind, int trackDelta);
@@ -99,6 +107,8 @@ public:
     void applyTrimEdit(const TimelineOps::TrimEdit& e, int delta);
     // Trim mode + , / . like DaVinci: slip selected clips by `frames`
     void slipSelection(int frames);
+    // Slide tool + , / .: slide selected clips by `frames` between their neighbours (one edit like a slide drag)
+    void slideSelection(int frames);
     // Volume of an audio clip (dB, limited to kMinVolumeDb..kMaxVolumeDb)
     void setClipVolume(int clipId, double db);
     // Normalize audio levels (DaVinci Normalize Audio Levels, sample peak): peakDb = measured peak level per
@@ -132,6 +142,7 @@ public:
     void deleteRange(int from, int to, bool ripple);
     // Several ranges [from, to) in one undo step `text` (Transcript panel: removed words, pauses); ranges may overlap
     void deleteRanges(const QVector<QPair<int, int>>& ranges, bool ripple, const QString& text);
+    // Ctrl+A: every clip and subtitle on unlocked tracks
     void selectAll();
     // Select clips from the playhead (DaVinci Y / Ctrl+Y / Alt+Y / Ctrl+Alt+Y): forward = playhead and right of it,
     // otherwise playhead and left of it. allTracks = all tracks, otherwise the tracks of the selection (without selection: target tracks)
@@ -142,7 +153,7 @@ public:
     void selectNearestEditPoint(int frame);
     void cycleEditPointSide();
     bool nudgeEditPoint(int frames, bool ripple);
-    // Move selection by `frames` (nudge, like , and . in DaVinci)
+    // Move selection (clips and subtitles) by `frames` (nudge, like , and . in DaVinci)
     void nudgeSelection(int frames);
     // Trim start/end up to the playhead (Shift+[ / Shift+]); selection or clips under the playhead
     void trimToPlayhead(TimelineOps::Edge edge, int frame);
@@ -352,7 +363,8 @@ public:
     void setSubtitleText(int id, const QString& text, const QString& mergeKey = {});
     // Start/end (Inspector): limited to the neighbors, at least 1 frame
     void setSubtitleTiming(int id, int start, int end);
-    // Move (also onto other subtitle tracks); overwrites what is there (like clips)
+    // Move (also onto other subtitle tracks); overwrites what is there (like clips). Clips among `ids` (a selection
+    // of clips and subtitles) move along in time on their tracks, in the same undo step.
     void moveSubtitles(const QVector<int>& ids, int delta, int trackDelta);
     int clampSubtitleTrackDelta(const QVector<int>& ids, int trackDelta) const;
     // Drag edge: limited to the neighbors and at least 1 frame
@@ -437,6 +449,8 @@ private:
 
     // Clips under the playhead or the selection (with partners), like DaVinci for Ctrl+B
     QVector<int> targetIds(int frame) const;
+    // Subtitle entries among `ids` on unlocked tracks, and their earliest start (INT_MAX = none)
+    QVector<int> unlockedSubtitles(const QVector<int>& ids, int* minStart = nullptr) const;
 
     struct ClipboardItem {
         Clip clip;

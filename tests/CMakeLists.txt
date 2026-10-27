@@ -78,6 +78,7 @@ schneidi_test(test_transition_size)
 schneidi_test(test_hw_encoders)
 schneidi_test(test_export_opus)
 schneidi_test(test_timeline_mouse)
+schneidi_test(test_timeline_keys) # key bindings of the window (no clashes per set), slip/slide tools, lock, transcript keys
 schneidi_test(test_trimview)
 schneidi_test(test_paste_attributes)
 schneidi_test(test_scopes)

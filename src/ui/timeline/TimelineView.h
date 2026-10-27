@@ -21,7 +21,9 @@ class QTimer;
 class TimelineView : public QWidget {
     Q_OBJECT
 public:
-    enum class Tool { Select, Trim, Blade };
+    // Slip/Slide: own tools for what trim mode does on the clip body/title bar - a drag anywhere on a clip slips
+    // resp. slides it (same edit, snapping, linked clips, undo and trim view as in trim mode)
+    enum class Tool { Select, Trim, Blade, Slip, Slide };
 
     static constexpr int kHeaderW = 180;
     static constexpr int kRulerH = 30;
@@ -34,6 +36,8 @@ public:
 
     const ViewState& view() const { return m_view; }
     Tool tool() const { return m_tool; }
+    // Trim mode and the Slip/Slide tools: a press on a clip starts a TrimEdit
+    bool trimTool() const { return m_tool == Tool::Trim || m_tool == Tool::Slip || m_tool == Tool::Slide; }
     bool snapping() const { return m_snap; }
     int playhead() const { return m_playhead; }
     // What an AI just changed (live connection) lights up and fades out: new clips filled, edited ones outlined,
@@ -176,7 +180,7 @@ private:
     };
 
     // Trim mode (T) like DaVinci: Ripple at the edge, Roll exactly at the cut of two clips,
-    // Slide on the clip's title bar, Slip on the rest of the clip
+    // Slide on the clip's title bar, Slip on the rest of the clip. Slip/Slide tool: the whole clip
     struct TrimHit {
         TimelineOps::TrimKind kind;
         int clipId;

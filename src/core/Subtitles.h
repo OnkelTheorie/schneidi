@@ -27,6 +27,9 @@ TitleStyle defaultStyle(QSize format);
 // Place an entry on the track; overwrites what is there (like clips: fully covered ones are dropped,
 // partly covered ones are shortened or split). Track stays sorted.
 void place(SubtitleTrack& track, const SubtitleCue& cue);
+// Move the entries `ids` by `delta` frames and `trackDelta` tracks (the target tracks must exist; locks and frame 0
+// are the caller's business), placed like `place`; split remains get newId(). Other ids are ignored.
+void move(Timeline& tl, const QVector<int>& ids, int delta, int trackDelta, const std::function<int()>& newId);
 // Find an entry by id (trackIndex = track), nullptr = none
 const SubtitleCue* find(const Timeline& tl, int id, int* trackIndex = nullptr);
 SubtitleCue* find(Timeline& tl, int id, int* trackIndex = nullptr);

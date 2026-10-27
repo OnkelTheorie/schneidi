@@ -37,19 +37,66 @@ void Editor::toggleTrackLock(TrackRef ref)
 {
     const Timeline& cur = m_project->timeline();
     if (ref.index < 0 || ref.index >= cur.tracks(ref.kind).size()) return;
-    const bool lock = !cur.track(ref).locked;
-    // Clear the selection on the track (clips, transition, keyframe diamonds) before it gets locked
+    setTracksLocked({ref}, {}, !cur.track(ref).locked);
+}
+
+void Editor::setTracksLocked(const QVector<TrackRef>& tracksIn, const QVector<int>& subtitleTracksIn, bool lock)
+{
+    const Timeline& cur = m_project->timeline();
+    QVector<TrackRef> tracks; // only those that change
+    for (TrackRef ref : tracksIn)
+        if (ref.index >= 0 && ref.index < cur.tracks(ref.kind).size() && cur.track(ref).locked != lock
+            && !tracks.contains(ref))
+            tracks << ref;
+    QVector<int> subtitles;
+    for (int i : subtitleTracksIn)
+        if (i >= 0 && i < cur.subtitles.size() && cur.subtitles[i].locked != lock && !subtitles.contains(i)) subtitles << i;
+    if (tracks.isEmpty() && subtitles.isEmpty()) return;
+    // Clear the selection on the tracks (clips, subtitles, transition, edit point, keyframe diamonds) before they
+    // get locked
     if (lock) {
-        QSet<int> onTrack;
-        for (const Clip& c : cur.track(ref).clips) onTrack.insert(c.id);
+        QSet<int> onTracks;
+        for (TrackRef ref : tracks)
+            for (const Clip& c : cur.track(ref).clips) onTracks.insert(c.id);
+        for (int i : subtitles)
+            for (const SubtitleCue& c : cur.subtitles[i].cues) onTracks.insert(c.id);
         const TransitionKey t = m_selection->transition();
-        if (onTrack.contains(t.leftId) || onTrack.contains(t.rightId) || onTrack.contains(m_selection->keyClip())) {
+        const EditPoint e = m_selection->editPoint();
+        if (onTracks.contains(t.leftId) || onTracks.contains(t.rightId) || onTracks.contains(e.leftId)
+            || onTracks.contains(e.rightId) || onTracks.contains(m_selection->keyClip())) {
             m_selection->clear();
-        } else if (m_selection->ids().intersects(onTrack)) {
-            m_selection->set(m_selection->ids() - onTrack);
+        } else if (m_selection->ids().intersects(onTracks)) {
+            m_selection->set(m_selection->ids() - onTracks);
         }
     }
-    m_project->edit(lock ? T("Spur sperren") : T("Spur entsperren"), [&](Timeline& tl) { tl.track(ref).locked = lock; });
+    const bool one = tracks.size() + subtitles.size() == 1;
+    const QString text = one ? (lock ? T("Spur sperren") : T("Spur entsperren"))
+                             : (lock ? T("Spuren sperren") : T("Spuren entsperren"));
+    m_project->edit(text, [&](Timeline& tl) {
+        for (TrackRef ref : tracks) tl.track(ref).locked = lock;
+        for (int i : subtitles) tl.subtitles[i].locked = lock;
+    });
+}
+
+void Editor::toggleSelectionTracksLock()
+{
+    const Timeline& tl = m_project->timeline();
+    QVector<int> ids = m_selection->ids().values().toVector();
+    const TransitionKey t = m_selection->transition();
+    const EditPoint e = m_selection->editPoint();
+    for (int id : {t.leftId, t.rightId, e.leftId, e.rightId})
+        if (id) ids << id;
+    QVector<TrackRef> tracks = TimelineOps::tracksOf(tl, ids);
+    QVector<int> subtitles;
+    for (int id : ids)
+        if (int index = -1; Subtitles::find(tl, id, &index) && !subtitles.contains(index)) subtitles << index;
+    if (tracks.isEmpty() && subtitles.isEmpty())
+        for (TrackRef ref : {TrackRef{TrackKind::Video, m_targetVideo}, TrackRef{TrackKind::Audio, m_targetAudio}})
+            if (ref.index < tl.tracks(ref.kind).size()) tracks << ref;
+    bool anyUnlocked = false;
+    for (TrackRef ref : tracks) anyUnlocked |= !tl.track(ref).locked;
+    for (int i : subtitles) anyUnlocked |= !tl.subtitles[i].locked;
+    setTracksLocked(tracks, subtitles, anyUnlocked);
 }
 
 void Editor::renameTrack(TrackRef ref, const QString& name)

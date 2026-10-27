@@ -6,7 +6,9 @@
 
 class Editor;
 class Project;
+class QAction;
 class QComboBox;
+class QKeyEvent;
 class QDoubleSpinBox;
 class QLabel;
 class QProgressBar;
@@ -25,6 +27,10 @@ public:
 
     // Cut the selected words (as with the Delete key); false = no words selected
     bool cutSelection();
+    // The action behind it with its keys (default Delete and Backspace; bindable as "transcript_cut", scope
+    // "transcript"). It is not added to a widget: the text matches its keys itself, so they only act while the
+    // transcript has the focus and words are selected - and come before the timeline's Delete there.
+    QAction* cutAction() const { return m_cutAction; }
     const QVector<TranscriptCut::Word>& words() const { return m_words; }
     // Select words first..last in the text (tests, CLI-like use)
     void selectWords(int first, int last);
@@ -47,6 +53,7 @@ private:
     int audioTrack() const; // -1 = all
     int wordAt(int charPos) const;
     QPair<int, int> selectedWords() const; // first, last; -1 = none
+    bool isCutKey(const QKeyEvent* e) const; // one of cutAction's keys
     void updateHighlight();
     void updateState();
     void transcribe();
@@ -63,6 +70,7 @@ private:
     QToolButton* m_cancel;
     QLabel* m_hint;
     QTextEdit* m_text;
+    QAction* m_cutAction;
     QVector<TranscriptCut::Word> m_words;
     QVector<QPair<int, int>> m_chars; // per word: [start, end) in the text
     int m_playhead = 0;

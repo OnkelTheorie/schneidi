@@ -17,7 +17,7 @@ public:
     explicit TimelinePanel(Editor* editor, QWidget* parent = nullptr);
     TimelineView* view() const { return m_view; }
     // Toolbar icons (drawn like in DaVinci: off = gray, on = white)
-    enum class Icon { Select, Trim, Blade, Snap, Link };
+    enum class Icon { Select, Trim, Blade, Snap, Link, Slip, Slide };
     static QIcon toolIcon(Icon icon);
     // Switch in the toolbar after "Snapping" (e.g. Linked Selection), follows the action
     void addToolAction(QAction* action, Icon icon);

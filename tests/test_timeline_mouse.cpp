@@ -1,5 +1,6 @@
 // Test mouse operation of the timeline (offscreen): selection rectangle, auto-scroll at the edge, reorder tracks;
-// plus selection from the playhead (Y / Ctrl+Y / Alt+Y) and edit points by keyboard (V, U, , / .).
+// plus selection from the playhead (Y / Ctrl+Y / Alt+Y), edit points by keyboard (V, U, , / .) and the Slip/Slide
+// tools (drag anywhere on a clip = trim mode's slip/slide, toolbar buttons, , / . with them).
 #include "check.h"
 
 #include "app/Theme.h"
@@ -8,11 +9,13 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QApplication>
 #include <QMouseEvent>
 #include <QTest>
+#include <QToolButton>
 #include <QUndoStack>
 #include <cmath>
 
@@ -233,6 +236,182 @@ void testEditPoints()
     CHECK(sel.editPoint().isNull());
 }
 
+// Slip/Slide tools: V1 a [0,100) in 100 | b [100,200) in 500 | c [200,300) in 1000, A1 a' linked to a
+struct ToolFixture {
+    Project project;
+    Selection sel;
+    Editor editor{&project, &sel};
+    TimelineView tv{&editor};
+    QVector<TrimFrames::View> views;
+    int ended = 0;
+
+    ToolFixture()
+    {
+        project.addMedia(MediaInfo{"/x/a.mp4", "a.mp4", 3000, true, true, false});
+        Timeline tl;
+        tl.video.resize(1);
+        tl.audio.resize(1);
+        auto at = [](int id, int start, int in, int link = 0) {
+            Clip c = clip(id, start, 100);
+            c.in = in;
+            c.out = in + 99;
+            c.linkId = link;
+            return c;
+        };
+        tl.video[0].clips << at(1, 0, 100, 1) << at(2, 100, 500) << at(3, 200, 1000);
+        tl.audio[0].clips << at(4, 0, 100, 1);
+        project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 5, 1});
+        tv.resize(1400, 400);
+        tv.show();
+        QApplication::processEvents();
+        QObject::connect(&tv, &TimelineView::trimFramesChanged, [this](const TrimFrames::View& v) { views << v; });
+        QObject::connect(&tv, &TimelineView::trimFramesEnded, [this] { ++ended; });
+    }
+    // V1 from y 30 (64 high, title bar = the top 16 px of the clip), A1 from y 100
+    int x(double frame) const { return int(std::lround(TimelineView::kHeaderW + (frame - tv.view().leftFrame) * tv.view().pxPerFrame)); }
+    int frames(int n) const { return int(std::lround(n * tv.view().pxPerFrame)); }
+    QString dump() const { return Check::dump(project.timeline()); }
+};
+
+void testSlipSlideTools()
+{
+    using TimelineOps::TrimKind;
+    const QString original = ToolFixture().dump();
+
+    // Slip: what trim mode does on the clip body, the slip tool does anywhere on the clip - here on the title bar at
+    // the left edge, where trim mode would slide resp. ripple
+    QString slipped;
+    {
+        ToolFixture f;
+        f.tv.setTool(TimelineView::Tool::Trim);
+        drag(f.tv, {f.x(50), 75}, {f.x(50) + f.frames(10), 75});
+        slipped = f.dump();
+        CHECK(slipped != original);
+    }
+    {
+        ToolFixture f;
+        QVector<TimelineView::Tool> changed;
+        QObject::connect(&f.tv, &TimelineView::toolChanged, [&](TimelineView::Tool t) { changed << t; });
+        f.tv.setTool(TimelineView::Tool::Slip);
+        CHECK(changed == QVector<TimelineView::Tool>{TimelineView::Tool::Slip});
+        CHECK(f.tv.trimTool());
+        mouse(f.tv, QEvent::MouseMove, {f.x(1), 33}, Qt::NoButton); // over the clip: the slip cursor
+        CHECK(f.tv.cursor().shape() == Qt::BitmapCursor);
+        mouse(f.tv, QEvent::MouseMove, {f.x(350), 33}, Qt::NoButton);
+        CHECK(f.tv.cursor().shape() == Qt::ArrowCursor);
+        const int undo0 = f.project.undoStack()->count();
+        const QPoint grab(f.x(1), 33);
+        mouse(f.tv, QEvent::MouseButtonPress, grab, Qt::LeftButton);
+        mouse(f.tv, QEvent::MouseMove, grab + QPoint(f.frames(5), 0), Qt::LeftButton);
+        mouse(f.tv, QEvent::MouseMove, grab + QPoint(f.frames(10), 0), Qt::LeftButton);
+        // four-up trim view like trim mode's slip, ended on release
+        if (CHECK(!f.views.isEmpty())) {
+            CHECK(f.views.last().kind == TrimKind::Slip);
+            CHECK_EQ(f.views.last().small.size(), 2);
+            CHECK_EQ(f.views.last().main.size(), 2);
+        }
+        mouse(f.tv, QEvent::MouseButtonRelease, grab + QPoint(f.frames(10), 0), Qt::NoButton);
+        CHECK_EQ(f.ended, 1);
+        CHECK_EQ(f.dump(), slipped);
+        const Clip* a = TimelineOps::findClip(f.project.timeline(), 1);
+        const Clip* partner = TimelineOps::findClip(f.project.timeline(), 4);
+        CHECK(a && a->start == 0 && a->length() == 100 && a->in != 100); // content moved, place and length stay
+        CHECK(partner && a && partner->in == a->in);                      // linked audio slips along
+        CHECK_EQ(f.project.undoStack()->count(), undo0 + 1);
+        f.project.undoStack()->undo();
+        CHECK_EQ(f.dump(), original);
+    }
+
+    // Slide: on b's body next to the cut with c (trim mode: roll there) like trim mode on the title bar, snapping
+    // included (the playhead at 112: dragged by 11 frames, b lands on 112)
+    QString slid;
+    {
+        ToolFixture f;
+        f.tv.setPlayhead(112);
+        f.tv.setTool(TimelineView::Tool::Trim);
+        drag(f.tv, {f.x(150), 33}, {f.x(150) + f.frames(11), 33});
+        slid = f.dump();
+        CHECK_EQ(TimelineOps::findClip(f.project.timeline(), 2)->start, 112);
+    }
+    {
+        ToolFixture f;
+        f.tv.setPlayhead(112);
+        f.tv.setTool(TimelineView::Tool::Slide);
+        const QPoint grab(f.x(200) - 1, 75);
+        mouse(f.tv, QEvent::MouseButtonPress, grab, Qt::LeftButton);
+        mouse(f.tv, QEvent::MouseMove, grab + QPoint(f.frames(11), 0), Qt::LeftButton);
+        if (CHECK(!f.views.isEmpty())) CHECK(f.views.last().kind == TrimKind::Slide);
+        mouse(f.tv, QEvent::MouseButtonRelease, grab + QPoint(f.frames(11), 0), Qt::NoButton);
+        CHECK_EQ(f.dump(), slid);
+        const Timeline& tl = f.project.timeline();
+        CHECK(TimelineOps::findClip(tl, 1)->end() == 112 && TimelineOps::findClip(tl, 3)->start == 212);
+        CHECK_EQ(TimelineOps::findClip(tl, 2)->in, 500); // slide keeps the content
+        CHECK(f.sel.contains(2));
+        CHECK_EQ(f.ended, 1);
+    }
+
+    // Locked tracks: nothing on V1 is grabbed; a locked partner (A1) stays where it is
+    {
+        ToolFixture f;
+        f.tv.setTool(TimelineView::Tool::Slip);
+        f.editor.toggleTrackLock({TrackKind::Video, 0});
+        const int undo0 = f.project.undoStack()->count();
+        drag(f.tv, {f.x(50), 75}, {f.x(50) + f.frames(10), 75});
+        CHECK(f.views.isEmpty());
+        CHECK_EQ(f.project.undoStack()->count(), undo0);
+        f.editor.toggleTrackLock({TrackKind::Video, 0});
+        f.editor.toggleTrackLock({TrackKind::Audio, 0});
+        drag(f.tv, {f.x(50), 75}, {f.x(50) + f.frames(10), 75});
+        CHECK(TimelineOps::findClip(f.project.timeline(), 1)->in != 100);
+        CHECK_EQ(TimelineOps::findClip(f.project.timeline(), 4)->in, 100);
+    }
+
+    // Another tool leaves it: the select tool moves the clip again
+    {
+        ToolFixture f;
+        f.tv.setTool(TimelineView::Tool::Slide);
+        f.tv.setTool(TimelineView::Tool::Select);
+        CHECK(!f.tv.trimTool());
+        drag(f.tv, {f.x(350), 75}, {f.x(350), 75}); // click on empty space: deselect
+        drag(f.tv, {f.x(250), 75}, {f.x(250) + f.frames(20), 75});
+        CHECK_EQ(TimelineOps::findClip(f.project.timeline(), 3)->start, 220);
+        CHECK(f.views.isEmpty());
+    }
+
+    // Toolbar: a button per tool, it follows the tool
+    {
+        Project project;
+        Selection sel;
+        Editor editor(&project, &sel);
+        TimelinePanel panel(&editor);
+        auto* slip = panel.findChild<QToolButton*>("tool_slip");
+        auto* slide = panel.findChild<QToolButton*>("tool_slide");
+        if (CHECK(slip && slide)) {
+            slip->click();
+            CHECK(panel.view()->tool() == TimelineView::Tool::Slip);
+            CHECK(slip->isChecked());
+            panel.view()->setTool(TimelineView::Tool::Slide);
+            CHECK(slide->isChecked() && !slip->isChecked());
+            panel.view()->setTool(TimelineView::Tool::Blade);
+            CHECK(!slide->isChecked() && panel.findChild<QToolButton*>("tool_blade")->isChecked());
+        }
+    }
+
+    // , and . with the slide tool: the selection slides (one undo step); slip tool: slips
+    {
+        ToolFixture f;
+        f.sel.set({2});
+        const int undo0 = f.project.undoStack()->count();
+        f.editor.slideSelection(5);
+        const Timeline& tl = f.project.timeline();
+        CHECK(TimelineOps::findClip(tl, 1)->end() == 105 && TimelineOps::findClip(tl, 2)->start == 105);
+        CHECK(TimelineOps::findClip(tl, 3)->start == 205 && TimelineOps::findClip(tl, 3)->in == 1005);
+        CHECK_EQ(f.project.undoStack()->count(), undo0 + 1);
+        f.editor.slipSelection(-3);
+        CHECK(TimelineOps::findClip(tl, 2)->start == 105 && TimelineOps::findClip(tl, 2)->in != 500);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -247,5 +426,6 @@ int main(int argc, char** argv)
     testTrackMove();
     testSelectFromPlayhead();
     testEditPoints();
+    testSlipSlideTools();
     return Check::result();
 }
