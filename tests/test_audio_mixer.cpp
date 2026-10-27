@@ -664,6 +664,7 @@ void checkRetimed(const Synth& src)
         Clip c = synthClip(src.bursts, t.in, 150, t.speed, t.reverse, t.pitch);
         c.ramp = t.ramp;
         const std::vector<float> got = renderClip(c);
+        CHECK(std::all_of(got.begin(), got.end(), [](float v) { return std::isfinite(v); })); // NaN: no bursts at all
         const std::vector<double> found = centroids(got);
         // Expected bursts inside the clip (not at its edges, where the declick ramps cut into them)
         std::vector<double> want;

@@ -147,6 +147,7 @@ struct Stretch::Impl {
     int64_t frame = 0;         // next frame to synthesize (centre frame * hop)
     int64_t nextT = INT64_MIN; // a read there continues
     int transients = 0;
+    int refetches = 0;
 
     Impl(int channels, int rate, Source s, Map m, const Options& o)
         : ch(std::max(1, channels)), source(std::move(s)), map(std::move(m))
@@ -205,6 +206,18 @@ struct Stretch::Impl {
         srcEnd = to;
     }
 
+    // Channel c's source samples [from, from + count) from the cache. analyze() fetches every window a frame and the
+    // detector read; one reaching outside would read memory that is not the cache: it is read again then (counted for
+    // the tests, which expect none).
+    const float* cached(int c, int64_t from, int count)
+    {
+        if (from < srcStart || from + count > srcEnd) {
+            ++refetches;
+            fetch(std::min(from, srcStart), std::max(from + count, srcEnd));
+        }
+        return src[size_t(c)].data() + (from - srcStart);
+    }
+
     // ---- Onsets ----
 
     // Power (summed over channels) of the short window centred on grid point g
@@ -215,7 +228,7 @@ struct Stretch::Impl {
         float* real = detFft->real();
         const Cpx* spec = detFft->spec();
         for (int c = 0; c < ch; ++c) {
-            const float* s = src[size_t(c)].data() + (centre - det / 2 - srcStart);
+            const float* s = cached(c, centre - det / 2, det);
             for (int i = 0; i < det; ++i) real[i] = s[i] * detWin[size_t(i)];
             detFft->forward();
             for (size_t b = 0; b < out.size(); ++b) out[b] += std::norm(spec[b]);
@@ -271,7 +284,7 @@ struct Stretch::Impl {
         const int blocks = int((to - from) / step);
         std::vector<double> e(size_t(blocks), 0.0);
         for (int c = 0; c < ch; ++c) {
-            const float* s = src[size_t(c)].data() + (from - srcStart);
+            const float* s = cached(c, from, blocks * step);
             for (int j = 0; j < blocks; ++j)
                 for (int i = 0; i < step; ++i) e[size_t(j)] += double(s[j * step + i]) * s[j * step + i];
         }
@@ -296,7 +309,7 @@ struct Stretch::Impl {
     // with a short fade before `cut`
     void spectrum(int c, int64_t centre, int64_t cut, Cpx* out)
     {
-        const float* s = src[size_t(c)].data() + (centre - n / 2 - srcStart);
+        const float* s = cached(c, centre - n / 2, n);
         const int half = n / 2;
         float* real = fft->real();
         for (int i = 0; i < n; ++i) real[(i + half) & (n - 1)] = s[i] * win[size_t(i)] * cutGain(centre - half + i, cut);
@@ -325,7 +338,9 @@ struct Stretch::Impl {
         if (detEmpty || from < detFrom * grid || from > detNext * grid + n)
             detRestart(int64_t(std::floor(double(from) / grid)) - (kDetSpan + 6)); // onsets from from / grid - 1 on
         const int64_t detLo = (detNext - kDetSpan) * grid - det / 2 - 8 * 16; // also what locate() reads
-        fetch(std::min(detLo, q - n / 2 - hop), to + (kDetSpan + 1) * grid + det / 2 + 1);
+        // A reset frame's centre lies at or after its onset (>= from), which faster than 1x can be up to half a window
+        // before q, and its second analysis reads a hop before the centre
+        fetch(std::min(detLo, std::min(q, from) - n / 2 - hop), to + (kDetSpan + 1) * grid + det / 2 + 1);
         detect(to + (kDetSpan + 1) * grid);
         while (onsets.size() > 64 && onsets.front().at < from - n) onsets.erase(onsets.begin());
 
@@ -511,6 +526,7 @@ int Stretch::channels() const { return d->ch; }
 int Stretch::window() const { return d->n; }
 int Stretch::hop() const { return d->hop; }
 int Stretch::transients() const { return d->transients; }
+int Stretch::refetches() const { return d->refetches; }
 
 void Stretch::read(int64_t t, int count, float* const* out)
 {
