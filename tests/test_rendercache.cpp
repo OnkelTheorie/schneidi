@@ -25,6 +25,7 @@
 #include <QFile>
 #include <QImage>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QUndoStack>
 #include <clocale>
@@ -450,6 +451,25 @@ void testBackground()
     CHECK(!QFileInfo::exists(rc.path(e)));
     const QStringList parts = QDir(RenderCache::cacheDir()).entryList({"*.part.mov"});
     CHECK(parts.isEmpty());
+
+    // Canceled right as it ends (an edit while the window was busy): the finished render waits in the event queue when
+    // sync() cancels it; it must do nothing then (it used the deleted thread: crash), the finished file stays
+    Clip f = c;
+    f.in = 5;
+    rc.sync(one(f));
+    CHECK(waitFor([&] { return rc.isRendering(); }, 5000));
+    QElapsedTimer rendering; // no events meanwhile: the result of the thread stays queued
+    rendering.start();
+    while (!QFileInfo::exists(rc.path(f)) && rendering.elapsed() < 60000) QThread::msleep(20);
+    CHECK(QFileInfo::exists(rc.path(f)));
+    QThread::msleep(300); // the thread has ended
+    Clip g = f;
+    g.renderCache = false;
+    rc.sync(one(g));
+    CHECK(!rc.isRendering());
+    waitFor([] { return false; }, 500);
+    CHECK(!rc.isRendering());
+    CHECK(QFileInfo::exists(rc.path(f))); // rendered all the way: kept (the marking may come back by undo)
     rc.clear();
 }
 

@@ -118,6 +118,9 @@ private:
     QTimer m_idle;              // short rest after changes before rendering
     QTimer m_poll;              // query progress
     QThread* m_thread = nullptr;
+    // Counts render threads started and canceled. Canceling one right as it ends leaves its finished() queued
+    // (disconnecting does not take back what is queued already): that one is stale and must do nothing.
+    quint64 m_run = 0;
     QString m_currentKey;
     std::shared_ptr<std::atomic<bool>> m_cancel;
     std::shared_ptr<std::atomic<int>> m_progress; // 0..1000

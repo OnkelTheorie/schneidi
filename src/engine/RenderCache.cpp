@@ -337,6 +337,7 @@ void RenderCache::cancelCurrent()
     m_idle.stop();
     if (!m_thread) return;
     *m_cancel = true;
+    ++m_run; // its finished() may be queued already
     m_thread->disconnect(this);
     m_thread->wait();
     delete m_thread;
@@ -372,7 +373,10 @@ void RenderCache::startNext()
         auto paused = [this] { return m_playing.load() || Exporter::anyRunning() || Background::foregroundBusy(); };
         *ok = render(job.clip, format, target, error.get(), cancel.get(), paused, progress.get());
     });
-    connect(m_thread, &QThread::finished, this, [this, error, ok] { onFinished(*ok, *error); });
+    const quint64 run = ++m_run;
+    connect(m_thread, &QThread::finished, this, [this, error, ok, run] {
+        if (run == m_run) onFinished(*ok, *error); // else canceled as it ended: m_thread is gone (cancelCurrent)
+    });
     m_thread->start(QThread::LowestPriority);
     m_poll.start();
     emit progressChanged();
