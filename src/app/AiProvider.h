@@ -156,6 +156,12 @@ private:
 // One answer as a JSON body (not streamed)
 Reply parseBody(Protocol p, const QJsonObject& body);
 
+// Tool calls a model wrote into its answer instead of making them (small local models over the OpenAI protocol): the
+// whole answer is {"name":…,"arguments":{…}} ("parameters" too, arguments also as a JSON string), a list or lines of
+// them, maybe in a ```json fence; or such objects in <tool_call> tags (text around them allowed). None when the answer
+// is anything else. Ids: idPrefix + "_1", "_2" …
+QVector<ToolCall> textCalls(const QString& text, const QString& idPrefix);
+
 // An error answer: HTTP status, body and Retry-After -> what the user reads, whether trying again may help
 struct Failure {
     enum class Kind { Key, RateLimit, Overloaded, NotFound, TooLarge, Request, Server, Network, Timeout, Other };

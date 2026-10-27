@@ -261,17 +261,24 @@ void AiChat::onReply(const Ai::Reply& reply)
     if (!m_busy) return;
     m_usage += reply.usage;
     emit usageChanged();
+    Ai::Reply r = reply;
+    // Small local models often write their tool calls as text ({"name":"edit","arguments":{…}}): run as if made (and
+    // so kept in the history: the model sees them answered like real calls); the text is not shown
+    if (r.calls.isEmpty() && !r.cutOff() && m_endpoint.protocol == Ai::Protocol::OpenAi) {
+        r.calls = Ai::textCalls(r.text, QString("text_%1").arg(m_history.size()));
+        if (!r.calls.isEmpty()) r.text.clear();
+    }
     // The whole text (also when it did not stream)
     if (m_streaming >= 0) {
-        change(m_streaming, [&reply](Entry& e) {
-            e.text = reply.text;
+        change(m_streaming, [&r](Entry& e) {
+            e.text = r.text;
             e.state = Entry::State::Done;
         });
-    } else if (!reply.text.trimmed().isEmpty()) {
-        add({Entry::Kind::Assistant, reply.text});
+    } else if (!r.text.trimmed().isEmpty()) {
+        add({Entry::Kind::Assistant, r.text});
     }
     m_streaming = -1;
-    if (reply.refused()) {
+    if (r.refused()) {
         // The refused answer is not kept: its tool calls would stay unanswered and break every later request (the
         // providers want the partial output dropped); what the user writes next joins their last message
         addError(T("Das Modell hat die Anfrage abgelehnt."));
@@ -280,15 +287,15 @@ void AiChat::onReply(const Ai::Reply& reply)
     }
     Ai::Message m;
     m.role = Ai::Message::Role::Assistant;
-    m.text = reply.text;
-    m.calls = reply.calls;
-    if (m_endpoint.protocol == Ai::Protocol::Anthropic) m.anthropic = reply.anthropic;
+    m.text = r.text;
+    m.calls = r.calls;
+    if (m_endpoint.protocol == Ai::Protocol::Anthropic) m.anthropic = r.anthropic;
     m_history << m;
-    if (reply.calls.isEmpty()) {
-        const bool empty = reply.text.trimmed().isEmpty();
+    if (r.calls.isEmpty()) {
+        const bool empty = r.text.trimmed().isEmpty();
         // Small local models sometimes stop with nothing after a failed tool step: asked once to go on (OpenAI
         // protocol only: there an empty assistant turn followed by a user turn is valid, the history only grows)
-        if (empty && !reply.cutOff() && !m_nudged && m_endpoint.protocol != Ai::Protocol::Anthropic) {
+        if (empty && !r.cutOff() && !m_nudged && m_endpoint.protocol != Ai::Protocol::Anthropic) {
             m_nudged = true;
             addNotice(T("Leere Antwort – die KI wird gebeten weiterzumachen …"));
             appendUser("[Note from the schneidi app: your last answer was empty. Go on with the request: fix the step "
@@ -296,15 +303,15 @@ void AiChat::onReply(const Ai::Reply& reply)
             requestModel();
             return;
         }
-        if (reply.stop == "model_context_window_exceeded" || (empty && reply.cutOff()))
+        if (r.stop == "model_context_window_exceeded" || (empty && r.cutOff()))
             addNotice(T("Der Chat ist zu lang für das Modell geworden: „Neuer Chat“ fängt frisch an (bei Ollama hilft "
                         "auch mehr Kontext, OLLAMA_CONTEXT_LENGTH)."));
-        else if (reply.cutOff()) addNotice(T("Die Antwort wurde abgeschnitten (zu lang)."));
+        else if (r.cutOff()) addNotice(T("Die Antwort wurde abgeschnitten (zu lang)."));
         else if (empty) addNotice(T("Die KI hat nichts geantwortet."));
         finishTurn();
         return;
     }
-    m_calls = reply.calls;
+    m_calls = r.calls;
     m_results.clear();
     nextTool();
 }

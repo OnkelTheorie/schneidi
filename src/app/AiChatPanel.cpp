@@ -206,6 +206,10 @@ public:
         m_entry = e;
         if (m_text) {
             m_text->setText(e.kind == Entry::Kind::Error ? "⚠ " + e.text : e.text);
+            // An answer that turned out to be tool calls written as text (AiChat) is not shown; never a window of its
+            // own (set() comes before the view is in the list)
+            if (e.text.isEmpty()) hide();
+            else if (parentWidget() && isHidden()) show();
             return;
         }
         // Long answers (a project's clip list …): the start; the model got its own cut version (AiChat::capped)

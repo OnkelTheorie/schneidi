@@ -4,6 +4,7 @@
 
 #include <QHostAddress>
 #include <QJsonDocument>
+#include <QRegularExpression>
 
 #include <algorithm>
 
@@ -522,6 +523,77 @@ Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryA
         f.message = with(T("Unerwartete Antwort (HTTP %1).").arg(status));
     }
     return f;
+}
+
+QVector<ToolCall> textCalls(const QString& text, const QString& idPrefix)
+{
+    // One written call: exactly a name and its arguments (an id or "type" may come along), or OpenAI's own shape
+    // {"type":"function","function":{…}}; anything else in the object = not a call
+    const auto call = [](QJsonObject o, ToolCall* out) {
+        if (o.value("function").isObject() && o.size() <= 3) o = o.value("function").toObject();
+        const QString args = o.contains("arguments") ? "arguments" : "parameters";
+        static const QStringList known{"name", "arguments", "parameters", "id", "type"};
+        const QString name = o.value("name").toString().trimmed();
+        if (name.isEmpty() || !o.contains(args)) return false;
+        for (const QString& k : o.keys())
+            if (!known.contains(k)) return false;
+        out->name = name;
+        const QJsonValue a = o.value(args);
+        if (a.isObject()) out->input = a.toObject();
+        else if (a.isString()) out->input = readArguments(a.toString(), &out->error);
+        else if (!a.isNull()) out->error = "the arguments are not a JSON object";
+        return true;
+    };
+    // A block of JSON: one object, a list of them, or several one after the other (also over several lines each)
+    const auto block = [&call](const QString& json, QVector<ToolCall>* out) {
+        QJsonArray objects;
+        QByteArray rest = json.toUtf8().trimmed();
+        while (!rest.isEmpty()) {
+            QJsonParseError err;
+            QJsonDocument doc = QJsonDocument::fromJson(rest, &err);
+            qsizetype used = rest.size();
+            if (err.error == QJsonParseError::GarbageAtEnd) { // the next value follows: this one ends there
+                used = err.offset;
+                doc = QJsonDocument::fromJson(rest.left(used), &err);
+            }
+            if (err.error != QJsonParseError::NoError || used <= 0) return false;
+            if (doc.isArray())
+                for (const QJsonValue& v : doc.array()) objects << v;
+            else objects << doc.object();
+            rest = rest.mid(used).trimmed();
+        }
+        if (objects.isEmpty()) return false;
+        for (const QJsonValue& v : objects) {
+            ToolCall c;
+            if (!v.isObject() || !call(v.toObject(), &c)) return false;
+            *out << c;
+        }
+        return true;
+    };
+    QVector<ToolCall> calls;
+    // Chat template markers that leaked into the text (seen: "<|im_start|>" before a call)
+    static const QRegularExpression marker("<\\|[a-z_]+\\|>");
+    QString t = QString(text).remove(marker).trimmed();
+    // The whole answer in one other tag (seen: a call inside <tool_response>)
+    static const QRegularExpression wrapped(R"(^<([a-z_]+)>(.*)</\1>$)", QRegularExpression::DotMatchesEverythingOption);
+    if (const auto m = wrapped.match(t); m.hasMatch() && m.captured(1) != "tool_call") t = m.captured(2).trimmed();
+    if (t.contains("<tool_call>")) {
+        // Hermes/Qwen style: every tag is a call (the closing tag may be missing at the end)
+        for (QString part : t.split("<tool_call>").mid(1)) {
+            part = part.section("</tool_call>", 0, 0).trimmed();
+            if (part.startsWith("```")) part = part.section('\n', 1).section("```", 0, 0);
+            if (!block(part.trimmed(), &calls)) return {};
+        }
+    } else {
+        // A ```json fence, also only half of one (seen: a call followed by a lone closing fence)
+        QString json = t;
+        if (json.startsWith("```")) json = json.section('\n', 1); // the fence line may name the language
+        if (json.endsWith("```")) json.chop(3);
+        if (!json.trimmed().startsWith('{') && !json.trimmed().startsWith('[')) return {};
+        if (!block(json.trimmed(), &calls)) return {};
+    }
+    for (int i = 0; i < calls.size(); ++i) calls[i].id = QString("%1_%2").arg(idPrefix).arg(i + 1);
+    return calls;
 }
 
 QStringList parseModels(const QJsonObject& body)

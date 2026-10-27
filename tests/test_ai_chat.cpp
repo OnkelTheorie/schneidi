@@ -6,7 +6,7 @@
 // sent back unchanged, tool results, pictures of `frames` as a user message after the tool answers); review mode
 // (accept = one undo step, discard = all back and the AI is told, editing meanwhile keeps the single steps, a file of a
 // watch folder waits until the user has chosen); what the user changed between two answers comes with the next
-// request (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on; errors
+// request (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on, tool calls it wrote as text are run; errors
 // (bad key, overloaded then fine, no server), stopping a request, test runs that never send; the chat section in
 // Settings › AI (test connection, model list, key stored).
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
@@ -635,6 +635,28 @@ void test(const QString& dir)
         CHECK_EQ(int(fake.requests.size()), sent + 4);
         if (const AiChat::Entry* n = lastOf(chat, AiChat::Entry::Kind::Notice); CHECK(n))
             CHECK_EQ(n->text, T("Die KI hat nichts geantwortet."));
+    }
+
+    // ---- Tool calls written as text (small local models): run like real ones, the JSON not shown as the answer ----
+    {
+        fake.script = {openAiText(R"({"name": "info", "arguments": {"project": "@app", "summary": true}})"),
+                       openAiText("Zwei Clips.")};
+        const int sent = int(fake.requests.size());
+        const int tools = count(chat, AiChat::Entry::Kind::Tool);
+        panel->sendText("Was ist im Projekt?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 2)) {
+            const QJsonArray m = fake.last().body["messages"].toArray();
+            const QJsonObject call = m[m.size() - 2].toObject();
+            CHECK_EQ(call["tool_calls"][0]["function"]["name"].toString(), QString("info"));
+            CHECK_EQ(m.last()["role"].toString(), QString("tool"));
+            CHECK_EQ(m.last()["tool_call_id"].toString(), call["tool_calls"][0]["id"].toString());
+            CHECK(m.last()["content"].toString().contains("\"ok\":true"));
+        }
+        CHECK_EQ(count(chat, AiChat::Entry::Kind::Tool), tools + 1);
+        for (const AiChat::Entry& e : chat->entries()) CHECK(!e.text.contains("\"arguments\""));
+        if (const AiChat::Entry* a = lastOf(chat, AiChat::Entry::Kind::Assistant); CHECK(a))
+            CHECK_EQ(a->text, QString("Zwei Clips."));
     }
 
     // ---- Errors ----
