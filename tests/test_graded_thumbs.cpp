@@ -515,8 +515,14 @@ void testTimeline(const QString& dump)
     m.project.undoStack()->undo();
     CHECK_EQ(differs(grabNow(), on), 0); // back to gray, from the cache
 
-    if (!dump.isEmpty()) { // project for an app screenshot (timeline + Media Pool)
-        ProjectData d{m.project.format(), 0, m.project.media(), {}, m.project.timeline(), 10, 0};
+    if (!dump.isEmpty()) {
+        // Project for an app screenshot (timeline + Media Pool), all clips from the one source: saturation 0 first
+        // (the timeline's picture in the Media Pool), ungraded, with the sepia LUT
+        Timeline tl = m.project.timeline();
+        tl.video[0].clips = {clip(2, 0, 0, 125, g_media), clip(1, 125, 0, 125, g_media), clip(3, 250, 0, 125, g_media)};
+        setGrade(tl.video[0].clips[0], "saturation", 0.0);
+        setGrade(tl.video[0].clips[2], "lut", QString(":/luts/sepia.cube"));
+        ProjectData d{m.project.format(), 0, m.project.media(), {}, tl, 10, 0};
         QString error;
         CHECK(ProjectFile::save(d, dump + "/graded.schneidi", &error));
     }

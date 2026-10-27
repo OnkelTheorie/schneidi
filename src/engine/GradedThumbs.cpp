@@ -119,6 +119,7 @@ GradedThumbs::GradedThumbs(QObject* parent) : QObject(parent)
     m_shown.setMaxCost(kShownCacheKB);
     m_settle = new QTimer(this);
     m_settle->setSingleShot(true);
+    m_settle->setTimerType(Qt::PreciseTimer); // a coarse timer may fire early: the redraw would still find it moving
     connect(m_settle, &QTimer::timeout, this, &GradedThumbs::updated);
     m_thread = QThread::create([this] {
         Background::lowerThisThread(Background::Level::Low);
@@ -191,7 +192,7 @@ QImage GradedThumbs::image(const ClipGrade& g, const QImage& raw, int t)
     }
     const qint64 now = m_clock.elapsed();
     if (now < g.m_settledAt) { // still changing: look again once it has settled
-        const int wait = int(g.m_settledAt - now);
+        const int wait = int(g.m_settledAt - now) + 1;
         if (!m_settle->isActive() || m_settle->remainingTime() < wait) m_settle->start(wait);
     } else {
         queue(key, raw, spec);

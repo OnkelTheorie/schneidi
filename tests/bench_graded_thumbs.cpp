@@ -1,7 +1,8 @@
 // Benchmark (not a CTest test): timeline filmstrip with and without the Color page grade (engine/GradedThumbs).
 // 200 clips of four 1080p sources, every second clip graded with a LUT + saturation. Per zoom level (whole timeline,
 // ~20 clips) and mode (graded off = the filmstrip as before, on): time until the filmstrip is complete, then the
-// UI-thread time per paint; afterwards a grade pasted onto all graded clips (time of the first paint, until regraded).
+// UI-thread time per paint; afterwards a grade pasted onto all graded clips (time of the first paint, until regraded);
+// at last scrolling through the whole timeline zoomed in (paint time while pictures/grades are still coming).
 // Run: ./build/tests/bench_graded_thumbs [media dir (reused if the files are there)]
 #include "check.h"
 
@@ -127,6 +128,43 @@ Run measure(Model& m, bool graded, double zoom)
     return r;
 }
 
+// Scrolling through the whole timeline zoomed in (~4 clips in view, half a view per step, one paint each like a
+// wheel turn): UI-thread time per paint while pictures and grades are still coming, then until everything is there
+void scrollRun(Model& m, bool graded)
+{
+    GradedThumbs::setEnabled(graded);
+    MediaCache cache;
+    TimelineView view(&m.editor);
+    view.setMediaCache(&cache);
+    view.resize(1600, 260);
+    view.show();
+    view.zoomToFit();
+    view.zoomBy(kClips / 4.0);
+    view.setLeftFrame(0);
+    QImage target(view.size(), QImage::Format_ARGB32_Premultiplied);
+    const double visible = (view.width() - TimelineView::kHeaderW) / view.view().pxPerFrame;
+    QElapsedTimer since, t;
+    since.start();
+    double sum = 0, mx = 0;
+    int n = 0;
+    for (double left = 0; left < kClips * kLen; left += visible / 2) {
+        view.setLeftFrame(left);
+        QPainter p(&target);
+        t.start();
+        view.render(&p);
+        const double ms = t.nsecsElapsed() / 1e6;
+        sum += ms;
+        mx = std::max(mx, ms);
+        ++n;
+        QApplication::processEvents(QEventLoop::AllEvents, 5);
+        QThread::msleep(16); // ~60 wheel steps per second
+    }
+    const double scrolled = since.nsecsElapsed() / 1e6;
+    const double complete = settle(cache, since, 2000);
+    std::printf("  scroll %-3s: %d steps in %.0f ms, paint %.2f ms (max %.2f), complete after %.0f ms, %d graded pictures\n",
+                graded ? "on" : "off", n, scrolled, sum / n, mx, complete, cache.graded()->computed());
+}
+
 // Paste another grade onto all graded clips (one edit): first paint, time until all regraded, paint afterwards
 void pasteRun(Model& m, double zoom)
 {
@@ -191,6 +229,20 @@ int main(int argc, char** argv)
     Model m;
     load(m, sources);
     std::printf("%d clips (%d graded: LUT + saturation), view 1600x260\n", kClips, kClips / 2);
+    { // What grading one tile costs (worker thread): source thumbnail size, LUT + saturation
+        Clip c;
+        grade(c, 70);
+        const GradedThumbs::Spec spec = GradedThumbs::specAt(c, 0);
+        QImage tile(160, 90, QImage::Format_RGB32);
+        for (int y = 0; y < tile.height(); ++y)
+            for (int x = 0; x < tile.width(); ++x) tile.setPixel(x, y, qRgb(x * 255 / 160, y * 255 / 90, 128));
+        GradedThumbs::apply(tile, spec); // loads the LUT
+        QElapsedTimer t;
+        t.start();
+        constexpr int kRuns = 500;
+        for (int i = 0; i < kRuns; ++i) GradedThumbs::apply(tile, spec);
+        std::printf("grading one 160x90 tile: %.3f ms\n", t.nsecsElapsed() / 1e6 / kRuns);
+    }
     for (double zoom : {1.0, 10.0}) {
         std::printf("%s:\n", zoom == 1 ? "whole timeline (fit)" : "zoomed in (~20 clips)");
         for (bool graded : {false, true}) {
@@ -200,5 +252,7 @@ int main(int argc, char** argv)
         }
         pasteRun(m, zoom);
     }
+    std::printf("scrolling through the timeline (~4 clips in view):\n");
+    for (bool graded : {false, true}) scrollRun(m, graded);
     return 0;
 }
