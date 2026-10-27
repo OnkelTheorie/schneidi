@@ -336,6 +336,13 @@ void testIdForName()
     CHECK_EQ(StartTemplates::idForName("a/b:c*d"), QString("a_b_c_d"));
     CHECK_EQ(StartTemplates::idForName(" .hidden. "), QString("hidden"));
     CHECK_EQ(StartTemplates::idForName("   "), QString("template"));
+    // Windows device names are no files there, also with an extension ("Aux.json"); very long names neither
+    CHECK_EQ(StartTemplates::idForName("Aux"), QString("Aux_"));
+    CHECK_EQ(StartTemplates::idForName("com1"), QString("com1_"));
+    CHECK_EQ(StartTemplates::idForName("NUL.v2"), QString("NUL_.v2"));
+    CHECK_EQ(StartTemplates::idForName("Console"), QString("Console"));
+    const QString longId = StartTemplates::idForName(QString(300, QChar(0x00e4)) + " .");
+    CHECK(longId.size() <= 200 && !longId.endsWith('.') && !longId.endsWith(' '));
 }
 
 // schneidi-cli: `new` with a template (id, name, file, project), the default, `templates`
