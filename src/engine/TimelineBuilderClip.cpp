@@ -12,7 +12,6 @@
 #include "core/TimelineOps.h"
 #include "engine/BlurFill.h"
 #include "engine/ColorGrade.h"
-#include "engine/Denoise.h"
 #include "engine/Lumas.h"
 #include "engine/Profiles.h"
 #include "engine/PitchLatency.h"
@@ -196,23 +195,27 @@ thread_local bool t_liveValues = false;
 void applyGeneric(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, const EffectInstance& inst,
                   const EffectDescriptor& d, int a, int len);
 
-// Effects in the order on the clip; a/len: section for keyframes. Video: stabilization first (it has to see the
-// camera image), then the Color page grade (like DaVinci: grade before the edit effects), regardless of their
-// position. Audio: the audio effects (before clip volume/pan); noise reduction is attached per clip instead.
+// Effects of the clip; a/len: section for keyframes. First the fixed stages (EffectDescriptor::fixed) at their own
+// place, wherever they sit in the list: stabilization (it has to see the camera image), the Color page grade (grade
+// before the edit effects), the Green Screen key (keys the graded camera picture). Then every other effect in the
+// clip's order (Editor::moveEffect). Audio: the audio effects in order (before clip volume/pan); noise reduction is
+// attached per clip instead (buildTimeline).
 void applyEffects(Mlt::Profile& profile, Mlt::Producer& clip, const Clip& c, TrackKind kind, int a, int len)
 {
     const bool video = kind == TrackKind::Video;
     if (video) {
         Stabilizer::attach(profile, clip, c);
         ColorGrade::attach(clip, c, a, t_gradeBypass);
+        if (const EffectInstance* key = EffectRegistry::instance(c, "chromakey"); key && key->enabled)
+            if (const EffectDescriptor* d = EffectRegistry::find(key->effectId))
+                applyGeneric(profile, clip, c, *key, *d, a, len);
     }
     for (const auto& inst : c.effects) {
-        if (!inst.enabled || inst.effectId == ColorGrade::EffectId || inst.effectId == Stabilizer::EffectId) continue;
+        if (!inst.enabled) continue;
         const EffectDescriptor* d = EffectRegistry::find(inst.effectId);
-        if (!d || d->video != video) continue;
+        if (!d || d->fixed || d->video != video) continue; // fixed stages: above resp. per clip
         if (inst.effectId == "color") applyColor(profile, clip, c, a, len);
         else if (inst.effectId == "blur") applyBlur(profile, clip, c, a, len);
-        else if (inst.effectId == Denoise::EffectId) continue; // one filter per clip (buildTimeline)
         else applyGeneric(profile, clip, c, inst, *d, a, len);
     }
 }

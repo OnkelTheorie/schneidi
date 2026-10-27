@@ -16,6 +16,7 @@
 #include "engine/Stabilizer.h"
 #include "ui/ScrubField.h"
 
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QColorDialog>
@@ -30,6 +31,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
 #include <QPlainTextEdit>
@@ -40,6 +42,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <cmath>
+#include <utility>
 #include "ui/InspectorDetail.h"
 
 using namespace InspectorDetail;
@@ -216,7 +219,7 @@ Inspector::Section Inspector::addSection(QVBoxLayout* page, TrackKind kind, cons
 
     page->addWidget(header);
     page->addWidget(body);
-    return {grid, kind, 0, titleOnly, effect, header, body, hl};
+    return {grid, kind, 0, titleOnly, effect, header, body, hl, toggle};
 }
 
 void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
@@ -240,6 +243,7 @@ void Inspector::addEffectSection(QVBoxLayout* page, const EffectDescriptor& d)
     }, false, id);
 
     addRemoveButton(s, id);
+    addMoveHandle(s, id);
 
     if (!d.description.isEmpty()) s.header->setToolTip(d.description);
     // Elide long names (frei0r), full name + description in the tooltip
@@ -443,8 +447,21 @@ void Inspector::addRemoveButton(const Section& s, const QString& id)
     s.headerLayout->insertWidget(s.headerLayout->count() - 1, trash); // before the reset button
     s.header->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(s.header, &QWidget::customContextMenuRequested, this,
-            [this, header = s.header, remove, video = s.kind == TrackKind::Video](const QPoint& pos) {
+            [this, header = s.header, remove, id, kind = s.kind, video = s.kind == TrackKind::Video](const QPoint& pos) {
                 QMenu menu(this);
+                if (EffectRegistry::movable(id)) { // effect order (fixed stages keep their place)
+                    int count = 0;
+                    const int place = effectPlace(kind, id, &count);
+                    QAction* up = menu.addAction(T("Nach oben"));
+                    up->setEnabled(place > 0);
+                    connect(up, &QAction::triggered, this,
+                            [this, id, kind] { m_editor->moveEffectBy(selectedIds(kind, false, id), id, -1); });
+                    QAction* down = menu.addAction(T("Nach unten"));
+                    down->setEnabled(place >= 0 && place < count - 1);
+                    connect(down, &QAction::triggered, this,
+                            [this, id, kind] { m_editor->moveEffectBy(selectedIds(kind, false, id), id, 1); });
+                    menu.addSeparator();
+                }
                 connect(menu.addAction(T("Effekt entfernen")), &QAction::triggered, this, remove);
                 if (video) { // presets hold video effects
                     menu.addSeparator();
@@ -455,12 +472,126 @@ void Inspector::addRemoveButton(const Section& s, const QString& id)
             });
 }
 
+void Inspector::addMoveHandle(const Section& s, const QString& id)
+{
+    auto* grip = new QLabel;
+    grip->setObjectName("EffectGrip");
+    grip->setFixedSize(8, 14);
+    if (!EffectRegistry::movable(id)) { // same indent as the others, nothing to drag
+        s.headerLayout->insertWidget(0, grip);
+        return;
+    }
+    grip->setPixmap(gripPixmap(devicePixelRatioF()));
+    grip->setCursor(Qt::OpenHandCursor);
+    grip->setToolTip(T("Ziehen ändert die Reihenfolge: oben wird zuerst berechnet"));
+    s.headerLayout->insertWidget(0, grip);
+    for (QWidget* w : {s.header, static_cast<QWidget*>(grip), static_cast<QWidget*>(s.toggle)})
+        if (w) w->installEventFilter(this);
+}
+
+int Inspector::effectPlace(TrackKind kind, const QString& id, int* count) const
+{
+    const Clip* c = primary(kind, false, id);
+    const QStringList order = c ? EffectRegistry::order(*c) : QStringList();
+    if (count) *count = int(order.size());
+    return int(order.indexOf(id));
+}
+
+bool Inspector::eventFilter(QObject* watched, QEvent* event)
+{
+    const QEvent::Type type = event->type();
+    if (type != QEvent::MouseButtonPress && type != QEvent::MouseMove && type != QEvent::MouseButtonRelease)
+        return QWidget::eventFilter(watched, event);
+    auto* w = qobject_cast<QWidget*>(watched);
+    const FxSection* section = nullptr;
+    for (const FxSection& f : std::as_const(m_fxSections))
+        if (w && (f.header == w || f.header == w->parentWidget())) section = &f;
+    if (!section) return QWidget::eventFilter(watched, event);
+    // The title folds the section on a click: it keeps its press and a release without drag
+    const bool title = qobject_cast<QToolButton*>(w) != nullptr;
+    auto* me = static_cast<QMouseEvent*>(event);
+    const QPoint global = me->globalPosition().toPoint();
+    if (type == QEvent::MouseButtonPress) {
+        if (me->button() != Qt::LeftButton) return false;
+        endEffectDrag(false);
+        m_fxDrag = FxDrag{section->header, section->id, section->kind, global};
+        return !title;
+    }
+    if (m_fxDrag.header != section->header) return false;
+    if (type == QEvent::MouseMove) {
+        if (!m_fxDrag.active) {
+            if ((global - m_fxDrag.start).manhattanLength() < QApplication::startDragDistance()) return !title;
+            m_fxDrag.active = true;
+            if (title) static_cast<QToolButton*>(w)->setDown(false); // the release then does not fold it
+            m_fxDrag.style = m_fxDrag.header->styleSheet();
+            m_fxDrag.header->setStyleSheet(QString("QWidget#InspectorSection { background: %1; border: 1px solid %2; }")
+                                               .arg(Theme::control.name(), Theme::primary.name()));
+            QApplication::setOverrideCursor(Qt::ClosedHandCursor);
+        }
+        dragEffect(global);
+        return true;
+    }
+    // Release: the title gets it too (after a drag it is no longer down, so it does not fold)
+    endEffectDrag(true);
+    return !title;
+}
+
+void Inspector::dragEffect(const QPoint& globalPos)
+{
+    // Gaps between the shown movable sections of the kind; the cursor lands in the one nearest to it
+    const Clip* c = primary(m_fxDrag.kind, false, m_fxDrag.id);
+    const QStringList order = c ? EffectRegistry::order(*c) : QStringList();
+    const int from = int(order.indexOf(m_fxDrag.id));
+    QWidget* page = m_fxDrag.header->parentWidget();
+    if (from < 0 || !page) return;
+    const int y = page->mapFromGlobal(globalPos).y();
+    QVector<QPair<int, int>> spans; // top and bottom of each section on the page
+    for (const QString& id : order)
+        for (const FxSection& f : std::as_const(m_fxSections))
+            if (f.kind == m_fxDrag.kind && f.id == id && f.header->isVisible()) {
+                const int bottom = f.body->isVisible() ? f.body->geometry().bottom() : f.header->geometry().bottom();
+                spans << qMakePair(f.header->geometry().top(), bottom);
+            }
+    if (spans.size() != order.size()) return;
+    int gap = 0;
+    for (int k = 0; k < spans.size(); ++k)
+        if (y > (spans[k].first + spans[k].second) / 2) gap = k + 1;
+    m_fxDrag.to = gap > from ? gap - 1 : gap;
+    if (!m_dropLine || m_dropLine->parentWidget() != page) {
+        delete m_dropLine;
+        m_dropLine = new QWidget(page);
+        m_dropLine->setObjectName("EffectDropLine");
+        m_dropLine->setAttribute(Qt::WA_TransparentForMouseEvents);
+        m_dropLine->setStyleSheet(QString("background: %1;").arg(Theme::primary.name()));
+    }
+    if (m_fxDrag.to == from) {
+        m_dropLine->hide();
+        return;
+    }
+    const int lineY = gap < spans.size() ? spans[gap].first : spans.last().second + 1;
+    m_dropLine->setGeometry(0, lineY - 1, page->width(), 3);
+    m_dropLine->show();
+    m_dropLine->raise();
+}
+
+void Inspector::endEffectDrag(bool apply)
+{
+    FxDrag drag = std::exchange(m_fxDrag, FxDrag{});
+    if (m_dropLine) m_dropLine->hide();
+    if (!drag.active) return;
+    drag.header->setStyleSheet(drag.style);
+    QApplication::restoreOverrideCursor();
+    if (apply && drag.to >= 0 && drag.to != effectPlace(drag.kind, drag.id))
+        m_editor->moveEffect(selectedIds(drag.kind, false, drag.id), drag.id, drag.to);
+}
+
 void Inspector::addMissingEffectSection(QVBoxLayout* page, const QString& id, TrackKind kind)
 {
     // Like "Media Offline": the effect stays in the project with its values, but nothing renders it
     const QString title = T("%1 (fehlt)").arg(id);
     Section s = addSection(page, kind, title, {}, {}, false, id);
     addRemoveButton(s, id);
+    addMoveHandle(s, id);
     for (QToolButton* b : s.header->findChildren<QToolButton*>()) // title in the warning color
         if (b->isCheckable() && b->text() == title)
             b->setStyleSheet(QString("QToolButton, QToolButton:checked { color: %1; border: none; background: transparent;"
@@ -508,15 +639,16 @@ void Inspector::arrangeEffectSections()
             return std::any_of(m_fxSections.begin(), m_fxSections.end(),
                                [&](const FxSection& f) { return f.kind == kind && f.id == id; });
         };
-        QStringList order;
+        QStringList order; // render order: fixed stages (stabilization) first, wherever they are in the list
         if (shownClip)
-            for (const EffectInstance& e : shownClip->effects) {
-                if (!known(e.effectId)) { // create on the first clip with the effect (frei0r: more than a hundred possible)
-                    const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+            for (const EffectInstance* e : EffectRegistry::renderOrder(*shownClip)) {
+                const QString& id = e->effectId;
+                if (!known(id)) { // create on the first clip with the effect (frei0r: more than a hundred possible)
+                    const EffectDescriptor* d = EffectRegistry::find(id);
                     if (d && d->library && d->video == video) addEffectSection(lay, *d);
-                    else if (!d) addMissingEffectSection(lay, e.effectId, kind); // plugin missing
+                    else if (!d) addMissingEffectSection(lay, id, kind); // plugin missing
                 }
-                if (known(e.effectId)) order << e.effectId;
+                if (known(id)) order << id;
             }
         QStringList& last = video ? m_fxOrder : m_audioFxOrder;
         if (order == last) continue;

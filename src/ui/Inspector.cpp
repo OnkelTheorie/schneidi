@@ -383,6 +383,7 @@ Inspector::Inspector(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 
 Inspector::~Inspector()
 {
+    endEffectDrag(false); // gives back the cursor
     qDeleteAll(m_params);
 }
 

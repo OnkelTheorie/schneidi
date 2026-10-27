@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace Cli::detail {
 
@@ -348,16 +349,67 @@ void opSubtitles(Session& s, const QJsonObject& op)
     s.editor.importSubtitles(cues, trackName);
 }
 
+// Effect order ({op:'effect', clips, effect, move}): 'up'/'down' one place, 'first'/'last', or a place (1 = rendered
+// first) among the movable effects of each clip; the fixed stages keep theirs
+void opMoveEffect(Session& s, const QJsonObject& op, const QString& effectId, const EffectDescriptor* d)
+{
+    if (effectId.isEmpty()) fail("BAD_ARGUMENT", "missing 'effect' (id of the effect to move, as `info` lists it)");
+    if (d && d->fixed)
+        fail("BAD_ARGUMENT", QString("'%1' is a fixed stage and cannot be moved: stabilize, grade (Color page) and "
+                                     "chromakey (Green Screen) always render first, in that order; denoise belongs "
+                                     "to the audio clip. Only the other effects follow the clip's order")
+                                 .arg(effectId));
+    for (const char* other : {"params", "enabled", "remove", "preset"})
+        if (op.contains(other))
+            fail("BAD_ARGUMENT", QString("'move' only changes the order; put '%1' into its own effect op").arg(other));
+    const QJsonValue v = op.value("move");
+    const QString where = v.toString();
+    const bool place = v.isDouble();
+    if (place ? v.toDouble() != std::floor(v.toDouble()) || v.toDouble() < 1 || v.toDouble() > 1000
+              : !QStringList{"up", "down", "first", "last"}.contains(where))
+        fail("BAD_ARGUMENT", "'move' is 'up' (one place earlier), 'down' (one later), 'first', 'last' or a place "
+                             "among the clip's movable effects (1 = rendered first)");
+    const QVector<int> targets = d ? clipsOn(s, op, d->video ? TrackKind::Video : TrackKind::Audio,
+                                             d->video ? "video effects" : "audio effects")
+                                   : clipIds(s, op); // plugin missing here: any clip that has it
+    const Timeline& tl = s.project.timeline();
+    QVector<int> having;
+    for (int id : targets)
+        if (const Clip* c = TimelineOps::findClip(tl, id); c && EffectRegistry::has(*c, effectId)) having << id;
+    if (having.isEmpty())
+        fail("NOT_FOUND", QString("none of the clips has the effect '%1' (`info` lists the effects of each clip)")
+                              .arg(effectId));
+    bool moved = false;
+    if (place) moved = s.editor.moveEffect(having, effectId, v.toInt() - 1);
+    else if (where == "up" || where == "down") moved = s.editor.moveEffectBy(having, effectId, where == "up" ? -1 : 1);
+    else moved = s.editor.moveEffect(having, effectId, where == "first" ? 0 : std::numeric_limits<int>::max());
+    if (!moved) {
+        s.notes << QString("'%1' is already at that place (or its track is locked): nothing changed").arg(effectId);
+        return;
+    }
+    // The new order, so the next step needs no `info`
+    QStringList orders;
+    for (int id : having.mid(0, 8))
+        if (const Clip* c = TimelineOps::findClip(s.project.timeline(), id))
+            orders << QString("clip %1: %2").arg(id).arg(EffectRegistry::order(*c).join(", "));
+    s.notes << "effect order now (rendered first to last, after the fixed stages): " + orders.join("; ")
+                   + (having.size() > 8 ? QString("; … %1 more clips").arg(having.size() - 8) : QString());
+}
+
 void opEffect(Session& s, const QJsonObject& op)
 {
     const QString effectId = op.value("effect").toString();
+    const EffectDescriptor* d = EffectRegistry::find(effectId);
+    if (op.contains("move")) {
+        opMoveEffect(s, op, effectId, d);
+        return;
+    }
     if (op.contains("preset")) {
         // Shotcut/Kdenlive preset from the effects folder: adds its effects with their values
         const QString path = findAsset(Asset::Preset, op.value("preset").toString());
         s.editor.addEffect(clipsOn(s, op, TrackKind::Video, "presets"), Presets::Prefix + path);
         return;
     }
-    const EffectDescriptor* d = EffectRegistry::find(effectId);
     if (op.value("remove").toBool()) {
         s.editor.removeEffect(d ? clipsOn(s, op, d->video ? TrackKind::Video : TrackKind::Audio, "effects") : clipIds(s, op),
                               effectId);
@@ -471,8 +523,16 @@ QVector<OpDef> makeOps()
          {}, opSubtitle},
         {"subtitles", "{op:'subtitles', srt?:file, cues?:[{from, to, text}], name?}",
          "new subtitle track from an SRT file or a cue list", {}, opSubtitles},
-        {"effect", "{op:'effect', clips, effect, params?:{key: value}, enabled?, remove?} or {op:'effect', clips, preset}",
-         "add/set/remove an effect (ids and parameters: `effects`); preset = effect preset from `effects`",
+        {"effect", "{op:'effect', clips, effect, params?:{key: value}, enabled?, remove?} or {op:'effect', clips, preset} "
+                   "or {op:'effect', clips, effect, move:'up'|'down'|'first'|'last'|place}",
+         "add/set/remove an effect (ids and parameters: `effects`); preset = effect preset from `effects`; move = "
+         "change the order the clip's effects render in",
+         "Effects render in the order `info` lists them (a new one comes last), which matters: blur then pixelate "
+         "gives soft blocks, pixelate then blur a smooth picture. move:'up' renders the effect one place "
+         "earlier, 'down' one later, 'first'/'last', or a number = its place among the clip's movable effects (1 = "
+         "rendered first). It works per clip on every given clip that has the effect. Fixed stages cannot move and "
+         "always render before the others: stabilize, then grade (Color page), then chromakey (Green Screen, so "
+         "effects work on the keyed picture); denoise is per audio clip. "
          "Video effects go on video clips, audio effects (kind 'audio' in `effects`, e.g. denoise) on audio clips. "
          "stabilize needs an analysis pass of the clip: the app runs it in the background (the clip plays "
          "unstabilized until then), `render` runs missing analyses before it encodes. Changing shakiness/accuracy "

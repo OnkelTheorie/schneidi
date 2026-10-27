@@ -180,6 +180,21 @@ inline QIcon trashIcon()
     return icon;
 }
 
+// Grip (two columns of dots) on the header of an effect that can be dragged into another place of the order
+inline QPixmap gripPixmap(qreal dpr)
+{
+    QPixmap pm(QSize(8, 14) * dpr);
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.setBrush(Theme::textDim);
+    for (int col = 0; col < 2; ++col)
+        for (int row = 0; row < 3; ++row) p.drawEllipse(QPointF(2 + col * 4, 3 + row * 4), 1.1, 1.1);
+    return pm;
+}
+
 // Pipette (pick the key color from the picture)
 inline QIcon pipetteIcon()
 {

@@ -1,5 +1,5 @@
 // Green Screen pipette (ui/KeyColorPicker, Inspector button "KeyPipette", MainWindow::startKeyPick): isolate() leaves
-// one clip as its key sees it (effects up to the key, no fades/opacity, other tracks empty), sample() averages the
+// one clip as its key sees it (fixed stages before the key, no fades/opacity, other tracks empty), sample() averages the
 // covered pixels; in the main window the button shows the clip without its key in the viewer, a click there sets
 // the key color (one undo step) and gives the viewer back to the Color page; right-click, Esc and another selection
 // cancel without changing anything.
@@ -60,6 +60,7 @@ void testIsolate()
     EffectRegistry::add(a, "blur");
     EffectRegistry::add(a, "chromakey");
     EffectRegistry::add(a, "color");
+    EffectRegistry::add(a, "grade");
     Clip other = a;
     other.id = 2;
     other.start = 100;
@@ -81,8 +82,10 @@ void testIsolate()
     CHECK(!alone.video[0].hidden);
     const Clip& c = alone.video[0].clips.first();
     CHECK_EQ(c.id, 1);
-    CHECK_EQ(c.effects.size(), 1); // the blur before the key stays, the key and the color after it go
-    CHECK_EQ(c.effects.value(0).effectId, QString("blur"));
+    // The key sees the graded picture: the grade (a fixed stage before it) stays; the key and the effects, which all
+    // render after it whatever their place in the list, go
+    CHECK_EQ(c.effects.size(), 1);
+    CHECK_EQ(c.effects.value(0).effectId, QString("grade"));
     CHECK(c.transform.opacity == 100 && c.fadeIn == 0 && c.fadeOut == 0 && c.transIn == 0);
     CHECK(KeyColorPicker::isolate(tl, 99).video.isEmpty()); // not in the timeline
     CHECK(KeyColorPicker::isolate(tl, 4).video.isEmpty());  // an audio clip has no picture
