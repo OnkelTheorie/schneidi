@@ -32,13 +32,14 @@ void key(uint8_t* rgba, int width, int height, const KeyParams& p);
 // ---- frei0r replacements (parameters 0..1 as in the frei0r plugins) ----
 // Glow: the picture blurred and laid over itself with "screen" (blur 0..1 = up to 1/20 of the picture height)
 void glow(uint8_t* rgba, int width, int height, double blur);
-// Color halftone: cyan, magenta and yellow dots on rotated grids (dot 0..1 = cell size, angles 0..1 = 0..360°)
+// Color halftone: per channel dots of its ink (cyan for red …) on rotated grids, black in that channel, the picture
+// between them (dot 0..1 = cell size, angles 0..1 = 0..360°)
 void halftone(uint8_t* rgba, int width, int height, double dot, double cyan, double magenta, double yellow);
 // Noise per channel (amount 0..1), different on every frame (seed)
 void noise(uint8_t* rgba, int width, int height, double amount, uint32_t seed);
-// Dark lines on every other pair of lines, like an interlaced TV picture
+// Every other line at half brightness, like an interlaced TV picture
 void scanlines(uint8_t* rgba, int width, int height);
-// Broken horizontal sync: the picture shifted sideways by offset 0..1 of its width, wrapping around, one line down
+// Broken sync: the picture rolled up by offset 0..1 of its height, the top coming in again from the bottom
 void noSync(uint8_t* rgba, int width, int height, double offset);
 
 struct GradientParams {
@@ -51,7 +52,8 @@ struct GradientParams {
                               // colorburn, hardlight, softlight, difference, exclusion, hslhue, hslsaturation,
                               // hslcolor, hslluminosity
 };
-// A two-color gradient laid over the picture with a blend mode
+// A two-color gradient laid over the picture with a blend mode. As in the frei0r plugin, the end color/opacity sit at
+// the start point and the start color/opacity at the end point (old projects look the same)
 void gradient(uint8_t* rgba, int width, int height, const GradientParams& p);
 
 struct AlphaParams {

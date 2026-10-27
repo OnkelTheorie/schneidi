@@ -9,6 +9,7 @@
 // - old projects: the frei0r effect ids, parameters and keyframes load as known effects; nothing frei0r is loaded
 //   while the opt-in is off
 // - speed: ms per 1080p frame for every effect (printed)
+// Comparison pictures: SCHNEIDI_FREI0R=1 OWN_EFFECTS_DUMP=<folder> build/tests/test_own_effects
 #include "check.h"
 
 #include "core/EffectRegistry.h"
@@ -22,6 +23,7 @@
 
 #include <Mlt.h>
 #include <QApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QImage>
 #include <QTemporaryDir>
@@ -292,22 +294,23 @@ int main(int argc, char** argv)
         // the glow spreads light next to the white square
         CHECK(g.at(320 * 2 / 5 - 6, 90)[2] > base.at(320 * 2 / 5 - 6, 90)[2] + 20);
 
-        Img ht = filled(320, 180, QColor(128, 128, 128));
+        Img ht = filled(1280, 720, QColor(128, 128, 128));
         VideoEffects::halftone(ht.px.data(), ht.w, ht.h, 0.4, 0.3, 0.45, 0.25);
-        int darkPx = 0, lightPx = 0;
+        int darkPx = 0, paperPx = 0;
         for (size_t i = 0; i < ht.px.size(); i += 4) {
-            darkPx += ht.px[i] < 40;
-            lightPx += ht.px[i] > 215;
+            darkPx += ht.px[i] < 20;
+            paperPx += std::abs(ht.px[i] - 128) < 3;
         }
-        CHECK(darkPx > 1000 && lightPx > 1000); // dots: ink or paper, not gray
-        CHECK(std::abs(meanLuma(ht) - 128) < 45);
+        CHECK(darkPx > 1000 && paperPx > 1000); // dots black, the picture between them
+        CHECK(meanLuma(ht) > 15 && meanLuma(ht) < 70); // half ink: dots touch, mostly dark (as frei0r: 33)
 
         Img nz = filled(320, 180, QColor(128, 128, 128));
-        VideoEffects::noise(nz.px.data(), nz.w, nz.h, 0.2, 1);
-        double var = 0;
-        for (size_t i = 0; i < nz.px.size(); i += 4) var += (nz.px[i] - 128.0) * (nz.px[i] - 128.0);
+        VideoEffects::noise(nz.px.data(), nz.w, nz.h, 0.1, 1);
+        double var = 0, mean = 0;
+        for (size_t i = 0; i < nz.px.size(); i += 4) var += (nz.px[i] - 128.0) * (nz.px[i] - 128.0), mean += nz.px[i];
         const double sd = std::sqrt(var / (nz.px.size() / 4));
-        CHECK(sd > 5 && sd < 30);
+        CHECK(std::abs(sd - 12.5) < 1.5);                       // as frei0r: 125 levels per 1.0
+        CHECK(std::abs(mean / (nz.px.size() / 4) - 128) < 0.5); // no shift of the brightness
         Img nz2 = filled(320, 180, QColor(128, 128, 128));
         VideoEffects::noise(nz2.px.data(), nz2.w, nz2.h, 0.2, 2);
         CHECK(nz.px != nz2.px); // other frame, other noise
@@ -318,24 +321,25 @@ int main(int argc, char** argv)
 
         Img ns = base;
         VideoEffects::noSync(ns.px.data(), ns.w, ns.h, 0.25);
-        CHECK(std::memcmp(ns.at(80, 50), base.at(0, 50), 4) == 0); // shifted right by a quarter
+        CHECK(std::memcmp(ns.at(30, 50), base.at(30, 95), 4) == 0); // rolled up by a quarter
+        CHECK(std::memcmp(ns.at(30, 179), base.at(30, 44), 4) == 0); // the top again at the bottom
         Img ns0 = base;
         VideoEffects::noSync(ns0.px.data(), ns0.w, ns0.h, 0);
         CHECK(ns0.px == base.px);
 
         Img gr = filled(100, 100, QColor(128, 128, 128));
-        VideoEffects::GradientParams gp; // black at the top, white at the bottom, half covering
+        VideoEffects::GradientParams gp; // as frei0r: white at the top (start point), black at the bottom, half covering
         VideoEffects::gradient(gr.px.data(), 100, 100, gp);
-        CHECK(gr.at(50, 1)[0] < 70 && gr.at(50, 98)[0] > 185 && std::abs(gr.at(50, 50)[0] - 128) < 6);
+        CHECK(gr.at(50, 0)[0] > 185 && gr.at(50, 99)[0] < 70 && std::abs(gr.at(50, 50)[0] - 128) < 6);
         Img mul = filled(100, 100, QColor(128, 128, 128));
         gp.blend = "multiply";
         gp.startOpacity = gp.endOpacity = 1;
         VideoEffects::gradient(mul.px.data(), 100, 100, gp);
-        CHECK(mul.at(50, 1)[0] < 5 && std::abs(mul.at(50, 98)[0] - 128) < 4); // multiply with black/white
+        CHECK(mul.at(50, 99)[0] < 5 && std::abs(mul.at(50, 0)[0] - 128) < 4); // multiply with white/black
         gp.blend = "hslluminosity";
         Img lum = filled(100, 100, QColor(200, 50, 50));
         VideoEffects::gradient(lum.px.data(), 100, 100, gp);
-        CHECK(lum.at(50, 98)[0] > 240 && lum.at(50, 1)[0] < 15);
+        CHECK(lum.at(50, 0)[0] > 240 && lum.at(50, 99)[0] < 15);
 
         // Alpha: a keyed disk; shrink makes the opaque part smaller, grow larger, gray display shows the alpha
         Img disk = greenScene();
@@ -390,7 +394,12 @@ int main(int argc, char** argv)
             if (!ff.is_valid()) continue; // frei0r not loaded (opt-in off): no comparison
             for (auto [k, v] : c.props) ff.set(k, v);
             const Img theirs = runMlt(profile, png, ff, 1280, 720);
-            std::printf("vs %s: mean difference %.1f levels\n", c.id, meanAbsDiff(mine, theirs));
+            std::printf("vs %s: mean difference %.1f levels, mean brightness %.1f (frei0r %.1f)\n", c.id,
+                        meanAbsDiff(mine, theirs), meanLuma(mine), meanLuma(theirs));
+            if (const QString dump = qEnvironmentVariable("OWN_EFFECTS_DUMP"); !dump.isEmpty()) { // pictures to compare
+                savePng(mine, QDir(dump).filePath(QString(c.id) + "-own.png"));
+                savePng(theirs, QDir(dump).filePath(QString(c.id) + "-frei0r.png"));
+            }
         }
     }
 

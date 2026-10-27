@@ -360,8 +360,9 @@ void glow(uint8_t* rgba, int width, int height, double amount)
 void halftone(uint8_t* rgba, int width, int height, double dot, double cyan, double magenta, double yellow)
 {
     if (!rgba || width <= 0 || height <= 0) return;
-    // Cell size relative to the picture height (same look in preview and export): 0.4 = 1/90 of 1080 lines
-    const float cell = std::max(2.0f, float(std::clamp(dot, 0.0, 1.0) * height / 36.0) + 1.0f);
+    // Cell size relative to the picture height (same look in preview and export); at 1080 lines as the frei0r plugin
+    // (dot 0.4 = 11.3 px, it used fixed pixels)
+    const float cell = std::max(2.0f, float(std::clamp(dot, 0.0, 1.0) * height / 38.2));
     const double angles[3] = {cyan, magenta, yellow};
     // Per channel: the rotated grid of cells over the picture and the dot radius of every cell (pixels + 0.5, the
     // antialiased edge), from the ink at the cell's center (cyan = 1 - red …)
@@ -390,8 +391,8 @@ void halftone(uint8_t* rgba, int width, int height, double dot, double cyan, dou
                 const int sx = std::clamp(int(std::lround((g.ca * cu - g.sa * cv) * cell)), 0, width - 1);
                 const int sy = std::clamp(int(std::lround((g.sa * cu + g.ca * cv) * cell)), 0, height - 1);
                 const float ink = 1.0f - rgba[(size_t(sy) * width + sx) * 4 + ch] / 255.0f;
-                // dot area ~ ink; a little larger than the cell's share so that full ink covers the paper
-                g.radius[size_t(j) * g.cols + i] = std::sqrt(ink / float(kPi)) * 1.15f * cell + 0.5f;
+                // dot radius ~ ink: dots touch at half ink, full ink covers the cell
+                g.radius[size_t(j) * g.cols + i] = ink * cell + 0.5f;
             }
     }
     // Draw every dot into an ink plane per channel: rows of the circle, the inside filled, the antialiased edge
@@ -438,20 +439,23 @@ void halftone(uint8_t* rgba, int width, int height, double dot, double cyan, dou
             }
     }
     for (size_t i = 0; i < n; ++i)
-        for (int ch = 0; ch < 3; ++ch) rgba[i * 4 + ch] = uint8_t(255 - ink[n * ch + i]);
+        for (int ch = 0; ch < 3; ++ch) // the dots are black in their channel, between them the picture stays
+            rgba[i * 4 + ch] = uint8_t((rgba[i * 4 + ch] * (255 - ink[n * ch + i]) + 127) / 255);
 }
 
 void noise(uint8_t* rgba, int width, int height, double amount, uint32_t seed)
 {
     if (!rgba || width <= 0 || height <= 0 || amount <= 0) return;
-    // Sum of two uniform values per channel (bell shaped, like film grain); 1 = up to ±255
-    const int scale = int(std::lround(std::clamp(amount, 0.0, 1.0) * 256));
+    // Sum of three uniform values per channel (close to a Gaussian, like film grain); standard deviation 125 levels
+    // per 1.0 of amount, as the frei0r plugin. u = -3069..3069 (odd steps), up to ±375 * amount levels
+    const int k = int(std::lround(std::clamp(amount, 0.0, 1.0) * 375.0 * 65536 / 3069));
     const size_t n = size_t(width) * height;
     for (size_t i = 0; i < n; ++i, rgba += 4) {
-        const uint32_t h1 = mix(uint32_t(i) * 2654435761U ^ seed), h2 = mix(h1 ^ 0x68e31da4U);
+        const uint32_t h1 = mix(uint32_t(i) * 2654435761U ^ seed), h2 = mix(h1 ^ 0x68e31da4U), h3 = mix(h2 ^ 0x1b873593U);
         for (int c = 0; c < 3; ++c) {
-            const int u = int((h1 >> (c * 10)) & 1023) + int((h2 >> (c * 10)) & 1023) - 1023; // -1023..1023
-            rgba[c] = uint8_t(std::clamp(rgba[c] + u * scale / 2048, 0, 255));
+            const int sh = c * 10;
+            const int u = 2 * int(((h1 >> sh) & 1023) + ((h2 >> sh) & 1023) + ((h3 >> sh) & 1023)) - 3069;
+            rgba[c] = uint8_t(std::clamp(rgba[c] + ((u * k + 32768) >> 16), 0, 255));
         }
     }
 }
@@ -469,13 +473,13 @@ void scanlines(uint8_t* rgba, int width, int height)
 void noSync(uint8_t* rgba, int width, int height, double offset)
 {
     if (!rgba || width <= 0 || height <= 0) return;
-    const int shift = int(std::lround(std::clamp(offset, 0.0, 1.0) * width)) % width;
+    const int shift = int(std::clamp(offset, 0.0, 1.0) * height) % height;
     if (shift == 0) return;
-    // The picture read as one long line shifted by `shift` pixels: the right end of each line wraps to the start of
-    // the next one (like a TV that lost the horizontal sync)
-    const size_t n = size_t(width) * height;
-    std::vector<uint8_t> src(rgba, rgba + n * 4);
-    for (size_t i = 0; i < n; ++i) std::memcpy(rgba + i * 4, src.data() + ((i + n - size_t(shift)) % n) * 4, 4);
+    // The picture rolled up by `shift` lines, its top coming in again from the bottom (like the frei0r plugin)
+    const size_t line = size_t(width) * 4;
+    std::vector<uint8_t> top(rgba, rgba + size_t(shift) * line);
+    std::memmove(rgba, rgba + size_t(shift) * line, size_t(height - shift) * line);
+    std::memcpy(rgba + size_t(height - shift) * line, top.data(), top.size());
 }
 
 void gradient(uint8_t* rgba, int width, int height, const GradientParams& p)
@@ -486,12 +490,13 @@ void gradient(uint8_t* rgba, int width, int height, const GradientParams& p)
     const float dx = float(p.endX * width) - sx, dy = float(p.endY * height) - sy;
     const float len2 = std::max(1e-6f, dx * dx + dy * dy);
     const float off = float(std::clamp(p.offset, 0.0, 0.999));
-    const float c0[4] = {p.startColor.redF(), p.startColor.greenF(), p.startColor.blueF(), float(p.startOpacity)};
-    const float c1[4] = {p.endColor.redF(), p.endColor.greenF(), p.endColor.blueF(), float(p.endOpacity)};
+    // As in the frei0r plugin (old projects look the same): the end color and opacity sit at the start point
+    const float c0[4] = {p.endColor.redF(), p.endColor.greenF(), p.endColor.blueF(), float(p.endOpacity)};
+    const float c1[4] = {p.startColor.redF(), p.startColor.greenF(), p.startColor.blueF(), float(p.startOpacity)};
     for (int y = 0; y < height; ++y) {
         uint8_t* row = rgba + size_t(y) * width * 4;
         for (int x = 0; x < width; ++x) {
-            const float px = x + 0.5f - sx, py = y + 0.5f - sy;
+            const float px = x - sx, py = y - sy;
             float t = p.radial ? std::sqrt((px * px + py * py) / len2) : (px * dx + py * dy) / len2;
             t = std::clamp((t - off) / (1 - off), 0.0f, 1.0f);
             float g[4];
