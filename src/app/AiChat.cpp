@@ -26,6 +26,12 @@ QString errorOf(const QString& text)
     return (m.isEmpty() ? text : m).simplified();
 }
 
+// A call by what it does (name and arguments; the keys of a JSON object are sorted)
+QString callKey(const Ai::ToolCall& c)
+{
+    return c.name + QString::fromUtf8(QJsonDocument(c.input).toJson(QJsonDocument::Compact));
+}
+
 QString capitalized(QString s)
 {
     if (!s.isEmpty()) s[0] = s[0].toUpper();
@@ -137,6 +143,8 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review
     m_stopped = false;
     m_rounds = 0;
     m_nudged = false;
+    m_failedCalls.clear();
+    m_repeats = 0;
     m_request = text.trimmed();
     // Pictures of earlier requests are not sent again: the model has seen them, and a long chat would outgrow what
     // providers take per request (count and size of pictures). It can look again with `frames`. Not once Claude's
@@ -398,6 +406,27 @@ void AiChat::nextTool()
         toolDone(entry, call, QString::fromUtf8(QJsonDocument(answer).toJson(QJsonDocument::Compact)), {}, false);
         return;
     }
+    // The same call as one that failed in this request (small models send it again unchanged, round after round): not
+    // run again, the model is told; the second time the request ends
+    if (m_endpoint.protocol != Ai::Protocol::Anthropic && m_failedCalls.contains(callKey(call))) {
+        if (++m_repeats >= kMaxRepeats) {
+            change(entry, [](Entry& x) { x.state = Entry::State::Failed; });
+            for (int i = int(m_results.size()); i < m_calls.size(); ++i)
+                m_results << Ai::ToolResult{m_calls[i].id, m_calls[i].name,
+                                            "not run: the request was ended (the same failed call again)", {}, true};
+            appendUser({}, m_results);
+            addNotice(T("Die KI wiederholt einen Schritt, der schon fehlgeschlagen ist – angehalten. Schreib, wie es "
+                        "weitergehen soll."));
+            finishTurn();
+            return;
+        }
+        toolDone(entry, call,
+                 QString("not run again: this exact call failed before in this request (%1). Do not repeat it: change "
+                         "what the error says, try another way, or tell the user what went wrong.")
+                     .arg(m_failedCalls.value(callKey(call))),
+                 {}, true);
+        return;
+    }
     m_mcp->call(
         call.name, call.input,
         [this, entry](int percent) { change(entry, [percent](Entry& x) { x.percent = percent; }); },
@@ -416,6 +445,7 @@ void AiChat::toolDone(int entry, const Ai::ToolCall& call, const QString& text, 
             if (QImage pic = QImage::fromData(QByteArray::fromBase64(img.base64)); !pic.isNull())
                 e.images << pic.scaledToHeight(std::min(pic.height(), 360), Qt::SmoothTransformation);
     });
+    if (error && !m_stopped && !m_failedCalls.contains(callKey(call))) m_failedCalls.insert(callKey(call), cut(errorOf(text), 300));
     // The model reads English; a stopped call may still have happened inside the app
     const QString answer = m_stopped ? QString("stopped by the user (the call may have finished in the app anyway)") : text;
     m_results << capped({call.id, call.name, answer, m_stopped ? QVector<Ai::Image>() : images, error || m_stopped});

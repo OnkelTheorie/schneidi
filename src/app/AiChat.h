@@ -74,6 +74,7 @@ public:
     static constexpr int kMaxImages = 8;
     static constexpr int kMaxImageEdge = 2000; // pixels, longer edges are scaled down
     static constexpr int kMaxRounds = 40; // tool rounds per request
+    static constexpr int kMaxRepeats = 2; // a failed call sent again this often ends the request (OpenAI protocol)
 
 signals:
     void entryAdded(int index);
@@ -118,6 +119,8 @@ private:
     Ai::Usage m_usage;
     int m_rounds = 0;
     bool m_nudged = false; // an empty answer was answered with "go on" in this request
+    QHash<QString, QString> m_failedCalls; // calls that failed in this request (name + arguments) -> their error
+    int m_repeats = 0; // failed calls sent again in this request
     qint64 m_sentChars = 0; // text of the last request to the model (system, tools, history; no pictures)
     int m_streaming = -1; // entry of the answer that streams in
     QVector<Ai::ToolCall> m_calls; // of the last answer

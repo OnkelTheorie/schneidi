@@ -8,9 +8,9 @@
 // watch folder waits until the user has chosen); what the user changed between two answers comes with the next request
 // (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on, tool calls it
 // wrote as text are run, a call without a project works on the open one, a request a local server cut is not run,
-// unreadable arguments are answered with what to send, `guide` without a topic gets the topics only; errors (bad key,
-// overloaded then fine, no server), stopping a request, test runs that never send; the chat section in Settings › AI
-// (test connection, model list, key stored).
+// unreadable arguments are answered with what to send, `guide` without a topic gets the topics only, a failed call sent
+// again is not run (twice: the request ends); errors (bad key, overloaded then fine, no server), stopping a request,
+// test runs that never send; the chat section in Settings › AI (test connection, model list, key stored).
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
 
 #include "check.h"
@@ -711,6 +711,33 @@ void test(const QString& dir)
             CHECK(answer.contains("already in your instructions") && answer.contains("social"));
             CHECK(!answer.contains("Editing video with schneidi"));
         }
+    }
+
+    // ---- The same failing call again: not run, the model told; the second time the request ends ----
+    {
+        const QJsonObject bad{{"project", "@app"}, {"ops", QJsonArray{QJsonObject{{"op", "trim"}, {"clip", 999}}}}};
+        fake.script = {openAiTool("call_r1", "edit", bad), openAiTool("call_r2", "edit", bad), openAiTool("call_r3", "edit", bad),
+                       openAiText("nie erreicht")};
+        const int sent = int(fake.requests.size());
+        panel->sendText("Kürze Clip 999");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent + 3);
+        const QJsonArray m = fake.last().body["messages"].toArray();
+        CHECK(m.last()["content"].toString().contains("not run again: this exact call failed before"));
+        CHECK(m.last()["content"].toString().contains("999"));
+        if (const AiChat::Entry* n = lastOf(chat, AiChat::Entry::Kind::Notice); CHECK(n))
+            CHECK(n->text.startsWith(T("Die KI wiederholt einen Schritt, der schon fehlgeschlagen ist – angehalten. Schreib, wie "
+                                       "es weitergehen soll.")));
+        fake.script.clear();
+        // The next request starts afresh (and the unanswered call got its answer: the history stays valid)
+        fake.script = {openAiTool("call_r4", "edit", bad), openAiText("Ok.")};
+        panel->sendText("Nochmal");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        const QJsonArray m2 = fake.last().body["messages"].toArray();
+        CHECK(m2.last()["content"].toString().contains("no clip with id 999"));
+        for (int i = 0; i + 1 < m2.size(); ++i)
+            if (m2[i]["tool_calls"][0]["id"].toString() == "call_r3")
+                CHECK(m2[i + 1]["content"].toString().contains("the request was ended"));
     }
 
     // ---- A call without a project (small models forget it): the chat's tools take the open project, with a note ----
