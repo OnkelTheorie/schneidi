@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <numbers>
+#include <thread>
 
 namespace StabilizeMotion {
 
@@ -535,13 +536,6 @@ inline uint8_t bilinear(const uint8_t* s, int stride, int ax, int ay)
     return uint8_t((top * 256 + (bottom - top) * ay + 32768) >> 16);
 }
 
-inline uint32_t lerp4(uint32_t a, uint32_t b, uint32_t t) // t 0..256, 4 bytes at once
-{
-    const uint32_t rb = (((a & 0x00FF00FFu) * (256 - t) + (b & 0x00FF00FFu) * t + 0x00800080u) >> 8) & 0x00FF00FFu;
-    const uint32_t ga = (((a >> 8) & 0x00FF00FFu) * (256 - t) + ((b >> 8) & 0x00FF00FFu) * t + 0x00800080u) & 0xFF00FF00u;
-    return rb | ga;
-}
-
 inline uint32_t load4(const uint8_t* p)
 {
     uint32_t v;
@@ -549,16 +543,40 @@ inline uint32_t load4(const uint8_t* p)
     return v;
 }
 
-} // namespace
+// 4 bytes -> four 16-bit lanes of a 64-bit number (byte order 0, 2, 1, 3) and back
+inline uint64_t expand(uint32_t c) { return (c & 0x00FF00FFu) | (uint64_t((c >> 8) & 0x00FF00FFu) << 32); }
+inline uint32_t pack(uint64_t e) { return uint32_t(e & 0x00FF00FFu) | ((uint32_t(e >> 32) & 0x00FF00FFu) << 8); }
 
-void warpPlane(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, const double m[6], Outside outside,
-               uint8_t fill)
+// Bilinear of the 2 x 2 pixels at s (4 bytes each), weights 0..256: all four bytes at once. The weights add up to
+// exactly 256, so a lane never exceeds 255 * 256 (+ rounding).
+inline uint32_t bilinear4(const uint8_t* s, int stride, int ax, int ay)
 {
-    if (w < 2 || h < 2) {
-        for (int y = 0; y < h; ++y) std::memcpy(dst + size_t(y) * ds, src + size_t(y) * ss, size_t(w));
+    const uint64_t w11 = uint64_t((ax * ay + 128) >> 8);
+    const uint64_t w10 = uint64_t(ay) - w11, w01 = uint64_t(ax) - w11, w00 = 256 - uint64_t(ax) - uint64_t(ay) + w11;
+    const uint64_t sum = expand(load4(s)) * w00 + expand(load4(s + 4)) * w01 + expand(load4(s + stride)) * w10
+                         + expand(load4(s + stride + 4)) * w11;
+    return pack(((sum + 0x0080008000800080ull) >> 8) & 0x00FF00FF00FF00FFull);
+}
+
+// Rows [0, h) in a few threads for big pictures (the warp runs during playback, ~1 ms per thread and megapixel)
+template <typename F>
+void parallelRows(int w, int h, F rows)
+{
+    const int n = std::clamp(int(std::thread::hardware_concurrency()) / 2, 1, 4);
+    if (n < 2 || int64_t(w) * h < 600'000) {
+        rows(0, h);
         return;
     }
-    for (int y = 0; y < h; ++y) {
+    std::thread threads[3];
+    for (int i = 1; i < n; ++i) threads[i - 1] = std::thread(rows, h * i / n, h * (i + 1) / n);
+    rows(0, h / n);
+    for (int i = 1; i < n; ++i) threads[i - 1].join();
+}
+
+void planeRows(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, const double m[6], Outside outside,
+               uint8_t fill, int rowFrom, int rowTo)
+{
+    for (int y = rowFrom; y < rowTo; ++y) {
         Row r = rowStart(m, y);
         uint8_t* d = dst + size_t(y) * ds;
         for (int x = 0; x < w; ++x, r.x += r.dx, r.y += r.dy) {
@@ -581,19 +599,13 @@ void warpPlane(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, c
     }
 }
 
-void warpRgba(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, const double m[6], Outside outside,
-              uint32_t fill)
+void rgbaRows(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, const double m[6], Outside outside,
+              uint32_t fill, int rowFrom, int rowTo)
 {
-    if (w < 2 || h < 2) {
-        for (int y = 0; y < h; ++y) std::memcpy(dst + size_t(y) * ds, src + size_t(y) * ss, size_t(w) * 4);
-        return;
-    }
     auto sample = [&](int ix, int iy, int ax, int ay) {
-        const uint8_t* s = src + size_t(iy) * ss + size_t(ix) * 4;
-        return lerp4(lerp4(load4(s), load4(s + 4), uint32_t(ax)), lerp4(load4(s + ss), load4(s + ss + 4), uint32_t(ax)),
-                     uint32_t(ay));
+        return bilinear4(src + size_t(iy) * ss + size_t(ix) * 4, ss, ax, ay);
     };
-    for (int y = 0; y < h; ++y) {
+    for (int y = rowFrom; y < rowTo; ++y) {
         Row r = rowStart(m, y);
         uint8_t* d = dst + size_t(y) * ds;
         for (int x = 0; x < w; ++x, r.x += r.dx, r.y += r.dy) {
@@ -617,13 +629,10 @@ void warpRgba(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, co
     }
 }
 
-void warpRgb(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, const double m[6], Outside outside)
+void rgbRows(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, const double m[6], Outside outside,
+             int rowFrom, int rowTo)
 {
-    if (w < 2 || h < 2) {
-        for (int y = 0; y < h; ++y) std::memcpy(dst + size_t(y) * ds, src + size_t(y) * ss, size_t(w) * 3);
-        return;
-    }
-    for (int y = 0; y < h; ++y) {
+    for (int y = rowFrom; y < rowTo; ++y) {
         Row r = rowStart(m, y);
         uint8_t* d = dst + size_t(y) * ds;
         for (int x = 0; x < w; ++x, r.x += r.dx, r.y += r.dy) {
@@ -643,6 +652,38 @@ void warpRgb(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, con
             }
         }
     }
+}
+
+} // namespace
+
+void warpPlane(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, const double m[6], Outside outside,
+               uint8_t fill)
+{
+    if (w < 2 || h < 2) {
+        for (int y = 0; y < h; ++y) std::memcpy(dst + size_t(y) * ds, src + size_t(y) * ss, size_t(w));
+        return;
+    }
+    parallelRows(w, h, [&](int y0, int y1) { planeRows(src, ss, dst, ds, w, h, m, outside, fill, y0, y1); });
+}
+
+void warpRgba(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, const double m[6], Outside outside,
+              uint32_t fill)
+{
+    if (w < 2 || h < 2) {
+        for (int y = 0; y < h; ++y) std::memcpy(dst + size_t(y) * ds, src + size_t(y) * ss, size_t(w) * 4);
+        return;
+    }
+    // 4 bytes per pixel: twice the work of a plane per pixel -> threads from half the size
+    parallelRows(w * 2, h, [&](int y0, int y1) { rgbaRows(src, ss, dst, ds, w, h, m, outside, fill, y0, y1); });
+}
+
+void warpRgb(const uint8_t* src, int ss, uint8_t* dst, int ds, int w, int h, const double m[6], Outside outside)
+{
+    if (w < 2 || h < 2) {
+        for (int y = 0; y < h; ++y) std::memcpy(dst + size_t(y) * ds, src + size_t(y) * ss, size_t(w) * 3);
+        return;
+    }
+    parallelRows(w * 2, h, [&](int y0, int y1) { rgbRows(src, ss, dst, ds, w, h, m, outside, y0, y1); });
 }
 
 } // namespace StabilizeMotion

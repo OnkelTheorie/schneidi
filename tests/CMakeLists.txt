@@ -254,6 +254,9 @@ add_executable(bench_graded_thumbs bench_graded_thumbs.cpp check.h)
 target_link_libraries(bench_graded_thumbs PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_memory bench_memory.cpp check.h)
 target_link_libraries(bench_memory PRIVATE schneidi_lib Qt6::Test)
+# Stabilizer: own vs vid.stab (when installed) on synthetic shaky clips, real clips as arguments
+add_executable(bench_stabilize bench_stabilize.cpp check.h)
+target_link_libraries(bench_stabilize PRIVATE schneidi_lib Qt6::Test)
 if(WIN32) # WASAPI loopback: what the system sends to the sound card
     add_executable(bench_soundcard bench_soundcard.cpp check.h)
     target_link_libraries(bench_soundcard PRIVATE schneidi_lib Qt6::Test)
