@@ -2,8 +2,9 @@
 // one clip as its key sees it (fixed stages before the key, no fades/opacity, other tracks empty), sample() averages the
 // covered pixels; in the main window the button shows the clip without its key in the viewer, a click there sets
 // the key color (one undo step) and gives the viewer back to the Color page; right-click, Esc and another selection
-// cancel without changing anything.
-// KEY_PICK_DUMP=<png>: picture of the viewer while the pipette is on.
+// cancel without changing anything. The loupe beside the cursor shows the pixels of the full-resolution frame (a single
+// pixel the scaled viewer picture loses is there, magnified, the one under the cursor in the middle).
+// KEY_PICK_DUMP=<png>: picture of the viewer while the pipette is on (and <png>-loupe.png: the loupe on a small viewer).
 
 #include "check.h"
 
@@ -20,6 +21,7 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <clocale>
@@ -42,6 +44,61 @@ void testSample()
     CHECK(!KeyColorPicker::sample(img, QPointF(8, 5), 1).isValid()); // only transparent pixels
     CHECK(KeyColorPicker::sample(img, QPointF(-1, 0), 1).isValid());  // edge: the part inside the picture
     CHECK(!KeyColorPicker::sample(img, QPointF(-20, 0), 3).isValid());
+}
+
+void testLoupe()
+{
+    // A 1920x1080 green frame with one red and one blue pixel side by side
+    QImage img(1920, 1080, QImage::Format_RGBA8888);
+    img.fill(QColor(0, 200, 40));
+    img.setPixelColor(961, 541, QColor(230, 20, 20));
+    img.setPixelColor(962, 541, QColor(20, 20, 230));
+    const QImage patch = KeyColorPicker::loupe(img, QPointF(961.6, 541.2));
+    CHECK_EQ(patch.size(), QSize(11, 11));
+    CHECK_EQ(patch.pixelColor(5, 5), QColor(230, 20, 20)); // the pixel under the cursor in the middle
+    CHECK_EQ(patch.pixelColor(6, 5), QColor(20, 20, 230));
+    CHECK_EQ(patch.pixelColor(0, 0), QColor(0, 200, 40));
+    const QImage corner = KeyColorPicker::loupe(img, QPointF(0.5, 0.5)); // outside the picture: transparent
+    CHECK(corner.pixelColor(0, 0).alpha() == 0 && corner.pixelColor(5, 5).alpha() == 255);
+
+    // Drawn on a viewer a quarter as large (where these pixels are gone in the scaled picture): magnified 8 times
+    KeyColorPicker picker(img);
+    QImage view(480, 270, QImage::Format_RGB32);
+    view.fill(Qt::black);
+    const QRectF frame(0, 0, 480, 270);
+    const QPointF cursor(961.5 / 4, 541.5 / 4);
+    picker.hover(cursor, frame);
+    {
+        QPainter p(&view);
+        picker.paint(p, frame);
+    }
+    const QRectF lens = KeyColorPicker::loupeRect(cursor, frame);
+    CHECK(frame.contains(lens));
+    CHECK_EQ(lens.size(), QSizeF(88, 88));
+    if (const QString dump = qEnvironmentVariable("KEY_PICK_DUMP"); !dump.isEmpty())
+        view.save(QString(dump).replace(".png", "-loupe.png"));
+    auto cellColor = [&](int cx, int cy) { // middle of a magnified pixel
+        return view.pixelColor(int(lens.x()) + cx * 8 + 4, int(lens.y()) + cy * 8 + 4);
+    };
+    auto near = [](const QColor& a, const QColor& b) {
+        return std::abs(a.red() - b.red()) < 4 && std::abs(a.green() - b.green()) < 4 && std::abs(a.blue() - b.blue()) < 4;
+    };
+    CHECK(near(cellColor(5, 5), QColor(230, 20, 20)));
+    CHECK(near(cellColor(6, 5), QColor(20, 20, 230)));
+    CHECK(near(cellColor(2, 8), QColor(0, 200, 40)));
+    // The whole magnified pixel is the one color (no smoothing), the one under the cursor framed
+    const int x0 = int(lens.x()) + 40, y0 = int(lens.y()) + 40;
+    bool solid = true;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) solid &= near(view.pixelColor(x0 + x, y0 + y), QColor(230, 20, 20));
+    CHECK(solid);
+    CHECK(view.pixelColor(x0 - 1, y0 + 4) == QColor(Qt::black) && view.pixelColor(x0 - 2, y0 + 4) == QColor(Qt::white));
+    // The color square beside it: the average a click takes (7x7 around the cursor)
+    const QColor avg = KeyColorPicker::sample(img, QPointF(961.5, 541.5));
+    CHECK(near(view.pixelColor(int(lens.right()) + 4 + 15, int(lens.bottom()) - 15), avg));
+    // Near the right and bottom edge it flips to the other side of the cursor
+    const QRectF flipped = KeyColorPicker::loupeRect(QPointF(470, 260), frame);
+    CHECK(flipped.right() < 470 && flipped.bottom() < 260);
 }
 
 void testIsolate()
@@ -221,6 +278,7 @@ int main(int argc, char** argv)
     Check::initApp("key-pick");
     QTemporaryDir dir;
     testSample();
+    testLoupe();
     testIsolate();
     testMainWindow(dir.path());
     return Check::result();

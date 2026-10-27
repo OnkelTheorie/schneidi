@@ -65,6 +65,38 @@ QColor KeyColorPicker::sample(const QImage& rgba, const QPointF& at, int radius)
     return QColor(int((r + n / 2) / n), int((g + n / 2) / n), int((b + n / 2) / n));
 }
 
+QImage KeyColorPicker::loupe(const QImage& rgba, const QPointF& at, int radius)
+{
+    const QImage img = rgba.format() == QImage::Format_RGBA8888 ? rgba : rgba.convertToFormat(QImage::Format_RGBA8888);
+    const int size = 2 * radius + 1;
+    QImage out(size, size, QImage::Format_RGBA8888);
+    out.fill(Qt::transparent);
+    const int x0 = int(std::floor(at.x())) - radius, y0 = int(std::floor(at.y())) - radius;
+    for (int y = 0; y < size; ++y) {
+        if (y0 + y < 0 || y0 + y >= img.height()) continue;
+        const auto* in = reinterpret_cast<const quint32*>(img.constScanLine(y0 + y));
+        auto* line = reinterpret_cast<quint32*>(out.scanLine(y));
+        for (int x = 0; x < size; ++x)
+            if (x0 + x >= 0 && x0 + x < img.width()) line[x] = in[x0 + x];
+    }
+    return out;
+}
+
+namespace {
+constexpr double kGap = 14, kSwatch = 30, kSwatchGap = 4; // cursor to loupe, color square beside it
+}
+
+QRectF KeyColorPicker::loupeRect(const QPointF& pos, const QRectF& frame)
+{
+    const double side = (2 * kLoupeRadius + 1) * kLoupeZoom;
+    const double width = side + kSwatchGap + kSwatch; // the color square to its right
+    QPointF tl = pos + QPointF(kGap, kGap);
+    if (tl.x() + width > frame.right()) tl.setX(pos.x() - kGap - width);
+    if (tl.y() + side > frame.bottom()) tl.setY(pos.y() - kGap - side);
+    // Whole pixels: the magnified pixels stay sharp squares
+    return QRectF(QPointF(std::round(tl.x()), std::round(tl.y())), QSizeF(side, side));
+}
+
 QPointF KeyColorPicker::imagePoint(const QPointF& pos, const QRectF& frame) const
 {
     if (frame.isEmpty()) return {-1, -1};
@@ -93,19 +125,46 @@ void KeyColorPicker::paint(QPainter& p, const QRectF& frame)
     p.setPen(Theme::text);
     p.drawText(hint, Qt::AlignCenter | Qt::TextWordWrap, text);
 
-    // Color under the cursor in a square beside it (flipped at the edges)
-    if (m_hover.x() >= 0 && m_hoverColor.isValid() && frame.contains(m_hover)) {
-        constexpr double size = 30, gap = 14;
-        QPointF tl = m_hover + QPointF(gap, gap);
-        if (tl.x() + size > frame.right()) tl.setX(m_hover.x() - gap - size);
-        if (tl.y() + size > frame.bottom()) tl.setY(m_hover.y() - gap - size);
-        const QRectF box(tl, QSizeF(size, size));
-        p.setBrush(m_hoverColor);
-        p.setPen(QPen(Qt::black, 3));
-        p.drawRoundedRect(box, 3, 3);
-        p.setPen(QPen(Qt::white, 1.2));
+    // Beside the cursor (flipped at the edges): the loupe with the pixels around it from the full-resolution frame,
+    // the pixel under the cursor framed, the area a click averages outlined; right of it the color a click takes
+    if (m_hover.x() >= 0 && frame.contains(m_hover)) {
+        const QRectF lens = loupeRect(m_hover, frame);
+        const QImage patch = loupe(m_picture, imagePoint(m_hover, frame));
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+        // Checkerboard where the clip does not cover the frame (as transparency is shown elsewhere)
+        constexpr int cell = kLoupeZoom / 2;
+        for (int y = 0; y < lens.height(); y += cell)
+            for (int x = 0; x < lens.width(); x += cell)
+                p.fillRect(QRectF(lens.x() + x, lens.y() + y, cell, cell),
+                           (x / cell + y / cell) % 2 ? QColor(70, 70, 70) : QColor(110, 110, 110));
+        p.drawImage(lens, patch);
+        auto cellRect = [&](int radius) {
+            const double c = kLoupeRadius - radius;
+            return QRectF(lens.x() + c * kLoupeZoom, lens.y() + c * kLoupeZoom, (2 * radius + 1) * kLoupeZoom,
+                          (2 * radius + 1) * kLoupeZoom);
+        };
         p.setBrush(Qt::NoBrush);
-        p.drawRoundedRect(box, 3, 3);
+        p.setPen(QPen(QColor(255, 255, 255, 110), 1, Qt::DashLine));
+        p.drawRect(cellRect(kSampleRadius).adjusted(0, 0, -1, -1));
+        p.setPen(QPen(Qt::black, 1));
+        p.drawRect(cellRect(0).adjusted(-1, -1, 0, 0));
+        p.setPen(QPen(Qt::white, 1));
+        p.drawRect(cellRect(0).adjusted(-2, -2, 1, 1));
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(Qt::black, 3));
+        p.drawRect(lens);
+        p.setPen(QPen(Qt::white, 1.2));
+        p.drawRect(lens);
+        if (m_hoverColor.isValid()) {
+            const QRectF box(lens.right() + kSwatchGap, lens.bottom() - kSwatch, kSwatch, kSwatch);
+            p.setBrush(m_hoverColor);
+            p.setPen(QPen(Qt::black, 3));
+            p.drawRoundedRect(box, 3, 3);
+            p.setPen(QPen(Qt::white, 1.2));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(box, 3, 3);
+        }
     }
     p.restore();
 }
@@ -117,7 +176,7 @@ bool KeyColorPicker::mousePress(QMouseEvent* e, const QRectF& frame)
         return true;
     }
     if (e->button() != Qt::LeftButton) return true;
-    const QColor c = sample(m_picture, imagePoint(e->position(), frame));
+    const QColor c = sample(m_picture, imagePoint(e->position(), frame), kSampleRadius);
     if (c.isValid()) emit picked(c); // outside the clip's picture nothing happens
     return true;
 }
@@ -127,7 +186,7 @@ Qt::CursorShape KeyColorPicker::cursorAt(const QPointF&, const QRectF&) const { 
 void KeyColorPicker::hover(const QPointF& pos, const QRectF& frame)
 {
     m_hover = pos;
-    m_hoverColor = sample(m_picture, imagePoint(pos, frame));
+    m_hoverColor = sample(m_picture, imagePoint(pos, frame), kSampleRadius);
     emit changed();
 }
 
