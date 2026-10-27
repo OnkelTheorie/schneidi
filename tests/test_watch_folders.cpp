@@ -40,6 +40,7 @@ void write(const QString& path, const QDateTime& modified, int bytes = 10)
     QFile f(path);
     f.open(QIODevice::WriteOnly | QIODevice::Truncate);
     f.write(QByteArray(bytes, 'x'));
+    f.flush(); // else the buffered bytes are written on close, after the time was set, and the time is "now" again
     f.setFileTime(modified, QFileDevice::FileModificationTime);
 }
 
@@ -156,7 +157,7 @@ void testScanner(const QString& root)
     w.ignored.clear();
 
     // Could not be read: left alone until it changes, then taken once it is complete again
-    sc.rejected(dir + "/deep.mp4");
+    sc.rejected(dir + "/sub/deep.mp4");
     r = sc.scan({w}, none, t0.addSecs(71));
     CHECK(!names(r.ready).contains("deep.mp4"));
     write(dir + "/sub/deep.mp4", t0.addSecs(71), 20);
@@ -459,7 +460,8 @@ void testCliProcess(const QString& root, const QString& clip, const QString& lon
     if (CHECK_EQ(lines.size(), 1)) {
         const QJsonObject line = QJsonDocument::fromJson(lines[0]).object();
         CHECK_EQ(line["file"].toString(), target);
-        CHECK_EQ(line["frames"].toInt(), 100); // the whole 4 s, not a part of it
+        // The whole 4 s, not a part of it (AAC in MKV: 4.02 s with some FFmpeg versions)
+        CHECK(line["frames"].toInt() >= 100 && line["frames"].toInt() <= 101);
         CHECK_EQ(line["revision"].toInt(), 2);
     } else {
         std::printf("       output: %s\n       stderr: %s\n", out.constData(), p.readAllStandardError().constData());
