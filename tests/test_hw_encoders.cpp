@@ -17,6 +17,7 @@
 #include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <clocale>
@@ -48,7 +49,7 @@ struct Result {
     QString codec, note;
 };
 
-Result render(const ExportSettings& s)
+Result render(const ExportSettings& s, const Timeline& tl = timeline())
 {
     Exporter ex;
     QEventLoop loop;
@@ -60,7 +61,7 @@ Result render(const ExportSettings& s)
         loop.quit();
     });
     QString error;
-    if (!CHECK(ex.start(timeline(), s, &error))) {
+    if (!CHECK(ex.start(tl, s, &error))) {
         std::printf("       %s\n", qPrintable(error));
         return r;
     }
@@ -78,6 +79,17 @@ QJsonObject videoStream(const QString& path)
     p.start("ffprobe", {"-v", "error", "-select_streams", "v:0", "-show_streams", "-of", "json", path});
     p.waitForFinished(30000);
     return QJsonDocument::fromJson(p.readAllStandardOutput()).object().value("streams").toArray().first().toObject();
+}
+
+// Loudest sample of the file's sound in dB (ffmpeg volumedetect), -100 without sound
+double maxVolume(const QString& path)
+{
+    QProcess p;
+    p.start("ffmpeg", {"-hide_banner", "-nostats", "-i", path, "-af", "volumedetect", "-f", "null", "-"});
+    p.waitForFinished(60000);
+    const QRegularExpressionMatch m =
+        QRegularExpression("max_volume: (-?[0-9.]+) dB").match(QString::fromUtf8(p.readAllStandardError()));
+    return m.hasMatch() ? m.captured(1).toDouble() : -100;
 }
 
 RenderJob job(const QString& path, const QString& format, VideoEncoder encoder, int quality = 0)
@@ -237,6 +249,28 @@ void testFallback(const QString& dir)
         CHECK_EQ(videoStream(s.path).value("codec_name").toString(), QString("h264"));
         CHECK(HardwareEncoders::cachedResult(broken, QSize(640, 360)) < 0);
     }
+    // Smart render with a piece to encode (a gap of one frame): the hardware encoder fails at that piece, after the
+    // sound of the copied frames was fetched. The software render fetches the sound again from the start (it was
+    // silent: the sound source stayed paused where the first try stopped)
+    Timeline gap = timeline();
+    for (QVector<Track>* tracks : {&gap.video, &gap.audio}) {
+        Clip c = (*tracks)[0].clips[0];
+        c.id += 10;
+        c.linkId = 2;
+        c.start = kFrames + 1;
+        (*tracks)[0].clips << c;
+    }
+    RenderJob smartJob = job(dir + "/fallback-smart.mp4", "h264", VideoEncoder::Software);
+    smartJob.settings.smartRender = true;
+    ExportSettings smart = RenderQueue::exportSettings(smartJob, kFmt);
+    smart.softwareCodec = smart.videoCodec;
+    smart.videoCodec = broken;
+    const Result fallback = render(smart, gap);
+    CHECK(fallback.ok);
+    CHECK_EQ(fallback.codec, QString("libx264"));
+    const double peak = maxVolume(smart.path);
+    if (!CHECK(peak > -30)) std::printf("       loudest sample %.1f dB (%s)\n", peak, qPrintable(fallback.note));
+
     // Without a software codec to fall back to: fails cleanly
     s.softwareCodec.clear();
     s.path = dir + "/nofallback.mp4";

@@ -6,6 +6,7 @@
 #include "engine/Background.h"
 #include "engine/ProxyManager.h"
 #include "ui/FileManager.h"
+#include "ui/HoverScrub.h"
 
 #include <QDateTime>
 #include <QEvent>
@@ -13,6 +14,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QImageReader>
 #include <QLabel>
@@ -20,6 +22,7 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QPainter>
+#include <QPainterPath>
 #include <QProcess>
 #include <QSettings>
 #include <QSplitter>
@@ -94,6 +97,25 @@ QPixmap placeholder(const QString& label, bool folder = false)
     p.setPen(Theme::textDim);
     p.drawText(pm.rect(), Qt::AlignCenter, label);
     return pm;
+}
+
+// Check mark on the thumbnail: the file is in the Media Pool already (big = list view, the icon is drawn a third)
+void drawPoolMark(QPixmap& pm, bool big)
+{
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const double d = big ? 36 : 18;
+    const QRectF r(pm.width() - d - 4, 4, d, d);
+    p.setPen(QPen(QColor(0x18, 0x18, 0x1b), big ? 3 : 1.5));
+    p.setBrush(Theme::primary);
+    p.drawEllipse(r);
+    QPainterPath check;
+    check.moveTo(r.left() + d * 0.27, r.top() + d * 0.53);
+    check.lineTo(r.left() + d * 0.44, r.top() + d * 0.69);
+    check.lineTo(r.left() + d * 0.74, r.top() + d * 0.34);
+    p.setPen(QPen(Theme::onPrimary, d * 0.13, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(check);
 }
 
 // File list: dragging yields file URLs (Media Pool and timeline take them as if from the file manager)
@@ -202,6 +224,31 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
         if (it->data(kDirRole).toBool()) setFolder(path);
         else emit importRequested({path});
     });
+    // Click on a file: look at it in the Viewer before importing (Ctrl/Shift only select)
+    connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
+        if (!it->data(kDirRole).toBool() && QGuiApplication::keyboardModifiers() == Qt::NoModifier)
+            emit previewRequested(it->data(kPathRole).toString());
+    });
+    m_scrub = new HoverScrub(
+        m_list, kThumb,
+        [](QListWidgetItem* it) {
+            const QString path = it->data(kPathRole).toString();
+            const bool video = !it->data(kDirRole).toBool() && videoExt().contains(QFileInfo(path).suffix().toLower());
+            return video ? ProxyManager::decodeSource(path) : QString();
+        },
+        [this](QListWidgetItem* it, const QImage& picture, double fraction) {
+            if (fraction < 0) {
+                m_hoverPath.clear();
+                m_hoverPixmap = {};
+            } else {
+                m_hoverPath = it->data(kPathRole).toString();
+                m_hoverPixmap = picture.isNull() ? m_shown.value(m_hoverPath) : framed(picture);
+                QPainter p(&m_hoverPixmap); // position in the clip
+                p.fillRect(QRect(0, kThumb.height() - 3, kThumb.width(), 3), QColor(0, 0, 0, 150));
+                p.fillRect(QRect(0, kThumb.height() - 3, int(kThumb.width() * fraction + 0.5), 3), Theme::primary);
+            }
+            updateItem(it);
+        });
     connect(m_list, &QListWidget::customContextMenuRequested, this, &MediaStorage::showFileMenu);
 
     auto* fileArea = new QWidget;
@@ -263,6 +310,7 @@ void MediaStorage::setListMode(bool list)
     m_listMode = list;
     m_thumbBtn->setChecked(!list);
     m_listBtn->setChecked(list);
+    m_scrub->setEnabled(!list); // the list view's icons are too small for it
     if (list) {
         m_list->setViewMode(QListView::ListMode);
         m_list->setIconSize(kListIcon);
@@ -281,6 +329,7 @@ void MediaStorage::setListMode(bool list)
     m_list->setResizeMode(QListView::Adjust);
     m_list->setDragEnabled(true);
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
+    for (QListWidgetItem* it : std::as_const(m_items)) updateItem(it); // pool mark in the size of the view
 }
 
 // Shorten the path from the left: the end (current folder) is what matters
@@ -416,8 +465,11 @@ QStringList MediaStorage::mediaIn(const QString& dir) const
 void MediaStorage::rebuildFiles()
 {
     QStringList selected = selectedFiles();
+    m_scrub->forget();
+    m_hoverPath.clear();
     m_list->clear();
     m_items.clear();
+    m_shown.clear();
     m_thumbQueue.clear();
     if (m_folder.isEmpty()) return;
 
@@ -441,11 +493,12 @@ void MediaStorage::rebuildFiles()
                 queueThumb(path);
             }
         }
-        auto* it = new QListWidgetItem(QIcon(pm), fi.fileName());
+        auto* it = new QListWidgetItem(fi.fileName());
         it->setData(kPathRole, path);
-        it->setToolTip(QDir::toNativeSeparators(path) + "\n" + T("In Media Pool oder Timeline ziehen, Doppelklick importiert"));
         m_list->addItem(it);
         m_items.insert(path, it);
+        m_shown.insert(path, pm);
+        updateItem(it);
         if (selected.contains(path)) it->setSelected(true);
     }
     nextThumb();
@@ -480,6 +533,7 @@ void MediaStorage::showFileMenu(const QPoint& pos)
         QAction* a = menu.addAction(T("Ordnerinhalt in den Media Pool importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
         menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this, [this, dir] { emit folderImportRequested(dir); });
+        menu.addAction(T("Diesen Ordner überwachen…"), this, [this, dir] { emit watchFolderRequested(dir); });
         if (!m_locations.contains(dir))
             menu.addAction(T("Als Speicherort hinzufügen"), this, [this, dir] {
                 m_locations << dir;
@@ -494,6 +548,7 @@ void MediaStorage::showFileMenu(const QPoint& pos)
         if (!m_folder.isEmpty()) {
             menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this,
                            [this, dir = m_folder] { emit folderImportRequested(dir); });
+            menu.addAction(T("Diesen Ordner überwachen…"), this, [this, dir = m_folder] { emit watchFolderRequested(dir); });
             menu.addAction(T("Ordner im Dateimanager öffnen"), this, [dir = m_folder] { FileManager::open(dir); });
         }
     }
@@ -522,6 +577,7 @@ void MediaStorage::showLocationMenu(const QPoint& pos)
         QAction* a = menu.addAction(T("Ordnerinhalt in den Media Pool importieren"), this, [this, media] { emit importRequested(media); });
         a->setEnabled(!media.isEmpty());
         menu.addAction(T("Ordner mit Unterordnern als Bins importieren"), this, [this, dir] { emit folderImportRequested(dir); });
+        menu.addAction(T("Diesen Ordner überwachen…"), this, [this, dir] { emit watchFolderRequested(dir); });
         menu.addAction(T("Im Dateimanager zeigen"), this, [dir] { FileManager::reveal(dir); });
     }
     menu.exec(m_tree->viewport()->mapToGlobal(pos));
@@ -621,5 +677,47 @@ void MediaStorage::nextThumb()
 void MediaStorage::thumbDone(const QString& path, const QPixmap& pm)
 {
     m_thumbs.insert(thumbKey(QFileInfo(path)), pm);
-    if (QListWidgetItem* it = m_items.value(path)) it->setIcon(QIcon(pm));
+    if (QListWidgetItem* it = m_items.value(path)) {
+        m_shown.insert(path, pm);
+        updateItem(it);
+    }
+}
+
+void MediaStorage::updateItem(QListWidgetItem* it)
+{
+    const QString path = it->data(kPathRole).toString();
+    QPixmap pm = path == m_hoverPath ? m_hoverPixmap : m_shown.value(path);
+    QString tip = QDir::toNativeSeparators(path) + "\n"
+                  + T("Klick zeigt die Datei im Viewer, Doppelklick importiert, in Media Pool oder Timeline ziehen");
+    if (inPool(path)) {
+        drawPoolMark(pm, m_listMode);
+        tip += "\n" + T("Schon im Media Pool");
+    }
+    it->setIcon(QIcon(pm));
+    it->setToolTip(tip);
+}
+
+QString MediaStorage::poolKey(const QString& path)
+{
+    const QString clean = QDir::cleanPath(path);
+#ifdef Q_OS_WIN
+    return clean.toLower(); // the same file in another spelling
+#else
+    return clean;
+#endif
+}
+
+void MediaStorage::setPoolFiles(const QStringList& paths)
+{
+    QSet<QString> keys;
+    keys.reserve(paths.size());
+    for (const QString& p : paths) keys.insert(poolKey(p));
+    if (keys == m_inPool) return;
+    m_inPool = std::move(keys);
+    for (QListWidgetItem* it : std::as_const(m_items)) updateItem(it);
+}
+
+bool MediaStorage::inPool(const QString& path) const
+{
+    return m_inPool.contains(poolKey(path));
 }

@@ -14,14 +14,17 @@
 #include "engine/Profiles.h"
 #include "engine/RenderQueue.h"
 #include "engine/TimelineBuilder.h"
+#include "ui/timeline/TimelineView.h"
 
 #include <Mlt.h>
 #include <QApplication>
 #include <QFile>
 #include <QImage>
+#include <QMouseEvent>
 #include <QTemporaryDir>
 #include <QUndoStack>
 #include <clocale>
+#include <cmath>
 #include <cstring>
 
 namespace {
@@ -576,6 +579,119 @@ int testRender(const QString& dir)
     return 0;
 }
 
+void mouse(QWidget& w, QEvent::Type type, QPoint pt, Qt::MouseButtons buttons)
+{
+    QMouseEvent e(type, pt, w.mapToGlobal(pt), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, {});
+    QApplication::sendEvent(&w, &e);
+}
+
+void drag(QWidget& w, QPoint from, QPoint to)
+{
+    mouse(w, QEvent::MouseButtonPress, from, Qt::LeftButton);
+    mouse(w, QEvent::MouseMove, (from + to) / 2, Qt::LeftButton);
+    mouse(w, QEvent::MouseMove, to, Qt::LeftButton);
+    mouse(w, QEvent::MouseButtonRelease, to, Qt::NoButton);
+}
+
+// Ctrl+A selects the subtitles too (not those of a locked track). With clips and subtitles selected together
+// nothing breaks and nothing unexpected goes: copy/cut take the clips, delete takes both, moving and nudging move
+// both in time (one undo step each), with the mouse too
+void testSelectAllMixed()
+{
+    RippleFixture f({{0, 10, 40, "a"}, {0, 60, 90, "b"}}, {{0, 110, 120, "fest"}});
+    QUndoStack* undo = f.p.undoStack();
+    const QString v1 = f.v1(), st1 = f.st(0), st2 = f.st(1);
+    f.ed.selectAll();
+    CHECK(f.sel.ids() == (QSet<int>{f.x, f.y, f.z, f.cueId(0, 0), f.cueId(0, 1)}));
+
+    // Copy/paste: the clipboard holds clips; the subtitles stay as they are
+    f.ed.copySelection();
+    f.ed.paste(300);
+    CHECK_EQ(f.v1(), v1 + " 300-350 350-400 400-450");
+    CHECK_EQ(f.st(0), st1);
+    undo->undo();
+    // Cut: likewise only the clips (Paste would not bring subtitles back)
+    f.ed.selectAll();
+    f.ed.cutSelection();
+    CHECK(f.v1().isEmpty() && f.st(0) == st1);
+    undo->undo();
+    CHECK_EQ(f.v1(), v1);
+
+    // Delete: everything selected in one undo step, the locked track stays
+    int steps = undo->index();
+    f.ed.selectAll();
+    f.ed.deleteSelection();
+    CHECK(f.v1().isEmpty() && f.st(0).isEmpty());
+    CHECK_EQ(f.st(1), st2);
+    CHECK_EQ(undo->index(), steps + 1);
+    undo->undo();
+    CHECK(f.v1() == v1 && f.st(0) == st1);
+
+    // Move: the subtitles go along in time (one undo step), also when a subtitle is moved with clips selected
+    f.ed.selectAll();
+    steps = undo->index();
+    f.ed.moveClips(f.sel.ids().values().toVector(), 20, TrackKind::Video, 0);
+    CHECK_EQ(f.v1(), QString("20-70 70-120 120-170"));
+    CHECK_EQ(f.st(0), QString("30-60:a 80-110:b"));
+    CHECK_EQ(f.st(1), st2);
+    CHECK_EQ(undo->index(), steps + 1);
+    f.ed.moveSubtitles(f.sel.ids().values().toVector(), -40, 0); // not before frame 0: by -20
+    CHECK(f.v1() == v1 && f.st(0) == st1);
+    CHECK_EQ(undo->index(), steps + 2);
+
+    // Nudge (, and .) likewise; nothing selected = no (empty) undo step; subtitles alone move too
+    f.ed.nudgeSelection(-5); // a clip starts at 0
+    CHECK_EQ(undo->index(), steps + 2);
+    f.ed.nudgeSelection(5);
+    CHECK_EQ(f.v1(), QString("5-55 55-105 105-155"));
+    CHECK_EQ(f.st(0), QString("15-45:a 65-95:b"));
+    f.sel.set({f.cueId(0, 0)});
+    f.ed.nudgeSelection(5);
+    CHECK_EQ(f.st(0), QString("20-50:a 65-95:b"));
+    f.sel.clear();
+    steps = undo->index();
+    f.ed.nudgeSelection(5);
+    CHECK_EQ(undo->index(), steps);
+    undo->undo();
+    undo->undo();
+    CHECK(f.v1() == v1 && f.st(0) == st1);
+
+    // Clip-only edits leave the subtitles of the selection alone
+    f.ed.selectAll();
+    f.ed.toggleSelectionEnabled();
+    CHECK(!f.p.timeline().video[0].clips[0].enabled && f.st(0) == st1);
+    f.ed.slipSelection(2);
+    CHECK(f.p.timeline().video[0].clips[0].in == 2 && f.st(0) == st1);
+    // Ripple delete: clips with ripple, the selected subtitles go, the locked track stays
+    f.ed.selectAll();
+    f.ed.rippleDeleteSelection();
+    CHECK(f.v1().isEmpty() && f.st(0).isEmpty() && f.st(1) == st2);
+    while (undo->canUndo()) undo->undo();
+    CHECK(f.v1() == v1 && f.st(0) == st1);
+
+    // Mouse: dragging a clip of the selection takes the subtitles along, dragging a subtitle the clips. One video
+    // track only, so V1 lies right below the subtitle tracks
+    f.p.edit("one video track", [](Timeline& tl) { tl.video.resize(1); });
+    TimelineView tv(&f.ed);
+    tv.resize(1200, 400);
+    tv.show();
+    QApplication::processEvents();
+    const double ppf = tv.view().pxPerFrame;
+    auto x = [&](double frame) { return int(std::lround(TimelineView::kHeaderW + frame * ppf)); };
+    // ST2 at the top (y 30), ST1 below (64), separator, V1 from 104
+    f.ed.selectAll();
+    steps = undo->index();
+    drag(tv, {x(75), 140}, {x(75) + int(std::lround(10 * ppf)), 140});
+    CHECK_EQ(f.v1(), QString("10-60 60-110 110-160"));
+    CHECK_EQ(f.st(0), QString("20-50:a 70-100:b"));
+    CHECK_EQ(f.st(1), st2);
+    CHECK_EQ(undo->index(), steps + 1);
+    CHECK_EQ(f.sel.ids().size(), 5);
+    drag(tv, {x(35), 81}, {x(35) - int(std::lround(10 * ppf)), 81});
+    CHECK(f.v1() == v1 && f.st(0) == st1);
+    CHECK_EQ(undo->index(), steps + 2);
+}
+
 } // namespace
 
 // Transcripts of several speakers (Create Subtitles from Audio, one track per audio track): all visible at once,
@@ -605,6 +721,7 @@ int main(int argc, char** argv)
     testRippleAndSplit();
     testProjectFile();
     testStackedImport();
+    testSelectAllMixed();
     if (!Check::haveFfmpeg()) {
         Check::result();
         return Check::skip("ffmpeg nicht gefunden (Render-Teil)");

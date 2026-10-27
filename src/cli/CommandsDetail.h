@@ -31,8 +31,11 @@ QString tc(int frames, const ProjectFormat& fmt);
 double seconds(int frames, const ProjectFormat& fmt);
 // [from, to) as frames, seconds and timecode
 QJsonObject range(int from, int to, const ProjectFormat& fmt);
-ProjectFormat parseFormat(const QJsonObject& a);
+// width/height/fps of `a` over `f` (the format of a new project's start template)
+ProjectFormat parseFormat(const QJsonObject& a, ProjectFormat f = {});
 QJsonObject formatJson(const ProjectFormat& f);
+// Own import presets for audio streams (`info`, `templates`): mute_mix, rules {title, action, volume_db, track}
+QJsonObject importPresetsJson(const StreamPresets& p);
 
 // ---------- Projects ----------
 
@@ -147,6 +150,7 @@ QColor colorOf(const QJsonValue& v, const QString& what);
 // ---------- Commands on projects and the app (CommandsProject.cpp) ----------
 
 QJsonObject cmdNew(const QJsonObject& a, Context& ctx);
+QJsonObject cmdTemplates(const QJsonObject& a, Context& ctx);
 QJsonObject cmdInfo(const QJsonObject& a, Context& ctx);
 QJsonObject cmdImport(const QJsonObject& a, Context& ctx);
 QJsonObject cmdEdit(const QJsonObject& a, Context& ctx);
@@ -157,6 +161,7 @@ QJsonObject cmdOverview(const QJsonObject& a, Context& ctx);
 QJsonObject cmdCheck(const QJsonObject& a, Context& ctx);
 QJsonObject cmdEffects(const QJsonObject& a, Context& ctx);
 QJsonObject cmdApp(const QJsonObject& a, Context& ctx);
+QJsonObject cmdWatch(const QJsonObject& a, Context& ctx); // CommandsWatch.cpp
 QString presetHelp(); // the app's Deliver presets for the `render` description
 
 // ---------- Analysis (Analysis*.cpp) ----------

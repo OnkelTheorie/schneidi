@@ -88,6 +88,21 @@ QPixmap drawIcon(TimelinePanel::Icon icon, const QColor& c)
         p.drawRoundedRect(QRectF(9, 7.3, 9.5, 5.4), 2.7, 2.7);
         break;
     }
+    case I::Slip: { // [<->] – the clip stays, its content moves inside (like the slip cursor)
+        p.drawRoundedRect(QRectF(2.5, 5, 15, 10), 1.5, 1.5);
+        p.drawLine(QPointF(6, 10), QPointF(14, 10));
+        p.drawPolyline(QPolygonF{{8.2, 7.8}, {6, 10}, {8.2, 12.2}});
+        p.drawPolyline(QPolygonF{{11.8, 7.8}, {14, 10}, {11.8, 12.2}});
+        break;
+    }
+    case I::Slide: { // <-[ ]-> – the clip moves between its neighbours (like the slide cursor)
+        p.drawRoundedRect(QRectF(6.5, 6, 7, 8), 1.2, 1.2);
+        p.drawLine(QPointF(1.5, 10), QPointF(4.8, 10));
+        p.drawLine(QPointF(15.2, 10), QPointF(18.5, 10));
+        p.drawPolyline(QPolygonF{{3.7, 7.8}, {1.5, 10}, {3.7, 12.2}});
+        p.drawPolyline(QPolygonF{{16.3, 7.8}, {18.5, 10}, {16.3, 12.2}});
+        break;
+    }
     }
     return pm;
 }
@@ -123,20 +138,30 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     };
     auto* selectBtn = makeTool(Icon::Select, T("Auswahl-Werkzeug (A)"));
     auto* trimBtn = makeTool(Icon::Trim, T("Trim-Modus (T): Kante = Ripple, Schnitt = Roll, Clip = Slip, Titelleiste = Slide"));
+    auto* slipBtn = makeTool(Icon::Slip, T("Slip-Werkzeug: Clip ziehen verschiebt seinen Inhalt, Lage und Länge bleiben"));
+    auto* slideBtn = makeTool(Icon::Slide, T("Slide-Werkzeug: Clip ziehen verschiebt ihn zwischen seinen Nachbarn"));
     auto* bladeBtn = makeTool(Icon::Blade, T("Klingen-Werkzeug (B)"));
     auto* snapBtn = makeTool(Icon::Snap, T("Snapping an/aus (N)"));
     selectBtn->setChecked(true);
     snapBtn->setChecked(m_view->snapping());
 
+    using Tool = TimelineView::Tool;
+    const QVector<QPair<QToolButton*, Tool>> toolButtons = {
+        {selectBtn, Tool::Select}, {trimBtn, Tool::Trim}, {slipBtn, Tool::Slip}, {slideBtn, Tool::Slide},
+        {bladeBtn, Tool::Blade}};
+    selectBtn->setObjectName("tool_select"); // the ids of the menu actions (tests find the buttons by them)
+    trimBtn->setObjectName("tool_trim");
+    slipBtn->setObjectName("tool_slip");
+    slideBtn->setObjectName("tool_slide");
+    bladeBtn->setObjectName("tool_blade");
     auto* tools = new QButtonGroup(this);
-    tools->addButton(selectBtn);
-    tools->addButton(trimBtn);
-    tools->addButton(bladeBtn);
-    connect(selectBtn, &QToolButton::clicked, m_view, [this] { m_view->setTool(TimelineView::Tool::Select); });
-    connect(trimBtn, &QToolButton::clicked, m_view, [this] { m_view->setTool(TimelineView::Tool::Trim); });
-    connect(bladeBtn, &QToolButton::clicked, m_view, [this] { m_view->setTool(TimelineView::Tool::Blade); });
-    connect(m_view, &TimelineView::toolChanged, this, [=](TimelineView::Tool t) {
-        (t == TimelineView::Tool::Blade ? bladeBtn : t == TimelineView::Tool::Trim ? trimBtn : selectBtn)->setChecked(true);
+    for (const auto& [b, tool] : toolButtons) {
+        tools->addButton(b);
+        connect(b, &QToolButton::clicked, m_view, [this, t = tool] { m_view->setTool(t); });
+    }
+    connect(m_view, &TimelineView::toolChanged, this, [toolButtons](Tool t) {
+        for (const auto& [b, tool] : toolButtons)
+            if (tool == t) b->setChecked(true);
     });
     connect(snapBtn, &QToolButton::toggled, m_view, &TimelineView::setSnapping);
     connect(m_view, &TimelineView::snappingChanged, snapBtn, &QToolButton::setChecked);
@@ -153,9 +178,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(6, 3, 6, 3);
     bar->setSpacing(2);
-    bar->addWidget(selectBtn);
-    bar->addWidget(trimBtn);
-    bar->addWidget(bladeBtn);
+    for (const auto& [b, tool] : toolButtons) bar->addWidget(b);
     auto* sep = new QWidget; // thin separator line like in DaVinci
     sep->setFixedSize(1, 18);
     sep->setStyleSheet(QString("background: %1;").arg(Theme::controlLight.name()));

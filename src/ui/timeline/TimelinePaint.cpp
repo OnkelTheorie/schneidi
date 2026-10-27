@@ -175,7 +175,8 @@ void TimelineView::drawTracks(QPainter& p)
     const Timeline& tl = trimEdit ? *m_trimPreview : m_editor->project()->timeline();
     const auto& sel = m_editor->selection()->ids();
     const QSet<int> dragSet(m_dragIds.begin(), m_dragIds.end());
-    const bool moving = m_drag == Drag::Move;
+    // also while subtitles are dragged: the selected clips move along
+    const bool moving = m_drag == Drag::Move || (m_drag == Drag::CueMove && !m_dragIds.isEmpty());
 
     p.save();
     p.setClipRect(kHeaderW, kRulerH, width() - kHeaderW, height() - kRulerH);

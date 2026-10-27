@@ -35,7 +35,13 @@ constexpr int kChatWidth = 380;
 
 } // namespace
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow()
+{
+    // The project is a child QObject and dies only in ~QWidget, after this destructor: clearing its undo stack there
+    // emits indexChanged into our slots (chatUndoChanged …) on a half-destroyed window (UBSan "downcast", clang)
+    m_project->undoStack()->blockSignals(true);
+    m_project->blockSignals(true);
+}
 
 void MainWindow::buildChat()
 {
@@ -226,7 +232,11 @@ bool MainWindow::sendChat(const QString& text)
     return true;
 }
 
-void MainWindow::liveCommandRunning(bool running, bool ownChat) { m_chatCommand = running && ownChat; }
+void MainWindow::liveCommandRunning(bool running, bool ownChat)
+{
+    m_chatCommand = running && ownChat;
+    m_liveCommand = running;
+}
 
 void MainWindow::chatUndoChanged()
 {

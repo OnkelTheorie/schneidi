@@ -7,6 +7,7 @@
 #include "core/RenderJob.h"
 #include "core/TimelineOps.h"
 #include "engine/Exporter.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/RenderQueue.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
@@ -20,13 +21,17 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
+#include <QPainter>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QUndoStack>
 #include <clocale>
+#include <functional>
 
 namespace {
 
@@ -35,6 +40,13 @@ const RenderJob* job(const Project& p, int id)
     for (const RenderJob& j : p.renderQueue())
         if (j.id == id) return &j;
     return nullptr;
+}
+
+QVector<int> ids(const QVector<RenderJob>& jobs)
+{
+    QVector<int> out;
+    for (const RenderJob& j : jobs) out << j.id;
+    return out;
 }
 
 // ffprobe: "codec_type=video|codec_name=h264|width=..." per stream + duration
@@ -204,6 +216,90 @@ int main(int argc, char** argv)
         CHECK(p.renderQueue().isEmpty());
     }
 
+    // --- Order (dragging jobs): the moved jobs keep their order, the job being rendered stays, saved with the project
+    {
+        QVector<RenderJob> q;
+        for (int i = 1; i <= 5; ++i) {
+            RenderJob j;
+            j.id = i;
+            j.path = QString("/x/%1.mp4").arg(i);
+            q << j;
+        }
+        CHECK_EQ(ids(moveRenderJobs(q, {4}, 2)), (QVector<int>{1, 4, 2, 3, 5}));    // up
+        CHECK_EQ(ids(moveRenderJobs(q, {1}, 4)), (QVector<int>{2, 3, 1, 4, 5}));    // down
+        CHECK_EQ(ids(moveRenderJobs(q, {2}, 0)), (QVector<int>{1, 3, 4, 5, 2}));    // to the end
+        CHECK_EQ(ids(moveRenderJobs(q, {5, 2}, 1)), (QVector<int>{2, 5, 1, 3, 4})); // several: in queue order
+        CHECK_EQ(ids(moveRenderJobs(q, {2, 3}, 3)), (QVector<int>{1, 2, 3, 4, 5})); // onto itself: nothing changes
+        CHECK_EQ(ids(moveRenderJobs(q, {3, 5}, 1, 3)), (QVector<int>{5, 1, 2, 3, 4})); // 3 is rendering: stays
+        CHECK_EQ(ids(moveRenderJobs(q, {3}, 1, 3)), (QVector<int>{1, 2, 3, 4, 5}));
+        CHECK_EQ(ids(moveRenderJobs(q, {9}, 1)), (QVector<int>{1, 2, 3, 4, 5}));    // unknown job
+        CHECK_EQ(ids(moveRenderJobs(q, {1}, 9)), (QVector<int>{2, 3, 4, 5, 1}));    // unknown target: the end
+
+        Project p;
+        RenderQueue queue(&p);
+        RenderQueuePanel panel(&p, &queue);
+        p.setRenderQueue(q);
+        p.markSaved();
+        panel.moveJobs({4, 5}, 1);
+        CHECK_EQ(ids(p.renderQueue()), (QVector<int>{4, 5, 1, 2, 3}));
+        CHECK(p.isModified());
+        auto* list = panel.findChild<QListWidget*>();
+        if (!CHECK(list && list->count() == 5)) return Check::result();
+        CHECK_EQ(list->item(0)->data(Qt::UserRole + 1).toInt(), 4); // the cards in the new order
+        ProjectData back;
+        QString err;
+        CHECK(ProjectFile::fromJson(ProjectFile::toJson(p.data(), "/x/p.schneidi"), "/x/p.schneidi", &back, &err));
+        CHECK_EQ(ids(back.renderQueue), (QVector<int>{4, 5, 1, 2, 3}));
+
+        // Del in the list deletes the selected jobs: the panel's key (deleteAction, bindable as "render_queue_delete")
+        // takes the key before the window's shortcuts (the timeline's Del must not delete clips meanwhile)
+        const auto press = [&](int key, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+            QKeyEvent over(QEvent::ShortcutOverride, key, mods);
+            over.ignore(); // as Qt sends it
+            QApplication::sendEvent(list, &over);
+            QKeyEvent ev(QEvent::KeyPress, key, mods);
+            QApplication::sendEvent(list, &ev);
+            return over.isAccepted();
+        };
+        const auto select = [&](int id) {
+            list->clearSelection();
+            for (int i = 0; i < list->count(); ++i)
+                if (list->item(i)->data(Qt::UserRole + 1).toInt() == id) list->item(i)->setSelected(true);
+        };
+        select(5);
+        CHECK(press(Qt::Key_Delete));
+        CHECK_EQ(ids(p.renderQueue()), (QVector<int>{4, 1, 2, 3}));
+        select(1);
+        CHECK(press(Qt::Key_Backspace));
+        CHECK_EQ(ids(p.renderQueue()), (QVector<int>{4, 2, 3}));
+        panel.deleteAction()->setShortcuts({QKeySequence("Ctrl+D")}); // bound another key (InputBindings does this)
+        select(2);
+        CHECK(!press(Qt::Key_Delete)); // Del is the window's again
+        CHECK_EQ(ids(p.renderQueue()), (QVector<int>{4, 2, 3}));
+        CHECK(press(Qt::Key_D, Qt::ControlModifier));
+        CHECK_EQ(ids(p.renderQueue()), (QVector<int>{4, 3}));
+        CHECK(!press(Qt::Key_A)); // other keys stay the list's
+    }
+
+    // --- File name from the timeline's name: valid on Windows, macOS and Linux
+    {
+        CHECK_EQ(renderFileBaseName("Timeline 1"), QString("Timeline 1"));
+        CHECK_EQ(renderFileBaseName("Intro: Teil 1/2"), QString("Intro_ Teil 1_2"));
+        CHECK_EQ(renderFileBaseName("a<b>c\"d\\e|f?g*h"), QString("a_b_c_d_e_f_g_h"));
+        CHECK_EQ(renderFileBaseName("Tab\there\n"), QString("Tab_here_"));
+        CHECK_EQ(renderFileBaseName("  Ende. . "), QString("Ende"));
+        CHECK_EQ(renderFileBaseName(" ... "), QString("Export"));
+        CHECK_EQ(renderFileBaseName(""), QString("Export"));
+        CHECK_EQ(renderFileBaseName("con"), QString("con_"));
+        CHECK_EQ(renderFileBaseName("NUL.final"), QString("NUL_.final"));
+        CHECK_EQ(renderFileBaseName("COM3"), QString("COM3_"));
+        CHECK_EQ(renderFileBaseName("lpt9"), QString("lpt9_"));
+        CHECK_EQ(renderFileBaseName("COM0"), QString("COM0"));
+        CHECK_EQ(renderFileBaseName("Console"), QString("Console"));
+        CHECK_EQ(renderFileBaseName("Größe – Ünïcödé 🎬"), QString("Größe – Ünïcödé 🎬"));
+        CHECK_EQ(renderFileBaseName(QString(300, 'x')).size(), 200);
+    }
+
     // --- DeliverPanel: presets, own presets, create jobs
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
@@ -332,6 +428,36 @@ int main(int argc, char** argv)
         CHECK_EQ(p.renderQueue().last().id, 3);
     }
 
+    // --- File name = the name of the opened timeline (several timelines), until the user types another one
+    {
+        Project p;
+        DeliverPanel panel(&p);
+        auto* name = panel.findChild<QLineEdit*>("renderName");
+        auto* folder = panel.findChild<QLineEdit*>("renderFolder");
+        if (!CHECK(name && folder)) return Check::result();
+        folder->setText(tmp.path());
+        const QString first = p.sequenceName(p.currentSequence());
+        CHECK_EQ(name->text(), first); // "Timeline 1" as before
+        const int intro = p.addTimeline("Intro: Teil 1/2"); // gets opened
+        CHECK_EQ(p.currentSequence(), intro);
+        CHECK_EQ(name->text(), QString("Intro_ Teil 1_2"));
+        const RenderJob j = panel.makeJob();
+        CHECK_EQ(j.path, QDir(tmp.path()).filePath("Intro_ Teil 1_2.mp4"));
+        CHECK_EQ(j.sequence, intro);
+        p.renameSequence(intro, "Outro");
+        CHECK_EQ(name->text(), QString("Outro"));
+        p.setCurrentSequence(1);
+        CHECK_EQ(name->text(), first);
+        name->setText("Mein Film?"); // typed: stays when another timeline is opened, made valid in the job
+        p.setCurrentSequence(intro);
+        CHECK_EQ(name->text(), QString("Mein Film?"));
+        CHECK_EQ(QFileInfo(panel.makeJob().path).fileName(), QString("Mein Film_.mp4"));
+        name->clear(); // empty: the opened timeline again
+        CHECK_EQ(QFileInfo(panel.makeJob().path).fileName(), QString("Outro.mp4"));
+        p.setCurrentSequence(1);
+        CHECK_EQ(name->text(), first);
+    }
+
     // --- Rendering (small and short)
     if (!Check::haveFfmpeg() || QStandardPaths::findExecutable("ffprobe").isEmpty())
         return Check::skip("ffmpeg/ffprobe nicht gefunden");
@@ -443,6 +569,72 @@ int main(int argc, char** argv)
     CHECK_EQ(order, (QVector<int>{4}));
     CHECK(job(p, 4)->status == RenderStatus::Failed);
 
+    // A finished job's file: double-click and the menu show it in the file manager (signals, the Deliver page passes
+    // them on to FileManager); a failed job has none: double-click loads its settings, the entries are off.
+    // QUEUE_SHOT=<file.png>: the queue with the menu of a finished job
+    {
+        RenderQueuePanel panel(&p, &q);
+        panel.resize(360, 720);
+        panel.show();
+        auto* list = panel.findChild<QListWidget*>();
+        QSignalSpy reveal(&panel, &RenderQueuePanel::revealFileRequested);
+        QSignalSpy open(&panel, &RenderQueuePanel::openFileRequested);
+        QSignalSpy load(&panel, &RenderQueuePanel::loadJobRequested);
+        if (CHECK(list && list->count() == 5)) {
+            emit list->itemDoubleClicked(list->item(0)); // job 1: done
+            CHECK_EQ(reveal.count(), 1);
+            if (!reveal.isEmpty()) CHECK_EQ(reveal.first().first().toString(), a.path);
+            CHECK_EQ(load.count(), 0);
+            emit list->itemDoubleClicked(list->item(3)); // job 4: failed
+            CHECK_EQ(reveal.count(), 1);
+            CHECK_EQ(load.count(), 1);
+            const auto menuOn = [&](int row, const std::function<void(QMenu*)>& look) {
+                list->clearSelection();
+                list->item(row)->setSelected(true);
+                bool seen = false;
+                QTimer timer; // dies with this call: never fires later on a dead `seen`
+                timer.setSingleShot(true);
+                QObject::connect(&timer, &QTimer::timeout, [&] {
+                    if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+                        seen = true;
+                        look(menu);
+                        menu->close();
+                    }
+                });
+                timer.start(200);
+                emit list->customContextMenuRequested(list->visualItemRect(list->item(row)).center());
+                return seen;
+            };
+            CHECK(menuOn(0, [&](QMenu* menu) {
+                if (const QString shot = qEnvironmentVariable("QUEUE_SHOT"); !shot.isEmpty()) {
+                    const QPoint at = panel.mapFromGlobal(menu->pos());
+                    QImage image(QSize(std::max(panel.width(), at.x() + menu->width()),
+                                       std::max(panel.height(), at.y() + menu->height())),
+                                 QImage::Format_RGB32);
+                    image.fill(Qt::black);
+                    QPainter painter(&image);
+                    painter.drawPixmap(0, 0, panel.grab());
+                    painter.drawPixmap(at, menu->grab());
+                    painter.end();
+                    image.save(shot);
+                }
+                QAction* r = menu->findChild<QAction*>("revealJob");
+                QAction* o = menu->findChild<QAction*>("openJob");
+                if (CHECK(r && o && r->isEnabled() && o->isEnabled())) {
+                    r->trigger();
+                    o->trigger();
+                }
+            }));
+            CHECK_EQ(reveal.count(), 2);
+            CHECK_EQ(open.count(), 1);
+            if (!open.isEmpty()) CHECK_EQ(open.first().first().toString(), a.path);
+            CHECK(menuOn(3, [&](QMenu* menu) {
+                QAction* r = menu->findChild<QAction*>("revealJob");
+                CHECK(r && !r->isEnabled());
+            }));
+        }
+    }
+
     // Cancel: running job -> "Cancelled", half file gone, rest stays "Waiting"
     {
         RenderJob big = mk(6, "gross.mp4", "h264", QSize(1920, 1080));
@@ -483,6 +675,90 @@ int main(int argc, char** argv)
         CHECK_EQ(finishedCount, 1);
         CHECK(job(p, 8)->status == RenderStatus::Done);
         CHECK(job(p, 9)->status == RenderStatus::Queued);
+    }
+
+    // Preparing a job (graphics card probe, opening the files, analyses) runs in the background: start() returns at
+    // once, the event loop goes on meanwhile (the window stays usable), the job is "preparing" until its first progress
+    {
+        p.setRenderQueue({mk(13, "prep.mp4", "h264")});
+        int preparing = 0, firstProgress = -1;
+        bool loopWhilePreparing = false;
+        const auto c1 = QObject::connect(&q, &RenderQueue::preparing, [&](int id) { preparing = id; });
+        const auto c2 = QObject::connect(&q, &RenderQueue::progress, [&](int, int percent) {
+            if (firstProgress < 0) firstProgress = percent;
+        });
+        CHECK(q.start());
+        CHECK_EQ(preparing, 13);
+        CHECK(q.isPreparing());
+        CHECK(job(p, 13)->status == RenderStatus::Rendering);
+        QTimer::singleShot(0, &q, [&] { loopWhilePreparing = q.isPreparing(); });
+        CHECK(waitFor(q));
+        CHECK(loopWhilePreparing);
+        CHECK_EQ(firstProgress, 0);
+        CHECK(!q.isPreparing());
+        CHECK(job(p, 13)->status == RenderStatus::Done);
+        QObject::disconnect(c1);
+        QObject::disconnect(c2);
+    }
+
+    // Cancel while preparing: nothing written, the job canceled, the rest waits, nothing keeps running
+    {
+        p.setRenderQueue({mk(14, "prepcancel.mp4", "h264"), mk(15, "prepnext.mp4", "h264")});
+        int finishedCount = 0;
+        const auto c = QObject::connect(&q, &RenderQueue::finished, [&] { ++finishedCount; });
+        CHECK(q.start());
+        CHECK(q.isPreparing());
+        q.cancel();
+        CHECK(!q.isRunning() && !q.isPreparing());
+        CHECK(job(p, 14)->status == RenderStatus::Canceled);
+        CHECK(job(p, 15)->status == RenderStatus::Queued);
+        QEventLoop settle;
+        QTimer::singleShot(300, &settle, &QEventLoop::quit);
+        settle.exec();
+        QObject::disconnect(c);
+        CHECK_EQ(finishedCount, 1);
+        CHECK(!Exporter::anyRunning());
+        CHECK(!QFileInfo::exists(tmp.filePath("prepcancel.mp4")) && !QFileInfo::exists(tmp.filePath("prepnext.mp4")));
+    }
+
+    // Encoder "Auto" in the first job of a session waits for the graphics card probe: in the background too, cancel
+    // works meanwhile, the next start waits again and renders
+    {
+        HardwareEncoders::resetForTests();
+        RenderJob autoJob = mk(16, "probe.mp4", "h264");
+        autoJob.settings.encoder = VideoEncoder::Auto;
+        p.setRenderQueue({autoJob});
+        CHECK(q.start());
+        CHECK(q.isPreparing());
+        q.cancel();
+        CHECK(!q.isRunning());
+        CHECK(job(p, 16)->status == RenderStatus::Canceled);
+        CHECK(q.start({16}));
+        CHECK(waitFor(q));
+        CHECK(HardwareEncoders::probed());
+        CHECK(job(p, 16)->status == RenderStatus::Done);
+        CHECK(QFileInfo(autoJob.path).size() > 0);
+    }
+
+    // Order: "Render all" takes the waiting jobs in the queue's order as it is when the next one starts, so dragging
+    // during a render changes what comes next; the job being rendered cannot be moved
+    {
+        p.setRenderQueue({mk(10, "o1.wav", "wav"), mk(11, "o2.wav", "wav"), mk(12, "o3.wav", "wav")});
+        RenderQueuePanel panel(&p, &q);
+        order.clear();
+        CHECK(q.start());
+        CHECK_EQ(q.currentJob(), 10);
+        panel.moveJobs({10, 12}, 11); // 10 is being rendered: only 12 moves
+        CHECK_EQ(ids(p.renderQueue()), (QVector<int>{10, 12, 11}));
+        panel.moveJobs({10}, 0);
+        CHECK_EQ(ids(p.renderQueue()), (QVector<int>{10, 12, 11}));
+        auto* list = panel.findChild<QListWidget*>();
+        if (CHECK(list && list->count() == 3)) { // its card cannot be dragged, the others can
+            CHECK(!(list->item(0)->flags() & Qt::ItemIsDragEnabled));
+            CHECK(list->item(1)->flags() & Qt::ItemIsDragEnabled);
+        }
+        CHECK(waitFor(q));
+        CHECK_EQ(order, (QVector<int>{10, 12, 11}));
     }
 
     // Output = source file of the timeline (also via another path to it): refused, source stays unchanged

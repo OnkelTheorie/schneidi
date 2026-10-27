@@ -106,6 +106,9 @@ public:
 
 signals:
     void progress(int percent);
+    // After start(): the graph is built (files opened, analyses done) and frames are being rendered. Until then the
+    // export is being prepared in the background.
+    void started();
     void finished(bool ok, const QString& message);
 
 private:

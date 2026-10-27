@@ -27,8 +27,6 @@
 
 namespace {
 
-QByteArray json(const QJsonObject& o) { return QJsonDocument(o).toJson(QJsonDocument::Compact); }
-
 QString header(const QList<QPair<QByteArray, QByteArray>>& h, const QByteArray& name)
 {
     for (const auto& [k, v] : h)

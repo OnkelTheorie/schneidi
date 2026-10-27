@@ -392,7 +392,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
             cleanup();
             QFile::remove(path);
             emit finished(false, error);
+            return;
         }
+        emit started();
     });
     ++g_running; // the render cache waits already
     m_build->start();

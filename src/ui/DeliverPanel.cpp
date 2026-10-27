@@ -11,6 +11,7 @@
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/RenderQueue.h"
+#include "ui/FileManager.h"
 #include "ui/RenderQueuePanel.h"
 
 #include <QApplication>
@@ -90,8 +91,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     presetRow->addWidget(m_preset, 1);
     presetRow->addWidget(m_presetMenu);
 
-    m_name = new QLineEdit("Timeline 1");
+    m_name = new QLineEdit;
     m_name->setObjectName("renderName");
+    m_name->setToolTip(T("Name der Datei. Leer oder unverändert: der Name der geöffneten Timeline"));
     m_folder = new QLineEdit(QDir::toNativeSeparators(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)));
     m_folder->setObjectName("renderFolder");
     auto* browseBtn = new QToolButton;
@@ -168,6 +170,10 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     m_range->addItem(T("In/Out-Bereich"));
     connect(project, &Project::timelineChanged, this, &DeliverPanel::updateRange);
     updateRange();
+    // File name = the opened timeline's name (another timeline opened or renamed: follows, unless typed over)
+    connect(project, &Project::currentSequenceChanged, this, &DeliverPanel::updateName);
+    connect(project, &Project::sequencesChanged, this, &DeliverPanel::updateName);
+    updateName();
     connect(project, &Project::formatChanged, this, &DeliverPanel::updateFormat);
     updateFormat();
 
@@ -258,6 +264,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
                 m_folder->setText(QDir::toNativeSeparators(fi.absolutePath()));
             }
     });
+
+    connect(m_queuePanel, &RenderQueuePanel::revealFileRequested, this, [](const QString& path) { FileManager::reveal(path); });
+    connect(m_queuePanel, &RenderQueuePanel::openFileRequested, this, [](const QString& path) { FileManager::open(path); });
 
     reloadPresets();
     selectPreset(0); // YouTube 1080p
@@ -536,6 +545,14 @@ void DeliverPanel::updateEncoders()
                                             "Klappt einer nicht, rechnet der Prozessor."));
 }
 
+void DeliverPanel::updateName()
+{
+    const QString name = renderFileBaseName(m_project->sequenceName(m_project->currentSequence()));
+    const QString typed = m_name->text().trimmed();
+    if (typed.isEmpty() || typed == m_autoName) m_name->setText(name);
+    m_autoName = name;
+}
+
 void DeliverPanel::updateRange()
 {
     // Range only selectable if In or Out is set; then preselected automatically
@@ -599,7 +616,6 @@ RenderJob DeliverPanel::makeJob() const
     job.settings = settings();
     const RenderFormatInfo& f = renderFormat(job.settings.format);
     QString name = m_name->text().trimmed();
-    if (name.isEmpty()) name = "Export";
     const QString ext = QString(".") + f.extension;
     // Replace a different extension (e.g. .mp4 after switching to WAV)
     for (const RenderFormatInfo& other : renderFormats())
@@ -607,6 +623,8 @@ RenderJob DeliverPanel::makeJob() const
             name.chop(int(qstrlen(other.extension)) + 1);
             break;
         }
+    // Empty: the timeline's name. Typed names too: no characters a file system refuses (Windows: : ? * …)
+    name = renderFileBaseName(name.isEmpty() ? m_project->sequenceName(m_project->currentSequence()) : name);
     job.path = QDir(QDir::fromNativeSeparators(m_folder->text().trimmed())).absoluteFilePath(name + ext);
     const int idx = currentPreset();
     if (idx >= 0 && idx < m_presets.size()) job.preset = m_presets[idx].name;

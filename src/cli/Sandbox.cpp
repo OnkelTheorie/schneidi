@@ -244,6 +244,7 @@ void checkProject(const Project& p)
     if (s.root.isEmpty()) return;
     QStringList files;
     for (const MediaInfo& m : p.media()) files << m.path;
+    for (const WatchFolder& w : p.watchFolders()) files << w.path; // `watch` would list and import from there
     for (const Sequence& q : p.sequences())
         for (TrackKind k : {TrackKind::Video, TrackKind::Audio})
             for (const Track& t : q.timeline.tracks(k))
