@@ -724,9 +724,11 @@ void MainWindow::buildActions()
                                                   T("Render-Warteschlange"), "render_queue", QKeySequence(Qt::Key_Delete),
                                                   QKeySequence(Qt::Key_Backspace));
     // Panels with items of their own: the keys that remove timeline clips do nothing there (Delete on a Media Pool
-    // clip, an effect or a Media Storage file never deletes the clips selected in the timeline)
+    // clip, an effect, a Media Storage file, in the transcript, on a render job or an export check never deletes the
+    // clips selected in the timeline)
     const QStringList removing{"delete", "delete_alt", "ripple_delete", "ripple_delete_alt", "cut"};
-    for (QWidget* panel : std::initializer_list<QWidget*>{m_mediaPool, m_storage, m_effects})
+    for (QWidget* panel : std::initializer_list<QWidget*>{m_mediaPool, m_storage, m_effects, m_transcript, m_deliver,
+                                                          m_deliver->queuePanel()})
         InputBindings::instance().shieldWindowKeys(panel, removing);
 
     InputBindings::instance().saveIfIncomplete();
