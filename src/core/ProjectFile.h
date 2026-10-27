@@ -6,6 +6,7 @@
 #include "core/RenderJob.h"
 #include "core/StreamPresets.h"
 #include "core/Types.h"
+#include "core/WatchFolders.h"
 
 #include <QJsonObject>
 #include <QLockFile>
@@ -33,6 +34,11 @@ struct ProjectData {
     bool fixedFrameRate = false;
     // The project's own import presets for audio streams (optional; none = those of the settings, all projects)
     std::optional<StreamPresets> importPresets;
+    // Watch folders (core/WatchFolders.h, optional): what is watched, and the files they brought in (the newest
+    // WatchFolders::kLogSize) with the revision of the newest one
+    QVector<WatchFolder> watchFolders;
+    QVector<WatchArrival> watchLog;
+    int watchRevision = 0;
 };
 
 namespace ProjectFile {

@@ -109,6 +109,9 @@ public:
     // in test runs); manual = Help › Check for Updates… (also says "up to date" or why it failed)
     void startUpdateCheck();
     void checkForUpdates(bool manual);
+    // Watch folders of the open project (MainWindowWatch.cpp): File › Watch Folders…, the watcher
+    void watchFoldersDialog();
+    class FolderWatch* folderWatch() const { return m_folderWatch; }
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -352,4 +355,8 @@ private:
         bool broken = false;
         bool pending = false;
     } m_review;
+
+    void setupWatchFolders(); // after the layout (Media Pool, Media Storage)
+    class FolderWatch* m_folderWatch = nullptr;
+    bool m_liveCommand = false; // a command of an AI runs in the app (watch folders wait with their import)
 };

@@ -155,6 +155,12 @@ target_link_libraries(test_blur_fill PRIVATE schneidi_cli_lib)
 schneidi_test(test_accents) # zoom punch / flash / shake as keyframes (op 'accent', clip menu), param zoom
 target_link_libraries(test_accents PRIVATE schneidi_cli_lib)
 # Speed brake: alone (parallel tests would distort the times), baseline per machine in data/speed-baseline.json
+# Watch folders: rules, project, `watch` command, schneidi-cli (--follow with a file written in chunks), live, app watcher
+schneidi_test(test_watch_folders)
+target_link_libraries(test_watch_folders PRIVATE schneidi_cli_lib)
+target_compile_definitions(test_watch_folders PRIVATE SCHNEIDI_CLI="$<TARGET_FILE:schneidi-cli>"
+                           SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
+add_dependencies(test_watch_folders schneidi-cli)
 schneidi_test(test_speed)
 target_compile_definitions(test_speed PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 set_tests_properties(test_speed PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)

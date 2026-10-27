@@ -972,9 +972,27 @@ void MediaPool::updateItem(const QString& path)
             tip += "\n" + T("%1 Audiospuren: %2").arg(n).arg(streams.join(", "));
         }
     }
+    if (m_fresh.contains(path)) { // new from a watch folder (markFresh)
+        p.setPen(QPen(Theme::primary, 3));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(pm.rect()).adjusted(1.5, 1.5, -1.5, -1.5));
+        tip += "\n" + T("Neu aus einem überwachten Ordner");
+    }
     p.end();
     item->setIcon(QIcon(pm));
     item->setToolTip(tip);
+}
+
+void MediaPool::markFresh(const QStringList& paths)
+{
+    for (const QString& path : paths) {
+        m_fresh.insert(path);
+        updateItem(path);
+    }
+    QTimer::singleShot(10000, this, [this, paths] {
+        for (const QString& path : paths)
+            if (m_fresh.remove(path)) updateItem(path);
+    });
 }
 
 void MediaPool::updateProxyStatus()
@@ -1184,6 +1202,8 @@ void MediaPool::showBinMenu(const QPoint& pos)
         menu.addAction(T("Bin umbenennen"), this, [this, it] { m_bins->editItem(it); });
         menu.addAction(T("Bin entfernen"), this, [this, id] { removeBin(id); });
     }
+    menu.addSeparator();
+    menu.addAction(T("Ordner überwachen…"), this, [this, id] { emit watchFolderRequested(id); });
     menu.exec(m_bins->viewport()->mapToGlobal(pos));
 }
 

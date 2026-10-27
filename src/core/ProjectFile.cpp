@@ -681,6 +681,28 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         root["fixedFormat"] = fixed;
     }
     if (data.importPresets) root["importPresets"] = data.importPresets->toJson(); // optional
+    // Watch folders (optional, absent in old files; older versions ignore them): folder also relative to the project
+    // like media, so a project moved together with its recording folder keeps watching it
+    if (!data.watchFolders.isEmpty()) {
+        QJsonArray watches;
+        for (const WatchFolder& w : data.watchFolders) {
+            QJsonObject o{{"path", w.path}, {"relPath", projectDir.relativeFilePath(w.path)},
+                          {"types", QJsonArray::fromStringList(WatchFolders::typeNames(w))}};
+            if (w.subfolders) o["subfolders"] = true;
+            if (w.bin != 0) o["bin"] = w.bin;
+            if (w.since.isValid()) o["since"] = w.since.toUTC().toString(Qt::ISODateWithMs);
+            if (!w.ignored.isEmpty()) o["ignored"] = QJsonArray::fromStringList(w.ignored);
+            watches << o;
+        }
+        root["watchFolders"] = watches;
+    }
+    if (data.watchRevision > 0) {
+        QJsonArray files;
+        for (const WatchArrival& a : data.watchLog)
+            files << QJsonObject{{"revision", a.revision}, {"path", a.path}, {"folder", a.folder},
+                                 {"time", a.time.toUTC().toString(Qt::ISODateWithMs)}};
+        root["watchLog"] = QJsonObject{{"revision", data.watchRevision}, {"files", files}};
+    }
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
 
@@ -867,6 +889,32 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.fixedFrameRate = fixed.value("frameRate").toBool();
     if (root.value("importPresets").isObject())
         d.importPresets = StreamPresets::fromJson(root.value("importPresets").toObject());
+    for (const QJsonValue& v : root.value("watchFolders").toArray()) {
+        const QJsonObject o = v.toObject();
+        WatchFolder w;
+        w.path = resolvePath(o, projectDir);
+        if (w.path.isEmpty() || WatchFolders::indexOf(d.watchFolders, w.path) >= 0) continue;
+        w.subfolders = o.value("subfolders").toBool();
+        QStringList types;
+        for (const QJsonValue& t : o.value("types").toArray()) types << t.toString();
+        if (o.contains("types") && !WatchFolders::setTypes(w, types)) continue; // nothing it knows: not a watch
+        w.bin = std::max(0, o.value("bin").toInt()); // a missing bin is set to Master by Project::load
+        w.since = QDateTime::fromString(o.value("since").toString(), Qt::ISODateWithMs);
+        for (const QJsonValue& f : o.value("ignored").toArray())
+            if (!f.toString().isEmpty()) w.ignored << f.toString();
+        d.watchFolders << w;
+    }
+    const QJsonObject watchLog = root.value("watchLog").toObject();
+    d.watchRevision = std::max(0, watchLog.value("revision").toInt());
+    for (const QJsonValue& v : watchLog.value("files").toArray()) {
+        const QJsonObject o = v.toObject();
+        const WatchArrival a{o.value("revision").toInt(), o.value("path").toString(), o.value("folder").toString(),
+                             QDateTime::fromString(o.value("time").toString(), Qt::ISODateWithMs)};
+        if (a.revision > 0 && a.revision <= d.watchRevision && !a.path.isEmpty()) d.watchLog << a;
+    }
+    std::sort(d.watchLog.begin(), d.watchLog.end(),
+              [](const WatchArrival& a, const WatchArrival& b) { return a.revision < b.revision; });
+    if (d.watchLog.size() > WatchFolders::kLogSize) d.watchLog.remove(0, d.watchLog.size() - WatchFolders::kLogSize);
 
     *data = d;
     return true;

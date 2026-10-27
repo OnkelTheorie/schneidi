@@ -466,6 +466,7 @@ QString AiChat::toolLine(const QString& tool, const QJsonObject& args)
         {"new", N_("Legt ein Projekt an")},             {"import", N_("Importiert")},
         {"backups", N_("Sieht sich die Sicherungen an")}, {"restore", N_("Stellt einen gesicherten Stand her")},
         {"templates", N_("Sieht sich die Startvorlagen an")},
+        {"watch", N_("Sieht in überwachten Ordnern nach")},
     };
     QString line;
     if (tool == "edit") line = T("Bearbeitet: %1").arg(opsOf(args));

@@ -338,6 +338,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     });
     updateViewer();
     setupMulticam();
+    setupWatchFolders();
     connect(m_storage, &MediaStorage::importRequested, m_mediaPool, &MediaPool::importFiles);
     connect(m_storage, &MediaStorage::folderImportRequested, m_mediaPool, &MediaPool::importFolder);
     connect(m_storage, &MediaStorage::previewRequested, this, &MainWindow::previewFile);

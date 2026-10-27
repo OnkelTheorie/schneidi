@@ -142,6 +142,19 @@ public:
     const std::optional<StreamPresets>& importPresets() const { return m_importPresets; }
     void setImportPresets(const std::optional<StreamPresets>& presets);
     StreamPresets effectiveImportPresets() const { return m_importPresets ? *m_importPresets : StreamPresets::load(); }
+    // Watch folders (core/WatchFolders.h): new media files of these folders come into the Media Pool on their own.
+    // Setting them up is not in the undo history (like the render queue), but counts as a change.
+    const QVector<WatchFolder>& watchFolders() const { return m_watchFolders; }
+    void setWatchFolders(const QVector<WatchFolder>& list);
+    // The files watch folders brought in (the newest WatchFolders::kLogSize, oldest first); watchRevision() = the
+    // revision of the newest one (0 = none yet), it only counts up
+    const QVector<WatchArrival>& watchLog() const { return m_watchLog; }
+    int watchRevision() const { return m_watchRevision; }
+    // New files of watch folders into the Media Pool (in their watch's bin) as one undo step; every file gets the next
+    // revision in the watch log. Files already in the pool are left out. Undo takes them out of the pool again and
+    // puts them on their watch's `ignored` list (a watch does not bring them back). Returns the arrivals.
+    QVector<WatchArrival> addWatchedMedia(const QVector<WatchImport>& files);
+    void applyWatchedMedia(const QVector<WatchImport>& files, bool in); // only for undo (in = into the pool)
 
     // Save/load (.schneidi). load() clears the undo history like a freshly opened project.
     ProjectData data() const;
@@ -166,6 +179,7 @@ signals:
     void modifiedChanged(bool modified);
     void renderQueueChanged();
     void importPresetsChanged(); // own import presets set/removed, or another project loaded
+    void watchFoldersChanged(); // the list of watch folders (also after load())
 
 private:
     ProjectFormat m_format;
@@ -188,4 +202,7 @@ private:
     void editPool(const QString& text, const std::function<void(PoolState&)>& fn);
     void sanitizePool(); // references to missing bins -> Master, resolve parent cycles
     bool m_mediaDirty = false;
+    QVector<WatchFolder> m_watchFolders;
+    QVector<WatchArrival> m_watchLog;
+    int m_watchRevision = 0;
 };

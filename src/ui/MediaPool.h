@@ -72,6 +72,8 @@ public:
     QVector<KeyAction> keyActions() const;
     // do not save view/sorting in the settings (test runs)
     void setSaveSettings(bool on) { m_saveSettings = on; }
+    // New from a watch folder: drawn with a frame in the accent colour for a few seconds
+    void markFresh(const QStringList& paths);
 
     // right-click menus "Clip color" and "Flags" (also in the timeline) for the clips of these media
     static void addClipColorMenu(QMenu* menu, Project* project, const QStringList& paths);
@@ -97,6 +99,8 @@ signals:
     void subtitleFilesImported(const QStringList& paths);
     // Right-click "Create Multicam Clip Using Selected Clips" (like DaVinci): the main window asks for name and sync
     void multicamRequested(const QStringList& paths);
+    // Right-click on a bin "Watch Folder…": a folder whose new files come into this bin on their own
+    void watchFolderRequested(int bin);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* e) override;
@@ -152,4 +156,5 @@ private:
     bool m_sortAscending = true;
     bool m_saveSettings = true;
     bool m_rebuildQueued = false;
+    QSet<QString> m_fresh; // markFresh
 };

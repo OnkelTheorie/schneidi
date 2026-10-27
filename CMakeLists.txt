@@ -103,6 +103,7 @@ add_library(schneidi_lib STATIC
     src/core/Stutter.h            src/core/Stutter.cpp
     src/core/ContactSheet.h       src/core/ContactSheet.cpp
     src/core/PoolFilter.h         src/core/PoolFilter.cpp
+    src/core/WatchFolders.h       src/core/WatchFolders.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
     src/engine/Background.h       src/engine/Background.cpp
@@ -176,6 +177,7 @@ add_library(schneidi_lib STATIC
     src/app/MainWindowChat.cpp
     src/app/MainWindowMulticam.cpp src/app/MainWindowExchange.cpp
     src/app/MainWindowAudio.cpp
+    src/app/MainWindowWatch.cpp
     src/app/KeyBindingsDialog.h   src/app/KeyBindingsDialog.cpp
     src/app/ProjectSettingsDialog.h src/app/ProjectSettingsDialog.cpp
     src/app/ClipSpeedDialog.h src/app/ClipSpeedDialog.cpp
@@ -192,6 +194,8 @@ add_library(schneidi_lib STATIC
     src/app/DynamicsDialog.h src/app/DynamicsDialog.cpp
     src/app/TimelineExportDialog.h src/app/TimelineExportDialog.cpp
     src/app/ContactSheetDialog.h src/app/ContactSheetDialog.cpp
+    src/app/FolderWatch.h src/app/FolderWatch.cpp
+    src/app/WatchFoldersDialog.h src/app/WatchFoldersDialog.cpp
     src/app/Log.h                 src/app/Log.cpp
     src/app/CrashReport.h         src/app/CrashReport.cpp
 
@@ -273,6 +277,7 @@ target_link_libraries(schneidi PRIVATE schneidi_lib schneidi_cli_lib) # live con
 # Command line + MCP server (no window): for scripts and AIs, see src/cli/main.cpp
 add_library(schneidi_cli_lib STATIC
     src/cli/Commands.h src/cli/Commands.cpp src/cli/CommandsDetail.h src/cli/CommandsProject.cpp
+    src/cli/CommandsWatch.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
     src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp

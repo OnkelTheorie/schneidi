@@ -589,8 +589,8 @@ const QVector<Command>& commands()
                             "(\"all\" = every op; without: only what each op is for)"}}, cmdHelp},
         {"guide", "How to edit well with schneidi: the workflow (look at the material, small steps, check the render) "
                   "and how-tos per task (highlight reel, talking head, short/9:16, ad, subtitles, color, sound, "
-                  "several cameras, export, checking a render). Read it first if you have not edited with schneidi "
-                  "before; without a topic: the main guide and the list of topics.",
+                  "several cameras, export, checking a render, automation with watch folders). Read it first if you "
+                  "have not edited with schneidi before; without a topic: the main guide and the list of topics.",
          {{"topic", T::String, "one task guide, e.g. \"highlights\" or \"ad\" (see 'topics')", false, true}},
          cmdGuide},
         {"new", "Create a new empty project (.schneidi), optionally with media already in the media pool. It starts "
@@ -618,7 +618,8 @@ const QVector<Command>& commands()
         {"info", "Show a project: format, media, its timelines and one timeline's tracks and clips (ids, positions, "
                  "source ranges). Each track shows its header and mixer state when not default: name, color, muted, "
                  "solo, hidden, locked; audio tracks volume_db, pan, compressor, eq. 'master': volume_db, limiter "
-                 "(on/off), limiter_db (ceiling). To check such settings after an edit, summary:true is enough.",
+                 "(on/off), limiter_db (ceiling). To check such settings after an edit, summary:true is enough. 'watch': "
+                 "watched folders and the revision of the newest file they brought in (see `watch`).",
          {{"project", T::Path, "project file", true, true},
           {"summary", T::Boolean, "short form: length, counts of clips/tracks/markers, no clip list (track states and "
                                   "master stay)"},
@@ -678,6 +679,31 @@ const QVector<Command>& commands()
           {"generate", T::Boolean, "proxies: start generating missing ones (default true; false = only show the state)"},
           {"path", T::Path, "save: file for a project that was never saved (a new .schneidi file, never overwrites)"}},
          cmdApp},
+        {"watch", "Watch folders: new media files in a folder come into the project's media pool on their own (a screen "
+                  "recorder's or game clip tool's output, renders of another program, a pipeline that drops "
+                  "recordings). Nothing is watched unless you add a folder. Without add/remove/list: one pass - "
+                  "imports the files that are new and complete (unchanged for settle_s, readable; still recording "
+                  "= 'pending', look again later) and answers them in 'new' (with their length and bin). The app "
+                  "watches the folders itself while it has the project open (one undo step per batch); 'revision' "
+                  "counts every file a watch folder brought in, so 'since' with the revision of your last answer "
+                  "shows what arrived since (also what the app took in). Command line: --follow keeps running and "
+                  "prints one JSON line per new file (react to it: `highlights`, `edit`, `render`).",
+         {{"project", T::Path, "project file or \"@app\"", true, true},
+          {"add", T::Path, "folder to watch from now on (again: change its settings)"},
+          {"bin", T::String, "with add: media pool bin for its files, e.g. \"Recordings\" or \"Clips/Raw\" (created if "
+                             "missing; default: Master)"},
+          {"subfolders", T::Boolean, "with add: also files in subfolders"},
+          {"types", T::String, "with add: which media, comma list of video, audio, image (default all)"},
+          {"existing", T::Boolean, "with add: also import the files that are in the folder already (default: only "
+                                   "new ones)"},
+          {"remove", T::Path, "stop watching this folder (imported files stay)"},
+          {"list", T::Boolean, "only list the watched folders and the revision, import nothing"},
+          {"since", T::Integer, "'new' = every file watch folders brought in after this revision (default: what this "
+                                "pass imported)"},
+          {"settle_s", T::Number, "seconds a file must stay unchanged to count as complete (default 3; more for slow "
+                                  "network folders)"},
+          {"follow", T::Boolean, "command line only: keep running, one JSON line per new file (stop with Ctrl+C)"}},
+         cmdWatch},
         {"render", "Render the project timeline to a video, animated GIF, image sequence or audio file.",
          {{"project", T::Path, "project file", true, true},
           {"out", T::Path, "output file (extension added if missing)", true},
@@ -939,6 +965,8 @@ const QVector<Command>& commands()
 bool runsInApp(const Command& cmd, const QJsonObject& args)
 {
     if (cmd.name == "app" || cmd.name == "import" || cmd.name == "restore") return true;
+    // A `watch` pass or setting folders up changes the project; follow only starts passes (each one goes there)
+    if (cmd.name == "watch") return !args["list"].toBool() && !args["follow"].toBool();
     return cmd.name == "edit" && !args["dry_run"].toBool();
 }
 
