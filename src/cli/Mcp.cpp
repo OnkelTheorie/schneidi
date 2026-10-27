@@ -174,8 +174,15 @@ QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& 
     QJsonObject out;
     try {
         testHooks(name, ctx.progress);
-        QJsonObject result = execute(*cmd, normalize(*cmd, params["arguments"].toObject()), ctx);
+        QJsonObject args = params["arguments"].toObject();
+        const bool appProject = defaultToAppProject(*cmd, args);
+        QJsonObject result = execute(*cmd, normalize(*cmd, args), ctx);
         result = Sandbox::mapBack(result).toObject(); // paths as the client knows them (--map)
+        if (appProject) {
+            QJsonArray notes = result["notes"].toArray();
+            notes << "no 'project' given: worked on \"@app\", the project open in the app (give it in every call)";
+            result["notes"] = notes;
+        }
         out = toolResult(result);
         QJsonArray content = out["content"].toArray();
         for (const QImage& img : ctx.images)

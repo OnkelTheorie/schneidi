@@ -5,10 +5,11 @@
 // outside are switched off; what the provider gets (key header, guide in the system prompt, tools, the thinking block
 // sent back unchanged, tool results, pictures of `frames` as a user message after the tool answers); review mode
 // (accept = one undo step, discard = all back and the AI is told, editing meanwhile keeps the single steps, a file of a
-// watch folder waits until the user has chosen); what the user changed between two answers comes with the next
-// request (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on, tool calls it wrote as text are run; errors
-// (bad key, overloaded then fine, no server), stopping a request, test runs that never send; the chat section in
-// Settings › AI (test connection, model list, key stored).
+// watch folder waits until the user has chosen); what the user changed between two answers comes with the next request
+// (clips added, changed, removed); an empty answer of an OpenAI-compatible model is asked once to go on, tool calls it
+// wrote as text are run, a call without a project works on the open one; errors (bad key, overloaded then fine, no
+// server), stopping a request, test runs that never send; the chat section in Settings › AI (test connection, model
+// list, key stored).
 // AI_CHAT_DUMP=<folder>: ai-setup.png, ai-conversation.png, ai-approval.png, ai-window.png, ai-settings.png.
 
 #include "check.h"
@@ -657,6 +658,19 @@ void test(const QString& dir)
         for (const AiChat::Entry& e : chat->entries()) CHECK(!e.text.contains("\"arguments\""));
         if (const AiChat::Entry* a = lastOf(chat, AiChat::Entry::Kind::Assistant); CHECK(a))
             CHECK_EQ(a->text, QString("Zwei Clips."));
+    }
+
+    // ---- A call without a project (small models forget it): the chat's tools take the open project, with a note ----
+    {
+        fake.script = {openAiTool("call_np", "info", {{"summary", true}}), openAiText("Ok.")};
+        const int sent = int(fake.requests.size());
+        panel->sendText("Wie lang ist die Timeline?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 2)) {
+            const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
+            CHECK(answer.contains("\"ok\":true"));
+            CHECK(answer.contains("no 'project' given: worked on \\\"@app\\\""));
+        }
     }
 
     // ---- Errors ----
