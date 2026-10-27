@@ -84,8 +84,11 @@ public:
     MemoryRelease::Activity activity() const;
 
     MediaInfo probe(const QString& path);
-    // Same without an Engine instance: lengths count in the frame rate of `format`
+    // Same without an Engine instance: lengths count in the frame rate of `format`. Reads the file's header itself
+    // (engine/MediaProbe, ~1 ms); still images and what it cannot decide through an MLT producer (probeMlt)
     static MediaInfo probe(const ProjectFormat& format, const QString& path);
+    // The same through an MLT producer (0.1-0.5 s per file): probe's fallback and the reference of test_media_probe
+    static MediaInfo probeMlt(const ProjectFormat& format, const QString& path);
     // Timecode of the file's first frame ("01:00:00:00", from cameras and other editors' renders); empty = none
     static QString startTimecode(const QString& path);
     // Width / height of the file's picture as the timeline shows it (pixel aspect, rotation), 0 = none/unreadable.
