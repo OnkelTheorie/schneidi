@@ -26,6 +26,7 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <functional>
+#include <utility>
 
 namespace {
 
@@ -108,7 +109,8 @@ void testDialog(const QString& folder)
                     const QTreeWidgetItem* it = list->topLevelItem(i);
                     rows << it->text(0) + "|" + it->text(1) + "|" + it->text(2);
                 }
-            if (const QByteArray dump = qgetenv("PROXY_CLEANUP_DUMP"); !dump.isEmpty()) {
+            static bool dumped = false; // the first one (two files listed)
+            if (const QByteArray dump = qgetenv("PROXY_CLEANUP_DUMP"); !dump.isEmpty() && !std::exchange(dumped, true)) {
                 QApplication::processEvents();
                 w->grab().save(QString::fromLocal8Bit(dump));
             }
@@ -307,6 +309,8 @@ int main(int argc, char** argv)
     // Sizes in the UI language
     CHECK(!ProxyCleanup::sizeText(3LL * 1024 * 1024 * 1024 / 2).isEmpty());
     CHECK(ProxyCleanup::sizeText(3LL * 1024 * 1024 * 1024 / 2).contains("1"));
+    CHECK_EQ(ProxyCleanup::sizeText(2000), QString("2 KB")); // a small note or leftover: not "0,0 MB"
+    CHECK_EQ(ProxyCleanup::sizeText(0), QString("0 KB"));
     for (const auto r : {ProxyCleanup::Reason::Missing, ProxyCleanup::Reason::Changed, ProxyCleanup::Reason::OtherSize,
                          ProxyCleanup::Reason::Unused, ProxyCleanup::Reason::Unknown, ProxyCleanup::Reason::Leftover}) {
         CHECK(!ProxyCleanup::reasonText(r).isEmpty());

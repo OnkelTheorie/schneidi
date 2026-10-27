@@ -9,7 +9,6 @@
 //      (the files go one after the other on V1/A1, the same again half a clip later on V2 at 60 % opacity, zoomed)
 #include "check.h"
 
-#include "engine/Bundle.h"
 #include "engine/Engine.h"
 #include "engine/Exporter.h"
 #include "engine/MediaCache.h"
@@ -28,6 +27,7 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 
 #ifdef __GLIBC__
 #include <malloc.h>
@@ -52,29 +52,50 @@ double procMb(const char* key)
     return -1;
 }
 
-// mlt_pool_stat() only logs (verbose level): catch its summary line
+// mlt_pool_stat() only logs (verbose level): our log callback catches its summary line and passes everything else on
+// to stderr like MLT's own (it stays installed: MLT has no getter for the previous one)
 qint64 g_poolAllocated = -1, g_poolUsed = -1;
-void poolLog(void*, int, const char* fmt, va_list args)
+bool g_catchPool = false;
+void poolLog(void*, int level, const char* fmt, va_list args)
 {
-    char buf[512];
+    char buf[1024];
     std::vsnprintf(buf, sizeof buf, fmt, args);
-    static const QRegularExpression re("allocated (\\d+) bytes, used (\\d+) bytes");
-    if (const auto m = re.match(QString::fromLatin1(buf)); m.hasMatch()) {
-        g_poolAllocated = m.captured(1).toLongLong();
-        g_poolUsed = m.captured(2).toLongLong();
+    if (g_catchPool) {
+        long long allocated = 0, used = 0;
+        if (const char* at = std::strstr(buf, "allocated ");
+            at && std::sscanf(at, "allocated %lld bytes, used %lld bytes", &allocated, &used) == 2) {
+            g_poolAllocated = allocated;
+            g_poolUsed = used;
+        }
+        return;
     }
+    if (level <= mlt_log_get_level()) std::fputs(buf, stderr);
 }
 
 void poolStat(double* allocatedMb, double* usedMb)
 {
+    *allocatedMb = *usedMb = 0;
+    if (!mlt_factory_repository()) return; // the pools exist only after Mlt::Factory::init (mlt_pool_stat crashes)
     const int level = mlt_log_get_level();
     mlt_log_set_callback(poolLog);
+    g_catchPool = true;
     mlt_log_set_level(MLT_LOG_VERBOSE);
     mlt_pool_stat();
     mlt_log_set_level(level);
-    Bundle::configureMltLogging(); // MLT's own callback back
+    g_catchPool = false;
     *allocatedMb = g_poolAllocated / 1048576.0;
     *usedMb = g_poolUsed / 1048576.0;
+}
+
+// glibc's heap: in use by allocations and free but still held by the process (malloc_trim gives the latter back)
+void heapStat(double* usedMb, double* freeMb)
+{
+    *usedMb = *freeMb = -1;
+#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+    const struct mallinfo2 mi = mallinfo2();
+    *usedMb = (mi.uordblks + mi.hblkhd) / 1048576.0;
+    *freeMb = mi.fordblks / 1048576.0;
+#endif
 }
 
 bool g_auto = false; // --auto: the app's IdleRelease runs, every phase is measured after this many idle ms
@@ -83,10 +104,11 @@ constexpr int kAutoIdleMs = 6000;
 void snap(const char* label)
 {
     if (g_auto) wait(kAutoIdleMs);
-    double alloc = 0, used = 0;
+    double alloc = 0, used = 0, heapUsed = 0, heapFree = 0;
     poolStat(&alloc, &used);
-    std::printf("%-34s RSS %7.0f MB  (peak %7.0f)  pool %6.0f MB allocated, %6.0f in use\n", label, procMb("VmRSS:"),
-                procMb("VmHWM:"), alloc, used);
+    heapStat(&heapUsed, &heapFree);
+    std::printf("%-34s RSS %6.0f MB (peak %5.0f)  pool %4.0f MB (%2.0f in use)  heap %5.0f MB in use, %5.0f free\n", label,
+                procMb("VmRSS:"), procMb("VmHWM:"), alloc, used, heapUsed, heapFree);
     std::fflush(stdout);
 }
 
@@ -150,6 +172,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("bench-memory");
+    std::setvbuf(stdout, nullptr, _IOLBF, 0); // lines reach a pipe even if it crashes
     double seconds = 20;
     int edits = 40;
     bool exportPhase = true;

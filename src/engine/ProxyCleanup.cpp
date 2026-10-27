@@ -209,6 +209,7 @@ const char* reasonId(Reason reason)
 
 QString sizeText(qint64 bytes)
 {
+    if (bytes < 1024 * 1024) return T("%1 KB").arg((bytes + 1023) / 1024); // notes, leftovers: never "0,0 MB"
     const double mb = bytes / (1024.0 * 1024.0);
     if (mb >= 1024) return T("%1 GB").arg(QString::number(mb / 1024, 'f', 1).replace('.', I18n::decimalPoint()));
     return T("%1 MB").arg(mb >= 10 ? QString::number(qRound64(mb))

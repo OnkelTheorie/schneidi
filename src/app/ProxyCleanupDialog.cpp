@@ -67,6 +67,7 @@ qint64 run(QWidget* parent, const ProjectData& open, const ProxyManager* proxies
     list->setRootIsDecorated(false);
     list->setUniformRowHeights(true);
     list->setSelectionMode(QAbstractItemView::NoSelection);
+    list->setFocusPolicy(Qt::NoFocus); // a list to read, nothing to pick
     list->setHeaderLabels({T("Datei"), T("Grund"), T("Größe")});
     for (const ProxyCleanup::Item& it : plan.items) {
         auto* row = new QTreeWidgetItem(list, {QFileInfo(it.original.isEmpty() ? it.file : it.original).fileName(),
