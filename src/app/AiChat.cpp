@@ -287,11 +287,7 @@ void AiChat::onReply(const Ai::Reply& reply)
         && m_sentChars > 5 * reply.usage.input + 4000) {
         if (m_streaming >= 0) change(m_streaming, [](Entry& e) { e.state = Entry::State::Failed; });
         m_streaming = -1;
-        addError(T("Das Modell hat nur das Ende der Anfrage gelesen: es nimmt %1 Token, die Anfrage hat etwa %2 "
-                   "(schneidis Werkzeuge und Anleitung allein etwa 15 000). Mehr Kontext einstellen, bei Ollama z. B. "
-                   "OLLAMA_CONTEXT_LENGTH=32768 oder ein Modell mit num_ctx 32768.")
-                     .arg(reply.usage.input)
-                     .arg(m_sentChars / 4));
+        addError(Ai::contextAdvice(reply.usage.input, m_sentChars / 4, true));
         finishTurn();
         return;
     }

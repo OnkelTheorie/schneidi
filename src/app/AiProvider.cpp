@@ -486,6 +486,51 @@ QString providerMessage(const QByteArray& body)
     return m.trimmed();
 }
 
+bool contextOverflow(const QString& said, qint64* context, qint64* request)
+{
+    *context = *request = 0;
+    const auto match = [&said](const char* pattern) {
+        return QRegularExpression(pattern, QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption)
+            .match(said);
+    };
+    // llama.cpp: "request (15768 tokens) exceeds the available context size (4096 tokens), try increasing it"
+    if (const auto m = match(R"(request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\))"); m.hasMatch()) {
+        *request = m.captured(1).toLongLong();
+        *context = m.captured(2).toLongLong();
+        return true;
+    }
+    // OpenAI, vLLM: "This model's maximum context length is 8192 tokens. However, your messages resulted in 15768 tokens"
+    if (const auto m = match(R"(maximum context length is (\d+) tokens.*?(?:resulted in|requested) (\d+) tokens)"); m.hasMatch()) {
+        *context = m.captured(1).toLongLong();
+        *request = m.captured(2).toLongLong();
+        return true;
+    }
+    // LM Studio: "… the model is loaded with context length of only 4096 tokens, which is not enough"
+    if (const auto m = match(R"(context length of only (\d+) tokens)"); m.hasMatch()) {
+        *context = m.captured(1).toLongLong();
+        return true;
+    }
+    return match(R"(context_length_exceeded|exceeds? the (?:available )?context (?:size|length|window))").hasMatch();
+}
+
+QString contextAdvice(qint64 context, qint64 request, bool silent)
+{
+    QString what;
+    if (silent)
+        what = T("Der KI-Server hat die Anfrage gekürzt, ohne es zu melden: das Modell nimmt %1 Token, die Anfrage hat etwa %2.")
+                   .arg(context)
+                   .arg(request);
+    else if (context > 0 && request > 0)
+        what = T("Die Anfrage passt nicht in den Kontext des Modells: es nimmt %1 Token, die Anfrage hat %2.").arg(context).arg(request);
+    else what = T("Die Anfrage passt nicht in den Kontext des Modells.");
+    // A large context is full: the chat grew too long; a small one cannot even take the tools
+    if (context >= 32768) return what + " " + T("„Neuer Chat“ fängt frisch an.");
+    return what + " "
+           + T("In den Einstellungen des KI-Servers die Kontextlänge auf mindestens 32 768 Token stellen – schneidis "
+               "Werkzeuge und Anleitung allein brauchen etwa 15 000 (Ollama: OLLAMA_CONTEXT_LENGTH, LM Studio, AtomicChat "
+               "und andere: Kontextlänge des Modells).");
+}
+
 Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryAfter)
 {
     Failure f;
@@ -493,7 +538,11 @@ Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryA
     const QString type = parseObject(body).value("error").toObject().value("type").toString();
     const auto with = [&said](const QString& text) { return said.isEmpty() ? text : T("%1 (%2)").arg(text, said); };
     f.retryAfterS = std::clamp(retryAfter.trimmed().toInt(), 0, 600);
-    if (status == 401 || status == 403) {
+    qint64 context = 0, request = 0;
+    if ((status == 400 || status == 413 || status >= 500) && contextOverflow(said, &context, &request)) {
+        f.kind = Failure::Kind::TooLarge;
+        f.message = contextAdvice(context, request);
+    } else if (status == 401 || status == 403) {
         f.kind = Failure::Kind::Key;
         f.message = with(status == 401 ? T("Der Schlüssel wurde abgelehnt. Prüfe ihn in Einstellungen › KI.")
                                        : T("Der Anbieter verweigert den Zugriff mit diesem Schlüssel."));

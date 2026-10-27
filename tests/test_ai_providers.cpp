@@ -2,10 +2,11 @@
 // API, OpenAI-compatible chat completions) from one conversation – tools, tool results with pictures (OpenAI: as a user
 // message after the tool answers), the Anthropic content sent back unchanged (thinking blocks), caching, the headers
 // with the key; streamed answers split anywhere (text, tool calls, usage, errors in the stream, servers without blank
-// lines, Ollama's whole calls); error answers to messages (401, 429 with Retry-After, overloaded, 404 …); model lists;
-// where a key comes from (environment > company file > keychain > settings, never another provider's variable), storing
-// it (keychain first, no second plain copy), the company file (merged, locked, broken) and the provider choice; what
-// goes back to the model from long tool answers; the chat's one-line tool steps; tool calls a model wrote as text.
+// lines, Ollama's whole calls); error answers to messages (401, 429 with Retry-After, overloaded, 404, a request larger
+// than the model's context …); model lists; where a key comes from (environment > company file > keychain > settings,
+// never another provider's variable), storing it (keychain first, no second plain copy), the company file (merged,
+// locked, broken) and the provider choice; what goes back to the model from long tool answers; the chat's one-line tool
+// steps; tool calls a model wrote as text.
 // AI_KEYCHAIN_TEST=1 also writes, reads and deletes a key in the Secret Service of the session bus – only on a
 // private bus: dbus-run-session -- sh -c 'echo -n x | gnome-keyring-daemon --unlock; build-tests/tests/test_ai_providers'
 
@@ -387,6 +388,27 @@ void testBodiesAndErrors()
     CHECK(f.message.contains("Bad Gateway"));
     CHECK(Ai::httpFailure(400, R"({"error":{"message":"bad"}})").kind == Ai::Failure::Kind::Request);
     CHECK(Ai::httpFailure(413, "{}").kind == Ai::Failure::Kind::TooLarge);
+    // A request larger than the model's context, in the words of local servers: the numbers and what helps
+    {
+        const Ai::Failure llama = Ai::httpFailure(
+            400, R"({"error":{"code":400,"message":"request (15768 tokens) exceeds the available context size (4096 tokens), try increasing it","type":"exceed_context_size_error"}})");
+        CHECK(llama.kind == Ai::Failure::Kind::TooLarge && !llama.retry);
+        CHECK(llama.message.contains("4096") && llama.message.contains("15768") && llama.message.contains("32 768"));
+        qint64 context = 0, request = 0;
+        CHECK(Ai::contextOverflow("This model's maximum context length is 8192 tokens. However, your messages resulted in "
+                                  "15768 tokens. Please reduce the length of the messages.",
+                                  &context, &request));
+        CHECK(context == 8192 && request == 15768);
+        CHECK(Ai::contextOverflow("Trying to keep the first 15768 tokens when context the overflows. However, the model is "
+                                  "loaded with context length of only 4096 tokens, which is not enough.",
+                                  &context, &request));
+        CHECK(context == 4096 && request == 0);
+        CHECK(!Ai::contextOverflow("model 'qwen' not found", &context, &request));
+        // A large context that is full: a new chat helps, not the server's settings
+        CHECK(Ai::contextAdvice(131072, 140000).contains(T("„Neuer Chat“ fängt frisch an.")));
+        CHECK(!Ai::contextAdvice(131072, 140000).contains("32 768"));
+        CHECK(Ai::httpFailure(400, R"({"error":{"message":"bad tool schema"}})").kind == Ai::Failure::Kind::Request);
+    }
 
     CHECK_EQ(Ai::parseModels(QJsonDocument::fromJson(R"({"data":[{"id":"gpt-5"},{"id":"gpt-4.1"}],"has_more":false})").object()),
              QStringList({"gpt-4.1", "gpt-5"}));

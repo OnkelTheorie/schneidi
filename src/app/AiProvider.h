@@ -173,6 +173,12 @@ struct Failure {
 Failure httpFailure(int status, const QByteArray& body, const QByteArray& retryAfter = {});
 // The provider's message inside an error body (Anthropic, OpenAI, Ollama shapes); empty = none
 QString providerMessage(const QByteArray& body);
+// A request too large for the model's context in the words of llama.cpp servers, OpenAI/vLLM or LM Studio: the
+// context and the request in tokens (0 = not said); false = no such message
+bool contextOverflow(const QString& said, qint64* context, qint64* request);
+// What the user reads then: the numbers and what helps (a small context: more of it in the server's settings, else a
+// new chat). silent = the server cut the request without saying so (Ollama), request is an estimate then
+QString contextAdvice(qint64 context, qint64 request, bool silent = false);
 
 // Model ids from a model list answer, sorted
 QStringList parseModels(const QJsonObject& body);
