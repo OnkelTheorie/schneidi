@@ -411,7 +411,9 @@ int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* wi
     const int err = mlt_frame_get_image(frame, image, format, width, height, 1);
     if (err || !*image || *format != mlt_image_rgba) return err;
     const Params p = d->animated ? at(d->clip, d->a + pos) : d->fixed;
-    if (!p.isNeutral() || d->lut) apply(*image, *width, *height, *d->tables(p));
+    // Rows in threads for the preview only (one frame at a time there); the export renders several frames at once
+    // (no Before/After switch there), where more threads per frame would only compete for the cores
+    if (!p.isNeutral() || d->lut) apply(*image, *width, *height, *d->tables(p), d->bypass ? 0 : 1);
     if (d->windows)
         for (const Window& w : windowsAt(d->clip, d->a + pos)) applyWindow(*image, *width, *height, w);
     return 0;
