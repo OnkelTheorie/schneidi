@@ -164,6 +164,7 @@ add_dependencies(test_watch_folders schneidi-cli)
 schneidi_test(test_speed)
 target_compile_definitions(test_speed PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 set_tests_properties(test_speed PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
+schneidi_test(test_file_manager) # show in file manager / open with the default program, also without a D-Bus session
 
 # Number format regressions (German decimal comma, e.g. 0.7.0: MLT reset LC_NUMERIC and stabilization did nothing):
 # run tests that pass numbers to MLT/FFmpeg a second time under de_DE.UTF-8 (CI generates the locale)
