@@ -82,6 +82,11 @@ void testSrt()
     CHECK_EQ(cues(c), QString("125-126:t||3:0:0-->0:0:0|0"));
     CHECK_EQ(cues(Subtitles::parseSrt(Subtitles::toSrt(c, 25), 25)), QString("125-126:t|3:0:0-->0:0:0|0"));
     CHECK(Subtitles::toSrt({{1, 0, 25, "oben\n \nunten"}}, 25).endsWith("\r\noben\r\nunten\r\n\r\n"));
+    // Hours no file has (2^63 - 1 overflowed the milliseconds, 99999 hours the frame numbers): broken entries
+    c = Subtitles::parseSrt("1\n9223372036854775807:00:00,000 --> 00:00:01,000\nA\n\n2\n99999:00:00,000 --> 99999:00:01,000\nB\n\n"
+                            "3\n00:00:01,000 --> 00:00:02,000\nC\n", 25, &skipped);
+    CHECK_EQ(cues(c), QString("25-50:C"));
+    CHECK_EQ(skipped, 2);
     CHECK_EQ(Subtitles::srtTime(3723004), QString("01:02:03,004"));
 
     // Timecode input in the Inspector (like DaVinci)
