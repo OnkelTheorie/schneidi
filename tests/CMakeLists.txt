@@ -122,6 +122,7 @@ schneidi_test(test_audio_regression)
 schneidi_test(test_audio_reference)
 schneidi_test(test_av_sync)
 schneidi_test(test_audio_reader)
+schneidi_test(test_audio_reader_damage) # vanishing files, timestamp gaps and outliers, Matroska without duration
 schneidi_test(test_media_probe)
 schneidi_test(test_audio_mixer)
 schneidi_test(test_stretch) # own time stretcher (keep pitch)

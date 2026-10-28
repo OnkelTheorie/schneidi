@@ -79,7 +79,8 @@ struct Player::Impl {
     bool deviceDirty = false;
     bool quit = false;
     std::atomic<uint32_t> gen{0};          // generation the callback plays
-    std::atomic<int64_t> holdUntil{0};     // nothing of the generation is handed over before (ns)
+    std::atomic<int64_t> holdUntil{0};     // nothing of the generation holdGen is handed over before (ns)
+    std::atomic<uint32_t> holdGen{0};
     std::atomic<bool> muted{false};
     std::atomic<SharedLoudness*> loudness{nullptr};
 
@@ -111,6 +112,9 @@ struct Player::Impl {
     // The device: opened by play() and the watchdog, under deviceMutex (taken before `mutex`, never inside it)
     std::mutex deviceMutex;
     std::unique_ptr<Device> device;
+    // Set once the first device is open (stays set): play() checks this instead of taking deviceMutex, which the
+    // watchdog holds while the driver takes its time (100 ms to seconds when headphones are plugged in or out)
+    std::atomic<bool> deviceOpened{false};
     bool forcedSilence = false; // the sound card kept failing: silence until available() says it is back
     int64_t openedAt = 0;       // lastCallback when it was opened: later = it has called back since
     int opened = 0;             // devices opened so far
@@ -188,9 +192,11 @@ void Player::Impl::process(float* out, int frames)
         s.gapT = s.total;
         s.inRun = false;
     }
-    const int64_t until = holdUntil.load(std::memory_order_relaxed);
+    // The hold belongs to its generation: a play() between loading `gen` and here must not hold the generation that
+    // is sounding (a hard cut without the fade)
+    const int64_t until = holdUntil.load(std::memory_order_acquire);
     const int64_t now = nowNs();
-    const bool hold = until != 0 && now < until;
+    const bool hold = until != 0 && now < until && holdGen.load(std::memory_order_relaxed) == g;
     const float muteTarget = muted.load(std::memory_order_relaxed) ? 0.f : 1.f;
     int i = 0;
     bool sound = false;
@@ -531,6 +537,7 @@ void Player::Impl::openDevice(bool silent)
     lastCallback.store(openedAt, std::memory_order_relaxed);
     QString error;
     device = Device::open(c, [this](float* out, int frames) { process(out, frames); }, &error);
+    deviceOpened.store(true);
     latency = device->latency();
     qInfo("Audio: %s, Latenz %d Samples", qPrintable(device->name()), latency.load());
     std::lock_guard<std::mutex> lock(mutex);
@@ -676,7 +683,7 @@ void Player::play(double position, double speed)
         pause();
         return;
     }
-    {
+    if (!d->deviceOpened.load()) { // only the first play: later the watchdog keeps a device open
         std::lock_guard<std::mutex> dl(d->deviceMutex);
         if (!d->device) d->openDevice();
     }
@@ -684,7 +691,8 @@ void Player::play(double position, double speed)
         std::lock_guard<std::mutex> lock(d->mutex);
         d->cmd = {d->cmd.gen + 1, true, position, speed};
         d->heardMax = 0;
-        d->holdUntil.store(nowNs() + kHoldNs, std::memory_order_relaxed);
+        d->holdGen.store(d->cmd.gen, std::memory_order_relaxed);
+        d->holdUntil.store(nowNs() + kHoldNs, std::memory_order_release); // after holdGen: seen with it
         d->gen.store(d->cmd.gen, std::memory_order_release);
     }
     d->wake.notify_all();

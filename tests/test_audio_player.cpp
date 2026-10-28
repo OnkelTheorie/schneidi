@@ -288,5 +288,23 @@ int main(int argc, char** argv)
     CHECK(std::abs(changed - later - 0.5 * kRate) < 0.1 * kRate);
     CHECK_EQ(lost->stats().reopens, 1); // a settings change is no vanished device
     CHECK(lost->playing());
+
+    // 9. A slow driver (headphones plugged in: the watchdog reopens for a second) never blocks play() – it runs on the
+    // UI thread at every start, jump and scrub step
+    lost.reset();
+    qputenv("SCHNEIDI_AUDIO_DEVICE", "null:slow=1500");
+    auto slow = std::make_unique<Audio::Player>(opt);
+    slow->setTimeline(tl, kFps);
+    slow->play(0, 1.0); // the first open: once
+    slow->release();
+    slow->setDevice(1920, QString(), QString()); // the watchdog reopens (1.5 s)
+    sleepMs(300);
+    QElapsedTimer jump;
+    jump.start();
+    slow->play(48000, 1.0);
+    const double jumpMs = jump.nsecsElapsed() / 1e6;
+    std::printf("Sprung während das Gerät 1,5 s lang öffnet: %.1f ms\n", jumpMs);
+    CHECK(jumpMs < 200);
+    CHECK(slow->playing());
     return Check::result();
 }
