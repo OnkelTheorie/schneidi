@@ -166,9 +166,11 @@ QString ProxyManager::decodeSource(const QString& original)
 
 QString ProxyManager::proxyPath(const QString& original)
 {
-    // Key as with the waveform cache: changed originals automatically get a new proxy
+    // Key as with the waveform cache: changed originals automatically get a new proxy. The trailing version is
+    // raised when proxies made before are wrong: 2 = frame 0 at the first video key frame (older proxies of files
+    // whose picture starts after the sound were one frame early)
     const QFileInfo fi(original);
-    const QString id = QString("%1|%2|%3|%4")
+    const QString id = QString("%1|%2|%3|%4|v2")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())
