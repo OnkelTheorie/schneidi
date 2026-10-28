@@ -34,13 +34,15 @@ void Preroll::setPoints(std::vector<PrerollPoint> points, int lookahead, QSize s
         m_size = size;
     }
     m_wake.notify_all();
+    // A decode still running belongs to the old graph: its "free from" no longer holds, and the new graph reuses the
+    // cached producers. Playback starts right after this, so it must not read a producer this thread still decodes.
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_idle.wait(lock, [this] { return !m_busy; });
 }
 
 void Preroll::clear()
 {
     setPoints({}, 0, {});
-    std::unique_lock<std::mutex> lock(m_mutex);
-    m_idle.wait(lock, [this] { return !m_busy; });
 }
 
 void Preroll::update(int position, double speed)
