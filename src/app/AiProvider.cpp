@@ -97,6 +97,19 @@ bool isLocal(const QString& address)
     return !ip.isNull() && ip.isLoopback();
 }
 
+bool isNearHost(const QString& name)
+{
+    QString host = name.trimmed().toLower();
+    if (host.startsWith('[') && host.endsWith(']')) host = host.mid(1, host.size() - 2);
+    if (host == "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+    const QHostAddress ip(host);
+    if (ip.isNull()) return false;
+    if (ip.isLoopback() || ip.isLinkLocal()) return true;
+    for (const char* net : {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"})
+        if (ip.isInSubnet(QHostAddress::parseSubnet(net))) return true;
+    return false;
+}
+
 QUrl chatUrl(const Endpoint& e)
 {
     const QString a = trimmedAddress(e.address);

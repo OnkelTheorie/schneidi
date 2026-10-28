@@ -463,6 +463,7 @@
  "Die Werkzeuge der KI (schneidi-cli) sind nicht eingerichtet.": "Narzędzia SI (schneidi-cli) nie są skonfigurowane.",
  "Die Werkzeuge der KI (schneidi-cli) wurden beendet.": "Narzędzia SI (schneidi-cli) zostały zamknięte.",
  "Die Werkzeuge der KI antworten nicht: %1": "Narzędzia SI nie odpowiadają: %1",
+ "Die Werkzeuge der KI (schneidi-cli) antworten nicht (nach %1 s abgebrochen).": "Narzędzia SI (schneidi-cli) nie odpowiadają (przerwano po %1 s).",
  "Die Werkzeuge der KI sind ausgefallen. Schreib einfach weiter: sie starten dann neu.": "Narzędzia SI przestały działać. Po prostu pisz dalej: wtedy uruchomią się ponownie.",
  "Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Hier kosten die Effekte am meisten. Der Render-Cache „Smart“ rechnet Clips mit Effekten in Pausen vor, der Export nutzt weiter die Originale": "Odtwarzanie się zacina (%1 z %2 klatek/s): tu najwięcej kosztują efekty. Pamięć podręczna renderowania „Inteligentny” renderuje klipy z efektami w przerwach; eksport nadal używa oryginałów",
  "Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Proxy-Medien machen die Vorschau flüssig, der Export nutzt weiter die Originale": "Odtwarzanie się zacina (%1 z %2 klatek/s): media proxy sprawiają, że podgląd jest płynny, eksport nadal używa oryginałów",

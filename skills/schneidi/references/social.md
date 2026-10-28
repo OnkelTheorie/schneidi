@@ -6,7 +6,7 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
 - New project `width` 1080, `height` 1920 (or `template` "vertical"), frame rate of the material. (`render` `size`
   only letterboxes a landscape timeline into a portrait file - that is not a vertical edit.) With the project open
   in the app (`@app`): a new timeline there instead, and ask before `format` turns a landscape project with other
-  timelines portrait (see the guide's live mode). Game recordings with a
+  timelines portrait (see the guide's live mode; `format` there needs `confirm:true` after the user's yes). Game recordings with a
   Mix stream next to the single streams: `template` "game" with `width` 1080, `height` 1920 mutes the Mix (else
   everything plays twice).
 - A 16:9 clip in a 9:16 project is fitted: full width, black above and below. Choose per clip:

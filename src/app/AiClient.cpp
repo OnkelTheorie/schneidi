@@ -13,10 +13,15 @@
 
 namespace {
 
-// The system's proxy settings (companies often allow the internet only through one); for the chat's requests only
+// The system's proxy settings (companies often allow the internet only through one); for the chat's requests only.
+// A server on this computer or in the local network (Ollama on localhost) is reached directly: a proxy cannot reach it
 class SystemProxies : public QNetworkProxyFactory {
 public:
-    QList<QNetworkProxy> queryProxy(const QNetworkProxyQuery& query) override { return systemProxyForQuery(query); }
+    QList<QNetworkProxy> queryProxy(const QNetworkProxyQuery& query) override
+    {
+        if (Ai::isNearHost(query.peerHostName())) return {QNetworkProxy(QNetworkProxy::NoProxy)};
+        return systemProxyForQuery(query);
+    }
 };
 
 QNetworkRequest request(const Ai::Endpoint& e, const QUrl& url, bool fallbacks, int timeoutMs)
@@ -153,11 +158,14 @@ void AiClient::onFinished()
     m_reply = nullptr;
     reply->deleteLater();
     const int status = statusOf(reply);
-    m_errorBody += reply->readAll();
     const bool streamed = m_request.stream && status == 200 && isEventStream(reply);
     if (streamed) {
-        const QString delta = m_parser.feed("\n\n"); // an event the server did not close with a blank line
+        // What came with the end (without a readyRead of its own), and an event the server did not close with a blank
+        // line
+        const QString delta = m_parser.feed(reply->readAll() + "\n\n");
         if (!delta.isEmpty()) emit text(delta);
+    } else {
+        m_errorBody += reply->readAll();
     }
     const auto again = [this](int delayMs, const QString& why) {
         if (m_attempt >= m_retryDelays.size()) return false;
@@ -201,8 +209,12 @@ void AiClient::onFinished()
         emit failed(T("Der Anbieter hat die Antwort abgebrochen: %1").arg(r.error));
         return;
     }
-    if (streamed && !m_parser.finished() && reply->error() != QNetworkReply::NoError) {
-        emit failed(networkError(reply, m_endpoint));
+    // A stream that ended before the provider said it is done (no end event, no reason to stop): cut, also when the
+    // connection was closed cleanly (a proxy's idle timeout) – half an answer is not a finished one
+    if (streamed && !m_parser.finished() && r.stop.isEmpty()) {
+        emit failed(reply->error() != QNetworkReply::NoError
+                        ? networkError(reply, m_endpoint)
+                        : T("Die Verbindung zu %1 wurde unterbrochen.").arg(QUrl(m_endpoint.address.trimmed()).host()));
         return;
     }
     emit finished(r);

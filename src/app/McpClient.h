@@ -37,11 +37,18 @@ public:
     // Starts the server when it does not run yet; ready() when it takes calls (or failed())
     void start();
     bool isReady() const { return m_ready; }
+    bool isStarting() const { return m_starting; }
+    // How long starting (initialize, tools/list) and a call with a time limit may take before the server counts as
+    // hung: it is ended and failed() says so
+    void setSetupTimeoutMs(int ms) { m_setupTimeoutMs = ms; }
+    int setupTimeoutMs() const { return m_setupTimeoutMs; }
     QString instructions() const { return m_instructions; } // the server's own words for the AI
     QJsonArray tools() const { return m_tools; }            // as tools/list gives them
 
-    // A tool call; done() once (also when the server dies or stop() ends it)
-    void call(const QString& tool, const QJsonObject& arguments, const Progress& progress, const Done& done);
+    // A tool call; done() once (also when the server dies or stop() ends it). timeoutMs > 0: a server that has not
+    // answered by then is ended (failed() first, then done() with an error)
+    void call(const QString& tool, const QJsonObject& arguments, const Progress& progress, const Done& done,
+              int timeoutMs = 0);
     // Ends the server now (a running call is answered as stopped); the next start() starts a new one
     void stop();
 
@@ -56,6 +63,8 @@ private:
     void onEnded();
     int request(const QString& method, const QJsonObject& params, const std::function<void(const QJsonObject&)>& reply);
     void finishAll(const Result& result);
+    void endProcess();                // kills and forgets the server (no signals of it reach this object anymore)
+    void giveUp(const QString& why); // the server is of no use: ended, failed(why), running calls answered
 
     QStringList m_command;
     QHash<QString, QString> m_environment;
@@ -67,6 +76,8 @@ private:
     QString m_instructions;
     QJsonArray m_tools;
     int m_next = 1;
+    int m_setupTimeoutMs = 60000;
+    int m_generation = 0; // counts start(): a time limit of an earlier server does not end a newer one
     struct Pending {
         std::function<void(const QJsonObject&)> reply; // the whole response (result or error)
         Progress progress;

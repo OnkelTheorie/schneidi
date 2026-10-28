@@ -48,6 +48,7 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProcess>
 #include <QPushButton>
 #include <QSettings>
 #include <QTcpServer>
@@ -56,7 +57,10 @@
 #include <QTimer>
 #include <QUndoStack>
 #include <clocale>
+#include <cstdio>
 #include <functional>
+#include <iostream>
+#include <string>
 
 namespace {
 
@@ -334,6 +338,108 @@ void testClient()
         CHECK_EQ(fake.requests[2].path, QByteArray("/v2/messages"));
         CHECK_EQ(fake.requests[2].headers.value("x-api-key"), kKey);
     }
+    // A system proxy (that cannot reach this computer): a server here is reached directly
+    qputenv("http_proxy", "http://127.0.0.1:1");
+    qputenv("HTTP_PROXY", "http://127.0.0.1:1");
+    {
+        AiClient proxied;
+        failure.clear();
+        done = false;
+        QObject::connect(&proxied, &AiClient::failed, [&](const QString& message) { failure = message; });
+        QObject::connect(&proxied, &AiClient::finished, [&](const Ai::Reply&) { done = true; });
+        fake.script = {anthropicText("Hallo")};
+        proxied.send(e, r);
+        CHECK(waitFor([&] { return !proxied.busy(); }, 10000));
+        if (!CHECK(done)) std::printf("       %s\n", qPrintable(failure));
+    }
+    qunsetenv("http_proxy");
+    qunsetenv("HTTP_PROXY");
+    // A stream that ends before the provider says it is done (a proxy closed the connection cleanly): cut, not finished
+    failure.clear();
+    done = false;
+    fake.script = {{200, "text/event-stream",
+                    sse({start(),
+                         {{"type", "content_block_start"}, {"index", 0}, {"content_block", QJsonObject{{"type", "text"}, {"text", ""}}}},
+                         {{"type", "content_block_delta"}, {"index", 0}, {"delta", QJsonObject{{"type", "text_delta"}, {"text", "Halb"}}}}})}};
+    client.send(e, r);
+    CHECK(waitFor([&] { return !client.busy(); }, 10000));
+    CHECK(!done);
+    CHECK(failure.contains(T("Die Verbindung zu %1 wurde unterbrochen.").arg("127.0.0.1")));
+    // An OpenAI stream with its reason to stop but without [DONE]: complete
+    failure.clear();
+    Ai::Endpoint o = e;
+    o.protocol = Ai::Protocol::OpenAi;
+    o.provider = "custom";
+    o.address = fake.address() + "/v1";
+    FakeProvider::Response noDone = openAiText("Fertig.");
+    noDone.body.replace("data: [DONE]\n\n", "");
+    fake.script = {noDone};
+    client.send(o, r);
+    CHECK(waitFor([&] { return !client.busy(); }, 10000));
+    CHECK(done && failure.isEmpty());
+}
+
+// This program as a broken tool server (`--fake-mcp <mode>`): die-on-call (dies when a tool is called), hang (never
+// answers), hang-call (never answers a tool call), init-error (initialize fails, it keeps running), list-error
+int fakeMcp(const std::string& mode)
+{
+    const auto answer = [](const QJsonObject& o) {
+        std::cout << QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+    };
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        const QJsonObject msg = QJsonDocument::fromJson(QByteArray::fromStdString(line)).object();
+        const QString method = msg["method"].toString();
+        if (!msg.contains("id") || mode == "hang") continue;
+        QJsonObject out{{"jsonrpc", "2.0"}, {"id", msg["id"]}};
+        if (method == "initialize") {
+            if (mode == "init-error") out["error"] = QJsonObject{{"code", -32603}, {"message", "init broke"}};
+            else out["result"] = QJsonObject{{"protocolVersion", "2025-06-18"}, {"instructions", "fake"}};
+        } else if (method == "tools/list") {
+            if (mode == "list-error") out["error"] = QJsonObject{{"code", -32603}, {"message", "list broke"}};
+            else
+                out["result"] = QJsonObject{{"tools", QJsonArray{QJsonObject{{"name", "guide"}, {"inputSchema", QJsonObject{}}}}}};
+        } else if (method == "tools/call") {
+            if (mode == "die-on-call") return 3;
+            if (mode == "hang-call") continue;
+        }
+        answer(out);
+    }
+    return 0;
+}
+
+// The tool server breaks: the request always ends with a message (never "the AI is working" forever), and no server
+// is left running
+void testBrokenTools()
+{
+    FakeProvider fake;
+    Ai::Endpoint e;
+    e.protocol = Ai::Protocol::Anthropic;
+    e.provider = "claude";
+    e.address = fake.address();
+    e.model = "claude-sonnet-5-5";
+    e.key = kKey;
+    const auto run = [&](const char* mode, const QString& expected) {
+        AiChat chat;
+        chat.tools()->setSetupTimeoutMs(700);
+        chat.setTools({QCoreApplication::applicationFilePath(), "--fake-mcp", mode}, {});
+        fake.script = {anthropicText("nie erreicht")};
+        CHECK(chat.send("Hallo", e, false));
+        const bool ended = waitFor([&] { return !chat.busy(); }, 10000);
+        if (!CHECK(ended)) std::printf("       mode %s: still working\n", mode);
+        if (const AiChat::Entry* err = lastOf(&chat, AiChat::Entry::Kind::Error); CHECK(err)) {
+            if (!CHECK(err->text.contains(expected))) std::printf("       mode %s: %s\n", mode, qPrintable(err->text));
+        }
+        CHECK(fake.requests.isEmpty()); // no request to the model without the tools
+        settle(50);
+        CHECK(chat.tools()->findChildren<QProcess*>().isEmpty()); // ended, not left behind
+        fake.requests.clear();
+    };
+    run("die-on-call", T("Die Werkzeuge der KI sind ausgefallen."));
+    run("hang", T("Die Werkzeuge der KI (schneidi-cli) antworten nicht (nach %1 s abgebrochen).").arg(0));
+    run("hang-call", T("Die Werkzeuge der KI (schneidi-cli) antworten nicht (nach %1 s abgebrochen).").arg(0));
+    run("init-error", "init broke");
+    run("list-error", "list broke");
 }
 
 void dump(QWidget* w, const QString& name)
@@ -646,14 +752,22 @@ void test(const QString& dir)
     }
     CHECK_EQ(chat->usage().input, qint64(20000));
     {
-        // Asked once per address and model; `help` has an op's details for the short request
-        const int probes = int(fake.probes.size());
+        // No server said the context (or a probe failed while the model loaded): asked again with the next request;
+        // once named, kept per address and model. `help` has an op's details for the short request
+        int probes = int(fake.probes.size());
+        fake.gets["/props"] = R"({"default_generation_settings":{"n_ctx":131072},"total_slots":1})";
         fake.script = {openAiTool("call_h", "help", {{"command", "edit"}, {"op", "trim"}}), openAiText("Ok.")};
         panel->sendText("Wie geht trim?");
         CHECK(waitFor([&] { return !chat->busy(); }));
-        CHECK_EQ(int(fake.probes.size()), probes);
+        CHECK(int(fake.probes.size()) > probes);
         const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
         CHECK(answer.contains("\"op\":\"trim\"") && answer.contains("details"));
+        probes = int(fake.probes.size());
+        fake.script = {openAiText("Ok.")};
+        panel->sendText("Danke");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.probes.size()), probes);
+        fake.gets.remove("/props");
     }
 
     // A click on a picture shows it bigger in a window of its own; never a popup (on X11 a popup grabs mouse and
@@ -886,6 +1000,43 @@ void test(const QString& dir)
                 CHECK(m2[i + 1]["content"].toString().contains("the request was ended"));
     }
 
+    // ---- A failed call after a change that succeeded: run again (the change may have fixed it) ----
+    {
+        const QJsonObject bad{{"project", "@app"}, {"ops", QJsonArray{QJsonObject{{"op", "trim"}, {"clip", 998}}}}};
+        fake.script = {openAiTool("call_c1", "edit", bad),
+                       openAiTool("call_c2", "app", {{"project", "@app"}, {"action", "seek"}, {"at", "1s"}}),
+                       openAiTool("call_c3", "edit", bad), openAiText("Ok.")};
+        const int sent = int(fake.requests.size());
+        panel->sendText("Kürze Clip 998");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 4)) {
+            const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
+            CHECK(answer.contains("no clip with id 998"));
+            CHECK(!answer.contains("not run again"));
+        }
+    }
+
+    // ---- Unreadable arguments: not taken for a valid call without arguments; sent again unchanged, they count as a
+    // repeat (the second time the request ends) ----
+    {
+        fake.script = {openAiToolText("call_u1", "info", "{\"proj"), openAiTool("call_u2", "info", QJsonObject{}),
+                       openAiText("Ok.")};
+        int sent = int(fake.requests.size());
+        panel->sendText("Was ist im Projekt?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 3))
+            CHECK(fake.last().body["messages"].toArray().last()["content"].toString().contains("\"ok\":true"));
+        fake.script = {openAiToolText("call_u3", "info", "{\"proj"), openAiToolText("call_u4", "info", "{\"proj"),
+                       openAiToolText("call_u5", "info", "{\"proj"), openAiText("nie erreicht")};
+        sent = int(fake.requests.size());
+        panel->sendText("Nochmal");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent + 3);
+        if (const AiChat::Entry* n = lastOf(chat, AiChat::Entry::Kind::Notice); CHECK(n))
+            CHECK(n->text.startsWith(T("Die KI wiederholt einen Schritt, der schon fehlgeschlagen ist")));
+        fake.script.clear();
+    }
+
     // ---- A local model that stays silent (it reads the whole request first): the working line says why ----
     {
         FakeProvider::Response slow = openAiText("Da bin ich.");
@@ -1075,6 +1226,7 @@ void test(const QString& dir)
 
 int main(int argc, char** argv)
 {
+    if (argc > 2 && std::string(argv[1]) == "--fake-mcp") return fakeMcp(argv[2]);
     QTemporaryDir tmp;
     // The chat's schneidi-cli: backups and its registry in here; never a real key from the environment
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8());
@@ -1089,6 +1241,7 @@ int main(int argc, char** argv)
     I18n::install("de");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg fehlt");
     testClient();
+    testBrokenTools();
     test(tmp.path());
     QSettings().remove("ai");
     return Check::result();

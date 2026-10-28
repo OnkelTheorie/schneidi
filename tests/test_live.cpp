@@ -341,6 +341,26 @@ int main(int argc, char* argv[])
     }
     CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
 
+    // A new resolution in the app while another timeline holds clips: refused until the user said yes (confirm)
+    {
+        const ProjectFormat before = fake.project.format();
+        const int undo = fake.project.undoStack()->index();
+        r = cli({"edit", "@app", "--ops",
+                 R"([{"op":"new_timeline","name":"Short"},{"op":"format","width":1080,"height":1920}])"});
+        CHECK_EQ(code(r), QString("NEEDS_CONFIRMATION"));
+        CHECK(r["error"].toObject()["message"].toString().contains("confirm:true"));
+        CHECK(fake.project.format() == before);
+        CHECK_EQ(fake.project.undoStack()->index(), undo); // nothing happened (also no new timeline)
+        // The timeline being edited alone may hold clips; the frame rate is not asked about
+        CHECK_EQ(code(cli({"edit", "@app", "--ops", R"([{"op":"format","fps":25}])"})), QString("ok"));
+        r = cli({"edit", "@app", "--ops",
+                 R"([{"op":"new_timeline","name":"Short"},{"op":"format","width":1080,"height":1920,"confirm":true}])"});
+        CHECK_EQ(code(r), QString("ok"));
+        CHECK_EQ(fake.project.format().height, 1920);
+        CHECK_EQ(code(cli({"app", "undo"})), QString("ok"));
+        CHECK(fake.project.format() == before);
+    }
+
     // backups/restore: "@app" is the app's file; restore replaces the timelines in the app as one undo step
     CHECK(!ProjectFile::backup(fake.path).isEmpty()); // state with 2 clips
     r = cli({"backups", "@app"});
