@@ -11,8 +11,11 @@
 #include "core/TimelineOps.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QSysInfo>
 #include <QTemporaryDir>
 
 namespace {
@@ -278,6 +281,38 @@ void testBackups(const QString& dir)
     QDir(ProjectFile::backupDir({})).removeRecursively();
 }
 
+// The write lock: an old lock of a running holder stays taken (a long CLI session), the lock of a process
+// that is gone is taken over
+void testLock(const QString& dir)
+{
+    const QString path = dir + "/lock-test.schneidi";
+    {
+        const auto held = ProjectFile::lock(path, 0);
+        if (!CHECK(held)) return;
+        {
+            QFile f(held->fileName()); // Windows: the holder keeps it closed for writing; age stays as is
+            if (f.open(QIODevice::ReadWrite))
+                CHECK(f.setFileTime(QDateTime::currentDateTime().addSecs(-3600), QFileDevice::FileModificationTime));
+        }
+        CHECK(!ProjectFile::lock(path, 0)); // one hour old, but its holder still runs
+        CHECK(QFileInfo::exists(held->fileName()));
+    }
+    // Left behind by a crashed process: free
+    QString lockFile;
+    {
+        const auto l = ProjectFile::lock(path, 0);
+        if (!CHECK(l)) return;
+        lockFile = l->fileName();
+    }
+    {
+        QFile f(lockFile);
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.write(QByteArray::number(0x7ffffff0) + "\n" + QCoreApplication::applicationName().toUtf8() + "\n" +
+                QSysInfo::machineHostName().toUtf8() + "\n");
+    }
+    CHECK(ProjectFile::lock(path, 0) != nullptr);
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -293,6 +328,7 @@ int main(int argc, char** argv)
     }
 
     testBackups(dir);
+    testLock(dir);
 
     // --- Save -> load -> save identical, all values equal
     const ProjectData orig = fullProject(dir);

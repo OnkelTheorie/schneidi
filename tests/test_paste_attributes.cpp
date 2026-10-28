@@ -200,6 +200,51 @@ void testGrade()
 
 } // namespace
 
+// Keyframes are stored as source frames (in + clip frame): pasted onto a clip with another in point they keep their
+// place in the clip (a zoom from the clip start of A was behind the end of B)
+void testKeysFollowInPoint()
+{
+    Fixture f;
+    Timeline tl = f.project.timeline();
+    Clip& a = tl.video[0].clips[0];
+    a.in = 500;
+    a.out = 599;
+    a.speed = 1;
+    a.keys.clear();
+    Keys::setKey(a, AnimParam::ZoomX, 0, 1);
+    Keys::setKey(a, AnimParam::ZoomX, 50, 2);
+    Keys::setKey(a, AnimParam::GradeExposure, 20, 1);
+    Clip& b = tl.video[0].clips[1];
+    b.in = 0;
+    b.out = 99;
+    b.keys.clear();
+    tl.audio[0].clips[0].in = 300;
+    tl.audio[0].clips[0].out = 399;
+    Keys::setKey(tl.audio[0].clips[0], AnimParam::Volume, 10, -12);
+    f.project.load(ProjectData{ProjectFormat{}, 0, f.project.media(), {}, tl, 10, 0});
+    const auto keysOf = [&](int id, AnimParam p) {
+        QVector<int> out;
+        for (const Keyframe& k : f.at(id).keys.value(p)) out << k.frame - f.at(id).in;
+        return out;
+    };
+    f.sel.set({1, 3});
+    f.editor.copySelection();
+    f.sel.set({2, 4});
+    f.editor.pasteAttributes(Editor::AttrZoom | Editor::AttrColor | Editor::AttrVolume);
+    CHECK(keysOf(2, AnimParam::ZoomX) == (QVector<int>{0, 50}));
+    CHECK_EQ(Keys::valueAt(f.at(2), AnimParam::ZoomX, 25), 1.5);
+    CHECK(keysOf(2, AnimParam::GradeExposure) == (QVector<int>{20}));
+    CHECK(keysOf(4, AnimParam::Volume) == (QVector<int>{10}));
+    f.project.undoStack()->undo();
+    // Paste grade and grade from the previous clip likewise
+    CHECK(f.editor.copyGrade(1));
+    f.editor.pasteGrade({2});
+    CHECK(keysOf(2, AnimParam::GradeExposure) == (QVector<int>{20}));
+    f.project.undoStack()->undo();
+    CHECK(f.editor.applyGradeFromPrevious(2, 1));
+    CHECK(keysOf(2, AnimParam::GradeExposure) == (QVector<int>{20}));
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -210,5 +255,6 @@ int main(int argc, char** argv)
     testPaste();
     testDialog();
     testGrade();
+    testKeysFollowInPoint();
     return Check::result();
 }

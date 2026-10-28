@@ -101,8 +101,14 @@ int timeRef(Session& s, const QJsonObject& r, const char* key)
             if (t < 0) fail("BAD_ARGUMENT", QString("%1: source time is not inside the clip (%2)").arg(what, sourceSpan(s, c)));
             return t;
         }
-        if (r.contains("from_end")) return c.end() - parseTime(r["from_end"], f, what + ".from_end");
-        return c.start + (r.contains("offset") ? parseTime(r["offset"], f, what + ".offset") : 0);
+        // Inside the clip (its end included): beyond it the time would silently land in a neighbour or before 0
+        const bool fromEnd = r.contains("from_end");
+        const QString part = what + (fromEnd ? ".from_end" : ".offset");
+        const int d = fromEnd || r.contains("offset") ? parseTime(r[fromEnd ? "from_end" : "offset"], f, part) : 0;
+        if (d > c.length())
+            fail("BAD_ARGUMENT", QString("%1 is %2, but clip %3 is only %4 long (%5 frames)")
+                                     .arg(part, tc(d, f)).arg(c.id).arg(tc(c.length(), f)).arg(c.length()));
+        return fromEnd ? c.end() - d : c.start + d;
     }
     if (r.contains("media") && r.contains("source")) {
         const QString path = absolute(r["media"].toString());
@@ -519,6 +525,7 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
     if (const QString st = op.value("track").toString().trimmed().toUpper(); st.startsWith("ST")) {
         const int index = st.mid(2).toInt() - 1;
         if (index < 0 || index >= s.project.timeline().subtitles.size()) fail("NOT_FOUND", "no subtitle track " + st);
+        if (s.project.timeline().subtitles[index].locked) fail("FAILED", "cannot remove subtitle track " + st + ": it is locked");
         s.editor.removeSubtitleTrack(index);
         return;
     }
@@ -666,7 +673,8 @@ QString editHelp()
     }
     return QStringLiteral(
                "List of operations, applied in order, saved once (nothing is saved if one fails). Times: frames "
-               "(integer), \"4.5s\" or \"HH:MM:SS:FF\"; ranges are half-open [from, to). A timeline position (at, to, "
+               "(integer), \"4.5s\", timecode \"HH:MM:SS:FF\" (frames below the frame rate) or clock time \"MM:SS\" "
+               "/ \"HH:MM:SS.sss\"; ranges are half-open [from, to). A timeline position (at, to, "
                "from, cue times …) can also be relative, resolved when the op runs so earlier ops that move clips do "
                "not shift it: {clip:id, offset?} (from the clip start), {clip:id, from_end}, {clip:id, source} (where "
                "the clip plays that source time; speed and ramps included) or {media:file, source} (first clip that "

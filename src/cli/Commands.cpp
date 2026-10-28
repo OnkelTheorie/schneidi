@@ -39,6 +39,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QUndoStack>
 
 #include <algorithm>
@@ -62,7 +63,62 @@ QString absolute(const QString& path)
 
 // ---------- Times ----------
 
-// Frames from 120 (frames), "120" (frames), "4.8s" (seconds) or "00:00:04:20" (timecode)
+namespace {
+
+// A time with colons, read as people write them - never guessed into frames: "HH:MM:SS:FF" or "HH:MM:SS;FF"
+// (timecode, the frame part below the frame rate), "HH:MM:SS" and "MM:SS" (clock time), and a '.' in the last part
+// means decimal seconds ("00:01:02.5", "1:02.500"). Minutes and seconds after the first part stay below 60.
+int clockTime(const QString& s, const ProjectFormat& fmt, const QString& what)
+{
+    const auto bad = [&](const QString& why) -> int {
+        fail("BAD_ARGUMENT", QString("%1: '%2' %3 (timecode \"HH:MM:SS:FF\", clock time \"HH:MM:SS\" or \"MM:SS\", "
+                                     "decimal seconds \"HH:MM:SS.sss\")").arg(what, s, why));
+    };
+    const int semicolon = int(s.indexOf(';'));
+    if (semicolon >= 0 && (s.count(';') > 1 || s.indexOf(':', semicolon) >= 0)) bad("is not a time");
+    QStringList parts = QString(s).replace(';', ':').split(':');
+    const bool timecode = parts.size() == 4 || semicolon >= 0;
+    if (parts.size() < 2 || parts.size() > 4 || (semicolon >= 0 && parts.size() != 4)) bad("is not a time");
+    // Decimal seconds: only in the last part of a clock time
+    double fraction = 0;
+    if (const int dot = int(parts.last().indexOf('.')); dot >= 0) {
+        if (timecode) bad("mixes frames and decimal seconds");
+        const QString digits = parts.last().mid(dot + 1);
+        bool ok = !digits.isEmpty();
+        for (const QChar ch : digits) ok = ok && ch.isDigit();
+        if (!ok) bad("is not a time");
+        fraction = ("0." + digits).toDouble();
+        parts.last().truncate(dot);
+    }
+    QVector<long long> v;
+    for (const QString& part : parts) {
+        bool ok = !part.isEmpty();
+        for (const QChar ch : part) ok = ok && ch.isDigit();
+        if (!ok || part.size() > 9) bad("is not a time");
+        v << part.toLongLong();
+    }
+    const int timebase = fmt.rate.timebase();
+    long long frames = 0;
+    double seconds = 0;
+    if (timecode) {
+        if (v[3] >= timebase) bad(QString("has frame %1, but a second has only %2 frames").arg(v[3]).arg(timebase));
+        if (v[1] >= 60 || v[2] >= 60) bad("has minutes or seconds above 59");
+        frames = ((v[0] * 60 + v[1]) * 60 + v[2]) * timebase + v[3];
+    } else {
+        for (int i = 1; i < v.size(); ++i)
+            if (v[i] >= 60) bad("has minutes or seconds above 59");
+        for (long long x : v) seconds = seconds * 60 + double(x);
+        seconds += fraction;
+    }
+    const double total = timecode ? double(frames) : std::round(seconds * fmt.rate.fps());
+    if (total > 2e9) bad("is too long");
+    return int(total);
+}
+
+} // namespace
+
+// Frames from 120 (frames), "120" (frames), "4.8s" (seconds), "00:00:04:20" (timecode), "1:30" / "00:01:02.5"
+// (clock time, see clockTime)
 int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what)
 {
     constexpr double kMax = 2e9; // as Timecode::parse: beyond that the cast to int would be undefined
@@ -81,17 +137,17 @@ int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what
     const QString s = v.toString().trimmed();
     if (s.endsWith('s')) {
         bool ok = false;
-        const double sec = s.chopped(1).toDouble(&ok);
+        const double sec = QString(s.chopped(1)).replace(',', '.').toDouble(&ok); // "6,95s": a decimal comma
         if (ok && sec >= 0 && sec * fmt.rate.fps() <= kMax) return int(std::lround(sec * fmt.rate.fps()));
     } else if (!s.isEmpty()) {
         bool ok = false;
         const int frames = s.toInt(&ok);
         if (ok && frames >= 0) return frames;
-        const int tc = Timecode::parse(s, fmt.rate.timebase());
-        if (tc >= 0 && s.contains(':')) return tc;
+        if (s.contains(':') || s.contains(';')) return clockTime(s, fmt, what);
         if (const double d = s.toDouble(&ok); ok && d >= 0 && d != std::floor(d) && d <= kMax) fraction(d);
     }
-    fail("BAD_ARGUMENT", QString("%1: '%2' is not a time (use frames, \"4.5s\" or \"HH:MM:SS:FF\")").arg(what, s));
+    fail("BAD_ARGUMENT",
+         QString("%1: '%2' is not a time (use frames, \"4.5s\", \"MM:SS\" or \"HH:MM:SS:FF\")").arg(what, s));
 }
 
 QString tc(int frames, const ProjectFormat& fmt) { return Timecode::format(frames, fmt.rate.timebase()); }
@@ -631,7 +687,8 @@ const QVector<Command>& commands()
           {"height", T::Integer, "timeline height (default: the template's, 1080)"},
           {"fps", T::Number, "frame rate (default: the template's, 25; 23.976, 24, 25, 29.97, 30, 50, 59.94, 60)"},
           {"media", T::Paths, "media files to import"},
-          {"overwrite", T::Boolean, "replace an existing project"}},
+          {"overwrite", T::Boolean, "replace an existing project (its last state goes into the backups; not while "
+                                    "it is open in the app)"}},
          cmdNew},
         {"templates", "List the start templates for `new`: built-in ones and the user's own (made in the app: File › "
                       "Save as Start Template), which one is the default, and what each sets: format (fixed_resolution "
@@ -1133,11 +1190,11 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
         }
         const QJsonValue v = raw[p.name];
         const QString str = v.isString() ? v.toString() : QString();
-        const auto list = [&]() {
+        const auto list = [&](const QString& text) {
             if (v.isArray()) return v.toArray();
-            if (str.trimmed().startsWith('[')) return QJsonDocument::fromJson(str.toUtf8()).array();
+            if (text.trimmed().startsWith('[')) return QJsonDocument::fromJson(text.toUtf8()).array();
             QJsonArray arr;
-            for (const QString& x : str.split(',', Qt::SkipEmptyParts)) arr << x.trimmed();
+            for (const QString& x : text.split(',', Qt::SkipEmptyParts)) arr << x.trimmed();
             return arr;
         };
         bool ok = true;
@@ -1162,16 +1219,22 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             else ok = false;
             break;
         case ParamType::Time: out[p.name] = v; ok = v.isDouble() || v.isString(); break;
-        case ParamType::Times: out[p.name] = list(); break;
+        case ParamType::Times: {
+            // A decimal comma in seconds ("6,95s", "1,5s, 3s" - German writing) is no list separator: it would
+            // become frame 6 and 95 s without an error
+            static const QRegularExpression decimalComma(R"((^|[,\s])(\d+),(\d+s)(?=$|[,\s]))");
+            out[p.name] = list(QString(str).replace(decimalComma, "\\1\\2.\\3"));
+            break;
+        }
         case ParamType::Paths: {
             QJsonArray arr;
-            for (const QJsonValue& x : list()) arr << absolute(x.toString());
+            for (const QJsonValue& x : list(str)) arr << absolute(x.toString());
             out[p.name] = arr;
             break;
         }
         case ParamType::Sources: {
             QJsonArray arr;
-            for (const QJsonValue& x : list()) {
+            for (const QJsonValue& x : list(str)) {
                 if (!x.isObject()) {
                     arr << absolute(x.toString());
                     continue;

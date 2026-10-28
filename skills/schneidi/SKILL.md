@@ -69,7 +69,8 @@ Every command then works on what the app shows, unsaved changes included; `info`
 ## Ground rules
 
 - **Absolute paths** for every file.
-- **Times**: frames (integer, in the project's frame rate), seconds like `"4.5s"`, or timecode `"00:01:02:10"`.
+- **Times**: frames (integer, in the project's frame rate), seconds like `"4.5s"`, timecode `"00:01:02:10"`
+  (hours:minutes:seconds:frames), or clock time `"1:30"` (minutes:seconds), `"00:01:02.5"` (decimal seconds).
   Seconds are the safest. Analysis commands on a media file count frames in the file's own rate unless you pass
   `project`, so pass it when you feed the result into `edit`.
 - **Never overwrite the user's material.** Renders and projects get new names (`trip-cut.mp4`, `trip-9x16.mp4`);

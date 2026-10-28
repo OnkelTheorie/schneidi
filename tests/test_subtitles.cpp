@@ -198,6 +198,16 @@ void testEditor()
     CHECK_EQ(track(p, 2), QString("25-50:importiert"));
     CHECK(p.timeline().subtitles[2].cues[0].id > 0);
     CHECK(!p.timeline().subtitles[2].enabled); // ST2 is visible
+    // Overlapping cues (a transcript, the AI's cue list): the later one splits the earlier, every part has its
+    // own id (the right part had id 0: not selectable, not editable, not deletable)
+    CHECK_EQ(ed.importSubtitles({{0, 0, 100, "A"}, {0, 50, 80, "B"}}, "overlap"), 3);
+    CHECK_EQ(track(p, 3), QString("0-50:A 50-80:B 80-100:A"));
+    QSet<int> ids;
+    if (CHECK_EQ(int(p.timeline().subtitles.size()), 4))
+        for (const SubtitleCue& c : p.timeline().subtitles[3].cues)
+            if (CHECK(c.id > 0 && Subtitles::find(p.timeline(), c.id) == &c)) ids << c.id;
+    CHECK_EQ(int(ids.size()), 3);
+    undo->undo();
 
     // Change style (dragging = one step), rename, delete track
     const int before = undo->count();
@@ -206,6 +216,12 @@ void testEditor()
     CHECK_EQ(undo->count(), before + 1);
     ed.renameSubtitleTrack(0, "Untertitel 1"); // default name -> stays empty
     CHECK(p.timeline().subtitles[0].name.isEmpty());
+    ed.toggleSubtitleTrackLock(2); // locked: stays, like a locked video/audio track
+    const int steps = undo->count();
+    ed.removeSubtitleTrack(2);
+    CHECK_EQ(p.timeline().subtitles.size(), 3);
+    CHECK_EQ(undo->count(), steps);
+    ed.toggleSubtitleTrackLock(2);
     ed.removeSubtitleTrack(2);
     CHECK_EQ(p.timeline().subtitles.size(), 2);
 
@@ -649,6 +665,19 @@ void testSelectAllMixed()
     f.ed.moveSubtitles(f.sel.ids().values().toVector(), -40, 0); // not before frame 0: by -20
     CHECK(f.v1() == v1 && f.st(0) == st1);
     CHECK_EQ(undo->index(), steps + 2);
+    // Too far left (the AI's edit op `move`): one delta for all, clamped to frame 0 - the clips keep their
+    // spacing (no clip overwriting the next) and the subtitles stay in step with them
+    f.ed.moveClips(f.sel.ids().values().toVector(), 20, TrackKind::Video, 0);
+    f.ed.moveClips({f.z, f.y, f.x, f.cueId(0, 1), f.cueId(0, 0)}, -60, TrackKind::Video, 0);
+    CHECK_EQ(f.v1(), v1);
+    CHECK_EQ(f.st(0), st1);
+    f.ed.moveClips({f.y, f.z}, -60, TrackKind::Video, 0); // only the later ones: by -50 (x is overwritten as usual)
+    CHECK_EQ(f.v1(), QString("0-50 50-100"));
+    undo->undo();
+    undo->undo();
+    undo->undo();
+    CHECK(f.v1() == v1 && f.st(0) == st1);
+    f.ed.selectAll();
 
     // Nudge (, and .) likewise; nothing selected = no (empty) undo step; subtitles alone move too
     f.ed.nudgeSelection(-5); // a clip starts at 0

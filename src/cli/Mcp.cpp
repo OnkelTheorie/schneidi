@@ -80,7 +80,8 @@ QString instructions(const Options& opt)
                      "longer than about %1 s answers {\"job\", \"state\":\"running\"} and keeps running: `jobs` with "
                      "that job (and wait) gives its progress and then its result.")
                  .arg(opt.jobWaitS);
-    s += " Times are frames in the project frame rate, seconds like \"4.5s\" or timecodes.";
+    s += " Times are frames in the project frame rate, seconds like \"4.5s\", timecodes \"HH:MM:SS:FF\" "
+         "or clock times \"MM:SS\" / \"HH:MM:SS.sss\".";
     return s;
 }
 
