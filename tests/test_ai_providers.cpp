@@ -85,6 +85,12 @@ void testPresets()
     CHECK(Ai::isLocal("http://[::1]:8080/v1"));
     CHECK(!Ai::isLocal("https://api.anthropic.com"));
     CHECK(!Ai::isLocal("http://192.168.1.20:8000/v1")); // another machine: the privacy notice asks
+    // Reached directly, never through the system's proxy: this computer and the local network
+    for (const char* h : {"localhost", "ollama.localhost", "127.0.0.1", "::1", "[::1]", "192.168.1.20", "10.1.2.3",
+                          "172.20.0.5", "169.254.3.4", "fe80::1", "fd12::5", "gpu-box.local"})
+        if (!CHECK(Ai::isNearHost(h))) std::printf("       %s\n", h);
+    for (const char* h : {"api.anthropic.com", "8.8.8.8", "172.32.0.1", "2001:db8::1", "openrouter.ai", ""})
+        if (!CHECK(!Ai::isNearHost(h))) std::printf("       %s\n", h);
 
     Ai::Endpoint a{Ai::Protocol::Anthropic, "https://api.anthropic.com/", "k", "claude-sonnet-5-5", "claude"};
     CHECK_EQ(Ai::chatUrl(a).toString(), QString("https://api.anthropic.com/v1/messages"));

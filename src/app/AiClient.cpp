@@ -13,10 +13,15 @@
 
 namespace {
 
-// The system's proxy settings (companies often allow the internet only through one); for the chat's requests only
+// The system's proxy settings (companies often allow the internet only through one); for the chat's requests only.
+// A server on this computer or in the local network (Ollama on localhost) is reached directly: a proxy cannot reach it
 class SystemProxies : public QNetworkProxyFactory {
 public:
-    QList<QNetworkProxy> queryProxy(const QNetworkProxyQuery& query) override { return systemProxyForQuery(query); }
+    QList<QNetworkProxy> queryProxy(const QNetworkProxyQuery& query) override
+    {
+        if (Ai::isNearHost(query.peerHostName())) return {QNetworkProxy(QNetworkProxy::NoProxy)};
+        return systemProxyForQuery(query);
+    }
 };
 
 QNetworkRequest request(const Ai::Endpoint& e, const QUrl& url, bool fallbacks, int timeoutMs)

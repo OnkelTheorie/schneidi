@@ -44,6 +44,9 @@ struct Endpoint {
 };
 // Loopback address: nothing leaves this computer (no privacy notice)
 bool isLocal(const QString& address);
+// A host on this computer or in the local network (private and link-local addresses, *.local): reached directly, never
+// through the system's proxy (which cannot reach it)
+bool isNearHost(const QString& host);
 QUrl chatUrl(const Endpoint& e);   // …/v1/messages or …/chat/completions
 QUrl modelsUrl(const Endpoint& e); // …/v1/models or …/models
 // Headers of every request (key, protocol version); the key never goes anywhere else
