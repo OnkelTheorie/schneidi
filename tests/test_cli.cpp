@@ -1261,8 +1261,6 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         const QJsonObject l = run("loudness", {{"source", proj}})["loudness"].toObject();
         CHECK(std::abs(l["integrated_lufs"].toDouble() + 20) < 0.5);
     }
-    return Check::result();
-}
     // A still takes the length asked for (AI run 2026-10-28: out 20.6s gave the 5 s still length), as when trimmed
     // in the app; a still with no length keeps the default
     {
