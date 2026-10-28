@@ -5,21 +5,35 @@ Thank you for helping. Bug reports, ideas and pull requests are welcome on
 
 ## License of contributions
 
-schneidi is licensed under the [GNU Affero General Public License version 3](LICENSE) (AGPL-3.0, version 3 only). By submitting a
-contribution (code, translations, documentation, images or other material) you agree that:
+schneidi is licensed under the [GNU Affero General Public License, version 3 only](LICENSE) (AGPL-3.0-only).
 
-1. your contribution is licensed under AGPL-3.0, like the rest of schneidi, and
-2. you additionally grant the maintainer of schneidi (OnkelTheorie) a perpetual, worldwide, non-exclusive, royalty-free
-   and irrevocable license to use, change and distribute your contribution under other license terms as well – for
-   example in official builds for mobile app stores that use the store's libraries for ads, in-app purchases or
-   license checks, or that are licensed to a partner who publishes such a build.
+Before your first pull request can be merged, you sign the [Contributor License Agreement](CLA.md) (CLA). CLA
+Assistant asks you in the pull request; signing takes one click and covers all your later contributions.
 
-You keep the copyright to your contribution. You confirm that you wrote it yourself or otherwise have the right to
-submit it under these terms.
+In short, the CLA says:
 
-The AGPL-3.0 does not allow anyone else to combine schneidi with such proprietary store libraries. Point 2 only lets
-the maintainer treat your contribution like schneidi's own code, so official app builds can include it.
+1. Your contribution is licensed to everyone under AGPL-3.0-only, like the rest of schneidi.
+2. You additionally allow the maintainer to use your contribution under other license terms as well, and to pass
+   that permission on. This is what makes official app store builds possible, which use the store's libraries for
+   ads, in-app purchases or license checks.
+3. You keep the copyright to your contribution.
+4. The maintainer promises that your contribution stays publicly available under an open source license.
+
+The [CLA](CLA.md) itself is the binding text; this summary is only for orientation.
+
+AGPL-3.0 does not allow anyone else to combine schneidi with such proprietary store libraries. Only official builds
+can do that.
+
+## Source file headers
+
+Every source file starts with:
+
+```cpp
+// SPDX-License-Identifier: AGPL-3.0-only
+```
+
+Please keep this line in new files you add.
 
 ## Name and logo
 
-The name "schneidi" and the logo are not part of the license – see [TRADEMARKS.md](TRADEMARKS.md).
+The name "schneidi" and the logo are not part of the license. See [TRADEMARKS.md](TRADEMARKS.md).

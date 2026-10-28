@@ -1,8 +1,10 @@
 # The schneidi name and logo
 
-The code of schneidi is free software ([AGPL-3.0](LICENSE)). The name "schneidi" and the schneidi logo are not part of
-that license. The rules below keep it clear which builds are official, so nobody gets a copy with ads or malware
-under the schneidi name.
+The name "schneidi" and the schneidi logo are trademarks of the maintainer of schneidi (GitHub account "OnkelTheorie").
+
+The code of schneidi is free software ([AGPL-3.0-only](LICENSE)). The name and the logo are not part of that license.
+The rules below keep it clear which builds are official, so nobody gets a copy with ads or malware under the schneidi
+name.
 
 ## Fine without asking
 - Talking about schneidi: articles, videos, tutorials, reviews, comparisons.
@@ -19,6 +21,6 @@ under the schneidi name.
 
 ## Official builds
 - Releases on [github.com/OnkelTheorie/schneidi](https://github.com/OnkelTheorie/schneidi/releases).
-- App store listings published with permission of the maintainer.
+- App store listings published by the maintainer or with the maintainer's written permission.
 
 Questions or requests: open an issue on GitHub.
