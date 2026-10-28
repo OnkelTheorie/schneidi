@@ -425,11 +425,14 @@ Mlt::Producer* TimelineBuilder::nestedProducer(int sequenceId, TrackKind kind, i
     if (!m_nested || m_nestStack.size() >= 16 || m_nestStack.count(sequenceId)) return nullptr; // loop/too deep
     const auto it = m_nested->constFind(sequenceId);
     if (it == m_nested->cend()) return nullptr;
-    // As with files: one own tractor per track and side of a transition (own decoders)
+    // As with files: one own tractor per track and side of a transition (own decoders). Inside a nested sequence
+    // the key carries the outer path too: the same compound clip on two tracks (picture in picture) holding another
+    // compound clip would otherwise share that inner tractor and read it at two positions per frame.
     QString key = QString("%1|%2|%3|%4|%5").arg(sequenceId).arg(kind == TrackKind::Video ? "v" : "a")
                       .arg(trackIndex).arg(second ? "x" : "").arg(m_nestStack.size());
     if (angle >= 0) key += QString("|m%1").arg(angle);
-    if (auto c = m_nestedCache.find(key); c != m_nestedCache.end()) return c->second.get();
+    const QString cacheKey = m_keyPrefix + key;
+    if (auto c = m_nestedCache.find(cacheKey); c != m_nestedCache.end()) return c->second.get();
     Timeline content;
     if (angle >= 0) { // Multicam segment: only the angle's own tracks
         if (angle >= it->angles.size()) return nullptr;
@@ -441,7 +444,7 @@ Mlt::Producer* TimelineBuilder::nestedProducer(int sequenceId, TrackKind kind, i
     m_nestStack.erase(sequenceId);
     if (!p || !p->is_valid()) return nullptr;
     Mlt::Producer* raw = p.get();
-    m_nestedCache.emplace(key, std::move(p));
+    m_nestedCache.emplace(cacheKey, std::move(p));
     return raw;
 }
 

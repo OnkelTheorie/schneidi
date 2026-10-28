@@ -211,5 +211,62 @@ int main(int argc, char** argv)
         }
     }
 
+    // --- The same compound clip A on V1 and V2 (picture in picture), A holding another compound clip B: each A gets
+    // its own B (one tractor read at two positions per frame made its decoders jump back and forth)
+    {
+        const QString blue = dir.filePath("blue.mp4");
+        if (CHECK(QFile::exists(blue))) {
+            const auto compound = [](int id, int seq, int start) {
+                Clip c;
+                c.id = id;
+                c.kind = ClipKind::Compound;
+                c.sequenceId = seq;
+                c.start = start;
+                c.out = 29;
+                return c;
+            };
+            auto nested = std::make_shared<NestedTimelines>();
+            Timeline b;
+            b.video.resize(1);
+            Clip file;
+            file.id = 1;
+            file.mediaPath = blue;
+            file.out = 29;
+            b.video[0].clips << file;
+            Timeline a;
+            a.video.resize(1);
+            a.video[0].clips << compound(1, 200, 0);
+            (*nested)[200] = b;
+            (*nested)[100] = a;
+            Timeline tl;
+            tl.video.resize(2);
+            tl.video[0].clips << compound(1, 100, 0);
+            tl.video[1].clips << compound(2, 100, 5);
+            tl.nested = nested;
+            ProjectFormat fmt;
+            fmt.width = 320;
+            fmt.height = 180;
+            fmt.rate = {25, 1};
+            auto prof = makeProfile(fmt);
+            TimelineBuilder builder(*prof);
+            auto tr = builder.build(tl);
+            if (CHECK(tr)) {
+                std::vector<std::set<mlt_producer>> perTrack;
+                for (int i = 0; i < tr->count(); ++i) {
+                    std::set<mlt_producer> s;
+                    if (std::unique_ptr<Mlt::Producer> track(tr->track(i)); track) tractorsIn(*track, s);
+                    if (!s.empty()) perTrack.push_back(std::move(s));
+                }
+                CHECK_EQ(int(perTrack.size()), 2); // V1 and V2, each with A and its B
+                for (size_t i = 0; i < perTrack.size(); ++i) {
+                    CHECK_EQ(int(perTrack[i].size()), 2);
+                    for (size_t j = i + 1; j < perTrack.size(); ++j)
+                        for (mlt_producer t : perTrack[i]) CHECK(!perTrack[j].count(t));
+                }
+                const auto [r20, b20] = redBlue(*tr, *prof, 20);
+                CHECK(b20 > 150);
+            }
+        }
+    }
     return Check::result();
 }
