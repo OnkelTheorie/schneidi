@@ -32,6 +32,31 @@ QString describe(const MediaInfo& m)
     return s + "]";
 }
 
+// h264_aac.mp4 with patched header lengths (version 0 boxes: mvhd/mdhd = version+flags, created, modified, time scale,
+// duration; tkhd = version+flags, created, modified, track id, reserved, duration). zero: all lengths 0, else time
+// scale 1 and 2^32-1 s in mvhd/mdhd
+QByteArray patchedLengths(const QString& source, bool zero)
+{
+    QFile whole(source);
+    if (!whole.open(QIODevice::ReadOnly)) return {};
+    QByteArray data = whole.readAll();
+    const auto put = [&](qsizetype at, quint32 v) {
+        for (int i = 0; i < 4; ++i) data[at + i] = char(v >> (24 - 8 * i));
+    };
+    for (const char* box : {"mvhd", "mdhd", "tkhd"}) {
+        for (qsizetype at = data.indexOf(box); at >= 0; at = data.indexOf(box, at + 4)) {
+            if (data[at + 4] != 0) continue; // version 1 (64-bit times): ffmpeg writes version 0 here
+            const bool tkhd = qstrcmp(box, "tkhd") == 0;
+            if (zero) put(at + (tkhd ? 24 : 20), 0);
+            else if (!tkhd) {
+                put(at + 16, 1);
+                put(at + 20, 0xFFFFFFFFu);
+            }
+        }
+    }
+    return data;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -99,6 +124,8 @@ int main(int argc, char** argv)
         {"text.mp4", {}, false},
         {"empty.mp4", {}, false},
         {"truncated.mp4", {}, false},
+        // Header lengths of 0 (mvhd/tkhd/mdhd, as an aborted recording can leave them): no length, left to MLT
+        {"zero_length.mp4", {}, false},
     };
     for (const Case& c : cases) {
         if (!c.args.isEmpty()) {
@@ -113,6 +140,7 @@ int main(int argc, char** argv)
             CHECK(whole.open(QIODevice::ReadOnly));
             f.write(whole.read(30000));
         }
+        if (qstrcmp(c.file, "zero_length.mp4") == 0) f.write(patchedLengths(in("h264_aac.mp4"), true));
     }
 
     const FrameRate rates[] = {{25, 1}, {30000, 1001}, {60, 1}, {24000, 1001}};
@@ -164,6 +192,15 @@ int main(int argc, char** argv)
     CHECK(!cover.hasVideo && cover.hasAudio);
     const MediaInfo still = Engine::probe(format, in("cover.png"));
     CHECK(still.isImage && still.hasVideo && still.length == 125);
+    // Absurd header length (2^32 s): capped, never negative; decided by the own reader (MLT's producer crashes on it)
+    {
+        QFile f(in("absurd_length.mp4"));
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.write(patchedLengths(in("h264_aac.mp4"), false));
+        f.close();
+        const std::optional<MediaInfo> absurd = MediaProbe::read(f.fileName(), {25, 1});
+        CHECK(absurd && absurd->length > 0 && absurd->hasVideo);
+    }
     const MediaInfo surround = Engine::probe(format, in("surround.wav"));
     CHECK(surround.audioStreams.size() == 1 && surround.audioStreams[0].channels == 6);
     return Check::result();
