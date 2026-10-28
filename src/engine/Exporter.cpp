@@ -795,8 +795,10 @@ void Exporter::poll()
         return;
     }
     if (m_consumer->is_stopped()) {
-        // Encoder or container failed (e.g. codec missing): no file or an empty one
-        if (!wroteOutput()) {
+        // Encoder or container failed (e.g. codec missing): no file or an empty one. Or it failed on the way (disk
+        // full, writing or encoding failed): avformat reports a fatal error and stops, the file is cut off
+        if (!wroteOutput() || m_fatal) {
+            if (m_fatal) qWarning("Export: the avformat consumer failed while rendering");
             fail(T("Export fehlgeschlagen: %1").arg(m_target));
             return;
         }

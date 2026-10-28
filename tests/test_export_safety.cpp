@@ -182,6 +182,41 @@ void testKeepsOlderFile(const QString& root)
     CHECK_EQ(entries(dir), QStringList({"out.wav"}));
 }
 
+// Disk full or a write error midway (here: a file size limit for this process): "export failed", the older file stays
+void testWriteErrorMidway(const QString& root)
+{
+#ifdef Q_OS_UNIX
+    struct Case { const char* name; ExportSettings::Writer writer; bool audioOnly; };
+    for (const Case& c : {Case{"mlt.mp4", ExportSettings::Writer::Mlt, false}, Case{"own.mp4", ExportSettings::Writer::Own, false},
+                          Case{"audio.wav", ExportSettings::Writer::Default, true}}) {
+        const QString dir = root + "/limit-" + c.name;
+        QDir().mkpath(dir);
+        const QString target = dir + "/" + c.name;
+        writeFile(target, kOld);
+        ExportSettings s = settings(target, c.writer);
+        s.crf = 1; // large frames: the limit is reached early
+        if (c.audioOnly) {
+            s.videoCodec.clear();
+            s.audioCodec = "pcm_s16le";
+        }
+        rlimit old{};
+        getrlimit(RLIMIT_FSIZE, &old);
+        rlimit small = old;
+        small.rlim_cur = 64 * 1024; // the export writes more than that
+        std::signal(SIGXFSZ, SIG_IGN); // write() fails with EFBIG instead of ending the process
+        setrlimit(RLIMIT_FSIZE, &small);
+        const Result r = run(s);
+        setrlimit(RLIMIT_FSIZE, &old);
+        std::signal(SIGXFSZ, SIG_DFL);
+        if (!CHECK(!r.ok)) std::printf("       %s reported as finished: %s\n", c.name, qPrintable(r.message));
+        CHECK_EQ(content(target), kOld);
+        CHECK_EQ(entries(dir), QStringList({c.name}));
+    }
+#else
+    Q_UNUSED(root);
+#endif
+}
+
 void testImageSequence(const QString& root)
 {
     const QString dir = root + "/seq-test";
@@ -256,6 +291,7 @@ int main(int argc, char** argv)
                                 "-shortest"});
     if (!CHECK(!g_media.isEmpty())) return Check::result();
     testKeepsOlderFile(tmp.path());
+    testWriteErrorMidway(tmp.path());
     testImageSequence(tmp.path());
     return Check::result();
 }
