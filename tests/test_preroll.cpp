@@ -125,6 +125,27 @@ void testClearWaits()
     QThread::msleep(50);
 }
 
+// A rebuild (new points) waits for a decode of the old graph that is still running: playback starts on the new
+// graph right after, and the builder hands it the same cached producers
+void testRebuildWaits()
+{
+    auto prof = makeProfile(kFmt);
+    TimelineBuilder builder(*prof);
+    auto tractor = builder.build(scene());
+    const std::vector<PrerollPoint> pts = builder.prerollPoints();
+    if (!CHECK_EQ(int(pts.size()), 3)) return;
+    Preroll preroll;
+    for (int i = 0; i < 5; ++i) {
+        preroll.setPoints(builder.prerollPoints(), 50, QSize(kFmt.width, kFmt.height));
+        preroll.update(40, 1.0);
+        QThread::msleep(5 + 10 * i); // right in the middle of decoding
+        preroll.update(40, 0.0);     // no new decode after this one
+        preroll.setPoints(builder.prerollPoints(), 50, QSize(kFmt.width, kFmt.height));
+        for (const auto& p : pts) CHECK_EQ(long(p.producer.use_count()), 3L); // pts, builder, the new points
+    }
+    preroll.clear();
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -150,5 +171,6 @@ int main(int argc, char** argv)
     testPoints();
     testSameImages();
     testClearWaits();
+    testRebuildWaits();
     return Check::result();
 }

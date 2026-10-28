@@ -4,6 +4,7 @@
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/ProxyCleanup.h"
+#include "engine/video/Reader.h"
 #include "engine/video/Still.h"
 
 #include <Mlt.h>
@@ -16,7 +17,9 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QThread>
+#include <cmath>
 #include <memory>
+#include <optional>
 
 namespace {
 
@@ -93,9 +96,16 @@ ProxyJob prepareJob(const QString& original, const QString& part)
     // "correct" it and the proxy looks exactly like the original in the preview
     const char* cs = ffColorspace(info.colorspace);
     const QString matrix = info.colorspace == 2020 ? "bt2020" : cs;
-    const QString scale = QString("scale=w='trunc(%1*iw*sar/2)*2':h='trunc(%1*ih/2)*2'"
+    QString scale = QString("scale=w='trunc(%1*iw*sar/2)*2':h='trunc(%1*ih/2)*2'"
                                   ":in_color_matrix=%2:out_color_matrix=%2:in_range=%3:out_range=tv,setsar=1")
                               .arg(f, matrix, info.fullRange ? "pc" : "tv");
+    // Frame 0 of the proxy = frame 0 of the original. MLT and the own decoder count from the first video key frame;
+    // FFmpeg (without -copyts) shifts by the container start, the earliest of all streams. A recording whose sound
+    // starts before the picture (OBS, phones, games: ~1 frame) would put the first picture at +1 frame, and the
+    // constant frame rate fills the gap with a doubled first picture: proxy frame k = original frame k-1, cuts
+    // one frame off in the preview. Move the picture so the counted start lands on 0.
+    if (const std::optional<double> zero = Video::zeroOffset(original); zero && std::abs(*zero) > 1e-4)
+        scale.prepend(QString("setpts=PTS-(%1)/TB,").arg(QString::number(*zero, 'f', 6)));
     const char* primaries = info.colorspace == 601 ? "smpte170m" : info.colorspace == 2020 ? "bt2020" : "bt709";
     const char* trc = info.colorspace == 601 ? "smpte170m" : "bt709";
     QStringList args{"-hide_banner", "-nostdin", "-y", "-i", original,

@@ -534,7 +534,7 @@ struct ExportWriter::Impl {
         AVBSFContext* bsf = nullptr;
         AVPacket* pkt = nullptr;
         int index = -1;
-        double tb = 0, fps = 0;
+        double fps = 0;
         int64_t firstPts = AV_NOPTS_VALUE;
         std::shared_ptr<AVCodecParameters> params; // the stream after the bit stream filter
         std::deque<AVPacket*> ready;
@@ -549,10 +549,8 @@ struct ExportWriter::Impl {
         // Stream frame position like engine/video/Reader (MLT's producer): from the first key frame, rounded
         int64_t position(const AVPacket* p) const
         {
-            int64_t pts = p->pts != AV_NOPTS_VALUE ? p->pts : p->dts;
-            if (firstPts != AV_NOPTS_VALUE) pts -= firstPts;
-            else if (fmt->start_time != AV_NOPTS_VALUE) pts -= av_rescale_q(fmt->start_time, AV_TIME_BASE_Q, fmt->streams[index]->time_base);
-            return int64_t(tb * double(pts) * fps + 0.5);
+            const int64_t pts = p->pts != AV_NOPTS_VALUE ? p->pts : p->dts;
+            return Video::framePosition(pts, firstPts, fmt->start_time, fmt->streams[index]->time_base, fps);
         }
         // Next packet of the stream (caller frees it), nullptr at the end or on a read error
         AVPacket* next()
@@ -593,8 +591,7 @@ struct ExportWriter::Impl {
             for (AVPacket*& p : ready) av_packet_free(&p);
             ready.clear();
             eof = false;
-            int64_t ts = int64_t(double(position) / (tb * fps));
-            if (firstPts != AV_NOPTS_VALUE) ts += firstPts;
+            const int64_t ts = Video::frameTimestamp(position, firstPts, fmt->start_time, fmt->streams[index]->time_base, fps);
             av_seek_frame(fmt, index, std::max<int64_t>(ts, 0), AVSEEK_FLAG_BACKWARD);
             av_bsf_flush(bsf);
         }
@@ -659,7 +656,6 @@ struct ExportWriter::Impl {
             return cannot("cannot be opened");
         src->index = info.index;
         AVStream* st = src->fmt->streams[info.index];
-        src->tb = av_q2d(st->time_base);
         src->fps = av_q2d(info.frameRate);
         src->pkt = av_packet_alloc();
         const AVBitStreamFilter* filter = av_bsf_get_by_name(codec == AV_CODEC_ID_H264 ? "h264_mp4toannexb" : "hevc_mp4toannexb");

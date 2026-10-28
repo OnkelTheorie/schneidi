@@ -149,6 +149,7 @@ schneidi_test(test_multicam)
 schneidi_test(test_multicam_render)
 schneidi_test(test_multicam_viewer)
 schneidi_test(test_proxy_hint)
+schneidi_test(test_media_timing) # proxy frame k = original frame k, shorter sources keep later clips in place, frame positions
 schneidi_test(test_proxy_cleanup) # which proxy files cleaning up deletes, which stay, dry run
 schneidi_test(test_memory_release) # MLT's pool and the heap given back while idle, never during playback
 schneidi_test(test_settings) # app settings (File › Settings…), AI page, indicator modes
