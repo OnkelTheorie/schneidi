@@ -308,6 +308,34 @@ void testDecomposeKeepsSettings()
     }
 }
 
+// The id of a deleted timeline is not given again after saving and opening (a render job queued for it would render
+// the new timeline)
+void testSequenceIdNotReused()
+{
+    Project p;
+    const int second = p.addTimeline("Zwei");
+    RenderJob job;
+    job.id = 1;
+    job.path = "/x/out.mp4";
+    job.sequence = second;
+    p.setRenderQueue({job});
+    CHECK(p.removeSequence(second));
+    const QByteArray json = ProjectFile::toJson(p.data(), "/x/p.schneidi");
+    ProjectData d;
+    QString err;
+    if (!CHECK(ProjectFile::fromJson(json, "/x/p.schneidi", &d, &err))) return;
+    CHECK_EQ(d.lastSequenceId, second);
+    Project again;
+    again.load(d);
+    const int third = again.addTimeline("Drei");
+    CHECK(third > second);
+    CHECK(!again.sequence(again.renderQueue().value(0).sequence));
+    // Nothing deleted: the file stays as before (no field)
+    Project plain;
+    plain.addTimeline();
+    CHECK(!ProjectFile::toJson(plain.data(), "/x/p.schneidi").contains("lastSequenceId"));
+}
+
 // The clipboard after opening another project: compound clips (they point at a sequence of the old project) are left
 // out, media clips bring their Media Pool entry along; another frame rate empties it
 void testClipboardAcrossProjects()
@@ -540,6 +568,7 @@ int main(int argc, char** argv)
     testDecomposeKeepsClipsAbove();
     testDecomposeKeepsSettings();
     testClipboardAcrossProjects();
+    testSequenceIdNotReused();
     testProjectFile();
     if (!Check::haveFfmpeg()) {
         Check::result();

@@ -698,6 +698,10 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         root["sequences"] = seqs;
         root["currentSequence"] = data.currentSequence;
     }
+    // Optional: only when a deleted sequence had a higher id than the ones there (older versions ignore it)
+    if (std::all_of(data.sequences.begin(), data.sequences.end(), [&](const Sequence& s) { return s.id < data.lastSequenceId; })
+        && data.lastSequenceId > std::max(1, data.currentSequence))
+        root["lastSequenceId"] = data.lastSequenceId;
     if (!data.renderQueue.isEmpty()) root["renderQueue"] = RenderQueueJson::toJson(data.renderQueue);
     if (data.fixedResolution || data.fixedFrameRate) { // optional, absent in old files
         QJsonObject fixed;
@@ -759,6 +763,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
     d.playhead = intOf(root.value("playhead"));
     d.lastClipId = intOf(root.value("lastClipId"));
     d.lastLinkId = intOf(root.value("lastLinkId"));
+    d.lastSequenceId = std::max(0, intOf(root.value("lastSequenceId")));
     // All entries resolve the clip references; "notInPool" (file only in the timeline) does not go into the Media Pool
     QVector<MediaInfo> allMedia;
     for (const QJsonValue& v : root.value("media").toArray()) {
@@ -1107,16 +1112,20 @@ int relink(ProjectData* data, const QString& searchDir)
         for (const QString& old : w.value())
             for (const QString& now : candidates) pairs << Pair{score(old, now), old, now};
         std::stable_sort(pairs.begin(), pairs.end(), [](const Pair& a, const Pair& b) { return a.score > b.score; });
-        QSet<QString> used;
+        QSet<QString> used, offline;
         for (const Pair& pr : pairs) {
-            if (moved.contains(pr.old) || used.contains(pr.now)) continue;
-            // Ambiguous (several old files of the same name, another file fits just as well): better leave offline
-            // than to show wrong material
-            const bool ambiguous = w.value().size() > 1 && std::any_of(pairs.begin(), pairs.end(), [&](const Pair& o) {
+            if (moved.contains(pr.old) || used.contains(pr.now) || offline.contains(pr.old)) continue;
+            // Ambiguous (another file fits just as well, e.g. C0001.MP4 on two camera cards, or another old file of the
+            // same name fits this one just as well): better leave offline than to show wrong material - also no worse
+            // match later
+            const bool ambiguous = std::any_of(pairs.begin(), pairs.end(), [&](const Pair& o) {
                 return o.score == pr.score && !moved.contains(o.old) && !used.contains(o.now)
-                       && ((o.old == pr.old) != (o.now == pr.now));
+                       && !offline.contains(o.old) && ((o.old == pr.old) != (o.now == pr.now));
             });
-            if (ambiguous) continue;
+            if (ambiguous) {
+                offline.insert(pr.old);
+                continue;
+            }
             moved.insert(pr.old, pr.now);
             used.insert(pr.now);
         }

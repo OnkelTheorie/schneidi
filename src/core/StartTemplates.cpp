@@ -46,7 +46,7 @@ Track track(TrackKind kind, const QString& name = {}, const QString& color = {})
 QByteArray toJson(const StartTemplate& t)
 {
     QJsonObject root = QJsonDocument::fromJson(ProjectFile::toJson(StartTemplates::apply(t), t.path)).object();
-    for (const char* key : {"media", "bins", "playhead", "lastClipId", "lastLinkId"}) root.remove(key);
+    for (const char* key : {"media", "bins", "playhead", "lastClipId", "lastLinkId", "lastSequenceId"}) root.remove(key);
     QJsonObject meta{{"name", t.name}};
     if (!t.description.isEmpty()) meta["description"] = t.description;
     root["template"] = meta;

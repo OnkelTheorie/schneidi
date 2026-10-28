@@ -225,6 +225,7 @@ ProjectData Project::data() const
     d.renderQueue = m_renderQueue;
     d.lastClipId = m_lastClipId;
     d.lastLinkId = m_lastLinkId;
+    d.lastSequenceId = m_lastSequenceId;
     d.sequences = m_sequences;
     d.currentSequence = m_current;
     d.fixedResolution = m_fixedResolution;
@@ -267,7 +268,7 @@ void Project::load(const ProjectData& d)
         current().compound = false; // there is always at least one normal timeline
         current().multicam = false;
     }
-    m_lastSequenceId = 0;
+    m_lastSequenceId = d.lastSequenceId; // ids of deleted sequences are not given again
     for (Sequence& s : m_sequences) {
         m_lastSequenceId = std::max(m_lastSequenceId, s.id);
         if (s.timeline.video.isEmpty()) s.timeline.video << makeTrack(TrackKind::Video);

@@ -23,6 +23,9 @@ struct ProjectData {
     Timeline timeline; // opened timeline (sequence currentSequence)
     int lastClipId = 0;
     int lastLinkId = 0;
+    // Highest sequence id ever given (optional): ids of deleted timelines are never given again (a queued render job
+    // keeps pointing at "deleted", not at a new timeline). 0 = the highest of `sequences`.
+    int lastSequenceId = 0;
     QVector<RenderJob> renderQueue; // Deliver: render queue (optional)
     // All sequences (timelines, compound clips); the opened one gets `timeline` on loading.
     // Empty (old files) = only `timeline` as "Timeline 1".
@@ -71,7 +74,8 @@ std::unique_ptr<QLockFile> lock(const QString& projectPath, int timeoutMs = 5000
 // Content fingerprint of a saved project file (empty = unreadable): tells own saves from changes by others
 QByteArray fingerprint(const QString& path);
 
-// Missing media: search for a file of the same name in a folder (recursively) and redirect all references.
+// Missing media: search for a file of the same name in a folder (recursively) and redirect all references. Of several
+// files of that name the one whose folders match most; several equally good ones: the file stays offline.
 // Returns the number of files found again.
 int relink(ProjectData* data, const QString& searchDir);
 QStringList missingMedia(const ProjectData& data);
