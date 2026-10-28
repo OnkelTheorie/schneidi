@@ -14,8 +14,8 @@ VERSION="$(sed -n 's/^project(schneidi VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeL
 VERSION="${VERSION:-0.1.0}"
 OUT="$BUILD/schneidi"
 
-# Only the MLT modules schneidi uses (like the AppImage)
-MODULES=(core avformat sdl2 rtaudio frei0r xml resample plus normalize)
+# Only the MLT modules schneidi uses (like the AppImage; normalize, resample and plus are GPL and not loaded)
+MODULES=(core avformat sdl2 rtaudio frei0r xml)
 # frei0r: all plugins (Effects Library, Open FX → frei0r) except face detection (would pull in OpenCV)
 FREI0R_SKIP=(facebl0r facedetect)
 
