@@ -124,17 +124,22 @@ void testFlashShake()
     Accents::apply(s2, {20}, Accents::find("shake")->amounts, kFps, kFrame);
     CHECK(s2.keys == s.keys);
 
-    // hit = all three; every preset does something and has a description for AIs
+    // big = all three; hit is mild (punch and shake, no flash: users found the flash on every kill too much);
+    // every preset does something and has a description for AIs
     Clip h = clip();
-    Accents::apply(h, {20}, Accents::find("hit")->amounts, kFps, kFrame);
+    Accents::apply(h, {20}, Accents::find("big")->amounts, kFps, kFrame);
     for (AnimParam p : {AnimParam::ZoomX, AnimParam::GradeExposure, AnimParam::PosX}) CHECK(Keys::animated(h, p));
+    Clip mild = clip();
+    Accents::apply(mild, {20}, Accents::find("hit")->amounts, kFps, kFrame);
+    CHECK(Keys::animated(mild, AnimParam::ZoomX) && Keys::animated(mild, AnimParam::PosX));
+    CHECK(!Keys::animated(mild, AnimParam::GradeExposure));
     for (const Accents::Preset& p : Accents::presets()) CHECK(p.amounts.any() && *p.description && *p.name);
     CHECK(!Accents::find("nope"));
 
     // A burst of kills does not strobe: a flash at most every 0.5 s (13 frames), punch and shake on every hit
     CHECK_EQ(Accents::flashHits({40, 20, 25, 20, 35}, kFps), (QVector<int>{20, 35}));
     Clip burst = clip();
-    CHECK_EQ(Accents::apply(burst, {20, 25, 35, 40}, Accents::find("hit")->amounts, kFps, kFrame), 4);
+    CHECK_EQ(Accents::apply(burst, {20, 25, 35, 40}, Accents::find("big")->amounts, kFps, kFrame), 4);
     CHECK_EQ(Keys::keyTimes(burst, {AnimParam::GradeExposure}), (QVector<int>{19, 20, 28, 34, 35, 43}));
     CHECK(near(Keys::valueAt(burst, AnimParam::GradeExposure, 35), 1.5));
     CHECK(Keys::valueAt(burst, AnimParam::GradeExposure, 25) < 1.5 * 0.5);
@@ -187,7 +192,7 @@ void testEditor()
     CHECK(Keys::animated(find(3), AnimParam::ZoomX) && !Keys::hasKeys(find(1)));
     CHECK(ed.addAccents({2}, {10}, Accents::find("pulse")->amounts, "Accent").isEmpty());
     // A burst across the cut flashes once: the kill 7 frames later in the next clip gets punch and shake only
-    CHECK_EQ(ed.addAccents({}, {45, 52}, Accents::find("hit")->amounts, "Accent"), (QVector<int>{45, 52}));
+    CHECK_EQ(ed.addAccents({}, {45, 52}, Accents::find("big")->amounts, "Accent"), (QVector<int>{45, 52}));
     CHECK(Keys::animated(find(1), AnimParam::GradeExposure));
     CHECK(Keys::animated(find(2), AnimParam::ZoomX) && !Keys::animated(find(2), AnimParam::GradeExposure));
 }
@@ -248,9 +253,9 @@ void testCli(const QString& dir)
     QJsonObject c = firstClip();
     const QJsonObject keys = std::as_const(c)["keyframes"].toObject();
     CHECK(keys.contains("zoom") && !keys.contains("zoom_x") && !keys.contains("zoom_y")); // both axes alike: one
-    CHECK(keys.contains("grade.exposure") && keys.contains("x") && keys.contains("y"));
+    CHECK(!keys.contains("grade.exposure") && keys.contains("x") && keys.contains("y")); // hit: no flash
     CHECK_EQ(keys["zoom"][1]["at"].toInt(), 25);
-    CHECK(near(keys["zoom"][1]["value"].toDouble(), 1.12, 1e-4));
+    CHECK(near(keys["zoom"][1]["value"].toDouble(), 1.10, 1e-4));
     {
         // A zoom (or place) set afterwards without `at` moves the whole curve: the punch stays a punch around it
         const int first = std::as_const(c)["id"].toInt();
@@ -260,7 +265,7 @@ void testCli(const QString& dir)
         const QJsonObject after = firstClip();
         const QJsonObject moved = after["keyframes"].toObject();
         CHECK(near(moved["zoom"][0]["value"].toDouble(), 2.0, 1e-4));
-        CHECK(near(moved["zoom"][1]["value"].toDouble(), 2.24, 1e-4));
+        CHECK(near(moved["zoom"][1]["value"].toDouble(), 2.20, 1e-4));
         CHECK_EQ(moved["zoom"].toArray().size(), keys["zoom"].toArray().size()); // no extra keyframe
         CHECK(near(moved["x"][1]["value"].toDouble() - moved["x"][0]["value"].toDouble(), x1 - x0, 1e-4));
         CHECK(near(moved["x"][0]["value"].toDouble(), 100, 1e-4));

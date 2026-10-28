@@ -22,7 +22,13 @@ const QVector<Preset>& presets()
          "camera shake: jumps of up to 3 % of the frame that die down in 0.25 s (on a clip that just fills the frame "
          "the edge shows: zoom it a little, combine with a punch, or use fit:'blur')",
          {0, 0, 0.03, 0.25}},
-        {"hit", N_("Treffer"), "kill hit: punch 12 % + flash +1.5 stops + shake 2 %, 0.3 s", {0.12, 1.5, 0.02, 0.3}},
+        // Users found flash + shake on every kill too much (three times): the everyday hit is mild, the flash belongs
+        // to the one big moment ("big") or comes when asked for
+        {"hit", N_("Treffer"), "kill hit, mild: punch 10 % + a light shake 1 %, 0.3 s (no flash)", {0.10, 0, 0.01, 0.3}},
+        {"big", N_("Großer Treffer"),
+         "the one big moment (ace, clutch): punch 12 % + flash +1.5 stops + shake 2 %, 0.3 s - once per video, not on "
+         "every kill",
+         {0.12, 1.5, 0.02, 0.3}},
         {"drop", N_("Drop"), "music drop: big punch 25 % + flash +2.5 stops, fades in 0.5 s", {0.25, 2.5, 0, 0.5}},
         {"pulse", N_("Puls"), "beat pulse: a small 5 % zoom bump in 0.15 s, for many beats in a row", {0.05, 0, 0, 0.15}},
     };

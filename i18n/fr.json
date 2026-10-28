@@ -1540,6 +1540,7 @@
  "Transkription (Whisper), Analysen, Proxys und das Einlesen beim Import. Weniger Threads: Musik, Spiele und andere Programme laufen nebenbei flüssiger, die Arbeit dauert länger. Den Export stellst du auf der Deliver-Seite ein.": "Transcription (Whisper), analyses, proxys et lecture des fichiers à l'import. Moins de threads : la musique, les jeux et les autres programmes restent fluides en parallèle, le travail prend plus de temps. L'export se règle sur la page Deliver.",
  "Transparent": "Transparent",
  "Treffer": "Impact",
+ "Großer Treffer": "Gros impact",
  "Treiber: DirectSound (Standard)": "Pilote : DirectSound (par défaut)",
  "Treiber: WASAPI": "Pilote : WASAPI",
  "Trennen": "Déconnecter",

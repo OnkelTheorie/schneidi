@@ -40,14 +40,18 @@ also read [social.md](social.md).
 - With music, follow the song, not a fixed grid: the strongest moments on its accents (the drop, the first beat
   after a break), a change of pace where the song changes, the end on the end of a phrase. Same scene length for
   every moment feels mechanical. `beats` tells you where those are (see Music).
-- Effects (zoom punch, flash, shake) for the big moments only; the same effect on every kill wears off.
+- **Effects (zoom punch, flash, shake) only when the user asks for them.** "Cut out the kills", "make a TikTok" is
+  no request for effects: put none and offer them in one line at the end. Users find flash and shake on every kill
+  too much - when asked for effects on the kills: the mild `hit` (punch + light shake, no flash) on the kills, at most
+  one `big` (with flash) on the one best moment of the video, never `big`/`flash`/`shake` on several kills in a row.
 - A sound on every kill (or hit, beat): all copies on **one** track, each starting on its moment (cut off silence at
   the file's start first, `silence` shows it). When a kill comes before the previous sound has ended, end the
   previous copy there (`trim`), like a sampler starting the sound again - copies on separate tracks pile up, get
   loud and clip. Keep them overlapping only when the user asks for it.
 - `accent` puts them on many moments in one op, as keyframes: `{"op":"accent","at":["3.3s","7.2s"],"preset":"hit"}`
   (drops from `beats`; for kills the `hit_s` of `highlights` as `{"media":"/path/clip.mkv","source":"7.67s"}`, which
-  finds the moment on the timeline wherever the clip ended up). Presets: `punch`, `flash`, `shake`, `hit` (all three, a kill),
+  finds the moment on the timeline wherever the clip ended up). Presets: `punch`, `flash`, `shake`, `hit` (mild: punch + light shake, a kill), `big` (punch + flash +
+  shake, the one big moment),
   `drop` (big, for the music drop), `pulse` (small, for beats); `strength` scales one, `effects` lists them.
   Flashes keep 0.5 s apart by themselves (a burst of kills would strobe); the quiet choice is `shake` alone. Don't
   write punches and flashes as single `keyframe` ops. A `transform` `zoom`/`x`/`y` without `at` afterwards moves
