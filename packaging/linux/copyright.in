@@ -4,13 +4,13 @@ Upstream-Contact: @SCHNEIDI_MAINTAINER@
 Source: @SCHNEIDI_HOMEPAGE@
 
 Files: *
-Copyright: 2026 schneidi contributors
+Copyright: 2026 OnkelTheorie and schneidi contributors
 License: AGPL-3.0-only
 
 License: AGPL-3.0-only
  This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU Affero General Public License version 3 as
- published by the Free Software Foundation.
+ it under the terms of the GNU Affero General Public License as published by
+ the Free Software Foundation, version 3.
  .
  This program is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
