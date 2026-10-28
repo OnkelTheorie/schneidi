@@ -539,6 +539,26 @@ int main(int argc, char** argv)
         CHECK(!tl["tracks"][0]["clips"][1].toObject().contains("transform"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keyframe","clips":[%1],"param":"blur.nope","at":1}])").arg(v1)}}),
                  QString("BAD_ARGUMENT"));
+        // Keyframe times outside the clip (AI run 2026-10-28: zoom keys at "0s"/"2s" on a later clip all landed on
+        // its first frame, one key, no zoom) and unknown keys are errors that say how; the clip's end is its last frame
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keyframe","clips":[%1],"param":"zoom","keys":[{"at":0,"value":1},{"at":20,"value":1.5}]}])").arg(v2)}})
+                  .contains("offset"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keyframe","clips":[%1],"param":"zoom","keyframes":[{"at":45,"value":1}]}])").arg(v2)}})
+                  .contains("unknown key 'keyframes'"));
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keyframe","clips":[%1],"param":"zoom","keys":[{"time":45,"value":1}]}])").arg(v2)}})
+                  .contains("unknown key 'time'"));
+        {
+            const QJsonObject r = run("edit", {{"project", g_path}, {"dry_run", true}, {"ops", QString(R"([{"op":"keyframe","clips":[%1],"param":"zoom",
+                "keys":[{"at":{"clip":%1,"offset":0},"value":1},{"at":{"clip":%1,"offset":"0.4s"},"value":1.5},{"at":80,"value":2}]}])").arg(v2)}});
+            const QJsonArray zoom = std::as_const(r)["timeline"]["tracks"][0]["clips"][1]["keyframes"]["zoom"].toArray();
+            if (CHECK_EQ(zoom.size(), 3)) {
+                CHECK_EQ(zoom[1]["at"].toInt(), 50);
+                CHECK_EQ(zoom[2]["at"].toInt(), 79);
+            }
+            // Several clips, one time: the clip it is in gets the key, the other one is left alone with a note
+            const QJsonObject both = run("edit", {{"project", g_path}, {"dry_run", true}, {"ops", QString(R"([{"op":"keyframe","clips":[%1,%2],"param":"x","at":45,"value":10}])").arg(v1).arg(v2)}});
+            CHECK(both["notes"][0].toString().contains("left alone"));
+        }
 
         // Windows: add (first free number), shape/fill/correction, keyframes, listed apart in `info`, remove
         const QJsonObject added = run("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"window","clips":[%1],"add":"rectangle",
