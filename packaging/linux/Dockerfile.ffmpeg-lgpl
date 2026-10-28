@@ -13,3 +13,7 @@ RUN apt-get update \
         nasm libopenh264-dev libkvazaar-dev libsvtav1enc-dev libvpx-dev libdav1d-dev \
         libopus-dev libvorbis-dev libmp3lame-dev libwebp-dev libva-dev libdrm-dev libvpl-dev \
  && rm -rf /var/lib/apt/lists/*
+# Qt plugins build-appimage.sh puts into the AppImage (Wayland platform, SVG icons)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends qt6-wayland qt6-svg-plugins \
+ && rm -rf /var/lib/apt/lists/*
