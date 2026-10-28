@@ -217,6 +217,17 @@ int main(int argc, char** argv)
         CHECK(first.size() == QSize(144, 81) && brightness(first) > 30);
         const QImage upright = Video::stillAt(file("rotated90.mp4"), 1.0, QSize(144, 81));
         CHECK(upright.width() < upright.height()); // turned, without borders
+        // A raw stream without time stamps: the first picture, not the whole file decoded to find "1 s"
+        const QString raw264 = Check::makeMedia(file("raw.h264"), {"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=60",
+                                                                  "-c:v", "libx264", "-preset", "ultrafast", "-f", "h264"});
+        if (CHECK(!raw264.isEmpty())) {
+            QElapsedTimer t;
+            t.start();
+            const QImage img = Video::stillAt(raw264, 1.0, QSize(144, 81));
+            const qint64 ms = t.elapsed();
+            std::printf("still of a raw 60 s stream: %lld ms\n", ms);
+            CHECK(!img.isNull() && ms < 400);
+        }
     }
 
     // Media Storage shows it in its list (in its own thread, the window stays free)

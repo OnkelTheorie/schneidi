@@ -81,11 +81,12 @@ struct Source {
         return true;
     }
 
+    // NaN without any time stamp (raw streams like .h264)
     double seconds(const AVFrame* f) const
     {
         int64_t ts = f->best_effort_timestamp;
         if (ts == AV_NOPTS_VALUE) ts = f->pts;
-        if (ts == AV_NOPTS_VALUE) return 0;
+        if (ts == AV_NOPTS_VALUE) return std::nan("");
         return double(ts) * av_q2d(st->time_base) - startSeconds;
     }
 
@@ -157,7 +158,8 @@ int keyFramePass(const QString& path, const KeyFrameOptions& options, bool keyPa
     auto drain = [&] {
         while (!stop && avcodec_receive_frame(src.dec, src.frame) >= 0) {
             const QImage img = src.picture(src.frame, options.box, true);
-            const double t = src.seconds(src.frame);
+            double t = src.seconds(src.frame);
+            if (std::isnan(t)) t = 0;
             av_frame_unref(src.frame);
             if (img.isNull()) continue;
             ++count;
@@ -206,7 +208,9 @@ QImage stillAt(const QString& path, double seconds, const QSize& box)
     bool done = false;
     auto drain = [&] {
         while (!done && avcodec_receive_frame(src.dec, src.frame) >= 0) {
-            const bool there = src.seconds(src.frame) >= seconds - 1e-6;
+            // without a time stamp the first picture (it never got "there": the whole file was decoded)
+            const double t = src.seconds(src.frame);
+            const bool there = std::isnan(t) || t >= seconds - 1e-6;
             if (there || first.isNull()) {
                 const QImage img = src.picture(src.frame, box, false);
                 if (there && !img.isNull()) {
