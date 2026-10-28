@@ -505,6 +505,34 @@ void testStorageMarks(const QString& dir, const QString& dump)
     storage.setFolder(dir);
 }
 
+// Picture thumbnails are read in the background one by one: opening a folder of big pictures does not decode them
+// all on the GUI thread in one go (the window stood still for the sum of all)
+void testImageThumbs()
+{
+    QTemporaryDir dir;
+    QImage red(1600, 900, QImage::Format_RGB32);
+    red.fill(Qt::red);
+    for (int i = 0; i < 12; ++i) CHECK(red.save(dir.filePath(QString("p%1.png").arg(i))));
+    MediaStorage storage;
+    storage.setPersistent(false);
+    storage.resize(700, 400);
+    storage.show();
+    auto* list = storage.findChild<QListWidget*>();
+    if (!CHECK(list)) return;
+    auto reds = [&] {
+        int n = 0;
+        for (int i = 0; i < list->count(); ++i) {
+            const QImage img = list->item(i)->icon().pixmap(QSize(144, 81)).toImage();
+            if (!img.isNull() && img.pixelColor(img.width() / 2, img.height() / 2) == QColor(Qt::red)) ++n;
+        }
+        return n;
+    };
+    storage.setFolder(dir.path());
+    CHECK_EQ(list->count(), 12);
+    CHECK_EQ(reds(), 0); // nothing decoded yet when the folder shows
+    CHECK(waitFor([&] { return reds() == 12; }));
+}
+
 void testHoverScrub(const QString& dir)
 {
     const QString a = dir + "/a.mp4";
@@ -726,6 +754,7 @@ int main(int argc, char** argv)
     QTemporaryDir tmp;
     if (Check::haveFfmpeg() && CHECK(tmp.isValid())) {
         testStorageMarks(tmp.path(), dump);
+        testImageThumbs();
         lap("storage marks");
         testHoverScrub(tmp.path());
         testScrubFileChanged(tmp.path());

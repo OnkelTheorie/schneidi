@@ -316,6 +316,8 @@ QString Stabilizer::unsupportedReason(const Clip& c)
     if (c.mediaPath.isEmpty()) return T("Kein Medium.");
     if (c.freeze) return T("Standbilder lassen sich nicht stabilisieren.");
     if (c.hasRamp()) return T("Clips mit Speed Ramp lassen sich nicht stabilisieren.");
+    // one frame has nothing to steady (its analysis failed and with it the whole export)
+    if (c.out <= c.in) return T("Der Clip ist zu kurz zum Stabilisieren.");
     return {};
 }
 
@@ -388,15 +390,16 @@ bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<boo
     std::unique_ptr<Mlt::Producer> p = factory.open(resourceOf(r));
     if (!p || !p->is_valid()) return fail(T("Datei lässt sich nicht öffnen: %1").arg(r.file));
     p->set("audio_index", -1);
-    const int len = p->get_length();
-    const int to = std::min(r.to, len - 1);
-    const int from = std::clamp(r.from, 0, std::max(0, to));
-    if (to - from < 1) return fail(T("Der Clip ist zu kurz zum Stabilisieren."));
+    // Frames beyond the end of the file (file shortened or replaced, rounded timewarp length) have no motion:
+    // the result still covers the whole request, or find() never accepts it (analyzed again and again)
+    const int from = std::max(0, r.from);
+    const int to = std::min(r.to, p->get_length() - 1);
+    if (r.to <= from) return fail(T("Der Clip ist zu kurz zum Stabilisieren."));
 
     // Every frame in order: the motion from each one to the next
     std::unique_ptr<StabilizeMotion::Estimator> estimator;
     Motions motions;
-    motions.reserve(size_t(to - from + 1));
+    motions.reserve(size_t(r.to - from + 1));
     for (int pos = from; pos <= to; ++pos) {
         if (cancel && cancel->load()) break;
         p->seek(pos);
@@ -412,11 +415,16 @@ bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<boo
     }
     p.reset();
     if (cancel && cancel->load()) return fail(T("Abgebrochen."));
-    if (int(motions.size()) != to - from + 1) return fail(T("Die Analyse ist fehlgeschlagen: %1").arg(QFileInfo(r.file).fileName()));
+    if (int(motions.size()) != std::max(0, to - from + 1))
+        return fail(T("Die Analyse ist fehlgeschlagen: %1").arg(QFileInfo(r.file).fileName()));
+    Motion none;
+    none.valid = false;
+    motions.resize(size_t(r.to - from + 1), none);
+    if (progress) *progress = 1000;
 
     QDir().mkpath(cacheDir());
     removeOldResults();
-    const QString target = QDir(cacheDir()).filePath(QString("%1_%2_%3%4").arg(r.base()).arg(from).arg(to).arg(kSuffix));
+    const QString target = QDir(cacheDir()).filePath(QString("%1_%2_%3%4").arg(r.base()).arg(from).arg(r.to).arg(kSuffix));
     if (QFileInfo::exists(target)) return true; // the same analysis finished elsewhere meanwhile (export + preview)
     // Only visible under the final name once complete -> nobody reads a half written file
     QSaveFile f(target);
@@ -526,7 +534,7 @@ void Stabilizer::sync(const QVector<Request>& requests)
         if (wanted.contains(key)) continue;
         wanted.insert(key);
         if (m_cancelled.contains(key) || m_failed.contains(key)) continue;
-        if (m_current && m_current->key() == key) continue;
+        if (runningUncancelled(key)) continue;
         if (find(r).valid()) continue;
         queue << r;
     }
@@ -543,10 +551,17 @@ void Stabilizer::start(const Request& r)
     const QString key = r.key();
     m_cancelled.remove(key);
     m_failed.remove(key);
-    if (find(r).valid() || (m_current && m_current->key() == key)) return;
+    if (find(r).valid() || runningUncancelled(key)) return;
     if (std::none_of(m_queue.begin(), m_queue.end(), [&](const Request& q) { return q.key() == key; })) m_queue << r;
     emit stateChanged();
     next();
+}
+
+// The analysis of `key` runs and goes on. One that is being cancelled still runs until its thread ends: the same
+// request again (start right after cancel, effect back by undo) is queued behind it, not dropped.
+bool Stabilizer::runningUncancelled(const QString& key) const
+{
+    return m_current && m_current->key() == key && !(m_cancel && m_cancel->load());
 }
 
 void Stabilizer::cancel(const Request& r)

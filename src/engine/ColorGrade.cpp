@@ -16,6 +16,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <future>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -220,7 +221,7 @@ std::shared_ptr<const LutTables> makeTables(const Lut& lut)
                 uint64_t w = 0;
                 for (int c = 0; c < 3; ++c) {
                     const float v = lut.data[qsizetype(i * 3 + c)];
-                    const long q = std::lround((double(v) + 0.5) * kSteps);
+                    const long q = std::lround((std::clamp(double(v), -1.0, 2.0) + 0.5) * kSteps);
                     w |= uint64_t(std::clamp(q, 0L, 8191L)) << (kLane * c);
                 }
                 t->nodes[i] = w;
@@ -524,11 +525,21 @@ LutPtr failLut(QString* error, const QString& msg)
     return nullptr;
 }
 
-// Number of a data line (QByteArray::toDouble: always with a dot, independent of the locale)
+// Number of a data line (QByteArray::toDouble: always with a dot, independent of the locale). Only finite
+// values that fit a float: toDouble also takes "nan"/"inf", which end up in lround/int casts later (undefined).
+double number(const QByteArray& w, bool* ok = nullptr)
+{
+    bool good = false;
+    const double v = w.toDouble(&good);
+    good = good && std::isfinite(float(v));
+    if (ok) *ok = good;
+    return good ? v : 0.0;
+}
+
 bool isNumber(const QByteArray& w)
 {
     bool ok = false;
-    w.toDouble(&ok);
+    number(w, &ok);
     return ok;
 }
 
@@ -548,7 +559,7 @@ LutPtr parseCube(QIODevice& f, QString* error)
             if (w.size() < 3 || !expected) return failLut(error, QStringLiteral("Datenzeile vor der Größenangabe"));
             for (int c = 0; c < 3; ++c) {
                 bool okc = false;
-                lut->data << float(w.at(c).toDouble(&okc));
+                lut->data << float(number(w.at(c), &okc));
                 if (!okc) return failLut(error, QStringLiteral("ungültige Zahl"));
             }
             continue;
@@ -559,14 +570,15 @@ LutPtr parseCube(QIODevice& f, QString* error)
             if (lut->size < 2 || lut->size > (lut->is3d ? 256 : 65536))
                 return failLut(error, QStringLiteral("ungültige Größe"));
             expected = lut->is3d ? lut->size * lut->size * lut->size : lut->size;
-            lut->data.reserve(expected * 3);
+            // not more than the file can hold (each value takes 2 bytes at least): a tiny file claiming 256 reserved 200 MB
+            lut->data.reserve(std::min<qint64>(qint64(expected) * 3, f.size() / 2));
         } else if (key == "DOMAIN_MIN" || key == "DOMAIN_MAX") {
             float* dst = key == "DOMAIN_MIN" ? lut->domainMin : lut->domainMax;
-            for (int c = 0; c < 3 && c + 1 < w.size(); ++c) dst[c] = float(w.at(c + 1).toDouble());
+            for (int c = 0; c < 3 && c + 1 < w.size(); ++c) dst[c] = float(number(w.at(c + 1)));
         } else if (key == "LUT_3D_INPUT_RANGE" || key == "LUT_1D_INPUT_RANGE") { // Resolve variant
             for (int c = 0; c < 3; ++c) {
-                lut->domainMin[c] = float(w.value(1).toDouble());
-                lut->domainMax[c] = float(w.value(2).toDouble());
+                lut->domainMin[c] = float(number(w.value(1)));
+                lut->domainMax[c] = float(number(w.value(2)));
             }
         } // skip TITLE and unknown things
     }
@@ -576,11 +588,13 @@ LutPtr parseCube(QIODevice& f, QString* error)
 }
 
 // .3dl (Lustre/Flame/Nuke): optional line with the input grid (N values), then N^3 integer RGB triples,
-// B fastest index. Output bit depth from "Mesh <in> <out>" or from the largest value (10/12/16 bit).
+// B fastest index. Output bit depth from "Mesh <in> <out>"; else values with decimals are 0..1 (float),
+// integers by the largest value (10/12/16 bit).
 LutPtr parse3dl(QIODevice& f, QString* error)
 {
     int size = 0;
     double outMax = 0;
+    bool fraction = false; // any value with decimals: a float LUT (0..1, may overshoot a bit)
     QVector<float> raw;
     while (!f.atEnd()) {
         const QByteArray line = f.readLine().trimmed();
@@ -598,8 +612,10 @@ LutPtr parse3dl(QIODevice& f, QString* error)
         if (w.size() < 3) return failLut(error, QStringLiteral("ungültige Datenzeile"));
         for (int c = 0; c < 3; ++c) {
             bool ok = false;
-            raw << float(w.at(c).toDouble(&ok));
+            const double v = number(w.at(c), &ok);
             if (!ok) return failLut(error, QStringLiteral("ungültige Zahl"));
+            raw << float(v);
+            fraction = fraction || v != std::floor(v);
         }
     }
     const int count = int(raw.size() / 3);
@@ -608,7 +624,7 @@ LutPtr parse3dl(QIODevice& f, QString* error)
         return failLut(error, QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
     if (outMax <= 0) {
         const float m = raw.isEmpty() ? 0 : *std::max_element(raw.cbegin(), raw.cend());
-        outMax = m <= 1.0f ? 1 : m <= 1023 ? 1023 : m <= 4095 ? 4095 : 65535;
+        outMax = fraction || m <= 1.0f ? 1 : m <= 1023 ? 1023 : m <= 4095 ? 4095 : 65535;
     }
     auto lut = std::make_shared<Lut>();
     lut->size = size;
@@ -643,7 +659,7 @@ LutPtr parseCsp(QIODevice& f, QString* error)
         }
         for (const QByteArray& w : words(line)) {
             bool ok = false;
-            nums << w.toDouble(&ok);
+            nums << number(w, &ok);
             if (!ok) return failLut(error, QStringLiteral("ungültige Zahl"));
         }
     }
@@ -727,6 +743,7 @@ LutPtr parseLutFile(const QString& path, QString* error)
     }
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return failLut(error, f.errorString());
+    if (f.peek(3) == "\xEF\xBB\xBF") f.skip(3); // UTF-8 BOM (files saved by Windows editors)
     if (suffix == "3dl") return parse3dl(f, error);
     if (suffix == "csp") return parseCsp(f, error);
     return parseCube(f, error);
@@ -743,24 +760,46 @@ std::shared_ptr<const Lut> parseLut(const QString& path, QString* error)
 
 std::shared_ptr<const Lut> loadLut(const QString& path, QString* error)
 {
+    // Failures are kept too (a broken big LUT was parsed again on every timeline rebuild), and a LUT being read is
+    // waited for instead of read a second time by another thread (export + preview)
+    struct Loaded {
+        std::shared_ptr<const Lut> lut;
+        QString error;
+    };
     struct Entry {
         QDateTime mtime;
         qint64 size = 0;
-        std::shared_ptr<const Lut> lut;
+        std::shared_future<Loaded> result;
     };
     static std::mutex mutex;
     static QHash<QString, Entry> cache;
     const QFileInfo fi(path);
+    std::promise<Loaded> promise;
+    std::shared_future<Loaded> result;
+    bool mine = false;
     {
         std::lock_guard<std::mutex> lock(mutex);
         const auto it = cache.constFind(path);
-        if (it != cache.cend() && it->mtime == fi.lastModified() && it->size == fi.size()) return it->lut;
+        if (it != cache.cend() && it->mtime == fi.lastModified() && it->size == fi.size()) {
+            result = it->result;
+        } else {
+            result = promise.get_future().share();
+            cache.insert(path, Entry{fi.lastModified(), fi.size(), result});
+            mine = true;
+        }
     }
-    std::shared_ptr<const Lut> lut = parseLut(path, error);
-    if (!lut) return nullptr;
-    std::lock_guard<std::mutex> lock(mutex);
-    cache.insert(path, Entry{fi.lastModified(), fi.size(), lut});
-    return lut;
+    if (mine) { // read outside the lock: other LUTs load meanwhile
+        Loaded loaded;
+        try {
+            loaded.lut = parseLut(path, &loaded.error);
+        } catch (...) { // out of memory: nobody may wait forever
+            loaded.error = QStringLiteral("zu wenig Speicher");
+        }
+        promise.set_value(loaded);
+    }
+    const Loaded& loaded = result.get();
+    if (!loaded.lut && error) *error = loaded.error;
+    return loaded.lut;
 }
 
 void prepare(Lut& lut) { lut.tables = makeTables(lut); }
