@@ -16,6 +16,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <future>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -759,24 +760,46 @@ std::shared_ptr<const Lut> parseLut(const QString& path, QString* error)
 
 std::shared_ptr<const Lut> loadLut(const QString& path, QString* error)
 {
+    // Failures are kept too (a broken big LUT was parsed again on every timeline rebuild), and a LUT being read is
+    // waited for instead of read a second time by another thread (export + preview)
+    struct Loaded {
+        std::shared_ptr<const Lut> lut;
+        QString error;
+    };
     struct Entry {
         QDateTime mtime;
         qint64 size = 0;
-        std::shared_ptr<const Lut> lut;
+        std::shared_future<Loaded> result;
     };
     static std::mutex mutex;
     static QHash<QString, Entry> cache;
     const QFileInfo fi(path);
+    std::promise<Loaded> promise;
+    std::shared_future<Loaded> result;
+    bool mine = false;
     {
         std::lock_guard<std::mutex> lock(mutex);
         const auto it = cache.constFind(path);
-        if (it != cache.cend() && it->mtime == fi.lastModified() && it->size == fi.size()) return it->lut;
+        if (it != cache.cend() && it->mtime == fi.lastModified() && it->size == fi.size()) {
+            result = it->result;
+        } else {
+            result = promise.get_future().share();
+            cache.insert(path, Entry{fi.lastModified(), fi.size(), result});
+            mine = true;
+        }
     }
-    std::shared_ptr<const Lut> lut = parseLut(path, error);
-    if (!lut) return nullptr;
-    std::lock_guard<std::mutex> lock(mutex);
-    cache.insert(path, Entry{fi.lastModified(), fi.size(), lut});
-    return lut;
+    if (mine) { // read outside the lock: other LUTs load meanwhile
+        Loaded loaded;
+        try {
+            loaded.lut = parseLut(path, &loaded.error);
+        } catch (...) { // out of memory: nobody may wait forever
+            loaded.error = QStringLiteral("zu wenig Speicher");
+        }
+        promise.set_value(loaded);
+    }
+    const Loaded& loaded = result.get();
+    if (!loaded.lut && error) *error = loaded.error;
+    return loaded.lut;
 }
 
 void prepare(Lut& lut) { lut.tables = makeTables(lut); }

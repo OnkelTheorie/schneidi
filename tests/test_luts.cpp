@@ -24,7 +24,9 @@
 #include <QTest>
 #include <QTreeWidget>
 #include <QUndoStack>
+#include <atomic>
 #include <functional>
+#include <thread>
 
 namespace {
 
@@ -242,6 +244,50 @@ void testRobustness(const QString& dir)
     CHECK(writeFile(path("liar.cube"), "LUT_3D_SIZE 256\n0 0 0\n1 1 1\n"));
     err.clear();
     CHECK(!ColorGrade::parseLut(path("liar.cube"), &err) && err.contains("Anzahl"));
+
+    // loadLut keeps failures too (a broken LUT was parsed again on every timeline rebuild) until the file changes
+    {
+        const QByteArray good = cube(3, kInvert);
+        QByteArray broken = good;
+        broken.replace("LUT_3D_SIZE 3", "LUT_3D_SIZE 4"); // same size, wrong count
+        const QString p = path("cached.cube");
+        CHECK(writeFile(p, broken));
+        const QDateTime mtime = QFileInfo(p).lastModified();
+        err.clear();
+        CHECK(!ColorGrade::loadLut(p, &err) && !err.isEmpty());
+        CHECK(writeFile(p, good)); // same size and time: not read again
+        {
+            QFile f(p);
+            CHECK(f.open(QIODevice::ReadWrite) && f.setFileTime(mtime, QFileDevice::FileModificationTime));
+        }
+        err.clear();
+        CHECK(!ColorGrade::loadLut(p, &err) && !err.isEmpty());
+        {
+            QFile f(p);
+            CHECK(f.open(QIODevice::ReadWrite) && f.setFileTime(mtime.addSecs(5), QFileDevice::FileModificationTime));
+        }
+        if (auto l = ColorGrade::loadLut(p, &err); CHECK(l)) CHECK(isInvert(l.get()));
+    }
+
+    // Two threads asking for the same new LUT at once: read once, both get the same one
+    {
+        const QString p = path("shared.cube");
+        CHECK(writeFile(p, cube(33, kInvert)));
+        for (int round = 0; round < 5; ++round) {
+            QFile f(p); // a new modification time: not cached
+            CHECK(f.open(QIODevice::ReadWrite)
+                  && f.setFileTime(QDateTime::currentDateTime().addSecs(round + 10), QFileDevice::FileModificationTime));
+            f.close();
+            std::shared_ptr<const ColorGrade::Lut> a, b;
+            std::atomic<bool> go{false};
+            std::thread ta([&] { while (!go) {} a = ColorGrade::loadLut(p); });
+            std::thread tb([&] { while (!go) {} b = ColorGrade::loadLut(p); });
+            go = true;
+            ta.join();
+            tb.join();
+            CHECK(a && a == b);
+        }
+    }
 }
 
 void testBuiltins()
