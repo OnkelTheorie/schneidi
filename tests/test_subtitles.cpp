@@ -212,10 +212,10 @@ void testEditor()
     undo->undo();
 
     // Change style (dragging = one step), rename, delete track
-    const int before = undo->count();
+    const int before = undo->index(); // index, not count: the undone import above is dropped by the next push
     ed.setSubtitleStyle(0, "Größe", [](TitleStyle& s) { s.size = 60; }, "size");
     ed.setSubtitleStyle(0, "Größe", [](TitleStyle& s) { s.size = 70; }, "size");
-    CHECK_EQ(undo->count(), before + 1);
+    CHECK_EQ(undo->index(), before + 1);
     ed.renameSubtitleTrack(0, "Untertitel 1"); // default name -> stays empty
     CHECK(p.timeline().subtitles[0].name.isEmpty());
     ed.toggleSubtitleTrackLock(2); // locked: stays, like a locked video/audio track
