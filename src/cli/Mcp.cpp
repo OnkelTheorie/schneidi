@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // MCP server (Model Context Protocol), see Mcp.h. stdio transport: JSON-RPC 2.0, one message per line; no network
 // port, so it works the same on Linux and Windows.
 #include "cli/Mcp.h"

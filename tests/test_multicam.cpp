@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Multicam (docs/archiv/plan-0.8.md), model and Editor without rendering: a multicam clip is a sequence with one angle
 // per recording (video track + one audio track per stream, placed by the sync offsets). In the timeline its segments
 // carry the active angle; cutting/switching writes normal edits that can be changed later (other angle, roll, trim,

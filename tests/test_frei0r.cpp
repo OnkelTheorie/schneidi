@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test frei0r plugins as effects: registry from the MLT metadata (number, checkbox, color, choice; old alias names
 // only once), rendering with parameters (pixel values on color bars), saving/loading parameters with their type,
 // Inspector (sections appear with the first clip that has the effect, checkbox/choice with undo) and Effects Library.

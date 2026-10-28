@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Blurred fill around the fitted picture (ClipTransform::fill == FitFill::Blur): the clip's own picture, scaled up to
 // cover the frame and blurred, behind the transformed picture - a 16:9 clip in a 9:16 timeline on one track with one

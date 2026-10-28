@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Keyframes (like DaVinci): pure functions on Clip::keys, without undo/signals (Project::edit does that).
 // Times here are clip frames t (0 = first frame of the clip), the source frame (Clip::in + t) is stored.

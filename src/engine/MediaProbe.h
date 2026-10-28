@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // What Engine::probe tells about a media file (length, picture, sound, audio streams), read with libavformat directly
 // instead of opening an MLT producer: Matroska/WebM, MP4/MOV, WAV, FLAC, MP3 and AVI from their header alone (~1 ms;

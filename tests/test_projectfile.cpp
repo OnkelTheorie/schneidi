@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test project file: save a project with all features -> load -> save gives the same file, and
 // all values come back unchanged (also fields that would be lost on the first save).
 // Also: moved project folder (relative paths), invalid/too new files.

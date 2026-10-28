@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // `schneidi-cli setup claude`: one command connects this installation to Claude. Claude Code gets the MCP server
 // (user scope, via its own `claude mcp add`) and the skill (cli/Guide.h) in its skills folder; Claude Desktop gets

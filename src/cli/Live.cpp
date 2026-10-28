@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Live connection app <-> schneidi-cli, see Live.h
 #include "cli/Live.h"
 

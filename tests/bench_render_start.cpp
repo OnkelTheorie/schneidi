@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): how long starting a job of the render queue blocks the GUI thread when the timeline
 // reads many different files. Clicks "Render all" like the user (RenderQueuePanel), a timer in the GUI thread measures
 // how late it fires: the longest stall and the sum of all stalls over 50 ms, from the click to the first rendered frame

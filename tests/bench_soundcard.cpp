@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Measuring program (not a CTest test): plays through Audio::Player on the real sound card and records what the
 // system really sends to it (WASAPI loopback of the default output, so Windows only), then counts clicks and checks
 // the level – the Windows test of the own audio engine with WASAPI and DirectSound (docs/dev/testen.md).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Subtitles (DaVinci Subtitle Tracks): read/write SRT and helpers for subtitle tracks.
 // Pure data functions, editing goes through the Editor (undo).

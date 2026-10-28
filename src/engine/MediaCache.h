@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Thumbnails (filmstrips) and waveforms for the timeline.
 // Computed asynchronously in own threads, the UI only queries and

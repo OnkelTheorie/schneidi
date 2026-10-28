@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli multicam (docs/archiv/plan-0.8.md): edit operations to make multicam clips from synced recordings, set
 // source markers, cut/switch angles (one or a whole list), flatten, resync and rename angles, all through the
 // Editor like the app; plus the `sync` command that measures the offsets of files by their sound. Angles are

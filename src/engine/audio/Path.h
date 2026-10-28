@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Which audio path is used (docs/archiv/plan-0.10-ton.md): the own engine SMT (Audio::Mixer, the default since 0.10) or the
 // old one through MLT, kept as a fallback for one version.

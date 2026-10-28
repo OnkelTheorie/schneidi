@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "core/TruePeak.h"
 
 // ITU-R BS.1770-4, Annex 2, Table 1 ("interpolating FIR filter", 48 taps, 4 phases)

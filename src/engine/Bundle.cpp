@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Bundle.h"
 
 #include "engine/audio/Volume.h"

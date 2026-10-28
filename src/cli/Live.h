@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Live connection between schneidi-cli (and its MCP server) and the running app: if the project is open in the
 // app, commands work on what the app shows instead of the file. Reading commands get a copy of the open project

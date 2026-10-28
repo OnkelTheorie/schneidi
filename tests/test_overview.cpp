@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // `overview` (cli/AnalysisOverview.cpp): windows on whole seconds (a short rest joins the last one), sound level and
 // silent share, motion, cuts and brightness of a file (a cut from a moving test picture to black silence), the
 // clips and sound of a project, several files.

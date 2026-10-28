@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Pictures for hover scrub over thumbnails (Media Storage, Media Pool): a few pictures spread over a video file, decoded
 // in one background thread with the own video decoder (engine/video/Reader) and kept in memory per state of the file

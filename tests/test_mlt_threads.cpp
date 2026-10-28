@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Opening the first producers in parallel right after MLT starts (Media Pool thumbnails when a project opens,
 // parallel opening before an export) crashed about 1 start in 10: MLT creates its service caches lazily and without a
 // lock. Engine::initMlt creates them first (Bundle::prepareMltCaches). Same for the loader's tables and the producer

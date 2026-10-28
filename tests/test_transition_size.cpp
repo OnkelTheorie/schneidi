@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Transitions look like the clips on both sides at every output size. An AI test run of 2026-10-25 saw a cross
 // dissolve show the incoming clip as a small rectangle in the top left corner (frames of a 1920x1080 timeline at
 // 640 px): the outgoing clip had keyframed zoom ending at exactly 1. Where the rectangle is the whole frame, MLT's

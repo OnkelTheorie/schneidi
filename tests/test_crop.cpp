@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Crop (Inspector, CLI op 'transform'): values are timeline pixels on the clip's picture as it fits into the frame at
 // zoom 1, cut off the picture's own edges, the same at every zoom and timeline shape; cropped areas and letterbox bars
 // stay transparent (the track below shows). AI test runs of 2026-10-25 found it measured on the frame at zoom 1

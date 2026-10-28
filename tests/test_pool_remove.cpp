@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Removing clips from the Media Pool (Project::removeMedia, edit op 'remove_media', Delete/Backspace and the context
 // menu in the pool): unused media go in one undo step, used ones only with their clips (every timeline, compound clips
 // included) after a question that names them; undo brings back exactly what was there (place in the pool, bin, color,

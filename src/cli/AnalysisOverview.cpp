@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: `overview` – a first look at material in one call. Per stretch of time: how loud and how often
 // silent, how much moves, how many cuts and how bright (media file), or which clips play there (project). Cheap in
 // tokens: an AI (also a small local model) reads a few lines and then picks the detailed analysis it needs.

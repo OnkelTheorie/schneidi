@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Text-based editing (Transcript panel): media transcripts placed on the timeline through the clips, cutting
 // words and pauses (ripple, one undo step), the panel itself with its bindable cut keys and the transcripts in the
 // project file.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test effects in the render (MLT): render color correction/blur on color bars and check pixel values -
 // direction of the sliders, keyframes, splitting, blur independent of resolution, title with effect (alpha stays),
 // same picture with German number format (LC_NUMERIC) at runtime. Test medium is created with ffmpeg.

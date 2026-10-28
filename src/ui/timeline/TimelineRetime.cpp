@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Timeline: retime controls (speed bar, speed points, segment menus).
 #include "ui/timeline/TimelineView.h"
 

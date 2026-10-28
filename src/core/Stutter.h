@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Stutter in recordings with a variable frame rate: game capture keeps the time stamps of the frames it got, so where
 // the game lagged a frame stays on screen for several frame durations (a jump in the time stamps). Pure functions on

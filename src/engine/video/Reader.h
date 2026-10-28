@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own video decoder (plan 0.11 point 7): reads the pictures of one video stream with the FFmpeg libraries, in a
 // thread of its own that decodes a few frames ahead of the last request. MLT's avformat producer decoded inside

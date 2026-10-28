@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Filmstrips and Media Storage previews inside the program (engine/video/Thumbnails) instead of an ffmpeg process per
 // file: the same pictures at the same times as the ffmpeg command line that made them before (h264, hevc, turned phone
 // video, variable frame rate, odd size with anamorphic pixels), audio only gives none; MediaCache fills its key frame

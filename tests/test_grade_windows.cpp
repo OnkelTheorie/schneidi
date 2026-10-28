@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test windows of the Color page (core/GradeWindows): mask math (shapes, soft edge, rotation, invert, bounds), pixel
 // work (window correction, blur, pixelate, color – only inside), parameters stored sparsely in the grade, editor
 // operations with undo, keyframes, copy grade, project file, render through MLT.

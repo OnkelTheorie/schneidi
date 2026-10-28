@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Keys (and company defaults) of the AI chat. Where a key comes from, first match wins:
 //  1. environment: SCHNEIDI_AI_KEY, else the provider's own variable (ANTHROPIC_API_KEY, OPENAI_API_KEY,

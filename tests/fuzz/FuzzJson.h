@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Structure-aware mutation for targets that read JSON (project files, OTIO, MCP messages): byte changes mostly break
 // the syntax and end in the JSON reader, so most of the time one value of the document is changed instead - numbers

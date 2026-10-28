@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Importing effects: folder in the user directory (QStandardPaths::AppDataLocation/effects) where foreign
 // effects are placed, plus the bundled ones (Effects Library: LUTs/gradient wipes -> Bundled/Own). So far LUTs (subfolder "LUTs", bundled as

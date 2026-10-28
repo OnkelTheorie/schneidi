@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Internal helpers of TimelineBuilder, shared by its implementation files (not part of the API).
 #include "core/Keyframes.h"

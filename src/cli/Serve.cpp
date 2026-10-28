@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // `schneidi-cli serve`: MCP over HTTP, files in and out, see Serve.h
 #include "cli/Serve.h"
 

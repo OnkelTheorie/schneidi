@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): timeline filmstrip with and without the Color page grade (engine/GradedThumbs).
 // A long timeline: 1000 clips of 2 s (~33 min) from four 1080p sources, every second clip graded with a LUT +
 // saturation. Per zoom level (whole timeline, ~20 clips) and mode (graded off = the filmstrip as before, on): time

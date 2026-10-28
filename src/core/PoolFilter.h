@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Filter of the Media Pool's clip list (filter button next to the search): by kind, flag and clip color. A group
 // matches when the clip has any of the entries ticked there (nothing ticked = no limit); all groups with ticks must

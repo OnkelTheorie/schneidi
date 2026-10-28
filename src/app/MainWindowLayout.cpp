@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: layout, top bar, page bar and pages.
 #include "app/MainWindow.h"
 

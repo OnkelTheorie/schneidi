@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Command layer of schneidi-cli: every command is defined once (name, parameters, handler) and serves both
 // frontends, the command line (`schneidi-cli <command> …`) and the MCP server (`schneidi-cli mcp`, one tool per

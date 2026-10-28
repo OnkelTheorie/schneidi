@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Multicam like DaVinci (docs/archiv/plan-0.8.md): a multicam clip is a sequence (Sequence::multicam) with one angle
 // per recording, each on its own tracks in sync. In a timeline its segments (ClipKind::Multicam) show one angle each;

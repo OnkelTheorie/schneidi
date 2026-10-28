@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own compositing services instead of MLT's qtblend (Qt module, GPL): the CPU core of laying pictures over each other.
 // - transformFilter: draws the clip's picture into a rectangle of a transparent frame of the requested size

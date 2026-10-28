@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Check before export (core/ExportCheck.h, CLI/MCP `check`): gaps without picture (also from hidden tracks and
 // disabled clips), offline media, subtitles too short/too fast/past the end; sound: no sound, clipping, true peak with
 // and without the limiter advice, loudness off the target, silence at the end/start/inside. Vertical videos: titles

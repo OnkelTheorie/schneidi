@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Reference renders of the sound (docs/archiv/plan-0.10-ton.md, step 0 "Messgrundlage"): one small project per sound
 // feature (clip, track, master, reading of the source formats), rendered through the normal export path to WAV
 // (48 kHz stereo, 24 bit). The written references are the sound as it is before the own audio engine; every later

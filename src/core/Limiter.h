@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Master limiter: lookahead brickwall limiter that holds a true-peak ceiling (BS.1770 4x oversampling, the same
 // filter as TruePeakMeter). One gain for all channels. The gain reaches its value before a peak arrives (lookahead,

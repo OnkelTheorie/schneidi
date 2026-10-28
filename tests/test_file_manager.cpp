@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // FileManager (ui/FileManager.h): "Show in file manager" and "Open with default program" (Media Pool, Media Storage,
 // Render Queue) reach the system even without a D-Bus session on Linux (no file manager to ask: the folder opens).
 // The system's opener is replaced by a URL handler that only records: no window opens, no real session is asked.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test render cache (engine/RenderCache): key changes exactly for changes that affect the picture;
 // mode Off/Smart/User; rendering (with/without alpha) gives the same picture as the live preview; the builder
 // reads the cache file only with ClipCache (preview), never export and still; background rendering via sync();

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Windows of the Color page (like DaVinci "Window": shape masks). A window limits its own correction (the same wheels
 // and sliders as the grade) and an optional fill (blur, pixelate, solid color) to a rectangle or an ellipse with a

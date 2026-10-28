@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Multicam rendering (docs/archiv/plan-0.8.md): a segment shows picture and sound of its active angle (also video-only
 // and audio-only switches, several streams of one angle, an angle's muted stream, gaps of a split recording), the sync
 // offset is respected frame-exactly and follows a resync, the sound runs on across a through edit. The grid for the

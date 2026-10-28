@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test tracks: add/delete, lock, rename, color, ripple across all unlocked tracks, track header operation (offscreen)
 #include "check.h"
 

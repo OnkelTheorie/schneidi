@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Scopes of the Color page: computation on known images (histogram/waveform/parade/vectorscope values),
 // downsampling, pixel formats, trace images, and the panel (worker thread, newest frame wins, type switch, offscreen).
 // SCOPES_DUMP=dir saves the panel grabs as PNG for a visual check.

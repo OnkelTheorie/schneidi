@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // AI log (click on the AI indicator in the top bar, Workspace › AI Log): what AIs connected to the app did in this
 // session, newest first – steps inside the app (edits, app actions, also failed ones; each edit is one undo step)

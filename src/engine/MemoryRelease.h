@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Giving memory back to the system while the app is idle. MLT keeps every image buffer it ever handed out in its pool
 // (mlt_pool) for reuse and never frees one; glibc keeps freed heap memory in the process. After playing 4K material,

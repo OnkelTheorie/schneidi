@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Measuring program (not a CTest test): plays through Audio::Player on the real sound card and logs the clock, so a
 // device can be pulled away while it plays (card profile off, headphones unplugged) – docs/dev/testen.md.
 // The sound is a sine at -90 dBFS: inaudible, also when the system moves it to other speakers.

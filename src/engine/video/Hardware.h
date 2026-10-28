@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Hardware decoding for the own video reader (plan 0.11 point 7): one device per process, shared by all decoders.
 // Linux: CUDA (NVIDIA, NVDEC), else VAAPI (AMD/Intel); Windows: D3D11VA (all vendors); macOS: VideoToolbox.

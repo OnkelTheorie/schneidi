@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own audio engine, step 1 (docs/archiv/plan-0.10-ton.md): Audio::Reader reads one audio stream sample-exact.
 // Per source (containers, codecs, late streams, rates, channel layouts):
 // - content: the samples equal FFmpeg's own decode of the stream (bit-exact for every codec: same decoder), placed

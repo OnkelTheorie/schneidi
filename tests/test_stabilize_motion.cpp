@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own stabilizer core (engine/StabilizeMotion, no MLT): frames rendered from a textured scene through a known camera
 // (random shift, rotation, scale) -> the estimated motion matches it, also with an object moving on its own and a
 // still overlay (a game HUD); the smoothed path takes the shake out (residual motion measured against the known

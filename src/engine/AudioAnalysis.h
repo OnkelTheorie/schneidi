@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Audio analysis for "Normalize audio levels" (like DaVinci Normalize Audio Levels):
 // peak level (Sample Peak Program) or loudness per ITU-R BS.1770-4 (LUFS), plus frame peaks for silence detection

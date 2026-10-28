@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Timeline: mouse and wheel input (select, drag, trim, rubber band, auto scroll).
 #include "ui/timeline/TimelineView.h"
 

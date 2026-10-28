@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Contact sheet: still images of a video in a grid, each with its label (timecode), as one picture. The same for the
 // app (File › Save Contact Sheet) and `frames --sheet` (lets an AI look at the material).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // AI visible in the main window (MainWindowLive.cpp, TimelineView AI marks, app/AiLog): what an AI changes lights up
 // (new = filled, edited = outline, deleted = ghost) without moving the view; changes outside the view get an arrow
 // at the edge; the AI log lists every step and the work outside the app with progress and result; the indicator

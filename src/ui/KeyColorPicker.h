@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Pipette for the Green Screen key color: shows the selected clip alone and without its key (so the green is there to
 // pick) – in a large window of its own (ui/KeyPickWindow), so the exact green is easy to hit; beside the cursor a square

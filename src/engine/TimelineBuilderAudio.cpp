@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // TimelineBuilder: audio filters (volume, pan, meters, limiter, track EQ/compressor, sub-frame delay, mixer strips).
 #include "engine/TimelineBuilderDetail.h"
 #include "core/Dynamics.h"

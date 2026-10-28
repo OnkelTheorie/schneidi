@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // What the running app offers to the live connection (schneidi-cli / MCP editing the project open in the app).
 // MainWindow implements it; the server (cli/Live.cpp) only talks to this interface, so the app code does not

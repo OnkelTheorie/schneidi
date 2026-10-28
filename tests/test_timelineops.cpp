@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test TimelineOps basic cases (pure functions on the model): overwriting (placeClip/clearRange), splitting,
 // ripple delete, insert gap, trimming (normal and trim mode ripple/roll/slip/slide), moving,
 // effective transitions at edges, fade/transition curves

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Large and full-screen viewer.
 // Large viewer (Workspace › Large Viewer, the viewer's button, MainWindow::setViewerLarge): on every page the panels
 // beside the viewer and the timeline hide, the viewer gets their room; a picture limited by the height takes height

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "core/TimelineOps.h"
 #include "core/TrimFrames.h"

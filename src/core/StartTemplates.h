@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Start templates: how a new project looks (File › New Project, File › New Project from Template, schneidi-cli
 // `new`). A template holds the project format (and whether the first clip may still change its resolution / frame

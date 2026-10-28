@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Tracking for the Color page windows (like DaVinci's window tracker, position only): follows the picture inside a
 // window from frame to frame and returns the window center per frame. Own template matching (normalized cross

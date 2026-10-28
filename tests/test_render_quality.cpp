@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Picture quality of the own MLT services (engine/video: Text, Still, Compose), measured on rendered pixels:
 // - titles/subtitles with outline: the outline layer and the text layer sit exactly on top of each other (the outline
 //   reaches the outline width beyond the letters on every side, also at the line ends and with a box)

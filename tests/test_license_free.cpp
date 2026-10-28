@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // No GPL in the bundled packages (0.14): Licenses::report() finds FFmpeg's license and the libraries in the process,
 // schneidi loads none of MLT's GPL modules (normalize, resample, plus, …), and the own "volume" filter that replaces
 // the normalize module's works like it (dB level, animated, ramp over a frame). A SCHNEIDI_NO_GPL build (or

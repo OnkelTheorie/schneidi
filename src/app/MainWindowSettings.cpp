@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: settings of the app (File › Settings…) and applying them
 #include "app/MainWindow.h"
 

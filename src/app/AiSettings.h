@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Settings of the AI features (Settings › AI), the same for all projects (QSettings "ai/…"). Read once at start and
 // after the settings dialog; test runs change them only in memory (MainWindow does not save them then).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Ducking in the app (docs/archiv/plan-0.8.md): the logic of the CLI op `duck` moves into the core (sound ranges from
 // per-frame peaks, volume keyframes with attack/release/hold), the Editor applies it as one undo step, the analysis
 // finds the voice on real files, the CLI gives the same keyframes as the app, and the dialog (music = selection,

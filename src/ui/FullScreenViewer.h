@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Full-screen viewer (DaVinci: Cinema Viewer): only the picture the engine shows, aspect-fitted on black, in a window
 // of its own over a whole screen. Esc, a double click or closing the window ask to leave (exitRequested); the main

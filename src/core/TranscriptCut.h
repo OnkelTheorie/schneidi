@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Text-based editing (Transcript panel, like DaVinci's transcription of timeline clips): the words of the media
 // transcripts (MediaInfo::transcripts, source times) placed where their clips sit in the timeline, and the timeline

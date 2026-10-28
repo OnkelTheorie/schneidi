@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Video stabilization (effect "stabilize") with schneidi's own analysis and warp (engine/StabilizeMotion).
 // An analysis pass measures the camera motion from frame to frame before anything can be applied. It runs in the

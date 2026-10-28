@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Gradient wipes (TransitionType::Luma): grayscale image, dark spots switch first (like MLT "luma",
 // Kdenlive/Shotcut/OpenShot). Bundled gradients are computed by id (":/lumas/<id>", names in

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Fuzz target: project files (.schneidi, core/ProjectFile.h) as others or an AI may write them. A file is read
 // (migrations included), opened as a project (Project::load sorts out broken references), checked like the server
 // does for its work folder (Sandbox::checkProject), saved and read again, and every timeline is written in the

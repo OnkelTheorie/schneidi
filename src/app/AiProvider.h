@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // AI chat providers (the "AI" panel, app/AiChat.h). Two protocols cover nearly all of them: Anthropic's Messages API
 // and the OpenAI-compatible /chat/completions (OpenAI, OpenRouter, Ollama, LM Studio, vLLM, Mistral, Groq, company

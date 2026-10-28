@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own time stretcher (engine/audio/Stretch): the pitch stays at every speed the app allows, sounds land where the
 // map puts them (no drift, also on a ramp) without pre-echo, no clicks (the output does not depend on the block size, a sine stays a
 // clean sine), the channels keep their phase and level difference, onsets are found in hits but not in a tone, every

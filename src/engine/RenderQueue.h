@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Render queue like in DaVinci (Deliver → Render Queue): renders the jobs of the project one after another
 // via the exporter, reports progress and sets the status per job in the project (saved with it).

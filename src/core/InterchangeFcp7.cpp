@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Final Cut Pro 7 XML (xmeml): Premiere Pro (File › Export › Final Cut Pro XML) and DaVinci Resolve (Timeline ›
 // Export › FCP 7 XML) write and read it. Conventions of the format: a clip next to a transition has start or end
 // -1 (its edit point follows from the transition and its alignment); in/out are frames of the (retimed) media;

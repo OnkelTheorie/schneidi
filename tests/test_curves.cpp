@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test curve editor (keyframes with Bezier handles): curve values, derived handles, smooth handles, splitting without
 // shape change, project file, engine linearity, snapping and operation in the timeline's curve editor (offscreen).
 #include "check.h"

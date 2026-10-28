@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/RampProducer.h"
 #include "engine/PitchLatency.h"
 #include "engine/Profiles.h"

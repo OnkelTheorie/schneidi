@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Accents on hits (core/Accents, Editor::addAccents, op 'accent'): a zoom punch, an exposure flash, a position shake
 // and their mixes are ordinary keyframes on top of the clip's values, close hits add up, the curve between the
 // written keyframes is the accent's own shape; the clips under the times are found without a list, one undo step;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Thumbnails with the Color page grade (engine/GradedThumbs): the grade applied to a small picture (saturation, LUT,
 // windows), the cache keyed by source thumbnail + evaluated grade, the settle time after a change (dragging a wheel),
 // undo through the Editor, ungraded clips untouched, the cost of many graded clips on the UI thread, the timeline

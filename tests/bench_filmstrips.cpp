@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Filmstrip pass over many files: the ffmpeg process per file (as MediaCache did before) against the own decoder.
 //   bench_filmstrips ffmpeg|own[:threads] <file>...   (one file after another, as MediaCache's strip thread works)
 //   bench_filmstrips still-ffmpeg|still-own <file>...  Media Storage previews (the picture at 1 s, 144×81)

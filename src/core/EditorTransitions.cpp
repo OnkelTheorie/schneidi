@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Editor: transitions.
 #include "core/Editor.h"
 #include "core/EditorDetail.h"

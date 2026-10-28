@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // In-place radix-2 FFT (complex, double), shared by the denoiser (engine/Denoise) and the audio sync (core/AudioSync)
 

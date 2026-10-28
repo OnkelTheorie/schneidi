@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Inspector changes without restarting the preview: when an edit only changes values (transform, effect parameters,
 // keyframes, clip volume/pan, fades), the Engine still builds the new MLT tractor (cheap), but instead of swapping it

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Compound clips and nested timelines (DaVinci "New Compound Clip", "Decompose in Place",
 // dragging a timeline from the Media Pool into another timeline)
 #include "core/Editor.h"

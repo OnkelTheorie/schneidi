@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Quality and speed of the own time stretcher (engine/audio/Stretch), and of Rubber Band when it is installed
 // (only here, never in the app: tests/CMakeLists.txt finds it with pkg-config and defines SCHNEIDI_HAVE_RUBBERBAND).
 //

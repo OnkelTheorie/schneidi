@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test gradient wipes (TransitionType::Luma): bundled gradients (all producible, full value range),
 // own images from the Transitions folder, cache PNG for MLT (size, invert), drag data "luma:<image>",
 // project file (relative or found again in the own folder) and rendering via MLT (door horizontal: middle already B,

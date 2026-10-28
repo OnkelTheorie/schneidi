@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Fuzz target: requests to `schneidi-cli serve` (cli/Http.h, cli/ServeDetail.h) without a network. What a client
 // sends goes into a real Http::Connection through a socket that is only a buffer; a small server answers like
 // Serve.cpp does (buffered bodies for /mcp, PUT streamed into a buffer, files with a byte range, early errors), and

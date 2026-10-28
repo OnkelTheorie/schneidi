@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Shape of a clip's picture for core code. Crop values are timeline pixels on the picture as it fits into the frame
 // at zoom 1 (ClipTransform), so converting them (older project files, a new timeline resolution) needs the aspect

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test LiveUpdate: Inspector-style value changes copied into a running tractor give the same picture as a fresh
 // build (transform, color correction, blur, Color page grade, frei0r, keyframes, fades, dissolve); structural
 // changes (trim, added effect) are refused.

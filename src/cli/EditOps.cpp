@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: the operations of the `edit` command (one JSON object each, applied through the Editor like in the app)
 #include "cli/CommandsDetail.h"
 

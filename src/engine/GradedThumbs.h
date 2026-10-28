@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Thumbnails with the Color page grade: the timeline filmstrip shows each clip's look, the Media Pool shows timelines
 // with their first picture graded. Sources in the Media Pool stay neutral on purpose: a source has no grade of its own,

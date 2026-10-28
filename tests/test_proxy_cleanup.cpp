@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Cleaning up the proxy folder (engine/ProxyCleanup): which proxy files go and why – the original is gone, changed,
 // used by no open or recent project, made at another size, a half-written leftover, a proxy without a note (older
 // version) – and which stay: the open project's proxies (never deleted), those of recent projects, the file being

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // The "AI" panel: chat with an AI that edits the open project (app/AiChat.h). Messages of the user and the AI, the
 // AI's tool steps (one line each, opened with a click: arguments and answer; pictures as thumbnails), the input

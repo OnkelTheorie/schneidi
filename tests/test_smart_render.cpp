@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Smart render (engine/SmartRender + ExportWriter): which output frames may be copied (timeline rules), and real
 // exports: copied frames are bit for bit the source's, encoded ones look the same as a normal export, the cuts land
 // on the right frames, the sound is the normal export's. Sources: H.264 with B-frames (decode times reordered),

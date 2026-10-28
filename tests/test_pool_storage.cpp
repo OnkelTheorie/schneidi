@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test Media Pool filter and Media Storage (0.13): filter by kind/flag/clip color (core/PoolFilter.h, filter button,
 // combined with search and bins, icon and list view, hundreds of clips), the pool's bindable keys (scoped: Delete in
 // the bin list never reaches the timeline), Media Storage marks for files in the Media Pool, hover scrub pictures

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Picture follows sound on a machine too slow for the material (docs/archiv/plan-0.10-ton.md › Zielbild: "a frame that is
 // too late is skipped, the sound runs on"). Measured on one core (2026-10-23): the picture fell further and further
 // behind the sound clock and never caught up (15 s: sound at frame 843, picture at 434). Here a test filter makes

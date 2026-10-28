@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Frame timing of media between the paths that read them: a proxy shows the same picture at frame k as the original
 // (a recording whose sound starts a frame before the picture, as OBS/phones/games write them), a source shorter than
 // the model expects does not move the clips after it in the preview graph, and the frame position of a timestamp

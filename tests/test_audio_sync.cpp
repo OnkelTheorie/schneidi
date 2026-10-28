@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Audio sync for multicam (docs/archiv/plan-0.8.md): onset envelope, offset between two recordings that only share a
 // few sounds (round start, spike, announcements) while each player hears his own sounds, cases where it must not guess
 // (silence, nothing shared, only periodic beeps), drift between two clocks, chains of recordings that do not all

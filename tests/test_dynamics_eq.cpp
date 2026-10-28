@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Compressor and EQ per audio track (docs/archiv/plan-0.8.md, Fairlight-like, Opus finding 4: game sound with extreme
 // peaks): the DSP (static curve with knee and make-up, attack/release, stereo-linked, block size and sample rate
 // independent, silence and extremes; EQ bands with known responses, flat = transparent, stable at the edges), the

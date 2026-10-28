@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: timelines to and from other editors (EDL, FCP7 XML, OpenTimelineIO), see core/Interchange.h
 #include "cli/CommandsDetail.h"
 

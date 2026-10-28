@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/timeline/TimelinePanel.h"
 
 #include "app/Theme.h"

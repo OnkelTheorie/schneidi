@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test presets from Kdenlive and Shotcut (core/Presets): custom effect as Kdenlive 24.12 writes it (value = MLT value) and from before 19.04 (factor), effect group with
 // keyframes (animation strings in frames, clock and SMPTE time, interpolation types, parentIn) and parameter names, Shotcut filter set (MLT XML) and filter preset (folder name = filter), colors and
 // choices, MLT filters rebuilt with own effects (brightness/eq/greyscale -> color, blurs -> blur, lift_gamma_gain ->

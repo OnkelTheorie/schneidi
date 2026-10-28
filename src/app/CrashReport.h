@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Crash file (local, no telemetry): on a crash (SIGSEGV/SIGABRT/…, on Windows an unhandled exception, an
 // uncaught C++ exception) a report with version, system and call stack is written to <AppData>/crashes.

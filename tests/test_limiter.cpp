@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test master limiter (PeakLimiter): holds the true peak ceiling, leaves quiet audio unchanged (only delayed),
 // same result in any block size and after a state copy; in the timeline the export path (integer samples like the
 // avformat consumer requests) and the measurement (float) give the same level.

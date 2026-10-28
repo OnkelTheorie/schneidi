@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: schneidi without a window, for scripts and AIs. Same project files and editing logic as the app.
 //   schneidi-cli help                      all commands (JSON)
 //   schneidi-cli info film.schneidi        timeline as JSON

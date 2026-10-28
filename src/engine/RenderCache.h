@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Render cache like DaVinci ("Render Cache Clip Output" in the right-click menu of a timeline clip,
 // Playback > Render Cache: Off / Smart / User). A video clip with all clip effects, transform,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // schneidi's own picture effects: Green Screen key, glow, halftone, noise, scan lines, broken sync, gradient and alpha
 // operations. They replace the frei0r plugins of the same name (GPL, not bundled any more) and keep their effect

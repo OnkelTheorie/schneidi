@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli `watch`: the watch folders of a project (core/WatchFolders.h). Sets them up (add, remove, list), looks
 // for new complete files and imports them (one pass, the default), or keeps watching (follow, command line only) and
 // prints every new file as one JSON line when it is there - for scripts and AI agents that react to new recordings.

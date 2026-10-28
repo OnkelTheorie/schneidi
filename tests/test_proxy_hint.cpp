@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Proxy hint on slow playback (core/PlaybackMeter.h, MainWindow::updateProxyHint): the meter tells a machine that
 // cannot keep up (pictures shown per second against the frame rate, after a warmup) from one that can; the main
 // window then shows a hint above the picture with "Generate proxy media" – and generates nothing by itself. The

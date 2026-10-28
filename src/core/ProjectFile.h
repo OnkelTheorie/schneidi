@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Project file (.schneidi, JSON): stores only references to the original files and the edit
 // (tracks, clips, effects, markers) - the media themselves are never modified (like DaVinci).

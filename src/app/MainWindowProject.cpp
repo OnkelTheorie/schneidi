@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: project file (new, open, save, autosave, backups, recent files, presets).
 #include "app/MainWindow.h"
 

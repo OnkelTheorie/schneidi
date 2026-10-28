@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): the own audio reader (engine/audio/Reader, docs/archiv/plan-0.10-ton.md step 1) against
 // MLT's avformat producer on real files. Per file and audio stream: time to open (until the first samples), decoding
 // speed, time per jump, and whether both deliver the same samples (lag, difference).

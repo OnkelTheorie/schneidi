@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 
 // Pure data model of the timeline - without Qt widgets and without MLT,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Import presets for files with several audio streams (docs/archiv/plan-0.8.md; OBS: "Mix" plus single streams plays
 // everything twice): "mute the Mix stream when single streams exist" (off by default: nothing is muted unless the user
 // says so) and rules per stream title

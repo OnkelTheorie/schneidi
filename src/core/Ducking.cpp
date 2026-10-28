@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Ducking.h"
 
 #include "core/Keyframes.h"

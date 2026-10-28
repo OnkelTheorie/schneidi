@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // The preview (Engine, rendered directly at 960 px) must show the same picture as the export (full project size):
 // pixel values (title size and position, outline, transform position, crop, blur) refer to the project format.
 // Regression: the preview consumer's width/height went into the shared profile, so the preview took 960x540 for the

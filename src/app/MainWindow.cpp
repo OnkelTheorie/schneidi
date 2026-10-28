@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "app/MainWindow.h"
 #include "app/AiKeys.h"
 #include "app/AiLog.h"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test of the source edits like DaVinci (F9 Insert, F10 Overwrite, F11 Replace, F12 Place on Top,
 // Ripple Overwrite, Append), source in/out in the project file - without UI
 #include "core/Editor.h"

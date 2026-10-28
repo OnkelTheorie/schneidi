@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Layout of the multicam grid (docs/archiv/plan-0.8.md): square grids 1x1 / 2x2 / 3x3 / 4x4 chosen by the number of
 // angles (auto) or fixed, more angles than cells go on further pages. Shared by the grid tractor

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Detect the MLT profile from the project settings (preview, export, cache) and the format of a clip
 // (for "adapt project to the first clip" like DaVinci).

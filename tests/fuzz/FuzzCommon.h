@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Shared setup of the fuzz targets (libFuzzer, see CMakeLists.txt here): one Qt application for the whole run, test
 // paths (the user's settings stay untouched), a work folder with traps for path checks, and a check that stops the

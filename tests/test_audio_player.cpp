@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own audio engine, step 5 (docs/archiv/plan-0.10-ton.md): Audio::Player plays live. The "speaker" is the file device
 // (SCHNEIDI_AUDIO_DEVICE=file:…, 16-bit stereo in real time). A sine timeline is played, jumped in, dragged, changed
 // live (clip volume = new mix, fader = live value), played at 2x, backwards and silent at 8x, then stopped – what

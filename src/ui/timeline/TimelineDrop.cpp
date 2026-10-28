@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Timeline: drag and drop from the media pool, file manager and effects library.
 #include "ui/timeline/TimelineView.h"
 

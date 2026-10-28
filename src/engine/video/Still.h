@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Still images (PNG, JPG, WebP, …) as an own MLT producer instead of MLT's qimage (Qt module, GPL). Reads the file
 // with Qt's QImageReader (EXIF orientation applied) on first use, keeps the decoded picture as 8-bit RGBA with straight

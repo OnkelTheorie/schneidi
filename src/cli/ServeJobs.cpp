@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Jobs and worker processes of `schneidi-cli serve`, see ServeJobs.h
 #include "cli/ServeJobs.h"
 

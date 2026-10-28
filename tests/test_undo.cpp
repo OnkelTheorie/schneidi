@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test undo/redo chain: many editor operations in a row (each must create an undo step), then everything
 // back = initial state, everything forward = final state; each intermediate step is compared via JSON (project file).
 #include "check.h"

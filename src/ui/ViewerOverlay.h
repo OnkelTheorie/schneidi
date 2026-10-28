@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // On-screen controls drawn over the viewer picture (like DaVinci's window outline on the Color page). The viewer
 // calls paint() after the picture and offers mouse events first; `frame` is the area of the project frame in widget

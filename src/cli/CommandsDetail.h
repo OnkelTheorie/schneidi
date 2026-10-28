@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Shared helpers of the schneidi-cli commands (Commands.cpp: projects, table, arguments; EditOps.cpp: edit
 // operations; Analysis*.cpp: looking at media). Not part of the public interface in Commands.h.

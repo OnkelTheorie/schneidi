@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Multicam in schneidi-cli / MCP (docs/archiv/plan-0.8.md): edit ops multicam (sync start/in/marker/sound),
 // source_marker, angle (cut/switch, by number or name, modes), angle_cuts (a list of switch points at once, e.g. from
 // an AI that found the kills per POV), flatten, multicam_nudge, angle_name; info/timelines show angles; the sync

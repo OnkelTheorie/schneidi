@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Audio regression tests through the normal export path (Exporter + RenderQueue::exportSettings), checked with
 // ffprobe/ffmpeg on the written file:
 // - length of the render = timeline length, level of the render = level of the source

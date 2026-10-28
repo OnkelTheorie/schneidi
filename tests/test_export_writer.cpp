@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own export path (engine/ExportWriter) against MLT's avformat consumer: the same timeline written both ways with a
 // lossless codec (FFV1 in MKV, PCM sound) must give the same decoded pictures and sound, frame count and color tags.
 // Cases: BT.709 and BT.601 sources, title over video (composited in RGBA), In/Out, another frame rate (frames in order),

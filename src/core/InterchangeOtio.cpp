@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // OpenTimelineIO (.otio, JSON): DaVinci Resolve (18.5+), Premiere (via adapters), Avid, Nuke Studio and others.
 // Tracks hold clips and gaps back to back; a transition sits between two of them and overlaps both (in_offset
 // before the cut, out_offset after it). Volume, opacity, the audio stream and links have no standard field: they go

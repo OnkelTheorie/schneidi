@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: check before export (core/ExportCheck.h) – a project timeline before rendering, or a rendered file
 // before handing it over
 #include "cli/AnalysisDetail.h"

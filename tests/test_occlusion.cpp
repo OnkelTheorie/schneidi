@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Covered videos are not decoded (tip from the user, 2026-10-24): MLT's qtblend between the tracks takes the upper
 // frame alone when it is opaque and fills the picture, and never asks the lower track for its image. This test counts
 // image requests on the lower track (export format yuv420p and preview format rgba) so it stays that way, and checks

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Background workers stopped, reset or canceled while they are busy, at varying moments: hover scrub pictures
 // (ScrubFrames), graded filmstrip tiles and timeline posters (GradedThumbs, TimelinePosters), the watch folder scan
 // (FolderWatch), the render cache and the render queue preparing in the background. Nothing may crash, hang or keep

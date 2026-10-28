@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Smart render (plan 0.11): where the export shows a file as it is (one clip on top, no effect, no transform, no
 // transition, no title or subtitle over it), the writer copies the file's compressed pictures instead of encoding

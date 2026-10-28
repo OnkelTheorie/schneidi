@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Baked Color page correction (ColorGrade::bake/apply) against the per-pixel reference (applyReference): test
 // pictures (a grid through all colors, a testsrc2 frame, skin tones, smooth gradients) x corrections (wheels,
 // strong/negative lift, gain, gamma, saturation 0 and 100, temperature/tint/exposure, contrast) x LUTs (none, 1D,

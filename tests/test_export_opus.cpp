@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Export from Opus sources (MKV/WebM-like and MP4) to H.264/AAC (MP4): audio stays in sync with the picture, audio and
 // video length match. FFmpeg reports "[opus] Could not update timestamps for skipped samples" and "[mp4] Timestamps
 // are unset in a packet for stream 1 … making some up“ – both harmless (see Bundle::configureMltLogging); this

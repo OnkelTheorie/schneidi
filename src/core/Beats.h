@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Beats of a song (schneidi-cli `beats`): tempo, beat grid, bars (4/4), phrases, energy per bar, breaks and drops, so
 // an AI can cut to the song in one call. Pure computation on a mono signal fed in blocks; decoding is the caller's

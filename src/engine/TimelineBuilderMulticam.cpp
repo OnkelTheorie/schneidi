@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Multicam grid for the viewer (docs/archiv/plan-0.8.md): one tractor that plays all angles of a page side by side, in
 // sync (frame = frame of the multicam sequence), independent of the timeline, so cutting does not restart playback.
 #include "core/Multicam.h"

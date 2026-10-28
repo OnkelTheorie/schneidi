@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Editor: track operations (mute, hide, lock, name, color, add, remove, move).
 #include "core/Editor.h"
 

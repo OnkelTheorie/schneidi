@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): cost of one Inspector change with many effects and keyframes.
 // Measures building the MLT timeline (what every Inspector change triggers) and rendering preview frames.
 // Run: ./build-tests/tests/bench_inspector [clips] [frei0r effects]

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own audio engine, step 3 (docs/archiv/plan-0.10-ton.md): the export takes its sound from Audio::Mixer (engine/MixedSound),
 // MLT only renders and encodes the picture.
 // Generated source (always): the written file holds exactly the mixer's samples, rounded to the file's bit depth:

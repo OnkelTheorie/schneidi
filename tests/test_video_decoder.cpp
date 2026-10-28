@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own video decoder (engine/video, plan 0.11 point 7) against MLT's avformat producer: for many kinds of files the
 // same position must give the same pixels and frame properties, in every image format MLT asks for, at the media
 // size and scaled (the loader's normalizers), in order, with jumps back and forth, and from several threads at once.

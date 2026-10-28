@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Editor: subtitle tracks (part of Editor, own file for overview)
 #include "core/Editor.h"
 

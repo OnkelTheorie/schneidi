@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Keys of the timeline in the real window: every action id once, no key used twice within a scope in any built-in
 // set (the multicam angle keys share Alt+1-8 with the video target tracks on purpose: only one of them is on at a
 // time), the Slip/Slide tools (menu, toolbar, a slip in progress shows four-up in the viewer), the track lock

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // TimelineBuilder: video and audio transitions (fades, dissolves, wipes).
 #include "engine/TimelineBuilderDetail.h"
 #include "core/Dynamics.h"

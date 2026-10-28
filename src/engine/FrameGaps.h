@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Stutter of a recording (core/Stutter.h) from the time stamps of its video packets: libavformat reads the packets of
 // the first video stream, nothing is decoded (a 30 s 1080p60 capture in well under a second). Results are kept in

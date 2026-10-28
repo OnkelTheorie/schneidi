@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: commands on projects (new, info, import, edit, backups, restore, render, effects) and the app
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Export with the own audio engine (docs/archiv/plan-0.10-ton.md, step 3): MLT still renders and encodes the picture, the
 // sound of every frame comes from Audio::Mixer. A filter on the producer the avformat consumer reads replaces the

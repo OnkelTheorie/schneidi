@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // OutputColor: the Y'CbCr matrix between color standards (against exact values, all formats) and the filter on a
 // real graph: a BT.601 source must leave the workers as BT.709 (otherwise the export's single encoder thread does
 // the matrix for every frame, docs/dev/mlt.md › Export-Tempo).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Multicam viewer (docs/archiv/plan-0.8.md): grid layout (auto 1x1/2x2/3x3/4x4, fixed, pages, cells tile the area, hit
 // test), the grid widget (click while playing = cut, while stopped = switch, Alt+click = cut, number keys, modes
 // video+audio / video / audio, pages, the grid follows the active angle's page, red frame on the active angle,

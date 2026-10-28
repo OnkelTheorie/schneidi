@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own audio engine: Audio::Reader with damaged or vanishing sources
 // - the file disappears while it is open (deleted, USB disk unplugged): a jump to the start reads silence and reports
 //   an error instead of crashing

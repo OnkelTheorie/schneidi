@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Shared parts of the commands that look at the material (Analysis.cpp, AnalysisAudio.cpp, AnalysisVideo.cpp)
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Work folder of schneidi-cli (`serve`, `mcp --root`): every path a client gives goes through resolve() (the
 // path parameters of the command table and the files inside edit ops, both via detail::absolute()). Relative paths

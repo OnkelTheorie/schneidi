@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // TimelineBuilder: per-clip filters (effects, color, transform, fades, titles, subtitles).
 #include "engine/TimelineBuilderDetail.h"
 #include "core/Dynamics.h"

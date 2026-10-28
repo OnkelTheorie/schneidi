@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Ducking (docs/archiv/plan-0.8.md): lower the music while other tracks (voice, game) have sound, with volume keyframes
 // that stay editable on the volume line. Same logic for the app (DuckingDialog -> Editor::duck) and the CLI op `duck`;

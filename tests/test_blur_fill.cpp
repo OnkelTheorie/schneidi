@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Blurred fill around the fitted picture (ClipTransform::fill, op 'transform' fit:'blur', engine/BlurFill): the bars
 // of a 16:9 clip in a 9:16 timeline show a blurred, enlarged copy of the same picture instead of the track below, on
 // one track. Checks the pixel functions, renders through the TimelineBuilder in the preview (RGBA) and export (YUV)

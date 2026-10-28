@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Editor: source edits (source in/out, insert, overwrite, replace, place on top, append, fit to fill).
 #include "core/Editor.h"
 

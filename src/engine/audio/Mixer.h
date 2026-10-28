@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own audio engine (docs/archiv/plan-0.10-ton.md), second block: mixes the sound of a timeline into samples. The same code
 // serves the export, the analyses and later the live output; it has no GUI or MLT dependency.

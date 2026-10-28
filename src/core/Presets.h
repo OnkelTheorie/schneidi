@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Effect presets from Shotcut and Kdenlive (effects folder, subfolder "Presets"). Both programs save MLT filters plus
 // their properties, so a preset becomes schneidi effects wherever the filter is one schneidi knows (frei0r plugins,

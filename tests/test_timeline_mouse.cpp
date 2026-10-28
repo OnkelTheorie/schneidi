@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test mouse operation of the timeline (offscreen): selection rectangle, auto-scroll at the edge, reorder tracks;
 // plus selection from the playhead (Y / Ctrl+Y / Alt+Y), edit points by keyboard (V, U, , / .) and the Slip/Slide
 // tools (drag anywhere on a clip = trim mode's slip/slide, toolbar buttons, , / . with them).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Export formats of the Deliver page: MP3, AIFF, Apple Lossless, FLAC, Opus, bit depths (16/24/32 float), AV1, VP9,
 // ProRes/DNxHR profiles, animated GIF, image sequences and a different frame rate than the timeline (frames converted,
 // length correct, audio without jumps, clip filters kept); BT.601 sources converted exactly to BT.709. Checked with ffprobe/ffmpeg.

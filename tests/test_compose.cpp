@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own compositing (engine/video/Compose) instead of MLT's qtblend (Qt module, GPL): the same timelines render the same
 // picture as with qtblend. Positions, scale, rotation, opacity, crop, alpha edges, odd sizes, 4:3 and 9:16 in 16:9,
 // a track over another, titles with outline/box (also with animated size), stills with alpha (PNG) and JPG, at export

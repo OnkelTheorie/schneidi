@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Inspector: building blocks (sections, effect sections, sliders, XY fields, keyframe buttons).
 #include "ui/Inspector.h"
 

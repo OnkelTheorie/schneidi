@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): probing media files on import, own header reader (Engine::probe, engine/MediaProbe)
 // against the MLT producer (Engine::probeMlt). Per file: median time of both and whether the results agree; then an
 // import of all files at once as the Media Pool does it (thread pool, half the cores) with each.

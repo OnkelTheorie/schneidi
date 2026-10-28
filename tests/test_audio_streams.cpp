@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test several audio streams per file (OBS: desktop audio, microphone ... separate): inserting (one audio clip per stream,
 // linked, own tracks, locked tracks, one undo step), source viewer edits, project file (also old
 // files without streams) and rendered audio (which stream sounds, also with speed and speed ramp).

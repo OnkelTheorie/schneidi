@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own audio engine: the sound of a retimed clip (speed, reverse, speed ramp) from its file stream. Part of
 // Audio::Mixer, no GUI or MLT dependency.

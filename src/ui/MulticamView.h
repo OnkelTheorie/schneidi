@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Multicam viewer like DaVinci (docs/archiv/plan-0.8.md): the grid of all angles of the multicam clip at the playhead
 // (picture from the engine's grid tractor, see Engine::showMulticam), the active angle framed red, angle names,

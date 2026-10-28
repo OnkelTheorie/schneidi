@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Inspector: transition page.
 #include "ui/Inspector.h"
 

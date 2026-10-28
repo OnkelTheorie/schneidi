@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // frei0r plugins as effects (Effects Library: Open FX → frei0r), opt-in: off by default, schneidi's own effects
 // (engine/VideoEffects) replace the plugins it used to offer and schneidi does not bundle frei0r. When it is off,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own audio engine (docs/archiv/plan-0.10-ton.md), first block: reads one audio stream of a media file as float samples at
 // a fixed output rate, with sample-exact random access. Uses the FFmpeg libraries directly, no MLT.

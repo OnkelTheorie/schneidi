@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test importing effects (LUTs): readers for .3dl, .csp and Hald CLUT, bundled looks (category "schneidi"),
 // own LUTs folder with subfolders, LUT from the Effects Library onto a clip (with undo), project file
 // (bundled LUT without relative path, missing LUT found again in the own folder) and the widget including

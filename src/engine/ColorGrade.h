@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Color correction of the Color page (like DaVinci "Primaries – Color Wheels" + LUT), effect "grade" on the clip.
 // calculation itself (no avfilter): lift may become negative, LUT paths need no FFmpeg escaping (Windows

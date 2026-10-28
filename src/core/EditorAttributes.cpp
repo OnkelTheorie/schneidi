@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Paste Attributes (Alt+V) like DaVinci "Paste Attributes", see Editor.h
 #include "core/Editor.h"
 

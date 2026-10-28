@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Text (titles, subtitles) as an own MLT filter instead of MLT's qtext (Qt module, GPL): draws lines of text with
 // Qt's QPainter (LGPL) onto the frame's picture. Same properties as qtext, so the timeline code sets them unchanged:

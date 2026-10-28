@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Work folder and path mapping of schneidi-cli, see Sandbox.h
 #include "cli/Sandbox.h"
 

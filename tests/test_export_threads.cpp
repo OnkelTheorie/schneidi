@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Export with several threads: frames in parallel (except with a frei0r plugin or stabilize border "keep"; the own
 // Green Screen keyer runs in parallel too), same result as with one thread.
 // Prints the render times (1 thread / all threads) so that the gain can be measured afterwards.

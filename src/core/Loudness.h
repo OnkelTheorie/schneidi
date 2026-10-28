@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Loudness measurement per ITU-R BS.1770-4 / EBU R128 (EBU Tech 3341/3342):
 // K-filter (high shelf + high pass) per channel, energy in 100 ms chunks, from which

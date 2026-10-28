@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Timeline: subtitle tracks (layout, drawing, headers, menus, mouse).
 #include "ui/timeline/TimelineView.h"
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Export safety: a failed or canceled export never costs the user an older file of the target's name (video, audio,
 // image sequence, SRT next to it), a disk full or write error midway is reported as a failure (not as "export
 // finished" with a cut-off file), an image sequence replaces an older one completely (a shorter one leaves no higher

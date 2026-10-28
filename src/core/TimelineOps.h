@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Pure functions on the timeline model. No undo, no signals -
 // Project::edit() takes care of that. This makes it easy to test and extend.

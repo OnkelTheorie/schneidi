@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: `beats` - tempo and structure of a song in one call (core/Beats): BPM, beat grid, bar ones, phrases,
 // energy per bar, breaks and drops, in seconds and frames; optionally timeline markers on the phrase starts or bars
 // (through `edit`, one undo step in the app). The sound is decoded like `peaks`/`silence` (engine/AudioAnalysis).

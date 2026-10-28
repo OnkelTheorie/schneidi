@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Hardware video encoders (Deliver): encoder choice in the render settings JSON (old files = software), choosing the
 // encoder (Auto, not available -> software), a real render with every hardware encoder that works on this computer
 // (skipped when there is none) and the fallback to software when a hardware encoder does not work.

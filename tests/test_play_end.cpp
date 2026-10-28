@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Playback stops at the end of the timeline, and stays stopped (user report 2026-10-24: everything deleted during
 // playback, then a new import – playback went on by itself). The engine kept its speed when the producer paused at
 // its end, so the next rebuild of the timeline started it again. Played: to the end; then deleted while playing

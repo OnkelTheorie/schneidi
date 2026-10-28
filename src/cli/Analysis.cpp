@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: commands that look at the material without changing a project – shared parts (opening media,
 // several files in parallel, regions), probe and extensions. Audio: AnalysisAudio.cpp, picture: AnalysisVideo.cpp
 #include "cli/AnalysisDetail.h"

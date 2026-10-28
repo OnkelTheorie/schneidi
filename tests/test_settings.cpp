@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // App settings (File › Settings…, app/SettingsDialog): the AI page shows and returns AiSettings, sections can be
 // added (the AI chat adds its own), the settings survive a restart (QSettings), the main window applies them (AI
 // indicator modes, AI connections on/off with the reason for the AI) and a test run never saves them. General ›

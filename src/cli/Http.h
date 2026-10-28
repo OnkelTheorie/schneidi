@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Small HTTP/1.1 server side for `schneidi-cli serve` (Serve.cpp) on a QTcpSocket, no extra Qt module: requests with
 // Content-Length bodies (buffered, or streamed into a file as they arrive), keep-alive, answers with a length,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Preview sound without clicks (user 2026-10-21): the real preview Engine plays a sine timeline while the test seeks,
 // drags the playhead and changes the clip volume and the mixer – what the speaker gets (SDL's "disk" driver writes
 // it to a file) must have no step in the wave and must come from one opened audio device.

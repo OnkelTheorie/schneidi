@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test speed ramps (DaVinci Retime Controls): RetimeMap (hard, soft, reversed, inversion), editor edits with
 // ripple/partners/keyframes/undo, project file, audio steps and rendered frames (which source picture is shown).
 #include "check.h"

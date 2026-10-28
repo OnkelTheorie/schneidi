@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test Media Pool: bins (create, rename, move, remove), clip colors, flags - undo, save/load,
 // broken files (missing bins, cycles, unknown colors); Media Pool widget offscreen (bin switch, import into bin)
 #include "check.h"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Check before export: what typically goes wrong in a finished video, so a person (Deliver page) or an AI (`check`)
 // sees it before handing the video over. Pure functions on the timeline and on measured numbers; decoding and

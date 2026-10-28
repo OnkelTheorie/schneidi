@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Engine::probe reads media files with its own header reader (engine/MediaProbe) instead of an MLT producer. Per
 // generated file (containers, codecs, several titled sound streams, rotated phone video, variable frame rate, sound
 // only, odd size, interlaced, cover pictures, timecode track, broken files) and project frame rate: the result

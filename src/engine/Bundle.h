@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Bundled runtime (AppImage on Linux, later program folder on Windows): MLT modules/data, frei0r and
 // ffmpeg/ffprobe live with the program instead of in the system. Same layout on both systems:

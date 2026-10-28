@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "core/TrimFrames.h"
 
 #include "core/Retime.h"

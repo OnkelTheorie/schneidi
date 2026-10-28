@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Speed brake: exports a few typical timelines and measures them against FFmpeg alone with the same encoder settings
 // (schneidi time / FFmpeg time, wall clock and CPU time). Red when a ratio is more than 15 % above the baseline of
 // this machine (tests/data/speed-baseline.json) – the tests elsewhere only check *that* an export is right, so a

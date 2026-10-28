@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Does playback keep up? Counts the pictures shown while playing at normal speed and compares them with the frame
 // rate. The main window offers proxy media when the machine is too slow for the originals (a Raspberry Pi showed

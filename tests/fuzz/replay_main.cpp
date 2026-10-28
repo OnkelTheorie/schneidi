@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // A fuzz target without libFuzzer: runs its code (with all its rules) once on every file given, or on every file in
 // the folders given. The normal test suite builds each target with this and replays the seeds (corpus/<target>) and
 // every input that once found a bug (regressions/<target>), see tests/CMakeLists.txt.

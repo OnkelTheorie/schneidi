@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/RenderCache.h"
 
 #include "core/I18n.h"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: import presets for audio streams and ducking (docs/archiv/plan-0.8.md)
 #include "app/MainWindow.h"
 

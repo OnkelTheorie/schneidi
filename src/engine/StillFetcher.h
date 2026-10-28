@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Single frames from media files for the trim view (two-up/four-up while trimming, like DaVinci).
 // Decodes in its own thread with its own producers, so the preview consumer is not disturbed.

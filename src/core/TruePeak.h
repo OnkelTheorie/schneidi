@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // True-peak measurement per ITU-R BS.1770-4 Annex 2 (EBU Tech 3341, dBTP):
 // 4x oversampling with the 48-tap polyphase FIR from the recommendation (4 phases of 12 taps), peak of the

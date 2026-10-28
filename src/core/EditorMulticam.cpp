@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Multicam clips like DaVinci (docs/archiv/plan-0.8.md): create from synced recordings, cut/switch angles, flatten,
 // resync and change angles afterwards. Model and lookups in core/Multicam.h.
 #include "core/Editor.h"

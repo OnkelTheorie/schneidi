@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Designs: built-in JSON files complete, "Dark Orange" = default in code, signal colors the same in all designs,
 // saving/loading the user's choice (primary/secondary color per design, signal colors for all), design dialog.
 // DESIGN_DUMP=folder saves images of the dialog per design.

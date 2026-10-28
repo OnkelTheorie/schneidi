@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Trim view like DaVinci Resolve: which frames the viewer shows while an edit is being trimmed.
 // Ripple/Roll/edge trim: two-up (left = Out frame of the outgoing clip, right = In frame of the incoming clip).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Audio sync of files (multicam, schneidi-cli `sync`): decodes one audio stream of each file into an onset envelope
 // (core/AudioSync) and finds the offsets between them. Blocks; long files take a while (progress + cancel).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): how much memory the preview engine keeps after playback, scrubbing, edits, an export,
 // thumbnails and stills, how much of it is MLT's frame pool (mlt_pool keeps every image buffer it ever handed out), and
 // what giving it back frees (mlt_pool_purge, then malloc_trim on glibc). Also the time from play() to the first new

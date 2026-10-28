@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Catalog of the available effects. An effect = description + parameters (Inspector, project file, keyframes).
 // Simple effects map their parameters directly to an MLT filter (mltService/mltProperty);

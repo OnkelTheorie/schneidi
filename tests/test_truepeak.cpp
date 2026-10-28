@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test true peak (ITU-R BS.1770-4 Annex 2, dBTP): TruePeakMeter with synthetic signals (fs/4 with 45 degree
 // phase offset: sample peak 3 dB below the true peak value), chunk processing, and the measurement at the
 // master level meter of the preview (_true_peak.N and SharedLoudness).

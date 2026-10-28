@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Curve editor of the timeline (like DaVinci's curves under the clip): drawing and mouse.
 // The curve shows an animated parameter over the clip length; points = keyframes, with handles for Bezier.
 #include "ui/timeline/TimelineView.h"

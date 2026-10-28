@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "ui/timeline/TimelineView.h"
 
 #include "app/InputBindings.h"

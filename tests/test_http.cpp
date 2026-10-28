@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // HTTP side of `schneidi-cli serve` (cli/Http.h) without a network: a Cli::Http::Connection on a socket that is only a
 // buffer (fuzz/FakeSocket.h). Pipelined requests, early answers whose bodies are dropped, thousands of them at once
 // (fuzzing found the stack overflowing), and what the server reads from a request (Range, Host).

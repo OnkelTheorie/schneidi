@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test workspace presets: whole key sets saved to a file and loaded again (InputBindings::exportSet/importSet),
 // built-in sets (InputBindings::applyPreset), two slots per action that take keys or mouse buttons, old files.
 #include "check.h"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): playback of a real project in the preview Engine, like pressing play in the app.
 // Reports shown frames per second and the longest gaps (stutter) per second of playback; with the own audio engine
 // (the default; not with SCHNEIDI_AUDIO=mlt) also how far the shown frame is behind the sound clock (picture follows sound).

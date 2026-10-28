@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Network side of the AI chat's providers (app/AiProvider.h builds and reads the messages): one request at a time,
 // streamed, with a timeout, a few tries more when the provider is busy (429, overloaded, 5xx – only before anything

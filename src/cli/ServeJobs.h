@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Tool calls of `schneidi-cli serve` as jobs (Serve.cpp): each call runs in one of a few worker processes
 // (`schneidi-cli mcp` on stdio, same program, started when needed and again after a crash). Why processes: commands

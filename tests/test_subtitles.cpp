@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test subtitles: read/write SRT (encoding, formatting, broken blocks, overlaps, 29.97 fps),
 // overwriting on the track, editor operations with undo, project file, format change, burn-in in the render
 // (pixels) and SRT file on export.

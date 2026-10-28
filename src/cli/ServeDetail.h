@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Inside of `schneidi-cli serve` (Serve.h): the server object, shared by Serve.cpp (HTTP, MCP, jobs, options) and
 // ServeFiles.cpp (files over HTTP, the tools `files` and `upload`).

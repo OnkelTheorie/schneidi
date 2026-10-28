@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Giving memory back while idle (engine/MemoryRelease): MLT's frame pool keeps every buffer it handed out and glibc
 // keeps freed heap memory, so the app grew by GBs over playback, exports and AI sessions. The policy: release only
 // while nothing renders (no playback, no export, no render cache job) – never during playback. IdleRelease waits until

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli edit operations of the Edit page beyond the basics: titles with their full style, trim modes
 // (ripple/roll/slip/slide), transitions with type and length, tracks and subtitle tracks, link/unlink, speed and
 // speed ramps, markers, Media Pool organisation, copy and insert edits

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // MLT producer around the own video decoder (engine/video/Reader, plan 0.11 point 7): stands in for MLT's avformat
 // producer for the picture of a media file. Same properties (width, height, aspect_ratio, video_index,

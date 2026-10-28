@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "app/AiProvider.h"
 
 #include "app/AiContext.h"

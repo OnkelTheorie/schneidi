@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Trim view (two-up/four-up in the viewer while trimming, like DaVinci): which frames are shown for each kind
 // of trim (TrimFrames), the signals of the timeline while dragging, the TrimView widget, the background frame
 // fetcher, and offscreen the whole main window during a ripple drag (TRIMVIEW_DUMP=<dir> saves screenshots).

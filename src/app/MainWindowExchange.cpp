@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: timelines from and to other editors (File › Import/Export Timeline, like DaVinci) – FCP7 XML,
 // OpenTimelineIO, EDL. The formats are in core/Interchange.
 #include "app/MainWindow.h"

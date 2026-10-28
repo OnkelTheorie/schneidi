@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Noise reduction (effect "denoise", like DaVinci's Fairlight FX → Noise Reduction): spectral noise suppression
 // (STFT with 75 % overlap, noise spectrum tracked by its minimum or set by a level, spectral subtraction with a gain

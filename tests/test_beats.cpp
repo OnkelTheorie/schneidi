@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // `beats` (cli/AnalysisBeats.cpp, core/Beats.cpp): a synthetic song of known tempo and phase - a kick on every beat
 // (the bar one louder), bass and hi-hats on the off-beats, a lead from bar 8, a break of 8 bars (only hi-hats and a
 // quiet pad), then a louder drop with a crash. Checks BPM, phase, bar ones, phrases, energy per bar, the break and

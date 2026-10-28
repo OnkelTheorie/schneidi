@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test "Paste Attributes" (Alt+V, DaVinci Paste Attributes): chosen properties including keyframes from the copied
 // clip onto the selection, video/audio separate, own color correction stays with "Effects", speed with ripple,
 // one undo step; dialog (grayed-out checkmarks, remembered choice).

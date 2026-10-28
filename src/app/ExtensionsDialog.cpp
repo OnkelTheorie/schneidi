@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "app/ExtensionsDialog.h"
 
 #include "core/I18n.h"

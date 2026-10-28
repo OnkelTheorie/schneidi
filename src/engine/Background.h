@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Background work (thumbnails, waveforms, scopes, caches, proxies) must not slow down playback, opening a project or
 // the window. QThread priorities do nothing on Linux: threads run as SCHED_OTHER, which has no thread priority

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli edit operations on timelines (sequences) and compound clips, like the Media Pool in the app
 #include "cli/CommandsDetail.h"
 

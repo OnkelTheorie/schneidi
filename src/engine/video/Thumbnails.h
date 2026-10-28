@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Small pictures of a video file without a process per file (timeline filmstrips, Media Storage previews): the FFmpeg
 // libraries in the calling thread, software decoding, libswscale. The pictures are upright (rotation metadata), in

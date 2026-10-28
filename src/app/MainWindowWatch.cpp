@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: watch folders (app/FolderWatch.h) - the watcher of the open project, its notice, the dialogs
 #include "app/FolderWatch.h"
 #include "app/MainWindow.h"

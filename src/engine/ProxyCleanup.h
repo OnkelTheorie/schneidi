@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Cleaning up the proxy folder (ProxyManager::cacheDir()): deletes the proxy files no project needs any more, instead
 // of only "delete the proxies of these clips". A proxy's name derives from path, size and modification time of its

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test Color page (effect "grade"): pixel math (lift/gamma/gain/offset, contrast, saturation, temperature,
 // exposure, LUT), .cube reader, render via MLT (preview bypass, keyframes, splitting, German number format),
 // editor operations with undo, saving/loading with LUT path (also moved folder) and old files.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Timeline: context menus and renaming tracks in the headers.
 #include "ui/timeline/TimelineView.h"
 

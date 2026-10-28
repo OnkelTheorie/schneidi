@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): what the multicam grid (docs/archiv/plan-0.8.md) costs in the real preview Engine.
 // Opens a project with a multicam clip, shows its grid, plays it (shown frames per second) and flips the pages
 // back and forth while stopped and while playing (memory after each step: does it settle or keep growing?).

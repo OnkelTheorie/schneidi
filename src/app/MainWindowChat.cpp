@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: the AI chat panel (app/AiChat.h, app/AiChatPanel.h): placing it beside the pages, the provider and its
 // key, the privacy notice, and the review mode (the changes of a request become one undo step or go back)
 #include "app/MainWindow.h"

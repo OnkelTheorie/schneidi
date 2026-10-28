@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Speech to text without whisper: reading whisper-cli's JSON (one word per segment), grouping words into subtitle
 // cues (sentences, commas, pauses, length), moving stretched words to where they are spoken, the extensions catalog
 // (pinned downloads, dependencies) and the dialogs (EXT_DUMP / TRANSCRIBE_DUMP = image file).

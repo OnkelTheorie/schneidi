@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test schneidi's own picture effects (engine/VideoEffects), which replaced the frei0r plugins:
 // - Green Screen keyer on a synthetic picture: green background (also in shade), skin, gray/white/black, a soft edge
 //   with green spill on the subject: background transparent, subject opaque and unchanged, edge in between, the green

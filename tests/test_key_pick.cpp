@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Green Screen pipette (ui/KeyColorPicker, ui/KeyPickWindow, Inspector button "KeyPipette", MainWindow::startKeyPick):
 // isolate() leaves one clip as its key sees it (fixed stages before the key, no fades/opacity, other tracks empty),
 // sample() averages the covered pixels; in the main window the button opens the clip without its key large in a window

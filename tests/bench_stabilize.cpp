@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark of the stabilizer (not run by CTest): synthetic shaky clips (a textured scene filmed through a camera
 // with known random shift/rotation/zoom, 1920x1080, encoded lossless) are stabilized with the own analysis + filter
 // and, when MLT's vid.stab module is installed, with vid.stab for comparison. Reported: residual motion of the output

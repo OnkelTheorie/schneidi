@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // A connected TCP socket without a network for Cli::Http::Connection (fuzz_http, test_http): the bytes of the client
 // come from feed(), what the server writes is collected in `out`.

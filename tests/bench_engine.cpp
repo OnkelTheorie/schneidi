@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): what an Inspector change costs in the real preview Engine.
 // Paused: time from updateTimeline() to the next shown frame. Playing: shown frames per second while the
 // timeline is updated at the rate of an Inspector drag (MainWindow bundles changes every 30 ms).

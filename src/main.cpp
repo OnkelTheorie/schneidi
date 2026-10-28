@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "buildinfo.h"
 #include "app/CrashReport.h"
 #include "app/InputBindings.h"

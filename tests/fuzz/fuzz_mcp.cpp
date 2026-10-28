@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Fuzz target: MCP messages (JSON-RPC, cli/Mcp.h) as `schneidi-cli mcp` reads a line and `serve` reads the body of
 // POST /mcp (one message or a batch). Every message is answered by Mcp::handle; a tools/call checks its arguments
 // like the server does before a job starts (Commands normalize: types, aliases, paths in the work folder) and reads

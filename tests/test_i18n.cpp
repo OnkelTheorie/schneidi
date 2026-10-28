@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test UI languages: every dictionary in i18n/ shows up in the language menu, restart hint in the new language,
 // untranslated texts fall back to English, numbers and bold/italic letters follow the UI language
 #include "check.h"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Fuzz target: timelines of other programs (core/Interchange.h), built once per format (FUZZ_FORMAT = Edl, Fcp7 or
 // Otio). A file is read and imported like the app does it: an empty project takes the file's format, the media
 // that exist go into the media pool (some are missing), addToProject makes the new timeline; then it is written

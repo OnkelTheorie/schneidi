@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // MCP server (Model Context Protocol): every command of Commands.cpp is one tool. The message handling is shared
 // by both transports: stdio (`schneidi-cli mcp`, one JSON-RPC message per line, below) and HTTP (`schneidi-cli

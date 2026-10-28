@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Deliver page like DaVinci: render settings, presets (built-in + own) and render queue.
 // Data + JSON only; rendering happens in engine/RenderQueue (via the Exporter).

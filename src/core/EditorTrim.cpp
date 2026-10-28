@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Editor: trimming (edges, trim mode, slip, edit points, trim to playhead).
 #include "core/Editor.h"
 

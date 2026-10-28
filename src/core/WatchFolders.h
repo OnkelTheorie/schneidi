@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Watch folders: a project can watch folders and take new media files from them into the Media Pool on its own - the
 // output folder of a screen recorder, a game clip tool or another program, a pipeline that drops recordings for an AI

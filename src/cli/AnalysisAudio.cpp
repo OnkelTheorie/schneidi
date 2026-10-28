@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: looking at the sound of the material (silence, peaks, loudness, transcribe)
 #include "cli/AnalysisDetail.h"
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // The only place that knows MLT (together with TimelineBuilder).
 // UI only talks via this class -> engine would be replaceable.

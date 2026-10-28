@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Track EQ (Mixer "EQ", like Fairlight): 6 biquad bands (RBJ cookbook) in series, high/low pass 12 dB/oct.
 // Bells and shelves at 0 dB and bands that are off are skipped, so a flat EQ is exactly transparent.

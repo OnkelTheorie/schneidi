@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test effects: editor (add/remove/undo/split), project file, Inspector, Effects Library,
 // dragging filters onto the timeline (offscreen)
 #include "check.h"

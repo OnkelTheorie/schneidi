@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // The app's own AI chat (the "AI" panel, app/AiChatPanel.h): a conversation with a model (app/AiProvider.h,
 // app/AiClient.h) whose tools are schneidi's own, served by `schneidi-cli mcp` (app/McpClient.h). One request of the

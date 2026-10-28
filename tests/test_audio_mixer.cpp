@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own audio engine, step 2 (docs/archiv/plan-0.10-ton.md): Audio::Mixer mixes a timeline offline.
 // Retimed clips against generated sources (always): bursts at known times land where the clip's RetimeMap puts
 // them (sample-exact without pitch correction, within a few ms with it), the pitch follows the speed (tape) or stays

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Single frames without a preview (schneidi-cli: lets an AI look at the material). Own profile and producers,
 // blocking; transparent areas are black like in the viewer.

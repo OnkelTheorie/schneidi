@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test stabilization (effect "stabilize", own analysis pass + own MLT filter, engine/Stabilizer) and noise reduction
 // (effect "denoise", afftdn): registry, editor (clip kinds, undo), project file, paste attributes; analysis of a
 // synthetic shaky clip (a still image with jittering crop) -> rendered frames move less, cache reuse, speed change,

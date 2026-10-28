@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Effect order: Editor::moveEffect/moveEffectBy (movable effects only, fixed stages keep their slots, several clips,
 // one undo step, nothing moved = no step, project file keeps the order), the `edit` op 'effect' with move (also via a
 // linked partner, errors), the Inspector (fixed stages shown first, Move Up/Down in the header menu, dragging a header

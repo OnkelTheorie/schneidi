@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Timeline: drawing (ruler, tracks, clips, filmstrips, waveforms, headers, playhead).
 #include "ui/timeline/TimelineView.h"
 

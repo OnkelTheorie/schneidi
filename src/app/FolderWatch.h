@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // The watch folders of the open project (core/WatchFolders.h) while the app runs: QFileSystemWatcher on the folders
 // (portable: inotify, ReadDirectoryChangesW, FSEvents underneath) plus a cheap rescan every few seconds (network

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Timeline exchange with other editors (Premiere Pro, DaVinci Resolve, Final Cut 7, Avid …): EDL (CMX3600),
 // FCP7 XML (xmeml) and OpenTimelineIO (.otio). The formats are read into and written from one neutral model

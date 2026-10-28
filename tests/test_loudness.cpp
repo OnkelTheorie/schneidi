@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test loudness (ITU-R BS.1770-4 / EBU R128): LoudnessMeter with synthetic signals, comparison with ffmpeg ebur128,
 // clip measurement (AudioAnalysis::clipLoudness), normalizing to LUFS (editor, relative via common loudness),
 // live measurement at the master level meter of the preview.

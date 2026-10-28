@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Key and mouse wheel bindings, customizable via keybindings.json in the config folder
 // (Linux: ~/.config/schneidi/, Windows: %APPDATA%/schneidi/).

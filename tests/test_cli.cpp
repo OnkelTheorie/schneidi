@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli command layer without media decoding: argument checks, edit operations on a saved project,
 // dry run, errors leave the file untouched
 #include "cli/Commands.h"

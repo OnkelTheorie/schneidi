@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own export path for video files (plan 0.11): MLT's render workers produce the images as before, but fetching and
 // encoding run in two threads of their own. MLT's avformat consumer fetched, copied and encoded in a single thread,

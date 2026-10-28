@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: looking at the picture of the material (scenes, region events, frames, scopes)
 #include "cli/AnalysisDetail.h"
 

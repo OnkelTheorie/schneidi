@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // The app's AI chat end to end: a MainWindow with the live server, the real `schneidi-cli mcp` as the chat's tools and
 // a fake AI provider in this process (a local HTTP server answering with scripted, streamed answers in the Anthropic
 // and the OpenAI protocol). Covered: the setup page (no provider yet) and starting from it; a request whose tool calls

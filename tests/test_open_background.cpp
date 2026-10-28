@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Opening files in the background (Engine::setOpenInBackground, the app's mode): MLT probes every file it opens,
 // which decodes pictures – on one core 25 s for a 12-clip 1080p60 project, all of it in the GUI thread. Now the
 // window stays usable: updateTimeline() returns at once, the build follows when the files are open.

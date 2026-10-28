@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Update hint: asks GitHub for the latest release and reports a version newer than this one. The main window checks
 // at most once a day, a few seconds after the start (MainWindowSettings.cpp), and on Help › Check for Updates…;

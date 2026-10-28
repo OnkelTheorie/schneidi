@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Speech to text with whisper.cpp (engine/Extensions downloads it): audio of a media file (ffmpeg) or of the timeline
 // (Exporter, mixed like the export) -> whisper-cli -> words with times (core/Transcript). Runs in the background.

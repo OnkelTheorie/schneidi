@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli edit operations for the look of clips: Color page grade, Inspector transform/crop/opacity,
 // keyframes of any animatable value and Paste Attributes. Same Editor/Keys functions as the app.
 #include "cli/CommandsDetail.h"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: menus and actions.
 #include "app/MainWindow.h"
 #include "app/AiChatPanel.h"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Hardware video encoders for Deliver (NVIDIA NVENC, VAAPI on Linux, Intel Quick Sync).
 // `ffmpeg -encoders` lists them even without a matching graphics card, and MLT's avformat consumer crashes when an

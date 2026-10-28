@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli edit operations for sound: clip volume/pan/stream, the mixer (track and master faders, mute, solo,
 // limiter) and Normalize Audio Levels (measured like the app's dialog)
 #include "cli/CommandsDetail.h"

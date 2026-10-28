@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Own audio engine, step 4 (docs/archiv/plan-0.10-ton.md): the analyses take their sound from the own engine
 // (Audio::Mixer for clip and timeline levels, Audio::Reader for waveforms and sound sync) instead of MLT.
 // Every check runs both paths (SCHNEIDI_AUDIO=mlt|own in the same process) on generated sources:

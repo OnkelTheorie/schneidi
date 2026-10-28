@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): export of a real project or media file, like the Deliver page, next to plain FFmpeg.
 // Reports how long Exporter::start() blocks the GUI thread, the time to the first rendered frame, frames per second,
 // CPU load and peak memory. With a single media file (or --ref) also FFmpeg alone with the same encoder settings:

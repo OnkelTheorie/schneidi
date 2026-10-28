@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own MLT "volume" filter: MLT's (normalize module) is GPL-2+ and is not loaded any more (0.14: no third-party GPL
 // code). Same behaviour for what schneidi uses: property "level" in dB (animatable, -200 = silence), float audio,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Update hint (app/UpdateCheck): the version this build counts as (a development build = the version being worked
 // on), comparing versions, reading GitHub's answer; against a local HTTP server (SCHNEIDI_UPDATE_URL): newer, same,
 // older, garbage, 404 and GitHub's rate limit, with a User-Agent and GitHub's Accept header; at most once a day. The

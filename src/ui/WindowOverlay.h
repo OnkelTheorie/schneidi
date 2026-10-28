@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Outline of the selected window of the Color page in the viewer, like DaVinci's on-screen window controls: the shape
 // (solid) and its soft edge (dashed), drag inside = move, the eight handles = size (around the center), the knob above

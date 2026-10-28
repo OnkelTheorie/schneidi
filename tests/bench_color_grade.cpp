@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Speed of the Color page correction (engine/ColorGrade) on a 1080p frame: the per-pixel reference against the
 // baked tables (1 thread and several), the cost of baking (per params change) and of preparing a LUT (once per
 // file), and the deviation from the reference. Per case:

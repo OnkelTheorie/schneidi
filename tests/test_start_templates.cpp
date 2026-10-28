@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Start templates (core/StartTemplates.h): how a new project looks. "Neutral" is exactly the project schneidi always
 // started with and the default; the built-in ones (game, podcast, vertical) are only offered and never mute, hide or
 // lock a track. Own templates are files in the app data folder (save, list, find, rename, delete, default follows),

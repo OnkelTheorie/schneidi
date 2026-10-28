@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Memory and time of snapshot undo (Project::edit) on a large timeline: every edit keeps the timeline before and
 // after; implicit sharing should make a step cost only the parts that changed.
 //   build-tests/tests/bench_undo [clips] [edits]

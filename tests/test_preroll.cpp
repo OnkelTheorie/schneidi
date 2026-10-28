@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test decoder pre-roll (engine/Preroll, TimelineBuilder::prerollPoints): clips of the same file at a dissolve
 // or hard cut get their own producers alternately, transition + body of a clip read in one go;
 // jump points are correct; pre-decoded points do not change the displayed images.

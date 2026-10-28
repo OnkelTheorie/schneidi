@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // What the AI chat's request takes of a model's context (app/AiChat.h): the size of the context, asked from the
 // server before the first request, and the short request for small or local models. The full request (instructions,

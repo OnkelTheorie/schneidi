@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Export with a frame rate other than the timeline's: plays the timeline (built in its own profile) in the output's
 // profile. Port of MLT's "consumer" producer (modules/core/producer_consumer.c) that takes the tractor directly

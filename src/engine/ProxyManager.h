@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Proxy media like in DaVinci ("Generate Proxy Media"): small H.264 copies of the originals
 // for a smooth preview. Created in the background via ffmpeg (QProcess, one file after the other),

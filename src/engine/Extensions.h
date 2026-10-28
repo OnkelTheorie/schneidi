@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Optional add-ons that schneidi downloads on request instead of shipping them (keeps the program small):
 // whisper.cpp (speech to text) and its language models. Fixed catalog with pinned versions and SHA-256 sums;

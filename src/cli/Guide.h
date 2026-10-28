@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // The editing guide for AIs, built into the program: the Claude skill of the repo (skills/schneidi: SKILL.md + one
 // reference per task) as Qt resources. Served as the MCP tool `guide`, installed as a skill by `schneidi-cli setup`

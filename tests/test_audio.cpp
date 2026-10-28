@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test Audio: normalizing (editor logic and peak level measurement), master limiter and level meter in the render,
 // limiter settings in the project file. Test media are created with ffmpeg.
 #include "check.h"

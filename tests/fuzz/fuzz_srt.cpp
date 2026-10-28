@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Fuzz target: subtitle files (SRT, core/Subtitles.h). A file is read in a project frame rate, put on a new
 // subtitle track like the import does (Editor::importSubtitles), written out again (whole and a range) and read back.
 //

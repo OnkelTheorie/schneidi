@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Contact sheet (core/ContactSheet.h, File › Save Contact Sheet, `frames --sheet`): frames spread evenly, the grid
 // (automatic and chosen columns, tiles of different sizes fitted into one cell size), the dialog (remembered
 // settings, file suffix, In/Out only when there is a range), a sheet of a real timeline (Snapshot::contactSheet).

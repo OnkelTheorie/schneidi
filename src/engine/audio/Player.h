@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own audio engine (docs/archiv/plan-0.10-ton.md), step 5: live playback. The same Audio::Mixer as export and analyses mixes
 // the timeline ahead in a feeder thread into a ring buffer; the device callback (real time: no locks, no allocation)

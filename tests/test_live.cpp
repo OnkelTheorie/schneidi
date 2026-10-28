@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Live connection (cli/Live.h): a server on a fake app in this process, schneidi-cli as a real second process.
 // Reading commands see the app's (unsaved) project, edits change it as one undo step without touching the file,
 // `app` controls playhead/selection/undo, one AI session at a time, the user can disconnect it, while the app waits

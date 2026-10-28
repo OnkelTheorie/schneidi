@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Window of the Green Screen pipette: the clip's picture large – as large as the screen allows with a margin, in the
 // picture's shape – with the pipette (KeyColorPicker) over it, so the exact green is easy to hit. The mouse wheel

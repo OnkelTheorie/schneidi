@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // MCP client of the app's AI chat: starts `schneidi-cli mcp` (the same version next to the app; main.cpp hands in
 // the command, the app does not link the command layer) and talks MCP with it over stdin/stdout: initialize,

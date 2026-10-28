@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Project settings like DaVinci (Project Settings -> Master Settings): timeline resolution and frame rate.
 // All frame counts in the model count in this frame rate; pixel values (transform, titles ...) refer

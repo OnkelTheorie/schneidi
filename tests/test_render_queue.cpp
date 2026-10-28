@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test Deliver: render settings/presets (built-in + own), render queue (project file, DeliverPanel,
 // render one after another with status, error, cancel). Rendering is small and short (ffmpeg/ffprobe needed).
 #include "check.h"

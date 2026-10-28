@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Licenses of the third-party code the running program uses (0.14: the bundled packages contain nothing GPL).
 // Looks at what is really there, not at what the build meant to use: the license FFmpeg was configured with

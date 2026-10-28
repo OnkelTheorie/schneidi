@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Watch folders (core/WatchFolders.h): which files count as new and complete (temporary, hidden, other kinds,
 // subfolders, already in the pool, taken back, still being written, clock of a network share), one undo step per
 // batch and its undo (the files stay out), the project file (round trip, old files without the field), the `watch`

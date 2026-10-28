@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own audio engine: changes the speed of a sound while keeping its pitch (phase vocoder). Used by Audio::Retimer
 // for "keep pitch"; no GUI, MLT or third-party stretcher.

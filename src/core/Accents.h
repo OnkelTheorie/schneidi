@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Accents on a hit (a kill, a beat, a drop): zoom punch, exposure flash, position shake and mixes of them, written
 // as ordinary keyframes (zoom x/y, grade exposure, x/y) that stay editable in the Inspector and the curve editor.

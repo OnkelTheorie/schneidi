@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Audio sync for multicam (docs/archiv/plan-0.8.md): finds the offset between two recordings of the same event by their
 // sound. Each recording becomes an onset envelope (how suddenly the level rises in five bands, log-compressed,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // EDL (CMX3600): one video track and audio channels, cuts and dissolves. Source timecodes are the file's own
 // (Item::mediaStart, 00:00:00:00 without one), the timeline starts at 01:00:00:00 (like DaVinci). Comment lines carry the clip name and the file
 // ("* FROM CLIP NAME:", "* SOURCE FILE:"), which Premiere and DaVinci read when conforming.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Track compressor (Mixer "DYN", like Fairlight Dynamics): static curve with soft knee and make-up gain, a peak
 // detector in the log domain with attack/release (smooth decoupled peak detector, Giannoulis/Massberg/Reiss 2012),

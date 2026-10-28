@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Speech-to-text results (whisper.cpp, see engine/Transcriber): words with times, grouped into subtitle cues.
 // Pure data functions; times in milliseconds from the start of the transcribed audio.

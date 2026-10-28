@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Transcriber.h"
 
 #include "core/I18n.h"

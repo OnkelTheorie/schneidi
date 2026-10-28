@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Watch folders of the project (core/WatchFolders.h, app/FolderWatch.h): one folder (WatchFolderDialog: folder,
 // subfolders, media kinds, bin, files already there) and the list of all of them (WatchFoldersDialog: add, edit,

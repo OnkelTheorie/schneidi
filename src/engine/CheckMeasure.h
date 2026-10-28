@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // What the check before export measures beyond the loudness of the mix, for the judgements in core/ExportCheck.h:
 // each audio track alone (music against game sound or speech), a few small frames of the start (the hook of a

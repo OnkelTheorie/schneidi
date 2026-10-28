@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Export: finished frames leave the render workers in the output's color standard.
 //

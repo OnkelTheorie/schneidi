@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // miniaudio (single header, MIT-0) for the sound devices of the own audio engine: only the device part, no decoders,
 // encoders or graph (FFmpeg reads the files). The implementation is compiled once in Miniaudio.cpp.

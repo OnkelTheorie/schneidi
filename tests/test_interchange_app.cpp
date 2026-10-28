@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Timeline import in the app (File › Import Timeline): an FCP7 XML from "another computer" (Windows paths) whose
 // files lie next to it becomes a new, opened timeline in an empty project, which takes the file's format; one undo
 // step removes it again. Export dialog: chosen by program, the extension follows the format.

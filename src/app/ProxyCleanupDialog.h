@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // "Clean up proxy media…" (Playback menu, Media Pool): shows which proxy files no open or recent project needs, why,
 // and how much space deleting them frees (engine/ProxyCleanup has the rule), and deletes them only when confirmed.

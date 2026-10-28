@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli serve (cli/Serve.h): the work folder rules in this process (cli/Sandbox.h), then real server processes
 // on a free port with a temporary work folder. Token, sessions, tools over HTTP (new/edit/info on a project), paths
 // outside the work folder (.., absolute, symlink, inside edit ops), files up and down (Range), render with progress as

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // `schneidi-cli serve`: the MCP server over HTTP ("Streamable HTTP", MCP 2025-06-18, 2025-03-26 clients too), so AIs
 // on other devices and automation (Docker) edit videos on a server. One endpoint POST /mcp (answers as JSON, or as a

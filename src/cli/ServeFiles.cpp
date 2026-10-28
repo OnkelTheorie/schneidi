@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // `schneidi-cli serve`: files in and out (PUT/GET /files/<path>, tools `files` and `upload`), see Serve.h
 #include "cli/ServeDetail.h"
 

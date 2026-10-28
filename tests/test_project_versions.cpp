@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Project files of every format version load (migration steps in ProjectFile.cpp) and are written back as the current
 // version without losing anything. Fixtures: tests/data/projects/v<format>-<schneidi version>.schneidi, media offline.
 // New format version -> add a fixture saved by the last release before it (docs/dev/konventionen.md).

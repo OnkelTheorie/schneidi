@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): what a jump costs in the preview Engine while stopped (clicking into the timeline):
 // time from seek() until the picture there is shown, for jumps to positions spread over the project.
 // Run: QT_QPA_PLATFORM=offscreen ./build-tests/tests/bench_seek <project.schneidi> [jumps]

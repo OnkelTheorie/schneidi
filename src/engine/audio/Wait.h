@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own audio engine (docs/archiv/plan-0.10-ton.md): waits that keep their time. With MSYS2's thread library (winpthreads)
 // std::condition_variable::wait_for and std::this_thread::sleep_for/sleep_until wake in Windows' ~15.6 ms grid, even

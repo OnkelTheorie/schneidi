@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Internal helpers of Inspector, shared by its implementation files (not part of the API).
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // AI chat providers without network (app/AiProvider.h, app/AiKeys.h): requests of both protocols (Anthropic Messages
 // API, OpenAI-compatible chat completions) from one conversation – tools, tool results with pictures (OpenAI: as a user
 // message after the tool answers), the Anthropic content sent back unchanged (thinking blocks), caching, the headers

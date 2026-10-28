@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: live connection to an AI session (schneidi-cli / MCP, see cli/Live.h): state, control, indicator
 #include "app/MainWindow.h"
 

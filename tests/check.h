@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Small test helpers for the test programs (CTest): CHECK/CHECK_EQ count failures, testResult() returns the
 // exit code (0 = ok, 1 = failure, 77 = skipped). Only failures and the summary are printed.

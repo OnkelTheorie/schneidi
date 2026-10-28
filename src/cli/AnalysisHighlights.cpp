@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: highlights – candidates for a highlight video from the kill feed (one colour in a region) and loud
 // moments, ready for the 'keep' edit operation
 #include "cli/AnalysisDetail.h"

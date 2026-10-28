@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // The editing guide built into the program (cli/Guide.h, the repo's Claude skill) and `schneidi-cli setup claude`
 // (cli/Setup.h): Claude Code gets MCP server + skill, Claude Desktop the MCP server in its config, other entries of
 // that config stay, a broken config is left alone, --remove takes everything out again. Runs the real schneidi-cli

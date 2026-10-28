@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): time per frame of laying tracks over each other, own compositing (engine/video/Compose)
 // against MLT's qtblend (Qt module, if it loads). Three 1080p stills (a JPG, a PNG with alpha, a JPG) on three tracks,
 // each with a transform (zoom, position, rotation) over a full-frame video track; stills so decoding stays out of

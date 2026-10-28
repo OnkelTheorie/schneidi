@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Editor: clip speed and speed ramps.
 #include "core/Editor.h"
 #include "core/EditorDetail.h"

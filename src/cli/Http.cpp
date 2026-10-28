@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Small HTTP/1.1 server side, see Http.h
 #include "cli/Http.h"
 

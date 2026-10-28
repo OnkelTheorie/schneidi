@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Export renders several frames at once (MLT worker threads, real_time < -1). They reach a clip's decoder (MLT's
 // avformat producer, one lock per file) in random order: when frame N+1 gets the lock before N, the producer decodes
