@@ -9,7 +9,6 @@
 #include <QThreadPool>
 #include <algorithm>
 #include <cmath>
-#include <initializer_list>
 #include <atomic>
 #include <condition_variable>
 #include <memory>
@@ -186,12 +185,12 @@ QString softwareCodec(const QString& format)
     const auto have = [](const char* name) { return avcodec_find_encoder_by_name(name) != nullptr; };
     if (have(f.videoCodec)) return f.videoCodec;
     // Free replacements (BSD): the GPL-free build has no x264/x265
-    const QLatin1String codec(f.videoCodec);
-    for (const char* other : codec == QLatin1String("libx264")     ? std::initializer_list<const char*>{"libopenh264"}
-                             : codec == QLatin1String("libx265")   ? std::initializer_list<const char*>{"libkvazaar"}
-                             : codec == QLatin1String("libsvtav1") ? std::initializer_list<const char*>{"libaom-av1"}
-                                                                   : std::initializer_list<const char*>{})
-        if (have(other)) return other;
+    static const struct {
+        const char* codec;
+        const char* replacement;
+    } kFree[] = {{"libx264", "libopenh264"}, {"libx265", "libkvazaar"}, {"libsvtav1", "libaom-av1"}};
+    for (const auto& r : kFree)
+        if (qstrcmp(f.videoCodec, r.codec) == 0 && have(r.replacement)) return r.replacement;
     return {};
 }
 
