@@ -111,6 +111,9 @@ struct Player::Impl {
     // The device: opened by play() and the watchdog, under deviceMutex (taken before `mutex`, never inside it)
     std::mutex deviceMutex;
     std::unique_ptr<Device> device;
+    // Set once the first device is open (stays set): play() checks this instead of taking deviceMutex, which the
+    // watchdog holds while the driver takes its time (100 ms to seconds when headphones are plugged in or out)
+    std::atomic<bool> deviceOpened{false};
     bool forcedSilence = false; // the sound card kept failing: silence until available() says it is back
     int64_t openedAt = 0;       // lastCallback when it was opened: later = it has called back since
     int opened = 0;             // devices opened so far
@@ -531,6 +534,7 @@ void Player::Impl::openDevice(bool silent)
     lastCallback.store(openedAt, std::memory_order_relaxed);
     QString error;
     device = Device::open(c, [this](float* out, int frames) { process(out, frames); }, &error);
+    deviceOpened.store(true);
     latency = device->latency();
     qInfo("Audio: %s, Latenz %d Samples", qPrintable(device->name()), latency.load());
     std::lock_guard<std::mutex> lock(mutex);
@@ -676,7 +680,7 @@ void Player::play(double position, double speed)
         pause();
         return;
     }
-    {
+    if (!d->deviceOpened.load()) { // only the first play: later the watchdog keeps a device open
         std::lock_guard<std::mutex> dl(d->deviceMutex);
         if (!d->device) d->openDevice();
     }

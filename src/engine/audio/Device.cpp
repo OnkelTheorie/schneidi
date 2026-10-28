@@ -255,6 +255,10 @@ std::unique_ptr<Device> Device::open(const Config& config, Callback callback, QS
 {
     const QString stand = qEnvironmentVariable("SCHNEIDI_AUDIO_DEVICE");
     if (stand == "null") return std::make_unique<TimerDevice>(config, std::move(callback), QString());
+    if (stand.startsWith("null:slow=")) { // a driver that takes its time to open (tests)
+        std::this_thread::sleep_for(std::chrono::milliseconds(stand.mid(10).toInt()));
+        return std::make_unique<TimerDevice>(config, std::move(callback), QString());
+    }
     if (stand.startsWith("null:stall=")) {
         static std::atomic<bool> stalled{false};
         const int ms = stalled.exchange(true) ? 0 : stand.mid(11).toInt();

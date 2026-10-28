@@ -53,7 +53,8 @@ public:
 
     // Opens and starts the output. The environment variable SCHNEIDI_AUDIO_DEVICE chooses a stand-in: "null" =
     // silence paced by a timer, "file:<path>" = 16-bit stereo raw file in real time (tests); "null:stall=<ms>" = like
-    // "null", but the first device opened in the process stops calling back after <ms> (a vanished device, tests).
+    // "null", but the first device opened in the process stops calling back after <ms> (a vanished device, tests);
+    // "null:slow=<ms>" = like "null", every open takes <ms> (a slow driver, tests).
     // Otherwise the sound card: the chosen output, if it is missing or does not open the system default; if none
     // opens, silence (the clock must run: picture follows sound) and *error says why.
     static std::unique_ptr<Device> open(const Config& config, Callback callback, QString* error = nullptr);
