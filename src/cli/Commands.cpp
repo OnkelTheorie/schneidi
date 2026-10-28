@@ -39,6 +39,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QUndoStack>
 
 #include <algorithm>
@@ -134,7 +135,7 @@ int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what
     const QString s = v.toString().trimmed();
     if (s.endsWith('s')) {
         bool ok = false;
-        const double sec = s.chopped(1).toDouble(&ok);
+        const double sec = QString(s.chopped(1)).replace(',', '.').toDouble(&ok); // "6,95s": a decimal comma
         if (ok && sec >= 0 && sec * fmt.rate.fps() <= kMax) return int(std::lround(sec * fmt.rate.fps()));
     } else if (!s.isEmpty()) {
         bool ok = false;
@@ -1184,11 +1185,11 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
         }
         const QJsonValue v = raw[p.name];
         const QString str = v.isString() ? v.toString() : QString();
-        const auto list = [&]() {
+        const auto list = [&](const QString& text) {
             if (v.isArray()) return v.toArray();
-            if (str.trimmed().startsWith('[')) return QJsonDocument::fromJson(str.toUtf8()).array();
+            if (text.trimmed().startsWith('[')) return QJsonDocument::fromJson(text.toUtf8()).array();
             QJsonArray arr;
-            for (const QString& x : str.split(',', Qt::SkipEmptyParts)) arr << x.trimmed();
+            for (const QString& x : text.split(',', Qt::SkipEmptyParts)) arr << x.trimmed();
             return arr;
         };
         bool ok = true;
@@ -1213,16 +1214,22 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             else ok = false;
             break;
         case ParamType::Time: out[p.name] = v; ok = v.isDouble() || v.isString(); break;
-        case ParamType::Times: out[p.name] = list(); break;
+        case ParamType::Times: {
+            // A decimal comma in seconds ("6,95s", "1,5s, 3s" - German writing) is no list separator: it would
+            // become frame 6 and 95 s without an error
+            static const QRegularExpression decimalComma(R"((^|[,\s])(\d+),(\d+s)(?=$|[,\s]))");
+            out[p.name] = list(QString(str).replace(decimalComma, "\\1\\2.\\3"));
+            break;
+        }
         case ParamType::Paths: {
             QJsonArray arr;
-            for (const QJsonValue& x : list()) arr << absolute(x.toString());
+            for (const QJsonValue& x : list(str)) arr << absolute(x.toString());
             out[p.name] = arr;
             break;
         }
         case ParamType::Sources: {
             QJsonArray arr;
-            for (const QJsonValue& x : list()) {
+            for (const QJsonValue& x : list(str)) {
                 if (!x.isObject()) {
                     arr << absolute(x.toString());
                     continue;

@@ -129,6 +129,15 @@ int main(int argc, char** argv)
         const Cli::Command* frames = Cli::find("frames");
         const QJsonObject n = Cli::normalize(*frames, {{"file", g_path}, {"at", QJsonArray{0}}});
         CHECK(n.contains("source") && !n.contains("file"));
+        // A decimal comma in seconds is no list separator; a list of ids or times still splits
+        const auto at = [&](const char* text) {
+            return Cli::normalize(*frames, {{"source", g_path}, {"at", text}})["at"].toArray();
+        };
+        CHECK(at("6,95s") == (QJsonArray{"6.95s"}));
+        CHECK(at("1,5s, 3s,2,25s") == (QJsonArray{"1.5s", "3s", "2.25s"}));
+        CHECK(at("6,95") == (QJsonArray{"6", "95"}));
+        CHECK(at("10, 20s") == (QJsonArray{"10", "20s"}));
+        CHECK_EQ(Cli::detail::parseTime(QJsonValue("6,95s"), ProjectFormat{}, "at"), int(std::lround(6.95 * ProjectFormat{}.rate.fps())));
         const Cli::Command* loudness = Cli::find("loudness");
         CHECK(Cli::normalize(*loudness, {{"project", g_path}}).contains("source"));
         const Cli::Command* render = Cli::find("render");
