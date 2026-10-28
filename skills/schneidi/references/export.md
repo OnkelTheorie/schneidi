@@ -14,6 +14,8 @@ current set.
 - `height` scales (e.g. 720), `fps` changes the frame rate, `from`/`to` renders a part, `size` forces a size
   (letterboxed - for a real vertical edit see [social.md](social.md)).
 - Subtitles: `subtitles` `burn` or `srt` ([subtitles.md](subtitles.md)).
+- A version without a track (no voice-over, no music, no facecam): `mute_tracks` `["A2"]` (video tracks like `"V3"`
+  are hidden) leaves it out of this render only; the project's mixer stays as it is - no mute, render, unmute.
 
 ## Files
 New, clear names; never the name of an input file. `overwrite` true only for your own earlier render of the same

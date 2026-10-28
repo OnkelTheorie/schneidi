@@ -525,7 +525,18 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings.subtitles = i;
     }
     job.size = job.settings.outputSize(s.format().size());
-    const Timeline tl = s.project.renderTimeline();
+    Timeline tl = s.project.renderTimeline();
+    // Tracks left out of this render only (a voice-over, a music bed): the project keeps its mixer
+    for (const QJsonValue& v : a["mute_tracks"].toArray()) {
+        TrackKind k = TrackKind::Video;
+        const int index = parseTrack(v, &k);
+        auto& tracks = tl.tracks(k);
+        if (index >= tracks.size())
+            fail("NOT_FOUND", QString("mute_tracks: there is no %1 (the timeline has V1-V%2 and A1-A%3)")
+                                  .arg(trackName({k, index})).arg(tl.video.size()).arg(tl.audio.size()));
+        if (k == TrackKind::Audio) tracks[index].muted = true;
+        else tracks[index].hidden = true;
+    }
     const int end = TimelineOps::endFrame(tl);
     if (end <= 0) s.failEmpty();
     if (a.contains("from") || a.contains("to")) {

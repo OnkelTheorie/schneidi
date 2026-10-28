@@ -199,7 +199,7 @@ void sourceRange(Session& s, const QJsonObject& op, const MediaInfo& m, int* in,
     *in = timeOf(s, op, "in", 0);
     *out = op.contains("out") ? timeOf(s, op, "out") : m.length;
     if (op.contains("duration")) *out = *in + timeOf(s, op, "duration");
-    *out = std::min(*out, m.length);
+    if (!m.isImage) *out = std::min(*out, m.length); // a still takes any length (its default: the still length)
     if (*in >= *out) fail("BAD_ARGUMENT", QString("empty source range %1..%2 (media has %3 frames)").arg(*in).arg(*out).arg(m.length));
 }
 
@@ -529,15 +529,46 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
         s.editor.removeSubtitleTrack(index);
         return;
     }
-    TrackKind k = TrackKind::Video;
-    const int index = parseTrack(op.value("track"), &k);
-    if (!s.editor.canRemoveTrack({k, index}))
-        fail("FAILED", "cannot remove that track (missing, locked or the last one of its kind)");
-    s.editor.removeTrack({k, index});
+    // Names are those of the timeline as it is now (after the ops before this one): removing A1 makes A2 the new
+    // A1. Several tracks of one op (track:[…] or tracks:[…]) are all named before any goes, removed from the bottom
+    // of the list up, so ["A1","A2","A5"] removes exactly those three
+    QJsonArray given = op.value("tracks").toArray();
+    if (given.isEmpty()) given = op.value("track").isArray() ? op.value("track").toArray() : QJsonArray{op.value("track")};
+    QVector<TrackRef> refs;
+    for (const QJsonValue& v : given) {
+        TrackKind k = TrackKind::Video;
+        const int index = parseTrack(v, &k);
+        if (!refs.contains(TrackRef{k, index})) refs << TrackRef{k, index};
+    }
+    const Timeline& tl = s.project.timeline();
+    for (const TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        const auto& tracks = tl.tracks(k);
+        const int removing = int(std::count_if(refs.begin(), refs.end(), [&](const TrackRef& r) { return r.kind == k; }));
+        for (const TrackRef& r : refs) {
+            if (r.kind != k) continue;
+            QString why;
+            if (r.index >= tracks.size()) why = "there is no " + trackName(r);
+            else if (tracks[r.index].locked) why = trackName(r) + " is locked";
+            else if (removing >= tracks.size()) why = QString("a timeline keeps at least one %1 track").arg(k == TrackKind::Video ? "video" : "audio");
+            else if (!s.editor.canRemoveTrack(r)) why = "the tracks of a multicam sequence stay";
+            if (why.isEmpty()) continue;
+            QStringList now;
+            for (int i = 0; i < tracks.size(); ++i)
+                now << trackName({k, i}) + (tracks[i].locked ? " (locked)" : "");
+            fail("FAILED", QString("cannot remove %1: %2. %3 tracks now: %4 (names refer to the timeline as it is "
+                                   "when the op runs: removing A1 makes A2 the new A1; remove several in one op with "
+                                   "tracks:[\"A1\",\"A3\"])")
+                               .arg(trackName(r), why, k == TrackKind::Video ? "Video" : "Audio", now.join(", ")));
+        }
+    }
+    std::sort(refs.begin(), refs.end(), [](const TrackRef& a, const TrackRef& b) { return a.index > b.index; });
+    for (const TrackRef& r : refs) s.editor.removeTrack(r);
 }
 
 // Details of the ops that place source ranges (import presets, core/StreamPresets.h)
 const char* const kPresetsDetails =
+    "in/out are source times (out exclusive, default: the whole file), duration = out - in. A still image takes "
+    "any length (out:'20s' or duration:'20s'; default 5 s). "
     "track: V2 puts the picture on V2 and the sound from A2 on. Files with several audio streams (OBS) get one "
     "track per stream, named after it, and follow the user's import presets from the app (by default every stream "
     "plays; users can e.g. mute the Mix stream when its single streams are there, or set rules per stream title; "
@@ -550,10 +581,10 @@ const char* const kPresetsDetails =
 QVector<OpDef> makeOps()
 {
     QVector<OpDef> ops{
-        {"append", "{op:'append', media, in?, out?, track?, presets?}", "put a source range at the end of the timeline",
+        {"append", "{op:'append', media, in?, out?|duration?, track?, presets?}", "put a source range at the end of the timeline",
          kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, true); }},
-        {"place", "{op:'place', media, at, in?, out?, track?, presets?}", "overwrite at a position", kPresetsDetails,
+        {"place", "{op:'place', media, at, in?, out?|duration?, track?, presets?}", "overwrite at a position", kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, false); }},
         {"keep", "{op:'keep', media, ranges:[[from,to],...], at?, track?, presets?}",
          "put several source ranges one after another (e.g. the 'sound' ranges of `silence`)", kPresetsDetails, opKeep},
@@ -627,7 +658,11 @@ QVector<OpDef> makeOps()
          opEffect},
         {"add_track", "{op:'add_track', kind:'video'|'audio', at?}", "new track (default: above/below the others)",
          {}, opAddTrack},
-        {"remove_track", "{op:'remove_track', track}", "remove a track with its clips (not the last one; ST1 … = subtitle tracks)", {},
+        {"remove_track", "{op:'remove_track', track} or {op:'remove_track', tracks:[…]}",
+         "remove tracks with their clips (not the last one of a kind; ST1 … = subtitle tracks)",
+         "Track names are those of the timeline when the op runs: after removing A1 the old A2 is A1, so a second op "
+         "{track:'A5'} means the track that was A6. Several tracks in ONE op (tracks:['A1','A2','A5'] or "
+         "track:[…]) are all named as they are before it and removed together.",
          opRemoveTrack},
     };
     addTimelineOps(ops);

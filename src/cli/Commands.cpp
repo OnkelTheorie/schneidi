@@ -812,6 +812,9 @@ const QVector<Command>& commands()
           {"from", T::Time, "start of the range (default: timeline start)"},
           {"to", T::Time, "end of the range, exclusive (default: timeline end)"},
           {"timeline", T::String, "timeline to render (id or name; default: the open one)"},
+          {"mute_tracks", T::Times, "tracks left out of this render only, e.g. [\"A2\"] (a voice track) or "
+                                    "[\"V3\",\"A3\"]: audio tracks muted, video tracks hidden; the project stays "
+                                    "as it is"},
           {"overwrite", T::Boolean, "replace an existing output file"}},
          cmdRender},
         {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams. With gaps: the stutter "
@@ -1197,6 +1200,33 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             for (const QString& x : text.split(',', Qt::SkipEmptyParts)) arr << x.trimmed();
             return arr;
         };
+        // A file name may contain a comma ("clip, take 2.mp4"): in a comma-separated string, neighbouring pieces
+        // that together name an existing file stay one path (longest match first); a JSON array is never split
+        const auto pathList = [&]() {
+            if (v.isArray() || str.trimmed().startsWith('[')) return list(str);
+            const QStringList pieces = str.split(',');
+            QJsonArray arr;
+            for (int i = 0; i < pieces.size();) {
+                int end = i + 1;
+                for (int j = int(pieces.size()); j > i + 1; --j) {
+                    const QString joined = pieces.mid(i, j - i).join(',').trimmed();
+                    bool exists = false;
+                    try {
+                        exists = QFileInfo::exists(Sandbox::resolve(joined));
+                    } catch (const Error&) {
+                        // outside the work folder or "@app": absolute() reports it for the pieces
+                    }
+                    if (exists) {
+                        end = j;
+                        break;
+                    }
+                }
+                const QString piece = pieces.mid(i, end - i).join(',').trimmed();
+                if (!piece.isEmpty()) arr << piece;
+                i = end;
+            }
+            return arr;
+        };
         bool ok = true;
         switch (p.type) {
         case ParamType::String: out[p.name] = v.isString() ? str : v.toVariant().toString(); break;
@@ -1228,13 +1258,13 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
         }
         case ParamType::Paths: {
             QJsonArray arr;
-            for (const QJsonValue& x : list(str)) arr << absolute(x.toString());
+            for (const QJsonValue& x : pathList()) arr << absolute(x.toString());
             out[p.name] = arr;
             break;
         }
         case ParamType::Sources: {
             QJsonArray arr;
-            for (const QJsonValue& x : list(str)) {
+            for (const QJsonValue& x : pathList()) {
                 if (!x.isObject()) {
                     arr << absolute(x.toString());
                     continue;

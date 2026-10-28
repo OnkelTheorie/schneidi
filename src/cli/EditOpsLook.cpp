@@ -360,10 +360,18 @@ KeyEase parseEase(const QJsonValue& v)
 
 void opKeyframe(Session& s, const QJsonObject& op)
 {
+    // A key this op does not know was dropped without a word ("keyframes":[…], "time"): the op ran and nothing moved
+    const auto checkKeys = [](const QJsonObject& o, const QStringList& known, const char* where) {
+        for (auto it = o.begin(); it != o.end(); ++it)
+            if (!known.contains(it.key()))
+                fail("BAD_ARGUMENT", QString("keyframe: unknown key '%1' %2(keys: %3)").arg(it.key(), where, known.join(", ")));
+    };
+    checkKeys(op, {"op", "clips", "clip", "linked", "param", "at", "value", "ease", "remove", "move_to", "keys", "clear"}, "");
+    if (!op.contains("param")) fail("BAD_ARGUMENT", "keyframe: missing 'param' (zoom, x, y, opacity, … see `help edit --op keyframe`)");
     const QVector<AnimParam> params = parseParams(op.value("param").toString());
     const AnimParam p = params.first(); // value checks: the parameters of "zoom" share their range
     const bool audioParam = p == AnimParam::Volume || p == AnimParam::Pan;
-    const QVector<int> ids = clipsOn(s, op, audioParam ? TrackKind::Audio : TrackKind::Video, "these keyframes");
+    QVector<int> ids = clipsOn(s, op, audioParam ? TrackKind::Audio : TrackKind::Video, "these keyframes");
     QString effectId;
     const EffectDescriptor* effect = nullptr;
     const EffectParam* ep = nullptr;
@@ -393,6 +401,7 @@ void opKeyframe(Session& s, const QJsonObject& op)
     QVector<Key> list;
     for (const QJsonValue& v : keys) {
         const QJsonObject k = v.toObject();
+        checkKeys(k, {"at", "value", "ease", "remove", "move_to"}, "in keys ");
         Key key{timeOf(s, k, "at"), {}, {}, k.value("remove").toBool(), {}};
         if (k.contains("value")) key.value = paramValue(p, k.value("value"), "value");
         if (k.contains("ease")) key.ease = parseEase(k.value("ease"));
@@ -409,6 +418,35 @@ void opKeyframe(Session& s, const QJsonObject& op)
             }
         }
         list << key;
+    }
+    // Times are timeline frames: a time outside a clip was pulled to its edge, so keys meant from the clip start
+    // ("0s", "2s" on a clip at 6 s) all landed on its first frame - no animation, one key. The clip's end counts as its
+    // last frame. A clip none of the times is in is left alone (one op for clips at different places); none at all
+    // is an error
+    const Timeline& tl = s.project.timeline();
+    const auto inside = [&](int id, int at) {
+        const Clip* c = TimelineOps::findClip(tl, id);
+        return c && at >= c->start && at <= c->end();
+    };
+    QVector<int> hit, missed;
+    for (int id : ids) {
+        if (std::all_of(list.begin(), list.end(), [&](const Key& k) { return inside(id, k.at); })) hit << id;
+        else missed << id;
+    }
+    if (!missed.isEmpty()) {
+        QStringList where;
+        for (int id : missed)
+            if (const Clip* c = TimelineOps::findClip(tl, id))
+                where << QString("clip %1 is %2-%3").arg(id).arg(tc(c->start, s.format()), tc(c->end(), s.format()));
+        const QString why = QString("keyframe times are timeline frames inside the clip (%1); from the clip start: "
+                                    "at:{clip:<id>, offset:\"2s\"}")
+                                .arg(where.join(", "));
+        if (hit.isEmpty() || std::any_of(missed.begin(), missed.end(), [&](int id) {
+                return std::any_of(list.begin(), list.end(), [&](const Key& k) { return inside(id, k.at); });
+            }))
+            fail("BAD_ARGUMENT", "a keyframe time is outside the clip: " + why);
+        s.notes << "keyframe: left alone where no time falls inside: " + why;
+        ids = hit;
     }
     s.editor.modifyClips(ids, "Keyframe", [&](Clip& c) {
         if (!effectId.isEmpty() && !EffectRegistry::has(c, effectId)) EffectRegistry::add(c, effectId);
@@ -594,7 +632,13 @@ void addLookOps(QVector<OpDef>& ops)
                  "the same unit at every zoom and timeline shape: crop px = source px * fitted width / source width "
                  "(1920x1080 clip: * 1 in a 1920x1080 timeline, * 0.5625 in 1080x1920, * 0.5 in 960x540). Crop "
                  "applies before zoom/position/rotation, so at zoom 2 a crop of 100 hides 200 timeline pixels; the "
-                 "cut area is transparent (tracks below show). opacity 0..100. "
+                 "cut area is transparent (tracks below show). Cropping never moves what is left: it stays where it "
+                 "was in the picture, and x/y/zoom/rotation act on the whole picture around ITS center (not the "
+                 "center of the part left). To center a cropped part, move by its distance from the picture center "
+                 "times zoom: x = -zoom * (crop_left - crop_right) / 2, y = zoom * (crop_top - crop_bottom) / 2. "
+                 "Example, a 9:16 timeline (1080x1920) with a 1920x1080 clip (fitted 1080x607.5, crop px = source px * "
+                 "0.5625) showing only the facecam at source x 1440..1920, y 0..360, centered and full width: "
+                 "crop_left 810, crop_bottom 405, zoom 4 (270 px left * 4 = 1080), x -1620, y -810. opacity 0..100. "
                  "fit:'blur' fills the frame around the fitted picture (bars, room left by zoom < 1, moves, rotation) "
                  "with a blurred copy of the same picture, enlarged to cover the frame: a vertical video from 16:9 "
                  "material on ONE track (one clip per scene, decoded once, plays smoothly), instead of a blurred second "
@@ -617,8 +661,10 @@ void addLookOps(QVector<OpDef>& ops)
                  "zoom_y, x, y, rotation, crop_left, crop_right, crop_top, crop_bottom, opacity, "
                  "title_size, title_x, title_y, title_color (\"#rrggbb\"), volume (dB, audio clips), pan (-100..100, "
                  "audio clips) or an effect parameter \"<effect>.<key>\" (keys: `effects <id>`; grade values: "
-                 "grade.liftY, grade.gainR, grade.saturation, …). at = timeline frame inside the clip, or {clip, offset} / "
-                 "{clip, source} (relative, stays right when clips move). Without value "
+                 "grade.liftY, grade.gainR, grade.saturation, …). at = timeline frame inside the clip (its end counts as "
+                 "its last frame; outside is an error - with several clips, ones no time falls in are left alone), or "
+                 "{clip, offset} / {clip, source} (relative to the clip, stays right when clips move: "
+                 "at:{clip:7, offset:\"2s\"} = 2 s after clip 7 starts). Without value "
                  "the keyframe keeps the current value there. ease (from this keyframe on): linear, ease_in, ease_out, "
                  "ease_in_out. Between keyframes the value is interpolated; with no keyframes left the static value "
                  "applies. Times in `info` keyframes are timeline frames. Units as in op 'transform' (crop_*: timeline "
