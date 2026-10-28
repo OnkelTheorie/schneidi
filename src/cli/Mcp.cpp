@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace Cli::Mcp {
@@ -120,6 +121,7 @@ void testHooks(const QString& tool, const std::function<void(double)>& progress)
 {
     static const int delay = qEnvironmentVariableIntValue("SCHNEIDI_TEST_CALL_DELAY_MS");
     if (qEnvironmentVariable("SCHNEIDI_TEST_CRASH_TOOL") == tool) std::abort();
+    if (qEnvironmentVariable("SCHNEIDI_TEST_THROW_TOOL") == tool) throw std::runtime_error("test exception");
     if (delay <= 0) return;
     QThread::msleep(delay / 2);
     if (progress) progress(0.5);
@@ -218,6 +220,11 @@ QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& 
         out["content"] = content;
     } catch (const Error& e) {
         out = toolError(e.code, e.message);
+    } catch (const std::exception& e) {
+        // Out of memory with a huge transcript, a library … : this call failed, the tool server goes on
+        out = toolError("INTERNAL", QString("internal error: %1").arg(QString::fromLocal8Bit(e.what())));
+    } catch (...) {
+        out = toolError("INTERNAL", "internal error");
     }
     releaseMemory();
     return out;

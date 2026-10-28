@@ -376,6 +376,27 @@ int main(int argc, char* argv[])
         CHECK_EQ(ran.size(), 4);
     }
 
+    // A C++ exception in a tool (out of memory, a library) fails that call, the MCP server goes on
+    {
+        QProcess mcp;
+        QProcessEnvironment e = QProcessEnvironment::systemEnvironment();
+        e.insert("SCHNEIDI_TEST_THROW_TOOL", "templates");
+        mcp.setProcessEnvironment(e);
+        mcp.start(SCHNEIDI_CLI, {"mcp"});
+        mcp.write(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"templates","arguments":{}}})" "\n"
+                  R"({"jsonrpc":"2.0","id":2,"method":"ping"})" "\n");
+        mcp.closeWriteChannel();
+        CHECK(mcp.waitForFinished(30000));
+        CHECK_EQ(mcp.exitCode(), 0);
+        const QList<QByteArray> lines = mcp.readAllStandardOutput().trimmed().split('\n');
+        if (CHECK_EQ(lines.size(), qsizetype(2))) {
+            const QJsonObject first = QJsonDocument::fromJson(lines[0]).object();
+            CHECK(first["result"].toObject()["isError"].toBool());
+            CHECK(lines[0].contains("INTERNAL"));
+            CHECK_EQ(QJsonDocument::fromJson(lines[1]).object()["id"].toInt(), 2);
+        }
+    }
+
     const QString root = tmp.filePath("root");
     QDir().mkpath(root);
     QDir().mkpath(tmp.filePath("outside"));

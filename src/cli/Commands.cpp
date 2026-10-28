@@ -1024,6 +1024,9 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
     } catch (const Error& e) {
         activity.failed(e);
         throw;
+    } catch (const std::exception& e) {
+        activity.failed({"INTERNAL", QString::fromLocal8Bit(e.what())});
+        throw;
     }
 }
 
