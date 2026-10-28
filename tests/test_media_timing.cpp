@@ -171,5 +171,45 @@ int main(int argc, char** argv)
         }
     }
 
+    // --- A source shorter than the clip in the model (proxy a few frames short, relinked shorter file): MLT ends the
+    // cut at the file's end, the clip after it stays where the model has it (a gap fills the rest)
+    {
+        const QString red = Check::makeMedia(dir.filePath("red.mp4"), {"-f", "lavfi", "-i", "color=c=red:size=320x180:rate=25:duration=1",
+                                                                       "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+        const QString blue = Check::makeMedia(dir.filePath("blue.mp4"), {"-f", "lavfi", "-i", "color=c=blue:size=320x180:rate=25:duration=2",
+                                                                         "-c:v", "libx264", "-pix_fmt", "yuv420p"});
+        if (CHECK(!red.isEmpty() && !blue.isEmpty())) {
+            ProjectFormat fmt;
+            fmt.width = 320;
+            fmt.height = 180;
+            fmt.rate = {25, 1};
+            Timeline tl;
+            tl.video.resize(1);
+            Clip a;
+            a.id = 1;
+            a.mediaPath = red; // 25 frames in the file
+            a.out = 39;        // 40 in the model
+            Clip b;
+            b.id = 2;
+            b.mediaPath = blue;
+            b.start = 40;
+            b.out = 29;
+            tl.video[0].clips << a << b;
+            auto prof = makeProfile(fmt);
+            TimelineBuilder builder(*prof);
+            auto tr = builder.build(tl);
+            if (CHECK(tr)) {
+                const auto [r10, b10] = redBlue(*tr, *prof, 10);
+                CHECK(r10 > 150 && b10 < 60);
+                const auto [r30, b30] = redBlue(*tr, *prof, 30); // past the file's end: the gap, not the next clip
+                Check::report(b30 < 60, "next clip not moved forward", __FILE__, __LINE__, QString("blue %1 at 30").arg(b30));
+                const auto [r45, b45] = redBlue(*tr, *prof, 45);
+                CHECK(b45 > 150 && r45 < 60);
+                const auto [r69, b69] = redBlue(*tr, *prof, 69); // last frame of b
+                CHECK(b69 > 150);
+            }
+        }
+    }
+
     return Check::result();
 }

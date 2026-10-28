@@ -594,10 +594,11 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             return delayed(c, rawCutOf(c, from, to, second), from, to);
         };
 
-        int cursor = 0;
+        // Gaps are filled up to the playlist's real length, not a count of model frames: MLT clamps a cut to the
+        // end of a source shorter than the model expects (proxy a few frames short, VFR source, relinked shorter
+        // file, transition handle past the source end), and the clips after it would otherwise slide forward
         auto blankTo = [&](int frame) {
-            if (frame > cursor) pl.blank(frame - cursor - 1);
-            cursor = std::max(cursor, frame);
+            if (const int have = pl.get_playtime(); frame > have) pl.blank(frame - have - 1);
         };
         auto appendSpan = [&](const TimelineOps::TransitionSpan& s) {
             blankTo(s.start);
@@ -639,7 +640,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             } else {
                 pl.blank(len - 1);
             }
-            cursor = s.end;
+            blankTo(s.end);
         };
 
         for (const Clip& c : track.clips) {
@@ -655,7 +656,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 blankTo(bodyStart);
                 if (std::unique_ptr<Mlt::Producer> body(cutOf(c, bodyStart, bodyEnd, useSecond.value(c.id))); body) pl.append(*body);
                 else pl.blank(bodyEnd - bodyStart - 1); // disabled or file missing -> gap
-                cursor = bodyEnd;
+                blankTo(bodyEnd);
             }
             // Fade out resp. crossfade to the next clip
             for (const auto& s : spans)
