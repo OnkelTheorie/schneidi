@@ -138,6 +138,22 @@ int main(int argc, char** argv)
         CHECK(at("6,95") == (QJsonArray{"6", "95"}));
         CHECK(at("10, 20s") == (QJsonArray{"10", "20s"}));
         CHECK_EQ(Cli::detail::parseTime(QJsonValue("6,95s"), ProjectFormat{}, "at"), int(std::lround(6.95 * ProjectFormat{}.rate.fps())));
+        // A file name with a comma stays one path in a comma-separated string; other pieces still split
+        {
+            const QString comma = dir.filePath("clip, take 2.mp4");
+            QFile f(comma);
+            CHECK(f.open(QIODevice::WriteOnly));
+            f.close();
+            const Cli::Command* probeCmd = Cli::find("probe");
+            const auto files = [&](const QString& text) {
+                return Cli::normalize(*probeCmd, {{"files", text}})["files"].toArray();
+            };
+            CHECK(files(comma) == (QJsonArray{comma}));
+            CHECK(files(g_path + "," + comma) == (QJsonArray{g_path, comma}));
+            CHECK(files(comma + ", " + g_path) == (QJsonArray{comma, g_path}));
+            CHECK(files(dir.filePath("a.mp4") + "," + dir.filePath("b.mp4")).size() == 2); // missing files: split
+            CHECK(Cli::normalize(*probeCmd, {{"files", QJsonArray{comma}}})["files"].toArray() == (QJsonArray{comma}));
+        }
         const Cli::Command* loudness = Cli::find("loudness");
         CHECK(Cli::normalize(*loudness, {{"project", g_path}}).contains("source"));
         const Cli::Command* render = Cli::find("render");
