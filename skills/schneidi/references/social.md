@@ -19,6 +19,12 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
     e.g. the kill feed that proves a kill); `fit_blur` (0-100, default 70) and `fit_dim` (percent darker, default
     20) tune the background. Don't build it from a blurred second copy of every clip on the track below: twice the
     ops, every cut kept twice, and the preview stutters.
+  - **One part of the picture, centered** (a facecam, the minimap, a kill feed): `transform` with `crop_*` keeps
+    the part where it was in the picture - x/y/zoom move the whole picture around its own center. Center the part
+    with `x` = -zoom * (crop_left - crop_right) / 2 and `y` = zoom * (crop_top - crop_bottom) / 2. Example, a
+    1920x1080 clip in 1080x1920 (crop px = source px * 0.5625), facecam at source x 1440-1920, y 0-360, full width:
+    `{"op":"transform","clips":[…],"crop_left":810,"crop_bottom":405,"zoom":4,"x":-1620,"y":-810}` (270 px left
+    * zoom 4 = 1080). On a track above the gameplay this is the usual facecam-on-top layout.
   - Material that is already vertical needs nothing.
 - Keep text and faces inside the safe area: platforms cover roughly the bottom 20 % (caption, buttons), a strip
   on the right and a bar at the top. Titles and subtitles about 25-35 % up from the bottom, or in the upper third.

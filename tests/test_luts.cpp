@@ -24,7 +24,9 @@
 #include <QTest>
 #include <QTreeWidget>
 #include <QUndoStack>
+#include <atomic>
 #include <functional>
+#include <thread>
 
 namespace {
 
@@ -180,6 +182,112 @@ void testFormats(const QString& dir)
     auto a = ColorGrade::loadLut(path("id10.3dl"));
     CHECK(a && ColorGrade::loadLut(path("id10.3dl")) == a);
     CHECK(EffectFolders::isLutFile("x/LOOK.CUBE") && EffectFolders::isLutFile("a.tiff") && !EffectFolders::isLutFile("a.mp4"));
+}
+
+// Crafted/broken LUT files: BOM, non-finite numbers, lying size lines, float .3dl, cache of failures
+void testRobustness(const QString& dir)
+{
+    QString err;
+    auto path = [&](const char* name) { return QDir(dir).filePath(name); };
+
+    // UTF-8 BOM at the start (Windows editors) is ignored in all text formats
+    const QByteArray bom = "\xEF\xBB\xBF";
+    CHECK(writeFile(path("bom.cube"), bom + cube(5, kInvert)));
+    CHECK(writeFile(path("bom.3dl"), bom + threeDl(5, 1023, kInvert).mid(7)));
+    QByteArray csp = "CSPLUTV100\n3D\n";
+    for (int c = 0; c < 3; ++c) csp += "2\n0.0 1.0\n0.0 1.0\n";
+    csp += "5 5 5\n" + cube(5, kInvert).mid(QByteArray("LUT_3D_SIZE 5\n").size());
+    CHECK(writeFile(path("bom.csp"), bom + csp));
+    for (const char* n : {"bom.cube", "bom.3dl", "bom.csp"}) {
+        err.clear();
+        auto l = ColorGrade::parseLut(path(n), &err);
+        if (!CHECK(l)) qWarning() << n << err;
+        else CHECK(isInvert(l.get()));
+    }
+
+    // nan/inf are no numbers (they reached lround/int casts: undefined behavior); a huge finite value is clamped
+    auto withValue = [](QByteArray text, const QByteArray& value) {
+        const int at = text.lastIndexOf('\n', text.size() - 2) + 1; // the last data line
+        return text.left(at) + value + " 0 0\n";
+    };
+    for (const QByteArray v : {"nan", "inf", "-INF", "infinity", "1e40"}) {
+        CHECK(writeFile(path("nan.cube"), withValue(cube(3, kIdent), v)));
+        CHECK(writeFile(path("nan.3dl"), withValue(threeDl(5, 1023, kIdent), v)));
+        CHECK(writeFile(path("nan.csp"), withValue(csp, v)));
+        for (const char* n : {"nan.cube", "nan.3dl", "nan.csp"})
+            if (!CHECK(!ColorGrade::parseLut(path(n)))) qWarning() << n << v;
+    }
+    CHECK(writeFile(path("huge.cube"), withValue(cube(3, kIdent), "1e30")));
+    if (auto l = ColorGrade::parseLut(path("huge.cube")); CHECK(l)) {
+        CHECK(std::all_of(l->data.cbegin(), l->data.cend(), [](float x) { return std::isfinite(x); }));
+        CHECK_EQ(R(graded(l.get()), 255), 255); // white -> clamped to white
+    }
+
+    // .3dl with float values that overshoot 1.0 a bit: still 0..1 (it was taken as 10 bit: almost black)
+    {
+        QByteArray f; // without grid line (a 3-value grid would read as data)
+        for (int r = 0; r < 3; ++r)
+            for (int g = 0; g < 3; ++g)
+                for (int b = 0; b < 3; ++b) {
+                    const bool white = r == 2 && g == 2 && b == 2;
+                    for (int v : {r, g, b}) f += white ? "1.02 " : QByteArray::number(v * 0.5, 'f', 4) + " ";
+                    f += "\n";
+                }
+        CHECK(writeFile(path("float.3dl"), f));
+        if (auto l = ColorGrade::parseLut(path("float.3dl"), &err); CHECK(l)) {
+            const auto o = graded(l.get());
+            CHECK(R(o, 255) == 255 && std::abs(R(o, 128) - 128) <= 1 && R(o, 0) == 0);
+        }
+    }
+
+    // A tiny file claiming the biggest size fails cleanly (it reserved 200 MB for the values up front)
+    CHECK(writeFile(path("liar.cube"), "LUT_3D_SIZE 256\n0 0 0\n1 1 1\n"));
+    err.clear();
+    CHECK(!ColorGrade::parseLut(path("liar.cube"), &err) && err.contains("Anzahl"));
+
+    // loadLut keeps failures too (a broken LUT was parsed again on every timeline rebuild) until the file changes
+    {
+        const QByteArray good = cube(3, kInvert);
+        QByteArray broken = good;
+        broken.replace("LUT_3D_SIZE 3", "LUT_3D_SIZE 4"); // same size, wrong count
+        const QString p = path("cached.cube");
+        CHECK(writeFile(p, broken));
+        const QDateTime mtime = QFileInfo(p).lastModified();
+        err.clear();
+        CHECK(!ColorGrade::loadLut(p, &err) && !err.isEmpty());
+        CHECK(writeFile(p, good)); // same size and time: not read again
+        {
+            QFile f(p);
+            CHECK(f.open(QIODevice::ReadWrite) && f.setFileTime(mtime, QFileDevice::FileModificationTime));
+        }
+        err.clear();
+        CHECK(!ColorGrade::loadLut(p, &err) && !err.isEmpty());
+        {
+            QFile f(p);
+            CHECK(f.open(QIODevice::ReadWrite) && f.setFileTime(mtime.addSecs(5), QFileDevice::FileModificationTime));
+        }
+        if (auto l = ColorGrade::loadLut(p, &err); CHECK(l)) CHECK(isInvert(l.get()));
+    }
+
+    // Two threads asking for the same new LUT at once: read once, both get the same one
+    {
+        const QString p = path("shared.cube");
+        CHECK(writeFile(p, cube(33, kInvert)));
+        for (int round = 0; round < 5; ++round) {
+            QFile f(p); // a new modification time: not cached
+            CHECK(f.open(QIODevice::ReadWrite)
+                  && f.setFileTime(QDateTime::currentDateTime().addSecs(round + 10), QFileDevice::FileModificationTime));
+            f.close();
+            std::shared_ptr<const ColorGrade::Lut> a, b;
+            std::atomic<bool> go{false};
+            std::thread ta([&] { while (!go) {} a = ColorGrade::loadLut(p); });
+            std::thread tb([&] { while (!go) {} b = ColorGrade::loadLut(p); });
+            go = true;
+            ta.join();
+            tb.join();
+            CHECK(a && a == b);
+        }
+    }
 }
 
 void testBuiltins()
@@ -349,6 +457,7 @@ int main(int argc, char** argv)
     if (!CHECK(tmp.isValid())) return Check::result();
 
     testFormats(tmp.path());
+    testRobustness(tmp.path());
     testBuiltins();
     testUserFolder(tmp.path());
     testWidget();

@@ -349,6 +349,7 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
         int sample;
         bool appear;
         double area;
+        int onset;
     };
     QVector<Event> events;
     for (const bool appear : {true, false}) {
@@ -375,7 +376,13 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
                     at = k;
                     break;
                 }
-            events << Event{at, appear, score[size_t(t)]};
+            // Where it began: back while the colour is already clearly on its way (a tenth of the step)
+            int onset = at;
+            while (onset > 0 && at - onset < kRate
+                   && (appear ? share[size_t(onset - 1)] > before + score[size_t(t)] / 10
+                              : share[size_t(onset - 1)] < before - score[size_t(t)] / 10))
+                --onset;
+            events << Event{at, appear, score[size_t(t)], onset};
         }
     }
     std::sort(events.begin(), events.end(), [](const Event& x, const Event& y) { return x.sample < y.sample; });
@@ -384,9 +391,10 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
     out.tolerance = tolerance;
     out.minArea = minArea;
     out.most = share.empty() ? 0.0 : *std::max_element(share.begin(), share.end());
-    for (const Event& e : events)
-        out.events << ColorEvent{std::min(m.info.length - 1, int(std::lround(double(e.sample) / kRate * f.rate.fps()))),
-                                 e.appear, e.area};
+    const auto frameOf = [&](int sample) {
+        return std::min(m.info.length - 1, int(std::lround(double(sample) / kRate * f.rate.fps())));
+    };
+    for (const Event& e : events) out.events << ColorEvent{frameOf(e.sample), e.appear, e.area, frameOf(e.onset)};
     return out;
 }
 

@@ -16,7 +16,8 @@ public:
     Preroll();
     ~Preroll();
 
-    // After every rebuild of the preview (spots from TimelineBuilder::prerollPoints)
+    // After every rebuild of the preview (spots from TimelineBuilder::prerollPoints); waits for a decode that is
+    // currently running (it read a producer the new graph may share)
     void setPoints(std::vector<PrerollPoint> points, int lookahead, QSize size);
     // Shown frame (consumer thread) and speed; speed <= 0 = prepare nothing
     void update(int position, double speed);

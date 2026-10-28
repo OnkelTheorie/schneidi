@@ -378,6 +378,26 @@ int main(int argc, char** argv)
         EffectRegistry::instance(off, "stabilize")->enabled = false;
         off.in = 0;
         CHECK(Stabilizer::missing(videoTimeline(off), fmt).isEmpty());
+        // One frame (a cut rest that kept the effect): nothing to analyze, not missing (its analysis failed and
+        // with it the whole export)
+        Clip one = c;
+        one.out = one.in;
+        CHECK(!Stabilizer::request(one, fmt) && !Stabilizer::unsupportedReason(one).isEmpty());
+        CHECK(Stabilizer::missing(videoTimeline(one), fmt).isEmpty());
+    }
+
+    // Out beyond the end of the file (100 frames; file shortened/replaced): the result covers the clip anyway
+    // (it was named after the last real frame, never found, and analyzed again and again)
+    for (const auto& [in, out] : {std::pair{90, 120}, std::pair{110, 130}}) {
+        Clip past = c;
+        past.in = in;
+        past.out = out;
+        EffectRegistry::instance(past, "stabilize")->params["accuracy"] = 3.0;
+        const auto r = Stabilizer::request(past, fmt);
+        error.clear();
+        if (!CHECK(r && Stabilizer::analyze(*r, &error))) std::printf("       %s\n", qPrintable(error));
+        CHECK(r && Stabilizer::find(*r).valid());
+        CHECK(Stabilizer::missing(videoTimeline(past), fmt).isEmpty());
     }
 
     // Speed change (timewarp): analyzed on the same producer the timeline reads
@@ -421,6 +441,21 @@ int main(int argc, char** argv)
         st->sync({}); // not needed any more: stops, not marked as cancelled
         CHECK(waitFor([&] { return st->state(*r2) == Stabilizer::State::Missing; }, 10000));
         CHECK(!Stabilizer::find(*r2).valid());
+
+        // Started again right after cancelling (the thread still ends): runs again instead of being dropped;
+        // the same for a request that comes back by sync (effect removed and back by undo)
+        st->start(*r2);
+        CHECK(st->state(*r2) == Stabilizer::State::Running);
+        st->cancel(*r2);
+        st->start(*r2);
+        CHECK(waitFor([&] { return st->state(*r2) == Stabilizer::State::Done; }, 60000));
+        EffectRegistry::instance(q, "stabilize")->params["accuracy"] = 6.0;
+        const auto r3 = Stabilizer::request(q, fmt);
+        st->sync({*r3});
+        CHECK(st->state(*r3) == Stabilizer::State::Running);
+        st->sync({});
+        st->sync({*r3});
+        CHECK(waitFor([&] { return st->state(*r3) == Stabilizer::State::Done; }, 60000));
     }
 
     // Export runs a missing analysis first (never exports unstabilized)

@@ -60,6 +60,11 @@ int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* wi
     const QColor ol = colorAt(fp, "olcolour", pos, len, Qt::black);
     const double outline = std::max(0.0, mlt_properties_get_double(fp, "outline")) * sy;
     const double pad = std::max(0.0, mlt_properties_get_double(fp, "pad")) * sy;
+    // The outline the layout makes room for (default: the drawn one). Layers stacked to one title (an outline layer
+    // under the text without outline) set the same value, so all of them get the same scale and origin.
+    const double room = mlt_properties_get(fp, "layout_outline")
+                            ? std::max(0.0, mlt_properties_get_double(fp, "layout_outline")) * sy
+                            : outline;
 
     // The block: lines one below the other at the font's line spacing, each aligned within the widest. Around it the
     // outline's outer half and the box margin; the whole is shrunk to fit the area when larger (a box margin or an
@@ -69,7 +74,7 @@ int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* wi
     double blockW = 0;
     for (const QString& line : lines) blockW = std::max(blockW, fm.horizontalAdvance(line));
     const double blockH = fm.lineSpacing() * (lines.size() - 1) + fm.height();
-    const double ext = pad + outline / 2;
+    const double ext = pad + room / 2;
     const double cw = blockW + 2 * ext, ch = blockH + 2 * ext;
     double k = 1.0;
     if (cw > 0 && area.width() > 0) k = std::min(k, area.width() / cw);

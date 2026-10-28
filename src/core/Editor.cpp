@@ -43,6 +43,23 @@ Editor::Editor(Project* project, Selection* selection, QObject* parent)
     : QObject(parent), m_project(project), m_selection(selection)
 {
     connect(m_project, &Project::mediaChanged, this, &Editor::adoptPreviewSource);
+    connect(m_project, &Project::loaded, this, [this] { keepClipboardFitting(true); });
+    connect(m_project, &Project::formatChanged, this, [this] { keepClipboardFitting(false); });
+    m_clipboardRate = m_project->format().rate;
+}
+
+void Editor::keepClipboardFitting(bool otherProject)
+{
+    // Clip times and keyframes count in frames of the rate they were copied at: another rate empties the clipboards
+    if (m_project->format().rate != m_clipboardRate) {
+        m_clipboard.clear();
+        m_gradeClipboard.reset();
+        m_clipboardRate = m_project->format().rate;
+        return;
+    }
+    // Compound and multicam clips point at a sequence of the project they were copied in: the same id in another
+    // project is another timeline (or none)
+    if (otherProject) m_clipboard.removeIf([](const ClipboardItem& it) { return it.clip.isNested(); });
 }
 
 QVector<int> Editor::withLinked(const QVector<int>& ids) const
@@ -639,13 +656,17 @@ void Editor::copySelection()
     for (int id : m_selection->ids()) {
         TrackRef ref;
         if (const Clip* c = TimelineOps::findClip(tl, id, &ref)) {
-            items << ClipboardItem{*c, ref};
+            ClipboardItem it{*c, ref, {}};
+            if (c->kind == ClipKind::Media)
+                if (const MediaInfo* m = m_project->mediaInfo(c->mediaPath)) it.media = *m;
+            items << it;
             minStart = std::min(minStart, c->start);
         }
     }
     if (items.isEmpty()) return;
     for (auto& it : items) it.clip.start -= minStart;
     m_clipboard = items;
+    m_clipboardRate = m_project->format().rate;
 }
 
 void Editor::cutSelection()
@@ -673,6 +694,14 @@ void Editor::paste(int frame)
             items << it; // never a compound clip inside itself (loop)
     if (items.isEmpty()) return;
     Project* p = m_project;
+    // Clips copied in another project: their files come into this Media Pool (like an import, not part of the step),
+    // so that lengths, speed changes, missing media and relink know them
+    for (const auto& it : items)
+        if (it.media && !p->mediaInfo(it.media->path)) {
+            MediaInfo m = *it.media;
+            m.bin = 0; // bins are the other project's
+            p->addMedia(m);
+        }
     QSet<int> pasted;
     p->edit(T("Einfügen"), [&](Timeline& tl) {
         QHash<int, int> linkMap; // copy gets its own link

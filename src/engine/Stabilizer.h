@@ -97,6 +97,7 @@ private:
     explicit Stabilizer(QObject* parent = nullptr);
     ~Stabilizer() override;
     void next();
+    bool runningUncancelled(const QString& key) const;
 
     QVector<Request> m_queue;
     std::optional<Request> m_current;

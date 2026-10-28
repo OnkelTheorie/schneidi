@@ -138,7 +138,8 @@ QJsonObject perFile(const QJsonObject& a, Context& ctx, QJsonObject (*one)(const
         QStringList media;
         if (!project.isEmpty()) {
             try {
-                for (const MediaInfo& m : Session(project).project.media()) media << m.path;
+                const Session session(project); // not a temporary in the loop head: it died before the loop ran
+                for (const MediaInfo& m : session.project.media()) media << m.path;
             } catch (const Error&) {
             }
         }

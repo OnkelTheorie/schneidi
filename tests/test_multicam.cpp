@@ -82,7 +82,7 @@ QSet<int> linked(const Editor& ed, int id)
 QByteArray json(const Project& p)
 {
     ProjectData d = p.data();
-    d.lastClipId = d.lastLinkId = 0;
+    d.lastClipId = d.lastLinkId = d.lastSequenceId = 0;
     return ProjectFile::toJson(d, "/x/p.schneidi");
 }
 

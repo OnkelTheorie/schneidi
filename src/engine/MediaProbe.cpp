@@ -87,7 +87,7 @@ Sound soundOf(const AVCodecParameters* p, const AVCodec* codec)
 // Length in µs from the header: the container's, else from the earliest stream start to the latest stream end
 int64_t headerDuration(const AVFormatContext* fmt)
 {
-    if (fmt->duration != AV_NOPTS_VALUE) return fmt->duration;
+    if (fmt->duration != AV_NOPTS_VALUE && fmt->duration > 0) return fmt->duration;
     int64_t start = INT64_MAX, end = INT64_MIN, longest = AV_NOPTS_VALUE;
     for (unsigned i = 0; i < fmt->nb_streams; ++i) {
         const AVStream* st = fmt->streams[i];
@@ -161,15 +161,20 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     info.path = path;
     info.name = fi.fileName();
     const bool audioFile = isAudioFile(path);
+    // A length of 0 or less is no length (fragmented MP4 of an aborted recording: mvhd duration 0)
+    const auto known = [](int64_t d) { return d != AV_NOPTS_VALUE && d > 0; };
     int64_t duration = headerSuffices(fmt->iformat) ? headerDuration(fmt.get()) : AV_NOPTS_VALUE;
-    if (duration == AV_NOPTS_VALUE || !fill(fmt.get(), audioFile, &info)) {
+    if (!known(duration) || !fill(fmt.get(), audioFile, &info)) {
         // What MLT's producer runs on opening: decodes the first frames, estimates the length
         if (avformat_find_stream_info(fmt.get(), nullptr) < 0) return std::nullopt;
         duration = fmt->duration;
-        if (duration == AV_NOPTS_VALUE || !fill(fmt.get(), audioFile, &info)) return std::nullopt;
+        if (!known(duration) || !fill(fmt.get(), audioFile, &info)) return std::nullopt;
     }
-    // In the project frame rate, rounded to whole frames like MLT's producer
-    info.length = int(std::lrint(double(duration) * rate.fps() / AV_TIME_BASE));
+    // In the project frame rate, rounded to whole frames like MLT's producer. A broken header can claim absurd
+    // lengths (time scale 1, duration 2^32 s): capped like MLT's "unknown" (INT_MAX), never overflowing into a
+    // negative length; not left to MLT, whose producer crashes on such a file
+    const double frames = std::nearbyint(double(duration) * rate.fps() / AV_TIME_BASE);
+    info.length = frames < double(INT_MAX) ? int(frames) : INT_MAX;
     return info;
 }
 

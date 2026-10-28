@@ -68,3 +68,7 @@ QString resolutionLabel(int width, int height);
 // everything stays at the same place and the same size relative to the picture. Positions/crop separately
 // by width and height, sizes (font, outline, border) with the smaller factor (text still fits in the picture).
 void scaleTimeline(Timeline& tl, QSize from, QSize to);
+
+// Frame rate changed: convert the times that are frames in a timeline without clips (subtitle cues, markers, in/out),
+// so that they stay at the same time. Clips are not converted (a timeline with clips keeps its frame rate).
+void retimeTimeline(Timeline& tl, FrameRate from, FrameRate to);
