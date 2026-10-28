@@ -79,7 +79,8 @@ struct Player::Impl {
     bool deviceDirty = false;
     bool quit = false;
     std::atomic<uint32_t> gen{0};          // generation the callback plays
-    std::atomic<int64_t> holdUntil{0};     // nothing of the generation is handed over before (ns)
+    std::atomic<int64_t> holdUntil{0};     // nothing of the generation holdGen is handed over before (ns)
+    std::atomic<uint32_t> holdGen{0};
     std::atomic<bool> muted{false};
     std::atomic<SharedLoudness*> loudness{nullptr};
 
@@ -191,9 +192,11 @@ void Player::Impl::process(float* out, int frames)
         s.gapT = s.total;
         s.inRun = false;
     }
-    const int64_t until = holdUntil.load(std::memory_order_relaxed);
+    // The hold belongs to its generation: a play() between loading `gen` and here must not hold the generation that
+    // is sounding (a hard cut without the fade)
+    const int64_t until = holdUntil.load(std::memory_order_acquire);
     const int64_t now = nowNs();
-    const bool hold = until != 0 && now < until;
+    const bool hold = until != 0 && now < until && holdGen.load(std::memory_order_relaxed) == g;
     const float muteTarget = muted.load(std::memory_order_relaxed) ? 0.f : 1.f;
     int i = 0;
     bool sound = false;
@@ -688,7 +691,8 @@ void Player::play(double position, double speed)
         std::lock_guard<std::mutex> lock(d->mutex);
         d->cmd = {d->cmd.gen + 1, true, position, speed};
         d->heardMax = 0;
-        d->holdUntil.store(nowNs() + kHoldNs, std::memory_order_relaxed);
+        d->holdGen.store(d->cmd.gen, std::memory_order_relaxed);
+        d->holdUntil.store(nowNs() + kHoldNs, std::memory_order_release); // after holdGen: seen with it
         d->gen.store(d->cmd.gen, std::memory_order_release);
     }
     d->wake.notify_all();
