@@ -326,6 +326,7 @@ void Project::load(const ProjectData& d)
     emit renderQueueChanged();
     emit importPresetsChanged();
     emit watchFoldersChanged();
+    emit loaded();
 }
 
 void Project::reset()

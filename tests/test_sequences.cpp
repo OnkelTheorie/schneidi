@@ -241,6 +241,56 @@ void testDecomposeKeepsClipsAbove()
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99]  V2: T[10-135|0-124]  V3: b[0-100|0-99]  A1:  A2:"));
 }
 
+// The clipboard after opening another project: compound clips (they point at a sequence of the old project) are left
+// out, media clips bring their Media Pool entry along; another frame rate empties it
+void testClipboardAcrossProjects()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia(media("/x/a.mp4", 100));
+    p.addMedia(media("/x/b.mp4", 100));
+    ed.addMediaAt({"/x/a.mp4"}, 0);
+    ed.addMediaAt({"/x/b.mp4"}, 100);
+    sel.set({clipOn(p.timeline(), TrackKind::Video, 0, 1)->id, clipOn(p.timeline(), TrackKind::Audio, 0, 1)->id});
+    const int seq = ed.createCompoundClip();
+    CHECK(seq > 0);
+    ed.selectAll(); // a (V1/A1) and the compound clip
+    ed.copySelection();
+
+    // Other project: a timeline 2 of its own with other content
+    ProjectData other;
+    other.format = p.format();
+    other.timeline.video.resize(1);
+    other.timeline.audio.resize(1);
+    Sequence s2;
+    s2.id = seq;
+    s2.name = "Fremd";
+    s2.timeline.video.resize(1);
+    s2.timeline.audio.resize(1);
+    other.sequences << s2;
+    p.load(other);
+    CHECK(!p.mediaInfo("/x/a.mp4"));
+    ed.paste(0);
+    CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99]  A1: a[0-100|0-99]"));
+    const MediaInfo* m = p.mediaInfo("/x/a.mp4");
+    CHECK(m && m->length == 100 && m->bin == 0);
+    CHECK(!p.mediaInfo("/x/b.mp4")); // only inside the compound clip, which stays behind
+
+    // New project at another frame rate: nothing to paste (times count in the old rate)
+    ed.selectAll();
+    ed.copySelection();
+    ProjectData fast;
+    fast.format = p.format();
+    fast.format.rate = {50, 1};
+    fast.timeline.video.resize(1);
+    fast.timeline.audio.resize(1);
+    p.load(fast);
+    ed.paste(0);
+    CHECK_EQ(Check::dump(p.timeline()), QString("V1:  A1:"));
+    CHECK_EQ(ed.pasteAttributesAvailable(), 0);
+}
+
 void testProjectFile()
 {
     Project p;
@@ -421,6 +471,7 @@ int main(int argc, char** argv)
     testSequences();
     testCompound();
     testDecomposeKeepsClipsAbove();
+    testClipboardAcrossProjects();
     testProjectFile();
     if (!Check::haveFfmpeg()) {
         Check::result();

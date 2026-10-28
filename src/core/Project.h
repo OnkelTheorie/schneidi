@@ -200,6 +200,7 @@ signals:
     void renderQueueChanged();
     void importPresetsChanged(); // own import presets set/removed, or another project loaded
     void watchFoldersChanged(); // the list of watch folders (also after load())
+    void loaded(); // another project (or a new empty one) replaced everything, after the other signals of load()
 
 private:
     ProjectFormat m_format;

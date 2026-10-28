@@ -472,6 +472,7 @@ private:
     struct ClipboardItem {
         Clip clip;
         TrackRef ref;
+        std::optional<MediaInfo> media; // media clip: its Media Pool entry (pasting into another project adds it)
     };
     // Paste Attributes: first copied clip on a track of this kind (nullptr = none)
     static const Clip* clipboardSource(const QVector<ClipboardItem>& items, TrackKind kind);
@@ -494,5 +495,8 @@ private:
     StreamPresets m_streamPresets;
     QVector<ClipboardItem> m_clipboard; // starts relative to the earliest clip
     std::optional<Clip> m_gradeClipboard; // copyGrade: the source clip (only its grade is used)
+    FrameRate m_clipboardRate; // frame rate the clipboards count in (clip times, keyframes)
+    // Another project opened or a new frame rate: what still fits of the clipboards (keepClipboardFitting)
+    void keepClipboardFitting(bool otherProject);
     MediaInfo m_preview; // setPreviewSource: a file shown in the source viewer that is not in the Media Pool
 };
