@@ -164,12 +164,7 @@ Job* Jobs::submit(std::unique_ptr<Job> job)
     job->created = QDateTime::currentDateTime();
     Job* j = job.get();
     m_jobs[j->id] = std::move(job);
-    if (j->runHere) {
-        j->state = Job::State::Running;
-        j->started = QDateTime::currentDateTime();
-        j->runHere(j);
-        return j;
-    }
+    // Also jobs that run here (upload): through the queue, one call at a time per file like the others
     m_queue << j;
     schedule();
     return j;
@@ -209,13 +204,15 @@ void Jobs::cancel(Job* job)
     job->ended = QDateTime::currentDateTime();
     job->result = Mcp::toolError("CANCELLED", "the job was cancelled");
     if (queued) {
-        m_queue.removeAll(job);
-    } else if (job->cancelHere) {
-        job->cancelHere();
+        m_queue.removeAll(job); // never held its file
     } else {
-        // The worker stops right there (a half written output file stays); a new one starts when needed
-        for (Worker* w : std::as_const(m_workers))
-            if (w->job() == job) w->kill();
+        if (job->cancelHere) {
+            job->cancelHere();
+        } else {
+            // The worker stops right there (a half written output file stays); a new one starts when needed
+            for (Worker* w : std::as_const(m_workers))
+                if (w->job() == job) w->kill();
+        }
         if (!job->writes.isEmpty()) m_writing.remove(job->writes);
     }
     emit changed(job);
@@ -232,11 +229,13 @@ void Jobs::setProgress(Job* job, int percent)
 void Jobs::end(Job* job, const QJsonObject& result)
 {
     if (job->over()) return;
+    const bool running = job->state == Job::State::Running; // only a running job holds its file
     job->result = result;
     job->state = result["isError"].toBool() ? Job::State::Failed : Job::State::Done;
     if (job->state == Job::State::Done) job->progress = 100;
     job->ended = QDateTime::currentDateTime();
-    if (!job->writes.isEmpty()) m_writing.remove(job->writes);
+    if (!running) m_queue.removeAll(job);
+    else if (!job->writes.isEmpty()) m_writing.remove(job->writes);
     emit changed(job);
     schedule();
 }
@@ -249,6 +248,15 @@ void Jobs::schedule()
         Job* j = m_queue[i];
         if (!j->writes.isEmpty() && (m_writing.contains(j->writes) || claimed.contains(j->writes))) {
             ++i;
+            continue;
+        }
+        if (j->runHere) { // needs no worker
+            m_queue.removeAt(i);
+            if (!j->writes.isEmpty()) m_writing.insert(j->writes);
+            j->state = Job::State::Running;
+            j->started = QDateTime::currentDateTime();
+            j->runHere(j);
+            emit changed(j);
             continue;
         }
         const auto idle = std::find_if(m_workers.begin(), m_workers.end(),

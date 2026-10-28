@@ -8,6 +8,7 @@
 #include "cli/Commands.h"
 #include "cli/Mcp.h"
 #include "cli/Sandbox.h"
+#include "cli/ServeJobs.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 
@@ -344,6 +345,36 @@ int main(int argc, char* argv[])
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg missing");
     QTemporaryDir tmp;
     sandboxRules(tmp.filePath("rules"));
+
+    // Jobs that run in the server itself (upload) wait for their file like the others; ending or cancelling one never
+    // frees the file of another job
+    {
+        using Cli::Serve::Job;
+        Cli::Serve::Jobs jobs({}, tmp.path(), 1);
+        QStringList ran;
+        const auto make = [&](const QString& file) {
+            auto j = std::make_unique<Job>();
+            j->tool = "upload";
+            j->writes = file;
+            j->runHere = [&ran](Job* x) { ran << x->id; };
+            return j;
+        };
+        Job* a = jobs.submit(make("/w/film.schneidi"));
+        Job* b = jobs.submit(make("/w/film.schneidi"));
+        Job* other = jobs.submit(make("/w/other.mp4"));
+        CHECK(a->state == Job::State::Running && other->state == Job::State::Running);
+        CHECK(b->state == Job::State::Queued);
+        jobs.cancel(b); // queued: a keeps its file
+        Job* c = jobs.submit(make("/w/film.schneidi"));
+        CHECK(c->state == Job::State::Queued);
+        jobs.end(a, Cli::Mcp::toolResult({}));
+        CHECK(c->state == Job::State::Running);
+        Job* d = jobs.submit(make("/w/film.schneidi"));
+        c->cancelHere = [] {};
+        jobs.cancel(c); // running (with its own cancel): frees the file for the next
+        CHECK(d->state == Job::State::Running);
+        CHECK_EQ(ran.size(), 4);
+    }
 
     const QString root = tmp.filePath("root");
     QDir().mkpath(root);
