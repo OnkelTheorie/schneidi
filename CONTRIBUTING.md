@@ -5,7 +5,7 @@ Thank you for helping. Bug reports, ideas and pull requests are welcome on
 
 ## License of contributions
 
-schneidi is licensed under the [GNU Affero General Public License version 3](LICENSE) (AGPL-3.0). By submitting a
+schneidi is licensed under the [GNU Affero General Public License version 3](LICENSE) (AGPL-3.0, version 3 only). By submitting a
 contribution (code, translations, documentation, images or other material) you agree that:
 
 1. your contribution is licensed under AGPL-3.0, like the rest of schneidi, and
