@@ -212,7 +212,7 @@ void testRobustness(const QString& dir)
     };
     for (const QByteArray v : {"nan", "inf", "-INF", "infinity", "1e40"}) {
         CHECK(writeFile(path("nan.cube"), withValue(cube(3, kIdent), v)));
-        CHECK(writeFile(path("nan.3dl"), withValue(threeDl(3, 1023, kIdent), v)));
+        CHECK(writeFile(path("nan.3dl"), withValue(threeDl(5, 1023, kIdent), v)));
         CHECK(writeFile(path("nan.csp"), withValue(csp, v)));
         for (const char* n : {"nan.cube", "nan.3dl", "nan.csp"})
             if (!CHECK(!ColorGrade::parseLut(path(n)))) qWarning() << n << v;
