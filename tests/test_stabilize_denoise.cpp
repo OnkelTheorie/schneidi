@@ -441,6 +441,21 @@ int main(int argc, char** argv)
         st->sync({}); // not needed any more: stops, not marked as cancelled
         CHECK(waitFor([&] { return st->state(*r2) == Stabilizer::State::Missing; }, 10000));
         CHECK(!Stabilizer::find(*r2).valid());
+
+        // Started again right after cancelling (the thread still ends): runs again instead of being dropped;
+        // the same for a request that comes back by sync (effect removed and back by undo)
+        st->start(*r2);
+        CHECK(st->state(*r2) == Stabilizer::State::Running);
+        st->cancel(*r2);
+        st->start(*r2);
+        CHECK(waitFor([&] { return st->state(*r2) == Stabilizer::State::Done; }, 60000));
+        EffectRegistry::instance(q, "stabilize")->params["accuracy"] = 6.0;
+        const auto r3 = Stabilizer::request(q, fmt);
+        st->sync({*r3});
+        CHECK(st->state(*r3) == Stabilizer::State::Running);
+        st->sync({});
+        st->sync({*r3});
+        CHECK(waitFor([&] { return st->state(*r3) == Stabilizer::State::Done; }, 60000));
     }
 
     // Export runs a missing analysis first (never exports unstabilized)

@@ -534,7 +534,7 @@ void Stabilizer::sync(const QVector<Request>& requests)
         if (wanted.contains(key)) continue;
         wanted.insert(key);
         if (m_cancelled.contains(key) || m_failed.contains(key)) continue;
-        if (m_current && m_current->key() == key) continue;
+        if (runningUncancelled(key)) continue;
         if (find(r).valid()) continue;
         queue << r;
     }
@@ -551,10 +551,17 @@ void Stabilizer::start(const Request& r)
     const QString key = r.key();
     m_cancelled.remove(key);
     m_failed.remove(key);
-    if (find(r).valid() || (m_current && m_current->key() == key)) return;
+    if (find(r).valid() || runningUncancelled(key)) return;
     if (std::none_of(m_queue.begin(), m_queue.end(), [&](const Request& q) { return q.key() == key; })) m_queue << r;
     emit stateChanged();
     next();
+}
+
+// The analysis of `key` runs and goes on. One that is being cancelled still runs until its thread ends: the same
+// request again (start right after cancel, effect back by undo) is queued behind it, not dropped.
+bool Stabilizer::runningUncancelled(const QString& key) const
+{
+    return m_current && m_current->key() == key && !(m_cancel && m_cancel->load());
 }
 
 void Stabilizer::cancel(const Request& r)
