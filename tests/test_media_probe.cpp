@@ -14,6 +14,8 @@
 #include <QFile>
 #include <QTemporaryDir>
 
+#include <climits>
+#include <cstring>
 #include <vector>
 
 namespace {
@@ -32,26 +34,18 @@ QString describe(const MediaInfo& m)
     return s + "]";
 }
 
-// h264_aac.mp4 with patched header lengths (version 0 boxes: mvhd/mdhd = version+flags, created, modified, time scale,
-// duration; tkhd = version+flags, created, modified, track id, reserved, duration). zero: all lengths 0, else time
-// scale 1 and 2^32-1 s in mvhd/mdhd
-QByteArray patchedLengths(const QString& source, bool zero)
+// h264_aac.mp4 with all header lengths 0 (version 0 boxes: mvhd/mdhd = version+flags, created, modified, time scale,
+// duration; tkhd = version+flags, created, modified, track id, reserved, duration)
+QByteArray zeroLengths(const QString& source)
 {
     QFile whole(source);
     if (!whole.open(QIODevice::ReadOnly)) return {};
     QByteArray data = whole.readAll();
-    const auto put = [&](qsizetype at, quint32 v) {
-        for (int i = 0; i < 4; ++i) data[at + i] = char(v >> (24 - 8 * i));
-    };
     for (const char* box : {"mvhd", "mdhd", "tkhd"}) {
         for (qsizetype at = data.indexOf(box); at >= 0; at = data.indexOf(box, at + 4)) {
             if (data[at + 4] != 0) continue; // version 1 (64-bit times): ffmpeg writes version 0 here
-            const bool tkhd = qstrcmp(box, "tkhd") == 0;
-            if (zero) put(at + (tkhd ? 24 : 20), 0);
-            else if (!tkhd) {
-                put(at + 16, 1);
-                put(at + 20, 0xFFFFFFFFu);
-            }
+            const qsizetype duration = at + (qstrcmp(box, "tkhd") == 0 ? 24 : 20);
+            for (int i = 0; i < 4; ++i) data[duration + i] = 0;
         }
     }
     return data;
@@ -140,7 +134,7 @@ int main(int argc, char** argv)
             CHECK(whole.open(QIODevice::ReadOnly));
             f.write(whole.read(30000));
         }
-        if (qstrcmp(c.file, "zero_length.mp4") == 0) f.write(patchedLengths(in("h264_aac.mp4"), true));
+        if (qstrcmp(c.file, "zero_length.mp4") == 0) f.write(zeroLengths(in("h264_aac.mp4")));
     }
 
     const FrameRate rates[] = {{25, 1}, {30000, 1001}, {60, 1}, {24000, 1001}};
@@ -192,14 +186,24 @@ int main(int argc, char** argv)
     CHECK(!cover.hasVideo && cover.hasAudio);
     const MediaInfo still = Engine::probe(format, in("cover.png"));
     CHECK(still.isImage && still.hasVideo && still.length == 125);
-    // Absurd header length (2^32 s): capped, never negative; decided by the own reader (MLT's producer crashes on it)
+    // Absurd header length (Matroska Duration 10^10 s, a broken header): capped, never a negative length
     {
-        QFile f(in("absurd_length.mp4"));
-        CHECK(f.open(QIODevice::WriteOnly));
-        f.write(patchedLengths(in("h264_aac.mp4"), false));
-        f.close();
-        const std::optional<MediaInfo> absurd = MediaProbe::read(f.fileName(), {25, 1});
-        CHECK(absurd && absurd->length > 0 && absurd->hasVideo);
+        QFile mkv(in("ac3.mkv"));
+        QFile f(in("absurd_length.mkv"));
+        if (CHECK(mkv.open(QIODevice::ReadOnly) && f.open(QIODevice::WriteOnly))) {
+            QByteArray data = mkv.readAll();
+            const qsizetype at = data.indexOf(QByteArray("\x44\x89\x88", 3)); // Duration, 8-byte float (ms)
+            if (CHECK(at >= 0)) {
+                const double ms = 1e13;
+                quint64 bits;
+                std::memcpy(&bits, &ms, 8);
+                for (int i = 0; i < 8; ++i) data[at + 3 + i] = char(bits >> (56 - 8 * i));
+            }
+            f.write(data);
+            f.close();
+            const std::optional<MediaInfo> absurd = MediaProbe::read(f.fileName(), {25, 1});
+            CHECK(absurd && absurd->length == INT_MAX && absurd->hasVideo);
+        }
     }
     const MediaInfo surround = Engine::probe(format, in("surround.wav"));
     CHECK(surround.audioStreams.size() == 1 && surround.audioStreams[0].channels == 6);
