@@ -727,6 +727,7 @@ LutPtr parseLutFile(const QString& path, QString* error)
     }
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return failLut(error, f.errorString());
+    if (f.peek(3) == "\xEF\xBB\xBF") f.skip(3); // UTF-8 BOM (files saved by Windows editors)
     if (suffix == "3dl") return parse3dl(f, error);
     if (suffix == "csp") return parseCsp(f, error);
     return parseCube(f, error);

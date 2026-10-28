@@ -182,6 +182,28 @@ void testFormats(const QString& dir)
     CHECK(EffectFolders::isLutFile("x/LOOK.CUBE") && EffectFolders::isLutFile("a.tiff") && !EffectFolders::isLutFile("a.mp4"));
 }
 
+// Crafted/broken LUT files: BOM, non-finite numbers, lying size lines, float .3dl, cache of failures
+void testRobustness(const QString& dir)
+{
+    QString err;
+    auto path = [&](const char* name) { return QDir(dir).filePath(name); };
+
+    // UTF-8 BOM at the start (Windows editors) is ignored in all text formats
+    const QByteArray bom = "\xEF\xBB\xBF";
+    CHECK(writeFile(path("bom.cube"), bom + cube(5, kInvert)));
+    CHECK(writeFile(path("bom.3dl"), bom + threeDl(5, 1023, kInvert).mid(7)));
+    QByteArray csp = "CSPLUTV100\n3D\n";
+    for (int c = 0; c < 3; ++c) csp += "2\n0.0 1.0\n0.0 1.0\n";
+    csp += "5 5 5\n" + cube(5, kInvert).mid(QByteArray("LUT_3D_SIZE 5\n").size());
+    CHECK(writeFile(path("bom.csp"), bom + csp));
+    for (const char* n : {"bom.cube", "bom.3dl", "bom.csp"}) {
+        err.clear();
+        auto l = ColorGrade::parseLut(path(n), &err);
+        if (!CHECK(l)) qWarning() << n << err;
+        else CHECK(isInvert(l.get()));
+    }
+}
+
 void testBuiltins()
 {
     const auto luts = EffectFolders::builtinLuts();
@@ -349,6 +371,7 @@ int main(int argc, char** argv)
     if (!CHECK(tmp.isValid())) return Check::result();
 
     testFormats(tmp.path());
+    testRobustness(tmp.path());
     testBuiltins();
     testUserFolder(tmp.path());
     testWidget();
