@@ -5,6 +5,8 @@
 
 #include "check.h"
 
+#include "core/RenderJob.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/Licenses.h"
 
 #include <Mlt.h>
@@ -93,6 +95,32 @@ void testNames()
     CHECK(Licenses::knownGplLicense("libmltcore.so").isEmpty());
 }
 
+// Every render format has an encoder, with x264/x265 (Debian's FFmpeg) or without them (the LGPL build: OpenH264,
+// kvazaar); codecs without crf get their own rate control
+void testEncoders()
+{
+    for (const RenderFormatInfo& f : renderFormats()) {
+        Check::report(HardwareEncoders::formatAvailable(f.id), "format without encoder", __FILE__, __LINE__, f.id);
+        if (*f.videoCodec)
+            Check::report(!HardwareEncoders::softwareCodec(f.id).isEmpty(), "no software encoder", __FILE__, __LINE__, f.id);
+    }
+    CHECK(!HardwareEncoders::formatAvailable("no-such-format"));
+    const QString h264 = HardwareEncoders::softwareCodec("h264");
+    CHECK(h264 == "libx264" || h264 == "libopenh264");
+    const QString h265 = HardwareEncoders::softwareCodec("h265");
+    CHECK(h265 == "libx265" || h265 == "libkvazaar");
+    CHECK_EQ(HardwareEncoders::codecName(VideoEncoder::Software, "h264"), h264);
+    CHECK_EQ(HardwareEncoders::resolve(VideoEncoder::Software, "h264").codec, h264);
+    CHECK(HardwareEncoders::softwareOptions("libx264", 22, QSize(1920, 1080), 30).isEmpty());
+    const auto open = HardwareEncoders::softwareOptions("libopenh264", 22, QSize(1920, 1080), 30);
+    CHECK(open.contains(qMakePair(QString("b"), QString("6220k")))); // 0.1 bit per pixel at CRF 22
+    const auto small = HardwareEncoders::softwareOptions("libopenh264", 28, QSize(1920, 1080), 30);
+    CHECK(small.contains(qMakePair(QString("b"), QString("3110k")))); // half the rate 6 steps up
+    const auto kvazaar = HardwareEncoders::softwareOptions("libkvazaar", 22, QSize(1920, 1080), 30);
+    CHECK(kvazaar.contains(qMakePair(QString("kvazaar-params"), QString("preset=fast,qp=24"))));
+    CHECK(HardwareEncoders::proxyVideoArguments().contains(h264));
+}
+
 void testReport()
 {
     const QVector<Licenses::Part> parts = Licenses::report();
@@ -123,6 +151,7 @@ int main(int argc, char** argv)
     Check::initMlt();
     testNames();
     testVolume();
+    testEncoders();
     testReport();
     return Check::result();
 }

@@ -26,13 +26,6 @@ QVector<Part> gplParts();
 // as GPL. Known GPL libraries only: everything else is treated as not GPL.
 QString knownGplLicense(const QString& fileName);
 // Built with SCHNEIDI_NO_GPL (the bundled packages)
-constexpr bool builtWithoutGpl()
-{
-#ifdef SCHNEIDI_NO_GPL
-    return true;
-#else
-    return false;
-#endif
-}
+bool builtWithoutGpl();
 
 } // namespace Licenses

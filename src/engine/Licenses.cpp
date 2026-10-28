@@ -152,6 +152,15 @@ QVector<Part> report()
     return out;
 }
 
+bool builtWithoutGpl()
+{
+#ifdef SCHNEIDI_NO_GPL
+    return true;
+#else
+    return false;
+#endif
+}
+
 QVector<Part> gplParts()
 {
     QVector<Part> out;

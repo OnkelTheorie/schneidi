@@ -50,7 +50,8 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswre
 # GPL MLT module (engine/Bundle). `schneidi-cli --licenses` and tests/test_license_free check the running program.
 option(SCHNEIDI_NO_GPL "Build without any GPL library (bundled packages)" OFF)
 if(SCHNEIDI_NO_GPL)
-    add_compile_definitions(SCHNEIDI_NO_GPL)
+    # Only where it is read: the rest stays in the shared compiler cache
+    set_property(SOURCE src/engine/Bundle.cpp src/engine/Licenses.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_NO_GPL)
     file(WRITE ${CMAKE_BINARY_DIR}/ffmpeg_license.cpp
         "#include <cstdio>\nextern \"C\" {\n#include <libavcodec/avcodec.h>\n}\nint main() { std::puts(avcodec_license()); }\n")
     try_run(FFMPEG_LICENSE_RUN FFMPEG_LICENSE_COMPILE ${CMAKE_BINARY_DIR}/ffmpeg_license_check
