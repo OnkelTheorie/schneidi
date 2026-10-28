@@ -110,7 +110,8 @@ const std::array<Migration, kFormatVersion - 1> kMigrations = {
 // the engine measured them on the frame: without a transform from the frame's edges (letterbox bars included), with
 // one as a share of the frame size laid onto the picture (x of the width, y of the height). For a picture shaped like
 // the frame all three agree; other clips get values that crop as before (a linear crop animation that crossed the
-// edge of a letterbox bar gets a keyframe there, ease curves change a little). Shape unknown (offline): left as it is.
+// edge of a letterbox bar gets a keyframe there, ease curves change a little). Shape unknown (offline): left as it is
+// and marked (Clip::cropOnFrame, saved), so that a later open or relink with the file there still converts it.
 
 // Linear keyframe sections of `k` that cross one of the levels get a keyframe there (nearest frame), so that
 // clamping the values afterwards keeps the course: before, values beyond the level simply had no effect
@@ -143,10 +144,16 @@ void convertCrop(Clip& c, QSizeF frame)
 {
     constexpr AnimParam crops[] = {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom};
     if (c.kind != ClipKind::Media) return; // titles, compound and multicam clips fill the frame
+    c.cropOnFrame = false;
     if (std::none_of(std::begin(crops), std::end(crops),
                      [&](AnimParam p) { return Keys::staticValue(c, p) != 0 || Keys::animated(c, p); }))
         return;
-    const QSizeF fit = MediaAspect::fit(MediaAspect::of(c.mediaPath), frame);
+    const double aspect = MediaAspect::of(c.mediaPath);
+    if (aspect <= 0) { // offline: try again when the file is there
+        c.cropOnFrame = true;
+        return;
+    }
+    const QSizeF fit = MediaAspect::fit(aspect, frame);
     if (std::abs(fit.width() - frame.width()) < 0.01 && std::abs(fit.height() - frame.height()) < 0.01) return;
     const bool transformed = Keys::hasTransform(c); // decided the old way of measuring
     for (AnimParam p : crops) {
@@ -424,6 +431,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
     if (c.pan != 0.0) o["pan"] = c.pan;
     if (c.audioStream != 0) o["audioStream"] = c.audioStream;
     if (c.subframe != 0) o["subframe"] = c.subframe;
+    if (c.cropOnFrame) o["cropOnFrame"] = true; // optional: crop not converted to format 3 yet (convertCrop)
     if (!c.enabled) o["enabled"] = false;
     if (c.transIn > 0) o["transIn"] = c.transIn; // transitions (frames); missing = none
     if (c.transOut > 0) o["transOut"] = c.transOut;
@@ -491,6 +499,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
     c.pan = o.value("pan").toDouble(0.0);
     c.audioStream = std::max(0, o.value("audioStream").toInt());
     c.subframe = std::clamp(o.value("subframe").toInt(), 0, 99);
+    c.cropOnFrame = c.kind == ClipKind::Media && o.value("cropOnFrame").toBool();
     c.enabled = o.value("enabled").toBool(true);
     c.transIn = std::max(0, intOf(o.value("transIn")));
     c.transOut = std::max(0, intOf(o.value("transOut")));
@@ -814,7 +823,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             if (o.contains("dynamics")) t.dynamics = dynamicsFromJson(o.value("dynamics").toObject());
             for (const QJsonValue& cv : o.value("clips").toArray()) {
                 Clip c = clipFromJson(cv.toObject(), allMedia, projectDir);
-                if (fileVersion < 3 && kind == TrackKind::Video) convertCrop(c, QSizeF(d.format.width, d.format.height));
+                if ((fileVersion < 3 || c.cropOnFrame) && kind == TrackKind::Video)
+                    convertCrop(c, QSizeF(d.format.width, d.format.height));
                 d.lastClipId = std::max(d.lastClipId, c.id);
                 d.lastLinkId = std::max(d.lastLinkId, c.linkId);
                 t.clips << c;
@@ -1118,7 +1128,11 @@ int relink(ProjectData* data, const QString& searchDir)
         for (QVector<Track>* list : {&tl.video, &tl.audio})
             for (Track& t : *list)
                 for (Clip& c : t.clips)
-                    if (moved.contains(c.mediaPath)) c.mediaPath = moved.value(c.mediaPath);
+                    if (moved.contains(c.mediaPath)) {
+                        c.mediaPath = moved.value(c.mediaPath);
+                        // Crop of an old project opened while the file was offline: now its shape is known
+                        if (c.cropOnFrame) convertCrop(c, QSizeF(data->format.width, data->format.height));
+                    }
     };
     relinkTimeline(data->timeline);
     for (Sequence& s : data->sequences) relinkTimeline(s.timeline);
