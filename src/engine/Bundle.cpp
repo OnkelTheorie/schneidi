@@ -1,5 +1,6 @@
 #include "engine/Bundle.h"
 
+#include "engine/audio/Volume.h"
 #include "engine/video/Compose.h"
 #include "engine/video/Still.h"
 #include "engine/video/Text.h"
@@ -103,6 +104,17 @@ void prepareMltEnvironment()
     deny("libmltglaxnimate-qt6");
     deny("libmltplusgpl");
     if (!qEnvironmentVariableIsSet("SCHNEIDI_MLT_QT")) deny("libmltqt6");
+    // More GPL modules schneidi does not need: normalize ("volume": own filter engine/audio/Volume; "audiolevel": own
+    // meter), resample (the loader's "resampler"; swresample of the avformat module converts already), plus (GPL
+    // through interp.h in its affine transition; nothing of it is used), vid.stab and rubberband (own stabilizer and
+    // time stretch), movit and sox (link GPL libraries, unused). Licenses::report() lists what is loaded.
+    for (const char* module : {"libmltnormalize", "libmltresample", "libmltplus", "libmltvidstab", "libmltrubberband",
+                               "libmltmovit", "libmltsox"})
+        deny(module);
+#ifdef SCHNEIDI_NO_GPL
+    // The GPL-free build loads no GPL module at all, also not from a system MLT (see the comment on xine above)
+    deny("libmltxine");
+#endif
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     // MLT's Qt module (only with SCHNEIDI_MLT_QT) refuses to load without $DISPLAY / $WAYLAND_DISPLAY, even when a Qt
@@ -168,6 +180,7 @@ void prepareMltCaches()
 {
     // Own services first: the loader below reads its tables, and with them the producer for pictures
     Compose::registerServices();
+    Volume::registerService();
     Still::registerService();
     Text::registerService();
     // every name MLT 7.30 uses with mlt_service_cache_* (grep over src/)
