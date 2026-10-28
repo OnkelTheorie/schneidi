@@ -350,6 +350,16 @@ int main(int argc, char* argv[])
         CHECK(QJsonDocument::fromJson(p.readAllStandardOutput()).object()["error"].toObject()["message"].toString().contains("token"));
     }
 
+    // Behind a reverse proxy (--public-url) everyone comes from this computer: a token anyway (made and kept)
+    {
+        Server proxied;
+        if (CHECK(proxied.start(root, tmp.filePath("s0"), {"--public-url", "https://edit.example"}, {}))) {
+            CHECK_EQ(http("POST", proxied.base + "/mcp", R"({"jsonrpc":"2.0","id":1,"method":"ping"})",
+                          proxied.headers() << QPair<QByteArray, QByteArray>{"Host", "edit.example"}).status, 401);
+            CHECK_EQ(http("GET", proxied.base + "/files/clip.mp4").status, 401);
+        }
+    }
+
     // ---------- Server 1: token, files, tools ----------
     {
         Server s;
