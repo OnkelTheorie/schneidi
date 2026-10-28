@@ -425,11 +425,14 @@ Mlt::Producer* TimelineBuilder::nestedProducer(int sequenceId, TrackKind kind, i
     if (!m_nested || m_nestStack.size() >= 16 || m_nestStack.count(sequenceId)) return nullptr; // loop/too deep
     const auto it = m_nested->constFind(sequenceId);
     if (it == m_nested->cend()) return nullptr;
-    // As with files: one own tractor per track and side of a transition (own decoders)
+    // As with files: one own tractor per track and side of a transition (own decoders). Inside a nested sequence
+    // the key carries the outer path too: the same compound clip on two tracks (picture in picture) holding another
+    // compound clip would otherwise share that inner tractor and read it at two positions per frame.
     QString key = QString("%1|%2|%3|%4|%5").arg(sequenceId).arg(kind == TrackKind::Video ? "v" : "a")
                       .arg(trackIndex).arg(second ? "x" : "").arg(m_nestStack.size());
     if (angle >= 0) key += QString("|m%1").arg(angle);
-    if (auto c = m_nestedCache.find(key); c != m_nestedCache.end()) return c->second.get();
+    const QString cacheKey = m_keyPrefix + key;
+    if (auto c = m_nestedCache.find(cacheKey); c != m_nestedCache.end()) return c->second.get();
     Timeline content;
     if (angle >= 0) { // Multicam segment: only the angle's own tracks
         if (angle >= it->angles.size()) return nullptr;
@@ -441,7 +444,7 @@ Mlt::Producer* TimelineBuilder::nestedProducer(int sequenceId, TrackKind kind, i
     m_nestStack.erase(sequenceId);
     if (!p || !p->is_valid()) return nullptr;
     Mlt::Producer* raw = p.get();
-    m_nestedCache.emplace(key, std::move(p));
+    m_nestedCache.emplace(cacheKey, std::move(p));
     return raw;
 }
 
@@ -594,10 +597,11 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             return delayed(c, rawCutOf(c, from, to, second), from, to);
         };
 
-        int cursor = 0;
+        // Gaps are filled up to the playlist's real length, not a count of model frames: MLT clamps a cut to the
+        // end of a source shorter than the model expects (proxy a few frames short, VFR source, relinked shorter
+        // file, transition handle past the source end), and the clips after it would otherwise slide forward
         auto blankTo = [&](int frame) {
-            if (frame > cursor) pl.blank(frame - cursor - 1);
-            cursor = std::max(cursor, frame);
+            if (const int have = pl.get_playtime(); frame > have) pl.blank(frame - have - 1);
         };
         auto appendSpan = [&](const TimelineOps::TransitionSpan& s) {
             blankTo(s.start);
@@ -639,7 +643,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
             } else {
                 pl.blank(len - 1);
             }
-            cursor = s.end;
+            blankTo(s.end);
         };
 
         for (const Clip& c : track.clips) {
@@ -655,7 +659,7 @@ std::unique_ptr<Mlt::Tractor> TimelineBuilder::buildTimeline(const Timeline& tl,
                 blankTo(bodyStart);
                 if (std::unique_ptr<Mlt::Producer> body(cutOf(c, bodyStart, bodyEnd, useSecond.value(c.id))); body) pl.append(*body);
                 else pl.blank(bodyEnd - bodyStart - 1); // disabled or file missing -> gap
-                cursor = bodyEnd;
+                blankTo(bodyEnd);
             }
             // Fade out resp. crossfade to the next clip
             for (const auto& s : spans)

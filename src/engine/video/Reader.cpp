@@ -456,12 +456,7 @@ struct Reader::Impl {
         return dts;
     }
 
-    int64_t positionOf(int64_t pts) const
-    {
-        if (firstPts != AV_NOPTS_VALUE) pts -= firstPts;
-        else if (fmt->start_time != AV_NOPTS_VALUE) pts -= fmt->start_time;
-        return int64_t(av_q2d(info.timeBase) * double(pts) * fps + 0.5);
-    }
+    int64_t positionOf(int64_t pts) const { return framePosition(pts, firstPts, fmt->start_time, info.timeBase, fps); }
 
     // MLT's find_first_pts: timestamp of the first key frame (frame 0)
     void findFirstPts()
@@ -581,10 +576,7 @@ struct Reader::Impl {
         restart(position);
         ++stats.seeks;
         lock.unlock();
-        int64_t ts = int64_t(double(position) / (av_q2d(info.timeBase) * fps));
-        if (position <= 0) ts = 0;
-        else if (firstPts != AV_NOPTS_VALUE) ts += firstPts;
-        else if (fmt->start_time != AV_NOPTS_VALUE) ts += fmt->start_time;
+        int64_t ts = position <= 0 ? 0 : frameTimestamp(position, firstPts, fmt->start_time, info.timeBase, fps);
         // B-frames: start a little earlier. Index times can be decode times (MP4), which run ahead of the shown time
         // by the reorder delay: a key frame decoded before the target may be shown after it. MLT starts 2 s earlier
         // (preseek), which decodes up to two more seconds per seek – on a weak computer every catch-up jump.
@@ -915,6 +907,64 @@ struct Reader::Impl {
 double streamRotation(const AVStream* stream)
 {
     return rotationOf(stream);
+}
+
+namespace {
+
+// The zero point in stream time base: first key frame's timestamp, else the container start converted (it is in µs)
+int64_t zeroOf(int64_t firstPts, int64_t startTime, AVRational timeBase)
+{
+    if (firstPts != AV_NOPTS_VALUE) return firstPts;
+    if (startTime != AV_NOPTS_VALUE && timeBase.num > 0 && timeBase.den > 0)
+        return av_rescale_q(startTime, AV_TIME_BASE_Q, timeBase);
+    return 0;
+}
+
+} // namespace
+
+int64_t framePosition(int64_t pts, int64_t firstPts, int64_t startTime, AVRational timeBase, double fps)
+{
+    pts -= zeroOf(firstPts, startTime, timeBase);
+    return int64_t(av_q2d(timeBase) * double(pts) * fps + 0.5);
+}
+
+int64_t frameTimestamp(int64_t position, int64_t firstPts, int64_t startTime, AVRational timeBase, double fps)
+{
+    const double step = av_q2d(timeBase) * fps;
+    const int64_t ts = step > 0 ? int64_t(double(position) / step) : 0;
+    return ts + zeroOf(firstPts, startTime, timeBase);
+}
+
+std::optional<double> zeroOffset(const QString& path)
+{
+    AVFormatContext* fmt = nullptr;
+    if (avformat_open_input(&fmt, path.toUtf8().constData(), nullptr, nullptr) < 0) return std::nullopt;
+    const std::unique_ptr<AVFormatContext, void (*)(AVFormatContext*)> guard(fmt, [](AVFormatContext* f) {
+        avformat_close_input(&f);
+    });
+    if (avformat_find_stream_info(fmt, nullptr) < 0) return std::nullopt;
+    int index = -1; // the stream Reader::open picks
+    for (unsigned i = 0; i < fmt->nb_streams && index < 0; ++i) {
+        const AVStream* st = fmt->streams[i];
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && avcodec_find_decoder(st->codecpar->codec_id)
+            && !(st->disposition & AV_DISPOSITION_ATTACHED_PIC))
+            index = int(i);
+    }
+    if (index < 0) return std::nullopt;
+    // As the reader's findFirstPts
+    int64_t first = AV_NOPTS_VALUE;
+    AVPacket* pkt = av_packet_alloc();
+    for (int n = 0; pkt && n < kFirstPtsPackets && first == AV_NOPTS_VALUE; ++n) {
+        if (av_read_frame(fmt, pkt) < 0) break;
+        if (pkt->stream_index == index && (pkt->flags & AV_PKT_FLAG_KEY))
+            first = pkt->dts != AV_NOPTS_VALUE && pkt->dts < 0 ? 0 : (pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts);
+        av_packet_unref(pkt);
+    }
+    av_packet_free(&pkt);
+    const AVRational tb = fmt->streams[index]->time_base;
+    const int64_t zeroUs = av_rescale_q(zeroOf(first, fmt->start_time, tb), tb, AV_TIME_BASE_Q);
+    const int64_t start = fmt->start_time != AV_NOPTS_VALUE ? fmt->start_time : 0;
+    return double(zeroUs - start) / AV_TIME_BASE;
 }
 
 Reader::Reader() : d(std::make_unique<Impl>()) {}

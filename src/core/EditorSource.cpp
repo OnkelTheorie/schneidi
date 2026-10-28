@@ -375,20 +375,25 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
     return mode == M::Replace ? playhead : start + len;
 }
 
-void Editor::placeSourceRange(const QString& path, int in, int out, int frame, int track)
+int Editor::placeSourceRange(const QString& path, int in, int out, int frame, int track, double speed)
 {
     importPreviewSource(path, m_preview.bin); // looked at in the Media Storage: into the Media Pool first
     const MediaInfo* info = m_project->mediaInfo(path);
-    if (!info || info->length <= 0) return;
+    if (!info || info->length <= 0) return 0;
     const MediaInfo m = *info;
     in = std::clamp(in, 0, m.length - 1);
-    out = std::clamp(out, in, m.length - 1);
+    out = m.isImage ? std::max(out, in) : std::clamp(out, in, m.length - 1); // a still takes any length (as trimmed)
     MediaInfo m2 = m; // locked track: this part is dropped
     track = std::max(0, track);
     if (m2.hasVideo && isTrackLocked(TrackRef{TrackKind::Video, track})) m2.hasVideo = false;
     if (m2.hasAudio && isTrackLocked(TrackRef{TrackKind::Audio, track})) m2.hasAudio = false;
-    if (!m2.hasVideo && !m2.hasAudio) return;
+    if (!m2.hasVideo && !m2.hasAudio) return 0;
+    // Retimed: in and length in material frames (file frame / speed, see Clip::speed); a still has no speed
+    if (m.isImage || speed <= 0) speed = 1.0;
+    const int sIn = int(std::lround(in / speed));
+    const int len = std::max(1, int(std::lround((out - in + 1) / speed)));
     m_project->edit(T("Clip überschreiben: %1").arg(m.name), [&](Timeline& tl) {
-        placeSource(tl, m2, in, out - in + 1, std::max(0, frame), track, track);
+        placeSource(tl, m2, sIn, len, std::max(0, frame), track, track, speed);
     });
+    return len;
 }

@@ -12,6 +12,10 @@ also read [social.md](social.md).
   events, vlogs. A thin mark needs a higher `tolerance` than a filled one: CS2 frames the player's own kills in red
   (`region` "0.72,0.04,0.28,0.2", `color` "#d8444a", `tolerance` 40). Fewer `kills` than you saw in the kill feed:
   raise `tolerance` step by step (too high counts red walls and blood as kills).
+- Each kill has two times: `kill_s` = when its kill feed line is there, `hit_s` = the hit itself (the last shot
+  before the line, ~0.1-0.3 s earlier). Put accents, sounds and beats on `hit_s`, never on `kill_s` - an effect after
+  the kill looks late. `hit_by` "feed" means no shot was heard (a silent first audio stream: pass `audio_stream`
+  of the game sound).
 - Look at the top candidates (`frames` with `at` around each kill time, or a cropped sheet) before you trust them.
   Drop near-duplicates and moments that only are loud. Banners in the kill feed's colour (a yellow "BUY PHASE")
   are not counted as kills but listed in `banners`; a `kill_feed_most_pct` far above the other files still means:
@@ -42,7 +46,8 @@ also read [social.md](social.md).
   previous copy there (`trim`), like a sampler starting the sound again - copies on separate tracks pile up, get
   loud and clip. Keep them overlapping only when the user asks for it.
 - `accent` puts them on many moments in one op, as keyframes: `{"op":"accent","at":["3.3s","7.2s"],"preset":"hit"}`
-  (kill times from `highlights`, drops from `beats`). Presets: `punch`, `flash`, `shake`, `hit` (all three, a kill),
+  (drops from `beats`; for kills the `hit_s` of `highlights` as `{"media":"/path/clip.mkv","source":"7.67s"}`, which
+  finds the moment on the timeline wherever the clip ended up). Presets: `punch`, `flash`, `shake`, `hit` (all three, a kill),
   `drop` (big, for the music drop), `pulse` (small, for beats); `strength` scales one, `effects` lists them.
   Flashes keep 0.5 s apart by themselves (a burst of kills would strobe); the quiet choice is `shake` alone. Don't
   write punches and flashes as single `keyframe` ops. A `transform` `zoom`/`x`/`y` without `at` afterwards moves
@@ -59,6 +64,12 @@ also read [social.md](social.md).
   k * `beat_period`, bar ones every `downbeats.every_s`; `phrases` are the sections (4 or 8 bars) with their
   energy, `drops` the big moments (best first). Put the best moment on the top drop, change scenes on bar ones or
   phrase starts, let the end land on a phrase end. `apply` `"markers"` marks the phrase starts on the timeline.
+- Kills on the beat: cut the clips on beats first, then one `align` puts each clip's kill on its nearest beat (or
+  bar one) by slipping the content - the cuts stay put: `{"op":"align","events":[{"media":"/path/clip.mkv",
+  "source":"7.67s"}, …],"to":{"first":<beat_phase.s>,"every":<beat_period.s>},"accent":"hit"}` with the `hit_s` of
+  `highlights` and `beats` run on the project (bar ones: `downbeats.s` / `downbeats.every_s`). Its notes say where
+  a clip ran out of material. Slow motion right in the cut: `speed` on `place`/`keep` (`{"from":…,"to":…,
+  "speed":0.5}` as a range).
 - Put the music on its own audio track (`place` with `track` `"A2"` at 0, or a new track), cut it to the video
   length, `fade` out the last 1-2 s.
 - Keep the game/event sound - it carries the action: shots and kills must stay audible. Measure first: `loudness`

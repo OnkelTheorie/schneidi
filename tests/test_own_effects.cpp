@@ -340,6 +340,15 @@ int main(int argc, char** argv)
         Img lum = filled(100, 100, QColor(200, 50, 50));
         VideoEffects::gradient(lum.px.data(), 100, 100, gp);
         CHECK(lum.at(50, 0)[0] > 240 && lum.at(50, 99)[0] < 15);
+        // Unknown or empty mode name (broken preset/project): normal, not the last (HSL luminosity) mode
+        for (const char* name : {"", "bogus"}) {
+            Img unknown = filled(100, 100, QColor(200, 50, 50)), normal = unknown;
+            gp.blend = name;
+            VideoEffects::gradient(unknown.px.data(), 100, 100, gp);
+            gp.blend = "normal";
+            VideoEffects::gradient(normal.px.data(), 100, 100, gp);
+            CHECK(unknown.px == normal.px);
+        }
 
         // Alpha: a keyed disk; shrink makes the opaque part smaller, grow larger, gray display shows the alpha
         Img disk = greenScene();

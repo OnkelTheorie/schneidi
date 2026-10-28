@@ -2,6 +2,7 @@
 // dragging a timeline from the Media Pool into another timeline)
 #include "core/Editor.h"
 
+#include "core/EditorDetail.h"
 #include "core/I18n.h"
 #include "core/Multicam.h"
 #include "core/Project.h"
@@ -9,6 +10,37 @@
 
 #include <QSet>
 #include <algorithm>
+
+void EditorDetail::takeOuter(Clip& x, const Clip& outer, int sourceShift, bool atStart, bool atEnd)
+{
+    if (outer.transform != ClipTransform{}) x.transform = outer.transform;
+    for (const EffectInstance& e : outer.effects) {
+        x.effects.removeIf([&](const EffectInstance& o) { return o.effectId == e.effectId; });
+        x.effects << e;
+    }
+    x.volumeDb = outer.volumeDb <= kMinVolumeDb || x.volumeDb <= kMinVolumeDb
+                     ? kMinVolumeDb
+                     : std::clamp(outer.volumeDb + x.volumeDb, kMinVolumeDb, kMaxVolumeDb);
+    if (outer.pan != 0) x.pan = outer.pan;
+    if (outer.subframe != 0) x.subframe = outer.subframe;
+    if (atStart && (outer.transIn > 0 || outer.fadeIn > 0)) {
+        x.transIn = outer.transIn;
+        x.transInAlone = outer.transInAlone;
+        x.transInStyle = outer.transInStyle;
+        x.fadeIn = outer.fadeIn;
+    }
+    if (atEnd && (outer.transOut > 0 || outer.fadeOut > 0)) {
+        x.transOut = outer.transOut;
+        x.transOutAlone = outer.transOutAlone;
+        x.transOutStyle = outer.transOutStyle;
+        x.fadeOut = outer.fadeOut;
+    }
+    for (auto it = outer.keys.begin(); it != outer.keys.end(); ++it) {
+        KeyTrack k = it.value();
+        for (Keyframe& f : k) f.frame += sourceShift;
+        x.keys[it.key()] = k;
+    }
+}
 
 namespace {
 
@@ -211,6 +243,7 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                         for (const Clip& n : src[j].clips) {
                             if (n.end() <= cc.in || n.start > cc.out) continue;
                             Clip x = n;
+                            const bool atStart = x.start <= cc.in, atEnd = x.end() >= cc.out + 1;
                             if (x.start < cc.in) { // cut off at the front: pull the start along
                                 const int d = cc.in - x.start;
                                 x.start += d;
@@ -225,6 +258,10 @@ bool Editor::decomposeCompoundClips(const QVector<int>& ids)
                                 x.transOutAlone = false;
                                 x.fadeOut = 0;
                             }
+                            // What was set on the compound clip (grade, zoom, volume, fades at its edges ...) goes
+                            // onto its content of the same kind
+                            if (kind == part.second.kind)
+                                EditorDetail::takeOuter(x, cc, x.in - x.start, atStart, atEnd);
                             x.start += offset;
                             x.id = newId();
                             if (x.linkId) {

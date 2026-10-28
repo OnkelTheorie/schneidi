@@ -92,6 +92,16 @@ mlt_image_format pickImageFormat(AVPixelFormat pix, mlt_image_format current)
     return current;
 }
 
+// The consumer's colour range by name; older MLT (7.22, Ubuntu 24.04) has no mlt_image_full_range
+int fullRangeName(const char* range)
+{
+#ifdef SCHNEIDI_HAVE_MLT_IMAGE_FULL_RANGE
+    return mlt_image_full_range(range);
+#else
+    return range && (!std::strcmp(range, "full") || !std::strcmp(range, "jpeg") || !std::strcmp(range, "pc"));
+#endif
+}
+
 // MLT's mlt_get_sws_flags (avformat/common.c)
 int swsFlags(int sw, int sh, AVPixelFormat src, int dw, int dh, AVPixelFormat dst)
 {
@@ -442,7 +452,7 @@ int getImage(mlt_frame frame, uint8_t** buffer, mlt_image_format* format, int* w
     const std::shared_ptr<const Picture> pic = d->reader->picture(request);
     if (!pic || !pic->frame) return 1;
 
-    int fullRange = mlt_image_full_range(mlt_properties_get(fp, "consumer.color_range"));
+    int fullRange = fullRangeName(mlt_properties_get(fp, "consumer.color_range"));
     // Above 8 bits swscale only changes the range when scaling: the source range stays
     const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(d->info.format);
     if (desc && desc->nb_components > 0 && desc->comp[0].depth > 8) fullRange = d->info.fullRange;

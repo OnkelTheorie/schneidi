@@ -9,6 +9,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -192,7 +193,32 @@ void testVersion2Crop()
     // Without a probe (or the media offline) the values stay as they are
     ProjectData plain;
     if (CHECK(ProjectFile::load(kData + "/v2-0.12dev-crop.schneidi", &plain, &err)))
-        if (const Clip* c = clip(plain.timeline, 2); CHECK(c)) CHECK(near(c->transform.cropTop, 700));
+        if (const Clip* c = clip(plain.timeline, 2); CHECK(c)) CHECK(near(c->transform.cropTop, 700) && c->cropOnFrame);
+    // ... and stay convertible: saved (as format 3) while offline, opened again with the media there -> converted then
+    const QString offline = tmp.filePath("offline.schneidi");
+    if (!CHECK(ProjectFile::save(plain, offline, &err))) return;
+    ProjectData still;
+    if (CHECK(ProjectFile::load(offline, &still, &err)))
+        if (const Clip* c = clip(still.timeline, 2); CHECK(c)) CHECK(near(c->transform.cropTop, 700) && c->cropOnFrame);
+    MediaAspect::setProbe([](const QString& path) {
+        return path.endsWith("grad.mkv") ? 16.0 / 9 : path.endsWith("green.mkv") ? 9.0 / 16 : path.endsWith("sq.png") ? 1.0 : 0.0;
+    });
+    ProjectData later;
+    if (CHECK(ProjectFile::load(offline, &later, &err))) {
+        CHECK(later.timeline == d.timeline);
+        if (const Clip* c = clip(later.timeline, 2); CHECK(c)) CHECK(!c->cropOnFrame);
+    }
+    // ... or relinked: the file found again gets its crop converted, the others stay marked
+    MediaAspect::setProbe([](const QString& path) { return path.endsWith("grad.mkv") ? 16.0 / 9 : 0.0; });
+    QDir(tmp.path()).mkpath("found");
+    QFile media(tmp.filePath("found/grad.mkv"));
+    CHECK(media.open(QIODevice::WriteOnly));
+    media.close();
+    CHECK(ProjectFile::relink(&still, tmp.filePath("found")) == 1);
+    if (const Clip* c = clip(still.timeline, 2); CHECK(c))
+        CHECK(near(c->transform.cropTop, 700 - 656.25) && !c->cropOnFrame && c->mediaPath.endsWith("found/grad.mkv"));
+    if (const Clip* c = clip(still.timeline, 5); CHECK(c)) CHECK(c->cropOnFrame); // sq.png, still offline
+    MediaAspect::setProbe({});
 }
 
 } // namespace

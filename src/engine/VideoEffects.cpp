@@ -485,7 +485,8 @@ void noSync(uint8_t* rgba, int width, int height, double offset)
 void gradient(uint8_t* rgba, int width, int height, const GradientParams& p)
 {
     if (!rgba || width <= 0 || height <= 0) return;
-    const int mode = int(std::find(std::begin(kBlendModes), std::end(kBlendModes), p.blend) - std::begin(kBlendModes));
+    int mode = int(std::find(std::begin(kBlendModes), std::end(kBlendModes), p.blend) - std::begin(kBlendModes));
+    if (mode >= int(std::size(kBlendModes))) mode = 0; // unknown or empty name: normal
     const float sx = float(p.startX * width), sy = float(p.startY * height);
     const float dx = float(p.endX * width) - sx, dy = float(p.endY * height) - sy;
     const float len2 = std::max(1e-6f, dx * dx + dy * dy);

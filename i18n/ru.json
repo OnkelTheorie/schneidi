@@ -197,6 +197,7 @@
  "Audio-Bitrate": "Битрейт аудио",
  "Audio-Bittiefe": "Разрядность аудио",
  "Audio-Encoder %1 nicht verfügbar.": "Аудиокодер %1 недоступен.",
+ "Video-Encoder %1 ist in diesem Build nicht verfügbar.": "Видеокодер %1 недоступен в этой сборке.",
  "Audio-Zielspur A%1": "Целевая аудиодорожка A%1",
  "Audioclips": "Аудиоклипы",
  "Audiopegel normalisieren": "Нормализовать уровни аудио",

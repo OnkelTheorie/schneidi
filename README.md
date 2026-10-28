@@ -241,6 +241,7 @@ cmake -S . -B build -G Ninja && cmake --build build && ./build/schneidi
 ```
 
 AppImage: `packaging/linux/build-appimage.sh` → `dist/schneidi-<version>-x86_64.AppImage`
+Without any GPL library (own LGPL FFmpeg, OpenH264/kvazaar instead of x264/x265): `SCHNEIDI_NO_GPL=1 packaging/linux/build-appimage.sh`; bundled libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md)
 Debian package (system Qt/MLT, no bundling): `cmake --build build && cpack --config build/CPackConfig.cmake -G DEB` → `dist/schneidi_<version>_amd64.deb`
 The .deb needs Debian 13 / Ubuntu 25.04 or newer (MLT ≥ 7.30, Qt ≥ 6.8, libc6 ≥ 2.38, libstdc++6 ≥ 14); on older systems use the AppImage.
 

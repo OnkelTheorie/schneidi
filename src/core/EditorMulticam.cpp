@@ -2,6 +2,7 @@
 // resync and change angles afterwards. Model and lookups in core/Multicam.h.
 #include "core/Editor.h"
 
+#include "core/EditorDetail.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Selection.h"
@@ -138,18 +139,10 @@ Clip flatClip(const Clip& seg, const Clip& n, int from, int to)
     x.in = n.in + (from - n.start);
     x.out = x.in + (to - from) - 1;
     x.enabled = seg.enabled && n.enabled;
-    if (seg.transform != ClipTransform{}) x.transform = seg.transform;
-    for (const EffectInstance& e : seg.effects) {
-        x.effects.removeIf([&](const EffectInstance& o) { return o.effectId == e.effectId; });
-        x.effects << e;
-    }
-    x.volumeDb = seg.volumeDb <= kMinVolumeDb || n.volumeDb <= kMinVolumeDb
-                     ? kMinVolumeDb
-                     : std::clamp(seg.volumeDb + n.volumeDb, kMinVolumeDb, kMaxVolumeDb);
-    if (seg.pan != 0) x.pan = seg.pan;
-    if (seg.subframe != 0) x.subframe = seg.subframe;
-    x.renderCache = seg.renderCache;
     const bool atStart = from == seg.in, atEnd = to == seg.out + 1;
+    EditorDetail::takeOuter(x, seg, n.in - n.start, atStart, atEnd);
+    x.renderCache = seg.renderCache;
+    // A recording's own edges inside the multicam clip are no cuts of the timeline: only the segment's edges count
     x.transIn = atStart ? seg.transIn : 0;
     x.transInAlone = atStart && seg.transInAlone;
     x.transInStyle = seg.transInStyle;
@@ -158,12 +151,6 @@ Clip flatClip(const Clip& seg, const Clip& n, int from, int to)
     x.transOutAlone = atEnd && seg.transOutAlone;
     x.transOutStyle = seg.transOutStyle;
     x.fadeOut = atEnd ? seg.fadeOut : 0;
-    // Keyframes of the segment count in frames of the multicam sequence -> frames of the file
-    for (auto it = seg.keys.begin(); it != seg.keys.end(); ++it) {
-        KeyTrack k = it.value();
-        for (Keyframe& f : k) f.frame += n.in - n.start;
-        x.keys[it.key()] = k;
-    }
     return x;
 }
 

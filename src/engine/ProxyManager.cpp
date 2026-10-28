@@ -3,7 +3,9 @@
 
 #include "core/I18n.h"
 #include "engine/Background.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/ProxyCleanup.h"
+#include "engine/video/Reader.h"
 #include "engine/video/Still.h"
 
 #include <Mlt.h>
@@ -16,7 +18,9 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QThread>
+#include <cmath>
 #include <memory>
+#include <optional>
 
 namespace {
 
@@ -93,18 +97,26 @@ ProxyJob prepareJob(const QString& original, const QString& part)
     // "correct" it and the proxy looks exactly like the original in the preview
     const char* cs = ffColorspace(info.colorspace);
     const QString matrix = info.colorspace == 2020 ? "bt2020" : cs;
-    const QString scale = QString("scale=w='trunc(%1*iw*sar/2)*2':h='trunc(%1*ih/2)*2'"
+    QString scale = QString("scale=w='trunc(%1*iw*sar/2)*2':h='trunc(%1*ih/2)*2'"
                                   ":in_color_matrix=%2:out_color_matrix=%2:in_range=%3:out_range=tv,setsar=1")
                               .arg(f, matrix, info.fullRange ? "pc" : "tv");
+    // Frame 0 of the proxy = frame 0 of the original. MLT and the own decoder count from the first video key frame;
+    // FFmpeg (without -copyts) shifts by the container start, the earliest of all streams. A recording whose sound
+    // starts before the picture (OBS, phones, games: ~1 frame) would put the first picture at +1 frame, and the
+    // constant frame rate fills the gap with a doubled first picture: proxy frame k = original frame k-1, cuts
+    // one frame off in the preview. Move the picture so the counted start lands on 0.
+    if (const std::optional<double> zero = Video::zeroOffset(original); zero && std::abs(*zero) > 1e-4)
+        scale.prepend(QString("setpts=PTS-(%1)/TB,").arg(QString::number(*zero, 'f', 6)));
     const char* primaries = info.colorspace == 601 ? "smpte170m" : info.colorspace == 2020 ? "bt2020" : "bt709";
     const char* trc = info.colorspace == 601 ? "smpte170m" : "bt709";
     QStringList args{"-hide_banner", "-nostdin", "-y", "-i", original,
                      "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-map_metadata", "-1",
                      "-vf", scale,
                      // short GOP without B-frames: jumping/scrubbing in the preview stays fast
-                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-tune", "fastdecode",
                      "-g", "10", "-bf", "0", "-pix_fmt", "yuv420p",
                      "-colorspace", cs, "-color_primaries", primaries, "-color_trc", trc, "-color_range", "tv"};
+    // x264, or OpenH264 in the GPL-free build
+    args << HardwareEncoders::proxyVideoArguments();
     // Constant frame rate equal to the source (phone clips with variable frame rate -> CFR)
     if (info.rateNum > 0 && info.rateDen > 0)
         args << "-r" << QString("%1/%2").arg(info.rateNum).arg(info.rateDen);
@@ -156,9 +168,11 @@ QString ProxyManager::decodeSource(const QString& original)
 
 QString ProxyManager::proxyPath(const QString& original)
 {
-    // Key as with the waveform cache: changed originals automatically get a new proxy
+    // Key as with the waveform cache: changed originals automatically get a new proxy. The trailing version is
+    // raised when proxies made before are wrong: 2 = frame 0 at the first video key frame (older proxies of files
+    // whose picture starts after the sound were one frame early)
     const QFileInfo fi(original);
-    const QString id = QString("%1|%2|%3|%4")
+    const QString id = QString("%1|%2|%3|%4|v2")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
                            .arg(fi.lastModified().toMSecsSinceEpoch())

@@ -1,0 +1,15 @@
+# Build environment for the GPL-free bundle: schneidi's build packages + what packaging/linux/build-ffmpeg-lgpl.sh
+# needs (only BSD/MIT/LGPL libraries). Debian 13 like CI.
+#   docker build -f packaging/linux/Dockerfile.ffmpeg-lgpl -t schneidi-lgpl-build packaging/linux
+#   docker run --rm -v "$PWD:/w" -w /w schneidi-lgpl-build packaging/linux/build-ffmpeg-lgpl.sh
+ARG BASE=debian:trixie
+FROM ${BASE}
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build pkg-config git ca-certificates curl xz-utils file \
+        qt6-base-dev libmlt++-dev libmlt-dev libmlt-data libminiaudio-dev \
+        libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev \
+        zlib1g-dev libbz2-dev liblzma-dev \
+        nasm libopenh264-dev libkvazaar-dev libsvtav1enc-dev libvpx-dev libdav1d-dev \
+        libopus-dev libvorbis-dev libmp3lame-dev libwebp-dev libva-dev libdrm-dev libvpl-dev \
+ && rm -rf /var/lib/apt/lists/*

@@ -41,10 +41,42 @@ if(UNIX AND NOT APPLE)
     find_package(Qt6 QUIET COMPONENTS DBus)
 endif()
 find_package(PkgConfig REQUIRED)
-# MLT liefert unter Linux und MSYS2 (Windows) eine .pc-Datei
-pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
+# MLT ships a .pc file on Linux and MSYS2 (Windows). 7.22 is the oldest version known to build (Ubuntu 24.04)
+pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7>=7.22)
+# mlt_image_full_range() came after 7.22: older MLT gets a fallback (src/engine/video/Producer.cpp)
+include(CheckSymbolExists)
+set(CMAKE_REQUIRED_INCLUDES ${MLT_INCLUDE_DIRS})
+set(CMAKE_REQUIRED_LIBRARIES ${MLT_LINK_LIBRARIES})
+check_symbol_exists(mlt_image_full_range "framework/mlt.h" SCHNEIDI_HAVE_MLT_IMAGE_FULL_RANGE)
+unset(CMAKE_REQUIRED_INCLUDES)
+unset(CMAKE_REQUIRED_LIBRARIES)
+if(SCHNEIDI_HAVE_MLT_IMAGE_FULL_RANGE)
+    set_property(SOURCE src/engine/video/Producer.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_HAVE_MLT_IMAGE_FULL_RANGE)
+endif()
 # Own audio engine (src/engine/audio): FFmpeg libraries directly, see docs/archiv/plan-0.10-ton.md
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libswscale libavutil)
+# GPL-free build for the bundled packages (AppImage, Windows, Docker; 0.14): refuses an FFmpeg configured with
+# --enable-gpl/--enable-nonfree (point PKG_CONFIG_PATH at packaging/linux/build-ffmpeg-lgpl.sh's prefix), loads no
+# GPL MLT module (engine/Bundle). `schneidi-cli --licenses` and tests/test_license_free check the running program.
+option(SCHNEIDI_NO_GPL "Build without any GPL library (bundled packages)" OFF)
+if(SCHNEIDI_NO_GPL)
+    # Only where it is read: the rest stays in the shared compiler cache
+    set_property(SOURCE src/engine/Bundle.cpp src/engine/Licenses.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_NO_GPL)
+    file(WRITE ${CMAKE_BINARY_DIR}/ffmpeg_license.cpp
+        "#include <cstdio>\nextern \"C\" {\n#include <libavcodec/avcodec.h>\n}\nint main() { std::puts(avcodec_license()); }\n")
+    try_run(FFMPEG_LICENSE_RUN FFMPEG_LICENSE_COMPILE ${CMAKE_BINARY_DIR}/ffmpeg_license_check
+        SOURCES ${CMAKE_BINARY_DIR}/ffmpeg_license.cpp
+        LINK_LIBRARIES PkgConfig::FFMPEG
+        RUN_OUTPUT_VARIABLE FFMPEG_LICENSE)
+    string(STRIP "${FFMPEG_LICENSE}" FFMPEG_LICENSE)
+    if(NOT FFMPEG_LICENSE_COMPILE OR NOT FFMPEG_LICENSE_RUN EQUAL 0)
+        message(FATAL_ERROR "SCHNEIDI_NO_GPL: could not ask FFmpeg for its license (LD_LIBRARY_PATH to its lib folder?)")
+    elseif(NOT FFMPEG_LICENSE MATCHES "^LGPL")
+        message(FATAL_ERROR "SCHNEIDI_NO_GPL: FFmpeg at ${FFMPEG_LIBDIR} is '${FFMPEG_LICENSE}', not LGPL "
+                            "(build one with packaging/linux/build-ffmpeg-lgpl.sh, PKG_CONFIG_PATH=<prefix>/lib/pkgconfig)")
+    endif()
+    message(STATUS "SCHNEIDI_NO_GPL: FFmpeg license ${FFMPEG_LICENSE}")
+endif()
 # Sound devices of the own audio engine: miniaudio, a single header (Debian libminiaudio-dev, MSYS2 miniaudio)
 find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h PATH_SUFFIXES miniaudio REQUIRED)
 find_package(Threads REQUIRED)
@@ -173,6 +205,8 @@ add_library(schneidi_lib STATIC
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
     src/engine/Snapshot.h         src/engine/Snapshot.cpp
     src/engine/audio/Reader.h     src/engine/audio/Reader.cpp
+    src/engine/audio/Volume.h     src/engine/audio/Volume.cpp
+    src/engine/Licenses.h         src/engine/Licenses.cpp
     src/engine/video/Reader.h     src/engine/video/Reader.cpp
     src/engine/video/Producer.h   src/engine/video/Producer.cpp
     src/engine/video/Hardware.h   src/engine/video/Hardware.cpp
