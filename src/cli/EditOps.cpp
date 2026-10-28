@@ -199,7 +199,7 @@ void sourceRange(Session& s, const QJsonObject& op, const MediaInfo& m, int* in,
     *in = timeOf(s, op, "in", 0);
     *out = op.contains("out") ? timeOf(s, op, "out") : m.length;
     if (op.contains("duration")) *out = *in + timeOf(s, op, "duration");
-    *out = std::min(*out, m.length);
+    if (!m.isImage) *out = std::min(*out, m.length); // a still takes any length (its default: the still length)
     if (*in >= *out) fail("BAD_ARGUMENT", QString("empty source range %1..%2 (media has %3 frames)").arg(*in).arg(*out).arg(m.length));
 }
 
@@ -538,6 +538,8 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
 
 // Details of the ops that place source ranges (import presets, core/StreamPresets.h)
 const char* const kPresetsDetails =
+    "in/out are source times (out exclusive, default: the whole file), duration = out - in. A still image takes "
+    "any length (out:'20s' or duration:'20s'; default 5 s). "
     "track: V2 puts the picture on V2 and the sound from A2 on. Files with several audio streams (OBS) get one "
     "track per stream, named after it, and follow the user's import presets from the app (by default every stream "
     "plays; users can e.g. mute the Mix stream when its single streams are there, or set rules per stream title; "
@@ -550,10 +552,10 @@ const char* const kPresetsDetails =
 QVector<OpDef> makeOps()
 {
     QVector<OpDef> ops{
-        {"append", "{op:'append', media, in?, out?, track?, presets?}", "put a source range at the end of the timeline",
+        {"append", "{op:'append', media, in?, out?|duration?, track?, presets?}", "put a source range at the end of the timeline",
          kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, true); }},
-        {"place", "{op:'place', media, at, in?, out?, track?, presets?}", "overwrite at a position", kPresetsDetails,
+        {"place", "{op:'place', media, at, in?, out?|duration?, track?, presets?}", "overwrite at a position", kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, false); }},
         {"keep", "{op:'keep', media, ranges:[[from,to],...], at?, track?, presets?}",
          "put several source ranges one after another (e.g. the 'sound' ranges of `silence`)", kPresetsDetails, opKeep},

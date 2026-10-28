@@ -382,7 +382,7 @@ void Editor::placeSourceRange(const QString& path, int in, int out, int frame, i
     if (!info || info->length <= 0) return;
     const MediaInfo m = *info;
     in = std::clamp(in, 0, m.length - 1);
-    out = std::clamp(out, in, m.length - 1);
+    out = m.isImage ? std::max(out, in) : std::clamp(out, in, m.length - 1); // a still takes any length (as trimmed)
     MediaInfo m2 = m; // locked track: this part is dropped
     track = std::max(0, track);
     if (m2.hasVideo && isTrackLocked(TrackRef{TrackKind::Video, track})) m2.hasVideo = false;

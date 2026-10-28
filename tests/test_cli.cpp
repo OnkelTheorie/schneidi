@@ -1263,3 +1263,22 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
     }
     return Check::result();
 }
+    // A still takes the length asked for (AI run 2026-10-28: out 20.6s gave the 5 s still length), as when trimmed
+    // in the app; a still with no length keeps the default
+    {
+        const QString still = Check::makeMedia(dir.filePath("bg.png"), {"-f", "lavfi", "-i", "color=c=blue:s=64x36", "-frames:v", "1"});
+        const QString proj = dir.filePath("still.schneidi");
+        run("new", {{"project", proj}, {"fps", 25}, {"width", 320}, {"height", 180}, {"overwrite", true}});
+        const auto clipsOf = [&](const QJsonObject& r) { return r["timeline"]["tracks"][0]["clips"].toArray(); };
+        QJsonObject r = run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"place","media":"%1","at":0,"out":"20.6s","track":"V1"},
+                                                                          {"op":"append","media":"%1","duration":"8s"},
+                                                                          {"op":"append","media":"%1"}])").arg(still)}, {"full", true}});
+        const QJsonArray clips = clipsOf(r);
+        if (CHECK_EQ(clips.size(), 3)) {
+            CHECK_EQ(clips[0]["end"].toInt() - clips[0]["start"].toInt(), 515);
+            CHECK_EQ(clips[1]["end"].toInt() - clips[1]["start"].toInt(), 200);
+            const int stillLength = run("probe", {{"file", still}, {"project", proj}})["frames"].toInt();
+            CHECK(stillLength > 0);
+            CHECK_EQ(clips[2]["end"].toInt() - clips[2]["start"].toInt(), stillLength);
+        }
+    }
