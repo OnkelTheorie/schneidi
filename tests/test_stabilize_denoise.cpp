@@ -378,6 +378,26 @@ int main(int argc, char** argv)
         EffectRegistry::instance(off, "stabilize")->enabled = false;
         off.in = 0;
         CHECK(Stabilizer::missing(videoTimeline(off), fmt).isEmpty());
+        // One frame (a cut rest that kept the effect): nothing to analyze, not missing (its analysis failed and
+        // with it the whole export)
+        Clip one = c;
+        one.out = one.in;
+        CHECK(!Stabilizer::request(one, fmt) && !Stabilizer::unsupportedReason(one).isEmpty());
+        CHECK(Stabilizer::missing(videoTimeline(one), fmt).isEmpty());
+    }
+
+    // Out beyond the end of the file (100 frames; file shortened/replaced): the result covers the clip anyway
+    // (it was named after the last real frame, never found, and analyzed again and again)
+    for (const auto& [in, out] : {std::pair{90, 120}, std::pair{110, 130}}) {
+        Clip past = c;
+        past.in = in;
+        past.out = out;
+        EffectRegistry::instance(past, "stabilize")->params["accuracy"] = 3.0;
+        const auto r = Stabilizer::request(past, fmt);
+        error.clear();
+        if (!CHECK(r && Stabilizer::analyze(*r, &error))) std::printf("       %s\n", qPrintable(error));
+        CHECK(r && Stabilizer::find(*r).valid());
+        CHECK(Stabilizer::missing(videoTimeline(past), fmt).isEmpty());
     }
 
     // Speed change (timewarp): analyzed on the same producer the timeline reads
