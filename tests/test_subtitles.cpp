@@ -18,10 +18,12 @@
 
 #include <Mlt.h>
 #include <QApplication>
+#include <QEventLoop>
 #include <QFile>
 #include <QImage>
 #include <QMouseEvent>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QUndoStack>
 #include <clocale>
 #include <cmath>
@@ -574,7 +576,21 @@ int testRender(const QString& dir)
     Exporter ex;
     QString err;
     CHECK(ex.start(tl, s, &err));
-    ex.cancel();
+    ex.cancel(); // canceled: no SRT either (it is written only with the finished export)
+    CHECK(!QFileInfo::exists(dir + "/out.srt"));
+    {
+        QEventLoop loop;
+        bool ok = false;
+        const auto c = QObject::connect(&ex, &Exporter::finished, &loop, [&](bool success, const QString&) {
+            ok = success;
+            loop.quit();
+        });
+        CHECK(ex.start(tl, s, &err));
+        QTimer::singleShot(120000, &loop, &QEventLoop::quit);
+        loop.exec();
+        QObject::disconnect(c);
+        CHECK(ok);
+    }
     QFile srt(dir + "/out.srt");
     CHECK(srt.open(QIODevice::ReadOnly));
     CHECK_EQ(QString::fromUtf8(srt.readAll()), QString("1\r\n00:00:00,000 --> 00:00:00,400\r\n") + st.cues[0].text + "\r\n\r\n");
