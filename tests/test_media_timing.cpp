@@ -147,5 +147,29 @@ int main(int argc, char** argv)
     Check::initMlt();
     QTemporaryDir dir;
 
+    // --- Proxy of a recording whose picture starts one frame after its sound: proxy frame k = original frame k
+    {
+        const QStringList sound{"-f", "lavfi", "-i", "sine=frequency=440:duration=3"};
+        const QStringList picture{"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=3"};
+        const QStringList x264{"-map", "1:v", "-map", "0:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
+                               "yuv420p", "-g", "10"};
+        const QString late = Check::makeMedia(dir.filePath("late_picture.mkv"),
+                                              sound + QStringList{"-itsoffset", "0.04"} + picture + x264
+                                                  + QStringList{"-c:a", "flac"});
+        const QString lateMp4 = Check::makeMedia(dir.filePath("late_picture.mp4"),
+                                                 sound + QStringList{"-itsoffset", "0.08"} + picture + x264
+                                                     + QStringList{"-c:a", "aac"});
+        const QString plain = Check::makeMedia(dir.filePath("plain.mp4"),
+                                               sound + picture + x264 + QStringList{"-c:a", "aac"});
+        if (CHECK(!late.isEmpty() && !lateMp4.isEmpty() && !plain.isEmpty())) {
+            const std::optional<double> zero = Video::zeroOffset(late);
+            CHECK(zero && std::abs(*zero - 0.04) < 0.002);
+            for (const QString& f : {late, lateMp4, plain}) {
+                const QString proxy = makeProxy(f);
+                if (CHECK(!proxy.isEmpty())) checkProxyFrames(f, proxy, qPrintable(QFileInfo(f).fileName()));
+            }
+        }
+    }
+
     return Check::result();
 }

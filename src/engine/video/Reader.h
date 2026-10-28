@@ -67,6 +67,11 @@ int64_t framePosition(int64_t pts, int64_t firstPts, int64_t startTime, AVRation
 // The stream timestamp of position `position` (the inverse, unrounded: where a seek aims)
 int64_t frameTimestamp(int64_t position, int64_t firstPts, int64_t startTime, AVRational timeBase, double fps);
 
+// Seconds from the container start (what FFmpeg turns into 0 when it converts the file without -copyts) to the
+// timestamp the reader counts as position 0 (the first key frame of the video stream); nullopt if the file has no
+// video. A game recording whose sound starts a frame before the picture gives ~0.033.
+std::optional<double> zeroOffset(const QString& path);
+
 class Reader {
 public:
     struct Options {

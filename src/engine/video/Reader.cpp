@@ -935,6 +935,38 @@ int64_t frameTimestamp(int64_t position, int64_t firstPts, int64_t startTime, AV
     return ts + zeroOf(firstPts, startTime, timeBase);
 }
 
+std::optional<double> zeroOffset(const QString& path)
+{
+    AVFormatContext* fmt = nullptr;
+    if (avformat_open_input(&fmt, path.toUtf8().constData(), nullptr, nullptr) < 0) return std::nullopt;
+    const std::unique_ptr<AVFormatContext, void (*)(AVFormatContext*)> guard(fmt, [](AVFormatContext* f) {
+        avformat_close_input(&f);
+    });
+    if (avformat_find_stream_info(fmt, nullptr) < 0) return std::nullopt;
+    int index = -1; // the stream Reader::open picks
+    for (unsigned i = 0; i < fmt->nb_streams && index < 0; ++i) {
+        const AVStream* st = fmt->streams[i];
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && avcodec_find_decoder(st->codecpar->codec_id)
+            && !(st->disposition & AV_DISPOSITION_ATTACHED_PIC))
+            index = int(i);
+    }
+    if (index < 0) return std::nullopt;
+    // As the reader's findFirstPts
+    int64_t first = AV_NOPTS_VALUE;
+    AVPacket* pkt = av_packet_alloc();
+    for (int n = 0; pkt && n < kFirstPtsPackets && first == AV_NOPTS_VALUE; ++n) {
+        if (av_read_frame(fmt, pkt) < 0) break;
+        if (pkt->stream_index == index && (pkt->flags & AV_PKT_FLAG_KEY))
+            first = pkt->dts != AV_NOPTS_VALUE && pkt->dts < 0 ? 0 : (pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts);
+        av_packet_unref(pkt);
+    }
+    av_packet_free(&pkt);
+    const AVRational tb = fmt->streams[index]->time_base;
+    const int64_t zeroUs = av_rescale_q(zeroOf(first, fmt->start_time, tb), tb, AV_TIME_BASE_Q);
+    const int64_t start = fmt->start_time != AV_NOPTS_VALUE ? fmt->start_time : 0;
+    return double(zeroUs - start) / AV_TIME_BASE;
+}
+
 Reader::Reader() : d(std::make_unique<Impl>()) {}
 Reader::~Reader() = default;
 
