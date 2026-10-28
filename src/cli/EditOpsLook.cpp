@@ -607,8 +607,10 @@ void addLookOps(QVector<OpDef>& ops)
                  "of the picture width/height, rotation in degrees (counterclockwise), softness = soft edge outside the "
                  "shape in % of the picture height (default 5), invert:true = everything outside. Inside the window "
                  "its own correction applies (lift … exposure like op 'color', neutral by default) and a fill: none, "
-                 "blur (amount 0..100 like the blur effect), pixelate (amount 100 = blocks of 1/10 of the picture "
-                 "height) or color (color \"#rrggbb\", covers it). Hide a face or a name: fill:'blur' or 'pixelate'. "
+                 "blur (amount 0..100 like the blur effect), pixelate (block size: amount 100 = 1/50 of the picture "
+                 "height, 22 px in 1080p, which makes a ~200 x 30 px player name an unreadable row of blocks; 50 = "
+                 "11 px; at least 2 px; projects from before 0.14 keep their coarser blocks as amounts above 100) "
+                 "or color (color \"#rrggbb\", covers it). Hide a face or a name: fill:'blur' or 'pixelate'. "
                  "The picture is the clip before transform/crop. Values that have keyframes get one at `at` (default "
                  "clip start); keyframe:true/false with `at` sets/removes a keyframe of every window value there. "
                  "Animate single values with {op:'keyframe', param:'grade.w1.x'}. remove:true deletes the window.",

@@ -4,6 +4,7 @@
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
 #include "core/Equalizer.h"
+#include "core/GradeWindows.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/Retime.h"
@@ -95,7 +96,9 @@ TrackDynamics dynamicsFromJson(const QJsonObject& o)
 //  2: audio streams per file (clip "audioStream"). Older versions would play only stream 1 and lose the assignment.
 //  3: crop measured on the clip's picture as it fits into the frame (0.12, convertCrop). Older versions would crop
 //     pictures of another shape than the frame wrongly.
-constexpr int kFormatVersion = 3;
+//  4: Color page window fill "pixelate" on a five times finer scale (0.14, convertPixelate). Older versions would
+//     show far coarser blocks than set.
+constexpr int kFormatVersion = 4;
 
 // Migrations: kMigrations[i] turns the JSON of version i + 1 into version i + 2 before the reader sees it. A step
 // converts what the reader of the new version no longer understands (renamed/restructured fields); a new version
@@ -104,7 +107,21 @@ using Migration = void (*)(QJsonObject& root);
 const std::array<Migration, kFormatVersion - 1> kMigrations = {
     [](QJsonObject&) {}, // 1 -> 2: nothing to convert (clips without "audioStream" use stream 0)
     [](QJsonObject&) {}, // 2 -> 3: crop values are converted while reading (convertCrop needs the media's shape)
+    [](QJsonObject&) {}, // 3 -> 4: pixelate amounts are converted while reading (convertPixelate, keyframes too)
 };
+
+// Format 4: pixelate windows have a finer scale (GradeWindows::pixelBlock: amount 100 = 1/50 of the picture height,
+// before 1/10). Amounts of older files are multiplied by 5 (static value and keyframes; the default 50 becomes 250),
+// so their blocks stay exactly as large. Windows with another fill keep their amount: switching such a window to
+// pixelate later uses the new scale.
+void convertPixelate(Clip& c)
+{
+    for (int n : GradeWindows::list(c))
+        if (GradeWindows::fillAt(c, n, 0).fill == GradeWindows::Fill::Pixelate) {
+            const double k = GradeWindows::kOldPixelateFactor;
+            Keys::convert(c, GradeWindows::param(n, "amount"), [k](double v) { return std::clamp(v, 0.0, 100.0) * k; }, k);
+        }
+}
 
 // Format 3: crop values are timeline pixels on the clip's picture fitted into the frame (ClipTransform). Up to format 2
 // the engine measured them on the frame: without a transform from the frame's edges (letterbox bars included), with
@@ -830,6 +847,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
                 Clip c = clipFromJson(cv.toObject(), allMedia, projectDir);
                 if ((fileVersion < 3 || c.cropOnFrame) && kind == TrackKind::Video)
                     convertCrop(c, QSizeF(d.format.width, d.format.height));
+                if (fileVersion < 4) convertPixelate(c);
                 d.lastClipId = std::max(d.lastClipId, c.id);
                 d.lastLinkId = std::max(d.lastLinkId, c.linkId);
                 t.clips << c;

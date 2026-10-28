@@ -160,17 +160,46 @@ void testPixels()
         ColorGrade::applyWindow(sharp.data(), W, H, w);
         CHECK(sharp == before);
     }
-    // Pixelate: blocks on a grid from the picture corner (100 % = 1/10 of the height = 10 px)
+    // Pixelate: blocks on a grid from the picture corner (500 = an old project's 100 = 1/10 of the height = 10 px)
     {
         ColorGrade::Window w{geo(Shape::Rectangle, 50, 50, 40, 60), {}, {}};
         w.fill.fill = Fill::Pixelate;
-        w.fill.amount = 100;
+        w.fill.amount = 500;
         auto px = image(W, H, [](int x, int) { return x; });
         ColorGrade::applyWindow(px.data(), W, H, w);
         CHECK_EQ(at(px, W, 100, 50), at(px, W, 109, 59)); // one block 100..109
         CHECK(std::abs(at(px, W, 100, 50) - 104) <= 1);   // average of 100..109
         CHECK(at(px, W, 110, 50) != at(px, W, 109, 50));
         CHECK_EQ(at(px, W, 10, 10), 10);                  // outside unchanged
+    }
+    // Pixelate scale (AI test run 2026-10-28: 100 was 1/10 of the height, a name became one solid patch): 100 = 1/50
+    // of the height, small amounts fine blocks, at least 2 px
+    CHECK_EQ(GradeWindows::pixelBlock(100, 1080), 22);
+    CHECK_EQ(GradeWindows::pixelBlock(50, 1080), 11);
+    CHECK_EQ(GradeWindows::pixelBlock(10, 1080), 2);
+    CHECK_EQ(GradeWindows::pixelBlock(0, 1080), 2);
+    CHECK_EQ(GradeWindows::pixelBlock(500, 1080), 108); // converted old project: as before
+    // A player name of 200 x 30 px in 1080p at amount 100: the 1-px strokes of the letters are gone, but the area is
+    // still several blocks (not one solid patch)
+    {
+        const int NW = 400, NH = 1080;
+        ColorGrade::Window w{geo(Shape::Rectangle, 50, 50, 200.0 / NW * 100, 30.0 / NH * 100), {}, {}};
+        w.fill.fill = Fill::Pixelate;
+        w.fill.amount = 100;
+        // "text": bright one-pixel strokes on a dark, slightly shaded background
+        const auto text = [](int x, int) { return (x % 3 == 0) ? 230 : 20 + x / 4; };
+        auto px = image(NW, NH, text);
+        ColorGrade::applyWindow(px.data(), NW, NH, w);
+        int maxStep = 0, distinct = 0, last = -1;
+        for (int x = 110; x < 290; ++x) {
+            const int v = at(px, NW, x, NH / 2);
+            if (last >= 0) maxStep = std::max(maxStep, std::abs(v - last));
+            if (v != last) ++distinct;
+            last = v;
+        }
+        CHECK(distinct >= 6); // several blocks along the name
+        CHECK(maxStep < 60);  // no letter stroke (about 200 apart) survives
+        CHECK_EQ(at(px, NW, 10, 10), text(10, 10)); // outside unchanged
     }
     // A window that does nothing changes nothing
     {
@@ -281,6 +310,39 @@ void testModel(const QString& dir)
         CHECK(*l1 == *c1);
         CHECK(GradeWindows::exists(*l1, 1));
         CHECK_EQ(GradeWindows::geometryAt(*l1, 1, 30).x, 70.0);
+    }
+
+    // Projects of format 3 (before 0.14): pixelate amounts were five times coarser -> converted on loading (static
+    // value, default and keyframes), so the blocks stay the same; a blur window keeps its amount
+    {
+        const QByteArray old = R"({"app":"schneidi","version":3,"fps":25,"media":[{"path":"/x/a.mp4","name":"a.mp4",
+            "length":100,"hasVideo":true}],"timeline":{"video":[{"clips":[
+            {"id":1,"start":0,"in":0,"out":49,"media":0,"effects":[{"id":"grade","params":{
+                "w1.shape":"rectangle","w1.fill":"pixelate","w1.amount":30,
+                "w2.shape":"ellipse","w2.fill":"blur","w2.amount":30,
+                "w3.shape":"ellipse","w3.fill":"pixelate"}}],
+             "keys":{"KEYID":[[0,10],[20,40]]}}]}],"audio":[]}})";
+        ProjectData o;
+        QString err;
+        const QByteArray json = QByteArray(old).replace("KEYID", Keys::info(GradeWindows::param(1, "amount")).id);
+        if (CHECK(ProjectFile::fromJson(json, dir + "/old.schneidi", &o, &err))
+            && CHECK(!o.timeline.video.isEmpty() && !o.timeline.video[0].clips.isEmpty())) {
+            const Clip& oc = o.timeline.video[0].clips[0];
+            CHECK_EQ(Keys::staticValue(oc, GradeWindows::param(1, "amount")), 150.0);
+            CHECK_EQ(GradeWindows::fillAt(oc, 1, 0).amount, 50.0);
+            CHECK_EQ(GradeWindows::fillAt(oc, 1, 20).amount, 200.0);
+            CHECK_EQ(GradeWindows::fillAt(oc, 2, 0).amount, 30.0);  // blur: unchanged
+            CHECK_EQ(GradeWindows::fillAt(oc, 3, 0).amount, 250.0); // default 50 of the old scale
+            // the same block size as before: old 40 at 1080 = 43 px
+            CHECK_EQ(GradeWindows::pixelBlock(GradeWindows::fillAt(oc, 1, 20).amount, 1080),
+                     int(std::lround(40 / 100.0 * 1080 / 10.0)));
+            // Saved again (format 4) and loaded: not converted a second time
+            CHECK(ProjectFile::save(o, dir + "/old4.schneidi", &err));
+            ProjectData again;
+            CHECK(ProjectFile::load(dir + "/old4.schneidi", &again, &err));
+            if (CHECK(!again.timeline.video.isEmpty() && !again.timeline.video[0].clips.isEmpty()))
+                CHECK_EQ(GradeWindows::fillAt(again.timeline.video[0].clips[0], 1, 20).amount, 200.0);
+        }
     }
 
     // Remove with undo

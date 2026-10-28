@@ -27,7 +27,8 @@ in the clip's order as `info` lists them; the order changes the picture (blur th
 the background, not pure green), `distance` = tolerance (raise it until shaded parts of the screen go, ~0.3–0.45),
 `softness` = soft edge, `spill` = takes the green fringe off the subject (default full). Check with `frames`
 over a contrasting clip below. Blurring a face or a plate: a `window` with fill 'blur' (or 'pixelate') on the
-clip, then `track_window` so it follows the face – there is no automatic face detection.
+clip, then `track_window` so it follows the face – there is no automatic face detection. Pixelate `amount` is the
+block size: 100 = 1/50 of the picture height (22 px in 1080p, enough to hide a player name), 50 = half that.
 
 ## Limits
 Phone footage in HDR (iPhone HLG/Dolby Vision, many Android phones) can look pale in schneidi. Raise contrast and

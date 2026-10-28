@@ -1009,7 +1009,7 @@ void applyWindow(uint8_t* rgba, int width, int height, const Window& w)
         const int m = int(std::ceil(sigma * 3)) + 1;
         area = r.adjusted(-m, -m, m, m);
     } else if (w.fill.fill == Fill::Pixelate) {
-        block = std::max(2, int(std::lround(w.fill.amount / 100.0 * height / 10.0))); // 100 = 1/10 of the height
+        block = GradeWindows::pixelBlock(w.fill.amount, height);
         const int x0 = r.left() / block * block, y0 = r.top() / block * block;
         area = QRect(QPoint(x0, y0), QPoint((r.right() / block + 1) * block - 1, (r.bottom() / block + 1) * block - 1));
     }
