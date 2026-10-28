@@ -812,6 +812,9 @@ const QVector<Command>& commands()
           {"from", T::Time, "start of the range (default: timeline start)"},
           {"to", T::Time, "end of the range, exclusive (default: timeline end)"},
           {"timeline", T::String, "timeline to render (id or name; default: the open one)"},
+          {"mute_tracks", T::Times, "tracks left out of this render only, e.g. [\"A2\"] (a voice track) or "
+                                    "[\"V3\",\"A3\"]: audio tracks muted, video tracks hidden; the project stays "
+                                    "as it is"},
           {"overwrite", T::Boolean, "replace an existing output file"}},
          cmdRender},
         {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams. With gaps: the stutter "

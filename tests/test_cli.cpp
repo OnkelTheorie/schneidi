@@ -1014,6 +1014,16 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(rendered["out"].toString().endsWith(".wav"));
         CHECK_EQ(rendered["preset"].toString(), wavPreset);
         CHECK(QFileInfo(rendered["out"].toString()).size() > 100000);
+        // A track left out of one render only (AI run 2026-10-28 muted the voice in the mixer, rendered, unmuted)
+        {
+            const QJsonObject silent = run("render", {{"project", proj}, {"out", dir.filePath("nonoise.wav")}, {"format", "wav"},
+                                                      {"to", "2s"}, {"mute_tracks", "A1"}});
+            const double lufs = run("loudness", {{"source", silent["out"].toString()}})["loudness"]["integrated_lufs"].toDouble();
+            CHECK(lufs < -100);
+            CHECK(mix() > -100); // the project's A1 still plays
+            CHECK(messageOf("render", {{"project", proj}, {"out", dir.filePath("x.wav")}, {"mute_tracks", QJsonArray{"A9"}}})
+                      .contains("there is no A9"));
+        }
         // Video encoder: the answer says which one wrote the file
         CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("x.mp4")}, {"encoder", "gpu"}}),
                  QString("BAD_ARGUMENT"));
