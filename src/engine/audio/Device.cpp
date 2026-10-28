@@ -230,6 +230,7 @@ public:
     int latency() const override { return m_latency; }
     QString name() const override { return m_name; }
     bool fallback() const override { return m_fallback; }
+    void setFallback() { m_fallback = true; }
     int reroutes() const override { return m_reroutes.load(std::memory_order_relaxed); }
     void detach() override
     {
@@ -265,6 +266,20 @@ std::unique_ptr<Device> Device::open(const Config& config, Callback callback, QS
         QString why;
         if (card->open(config, callback, &why)) return card;
         card.reset();
+        if (!config.output.isEmpty()) {
+            // The chosen output is there but does not open (taken exclusively by another program, busy ALSA device,
+            // format not supported): the system default instead of silence
+            qWarning("Audio: %s – Systemstandard", qPrintable(why));
+            Config standard = config;
+            standard.output.clear();
+            card = std::make_unique<SoundCard>();
+            if (card->open(standard, callback, nullptr)) {
+                card->setFallback();
+                if (error) *error = why;
+                return card;
+            }
+            card.reset();
+        }
         qWarning("Audio: %s – spiele stumm", qPrintable(why));
         if (error) *error = why;
         return std::make_unique<TimerDevice>(config, std::move(callback), QString(), true);
@@ -277,10 +292,32 @@ bool Device::available(const Config& config)
     if (qEnvironmentVariableIsSet("SCHNEIDI_AUDIO_DEVICE") || plainName(config.backend) == "null") return true;
     ma_context context;
     if (!initContext(config.backend, &context)) return false;
-    const auto list = listOutputs(&context);
+    bool found = false;
+    ma_device_id chosen{};
+    for (const auto& [output, id] : listOutputs(&context))
+        if (config.output.isEmpty() || output.id == config.output) {
+            found = true;
+            chosen = id;
+        }
+    // Listed is not enough: an output taken exclusively by another program (WASAPI, ALSA hw) is listed but does not
+    // open – the watchdog would reopen every few seconds forever. Opened (not started) and closed again to see.
+    if (found) {
+        ma_device_config c = ma_device_config_init(ma_device_type_playback);
+        if (!config.output.isEmpty()) c.playback.pDeviceID = &chosen;
+        c.playback.format = ma_format_f32;
+        c.playback.channels = ma_uint32(config.channels);
+        c.sampleRate = ma_uint32(config.rate);
+        c.periodSizeInFrames = ma_uint32(std::max(64, config.buffer / 2));
+        c.periods = 2;
+        c.dataCallback = [](ma_device* device, void* out, const void*, ma_uint32 frames) {
+            std::fill_n(static_cast<float*>(out), size_t(frames) * device->playback.channels, 0.f); // never started
+        };
+        ma_device probe;
+        found = ma_device_init(&context, &c, &probe) == MA_SUCCESS;
+        if (found) ma_device_uninit(&probe);
+    }
     ma_context_uninit(&context);
-    return std::any_of(list.begin(), list.end(),
-                       [&](const auto& o) { return config.output.isEmpty() || o.first.id == config.output; });
+    return found;
 }
 
 QStringList Device::backends()
