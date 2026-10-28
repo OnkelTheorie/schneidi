@@ -26,10 +26,19 @@ QString errorOf(const QString& text)
     return (m.isEmpty() ? text : m).simplified();
 }
 
-// A call by what it does (name and arguments; the keys of a JSON object are sorted)
+// A call by what it does (name and arguments; the keys of a JSON object are sorted). Unreadable arguments by their
+// error: never the same as a valid call without arguments
 QString callKey(const Ai::ToolCall& c)
 {
+    if (!c.error.isEmpty()) return c.name + " unreadable: " + c.error;
     return c.name + QString::fromUtf8(QJsonDocument(c.input).toJson(QJsonDocument::Compact));
+}
+
+// Tools that change the project, the app or the files (a failed call may work after them)
+bool changesState(const QString& tool)
+{
+    static const QStringList tools{"edit", "import", "new", "restore", "app", "watch"};
+    return tools.contains(tool);
 }
 
 QString capitalized(QString s)
@@ -77,7 +86,8 @@ AiChat::AiChat(QObject* parent) : QObject(parent), m_client(new AiClient(this)),
         addNotice(T("%1 Neuer Versuch in %2 s …").arg(why).arg(seconds));
     });
     connect(m_client, &AiClient::contextProbed, this, [this](qint64 tokens) {
-        m_contexts.insert(m_probeKey, tokens);
+        // Not known (no server said it, a probe timed out while the model loaded): asked again with the next request
+        if (tokens > 0) m_contexts.insert(m_probeKey, tokens);
         m_probing = false;
         prepare();
     });
@@ -184,7 +194,8 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review
     m_review = review;
     appendUser(message);
     setBusy(true);
-    // The model's context, once per address and model, while the tools start (a short timeout: no server says it = 0)
+    // The model's context, once per address and model, while the tools start (a short timeout: no server says it = 0,
+    // asked again next time)
     if (!m_probing && !m_contexts.contains(contextKey(endpoint)) && !Ai::contextProbes(endpoint).isEmpty()) {
         m_probing = true;
         m_probeKey = contextKey(endpoint);
@@ -199,7 +210,16 @@ void AiChat::toolsReady() { prepare(); }
 
 void AiChat::prepare()
 {
-    if (!m_busy || m_stopped || m_probing || m_asking || !m_mcp->isReady()) return;
+    if (!m_busy || m_stopped || m_probing || m_asking) return;
+    if (!m_mcp->isReady()) {
+        // Still starting: toolsReady() or failed() follows. Else the tool server ended while the guide or the ops were
+        // read (crashed): the request ends, the next one starts it again (nothing else would end it)
+        if (!m_mcp->isStarting()) {
+            addError(T("Die Werkzeuge der KI sind ausgefallen. Schreib einfach weiter: sie starten dann neu."));
+            finishTurn();
+        }
+        return;
+    }
     // The editing guide, once: it is the heart of the instructions (the same text as the `guide` tool)
     if (m_guide != Guide::Read && !m_guideAsked) {
         m_guideAsked = true;
@@ -219,7 +239,7 @@ void AiChat::prepare()
                 m_guideTopicList = topics.join('\n');
             }
             prepare();
-        });
+        }, m_mcp->setupTimeoutMs());
         return;
     }
     // The short request lists the ops of `edit` by their signatures (from `help`, read once)
@@ -231,7 +251,7 @@ void AiChat::prepare()
             m_asking = false;
             if (!r.error) m_editOps = QJsonDocument::fromJson(r.text.toUtf8()).object()["commands"][0]["ops"].toArray();
             prepare();
-        });
+        }, m_mcp->setupTimeoutMs());
         return;
     }
     requestModel();
@@ -464,6 +484,27 @@ void AiChat::nextTool()
     e.details = pretty(call.input);
     e.state = Entry::State::Running;
     const int entry = add(e);
+    // The same call as one that failed in this request (small models send it again unchanged, round after round): not
+    // run again, the model is told; the second time the request ends (also the same unreadable arguments again)
+    if (m_endpoint.protocol != Ai::Protocol::Anthropic && m_failedCalls.contains(callKey(call))) {
+        if (++m_repeats >= kMaxRepeats) {
+            change(entry, [](Entry& x) { x.state = Entry::State::Failed; });
+            for (int i = int(m_results.size()); i < m_calls.size(); ++i)
+                m_results << Ai::ToolResult{m_calls[i].id, m_calls[i].name,
+                                            "not run: the request was ended (the same failed call again)", {}, true};
+            appendUser({}, m_results);
+            addNotice(T("Die KI wiederholt einen Schritt, der schon fehlgeschlagen ist – angehalten. Schreib, wie es "
+                        "weitergehen soll."));
+            finishTurn();
+            return;
+        }
+        toolDone(entry, call,
+                 QString("not run again: this exact call failed before in this request (%1). Do not repeat it: change "
+                         "what the error says, try another way, or tell the user what went wrong.")
+                     .arg(m_failedCalls.value(callKey(call))),
+                 {}, true);
+        return;
+    }
     if (!call.error.isEmpty()) { // never reached the tool; what to send instead (small models write "social")
         QStringList params;
         for (const QJsonValue& t : m_mcp->tools())
@@ -488,27 +529,6 @@ void AiChat::nextTool()
         toolDone(entry, call, QString::fromUtf8(QJsonDocument(answer).toJson(QJsonDocument::Compact)), {}, false);
         return;
     }
-    // The same call as one that failed in this request (small models send it again unchanged, round after round): not
-    // run again, the model is told; the second time the request ends
-    if (m_endpoint.protocol != Ai::Protocol::Anthropic && m_failedCalls.contains(callKey(call))) {
-        if (++m_repeats >= kMaxRepeats) {
-            change(entry, [](Entry& x) { x.state = Entry::State::Failed; });
-            for (int i = int(m_results.size()); i < m_calls.size(); ++i)
-                m_results << Ai::ToolResult{m_calls[i].id, m_calls[i].name,
-                                            "not run: the request was ended (the same failed call again)", {}, true};
-            appendUser({}, m_results);
-            addNotice(T("Die KI wiederholt einen Schritt, der schon fehlgeschlagen ist – angehalten. Schreib, wie es "
-                        "weitergehen soll."));
-            finishTurn();
-            return;
-        }
-        toolDone(entry, call,
-                 QString("not run again: this exact call failed before in this request (%1). Do not repeat it: change "
-                         "what the error says, try another way, or tell the user what went wrong.")
-                     .arg(m_failedCalls.value(callKey(call))),
-                 {}, true);
-        return;
-    }
     m_mcp->call(
         call.name, call.input,
         [this, entry](int percent) { change(entry, [percent](Entry& x) { x.percent = percent; }); },
@@ -529,6 +549,8 @@ void AiChat::toolDone(int entry, const Ai::ToolCall& call, const QString& text, 
     });
     if (error && !m_stopped && !m_failedCalls.contains(callKey(call)))
         m_failedCalls.insert(callKey(call), cut(errorOf(text), 300));
+    // A change succeeded: what failed before may work now (the timeline it missed was made), so it may be tried again
+    if (!error && !m_stopped && changesState(call.name)) m_failedCalls.clear();
     // The model reads English; a stopped call may still have happened inside the app
     const QString answer = m_stopped ? QString("stopped by the user (the call may have finished in the app anyway)") : text;
     m_results << capped({call.id, call.name, answer, m_stopped ? QVector<Ai::Image>() : images, error || m_stopped});

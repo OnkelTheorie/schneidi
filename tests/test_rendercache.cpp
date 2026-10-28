@@ -184,6 +184,23 @@ void testKeys()
         g.close();
         CHECK_EQ(RenderCache::key(c, kFmt), k);
     }
+    {
+        // A LUT file edited or replaced under the same name: the cached render is stale
+        const QString lut = QFileInfo(g_media).dir().filePath("look.cube");
+        QFile f(lut);
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.write("LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n");
+        f.close();
+        Clip a = c;
+        EffectRegistry::add(a, "grade"); // the Color page grade carries the LUT
+        EffectRegistry::instance(a, "grade")->params["lut"] = lut;
+        const QString before = RenderCache::key(a, kFmt);
+        CHECK_EQ(RenderCache::key(a, kFmt), before);
+        CHECK(f.open(QIODevice::Append));
+        f.write("# edited\n");
+        f.close();
+        CHECK(RenderCache::key(a, kFmt) != before);
+    }
 
     // Mode: Off = never, User = only marked, Smart = additionally expensive; titles never
     Clip marked = c;

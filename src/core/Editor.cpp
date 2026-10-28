@@ -197,9 +197,16 @@ void Editor::moveClips(const QVector<int>& idsIn, int deltaFrames, TrackKind kin
         if (isTrackLocked({ref.kind, ref.index + dt})) return;
     int cueStart = INT_MAX;
     const QVector<int> cues = unlockedSubtitles(ids, &cueStart); // selected subtitles move along in time
-    const int cueDelta = std::max(deltaFrames, -cueStart);
+    // Not before frame 0, and the same delta for everything: clamping each clip on its own would pile
+    // the selection up at 0 (later clips overwriting earlier ones) and let clips and subtitles drift apart
+    int clipStart = INT_MAX;
+    for (int id : ids)
+        if (const Clip* c = TimelineOps::findClip(cur, id)) clipStart = std::min(clipStart, c->start);
+    deltaFrames = std::max(deltaFrames, -std::min(clipStart, cueStart));
+    const int cueDelta = deltaFrames;
     const bool clips = !TimelineOps::tracksOf(cur, ids).isEmpty();
     if (!clips && (cues.isEmpty() || cueDelta == 0)) return;
+    if (deltaFrames == 0 && dt == 0) return;
     Project* p = m_project;
     p->edit(clips ? T("Clips verschieben") : T("Untertitel verschieben"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
@@ -218,6 +225,12 @@ void Editor::moveClipsFine(const QVector<int>& idsIn, int fine, TrackKind kind, 
     const int dt = TimelineOps::clampTrackDelta(cur, ids, kind, trackDelta);
     for (TrackRef ref : TimelineOps::tracksOf(cur, ids))
         if (isTrackLocked({ref.kind, ref.index + dt})) return;
+    // Not before frame 0 with one delta for all (see moveClips)
+    int earliest = INT_MAX;
+    for (int id : ids)
+        if (const Clip* c = TimelineOps::findClip(cur, id)) earliest = std::min(earliest, c->start * 100 + c->subframe);
+    if (earliest != INT_MAX) fine = std::max(fine, -earliest);
+    if (fine == 0 && dt == 0) return;
     // Target per clip; whole frames via moveClips (overwriting as usual), then the fine position
     QHash<int, Clip> target;
     for (int id : ids)

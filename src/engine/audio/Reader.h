@@ -51,6 +51,7 @@ public:
     struct Stats {
         int seeks = 0;         // demuxer seeks (incl. retries)
         int gaps = 0;          // timestamp gaps filled with silence
+        int outliers = 0;      // single packets far ahead of the stream, placed where the stream was
         int overlaps = 0;      // overlapping packets trimmed
         int decodeErrors = 0;
         int reopens = 0;       // jumps to the start that needed a fresh demuxer

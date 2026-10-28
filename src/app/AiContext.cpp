@@ -139,7 +139,7 @@ QJsonArray compactTools(const QJsonArray& tools, const QJsonArray& editOps)
                 if (const QString usage = op["usage"].toString(); !usage.isEmpty()) ops << usage;
             QJsonObject p = props["ops"].toObject();
             p["description"] = "List of operations, applied in order (nothing changes if one fails). Times: frames, "
-                               "\"4.5s\" or \"HH:MM:SS:FF\"; ranges [from, to). Tracks: \"V1\", \"A2\". Clip ids "
+                               "\"4.5s\", \"HH:MM:SS:FF\" or \"MM:SS\"; ranges [from, to). Tracks: \"V1\", \"A2\". Clip ids "
                                "come from `info` or the answer of the edit before (they change when clips are split). "
                                "An op's parameters in detail: `help` with command 'edit' and op '<name>'. Ops: "
                                + ops.join("; ");

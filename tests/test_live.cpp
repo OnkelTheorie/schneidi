@@ -238,6 +238,7 @@ int main(int argc, char* argv[])
     CHECK_EQ(code(r), QString("NOT_FOUND"));
     CHECK_EQ(videoClips(fake.project), 2);
     CHECK_EQ(fake.project.undoStack()->index(), undoBefore + 1);
+    CHECK(!fake.project.undoStack()->canRedo()); // redo does not bring the half edit back
     // ... also what is not in the undo history: source markers and source In/Out
     r = cli({"edit", fake.path, "--ops",
              R"([{"op":"source_marker","media":"/x/a.mp4","at":30},{"op":"media","media":"/x/a.mp4","in":5,"out":60},
@@ -257,6 +258,25 @@ int main(int argc, char* argv[])
         CHECK_EQ(code(r), QString("NOT_FOUND"));
         CHECK_EQ(fake.project.media().size(), mediaBefore);
         CHECK(!fake.project.mediaInfo(broll));
+        // import is all or nothing too: a file it cannot read takes the ones before it out again, no step is left
+        const QString broken = tmp.path() + "/broken.mp4";
+        {
+            QFile f(broken);
+            if (f.open(QIODevice::WriteOnly)) f.write("no video");
+        }
+        const int steps = fake.project.undoStack()->index();
+        r = cli({"import", fake.path, broll, broken});
+        CHECK(code(r) != QString("ok"));
+        CHECK_EQ(fake.project.media().size(), mediaBefore);
+        CHECK(!fake.project.mediaInfo(broll));
+        CHECK_EQ(fake.project.undoStack()->index(), steps);
+        CHECK(!fake.project.undoStack()->canRedo());
+        // ... and one that works is no empty undo step
+        r = cli({"import", fake.path, broll});
+        CHECK_EQ(code(r), QString("ok"));
+        CHECK(fake.project.mediaInfo(broll));
+        CHECK_EQ(fake.project.undoStack()->index(), steps);
+        fake.project.replaceMedia(fake.project.media().mid(0, mediaBefore));
     }
 
     // Dry run: computed on a copy
@@ -340,6 +360,26 @@ int main(int argc, char* argv[])
         fake.path = own;
     }
     CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
+
+    // A new resolution in the app while another timeline holds clips: refused until the user said yes (confirm)
+    {
+        const ProjectFormat before = fake.project.format();
+        const int undo = fake.project.undoStack()->index();
+        r = cli({"edit", "@app", "--ops",
+                 R"([{"op":"new_timeline","name":"Short"},{"op":"format","width":1080,"height":1920}])"});
+        CHECK_EQ(code(r), QString("NEEDS_CONFIRMATION"));
+        CHECK(r["error"].toObject()["message"].toString().contains("confirm:true"));
+        CHECK(fake.project.format() == before);
+        CHECK_EQ(fake.project.undoStack()->index(), undo); // nothing happened (also no new timeline)
+        // The timeline being edited alone may hold clips; the frame rate is not asked about
+        CHECK_EQ(code(cli({"edit", "@app", "--ops", R"([{"op":"format","fps":25}])"})), QString("ok"));
+        r = cli({"edit", "@app", "--ops",
+                 R"([{"op":"new_timeline","name":"Short"},{"op":"format","width":1080,"height":1920,"confirm":true}])"});
+        CHECK_EQ(code(r), QString("ok"));
+        CHECK_EQ(fake.project.format().height, 1920);
+        CHECK_EQ(code(cli({"app", "undo"})), QString("ok"));
+        CHECK(fake.project.format() == before);
+    }
 
     // backups/restore: "@app" is the app's file; restore replaces the timelines in the app as one undo step
     CHECK(!ProjectFile::backup(fake.path).isEmpty()); // state with 2 clips
@@ -451,6 +491,53 @@ int main(int argc, char* argv[])
         CHECK(waitServing(mcp));
         for (int i = 0; i < 50 && server.attached(); ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         CHECK(!server.attached());
+    }
+
+    // The app does not answer in time (a long command blocks its event loop; here: this process does not serve):
+    // an error, never a silent write to the file the app has open
+    {
+        const int clips = fileVideoClips(fake.path);
+        QProcess p;
+        p.start(SCHNEIDI_CLI, {"edit", fake.path, "--ops", R"([{"op":"split","at":30}])"});
+        CHECK(p.waitForFinished(60000)); // without serving
+        r = QJsonDocument::fromJson(p.readAllStandardOutput()).object();
+        CHECK_EQ(code(r), QString("APP_BUSY"));
+        CHECK_EQ(fileVideoClips(fake.path), clips);
+        for (int i = 0; i < 20; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 5); // the late hello
+    }
+    // A request that timed out ends the connection: its late answer is not read as the answer to the next one
+    {
+        QProcess mcp;
+        mcp.start(SCHNEIDI_CLI, {"mcp"});
+        const auto serveUntil = [&](QByteArray& out, int lines) {
+            for (int i = 0; i < 4000 && out.count('\n') < lines; ++i) {
+                mcp.waitForReadyRead(5);
+                out += mcp.readAllStandardOutput();
+                QCoreApplication::processEvents();
+            }
+        };
+        QByteArray out;
+        mcp.write(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})" "\n");
+        mcp.write(R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"info","arguments":{"project":"@app"}}})" "\n");
+        serveUntil(out, 2);
+        // The file path asks the app (hello) which project it has open: no answer while this process does not serve
+        mcp.write(QByteArray(R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"info","arguments":{"project":")")
+                  + fake.path.toUtf8() + R"("}}})" "\n");
+        for (int i = 0; i < 300 && out.count('\n') < 3; ++i) {
+            mcp.waitForReadyRead(100);
+            out += mcp.readAllStandardOutput();
+        }
+        const QList<QByteArray> before = out.split('\n');
+        CHECK(before.value(2).contains("APP_BUSY"));
+        mcp.write(R"({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"info","arguments":{"project":"@app"}}})" "\n");
+        mcp.write(R"({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"info","arguments":{"project":"@app"}}})" "\n");
+        serveUntil(out, 5);
+        const QList<QByteArray> lines = out.split('\n');
+        if (!CHECK(lines.value(3).contains("\\\"ok\\\":true") && lines.value(4).contains("\\\"ok\\\":true")))
+            std::printf("       %s\n", out.constData());
+        mcp.closeWriteChannel();
+        CHECK(waitServing(mcp));
+        for (int i = 0; i < 50 && server.attached(); ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
     }
 
     // Other projects stay file based

@@ -55,7 +55,8 @@ Every command then works on what the app shows, unsaved changes included; `info`
 - **The result belongs in the open project**, not in a project file beside it that the user never sees: a new
   version (another format, a short from a long edit) goes into a new timeline (`new_timeline`). The resolution
   belongs to the whole project (`format` changes every timeline): before changing it while other timelines hold
-  clips, ask in one sentence - switch the project (the other timelines get bars) or make a separate project.
+  clips, ask in one sentence - switch the project (the other timelines get bars) or make a separate project. In the
+  app `format` refuses such a change until you send `confirm:true` - only after the user said yes.
 - One `edit` call = one undo step in the app. Put a logical change (e.g. "remove all pauses") into one call so the
   user can take it back with one Ctrl+Z.
 - Don't save (`app` save) unless the user asks - they decide when their file changes.
@@ -68,7 +69,8 @@ Every command then works on what the app shows, unsaved changes included; `info`
 ## Ground rules
 
 - **Absolute paths** for every file.
-- **Times**: frames (integer, in the project's frame rate), seconds like `"4.5s"`, or timecode `"00:01:02:10"`.
+- **Times**: frames (integer, in the project's frame rate), seconds like `"4.5s"`, timecode `"00:01:02:10"`
+  (hours:minutes:seconds:frames), or clock time `"1:30"` (minutes:seconds), `"00:01:02.5"` (decimal seconds).
   Seconds are the safest. Analysis commands on a media file count frames in the file's own rate unless you pass
   `project`, so pass it when you feed the result into `edit`.
 - **Never overwrite the user's material.** Renders and projects get new names (`trip-cut.mp4`, `trip-9x16.mp4`);

@@ -463,6 +463,7 @@
  "Die Werkzeuge der KI (schneidi-cli) sind nicht eingerichtet.": "Инструменты ИИ (schneidi-cli) не настроены.",
  "Die Werkzeuge der KI (schneidi-cli) wurden beendet.": "Инструменты ИИ (schneidi-cli) завершили работу.",
  "Die Werkzeuge der KI antworten nicht: %1": "Инструменты ИИ не отвечают: %1",
+ "Die Werkzeuge der KI (schneidi-cli) antworten nicht (nach %1 s abgebrochen).": "Инструменты ИИ (schneidi-cli) не отвечают (остановлены через %1 с).",
  "Die Werkzeuge der KI sind ausgefallen. Schreib einfach weiter: sie starten dann neu.": "Инструменты ИИ перестали работать. Просто пишите дальше: тогда они запустятся снова.",
  "Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Hier kosten die Effekte am meisten. Der Render-Cache „Smart“ rechnet Clips mit Effekten in Pausen vor, der Export nutzt weiter die Originale": "Воспроизведение рывками (%1 из %2 кадров/с): здесь больше всего стоят эффекты. Кэш рендера «Умный» просчитывает клипы с эффектами в паузах, экспорт по-прежнему использует оригиналы",
  "Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Proxy-Medien machen die Vorschau flüssig, der Export nutzt weiter die Originale": "Воспроизведение рывками (%1 из %2 кадров/с): прокси-медиа делают предпросмотр плавным, экспорт по-прежнему использует оригиналы",

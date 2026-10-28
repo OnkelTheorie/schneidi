@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QProcess>
+#include <QTimer>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -72,19 +73,33 @@ void McpClient::start()
         if (e == QProcess::FailedToStart) onEnded();
     });
     m_process->start(m_command.first(), m_command.mid(1));
+    // A server that hangs while starting (a virus scanner holding it, a blocked live connection): ended with a message
+    // instead of a chat that works forever
+    const int generation = ++m_generation;
+    QTimer::singleShot(m_setupTimeoutMs, this, [this, generation] {
+        if (m_starting && generation == m_generation)
+            giveUp(T("Die Werkzeuge der KI (schneidi-cli) antworten nicht (nach %1 s abgebrochen).")
+                       .arg(m_setupTimeoutMs / 1000));
+    });
     const QJsonObject init{{"protocolVersion", "2025-06-18"},
                            {"capabilities", QJsonObject{}},
                            {"clientInfo", QJsonObject{{"name", "schneidi app chat"},
                                                       {"version", QCoreApplication::applicationVersion()}}}};
     request("initialize", init, [this](const QJsonObject& r) {
+        // An error: the server is ended (a running one left behind would keep talking to this object)
         if (r.contains("error")) {
-            m_starting = false;
-            emit failed(T("Die Werkzeuge der KI antworten nicht: %1").arg(r["error"]["message"].toString()));
+            giveUp(T("Die Werkzeuge der KI antworten nicht: %1").arg(r["error"]["message"].toString()));
             return;
         }
         m_instructions = r["result"]["instructions"].toString();
         send({{"jsonrpc", "2.0"}, {"method", "notifications/initialized"}});
         request("tools/list", {}, [this](const QJsonObject& list) {
+            // No tools (an error, an empty list): the chat would run silently without them
+            if (list.contains("error") || list["result"]["tools"].toArray().isEmpty()) {
+                const QString why = list["error"]["message"].toString();
+                giveUp(T("Die Werkzeuge der KI antworten nicht: %1").arg(why.isEmpty() ? QString("tools/list") : why));
+                return;
+            }
             m_tools = list["result"]["tools"].toArray();
             m_starting = false;
             m_ready = true;
@@ -93,7 +108,8 @@ void McpClient::start()
     });
 }
 
-void McpClient::call(const QString& tool, const QJsonObject& arguments, const Progress& progress, const Done& done)
+void McpClient::call(const QString& tool, const QJsonObject& arguments, const Progress& progress, const Done& done,
+                     int timeoutMs)
 {
     if (!m_ready) {
         done({"not run: the schneidi tools are not running", {}, true}); // for the model: English
@@ -128,6 +144,12 @@ void McpClient::call(const QString& tool, const QJsonObject& arguments, const Pr
           {"id", id},
           {"method", "tools/call"},
           {"params", QJsonObject{{"name", tool}, {"arguments", arguments}, {"_meta", QJsonObject{{"progressToken", id}}}}}});
+    if (timeoutMs > 0)
+        QTimer::singleShot(timeoutMs, this, [this, id, timeoutMs] {
+            if (m_pending.contains(id)) // (ids are never used twice, also not by a newer server)
+                giveUp(T("Die Werkzeuge der KI (schneidi-cli) antworten nicht (nach %1 s abgebrochen).")
+                           .arg(timeoutMs / 1000));
+        });
 }
 
 void McpClient::onOutput()
@@ -200,7 +222,7 @@ void McpClient::onEnded()
     if (starting) emit failed(why);
 }
 
-void McpClient::stop()
+void McpClient::endProcess()
 {
     if (!m_process) return;
     QProcess* p = m_process;
@@ -212,5 +234,19 @@ void McpClient::stop()
     m_ready = false;
     m_starting = false;
     m_buffer.clear();
+}
+
+void McpClient::stop()
+{
+    if (!m_process) return;
+    endProcess();
     finishAll({"stopped", {}, true}); // for the model: English
+}
+
+void McpClient::giveUp(const QString& why)
+{
+    if (!m_process) return;
+    endProcess();
+    emit failed(why); // first: the chat ends its request with this message, not with the calls' answers
+    finishAll({"the schneidi tools (schneidi-cli) did not answer and were ended", {}, true}); // for the model: English
 }

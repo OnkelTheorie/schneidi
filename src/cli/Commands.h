@@ -26,7 +26,7 @@ enum class ParamType {
     Integer,
     Number,
     Boolean,
-    Time,    // frames (integer), "12.5s" (seconds) or timecode "00:01:02:03"
+    Time,    // frames (integer), "12.5s" (seconds), timecode "00:01:02:03" or clock time "1:30" / "00:01:02.5"
     Times,   // list of times
     Paths,   // list of files
     Sources, // list of files, each optionally an object {file, …settings for this file}

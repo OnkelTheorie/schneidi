@@ -99,6 +99,26 @@ void opFormat(Session& s, const QJsonObject& op)
                            "project with `new --fps` instead");
         f.rate = rate;
     }
+    // The project open in the app: the resolution belongs to every timeline. While other timelines hold clips, a new
+    // resolution needs the user's yes (an AI turned a landscape project portrait for one short)
+    if (s.live && f.size() != s.format().size() && !op.value("confirm").toBool()) {
+        QStringList others;
+        for (const Sequence& q : s.project.sequences()) {
+            if (q.id == s.project.currentSequence() || q.compound) continue;
+            bool clips = false;
+            for (const auto* tracks : {&q.timeline.video, &q.timeline.audio})
+                for (const Track& t : *tracks) clips |= !t.clips.isEmpty();
+            if (clips) others << "'" + q.name + "'";
+        }
+        if (!others.isEmpty())
+            fail("NEEDS_CONFIRMATION",
+                 QString("the resolution belongs to the whole project: %1x%2 would also change %3 (they hold clips, "
+                         "they would get bars). Ask the user first; send confirm:true only after they said yes, or "
+                         "leave the format as it is")
+                     .arg(f.width)
+                     .arg(f.height)
+                     .arg(others.join(", ")));
+    }
     const FrameRate oldRate = s.format().rate;
     s.project.setFormat(f);
     if (f.rate == oldRate) return;
@@ -129,10 +149,13 @@ void addTimelineOps(QVector<OpDef>& ops)
         << OpDef{"place_timeline", "{op:'place_timeline', timeline, at?, track?}",
                  "put another timeline (or compound clip) as one clip into this one (default: at the end)", {},
                  opPlaceTimeline}
-        << OpDef{"format", "{op:'format', width?, height?, fps?}",
+        << OpDef{"format", "{op:'format', width?, height?, fps?, confirm?}",
                  "project resolution (scales positions in all timelines) and frame rate (only while all timelines are "
                  "empty)",
-                 {}, opFormat};
+                 "With the project open in the app (@app) a new resolution is refused while other timelines hold "
+                 "clips: it changes them too (they get bars). Ask the user first and send confirm:true only after "
+                 "they said yes.",
+                 opFormat};
 }
 
 } // namespace Cli::detail

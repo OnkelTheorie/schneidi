@@ -128,6 +128,17 @@ void restoreMedia(Project& p, const QVector<MediaInfo>& before)
     p.replaceMedia(media);
 }
 
+// Takes the step at `index` off the undo stack without running it: a failed command's undone macro would stay as a
+// redo step (redo would bring the half state back), an empty one would be a step that does nothing. QUndoStack
+// deletes an obsolete command instead of redoing/undoing it.
+void dropStep(QUndoStack* undo, int index)
+{
+    if (index < 0 || index >= undo->count()) return;
+    const_cast<QUndoCommand*>(undo->command(index))->setObsolete(true);
+    if (undo->index() == index) undo->redo();
+    else if (undo->index() == index + 1) undo->undo();
+}
+
 // The ops of an edit: "split, delete"
 QString opNames(const QJsonObject& args)
 {
@@ -479,13 +490,15 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
     Project* p = m_host->liveProject();
     const QHash<int, ClipState> before = clipStates(*p);
     const QVector<MediaInfo> mediaBefore = p->media();
-    // One undo step per edit command; it never merges with the user's slider series before or after it
+    const QVector<WatchFolder> watchBefore = p->watchFolders();
+    // One undo step per changing command, all or nothing like on the file; it never merges with the user's slider
+    // series before or after it (`restore` is one step of its own and changes nothing before it can fail)
     QUndoStack* undo = p->undoStack();
-    const bool step = name == "edit";
+    const bool step = name == "edit" || name == "import" || name == "watch";
     const int index = undo->index();
     if (step) {
         p->closeMerge();
-        undo->beginMacro(undoText(args));
+        undo->beginMacro(name == "edit" ? undoText(args) : T("KI: %1").arg(name));
     }
     QJsonObject result;
     Context ctx;
@@ -500,7 +513,9 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
         if (step) {
             undo->endMacro();
             if (undo->index() > index) undo->undo(); // all or nothing, like on the file
+            dropStep(undo, index);                   // and no redo step that brings it back
             restoreMedia(*p, mediaBefore);
+            if (p->watchFolders() != watchBefore) p->setWatchFolders(watchBefore);
         }
         if (logged) {
             change.step = stepText(name, args, {}, *p);
@@ -511,6 +526,9 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
     }
     if (step) {
         undo->endMacro();
+        // An import of media only changes nothing in the undo history: no empty step
+        if (name != "edit" && undo->index() == index + 1 && undo->command(index)->childCount() == 0)
+            dropStep(undo, index);
         p->closeMerge();
     }
     compareClips(before, clipStates(*p), change);
@@ -530,6 +548,8 @@ public:
     QLocalSocket socket;
     QString project; // as the app reported it
 
+    // Answers carry no request id: a request that timed out ends the connection, else its late answer would be read
+    // as the answer to the next request (connectionFor() opens a new one)
     QJsonObject request(const QJsonObject& msg, int timeoutMs)
     {
         socket.write(line(msg));
@@ -549,6 +569,11 @@ private:
     QByteArray m_buffer;
     [[noreturn]] void lost()
     {
+        const bool timedOut = socket.state() == QLocalSocket::ConnectedState;
+        socket.abort();
+        m_buffer.clear();
+        if (timedOut)
+            detail::fail("APP_BUSY", "the schneidi app did not answer in time (it is busy), try again");
         detail::fail("APP_DISCONNECTED", "the connection to the schneidi app was closed (app quit or the user "
                                          "disconnected the AI)");
     }
@@ -568,6 +593,7 @@ struct Candidate {
     bool allowed = true;
     QString refusal; // not allowed: why (empty = the user disconnected the AI)
     QString waiting; // the app waits for the user (why, for the AI)
+    bool silent = false; // did not answer hello in time (busy): its project is unknown
 };
 
 std::vector<Candidate> runningApps()
@@ -604,7 +630,14 @@ std::vector<Candidate> runningApps()
         QJsonObject hello;
         try {
             hello = c->request({{"type", "hello"}, {"token", entry.value("token").toString()}}, 3000);
-        } catch (const Error&) {
+        } catch (const Error& e) {
+            // Busy (a long command in its event loop): it may have the project open, so it is no "not running"
+            if (e.code == "APP_BUSY") {
+                Candidate busy;
+                busy.conn = std::move(c);
+                busy.silent = true;
+                out.push_back(std::move(busy));
+            }
             continue;
         }
         if (!hello.value("ok").toBool()) continue;
@@ -649,21 +682,29 @@ Connection* connectionFor(const QString& project)
                 if (!open.isEmpty() && canonical(open) == key) return conn.get();
             }
     std::vector<Candidate> apps = runningApps();
+    const QString silent = "a schneidi app is running but did not answer in time (it is busy and may have this "
+                           "project open), try again";
     Candidate* pick = nullptr;
     if (any) {
         if (apps.empty()) detail::fail("NO_APP", "the schneidi app is not running (\"@app\" needs it)");
         if (apps.size() > 1) {
             QStringList projects;
-            for (const Candidate& c : apps) projects << (c.conn->project.isEmpty() ? "(unsaved)" : c.conn->project);
+            for (const Candidate& c : apps)
+                projects << (c.silent ? "(not answering)" : c.conn->project.isEmpty() ? "(unsaved)" : c.conn->project);
             detail::fail("AMBIGUOUS", "several schneidi apps are running, give the project file instead of \"@app\": "
                                           + projects.join(", "));
         }
         pick = &apps[0];
     } else {
         for (Candidate& c : apps)
-            if (!c.conn->project.isEmpty() && canonical(c.conn->project) == key) pick = &c;
+            if (!c.silent && !c.conn->project.isEmpty() && canonical(c.conn->project) == key) pick = &c;
+        // Never a silent write to the file: an app that did not answer may have it open
+        if (!pick)
+            for (const Candidate& c : apps)
+                if (c.silent) detail::fail("APP_BUSY", silent);
         if (!pick) return nullptr;
     }
+    if (pick->silent) detail::fail("APP_BUSY", silent);
     if (!pick->waiting.isEmpty()) detail::fail("APP_WAITING", pick->waiting);
     if (!pick->allowed)
         detail::fail("APP_DISCONNECTED", !pick->refusal.isEmpty()

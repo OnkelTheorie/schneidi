@@ -195,7 +195,19 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
     const QByteArray crop = Keys::hasCrop(c) ? QByteArray(kCropVersion) : QByteArray();
     const QByteArray key = EffectRegistry::has(c, "chromakey") ? QByteArray(kKeyVersion) : QByteArray();
     const QByteArray stab = EffectRegistry::has(c, Stabilizer::EffectId) ? QByteArray(kStabilizeVersion) : QByteArray();
-    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + clip, QCryptographicHash::Sha1).toHex();
+    // Files the effects read (a LUT): edited or replaced under the same name, the cached render is stale. The clip
+    // JSON has only their paths. Nothing added without such files: other keys stay as they were
+    QString files;
+    for (const EffectInstance& e : c.effects)
+        if (const EffectDescriptor* d = EffectRegistry::find(e.effectId))
+            for (const EffectParam& p : d->params) {
+                const QString path = p.type == EffectParam::Path ? e.params.value(p.key).toString() : QString();
+                if (path.isEmpty()) continue;
+                const QFileInfo f(path);
+                files += QString("%1|%2|").arg(f.size()).arg(f.lastModified().toMSecsSinceEpoch());
+            }
+    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + files.toUtf8() + clip, QCryptographicHash::Sha1)
+        .toHex();
 }
 
 QString RenderCache::path(const Clip& c) const

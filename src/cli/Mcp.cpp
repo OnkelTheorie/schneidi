@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace Cli::Mcp {
@@ -79,7 +80,8 @@ QString instructions(const Options& opt)
                      "longer than about %1 s answers {\"job\", \"state\":\"running\"} and keeps running: `jobs` with "
                      "that job (and wait) gives its progress and then its result.")
                  .arg(opt.jobWaitS);
-    s += " Times are frames in the project frame rate, seconds like \"4.5s\" or timecodes.";
+    s += " Times are frames in the project frame rate, seconds like \"4.5s\", timecodes \"HH:MM:SS:FF\" "
+         "or clock times \"MM:SS\" / \"HH:MM:SS.sss\".";
     return s;
 }
 
@@ -120,6 +122,7 @@ void testHooks(const QString& tool, const std::function<void(double)>& progress)
 {
     static const int delay = qEnvironmentVariableIntValue("SCHNEIDI_TEST_CALL_DELAY_MS");
     if (qEnvironmentVariable("SCHNEIDI_TEST_CRASH_TOOL") == tool) std::abort();
+    if (qEnvironmentVariable("SCHNEIDI_TEST_THROW_TOOL") == tool) throw std::runtime_error("test exception");
     if (delay <= 0) return;
     QThread::msleep(delay / 2);
     if (progress) progress(0.5);
@@ -218,6 +221,11 @@ QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& 
         out["content"] = content;
     } catch (const Error& e) {
         out = toolError(e.code, e.message);
+    } catch (const std::exception& e) {
+        // Out of memory with a huge transcript, a library … : this call failed, the tool server goes on
+        out = toolError("INTERNAL", QString("internal error: %1").arg(QString::fromLocal8Bit(e.what())));
+    } catch (...) {
+        out = toolError("INTERNAL", "internal error");
     }
     releaseMemory();
     return out;
@@ -245,8 +253,14 @@ bool handle(const QJsonObject& msg, const Options& opt, const ToolCall& call, co
     }
     const QString method = msg["method"].toString();
     // Notifications (initialized, cancelled …) and responses need no answer
-    if (!msg.contains("id") || method.isEmpty()) return false;
+    if (!msg.contains("id") || !msg.contains("method")) return false;
     const QJsonValue id = msg.value("id");
+    // A request all the same: unanswered, its HTTP request (and connection) would wait forever
+    if (method.isEmpty()) {
+        send({{"jsonrpc", "2.0"}, {"id", id},
+              {"error", QJsonObject{{"code", -32600}, {"message", "invalid request: 'method' must be a non-empty string"}}}});
+        return true;
+    }
     const auto reply = [send, id](const QJsonObject& result) {
         send({{"jsonrpc", "2.0"}, {"id", id}, {"result", result}});
     };

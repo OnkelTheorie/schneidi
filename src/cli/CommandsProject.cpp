@@ -220,8 +220,13 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
     const QString path = absolute(a["project"].toString());
     if (!path.endsWith("." + QString(ProjectFile::Extension)))
         fail("BAD_ARGUMENT", QString("project file must end in .%1").arg(ProjectFile::Extension));
-    if (QFileInfo::exists(path) && !a["overwrite"].toBool())
+    const bool replaces = QFileInfo::exists(path);
+    if (replaces && !a["overwrite"].toBool())
         fail("EXISTS", "project already exists (pass overwrite to replace it): " + path);
+    // Not under the app's feet: it would keep its own state and save it over the new file
+    const LiveHost* h = Live::host();
+    if (replaces && ((h && QFileInfo(h->liveProjectPath()) == QFileInfo(path)) || (!h && Live::connectionFor(path))))
+        fail("IN_USE", "the project is open in the schneidi app; close it there first: " + path);
     const StartTemplate t = startTemplate(a["template"].toString());
     ProjectData d = StartTemplates::apply(t);
     d.format = parseFormat(a, d.format);
@@ -233,10 +238,20 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
         p.addMedia(info);
     }
     QDir().mkpath(QFileInfo(path).absolutePath());
+    // Replacing: like every writing command under the write lock, and the old state goes into the backups
+    // (`restore` brings it back)
+    std::unique_ptr<QLockFile> lock;
+    QString backup;
+    if (replaces) {
+        lock = ProjectFile::lock(path);
+        if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
+        backup = ProjectFile::backup(path);
+    }
     QString error;
     if (!ProjectFile::save(p.data(), path, &error)) fail("SAVE_FAILED", error);
     QJsonObject o = projectJson(p, path);
     o["template"] = QJsonObject{{"id", t.id}, {"name", t.displayName()}};
+    if (!backup.isEmpty()) o["backup"] = backup;
     return o;
 }
 

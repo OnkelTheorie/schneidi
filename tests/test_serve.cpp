@@ -8,6 +8,7 @@
 #include "cli/Commands.h"
 #include "cli/Mcp.h"
 #include "cli/Sandbox.h"
+#include "cli/ServeJobs.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 
@@ -84,6 +85,25 @@ void sandboxRules(const QString& base)
     const Cli::Command* probe = Cli::find("probe");
     CHECK_EQ(codeOf([&] { Cli::normalize(*probe, {{"file", "../outside/secret.mp4"}}); }), QString("OUTSIDE_ROOT"));
     CHECK_EQ(Cli::normalize(*probe, {{"file", "clips/a.mp4"}})["file"].toString(), root + "/clips/a.mp4");
+    // Hidden files stay out for every tool path, read or written (".bashrc", ".config/autostart/…")
+    const Cli::Command* exportTl = Cli::find("export_timeline");
+    CHECK_EQ(codeOf([] { resolve(".bashrc"); }), QString("HIDDEN"));
+    CHECK_EQ(codeOf([] { resolve("clips/.config/autostart/x.desktop"); }), QString("HIDDEN"));
+    CHECK_EQ(codeOf([&] { Cli::normalize(*exportTl, {{"project", "a.schneidi"}, {"out", ".bashrc"}}); }), QString("HIDDEN"));
+    CHECK_EQ(codeOf([&] { Cli::normalize(*probe, {{"file", ".hidden/key.mp4"}}); }), QString("HIDDEN"));
+    // Files that make MLT/FFmpeg read other files or addresses (MLT XML, playlists) are no media here, by name or
+    // content; other XML (a timeline of another program) is fine
+    const auto write = [&](const QString& rel, const QByteArray& data) {
+        QFile f(root + "/" + rel);
+        if (f.open(QIODevice::WriteOnly)) f.write(data);
+    };
+    write("clips/list.mlt", "<mlt><producer><property name=\"resource\">/etc/passwd</property></producer></mlt>");
+    write("clips/inner.xml", "\xef\xbb\xbf<?xml version=\"1.0\"?>\n<!-- x -->\n<mlt LC_NUMERIC=\"C\">\n</mlt>");
+    write("clips/playlist.mp4", "#EXTM3U\n#EXTINF:1,\nhttp://169.254.169.254/latest\n");
+    write("clips/fcp.xml", "<?xml version=\"1.0\"?>\n<xmeml version=\"5\"></xmeml>");
+    for (const char* bad : {"clips/list.mlt", "clips/inner.xml", "clips/playlist.mp4"})
+        CHECK_EQ(codeOf([&] { Cli::normalize(*probe, {{"file", bad}}); }), QString("BAD_MEDIA"));
+    CHECK_EQ(codeOf([&] { Cli::normalize(*probe, {{"file", "clips/fcp.xml"}}); }), QString("none"));
     // A project naming a file outside: refused, also a missing one or one the engine would read through options,
     // a prefix or a link (MLT/FFmpeg open the string as written); offline media inside are fine
     {
@@ -108,6 +128,9 @@ void sandboxRules(const QString& base)
         CHECK_EQ(check(root + "/clips/../clips/a.mp4"), QString("OUTSIDE_ROOT")); // ".." follows links on disk
         CHECK_EQ(check("avformat:" + QDir(base).filePath("outside/secret.mp4")), QString("OUTSIDE_ROOT"));
         CHECK_EQ(check("clips/a.mp4"), QString("OUTSIDE_ROOT")); // not a plain absolute path
+        CHECK_EQ(check(root + "/clips/list.mlt"), QString("BAD_MEDIA"));
+        CHECK_EQ(check(root + "/clips/playlist.mp4"), QString("BAD_MEDIA"));
+        CHECK_EQ(check(root + "/.hidden/key.mp4"), QString("HIDDEN"));
         if (QFileInfo(root + "/link").isSymLink()) {
             CHECK_EQ(check(root + "/link/secret.mp4"), QString("OUTSIDE_ROOT"));
             CHECK_EQ(check(root + "/link/missing.mp4"), QString("OUTSIDE_ROOT"));
@@ -323,6 +346,57 @@ int main(int argc, char* argv[])
     QTemporaryDir tmp;
     sandboxRules(tmp.filePath("rules"));
 
+    // Jobs that run in the server itself (upload) wait for their file like the others; ending or cancelling one never
+    // frees the file of another job
+    {
+        using Cli::Serve::Job;
+        Cli::Serve::Jobs jobs({}, tmp.path(), 1);
+        QStringList ran;
+        const auto make = [&](const QString& file) {
+            auto j = std::make_unique<Job>();
+            j->tool = "upload";
+            j->writes = file;
+            j->runHere = [&ran](Job* x) { ran << x->id; };
+            return j;
+        };
+        Job* a = jobs.submit(make("/w/film.schneidi"));
+        Job* b = jobs.submit(make("/w/film.schneidi"));
+        Job* other = jobs.submit(make("/w/other.mp4"));
+        CHECK(a->state == Job::State::Running && other->state == Job::State::Running);
+        CHECK(b->state == Job::State::Queued);
+        jobs.cancel(b); // queued: a keeps its file
+        Job* c = jobs.submit(make("/w/film.schneidi"));
+        CHECK(c->state == Job::State::Queued);
+        jobs.end(a, Cli::Mcp::toolResult({}));
+        CHECK(c->state == Job::State::Running);
+        Job* d = jobs.submit(make("/w/film.schneidi"));
+        c->cancelHere = [] {};
+        jobs.cancel(c); // running (with its own cancel): frees the file for the next
+        CHECK(d->state == Job::State::Running);
+        CHECK_EQ(ran.size(), 4);
+    }
+
+    // A C++ exception in a tool (out of memory, a library) fails that call, the MCP server goes on
+    {
+        QProcess mcp;
+        QProcessEnvironment e = QProcessEnvironment::systemEnvironment();
+        e.insert("SCHNEIDI_TEST_THROW_TOOL", "templates");
+        mcp.setProcessEnvironment(e);
+        mcp.start(SCHNEIDI_CLI, {"mcp"});
+        mcp.write(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"templates","arguments":{}}})" "\n"
+                  R"({"jsonrpc":"2.0","id":2,"method":"ping"})" "\n");
+        mcp.closeWriteChannel();
+        CHECK(mcp.waitForFinished(30000));
+        CHECK_EQ(mcp.exitCode(), 0);
+        const QList<QByteArray> lines = mcp.readAllStandardOutput().trimmed().split('\n');
+        if (CHECK_EQ(lines.size(), qsizetype(2))) {
+            const QJsonObject first = QJsonDocument::fromJson(lines[0]).object();
+            CHECK(first["result"].toObject()["isError"].toBool());
+            CHECK(lines[0].contains("INTERNAL"));
+            CHECK_EQ(QJsonDocument::fromJson(lines[1]).object()["id"].toInt(), 2);
+        }
+    }
+
     const QString root = tmp.filePath("root");
     QDir().mkpath(root);
     QDir().mkpath(tmp.filePath("outside"));
@@ -348,6 +422,16 @@ int main(int argc, char* argv[])
         CHECK(p.waitForFinished(20000));
         CHECK_EQ(p.exitCode(), 2);
         CHECK(QJsonDocument::fromJson(p.readAllStandardOutput()).object()["error"].toObject()["message"].toString().contains("token"));
+    }
+
+    // Behind a reverse proxy (--public-url) everyone comes from this computer: a token anyway (made and kept)
+    {
+        Server proxied;
+        if (CHECK(proxied.start(root, tmp.filePath("s0"), {"--public-url", "https://edit.example"}, {}))) {
+            CHECK_EQ(http("POST", proxied.base + "/mcp", R"({"jsonrpc":"2.0","id":1,"method":"ping"})",
+                          proxied.headers() << QPair<QByteArray, QByteArray>{"Host", "edit.example"}).status, 401);
+            CHECK_EQ(http("GET", proxied.base + "/files/clip.mp4").status, 401);
+        }
     }
 
     // ---------- Server 1: token, files, tools ----------
@@ -376,6 +460,14 @@ int main(int argc, char* argv[])
         CHECK_EQ(http("POST", s.base + "/mcp", R"({"jsonrpc":"2.0","method":"notifications/initialized"})", s.headers()).status, 202);
         CHECK_EQ(http("GET", s.base + "/mcp", {}, s.headers()).status, 405);
         CHECK_EQ(http("POST", s.base + "/mcp", "{not json", s.headers()).status, 400);
+        // A request (id) with an empty or not-string method gets an error answer, not a connection that hangs forever
+        for (const QByteArray body : {QByteArray(R"({"jsonrpc":"2.0","id":5,"method":""})"),
+                                      QByteArray(R"({"jsonrpc":"2.0","id":5,"method":5})"),
+                                      QByteArray(R"([{"jsonrpc":"2.0","id":5,"method":null},{"jsonrpc":"2.0","id":6,"method":"ping"}])")}) {
+            const Reply bad = wait(send("POST", s.base + "/mcp", body, s.headers()), 10000);
+            CHECK_EQ(bad.status, 200);
+            CHECK(bad.body.contains("-32600"));
+        }
         // A key with U+0000 (Qt may read "id\u0000" as "id", found by fuzz_mcp): refused here and on stdio
         CHECK_EQ(http("POST", s.base + "/mcp", R"({"jsonrpc":"2.0","id\u0000":1,"method":"ping"})", s.headers()).status, 400);
         {

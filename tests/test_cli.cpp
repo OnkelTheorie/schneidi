@@ -129,6 +129,15 @@ int main(int argc, char** argv)
         const Cli::Command* frames = Cli::find("frames");
         const QJsonObject n = Cli::normalize(*frames, {{"file", g_path}, {"at", QJsonArray{0}}});
         CHECK(n.contains("source") && !n.contains("file"));
+        // A decimal comma in seconds is no list separator; a list of ids or times still splits
+        const auto at = [&](const char* text) {
+            return Cli::normalize(*frames, {{"source", g_path}, {"at", text}})["at"].toArray();
+        };
+        CHECK(at("6,95s") == (QJsonArray{"6.95s"}));
+        CHECK(at("1,5s, 3s,2,25s") == (QJsonArray{"1.5s", "3s", "2.25s"}));
+        CHECK(at("6,95") == (QJsonArray{"6", "95"}));
+        CHECK(at("10, 20s") == (QJsonArray{"10", "20s"}));
+        CHECK_EQ(Cli::detail::parseTime(QJsonValue("6,95s"), ProjectFormat{}, "at"), int(std::lround(6.95 * ProjectFormat{}.rate.fps())));
         const Cli::Command* loudness = Cli::find("loudness");
         CHECK(Cli::normalize(*loudness, {{"project", g_path}}).contains("source"));
         const Cli::Command* render = Cli::find("render");
@@ -158,6 +167,27 @@ int main(int argc, char** argv)
         CHECK_EQ(Cli::detail::parseTime(QJsonValue("4.5s"), fmt, "at"), int(std::lround(4.5 * fmt.rate.fps())));
         CHECK_EQ(timeError(QJsonValue(1e12)), QString("BAD_ARGUMENT"));
         CHECK_EQ(timeError(QJsonValue("1e10s")), QString("BAD_ARGUMENT"));
+        // Times with colons (25 fps): timecode with frames, clock time, decimal seconds - never guessed into frames
+        const auto at = [&](const char* t) { return Cli::detail::parseTime(QJsonValue(t), fmt, "at"); };
+        CHECK_EQ(at("00:00:04:20"), 120);
+        CHECK_EQ(at("00:00:04;20"), 120);
+        CHECK_EQ(at("01:00:00:00"), 90000);
+        CHECK_EQ(at("00:01:02.5"), 1563); // 62.5 s, not 1:02 + 5 frames
+        CHECK_EQ(at("00:00:04.500"), 113);
+        CHECK_EQ(at("1:30"), 2250); // minutes:seconds
+        CHECK_EQ(at("1:02.5"), 1563);
+        CHECK_EQ(at("00:01:30"), 2250); // hours:minutes:seconds
+        CHECK_EQ(at("90:00"), 135000); // 90 minutes
+        for (const char* bad : {"00:00:04:50", "00:00:04:25", "00:61:00:00", "1:75", "00:00:04:20.5", "1:2:3:4:5",
+                                "1;30", "00:00;04:20", "1:", ":30", "1:3a", "1:30.", "00:00:04;20;1"})
+            CHECK_EQ(timeError(QJsonValue(bad)), QString("BAD_ARGUMENT"));
+        QString frameMessage;
+        try {
+            at("00:00:04:50");
+        } catch (const Cli::Error& e) {
+            frameMessage = e.message;
+        }
+        CHECK(frameMessage.contains("frame 50") && frameMessage.contains("25 frames"));
         // A number with a fraction (a small model's seconds): the error says how to write it
         for (const QJsonValue& v : {QJsonValue(6.95), QJsonValue("6.95")}) {
             QString message;
@@ -699,6 +729,18 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         run("new", {{"project", empty}});
         run("edit", {{"project", empty}, {"ops", R"([{"op":"format","fps":50}])"}});
         CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 50.0);
+        // Replacing it: the old state goes into the backups (restore brings it back), not while someone saves
+        CHECK_EQ(errorOf("new", {{"project", empty}}), QString("EXISTS"));
+        {
+            const auto held = ProjectFile::lock(empty, 0);
+            CHECK_EQ(errorOf("new", {{"project", empty}, {"overwrite", true}}), QString("PROJECT_LOCKED"));
+        }
+        CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 50.0);
+        const QJsonObject replaced = run("new", {{"project", empty}, {"overwrite", true}});
+        CHECK(!replaced["backup"].toString().isEmpty());
+        CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 25.0);
+        run("restore", {{"project", empty}});
+        CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 50.0);
     }
 
     // Audio effect (noise reduction) on audio clips only; stabilization with a choice parameter; `effects` kinds
@@ -1006,6 +1048,14 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", "[{\"op\":\"marker\",\"at\":{\"clip\":1}}]"}}), QString("none"));
         CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", "[{\"op\":\"marker\",\"at\":{\"clip\":3,\"source\":\"20s\"}}]"}}),
                  QString("BAD_ARGUMENT"));
+        // Beyond the clip (10 s long): an error, not a time in the neighbour or before 0; its end is fine
+        for (const char* at : {"{\"clip\":3,\"offset\":\"11s\"}", "{\"clip\":3,\"from_end\":\"20s\"}"})
+            CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", QString("[{\"op\":\"marker\",\"at\":%1}]").arg(at)}}),
+                     QString("BAD_ARGUMENT"));
+        CHECK(messageOf("edit", {{"project", proj}, {"ops", "[{\"op\":\"marker\",\"at\":{\"clip\":3,\"offset\":300}}]"}})
+                  .contains("only 00:00:10:00 long"));
+        CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", "[{\"op\":\"marker\",\"at\":{\"clip\":3,\"from_end\":\"10s\"}}]"}, {"dry_run", true}}),
+                 QString("none"));
 
         // frames: crop of the box region and two sources on one sheet
         Cli::Context ctx;

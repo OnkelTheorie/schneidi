@@ -1001,9 +1001,10 @@ QString backup(const QString& projectPath, int keep)
     QString target;
     for (QDateTime t = QDateTime::currentDateTime(); target.isEmpty() || QFileInfo::exists(target); t = t.addMSecs(1))
         target = dir.filePath(QString("%1.%2").arg(t.toString("yyyy-MM-dd HH-mm-ss-zzz"), Extension));
-    QFile out(target);
-    if (!out.open(QIODevice::WriteOnly) || out.write(bytes) != bytes.size()) return {};
-    out.close();
+    // QSaveFile: a copy cut short (disk full) never lands - it would count as the newest and push out a good
+    // one; old copies are only cleared away once the new one is complete
+    QSaveFile out(target);
+    if (!out.open(QIODevice::WriteOnly) || out.write(bytes) != bytes.size() || !out.commit()) return {};
     existing = backupsOldestFirst(dir);
     for (int i = 0; i + keep < existing.size(); ++i) QFile::remove(dir.filePath(existing[i]));
     return target;
@@ -1016,6 +1017,10 @@ std::unique_ptr<QLockFile> lock(const QString& projectPath, int timeoutMs)
     const QByteArray hash =
         QCryptographicHash::hash(QFileInfo(projectPath).absoluteFilePath().toUtf8(), QCryptographicHash::Sha1).toHex();
     auto l = std::make_unique<QLockFile>(dir.filePath(QString::fromLatin1(hash.left(16)) + ".lock"));
+    // Stale only when its process is gone, never by age: a CLI write session holds the lock from loading to
+    // saving, often longer than Qt's default 30 s. (Qt's own file lock keeps a held lock today, this does not
+    // rely on it.)
+    l->setStaleLockTime(0);
     if (!l->tryLock(timeoutMs)) return nullptr;
     return l;
 }

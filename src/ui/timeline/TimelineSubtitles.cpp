@@ -251,7 +251,9 @@ void TimelineView::subtitleHeaderMenu(int index, const QPoint& globalPos)
     add->setEnabled(!t.locked);
     connect(add, &QAction::triggered, this, [this, index] { m_editor->addSubtitle(m_playhead, index); });
     connect(menu.addAction(T("Untertitelspur hinzufügen")), &QAction::triggered, this, [this] { m_editor->addSubtitleTrack(); });
-    connect(menu.addAction(T("Spur löschen")), &QAction::triggered, this, [this, index] { m_editor->removeSubtitleTrack(index); });
+    QAction* remove = menu.addAction(T("Spur löschen"));
+    remove->setEnabled(!t.locked);
+    connect(remove, &QAction::triggered, this, [this, index] { m_editor->removeSubtitleTrack(index); });
     menu.exec(globalPos);
 }
 

@@ -463,6 +463,7 @@
  "Die Werkzeuge der KI (schneidi-cli) sind nicht eingerichtet.": "Les outils de l’IA (schneidi-cli) ne sont pas configurés.",
  "Die Werkzeuge der KI (schneidi-cli) wurden beendet.": "Les outils de l’IA (schneidi-cli) se sont arrêtés.",
  "Die Werkzeuge der KI antworten nicht: %1": "Les outils de l’IA ne répondent pas : %1",
+ "Die Werkzeuge der KI (schneidi-cli) antworten nicht (nach %1 s abgebrochen).": "Les outils de l’IA (schneidi-cli) ne répondent pas (arrêtés après %1 s).",
  "Die Werkzeuge der KI sind ausgefallen. Schreib einfach weiter: sie starten dann neu.": "Les outils de l’IA sont tombés en panne. Continue simplement à écrire : ils redémarrent alors.",
  "Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Hier kosten die Effekte am meisten. Der Render-Cache „Smart“ rechnet Clips mit Effekten in Pausen vor, der Export nutzt weiter die Originale": "La lecture saccade (%1 sur %2 images/s) : ici, ce sont les effets qui coûtent le plus. Le cache de rendu « Intelligent » précalcule les clips avec effets pendant les pauses ; l’export utilise toujours les originaux",
  "Die Wiedergabe ruckelt (%1 von %2 Bildern/s): Proxy-Medien machen die Vorschau flüssig, der Export nutzt weiter die Originale": "La lecture saccade (%1 sur %2 images/s) : les médias proxy rendent l'aperçu fluide, l'export utilise toujours les originaux",

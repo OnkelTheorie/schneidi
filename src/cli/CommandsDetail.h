@@ -25,7 +25,7 @@ QString absolute(const QString& path);
 
 // ---------- Times ----------
 
-// Frames from 120 (frames), "120" (frames), "4.8s" (seconds) or "00:00:04:20" (timecode)
+// Frames from 120 (frames), "120" (frames), "4.8s" (seconds), "00:00:04:20" (timecode) or "1:30" (clock time)
 int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what);
 QString tc(int frames, const ProjectFormat& fmt);
 double seconds(int frames, const ProjectFormat& fmt);
