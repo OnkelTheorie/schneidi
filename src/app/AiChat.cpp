@@ -34,6 +34,13 @@ QString callKey(const Ai::ToolCall& c)
     return c.name + QString::fromUtf8(QJsonDocument(c.input).toJson(QJsonDocument::Compact));
 }
 
+// Tools that change the project, the app or the files (a failed call may work after them)
+bool changesState(const QString& tool)
+{
+    static const QStringList tools{"edit", "import", "new", "restore", "app", "watch"};
+    return tools.contains(tool);
+}
+
 QString capitalized(QString s)
 {
     if (!s.isEmpty()) s[0] = s[0].toUpper();
@@ -542,6 +549,8 @@ void AiChat::toolDone(int entry, const Ai::ToolCall& call, const QString& text, 
     });
     if (error && !m_stopped && !m_failedCalls.contains(callKey(call)))
         m_failedCalls.insert(callKey(call), cut(errorOf(text), 300));
+    // A change succeeded: what failed before may work now (the timeline it missed was made), so it may be tried again
+    if (!error && !m_stopped && changesState(call.name)) m_failedCalls.clear();
     // The model reads English; a stopped call may still have happened inside the app
     const QString answer = m_stopped ? QString("stopped by the user (the call may have finished in the app anyway)") : text;
     m_results << capped({call.id, call.name, answer, m_stopped ? QVector<Ai::Image>() : images, error || m_stopped});

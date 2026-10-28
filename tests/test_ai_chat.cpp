@@ -1000,6 +1000,43 @@ void test(const QString& dir)
                 CHECK(m2[i + 1]["content"].toString().contains("the request was ended"));
     }
 
+    // ---- A failed call after a change that succeeded: run again (the change may have fixed it) ----
+    {
+        const QJsonObject bad{{"project", "@app"}, {"ops", QJsonArray{QJsonObject{{"op", "trim"}, {"clip", 998}}}}};
+        fake.script = {openAiTool("call_c1", "edit", bad),
+                       openAiTool("call_c2", "app", {{"project", "@app"}, {"action", "seek"}, {"at", "1s"}}),
+                       openAiTool("call_c3", "edit", bad), openAiText("Ok.")};
+        const int sent = int(fake.requests.size());
+        panel->sendText("Kürze Clip 998");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 4)) {
+            const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
+            CHECK(answer.contains("no clip with id 998"));
+            CHECK(!answer.contains("not run again"));
+        }
+    }
+
+    // ---- Unreadable arguments: not taken for a valid call without arguments; sent again unchanged, they count as a
+    // repeat (the second time the request ends) ----
+    {
+        fake.script = {openAiToolText("call_u1", "info", "{\"proj"), openAiTool("call_u2", "info", QJsonObject{}),
+                       openAiText("Ok.")};
+        int sent = int(fake.requests.size());
+        panel->sendText("Was ist im Projekt?");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        if (CHECK_EQ(int(fake.requests.size()), sent + 3))
+            CHECK(fake.last().body["messages"].toArray().last()["content"].toString().contains("\"ok\":true"));
+        fake.script = {openAiToolText("call_u3", "info", "{\"proj"), openAiToolText("call_u4", "info", "{\"proj"),
+                       openAiToolText("call_u5", "info", "{\"proj"), openAiText("nie erreicht")};
+        sent = int(fake.requests.size());
+        panel->sendText("Nochmal");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.requests.size()), sent + 3);
+        if (const AiChat::Entry* n = lastOf(chat, AiChat::Entry::Kind::Notice); CHECK(n))
+            CHECK(n->text.startsWith(T("Die KI wiederholt einen Schritt, der schon fehlgeschlagen ist")));
+        fake.script.clear();
+    }
+
     // ---- A local model that stays silent (it reads the whole request first): the working line says why ----
     {
         FakeProvider::Response slow = openAiText("Da bin ich.");
