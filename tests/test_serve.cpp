@@ -84,6 +84,25 @@ void sandboxRules(const QString& base)
     const Cli::Command* probe = Cli::find("probe");
     CHECK_EQ(codeOf([&] { Cli::normalize(*probe, {{"file", "../outside/secret.mp4"}}); }), QString("OUTSIDE_ROOT"));
     CHECK_EQ(Cli::normalize(*probe, {{"file", "clips/a.mp4"}})["file"].toString(), root + "/clips/a.mp4");
+    // Hidden files stay out for every tool path, read or written (".bashrc", ".config/autostart/…")
+    const Cli::Command* exportTl = Cli::find("export_timeline");
+    CHECK_EQ(codeOf([] { resolve(".bashrc"); }), QString("HIDDEN"));
+    CHECK_EQ(codeOf([] { resolve("clips/.config/autostart/x.desktop"); }), QString("HIDDEN"));
+    CHECK_EQ(codeOf([&] { Cli::normalize(*exportTl, {{"project", "a.schneidi"}, {"out", ".bashrc"}}); }), QString("HIDDEN"));
+    CHECK_EQ(codeOf([&] { Cli::normalize(*probe, {{"file", ".hidden/key.mp4"}}); }), QString("HIDDEN"));
+    // Files that make MLT/FFmpeg read other files or addresses (MLT XML, playlists) are no media here, by name or
+    // content; other XML (a timeline of another program) is fine
+    const auto write = [&](const QString& rel, const QByteArray& data) {
+        QFile f(root + "/" + rel);
+        if (f.open(QIODevice::WriteOnly)) f.write(data);
+    };
+    write("clips/list.mlt", "<mlt><producer><property name=\"resource\">/etc/passwd</property></producer></mlt>");
+    write("clips/inner.xml", "\xef\xbb\xbf<?xml version=\"1.0\"?>\n<!-- x -->\n<mlt LC_NUMERIC=\"C\">\n</mlt>");
+    write("clips/playlist.mp4", "#EXTM3U\n#EXTINF:1,\nhttp://169.254.169.254/latest\n");
+    write("clips/fcp.xml", "<?xml version=\"1.0\"?>\n<xmeml version=\"5\"></xmeml>");
+    for (const char* bad : {"clips/list.mlt", "clips/inner.xml", "clips/playlist.mp4"})
+        CHECK_EQ(codeOf([&] { Cli::normalize(*probe, {{"file", bad}}); }), QString("BAD_MEDIA"));
+    CHECK_EQ(codeOf([&] { Cli::normalize(*probe, {{"file", "clips/fcp.xml"}}); }), QString("none"));
     // A project naming a file outside: refused, also a missing one or one the engine would read through options,
     // a prefix or a link (MLT/FFmpeg open the string as written); offline media inside are fine
     {
@@ -108,6 +127,9 @@ void sandboxRules(const QString& base)
         CHECK_EQ(check(root + "/clips/../clips/a.mp4"), QString("OUTSIDE_ROOT")); // ".." follows links on disk
         CHECK_EQ(check("avformat:" + QDir(base).filePath("outside/secret.mp4")), QString("OUTSIDE_ROOT"));
         CHECK_EQ(check("clips/a.mp4"), QString("OUTSIDE_ROOT")); // not a plain absolute path
+        CHECK_EQ(check(root + "/clips/list.mlt"), QString("BAD_MEDIA"));
+        CHECK_EQ(check(root + "/clips/playlist.mp4"), QString("BAD_MEDIA"));
+        CHECK_EQ(check(root + "/.hidden/key.mp4"), QString("HIDDEN"));
         if (QFileInfo(root + "/link").isSymLink()) {
             CHECK_EQ(check(root + "/link/secret.mp4"), QString("OUTSIDE_ROOT"));
             CHECK_EQ(check(root + "/link/missing.mp4"), QString("OUTSIDE_ROOT"));
