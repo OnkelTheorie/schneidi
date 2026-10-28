@@ -191,9 +191,11 @@ void testReport()
     }
     std::fflush(stdout);
     CHECK(avcodec);
-    // schneidi's own choice in every build: none of MLT's GPL modules (xine stays allowed on a system MLT)
+    // schneidi's own choice in every build: none of MLT's GPL modules (xine and rubberband stay allowed on a system
+    // MLT: rubberband keeps the pitch on the MLT sound path; the bundled packages never have them)
     for (const Licenses::Part& p : parts) {
-        const bool mltGpl = p.gpl && p.name.startsWith("libmlt") && !p.name.startsWith("libmltxine");
+        const bool system = p.name.startsWith("libmltxine") || p.name.startsWith("libmltrubberband");
+        const bool mltGpl = p.gpl && p.name.startsWith("libmlt") && (!system || Licenses::builtWithoutGpl());
         Check::report(!mltGpl, "GPL MLT module loaded", __FILE__, __LINE__, p.name);
     }
     if (Licenses::builtWithoutGpl() || qEnvironmentVariableIntValue("SCHNEIDI_NO_GPL") > 0)
