@@ -55,6 +55,7 @@ OPTS=(
     --prefix="$PREFIX" --libdir="$PREFIX/lib" --enable-shared --disable-static
     --extra-version=schneidi-lgpl --disable-doc --disable-ffplay --disable-debug
     --disable-gpl --disable-nonfree
+    --enable-zlib --enable-bzlib --enable-lzma # PNG/TIFF encoders, compressed MP4/MKV headers: required, not optional
     --enable-libopenh264 --enable-libkvazaar --enable-libsvtav1 --enable-libvpx --enable-libdav1d
     --enable-libopus --enable-libvorbis --enable-libmp3lame --enable-libwebp
     --enable-vaapi --enable-libdrm --enable-libvpl --enable-ffnvcodec --enable-nvenc --enable-nvdec

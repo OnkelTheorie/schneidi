@@ -131,10 +131,10 @@ void testEncoders()
 void testExport(const QString& dir)
 {
     const QString clip = Check::makeMedia(QDir(dir).filePath("clip.mkv"),
-                                          {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=2", "-f", "lavfi",
+                                          {"-f", "lavfi", "-i", "testsrc2=size=320x176:rate=25:duration=2", "-f", "lavfi",
                                            "-i", "sine=frequency=440:duration=2", "-c:v", "ffv1", "-c:a", "flac"});
     if (!CHECK(!clip.isEmpty())) return;
-    const ProjectFormat fmt{320, 180, {25, 1}};
+    const ProjectFormat fmt{320, 176, {25, 1}}; // kvazaar takes only sizes in multiples of 8
     Timeline tl;
     tl.video.resize(1);
     tl.audio.resize(1);
