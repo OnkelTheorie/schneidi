@@ -1039,6 +1039,14 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", "[{\"op\":\"marker\",\"at\":{\"clip\":1}}]"}}), QString("none"));
         CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", "[{\"op\":\"marker\",\"at\":{\"clip\":3,\"source\":\"20s\"}}]"}}),
                  QString("BAD_ARGUMENT"));
+        // Beyond the clip (10 s long): an error, not a time in the neighbour or before 0; its end is fine
+        for (const char* at : {"{\"clip\":3,\"offset\":\"11s\"}", "{\"clip\":3,\"from_end\":\"20s\"}"})
+            CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", QString("[{\"op\":\"marker\",\"at\":%1}]").arg(at)}}),
+                     QString("BAD_ARGUMENT"));
+        CHECK(messageOf("edit", {{"project", proj}, {"ops", "[{\"op\":\"marker\",\"at\":{\"clip\":3,\"offset\":300}}]"}})
+                  .contains("only 00:00:10:00 long"));
+        CHECK_EQ(errorOf("edit", {{"project", proj}, {"ops", "[{\"op\":\"marker\",\"at\":{\"clip\":3,\"from_end\":\"10s\"}}]"}, {"dry_run", true}}),
+                 QString("none"));
 
         // frames: crop of the box region and two sources on one sheet
         Cli::Context ctx;

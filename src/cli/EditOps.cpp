@@ -101,8 +101,14 @@ int timeRef(Session& s, const QJsonObject& r, const char* key)
             if (t < 0) fail("BAD_ARGUMENT", QString("%1: source time is not inside the clip (%2)").arg(what, sourceSpan(s, c)));
             return t;
         }
-        if (r.contains("from_end")) return c.end() - parseTime(r["from_end"], f, what + ".from_end");
-        return c.start + (r.contains("offset") ? parseTime(r["offset"], f, what + ".offset") : 0);
+        // Inside the clip (its end included): beyond it the time would silently land in a neighbour or before 0
+        const bool fromEnd = r.contains("from_end");
+        const QString part = what + (fromEnd ? ".from_end" : ".offset");
+        const int d = fromEnd || r.contains("offset") ? parseTime(r[fromEnd ? "from_end" : "offset"], f, part) : 0;
+        if (d > c.length())
+            fail("BAD_ARGUMENT", QString("%1 is %2, but clip %3 is only %4 long (%5 frames)")
+                                     .arg(part, tc(d, f)).arg(c.id).arg(tc(c.length(), f)).arg(c.length()));
+        return fromEnd ? c.end() - d : c.start + d;
     }
     if (r.contains("media") && r.contains("source")) {
         const QString path = absolute(r["media"].toString());
