@@ -2,6 +2,7 @@
 #include "core/Ducking.h"
 #include "core/GradeWindows.h"
 #include "core/Multicam.h"
+#include "core/ProjectFormat.h"
 #include "core/StreamPresets.h"
 #include "core/TimelineOps.h"
 #include "core/Types.h"
