@@ -22,6 +22,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
@@ -39,8 +40,9 @@ extern "C" {
 namespace {
 std::atomic<int> g_running{0}; // running exports (m_timer runs exactly then)
 
-// Visible subtitle track (otherwise the first one with entries) in the range [from, to) as SRT, times from the start of the range
-bool writeSubtitleFile(const Timeline& tl, double fps, int from, int to, const QString& path, QString* error)
+// Visible subtitle track (otherwise the first one with entries) in the range [from, to) as SRT, times from the start of the range.
+// Not committed yet: an existing file of that name is replaced only when the export worked (nullptr = error set)
+std::unique_ptr<QSaveFile> writeSubtitleFile(const Timeline& tl, double fps, int from, int to, const QString& path, QString* error)
 {
     const SubtitleTrack* track = nullptr;
     for (const SubtitleTrack& t : tl.subtitles)
@@ -49,13 +51,37 @@ bool writeSubtitleFile(const Timeline& tl, double fps, int from, int to, const Q
         if (!track && !t.cues.isEmpty()) track = &t;
     if (!track) {
         if (error) *error = T("Die Timeline enthält keine Untertitel.");
-        return false;
+        return nullptr;
     }
-    QSaveFile f(path);
-    if (!f.open(QIODevice::WriteOnly) || f.write(Subtitles::toSrt(track->cues, fps, from, to)) < 0 || !f.commit()) {
+    auto f = std::make_unique<QSaveFile>(path);
+    if (!f->open(QIODevice::WriteOnly) || f->write(Subtitles::toSrt(track->cues, fps, from, to)) < 0) {
         if (error) *error = T("Untertiteldatei kann nicht geschrieben werden: %1").arg(path);
+        return nullptr;
+    }
+    return f;
+}
+
+// Temporary name next to a target file, with its extension (the muxer is picked by it): "clip.1a2b3c4d.part.mp4"
+// (watch folders take it for a file still being written, core/WatchFolders)
+QString partPath(const QString& target, const QString& id)
+{
+    const QFileInfo fi(target);
+    const QString suffix = fi.suffix().isEmpty() ? QString() : "." + fi.suffix();
+    return fi.dir().filePath(QString("%1.%2.part%3").arg(fi.completeBaseName(), id, suffix));
+}
+
+// Rename from onto to, replacing an existing file. QFile::rename refuses an existing target: the old file is moved
+// aside first and put back when the rename fails, so it is never lost.
+bool replaceFile(const QString& from, const QString& to)
+{
+    if (!QFileInfo::exists(to)) return QFile::rename(from, to);
+    const QString aside = partPath(to, QUuid::createUuid().toString(QUuid::Id128).left(8) + "-old");
+    if (!QFile::rename(to, aside)) return false;
+    if (!QFile::rename(from, to)) {
+        QFile::rename(aside, to);
         return false;
     }
+    QFile::remove(aside);
     return true;
 }
 
@@ -190,6 +216,7 @@ Exporter::~Exporter()
 {
     if (m_build) stopBuild();
     cancel();
+    discardOutput(); // e.g. stopped while building the graph
 }
 
 bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error)
@@ -249,8 +276,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         if (t.hidden) t.clips.clear();
 
     QDir().mkpath(QFileInfo(s.path).absolutePath());
-    if (s.output == ExportSettings::Output::ImageSequence) QDir().mkpath(imageSequenceDir(s.path));
-    if (!s.subtitlePath.isEmpty() && !writeSubtitleFile(tl, s.format.rate.fps(), m_from, m_from + m_length, s.subtitlePath, error))
+    std::unique_ptr<QSaveFile> subtitles;
+    if (!s.subtitlePath.isEmpty()
+        && !(subtitles = writeSubtitleFile(tl, s.format.rate.fps(), m_from, m_from + m_length, s.subtitlePath, error)))
         return false;
     // Different frame rate: play the timeline in the output's profile (engine/RateConverter)
     const FrameRate rate = s.rate.num > 0 && s.rate.den > 0 ? s.rate : s.format.rate;
@@ -264,12 +292,20 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // Render every frame (real_time < 0), several frames at once (not with frei0r, see parallelFrames)
     m_frames = convertRate ? 1 : parallelFrames(scaled, threads); // effects on left-out tracks do not count
     m_target = s.path;
+    m_subtitles = std::move(subtitles);
+    // Written under a temporary name next to the target, renamed onto it at the end (see m_part)
+    const QString partId = QUuid::createUuid().toString(QUuid::Id128).left(8);
     switch (s.output) {
-    case ExportSettings::Output::File: m_path = s.path; break;
-    case ExportSettings::Output::ImageSequence: m_path = imageSequencePattern(s.path); break;
+    case ExportSettings::Output::File: m_path = m_part = partPath(s.path, partId); break;
+    case ExportSettings::Output::ImageSequence:
+        m_part = imageSequenceDir(s.path) + "." + partId + ".part";
+        QDir().mkpath(m_part);
+        m_path = QDir(m_part).filePath(QFileInfo(imageSequencePattern(s.path)).fileName());
+        break;
     case ExportSettings::Output::Gif:
         m_path = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
                      .filePath(QString("schneidi-gif-%1.mov").arg(QUuid::createUuid().toString(QUuid::Id128)));
+        m_part = partPath(s.path, partId);
         break;
     }
     m_note = s.encoderNote;
@@ -378,7 +414,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         m_build = nullptr;
         --g_running;
         if (!graph->error.isEmpty()) {
-            emit finished(false, graph->error);
+            fail(graph->error);
             return;
         }
         m_profile = std::move(graph->profile);
@@ -392,10 +428,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         m_length = graph->length;
         QString error;
         if (!launch(&error)) {
-            const QString path = m_path;
-            cleanup();
-            QFile::remove(path);
-            emit finished(false, error);
+            fail(error);
             return;
         }
         emit started();
@@ -467,12 +500,7 @@ void Exporter::onCheckFinished(bool works)
     m_check.release()->deleteLater();
     QString error;
     const bool ok = works ? startConsumer(m_settings.videoCodec, &error) : fallBackToSoftware(&error);
-    if (!ok) {
-        const QString path = m_path;
-        cleanup();
-        QFile::remove(path);
-        emit finished(false, error);
-    }
+    if (!ok) fail(error);
 }
 
 bool Exporter::fallBackToSoftware(QString* error)
@@ -680,10 +708,7 @@ void Exporter::pollWriter()
         if (m_writer->smartFailed()) {
             QString error;
             if (smartFallback(&error)) return;
-            const QString path = m_path;
-            cleanup();
-            QFile::remove(path);
-            emit finished(false, error);
+            fail(error);
             return;
         }
         // Hardware encoder could not be opened or failed while encoding: render again with software
@@ -695,16 +720,10 @@ void Exporter::pollWriter()
             QFile::remove(m_path);
             QString error;
             if (fallBackToSoftware(&error)) return;
-            const QString path = m_path;
-            cleanup();
-            QFile::remove(path);
-            emit finished(false, error);
+            fail(error);
             return;
         }
-        const QString path = m_path;
-        cleanup();
-        QFile::remove(path);
-        emit finished(false, T("Export fehlgeschlagen: %1").arg(m_target));
+        fail(T("Export fehlgeschlagen: %1").arg(m_target));
         return;
     }
     case ExportWriter::State::Done: {
@@ -714,16 +733,12 @@ void Exporter::pollWriter()
             const QString smart = T("Smart Render: %1 % kopiert, %2 % kodiert").arg(m_copiedPercent).arg(100 - m_copiedPercent);
             m_note = m_note.isEmpty() ? smart : m_note + " · " + smart;
         }
-        const QString path = m_path;
-        const bool wrote = wroteOutput();
-        cleanup();
-        if (!wrote) {
-            QFile::remove(path);
-            emit finished(false, T("Export fehlgeschlagen: %1").arg(m_target));
+        if (!wroteOutput()) {
+            fail(T("Export fehlgeschlagen: %1").arg(m_target));
             return;
         }
-        emit progress(100);
-        emit finished(true, T("Export fertig: %1").arg(m_target));
+        cleanup();
+        succeed();
         return;
     }
     }
@@ -776,28 +791,21 @@ void Exporter::poll()
         QFile::remove(m_path);
         QString error;
         if (fallBackToSoftware(&error)) return;
-        const QString path = m_path;
-        cleanup();
-        QFile::remove(path);
-        emit finished(false, error);
+        fail(error);
         return;
     }
     if (m_consumer->is_stopped()) {
-        const QString path = m_path;
-        const bool wrote = wroteOutput();
-        cleanup();
         // Encoder or container failed (e.g. codec missing): no file or an empty one
-        if (!wrote) {
-            QFile::remove(path);
-            emit finished(false, T("Export fehlgeschlagen: %1").arg(m_target));
+        if (!wroteOutput()) {
+            fail(T("Export fehlgeschlagen: %1").arg(m_target));
             return;
         }
+        cleanup();
         if (m_settings.output == ExportSettings::Output::Gif) {
             convertToGif();
             return;
         }
-        emit progress(100);
-        emit finished(true, T("Export fertig: %1").arg(m_target));
+        succeed();
         return;
     }
     const int pos = m_source->position(); // relative to the In point
@@ -817,7 +825,6 @@ void Exporter::convertToGif()
 {
     // One palette for the whole clip from the changing parts (stats_mode=diff: moving things get the colors),
     // error diffusion only where pixels change (diff_mode=rectangle: smaller file, no flicker in still areas)
-    const QString part = m_target + ".part";
     m_gif = std::make_unique<QProcess>();
     m_gif->setProcessChannelMode(QProcess::SeparateChannels);
     connect(m_gif.get(), &QProcess::readyReadStandardOutput, this, [this] {
@@ -836,7 +843,7 @@ void Exporter::convertToGif()
     m_gif->start(Bundle::tool("ffmpeg"),
                  {"-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-progress", "pipe:1", "-i", m_path, "-vf",
                   "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle",
-                  "-loop", "0", "-f", "gif", "-y", part});
+                  "-loop", "0", "-f", "gif", "-y", m_part});
     emit progress(90);
 }
 
@@ -846,21 +853,13 @@ void Exporter::finishGif(bool ok, const QString& log)
     m_gif->disconnect(this);
     m_gif.release()->deleteLater(); // inside one of its signals
     --g_running;
-    QFile::remove(m_path); // intermediate
-    const QString part = m_target + ".part";
-    if (ok) {
-        QFile::remove(m_target);
-        ok = QFile::rename(part, m_target);
-    }
     if (!ok) {
         if (!log.isEmpty()) qWarning("Export: GIF conversion failed: %s", qPrintable(log));
-        QFile::remove(part);
-        emit finished(false, T("Export fehlgeschlagen: %1").arg(m_target));
+        fail(T("Export fehlgeschlagen: %1").arg(m_target));
         return;
     }
     m_usedCodec = "gif"; // what wrote the file (not the intermediate)
-    emit progress(100);
-    emit finished(true, T("Export fertig: %1").arg(m_target));
+    succeed();
 }
 
 bool Exporter::runAnalyses(const Timeline& tl, const ExportSettings& s)
@@ -919,7 +918,7 @@ void Exporter::cancel()
 {
     if (m_build) { // still building the graph
         stopBuild();
-        emit finished(false, T("Export abgebrochen."));
+        fail(T("Export abgebrochen."));
         return;
     }
     if (m_analysis) { // still analyzing for stabilization
@@ -940,17 +939,74 @@ void Exporter::cancel()
         m_gif->waitForFinished(2000);
         m_gif.reset();
         --g_running;
-        QFile::remove(m_path);
-        QFile::remove(m_target + ".part");
-        emit finished(false, T("Export abgebrochen."));
+        fail(T("Export abgebrochen."));
         return;
     }
     if (!isRunning()) return;
-    if (m_consumer) m_consumer->stop();
-    const QString path = m_path;
+    fail(T("Export abgebrochen.")); // the half-finished file goes, an older one of the target's name stays
+}
+
+void Exporter::succeed()
+{
+    QString error;
+    if (!commitOutput(&error)) {
+        fail(error);
+        return;
+    }
+    emit progress(100);
+    emit finished(true, T("Export fertig: %1").arg(m_target));
+}
+
+bool Exporter::commitOutput(QString* error)
+{
+    bool ok = true;
+    if (m_settings.output == ExportSettings::Output::ImageSequence) {
+        // Replace the frames of an older sequence of the same name (a shorter export would leave its higher numbers),
+        // nothing else in that folder
+        const QFileInfo target(m_target);
+        const QDir dir(imageSequenceDir(m_target));
+        QDir().mkpath(dir.path());
+        const QRegularExpression frame(QString("^%1_\\d{5,}\\.%2$")
+                                           .arg(QRegularExpression::escape(target.completeBaseName()),
+                                                QRegularExpression::escape(target.suffix())));
+        for (const QString& old : dir.entryList(QDir::Files))
+            if (frame.match(old).hasMatch()) QFile::remove(dir.filePath(old));
+        const QDir part(m_part);
+        for (const QString& name : part.entryList(QDir::Files))
+            ok = QFile::rename(part.filePath(name), dir.filePath(name)) && ok;
+    } else {
+        ok = replaceFile(m_part, m_target);
+    }
+    if (!ok) {
+        if (error) *error = T("Export fehlgeschlagen: %1").arg(m_target);
+        return false;
+    }
+    if (m_subtitles && !m_subtitles->commit()) {
+        if (error) *error = T("Untertiteldatei kann nicht geschrieben werden: %1").arg(m_subtitles->fileName());
+        return false;
+    }
+    m_subtitles.reset();
+    discardOutput(); // only the intermediates are left (GIF, the empty folder of an image sequence)
+    return true;
+}
+
+void Exporter::fail(const QString& message)
+{
     cleanup();
-    QFile::remove(path); // half-finished file gone
-    emit finished(false, T("Export abgebrochen."));
+    discardOutput();
+    emit finished(false, message);
+}
+
+void Exporter::discardOutput()
+{
+    m_subtitles.reset(); // not committed: its temporary file goes, an existing SRT stays
+    if (!m_part.isEmpty()) {
+        if (m_settings.output == ExportSettings::Output::ImageSequence) QDir(m_part).removeRecursively();
+        else QFile::remove(m_part);
+    }
+    if (m_settings.output == ExportSettings::Output::Gif && !m_path.isEmpty()) QFile::remove(m_path); // intermediate
+    m_part.clear();
+    m_path.clear();
 }
 
 void Exporter::cleanup()

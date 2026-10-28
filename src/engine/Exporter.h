@@ -23,6 +23,7 @@ class Filter;
 } // namespace Mlt
 class TimelineBuilder;
 class ExportWriter;
+class QSaveFile;
 class QThread;
 
 struct ExportSettings {
@@ -131,6 +132,14 @@ private:
     bool fallBackToSoftware(QString* error);
     // Has the encoder written anything yet? (image sequences: the first frame)
     bool wroteOutput() const;
+    // The export worked: move what was written under a temporary name (m_part) to the target the user asked for
+    // (replacing an older file only now) and commit the SRT, then report it. Fails like fail() when that goes wrong.
+    void succeed();
+    bool commitOutput(QString* error);
+    // The export failed or was canceled: stop everything, remove only what this export created (never an older file
+    // of the target's name) and report it
+    void fail(const QString& message);
+    void discardOutput();
     // GIF: intermediate rendered -> ffmpeg palettegen/paletteuse into the target (m_gif)
     void convertToGif();
     void finishGif(bool ok, const QString& log);
@@ -185,6 +194,11 @@ private:
     std::unique_ptr<QProcess> m_check; // test encode of the hardware encoder before the render starts
     std::unique_ptr<QProcess> m_gif;   // GIF: ffmpeg converts the intermediate m_path into m_target
     QString m_target;                  // file the user asked for (differs from m_path for GIF/image sequences)
+    // What this export creates under a temporary name next to the target, renamed onto it only at success (a failed or
+    // canceled export keeps an older file of that name): File = m_path, GIF = the converted file, image sequence = the
+    // folder m_path writes into
+    QString m_part;
+    std::unique_ptr<QSaveFile> m_subtitles; // SRT next to the file (ExportSettings::subtitlePath), committed at success
     ExportSettings m_settings;
     bool m_convertRate = false;
     bool m_ownAudio = false;  // sound from engine/MixedSound
