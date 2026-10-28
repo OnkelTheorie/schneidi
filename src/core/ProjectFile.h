@@ -23,9 +23,6 @@ struct ProjectData {
     Timeline timeline; // opened timeline (sequence currentSequence)
     int lastClipId = 0;
     int lastLinkId = 0;
-    // Highest sequence id ever given (optional): ids of deleted timelines are never given again (a queued render job
-    // keeps pointing at "deleted", not at a new timeline). 0 = the highest of `sequences`.
-    int lastSequenceId = 0;
     QVector<RenderJob> renderQueue; // Deliver: render queue (optional)
     // All sequences (timelines, compound clips); the opened one gets `timeline` on loading.
     // Empty (old files) = only `timeline` as "Timeline 1".
@@ -42,6 +39,9 @@ struct ProjectData {
     QVector<WatchFolder> watchFolders;
     QVector<WatchArrival> watchLog;
     int watchRevision = 0;
+    // Highest sequence id ever given (optional): ids of deleted timelines are never given again (a queued render job
+    // keeps pointing at "deleted", not at a new timeline). 0 = the highest of `sequences`.
+    int lastSequenceId = 0;
 };
 
 namespace ProjectFile {
