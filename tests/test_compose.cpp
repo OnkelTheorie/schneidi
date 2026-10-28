@@ -351,10 +351,13 @@ int main(int argc, char** argv)
                 // the preview are cut at preview size (qtblend cut at media size and scaled)
                 // Titles with outline: qtext lays out the outline layer at another scale than the text (the outline
                 // is off by up to its width at the line ends; the own filter lines both up, tests/test_render_quality).
+                // Preview: shrinking by 2:1 or more is prefiltered here, qtblend samples bilinear only (stair steps),
+                // so edges differ more.
                 const bool text = QString(c.name).contains("title"), crop = QString(c.name).startsWith("crop");
                 const bool outline = text && (QString(c.name).contains("outline") || QString(c.name).contains("zoomed"));
-                const double meanLimit = outline ? 5.0 : text ? 2.5 : 1.0;
-                const double edgeLimit = outline ? 0.05 : text ? 0.035 : crop ? 0.02 : 0.01;
+                const bool shrunk = !text && s.scale < 1.0;
+                const double meanLimit = outline ? 5.0 : text ? 2.5 : shrunk ? 1.5 : 1.0;
+                const double edgeLimit = outline ? 0.05 : text ? 0.035 : crop || shrunk ? 0.025 : 0.01;
                 const bool ok = d.mean < meanLimit && d.over16 < edgeLimit && d.level > 8;
                 std::printf("  %s %-34s %-13s frame %2d: mean %.3f max %3d >16: %.3f%% (level %.0f)\n", ok ? "  " : "!!",
                             c.name, s.name, frame, d.mean, d.max, d.over16 * 100, d.level);

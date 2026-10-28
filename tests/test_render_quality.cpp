@@ -3,6 +3,8 @@
 //   reaches the outline width beyond the letters on every side, also at the line ends and with a box)
 // - stills: a photo much larger than the project is decoded smaller, all still producers share one memory budget
 //   (a slideshow of many large photos kept each one decoded), EXIF orientation still applied
+// - compose: strong downscales are prefiltered (1-px stripes shrunk 4.3:1 come out as even gray, not as random
+//   stripes)
 
 #include "check.h"
 
@@ -200,6 +202,67 @@ void testStills(Mlt::Profile& profile, const QTemporaryDir& tmp)
     Still::setCacheBudget(0);
 }
 
+double stddev(const std::vector<uint8_t>& px, int w, int h, int x0, int y0, int x1, int y1)
+{
+    double sum = 0, sq = 0;
+    int n = 0;
+    for (int y = y0; y < y1; ++y)
+        for (int x = x0; x < x1; ++x) {
+            const double v = px[(size_t(y) * w + x) * 4];
+            sum += v;
+            sq += v * v;
+            ++n;
+        }
+    const double mean = sum / n;
+    return std::sqrt(std::max(0.0, sq / n - mean * mean));
+}
+
+// 1-px stripes shrunk 4.3:1 (and a zone plate 4:1 for looking at it): even gray instead of random stripes
+void testDownscale(const QString& dump)
+{
+    const int sw = 1376, sh = 774, dw = 320, dh = 180;
+    std::vector<uint8_t> src(size_t(sw) * sh * 4);
+    for (int y = 0; y < sh; ++y)
+        for (int x = 0; x < sw; ++x) {
+            uint8_t* p = src.data() + (size_t(y) * sw + x) * 4;
+            p[0] = p[1] = p[2] = (x & 1) ? 255 : 0;
+            p[3] = 255;
+        }
+    std::vector<uint8_t> dst(size_t(dw) * dh * 4, 0);
+    Compose::Affine m;
+    m.a = double(dw) / sw;
+    m.e = double(dh) / sh;
+    Compose::draw(dst.data(), dw, dh, src.data(), sw, sh, m, 1.0);
+    const double sd = stddev(dst, dw, dh, 2, 2, dw - 2, dh - 2);
+    std::printf("  1-px stripes shrunk %.1f:1: spread of the gray %.1f (even gray = 0)\n", double(sw) / dw, sd);
+    CHECK(sd < 8);
+    // Rotated a little as well: still even
+    std::fill(dst.begin(), dst.end(), 0);
+    const double rad = 0.2, k = 0.25;
+    Compose::Affine r{k * std::cos(rad), -k * std::sin(rad), 60, k * std::sin(rad), k * std::cos(rad), -20};
+    Compose::draw(dst.data(), dw, dh, src.data(), sw, sh, r, 1.0);
+    const double sdr = stddev(dst, dw, dh, 100, 70, 200, 120);
+    std::printf("  1-px stripes shrunk 4:1, rotated: spread %.1f\n", sdr);
+    CHECK(sdr < 12);
+
+    if (dump.isEmpty()) return;
+    // Zone plate (rings getting finer outwards) 1280x1280 -> 320x320: look at the picture
+    const int zs = 1280, zd = 320;
+    std::vector<uint8_t> zone(size_t(zs) * zs * 4), out(size_t(zd) * zd * 4, 0);
+    for (int y = 0; y < zs; ++y)
+        for (int x = 0; x < zs; ++x) {
+            const double dx = x - zs / 2.0, dy = y - zs / 2.0;
+            const uint8_t v = uint8_t(127.5 + 127.5 * std::cos(std::numbers::pi * (dx * dx + dy * dy) / zs));
+            uint8_t* p = zone.data() + (size_t(y) * zs + x) * 4;
+            p[0] = p[1] = p[2] = v;
+            p[3] = 255;
+        }
+    Compose::Affine z;
+    z.a = z.e = double(zd) / zs;
+    Compose::draw(out.data(), zd, zd, zone.data(), zs, zs, z, 1.0);
+    QImage(out.data(), zd, zd, QImage::Format_RGBA8888).save(dump + "/zoneplate-4to1.png");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -218,5 +281,6 @@ int main(int argc, char** argv)
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     testStills(*profile, tmp);
+    testDownscale(qEnvironmentVariable("SCHNEIDI_QUALITY_DUMP"));
     return Check::result();
 }
