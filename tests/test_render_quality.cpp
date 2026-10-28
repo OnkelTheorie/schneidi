@@ -1,6 +1,8 @@
 // Picture quality of the own MLT services (engine/video: Text, Still, Compose), measured on rendered pixels:
 // - titles/subtitles with outline: the outline layer and the text layer sit exactly on top of each other (the outline
 //   reaches the outline width beyond the letters on every side, also at the line ends and with a box)
+// - stills: a photo much larger than the project is decoded smaller, all still producers share one memory budget
+//   (a slideshow of many large photos kept each one decoded), EXIF orientation still applied
 
 #include "check.h"
 
@@ -115,6 +117,89 @@ void testOutline(Mlt::Profile& profile, const char* name, bool subtitle, double 
     }
 }
 
+// A JPEG with an EXIF orientation tag (6 = turn 90 degrees clockwise to show it): APP1 segment right after SOI
+QByteArray withOrientation(const QByteArray& jpg, int orientation)
+{
+    const QByteArray tiff = QByteArray("MM\x00\x2a\x00\x00\x00\x08", 8) + QByteArray("\x00\x01", 2) // one entry
+                            + QByteArray("\x01\x12\x00\x03\x00\x00\x00\x01", 8) + char(0) + char(orientation)
+                            + QByteArray(2, 0) + QByteArray(4, 0); // value (padded), no next IFD
+    const QByteArray body = QByteArray("Exif\x00\x00", 6) + tiff;
+    const int len = int(body.size()) + 2;
+    QByteArray seg = QByteArray("\xff\xe1", 2) + char(len >> 8) + char(len & 255) + body;
+    return jpg.left(2) + seg + jpg.mid(2);
+}
+
+QImage stillFrame(Mlt::Profile& profile, const QString& path)
+{
+    Mlt::Producer p(profile, (QString(Still::kService) + ":" + path).toUtf8().constData());
+    if (!p.is_valid()) return {};
+    std::unique_ptr<Mlt::Frame> f(p.get_frame());
+    mlt_image_format fmt = mlt_image_rgba;
+    int w = p.get_int("meta.media.width"), h = p.get_int("meta.media.height");
+    const uint8_t* img = f->get_image(fmt, w, h);
+    if (!img || fmt != mlt_image_rgba) return {};
+    return QImage(img, w, h, w * 4, QImage::Format_RGBA8888).copy();
+}
+
+// Many large photos in a small project: decoded at most 4x the project's pixels, all of them together within the
+// budget, a dropped one is read again; a turned phone photo (EXIF) comes out upright and scaled
+void testStills(Mlt::Profile& profile, const QTemporaryDir& tmp)
+{
+    QImage photo(4000, 3000, QImage::Format_RGB32); // top half red, bottom half blue
+    photo.fill(QColor(220, 30, 30));
+    QPainter(&photo).fillRect(0, 1500, 4000, 1500, QColor(30, 30, 220));
+    QByteArray jpg;
+    {
+        QBuffer buf(&jpg);
+        buf.open(QIODevice::WriteOnly);
+        CHECK(photo.save(&buf, "JPG", 85));
+    }
+    const qint64 budget = qint64(64) << 20;
+    Still::setCacheBudget(budget);
+    const double most = 4.0 * profile.width() * profile.height();
+    std::vector<std::unique_ptr<Mlt::Producer>> keep; // all producers stay open (like the clips of a timeline)
+    QString first;
+    for (int i = 0; i < 12; ++i) {
+        const QString path = tmp.filePath(QString("photo%1.jpg").arg(i));
+        QFile f(path);
+        if (!CHECK(f.open(QIODevice::WriteOnly) && f.write(jpg) == jpg.size())) return;
+        f.close();
+        if (i == 0) first = path;
+        keep.push_back(std::make_unique<Mlt::Producer>(profile, (QString(Still::kService) + ":" + path).toUtf8().constData()));
+        Mlt::Producer& p = *keep.back();
+        if (!CHECK(p.is_valid())) return;
+        std::unique_ptr<Mlt::Frame> fr(p.get_frame());
+        mlt_image_format fmt = mlt_image_rgba;
+        int w = p.get_int("meta.media.width"), h = p.get_int("meta.media.height");
+        const uint8_t* img = fr->get_image(fmt, w, h);
+        if (!CHECK(img && fmt == mlt_image_rgba)) return;
+        if (i == 0) {
+            std::printf("  still 4000x3000 in a %dx%d project: decoded %dx%d\n", profile.width(), profile.height(), w, h);
+            CHECK(double(w) * h <= most * 1.01 && std::abs(double(w) / h - 4.0 / 3.0) < 0.01);
+            CHECK(img[(size_t(h / 4) * w + w / 2) * 4] > 180 && img[(size_t(3 * h / 4) * w + w / 2) * 4 + 2] > 180);
+        }
+    }
+    std::printf("  12 large stills decoded: %.1f MB held (budget %.0f MB)\n", Still::cachedBytes() / 1048576.0,
+                budget / 1048576.0);
+    CHECK(Still::cachedBytes() <= budget);
+    // The first one was dropped: read again, same picture
+    const QImage again = stillFrame(profile, first);
+    CHECK(!again.isNull() && again.pixelColor(again.width() / 2, again.height() / 4).red() > 180);
+
+    // EXIF orientation 6: shown turned clockwise (the top of the file on the right), portrait, scaled
+    const QString turned = tmp.filePath("turned.jpg");
+    QFile f(turned);
+    if (!CHECK(f.open(QIODevice::WriteOnly))) return;
+    f.write(withOrientation(jpg, 6));
+    f.close();
+    const QImage t = stillFrame(profile, turned);
+    if (!CHECK(!t.isNull())) return;
+    std::printf("  turned still: %dx%d\n", t.width(), t.height());
+    CHECK(t.height() > t.width() && double(t.width()) * t.height() <= most * 1.01);
+    CHECK(t.pixelColor(t.width() * 3 / 4, t.height() / 2).red() > 180 && t.pixelColor(t.width() / 4, t.height() / 2).blue() > 180);
+    Still::setCacheBudget(0);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -130,5 +215,8 @@ int main(int argc, char** argv)
     testOutline(*profile, "title, outline 4 + box 20", false, 4, true, 20);
     testOutline(*profile, "subtitle, outline 6", true, 6, false, 0);
     testOutline(*profile, "subtitle, outline 6 + box 10", true, 6, true, 10);
+    QTemporaryDir tmp;
+    if (!CHECK(tmp.isValid())) return Check::result();
+    testStills(*profile, tmp);
     return Check::result();
 }
