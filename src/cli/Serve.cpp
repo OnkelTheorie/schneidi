@@ -690,7 +690,9 @@ Options parse(const QStringList& args)
     if (!opt.publicUrl.isEmpty() && !QUrl(opt.publicUrl).isValid()) fail("USAGE", "--public-url is not a URL");
     opt.origins = o.value("allow-origin");
     opt.verbose = qEnvironmentVariableIsSet("SCHNEIDI_VERBOSE");
-    // Token: given, from a file, from the environment; off this computer always (made once and kept)
+    // Token: given, from a file, from the environment; off this computer always (made once and kept). Behind a reverse
+    // proxy (--public-url) everyone comes from this computer: as public as listening on the network
+    const bool reachable = !opt.listen.isLoopback() || !opt.publicUrl.isEmpty();
     if (o.contains("token")) {
         opt.token = one("token");
         opt.tokenFrom = "--token";
@@ -703,7 +705,7 @@ Options parse(const QStringList& args)
     } else if (!qEnvironmentVariable("SCHNEIDI_TOKEN").trimmed().isEmpty()) {
         opt.token = qEnvironmentVariable("SCHNEIDI_TOKEN").trimmed();
         opt.tokenFrom = "SCHNEIDI_TOKEN";
-    } else if (!opt.listen.isLoopback()) {
+    } else if (reachable) {
         QFile f(tokenFile());
         if (f.open(QIODevice::ReadOnly)) opt.token = QString::fromUtf8(f.readLine()).trimmed();
         f.close();
@@ -719,7 +721,7 @@ Options parse(const QStringList& args)
         opt.tokenShown = true;
     }
     // An empty --token would switch the check off for everyone on the network
-    if ((!opt.token.isEmpty() || !opt.listen.isLoopback()) && opt.token.size() < 16)
+    if ((!opt.token.isEmpty() || reachable) && opt.token.size() < 16)
         fail("USAGE", "the token is too short (at least 16 characters; leave it out to get a generated one)");
     return opt;
 }
@@ -775,17 +777,19 @@ QJsonObject help()
                   {"listen", "address to listen on (default 127.0.0.1 = only this computer; 0.0.0.0 = all networks, "
                              "then a token is required)"},
                   {"port", "TCP port (default 8642; 0 = any free one, printed at start)"},
-                  {"root", "work folder: all paths are inside it, its hidden files are not served (default on "
+                  {"root", "work folder: all paths are inside it, its hidden files are not served or used by tools, "
+                           "playlists and MLT XML in it are no media (default on "
                            "127.0.0.1: the current folder; required on any other address)"},
                   {"map", "path of another computer = path here, e.g. 'Z:\\Clips=/data/clips' (repeatable)"},
                   {"token", "token clients must send (Authorization: Bearer …); better --token-file or the "
-                            "environment variable SCHNEIDI_TOKEN (not visible in the process list). Not on 127.0.0.1: "
-                            "without one a token is generated once, stored and printed"},
+                            "environment variable SCHNEIDI_TOKEN (not visible in the process list). Not on 127.0.0.1 or "
+                            "with --public-url: without one a token is generated once, stored and printed"},
                   {"token-file", "file with the token (first line)"},
                   {"workers", "worker processes for parallel calls (default: half the processor threads, max 4)"},
                   {"job-wait", "seconds a call waits before it answers with a job (default 50)"},
                   {"max-upload", "largest upload in MB (default 51200)"},
-                  {"public-url", "address clients use (behind a reverse proxy), e.g. https://schneidi.example.org"},
+                  {"public-url", "address clients use (behind a reverse proxy), e.g. https://schneidi.example.org; "
+                                 "then a token is required (everyone comes through the proxy)"},
                   {"allow-origin", "web page allowed to call the server, e.g. https://example.org (repeatable)"},
                   {"allow-extensions", "offer the `extensions` tool (downloads programs onto the server)"}}}}},
     };

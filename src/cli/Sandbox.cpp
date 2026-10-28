@@ -8,6 +8,7 @@
 #include "core/Project.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -157,7 +158,37 @@ QString resolve(const QString& given)
         if (parent == probe) break;
         probe = parent;
     }
+    // Hidden files (".bashrc", ".config/autostart/…") stay out for every tool, as for the server's own file access
+    if (hidden(abs)) fail("HIDDEN", QString("'%1' is a hidden file or folder of the work folder (or in one): not "
+                                            "readable or writable here").arg(given));
     return abs;
+}
+
+bool namesOtherFiles(const QString& path)
+{
+    if (state().root.isEmpty()) return false;
+    const QFileInfo fi(path);
+    if (!fi.isFile()) return false;
+    // By name: MLT and FFmpeg pick their reader by the extension (MLT XML, playlists, stream descriptions)
+    static const QStringList suffixes{"mlt", "kdenlive", "m3u", "m3u8", "ffconcat", "sdp", "mpd"};
+    if (suffixes.contains(fi.suffix().toLower())) return true;
+    // By content: FFmpeg probes it (a playlist named clip.mp4 is still read as one), MLT XML in any .xml
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    QByteArray head = f.read(8192).toLower();
+    if (head.startsWith("\xef\xbb\xbf")) head.remove(0, 3);
+    head = head.trimmed();
+    static const QRegularExpression mlt("<mlt[\\s>/]");
+    return head.startsWith("#extm3u") || head.startsWith("ffconcat") || head.startsWith("v=0")
+           || mlt.match(QString::fromLatin1(head)).hasMatch() || head.contains("<mpd");
+}
+
+void checkMedia(const QString& path)
+{
+    if (namesOtherFiles(path))
+        fail("BAD_MEDIA", QString("'%1' is a playlist or MLT/stream description that makes the engine read other "
+                                  "files or addresses: not allowed in the work folder of a server")
+                              .arg(mapBack(path)));
 }
 
 QString relative(const QString& absolutePath)
@@ -260,7 +291,14 @@ void checkProject(const Project& p)
     if (const QString c = QFileInfo(EffectFolders::root()).canonicalFilePath(); !c.isEmpty()) own << c;
     files.removeDuplicates();
     for (const QString& f : files) {
-        if (f.isEmpty() || EffectFolders::isBuiltin(f) || allowedFile(f, own)) continue;
+        if (f.isEmpty() || EffectFolders::isBuiltin(f)) continue;
+        if (allowedFile(f, own)) {
+            // Inside, but hidden or a playlist/MLT XML that reads files from anywhere
+            const QString clean = QDir::cleanPath(QDir::fromNativeSeparators(f));
+            if (hidden(clean)) fail("HIDDEN", "the project uses a hidden file of the work folder: " + f);
+            checkMedia(clean);
+            continue;
+        }
         // Also offline ones: the engine would still try to open them
         fail("OUTSIDE_ROOT", QString("the project uses a file outside the work folder %1: %2 (put it into the work "
                                      "folder – next to the project as it was on the other computer, then it is found "

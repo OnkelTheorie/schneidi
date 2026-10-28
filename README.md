@@ -198,7 +198,7 @@ The AppImage contains the CLI too: `./schneidi-<version>-x86_64.AppImage cli hel
 **On a server (HTTP, Docker):** `schneidi-cli serve` runs the same tools as an MCP server over HTTP, so AIs on other
 devices and fully automatic pipelines can edit on a server: material goes in by `PUT /files/…` or the `upload` tool,
 results come back as download links, long renders turn into jobs (`jobs`), and nothing outside the work folder
-(`--root`) can be read or written. It listens on localhost by default; on the network a token is required. A Docker
+(`--root`) can be read or written. It listens on localhost by default; on the network or behind a reverse proxy (`--public-url`) a token is required. A Docker
 image (`ghcr.io/onkeltheorie/schneidi`, from 0.12.0) with compose file is in [packaging/docker](packaging/docker/README.md).
 
 ```bash

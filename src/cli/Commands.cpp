@@ -54,8 +54,10 @@ void fail(const QString& code, const QString& message) { throw Error{code, messa
 QString absolute(const QString& path)
 {
     // "@app" stays (not a file in the working directory); in a work folder (server) relative paths start there and
-    // nothing outside it is allowed
-    return Sandbox::resolve(path);
+    // nothing outside it is allowed, nor a playlist or MLT XML that reads files from anywhere
+    const QString resolved = Sandbox::resolve(path);
+    Sandbox::checkMedia(resolved);
+    return resolved;
 }
 
 // ---------- Times ----------
@@ -1021,6 +1023,9 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
         return result;
     } catch (const Error& e) {
         activity.failed(e);
+        throw;
+    } catch (const std::exception& e) {
+        activity.failed({"INTERNAL", QString::fromLocal8Bit(e.what())});
         throw;
     }
 }
