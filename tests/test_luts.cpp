@@ -202,6 +202,24 @@ void testRobustness(const QString& dir)
         if (!CHECK(l)) qWarning() << n << err;
         else CHECK(isInvert(l.get()));
     }
+
+    // nan/inf are no numbers (they reached lround/int casts: undefined behavior); a huge finite value is clamped
+    auto withValue = [](QByteArray text, const QByteArray& value) {
+        const int at = text.lastIndexOf('\n', text.size() - 2) + 1; // the last data line
+        return text.left(at) + value + " 0 0\n";
+    };
+    for (const QByteArray v : {"nan", "inf", "-INF", "infinity", "1e40"}) {
+        CHECK(writeFile(path("nan.cube"), withValue(cube(3, kIdent), v)));
+        CHECK(writeFile(path("nan.3dl"), withValue(threeDl(3, 1023, kIdent), v)));
+        CHECK(writeFile(path("nan.csp"), withValue(csp, v)));
+        for (const char* n : {"nan.cube", "nan.3dl", "nan.csp"})
+            if (!CHECK(!ColorGrade::parseLut(path(n)))) qWarning() << n << v;
+    }
+    CHECK(writeFile(path("huge.cube"), withValue(cube(3, kIdent), "1e30")));
+    if (auto l = ColorGrade::parseLut(path("huge.cube")); CHECK(l)) {
+        CHECK(std::all_of(l->data.cbegin(), l->data.cend(), [](float x) { return std::isfinite(x); }));
+        CHECK_EQ(R(graded(l.get()), 255), 255); // white -> clamped to white
+    }
 }
 
 void testBuiltins()

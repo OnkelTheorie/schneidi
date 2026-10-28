@@ -220,7 +220,7 @@ std::shared_ptr<const LutTables> makeTables(const Lut& lut)
                 uint64_t w = 0;
                 for (int c = 0; c < 3; ++c) {
                     const float v = lut.data[qsizetype(i * 3 + c)];
-                    const long q = std::lround((double(v) + 0.5) * kSteps);
+                    const long q = std::lround((std::clamp(double(v), -1.0, 2.0) + 0.5) * kSteps);
                     w |= uint64_t(std::clamp(q, 0L, 8191L)) << (kLane * c);
                 }
                 t->nodes[i] = w;
@@ -524,11 +524,21 @@ LutPtr failLut(QString* error, const QString& msg)
     return nullptr;
 }
 
-// Number of a data line (QByteArray::toDouble: always with a dot, independent of the locale)
+// Number of a data line (QByteArray::toDouble: always with a dot, independent of the locale). Only finite
+// values that fit a float: toDouble also takes "nan"/"inf", which end up in lround/int casts later (undefined).
+double number(const QByteArray& w, bool* ok = nullptr)
+{
+    bool good = false;
+    const double v = w.toDouble(&good);
+    good = good && std::isfinite(float(v));
+    if (ok) *ok = good;
+    return good ? v : 0.0;
+}
+
 bool isNumber(const QByteArray& w)
 {
     bool ok = false;
-    w.toDouble(&ok);
+    number(w, &ok);
     return ok;
 }
 
@@ -548,7 +558,7 @@ LutPtr parseCube(QIODevice& f, QString* error)
             if (w.size() < 3 || !expected) return failLut(error, QStringLiteral("Datenzeile vor der Größenangabe"));
             for (int c = 0; c < 3; ++c) {
                 bool okc = false;
-                lut->data << float(w.at(c).toDouble(&okc));
+                lut->data << float(number(w.at(c), &okc));
                 if (!okc) return failLut(error, QStringLiteral("ungültige Zahl"));
             }
             continue;
@@ -562,11 +572,11 @@ LutPtr parseCube(QIODevice& f, QString* error)
             lut->data.reserve(expected * 3);
         } else if (key == "DOMAIN_MIN" || key == "DOMAIN_MAX") {
             float* dst = key == "DOMAIN_MIN" ? lut->domainMin : lut->domainMax;
-            for (int c = 0; c < 3 && c + 1 < w.size(); ++c) dst[c] = float(w.at(c + 1).toDouble());
+            for (int c = 0; c < 3 && c + 1 < w.size(); ++c) dst[c] = float(number(w.at(c + 1)));
         } else if (key == "LUT_3D_INPUT_RANGE" || key == "LUT_1D_INPUT_RANGE") { // Resolve variant
             for (int c = 0; c < 3; ++c) {
-                lut->domainMin[c] = float(w.value(1).toDouble());
-                lut->domainMax[c] = float(w.value(2).toDouble());
+                lut->domainMin[c] = float(number(w.value(1)));
+                lut->domainMax[c] = float(number(w.value(2)));
             }
         } // skip TITLE and unknown things
     }
@@ -598,7 +608,7 @@ LutPtr parse3dl(QIODevice& f, QString* error)
         if (w.size() < 3) return failLut(error, QStringLiteral("ungültige Datenzeile"));
         for (int c = 0; c < 3; ++c) {
             bool ok = false;
-            raw << float(w.at(c).toDouble(&ok));
+            raw << float(number(w.at(c), &ok));
             if (!ok) return failLut(error, QStringLiteral("ungültige Zahl"));
         }
     }
@@ -643,7 +653,7 @@ LutPtr parseCsp(QIODevice& f, QString* error)
         }
         for (const QByteArray& w : words(line)) {
             bool ok = false;
-            nums << w.toDouble(&ok);
+            nums << number(w, &ok);
             if (!ok) return failLut(error, QStringLiteral("ungültige Zahl"));
         }
     }
