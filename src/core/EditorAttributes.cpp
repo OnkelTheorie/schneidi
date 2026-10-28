@@ -14,10 +14,19 @@ namespace {
 
 constexpr const char* kGrade = "grade"; // effect of the Color page (EffectRegistry)
 
+// The source's keyframes for clip c: they are stored as source frames (Clip::in + clip frame), so they move by the
+// difference of the in points - a zoom at the start of the source clip is at the start of c too, not behind its end
+KeyTrack keysFor(const Clip& c, const Clip& src, const KeyTrack& keys)
+{
+    KeyTrack out = keys;
+    for (Keyframe& k : out) k.frame += c.in - src.in;
+    return out;
+}
+
 void copyKeys(Clip& c, const Clip& src, std::initializer_list<AnimParam> params)
 {
     for (AnimParam p : params) {
-        if (src.keys.contains(p)) c.keys[p] = src.keys[p];
+        if (src.keys.contains(p)) c.keys[p] = keysFor(c, src, src.keys[p]);
         else c.keys.remove(p);
     }
 }
@@ -64,7 +73,7 @@ void pasteEffects(Clip& c, const Clip& src)
     const auto other = [](AnimParam p) { return Keys::isEffectParam(p) && !isGradeParam(p); };
     c.keys.removeIf([&](const auto& it) { return other(it.key()); });
     for (auto it = src.keys.cbegin(); it != src.keys.cend(); ++it)
-        if (other(it.key())) c.keys.insert(it.key(), it.value());
+        if (other(it.key())) c.keys.insert(it.key(), keysFor(c, src, it.value()));
 }
 
 // Take over or remove the color grade (Color page) including LUT; other effects stay
@@ -77,7 +86,7 @@ void pasteColor(Clip& c, const Clip& src)
     copyKeyRange(c, src, AnimParam::GradeLiftY, AnimParam::GradeExposure);
     c.keys.removeIf([](const auto& it) { return isGradeParam(it.key()); }); // windows
     for (auto it = src.keys.cbegin(); it != src.keys.cend(); ++it)
-        if (isGradeParam(it.key())) c.keys.insert(it.key(), it.value());
+        if (isGradeParam(it.key())) c.keys.insert(it.key(), keysFor(c, src, it.value()));
 }
 
 } // namespace
