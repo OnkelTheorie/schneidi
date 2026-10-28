@@ -29,6 +29,9 @@ constexpr double kBackoff[] = {1.0, 4.0}; // seek further back when the first pa
 constexpr int kProbePackets = 2000;  // read at most this many packets to find the picture's first key frame
 constexpr int kGridFrames = 24;      // frames measured in a stream with coarse timestamps (Matroska)
 constexpr int kSilenceChunk = 4096;
+// A timestamp jump forward longer than this: the next packet decides whether the stream goes on there (a gap) or the
+// one packet is broken (an outlier)
+constexpr double kOutlierCheck = 1.0;
 // 16-bit WAV: FFmpeg looks for DTS/AC3 hidden in the PCM in the first 32 packets (2.7 s, 20 ms per stereo file, 70 ms
 // for 5.1); 64 KB find it just as well
 constexpr int64_t kCodecProbeBytes = 1 << 16;
@@ -110,9 +113,15 @@ struct Reader::Impl {
     int64_t keepFrom = kFar;
     std::vector<std::vector<float>> tmp;
     std::vector<uint8_t*> tmpPtrs;
+    // A frame after a long timestamp gap: waits while the silence before it is made, a chunk per step() (an hour
+    // without packets must not become an hour of samples in one go)
+    AVFrame* gapFrame = nullptr;
+    bool gapPending = false;
+    int64_t gapAt = 0; // its source position
 
     ~Impl()
     {
+        av_frame_free(&gapFrame);
         for (AVPacket* p : queued) av_packet_free(&p);
         freeSilence();
         swr_free(&swr);
@@ -143,6 +152,7 @@ struct Reader::Impl {
             av_packet_free(&p);
             return true;
         }
+        if (!fmt) return false;
         for (;;) {
             const int r = av_read_frame(fmt, pkt);
             if (r == AVERROR(EAGAIN)) continue;
@@ -336,6 +346,52 @@ struct Reader::Impl {
         }
     }
 
+    void dropGapFrame()
+    {
+        if (gapFrame) av_frame_unref(gapFrame);
+        gapPending = false;
+    }
+
+    // `f` starts at sp, after a gap from srcNext: a short gap is filled at once, a long one by fillGap()
+    void afterGap(const AVFrame* f, int64_t sp)
+    {
+        if (sp - srcNext <= kSilenceChunk) {
+            feedSilence(sp - srcNext);
+            feed(f, 0);
+            return;
+        }
+        if (!gapFrame) gapFrame = av_frame_alloc();
+        if (!gapFrame || av_frame_ref(gapFrame, f) < 0) {
+            error = true;
+            return;
+        }
+        gapAt = sp;
+        gapPending = true;
+    }
+
+    void fillGap()
+    {
+        feedSilence(std::min<int64_t>(gapAt - srcNext, kSilenceChunk));
+        if (srcNext < gapAt || error) return;
+        gapPending = false;
+        feed(gapFrame, 0);
+        av_frame_unref(gapFrame);
+    }
+
+    // A frame at sp, far after srcNext: true when the packet after it comes back to where the stream was (a single
+    // broken timestamp, e.g. of an aborted recording) – its samples then simply follow. The packet is put back.
+    bool outlier(int64_t sp)
+    {
+        if (!nextPacket()) return true; // nothing after it: the samples are more trustworthy than the timestamp
+        const int64_t ts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
+        AVPacket* back = av_packet_clone(pkt);
+        av_packet_unref(pkt);
+        if (back) queued.push_front(back);
+        if (ts == AV_NOPTS_VALUE) return false;
+        const long double next = ((long double)ts * tb.num / tb.den - zero) * inRate;
+        return next < srcNext + (long double)(sp - srcNext) / 2;
+    }
+
     void feed(const AVFrame* f, int offset)
     {
         const int n = f->nb_samples - offset;
@@ -412,9 +468,8 @@ struct Reader::Impl {
                 else // keep the buffer contiguous
                     for (auto& b : buf) b.resize(b.size() + size_t(outNext - outPos), 0.f);
                 started = true;
-                if (sp > srcNext) feedSilence(sp - srcNext);
-                const int off = sp < srcNext ? int(std::min<int64_t>(srcNext - sp, f->nb_samples)) : 0;
-                feed(f, off);
+                if (sp > srcNext) afterGap(f, sp);
+                else feed(f, int(std::min<int64_t>(srcNext - sp, f->nb_samples)));
                 return Placed::Fed;
             }
         }
@@ -455,9 +510,13 @@ struct Reader::Impl {
         const int64_t diff = sp - srcNext;
         const int64_t jitter = std::llround(kJitter * inRate);
         if (diff > jitter) {
-            ++stats.gaps;
-            feedSilence(diff);
-            feed(f, 0);
+            if (diff > std::llround(kOutlierCheck * inRate) && outlier(sp)) {
+                ++stats.outliers;
+                feed(f, 0);
+            } else {
+                ++stats.gaps;
+                afterGap(f, sp);
+            }
         } else if (diff < -jitter) {
             ++stats.overlaps;
             const int64_t cut = -diff;
@@ -474,6 +533,7 @@ struct Reader::Impl {
     bool openDecoder()
     {
         avcodec_free_context(&dec);
+        if (!fmt || index < 0 || index >= int(fmt->nb_streams)) return false;
         const AVStream* st = fmt->streams[index];
         const AVCodec* codec = avcodec_find_decoder(st->codecpar->codec_id);
         if (!codec) return false;
@@ -484,23 +544,46 @@ struct Reader::Impl {
         return avcodec_open2(dec, codec, nullptr) >= 0;
     }
 
-    // A fresh demuxer at the file start (some demuxers drop packets before the picture's first key frame on a seek)
+    // A fresh demuxer at the file start (some demuxers drop packets before the picture's first key frame on a seek).
+    // Fails when the file is gone (deleted, moved, disk unplugged): no demuxer afterwards (fmt == nullptr).
     bool reopen()
     {
         ++stats.reopens;
         avformat_close_input(&fmt);
         if (avformat_open_input(&fmt, path.constData(), nullptr, nullptr) < 0) return false;
-        if (streamInfo && avformat_find_stream_info(fmt, nullptr) < 0) return false;
-        if (index >= int(fmt->nb_streams)) return false;
+        if ((streamInfo && avformat_find_stream_info(fmt, nullptr) < 0) || index >= int(fmt->nb_streams)) {
+            avformat_close_input(&fmt);
+            return false;
+        }
         fmt->probesize = std::min(fmt->probesize, kCodecProbeBytes);
         for (unsigned i = 0; i < fmt->nb_streams; ++i)
             if (int(i) != index) fmt->streams[i]->discard = AVDISCARD_ALL;
         return true;
     }
 
+    // The file or its decoder is gone: silence from the jump target on, an error for the caller. A later jump before
+    // the target tries the file again.
+    void lose()
+    {
+        error = true;
+        for (AVPacket* p : queued) av_packet_free(&p);
+        queued.clear();
+        dropGapFrame();
+        swr_free(&swr);
+        inRate = 0;
+        inFormat = -1;
+        started = false;
+        demuxEnd = ended = true;
+        for (auto& b : buf) b.clear();
+        bufStart = outNext = validFrom;
+        silentFrom = validFrom;
+        positioned = true;
+    }
+
     void seek(int64_t target, int tryNo, bool fresh = false)
     {
         ++stats.seeks;
+        if (!fmt || !dec) fresh = true; // lost before: open the file anew
         attempt = tryNo;
         validFrom = target;
         wantOut = target - seconds(kPreroll);
@@ -524,10 +607,15 @@ struct Reader::Impl {
         if (r < 0) error = true;
         for (AVPacket* p : queued) av_packet_free(&p);
         queued.clear();
+        dropGapFrame();
         if (fromStart) {
             if (!openDecoder()) error = true;
         } else {
             avcodec_flush_buffers(dec);
+        }
+        if (!fmt || !dec) {
+            lose();
+            return;
         }
         swr_free(&swr);
         inRate = 0;
@@ -547,7 +635,16 @@ struct Reader::Impl {
     bool step()
     {
         if (ended) return false;
-        if (!demuxEnd) {
+        if (!fmt || !dec) {
+            lose();
+            return false;
+        }
+        if (gapPending) {
+            fillGap();
+            if (gapPending) return true;
+            receive(); // the decoder's further frames
+            if (gapPending || !demuxEnd) return true;
+        } else if (!demuxEnd) {
             if (nextPacket()) {
                 const int r = avcodec_send_packet(dec, pkt);
                 av_packet_unref(pkt);
@@ -558,7 +655,7 @@ struct Reader::Impl {
             demuxEnd = true;
             avcodec_send_packet(dec, nullptr);
             receive();
-            if (!demuxEnd) return true; // a retry seek happened while draining
+            if (!demuxEnd || gapPending) return true; // a retry seek happened while draining, or a gap waits
         }
         drainResampler();
         if (!started) { // nothing after the seek target: all silence
@@ -585,6 +682,7 @@ struct Reader::Impl {
                 seek(validFrom, attempt + 1, p == Placed::Reopen);
                 return;
             }
+            if (gapPending) return; // the frame after a long gap waits: nothing after it yet
         }
     }
 
