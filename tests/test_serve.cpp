@@ -408,6 +408,14 @@ int main(int argc, char* argv[])
         CHECK_EQ(http("POST", s.base + "/mcp", R"({"jsonrpc":"2.0","method":"notifications/initialized"})", s.headers()).status, 202);
         CHECK_EQ(http("GET", s.base + "/mcp", {}, s.headers()).status, 405);
         CHECK_EQ(http("POST", s.base + "/mcp", "{not json", s.headers()).status, 400);
+        // A request (id) with an empty or not-string method gets an error answer, not a connection that hangs forever
+        for (const QByteArray body : {QByteArray(R"({"jsonrpc":"2.0","id":5,"method":""})"),
+                                      QByteArray(R"({"jsonrpc":"2.0","id":5,"method":5})"),
+                                      QByteArray(R"([{"jsonrpc":"2.0","id":5,"method":null},{"jsonrpc":"2.0","id":6,"method":"ping"}])")}) {
+            const Reply bad = wait(send("POST", s.base + "/mcp", body, s.headers()), 10000);
+            CHECK_EQ(bad.status, 200);
+            CHECK(bad.body.contains("-32600"));
+        }
         // A key with U+0000 (Qt may read "id\u0000" as "id", found by fuzz_mcp): refused here and on stdio
         CHECK_EQ(http("POST", s.base + "/mcp", R"({"jsonrpc":"2.0","id\u0000":1,"method":"ping"})", s.headers()).status, 400);
         {

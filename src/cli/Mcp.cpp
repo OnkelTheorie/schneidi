@@ -245,8 +245,14 @@ bool handle(const QJsonObject& msg, const Options& opt, const ToolCall& call, co
     }
     const QString method = msg["method"].toString();
     // Notifications (initialized, cancelled …) and responses need no answer
-    if (!msg.contains("id") || method.isEmpty()) return false;
+    if (!msg.contains("id") || !msg.contains("method")) return false;
     const QJsonValue id = msg.value("id");
+    // A request all the same: unanswered, its HTTP request (and connection) would wait forever
+    if (method.isEmpty()) {
+        send({{"jsonrpc", "2.0"}, {"id", id},
+              {"error", QJsonObject{{"code", -32600}, {"message", "invalid request: 'method' must be a non-empty string"}}}});
+        return true;
+    }
     const auto reply = [send, id](const QJsonObject& result) {
         send({{"jsonrpc", "2.0"}, {"id", id}, {"result", result}});
     };
