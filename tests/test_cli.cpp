@@ -718,6 +718,9 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(text.contains("keyframes stay where they are in the clip"));
         CHECK(text.contains("windows (x, y, size, rotation) moves with the content"));
         CHECK(text.contains("timeline pixels on that fitted picture"));
+        // ... and that cropping leaves the rest in place, with the formula to center it (test_crop renders it)
+        CHECK(text.contains("Cropping never moves what is left"));
+        CHECK(text.contains("x = -zoom * (crop_left - crop_right) / 2"));
     }
 
     // Project format (resolution scales positions, frame rate locked while clips exist), LUT by name, SRT export

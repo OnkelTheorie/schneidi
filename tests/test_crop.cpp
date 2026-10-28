@@ -156,6 +156,17 @@ void testRender()
                            }),
                            kTall, mlt_image_rgba, 5)),
              top + 10 - 30, bottom - 5 - 30, 80, 130, "crop with position");
+    // Centering a cropped part (the formula of the `transform` help, AI run 2026-10-28 expected the part to be
+    // centered by itself): the top right quarter-by-half (45 x 50.625) at zoom 4 fills the width, centered with
+    // x = -zoom * (left - right) / 2 and y = zoom * (top - bottom) / 2
+    checkBox(redBox(render(overGreen([](Clip& c) {
+                               crop(c, 135, 0, 0, 50.625);
+                               c.transform.zoomX = c.transform.zoomY = 4;
+                               c.transform.posX = -4 * (135 - 0) / 2.0;
+                               c.transform.posY = 4 * (0 - 50.625) / 2;
+                           }),
+                           kTall, mlt_image_rgba, 5)),
+             160 - 101.25, 160 + 101.25, 0, 180, "cropped part centered");
     // More than half from one side (the Inspector allows the whole frame): only the right strip stays
     checkBox(redBox(render(overGreen([](Clip& c) { crop(c, 135, 0, 0, 0); }), kTall, mlt_image_rgba, 5)), top, bottom,
              135, 180, "crop past the middle");
