@@ -628,22 +628,23 @@ void MediaStorage::nextThumb()
     while (m_thumbPath.isEmpty() && !m_thumbQueue.isEmpty()) {
         const QString path = m_thumbQueue.takeAt(nextInView());
         if (!m_items.contains(path)) continue; // folder changed in the meantime
-        const QString ext = QFileInfo(path).suffix().toLower();
-        if (imageExt().contains(ext)) {
-            QImageReader reader(path);
-            reader.setAutoTransform(true);
-            const QSize size = reader.size();
-            if (size.isValid()) reader.setScaledSize(size.scaled(kThumb, Qt::KeepAspectRatio));
-            const QImage img = reader.read();
-            thumbDone(path, img.isNull() ? placeholder("?") : framed(img));
-            continue;
-        }
-        // Video: the frame at 1 s (for very short clips the first one), upright, in its own thread (no process per file)
+        // Video: the frame at 1 s (for very short clips the first one), upright; pictures too in that thread (a folder
+        // of big PNGs, which decode at full size, blocked the window for all of them in one go)
+        const bool image = imageExt().contains(QFileInfo(path).suffix().toLower());
         m_thumbPath = path;
-        const QString source = ProxyManager::decodeSource(path);
-        m_thumbPool->start([this, path, source] {
+        const QString source = image ? path : ProxyManager::decodeSource(path);
+        m_thumbPool->start([this, path, source, image] {
             Background::lowerThisThread(Background::Level::Low); // own pool: its thread does nothing else
-            const QImage img = Video::stillAt(source, 1.0, kThumb);
+            QImage img;
+            if (image) {
+                QImageReader reader(source);
+                reader.setAutoTransform(true);
+                const QSize size = reader.size();
+                if (size.isValid()) reader.setScaledSize(size.scaled(kThumb, Qt::KeepAspectRatio));
+                img = reader.read();
+            } else {
+                img = Video::stillAt(source, 1.0, kThumb);
+            }
             QMetaObject::invokeMethod(
                 this,
                 [this, path, img] {
