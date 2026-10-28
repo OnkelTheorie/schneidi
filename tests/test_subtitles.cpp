@@ -649,6 +649,19 @@ void testSelectAllMixed()
     f.ed.moveSubtitles(f.sel.ids().values().toVector(), -40, 0); // not before frame 0: by -20
     CHECK(f.v1() == v1 && f.st(0) == st1);
     CHECK_EQ(undo->index(), steps + 2);
+    // Too far left (the AI's edit op `move`): one delta for all, clamped to frame 0 - the clips keep their
+    // spacing (no clip overwriting the next) and the subtitles stay in step with them
+    f.ed.moveClips(f.sel.ids().values().toVector(), 20, TrackKind::Video, 0);
+    f.ed.moveClips({f.z, f.y, f.x, f.cueId(0, 1), f.cueId(0, 0)}, -60, TrackKind::Video, 0);
+    CHECK_EQ(f.v1(), v1);
+    CHECK_EQ(f.st(0), st1);
+    f.ed.moveClips({f.y, f.z}, -60, TrackKind::Video, 0); // only the later ones: by -50 (x is overwritten as usual)
+    CHECK_EQ(f.v1(), QString("0-50 50-100"));
+    undo->undo();
+    undo->undo();
+    undo->undo();
+    CHECK(f.v1() == v1 && f.st(0) == st1);
+    f.ed.selectAll();
 
     // Nudge (, and .) likewise; nothing selected = no (empty) undo step; subtitles alone move too
     f.ed.nudgeSelection(-5); // a clip starts at 0
