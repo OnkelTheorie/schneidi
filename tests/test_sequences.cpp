@@ -283,7 +283,7 @@ void testDecomposeKeepsSettings()
         a->pan = 30;
     });
     CHECK(ed.decomposeCompoundClips({vid}));
-    CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[20-100|20-99]  b[100-200|0-99]  A1: a[20-100|20-99]  b[100-200|0-99]"));
+    CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[20-100|20-99] b[100-200|0-99]  V2:  A1: a[20-100|20-99] b[100-200|0-99]  A2:"));
     const Clip* va = clipOn(p.timeline(), TrackKind::Video, 0, 0);
     const Clip* vb = clipOn(p.timeline(), TrackKind::Video, 0, 1);
     const Clip* aa = clipOn(p.timeline(), TrackKind::Audio, 0, 0);
