@@ -32,6 +32,7 @@ constexpr int kSilenceChunk = 4096;
 // A timestamp jump forward longer than this: the next packet decides whether the stream goes on there (a gap) or the
 // one packet is broken (an outlier)
 constexpr double kOutlierCheck = 1.0;
+constexpr int64_t kTailBytes = 1 << 20; // a file without a duration: its end is looked for in this much of its tail
 // 16-bit WAV: FFmpeg looks for DTS/AC3 hidden in the PCM in the first 32 packets (2.7 s, 20 ms per stereo file, 70 ms
 // for 5.1); 64 KB find it just as well
 constexpr int64_t kCodecProbeBytes = 1 << 16;
@@ -686,6 +687,39 @@ struct Reader::Impl {
         }
     }
 
+    // End of the stream (file time in seconds) from its last packets, for a file whose header states no duration
+    // (Matroska of a recorder that crashed or was killed, live streams). A second demuxer reads the file's tail, more
+    // of it if no packet of the stream was there. NAN if none was found.
+    long double lastPacketEnd() const
+    {
+        AVFormatContext* f = nullptr;
+        if (avformat_open_input(&f, path.constData(), nullptr, nullptr) < 0) return NAN;
+        long double end = NAN;
+        AVPacket* p = av_packet_alloc();
+        if (p && index < int(f->nb_streams)) {
+            for (unsigned i = 0; i < f->nb_streams; ++i)
+                if (int(i) != index) f->streams[i]->discard = AVDISCARD_ALL;
+            const AVRational stb = f->streams[index]->time_base;
+            const int64_t size = f->pb ? avio_size(f->pb) : -1;
+            for (int64_t tail = kTailBytes; std::isnan(end); tail *= 16) {
+                const int64_t from = size > tail ? size - tail : 0;
+                if (from > 0 && av_seek_frame(f, -1, from, AVSEEK_FLAG_BYTE) < 0) break;
+                while (av_read_frame(f, p) >= 0) {
+                    const int64_t ts = p->pts != AV_NOPTS_VALUE ? p->pts : p->dts;
+                    if (p->stream_index == index && ts != AV_NOPTS_VALUE) {
+                        const long double e = (long double)(ts + std::max<int64_t>(0, p->duration)) * stb.num / stb.den;
+                        if (std::isnan(end) || e > end) end = e;
+                    }
+                    av_packet_unref(p);
+                }
+                if (from == 0) break; // read from the start: there is no more
+            }
+        }
+        av_packet_free(&p);
+        avformat_close_input(&f);
+        return end;
+    }
+
     void trim()
     {
         if (buf.empty() || buf[0].empty() || bufStart >= keepFrom) return;
@@ -806,6 +840,8 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
         d.info.end = d.info.start + std::llround((long double)st->duration * d.tb.num / d.tb.den * d.outRate);
     else if (d.fmt->duration != AV_NOPTS_VALUE)
         d.info.end = std::llround(((long double)(d.fmt->duration + std::max<int64_t>(0, d.fmt->start_time == AV_NOPTS_VALUE ? 0 : d.fmt->start_time)) / AV_TIME_BASE - d.zero) * d.outRate);
+    else if (const long double last = d.lastPacketEnd(); !std::isnan(last))
+        d.info.end = std::max(d.info.start, int64_t(std::llround((last - d.zero) * d.outRate)));
     else
         d.info.end = d.info.start;
     return r;

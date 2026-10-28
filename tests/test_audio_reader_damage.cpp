@@ -3,6 +3,7 @@
 //   an error instead of crashing
 // - a long timestamp gap (muted microphone track) is known silence, not a buffer of the gap's whole length
 // - a single packet with a timestamp far ahead (broken recording) does not swallow the rest of the file
+// - Matroska without a duration (the recorder crashed): the end is estimated from the last packets
 
 #include "check.h"
 
@@ -164,6 +165,28 @@ void testOutlier(const QString& dir)
     CHECK(r->stats().overlaps <= 1);
 }
 
+// Matroska written as a live stream (or by a recorder that crashed): no duration in the header
+void testNoDuration(const QString& dir)
+{
+    std::printf("-- Matroska without duration\n");
+    for (bool video : {true, false}) {
+        QStringList args;
+        if (video) args << "-f" << "lavfi" << "-i" << "color=c=black:s=160x90:r=25:d=6";
+        args << "-f" << "lavfi" << "-i" << "sine=f=440:d=6";
+        if (video) args << "-c:v" << "libx264" << "-preset" << "ultrafast" << "-pix_fmt" << "yuv420p";
+        args << "-c:a" << "aac" << "-live" << "1";
+        const QString path = Check::makeMedia(dir + (video ? "/live_av.mkv" : "/live_a.mkv"), args);
+        if (!CHECK(!path.isEmpty())) continue;
+        auto r = Audio::Reader::open(path);
+        if (!CHECK(r)) continue;
+        std::printf("       %s: end %lld\n", video ? "with picture" : "sound only", (long long)r->info().end);
+        CHECK(std::abs(r->info().end - 6 * kRate) <= kRate / 20);
+        // Still reads from the start after estimating the end
+        const Planar a = readRange(*r, 0, kRate, 1920);
+        CHECK(peak(a[0], size_t(kRate / 10), size_t(kRate)) > 0.1);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -176,5 +199,6 @@ int main(int argc, char** argv)
     testVanished(dir.path());
     testLongGap(dir.path());
     testOutlier(dir.path());
+    testNoDuration(dir.path());
     return Check::result();
 }
