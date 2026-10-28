@@ -120,3 +120,23 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
         tl.nested = std::move(nested);
     }
 }
+
+void retimeTimeline(Timeline& tl, FrameRate from, FrameRate to)
+{
+    if (from == to || from.fps() <= 0 || to.fps() <= 0) return;
+    const double k = to.fps() / from.fps();
+    const auto at = [k](int frame) { return frame < 0 ? frame : int(std::lround(frame * k)); };
+    for (SubtitleTrack& t : tl.subtitles) {
+        int prevEnd = 0;
+        for (SubtitleCue& c : t.cues) { // sorted without overlap: stays so, every cue keeps at least one frame
+            c.start = std::max(prevEnd, at(c.start));
+            c.end = std::max(c.start + 1, at(c.end));
+            prevEnd = c.end;
+        }
+    }
+    for (int& m : tl.markers) m = at(m);
+    tl.markers.erase(std::unique(tl.markers.begin(), tl.markers.end()), tl.markers.end());
+    tl.markIn = at(tl.markIn);
+    tl.markOut = at(tl.markOut);
+    if (tl.markIn >= 0 && tl.markOut >= 0) tl.markOut = std::max(tl.markOut, tl.markIn);
+}

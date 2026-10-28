@@ -389,7 +389,10 @@ void Project::setFormat(const ProjectFormat& format)
     if (frameRateLocked()) f.rate = m_format.rate;
     if (f == m_format) return;
     QVector<Sequence> after = m_sequences;
-    for (Sequence& s : after) scaleTimeline(s.timeline, m_format.size(), f.size());
+    for (Sequence& s : after) {
+        scaleTimeline(s.timeline, m_format.size(), f.size());
+        retimeTimeline(s.timeline, m_format.rate, f.rate); // subtitles, markers, in/out (clips lock the rate)
+    }
     m_undo.push(new FormatCommand(this, m_format, f, m_sequences, after)); // push calls redo()
 }
 

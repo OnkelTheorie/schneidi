@@ -505,6 +505,53 @@ void testProjectFile()
     CHECK_EQ(Subtitles::defaultStyle({1080, 1920}).posY, 107.0); // 60 * 1920 / 1080, rounded
 }
 
+// A new frame rate (allowed while no timeline holds clips: SRT first, then "adapt the frame rate to the material")
+// keeps subtitles, markers and in/out at their time, in every timeline, as one undo step
+void testFrameRateChange()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    ProjectFormat f = p.format();
+    f.rate = {25, 1};
+    p.setFormat(f);
+    ed.importSubtitles({{0, 25, 50, "Eins"}, {0, 50, 51, "kurz"}, {0, 100, 150, "Zwei"}}, "a.srt");
+    ed.toggleMarker(75);
+    ed.setMarkIn(10);
+    ed.setMarkOut(99);
+    const int first = p.currentSequence();
+    const int other = p.addTimeline();
+    p.setCurrentSequence(other);
+    ed.importSubtitles({{0, 250, 300, "Andere"}}, "b.srt");
+    p.setCurrentSequence(first);
+    CHECK(!p.frameRateLocked());
+    const QString before = track(p, 0);
+    const int steps = p.undoStack()->index();
+
+    f.rate = {50, 1};
+    p.setFormat(f);
+    CHECK_EQ(p.undoStack()->index(), steps + 1);
+    CHECK_EQ(track(p, 0), QString("50-100:Eins 100-102:kurz 200-300:Zwei"));
+    CHECK_EQ(p.timeline().markers, QVector<int>{150});
+    CHECK_EQ(p.timeline().markIn, 20);
+    CHECK_EQ(p.timeline().markOut, 198);
+    CHECK_EQ(cues(p.sequence(other)->timeline.subtitles[0].cues), QString("500-600:Andere"));
+
+    // Down to 24000/1001: every cue keeps a frame, none overlaps the next
+    f.rate = {24000, 1001};
+    p.setFormat(f);
+    const QVector<SubtitleCue>& c = p.timeline().subtitles[0].cues;
+    for (int i = 0; i < c.size(); ++i) {
+        CHECK(c[i].end > c[i].start);
+        if (i > 0) CHECK(c[i].start >= c[i - 1].end);
+    }
+    p.undoStack()->undo();
+    p.undoStack()->undo();
+    CHECK_EQ(track(p, 0), before);
+    CHECK_EQ(p.timeline().markIn, 10);
+    CHECK_EQ(cues(p.sequence(other)->timeline.subtitles[0].cues), QString("250-300:Andere"));
+}
+
 QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos, bool subtitles = true)
 {
     auto prof = makeProfile(fmt);
@@ -776,6 +823,7 @@ int main(int argc, char** argv)
     testEditor();
     testRippleAndSplit();
     testProjectFile();
+    testFrameRateChange();
     testStackedImport();
     testSelectAllMixed();
     if (!Check::haveFfmpeg()) {
