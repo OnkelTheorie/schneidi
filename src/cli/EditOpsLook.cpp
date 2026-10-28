@@ -675,7 +675,8 @@ void addLookOps(QVector<OpDef>& ops)
         << OpDef{"accent", "{op:'accent', at:[times]|markers:true, clips?, preset?, strength?, length?, punch?, flash?, "
                            "shake?}",
                  "zoom punch / flash / shake on hits (kills, beats, drops), written as keyframes",
-                 "at = the hit times (one time or a list, e.g. kill times from `highlights` or bar ones from `beats`); "
+                 "at = the hit times (one time or a list, e.g. bar ones from `beats`, or the hits of `highlights`: "
+                 "its hit_s, not kill_s which comes a few frames later, as {media:file, source:'<hit_s>s'}); "
                  "markers:true adds the timeline markers. Without clips: every enabled video clip with a picture "
                  "under each time (no titles); clips: only these. preset (default hit; `effects` lists them): "
                  "punch (zoom +15 %, lands back in 0.25 s), flash (exposure +2 stops, 0.2 s), shake (position jumps "

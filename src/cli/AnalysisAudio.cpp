@@ -40,6 +40,7 @@ LoudPeaks loudPeaks(const MediaSource& m, const QJsonObject& a, const std::funct
     std::vector<double> db(peaks->size());
     for (size_t i = 0; i < db.size(); ++i) db[i] = 20 * std::log10(std::max(1e-6f, (*peaks)[i]));
     LoudPeaks out;
+    out.db = db;
     // Default threshold: well above the file's typical level (median), so it adapts to quiet recordings
     std::vector<double> sorted = db;
     std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());

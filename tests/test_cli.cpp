@@ -743,6 +743,66 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(text.contains("x = -zoom * (crop_left - crop_right) / 2"));
     }
 
+    // CS2 report 28.10.: speed at place/keep, src_in in file frames, sound fades alone, kills onto the beat
+    {
+        const auto ed = [](const QString& ops) { return run("edit", {{"project", g_path}, {"ops", ops}}); };
+        const auto track = [](int i) { return saved().section("  ", i, i); };
+        const auto clipsOf = [](int i) { return run("info", {{"project", g_path}})["timeline"]["tracks"][i]["clips"].toArray(); };
+        // place with speed: source 10..30 at half speed takes 40 frames (in/out of a retimed clip are material
+        // frames, file frame / speed); the answer names the file frames
+        ed(R"([{"op":"clear"},{"op":"place","media":"/x/a.mp4","at":0,"in":10,"out":30,"speed":0.5}])");
+        CHECK_EQ(track(0), QString("V1: a[0-40|20-59]"));
+        QJsonObject slow = clipsOf(0)[0].toObject();
+        CHECK_EQ(slow["speed"].toDouble(), 0.5);
+        CHECK_EQ(slow["src_in"].toInt(), 10);
+        CHECK_EQ(slow["src_out"].toInt(), 30);
+        // keep: per range or for all; the next range follows the retimed length
+        ed(R"([{"op":"clear"},{"op":"keep","media":"/x/a.mp4","ranges":[[0,10],{"from":20,"to":40,"speed":2}]}])");
+        CHECK_EQ(track(0), QString("V1: a[0-10|0-9] a[10-20|10-19]"));
+        CHECK_EQ(clipsOf(0)[1].toObject()["src_in"].toInt(), 20);
+        CHECK_EQ(clipsOf(0)[1].toObject()["src_out"].toInt(), 40);
+        // speed without ripple keeps the first file frame (the answer said 20 for 40 before: material frames)
+        ed(R"([{"op":"clear"},{"op":"place","media":"/x/a.mp4","at":0,"in":40,"out":60}])");
+        int v = clipsOf(0)[0].toObject()["id"].toInt();
+        ed(QString(R"([{"op":"speed","clips":[%1],"speed":2,"ripple":false}])").arg(v));
+        CHECK_EQ(clipsOf(0)[0].toObject()["src_in"].toInt(), 40);
+        CHECK_EQ(clipsOf(0)[0].toObject()["src_out"].toInt(), 80);
+        // Picture and sound both named: the speed applies once (TikTok agent: 63 -> 5 frames)
+        ed(R"([{"op":"clear"},{"op":"place","media":"/x/a.mp4","at":0,"in":0,"out":40}])");
+        v = clipsOf(0)[0].toObject()["id"].toInt();
+        int a = clipsOf(2)[0].toObject()["id"].toInt();
+        ed(QString(R"([{"op":"speed","clips":[%1,%2],"speed":2}])").arg(v).arg(a));
+        CHECK_EQ(clipsOf(0)[0].toObject()["end"].toInt(), 20);
+        CHECK_EQ(clipsOf(2)[0].toObject()["end"].toInt(), 20);
+        // A sound fade leaves the picture alone (black frames at every cut before); a picture fade takes its sound
+        ed(QString(R"([{"op":"fade","clips":[%1],"in":5}])").arg(a));
+        CHECK(!clipsOf(0)[0].toObject().contains("fade_in"));
+        CHECK_EQ(clipsOf(2)[0].toObject()["fade_in"].toInt(), 5);
+        ed(QString(R"([{"op":"fade","clips":[%1],"out":4}])").arg(v));
+        CHECK_EQ(clipsOf(0)[0].toObject()["fade_out"].toInt(), 4);
+        CHECK_EQ(clipsOf(2)[0].toObject()["fade_out"].toInt(), 4);
+        ed(QString(R"([{"op":"fade","clips":[%1],"in":3,"linked":true}])").arg(a));
+        CHECK_EQ(clipsOf(0)[0].toObject()["fade_in"].toInt(), 3);
+        // align: kills at source 18 (timeline 8) and 63 (timeline 33) onto a grid every 10 frames: the content
+        // slips, the cuts stay; accents land on the beats
+        ed(R"([{"op":"clear"},{"op":"append","media":"/x/a.mp4","in":10,"out":30},{"op":"append","media":"/x/a.mp4","in":50,"out":70}])");
+        const double fps = run("info", {{"project", g_path}})["format"]["fps"].toDouble();
+        QJsonObject r = ed(QString(R"([{"op":"align","events":[{"media":"/x/a.mp4","source":18},{"media":"/x/a.mp4","source":63}],
+                                       "to":{"first":0,"every":%1},"accent":"hit"}])").arg(10 / fps, 0, 'g', 17));
+        CHECK_EQ(track(0), QString("V1: a[0-20|8-27] a[20-40|53-72]"));
+        CHECK(QJsonDocument(r).toJson().contains("align: "));
+        CHECK(clipsOf(0)[0].toObject()["keyframes"].toObject().contains("zoom"));
+        // A list of targets, max_shift: 37 is 7 frames from 30 -> left alone with max_shift 5
+        r = ed(R"([{"op":"align","events":[{"media":"/x/a.mp4","source":70}],"to":[30],"max_shift":5}])");
+        CHECK_EQ(track(0), QString("V1: a[0-20|8-27] a[20-40|53-72]"));
+        CHECK(QJsonDocument(r).toJson().contains("more than max_shift away"));
+        // Not enough material: slips as far as the file allows
+        ed(R"([{"op":"clear"},{"op":"append","media":"/x/a.mp4","in":2,"out":22}])");
+        ed(R"([{"op":"align","events":[{"media":"/x/a.mp4","source":10}],"to":[15]}])");
+        CHECK_EQ(track(0), QString("V1: a[0-20|0-19]"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"align","events":[5]}])"}}), QString("BAD_ARGUMENT"));
+    }
+
     // Project format (resolution scales positions, frame rate locked while clips exist), LUT by name, SRT export
     {
         const QJsonObject r = run("edit", {{"project", g_path}, {"ops", R"([{"op":"clear"},
@@ -1264,6 +1324,34 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         for (const QJsonValue& c : hb["candidates"].toArray()) bannerKills += c["kills"].toInt();
         CHECK_EQ(bannerKills, 1);
         if (CHECK_EQ(hb["banners"].toArray().size(), 1)) CHECK(std::abs(hb["banners"][0].toDouble() - 4.0) < 0.15);
+        // The hit behind a kill (CS2 report 28.10.: kill_s came ~0.27 s after the hit): shots at 1.5 s and 2.0 s, the
+        // kill feed line slides in from 2.12 s (in three steps, each under the 1 % of a banner) and is whole at 2.32 s. kill_s = the line, hit_s =
+        // the last shot before it
+        const QString hitClip = Check::makeMedia(
+            dir.filePath("hit.mkv"),
+            {"-f", "lavfi", "-i",
+             "color=c=0x202020:s=640x360:d=4:r=25,"
+             "drawbox=x=400:y=20:w=20:h=14:c=0xd01010:t=fill:enable='gte(t,2.12)',"
+             "drawbox=x=400:y=20:w=50:h=14:c=0xd01010:t=fill:enable='gte(t,2.24)',"
+             "drawbox=x=400:y=20:w=120:h=14:c=0xd01010:t=fill:enable='gte(t,2.32)'",
+             "-f", "lavfi", "-i",
+             "aevalsrc='0.01*(random(0)-0.5)+if(between(t,1.5,1.55)+between(t,2,2.05),0.8*sin(2*PI*900*t),0)':s=48000:d=4",
+             "-c:v", "ffv1", "-pix_fmt", "bgr0", "-c:a", "pcm_s16le", "-shortest"});
+        const QJsonObject hh = run("highlights", {{"file", hitClip}, {"region", "0.5,0,0.5,0.4"}, {"color", "#d01010"}});
+        if (CHECK_EQ(hh["candidates"].toArray().size(), 1)) {
+            const QJsonObject c = hh["candidates"][0].toObject();
+            CHECK_EQ(c["kills"].toInt(), 1);
+            CHECK(std::abs(c["kill_s"][0].toDouble() - 2.32) < 0.1);
+            CHECK(std::abs(c["hit_s"][0].toDouble() - 2.0) < 0.05);
+            CHECK_EQ(c["hit_by"][0].toString(), QString("sound"));
+        }
+        CHECK(hh["kills_note"].toString().contains("hit_s"));
+        // Without sound: the frame the line began to show
+        if (const QJsonObject c = hl["candidates"][0].toObject(); CHECK(c["hit_s"].isArray())) {
+            CHECK_EQ(c["hit_by"][0].toString(), QString("feed"));
+            CHECK(c["hit_s"][0].toDouble() <= c["kill_s"][0].toDouble());
+            CHECK(std::abs(c["hit_s"][0].toDouble() - 3.0) < 0.15);
+        }
         const QJsonObject hs = run("highlights", {{"files", QJsonArray{clip, clip}}, {"top", 3}});
         CHECK_EQ(hs["files"][0]["candidates"].toArray().size(), 2);
         CHECK_EQ(hs["best"].toArray().size(), 3);

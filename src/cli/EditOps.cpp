@@ -300,8 +300,9 @@ void opPlace(Session& s, const QJsonObject& op, bool append)
     int in = 0, out = 0;
     sourceRange(s, op, m, &in, &out);
     const int at = append ? timeOf(s, op, "at", endOf(s)) : timeOf(s, op, "at");
-    s.editor.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")));
-    noteDoubledMix(s, m, at, at + out - in);
+    const double speed = op.contains("speed") ? numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
+    const int len = s.editor.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")), speed);
+    noteDoubledMix(s, m, at, at + len);
 }
 
 void opKeep(Session& s, const QJsonObject& op)
@@ -336,10 +337,118 @@ void opKeep(Session& s, const QJsonObject& op)
         else sub = {{"in", o.value("from")}, {"out", o.value("to")}};
         int in = 0, out = 0;
         sourceRange(s, sub, m, &in, &out);
-        s.editor.placeSourceRange(m.path, in, out - 1, at, track);
-        at += out - in;
+        // speed: of this range, else of the whole op
+        const QJsonObject sp = o.contains("speed") ? o : op;
+        const double speed = sp.contains("speed") ? numberOf(sp, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
+        at += s.editor.placeSourceRange(m.path, in, out - 1, at, track, speed);
     }
     noteDoubledMix(s, m, start, at);
+}
+
+// Events (kills) onto the beat: each clip's content slips until its event lies on the nearest target (a beat, a bar
+// one); the cuts stay where they are. One event per clip, the first; then accents on where the events ended up
+// (CS2 report 28.10.: cuts on the beat, the kills inside the clips beside it)
+void opAlign(Session& s, const QJsonObject& op)
+{
+    const ProjectFormat& f = s.format();
+    const Timeline& tl = s.project.timeline();
+    const QJsonArray events = op.value("events").isArray() ? op.value("events").toArray() : QJsonArray{op.value("events")};
+    if (events.isEmpty() || events.first().isUndefined())
+        fail("BAD_ARGUMENT", "missing 'events': the moments to put on the beat, e.g. the hit_s of `highlights` as "
+                             "[{media:'/path/clip.mkv', source:'7.67s'}]");
+    // Targets: a list of times, or a grid {first, every} (the beat_phase and beat_period of `beats` on the project,
+    // or its downbeats for bar ones)
+    const QJsonValue to = op.value("to");
+    QVector<int> list;
+    double first = 0, every = 0;
+    if (to.isArray()) {
+        for (const QJsonValue& v : to.toArray()) list << timeOf(s, QJsonObject{{"to", v}}, "to");
+        std::sort(list.begin(), list.end());
+        if (list.isEmpty()) fail("BAD_ARGUMENT", "'to' is an empty list");
+    } else if (to.isObject() && to.toObject().contains("first") && to.toObject().contains("every")) {
+        const QJsonObject g = to.toObject();
+        const double fps = f.rate.fps();
+        const auto secs = [&](const char* key) {
+            const QJsonValue v = g.value(key);
+            // Seconds as `beats` gives them (beat_period.s = 0.34286) need more than whole frames
+            if (v.isDouble()) return v.toDouble();
+            return parseTime(v, f, QString("to.") + key) / fps;
+        };
+        first = secs("first") * fps;
+        every = secs("every") * fps;
+        if (every < 1) fail("BAD_ARGUMENT", "to.every must be at least one frame");
+    } else {
+        fail("BAD_ARGUMENT", "'to' is a list of times or a grid {first:<s>, every:<s>}: `beats` on the project (its "
+                             "music track) gives beat_phase.s/beat_period.s, or downbeats.s/every_s for bar ones");
+    }
+    const auto nearest = [&](int t) {
+        if (!list.isEmpty())
+            return *std::min_element(list.begin(), list.end(), [t](int a, int b) { return std::abs(a - t) < std::abs(b - t); });
+        return int(std::lround(first + std::round((t - first) / every) * every));
+    };
+    const int maxShift = op.contains("max_shift") ? timeOf(s, op, "max_shift")
+                         : every > 0           ? int(std::ceil(every / 2))
+                                               : int(std::lround(f.rate.fps()));
+
+    // The clip that shows each event: the one named, the clip of that file playing it, else the top video clip there
+    const auto clipAt = [&](const QJsonValue& v, int t) -> const Clip* {
+        const QJsonObject r = v.toObject();
+        if (r.contains("clip")) return &clipOf(s, r);
+        const QString path = r.contains("media") ? absolute(r.value("media").toString()) : QString();
+        for (const QVector<Track>* tracks : {&tl.video, &tl.audio})
+            for (int i = tracks->size() - 1; i >= 0; --i) {
+                const Track& track = (*tracks)[i];
+                if (tracks == &tl.video && track.hidden) continue;
+                for (const Clip& c : track.clips)
+                    if (c.kind == ClipKind::Media && c.enabled && t >= c.start && t < c.end()
+                        && (path.isEmpty() ? tracks == &tl.video : c.mediaPath == path))
+                        return &c;
+            }
+        return nullptr;
+    };
+    QVector<int> done, landed;
+    QJsonArray report;
+    for (const QJsonValue& v : events) {
+        const int t = timeOf(s, QJsonObject{{"events", v}}, "events");
+        const Clip* c = clipAt(v, t);
+        if (!c) fail("NOT_FOUND", QString("no media clip plays the event at %1").arg(tc(t, f)));
+        const int id = c->id;
+        QJsonObject r{{"event", tc(t, f)}, {"clip", id}};
+        if (done.contains(id)) {
+            // A second kill in the same clip moves with the first one
+            r["note"] = "same clip as an earlier event: moved with it";
+            report << r;
+            continue;
+        }
+        done << id;
+        const int target = nearest(t);
+        if (std::abs(target - t) > maxShift) {
+            r["note"] = QString("nearest target %1 is more than max_shift away: left alone").arg(tc(target, f));
+            landed << t;
+            report << r;
+            continue;
+        }
+        // Slip: the content moves, the clip (and its linked sound) stays; less material at the edge = less shift
+        const TimelineOps::TrimEdit e = s.editor.trimEdit(TimelineOps::TrimKind::Slip, id, TimelineOps::Edge::Start);
+        const int want = t - target;
+        const int got = e.isNull() || want == 0 ? 0 : s.editor.clampTrimEdit(e, want);
+        if (got != 0) s.editor.applyTrimEdit(e, got);
+        r["to"] = tc(t - got, f);
+        r["shift_frames"] = -got;
+        if (got != want) r["note"] = QString("not enough material in the file to slip it all the way (%1 frames off)").arg(want - got);
+        landed << t - got;
+        report << r;
+    }
+    s.notes << "align: " + QString::fromUtf8(QJsonDocument(report).toJson(QJsonDocument::Compact));
+    // Accents on the events where they are now (accent:false = none)
+    const QJsonValue accent = op.value("accent");
+    if (accent.isUndefined() || accent.toBool(true) == false || accent.isNull()) return;
+    QJsonObject a{{"op", "accent"}, {"preset", accent.isString() ? accent.toString() : "hit"}};
+    QJsonArray at;
+    for (int t : landed) at << t;
+    a["at"] = at;
+    if (op.contains("strength")) a["strength"] = op.value("strength");
+    applyOp(s, a);
 }
 
 void opDelete(Session& s, const QJsonObject& op)
@@ -361,11 +470,23 @@ void opMove(Session& s, const QJsonObject& op)
     s.editor.moveClips(clipIds(s, op), delta, TrackKind::Video, op.value("track_delta").toInt());
 }
 
-// Fade handles of the clips; the linked partners (the sound of a video clip) fade along unless linked:false
+// Fade handles of the clips; a video clip's sound fades along unless linked:false. Sound alone does not take the
+// picture with it (TikTok agent 28.10.: audio fades at every cut gave black frames there) unless linked:true
 void opFade(Session& s, const QJsonObject& op)
 {
     if (!op.contains("in") && !op.contains("out")) fail("BAD_ARGUMENT", "missing 'in' and/or 'out' (fade lengths)");
-    for (int id : clipIds(s, op)) {
+    QJsonObject sel = op;
+    if (!op.contains("linked")) {
+        bool video = false;
+        QJsonObject named = op;
+        named["linked"] = false;
+        for (int id : clipIds(s, named)) {
+            TrackRef where;
+            if (TimelineOps::findClip(s.project.timeline(), id, &where) && where.kind == TrackKind::Video) video = true;
+        }
+        if (!video) sel["linked"] = false;
+    }
+    for (int id : clipIds(s, sel)) {
         if (s.editor.isSubtitle(id)) continue;
         if (op.contains("in")) s.editor.setClipFade(id, TimelineOps::Edge::Start, timeOf(s, op, "in"));
         if (op.contains("out")) s.editor.setClipFade(id, TimelineOps::Edge::End, timeOf(s, op, "out"));
@@ -567,8 +688,9 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
 
 // Details of the ops that place source ranges (import presets, core/StreamPresets.h)
 const char* const kPresetsDetails =
-    "in/out are source times (out exclusive, default: the whole file), duration = out - in. A still image takes "
-    "any length (out:'20s' or duration:'20s'; default 5 s). "
+    "in/out are source times (out exclusive, default: the whole file), duration = out - in. speed (0.01..100, "
+    "default 1): that source range retimed in one go, 0.5 = slow motion twice as long (keep: per range "
+    "{from, to, speed} or for all; the next range follows the retimed length). A still image takes any length (out:'20s' or duration:'20s'; default 5 s). "
     "track: V2 puts the picture on V2 and the sound from A2 on. Files with several audio streams (OBS) get one "
     "track per stream, named after it, and follow the user's import presets from the app (by default every stream "
     "plays; users can e.g. mute the Mix stream when its single streams are there, or set rules per stream title; "
@@ -581,13 +703,24 @@ const char* const kPresetsDetails =
 QVector<OpDef> makeOps()
 {
     QVector<OpDef> ops{
-        {"append", "{op:'append', media, in?, out?|duration?, track?, presets?}", "put a source range at the end of the timeline",
+        {"append", "{op:'append', media, in?, out?|duration?, speed?, track?, presets?}", "put a source range at the end of the timeline",
          kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, true); }},
-        {"place", "{op:'place', media, at, in?, out?|duration?, track?, presets?}", "overwrite at a position", kPresetsDetails,
+        {"place", "{op:'place', media, at, in?, out?|duration?, speed?, track?, presets?}", "overwrite at a position", kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, false); }},
-        {"keep", "{op:'keep', media, ranges:[[from,to],...], at?, track?, presets?}",
+        {"keep", "{op:'keep', media, ranges:[[from,to]|{from,to,speed?},...], at?, speed?, track?, presets?}",
          "put several source ranges one after another (e.g. the 'sound' ranges of `silence`)", kPresetsDetails, opKeep},
+        {"align", "{op:'align', events:[times], to:[times]|{first, every}, max_shift?, accent?, strength?}",
+         "put events (kills) on the beat: each clip's content slips until its event lies on the nearest target",
+         "events = the moments, best the hit_s of `highlights` as {media:'/path/clip.mkv', source:'7.67s'} (or "
+         "{clip, source}, or timeline times: the top video clip there). to = target times, or a grid {first, every} in "
+         "seconds: run `beats` on the project (tracks: the music track) and pass beat_phase.s / beat_period.s for "
+         "beats, downbeats.s / downbeats.every_s for bar ones. The cuts stay where they are, only which part of the "
+         "file plays moves (with the linked sound); one event per clip (the first, a second kill there moves along). "
+         "max_shift (default half a beat of the grid, 1 s for a list): farther targets leave the event alone. Not "
+         "enough material at the clip's edge: it slips as far as it can (the answer's notes say so). accent: a preset "
+         "('hit', 'drop', …; true = hit) puts accents on the events where they ended up, strength scales them",
+         opAlign},
         {"split", "{op:'split', at, clip?}", "cut all clips under `at` (or one clip)", {},
          [](Session& s, const QJsonObject& op) {
              const int at = timeOf(s, op, "at");
@@ -618,7 +751,8 @@ QVector<OpDef> makeOps()
          }},
         {"move", "{op:'move', clips, by|to, track_delta?}", {}, {}, opMove},
         {"fade", "{op:'fade', clips, in?, out?, linked?}", "fade handles (video: to the track below/black, audio: volume); "
-         "a video clip's sound fades along unless linked:false", {}, opFade},
+         "a video clip's sound fades along unless linked:false; sound alone fades without its picture unless linked:true",
+         {}, opFade},
         {"enable", "{op:'enable'|'disable', clips}", {}, {},
          [](Session& s, const QJsonObject& op) {
              s.editor.modifyClips(clipIds(s, op), "Enable", [](Clip& c) { c.enabled = true; });

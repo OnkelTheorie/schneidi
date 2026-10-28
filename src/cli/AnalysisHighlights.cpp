@@ -17,9 +17,30 @@ namespace {
 // colour bigger than 1 % that appears at once is a banner or menu in that colour (buy phase, round won), not a kill
 constexpr double kBannerArea = 0.01;
 
+// The hit behind a kill feed line: the line shows up a few frames after the shot (the server confirms the kill, the
+// line slides in and is only counted once half of it is there). The last sharp rise of the sound (a shot) in the
+// 0.6 s before the line began; without one the frame where the line began.
+struct Hit {
+    int frame;
+    bool bySound;
+};
+Hit hitBefore(const ColorEvent& e, const LoudPeaks& sound, double fps)
+{
+    const std::vector<double>& db = sound.db;
+    const int end = std::min(e.onset, int(db.size()) - 1), from = std::max(3, e.onset - int(std::lround(0.6 * fps)));
+    // A shot: well above the file's usual level and at least 6 dB above the frames just before it
+    const double loud = std::max(sound.medianDb + 10, sound.thresholdDb - 6);
+    for (int i = end; i >= from; --i) {
+        const double before = std::min({db[size_t(i - 1)], db[size_t(i - 2)], db[size_t(i - 3)]});
+        if (db[size_t(i)] >= loud && db[size_t(i)] - before >= 6) return {i, true};
+    }
+    return {e.onset, false};
+}
+
 struct Candidate {
     int from, to;          // source frames, with lead-in and lead-out
     QVector<int> kills;    // frames of the kill feed events inside
+    QVector<Hit> hits;     // the hit behind each of them
     int peaks = 0;         // loud moments inside
     double loudest = -200; // dBFS of the loudest of them
     double score = 0;
@@ -48,13 +69,17 @@ QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
 
     // Kill feed: a new line of the player's colour; sound: loud moments (shots, explosions, shouts)
     QVector<int> kills, banners;
+    QVector<ColorEvent> killEvents;
     double most = 0;
     if (feed) {
         if (!m.info.hasVideo || m.info.isImage) fail("NO_VIDEO", "file has no moving picture: " + m.info.path);
         QJsonObject ca = a;
         ca["only"] = "appear";
         const ColorEvents ce = colorEvents(m, ca, progress(0.0, m.info.hasAudio ? 0.85 : 1.0));
-        for (const ColorEvent& e : ce.events) (e.area > kBannerArea ? banners : kills) << e.frame;
+        for (const ColorEvent& e : ce.events) {
+            (e.area > kBannerArea ? banners : kills) << e.frame;
+            if (e.area <= kBannerArea) killEvents << e;
+        }
         most = ce.most;
     }
     LoudPeaks sound;
@@ -78,8 +103,11 @@ QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
         for (const PeakGroup& g : groupPeaks(sound.peaks, join)) add(g.from, g.to - 1);
     }
     for (Candidate& c : list) {
-        for (int k : kills)
-            if (k >= c.from && k < c.to) c.kills << k;
+        for (const ColorEvent& e : killEvents)
+            if (e.frame >= c.from && e.frame < c.to) {
+                c.kills << e.frame;
+                c.hits << (sound.db.empty() ? Hit{e.onset, false} : hitBefore(e, sound, f.rate.fps()));
+            }
         for (const Peak& p : sound.peaks)
             if (p.frame >= c.from && p.frame < c.to) {
                 ++c.peaks;
@@ -120,14 +148,22 @@ QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
         o["score"] = std::round(c.score * 10) / 10;
         QStringList reasons;
         if (feed) {
-            QJsonArray at, s;
+            QJsonArray at, s, hitAt, hitS, hitBy;
             for (int k : c.kills) {
                 at << k;
                 s << seconds(k, f);
             }
+            for (const Hit& h : c.hits) {
+                hitAt << h.frame;
+                hitS << seconds(h.frame, f);
+                hitBy << (h.bySound ? "sound" : "feed");
+            }
             o["kills"] = int(c.kills.size());
             o["kill_frames"] = at;
             o["kill_s"] = s;
+            o["hit_frames"] = hitAt;
+            o["hit_s"] = hitS;
+            o["hit_by"] = hitBy;
             reasons << (c.kills.size() == 1 ? QString("1 kill") : QString("%1 kills (multi kill)").arg(c.kills.size()));
         }
         o["loud_moments"] = c.peaks;
@@ -157,7 +193,12 @@ QJsonObject highlightsOne(const QJsonObject& a, Context& ctx)
     QJsonObject out{{"file", m.info.path}, {"frames", m.info.length}, {"fps", formatJson(f)["fps"]},
                     {"candidates", candidates}, {"keep", keep}};
     if (anyStutter) out["keep_clean"] = keepClean;
-    if (feed) out["kill_feed_most_pct"] = std::round(most * 1e5) / 1e3;
+    if (feed) {
+        out["kill_feed_most_pct"] = std::round(most * 1e5) / 1e3;
+        out["kills_note"] = "kill_s = when the kill feed line is there (a few frames after the hit); hit_s = the hit "
+                            "itself: the last shot in the sound before the line began (hit_by 'sound'), or the frame "
+                            "the line began to show (hit_by 'feed', no shot heard). Put accents and beats on hit_s";
+    }
     if (!banners.isEmpty()) {
         QJsonArray times;
         for (int b : banners) times << seconds(b, f);

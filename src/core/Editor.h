@@ -263,8 +263,10 @@ public:
     // Video/audio linked onto the target tracks, one undo step. Return value: end of the new clip (new playhead),
     // -1 = nothing happened (no clip under the playhead, too little material).
     int sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int playhead);
-    // Overwrite source range [in, out] at frame `frame` on track index `track` (V[n]/A[n]) (drag from the viewer)
-    void placeSourceRange(const QString& path, int in, int out, int frame, int track);
+    // Overwrite source range [in, out] at frame `frame` on track index `track` (V[n]/A[n]) (drag from the viewer);
+    // speed != 1: the same file frames retimed (speed 0.5 = twice as long). Returns the timeline frames it took (0 =
+    // nothing placed)
+    int placeSourceRange(const QString& path, int in, int out, int frame, int track, double speed = 1.0);
     // Target tracks for F9/F10 ... (like DaVinci Destination Controls), index 0 = V1/A1
     // Import presets for files with several audio streams (core/StreamPresets.h): used by every edit that makes
     // clips from files; changing them leaves the timeline as it is (not in the undo)
