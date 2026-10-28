@@ -525,6 +525,7 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
     if (const QString st = op.value("track").toString().trimmed().toUpper(); st.startsWith("ST")) {
         const int index = st.mid(2).toInt() - 1;
         if (index < 0 || index >= s.project.timeline().subtitles.size()) fail("NOT_FOUND", "no subtitle track " + st);
+        if (s.project.timeline().subtitles[index].locked) fail("FAILED", "cannot remove subtitle track " + st + ": it is locked");
         s.editor.removeSubtitleTrack(index);
         return;
     }

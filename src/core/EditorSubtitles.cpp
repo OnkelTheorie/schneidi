@@ -70,7 +70,7 @@ int Editor::addSubtitleTrack()
 void Editor::removeSubtitleTrack(int index)
 {
     const Timeline& cur = m_project->timeline();
-    if (!validTrack(cur, index)) return;
+    if (!validTrack(cur, index) || cur.subtitles[index].locked) return; // locked like video/audio tracks
     QSet<int> ids;
     for (const SubtitleCue& c : cur.subtitles[index].cues) ids.insert(c.id);
     if (m_selection->ids().intersects(ids)) m_selection->set(m_selection->ids() - ids);

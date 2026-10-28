@@ -216,6 +216,12 @@ void testEditor()
     CHECK_EQ(undo->count(), before + 1);
     ed.renameSubtitleTrack(0, "Untertitel 1"); // default name -> stays empty
     CHECK(p.timeline().subtitles[0].name.isEmpty());
+    ed.toggleSubtitleTrackLock(2); // locked: stays, like a locked video/audio track
+    const int steps = undo->count();
+    ed.removeSubtitleTrack(2);
+    CHECK_EQ(p.timeline().subtitles.size(), 3);
+    CHECK_EQ(undo->count(), steps);
+    ed.toggleSubtitleTrackLock(2);
     ed.removeSubtitleTrack(2);
     CHECK_EQ(p.timeline().subtitles.size(), 2);
 
