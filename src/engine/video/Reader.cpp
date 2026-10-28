@@ -456,12 +456,7 @@ struct Reader::Impl {
         return dts;
     }
 
-    int64_t positionOf(int64_t pts) const
-    {
-        if (firstPts != AV_NOPTS_VALUE) pts -= firstPts;
-        else if (fmt->start_time != AV_NOPTS_VALUE) pts -= fmt->start_time;
-        return int64_t(av_q2d(info.timeBase) * double(pts) * fps + 0.5);
-    }
+    int64_t positionOf(int64_t pts) const { return framePosition(pts, firstPts, fmt->start_time, info.timeBase, fps); }
 
     // MLT's find_first_pts: timestamp of the first key frame (frame 0)
     void findFirstPts()
@@ -581,10 +576,7 @@ struct Reader::Impl {
         restart(position);
         ++stats.seeks;
         lock.unlock();
-        int64_t ts = int64_t(double(position) / (av_q2d(info.timeBase) * fps));
-        if (position <= 0) ts = 0;
-        else if (firstPts != AV_NOPTS_VALUE) ts += firstPts;
-        else if (fmt->start_time != AV_NOPTS_VALUE) ts += fmt->start_time;
+        int64_t ts = position <= 0 ? 0 : frameTimestamp(position, firstPts, fmt->start_time, info.timeBase, fps);
         // B-frames: start a little earlier. Index times can be decode times (MP4), which run ahead of the shown time
         // by the reorder delay: a key frame decoded before the target may be shown after it. MLT starts 2 s earlier
         // (preseek), which decodes up to two more seconds per seek – on a weak computer every catch-up jump.
@@ -915,6 +907,32 @@ struct Reader::Impl {
 double streamRotation(const AVStream* stream)
 {
     return rotationOf(stream);
+}
+
+namespace {
+
+// The zero point in stream time base: first key frame's timestamp, else the container start converted (it is in µs)
+int64_t zeroOf(int64_t firstPts, int64_t startTime, AVRational timeBase)
+{
+    if (firstPts != AV_NOPTS_VALUE) return firstPts;
+    if (startTime != AV_NOPTS_VALUE && timeBase.num > 0 && timeBase.den > 0)
+        return av_rescale_q(startTime, AV_TIME_BASE_Q, timeBase);
+    return 0;
+}
+
+} // namespace
+
+int64_t framePosition(int64_t pts, int64_t firstPts, int64_t startTime, AVRational timeBase, double fps)
+{
+    pts -= zeroOf(firstPts, startTime, timeBase);
+    return int64_t(av_q2d(timeBase) * double(pts) * fps + 0.5);
+}
+
+int64_t frameTimestamp(int64_t position, int64_t firstPts, int64_t startTime, AVRational timeBase, double fps)
+{
+    const double step = av_q2d(timeBase) * fps;
+    const int64_t ts = step > 0 ? int64_t(double(position) / step) : 0;
+    return ts + zeroOf(firstPts, startTime, timeBase);
 }
 
 Reader::Reader() : d(std::make_unique<Impl>()) {}

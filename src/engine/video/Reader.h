@@ -24,6 +24,7 @@ extern "C" {
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 struct AVFormatContext;
 struct AVFrame;
@@ -58,6 +59,13 @@ struct Picture {
 
 // Degrees clockwise the stream's pictures are turned to show them upright (rotation tag or display matrix), in [0, 360)
 double streamRotation(const AVStream* stream);
+
+// Stream frame position of timestamp `pts` (stream time base) as MLT's producer counts it: from `firstPts` (the first
+// key frame, stream time base), else from the container start `startTime` (AV_TIME_BASE units, AV_NOPTS_VALUE =
+// none), rounded to the nearest frame. Shared by the reader and smart render so both count the same frames.
+int64_t framePosition(int64_t pts, int64_t firstPts, int64_t startTime, AVRational timeBase, double fps);
+// The stream timestamp of position `position` (the inverse, unrounded: where a seek aims)
+int64_t frameTimestamp(int64_t position, int64_t firstPts, int64_t startTime, AVRational timeBase, double fps);
 
 class Reader {
 public:
