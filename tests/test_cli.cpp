@@ -1280,3 +1280,30 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK_EQ(clips[2]["end"].toInt() - clips[2]["start"].toInt(), stillLength);
         }
     }
+    // remove_track: names are those of the timeline when the op runs; several in one op are named before any goes;
+    // the error names the tracks there are (AI run 2026-10-28 removed A1-A3, then "A5" failed without saying why)
+    {
+        const QString proj = dir.filePath("tracks.schneidi");
+        run("new", {{"project", proj}, {"overwrite", true}});
+        const auto ed = [&](const QString& ops) { return run("edit", {{"project", proj}, {"ops", ops}}); };
+        ed(R"([{"op":"add_track","kind":"audio"},{"op":"add_track","kind":"audio"},{"op":"add_track","kind":"audio"},
+               {"op":"add_track","kind":"audio"},{"op":"add_track","kind":"audio"}])");
+        const auto audioTracks = [&] {
+            int n = 0;
+            for (const QJsonValue& t : run("info", {{"project", proj}})["timeline"]["tracks"].toArray())
+                n += t["track"].toString().startsWith('A');
+            return n;
+        };
+        const int before = audioTracks();
+        CHECK(before >= 6);
+        const QString msg = messageOf("edit", {{"project", proj}, {"ops", QString(R"([{"op":"remove_track","track":"A1"},{"op":"remove_track","track":"A%1"}])").arg(before)}});
+        CHECK(msg.contains(QString("there is no A%1").arg(before)));
+        CHECK(msg.contains(QString("Audio tracks now: A1, A2")));
+        CHECK(msg.contains("tracks:["));
+        ed(QString(R"([{"op":"remove_track","tracks":["A1","A2","A%1"]}])").arg(before));
+        CHECK_EQ(audioTracks(), before - 3);
+        CHECK(messageOf("edit", {{"project", proj}, {"ops", R"([{"op":"remove_track","tracks":["V1","V2"]}])"}})
+                  .contains("a timeline keeps at least one video track"));
+    }
+    return Check::result();
+}
