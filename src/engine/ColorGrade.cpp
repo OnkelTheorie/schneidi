@@ -569,7 +569,8 @@ LutPtr parseCube(QIODevice& f, QString* error)
             if (lut->size < 2 || lut->size > (lut->is3d ? 256 : 65536))
                 return failLut(error, QStringLiteral("ungültige Größe"));
             expected = lut->is3d ? lut->size * lut->size * lut->size : lut->size;
-            lut->data.reserve(expected * 3);
+            // not more than the file can hold (each value takes 2 bytes at least): a tiny file claiming 256 reserved 200 MB
+            lut->data.reserve(std::min<qint64>(qint64(expected) * 3, f.size() / 2));
         } else if (key == "DOMAIN_MIN" || key == "DOMAIN_MAX") {
             float* dst = key == "DOMAIN_MIN" ? lut->domainMin : lut->domainMax;
             for (int c = 0; c < 3 && c + 1 < w.size(); ++c) dst[c] = float(number(w.at(c + 1)));

@@ -220,6 +220,11 @@ void testRobustness(const QString& dir)
         CHECK(std::all_of(l->data.cbegin(), l->data.cend(), [](float x) { return std::isfinite(x); }));
         CHECK_EQ(R(graded(l.get()), 255), 255); // white -> clamped to white
     }
+
+    // A tiny file claiming the biggest size fails cleanly (it reserved 200 MB for the values up front)
+    CHECK(writeFile(path("liar.cube"), "LUT_3D_SIZE 256\n0 0 0\n1 1 1\n"));
+    err.clear();
+    CHECK(!ColorGrade::parseLut(path("liar.cube"), &err) && err.contains("Anzahl"));
 }
 
 void testBuiltins()
