@@ -77,7 +77,8 @@ AiChat::AiChat(QObject* parent) : QObject(parent), m_client(new AiClient(this)),
         addNotice(T("%1 Neuer Versuch in %2 s …").arg(why).arg(seconds));
     });
     connect(m_client, &AiClient::contextProbed, this, [this](qint64 tokens) {
-        m_contexts.insert(m_probeKey, tokens);
+        // Not known (no server said it, a probe timed out while the model loaded): asked again with the next request
+        if (tokens > 0) m_contexts.insert(m_probeKey, tokens);
         m_probing = false;
         prepare();
     });
@@ -184,7 +185,8 @@ bool AiChat::send(const QString& text, const Ai::Endpoint& endpoint, bool review
     m_review = review;
     appendUser(message);
     setBusy(true);
-    // The model's context, once per address and model, while the tools start (a short timeout: no server says it = 0)
+    // The model's context, once per address and model, while the tools start (a short timeout: no server says it = 0,
+    // asked again next time)
     if (!m_probing && !m_contexts.contains(contextKey(endpoint)) && !Ai::contextProbes(endpoint).isEmpty()) {
         m_probing = true;
         m_probeKey = contextKey(endpoint);

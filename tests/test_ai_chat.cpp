@@ -752,14 +752,22 @@ void test(const QString& dir)
     }
     CHECK_EQ(chat->usage().input, qint64(20000));
     {
-        // Asked once per address and model; `help` has an op's details for the short request
-        const int probes = int(fake.probes.size());
+        // No server said the context (or a probe failed while the model loaded): asked again with the next request;
+        // once named, kept per address and model. `help` has an op's details for the short request
+        int probes = int(fake.probes.size());
+        fake.gets["/props"] = R"({"default_generation_settings":{"n_ctx":131072},"total_slots":1})";
         fake.script = {openAiTool("call_h", "help", {{"command", "edit"}, {"op", "trim"}}), openAiText("Ok.")};
         panel->sendText("Wie geht trim?");
         CHECK(waitFor([&] { return !chat->busy(); }));
-        CHECK_EQ(int(fake.probes.size()), probes);
+        CHECK(int(fake.probes.size()) > probes);
         const QString answer = fake.last().body["messages"].toArray().last()["content"].toString();
         CHECK(answer.contains("\"op\":\"trim\"") && answer.contains("details"));
+        probes = int(fake.probes.size());
+        fake.script = {openAiText("Ok.")};
+        panel->sendText("Danke");
+        CHECK(waitFor([&] { return !chat->busy(); }));
+        CHECK_EQ(int(fake.probes.size()), probes);
+        fake.gets.remove("/props");
     }
 
     // A click on a picture shows it bigger in a window of its own; never a popup (on X11 a popup grabs mouse and
