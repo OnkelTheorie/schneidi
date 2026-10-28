@@ -107,14 +107,15 @@ void prepareMltEnvironment()
     if (!qEnvironmentVariableIsSet("SCHNEIDI_MLT_QT")) deny("libmltqt6");
     // More GPL modules schneidi does not need: normalize ("volume": own filter engine/audio/Volume; "audiolevel": own
     // meter), resample (the loader's "resampler"; swresample of the avformat module converts already), plus (GPL
-    // through interp.h in its affine transition; nothing of it is used), vid.stab and rubberband (own stabilizer and
-    // time stretch), movit and sox (link GPL libraries, unused). Licenses::report() lists what is loaded.
-    for (const char* module : {"libmltnormalize", "libmltresample", "libmltplus", "libmltvidstab", "libmltrubberband",
-                               "libmltmovit", "libmltsox"})
+    // through interp.h in its affine transition; nothing of it is used), vid.stab (own stabilizer), movit and sox
+    // (link GPL libraries, unused). Licenses::report() lists what is loaded.
+    for (const char* module : {"libmltnormalize", "libmltresample", "libmltplus", "libmltvidstab", "libmltmovit", "libmltsox"})
         deny(module);
 #ifdef SCHNEIDI_NO_GPL
-    // The GPL-free build loads no GPL module at all, also not from a system MLT (see the comment on xine above)
+    // The GPL-free build loads no GPL module at all, also not from a system MLT (see the comment on xine above);
+    // rubberband too: the MLT sound path (fallback) then keeps no pitch, the own engine does (engine/audio/Stretch)
     deny("libmltxine");
+    deny("libmltrubberband");
 #endif
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
