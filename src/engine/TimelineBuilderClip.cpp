@@ -576,6 +576,10 @@ Mlt::Producer* titleCut(Mlt::Profile& profile, const Clip& c, int a, int len)
         f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
         f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
         f.set("outline", outlineLayer ? 2 * t.outlineWidth : 0.0);
+        // Both layers laid out with the outline layer's room: same scale and origin, the outline sits exactly around
+        // the letters (each with its own room the outline layer came out a little smaller, at the line ends the
+        // outline went missing and a box shifted against the text)
+        f.set("layout_outline", outline ? 2 * t.outlineWidth : 0.0);
         attachTo(*cut, f);
         return true;
     };
@@ -686,6 +690,10 @@ Mlt::Producer* subtitleCut(Mlt::Profile& profile, const TitleStyle& t, const QSt
         f.set("pad", t.boxOn ? std::max(0.0, t.boxPad) : 0.0);
         f.set("olcolour", t.outlineColor.name(QColor::HexArgb).toUtf8().constData());
         f.set("outline", outlineLayer ? 2 * t.outlineWidth : 0.0);
+        // Both layers laid out with the outline layer's room: same scale and origin, the outline sits exactly around
+        // the letters (each with its own room the outline layer came out a little smaller, at the line ends the
+        // outline went missing and a box shifted against the text)
+        f.set("layout_outline", outline ? 2 * t.outlineWidth : 0.0);
         attachTo(*cut, f);
         return true;
     };
