@@ -26,9 +26,11 @@ QString errorOf(const QString& text)
     return (m.isEmpty() ? text : m).simplified();
 }
 
-// A call by what it does (name and arguments; the keys of a JSON object are sorted)
+// A call by what it does (name and arguments; the keys of a JSON object are sorted). Unreadable arguments by their
+// error: never the same as a valid call without arguments
 QString callKey(const Ai::ToolCall& c)
 {
+    if (!c.error.isEmpty()) return c.name + " unreadable: " + c.error;
     return c.name + QString::fromUtf8(QJsonDocument(c.input).toJson(QJsonDocument::Compact));
 }
 
@@ -475,6 +477,27 @@ void AiChat::nextTool()
     e.details = pretty(call.input);
     e.state = Entry::State::Running;
     const int entry = add(e);
+    // The same call as one that failed in this request (small models send it again unchanged, round after round): not
+    // run again, the model is told; the second time the request ends (also the same unreadable arguments again)
+    if (m_endpoint.protocol != Ai::Protocol::Anthropic && m_failedCalls.contains(callKey(call))) {
+        if (++m_repeats >= kMaxRepeats) {
+            change(entry, [](Entry& x) { x.state = Entry::State::Failed; });
+            for (int i = int(m_results.size()); i < m_calls.size(); ++i)
+                m_results << Ai::ToolResult{m_calls[i].id, m_calls[i].name,
+                                            "not run: the request was ended (the same failed call again)", {}, true};
+            appendUser({}, m_results);
+            addNotice(T("Die KI wiederholt einen Schritt, der schon fehlgeschlagen ist – angehalten. Schreib, wie es "
+                        "weitergehen soll."));
+            finishTurn();
+            return;
+        }
+        toolDone(entry, call,
+                 QString("not run again: this exact call failed before in this request (%1). Do not repeat it: change "
+                         "what the error says, try another way, or tell the user what went wrong.")
+                     .arg(m_failedCalls.value(callKey(call))),
+                 {}, true);
+        return;
+    }
     if (!call.error.isEmpty()) { // never reached the tool; what to send instead (small models write "social")
         QStringList params;
         for (const QJsonValue& t : m_mcp->tools())
@@ -497,27 +520,6 @@ void AiChat::nextTool()
                                  {"note", what + " (not sent again); for a task call guide with its topic: "
                                               + m_guideTopics.join(", ")}};
         toolDone(entry, call, QString::fromUtf8(QJsonDocument(answer).toJson(QJsonDocument::Compact)), {}, false);
-        return;
-    }
-    // The same call as one that failed in this request (small models send it again unchanged, round after round): not
-    // run again, the model is told; the second time the request ends
-    if (m_endpoint.protocol != Ai::Protocol::Anthropic && m_failedCalls.contains(callKey(call))) {
-        if (++m_repeats >= kMaxRepeats) {
-            change(entry, [](Entry& x) { x.state = Entry::State::Failed; });
-            for (int i = int(m_results.size()); i < m_calls.size(); ++i)
-                m_results << Ai::ToolResult{m_calls[i].id, m_calls[i].name,
-                                            "not run: the request was ended (the same failed call again)", {}, true};
-            appendUser({}, m_results);
-            addNotice(T("Die KI wiederholt einen Schritt, der schon fehlgeschlagen ist – angehalten. Schreib, wie es "
-                        "weitergehen soll."));
-            finishTurn();
-            return;
-        }
-        toolDone(entry, call,
-                 QString("not run again: this exact call failed before in this request (%1). Do not repeat it: change "
-                         "what the error says, try another way, or tell the user what went wrong.")
-                     .arg(m_failedCalls.value(callKey(call))),
-                 {}, true);
         return;
     }
     m_mcp->call(
