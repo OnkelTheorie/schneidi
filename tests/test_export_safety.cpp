@@ -269,6 +269,23 @@ void testImageSequence(const QString& root)
     CHECK_EQ(entries(dir), QStringList({"seq"}));
 }
 
+// Odd project size (an import or a project file can bring one) exported at project size: the nearest even size
+void testOddSize(const QString& root)
+{
+    const ProjectFormat odd{641, 361, {25, 1}};
+    for (const auto writer : {ExportSettings::Writer::Own, ExportSettings::Writer::Mlt}) {
+        const QString path = root + (writer == ExportSettings::Writer::Own ? "/odd-own.mp4" : "/odd-mlt.mp4");
+        ExportSettings s = settings(path, writer);
+        s.format = odd;
+        s.to = 24;
+        const Result r = run(s);
+        if (!CHECK(r.ok)) std::printf("       %s\n", qPrintable(r.message));
+        const QJsonObject v = probeVideo(path);
+        CHECK_EQ(v.value("width").toInt(), 640);
+        CHECK_EQ(v.value("height").toInt(), 360);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -293,5 +310,6 @@ int main(int argc, char** argv)
     testKeepsOlderFile(tmp.path());
     testWriteErrorMidway(tmp.path());
     testImageSequence(tmp.path());
+    testOddSize(tmp.path());
     return Check::result();
 }

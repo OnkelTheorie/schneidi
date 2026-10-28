@@ -239,14 +239,15 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // Stabilization needs its analysis pass: run what is missing first, never export unstabilized silently
     if (!std::exchange(m_analysisDone, false) && runAnalyses(tl, s)) return true;
 
-    // Output size different from the timeline: scale pixel values (position, titles …) along
+    // Output size: the one asked for or the timeline's, always even (4:2:0 encoders cannot open odd sizes, and a
+    // project format from an import or a project file may be odd). Different from the timeline: scale pixel values
+    // (position, titles …) along
     ProjectFormat out = s.format;
+    const QSize size = s.size.isEmpty() ? s.format.size() : s.size;
+    out.width = size.width() & ~1;
+    out.height = size.height() & ~1;
     Timeline scaled = tl;
-    if (!s.size.isEmpty() && s.size != s.format.size()) {
-        out.width = s.size.width() & ~1;
-        out.height = s.size.height() & ~1;
-        scaleTimeline(scaled, s.format.size(), out.size());
-    }
+    if (out.size() != s.format.size()) scaleTimeline(scaled, s.format.size(), out.size());
     // Audio only: video tracks carry no sound (TimelineBuilder hides it), so skip decoding their images
     if (s.videoCodec.isEmpty()) scaled.video.clear();
     // Own audio engine: the mixer gets the timeline as it is (it handles mute/solo itself), the MLT graph no sound
@@ -313,7 +314,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_copiedPercent = 0;
     // Smart render: only where the own path writes the timeline as it is (size, frame rate, sound from the own engine)
     m_copy.clear();
-    const bool sameSize = s.size.isEmpty() || s.size == s.format.size();
+    const bool sameSize = out.size() == s.format.size();
     if (s.smartRender && SmartRender::enabled() && s.output == ExportSettings::Output::File && !s.videoCodec.isEmpty()
         && !convertRate && sameSize && (ownAudio || s.audioCodec.isEmpty())
         && s.writer != ExportSettings::Writer::Mlt && (s.writer == ExportSettings::Writer::Own || ExportWriter::wanted()))
