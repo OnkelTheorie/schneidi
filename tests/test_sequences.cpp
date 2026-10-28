@@ -241,6 +241,73 @@ void testDecomposeKeepsClipsAbove()
     CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99]  V2: T[10-135|0-124]  V3: b[0-100|0-99]  A1:  A2:"));
 }
 
+// Dissolving keeps what was set on the compound clip: transform, effects, volume/pan, keyframes, fades at its edges
+// (the content's own fades and dissolves inside stay)
+void testDecomposeKeepsSettings()
+{
+    Project p;
+    Selection sel;
+    Editor ed(&p, &sel);
+    p.addMedia(media("/x/a.mp4", 100));
+    p.addMedia(media("/x/b.mp4", 100));
+    ed.addMediaAt({"/x/a.mp4", "/x/b.mp4"}, 0); // a 0-100, b 100-200 on V1/A1
+    ed.selectAll();
+    const int parent = p.currentSequence();
+    const int seq = ed.createCompoundClip();
+    if (!CHECK(seq > 0)) return;
+    // Inside: a fade-out of a at its end (not an edge of the compound clip) stays
+    p.setCurrentSequence(seq);
+    const int innerA = clipOn(p.timeline(), TrackKind::Video, 0, 0)->id;
+    p.edit("inner", [&](Timeline& tl) { TimelineOps::findClip(tl, innerA)->fadeOut = 5; });
+    p.setCurrentSequence(parent);
+    const Clip* cv = clipOn(p.timeline(), TrackKind::Video, 0, 0);
+    const Clip* ca = clipOn(p.timeline(), TrackKind::Audio, 0, 0);
+    if (!CHECK(cv && ca && cv->isCompound())) return;
+    const int vid = cv->id, aid = ca->id;
+    ed.trimClip(vid, TimelineOps::Edge::Start, 20); // compound shows sequence frames 20..199 from timeline frame 20
+    p.edit("outer", [&](Timeline& tl) {
+        Clip* v = TimelineOps::findClip(tl, vid);
+        v->transform.opacity = 0.5;
+        v->transform.zoomX = v->transform.zoomY = 1.5;
+        v->effects << EffectInstance{"color", {}, true};
+        v->fadeIn = 10;
+        v->fadeOut = 15;
+        Keyframe k1, k2;
+        k1.frame = 20;
+        k1.value = 1.0;
+        k2.frame = 150;
+        k2.value = 2.0;
+        v->keys[AnimParam::ZoomX] = {k1, k2};
+        Clip* a = TimelineOps::findClip(tl, aid);
+        a->volumeDb = -6;
+        a->pan = 30;
+    });
+    CHECK(ed.decomposeCompoundClips({vid}));
+    CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[20-100|20-99]  b[100-200|0-99]  A1: a[20-100|20-99]  b[100-200|0-99]"));
+    const Clip* va = clipOn(p.timeline(), TrackKind::Video, 0, 0);
+    const Clip* vb = clipOn(p.timeline(), TrackKind::Video, 0, 1);
+    const Clip* aa = clipOn(p.timeline(), TrackKind::Audio, 0, 0);
+    const Clip* ab = clipOn(p.timeline(), TrackKind::Audio, 0, 1);
+    if (!CHECK(va && vb && aa && ab)) return;
+    for (const Clip* c : {va, vb}) {
+        CHECK_EQ(c->transform.opacity, 0.5);
+        CHECK_EQ(c->transform.zoomX, 1.5);
+        CHECK(c->effects.size() == 1 && c->effects[0].effectId == "color");
+    }
+    CHECK_EQ(va->fadeIn, 10); // the compound clip's edges
+    CHECK_EQ(vb->fadeOut, 15);
+    CHECK_EQ(va->fadeOut, 5); // inside: a's own
+    CHECK_EQ(vb->fadeIn, 0);
+    // Keys at sequence frames 20 and 150: a's source = sequence frame, b's = sequence frame - 100
+    if (CHECK_EQ(va->keys.value(AnimParam::ZoomX).size(), 2)) CHECK_EQ(va->keys[AnimParam::ZoomX][1].frame, 150);
+    if (CHECK_EQ(vb->keys.value(AnimParam::ZoomX).size(), 2)) CHECK_EQ(vb->keys[AnimParam::ZoomX][1].frame, 50);
+    for (const Clip* c : {aa, ab}) {
+        CHECK_EQ(c->volumeDb, -6.0);
+        CHECK_EQ(c->pan, 30.0);
+        CHECK(c->effects.isEmpty() && c->transform == ClipTransform{}); // video settings stay off the sound
+    }
+}
+
 // The clipboard after opening another project: compound clips (they point at a sequence of the old project) are left
 // out, media clips bring their Media Pool entry along; another frame rate empties it
 void testClipboardAcrossProjects()
@@ -471,6 +538,7 @@ int main(int argc, char** argv)
     testSequences();
     testCompound();
     testDecomposeKeepsClipsAbove();
+    testDecomposeKeepsSettings();
     testClipboardAcrossProjects();
     testProjectFile();
     if (!Check::haveFfmpeg()) {
