@@ -10,6 +10,7 @@
 #include <QSize>
 
 #include <functional>
+#include <vector>
 
 namespace Cli::detail {
 
@@ -52,6 +53,7 @@ struct Peak {
 struct LoudPeaks {
     QVector<Peak> peaks; // in time order
     double medianDb = 0, thresholdDb = 0;
+    std::vector<double> db; // the loudest sample of each frame, dBFS
 };
 // Loud moments: the loudest frame of each burst above the threshold (`threshold_db`, default 12 dB above the
 // median), at least `min` apart (default 0.5 s); `audio_stream`. Throws without sound
@@ -72,6 +74,7 @@ struct ColorEvent {
     int frame;
     bool appear;
     double area; // part of the whole picture
+    int onset;   // the first frame where the change began to show (a kill feed line slides in over a few frames)
 };
 struct ColorEvents {
     QVector<ColorEvent> events; // in time order

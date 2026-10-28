@@ -397,8 +397,18 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     } else {
         o["kind"] = "media";
         o["media"] = c.mediaPath;
-        o["src_in"] = c.in;
-        o["src_out"] = c.out + 1;
+        // Frames of the file (what `place` in/out take): a retimed clip keeps in/out in its own material frames
+        // (file frame / speed), which read like a different place in the file (CS2 report 28.10.: 660 for 396)
+        if (const MediaInfo* m = p.mediaInfo(c.mediaPath); m && c.isRetimed() && !c.freeze) {
+            const RetimeMap map(c, m->length);
+            // The part of the file it shows (reversed: the same range, played backwards)
+            const double a = map.sourceAt(c.in), b = map.sourceAt(c.out + 1);
+            o["src_in"] = int(std::lround(c.reverse ? m->length - b : a));
+            o["src_out"] = int(std::lround(c.reverse ? m->length - a : b));
+        } else {
+            o["src_in"] = c.in;
+            o["src_out"] = c.out + 1;
+        }
     }
     if (c.linkId) o["link"] = c.linkId;
     if (!c.enabled) o["enabled"] = false;
@@ -919,7 +929,10 @@ const QVector<Command>& commands()
                        "only those parts - use it to drop the lag, not the moment. 'kill_feed_most_pct' = the most "
                        "of the colour at one time in percent of the picture (0 = never there: check region and colour; "
                        "kill feed marks stay well under 0.3); bigger patches of it (a banner in that colour) are not "
-                       "counted as kills but listed in 'banners' (seconds).",
+                       "counted as kills but listed in 'banners' (seconds). Per kill: 'kill_s' = when its kill feed "
+                       "line is there, a few frames (~0.1-0.3 s) after the hit; 'hit_s' = the hit itself (the last shot "
+                       "in the sound before the line began, 'hit_by' sound; or the frame the line began, 'hit_by' "
+                       "feed). Put accents and beats on hit_s: on the timeline it is {media:file, source:\"<hit_s>s\"}.",
          {{"file", T::Path, "video file", false, true},
           {"files", T::Paths, "several video files (one result each, plus 'best': all candidates by score)"},
           {"region", T::String, "where the kill feed is, \"x,y,w,h\" (fractions 0..1 or pixels; look with `frames` "
@@ -934,7 +947,8 @@ const QVector<Command>& commands()
           {"post", T::Time, "lead-out after the last one (default 1s)"},
           {"join", T::Time, "kills at most this far apart are one candidate (default 4s; loud moments without a kill feed: 2s)"},
           {"threshold_db", T::Number, "loud moments: sample peak in dBFS (default 12 dB above the file's median)"},
-          {"audio_stream", T::Integer, "which audio stream, 0 = first"},
+          {"audio_stream", T::Integer, "which audio stream, 0 = first (loud moments and the shots behind hit_s; a "
+                                       "recording whose first stream is silent: the stream with the game sound)"},
           {"top", T::Integer, "only the best N candidates ('best' with several files)"},
           {"project", T::Path, "count frames in this project's frame rate (recommended before 'keep')"}},
          cmdHighlights},
