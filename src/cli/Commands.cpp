@@ -1197,9 +1197,6 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             for (const QString& x : text.split(',', Qt::SkipEmptyParts)) arr << x.trimmed();
             return arr;
         };
-        bool ok = true;
-        switch (p.type) {
-        case ParamType::String: out[p.name] = v.isString() ? str : v.toVariant().toString(); break;
         // A file name may contain a comma ("clip, take 2.mp4"): in a comma-separated string, neighbouring pieces
         // that together name an existing file stay one path (longest match first); a JSON array is never split
         const auto pathList = [&]() {
@@ -1227,6 +1224,9 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             }
             return arr;
         };
+        bool ok = true;
+        switch (p.type) {
+        case ParamType::String: out[p.name] = v.isString() ? str : v.toVariant().toString(); break;
         case ParamType::Path:
             out[p.name] = absolute(str);
             ok = v.isString() && !str.isEmpty();
