@@ -218,11 +218,12 @@ schneidi's own picture engine on the graphics card – mixing, transitions, titl
 exactly like the export, faster start and analyses.
 
 ### Later
-- **0.16 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, one word per beat, presets for Shorts/Reels/TikTok, voiceover recording, text to speech, smooth slow motion
-- **0.17 – Template Update:** templates with placeholders filled from a list, brand kit
-- **0.18 – Fusion Light:** light node compositing on the new picture engine – layers, masks, keyer and tracking as nodes, textured and 3D-edged text
-- **0.19 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
-- **0.20 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
+- **0.16 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, one word per beat, presets for Shorts/Reels/TikTok, voiceover recording, text to speech, smooth slow motion, a sound library for hits and cuts, player names blurred automatically
+- **0.17 – AI Director Update:** the AI understands the material (searchable index: shots, sounds, quality), builds a story (hook, build-up, payoff) and checks it, shows its cut plan before cutting, measures the pace, J/L cuts, songs cut to length
+- **0.18 – Template Update:** templates with placeholders filled from a list, brand kit
+- **0.19 – Fusion Light:** light node compositing on the new picture engine – layers, masks, keyer and tracking as nodes, textured and 3D-edged text
+- **0.20 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
+- **0.21 – Color Update 2:** curves on the Color page, qualifier (select by hue, saturation and lightness), more scope overlays
 
 ## Building
 
