@@ -51,7 +51,7 @@ schneidi has four pages – Media, Edit, Color and Deliver – and fewer feature
 - **Vertical video from 16:9 on one track:** a blurred copy of the picture fills the space around it – no second track, smooth preview; **accents** (zoom punch, flash, shake) on hits and drops in one click
 - **Windows** on the Color page (rectangle, ellipse, soft edge, invert): grade only part of the picture, or blur, pixelate or cover a region (a face, a name, an overlay); **tracking** makes a window follow a moving object
 - Video stabilization and audio noise reduction (own implementations)
-- frei0r effects; import effect presets from Kdenlive and Shotcut
+- Own effects (green screen with spill removal, glow, halftone …); frei0r plugins if you turn them on; import effect presets from Kdenlive and Shotcut
 - Video scopes: waveform, RGB parade, vectorscope, histogram
 - Slip and slide tools; two-up/four-up trim view while dragging an edit
 - **Own audio engine (SMT):** sound is read, mixed and played sample-exact – lips in sync within about 1 ms in the viewer, no clicks when stopping, jumping or moving faders, real 24-bit export; choose the output device, survives an unplugged headset
@@ -210,20 +210,14 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.13.x – bug fixes
-Only fixes for problems found in 0.13.0 – new features wait for the next version.
+### 0.14.x – bug fixes
+Only fixes for problems found in 0.14.0 – new features wait for the next version.
 
-### 0.14 – Freedom Update
-schneidi's own building blocks instead of outside libraries – faster, fewer dependencies.
-| Feature | What it does |
-|---|---|
-| **Own time stretching** | Speed changes keep the pitch – much faster than before, cleaner on music and speech |
-| **Own effects** | Green Screen with spill removal, glow, halftone and more built in – the key several times faster |
-| **Own stabilization** | Steadier pictures; HUDs, logos and black bars no longer confuse it, pans are kept |
-| **Faster import and thumbnails** | Files are read and thumbnails made inside schneidi instead of one outside program per file |
+### 0.15 – Speed Update
+schneidi's own picture engine on the graphics card – mixing, transitions, titles and effects there, the preview looks
+exactly like the export, faster start and analyses.
 
 ### Later
-- **0.15 – Speed Update:** schneidi's own picture engine on the graphics card – mixing, transitions, titles and effects there, the preview looks exactly like the export, faster start and analyses
 - **0.16 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, presets for Shorts/Reels/TikTok, voiceover recording, text to speech
 - **0.17 – Template Update:** templates with placeholders filled from a list, brand kit
 - **0.18 – Newcomer Update:** Premiere/Final Cut key presets, export for Shotcut/Kdenlive and Final Cut, apt repository
