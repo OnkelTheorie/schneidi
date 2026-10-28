@@ -1001,9 +1001,10 @@ QString backup(const QString& projectPath, int keep)
     QString target;
     for (QDateTime t = QDateTime::currentDateTime(); target.isEmpty() || QFileInfo::exists(target); t = t.addMSecs(1))
         target = dir.filePath(QString("%1.%2").arg(t.toString("yyyy-MM-dd HH-mm-ss-zzz"), Extension));
-    QFile out(target);
-    if (!out.open(QIODevice::WriteOnly) || out.write(bytes) != bytes.size()) return {};
-    out.close();
+    // QSaveFile: a copy cut short (disk full) never lands - it would count as the newest and push out a good
+    // one; old copies are only cleared away once the new one is complete
+    QSaveFile out(target);
+    if (!out.open(QIODevice::WriteOnly) || out.write(bytes) != bytes.size() || !out.commit()) return {};
     existing = backupsOldestFirst(dir);
     for (int i = 0; i + keep < existing.size(); ++i) QFile::remove(dir.filePath(existing[i]));
     return target;
