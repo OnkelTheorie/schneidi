@@ -225,6 +225,7 @@ ProjectData Project::data() const
     d.renderQueue = m_renderQueue;
     d.lastClipId = m_lastClipId;
     d.lastLinkId = m_lastLinkId;
+    d.lastSequenceId = m_lastSequenceId;
     d.sequences = m_sequences;
     d.currentSequence = m_current;
     d.fixedResolution = m_fixedResolution;
@@ -267,7 +268,7 @@ void Project::load(const ProjectData& d)
         current().compound = false; // there is always at least one normal timeline
         current().multicam = false;
     }
-    m_lastSequenceId = 0;
+    m_lastSequenceId = d.lastSequenceId; // ids of deleted sequences are not given again
     for (Sequence& s : m_sequences) {
         m_lastSequenceId = std::max(m_lastSequenceId, s.id);
         if (s.timeline.video.isEmpty()) s.timeline.video << makeTrack(TrackKind::Video);
@@ -326,6 +327,7 @@ void Project::load(const ProjectData& d)
     emit renderQueueChanged();
     emit importPresetsChanged();
     emit watchFoldersChanged();
+    emit loaded();
 }
 
 void Project::reset()
@@ -389,7 +391,10 @@ void Project::setFormat(const ProjectFormat& format)
     if (frameRateLocked()) f.rate = m_format.rate;
     if (f == m_format) return;
     QVector<Sequence> after = m_sequences;
-    for (Sequence& s : after) scaleTimeline(s.timeline, m_format.size(), f.size());
+    for (Sequence& s : after) {
+        scaleTimeline(s.timeline, m_format.size(), f.size());
+        retimeTimeline(s.timeline, m_format.rate, f.rate); // subtitles, markers, in/out (clips lock the rate)
+    }
     m_undo.push(new FormatCommand(this, m_format, f, m_sequences, after)); // push calls redo()
 }
 

@@ -77,7 +77,7 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                         return Keys::staticValue(c, p) != 0 || Keys::animated(c, p);
                     })) {
                     double kx = sx, ky = sy;
-                    if (std::abs(sx - sy) > 1e-9 && c.kind == ClipKind::Media) {
+                    if (std::abs(sx - sy) > 1e-9 && c.kind == ClipKind::Media && !c.cropOnFrame) { // else on the frame
                         double aspect = MediaAspect::of(c.mediaPath);
                         if (aspect <= 0) aspect = before.width() / before.height();
                         const QSizeF a = MediaAspect::fit(aspect, before), b = MediaAspect::fit(aspect, after);
@@ -119,4 +119,24 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
         for (Timeline& n : *nested) scaleTimeline(n, from, to);
         tl.nested = std::move(nested);
     }
+}
+
+void retimeTimeline(Timeline& tl, FrameRate from, FrameRate to)
+{
+    if (from == to || from.fps() <= 0 || to.fps() <= 0) return;
+    const double k = to.fps() / from.fps();
+    const auto at = [k](int frame) { return frame < 0 ? frame : int(std::lround(frame * k)); };
+    for (SubtitleTrack& t : tl.subtitles) {
+        int prevEnd = 0;
+        for (SubtitleCue& c : t.cues) { // sorted without overlap: stays so, every cue keeps at least one frame
+            c.start = std::max(prevEnd, at(c.start));
+            c.end = std::max(c.start + 1, at(c.end));
+            prevEnd = c.end;
+        }
+    }
+    for (int& m : tl.markers) m = at(m);
+    tl.markers.erase(std::unique(tl.markers.begin(), tl.markers.end()), tl.markers.end());
+    tl.markIn = at(tl.markIn);
+    tl.markOut = at(tl.markOut);
+    if (tl.markIn >= 0 && tl.markOut >= 0) tl.markOut = std::max(tl.markOut, tl.markIn);
 }

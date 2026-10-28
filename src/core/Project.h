@@ -52,7 +52,7 @@ public:
     // Like DaVinci: frame rate can only be changed as long as no timeline contains clips
     bool frameRateLocked() const;
     // One undo step; a new resolution also converts positions/sizes in all timelines (scaleTimeline).
-    // A locked frame rate stays unchanged.
+    // A new frame rate keeps subtitles, markers and in/out at their time (retimeTimeline); a locked one stays unchanged.
     void setFormat(const ProjectFormat& format);
     void applyFormat(const ProjectFormat& format, const QVector<Sequence>& sequences); // only for undo
     // The currently opened timeline (sequence currentSequence()); all edits act on it
@@ -200,6 +200,7 @@ signals:
     void renderQueueChanged();
     void importPresetsChanged(); // own import presets set/removed, or another project loaded
     void watchFoldersChanged(); // the list of watch folders (also after load())
+    void loaded(); // another project (or a new empty one) replaced everything, after the other signals of load()
 
 private:
     ProjectFormat m_format;

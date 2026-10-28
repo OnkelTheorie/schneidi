@@ -452,10 +452,22 @@ int main(int argc, char** argv)
         d = project("/alt/x/C0001.MP4", "/alt/y/C0001.MP4");
         CHECK_EQ(ProjectFile::relink(&d, root), 0);
         CHECK_EQ(ProjectFile::missingMedia(d).size(), 2);
-        // only one file of this name searched: best match, otherwise the first found
+        // only one file of this name searched: the best match
         d = project("/alt/camB/C0001.MP4", "/alt/andere.mp4");
         CHECK_EQ(ProjectFile::relink(&d, root), 1);
         CHECK_EQ(d.media.value(0).path, root + "/neu/camB/C0001.MP4");
+        // ... two found that fit it just as well: do not pick one by the folder order, it stays offline
+        d = project("/alt/z/C0001.MP4", "/alt/andere.mp4");
+        CHECK_EQ(ProjectFile::relink(&d, root), 0);
+        CHECK_EQ(d.media.value(0).path, QString("/alt/z/C0001.MP4"));
+        // ... a single one found: taken even with other folders
+        QDir().mkpath(root + "/neu/camC");
+        QFile single(root + "/neu/camC/C0002.MP4");
+        CHECK(single.open(QIODevice::WriteOnly));
+        single.close();
+        d = project("/alt/z/C0002.MP4", "/alt/andere.mp4");
+        CHECK_EQ(ProjectFile::relink(&d, root), 1);
+        CHECK_EQ(d.media.value(0).path, root + "/neu/camC/C0002.MP4");
     }
 
     // --- Invalid files

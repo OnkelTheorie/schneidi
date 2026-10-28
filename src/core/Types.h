@@ -278,6 +278,10 @@ struct Clip {
     // Render cache clip output (DaVinci "Render Cache Clip Output"): preview plays a pre-rendered file
     // with all effects, see engine/RenderCache.h
     bool renderCache = false;
+    // Crop still measured the format-2 way (on the frame, ProjectFile convertCrop): the project was opened while the
+    // file was offline, so the picture's shape was unknown. Converted as soon as the file can be read (opening the
+    // project, relinking it).
+    bool cropOnFrame = false;
 
     bool isRetimed() const { return speed != 1.0 || reverse || freeze || !ramp.isEmpty(); }
     bool hasRamp() const { return !ramp.isEmpty() && !freeze; }
