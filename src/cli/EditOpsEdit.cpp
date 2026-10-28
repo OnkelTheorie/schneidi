@@ -67,6 +67,48 @@ bool applyStyle(TitleStyle& t, const QJsonObject& op)
     return any;
 }
 
+// Clips of the video track `track` that [from, to) overlaps, by id (before a title is placed or lengthened there)
+QHash<int, Clip> clipsIn(const Session& s, int track, int from, int to)
+{
+    QHash<int, Clip> out;
+    const Timeline& tl = s.project.timeline();
+    if (track < 0 || track >= tl.video.size()) return out;
+    for (const Clip& c : tl.video[track].clips)
+        if (c.start < to && c.end() > from) out.insert(c.id, c);
+    return out;
+}
+
+QString clipWord(const Clip& c) { return c.isTitle() ? QString("title \"%1\"").arg(c.title.text) : QString("clip"); }
+
+// Placing on a track overwrites what is there (like `place`); say what happened to each clip that was in the range,
+// so that a second title over the first one does not silently replace it
+void noteOverwritten(Session& s, int titleId, const QHash<int, Clip>& before)
+{
+    TrackRef ref;
+    const Timeline& tl = s.project.timeline();
+    const Clip* title = TimelineOps::findClip(tl, titleId, &ref);
+    if (!title) return;
+    QList<int> ids = before.keys();
+    std::sort(ids.begin(), ids.end());
+    const QString where = QString("[%1-%2) on %3").arg(title->start).arg(title->end()).arg(trackName(ref));
+    for (int id : ids) {
+        if (id == titleId) continue;
+        const Clip& old = before[id];
+        const QString what = QString("%1 %2 [%3-%4)").arg(clipWord(old)).arg(id).arg(old.start).arg(old.end());
+        const Clip* now = TimelineOps::findClip(tl, id);
+        if (!now) s.notes << QString("overwrote %1: title %2 covers it completely, it was removed").arg(what).arg(where);
+        else if (now->start != old.start || now->end() != old.end())
+            s.notes << QString("overwrote %1 in %2: it is now [%3-%4)").arg(what).arg(where).arg(now->start).arg(now->end());
+    }
+    // A clip longer than the title on both sides was split: its part after the title is a new clip
+    for (const Clip& c : tl.track(ref).clips)
+        if (c.id != titleId && !before.contains(c.id) && c.start == title->end())
+            s.notes << QString("the part after the title continues as clip %1 [%2-%3)").arg(c.id).arg(c.start).arg(c.end());
+    if (std::any_of(before.cbegin(), before.cend(), [&](const Clip& c) { return c.id != titleId && c.isTitle(); }))
+        s.notes << "a track holds one clip at a time: to show two titles at once, leave out `track` (the new title "
+                   "goes on a free track above) or give each its own track";
+}
+
 void opTitle(Session& s, const QJsonObject& op)
 {
     const bool created = !op.contains("clip");
@@ -77,13 +119,26 @@ void opTitle(Session& s, const QJsonObject& op)
         const Clip& c = clipOf(s, op);
         if (!c.isTitle()) fail("BAD_ARGUMENT", QString("clip %1 is not a title").arg(c.id));
         id = c.id;
-        if (length > 0) s.editor.setTitleLength(id, length);
+        if (length > c.length()) {
+            TrackRef ref;
+            TimelineOps::findClip(s.project.timeline(), id, &ref);
+            const QHash<int, Clip> before = clipsIn(s, ref.index, c.end(), c.start + length);
+            s.editor.setTitleLength(id, length);
+            noteOverwritten(s, id, before);
+        } else if (length > 0) {
+            s.editor.setTitleLength(id, length);
+        }
     } else {
         // Placed with its final length: only [at, at + duration) changes on the track
+        const int at = timeOf(s, op, "at", 0);
+        const int track = op.contains("track") ? parseTrack(op.value("track")) : -1;
+        const QHash<int, Clip> before =
+            clipsIn(s, track, std::max(0, at), std::max(0, at) + (length > 0 ? length : 5 * s.project.fps()));
         s.selection.clear();
-        s.editor.addTitle(timeOf(s, op, "at", 0), op.contains("track") ? parseTrack(op.value("track")) : -1, length);
+        s.editor.addTitle(at, track, length);
         if (s.selection.ids().isEmpty()) fail("FAILED", "could not place the title (locked track?)");
         id = *s.selection.ids().begin();
+        noteOverwritten(s, id, before);
     }
     TitleStyle style = TimelineOps::findClip(s.project.timeline(), id)->title;
     if (created) style.text = "Title";
@@ -550,8 +605,9 @@ QJsonObject transitionStyleJson(const TransitionStyle& st)
 void addEditOps(QVector<OpDef>& ops)
 {
     ops << OpDef{"title", "{op:'title', text?, at?, duration?, track?, clip?, <style>}",
-                 "new title (duration default 5s; on `track` it overwrites only [at, at+duration), without track it "
-                 "goes on the video track above the clips in that range) or with clip: change one (a new duration "
+                 "new title (duration default 5s; on `track` it overwrites only [at, at+duration) like `place`, also an "
+                 "earlier title there (notes say what was cut or removed); without track it goes on the video track "
+                 "above the clips in that range, so overlapping titles all show) or with clip: change one (a new duration "
                  "keeps its start; longer overwrites only the added range)",
                  "Style (pixels of the timeline format, from the center, y up): " + kStyleFields
                      + ". Colors \"#rrggbb\" or \"#aarrggbb\". text may have several lines (\\n).",

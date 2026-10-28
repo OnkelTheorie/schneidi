@@ -3,6 +3,7 @@
 // New format version -> add a fixture saved by the last release before it (docs/dev/konventionen.md).
 #include "check.h"
 
+#include "core/GradeWindows.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/ProjectFile.h"
@@ -42,7 +43,7 @@ void testRoundTrip(const QString& tmp)
         const QString path = tmp + "/" + name;
         const QByteArray first = ProjectFile::toJson(d, path);
         const QJsonObject root = QJsonDocument::fromJson(first).object();
-        CHECK_EQ(root.value("version").toInt(), 3);
+        CHECK_EQ(root.value("version").toInt(), 4);
         ProjectData again;
         CHECK(ProjectFile::fromJson(first, path, &again, &err));
         Check::report(ProjectFile::toJson(again, path) == first, qPrintable(name + ": save -> load -> save is stable"),
@@ -101,7 +102,7 @@ void testVersion2()
     CHECK(!tl.subtitles.isEmpty() && tl.subtitles[0].cues.size() == 1);
     CHECK_EQ(tl.audio[0].volumeDb, -3.0);
     CHECK(tl.masterLimiter);
-    bool title = false, ramp = false, window = false, keys = false;
+    bool title = false, ramp = false, window = false, keys = false, pixelate = false;
     QVector<const Timeline*> all{&d.timeline}; // the opened timeline is in `timeline`, not in its sequence
     for (const Sequence& s : d.sequences) all << &s.timeline;
     for (const Timeline* x : all)
@@ -114,11 +115,15 @@ void testVersion2()
                                   return e.effectId == "grade" && e.params.contains("w1.shape");
                               });
                     keys |= !c.keys.value(AnimParam::ZoomX).isEmpty();
+                    // Format 4: pixelate amounts five times finer -> the old default 50 becomes 250 (same blocks)
+                    if (GradeWindows::exists(c, 1) && GradeWindows::fillAt(c, 1, 0).fill == GradeWindows::Fill::Pixelate)
+                        pixelate = CHECK_EQ(GradeWindows::fillAt(c, 1, 0).amount, 250.0);
                 }
     CHECK(title);
     CHECK(ramp);
     CHECK(window);
     CHECK(keys);
+    CHECK(pixelate);
     int compound = 0, multicam = 0, named = 0;
     for (const Sequence& s : d.sequences) {
         compound += s.compound && !s.multicam;
@@ -221,6 +226,28 @@ void testVersion2Crop()
     MediaAspect::setProbe({});
 }
 
+// Format 3 -> 4 (0.14): pixelate windows on a five times finer scale. Fixture saved before the change (v2-0.9 plus, on
+// clip 3, keyframes 20 -> 60 on window 1 (pixelate, default amount), window 2 blur 30, window 3 pixelate 30).
+// Pixelate amounts x 5, so the blocks stay as large; blur stays.
+void testVersion3Pixelate()
+{
+    ProjectData d;
+    QString err;
+    if (!CHECK(ProjectFile::load(kData + "/v3-0.14dev-pixelate.schneidi", &d, &err))) return;
+    const Clip* c = clip(d.timeline, 3);
+    if (!CHECK(c)) return;
+    CHECK_EQ(GradeWindows::list(*c), (QVector<int>{1, 2, 3}));
+    const KeyTrack k = c->keys.value(GradeWindows::param(1, "amount"));
+    if (CHECK_EQ(k.size(), 2)) {
+        CHECK_EQ(k[0].value, 100.0);
+        CHECK_EQ(k[1].value, 300.0);
+    }
+    CHECK_EQ(Keys::staticValue(*c, GradeWindows::param(1, "amount")), 250.0); // default 50 of the old scale
+    CHECK_EQ(Keys::staticValue(*c, GradeWindows::param(2, "amount")), 30.0);  // blur
+    CHECK_EQ(Keys::staticValue(*c, GradeWindows::param(3, "amount")), 150.0);
+    CHECK_EQ(GradeWindows::fillAt(*c, 3, 0).amount, 150.0);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -233,5 +260,6 @@ int main(int argc, char** argv)
     testVersion1();
     testVersion2();
     testVersion2Crop();
+    testVersion3Pixelate();
     return Check::result();
 }

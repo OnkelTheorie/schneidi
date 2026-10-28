@@ -1,0 +1,500 @@
+{
+    "app": "schneidi",
+    "bins": [
+    ],
+    "currentSequence": 1,
+    "format": {
+        "fpsDen": 1,
+        "fpsNum": 25,
+        "height": 1080,
+        "width": 1920
+    },
+    "fps": 25,
+    "lastClipId": 13,
+    "lastLinkId": 5,
+    "media": [
+        {
+            "audioStreams": [
+                {
+                    "channels": 1
+                }
+            ],
+            "clipColor": "purple",
+            "flags": [
+                "red"
+            ],
+            "hasAudio": true,
+            "hasVideo": true,
+            "isImage": false,
+            "length": 300,
+            "name": "a.mp4",
+            "path": "/fixtures/media/a.mp4",
+            "relPath": "../../fixtures/media/a.mp4"
+        },
+        {
+            "audioStreams": [
+                {
+                    "channels": 1
+                }
+            ],
+            "hasAudio": true,
+            "hasVideo": true,
+            "isImage": false,
+            "length": 250,
+            "name": "b.mp4",
+            "path": "/fixtures/media/b.mp4",
+            "relPath": "../../fixtures/media/b.mp4"
+        }
+    ],
+    "playhead": 0,
+    "sequences": [
+        {
+            "id": 1,
+            "name": "Timeline 1"
+        },
+        {
+            "id": 2,
+            "name": "Zweite",
+            "timeline": {
+                "audio": [
+                    {
+                        "clips": [
+                        ],
+                        "name": "A1"
+                    },
+                    {
+                        "clips": [
+                        ],
+                        "name": "A2"
+                    }
+                ],
+                "markIn": -1,
+                "markOut": -1,
+                "markers": [
+                ],
+                "masterLimiter": false,
+                "masterLimiterDb": -1,
+                "masterVolumeDb": 0,
+                "video": [
+                    {
+                        "clips": [
+                        ],
+                        "name": "V1"
+                    },
+                    {
+                        "clips": [
+                        ],
+                        "name": "V2"
+                    }
+                ]
+            }
+        },
+        {
+            "angles": [
+                {
+                    "audio": [
+                        0
+                    ],
+                    "name": "a",
+                    "video": 0
+                },
+                {
+                    "audio": [
+                        1
+                    ],
+                    "name": "b",
+                    "video": 1
+                }
+            ],
+            "compound": true,
+            "id": 3,
+            "multicam": true,
+            "name": "MC",
+            "timeline": {
+                "audio": [
+                    {
+                        "clips": [
+                            {
+                                "id": 8,
+                                "in": 0,
+                                "link": 3,
+                                "media": 0,
+                                "out": 299,
+                                "start": 0
+                            }
+                        ],
+                        "label": "a",
+                        "name": "A1"
+                    },
+                    {
+                        "clips": [
+                            {
+                                "id": 10,
+                                "in": 0,
+                                "link": 4,
+                                "media": 1,
+                                "out": 249,
+                                "start": 0
+                            }
+                        ],
+                        "label": "b",
+                        "name": "A2"
+                    }
+                ],
+                "markIn": -1,
+                "markOut": -1,
+                "markers": [
+                ],
+                "masterLimiter": false,
+                "masterLimiterDb": -1,
+                "masterVolumeDb": 0,
+                "video": [
+                    {
+                        "clips": [
+                            {
+                                "id": 7,
+                                "in": 0,
+                                "link": 3,
+                                "media": 0,
+                                "out": 299,
+                                "start": 0
+                            }
+                        ],
+                        "label": "a",
+                        "name": "V1"
+                    },
+                    {
+                        "clips": [
+                            {
+                                "id": 9,
+                                "in": 0,
+                                "link": 4,
+                                "media": 1,
+                                "out": 249,
+                                "start": 0
+                            }
+                        ],
+                        "label": "b",
+                        "name": "V2"
+                    }
+                ]
+            }
+        },
+        {
+            "compound": true,
+            "id": 4,
+            "name": "Titelgruppe",
+            "timeline": {
+                "audio": [
+                    {
+                        "clips": [
+                        ],
+                        "name": "A1",
+                        "pan": 0.2,
+                        "volumeDb": -3
+                    },
+                    {
+                        "clips": [
+                        ],
+                        "name": "A2"
+                    }
+                ],
+                "markIn": -1,
+                "markOut": -1,
+                "markers": [
+                ],
+                "masterLimiter": false,
+                "masterLimiterDb": -1,
+                "masterVolumeDb": 0,
+                "video": [
+                    {
+                        "clips": [
+                            {
+                                "id": 5,
+                                "in": 0,
+                                "out": 74,
+                                "start": 0,
+                                "title": {
+                                    "align": 1,
+                                    "bold": true,
+                                    "boxColor": "#a0000000",
+                                    "boxOn": false,
+                                    "boxPad": 20,
+                                    "color": "#ffffffff",
+                                    "font": "Sans",
+                                    "italic": false,
+                                    "outlineColor": "#ff000000",
+                                    "outlineOn": true,
+                                    "outlineWidth": 4,
+                                    "posX": 0,
+                                    "posY": -200,
+                                    "size": 90,
+                                    "text": "Hallo\nWelt"
+                                }
+                            }
+                        ],
+                        "name": "V1"
+                    },
+                    {
+                        "clips": [
+                        ],
+                        "name": "V2"
+                    }
+                ]
+            }
+        }
+    ],
+    "timeline": {
+        "audio": [
+            {
+                "clips": [
+                    {
+                        "id": 2,
+                        "in": 0,
+                        "link": 1,
+                        "media": 0,
+                        "out": 149,
+                        "start": 0,
+                        "transOut": 25,
+                        "transOutStyle": {
+                            "align": "center",
+                            "color": "#ffffff",
+                            "type": "dip_color"
+                        }
+                    },
+                    {
+                        "id": 4,
+                        "in": 25,
+                        "link": 2,
+                        "media": 1,
+                        "out": 299,
+                        "ramp": [
+                            {
+                                "smooth": 6,
+                                "source": 50,
+                                "speed": 0.5
+                            }
+                        ],
+                        "start": 150,
+                        "transIn": 25,
+                        "transInStyle": {
+                            "align": "center",
+                            "color": "#ffffff",
+                            "type": "dip_color"
+                        }
+                    },
+                    {
+                        "id": 12,
+                        "in": 0,
+                        "link": 5,
+                        "multicam": 3,
+                        "out": 299,
+                        "start": 500
+                    }
+                ],
+                "name": "A1",
+                "pan": 0.2,
+                "volumeDb": -3
+            },
+            {
+                "clips": [
+                ],
+                "name": "A2"
+            }
+        ],
+        "markIn": -1,
+        "markOut": -1,
+        "markers": [
+            75
+        ],
+        "masterLimiter": true,
+        "masterLimiterDb": -1,
+        "masterVolumeDb": 0,
+        "subtitles": [
+            {
+                "cues": [
+                    {
+                        "end": 63,
+                        "id": 6,
+                        "start": 13,
+                        "text": "Untertitel eins"
+                    }
+                ],
+                "style": {
+                    "align": 1,
+                    "bold": false,
+                    "boxColor": "#aa000000",
+                    "boxOn": true,
+                    "boxPad": 10,
+                    "color": "#ffffffff",
+                    "font": "Sans",
+                    "italic": false,
+                    "outlineColor": "#ff000000",
+                    "outlineOn": false,
+                    "outlineWidth": 3,
+                    "posX": 0,
+                    "posY": 60,
+                    "size": 48
+                }
+            }
+        ],
+        "video": [
+            {
+                "clips": [
+                    {
+                        "effects": [
+                            {
+                                "enabled": true,
+                                "id": "blur",
+                                "params": {
+                                    "strength": 25
+                                }
+                            }
+                        ],
+                        "id": 1,
+                        "in": 0,
+                        "keys": {
+                            "zoomX": [
+                                [
+                                    0,
+                                    1
+                                ],
+                                [
+                                    50,
+                                    1.3,
+                                    "easeInOut"
+                                ]
+                            ]
+                        },
+                        "link": 1,
+                        "media": 0,
+                        "out": 149,
+                        "start": 0,
+                        "transOut": 25,
+                        "transOutStyle": {
+                            "align": "center",
+                            "color": "#ffffff",
+                            "type": "dip_color"
+                        }
+                    },
+                    {
+                        "effects": [
+                            {
+                                "enabled": true,
+                                "id": "grade",
+                                "params": {
+                                    "contrast": 1.1,
+                                    "exposure": 0,
+                                    "gainB": 1,
+                                    "gainG": 1,
+                                    "gainR": 1,
+                                    "gainY": 1,
+                                    "gammaB": 0,
+                                    "gammaG": 0,
+                                    "gammaR": 0,
+                                    "gammaY": 0,
+                                    "liftB": 0,
+                                    "liftG": 0,
+                                    "liftR": 0,
+                                    "liftY": 0,
+                                    "lut": "",
+                                    "offsetB": 25,
+                                    "offsetG": 25,
+                                    "offsetR": 25,
+                                    "offsetY": 25,
+                                    "pivot": 0.435,
+                                    "saturation": 70,
+                                    "temperature": 0,
+                                    "tint": 0,
+                                    "w1.fill": "pixelate",
+                                    "w1.height": 25,
+                                    "w1.invert": false,
+                                    "w1.rotation": 0,
+                                    "w1.shape": "ellipse",
+                                    "w1.softness": 5,
+                                    "w1.width": 20,
+                                    "w1.x": 30,
+                                    "w1.y": 40,
+                                    "w2.amount": 30,
+                                    "w2.fill": "blur",
+                                    "w2.height": 40,
+                                    "w2.invert": false,
+                                    "w2.rotation": 0,
+                                    "w2.shape": "rectangle",
+                                    "w2.softness": 5,
+                                    "w2.width": 40,
+                                    "w2.x": 50,
+                                    "w2.y": 50,
+                                    "w3.amount": 30,
+                                    "w3.fill": "pixelate",
+                                    "w3.height": 40,
+                                    "w3.invert": false,
+                                    "w3.rotation": 0,
+                                    "w3.shape": "ellipse",
+                                    "w3.softness": 5,
+                                    "w3.width": 40,
+                                    "w3.x": 50,
+                                    "w3.y": 50
+                                }
+                            }
+                        ],
+                        "id": 3,
+                        "in": 25,
+                        "keys": {
+                            "fx:grade:w1.amount": [
+                                [
+                                    25,
+                                    20
+                                ],
+                                [
+                                    75,
+                                    60
+                                ]
+                            ]
+                        },
+                        "link": 2,
+                        "media": 1,
+                        "out": 299,
+                        "ramp": [
+                            {
+                                "smooth": 6,
+                                "source": 50,
+                                "speed": 0.5
+                            }
+                        ],
+                        "start": 150,
+                        "transIn": 25,
+                        "transInStyle": {
+                            "align": "center",
+                            "color": "#ffffff",
+                            "type": "dip_color"
+                        }
+                    },
+                    {
+                        "id": 11,
+                        "in": 0,
+                        "link": 5,
+                        "multicam": 3,
+                        "out": 299,
+                        "start": 500
+                    }
+                ],
+                "label": "Kamera",
+                "name": "V1"
+            },
+            {
+                "clips": [
+                    {
+                        "id": 13,
+                        "in": 0,
+                        "out": 74,
+                        "sequence": 4,
+                        "start": 25
+                    }
+                ],
+                "name": "V2"
+            }
+        ]
+    },
+    "version": 3
+}

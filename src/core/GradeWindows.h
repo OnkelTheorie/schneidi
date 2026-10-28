@@ -65,9 +65,18 @@ Geometry geometryAt(const Clip& c, int n, double t);
 
 struct FillInfo {
     Fill fill = Fill::None;
-    double amount = 50; // blur strength (like the blur effect) resp. block size, 0..100
+    double amount = 50; // blur strength (like the blur effect) resp. block size, 0..100 (pixelate: up to kMaxPixelate)
     QColor color = Qt::black;
 };
+
+// Pixelate: amount 100 = blocks of 1/50 of the picture height (22 px in 1080p: a player name of ~200 x 30 px becomes
+// a row of about ten blocks, unreadable but not one solid patch), at least 2 px. Up to project format 3 the scale was
+// five times coarser (100 = 1/10); older projects are converted on loading (amount x 5), which can give values above
+// 100 -> pixelate amounts go up to kMaxPixelate so those keep their look.
+constexpr double kPixelateDivisor = 50;
+constexpr double kOldPixelateFactor = 5; // format <= 3 amount x this = today's amount
+constexpr double kMaxPixelate = 100 * kOldPixelateFactor;
+int pixelBlock(double amount, int pictureHeight);
 FillInfo fillAt(const Clip& c, int n, double t);
 
 // Window center on a clip frame (tracking result, Editor::setGradeWindowPath)

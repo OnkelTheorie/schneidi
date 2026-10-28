@@ -836,9 +836,12 @@ void ColorPanel::refreshWindows(const Clip* c, int t)
     m_invert->setChecked(g.invert);
     m_fill->setCurrentIndex(m_fill->findData(QString(GradeWindows::fillId(fill.fill))));
     for (const WindowField& f : m_windowFields) {
-        if (!f.field->hasFocus()) f.field->setValue(Keys::valueAt(*c, GradeWindows::param(m_layer, f.key), t));
-        if (f.key == "amount")
+        if (f.key == "amount") {
             f.field->setEnabled(fill.fill == GradeWindows::Fill::Blur || fill.fill == GradeWindows::Fill::Pixelate);
+            // Pixelate of a project from before 0.14 can be above 100 (old coarser scale, converted): show it as it is
+            f.field->setRange(0, fill.fill == GradeWindows::Fill::Pixelate ? std::max(100.0, fill.amount) : 100.0);
+        }
+        if (!f.field->hasFocus()) f.field->setValue(Keys::valueAt(*c, GradeWindows::param(m_layer, f.key), t));
     }
     m_fillColor->setEnabled(fill.fill == GradeWindows::Fill::Color);
     m_trackBack->setEnabled(!tracking() && t > 0);

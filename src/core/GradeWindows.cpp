@@ -224,9 +224,14 @@ FillInfo fillAt(const Clip& c, int n, double t)
 {
     FillInfo f;
     fillFromId(EffectRegistry::value(c, kGrade, key(n, "fill")).toString(), &f.fill);
-    f.amount = std::clamp(num(c, n, "amount", t), 0.0, 100.0);
+    f.amount = std::clamp(num(c, n, "amount", t), 0.0, f.fill == Fill::Pixelate ? kMaxPixelate : 100.0);
     f.color = EffectRegistry::value(c, kGrade, key(n, "color")).value<QColor>();
     return f;
+}
+
+int pixelBlock(double amount, int pictureHeight)
+{
+    return std::max(2, int(std::lround(amount / 100.0 * pictureHeight / kPixelateDivisor)));
 }
 
 // ---- Mask ----

@@ -574,6 +574,9 @@ int main(int argc, char** argv)
         CHECK_EQ(wins[0]["shape"].toString(), QString("rectangle"));
         CHECK_EQ(wins[0]["fill"].toString(), QString("pixelate"));
         CHECK_EQ(wins[0]["amount"].toDouble(), 30.0);
+        // The help gives the pixelate scale (100 = 1/50 of the height, fine enough to keep blocks over a name)
+        CHECK(QString(QJsonDocument(run("help", {{"command", "edit"}, {"op", "window"}})).toJson())
+                  .contains("amount 100 = 1/50 of the picture height"));
         CHECK_EQ(wins[0]["saturation"].toDouble(), 0.0);
         CHECK_EQ(wins[0]["width"].toDouble(), 20.0);
         CHECK_EQ(wins[1]["shape"].toString(), QString("ellipse"));
@@ -801,6 +804,42 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         ed(R"([{"op":"align","events":[{"media":"/x/a.mp4","source":10}],"to":[15]}])");
         CHECK_EQ(track(0), QString("V1: a[0-20|0-19]"));
         CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"align","events":[5]}])"}}), QString("BAD_ARGUMENT"));
+    }
+
+    // Overlapping titles (AI test run 2026-10-28): on one track the second overwrites the first like `place` and the
+    // notes say so; without a track both stay visible on their own tracks
+    {
+        const auto ed = [](const QString& ops) { return run("edit", {{"project", g_path}, {"ops", ops}}); };
+        const auto track = [](int i) { return saved().section("  ", i, i); };
+        ed(R"([{"op":"clear"},{"op":"title","text":"One","at":10,"duration":40,"track":"V1"}])");
+        QJsonObject r = ed(R"([{"op":"title","text":"Two","at":30,"duration":40,"track":"V1"}])");
+        CHECK_EQ(track(0), QString("V1: T[10-30|0-19] T[30-70|0-39]"));
+        QString notes = QJsonDocument(r["notes"].toArray()).toJson();
+        CHECK(notes.contains("overwrote title \\\"One\\\""));
+        CHECK(notes.contains("it is now [10-30)"));
+        CHECK(notes.contains("leave out `track`"));
+        // Covered completely: removed, and the notes say so
+        r = ed(R"([{"op":"title","text":"Three","at":0,"duration":80,"track":"V1"}])");
+        CHECK_EQ(track(0), QString("V1: T[0-80|0-79]"));
+        notes = QJsonDocument(r["notes"].toArray()).toJson();
+        CHECK(notes.contains("it was removed"));
+        // Inside a longer title: that one is split, its rest continues as a new clip
+        r = ed(R"([{"op":"title","text":"Four","at":20,"duration":10,"track":"V1"}])");
+        CHECK_EQ(track(0), QString("V1: T[0-20|0-19] T[20-30|0-9] T[30-80|30-79]"));
+        notes = QJsonDocument(r["notes"].toArray()).toJson();
+        CHECK(notes.contains("continues as clip"));
+        // Without a track: a free track above, both titles show
+        ed(R"([{"op":"clear"}])");
+        r = ed(R"([{"op":"title","text":"A","at":10,"duration":40},{"op":"title","text":"B","at":30,"duration":40}])");
+        CHECK_EQ(track(0), QString("V1: T[10-50|0-39]"));
+        CHECK_EQ(track(1), QString("V2: T[30-70|0-39]"));
+        CHECK(!r.contains("notes"));
+        // Lengthening a title over another one on its track says so too
+        const int a = run("info", {{"project", g_path}})["timeline"]["tracks"][0]["clips"][0]["id"].toInt();
+        ed(R"([{"op":"title","text":"C","at":60,"duration":10,"track":"V1"}])");
+        r = ed(QString(R"([{"op":"title","clip":%1,"duration":55}])").arg(a));
+        CHECK_EQ(track(0), QString("V1: T[10-65|0-54] T[65-70|5-9]"));
+        CHECK(QJsonDocument(r["notes"].toArray()).toJson().contains("it is now [65-70)"));
     }
 
     // Project format (resolution scales positions, frame rate locked while clips exist), LUT by name, SRT export
