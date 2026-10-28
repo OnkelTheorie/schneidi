@@ -5,7 +5,8 @@
 // aligned in), "family", "size" (pixels), "weight" (400/700), "style" (normal/italic), "halign" (left/center/right:
 // the lines within the block and the block in the area), "valign" (top/middle/bottom), "fgcolour" (keyframed),
 // "bgcolour" (box behind the block), "pad" (box margin), "olcolour", "outline" (pen width, centered on the glyph
-// edges). Font, outline and margin scale with the requested size (a preview frame looks like the export one).
+// edges). Own addition: "layout_outline" (the outline width the layout makes room for, default "outline": stacked
+// layers of one title share it and so the scale and origin). Font, outline and margin scale with the requested size (a preview frame looks like the export one).
 
 namespace Mlt {
 class Filter;

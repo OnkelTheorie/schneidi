@@ -42,7 +42,8 @@ struct Affine {
 };
 
 // Source over: src (sw x sh) through m onto dst (dw x dh), both RGBA with straight alpha, opacity 0..1. Bilinear in
-// premultiplied alpha; outside the source counts as transparent (soft one-pixel edge).
+// premultiplied alpha, shrinking by 2:1 or more averages 2x2 blocks of texels first (mip steps) (no skipped texels: fine
+// patterns do not flicker); outside the source counts as transparent (soft one-pixel edge).
 void draw(uint8_t* dst, int dw, int dh, const uint8_t* src, int sw, int sh, const Affine& m, double opacity);
 // Source over of two pictures of the same size w x h (RGBA, straight alpha)
 void over(uint8_t* dst, const uint8_t* src, int w, int h, double opacity);

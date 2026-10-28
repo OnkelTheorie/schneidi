@@ -3,31 +3,103 @@
 #include <Mlt.h>
 #include <QImage>
 #include <QImageReader>
+#include <algorithm>
+#include <atomic>
+#include <cmath>
 #include <cstring>
+#include <list>
 #include <mutex>
 
 namespace Still {
 
 namespace {
 
+// Decoded pictures of all still producers share one memory budget: the least recently used ones are dropped (and
+// decoded again when needed). Without it a slideshow of many large photos kept every one of them decoded.
+constexpr qint64 kMinBudget = qint64(256) << 20; // 7 photos at the 1080p cap
+// A picture is decoded at most at this many times the project's pixel count (twice the size in both directions:
+// sharp up to zoom 2 on a fitted photo); a 24 MP photo in a 1080p project takes 33 MB instead of 96 MB.
+constexpr double kMaxPixelsPerProfile = 4.0;
+
+std::atomic<qint64> g_budget{0}; // 0 = the default
+
+struct Data;
+
+struct Cache {
+    std::mutex mutex;
+    std::list<Data*> lru; // most recently used at the front; only pictures that are decoded
+    qint64 bytes = 0;
+};
+
+Cache& cache()
+{
+    static Cache* c = new Cache; // never destroyed: producers may close while statics are torn down
+    return *c;
+}
+
 struct Data {
     QString path;
-    QSize size; // as shown (EXIF orientation applied)
-    std::mutex mutex;
-    QImage full; // decoded on first use, RGBA8888 (straight alpha)
+    QSize size; // as handed out (EXIF orientation applied, at most kMaxPixelsPerProfile x the project's pixels)
+    std::mutex decode; // one decode at a time for this picture
+    // under cache().mutex:
+    QImage full; // RGBA8888 (straight alpha), null when not decoded (yet, or dropped for the budget)
     bool failed = false;
+    std::list<Data*>::iterator at; // its place in cache().lru while decoded
 
-    // The picture; null = unreadable. Implicitly shared copy: usable unlocked.
+    ~Data() { drop(); }
+
+    // Leaves the cache (under cache().mutex)
+    void forget(Cache& c)
+    {
+        if (full.isNull()) return;
+        c.bytes -= full.sizeInBytes();
+        c.lru.erase(at);
+        full = QImage();
+    }
+    void drop()
+    {
+        Cache& c = cache();
+        std::lock_guard lock(c.mutex);
+        forget(c);
+    }
+
+    QImage read() const
+    {
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        // The reader scales before it turns the picture: ask in the file's orientation
+        const QSize raw = reader.size();
+        const QSize want = reader.transformation() & QImageIOHandler::TransformationRotate90 ? size.transposed() : size;
+        if (raw.isValid() && raw != want) reader.setScaledSize(want);
+        QImage img = reader.read();
+        if (img.isNull()) return img;
+        if (img.size() != size) img = img.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        return img.convertToFormat(QImage::Format_RGBA8888);
+    }
+
+    // The picture; null = unreadable. Implicitly shared copy: usable unlocked (stays valid when the cache drops it).
     QImage picture()
     {
-        std::lock_guard lock(mutex);
-        if (full.isNull() && !failed) {
-            QImageReader reader(path);
-            reader.setAutoTransform(true);
-            QImage img = reader.read();
-            failed = img.isNull();
-            if (!failed) full = img.convertToFormat(QImage::Format_RGBA8888);
+        Cache& c = cache();
+        std::lock_guard dl(decode);
+        {
+            std::lock_guard lock(c.mutex);
+            if (!full.isNull()) {
+                c.lru.splice(c.lru.begin(), c.lru, at);
+                return full;
+            }
+            if (failed) return {};
         }
+        const QImage img = read(); // unlocked: other stills decode at the same time
+        std::lock_guard lock(c.mutex);
+        failed = img.isNull();
+        if (failed) return img;
+        full = img;
+        c.lru.push_front(this);
+        at = c.lru.begin();
+        c.bytes += full.sizeInBytes();
+        const qint64 budget = std::max(g_budget.load() > 0 ? g_budget.load() : kMinBudget, 3 * full.sizeInBytes());
+        while (c.bytes > budget && c.lru.back() != this) c.lru.back()->forget(c);
         return full;
     }
 };
@@ -99,6 +171,14 @@ mlt_producer create(mlt_profile profile, const QString& path)
         size = img.size();
     }
     if (size.isEmpty()) return nullptr;
+    if (profile && profile->width > 0 && profile->height > 0) {
+        const double most = kMaxPixelsPerProfile * profile->width * profile->height;
+        const double pixels = double(size.width()) * size.height();
+        if (pixels > most) {
+            const double s = std::sqrt(most / pixels);
+            size = QSize(std::max(1, int(std::lround(size.width() * s))), std::max(1, int(std::lround(size.height() * s))));
+        }
+    }
     mlt_producer raw = mlt_producer_new(profile);
     if (!raw) return nullptr;
     auto* d = new Data;
@@ -142,6 +222,15 @@ void* createService(mlt_profile profile, mlt_service_type, const char*, const vo
 }
 
 } // namespace
+
+void setCacheBudget(qint64 bytes) { g_budget = bytes; }
+
+qint64 cachedBytes()
+{
+    Cache& c = cache();
+    std::lock_guard lock(c.mutex);
+    return c.bytes;
+}
 
 bool isStillService(const char* service)
 {
