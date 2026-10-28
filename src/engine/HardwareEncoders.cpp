@@ -8,10 +8,16 @@
 #include <QProcess>
 #include <QThreadPool>
 #include <algorithm>
+#include <cmath>
+#include <initializer_list>
 #include <atomic>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
 
 namespace HardwareEncoders {
 
@@ -161,7 +167,7 @@ void ensureProbed()
 QString codecName(VideoEncoder e, const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
-    if (!f.hardware) return f.videoCodec;
+    if (!f.hardware) return softwareCodec(format);
     const QString base = QLatin1String(f.id) == QLatin1String("h265") ? "hevc" : "h264";
     switch (e) {
     case VideoEncoder::Nvenc: return base + "_nvenc";
@@ -170,7 +176,57 @@ QString codecName(VideoEncoder e, const QString& format)
     case VideoEncoder::Auto:
     case VideoEncoder::Software: break;
     }
-    return f.videoCodec;
+    return softwareCodec(format);
+}
+
+QString softwareCodec(const QString& format)
+{
+    const RenderFormatInfo& f = renderFormat(format);
+    if (!*f.videoCodec) return {};
+    const auto have = [](const char* name) { return avcodec_find_encoder_by_name(name) != nullptr; };
+    if (have(f.videoCodec)) return f.videoCodec;
+    // Free replacements (BSD): the GPL-free build has no x264/x265
+    const QLatin1String codec(f.videoCodec);
+    for (const char* other : codec == QLatin1String("libx264")     ? std::initializer_list<const char*>{"libopenh264"}
+                             : codec == QLatin1String("libx265")   ? std::initializer_list<const char*>{"libkvazaar"}
+                             : codec == QLatin1String("libsvtav1") ? std::initializer_list<const char*>{"libaom-av1"}
+                                                                   : std::initializer_list<const char*>{})
+        if (have(other)) return other;
+    return {};
+}
+
+bool formatAvailable(const QString& format)
+{
+    const RenderFormatInfo& f = renderFormat(format);
+    if (QLatin1String(f.id) != format) return false;
+    if (*f.audioCodec && !avcodec_find_encoder_by_name(renderFormat(format).audioCodec)) return false;
+    if (!*f.videoCodec || !softwareCodec(format).isEmpty()) return true;
+    return f.hardware && probed() && !available(format).isEmpty();
+}
+
+QVector<QPair<QString, QString>> softwareOptions(const QString& codec, int crf, QSize size, double fps)
+{
+    if (crf <= 0) return {};
+    if (codec == "libopenh264") {
+        // No constant quality mode: a bit rate target from the picture size, like x264 at that CRF gives for typical
+        // material (about 0.1 bit per pixel at 22, doubling every 6 steps), in "quality" rate control
+        const double pixels = double(std::max(16, size.width())) * std::max(16, size.height()) * std::max(1.0, fps);
+        const double bitsPerPixel = 0.1 * std::pow(2.0, (22 - crf) / 6.0);
+        const qint64 kbit = std::max<qint64>(200, qint64(pixels * bitsPerPixel / 1000));
+        return {{"rc_mode", "quality"}, {"b", QString::number(kbit) + "k"}, {"allow_skip_frames", "0"},
+                {"profile", "high"}, {"coder", "cabac"}};
+    }
+    if (codec == "libkvazaar") // constant QP (kvazaar has no CRF); QP ≈ x265's CRF + 2 for similar sizes
+        return {{"kvazaar-params", QString("preset=fast,qp=%1").arg(std::clamp(crf + 2, 1, 51))}};
+    return {};
+}
+
+QStringList proxyVideoArguments()
+{
+    if (avcodec_find_encoder_by_name("libx264"))
+        return {"-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-tune", "fastdecode"};
+    // GPL-free build: OpenH264 at a bit rate that suits the proxy size (at most 960 px wide, see ProxyManager)
+    return {"-c:v", "libopenh264", "-rc_mode", "quality", "-b:v", "6M", "-allow_skip_frames", "0"};
 }
 
 VideoEncoder encoderOfCodec(const QString& codec)
@@ -292,13 +348,20 @@ Choice resolve(VideoEncoder wanted, const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
     Choice c;
-    c.codec = f.videoCodec;
-    if (!f.hardware || wanted == VideoEncoder::Software) return c;
+    c.codec = softwareCodec(format);
+    // No software encoder in this FFmpeg: keep the format's name, the export then reports it as not available
+    const QString software = c.codec.isEmpty() ? QString(f.videoCodec) : c.codec;
+    if (!f.hardware || (wanted == VideoEncoder::Software && !c.codec.isEmpty())) {
+        c.codec = software;
+        return c;
+    }
     const QVector<VideoEncoder> list = available(format);
-    if (wanted == VideoEncoder::Auto) {
+    if (wanted == VideoEncoder::Auto || wanted == VideoEncoder::Software) { // Software without one: the graphics card
         if (!list.isEmpty()) {
             c.fallback = c.codec;
             c.codec = codecName(list.first(), format);
+        } else {
+            c.codec = software;
         }
         return c;
     }
@@ -306,6 +369,7 @@ Choice resolve(VideoEncoder wanted, const QString& format)
         c.fallback = c.codec;
         c.codec = codecName(wanted, format);
     } else {
+        c.codec = software;
         c.note = T("%1 ist auf diesem Rechner nicht verfügbar, mit Software gerendert.").arg(videoEncoderLabel(wanted));
     }
     return c;

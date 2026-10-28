@@ -250,6 +250,12 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     if (out.size() != s.format.size()) scaleTimeline(scaled, s.format.size(), out.size());
     // Audio only: video tracks carry no sound (TimelineBuilder hides it), so skip decoding their images
     if (s.videoCodec.isEmpty()) scaled.video.clear();
+    // An encoder this FFmpeg does not have (the GPL-free build has no x264/x265 and offers what it has instead):
+    // say so instead of MLT failing without a reason
+    if (!s.videoCodec.isEmpty() && !avcodec_find_encoder_by_name(s.videoCodec.toUtf8().constData())) {
+        if (error) *error = T("Video-Encoder %1 ist in diesem Build nicht verfügbar.").arg(s.videoCodec);
+        return false;
+    }
     // Own audio engine: the mixer gets the timeline as it is (it handles mute/solo itself), the MLT graph no sound
     const bool ownAudio = !s.audioCodec.isEmpty()
                           && (s.audioPath == ExportSettings::AudioPath::Own
@@ -576,7 +582,8 @@ bool Exporter::startConsumer(const QString& codec, QString* error)
     if ((ext == "mp4" || ext == "mov" || ext == "m4a") && s.output == ExportSettings::Output::File)
         m_consumer->set("movflags", ext == "mp4" ? "+faststart+negative_cts_offsets" : "+faststart");
     // HEVC as 'hvc1' for Apple players (see ExportWriter::writeHeader)
-    if ((ext == "mp4" || ext == "mov") && (codec == "libx265" || codec.startsWith("hevc_"))) m_consumer->set("vtag", "hvc1");
+    if ((ext == "mp4" || ext == "mov") && (codec == "libx265" || codec == "libkvazaar" || codec.startsWith("hevc_")))
+        m_consumer->set("vtag", "hvc1");
     // Decoder (start) and encoder get the same thread count. When converting the frame rate the RateConverter
     // fetches frames in order -> one at a time there, and without the read-ahead thread (real_time 0): repeated
     // frames deliver 0 samples; the read-ahead thread fetches the sound early, and on the encoder's second fetch
@@ -613,7 +620,13 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
     if (HardwareEncoders::isHardwareCodec(codec)) {
         for (const auto& [key, value] : HardwareEncoders::codecOptions(codec, s.crf)) o.append({key.toUtf8(), value.toUtf8()});
     } else {
-        if (s.crf > 0) o.append({"crf", QByteArray::number(s.crf)}); // H.264/H.265/AV1/VP9; fixed-quality formats have 0
+        Mlt::Profile& p = m_convertRate ? *m_outProfile : *m_profile;
+        const auto own = HardwareEncoders::softwareOptions(codec, s.crf, QSize(p.width(), p.height()), p.fps());
+        if (!own.isEmpty()) { // OpenH264, kvazaar: no crf of their own
+            for (const auto& [key, value] : own) o.append({key.toUtf8(), value.toUtf8()});
+        } else if (s.crf > 0) {
+            o.append({"crf", QByteArray::number(s.crf)}); // H.264/H.265/AV1/VP9; fixed-quality formats have 0
+        }
         if (codec == "libx264" || codec == "libx265") o.append({"preset", s.preset.toUtf8()});
     }
     if (s.maxBitrateK > 0) { // quality target as before, but capped (VBV)

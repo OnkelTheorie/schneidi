@@ -109,6 +109,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent)
     // Groups like DaVinci's format list: delivery, mastering, GIF, image sequences, audio only
     const auto group = [](const RenderFormatInfo& f) { return int(f.kind) * 2 + (f.hasQuality() ? 0 : 1); };
     for (const RenderFormatInfo& f : renderFormats()) {
+        if (!HardwareEncoders::formatAvailable(f.id)) continue; // e.g. MP3 with an FFmpeg without LAME
         if (m_format->count() > 0 && group(renderFormat(m_format->itemData(m_format->count() - 1).toString())) != group(f))
             m_format->insertSeparator(m_format->count());
         m_format->addItem(T(f.label), QString(f.id));

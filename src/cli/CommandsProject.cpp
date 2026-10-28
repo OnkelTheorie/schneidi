@@ -22,6 +22,7 @@
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
 #include "engine/Exporter.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/Profiles.h"
 #include "engine/ProxyCleanup.h"
 #include "engine/RenderQueue.h"
@@ -488,6 +489,13 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         QStringList ids;
         for (const RenderFormatInfo& i : formats) ids << i.id;
         fail("BAD_ARGUMENT", "unknown format " + formatId + " (" + ids.join(", ") + ", srt)");
+    }
+    if (!srtOnly && !HardwareEncoders::formatAvailable(formatId)) {
+        QStringList ids;
+        for (const RenderFormatInfo& i : formats)
+            if (HardwareEncoders::formatAvailable(i.id)) ids << i.id;
+        fail("BAD_ARGUMENT", "format " + formatId + " has no encoder in this build of FFmpeg (available: " + ids.join(", ")
+                                  + ", srt)");
     }
     QString out = absolute(a["out"].toString());
     if (QFileInfo(out).suffix().isEmpty()) out += "." + QString(srtOnly ? "srt" : renderFormat(formatId).extension);

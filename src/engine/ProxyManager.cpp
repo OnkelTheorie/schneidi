@@ -3,6 +3,7 @@
 
 #include "core/I18n.h"
 #include "engine/Background.h"
+#include "engine/HardwareEncoders.h"
 #include "engine/ProxyCleanup.h"
 #include "engine/video/Still.h"
 
@@ -102,9 +103,10 @@ ProxyJob prepareJob(const QString& original, const QString& part)
                      "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-map_metadata", "-1",
                      "-vf", scale,
                      // short GOP without B-frames: jumping/scrubbing in the preview stays fast
-                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-tune", "fastdecode",
                      "-g", "10", "-bf", "0", "-pix_fmt", "yuv420p",
                      "-colorspace", cs, "-color_primaries", primaries, "-color_trc", trc, "-color_range", "tv"};
+    // x264, or OpenH264 in the GPL-free build
+    args << HardwareEncoders::proxyVideoArguments();
     // Constant frame rate equal to the source (phone clips with variable frame rate -> CFR)
     if (info.rateNum > 0 && info.rateDen > 0)
         args << "-r" << QString("%1/%2").arg(info.rateNum).arg(info.rateDen);

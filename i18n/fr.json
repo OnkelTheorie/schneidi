@@ -197,6 +197,7 @@
  "Audio-Bitrate": "Débit audio",
  "Audio-Bittiefe": "Profondeur de bits audio",
  "Audio-Encoder %1 nicht verfügbar.": "L’encodeur audio %1 n’est pas disponible.",
+ "Video-Encoder %1 ist in diesem Build nicht verfügbar.": "L’encodeur vidéo %1 n’est pas disponible dans cette version.",
  "Audio-Zielspur A%1": "Destination audio A%1",
  "Audioclips": "Clips audio",
  "Audiopegel normalisieren": "Normaliser les niveaux audio",
