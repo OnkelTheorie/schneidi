@@ -194,10 +194,13 @@ int keyFrames(const QString& path, const KeyFrameOptions& options, const std::fu
     return count;
 }
 
-QImage stillAt(const QString& path, double seconds, const QSize& box)
+namespace {
+
+QImage stillOnce(const QString& path, double seconds, const QSize& box, bool* opened)
 {
     Source src;
-    if (!src.open(path, 2, false)) return {};
+    *opened = src.open(path, 2, false);
+    if (!*opened) return {};
     if (src.fmt->duration != AV_NOPTS_VALUE && double(src.fmt->duration) / AV_TIME_BASE <= seconds) seconds = 0;
     const double tb = av_q2d(src.st->time_base);
     if (seconds > 0) {
@@ -235,6 +238,17 @@ QImage stillAt(const QString& path, double seconds, const QSize& box)
         drain();
     }
     return first;
+}
+
+} // namespace
+
+QImage stillAt(const QString& path, double seconds, const QSize& box)
+{
+    bool opened = false;
+    const QImage img = stillOnce(path, seconds, box, &opened);
+    // Nothing after the seek (a raw stream without time stamps such as .h264: it lands anywhere): the first picture
+    if (img.isNull() && opened && seconds > 0) return stillOnce(path, 0, box, &opened);
+    return img;
 }
 
 } // namespace Video
