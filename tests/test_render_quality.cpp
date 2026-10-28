@@ -4,7 +4,8 @@
 // - stills: a photo much larger than the project is decoded smaller, all still producers share one memory budget
 //   (a slideshow of many large photos kept each one decoded), EXIF orientation still applied
 // - compose: strong downscales are prefiltered (1-px stripes shrunk 4.3:1 come out as even gray, not as random
-//   stripes)
+//   stripes), and an opaque full-frame track handed through the blend is fetched writable when the next blend draws
+//   into it (a producer that shares its cached picture got the overlay painted into its cache)
 
 #include "check.h"
 
@@ -263,6 +264,97 @@ void testDownscale(const QString& dump)
     QImage(out.data(), zd, zd, QImage::Format_RGBA8888).save(dump + "/zoneplate-4to1.png");
 }
 
+// A producer handing out its cached picture when the caller does not want to write (like MLT's avformat with its
+// image cache), a copy otherwise
+struct Shared {
+    int w = 0, h = 0;
+    std::vector<uint8_t> px;
+};
+
+int sharedGetImage(mlt_frame frame, uint8_t** buffer, mlt_image_format* format, int* width, int* height, int writable)
+{
+    auto* s = static_cast<Shared*>(mlt_frame_pop_service(frame));
+    const int size = mlt_image_format_size(mlt_image_rgba, s->w, s->h, nullptr);
+    uint8_t* out = s->px.data();
+    if (writable) {
+        out = static_cast<uint8_t*>(mlt_pool_alloc(size));
+        std::memcpy(out, s->px.data(), s->px.size());
+        mlt_frame_set_image(frame, out, size, mlt_pool_release);
+    } else {
+        mlt_frame_set_image(frame, out, 0, nullptr);
+    }
+    *buffer = out;
+    *format = mlt_image_rgba;
+    *width = s->w;
+    *height = s->h;
+    return 0;
+}
+
+int sharedGetFrame(mlt_producer self, mlt_frame_ptr frame, int)
+{
+    auto* s = static_cast<Shared*>(self->child);
+    *frame = mlt_frame_init(MLT_PRODUCER_SERVICE(self));
+    mlt_properties fp = MLT_FRAME_PROPERTIES(*frame);
+    mlt_frame_set_position(*frame, mlt_producer_position(self));
+    mlt_properties_set_int(fp, "width", s->w);
+    mlt_properties_set_int(fp, "height", s->h);
+    mlt_properties_set_double(fp, "aspect_ratio", 1.0);
+    mlt_properties_set_int(fp, "format", mlt_image_rgba);
+    mlt_properties_set_int(fp, "progressive", 1);
+    mlt_frame_push_service(*frame, s);
+    mlt_frame_push_get_image(*frame, sharedGetImage);
+    mlt_producer_prepare_next(self);
+    return 0;
+}
+
+// V1 black, V2 the sharing producer (opaque, full frame: handed through), V3 half-transparent red over it: rendering
+// twice must leave the producer's picture alone and give the same frame
+void testCoversWritable(Mlt::Profile& profile)
+{
+    Shared s;
+    s.w = profile.width();
+    s.h = profile.height();
+    s.px.assign(size_t(s.w) * s.h * 4, 0);
+    for (size_t i = 0; i < s.px.size(); i += 4) s.px[i + 1] = 200, s.px[i + 3] = 255; // green
+    const std::vector<uint8_t> original = s.px;
+    mlt_producer raw = mlt_producer_new(profile.get_profile());
+    raw->child = &s;
+    raw->get_frame = sharedGetFrame;
+    mlt_properties_set_int(MLT_PRODUCER_PROPERTIES(raw), "length", 100);
+    mlt_properties_set_int(MLT_PRODUCER_PROPERTIES(raw), "out", 99);
+    Mlt::Producer shared(raw);
+    mlt_producer_close(raw);
+    Mlt::Producer black(profile, "color:#ff000000"), red(profile, "color:#80ff0000");
+    for (Mlt::Producer* p : {&black, &red}) p->set("length", 100), p->set("out", 99);
+    Mlt::Tractor tractor(profile);
+    tractor.set_track(black, 0);
+    tractor.set_track(shared, 1);
+    tractor.set_track(red, 2);
+    for (int track : {1, 2}) {
+        Mlt::Transition t = Compose::blendTransition(profile);
+        t.set("always_active", 1);
+        tractor.plant_transition(t, 0, track);
+    }
+    std::vector<uint8_t> first;
+    for (int run = 0; run < 2; ++run) {
+        tractor.seek(5);
+        std::unique_ptr<Mlt::Frame> f(tractor.get_frame());
+        mlt_image_format fmt = mlt_image_rgba;
+        int w = s.w, h = s.h;
+        const uint8_t* img = f->get_image(fmt, w, h);
+        if (!CHECK(img && fmt == mlt_image_rgba && w == s.w && h == s.h)) return;
+        std::vector<uint8_t> px(img, img + size_t(w) * h * 4);
+        if (run == 0) {
+            first = px;
+            std::printf("  covered track + overlay: pixel %d %d %d\n", px[0], px[1], px[2]);
+            CHECK(px[0] > 100 && px[1] > 60 && px[1] < 140); // red half over green
+        } else {
+            CHECK(px == first);
+        }
+    }
+    CHECK(s.px == original);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -282,5 +374,6 @@ int main(int argc, char** argv)
     if (!CHECK(tmp.isValid())) return Check::result();
     testStills(*profile, tmp);
     testDownscale(qEnvironmentVariable("SCHNEIDI_QUALITY_DUMP"));
+    testCoversWritable(*profile);
     return Check::result();
 }

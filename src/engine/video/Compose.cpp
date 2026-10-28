@@ -527,7 +527,10 @@ int blendGetImage(mlt_frame a, uint8_t** image, mlt_image_format* format, int* w
                               : mlt_image_none;
     uint8_t* bi = nullptr;
     int bw = w, bh = h;
-    int error = mlt_frame_get_image(b, &bi, &bf, &bw, &bh, 0);
+    // Writable when the caller wants to write: an opaque b is handed on as a's picture below, and a producer may share
+    // its cached picture with readers (a decoder's image cache): the next track's blend drew into that cache, a
+    // repeated frame got the overlay twice. A producer with a fresh buffer per frame (the own decoder) copies nothing.
+    int error = mlt_frame_get_image(b, &bi, &bf, &bw, &bh, writable);
     if (error || !bi) return mlt_frame_get_image(a, image, format, width, height, writable);
     if (fills(pl, w, h) && bw == w && bh == h) {
         bool covers = false;
@@ -543,13 +546,13 @@ int blendGetImage(mlt_frame a, uint8_t** image, mlt_image_format* format, int* w
             // YUV export: b knows the source's standard, a does not)
             if (*format != mlt_image_none && bf != *format) {
                 bf = *format;
-                if (mlt_frame_get_image(b, &bi, &bf, &bw, &bh, 0) || !bi)
+                if (mlt_frame_get_image(b, &bi, &bf, &bw, &bh, writable) || !bi)
                     return mlt_frame_get_image(a, image, format, width, height, writable);
             }
             mlt_properties_inc_ref(bp);
             mlt_properties_set_data(ap, "_schneidi_blend_b", b, 0, reinterpret_cast<mlt_destructor>(mlt_frame_close),
                                     nullptr);
-            mlt_frame_set_image(a, bi, 0, nullptr); // lives with b, which a now holds
+            mlt_frame_set_image(a, bi, 0, nullptr); // lives with b, which a now holds (writable when asked, see above)
             mlt_frame_set_alpha(a, nullptr, 0, nullptr);
             mlt_properties_pass_list(ap, bp, "colorspace,full_range,color_trc,color_primaries,progressive,top_field_first");
             *image = bi;
