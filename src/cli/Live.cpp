@@ -128,6 +128,17 @@ void restoreMedia(Project& p, const QVector<MediaInfo>& before)
     p.replaceMedia(media);
 }
 
+// Takes the step at `index` off the undo stack without running it: a failed command's undone macro would stay as a
+// redo step (redo would bring the half state back), an empty one would be a step that does nothing. QUndoStack
+// deletes an obsolete command instead of redoing/undoing it.
+void dropStep(QUndoStack* undo, int index)
+{
+    if (index < 0 || index >= undo->count()) return;
+    const_cast<QUndoCommand*>(undo->command(index))->setObsolete(true);
+    if (undo->index() == index) undo->redo();
+    else if (undo->index() == index + 1) undo->undo();
+}
+
 // The ops of an edit: "split, delete"
 QString opNames(const QJsonObject& args)
 {
@@ -479,13 +490,15 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
     Project* p = m_host->liveProject();
     const QHash<int, ClipState> before = clipStates(*p);
     const QVector<MediaInfo> mediaBefore = p->media();
-    // One undo step per edit command; it never merges with the user's slider series before or after it
+    const QVector<WatchFolder> watchBefore = p->watchFolders();
+    // One undo step per changing command, all or nothing like on the file; it never merges with the user's slider
+    // series before or after it (`restore` is one step of its own and changes nothing before it can fail)
     QUndoStack* undo = p->undoStack();
-    const bool step = name == "edit";
+    const bool step = name == "edit" || name == "import" || name == "watch";
     const int index = undo->index();
     if (step) {
         p->closeMerge();
-        undo->beginMacro(undoText(args));
+        undo->beginMacro(name == "edit" ? undoText(args) : T("KI: %1").arg(name));
     }
     QJsonObject result;
     Context ctx;
@@ -500,7 +513,9 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
         if (step) {
             undo->endMacro();
             if (undo->index() > index) undo->undo(); // all or nothing, like on the file
+            dropStep(undo, index);                   // and no redo step that brings it back
             restoreMedia(*p, mediaBefore);
+            if (p->watchFolders() != watchBefore) p->setWatchFolders(watchBefore);
         }
         if (logged) {
             change.step = stepText(name, args, {}, *p);
@@ -511,6 +526,9 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat)
     }
     if (step) {
         undo->endMacro();
+        // An import of media only changes nothing in the undo history: no empty step
+        if (name != "edit" && undo->index() == index + 1 && undo->command(index)->childCount() == 0)
+            dropStep(undo, index);
         p->closeMerge();
     }
     compareClips(before, clipStates(*p), change);

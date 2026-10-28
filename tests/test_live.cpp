@@ -238,6 +238,7 @@ int main(int argc, char* argv[])
     CHECK_EQ(code(r), QString("NOT_FOUND"));
     CHECK_EQ(videoClips(fake.project), 2);
     CHECK_EQ(fake.project.undoStack()->index(), undoBefore + 1);
+    CHECK(!fake.project.undoStack()->canRedo()); // redo does not bring the half edit back
     // ... also what is not in the undo history: source markers and source In/Out
     r = cli({"edit", fake.path, "--ops",
              R"([{"op":"source_marker","media":"/x/a.mp4","at":30},{"op":"media","media":"/x/a.mp4","in":5,"out":60},
@@ -257,6 +258,25 @@ int main(int argc, char* argv[])
         CHECK_EQ(code(r), QString("NOT_FOUND"));
         CHECK_EQ(fake.project.media().size(), mediaBefore);
         CHECK(!fake.project.mediaInfo(broll));
+        // import is all or nothing too: a file it cannot read takes the ones before it out again, no step is left
+        const QString broken = tmp.path() + "/broken.mp4";
+        {
+            QFile f(broken);
+            if (f.open(QIODevice::WriteOnly)) f.write("no video");
+        }
+        const int steps = fake.project.undoStack()->index();
+        r = cli({"import", fake.path, broll, broken});
+        CHECK(code(r) != QString("ok"));
+        CHECK_EQ(fake.project.media().size(), mediaBefore);
+        CHECK(!fake.project.mediaInfo(broll));
+        CHECK_EQ(fake.project.undoStack()->index(), steps);
+        CHECK(!fake.project.undoStack()->canRedo());
+        // ... and one that works is no empty undo step
+        r = cli({"import", fake.path, broll});
+        CHECK_EQ(code(r), QString("ok"));
+        CHECK(fake.project.mediaInfo(broll));
+        CHECK_EQ(fake.project.undoStack()->index(), steps);
+        fake.project.replaceMedia(fake.project.media().mid(0, mediaBefore));
     }
 
     // Dry run: computed on a copy
