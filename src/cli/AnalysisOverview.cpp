@@ -94,13 +94,15 @@ Picture pictureOf(const MediaSource& m, Context& ctx, double progressFrom, doubl
     ff.setProgram(Bundle::tool("ffmpeg"));
     ff.setArguments({"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-i", m.info.path, "-map", "0:v:0",
                      "-an", "-sn", "-vf",
-                     "setpts=PTS-STARTPTS,scale=160:-2,signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG,"
-                     "select='gte(scene\\,0)',metadata=mode=print:key=lavfi.scene_score",
+                     // brightness: showinfo's mean of the Y plane in 8 bit (signalstats' YAVG gave the same, but it
+                     // is a GPL-only filter, missing from the GPL-free FFmpeg of the bundled packages)
+                     "setpts=PTS-STARTPTS,scale=160:-2,select='gte(scene\\,0)',metadata=mode=print:key=lavfi.scene_score,"
+                     "format=yuv420p,showinfo",
                      "-f", "null", "-", "-progress", "pipe:1"});
     ff.start();
     if (!ff.waitForStarted()) fail("TOOL_MISSING", "ffmpeg not found (needed to look at the picture)");
     const double fps = m.format.rate.fps(), total = m.info.length / fps;
-    static const QRegularExpression timeRe("pts_time:([0-9.]+)"), lumaRe("signalstats\\.YAVG=([0-9.]+)"),
+    static const QRegularExpression timeRe("pts_time:([0-9.]+)"), lumaRe(" mean:\\[([0-9.]+)"),
         scoreRe("scene_score=([0-9.]+)");
     int frame = 0;
     QByteArray pending;
@@ -110,9 +112,10 @@ Picture pictureOf(const MediaSource& m, Context& ctx, double progressFrom, doubl
         if (end < 0) return;
         for (const QByteArray& raw : pending.left(end).split('\n')) {
             const QString line = QString::fromUtf8(raw);
+            // showinfo: time and brightness on one line; metadata print: time line, then the score line
             if (const auto t = timeRe.match(line); t.hasMatch())
                 frame = std::clamp(int(std::lround(t.captured(1).toDouble() * fps)), 0, std::max(0, m.info.length - 1));
-            else if (const auto l = lumaRe.match(line); l.hasMatch() && frame < m.info.length)
+            if (const auto l = lumaRe.match(line); l.hasMatch() && frame < m.info.length)
                 out.luma[size_t(frame)] = l.captured(1).toDouble();
             else if (const auto s = scoreRe.match(line); s.hasMatch() && frame < m.info.length)
                 out.score[size_t(frame)] = s.captured(1).toDouble();
