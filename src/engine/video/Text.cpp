@@ -95,7 +95,13 @@ int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* wi
     p.setRenderHint(QPainter::Antialiasing);
     p.translate(ox, oy);
     p.scale(k, k);
-    if (bg.alpha() > 0) p.fillRect(QRectF(0, 0, cw, ch), bg);
+    if (bg.alpha() > 0) {
+        // As wide as the layout, but centred on the letters as drawn, not on their advances: the side bearings differ
+        // per font (the box stood 17 px left and 9 px right of a subtitle with another system font)
+        const QRectF ink = path.boundingRect();
+        const double x0 = ink.isEmpty() ? 0.0 : ink.center().x() - cw / 2;
+        p.fillRect(QRectF(x0, 0, cw, ch), bg);
+    }
     if (outline > 0 && ol.alpha() > 0) p.strokePath(path, QPen(ol, outline, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.fillPath(path, fg);
     p.end();
