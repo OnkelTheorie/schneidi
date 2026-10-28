@@ -198,6 +198,16 @@ void testEditor()
     CHECK_EQ(track(p, 2), QString("25-50:importiert"));
     CHECK(p.timeline().subtitles[2].cues[0].id > 0);
     CHECK(!p.timeline().subtitles[2].enabled); // ST2 is visible
+    // Overlapping cues (a transcript, the AI's cue list): the later one splits the earlier, every part has its
+    // own id (the right part had id 0: not selectable, not editable, not deletable)
+    CHECK_EQ(ed.importSubtitles({{0, 0, 100, "A"}, {0, 50, 80, "B"}}, "overlap"), 3);
+    CHECK_EQ(track(p, 3), QString("0-50:A 50-80:B 80-100:A"));
+    QSet<int> ids;
+    if (CHECK_EQ(int(p.timeline().subtitles.size()), 4))
+        for (const SubtitleCue& c : p.timeline().subtitles[3].cues)
+            if (CHECK(c.id > 0 && Subtitles::find(p.timeline(), c.id) == &c)) ids << c.id;
+    CHECK_EQ(int(ids.size()), 3);
+    undo->undo();
 
     // Change style (dragging = one step), rename, delete track
     const int before = undo->count();

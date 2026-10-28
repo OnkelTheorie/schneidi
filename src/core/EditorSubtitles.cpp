@@ -256,6 +256,8 @@ int Editor::importSubtitles(const QVector<SubtitleCue>& cues, const QString& nam
             c.id = p->newClipId();
             Subtitles::place(t, c);
         }
+        for (SubtitleCue& c : t.cues) // the right part of a cue that a later, overlapping one split
+            if (c.id == 0) c.id = p->newClipId();
         tl.subtitles << t;
     });
     return index;
