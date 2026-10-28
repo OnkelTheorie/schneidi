@@ -199,7 +199,16 @@ void AiChat::toolsReady() { prepare(); }
 
 void AiChat::prepare()
 {
-    if (!m_busy || m_stopped || m_probing || m_asking || !m_mcp->isReady()) return;
+    if (!m_busy || m_stopped || m_probing || m_asking) return;
+    if (!m_mcp->isReady()) {
+        // Still starting: toolsReady() or failed() follows. Else the tool server ended while the guide or the ops were
+        // read (crashed): the request ends, the next one starts it again (nothing else would end it)
+        if (!m_mcp->isStarting()) {
+            addError(T("Die Werkzeuge der KI sind ausgefallen. Schreib einfach weiter: sie starten dann neu."));
+            finishTurn();
+        }
+        return;
+    }
     // The editing guide, once: it is the heart of the instructions (the same text as the `guide` tool)
     if (m_guide != Guide::Read && !m_guideAsked) {
         m_guideAsked = true;
@@ -219,7 +228,7 @@ void AiChat::prepare()
                 m_guideTopicList = topics.join('\n');
             }
             prepare();
-        });
+        }, m_mcp->setupTimeoutMs());
         return;
     }
     // The short request lists the ops of `edit` by their signatures (from `help`, read once)
@@ -231,7 +240,7 @@ void AiChat::prepare()
             m_asking = false;
             if (!r.error) m_editOps = QJsonDocument::fromJson(r.text.toUtf8()).object()["commands"][0]["ops"].toArray();
             prepare();
-        });
+        }, m_mcp->setupTimeoutMs());
         return;
     }
     requestModel();
