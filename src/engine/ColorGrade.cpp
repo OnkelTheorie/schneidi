@@ -587,11 +587,13 @@ LutPtr parseCube(QIODevice& f, QString* error)
 }
 
 // .3dl (Lustre/Flame/Nuke): optional line with the input grid (N values), then N^3 integer RGB triples,
-// B fastest index. Output bit depth from "Mesh <in> <out>" or from the largest value (10/12/16 bit).
+// B fastest index. Output bit depth from "Mesh <in> <out>"; else values with decimals are 0..1 (float),
+// integers by the largest value (10/12/16 bit).
 LutPtr parse3dl(QIODevice& f, QString* error)
 {
     int size = 0;
     double outMax = 0;
+    bool fraction = false; // any value with decimals: a float LUT (0..1, may overshoot a bit)
     QVector<float> raw;
     while (!f.atEnd()) {
         const QByteArray line = f.readLine().trimmed();
@@ -609,8 +611,10 @@ LutPtr parse3dl(QIODevice& f, QString* error)
         if (w.size() < 3) return failLut(error, QStringLiteral("ungültige Datenzeile"));
         for (int c = 0; c < 3; ++c) {
             bool ok = false;
-            raw << float(number(w.at(c), &ok));
+            const double v = number(w.at(c), &ok);
             if (!ok) return failLut(error, QStringLiteral("ungültige Zahl"));
+            raw << float(v);
+            fraction = fraction || v != std::floor(v);
         }
     }
     const int count = int(raw.size() / 3);
@@ -619,7 +623,7 @@ LutPtr parse3dl(QIODevice& f, QString* error)
         return failLut(error, QStringLiteral("Anzahl der Werte passt nicht zur Größe"));
     if (outMax <= 0) {
         const float m = raw.isEmpty() ? 0 : *std::max_element(raw.cbegin(), raw.cend());
-        outMax = m <= 1.0f ? 1 : m <= 1023 ? 1023 : m <= 4095 ? 4095 : 65535;
+        outMax = fraction || m <= 1.0f ? 1 : m <= 1023 ? 1023 : m <= 4095 ? 4095 : 65535;
     }
     auto lut = std::make_shared<Lut>();
     lut->size = size;

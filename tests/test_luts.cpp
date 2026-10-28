@@ -221,6 +221,23 @@ void testRobustness(const QString& dir)
         CHECK_EQ(R(graded(l.get()), 255), 255); // white -> clamped to white
     }
 
+    // .3dl with float values that overshoot 1.0 a bit: still 0..1 (it was taken as 10 bit: almost black)
+    {
+        QByteArray f; // without grid line (a 3-value grid would read as data)
+        for (int r = 0; r < 3; ++r)
+            for (int g = 0; g < 3; ++g)
+                for (int b = 0; b < 3; ++b) {
+                    const bool white = r == 2 && g == 2 && b == 2;
+                    for (int v : {r, g, b}) f += white ? "1.02 " : QByteArray::number(v * 0.5, 'f', 4) + " ";
+                    f += "\n";
+                }
+        CHECK(writeFile(path("float.3dl"), f));
+        if (auto l = ColorGrade::parseLut(path("float.3dl"), &err); CHECK(l)) {
+            const auto o = graded(l.get());
+            CHECK(R(o, 255) == 255 && std::abs(R(o, 128) - 128) <= 1 && R(o, 0) == 0);
+        }
+    }
+
     // A tiny file claiming the biggest size fails cleanly (it reserved 200 MB for the values up front)
     CHECK(writeFile(path("liar.cube"), "LUT_3D_SIZE 256\n0 0 0\n1 1 1\n"));
     err.clear();
