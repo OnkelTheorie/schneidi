@@ -629,7 +629,8 @@ const QVector<Command>& commands()
           {"height", T::Integer, "timeline height (default: the template's, 1080)"},
           {"fps", T::Number, "frame rate (default: the template's, 25; 23.976, 24, 25, 29.97, 30, 50, 59.94, 60)"},
           {"media", T::Paths, "media files to import"},
-          {"overwrite", T::Boolean, "replace an existing project"}},
+          {"overwrite", T::Boolean, "replace an existing project (its last state goes into the backups; not while "
+                                    "it is open in the app)"}},
          cmdNew},
         {"templates", "List the start templates for `new`: built-in ones and the user's own (made in the app: File › "
                       "Save as Start Template), which one is the default, and what each sets: format (fixed_resolution "

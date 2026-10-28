@@ -699,6 +699,18 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         run("new", {{"project", empty}});
         run("edit", {{"project", empty}, {"ops", R"([{"op":"format","fps":50}])"}});
         CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 50.0);
+        // Replacing it: the old state goes into the backups (restore brings it back), not while someone saves
+        CHECK_EQ(errorOf("new", {{"project", empty}}), QString("EXISTS"));
+        {
+            const auto held = ProjectFile::lock(empty, 0);
+            CHECK_EQ(errorOf("new", {{"project", empty}, {"overwrite", true}}), QString("PROJECT_LOCKED"));
+        }
+        CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 50.0);
+        const QJsonObject replaced = run("new", {{"project", empty}, {"overwrite", true}});
+        CHECK(!replaced["backup"].toString().isEmpty());
+        CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 25.0);
+        run("restore", {{"project", empty}});
+        CHECK_EQ(run("info", {{"project", empty}})["format"]["fps"].toDouble(), 50.0);
     }
 
     // Audio effect (noise reduction) on audio clips only; stabilization with a choice parameter; `effects` kinds
