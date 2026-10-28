@@ -666,7 +666,8 @@ QString editHelp()
     }
     return QStringLiteral(
                "List of operations, applied in order, saved once (nothing is saved if one fails). Times: frames "
-               "(integer), \"4.5s\" or \"HH:MM:SS:FF\"; ranges are half-open [from, to). A timeline position (at, to, "
+               "(integer), \"4.5s\", timecode \"HH:MM:SS:FF\" (frames below the frame rate) or clock time \"MM:SS\" "
+               "/ \"HH:MM:SS.sss\"; ranges are half-open [from, to). A timeline position (at, to, "
                "from, cue times …) can also be relative, resolved when the op runs so earlier ops that move clips do "
                "not shift it: {clip:id, offset?} (from the clip start), {clip:id, from_end}, {clip:id, source} (where "
                "the clip plays that source time; speed and ramps included) or {media:file, source} (first clip that "

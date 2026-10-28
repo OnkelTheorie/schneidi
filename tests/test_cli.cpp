@@ -158,6 +158,27 @@ int main(int argc, char** argv)
         CHECK_EQ(Cli::detail::parseTime(QJsonValue("4.5s"), fmt, "at"), int(std::lround(4.5 * fmt.rate.fps())));
         CHECK_EQ(timeError(QJsonValue(1e12)), QString("BAD_ARGUMENT"));
         CHECK_EQ(timeError(QJsonValue("1e10s")), QString("BAD_ARGUMENT"));
+        // Times with colons (25 fps): timecode with frames, clock time, decimal seconds - never guessed into frames
+        const auto at = [&](const char* t) { return Cli::detail::parseTime(QJsonValue(t), fmt, "at"); };
+        CHECK_EQ(at("00:00:04:20"), 120);
+        CHECK_EQ(at("00:00:04;20"), 120);
+        CHECK_EQ(at("01:00:00:00"), 90000);
+        CHECK_EQ(at("00:01:02.5"), 1563); // 62.5 s, not 1:02 + 5 frames
+        CHECK_EQ(at("00:00:04.500"), 113);
+        CHECK_EQ(at("1:30"), 2250); // minutes:seconds
+        CHECK_EQ(at("1:02.5"), 1563);
+        CHECK_EQ(at("00:01:30"), 2250); // hours:minutes:seconds
+        CHECK_EQ(at("90:00"), 135000); // 90 minutes
+        for (const char* bad : {"00:00:04:50", "00:00:04:25", "00:61:00:00", "1:75", "00:00:04:20.5", "1:2:3:4:5",
+                                "1;30", "00:00;04:20", "1:", ":30", "1:3a", "1:30.", "00:00:04;20;1"})
+            CHECK_EQ(timeError(QJsonValue(bad)), QString("BAD_ARGUMENT"));
+        QString frameMessage;
+        try {
+            at("00:00:04:50");
+        } catch (const Cli::Error& e) {
+            frameMessage = e.message;
+        }
+        CHECK(frameMessage.contains("frame 50") && frameMessage.contains("25 frames"));
         // A number with a fraction (a small model's seconds): the error says how to write it
         for (const QJsonValue& v : {QJsonValue(6.95), QJsonValue("6.95")}) {
             QString message;
