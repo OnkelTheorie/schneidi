@@ -197,6 +197,7 @@
  "Audio-Bitrate": "Tasa de bits de audio",
  "Audio-Bittiefe": "Profundidad de bits de audio",
  "Audio-Encoder %1 nicht verfügbar.": "El codificador de audio %1 no está disponible.",
+ "Video-Encoder %1 ist in diesem Build nicht verfügbar.": "El codificador de vídeo %1 no está disponible en esta versión.",
  "Audio-Zielspur A%1": "Destino de audio A%1",
  "Audioclips": "Clips de audio",
  "Audiopegel normalisieren": "Normalizar niveles de audio",

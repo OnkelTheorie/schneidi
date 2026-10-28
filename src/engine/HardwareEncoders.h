@@ -15,8 +15,20 @@
 namespace HardwareEncoders {
 
 // FFmpeg codec of an encoder for a render format ("h264"/"h265"), e.g. h264_nvenc; empty = not for this format.
-// Software gives the software codec (libx264/libx265).
+// Software gives the software codec (softwareCodec).
 QString codecName(VideoEncoder e, const QString& format);
+// Software video encoder of a render format that this FFmpeg has: the format's own (libx264, libx265, libsvtav1 …)
+// or a free replacement when it is missing (the GPL-free build has no x264/x265): OpenH264 for H.264, kvazaar for
+// H.265, libaom for AV1. Empty = none (and for audio-only formats).
+QString softwareCodec(const QString& format);
+// The format can be rendered with this FFmpeg: its audio encoder exists, and a software video encoder or (H.264/H.265)
+// a hardware one. Does not wait for the hardware probe: until it has run, only software counts.
+bool formatAvailable(const QString& format);
+// Encoder options of a software codec for a quality (crf as for x264: 18/22/28) where the codec has no "crf" of its
+// own (OpenH264, kvazaar); empty for the others (they take crf)
+QVector<QPair<QString, QString>> softwareOptions(const QString& codec, int crf, QSize size, double fps);
+// ffmpeg arguments for the video encoder of proxy files (short GOP, no B-frames, fast to decode): x264, else OpenH264
+QStringList proxyVideoArguments();
 bool isHardwareCodec(const QString& codec);
 VideoEncoder encoderOfCodec(const QString& codec); // Software for anything that is not a hardware codec
 

@@ -14,6 +14,7 @@
 #include "cli/Setup.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
+#include "engine/Licenses.h"
 
 #include <QGuiApplication>
 #include <QLoggingCategory>
@@ -130,6 +131,18 @@ int main(int argc, char* argv[])
             print(errorJson("MLT_INIT", error), pretty);
             return 1;
         }
+    }
+    // Third-party licenses of what this program really loads (FFmpeg's configuration, MLT modules, GPL libraries);
+    // exit code 1 when a SCHNEIDI_NO_GPL build finds anything GPL (the check of the bundled packages)
+    if (name == "--licenses") {
+        QJsonArray parts, gpl;
+        for (const Licenses::Part& p : Licenses::report()) {
+            parts << QJsonObject{{"name", p.name}, {"license", p.license}, {"gpl", p.gpl}, {"path", p.path}};
+            if (p.gpl) gpl << p.name;
+        }
+        const bool ok = !Licenses::builtWithoutGpl() || gpl.isEmpty();
+        print({{"ok", ok}, {"no_gpl_build", Licenses::builtWithoutGpl()}, {"gpl", gpl}, {"parts", parts}}, pretty);
+        return ok ? 0 : 1;
     }
     if (name == "mcp") {
         Cli::Mcp::Options opt;

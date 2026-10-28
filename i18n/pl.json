@@ -197,6 +197,7 @@
  "Audio-Bitrate": "Przepływność audio",
  "Audio-Bittiefe": "Głębia bitowa audio",
  "Audio-Encoder %1 nicht verfügbar.": "Koder audio %1 jest niedostępny.",
+ "Video-Encoder %1 ist in diesem Build nicht verfügbar.": "Koder wideo %1 nie jest dostępny w tej wersji.",
  "Audio-Zielspur A%1": "Docelowa ścieżka audio A%1",
  "Audioclips": "Klipy audio",
  "Audiopegel normalisieren": "Normalizuj poziomy audio",

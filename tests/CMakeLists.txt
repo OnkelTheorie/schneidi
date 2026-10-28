@@ -86,6 +86,7 @@ schneidi_test(test_crop)
 schneidi_test(test_transition_size)
 schneidi_test(test_hw_encoders)
 schneidi_test(test_export_opus)
+schneidi_test(test_license_free)
 # a failed/canceled export keeps an older file of the same name, write errors midway fail, odd project sizes
 schneidi_test(test_export_safety)
 schneidi_test(test_timeline_mouse)
