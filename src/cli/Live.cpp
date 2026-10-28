@@ -530,6 +530,8 @@ public:
     QLocalSocket socket;
     QString project; // as the app reported it
 
+    // Answers carry no request id: a request that timed out ends the connection, else its late answer would be read
+    // as the answer to the next request (connectionFor() opens a new one)
     QJsonObject request(const QJsonObject& msg, int timeoutMs)
     {
         socket.write(line(msg));
@@ -549,6 +551,11 @@ private:
     QByteArray m_buffer;
     [[noreturn]] void lost()
     {
+        const bool timedOut = socket.state() == QLocalSocket::ConnectedState;
+        socket.abort();
+        m_buffer.clear();
+        if (timedOut)
+            detail::fail("APP_BUSY", "the schneidi app did not answer in time (it is busy), try again");
         detail::fail("APP_DISCONNECTED", "the connection to the schneidi app was closed (app quit or the user "
                                          "disconnected the AI)");
     }
@@ -568,6 +575,7 @@ struct Candidate {
     bool allowed = true;
     QString refusal; // not allowed: why (empty = the user disconnected the AI)
     QString waiting; // the app waits for the user (why, for the AI)
+    bool silent = false; // did not answer hello in time (busy): its project is unknown
 };
 
 std::vector<Candidate> runningApps()
@@ -604,7 +612,14 @@ std::vector<Candidate> runningApps()
         QJsonObject hello;
         try {
             hello = c->request({{"type", "hello"}, {"token", entry.value("token").toString()}}, 3000);
-        } catch (const Error&) {
+        } catch (const Error& e) {
+            // Busy (a long command in its event loop): it may have the project open, so it is no "not running"
+            if (e.code == "APP_BUSY") {
+                Candidate busy;
+                busy.conn = std::move(c);
+                busy.silent = true;
+                out.push_back(std::move(busy));
+            }
             continue;
         }
         if (!hello.value("ok").toBool()) continue;
@@ -649,21 +664,29 @@ Connection* connectionFor(const QString& project)
                 if (!open.isEmpty() && canonical(open) == key) return conn.get();
             }
     std::vector<Candidate> apps = runningApps();
+    const QString silent = "a schneidi app is running but did not answer in time (it is busy and may have this "
+                           "project open), try again";
     Candidate* pick = nullptr;
     if (any) {
         if (apps.empty()) detail::fail("NO_APP", "the schneidi app is not running (\"@app\" needs it)");
         if (apps.size() > 1) {
             QStringList projects;
-            for (const Candidate& c : apps) projects << (c.conn->project.isEmpty() ? "(unsaved)" : c.conn->project);
+            for (const Candidate& c : apps)
+                projects << (c.silent ? "(not answering)" : c.conn->project.isEmpty() ? "(unsaved)" : c.conn->project);
             detail::fail("AMBIGUOUS", "several schneidi apps are running, give the project file instead of \"@app\": "
                                           + projects.join(", "));
         }
         pick = &apps[0];
     } else {
         for (Candidate& c : apps)
-            if (!c.conn->project.isEmpty() && canonical(c.conn->project) == key) pick = &c;
+            if (!c.silent && !c.conn->project.isEmpty() && canonical(c.conn->project) == key) pick = &c;
+        // Never a silent write to the file: an app that did not answer may have it open
+        if (!pick)
+            for (const Candidate& c : apps)
+                if (c.silent) detail::fail("APP_BUSY", silent);
         if (!pick) return nullptr;
     }
+    if (pick->silent) detail::fail("APP_BUSY", silent);
     if (!pick->waiting.isEmpty()) detail::fail("APP_WAITING", pick->waiting);
     if (!pick->allowed)
         detail::fail("APP_DISCONNECTED", !pick->refusal.isEmpty()

@@ -453,6 +453,53 @@ int main(int argc, char* argv[])
         CHECK(!server.attached());
     }
 
+    // The app does not answer in time (a long command blocks its event loop; here: this process does not serve):
+    // an error, never a silent write to the file the app has open
+    {
+        const int clips = fileVideoClips(fake.path);
+        QProcess p;
+        p.start(SCHNEIDI_CLI, {"edit", fake.path, "--ops", R"([{"op":"split","at":30}])"});
+        CHECK(p.waitForFinished(60000)); // without serving
+        r = QJsonDocument::fromJson(p.readAllStandardOutput()).object();
+        CHECK_EQ(code(r), QString("APP_BUSY"));
+        CHECK_EQ(fileVideoClips(fake.path), clips);
+        for (int i = 0; i < 20; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 5); // the late hello
+    }
+    // A request that timed out ends the connection: its late answer is not read as the answer to the next one
+    {
+        QProcess mcp;
+        mcp.start(SCHNEIDI_CLI, {"mcp"});
+        const auto serveUntil = [&](QByteArray& out, int lines) {
+            for (int i = 0; i < 4000 && out.count('\n') < lines; ++i) {
+                mcp.waitForReadyRead(5);
+                out += mcp.readAllStandardOutput();
+                QCoreApplication::processEvents();
+            }
+        };
+        QByteArray out;
+        mcp.write(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})" "\n");
+        mcp.write(R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"info","arguments":{"project":"@app"}}})" "\n");
+        serveUntil(out, 2);
+        // The file path asks the app (hello) which project it has open: no answer while this process does not serve
+        mcp.write(QByteArray(R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"info","arguments":{"project":")")
+                  + fake.path.toUtf8() + R"("}}})" "\n");
+        for (int i = 0; i < 300 && out.count('\n') < 3; ++i) {
+            mcp.waitForReadyRead(100);
+            out += mcp.readAllStandardOutput();
+        }
+        const QList<QByteArray> before = out.split('\n');
+        CHECK(before.value(2).contains("APP_BUSY"));
+        mcp.write(R"({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"info","arguments":{"project":"@app"}}})" "\n");
+        mcp.write(R"({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"info","arguments":{"project":"@app"}}})" "\n");
+        serveUntil(out, 5);
+        const QList<QByteArray> lines = out.split('\n');
+        if (!CHECK(lines.value(3).contains("\\\"ok\\\":true") && lines.value(4).contains("\\\"ok\\\":true")))
+            std::printf("       %s\n", out.constData());
+        mcp.closeWriteChannel();
+        CHECK(waitServing(mcp));
+        for (int i = 0; i < 50 && server.attached(); ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    }
+
     // Other projects stay file based
     const QString other = tmp.path() + "/other.schneidi";
     {
