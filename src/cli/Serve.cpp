@@ -777,17 +777,19 @@ QJsonObject help()
                   {"listen", "address to listen on (default 127.0.0.1 = only this computer; 0.0.0.0 = all networks, "
                              "then a token is required)"},
                   {"port", "TCP port (default 8642; 0 = any free one, printed at start)"},
-                  {"root", "work folder: all paths are inside it, its hidden files are not served (default on "
+                  {"root", "work folder: all paths are inside it, its hidden files are not served or used by tools, "
+                           "playlists and MLT XML in it are no media (default on "
                            "127.0.0.1: the current folder; required on any other address)"},
                   {"map", "path of another computer = path here, e.g. 'Z:\\Clips=/data/clips' (repeatable)"},
                   {"token", "token clients must send (Authorization: Bearer …); better --token-file or the "
-                            "environment variable SCHNEIDI_TOKEN (not visible in the process list). Not on 127.0.0.1: "
-                            "without one a token is generated once, stored and printed"},
+                            "environment variable SCHNEIDI_TOKEN (not visible in the process list). Not on 127.0.0.1 or "
+                            "with --public-url: without one a token is generated once, stored and printed"},
                   {"token-file", "file with the token (first line)"},
                   {"workers", "worker processes for parallel calls (default: half the processor threads, max 4)"},
                   {"job-wait", "seconds a call waits before it answers with a job (default 50)"},
                   {"max-upload", "largest upload in MB (default 51200)"},
-                  {"public-url", "address clients use (behind a reverse proxy), e.g. https://schneidi.example.org"},
+                  {"public-url", "address clients use (behind a reverse proxy), e.g. https://schneidi.example.org; "
+                                 "then a token is required (everyone comes through the proxy)"},
                   {"allow-origin", "web page allowed to call the server, e.g. https://example.org (repeatable)"},
                   {"allow-extensions", "offer the `extensions` tool (downloads programs onto the server)"}}}}},
     };
