@@ -186,12 +186,14 @@ add_library(schneidi_lib STATIC
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
     src/engine/Denoise.h          src/engine/Denoise.cpp
     src/engine/Stabilizer.h       src/engine/Stabilizer.cpp
+    src/engine/StabilizeCorrection.h
     src/engine/StabilizeMotion.h  src/engine/StabilizeMotion.cpp
     src/engine/Preroll.h          src/engine/Preroll.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/CheckMeasure.h     src/engine/CheckMeasure.cpp
     src/engine/FrameGaps.h        src/engine/FrameGaps.cpp
     src/engine/MediaProbe.h       src/engine/MediaProbe.cpp
+    src/engine/MltLog.h           src/engine/MltLog.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
     src/engine/GradedThumbs.h     src/engine/GradedThumbs.cpp
@@ -212,6 +214,7 @@ add_library(schneidi_lib STATIC
     src/engine/audio/Volume.h     src/engine/audio/Volume.cpp
     src/engine/Licenses.h         src/engine/Licenses.cpp
     src/engine/video/Reader.h     src/engine/video/Reader.cpp
+    src/engine/video/Scan.h       src/engine/video/Scan.cpp
     src/engine/video/Producer.h   src/engine/video/Producer.cpp
     src/engine/video/Hardware.h   src/engine/video/Hardware.cpp
     src/engine/video/Thumbnails.h src/engine/video/Thumbnails.cpp
@@ -287,6 +290,7 @@ add_library(schneidi_lib STATIC
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp
     src/ui/MulticamView.h         src/ui/MulticamView.cpp
     src/ui/TrimView.h             src/ui/TrimView.cpp
+    src/ui/FrameView.h            src/ui/FrameView.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/InspectorDetail.h
     src/ui/InspectorSections.cpp
@@ -337,6 +341,47 @@ if(TARGET Qt6::DBus)
     target_link_libraries(schneidi_lib PUBLIC Qt6::DBus)
     target_compile_definitions(schneidi_lib PRIVATE SCHNEIDI_HAVE_DBUS)
 endif()
+# GPU viewer (ui/FrameView) through Qt RHI: needs the RHI headers, which Qt counts as private API (Debian:
+# qt6-base-private-dev; MSYS2/Qt installers ship them). Without them the viewer draws with QPainter only. The shaders
+# are baked into .qsb files in the repo (tools/bake_shaders.sh), so Qt Shader Tools are not needed to build.
+option(SCHNEIDI_RHI "GPU viewer through Qt RHI (falls back to QPainter at runtime)" ON)
+if(SCHNEIDI_RHI)
+    if(NOT TARGET Qt6::GuiPrivate)
+        find_package(Qt6 QUIET COMPONENTS GuiPrivate)
+    endif()
+    if(TARGET Qt6::GuiPrivate)
+        # Qt6::GuiPrivate exists even without the private headers (Debian), naming include folders that are not
+        # there - a test compile with it fails at configure time. Only test when they exist.
+        get_target_property(_gui_private_dirs Qt6::GuiPrivate INTERFACE_INCLUDE_DIRECTORIES)
+        set(_gui_private_ok ON)
+        foreach(_dir IN LISTS _gui_private_dirs)
+            # entries look like $<$<BOOL:...>:/usr/include/.../QtGui/6.8.2>: the path inside
+            string(REGEX REPLACE "^\\$<\\$<BOOL:.*>>:(.*)>$" "\\1" _path "${_dir}")
+            if(NOT _path STREQUAL "" AND NOT _path MATCHES "^\\$<" AND NOT EXISTS "${_path}")
+                set(_gui_private_ok OFF)
+            endif()
+        endforeach()
+    endif()
+    if(TARGET Qt6::GuiPrivate AND _gui_private_ok)
+        # Test whether rhi/qrhi.h is there
+        include(CheckIncludeFileCXX)
+        set(CMAKE_REQUIRED_LIBRARIES Qt6::GuiPrivate)
+        set(CMAKE_REQUIRED_QUIET ON)
+        check_include_file_cxx(rhi/qrhi.h SCHNEIDI_QRHI_HEADER)
+        unset(CMAKE_REQUIRED_LIBRARIES)
+        unset(CMAKE_REQUIRED_QUIET)
+    endif()
+    if(SCHNEIDI_QRHI_HEADER)
+        target_sources(schneidi_lib PRIVATE src/ui/FrameViewRhi.h src/ui/FrameViewRhi.cpp)
+        target_link_libraries(schneidi_lib PRIVATE Qt6::GuiPrivate)
+        target_compile_definitions(schneidi_lib PRIVATE SCHNEIDI_HAVE_RHI)
+        qt_add_resources(schneidi_lib "shaders" PREFIX "/" BASE src/ui
+                         FILES src/ui/shaders/frameview.vert.qsb src/ui/shaders/frameview.frag.qsb)
+        message(STATUS "GPU viewer: Qt RHI")
+    else()
+        message(STATUS "GPU viewer: off (no Qt RHI headers - install qt6-base-private-dev); QPainter only")
+    endif()
+endif()
 if(WIN32)
     target_link_libraries(schneidi_lib PUBLIC advapi32) # Credential Manager: the AI chat's key (app/AiKeys.cpp)
 endif()
@@ -354,7 +399,7 @@ add_library(schneidi_cli_lib STATIC
     src/cli/CommandsWatch.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
-    src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp
+    src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
     src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp

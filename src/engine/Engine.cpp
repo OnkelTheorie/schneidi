@@ -25,11 +25,13 @@
 #include "engine/audio/Path.h"
 #include "engine/audio/Player.h"
 #include "engine/picture/Renderer.h"
+#include "engine/video/Reader.h"
 #include "engine/video/Still.h"
 #include "ui/MulticamGrid.h"
 
 #include <Mlt.h>
 #include <QCoreApplication>
+#include <QImageReader>
 #include <QDir>
 #include <QFileInfo>
 #include <QPainter>
@@ -42,6 +44,10 @@
 #include <cstring>
 #include <thread>
 #include <utility>
+
+extern "C" {
+#include <libavformat/avformat.h>
+}
 
 namespace {
 
@@ -82,10 +88,11 @@ QImage frameImage(const Picture::Frame& f)
                   [](void* p) { delete static_cast<Picture::Frame*>(p); }, keep);
 }
 
-// Preview size: the project format scaled down to a longer edge of 960 (even), the full size with
-// SCHNEIDI_FULLRES_PREVIEW
-QSize previewSizeOf(const ProjectFormat& format)
+// Preview size: the project format scaled down to a longer edge of 960 (even), the full size when the viewer zooms
+// to 100 % or more (full) or with SCHNEIDI_FULLRES_PREVIEW
+QSize previewSizeOf(const ProjectFormat& format, bool full)
 {
+    if (full || qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW")) return format.size();
     const QSize fit = format.size().scaled(960, 960, Qt::KeepAspectRatio);
     return QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
 }
@@ -233,7 +240,7 @@ bool Engine::createConsumer(QString* error)
     m_gridBuilder->setGradeBypass(m_gradeBypass);
     m_gridBuilder->setGridSound(!m_player); // own audio engine: the player plays the angle's sound
     // Preview image in the project's aspect ratio (otherwise portrait gets distorted), even dimensions
-    m_previewSize = previewSizeOf(m_format);
+    m_previewSize = previewSizeOf(m_format, m_previewFull);
     m_own = m_player && Picture::ownPicture();
     if (m_own) {
         // Own picture engine: no MLT consumer, the pump follows the player's clock
@@ -375,33 +382,41 @@ MediaInfo Engine::probeMlt(const ProjectFormat& format, const QString& path)
 
 QString Engine::startTimecode(const QString& path)
 {
-    const auto profile = makeProfile(ProjectFormat{});
-    Mlt::Producer p(*profile, "avformat", path.toUtf8().constData());
-    if (!p.is_valid()) return {};
-    // The container's tag, else the one of the video stream (QuickTime: a timecode track, shown on the stream)
-    QString container, stream;
-    const QString video = QString("meta.attr.%1.stream.timecode.markup").arg(p.get_int("video_index"));
-    for (int i = 0; i < p.count(); ++i) {
-        const QString name = p.get_name(i);
-        if (name == "meta.attr.timecode.markup") container = p.get(i);
-        else if (name == video || (stream.isEmpty() && name.endsWith(".stream.timecode.markup"))) stream = p.get(i);
-    }
-    return (container.isEmpty() ? stream : container).trimmed();
+    AVFormatContext* fmt = nullptr;
+    if (avformat_open_input(&fmt, path.toUtf8().constData(), nullptr, nullptr) < 0) return {};
+    // The container's tag, else the one of the (first) video stream, else of any stream (QuickTime: a timecode
+    // track, shown on the stream)
+    const auto tag = [](const AVDictionary* d) {
+        const AVDictionaryEntry* e = av_dict_get(d, "timecode", nullptr, 0);
+        return e ? QString::fromUtf8(e->value).trimmed() : QString();
+    };
+    QString out = tag(fmt->metadata);
+    const int video = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    if (out.isEmpty() && video >= 0) out = tag(fmt->streams[video]->metadata);
+    for (unsigned i = 0; i < fmt->nb_streams && out.isEmpty(); ++i) out = tag(fmt->streams[i]->metadata);
+    avformat_close_input(&fmt);
+    return out;
 }
 
 double Engine::pictureAspect(const QString& path)
 {
-    // Opened like the TimelineBuilder opens it, so the shape is the one it fits into the frame
-    const auto profile = makeProfile(ProjectFormat{});
-    ProducerFactory factory(*profile); // owns profiles the producer may use: declared first, destroyed last
-    const std::unique_ptr<Mlt::Producer> p = factory.open(path);
-    if (!p || !p->is_valid() || p->get_int("video_index") < 0) return 0;
-    double aspect = TimelineBuilderDetail::sourceAspect(*p);
-    if (aspect <= 0) { // still images: size only after the first frame
-        std::unique_ptr<Mlt::Frame> frame(p->get_frame());
-        aspect = TimelineBuilderDetail::sourceAspect(*p);
+    // The shape the picture engine and the timeline fit into the frame: display aspect, upright
+    if (const std::optional<MediaInfo> m = MediaProbe::read(path, FrameRate{25, 1}); m && m->isImage) {
+        QImageReader reader(path);
+        QSize size = reader.size();
+        if (reader.transformation() & QImageIOHandler::TransformationRotate90) size.transpose();
+        return size.width() > 0 && size.height() > 0 ? double(size.width()) / size.height() : 0.0;
     }
-    return aspect;
+    Video::Reader::Options options;
+    options.hardware = false;
+    const std::unique_ptr<Video::Reader> reader = Video::Reader::open(path, options);
+    if (!reader) return 0;
+    const Video::Info& i = reader->info();
+    double w = i.width, h = i.height;
+    if (w <= 0 || h <= 0) return 0;
+    w *= i.sar.num > 0 && i.sar.den > 0 ? av_q2d(i.sar) : 1.0;
+    const bool sideways = std::lround(std::abs(i.rotation)) % 180 == 90;
+    return sideways ? h / w : w / h;
 }
 
 QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
@@ -693,7 +708,7 @@ void Engine::applyTimeline(const Timeline& tl, bool hinted)
             Stabilizer::instance()->sync(Stabilizer::missing(tl, m_format));
         }
         m_built = tl;
-        const QSize output = qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW") ? m_format.size() : m_previewSize;
+        const QSize output = m_previewSize;
         if (!m_renderer) {
             m_renderer = std::make_shared<Picture::Renderer>(pictureOnly(tl), previewOptions(output));
             m_timelineContent = rendererContent(m_renderer, true);
@@ -933,7 +948,7 @@ void Engine::showSource(const QString& path, int position)
         c.out = m_sourceLength - 1;
         if (info.hasVideo) picture.video[0].clips << c;
         resolveFiles(picture, false);
-        const QSize output = qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW") ? m_format.size() : m_previewSize;
+        const QSize output = m_previewSize;
         m_sourceRenderer = std::make_shared<Picture::Renderer>(picture, previewOptions(output));
         m_sourcePath = path;
         m_speed = 0;
@@ -1157,6 +1172,20 @@ void Engine::setColorBypass(bool on)
     if (m_gradeBypass->exchange(on) == on) return;
     refresh(); // filters read the switch at the next frame, no rebuild needed
     emit colorBypassChanged(on);
+}
+
+void Engine::setPreviewFullSize(bool full)
+{
+    if (full == m_previewFull) return;
+    m_previewFull = full;
+    m_previewSize = previewSizeOf(m_format, full);
+    if (m_renderer) m_renderer->setOutputSize(m_previewSize);
+    if (m_sourceRenderer) m_sourceRenderer->setOutputSize(m_previewSize);
+    if (m_consumer && !qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW")) {
+        m_consumer->set("width", m_previewSize.width());
+        m_consumer->set("height", m_previewSize.height());
+    }
+    refresh(); // the frame shown again at the new size
 }
 
 void Engine::refresh()

@@ -58,6 +58,7 @@ schneidi_test(test_lumas)
 schneidi_test(test_frei0r)
 schneidi_test(test_key_pick)
 schneidi_test(test_viewer_large) # large viewer: panels hide and come back exactly, timeline zoom/scroll untouched
+schneidi_test(test_frame_view) # viewer picture widget: GPU/painter choice, zoom/pan, overlay mapping, zoom actions
 schneidi_test(test_own_effects)
 schneidi_test(test_presets)
 schneidi_test(test_rendercache)
@@ -112,6 +113,8 @@ schneidi_test(test_check)
 schneidi_test(test_contact_sheet)
 schneidi_test(test_overview)
 target_link_libraries(test_overview PRIVATE schneidi_cli_lib)
+schneidi_test(test_analysis_scan) # scenes/overview/region/colour events in-process == the ffmpeg way
+target_link_libraries(test_analysis_scan PRIVATE schneidi_cli_lib)
 schneidi_test(test_beats) # `beats`: tempo, bars, phrases, breaks, drops of a song
 target_link_libraries(test_beats PRIVATE schneidi_cli_lib)
 target_link_libraries(test_check PRIVATE schneidi_cli_lib)

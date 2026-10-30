@@ -6,14 +6,9 @@
 #include <QDir>
 #include <QFile>
 #include <QStandardPaths>
-#include <QStringDecoder>
 #include <QSysInfo>
 
-#include <framework/mlt.h>
-
 #include <algorithm>
-#include <cstdarg>
-#include <cstdio>
 #include <mutex>
 
 namespace Log {
@@ -42,26 +37,6 @@ void qtHandler(QtMsgType type, const QMessageLogContext& ctx, const QString& msg
     if (s_previous) s_previous(type, ctx, msg);
 }
 
-void mltHandler(void* service, int level, const char* fmt, va_list args)
-{
-    if (level > mlt_log_get_level()) return;
-    char buf[2048];
-    va_list copy;
-    va_copy(copy, args);
-    std::vsnprintf(buf, sizeof buf, fmt, copy);
-    va_end(copy);
-    // Mostly UTF-8, on Windows paths partly in the ANSI code page
-    QStringDecoder utf8(QStringConverter::Utf8, QStringConverter::Flag::Stateless);
-    QString text = utf8(QByteArrayView(buf));
-    if (utf8.hasError()) text = QString::fromLocal8Bit(buf);
-    if (service) {
-        const char* id = mlt_properties_get(MLT_SERVICE_PROPERTIES(static_cast<mlt_service>(service)), "mlt_service");
-        if (id) text = QString("[%1] %2").arg(QString::fromUtf8(id), text);
-    }
-    write(level <= MLT_LOG_ERROR ? "MLT-E" : "MLT-W", text);
-    std::fputs(buf, stderr);
-}
-
 } // namespace
 
 QString directory()
@@ -83,9 +58,9 @@ void install()
     s_previous = qInstallMessageHandler(qtHandler);
 }
 
-void installMlt()
+void message(const char* level, const QString& text)
 {
-    mlt_log_set_callback(mltHandler);
+    write(level, text);
 }
 
 } // namespace Log

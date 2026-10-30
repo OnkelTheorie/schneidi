@@ -3,7 +3,7 @@
 // generated file (containers, codecs, several titled sound streams, rotated phone video, variable frame rate, sound
 // only, odd size, interlaced, cover pictures, timecode track, broken files) and project frame rate: the result
 // equals the MLT producer's (Engine::probeMlt) in every field, and the own reader decides it itself where it should
-// (still images and broken files stay with MLT). Times of both are printed (real material: bench_probe).
+// (broken files stay with MLT). Times of both are printed (real material: bench_probe).
 
 #include "check.h"
 
@@ -111,13 +111,15 @@ int main(int argc, char** argv)
         {"opus.mkv", v + a + x264 + QStringList{"-c:a", "libopus"}},
         {"sound.opus", a + QStringList{"-c:a", "libopus"}},
         {"sound.ogg", a + QStringList{"-c:a", "libvorbis"}},
-        {"cover.png", QStringList{"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=1", "-frames:v", "1"}, false},
+        {"cover.png", QStringList{"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=1", "-frames:v", "1"}},
+        {"photo.jpg", QStringList{"-f", "lavfi", "-i", "testsrc2=size=640x480:rate=25:duration=1", "-frames:v", "1"}},
         {"cover.mp3", QStringList{"-i", in("sound.mp3"), "-i", in("cover.png"), "-map", "0", "-map", "1", "-c:a", "copy",
                                   "-c:v", "png", "-disposition:v", "attached_pic"}},
         {"cover_sound.mp4", QStringList{"-i", in("sound.m4a"), "-i", in("cover.png"), "-map", "0", "-map", "1", "-c:a",
                                         "copy", "-c:v", "png", "-disposition:v", "attached_pic"}},
         {"text.mp4", {}, false},
         {"empty.mp4", {}, false},
+        {"broken.png", {}, false}, // not a picture: Qt cannot read it
         {"truncated.mp4", {}, false},
         // Header lengths of 0 (mvhd/tkhd/mdhd, as an aborted recording can leave them): no length, left to MLT
         {"zero_length.mp4", {}, false},

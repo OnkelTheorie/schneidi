@@ -10,6 +10,7 @@
 #include "engine/BlurFill.h"
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
+#include "engine/StabilizeCorrection.h"
 #include "engine/VideoEffects.h"
 #include "engine/picture/Effects.h"
 #include "engine/video/Compose.h"
@@ -362,6 +363,13 @@ struct Renderer::Impl {
     // frameHeight: the frame's height in pixels of img (blur strength is relative to it)
     void applyEffects(Image& img, const Clip& c, double t, const Ctx& ctx, double frameHeight)
     {
+        // Stabilization first (it has to see the camera picture): the analyzed correction at the clip's material
+        // frame. Border "keep" has no previous output picture here: edge pixels (as a seek in the MLT filter).
+        if (const auto st = StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) {
+            Image warped(img.w, img.h);
+            if (StabilizeCorrection::warpRgba(*st, int(std::floor(c.in + t + 1e-6)), img.data(), warped.data(), img.w, img.h))
+                img = std::move(warped);
+        }
         if (ColorGrade::active(c) && !ctx.bypassGrade) {
             const ColorGrade::Params p = ColorGrade::at(c, t);
             const QString lp = ColorGrade::lutPath(c);
@@ -425,16 +433,17 @@ struct Renderer::Impl {
         if (c.isRetimed()) {
             if (c.freeze) {
                 const double at = c.stillFrame() * c.speed;
-                file = c.reverse ? v.length - 1 - at : at;
+                file = std::floor(c.reverse ? v.length - 1 - at + 1e-6 : at + 1e-6);
             } else if (c.hasRamp()) {
-                file = RetimeMap(c, v.length).fileFrameAt(m);
+                file = std::floor(RetimeMap(c, v.length).fileFrameAt(m) + 1e-6);
             } else {
                 // MLT's timewarp: the converted material is int(length / speed) frames long, frame p shows
-                // p * speed, reversed (length' - 1 - p) * speed
+                // p * speed, reversed (length' - 1 - p) * speed; a position between two frames rounds to the
+                // nearest (slow motion: every other frame)
                 const int warped = std::max(1, int(v.length / c.speed));
-                file = (c.reverse ? warped - 1 - m : m) * c.speed;
+                file = std::floor((c.reverse ? warped - 1 - m : m) * c.speed + 0.5);
             }
-            file = std::clamp(std::floor(file + 1e-6), 0.0, double(std::max(0, v.length - 1)));
+            file = std::clamp(file, 0.0, double(std::max(0, v.length - 1)));
         }
         if (file < 0) return {};
         return videoFrame(v, file, dw, dh, ctx, native, into);

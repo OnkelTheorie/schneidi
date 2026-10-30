@@ -9,8 +9,8 @@ namespace Log {
 
 // Call after setting the program name (the path depends on it); still forwards to stderr
 void install();
-// Also write MLT messages (from warning level) – call after MLT initialization
-void installMlt();
+// A line from elsewhere (level: 5 characters, e.g. "MLT-W"; engine/MltLog hands MLT's messages in)
+void message(const char* level, const QString& text);
 QString directory();
 
 } // namespace Log

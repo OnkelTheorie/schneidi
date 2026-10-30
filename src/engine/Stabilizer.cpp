@@ -5,7 +5,14 @@
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/Profiles.h"
+#include "engine/StabilizeCorrection.h"
 #include "engine/StabilizeMotion.h"
+#include "engine/video/Reader.h"
+
+extern "C" {
+#include <libavutil/frame.h>
+#include <libswscale/swscale.h>
+}
 
 #include <Mlt.h>
 #include <QCoreApplication>
@@ -18,6 +25,7 @@
 #include <QMutex>
 #include <QSaveFile>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -159,15 +167,45 @@ void removeOldResults()
     });
 }
 
+// Results stored by this process so far: a cached "no result yet" of StabilizeCorrection::of is stale after one
+std::atomic<int> g_results{0};
+
+// Common end of both analyses: checks, pads frames past the file's end, stores the result
+bool finish(const Stabilizer::Request& r, int from, int to, Motions& motions, QString* error,
+            const std::atomic<bool>* cancel, std::atomic<int>* progress)
+{
+    auto fail = [&](const QString& msg) {
+        if (error) *error = msg;
+        return false;
+    };
+    if (cancel && cancel->load()) return fail(T("Abgebrochen."));
+    if (int(motions.size()) != std::max(0, to - from + 1))
+        return fail(T("Die Analyse ist fehlgeschlagen: %1").arg(QFileInfo(r.file).fileName()));
+    Motion none;
+    none.valid = false;
+    motions.resize(size_t(r.to - from + 1), none);
+    if (progress) *progress = 1000;
+
+    QDir().mkpath(Stabilizer::cacheDir());
+    removeOldResults();
+    const QString target = QDir(Stabilizer::cacheDir()).filePath(QString("%1_%2_%3%4").arg(r.base()).arg(from).arg(r.to).arg(kSuffix));
+    if (QFileInfo::exists(target)) { // the same analysis finished elsewhere meanwhile (export + preview)
+        ++g_results;
+        return true;
+    }
+    // Only visible under the final name once complete -> nobody reads a half written file
+    QSaveFile f(target);
+    if (!f.open(QIODevice::WriteOnly) || f.write(writeMotions(motions)) < 0 || !f.commit())
+        return fail(T("Das Analyse-Ergebnis konnte nicht gespeichert werden: %1").arg(target));
+    ++g_results;
+    return true;
+}
+
 // ---- The filter that applies the result (own MLT filter like ColorGrade) ----
 
 using StabilizeMotion::Outside;
 
-struct ApplyState {
-    std::vector<StabilizeMotion::Similarity> corrections; // per analyzed frame (position from the filter's in)
-    double aspect = 16.0 / 9.0;
-    StabilizeMotion::Border border = StabilizeMotion::Border::Auto;
-};
+using ApplyState = StabilizeCorrection::Correction; // positions from the filter's in
 
 // Border "keep": the last output picture, its uncovered parts filled from it
 struct KeptPicture {
@@ -377,6 +415,81 @@ QVector<Stabilizer::Request> Stabilizer::missing(const Timeline& tl, const Proje
 
 bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<bool>* cancel, std::atomic<int>* progress)
 {
+    if (qEnvironmentVariable("SCHNEIDI_STABILIZE_ANALYSIS") == QLatin1String("mlt"))
+        return analyzeMlt(r, error, cancel, progress);
+    auto fail = [&](const QString& msg) {
+        if (error) *error = msg;
+        return false;
+    };
+    if (!QFileInfo::exists(r.file)) return fail(T("Datei nicht gefunden: %1").arg(r.file));
+    // Own decoder, positions as the timeline counts them (Picture::Renderer, TimelineBuilder): project frames of the
+    // file, through MLT's timewarp arithmetic for a speed change
+    Video::Reader::Options ro;
+    ro.hardware = false; // in order through the whole range: the software decoder keeps up and leaves the card alone
+    std::unique_ptr<Video::Reader> reader = Video::Reader::open(r.file, ro);
+    if (!reader) return fail(T("Datei lässt sich nicht öffnen: %1").arg(r.file));
+    reader->setFrameRate(AVRational{r.rate.num, r.rate.den});
+    const Video::Info& info = reader->info();
+    const double fps = r.rate.fps();
+    const double srcFps = info.frameRate.num > 0 && info.frameRate.den > 0 ? av_q2d(info.frameRate) : fps;
+    const int fileLength = info.duration > 0 ? int(double(info.duration) / 1e6 * fps + 0.5) : 0;
+    const double speed = std::abs(r.speed);
+    const bool reverse = r.speed < 0;
+    const int warped = speed != 1.0 || reverse ? std::max(1, int(fileLength / speed)) : fileLength;
+    const int from = std::max(0, r.from);
+    const int to = std::min(r.to, warped - 1);
+    if (r.to <= from) return fail(T("Der Clip ist zu kurz zum Stabilisieren."));
+
+    // The picture fit into the analysis size like the timeline shows it (black bars for another aspect ratio)
+    const bool sideways = std::lround(std::abs(info.rotation)) % 180 == 90;
+    const double sar = info.sar.num > 0 && info.sar.den > 0 ? av_q2d(info.sar) : 1.0;
+    const double dar = sideways ? double(info.height) / (info.width * sar) : info.width * sar / info.height;
+    int fw = r.width, fh = r.height;
+    if (dar > double(r.width) / r.height) fh = std::max(2, int(std::lround(r.width / dar / 2)) * 2);
+    else fw = std::max(2, int(std::lround(r.height * dar / 2)) * 2);
+    const int ox = (r.width - fw) / 2, oy = (r.height - fh) / 2;
+    std::vector<uint8_t> luma(size_t(r.width) * size_t(r.height), 16); // black (video range)
+    SwsContext* sws = nullptr;
+    uint8_t* planes[4] = {};
+    int strides[4] = {};
+    std::vector<uint8_t> yuv(size_t(fw) * size_t(fh) * 2);
+    planes[0] = yuv.data();
+    planes[1] = yuv.data() + size_t(fw) * size_t(fh);
+    planes[2] = planes[1] + size_t(fw / 2) * size_t(fh / 2);
+    strides[0] = fw;
+    strides[1] = strides[2] = fw / 2;
+
+    std::unique_ptr<StabilizeMotion::Estimator> estimator;
+    Motions motions;
+    motions.reserve(size_t(r.to - from + 1));
+    for (int pos = from; pos <= to; ++pos) {
+        if (cancel && cancel->load()) break;
+        double file = pos;
+        if (warped != fileLength || reverse) file = (reverse ? warped - 1 - pos : pos) * speed;
+        // Not floored: MLT's timewarp hands the fractional position to the file's producer, which rounds it to the
+        // nearest stream frame (speed 50 %: frame p shows round(p / 2), test_stabilize_denoise compares both)
+        file = std::clamp(file, 0.0, double(std::max(0, fileLength - 1)));
+        const auto pic = reader->picture(int64_t(file / fps * srcFps + 0.5));
+        if (!pic || !pic->frame) break;
+        const AVFrame* f = pic->frame;
+        sws = sws_getCachedContext(sws, f->width, f->height, AVPixelFormat(f->format), fw, fh, AV_PIX_FMT_YUV420P,
+                                   SWS_BICUBIC, nullptr, nullptr, nullptr);
+        if (!sws) break;
+        sws_scale(sws, f->data, f->linesize, 0, f->height, planes, strides);
+        for (int y = 0; y < fh; ++y)
+            std::memcpy(luma.data() + size_t(oy + y) * size_t(r.width) + size_t(ox), planes[0] + size_t(y) * size_t(fw),
+                        size_t(fw));
+        if (!estimator) estimator = std::make_unique<StabilizeMotion::Estimator>(r.width, r.height, r.shakiness, r.accuracy);
+        motions.push_back(estimator->push(luma.data(), r.width));
+        if (progress) *progress = int(qint64(pos - from + 1) * 1000 / (to - from + 1));
+    }
+    sws_freeContext(sws);
+    reader.reset();
+    return finish(r, from, to, motions, error, cancel, progress);
+}
+
+bool Stabilizer::analyzeMlt(const Request& r, QString* error, const std::atomic<bool>* cancel, std::atomic<int>* progress)
+{
     auto fail = [&](const QString& msg) {
         if (error) *error = msg;
         return false;
@@ -415,46 +528,86 @@ bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<boo
         if (progress) *progress = int(qint64(pos - from + 1) * 1000 / (to - from + 1));
     }
     p.reset();
-    if (cancel && cancel->load()) return fail(T("Abgebrochen."));
-    if (int(motions.size()) != std::max(0, to - from + 1))
-        return fail(T("Die Analyse ist fehlgeschlagen: %1").arg(QFileInfo(r.file).fileName()));
-    Motion none;
-    none.valid = false;
-    motions.resize(size_t(r.to - from + 1), none);
-    if (progress) *progress = 1000;
-
-    QDir().mkpath(cacheDir());
-    removeOldResults();
-    const QString target = QDir(cacheDir()).filePath(QString("%1_%2_%3%4").arg(r.base()).arg(from).arg(r.to).arg(kSuffix));
-    if (QFileInfo::exists(target)) return true; // the same analysis finished elsewhere meanwhile (export + preview)
-    // Only visible under the final name once complete -> nobody reads a half written file
-    QSaveFile f(target);
-    if (!f.open(QIODevice::WriteOnly) || f.write(writeMotions(motions)) < 0 || !f.commit())
-        return fail(T("Das Analyse-Ergebnis konnte nicht gespeichert werden: %1").arg(target));
-    return true;
+    return finish(r, from, to, motions, error, cancel, progress);
 }
 
-bool Stabilizer::attach(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c)
+namespace StabilizeCorrection {
+
+std::shared_ptr<const Correction> of(const Clip& c, FrameRate rate, double aspect)
 {
+    const char* const EffectId = Stabilizer::EffectId;
     const EffectInstance* e = EffectRegistry::instance(c, EffectId);
-    if (!e || !e->enabled) return false;
-    const auto r = request(c, profile);
-    if (!r) return false;
-    const Result res = find(*r);
-    if (!res.valid()) return false;
-    const auto motions = loadMotions(res.path);
-    if (!motions || int(motions->size()) != res.to - res.from + 1) return false;
+    if (!e || !e->enabled) return nullptr;
+    const auto r = makeRequest(c, rate, aspect);
+    if (!r) return nullptr;
     StabilizeMotion::PathParams pp;
     pp.smoothing = std::clamp(int(std::lround(EffectRegistry::value(c, EffectId, "smoothing").toDouble())), 0, 100);
     pp.zoom = std::clamp(EffectRegistry::value(c, EffectId, "zoom").toDouble(), -90.0, 500.0);
     const QString border = EffectRegistry::value(c, EffectId, "border").toString();
     using StabilizeMotion::Border;
     pp.border = border == "adaptive" ? Border::Adaptive : border == "black" ? Border::Black : border == "keep" ? Border::Keep : Border::Auto;
-    pp.aspect = profile.dar() > 0 ? profile.dar() : 16.0 / 9.0;
-    auto st = std::make_shared<ApplyState>();
-    st->corrections = StabilizeMotion::corrections(*motions, pp);
-    st->aspect = pp.aspect;
-    st->border = pp.border;
+    pp.aspect = aspect > 0 ? aspect : 16.0 / 9.0;
+    // Cached by everything that goes in; a missing result is looked for again after a second (analysis running)
+    struct Entry {
+        std::shared_ptr<const Correction> value;
+        std::chrono::steady_clock::time_point at;
+        int results = 0; // g_results when it was looked up
+    };
+    static std::mutex mutex;
+    static QHash<QString, Entry> cache;
+    const QString key = QString("%1|%2|%3|%4|%5").arg(r->key()).arg(pp.smoothing).arg(pp.zoom).arg(int(pp.border)).arg(pp.aspect);
+    const auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard lock(mutex);
+        if (auto it = cache.constFind(key); it != cache.constEnd()
+                                            && (it->value || (now - it->at < std::chrono::seconds(1) && it->results == g_results)))
+            return it->value;
+    }
+    const int results = g_results;
+    std::shared_ptr<Correction> out;
+    const Stabilizer::Result res = Stabilizer::find(*r);
+    if (const auto motions = res.valid() ? loadMotions(res.path) : nullptr;
+        motions && int(motions->size()) == res.to - res.from + 1) {
+        out = std::make_shared<Correction>();
+        out->corrections = StabilizeMotion::corrections(*motions, pp);
+        out->from = res.from;
+        out->aspect = pp.aspect;
+        out->border = pp.border;
+    }
+    std::lock_guard lock(mutex);
+    if (cache.size() > 256) cache.clear();
+    cache.insert(key, Entry{out, now, results});
+    return out;
+}
+
+bool warpRgba(const Correction& c, int pos, const uint8_t* src, uint8_t* dst, int w, int h,
+                          const uint8_t* previous)
+{
+    const int i = pos - c.from;
+    if (i < 0 || i >= int(c.corrections.size()) || w < 2 || h < 2) return false;
+    const StabilizeMotion::Similarity& s = c.corrections[size_t(i)];
+    if (s.isIdentity()) return false;
+    Outside outside = c.border == StabilizeMotion::Border::Black ? Outside::Fill : Outside::Clamp;
+    if (c.border == StabilizeMotion::Border::Keep && previous) {
+        std::memcpy(dst, previous, size_t(w) * size_t(h) * 4);
+        outside = Outside::Keep;
+    }
+    double m[6];
+    StabilizeMotion::pixelMap(s, w, h, c.aspect, m);
+    StabilizeMotion::warpRgba(src, w * 4, dst, w * 4, w, h, m, outside, 0xFF000000u); // opaque black
+    return true;
+}
+
+} // namespace StabilizeCorrection
+
+bool Stabilizer::attach(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c)
+{
+    // display aspect: an export in another size (same aspect ratio) finds the same analysis
+    const double dar = profile.display_aspect_den() > 0 ? double(profile.display_aspect_num()) / profile.display_aspect_den() : 0.0;
+    std::shared_ptr<const ApplyState> st = StabilizeCorrection::of(c, FrameRate{profile.frame_rate_num(), profile.frame_rate_den()},
+                                                      profile.dar() > 0 ? profile.dar() : dar);
+    if (!st) return false;
+    const int resFrom = st->from, resTo = st->from + int(st->corrections.size()) - 1;
     mlt_filter f = mlt_filter_new();
     if (!f) return false;
     f->process = process;
@@ -464,7 +617,7 @@ bool Stabilizer::attach(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c
     Mlt::Filter filter(f); // holds its own reference
     mlt_filter_close(f);
     // positions count from the analyzed range (frames outside it, e.g. far handles, stay as they are)
-    filter.set_in_and_out(res.from, res.to);
+    filter.set_in_and_out(resFrom, resTo);
     cut.attach(filter);
     return true;
 }

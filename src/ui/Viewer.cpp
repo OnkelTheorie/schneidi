@@ -8,6 +8,7 @@
 #include "engine/StillFetcher.h"
 #include "ui/TrimView.h"
 #include "ui/MediaPool.h"
+#include "ui/FrameView.h"
 #include "ui/ViewerOverlay.h"
 
 #include <QAction>
@@ -17,6 +18,7 @@
 #include <QIcon>
 #include <QLabel>
 #include <QMimeData>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
@@ -29,95 +31,6 @@
 #include <cmath>
 #include <functional>
 #include <utility>
-
-// Draws the current frame, aspect-ratio preserving, on a black background, and an overlay on top (on-screen controls).
-// With the dragData function set, the image can be dragged into the timeline.
-class Screen : public QWidget {
-public:
-    explicit Screen(QWidget* parent = nullptr) : QWidget(parent) { setMouseTracking(true); }
-    std::function<QMimeData*()> dragData;
-
-    void setImage(const QImage& img)
-    {
-        m_image = img;
-        update();
-    }
-    void setOverlay(ViewerOverlay* o)
-    {
-        if (m_overlay) disconnect(m_overlay, nullptr, this, nullptr);
-        m_overlay = o;
-        if (o) connect(o, &ViewerOverlay::changed, this, qOverload<>(&QWidget::update));
-        update();
-    }
-    ViewerOverlay* overlay() const { return m_overlay; }
-    const QImage& image() const { return m_image; }
-
-protected:
-    // Area of the frame in the widget (picture without the bars)
-    QRectF frameRect() const
-    {
-        if (m_image.isNull()) return {};
-        QSize s = m_image.size().scaled(size(), Qt::KeepAspectRatio);
-        return QRectF(QPoint((width() - s.width()) / 2, (height() - s.height()) / 2), s);
-    }
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter p(this);
-        p.fillRect(rect(), Theme::viewerBg);
-        if (m_image.isNull()) return;
-        const QRectF r = frameRect();
-        p.setRenderHint(QPainter::SmoothPixmapTransform);
-        p.drawImage(r, m_image);
-        if (m_overlay) m_overlay->paint(p, r);
-    }
-    void mousePressEvent(QMouseEvent* e) override
-    {
-        if (m_overlay && m_overlay->mousePress(e, frameRect())) {
-            m_overlayDrag = true;
-            return;
-        }
-        if (e->button() == Qt::LeftButton) m_pressPos = e->pos();
-    }
-    void mouseMoveEvent(QMouseEvent* e) override
-    {
-        if (m_overlayDrag) {
-            m_overlay->mouseMove(e, frameRect());
-            return;
-        }
-        if (!(e->buttons() & Qt::LeftButton)) {
-            setCursor(m_overlay ? m_overlay->cursorAt(e->position(), frameRect()) : Qt::ArrowCursor);
-            if (m_overlay) m_overlay->hover(e->position(), frameRect());
-        }
-        if (!(e->buttons() & Qt::LeftButton) || m_pressPos.x() < 0 || !dragData) return;
-        if ((e->pos() - m_pressPos).manhattanLength() < QApplication::startDragDistance()) return;
-        m_pressPos = QPoint(-1, -1);
-        QMimeData* mime = dragData();
-        if (!mime) return;
-        auto* drag = new QDrag(this);
-        drag->setMimeData(mime);
-        if (!m_image.isNull())
-            drag->setPixmap(QPixmap::fromImage(m_image.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
-        drag->exec(Qt::CopyAction);
-    }
-    void mouseReleaseEvent(QMouseEvent* e) override
-    {
-        if (m_overlayDrag) {
-            m_overlayDrag = false;
-            if (m_overlay) m_overlay->mouseRelease(e, frameRect());
-        }
-        m_pressPos = QPoint(-1, -1);
-    }
-    void leaveEvent(QEvent*) override
-    {
-        if (m_overlay) m_overlay->leave();
-    }
-
-private:
-    QImage m_image;
-    QPoint m_pressPos{-1, -1};
-    QPointer<ViewerOverlay> m_overlay;
-    bool m_overlayDrag = false;
-};
 
 // Scrubber under the image like in DaVinci: whole length of the source/timeline, In/Out range bright
 // with brackets (like in the timeline ruler), playhead red. Click/drag jumps there.
@@ -248,9 +161,9 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     });
     m_hint->hide();
 
-    m_screen = new Screen;
+    m_screen = new FrameView;
+    m_screen->setObjectName("viewer_screen");
     m_screen->setMinimumSize(320, 180);
-    m_screen->dragData = [this] { return dragData(); };
 
     m_trim = new TrimView;
     m_stack = new QStackedWidget;
@@ -331,7 +244,14 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     lay->addWidget(m_scrubber);
     lay->addLayout(transport);
 
-    connect(m_engine, &Engine::frameReady, m_screen, &Screen::setImage);
+    connect(m_engine, &Engine::frameReady, m_screen, [this](const QImage& img) {
+        m_screen->setFrameSize(m_engine->frameSize()); // the zoom steps refer to the project frame
+        m_screen->setFrame(img);
+    });
+    connect(m_screen, &FrameView::zoomChanged, this, [this](double z) {
+        emit zoomChanged(z);
+        emit fullSizeWanted(z != FrameView::kFit && z >= 1.0);
+    });
     connect(m_engine, &Engine::positionChanged, this, &Viewer::updateTimecode);
     connect(m_engine, &Engine::speedChanged, this,
             [this](double s) { m_playBtn->setText(s == 0.0 ? "▶" : "⏸"); });
@@ -403,7 +323,42 @@ QToolButton* Viewer::addViewAction(QAction* action, ViewIcon icon)
 
 QImage Viewer::picture() const
 {
-    return m_screen->image();
+    return m_screen->frame();
+}
+
+void Viewer::setZoom(double zoom)
+{
+    m_screen->setZoom(zoom);
+}
+
+double Viewer::zoom() const
+{
+    return m_screen->zoom();
+}
+
+void Viewer::addZoomActions(const QList<QAction*>& actions)
+{
+    // Menu button left of Before/After: shows the zoom, the menu holds the steps
+    auto* b = new QToolButton;
+    b->setObjectName("viewer_zoom");
+    b->setPopupMode(QToolButton::InstantPopup);
+    b->setAutoRaise(true);
+    b->setFocusPolicy(Qt::NoFocus);
+    b->setToolTip(T("Zoom des Viewers (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)"));
+    b->setStyleSheet(QString("QToolButton { color: %1; padding: 0 4px; } QToolButton::menu-indicator { image: none; }")
+                         .arg(Theme::textDim.name()));
+    auto* menu = new QMenu(b);
+    menu->addActions(actions);
+    b->setMenu(menu);
+    const auto label = [](double z) {
+        return z == FrameView::kFit ? T("Einpassen") : QString("%1 %").arg(QString::number(z * 100, 'g', 4).replace('.', I18n::decimalPoint()));
+    };
+    b->setText(label(zoom()));
+    connect(this, &Viewer::zoomChanged, b, [b, label](double z) { b->setText(label(z)); });
+    m_barRight->insertWidget(0, b);
+    m_barBalance->changeSize(std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width()), 0,
+                             QSizePolicy::Fixed, QSizePolicy::Minimum);
+    layout()->invalidate();
 }
 
 int Viewer::heightFor(int width) const
@@ -497,6 +452,9 @@ void Viewer::setSource(const QString& path, const QString& name)
     m_sourceName = name;
     updateModeText();
     m_screen->setCursor(path.isEmpty() ? Qt::ArrowCursor : Qt::OpenHandCursor);
+    // Only a source can be dragged into the timeline; in the timeline view a left drag pans the zoomed picture
+    if (path.isEmpty()) m_screen->dragData = nullptr;
+    else m_screen->dragData = [this] { return dragData(); };
 }
 
 void Viewer::updateModeText()
