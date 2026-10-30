@@ -5,9 +5,11 @@
 // MLT took 0.1-0.5 s, a game recording with several sound streams the most, because it decodes the first frames of
 // every stream), other containers with libavformat's stream analysis (what MLT runs too, once instead of per
 // producer). Same results as the MLT producer (test_media_probe compares both on varied files).
-// Not decided here (nullopt, Engine::probe asks MLT): still images and everything else MLT's loader does not hand to
-// its avformat producer (loader.dict: images, .mlt/.xml, titles, …), files libavformat cannot open, an unknown
-// length, streams without a decoder. Thread-safe (the Media Pool probes several files at once).
+// Still pictures (the suffixes MLT's loader gives to its still producer) when Qt can read them: from the picture's
+// header (QImageReader::canRead), 5 seconds long.
+// Not decided here (nullopt, Engine::probe asks MLT): everything else MLT's loader does not hand to its avformat
+// producer (loader.dict: .mlt/.xml, titles, animations, …), unreadable pictures, files libavformat cannot open, an
+// unknown length, streams without a decoder. Thread-safe (the Media Pool probes several files at once).
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"

@@ -5,11 +5,10 @@
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/HardwareEncoders.h"
+#include "engine/MediaProbe.h"
 #include "engine/ProxyCleanup.h"
 #include "engine/video/Reader.h"
-#include "engine/video/Still.h"
 
-#include <Mlt.h>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -27,13 +26,13 @@ namespace {
 
 constexpr const char* kSettingKey = "playback/useProxy";
 
-// What ffmpeg needs to know about the source; read via MLT so that the proxy is interpreted exactly
-// like the original (same frame rate, same color matrix)
+// What ffmpeg needs to know about the source; read with the own decoder (engine/video/Reader), which interprets the
+// file the way the preview does (same frame rate, same color matrix)
 struct SourceInfo {
     bool ok = false;
     bool hasVideo = false;
     int rateNum = 0, rateDen = 0;
-    int colorspace = 709; // MLT: 601/709/240/2020
+    int colorspace = 709; // 601/709/240/2020/2021
     bool fullRange = false;
     double seconds = 0;
 };
@@ -47,27 +46,27 @@ struct ProxyJob {
 SourceInfo probeSource(const QString& path)
 {
     SourceInfo s;
-    Mlt::Profile profile("atsc_1080p_25"); // only for opening; length is converted to seconds below
-    Mlt::Producer p(profile, path.toUtf8().constData());
-    if (!p.is_valid()) return s;
-    const QByteArray svc = p.get("mlt_service");
-    if (Still::isStillService(svc.constData())) return s; // still images need no proxy
+    // Still pictures need no proxy (and files without a moving picture)
+    const std::optional<MediaInfo> media = MediaProbe::read(path, FrameRate{25, 1});
+    if (media && (media->isImage || !media->hasVideo)) return s;
+    Video::Reader::Options options;
+    options.hardware = false; // only the stream's description is read
+    const std::unique_ptr<Video::Reader> reader = Video::Reader::open(path, options);
+    if (!reader) return s;
+    const Video::Info& in = reader->info();
     s.ok = true;
-    s.hasVideo = p.get_int("video_index") >= 0;
-    // MLT only sets meta.media.frame_rate_*/colorspace at the first frame
-    // (frame rate = r_frame_rate, i.e. the highest with variable frame rate -> CFR only duplicates frames)
-    std::unique_ptr<Mlt::Frame> frame(p.get_frame());
-    s.rateNum = p.get_int("meta.media.frame_rate_num");
-    s.rateDen = p.get_int("meta.media.frame_rate_den");
-    // Without information in the file MLT guesses by image height (below 720 -> BT.601); the value here is already the result
-    if (const int cs = p.get_int("meta.media.colorspace"); cs > 0) s.colorspace = cs;
-    else if (const int h = p.get_int("meta.media.height"); h > 0) s.colorspace = h < 720 ? 601 : 709;
-    s.fullRange = qstrcmp(p.get("meta.media.color_range"), "jpeg") == 0;
-    s.seconds = p.get_length() / profile.fps();
+    s.hasVideo = true;
+    // The highest frame rate with variable frame rate (r_frame_rate as the preview counts it): CFR only duplicates
+    s.rateNum = in.frameRate.num;
+    s.rateDen = in.frameRate.den;
+    s.colorspace = in.colorspace; // a guess by picture size already when the file states none
+    s.fullRange = in.fullRange;
+    if (media) s.seconds = media->length / 25.0;
+    else if (in.duration > 0) s.seconds = double(in.duration) / 1e6; // AV_TIME_BASE units
     return s;
 }
 
-// ffmpeg names for the MLT color matrix (the proxy gets the matrix of the original as tag,
+// ffmpeg names for the color matrix (MLT numbers) (the proxy gets the matrix of the original as tag,
 // otherwise MLT takes a 540p image without tag for BT.601 and the colors shift)
 const char* ffColorspace(int cs)
 {
