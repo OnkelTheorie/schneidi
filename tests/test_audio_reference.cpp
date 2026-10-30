@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Reference renders of the sound (docs/archiv/plan-0.10-ton.md, step 0 "Messgrundlage"): one small project per sound
 // feature (clip, track, master, reading of the source formats), rendered through the normal export path to WAV
-// (48 kHz stereo, 24 bit). The written references are the sound as it is before the own audio engine; every later
-// audio path must render the same projects to the same samples (or within a tolerance named per case).
+// (48 kHz stereo, 24 bit), compared with the own audio engine's references sample for sample (2 LSB): every change
+// of the exported sound shows here.
 //
 // The references live outside the public repository (default: docs/testdaten/ton-referenz, AUDIO_REFERENCE_DIR
 // overrides): quellen/ (generated sources, kept so that encoder updates do not change them), projekte/<case>.schneidi
-// (media paths relative, open them in the app or the CLI), referenz/<case>.flac (24 bit lossless) and manifest.json
-// (FFmpeg version, level and render time per case). Missing folder = skipped (CI).
+// (media paths relative, open them in the app or the CLI), eigen/<case>.flac (24 bit lossless, the own engine's export,
+// written 0.15 - bit-identical to the 0.14 export of every case) with eigen/manifest.json (FFmpeg version, level and
+// render time per case). referenz/<case>.flac is the sound of the old MLT path (0.9, written 2026-10-22): kept as the
+// historical baseline that test_audio_mixer and test_export_audio check the own engine against with per-case bounds
+// (the old path's known differences: frame-late curves, uncompensated latencies). Missing folder = skipped (CI).
 //
-//   AUDIO_REFERENCE=write          sources (if missing), projects and references of all cases, then checked once more
+//   AUDIO_REFERENCE=write          sources and projects (if missing) and the own references of all cases, then
+//                                  checked once more (a second render must give the same samples)
 //   AUDIO_REFERENCE=write:a,b      only these cases
 //   (unset)                        render every project and compare with its reference
 //   AUDIO_REFERENCE_KEEP=<dir>     keep the renders of a check run there (listening, diff in an editor)
@@ -600,7 +604,7 @@ QString versionLine(const QString& program)
 }
 
 QString projectPath(const char* name) { return QString("%1/projekte/%2.schneidi").arg(g_dir, name); }
-QString referencePath(const char* name) { return QString("%1/referenz/%2.flac").arg(g_dir, name); }
+QString referencePath(const char* name) { return QString("%1/eigen/%2.flac").arg(g_dir, name); }
 
 // Renders the case's project and compares it with its reference; false = differs (reported)
 bool check(const Case& c, const QString& tmp, QJsonObject* entry = nullptr)
@@ -645,15 +649,16 @@ int writeReferences(const QStringList& only, const QString& tmp)
 {
     if (!CHECK(makeSources())) return Check::result();
     QDir().mkpath(g_dir + "/projekte");
-    QDir().mkpath(g_dir + "/referenz");
+    QDir().mkpath(g_dir + "/eigen");
     QJsonObject manifest;
-    if (QFile f(g_dir + "/manifest.json"); f.open(QIODevice::ReadOnly))
+    if (QFile f(g_dir + "/eigen/manifest.json"); f.open(QIODevice::ReadOnly))
         manifest = QJsonDocument::fromJson(f.readAll()).object();
     QJsonObject entries = manifest.value("cases").toObject();
     for (const Case& c : cases()) {
         if (!only.isEmpty() && !only.contains(c.name)) continue;
         QString error;
-        if (!CHECK(ProjectFile::save(c.make(), projectPath(c.name), &error))) {
+        // Existing projects stay as they are (test_audio_mixer and test_export_audio read them with the old references)
+        if (!QFileInfo::exists(projectPath(c.name)) && !CHECK(ProjectFile::save(c.make(), projectPath(c.name), &error))) {
             std::printf("       %s: %s\n", c.name, qPrintable(error));
             continue;
         }
@@ -673,8 +678,8 @@ int writeReferences(const QStringList& only, const QString& tmp)
     manifest["written"] = QDateTime::currentDateTime().toString(Qt::ISODate);
     manifest["host"] = QHostInfo::localHostName();
     manifest["ffmpeg"] = versionLine("ffmpeg");
-    manifest["format"] = "WAV export 48 kHz stereo 24 bit through Exporter, stored as FLAC";
-    QFile f(g_dir + "/manifest.json");
+    manifest["format"] = "WAV export 48 kHz stereo 24 bit through Exporter (own audio engine), stored as FLAC";
+    QFile f(g_dir + "/eigen/manifest.json");
     if (CHECK(f.open(QIODevice::WriteOnly))) f.write(QJsonDocument(manifest).toJson());
     return Check::result();
 }
@@ -684,17 +689,15 @@ int writeReferences(const QStringList& only, const QString& tmp)
 int main(int argc, char** argv)
 {
     Check::initEnv();
-    // The stored references were written by the sound path before the own engine (0.9); test_export_audio and
-    // test_audio_mixer check the own engine against them with their tolerances. AUDIO_REFERENCE=write now writes the
-    // own engine's sound.
     QApplication app(argc, argv);
     Check::initApp("audio_reference");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     g_dir = qEnvironmentVariable("AUDIO_REFERENCE_DIR", SCHNEIDI_AUDIO_REFERENCE);
     const QString mode = qEnvironmentVariable("AUDIO_REFERENCE");
     const bool write = mode.startsWith("write");
-    if (g_dir.isEmpty() || (!write && !QFileInfo::exists(g_dir + "/manifest.json")))
-        return Check::skip("keine Ton-Referenzen (docs/testdaten/ton-referenz, AUDIO_REFERENCE=write legt sie an)");
+    if (g_dir.isEmpty() || (!write && !QFileInfo::exists(g_dir + "/eigen/manifest.json")))
+        return Check::skip("keine Ton-Referenzen der eigenen Ton-Maschine (docs/testdaten/ton-referenz/eigen, "
+                           "AUDIO_REFERENCE=write legt sie an)");
     g_dir = QDir(g_dir).absolutePath();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();

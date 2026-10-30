@@ -1,0 +1,313 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Own video decoder (engine/video/Reader) on many kinds of files, without a second decoder to compare against: the
+// pictures read in order are the reference, and every other way of asking must give the same pictures -
+// - jumps back and forth, small steps, the end and past it (seeks to key frames, B-frames, preseek)
+// - several threads asking one reader a little out of order (export workers, read-ahead)
+// - hardware decoding (if this machine has a device) = software decoding bit for bit (H.264, 10-bit HEVC)
+// - unused readers close their decoder after a pause and give the same pictures when asked again
+// plus the frame properties the file states (size, rotation, colour standard and range, interlacing, alpha).
+// Replaces the comparison with MLT's producer (test_video_decoder, until 0.15).
+
+#include "check.h"
+
+#include "engine/video/Reader.h"
+
+extern "C" {
+#include <libavutil/frame.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/pixdesc.h>
+}
+
+#include <QCoreApplication>
+#include <QTemporaryDir>
+#include <QThread>
+
+#include <atomic>
+#include <cstring>
+#include <random>
+#include <thread>
+
+namespace {
+
+struct Media {
+    QString name, path;
+    int frames = 0; // stream frames
+};
+
+// The planes of a picture as bytes (only the visible part of every row)
+QByteArray bytesOf(const AVFrame* f)
+{
+    QByteArray out;
+    const auto fmt = AVPixelFormat(f->format);
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(fmt);
+    const int planes = av_pix_fmt_count_planes(fmt);
+    for (int p = 0; p < planes; ++p) {
+        const bool chroma = (p == 1 || p == 2) && !(desc->flags & AV_PIX_FMT_FLAG_RGB);
+        const int h = chroma ? AV_CEIL_RSHIFT(f->height, desc->log2_chroma_h) : f->height;
+        const int bytes = av_image_get_linesize(fmt, f->width, p);
+        for (int y = 0; y < h; ++y) out.append(reinterpret_cast<const char*>(f->data[p] + y * f->linesize[p]), bytes);
+    }
+    return out;
+}
+
+// Positions: in order, then jumps back, far forward, small steps forward (decode on), the end and past it
+QVector<int> positions(int frames)
+{
+    QVector<int> out;
+    for (int i = 0; i < std::min(frames, 40); ++i) out << i;
+    out << 5 << 3 << frames / 2 << frames / 2 + 1 << frames / 2 + 7 << frames - 2 << 1 << frames - 1 << frames + 3 << 0;
+    // Seeks (back from the end) to just before and onto a key frame of the 2 s GOPs: with B-frames the key frame is
+    // decoded before the pictures shown ahead of it (the seek must not land on it)
+    for (int k : {46, 47, 48, 49, 50, 51})
+        if (k < frames - 1) out << frames - 1 << k;
+    return out.toList().toVector();
+}
+
+// In order from a fresh software reader: the reference
+QVector<QByteArray> reference(const Media& m)
+{
+    Video::Reader::Options o;
+    o.hardware = false;
+    auto r = Video::Reader::open(m.path, o);
+    QVector<QByteArray> out;
+    if (!r) return out;
+    for (int i = 0; i < m.frames; ++i) {
+        const auto p = r->picture(i);
+        if (!p || p->position != i) break;
+        out << bytesOf(p->frame);
+    }
+    return out;
+}
+
+void testSeeks(const Media& m, const QVector<QByteArray>& ref)
+{
+    Video::Reader::Options o;
+    o.hardware = false;
+    auto r = Video::Reader::open(m.path, o);
+    if (!CHECK(r)) return;
+    int wrong = 0;
+    QStringList where;
+    for (int pos : positions(m.frames)) {
+        const auto p = r->picture(pos);
+        const int want = std::min(pos, m.frames - 1); // past the end: the last picture
+        if (!p || p->position != want || bytesOf(p->frame) != ref.value(want)) {
+            ++wrong;
+            if (where.size() < 5) where << QString("%1->%2").arg(pos).arg(p ? int(p->position) : -1);
+        }
+    }
+    Check::report(wrong == 0, qPrintable(m.name + ": jumps = in order"), __FILE__, __LINE__,
+                  QString("%1 wrong pictures (%2)").arg(wrong).arg(where.join(", ")));
+}
+
+// Four threads on one reader, a little out of order
+void testThreads(const Media& m, const QVector<QByteArray>& ref)
+{
+    Video::Reader::Options o;
+    o.hardware = false;
+    o.threads = 4;
+    auto r = Video::Reader::open(m.path, o);
+    if (!CHECK(r)) return;
+    std::atomic<int> next{0}, wrong{0};
+    auto work = [&] {
+        std::mt19937 rng(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+        for (int i; (i = next++) < m.frames;) {
+            const int pos = std::clamp(i + int(rng() % 5) - 2, 0, m.frames - 1);
+            const auto p = r->picture(pos);
+            if (!p || p->position != pos || bytesOf(p->frame) != ref.value(pos)) ++wrong;
+        }
+    };
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t) threads.emplace_back(work);
+    for (auto& t : threads) t.join();
+    Check::report(wrong == 0, qPrintable(m.name + ": 4 threads = in order"), __FILE__, __LINE__,
+                  QString("%1 wrong pictures").arg(wrong.load()));
+}
+
+// Hardware pictures = software pictures (H.264/HEVC decoding is bit exact)
+void testHardware(const Media& m)
+{
+    Video::Reader::Options sw;
+    sw.hardware = false;
+    auto a = Video::Reader::open(m.path, sw);
+    auto b = Video::Reader::open(m.path, Video::Reader::Options{});
+    if (!CHECK(a && b)) return;
+    // A picture first: the decoder decides on the card at the first frame
+    if (!b->picture(0) || !b->stats().hardware) {
+        std::printf("       %s: no hardware decoding here (%d failures), not compared\n", qPrintable(m.name),
+                    b->stats().hardwareFailures);
+        return;
+    }
+    int failures = 0;
+    for (int pos : positions(m.frames)) {
+        const auto pa = a->picture(pos), pb = b->picture(pos);
+        if (!pa || !pb || pa->position != pb->position || pa->frame->format != pb->frame->format
+            || bytesOf(pa->frame) != bytesOf(pb->frame))
+            ++failures;
+    }
+    Check::report(failures == 0 && b->stats().hardware, qPrintable(m.name + ": hardware = software"), __FILE__, __LINE__,
+                  QString("%1 differing pictures").arg(failures));
+}
+
+// Unused readers close their decoder after a pause (all but the 4 most recently used) and open again on demand
+void testHibernate(const QString& path)
+{
+    std::vector<std::unique_ptr<Video::Reader>> readers;
+    QVector<QByteArray> first;
+    for (int i = 0; i < 6; ++i) {
+        readers.push_back(Video::Reader::open(path));
+        const auto p = readers.back()->picture(10 + i);
+        first << (p ? bytesOf(p->frame) : QByteArray());
+        QThread::msleep(5); // distinct last-use times
+    }
+    QThread::msleep(1500); // SCHNEIDI_DECODER_IDLE_MS = 300 (main), decoder threads check every 300 ms
+    int asleep = 0;
+    for (auto& r : readers) asleep += r->stats().hibernations;
+    CHECK_EQ(asleep, 2); // the two least recently used
+    CHECK_EQ(readers[0]->stats().hibernations, 1);
+    CHECK_EQ(readers[5]->stats().hibernations, 0);
+    for (int i = 0; i < 6; ++i) {
+        const auto p = readers[i]->picture(10 + i);
+        CHECK(p && bytesOf(p->frame) == first[i]);
+    }
+}
+
+// The luma plane of a picture as rows (8 bit)
+QVector<QByteArray> luma(const AVFrame* f)
+{
+    QVector<QByteArray> rows;
+    for (int y = 0; y < f->height; ++y) rows << QByteArray(reinterpret_cast<const char*>(f->data[0] + y * f->linesize[0]), f->width);
+    return rows;
+}
+
+// A file with a rotation tag comes upright: the plain file's picture turned by a quarter (the tag's direction)
+void testRotation(const QString& plain, const QString& rotated, double degrees)
+{
+    auto a = Video::Reader::open(plain), b = Video::Reader::open(rotated);
+    if (!CHECK(a && b)) return;
+    CHECK(std::abs(b->info().rotation - degrees) < 0.5);
+    const auto pa = a->picture(12), pb = b->picture(12);
+    if (!CHECK(pa && pb)) return;
+    const auto la = luma(pa->frame), lb = luma(pb->frame);
+    const int w = pa->frame->width, h = pa->frame->height;
+    if (degrees == 180) {
+        bool same = pb->frame->width == w && pb->frame->height == h;
+        for (int y = 0; same && y < h; ++y)
+            for (int x = 0; x < w && same; ++x) same = la[y][x] == lb[h - 1 - y][w - 1 - x];
+        Check::report(same, "rotated 180: upside down", __FILE__, __LINE__);
+        return;
+    }
+    if (!CHECK(pb->frame->width == h && pb->frame->height == w)) return;
+    // 90 clockwise: source (x, y) -> (h - 1 - y, x)
+    bool same = true;
+    for (int y = 0; same && y < h; ++y)
+        for (int x = 0; x < w && same; ++x) same = la[y][x] == lb[x][h - 1 - y];
+    Check::report(same, qPrintable(QString("rotated %1: turned clockwise").arg(degrees)), __FILE__, __LINE__);
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    Check::initEnv();
+    qputenv("SCHNEIDI_DECODER_IDLE_MS", "300");
+    QCoreApplication app(argc, argv);
+    Check::initApp("video_reader");
+    if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
+
+    QTemporaryDir dir;
+    if (!CHECK(dir.isValid())) return Check::result();
+    auto file = [&](const char* name) { return dir.filePath(name); };
+    const QString src2 = "testsrc2=size=640x360:rate=25";
+    QVector<Media> media;
+    auto add = [&](const char* name, const QString& path, int frames) {
+        if (!path.isEmpty()) media << Media{name, path, frames};
+        else Check::report(false, name, __FILE__, __LINE__, "ffmpeg konnte die Datei nicht erzeugen");
+    };
+    // H.264 with B-frames and a long GOP (seeks back to key frames, preseek)
+    add("h264", Check::makeMedia(file("h264.mp4"), {"-f", "lavfi", "-i", src2, "-t", "4", "-c:v", "libx264", "-g", "50",
+                                                     "-bf", "3", "-pix_fmt", "yuv420p"}), 100);
+    add("h264-30fps", Check::makeMedia(file("h264-30.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+                                                             "-t", "4", "-c:v", "libx264", "-g", "60", "-pix_fmt", "yuv420p"}), 120);
+    // Matroska with NTSC rate (1 ms timestamps)
+    add("mkv-29.97", Check::makeMedia(file("ntsc.mkv"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30000/1001",
+                                                         "-t", "4", "-c:v", "libx264", "-pix_fmt", "yuv420p"}), 119);
+    // Full range (MJPEG, yuvj420p)
+    add("mjpeg-full", Check::makeMedia(file("mjpeg.avi"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "mjpeg",
+                                                           "-pix_fmt", "yuvj420p", "-q:v", "3"}), 50);
+    // 4:2:2 10 bit intra (ProRes)
+    add("prores", Check::makeMedia(file("prores.mov"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "prores_ks",
+                                                        "-profile:v", "2"}), 50);
+    // 10-bit HEVC
+    add("hevc-10bit", Check::makeMedia(file("hevc10.mp4"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "libx265",
+                                                            "-pix_fmt", "yuv420p10le", "-x265-params", "log-level=error"}), 50);
+    // Phone portrait: landscape pictures with a rotation in the metadata
+    add("rotated-90", Check::makeMedia(file("rotated.mp4"), {"-display_rotation", "-90", "-i", file("h264.mp4"),
+                                                             "-c", "copy"}), 100);
+    // iPhone-like: HEVC 10 bit HLG/BT.2020 in MOV (hvc1, Apple's time scale 600)
+    add("iphone-hlg", Check::makeMedia(file("iphone-hlg.mov"), {"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-t",
+                                                                 "2", "-c:v", "libx265", "-pix_fmt", "yuv420p10le",
+                                                                 "-tag:v", "hvc1", "-color_primaries", "bt2020",
+                                                                 "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc",
+                                                                 "-x265-params", "log-level=error",
+                                                                 "-video_track_timescale", "600"}), 60);
+    // Interlaced (top field first)
+    add("interlaced", Check::makeMedia(file("interlaced.mp4"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "libx264",
+                                                                "-flags", "+ildct+ilme", "-x264opts", "tff=1",
+                                                                "-pix_fmt", "yuv420p", "-field_order", "tt"}), 50);
+    // SD with BT.601 tag
+    add("sd-601", Check::makeMedia(file("sd.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=720x576:rate=25", "-t", "2",
+                                                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-colorspace", "bt470bg",
+                                                    "-color_primaries", "bt470bg", "-color_trc", "gamma28"}), 50);
+    // RGBA (PNG in MOV) and VP9 with alpha
+    add("png-rgba", Check::makeMedia(file("rgba.mov"), {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25,format=rgba",
+                                                        "-t", "1", "-c:v", "png"}), 25);
+    add("vp9-alpha", Check::makeMedia(file("alpha.webm"), {"-f", "lavfi", "-i",
+                                                           "testsrc2=size=320x180:rate=25,format=yuva420p", "-t", "1",
+                                                           "-c:v", "libvpx-vp9", "-auto-alt-ref", "0"}), 25);
+
+    for (const Media& m : media) {
+        const QVector<QByteArray> ref = reference(m);
+        if (!Check::report(ref.size() == m.frames, qPrintable(m.name + ": every picture in order"), __FILE__, __LINE__,
+                           QString("%1 of %2").arg(ref.size()).arg(m.frames)))
+            continue;
+        testSeeks(m, ref);
+        if (m.name == "h264" || m.name == "hevc-10bit" || m.name == "prores") testThreads(m, ref);
+    }
+
+    // What the files state
+    auto info = [&](const char* name) {
+        auto r = Video::Reader::open(file(name));
+        return r ? r->info() : Video::Info{};
+    };
+    CHECK(info("mjpeg.avi").fullRange && !info("h264.mp4").fullRange);
+    CHECK_EQ(info("sd.mp4").colorspace, 601);
+    CHECK_EQ(info("h264.mp4").colorspace, 709); // untagged HD
+    CHECK_EQ(info("iphone-hlg.mov").colorspace, 2020);
+    CHECK_EQ(info("iphone-hlg.mov").colorTrc, 18); // AVCOL_TRC_ARIB_STD_B67
+    CHECK_EQ(info("prores.mov").format, AV_PIX_FMT_YUV422P10LE);
+    CHECK(av_pix_fmt_desc_get(info("rgba.mov").format)->flags & AV_PIX_FMT_FLAG_ALPHA);
+    CHECK(info("alpha.webm").format == AV_PIX_FMT_YUVA420P);
+    CHECK(info("h264.mp4").hasBFrames);
+    if (auto r = Video::Reader::open(file("interlaced.mp4"))) {
+        const auto p = r->picture(3);
+        CHECK(p && !p->progressive && p->topFieldFirst);
+    }
+    if (auto r = Video::Reader::open(file("h264.mp4"))) {
+        const auto p = r->picture(3);
+        CHECK(p && p->progressive);
+    }
+    testRotation(file("h264.mp4"), file("rotated.mp4"), 90);
+
+    // Hardware decoding: 720p H.264 and 10-bit HEVC
+    const QString hd = Check::makeMedia(file("hd.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-t",
+                                                         "3", "-c:v", "libx264", "-g", "60", "-bf", "2", "-pix_fmt",
+                                                         "yuv420p"});
+    const QString hd10 = Check::makeMedia(file("hd10.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+                                                             "-t", "2", "-c:v", "libx265", "-pix_fmt", "yuv420p10le",
+                                                             "-x265-params", "log-level=error"});
+    if (!hd.isEmpty()) testHardware(Media{"h264 720p", hd, 90});
+    if (!hd10.isEmpty()) testHardware(Media{"hevc 10 bit 720p", hd10, 60});
+
+    testHibernate(file("h264.mp4"));
+    return Check::result();
+}
