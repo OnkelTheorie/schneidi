@@ -77,6 +77,7 @@ schneidi_test(test_audio_streams)
 schneidi_test(test_export_threads)
 schneidi_test(test_export_formats)
 schneidi_test(test_export_writer)
+schneidi_test(test_export_timing)
 schneidi_test(test_smart_render)
 schneidi_test(test_video_decoder)
 schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the own decoder: same pictures as the ffmpeg command
