@@ -826,6 +826,9 @@ const QVector<Command>& commands()
           {"mute_tracks", T::Times, "tracks left out of this render only, e.g. [\"A2\"] (a voice track) or "
                                     "[\"V3\",\"A3\"]: audio tracks muted, video tracks hidden; the project stays "
                                     "as it is"},
+          {"threads", T::Integer, "processor threads for this render (default: the app's export setting, else all). "
+                                  "Fewer threads also render fewer frames at once and so need less memory: on a "
+                                  "machine that is busy (a game, a recording) use 2"},
           {"overwrite", T::Boolean, "replace an existing output file"}},
          cmdRender},
         {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams. With gaps: the stutter "

@@ -527,6 +527,13 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings.encoder = videoEncoderFromId(a["encoder"].toString(), VideoEncoder::Auto, &ok);
         if (!ok) fail("BAD_ARGUMENT", "encoder must be auto, software, nvenc, vaapi or qsv");
     }
+    // A render beside a game froze the PC (2026-10-28: all threads, 3.2 GB): the caller can keep it small
+    int threads = 0;
+    if (a.contains("threads")) {
+        threads = a["threads"].toInt();
+        if (threads < 1) fail("BAD_ARGUMENT", "threads must be 1 or more");
+        threads = std::min(threads, Exporter::availableThreads());
+    }
     if (a.contains("audio_bitrate")) job.settings.audioBitrateK = std::clamp(a["audio_bitrate"].toInt(), 32, 512);
     if (a.contains("subtitles")) {
         const int i = QStringList{"none", "burn", "srt"}.indexOf(a["subtitles"].toString());
@@ -587,11 +594,13 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     QElapsedTimer timer;
     timer.start();
     QString error;
-    const ExportSettings es = RenderQueue::exportSettings(job, s.project);
+    ExportSettings es = RenderQueue::exportSettings(job, s.project);
+    if (threads > 0) es.threads = threads;
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
     QJsonObject o{{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10}};
+    o["threads"] = ex.threads();
     if (!ex.usedCodec().isEmpty()) o["encoder"] = ex.usedCodec(); // video codec that wrote the file, e.g. h264_nvenc
     if (job.settings.kind() == RenderKind::ImageSequence) {
         o["frames_dir"] = imageSequenceDir(out);

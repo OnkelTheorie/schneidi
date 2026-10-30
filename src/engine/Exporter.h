@@ -103,6 +103,8 @@ public:
     // (e.g. the hardware encoder did not work and software was used; empty = nothing to say)
     QString usedCodec() const { return m_usedCodec; }
     QString note() const { return m_note; }
+    // After start(): processor threads the render uses (also caps the frames rendered at once)
+    int threads() const { return m_threads; }
     // After finished(): share of the frames copied by smart render (0 = everything encoded)
     int copiedPercent() const { return m_copiedPercent; }
 

@@ -16,6 +16,8 @@ current set.
 - Subtitles: `subtitles` `burn` or `srt` ([subtitles.md](subtitles.md)).
 - A version without a track (no voice-over, no music, no facecam): `mute_tracks` `["A2"]` (video tracks like `"V3"`
   are hidden) leaves it out of this render only; the project's mixer stays as it is - no mute, render, unmute.
+- Machine busy (the user plays a game, records, edits): `threads` 2. A render takes all processors by default and
+  holds a frame per thread in memory; a long render beside a game froze a PC.
 
 ## Files
 New, clear names; never the name of an input file. `overwrite` true only for your own earlier render of the same

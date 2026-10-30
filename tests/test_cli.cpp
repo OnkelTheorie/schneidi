@@ -9,6 +9,7 @@
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
 #include "core/TimelineOps.h"
+#include "engine/Exporter.h"
 
 #include <QLockFile>
 
@@ -1128,9 +1129,12 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("x.mp4")}, {"encoder", "gpu"}}),
                  QString("BAD_ARGUMENT"));
         const QJsonObject sw = run("render", {{"project", proj}, {"out", dir.filePath("sw.mp4")}, {"encoder", "software"},
-                                              {"height", 180}, {"to", "1s"}});
+                                              {"height", 180}, {"to", "1s"}, {"threads", 2}});
         CHECK_EQ(sw["encoder"].toString(), QString("libx264"));
         CHECK(!sw.contains("encoder_note"));
+        // Threads for one render (a render beside a game froze the PC): capped to the machine, at least 1
+        CHECK_EQ(sw["threads"].toInt(), std::min(2, Exporter::availableThreads()));
+        CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("t.mp4")}, {"threads", 0}}), QString("BAD_ARGUMENT"));
         const QJsonObject autoEnc = run("render", {{"project", proj}, {"out", dir.filePath("auto.mp4")}, {"height", 180},
                                                    {"to", "1s"}});
         CHECK(autoEnc["encoder"].toString().startsWith("h264_") || autoEnc["encoder"].toString() == "libx264");
