@@ -217,6 +217,14 @@ foreach(name test_av_sync test_preview_audio test_play_end test_open_background 
         RESOURCE_LOCK ${name}
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_AUDIO=mlt")
 endforeach()
+# Export with MLT's pictures (SCHNEIDI_PICTURE=mlt) until MLT goes: the own writer must match MLT's consumer bit for bit
+foreach(name test_export_writer test_smart_render)
+    add_test(NAME ${name}_mlt_picture COMMAND ${name})
+    set_tests_properties(${name}_mlt_picture PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 300
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_PICTURE=mlt")
+endforeach()
 set_tests_properties(test_av_sync test_preview_audio test_picture_catchup test_play_end test_av_sync_mlt_audio test_preview_audio_mlt_audio test_play_end_mlt_audio
                      PROPERTIES RUN_SERIAL TRUE) # preview timing
 

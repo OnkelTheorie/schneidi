@@ -37,6 +37,7 @@ extern "C" {
 #include <map>
 #include <mutex>
 #include <shared_mutex>
+#include <utility>
 #include <vector>
 
 namespace Picture {
@@ -79,6 +80,11 @@ struct Pool {
         if (list.size() < kKeep) list.emplace_back(p);
         else delete p;
     }
+    void clear()
+    {
+        std::lock_guard lock(mutex);
+        free.clear();
+    }
 };
 
 Pool& pool()
@@ -87,12 +93,74 @@ Pool& pool()
     return *p;
 }
 
-// An RGBA picture being worked on (layer, canvas)
+// Storage of layers (Image) that went out of use, by size. Layers, transitions and transforms take a cleared
+// full-frame buffer per clip and frame; fresh allocations of that size come from mmap (page faults and zeroing by the
+// kernel each time) or, once glibc raised its mmap threshold, from per-thread arenas that grow and stay large with
+// several render threads (export peaks of GBs). Reusing them keeps memory at what the frames in flight need.
+struct LayerPool {
+    std::mutex mutex;
+    std::map<size_t, std::vector<std::vector<uint8_t>>> free;
+    size_t bytes = 0;
+    static constexpr size_t kMaxBytes = size_t(256) << 20; // what stays around between frames
+    static constexpr size_t kMinBytes = size_t(64) << 10;  // small pictures (titles, icons) are not worth it
+
+    std::vector<uint8_t> take(size_t n)
+    {
+        if (n >= kMinBytes) {
+            std::lock_guard lock(mutex);
+            auto it = free.find(n);
+            if (it != free.end() && !it->second.empty()) {
+                std::vector<uint8_t> v = std::move(it->second.back());
+                it->second.pop_back();
+                bytes -= v.capacity();
+                std::memset(v.data(), 0, n);
+                return v;
+            }
+        }
+        return std::vector<uint8_t>(n, 0);
+    }
+    void give(std::vector<uint8_t>&& v)
+    {
+        if (v.size() < kMinBytes || v.size() != v.capacity()) return;
+        std::lock_guard lock(mutex);
+        if (bytes + v.capacity() > kMaxBytes) return; // freed by the caller's vector
+        bytes += v.capacity();
+        free[v.size()].push_back(std::move(v));
+    }
+    void clear()
+    {
+        std::lock_guard lock(mutex);
+        free.clear();
+        bytes = 0;
+    }
+};
+
+LayerPool& layerPool()
+{
+    static LayerPool* p = new LayerPool; // never destroyed: images may outlive statics
+    return *p;
+}
+
+// An RGBA picture being worked on (layer, canvas). Its storage comes from and goes back to layerPool().
 struct Image {
     int w = 0, h = 0;
     std::vector<uint8_t> px;
     Image() = default;
-    Image(int width, int height) : w(width), h(height), px(size_t(width) * height * 4, 0) {}
+    Image(int width, int height) : w(width), h(height), px(layerPool().take(size_t(width) * height * 4)) {}
+    Image(const Image&) = default;
+    Image& operator=(const Image&) = default;
+    Image(Image&& o) noexcept : w(o.w), h(o.h), px(std::move(o.px)) { o.w = o.h = 0; }
+    Image& operator=(Image&& o) noexcept
+    {
+        if (this != &o) {
+            layerPool().give(std::move(px));
+            px = std::move(o.px);
+            w = std::exchange(o.w, 0);
+            h = std::exchange(o.h, 0);
+        }
+        return *this;
+    }
+    ~Image() { layerPool().give(std::move(px)); }
     bool empty() const { return w <= 0 || h <= 0; }
     uint8_t* data() { return px.data(); }
     const uint8_t* data() const { return px.data(); }
@@ -166,7 +234,11 @@ struct Source {
     std::shared_ptr<StillSource> still;
     bool failed = false;
     std::chrono::steady_clock::time_point used;
+    int64_t usedFrame = -1; // last output frame that asked for it (export: dropped once rendering went past it)
 };
+
+// Output frame the calling thread renders right now (Renderer::render)
+thread_local int64_t t_frame = -1;
 
 bool looksLikeStill(const QString& path)
 {
@@ -244,6 +316,7 @@ struct Renderer::Impl {
             auto it = sources.find(key);
             if (it != sources.end()) {
                 it->second.used = std::chrono::steady_clock::now();
+                it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
                 return it->second;
             }
         }
@@ -290,6 +363,7 @@ struct Renderer::Impl {
         }
         s.failed = !s.video && !s.still;
         s.used = std::chrono::steady_clock::now();
+        s.usedFrame = t_frame;
         std::lock_guard lock(sourceMutex);
         return sources.emplace(key, s).first->second;
     }
@@ -972,6 +1046,9 @@ struct Renderer::Impl {
         }
     }
 
+    // Drops sources last used before output frame `frame` (export only: it renders forward)
+    void dropBefore(int64_t frame);
+
     // A timeline's picture at frame f onto canvas (black or transparent background already there)
     void renderTimeline(const Timeline& tl, int f, Image& canvas, const Ctx& ctx, const QString& prefix, bool subtitles,
                         int depth)
@@ -993,6 +1070,19 @@ struct Renderer::Impl {
         if (subtitles) subtitleLayer(canvas, tl, f, ctx);
     }
 };
+
+void Renderer::Impl::dropBefore(int64_t frame)
+{
+    std::vector<Source> gone; // closed outside the lock
+    std::lock_guard lock(sourceMutex);
+    for (auto it = sources.begin(); it != sources.end();)
+        if (it->second.usedFrame >= 0 && it->second.usedFrame < frame) {
+            gone.push_back(std::move(it->second));
+            it = sources.erase(it);
+        } else {
+            ++it;
+        }
+}
 
 Renderer::Renderer(const Timeline& tl, const Options& options) : d(std::make_unique<Impl>())
 {
@@ -1019,6 +1109,12 @@ Frame Renderer::render(int64_t frame)
     ctx.fps = d->options.format.rate.fps();
     ctx.preview = d->options.mode == Mode::Preview;
     ctx.bypassGrade = ctx.preview && d->options.gradeBypass && d->options.gradeBypass->load();
+
+    // Export renders forward: decoders (and their cached pictures) of clips the export has passed go. A source asked
+    // for again later (the same file further on) is opened again.
+    if (d->options.mode == Mode::Export && frame % 16 == 0)
+        d->dropBefore(frame - std::max<int64_t>(int64_t(2 * ctx.fps), 4 * d->options.parallelFrames + 8));
+    t_frame = frame;
 
     // Rendered straight into a pooled buffer (its vector lent to the canvas)
     Frame f;
@@ -1092,6 +1188,36 @@ Renderer::Stats Renderer::stats() const
     std::lock_guard lock(d->sourceMutex);
     s.sourcesOpen = int(d->sources.size());
     return s;
+}
+
+void releasePools()
+{
+    layerPool().clear();
+    pool().clear();
+}
+
+QString unsupported(const Timeline& tl)
+{
+    auto check = [](const Timeline& t) -> QString {
+        for (const Track& track : t.video)
+            for (const Clip& c : track.clips)
+                for (const EffectInstance& e : c.effects) {
+                    if (!e.enabled) continue;
+                    if (e.effectId == QLatin1String("stabilize")) return e.effectId; // no warp here yet
+                    const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+                    if (!d || d->fixed || !d->video) continue;
+                    if (e.effectId == QLatin1String("color") || e.effectId == QLatin1String("blur")
+                        || e.effectId == QLatin1String("chromakey") || VideoEffects::isOwn(e.effectId))
+                        continue;
+                    return e.effectId;
+                }
+        return {};
+    };
+    QString why = check(tl);
+    if (why.isEmpty() && tl.nested)
+        for (const Timeline& n : *tl.nested)
+            if (why.isEmpty()) why = check(n);
+    return why;
 }
 
 bool ownPicture()

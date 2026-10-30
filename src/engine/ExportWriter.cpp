@@ -2,6 +2,8 @@
 #include "engine/ExportWriter.h"
 
 #include "engine/OutputColor.h"
+#include "engine/audio/Mixer.h"
+#include "engine/picture/Renderer.h"
 #include "engine/video/Reader.h"
 
 #include <Mlt.h>
@@ -14,6 +16,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <cmath>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -25,9 +28,11 @@ extern "C" {
 #include <libavcodec/bsf.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
+#include <libswscale/swscale.h>
 }
 
 namespace {
@@ -243,6 +248,29 @@ bool ExportWriter::supports(const QString& path, const QString& videoCodec, cons
            && mltAudioFormat(av_get_sample_fmt(sampleFormat.toUtf8().constData())) != mlt_audio_none;
 }
 
+bool ExportWriter::supportsOwn(const QString& path, const QString& muxer, const QString& videoCodec, const QString& pixFmt,
+                               const QString& audioCodec, const QString& sampleFormat)
+{
+    const AVOutputFormat* f = muxer.isEmpty() ? av_guess_format(nullptr, path.toUtf8().constData(), nullptr)
+                                              : av_guess_format(muxer.toUtf8().constData(), nullptr, nullptr);
+    if (!f) return false;
+    if (!videoCodec.isEmpty()) {
+        const AVCodec* video = avcodec_find_encoder_by_name(videoCodec.toUtf8().constData());
+        if (!video || video->type != AVMEDIA_TYPE_VIDEO) return false;
+        const AVPixelFormat pf = av_get_pix_fmt(pixFmt.toUtf8().constData());
+        if (pf == AV_PIX_FMT_NONE) return false;
+        // Converted by OutputColor, uploaded (VAAPI) or by swscale from RGBA
+        OutputColor::Target t;
+        if (pf != AV_PIX_FMT_VAAPI && !OutputColor::targetOf(pf, t) && !sws_isSupportedOutput(pf)) return false;
+    } else if (audioCodec.isEmpty()) {
+        return false;
+    }
+    if (audioCodec.isEmpty()) return true;
+    const AVCodec* audio = avcodec_find_encoder_by_name(audioCodec.toUtf8().constData());
+    return audio && audio->type == AVMEDIA_TYPE_AUDIO
+           && mltAudioFormat(av_get_sample_fmt(sampleFormat.toUtf8().constData())) != mlt_audio_none;
+}
+
 struct ExportWriter::Impl {
     Settings s;
     mlt_consumer consumer = nullptr;
@@ -315,6 +343,257 @@ struct ExportWriter::Impl {
     bool pieceFed = false;            // the piece encoder has pictures
     int64_t videoPackets = 0;
 
+    // ---- Own picture engine (Own) ----
+    bool own = false;
+    Own o;
+    AVPixelFormat inputFmt = AV_PIX_FMT_NONE; // what the workers write (VAAPI: NV12, uploaded by the encode thread)
+    OutputColor::Target target;               // inputFmt as OutputColor layout (planes filled per frame)
+    bool direct = false;                      // OutputColor converts (else swscale)
+    AVBufferPool* framePool = nullptr;        // buffers of converted pictures (one per picture, all planes)
+    int frameBytes = 0;
+    AVBufferRef* hwDevice = nullptr;          // VAAPI
+    AVBufferRef* hwFrames = nullptr;
+    std::vector<float> mixL, mixR;            // fetch thread: the mix of one output frame
+
+    // Timeline frame shown at output frame i (frame rate conversion as engine/RateConverter: k * fps_tl / fps_out,
+    // rounded to nearest even like lrint)
+    int64_t timelineFrame(int64_t i) const
+    {
+        if (o.rate == o.timelineRate) return o.from + i;
+        return o.from + std::lrint(double(i) * o.timelineRate.fps() / o.rate.fps());
+    }
+
+    // Worker threads render output frames [a, b) and hand them over in order; at most `window` frames ahead of the
+    // one taken last (memory: frames in flight stay bounded)
+    struct Pump {
+        Impl* d = nullptr;
+        std::vector<std::thread> threads;
+        std::mutex mutex;
+        std::condition_variable work, ready;
+        int first = 0, next = 0, end = 0, taken = 0, window = 4;
+        uint64_t generation = 0;
+        bool quit = false;
+        struct Done {
+            AVFrame* picture = nullptr;
+            bool repeat = false; // same timeline frame as the one before: the fetcher reuses that picture
+        };
+        std::map<int, Done> done;
+        AVFrame* last = nullptr; // fetcher: the picture taken last (for repeats)
+
+        void startThreads(int count)
+        {
+            for (int t = 0; t < count; ++t) threads.emplace_back([this] { loop(); });
+        }
+        void stopThreads()
+        {
+            {
+                std::lock_guard lock(mutex);
+                quit = true;
+            }
+            work.notify_all();
+            ready.notify_all();
+            for (std::thread& t : threads)
+                if (t.joinable()) t.join();
+            threads.clear();
+            clear();
+            av_frame_free(&last);
+        }
+        void clear()
+        {
+            for (auto& [i, f] : done) av_frame_free(&f.picture);
+            done.clear();
+        }
+        // Renders [a, b) from now on (what was left of an earlier range is dropped)
+        void run(int a, int b)
+        {
+            {
+                std::lock_guard lock(mutex);
+                clear();
+                first = next = taken = a;
+                end = b;
+                ++generation;
+            }
+            work.notify_all();
+        }
+        void loop()
+        {
+            for (;;) {
+                int i = 0;
+                uint64_t gen = 0;
+                {
+                    std::unique_lock lock(mutex);
+                    work.wait(lock, [this] { return quit || d->stop || (next < end && next < taken + window); });
+                    if (quit || d->stop) return;
+                    i = next++;
+                    gen = generation;
+                }
+                Done result;
+                if (i > first && d->timelineFrame(i) == d->timelineFrame(i - 1)) result.repeat = true;
+                else result.picture = d->makePicture(i);
+                {
+                    std::lock_guard lock(mutex);
+                    if (gen == generation) {
+                        done[i] = result;
+                        result.picture = nullptr;
+                    }
+                }
+                av_frame_free(&result.picture);
+                ready.notify_all();
+            }
+        }
+        // Output frame i's picture (caller owns it); nullptr = stopped or rendering failed
+        AVFrame* take(int i)
+        {
+            Done got;
+            {
+                std::unique_lock lock(mutex);
+                ready.wait(lock, [&] { return quit || d->stop || done.count(i); });
+                if (quit || d->stop) return nullptr;
+                got = done[i];
+                done.erase(i);
+                taken = i + 1;
+            }
+            work.notify_all();
+            if (got.repeat) {
+                if (!last) return nullptr;
+                got.picture = av_frame_clone(last); // shares the buffer: no copy
+                if (got.picture) got.picture->pts = i;
+            } else if (!got.picture) {
+                return nullptr;
+            }
+            av_frame_free(&last);
+            last = av_frame_clone(got.picture);
+            return got.picture;
+        }
+        void wake()
+        {
+            work.notify_all();
+            ready.notify_all();
+        }
+    };
+    std::unique_ptr<Pump> pump;
+
+    // Worker thread: output frame i rendered and converted into a pooled AVFrame (pts = i); nullptr = failed
+    AVFrame* makePicture(int i)
+    {
+        const Picture::Frame frame = o.renderer->render(timelineFrame(i));
+        if (frame.isNull() || frame.width() != width || frame.height() != height) return nullptr;
+        AVFrame* f = av_frame_alloc();
+        if (!f) return nullptr;
+        f->format = inputFmt;
+        f->width = width;
+        f->height = height;
+        f->buf[0] = av_buffer_pool_get(framePool);
+        if (!f->buf[0]) {
+            av_frame_free(&f);
+            return nullptr;
+        }
+        av_image_fill_arrays(f->data, f->linesize, f->buf[0]->data, inputFmt, width, height, 32);
+        if (direct) {
+            OutputColor::Target t = target;
+            for (int p = 0; p < 4; ++p) {
+                t.planes[p] = f->data[p];
+                t.strides[p] = f->linesize[p];
+            }
+            OutputColor::fromRgba(frame.bits(), width, height, frame.stride(), t);
+        } else {
+            // Rare formats: swscale, one context per worker thread
+            thread_local SwsContext* sws = nullptr;
+            sws = sws_getCachedContext(sws, width, height, AV_PIX_FMT_RGBA, width, height, inputFmt, SWS_BICUBIC, nullptr,
+                                       nullptr, nullptr);
+            if (!sws) {
+                av_frame_free(&f);
+                return nullptr;
+            }
+            const int cs = colorspace == 601 ? SWS_CS_ITU601 : colorspace == 2020 ? SWS_CS_BT2020 : SWS_CS_ITU709;
+            const int* table = sws_getCoefficients(cs);
+            sws_setColorspaceDetails(sws, table, 1, table, 0, 0, 1 << 16, 1 << 16);
+            const uint8_t* src[4] = {frame.bits(), nullptr, nullptr, nullptr};
+            const int srcStride[4] = {frame.stride(), 0, 0, 0};
+            sws_scale(sws, src, srcStride, 0, height, f->data, f->linesize);
+        }
+        f->pts = i;
+        return f;
+    }
+
+    // Fetch thread: the mix of output frame i appended to pcm (interleaved, encoder sample type)
+    void soundOwn(int i, std::vector<uint8_t>& pcm)
+    {
+        Audio::Mixer& mixer = *o.mixer;
+        int64_t a = 0, b = 0;
+        if (o.rate == o.timelineRate) {
+            a = mixer.frameStart(o.from + i);
+            b = mixer.frameStart(o.from + i + 1);
+        } else { // the mixer's rounding on the output's frame grid (engine/MixedSound)
+            const int64_t base = mixer.frameStart(o.from);
+            auto start = [&](int64_t k) {
+                const int64_t v = k * int64_t(mixer.rate()) * o.rate.den;
+                const int64_t num = 2 * v + o.rate.num, den = 2 * int64_t(o.rate.num);
+                return base + (num >= 0 ? num / den : -((-num + den - 1) / den));
+            };
+            a = start(i);
+            b = start(i + 1);
+        }
+        const int count = int(std::max<int64_t>(0, b - a));
+        if (count <= 0) return;
+        mixL.resize(size_t(count));
+        mixR.resize(size_t(count));
+        float* planes[] = {mixL.data(), mixR.data()};
+        mixer.render(a, count, planes);
+        const int channels = s.audioChannels;
+        const size_t at = pcm.size();
+        pcm.resize(at + size_t(count) * channels * sampleBytes);
+        uint8_t* out = pcm.data() + at;
+        const AVSampleFormat packed = av_get_packed_sample_fmt(sampleFmt);
+        const int bits = packed == AV_SAMPLE_FMT_S16 ? 16 : std::clamp(o.audioBits > 0 ? o.audioBits : 32, 8, 32);
+        for (int k = 0; k < count; ++k)
+            for (int c = 0; c < channels; ++c, out += sampleBytes) {
+                const double v = channels == 1 ? 0.5 * (double(mixL[k]) + double(mixR[k])) : c == 0 ? mixL[k] : c == 1 ? mixR[k] : 0.0;
+                switch (packed) {
+                case AV_SAMPLE_FMT_S16: {
+                    const auto q = int16_t(std::clamp(std::nearbyint(v * 32768.0), -32768.0, 32767.0));
+                    std::memcpy(out, &q, 2);
+                    break;
+                }
+                case AV_SAMPLE_FMT_S32: { // rounded to the file's bits, placed in the top bits
+                    const double scale = std::ldexp(1.0, bits - 1);
+                    const auto q = int64_t(std::clamp(std::nearbyint(v * scale), -scale, scale - 1));
+                    const auto w = int32_t(q * (int64_t(1) << (32 - bits)));
+                    std::memcpy(out, &w, 4);
+                    break;
+                }
+                case AV_SAMPLE_FMT_U8: *out = uint8_t(std::clamp(std::nearbyint(v * 128.0 + 128.0), 0.0, 255.0)); break;
+                default: { // float
+                    const float fv = float(v);
+                    std::memcpy(out, &fv, 4);
+                    break;
+                }
+                }
+            }
+    }
+
+    // Fetch thread, own path: output frames [a, b) in order (picture and sound); restart marks a's picture as the
+    // first of an encoded piece (smart render)
+    bool fetchOwn(int a, int b, bool restart)
+    {
+        if (b <= a || stop) return !stop;
+        if (pump) pump->run(a, b);
+        for (int i = a; i < b && !stop; ++i) {
+            Item item;
+            if (pump) {
+                item.picture = pump->take(i);
+                if (!item.picture) {
+                    if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
+                    return false;
+                }
+                item.restart = restart && i == a;
+            }
+            if (o.mixer && audioFmt != mlt_audio_none) soundOwn(i, item.pcm);
+            if (!push(std::move(item))) return false;
+        }
+        return !stop;
+    }
+
     static int isStopped(mlt_consumer c) { return static_cast<Impl*>(c->child)->consumerStarted ? 0 : 1; }
     // Consumers of the smart path (pieces, sound): running = property set after the start
     static int pieceStopped(mlt_consumer c) { return mlt_properties_get_int(MLT_CONSUMER_PROPERTIES(c), "_running") ? 0 : 1; }
@@ -329,6 +608,7 @@ struct ExportWriter::Impl {
         state = State::Failed;
         stop = true;
         cond.notify_all();
+        if (pump) pump->wake();
     }
 
     bool push(Item item)
@@ -508,7 +788,9 @@ struct ExportWriter::Impl {
 
     void fetch()
     {
-        if (smart) {
+        if (own && !smart) {
+            fetchOwn(0, s.length, false);
+        } else if (smart) {
             fetchSmart();
         } else {
             bool warnedSound = false;
@@ -685,6 +967,15 @@ struct ExportWriter::Impl {
     bool nextSound(int i, std::vector<uint8_t>& pcm)
     {
         static thread_local bool warned = false;
+        if (own) {
+            if (i != soundNext) {
+                fail(QStringLiteral("sound of frame %1 asked, %2 is next").arg(i).arg(soundNext));
+                return false;
+            }
+            if (o.mixer && audioFmt != mlt_audio_none) soundOwn(i, pcm);
+            ++soundNext;
+            return true;
+        }
         if (!soundConsumer) return true;
         if (i != soundNext) {
             fail(QStringLiteral("sound of frame %1 asked, %2 is next").arg(i).arg(soundNext));
@@ -705,6 +996,20 @@ struct ExportWriter::Impl {
     bool encodePiece(int a, int b)
     {
         if (b <= a || stop) return !stop;
+        if (own) { // the pictures from the pump, the sound in order (nextSound)
+            pump->run(a, b);
+            for (int i = a; i < b && !stop; ++i) {
+                Item item;
+                item.picture = pump->take(i);
+                if (!item.picture) {
+                    if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
+                    return false;
+                }
+                item.restart = i == a;
+                if (!nextSound(i, item.pcm) || !push(std::move(item))) return false;
+            }
+            return !stop;
+        }
         mlt_producer_seek(source, a); // position counts from the in point
         // The last piece's workers may have read ahead up to the end, where the producer paused (speed 0)
         mlt_producer_set_speed(source, 1);
@@ -857,7 +1162,7 @@ struct ExportWriter::Impl {
 
     void fetchSmart()
     {
-        if (audioFmt != mlt_audio_none) {
+        if (audioFmt != mlt_audio_none && !own) {
             mlt_producer_seek(soundSource, 0);
             // A consumer that stopped (a writer before this one, e.g. a hardware encoder that failed) left it paused:
             // its frames would carry silence
@@ -885,24 +1190,32 @@ struct ExportWriter::Impl {
     bool open()
     {
         const QByteArray path = s.path.toUtf8();
-        int r = avformat_alloc_output_context2(&oc, nullptr, nullptr, path.constData());
+        const QByteArray muxer = s.muxer.toUtf8();
+        int r = avformat_alloc_output_context2(&oc, nullptr, muxer.isEmpty() ? nullptr : muxer.constData(), path.constData());
         if (r < 0 || !oc) {
             fail(QStringLiteral("no muxer for %1: %2").arg(s.path, avError(r)));
             return false;
         }
         packet = av_packet_alloc();
-        // Video (smart render: one encoder per piece, the stream gets the first item's parameters)
-        vst = avformat_new_stream(oc, nullptr);
-        if (!vst || !packet) {
+        if (!packet) {
             fail(QStringLiteral("out of memory"));
             return false;
         }
-        vst->time_base = av_inv_q(rate);
-        vst->avg_frame_rate = rate;
-        vst->sample_aspect_ratio = aspect;
-        if (!smart) {
-            if (!(venc = newVideoEncoder())) return false;
-            avcodec_parameters_from_context(vst->codecpar, venc);
+        // Video (smart render: one encoder per piece, the stream gets the first item's parameters)
+        if (!s.videoCodec.isEmpty()) {
+            if (own && pixFmt == AV_PIX_FMT_VAAPI && !openHardware()) return false;
+            vst = avformat_new_stream(oc, nullptr);
+            if (!vst) {
+                fail(QStringLiteral("out of memory"));
+                return false;
+            }
+            vst->time_base = av_inv_q(rate);
+            vst->avg_frame_rate = rate;
+            vst->sample_aspect_ratio = aspect;
+            if (!smart) {
+                if (!(venc = newVideoEncoder())) return false;
+                avcodec_parameters_from_context(vst->codecpar, venc);
+            }
         }
         // Sound
         if (!s.audioCodec.isEmpty()) {
@@ -934,7 +1247,7 @@ struct ExportWriter::Impl {
     {
         const QByteArray path = s.path.toUtf8();
         int r = 0;
-        if ((r = avio_open(&oc->pb, path.constData(), AVIO_FLAG_WRITE)) < 0) {
+        if (!(oc->oformat->flags & AVFMT_NOFILE) && (r = avio_open(&oc->pb, path.constData(), AVIO_FLAG_WRITE)) < 0) {
             fail(QStringLiteral("cannot write %1: %2").arg(s.path, avError(r)));
             return false;
         }
@@ -948,7 +1261,7 @@ struct ExportWriter::Impl {
         // HEVC in MP4/MOV as 'hvc1' instead of FFmpeg's default 'hev1': Apple players (QuickTime, Safari, iPhone) play
         // no 'hev1'. Smart render's in-band parameter sets per piece then work as they do in H.264's 'avc1'.
         const bool mov = std::strcmp(oc->oformat->name, "mp4") == 0 || std::strcmp(oc->oformat->name, "mov") == 0;
-        if (mov && vst->codecpar->codec_id == AV_CODEC_ID_HEVC) vst->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
+        if (mov && vst && vst->codecpar->codec_id == AV_CODEC_ID_HEVC) vst->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
         r = avformat_write_header(oc, &options);
         av_dict_free(&options);
         if (r < 0) {
@@ -978,10 +1291,15 @@ struct ExportWriter::Impl {
         venc->time_base = av_inv_q(rate);
         venc->framerate = rate;
         venc->pix_fmt = pixFmt;
-        venc->colorspace = matrixOf(colorspace, height);
-        venc->color_trc = transferOf(colorspace);
-        venc->color_primaries = primariesOf(colorspace, height);
-        venc->color_range = AVCOL_RANGE_MPEG; // MLT's consumer left it unspecified; it is limited range
+        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(own && hwFrames ? inputFmt : pixFmt);
+        if (!desc || !(desc->flags & AV_PIX_FMT_FLAG_RGB)) {
+            venc->colorspace = matrixOf(colorspace, height);
+            venc->color_trc = transferOf(colorspace);
+            venc->color_primaries = primariesOf(colorspace, height);
+            // MLT's consumer left it unspecified; it is limited range (JPEG formats: full)
+            venc->color_range = own && target.fullRange ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+        }
+        if (hwFrames) venc->hw_frames_ctx = av_buffer_ref(hwFrames);
         venc->sample_aspect_ratio = aspect;
         venc->field_order = AV_FIELD_PROGRESSIVE;
         if (smart || (oc->oformat->flags & AVFMT_GLOBALHEADER)) venc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
@@ -1221,7 +1539,17 @@ struct ExportWriter::Impl {
                     break;
                 }
             }
+            if (!venc) { // audio only
+                freeItem(item);
+                ++written;
+                continue;
+            }
             pieceFed = true;
+            if (hwFrames && item.picture && !upload(item.picture)) {
+                freeItem(item);
+                fail(QStringLiteral("cannot upload the picture to the card"), true);
+                break;
+            }
             const int r = avcodec_send_frame(venc, item.picture);
             av_frame_free(&item.picture);
             if (r < 0) {
@@ -1232,6 +1560,47 @@ struct ExportWriter::Impl {
             ++written;
         }
         discardQueue();
+    }
+
+    // VAAPI: the converted NV12 picture onto the card (replaces *picture)
+    bool upload(AVFrame*& picture)
+    {
+        AVFrame* hw = av_frame_alloc();
+        if (!hw || av_hwframe_get_buffer(hwFrames, hw, 0) < 0 || av_hwframe_transfer_data(hw, picture, 0) < 0) {
+            av_frame_free(&hw);
+            return false;
+        }
+        av_frame_copy_props(hw, picture);
+        av_frame_free(&picture);
+        picture = hw;
+        return true;
+    }
+
+    // VAAPI device and frame pool for the encoder; false = not available (fail() called, encoder problem)
+    bool openHardware()
+    {
+        const QByteArray device = s.hwDevice.toUtf8();
+        if (av_hwdevice_ctx_create(&hwDevice, AV_HWDEVICE_TYPE_VAAPI, device.isEmpty() ? nullptr : device.constData(), nullptr, 0) < 0) {
+            fail(QStringLiteral("VAAPI device %1 cannot be opened").arg(s.hwDevice), true);
+            return false;
+        }
+        hwFrames = av_hwframe_ctx_alloc(hwDevice);
+        if (!hwFrames) {
+            fail(QStringLiteral("out of memory"), true);
+            return false;
+        }
+        auto* fc = reinterpret_cast<AVHWFramesContext*>(hwFrames->data);
+        fc->format = AV_PIX_FMT_VAAPI;
+        fc->sw_format = AV_PIX_FMT_NV12;
+        fc->width = width;
+        fc->height = height;
+        fc->initial_pool_size = 20;
+        if (av_hwframe_ctx_init(hwFrames) < 0) {
+            av_buffer_unref(&hwFrames);
+            fail(QStringLiteral("VAAPI frames cannot be set up"), true);
+            return false;
+        }
+        return true;
     }
 
     void discardQueue()
@@ -1246,6 +1615,9 @@ struct ExportWriter::Impl {
     {
         avcodec_free_context(&venc); // frees pictures still held by the encoder (MLT frames)
         avcodec_free_context(&aenc);
+        av_buffer_unref(&hwFrames);
+        av_buffer_unref(&hwDevice);
+        av_buffer_pool_uninit(&framePool); // freed once the last picture is back
         if (oc) {
             if (oc->pb) avio_closep(&oc->pb);
             avformat_free_context(oc);
@@ -1303,6 +1675,47 @@ ExportWriter::ExportWriter(Mlt::Profile& profile, Mlt::Producer& source, const S
     mlt_consumer_connect(d->consumer, MLT_PRODUCER_SERVICE(source.get_producer()));
 }
 
+ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl>())
+{
+    d->s = s;
+    d->own = true;
+    d->width = own.size.width();
+    d->height = own.size.height();
+    d->colorspace = own.colorspace;
+    d->rate = AVRational{own.rate.num, std::max(1, own.rate.den)};
+    d->fps = std::max(1.0, own.rate.fps());
+    d->aspect = AVRational{1, 1};
+    if (s.videoCodec.isEmpty()) own.renderer.reset();
+    if (s.audioCodec.isEmpty()) own.mixer.reset();
+    d->o = std::move(own);
+    if (!s.videoCodec.isEmpty()) {
+        d->pixFmt = av_get_pix_fmt(s.pixFmt.toUtf8().constData());
+        d->inputFmt = d->pixFmt == AV_PIX_FMT_VAAPI ? AV_PIX_FMT_NV12 : d->pixFmt;
+        d->target.colorspace = d->colorspace;
+        d->direct = OutputColor::targetOf(d->inputFmt, d->target);
+        d->target.colorspace = d->colorspace; // targetOf only sets the layout
+        d->frameBytes = av_image_get_buffer_size(d->inputFmt, d->width, d->height, 32);
+        if (d->frameBytes > 0) d->framePool = av_buffer_pool_init(size_t(d->frameBytes), nullptr);
+    }
+    if (!s.audioCodec.isEmpty()) {
+        d->sampleFmt = av_get_sample_fmt(s.sampleFormat.toUtf8().constData());
+        d->audioFmt = mltAudioFormat(d->sampleFmt);
+        d->sampleBytes = av_get_bytes_per_sample(d->sampleFmt);
+    }
+    const int parallel = std::max(1, d->o.parallel);
+    d->queueMax = size_t(std::clamp(parallel, 2, 8));
+    if (const AVCodec* c = avcodec_find_encoder_by_name(s.videoCodec.toUtf8().constData())) d->codecId = c->id;
+    d->smart = !s.copy.isEmpty() && d->o.renderer && d->o.rate == d->o.timelineRate
+               && (d->codecId == AV_CODEC_ID_H264 || d->codecId == AV_CODEC_ID_HEVC)
+               && (streamFormat(d->pixFmt) == AV_PIX_FMT_YUV420P || streamFormat(d->pixFmt) == AV_PIX_FMT_YUV420P10LE);
+    if (d->o.renderer) {
+        d->pump = std::make_unique<Impl::Pump>();
+        d->pump->d = d.get();
+        // A couple of frames more than the workers: one waits for the encoder while the others render
+        d->pump->window = parallel + 2;
+    }
+}
+
 ExportWriter::~ExportWriter()
 {
     cancel();
@@ -1317,6 +1730,16 @@ void ExportWriter::start()
 {
     if (d->started) return;
     d->started = true;
+    if (d->own) {
+        if (d->o.renderer && (!d->framePool || d->frameBytes <= 0)) {
+            d->fail(QStringLiteral("pixel format %1 cannot be written").arg(d->s.pixFmt));
+            return;
+        }
+        if (d->pump) d->pump->startThreads(std::max(1, d->o.parallel));
+        d->encoder = std::thread([this] { d->encode(); });
+        d->fetcher = std::thread([this] { d->fetch(); });
+        return;
+    }
     if (d->smart) { // consumers per piece in the fetch thread
         d->encoder = std::thread([this] { d->encode(); });
         d->fetcher = std::thread([this] { d->fetch(); });
@@ -1335,9 +1758,11 @@ void ExportWriter::cancel()
 {
     if (d->state == State::Running) d->stop = true;
     d->cond.notify_all();
+    if (d->pump) d->pump->wake();
     // The fetch thread may wait in mlt_consumer_rt_frame for the frame being rendered: the workers still run and
     // deliver it. Only then stop the workers (mlt_consumer_stop frees what the waiting thread uses).
     if (d->fetcher.joinable()) d->fetcher.join();
+    if (d->pump) d->pump->stopThreads();
     if (d->consumerStarted) {
         mlt_consumer_stop(d->consumer);
         d->consumerStarted = false;
