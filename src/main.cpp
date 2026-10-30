@@ -11,6 +11,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
+#include "engine/MltLog.h"
 
 #include <QApplication>
 #include <QAction>
@@ -135,7 +136,8 @@ int main(int argc, char* argv[])
         status(T("Lade Module…"));
     }
 
-    Log::installMlt(); // before MLT initialization: missing modules also end up in the log
+    // Before MLT initialization: missing modules also end up in the log
+    MltLog::install([](bool error, const QString& text) { Log::message(error ? "MLT-E" : "MLT-W", text); });
     Engine::applyAudioSettings(); // before MLT initialization (SDL reads the audio driver at startup)
     Engine engine;
     QString error;

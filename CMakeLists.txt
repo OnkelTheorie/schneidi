@@ -192,6 +192,7 @@ add_library(schneidi_lib STATIC
     src/engine/CheckMeasure.h     src/engine/CheckMeasure.cpp
     src/engine/FrameGaps.h        src/engine/FrameGaps.cpp
     src/engine/MediaProbe.h       src/engine/MediaProbe.cpp
+    src/engine/MltLog.h           src/engine/MltLog.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
     src/engine/GradedThumbs.h     src/engine/GradedThumbs.cpp
