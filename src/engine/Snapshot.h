@@ -42,7 +42,8 @@ private:
     std::unique_ptr<ProducerFactory> m_factory;
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Producer> m_producer;
-    std::unique_ptr<Picture::Renderer> m_picture; // SCHNEIDI_PICTURE=own: the own picture engine instead of MLT
+    std::unique_ptr<Picture::Renderer> m_picture; // own picture engine (default; SCHNEIDI_PICTURE=mlt: MLT)
+    bool m_media = false; // a media file: nothing decoded = no picture (null image)
 };
 
 // Frame `frame` (in the rate of `format`) of a media file, fitted into the project aspect ratio

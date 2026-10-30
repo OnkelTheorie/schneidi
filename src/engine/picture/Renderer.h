@@ -118,7 +118,8 @@ public:
     void setOutputSize(const QSize& size);
     // Playback direction for decoding ahead: 1 forward, -1 backward, 0 = still (seeks/scrubbing)
     void setDirection(int direction);
-    // Open the decoders the frames around `frame` will need (call from a worker thread before playback starts)
+    // Open the decoders the frames around `frame` will need and decode the first picture of clips starting within the
+    // next 3 seconds (call from a worker thread before playback starts and while it plays forward)
     void prepare(int64_t frame);
     // Drop decoders and cached pictures not used for a while (memory pressure, idle)
     void trim();
@@ -144,12 +145,12 @@ private:
 // Gives back the buffers kept for reuse (frames, layers): after an export, when nothing renders for a while
 void releasePools();
 
-// Why this timeline cannot be rendered by this engine yet: the id of an effect it does not have (stabilize, frei0r
-// plugins …); empty = it can. Callers take the MLT path meanwhile.
+// Why this timeline cannot be rendered by this engine yet: the id of an effect it does not have (frei0r plugins,
+// unknown ids); empty = it can. The export takes the MLT path meanwhile.
 QString unsupported(const Timeline& tl);
 
-// SCHNEIDI_PICTURE=own|mlt (read once): which picture path the engine uses while both exist. Default "mlt" until
-// package 4/5 switch preview and export over.
+// SCHNEIDI_PICTURE=own|mlt (read once): which picture path the engine uses while both exist. Default own (preview,
+// stills, export); "mlt" keeps the old path until it is removed (package 6).
 bool ownPicture();
 
 } // namespace Picture

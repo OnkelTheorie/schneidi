@@ -24,6 +24,8 @@
 #include "engine/TimelineBuilderDetail.h"
 #include "engine/audio/Path.h"
 #include "engine/audio/Player.h"
+#include "engine/picture/MediaStills.h"
+#include "engine/picture/Renderer.h"
 #include "engine/video/Reader.h"
 #include "engine/video/Still.h"
 #include "ui/MulticamGrid.h"
@@ -77,7 +79,48 @@ bool samePicture(const Timeline& a, const Timeline& b)
            && TimelineOps::sameNested(a, b);
 }
 
+// A rendered frame as QImage without copying: the image keeps the pooled buffer until it goes away
+QImage frameImage(const Picture::Frame& f)
+{
+    if (f.isNull()) return {};
+    auto* keep = new Picture::Frame(f);
+    const Picture::Frame& k = *keep;
+    return QImage(k.bits(), k.width(), k.height(), k.stride(), QImage::Format_RGBA8888,
+                  [](void* p) { delete static_cast<Picture::Frame*>(p); }, keep);
+}
+
+// Preview size: the project format scaled down to a longer edge of 960 (even), the full size when the viewer zooms
+// to 100 % or more (full) or with SCHNEIDI_FULLRES_PREVIEW
+QSize previewSizeOf(const ProjectFormat& format, bool full)
+{
+    if (full || qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW")) return format.size();
+    const QSize fit = format.size().scaled(960, 960, Qt::KeepAspectRatio);
+    return QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
+}
+
 } // namespace
+
+// Own picture engine: proxy and render-cache files the renderers read (their worker threads ask; ProxyManager and
+// RenderCache are UI-thread objects that look at the disk, so the answers are worked out on the UI thread per
+// timeline and swapped in whole)
+struct Engine::Resolved {
+    std::mutex mutex;
+    QHash<QString, QString> proxies; // original -> file the preview reads
+    QHash<int, QString> cache;       // top-level clip id -> rendered clip output
+    std::shared_ptr<std::atomic<bool>> bypass;
+
+    QString proxy(const QString& path)
+    {
+        std::lock_guard lock(mutex);
+        return proxies.value(path, path);
+    }
+    QString cached(const Clip& c)
+    {
+        if (bypass && bypass->load()) return {}; // cached clips contain the correction
+        std::lock_guard lock(mutex);
+        return cache.value(c.id);
+    }
+};
 
 struct EngineCallbacks {
     // Runs in the MLT consumer thread as soon as a frame is to be shown
@@ -126,6 +169,11 @@ Engine::Engine(QObject* parent)
 
 Engine::~Engine()
 {
+    m_pump.reset(); // its threads use the renderers
+    m_timelineContent.reset();
+    m_gridRenderers.clear();
+    m_sourceRenderer.reset();
+    m_renderer.reset();
     stopOpening();
     if (m_consumer) m_consumer->stop();
     m_consumer.reset();
@@ -193,8 +241,20 @@ bool Engine::createConsumer(QString* error)
     m_gridBuilder->setGradeBypass(m_gradeBypass);
     m_gridBuilder->setGridSound(!m_player); // own audio engine: the player plays the angle's sound
     // Preview image in the project's aspect ratio (otherwise portrait gets distorted), even dimensions
-    const QSize fit = m_previewFull ? m_format.size() : m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
-    m_previewSize = QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
+    m_previewSize = previewSizeOf(m_format, m_previewFull);
+    m_own = m_player && Picture::ownPicture();
+    if (m_own) {
+        // Own picture engine: no MLT consumer, the pump follows the player's clock
+        if (!m_resolved) {
+            m_resolved = std::make_shared<Resolved>();
+            m_resolved->bypass = m_gradeBypass;
+        }
+        if (!m_pump)
+            m_pump = std::make_unique<Picture::Pump>(
+                [this] { return clockFrames(); },
+                [this](const QImage& image, int64_t position, double speed) { onPumpShown(image, position, speed); });
+        return true;
+    }
 
     m_consumerProfile = makeProfile(m_format);
     if (m_player) {
@@ -244,6 +304,11 @@ void Engine::setFormat(const ProjectFormat& format)
     // Tear down everything attached to the old profile in this order: consumer first (reads the producers)
     if (m_consumer) m_consumer->stop();
     if (m_player) m_player->pause();
+    if (m_pump) m_pump->setContent(nullptr, 0, 0);
+    m_timelineContent.reset();
+    m_renderer.reset();
+    m_sourceRenderer.reset();
+    m_gridRenderers.clear();
     m_preroll->clear();
     m_current = nullptr;
     m_consumer.reset();
@@ -277,6 +342,7 @@ void Engine::setFormat(const ProjectFormat& format)
     }
     emit speedChanged(m_speed);
     if (waiting) updateTimeline(std::exchange(m_waiting, Timeline{})); // what was being opened, now in the new format
+    else if (m_own) applyTimeline(std::exchange(m_built, Timeline{}), false); // the shown timeline in the new format
 }
 
 MediaInfo Engine::probe(const QString& path)
@@ -361,6 +427,24 @@ QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
 
 QImage Engine::thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size, bool ownShape)
 {
+    if (Picture::ownPicture()) {
+        // As a timeline shows the file (format's shape), or in its own shape: a format of that shape it fills
+        ProjectFormat shape = format;
+        QSize fit = format.size().scaled(size, Qt::KeepAspectRatio);
+        if (const double aspect = ownShape ? pictureAspect(path) : 0; aspect > 0) {
+            shape.width = std::max(2, int(std::lround(aspect * format.height)));
+            fit = QSizeF(aspect * size.height(), size.height()).scaled(QSizeF(size), Qt::KeepAspectRatio).toSize();
+        }
+        Picture::MediaStills stills(shape, &ProxyManager::decodeSource, 1); // proxy if present (4K: 0.2-0.7 s a frame)
+        const QImage img = stills.frame(path, frame, QSize(std::max(2, fit.width()), std::max(2, fit.height())));
+        if (img.isNull() || img.size() == size) return img;
+        QImage out(size, QImage::Format_RGBA8888);
+        out.fill(Qt::black);
+        QPainter painter(&out);
+        painter.drawImage(QPoint((size.width() - img.width()) / 2, (size.height() - img.height()) / 2), img);
+        painter.end();
+        return out;
+    }
     const auto profile = makeProfile(format);
     ProducerFactory factory(*profile);
     // Proxy if present: a 4K original takes ~0.2–0.7 s per exactly sought frame
@@ -410,8 +494,36 @@ QImage rgbaFrame(Mlt::Profile& profile, Mlt::Producer& producer, int position)
 
 } // namespace
 
+// A single frame through an own renderer (always from the originals, project size)
+QImage Engine::ownStill(const Timeline& tl, int position, bool transparent)
+{
+    Picture::Options o;
+    o.format = m_format;
+    o.mode = Picture::Mode::Still;
+    o.transparent = transparent;
+    Timeline picture = pictureOnly(tl);
+    picture.audio.clear();
+    Picture::Renderer renderer(picture, o);
+    return renderer.render(position).toImage();
+}
+
 QImage Engine::grabStill(const Timeline& tl)
 {
+    if (m_own) {
+        Timeline shown = tl;
+        int at = m_position;
+        if (m_mode == Mode::Source && !m_sourcePath.isEmpty()) {
+            shown = Timeline{};
+            shown.video.resize(1);
+            Clip c;
+            c.id = 1;
+            c.mediaPath = m_sourcePath;
+            c.out = std::max(0, m_sourceLength - 1);
+            shown.video[0].clips << c;
+        }
+        const QImage img = ownStill(shown, at, false);
+        return img.isNull() ? QImage() : img.convertToFormat(QImage::Format_RGB32);
+    }
     // Own profile and own producers (like the export) -> preview keeps running undisturbed
     auto profile = makeProfile(m_format);
     ProducerFactory factory(*profile);
@@ -436,6 +548,7 @@ QImage Engine::grabStill(const Timeline& tl)
 
 QImage Engine::grabFrame(const Timeline& tl, int position)
 {
+    if (m_own) return ownStill(tl, position, true);
     auto profile = makeProfile(m_format);
     TimelineBuilder builder(*profile);
     builder.setTransparentBackground(true);
@@ -531,8 +644,100 @@ void Engine::stopOpening()
     emit openingChanged(false);
 }
 
+bool Engine::resolveFiles(const Timeline& tl, bool timeline)
+{
+    QHash<QString, QString> proxies;
+    QHash<int, QString> cache;
+    std::function<void(const Timeline&, bool)> walk = [&](const Timeline& t, bool top) {
+        for (const Track& track : t.video)
+            for (const Clip& c : track.clips) {
+                if (!c.mediaPath.isEmpty() && !proxies.contains(c.mediaPath))
+                    proxies.insert(c.mediaPath, m_proxies->resolve(c.mediaPath));
+                if (top && !c.mediaPath.isEmpty() && !c.isTitle())
+                    if (const QString file = m_renderCache->resolve(c); !file.isEmpty()) cache.insert(c.id, file);
+            }
+    };
+    walk(tl, true);
+    if (tl.nested)
+        for (const Timeline& inner : *tl.nested) walk(inner, false);
+    std::lock_guard lock(m_resolved->mutex);
+    // Proxies are only added/updated (the source view and the multicam grid read through the same map), the render
+    // cache is the timeline's
+    bool changed = false;
+    for (auto it = proxies.cbegin(); it != proxies.cend(); ++it) {
+        QString& file = m_resolved->proxies[it.key()];
+        if (file != it.value()) {
+            file = it.value();
+            changed = true;
+        }
+    }
+    if (timeline && cache != m_resolved->cache) {
+        m_resolved->cache = std::move(cache);
+        changed = true;
+    }
+    return changed;
+}
+
+Picture::Options Engine::previewOptions(const QSize& output) const
+{
+    Picture::Options o;
+    o.format = m_format;
+    o.output = output;
+    o.mode = Picture::Mode::Preview;
+    const std::shared_ptr<Resolved> resolved = m_resolved;
+    o.proxy = [resolved](const QString& path) { return resolved->proxy(path); };
+    o.renderCache = [resolved](const Clip& c) { return resolved->cached(c); };
+    o.gradeBypass = m_gradeBypass;
+    o.parallelFrames = m_pump ? m_pump->workers() : 1;
+    return o;
+}
+
+std::shared_ptr<const Picture::Pump::Content> Engine::rendererContent(std::shared_ptr<Picture::Renderer> renderer,
+                                                                      bool timeline)
+{
+    auto c = std::make_shared<Picture::Pump::Content>();
+    c->render = [renderer](int64_t f) { return frameImage(renderer->render(f)); };
+    if (timeline) {
+        c->last = [last = m_lastFrame] { return last->load(); };
+    } else {
+        const int64_t last = std::max(0, m_sourceLength - 1);
+        c->last = [last] { return last; };
+    }
+    c->direction = [renderer](int dir) { renderer->setDirection(dir); };
+    c->prepare = [renderer](int64_t f) { renderer->prepare(f); };
+    c->trim = [renderer] { renderer->trim(); };
+    c->fps = m_format.rate.fps();
+    return c;
+}
+
 void Engine::applyTimeline(const Timeline& tl, bool hinted)
 {
+    if (m_own) {
+        // Own picture engine: the renderer takes every change as a new snapshot (no rebuild, playback goes on);
+        // files open lazily in the render threads, the window never waits for them
+        if (m_mode == Mode::Timeline) m_player->setTimeline(tl, m_format.rate);
+        m_lastFrame->store(std::max(0, TimelineOps::endFrame(tl) - 1));
+        const bool files = resolveFiles(tl, true);
+        if (m_renderer && !files && samePicture(m_built, tl)) {
+            m_built = tl;
+            return;
+        }
+        if (!m_renderer || !samePicture(m_built, tl)) {
+            m_renderCache->sync(tl); // queue missing clip outputs, discard outdated ones
+            Stabilizer::instance()->sync(Stabilizer::missing(tl, m_format));
+        }
+        m_built = tl;
+        const QSize output = m_previewSize;
+        if (!m_renderer) {
+            m_renderer = std::make_shared<Picture::Renderer>(pictureOnly(tl), previewOptions(output));
+            m_timelineContent = rendererContent(m_renderer, true);
+            if (m_mode == Mode::Timeline) showContent(m_timelineContent, m_position);
+            return;
+        }
+        m_renderer->update(pictureOnly(tl));
+        if (m_mode == Mode::Timeline) m_pump->refresh();
+        return;
+    }
     const Timeline picture = m_player ? pictureOnly(tl) : tl;
     if (m_player) {
         // The sound waits for the picture while its files open (otherwise new sound under the old picture)
@@ -595,6 +800,21 @@ void Engine::setMediaLengths(const QHash<QString, int>& lengths)
 
 void Engine::showTimeline(int position, bool keepSpeed)
 {
+    if (m_own) {
+        if (!m_timelineContent) return;
+        if (!keepSpeed) m_speed = 0;
+        m_mode = Mode::Timeline;
+        m_offset = 0;
+        showContent(m_timelineContent, position);
+        syncPlayer(position, true);
+        if (!m_gridRenderers.empty()) {
+            m_gridRenderers.clear(); // not shown any more: free their decoders
+            releaseFreedMemory();
+        }
+        m_sourceRenderer.reset();
+        emit modeChanged(m_mode);
+        return;
+    }
     if (!m_timeline) return;
     if (!keepSpeed) m_speed = 0;
     m_mode = Mode::Timeline;
@@ -614,8 +834,8 @@ void Engine::showTimeline(int position, bool keepSpeed)
 bool Engine::showMulticam(const Timeline& content, const QVector<MulticamAngle>& angles,
                           const MulticamGridOptions& options, int offset, int position)
 {
-    if (!m_consumer || !m_gridBuilder) return false;
-    if (m_mode == Mode::Multicam && m_grid && content == m_gridContent && angles == m_gridAngles
+    if (!m_own && (!m_consumer || !m_gridBuilder)) return false;
+    if (m_mode == Mode::Multicam && (m_own ? !m_gridRenderers.empty() : m_grid != nullptr) && content == m_gridContent && angles == m_gridAngles
         && options.columns == m_gridColumns && options.page == m_gridPage) {
         setMulticamAudio(options.activeAngle);
         if (offset != m_offset) { // another segment of the same multicam clip, slipped: same timeline frame
@@ -629,6 +849,77 @@ bool Engine::showMulticam(const Timeline& content, const QVector<MulticamAngle>&
     // One decoder per cell: their own frame threads only cost memory (each holds frames of its own) once the cells
     // keep all cores busy; a single cell decodes with all of them
     const int cells = std::min<int>(angles.size(), MulticamGrid::perPage(angles.size(), options.columns));
+    if (m_own) {
+        // Each angle's picture timeline rendered at its cell's size, tiled into the preview frame (cells have the
+        // frame's aspect ratio, an angle's own bars come along)
+        if (angles.isEmpty()) return false;
+        const int n = angles.size();
+        const int per = MulticamGrid::perPage(n, options.columns);
+        const int page = std::clamp(options.page, 0, MulticamGrid::pages(n, options.columns) - 1);
+        const QRect frame(QPoint(0, 0), m_previewSize);
+        struct Cell {
+            std::shared_ptr<Picture::Renderer> renderer;
+            QRect rect;
+        };
+        auto layout = std::make_shared<std::vector<Cell>>();
+        std::vector<std::shared_ptr<Picture::Renderer>> renderers;
+        for (int i = 0; i < per; ++i) {
+            const int angle = page * per + i;
+            if (angle >= n) break;
+            const Timeline t = Multicam::angleTimeline(content, angles[angle], TrackKind::Video);
+            if (t.video.isEmpty()) continue; // sound-only angle: its cell stays black
+            const QRect cell = MulticamGrid::cell(frame, n, i, options.columns);
+            Picture::Options o = previewOptions(cell.size());
+            o.decoderThreads = cells <= 1 ? 0 : std::max(1, QThread::idealThreadCount() / cells);
+            auto r = std::make_shared<Picture::Renderer>(t, o);
+            layout->push_back({r, cell});
+            renderers.push_back(std::move(r));
+        }
+        resolveFiles(content, false);
+        auto c = std::make_shared<Picture::Pump::Content>();
+        const QSize size = m_previewSize;
+        c->render = [layout, size](int64_t f) {
+            QImage out(size, QImage::Format_RGBA8888);
+            out.fill(Qt::black);
+            for (const Cell& cell : *layout) {
+                const Picture::Frame fr = cell.renderer->render(f);
+                if (fr.isNull()) continue;
+                const int w = std::min(fr.width(), cell.rect.width()), h = std::min(fr.height(), cell.rect.height());
+                for (int y = 0; y < h; ++y)
+                    std::memcpy(out.scanLine(cell.rect.y() + y) + size_t(cell.rect.x()) * 4,
+                                fr.bits() + size_t(y) * fr.stride(), size_t(w) * 4);
+            }
+            return out;
+        };
+        c->last = [] { return int64_t(-1); }; // no end of its own: the window moves on to the next segment
+        c->direction = [layout](int dir) {
+            for (const Cell& cell : *layout) cell.renderer->setDirection(dir);
+        };
+        c->prepare = [layout](int64_t f) {
+            for (const Cell& cell : *layout) cell.renderer->prepare(f);
+        };
+        c->trim = [layout] {
+            for (const Cell& cell : *layout) cell.renderer->trim();
+        };
+        c->fps = m_format.rate.fps();
+        // Building took a while and the old grid played on meanwhile: go on from there, not from `position`
+        if (m_speed != 0.0 && m_mode == Mode::Multicam) position = m_position;
+        m_gridRenderers = std::move(renderers);
+        m_sourceRenderer.reset();
+        m_gridContent = content;
+        m_gridAngles = angles;
+        m_gridColumns = options.columns;
+        m_gridPage = options.page;
+        m_offset = offset;
+        const bool changed = m_mode != Mode::Multicam;
+        m_mode = Mode::Multicam;
+        m_gridSoundAngle = options.activeAngle;
+        showContent(c, position);
+        releaseFreedMemory(); // the old grid's decoders and frames
+        syncPlayer(position, true);
+        if (changed) emit modeChanged(m_mode);
+        return true;
+    }
     m_gridBuilder->setDecoderThreads(cells <= 1 ? 0 : std::max(1, QThread::idealThreadCount() / cells));
     auto hooks = std::make_unique<MulticamGridHooks>();
     auto grid = m_gridBuilder->buildMulticamGrid(content, angles, options, hooks.get());
@@ -664,6 +955,37 @@ void Engine::setMulticamAudio(int angle)
 
 void Engine::showSource(const QString& path, int position)
 {
+    if (m_own) {
+        const MediaInfo info = probe(m_format, path);
+        if (!info.hasVideo && !info.hasAudio) return;
+        m_sourceLength = std::max(1, info.length);
+        Timeline picture;
+        picture.video.resize(1);
+        Clip c;
+        c.id = 1;
+        c.mediaPath = path;
+        c.out = m_sourceLength - 1;
+        if (info.hasVideo) picture.video[0].clips << c;
+        resolveFiles(picture, false);
+        const QSize output = m_previewSize;
+        m_sourceRenderer = std::make_shared<Picture::Renderer>(picture, previewOptions(output));
+        m_sourcePath = path;
+        m_speed = 0;
+        m_mode = Mode::Source;
+        m_offset = 0;
+        m_sourceSound = Timeline{}; // the sound of the original file, stream 0
+        m_sourceSound.audio.resize(1);
+        m_sourceSound.audio[0].kind = TrackKind::Audio;
+        m_sourceSound.audio[0].clips << c;
+        showContent(rendererContent(m_sourceRenderer, false), std::max(0, position));
+        syncPlayer(std::max(0, position), true);
+        if (!m_gridRenderers.empty()) {
+            m_gridRenderers.clear();
+            releaseFreedMemory();
+        }
+        emit modeChanged(m_mode);
+        return;
+    }
     auto p = m_factory->open(m_proxies->resolve(path));
     if (!p->is_valid()) return;
     m_consumer->stop();
@@ -685,6 +1007,36 @@ void Engine::showSource(const QString& path, int position)
     connectProducer(m_source.get(), std::max(0, position));
     syncPlayer(std::max(0, position), true);
     emit modeChanged(m_mode);
+}
+
+bool Engine::connected() const
+{
+    if (!m_own) return m_current != nullptr;
+    switch (m_mode) {
+    case Mode::Timeline: return m_timelineContent != nullptr;
+    case Mode::Source: return m_sourceRenderer != nullptr;
+    case Mode::Multicam: return true;
+    }
+    return false;
+}
+
+void Engine::showContent(std::shared_ptr<const Picture::Pump::Content> content, int position)
+{
+    ++m_seekEpoch;
+    m_seekTarget = -1;
+    m_pump->setContent(std::move(content), std::max(0, position - m_offset), m_speed);
+    m_position = position;
+    emit positionChanged(position);
+    emit speedChanged(m_speed);
+}
+
+void Engine::onPumpShown(const QImage& image, int64_t position, double speed)
+{
+    if (m_player && speed != 0.0) m_player->release(); // the picture is there: the sound may start
+    if (!image.isNull()) emit frameReady(image);       // queued -> UI thread
+    const int shown = int(position) + m_offset;        // timeline frame
+    if (speed != 0.0 && shown != m_position.exchange(shown)) emit framePosition(shown, m_seekEpoch);
+    if (speed != 0.0 && m_mode == Mode::Timeline) emitLevels();
 }
 
 void Engine::connectProducer(Mlt::Producer* producer, int position)
@@ -845,8 +1197,9 @@ void Engine::setPreviewFullSize(bool full)
 {
     if (full == m_previewFull) return;
     m_previewFull = full;
-    const QSize fit = full ? m_format.size() : m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
-    m_previewSize = QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
+    m_previewSize = previewSizeOf(m_format, full);
+    if (m_renderer) m_renderer->setOutputSize(m_previewSize);
+    if (m_sourceRenderer) m_sourceRenderer->setOutputSize(m_previewSize);
     if (m_consumer && !qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW")) {
         m_consumer->set("width", m_previewSize.width());
         m_consumer->set("height", m_previewSize.height());
@@ -856,6 +1209,10 @@ void Engine::setPreviewFullSize(bool full)
 
 void Engine::refresh()
 {
+    if (m_own) {
+        if (m_pump) m_pump->refresh();
+        return;
+    }
     if (m_consumer) m_consumer->set("refresh", 1);
 }
 
@@ -867,7 +1224,9 @@ int Engine::lastFrame() const
 {
     switch (m_mode) {
     case Mode::Timeline: return TimelineOps::endFrame(m_built) - 1;
-    case Mode::Source: return m_source ? m_source->get_length() - 1 : -1;
+    case Mode::Source:
+        if (m_own) return m_sourceRenderer ? m_sourceLength - 1 : -1;
+        return m_source ? m_source->get_length() - 1 : -1;
     case Mode::Multicam: break;
     }
     return INT_MAX;
@@ -883,12 +1242,12 @@ bool Engine::atEnd(double speed) const
 // playing, and the next rebuild (an edit, an import) played on by itself (user report 2026-10-24). Stop for real.
 void Engine::stopAtEnd()
 {
-    if (m_speed != 0.0 && m_current && atEnd(m_speed)) pause();
+    if (m_speed != 0.0 && connected() && atEnd(m_speed)) pause();
 }
 
 void Engine::setSpeed(double speed)
 {
-    if (!m_current) return;
+    if (!connected()) return;
     if (speed != 0.0 && m_speed == 0.0 && atEnd(speed)) {
         // Play at the end starts from the front (Premiere, Final Cut); backwards at the start there is nothing
         if (speed < 0 || lastFrame() <= 0) return;
@@ -897,6 +1256,24 @@ void Engine::setSpeed(double speed)
     const bool wasPlaying = m_speed != 0.0;
     const double before = m_speed;
     m_speed = speed;
+    if (m_own) {
+        // The pump goes on from the shown frame first (nothing from before is shown after this), then the sound
+        const int at = std::max(0, m_position - m_offset);
+        if (speed == 0.0) {
+            m_player->pause();
+            m_pump->setSpeed(0, at); // stay exactly on the shown frame
+        } else if (wasPlaying && (before > 0) == (speed > 0)) {
+            m_pump->setSpeed(speed, at);
+            m_player->play(m_player->position(), speed); // faster/slower from where the sound is
+        } else {
+            if (wasPlaying) ++m_seekEpoch; // turning around: positions on their way lie the other way
+            m_pump->setSpeed(speed, at);
+            m_player->play(soundStart(at, speed), speed);
+        }
+        applyAudioState();
+        emit speedChanged(speed);
+        return;
+    }
     m_current->set_speed(speed);
     if (m_player) {
         // Own audio engine: the device stays open, the player fades. The picture waits for the sound's clock.
@@ -939,10 +1316,26 @@ void Engine::setSpeed(double speed)
 
 void Engine::seek(int frame)
 {
-    if (!m_current) return;
+    if (!connected()) return;
     frame = std::max(0, frame);
     const int at = std::max(0, frame - m_offset); // frame of the producer (multicam grid: of the sequence)
     const bool playing = m_speed != 0.0;
+    if (m_own) {
+        ++m_seekEpoch;
+        m_pump->seek(at); // first: no frame from before the jump is shown after this
+        if (playing) {
+            // The next seek within moments: the playhead is being dragged -> silent until it rests
+            if (m_lastSeek.isValid() && m_lastSeek.elapsed() < 150) {
+                m_player->setMuted(true);
+                m_seekRelease->start();
+            }
+            m_player->play(soundStart(at, m_speed), m_speed);
+        }
+        m_lastSeek.start();
+        m_position = frame;
+        emit positionChanged(frame);
+        return;
+    }
     // During playback already on the way to this frame: do not discard buffers and decode again
     if (playing && m_seekTarget == at) return;
     ++m_seekEpoch;

@@ -5,6 +5,7 @@
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
+#include "engine/picture/Pump.h"
 
 #include <QElapsedTimer>
 #include <QHash>
@@ -42,6 +43,10 @@ struct MulticamGridHooks;
 struct MulticamGridOptions;
 struct SharedLoudness;
 struct SeekFade;
+namespace Picture {
+class Renderer;
+struct Options;
+} // namespace Picture
 
 // Loudness meter (ITU-R BS.1770) of the preview: measured at the master, only during playback at normal speed
 struct LoudnessReading {
@@ -203,6 +208,17 @@ private:
     void finishOpening(quint64 id);
     void stopOpening(); // cancels and waits (before the builder goes away)
     void emitLevels();
+    // Own picture engine: the pump shows `content` from `position` (Timeline/Source/Multicam), frames come to
+    // onPumpShown (pump thread)
+    bool connected() const;
+    void showContent(std::shared_ptr<const Picture::Pump::Content> content, int position);
+    void onPumpShown(const QImage& image, int64_t position, double speed);
+    Picture::Options previewOptions(const QSize& output) const;
+    std::shared_ptr<const Picture::Pump::Content> rendererContent(std::shared_ptr<Picture::Renderer> renderer, bool timeline);
+    // Proxy and render-cache files of the shown timeline, resolved on the UI thread (the renderers ask from theirs);
+    // true = something changed; timeline = the render cache's files too (else only proxies are added)
+    bool resolveFiles(const Timeline& tl, bool timeline);
+    QImage ownStill(const Timeline& tl, int position, bool transparent);
     // Own audio engine: the clock in frames of the connected producer, where playback of `frame` (producer frame)
     // starts in samples, and what the player plays in the current mode (positions = producer frames)
     double clockFrames() const;
@@ -273,6 +289,19 @@ private:
     std::unique_ptr<PreviewConsumer> m_preview;
     Timeline m_sourceSound;  // source view: the file as a timeline
     int m_gridSoundAngle = 0; // multicam grid: whose sound plays
+
+    // Own picture engine (Picture::ownPicture() with the own audio engine; SCHNEIDI_PICTURE=mlt = the MLT consumer
+    // above): the pump renders ahead and shows by the sound clock, the renderers evaluate the model directly
+    bool m_own = false;
+    std::unique_ptr<Picture::Pump> m_pump;
+    std::shared_ptr<Picture::Renderer> m_renderer;       // timeline
+    std::shared_ptr<Picture::Renderer> m_sourceRenderer; // source view
+    std::vector<std::shared_ptr<Picture::Renderer>> m_gridRenderers; // multicam cells of the shown page
+    std::shared_ptr<const Picture::Pump::Content> m_timelineContent;        // Pump::Content of m_renderer
+    int m_sourceLength = 0;
+    std::shared_ptr<std::atomic<int64_t>> m_lastFrame = std::make_shared<std::atomic<int64_t>>(0);
+    struct Resolved;
+    std::shared_ptr<Resolved> m_resolved;
 
     friend struct EngineCallbacks;
 };

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/RenderCache.h"
+#include "engine/picture/Renderer.h"
 
 #include "core/I18n.h"
 #include "core/Keyframes.h"
@@ -76,19 +77,6 @@ bool hasAlpha(const uint8_t* rgba, int w, int h)
     const size_t n = size_t(w) * h;
     for (size_t i = 0; i < n; ++i)
         if (rgba[i * 4 + 3] < 255) return true;
-    return false;
-}
-
-// Transparent? Cropping/opacity/transform for sure (even if only a part is animated), otherwise samples
-// (aspect ratio different from the project, Green Screen …)
-bool needsAlpha(const Clip& c, Mlt::Producer& p, int len, int w, int h)
-{
-    if (Keys::hasCrop(c) || Keys::hasOpacity(c) || Keys::hasTransform(c)) return true;
-    for (int pos : {0, len / 2, len - 1}) {
-        std::unique_ptr<Mlt::Frame> f;
-        const uint8_t* d = frameImage(p, std::max(0, pos), w, h, f);
-        if (d && hasAlpha(d, w, h)) return true;
-    }
     return false;
 }
 
@@ -435,12 +423,44 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
     const int len = c.length();
     if (len <= 0) return fail({});
 
-    auto profile = makeProfile(format);
-    TimelineBuilder builder(*profile);
-    std::unique_ptr<Mlt::Tractor> tractor = builder.buildClipOutput(c);
-    if (!tractor || !tractor->is_valid()) return fail(T("Render-Cache: Clip konnte nicht geöffnet werden."));
-    const int w = profile->width(), h = profile->height();
-    const bool alpha = needsAlpha(c, *tractor, len, w, h);
+    // The clip's output alone on a transparent frame (frame 0 = clip start): own picture engine (default) or the
+    // MLT tractor (SCHNEIDI_PICTURE=mlt)
+    const int w = format.width, h = format.height;
+    std::unique_ptr<Picture::Renderer> renderer;
+    std::unique_ptr<Mlt::Profile> profile;
+    std::unique_ptr<TimelineBuilder> builder;
+    std::unique_ptr<Mlt::Tractor> tractor;
+    Picture::Frame ownFrame;
+    std::unique_ptr<Mlt::Frame> mltFrame;
+    std::function<const uint8_t*(int)> frameAt;
+    if (Picture::ownPicture()) {
+        Timeline one;
+        one.video.resize(1);
+        one.video[0].clips << c;
+        Picture::Options o;
+        o.format = format;
+        o.mode = Picture::Mode::Export;
+        o.transparent = true;
+        o.subtitles = false;
+        renderer = std::make_unique<Picture::Renderer>(one, o);
+        frameAt = [&](int i) -> const uint8_t* {
+            ownFrame = renderer->render(i);
+            return ownFrame.isNull() || ownFrame.width() != w || ownFrame.height() != h ? nullptr : ownFrame.bits();
+        };
+    } else {
+        profile = makeProfile(format);
+        builder = std::make_unique<TimelineBuilder>(*profile);
+        tractor = builder->buildClipOutput(c);
+        if (!tractor || !tractor->is_valid()) return fail(T("Render-Cache: Clip konnte nicht geöffnet werden."));
+        frameAt = [&](int i) { return frameImage(*tractor, i, w, h, mltFrame); };
+    }
+    // Transparent? Cropping/opacity/transform for sure, otherwise samples (other aspect ratio, green screen …)
+    bool alpha = Keys::hasCrop(c) || Keys::hasOpacity(c) || Keys::hasTransform(c);
+    for (int pos : {0, len / 2, len - 1}) {
+        if (alpha) break;
+        const uint8_t* d = frameAt(std::max(0, pos));
+        alpha = d && hasAlpha(d, w, h);
+    }
 
     QString ffmpeg = Bundle::tool("ffmpeg");
     if (!QFileInfo(ffmpeg).isAbsolute()) return fail(T("ffmpeg wurde nicht gefunden. Bitte ffmpeg installieren."));
@@ -475,8 +495,7 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
     for (int i = 0; i < len; ++i) {
         while (paused && paused() && !cancelled()) QThread::msleep(100);
         if (cancelled()) return abort();
-        std::unique_ptr<Mlt::Frame> f;
-        const uint8_t* d = frameImage(*tractor, i, w, h, f);
+        const uint8_t* d = frameAt(i);
         if (!d) {
             abort();
             return fail(T("Render-Cache: Bild %1 ließ sich nicht rendern.").arg(i));

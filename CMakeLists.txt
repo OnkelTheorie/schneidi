@@ -202,6 +202,8 @@ add_library(schneidi_lib STATIC
     src/engine/video/Convert.h
     src/engine/picture/Renderer.h src/engine/picture/Renderer.cpp
     src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
+    src/engine/picture/Pump.h     src/engine/picture/Pump.cpp
+    src/engine/picture/MediaStills.h src/engine/picture/MediaStills.cpp
     src/engine/video/Still.h      src/engine/video/Still.cpp
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
