@@ -197,6 +197,9 @@ add_library(schneidi_lib STATIC
     src/engine/GradedThumbs.h     src/engine/GradedThumbs.cpp
     src/engine/BlurFill.h         src/engine/BlurFill.cpp
     src/engine/video/Compose.h    src/engine/video/Compose.cpp
+    src/engine/video/Convert.h
+    src/engine/picture/Renderer.h src/engine/picture/Renderer.cpp
+    src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
     src/engine/video/Still.h      src/engine/video/Still.cpp
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp

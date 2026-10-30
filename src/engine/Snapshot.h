@@ -19,6 +19,9 @@ class Profile;
 } // namespace Mlt
 class ProducerFactory;
 class TimelineBuilder;
+namespace Picture {
+class Renderer;
+}
 
 namespace Snapshot {
 
@@ -39,6 +42,7 @@ private:
     std::unique_ptr<ProducerFactory> m_factory;
     std::unique_ptr<TimelineBuilder> m_builder;
     std::unique_ptr<Mlt::Producer> m_producer;
+    std::unique_ptr<Picture::Renderer> m_picture; // SCHNEIDI_PICTURE=own: the own picture engine instead of MLT
 };
 
 // Frame `frame` (in the rate of `format`) of a media file, fitted into the project aspect ratio
