@@ -533,8 +533,21 @@ struct Reader::Impl {
     bool needsSeek(int64_t position) const
     {
         if (validFrom == kNothing || position < validFrom) return true;
+        if (position <= windowEnd) return false; // a backward window being decoded up to there
         return !ended && position - frontier() >= kSeekThreshold;
     }
+
+    // Where decoding after a seek for `position` keeps pictures from: the position itself, or with a large window
+    // behind (setBehind: playing backwards) and a request before the decoded ones that many pictures earlier, so the
+    // next requests going back are answered without seeking again
+    int64_t seekStart(int64_t position) const
+    {
+        constexpr int kWindowFrom = 16;
+        const bool back = validFrom == kNothing || position < validFrom;
+        if (opt.behind <= kWindowFrom || !back) return position;
+        return std::max<int64_t>(0, position - (opt.behind - 2));
+    }
+    int64_t windowEnd = -1; // the request a backward window was started for (seekStart)
 
     bool wantAhead() const
     {
@@ -812,7 +825,9 @@ struct Reader::Impl {
                 continue;
             }
             if (r && needsSeek(r->position)) {
-                seek(lock, r->position);
+                const int64_t from = seekStart(r->position);
+                seek(lock, from);
+                windowEnd = from < r->position ? r->position : -1;
                 continue;
             }
             // Nothing asked, or the downloads lag behind: wait (the finisher wakes us). Long unused: close.

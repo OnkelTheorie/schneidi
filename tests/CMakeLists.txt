@@ -84,6 +84,7 @@ schneidi_test(test_compose) # own compositing (qtblend replacement) against the 
 schneidi_test(test_render_quality) # own services measured on pixels: title outline alignment, still memory, compose downscale
 schneidi_test(test_crop)
 schneidi_test(test_picture_parity)
+schneidi_test(test_picture_pump) # preview frame pump: sync under load, catch-up, seek, live change, backward
 schneidi_test(test_transition_size)
 schneidi_test(test_hw_encoders)
 schneidi_test(test_export_opus)
