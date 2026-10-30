@@ -78,13 +78,13 @@ const QByteArray kKdenliveLegacy = R"(<effect tag="frei0r.glow" id="Alt" kdenliv
 
 const QByteArray kKdenliveGroup = R"(<?xml version="1.0"?>
 <effectgroup id="Shut-off" parentIn="1">
-    <effect id="frei0r.levels">
+    <effect id="frei0r.alpha0ps_alpha0ps">
         <property name="kdenlive:collapsed">1</property>
-        <property name="Gamma">1=0.25;10=0.2455;12=0.485</property>
-        <property name="Input white level">0.8</property>
+        <property name="Threshold">1=0.25;10=0.2455;12=0.485</property>
+        <property name="Shrink/Grow/Blur amount">0.8</property>
     </effect>
     <effect id="boxblur"><property name="blur">1=0;10=15</property></effect>
-    <effect id="frei0r.colortap"><property name="Table">sepia</property></effect>
+    <effect id="frei0r.cairogradient"><property name="pattern">gradient_radial</property></effect>
     <effect id="qtblend"><property name="rect">1=0 0 1920 1080 1.000000;10=-1527 -861 4974 2798 1.000000</property></effect>
     <description>CRT monitor shut off effect</description>
 </effectgroup>
@@ -104,9 +104,12 @@ const QByteArray kShotcutSet = R"(<?xml version="1.0" encoding="utf-8"?>
       <property name="0">0.5</property>
     </filter>
     <filter id="filter2">
-      <property name="mlt_service">frei0r.three_point_balance</property>
-      <property name="0">0xff000080</property>
-      <property name="3">1</property>
+      <property name="mlt_service">frei0r.cairogradient</property>
+      <property name="1">0xff000080</property>
+    </filter>
+    <filter id="filter3">
+      <property name="mlt_service">frei0r.alpha0ps_alpha0ps</property>
+      <property name="5">1</property>
     </filter>
   </producer>
 </mlt>
@@ -144,8 +147,6 @@ int main(int argc, char** argv)
     Check::initApp("presets");
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
-    if (!EffectRegistry::find("frei0r.glow") || !EffectRegistry::find("frei0r.levels"))
-        return Check::skip("frei0r plugins not installed");
 
     // ---- Kdenlive custom effect: <parameter value> is the MLT value (factor only for files before 19.04) ----
     {
@@ -166,15 +167,20 @@ int main(int argc, char** argv)
         if (const EffectInstance* e = effect(def, "frei0r.glow"); CHECK(e)) CHECK(qAbs(num(*e, "0") - 0.01) < 1e-9);
     }
 
-    // ---- Old frei0r parameter names (MLT param_name_map, still used by Kdenlive's lenscorrection/pixeliz0r) ----
-    if (EffectRegistry::find("frei0r.lenscorrection")) {
+    // ---- Old plugin and parameter names: frei0r.alpha0ps (before frei0r 1.7 split it) and the old name of its
+    // parameter 4 in older Kdenlive files ----
+    {
         const Presets::Mapped m = Presets::map(Presets::parse(R"(<effectgroup id="g" parentIn="0">
-            <effect id="frei0r.lenscorrection"><property name="xcenter">0.3</property>
-                <property name="brightness">0=0.1;10=0.6</property></effect>
+            <effect id="frei0r.alpha0ps"><property name="Threshold">0.3</property>
+                <property name="Shrink/grow amount">0=0.1;10=0.6</property></effect>
             <effect id="frei0r.glow"><property name="Blur">0.2</property></effect>
         </effectgroup>)", "g.xml"));
-        if (const EffectInstance* e = effect(m, "frei0r.lenscorrection"); CHECK(e)) CHECK(qAbs(num(*e, "0") - 0.3) < 1e-9);
-        CHECK(m.keys.value(animOf("frei0r.lenscorrection", "4")).size() == 2);
+        CHECK(m.skipped.isEmpty());
+        if (const EffectInstance* e = effect(m, "frei0r.alpha0ps_alpha0ps"); CHECK(e)) CHECK(qAbs(num(*e, "3") - 0.3) < 1e-9);
+        CHECK(m.keys.value(animOf("frei0r.alpha0ps_alpha0ps", "4")).size() == 2);
+        CHECK_EQ(Presets::shotcutService("alphaChannelAdjust"), QString("frei0r.alpha0ps"));
+        const Presets::Mapped s = Presets::map(Presets::parse("2=0.3\n", "Schrumpfen", "alphaChannelAdjust"));
+        if (const EffectInstance* e = effect(s, "frei0r.alpha0ps_alpha0ps"); CHECK(e)) CHECK(qAbs(num(*e, "2") - 0.3) < 1e-9);
     }
 
     // ---- Kdenlive effect group: names instead of indexes, keyframes -> first value, unknown filter skipped ----
@@ -184,15 +190,15 @@ int main(int argc, char** argv)
         CHECK_EQ(p.name, QString("Shut-off"));
         CHECK_EQ(int(p.filters.size()), 4);
         const Presets::Mapped m = Presets::map(p);
-        if (const EffectInstance* e = effect(m, "frei0r.levels"); CHECK(e)) {
-            CHECK(qAbs(num(*e, "3") - 0.25) < 1e-9); // Gamma
-            CHECK(qAbs(num(*e, "2") - 0.8) < 1e-9);  // Input white level
+        if (const EffectInstance* e = effect(m, "frei0r.alpha0ps_alpha0ps"); CHECK(e)) {
+            CHECK(qAbs(num(*e, "3") - 0.25) < 1e-9); // Threshold
+            CHECK(qAbs(num(*e, "4") - 0.8) < 1e-9);  // Shrink/Grow/Blur amount
         }
-        if (const EffectInstance* e = effect(m, "frei0r.colortap"); CHECK(e))
-            CHECK_EQ(e->params.value("0").toString(), QString("sepia"));
+        if (const EffectInstance* e = effect(m, "frei0r.cairogradient"); CHECK(e))
+            CHECK_EQ(e->params.value("0").toString(), QString("gradient_radial"));
         CHECK_EQ(m.skipped, QStringList{"qtblend"});
-        CHECK(!m.keyframes); // Gamma is a number: keyframes taken over
-        const AnimParam gamma = animOf("frei0r.levels", "3");
+        CHECK(!m.keyframes); // Threshold is a number: keyframes taken over
+        const AnimParam gamma = animOf("frei0r.alpha0ps_alpha0ps", "3");
         CHECK(m.keys.contains(AnimParam::FxBlur)); // boxblur -> Gaussian blur
         if (CHECK(m.keys.contains(gamma) && m.keys.size() == 2)) {
             const QVector<Presets::AnimKey>& k = m.keys[gamma];
@@ -246,20 +252,24 @@ int main(int argc, char** argv)
         CHECK_EQ(p.source, QString("Shotcut"));
         const Presets::Mapped m = Presets::map(p);
         if (const EffectInstance* e = effect(m, "frei0r.glow"); CHECK(e)) CHECK(qAbs(num(*e, "0") - 0.5) < 1e-9);
-        if (const EffectInstance* e = effect(m, "frei0r.three_point_balance"); CHECK(e)) {
-            const QColor c = e->params.value("0").value<QColor>();
+        if (const EffectInstance* e = effect(m, "frei0r.cairogradient"); CHECK(e)) {
+            const QColor c = e->params.value("1").value<QColor>();
             CHECK(c.red() == 255 && c.green() == 0 && c.blue() == 0 && c.alpha() == 0x80);
-            CHECK(e->params.value("3").toBool());
         }
+        if (const EffectInstance* e = effect(m, "frei0r.alpha0ps_alpha0ps"); CHECK(e)) CHECK(e->params.value("5").toBool());
         CHECK_EQ(m.skipped, QStringList{"mask_start"});
     }
 
     // ---- Shotcut filter preset: "property=value", filter = folder name (QML objectName) ----
     {
-        const Presets::Preset p = Presets::parse("0=0.3\n1=1\nshotcut:animIn=00:00:00.000\n", "Weich", "blur_exponential");
+        const Presets::Preset p = Presets::parse("0=0.3\n1=1\nshotcut:animIn=00:00:00.000\n", "Grob", "halftone");
         CHECK(p.error.isEmpty());
         const Presets::Mapped m = Presets::map(p);
-        if (const EffectInstance* e = effect(m, "frei0r.IIRblur"); CHECK(e)) CHECK(qAbs(num(*e, "0") - 0.3) < 1e-9);
+        if (const EffectInstance* e = effect(m, "frei0r.colorhalftone"); CHECK(e))
+            CHECK(qAbs(num(*e, "0") - 0.3) < 1e-9 && qAbs(num(*e, "1") - 1.0) < 1e-9);
+        // A frei0r plugin schneidi has no effect for: named as skipped
+        CHECK_EQ(Presets::map(Presets::parse("0=0.3\n", "Weich", "blur_exponential")).skipped,
+                 QStringList{"frei0r.IIRblur"});
         CHECK_EQ(Presets::shotcutService("glow"), QString("frei0r.glow"));
         CHECK_EQ(Presets::shotcutService("frei0r.glow"), QString("frei0r.glow"));
         CHECK(Presets::shotcutService("gibtsnicht").isEmpty());
@@ -273,8 +283,8 @@ int main(int argc, char** argv)
         const Presets::Mapped a50 = Presets::map(Presets::parse("0=00:00:00.000=0.2;00:00:01.000=0.9\n", "a", "glow"), 50);
         CHECK(a50.keys.value(glow).value(1).frame == 50);
         // Animated checkbox: cannot be animated -> first value, flagged
-        const Presets::Mapped b = Presets::map(Presets::parse("0=0=1;10=0\n", "b", "flippo"));
-        if (const EffectInstance* e = effect(b, "frei0r.flippo"); CHECK(e)) CHECK(e->params.value("0").toBool());
+        const Presets::Mapped b = Presets::map(Presets::parse("5=0=1;10=0\n", "b", "alpha0ps_alpha0ps"));
+        if (const EffectInstance* e = effect(b, "frei0r.alpha0ps_alpha0ps"); CHECK(e)) CHECK(e->params.value("5").toBool());
         CHECK(b.keyframes && b.keys.isEmpty());
     }
 
@@ -396,9 +406,9 @@ int main(int argc, char** argv)
     const int steps = project.undoStack()->count();
     editor.addEffect({1}, Presets::Prefix + QDir(dir).filePath("Kdenlive/shut_off.xml"));
     CHECK_EQ(project.undoStack()->count(), steps + 1);
-    CHECK(EffectRegistry::has(clip(), "frei0r.levels") && EffectRegistry::has(clip(), "frei0r.colortap"));
+    CHECK(EffectRegistry::has(clip(), "frei0r.alpha0ps_alpha0ps") && EffectRegistry::has(clip(), "frei0r.cairogradient"));
     CHECK(EffectRegistry::has(clip(), "blur"));
-    const AnimParam gamma = animOf("frei0r.levels", "3");
+    const AnimParam gamma = animOf("frei0r.alpha0ps_alpha0ps", "3");
     if (CHECK(Keys::animated(clip(), gamma))) { // keyframes in clip frames
         CHECK(qAbs(Keys::valueAt(clip(), gamma, 0) - 0.25) < 1e-9);
         CHECK(qAbs(Keys::valueAt(clip(), gamma, 11) - 0.485) < 1e-9);
@@ -466,16 +476,17 @@ int main(int argc, char** argv)
         c.in = 10;
         c.out = 59; // 50 frames
         CHECK(EffectRegistry::add(c, "frei0r.glow"));
-        CHECK(EffectRegistry::add(c, "frei0r.flippo"));
-        CHECK(EffectRegistry::add(c, "frei0r.colortap"));
+        CHECK(EffectRegistry::add(c, "frei0r.alpha0ps_alpha0ps"));
+        CHECK(EffectRegistry::add(c, "frei0r.cairogradient"));
         CHECK(EffectRegistry::add(c, "chromakey"));
         CHECK(EffectRegistry::add(c, "blur"));
         CHECK(EffectRegistry::add(c, "color"));
         CHECK(EffectRegistry::add(c, "grade"));
         c.effects << EffectInstance{"frei0r.gibtsnicht", {{"0", 0.5}}, true};
-        EffectRegistry::instance(c, "frei0r.flippo")->params["0"] = true;
-        EffectRegistry::instance(c, "frei0r.flippo")->enabled = false;
-        EffectRegistry::instance(c, "frei0r.colortap")->params["0"] = "xray";
+        EffectRegistry::instance(c, "frei0r.alpha0ps_alpha0ps")->params["5"] = true;
+        EffectRegistry::instance(c, "frei0r.alpha0ps_alpha0ps")->enabled = false;
+        EffectRegistry::instance(c, "frei0r.cairogradient")->params["0"] = "gradient_radial";
+        EffectRegistry::instance(c, "frei0r.cairogradient")->params["1"] = QColor(10, 20, 30);
         EffectRegistry::instance(c, "chromakey")->params["color"] = QColor(1, 2, 3, 200);
         EffectRegistry::instance(c, "chromakey")->params["distance"] = 0.42;
         EffectRegistry::instance(c, "color")->params["brightness"] = 12.5;
@@ -512,7 +523,8 @@ int main(int argc, char** argv)
         QStringList ids;
         for (const EffectInstance& e : t.effects) ids << e.effectId;
         // Written in render order: the Green Screen key (a fixed stage) first, then the clip's order
-        CHECK_EQ(ids, (QStringList{"chromakey", "frei0r.glow", "frei0r.flippo", "frei0r.colortap", "blur", "color"}));
+        CHECK_EQ(ids, (QStringList{"chromakey", "frei0r.glow", "frei0r.alpha0ps_alpha0ps", "frei0r.cairogradient", "blur",
+                                   "color"}));
         for (const EffectInstance& e : t.effects) {
             const EffectInstance* o = EffectRegistry::instance(c, e.effectId);
             if (!CHECK(o)) continue;
@@ -526,7 +538,7 @@ int main(int argc, char** argv)
                     CHECK(e.params.value(it.key()) == it.value());
             }
         }
-        CHECK(!EffectRegistry::instance(t, "frei0r.flippo")->enabled);
+        CHECK(!EffectRegistry::instance(t, "frei0r.alpha0ps_alpha0ps")->enabled);
         double worst = 0;
         for (int f = 0; f < 50; ++f) worst = std::max(worst, std::abs(Keys::valueAt(t, glow, f) - Keys::valueAt(c, glow, f)));
         CHECK(worst < 1e-6); // eases survive as MLT sinusoidal types
@@ -588,16 +600,21 @@ int main(int argc, char** argv)
         const Presets::Mapped off = Presets::map(Presets::parse(Presets::toXml(c, "x"), "x.xml"));
         if (const EffectInstance* e = effect(off, "frei0r.glow"); CHECK(e)) CHECK(!e->enabled);
     }
-    // Plugins whose Kdenlive file uses indexes / old names keep them
-    if (EffectRegistry::find("frei0r.rgbsplit0r") && EffectRegistry::find("frei0r.lenscorrection")) {
+    // Plugins whose Kdenlive file uses indexes keep them, named ones get Kdenlive's names; a plugin Kdenlive hides is
+    // written like schneidi's own effects
+    {
         Clip c;
         c.out = 9;
-        CHECK(EffectRegistry::add(c, "frei0r.rgbsplit0r"));
-        CHECK(EffectRegistry::add(c, "frei0r.lenscorrection"));
+        CHECK(EffectRegistry::add(c, "frei0r.cairogradient"));
+        CHECK(EffectRegistry::add(c, "frei0r.alpha0ps_alpha0ps"));
+        CHECK(EffectRegistry::add(c, "frei0r.colorhalftone"));
         const QByteArray xml = Presets::toXml(c, "Namen");
+        if (qEnvironmentVariableIsSet("PRESET_XML")) qInfo("%s", xml.constData());
         CHECK(kdenliveAccepts(xml));
-        CHECK(xml.contains(R"(<property name="1">)") && xml.contains(R"(<property name="xcenter">)"));
-        CHECK(xml.contains(R"(<property name="brightness">)"));
+        CHECK(xml.contains(R"(<property name="1">)") && xml.contains(R"(<property name="Threshold">)"));
+        CHECK(xml.contains(R"(<schneidi-effect id="frei0r.colorhalftone">)"));
+        const Presets::Mapped back = Presets::map(Presets::parse(xml, "Namen.xml"));
+        CHECK(back.skipped.isEmpty() && back.effects.size() == 3);
     }
 
     QDir(EffectFolders::root()).removeRecursively();
