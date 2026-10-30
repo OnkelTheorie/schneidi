@@ -1,0 +1,373 @@
+# FFmpeg components of the bundled packages (AppImage, Windows program folder, Docker image): what schneidi uses.
+# Read by packaging/linux/build-ffmpeg-lgpl.sh (Linux and MSYS2): FFmpeg is configured with --disable-everything and
+# one --enable-<type>=<name> per line. Names as `./configure --list-<type>s` prints them; shell patterns (pcm_*) work.
+# A name configure does not know stops the build. Components whose library is missing on a platform (VAAPI on
+# Windows, D3D11VA on Linux, an encoder library) are left out by configure itself.
+#
+# Rules when changing it:
+# - Import: keep every decoder/demuxer a camera, phone, screen or game recorder, image or audio tool can write.
+#   Users notice a file that does not open, not a few hundred KB. tools/ffmpeg-import-check.sh compares against the
+#   full build.
+# - Export: every encoder/muxer of core/RenderJob.cpp (render formats), engine/HardwareEncoders.cpp (hardware and
+#   GPL-free replacements, proxy encoder), engine/RenderCache.cpp, engine/Transcriber.cpp, engine/Exporter.cpp (GIF).
+# - Filters: only the bundled ffmpeg program uses them (proxies, render cache, GIF palette, hardware encoder test,
+#   SCHNEIDI_ANALYSIS=ffmpeg comparisons) plus those its command line inserts by itself (autorotate, format/rate
+#   conversion, -ss/-t). The program itself does not link libavfilter.
+
+# ---- Video decoders ----
+# today's cameras, phones, screen and game recorders, delivery codecs
+decoder h264
+decoder hevc
+decoder vvc
+decoder av1
+decoder libdav1d
+decoder vp8
+decoder vp9
+decoder libvpx_vp8
+decoder libvpx_vp9
+# intermediate / editing codecs
+decoder prores
+decoder dnxhd
+decoder cfhd
+decoder hap
+decoder dvvideo
+decoder ffv1
+decoder ffvhuff
+decoder huffyuv
+decoder utvideo
+decoder magicyuv
+decoder lagarith
+decoder fraps
+decoder fic
+decoder zmbv
+decoder tscc
+decoder tscc2
+decoder qtrle
+decoder aic
+decoder rawvideo
+decoder bitpacked
+decoder v210
+decoder v210x
+decoder v308
+decoder v408
+decoder v410
+decoder r210
+decoder r10k
+decoder y41p
+decoder yuv4
+decoder zero12v
+decoder eightbps
+# older cameras, DVDs, broadcast, web video
+decoder mpeg1video
+decoder mpeg2video
+decoder mpeg4
+decoder h261
+decoder h263
+decoder h263i
+decoder h263p
+decoder msmpeg4v1
+decoder msmpeg4v2
+decoder msmpeg4v3
+decoder wmv1
+decoder wmv2
+decoder wmv3
+decoder wmv3image
+decoder vc1
+decoder vc1image
+decoder mjpeg
+decoder mjpegb
+decoder theora
+decoder vp3
+decoder vp5
+decoder vp6
+decoder vp6a
+decoder vp6f
+decoder vp7
+decoder flv
+decoder flashsv
+decoder flashsv2
+decoder svq1
+decoder svq3
+decoder cinepak
+decoder msrle
+decoder msvideo1
+decoder rpza
+decoder smc
+decoder rv10
+decoder rv20
+decoder rv30
+decoder rv40
+decoder indeo3
+decoder indeo4
+decoder indeo5
+decoder bink
+decoder smacker
+# pictures (Qt reads them first; FFmpeg is the fallback and the image sequence path)
+decoder png
+decoder apng
+decoder jpeg2000
+decoder jpegls
+decoder webp
+decoder gif
+decoder tiff
+decoder bmp
+decoder exr
+decoder dpx
+decoder targa
+decoder ppm
+decoder pgm
+decoder pgmyuv
+decoder pbm
+decoder pam
+decoder pfm
+decoder phm
+decoder qoi
+decoder sgi
+decoder hdr
+decoder psd
+decoder dds
+decoder pcx
+decoder sunrast
+decoder xbm
+decoder xpm
+decoder xwd
+
+# ---- Audio decoders ----
+decoder aac
+decoder aac_fixed
+decoder aac_latm
+decoder mp1
+decoder mp1float
+decoder mp2
+decoder mp2float
+decoder mp3
+decoder mp3float
+decoder mp3adu
+decoder mp3adufloat
+decoder mp3on4
+decoder mp3on4float
+decoder ac3
+decoder ac3_fixed
+decoder eac3
+decoder truehd
+decoder mlp
+decoder dca
+decoder flac
+decoder alac
+decoder opus
+decoder vorbis
+decoder wavpack
+decoder ape
+decoder tta
+decoder tak
+decoder als
+decoder mpc7
+decoder mpc8
+decoder wmav1
+decoder wmav2
+decoder wmapro
+decoder wmalossless
+decoder wmavoice
+decoder amrnb
+decoder amrwb
+decoder speex
+decoder gsm
+decoder gsm_ms
+decoder g723_1
+decoder g729
+decoder qcelp
+decoder cook
+decoder ra_144
+decoder ra_288
+decoder sipr
+decoder atrac3
+decoder atrac3p
+decoder qdm2
+decoder qdmc
+decoder mace3
+decoder mace6
+decoder binkaudio_dct
+decoder binkaudio_rdft
+decoder smackaud
+decoder dsd_lsbf
+decoder dsd_msbf
+decoder dsd_lsbf_planar
+decoder dsd_msbf_planar
+decoder dst
+decoder s302m
+decoder dvaudio
+decoder comfortnoise
+decoder pcm_*
+decoder adpcm_*
+
+# ---- Encoders ----
+# render formats (core/RenderJob.cpp) and their GPL-free replacements (engine/HardwareEncoders.cpp)
+encoder libopenh264
+encoder libkvazaar
+encoder libsvtav1
+encoder libvpx_vp9
+encoder prores_ks
+encoder dnxhd
+encoder png
+encoder tiff
+encoder mjpeg
+encoder gif
+encoder aac
+encoder libmp3lame
+encoder libopus
+encoder flac
+encoder alac
+encoder pcm_s16le
+encoder pcm_s24le
+encoder pcm_s32le
+encoder pcm_f32le
+encoder pcm_s16be
+encoder pcm_s24be
+encoder pcm_s32be
+encoder pcm_f32be
+# hardware (engine/HardwareEncoders.cpp: NVENC, VAAPI, Quick Sync)
+encoder h264_nvenc
+encoder hevc_nvenc
+encoder av1_nvenc
+encoder h264_vaapi
+encoder hevc_vaapi
+encoder av1_vaapi
+encoder h264_qsv
+encoder hevc_qsv
+encoder av1_qsv
+# the ffmpeg program: `-f null` (hardware test, analyses), `-f rawvideo` (region analysis)
+encoder wrapped_avframe
+encoder rawvideo
+
+# ---- Hardware decoding (engine/video/Hardware.cpp: CUDA, VAAPI, D3D11VA, VideoToolbox) ----
+hwaccel *_nvdec
+hwaccel *_vaapi
+hwaccel *_d3d11va
+hwaccel *_d3d11va2
+hwaccel *_videotoolbox
+
+# ---- Demuxers ----
+demuxer mov
+demuxer matroska
+demuxer avi
+demuxer mpegts
+demuxer mpegtsraw
+demuxer mpegps
+demuxer mpegvideo
+demuxer flv
+demuxer live_flv
+demuxer asf
+demuxer mxf
+demuxer gxf
+demuxer lxf
+demuxer nut
+demuxer rm
+demuxer ogg
+demuxer dv
+demuxer h261
+demuxer h263
+demuxer h264
+demuxer hevc
+demuxer vvc
+demuxer m4v
+demuxer cavsvideo
+demuxer obu
+demuxer ivf
+demuxer mjpeg
+demuxer yuv4mpegpipe
+demuxer rawvideo
+demuxer bink
+demuxer smacker
+demuxer gif
+demuxer apng
+demuxer image2
+demuxer image2pipe
+demuxer image_*_pipe
+demuxer wav
+demuxer w64
+demuxer aiff
+demuxer caf
+demuxer au
+demuxer voc
+demuxer mp3
+demuxer aac
+demuxer loas
+demuxer ac3
+demuxer eac3
+demuxer dts
+demuxer dtshd
+demuxer truehd
+demuxer mlp
+demuxer flac
+demuxer wv
+demuxer ape
+demuxer tta
+demuxer tak
+demuxer mpc
+demuxer mpc8
+demuxer amr
+demuxer amrnb
+demuxer amrwb
+demuxer xwma
+demuxer dsf
+demuxer iff
+demuxer g722
+demuxer g723_1
+demuxer g729
+demuxer gsm
+demuxer pcm_*
+
+# ---- Muxers ----
+muxer mp4
+muxer mov
+muxer ipod
+muxer matroska
+muxer webm
+muxer image2
+muxer gif
+muxer mp3
+muxer ogg
+muxer opus
+muxer wav
+muxer aiff
+muxer flac
+muxer null
+muxer rawvideo
+
+# ---- Parsers and bit stream filters: all (small; smart render needs h264/hevc_mp4toannexb, muxers insert others) ----
+parser *
+bsf *
+
+# ---- Protocols: files and the pipes of the ffmpeg program (render cache input, -progress pipe:1) ----
+protocol file
+protocol pipe
+
+# ---- Filters (only the ffmpeg program; see above; buffer/buffersink are always built) ----
+filter null
+filter anull
+filter format
+filter aformat
+filter scale
+filter aresample
+filter setpts
+filter asetpts
+filter setsar
+filter setparams
+filter fps
+filter trim
+filter atrim
+filter transpose
+filter hflip
+filter vflip
+filter rotate
+filter crop
+filter split
+filter palettegen
+filter paletteuse
+filter hwupload
+filter hwdownload
+filter hwupload_cuda
+filter blackdetect
+filter freezedetect
+filter select
+filter metadata
