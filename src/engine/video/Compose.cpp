@@ -35,7 +35,8 @@ QThreadPool& pool()
     return *p;
 }
 
-// fn(first, last) for row ranges covering [0, rows); minRows per job keeps small pictures on one thread
+} // namespace
+
 void forRows(int rows, int minRows, const std::function<void(int, int)>& fn)
 {
     QThreadPool& tp = pool();
@@ -53,6 +54,8 @@ void forRows(int rows, int minRows, const std::function<void(int, int)>& fn)
     fn(0, rows / jobs);
     done.wait();
 }
+
+namespace {
 
 // ---- Pixels ----
 
@@ -732,6 +735,11 @@ Mlt::Transition blendTransition(Mlt::Profile& profile)
     Mlt::Transition transition(t);
     mlt_transition_close(t);
     return transition;
+}
+
+Affine placement(double x, double y, double w, double h, double angle, int sw, int sh, bool distort, bool rotateCenter)
+{
+    return mapping(Place{x, y, w, h, angle, 1.0}, sw, sh, distort, rotateCenter);
 }
 
 } // namespace Compose

@@ -71,6 +71,11 @@ public:
     const ProjectFormat& format() const { return m_format; }
     int fps() const { return m_format.rate.timebase(); } // timecode frames per second (29.97 -> 30)
     QSize frameSize() const { return m_format.size(); }  // project format in pixels
+    // Preview frames at the project size instead of scaled down (longer edge 960): the viewer is zoomed to 100 % or
+    // more and would otherwise show the small picture enlarged
+    void setPreviewFullSize(bool full);
+    bool previewFullSize() const { return m_previewFull; }
+    QSize previewSize() const { return m_previewSize; }
 
     // Proxy media: preview (timeline video tracks, source view) reads the proxy if present and
     // enabled; audio and export always from the original. Call updateTimeline() after changes.
@@ -259,7 +264,8 @@ private:
     QElapsedTimer m_lastSeek;  // seeks in quick succession = dragging (SeekFade::hold)
     QTimer* m_seekRelease;     // no seek for a moment: dragging ended, sound fades in
     std::atomic<int> m_seekSkipped{0};
-    QSize m_previewSize{960, 540}; // project format scaled down (longer edge 960)
+    QSize m_previewSize{960, 540}; // project format scaled down (longer edge 960), or full (m_previewFull)
+    bool m_previewFull = false;
 
     // Own audio engine (Audio::ownPath(), docs/archiv/plan-0.10-ton.md): the player plays the sound, the picture follows its
     // clock (m_preview is the consumer); the MLT graph has no sound. nullptr = sound through MLT (sdl2_audio).

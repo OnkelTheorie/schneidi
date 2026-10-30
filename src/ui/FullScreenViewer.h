@@ -20,20 +20,20 @@ public:
 
     // Full screen on `screen` (the one the main window is on), active, with the keyboard focus
     void showOn(QScreen* screen);
-    const QImage& picture() const { return m_image; }
+    const QImage& picture() const;
     QRectF pictureRect() const; // where the picture is drawn (empty without one)
 
 signals:
     void exitRequested();
 
 protected:
-    void paintEvent(QPaintEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
 
 private:
-    QImage m_image;
+    class FrameView* m_view; // the picture (GPU or QPainter, see there)
     QTimer m_hideCursor; // the pointer goes away when the mouse rests
 };

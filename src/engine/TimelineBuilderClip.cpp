@@ -19,6 +19,7 @@
 #include "engine/RampProducer.h"
 #include "engine/Stabilizer.h"
 #include "engine/VideoEffects.h"
+#include "engine/picture/Effects.h"
 #include "engine/video/Compose.h"
 #include "engine/video/Text.h"
 
@@ -80,46 +81,11 @@ void attachTo(Mlt::Producer& cut, Mlt::Filter& f)
 
 // ---- Effects (Open FX) ----
 
-// Color correction as a 3x3 matrix (avfilter.colorchannelmixer): white balance like DaVinci Temp/Tint as
-// channel gain, normalized to equal brightness (Rec. 709), then saturation (mix with the brightness).
-// Temperature +100 = warm (more red, less blue), tint +100 = magenta (less green), saturation -100 = gray.
-struct Matrix { double m[3][3]; };
-Matrix colorMatrix(double temp, double tint, double saturation)
-{
-    const double k = temp / 100.0 * 0.3, n = tint / 100.0 * 0.25;
-    double g[3] = {1.0 + k, 1.0 - n, 1.0 - k};
-    const double w[3] = {0.2126, 0.7152, 0.0722};
-    const double l = w[0] * g[0] + w[1] * g[1] + w[2] * g[2];
-    for (double& x : g) x /= l;
-    const double s = std::max(0.0, 1.0 + saturation / 100.0);
-    Matrix out;
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            out.m[i][j] = std::clamp(((i == j ? s : 0.0) + (1.0 - s) * w[j]) * g[j], -2.0, 2.0);
-    return out;
-}
-
-// Brightness/contrast as tone correction (avfilter.colorlevels): out = 0.5 + (in - 0.5)·c + b, limited to 0..1.
-// colorlevels allows input -1..1 and output 0..1 -> cut the line where it reaches 0 resp. 1.
-struct Levels { double imin, imax, omin, omax; };
-Levels levels(double brightness, double contrast)
-{
-    const double c = std::max(0.0, 1.0 + contrast / 100.0), b = brightness / 200.0;
-    const double d = 0.5 - 0.5 * c + b; // out = c·in + d
-    Levels lv{0.0, 1.0, d, c + d};
-    if (lv.omin < 0 && c > 0) {
-        lv.imin = std::min(-d / c, 1.0);
-        lv.omin = 0;
-    }
-    if (lv.omax > 1 && c > 0) {
-        lv.imax = std::max((1.0 - d) / c, -1.0);
-        lv.omax = 1;
-    }
-    if (lv.imax - lv.imin < 1e-4) lv.imin = lv.imax - 1e-4; // completely dark/bright: jump instead of division by 0
-    lv.omin = std::clamp(lv.omin, 0.0, 1.0);
-    lv.omax = std::clamp(lv.omax, 0.0, 1.0);
-    return lv;
-}
+// Colour correction numbers (engine/picture/Effects): the same for avfilter and the own picture engine
+using Picture::colorMatrix;
+using Picture::Levels;
+using Picture::levels;
+using Picture::Matrix;
 
 // Value of an effect parameter at clip frame t (static from the instance or from the keyframes)
 double fxValue(const Clip& c, AnimParam p, double t) { return Keys::valueAt(c, p, t); }

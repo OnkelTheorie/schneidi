@@ -50,12 +50,14 @@
 #include "ui/Inspector.h"
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
+#include "ui/FrameView.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
 #include <QActionGroup>
+#include <tuple>
 #include <QApplication>
 #include <QMouseEvent>
 #include <QButtonGroup>
@@ -728,6 +730,28 @@ void MainWindow::buildActions()
         if (DesignDialog(this).exec() == QDialog::Accepted && Theme::restartNeeded())
             offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
     });
+    // Viewer zoom (pure display; the timeline view is not touched): fit, 50/100/200 %, menu also on the viewer's bar.
+    // Alt+digits target tracks/multicam angles, so only fit has a default key (Ctrl+wheel over the picture zooms)
+    // At 100 % and more the preview comes at the project size instead of scaled down
+    QMenu* zoomMenu = workspace->addMenu(T("Viewer-Zoom"));
+    auto* zoomGroup = new QActionGroup(zoomMenu);
+    QList<QAction*> zoomActions;
+    for (const auto& [id, text, key, factor] :
+         {std::tuple{"viewer_zoom_fit", N_("Einpassen"), "Alt+0", FrameView::kFit},
+          std::tuple{"viewer_zoom_50", N_("50 %"), "", 0.5}, std::tuple{"viewer_zoom_100", N_("100 %"), "", 1.0},
+          std::tuple{"viewer_zoom_200", N_("200 %"), "", 2.0}}) {
+        QAction* a = makeAction(zoomMenu, id, T(text), QKeySequence(key), [this, f = factor] { m_viewer->setZoom(f); });
+        a->setCheckable(true);
+        a->setChecked(factor == FrameView::kFit);
+        a->setData(factor);
+        zoomGroup->addAction(a);
+        zoomActions << a;
+    }
+    m_viewer->addZoomActions(zoomActions);
+    connect(m_viewer, &Viewer::zoomChanged, zoomGroup, [zoomActions](double z) {
+        for (QAction* a : zoomActions) a->setChecked(a->data().toDouble() == z); // Ctrl+wheel: maybe no step checked
+    });
+    connect(m_viewer, &Viewer::fullSizeWanted, m_engine, &Engine::setPreviewFullSize);
 
     // Help: log file for error messages (Windows has no terminal)
     QMenu* help = menuBar()->addMenu(T("&Hilfe"));

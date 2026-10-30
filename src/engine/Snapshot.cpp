@@ -6,6 +6,7 @@
 
 #include "engine/Profiles.h"
 #include "engine/TimelineBuilder.h"
+#include "engine/picture/Renderer.h"
 
 #include <Mlt.h>
 #include <QPainter>
@@ -17,17 +18,23 @@ namespace Snapshot {
 
 namespace {
 
+QSize grabSize(const ProjectFormat& format, int maxEdge)
+{
+    QSize size = format.size();
+    if (maxEdge > 0 && std::max(size.width(), size.height()) > maxEdge)
+        size = size.scaled(maxEdge, maxEdge, Qt::KeepAspectRatio);
+    return {std::max(2, size.width() & ~1), std::max(2, size.height() & ~1)};
+}
+
 QImage grab(Mlt::Producer& producer, const ProjectFormat& format, int frame, int maxEdge)
 {
     if (!producer.is_valid()) return {};
     producer.seek(frame);
     std::unique_ptr<Mlt::Frame> f(producer.get_frame());
     if (!f) return {};
-    QSize size = format.size();
-    if (maxEdge > 0 && std::max(size.width(), size.height()) > maxEdge)
-        size = size.scaled(maxEdge, maxEdge, Qt::KeepAspectRatio);
+    const QSize size = grabSize(format, maxEdge);
     mlt_image_format fmt = mlt_image_rgba;
-    int w = std::max(2, size.width() & ~1), h = std::max(2, size.height() & ~1);
+    int w = size.width(), h = size.height();
     const uint8_t* data = f->get_image(fmt, w, h);
     if (!data || w <= 0 || h <= 0) return {};
     QImage img(w, h, QImage::Format_RGBA8888);
@@ -66,12 +73,24 @@ std::unique_ptr<Source> Source::timeline(const ProjectFormat& format, const Time
     s->m_builder = std::make_unique<TimelineBuilder>(*s->m_profile);
     Timeline picture = tl;
     for (Track& t : picture.audio) t.clips.clear();
+    if (Picture::ownPicture()) {
+        Picture::Options o;
+        o.format = format;
+        o.mode = Picture::Mode::Still;
+        s->m_picture = std::make_unique<Picture::Renderer>(picture, o);
+        return s;
+    }
     s->m_producer = s->m_builder->build(picture);
     return s;
 }
 
 QImage Source::frame(int frame, int maxEdge)
 {
+    if (m_picture) {
+        m_picture->setOutputSize(grabSize(m_format, maxEdge));
+        const Picture::Frame f = m_picture->render(frame);
+        return f.isNull() ? QImage() : f.view().convertToFormat(QImage::Format_RGB32);
+    }
     return m_producer ? grab(*m_producer, m_format, frame, maxEdge) : QImage();
 }
 
