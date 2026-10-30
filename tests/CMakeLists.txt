@@ -59,6 +59,7 @@ schneidi_test(test_frei0r)
 schneidi_test(test_key_pick)
 schneidi_test(test_viewer_large) # large viewer: panels hide and come back exactly, timeline zoom/scroll untouched
 schneidi_test(test_frame_view) # viewer picture widget: GPU/painter choice, zoom/pan, overlay mapping, zoom actions
+schneidi_test(test_picture_gpu) # picture engine on the GPU vs the CPU path (skips without a hardware device)
 schneidi_test(test_own_effects)
 schneidi_test(test_presets)
 schneidi_test(test_rendercache)
