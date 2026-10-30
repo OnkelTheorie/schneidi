@@ -11,7 +11,7 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
-#include "engine/MltLog.h"
+#include "engine/FfmpegLog.h"
 
 #include <QApplication>
 #include <QAction>
@@ -90,12 +90,11 @@ int main(int argc, char* argv[])
         if (qstrcmp(argv[i], "--storage") == 0) storageArg = QString::fromLocal8Bit(argv[i + 1]);
         if (qstrcmp(argv[i], "--design") == 0) designArg = QString::fromLocal8Bit(argv[i + 1]);
     }
-    // --verbose: detailed MLT/FFmpeg messages on the console (otherwise only errors, see Bundle::configureMltLogging)
+    // --verbose: FFmpeg warnings too (otherwise only errors, see FfmpegLog)
     for (int i = 1; i < argc; ++i)
         if (qstrcmp(argv[i], "--verbose") == 0) qputenv("SCHNEIDI_VERBOSE", "1");
     if (!screenshot.isEmpty()) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
-        qputenv("SDL_AUDIODRIVER", "dummy");
     }
     // Names before the application object: I18n::prepareEnvironment reads the language setting
     QApplication::setApplicationName("schneidi");
@@ -112,18 +111,14 @@ int main(int argc, char* argv[])
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)
     I18n::install(langOverride);
 
-    // MLT reads decimal numbers with a dot - a German locale would read "0.5" as 0
+    // C libraries (FFmpeg option parsing) read decimal numbers with a dot - a German locale would read "0.5" as 0
     std::setlocale(LC_NUMERIC, "C");
-
-    // SDL (MLT's audio output) should not catch SIGTERM/SIGINT, otherwise
-    // the program cannot be ended with kill/Ctrl+C
-    qputenv("SDL_NO_SIGNAL_HANDLERS", "1");
 
     Theme::load(designArg);
     Theme::apply(app);
     InputBindings::instance().load();
 
-    // Splash window: loading the MLT modules takes a while (clearly on Windows at first start, virus scanner)
+    // Splash window while the window is built (Windows at first start: the virus scanner looks at every DLL)
     std::unique_ptr<QSplashScreen> splash;
     const auto status = [&splash](const QString& text) {
         if (!splash) return;
@@ -133,29 +128,26 @@ int main(int argc, char* argv[])
     if (screenshot.isEmpty()) {
         splash = std::make_unique<QSplashScreen>(splashPixmap());
         splash->show();
-        status(T("Lade Module…"));
+        status(T("Öffne Fenster…"));
     }
 
-    // Before MLT initialization: missing modules also end up in the log
-    MltLog::install([](bool error, const QString& text) { Log::message(error ? "MLT-E" : "MLT-W", text); });
-    Engine::applyAudioSettings(); // before MLT initialization (SDL reads the audio driver at startup)
+    FfmpegLog::install([](bool error, const QString& text) { Log::message(error ? "AV-E" : "AV-W", text); });
     Engine engine;
     QString error;
-    const qint64 beforeMlt = startTimer.elapsed();
+    const qint64 beforeEngine = startTimer.elapsed();
     if (!engine.init(&error)) {
         splash.reset();
         QMessageBox::critical(nullptr, "schneidi", error);
         return 1;
     }
-    const qint64 afterMlt = startTimer.elapsed();
-    status(T("Öffne Fenster…"));
+    const qint64 afterEngine = startTimer.elapsed();
 
     MainWindow w(&engine);
     // Start maximized like DaVinci; screenshot test runs (offscreen) keep the fixed size from MainWindow
     if (app.arguments().contains("--screenshot")) w.show();
     else w.showMaximized();
     if (splash) splash->finish(&w);
-    qInfo("Startzeit: MLT %lld ms, Fenster sichtbar nach %lld ms", afterMlt - beforeMlt, startTimer.elapsed());
+    qInfo("Startzeit: Engine %lld ms, Fenster sichtbar nach %lld ms", afterEngine - beforeEngine, startTimer.elapsed());
 
     // Files from the command line directly into the Media Pool
     QStringList files = app.arguments().mid(1);

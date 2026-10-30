@@ -5,21 +5,11 @@
 // decode. Before, that took a second copy of every clip on the track below (decoded twice, blurred at full size;
 // 8 of 60 pictures per second in the preview of an AI's TikTok edit, docs archive 2026-10-26).
 //
-// Two own MLT filters around the transform's qtblend (TimelineBuilder applyTransform):
-// - capture (below qtblend) sees the picture on its way into qtblend and keeps a small blurred copy of the part that
-//   covers the frame on the frame: averaged down first, then blurred on few pixels, so the strength costs nothing;
-// - composite (above qtblend) lays qtblend's result (the transformed picture, transparent around it) onto that copy,
-//   scaled up to the requested size.
 // The background has the frame's shape and its blur counts in shares of the frame height, so preview and export
 // (any output size) show the same picture.
 
 #include <cstdint>
 #include <vector>
-
-namespace Mlt {
-class Filter;
-class Profile;
-}
 
 namespace BlurFill {
 
@@ -40,9 +30,5 @@ Background makeBackground(const uint8_t* rgba, int w, int h, double pictureAspec
 // Lay the picture (rgba, w x h, straight alpha) onto the background scaled up to w x h, in place
 void composite(uint8_t* rgba, int w, int h, const Background& bg);
 
-// The two filters. capture: the builder sets the crop as rect "crop" (shares l, t, r, b in x, y, w, h; static or
-// keyframed like qtcrop's) and attaches it with the cut's in/out (positions count from filter-in).
-Mlt::Filter captureFilter(Mlt::Profile& profile, double pictureAspect, double blur, double dim);
-Mlt::Filter compositeFilter();
 
 } // namespace BlurFill

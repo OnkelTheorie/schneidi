@@ -2,8 +2,7 @@
 #pragma once
 // Audio analysis for "Normalize audio levels" (like DaVinci Normalize Audio Levels):
 // peak level (Sample Peak Program) or loudness per ITU-R BS.1770-4 (LUFS), plus frame peaks for silence detection
-// and ducking. The sound comes from the own audio engine (Audio::Mixer, the same mix as the export) or, as long as
-// it is the chosen path (Audio::ownPath), through MLT.
+// and ducking. The sound comes from the own audio engine (Audio::Mixer, the same mix as the export).
 
 #include "core/Ducking.h"
 #include "core/ProjectFormat.h"
@@ -16,11 +15,6 @@
 #include <memory>
 #include <optional>
 #include <vector>
-
-namespace Mlt {
-class Profile;
-}
-class TimelineBuilder;
 
 namespace AudioAnalysis {
 
@@ -62,9 +56,8 @@ std::optional<Loudness> timelineLoudness(const ProjectFormat& format, const Time
                                          const std::function<bool(double)>& progress = {},
                                          std::vector<float>* framePeaks = nullptr);
 
-// The same for measuring one timeline several times (fader changes). MLT audio path: keeps the opened files between
-// the measurements (opening the producers of an edit with speed ramps takes seconds); the own engine opens a file in
-// about a millisecond and mixes each measurement afresh.
+// The same for measuring one timeline several times (fader changes): the own engine opens a file in about a
+// millisecond and mixes each measurement afresh.
 class MixMeter {
 public:
     explicit MixMeter(const ProjectFormat& format);
@@ -75,8 +68,6 @@ public:
 
 private:
     ProjectFormat m_format;
-    std::unique_ptr<Mlt::Profile> m_profile; // MLT audio path only, made on first use
-    std::unique_ptr<TimelineBuilder> m_builder;
 };
 
 // Sample peak (linear, all channels) of every timeline frame of the clip, same rules as clipPeakDb
@@ -90,7 +81,7 @@ std::optional<std::vector<float>> timelineFramePeaks(const ProjectFormat& format
 
 // The sound itself, timeline frame by timeline frame, as planar float (48 kHz, stereo): of the clip as
 // clipFramePeaks reads it, or of the timeline mix [from, to) as timelineFramePeaks (schneidi-cli `beats`).
-// pcm == nullptr = a frame that could not be decoded (MLT path; keeps counting sinks in step). false = no audio,
+// pcm == nullptr = a frame that could not be decoded (keeps counting sinks in step). false = no audio,
 // could not mix or canceled.
 using SoundSink = std::function<void(const float* pcm, int samples, int channels, int rate)>;
 bool clipSound(const ProjectFormat& format, const Clip& clip, const SoundSink& sink,

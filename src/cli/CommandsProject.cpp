@@ -24,7 +24,7 @@
 #include "engine/Engine.h"
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/ProxyCleanup.h"
 #include "engine/RenderQueue.h"
 #include "engine/Snapshot.h"

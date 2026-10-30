@@ -8,8 +8,6 @@
 #include <algorithm>
 #include <QSet>
 
-#include <framework/mlt.h>
-
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -28,17 +26,11 @@ namespace Licenses {
 namespace {
 
 // Libraries that are GPL (or make the process GPL) by their base name, without "lib" prefix, version and extension.
-// MLT modules: per Debian's copyright file of MLT 7.30 (normalize, resample, xine, vid.stab, jackrack, plusgpl and the
-// Qt modules are GPL-2+; plus contains the GPL interp.h in transition_affine; movit and sox link GPL libraries).
 struct Known {
     const char* name;
     const char* license;
 };
 constexpr Known kGpl[] = {
-    {"mltplusgpl", "GPL-2+"},  {"mltqt", "GPL-2+"},       {"mltqt6", "GPL-2+"},      {"mltglaxnimate", "GPL-3+"},
-    {"mltglaxnimate-qt6", "GPL-3+"}, {"mltvidstab", "GPL-2+"}, {"mltrubberband", "GPL-2+"}, {"mltxine", "GPL-2+"},
-    {"mltresample", "GPL-2+"}, {"mltnormalize", "GPL-2+"}, {"mltplus", "GPL-2+ (interp.h)"}, {"mltjackrack", "GPL-2+"},
-    {"mltmovit", "GPL-2+ (libmovit)"}, {"mltsox", "GPL-2+ (libsox)"},
     // FFmpeg's GPL dependencies (only linked with --enable-gpl) and other GPL libraries
     {"x264", "GPL-2+"},        {"x265", "GPL-2+"},        {"rubberband", "GPL-2+"},  {"vidstab", "GPL-2+"},
     {"postproc", "GPL-2+"},    {"xvidcore", "GPL-2+"},    {"frei0r", "GPL-2+"},      {"movit", "GPL-2+"},
@@ -48,7 +40,7 @@ constexpr Known kGpl[] = {
     {"vo-amrwbenc", "Apache-2.0 (needs GPL-3 FFmpeg)"},
 };
 
-// "libx264.so.164" / "libmltplus.so" / "x264-164.dll" / "avcodec-61.dll" -> "x264", "mltplus", "x264", "avcodec"
+// "libx264.so.164" / "libpostproc.so.58" / "x264-164.dll" / "avcodec-61.dll" -> "x264", "mltplus", "x264", "avcodec"
 QString baseName(const QString& fileName)
 {
     QString n = fileName;
@@ -120,35 +112,15 @@ QVector<Part> report()
         << ffmpegPart("libswscale", swscale_version(), swscale_license())
         << ffmpegPart("libswresample", swresample_version(), swresample_license());
 
-    // Loaded libraries: GPL ones by name, MLT modules always (to see which are loaded)
+    // Loaded libraries: GPL ones by name
     for (const QString& path : loadedLibraries()) {
         const QString file = QFileInfo(path).fileName();
         const QString gpl = knownGplLicense(file);
-        const bool mltModule = baseName(file).startsWith("mlt") && path.contains("mlt-7")
-                               || path.contains("/lib/mlt/"); // MSYS2 module folder
-        if (gpl.isEmpty() && !mltModule) continue;
+        if (gpl.isEmpty()) continue;
         Part p;
         p.name = file;
         p.path = path;
-        p.license = gpl.isEmpty() ? QString("LGPL-2.1+") : gpl;
-        p.gpl = !gpl.isEmpty();
-        out << p;
-    }
-
-    // frei0r plugins MLT can load (FREI0R_PATH; off by default, see engine/Frei0r): the plugins are GPL-2+
-    const QString list = QString::fromLocal8Bit(qgetenv("FREI0R_PATH"));
-#ifdef Q_OS_WIN
-    const QChar sep = ';';
-#else
-    const QChar sep = ':';
-#endif
-    for (const QString& dir : list.split(sep, Qt::SkipEmptyParts)) {
-        const QStringList plugins = QDir(dir).entryList({"*.so", "*.dll", "*.dylib"}, QDir::Files);
-        if (plugins.isEmpty()) continue;
-        Part p;
-        p.name = QString("frei0r plugins (%1)").arg(plugins.size());
-        p.path = dir;
-        p.license = "GPL-2+";
+        p.license = gpl;
         p.gpl = true;
         out << p;
     }

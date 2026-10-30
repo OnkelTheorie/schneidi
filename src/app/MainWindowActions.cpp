@@ -29,15 +29,13 @@
 #include "engine/Engine.h"
 #include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/ProxyCleanup.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
 #include "engine/audio/Device.h"
-#include "engine/audio/Path.h"
-#include "engine/ExportWriter.h"
+#include "engine/CpuPath.h"
 #include "engine/video/Hardware.h"
-#include "engine/video/Producer.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 #include "engine/Exporter.h"
@@ -500,14 +498,13 @@ void MainWindow::buildActions()
         Video::Hardware::setEnabled(on);
         statusBar()->showMessage(T("Gilt für Clips, die ab jetzt geöffnet werden (alle nach einem Neustart)"), 6000);
     });
-    // Way back while the own decoder and export path (0.11) are new: MLT decodes and writes as up to 0.10
-    auto* compat = makeAction(play, "compat_mlt", T("Kompatibilitätsmodus: Bild und Export über MLT"), QKeySequence(),
+    // Everything on the CPU (no hardware decoding, no GPU viewer) for machines whose graphics driver misbehaves
+    auto* compat = makeAction(play, "compat_cpu", T("Kompatibilitätsmodus: CPU-Weg (ohne Grafikkarte)"), QKeySequence(),
                               [] {});
     compat->setCheckable(true);
-    compat->setChecked(!Video::ownDecoder() || !ExportWriter::wanted());
+    compat->setChecked(CpuPath::on());
     connect(compat, &QAction::toggled, this, [this](bool on) {
-        Video::setOwnDecoder(!on);
-        ExportWriter::setWanted(!on);
+        CpuPath::setOn(on);
         offerRestart(T("Der Kompatibilitätsmodus wirkt nach dem Neustart von schneidi."), T("Jetzt neu starten"),
                      T("Später"));
     });
@@ -564,7 +561,7 @@ void MainWindow::buildActions()
     }
     // Output device like DaVinci (Video and Audio I/O → Speaker Setup); only the own sound engine can choose one. The
     // list is read when the menu opens: devices come and go.
-    if (Audio::ownPath()) {
+    {
         QMenu* outputMenu = audioMenu->addMenu(T("Ausgabegerät"));
         connect(outputMenu, &QMenu::aboutToShow, this, [this, outputMenu] {
             outputMenu->clear();
@@ -585,22 +582,6 @@ void MainWindow::buildActions()
                 found = found || o.id == current;
             }
             if (!found) add(current, T("%1 (nicht angeschlossen)").arg(current));
-        });
-    }
-    // Sound engine (docs/archiv/plan-0.10-ton.md): the own one, MLT's as a fallback for one version
-    audioMenu->addSeparator();
-    auto* engineGroup = new QActionGroup(audioMenu);
-    for (const auto& [own, text] : {std::pair{true, N_("Ton-Maschine: SMT (Standard)")},
-                                    std::pair{false, N_("Ton-Maschine: MLT (Rückfall)")}}) {
-        QAction* a = audioMenu->addAction(T(text));
-        a->setCheckable(true);
-        a->setChecked(Audio::ownPath() == own);
-        engineGroup->addAction(a);
-        connect(a, &QAction::triggered, this, [this, own = own] {
-            if (own == Audio::ownPath()) return;
-            Audio::setOwnPath(own);
-            offerRestart(T("Die Ton-Maschine wechselt nach dem Neustart von schneidi."), T("Jetzt neu starten"),
-                         T("Später"));
         });
     }
 #ifdef Q_OS_WIN

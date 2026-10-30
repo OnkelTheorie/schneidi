@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/video/Hardware.h"
+#include "engine/CpuPath.h"
 
 #include <QSettings>
 #include <QtGlobal>
@@ -56,7 +57,7 @@ std::vector<AVHWDeviceType> candidates()
         const AVHWDeviceType t = av_hwdevice_find_type_by_name(env.constData());
         if (t != AV_HWDEVICE_TYPE_NONE) return {t};
     }
-    if (!enabled()) return {};
+    if (!enabled() || CpuPath::on()) return {};
 #if defined(_WIN32)
     return {AV_HWDEVICE_TYPE_D3D11VA};
 #elif defined(__APPLE__)

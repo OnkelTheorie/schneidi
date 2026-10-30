@@ -1301,7 +1301,8 @@ QString unsupported(const Timeline& tl)
                 for (const EffectInstance& e : c.effects) {
                     if (!e.enabled) continue;
                     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
-                    if (!d || d->fixed || !d->video) continue;
+                    if (!d) return e.effectId; // not known here (frei0r plugin, newer version)
+                    if (d->fixed || !d->video) continue;
                     if (e.effectId == QLatin1String("color") || e.effectId == QLatin1String("blur")
                         || e.effectId == QLatin1String("chromakey") || VideoEffects::isOwn(e.effectId))
                         continue;
@@ -1314,12 +1315,6 @@ QString unsupported(const Timeline& tl)
         for (const Timeline& n : *tl.nested)
             if (why.isEmpty()) why = check(n);
     return why;
-}
-
-bool ownPicture()
-{
-    static const bool own = qgetenv("SCHNEIDI_PICTURE") != "mlt";
-    return own;
 }
 
 } // namespace Picture

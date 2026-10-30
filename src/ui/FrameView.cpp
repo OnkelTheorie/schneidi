@@ -2,6 +2,7 @@
 #include "ui/FrameView.h"
 
 #include "app/Theme.h"
+#include "engine/CpuPath.h"
 #include "ui/ViewerOverlay.h"
 #ifdef SCHNEIDI_HAVE_RHI
 #include "ui/FrameViewRhi.h"
@@ -86,8 +87,10 @@ FrameView::FrameView(QWidget* parent) : QWidget(parent), m_background(Theme::vie
 #ifdef SCHNEIDI_HAVE_RHI
     probe = [] { return FrameViewRhiSurface::probe(); };
 #endif
+    // Compatibility mode (CpuPath): the painter unless SCHNEIDI_VIEWER asks for something else
     m_backend = chooseBackend(qEnvironmentVariable("SCHNEIDI_VIEWER"),
-                              QSettings().value("viewer/renderer").toString(), QGuiApplication::platformName(),
+                              CpuPath::on() ? QStringLiteral("painter") : QSettings().value("viewer/renderer").toString(),
+                              QGuiApplication::platformName(),
                               rhiCompiled(), probe, &m_backendInfo);
 #ifdef SCHNEIDI_HAVE_RHI
     if (m_backend == Backend::Rhi) {

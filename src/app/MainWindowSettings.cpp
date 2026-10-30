@@ -15,7 +15,6 @@
 #include "core/I18n.h"
 #include "core/StartTemplates.h"
 #include "engine/Background.h"
-#include "engine/Frei0r.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
 
@@ -57,7 +56,6 @@ void MainWindow::settingsDialog(int tab)
     if (dlg.updateHint() != UpdateCheck::enabled() && !m_autosaveDisabled) UpdateCheck::setEnabled(dlg.updateHint());
     if (dlg.backgroundThreads() != Background::chosenThreads() && !m_autosaveDisabled)
         Background::setChosenThreads(dlg.backgroundThreads()); // takes effect with the next job
-    if (dlg.frei0r() != Frei0r::enabled() && !m_autosaveDisabled) Frei0r::setEnabled(dlg.frei0r()); // after a restart
     // Language like from the menu (Workspace › Language): takes effect after a restart; test runs keep the setting
     const QString lang = dlg.language();
     if (lang != I18n::language() && !m_autosaveDisabled) {

@@ -27,7 +27,7 @@
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
 #include "engine/MediaCache.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
 #include "ui/DeliverPanel.h"

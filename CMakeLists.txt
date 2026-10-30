@@ -41,27 +41,14 @@ if(UNIX AND NOT APPLE)
     find_package(Qt6 QUIET COMPONENTS DBus)
 endif()
 find_package(PkgConfig REQUIRED)
-# MLT ships a .pc file on Linux and MSYS2 (Windows). 7.22 is the oldest version known to build (Ubuntu 24.04)
-pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7>=7.22)
-# mlt_image_full_range() came after 7.22: older MLT gets a fallback (src/engine/video/Producer.cpp)
-include(CheckSymbolExists)
-set(CMAKE_REQUIRED_INCLUDES ${MLT_INCLUDE_DIRS})
-set(CMAKE_REQUIRED_LIBRARIES ${MLT_LINK_LIBRARIES})
-check_symbol_exists(mlt_image_full_range "framework/mlt.h" SCHNEIDI_HAVE_MLT_IMAGE_FULL_RANGE)
-unset(CMAKE_REQUIRED_INCLUDES)
-unset(CMAKE_REQUIRED_LIBRARIES)
-if(SCHNEIDI_HAVE_MLT_IMAGE_FULL_RANGE)
-    set_property(SOURCE src/engine/video/Producer.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_HAVE_MLT_IMAGE_FULL_RANGE)
-endif()
-# Own audio engine (src/engine/audio): FFmpeg libraries directly, see docs/archiv/plan-0.10-ton.md
+# Decoding, encoding, scaling and resampling: FFmpeg libraries directly
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libswscale libavutil)
 # GPL-free build for the bundled packages (AppImage, Windows, Docker; 0.14): refuses an FFmpeg configured with
-# --enable-gpl/--enable-nonfree (point PKG_CONFIG_PATH at packaging/linux/build-ffmpeg-lgpl.sh's prefix), loads no
-# GPL MLT module (engine/Bundle). `schneidi-cli --licenses` and tests/test_license_free check the running program.
+# --enable-gpl/--enable-nonfree (point PKG_CONFIG_PATH at packaging/linux/build-ffmpeg-lgpl.sh's prefix). `schneidi-cli --licenses` and tests/test_license_free check the running program.
 option(SCHNEIDI_NO_GPL "Build without any GPL library (bundled packages)" OFF)
 if(SCHNEIDI_NO_GPL)
     # Only where it is read: the rest stays in the shared compiler cache
-    set_property(SOURCE src/engine/Bundle.cpp src/engine/Licenses.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_NO_GPL)
+    set_property(SOURCE src/engine/Licenses.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_NO_GPL)
     file(WRITE ${CMAKE_BINARY_DIR}/ffmpeg_license.cpp
         "#include <cstdio>\nextern \"C\" {\n#include <libavcodec/avcodec.h>\n}\nint main() { std::puts(avcodec_license()); }\n")
     try_run(FFMPEG_LICENSE_RUN FFMPEG_LICENSE_COMPILE ${CMAKE_BINARY_DIR}/ffmpeg_license_check
@@ -80,14 +67,6 @@ endif()
 # Sound devices of the own audio engine: miniaudio, a single header (Debian libminiaudio-dev, MSYS2 miniaudio)
 find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h PATH_SUFFIXES miniaudio REQUIRED)
 find_package(Threads REQUIRED)
-# MLT's module folder (Bundle::prepareMltEnvironment looks there which Qt modules exist); only that file needs it
-pkg_get_variable(MLT_MODULE_DIR mlt-framework-7 moduledir)
-set_property(SOURCE src/engine/Bundle.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_MLT_MODULE_DIR="${MLT_MODULE_DIR}")
-if(WIN32)
-    # Nicht paketierter Build: MLT-Module/-Daten aus MSYS2 (siehe engine/Bundle.cpp)
-    pkg_get_variable(MLT_PREFIX mlt-framework-7 prefix)
-    add_compile_definitions(SCHNEIDI_MLT_DEV_PREFIX="${MLT_PREFIX}")
-endif()
 
 # Git state for the log and the splash screen (buildinfo.h, refreshed on every build)
 find_package(Git QUIET)
@@ -157,23 +136,14 @@ add_library(schneidi_lib STATIC
     src/core/WatchFolders.h       src/core/WatchFolders.cpp
 
     src/engine/Engine.h           src/engine/Engine.cpp
+    src/engine/ClipFormat.h       src/engine/ClipFormat.cpp
+    src/engine/CpuPath.h          src/engine/CpuPath.cpp
     src/engine/Background.h       src/engine/Background.cpp
-    src/engine/PreviewConsumer.h  src/engine/PreviewConsumer.cpp
-    src/engine/Profiles.h         src/engine/Profiles.cpp
-    src/engine/TimelineBuilder.h  src/engine/TimelineBuilder.cpp
-    src/engine/TimelineBuilderDetail.h src/engine/TimelineBuilderClip.cpp
-    src/engine/TimelineBuilderAudio.cpp src/engine/TimelineBuilderTransitions.cpp
-    src/engine/TimelineBuilderMulticam.cpp
-    src/engine/LiveUpdate.h       src/engine/LiveUpdate.cpp
     src/engine/VideoEffects.h     src/engine/VideoEffects.cpp
-    src/engine/RampProducer.h     src/engine/RampProducer.cpp
-    src/engine/PitchLatency.h     src/engine/PitchLatency.cpp
     src/engine/Exporter.h         src/engine/Exporter.cpp
     src/engine/ExportWriter.h     src/engine/ExportWriter.cpp
     src/engine/SmartRender.h      src/engine/SmartRender.cpp
-    src/engine/DecodeOrder.h      src/engine/DecodeOrder.cpp
     src/engine/OutputColor.h      src/engine/OutputColor.cpp
-    src/engine/RateConverter.h    src/engine/RateConverter.cpp
     src/engine/HardwareEncoders.h src/engine/HardwareEncoders.cpp
     src/engine/Extensions.h       src/engine/Extensions.cpp
     src/engine/Transcriber.h      src/engine/Transcriber.cpp
@@ -188,46 +158,39 @@ add_library(schneidi_lib STATIC
     src/engine/Stabilizer.h       src/engine/Stabilizer.cpp
     src/engine/StabilizeCorrection.h
     src/engine/StabilizeMotion.h  src/engine/StabilizeMotion.cpp
-    src/engine/Preroll.h          src/engine/Preroll.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/CheckMeasure.h     src/engine/CheckMeasure.cpp
     src/engine/FrameGaps.h        src/engine/FrameGaps.cpp
     src/engine/MediaProbe.h       src/engine/MediaProbe.cpp
-    src/engine/MltLog.h           src/engine/MltLog.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
     src/engine/GradedThumbs.h     src/engine/GradedThumbs.cpp
     src/engine/BlurFill.h         src/engine/BlurFill.cpp
     src/engine/video/Compose.h    src/engine/video/Compose.cpp
-    src/engine/video/Convert.h
+    src/engine/video/Convert.h    src/engine/video/Convert.cpp
+    src/engine/FfmpegLog.h        src/engine/FfmpegLog.cpp
     src/engine/picture/Renderer.h src/engine/picture/Renderer.cpp
     src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
     src/engine/picture/Pump.h     src/engine/picture/Pump.cpp
     src/engine/picture/MediaStills.h src/engine/picture/MediaStills.cpp
-    src/engine/video/Still.h      src/engine/video/Still.cpp
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
-    src/engine/Frei0r.h           src/engine/Frei0r.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
     src/engine/Snapshot.h         src/engine/Snapshot.cpp
     src/engine/audio/Reader.h     src/engine/audio/Reader.cpp
-    src/engine/audio/Volume.h     src/engine/audio/Volume.cpp
     src/engine/Licenses.h         src/engine/Licenses.cpp
     src/engine/video/Reader.h     src/engine/video/Reader.cpp
     src/engine/video/Scan.h       src/engine/video/Scan.cpp
-    src/engine/video/Producer.h   src/engine/video/Producer.cpp
     src/engine/video/Hardware.h   src/engine/video/Hardware.cpp
     src/engine/video/Thumbnails.h src/engine/video/Thumbnails.cpp
     src/engine/audio/Mixer.h      src/engine/audio/Mixer.cpp
     src/engine/audio/Retimer.h    src/engine/audio/Retimer.cpp
     src/engine/audio/Stretch.h    src/engine/audio/Stretch.cpp
-    src/engine/audio/Path.h       src/engine/audio/Path.cpp
     src/engine/audio/Device.h     src/engine/audio/Device.cpp
     src/engine/audio/Player.h     src/engine/audio/Player.cpp
     src/engine/audio/Miniaudio.h  src/engine/audio/Miniaudio.cpp
     src/engine/audio/Wait.h       src/engine/audio/Wait.cpp
-    src/engine/MixedSound.h       src/engine/MixedSound.cpp
 
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
@@ -336,7 +299,7 @@ file(GLOB SCHNEIDI_LUTS RELATIVE ${PROJECT_SOURCE_DIR} CONFIGURE_DEPENDS ${PROJE
 qt_add_resources(schneidi_lib "luts" PREFIX "/" BASE assets FILES ${SCHNEIDI_LUTS})
 target_include_directories(schneidi_lib PUBLIC src)
 target_include_directories(schneidi_lib PRIVATE ${MINIAUDIO_INCLUDE_DIR})
-target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::MLT PkgConfig::FFMPEG
+target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::FFMPEG
                       Threads::Threads ${CMAKE_DL_LIBS})
 if(TARGET Qt6::DBus)
     target_link_libraries(schneidi_lib PUBLIC Qt6::DBus)
@@ -466,11 +429,10 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_SECTION "video")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
-    # MLT modules (FFmpeg, frei0r, ...) are loaded at runtime, not linked; frei0r effects are optional.
     # miniaudio (own audio engine) opens ALSA/PulseAudio with dlopen, invisible to shlibdeps.
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libmlt-data, libmlt7, libasound2t64 | libasound2")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libasound2t64 | libasound2")
     # Hardware decoding on AMD/Intel (VAAPI) loads the driver at runtime; NVIDIA comes with its driver (CUDA)
-    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "frei0r-plugins, ffmpeg, libpulse0, mesa-va-drivers | va-driver")
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "ffmpeg, libpulse0, mesa-va-drivers | va-driver")
     include(CPack)
 endif()
 

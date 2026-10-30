@@ -2,21 +2,17 @@
 #pragma once
 // Color correction of the Color page (like DaVinci "Primaries – Color Wheels" + LUT), effect "grade" on the clip.
 // calculation itself (no avfilter): lift may become negative, LUT paths need no FFmpeg escaping (Windows
-// "C:\…"), keyframes/before-after without a rebuild. The pixel computation is a pure function (testable without MLT).
+// "C:\…"), keyframes/before-after without a rebuild. The pixel computation is a pure function.
 
 #include "core/GradeWindows.h"
 #include "core/Types.h"
 
 #include <QString>
 #include <QVector>
-#include <framework/mlt_types.h>
 #include <atomic>
 #include <cstdint>
 #include <memory>
 
-namespace Mlt {
-class Producer;
-}
 
 namespace ColorGrade {
 
@@ -99,12 +95,5 @@ void applyReference(uint8_t* rgba, int width, int height, const Params& p, const
 // Apply a window on top: inside its mask the picture gets the window's correction and fill (blur/pixelate/color),
 // mixed by the soft edge. Only the window's area is computed.
 void applyWindow(uint8_t* rgba, int width, int height, const Window& w);
-
-// Attach the filter to an excerpt (a = clip frame at the start, for keyframes). bypass: preview switch
-// "Before/After" (true = without correction), nullptr = always apply (export). Nothing to do -> no filter.
-void attach(Mlt::Producer& cut, const Clip& c, int a, const std::shared_ptr<std::atomic<bool>>& bypass);
-// Filter made by attach(): give `live` the state of `fresh` (same clip, new values) while the preview may be
-// rendering; false = not both such filters
-bool transfer(mlt_filter live, mlt_filter fresh);
 
 } // namespace ColorGrade

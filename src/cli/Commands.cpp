@@ -23,7 +23,7 @@
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
 #include "engine/Exporter.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/RenderQueue.h"
 #include "engine/Snapshot.h"
 #include "engine/Stabilizer.h"

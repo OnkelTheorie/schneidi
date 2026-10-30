@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own picture engine (0.15, CPU path): evaluates the timeline model directly for one frame number and returns an RGBA
-// picture – the replacement for TimelineBuilder + MLT tractor + consumer. No MLT here (no <Mlt.h>).
+// picture.
 //
 // Design:
 // - A Renderer is built from a Timeline + Options. It keeps an immutable snapshot of the timeline (shared_ptr, swapped
@@ -145,12 +145,8 @@ private:
 // Gives back the buffers kept for reuse (frames, layers): after an export, when nothing renders for a while
 void releasePools();
 
-// Why this timeline cannot be rendered by this engine yet: the id of an effect it does not have (frei0r plugins,
-// unknown ids); empty = it can. The export takes the MLT path meanwhile.
+// An enabled effect of this timeline (nested sequences too) the engine does not have: its id (frei0r plugins of
+// projects from before 0.15, ids of newer versions); empty = none. Such effects stay in the project and are skipped.
 QString unsupported(const Timeline& tl);
-
-// SCHNEIDI_PICTURE=own|mlt (read once): which picture path the engine uses while both exist. Default own (preview,
-// stills, export); "mlt" keeps the old path until it is removed (package 6).
-bool ownPicture();
 
 } // namespace Picture

@@ -2,14 +2,11 @@
 #include "engine/StillFetcher.h"
 #include "engine/picture/MediaStills.h"
 
-#include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
 
-#include <Mlt.h>
 #include <QFileInfo>
 #include <QHash>
 #include <QThread>
-#include <cstring>
 #include <memory>
 
 namespace {
@@ -91,12 +88,9 @@ int StillFetcher::decodedCount() const
 
 void StillFetcher::loop()
 {
-    std::unique_ptr<Mlt::Profile> profile;
-    std::unique_ptr<ProducerFactory> factory; // BT.601 workaround (Profiles.h), outlives the producers
     int generation = -1;
-    // Open producers are reused: seeking near the last frame (dragging an edit) is much cheaper than opening
-    QHash<QString, std::shared_ptr<Mlt::Producer>> producers;
-    std::unique_ptr<Picture::MediaStills> own; // own picture engine (default; SCHNEIDI_PICTURE=mlt: the producers)
+    // Keeps its sources open: seeking near the last frame (dragging an edit) is much cheaper than opening
+    std::unique_ptr<Picture::MediaStills> own;
 
     for (;;) {
         Request job;
@@ -111,47 +105,14 @@ void StillFetcher::loop()
             gen = m_generation;
             maxEdge = m_maxEdge;
         }
-        if (gen != generation) { // new project format: producers belong to the old profile
-            producers.clear();
-            factory.reset();
-            own.reset();
-            if (Picture::ownPicture()) {
-                own = std::make_unique<Picture::MediaStills>(format, &ProxyManager::decodeSource);
-            } else {
-                profile = makeProfile(format);
-                factory = std::make_unique<ProducerFactory>(*profile);
-            }
+        if (gen != generation) { // new project format
+            own = std::make_unique<Picture::MediaStills>(format, &ProxyManager::decodeSource);
             generation = gen;
         }
 
-        std::shared_ptr<Mlt::Producer> prod = own ? nullptr : producers.value(job.path);
-        if (!own && !prod) {
-            if (producers.size() >= 6) producers.clear();
-            prod = factory->open(ProxyManager::decodeSource(job.path));
-            prod->set("audio_index", -1); // no sound needed here
-            producers.insert(job.path, prod);
-        }
-
-        QImage img;
-        if (own) {
-            const QSize want = format.size().scaled(maxEdge, maxEdge, Qt::KeepAspectRatio);
-            img = own->frame(job.path, job.frame, QSize(std::max(2, want.width()), std::max(2, want.height())));
-            if (!img.isNull()) img = img.convertToFormat(QImage::Format_RGB32); // faster to draw
-        } else if (prod->is_valid()) {
-            prod->seek(job.frame);
-            std::unique_ptr<Mlt::Frame> f(prod->get_frame());
-            if (f) {
-                const QSize want = format.size().scaled(maxEdge, maxEdge, Qt::KeepAspectRatio);
-                mlt_image_format fmt = mlt_image_rgba;
-                int w = std::max(2, want.width()), h = std::max(2, want.height());
-                const uint8_t* data = f->get_image(fmt, w, h);
-                if (data && w > 0 && h > 0) {
-                    QImage raw(w, h, QImage::Format_RGBA8888);
-                    std::memcpy(raw.bits(), data, size_t(w) * h * 4);
-                    img = raw.convertToFormat(QImage::Format_RGB32); // faster to draw
-                }
-            }
-        }
+        const QSize want = format.size().scaled(maxEdge, maxEdge, Qt::KeepAspectRatio);
+        QImage img = own->frame(job.path, job.frame, QSize(std::max(2, want.width()), std::max(2, want.height())));
+        if (!img.isNull()) img = img.convertToFormat(QImage::Format_RGB32); // faster to draw
 
         {
             QMutexLocker lock(&m_mutex);

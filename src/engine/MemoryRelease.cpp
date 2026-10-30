@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/MemoryRelease.h"
 
-#include <framework/mlt.h>
+#include "engine/picture/Renderer.h"
 
 #include <QFile>
 #include <QMutex>
@@ -31,7 +31,7 @@ bool allowed(const Activity& a)
 
 void release()
 {
-    if (mlt_factory_repository()) mlt_pool_purge(); // only after Factory::init (the pools exist from then on)
+    Picture::releasePools();
     trimHeap();
     ++g_releases;
 }

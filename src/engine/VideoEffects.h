@@ -4,17 +4,13 @@
 // operations. They replace the frei0r plugins of the same name (GPL, not bundled any more) and keep their effect
 // ids and parameters ("frei0r.glow", key "0" …), so old projects and Kdenlive/Shotcut presets map onto them unchanged;
 // the descriptors live in core/EffectRegistry. Written from scratch (no frei0r code).
-// Each effect is a pure function on an RGBA image (8 bit straight alpha, rows without gaps; testable without MLT)
-// plus one own MLT filter made like engine/ColorGrade (mlt_filter_new + process): the TimelineBuilder sets the
-// parameters as properties (keyframes via anim_set), the filter reads them per frame, so a live parameter change
-// (engine/LiveUpdate) needs no rebuild. Thread-safe: frames may render in parallel (export).
+// Each effect is a pure function on an RGBA image (8 bit straight alpha, rows without gaps), applied by the picture
+// engine (engine/picture) by effect id. Thread-safe: frames may render in parallel (export).
 
 #include <QColor>
 #include <QString>
 #include <cstdint>
 #include <functional>
-
-#include <framework/mlt_types.h>
 
 namespace VideoEffects {
 
@@ -69,10 +65,9 @@ struct AlphaParams {
 // Operations on the alpha channel (shrink, grow, soften the key's edge) and ways to look at it
 void alphaOps(uint8_t* rgba, int width, int height, const AlphaParams& p);
 
-// ---- MLT ----
-// Is the effect one of these (by effect id, e.g. "chromakey", "frei0r.glow")?
-// Parameter values of an own effect by property name ("0", "softness", … as in EffectRegistry's mltProperty): the MLT
-// filter reads its properties, the own picture engine (engine/picture) the clip's values. has() false = default.
+// ---- By effect id ----
+// Parameter values of an own effect by property name ("0", "softness", … as in EffectRegistry's mltProperty, the
+// key old projects and presets use): the picture engine reads the clip's values. has() false = default.
 struct Params {
     std::function<bool(const char*)> has;
     std::function<double(const char*)> num;
@@ -84,9 +79,7 @@ bool apply(const QString& effectId, uint8_t* rgba, int width, int height, const 
 // Gaussian blur (three box blurs) of an RGBA picture with straight alpha, sigma in pixels
 void gaussian(uint8_t* rgba, int width, int height, double sigma);
 
+// Is the effect one of these (by effect id, e.g. "chromakey", "frei0r.glow")?
 bool isOwn(const QString& effectId);
-// New filter for the effect (nullptr = not an own effect). The parameters are set as properties named like the
-// effect's mltProperty ("0", "1" …); numbers may be animated (anim_set, positions from the filter's in point).
-mlt_filter create(const QString& effectId);
 
 } // namespace VideoEffects

@@ -14,7 +14,7 @@
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
 #include "engine/SoundSync.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/Engine.h"
 #include "ui/MediaPool.h"
 #include "ui/MulticamView.h"
 #include "ui/Viewer.h"

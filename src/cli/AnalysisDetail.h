@@ -4,7 +4,7 @@
 
 #include "cli/CommandsDetail.h"
 #include "core/Stutter.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 
 #include <QColor>
 #include <QRect>

@@ -7,16 +7,13 @@
 // size/time, speed, frame rate, aspect ratio, shakiness/accuracy) plus the analyzed range. A cached range that covers
 // the clip is reused (trimming shorter, moving, splitting need no new analysis). Until the result exists the clip
 // plays unstabilized; export runs missing analyses first (Exporter), never silently without. Smoothing, zoom and
-// border are applied by an own MLT filter on the clip (attach) and change live, without a new analysis.
+// border are applied by the picture engine (StabilizeCorrection) and change live, without a new analysis.
 // Results of older versions (vid.stab's .trf) are not read: such clips are analyzed again by themselves.
 //
-// Frames: positions of the producer the timeline reads (the timewarp producer for speed changes, so speed and
-// reverse work too). Not supported: speed ramps, freeze frames, titles, compound clips.
+// Frames: positions in the clip's retimed source (speed and reverse work too). Not supported: speed ramps, freeze frames, titles, compound clips.
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
-
-#include <framework/mlt_types.h>
 
 #include <QHash>
 #include <QObject>
@@ -28,10 +25,6 @@
 #include <memory>
 #include <optional>
 
-namespace Mlt {
-class Producer;
-class Profile;
-} // namespace Mlt
 class QThread;
 
 class Stabilizer : public QObject {
@@ -61,7 +54,6 @@ public:
     static QString cacheDir();
     // Request for a stabilized clip (effect present, also when switched off); nullopt = not possible for this clip
     static std::optional<Request> request(const Clip& c, const ProjectFormat& format);
-    static std::optional<Request> request(const Clip& c, Mlt::Profile& profile);
     // Why a clip cannot be stabilized (empty = it can)
     static QString unsupportedReason(const Clip& c);
     // Cached result covering the request (thread-safe); invalid = analysis missing
@@ -71,17 +63,9 @@ public:
     // Requests of all enabled stabilizations in the timeline (and its nested sequences) without a result
     static QVector<Request> missing(const Timeline& tl, const ProjectFormat& format);
     // Analyze synchronously in the calling thread (any thread). progress: 0..1000
-    // Reads the file with the own decoder (engine/video/Reader); SCHNEIDI_STABILIZE_ANALYSIS=mlt: through an MLT
-    // producer as before 0.15 (analyzeMlt, comparison until MLT goes)
+    // Reads the file with the own decoder (engine/video/Reader)
     static bool analyze(const Request& r, QString* error, const std::atomic<bool>* cancel = nullptr,
                         std::atomic<int>* progress = nullptr);
-    static bool analyzeMlt(const Request& r, QString* error, const std::atomic<bool>* cancel = nullptr,
-                           std::atomic<int>* progress = nullptr);
-    // Timeline: the stabilizing filter on the cut of clip c (its first filter); false = no result (yet) or not possible
-    static bool attach(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c);
-    // Live update (LiveUpdate): takes over the fresh filter's values (smoothing, zoom, border, a new result) without a
-    // rebuild; false = not two stabilizing filters
-    static bool transfer(mlt_filter live, mlt_filter fresh);
 
     // Background analyses of the preview (main thread). Created on first use.
     static Stabilizer* instance();

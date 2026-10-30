@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// The only place that knows MLT (together with TimelineBuilder).
-// UI only talks via this class -> engine would be replaceable.
+// Preview, stills and probing for the UI: the own picture engine (engine/picture) shows frames by the clock of the
+// own audio engine (engine/audio). UI only talks via this class.
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
@@ -18,15 +18,6 @@
 #include <memory>
 #include <mutex>
 
-namespace Mlt {
-class Profile;
-class Producer;
-class Consumer;
-class Tractor;
-} // namespace Mlt
-class TimelineBuilder;
-class ProducerFactory;
-class PreviewConsumer;
 namespace Audio {
 class Player;
 }
@@ -36,17 +27,20 @@ class IdleRelease;
 namespace MemoryRelease {
 struct Activity;
 }
-class Preroll;
 class StillFetcher;
-struct MixerHooks;
-struct MulticamGridHooks;
-struct MulticamGridOptions;
 struct SharedLoudness;
-struct SeekFade;
 namespace Picture {
 class Renderer;
 struct Options;
 } // namespace Picture
+
+// Grid of a multicam clip for the viewer (ui/MulticamView): all angles of a page in their cells (ui/MulticamGrid),
+// frame = frame of the multicam sequence. Sound = only the active angle.
+struct MulticamGridOptions {
+    int columns = 0;     // 0 = auto by the number of angles, 2..4 = fixed (MulticamGrid::columns)
+    int page = 0;        // clamped to the last page
+    int activeAngle = 0; // whose sound plays
+};
 
 // Loudness meter (ITU-R BS.1770) of the preview: measured at the master, only during playback at normal speed
 struct LoudnessReading {
@@ -67,11 +61,10 @@ public:
     ~Engine() override;
 
     bool init(QString* error);
-    // MLT itself (modules, logging, frei0r effects) without a preview consumer; init() calls it.
+    // What the engine needs without a preview (logging, the crop converter's probe); init() calls it.
     // Enough for headless use (schneidi-cli): probing, rendering, analysis.
-    static bool initMlt(QString* error);
-    // Project settings: rebuilds profile, preview consumer and all producers (Viewer then shows
-    // the timeline). The timeline itself comes with the next updateTimeline().
+    static void initHeadless();
+    // Project settings: new renderers in the new format (Viewer then shows the timeline)
     void setFormat(const ProjectFormat& format);
     const ProjectFormat& format() const { return m_format; }
     int fps() const { return m_format.rate.timebase(); } // timecode frames per second (29.97 -> 30)
@@ -89,24 +82,22 @@ public:
     RenderCache* renderCache() const { return m_renderCache; }
     // Single frames from media files in their own thread (trim view while dragging an edit); follows setFormat()
     StillFetcher* stills() const { return m_stills; }
-    // Gives MLT's frame pool and the free heap back once nothing renders (after stopping, rebuilds, exports)
+    // Gives the picture pools and the free heap back once nothing renders (after stopping, rebuilds, exports)
     IdleRelease* idleRelease() const { return m_idleRelease; }
     // What renders right now: playback, an export, the render cache (MemoryRelease's policy)
     MemoryRelease::Activity activity() const;
 
     MediaInfo probe(const QString& path);
     // Same without an Engine instance: lengths count in the frame rate of `format`. Reads the file's header itself
-    // (engine/MediaProbe, ~1 ms); still images and what it cannot decide through an MLT producer (probeMlt)
+    // (engine/MediaProbe, ~1 ms); unreadable files give an empty MediaInfo (no video, no audio)
     static MediaInfo probe(const ProjectFormat& format, const QString& path);
-    // The same through an MLT producer (0.1-0.5 s per file): probe's fallback and the reference of test_media_probe
-    static MediaInfo probeMlt(const ProjectFormat& format, const QString& path);
     // Timecode of the file's first frame ("01:00:00:00", from cameras and other editors' renders); empty = none
     static QString startTimecode(const QString& path);
     // Width / height of the file's picture as the timeline shows it (pixel aspect, rotation), 0 = none/unreadable.
-    // initMlt() installs it as MediaAspect's probe (core: converting crop values).
+    // initHeadless() installs it as MediaAspect's probe (core: converting crop values).
     static double pictureAspect(const QString& path);
     QImage thumbnail(const QString& path, int frame, const QSize& size);
-    // Same without an Engine instance (own profile; usable from worker threads): the picture in the shape of `format`
+    // Same without an Engine instance (usable from worker threads): the picture in the shape of `format`
     // (as a timeline shows it at zoom 1), with ownShape in the file's own shape (pixel aspect and rotation included:
     // Media Pool tiles, where a landscape clip fills its 16:9 tile also in a 9:16 project), centered in `size` with
     // black borders
@@ -120,16 +111,15 @@ public:
     // (Green Screen pipette: one clip alone without its key)
     QImage grabFrame(const Timeline& tl, int position);
 
-    void updateTimeline(const Timeline& tl); // model changed -> rebuild
-    // Files the timeline needs that are not open yet are opened in a thread, the window stays usable; the newest
-    // timeline is built afterwards (until then the Viewer shows the old picture, or black for other content).
-    // Off (tests, CLI): updateTimeline() opens them itself and returns when the timeline is built.
-    void setOpenInBackground(bool on) { m_openInBackground = on; }
-    bool opening() const { return m_opening != nullptr; }
+    // Model changed: the renderer takes it as a new snapshot (playback goes on); files open lazily in the render
+    // threads, the window never waits for them
+    void updateTimeline(const Timeline& tl);
+    // Kept for callers from the time files were opened ahead: the own engine never waits for files
+    void setOpenInBackground(bool) {}
+    bool opening() const { return false; }
     // Lengths of the project's media in frames (Project::media()): the sound is mixed with them like in the export
     void setMediaLengths(const QHash<QString, int>& lengths);
-    // Next updateTimeline() only changes fader/pan/mute/solo -> apply live instead of rebuilding
-    // (otherwise playback stutters while dragging the fader)
+    // Next updateTimeline() only changes fader/pan/mute/solo (the player takes every change live anyway)
     void mixerOnlyNext() { m_mixerOnlyNext = true; }
     bool mixerOnlyPending() const { return m_mixerOnlyNext; }
     // keepSpeed: keep playing (leaving the multicam grid during playback)
@@ -156,8 +146,8 @@ public:
     double speed() const { return m_speed; }
     void seek(int frame);
     int position() const { return m_position; }
-    // Own audio engine while playing: the frame heard right now (fractional, in positions like position()); NaN
-    // otherwise (stopped, sound through MLT). position() = the frame on screen, which follows it.
+    // While playing: the frame heard right now (fractional, in positions like position()); NaN when stopped.
+    // position() = the frame on screen, which follows it.
     double soundFrame() const;
 
     // Before/After (Color page, like DaVinci "Bypass Color Grades"): preview without color correction; export untouched
@@ -170,15 +160,13 @@ public:
     // dropouts (Windows/WASAPI needs more than PulseAudio), at the cost of slightly more delay. Takes effect from the next play.
     static int audioBuffer();
     void setAudioBuffer(int samples);
-    // Audio driver (empty = automatic; Windows: "directsound" (default)/"wasapi"): SDL's on the MLT sound path (after a
-    // restart), miniaudio's backend of the same name on the own one (from the next play)
+    // Audio driver (empty = automatic; Windows: "directsound" (default)/"wasapi"): miniaudio's backend of that name
+    // (from the next play)
     static QString audioDriver();
     static void setAudioDriver(const QString& driver);
     // Output device of the own sound engine (Audio::Device::Output::id, empty = system default); at once
     static QString audioOutput();
     void setAudioOutput(const QString& id);
-    // Call before init(): sets the chosen driver for SDL (an already set environment variable takes precedence)
-    static void applyAudioSettings();
 
 signals:
     void frameReady(const QImage& image);
@@ -189,27 +177,18 @@ signals:
     // Only during playback: peak levels in dBFS, [A1 L, A1 R, A2 L, …, Master L, Master R];
     // the master measures true peak (dBTP, BS.1770 4x oversampled) like the delivery check
     void audioLevels(const QVector<float>& db);
-    // internal: position from the consumer thread, epoch = jump counter when displaying (older ones are discarded)
+    // internal: position from the pump thread, epoch = jump counter when displaying (older ones are discarded)
     void framePosition(int frame, int epoch);
     // Files are being opened in the background (setOpenInBackground) / done and built
-    void openingChanged(bool opening);
+    void openingChanged(bool opening); // never emitted any more (files open lazily)
 
 private:
-    bool createConsumer(QString* error);
-    void connectProducer(Mlt::Producer* producer, int position);
+    void createPump();
     void refresh();
-    // Moves the connected producer to `at` (its frames) while connected and drops what was rendered before
-    void seekProducer(int at);
     void applyAudioState();
-    void onFrameShown(void* mltFrame);
-    void applyTimeline(const Timeline& tl, bool hinted);
-    // Starts opening the files `picture` needs in a thread; false = all open (build now)
-    bool openInBackground(const Timeline& picture, const Timeline& tl);
-    void finishOpening(quint64 id);
-    void stopOpening(); // cancels and waits (before the builder goes away)
+    void applyTimeline(const Timeline& tl);
     void emitLevels();
-    // Own picture engine: the pump shows `content` from `position` (Timeline/Source/Multicam), frames come to
-    // onPumpShown (pump thread)
+    // The pump shows `content` from `position` (Timeline/Source/Multicam), frames come to onPumpShown (pump thread)
     bool connected() const;
     void showContent(std::shared_ptr<const Picture::Pump::Content> content, int position);
     void onPumpShown(const QImage& image, int64_t position, double speed);
@@ -219,8 +198,8 @@ private:
     // true = something changed; timeline = the render cache's files too (else only proxies are added)
     bool resolveFiles(const Timeline& tl, bool timeline);
     QImage ownStill(const Timeline& tl, int position, bool transparent);
-    // Own audio engine: the clock in frames of the connected producer, where playback of `frame` (producer frame)
-    // starts in samples, and what the player plays in the current mode (positions = producer frames)
+    // The clock in frames of what is shown, where playback of `frame` (content frame) starts in samples, and what
+    // the player plays in the current mode (positions = content frames)
     double clockFrames() const;
     double soundStart(int frame, double speed) const;
     void syncPlayer(int position, bool restart);
@@ -235,64 +214,34 @@ private:
     StillFetcher* m_stills;
     IdleRelease* m_idleRelease;
     ProjectFormat m_format;
-    std::unique_ptr<Mlt::Profile> m_profile;
-    // The preview consumer's own copy: setting its width/height writes them into its profile (mlt_consumer.c), which
-    // with a shared profile made every producer/filter take 960x540 for the project size (titles, positions in the
-    // preview twice as large)
-    std::unique_ptr<Mlt::Profile> m_consumerProfile;
-    std::unique_ptr<ProducerFactory> m_factory; // source view (BT.601 detour, Profiles.h); outlives m_source
-    std::unique_ptr<Mlt::Consumer> m_consumer;
-    std::unique_ptr<TimelineBuilder> m_builder;
-    std::unique_ptr<Mlt::Tractor> m_timeline;
-    Timeline m_built; // model m_timeline was built from (LiveUpdate)
-    struct Opening;
-    std::unique_ptr<Opening> m_opening; // files being opened for m_builder (openInBackground)
-    quint64 m_openings = 0;
-    Timeline m_waiting;                 // newest timeline while opening
-    bool m_waitingHinted = false;
-    bool m_openInBackground = false;
-    std::unique_ptr<MixerHooks> m_mixer;
+    bool m_formatSet = false;
+    Timeline m_built; // the timeline shown
     std::unique_ptr<SharedLoudness> m_loudness; // fed by the master level meter in the audio thread
-    std::unique_ptr<SeekFade> m_seekFade;       // seek while playing: fade out/in at the master (no click)
-    std::unique_ptr<Preroll> m_preroll;         // Pre-position the decoder before jump spots
-    std::mutex m_mixerMutex; // m_mixer is read in the consumer thread
     bool m_mixerOnlyNext = false;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass = std::make_shared<std::atomic<bool>>(false);
-    std::unique_ptr<Mlt::Producer> m_source;
-    // Multicam grid: own builder (the grid would otherwise clear the timeline's producer cache)
-    std::unique_ptr<TimelineBuilder> m_gridBuilder;
-    std::unique_ptr<Mlt::Tractor> m_grid;
-    std::unique_ptr<MulticamGridHooks> m_gridHooks;
     Timeline m_gridContent;
     QVector<MulticamAngle> m_gridAngles;
     int m_gridColumns = 0, m_gridPage = 0;
-    std::atomic<int> m_offset{0}; // timeline frame minus producer frame (Multicam mode, else 0)
+    std::atomic<int> m_offset{0}; // timeline frame minus content frame (Multicam mode, else 0)
     QString m_sourcePath;
-    Mlt::Producer* m_current = nullptr;
 
-    // Atomic: onFrameShown reads them on the consumer's thread while the UI thread switches mode/speed
+    // Atomic: onPumpShown reads them on the pump's thread while the UI thread switches mode/speed
     std::atomic<Mode> m_mode{Mode::Timeline};
     std::atomic<double> m_speed{0.0};
     std::atomic<int> m_position{0};
-    // Jump during playback: no longer show/report images from the buffer from before the jump
+    // Jump during playback: no longer report positions from before the jump
     std::atomic<int> m_seekEpoch{0};
-    std::atomic<int> m_seekTarget{-1};
-    QElapsedTimer m_lastSeek;  // seeks in quick succession = dragging (SeekFade::hold)
+    QElapsedTimer m_lastSeek;  // seeks in quick succession = dragging (muted until it rests)
     QTimer* m_seekRelease;     // no seek for a moment: dragging ended, sound fades in
-    std::atomic<int> m_seekSkipped{0};
     QSize m_previewSize{960, 540}; // project format scaled down (longer edge 960), or full (m_previewFull)
     bool m_previewFull = false;
 
-    // Own audio engine (Audio::ownPath(), docs/archiv/plan-0.10-ton.md): the player plays the sound, the picture follows its
-    // clock (m_preview is the consumer); the MLT graph has no sound. nullptr = sound through MLT (sdl2_audio).
+    // Own audio engine (docs/archiv/plan-0.10-ton.md): the player plays the sound, the picture follows its clock
     std::unique_ptr<Audio::Player> m_player;
-    std::unique_ptr<PreviewConsumer> m_preview;
     Timeline m_sourceSound;  // source view: the file as a timeline
     int m_gridSoundAngle = 0; // multicam grid: whose sound plays
 
-    // Own picture engine (Picture::ownPicture() with the own audio engine; SCHNEIDI_PICTURE=mlt = the MLT consumer
-    // above): the pump renders ahead and shows by the sound clock, the renderers evaluate the model directly
-    bool m_own = false;
+    // Own picture engine: the pump renders ahead and shows by the sound clock, the renderers evaluate the model
     std::unique_ptr<Picture::Pump> m_pump;
     std::shared_ptr<Picture::Renderer> m_renderer;       // timeline
     std::shared_ptr<Picture::Renderer> m_sourceRenderer; // source view
@@ -302,6 +251,4 @@ private:
     std::shared_ptr<std::atomic<int64_t>> m_lastFrame = std::make_shared<std::atomic<int64_t>>(0);
     struct Resolved;
     std::shared_ptr<Resolved> m_resolved;
-
-    friend struct EngineCallbacks;
 };

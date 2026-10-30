@@ -19,8 +19,8 @@ namespace MediaProbe {
 
 namespace {
 
-// Extensions MLT's loader (loader.dict) gives to another producer than avformat first: still images, MLT/Kdenlive
-// projects, titles, animations. Their probing stays MLT's.
+// Extensions that are no media for schneidi (project files of other editors, titles, animations, documents) or still
+// pictures Qt cannot read: not opened with libavformat (it would guess a format for some of them)
 bool forOtherProducer(const QString& suffix)
 {
     static const QStringList list{
@@ -40,8 +40,7 @@ bool headerSuffices(const AVInputFormat* f)
     return std::any_of(std::begin(names), std::end(names), [f](const char* n) { return qstrcmp(f->name, n) == 0; });
 }
 
-// Suffixes MLT's loader opens as a still picture first (qimage, the own still producer registers under that name):
-// decided here when Qt can read the picture, like the still producer does
+// Still picture suffixes: decided here when Qt can read the picture, like the still source (engine/video/Still) does
 bool stillSuffix(const QString& suffix)
 {
     static const QStringList list{"avif", "bmp",  "dds",  "exr", "gif", "heic", "heif", "ico", "jfif", "jpg", "jpeg", "jxl",
@@ -49,14 +48,14 @@ bool stillSuffix(const QString& suffix)
     return list.contains(suffix);
 }
 
-// Single pictures and picture sequences (a still image with another extension): MLT treats them its own way
+// Single pictures and picture sequences (a still image with another extension)
 bool pictureDemuxer(const AVInputFormat* f)
 {
     const QByteArray name(f->name);
     return name == "image2" || name.endsWith("_pipe");
 }
 
-// Sample formats MLT's avformat producer plays. A stream decoding to another one (64-bit integer or double) is not its
+// Sample formats the sound path plays. A stream decoding to another one (64-bit integer or double) is not its
 // default sound: a file with only such streams has no sound for it.
 bool playable(int format)
 {
@@ -128,9 +127,9 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info)
         const AVCodecParameters* p = st->codecpar;
         if (p->codec_type != AVMEDIA_TYPE_VIDEO && p->codec_type != AVMEDIA_TYPE_AUDIO) continue;
         const AVCodec* codec = avcodec_find_decoder(p->codec_id);
-        if (!codec) return false; // MLT skips such streams, its stream numbering with them: left to MLT
+        if (!codec) return false; // no decoder in this FFmpeg: not playable here
         if (p->codec_type == AVMEDIA_TYPE_VIDEO) {
-            video = true; // also a cover picture: MLT's picture stream when there is no other
+            video = true; // also a cover picture: the picture stream when there is no other
             continue;
         }
         if (p->ch_layout.nb_channels <= 0) return false;
@@ -139,12 +138,12 @@ bool fill(const AVFormatContext* fmt, bool audioFile, MediaInfo* info)
         sound = sound || s == Sound::Playable;
         AudioStreamInfo a;
         a.channels = p->ch_layout.nb_channels;
-        // MLT keeps no empty and no "und" (undetermined) tag values
+        // No empty and no "und" (undetermined) tag values
         if (const AVDictionaryEntry* t = av_dict_get(st->metadata, "title", nullptr, 0); t && qstrcmp(t->value, "und") != 0)
             a.title = QString::fromUtf8(t->value).trimmed();
         streams << a;
     }
-    if (!video && !sound) return false; // nothing MLT plays: its producer does not open (length 0)
+    if (!video && !sound) return false; // nothing playable
     info->hasVideo = !audioFile && video;
     info->hasAudio = sound;
     if (sound) info->audioStreams = streams;
@@ -179,7 +178,17 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     AVFormatContext* raw = nullptr;
     if (avformat_open_input(&raw, path.toUtf8().constData(), nullptr, nullptr) < 0) return std::nullopt;
     const std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
-    if (pictureDemuxer(fmt->iformat)) return std::nullopt;
+    if (pictureDemuxer(fmt->iformat)) {
+        // A still picture with another extension: as a still when Qt reads it
+        if (!QImageReader(path).canRead()) return std::nullopt;
+        MediaInfo info;
+        info.path = path;
+        info.name = fi.fileName();
+        info.isImage = true;
+        info.hasVideo = true;
+        info.length = 5 * rate.timebase();
+        return info;
+    }
 
     MediaInfo info;
     info.path = path;
@@ -189,14 +198,13 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     const auto known = [](int64_t d) { return d != AV_NOPTS_VALUE && d > 0; };
     int64_t duration = headerSuffices(fmt->iformat) ? headerDuration(fmt.get()) : AV_NOPTS_VALUE;
     if (!known(duration) || !fill(fmt.get(), audioFile, &info)) {
-        // What MLT's producer runs on opening: decodes the first frames, estimates the length
+        // libavformat's stream analysis: decodes the first frames, estimates the length
         if (avformat_find_stream_info(fmt.get(), nullptr) < 0) return std::nullopt;
         duration = fmt->duration;
         if (!known(duration) || !fill(fmt.get(), audioFile, &info)) return std::nullopt;
     }
-    // In the project frame rate, rounded to whole frames like MLT's producer. A broken header can claim absurd
-    // lengths (time scale 1, duration 2^32 s): capped like MLT's "unknown" (INT_MAX), never overflowing into a
-    // negative length; not left to MLT, whose producer crashes on such a file
+    // In the project frame rate, rounded to whole frames. A broken header can claim absurd lengths (time scale 1,
+    // duration 2^32 s): capped at "unknown" (INT_MAX), never overflowing into a negative length
     const double frames = std::nearbyint(double(duration) * rate.fps() / AV_TIME_BASE);
     info.length = frames < double(INT_MAX) ? int(frames) : INT_MAX;
     return info;

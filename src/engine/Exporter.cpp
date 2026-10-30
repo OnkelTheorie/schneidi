@@ -10,18 +10,11 @@
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MemoryRelease.h"
-#include "engine/MixedSound.h"
-#include "engine/OutputColor.h"
-#include "engine/Profiles.h"
-#include "engine/RateConverter.h"
 #include "engine/SmartRender.h"
 #include "engine/Stabilizer.h"
-#include "engine/TimelineBuilder.h"
 #include "engine/audio/Mixer.h"
-#include "engine/audio/Path.h"
 #include "engine/picture/Renderer.h"
 
-#include <Mlt.h>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -88,19 +81,8 @@ bool replaceFile(const QString& from, const QString& to)
     return true;
 }
 
-bool usesFrei0r(const Timeline& tl)
-{
-    for (const Track& t : tl.video)
-        for (const Clip& c : t.clips)
-            for (const EffectInstance& e : c.effects) {
-                const EffectDescriptor* d = EffectRegistry::find(e.effectId);
-                if (e.enabled && d && d->category == QLatin1String(EffectRegistry::Frei0rCategory)) return true;
-            }
-    return false;
-}
-
-// The sample format MLT's avformat consumer gives the audio encoder (pick_sample_fmt): the wanted one if the codec
-// takes it, otherwise the codec's first; empty = unknown codec
+// The sample format the audio encoder gets: the wanted one if the codec takes it, otherwise the codec's first; empty =
+// unknown codec
 QString encoderSampleFormat(const QString& codecName, const QString& wanted)
 {
     const AVCodec* codec = avcodec_find_encoder_by_name(codecName.toUtf8().constData());
@@ -128,7 +110,7 @@ QString encoderSampleFormat(const QString& codecName, const QString& wanted)
     return {};
 }
 
-// Bits the file keeps of an integer sample format (MixedSound rounds to them); 0 = float or the full format
+// Bits the file keeps of an integer sample format (the writer rounds to them); 0 = float or the full format
 int fileBits(const QString& codec, const QString& sampleFormat)
 {
     if (codec.startsWith("pcm_s16") || sampleFormat.startsWith("s16")) return 16;
@@ -137,12 +119,6 @@ int fileBits(const QString& codec, const QString& sampleFormat)
     if (sampleFormat.startsWith("s32")) return 32;
     if (sampleFormat.startsWith("u8")) return 8;
     return 0;
-}
-
-// Runs in the avformat encoder thread, right before it ends
-void onConsumerStopped(mlt_properties, void* done, mlt_event_data)
-{
-    static_cast<std::atomic<bool>*>(done)->store(true);
 }
 
 } // namespace
@@ -202,11 +178,8 @@ int Exporter::availableThreads()
 
 int Exporter::parallelFrames(const Timeline& tl, int threads)
 {
-    bool frei0r = usesFrei0r(tl);
-    if (tl.nested)
-        for (const Timeline& n : *tl.nested) frei0r = frei0r || usesFrei0r(n);
     if (Stabilizer::needsFrameOrder(tl)) return 1; // border "keep": each frame takes over parts of the one before
-    return frei0r ? 1 : (threads > 0 ? threads : availableThreads());
+    return threads > 0 ? threads : availableThreads();
 }
 
 Exporter::Exporter(QObject* parent) : QObject(parent)
@@ -251,37 +224,29 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     out.height = size.height() & ~1;
     Timeline scaled = tl;
     if (out.size() != s.format.size()) scaleTimeline(scaled, s.format.size(), out.size());
-    // Audio only: video tracks carry no sound (TimelineBuilder hides it), so skip decoding their images
+    // Audio only: video tracks carry no sound, so skip decoding their images
     if (s.videoCodec.isEmpty()) scaled.video.clear();
     // An encoder this FFmpeg does not have (the GPL-free build has no x264/x265 and offers what it has instead):
-    // say so instead of MLT failing without a reason
+    // say so instead of failing without a reason
     if (!s.videoCodec.isEmpty() && !avcodec_find_encoder_by_name(s.videoCodec.toUtf8().constData())) {
         if (error) *error = T("Video-Encoder %1 ist in diesem Build nicht verfügbar.").arg(s.videoCodec);
         return false;
     }
-    // Own audio engine: the mixer gets the timeline as it is (it handles mute/solo itself), the MLT graph no sound
-    const bool ownAudio = !s.audioCodec.isEmpty()
-                          && (s.audioPath == ExportSettings::AudioPath::Own
-                              || (s.audioPath == ExportSettings::AudioPath::Default && Audio::ownPath()));
+    // The mixer gets the timeline as it is (it handles mute/solo itself), the renderer no sound
+    const bool sound = !s.audioCodec.isEmpty();
     QString sampleFormat;
-    if (ownAudio) {
+    if (sound) {
         sampleFormat = encoderSampleFormat(s.audioCodec, s.audioSampleFormat);
         if (sampleFormat.isEmpty()) {
             if (error) *error = T("Audio-Encoder %1 nicht verfügbar.").arg(s.audioCodec);
             return false;
         }
     }
-    const bool soundInGraph = !ownAudio && !s.audioCodec.isEmpty();
-    if (!soundInGraph) { // no sound filters in the graph either
-        scaled.audio.clear();
-        scaled.masterVolumeDb = 0;
-        scaled.masterLimiter = false;
-    }
-    // Muted (or not soloed) audio tracks and hidden video tracks add nothing to the file: leave their clips out, so
-    // their media is neither opened (slow start) nor decoded while rendering. The length stays (end is computed above)
-    const bool anySolo = std::any_of(scaled.audio.cbegin(), scaled.audio.cend(), [](const Track& t) { return t.solo; });
-    for (Track& t : scaled.audio)
-        if (t.muted || (anySolo && !t.solo)) t.clips.clear();
+    scaled.audio.clear(); // the picture only
+    scaled.masterVolumeDb = 0;
+    scaled.masterLimiter = false;
+    // Hidden video tracks add nothing to the file: leave their clips out, so their media is neither opened nor
+    // decoded while rendering. The length stays (end is computed above)
     for (Track& t : scaled.video)
         if (t.hidden) t.clips.clear();
 
@@ -290,17 +255,15 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     if (!s.subtitlePath.isEmpty()
         && !(subtitles = writeSubtitleFile(tl, s.format.rate.fps(), m_from, m_from + m_length, s.subtitlePath, error)))
         return false;
-    // Different frame rate: play the timeline in the output's profile (engine/RateConverter)
+    // Different frame rate: the writer picks the timeline frame of every output frame
     const FrameRate rate = s.rate.num > 0 && s.rate.den > 0 ? s.rate : s.format.rate;
     const bool convertRate = rate != s.format.rate && !s.videoCodec.isEmpty();
     const int threads = s.threads > 0 ? s.threads : availableThreads();
     m_settings = s;
     m_convertRate = convertRate;
-    m_ownAudio = ownAudio;
     m_sampleFormat = sampleFormat;
     m_threads = threads;
-    // Render every frame (real_time < 0), several frames at once (not with frei0r, see parallelFrames)
-    m_frames = convertRate ? 1 : parallelFrames(scaled, threads); // effects on left-out tracks do not count
+    m_frames = parallelFrames(scaled, threads); // effects on left-out tracks do not count
     m_target = s.path;
     m_subtitles = std::move(subtitles);
     // Written under a temporary name next to the target, renamed onto it at the end (see m_part)
@@ -321,32 +284,32 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_note = s.encoderNote;
     m_usedCodec.clear();
     m_copiedPercent = 0;
-    m_own = ownPathFor(scaled, s, ownAudio, sampleFormat);
-    if (m_own) m_frames = parallelFrames(scaled, threads); // frame rate conversion renders in parallel too
+    if (!writable(scaled, s, sampleFormat)) {
+        if (error) *error = T("Export konnte nicht gestartet werden.");
+        discardOutput();
+        return false;
+    }
     m_outSize = out.size();
     m_outRate = rate;
-    // Smart render: only where the own path writes the timeline as it is (size, frame rate, sound from the own engine)
+    // Smart render: only where the timeline is written as it is (size, frame rate)
     m_copy.clear();
     const bool sameSize = out.size() == s.format.size();
     if (s.smartRender && SmartRender::enabled() && s.output == ExportSettings::Output::File && !s.videoCodec.isEmpty()
-        && !convertRate && sameSize && (ownAudio || s.audioCodec.isEmpty())
-        && (m_own || (s.writer != ExportSettings::Writer::Mlt && (s.writer == ExportSettings::Writer::Own || ExportWriter::wanted()))))
+        && !convertRate && sameSize)
         m_copy = SmartRender::spans(tl, m_from, m_length, s.burnSubtitles);
     const bool smart = !m_copy.isEmpty();
 
-    // Building the MLT graph opens every file of the timeline (probing all streams, ~0.1 s per file even in
-    // parallel): in a thread, so the window stays responsive. launch() continues in this thread.
+    // Renderer and mixer are made in a thread (smart render looks at the files to copy), so the window stays
+    // responsive. launch() continues in this thread. Sources open with their first frame.
     auto graph = std::make_shared<Graph>();
     const int from = m_from, length = m_length, frames = m_frames;
-    const bool own = m_own;
     m_buildCancel = std::make_shared<std::atomic<bool>>(false);
-    std::optional<Timeline> sound;
-    if (ownAudio) sound = tl;
-    m_build = QThread::create([graph, cancel = m_buildCancel, scaled = std::move(scaled), sound = std::move(sound), out,
-                               s, threads, end, from, length, frames, rate, convertRate, soundInGraph, sampleFormat, smart, copy = m_copy,
-                               own] {
+    std::optional<Timeline> mixed;
+    if (sound) mixed = tl;
+    m_build = QThread::create([graph, scaled = std::move(scaled), mixed = std::move(mixed), out, s, threads, from,
+                               length, frames, rate, convertRate, smart, copy = m_copy] {
         Graph& g = *graph;
-        if (own) { // own picture engine and mixer: nothing is opened here (sources open with their first frame)
+        {
             if (smart)
                 if (const int cs = SmartRender::colorspace(copy, s.videoCodec, out.size()); cs > 0) g.colorspace = cs;
             if (!s.videoCodec.isEmpty()) {
@@ -360,89 +323,13 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
                 po.parallelFrames = frames;
                 g.renderer = std::make_shared<Picture::Renderer>(scaled, po);
             }
-            if (sound) {
+            if (mixed) {
                 Audio::Mixer::Options o;
                 o.fileLength = [lengths = s.mediaLengths](const QString& path) { return lengths.value(path); };
                 o.rate = s.audioRate > 0 ? s.audioRate : 48000;
-                g.mixer = std::make_shared<Audio::Mixer>(*sound, s.format.rate, o);
+                g.mixer = std::make_shared<Audio::Mixer>(*mixed, s.format.rate, o);
             }
             g.length = convertRate ? std::max(1, int(std::lround(length * rate.fps() / s.format.rate.fps()))) : length;
-            return;
-        }
-        g.profile = makeProfile(out);
-        // Smart render: export in the color standard of the files to copy (gaming clips are mostly tagged BT.601, also
-        // in HD). Otherwise they would not fit, or copied and encoded stretches would differ. The file is tagged so.
-        if (smart) {
-            const int cs = SmartRender::colorspace(copy, s.videoCodec, out.size());
-            if (cs > 0 && cs != g.profile->colorspace()) g.profile->set_colorspace(cs);
-        }
-        g.builder = std::make_unique<TimelineBuilder>(*g.profile);
-        g.builder->setCancelFlag(cancel);
-        g.builder->setDecoderThreads(threads);
-        g.builder->setParallelFrames(frames);
-        g.builder->setSubtitles(s.burnSubtitles && !s.videoCodec.isEmpty());
-        g.tractor = g.builder->build(scaled);
-        if (*cancel) return;
-        if (s.videoCodec.isEmpty() || !soundInGraph) { // keep the full length when the picture or sound ends earlier
-            Mlt::Playlist blank(*g.profile);
-            blank.blank(end - 1);
-            blank.set("hide", 3);
-            g.tractor->set_track(blank, g.tractor->count());
-        }
-        g.tractor->set_in_and_out(from, from + length - 1);
-        g.length = length;
-        if (convertRate) {
-            ProjectFormat target = out;
-            target.rate = rate;
-            g.outProfile = makeProfile(target);
-            g.source = RateConverter::make(*g.outProfile, *g.profile, *g.tractor);
-            if (!g.source || !g.source->is_valid()) {
-                g.error = T("Bildrate kann nicht umgerechnet werden.");
-                return;
-            }
-            // Length in the new frame rate
-            g.length = std::max(1, int(std::lround(length * rate.fps() / s.format.rate.fps())));
-            g.source->set("length", g.length);
-            g.source->set_in_and_out(0, g.length - 1);
-        } else {
-            g.source = std::make_unique<Mlt::Producer>(*g.tractor);
-        }
-        // The workers deliver YUV in the output's color standard, the encoder thread only repacks (see OutputColor.h)
-        if (!s.videoCodec.isEmpty())
-            if (auto f = OutputColor::make(convertRate ? *g.outProfile : *g.profile)) g.source->attach(*f);
-        if (sound) {
-            Audio::Mixer::Options o;
-            o.fileLength = [lengths = s.mediaLengths](const QString& path) { return lengths.value(path); };
-            MixedSound::Output mo;
-            mo.rate = s.audioRate > 0 ? s.audioRate : 48000;
-            mo.channels = s.audioChannels > 0 ? s.audioChannels : 2;
-            mo.bits = fileBits(s.audioCodec, sampleFormat);
-            mo.fps = rate;
-            mo.firstFrame = from;
-            mo.firstPosition = convertRate ? 0 : from;
-            g.sound = MixedSound::make(convertRate ? *g.outProfile : *g.profile, *sound, s.format.rate, o, mo);
-            if (!g.sound) {
-                g.error = T("Export konnte nicht gestartet werden.");
-                return;
-            }
-        }
-        // Smart render: the writer fetches the sound apart from the pictures (only encoded pieces are rendered),
-        // from a producer that carries nothing but the sound
-        if (smart) {
-            // Built like the timeline's tractor (blank track, in point): frame positions count from the timeline
-            // start as there, which MixedSound expects (a plain producer counts from its in point). One frame more
-            // than fetched: at its out point a producer pauses, the last frame would be silent.
-            Mlt::Playlist blank(*g.profile);
-            blank.blank(end);
-            Mlt::Tractor tractor(*g.profile);
-            tractor.set_track(blank, 0);
-            tractor.set_in_and_out(from, from + length);
-            g.soundSource = std::make_unique<Mlt::Producer>(tractor);
-            g.soundSource->set_speed(1);
-        }
-        if (g.sound) {
-            if (g.soundSource) g.soundSource->attach(*g.sound);
-            else g.source->attach(*g.sound);
         }
     });
     const quint64 run = ++m_threadRun;
@@ -456,17 +343,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
             fail(graph->error);
             return;
         }
-        m_profile = std::move(graph->profile);
-        m_builder = std::move(graph->builder);
-        m_tractor = std::move(graph->tractor);
-        m_outProfile = std::move(graph->outProfile);
-        m_source = std::move(graph->source);
-        m_sound = std::move(graph->sound);
-        m_soundSource = std::move(graph->soundSource);
         m_renderer = std::move(graph->renderer);
         m_mixer = std::move(graph->mixer);
         m_colorspace = graph->colorspace;
-        if (!m_soundSource && !m_own) m_copy.clear();
         m_length = graph->length;
         QString error;
         if (!launch(&error)) {
@@ -484,63 +363,18 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
 bool Exporter::launch(QString* error)
 {
     const ExportSettings& s = m_settings;
-    // Hardware encoder: test it with the output size first (MLT's avformat consumer crashes when the encoder cannot
-    // be opened, e.g. no such card, too large for the card, all its sessions busy). Runs ffmpeg in the background.
-    // The own path opens the encoder itself and reports when it cannot (fallback in pollWriter): no test needed
-    // Own path with a hardware encoder that already failed in this session (could not be opened): software right away
-    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && useWriter(s.videoCodec)) {
-        if (HardwareEncoders::cachedResult(s.videoCodec, outputSize()) < 0) {
-            if (!fallBackToSoftware(error)) return false;
-            ++g_running;
-            m_timer.start();
-            return true;
-        }
+    // The writer opens the encoder itself and reports when it cannot (fallback in pollWriter). A hardware encoder that
+    // already failed in this session (could not be opened): software right away
+    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && HardwareEncoders::cachedResult(s.videoCodec, outputSize()) < 0) {
+        if (!fallBackToSoftware(error)) return false;
+        ++g_running;
+        m_timer.start();
+        return true;
     }
-    if (HardwareEncoders::isHardwareCodec(s.videoCodec) && !useWriter(s.videoCodec)) {
-        const QSize size = outputSize();
-        const int known = HardwareEncoders::cachedResult(s.videoCodec, size);
-        if (known == 0) {
-            m_check = std::make_unique<QProcess>();
-            m_check->setProcessChannelMode(QProcess::MergedChannels);
-            connect(m_check.get(), &QProcess::finished, this, [this, size](int code, QProcess::ExitStatus status) {
-                const bool works = status == QProcess::NormalExit && code == 0;
-                HardwareEncoders::remember(m_settings.videoCodec, size, works);
-                if (!works)
-                    qWarning("Export: %s test failed: %s", qPrintable(m_settings.videoCodec),
-                             m_check->readAll().trimmed().constData());
-                onCheckFinished(works);
-            });
-            connect(m_check.get(), &QProcess::errorOccurred, this, [this, size](QProcess::ProcessError e) {
-                if (e != QProcess::FailedToStart) return;
-                HardwareEncoders::remember(m_settings.videoCodec, size, false);
-                onCheckFinished(false);
-            });
-            m_check->start(Bundle::tool("ffmpeg"), HardwareEncoders::testArguments(s.videoCodec, size, s.crf));
-            ++g_running;
-            m_timer.start(); // poll() waits for the consumer
-            return true;
-        }
-        if (known < 0) {
-            if (!fallBackToSoftware(error)) return false;
-            ++g_running;
-            m_timer.start();
-            return true;
-        }
-    }
-    if (!startConsumer(s.videoCodec, error)) return false;
+    if (!startWriter(s.videoCodec, error)) return false;
     ++g_running;
     m_timer.start();
     return true;
-}
-
-void Exporter::onCheckFinished(bool works)
-{
-    if (!m_check) return;
-    // Not deleted right here: we are inside a signal of m_check
-    m_check.release()->deleteLater();
-    QString error;
-    const bool ok = works ? startConsumer(m_settings.videoCodec, &error) : fallBackToSoftware(&error);
-    if (!ok) fail(error);
 }
 
 bool Exporter::fallBackToSoftware(QString* error)
@@ -553,102 +387,9 @@ bool Exporter::fallBackToSoftware(QString* error)
     qWarning("Export: hardware encoder %s failed, rendering with %s", qPrintable(hw), qPrintable(m_settings.softwareCodec));
     m_note = T("Hardware-Encoder %1 funktioniert nicht, mit Software gerendert.")
                  .arg(videoEncoderLabel(HardwareEncoders::encoderOfCodec(hw)));
-    return startConsumer(m_settings.softwareCodec, error);
+    return startWriter(m_settings.softwareCodec, error);
 }
 
-bool Exporter::startConsumer(const QString& codec, QString* error)
-{
-    const ExportSettings& s = m_settings;
-    if (m_consumer) { // again (fallback): the old one has stopped
-        m_consumer->stop();
-        m_stoppedEvent.reset();
-        m_fatalEvent.reset();
-        m_consumer.reset();
-    }
-    m_writer.reset();
-    if (useWriter(codec)) return startWriter(codec, error);
-    if (m_own) { // cannot happen (ownPathFor asked the writer); the MLT graph was not built
-        if (error) *error = T("Export konnte nicht gestartet werden.");
-        return false;
-    }
-    Mlt::Profile& outProfile = m_convertRate ? *m_outProfile : *m_profile;
-    m_consumer = std::make_unique<Mlt::Consumer>(outProfile, "avformat", m_path.toUtf8().constData());
-    if (!m_consumer->is_valid()) {
-        if (error) *error = T("FFmpeg-Ausgabe (avformat) nicht verfügbar.");
-        return false;
-    }
-    m_usedCodec = codec;
-    if (s.videoCodec.isEmpty()) {
-        m_consumer->set("vn", 1); // audio only
-        // vn only drops the video encoder: without video_off MLT's render threads still fetch (decode) every image
-        m_consumer->set("video_off", 1);
-    } else {
-        m_consumer->set("vcodec", codec.toUtf8().constData());
-        if (HardwareEncoders::isHardwareCodec(codec)) {
-            m_consumer->set("pix_fmt", HardwareEncoders::pixelFormat(codec).toUtf8().constData());
-            if (codec.endsWith("_vaapi"))
-                m_consumer->set("vaapi_device", HardwareEncoders::vaapiDevice().toUtf8().constData());
-        } else {
-            m_consumer->set("pix_fmt", s.pixFmt.toUtf8().constData());
-        }
-        for (const auto& [key, value] : encoderOptions(codec)) m_consumer->set(key.constData(), value.constData());
-        // 4:2:0 output: the workers deliver yuv420p (MLT asks for yuv422 otherwise), so the encoder thread only copies
-        // or interleaves instead of subsampling every frame a second time (~10 % faster, one chroma step less)
-        const QByteArray pixFmt = m_consumer->get("pix_fmt");
-        if (pixFmt == "yuv420p" || pixFmt == "nv12") m_consumer->set("mlt_image_format", "yuv420p");
-    }
-    if (s.output == ExportSettings::Output::ImageSequence) m_consumer->set("f", "image2"); // one file per frame
-    if (s.audioCodec.isEmpty()) m_consumer->set("an", 1); // GIF, image sequence: no sound
-    else m_consumer->set("acodec", s.audioCodec.toUtf8().constData());
-    if (m_ownAudio) {
-        // The consumer fetches the sound once in its own format (default s16, the cause of 16-bit "24 bit" files)
-        // and converts it for the encoder: ask for the encoder's format right away
-        m_consumer->set("sample_fmt", m_sampleFormat.toUtf8().constData());
-        if (m_sampleFormat.startsWith("s32")) m_consumer->set("mlt_audio_format", "s32le");
-        else if (m_sampleFormat.startsWith("flt")) m_consumer->set("mlt_audio_format", "f32le");
-        else if (m_sampleFormat.startsWith("u8")) m_consumer->set("mlt_audio_format", "u8");
-    } else if (!s.audioSampleFormat.isEmpty()) {
-        m_consumer->set("sample_fmt", s.audioSampleFormat.toUtf8().constData());
-    }
-    if (s.audioRate > 0) m_consumer->set("frequency", s.audioRate);
-    if (s.audioChannels > 0) m_consumer->set("channels", s.audioChannels);
-    if (const int bitrate = audioBitrateK(); bitrate > 0) m_consumer->set("ab", QString("%1k").arg(bitrate).toUtf8().constData());
-    const QString ext = QFileInfo(m_path).suffix().toLower();
-    // MP4: negative composition offsets instead of an edit list for B-frames (Windows Media Player ignores edit lists,
-    // see ExportWriter::writeHeader)
-    if ((ext == "mp4" || ext == "mov" || ext == "m4a") && s.output == ExportSettings::Output::File)
-        m_consumer->set("movflags", ext == "mp4" ? "+faststart+negative_cts_offsets" : "+faststart");
-    // HEVC as 'hvc1' for Apple players (see ExportWriter::writeHeader)
-    if ((ext == "mp4" || ext == "mov") && (codec == "libx265" || codec == "libkvazaar" || codec.startsWith("hevc_")))
-        m_consumer->set("vtag", "hvc1");
-    // Decoder (start) and encoder get the same thread count. When converting the frame rate the RateConverter
-    // fetches frames in order -> one at a time there, and without the read-ahead thread (real_time 0): repeated
-    // frames deliver 0 samples; the read-ahead thread fetches the sound early, and on the encoder's second fetch
-    // MLT fills the empty frames with silence (sound too long, with jumps).
-    m_consumer->set("real_time", m_convertRate ? 0 : -m_frames);
-    m_consumer->set("threads", m_threads);
-    qInfo("Export: %s, %d threads, %d frames at once%s%s", s.videoCodec.isEmpty() ? "audio only" : qPrintable(codec),
-          m_threads, m_frames, m_convertRate ? ", frame rate converted" : "", m_ownAudio ? ", own audio engine" : "");
-    m_consumer->set("terminate_on_pause", 1); // stop by itself at the end
-    m_consumer->connect(*m_source);
-
-    // avformat sets "running" only AFTER pthread_create: when the encoder thread is faster (short audio exports
-    // under load), it sees running=0, ends without a frame and afterwards running stays 1 -> is_stopped() never true.
-    // So also detect the end of the thread through the event (see poll).
-    m_threadDone = false;
-    m_fatal = false;
-    m_restarts = 0;
-    m_stoppedEvent.reset(m_consumer->listen("consumer-stopped", &m_threadDone, (mlt_listener)onConsumerStopped));
-    m_fatalEvent.reset(m_consumer->listen("consumer-fatal-error", &m_fatal, (mlt_listener)onConsumerStopped));
-
-    m_source->set_speed(1);
-    m_source->seek(0); // position counts from the in point (seek(m_from) dropped the first m_from frames with In/Out)
-    if (m_consumer->start() != 0) {
-        if (error) *error = T("Export konnte nicht gestartet werden.");
-        return false;
-    }
-    return true;
-}
 QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& codec) const
 {
     const ExportSettings& s = m_settings;
@@ -678,7 +419,7 @@ QVector<QPair<QByteArray, QByteArray>> Exporter::encoderOptions(const QString& c
 
 QString Exporter::audioSampleFormat() const
 {
-    return m_ownAudio ? m_sampleFormat : encoderSampleFormat(m_settings.audioCodec, m_settings.audioSampleFormat);
+    return m_sampleFormat;
 }
 
 int Exporter::audioBitrateK() const
@@ -688,27 +429,10 @@ int Exporter::audioBitrateK() const
     return c == "libmp3lame" ? std::min(m_settings.audioBitrateK, 320) : m_settings.audioBitrateK;
 }
 
-bool Exporter::useWriter(const QString& codec) const
-{
-    const ExportSettings& s = m_settings;
-    if (m_own) {
-        const QString pixFmt = s.videoCodec.isEmpty() ? QString()
-                               : HardwareEncoders::isHardwareCodec(codec) ? HardwareEncoders::pixelFormat(codec)
-                                                                          : s.pixFmt;
-        return ExportWriter::supportsOwn(m_path, s.output == ExportSettings::Output::ImageSequence ? "image2" : QString(),
-                                         s.videoCodec.isEmpty() ? QString() : codec, pixFmt, s.audioCodec,
-                                         s.audioCodec.isEmpty() ? QString() : audioSampleFormat());
-    }
-    if (s.writer == ExportSettings::Writer::Mlt || (s.writer == ExportSettings::Writer::Default && !ExportWriter::wanted()))
-        return false;
-    if (s.output != ExportSettings::Output::File || s.videoCodec.isEmpty()) return false;
-    const QString pixFmt = HardwareEncoders::isHardwareCodec(codec) ? HardwareEncoders::pixelFormat(codec) : s.pixFmt;
-    return ExportWriter::supports(m_path, codec, pixFmt, s.audioCodec, s.audioCodec.isEmpty() ? QString() : audioSampleFormat());
-}
-
 bool Exporter::startWriter(const QString& codec, QString* error)
 {
     const ExportSettings& s = m_settings;
+    m_writer.reset(); // again (fallback): the old one has stopped
     ExportWriter::Settings w;
     w.path = m_path;
     w.videoCodec = s.videoCodec.isEmpty() ? QString() : codec;
@@ -724,12 +448,11 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     const QString ext = QFileInfo(m_path).suffix().toLower();
     w.fastStart = ext == "mp4" || ext == "mov" || ext == "m4a";
     w.threads = m_threads;
-    w.realTime = m_convertRate ? 0 : -m_frames; // see startConsumer
     w.length = m_length;
-    if (m_soundSource || m_own) w.copy = m_copy;
+    w.copy = m_copy;
     w.maxBitrateK = s.maxBitrateK;
     m_usedCodec = s.videoCodec.isEmpty() ? QString() : codec;
-    if (m_own) {
+    {
         if (s.output == ExportSettings::Output::ImageSequence) w.muxer = "image2";
         if (codec.endsWith("_vaapi")) w.hwDevice = HardwareEncoders::vaapiDevice();
         ExportWriter::Own o;
@@ -742,17 +465,10 @@ bool Exporter::startWriter(const QString& codec, QString* error)
         o.from = m_from;
         o.audioBits = fileBits(s.audioCodec, w.sampleFormat);
         o.parallel = m_frames;
-        qInfo("Export: %s (own picture engine), %d threads, %d frames at once%s",
+        qInfo("Export: %s, %d threads, %d frames at once%s",
               s.videoCodec.isEmpty() ? "audio only" : qPrintable(codec), m_threads, m_frames,
               m_convertRate ? ", frame rate converted" : "");
         m_writer = std::make_unique<ExportWriter>(w, std::move(o));
-    } else {
-        qInfo("Export: %s (own path), %d threads, %d frames at once%s%s", qPrintable(codec), m_threads, m_frames,
-              m_convertRate ? ", frame rate converted" : "", m_ownAudio ? ", own audio engine" : "");
-        Mlt::Profile& outProfile = m_convertRate ? *m_outProfile : *m_profile;
-        m_source->set_speed(1);
-        m_source->seek(0); // position counts from the in point
-        m_writer = std::make_unique<ExportWriter>(outProfile, *m_source, w, m_soundSource.get());
     }
     m_writer->start();
     if (m_writer->state() == ExportWriter::State::Failed) {
@@ -833,70 +549,12 @@ bool Exporter::smartFallback(QString* error)
     m_writer.reset();
     QFile::remove(m_path);
     m_copy.clear();
-    if (m_own) return startConsumer(m_usedCodec, error); // the writer takes the sound from the mixer either way
-    if (m_sound && m_soundSource) {
-        m_soundSource->detach(*m_sound);
-        m_source->attach(*m_sound);
-    }
-    m_soundSource.reset();
-    return startConsumer(m_usedCodec, error);
+    return startWriter(m_usedCodec, error); // the writer takes the sound from the mixer either way
 }
 
 void Exporter::poll()
 {
-    if (m_writer) {
-        pollWriter();
-        return;
-    }
-    if (!m_consumer) return;
-    // Race at the start (see start): the thread saw running=0 and ended without a frame. Either running=1 comes
-    // after its end (never stopped), or before mlt_consumer_stopped() puts it back to 0 (looks finished, but the
-    // file is empty) -> start again in both cases
-    const bool nothingWritten = m_consumer->is_stopped() && !wroteOutput();
-    if (m_threadDone && (!m_consumer->is_stopped() || nothingWritten)) {
-        if (++m_restarts <= 3) {
-            qWarning("Export: encoder thread ended at once, restart %d", m_restarts);
-            m_consumer->stop(); // sets running=0, the thread has ended already
-            m_threadDone = false;
-            m_source->seek(0);
-            if (m_consumer->start() == 0) return;
-        }
-        m_consumer->stop();
-    }
-    // Hardware encoder failed while rendering (fatal error or nothing written): render again with software
-    // (not when the file cannot be written at all: that is no encoder problem)
-    const bool hardware = HardwareEncoders::isHardwareCodec(m_usedCodec) && !m_settings.softwareCodec.isEmpty();
-    const QFileInfo dir(QFileInfo(m_path).absolutePath());
-    if (hardware && (m_fatal || (m_consumer->is_stopped() && QFileInfo(m_path).size() <= 0)) && dir.isDir()
-        && dir.isWritable()) {
-        m_consumer->stop();
-        HardwareEncoders::remember(m_usedCodec, outputSize(), false); // not again this session
-        QFile::remove(m_path);
-        QString error;
-        if (fallBackToSoftware(&error)) return;
-        fail(error);
-        return;
-    }
-    if (m_consumer->is_stopped()) {
-        // Encoder or container failed (e.g. codec missing): no file or an empty one. Or it failed on the way (disk
-        // full, writing or encoding failed): avformat reports a fatal error and stops, the file is cut off
-        if (!wroteOutput() || m_fatal) {
-            if (m_fatal) qWarning("Export: the avformat consumer failed while rendering");
-            fail(T("Export fehlgeschlagen: %1").arg(m_target));
-            return;
-        }
-        cleanup();
-        if (m_settings.output == ExportSettings::Output::Gif) {
-            convertToGif();
-            return;
-        }
-        succeed();
-        return;
-    }
-    const int pos = m_source->position(); // relative to the In point
-    // GIF: the conversion afterwards gets the last tenth
-    const int scale = m_settings.output == ExportSettings::Output::Gif ? 90 : 100;
-    emit progress(std::clamp(pos * scale / std::max(1, m_length), 0, scale - 1));
+    if (m_writer) pollWriter();
 }
 
 bool Exporter::wroteOutput() const
@@ -947,18 +605,12 @@ void Exporter::finishGif(bool ok, const QString& log)
     succeed();
 }
 
-bool Exporter::ownPathFor(const Timeline& tl, const ExportSettings& s, bool ownAudio, const QString& sampleFormat) const
+bool Exporter::writable(const Timeline& tl, const ExportSettings& s, const QString& sampleFormat) const
 {
-    if (qgetenv("SCHNEIDI_PICTURE") == "mlt") return false;
-    if (s.writer == ExportSettings::Writer::Mlt || (s.writer == ExportSettings::Writer::Default && !ExportWriter::wanted()))
-        return false;
-    if (!s.audioCodec.isEmpty() && !ownAudio) return false; // sound through the MLT graph
     if (!s.videoCodec.isEmpty()) {
-        const QString why = Picture::unsupported(tl); // the one place that decides it
-        if (!why.isEmpty()) {
-            qInfo("Export: effect %s needs the MLT path for now", qPrintable(why));
-            return false;
-        }
+        // Effects this engine does not have (frei0r plugins, ids of newer versions) stay in the project but are skipped
+        if (const QString why = Picture::unsupported(tl); !why.isEmpty())
+            qWarning("Export: effect %s is not available here and is skipped", qPrintable(why));
     }
     const QString pixFmt = s.videoCodec.isEmpty() ? QString()
                            : HardwareEncoders::isHardwareCodec(s.videoCodec) ? HardwareEncoders::pixelFormat(s.videoCodec)
@@ -969,16 +621,12 @@ bool Exporter::ownPathFor(const Timeline& tl, const ExportSettings& s, bool ownA
 
 QSize Exporter::outputSize() const
 {
-    if (m_own) return m_outSize;
-    const Mlt::Profile* p = m_convertRate ? m_outProfile.get() : m_profile.get();
-    return p ? QSize(p->width(), p->height()) : m_outSize;
+    return m_outSize;
 }
 
 double Exporter::outputFps() const
 {
-    if (m_own) return m_outRate.fps();
-    const Mlt::Profile* p = m_convertRate ? m_outProfile.get() : m_profile.get();
-    return p ? p->fps() : m_outRate.fps();
+    return m_outRate.fps();
 }
 
 bool Exporter::runAnalyses(const Timeline& tl, const ExportSettings& s)
@@ -1023,7 +671,7 @@ bool Exporter::runAnalyses(const Timeline& tl, const ExportSettings& s)
 
 void Exporter::stopBuild()
 {
-    // Not left running detached: it would still open files while the program ends (MLT closed: crash)
+    // Not left running detached: it would still work while the program ends
     *m_buildCancel = true;
     ++m_threadRun; // its finished() may be queued already
     m_build->disconnect(this);
@@ -1132,29 +780,10 @@ void Exporter::cleanup()
 {
     if (m_timer.isActive()) --g_running;
     m_timer.stop();
-    // Always stop(): if the consumer ends itself (terminate_on_pause), its worker threads (real_time < -1) keep running
-    // otherwise – mlt_consumer_close does not stop them – and later compute on freed profiles/producers
-    if (m_check) { // test encode still running: only our own ffmpeg process
-        m_check->disconnect(this);
-        m_check->kill();
-        m_check->waitForFinished(2000);
-        m_check.reset();
-    }
-    m_writer.reset(); // stops its threads and render workers, releases every frame before the graph goes
-    if (m_consumer) m_consumer->stop();
-    m_stoppedEvent.reset();
-    m_fatalEvent.reset();
-    m_consumer.reset();
-    m_source.reset();
-    m_sound.reset();
-    m_soundSource.reset();
+    m_writer.reset(); // stops its threads and render workers, releases every frame before the renderer goes
     m_copy.clear();
-    m_outProfile.reset();
-    m_tractor.reset();
-    m_builder.reset();
-    m_profile.reset();
     m_renderer.reset();
     m_mixer.reset();
     Picture::releasePools();
-    MemoryRelease::requestRelease(); // the app gives MLT's pool back once nothing renders any more
+    MemoryRelease::requestRelease(); // the app gives the heap back once nothing renders any more
 }

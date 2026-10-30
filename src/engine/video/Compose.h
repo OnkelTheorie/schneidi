@@ -1,42 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Own compositing services instead of MLT's qtblend (Qt module, GPL): the CPU core of laying pictures over each other.
-// - transformFilter: draws the clip's picture into a rectangle of a transparent frame of the requested size
-//   (position/size keyframed, rotation around the rectangle's center, bilinear sampling). Same properties as
-//   qtblend's filter, so the timeline code sets them unchanged: "rect" (profile pixels "x y w h opacity"),
-//   "rotation" (degrees, clockwise on screen), "rotate_center" (1 = around the rectangle's center, else its top
-//   left), "distort" (1 = stretch onto the rectangle, else keep the picture's aspect ratio inside it).
-//   The source is fetched at its media size (meta.media.width/height, the profile size if unknown) like qtblend did,
-//   so TimelineBuilderDetail::attachSourceCap keeps working. A rectangle that is the whole frame without rotation
-//   passes the picture through at the requested size in the requested format (no RGBA round trip).
-// - blendTransition: lays the upper track (b) over the lower one (a). An opaque b that fills the frame is passed
-//   through without asking a for its picture (covered tracks are not decoded, tests/test_occlusion); a blank b
-//   (gap in the playlist) leaves a alone.
-// - cropFilter: keeps the rectangle "rect" (profile pixels, keyframed, scaled to the picture's size like qtcrop did)
-//   and paints the rest in "color" (default transparent); edges that cut through a pixel cover it partly.
-// Pixels: MLT's 8-bit RGBA with straight alpha; mixed in premultiplied fixed point, rows split over threads.
+// The CPU core of laying pictures over each other (engine/picture): drawing a picture into a rectangle (placement,
+// bilinear sampling), laying one picture over another, cropping. Pixels: 8-bit RGBA with straight alpha; mixed in
+// premultiplied fixed point, rows split over threads.
 
 #include <cstdint>
 #include <functional>
 
-namespace Mlt {
-class Filter;
-class Profile;
-class Transition;
-} // namespace Mlt
-
 namespace Compose {
-
-Mlt::Filter transformFilter(Mlt::Profile& profile);
-Mlt::Transition blendTransition(Mlt::Profile& profile);
-Mlt::Filter cropFilter(Mlt::Profile& profile);
-// With MLT's factory (after Mlt::Factory::init, Bundle::prepareMltCaches): "schneidi_transform", "schneidi_crop",
-// "schneidi_blend", and MLT's names qtblend/qtcrop for them where the Qt module is not loaded
-void registerServices();
-
-// Image comparison against the old services (tests, bench): true = MLT's qtblend where it loads, else the own ones
-void setQtReference(bool on);
-bool qtReference();
 
 // fn(first, last) for row ranges covering [0, rows), spread over a pool of threads whose jobs never wait (safe from
 // any thread); minRows per job keeps small pictures on one thread. The calling thread takes the first share.

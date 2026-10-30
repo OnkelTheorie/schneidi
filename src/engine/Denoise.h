@@ -4,29 +4,17 @@
 // (STFT with 75 % overlap, noise spectrum tracked by its minimum or set by a level, spectral subtraction with a gain
 // floor and gain smoothing against "musical noise"). Real time, ~11 ms latency (48 kHz).
 //
-// Own implementation instead of FFmpeg's afftdn: MLT's avfilter wrapper (7.30) only works with filters that return
-// as many samples as they get – afftdn/anlmdn buffer internally ("Unexpected return format", sound unchanged).
-//
-// One filter per clip, attached to all its cuts (like the sub-frame delay): its state runs on across cut
-// boundaries (transitions), so the sound does not start over there. Parameters are integer properties (LiveUpdate
-// copies them as text; MLT would write other numbers in the current locale) and apply live.
+// Applied per clip by the mixer (engine/audio/Mixer); its state runs on across the clip's cuts (transitions), so the
+// sound does not start over there.
 
 #include "core/Types.h"
 
 #include <memory>
 #include <vector>
 
-namespace Mlt {
-class Filter;
-class Profile;
-} // namespace Mlt
-
 namespace Denoise {
 
 constexpr const char* EffectId = "denoise";
-
-// Filter for all audio cuts of clip c; nullptr = no enabled noise reduction
-std::shared_ptr<Mlt::Filter> make(Mlt::Profile& profile, const Clip& c);
 
 // The processing of one channel (also used by the tests)
 class Processor {
