@@ -208,6 +208,7 @@ add_library(schneidi_lib STATIC
     src/engine/audio/Volume.h     src/engine/audio/Volume.cpp
     src/engine/Licenses.h         src/engine/Licenses.cpp
     src/engine/video/Reader.h     src/engine/video/Reader.cpp
+    src/engine/video/Scan.h       src/engine/video/Scan.cpp
     src/engine/video/Producer.h   src/engine/video/Producer.cpp
     src/engine/video/Hardware.h   src/engine/video/Hardware.cpp
     src/engine/video/Thumbnails.h src/engine/video/Thumbnails.cpp
