@@ -38,6 +38,12 @@ for m in "${MODULES[@]}"; do
 done
 # Beschreibungen der Module (.yml) und Daten (Profile, Presets, …)
 cp -r "$UCRT/share/mlt" "$OUT/share/mlt-7"
+# Descriptions of modules that are not in the package (GPL ones among them), like the AppImage
+for d in "$OUT/share/mlt-7"/*/; do
+    m="$(basename "$d")"
+    case "$m" in profiles|presets|lumas|core|avformat|sdl2|rtaudio|frei0r|xml) ;; *) if [ -f "$UCRT/lib/mlt/libmlt$m.dll" ]; then rm -rf "$d"; fi ;; esac
+done
+rm -rf "$OUT/share/mlt-7"/{qt,qt6,plusgpl,glaxnimate,vid.stab,rubberband}
 [ -f "$UCRT/lib/frei0r-1/bluescreen0r.dll" ] || echo "!! frei0r fehlt (pacman -S mingw-w64-ucrt-x86_64-frei0r-plugins)" >&2
 for dll in "$UCRT"/lib/frei0r-1/*.dll; do
     [ -f "$dll" ] || continue

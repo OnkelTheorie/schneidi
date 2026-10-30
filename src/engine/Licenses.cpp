@@ -20,6 +20,8 @@ extern "C" {
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+// after windows.h: K32EnumProcessModules (kernel32, no psapi.lib needed)
+#include <psapi.h>
 #endif
 
 namespace Licenses {
