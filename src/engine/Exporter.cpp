@@ -954,8 +954,7 @@ bool Exporter::ownPathFor(const Timeline& tl, const ExportSettings& s, bool ownA
         return false;
     if (!s.audioCodec.isEmpty() && !ownAudio) return false; // sound through the MLT graph
     if (!s.videoCodec.isEmpty()) {
-        QString why = Picture::unsupported(tl);
-        if (why.isEmpty() && Stabilizer::needsFrameOrder(tl)) why = Stabilizer::EffectId;
+        const QString why = Picture::unsupported(tl); // the one place that decides it
         if (!why.isEmpty()) {
             qInfo("Export: effect %s needs the MLT path for now", qPrintable(why));
             return false;

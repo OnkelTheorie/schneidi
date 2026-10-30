@@ -347,6 +347,12 @@ struct Renderer::Impl {
             ro.threads = options.decoderThreads;
             ro.behind = std::max(4, options.parallelFrames);
             ro.ahead = std::max(6, options.parallelFrames + 2);
+            if (options.mode == Mode::Export) {
+                // Export asks in order (workers at most a few frames apart): the small default windows suffice.
+                // Measured 1080p, 3 tracks, 10 workers: peak 1.68 -> 1.35 GB at the same frame rate.
+                ro.behind = 4;
+                ro.ahead = 6;
+            }
             if (auto r = Video::Reader::open(file, ro)) {
                 auto v = std::make_shared<VideoSource>();
                 // Only when the file states none (as engine/video/Producer): overriding it put two pictures of a
@@ -539,7 +545,10 @@ struct Renderer::Impl {
     }
 
     // Title text onto an output-size layer (clip frame t)
-    void drawTitle(Image& layer, const Clip& c, double t, const Ctx& ctx, double sizeOverride = 0)
+    // Draws the title onto layer, whose top left is at (shift) of the output frame. bounds: instead of drawing, the
+    // part of the output frame it covers (whole pixels, inside the frame)
+    void drawTitle(Image& layer, const Clip& c, double t, const Ctx& ctx, double sizeOverride = 0, QPoint shift = {},
+                   QRect* bounds = nullptr)
     {
         const TitleStyle& st = c.title;
         const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
@@ -575,10 +584,17 @@ struct Renderer::Impl {
             p.outlineColor = st.outlineColor;
             p.outline = (outlineLayer ? 2 * st.outlineWidth : 0.0) * sy;
             p.room = (outline ? 2 * st.outlineWidth : 0.0) * sy;
+            if (bounds) {
+                *bounds |= Text::bounds(p).toAlignedRect();
+                return;
+            }
+            p.area.translate(-shift);
             Text::draw(layer.data(), layer.w, layer.h, p);
         };
+        if (bounds) *bounds = QRect();
         if (outline) layerOf(true);
         layerOf(false);
+        if (bounds) *bounds &= QRect(0, 0, ctx.W, ctx.H);
     }
 
     // One clip's picture at timeline frame f on a transparent output-size layer; empty = nothing visible
@@ -594,11 +610,28 @@ struct Renderer::Impl {
         // The source picture and where it goes at zoom 1 (project pixels)
         Image src;
         QSizeF fit(ctx.PW, ctx.PH);
+        // A title drawn only as large as its text: where that part sits in the full-frame picture it stands for
+        QPoint part;
+        bool partial = false;
         if (c.isTitle()) {
             double size = 0;
             if (Keys::animated(c, AnimParam::TitleSize)) size = Keys::valueAt(c, AnimParam::TitleSize, t);
-            src = Image(W, H);
-            drawTitle(src, c, t, ctx, size);
+            QRect box;
+            // Effects (blur, glow …) work on the whole picture: there it stays full size
+            if ((transform || crop) && c.effects.isEmpty() && !ColorGrade::active(c)) {
+                drawTitle(src, c, t, ctx, size, {}, &box);
+                // Even offset: the mip steps of Compose::draw average the same 2x2 blocks as on the full picture
+                box.setLeft(box.left() & ~1);
+                box.setTop(box.top() & ~1);
+                if (box.isEmpty()) return {};
+                partial = true;
+                part = box.topLeft();
+                src = Image(box.width(), box.height());
+                drawTitle(src, c, t, ctx, size, part);
+            } else {
+                src = Image(W, H);
+                drawTitle(src, c, t, ctx, size);
+            }
         } else if (c.isNested()) {
             if (!tl.nested || depth > 16) return {};
             const auto it = tl.nested->constFind(c.sequenceId);
@@ -693,10 +726,12 @@ struct Renderer::Impl {
             bg = std::make_unique<BlurFill::Background>(BlurFill::makeBackground(
                 src.data(), src.w, src.h, double(src.w) / src.h, shares, ctx.PW / ctx.PH, c.transform.fillBlur,
                 c.transform.fillDim));
+        // The full-frame picture the source stands for (a title drawn at text size is a part of it)
+        const int fullW = partial ? W : src.w, fullH = partial ? H : src.h;
         if (crop) {
             const uint8_t none[4] = {0, 0, 0, 0};
-            Compose::crop(src.data(), src.w, src.h, shares[0] * src.w, shares[1] * src.h, (1 - shares[2]) * src.w,
-                          (1 - shares[3]) * src.h, none);
+            Compose::crop(src.data(), src.w, src.h, shares[0] * fullW - part.x(), shares[1] * fullH - part.y(),
+                          (1 - shares[2]) * fullW - part.x(), (1 - shares[3]) * fullH - part.y(), none);
         }
         const double zx = transform ? val(AnimParam::ZoomX) : 1.0, zy = transform ? val(AnimParam::ZoomY) : 1.0;
         const double x = transform ? val(AnimParam::PosX) : 0.0, y = transform ? val(AnimParam::PosY) : 0.0;
@@ -704,7 +739,11 @@ struct Renderer::Impl {
         const double rx = (ctx.PW - w) / 2 + x, ry = (ctx.PH - h) / 2 - y;
         const double angle = transform ? -val(AnimParam::Rotation) : 0.0;
         layer = Image(W, H);
-        const Compose::Affine m = Compose::placement(rx * sx, ry * sy, w * sx, h * sy, angle, src.w, src.h, true, true);
+        Compose::Affine m = Compose::placement(rx * sx, ry * sy, w * sx, h * sy, angle, fullW, fullH, true, true);
+        if (partial) { // the part's pixel (0, 0) is the full picture's part.x(), part.y()
+            m.c += m.a * part.x() + m.b * part.y();
+            m.f += m.d * part.x() + m.e * part.y();
+        }
         Compose::draw(layer.data(), W, H, src.data(), src.w, src.h, m, blurFill ? 1.0 : opacity);
         if (bg) {
             BlurFill::composite(layer.data(), W, H, *bg);
