@@ -35,7 +35,7 @@ struct Sound {
     void add(const float* pcm, int samples, int channels, int rate)
     {
         if (!features) features.emplace(rate);
-        if (!pcm) { // a frame that could not be decoded (MLT path): silence of its length
+        if (!pcm) { // a frame that could not be decoded: silence of its length
             mono.assign(size_t(std::lround(rate / fps)), 0.f);
             features->add(mono.data(), int(mono.size()));
             return;

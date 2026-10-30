@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Baut dist/schneidi-windows-<version>.zip: Programmordner mit schneidi.exe (+ schneidi-cli.exe), Qt, MLT-Modulen, frei0r und ffmpeg/ffprobe.
-# Läuft in MSYS2 (Umgebung UCRT64). Aufbau wie in src/engine/Bundle.h (<prefix> = Programmordner):
-#   schneidi.exe ffmpeg.exe ffprobe.exe *.dll  platforms/ styles/ …  lib/mlt-7  share/mlt-7  lib/frei0r-1
+# Builds dist/schneidi-windows-<version>.zip: program folder with schneidi.exe (+ schneidi-cli.exe), Qt and ffmpeg/ffprobe.
+# Runs in MSYS2 (environment UCRT64). Layout as in src/engine/Bundle.h:
+#   schneidi.exe ffmpeg.exe ffprobe.exe *.dll  platforms/ styles/ …
 # Aufruf aus dem Projektordner:  packaging/windows/build-windows.sh
 # Pakete: siehe README.md (Abschnitt Windows)
 set -euo pipefail
@@ -14,11 +14,6 @@ VERSION="$(sed -n 's/^project(schneidi VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeL
 VERSION="${VERSION:-0.1.0}"
 OUT="$BUILD/schneidi"
 
-# Only the MLT modules schneidi uses (like the AppImage; normalize, resample and plus are GPL and not loaded)
-MODULES=(core avformat sdl2 rtaudio frei0r xml)
-# frei0r: all plugins (Effects Library, Open FX → frei0r) except face detection (would pull in OpenCV)
-FREI0R_SKIP=(facebl0r facedetect)
-
 [ "${MSYSTEM:-}" = "UCRT64" ] || { echo "!! Bitte in der MSYS2-Umgebung UCRT64 starten" >&2; exit 1; }
 
 # --- Release-Build ---
@@ -27,28 +22,11 @@ cmake --build "$BUILD"
 
 # --- Programmordner ---
 rm -rf "$OUT"
-mkdir -p "$OUT/lib/mlt-7" "$OUT/lib/frei0r-1" "$OUT/share"
+mkdir -p "$OUT"
 cp "$BUILD/schneidi.exe" "$BUILD/schneidi-cli.exe" "$OUT/"
 strip "$OUT/schneidi.exe" "$OUT/schneidi-cli.exe"
 cp "$UCRT/bin/ffmpeg.exe" "$UCRT/bin/ffprobe.exe" "$OUT/"
 
-for m in "${MODULES[@]}"; do
-    dll="$UCRT/lib/mlt/libmlt$m.dll" # MSYS2: lib/mlt, im Paket lib/mlt-7 wie im AppImage
-    if [ -f "$dll" ]; then cp "$dll" "$OUT/lib/mlt-7/"; else echo "!! MLT-Modul fehlt: $dll" >&2; fi
-done
-# Beschreibungen der Module (.yml) und Daten (Profile, Presets, …)
-cp -r "$UCRT/share/mlt" "$OUT/share/mlt-7"
-# Descriptions of modules that are not in the package (GPL ones among them), like the AppImage
-for d in "$OUT/share/mlt-7"/*/; do
-    m="$(basename "$d")"
-    case "$m" in profiles|presets|lumas|core|avformat|sdl2|rtaudio|frei0r|xml) ;; *) if [ -f "$UCRT/lib/mlt/libmlt$m.dll" ]; then rm -rf "$d"; fi ;; esac
-done
-rm -rf "$OUT/share/mlt-7"/{qt,qt6,plusgpl,glaxnimate,vid.stab,rubberband}
-[ -f "$UCRT/lib/frei0r-1/bluescreen0r.dll" ] || echo "!! frei0r fehlt (pacman -S mingw-w64-ucrt-x86_64-frei0r-plugins)" >&2
-for dll in "$UCRT"/lib/frei0r-1/*.dll; do
-    [ -f "$dll" ] || continue
-    [[ " ${FREI0R_SKIP[*]} " == *" $(basename "$dll" .dll) "* ]] || cp "$dll" "$OUT/lib/frei0r-1/"
-done
 
 # --- Qt (Plugins: platforms, styles, imageformats, …) ---
 windeployqt6 --release --no-translations --no-system-d3d-compiler --no-opengl-sw --no-compiler-runtime \
@@ -65,14 +43,14 @@ done
 # offscreen: für den unsichtbaren Testlauf (--screenshot), wie im AppImage
 cp "$UCRT/share/qt6/plugins/platforms/qoffscreen.dll" "$OUT/platforms/"
 
-# --- Alle übrigen DLLs aus UCRT64 einsammeln (auch die der MLT-Module/frei0r/ffmpeg) ---
+# --- Collect every other DLL from UCRT64 (also those of ffmpeg) ---
 collect() {
     ntldd -R "$@" 2>/dev/null | tr '\\' '/' | sed -n 's|.*=> \(.*\.dll\) (0x.*|\1|p' | while read -r dll; do
         u="$(cygpath -u "$dll")"
         case "$u" in "$UCRT"/bin/*) [ -f "$OUT/$(basename "$u")" ] || cp "$u" "$OUT/" ;; esac
     done
 }
-TARGETS=("$OUT"/*.exe "$OUT"/lib/mlt-7/*.dll "$OUT"/lib/frei0r-1/*.dll)
+TARGETS=("$OUT"/*.exe)
 while IFS= read -r -d '' f; do TARGETS+=("$f"); done < <(find "$OUT" -mindepth 2 -name '*.dll' -not -path '*/lib/*' -print0)
 collect "${TARGETS[@]}"
 collect "$OUT"/*.dll # DLLs der eben kopierten DLLs (ntldd -R findet manche über Umwege nicht)

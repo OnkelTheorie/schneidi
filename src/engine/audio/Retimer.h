@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own audio engine: the sound of a retimed clip (speed, reverse, speed ramp) from its file stream. Part of
-// Audio::Mixer, no GUI or MLT dependency.
+// Audio::Mixer, no GUI dependency.
 //
 // Material sample mu (the clip's in/out count in material, like Clip::in) maps to a source position through the
 // clip's RetimeMap. Reverse reads the file backwards from its end (material 0 = the file's last sample).

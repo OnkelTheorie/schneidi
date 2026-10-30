@@ -25,7 +25,7 @@ namespace Audio {
 namespace {
 
 constexpr int kMaxNesting = 16;
-constexpr double kMaxGainDb = 20; // like MLT's volume filter (clip volumes stay below anyway)
+constexpr double kMaxGainDb = 20; // clip volumes stay below anyway
 constexpr int kGlide = 480;       // a gain changed live glides over 10 ms (no zipper click)
 
 int64_t floorDiv(int64_t a, int64_t b)

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own audio engine: changes the speed of a sound while keeping its pitch (phase vocoder). Used by Audio::Retimer
-// for "keep pitch"; no GUI, MLT or third-party stretcher.
+// for "keep pitch"; no GUI or third-party stretcher.
 //
 // Pull design on a fixed grid: the output is cut into frames at output samples k * hop (Hann window of 4 hops,
 // ~85 ms, overlap-add). Frame k takes its sound from the source window centred on map(k * hop), so the time course is exactly

@@ -66,8 +66,8 @@ SourceInfo probeSource(const QString& path)
     return s;
 }
 
-// ffmpeg names for the color matrix (MLT numbers) (the proxy gets the matrix of the original as tag,
-// otherwise MLT takes a 540p image without tag for BT.601 and the colors shift)
+// ffmpeg names for the color matrix (colorspace numbers 601/709/…) (the proxy gets the matrix of the original as tag,
+// otherwise a 540p image without tag is taken for BT.601 and the colors shift)
 const char* ffColorspace(int cs)
 {
     switch (cs) {
@@ -93,14 +93,14 @@ ProxyJob prepareJob(const QString& original, const QString& part)
     // (sar) are made square. Even dimensions for yuv420p.
     const QString k = QString::number(ProxyManager::kMaxSize);
     const QString f = QString("min(1,%1/max(iw*sar,ih))").arg(k);
-    // Fix the color matrix as MLT assumes it for the original (also for files without tag), so that ffmpeg does not
+    // Fix the color matrix as the decoder assumes it for the original (also for files without tag), so that ffmpeg does not
     // "correct" it and the proxy looks exactly like the original in the preview
     const char* cs = ffColorspace(info.colorspace);
     const QString matrix = info.colorspace == 2020 ? "bt2020" : cs;
     QString scale = QString("scale=w='trunc(%1*iw*sar/2)*2':h='trunc(%1*ih/2)*2'"
                                   ":in_color_matrix=%2:out_color_matrix=%2:in_range=%3:out_range=tv,setsar=1")
                               .arg(f, matrix, info.fullRange ? "pc" : "tv");
-    // Frame 0 of the proxy = frame 0 of the original. MLT and the own decoder count from the first video key frame;
+    // Frame 0 of the proxy = frame 0 of the original. The decoder counts from the first video key frame;
     // FFmpeg (without -copyts) shifts by the container start, the earliest of all streams. A recording whose sound
     // starts before the picture (OBS, phones, games: ~1 frame) would put the first picture at +1 frame, and the
     // constant frame rate fills the gap with a doubled first picture: proxy frame k = original frame k-1, cuts

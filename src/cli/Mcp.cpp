@@ -25,8 +25,8 @@ namespace Cli::Mcp {
 
 namespace {
 
-// An MCP server lives as long as the AI's chat, mostly idle: after a tool it gives back what the tool used. MLT keeps
-// every image buffer it freed for reuse (a 3-s render of a 1080x1920 timeline left 1.3 GB behind, 0.4 GB after this).
+// An MCP server lives as long as the AI's chat, mostly idle: after a tool it gives back what the tool used. The picture
+// engine keeps buffers for reuse and the heap keeps freed memory (a 3-s render of a 1080x1920 timeline left 1.3 GB).
 void releaseMemory()
 {
     MemoryRelease::release();

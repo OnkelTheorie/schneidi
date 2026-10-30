@@ -9,7 +9,6 @@ The running program lists what it really loaded: `schneidi-cli --licenses` (AppI
 | Part | License | What for |
 |---|---|---|
 | [Qt 6](https://www.qt.io) (Core, Gui, Widgets, Network, Svg, DBus; platform plugins) | LGPL-3.0 | user interface |
-| [MLT 7](https://www.mltframework.org) framework and the modules core, avformat, sdl2, rtaudio, xml, frei0r (the wrapper only) | LGPL-2.1+ (rtaudio: MIT) | preview and export graph |
 | [FFmpeg 7.1](https://ffmpeg.org) libraries and the `ffmpeg`/`ffprobe` programs, built by `packaging/linux/build-ffmpeg-lgpl.sh` without `--enable-gpl`/`--enable-nonfree` | LGPL-2.1+ | reading and writing media |
 | [OpenH264](https://www.openh264.org) | BSD-2-Clause | H.264 software encoder (see the note below) |
 | [kvazaar](https://github.com/ultravideo/kvazaar) | BSD-3-Clause | H.265 software encoder |
@@ -20,15 +19,11 @@ The running program lists what it really loaded: `schneidi-cli --licenses` (AppI
 | [LAME](https://lame.sourceforge.io) | LGPL-2.0+ | MP3 encoder |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | BSD-3-Clause | WebP pictures |
 | [libva](https://github.com/intel/libva), [libdrm](https://gitlab.freedesktop.org/mesa/drm), [oneVPL](https://github.com/intel/libvpl), [nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers) | MIT | hardware encoders (VAAPI, Quick Sync, NVENC) |
-| [SDL 2](https://www.libsdl.org) | Zlib | MLT's sdl2 module |
-| [libsamplerate](https://libsndfile.github.io/libsamplerate/) | BSD-2-Clause | MLT's sdl2 module |
 | [miniaudio](https://miniaud.io) | MIT-0 / public domain | sound output |
 | libglvnd (EGL/OpenGL dispatch, fallback only) | MIT-style | systems without a desktop |
 | System libraries pulled in by the above (glib, ICU, fontconfig, FreeType, HarfBuzz, libpng, zlib, zstd, libjpeg-turbo, PCRE2, X11/XCB/xkbcommon, Wayland, D-Bus, double-conversion, brotli, md4c …) | LGPL-2.1+, MIT, BSD, Zlib, IJG, Unicode, FTL, AFL-2.1 (D-Bus, dual-licensed) | as used by Qt |
 
-Not in these packages: x264, x265, Rubber Band, vid.stab, frei0r plugins, MLT's GPL modules (qt, plusgpl, plus,
-normalize, resample, xine, vid.stab, rubberband, jackrack, movit, sox). frei0r effects stay possible as an option
-(Settings › General › Effects) with plugins the user installs.
+Not in these packages: x264, x265, Rubber Band, vid.stab, frei0r plugins.
 
 whisper.cpp (speech recognition, MIT) is not bundled: schneidi downloads it as an extension on request.
 
@@ -39,5 +34,4 @@ Hardware encoders (the graphics card's driver) are the alternative.
 ## Regular packages (AppImage without `SCHNEIDI_NO_GPL`, Windows, Debian package, Docker)
 
 As above, but with the FFmpeg of Debian 13 / MSYS2, which is built with `--enable-gpl` (x264, x265, Rubber Band,
-vid.stab, frei0r, …) and is therefore GPL-2.0+ as a whole; the AppImage and the Windows package also bundle the frei0r
-plugins (GPL-2.0+). The Debian package and the Docker image use these libraries from the system.
+vid.stab, frei0r, …) and is therefore GPL-2.0+ as a whole. The Debian package and the Docker image use these libraries from the system.

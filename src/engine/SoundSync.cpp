@@ -14,7 +14,7 @@ namespace {
 constexpr int kChunksPerSecond = 5; // chunks of 0.2 s
 
 // The stream from the picture's first frame (position 0, as the timeline counts) to its end, channels averaged, read
-// with the own audio engine (no MLT, also when the MLT sound path is chosen). At 48 kHz like the material mostly is
+// with the own audio engine. At 48 kHz like the material mostly is
 // (resampling to 16 kHz would cut the envelope's top band).
 std::optional<std::vector<float>> envelope(const QString& path, int stream, const Progress& progress)
 {

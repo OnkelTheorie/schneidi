@@ -323,7 +323,7 @@ void Jobs::onGone(Worker* w, bool started)
     }
     if (!started) ++m_startFailures;
     w->deleteLater();
-    // A worker that cannot even start (program missing, MLT broken): do not try forever
+    // A worker that cannot even start (program missing or broken): do not try forever
     if (m_startFailures >= 3) {
         m_startFailures = 0;
         const QVector<Job*> queued = m_queue;

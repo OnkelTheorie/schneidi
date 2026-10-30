@@ -2,7 +2,7 @@
 #pragma once
 // Tool calls of `schneidi-cli serve` as jobs (Serve.cpp): each call runs in one of a few worker processes
 // (`schneidi-cli mcp` on stdio, same program, started when needed and again after a crash). Why processes: commands
-// run synchronously on MLT/FFmpeg (not made for threads), a long render must not hold up other clients and a crash
+// run synchronously on the engine (not made for threads), a long render must not hold up other clients and a crash
 // must not take the server down. Calls that change a project run one after another per project file; everything
 // else runs as soon as a worker is free. A job stays listed (with its result) for an hour after it ended.
 

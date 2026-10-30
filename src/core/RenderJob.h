@@ -27,7 +27,7 @@ struct RenderFormatInfo {
     int crf[3];             // CRF of the quality levels high/medium/small; 0 = fixed quality (ProRes, DNxHR, images)
     bool webQuality;        // quality "web" (bit rate cap) available (H.264/H.265)
     bool hardware;          // hardware encoders of the graphics card selectable (H.264/H.265)
-    const char* options;    // further encoder settings for MLT's avformat consumer, "key=value key=value"
+    const char* options;    // further encoder settings (AVOptions), "key=value key=value"
 
     bool hasQuality() const { return crf[0] > 0; }
 };

@@ -9,7 +9,7 @@
 // Timing as the ffmpeg command line did it (setpts=PTS-STARTPTS, fps=<rate>): times count from the first decoded
 // picture; sample k is the last picture whose time rounds to k / rate or earlier (a picture repeats when the file has
 // fewer pictures than samples). Scaling with libswscale bicubic, the colour matrix and range from the picture's tags,
-// pictures turned upright like ffmpeg's autorotate. No MLT, no GUI dependency.
+// pictures turned upright like ffmpeg's autorotate. No GUI dependency.
 
 #include <QRectF>
 #include <QString>

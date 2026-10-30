@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 
-// Pure data model of the timeline - without Qt widgets and without MLT,
+// Pure data model of the timeline - without Qt widgets,
 // so that engine and UI stay interchangeable independently of it.
 
 #include "core/I18n.h"
@@ -238,7 +238,7 @@ struct Clip {
     int angle = 0;      // only for kind == Multicam: index in Sequence::angles (video part: picture, audio part: sound)
     int start = 0;  // position in the timeline (frames)
     int in = 0;     // first frame in the source material
-    int out = 0;    // last frame in the source material (inclusive, as in MLT)
+    int out = 0;    // last frame in the source material (inclusive)
     int linkId = 0; // 0 = free; same linkId = linked video+audio
     // Audio only: fine position after `start` in 1/100 frame (0..99, like sub-frame in DaVinci Fairlight). Cuts and
     // edges stay on whole frames, only the audio (and its display) shifts right by the fraction.
@@ -265,7 +265,7 @@ struct Clip {
     // Keyframes per parameter (empty = static value), see core/Keyframes.h
     QMap<AnimParam, KeyTrack> keys;
     // Speed like DaVinci "Change Clip Speed" (Ctrl+R). in/out/keyframes count in frames of the converted
-    // material (MLT timewarp): at 50 % the source is twice as long, reversed frame 0 starts at the file end.
+    // material: at 50 % the source is twice as long, reversed frame 0 starts at the file end.
     double speed = 1.0;     // 1.0 = 100 %, always > 0
     bool reverse = false;   // play backwards
     bool freeze = false;    // freeze frame: every frame shows stillFrame() (audio muted), can be stretched to any length

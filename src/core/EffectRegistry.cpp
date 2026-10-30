@@ -173,7 +173,7 @@ QVector<EffectDescriptor>& registry()
          true, T("Senkt gleichmäßiges Rauschen (Rauschen, Brummen, Lüfter) in Sprachaufnahmen ab"), true},
         // Color page (DaVinci "Primaries - Color Wheels", own area instead of Effects Library): values as in DaVinci
         // (Lift/Gamma 0 = neutral, Gain 1, Offset 25, Contrast 1, Pivot 0.435, Saturation 50), plus LUT (.cube).
-        // Engine: own MLT filter (engine/ColorGrade), applied before all other effects.
+        // Engine: engine/ColorGrade, applied before all other effects.
         {"grade", T("Farbkorrektur (Color)"), {}, true,
          {
              {"liftY", T("Lift"), {}, EffectParam::Double, 0.0, -1, 1, AnimParam::GradeLiftY, 0.002, 2},

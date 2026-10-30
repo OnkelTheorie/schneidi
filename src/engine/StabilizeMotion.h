@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Own video stabilization, the computation part (no MLT, works on plain pictures, testable): global camera motion
+// Own video stabilization, the computation part (works on plain pictures, testable): global camera motion
 // between frames, the smoothed camera path with the zoom that hides the borders, and the warp that applies it.
 //
 // Motion: corner features (one per grid cell, Shi-Tomasi score) followed from frame to frame with pyramidal

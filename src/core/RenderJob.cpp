@@ -112,7 +112,7 @@ bool RenderSettings::hasAudioBitrate() const
 
 QVector<int> RenderSettings::audioBitChoices() const
 {
-    // 64 bit does not exist: MLT mixes in 32-bit float at most
+    // 64 bit does not exist: the mixer works in 32-bit float
     const QLatin1String c(renderFormat(format).audioCodec);
     if (c.startsWith(QLatin1String("pcm_"))) return {16, 24, 32};
     if (c == QLatin1String("alac") || c == QLatin1String("flac")) return {16, 24};

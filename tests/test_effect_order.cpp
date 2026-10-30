@@ -438,6 +438,40 @@ void testInspector(QApplication& app)
     CHECK(!QApplication::overrideCursor());
 }
 
+// An effect this version does not have (frei0r plugin of an old project): listed in the Inspector with the hint that it
+// is skipped, kept in the clip
+void testInspectorMissing(QApplication& app)
+{
+    Project project;
+    Selection sel;
+    Editor editor(&project, &sel);
+    project.addMedia(MediaInfo{"/x/b.mp4", "b.mp4", 300, true, false, false});
+    Timeline tl;
+    tl.video.resize(1);
+    tl.audio.resize(1);
+    Clip c;
+    c.id = project.newClipId();
+    c.mediaPath = "/x/b.mp4";
+    c.out = 99;
+    c.effects << EffectInstance{"frei0r.gibtsnicht", {}, true};
+    tl.video[0].clips << c;
+    project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, c.id, 0});
+    Inspector insp(&editor);
+    insp.resize(380, 900);
+    sel.set({c.id});
+    insp.show();
+    app.processEvents();
+    bool hinted = false;
+    for (const QLabel* l : insp.findChildren<QLabel*>("MissingEffect"))
+        hinted = hinted || l->text().contains("übersprungen");
+    CHECK(hinted);
+    bool shown = false;
+    for (const QWidget* w : insp.findChildren<QWidget*>())
+        shown = shown || (w->toolTip() == T("Effekt „%1“ fehlt").arg("frei0r.gibtsnicht") && w->isVisibleTo(&insp));
+    CHECK(shown);
+    CHECK_EQ(TimelineOps::findClip(project.timeline(), c.id)->effects.size(), 1);
+}
+
 // ---- Render ----
 
 QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos)
@@ -525,6 +559,7 @@ int main(int argc, char** argv)
     testCli(tmp.path());
     Check::initEngine();
     testInspector(app);
+    testInspectorMissing(app);
 
     if (!Check::haveFfmpeg()) {
         std::printf("Hinweis: ffmpeg fehlt, Render-Teil übersprungen\n");

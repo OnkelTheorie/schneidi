@@ -76,7 +76,7 @@ QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos, std::shared
 {
     Picture::Options o;
     o.format = fmt;
-    o.mode = Picture::Mode::Export;
+    o.mode = bypass ? Picture::Mode::Preview : Picture::Mode::Export; // the switch is the preview's
     o.gradeBypass = bypass;
     Picture::Renderer r(tl, o);
     return r.render(pos).toImage();

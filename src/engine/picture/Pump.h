@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Frame pump of the preview (0.15, own picture engine): replaces the MLT preview consumer (PreviewConsumer), its
-// read-ahead, Preroll and LiveUpdate. No MLT here.
+// Frame pump of the preview (0.15, own picture engine).
 //
 // - Worker threads render the frames ahead of the one shown next (in playback direction, `step` frames apart at
 //   shuttle speeds) through Content::render (Renderer::render, or the multicam grid tiling several renderers). A

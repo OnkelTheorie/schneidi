@@ -23,7 +23,7 @@ struct EffectParam {
     AnimParam anim = AnimParam::Count; // Count = not animatable
     double step = 1;                   // number field: step per pixel when dragging
     int decimals = 2;
-    QStringList choices; // Choice: allowed values (passed to MLT as they are)
+    QStringList choices; // Choice: allowed values (stored as they are)
     QString description; // Tooltip
     // frei0r: parameter name of the plugin (MLT also accepts it instead of the index in mltProperty; Kdenlive's
     // effect files mostly use it)

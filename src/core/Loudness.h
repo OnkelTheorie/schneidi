@@ -5,7 +5,7 @@
 //   Momentary  = last 400 ms, Short-term = last 3 s,
 //   Integrated = all 400 ms blocks (75 % overlap) with absolute (-70 LUFS) and relative (-10 LU) gate,
 //   Loudness Range (LRA) = 10th-95th percentile of the short-term values (gates -70 LUFS / -20 LU).
-// Pure C++ without MLT/Qt -> same on Linux and Windows, testable. Not thread-safe (caller locks).
+// Pure C++ without Qt -> same on Linux and Windows, testable. Not thread-safe (caller locks).
 
 #include "core/TruePeak.h"
 
@@ -40,7 +40,7 @@ public:
             if (++m_accCount >= m_blockSamples) finishSubBlock();
         }
     }
-    // Planar float (MLT mlt_audio_float) or interleaved (f32le)
+    // Planar float or interleaved (f32le)
     void addPlanar(const float* data, int frames, int channels, int rate)
     {
         add(frames, channels, rate, [&](int c, int i) { return data[c * frames + i]; });

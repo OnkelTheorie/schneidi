@@ -4,7 +4,7 @@
 // filter as TruePeakMeter). One gain for all channels. The gain reaches its value before a peak arrives (lookahead,
 // smooth ramp) and recovers exponentially (release). The audio is delayed by latency() samples.
 // Works on float, so levels above 0 dBFS before the limiter are not clipped (export and measurement agree).
-// Plain C++ without MLT/Qt -> same on Linux and Windows, testable. Not thread-safe; copyable (state snapshot).
+// Plain C++ without Qt -> same on Linux and Windows, testable. Not thread-safe; copyable (state snapshot).
 
 #include <cstdint>
 #include <deque>

@@ -284,10 +284,12 @@ QImage gridImage(const Sequence& s, const MulticamGridOptions& o, int pos)
     QImage shown;
     QObject::connect(&engine, &Engine::frameReady, &engine, [&](const QImage& img) { shown = img; });
     if (!engine.showMulticam(s.timeline, s.angles, o, 0, pos)) return {};
+    // The timeline's (empty) picture from before may still be on its way: the last picture after a while
     QElapsedTimer t;
     t.start();
-    while (shown.isNull() && t.elapsed() < 5000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    return shown.convertToFormat(QImage::Format_RGBA8888);
+    while (t.elapsed() < 1500) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    // The preview renders small projects at a longer edge of 960: back to the project size for the pixel checks
+    return shown.scaled(kFmt.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation).convertToFormat(QImage::Format_RGBA8888);
 }
 
 void testGridShowsAllAnglesInCells()

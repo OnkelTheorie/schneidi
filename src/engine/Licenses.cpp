@@ -40,7 +40,7 @@ constexpr Known kGpl[] = {
     {"vo-amrwbenc", "Apache-2.0 (needs GPL-3 FFmpeg)"},
 };
 
-// "libx264.so.164" / "libpostproc.so.58" / "x264-164.dll" / "avcodec-61.dll" -> "x264", "mltplus", "x264", "avcodec"
+// "libx264.so.164" / "libpostproc.so.58" / "x264-164.dll" / "avcodec-61.dll" -> "x264", "postproc", "x264", "avcodec"
 QString baseName(const QString& fileName)
 {
     QString n = fileName;
