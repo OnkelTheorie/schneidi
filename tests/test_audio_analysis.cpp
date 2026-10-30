@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Own audio engine, step 4 (docs/archiv/plan-0.10-ton.md): the analyses take their sound from the own engine
-// (Audio::Mixer for clip and timeline levels, Audio::Reader for waveforms and sound sync) instead of MLT.
-// Every check runs both paths (SCHNEIDI_AUDIO=mlt|own in the same process) on generated sources:
-// - clip peak/loudness ("Normalize audio levels"): own = MLT, clip volume/fades/effects ignored, also with speed
-// - frame peaks of a clip (silence detection) and of the mix (silence, ducking): own = MLT frame by frame, own mix
-//   = Audio::Mixer itself
-// - sound later than the picture (phones, OBS): frame peaks, waveform and sync envelope start exactly at 0.3 s on
-//   the own path (MLT places it 65-87 ms early, only reported)
-// - sound sync: envelopes like MLT, offsets exact
-// - waveform (MediaCache): same values as MLT, sample-exact start of a late stream
-// With the sound references of step 0 (private docs folder; skipped without it): loudness and frame peaks of every
-// reference project, own against MLT and against the mixer with the project's media lengths, plus the times.
+// Analyses on the own audio engine (Audio::Mixer for clip and timeline levels, Audio::Reader for waveforms and sound
+// sync), checked against values known from the generated sources:
+// - clip peak/loudness ("Normalize audio levels"): the source's level (0.5 sine = -6.02 dBFS), clip volume/fades/
+//   effects ignored, also with speed and reversed; loudness against frozen values of the generated tone
+// - frame peaks of a clip (silence detection) and of the mix (silence, ducking): the source's levels frame by frame,
+//   the mix = Audio::Mixer itself (the export's sound)
+// - sound later than the picture (phones, OBS): frame peaks, waveform and sync envelope start exactly at 0.3 s
+// - sound sync: the envelope = that of the file decoded by ffmpeg, offsets exact
+// - waveform (MediaCache): levels of the source, sample-exact start of a late stream
+// With the sound references (private docs folder; skipped without it): the analysis of every reference project hears
+// what the export mixer writes (frame peaks equal).
 
 #include "check.h"
 
@@ -44,8 +43,21 @@ namespace {
 
 const ProjectFormat kFmt{320, 180, {25, 1}};
 constexpr int kFrames = 150; // 6 s at 25 fps
+// Frozen loudness of the generated tone (see checkClipLevels); regenerate: run the test, take the printed values
+constexpr double kToneLufs = -9.404, kPartLufs = -12.412, kSlowLufs = -9.599, kMixLufs = -8.706;
 
-void usePath(bool own) { qputenv("SCHNEIDI_AUDIO", own ? "own" : "mlt"); }
+bool near(double a, double b, double tol) { return std::abs(a - b) <= tol; }
+
+// Every frame in [from, to) with a peak within tol of want
+bool levels(const std::vector<float>& peaks, int from, int to, double want, double tol)
+{
+    for (int i = from; i < to; ++i)
+        if (i >= int(peaks.size()) || !near(peaks[size_t(i)], want, tol)) {
+            std::printf("       frame %d: %.5f, want %.5f\n", i, i < int(peaks.size()) ? peaks[size_t(i)] : -1.f, want);
+            return false;
+        }
+    return true;
+}
 
 Clip clipOf(const QString& path, int id = 1, int start = 0, int in = 0, int out = kFrames - 1)
 {
@@ -76,35 +88,35 @@ int firstSound(const std::vector<float>& peaks)
 void checkClipLevels(const QString& tone)
 {
     std::printf("Pegel eines Clips (Normalisieren):\n");
+    // Frozen reference values of the generated tone (0.5 sine 440 Hz 0-2 s, 0.25 sine 1 kHz 3-6 s, stereo PCM):
+    // loudness measured once with the meter checked against the standard (test_loudness); the peak is the amplitude
     struct Case {
         const char* name;
         Clip clip;
-        double tolDb;
+        double peakDb, lufs, tol;
     };
+    const double half = 20 * std::log10(0.5), quarter = 20 * std::log10(0.25);
     Clip slow = clipOf(tone, 1, 0, 0, 2 * kFrames - 1);
     slow.speed = 0.5;
     slow.keepPitch = false;
     Clip rev = clipOf(tone);
     rev.reverse = true;
-    Clip part = clipOf(tone, 1, 0, 60, 120); // only the quiet part (0.25)
-    const Case cases[] = {{"ganzer Clip", clipOf(tone), 0.01}, {"Ausschnitt", part, 0.01}, {"50 % ohne Tonhöhe", slow, 0.05},
-                          {"rückwärts", rev, 0.01}};
+    Clip part = clipOf(tone, 1, 0, 60, 120); // only the quiet part (0.25) after a bit of silence
+    const Case cases[] = {{"ganzer Clip", clipOf(tone), half, kToneLufs, 0.05},
+                          {"Ausschnitt", part, quarter, kPartLufs, 0.05},
+                          {"50 % ohne Tonhöhe", slow, half, kSlowLufs, 0.1},
+                          {"rückwärts", rev, half, kToneLufs, 0.05}};
     for (const Case& c : cases) {
-        usePath(false);
-        const auto mltPeak = AudioAnalysis::clipPeakDb(kFmt, c.clip);
-        const auto mltLoud = AudioAnalysis::clipLoudness(kFmt, c.clip);
-        usePath(true);
-        const auto ownPeak = AudioAnalysis::clipPeakDb(kFmt, c.clip);
-        const auto ownLoud = AudioAnalysis::clipLoudness(kFmt, c.clip);
-        if (!CHECK(mltPeak && ownPeak && mltLoud && ownLoud)) continue;
-        std::printf("  %-20s Spitze %.3f / %.3f dBFS, Lautheit %.3f / %.3f LUFS, True Peak %.3f / %.3f (MLT / eigen)\n",
-                    c.name, *mltPeak, *ownPeak, mltLoud->integrated, ownLoud->integrated, mltLoud->truePeakDb,
-                    ownLoud->truePeakDb);
-        CHECK(std::abs(*mltPeak - *ownPeak) < c.tolDb);
-        CHECK(std::abs(mltLoud->integrated - ownLoud->integrated) < 0.05);
-        CHECK(std::abs(mltLoud->truePeakDb - ownLoud->truePeakDb) < 0.1);
+        const auto peak = AudioAnalysis::clipPeakDb(kFmt, c.clip);
+        const auto loud = AudioAnalysis::clipLoudness(kFmt, c.clip);
+        if (!CHECK(peak && loud)) continue;
+        std::printf("  %-20s Spitze %.3f dBFS, Lautheit %.3f LUFS, True Peak %.3f dBTP\n", c.name, *peak, loud->integrated,
+                    loud->truePeakDb);
+        CHECK(near(*peak, c.peakDb, 0.01));
+        CHECK(near(loud->integrated, c.lufs, c.tol));
+        // a low sine: the true peak is the sample peak (within the meter's tolerance)
+        CHECK(loud->truePeakDb >= *peak - 0.01 && loud->truePeakDb < *peak + 0.1);
     }
-    usePath(true);
     // The source alone: volume, pan, fades, transitions and effects do not count
     Clip loud = clipOf(tone);
     loud.volumeDb = -12;
@@ -114,53 +126,40 @@ void checkClipLevels(const QString& tone)
     const auto plain = AudioAnalysis::clipPeakDb(kFmt, clipOf(tone));
     const auto styled = AudioAnalysis::clipPeakDb(kFmt, loud);
     CHECK(plain && styled && *plain == *styled);
-    CHECK(plain && std::abs(*plain - 20 * std::log10(0.5)) < 0.01);
     // A clip later in the timeline measures the same
     CHECK(styled && AudioAnalysis::clipPeakDb(kFmt, clipOf(tone, 1, 400)) == plain);
-    // No sound: title, freeze frame, missing file, missing stream
+    // No sound: title, freeze frame, missing file, a stream the file does not have (silent like in the mix)
     Clip title = clipOf({});
     title.kind = ClipKind::Title;
     Clip freeze = clipOf(tone);
     freeze.freeze = true;
     Clip stream = clipOf(tone);
     stream.audioStream = 3;
-    for (bool own : {false, true}) {
-        usePath(own);
-        CHECK(!AudioAnalysis::clipPeakDb(kFmt, title));
-        CHECK(!AudioAnalysis::clipPeakDb(kFmt, freeze));
-        CHECK(!AudioAnalysis::clipPeakDb(kFmt, clipOf(tone + ".missing")));
-    }
-    // A stream the file does not have: silent like in the mix (MLT took the first stream instead)
-    usePath(true);
+    CHECK(!AudioAnalysis::clipPeakDb(kFmt, title));
+    CHECK(!AudioAnalysis::clipPeakDb(kFmt, freeze));
+    CHECK(!AudioAnalysis::clipPeakDb(kFmt, clipOf(tone + ".missing")));
     CHECK(!AudioAnalysis::clipPeakDb(kFmt, stream));
     // Cancel
-    usePath(true);
     CHECK(!AudioAnalysis::clipLoudness(kFmt, clipOf(tone), [](double f) { return f < 0.3; }));
 }
 
 void checkFramePeaks(const QString& tone, const QString& late)
 {
     std::printf("Spitze je Bild (Stille, Ducking):\n");
-    usePath(false);
-    const auto mlt = AudioAnalysis::clipFramePeaks(kFmt, clipOf(tone));
-    usePath(true);
     const auto own = AudioAnalysis::clipFramePeaks(kFmt, clipOf(tone));
-    if (!CHECK(mlt && own)) return;
-    std::printf("  Clip: %zu / %zu Bilder, größte Abweichung %.5f\n", mlt->size(), own->size(), maxDiff(*mlt, *own));
+    if (!CHECK(own)) return;
     CHECK_EQ(own->size(), size_t(kFrames));
-    CHECK_EQ(mlt->size(), own->size());
-    CHECK(maxDiff(*mlt, *own) < 1e-4);
-    CHECK((*own)[55] == 0.f && (*own)[70] == 0.f); // 2-3 s silent
+    // 0.5 sine for 2 s (frames 0-49), silent to 3 s (50-74), 0.25 sine to the end (24-bit source: exact to 1e-3)
+    CHECK(levels(*own, 0, 50, 0.5, 1e-3));
+    CHECK(levels(*own, 50, 75, 0.0, 0.0));
+    CHECK(levels(*own, 75, kFrames, 0.25, 1e-3));
 
     // Sound stream 0.3 s after the picture: frame 7 (0.28-0.32 s) is the first with sound
-    usePath(false);
-    const auto mltLate = AudioAnalysis::clipFramePeaks(kFmt, clipOf(late));
-    usePath(true);
     const auto ownLate = AudioAnalysis::clipFramePeaks(kFmt, clipOf(late));
-    if (!CHECK(mltLate && ownLate)) return;
-    std::printf("  Ton 0,3 s später: erstes Bild mit Ton MLT %d, eigen %d (richtig: 7)\n", firstSound(*mltLate),
-                firstSound(*ownLate));
+    if (!CHECK(ownLate)) return;
+    std::printf("  Ton 0,3 s später: erstes Bild mit Ton %d (richtig: 7)\n", firstSound(*ownLate));
     CHECK_EQ(firstSound(*ownLate), 7);
+    CHECK(levels(*ownLate, 8, kFrames, 0.5, 2e-3)); // 16-bit source
 
     // The mix: two tracks, faders, pan, master fader and limiter
     Timeline tl;
@@ -175,30 +174,23 @@ void checkFramePeaks(const QString& tone, const QString& late)
     tl.masterLimiter = true;
     tl.masterLimiterDb = -3;
     const int end = TimelineOps::endFrame(tl);
-    usePath(false);
-    const auto mltMix = AudioAnalysis::timelineFramePeaks(kFmt, tl, 0, end);
-    const auto mltLoud = AudioAnalysis::timelineLoudness(kFmt, tl, 0, end);
-    usePath(true);
     const auto ownMix = AudioAnalysis::timelineFramePeaks(kFmt, tl, 0, end);
     const auto ownLoud = AudioAnalysis::timelineLoudness(kFmt, tl, 0, end);
-    if (!CHECK(mltMix && ownMix && mltLoud && ownLoud)) return;
-    // Clip edges differ on purpose (the mixer's gain curves and declick, docs/dev/ton.md); MLT's limiter delays the
-    // sound by its latency (5 ms), so the frames where the source falls silent (50 on A1, 125 on A2) still sound
-    // there. The rest is the same mix.
-    double inner = 0;
-    for (size_t i = 0; i < ownMix->size(); ++i)
-        if (i != 0 && i != 50 && i != 74 && i != 75 && i != 125 && i != 149 && i != 150 && i != 174)
-            inner = std::max(inner, std::abs(double((*mltMix)[i]) - double((*ownMix)[i])));
-    std::printf("  Mix: %zu / %zu Bilder, Abweichung ohne Clipkanten %.5f, Lautheit %.3f / %.3f LUFS, True Peak %.2f / %.2f\n",
-                mltMix->size(), ownMix->size(), inner, mltLoud->integrated, ownLoud->integrated, mltLoud->truePeakDb,
+    if (!CHECK(ownMix && ownLoud)) return;
+    std::printf("  Mix: %zu Bilder, Lautheit %.3f LUFS, True Peak %.2f dBTP\n", ownMix->size(), ownLoud->integrated,
                 ownLoud->truePeakDb);
     CHECK_EQ(ownMix->size(), size_t(end));
-    CHECK(inner < 2e-3);
-    std::printf("  A1 verstummt in Bild 50: MLT %.3f, eigen %.3f\n", (*mltMix)[50], (*ownMix)[50]);
-    CHECK((*ownMix)[50] == 0.f);
-    CHECK(std::abs(mltLoud->integrated - ownLoud->integrated) < 0.05);
-    CHECK(std::abs(mltLoud->truePeakDb - ownLoud->truePeakDb) < 0.2);
+    // A1 alone: 0.5 at -4 dB track and +2 dB master = 0.5 * 10^(-2/20), below the limiter's ceiling (0.708)
+    CHECK(levels(*ownMix, 2, 48, 0.5 * std::pow(10.0, -2.0 / 20), 2e-3));
+    CHECK(levels(*ownMix, 50, 75, 0.0, 0.0)); // A1 silent from frame 50, A2 starts at 75
+    // Both: 0.25 * 0.631 + 0.5 * 1.413 (A2 +3 dB) = 0.86, times 1.26 master = 1.09 -> held by the limiter at -3 dB
+    const double ceiling = std::pow(10.0, -3.0 / 20);
+    double loudest = 0;
+    for (int i = 80; i < 120; ++i) loudest = std::max(loudest, double((*ownMix)[size_t(i)]));
+    std::printf("  beide Spuren: lauteste Spitze %.4f (Decke %.4f)\n", loudest, ceiling);
+    CHECK(loudest <= ceiling + 1e-4 && loudest > ceiling - 0.05);
     CHECK(ownLoud->truePeakDb < -2.9); // the limiter holds
+    CHECK(near(ownLoud->integrated, kMixLufs, 0.05));
 
     // = the mixer itself (the export's sound)
     Audio::Mixer mixer(tl, kFmt.rate);
@@ -218,7 +210,7 @@ void checkFramePeaks(const QString& tone, const QString& late)
     CHECK(*ownMix == direct);
     // A part of it: the same frames
     const auto part = AudioAnalysis::timelineFramePeaks(kFmt, tl, 40, 90);
-    CHECK(part && part->size() == 50 && maxDiff(*part, *ownMix) >= 0 && std::equal(part->begin(), part->end(), ownMix->begin() + 40));
+    CHECK(part && part->size() == 50 && std::equal(part->begin(), part->end(), ownMix->begin() + 40));
     // MixMeter: several measurements of one timeline, fader changes in between
     AudioAnalysis::MixMeter meter(kFmt);
     const auto m1 = meter.measure(tl, 0, end);
@@ -229,21 +221,10 @@ void checkFramePeaks(const QString& tone, const QString& late)
     CHECK(m1 && m2 && m3 && m1->integrated == ownLoud->integrated && m3->integrated == m1->integrated
           && m2->integrated < m1->integrated - 0.2);
 
-    // Ducking ranges: where A2 sounds (its source is silent 2-3 s = frames 125-149); MLT one frame longer (limiter)
+    // Ducking ranges: where A2 sounds (its source is silent 2-3 s = frames 125-149)
     Ducking::Params dp;
-    usePath(false);
-    const auto mltRanges = AudioAnalysis::soundRanges(kFmt, tl, {1}, dp);
-    usePath(true);
     const auto ownRanges = AudioAnalysis::soundRanges(kFmt, tl, {1}, dp);
-    if (CHECK(mltRanges && ownRanges)) {
-        auto text = [](const Ducking::Ranges& rs) {
-            QStringList t;
-            for (const auto& r : rs) t << QString("%1-%2").arg(r.first).arg(r.second);
-            return t.join(", ");
-        };
-        std::printf("  Ducking-Bereiche: MLT %s, eigen %s\n", qPrintable(text(*mltRanges)), qPrintable(text(*ownRanges)));
-        CHECK(*ownRanges == (Ducking::Ranges{{75, 125}, {150, 175}}));
-    }
+    if (CHECK(ownRanges)) CHECK(*ownRanges == (Ducking::Ranges{{75, 125}, {150, 175}}));
 }
 
 double correlation(const std::vector<float>& a, const std::vector<float>& b)
@@ -261,15 +242,10 @@ double correlation(const std::vector<float>& a, const std::vector<float>& b)
 void checkSync(const QString& noise, const QString& noiseLate, const QString& padded)
 {
     std::printf("Ton-Sync:\n");
-    usePath(false);
-    const auto mltEnv = SoundSync::fileEnvelope(noise, 0);
-    const auto mltLate = SoundSync::align({{padded, 0}, {noiseLate, 0}});
-    const auto mltPad = SoundSync::align({{noise, 0}, {padded, 0}});
-    usePath(true);
     const auto ownEnv = SoundSync::fileEnvelope(noise, 0);
     const auto ownLate = SoundSync::align({{padded, 0}, {noiseLate, 0}});
     const auto ownPad = SoundSync::align({{noise, 0}, {padded, 0}});
-    if (!CHECK(mltEnv && ownEnv)) return;
+    if (!CHECK(ownEnv)) return;
     // The truth: the envelope of the file decoded by ffmpeg (the source is mono PCM)
     QProcess p;
     p.start("ffmpeg", {"-v", "error", "-nostdin", "-i", noise, "-map", "0:a:0", "-f", "f32le", "-"});
@@ -277,16 +253,15 @@ void checkSync(const QString& noise, const QString& noiseLate, const QString& pa
     const QByteArray raw = p.readAllStandardOutput();
     const auto* pcm = reinterpret_cast<const float*>(raw.constData());
     const std::vector<float> truth = AudioSync::envelope(std::vector<float>(pcm, pcm + raw.size() / 4), 48000);
-    std::printf("  Hüllkurve: %zu / %zu Werte (Datei %zu), Korrelation mit der Datei MLT %.5f, eigen %.7f\n",
-                mltEnv->size(), ownEnv->size(), truth.size(), correlation(truth, *mltEnv), correlation(truth, *ownEnv));
+    std::printf("  Hüllkurve: %zu Werte (Datei %zu), Korrelation mit der Datei %.7f\n", ownEnv->size(), truth.size(),
+                correlation(truth, *ownEnv));
     CHECK_EQ(ownEnv->size(), truth.size());
     CHECK(correlation(truth, *ownEnv) > 0.99999);
-    if (!CHECK(mltPad.size() == 2 && ownPad.size() == 2 && mltLate.size() == 2 && ownLate.size() == 2)) return;
-    std::printf("  WAV 0,3 s verzögert: MLT %+.4f s, eigen %+.4f s\n", mltPad[1].offsetS, ownPad[1].offsetS);
+    if (!CHECK(ownPad.size() == 2 && ownLate.size() == 2)) return;
+    std::printf("  WAV 0,3 s verzögert: %+.4f s\n", ownPad[1].offsetS);
     CHECK(ownPad[1].found && std::abs(std::abs(ownPad[1].offsetS) - 0.3) < 0.006);
     // The late stream and the padded WAV hold the sound at the same place (0.3 s after position 0)
-    std::printf("  Ton 0,3 s später als Bild gegen WAV mit 0,3 s Stille: MLT %+.4f s, eigen %+.4f s (richtig: 0)\n",
-                mltLate[1].offsetS, ownLate[1].offsetS);
+    std::printf("  Ton 0,3 s später als Bild gegen WAV mit 0,3 s Stille: %+.4f s (richtig: 0)\n", ownLate[1].offsetS);
     CHECK(ownLate[1].found && std::abs(ownLate[1].offsetS) < 0.006);
     // Cancel, missing stream
     CHECK(!SoundSync::fileEnvelope(noise, 0, [](double f) { return f < 0.5; }));
@@ -294,9 +269,8 @@ void checkSync(const QString& noise, const QString& noiseLate, const QString& pa
 }
 
 // Waveform of a file from a fresh cache (the disk cache of the test paths is cleared first)
-std::shared_ptr<const Waveform> waveform(const QString& path, bool own, qint64* ms)
+std::shared_ptr<const Waveform> waveform(const QString& path, qint64* ms)
 {
-    usePath(own);
     QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/peaks").removeRecursively();
     MediaCache cache;
     cache.setFormat(kFmt);
@@ -317,51 +291,46 @@ std::shared_ptr<const Waveform> waveform(const QString& path, bool own, qint64* 
 void checkWaveform(const QString& tone, const QString& late)
 {
     std::printf("Wellenform:\n");
-    qint64 mltMs = 0, ownMs = 0;
-    const auto mlt = waveform(tone, false, &mltMs);
-    const auto own = waveform(tone, true, &ownMs);
-    if (!CHECK(mlt && own && !mlt->levels.isEmpty() && !own->levels.isEmpty())) return;
-    const QVector<quint8>& a = mlt->levels[0];
+    qint64 ms = 0;
+    const auto own = waveform(tone, &ms);
+    if (!CHECK(own && !own->levels.isEmpty())) return;
     const QVector<quint8>& b = own->levels[0];
-    int worst = 0, off = 0;
-    for (int i = 0; i < std::min(a.size(), b.size()); ++i) {
-        const int d = std::abs(int(a[i]) - int(b[i]));
-        worst = std::max(worst, d);
-        off += d > 1;
-    }
-    std::printf("  %d / %d Bilder, größte Abweichung %d von 255, %d Werte > 1 daneben (MLT %lld ms, eigen %lld ms)\n",
-                mlt->frames, own->frames, worst, off, mltMs, ownMs);
+    std::printf("  %d Bilder (%lld ms)\n", own->frames, ms);
     CHECK_EQ(own->frames, kFrames);
-    CHECK_EQ(mlt->frames, own->frames);
-    CHECK(worst <= 1);
-    CHECK(b[0] >= 127 && b[0] <= 128); // 0.5 -> 16384 >> 7 (s16 like the MLT path)
+    const int k = Waveform::kBucketsPerFrame;
+    CHECK_EQ(b.size(), kFrames * k);
+    // 0.5 -> 16384 >> 7 (s16), silence 0, 0.25 -> 64 (every bucket spans several periods of the sine)
+    auto range = [&](int from, int to, int lo, int hi) {
+        for (int i = from * k; i < to * k && i < b.size(); ++i)
+            if (b[i] < lo || b[i] > hi) {
+                std::printf("       bucket %d: %d, want %d-%d\n", i, b[i], lo, hi);
+                return false;
+            }
+        return true;
+    };
+    CHECK(range(0, 50, 127, 128));
+    CHECK(range(50, 75, 0, 0));
+    CHECK(range(76, kFrames, 63, 64));
 
     // Late stream: the sound begins exactly with bucket 4 of frame 7 (sample 14400 = 13440 + 4 * 240)
-    const auto mltLate = waveform(late, false, nullptr);
-    const auto ownLate = waveform(late, true, nullptr);
-    if (!CHECK(mltLate && ownLate)) return;
+    const auto ownLate = waveform(late, nullptr);
+    if (!CHECK(ownLate)) return;
     auto first = [](const Waveform& w) {
         for (int i = 0; i < w.levels[0].size(); ++i)
             if (w.levels[0][i] > 0) return i;
         return -1;
     };
-    const int k = Waveform::kBucketsPerFrame;
-    std::printf("  Ton 0,3 s später: erster Wert MLT Bild %.3f, eigen Bild %.3f (richtig: 7,500)\n",
-                double(first(*mltLate)) / k, double(first(*ownLate)) / k);
+    std::printf("  Ton 0,3 s später: erster Wert Bild %.3f (richtig: 7,500)\n", double(first(*ownLate)) / k);
     CHECK_EQ(first(*ownLate), 7 * k + 4);
 }
 
 void checkReferences(const QString& refDir)
 {
-    std::printf("Referenzprojekte (Lautheit und Spitze je Bild, MLT / eigen):\n");
+    std::printf("Referenzprojekte (Lautheit, Analyse = Export-Mischer):\n");
     QStringList projects;
     for (const QString& f : QDir(refDir + "/projekte").entryList({"*.schneidi"}, QDir::Files, QDir::Name))
         projects << refDir + "/projekte/" + f;
     if (QFileInfo::exists(refDir + "/echt/tiktok.schneidi")) projects << refDir + "/echt/tiktok.schneidi";
-    // Where MLT's sound is known to be wrong (docs/archiv/plan-0.10-ton.md, steps 0-2): sound stream later than the picture,
-    // tempo with pitch (Rubberband settles differently), MKV dropping samples (tiktok); 5.1: MLT's analyses ask for
-    // float and get the downmix without normalization, 7.7 dB louder than MLT's own export (s16, normalized)
-    const QStringList mltWrong{"late_start", "speed_pitch", "ramp", "tiktok", "surround"};
     for (const QString& path : projects) {
         const QString name = QFileInfo(path).completeBaseName();
         ProjectData d;
@@ -378,29 +347,12 @@ void checkReferences(const QString& refDir)
         }
         const int end = TimelineOps::endFrame(tl);
         QElapsedTimer t;
-        usePath(false);
         t.start();
-        const auto mltLoud = AudioAnalysis::timelineLoudness(d.format, tl, 0, end);
-        const qint64 mltMs = t.elapsed();
-        const auto mltPeaks = AudioAnalysis::timelineFramePeaks(d.format, tl, 0, end);
-        usePath(true);
-        t.restart();
         const auto ownLoud = AudioAnalysis::timelineLoudness(d.format, tl, 0, end);
         const qint64 ownMs = t.elapsed();
         const auto ownPeaks = AudioAnalysis::timelineFramePeaks(d.format, tl, 0, end);
-        if (!CHECK(mltLoud && ownLoud && mltPeaks && ownPeaks)) continue;
-        // Frames that differ by more than 1 dB: clip edges (the mixer's curves reach 0 on the edge, MLT's a frame
-        // later), noise reduction before the curves; together a little loudness (fades, keyframes: < 0.15 LU)
-        int frames = 0;
-        for (size_t i = 0; i < std::min(mltPeaks->size(), ownPeaks->size()); ++i) {
-            const double a = (*mltPeaks)[i], b = (*ownPeaks)[i];
-            if (std::max(a, b) > 0.01 && std::abs(20 * std::log10(std::max(a, 1e-6) / std::max(b, 1e-6))) > 1) ++frames;
-        }
-        const double diff = ownLoud->integrated - mltLoud->integrated;
-        std::printf("  %-16s %8.3f / %8.3f LUFS (%+.3f), %d von %d Bildern > 1 dB daneben, %lld / %lld ms%s\n",
-                    qPrintable(name), mltLoud->integrated, ownLoud->integrated, diff, frames, end, mltMs, ownMs,
-                    mltWrong.contains(name) ? "  (MLT bekannt falsch)" : "");
-        if (!mltWrong.contains(name)) CHECK(std::abs(diff) < 0.15);
+        if (!CHECK(ownLoud && ownPeaks)) continue;
+        std::printf("  %-16s %8.3f LUFS, %d Bilder, %lld ms\n", qPrintable(name), ownLoud->integrated, end, ownMs);
         // The analysis hears what the export writes: the mixer with the project's media lengths
         QHash<QString, int> lengths;
         for (const MediaInfo& m : project.media()) lengths.insert(m.path, m.length);
