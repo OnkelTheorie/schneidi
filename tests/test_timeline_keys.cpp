@@ -372,7 +372,7 @@ int main(int argc, char** argv)
     InputBindings::instance().load();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     QString media;
     if (Check::haveFfmpeg())
         media = Check::makeMedia(QDir(tmp.path()).filePath("clip.mp4"),

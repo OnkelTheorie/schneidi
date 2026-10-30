@@ -7,7 +7,7 @@
 // The references live outside the public repository (default: docs/testdaten/ton-referenz, AUDIO_REFERENCE_DIR
 // overrides): quellen/ (generated sources, kept so that encoder updates do not change them), projekte/<case>.schneidi
 // (media paths relative, open them in the app or the CLI), referenz/<case>.flac (24 bit lossless) and manifest.json
-// (MLT/FFmpeg version, level and render time per case). Missing folder = skipped (CI).
+// (FFmpeg version, level and render time per case). Missing folder = skipped (CI).
 //
 //   AUDIO_REFERENCE=write          sources (if missing), projects and references of all cases, then checked once more
 //   AUDIO_REFERENCE=write:a,b      only these cases
@@ -108,7 +108,7 @@ bool makeSources()
                      "0.1*sin(2*PI*600*t)|0.1*sin(2*PI*700*t):s=48000:d=6:c=5.1",
                      "-c:a", "pcm_s16le"}},
         {kFlac, {"-f", "lavfi", "-i", chirp, "-c:a", "flac", "-sample_fmt", "s32"}},
-        // MP3 with a cover picture (attached_pic): MLT must not take it for a video. A one-frame picture source:
+        // MP3 with a cover picture (attached_pic): the engine must not take it for a video. A one-frame picture source:
         // with "-frames:v 1" FFmpeg ends the whole file after 48 ms
         {kMp3, {"-f", "lavfi", "-i", tone, "-f", "lavfi", "-i", "color=c=red:s=64x64:r=1:d=1", "-map", "0:a", "-map", "1:v",
                 "-c:v", "mjpeg", "-disposition:v", "attached_pic", "-c:a", "libmp3lame", "-b:a", "192k", "-id3v2_version", "3"}},
@@ -672,7 +672,6 @@ int writeReferences(const QStringList& only, const QString& tmp)
     manifest["cases"] = entries;
     manifest["written"] = QDateTime::currentDateTime().toString(Qt::ISODate);
     manifest["host"] = QHostInfo::localHostName();
-    manifest["mlt"] = QString(mlt_version_get_string());
     manifest["ffmpeg"] = versionLine("ffmpeg");
     manifest["format"] = "WAV export 48 kHz stereo 24 bit through Exporter, stored as FLAC";
     QFile f(g_dir + "/manifest.json");
@@ -685,9 +684,9 @@ int writeReferences(const QStringList& only, const QString& tmp)
 int main(int argc, char** argv)
 {
     Check::initEnv();
-    // The references are the MLT sound path's (above); the own engine (the default) is checked against the same
-    // projects by test_export_audio and test_audio_mixer
-    if (qEnvironmentVariableIsEmpty("SCHNEIDI_AUDIO")) qputenv("SCHNEIDI_AUDIO", "mlt");
+    // The stored references were written by the sound path before the own engine (0.9); test_export_audio and
+    // test_audio_mixer check the own engine against them with their tolerances. AUDIO_REFERENCE=write now writes the
+    // own engine's sound.
     QApplication app(argc, argv);
     Check::initApp("audio_reference");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
@@ -699,7 +698,7 @@ int main(int argc, char** argv)
     g_dir = QDir(g_dir).absolutePath();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     if (write) {
         const QString list = mode.section(':', 1);
         return writeReferences(list.isEmpty() ? QStringList{} : list.split(','), tmp.path());

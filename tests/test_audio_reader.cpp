@@ -6,9 +6,6 @@
 // - placement: beeps written at known times relative to the picture start land there (onset in samples)
 // - random access: reads at random places, backwards and in odd sizes return the same samples as one sequential read
 //   (bit-exact for PCM/FLAC; lossy codecs within a small threshold, their decoders converge after a jump)
-// - MLT: the same samples as MLT's avformat producer from frame 0 (alignment printed; MLT's known 65-87 ms offset
-//   for late sound streams, test_av_sync, is only reported)
-// - opening time against MLT (printed; real material: bench_audio_reader)
 
 #include "check.h"
 
@@ -19,7 +16,6 @@
 #include <QProcess>
 #include <QRandomGenerator>
 #include <QTemporaryDir>
-#include <mlt++/Mlt.h>
 
 #include <algorithm>
 #include <cmath>
@@ -44,10 +40,6 @@ struct Case {
     int rate = kRate;
     int channels = 2;
     bool lossless = true;  // random access bit-exact
-    // Acceptance: same samples as MLT from frame 0. Where MLT is wrong (the beeps show it), only printed:
-    // late streams (MLT 65-87 ms early), M4A (MLT's seek to the start skips the AAC priming packet: its first 21 ms
-    // differ), Matroska AAC (MLT 0.67 ms early), 44.1 kHz (MLT's resampler 17 samples late)
-    bool sameAsMlt = true;
     double placeTol = 2;   // beep onset tolerance in samples
     int streams = 1;
     bool cover = false;
@@ -68,22 +60,22 @@ const Case kCases[] = {
     {"wav", "wav", "pcm_s16le", false},
     {"flac", "flac", "flac", false},
     {"mov", "mov", "pcm_s16le"},
-    {"mov_late_audio", "mov", "pcm_s16le", true, 0.3, 0, kRate, 2, true, false},
+    {"mov_late_audio", "mov", "pcm_s16le", true, 0.3, 0, kRate, 2, true},
     {"mov_late_video", "mov", "pcm_s16le", true, 0, 0.2},
-    {"mp4_aac", "mp4", "aac", true, 0, 0, kRate, 2, false, true, kLossyTol},
-    {"mp4_aac_late_audio", "mp4", "aac", true, 0.3, 0, kRate, 2, false, false, 33, 1, false, false, 1056},
-    {"m4a", "m4a", "aac", false, 0, 0, kRate, 2, false, false, kLossyTol},
-    {"m4a_pns", "m4a", "aac", false, 0, 0, kRate, 2, false, false, kLossyTol, 1, false, true},
-    {"mkv_pcm", "mkv", "pcm_s16le", true, 0, 0, kRate, 2, true, true, kMkvTol},
-    {"mkv_aac", "mkv", "aac", true, 0, 0, kRate, 2, false, false, kMkvTol},
-    {"mkv_aac_late_audio", "mkv", "aac", true, 0.3, 0, kRate, 2, false, false, kMkvTol},
-    {"opus", "opus", "libopus", false, 0, 0, kRate, 2, false, true, kLossyTol},
-    {"mp3", "mp3", "libmp3lame", false, 0, 0, kRate, 2, false, true, kLossyTol},
-    {"mp3_cover", "mp3", "libmp3lame", false, 0, 0, kRate, 2, false, true, kLossyTol, 1, true},
-    {"wav44", "wav", "pcm_s16le", false, 0, 0, 44100, 2, true, false, 3},
+    {"mp4_aac", "mp4", "aac", true, 0, 0, kRate, 2, false, kLossyTol},
+    {"mp4_aac_late_audio", "mp4", "aac", true, 0.3, 0, kRate, 2, false, 33, 1, false, false, 1056},
+    {"m4a", "m4a", "aac", false, 0, 0, kRate, 2, false, kLossyTol},
+    {"m4a_pns", "m4a", "aac", false, 0, 0, kRate, 2, false, kLossyTol, 1, false, true},
+    {"mkv_pcm", "mkv", "pcm_s16le", true, 0, 0, kRate, 2, true, kMkvTol},
+    {"mkv_aac", "mkv", "aac", true, 0, 0, kRate, 2, false, kMkvTol},
+    {"mkv_aac_late_audio", "mkv", "aac", true, 0.3, 0, kRate, 2, false, kMkvTol},
+    {"opus", "opus", "libopus", false, 0, 0, kRate, 2, false, kLossyTol},
+    {"mp3", "mp3", "libmp3lame", false, 0, 0, kRate, 2, false, kLossyTol},
+    {"mp3_cover", "mp3", "libmp3lame", false, 0, 0, kRate, 2, false, kLossyTol, 1, true},
+    {"wav44", "wav", "pcm_s16le", false, 0, 0, 44100, 2, true, 3},
     {"mono", "wav", "pcm_s16le", false, 0, 0, kRate, 1},
     {"surround", "wav", "pcm_s16le", false, 0, 0, kRate, 6},
-    {"streams", "mov", "pcm_s16le", true, 0, 0, kRate, 2, true, true, 2, 2},
+    {"streams", "mov", "pcm_s16le", true, 0, 0, kRate, 2, true, 2, 2},
 };
 
 // Quiet noise plus 1 kHz beeps (20 ms, starting at phase 0) at `beeps` (picture time); `delay` = stream start
@@ -190,54 +182,6 @@ std::vector<int64_t> onsets(const std::vector<float>& s, int64_t origin)
     return out;
 }
 
-// MLT's avformat producer from frame 0 (like the timeline opens sound), planar float at the project rate
-Planar mltRead(const QString& path, int stream, int channels, int frames, double* openMs)
-{
-    Mlt::Profile profile("atsc_1080p_25");
-    profile.set_frame_rate(kFps, 1);
-    QElapsedTimer t;
-    t.start();
-    Mlt::Producer p(profile, path.toUtf8().constData());
-    Planar out(static_cast<size_t>(channels));
-    if (!p.is_valid()) return out;
-    if (stream > 0) {
-        int n = 0;
-        for (int i = 0; i < p.get_int("meta.media.nb_streams"); ++i)
-            if (QByteArray(p.get(QString("meta.media.%1.stream.type").arg(i).toUtf8().constData())) == "audio" && n++ == stream)
-                p.set("audio_index", i);
-    }
-    p.seek(0);
-    for (int pos = 0; pos < frames; ++pos) {
-        std::unique_ptr<Mlt::Frame> f(p.get_frame());
-        mlt_audio_format fmt = mlt_audio_float;
-        int freq = kRate, ch = channels;
-        int samples = mlt_audio_calculate_frame_samples(float(kFps), freq, pos);
-        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, ch, samples));
-        if (pos == 0 && openMs) *openMs = t.nsecsElapsed() / 1e6;
-        for (int c = 0; c < channels; ++c)
-            for (int i = 0; i < samples; ++i)
-                out[size_t(c)].push_back(pcm && fmt == mlt_audio_float && c < ch ? pcm[c * samples + i] : 0.f);
-    }
-    return out;
-}
-
-// Lag of b against a (b[i + lag] ~ a[i]) in [-range, range] by the smallest difference on channel 0
-int bestLag(const Planar& a, const Planar& b, int range)
-{
-    int best = 0;
-    double bestErr = 1e300;
-    const size_t n = std::min(a[0].size(), b[0].size());
-    for (int lag = -range; lag <= range; ++lag) {
-        double err = 0;
-        for (size_t i = size_t(range); i + size_t(range) < n; i += 7) err += std::abs(a[0][i] - b[0][size_t(int64_t(i) + lag)]);
-        if (err < bestErr) {
-            bestErr = err;
-            best = lag;
-        }
-    }
-    return best;
-}
-
 void testCase(const QString& dir, const Case& c)
 {
     std::printf("-- %s\n", c.name);
@@ -253,6 +197,7 @@ void testCase(const QString& dir, const Case& c)
             std::printf("       %s\n", qPrintable(error));
             return;
         }
+        std::printf("       stream %d opened in %.1f ms\n", s, openMs);
         const Audio::StreamInfo& info = r->info();
         CHECK_EQ(r->channels(), c.channels);
         CHECK_EQ(info.sourceRate, c.rate);
@@ -347,23 +292,6 @@ void testCase(const QString& dir, const Case& c)
         else std::printf("       random access within %.3g, level within %.2f dB (%d seeks)\n", worstJump, worstLevel, r->stats().seeks);
         CHECK(worstLevel <= 0.5);
 
-        // MLT from frame 0
-        double mltOpenMs = 0;
-        const int frames = int(kSeconds * kFps) - 10;
-        const Planar mlt = mltRead(path, s, c.channels, frames, &mltOpenMs);
-        if (CHECK(!mlt[0].empty())) {
-            const Planar ours = readRange(*r, 0, int64_t(mlt[0].size()), 1920);
-            const int lag = bestLag(ours, mlt, 4800);
-            const size_t a0 = size_t(std::max(0, -lag)), b0 = size_t(std::max(0, lag)), n = mlt[0].size() - 4800;
-            const double diff = maxDiff(ours, a0, mlt, b0, n);
-            const double tail = maxDiff(ours, a0 + 4800, mlt, b0 + 4800, n - 4800); // after the first 0.1 s
-            std::printf("       MLT: lag %d samples (%.2f ms), difference %.3g (after 0.1 s: %.3g); open %.1f ms (MLT %.1f ms)\n",
-                        lag, lag * 1000.0 / kRate, diff, tail, openMs, mltOpenMs);
-            if (c.sameAsMlt) {
-                CHECK_EQ(lag, 0);
-                CHECK(diff <= 1e-6);
-            }
-        }
         const Audio::Reader::Stats& st = r->stats();
         std::printf("       %s %d Hz %d ch, start %lld, end %lld; gaps %d, overlaps %d, errors %d, reopens %d\n",
                     qPrintable(info.codec), info.sourceRate, info.sourceChannels, (long long)info.start,
@@ -464,7 +392,7 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     Check::initApp("audio_reader");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
-    Check::initMlt();
+    Check::initEngine();
     QTemporaryDir dir;
     for (const Case& c : kCases) testCase(dir.path(), c);
     testOverlaps(dir.path());

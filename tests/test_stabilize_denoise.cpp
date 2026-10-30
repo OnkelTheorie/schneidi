@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Test stabilization (effect "stabilize", own analysis pass + own MLT filter, engine/Stabilizer) and noise reduction
+// Test stabilization (effect "stabilize", own analysis pass + warp in the picture engine, engine/Stabilizer) and noise reduction
 // (effect "denoise", afftdn): registry, editor (clip kinds, undo), project file, paste attributes; analysis of a
 // synthetic shaky clip (a still image with jittering crop) -> rendered frames move less, cache reuse, speed change,
 // background queue (cancel), export runs a missing analysis first; noise reduction lowers the noise of sine + noise.
@@ -16,11 +16,11 @@
 #include "engine/Exporter.h"
 #include "engine/ClipFormat.h"
 #include "engine/Stabilizer.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/audio/Mixer.h"
+#include "engine/picture/Renderer.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/Inspector.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QComboBox>
 #include <QElapsedTimer>
@@ -66,20 +66,20 @@ Timeline videoTimeline(const Clip& c)
 // rendered at w x h (like a smaller preview)
 double jitter(const Timeline& tl, int from, int to, int w, int h)
 {
-    auto prof = makeProfile(ProjectFormat{});
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl);
+    Picture::Options o;
+    o.format = ProjectFormat{};
+    o.output = QSize(w, h);
+    o.mode = Picture::Mode::Export;
+    Picture::Renderer r(tl, o);
     std::vector<uint8_t> prev;
     double sum = 0;
     int n = 0;
     for (int pos = from; pos <= to; ++pos) {
-        tr->seek(pos);
-        std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-        mlt_image_format fmt = mlt_image_yuv420p;
-        int ww = w, hh = h;
-        const uint8_t* d = f->get_image(fmt, ww, hh);
-        if (!d || ww != w || hh != h) return -1;
-        std::vector<uint8_t> cur(d, d + size_t(w) * h);
+        const QImage img = r.render(pos).toImage();
+        if (img.width() != w || img.height() != h) return -1;
+        std::vector<uint8_t> cur(size_t(w) * h);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) cur[size_t(y) * w + x] = uint8_t(qGray(img.pixel(x, y)));
         if (!prev.empty()) {
             double s = 0;
             int k = 0;
@@ -97,22 +97,14 @@ double jitter(const Timeline& tl, int from, int to, int w, int h)
 // reduction learns the noise as it goes)
 double rmsDb(const Timeline& tl, int from, int to)
 {
-    auto prof = makeProfile(ProjectFormat{});
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl);
-    tr->seek(0);
+    Audio::Mixer mixer(tl, ProjectFormat{}.rate);
+    const int64_t a = mixer.frameStart(0), b = mixer.frameStart(to + 1), at = mixer.frameStart(from);
+    std::vector<float> l(static_cast<size_t>(b - a)), r(static_cast<size_t>(b - a));
+    float* planes[] = {l.data(), r.data()};
+    mixer.render(a, int(b - a), planes);
     double sum = 0;
     long count = 0;
-    for (int pos = 0; pos <= to; ++pos) {
-        std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-        mlt_audio_format fmt = mlt_audio_float;
-        int freq = 48000, channels = 2;
-        int samples = mlt_audio_calculate_frame_samples(float(prof->fps()), freq, pos);
-        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
-        if (!pcm || fmt != mlt_audio_float || pos < from) continue;
-        for (int i = 0; i < samples; ++i) sum += double(pcm[i]) * pcm[i]; // first channel (planar)
-        count += samples;
-    }
+    for (size_t i = size_t(at - a); i < l.size(); ++i, ++count) sum += double(l[i]) * l[i]; // first channel
     return count && sum > 0 ? 10 * std::log10(sum / count) : -200;
 }
 
@@ -263,17 +255,10 @@ int main(int argc, char** argv)
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt; // 1920x1080, 25 fps
 
-    // The first qt module service (qtblend: transform/opacity) must not put LC_NUMERIC back to the user's locale:
-    // (MLT and FFmpeg parse numbers with the C library, e.g. the timewarp speed)
-    {
-        Mlt::Profile profile;
-        Mlt::Transition blend(profile, "qtblend");
-        CHECK_EQ(QString(std::setlocale(LC_NUMERIC, nullptr)), QString("C"));
-    }
 
     // --- Noise reduction: 0-2 s noise only, 2-4 s sine + noise
     {
@@ -414,38 +399,6 @@ int main(int argc, char** argv)
         const double before = jitter(videoTimeline(slowRaw), 0, 40, 640, 360);
         const double after = jitter(videoTimeline(slow), 0, 40, 640, 360);
         if (!CHECK(after > 0 && after < before * 0.6)) std::printf("       speed 50 %%: jitter %.2f -> %.2f\n", before, after);
-    }
-
-    // The analysis reads with the own decoder: the same motions as through MLT (speed 1 and 50 %)
-    for (const double speed : {1.0, 0.5}) {
-        Clip k = mk(1, shaky, 0, 5, 60);
-        k.speed = speed;
-        EffectRegistry::add(k, "stabilize");
-        EffectRegistry::instance(k, "stabilize")->params["accuracy"] = 4.0;
-        const auto r = Stabilizer::request(k, fmt);
-        if (!CHECK(r)) continue;
-        const auto motions = [&](bool mlt) {
-            QFile::remove(Stabilizer::find(*r).path);
-            QString e;
-            CHECK(mlt ? Stabilizer::analyzeMlt(*r, &e) : Stabilizer::analyze(*r, &e));
-            QFile f(Stabilizer::find(*r).path);
-            QList<QByteArray> lines;
-            if (f.open(QIODevice::ReadOnly)) lines = f.readAll().split('\n').mid(2);
-            return lines;
-        };
-        const QList<QByteArray> mlt = motions(true), own = motions(false);
-        double worst = 0;
-        int count = 0;
-        for (qsizetype i = 0; i < std::min(mlt.size(), own.size()); ++i) {
-            const QList<QByteArray> a = mlt[i].split(' '), b = own[i].split(' ');
-            if (a.size() < 2 || b.size() < 2) continue;
-            // shift in picture widths: 0.001 = 1 pixel of 960
-            worst = std::max({worst, std::abs(a[0].toDouble() - b[0].toDouble()), std::abs(a[1].toDouble() - b[1].toDouble())});
-            ++count;
-        }
-        if (!CHECK(count > 50 && mlt.size() == own.size() && worst < 0.002))
-            std::printf("       speed %.1f: %d frames, largest difference %.4f\n", speed, count, worst);
-        std::printf("analysis own vs MLT, speed %.1f: largest shift difference %.5f picture widths\n", speed, worst);
     }
 
     // Background queue: runs, reports, can be cancelled

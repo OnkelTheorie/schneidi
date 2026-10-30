@@ -14,10 +14,8 @@
 #include "engine/Exporter.h"
 #include "engine/ClipFormat.h"
 #include "engine/RenderQueue.h"
-#include "engine/TimelineBuilder.h"
 #include "ui/timeline/TimelineView.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QEventLoop>
 #include <QFile>
@@ -555,19 +553,7 @@ void testFrameRateChange()
 
 QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos, bool subtitles = true)
 {
-    auto prof = makeProfile(fmt);
-    TimelineBuilder b(*prof);
-    b.setSubtitles(subtitles);
-    auto tr = b.build(tl);
-    tr->seek(pos);
-    std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-    mlt_image_format ifmt = mlt_image_rgba;
-    int w = prof->width(), h = prof->height();
-    const uint8_t* data = f->get_image(ifmt, w, h);
-    if (!data) return {};
-    QImage img(w, h, QImage::Format_RGBA8888);
-    std::memcpy(img.bits(), data, size_t(w) * h * 4);
-    return img.copy();
+    return Check::renderFrame(tl, fmt, pos, {}, false, subtitles);
 }
 
 // Bright pixels (text white on black) in a region (relative)
@@ -585,14 +571,9 @@ int testRender(const QString& dir)
     const QString black = Check::makeMedia(dir + "/black.mp4", {"-f", "lavfi", "-i", "color=black:size=640x360:rate=25:duration=4",
                                                                  "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (!CHECK(!black.isEmpty())) return 1;
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt{640, 360, {25, 1}};
-    {
-        auto prof = makeProfile(fmt);
-        Mlt::Filter qt(*prof, "qtext");
-        if (!qt.is_valid()) return Check::skip("MLT-Qt-Modul nicht nutzbar (kein Display? z. B. xvfb-run -a ctest …)");
-    }
     Timeline tl;
     tl.video.resize(1);
     Clip c;

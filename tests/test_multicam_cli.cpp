@@ -373,7 +373,7 @@ int main(int argc, char** argv)
     testAngleCutsList();
     testFlattenNudgeAndAngleName();
     testMulticamErrors();
-    Check::initMlt();
+    Check::initEngine();
     testSyncCommandAndSoundSync(dir.path());
     return Check::result();
 }

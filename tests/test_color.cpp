@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test Color page (effect "grade"): pixel math (lift/gamma/gain/offset, contrast, saturation, temperature,
-// exposure, LUT), .cube reader, render via MLT (preview bypass, keyframes, splitting, German number format),
+// exposure, LUT), .cube reader, render (preview bypass, keyframes, splitting, German number format),
 // editor operations with undo, saving/loading with LUT path (also moved folder) and old files.
 #include "check.h"
+#include "engine/picture/Renderer.h"
 
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"
@@ -14,10 +15,8 @@
 #include "core/TimelineOps.h"
 #include "engine/ColorGrade.h"
 #include "engine/ClipFormat.h"
-#include "engine/TimelineBuilder.h"
 #include "ui/ColorPanel.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -75,19 +74,12 @@ QByteArray cube(int n, const std::function<void(double&, double&, double&)>& fn)
 
 QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos, std::shared_ptr<std::atomic<bool>> bypass = {})
 {
-    auto prof = makeProfile(fmt);
-    TimelineBuilder b(*prof);
-    if (bypass) b.setGradeBypass(bypass);
-    auto tr = b.build(tl);
-    tr->seek(pos);
-    std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-    mlt_image_format ifmt = mlt_image_rgba;
-    int w = prof->width(), h = prof->height();
-    const uint8_t* d = f->get_image(ifmt, w, h);
-    if (!d) return {};
-    QImage img(w, h, QImage::Format_RGBA8888);
-    std::memcpy(img.bits(), d, size_t(w) * h * 4);
-    return img.copy();
+    Picture::Options o;
+    o.format = fmt;
+    o.mode = Picture::Mode::Export;
+    o.gradeBypass = bypass;
+    Picture::Renderer r(tl, o);
+    return r.render(pos).toImage();
 }
 
 Timeline one(const std::function<void(Clip&)>& fn)
@@ -263,23 +255,15 @@ void testRender(const QString& dir)
     bypass->store(false);
     CHECK(diff(render(darker, fmt, 10, bypass), dark) < 0.5);
     {
-        auto prof = makeProfile(fmt);
-        TimelineBuilder b(*prof);
         auto flag = std::make_shared<std::atomic<bool>>(false);
-        b.setGradeBypass(flag);
-        auto tr = b.build(darker);
-        auto grab = [&] {
-            tr->seek(10);
-            std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-            mlt_image_format ifmt = mlt_image_rgba;
-            int w = prof->width(), h = prof->height();
-            const uint8_t* d = f->get_image(ifmt, w, h);
-            QImage img(w, h, QImage::Format_RGBA8888);
-            if (d) std::memcpy(img.bits(), d, size_t(w) * h * 4);
-            return img;
-        };
+        Picture::Options o;
+        o.format = fmt;
+        o.mode = Picture::Mode::Preview;
+        o.gradeBypass = flag;
+        Picture::Renderer r(darker, o);
+        auto grab = [&] { return r.render(10).toImage(); };
         CHECK(diff(grab(), dark) < 0.5);
-        flag->store(true); // same tractor, no rebuild
+        flag->store(true); // same renderer, no rebuild
         CHECK(diff(grab(), ref) < 0.5);
     }
 
@@ -453,7 +437,7 @@ int main(int argc, char** argv)
                                 "scale=out_color_matrix=bt709", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
                                 "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"});
     if (!CHECK(!g_media.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testRender(tmp.path());
     return Check::result();

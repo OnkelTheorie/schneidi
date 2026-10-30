@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test speed ramps (DaVinci Retime Controls): RetimeMap (hard, soft, reversed, inversion), editor edits with
-// ripple/partners/keyframes/undo, project file, audio steps and rendered frames (which source picture is shown).
+// ripple/partners/keyframes/undo, project file, rendered frames and sound (which source picture is shown).
 #include "check.h"
 
 #include "core/Editor.h"
@@ -11,10 +11,8 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/ClipFormat.h"
-#include "engine/RampProducer.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/audio/Mixer.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QImage>
 #include <QTemporaryDir>
@@ -110,24 +108,6 @@ void testMap()
     CHECK(close(r[0].source, 10) && close(r[0].speed, 1.0) && r[0].smooth == 0);
     CHECK(close(r[1].source, 80) && close(r[1].speed, 3));
 
-    // Audio steps: gapless, hard sections one step each
-    Clip a;
-    a.ramp = {SpeedPoint{50, 2.0, 0}};
-    auto steps = RampProducer::audioSteps(a, 100);
-    CHECK_EQ(steps.size(), 2);
-    if (steps.size() == 2) {
-        CHECK(steps[0].m0 == 0 && steps[0].m1 == 50 && close(steps[0].speed, 1.0));
-        CHECK(steps[1].m0 == 50 && steps[1].m1 == 75 && close(steps[1].speed, 2.0) && close(steps[1].s0, 50));
-    }
-    a.ramp[0].smooth = 16;
-    steps = RampProducer::audioSteps(a, 100);
-    CHECK(steps.size() > 3);
-    int at = 0;
-    for (const auto& s : steps) {
-        CHECK_EQ(s.m0, at);
-        at = s.m1;
-    }
-    CHECK_EQ(at, 75);
 }
 
 void testEditor()
@@ -230,17 +210,37 @@ void testProjectFile()
 
 int frameAt(const Timeline& tl, const ProjectFormat& fmt, int pos)
 {
-    auto prof = makeProfile(fmt);
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl);
-    tr->seek(pos);
-    std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-    mlt_image_format ifmt = mlt_image_rgba;
-    int w = prof->width(), h = prof->height();
-    const uint8_t* data = f->get_image(ifmt, w, h);
-    if (!data) return -1;
-    const int g = data[(size_t(h / 2) * w + w / 2) * 4 + 1];
+    const QImage img = Check::renderFrame(tl, fmt, pos);
+    if (img.isNull()) return -1;
+    const int g = qGreen(img.pixel(img.width() / 2, img.height() / 2));
     return int(std::lround(g / 2.0)); // source: gray = 2 * frame
+}
+
+// The mix of `tl` frame by frame: left channel of frames [0, frames)
+std::vector<std::vector<float>> soundFrames(const Timeline& tl, int frames)
+{
+    Audio::Mixer mixer(tl, FrameRate{25, 1});
+    std::vector<std::vector<float>> out;
+    for (int f = 0; f < frames; ++f) {
+        const int64_t a = mixer.frameStart(f), b = mixer.frameStart(f + 1);
+        std::vector<float> l(static_cast<size_t>(b - a)), r(static_cast<size_t>(b - a));
+        float* planes[] = {l.data(), r.data()};
+        mixer.render(a, int(b - a), planes);
+        out.push_back(std::move(l));
+    }
+    return out;
+}
+
+// A clip alone on an audio track from frame 0
+Timeline soundOf(const Clip& c)
+{
+    Timeline tl;
+    tl.masterLimiter = false;
+    tl.audio.resize(1);
+    Clip at = c;
+    at.start = 0;
+    tl.audio[0].clips << at;
+    return tl;
 }
 
 // Reversed at 100 %: audio stays in sync with the picture (beep in file frame 100 of 200 -> material frame ~98.5),
@@ -251,26 +251,16 @@ void testReverseAudioSync(const QString& dir)
                                           {"-f", "lavfi", "-i", "aevalsrc='if(between(t,4,4.04),sin(2*PI*1000*t),0)':s=48000:d=8",
                                            "-c:a", "pcm_s16le"});
     if (!CHECK(!file.isEmpty())) return;
-    const ProjectFormat fmt{64, 64, {25, 1}};
-    auto prof = makeProfile(fmt);
     auto loudest = [&](const Clip& c) {
-        TimelineBuilder b(*prof);
-        Mlt::Producer* src = b.clipAudioSource(c);
-        if (!src) return -1;
-        src->seek(0);
+        const auto frames = soundFrames(soundOf(c), c.out + 1);
         int best = -1;
         double bestPeak = 0;
-        for (int pos = 0; pos <= c.out; ++pos) {
-            std::unique_ptr<Mlt::Frame> f(src->get_frame());
-            mlt_audio_format af = mlt_audio_float;
-            int freq = 48000, channels = 2, samples = mlt_audio_calculate_frame_samples(25, freq, pos);
-            const auto* pcm = static_cast<const float*>(f->get_audio(af, freq, channels, samples));
-            for (int i = 0; pcm && i < samples; ++i)
-                if (std::abs(pcm[i]) > bestPeak) {
-                    bestPeak = std::abs(pcm[i]);
+        for (int pos = 0; pos < int(frames.size()); ++pos)
+            for (const float v : frames[size_t(pos)])
+                if (std::abs(v) > bestPeak) {
+                    bestPeak = std::abs(v);
                     best = pos;
                 }
-        }
         return best;
     };
     Clip c;
@@ -292,31 +282,22 @@ void testReverseAudioSync(const QString& dir)
     }
 }
 
-// "Keep pitch" (Rubberband) delays the audio by a few frames; TimelineBuilder/RampProducer fetch it earlier by the
-// measured delay (PitchLatency). Click in the timeline: with pitch at most ~1/2 frame off from without.
+// "Keep pitch" (the time stretcher) delays the audio; the mixer compensates its delay. Click in the timeline: with
+// pitch at most ~1/2 frame off from without.
 void testPitchAudioSync(const QString& dir)
 {
     const QString file = Check::makeMedia(dir + "/click.wav",
                                           {"-f", "lavfi", "-i", "aevalsrc='if(between(t,4,4.002),0.9,0)':s=48000:d=12"});
     if (!CHECK(!file.isEmpty())) return;
-    const ProjectFormat fmt{64, 64, {25, 1}};
-    auto prof = makeProfile(fmt);
     // first click sample in the timeline output
     auto clickAt = [&](const Clip& c) -> long {
         Timeline tl = emptyTimeline();
         tl.audio[0].clips << c;
-        TimelineBuilder b(*prof);
-        auto tr = b.build(tl);
         long at = 0;
-        for (int pos = 0; pos < c.end(); ++pos) {
-            tr->seek(pos);
-            std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-            mlt_audio_format af = mlt_audio_float;
-            int freq = 48000, channels = 2, samples = mlt_audio_calculate_frame_samples(25, freq, pos);
-            const auto* pcm = static_cast<const float*>(f->get_audio(af, freq, channels, samples));
-            for (int i = 0; pcm && i < samples; ++i)
-                if (std::abs(pcm[i]) > 0.2f) return at + i;
-            at += samples;
+        for (const std::vector<float>& f : soundFrames(tl, c.end())) {
+            for (size_t i = 0; i < f.size(); ++i)
+                if (std::abs(f[i]) > 0.2f) return at + long(i);
+            at += long(f.size());
         }
         return -1;
     };
@@ -363,14 +344,9 @@ int testRender(const QString& dir)
                                            "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
                                            "-c:v", "ffv1", "-pix_fmt", "rgb24", "-c:a", "pcm_s16le", "-shortest"});
     if (!CHECK(!file.isEmpty())) return 1;
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt{64, 64, {25, 1}};
-    {
-        auto prof = makeProfile(fmt);
-        Mlt::Filter qt(*prof, "qtext");
-        if (!qt.is_valid()) return Check::skip("MLT-Qt-Modul nicht nutzbar (kein Display? z. B. xvfb-run -a ctest …)");
-    }
 
     Project p;
     p.load([&] {
@@ -438,45 +414,23 @@ int testRender(const QString& dir)
         }
     }
 
-    // Audio: playlist as long as the material
-    Clip a = *clipOn(p.timeline(), TrackKind::Audio, 0, 0);
-    auto prof = makeProfile(fmt);
-    auto audio = RampProducer::audio(*prof, file, a);
-    if (CHECK(audio && audio->is_valid())) {
-        CHECK_EQ(audio->get_length(), a.retimedLength(100));
-        // Audio in the fast section not silent (sine from the file)
-        // play through: 100 % section without gap, in the 200 % section only a short settling (keep pitch)
-        audio->seek(0);
+    // Audio: in the fast section not silent (sine from the file); played through: the 100 % section without a gap,
+    // in the 200 % section only a short settling (keep pitch)
+    auto silentFrames = [&](const Clip& clip) {
         int silent = 0;
-        for (int pos = 0; pos < audio->get_length(); ++pos) {
-            std::unique_ptr<Mlt::Frame> f(audio->get_frame());
-            mlt_audio_format afmt = mlt_audio_float;
-            int freq = 48000, ch = 2, samples = 1920;
-            const auto* s = static_cast<const float*>(f->get_audio(afmt, freq, ch, samples));
+        for (const std::vector<float>& f : soundFrames(soundOf(clip), clip.length())) {
             float peak = 0;
-            for (int i = 0; s && i < samples * ch; ++i) peak = std::max(peak, std::abs(s[i]));
+            for (const float v : f) peak = std::max(peak, std::abs(v));
             if (peak < 0.04f) ++silent; // ffmpeg sine: ~0.09
         }
-        CHECK(silent <= 2);
-    }
+        return silent;
+    };
+    Clip a = *clipOn(p.timeline(), TrackKind::Audio, 0, 0);
+    CHECK(silentFrames(a) <= 2);
     // soft transition: steps without pitch correction -> no gaps
     ed.setSpeedPointSmooth(v, 0, 12);
     a = *clipOn(p.timeline(), TrackKind::Audio, 0, 0);
-    audio = RampProducer::audio(*prof, file, a);
-    if (CHECK(audio && audio->is_valid())) {
-        audio->seek(0);
-        int silent = 0;
-        for (int pos = 0; pos < audio->get_length(); ++pos) {
-            std::unique_ptr<Mlt::Frame> f(audio->get_frame());
-            mlt_audio_format afmt = mlt_audio_float;
-            int freq = 48000, ch = 2, samples = 1920;
-            const auto* s = static_cast<const float*>(f->get_audio(afmt, freq, ch, samples));
-            float peak = 0;
-            for (int i = 0; s && i < samples * ch; ++i) peak = std::max(peak, std::abs(s[i]));
-            if (peak < 0.04f) ++silent;
-        }
-        CHECK(silent <= 2);
-    }
+    CHECK(silentFrames(a) <= 2);
     return 0;
 }
 

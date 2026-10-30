@@ -772,7 +772,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     QApplication::setApplicationName("schneidi");
-    Check::initMlt();
+    Check::initEngine();
     const QString root = QDir(tmp.path()).filePath("w");
     QDir().mkpath(root);
 

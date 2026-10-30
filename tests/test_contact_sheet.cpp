@@ -75,7 +75,7 @@ int main(int argc, char** argv)
 
     // A sheet of a timeline with a real clip: tiles exactly as wide as asked, picture (not black), cancel
     if (!Check::haveFfmpeg()) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     const QString media = Check::makeMedia(dir.filePath("a.mp4"), {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=2",
                                                                    "-c:v", "libx264", "-pix_fmt", "yuv420p"});
     if (!CHECK(!media.isEmpty())) return Check::result();

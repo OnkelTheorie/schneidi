@@ -136,7 +136,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QGuiApplication app(argc, argv);
     Check::initApp("beats");
-    Check::initMlt();
+    Check::initEngine();
     QTemporaryDir dir;
     qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8()); // backups of the project edits
     testBlocks();

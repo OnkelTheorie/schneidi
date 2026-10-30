@@ -432,7 +432,7 @@ int main(int argc, char** argv)
 
     // --- The command on a project and on its render
     if (!Check::haveFfmpeg()) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     QTemporaryDir dir;
     qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8()); // backups of the test project
     const QString media = Check::makeMedia(dir.filePath("a.mp4"),

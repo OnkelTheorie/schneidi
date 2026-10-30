@@ -40,7 +40,7 @@ namespace {
 constexpr QSize kIcon{48, 27};
 
 enum Category {
-    All, VideoTransitions, AudioTransitions, Titles, OpenFx, Filters, Frei0rFilters,
+    All, VideoTransitions, AudioTransitions, Titles, OpenFx, Filters,
     LutsAll, BuiltinLuts, Luts, LutGroup,                         // LUTs: bundled + custom
     LumasAll, BuiltinTransitions, Transitions, TransitionGroup,   // Gradient wipes: bundled + custom
     PresetsAll, PresetGroup,                                      // Shotcut/Kdenlive presets (own folder only)
@@ -217,18 +217,6 @@ QPixmap effectIcon(const QString& id)
         shade.setColorAt(0, QColor(255, 255, 255, 90));
         shade.setColorAt(1, QColor(0, 0, 0, 150));
         p.fillRect(r, shade);
-    } else if (id.startsWith("frei0r.")) { // frei0r plugin (opt-in): tile with a short tag (over a hundred filters, no
-                                           // picture per filter)
-        QLinearGradient g(r.topLeft(), r.bottomRight());
-        g.setColorAt(0, QColor(0x3a, 0x40, 0x52));
-        g.setColorAt(1, QColor(0x22, 0x24, 0x2c));
-        p.fillRect(r, g);
-        QFont f = p.font();
-        f.setPixelSize(10);
-        f.setBold(true);
-        p.setFont(f);
-        p.setPen(QColor(0xb8, 0xc0, 0xd8));
-        p.drawText(r, Qt::AlignCenter, QStringLiteral("f0r"));
     } else if (id == "stabilize") { // shaky frame outlines around a calm one
         p.setBrush(Qt::NoBrush);
         p.setPen(QPen(QColor(0x80, 0x88, 0xa0), 1));
@@ -355,9 +343,7 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     import->setText(T("Effekte importieren…"));
     import->setToolTip(T("Öffnet den Effekte-Ordner. LUTs (.cube, .3dl, .csp, Hald-CLUT) in den Ordner „LUTs“, "
                          "Übergänge (Graustufenbilder) in den Ordner „Transitions“ legen, Unterordner werden zu "
-                         "Kategorien. frei0r-Plugins in den Ordner „frei0r“ (wenn in den Einstellungen eingeschaltet, "
-                         "wirken nach Neustart), Presets aus "
-                         "Kdenlive/Shotcut in den Ordner „Presets“.\n%1")
+                         "Kategorien. Presets aus Kdenlive/Shotcut in den Ordner „Presets“.\n%1")
                            .arg(QDir::toNativeSeparators(EffectFolders::root())));
     connect(import, &QToolButton::clicked, this, [] {
         EffectFolders::ensure();
@@ -385,11 +371,6 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     // Open FX → Filters (like DaVinci: the ResolveFX filters live there)
     auto* openFx = add(m_categories, QStringLiteral("Open FX"), OpenFx);
     add(openFx, T("Filter"), Filters);
-    // frei0r plugins only when switched on (Settings → General) and installed
-    if (std::any_of(EffectRegistry::all().begin(), EffectRegistry::all().end(),
-                    [](const EffectDescriptor& d) { return d.category == EffectRegistry::Frei0rCategory; }))
-        add(openFx, QStringLiteral("frei0r"), Frei0rFilters)
-            ->setToolTip(0, T("frei0r-Plugins (eigene im Effekte-Ordner unter „frei0r“)"));
     add(m_categories, QStringLiteral("Audio FX"), AudioFx)->setToolTip(0, T("Effekte für Audioclips"));
     // Sorted by kind, below that bundled and custom effects folder each (subfolder = subcategories)
     auto* luts = add(m_categories, QStringLiteral("LUTs"), LutsAll);
@@ -596,10 +577,10 @@ void EffectsLibrary::rebuild()
             out << Entry{T(i.name), QString("audio:%1").arg(i.id), audioIcon()};
         return out;
     };
-    auto filters = [&](const QString& category, bool video = true) {
+    auto filters = [&](bool video) {
         QVector<Entry> out;
         for (const auto& e : EffectRegistry::all())
-            if (e.library && e.category == category && e.video == video)
+            if (e.library && e.video == video)
                 out << Entry{e.name, kEffectPrefix + e.id, effectIcon(e.id), e.description};
         return out;
     };
@@ -622,10 +603,9 @@ void EffectsLibrary::rebuild()
     case VideoTransitions: groups = {{{}, videoTransitions()}}; break;
     case AudioTransitions: groups = {{{}, audioTransitions()}}; break;
     case Titles: groups = {{{}, titles}}; break;
-    case OpenFx: groups = {{T("Filter"), filters({})}, {QStringLiteral("frei0r"), filters(EffectRegistry::Frei0rCategory)}}; break;
-    case Filters: groups = {{{}, filters({})}}; break;
-    case Frei0rFilters: groups = {{{}, filters(EffectRegistry::Frei0rCategory)}}; break;
-    case AudioFx: groups = {{{}, filters({}, false)}}; break;
+    case OpenFx: groups = {{T("Filter"), filters(true)}}; break;
+    case Filters: groups = {{{}, filters(true)}}; break;
+    case AudioFx: groups = {{{}, filters(false)}}; break;
     case LutsAll:
         groups = {{T("Mitgeliefert"), files(EffectFolders::builtinLuts(), true, true)},
                   {T("Eigene"), files(m_userLuts, true, false)}};

@@ -10,7 +10,6 @@
 #include "core/ProjectFile.h"
 #include "engine/Engine.h"
 #include "engine/ProxyManager.h"
-#include "engine/TimelineBuilder.h"
 #include "ui/MulticamGrid.h"
 
 #include <QApplication>

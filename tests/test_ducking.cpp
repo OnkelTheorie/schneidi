@@ -376,7 +376,7 @@ int main(int argc, char** argv)
     g_music = Check::makeMedia(dir.filePath("music.wav"),
                                {"-f", "lavfi", "-i", "aevalsrc=0.1*sin(2*PI*440*t):s=48000:d=10", "-ac", "2"});
     if (!CHECK(!g_voice.isEmpty() && !g_music.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testAnalyzeRealSound();
     testCliDuckMatchesEditor(dir.path());

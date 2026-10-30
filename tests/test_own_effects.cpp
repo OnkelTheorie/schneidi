@@ -4,25 +4,19 @@
 //   with green spill on the subject: background transparent, subject opaque and unchanged, edge in between, the green
 //   fringe taken out (spill)
 // - the frei0r look-alikes (glow, halftone, noise, scan lines, broken sync, gradient, alpha operations): plausible
-//   pixels; next to the frei0r plugin of the same name (only with SCHNEIDI_FREI0R=1 and frei0r installed) the mean
-//   difference is printed as a report, not checked
-// - render through the TimelineBuilder without any frei0r: keyed clip over black, a glow on a clip
-// - old projects: the frei0r effect ids, parameters and keyframes load as known effects; nothing frei0r is loaded
-//   while the opt-in is off
+//   pixels
+// - render through the picture engine: keyed clip over black, a glow on a clip
+// - old projects: the frei0r effect ids, parameters and keyframes load as known effects
 // - speed: ms per 1080p frame for every effect (printed)
-// Comparison pictures: SCHNEIDI_FREI0R=1 OWN_EFFECTS_DUMP=<folder> build/tests/test_own_effects
 #include "check.h"
 
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "core/ProjectFile.h"
 #include "core/ProjectFormat.h"
-#include "engine/Frei0r.h"
 #include "engine/ClipFormat.h"
-#include "engine/TimelineBuilder.h"
 #include "engine/VideoEffects.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -119,36 +113,6 @@ Img pattern(int w, int h)
     return im;
 }
 
-double meanAbsDiff(const Img& a, const Img& b)
-{
-    if (a.px.size() != b.px.size()) return -1;
-    double s = 0;
-    size_t n = 0;
-    for (size_t i = 0; i < a.px.size(); ++i) {
-        if (i % 4 == 3) continue;
-        s += std::abs(int(a.px[i]) - int(b.px[i]));
-        ++n;
-    }
-    return s / n;
-}
-
-// Runs an MLT filter (own or frei0r) on a picture: producer = the picture as a PNG
-Img runMlt(Mlt::Profile& profile, const QString& png, Mlt::Filter& f, int w, int h)
-{
-    Mlt::Producer p(profile, ("qimage:" + png).toUtf8().constData());
-    if (!p.is_valid()) p = Mlt::Producer(profile, png.toUtf8().constData());
-    if (!p.is_valid()) return {};
-    p.attach(f);
-    p.seek(0);
-    std::unique_ptr<Mlt::Frame> frame(p.get_frame());
-    mlt_image_format fmt = mlt_image_rgba;
-    const uint8_t* d = frame->get_image(fmt, w, h);
-    if (!d) return {};
-    Img out{w, h, Pixels(d, d + size_t(w) * h * 4)};
-    p.detach(f);
-    return out;
-}
-
 QString savePng(const Img& im, const QString& path)
 {
     QImage q(im.px.data(), im.w, im.h, QImage::Format_RGBA8888);
@@ -178,37 +142,23 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("own_effects");
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
 
-    // ---- Nothing frei0r while the opt-in is off (the default) ----
-    // SCHNEIDI_FREI0R=1 test_own_effects: frei0r loaded instead, prints the comparison with the plugins
-    const bool compare = Frei0r::enabled();
-    if (!compare) {
-        int frei0rFilters = 0;
-        Mlt::Repository* repo = Mlt::Factory::init(); // already initialized: returns the repository
-        if (CHECK(repo)) {
-            std::unique_ptr<Mlt::Properties> filters(repo->filters());
-            for (int i = 0; i < filters->count(); ++i)
-                if (QString(filters->get_name(i)).startsWith("frei0r.")) ++frei0rFilters;
-        }
-        CHECK_EQ(frei0rFilters, 0);
-        for (const EffectDescriptor& d : EffectRegistry::all()) CHECK(d.category != EffectRegistry::Frei0rCategory);
-    }
     // The replaced plugins exist as own effects (same ids and parameter keys)
     for (const char* id : {"chromakey", "frei0r.glow", "frei0r.colorhalftone", "frei0r.rgbnoise", "frei0r.scanline0r",
                            "frei0r.nosync0r", "frei0r.cairogradient", "frei0r.alpha0ps_alpha0ps"}) {
         const EffectDescriptor* d = EffectRegistry::find(id);
         if (!CHECK(d)) continue;
         CHECK(VideoEffects::isOwn(id));
-        CHECK(d->video && d->category.isEmpty());
+        CHECK(d->video);
         CHECK(QString(id) == "chromakey" ? !d->library && d->fixed : d->library && !d->fixed);
     }
     if (const EffectDescriptor* d = EffectRegistry::find("frei0r.glow"); CHECK(d && d->params.size() == 1)) {
         CHECK(d->params[0].key == "0" && d->params[0].min == 0 && d->params[0].max == 1);
         CHECK(d->params[0].anim == Keys::effectParam("frei0r.glow", "0"));
     }
-    CHECK(!VideoEffects::isOwn("blur") && !VideoEffects::create("blur"));
+    CHECK(!VideoEffects::isOwn("blur"));
 
     // ---- Green Screen ----
     CHECK(VideoEffects::keyDistance(kGreen, kGreen) < 1e-6);
@@ -375,45 +325,10 @@ int main(int argc, char** argv)
         CHECK(gray.at(kCx, kCy)[0] == 255 && gray.at(10, 10)[0] == 0 && gray.at(10, 10)[3] == 255);
     }
 
-    // ---- Next to the frei0r plugins (report only) ----
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
-    {
-        Mlt::Profile profile("atsc_720p_25");
-        const QString png = savePng(pattern(1280, 720), tmp.filePath("pattern.png"));
-        struct Cmp {
-            const char* id;
-            QVector<QPair<const char*, const char*>> props;
-        };
-        const Cmp cmps[] = {{"frei0r.glow", {{"0", "0.5"}}},
-                            {"frei0r.colorhalftone", {}},
-                            {"frei0r.rgbnoise", {{"0", "0.2"}}},
-                            {"frei0r.scanline0r", {}},
-                            {"frei0r.nosync0r", {{"0", "0.25"}}},
-                            {"frei0r.cairogradient", {}},
-                            {"frei0r.alpha0ps_alpha0ps", {{"0", "0.21"}}}};
-        for (const Cmp& c : cmps) {
-            mlt_filter own = VideoEffects::create(c.id);
-            if (!CHECK(own)) continue;
-            Mlt::Filter of(own);
-            mlt_filter_close(own);
-            for (auto [k, v] : c.props) of.set(k, v);
-            const Img mine = runMlt(profile, png, of, 1280, 720);
-            CHECK(!mine.px.empty());
-            Mlt::Filter ff(profile, c.id);
-            if (!ff.is_valid()) continue; // frei0r not loaded (opt-in off): no comparison
-            for (auto [k, v] : c.props) ff.set(k, v);
-            const Img theirs = runMlt(profile, png, ff, 1280, 720);
-            std::printf("vs %s: mean difference %.1f levels, mean brightness %.1f (frei0r %.1f)\n", c.id,
-                        meanAbsDiff(mine, theirs), meanLuma(mine), meanLuma(theirs));
-            if (const QString dump = qEnvironmentVariable("OWN_EFFECTS_DUMP"); !dump.isEmpty()) { // pictures to compare
-                savePng(mine, QDir(dump).filePath(QString(c.id) + "-own.png"));
-                savePng(theirs, QDir(dump).filePath(QString(c.id) + "-frei0r.png"));
-            }
-        }
-    }
 
-    // ---- Render through the TimelineBuilder (no frei0r loaded) ----
+    // ---- Render through the picture engine ----
     if (Check::haveFfmpeg()) {
         const QString media = Check::makeMedia(
             tmp.filePath("green.mp4"),
@@ -433,15 +348,12 @@ int main(int argc, char** argv)
                 c.out = 24;
                 fn(c);
                 tl.video[0].clips << c;
-                auto prof = makeProfile(fmt);
-                TimelineBuilder b(*prof);
-                auto tr = b.build(tl);
-                tr->seek(3);
-                std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-                mlt_image_format ifmt = mlt_image_rgba;
-                int w = prof->width(), h = prof->height();
-                const uint8_t* d = f->get_image(ifmt, w, h);
-                return d ? Img{w, h, Pixels(d, d + size_t(w) * h * 4)} : Img{};
+                const QImage img = Check::renderFrame(tl, fmt, 3).convertToFormat(QImage::Format_RGBA8888);
+                if (img.isNull()) return Img{};
+                Img out{img.width(), img.height(), Pixels(size_t(img.width()) * img.height() * 4)};
+                for (int y = 0; y < img.height(); ++y)
+                    std::memcpy(out.px.data() + size_t(y) * img.width() * 4, img.constScanLine(y), size_t(img.width()) * 4);
+                return out;
             };
             const Img plain = render([](Clip&) {});
             const Img keyed = render([](Clip& c) {
@@ -458,7 +370,7 @@ int main(int argc, char** argv)
                 EffectRegistry::instance(c, "frei0r.glow")->params["0"] = 0.4;
             });
             if (CHECK(!glowing.px.empty())) CHECK(meanLuma(glowing) > meanLuma(plain) + 10);
-            // Keyframes on the old dynamic parameter (fx:frei0r.glow:0) drive the own filter
+            // Keyframes on the old dynamic parameter (fx:frei0r.glow:0) drive the own effect
             const AnimParam ga = Keys::effectParam("frei0r.glow", "0");
             const Img keyedGlow = render([&](Clip& c) {
                 EffectRegistry::add(c, "frei0r.glow");

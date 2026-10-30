@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Covered videos are not decoded (tip from the user, 2026-10-24): MLT's qtblend between the tracks takes the upper
-// frame alone when it is opaque and fills the picture, and never asks the lower track for its image. This test counts
-// image requests on the lower track (export format yuv420p and preview format rgba) so it stays that way, and checks
-// the cases where the lower track must show (smaller, transparent, other aspect ratio).
+// Covered videos are not decoded (tip from the user, 2026-10-24): the renderer takes the upper picture alone when it
+// is opaque and fills the frame, and never decodes the lower track. This test counts decoded layers (export and
+// preview) so it stays that way, and checks the cases where the lower track must show (smaller, transparent, other
+// aspect ratio).
 
 #include "check.h"
 
 #include "engine/ClipFormat.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/picture/Renderer.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QTemporaryDir>
 #include <atomic>
@@ -21,42 +20,15 @@ namespace {
 const ProjectFormat kFmt{640, 360, {25, 1}};
 QString g_wide, g_narrow;
 
-int countImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int writable)
+// Layers decoded beyond the upper one for frames 0-9 (0 = the lower track was never decoded)
+int lowerDecodes(const Timeline& tl, Picture::Mode mode)
 {
-    ++*static_cast<std::atomic<int>*>(mlt_frame_pop_service(frame));
-    return mlt_frame_get_image(frame, image, format, width, height, writable);
-}
-
-mlt_frame countProcess(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_service(frame, mlt_properties_get_data(MLT_FILTER_PROPERTIES(filter), "counter", nullptr));
-    mlt_frame_push_get_image(frame, countImage);
-    return frame;
-}
-
-// Image requests on the lower video track (MLT track 1; 0 is the black background) for frames 0-9
-int lowerRequests(const Timeline& tl, mlt_image_format format)
-{
-    auto profile = makeProfile(kFmt);
-    TimelineBuilder b(*profile);
-    auto tractor = b.build(tl);
-    std::unique_ptr<Mlt::Producer> lower(tractor->track(1));
-    std::atomic<int> count{0};
-    mlt_filter f = mlt_filter_new();
-    f->process = countProcess;
-    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), "counter", &count, 0, nullptr, nullptr);
-    Mlt::Filter filter(f);
-    mlt_filter_close(f);
-    lower->attach(filter);
-    for (int pos = 0; pos < 10; ++pos) {
-        tractor->seek(pos);
-        std::unique_ptr<Mlt::Frame> frame(tractor->get_frame());
-        mlt_image_format fmt = format;
-        int w = kFmt.width, h = kFmt.height;
-        CHECK(frame->get_image(fmt, w, h) != nullptr);
-    }
-    lower->detach(filter);
-    return count;
+    Picture::Options o;
+    o.format = kFmt;
+    o.mode = mode;
+    Picture::Renderer r(tl, o);
+    for (int pos = 0; pos < 10; ++pos) CHECK(!r.render(pos).isNull());
+    return r.stats().layersDecoded - 10;
 }
 
 Timeline stacked(const std::function<void(Clip&)>& top, const QString& topMedia = g_wide)
@@ -92,7 +64,7 @@ int main(int argc, char** argv)
     g_narrow = Check::makeMedia(tmp.filePath("narrow.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=480x360:rate=25:duration=2",
                                                              "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (!CHECK(!g_wide.isEmpty() && !g_narrow.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
 
     struct Case {
@@ -109,10 +81,11 @@ int main(int argc, char** argv)
         {"other aspect ratio", stacked([](Clip&) {}, g_narrow), true},
     };
     for (const Case& c : cases)
-        for (mlt_image_format format : {mlt_image_yuv420p, mlt_image_rgba}) {
-            const int n = lowerRequests(c.tl, format);
+        for (Picture::Mode mode : {Picture::Mode::Export, Picture::Mode::Preview}) {
+            const int n = lowerDecodes(c.tl, mode);
             if (!CHECK(c.lowerVisible ? n > 0 : n == 0))
-                std::printf("       %s (%s): %d requests on the lower track\n", c.name, mlt_image_format_name(format), n);
+                std::printf("       %s (%s): %d decodes of the lower track\n", c.name,
+                            mode == Picture::Mode::Export ? "export" : "preview", n);
         }
     return Check::result();
 }

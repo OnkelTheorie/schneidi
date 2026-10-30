@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Giving memory back while idle (engine/MemoryRelease): MLT's frame pool keeps every buffer it handed out and glibc
+// Giving memory back while idle (engine/MemoryRelease): the picture engine keeps frame buffers for reuse and glibc
 // keeps freed heap memory, so the app grew by GBs over playback, exports and AI sessions. The policy: release only
 // while nothing renders (no playback, no export, no render cache job) – never during playback. IdleRelease waits until
 // nothing happened for its delay, tries again while something renders, releases once, and is reached from anywhere via
-// MemoryRelease::requestRelease(). release() really hands the pool's buffers back (resident memory drops, Linux).
+// MemoryRelease::requestRelease(). release() really hands freed memory back (resident memory drops, Linux).
 // The engine asks after stopping and after rebuilds, never while playing.
 #include "check.h"
 
 #include "engine/Engine.h"
 #include "engine/MemoryRelease.h"
 
-#include <framework/mlt.h>
+#include <cstdlib>
 
 #include <QApplication>
 #include <QElapsedTimer>
@@ -122,19 +122,20 @@ void testRelease()
         MemoryRelease::release();
         return;
     }
-    constexpr int kBuffers = 40;
-    constexpr int kSize = 8 * 1024 * 1024; // like a 1080p RGBA frame
+    // Small blocks (below glibc's mmap threshold): freed, they stay in the heap until it is trimmed
+    constexpr int kBuffers = 8000;
+    constexpr int kSize = 16 * 1024;
     std::vector<void*> buffers;
     for (int i = 0; i < kBuffers; ++i) {
-        void* b = mlt_pool_alloc(kSize);
+        void* b = std::malloc(kSize);
         std::memset(b, i, kSize); // resident
         buffers.push_back(b);
     }
-    for (void* b : buffers) mlt_pool_release(b); // back into MLT's pool: still resident
+    for (void* b : buffers) std::free(b); // freed: still resident in the heap
     const qint64 held = MemoryRelease::residentBytes();
     MemoryRelease::release();
     const qint64 after = MemoryRelease::residentBytes();
-    std::printf("       resident: %lld MB, with %d pooled buffers %lld MB, after release %lld MB\n", base / 1048576,
+    std::printf("       resident: %lld MB, with %d freed blocks %lld MB, after release %lld MB\n", base / 1048576,
                 kBuffers, held / 1048576, after / 1048576);
     CHECK(held - base > qint64(kBuffers) * kSize / 2);
     CHECK(held - after > qint64(kBuffers) * kSize / 2);
@@ -181,8 +182,8 @@ void testEngine(const QString& media)
     CHECK(engine.speed() != 0.0);
     CHECK_EQ(MemoryRelease::releases(), playing);
 
-    // Called directly while it plays (schneidi-cli releases after every MCP tool, whatever else runs): MLT's threads
-    // keep taking and returning pool buffers meanwhile – no crash, the pictures keep coming
+    // Called directly while it plays (schneidi-cli releases after every MCP tool, whatever else runs): the render
+    // threads keep taking and returning pool buffers meanwhile – no crash, the pictures keep coming
     {
         int shown = 0;
         const auto counter = QObject::connect(&engine, &Engine::frameReady, [&] { ++shown; });
@@ -219,7 +220,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("memory_release");
-    Check::initMlt();
+    Check::initEngine();
 
     testPolicy();
     testIdleRelease();

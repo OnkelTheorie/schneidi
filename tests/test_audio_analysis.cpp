@@ -435,7 +435,7 @@ int main(int argc, char** argv)
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
 
     // 0.5 sine 0-2 s, silence 2-3 s, 0.25 sine 3-6 s
     const QString tone = Check::makeMedia(

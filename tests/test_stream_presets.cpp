@@ -442,7 +442,7 @@ void testCliRealRecording(const QString& dir)
          "-c:a", "pcm_s16le", "-ac", "2", "-metadata:s:a:0", "title=Mix", "-metadata:s:a:1", "title=Discord",
          "-metadata:s:a:2", "title=Mikrofon"});
     if (!CHECK(!file.isEmpty())) return;
-    Check::initMlt();
+    Check::initEngine();
     StreamPresets user;
     user.muteMix = true; // set in the import presets dialog, like the user does
     user.save();

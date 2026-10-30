@@ -594,8 +594,7 @@ void Inspector::addMissingEffectSection(QVBoxLayout* page, const QString& id, Tr
         if (b->isCheckable() && b->text() == title)
             b->setStyleSheet(QString("QToolButton, QToolButton:checked { color: %1; border: none; background: transparent;"
                                      " font-weight: 600; }").arg(Theme::warning.name()));
-    auto* warn = new QLabel(T("Plugin auf diesem Rechner nicht installiert: der Effekt wirkt nicht, bleibt aber mit "
-                              "seinen Werten im Projekt."));
+    auto* warn = new QLabel(T("Nicht verfügbar – wird übersprungen. Der Effekt bleibt mit seinen Werten im Projekt."));
     warn->setObjectName("MissingEffect");
     warn->setWordWrap(true);
     warn->setStyleSheet(QString("color: %1;").arg(Theme::warning.name()));
@@ -641,10 +640,10 @@ void Inspector::arrangeEffectSections()
         if (shownClip)
             for (const EffectInstance* e : EffectRegistry::renderOrder(*shownClip)) {
                 const QString& id = e->effectId;
-                if (!known(id)) { // create on the first clip with the effect (frei0r: more than a hundred possible)
+                if (!known(id)) { // create on the first clip with the effect
                     const EffectDescriptor* d = EffectRegistry::find(id);
                     if (d && d->library && d->video == video) addEffectSection(lay, *d);
-                    else if (!d) addMissingEffectSection(lay, id, kind); // plugin missing
+                    else if (!d) addMissingEffectSection(lay, id, kind); // not in this version (frei0r plugin)
                 }
                 if (known(id)) order << id;
             }

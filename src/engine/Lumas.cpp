@@ -120,28 +120,6 @@ QImage image(const QString& path, int w, int h, bool invert, QString* error)
     return img;
 }
 
-QString file(const QString& path, int w, int h, bool invert)
-{
-    const QFileInfo fi(path);
-    // "v1": version of the bundled gradients (increase when rawValues changes)
-    const QByteArray key = "v1|" + path.toUtf8() + '|' + QByteArray::number(fi.lastModified().toMSecsSinceEpoch()) +
-                           '|' + QByteArray::number(fi.size());
-    const QString hash = QCryptographicHash::hash(key, QCryptographicHash::Sha1).toHex().left(12);
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/lumas";
-    const QString out = QString("%1/user_%2_%3x%4%5.png").arg(dir, hash).arg(w).arg(h).arg(invert ? "_inv" : "");
-    if (QFile::exists(out)) return out;
-    const QImage img = image(path, w, h, invert);
-    if (img.isNull()) return {};
-    QDir().mkpath(dir);
-    // First write under a different name so that a second instance never reads a half image (own name per writer:
-    // preview and export build in different threads)
-    const QString tmp = out + "." + QUuid::createUuid().toString(QUuid::Id128) + ".tmp.png";
-    if (!img.save(tmp)) return {};
-    QFile::remove(out);
-    QFile::rename(tmp, out);
-    return out;
-}
-
 QImage preview(const QImage& luma, double progress)
 {
     const QImage g = luma.convertToFormat(QImage::Format_Grayscale8);
@@ -152,7 +130,7 @@ QImage preview(const QImage& luma, double progress)
         const uchar* src = g.constScanLine(y);
         auto* dst = reinterpret_cast<QRgb*>(out.scanLine(y));
         for (int x = 0; x < g.width(); ++x) {
-            // like MLT luma: spots below the progress already show B, soft edge
+            // spots below the progress already show B, soft edge
             const double t = std::clamp((progress * (1 + soft) - src[x] / 255.0) / soft, 0.0, 1.0);
             dst[x] = qRgb(int(a.red() + (b.red() - a.red()) * t), int(a.green() + (b.green() - a.green()) * t),
                           int(a.blue() + (b.blue() - a.blue()) * t));

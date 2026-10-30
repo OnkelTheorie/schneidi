@@ -121,7 +121,7 @@ QVector<EffectDescriptor>& registry()
              {"spill", T("Farbsaum entfernen"), "spill", EffectParam::Double, 1.0, 0.0, 1.0, AnimParam::Count, 0.002, 3,
               {}, T("Nimmt den Schimmer der Key-Farbe (grüner Rand, Widerschein) aus dem, was sichtbar bleibt")},
          },
-         false, {}, {}, true},
+         false, {}, true},
         // Simple color correction (all values -100..+100, 0 = unchanged). Engine: avfilter.colorchannelmixer
         // (temperature/tint as white balance, saturation) + avfilter.colorlevels (brightness, contrast)
         {"color", T("Farbkorrektur"), {}, true,
@@ -157,7 +157,7 @@ QVector<EffectDescriptor>& registry()
              {"accuracy", T("Genauigkeit"), {}, EffectParam::Double, 9.0, 1, 15, AnimParam::Count, 0.05, 0, {},
               T("Genauigkeit der Bewegungserkennung (höher = langsamere Analyse). Neue Analyse"), {}, {}, true},
          },
-         true, {}, T("Beruhigt verwackelte Aufnahmen. Analysiert den Clip im Hintergrund (Fortschritt im Inspector)"),
+         true, T("Beruhigt verwackelte Aufnahmen. Analysiert den Clip im Hintergrund (Fortschritt im Inspector)"),
          true},
         // Noise reduction for voice recordings (DaVinci: Fairlight FX → Noise Reduction). Engine: own spectral noise
         // suppression (engine/Denoise, real time); defaults work for typical hiss/hum under speech.
@@ -170,7 +170,7 @@ QVector<EffectDescriptor>& registry()
              {"track", T("Rauschen verfolgen"), {}, EffectParam::Bool, true, 0, 0, AnimParam::Count, 1, 2, {},
               T("Misst das Rauschen laufend in der Aufnahme (in Sprechpausen) statt den festen Rauschpegel zu nehmen")},
          },
-         true, {}, T("Senkt gleichmäßiges Rauschen (Rauschen, Brummen, Lüfter) in Sprachaufnahmen ab"), true},
+         true, T("Senkt gleichmäßiges Rauschen (Rauschen, Brummen, Lüfter) in Sprachaufnahmen ab"), true},
         // Color page (DaVinci "Primaries - Color Wheels", own area instead of Effects Library): values as in DaVinci
         // (Lift/Gamma 0 = neutral, Gain 1, Offset 25, Contrast 1, Pivot 0.435, Saturation 50), plus LUT (.cube).
         // Engine: own MLT filter (engine/ColorGrade), applied before all other effects.
@@ -200,7 +200,7 @@ QVector<EffectDescriptor>& registry()
              {"exposure", T("Belichtung"), {}, EffectParam::Double, 0.0, -4, 4, AnimParam::GradeExposure, 0.01, 2},
              {"lut", T("LUT"), {}, EffectParam::Path, QString(), 0, 0},
          },
-         false, {}, {}, true},
+         false, {}, true},
     }) + ownLooks(); // after the built-in ones: the Effects Library lists them behind blur and color correction
     return effects;
 }
@@ -208,12 +208,6 @@ QVector<EffectDescriptor>& registry()
 } // namespace
 
 const QVector<EffectDescriptor>& all() { return registry(); }
-
-void registerEffects(const QVector<EffectDescriptor>& effects)
-{
-    for (const EffectDescriptor& e : effects)
-        if (!find(e.id)) registry() << e;
-}
 
 const EffectDescriptor* find(const QString& id)
 {

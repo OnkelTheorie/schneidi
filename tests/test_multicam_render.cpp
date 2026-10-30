@@ -3,7 +3,7 @@
 // and audio-only switches, several streams of one angle, an angle's muted stream, gaps of a split recording), the sync
 // offset is respected frame-exactly and follows a resync, the sound runs on across a through edit. The grid for the
 // viewer: all angles of a page in their cells (auto and fixed layout, pages, aspect ratio kept), at the right sync
-// position, sound = only the active angle, switched live without rebuilding, fine detail of a large angle smoothed
+// position, sound = only the active angle, fine detail of a large angle smoothed
 // into its small cell instead of dropped.
 #include "check.h"
 
@@ -15,10 +15,11 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/ClipFormat.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/Engine.h"
+#include "engine/audio/Mixer.h"
 
-#include <Mlt.h>
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QImage>
 #include <QTemporaryDir>
 #include <clocale>
@@ -68,50 +69,21 @@ struct Fixture {
     }
 };
 
-QImage image(Mlt::Producer& tr, int pos)
-{
-    tr.seek(pos);
-    std::unique_ptr<Mlt::Frame> f(tr.get_frame());
-    f->set("consumer.rescale", "bilinear"); // as the preview consumer (Engine) and the export scale
-    mlt_image_format ifmt = mlt_image_rgba;
-    int w = kFmt.width, h = kFmt.height;
-    const uint8_t* data = f->get_image(ifmt, w, h);
-    if (!data) return {};
-    QImage img(w, h, QImage::Format_RGBA8888);
-    std::memcpy(img.bits(), data, size_t(w) * h * 4);
-    return img.copy();
-}
-
 QImage render(const Timeline& tl, int pos)
 {
-    auto prof = makeProfile(kFmt);
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl);
-    return image(*tr, pos);
+    return Check::renderFrame(tl, kFmt, pos);
 }
 
 // First channel of the mixed sound of frames [pos, pos + frames), after two settling frames
-std::vector<float> sound(Mlt::Producer& tr, int pos, int frames)
-{
-    std::vector<float> out;
-    tr.seek(std::max(0, pos - 2));
-    for (int i = std::max(0, pos - 2); i < pos + frames; ++i) {
-        std::unique_ptr<Mlt::Frame> f(tr.get_frame());
-        mlt_audio_format fmt = mlt_audio_float;
-        int freq = 48000, channels = 2;
-        int samples = mlt_audio_calculate_frame_samples(25.f, freq, i);
-        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
-        if (pcm && i >= pos) out.insert(out.end(), pcm, pcm + samples);
-    }
-    return out;
-}
-
 std::vector<float> sound(const Timeline& tl, int pos, int frames = 4)
 {
-    auto prof = makeProfile(kFmt);
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl);
-    return sound(*tr, pos, frames);
+    Audio::Mixer mixer(tl, kFmt.rate);
+    const int64_t s0 = mixer.frameStart(std::max(0, pos - 2)), a = mixer.frameStart(pos),
+                  b = mixer.frameStart(pos + frames);
+    std::vector<float> l(static_cast<size_t>(b - s0)), r(static_cast<size_t>(b - s0));
+    float* planes[] = {l.data(), r.data()};
+    mixer.render(s0, int(b - s0), planes);
+    return std::vector<float>(l.begin() + (a - s0), l.end());
 }
 
 // Level of one frequency (Goertzel, dB of the amplitude)
@@ -302,13 +274,20 @@ void testGapInAngleIsBlackAndSilent()
 
 // ---- The grid of the viewer ----
 
-QImage gridImage(const Sequence& s, const MulticamGridOptions& o, int pos, MulticamGridHooks* hooks = nullptr)
+// The viewer's grid as the preview engine shows it (frame `pos` of the multicam sequence)
+QImage gridImage(const Sequence& s, const MulticamGridOptions& o, int pos)
 {
-    auto prof = makeProfile(kFmt);
-    TimelineBuilder b(*prof);
-    auto tr = b.buildMulticamGrid(s.timeline, s.angles, o, hooks);
-    if (!tr) return {};
-    return image(*tr, pos);
+    Engine engine;
+    QString error;
+    if (!engine.init(&error)) return {};
+    engine.setFormat(kFmt);
+    QImage shown;
+    QObject::connect(&engine, &Engine::frameReady, &engine, [&](const QImage& img) { shown = img; });
+    if (!engine.showMulticam(s.timeline, s.angles, o, 0, pos)) return {};
+    QElapsedTimer t;
+    t.start();
+    while (shown.isNull() && t.elapsed() < 5000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    return shown.convertToFormat(QImage::Format_RGBA8888);
 }
 
 void testGridShowsAllAnglesInCells()
@@ -410,29 +389,19 @@ void testGridSmoothsFineDetail()
     CHECK(hi - lo < 60); // even gray, no stripes left over
 }
 
-void testGridSoundIsActiveAngleOnlyAndLive()
+void testGridSoundIsActiveAngleOnly()
 {
+    // The preview plays the active angle's sound (Engine::syncPlayer): that angle's sound timeline
     Fixture f;
     for (const QString& path : {g.red, g.lime, g.blue}) f.p.addMedia(info(path, 200));
     const int seq = f.ed.createMulticamClip("RGB", {{"R", {{g.red, 0}}}, {"G", {{g.lime, 0}}}, {"B", {{g.blue, 0}}}});
     const Sequence& s = *f.p.sequence(seq);
-    auto prof = makeProfile(kFmt);
-    TimelineBuilder b(*prof);
-    MulticamGridHooks hooks;
-    MulticamGridOptions o;
-    o.activeAngle = 1;
-    auto tr = b.buildMulticamGrid(s.timeline, s.angles, o, &hooks);
-    if (!CHECK(tr)) return;
-    std::vector<float> x = sound(*tr, 20, 4);
+    std::vector<float> x = sound(Multicam::angleTimeline(s.timeline, s.angles[1], TrackKind::Audio), 20, 4);
     CHECK_EQ(dominant(x), 880);
     CHECK(toneDb(x, 880) > toneDb(x, 440) + 30);
-    // Switch live: same tractor, next frames have the new angle's sound
-    CHECK(TimelineBuilder::applyMulticamAudio(hooks, 2));
-    x = sound(*tr, 40, 4);
+    x = sound(Multicam::angleTimeline(s.timeline, s.angles[2], TrackKind::Audio), 40, 4);
     CHECK_EQ(dominant(x), 1320);
     CHECK(toneDb(x, 1320) > toneDb(x, 880) + 30);
-    CHECK(!TimelineBuilder::applyMulticamAudio(hooks, 7)); // no such angle: unchanged
-    CHECK_EQ(dominant(sound(*tr, 60, 4)), 1320);
 }
 
 } // namespace
@@ -472,13 +441,8 @@ int main(int argc, char** argv)
                                                       "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv420p"});
     for (const QString& file : {g.red, g.lime, g.blue, g.yellow, g.narrow, g.part1, g.part2, g.ramp, g.two, g.lines})
         if (!CHECK(!file.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
-    {
-        auto prof = makeProfile(kFmt);
-        Mlt::Filter qt(*prof, "qtext");
-        if (!qt.is_valid()) return Check::skip("MLT-Qt-Modul nicht nutzbar (kein Display? z. B. xvfb-run -a ctest …)");
-    }
 
     testActiveAngleVideo();
     testActiveAngleAudio();
@@ -491,6 +455,6 @@ int main(int argc, char** argv)
     testGridFollowsSyncPosition();
     testGridKeepsAspect();
     testGridSmoothsFineDetail();
-    testGridSoundIsActiveAngleOnlyAndLive();
+    testGridSoundIsActiveAngleOnly();
     return Check::result();
 }

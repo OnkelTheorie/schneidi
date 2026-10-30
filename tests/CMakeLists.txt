@@ -1,7 +1,7 @@
 # Automatische Tests (CTest). Bauen/Ausführen:
 #   cmake -S . -B build-tests -G Ninja -DSCHNEIDI_TESTS=ON && cmake --build build-tests
 #   ctest --test-dir build-tests --output-on-failure
-# Alle Tests laufen ohne sichtbare Fenster (offscreen) und ohne Ton (SDL dummy, eigenes Gerät "null").
+# Alle Tests laufen ohne sichtbare Fenster (offscreen) und ohne Ton (eigenes Gerät "null").
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Test)
 
@@ -18,14 +18,13 @@ function(schneidi_test name)
         SKIP_RETURN_CODE 77
         TIMEOUT 300
         RESOURCE_LOCK ${name}
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null")
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
 endfunction()
 
 schneidi_test(test_timelineops)
 schneidi_test(test_interchange)
 target_compile_definitions(test_interchange PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 schneidi_test(test_interchange_app)
-schneidi_test(test_preroll)
 schneidi_test(test_projectfile)
 schneidi_test(test_project_versions)
 target_compile_definitions(test_project_versions PRIVATE SCHNEIDI_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
@@ -38,10 +37,8 @@ schneidi_test(test_effect_order)
 target_link_libraries(test_effect_order PRIVATE schneidi_cli_lib)
 schneidi_test(test_i18n)
 schneidi_test(test_effects_render)
-schneidi_test(test_output_color)
 schneidi_test(test_preview_export)
 schneidi_test(test_audio)
-schneidi_test(test_mlt_threads)
 schneidi_test(test_preview_audio)
 # plays in real time: under parallel load the preview could fall behind (gaps in the sound = false clicks)
 set_tests_properties(test_preview_audio PROPERTIES RUN_SERIAL TRUE)
@@ -55,7 +52,6 @@ schneidi_test(test_grade_windows)
 schneidi_test(test_workspace)
 schneidi_test(test_luts)
 schneidi_test(test_lumas)
-schneidi_test(test_frei0r)
 schneidi_test(test_key_pick)
 schneidi_test(test_viewer_large) # large viewer: panels hide and come back exactly, timeline zoom/scroll untouched
 schneidi_test(test_frame_view) # viewer picture widget: GPU/painter choice, zoom/pan, overlay mapping, zoom actions
@@ -67,7 +63,6 @@ schneidi_test(test_truepeak)
 schneidi_test(test_limiter)
 schneidi_test(test_render_queue)
 schneidi_test(test_subtitles)
-schneidi_test(test_liveupdate)
 schneidi_test(test_transcript)
 schneidi_test(test_sequences)
 schneidi_test(test_retime)
@@ -79,15 +74,10 @@ schneidi_test(test_export_formats)
 schneidi_test(test_export_writer)
 schneidi_test(test_export_timing)
 schneidi_test(test_smart_render)
-schneidi_test(test_video_decoder)
 schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the own decoder: same pictures as the ffmpeg command
 schneidi_test(test_occlusion)
-schneidi_test(test_compose) # own compositing (qtblend replacement) against the picture of MLT's Qt module
-schneidi_test(test_render_quality) # own services measured on pixels: title outline alignment, still memory, compose downscale
 schneidi_test(test_crop)
-schneidi_test(test_picture_parity)
 schneidi_test(test_picture_pump) # preview frame pump: sync under load, catch-up, seek, live change, backward
-schneidi_test(test_transition_size)
 schneidi_test(test_hw_encoders)
 schneidi_test(test_export_opus)
 schneidi_test(test_license_free)
@@ -140,13 +130,7 @@ schneidi_test(test_export_audio)
 schneidi_test(test_audio_analysis)
 schneidi_test(test_audio_player)
 set_tests_properties(test_audio_player PROPERTIES RUN_SERIAL TRUE) # real time
-# Picture keeps up with the sound when rendering is too slow: own audio engine only (the MLT variant skips)
-schneidi_test(test_picture_catchup)
-# Its slowness comes from an MLT test filter the own picture engine does not run: kept on the MLT path until MLT goes
-# (package 6); the own frame pump's catch-up is tested in test_picture_pump
-set_property(TEST test_picture_catchup APPEND PROPERTY ENVIRONMENT "SCHNEIDI_PICTURE=mlt")
 schneidi_test(test_play_end) # playback stops at the end and stays stopped
-schneidi_test(test_open_background) # opening files in a thread (Engine::setOpenInBackground)
 target_compile_definitions(test_audio_analysis PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 target_compile_definitions(test_export_audio PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
 target_compile_definitions(test_audio_mixer PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
@@ -161,7 +145,7 @@ schneidi_test(test_multicam_viewer)
 schneidi_test(test_proxy_hint)
 schneidi_test(test_media_timing) # proxy frame k = original frame k, shorter sources keep later clips in place, frame positions
 schneidi_test(test_proxy_cleanup) # which proxy files cleaning up deletes, which stay, dry run
-schneidi_test(test_memory_release) # MLT's pool and the heap given back while idle, never during playback
+schneidi_test(test_memory_release) # picture pools and the heap given back while idle, never during playback
 schneidi_test(test_settings) # app settings (File › Settings…), AI page, indicator modes
 schneidi_test(test_update_check) # update hint against a local HTTP server
 schneidi_test(test_ai_activity) # AI changes light up, AI log, indicator with the AI's work
@@ -198,61 +182,37 @@ schneidi_test(test_file_manager) # show in file manager / open with the default 
 # a stress test for the thread sanitizer and ASan, a few seconds in the normal suite
 schneidi_test(test_thread_teardown)
 
-# Number format regressions (German decimal comma, e.g. 0.7.0: MLT reset LC_NUMERIC and stabilization did nothing):
-# run tests that pass numbers to MLT/FFmpeg a second time under de_DE.UTF-8 (CI generates the locale)
+# Number format regressions (German decimal comma, e.g. 0.7.0: stabilization did nothing): run tests that pass numbers
+# to FFmpeg or parse them a second time under de_DE.UTF-8 (CI generates the locale)
 foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_order test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
-             test_ducking test_crop test_blur_fill test_compose)
+             test_ducking test_crop test_blur_fill)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77
         TIMEOUT 300
         RESOURCE_LOCK ${name}
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
 endforeach()
 
-# MLT's sound as a fallback (docs/archiv/plan-0.10-ton.md, the own engine SMT is the default since 0.10): export, preview and
-# analysis tests a second time with the sound through MLT; its known errors are reported there, not failed
-foreach(name test_av_sync test_preview_audio test_play_end test_open_background test_audio_regression test_export_formats test_audio_streams test_export_opus test_cli
-             test_multicam_render test_render_queue test_loudness test_ducking test_audio_sync test_dynamics_eq
-             test_multicam_cli)
-    add_test(NAME ${name}_mlt_audio COMMAND ${name})
-    set_tests_properties(${name}_mlt_audio PROPERTIES
-        SKIP_RETURN_CODE 77
-        TIMEOUT 300
-        RESOURCE_LOCK ${name}
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_AUDIO=mlt")
-endforeach()
-# Export with MLT's pictures (SCHNEIDI_PICTURE=mlt) until MLT goes: the own writer must match MLT's consumer bit for bit
-foreach(name test_export_writer test_smart_render)
-    add_test(NAME ${name}_mlt_picture COMMAND ${name})
-    set_tests_properties(${name}_mlt_picture PROPERTIES
-        SKIP_RETURN_CODE 77
-        TIMEOUT 300
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_PICTURE=mlt")
-endforeach()
-set_tests_properties(test_av_sync test_preview_audio test_picture_catchup test_play_end test_av_sync_mlt_audio test_preview_audio_mlt_audio test_play_end_mlt_audio
-                     PROPERTIES RUN_SERIAL TRUE) # preview timing
+set_tests_properties(test_av_sync test_preview_audio test_play_end PROPERTIES RUN_SERIAL TRUE) # preview timing
 
 # Label "timing": tests that measure real time or wait for other processes. They fail when the machine is busy (other
 # builds, a game, a parallel ctest), not when the code is wrong. tools/run_tests.py runs everything else in parallel,
 # then these one by one, and once more what failed (ctest -LE timing / -L timing work by hand too).
-set_tests_properties(test_av_sync test_preview_audio test_picture_catchup test_play_end test_audio_player test_speed
-                     test_av_sync_mlt_audio test_preview_audio_mlt_audio test_play_end_mlt_audio test_serve
-                     test_video_decoder test_watch_folders
+set_tests_properties(test_av_sync test_preview_audio test_play_end test_audio_player test_speed test_serve
+                     test_watch_folders
                      PROPERTIES LABELS timing)
-set_tests_properties(test_video_decoder PROPERTIES TIMEOUT 600) # ~100 s alone, over 300 s on a loaded machine
 
-# Server/container without a display: MLT's Qt module (qtblend, qtext) must still load – it used to refuse without
-# $DISPLAY and the timeline crashed on the invalid transition (see Bundle::prepareMltEnvironment)
+# Server/container without a display: titles (Qt's fonts) and the renderer still work
 foreach(name test_cli test_multicam_render)
     add_test(NAME ${name}_no_display COMMAND ${name})
     set_tests_properties(${name}_no_display PROPERTIES
         SKIP_RETURN_CODE 77
         RESOURCE_LOCK ${name}
         TIMEOUT 300
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null"
         ENVIRONMENT_MODIFICATION "DISPLAY=unset:;WAYLAND_DISPLAY=unset:")
 endforeach()
 
@@ -262,7 +222,7 @@ set_tests_properties(test_luts_c_locale PROPERTIES
     SKIP_RETURN_CODE 77
     RESOURCE_LOCK test_luts
     TIMEOUT 300
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null;LC_ALL=C;LANG=C")
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;LC_ALL=C;LANG=C")
 
 # HTTP side of the server on a socket without a network (fuzz/FakeSocket.h): pipelining, dropped bodies, Range
 schneidi_test(test_http)
@@ -285,41 +245,30 @@ foreach(target http mcp project srt edl fcp7 otio)
                                                             ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/regressions/${target})
     set_tests_properties(replay_${target} PROPERTIES
         TIMEOUT 300
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;SDL_NO_SIGNAL_HANDLERS=1;SCHNEIDI_AUDIO_DEVICE=null")
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
 endforeach()
 
 # Benchmark, not run by CTest
 add_executable(bench_filmstrips bench_filmstrips.cpp)
 target_link_libraries(bench_filmstrips PRIVATE schneidi_lib)
-add_executable(bench_inspector bench_inspector.cpp check.h)
-target_link_libraries(bench_inspector PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_engine bench_engine.cpp check.h)
 target_link_libraries(bench_engine PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_playback bench_playback.cpp check.h)
 target_link_libraries(bench_playback PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_seek bench_seek.cpp check.h)
 target_link_libraries(bench_seek PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_compose bench_compose.cpp check.h)
-target_link_libraries(bench_compose PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_multicam bench_multicam.cpp check.h)
 target_link_libraries(bench_multicam PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_export bench_export.cpp check.h)
 target_link_libraries(bench_export PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_undo bench_undo.cpp check.h)
 target_link_libraries(bench_undo PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_audio_reader bench_audio_reader.cpp check.h)
-target_link_libraries(bench_audio_reader PRIVATE schneidi_lib Qt6::Test)
-add_executable(bench_probe bench_probe.cpp check.h)
-target_link_libraries(bench_probe PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_device_loss bench_device_loss.cpp check.h)
 target_link_libraries(bench_device_loss PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_graded_thumbs bench_graded_thumbs.cpp check.h)
 target_link_libraries(bench_graded_thumbs PRIVATE schneidi_lib Qt6::Test)
 add_executable(bench_memory bench_memory.cpp check.h)
 target_link_libraries(bench_memory PRIVATE schneidi_lib Qt6::Test)
-# Stabilizer: own vs vid.stab (when installed) on synthetic shaky clips, real clips as arguments
-add_executable(bench_stabilize bench_stabilize.cpp check.h)
-target_link_libraries(bench_stabilize PRIVATE schneidi_lib Qt6::Test)
 if(WIN32) # WASAPI loopback: what the system sends to the sound card
     add_executable(bench_soundcard bench_soundcard.cpp check.h)
     target_link_libraries(bench_soundcard PRIVATE schneidi_lib Qt6::Test)

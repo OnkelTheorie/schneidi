@@ -16,7 +16,6 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Engine.h"
-#include "engine/TimelineBuilder.h"
 #include "ui/MulticamGrid.h"
 #include "ui/MulticamView.h"
 

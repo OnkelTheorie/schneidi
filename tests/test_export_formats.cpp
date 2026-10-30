@@ -446,7 +446,7 @@ int main(int argc, char** argv)
     testSettingsJson();
     if (!Check::haveFfmpeg() || QStandardPaths::findExecutable("ffprobe").isEmpty())
         return Check::skip("ffmpeg/ffprobe nicht gefunden");
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();

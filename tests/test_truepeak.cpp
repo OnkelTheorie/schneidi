@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test true peak (ITU-R BS.1770-4 Annex 2, dBTP): TruePeakMeter with synthetic signals (fs/4 with 45 degree
-// phase offset: sample peak 3 dB below the true peak value), chunk processing, and the measurement at the
-// master level meter of the preview (_true_peak.N and SharedLoudness).
+// phase offset: sample peak 3 dB below the true peak value) and chunk processing.
 #include "check.h"
 
 #include "core/Loudness.h"
 #include "core/TimelineOps.h"
 #include "core/TruePeak.h"
 #include "engine/ClipFormat.h"
-#include "engine/TimelineBuilder.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QTemporaryDir>
 #include <cmath>
@@ -166,48 +163,5 @@ int main(int argc, char** argv)
         CHECK_EQ(whole.maxDb(), TruePeakMeter::kSilence);
     }
 
-    // --- Preview: master level meter sets _true_peak.N, live measurement (SharedLoudness) remembers the maximum
-    Check::initMlt();
-    if (!Check::haveFfmpeg()) return Check::result();
-    QTemporaryDir tmp;
-    const QString wav = Check::makeMedia(
-        tmp.filePath("fs4.wav"),
-        {"-f", "lavfi", "-i", "aevalsrc=0.5*sin(2*PI*12000*t+PI/4)|0.5*sin(2*PI*12000*t+PI/4):s=48000:d=4",
-         "-c:a", "pcm_f32le"});
-    CHECK(!wav.isEmpty());
-    if (wav.isEmpty()) return Check::result();
-    ProjectFormat fmt;
-    Timeline tl;
-    tl.video.resize(1);
-    tl.audio.resize(1);
-    tl.audio[0].clips << mk(1, wav, 0, 0, 74);
-    auto prof = makeProfile(fmt);
-    TimelineBuilder b(*prof);
-    MixerHooks hooks;
-    auto tr = b.build(tl, &hooks);
-    CHECK(hooks.master.meter != nullptr && hooks.tracks.size() == 1);
-    if (!hooks.master.meter || hooks.tracks.size() != 1) return Check::result();
-    SharedLoudness live;
-    hooks.master.meter->set("_loudness", &live, 0);
-    live.active = true;
-    tr->seek(10);
-    double tpMin = 1e9, spMax = -1e9, trackTp = -1e9;
-    for (int pos = 10; pos < 60; ++pos) {
-        std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-        mlt_audio_format afmt = mlt_audio_float;
-        int freq = 48000, channels = 2;
-        int samples = mlt_audio_calculate_frame_samples(float(prof->fps()), freq, pos);
-        f->get_audio(afmt, freq, channels, samples);
-        tpMin = std::min(tpMin, hooks.master.meter->get_double("_true_peak.0"));
-        spMax = std::max(spMax, hooks.master.meter->get_double("_audio_level.0"));
-        trackTp = std::max(trackTp, hooks.tracks[0].meter->get_double("_true_peak.1"));
-    }
-    if (!CHECK(near(tpMin, -6.02, 0.4) && near(spMax, -9.03, 0.1)))
-        std::printf("       master TP %.2f dBTP, SP %.2f dBFS\n", tpMin, spMax);
-    CHECK(near(trackTp, -6.02, 0.4));
-    {
-        std::lock_guard<std::mutex> lock(live.mutex);
-        if (!CHECK(near(live.truePeak.maxDb(), -6.02, 0.4))) std::printf("       live %.2f\n", live.truePeak.maxDb());
-    }
     return Check::result();
 }

@@ -4,10 +4,9 @@
 // exit code (0 = ok, 1 = failure, 77 = skipped). Only failures and the summary are printed.
 
 #include "core/Types.h"
-#include "engine/Bundle.h"
-#include "engine/Frei0r.h"
-
-#include <Mlt.h>
+#include "engine/Engine.h"
+#include "engine/Snapshot.h"
+#include "engine/picture/Renderer.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -48,8 +47,6 @@ bool equal(const A& a, const B& b, const char* expr, const char* file, int line)
 inline void initEnv()
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
-    qputenv("SDL_AUDIODRIVER", "dummy");
-    qputenv("SDL_NO_SIGNAL_HANDLERS", "1");
     // Own audio engine: never the sound card in tests (silence paced by a timer), unless a test chose a device
     if (!qEnvironmentVariableIsSet("SCHNEIDI_AUDIO_DEVICE")) qputenv("SCHNEIDI_AUDIO_DEVICE", "null");
 }
@@ -62,21 +59,29 @@ inline void initApp(const char* name)
     QStandardPaths::setTestModeEnabled(true);
 }
 
-// Start MLT like the program (bundled modules, or the MSYS2 modules on Windows). frei0r: switch the opt-in on
-// (Frei0r::enabled) to test the installed frei0r plugins
-inline void initMlt(bool frei0r = false)
+// What the engine needs without a preview, like schneidi-cli
+inline void initEngine() { Engine::initHeadless(); }
+
+// Frame `pos` of a timeline as the export renders it (RGBA, straight alpha), at `size` (empty = project size);
+// transparent = no black background where nothing covers the frame; subtitles = the visible subtitle track burnt in.
+// Null image = failed.
+inline QImage renderFrame(const Timeline& tl, const ProjectFormat& f, int pos, QSize size = {}, bool transparent = false,
+                          bool subtitles = true)
 {
-    if (frei0r) qputenv("SCHNEIDI_FREI0R", "1");
-    Bundle::prepareMltEnvironment();
-    Frei0r::prepareEnvironment();
-    const QString modules = Bundle::mltModuleDir();
-    if (modules.isEmpty()) Mlt::Factory::init();
-    else Mlt::Factory::init(Bundle::pathForMlt(modules).constData());
-    Bundle::configureMltLogging();
-    Bundle::pinNumericLocale();
-    Bundle::prepareMltCaches();
-    Frei0r::registerEffects();
+    Picture::Options o;
+    o.format = f;
+    o.mode = Picture::Mode::Export;
+    o.transparent = transparent;
+    o.subtitles = subtitles;
+    if (!size.isEmpty()) o.output = size;
+    Picture::Renderer r(tl, o);
+    return r.render(pos).toImage();
 }
+
+// Frame `pos` of a media file (a written export) in the shape of `f` (RGB32); null = unreadable
+inline QImage mediaFrame(const QString& path, const ProjectFormat& f, int pos) { return Snapshot::media(f, path, pos); }
+// Length of a media file in frames of `f`
+inline int mediaLength(const QString& path, const ProjectFormat& f) { return Engine::probe(f, path).length; }
 
 inline bool haveFfmpeg() { return !QStandardPaths::findExecutable("ffmpeg").isEmpty(); }
 

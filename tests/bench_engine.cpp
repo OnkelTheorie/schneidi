@@ -96,11 +96,9 @@ int main(int argc, char** argv)
         f.rate = {rate, 1};
         engine.setFormat(f);
     }
-    QStringList frei0r;
-    for (const EffectDescriptor& d : EffectRegistry::all())
-        if (d.category == EffectRegistry::Frei0rCategory && d.video && frei0r.size() < nFrei0r
-            && !d.id.contains("bluescreen") && !d.id.contains("facedetect"))
-            frei0r << d.id;
+    QStringList frei0r; // own effects that replaced frei0r plugins
+    for (const char* id : {"frei0r.glow", "frei0r.colorhalftone", "frei0r.rgbnoise", "frei0r.nosync0r"})
+        if (frei0r.size() < nFrei0r) frei0r << id;
     std::printf("clips %d, frei0r: %s\n", clips, qPrintable(frei0r.join(", ")));
 
     Timeline tl = make(media, clips, frei0r, nFrei0r >= 0);

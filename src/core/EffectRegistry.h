@@ -52,7 +52,6 @@ struct EffectDescriptor {
     // Can be offered in the Effects Library (Open FX -> Filter); such effects get their own, removable
     // section in the Inspector. No = fixed section in the Inspector (Green Screen).
     bool library = false;
-    QString category;    // Effects Library: empty = Open FX → Filter, "frei0r" = Open FX → frei0r
     QString description; // Tooltip
     // Fixed stage: rendered at its own place in the chain, wherever it sits in Clip::effects (stabilization first,
     // then the Color page grade, then the Green Screen key; noise reduction per audio clip). It cannot be moved; all
@@ -61,12 +60,7 @@ struct EffectDescriptor {
 };
 
 namespace EffectRegistry {
-inline constexpr const char* Frei0rCategory = "frei0r";
-
 const QVector<EffectDescriptor>& all();
-// Add more effects (frei0r plugins, engine/Frei0r). Only at startup, before anyone holds pointers from find();
-// ids that already exist are skipped.
-void registerEffects(const QVector<EffectDescriptor>& effects);
 const EffectDescriptor* find(const QString& id);
 // Effect and parameter for an animatable effect parameter (false = not an effect parameter)
 bool paramFor(AnimParam p, const EffectDescriptor** effect, const EffectParam** param);

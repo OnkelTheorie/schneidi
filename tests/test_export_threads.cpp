@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Export with several threads: frames in parallel (except with a frei0r plugin or stabilize border "keep"; the own
-// Green Screen keyer runs in parallel too), same result as with one thread.
+// Export with several threads: frames in parallel (except with stabilize border "keep"; the own Green Screen keyer runs
+// in parallel too), same result as with one thread.
 // Prints the render times (1 thread / all threads) so that the gain can be measured afterwards.
 
 #include "check.h"
@@ -9,7 +9,6 @@
 #include "engine/Exporter.h"
 #include "engine/ClipFormat.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -31,10 +30,7 @@ QString g_media;
 ProjectFormat kFmt{1920, 1080, {25, 1}};
 constexpr int kFrames = 100;
 
-// Stand-in for a frei0r plugin (Open FX › frei0r, opt-in): only its category counts
-constexpr const char* kPlugin = "frei0r.stand_in";
-
-Clip effectClip(bool chromakey, bool plugin = false)
+Clip effectClip(bool chromakey)
 {
     Clip c;
     c.id = 1;
@@ -45,7 +41,6 @@ Clip effectClip(bool chromakey, bool plugin = false)
     EffectRegistry::instance(c, "color")->params["saturation"] = 40.0;
     EffectRegistry::add(c, "blur");
     if (chromakey) EffectRegistry::add(c, "chromakey");
-    if (plugin) EffectRegistry::add(c, kPlugin);
     return c;
 }
 
@@ -63,22 +58,6 @@ void testParallelFrames()
     CHECK_EQ(Exporter::parallelFrames(plain, 0), Exporter::availableThreads());
     CHECK_EQ(Exporter::parallelFrames(plain, 3), 3);
     CHECK_EQ(Exporter::parallelFrames(one(effectClip(true)), 3), 3); // own keyer: thread-safe
-    EffectDescriptor d;
-    d.id = d.mltService = kPlugin;
-    d.category = EffectRegistry::Frei0rCategory;
-    d.library = true;
-    EffectRegistry::registerEffects({d});
-    CHECK_EQ(Exporter::parallelFrames(one(effectClip(false, true)), 0), 1);
-    // disabled plugin does not count
-    Clip off = effectClip(false, true);
-    EffectRegistry::instance(off, kPlugin)->enabled = false;
-    CHECK_EQ(Exporter::parallelFrames(one(off), 4), 4);
-    // plugin in a nested sequence (compound clip)
-    Timeline outer = plain;
-    auto nested = std::make_shared<NestedTimelines>();
-    nested->insert(7, one(effectClip(false, true)));
-    outer.nested = nested;
-    CHECK_EQ(Exporter::parallelFrames(outer, 4), 1);
     // Stabilization with border "keep" needs the frames in order (the other borders do not)
     Clip st = effectClip(false);
     EffectRegistry::add(st, "stabilize");
@@ -132,16 +111,7 @@ qint64 render(const Timeline& tl, const QString& path, int threads)
 
 QImage grab(const QString& path, int pos)
 {
-    auto prof = makeProfile(kFmt);
-    Mlt::Producer p(*prof, path.toUtf8().constData());
-    if (!p.is_valid()) return {};
-    p.seek(pos);
-    std::unique_ptr<Mlt::Frame> f(p.get_frame());
-    mlt_image_format fmt = mlt_image_rgba;
-    int w = kFmt.width, h = kFmt.height;
-    const uint8_t* img = f ? f->get_image(fmt, w, h) : nullptr;
-    if (!img) return {};
-    return QImage(img, w, h, QImage::Format_RGBA8888).copy();
+    return Check::mediaFrame(path, kFmt, pos);
 }
 
 // mean deviation per channel (0..255), sample
@@ -172,9 +142,7 @@ void testRender(const QString& dir)
         const double d = diff(grab(single, pos), grab(all, pos));
         if (!CHECK(d < 2.0)) std::printf("       Bild %d: Abweichung %.2f\n", pos, d);
     }
-    auto prof = makeProfile(kFmt);
-    Mlt::Producer p(*prof, all.toUtf8().constData());
-    CHECK_EQ(p.get_length(), kFrames);
+    CHECK_EQ(Check::mediaLength(all, kFmt), kFrames);
 
     // Green Screen: frames in parallel, the same pictures as with one thread
     Timeline key = one(effectClip(true));
@@ -192,13 +160,12 @@ int bench(const QString& clip)
 {
     kFmt = ProjectFormat{1920, 1080, {qEnvironmentVariableIntValue("SCHNEIDI_BENCH_FPS") > 0
                                           ? qEnvironmentVariableIntValue("SCHNEIDI_BENCH_FPS") : 60, 1}};
-    auto prof = makeProfile(kFmt);
-    Mlt::Producer src(*prof, clip.toUtf8().constData());
-    if (!CHECK(src.is_valid())) return Check::result();
+    const int length = Check::mediaLength(clip, kFmt);
+    if (!CHECK(length > 0)) return Check::result();
     Clip c;
     c.id = 1;
     c.mediaPath = clip;
-    c.out = src.get_length() - 1;
+    c.out = length - 1;
     Timeline tl;
     tl.video.resize(1);
     tl.audio.resize(1);
@@ -229,7 +196,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("export_threads");
     if (qEnvironmentVariableIsSet("SCHNEIDI_BENCH_CLIP")) {
-        Check::initMlt();
+        Check::initEngine();
         std::setlocale(LC_NUMERIC, "C");
         return bench(qEnvironmentVariable("SCHNEIDI_BENCH_CLIP"));
     }
@@ -241,7 +208,7 @@ int main(int argc, char** argv)
                                 "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (!CHECK(!g_media.isEmpty())) return Check::result();
 
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testParallelFrames();
     testRender(tmp.path());
