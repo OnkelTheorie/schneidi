@@ -349,7 +349,10 @@ struct Renderer::Impl {
             ro.ahead = std::max(6, options.parallelFrames + 2);
             if (auto r = Video::Reader::open(file, ro)) {
                 auto v = std::make_shared<VideoSource>();
-                r->setFrameRate(AVRational{options.format.rate.num, options.format.rate.den});
+                // Only when the file states none (as engine/video/Producer): overriding it put two pictures of a
+                // variable-rate file on one position, the first one won (a flash frame of a phone video went missing)
+                if (r->info().frameRate.num <= 0 || r->info().frameRate.den <= 0)
+                    r->setFrameRate(AVRational{options.format.rate.num, options.format.rate.den});
                 v->info = r->info();
                 const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(v->info.format);
                 v->hasAlpha = !desc || (desc->flags & AV_PIX_FMT_FLAG_ALPHA);
