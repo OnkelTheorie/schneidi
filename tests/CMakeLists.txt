@@ -76,6 +76,7 @@ schneidi_test(test_export_timing)
 schneidi_test(test_smart_render)
 schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the own decoder: same pictures as the ffmpeg command
 schneidi_test(test_occlusion)
+schneidi_test(test_video_convert) # toRgba sets the colour matrix per conversion (BT.2020 after/before 601)
 schneidi_test(test_crop)
 schneidi_test(test_picture_pump) # preview frame pump: sync under load, catch-up, seek, live change, backward
 schneidi_test(test_hw_encoders)

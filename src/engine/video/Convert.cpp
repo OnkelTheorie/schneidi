@@ -55,7 +55,10 @@ int swsFlags(int sw, int sh, AVPixelFormat src, int dw, int dh, AVPixelFormat ds
     return flags;
 }
 
-const int* coefficients(int colorspace, const int* fallback)
+// The matrix of a colorspace number. Never the context's current table: the contexts are cached per thread, so that
+// table is whatever the previous conversion set (a BT.2020 picture decoded with 601 or 709 depending on the order).
+// Unknown numbers take swscale's default (601).
+const int* coefficients(int colorspace)
 {
     switch (colorspace) {
     case 170:
@@ -64,19 +67,22 @@ const int* coefficients(int colorspace, const int* fallback)
     case 624: return sws_getCoefficients(SWS_CS_ITU601);
     case 240: return sws_getCoefficients(SWS_CS_SMPTE240M);
     case 709: return sws_getCoefficients(SWS_CS_ITU709);
-    default: return fallback;
+    case 2020:
+    case 2021: return sws_getCoefficients(SWS_CS_BT2020);
+    default: return sws_getCoefficients(SWS_CS_DEFAULT);
     }
 }
 
-// The matrices of both sides by colorspace number; the ranges come from the context (the pixel formats)
+// The matrices of both sides by colorspace number, set for every conversion; the ranges come from the context (the
+// pixel formats)
 int lumaTransfer(SwsContext* ctx, int srcColorspace, int dstColorspace)
 {
     int* src = nullptr;
     int* dst = nullptr;
     int srcRange = 0, dstRange = 0, brightness = 0, contrast = 1 << 16, saturation = 1 << 16;
     sws_getColorspaceDetails(ctx, &src, &srcRange, &dst, &dstRange, &brightness, &contrast, &saturation);
-    return sws_setColorspaceDetails(ctx, coefficients(srcColorspace, src), srcRange, coefficients(dstColorspace, dst),
-                                    dstRange, brightness, contrast, saturation);
+    return sws_setColorspaceDetails(ctx, coefficients(srcColorspace), srcRange, coefficients(dstColorspace), dstRange,
+                                    brightness, contrast, saturation);
 }
 
 // Per thread: a context per conversion (sws_getCachedContext reuses it while the parameters stay the same); slot =
