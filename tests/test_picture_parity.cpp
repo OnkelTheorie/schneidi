@@ -218,6 +218,12 @@ void testTitleStillSpeed()
     s.reverse = true;
     parity("reverse", oneTrack({s}), 7, 0.01, 0.0);
     s.reverse = false;
+    // slow motion: odd frames fall between two file frames, MLT rounds to the nearest
+    s.speed = 0.5;
+    for (int f : {6, 7}) parity("speed05", oneTrack({s}), f, 0.01, 0.0);
+    s.reverse = true;
+    for (int f : {6, 7}) parity("reverse05", oneTrack({s}), f, 0.01, 0.0);
+    s.reverse = false;
     s.speed = 1.0;
     s.freeze = true;
     s.freezeFrame = 12;

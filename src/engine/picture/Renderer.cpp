@@ -420,16 +420,17 @@ struct Renderer::Impl {
         if (c.isRetimed()) {
             if (c.freeze) {
                 const double at = c.stillFrame() * c.speed;
-                file = c.reverse ? v.length - 1 - at : at;
+                file = std::floor(c.reverse ? v.length - 1 - at + 1e-6 : at + 1e-6);
             } else if (c.hasRamp()) {
-                file = RetimeMap(c, v.length).fileFrameAt(m);
+                file = std::floor(RetimeMap(c, v.length).fileFrameAt(m) + 1e-6);
             } else {
                 // MLT's timewarp: the converted material is int(length / speed) frames long, frame p shows
-                // p * speed, reversed (length' - 1 - p) * speed
+                // p * speed, reversed (length' - 1 - p) * speed; a position between two frames rounds to the
+                // nearest (slow motion: every other frame)
                 const int warped = std::max(1, int(v.length / c.speed));
-                file = (c.reverse ? warped - 1 - m : m) * c.speed;
+                file = std::floor((c.reverse ? warped - 1 - m : m) * c.speed + 0.5);
             }
-            file = std::clamp(std::floor(file + 1e-6), 0.0, double(std::max(0, v.length - 1)));
+            file = std::clamp(file, 0.0, double(std::max(0, v.length - 1)));
         }
         if (file < 0) return {};
         return videoFrame(v, file, dw, dh, ctx, native, into);
