@@ -21,6 +21,7 @@
 #include <QTemporaryDir>
 #include <clocale>
 #include <cmath>
+#include <thread>
 
 namespace {
 
@@ -304,6 +305,46 @@ void testMore()
     for (int f : {5, 20}) parity("ramp", oneTrack({ramp}), f, 0.01, 0.0);
 }
 
+
+// render() from several threads at once (export workers, read-ahead) gives the same pictures as one after the other;
+// update() takes a change while renders run
+void testThreads()
+{
+    std::printf("threads\n");
+    Timeline tl = oneTrack({media(1, g_pattern2, 0, 0, 49)});
+    tl.video.resize(2);
+    Clip top = media(2, g_pattern, 0, 0, 49);
+    top.transform.zoomX = top.transform.zoomY = 0.6;
+    top.transform.rotation = 10;
+    top.fadeIn = 8;
+    tl.video[1].clips = {top};
+    Picture::Options o;
+    o.format = kFormat;
+    o.parallelFrames = 4;
+    Picture::Renderer serial(tl, o);
+    QVector<QImage> want;
+    for (int f = 0; f < 40; ++f) want << serial.render(f).toImage();
+    Picture::Renderer parallel(tl, o);
+    QVector<QImage> got(40);
+    std::atomic<int> next{0};
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 4; ++i)
+        threads.emplace_back([&] {
+            for (int f; (f = next++) < 40;) got[f] = parallel.render(f).toImage();
+        });
+    for (std::thread& t : threads) t.join();
+    int same = 0;
+    for (int f = 0; f < 40; ++f) same += got[f] == want[f];
+    CHECK_EQ(same, 40);
+    // A change: the next render shows it, nothing reopened needlessly
+    const int open = parallel.stats().sourcesOpen;
+    tl.video[1].clips[0].transform.zoomX = tl.video[1].clips[0].transform.zoomY = 1.0;
+    tl.video[1].clips[0].transform.rotation = 0;
+    parallel.update(tl);
+    CHECK(parallel.render(20).toImage() == renderMlt(tl, kFormat, 20));
+    CHECK_EQ(parallel.stats().sourcesOpen, open);
+}
+
 void testOcclusion()
 {
     std::printf("occlusion\n");
@@ -402,6 +443,7 @@ int main(int argc, char** argv)
     testSubtitles();
     testEffects();
     testMore();
+    testThreads();
     testOcclusion();
     bench(tmp.path());
     return Check::result();

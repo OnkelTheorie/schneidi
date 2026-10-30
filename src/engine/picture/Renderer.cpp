@@ -424,6 +424,13 @@ struct Renderer::Impl {
             file = std::clamp(std::floor(file + 1e-6), 0.0, double(std::max(0, v.length - 1)));
         }
         if (file < 0) return {};
+        return videoFrame(v, file, dw, dh, ctx, native, into);
+    }
+
+    // Frame `file` (project rate) of a video at dw x dh (into: straight into that picture, see mediaPicture)
+    static Image videoFrame(const VideoSource& v, double file, int dw, int dh, const Ctx& ctx, QSize* native,
+                            uint8_t* into = nullptr)
+    {
         const int64_t request = int64_t(file / ctx.fps * v.fps + 0.5);
         const auto pic = v.reader->picture(request);
         if (!pic || !pic->frame) return {};
@@ -740,6 +747,23 @@ struct Renderer::Impl {
         const QString lane = prefix + QString("v%1").arg(trackIndex);
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
+        // Render cache (preview, outer timeline): the clip's finished output (frame 0 = clip start) instead of the
+        // original with its effects; not while Before/After shows a graded clip without its grade
+        if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
+            && !(ctx.bypassGrade && ColorGrade::active(*c))) {
+            if (const QString file = options.renderCache(*c); !file.isEmpty()) {
+                const Source s = source(file, lane + QStringLiteral("c"));
+                if (s.video) {
+                    QSize native;
+                    const Image img = videoFrame(*s.video, t, canvas.w, canvas.h, ctx, &native);
+                    if (!img.empty()) {
+                        layersDecoded.fetch_add(1, std::memory_order_relaxed);
+                        Compose::over(canvas.data(), img.data(), canvas.w, canvas.h, fade);
+                        return;
+                    }
+                }
+            }
+        }
         const bool plain = !Keys::hasTransform(*c) && !Keys::hasCrop(*c);
         const double opacity = Keys::hasOpacity(*c) ? std::clamp(Keys::valueAt(*c, AnimParam::Opacity, t) / 100.0, 0.0, 1.0) : 1.0;
         if (plain && !c->isTitle() && !c->isNested() && !c->mediaPath.isEmpty() && !ColorGrade::active(*c)
