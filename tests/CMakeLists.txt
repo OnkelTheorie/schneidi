@@ -110,6 +110,8 @@ schneidi_test(test_check)
 schneidi_test(test_contact_sheet)
 schneidi_test(test_overview)
 target_link_libraries(test_overview PRIVATE schneidi_cli_lib)
+schneidi_test(test_analysis_scan) # scenes/overview/region/colour events in-process == the ffmpeg way
+target_link_libraries(test_analysis_scan PRIVATE schneidi_cli_lib)
 schneidi_test(test_beats) # `beats`: tempo, bars, phrases, breaks, drops of a song
 target_link_libraries(test_beats PRIVATE schneidi_cli_lib)
 target_link_libraries(test_check PRIVATE schneidi_cli_lib)

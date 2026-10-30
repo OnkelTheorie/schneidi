@@ -446,9 +446,16 @@ Result run(const QString& path, const Options& options, const Each& each, const 
     const int uprightW = plan.quarters % 2 ? srcH : srcW, uprightH = plan.quarters % 2 ? srcW : srcH;
     // Crop in the upright picture -> in the decoded one
     const QRectF& c = options.crop;
-    QRect crop = c.isNull() ? QRect(0, 0, uprightW, uprightH)
-                            : QRect(int(std::lround(c.x() * uprightW)), int(std::lround(c.y() * uprightH)),
-                                    int(std::lround(c.width() * uprightW)), int(std::lround(c.height() * uprightH)));
+    QRect crop(0, 0, uprightW, uprightH);
+    if (!c.isNull()) {
+        // As ffmpeg's crop filter: truncated, and on the chroma grid of a subsampled picture
+        const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(AVPixelFormat(probe.frame->format));
+        const int sx = d ? (plan.quarters % 2 ? d->log2_chroma_h : d->log2_chroma_w) : 0;
+        const int sy = d ? (plan.quarters % 2 ? d->log2_chroma_w : d->log2_chroma_h) : 0;
+        const auto grid = [](double v, int shift) { return std::max(0, int(v) & ~((1 << shift) - 1)); };
+        crop = QRect(grid(c.x() * uprightW, sx), grid(c.y() * uprightH, sy), grid(c.width() * uprightW, sx),
+                     grid(c.height() * uprightH, sy));
+    }
     crop = crop.intersected(QRect(0, 0, uprightW, uprightH));
     if (crop.isEmpty()) {
         result.error = "the region is outside the picture";

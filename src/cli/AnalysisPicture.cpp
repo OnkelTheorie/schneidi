@@ -69,8 +69,11 @@ std::vector<PictureScore> scoresFfmpeg(const MediaSource& m, int width, const st
         if (end < 0) return;
         for (const QByteArray& raw : pending.left(end).split('\n')) {
             const QString line = QString::fromUtf8(raw);
-            if (const auto t = timeRe.match(line); t.hasMatch())
-                out.push_back({t.captured(1).toDouble(), 0.0, -1.0});
+            if (const auto t = timeRe.match(line); t.hasMatch()) {
+                // Both metadata filters print the frame's time: one entry per frame
+                const double at = t.captured(1).toDouble();
+                if (out.empty() || out.back().seconds != at) out.push_back({at, 0.0, -1.0});
+            }
             else if (const auto l = lumaRe.match(line); l.hasMatch() && !out.empty())
                 out.back().luma = l.captured(1).toDouble();
             else if (const auto s = scoreRe.match(line); s.hasMatch() && !out.empty())
@@ -95,8 +98,7 @@ std::vector<PictureScore> scoresFfmpeg(const MediaSource& m, int width, const st
 
 bool ffmpegAnalysis()
 {
-    static const bool on = qEnvironmentVariable("SCHNEIDI_ANALYSIS") == QLatin1String("ffmpeg");
-    return on;
+    return qEnvironmentVariable("SCHNEIDI_ANALYSIS") == QLatin1String("ffmpeg");
 }
 
 std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const std::function<void(double)>& progress)
