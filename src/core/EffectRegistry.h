@@ -2,7 +2,7 @@
 #pragma once
 // Catalog of the available effects. An effect = description + parameters (Inspector, project file, keyframes).
 // Simple effects map their parameters directly to an MLT filter (mltService/mltProperty);
-// effects with their own conversion (color correction, blur) are built by the TimelineBuilder by id.
+// effects with their own conversion (color correction, blur) are applied by the picture engine by id.
 
 #include "core/Types.h"
 
@@ -16,7 +16,7 @@ struct EffectParam {
     enum Type { Double, Color, Path, Bool, Choice };
     QString key;         // Name in EffectInstance::params
     QString label;       // display in the Inspector
-    QString mltProperty; // property on the MLT filter (empty = conversion in the TimelineBuilder)
+    QString mltProperty; // parameter key of presets and old projects (empty = converted by the picture engine)
     Type type = Double;
     QVariant defaultValue;
     double min = 0, max = 1;

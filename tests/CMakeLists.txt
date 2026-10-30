@@ -55,6 +55,7 @@ schneidi_test(test_lumas)
 schneidi_test(test_key_pick)
 schneidi_test(test_viewer_large) # large viewer: panels hide and come back exactly, timeline zoom/scroll untouched
 schneidi_test(test_frame_view) # viewer picture widget: GPU/painter choice, zoom/pan, overlay mapping, zoom actions
+schneidi_test(test_picture_gpu) # picture engine on the GPU vs the CPU path (skips without a hardware device)
 schneidi_test(test_own_effects)
 schneidi_test(test_presets)
 schneidi_test(test_rendercache)
@@ -79,6 +80,7 @@ schneidi_test(test_occlusion)
 schneidi_test(test_video_convert) # toRgba sets the colour matrix per conversion (BT.2020 after/before 601)
 schneidi_test(test_crop)
 schneidi_test(test_picture_pump) # preview frame pump: sync under load, catch-up, seek, live change, backward
+schneidi_test(test_fast_seek) # seek window, scrubbing (close picture, then the exact one), recently shown frames
 schneidi_test(test_hw_encoders)
 schneidi_test(test_export_opus)
 schneidi_test(test_license_free)

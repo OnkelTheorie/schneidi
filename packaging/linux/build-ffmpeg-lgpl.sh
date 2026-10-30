@@ -2,7 +2,10 @@
 # Builds FFmpeg without any GPL part (LGPL-2.1+ only) for the bundled packages (AppImage, Docker): no x264/x265,
 # no GPL-only filters, no rubberband/vidstab/frei0r. Software H.264 comes from OpenH264 (BSD-2), H.265 from kvazaar
 # (BSD-3), AV1 from SVT-AV1 (BSD), VP9 from libvpx (BSD); hardware encoders (VAAPI, NVENC, Quick Sync) stay.
+# Slim by default: only the components in packaging/ffmpeg-components.txt (what schneidi uses; smaller package,
+# faster start). FFMPEG_FULL=1 builds everything configure allows (for comparisons: tools/ffmpeg-import-check.sh).
 #   packaging/linux/build-ffmpeg-lgpl.sh [prefix]          (default prefix: build-ffmpeg-lgpl/prefix)
+# Also runs in MSYS2 UCRT64 (Windows program folder; D3D11VA/AMF instead of VAAPI, see packaging/windows).
 # Build packages (Debian 13): see packaging/linux/Dockerfile.ffmpeg-lgpl. Then:
 #   PKG_CONFIG_PATH=<prefix>/lib/pkgconfig LD_LIBRARY_PATH=<prefix>/lib …   (build-appimage.sh does it with SCHNEIDI_NO_GPL=1)
 # The version matches Debian 13's FFmpeg (same library sonames as the system libraries).
@@ -16,6 +19,9 @@ NVHEADERS_SHA256="c295a2ba8a06434d4bdc5c2208f8a825285210d71d91d572329b2c51fd0d4d
 WORK="${FFMPEG_WORK:-$ROOT/build-ffmpeg-lgpl}"
 PREFIX="$(realpath -m "${1:-$WORK/prefix}")"
 JOBS="${JOBS:-4}"
+FULL="${FFMPEG_FULL:-0}"
+COMPONENTS="$ROOT/packaging/ffmpeg-components.txt"
+case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) WINDOWS=1 ;; *) WINDOWS=0 ;; esac
 
 mkdir -p "$WORK/download" "$PREFIX"
 fetch() { # file url sha256
@@ -57,9 +63,30 @@ OPTS=(
     --disable-gpl --disable-nonfree
     --enable-zlib --enable-bzlib --enable-lzma # PNG/TIFF encoders, compressed MP4/MKV headers: required, not optional
     --enable-libopenh264 --enable-libkvazaar --enable-libsvtav1 --enable-libvpx --enable-libdav1d
-    --enable-libopus --enable-libvorbis --enable-libmp3lame --enable-libwebp
-    --enable-vaapi --enable-libdrm --enable-libvpl --enable-ffnvcodec --enable-nvenc --enable-nvdec
+    --enable-libopus --enable-libmp3lame
+    --enable-libvpl --enable-ffnvcodec --enable-nvenc --enable-nvdec
 )
+if [ "$WINDOWS" = 1 ]; then OPTS+=(--enable-d3d11va --enable-dxva2)
+else OPTS+=(--enable-vaapi --enable-libdrm); fi
+if [ "$FULL" = 1 ]; then
+    OPTS+=(--enable-libvorbis --enable-libwebp --extra-version=schneidi-lgpl-full)
+else
+    # --disable-everything, then one --enable-<type>=<name> per line of the list (devices: only the lavfi input of the
+    # hardware encoder test)
+    OPTS+=(--disable-everything --disable-autodetect --enable-pthreads --enable-cuda)
+    [ "$WINDOWS" = 1 ] && OPTS+=(--enable-w32threads --disable-pthreads)
+    known() { (cd "$SRC" && ./configure --list-"$1"s) | tr -s ' \t' '\n'; }
+    declare -A LISTS=()
+    while read -r type name _; do
+        [ -z "$type" ] || [[ "$type" == \#* ]] && continue
+        [ -n "${LISTS[$type]+x}" ] || LISTS[$type]="$(known "$type")"
+        if ! grep -qx -- "$(printf '%s' "$name" | sed 's/[.]/\\./g; s/[*]/.*/g')" <<<"${LISTS[$type]}"; then
+            echo "!! $COMPONENTS: FFmpeg $FFMPEG_VERSION has no $type '$name'" >&2
+            exit 1
+        fi
+        OPTS+=("--enable-$type=$name")
+    done <"$COMPONENTS"
+fi
 (
     cd "$SRC"
     ./configure "${OPTS[@]}" >"$WORK/configure.log" 2>&1 || { tail -30 "$WORK/configure.log" >&2; exit 1; }

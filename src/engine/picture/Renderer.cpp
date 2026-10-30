@@ -240,6 +240,12 @@ struct Source {
 
 // Output frame the calling thread renders right now (Renderer::render)
 thread_local int64_t t_frame = -1;
+// Its hints (null = none) and whether a close picture stood in for one of its videos
+thread_local const RenderHints* t_hints = nullptr;
+thread_local bool t_exact = true;
+
+// Preview: what a decoder keeps of the pictures decoded on the way to a jump's target (steps back after a jump)
+constexpr int64_t kSeekWindowBytes = 96ll * 1024 * 1024;
 
 bool looksLikeStill(const QString& path)
 {
@@ -355,6 +361,7 @@ struct Renderer::Impl {
                 ro.behind = 4;
                 ro.ahead = 6;
             }
+            if (options.mode == Mode::Preview) ro.keepBytes = kSeekWindowBytes;
             if (auto r = Video::Reader::open(file, ro)) {
                 auto v = std::make_shared<VideoSource>();
                 // Only when the file states none (as engine/video/Producer): overriding it put two pictures of a
@@ -537,7 +544,14 @@ struct Renderer::Impl {
                             uint8_t* into = nullptr)
     {
         const int64_t request = int64_t(file / ctx.fps * v.fps + 0.5);
-        const auto pic = v.reader->picture(request);
+        Video::Reader::Fetch fetch;
+        if (t_hints) {
+            fetch.nearest = t_hints->nearest;
+            fetch.cancel = t_hints->cancel;
+        }
+        bool exact = true;
+        const auto pic = v.reader->picture(request, fetch, &exact);
+        if (!exact) t_exact = false;
         if (!pic || !pic->frame) return {};
         *native = QSize(pic->frame->width, pic->frame->height);
         if (dw <= 0 || dh <= 0) return {};
@@ -1175,6 +1189,12 @@ Renderer::~Renderer() = default;
 
 Frame Renderer::render(int64_t frame)
 {
+    return render(frame, RenderHints{});
+}
+
+Frame Renderer::render(int64_t frame, const RenderHints& hints)
+{
+    if (hints.cancel && hints.cancel->load()) return {};
     Impl::Ctx ctx;
     QSize out;
     {
@@ -1195,6 +1215,8 @@ Frame Renderer::render(int64_t frame)
     if (d->options.mode == Mode::Export && frame % 16 == 0)
         d->dropBefore(frame - std::max<int64_t>(int64_t(2 * ctx.fps), 4 * d->options.parallelFrames + 8));
     t_frame = frame;
+    t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
+    t_exact = true;
 
     // Rendered straight into a pooled buffer (its vector lent to the canvas)
     Frame f;
@@ -1207,6 +1229,9 @@ Frame Renderer::render(int64_t frame)
     else fill(canvas, Qt::black);
     d->renderTimeline(*ctx.root, int(frame), canvas, ctx, QString(), d->options.subtitles, 0);
     canvas.px.swap(f.m_buffer->data);
+    t_hints = nullptr;
+    if (hints.cancel && hints.cancel->load()) return {};
+    f.m_exact = t_exact;
     f.m_width = ctx.W;
     f.m_height = ctx.H;
     f.m_position = frame;

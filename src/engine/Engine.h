@@ -144,8 +144,12 @@ public:
     void togglePlay();
     void setSpeed(double speed);
     double speed() const { return m_speed; }
+    // Seeks in quick succession while stopped (dragging the playhead, holding an arrow key) scrub: a close picture
+    // is shown at once, the exact one follows (own picture engine)
     void seek(int frame);
     int position() const { return m_position; }
+    // Counters of the preview's frame pump (tests, benchmarks)
+    Picture::Pump::Stats pictureStats() const;
     // While playing: the frame heard right now (fractional, in positions like position()); NaN when stopped.
     // position() = the frame on screen, which follows it.
     double soundFrame() const;

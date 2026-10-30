@@ -291,7 +291,7 @@ bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<boo
         return false;
     };
     if (!QFileInfo::exists(r.file)) return fail(T("Datei nicht gefunden: %1").arg(r.file));
-    // Own decoder, positions as the timeline counts them (Picture::Renderer, TimelineBuilder): project frames of the
+    // Own decoder, positions as the timeline counts them (Picture::Renderer): project frames of the
     // file, through MLT's timewarp arithmetic for a speed change
     Video::Reader::Options ro;
     ro.hardware = false; // in order through the whole range: the software decoder keeps up and leaves the card alone

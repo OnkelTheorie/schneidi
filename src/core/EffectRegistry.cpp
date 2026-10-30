@@ -295,7 +295,7 @@ QStringList order(const Clip& c)
 
 QVector<const EffectInstance*> renderOrder(const Clip& c)
 {
-    // Place of a fixed stage in the chain (TimelineBuilder applyEffects); the movable effects come after all of them
+    // Place of a fixed stage in the chain (Picture::Renderer); the movable effects come after all of them
     static const QStringList stages{"stabilize", "grade", "chromakey"};
     auto rank = [](const EffectInstance& e) {
         if (movable(e.effectId)) return int(stages.size()) + 1;

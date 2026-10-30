@@ -12,7 +12,11 @@
 //   itself, the pump jumps ahead to where the clock will be once the jump is done (its cost - decoding from the
 //   keyframe - is measured on every jump). On a machine fast enough nothing jumps.
 // - Stopped (speed 0): the frame at the position is rendered and shown once, again after every seek()/refresh().
-//   Scrubbing: the newest seek wins; renders for older positions finish but are not shown.
+//   The newest seek wins: renders for older positions are cancelled (Content::renderWant) or finish unseen.
+//   Scrubbing (seek(p, true)): first a close picture that is there at once (Want::nearest: the decoders' newest
+//   picture before p, after a jump the key frame), then always the exact one - never a stand-in stays on screen.
+// - Recently shown frames are kept (a byte budget, preview size): stepping back, J-K-L around the playhead and
+//   playing a stretch again take them instead of rendering. Dropped when the content changes.
 // - After seek()/setSpeed()/setContent() return, no frame from before is shown any more (the Show callback runs
 //   under a lock those take).
 //
@@ -20,6 +24,7 @@
 
 #include <QImage>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -28,9 +33,17 @@ namespace Picture {
 
 class Pump {
 public:
+    // How a still frame may be rendered (Content::renderWant)
+    struct Want {
+        bool nearest = false;                      // a close picture will do (scrubbing)
+        const std::atomic<bool>* cancel = nullptr; // set when the frame is not wanted any more: return soon
+        bool exact = true;                         // out: the picture is exactly frame f's
+    };
     struct Content {
         // The picture of content frame f (any thread, several at once); null image = nothing (shown as black)
         std::function<QImage(int64_t f)> render;
+        // Optional: the same for still frames with a Want (cancellable, scrubbing); without it `render` is used
+        std::function<QImage(int64_t f, Want& want)> renderWant;
         // Last frame (inclusive) that may be rendered, < 0 = no end; read often (cheap)
         std::function<int64_t()> last;
         // Playback direction changes (1, -1, 0 = stopped): the renderer reads ahead that way (optional)
@@ -58,7 +71,8 @@ public:
     // Speed change; position = where playback goes on (the frame shown when stopping). Same direction while playing:
     // the frames rendered ahead stay.
     void setSpeed(double speed, int64_t position);
-    void seek(int64_t position);
+    // scrub: seeks in quick succession (dragging the playhead): a close picture first, then the exact one
+    void seek(int64_t position, bool scrub = false);
     // The content changed (model, grade bypass, output size): renders again what is shown/ahead, keeps playing
     void refresh();
     int workers() const;
@@ -69,7 +83,13 @@ public:
         int skipped = 0;   // rendered frames never shown (late, or behind a jump)
         int jumps = 0;     // catch-up jumps
         double jumpCost = 0; // seconds, the estimate used for the next jump
+        int recent = 0;      // frames taken from the recently shown ones instead of rendering
+        int nearest = 0;     // close pictures shown while scrubbing (each followed by the exact one)
+        int cancelled = 0;   // still renders given up because the position moved on
+        int64_t recentBytes = 0; // memory the recently shown frames hold now
     };
+    // Memory for recently shown frames (bytes; tests make it small)
+    void setRecentBudget(int64_t bytes);
     Stats stats() const;
 
 private:

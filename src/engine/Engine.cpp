@@ -42,6 +42,9 @@ extern "C" {
 
 namespace {
 
+// Seeks this close together (ms) while stopped are scrubbing (Engine::seek)
+constexpr qint64 kScrubMs = 150;
+
 // Hands freed memory back to the system right away. glibc raises its mmap threshold after the first freed frame buffer
 // (several MB each), from then on frames come from the heap and stay there when freed: every multicam grid built (one
 // decoder per cell) left hundreds of MB behind (4 GB after flipping the pages of 20 angles a few times).
@@ -394,6 +397,14 @@ std::shared_ptr<const Picture::Pump::Content> Engine::rendererContent(std::share
 {
     auto c = std::make_shared<Picture::Pump::Content>();
     c->render = [renderer](int64_t f) { return frameImage(renderer->render(f)); };
+    c->renderWant = [renderer](int64_t f, Picture::Pump::Want& want) {
+        Picture::RenderHints hints;
+        hints.nearest = want.nearest;
+        hints.cancel = want.cancel;
+        const Picture::Frame frame = renderer->render(f, hints);
+        want.exact = frame.exact();
+        return frameImage(frame);
+    };
     if (timeline) {
         c->last = [last = m_lastFrame] { return last->load(); };
     } else {
@@ -805,7 +816,9 @@ void Engine::seek(int frame)
     const int at = std::max(0, frame - m_offset); // frame of the producer (multicam grid: of the sequence)
     const bool playing = m_speed != 0.0;
     ++m_seekEpoch;
-    m_pump->seek(at); // first: no frame from before the jump is shown after this
+    // Stopped and the last seek moments ago: scrubbing (dragging, a held arrow key)
+    const bool scrub = !playing && m_lastSeek.isValid() && m_lastSeek.elapsed() < kScrubMs;
+    m_pump->seek(at, scrub); // first: no frame from before the jump is shown after this
     if (playing) {
         // The next seek within moments: the playhead is being dragged -> silent until it rests
         if (m_lastSeek.isValid() && m_lastSeek.elapsed() < 150) {
@@ -817,6 +830,11 @@ void Engine::seek(int frame)
     m_lastSeek.start();
     m_position = frame;
     emit positionChanged(frame);
+}
+
+Picture::Pump::Stats Engine::pictureStats() const
+{
+    return m_pump ? m_pump->stats() : Picture::Pump::Stats{};
 }
 
 void Engine::emitLevels()

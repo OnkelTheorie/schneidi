@@ -43,7 +43,7 @@ constexpr ShotcutName kShotcutNames[] = {
 // filter's default when missing). One of them may be animated: its keys become keys of the target parameter.
 
 // Blur radii are pixels; presets come from projects of unknown size -> assumed 1080 lines. schneidi's blur:
-// sigma = strength * height / 2000 (TimelineBuilder applyBlur).
+// sigma = strength * height / 2000 (the picture engine's blur).
 double sigmaToStrength(double sigma) { return std::max(0.0, sigma) * 2000.0 / 1080.0; }
 // Box blur of radius r (width 2r+1) has the variance r(r+1)/3; `passes` boxes in a row add up
 double boxToStrength(double r, double passes = 1)
@@ -68,7 +68,7 @@ struct Conversion {
     Factor a, b;
     double (*f)(double a, double b);
 };
-// The same look with schneidi's effects (TimelineBuilder applyColor: out = 0.5 + (in - 0.5)(1 + contrast/100) +
+// The same look with schneidi's effects (the picture engine's color correction: out = 0.5 + (in - 0.5)(1 + contrast/100) +
 // brightness/200 per channel, saturation -100 = gray, +100 = double)
 const Conversion kConversions[] = {
     // MLT brightness: out = in * level -> contrast and brightness 100(level - 1) give exactly that

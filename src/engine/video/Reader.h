@@ -23,6 +23,7 @@ extern "C" {
 #include <libavutil/rational.h>
 }
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -80,6 +81,20 @@ public:
         bool hardware = true;     // try the hardware decoder (engine/video/Hardware)
         int ahead = 6;            // pictures decoded ahead while frames are fetched in order
         int behind = 4;           // decoded pictures kept before the last request (workers out of order, small steps back)
+        // Seek window (preview): after a seek, the pictures decoded on the way from the key frame to the target are kept
+        // too (the newest that fit into this many bytes), so steps back and jumps back a little are answered without
+        // decoding again. Software decoding only (hardware pictures would have to be downloaded). 0 = off.
+        int64_t keepBytes = 0;
+    };
+
+    // How picture() may answer
+    struct Fetch {
+        // Scrubbing: when the exact picture is not decoded yet, a close one will do - the newest decoded picture
+        // before the position once the decoder is on its way there (right after a seek: the key frame before it)
+        bool nearest = false;
+        // Set by the caller when the picture is not wanted any more: picture() returns nullptr soon and the decoder
+        // stops working towards it
+        const std::atomic<bool>* cancel = nullptr;
     };
 
     static std::unique_ptr<Reader> open(const QString& path, const Options& options, QString* error = nullptr);
@@ -100,6 +115,8 @@ public:
 
     // The picture for stream position `position`; nullptr if the file has none (read error before the first picture)
     std::shared_ptr<const Picture> picture(int64_t position);
+    // The same with a Fetch; exact (optional) = false when a close picture answered instead (Fetch::nearest)
+    std::shared_ptr<const Picture> picture(int64_t position, const Fetch& fetch, bool* exact = nullptr);
 
     // Counters for tests and the log
     struct Stats {
@@ -108,6 +125,8 @@ public:
         bool hardware = false;    // decoding on the graphics card right now
         int hardwareFailures = 0; // fell back to software
         int hibernations = 0;     // decoder closed after a long pause, reopened on demand
+        int nearest = 0;          // requests answered by a close picture instead of the exact one (Fetch::nearest)
+        int cancelled = 0;        // requests given up by their caller (Fetch::cancel)
     };
     Stats stats() const;
 

@@ -70,7 +70,7 @@ bool WindowOverlay::transforms(const QRectF& frame, QTransform* clipToWidget, QT
     ct.translate(frame.left(), frame.top());
     ct.scale(frame.width() / W, frame.height() / H);
     if (Keys::hasTransform(*c)) {
-        // Inspector transform like the TimelineBuilder: zoom around the center, position Y upward, rotation
+        // Inspector transform like the picture engine: zoom around the center, position Y upward, rotation
         // counterclockwise
         ct.translate(W / 2 + Keys::valueAt(*c, AnimParam::PosX, t), H / 2 - Keys::valueAt(*c, AnimParam::PosY, t));
         ct.rotate(-Keys::valueAt(*c, AnimParam::Rotation, t));
