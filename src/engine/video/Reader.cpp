@@ -34,9 +34,11 @@ constexpr int64_t kNothing = INT64_MAX; // validFrom before the first seek: noth
 // (MLT keeps 4 avformat producers open; a project with many clips would otherwise hold every decoder it ever used)
 constexpr int64_t kIdleMs = 4000; // longer than Preroll looks ahead (3 s): a prepared decoder stays until it is used
 constexpr int kKeepOpen = 4;
-// Seek window with hardware decoding: only this many pictures right before the target are downloaded too (each is a
-// download; they overlap with decoding in the finisher thread)
+// Seek window: at most this many pictures right before the target are kept (hardware: each one is a download, they
+// overlap with decoding in the finisher thread; software: they are decoded with the loop filter, which jumps skip on
+// frames nothing refers to; with 32 software jumps on 1080p60 game footage looked slower)
 constexpr int kHardwareWindow = 12;
+constexpr int kSoftwareWindow = 16;
 
 // SCHNEIDI_DECODER_IDLE_MS shortens it (tests)
 int64_t idleMs()
@@ -370,6 +372,7 @@ struct Reader::Impl {
     bool keyStarted = false; // decoder thread: that key frame came
     int keepFrames = 0;      // pictures Options::keepBytes holds (0 = not computed yet)
     int64_t seekTarget = -1; // the request the last seek was for
+    int64_t keepReach = 0;   // decoder thread: pictures this close before the target are kept (exact decoding)
     Decoded rawTail;                                 // newest frame before the target, not finished yet
     std::deque<Decoded> queue;                       // for the finisher thread
     int64_t queuedBack = INT64_MIN;                  // position of the last frame queued
@@ -649,11 +652,12 @@ struct Reader::Impl {
         if (mustDecode && dec->has_b_frames && av_q2d(info.timeBase) != 0 && fps > 0)
             ts -= int64_t((dec->has_b_frames + 2) / fps / av_q2d(info.timeBase));
         ts = std::max<int64_t>(ts, 0);
-        // Pictures before the target are only a way there - unless the seek window keeps them (then exact; the
-        // loop filter only matters for software decoding)
+        // Pictures before the target are only a way there (no loop filter on frames nothing refers to) - except the
+        // last ones the seek window keeps: they are decoded exactly (step())
         keeping = opt.keepBytes > 0 && mustDecode;
         keyStarted = false;
-        dec->skip_loop_filter = keeping ? AVDISCARD_NONE : AVDISCARD_NONREF;
+        keepReach = !keeping ? 0 : hw.context ? kHardwareWindow : std::min(kSoftwareWindow, seekWindow());
+        dec->skip_loop_filter = AVDISCARD_NONREF;
         av_seek_frame(fmt, info.index, ts, AVSEEK_FLAG_BACKWARD);
         avcodec_flush_buffers(dec);
         draining = false;
@@ -735,7 +739,7 @@ struct Reader::Impl {
                 av_packet_unref(pkt);
                 return;
             }
-            if (pos >= target || keeping) dec->skip_loop_filter = AVDISCARD_NONE;
+            if (pos >= target - keepReach) dec->skip_loop_filter = AVDISCARD_NONE;
         }
         for (;;) {
             const int r = avcodec_send_packet(dec, send);
@@ -784,7 +788,7 @@ struct Reader::Impl {
                             && (par->field_order == AV_FIELD_PROGRESSIVE || par->field_order == AV_FIELD_UNKNOWN);
             d.topFieldFirst = (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) || par->field_order == AV_FIELD_TT
                               || par->field_order == AV_FIELD_TB;
-            if (d.position >= target) dec->skip_loop_filter = AVDISCARD_NONE;
+            if (d.position >= target - keepReach) dec->skip_loop_filter = AVDISCARD_NONE;
             d.frame = av_frame_clone(frame);
             av_frame_unref(frame);
             if (d.frame) out.push_back(d);
@@ -907,7 +911,6 @@ struct Reader::Impl {
             const uint64_t gen = generation;
             const bool hardware = hw.context != nullptr;
             const bool keepAll = keeping;
-            const int64_t seekWindowFrames = keepAll ? seekWindow() : 0;
             // A scrubbing request waits: the newest picture before the target answers it (hardware: only the first
             // after the seek, each one is a download)
             const bool nearTail = nearestWanted() && (!hardware || !(tail && tailGeneration == generation));
@@ -922,7 +925,7 @@ struct Reader::Impl {
             std::vector<Decoded> keep;
             int64_t keptFrom = kNothing;
             // Hardware: only the last few before the target (downloads); software: as many as the window holds
-            const int64_t reach = hardware ? kHardwareWindow : seekWindowFrames;
+            const int64_t reach = keepReach;
             for (Decoded& d : fresh) {
                 if (d.position < target && keepAll && d.key) keyStarted = true;
                 if (d.position < target && keepAll && keyStarted && target - d.position <= reach) {

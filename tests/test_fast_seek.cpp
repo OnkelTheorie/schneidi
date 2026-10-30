@@ -61,7 +61,7 @@ constexpr int64_t kPicture = 640 * 360 * 3 / 2;
 
 void testSeekWindow(const QString& file)
 {
-    // Jump to 120 (key frame 100), then 20 steps back: answered from the window, no seek, the same pixels
+    // Jump to 120 (key frame 100), then 16 steps back: answered from the window, no seek, the same pixels
     auto r = Video::Reader::open(file, software(64 * kPicture));
     auto fresh = Video::Reader::open(file, software(0));
     if (!CHECK(r && fresh)) return;
@@ -69,7 +69,7 @@ void testSeekWindow(const QString& file)
     CHECK(p && p->position == 120);
     const int decoded = r->stats().decoded;
     int wrong = 0, differ = 0;
-    for (int k = 119; k >= 100; --k) {
+    for (int k = 119; k >= 104; --k) {
         auto q = r->picture(k);
         if (!q || q->position != k) ++wrong;
         else if (auto f = Video::Reader::open(file, software(0))) { // a fresh decode of the same frame
@@ -78,7 +78,7 @@ void testSeekWindow(const QString& file)
         }
     }
     const Video::Reader::Stats st = r->stats();
-    std::printf("       window: 20 steps back after a jump: %d seek(s), %d decoded after the jump\n", st.seeks,
+    std::printf("       window: 16 steps back after a jump: %d seek(s), %d decoded after the jump\n", st.seeks,
                 st.decoded - decoded);
     CHECK_EQ(wrong, 0);
     CHECK_EQ(differ, 0);
