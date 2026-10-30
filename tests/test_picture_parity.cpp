@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Own picture engine (engine/picture, 0.15) against the MLT path: the same timelines rendered through TimelineBuilder +
 // MLT tractor and through Picture::Renderer, compared pixel by pixel (RGBA, straight alpha). Each case states its
-// tolerance: mean absolute difference per channel and the share of pixels off by more than 24 steps (edges of moved
+// tolerance: mean absolute difference per channel and the share of pixels off by more than 24 steps. Intended
+// differences: a picture shown smaller than its size is converted small in one swscale pass (MLT converts it at full
+// size and shrinks it when drawing: edges of moved
 // pictures, text antialiasing, MLT's dissolve in YUV 4:2:2). Also checks that a covered track is not decoded.
 // With SCHNEIDI_PICTURE_BENCH=1: ms per 1080p frame for a 3-track project, MLT vs own.
 
@@ -266,25 +268,28 @@ void bench(const QString& dir)
         auto profile = makeProfile(hd);
         TimelineBuilder builder(*profile);
         auto tractor = builder.build(tl);
-        QElapsedTimer timer;
-        timer.start();
-        for (int f = 0; f < 50; ++f) {
+        auto grab = [&](int f) {
             tractor->seek(f);
             std::unique_ptr<Mlt::Frame> fr(tractor->get_frame());
             mlt_image_format fmt = mlt_image_rgba;
             int w = 1920, h = 1080;
             fr->get_image(fmt, w, h);
-        }
-        std::printf("bench MLT: %.1f ms/frame\n", timer.elapsed() / 50.0);
+        };
+        grab(0); // files open, decoders started (as the own renderer below)
+        QElapsedTimer timer;
+        timer.start();
+        for (int f = 1; f < 100; ++f) grab(f);
+        std::printf("bench MLT: %.1f ms/frame\n", timer.elapsed() / 99.0);
     }
     {
         Picture::Options o;
         o.format = hd;
         Picture::Renderer r(tl, o);
+        r.render(0);
         QElapsedTimer timer;
         timer.start();
-        for (int f = 0; f < 50; ++f) r.render(f);
-        std::printf("bench own: %.1f ms/frame\n", timer.elapsed() / 50.0);
+        for (int f = 1; f < 100; ++f) r.render(f);
+        std::printf("bench own: %.1f ms/frame\n", timer.elapsed() / 99.0);
     }
 }
 

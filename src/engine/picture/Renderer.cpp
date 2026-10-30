@@ -17,6 +17,7 @@
 
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavutil/pixdesc.h>
 }
 
 #include <QFileInfo>
@@ -130,13 +131,16 @@ void mix(Image& a, const Image& b, double t)
 
 void fill(Image& img, const QColor& c)
 {
+    const uint8_t px[4] = {uint8_t(c.red()), uint8_t(c.green()), uint8_t(c.blue()), uint8_t(c.alpha())};
+    uint32_t word;
+    std::memcpy(&word, px, 4);
     uint8_t* p = img.data();
-    for (size_t i = 0, n = size_t(img.w) * img.h; i < n; ++i, p += 4) {
-        p[0] = uint8_t(c.red());
-        p[1] = uint8_t(c.green());
-        p[2] = uint8_t(c.blue());
-        p[3] = uint8_t(c.alpha());
+    const size_t n = size_t(img.w) * img.h;
+    if (word == 0) {
+        std::memset(p, 0, n * 4);
+        return;
     }
+    std::fill_n(reinterpret_cast<uint32_t*>(p), n, word); // vector storage is aligned for uint32_t
 }
 
 // ---- Sources ----
@@ -146,10 +150,12 @@ struct VideoSource {
     Video::Info info;
     double fps = 0;     // stream frame rate (positions count in it)
     int length = 0;     // frames in the project rate (as MLT's producer length)
+    bool hasAlpha = false; // pixel format with alpha
 };
 
 struct StillSource {
     QImage image; // RGBA8888, straight alpha
+    bool opaque = true;
 };
 
 struct Source {
@@ -256,6 +262,8 @@ struct Renderer::Impl {
             if (!img.isNull()) {
                 s.still = std::make_shared<StillSource>();
                 s.still->image = img.convertToFormat(QImage::Format_RGBA8888);
+                s.still->opaque = fullyOpaque(s.still->image.constBits(),
+                                              size_t(s.still->image.width()) * s.still->image.height());
             }
         }
         if (!s.still) {
@@ -267,6 +275,8 @@ struct Renderer::Impl {
                 auto v = std::make_shared<VideoSource>();
                 r->setFrameRate(AVRational{options.format.rate.num, options.format.rate.den});
                 v->info = r->info();
+                const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(v->info.format);
+                v->hasAlpha = !desc || (desc->flags & AV_PIX_FMT_FLAG_ALPHA);
                 v->fps = v->info.frameRate.num > 0 && v->info.frameRate.den > 0 ? av_q2d(v->info.frameRate)
                                                                                  : options.format.rate.fps();
                 if (v->info.duration > 0)
@@ -318,7 +328,8 @@ struct Renderer::Impl {
     }
 
     // Source picture of a media clip at clip frame t, fetched at (dw x dh); empty = none
-    Image mediaPicture(const Clip& c, int t, const QString& lane, int dw, int dh, const Ctx& ctx, QSize* native)
+    Image mediaPicture(const Clip& c, int t, const QString& lane, int dw, int dh, const Ctx& ctx, QSize* native,
+                       uint8_t* into = nullptr)
     {
         const Source s = source(c.mediaPath, lane);
         if (s.still) {
@@ -361,6 +372,13 @@ struct Renderer::Impl {
         if (!pic || !pic->frame) return {};
         *native = QSize(pic->frame->width, pic->frame->height);
         if (dw <= 0 || dh <= 0) return {};
+        if (into) { // straight into the caller's picture (a layer that covers the frame)
+            if (!Video::toRgba(*pic, v.info, into, dw, dh, ctx.preview)) return {};
+            Image done;
+            done.w = dw;
+            done.h = dh;
+            return done; // size only: the pixels are in `into`
+        }
         Image out(dw, dh);
         if (!Video::toRgba(*pic, v.info, out.data(), dw, dh, ctx.preview)) return {};
         return out;
@@ -485,11 +503,14 @@ struct Renderer::Impl {
                     nh = sideways ? s.video->info.width : s.video->info.height;
                 }
                 if (nw <= 0 || nh <= 0) return {};
-                double zoom = 1;
+                // Largest zoom of the clip (keyframes included), with headroom for Bezier overshoot: a picture shown
+                // small is converted small (one scaling pass instead of a full-size conversion)
+                double zoom = 0;
                 for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY}) {
                     zoom = std::max(zoom, std::abs(Keys::staticValue(c, p)));
                     for (const Keyframe& k : c.keys.value(p)) zoom = std::max(zoom, std::abs(k.value));
                 }
+                if (!transform || zoom <= 0) zoom = 1;
                 const double scale = std::max(double(W) / nw, double(H) / nh) * zoom * 1.1;
                 const int dw = scale < 1.0 ? std::max(2, int(std::ceil(nw * scale))) : nw;
                 const int dh = scale < 1.0 ? std::max(2, int(std::ceil(nh * scale))) : nh;
@@ -596,16 +617,105 @@ struct Renderer::Impl {
             scaleAlpha(one, ia.empty() ? double(i) / len : double(len - 1 - i) / len);
             return std::move(one);
         }
-        for (const Clip& c : track.clips) {
-            if (f < c.start || f >= c.end()) continue;
-            // A clip following a dissolve partner of the same file reads from the second lane (as TimelineBuilder)
-            Image img = clipLayer(c, f, lane, ctx, tl, depth);
-            if (!img.empty()) scaleAlpha(img, TimelineOps::fadeRamp(c, t(c, f)));
-            return img;
-        }
         return {};
     }
-    static int t(const Clip& c, int f) { return f - c.start; }
+
+    // Transition spans of a track (cached per render call would be nicer; cheap enough for now)
+    QVector<TimelineOps::TransitionSpan> spansOf(const Track& track, const Timeline& tl)
+    {
+        bool any = false;
+        for (const Clip& c : track.clips) any = any || c.transIn > 0 || c.transOut > 0;
+        if (!any) return {};
+        return TimelineOps::transitions(track, [&](const Clip& c) { return sourceLength(c, tl); });
+    }
+
+    static const Clip* clipAt(const Track& track, int f)
+    {
+        // clips are sorted by start
+        auto it = std::upper_bound(track.clips.begin(), track.clips.end(), f,
+                                   [](int frame, const Clip& c) { return frame < c.start; });
+        if (it == track.clips.begin()) return nullptr;
+        --it;
+        return f < it->end() ? &*it : nullptr;
+    }
+
+    // The track's picture at f surely covers the whole frame opaquely (then nothing below is decoded). Conservative:
+    // false when unsure.
+    bool covers(const Track& track, int trackIndex, int f, const Ctx& ctx, const Timeline& tl, const QString& prefix)
+    {
+        if (track.hidden) return false;
+        for (const auto& s : spansOf(track, tl))
+            if (f >= s.start && f < s.end) return false;
+        const Clip* c = clipAt(track, f);
+        if (!c || !c->enabled || c->isTitle() || c->isNested() || c->mediaPath.isEmpty()) return false;
+        if (Keys::hasTransform(*c) || Keys::hasCrop(*c) || Keys::hasOpacity(*c)) return false;
+        if (TimelineOps::fadeRamp(*c, f - c->start) < 1.0) return false;
+        for (const EffectInstance& e : c->effects)
+            if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId)) return false;
+        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        const Source s = source(c->mediaPath, lane);
+        if (s.still) {
+            if (!s.still->opaque) return false;
+        } else if (!s.video || s.video->hasAlpha) {
+            return false;
+        }
+        const QSizeF fit = MediaAspect::fit(nativeAspect(*c, lane), QSizeF(ctx.PW, ctx.PH));
+        return std::lround(fit.width() * ctx.W / ctx.PW) >= ctx.W && std::lround(fit.height() * ctx.H / ctx.PH) >= ctx.H;
+    }
+
+    // Draws the track's picture at f over canvas. bottom: the canvas holds nothing that shows (this track covers it)
+    void drawTrack(Image& canvas, bool bottom, const Track& track, int trackIndex, int f, const Ctx& ctx,
+                   const Timeline& tl, const QString& prefix, int depth)
+    {
+        if (track.hidden) return;
+        for (const auto& s : spansOf(track, tl))
+            if (f >= s.start && f < s.end) {
+                Image layer = trackLayer(track, trackIndex, f, ctx, tl, prefix, depth);
+                if (!layer.empty()) Compose::over(canvas.data(), layer.data(), canvas.w, canvas.h, 1.0);
+                return;
+            }
+        const Clip* c = clipAt(track, f);
+        if (!c || !c->enabled) return;
+        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        const int t = f - c->start;
+        const double fade = TimelineOps::fadeRamp(*c, t);
+        const bool plain = !Keys::hasTransform(*c) && !Keys::hasCrop(*c);
+        const double opacity = Keys::hasOpacity(*c) ? std::clamp(Keys::valueAt(*c, AnimParam::Opacity, t) / 100.0, 0.0, 1.0) : 1.0;
+        if (plain && !c->isTitle() && !c->isNested() && !c->mediaPath.isEmpty() && !ColorGrade::active(*c)
+            && c->effects.isEmpty()) {
+            // Media without transform or effects: decoded at its fitted size and laid on directly
+            const QSizeF fit = MediaAspect::fit(nativeAspect(*c, lane), QSizeF(ctx.PW, ctx.PH));
+            const int fw = std::max(1, int(std::lround(fit.width() * ctx.W / ctx.PW)));
+            const int fh = std::max(1, int(std::lround(fit.height() * ctx.H / ctx.PH)));
+            QSize native;
+            const double k = opacity * fade;
+            if (bottom && fw == canvas.w && fh == canvas.h && k >= 1.0) {
+                if (!mediaPicture(*c, t, lane, fw, fh, ctx, &native, canvas.data()).empty())
+                    layersDecoded.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            const Image src = mediaPicture(*c, t, lane, fw, fh, ctx, &native);
+            if (src.empty()) return;
+            layersDecoded.fetch_add(1, std::memory_order_relaxed);
+            if (fw == canvas.w && fh == canvas.h) {
+                Compose::over(canvas.data(), src.data(), canvas.w, canvas.h, k);
+            } else {
+                Compose::Affine m;
+                m.c = (canvas.w - fw) / 2;
+                m.f = (canvas.h - fh) / 2;
+                Compose::draw(canvas.data(), canvas.w, canvas.h, src.data(), fw, fh, m, k);
+            }
+            return;
+        }
+        if (c->isTitle() && plain && opacity * fade >= 1.0 && c->effects.isEmpty()
+            && !Keys::animated(*c, AnimParam::TitleSize)) {
+            drawTitle(canvas, *c, t, ctx); // painted straight on: no full-frame layer
+            return;
+        }
+        Image layer = clipLayer(*c, f, lane, ctx, tl, depth);
+        if (layer.empty()) return;
+        Compose::over(canvas.data(), layer.data(), canvas.w, canvas.h, fade);
+    }
 
     // Alpha keyframes linear between (frame, value) points, as MLT's brightness filter animates them
     static double alphaKeys(int i, std::initializer_list<std::pair<int, double>> keys)
@@ -761,30 +871,20 @@ struct Renderer::Impl {
                         bool subtitles, int depth)
     {
         (void)transparent;
-        // Top down until a layer covers the whole frame: what lies below is never decoded (tests/test_occlusion)
-        std::vector<Image> layers;
-        bool covered = false;
-        for (int i = tl.video.size() - 1; i >= 0; --i) {
-            if (covered) {
-                if (!tl.video[i].hidden)
-                    for (const Clip& c : tl.video[i].clips)
-                        if (f >= c.start && f < c.end()) {
-                            layersSkipped.fetch_add(1, std::memory_order_relaxed);
-                            break;
-                        }
-                continue;
+        // Top down to the first track that surely covers the frame: what lies below is never decoded
+        // (tests/test_occlusion), then bottom up onto the canvas
+        int lowest = 0;
+        bool lowestCovers = false;
+        for (int i = tl.video.size() - 1; i >= 0; --i)
+            if (covers(tl.video[i], i, f, ctx, tl, prefix)) {
+                lowest = i;
+                lowestCovers = true;
+                for (int j = 0; j < i; ++j)
+                    if (!tl.video[j].hidden && clipAt(tl.video[j], f)) layersSkipped.fetch_add(1, std::memory_order_relaxed);
+                break;
             }
-            Image img = trackLayer(tl.video[i], i, f, ctx, tl, prefix, depth);
-            if (img.empty()) continue;
-            covered = fullyOpaque(img.data(), size_t(img.w) * img.h);
-            layers.push_back(std::move(img));
-        }
-        if (covered) {
-            canvas = std::move(layers.back());
-            layers.pop_back();
-        }
-        for (auto it = layers.rbegin(); it != layers.rend(); ++it)
-            Compose::over(canvas.data(), it->data(), canvas.w, canvas.h, 1.0);
+        for (int i = lowest; i < tl.video.size(); ++i)
+            drawTrack(canvas, i == lowest && lowestCovers, tl.video[i], i, f, ctx, tl, prefix, depth);
         if (subtitles) subtitleLayer(canvas, tl, f, ctx);
     }
 };
@@ -815,13 +915,17 @@ Frame Renderer::render(int64_t frame)
     ctx.preview = d->options.mode == Mode::Preview;
     ctx.bypassGrade = ctx.preview && d->options.gradeBypass && d->options.gradeBypass->load();
 
-    Image canvas(ctx.W, ctx.H);
-    if (!d->options.transparent) fill(canvas, Qt::black);
-    d->renderTimeline(*ctx.root, int(frame), canvas, ctx, QString(), d->options.transparent, d->options.subtitles, 0);
-
+    // Rendered straight into a pooled buffer (its vector lent to the canvas)
     Frame f;
-    f.m_buffer = pool().take(canvas.px.size());
-    std::memcpy(f.m_buffer->data.data(), canvas.data(), canvas.px.size());
+    f.m_buffer = pool().take(size_t(ctx.W) * ctx.H * 4);
+    Image canvas;
+    canvas.w = ctx.W;
+    canvas.h = ctx.H;
+    canvas.px.swap(f.m_buffer->data);
+    if (d->options.transparent) std::memset(canvas.data(), 0, canvas.px.size());
+    else fill(canvas, Qt::black);
+    d->renderTimeline(*ctx.root, int(frame), canvas, ctx, QString(), d->options.transparent, d->options.subtitles, 0);
+    canvas.px.swap(f.m_buffer->data);
     f.m_width = ctx.W;
     f.m_height = ctx.H;
     f.m_position = frame;

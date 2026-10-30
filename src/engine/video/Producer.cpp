@@ -2,6 +2,7 @@
 #include "engine/video/Producer.h"
 #include "engine/video/Reader.h"
 #include "engine/video/Convert.h"
+#include "engine/video/Compose.h"
 
 #include <Mlt.h>
 
@@ -436,6 +437,41 @@ bool toRgba(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, 
     if (!pic.frame || dw <= 0 || dh <= 0) return false;
     const int w = pic.frame->width, h = pic.frame->height;
     if (dw == w && dh == h) {
+        // Planar YUV, progressive, exact conversion: in horizontal bands over threads (point sampling at the same
+        // size, so every band converts on its own; MLT converted in one thread). The preview's SIMD path is fast already.
+        const AVPixelFormat src = withRange(AVPixelFormat(pic.frame->format), info.fullRange);
+        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(src);
+        const bool planarYuv = desc && (desc->flags & AV_PIX_FMT_FLAG_PLANAR) && !(desc->flags & AV_PIX_FMT_FLAG_RGB)
+                               && desc->nb_components == 3 && desc->comp[0].depth == 8;
+        if (planarYuv && pic.progressive && !(fast && fastRgbSource(src)) && h >= 128) {
+            const int flags = swsFlags(w, h, src, w, h, AV_PIX_FMT_RGBA);
+            const int bands = std::min(8, h / 64);
+            const int step = ((h + bands - 1) / bands + 1) & ~1; // even: chroma rows stay whole
+            std::atomic<bool> ok{true};
+            Compose::forRows(bands, 1, [&](int first, int last) {
+                for (int b = first; b < last; ++b) {
+                    const int y0 = b * step, y1 = std::min(h, y0 + step);
+                    if (y0 >= y1) continue;
+                    SwsContext* ctx = cachedContext(w, y1 - y0, src, AV_PIX_FMT_RGBA, flags, 0, 0, y1 - y0 == step ? 0 : 1);
+                    if (!ctx) {
+                        ok = false;
+                        continue;
+                    }
+                    lumaTransfer(ctx, info.colorspace, 601);
+                    const uint8_t* in[4] = {};
+                    int inStride[4] = {};
+                    for (int i = 0; i < 3; ++i) {
+                        const int sub = i == 0 ? 0 : desc->log2_chroma_h;
+                        in[i] = pic.frame->data[i] + (y0 >> sub) * pic.frame->linesize[i];
+                        inStride[i] = pic.frame->linesize[i];
+                    }
+                    uint8_t* o[4] = {out + size_t(y0) * w * 4};
+                    const int oStride[4] = {w * 4};
+                    sws_scale(ctx, in, inStride, 0, y1 - y0, o, oStride);
+                }
+            });
+            if (ok) return true;
+        }
         uint8_t* alpha = nullptr;
         convert(pic, out, mlt_image_rgba, w, h, &alpha, info, 709, fast);
         return true;

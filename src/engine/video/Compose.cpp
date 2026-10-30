@@ -35,7 +35,8 @@ QThreadPool& pool()
     return *p;
 }
 
-// fn(first, last) for row ranges covering [0, rows); minRows per job keeps small pictures on one thread
+} // namespace
+
 void forRows(int rows, int minRows, const std::function<void(int, int)>& fn)
 {
     QThreadPool& tp = pool();
@@ -53,6 +54,8 @@ void forRows(int rows, int minRows, const std::function<void(int, int)>& fn)
     fn(0, rows / jobs);
     done.wait();
 }
+
+namespace {
 
 // ---- Pixels ----
 
