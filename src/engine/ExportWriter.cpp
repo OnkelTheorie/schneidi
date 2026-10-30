@@ -375,8 +375,6 @@ struct ExportWriter::Impl {
     // Worker thread: output frame i rendered and converted into a pooled AVFrame (pts = i); nullptr = failed
     AVFrame* makePicture(int i)
     {
-        const Picture::Frame frame = o.renderer->render(timelineFrame(i));
-        if (frame.isNull() || frame.width() != width || frame.height() != height) return nullptr;
         AVFrame* f = av_frame_alloc();
         if (!f) return nullptr;
         f->format = inputFmt;
@@ -388,12 +386,22 @@ struct ExportWriter::Impl {
             return nullptr;
         }
         av_image_fill_arrays(f->data, f->linesize, f->buf[0]->data, inputFmt, width, height, 32);
-        if (direct) {
-            OutputColor::Target t = target;
-            for (int p = 0; p < 4; ++p) {
-                t.planes[p] = f->data[p];
-                t.strides[p] = f->linesize[p];
-            }
+        OutputColor::Target t = target;
+        for (int p = 0; p < 4; ++p) {
+            t.planes[p] = f->data[p];
+            t.strides[p] = f->linesize[p];
+        }
+        // GPU path: the card writes the encoder's planes itself where it can (8-bit 4:2:0 / NV12)
+        Picture::RenderHints hints;
+        if (direct) hints.yuv = &t;
+        const Picture::Frame frame = o.renderer->render(timelineFrame(i), hints);
+        if (frame.isNull() || frame.width() != width || frame.height() != height) {
+            av_frame_free(&f);
+            return nullptr;
+        }
+        if (frame.yuvWritten()) {
+            // done
+        } else if (direct) {
             OutputColor::fromRgba(frame.bits(), width, height, frame.stride(), t);
         } else {
             // Rare formats: swscale, one context per worker thread

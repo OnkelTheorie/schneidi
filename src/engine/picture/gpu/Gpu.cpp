@@ -23,9 +23,13 @@ extern "C" {
 #include <array>
 #include <functional>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
+#include <future>
 #include <map>
 #include <mutex>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -114,8 +118,19 @@ bool softwareDevice(const QRhiDriverInfo& info)
     return false;
 }
 
-// The offscreen QRhi of the platform's API; the GL fallback surface goes to *surface (must outlive the QRhi)
-QRhi* createRhi(std::unique_ptr<QOffscreenSurface>& surface, QString& api)
+// The OpenGL format the context asks for: 3.3 core (3D textures, texelFetch, R8/RG8; the default format asks for 2.0,
+// and QRhi then assumes its limits)
+QSurfaceFormat glFormat()
+{
+    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
+    format.setVersion(3, 3);
+    format.setProfile(QSurfaceFormat::CoreProfile);
+    return format;
+}
+
+// The offscreen QRhi of the platform's API; the GL fallback surface goes to *surface (must outlive the QRhi), or
+// `external` is used when given
+QRhi* createRhi(std::unique_ptr<QOffscreenSurface>& surface, QString& api, QOffscreenSurface* external = nullptr)
 {
     if (!qobject_cast<QGuiApplication*>(QCoreApplication::instance())) return nullptr;
 #if defined(Q_OS_WIN)
@@ -128,15 +143,14 @@ QRhi* createRhi(std::unique_ptr<QOffscreenSurface>& surface, QString& api)
     return QRhi::create(QRhi::Metal, &params);
 #else
     api = QStringLiteral("OpenGL");
-    // 3.3 core: 3D textures, texelFetch, R8/RG8 (the default format asks for 2.0, and QRhi then assumes its limits)
-    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    surface.reset(QRhiGles2InitParams::newFallbackSurface(format));
-    if (!surface) return nullptr;
+    const QSurfaceFormat format = glFormat();
+    if (!external) {
+        surface.reset(QRhiGles2InitParams::newFallbackSurface(format));
+        if (!surface) return nullptr;
+    }
     QRhiGles2InitParams params;
     params.format = format;
-    params.fallbackSurface = surface.get();
+    params.fallbackSurface = external ? external : surface.get();
     return QRhi::create(QRhi::OpenGLES2, &params);
 #endif
 }
@@ -428,9 +442,14 @@ Context::~Context()
 
 std::unique_ptr<Context> Context::create(QString* why, bool allowSoftware)
 {
+    return create(nullptr, why, allowSoftware);
+}
+
+std::unique_ptr<Context> Context::create(QOffscreenSurface* surface, QString* why, bool allowSoftware)
+{
     std::unique_ptr<Context> c(new Context);
     QString api;
-    c->d->rhi.reset(createRhi(c->d->surface, api));
+    c->d->rhi.reset(createRhi(c->d->surface, api, surface));
     c->d->info.api = api;
     if (!c->d->rhi) {
         if (why) *why = QStringLiteral("no %1 device").arg(api.isEmpty() ? QStringLiteral("GPU") : api);
@@ -799,6 +818,106 @@ Context::Stats Context::stats() const
 
 QSize size(const Texture& t) { return t.size; }
 
+bool canUpload(int avPixelFormat)
+{
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(AVPixelFormat(avPixelFormat));
+    if (!desc || (desc->flags & (AV_PIX_FMT_FLAG_RGB | AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_BE
+                                 | AV_PIX_FMT_FLAG_ALPHA))
+        || desc->nb_components != 3)
+        return false;
+    const bool semi = desc->comp[1].plane == desc->comp[2].plane;
+    const int depth = desc->comp[0].depth;
+    return depth <= 16 && (depth > 8) == (desc->comp[0].step == 2) && (!semi || desc->comp[1].step == 2 * desc->comp[0].step);
+}
+
+// ---- Service ----
+
+struct Service::Impl {
+    std::unique_ptr<QOffscreenSurface> surface; // made on the thread that asked first (GUI thread when possible)
+    std::unique_ptr<Context> context;
+    DeviceInfo info;
+    std::thread thread;
+    std::mutex mutex;
+    std::condition_variable wake;
+    struct Job {
+        const std::function<void(Context&)>* fn = nullptr;
+        bool done = false;
+        std::condition_variable doneCv;
+    };
+    std::deque<Job*> queue;
+
+    void loop()
+    {
+        for (;;) {
+            Job* job;
+            {
+                std::unique_lock lock(mutex);
+                wake.wait(lock, [&] { return !queue.empty(); });
+                job = queue.front();
+                queue.pop_front();
+            }
+            context->begin();
+            (*job->fn)(*context);
+            context->finish();
+            {
+                std::lock_guard lock(mutex);
+                job->done = true;
+            }
+            job->doneCv.notify_all();
+        }
+    }
+};
+
+Service* Service::instance()
+{
+    static Service* service = []() -> Service* {
+        if (!enabled()) return nullptr;
+        auto* d = new Impl;
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+        d->surface.reset(QRhiGles2InitParams::newFallbackSurface(glFormat()));
+        if (!d->surface) {
+            delete d;
+            return nullptr;
+        }
+#endif
+        // The context is made on the GPU thread (a QRhi belongs to its thread)
+        std::promise<bool> made;
+        d->thread = std::thread([d, &made] {
+            QString why;
+            d->context = Context::create(d->surface.get(), &why, envSwitch() == 1);
+            if (!d->context) {
+                qWarning("GPU picture engine off: %s", qPrintable(why));
+                made.set_value(false);
+                return;
+            }
+            d->info = d->context->info();
+            made.set_value(true);
+            d->loop();
+        });
+        if (!made.get_future().get()) {
+            d->thread.join();
+            return nullptr; // d leaks its surface on purpose: a GL context may still refer to it
+        }
+        d->thread.detach();
+        auto* s = new Service;
+        s->d = d;
+        return s;
+    }();
+    return service;
+}
+
+void Service::run(const std::function<void(Context&)>& job)
+{
+    Impl::Job j;
+    j.fn = &job;
+    std::unique_lock lock(d->mutex);
+    d->queue.push_back(&j);
+    d->wake.notify_one();
+    j.doneCv.wait(lock, [&] { return j.done; });
+}
+
+const DeviceInfo& Service::info() const { return d->info; }
+
 #else // no Qt RHI headers: the CPU path only
 
 class Texture {
@@ -827,6 +946,7 @@ std::unique_ptr<Context> Context::create(QString* why, bool)
     if (why) *why = probe().error;
     return {};
 }
+std::unique_ptr<Context> Context::create(QOffscreenSurface*, QString* why, bool b) { return create(why, b); }
 QRhi* Context::rhi() const { return nullptr; }
 const DeviceInfo& Context::info() const { return d->info; }
 void Context::begin() {}
@@ -843,6 +963,10 @@ void Context::readRgba(const Texture&, uint8_t*) {}
 bool Context::readYuv(const Texture&, const OutputColor::Target&) { return false; }
 Context::Stats Context::stats() const { return {}; }
 QSize size(const Texture& t) { return t.size; }
+bool canUpload(int) { return false; }
+Service* Service::instance() { return nullptr; }
+void Service::run(const std::function<void(Context&)>&) {}
+const DeviceInfo& Service::info() const { return probe(); }
 
 #endif
 
