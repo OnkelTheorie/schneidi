@@ -17,6 +17,7 @@
 #include "engine/Engine.h"
 #include "engine/FfmpegLog.h"
 #include "engine/Licenses.h"
+#include "engine/picture/gpu/Gpu.h"
 
 #include <QGuiApplication>
 #include <QLoggingCategory>

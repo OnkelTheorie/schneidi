@@ -12,6 +12,7 @@
 #include "core/I18n.h"
 #include "engine/Engine.h"
 #include "engine/FfmpegLog.h"
+#include "engine/picture/gpu/Gpu.h"
 
 #include <QApplication>
 #include <QAction>
@@ -132,6 +133,8 @@ int main(int argc, char* argv[])
     }
 
     FfmpegLog::install([](bool error, const QString& text) { Log::message(error ? "AV-E" : "AV-W", text); });
+    // The GPU picture engine's OpenGL surface from the event loop, not on the way to the first window
+    Picture::Gpu::Service::setDeferredPrepare(true);
     Engine engine;
     QString error;
     const qint64 beforeEngine = startTimer.elapsed();

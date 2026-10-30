@@ -92,6 +92,8 @@ public:
 
     QRhi* rhi() const;
     const DeviceInfo& info() const;
+    // A slot for the caller's per-context caches (LUTs, stills kept on the card); released before the device
+    std::shared_ptr<void>& userData();
 
     void begin();
     // Submits what was recorded, waits for the card, fills the readbacks
@@ -151,17 +153,30 @@ bool canUpload(int avPixelFormat);
 // callers keep doing their CPU work (decoding, layers the GPU cannot draw) in parallel and only wait for their job.
 class Service {
 public:
-    // nullptr when enabled() is false or no Context could be made (then the CPU path). The first call makes the
-    // OpenGL surface on the calling thread: make it from the GUI thread when possible (Renderer's constructor).
+    // Makes the OpenGL surface ahead when called on the GUI thread (QOffscreenSurface needs it on the offscreen platform;
+    // ~40 ms, mostly loading the GL library). Renderer's constructor calls it, so a first instance() on a worker (export
+    // workers, preview pump) finds it.
+    static void prepare();
+    // GUI app: prepare() only posts the work to the event loop (not in the way of the start); a worker asking for
+    // instance() meanwhile waits for it (at most 2 s)
+    static void setDeferredPrepare(bool deferred);
+    // nullptr when SCHNEIDI_GPU=0, no GUI application, or no hardware device (then the CPU path). The first call starts
+    // the GPU thread and waits until its context is made (or refused).
     static Service* instance();
-    // Runs job(context) on the GPU thread inside begin()/finish() and waits for it (readbacks are filled on return)
-    void run(const std::function<void(Context&)>& job);
+    // As instance(), but while a deferred prepare() is pending it starts the service in the background and returns
+    // nullptr at once with *decided = false (render this frame on the CPU, ask again for the next)
+    static Service* tryInstance(bool* decided);
+    // Ends the GPU thread (its context released on it); after that run() refuses. Done on QCoreApplication::aboutToQuit
+    static void shutdown();
+    // Runs job(context) on the GPU thread inside begin()/finish() and waits for it (readbacks are filled on return);
+    // false = shut down, nothing ran
+    bool run(const std::function<void(Context&)>& job);
     const DeviceInfo& info() const;
 
 private:
     Service() = default;
     struct Impl;
-    Impl* d = nullptr; // never freed: the thread and its context live until the process ends
+    Impl* d = nullptr; // never freed (the thread ends in shutdown())
 };
 
 } // namespace Picture::Gpu

@@ -305,7 +305,20 @@ struct Renderer::Impl {
     std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
 
     std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0}, framesGpu{0}, layersCpu{0};
-    Gpu::Service* gpu = nullptr; // GPU path (Options::gpu and a hardware device)
+    // GPU path (Options::gpu and a hardware device), looked up by the renders (GUI app: CPU until the GPU has started)
+    std::atomic<Gpu::Service*> gpu{nullptr};
+    std::atomic<bool> gpuDecided{false};
+    Gpu::Service* gpuService()
+    {
+        if (!options.gpu || gpuDecided.load()) return gpu.load();
+        bool decided = false;
+        Gpu::Service* s = Gpu::Service::tryInstance(&decided);
+        if (decided) {
+            gpu = s;
+            gpuDecided = true;
+        }
+        return s;
+    }
 
     // What one render call works with
     struct Ctx {
@@ -1547,6 +1560,11 @@ struct Renderer::Impl {
         }
     };
 
+    struct GpuCaches {
+        LutCache luts;
+        std::map<const StillSource*, std::pair<std::weak_ptr<StillSource>, Gpu::TexturePtr>> stills;
+    };
+
     // What a GPU job keeps alive until the frame is submitted (uploads read their memory then; textures go back to
     // the pool after that)
     struct GpuKeep {
@@ -1557,7 +1575,10 @@ struct Renderer::Impl {
     // GPU thread: the draws onto dst (size of the output)
     static void runOps(Gpu::Context& g, Gpu::Texture& dst, const std::vector<GpuOp>& ops, QSize size, GpuKeep& keep)
     {
-        static thread_local LutCache luts; // lives on the GPU thread (its textures belong to that context)
+        auto& slot = g.userData(); // the caches live with the context (their textures belong to it)
+        if (!slot) slot = std::make_shared<GpuCaches>();
+        GpuCaches& caches = *static_cast<GpuCaches*>(slot.get());
+        LutCache& luts = caches.luts;
         for (const GpuOp& op : ops) {
             switch (op.kind) {
             case GpuOp::Draw: {
@@ -1573,7 +1594,7 @@ struct Renderer::Impl {
                     }
                 } else if (op.still) {
                     // Stills stay on the card while their source lives (a photo is uploaded once, not every frame)
-                    static thread_local std::map<const StillSource*, std::pair<std::weak_ptr<StillSource>, Gpu::TexturePtr>> stills;
+                    auto& stills = caches.stills;
                     auto it = stills.find(op.still.get());
                     if (it != stills.end() && it->second.first.lock() == op.still) {
                         src = it->second.second;
@@ -1644,7 +1665,7 @@ struct Renderer::Impl {
                 : nullptr;
         if (!yuv) f.m_buffer = pool().take(size_t(ctx.W) * ctx.H * 4);
         uint8_t* rgba = f.m_buffer ? f.m_buffer->data.data() : nullptr;
-        gpu.run([&](Gpu::Context& g) {
+        const bool ran = gpu.run([&](Gpu::Context& g) {
             const float black[4] = {0, 0, 0, 1};
             Gpu::TexturePtr canvas = g.target(size, transparent ? nullptr : black);
             if (!canvas) return;
@@ -1657,6 +1678,7 @@ struct Renderer::Impl {
             keep.textures.push_back(std::move(canvas));
             ok = true;
         });
+        (void)ran; // shut down: ok stays false
         if (!ok) {
             f.m_buffer.reset();
             return false;
@@ -1710,7 +1732,7 @@ Renderer::Renderer(const Timeline& tl, const Options& options) : d(std::make_uni
     d->options = options;
     d->snapshot = std::make_shared<const Timeline>(tl);
     d->output = options.outputSize();
-    if (options.gpu) d->gpu = Gpu::Service::instance();
+    if (options.gpu) Gpu::Service::prepare(); // the surface on the GUI thread; the context comes with the first frame
 }
 
 Renderer::~Renderer() = default;
@@ -1746,9 +1768,9 @@ Frame Renderer::render(int64_t frame, const RenderHints& hints)
     t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
     t_exact = true;
 
-    if (d->gpu) {
+    if (Gpu::Service* gpu = d->gpuService()) {
         Frame f;
-        if (d->renderGpu(*d->gpu, f, frame, ctx, hints)) {
+        if (d->renderGpu(*gpu, f, frame, ctx, hints)) {
             t_hints = nullptr;
             if (hints.cancel && hints.cancel->load()) return {};
             f.m_exact = t_exact;
