@@ -60,12 +60,21 @@ public:
     QToolButton* addViewAction(QAction* action, ViewIcon icon);
     // The picture shown last (the engine's preview frame)
     QImage picture() const;
+    // Display zoom of the picture: FrameView::kFit (0) or a factor of the project frame (1 = 100 %); pure display,
+    // the timeline is not touched. addZoomActions: menu button with the zoom steps in the transport bar
+    void setZoom(double zoom);
+    double zoom() const;
+    void addZoomActions(const QList<QAction*>& actions);
+    class FrameView* screen() const { return m_screen; }
     // Height of the whole viewer (bars included) at which the picture fills `width` (0 = no frame size known)
     int heightFor(int width) const;
 
 signals:
     void hintAccepted(); // the hint's button
     void hintClosed();   // the hint's close button
+    void zoomChanged(double zoom);
+    // Zoomed to 100 % or more: the preview should come at the project size (Engine::setPreviewFullSize)
+    void fullSizeWanted(bool full);
 
 private:
     void updateTimecode(int frame);
@@ -73,7 +82,7 @@ private:
     QMimeData* dragData() const;
 
     Engine* m_engine;
-    class Screen* m_screen;
+    class FrameView* m_screen;
     TrimView* m_trim;
     QStackedWidget* m_stack;
     class Scrubber* m_scrubber;

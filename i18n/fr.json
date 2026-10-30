@@ -1887,5 +1887,11 @@
  "„Neuer Chat“ fängt frisch an.": "« Nouvelle conversation » repart de zéro.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "« Neutre » est un nouveau projet comme toujours : rien de muet, rien de renommé, le format vient du premier clip. Le modèle choisi vaut aussi pour le projet avec lequel schneidi démarre.",
  "◀ Verfolgen": "◀ Suivre",
- "♪ Audio": "♪ Audio"
+ "♪ Audio": "♪ Audio",
+ "Viewer-Zoom": "Zoom du visualiseur",
+ "Einpassen": "Ajuster",
+ "50 %": "50 %",
+ "100 %": "100 %",
+ "200 %": "200 %",
+ "Zoom des Viewers (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)": "Zoom du visualiseur (Ctrl+molette sur l'image, le bouton du milieu déplace)"
 }

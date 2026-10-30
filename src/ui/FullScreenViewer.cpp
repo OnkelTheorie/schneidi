@@ -2,24 +2,33 @@
 #include "ui/FullScreenViewer.h"
 
 #include "engine/Engine.h"
+#include "ui/FrameView.h"
 
 #include <QCloseEvent>
 #include <QKeyEvent>
-#include <QPainter>
 #include <QScreen>
+#include <QVBoxLayout>
 #include <QWindow>
 
 FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture, QWidget* parent)
-    : QWidget(parent, Qt::Window | Qt::FramelessWindowHint), m_image(picture)
+    : QWidget(parent, Qt::Window | Qt::FramelessWindowHint)
 {
     setObjectName("FullScreenViewer");
-    setAttribute(Qt::WA_OpaquePaintEvent);
     setAttribute(Qt::WA_QuitOnClose, false);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
-    connect(engine, &Engine::frameReady, this, [this](const QImage& img) {
-        m_image = img;
-        update();
+    m_view = new FrameView(this);
+    m_view->setObjectName("full_screen_frame");
+    m_view->setBackground(Qt::black);
+    m_view->setFrameSize(engine->frameSize());
+    m_view->setFrame(picture);
+    m_view->installEventFilter(this); // pointer hiding and double click also over the picture
+    auto* lay = new QVBoxLayout(this);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->addWidget(m_view);
+    connect(engine, &Engine::frameReady, this, [this, engine](const QImage& img) {
+        m_view->setFrameSize(engine->frameSize());
+        m_view->setFrame(img);
     });
     m_hideCursor.setSingleShot(true);
     m_hideCursor.setInterval(1500);
@@ -40,20 +49,28 @@ void FullScreenViewer::showOn(QScreen* screen)
     m_hideCursor.start();
 }
 
-QRectF FullScreenViewer::pictureRect() const
+const QImage& FullScreenViewer::picture() const
 {
-    if (m_image.isNull()) return {};
-    const QSizeF s = QSizeF(m_image.size()).scaled(size(), Qt::KeepAspectRatio);
-    return QRectF(QPointF((width() - s.width()) / 2, (height() - s.height()) / 2), s);
+    return m_view->frame();
 }
 
-void FullScreenViewer::paintEvent(QPaintEvent*)
+QRectF FullScreenViewer::pictureRect() const
 {
-    QPainter p(this);
-    p.fillRect(rect(), Qt::black);
-    if (m_image.isNull()) return;
-    p.setRenderHint(QPainter::SmoothPixmapTransform);
-    p.drawImage(pictureRect(), m_image);
+    return m_view->frameRect();
+}
+
+bool FullScreenViewer::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_view) {
+        if (event->type() == QEvent::MouseMove) {
+            unsetCursor();
+            m_hideCursor.start();
+        } else if (event->type() == QEvent::MouseButtonDblClick) {
+            emit exitRequested();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void FullScreenViewer::keyPressEvent(QKeyEvent* event)

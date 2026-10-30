@@ -1887,5 +1887,11 @@
  "„Neuer Chat“ fängt frisch an.": "«Новый чат» начинает заново.",
  "„Neutral“ ist ein neues Projekt wie immer: nichts stumm, nichts umbenannt, das Format kommt vom ersten Clip. Die gewählte Vorlage gilt auch für das Projekt, mit dem schneidi startet.": "«Нейтральный» — новый проект как всегда: ничего не заглушено и не переименовано, формат берётся от первого клипа. Выбранный шаблон действует и для проекта, с которым запускается schneidi.",
  "◀ Verfolgen": "◀ Отслеж.",
- "♪ Audio": "♪ Аудио"
+ "♪ Audio": "♪ Аудио",
+ "Viewer-Zoom": "Масштаб окна просмотра",
+ "Einpassen": "По размеру",
+ "50 %": "50 %",
+ "100 %": "100 %",
+ "200 %": "200 %",
+ "Zoom des Viewers (Strg+Mausrad im Bild, mittlere Maustaste verschiebt)": "Масштаб окна просмотра (Ctrl+колесо мыши над изображением, средняя кнопка сдвигает)"
 }

@@ -286,6 +286,7 @@ add_library(schneidi_lib STATIC
     src/ui/MulticamGrid.h         src/ui/MulticamGrid.cpp
     src/ui/MulticamView.h         src/ui/MulticamView.cpp
     src/ui/TrimView.h             src/ui/TrimView.cpp
+    src/ui/FrameView.h            src/ui/FrameView.cpp
     src/ui/Inspector.h            src/ui/Inspector.cpp
     src/ui/InspectorDetail.h
     src/ui/InspectorSections.cpp
@@ -335,6 +336,34 @@ target_link_libraries(schneidi_lib PUBLIC Qt6::Widgets Qt6::Network PkgConfig::M
 if(TARGET Qt6::DBus)
     target_link_libraries(schneidi_lib PUBLIC Qt6::DBus)
     target_compile_definitions(schneidi_lib PRIVATE SCHNEIDI_HAVE_DBUS)
+endif()
+# GPU viewer (ui/FrameView) through Qt RHI: needs the RHI headers, which Qt counts as private API (Debian:
+# qt6-base-private-dev; MSYS2/Qt installers ship them). Without them the viewer draws with QPainter only. The shaders
+# are baked into .qsb files in the repo (tools/bake_shaders.sh), so Qt Shader Tools are not needed to build.
+option(SCHNEIDI_RHI "GPU viewer through Qt RHI (falls back to QPainter at runtime)" ON)
+if(SCHNEIDI_RHI)
+    if(NOT TARGET Qt6::GuiPrivate)
+        find_package(Qt6 QUIET COMPONENTS GuiPrivate)
+    endif()
+    if(TARGET Qt6::GuiPrivate)
+        # Qt6::GuiPrivate exists even without the private headers (Debian): test whether rhi/qrhi.h is there
+        include(CheckIncludeFileCXX)
+        set(CMAKE_REQUIRED_LIBRARIES Qt6::GuiPrivate)
+        set(CMAKE_REQUIRED_QUIET ON)
+        check_include_file_cxx(rhi/qrhi.h SCHNEIDI_QRHI_HEADER)
+        unset(CMAKE_REQUIRED_LIBRARIES)
+        unset(CMAKE_REQUIRED_QUIET)
+    endif()
+    if(SCHNEIDI_QRHI_HEADER)
+        target_sources(schneidi_lib PRIVATE src/ui/FrameViewRhi.h src/ui/FrameViewRhi.cpp)
+        target_link_libraries(schneidi_lib PRIVATE Qt6::GuiPrivate)
+        target_compile_definitions(schneidi_lib PRIVATE SCHNEIDI_HAVE_RHI)
+        qt_add_resources(schneidi_lib "shaders" PREFIX "/" BASE src/ui
+                         FILES src/ui/shaders/frameview.vert.qsb src/ui/shaders/frameview.frag.qsb)
+        message(STATUS "GPU viewer: Qt RHI")
+    else()
+        message(STATUS "GPU viewer: off (no Qt RHI headers - install qt6-base-private-dev); QPainter only")
+    endif()
 endif()
 if(WIN32)
     target_link_libraries(schneidi_lib PUBLIC advapi32) # Credential Manager: the AI chat's key (app/AiKeys.cpp)
