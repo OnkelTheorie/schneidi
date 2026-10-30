@@ -135,6 +135,7 @@ struct Buffer {
     uint8_t* data[4] = {};
     int linesize[4] = {};
     int width = 0, height = 0;
+    bool fullRange = true; // YUV/gray output: the levels of the source (video range 16..235 or full)
 
     void allocate(AVPixelFormat format, int w, int h)
     {
@@ -303,6 +304,10 @@ private:
             sws_setColorspaceDetails(m_sws, sws_getCoefficients(cs), full, sws_getCoefficients(cs), dstFull, 0, 1 << 16,
                                      1 << 16);
         }
+        out.fullRange = true;
+        if (srcYuv && p.opt.format != AV_PIX_FMT_RGB24)
+            out.fullRange = m_cropped->color_range == AVCOL_RANGE_JPEG || fmt == AV_PIX_FMT_YUVJ420P
+                            || fmt == AV_PIX_FMT_YUVJ422P || fmt == AV_PIX_FMT_YUVJ444P;
         Buffer& target = p.quarters ? m_turn : out;
         target.allocate(p.opt.format, p.scaledW, p.scaledH);
         sws_scale(m_sws, m_cropped->data, m_cropped->linesize, 0, m_cropped->height, target.data, target.linesize);
@@ -331,6 +336,7 @@ private:
         }
         f.width = b.width;
         f.height = b.height;
+        f.fullRange = b.fullRange;
         return f;
     }
 

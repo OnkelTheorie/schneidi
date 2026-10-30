@@ -9,6 +9,7 @@
 #include "engine/AudioAnalysis.h"
 #include "engine/Bundle.h"
 #include "engine/CheckMeasure.h"
+#include "engine/video/Scan.h"
 
 #include <QJsonArray>
 #include <QProcess>
@@ -16,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 namespace Cli::detail {
 
@@ -44,9 +46,94 @@ QJsonObject measuredJson(const Measured& m)
             {"range_lu", round1(m.loudness.range)}};
 }
 
-// Black and frozen picture in a rendered file (ffmpeg blackdetect/freezedetect on a small copy)
+// Black and frozen picture in a rendered file, in-process on a small copy (engine/video/Scan) with the rules of
+// ffmpeg's blackdetect (d=1, pix_th=0.10: 98 % of the pixels at most 10 % above black, for 1 s) and freezedetect
+// (n=-60dB, d=3: every plane differs from the picture before by at most 0.1 % on average, for 3 s)
+QVector<ExportCheck::Issue> pictureOfFileOwn(const MediaSource& m, Context& ctx, double progressFrom, double progressTo)
+{
+    const ProjectFormat& f = m.format;
+    struct Sample {
+        double seconds;
+        bool black, still;
+    };
+    std::vector<Sample> samples;
+    std::mutex mutex;
+    Video::Scan::Options o;
+    o.width = 320;
+    o.height = -2;
+    o.format = AV_PIX_FMT_YUV420P;
+    const Video::Scan::Result r = Video::Scan::run(
+        m.info.path, o,
+        [&](const Video::Scan::Frame& fr, const Video::Scan::Frame* previous) {
+            const int limit = fr.fullRange ? int(0.10 * 255) : int(16 + 0.10 * (235 - 16));
+            int64_t dark = 0;
+            for (int y = 0; y < fr.height; ++y) {
+                const uint8_t* row = fr.data[0] + size_t(y) * size_t(fr.linesize[0]);
+                for (int x = 0; x < fr.width; ++x) dark += row[x] <= limit;
+            }
+            const bool black = dark >= 0.98 * fr.width * fr.height;
+            bool still = previous != nullptr;
+            for (int p = 0; p < 3 && still; ++p) {
+                const int w = p ? (fr.width + 1) / 2 : fr.width, h = p ? (fr.height + 1) / 2 : fr.height;
+                uint64_t sad = 0;
+                for (int y = 0; y < h; ++y) {
+                    const uint8_t* a = fr.data[p] + size_t(y) * size_t(fr.linesize[p]);
+                    const uint8_t* b = previous->data[p] + size_t(y) * size_t(previous->linesize[p]);
+                    for (int x = 0; x < w; ++x) sad += uint64_t(std::abs(int(a[x]) - int(b[x])));
+                }
+                still = double(sad) / (double(w) * h * 255.0) <= 0.001; // -60 dB
+            }
+            std::lock_guard lock(mutex);
+            samples.push_back({fr.seconds, black, still});
+        },
+        [&](double p) {
+            if (ctx.progress) ctx.progress(progressFrom + (progressTo - progressFrom) * p);
+            return true;
+        });
+    if (!r.ok) fail("DECODE_FAILED", "could not read the video of " + m.info.path + ": " + r.error);
+    std::sort(samples.begin(), samples.end(), [](const Sample& a, const Sample& b) { return a.seconds < b.seconds; });
+
+    QVector<ExportCheck::Issue> out;
+    const auto frame = [&f](double s) { return int(std::lround(s * f.rate.fps())); };
+    const double end = m.info.length / f.rate.fps();
+    double blackFrom = -1, stillFrom = -1;
+    const auto black = [&](double a, double b) {
+        if (b - a < 1.0) return;
+        const int a0 = frame(a), b0 = std::min(m.info.length, frame(b));
+        out << ExportCheck::Issue{ExportCheck::Severity::Warning, "black_file",
+                                  T("%1 s schwarzes Bild").arg(num1(seconds(b0 - a0, f))), a0, b0};
+    };
+    QVector<ExportCheck::Issue> frozenList;
+    const auto frozen = [&](double a, double b, bool toEnd) {
+        if (b - a < 3.0) return;
+        const int a0 = frame(a), b0 = toEnd ? m.info.length : frame(b);
+        frozenList << ExportCheck::Issue{ExportCheck::Severity::Info, "frozen",
+                                         T("%1 s Standbild (nichts bewegt sich)").arg(num1(seconds(b0 - a0, f))), a0, b0};
+    };
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const Sample& s = samples[i];
+        if (s.black && blackFrom < 0) blackFrom = s.seconds;
+        if (!s.black && blackFrom >= 0) {
+            black(blackFrom, s.seconds);
+            blackFrom = -1;
+        }
+        // A still run starts at the picture the next ones equal
+        if (s.still && stillFrom < 0) stillFrom = i > 0 ? samples[i - 1].seconds : s.seconds;
+        if (!s.still && stillFrom >= 0) {
+            frozen(stillFrom, s.seconds, false);
+            stillFrom = -1;
+        }
+    }
+    if (blackFrom >= 0) black(blackFrom, end);
+    if (stillFrom >= 0) frozen(stillFrom, end, true);
+    // ffmpeg's log order: the black ones as they end, the frozen ones after (both in time order)
+    return out + frozenList;
+}
+
+// The same with ffmpeg's blackdetect/freezedetect (SCHNEIDI_ANALYSIS=ffmpeg, comparison)
 QVector<ExportCheck::Issue> pictureOfFile(const MediaSource& m, Context& ctx, double progressFrom, double progressTo)
 {
+    if (!ffmpegAnalysis()) return pictureOfFileOwn(m, ctx, progressFrom, progressTo);
     QVector<ExportCheck::Issue> out;
     const ProjectFormat& f = m.format;
     QProcess ff;

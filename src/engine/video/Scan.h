@@ -41,6 +41,7 @@ struct Frame {
     const uint8_t* data[4] = {};
     int linesize[4] = {};
     int width = 0, height = 0;
+    bool fullRange = true;        // YUV/gray: full levels 0..255 (else video range 16..235)
 };
 
 // Called for every picture/sample, from several threads at once (each in time order within its range). `previous` is

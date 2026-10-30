@@ -71,8 +71,12 @@ public:
     // Requests of all enabled stabilizations in the timeline (and its nested sequences) without a result
     static QVector<Request> missing(const Timeline& tl, const ProjectFormat& format);
     // Analyze synchronously in the calling thread (any thread). progress: 0..1000
+    // Reads the file with the own decoder (engine/video/Reader); SCHNEIDI_STABILIZE_ANALYSIS=mlt: through an MLT
+    // producer as before 0.15 (analyzeMlt, comparison until MLT goes)
     static bool analyze(const Request& r, QString* error, const std::atomic<bool>* cancel = nullptr,
                         std::atomic<int>* progress = nullptr);
+    static bool analyzeMlt(const Request& r, QString* error, const std::atomic<bool>* cancel = nullptr,
+                           std::atomic<int>* progress = nullptr);
     // Timeline: the stabilizing filter on the cut of clip c (its first filter); false = no result (yet) or not possible
     static bool attach(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c);
     // Live update (LiveUpdate): takes over the fresh filter's values (smoothing, zoom, border, a new result) without a

@@ -11,6 +11,7 @@
 #include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QJsonArray>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 
 #include <cmath>
@@ -150,6 +151,37 @@ int main(int argc, char** argv)
                           QString("%1 %2\n       own: %3\n       ffmpeg: %4").arg(name, what, frames(o), frames(f)));
             std::printf("%-12s %s own %7.1f ms  ffmpeg %7.1f ms  events %s\n", qPrintable(name), what, ownMs, ffMs,
                         qPrintable(frames(o)));
+        }
+    }
+
+    // check: black and frozen picture (2 s moving, 2 s black, 4 s still bars, 2 s moving, 3.5 s still to the end)
+    {
+        const QString shots = Check::makeMedia(
+            dir.filePath("check.mp4"),
+            {"-f", "lavfi", "-t", "2", "-i", "testsrc2=s=320x180:r=25", "-f", "lavfi", "-t", "2", "-i", "color=c=black:s=320x180:r=25",
+             "-f", "lavfi", "-t", "4", "-i", "smptebars=s=320x180:r=25", "-f", "lavfi", "-t", "2", "-i", "testsrc2=s=320x180:r=25",
+             "-f", "lavfi", "-t", "3.5", "-i", "rgbtestsrc=s=320x180:r=25", "-filter_complex",
+             "[0][1][2][3][4]concat=n=5:v=1:a=0[v]", "-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+        if (CHECK(!shots.isEmpty())) {
+            const auto issues = [&](const char* mode) {
+                QStringList out;
+                for (const QJsonValue& v : run("check", {{"file", shots}, {"sound", false}}, mode)["issues"].toArray())
+                    if (v["check"] == "black_file" || v["check"] == "frozen")
+                        out << QString("%1 %2-%3").arg(v["check"].toString()).arg(v["from"].toInt()).arg(v["to"].toInt());
+                out.sort();
+                return out;
+            };
+            const QStringList own = issues(nullptr), ff = issues("ffmpeg");
+            CHECK_EQ(own.size(), 3); // black 50-100, still bars 100-200, still to the end
+            // The same ranges within a frame
+            bool same = own.size() == ff.size();
+            for (qsizetype i = 0; same && i < own.size(); ++i) {
+                const QStringList a = own[i].split(QRegularExpression("[ -]")), b = ff[i].split(QRegularExpression("[ -]"));
+                same = a.size() == 3 && b.size() == 3 && a[0] == b[0] && std::abs(a[1].toInt() - b[1].toInt()) <= 1
+                       && std::abs(a[2].toInt() - b[2].toInt()) <= 1;
+            }
+            Check::report(same, "black/frozen == ffmpeg", __FILE__, __LINE__,
+                          QString("\n       own: %1\n       ffmpeg: %2").arg(own.join(", "), ff.join(", ")));
         }
     }
     return Check::result();
