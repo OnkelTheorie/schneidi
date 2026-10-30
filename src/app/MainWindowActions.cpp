@@ -731,14 +731,15 @@ void MainWindow::buildActions()
             offerRestart(T("Das Design ändert sich nach dem Neustart von schneidi."), T("Jetzt neu starten"), T("Später"));
     });
     // Viewer zoom (pure display; the timeline view is not touched): fit, 50/100/200 %, menu also on the viewer's bar.
+    // Alt+digits target tracks/multicam angles, so only fit has a default key (Ctrl+wheel over the picture zooms)
     // At 100 % and more the preview comes at the project size instead of scaled down
     QMenu* zoomMenu = workspace->addMenu(T("Viewer-Zoom"));
     auto* zoomGroup = new QActionGroup(zoomMenu);
     QList<QAction*> zoomActions;
     for (const auto& [id, text, key, factor] :
          {std::tuple{"viewer_zoom_fit", N_("Einpassen"), "Alt+0", FrameView::kFit},
-          std::tuple{"viewer_zoom_50", N_("50 %"), "", 0.5}, std::tuple{"viewer_zoom_100", N_("100 %"), "Alt+1", 1.0},
-          std::tuple{"viewer_zoom_200", N_("200 %"), "Alt+2", 2.0}}) {
+          std::tuple{"viewer_zoom_50", N_("50 %"), "", 0.5}, std::tuple{"viewer_zoom_100", N_("100 %"), "", 1.0},
+          std::tuple{"viewer_zoom_200", N_("200 %"), "", 2.0}}) {
         QAction* a = makeAction(zoomMenu, id, T(text), QKeySequence(key), [this, f = factor] { m_viewer->setZoom(f); });
         a->setCheckable(true);
         a->setChecked(factor == FrameView::kFit);

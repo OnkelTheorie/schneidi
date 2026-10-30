@@ -6,7 +6,7 @@
 //   widget <-> frame mapping, the overlay gets the same frame rectangle in paint and mouse events
 // - Mouse: middle drag pans, left drag pans only when zoomed in and nothing can be dragged out; Ctrl+wheel zooms
 // - Drawing: bilinear below 200 %, sharp pixels from 200 %; the bars in the letterbox colour
-// - Viewer: the zoom actions (Workspace › Viewer-Zoom, Alt+0/1/2) set the zoom, 100 % asks the engine for full-size
+// - Viewer: the zoom actions (Workspace › Viewer-Zoom, fit on Alt+0) set the zoom, 100 % asks the engine for full-size
 //   frames, the zoom button shows the step
 // FRAME_VIEW_DUMP=<folder>: pictures of the zoom states. FRAME_VIEW_BENCH=<n>: CPU time per displayed 1080p frame (also
 // run it under Xvfb with SCHNEIDI_VIEWER=gpu to measure the GPU path).
@@ -345,8 +345,8 @@ void testViewer(const QString& clipDir)
     QAction* z50 = InputBindings::instance().action("viewer_zoom_50");
     if (!CHECK(viewer && button && fit && z100 && z200 && z50)) return;
     CHECK_EQ(InputBindings::instance().defaultInputs("viewer_zoom_fit").value(0), QString("Alt+0"));
-    CHECK_EQ(InputBindings::instance().defaultInputs("viewer_zoom_100").value(0), QString("Alt+1"));
-    CHECK_EQ(InputBindings::instance().defaultInputs("viewer_zoom_200").value(0), QString("Alt+2"));
+    CHECK_EQ(InputBindings::instance().defaultInputs("viewer_zoom_100").value(0), QString()); // Alt+1 = target V1
+    CHECK_EQ(InputBindings::instance().defaultInputs("viewer_zoom_200").value(0), QString());
     CHECK(fit->isChecked() && viewer->zoom() == FrameView::kFit);
     CHECK(!engine.previewFullSize());
     engine.seek(10);
