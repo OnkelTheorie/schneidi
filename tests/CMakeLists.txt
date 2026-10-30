@@ -141,6 +141,9 @@ schneidi_test(test_audio_player)
 set_tests_properties(test_audio_player PROPERTIES RUN_SERIAL TRUE) # real time
 # Picture keeps up with the sound when rendering is too slow: own audio engine only (the MLT variant skips)
 schneidi_test(test_picture_catchup)
+# Its slowness comes from an MLT test filter the own picture engine does not run: kept on the MLT path until MLT goes
+# (package 6); the own frame pump's catch-up is tested in test_picture_pump
+set_property(TEST test_picture_catchup APPEND PROPERTY ENVIRONMENT "SCHNEIDI_PICTURE=mlt")
 schneidi_test(test_play_end) # playback stops at the end and stays stopped
 schneidi_test(test_open_background) # opening files in a thread (Engine::setOpenInBackground)
 target_compile_definitions(test_audio_analysis PRIVATE SCHNEIDI_AUDIO_REFERENCE="${CMAKE_SOURCE_DIR}/docs/testdaten/ton-referenz")
