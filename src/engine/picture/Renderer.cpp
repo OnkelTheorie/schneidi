@@ -29,6 +29,7 @@ extern "C" {
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <shared_mutex>
@@ -344,8 +345,13 @@ struct Renderer::Impl {
             if (c.freeze) {
                 const double at = c.stillFrame() * c.speed;
                 file = c.reverse ? v.length - 1 - at : at;
-            } else {
+            } else if (c.hasRamp()) {
                 file = RetimeMap(c, v.length).fileFrameAt(m);
+            } else {
+                // MLT's timewarp: the converted material is int(length / speed) frames long, frame p shows
+                // p * speed, reversed (length' - 1 - p) * speed
+                const int warped = std::max(1, int(v.length / c.speed));
+                file = (c.reverse ? warped - 1 - m : m) * c.speed;
             }
             file = std::clamp(std::floor(file + 1e-6), 0.0, double(std::max(0, v.length - 1)));
         }
@@ -504,8 +510,8 @@ struct Renderer::Impl {
             } else {
                 layer = Image(W, H);
                 Compose::Affine m;
-                m.c = std::round((W - src.w) / 2.0);
-                m.f = std::round((H - src.h) / 2.0);
+                m.c = (W - src.w) / 2; // whole pixels, as MLT's resize filter pads
+                m.f = (H - src.h) / 2;
                 Compose::draw(layer.data(), W, H, src.data(), src.w, src.h, m, opacity);
             }
             return layer;
@@ -577,27 +583,16 @@ struct Renderer::Impl {
                     scaleAlpha(*img, TimelineOps::fadeRamp(*c, f - c->start));
                 }
             const int len = s.length(), i = f - s.start;
-            const double p = double(i) / len;
             const TransitionStyle& st = s.style;
-            if (!ia.empty() && !ib.empty()) {
-                if (st.type == TransitionType::CrossDissolve) {
-                    mix(ia, ib, p);
-                } else if (st.type == TransitionType::DipToColor) {
-                    Image col(ia.w, ia.h);
-                    fill(col, st.color);
-                    if (p < 0.5) mix(ia, col, p * 2);
-                    else {
-                        mix(col, ib, p * 2 - 1);
-                        ia = std::move(col);
-                    }
-                } else {
-                    wipe(ia, ib, p, st, ctx);
-                }
+            const bool styled = st.type != TransitionType::CrossDissolve && (!st.isLuma() || (!ia.empty() && !ib.empty()));
+            if (ia.empty() && ib.empty()) return {};
+            if (styled) return styledTransition(std::move(ia), std::move(ib), i, len, st, ctx);
+            if (!ia.empty() && !ib.empty()) { // Cross Dissolve (MLT: luma without a gradient, progress i / len)
+                mix(ia, ib, double(i) / len);
                 return ia;
             }
             // One side: fade out/in through transparency
             Image& one = ia.empty() ? ib : ia;
-            if (one.empty()) return {};
             scaleAlpha(one, ia.empty() ? double(i) / len : double(len - 1 - i) / len);
             return std::move(one);
         }
@@ -612,32 +607,105 @@ struct Renderer::Impl {
     }
     static int t(const Clip& c, int f) { return f - c.start; }
 
-    // Wipes and gradient wipes: a pixel switches to b once the gradient there is below the progress
-    void wipe(Image& a, const Image& b, double p, const TransitionStyle& st, const Ctx& ctx)
+    // Alpha keyframes linear between (frame, value) points, as MLT's brightness filter animates them
+    static double alphaKeys(int i, std::initializer_list<std::pair<int, double>> keys)
     {
-        QImage grad;
-        if (st.type == TransitionType::Luma) grad = Lumas::image(st.luma, a.w, a.h, st.invert);
-        const double soft = std::clamp(st.softness / 100.0, 0.0, 1.0);
-        const double edge = p * (1 + soft); // luma's softness: the edge runs over [edge - soft, edge]
+        auto prev = *keys.begin();
+        for (const auto& k : keys) {
+            if (i <= k.first) {
+                if (k.first == prev.first) return k.second;
+                return prev.second + (k.second - prev.second) * (i - prev.first) / double(k.first - prev.first);
+            }
+            prev = k;
+        }
+        return prev.second;
+    }
+
+    // luma with a gradient: b replaces a where the gradient is below the progress, over a soft band
+    // (smoothstep(value, value + softness, progress * (1 + softness)))
+    static void luma(Image& a, const Image& b, double progress, double softness, const std::function<double(int, int)>& value)
+    {
+        const double weight = progress * (1 + softness);
         uint8_t* d = a.data();
         const uint8_t* s = b.data();
-        for (int y = 0; y < a.h; ++y) {
-            const uchar* gl = grad.isNull() ? nullptr : grad.constScanLine(y);
+        for (int y = 0; y < a.h; ++y)
             for (int x = 0; x < a.w; ++x, d += 4, s += 4) {
-                double g = 0;
-                switch (st.type) {
-                case TransitionType::WipeRight: g = double(x) / std::max(1, a.w - 1); break;
-                case TransitionType::WipeLeft: g = 1.0 - double(x) / std::max(1, a.w - 1); break;
-                case TransitionType::WipeDown: g = double(y) / std::max(1, a.h - 1); break;
-                case TransitionType::WipeUp: g = 1.0 - double(y) / std::max(1, a.h - 1); break;
-                default: g = gl ? gl[x] / 255.0 : 0.0; break;
+                const double v = value(x, y);
+                double k;
+                if (weight < v) k = 0;
+                else if (weight >= v + softness) k = 1;
+                else {
+                    const double t = (weight - v) / softness;
+                    k = t * t * (3 - 2 * t);
                 }
-                double k = soft > 0 ? std::clamp((edge - g) / soft, 0.0, 1.0) : (g < p ? 1.0 : 0.0);
                 if (k <= 0) continue;
                 for (int c = 0; c < 4; ++c) d[c] = uint8_t(std::lround(d[c] + (s[c] - d[c]) * k));
             }
+    }
+
+    // Transitions other than Cross Dissolve (TimelineBuilderDetail::styledTransition): a leaves, b enters, either may
+    // be missing
+    Image styledTransition(Image a, Image b, int i, int len, const TransitionStyle& st, const Ctx& ctx)
+    {
+        const TransitionType type = st.type;
+        if (type == TransitionType::DipToColor) {
+            // Colour at the bottom, a fades out over the first half, b in over the second (one side: whole length)
+            Image out(ctx.W, ctx.H);
+            QColor col = st.color;
+            col.setAlpha(255);
+            fill(out, col);
+            const bool both = !a.empty() && !b.empty();
+            const int half = both ? len / 2 : 0;
+            if (!a.empty()) {
+                scaleAlpha(a, alphaKeys(i, {{0, 1.0}, {(both ? half : len) - 1, 0.0}, {len - 1, 0.0}}));
+                Compose::over(out.data(), a.data(), out.w, out.h, 1.0);
+            }
+            if (!b.empty()) {
+                scaleAlpha(b, alphaKeys(i, {{0, 0.0}, {half, 0.0}, {len - 1, 1.0}}));
+                Compose::over(out.data(), b.data(), out.w, out.h, 1.0);
+            }
+            return out;
         }
-        (void)ctx;
+        const double soft = 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0;
+        const double progress = double(i) / len;
+        if (st.isLuma()) { // both sides (one side is a fade, see trackLayer)
+            const QImage grad = Lumas::image(st.luma, a.w, a.h, st.invert);
+            if (grad.isNull()) {
+                mix(a, b, progress);
+                return a;
+            }
+            const QImage g8 = grad.convertToFormat(QImage::Format_Grayscale8);
+            luma(a, b, progress, soft, [&](int x, int y) { return g8.constScanLine(y)[x] / 255.0; });
+            return a;
+        }
+        const bool horizontal = type == TransitionType::WipeRight || type == TransitionType::WipeLeft;
+        if (a.empty() || b.empty()) {
+            // Wipe from/to nothing: the visible part of the one side shrinks/grows (hard edge)
+            const bool fromStart = (type == TransitionType::WipeRight || type == TransitionType::WipeDown) == a.empty();
+            Image& one = a.empty() ? b : a;
+            const double p = len > 1 ? double(i) / (len - 1) : 1.0;
+            const double shown = !a.empty() ? 1.0 - p : p;
+            const double full = horizontal ? ctx.W : ctx.H;
+            const double size = full * shown, pos = fromStart ? 0.0 : full - size;
+            const uint8_t none[4] = {0, 0, 0, 0};
+            if (horizontal) Compose::crop(one.data(), one.w, one.h, pos, 0, pos + std::max(size, 0.0), one.h, none);
+            else Compose::crop(one.data(), one.w, one.h, 0, pos, one.w, pos + std::max(size, 0.0), none);
+            return std::move(one);
+        }
+        // Wipe between two clips: luma with a linear gradient (wipeLuma: lround(t * 255) per pixel)
+        const int w = a.w, h = a.h;
+        luma(a, b, progress, soft, [&](int x, int y) {
+            double t = 0;
+            switch (type) {
+            case TransitionType::WipeRight: t = double(x) / std::max(1, w - 1); break;
+            case TransitionType::WipeLeft: t = 1.0 - double(x) / std::max(1, w - 1); break;
+            case TransitionType::WipeDown: t = double(y) / std::max(1, h - 1); break;
+            case TransitionType::WipeUp: t = 1.0 - double(y) / std::max(1, h - 1); break;
+            default: break;
+            }
+            return std::lround(t * 255) / 255.0;
+        });
+        return a;
     }
 
     void subtitleLayer(Image& canvas, const Timeline& tl, int f, const Ctx& ctx)

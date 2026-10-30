@@ -33,6 +33,7 @@ QImage renderMlt(const Timeline& tl, const ProjectFormat& fmt, int frame, QSize 
     auto tractor = b.build(tl);
     tractor->seek(frame);
     std::unique_ptr<Mlt::Frame> f(tractor->get_frame());
+    f->set("consumer.rescale", "bilinear"); // as the preview consumer (Engine) and the export ask
     mlt_image_format format = mlt_image_rgba;
     int w = size.width(), h = size.height();
     const uint8_t* img = f->get_image(format, w, h);
@@ -169,6 +170,16 @@ void testFadesAndTransitions()
     parity("wipe", oneTrack({b, c}), 24, 3.0, 0.05);
     b.transOutStyle.type = c.transInStyle.type = TransitionType::DipToColor;
     parity("dip", oneTrack({b, c}), 22, 2.0, 0.03);
+    b.transOutStyle.type = c.transInStyle.type = TransitionType::Luma;
+    b.transOutStyle.luma = c.transInStyle.luma = ":/lumas/uhr";
+    parity("luma", oneTrack({b, c}), 24, 3.0, 0.05);
+    Clip e = media(1, g_pattern, 0, 0, 24);
+    e.transOut = 10;
+    e.transOutStyle.type = TransitionType::WipeDown;
+    parity("wipe-out", oneTrack({e}), 20, 1.0, 0.02);
+    e.transOutStyle.type = TransitionType::DipToColor;
+    e.transOutStyle.color = Qt::red;
+    parity("dip-out", oneTrack({e}), 20, 1.0, 0.02);
 }
 
 void testTitleStillSpeed()
