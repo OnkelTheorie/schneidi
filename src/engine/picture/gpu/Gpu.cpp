@@ -10,7 +10,10 @@
 #ifdef SCHNEIDI_HAVE_RHI
 #include <QFile>
 #include <QGuiApplication>
+#include <QElapsedTimer>
 #include <QOffscreenSurface>
+#include <QThread>
+#include <QTimer>
 #include <rhi/qrhi.h>
 #endif
 
@@ -23,10 +26,17 @@ extern "C" {
 #include <array>
 #include <functional>
 #include <cmath>
+#include <chrono>
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
+#include <future>
 #include <map>
 #include <mutex>
+#include <thread>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace Picture::Gpu {
@@ -114,8 +124,19 @@ bool softwareDevice(const QRhiDriverInfo& info)
     return false;
 }
 
-// The offscreen QRhi of the platform's API; the GL fallback surface goes to *surface (must outlive the QRhi)
-QRhi* createRhi(std::unique_ptr<QOffscreenSurface>& surface, QString& api)
+// The OpenGL format the context asks for: 3.3 core (3D textures, texelFetch, R8/RG8; the default format asks for 2.0,
+// and QRhi then assumes its limits)
+QSurfaceFormat glFormat()
+{
+    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
+    format.setVersion(3, 3);
+    format.setProfile(QSurfaceFormat::CoreProfile);
+    return format;
+}
+
+// The offscreen QRhi of the platform's API; the GL fallback surface goes to *surface (must outlive the QRhi), or
+// `external` is used when given
+QRhi* createRhi(std::unique_ptr<QOffscreenSurface>& surface, QString& api, QOffscreenSurface* external = nullptr)
 {
     if (!qobject_cast<QGuiApplication*>(QCoreApplication::instance())) return nullptr;
 #if defined(Q_OS_WIN)
@@ -128,15 +149,14 @@ QRhi* createRhi(std::unique_ptr<QOffscreenSurface>& surface, QString& api)
     return QRhi::create(QRhi::Metal, &params);
 #else
     api = QStringLiteral("OpenGL");
-    // 3.3 core: 3D textures, texelFetch, R8/RG8 (the default format asks for 2.0, and QRhi then assumes its limits)
-    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    surface.reset(QRhiGles2InitParams::newFallbackSurface(format));
-    if (!surface) return nullptr;
+    const QSurfaceFormat format = glFormat();
+    if (!external) {
+        surface.reset(QRhiGles2InitParams::newFallbackSurface(format));
+        if (!surface) return nullptr;
+    }
     QRhiGles2InitParams params;
     params.format = format;
-    params.fallbackSurface = surface.get();
+    params.fallbackSurface = external ? external : surface.get();
     return QRhi::create(QRhi::OpenGLES2, &params);
 #endif
 }
@@ -181,8 +201,11 @@ struct Context::Impl {
     };
     std::vector<Readback> readbacks;
 
+    std::shared_ptr<void> userData; // caller's caches (textures in it go before the QRhi)
+
     ~Impl()
     {
+        userData.reset();
         pool.reset(); // textures still given out leak their GPU objects instead of touching a dead QRhi
     }
 
@@ -428,9 +451,14 @@ Context::~Context()
 
 std::unique_ptr<Context> Context::create(QString* why, bool allowSoftware)
 {
+    return create(nullptr, why, allowSoftware);
+}
+
+std::unique_ptr<Context> Context::create(QOffscreenSurface* surface, QString* why, bool allowSoftware)
+{
     std::unique_ptr<Context> c(new Context);
     QString api;
-    c->d->rhi.reset(createRhi(c->d->surface, api));
+    c->d->rhi.reset(createRhi(c->d->surface, api, surface));
     c->d->info.api = api;
     if (!c->d->rhi) {
         if (why) *why = QStringLiteral("no %1 device").arg(api.isEmpty() ? QStringLiteral("GPU") : api);
@@ -452,6 +480,7 @@ std::unique_ptr<Context> Context::create(QString* why, bool allowSoftware)
 
 QRhi* Context::rhi() const { return d->rhi.get(); }
 const DeviceInfo& Context::info() const { return d->info; }
+std::shared_ptr<void>& Context::userData() { return d->userData; }
 
 void Context::begin()
 {
@@ -799,6 +828,251 @@ Context::Stats Context::stats() const
 
 QSize size(const Texture& t) { return t.size; }
 
+bool canUpload(int avPixelFormat)
+{
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(AVPixelFormat(avPixelFormat));
+    if (!desc || (desc->flags & (AV_PIX_FMT_FLAG_RGB | AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_BE
+                                 | AV_PIX_FMT_FLAG_ALPHA))
+        || desc->nb_components != 3)
+        return false;
+    const bool semi = desc->comp[1].plane == desc->comp[2].plane;
+    const int depth = desc->comp[0].depth;
+    return depth <= 16 && (depth > 8) == (desc->comp[0].step == 2) && (!semi || desc->comp[1].step == 2 * desc->comp[0].step);
+}
+
+// ---- Service ----
+
+namespace {
+// The OpenGL surface made ahead on the GUI thread (Service::prepare)
+// (raw and never freed: destroying a QOffscreenSurface after the application is gone crashes)
+std::mutex g_surfaceMutex;
+QOffscreenSurface* g_surface = nullptr;
+bool g_surfaceTaken = false; // the service took it (or made its own)
+} // namespace
+
+struct Service::Impl {
+    std::unique_ptr<QOffscreenSurface> surface; // made on the GUI thread when possible (prepare())
+    std::unique_ptr<Context> context;
+    DeviceInfo info;
+    std::thread thread;
+    std::mutex mutex;
+    std::condition_variable wake;
+    bool stopping = false, stopped = false;
+    struct Job {
+        const std::function<void(Context&)>* fn = nullptr; // nullptr = end the thread
+        bool done = false;
+        std::condition_variable doneCv;
+    };
+    std::deque<Job*> queue;
+
+    void loop()
+    {
+        // Jobs waiting together are recorded into one offscreen frame (at most kBatch): the card's wait at its end
+        // covers several frames (export workers keep the queue full) instead of one wait per frame
+        constexpr size_t kBatch = 3;
+        for (;;) {
+            std::vector<Job*> jobs;
+            {
+                std::unique_lock lock(mutex);
+                wake.wait(lock, [&] { return !queue.empty(); });
+                while (!queue.empty() && jobs.size() < kBatch) {
+                    jobs.push_back(queue.front());
+                    queue.pop_front();
+                    if (!jobs.back()->fn) break; // the end: after what came before it
+                }
+            }
+            const bool quit = !jobs.back()->fn;
+            const size_t work = jobs.size() - (quit ? 1 : 0);
+            if (work > 0) {
+                context->begin();
+                for (size_t i = 0; i < work; ++i) (*jobs[i]->fn)(*context);
+                context->finish();
+            }
+            if (quit) context.reset(); // on its own thread (GL context, textures)
+            {
+                std::lock_guard lock(mutex);
+                for (Job* job : jobs) job->done = true;
+            }
+            for (Job* job : jobs) job->doneCv.notify_all();
+            if (quit) return;
+        }
+    }
+};
+
+namespace {
+Service* g_service = nullptr;
+std::atomic<int> g_state{0}; // 0 not started, 1 starting in the background, 2 decided (g_service or none)
+} // namespace
+
+namespace {
+bool g_deferred = false;          // setDeferredPrepare
+bool g_preparePosted = false;     // a deferred prepare() waits in the GUI thread's event queue
+std::condition_variable g_surfaceReady;
+} // namespace
+
+void Service::setDeferredPrepare(bool deferred)
+{
+    std::lock_guard lock(g_surfaceMutex);
+    g_deferred = deferred;
+}
+
+void Service::prepare()
+{
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+    if (envSwitch() == 0 || !qobject_cast<QGuiApplication*>(QCoreApplication::instance())
+        || QThread::currentThread() != QCoreApplication::instance()->thread())
+        return;
+    {
+        std::lock_guard lock(g_surfaceMutex);
+        if (g_surface || g_surfaceTaken) return;
+        if (g_deferred) { // later, from the event loop (keeps the GL library load out of the start)
+            if (!g_preparePosted) {
+                g_preparePosted = true;
+                QTimer::singleShot(0, QCoreApplication::instance(), [] {
+                    {
+                        std::lock_guard lock(g_surfaceMutex);
+                        g_deferred = false;
+                    }
+                    prepare();
+                });
+            }
+            return;
+        }
+    }
+    QElapsedTimer t;
+    t.start();
+    QOffscreenSurface* surface = QRhiGles2InitParams::newFallbackSurface(glFormat());
+    {
+        std::lock_guard lock(g_surfaceMutex);
+        g_surface = surface;
+        g_preparePosted = false;
+    }
+    g_surfaceReady.notify_all();
+    if (qEnvironmentVariableIsSet("SCHNEIDI_VERBOSE")) qInfo("GPU surface made in %lld ms", t.elapsed());
+#endif
+}
+
+Service* Service::instance()
+{
+    static Service* service = []() -> Service* {
+        if (envSwitch() == 0 || !qobject_cast<QGuiApplication*>(QCoreApplication::instance())) return nullptr;
+        struct Decided {
+            ~Decided() { g_state = 2; }
+        } decided;
+        QElapsedTimer started;
+        started.start();
+        auto* d = new Impl;
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS) && !defined(Q_OS_IOS)
+        const bool gui = QThread::currentThread() == QCoreApplication::instance()->thread();
+        if (gui) {
+            std::lock_guard lock(g_surfaceMutex);
+            g_deferred = false; // needed now
+        }
+        prepare();
+        {
+            std::unique_lock lock(g_surfaceMutex);
+            // A deferred prepare() is about to run on the GUI thread: wait for it a little
+            if (!gui && g_preparePosted) g_surfaceReady.wait_for(lock, std::chrono::seconds(2), [] { return g_surface != nullptr; });
+            d->surface.reset(std::exchange(g_surface, nullptr));
+            g_surfaceTaken = true;
+        }
+        // Not prepared on the GUI thread (first renderer made on a worker): made here (fine with GLX pbuffers)
+        if (!d->surface) d->surface.reset(QRhiGles2InitParams::newFallbackSurface(glFormat()));
+        if (!d->surface) {
+            delete d;
+            return nullptr;
+        }
+#endif
+        // The context is made on the GPU thread (a QRhi belongs to its thread); it refuses a software rasterizer
+        // unless SCHNEIDI_GPU=1
+        std::promise<bool> made;
+        d->thread = std::thread([d, &made] {
+            QString why;
+            d->context = Context::create(d->surface.get(), &why, envSwitch() == 1);
+            if (!d->context) {
+                if (envSwitch() == 1 || !why.startsWith(QLatin1String("software")))
+                    qWarning("GPU picture engine off: %s", qPrintable(why));
+                made.set_value(false);
+                return;
+            }
+            d->info = d->context->info();
+            made.set_value(true);
+            d->loop();
+        });
+        if (!made.get_future().get()) {
+            d->thread.join();
+            QOffscreenSurface* surface = d->surface.release(); // a GL context may still refer to it: kept
+            (void)surface;
+            delete d;
+            return nullptr;
+        }
+        auto* s = new Service;
+        s->d = d;
+        g_service = s;
+        qInfo("GPU picture engine: %s on %s (%lld ms to start)", qPrintable(d->info.api), qPrintable(d->info.device),
+              started.elapsed());
+        // End the thread with the application (its GL context goes before the platform's display connection)
+        QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, QCoreApplication::instance(),
+                         [] { shutdown(); });
+        return s;
+    }();
+    return service;
+}
+
+Service* Service::tryInstance(bool* decided)
+{
+    if (g_state.load() == 2) {
+        *decided = true;
+        return g_service;
+    }
+    bool deferred;
+    {
+        std::lock_guard lock(g_surfaceMutex);
+        deferred = g_deferred || g_preparePosted;
+    }
+    if (!deferred && g_state.load() == 0) {
+        *decided = true;
+        return instance();
+    }
+    int idle = 0;
+    if (g_state.compare_exchange_strong(idle, 1)) std::thread([] { instance(); }).detach();
+    *decided = false;
+    return nullptr;
+}
+
+void Service::shutdown()
+{
+    Service* s = g_service;
+    if (!s) return;
+    Impl* d = s->d;
+    Impl::Job quit;
+    {
+        std::unique_lock lock(d->mutex);
+        if (d->stopping) return;
+        d->stopping = true;
+        d->queue.push_back(&quit);
+        d->wake.notify_one();
+        quit.doneCv.wait(lock, [&] { return quit.done; });
+        d->stopped = true;
+    }
+    d->thread.join();
+    d->surface.reset();
+}
+
+bool Service::run(const std::function<void(Context&)>& job)
+{
+    Impl::Job j;
+    j.fn = &job;
+    std::unique_lock lock(d->mutex);
+    if (d->stopping) return false; // shut down: the caller takes the CPU path
+    d->queue.push_back(&j);
+    d->wake.notify_one();
+    j.doneCv.wait(lock, [&] { return j.done; });
+    return true;
+}
+
+const DeviceInfo& Service::info() const { return d->info; }
+
 #else // no Qt RHI headers: the CPU path only
 
 class Texture {
@@ -827,7 +1101,13 @@ std::unique_ptr<Context> Context::create(QString* why, bool)
     if (why) *why = probe().error;
     return {};
 }
+std::unique_ptr<Context> Context::create(QOffscreenSurface*, QString* why, bool b) { return create(why, b); }
 QRhi* Context::rhi() const { return nullptr; }
+std::shared_ptr<void>& Context::userData()
+{
+    static std::shared_ptr<void> none;
+    return none;
+}
 const DeviceInfo& Context::info() const { return d->info; }
 void Context::begin() {}
 void Context::finish() {}
@@ -843,6 +1123,18 @@ void Context::readRgba(const Texture&, uint8_t*) {}
 bool Context::readYuv(const Texture&, const OutputColor::Target&) { return false; }
 Context::Stats Context::stats() const { return {}; }
 QSize size(const Texture& t) { return t.size; }
+bool canUpload(int) { return false; }
+void Service::prepare() {}
+void Service::setDeferredPrepare(bool) {}
+Service* Service::instance() { return nullptr; }
+Service* Service::tryInstance(bool* decided)
+{
+    *decided = true;
+    return nullptr;
+}
+void Service::shutdown() {}
+bool Service::run(const std::function<void(Context&)>&) { return false; }
+const DeviceInfo& Service::info() const { return probe(); }
 
 #endif
 

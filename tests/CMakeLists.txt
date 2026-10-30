@@ -18,7 +18,7 @@ function(schneidi_test name)
         SKIP_RETURN_CODE 77
         TIMEOUT 300
         RESOURCE_LOCK ${name}
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_GPU=0")
 endfunction()
 
 schneidi_test(test_timelineops)
@@ -57,6 +57,9 @@ schneidi_test(test_key_pick)
 schneidi_test(test_viewer_large) # large viewer: panels hide and come back exactly, timeline zoom/scroll untouched
 schneidi_test(test_frame_view) # viewer picture widget: GPU/painter choice, zoom/pan, overlay mapping, zoom actions
 schneidi_test(test_picture_gpu) # picture engine on the GPU vs the CPU path (skips without a hardware device)
+schneidi_test(test_picture_gpu_render) # Renderer's GPU path vs its CPU path, whole frames (skips without a GPU)
+# The GPU decides by itself here (every other test runs the CPU path: SCHNEIDI_GPU=0)
+set_tests_properties(test_picture_gpu_render PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
 schneidi_test(test_own_effects)
 schneidi_test(test_presets)
 schneidi_test(test_rendercache)
@@ -199,7 +202,7 @@ foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_
         SKIP_RETURN_CODE 77
         TIMEOUT 300
         RESOURCE_LOCK ${name}
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_GPU=0;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
 endforeach()
 
 set_tests_properties(test_av_sync test_preview_audio test_play_end PROPERTIES RUN_SERIAL TRUE) # preview timing
@@ -218,7 +221,7 @@ foreach(name test_cli test_multicam_render)
         SKIP_RETURN_CODE 77
         RESOURCE_LOCK ${name}
         TIMEOUT 300
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_GPU=0"
         ENVIRONMENT_MODIFICATION "DISPLAY=unset:;WAYLAND_DISPLAY=unset:")
 endforeach()
 
@@ -228,7 +231,7 @@ set_tests_properties(test_luts_c_locale PROPERTIES
     SKIP_RETURN_CODE 77
     RESOURCE_LOCK test_luts
     TIMEOUT 300
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;LC_ALL=C;LANG=C")
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_GPU=0;LC_ALL=C;LANG=C")
 
 # HTTP side of the server on a socket without a network (fuzz/FakeSocket.h): pipelining, dropped bodies, Range
 schneidi_test(test_http)
@@ -251,7 +254,7 @@ foreach(target http mcp project srt edl fcp7 otio)
                                                             ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/regressions/${target})
     set_tests_properties(replay_${target} PROPERTIES
         TIMEOUT 300
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_GPU=0")
 endforeach()
 
 # Benchmark, not run by CTest

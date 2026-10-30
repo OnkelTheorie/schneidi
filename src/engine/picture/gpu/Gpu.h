@@ -42,9 +42,11 @@
 #include <QString>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 struct AVFrame;
+class QOffscreenSurface;
 class QRhi;
 
 namespace ColorGrade {
@@ -81,12 +83,17 @@ class Context {
 public:
     // nullptr when no device works (error in *why). allowSoftware: also a software rasterizer (tests of the shaders)
     static std::unique_ptr<Context> create(QString* why = nullptr, bool allowSoftware = false);
+    // The same with a surface made beforehand (OpenGL: QOffscreenSurface is made on the GUI thread, the context may then
+    // live on another one); it must outlive the Context
+    static std::unique_ptr<Context> create(QOffscreenSurface* surface, QString* why, bool allowSoftware);
     ~Context();
     Context(const Context&) = delete;
     Context& operator=(const Context&) = delete;
 
     QRhi* rhi() const;
     const DeviceInfo& info() const;
+    // A slot for the caller's per-context caches (LUTs, stills kept on the card); released before the device
+    std::shared_ptr<void>& userData();
 
     void begin();
     // Submits what was recorded, waits for the card, fills the readbacks
@@ -138,5 +145,38 @@ private:
 };
 
 QSize size(const Texture& t);
+
+// uploadYuv() takes pictures of this pixel format (AVPixelFormat number)
+bool canUpload(int avPixelFormat);
+
+// The process's GPU thread: one Context, jobs run one after another on it (preview pump, export workers, stills). The
+// callers keep doing their CPU work (decoding, layers the GPU cannot draw) in parallel and only wait for their job.
+class Service {
+public:
+    // Makes the OpenGL surface ahead when called on the GUI thread (QOffscreenSurface needs it on the offscreen platform;
+    // ~40 ms, mostly loading the GL library). Renderer's constructor calls it, so a first instance() on a worker (export
+    // workers, preview pump) finds it.
+    static void prepare();
+    // GUI app: prepare() only posts the work to the event loop (not in the way of the start); a worker asking for
+    // instance() meanwhile waits for it (at most 2 s)
+    static void setDeferredPrepare(bool deferred);
+    // nullptr when SCHNEIDI_GPU=0, no GUI application, or no hardware device (then the CPU path). The first call starts
+    // the GPU thread and waits until its context is made (or refused).
+    static Service* instance();
+    // As instance(), but while a deferred prepare() is pending it starts the service in the background and returns
+    // nullptr at once with *decided = false (render this frame on the CPU, ask again for the next)
+    static Service* tryInstance(bool* decided);
+    // Ends the GPU thread (its context released on it); after that run() refuses. Done on QCoreApplication::aboutToQuit
+    static void shutdown();
+    // Runs job(context) on the GPU thread inside begin()/finish() and waits for it (readbacks are filled on return);
+    // false = shut down, nothing ran
+    bool run(const std::function<void(Context&)>& job);
+    const DeviceInfo& info() const;
+
+private:
+    Service() = default;
+    struct Impl;
+    Impl* d = nullptr; // never freed (the thread ends in shutdown())
+};
 
 } // namespace Picture::Gpu

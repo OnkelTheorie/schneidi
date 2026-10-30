@@ -10,9 +10,11 @@
 #include "engine/BlurFill.h"
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
+#include "engine/OutputColor.h"
 #include "engine/StabilizeCorrection.h"
 #include "engine/VideoEffects.h"
 #include "engine/picture/Effects.h"
+#include "engine/picture/gpu/Gpu.h"
 #include "engine/video/Compose.h"
 #include "engine/video/Convert.h"
 #include "engine/video/Reader.h"
@@ -302,7 +304,21 @@ struct Renderer::Impl {
     std::mutex lutMutex;
     std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
 
-    std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0};
+    std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0}, framesGpu{0}, layersCpu{0};
+    // GPU path (Options::gpu and a hardware device), looked up by the renders (GUI app: CPU until the GPU has started)
+    std::atomic<Gpu::Service*> gpu{nullptr};
+    std::atomic<bool> gpuDecided{false};
+    Gpu::Service* gpuService()
+    {
+        if (!options.gpu || gpuDecided.load()) return gpu.load();
+        bool decided = false;
+        Gpu::Service* s = Gpu::Service::tryInstance(&decided);
+        if (decided) {
+            gpu = s;
+            gpuDecided = true;
+        }
+        return s;
+    }
 
     // What one render call works with
     struct Ctx {
@@ -516,7 +532,14 @@ struct Renderer::Impl {
             return out;
         }
         if (!s.video) return {};
-        const VideoSource& v = *s.video;
+        const double file = fileFrame(c, t, *s.video);
+        if (file < 0) return {};
+        return videoFrame(*s.video, file, dw, dh, ctx, native, into);
+    }
+
+    // Frame of the file (project rate) a video clip shows at clip frame t; < 0 = none
+    static double fileFrame(const Clip& c, int t, const VideoSource& v)
+    {
         // Material frame -> file frame (project rate) -> stream position (as the MLT producer)
         const double m = c.freeze ? c.stillFrame() : c.in + t;
         double file = m;
@@ -535,13 +558,11 @@ struct Renderer::Impl {
             }
             file = std::clamp(file, 0.0, double(std::max(0, v.length - 1)));
         }
-        if (file < 0) return {};
-        return videoFrame(v, file, dw, dh, ctx, native, into);
+        return file;
     }
 
-    // Frame `file` (project rate) of a video at dw x dh (into: straight into that picture, see mediaPicture)
-    static Image videoFrame(const VideoSource& v, double file, int dw, int dh, const Ctx& ctx, QSize* native,
-                            uint8_t* into = nullptr)
+    // The decoded picture of frame `file` (project rate) of a video; nullptr = none
+    static std::shared_ptr<const Video::Picture> fetchPicture(const VideoSource& v, double file, const Ctx& ctx)
     {
         const int64_t request = int64_t(file / ctx.fps * v.fps + 0.5);
         Video::Reader::Fetch fetch;
@@ -550,9 +571,18 @@ struct Renderer::Impl {
             fetch.cancel = t_hints->cancel;
         }
         bool exact = true;
-        const auto pic = v.reader->picture(request, fetch, &exact);
+        auto pic = v.reader->picture(request, fetch, &exact);
         if (!exact) t_exact = false;
         if (!pic || !pic->frame) return {};
+        return pic;
+    }
+
+    // Frame `file` (project rate) of a video at dw x dh (into: straight into that picture, see mediaPicture)
+    static Image videoFrame(const VideoSource& v, double file, int dw, int dh, const Ctx& ctx, QSize* native,
+                            uint8_t* into = nullptr)
+    {
+        const auto pic = fetchPicture(v, file, ctx);
+        if (!pic) return {};
         *native = QSize(pic->frame->width, pic->frame->height);
         if (dw <= 0 || dh <= 0) return {};
         if (into) { // straight into the caller's picture (a layer that covers the frame)
@@ -1140,6 +1170,525 @@ struct Renderer::Impl {
         }
     }
 
+    // ---- GPU path (see the header): the frame as a list of draws, worked out here, composited on the GPU thread ----
+
+    struct GpuOp {
+        enum Kind {
+            Draw,  // a picture over the target
+            Group, // `a` onto a new target cleared to `fill`, that over the target with `opacity`
+            Mix,   // `a` and `b` each onto a transparent target, cross dissolved (t), the result over the target
+            Luma,  // as Mix, wiped by `gradient` (progress t, softness)
+        };
+        Kind kind = Draw;
+        // Draw: one of these
+        std::shared_ptr<const Video::Picture> picture; // decoded (its planes are uploaded)
+        Video::Info info;
+        std::shared_ptr<StillSource> still;
+        std::shared_ptr<Image> rgba; // made on the CPU (straight alpha, or premultiplied)
+        bool premultiplied = false;
+        bool mips = false;
+        Compose::Affine m;
+        double opacity = 1;
+        QRectF crop;
+        bool graded = false;
+        ColorGrade::Params grade;
+        QString gradeLutPath;
+        std::shared_ptr<const ColorGrade::Lut> gradeLut;
+        // Group/Mix/Luma
+        std::vector<GpuOp> a, b;
+        QColor fill = Qt::transparent;
+        double t = 0, softness = 0;
+        std::shared_ptr<std::vector<uint8_t>> gradient; // 8-bit gray, output size
+    };
+
+    // A clip the card draws by itself at clip frame t: media (video in an uploadable format, still) with transform,
+    // crop, opacity, fade and colour grade, nothing else
+    bool gpuClip(const Clip& c, int t, const Ctx& ctx, const QString& lane)
+    {
+        if (!c.enabled || c.isTitle() || c.isNested() || c.mediaPath.isEmpty()) return false;
+        for (const EffectInstance& e : c.effects)
+            if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId)) return false;
+        if (ColorGrade::active(c) && !ctx.bypassGrade && !ColorGrade::windowsAt(c, t).isEmpty()) return false;
+        if (StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) return false;
+        const Source s = source(c.mediaPath, lane);
+        if (s.still) return true;
+        return s.video && Gpu::canUpload(s.video->info.format);
+    }
+
+    // The draw of a gpuClip at timeline frame f, its opacity times k; false = nothing to draw
+    bool gpuMediaOp(const Clip& c, int f, const QString& lane, const Ctx& ctx, double k, GpuOp& op)
+    {
+        const int t = f - c.start;
+        const Source s = source(c.mediaPath, lane);
+        int nw = 0, nh = 0;
+        if (s.still) {
+            op.still = s.still;
+            nw = s.still->image.width();
+            nh = s.still->image.height();
+        } else if (s.video) {
+            const double file = fileFrame(c, t, *s.video);
+            if (file < 0) return false;
+            op.picture = fetchPicture(*s.video, file, ctx);
+            if (!op.picture) return false;
+            op.info = s.video->info;
+            nw = op.picture->frame->width;
+            nh = op.picture->frame->height;
+        }
+        if (nw <= 0 || nh <= 0) return false;
+        layersDecoded.fetch_add(1, std::memory_order_relaxed);
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        const bool transform = Keys::hasTransform(c), crop = Keys::hasCrop(c);
+        const QSizeF fit = MediaAspect::fit(nativeAspect(c, lane), QSizeF(ctx.PW, ctx.PH));
+        auto val = [&](AnimParam p) { return Keys::valueAt(c, p, t); };
+        const double opacity = Keys::hasOpacity(c) ? std::clamp(val(AnimParam::Opacity) / 100.0, 0.0, 1.0) : 1.0;
+        if (!transform && !crop) {
+            // Fitted into the frame at its own shape, centred on whole pixels (as the CPU path)
+            const int fw = std::max(1, int(std::lround(fit.width() * sx))), fh = std::max(1, int(std::lround(fit.height() * sy)));
+            op.m.a = double(fw) / nw;
+            op.m.e = double(fh) / nh;
+            op.m.c = (ctx.W - fw) / 2;
+            op.m.f = (ctx.H - fh) / 2;
+        }
+        double shares[4] = {0, 0, 0, 0};
+        if (transform || crop) {
+            if (crop) {
+                const double l = val(AnimParam::CropLeft) / fit.width(), tp = val(AnimParam::CropTop) / fit.height();
+                const double r = val(AnimParam::CropRight) / fit.width(), b = val(AnimParam::CropBottom) / fit.height();
+                shares[0] = l, shares[1] = tp, shares[2] = r, shares[3] = b;
+                op.crop = QRectF(QPointF(l * nw, tp * nh), QPointF((1 - r) * nw, (1 - b) * nh));
+                if (op.crop.width() <= 0 || op.crop.height() <= 0) return false;
+            }
+            const double zx = transform ? val(AnimParam::ZoomX) : 1.0, zy = transform ? val(AnimParam::ZoomY) : 1.0;
+            const double x = transform ? val(AnimParam::PosX) : 0.0, y = transform ? val(AnimParam::PosY) : 0.0;
+            const double w = fit.width() * zx, h = fit.height() * zy;
+            const double rx = (ctx.PW - w) / 2 + x, ry = (ctx.PH - h) / 2 - y;
+            const double angle = transform ? -val(AnimParam::Rotation) : 0.0;
+            op.m = Compose::placement(rx * sx, ry * sy, w * sx, h * sy, angle, nw, nh, true, true);
+        }
+        op.opacity = opacity * k;
+        // Shrunk 2:1 or more: mip levels (as Compose::draw's 2x2 steps)
+        op.mips = std::hypot(op.m.a, op.m.d) <= 0.5 && std::hypot(op.m.b, op.m.e) <= 0.5;
+        if (ColorGrade::active(c) && !ctx.bypassGrade) {
+            const ColorGrade::Params p = ColorGrade::at(c, t);
+            const QString lp = ColorGrade::lutPath(c);
+            auto l = lp.isEmpty() ? nullptr : lut(lp);
+            if (!p.isNeutral() || l) {
+                op.graded = true;
+                op.grade = p;
+                op.gradeLutPath = lp;
+                op.gradeLut = std::move(l);
+            }
+        }
+        if ((transform || crop) && c.transform.hasBlurFill()) return blurFillOp(c, ctx, shares, op);
+        return true;
+    }
+
+    // Blurred fill behind a gpuClip's draw (as clipLayer: BlurFill::makeBackground from the graded, uncropped picture,
+    // the picture over it, then opacity): the small background is made here from a shrunk copy of the picture (the
+    // fill is blurred anyway; the full picture never needs converting) and scaled up on the card. op becomes a Group.
+    bool blurFillOp(const Clip& c, const Ctx& ctx, const double shares[4], GpuOp& op)
+    {
+        constexpr int kMost = 640; // longer side of the shrunk picture (the background is at most 640 x 360)
+        Image small;
+        double aspect = 0;
+        if (op.still) {
+            const QImage& img = op.still->image;
+            aspect = double(img.width()) / std::max(1, img.height());
+            const double k = std::min(1.0, double(kMost) / std::max(img.width(), img.height()));
+            small = Image(std::max(1, int(std::lround(img.width() * k))), std::max(1, int(std::lround(img.height() * k))));
+            Compose::Affine m;
+            m.a = double(small.w) / img.width();
+            m.e = double(small.h) / img.height();
+            Compose::draw(small.data(), small.w, small.h, img.constBits(), img.width(), img.height(), m, 1.0);
+        } else {
+            const int w = op.picture->frame->width, h = op.picture->frame->height;
+            aspect = double(w) / std::max(1, h);
+            const double k = std::min(1.0, double(kMost) / std::max(w, h));
+            small = Image(std::max(2, int(std::lround(w * k))), std::max(2, int(std::lround(h * k))));
+            if (!Video::toRgba(*op.picture, op.info, small.data(), small.w, small.h, true)) return false;
+        }
+        if (op.graded) ColorGrade::apply(small.data(), small.w, small.h, *ColorGrade::bake(op.grade, op.gradeLut.get()), 1);
+        const BlurFill::Background bg = BlurFill::makeBackground(small.data(), small.w, small.h, aspect, shares,
+                                                                 ctx.PW / ctx.PH, c.transform.fillBlur, c.transform.fillDim);
+        if (bg.width <= 0 || bg.height <= 0) return true; // just the picture
+        // One pixel of edge repeated around it: scaled up, the frame's edge samples it as composite() clamps
+        const int pw = bg.width + 2, ph = bg.height + 2;
+        auto padded = std::make_shared<Image>(pw, ph);
+        for (int y = 0; y < ph; ++y)
+            for (int x = 0; x < pw; ++x)
+                std::memcpy(padded->data() + (size_t(y) * pw + x) * 4,
+                            bg.rgba.data() + (size_t(std::clamp(y - 1, 0, bg.height - 1)) * bg.width
+                                              + std::clamp(x - 1, 0, bg.width - 1)) * 4,
+                            4);
+        GpuOp back;
+        back.rgba = std::move(padded);
+        back.premultiplied = true;
+        back.m.a = double(ctx.W) / bg.width;
+        back.m.e = double(ctx.H) / bg.height;
+        back.m.c = -back.m.a;
+        back.m.f = -back.m.e;
+        GpuOp group;
+        group.kind = GpuOp::Group;
+        group.opacity = op.opacity;
+        op.opacity = 1.0;
+        group.a.push_back(std::move(back));
+        group.a.push_back(std::move(op));
+        op = std::move(group);
+        return true;
+    }
+
+    // A picture rendered on the CPU (straight alpha) drawn at (x, y) with opacity k
+    GpuOp cpuOp(Image&& img, double k, int x = 0, int y = 0)
+    {
+        layersCpu.fetch_add(1, std::memory_order_relaxed);
+        GpuOp op;
+        op.rgba = std::make_shared<Image>(std::move(img));
+        op.opacity = k;
+        op.m.c = x;
+        op.m.f = y;
+        return op;
+    }
+
+    // One side of a transition: its draw (GPU or CPU layer), opacity times k; false = nothing
+    bool gpuSide(std::vector<GpuOp>& out, const Clip* c, int f, const QString& lane, const Ctx& ctx, const Timeline& tl,
+                 int depth, double k)
+    {
+        if (!c) return false;
+        k *= TimelineOps::fadeRamp(*c, f - c->start);
+        if (gpuClip(*c, f - c->start, ctx, lane)) {
+            GpuOp op;
+            if (!gpuMediaOp(*c, f, lane, ctx, k, op)) return false;
+            out.push_back(std::move(op));
+            return true;
+        }
+        Image img = clipLayer(*c, f, lane, ctx, tl, depth);
+        if (img.empty()) return false;
+        out.push_back(cpuOp(std::move(img), k));
+        return true;
+    }
+
+    // A transition span on the GPU (types it has: dissolve, luma wipes, wipes between two clips without border, dip)
+    void gpuTransition(std::vector<GpuOp>& ops, const Track& track, int trackIndex, const TimelineOps::TransitionSpan& s,
+                       int f, const Ctx& ctx, const Timeline& tl, const QString& prefix, int depth)
+    {
+        auto byId = [&](int id) -> const Clip* {
+            for (const Clip& c : track.clips)
+                if (c.id == id) return &c;
+            return nullptr;
+        };
+        const Clip* a = s.leftId ? byId(s.leftId) : nullptr;
+        const Clip* b = s.rightId ? byId(s.rightId) : nullptr;
+        if (a && !a->enabled) a = nullptr;
+        if (b && !b->enabled) b = nullptr;
+        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        const bool sameFile = a && b && a->mediaPath == b->mediaPath;
+        const QString laneA = lane, laneB = sameFile ? lane + 'x' : lane;
+        const int len = s.length(), i = f - s.start;
+        const TransitionStyle& st = s.style;
+        const TransitionType type = st.type;
+        const bool both = a && b;
+        const bool wipe = type == TransitionType::WipeRight || type == TransitionType::WipeLeft
+                          || type == TransitionType::WipeDown || type == TransitionType::WipeUp;
+        const bool styled = type != TransitionType::CrossDissolve && (!st.isLuma() || both);
+        if (styled && wipe && (!both || st.border >= 0.5)) {
+            // Not on the card yet: the CPU's picture of the track
+            Image layer = trackLayer(track, trackIndex, f, ctx, tl, prefix, depth);
+            if (!layer.empty()) ops.push_back(cpuOp(std::move(layer), 1.0));
+            return;
+        }
+        if (type == TransitionType::DipToColor) {
+            GpuOp g;
+            g.kind = GpuOp::Group;
+            g.fill = st.color;
+            g.fill.setAlpha(255);
+            const int half = both ? len / 2 : 0;
+            if (a) gpuSide(g.a, a, f, laneA, ctx, tl, depth, alphaKeys(i, {{0, 1.0}, {(both ? half : len) - 1, 0.0}, {len - 1, 0.0}}));
+            if (b) gpuSide(g.a, b, f, laneB, ctx, tl, depth, alphaKeys(i, {{0, 0.0}, {half, 0.0}, {len - 1, 1.0}}));
+            ops.push_back(std::move(g));
+            return;
+        }
+        if (!both) { // one side: fade out/in through transparency
+            if (a) gpuSide(ops, a, f, laneA, ctx, tl, depth, double(len - 1 - i) / len);
+            else if (b) gpuSide(ops, b, f, laneB, ctx, tl, depth, double(i) / len);
+            return;
+        }
+        GpuOp m;
+        m.kind = GpuOp::Mix;
+        m.t = double(i) / len;
+        const bool hasA = gpuSide(m.a, a, f, laneA, ctx, tl, depth, 1.0);
+        const bool hasB = gpuSide(m.b, b, f, laneB, ctx, tl, depth, 1.0);
+        if (!hasA && !hasB) return;
+        if (hasA != hasB) { // one side empty (no picture): as the CPU path, a fade of the other
+            std::vector<GpuOp>& one = hasA ? m.a : m.b;
+            for (GpuOp& op : one) op.opacity *= hasA ? double(len - 1 - i) / len : double(i) / len;
+            for (GpuOp& op : one) ops.push_back(std::move(op));
+            return;
+        }
+        if (styled) {
+            m.kind = GpuOp::Luma;
+            m.softness = 0.02 + 0.98 * std::clamp(st.softness, 0.0, 100.0) / 100.0;
+            const int W = ctx.W, H = ctx.H;
+            auto grad = std::make_shared<std::vector<uint8_t>>(size_t(W) * H);
+            if (st.isLuma()) {
+                const QImage img = Lumas::image(st.luma, W, H, st.invert);
+                if (img.isNull()) {
+                    m.kind = GpuOp::Mix;
+                } else {
+                    const QImage g8 = img.convertToFormat(QImage::Format_Grayscale8);
+                    for (int y = 0; y < H; ++y) std::memcpy(grad->data() + size_t(y) * W, g8.constScanLine(y), size_t(W));
+                }
+            } else {
+                for (int y = 0; y < H; ++y)
+                    for (int x = 0; x < W; ++x) {
+                        double v = 0;
+                        switch (type) {
+                        case TransitionType::WipeRight: v = double(x) / std::max(1, W - 1); break;
+                        case TransitionType::WipeLeft: v = 1.0 - double(x) / std::max(1, W - 1); break;
+                        case TransitionType::WipeDown: v = double(y) / std::max(1, H - 1); break;
+                        case TransitionType::WipeUp: v = 1.0 - double(y) / std::max(1, H - 1); break;
+                        default: break;
+                        }
+                        (*grad)[size_t(y) * W + x] = uint8_t(std::lround(v * 255));
+                    }
+            }
+            m.gradient = std::move(grad);
+        }
+        ops.push_back(std::move(m));
+    }
+
+    void gpuTrack(std::vector<GpuOp>& ops, const Track& track, int trackIndex, int f, const Ctx& ctx, const Timeline& tl,
+                  const QString& prefix, int depth)
+    {
+        if (track.hidden) return;
+        for (const auto& s : spansOf(track, tl))
+            if (f >= s.start && f < s.end) {
+                gpuTransition(ops, track, trackIndex, s, f, ctx, tl, prefix, depth);
+                return;
+            }
+        const Clip* c = clipAt(track, f);
+        if (!c || !c->enabled) return;
+        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        const int t = f - c->start;
+        const double fade = TimelineOps::fadeRamp(*c, t);
+        if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
+            && !(ctx.bypassGrade && ColorGrade::active(*c))) {
+            if (const QString file = options.renderCache(*c); !file.isEmpty()) {
+                const Source s = source(file, lane + QStringLiteral("c"));
+                if (s.video) {
+                    QSize native;
+                    Image img = videoFrame(*s.video, t, ctx.W, ctx.H, ctx, &native);
+                    if (!img.empty()) {
+                        layersDecoded.fetch_add(1, std::memory_order_relaxed);
+                        ops.push_back(cpuOp(std::move(img), fade));
+                        return;
+                    }
+                }
+            }
+        }
+        if (gpuClip(*c, t, ctx, lane)) {
+            GpuOp op;
+            if (gpuMediaOp(*c, f, lane, ctx, fade, op)) ops.push_back(std::move(op));
+            return;
+        }
+        const bool plain = !Keys::hasTransform(*c) && !Keys::hasCrop(*c);
+        const double opacity = Keys::hasOpacity(*c) ? std::clamp(Keys::valueAt(*c, AnimParam::Opacity, t) / 100.0, 0.0, 1.0) : 1.0;
+        if (c->isTitle() && plain && opacity * fade >= 1.0 && c->effects.isEmpty() && !Keys::animated(*c, AnimParam::TitleSize)) {
+            // Drawn only as large as its text
+            Image dummy;
+            QRect box;
+            drawTitle(dummy, *c, t, ctx, 0, {}, &box);
+            if (box.isEmpty()) return;
+            Image part(box.width(), box.height());
+            drawTitle(part, *c, t, ctx, 0, box.topLeft());
+            ops.push_back(cpuOp(std::move(part), 1.0, box.x(), box.y()));
+            return;
+        }
+        Image layer = clipLayer(*c, f, lane, ctx, tl, depth);
+        if (!layer.empty()) ops.push_back(cpuOp(std::move(layer), fade));
+    }
+
+    bool subtitleVisible(const Timeline& tl, int f) const
+    {
+        for (const SubtitleTrack& st : tl.subtitles) {
+            if (!st.enabled) continue;
+            for (const SubtitleCue& cue : st.cues)
+                if (f >= cue.start && f < cue.end && !cue.text.trimmed().isEmpty()) return true;
+            return false; // one subtitle track at a time is visible
+        }
+        return false;
+    }
+
+    // The draws of a timeline's picture at frame f (as renderTimeline)
+    void gpuTimeline(std::vector<GpuOp>& ops, const Timeline& tl, int f, const Ctx& ctx, bool subtitles)
+    {
+        int lowest = 0;
+        for (int i = tl.video.size() - 1; i >= 0; --i)
+            if (covers(tl.video[i], i, f, ctx, tl, QString())) {
+                lowest = i;
+                for (int j = 0; j < i; ++j)
+                    if (!tl.video[j].hidden && clipAt(tl.video[j], f)) layersSkipped.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+        for (int i = lowest; i < tl.video.size(); ++i) gpuTrack(ops, tl.video[i], i, f, ctx, tl, QString(), 0);
+        if (subtitles && subtitleVisible(tl, f)) {
+            Image layer(ctx.W, ctx.H);
+            subtitleLayer(layer, tl, f, ctx);
+            ops.push_back(cpuOp(std::move(layer), 1.0));
+        }
+    }
+
+    // GPU thread: the baked grades as 3D LUTs, the last few (keyframed grades bake one per frame)
+    struct LutCache {
+        struct Entry {
+            ColorGrade::Params params;
+            QString lutPath;
+            Gpu::LutPtr lut;
+        };
+        std::vector<Entry> entries;
+        Gpu::LutPtr get(Gpu::Context& g, const GpuOp& op)
+        {
+            for (size_t i = 0; i < entries.size(); ++i)
+                if (entries[i].params == op.grade && entries[i].lutPath == op.gradeLutPath) {
+                    std::rotate(entries.begin(), entries.begin() + i, entries.begin() + i + 1);
+                    return entries.front().lut;
+                }
+            Gpu::LutPtr l = g.gradeLut(*ColorGrade::bake(op.grade, op.gradeLut.get()));
+            if (!l) return {};
+            entries.insert(entries.begin(), {op.grade, op.gradeLutPath, l});
+            if (entries.size() > 16) entries.pop_back();
+            return l;
+        }
+    };
+
+    struct GpuCaches {
+        LutCache luts;
+        std::map<const StillSource*, std::pair<std::weak_ptr<StillSource>, Gpu::TexturePtr>> stills;
+    };
+
+    // What a GPU job keeps alive until the frame is submitted (uploads read their memory then; textures go back to
+    // the pool after that)
+    struct GpuKeep {
+        std::vector<Gpu::TexturePtr> textures;
+        std::vector<std::vector<uint8_t>> buffers;
+    };
+
+    // GPU thread: the draws onto dst (size of the output)
+    static void runOps(Gpu::Context& g, Gpu::Texture& dst, const std::vector<GpuOp>& ops, QSize size, GpuKeep& keep)
+    {
+        auto& slot = g.userData(); // the caches live with the context (their textures belong to it)
+        if (!slot) slot = std::make_shared<GpuCaches>();
+        GpuCaches& caches = *static_cast<GpuCaches*>(slot.get());
+        LutCache& luts = caches.luts;
+        for (const GpuOp& op : ops) {
+            switch (op.kind) {
+            case GpuOp::Draw: {
+                Gpu::TexturePtr src;
+                if (op.picture) {
+                    src = g.uploadYuv(op.picture->frame, op.info, op.mips);
+                    if (!src) { // a format the planes upload does not take after all: converted here
+                        const int w = op.picture->frame->width, h = op.picture->frame->height;
+                        std::vector<uint8_t> rgba(size_t(w) * h * 4);
+                        if (Video::toRgba(*op.picture, op.info, rgba.data(), w, h, false))
+                            src = g.uploadRgba(rgba.data(), w, h, false);
+                        keep.buffers.push_back(std::move(rgba));
+                    }
+                } else if (op.still) {
+                    // Stills stay on the card while their source lives (a photo is uploaded once, not every frame)
+                    auto& stills = caches.stills;
+                    auto it = stills.find(op.still.get());
+                    if (it != stills.end() && it->second.first.lock() == op.still) {
+                        src = it->second.second;
+                    } else {
+                        const QImage& img = op.still->image;
+                        src = g.uploadRgba(img.constBits(), img.width(), img.height(), false);
+                        for (auto e = stills.begin(); e != stills.end();) // sources closed since: textures go
+                            e = e->second.first.expired() ? stills.erase(e) : std::next(e);
+                        if (src) stills[op.still.get()] = {op.still, src};
+                    }
+                } else if (op.rgba && !op.rgba->empty()) {
+                    src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, op.premultiplied);
+                }
+                if (!src) break;
+                Gpu::LutPtr lut = op.graded ? luts.get(g, op) : nullptr;
+                g.draw(dst, {src.get(), op.m, op.opacity, lut.get(), op.crop});
+                keep.textures.push_back(std::move(src));
+                break;
+            }
+            case GpuOp::Group: {
+                const float clear[4] = {float(op.fill.redF()), float(op.fill.greenF()), float(op.fill.blueF()), float(op.fill.alphaF())};
+                Gpu::TexturePtr t = g.target(size, clear);
+                if (!t) break;
+                runOps(g, *t, op.a, size, keep);
+                g.draw(dst, {t.get(), {}, op.opacity, nullptr, {}});
+                keep.textures.push_back(std::move(t));
+                break;
+            }
+            case GpuOp::Mix:
+            case GpuOp::Luma: {
+                Gpu::TexturePtr ta = g.target(size), tb = g.target(size);
+                if (!ta || !tb) break;
+                runOps(g, *ta, op.a, size, keep);
+                runOps(g, *tb, op.b, size, keep);
+                Gpu::TexturePtr out;
+                if (op.kind == GpuOp::Luma && op.gradient) {
+                    Gpu::TexturePtr grad = g.uploadGray(op.gradient->data(), size.width(), size.height());
+                    if (grad) out = g.luma(*ta, *tb, *grad, op.t, op.softness);
+                    keep.textures.push_back(std::move(grad));
+                } else {
+                    out = g.mix(*ta, *tb, op.t);
+                }
+                if (out) g.draw(dst, {out.get(), {}, 1.0, nullptr, {}});
+                keep.textures.push_back(std::move(ta));
+                keep.textures.push_back(std::move(tb));
+                keep.textures.push_back(std::move(out));
+                break;
+            }
+            }
+        }
+    }
+
+    // The frame on the GPU path into f (buffer or hints.yuv); false = the card could not do it (CPU path then)
+    bool renderGpu(Gpu::Service& gpu, Frame& f, int64_t frame, const Ctx& ctx, const RenderHints& hints)
+    {
+        std::vector<GpuOp> ops;
+        gpuTimeline(ops, *ctx.root, int(frame), ctx, options.subtitles);
+        if (hints.cancel && hints.cancel->load()) return true; // caller sees the cancel
+        const QSize size(ctx.W, ctx.H);
+        const bool transparent = options.transparent;
+        bool yuvDone = false;
+        bool ok = false;
+        GpuKeep keep;
+        const OutputColor::Target* yuv =
+            hints.yuv && hints.yuv->bits == 8
+                    && (hints.yuv->layout == OutputColor::Layout::Yuv420 || hints.yuv->layout == OutputColor::Layout::Nv12)
+                ? hints.yuv
+                : nullptr;
+        if (!yuv) f.m_buffer = pool().take(size_t(ctx.W) * ctx.H * 4);
+        uint8_t* rgba = f.m_buffer ? f.m_buffer->data.data() : nullptr;
+        const bool ran = gpu.run([&](Gpu::Context& g) {
+            const float black[4] = {0, 0, 0, 1};
+            Gpu::TexturePtr canvas = g.target(size, transparent ? nullptr : black);
+            if (!canvas) return;
+            runOps(g, *canvas, ops, size, keep);
+            if (yuv) yuvDone = g.readYuv(*canvas, *yuv);
+            if (!yuvDone) {
+                if (!rgba) return; // the card could not write the planes after all: CPU path
+                g.readRgba(*canvas, rgba);
+            }
+            keep.textures.push_back(std::move(canvas));
+            ok = true;
+        });
+        (void)ran; // shut down: ok stays false
+        if (!ok) {
+            f.m_buffer.reset();
+            return false;
+        }
+        f.m_yuvWritten = yuvDone;
+        f.m_gpu = true;
+        framesGpu.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
     // Drops sources last used before output frame `frame` (export only: it renders forward)
     void dropBefore(int64_t frame);
 
@@ -1183,6 +1732,7 @@ Renderer::Renderer(const Timeline& tl, const Options& options) : d(std::make_uni
     d->options = options;
     d->snapshot = std::make_shared<const Timeline>(tl);
     d->output = options.outputSize();
+    if (options.gpu) Gpu::Service::prepare(); // the surface on the GUI thread; the context comes with the first frame
 }
 
 Renderer::~Renderer() = default;
@@ -1217,6 +1767,23 @@ Frame Renderer::render(int64_t frame, const RenderHints& hints)
     t_frame = frame;
     t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
     t_exact = true;
+
+    if (Gpu::Service* gpu = d->gpuService()) {
+        Frame f;
+        if (d->renderGpu(*gpu, f, frame, ctx, hints)) {
+            t_hints = nullptr;
+            if (hints.cancel && hints.cancel->load()) return {};
+            f.m_exact = t_exact;
+            f.m_width = ctx.W;
+            f.m_height = ctx.H;
+            f.m_position = frame;
+            f.m_opaque = !d->options.transparent
+                         || (f.m_buffer && fullyOpaque(f.m_buffer->data.data(), size_t(ctx.W) * ctx.H));
+            d->framesRendered.fetch_add(1, std::memory_order_relaxed);
+            return f;
+        }
+        t_exact = true; // the CPU path fetches again
+    }
 
     // Rendered straight into a pooled buffer (its vector lent to the canvas)
     Frame f;
@@ -1323,6 +1890,8 @@ Renderer::Stats Renderer::stats() const
     s.framesRendered = d->framesRendered;
     s.layersDecoded = d->layersDecoded;
     s.layersSkipped = d->layersSkipped;
+    s.framesGpu = d->framesGpu;
+    s.layersCpu = d->layersCpu;
     std::lock_guard lock(d->sourceMutex);
     s.sourcesOpen = int(d->sources.size());
     return s;

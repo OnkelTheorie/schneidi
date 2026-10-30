@@ -21,7 +21,15 @@
 //   values (Clip::transform, titles) are in project pixels (Options::format); the output may be smaller (preview) –
 //   everything is scaled by output/project size, so a preview frame looks like a shrunk export frame.
 // - Frame carries its size, colour description and a pooled buffer; a GPU texture handle can be added to it later
-//   (package 7) without changing callers that only read pixels.
+//   without changing callers that only read pixels.
+// - GPU (0.15 package 7, engine/picture/gpu): when Options::gpu and Gpu::Service::instance() (a hardware device), a
+//   frame is worked out on the calling thread as a list of draws (decoded pictures as Y'CbCr planes, stills, the clip's
+//   transform/crop/opacity/fade, grade as 3D LUT, cross dissolve, luma wipes, wipes, dip to colour) and composited on
+//   the process's one GPU thread. What the card cannot draw yet is rendered per layer on the calling thread with the
+//   CPU code and uploaded as a picture: clips with effects other than the grade, grade windows, stabilization, blur
+//   fill, compound/multicam clips, the render cache, titles (drawn only as large as their text), subtitles, wipes with
+//   a border or from/to nothing. So every frame takes the GPU path and the CPU code stays the reference (tests compare
+//   both). The result is read back as RGBA, or straight into the encoder's planes (RenderHints::yuv).
 //
 // Semantics follow the MLT graph of versions before 0.15 (held pixel by pixel against it until then).
 
@@ -35,6 +43,10 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+
+namespace OutputColor {
+struct Target;
+}
 
 namespace Picture {
 
@@ -51,7 +63,7 @@ class Buffer;
 class Frame {
 public:
     Frame() = default;
-    bool isNull() const { return !m_buffer; }
+    bool isNull() const { return !m_buffer && !m_yuvWritten; }
     int width() const { return m_width; }
     int height() const { return m_height; }
     int stride() const { return m_width * 4; }           // bytes per row (rows are tightly packed)
@@ -63,6 +75,10 @@ public:
     bool opaque() const { return m_opaque; }
     // Shows exactly its frame; false = a close picture stood in for a video (RenderHints::nearest, scrubbing)
     bool exact() const { return m_exact; }
+    // The picture went into RenderHints::yuv (the encoder's planes) instead of a buffer: bits() is null
+    bool yuvWritten() const { return m_yuvWritten; }
+    // Composited on the graphics card
+    bool gpu() const { return m_gpu; }
     // Copy as QImage (Format_RGBA8888 for straight alpha); for tests, stills and the QPainter viewer
     QImage toImage() const;
     // A view as QImage without copying (valid while this Frame lives)
@@ -77,6 +93,8 @@ private:
     ColorInfo m_color;
     bool m_opaque = false;
     bool m_exact = true;
+    bool m_yuvWritten = false;
+    bool m_gpu = false;
 };
 
 enum class Mode {
@@ -102,6 +120,8 @@ struct Options {
     int parallelFrames = 1;            // frames rendered at once: decoders keep that many pictures around a request
     // Preview "Before/After": true = colour correction bypassed (read at every render)
     std::shared_ptr<const std::atomic<bool>> gradeBypass;
+    // Composite on the graphics card when Gpu::Service::instance() has a hardware device (CPU path otherwise)
+    bool gpu = true;
 
     QSize outputSize() const { return output.isEmpty() ? format.size() : output; }
 };
@@ -113,6 +133,9 @@ struct RenderHints {
     bool nearest = false;
     // Set by the caller when the frame is not wanted any more: decoding for it stops, render() returns soon (null)
     const std::atomic<bool>* cancel = nullptr;
+    // Export: on the GPU path the encoder's planes are written straight into this target (8-bit 4:2:0 / NV12 only;
+    // Frame::yuvWritten() then), saving the RGBA readback and the conversion on the CPU. Must stay valid during render().
+    const OutputColor::Target* yuv = nullptr;
 };
 
 class Renderer {
@@ -147,6 +170,8 @@ public:
         int sourcesOpen = 0;       // decoders/stills/titles currently cached
         int layersDecoded = 0;     // clip pictures fetched (covered clips do not count)
         int layersSkipped = 0;     // clip pictures not fetched because a layer above covered the frame
+        int framesGpu = 0;         // frames composited on the graphics card
+        int layersCpu = 0;         // layers of GPU frames rendered on the CPU (what the card cannot draw yet)
     };
     Stats stats() const;
 

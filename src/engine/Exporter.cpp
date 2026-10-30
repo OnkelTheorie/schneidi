@@ -14,6 +14,7 @@
 #include "engine/Stabilizer.h"
 #include "engine/audio/Mixer.h"
 #include "engine/picture/Renderer.h"
+#include "engine/picture/gpu/Gpu.h"
 
 #include <QDir>
 #include <QFile>
@@ -302,6 +303,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     // Renderer and mixer are made in a thread (smart render looks at the files to copy), so the window stays
     // responsive. launch() continues in this thread. Sources open with their first frame.
     auto graph = std::make_shared<Graph>();
+    Picture::Gpu::Service::prepare(); // the GPU's surface on this thread (the renderer is made in the build thread)
     const int from = m_from, length = m_length, frames = m_frames;
     m_buildCancel = std::make_shared<std::atomic<bool>>(false);
     std::optional<Timeline> mixed;
