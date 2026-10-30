@@ -57,6 +57,7 @@ schneidi_test(test_key_pick)
 schneidi_test(test_viewer_large) # large viewer: panels hide and come back exactly, timeline zoom/scroll untouched
 schneidi_test(test_frame_view) # viewer picture widget: GPU/painter choice, zoom/pan, overlay mapping, zoom actions
 schneidi_test(test_picture_gpu) # picture engine on the GPU vs the CPU path (skips without a hardware device)
+schneidi_test(test_launch_args) # app command line: options (also Qt's X11 -geometry) are no files to import
 schneidi_test(test_picture_gpu_render) # Renderer's GPU path vs its CPU path, whole frames (skips without a GPU)
 # The GPU decides by itself here (every other test runs the CPU path: SCHNEIDI_GPU=0)
 set_tests_properties(test_picture_gpu_render PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null")
