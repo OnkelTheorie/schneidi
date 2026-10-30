@@ -885,6 +885,7 @@ struct Renderer::Impl {
             const uint8_t none[4] = {0, 0, 0, 0};
             if (horizontal) Compose::crop(one.data(), one.w, one.h, pos, 0, pos + std::max(size, 0.0), one.h, none);
             else Compose::crop(one.data(), one.w, one.h, 0, pos, one.w, pos + std::max(size, 0.0), none);
+            wipeBorder(one, st, p, ctx);
             return std::move(one);
         }
         // Wipe between two clips: luma with a linear gradient (wipeLuma: lround(t * 255) per pixel)
@@ -900,7 +901,27 @@ struct Renderer::Impl {
             }
             return std::lround(t * 255) / 255.0;
         });
+        wipeBorder(a, st, progress * (1.0 + soft) - soft / 2, ctx); // middle of luma's soft zone
         return a;
+    }
+
+    // Border of a wipe: a stripe in the border colour around the edge (edge = 0..1 in wipe direction)
+    static void wipeBorder(Image& img, const TransitionStyle& st, double edge, const Ctx& ctx)
+    {
+        if (st.border < 0.5) return;
+        const bool horizontal = st.type == TransitionType::WipeRight || st.type == TransitionType::WipeLeft;
+        const bool reverse = st.type == TransitionType::WipeLeft || st.type == TransitionType::WipeUp;
+        const double full = horizontal ? ctx.PW : ctx.PH;
+        const double pos = (reverse ? 1.0 - edge : edge) * full - st.border / 2; // project pixels
+        const double k = horizontal ? ctx.W / ctx.PW : ctx.H / ctx.PH;
+        Image strip(img.w, img.h);
+        QColor c = st.borderColor;
+        c.setAlpha(255);
+        fill(strip, c);
+        const uint8_t none[4] = {0, 0, 0, 0};
+        if (horizontal) Compose::crop(strip.data(), strip.w, strip.h, pos * k, 0, (pos + st.border) * k, strip.h, none);
+        else Compose::crop(strip.data(), strip.w, strip.h, 0, pos * k, strip.w, (pos + st.border) * k, none);
+        Compose::over(img.data(), strip.data(), img.w, img.h, 1.0);
     }
 
     void subtitleLayer(Image& canvas, const Timeline& tl, int f, const Ctx& ctx)

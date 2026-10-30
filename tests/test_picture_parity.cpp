@@ -183,6 +183,11 @@ void testFadesAndTransitions()
     e.transOutStyle.type = TransitionType::DipToColor;
     e.transOutStyle.color = Qt::red;
     parity("dip-out", oneTrack({e}), 20, 1.0, 0.02);
+    e.transOutStyle.type = TransitionType::WipeLeft;
+    e.transOutStyle.border = 6;
+    parity("wipe-out-border", oneTrack({e}), 20, 1.0, 0.02);
+    b.transOutStyle = c.transInStyle = e.transOutStyle;
+    parity("wipe-border", oneTrack({b, c}), 23, 3.0, 0.06);
 }
 
 void testTitleStillSpeed()
