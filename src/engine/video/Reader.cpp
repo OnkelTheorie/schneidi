@@ -34,6 +34,11 @@ constexpr int64_t kNothing = INT64_MAX; // validFrom before the first seek: noth
 // (MLT keeps 4 avformat producers open; a project with many clips would otherwise hold every decoder it ever used)
 constexpr int64_t kIdleMs = 4000; // longer than Preroll looks ahead (3 s): a prepared decoder stays until it is used
 constexpr int kKeepOpen = 4;
+// Seek window: at most this many pictures right before the target are kept (hardware: each one is a download, they
+// overlap with decoding in the finisher thread; software: they are decoded with the loop filter, which jumps skip on
+// frames nothing refers to; with 32 software jumps on 1080p60 game footage looked slower)
+constexpr int kHardwareWindow = 12;
+constexpr int kSoftwareWindow = 16;
 
 // SCHNEIDI_DECODER_IDLE_MS shortens it (tests)
 int64_t idleMs()
@@ -318,6 +323,7 @@ struct Reader::Impl {
         bool progressive = true, topFieldFirst = false;
         uint64_t generation = 0;
         bool tailOnly = false;    // only the last picture before the target (answers requests past the end)
+        bool key = false;         // a key frame (the seek window starts at one)
     };
     static constexpr int kQueue = 3; // hardware frames waiting for the download (each holds a surface)
 
@@ -354,11 +360,19 @@ struct Reader::Impl {
         int64_t position;
         std::shared_ptr<const Picture> result;
         bool done = false;
+        bool nearest = false; // Fetch::nearest
+        bool exact = true;    // answered by the picture at the position (not a close one)
     };
     mutable std::mutex m;
     std::condition_variable work, done, finishWork;
     std::deque<std::shared_ptr<const Picture>> pics; // decoded since the last seek, in order
     std::shared_ptr<const Picture> tail;             // last picture finished (also before the target)
+    uint64_t tailGeneration = 0;                     // the generation `tail` was decoded in
+    bool keeping = false;    // since the last seek: pictures before the target are kept from the first key frame on
+    bool keyStarted = false; // decoder thread: that key frame came
+    int keepFrames = 0;      // pictures Options::keepBytes holds (0 = not computed yet)
+    int64_t seekTarget = -1; // the request the last seek was for
+    int64_t keepReach = 0;   // decoder thread: pictures this close before the target are kept (exact decoding)
     Decoded rawTail;                                 // newest frame before the target, not finished yet
     std::deque<Decoded> queue;                       // for the finisher thread
     int64_t queuedBack = INT64_MIN;                  // position of the last frame queued
@@ -498,7 +512,43 @@ struct Reader::Impl {
             r.done = true;
             return true;
         }
+        if (r.nearest && !needsSeek(r.position)) {
+            // The decoder is on its way there (or past it): the newest picture of this generation before the position
+            std::shared_ptr<const Picture> best;
+            if (validFrom != kNothing && r.position >= validFrom) {
+                auto it = std::lower_bound(pics.begin(), pics.end(), r.position,
+                                           [](const auto& p, int64_t pos) { return p->position < pos; });
+                if (it != pics.begin()) best = *std::prev(it);
+            }
+            if (!best && tail && tailGeneration == generation && tail->position <= r.position) best = tail;
+            if (best) {
+                r.result = best;
+                r.exact = false;
+                r.done = true;
+                ++stats.nearest;
+                return true;
+            }
+        }
         return false;
+    }
+
+    // Under the lock: is a request waiting that a close picture would answer?
+    bool nearestWanted() const
+    {
+        for (const Request* r : pending)
+            if (r->nearest) return true;
+        return false;
+    }
+
+    // Pictures the seek window keeps (Options::keepBytes), from the stream's size
+    int seekWindow()
+    {
+        if (opt.keepBytes <= 0) return 0;
+        if (keepFrames == 0) {
+            const int bytes = av_image_get_buffer_size(info.format, std::max(1, info.width), std::max(1, info.height), 1);
+            keepFrames = std::max(1, int(opt.keepBytes / std::max(1, bytes)));
+        }
+        return keepFrames;
     }
 
     void fulfil()
@@ -567,7 +617,12 @@ struct Reader::Impl {
         int before = 0;
         for (const auto& p : pics)
             if (p->position < ref) ++before;
-        while (before > opt.behind && pics.size() > 1) {
+        // The seek window is for steps and jumps back after a seek: once requests went on further than it holds
+        // (playing on), the usual few
+        const int window = seekWindow();
+        const bool nearSeek = window > 0 && seekTarget >= 0 && high >= 0 && high - seekTarget < window;
+        const int limit = nearSeek ? std::max(opt.behind, window) : opt.behind;
+        while (before > limit && pics.size() > 1) {
             validFrom = std::max(validFrom, pics.front()->position + 1);
             pics.pop_front();
             --before;
@@ -597,6 +652,11 @@ struct Reader::Impl {
         if (mustDecode && dec->has_b_frames && av_q2d(info.timeBase) != 0 && fps > 0)
             ts -= int64_t((dec->has_b_frames + 2) / fps / av_q2d(info.timeBase));
         ts = std::max<int64_t>(ts, 0);
+        // Pictures before the target are only a way there (no loop filter on frames nothing refers to) - except the
+        // last ones the seek window keeps: they are decoded exactly (step())
+        keeping = opt.keepBytes > 0 && mustDecode;
+        keyStarted = false;
+        keepReach = !keeping ? 0 : hw.context ? kHardwareWindow : std::min(kSoftwareWindow, seekWindow());
         dec->skip_loop_filter = AVDISCARD_NONREF;
         av_seek_frame(fmt, info.index, ts, AVSEEK_FLAG_BACKWARD);
         avcodec_flush_buffers(dec);
@@ -643,6 +703,7 @@ struct Reader::Impl {
     void place(const std::shared_ptr<const Picture>& pic, bool tailOnly)
     {
         tail = pic;
+        tailGeneration = generation;
         if (!tailOnly && pic->position >= validFrom && (pics.empty() || pic->position > pics.back()->position))
             pics.push_back(pic);
     }
@@ -678,7 +739,7 @@ struct Reader::Impl {
                 av_packet_unref(pkt);
                 return;
             }
-            if (pos >= target) dec->skip_loop_filter = AVDISCARD_NONE;
+            if (pos >= target - keepReach) dec->skip_loop_filter = AVDISCARD_NONE;
         }
         for (;;) {
             const int r = avcodec_send_packet(dec, send);
@@ -713,8 +774,9 @@ struct Reader::Impl {
             got = true;
             Decoded d;
             const int64_t pts = bestPts(frame->pts, frame->pkt_dts);
+            d.key = (frame->flags & AV_FRAME_FLAG_KEY) || frame->pict_type == AV_PICTURE_TYPE_I;
             if (pts != AV_NOPTS_VALUE) {
-                const bool key = (frame->flags & AV_FRAME_FLAG_KEY) || frame->pict_type == AV_PICTURE_TYPE_I;
+                const bool key = d.key;
                 if (firstPts == AV_NOPTS_VALUE && key) firstPts = pts;
                 d.position = positionOf(pts);
             } else {
@@ -726,7 +788,7 @@ struct Reader::Impl {
                             && (par->field_order == AV_FIELD_PROGRESSIVE || par->field_order == AV_FIELD_UNKNOWN);
             d.topFieldFirst = (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) || par->field_order == AV_FIELD_TT
                               || par->field_order == AV_FIELD_TB;
-            if (d.position >= target) dec->skip_loop_filter = AVDISCARD_NONE;
+            if (d.position >= target - keepReach) dec->skip_loop_filter = AVDISCARD_NONE;
             d.frame = av_frame_clone(frame);
             av_frame_unref(frame);
             if (d.frame) out.push_back(d);
@@ -826,6 +888,7 @@ struct Reader::Impl {
             }
             if (r && needsSeek(r->position)) {
                 const int64_t from = seekStart(r->position);
+                seekTarget = r->position;
                 seek(lock, from);
                 windowEnd = from < r->position ? r->position : -1;
                 continue;
@@ -847,25 +910,59 @@ struct Reader::Impl {
             const int64_t target = validFrom;
             const uint64_t gen = generation;
             const bool hardware = hw.context != nullptr;
+            const bool keepAll = keeping;
+            // A scrubbing request waits: the newest picture before the target answers it (hardware: only the first
+            // after the seek, each one is a download)
+            const bool nearTail = nearestWanted() && (!hardware || !(tail && tailGeneration == generation));
             lock.unlock();
             bool reachedEnd = false, hwFailed = false;
             fresh.clear();
             finished.clear();
             step(fresh, reachedEnd, hwFailed, target);
-            // Keep the frames from the target on; of those before it only the newest (the tail)
+            // Keep the frames from the target on (seek window: from the first key frame on); of those before it only
+            // the newest (the tail)
             Decoded before;
             std::vector<Decoded> keep;
+            int64_t keptFrom = kNothing;
+            // Hardware: only the last few before the target (downloads); software: as many as the window holds
+            const int64_t reach = keepReach;
             for (Decoded& d : fresh) {
-                if (d.position < target) {
+                if (d.position < target && keepAll && d.key) keyStarted = true;
+                if (d.position < target && keepAll && keyStarted && target - d.position <= reach) {
+                    keptFrom = std::min(keptFrom, d.position);
+                    keep.push_back(d);
+                } else if (d.position < target) {
                     av_frame_free(&before.frame);
                     before = d;
                 } else {
                     keep.push_back(d);
                 }
             }
-            if (!hardware && !hwFailed)
+            std::shared_ptr<const Picture> nearPic;
+            if (!hardware && !hwFailed) {
                 for (Decoded& d : keep) finished.push_back(finish(d)); // software: no download, done here
+                if (nearTail && before.frame) {
+                    Decoded copy = before;
+                    copy.frame = av_frame_clone(before.frame);
+                    if (copy.frame) nearPic = finish(copy);
+                }
+            }
             lock.lock();
+            if (gen == generation && keptFrom < validFrom) validFrom = keptFrom;
+            if (nearPic && gen == generation) {
+                place(nearPic, true);
+                fulfil();
+            } else if (hardware && nearTail && before.frame && gen == generation && !hwFailed) {
+                Decoded copy = before;
+                copy.frame = av_frame_clone(before.frame);
+                copy.tailOnly = true;
+                copy.generation = gen;
+                if (copy.frame) {
+                    queue.push_back(copy);
+                    if (!finisher.joinable()) finisher = std::thread([this] { finishLoop(); });
+                    finishWork.notify_one();
+                }
+            }
             stats.decoded += int(fresh.size());
             stats.hardware = hardware && !hwFailed;
             if (hwFailed || gen != generation) {
@@ -1079,6 +1176,11 @@ void Reader::setBehind(int pictures)
 
 std::shared_ptr<const Picture> Reader::picture(int64_t position)
 {
+    return picture(position, Fetch{});
+}
+
+std::shared_ptr<const Picture> Reader::picture(int64_t position, const Fetch& fetch, bool* exact)
+{
     d->lastUse = nowMs();
     std::unique_lock lock(d->m);
     if (!d->started) {
@@ -1091,13 +1193,31 @@ std::shared_ptr<const Picture> Reader::picture(int64_t position)
     d->sequential = d->high >= 0 && position >= d->high - 8 && position <= d->high + 2;
     if (!d->sequential || position > d->high) d->high = position;
     Impl::Request req{position, nullptr, false};
+    req.nearest = fetch.nearest;
+    if (fetch.cancel && fetch.cancel->load()) return nullptr;
     if (!d->answer(req)) {
         d->pending.push_back(&req);
         d->work.notify_one();
-        d->done.wait(lock, [&] { return req.done; });
+        if (!fetch.cancel) {
+            d->done.wait(lock, [&] { return req.done; });
+        } else {
+            // Nobody signals the cancel flag: look at it now and then
+            while (!req.done) {
+                if (fetch.cancel->load()) {
+                    d->pending.remove(&req);
+                    ++d->stats.cancelled;
+                    // Nothing else asked: stop decoding towards it (the next request sets the reference again)
+                    if (d->pending.empty()) d->high = -1;
+                    d->work.notify_one();
+                    return nullptr;
+                }
+                d->done.wait_for(lock, std::chrono::milliseconds(4));
+            }
+        }
     } else {
         d->work.notify_one(); // keep reading ahead
     }
+    if (exact) *exact = req.exact;
     return req.result;
 }
 

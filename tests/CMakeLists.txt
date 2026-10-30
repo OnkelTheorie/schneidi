@@ -87,6 +87,7 @@ schneidi_test(test_render_quality) # own services measured on pixels: title outl
 schneidi_test(test_crop)
 schneidi_test(test_picture_parity)
 schneidi_test(test_picture_pump) # preview frame pump: sync under load, catch-up, seek, live change, backward
+schneidi_test(test_fast_seek) # seek window, scrubbing (close picture, then the exact one), recently shown frames
 schneidi_test(test_transition_size)
 schneidi_test(test_hw_encoders)
 schneidi_test(test_export_opus)

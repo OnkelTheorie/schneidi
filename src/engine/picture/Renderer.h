@@ -61,6 +61,8 @@ public:
     const ColorInfo& color() const { return m_color; }
     // Fully opaque everywhere (no transparent background, nothing see-through at the bottom)
     bool opaque() const { return m_opaque; }
+    // Shows exactly its frame; false = a close picture stood in for a video (RenderHints::nearest, scrubbing)
+    bool exact() const { return m_exact; }
     // Copy as QImage (Format_RGBA8888 for straight alpha); for tests, stills and the QPainter viewer
     QImage toImage() const;
     // A view as QImage without copying (valid while this Frame lives)
@@ -74,6 +76,7 @@ private:
     int64_t m_position = 0;
     ColorInfo m_color;
     bool m_opaque = false;
+    bool m_exact = true;
 };
 
 enum class Mode {
@@ -103,6 +106,15 @@ struct Options {
     QSize outputSize() const { return output.isEmpty() ? format.size() : output; }
 };
 
+// How render() may take shortcuts (preview scrubbing)
+struct RenderHints {
+    // A video picture close to the frame will do when the exact one is not decoded yet: the newest decoded one before
+    // it (right after a jump: the key frame before it). Frame::exact() tells whether one stood in.
+    bool nearest = false;
+    // Set by the caller when the frame is not wanted any more: decoding for it stops, render() returns soon (null)
+    const std::atomic<bool>* cancel = nullptr;
+};
+
 class Renderer {
 public:
     Renderer(const Timeline& tl, const Options& options);
@@ -112,6 +124,7 @@ public:
 
     // The picture of timeline frame `frame`. Thread-safe; several calls may run at once.
     Frame render(int64_t frame);
+    Frame render(int64_t frame, const RenderHints& hints);
     // Takes a changed timeline (same project format). Renders already running finish with the old one.
     void update(const Timeline& tl);
     // Output size changes (viewer resized); renders already running finish at the old size
