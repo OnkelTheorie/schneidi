@@ -14,7 +14,7 @@
 #include "core/TimelineOps.h"
 #include "engine/Denoise.h"
 #include "engine/Exporter.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/Stabilizer.h"
 #include "engine/TimelineBuilder.h"
 #include "ui/EffectsLibrary.h"

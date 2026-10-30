@@ -14,7 +14,7 @@
 #include "core/ProjectFormat.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/TimelineBuilder.h"
 
 #include <Mlt.h>

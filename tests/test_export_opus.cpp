@@ -7,7 +7,7 @@
 #include "check.h"
 
 #include "engine/Exporter.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 
 #include <Mlt.h>
 #include <QApplication>

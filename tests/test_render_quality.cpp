@@ -11,7 +11,7 @@
 #include "check.h"
 
 #include "core/ProjectFormat.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/TimelineBuilderDetail.h"
 #include "engine/video/Compose.h"
 #include "engine/video/Still.h"

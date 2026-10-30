@@ -7,7 +7,7 @@
 #include "check.h"
 
 #include "core/ProjectFormat.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/TimelineBuilder.h"
 #include "engine/video/Compose.h"
 

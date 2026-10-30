@@ -9,7 +9,7 @@
 #include "check.h"
 
 #include "core/EffectRegistry.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/StabilizeMotion.h"
 #include "engine/Stabilizer.h"
 #include "engine/TimelineBuilder.h"

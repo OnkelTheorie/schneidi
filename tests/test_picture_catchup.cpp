@@ -13,7 +13,6 @@
 
 #include "core/EffectRegistry.h"
 #include "engine/Engine.h"
-#include "engine/audio/Path.h"
 
 #include <QApplication>
 #include <QDir>

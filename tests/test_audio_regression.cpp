@@ -16,7 +16,6 @@
 
 #include "core/RenderJob.h"
 #include "engine/Exporter.h"
-#include "engine/audio/Path.h"
 #include "engine/RenderQueue.h"
 
 #include <QApplication>

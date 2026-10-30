@@ -6,7 +6,7 @@
 #include "check.h"
 
 #include "core/Types.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/ProxyManager.h"
 #include "engine/TimelineBuilder.h"
 #include "engine/video/Reader.h"

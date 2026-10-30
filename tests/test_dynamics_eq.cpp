@@ -18,7 +18,7 @@
 #include "core/Selection.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/TimelineBuilder.h"
 #include "ui/EqCurve.h"
 #include "ui/Mixer.h"

@@ -7,7 +7,6 @@
 #include "check.h"
 
 #include "engine/Engine.h"
-#include "engine/audio/Path.h"
 #include "engine/picture/Renderer.h"
 
 #include <QApplication>

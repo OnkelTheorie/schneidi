@@ -16,7 +16,7 @@
 #include "core/Selection.h"
 #include "core/ProjectFile.h"
 #include "core/ProjectFormat.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/TimelineBuilder.h"
 #include "ui/EffectsLibrary.h"
 #include "ui/Inspector.h"

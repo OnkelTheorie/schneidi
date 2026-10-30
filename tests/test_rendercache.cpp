@@ -13,7 +13,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Exporter.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/RenderCache.h"
 #include "engine/TimelineBuilder.h"
 
