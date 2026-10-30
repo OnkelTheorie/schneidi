@@ -7,7 +7,7 @@ FROM debian:trixie AS build
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build pkg-config git ca-certificates \
-        qt6-base-dev libmlt++-dev libmlt-dev \
+        qt6-base-dev qt6-base-private-dev libmlt++-dev libmlt-dev \
         libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev libminiaudio-dev \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src

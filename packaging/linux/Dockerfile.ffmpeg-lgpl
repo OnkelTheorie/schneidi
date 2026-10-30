@@ -7,7 +7,7 @@ FROM ${BASE}
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build pkg-config git ca-certificates curl xz-utils file \
-        qt6-base-dev libmlt++-dev libmlt-dev libmlt-data libminiaudio-dev \
+        qt6-base-dev qt6-base-private-dev libmlt++-dev libmlt-dev libmlt-data libminiaudio-dev \
         libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev \
         zlib1g-dev libbz2-dev liblzma-dev \
         nasm libopenh264-dev libkvazaar-dev libsvtav1enc-dev libvpx-dev libdav1d-dev \

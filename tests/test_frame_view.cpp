@@ -23,6 +23,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QGuiApplication>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QTemporaryDir>
@@ -109,7 +110,7 @@ void testChoice()
 
     // Here (offscreen tests): the painter, with the same API
     FrameView view;
-    CHECK(view.backend() == B::Painter);
+    if (QGuiApplication::platformName() == "offscreen") CHECK(view.backend() == B::Painter);
     CHECK(!view.backendInfo().isEmpty());
 }
 
@@ -381,8 +382,12 @@ void testViewer(const QString& clipDir)
 int main(int argc, char** argv)
 {
     Check::initEnv();
+    // FRAME_VIEW_PLATFORM=xcb under Xvfb: the GPU path (with SCHNEIDI_VIEWER=gpu on a software device)
+    if (qEnvironmentVariableIsSet("FRAME_VIEW_PLATFORM")) qputenv("QT_QPA_PLATFORM", qgetenv("FRAME_VIEW_PLATFORM"));
     QApplication app(argc, argv);
     Check::initApp("frame-view");
+    qInfo().noquote() << "FrameView backend:" << (FrameView().backend() == FrameView::Backend::Rhi ? "rhi" : "painter")
+                      << FrameView().backendInfo();
     if (const int frames = qEnvironmentVariableIntValue("FRAME_VIEW_BENCH"); frames > 0) {
         bench(frames);
         return 0;

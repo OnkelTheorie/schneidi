@@ -58,6 +58,7 @@ FrameView::Probe FrameViewRhiSurface::probe()
         p.ok = true;
         p.device = QString::fromUtf8(rhi->driverInfo().deviceName);
         p.software = softwareDevice(rhi->driverInfo());
+        rhi.reset(); // before the fallback surface (OpenGL) goes: the QRhi needs it to shut down
         return p;
     }();
     return result;
