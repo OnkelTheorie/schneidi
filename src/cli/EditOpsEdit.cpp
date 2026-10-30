@@ -24,6 +24,9 @@ const QString kStyleFields = "font, size, color, bold, italic, align (left|cente
                              "(like DaVinci); align only lines up the lines inside the block, it does not move the "
                              "block to an edge. For text at the left edge: align left and x = -(width/2) + margin + "
                              "half the text width (or check with `frames`). The outline is drawn outside the letters";
+// The keys applyStyle reads (the ones kStyleFields names)
+const QStringList kStyleKeys{"font", "size", "color", "bold", "italic", "align", "x", "y", "outline", "outline_color",
+                             "outline_width", "box", "box_color", "box_padding"};
 
 bool applyStyle(TitleStyle& t, const QJsonObject& op)
 {
@@ -612,7 +615,7 @@ void addEditOps(QVector<OpDef>& ops)
                  "keeps its start; longer overwrites only the added range)",
                  "Style (pixels of the timeline format, from the center, y up): " + kStyleFields
                      + ". Colors \"#rrggbb\" or \"#aarrggbb\". text may have several lines (\\n).",
-                 opTitle}
+                 opTitle, kStyleKeys}
         << OpDef{"trim", "{op:'trim', clip, edge?:'start'|'end', by|to, mode?}",
                  "move a clip edge; mode normal (default, no ripple), ripple, roll (the cut), slip (content, by only), "
                  "slide (clip between its neighbours)",
@@ -620,7 +623,7 @@ void addEditOps(QVector<OpDef>& ops)
                  "material; the clip's keyframes stay where they are in the clip (an animation keeps its timing, "
                  "they never leave the clip). Only the place of Color page windows (x, y, size, rotation) moves with the "
                  "content, so a window tracked to a face stays on it.",
-                 opTrim}
+                 opTrim, {"clips"}} // clipOf: a list of one
         << OpDef{"transition", "{op:'transition', at|clips, type?, length?, align?, kind?, trim?, remove?, …}",
                  "transition at the cut nearest to `at` (all tracks) or at both edges of the clips (default cross "
                  "dissolve, 1s)",
@@ -630,25 +633,26 @@ void addEditOps(QVector<OpDef>& ops)
                  "kind: only 'video' or 'audio' tracks. Alone at a clip edge it fades from/to black (silence). "
                  "remove:true removes them; existing ones change their style/length. A cut without spare material "
                  "(clips used to their ends) gets none; trim:true ripple-trims the clips there so it fits.",
-                 opTransition}
+                 opTransition,
+                 kClipKeys + QStringList{"color", "softness", "border", "border_color", "invert", "audio_curve", "luma"}}
         << OpDef{"track", "{op:'track', track, name?, lock?, mute?, hidden?, color?, move_to?}",
                  "track header settings; subtitle tracks (ST1 …) take name, enabled, lock and the title style",
                  "Video/audio track colors: orange, apricot, yellow, lime, olive, green, teal, navy, blue, purple, "
                  "violet, pink, tan, beige, brown, chocolate. Subtitle style: " + kStyleFields
                      + " (y = distance from the bottom edge).",
-                 opTrack}
+                 opTrack, QStringList{"enabled"} + kStyleKeys}
         << OpDef{"add_subtitle_track", "{op:'add_subtitle_track', name?}", {}, {}, opAddSubtitleTrack}
         << OpDef{"link", "{op:'link'|'unlink', clips}", "link clips (move/cut together) or unlink them", {},
                  [](Session& s, const QJsonObject& op) { opLink(s, op, true); }}
         << OpDef{"unlink", {}, {}, {}, [](Session& s, const QJsonObject& op) { opLink(s, op, false); }}
         << OpDef{"speed", "{op:'speed', clips, speed?, reverse?, freeze?, keep_pitch?, ripple?:true}",
-                 "clip speed (1 = normal, 0.01..100), reverse, freeze frame; ripple: length follows, later clips move", {}, opSpeed}
+                 "clip speed (1 = normal, 0.01..100), reverse, freeze frame; ripple: length follows, later clips move", {}, opSpeed, kClipKeys}
         << OpDef{"speed_ramp", "{op:'speed_ramp', clip, points:[{at, speed, smooth?}], speed?} or {…, clear:true}",
                  "speed ramp: from each point on its own speed (speed = before the first point)",
                  "at = timeline frame inside the clip as it is now, or {clip, source:\"12.4s\"} = where the clip "
                  "plays that source time (safe after earlier ramps); smooth = frames of a soft change around the "
                  "point. The clip length follows the speeds, later clips move. Replaces earlier points.",
-                 opSpeedRamp}
+                 opSpeedRamp, {"clips"}} // clipOf: a list of one
         << OpDef{"marker", "{op:'marker', at, remove?}", "at may be {media, source} to mark a moment of the material", {}, opMarker}
         << OpDef{"marks", "{op:'marks', in?, out?, clear?}", "timeline In/Out range (I/O)", {}, opMarks}
         << OpDef{"media", "{op:'media', media, bin?, color?, flags?, in?, out?}",
@@ -670,7 +674,7 @@ void addEditOps(QVector<OpDef>& ops)
                  "remove:true deletes the bin; its media and sub-bins move into its parent bin (nothing is deleted "
                  "from disk). `info` media show their bin as a path.",
                  opBin}
-        << OpDef{"copy", "{op:'copy', clips, at}", "copy clips to `at` (same tracks, overwrites)", {}, opCopy}
+        << OpDef{"copy", "{op:'copy', clips, at}", "copy clips to `at` (same tracks, overwrites)", {}, opCopy, kClipKeys}
         << OpDef{"insert", "{op:'insert'|'replace'|'place_on_top'|'ripple_overwrite', media, at, in?, out?, track?}",
                  "source edits like F9–F12: insert (later clips move right), replace (the clip under `at`, keeps its "
                  "length), place_on_top (first free track above), ripple_overwrite (replace, the rest moves by the "

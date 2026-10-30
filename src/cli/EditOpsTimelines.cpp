@@ -145,8 +145,8 @@ void addTimelineOps(QVector<OpDef>& ops)
         << OpDef{"compound", "{op:'compound', clips, name?}", "combine clips into one compound clip (its own timeline)",
                  "The new compound clip covers the span of the clips; its content is a timeline named `name` that "
                  "can be edited with {op:'timeline'}.",
-                 opCompound}
-        << OpDef{"decompose", "{op:'decompose', clips}", "put a compound clip's content back in place", {}, opDecompose}
+                 opCompound, kClipKeys}
+        << OpDef{"decompose", "{op:'decompose', clips}", "put a compound clip's content back in place", {}, opDecompose, kClipKeys}
         << OpDef{"place_timeline", "{op:'place_timeline', timeline, at?, track?}",
                  "put another timeline (or compound clip) as one clip into this one (default: at the end)", {},
                  opPlaceTimeline}

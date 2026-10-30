@@ -394,9 +394,9 @@ void addAudioOps(QVector<OpDef>& ops)
                  "clip volume in dB (-60 = silent, max +12) and pan (-100 left … 100 right)",
                  "A clip with volume keyframes (ducked music, a drawn curve) keeps its shape: the whole curve moves so "
                  "that the clip's level becomes db - its loudest key, or its volume when `duck` lowered all of it.",
-                 opVolume}
+                 opVolume, kClipKeys}
         << OpDef{"audio_stream", "{op:'audio_stream', clips, stream}",
-                 "which audio stream of the file the clips play (0 = first; `probe` lists them)", {}, opAudioStream}
+                 "which audio stream of the file the clips play (0 = first; `probe` lists them)", {}, opAudioStream, kClipKeys}
         << OpDef{"mixer", "{op:'mixer', track:'A1'|'master', volume_db?|target_lufs?, pan?, mute?, solo?, limiter?, "
                           "limiter_db?, compressor?, eq?}",
                  "track faders like the Mixer; the master has volume_db, limiter (on/off) and limiter_db (ceiling, "
@@ -417,7 +417,7 @@ void addAudioOps(QVector<OpDef>& ops)
                  "loudest/whole hits the target), otherwise each clip on its own. allow_track_gain:true: what a clip needs "
                  "beyond the clip volume's +12 dB goes onto its track fader (the track's other clips are lowered by as "
                  "much, so they stay as they were). Measures the files (takes a while).",
-                 opNormalize}
+                 opNormalize, kClipKeys}
         << OpDef{"duck", "{op:'duck', clips|track, under, amount_db?, threshold_db?, attack?, release?, hold?}",
                  "ducking: lower the music while other tracks have sound (volume keyframes)",
                  "clips or track = the music; under = the tracks that duck it (\"A1\", \"A1,A3\" or stream/track "
@@ -425,7 +425,7 @@ void addAudioOps(QVector<OpDef>& ops)
                  "sound on 'under' (default -35 dBFS), attack/release: ramp before/after a sound (default 0.15s / "
                  "0.4s), hold: pauses shorter than this stay ducked (default 0.5s). Replaces the clips' volume "
                  "keyframes; run it again after editing.",
-                 opDuck};
+                 opDuck, {"clip", "linked", "replace"}}; // replace:false keeps clips that have volume keyframes
 }
 
 } // namespace Cli::detail

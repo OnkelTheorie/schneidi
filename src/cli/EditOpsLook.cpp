@@ -361,13 +361,13 @@ KeyEase parseEase(const QJsonValue& v)
 
 void opKeyframe(Session& s, const QJsonObject& op)
 {
-    // A key this op does not know was dropped without a word ("keyframes":[…], "time"): the op ran and nothing moved
+    // A key this op does not know was dropped without a word ("time" in keys): the op ran and nothing moved. The
+    // op's own keys are checked by applyOp
     const auto checkKeys = [](const QJsonObject& o, const QStringList& known, const char* where) {
         for (auto it = o.begin(); it != o.end(); ++it)
             if (!known.contains(it.key()))
                 fail("BAD_ARGUMENT", QString("keyframe: unknown key '%1' %2(keys: %3)").arg(it.key(), where, known.join(", ")));
     };
-    checkKeys(op, {"op", "clips", "clip", "linked", "param", "at", "value", "ease", "remove", "move_to", "keys", "clear"}, "");
     if (!op.contains("param")) fail("BAD_ARGUMENT", "keyframe: missing 'param' (zoom, x, y, opacity, … see `help edit --op keyframe`)");
     const QVector<AnimParam> params = parseParams(op.value("param").toString());
     const AnimParam p = params.first(); // value checks: the parameters of "zoom" share their range
@@ -597,7 +597,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "reset:true removes the whole grade, reset:[\"liftY\", …] sets single values back. Values that "
                  "have keyframes get one at `at` (default: clip start); keyframe:true/false with `at` sets/removes a "
                  "keyframe of every value there. Single grade values animate with {op:'keyframe', param:'grade.gainY'}.",
-                 opColor}
+                 opColor, kClipKeys}
         << OpDef{"window", "{op:'window', clips, window?, add?, remove?, shape?, x?, y?, width?, height?, rotation?, "
                            "softness?, invert?, fill?, amount?, color?, lift?, gamma?, gain?, offset?, contrast?, pivot?, "
                            "saturation?, temperature?, tint?, exposure?, at?, keyframe?}",
@@ -615,7 +615,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "The picture is the clip before transform/crop. Values that have keyframes get one at `at` (default "
                  "clip start); keyframe:true/false with `at` sets/removes a keyframe of every window value there. "
                  "Animate single values with {op:'keyframe', param:'grade.w1.x'}. remove:true deletes the window.",
-                 opWindow}
+                 opWindow, kClipKeys}
         << OpDef{"track_window", "{op:'track_window', clips, window, from?, to?}",
                  "the window follows the object under it (tracker, position only)",
                  "Tracks what is inside window `window` from `from` to `to` (timeline frames inside the clip, default "
@@ -623,7 +623,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "frame (keyframes in that range are replaced). Place the window on the object at `from` first. "
                  "Stops where the picture no longer matches (see notes); move the window there and track again. Works "
                  "on the clip's picture before transform, speed changes included. Slow: ~10–40 frames per second.",
-                 opTrack}
+                 opTrack, kClipKeys}
         << OpDef{"transform", "{op:'transform', clips, zoom?, zoom_x?, zoom_y?, x?, y?, rotation?, crop_left?, "
                               "crop_right?, crop_top?, crop_bottom?, opacity?, fit?, fit_blur?, fit_dim?, transform_on?, "
                               "crop_on?, opacity_on?, reset?, at?}",
@@ -655,7 +655,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "a new zoom or place. transform_on/crop_on/opacity_on:false switch that "
                  "Inspector section off (its values and keyframes stay but do not apply, e.g. to compare), true on "
                  "again; `info` shows them when off.",
-                 opTransform}
+                 opTransform, kClipKeys}
         << OpDef{"keyframe", "{op:'keyframe', clips, param, at, value?, ease?, remove?, move_to?} or {op:'keyframe', "
                              "clips, param, keys:[{at, value?, ease?, remove?, move_to?}, …]} or {op:'keyframe', clips, "
                              "param, clear:true}",
@@ -674,7 +674,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "pixels on the fitted picture). move_to = move the keyframe at `at` to this time inside the clip "
                  "(value, ease and curve handles stay; one already there is replaced). For a zoom punch, flash or "
                  "shake on a hit use op 'accent' (one op for many times).",
-                 opKeyframe}
+                 opKeyframe, kClipKeys}
         << OpDef{"accent", "{op:'accent', at:[times]|markers:true, clips?, preset?, strength?, length?, punch?, flash?, "
                            "shake?}",
                  "zoom punch / flash / shake on hits (kills, beats, drops), written as keyframes",
@@ -695,12 +695,12 @@ void addLookOps(QVector<OpDef>& ops)
                  "'keyframe'. Shake moves the picture: on a clip that just fills the frame the edge shows (zoom a "
                  "little, or fit:'blur'). Save the big accents for the big moments: the same one on every cut wears "
                  "off; pulse suits beats.",
-                 opAccent}
+                 opAccent, kClipKeys}
         << OpDef{"copy_attributes", "{op:'copy_attributes', from, clips, attributes?}",
                  "Paste Attributes: copy values of clip `from` to the clips",
                  "attributes (default all): zoom (with fit), position, rotation, crop, opacity, effects (video and audio), color "
                  "(grade), speed, volume, pan, fades. Keyframes come along.",
-                 opCopyAttributes};
+                 opCopyAttributes, kClipKeys};
 }
 
 } // namespace Cli::detail

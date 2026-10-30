@@ -706,11 +706,12 @@ QVector<OpDef> makeOps()
     QVector<OpDef> ops{
         {"append", "{op:'append', media, in?, out?|duration?, speed?, track?, presets?}", "put a source range at the end of the timeline",
          kPresetsDetails,
-         [](Session& s, const QJsonObject& op) { opPlace(s, op, true); }},
+         [](Session& s, const QJsonObject& op) { opPlace(s, op, true); }, {"at"}},
         {"place", "{op:'place', media, at, in?, out?|duration?, speed?, track?, presets?}", "overwrite at a position", kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, false); }},
         {"keep", "{op:'keep', media, ranges:[[from,to]|{from,to,speed?},...], at?, speed?, track?, presets?}",
-         "put several source ranges one after another (e.g. the 'sound' ranges of `silence`)", kPresetsDetails, opKeep},
+         "put several source ranges one after another (e.g. the 'sound' ranges of `silence`)", kPresetsDetails, opKeep,
+         {"range", "from", "to"}}, // one range written another way (small models)
         {"align", "{op:'align', events:[times], to:[times]|{first, every}, max_shift?, accent?, strength?}",
          "put events (kills) on the beat: each clip's content slips until its event lies on the nearest target",
          "events = the moments, best the hit_s of `highlights` as {media:'/path/clip.mkv', source:'7.67s'} (or "
@@ -728,7 +729,7 @@ QVector<OpDef> makeOps()
              if (op.contains("clip")) s.editor.bladeAt(clipOf(s, op).id, at);
              else s.editor.splitAtPlayhead(at); // no selection: every clip under `at`
          }},
-        {"delete", "{op:'delete', clips:[ids], ripple?:false}", "clips or subtitles", {}, opDelete},
+        {"delete", "{op:'delete', clips:[ids], ripple?:false}", "clips or subtitles", {}, opDelete, kClipKeys},
         {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to],...]}",
          "remove time ranges on all tracks; `ranges` are all timeline times before the cut (e.g. words of "
          "`transcribe` with words:true), applied together", {},
@@ -750,18 +751,20 @@ QVector<OpDef> makeOps()
              const bool ripple = op.value("ripple").toBool(true);
              s.editor.deleteRanges(ranges, ripple, ripple ? "Delete ranges with ripple" : "Delete ranges");
          }},
-        {"move", "{op:'move', clips, by|to, track_delta?}", {}, {}, opMove},
+        {"move", "{op:'move', clips, by|to, track_delta?}", {}, {}, opMove, kClipKeys},
         {"fade", "{op:'fade', clips, in?, out?, linked?}", "fade handles (video: to the track below/black, audio: volume); "
          "a video clip's sound fades along unless linked:false; sound alone fades without its picture unless linked:true",
-         {}, opFade},
+         {}, opFade, kClipKeys},
         {"enable", "{op:'enable'|'disable', clips}", {}, {},
          [](Session& s, const QJsonObject& op) {
              s.editor.modifyClips(clipIds(s, op), "Enable", [](Clip& c) { c.enabled = true; });
-         }},
+         },
+         kClipKeys},
         {"disable", {}, {}, {},
          [](Session& s, const QJsonObject& op) {
              s.editor.modifyClips(clipIds(s, op), "Disable", [](Clip& c) { c.enabled = false; });
-         }},
+         },
+         kClipKeys},
         {"clear", "{op:'clear'}", "empty the timeline", {},
          [](Session& s, const QJsonObject&) { s.editor.deleteRange(0, std::max(1, endOf(s)), false); }},
         {"subtitle", "{op:'subtitle', text, at, to?|duration?, track?:'ST1'}",
@@ -790,7 +793,7 @@ QVector<OpDef> makeOps()
          "titles and compound clips. denoise (noise reduction for voice recordings, ~11 ms delay): reduction = how far "
          "the noise is lowered in dB (default 12), track = measure the noise in the recording (default true), floor "
          "= fixed noise level in dBFS used when track is false.",
-         opEffect},
+         opEffect, kClipKeys},
         {"add_track", "{op:'add_track', kind:'video'|'audio', at?}", "new track (default: above/below the others)",
          {}, opAddTrack},
         {"remove_track", "{op:'remove_track', track} or {op:'remove_track', tracks:[…]}",
@@ -816,10 +819,154 @@ const QVector<OpDef>& editOps()
     return ops;
 }
 
+namespace {
+
+// Splits at `sep` outside brackets, braces and quotes
+QStringList splitTop(QStringView text, QChar sep)
+{
+    QStringList out;
+    int depth = 0;
+    QChar quote;
+    qsizetype from = 0;
+    for (qsizetype i = 0; i < text.size(); ++i) {
+        const QChar c = text[i];
+        if (!quote.isNull()) {
+            if (c == quote) quote = QChar();
+        } else if (c == '\'' || c == '"') {
+            quote = c;
+        } else if (c == '[' || c == '{') {
+            ++depth;
+        } else if (c == ']' || c == '}') {
+            --depth;
+        } else if (c == sep && depth == 0) {
+            out << text.mid(from, i - from).toString();
+            from = i + 1;
+        }
+    }
+    out << text.mid(from).toString();
+    return out;
+}
+
+// The name a part starts with ("in?", "'audio'", "\"at\":4"); *rest = what follows it. Empty: no name
+QString leadingName(const QString& part, QString* rest)
+{
+    const QString t = part.trimmed();
+    qsizetype i = 0;
+    const QChar quote = !t.isEmpty() && (t[0] == '\'' || t[0] == '"') ? t[0] : QChar();
+    if (!quote.isNull()) ++i;
+    const qsizetype start = i;
+    if (i >= t.size() || !(t[i].isLetter() || t[i] == '_')) return {};
+    while (i < t.size() && (t[i].isLetterOrNumber() || t[i] == '_')) ++i;
+    const QString name = t.mid(start, i - start);
+    if (!quote.isNull()) {
+        if (i >= t.size() || t[i] != quote) return {};
+        ++i;
+    }
+    *rest = t.mid(i).trimmed();
+    return name;
+}
+
+} // namespace
+
+QVector<OpObject> opObjects(const QString& text)
+{
+    QVector<OpObject> out;
+    for (qsizetype i = 0; i < text.size(); ++i) {
+        if (text[i] != '{') continue;
+        // The matching brace (quotes inside the object count as strings)
+        qsizetype end = i + 1;
+        int depth = 1;
+        QChar quote;
+        for (; end < text.size() && depth > 0; ++end) {
+            const QChar c = text[end];
+            if (!quote.isNull()) {
+                if (c == quote) quote = QChar();
+            } else if (c == '\'' || c == '"') {
+                quote = c;
+            } else if (c == '{') {
+                ++depth;
+            } else if (c == '}') {
+                --depth;
+            }
+        }
+        if (depth > 0) break;
+        OpObject o;
+        for (const QString& element : splitTop(QStringView(text).mid(i + 1, end - i - 2), ',')) {
+            // "out?|duration?" = two keys; a value ("kind:'video'|'audio'", "move:'up'|…|place") goes on until a
+            // part names a key with a value of its own ("at:[times]|markers:true")
+            const QStringList parts = splitTop(element, '|');
+            QString rest;
+            if (leadingName(parts.first(), &rest) == QLatin1String("op") && rest.startsWith(':')) {
+                for (int p = 0; p < parts.size(); ++p) {
+                    QString n = (p == 0 ? rest.mid(1) : parts[p]).trimmed();
+                    if (n.size() >= 2 && (n[0] == '\'' || n[0] == '"')) n = n.mid(1, n.size() - 2);
+                    if (!n.isEmpty()) o.ops << n;
+                }
+                continue;
+            }
+            bool inValue = false;
+            for (const QString& part : parts) {
+                const QString key = leadingName(part, &rest);
+                if (rest.startsWith('?')) rest = rest.mid(1).trimmed();
+                if (key.isEmpty() || !(rest.isEmpty() || rest.startsWith(':'))) {
+                    inValue = true;
+                    continue;
+                }
+                if (rest.isEmpty() && inValue) continue;
+                if (!o.keys.contains(key)) o.keys << key;
+                inValue = rest.startsWith(':');
+            }
+        }
+        out << o;
+        i = end - 1;
+    }
+    return out;
+}
+
+QStringList editOpKeys(const QString& name)
+{
+    static const QHash<QString, QStringList> all = [] {
+        QHash<QString, QStringList> keys;
+        const auto add = [&](const QString& op, const QStringList& more) {
+            QStringList& k = keys[op];
+            for (const QString& key : more)
+                if (!k.contains(key)) k << key;
+        };
+        for (const OpDef& d : editOps()) add(d.name, {"op"});
+        for (const OpDef& d : editOps()) {
+            // An object of the usage without op ("… or {…, clear:true}") is this op's; the others name their ops
+            for (const OpObject& o : opObjects(d.usage))
+                for (const QString& op : o.ops.isEmpty() ? QStringList{d.name} : o.ops) add(op, o.keys);
+            for (const QString& text : {d.summary, d.details})
+                for (const OpObject& o : opObjects(text))
+                    for (const QString& op : o.ops) add(op, o.keys);
+            add(d.name, d.moreKeys);
+        }
+        // The dispatcher takes the file under the names of other commands as 'media'
+        for (QStringList& k : keys)
+            if (k.contains("media")) k << "file" << "path";
+        return keys;
+    }();
+    return all.value(name);
+}
+
 void applyOp(Session& s, const QJsonObject& given)
 {
     QJsonObject op = given;
     const QString name = op.value("op").toString();
+    const auto def = std::find_if(editOps().begin(), editOps().end(), [&](const OpDef& d) { return d.name == name; });
+    if (def == editOps().end()) fail("BAD_ARGUMENT", QString("unknown op '%1' (see `help edit`)").arg(name));
+    // A key the op does not read was dropped without a word ("star" for "start"): the op ran and did something else
+    const QStringList keys = editOpKeys(name);
+    for (auto it = given.begin(); it != given.end(); ++it)
+        if (!keys.contains(it.key())) {
+            QStringList shown = keys;
+            for (const char* k : {"op", "file", "path"}) shown.removeAll(k);
+            shown.erase(std::remove_if(shown.begin(), shown.end(), [](const QString& k) { return k.startsWith('_'); }),
+                        shown.end());
+            fail("BAD_ARGUMENT", QString("unknown key '%1' (keys: %2; `help` with command 'edit' and op '%3')")
+                                     .arg(it.key(), shown.isEmpty() ? "none" : shown.join(", "), name));
+        }
     // The file under the name other commands give it ("file", "path"; no op has such a key): taken as 'media'
     if (!op.contains("media"))
         for (const char* alias : {"file", "path"})
@@ -829,9 +976,7 @@ void applyOp(Session& s, const QJsonObject& given)
                 break;
             }
     s.selection.clear();
-    for (const OpDef& d : editOps())
-        if (d.name == name) return d.run(s, op);
-    fail("BAD_ARGUMENT", QString("unknown op '%1' (see `help edit`)").arg(name));
+    def->run(s, op);
 }
 
 QString editHelp()
