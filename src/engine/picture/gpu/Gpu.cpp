@@ -867,27 +867,33 @@ struct Service::Impl {
 
     void loop()
     {
+        // Jobs waiting together are recorded into one offscreen frame (at most kBatch): the card's wait at its end
+        // covers several frames (export workers keep the queue full) instead of one wait per frame
+        constexpr size_t kBatch = 3;
         for (;;) {
-            Job* job;
+            std::vector<Job*> jobs;
             {
                 std::unique_lock lock(mutex);
                 wake.wait(lock, [&] { return !queue.empty(); });
-                job = queue.front();
-                queue.pop_front();
+                while (!queue.empty() && jobs.size() < kBatch) {
+                    jobs.push_back(queue.front());
+                    queue.pop_front();
+                    if (!jobs.back()->fn) break; // the end: after what came before it
+                }
             }
-            const bool quit = !job->fn;
-            if (quit) {
-                context.reset(); // on its own thread (GL context, textures)
-            } else {
+            const bool quit = !jobs.back()->fn;
+            const size_t work = jobs.size() - (quit ? 1 : 0);
+            if (work > 0) {
                 context->begin();
-                (*job->fn)(*context);
+                for (size_t i = 0; i < work; ++i) (*jobs[i]->fn)(*context);
                 context->finish();
             }
+            if (quit) context.reset(); // on its own thread (GL context, textures)
             {
                 std::lock_guard lock(mutex);
-                job->done = true;
+                for (Job* job : jobs) job->done = true;
             }
-            job->doneCv.notify_all();
+            for (Job* job : jobs) job->doneCv.notify_all();
             if (quit) return;
         }
     }
