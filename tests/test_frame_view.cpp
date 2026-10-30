@@ -8,8 +8,8 @@
 // - Drawing: bilinear below 200 %, sharp pixels from 200 %; the bars in the letterbox colour
 // - Viewer: the zoom actions (Workspace › Viewer-Zoom, fit on Alt+0) set the zoom, 100 % asks the engine for full-size
 //   frames, the zoom button shows the step
-// FRAME_VIEW_DUMP=<folder>: pictures of the zoom states. FRAME_VIEW_BENCH=<n>: CPU time per displayed 1080p frame (also
-// run it under Xvfb with SCHNEIDI_VIEWER=gpu to measure the GPU path).
+// FRAME_VIEW_DUMP=<folder>: pictures of the zoom states. FRAME_VIEW_BENCH=<n>: CPU time per displayed 1080p frame
+// (FRAME_VIEW_POS=x,y places the window, e.g. on a second monitor; also run it under Xvfb with SCHNEIDI_VIEWER=gpu to measure the GPU path).
 
 #include "check.h"
 
@@ -284,6 +284,10 @@ void bench(int frames)
 {
     FrameView view;
     view.resize(1280, 720);
+    // FRAME_VIEW_POS=x,y: where the window opens on a real display (e.g. a second monitor), without taking the focus
+    if (const QStringList pos = QString::fromLocal8Bit(qgetenv("FRAME_VIEW_POS")).split(','); pos.size() == 2)
+        view.move(pos[0].toInt(), pos[1].toInt());
+    view.setAttribute(Qt::WA_ShowWithoutActivating);
     view.show();
     QTest::qWait(200);
     QList<QImage> images;
