@@ -1162,7 +1162,7 @@ struct Renderer::Impl {
     struct GpuOp {
         enum Kind {
             Draw,  // a picture over the target
-            Group, // `a` onto a new target cleared to `fill`, that over the target
+            Group, // `a` onto a new target cleared to `fill`, that over the target with `opacity`
             Mix,   // `a` and `b` each onto a transparent target, cross dissolved (t), the result over the target
             Luma,  // as Mix, wiped by `gradient` (progress t, softness)
         };
@@ -1171,7 +1171,8 @@ struct Renderer::Impl {
         std::shared_ptr<const Video::Picture> picture; // decoded (its planes are uploaded)
         Video::Info info;
         std::shared_ptr<StillSource> still;
-        std::shared_ptr<Image> rgba; // made on the CPU (straight alpha)
+        std::shared_ptr<Image> rgba; // made on the CPU (straight alpha, or premultiplied)
+        bool premultiplied = false;
         bool mips = false;
         Compose::Affine m;
         double opacity = 1;
@@ -1195,7 +1196,6 @@ struct Renderer::Impl {
         for (const EffectInstance& e : c.effects)
             if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId)) return false;
         if (ColorGrade::active(c) && !ctx.bypassGrade && !ColorGrade::windowsAt(c, t).isEmpty()) return false;
-        if ((Keys::hasTransform(c) || Keys::hasCrop(c)) && c.transform.hasBlurFill()) return false;
         if (StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) return false;
         const Source s = source(c.mediaPath, lane);
         if (s.still) return true;
@@ -1235,10 +1235,13 @@ struct Renderer::Impl {
             op.m.e = double(fh) / nh;
             op.m.c = (ctx.W - fw) / 2;
             op.m.f = (ctx.H - fh) / 2;
-        } else {
+        }
+        double shares[4] = {0, 0, 0, 0};
+        if (transform || crop) {
             if (crop) {
                 const double l = val(AnimParam::CropLeft) / fit.width(), tp = val(AnimParam::CropTop) / fit.height();
                 const double r = val(AnimParam::CropRight) / fit.width(), b = val(AnimParam::CropBottom) / fit.height();
+                shares[0] = l, shares[1] = tp, shares[2] = r, shares[3] = b;
                 op.crop = QRectF(QPointF(l * nw, tp * nh), QPointF((1 - r) * nw, (1 - b) * nh));
                 if (op.crop.width() <= 0 || op.crop.height() <= 0) return false;
             }
@@ -1263,6 +1266,61 @@ struct Renderer::Impl {
                 op.gradeLut = std::move(l);
             }
         }
+        if ((transform || crop) && c.transform.hasBlurFill()) return blurFillOp(c, ctx, shares, op);
+        return true;
+    }
+
+    // Blurred fill behind a gpuClip's draw (as clipLayer: BlurFill::makeBackground from the graded, uncropped picture,
+    // the picture over it, then opacity): the small background is made here from a shrunk copy of the picture (the
+    // fill is blurred anyway; the full picture never needs converting) and scaled up on the card. op becomes a Group.
+    bool blurFillOp(const Clip& c, const Ctx& ctx, const double shares[4], GpuOp& op)
+    {
+        constexpr int kMost = 640; // longer side of the shrunk picture (the background is at most 640 x 360)
+        Image small;
+        double aspect = 0;
+        if (op.still) {
+            const QImage& img = op.still->image;
+            aspect = double(img.width()) / std::max(1, img.height());
+            const double k = std::min(1.0, double(kMost) / std::max(img.width(), img.height()));
+            small = Image(std::max(1, int(std::lround(img.width() * k))), std::max(1, int(std::lround(img.height() * k))));
+            Compose::Affine m;
+            m.a = double(small.w) / img.width();
+            m.e = double(small.h) / img.height();
+            Compose::draw(small.data(), small.w, small.h, img.constBits(), img.width(), img.height(), m, 1.0);
+        } else {
+            const int w = op.picture->frame->width, h = op.picture->frame->height;
+            aspect = double(w) / std::max(1, h);
+            const double k = std::min(1.0, double(kMost) / std::max(w, h));
+            small = Image(std::max(2, int(std::lround(w * k))), std::max(2, int(std::lround(h * k))));
+            if (!Video::toRgba(*op.picture, op.info, small.data(), small.w, small.h, true)) return false;
+        }
+        if (op.graded) ColorGrade::apply(small.data(), small.w, small.h, *ColorGrade::bake(op.grade, op.gradeLut.get()), 1);
+        const BlurFill::Background bg = BlurFill::makeBackground(small.data(), small.w, small.h, aspect, shares,
+                                                                 ctx.PW / ctx.PH, c.transform.fillBlur, c.transform.fillDim);
+        if (bg.width <= 0 || bg.height <= 0) return true; // just the picture
+        // One pixel of edge repeated around it: scaled up, the frame's edge samples it as composite() clamps
+        const int pw = bg.width + 2, ph = bg.height + 2;
+        auto padded = std::make_shared<Image>(pw, ph);
+        for (int y = 0; y < ph; ++y)
+            for (int x = 0; x < pw; ++x)
+                std::memcpy(padded->data() + (size_t(y) * pw + x) * 4,
+                            bg.rgba.data() + (size_t(std::clamp(y - 1, 0, bg.height - 1)) * bg.width
+                                              + std::clamp(x - 1, 0, bg.width - 1)) * 4,
+                            4);
+        GpuOp back;
+        back.rgba = std::move(padded);
+        back.premultiplied = true;
+        back.m.a = double(ctx.W) / bg.width;
+        back.m.e = double(ctx.H) / bg.height;
+        back.m.c = -back.m.a;
+        back.m.f = -back.m.e;
+        GpuOp group;
+        group.kind = GpuOp::Group;
+        group.opacity = op.opacity;
+        op.opacity = 1.0;
+        group.a.push_back(std::move(back));
+        group.a.push_back(std::move(op));
+        op = std::move(group);
         return true;
     }
 
@@ -1527,7 +1585,7 @@ struct Renderer::Impl {
                         if (src) stills[op.still.get()] = {op.still, src};
                     }
                 } else if (op.rgba && !op.rgba->empty()) {
-                    src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, false);
+                    src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, op.premultiplied);
                 }
                 if (!src) break;
                 Gpu::LutPtr lut = op.graded ? luts.get(g, op) : nullptr;
@@ -1540,7 +1598,7 @@ struct Renderer::Impl {
                 Gpu::TexturePtr t = g.target(size, clear);
                 if (!t) break;
                 runOps(g, *t, op.a, size, keep);
-                g.draw(dst, {t.get(), {}, 1.0, nullptr, {}});
+                g.draw(dst, {t.get(), {}, op.opacity, nullptr, {}});
                 keep.textures.push_back(std::move(t));
                 break;
             }

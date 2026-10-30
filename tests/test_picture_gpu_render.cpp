@@ -230,7 +230,17 @@ int main(int argc, char** argv)
         same("title+blur+subtitle", tl, {5}, 1.5, 30);
         Timeline fill = oneTrack({media(1, g_still, 0, 30)});
         fill.video[0].clips[0].transform.fill = FitFill::Blur;
-        same("blur fill (CPU layer)", fill, {0}, 1.5, 30);
+        same("blur fill still", fill, {0}, 1.5, 30);
+        Timeline vfill = oneTrack({media(1, g_c, 0, 30)});
+        vfill.video[0].clips[0].transform.fill = FitFill::Blur;
+        vfill.video[0].clips[0].transform.zoomX = vfill.video[0].clips[0].transform.zoomY = 0.7;
+        vfill.video[0].clips[0].transform.opacity = 80;
+        grade(vfill.video[0].clips[0], false);
+        same("blur fill video+grade", vfill, {4}, 1.5, 30);
+        Picture::Options o = options(Picture::Mode::Export, true);
+        Picture::Renderer r(vfill, o);
+        r.render(4);
+        CHECK_EQ(r.stats().layersCpu, 0); // all on the card
     }
 
     // Encoder planes from the card (4:2:0 and NV12) against OutputColor::fromRgba of the CPU frame
