@@ -1514,8 +1514,18 @@ struct Renderer::Impl {
                         keep.buffers.push_back(std::move(rgba));
                     }
                 } else if (op.still) {
-                    const QImage& img = op.still->image;
-                    src = g.uploadRgba(img.constBits(), img.width(), img.height(), false);
+                    // Stills stay on the card while their source lives (a photo is uploaded once, not every frame)
+                    static thread_local std::map<const StillSource*, std::pair<std::weak_ptr<StillSource>, Gpu::TexturePtr>> stills;
+                    auto it = stills.find(op.still.get());
+                    if (it != stills.end() && it->second.first.lock() == op.still) {
+                        src = it->second.second;
+                    } else {
+                        const QImage& img = op.still->image;
+                        src = g.uploadRgba(img.constBits(), img.width(), img.height(), false);
+                        for (auto e = stills.begin(); e != stills.end();) // sources closed since: textures go
+                            e = e->second.first.expired() ? stills.erase(e) : std::next(e);
+                        if (src) stills[op.still.get()] = {op.still, src};
+                    }
                 } else if (op.rgba && !op.rgba->empty()) {
                     src = g.uploadRgba(op.rgba->data(), op.rgba->w, op.rgba->h, false);
                 }
