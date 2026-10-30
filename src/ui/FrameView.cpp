@@ -359,7 +359,7 @@ void FrameView::wheelEvent(QWheelEvent* e)
         next = kFit;
         for (auto it = kSteps.rbegin(); it != kSteps.rend(); ++it)
             if (*it < now * 0.999) { next = *it; break; }
-        if (next != kFit && next < fitZoom) next = kFit;
+        if (next != kFit && next <= fitZoom * 1.001) next = kFit; // a step at or below the fit size: fit
     }
     setZoom(next);
     e->accept();
