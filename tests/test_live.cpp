@@ -240,6 +240,12 @@ int main(int argc, char* argv[])
     CHECK_EQ(videoClips(fake.project), 2);
     CHECK_EQ(fake.project.undoStack()->index(), undoBefore + 1);
     CHECK(!fake.project.undoStack()->canRedo()); // redo does not bring the half edit back
+    // An unknown key is refused in the app too (the same check as on the file), naming the key
+    r = cli({"edit", fake.path, "--ops", R"([{"op":"split","at":20},{"op":"trim","clip":1,"star":5}])"});
+    CHECK_EQ(code(r), QString("BAD_ARGUMENT"));
+    CHECK(QJsonDocument(r).toJson().contains("unknown key 'star'"));
+    CHECK_EQ(videoClips(fake.project), 2);
+    CHECK_EQ(fake.project.undoStack()->index(), undoBefore + 1);
     // ... also what is not in the undo history: source markers and source In/Out
     r = cli({"edit", fake.path, "--ops",
              R"([{"op":"source_marker","media":"/x/a.mp4","at":30},{"op":"media","media":"/x/a.mp4","in":5,"out":60},

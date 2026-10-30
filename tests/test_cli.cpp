@@ -3,6 +3,7 @@
 // dry run, errors leave the file untouched
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "cli/Guide.h"
 #include "cli/Mcp.h"
 #include "core/Project.h"
 #include "core/EffectRegistry.h"
@@ -119,6 +120,78 @@ int main(int argc, char** argv)
             if (!CHECK(!names.contains(op.name))) std::printf("       op %s twice\n", qPrintable(op.name));
             names << op.name;
         }
+    }
+
+    // Unknown keys of an op are errors that name the key and the ones the op takes (an AI's {"op":"trim","star":…}
+    // did nothing without a word). The keys come from the op's usage/details and its moreKeys, so docs and check
+    // cannot drift: every key the docs (usage, details, the guide) write for an op is one it takes
+    {
+        using Cli::detail::OpObject;
+        const QVector<OpObject> parsed = Cli::detail::opObjects(
+            "x {op:'a'|'b', clips, in?, out?|duration?, kind:'video'|'audio', move:'up'|'last'|place, "
+            "at:[times]|markers:true, to:[t]|{first, every}, list:[{n, m}], <style>, …} or {…, clear:true} "
+            R"(and {"op":"c","at":"4s","ranges":[["1s","2s"]]})");
+        if (CHECK_EQ(parsed.size(), 3)) {
+            CHECK(parsed[0].ops == (QStringList{"a", "b"}));
+            CHECK(parsed[0].keys == (QStringList{"clips", "in", "out", "duration", "kind", "move", "at", "markers", "to", "list"}));
+            CHECK(parsed[1].ops.isEmpty() && parsed[1].keys == QStringList{"clear"});
+            CHECK(parsed[2].ops == QStringList{"c"} && parsed[2].keys == (QStringList{"at", "ranges"}));
+        }
+        // Every op takes keys (an op without usage gets those of the usage that names it, like 'disable')
+        for (const Cli::detail::OpDef& d : Cli::detail::editOps()) {
+            const QStringList keys = Cli::detail::editOpKeys(d.name);
+            if (!CHECK(keys.contains("op") && (keys.size() > 1 || d.name == "clear")))
+                std::printf("       op %s: keys %s\n", qPrintable(d.name), qPrintable(keys.join(",")));
+        }
+        QStringList texts{Cli::detail::editHelp(), Cli::Guide::text()};
+        for (const QString& t : Cli::Guide::topics()) texts << Cli::Guide::text(t);
+        for (const Cli::detail::OpDef& d : Cli::detail::editOps()) texts << d.usage << d.summary << d.details;
+        int checked = 0;
+        for (const QString& text : texts)
+            for (const OpObject& o : Cli::detail::opObjects(text))
+                for (const QString& op : o.ops) {
+                    const QStringList keys = Cli::detail::editOpKeys(op);
+                    if (!CHECK(!keys.isEmpty())) std::printf("       docs name an op '%s' that does not exist\n", qPrintable(op));
+                    for (const QString& k : o.keys)
+                        if (!CHECK(keys.isEmpty() || keys.contains(k)))
+                            std::printf("       docs write key '%s' for op '%s', which rejects it\n", qPrintable(k), qPrintable(op));
+                    ++checked;
+                }
+        CHECK(checked > 100);
+        // The guide's JSON examples are among them
+        CHECK(Cli::Guide::text("social").contains(R"("op":"transform")"));
+
+        writeProject();
+        const QString before = saved();
+        const auto message = [&](const QString& op) {
+            return messageOf("edit", {{"project", g_path}, {"ops", "[" + op + "]"}});
+        };
+        const QString trim = message(R"({"op":"trim","clip":1,"star":5})");
+        CHECK(trim.startsWith("BAD_ARGUMENT: op 0 (trim): unknown key 'star' (keys: clip, edge, by, to, mode, clips;"));
+        for (const char* op : {R"({"op":"split","at":10,"clips":[1]})", R"({"op":"transform","clips":[1],"zom":2})",
+                               R"({"op":"volume","clips":[2],"db":-3,"gain":2})",
+                               R"({"op":"append","media":"/x/a.mp4","lenght":5})",
+                               R"({"op":"mixer","track":"master","volume":-3})", R"({"op":"new_timeline","nmae":"x"})",
+                               R"({"op":"multicam","files":["/x/a.mp4"],"synch":"marker"})",
+                               R"({"op":"link","clips":[1,2],"linked":false})", R"({"op":"clear","all":true})",
+                               R"({"op":"disable","clips":[1],"enabled":false})",
+                               R"({"op":"title","text":"Hi","colour":"#ffffff"})"}) {
+            const QString msg = message(op);
+            if (!CHECK(msg.startsWith("BAD_ARGUMENT") && msg.contains("unknown key")))
+                std::printf("       %s: %s\n", op, qPrintable(msg));
+        }
+        CHECK_EQ(saved(), before);
+        // Every key an op takes passes the check (whatever the op then says about the values); the file aliases too
+        for (const Cli::detail::OpDef& d : Cli::detail::editOps()) {
+            QJsonObject op;
+            for (const QString& k : Cli::detail::editOpKeys(d.name)) op[k] = QJsonValue::Null;
+            op["op"] = d.name;
+            const QString msg = messageOf("edit", {{"project", g_path}, {"dry_run", true}, {"ops", QJsonArray{op}}});
+            if (!CHECK(!msg.contains("unknown key"))) std::printf("       %s\n", qPrintable(msg));
+        }
+        CHECK(!messageOf("edit", {{"project", g_path}, {"dry_run", true}, {"ops", R"([{"op":"append","file":"/x/a.mp4","duration":5}])"}})
+                   .contains("unknown key"));
+        CHECK_EQ(saved(), before);
     }
 
     // Arguments: types, unknown and missing parameters

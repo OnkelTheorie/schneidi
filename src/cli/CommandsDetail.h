@@ -114,8 +114,22 @@ struct OpDef {
     QString summary; // one line, may be empty
     QString details; // longer description (parameter names, ranges), may be empty
     std::function<void(Session&, const QJsonObject&)> run;
+    // Keys the op reads besides those of its {op:'<name>', …} objects in the texts above: aliases (clip for clips),
+    // linked, fields only the details name, private fields. Any other key is an error (a typo did nothing)
+    QStringList moreKeys = {};
 };
+// moreKeys of ops that take `clips` through clipIds/clipsOn: one id as 'clip', and 'linked' (editHelp tells both)
+inline const QStringList kClipKeys{"clip", "linked"};
 const QVector<OpDef>& editOps();
+// The {op:'…', key?, …} objects written in a text (usage strings, docs; JSON like {"op":"split","at":4} too): the
+// op names of each (empty: an object without op) and its top-level keys
+struct OpObject {
+    QStringList ops;
+    QStringList keys;
+};
+QVector<OpObject> opObjects(const QString& text);
+// Every key the op accepts ("op" included), from its texts and moreKeys; empty = no such op
+QStringList editOpKeys(const QString& name);
 void addTimelineOps(QVector<OpDef>& ops); // EditOpsTimelines.cpp
 void addLookOps(QVector<OpDef>& ops);     // EditOpsLook.cpp
 void addAudioOps(QVector<OpDef>& ops);    // EditOpsAudio.cpp

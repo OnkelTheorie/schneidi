@@ -608,7 +608,7 @@ void addMulticamOps(QVector<OpDef>& ops)
                  "to source markers, else to the start of its angle (a note names it). The multicam clip is a timeline "
                  "(`info` timelines: multicam, angles with each file's start and how it was synced). Its segments in a "
                  "timeline show one angle each (clip kind 'multicam', angle 1-based); cut with 'angle'/'angle_cuts'.",
-                 opMulticam}
+                 opMulticam, {"_sound"}} // withSoundSync: measured by schneidi-cli for the app
         << OpDef{"source_marker", "{op:'source_marker', media, at, remove?}",
                  "source marker in a media file (M in the source viewer), for sync:'marker'",
                  "at = source time in the file (frames in the project rate or \"12.4s\"); remove:true removes the marker "
@@ -632,7 +632,7 @@ void addMulticamOps(QVector<OpDef>& ops)
                  "replace multicam segments by normal clips of their angle (default: all in this timeline)",
                  "Keeps transform, effects, volume and fades of the segments; moves up to a free track where one is "
                  "taken; gaps of a recording stay empty.",
-                 opFlatten}
+                 opFlatten, kClipKeys}
         << OpDef{"multicam_nudge", "{op:'multicam_nudge', timeline|clip, angle, by}",
                  "resync: move an angle inside the multicam clip by frames or seconds (negative = earlier)",
                  "timeline = id or name of the multicam clip, or clip = a segment of it. The angle cannot start before "
@@ -647,7 +647,7 @@ void addMulticamOps(QVector<OpDef>& ops)
                  "first gives it), later files right after each other. The part before the multicam clip's start is "
                  "cut off. name defaults to the file name. Segments in timelines are not changed: cut to the new angle "
                  "with 'angle'.",
-                 opAddAngle}
+                 opAddAngle, {"_sound"}}
         << OpDef{"angle_name", "{op:'angle_name', timeline|clip, angle, name}",
                  "rename an angle of a multicam clip (empty = file name)", {}, opAngleName};
 }
