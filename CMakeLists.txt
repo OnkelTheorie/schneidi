@@ -204,6 +204,7 @@ add_library(schneidi_lib STATIC
     src/engine/picture/Effects.h  src/engine/picture/Effects.cpp
     src/engine/picture/Pump.h     src/engine/picture/Pump.cpp
     src/engine/picture/MediaStills.h src/engine/picture/MediaStills.cpp
+    src/engine/picture/gpu/Gpu.h  src/engine/picture/gpu/Gpu.cpp
     src/engine/video/Still.h      src/engine/video/Still.cpp
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
@@ -378,6 +379,10 @@ if(SCHNEIDI_RHI)
         target_compile_definitions(schneidi_lib PRIVATE SCHNEIDI_HAVE_RHI)
         qt_add_resources(schneidi_lib "shaders" PREFIX "/" BASE src/ui
                          FILES src/ui/shaders/frameview.vert.qsb src/ui/shaders/frameview.frag.qsb)
+        # Picture engine on the GPU (engine/picture/gpu); without RHI it compiles to the CPU-only stub
+        qt_add_resources(schneidi_lib "picture_shaders" PREFIX "/picture-shaders" BASE src/engine/picture/shaders
+                         FILES src/engine/picture/shaders/quad.vert.qsb src/engine/picture/shaders/layer.frag.qsb
+                               src/engine/picture/shaders/mix.frag.qsb src/engine/picture/shaders/toyuv.frag.qsb)
         message(STATUS "GPU viewer: Qt RHI")
     else()
         message(STATUS "GPU viewer: off (no Qt RHI headers - install qt6-base-private-dev); QPainter only")
