@@ -7,6 +7,7 @@
 #include "check.h"
 
 #include "engine/Engine.h"
+#include "engine/picture/Renderer.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
@@ -111,8 +112,10 @@ int main(int argc, char** argv)
         engine.showTimeline(0);
 
         // Opens in the background; a change meanwhile that needs one more file is built afterwards
+        // Own picture engine: files open lazily in the render threads, nothing waits (opening() stays false)
+        const bool background = !Picture::ownPicture();
         engine.updateTimeline(timeline({red}));
-        CHECK(engine.opening());
+        CHECK(engine.opening() == background);
         engine.updateTimeline(timeline({red, blue}));
         CHECK(waitOpened(engine));
         const QColor first = shownAt(engine, 10), second = shownAt(engine, 60);
@@ -137,7 +140,7 @@ int main(int argc, char** argv)
         // Quitting while opening: no crash, no hang
         engine.setFormat(ProjectFormat{320, 180, {25, 1}});
         engine.updateTimeline(timeline({red, blue, green}));
-        CHECK(engine.opening());
+        CHECK(engine.opening() == background);
     }
     CHECK(true); // quitting during an opening neither crashed nor hung
     return Check::result();

@@ -224,6 +224,21 @@ bool convertFast(const AVFrame* frame, AVPixelFormat src, uint8_t** outData, int
     SwsContext* ctx = cachedContext(dw, dh, src, dst, SWS_POINT);
     if (!ctx) return false;
     lumaTransfer(ctx, colorspace, 601); // swscale's RGB side is SWS_CS_DEFAULT (601)
+    // The SIMD converter writes whole blocks of pixels per row (8-32): with a width that is no multiple, the last
+    // row runs past the end of a tightly packed picture (MLT's buffers had room, the own picture engine's do not -
+    // heap corruption at preview sizes like 476 px). Then into a padded scratch picture and copied.
+    if (dw % 32 != 0) {
+        const int pixelBytes = av_get_padded_bits_per_pixel(av_pix_fmt_desc_get(dst)) / 8;
+        const int bytes = dw * pixelBytes;
+        const int stride = FFALIGN(dw, 32) * pixelBytes + 64;
+        thread_local std::vector<uint8_t> scratch;
+        scratch.resize(size_t(stride) * (dh + 1));
+        uint8_t* tmp[4] = {scratch.data()};
+        const int tmpStride[4] = {stride};
+        sws_scale(ctx, inData, inStride, 0, dh, tmp, tmpStride);
+        av_image_copy_plane(outData[0], outStride[0], scratch.data(), stride, bytes, dh);
+        return true;
+    }
     sws_scale(ctx, inData, inStride, 0, dh, outData, outStride);
     return true;
 }

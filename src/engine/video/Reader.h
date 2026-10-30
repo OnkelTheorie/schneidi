@@ -93,6 +93,10 @@ public:
     // (afterwards the decoder thread uses it).
     const AVFormatContext* container() const;
 
+    // Decoded pictures kept before the last request (Options::behind), changeable while reading: playing backwards
+    // keeps a whole GOP so every picture of it is decoded once instead of seeking back for each one
+    void setBehind(int pictures);
+
     // The picture for stream position `position`; nullptr if the file has none (read error before the first picture)
     std::shared_ptr<const Picture> picture(int64_t position);
 

@@ -273,6 +273,7 @@ struct Renderer::Impl {
             Video::Reader::Options ro;
             ro.threads = options.decoderThreads;
             ro.behind = std::max(4, options.parallelFrames);
+            if (direction < 0) ro.behind = std::max(ro.behind, backwardKeep(0, 0)); // size not known yet: the budget's
             ro.ahead = std::max(6, options.parallelFrames + 2);
             if (auto r = Video::Reader::open(file, ro)) {
                 auto v = std::make_shared<VideoSource>();
@@ -284,6 +285,7 @@ struct Renderer::Impl {
                                                                                  : options.format.rate.fps();
                 if (v->info.duration > 0)
                     v->length = int(double(v->info.duration) / AV_TIME_BASE * options.format.rate.fps() + 0.5);
+                if (direction < 0) r->setBehind(std::max(4, backwardKeep(v->info.width, v->info.height)));
                 v->reader = std::move(r);
                 s.video = std::move(v);
             }
@@ -292,6 +294,17 @@ struct Renderer::Impl {
         s.used = std::chrono::steady_clock::now();
         std::lock_guard lock(sourceMutex);
         return sources.emplace(key, s).first->second;
+    }
+
+    // Pictures a decoder keeps behind the last request while playing backwards: a whole GOP if memory allows (each
+    // picture of it is then decoded once per GOP instead of decoding from the keyframe for every picture)
+    static int backwardKeep(int width, int height)
+    {
+        constexpr double kBudget = 384.0 * 1024 * 1024; // bytes per decoder
+        constexpr int kMost = 250;
+        if (width <= 0 || height <= 0) return 60;
+        const double bytes = 1.5 * width * height; // 8-bit 4:2:0
+        return std::clamp(int(kBudget / bytes), 8, kMost);
     }
 
     // Source length in project frames for TimelineOps::transitions (0 = unlimited: stills, titles)
@@ -1034,7 +1047,7 @@ Frame Renderer::render(int64_t frame)
     f.m_width = ctx.W;
     f.m_height = ctx.H;
     f.m_position = frame;
-    f.m_opaque = !d->options.transparent || fullyOpaque(canvas.data(), size_t(ctx.W) * ctx.H);
+    f.m_opaque = !d->options.transparent || fullyOpaque(f.m_buffer->data.data(), size_t(ctx.W) * ctx.H);
     d->framesRendered.fetch_add(1, std::memory_order_relaxed);
     return f;
 }
@@ -1052,7 +1065,18 @@ void Renderer::setOutputSize(const QSize& size)
     d->output = size.isEmpty() ? d->options.format.size() : size;
 }
 
-void Renderer::setDirection(int direction) { d->direction = direction; }
+void Renderer::setDirection(int direction)
+{
+    if (d->direction.exchange(direction) == direction) return;
+    std::lock_guard lock(d->sourceMutex);
+    for (auto& [key, s] : d->sources)
+        if (s.video && s.video->reader) {
+            const int keep = std::max(4, d->options.parallelFrames);
+            s.video->reader->setBehind(direction < 0 ? std::max(keep, Impl::backwardKeep(s.video->info.width,
+                                                                                         s.video->info.height))
+                                                     : keep);
+        }
+}
 
 void Renderer::prepare(int64_t frame)
 {
@@ -1061,10 +1085,32 @@ void Renderer::prepare(int64_t frame)
         std::lock_guard lock(d->snapMutex);
         tl = d->snapshot;
     }
-    for (int i = 0; i < tl->video.size(); ++i)
-        for (const Clip& c : tl->video[i].clips)
-            if (c.enabled && !c.mediaPath.isEmpty() && frame >= c.start - 50 && frame < c.end())
-                d->source(c.mediaPath, QString("v%1").arg(i));
+    const double fps = d->options.format.rate.fps();
+    const int64_t soon = frame + int64_t(3 * fps); // as far as Preroll looked ahead
+    Impl::Ctx ctx;
+    ctx.root = tl;
+    ctx.fps = fps;
+    ctx.PW = d->options.format.width;
+    ctx.PH = d->options.format.height;
+    ctx.preview = d->options.mode == Mode::Preview;
+    for (int i = 0; i < tl->video.size(); ++i) {
+        const QString lane = QString("v%1").arg(i);
+        const QVector<Clip>& clips = tl->video[i].clips;
+        for (const Clip& c : clips) {
+            if (!c.enabled || c.mediaPath.isEmpty() || c.isTitle() || c.isNested()) continue;
+            if (frame >= c.start - 50 && frame < c.end()) d->source(c.mediaPath, lane);
+            // A clip starting soon: decode its first picture now (long-GOP material decodes up to seconds from the
+            // keyframe before its in point; in the middle of playback the picture stood that long). Only when the
+            // lane's decoder of that file is not in use until then (a cut inside one recording shares it).
+            if (c.start <= frame || c.start > soon) continue;
+            const bool shared = std::any_of(clips.cbegin(), clips.cend(), [&](const Clip& o) {
+                return o.id != c.id && o.mediaPath == c.mediaPath && o.end() > frame && o.start < c.start;
+            });
+            if (shared) continue;
+            QSize native;
+            d->mediaPicture(c, 0, lane, 0, 0, ctx, &native); // decodes, converts nothing
+        }
+    }
 }
 
 void Renderer::trim()
@@ -1096,7 +1142,7 @@ Renderer::Stats Renderer::stats() const
 
 bool ownPicture()
 {
-    static const bool own = qgetenv("SCHNEIDI_PICTURE") == "own";
+    static const bool own = qgetenv("SCHNEIDI_PICTURE") != "mlt";
     return own;
 }
 

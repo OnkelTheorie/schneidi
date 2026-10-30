@@ -1056,6 +1056,12 @@ const AVFormatContext* Reader::container() const
     return d->fmt;
 }
 
+void Reader::setBehind(int pictures)
+{
+    std::lock_guard lock(d->m);
+    d->opt.behind = std::max(1, pictures);
+}
+
 std::shared_ptr<const Picture> Reader::picture(int64_t position)
 {
     d->lastUse = nowMs();
