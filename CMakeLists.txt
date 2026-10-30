@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(schneidi VERSION 0.14.0 LANGUAGES CXX)
+project(schneidi VERSION 0.14.1 LANGUAGES CXX)
 # Version being worked on. While it differs from the released version above, the app shows "0.11.0 → 0.12.0".
 # On release set both to the same number; after that, set this one to the next target.
 set(SCHNEIDI_NEXT_VERSION 0.14.1)
