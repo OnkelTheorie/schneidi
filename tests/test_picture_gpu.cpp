@@ -22,6 +22,7 @@ extern "C" {
 }
 
 #include <cmath>
+#include <ctime>
 #include <cstring>
 #include <random>
 #include <vector>
@@ -434,6 +435,7 @@ int main(int argc, char** argv)
         std::vector<uint8_t> canvas(size_t(W) * H * 4), layer(canvas.size());
         QElapsedTimer timer;
         timer.start();
+        const std::clock_t cpuStart = std::clock();
         for (int f = 0; f < benchFrames; ++f) {
             Video::toRgba(*pics[0], info, canvas.data(), W, H, false);
             ColorGrade::apply(canvas.data(), W, H, *ColorGrade::bake(gp, nullptr));
@@ -444,27 +446,37 @@ int main(int argc, char** argv)
             Compose::forRows(H, 64, [&](int r0, int r1) { OutputColor::fromRgba(canvas.data(), W, H, W * 4, ot, r0, r1); });
         }
         const double cpuMs = timer.nsecsElapsed() / 1e6 / benchFrames;
+        const std::clock_t cpuClock = std::clock() - cpuStart; // process CPU time (Linux; wall time on Windows)
 
-        // GPU: upload the planes, three draws (grade in the bottom one), read back yuv420p
-        timer.restart();
-        qint64 uploadNs = 0;
-        for (int f = 0; f < benchFrames; ++f) {
-            gpu->begin();
-            auto lut = gpu->gradeLut(*ColorGrade::bake(gp, nullptr));
-            Gpu::TexturePtr t0 = gpu->uploadYuv(pics[0]->frame, info);
-            Gpu::TexturePtr t1 = gpu->uploadYuv(pics[1]->frame, info, true);
-            Gpu::TexturePtr t2 = gpu->uploadYuv(pics[2]->frame, info);
-            Gpu::TexturePtr c = gpu->target(QSize(W, H));
-            gpu->draw(*c, {t0.get(), {}, 1.0, lut.get(), {}});
-            gpu->draw(*c, {t1.get(), pip1, 1.0, nullptr, {}});
-            gpu->draw(*c, {t2.get(), pip2, 1.0, nullptr, {}});
-            gpu->readYuv(*c, ot);
-            gpu->finish();
+        // GPU: upload the planes, three draws (grade in the bottom one), then: read back yuv420p (export), read back
+        // RGBA (viewer today), nothing (picture stays on the card: viewer sharing the texture later)
+        std::vector<uint8_t> rgba(size_t(W) * H * 4);
+        const char* names[] = {"yuv420p readback", "RGBA readback", "no readback"};
+        double gpuMs[3], gpuCpuMs[3];
+        for (int variant = 0; variant < 3; ++variant) {
+            timer.restart();
+            const std::clock_t c0 = std::clock();
+            for (int f = 0; f < benchFrames; ++f) {
+                gpu->begin();
+                auto lut = gpu->gradeLut(*ColorGrade::bake(gp, nullptr));
+                Gpu::TexturePtr t0 = gpu->uploadYuv(pics[0]->frame, info);
+                Gpu::TexturePtr t1 = gpu->uploadYuv(pics[1]->frame, info, true);
+                Gpu::TexturePtr t2 = gpu->uploadYuv(pics[2]->frame, info);
+                Gpu::TexturePtr c = gpu->target(QSize(W, H));
+                gpu->draw(*c, {t0.get(), {}, 1.0, lut.get(), {}});
+                gpu->draw(*c, {t1.get(), pip1, 1.0, nullptr, {}});
+                gpu->draw(*c, {t2.get(), pip2, 1.0, nullptr, {}});
+                if (variant == 0) gpu->readYuv(*c, ot);
+                else if (variant == 1) gpu->readRgba(*c, rgba.data());
+                gpu->finish();
+            }
+            gpuMs[variant] = timer.nsecsElapsed() / 1e6 / benchFrames;
+            gpuCpuMs[variant] = double(std::clock() - c0) * 1000.0 / CLOCKS_PER_SEC / benchFrames;
         }
-        const double gpuMs = timer.nsecsElapsed() / 1e6 / benchFrames;
-        (void)uploadNs;
-        std::printf("BENCH 1080p 3 layers + grade -> yuv420p: CPU %.2f ms/frame, GPU %.2f ms/frame (%d frames)\n", cpuMs,
-                    gpuMs, benchFrames);
+        const double cpuCpuMs = cpuClock * 1000.0 / CLOCKS_PER_SEC / benchFrames;
+        std::printf("BENCH 1080p 3 layers + grade (%d frames), wall / process CPU per frame:\n", benchFrames);
+        std::printf("  CPU path -> yuv420p        %6.2f ms / %6.2f ms\n", cpuMs, cpuCpuMs);
+        for (int v = 0; v < 3; ++v) std::printf("  GPU %-22s %6.2f ms / %6.2f ms\n", names[v], gpuMs[v], gpuCpuMs[v]);
     }
 
     std::printf("passes last frame %d, pooled textures %d\n", gpu->stats().passes, gpu->stats().texturesPooled);
