@@ -445,7 +445,10 @@ Result run(const QString& path, const Options& options, const Each& each, const 
     const int srcW = probe.frame->width, srcH = probe.frame->height;
     const int uprightW = plan.quarters % 2 ? srcH : srcW, uprightH = plan.quarters % 2 ? srcW : srcH;
     // Crop in the upright picture -> in the decoded one
-    QRect crop = options.crop.isNull() ? QRect(0, 0, uprightW, uprightH) : options.crop.toRect();
+    const QRectF& c = options.crop;
+    QRect crop = c.isNull() ? QRect(0, 0, uprightW, uprightH)
+                            : QRect(int(std::lround(c.x() * uprightW)), int(std::lround(c.y() * uprightH)),
+                                    int(std::lround(c.width() * uprightW)), int(std::lround(c.height() * uprightH)));
     crop = crop.intersected(QRect(0, 0, uprightW, uprightH));
     if (crop.isEmpty()) {
         result.error = "the region is outside the picture";

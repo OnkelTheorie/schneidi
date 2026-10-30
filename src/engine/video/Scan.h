@@ -28,7 +28,7 @@ struct Options {
     // width <= 0 = the (cropped) picture's own size
     int width = 320;
     int height = -2;
-    QRectF crop;                  // part of the upright picture, in its pixels (null = all of it)
+    QRectF crop;                  // part of the upright picture, as fractions of its size (null = all of it)
     AVPixelFormat format = AV_PIX_FMT_YUV420P; // YUV420P, GRAY8 or RGB24
     double rate = 0;              // samples per second; 0 = every decoded picture
     bool skipNonReference = false; // only with rate: leave pictures no other picture depends on undecoded

@@ -8,6 +8,7 @@
 
 #include <QColor>
 #include <QRect>
+#include <QRectF>
 #include <QSize>
 
 #include <functional>
@@ -66,6 +67,29 @@ struct PeakGroup {
     double peakDb;
 };
 QVector<PeakGroup> groupPeaks(const QVector<Peak>& peaks, int gap);
+
+// ---------- Reading the picture (AnalysisPicture.cpp) ----------
+
+// SCHNEIDI_ANALYSIS=ffmpeg: read the picture with an ffmpeg process as before 0.15 (comparison, fallback);
+// SCHNEIDI_ANALYSIS=full: in-process, but samples decode every picture (exactly the ffmpeg way's results)
+bool ffmpegAnalysis();
+
+// Every decoded picture of a video file scaled to `width` (aspect kept): time from the first picture, scene score
+// (difference to the picture before, 0..1, as ffmpeg's select filter: 0 for the first) and mean brightness (0..255)
+struct PictureScore {
+    double seconds;
+    double score;
+    double luma;
+};
+// In time order; throws when the video cannot be read
+std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const std::function<void(double)>& progress);
+
+// Samples of `crop` (fractions of the upright picture) scaled to `size` as packed RGB24, `rate` per second from the
+// first picture (as ffmpeg's fps filter: the last picture at or before each sample). each(sample, pixels) is called
+// from several threads at once and must not throw. `ffmpegFilter`: the same as an ffmpeg filter chain after the
+// fps filter (crop and scale) for SCHNEIDI_ANALYSIS=ffmpeg. Throws when the video cannot be read.
+void pictureSamples(const MediaSource& m, const QRectF& crop, QSize size, int rate, const QString& ffmpegFilter,
+                    const std::function<void(int, const uchar*)>& each, const std::function<void(double)>& progress);
 
 // ---------- Picture (AnalysisVideo.cpp) ----------
 
