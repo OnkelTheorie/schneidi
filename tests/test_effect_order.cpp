@@ -467,7 +467,7 @@ void testInspectorMissing(QApplication& app)
     CHECK(hinted);
     bool shown = false;
     for (const QWidget* w : insp.findChildren<QWidget*>())
-        shown = shown || (w->toolTip() == T("Effekt „%1“ fehlt").arg("frei0r.gibtsnicht") && w->isVisibleTo(&insp));
+        shown = shown || (w->toolTip() == T("Effekt „%1“ fehlt").arg("frei0r.gibtsnicht") && !w->isHidden()); // its tab may not be the current one
     CHECK(shown);
     CHECK_EQ(TimelineOps::findClip(project.timeline(), c.id)->effects.size(), 1);
 }
