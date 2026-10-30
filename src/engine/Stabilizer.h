@@ -2,7 +2,7 @@
 #pragma once
 // Video stabilization (effect "stabilize") with schneidi's own analysis and warp (engine/StabilizeMotion).
 // An analysis pass measures the camera motion from frame to frame before anything can be applied. It runs in the
-// background (one at a time, own MLT producer, no preview involved); its result (.stab: one motion per frame) is
+// background (one at a time, own decoder, no preview involved); its result (.stab: one motion per frame) is
 // cached in QStandardPaths::CacheLocation/stabilize, named after everything that changes it (source file +
 // size/time, speed, frame rate, aspect ratio, shakiness/accuracy) plus the analyzed range. A cached range that covers
 // the clip is reused (trimming shorter, moving, splitting need no new analysis). Until the result exists the clip
