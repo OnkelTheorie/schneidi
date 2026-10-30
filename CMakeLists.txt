@@ -346,7 +346,17 @@ if(SCHNEIDI_RHI)
         find_package(Qt6 QUIET COMPONENTS GuiPrivate)
     endif()
     if(TARGET Qt6::GuiPrivate)
-        # Qt6::GuiPrivate exists even without the private headers (Debian): test whether rhi/qrhi.h is there
+        # Qt6::GuiPrivate exists even without the private headers (Debian), and then names include folders that do not
+        # exist: try_compile with it fails the whole configure step. Only test when the private header folder is there.
+        get_target_property(_guiPrivateDirs Qt6::GuiPrivate INTERFACE_INCLUDE_DIRECTORIES)
+        set(_guiPrivateMissing OFF)
+        if("${_guiPrivateDirs}" MATCHES "QtGui/${Qt6Gui_VERSION}" AND NOT EXISTS
+           "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_HEADERS}/QtGui/${Qt6Gui_VERSION}/QtGui")
+            set(_guiPrivateMissing ON)
+        endif()
+    endif()
+    if(TARGET Qt6::GuiPrivate AND NOT _guiPrivateMissing)
+        # Private headers there: test whether rhi/qrhi.h is among them
         include(CheckIncludeFileCXX)
         set(CMAKE_REQUIRED_LIBRARIES Qt6::GuiPrivate)
         set(CMAKE_REQUIRED_QUIET ON)
