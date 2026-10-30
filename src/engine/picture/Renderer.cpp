@@ -544,7 +544,7 @@ struct Renderer::Impl {
                 withNested.nested = tl.nested;
                 inner = &withNested;
             }
-            renderTimeline(*inner, in, src, ctx, lane + QString("n%1/").arg(c.sequenceId), true, false, depth + 1);
+            renderTimeline(*inner, in, src, ctx, lane + QString("n%1/").arg(c.sequenceId), false, depth + 1);
         } else {
             if (c.mediaPath.isEmpty()) return {};
             const double aspect = nativeAspect(c, lane);
@@ -584,9 +584,9 @@ struct Renderer::Impl {
             layersDecoded.fetch_add(1, std::memory_order_relaxed);
         }
         if (src.empty()) return {};
-        if (!c.isNested()) {
+        {
             // the frame's height in the picture's pixels: the picture is fit.height() project pixels tall at zoom 1
-            const double frameHeight = c.isTitle() ? src.h : src.h * ctx.PH / std::max(1.0, fit.height());
+            const double frameHeight = src.h * ctx.PH / std::max(1.0, fit.height());
             applyEffects(src, c, t, ctx, frameHeight);
         }
 
@@ -658,14 +658,14 @@ struct Renderer::Impl {
         };
         const QString lane = prefix + QString("v%1").arg(trackIndex);
         // Second lane for the right side of a dissolve between clips of the same file
-        auto laneOf = [&](const Clip& c, bool right) { return right ? lane + 'x' : lane; };
+        auto laneOf = [&](bool right) { return right ? lane + 'x' : lane; };
         for (const auto& s : spans) {
             if (f < s.start || f >= s.end) continue;
             const Clip* a = s.leftId ? byId(s.leftId) : nullptr;
             const Clip* b = s.rightId ? byId(s.rightId) : nullptr;
             const bool sameFile = a && b && a->mediaPath == b->mediaPath;
-            Image ia = a ? clipLayer(*a, f, laneOf(*a, false), ctx, tl, depth) : Image();
-            Image ib = b ? clipLayer(*b, f, laneOf(*b, sameFile), ctx, tl, depth) : Image();
+            Image ia = a ? clipLayer(*a, f, laneOf(false), ctx, tl, depth) : Image();
+            Image ib = b ? clipLayer(*b, f, laneOf(sameFile), ctx, tl, depth) : Image();
             for (Image* img : {&ia, &ib})
                 if (!img->empty()) {
                     const Clip* c = img == &ia ? a : b;
@@ -952,10 +952,9 @@ struct Renderer::Impl {
     }
 
     // A timeline's picture at frame f onto canvas (black or transparent background already there)
-    void renderTimeline(const Timeline& tl, int f, Image& canvas, const Ctx& ctx, const QString& prefix, bool transparent,
-                        bool subtitles, int depth)
+    void renderTimeline(const Timeline& tl, int f, Image& canvas, const Ctx& ctx, const QString& prefix, bool subtitles,
+                        int depth)
     {
-        (void)transparent;
         // Top down to the first track that surely covers the frame: what lies below is never decoded
         // (tests/test_occlusion), then bottom up onto the canvas
         int lowest = 0;
@@ -1009,7 +1008,7 @@ Frame Renderer::render(int64_t frame)
     canvas.px.swap(f.m_buffer->data);
     if (d->options.transparent) std::memset(canvas.data(), 0, canvas.px.size());
     else fill(canvas, Qt::black);
-    d->renderTimeline(*ctx.root, int(frame), canvas, ctx, QString(), d->options.transparent, d->options.subtitles, 0);
+    d->renderTimeline(*ctx.root, int(frame), canvas, ctx, QString(), d->options.subtitles, 0);
     canvas.px.swap(f.m_buffer->data);
     f.m_width = ctx.W;
     f.m_height = ctx.H;
