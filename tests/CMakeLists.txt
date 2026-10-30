@@ -80,6 +80,7 @@ schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the ow
 schneidi_test(test_occlusion)
 schneidi_test(test_video_convert) # toRgba sets the colour matrix per conversion (BT.2020 after/before 601)
 schneidi_test(test_video_reader) # own decoder: jumps/threads/hardware = pictures in order, hibernation, rotation, file properties
+schneidi_test(test_picture_regression) # picture engine against independent references: timing, layers, transitions, outline, downscale, threads
 schneidi_test(test_crop)
 schneidi_test(test_picture_pump) # preview frame pump: sync under load, catch-up, seek, live change, backward
 schneidi_test(test_fast_seek) # seek window, scrubbing (close picture, then the exact one), recently shown frames
