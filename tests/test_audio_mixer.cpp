@@ -4,11 +4,9 @@
 // them (sample-exact without pitch correction, within a few ms with it), the pitch follows the speed (tape) or stays
 // (own stretcher, engine/audio/Stretch), level kept, reverse at 100 % = the samples backwards, block size does not matter.
 // Against the sound references of step 0 (test_audio_reference, private docs folder; skipped without it):
-// - MLT compatibility mode (curves frame-late like MLT, no latency compensation): every case the same samples as the
-//   reference rendered through MLT (2 LSB at 24 bit), except where MLT itself is wrong or works differently
-//   (listed per case with the reason and its own check)
-// - exact mode (the engine as it will be used): difference to the reference printed, checked against a bound per case
-// - block size: rendering in odd block sizes gives the same samples as in one go
+// - difference to the reference (rendered through the old MLT path in 0.10) printed, checked against a bound per case
+//   (listed per case with the reason where the old path was wrong or works differently)
+// - block size: rendering in odd block sizes gives the same samples as in blocks of a frame
 
 #include "check.h"
 
@@ -41,8 +39,8 @@
 namespace {
 
 constexpr int kRate = 48000;
-// Same samples: 2 LSB at 16 bit. The MLT path rounds to 16 bit at the end (render()); where only one track sounds, its
-// declick ramp also works on 16-bit samples (cut toward zero twice)
+// Same samples: 2 LSB at 16 bit. The references are 16-bit samples (render() rounds the same way); where only one track
+// sounds, the old path's declick ramp also worked on 16-bit samples (cut toward zero twice)
 constexpr double kExact = 2.02 / 32768;
 
 QString g_dir;
@@ -83,11 +81,10 @@ bool load(const QString& path, Loaded* out)
 // Whole timeline in blocks of `block` samples (0 = varying odd sizes), interleaved stereo, quantized like the
 // references: the MLT export path writes its "24 bit" WAV with 16-bit samples, cut toward zero (the frames reach the
 // consumer as s16)
-std::vector<float> render(const Loaded& l, bool compat, int block, qint64* ms = nullptr, Audio::Mixer::Stats* stats = nullptr)
+std::vector<float> render(const Loaded& l, int block, qint64* ms = nullptr, Audio::Mixer::Stats* stats = nullptr)
 {
     Audio::Mixer::Options o;
     o.rate = kRate;
-    o.mltCompat = compat;
     o.fileLength = [&](const QString& p) { return l.lengths.value(p); };
     QElapsedTimer t;
     t.start();
@@ -123,7 +120,7 @@ double alignedShare(const std::vector<float>& got, const std::vector<float>& ref
 struct Match {
     double bound = kExact; // largest difference allowed
     double rmsDb = 0;      // instead: bound on the RMS of the difference (dBFS), for intended differences
-    int64_t shift = 0;     // got[i] is compared with ref[i + shift] (latency the MLT path does not compensate)
+    int64_t shift = 0;     // got[i] is compared with ref[i + shift] (latency the old path did not compensate)
     int maxLag = 0;        // each sample may also match up to this many samples away
     int outliers = 0;      // this many samples may differ more
     QVector<QPair<double, double>> skip; // seconds left out (from, to)
@@ -296,19 +293,19 @@ double alignedShare(const std::vector<float>& got, const std::vector<float>& ref
     return counted ? double(same) / counted : 0;
 }
 
-// Expectations per case (default: both modes the same samples as the reference)
+// Expectations per case (default: the same samples as the reference)
 struct Expect {
-    Match compat, exact;
+    Match exact;
     const char* why = nullptr;
     int64_t lengthTol = 0;
 };
 
 QHash<QString, Expect> expectations()
 {
-    // Gain/pan curves in the exact mode: a frame's value at its start (MLT: at its end, the first frame of every
-    // excerpt constant), fades/transitions reach 0 at the edge
+    // Gain/pan curves: a frame's value at its start (the old path: at its end, the first frame of every excerpt
+    // constant), fades/transitions reach 0 at the edge
     const Match curves{kExact, -30};
-    const char* curvesWhy = "exact mode: curves on time (the MLT path is a frame late)";
+    const char* curvesWhy = "curves on time (the old MLT path was a frame late)";
     Match retimed;
     retimed.spectralDb = 3;
     Match real;
@@ -320,38 +317,38 @@ QHash<QString, Expect> expectations()
     };
     const char* retimedWhy = "retimed clips: other resampler/stretcher than MLT, compared by third-octave bands";
     return {
-        {"fades", {{}, curves, curvesWhy}},
-        {"pan", {{}, curves, curvesWhy}},
-        {"volume_keys", {{}, curves, curvesWhy}},
-        {"transition_fades", {{}, curves, curvesWhy}},
-        {"crossfades", {{}, curves, "exact mode: curves on time; no 4 ms dip to silence where a dissolve starts on the edit"}},
-        {"subframe", {{}, curves, "exact mode: the offset moves the whole clip (MLT cuts its end and with it the declick)"}},
-        {"ntsc", {{kExact, 0, 0, 2, 200}, curves,
-                  "MLT's mix transition delays the mix by a sample when the tracks' frames bring different sample counts "
+        {"fades", {curves, curvesWhy}},
+        {"pan", {curves, curvesWhy}},
+        {"volume_keys", {curves, curvesWhy}},
+        {"transition_fades", {curves, curvesWhy}},
+        {"crossfades", {curves, "curves on time; no 4 ms dip to silence where a dissolve starts on the edit"}},
+        {"subframe", {curves, "the offset moves the whole clip (MLT cuts its end and with it the declick)"}},
+        {"ntsc", {curves,
+                  "MLT's mix transition delayed the mix by a sample when the tracks' frames bring different sample counts "
                   "(29.97 fps, as the clip on A2 ends; its declick ramp moves against A1), its last sample is missing; "
-                  "exact mode: curves and sub-frame offset", 1}},
-        // Noise reduction ~10.7 ms, limiter 5 ms + 6 samples: exact = reference that much later (edges aside)
-        {"denoise", {{}, {kExact, 0, 512, 0, 2400}, "exact mode: noise reduction latency compensated (512 samples)"}},
-        {"master", {{}, {kExact, 0, 246, 0, 300}, "exact mode: limiter latency compensated (246 samples)"}},
+                  "curves and sub-frame offset", 1}},
+        // Noise reduction ~10.7 ms, limiter 5 ms + 6 samples: the own mix = reference that much later (edges aside)
+        {"denoise", {{kExact, 0, 512, 0, 2400}, "noise reduction latency compensated (512 samples)"}},
+        {"master", {{kExact, 0, 246, 0, 300}, "limiter latency compensated (246 samples)"}},
         // Real material: Clipi clips are Matroska, where the MLT path drops 48 samples after clip starts
         // (test_audio_regression), and they carry speed changes and transitions -> compared by sound
-        {"tiktok", {real, real, "Matroska: the MLT path drops samples after clip starts and jumps inside clips whose "
+        {"tiktok", {real, "Matroska: the MLT path drops samples after clip starts and jumps inside clips whose "
                                 "timestamps overlap (Clipi); compared by windows after shifting"}},
         // Where MLT reads wrong (test_audio_reader, test_av_sync): left out / looser
-        {"late_start", {{kExact, 0, 0, 0, 0, {{0, 4.0}}}, {kExact, 0, 0, 0, 0, {{0, 4.0}}},
+        {"late_start", {{kExact, 0, 0, 0, 0, {{0, 4.0}}},
                         "MLT plays a sound stream that starts after the picture 65 ms early when the clip starts at the "
                         "file start (first clip left out)"}},
-        {"rate44", {{kExact, -55, 17}, {kExact, -55, 17}, "MLT's resampler puts 44.1 kHz sources 17 samples late"}},
+        {"rate44", {{kExact, -55, 17}, "MLT's resampler puts 44.1 kHz sources 17 samples late"}},
         // Retimed: MLT resamples frame by frame (32 samples late at 50 %) and pitches with Rubber Band after its
         // resampler; the own engine reads the source position directly. Compared by sound
-        {"speed_nopitch", {retimed, retimed, retimedWhy}},
-        {"reverse", {retimed, retimed, retimedWhy}},
+        {"speed_nopitch", {retimed, retimedWhy}},
+        {"reverse", {retimed, retimedWhy}},
         // MLT's pitch correction starts every section with ~50 ms of silence, a fade and an overshoot (its stretcher
         // starts empty, the delay is not compensated), and plays smooth ramp transitions in steps without pitch
         // correction, after which its 200 % section runs 35 ms early (the synthetic test above puts the own engine
         // within 4 ms there): left out
-        {"speed_pitch", {gaps({{0.0, 0.3}, {3.95, 4.3}}), gaps({{0.0, 0.3}, {3.95, 4.3}}), retimedWhy}},
-        {"ramp", {gaps({{0.0, 0.3}, {0.95, 1.3}, {3.55, 99}}), gaps({{0.0, 0.3}, {0.95, 1.3}, {3.55, 99}}), retimedWhy}},
+        {"speed_pitch", {gaps({{0.0, 0.3}, {3.95, 4.3}}), retimedWhy}},
+        {"ramp", {gaps({{0.0, 0.3}, {0.95, 1.3}, {3.55, 99}}), retimedWhy}},
     };
 }
 
@@ -764,7 +761,7 @@ int main(int argc, char** argv)
     }
     const QHash<QString, Expect> expect = expectations();
 
-    std::printf("  %-18s %-24s %-24s %s\n", "Fall", "MLT-Modus max (dB)", "genau max / RMS (dB)", "ms");
+    std::printf("  %-18s %-24s %s\n", "Fall", "max / RMS (dB)", "ms");
     QVector<QPair<QString, QString>> cases; // project, reference
     for (const QString& file : QDir(g_dir + "/projekte").entryList({"*.schneidi"}, QDir::Files, QDir::Name))
         cases.push_back({g_dir + "/projekte/" + file, g_dir + "/referenz/" + QFileInfo(file).completeBaseName() + ".flac"});
@@ -776,64 +773,50 @@ int main(int argc, char** argv)
         if (!QFileInfo::exists(project)) continue;
         Loaded l;
         if (!CHECK(load(project, &l))) continue;
-        qint64 ms = 0, exactMs = 0;
+        qint64 ms = 0;
         Audio::Mixer::Stats stats;
-        const std::vector<float> compat = render(l, true, 1920, &ms, &stats);
+        const std::vector<float> exact = render(l, 0, &ms, &stats);
         if (stats.missing) {
             std::printf("  %-18s übersprungen: %d Quellen fehlen\n", qPrintable(name), stats.missing);
             continue;
         }
-        const std::vector<float> exact = render(l, false, 0, &exactMs);
+        // Block size does not matter: odd sizes = blocks of a frame
+        const std::vector<float> framed = render(l, 1920);
         const std::vector<float> ref = decode(reference);
         const Expect e = expect.value(name);
-        const Result rc = measure(compat, ref, e.compat), re = measure(exact, ref, e.exact);
-        const bool lenOk = std::abs(qsizetype(compat.size()) - qsizetype(ref.size())) <= 2 * e.lengthTol
-            && std::abs(qsizetype(exact.size()) - qsizetype(ref.size())) <= 2 * e.lengthTol;
+        const Result re = measure(exact, ref, e.exact);
+        const bool lenOk = std::abs(qsizetype(exact.size()) - qsizetype(ref.size())) <= 2 * e.lengthTol;
         auto db = [](double v) { return v > 0 ? 20 * std::log10(v) : -200.0; };
-        if (rc.share >= 0 || re.share >= 0)
-            std::printf("       nach Ausrichten gleich (< -60 dB): MLT-Modus %.1f %%, genau %.1f %% der Abschnitte\n",
-                        rc.share * 100, re.share * 100);
-        if (rc.spectral >= 0 || re.spectral >= 0)
-            std::printf("       Klang (Terzbänder): MLT-Modus %.2f dB @%.3fs, genau %.2f dB @%.3fs\n", rc.spectral,
-                        double(rc.maxAt) / kRate, re.spectral, double(re.maxAt) / kRate);
-        std::printf("  %-18s %7.1f @%-6.3fs %s  %7.1f / %6.1f @%-6.3fs %s %5lld%s\n", qPrintable(name), db(rc.maxDiff),
-                    double(rc.maxAt) / kRate, rc.ok ? "  " : "<-", db(re.maxDiff), re.rmsDb, double(re.maxAt) / kRate,
-                    re.ok ? "  " : "<-", ms, lenOk ? "" : "  Länge!");
-        if (!lenOk)
-            std::printf("       Länge: MLT-Modus %zu, genau %zu, Referenz %zu Samples\n", compat.size() / 2, exact.size() / 2,
-                        ref.size() / 2);
+        if (re.share >= 0) std::printf("       nach Ausrichten gleich (< -60 dB): %.1f %% der Abschnitte\n", re.share * 100);
+        if (re.spectral >= 0)
+            std::printf("       Klang (Terzbänder): %.2f dB @%.3fs\n", re.spectral, double(re.maxAt) / kRate);
+        std::printf("  %-18s %7.1f / %6.1f @%-6.3fs %s %5lld%s\n", qPrintable(name), db(re.maxDiff), re.rmsDb,
+                    double(re.maxAt) / kRate, re.ok ? "  " : "<-", ms, lenOk ? "" : "  Länge!");
+        if (!lenOk) std::printf("       Länge: %zu, Referenz %zu Samples\n", exact.size() / 2, ref.size() / 2);
         if (name == "tiktok") {
             // Acceptance of step 2: the whole sound faster than the MLT path's sound export (8.7 s when measured)
-            std::printf("       Ton von %.1f s gemischt in %.2f s (MLT-Modus %.2f s), Abnahme: unter 8,7 s\n",
-                        double(compat.size() / 2) / kRate, exactMs / 1000.0, ms / 1000.0);
-            CHECK(exactMs < 8700);
+            std::printf("       Ton von %.1f s gemischt in %.2f s, Abnahme: unter 8,7 s\n", double(exact.size() / 2) / kRate,
+                        ms / 1000.0);
+            CHECK(ms < 8700);
         }
-        if (e.why && (!rc.ok || !re.ok)) std::printf("       %s\n", e.why);
-        // AUDIO_MIXER_KEEP=<dir>: renders as raw interleaved float (<case>-mlt.f32, <case>-genau.f32) for analysis
+        if (e.why && !re.ok) std::printf("       %s\n", e.why);
+        // AUDIO_MIXER_KEEP=<dir>: the render as raw interleaved float (<case>.f32) for analysis
         if (const QString keep = qEnvironmentVariable("AUDIO_MIXER_KEEP"); !keep.isEmpty()) {
             QDir().mkpath(keep);
-            for (const auto& [suffix, data] : {std::pair{"mlt", &compat}, std::pair{"genau", &exact}}) {
-                QFile f(QString("%1/%2-%3.f32").arg(keep, name, suffix));
-                if (f.open(QIODevice::WriteOnly)) f.write(reinterpret_cast<const char*>(data->data()), qint64(data->size() * sizeof(float)));
-            }
+            QFile f(QString("%1/%2.f32").arg(keep, name));
+            if (f.open(QIODevice::WriteOnly)) f.write(reinterpret_cast<const char*>(exact.data()), qint64(exact.size() * sizeof(float)));
         }
-        // AUDIO_MIXER_DUMP=<case>:<seconds>: samples around a place (reference, MLT mode, exact)
+        // AUDIO_MIXER_DUMP=<case>:<seconds>: samples around a place (reference, own mix)
         if (const QString dump = qEnvironmentVariable("AUDIO_MIXER_DUMP"); dump.section(':', 0, 0) == name) {
             const qsizetype at = qsizetype(dump.section(':', 1).toDouble() * kRate);
             for (qsizetype i = std::max<qsizetype>(0, at - 8); i < at + 8 && size_t(i) * 2 + 1 < ref.size(); ++i)
-                std::printf("       %7lld  ref %+.7f %+.7f  mlt %+.7f %+.7f  genau %+.7f %+.7f\n", qlonglong(i), ref[size_t(i) * 2],
-                            ref[size_t(i) * 2 + 1], compat[size_t(i) * 2], compat[size_t(i) * 2 + 1], exact[size_t(i) * 2],
-                            exact[size_t(i) * 2 + 1]);
+                std::printf("       %7lld  ref %+.7f %+.7f  own %+.7f %+.7f\n", qlonglong(i), ref[size_t(i) * 2],
+                            ref[size_t(i) * 2 + 1], exact[size_t(i) * 2], exact[size_t(i) * 2 + 1]);
         }
-        if (qEnvironmentVariableIsSet("AUDIO_MIXER_ALIGN")) {
-            std::printf("     MLT-Modus gegen Referenz:\n");
-            alignReport(compat, ref);
-            std::printf("     genau gegen Referenz:\n");
-            alignReport(exact, ref);
-        }
+        if (qEnvironmentVariableIsSet("AUDIO_MIXER_ALIGN")) alignReport(exact, ref);
         CHECK(lenOk);
-        CHECK(rc.ok);
         CHECK(re.ok);
+        CHECK(exact == framed);
     }
     return Check::result();
 }
