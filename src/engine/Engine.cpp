@@ -187,7 +187,7 @@ bool Engine::createConsumer(QString* error)
     m_gridBuilder->setGradeBypass(m_gradeBypass);
     m_gridBuilder->setGridSound(!m_player); // own audio engine: the player plays the angle's sound
     // Preview image in the project's aspect ratio (otherwise portrait gets distorted), even dimensions
-    const QSize fit = m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
+    const QSize fit = m_previewFull ? m_format.size() : m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
     m_previewSize = QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
 
     m_consumerProfile = makeProfile(m_format);
@@ -825,6 +825,19 @@ void Engine::setColorBypass(bool on)
     if (m_gradeBypass->exchange(on) == on) return;
     refresh(); // filters read the switch at the next frame, no rebuild needed
     emit colorBypassChanged(on);
+}
+
+void Engine::setPreviewFullSize(bool full)
+{
+    if (full == m_previewFull) return;
+    m_previewFull = full;
+    const QSize fit = full ? m_format.size() : m_format.size().scaled(960, 960, Qt::KeepAspectRatio);
+    m_previewSize = QSize(std::max(2, fit.width() & ~1), std::max(2, fit.height() & ~1));
+    if (m_consumer && !qEnvironmentVariableIsSet("SCHNEIDI_FULLRES_PREVIEW")) {
+        m_consumer->set("width", m_previewSize.width());
+        m_consumer->set("height", m_previewSize.height());
+    }
+    refresh(); // the frame shown again at the new size
 }
 
 void Engine::refresh()
