@@ -628,7 +628,7 @@ LutPtr Context::gradeLut(const ColorGrade::Baked& baked, int n)
 void Context::draw(Texture& dst, const Layer& layer)
 {
     const Texture* s = layer.source;
-    if (!d->recording || !s || dst.kind != Texture::Target || layer.opacity <= 0) return;
+    if (!d->recording || !s || s == &dst || dst.kind != Texture::Target || layer.opacity <= 0) return; // no feedback loop
     const Compose::Affine& m = layer.m;
     const double det = m.a * m.e - m.b * m.d;
     if (std::abs(det) < 1e-12) return;
