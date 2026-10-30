@@ -87,7 +87,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("bench-export");
-    Check::initMlt();
+    Check::initEngine();
     QStringList args = app.arguments().mid(1);
     auto option = [&](const QString& name, const QString& def) {
         const qsizetype i = args.indexOf(name);

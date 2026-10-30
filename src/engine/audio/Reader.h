@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own audio engine (docs/archiv/plan-0.10-ton.md), first block: reads one audio stream of a media file as float samples at
-// a fixed output rate, with sample-exact random access. Uses the FFmpeg libraries directly, no MLT.
+// a fixed output rate, with sample-exact random access. Uses the FFmpeg libraries directly.
 //
-// Time: position 0 is the picture's first frame (the first key frame, like MLT's frame 0), or the first sample of a
+// Time: position 0 is the picture's first frame (the first key frame), or the first sample of a
 // file without a picture. A sound stream that starts later than the picture begins at a positive position, one that
 // starts earlier at a negative one. Silence before the stream, after it and in gaps of its timestamps.
 //

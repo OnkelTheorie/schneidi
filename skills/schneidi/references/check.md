@@ -12,6 +12,8 @@ ready ops (master limiter, master fader) - pass them to `edit` and `check` again
 It also finds:
 - `under_music`: a track with events (game sound, speech) more than 15 LU under the music while its events play -
   raise that track or `duck` the music under it. Name the music track "Music" if it is not a plain sound file.
+- `missing_effect`: an effect this schneidi does not have (frei0r plugins of old projects) - it stays in the project
+  but is skipped when rendering; remove it or use an own effect instead (`effects` lists them).
 - `stutter`: a clip uses a part of a recording where the game lagged (the picture stands still) - trim the clip
   around it (`probe` `gaps` shows the jumps, `highlights` gives `clean` parts).
 - 9:16 only: `safe_area` / `subtitle_safe_area` = text where TikTok, Reels and Shorts put caption and buttons

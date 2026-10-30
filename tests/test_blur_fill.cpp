@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Blurred fill around the fitted picture (ClipTransform::fill, op 'transform' fit:'blur', engine/BlurFill): the bars
 // of a 16:9 clip in a 9:16 timeline show a blurred, enlarged copy of the same picture instead of the track below, on
-// one track. Checks the pixel functions, renders through the TimelineBuilder in the preview (RGBA) and export (YUV)
-// formats and at half size (crop limits the copy, zoom < 1 and rotation fill too, opacity makes the whole clip
+// one track. Checks the pixel functions, renders through the picture engine in preview and export
+// mode and at half size (crop limits the copy, zoom < 1 and rotation fill too, opacity makes the whole clip
 // see-through, the track below is covered), live value changes, the project file (old files unchanged) and the CLI.
 
 #include "check.h"
@@ -13,11 +13,9 @@
 #include "core/ProjectFile.h"
 #include "core/ProjectFormat.h"
 #include "engine/BlurFill.h"
-#include "engine/LiveUpdate.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
+#include "engine/picture/Renderer.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -36,48 +34,44 @@ struct Rgb {
     int r = 0, g = 0, b = 0;
 };
 
-struct Picture {
+struct Pic {
     int w = 0, h = 0;
-    mlt_image_format format = mlt_image_rgba;
-    QVector<uint8_t> data;
-    // RGBA: the pixel; YUV: luma only (in r, g, b)
+    QImage img;
     Rgb at(int x, int y) const
     {
-        if (format == mlt_image_rgba) {
-            const uint8_t* p = data.constData() + (size_t(y) * w + x) * 4;
-            return {p[0], p[1], p[2]};
-        }
-        const int l = data[y * w + x];
-        return {l, l, l};
+        const QRgb p = img.pixel(x, y);
+        return {qRed(p), qGreen(p), qBlue(p)};
     }
 };
 
-Picture render(const Timeline& tl, const ProjectFormat& fmt, mlt_image_format format, int frame, double scale = 1.0)
+enum Mode { Preview, Export };
+
+Pic picOf(const QImage& img)
 {
-    auto profile = makeProfile(fmt);
-    TimelineBuilder b(*profile);
-    auto tractor = b.build(tl);
-    tractor->seek(frame);
-    std::unique_ptr<Mlt::Frame> f(tractor->get_frame());
-    Picture pic;
-    pic.w = int(fmt.width * scale);
-    pic.h = int(fmt.height * scale);
-    pic.format = format;
-    mlt_image_format got = format;
-    int w = pic.w, h = pic.h;
-    f->set("consumer.rescale", "bilinear");
-    const uint8_t* img = f->get_image(got, w, h);
-    if (!CHECK(img && w == pic.w && h == pic.h && got == format)) return {};
-    const int bytes = format == mlt_image_rgba ? w * h * 4 : w * h;
-    pic.data = QVector<uint8_t>(img, img + bytes);
+    Pic pic;
+    pic.img = img;
+    pic.w = img.width();
+    pic.h = img.height();
     return pic;
+}
+
+Pic render(const Timeline& tl, const ProjectFormat& fmt, Mode mode, int frame, double scale = 1.0)
+{
+    ::Picture::Options o;
+    o.format = fmt;
+    o.output = QSize(int(fmt.width * scale), int(fmt.height * scale));
+    o.mode = mode == Preview ? ::Picture::Mode::Preview : ::Picture::Mode::Export;
+    ::Picture::Renderer r(tl, o);
+    const QImage img = r.render(frame).toImage();
+    if (!CHECK(!img.isNull() && img.size() == o.output)) return {};
+    return picOf(img);
 }
 
 bool reddish(Rgb c) { return c.r > 120 && c.g < 90 && c.b < 90; }
 bool greenish(Rgb c) { return c.g > 150 && c.r < 100; }
 bool bluish(Rgb c) { return c.b > 120 && c.r < 120; }
 
-int countGreen(const Picture& p)
+int countGreen(const Pic& p)
 {
     int n = 0;
     for (int y = 0; y < p.h; ++y)
@@ -182,13 +176,13 @@ void testPixels()
 
 void testRender()
 {
-    for (mlt_image_format f : {mlt_image_rgba, mlt_image_yuv420p}) {
-        const bool rgba = f == mlt_image_rgba;
+    for (Mode f : {Preview, Export}) {
+        const bool rgba = true;
         // Without: the bars are transparent, the green track shows (as before)
-        const Picture plain = render(overGreen(g_red, [](Clip&) {}), kTall, f, 5);
+        const Pic plain = render(overGreen(g_red, [](Clip&) {}), kTall, f, 5);
         if (rgba) CHECK(greenish(plain.at(90, 20)));
         // With: red bars from the clip itself, the picture unchanged, nothing of the green track left
-        const Picture filled = render(overGreen(g_red, [](Clip& c) { blurFill(c); }), kTall, f, 5);
+        const Pic filled = render(overGreen(g_red, [](Clip& c) { blurFill(c); }), kTall, f, 5);
         if (rgba) {
             CHECK(reddish(filled.at(90, 20)));
             CHECK(reddish(filled.at(90, 300)));
@@ -198,7 +192,7 @@ void testRender()
         }
         CHECK_EQ(countGreen(filled), 0);
         // Darker by half
-        const Picture dim = render(overGreen(g_red, [](Clip& c) { blurFill(c, 50); }), kTall, f, 5);
+        const Pic dim = render(overGreen(g_red, [](Clip& c) { blurFill(c, 50); }), kTall, f, 5);
         if (rgba) {
             const Rgb bar = dim.at(90, 20), pic = dim.at(90, 160);
             CHECK(std::abs(bar.r - pic.r / 2) < 20);
@@ -211,36 +205,36 @@ void testRender()
                               blurFill(c);
                               c.transform.transformOn = false;
                           }),
-                          kTall, mlt_image_rgba, 5)
+                          kTall, Preview, 5)
                        .at(90, 20)));
     // Opacity acts on the whole clip: the green shows through the bars and the picture alike
     {
-        const Picture half = render(overGreen(g_red, [](Clip& c) {
+        const Pic half = render(overGreen(g_red, [](Clip& c) {
                                         blurFill(c);
                                         c.transform.opacity = 50;
                                     }),
-                                    kTall, mlt_image_rgba, 5);
+                                    kTall, Preview, 5);
         const Rgb bar = half.at(90, 20), pic = half.at(90, 160);
         CHECK(bar.g > 60 && bar.r > 60);
         CHECK(std::abs(bar.g - pic.g) < 25 && std::abs(bar.r - pic.r) < 25);
     }
     // Crop: the copy leaves out what is cropped (blue bands of the source), at every size
     for (double scale : {1.0, 0.5}) {
-        const Picture banded = render(overGreen(g_banded, [](Clip& c) { blurFill(c); }), kTall, mlt_image_rgba, 5, scale);
+        const Pic banded = render(overGreen(g_banded, [](Clip& c) { blurFill(c); }), kTall, Preview, 5, scale);
         CHECK(bluish(banded.at(int(90 * scale), int(4 * scale))));
         const double band = 30 * 180.0 / 320; // 30 source rows in timeline pixels on the fitted picture
-        const Picture cropped = render(overGreen(g_banded, [&](Clip& c) {
+        const Pic cropped = render(overGreen(g_banded, [&](Clip& c) {
                                            blurFill(c);
                                            c.transform.cropTop = c.transform.cropBottom = band;
                                        }),
-                                       kTall, mlt_image_rgba, 5, scale);
+                                       kTall, Preview, 5, scale);
         CHECK(reddish(cropped.at(int(90 * scale), int(4 * scale))));
         CHECK_EQ(countGreen(cropped), 0);
     }
     // Preview size = export size scaled: the same colors at the same places
     {
-        const Picture full = render(overGreen(g_banded, [](Clip& c) { blurFill(c, 20); }), kTall, mlt_image_rgba, 5);
-        const Picture half = render(overGreen(g_banded, [](Clip& c) { blurFill(c, 20); }), kTall, mlt_image_rgba, 5, 0.5);
+        const Pic full = render(overGreen(g_banded, [](Clip& c) { blurFill(c, 20); }), kTall, Preview, 5);
+        const Pic half = render(overGreen(g_banded, [](Clip& c) { blurFill(c, 20); }), kTall, Preview, 5, 0.5);
         int worst = 0;
         for (int y : {6, 40, 80, 240, 280, 314})
             for (int x : {10, 90, 170}) {
@@ -251,18 +245,18 @@ void testRender()
     }
     // Room left by zoom < 1 and rotation fills too (a 16:9 clip in a 16:9 timeline)
     {
-        const Picture small = render(overGreen(g_red, [](Clip& c) {
+        const Pic small = render(overGreen(g_red, [](Clip& c) {
                                          blurFill(c);
                                          c.transform.zoomX = c.transform.zoomY = 0.5;
                                      }, g_greenWide),
-                                     kWide, mlt_image_rgba, 5);
+                                     kWide, Preview, 5);
         CHECK(reddish(small.at(5, 5)));
         CHECK_EQ(countGreen(small), 0);
-        const Picture turned = render(overGreen(g_red, [](Clip& c) {
+        const Pic turned = render(overGreen(g_red, [](Clip& c) {
                                           blurFill(c);
                                           c.transform.rotation = 20;
                                       }, g_greenWide),
-                                      kWide, mlt_image_rgba, 5);
+                                      kWide, Preview, 5);
         CHECK(reddish(turned.at(2, 2)));
         CHECK_EQ(countGreen(turned), 0);
     }
@@ -270,27 +264,22 @@ void testRender()
 
 void testLiveUpdate()
 {
-    // Blur and darkening are values: the running preview takes them without a rebuild; switching the fill on is not
-    auto profile = makeProfile(kTall);
+    // Blur and darkening are values: the running renderer takes them as a new snapshot, no new renderer
     const Timeline base = overGreen(g_banded, [](Clip& c) { blurFill(c, 0); });
     Timeline changed = base;
     changed.video[1].clips[0].transform.fillDim = 80;
     changed.video[1].clips[0].transform.fillBlur = 90;
-    CHECK(LiveUpdate::valuesOnly(base, changed));
-    TimelineBuilder builder(*profile);
-    auto live = builder.build(base);
-    auto fresh = builder.build(changed);
-    CHECK(LiveUpdate::transfer(*live, *fresh));
-    live->seek(5);
-    std::unique_ptr<Mlt::Frame> f(live->get_frame());
-    mlt_image_format fmt = mlt_image_rgba;
-    int w = kTall.width, h = kTall.height;
-    const uint8_t* img = f->get_image(fmt, w, h);
-    if (CHECK(img)) CHECK(img[(10 * w + 90) * 4] + img[(10 * w + 90) * 4 + 2] < 80); // 80 % darker
-    const Timeline off = overGreen(g_banded, [](Clip&) {});
-    auto plain = builder.build(off);
-    auto with = builder.build(base);
-    CHECK(!LiveUpdate::transfer(*plain, *with));
+    ::Picture::Options o;
+    o.format = kTall;
+    o.mode = ::Picture::Mode::Preview;
+    ::Picture::Renderer r(base, o);
+    CHECK(!r.render(5).isNull());
+    r.update(changed);
+    const QImage img = r.render(5).toImage();
+    if (CHECK(!img.isNull())) {
+        const QRgb p = img.pixel(90, 10);
+        CHECK(qRed(p) + qBlue(p) < 80); // 80 % darker
+    }
 }
 
 void testProjectFile(const QString& dir)
@@ -420,7 +409,7 @@ int main(int argc, char** argv)
                                    QStringList{"-f", "lavfi", "-i", "color=c=0x00ff00:s=320x180:r=25:d=2"} + h264);
     if (!CHECK(!g_red.isEmpty() && !g_banded.isEmpty() && !g_green.isEmpty() && !g_greenWide.isEmpty()))
         return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testRender();
     testLiveUpdate();

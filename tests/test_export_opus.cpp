@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Export from Opus sources (MKV/WebM-like and MP4) to H.264/AAC (MP4): audio stays in sync with the picture, audio and
 // video length match. FFmpeg reports "[opus] Could not update timestamps for skipped samples" and "[mp4] Timestamps
-// are unset in a packet for stream 1 … making some up“ – both harmless (see Bundle::configureMltLogging); this
-// test proves that. Also: log levels and the jackrack module not being loaded (LADSPA message).
+// are unset in a packet for stream 1 … making some up“ – both harmless (FfmpegLog keeps them out of the log); this
+// test proves that.
 
 #include "check.h"
 
 #include "engine/Exporter.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QEventLoop>
 #include <QJsonArray>
@@ -108,17 +107,6 @@ QJsonObject probe(const QString& path)
     return r;
 }
 
-void testLogging()
-{
-    CHECK(qgetenv("MLT_REPOSITORY_DENY").split(':').contains("libmltjackrack"));
-    CHECK_EQ(mlt_log_get_level(), MLT_LOG_WARNING);
-    // jackrack not loaded: no LADSPA filter, no search for plugins
-    auto prof = makeProfile(kFmt);
-    mlt_filter f = mlt_factory_filter(prof->get_profile(), "ladspa", nullptr);
-    CHECK(f == nullptr);
-    if (f) mlt_filter_close(f);
-}
-
 void testSync(const QString& dir, const QString& source)
 {
     std::printf("Quelle %s\n", qPrintable(QFileInfo(source).fileName()));
@@ -162,9 +150,8 @@ int main(int argc, char** argv)
     const QString mp4 = Check::makeMedia(tmp.filePath("opus.mp4"), input);
     if (mkv.isEmpty() || mp4.isEmpty()) return Check::skip("ffmpeg ohne libx264/libopus");
 
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
-    testLogging();
     testSync(tmp.path(), mkv);
     testSync(tmp.path(), mp4);
     return Check::result();

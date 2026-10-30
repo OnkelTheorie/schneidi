@@ -354,7 +354,7 @@ int main(int argc, char** argv)
     testJson();
     if (!Check::haveFfmpeg() || QStandardPaths::findExecutable("ffprobe").isEmpty())
         return Check::skip("ffmpeg/ffprobe nicht gefunden");
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testChoice();
     testPanel();

@@ -2,15 +2,13 @@
 #include "engine/MediaCache.h"
 #include "engine/picture/MediaStills.h"
 
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/ProxyManager.h"
-#include "engine/audio/Path.h"
 #include "engine/audio/Reader.h"
 #include "engine/Background.h"
 #include "engine/GradedThumbs.h"
 #include "engine/video/Thumbnails.h"
 
-#include <Mlt.h>
 #include <QCryptographicHash>
 #include <QDataStream>
 #include <QDir>
@@ -49,12 +47,12 @@ QVector<QVector<quint8>> buildLevels(QVector<quint8> base)
 }
 
 // Disk cache for waveforms: key from path, size and modification time
-QString waveCacheFile(const QString& path, int stream, const FrameRate& rate, bool own)
+QString waveCacheFile(const QString& path, int stream, const FrameRate& rate)
 {
     const QFileInfo fi(path);
-    // further streams with a suffix so that existing waveforms (stream 0) stay valid; the own audio engine places
-    // some files' sound differently than MLT (sound stream later than the picture, 44.1 kHz) -> own entries
-    const QString id = (own ? QStringLiteral("own|") : QString()) + (stream > 0 ? QString("s%1|").arg(stream) : QString())
+    // further streams with a suffix so that existing waveforms (stream 0) stay valid; "own|": the sound as the own
+    // audio engine places it (entries without it came from the sound path before 0.10)
+    const QString id = QStringLiteral("own|") + (stream > 0 ? QString("s%1|").arg(stream) : QString())
                        + QString("%1|%2|%3|%4|%5")
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
@@ -233,12 +231,9 @@ std::shared_ptr<const Waveform> MediaCache::waveform(const QString& path, int st
 
 void MediaCache::thumbLoop()
 {
-    std::unique_ptr<Mlt::Profile> profile;
-    std::unique_ptr<ProducerFactory> factory; // BT.601 detour (Profiles.h), outlives the producers
     int generation = -1;
-    // Reuse open producers (opening a file is more expensive than seeking)
-    QHash<QString, std::shared_ptr<Mlt::Producer>> producers;
-    std::unique_ptr<Picture::MediaStills> own; // own picture engine (default; SCHNEIDI_PICTURE=mlt: the producers)
+    // Keeps its sources open (opening a file is more expensive than seeking)
+    std::unique_ptr<Picture::MediaStills> own;
 
     for (;;) {
         ThumbJob job;
@@ -254,48 +249,13 @@ void MediaCache::thumbLoop()
             gen = m_generation;
         }
         Background::yieldToForeground();
-        if (gen != generation) { // new project format: producers hang on the old profile
-            producers.clear();
-            factory.reset();
-            own.reset();
-            if (Picture::ownPicture()) {
-                own = std::make_unique<Picture::MediaStills>(format, &ProxyManager::decodeSource, 8);
-            } else {
-                profile = makeProfile(format);
-                factory = std::make_unique<ProducerFactory>(*profile);
-            }
+        if (gen != generation) { // new project format
+            own = std::make_unique<Picture::MediaStills>(format, &ProxyManager::decodeSource, 8);
             generation = gen;
         }
 
-        std::shared_ptr<Mlt::Producer> prod = own ? nullptr : producers.value(job.path);
-        if (!own && !prod) {
-            if (producers.size() >= 8) producers.clear();
-            prod = factory->open(ProxyManager::decodeSource(job.path));
-            prod->set("audio_index", -1); // audio is never needed here
-            producers.insert(job.path, prod);
-        }
-
-        QImage img;
-        if (own) {
-            img = own->frame(job.path, job.frame, thumbSize(format));
-            if (!img.isNull()) img = img.convertToFormat(QImage::Format_RGB32); // faster to draw
-        } else if (prod->is_valid()) {
-            prod->seek(job.frame);
-            std::unique_ptr<Mlt::Frame> f(prod->get_frame());
-            if (f) {
-                mlt_image_format fmt = mlt_image_rgba;
-                const QSize want = thumbSize(format);
-                int w = want.width(), h = want.height();
-                const int reqW = w, reqH = h;
-                const uint8_t* data = f->get_image(fmt, w, h);
-                if (data && w > 0 && h > 0) {
-                    QImage raw(w, h, QImage::Format_RGBA8888);
-                    std::memcpy(raw.bits(), data, size_t(w) * h * 4);
-                    img = (w == reqW && h == reqH) ? raw : raw.scaled(reqW, reqH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-                    img = img.convertToFormat(QImage::Format_RGB32); // faster to draw
-                }
-            }
-        }
+        QImage img = own->frame(job.path, job.frame, thumbSize(format));
+        if (!img.isNull()) img = img.convertToFormat(QImage::Format_RGB32); // faster to draw
 
         {
             QMutexLocker lock(&m_mutex);
@@ -327,7 +287,7 @@ void MediaCache::stripLoop()
         }
         Background::yieldToForeground();
         const double fps = format.rate.fps();
-        // Only key frames, upright, square pixels, fitted into the project format centered with black borders like MLT
+        // Only key frames, upright, square pixels, fitted into the project format centered with black borders like the timeline
         int count = 0;
         bool aborted = false;
         QElapsedTimer sinceUpdate;
@@ -359,7 +319,7 @@ void MediaCache::stripLoop()
             if (gen != m_generation) continue;
             KeyIndex& ki = m_keys[path];
             ki.done = true;
-            ki.failed = count == 0; // no video / unreadable -> exact frames via MLT as before
+            ki.failed = count == 0; // no video / unreadable -> exact frames through the decoder
         }
         emit updated();
     }
@@ -392,7 +352,6 @@ void MediaCache::waveLoop()
             gen = m_generation;
         }
         // Waveform counts frames in the project frame rate
-        const bool own = Audio::ownPath();
         auto publish = [&](std::shared_ptr<const Waveform> w) {
             {
                 QMutexLocker lock(&m_mutex);
@@ -402,7 +361,7 @@ void MediaCache::waveLoop()
             emit updated();
         };
 
-        const QString cacheFile = waveCacheFile(path, stream, format.rate, own);
+        const QString cacheFile = waveCacheFile(path, stream, format.rate);
         {
             auto w = std::make_shared<Waveform>();
             if (loadWave(cacheFile, *w)) {
@@ -414,14 +373,11 @@ void MediaCache::waveLoop()
         // Peaks of frame i: fills peaks[0..N) with 0..255; false = no sound for it
         int length = 0;
         std::function<bool(int, quint8*)> framePeaks;
-        // Own engine: the stream as the mixer reads it (stereo, 48 kHz), frame i = samples of timeline frame i
+        // The stream as the mixer reads it (stereo, 48 kHz), frame i = samples of timeline frame i
         std::unique_ptr<Audio::Reader> reader;
         std::vector<float> buf[2];
         int64_t bufFrom = 0, bufTo = 0;
-        // MLT audio path
-        std::unique_ptr<Mlt::Profile> profile;
-        std::unique_ptr<Mlt::Producer> producer;
-        if (own) {
+        {
             constexpr int kRate = 48000;
             reader = Audio::Reader::open(path, stream, Audio::Reader::Options{kRate, 2});
             const FrameRate fps = format.rate;
@@ -450,31 +406,6 @@ void MediaCache::waveLoop()
                     for (int c = 0; c < 2; ++c)
                         for (int s = s0; s < s1; ++s) peak = std::max(peak, std::abs(buf[c][size_t(a - bufFrom + s)]));
                     peaks[k] = quint8(std::min(255, int(std::min(peak, 1.f) * 32767.f) >> 7)); // as the s16 path
-                }
-                return true;
-            };
-        } else {
-            profile = makeProfile(format);
-            const double fps = profile->fps();
-            producer = std::make_unique<Mlt::Producer>(*profile, path.toUtf8().constData());
-            if (producer->is_valid()) selectAudioStream(*producer, stream);
-            length = producer->is_valid() ? producer->get_length() : 0;
-            framePeaks = [&, fps](int i, quint8* peaks) {
-                Mlt::Producer& p = *producer;
-                p.seek(i);
-                std::unique_ptr<Mlt::Frame> f(p.get_frame());
-                if (!f) return false;
-                // Only fetch audio – without get_image the video is not decoded at all
-                mlt_audio_format fmt = mlt_audio_s16;
-                int freq = 48000, channels = 2;
-                int samples = mlt_audio_calculate_frame_samples(float(fps), freq, i);
-                const auto* pcm = static_cast<const int16_t*>(f->get_audio(fmt, freq, channels, samples));
-                if (!pcm || samples <= 0 || channels <= 0) return false;
-                for (int b = 0; b < N; ++b) {
-                    const int s0 = samples * b / N, s1 = samples * (b + 1) / N;
-                    int peak = 0;
-                    for (int s = s0 * channels; s < s1 * channels; ++s) peak = std::max(peak, std::abs(int(pcm[s])));
-                    peaks[b] = quint8(std::min(255, peak >> 7));
                 }
                 return true;
             };

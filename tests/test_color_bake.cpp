@@ -25,24 +25,24 @@ namespace {
 using CP = ColorGrade::Params;
 using Fn = std::function<void(float, float, float, float*)>;
 
-struct Picture {
+struct Pic {
     const char* name;
     int w = 0, h = 0;
     std::vector<uint8_t> px;
 };
 
-Picture fromColors(const char* name, const std::vector<std::array<int, 3>>& colors, int w)
+Pic fromColors(const char* name, const std::vector<std::array<int, 3>>& colors, int w)
 {
-    Picture p{name, w, int((colors.size() + w - 1) / w), {}};
+    Pic p{name, w, int((colors.size() + w - 1) / w), {}};
     p.px.assign(size_t(p.w) * p.h * 4, 255);
     for (size_t i = 0; i < colors.size(); ++i)
         for (int c = 0; c < 3; ++c) p.px[i * 4 + c] = uint8_t(colors[i][c]);
     return p;
 }
 
-std::vector<Picture> pictures()
+std::vector<Pic> pictures()
 {
-    std::vector<Picture> out;
+    std::vector<Pic> out;
     std::vector<std::array<int, 3>> grid;
     for (int r = 0; r < 256; r += 5)
         for (int g = 0; g < 256; g += 5)
@@ -58,7 +58,7 @@ std::vector<Picture> pictures()
                 if (r > g && g > b) skin.push_back({r, g, b});
     out.push_back(fromColors("skin tones", skin, 512));
     // Smooth gradients, one per row (checked for banding below)
-    Picture grad{"gradients", 1024, 6, {}};
+    Pic grad{"gradients", 1024, 6, {}};
     grad.px.assign(size_t(grad.w) * grad.h * 4, 255);
     for (int x = 0; x < grad.w; ++x) {
         const int v = x / 4, f = x * 255 / 1023;
@@ -178,7 +178,7 @@ void compare(const std::vector<uint8_t>& want, const std::vector<uint8_t>& got, 
 // Gradient picture without banding: on no row the baked picture jumps further from one pixel to the next than
 // the reference does anywhere on that row (+1 for rounding), and the gray ramp (first row) rises wherever the
 // reference rises. (Single pixels may round the other way where the exact value is near .5.)
-bool smooth(const Picture& pic, const std::vector<uint8_t>& want, const std::vector<uint8_t>& got)
+bool smooth(const Pic& pic, const std::vector<uint8_t>& want, const std::vector<uint8_t>& got)
 {
     for (int y = 0; y < pic.h; ++y)
         for (int c = 0; c < 3; ++c) {
@@ -205,7 +205,7 @@ bool smooth(const Picture& pic, const std::vector<uint8_t>& want, const std::vec
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
-    const std::vector<Picture> pics = pictures();
+    const std::vector<Pic> pics = pictures();
     auto lut1d = makeLut(1024, false, curves);
     auto lut17 = makeLut(17, true, look);
     auto lut33 = makeLut(33, true, look);
@@ -227,7 +227,7 @@ int main(int argc, char** argv)
     };
     const auto corr = corrections();
     std::printf("%-12s %-24s %4s %8s %10s\n", "picture", "LUT", "max", "mean", "share > 1");
-    for (const Picture& pic : pics)
+    for (const Pic& pic : pics)
         for (const auto& [lname, lut] : luts) {
             Stats s;
             for (const auto& [cname, p] : corr) {
@@ -249,7 +249,7 @@ int main(int argc, char** argv)
 
     // The same tables again give the same picture; a hand-made LUT without prepare() gives the prepared result
     {
-        const Picture& pic = pics.front();
+        const Pic& pic = pics.front();
         CP p = corr[1].second;
         p.saturation = 70;
         auto b = ColorGrade::bake(p, lut33.get());
@@ -267,7 +267,7 @@ int main(int argc, char** argv)
     // A 3D LUT too big for packed nodes is computed per pixel: exactly the reference
     {
         auto big = makeLut(130, true, look);
-        const Picture& pic = pics[1];
+        const Pic& pic = pics[1];
         const CP p = corr[1].second;
         std::vector<uint8_t> want = pic.px, got = pic.px;
         ColorGrade::applyReference(want.data(), pic.w, pic.h, p, big.get());

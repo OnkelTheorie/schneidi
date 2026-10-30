@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/VideoEffects.h"
 
-#include <framework/mlt.h>
 
 #include <algorithm>
 #include <cmath>
@@ -644,25 +643,24 @@ void alphaOps(uint8_t* rgba, int width, int height, const AlphaParams& p)
     }
 }
 
-// ---- MLT filter ----
+// ---- By effect id ----
 
 namespace {
 
 enum class Kind { Key, Glow, Halftone, Noise, Scanlines, NoSync, Gradient, Alpha };
 struct Entry {
     const char* id;
-    const char* service; // mlt_service of the own filter (LiveUpdate tells filters apart by it)
     Kind kind;
 };
 constexpr Entry kEntries[] = {
-    {"chromakey", "schneidi.key", Kind::Key},
-    {"frei0r.glow", "schneidi.glow", Kind::Glow},
-    {"frei0r.colorhalftone", "schneidi.halftone", Kind::Halftone},
-    {"frei0r.rgbnoise", "schneidi.noise", Kind::Noise},
-    {"frei0r.scanline0r", "schneidi.scanlines", Kind::Scanlines},
-    {"frei0r.nosync0r", "schneidi.nosync", Kind::NoSync},
-    {"frei0r.cairogradient", "schneidi.gradient", Kind::Gradient},
-    {"frei0r.alpha0ps_alpha0ps", "schneidi.alpha", Kind::Alpha},
+    {"chromakey", Kind::Key},
+    {"frei0r.glow", Kind::Glow},
+    {"frei0r.colorhalftone", Kind::Halftone},
+    {"frei0r.rgbnoise", Kind::Noise},
+    {"frei0r.scanline0r", Kind::Scanlines},
+    {"frei0r.nosync0r", Kind::NoSync},
+    {"frei0r.cairogradient", Kind::Gradient},
+    {"frei0r.alpha0ps_alpha0ps", Kind::Alpha},
 };
 
 const Entry* entry(const QString& id)
@@ -670,46 +668,6 @@ const Entry* entry(const QString& id)
     for (const Entry& e : kEntries)
         if (id == QLatin1String(e.id)) return &e;
     return nullptr;
-}
-
-// The MLT filter's properties as the effect's parameter values
-Params mltParams(mlt_properties props, int pos, int len)
-{
-    Params c;
-    c.has = [props](const char* name) { return mlt_properties_get(props, name) != nullptr; };
-    c.num = [props, pos, len](const char* name) { return mlt_properties_anim_get_double(props, name, pos, len); };
-    c.color = [props](const char* name) {
-        const mlt_color m = mlt_properties_get_color(props, name);
-        return QColor(m.r, m.g, m.b);
-    };
-    c.text = [props](const char* name) { return QString::fromUtf8(mlt_properties_get(props, name)); };
-    return c;
-}
-
-int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int)
-{
-    auto filter = static_cast<mlt_filter>(mlt_frame_pop_service(frame));
-    const int pos = mlt_frame_pop_service_int(frame);
-    const int len = mlt_frame_pop_service_int(frame);
-    mlt_frame_pop_service_int(frame); // kind (apply() finds it by the effect id)
-    *format = mlt_image_rgba;
-    const int err = mlt_frame_get_image(frame, image, format, width, height, 1);
-    if (err || !*image || *format != mlt_image_rgba) return err;
-    const char* id = mlt_properties_get(MLT_FILTER_PROPERTIES(filter), "_effect");
-    apply(QString::fromUtf8(id ? id : ""), *image, *width, *height, mltParams(MLT_FILTER_PROPERTIES(filter), pos, len),
-          mlt_frame_get_position(frame));
-    return 0;
-}
-
-mlt_frame process(mlt_filter filter, mlt_frame frame)
-{
-    const auto kind = mlt_properties_get_int(MLT_FILTER_PROPERTIES(filter), "_kind");
-    mlt_frame_push_service_int(frame, kind);
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_length2(filter, frame)));
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_position(filter, frame)));
-    mlt_frame_push_service(frame, filter);
-    mlt_frame_push_get_image(frame, getImage);
-    return frame;
 }
 
 } // namespace
@@ -780,19 +738,5 @@ bool apply(const QString& effectId, uint8_t* img, int w, int h, const Params& pa
 void gaussian(uint8_t* rgba, int w, int h, double sigma) { blur(rgba, w, h, 4, sigma); }
 
 bool isOwn(const QString& effectId) { return entry(effectId) != nullptr; }
-
-mlt_filter create(const QString& effectId)
-{
-    const Entry* e = entry(effectId);
-    if (!e) return nullptr;
-    mlt_filter f = mlt_filter_new();
-    if (!f) return nullptr;
-    f->process = process;
-    mlt_properties p = MLT_FILTER_PROPERTIES(f);
-    mlt_properties_set(p, "mlt_service", e->service);
-    mlt_properties_set_int(p, "_kind", int(e->kind));
-    mlt_properties_set(p, "_effect", e->id);
-    return f;
-}
 
 } // namespace VideoEffects

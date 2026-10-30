@@ -4,7 +4,7 @@
 // stay transparent (the track below shows). AI test runs of 2026-10-25 found it measured on the frame at zoom 1
 // (letterbox included, the bars inside the kept area opaque black) and as a share of the frame size laid onto the
 // picture otherwise (x of the width, y of the height). Renders a red 16:9 clip over a green track in a 9:16 timeline,
-// in the preview (RGBA) and export (YUV) formats and at half size, and checks the core conversions (new timeline
+// in the preview and export renderers and at half size, and checks the core conversions (new timeline
 // resolution, the engine's picture shape probe).
 
 #include "check.h"
@@ -13,10 +13,8 @@
 #include "core/MediaAspect.h"
 #include "core/ProjectFormat.h"
 #include "engine/Engine.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QFile>
 #include <QTemporaryDir>
@@ -32,39 +30,37 @@ QString g_red, g_green, g_greenWide; // green backgrounds in the shape of each t
 
 enum class Px { Black, Red, Green, Other };
 
-struct Picture {
+struct Pic {
     int w = 0, h = 0;
     QVector<Px> px;
     Px at(int x, int y) const { return px[y * w + x]; }
 };
 
-Picture render(const Timeline& tl, const ProjectFormat& fmt, mlt_image_format format, int frame, double scale = 1.0)
+// Preview or export renderer
+enum Mode { Preview, Export };
+
+Pic render(const Timeline& tl, const ProjectFormat& fmt, Mode mode, int frame, double scale = 1.0)
 {
-    auto profile = makeProfile(fmt);
-    TimelineBuilder b(*profile);
-    auto tractor = b.build(tl);
-    tractor->seek(frame);
-    std::unique_ptr<Mlt::Frame> f(tractor->get_frame());
-    Picture pic;
+    Pic pic;
     pic.w = int(fmt.width * scale);
     pic.h = int(fmt.height * scale);
-    mlt_image_format got = format;
-    int w = pic.w, h = pic.h;
-    const uint8_t* img = f->get_image(got, w, h);
-    if (!CHECK(img && w == pic.w && h == pic.h && got == format)) return {};
+    ::Picture::Options o;
+    o.format = fmt;
+    o.output = QSize(pic.w, pic.h);
+    o.mode = mode == Preview ? ::Picture::Mode::Preview : ::Picture::Mode::Export;
+    ::Picture::Renderer r(tl, o);
+    const QImage img = r.render(frame).toImage();
+    const int w = img.width(), h = img.height();
+    if (!CHECK(!img.isNull() && w == pic.w && h == pic.h)) return {};
     pic.px.resize(w * h);
-    for (int i = 0; i < w * h; ++i) {
-        if (format == mlt_image_rgba) {
-            const uint8_t* p = img + 4 * i;
-            pic.px[i] = p[0] + p[1] + p[2] < 90                ? Px::Black
-                        : p[0] > 150 && p[1] < 100            ? Px::Red
-                        : p[1] > 150 && p[0] < 100            ? Px::Green
-                                                              : Px::Other;
-        } else { // yuv420p: luma decides (BT.709 limited: black 16, red ~63, green ~173)
-            const int y = img[i];
-            pic.px[i] = y < 35 ? Px::Black : y > 45 && y < 100 ? Px::Red : y > 140 && y < 205 ? Px::Green : Px::Other;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            const QRgb p = img.pixel(x, y);
+            pic.px[y * w + x] = qRed(p) + qGreen(p) + qBlue(p) < 90 ? Px::Black
+                                : qRed(p) > 150 && qGreen(p) < 100  ? Px::Red
+                                : qGreen(p) > 150 && qRed(p) < 100  ? Px::Green
+                                                                    : Px::Other;
         }
-    }
     return pic;
 }
 
@@ -75,7 +71,7 @@ struct Box {
     int black = 0;
 };
 
-Box redBox(const Picture& pic)
+Box redBox(const Pic& pic)
 {
     Box b;
     for (int y = 0; y < pic.h; ++y)
@@ -135,7 +131,7 @@ void testRender()
 {
     // 16:9 in 180x320: the picture is 180 x 101.25, rows 109.375..210.625
     const double top = (320 - 101.25) / 2, bottom = top + 101.25;
-    for (mlt_image_format f : {mlt_image_rgba, mlt_image_yuv420p}) {
+    for (Mode f : {Preview, Export}) {
         checkBox(redBox(render(overGreen([](Clip&) {}), kTall, f, 5)), top, bottom, 0, 180, "letterbox transparent");
         // zoom 1: 60/70 px off the sides, 10/5 px off the picture's top/bottom (not the frame's), bars stay see-through
         checkBox(redBox(render(overGreen([](Clip& c) { crop(c, 60, 70, 10, 5); }), kTall, f, 5)), top + 10, bottom - 5,
@@ -155,7 +151,7 @@ void testRender()
                                c.transform.posX = 20;
                                c.transform.posY = 30; // up
                            }),
-                           kTall, mlt_image_rgba, 5)),
+                           kTall, Preview, 5)),
              top + 10 - 30, bottom - 5 - 30, 80, 130, "crop with position");
     // Centering a cropped part (the formula of the `transform` help, AI run 2026-10-28 expected the part to be
     // centered by itself): the top right quarter-by-half (45 x 50.625) at zoom 4 fills the width, centered with
@@ -166,16 +162,16 @@ void testRender()
                                c.transform.posX = -4 * (135 - 0) / 2.0;
                                c.transform.posY = 4 * (0 - 50.625) / 2;
                            }),
-                           kTall, mlt_image_rgba, 5)),
+                           kTall, Preview, 5)),
              160 - 101.25, 160 + 101.25, 0, 180, "cropped part centered");
     // More than half from one side (the Inspector allows the whole frame): only the right strip stays
-    checkBox(redBox(render(overGreen([](Clip& c) { crop(c, 135, 0, 0, 0); }), kTall, mlt_image_rgba, 5)), top, bottom,
+    checkBox(redBox(render(overGreen([](Clip& c) { crop(c, 135, 0, 0, 0); }), kTall, Preview, 5)), top, bottom,
              135, 180, "crop past the middle");
     checkBox(redBox(render(overGreen([](Clip& c) {
                                crop(c, 60, 70, 10, 5);
                                c.transform.cropOn = false;
                            }),
-                           kTall, mlt_image_rgba, 5)),
+                           kTall, Preview, 5)),
              top, bottom, 0, 180, "crop off");
     // A transform switched off keeps zoom 1 under the crop
     checkBox(redBox(render(overGreen([](Clip& c) {
@@ -183,24 +179,24 @@ void testRender()
                                c.transform.zoomX = c.transform.zoomY = 2;
                                c.transform.transformOn = false;
                            }),
-                           kTall, mlt_image_rgba, 5)),
+                           kTall, Preview, 5)),
              top + 10, bottom - 5, 60, 110, "crop with the transform off");
     // Preview at half size: everything halves
     checkBox(redBox(render(overGreen([](Clip& c) {
                                crop(c, 60, 70, 10, 5);
                                c.transform.zoomX = c.transform.zoomY = 2;
                            }),
-                           kTall, mlt_image_rgba, 5, 0.5)),
+                           kTall, Preview, 5, 0.5)),
              (160 - 101.25 + 20) / 2, (160 + 101.25 - 10) / 2, 15, 65, "half size");
     // Animated: crop_top 0 -> 50 over clip frames 0..20, at frame 10 it is 25
     checkBox(redBox(render(overGreen([](Clip& c) {
                                Keys::setKey(c, AnimParam::CropTop, 0, 0);
                                Keys::setKey(c, AnimParam::CropTop, 20, 50);
                            }),
-                           kTall, mlt_image_rgba, 10)),
+                           kTall, Preview, 10)),
              top + 25, bottom, 0, 180, "animated crop");
     // A clip shaped like the timeline: timeline pixels of the frame, as before
-    checkBox(redBox(render(overGreen([](Clip& c) { crop(c, 60, 70, 10, 5); }, g_greenWide), kWide, mlt_image_rgba, 5)),
+    checkBox(redBox(render(overGreen([](Clip& c) { crop(c, 60, 70, 10, 5); }, g_greenWide), kWide, Preview, 5)),
              10, 175, 60, 250, "same shape, zoom 1");
     checkBox(redBox(render(overGreen(
                                [](Clip& c) {
@@ -208,13 +204,13 @@ void testRender()
                                    c.transform.zoomX = c.transform.zoomY = 2;
                                },
                                g_greenWide),
-                           kWide, mlt_image_rgba, 5)),
+                           kWide, Preview, 5)),
              -90 + 100, 270 - 90, 0, 320, "same shape, zoom 2");
 }
 
 void testProbe(const QString& dir)
 {
-    // The engine's probe (installed by Engine::initMlt) measures the picture as the TimelineBuilder places it
+    // The engine's probe (installed by Engine::initHeadless) measures the picture as the renderer places it
     CHECK(std::abs(Engine::pictureAspect(g_red) - 16.0 / 9) < 0.01);
     CHECK(std::abs(Engine::pictureAspect(g_green) - 9.0 / 16) < 0.01);
     const QString png = Check::makeMedia(dir + "/square.png", {"-f", "lavfi", "-i", "color=c=blue:s=40x30", "-frames:v", "1"});
@@ -285,7 +281,7 @@ int main(int argc, char** argv)
                                                                     "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
                                                                     "yuv420p"});
     if (!CHECK(!g_red.isEmpty() && !g_green.isEmpty() && !g_greenWide.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testRender();
     testProbe(tmp.path());

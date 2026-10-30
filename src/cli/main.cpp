@@ -15,6 +15,7 @@
 #include "cli/Setup.h"
 #include "core/I18n.h"
 #include "engine/Engine.h"
+#include "engine/FfmpegLog.h"
 #include "engine/Licenses.h"
 
 #include <QGuiApplication>
@@ -99,8 +100,6 @@ int main(int argc, char* argv[])
 {
     // No window, no sound: titles still need Qt's painting (fonts), hence a GUI application on the offscreen platform
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
-    if (qEnvironmentVariableIsEmpty("SDL_AUDIODRIVER")) qputenv("SDL_AUDIODRIVER", "dummy");
-    qputenv("SDL_NO_SIGNAL_HANDLERS", "1");
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("schneidi"); // same backups, effects and settings as the app
 #ifdef Q_OS_WIN
@@ -108,7 +107,7 @@ int main(int argc, char* argv[])
 #endif
     QGuiApplication::setApplicationVersion(QString("%1 (%2)").arg(QString::fromUtf8(SCHNEIDI_VERSION_LABEL), SCHNEIDI_BUILD));
     I18n::install("en");
-    std::setlocale(LC_NUMERIC, "C"); // MLT reads numbers with a dot
+    std::setlocale(LC_NUMERIC, "C"); // C libraries (FFmpeg option parsing) read numbers with a dot
 
     QStringList args = app.arguments().mid(1);
     bool pretty = false;
@@ -124,16 +123,13 @@ int main(int argc, char* argv[])
     const QString name = args.takeFirst();
     if (name == "setup") return Cli::Setup::run(args, pretty);
 
-    // The HTTP server only routes: MLT runs in its workers (`mcp` processes)
+    // The HTTP server only routes: the engine runs in its workers (`mcp` processes)
     if (name == "serve") return Cli::Serve::run(args);
     if (name != "help") {
-        QString error;
-        if (!Engine::initMlt(&error)) {
-            print(errorJson("MLT_INIT", error), pretty);
-            return 1;
-        }
+        FfmpegLog::install(nullptr);
+        Engine::initHeadless();
     }
-    // Third-party licenses of what this program really loads (FFmpeg's configuration, MLT modules, GPL libraries);
+    // Third-party licenses of what this program really loads (FFmpeg's configuration, GPL libraries);
     // exit code 1 when a SCHNEIDI_NO_GPL build finds anything GPL (the check of the bundled packages)
     if (name == "--licenses") {
         QJsonArray parts, gpl;

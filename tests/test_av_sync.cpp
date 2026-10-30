@@ -12,7 +12,6 @@
 #include "core/RenderJob.h"
 #include "engine/Engine.h"
 #include "engine/Exporter.h"
-#include "engine/audio/Path.h"
 #include "engine/RenderQueue.h"
 
 #include <QApplication>
@@ -35,9 +34,6 @@ const ProjectFormat kFmt{320, 180, {25, 1}};
 constexpr int kFps = 25;
 constexpr int kRate = 48000;
 constexpr double kSeconds = 8;
-// Sound through MLT (the fallback, SCHNEIDI_AUDIO=mlt): its known offsets are reported, not counted; the own engine
-// must be exact
-bool mltAudio() { return !Audio::ownPath(); }
 // Flash/beep times of the sources (frames at 25 fps = seconds * 25)
 constexpr int kFlashes[] = {25, 58, 92, 131, 170};
 // Timeline: [0, 80) from in 0, [100, 215) from in 85 -> flashes 25, 58 and 107, 146, 185
@@ -54,9 +50,8 @@ struct Variant {
     double videoDelay = 0; // the picture starts this much after the sound
     const char* container = "mov";
     const char* audioCodec = "pcm_s16le";
-    // MLT 7.30 plays a clip that starts at the file start 65-87 ms early when the sound stream starts later than the
-    // picture (from an in point it is right): found 2026-10-22, fixed by the own audio engine
-    bool mltOffset = false;
+    // The sound stream starts later than the picture: a clip from the file start was once 65-87 ms early (2026-10-22)
+    bool lateStart = false;
 };
 
 const Variant kVariants[] = {
@@ -238,10 +233,9 @@ void testExport(const QString& dir)
             worst = std::max(worst, std::abs(got[i]));
             line += QString("%1%2").arg(i == 2 ? "  | B:" : " ").arg(got[i], 7, 'f', 2);
         }
-        const bool ok = worst <= kExportTolMs, known = !ok && mltAudio() && v.mltOffset;
-        std::printf("  %-20s A:%s%s\n", v.name, qPrintable(line),
-                    ok ? "" : known ? "  <- versetzt (bekannt: MLT-Ton-Weg)" : "  <- versetzt");
-        if (!known && !CHECK(ok)) std::printf("       %s\n", v.what);
+        const bool ok = worst <= kExportTolMs;
+        std::printf("  %-20s A:%s%s\n", v.name, qPrintable(line), ok ? "" : "  <- versetzt");
+        if (!CHECK(ok)) std::printf("       %s\n", v.what);
     }
 }
 
@@ -282,10 +276,9 @@ struct SpeakerClock {
     }
 };
 
-// Preview: the real Engine plays a timeline with three sources from their file start (the MLT offset of the export
-// above shows here too) – flash shown (frameReady) against beep handed to the speaker. MLT sound path: only measured
-// and printed. Own audio engine (picture follows its clock): |offset| <= kPreviewTolMs. The "speaker" (SDL's disk
-// driver resp. the engine's file device) has no device latency; with a sound card the clock subtracts its buffer.
+// Preview: the real Engine plays a timeline with three sources from their file start – flash shown (frameReady)
+// against beep handed to the speaker. The picture follows the sound's clock: |offset| <= kPreviewTolMs. The "speaker"
+// (the engine's file device) has no device latency; with a sound card the clock subtracts its buffer.
 void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock)
 {
     const Variant* parts[] = {&kVariants[0], &kVariants[1], &kVariants[3]}; // mov, late_audio, aac
@@ -354,8 +347,8 @@ void testPreview(const QString& dir, const QString& speaker, SpeakerClock& clock
             if (!CHECK(heard >= 0)) return;
             const double ms = (heard - flashes[n]) / 1e6;
             line += QString(" %1").arg(ms, 7, 'f', 1);
-            if (!mltAudio() && std::abs(ms) > kPreviewTolMs) line += " <- versetzt";
-            if (!mltAudio()) CHECK(std::abs(ms) <= kPreviewTolMs);
+            if (std::abs(ms) > kPreviewTolMs) line += " <- versetzt";
+            CHECK(std::abs(ms) <= kPreviewTolMs);
         }
         std::printf("  %-20s%s\n", parts[i]->name, qPrintable(line));
     }
@@ -376,7 +369,7 @@ int main(int argc, char** argv)
     Check::initApp("av_sync");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     if (!CHECK(tmp.isValid())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     testExport(tmp.path());
     clock.clock.start();
     clock.start();

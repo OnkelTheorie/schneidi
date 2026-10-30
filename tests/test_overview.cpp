@@ -16,7 +16,7 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     Check::initApp("overview");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg missing");
-    Check::initMlt();
+    Check::initEngine();
     QTemporaryDir dir;
     qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
     // 4 s moving test picture with a tone, then 4 s black and silent (one cut at 4 s)

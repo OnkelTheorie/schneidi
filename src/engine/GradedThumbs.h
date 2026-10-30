@@ -5,7 +5,7 @@
 // several clips of one source can be graded differently.
 //
 // The grade is the pure pixel function of engine/ColorGrade (correction, LUT, windows) applied to the small source
-// thumbnail, never an MLT graph. Graded images are made in a worker thread and cached by (source thumbnail, evaluated
+// thumbnail, never a full render. Graded images are made in a worker thread and cached by (source thumbnail, evaluated
 // grade): scrolling and zooming reuse them, undo finds the previous look again. Until a graded image is ready a tile
 // keeps what it showed before (its previous look; a new tile a graded neighbor of the clip, else the ungraded
 // thumbnail), so nothing flickers or goes blank.

@@ -688,7 +688,7 @@ int main(int argc, char** argv)
                                {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=5", "-c:v", "libx264",
                                 "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (!CHECK(!g_media.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testTimeline(dump);
     testPosters();

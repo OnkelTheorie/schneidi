@@ -262,7 +262,7 @@ int main(int argc, char** argv)
         if (!QFileInfo::exists(path)) return Check::skip("Testmedium fehlt");
         sources << path;
     }
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     Model m;
     load(m, sources);

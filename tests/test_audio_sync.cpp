@@ -728,7 +728,7 @@ int main(int argc, char** argv)
     testSourceMarkers();
 
     // Decoding real files (skipped inside without ffmpeg)
-    Check::initMlt();
+    Check::initEngine();
     testSoundSyncOnFiles(dir.path());
     testSoundSyncCancel(dir.path());
     return Check::result();

@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Preview sound without clicks (user 2026-10-21): the real preview Engine plays a sine timeline while the test seeks,
-// drags the playhead and changes the clip volume and the mixer – what the speaker gets (SDL's "disk" driver writes
+// drags the playhead and changes the clip volume and the mixer – what the speaker gets (the engine's file device writes
 // it to a file) must have no step in the wave and must come from one opened audio device.
 // Clicks found this way (docs/testdaten/knacken): a full purge on seek threw away the fade-out (SeekFade), every seek
 // of a drag played 5 ms of sound, clip volume 0 -> x dB and mixer changes from the AI rebuilt the timeline
-// (audio device closed and reopened). Stopping breaks off on the MLT sound path (sdl2_audio drops its buffer) – checked
-// as known there (SCHNEIDI_AUDIO=mlt); the own audio engine (the default, its file device as the speaker) fades out.
+// (audio device closed and reopened). Stopping fades out.
 #include "check.h"
 
 #include "engine/Engine.h"
-#include "engine/audio/Path.h"
 
 #include <QApplication>
 #include <QDir>
@@ -56,7 +54,6 @@ int main(int argc, char** argv)
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     if (!CHECK(tmp.isValid())) return Check::result();
     // Two tones (-6 dB) with a small picture, every cut and every seek is a jump in the wave unless faded. MOV: sample-exact timestamps
-    // (MKV has 1 ms, MLT < 7.36 then drops 48 samples after a seek – a click of its own, see dev/mlt.md)
     QStringList tones;
     for (int f : {440, 620}) {
         tones << Check::makeMedia(tmp.filePath(QString("sine%1.mov").arg(f)),
@@ -70,7 +67,7 @@ int main(int argc, char** argv)
     QString error;
     if (!engine.init(&error)) {
         std::printf("Engine: %s\n", qPrintable(error));
-        return Check::skip("kein MLT-Audio-Consumer");
+        return Check::skip("keine Engine");
     }
     ProjectFormat fmt;
     fmt.width = 320;
@@ -139,8 +136,7 @@ int main(int argc, char** argv)
     CHECK_EQ(clicks, 0);
 
     // Stop: the sound fades out within a few ms instead of breaking off (the last sounding 2 ms are much quieter than
-    // the sine before them). sdl2_audio closes the device at once and drops its buffer (dev/mlt.md) – known until the
-    // own audio engine (docs/archiv/plan-0.10-ton.md), which fades out and keeps the device open.
+    // the sine before them): the audio engine fades out and keeps the device open.
     qsizetype last = frames - 1;
     while (last > 0 && std::abs(s[last * 2]) < 1000) --last;
     auto peak = [&](qsizetype from, qsizetype to) {
@@ -150,13 +146,8 @@ int main(int argc, char** argv)
     };
     const int tail = peak(last - 96, last), before = peak(last - 2400, last - 1440);
     const bool cut = before > 0 && tail > before / 2;
-    const bool kMltAudio = !Audio::ownPath();
     std::printf("       Stopp: letzte 2 ms Spitze %d, 30–50 ms davor %d%s\n", tail, before,
-                cut ? (kMltAudio ? " – bricht ab (bekannt: MLT-Ton-Weg)" : " – bricht ab") : " – blendet aus");
-    if (kMltAudio) {
-        if (!CHECK(cut)) std::printf("       Stopp knackt nicht mehr: Test auf die strenge Prüfung umstellen\n");
-    } else {
-        CHECK(!cut);
-    }
+                cut ? " – bricht ab" : " – blendet aus");
+    CHECK(!cut);
     return Check::result();
 }

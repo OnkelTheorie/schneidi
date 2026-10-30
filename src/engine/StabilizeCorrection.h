@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Applying a stabilization result (effect "stabilize", engine/Stabilizer) without MLT: the correction of a clip and
-// the pure RGBA warp. The MLT filter (Stabilizer::attach) and the own picture engine (Picture::Renderer) use both.
+// Applying a stabilization result (effect "stabilize", engine/Stabilizer): the correction of a clip and the pure RGBA
+// warp the picture engine (Picture::Renderer) applies.
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"

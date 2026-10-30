@@ -610,7 +610,7 @@ int main(int argc, char** argv)
                                            {"-f", "lavfi", "-i", "smptebars=size=640x360:rate=25:duration=3", "-c:v",
                                             "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (!CHECK(!media.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testRender(media);
     const QString moving = Check::makeMedia(

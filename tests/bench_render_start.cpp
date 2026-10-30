@@ -95,7 +95,7 @@ int main(int argc, char** argv)
             return 1;
         media << path;
     }
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
 
     Project p;

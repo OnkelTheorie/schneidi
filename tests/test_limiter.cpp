@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test master limiter (PeakLimiter): holds the true peak ceiling, leaves quiet audio unchanged (only delayed),
-// same result in any block size and after a state copy; in the timeline the export path (integer samples like the
-// avformat consumer requests) and the measurement (float) give the same level.
+// same result in any block size and after a state copy; in the timeline the mixer holds the ceiling.
 #include "check.h"
 
 #include "core/Limiter.h"
 #include "core/TruePeak.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
+#include "engine/audio/Mixer.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QTemporaryDir>
 #include <cmath>
@@ -58,34 +56,27 @@ struct Levels {
     double peakDb = -200, rmsDb = -200;
 };
 
-// Timeline audio [from, to] as float (the measurement) or as interleaved s32 (what the export's consumer asks for)
-Levels renderLevels(const Timeline& tl, int from, int to, mlt_audio_format want)
+// Timeline audio [from, to] as the mixer renders it (export and preview)
+Levels renderLevels(const Timeline& tl, int from, int to)
 {
-    auto prof = makeProfile(ProjectFormat{});
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl, nullptr);
-    tr->seek(from);
+    Audio::Mixer::Options o;
+    o.rate = kRate;
+    Audio::Mixer mixer(tl, ProjectFormat{}.rate, o);
+    const int64_t a = mixer.frameStart(from), b = mixer.frameStart(to + 1);
+    const int count = int(b - a);
+    std::vector<float> l(static_cast<size_t>(count)), r(static_cast<size_t>(count));
+    float* planes[] = {l.data(), r.data()};
+    mixer.render(a, count, planes);
     double peak = 0, sum = 0;
-    long count = 0;
-    for (int pos = from; pos <= to; ++pos) {
-        std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-        mlt_audio_format fmt = want;
-        int freq = kRate, channels = 2;
-        int samples = mlt_audio_calculate_frame_samples(float(prof->fps()), freq, pos);
-        const void* data = f->get_audio(fmt, freq, channels, samples);
-        if (!data || fmt != want) continue;
-        for (int i = 0; i < samples * channels; ++i) {
-            const double x = want == mlt_audio_s32le ? static_cast<const int32_t*>(data)[i] / 2147483648.0
-                                                     : static_cast<const float*>(data)[i];
-            peak = std::max(peak, std::abs(x));
-            sum += x * x;
-            ++count;
+    for (const auto* ch : {&l, &r})
+        for (const float x : *ch) {
+            peak = std::max(peak, std::abs(double(x)));
+            sum += double(x) * x;
         }
-    }
-    Levels l;
-    if (peak > 1e-10) l.peakDb = 20 * std::log10(peak);
-    if (count && sum > 0) l.rmsDb = 10 * std::log10(sum / count);
-    return l;
+    Levels lv;
+    if (peak > 1e-10) lv.peakDb = 20 * std::log10(peak);
+    if (count && sum > 0) lv.rmsDb = 10 * std::log10(sum / (2.0 * count));
+    return lv;
 }
 
 } // namespace
@@ -162,7 +153,7 @@ int main(int argc, char** argv)
                                            "aevalsrc=0.5*sin(2*PI*440*t)*(0.6+0.4*sin(2*PI*3*t))|0.5*sin(2*PI*440*t)*(0.6+0.4*sin(2*PI*3*t)):s=48000:d=3",
                                            "-c:a", "pcm_f32le"});
     if (!CHECK(!tone.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     Timeline tl;
     tl.video.resize(1);
@@ -177,14 +168,11 @@ int main(int argc, char** argv)
     tl.audio[0].clips << c;
     tl.masterLimiter = true;
     tl.masterLimiterDb = -1.0;
-    const Levels measured = renderLevels(tl, 5, 70, mlt_audio_float);
-    const Levels exported = renderLevels(tl, 5, 70, mlt_audio_s32le);
-    if (!CHECK(near(measured.rmsDb, exported.rmsDb, 0.05)))
-        std::printf("       RMS float %.2f, s32 %.2f dB\n", measured.rmsDb, exported.rmsDb);
-    CHECK(measured.peakDb <= -0.99 && exported.peakDb <= -0.99);
+    const Levels measured = renderLevels(tl, 5, 70);
+    CHECK(measured.peakDb <= -0.99);
     CHECK(measured.peakDb > -3.0);
     // Off: the clip is louder than full scale (float keeps it, nothing clipped before the master)
     tl.masterLimiter = false;
-    CHECK(renderLevels(tl, 5, 70, mlt_audio_float).peakDb > 3.0);
+    CHECK(renderLevels(tl, 5, 70).peakDb > 3.0);
     return Check::result();
 }

@@ -258,7 +258,7 @@ int main(int argc, char* argv[])
     const QString broll = Check::makeMedia(tmp.path() + "/broll.mkv",
                                            {"-f", "lavfi", "-i", "testsrc2=size=64x64:rate=25:duration=2", "-c:v", "ffv1"});
     if (CHECK(!broll.isEmpty())) {
-        Check::initMlt(); // append reads the new file
+        Check::initEngine(); // append reads the new file
         const int mediaBefore = fake.project.media().size();
         r = cli({"edit", fake.path, "--ops",
                  QString(R"([{"op":"append","media":"%1"},{"op":"delete","clips":[999]}])").arg(broll)});

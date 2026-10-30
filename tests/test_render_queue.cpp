@@ -14,7 +14,6 @@
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
@@ -556,7 +555,7 @@ int main(int argc, char** argv)
                                            "-i", "sine=frequency=440:duration=2", "-c:v", "libx264", "-pix_fmt",
                                            "yuv420p", "-c:a", "aac", "-shortest"});
     if (!CHECK(!clip.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
 
     Project p;

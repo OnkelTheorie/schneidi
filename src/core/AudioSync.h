@@ -6,7 +6,7 @@
 // hears them. The envelopes are cross-correlated over the whole length (FFT, scored per lag against the spread of
 // unrelated recordings), the peak is refined to sub-values (parabola, windows along the overlap for the drift) and
 // checked against the next best peak (confidence): silence, nothing shared or only periodic beeps are "not found"
-// instead of a guess. Pure computation without MLT; decoding files is engine/SoundSync.
+// instead of a guess. Pure computation; decoding files is engine/SoundSync.
 
 #include <QVector>
 

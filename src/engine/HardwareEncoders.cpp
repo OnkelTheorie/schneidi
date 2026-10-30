@@ -274,7 +274,7 @@ QVector<QPair<QString, QString>> codecOptions(const QString& codec, int crf)
 QString pixelFormat(const QString& codec)
 {
     switch (encoderOfCodec(codec)) {
-    case VideoEncoder::Vaapi: return "vaapi"; // MLT converts to NV12 and uploads to the device
+    case VideoEncoder::Vaapi: return "vaapi"; // the writer converts to NV12 and uploads to the device
     case VideoEncoder::Qsv: return "nv12";
     default: return "yuv420p";
     }

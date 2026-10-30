@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Test effects in the render (MLT): render color correction/blur on color bars and check pixel values -
+// Test effects in the render: render color correction/blur on color bars and check pixel values -
 // direction of the sliders, keyframes, splitting, blur independent of resolution, title with effect (alpha stays),
 // same picture with German number format (LC_NUMERIC) at runtime. Test medium is created with ffmpeg.
 #include "check.h"
@@ -7,10 +7,8 @@
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
 #include "core/ProjectFormat.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QImage>
 #include <QTemporaryDir>
@@ -24,21 +22,7 @@ QString g_media;
 
 QImage render(const Timeline& tl, ProjectFormat fmt, int pos, int w = 0, int h = 0)
 {
-    auto prof = makeProfile(fmt);
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl);
-    tr->seek(pos);
-    std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-    mlt_image_format ifmt = mlt_image_rgba;
-    if (!w) {
-        w = prof->width();
-        h = prof->height();
-    }
-    const uint8_t* d = f->get_image(ifmt, w, h);
-    if (!d) return {};
-    QImage img(w, h, QImage::Format_RGBA8888);
-    std::memcpy(img.bits(), d, size_t(w) * h * 4);
-    return img.copy();
+    return Check::renderFrame(tl, fmt, pos, w ? QSize(w, h) : QSize());
 }
 
 // One video track with one clip (color bars, 100 frames), fn adjusts the clip
@@ -114,19 +98,12 @@ int main(int argc, char** argv)
                                {"-f", "lavfi", "-i", "smptebars=size=1920x1080:rate=25:duration=4", "-vf",
                                 "scale=out_color_matrix=bt709", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
                                 "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"});
-    // BT.709 like phone/camera material: MLT colors BT.601 sources differently when scaling (docs/dev/mlt.md), which would
-    // distort the size comparisons of the blur
+    // BT.709 like phone/camera material
     if (!CHECK(!g_media.isEmpty())) return Check::result();
 
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt; // 1920 × 1080 @ 25
-    {
-        // The MLT Qt module (qtblend, qtext) refuses depending on the build without X11/Wayland -> skip without a display
-        auto prof = makeProfile(fmt);
-        Mlt::Transition qt(*prof, "qtblend");
-        if (!qt.is_valid()) return Check::skip("MLT-Qt-Modul nicht nutzbar (kein Display? z. B. xvfb-run -a ctest …)");
-    }
 
     const QImage ref = render(one([](Clip&) {}), fmt, 10);
     if (!CHECK(!ref.isNull())) return Check::result();
@@ -229,7 +206,7 @@ int main(int argc, char** argv)
     }
 
     // BT.601 source (without color info, as ffmpeg writes it): same colors in full size, preview size and
-    // 720p project (MLT scaler colored it wrongly, detour via ProducerFactory)
+    // 720p project (a scaler once colored it wrongly)
     const QString bars601 = Check::makeMedia(tmp.filePath("bars601.mp4"),
                                              {"-f", "lavfi", "-i", "smptebars=size=1920x1080:rate=25:duration=2",
                                               "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});

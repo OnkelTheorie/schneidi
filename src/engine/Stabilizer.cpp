@@ -4,7 +4,7 @@
 #include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/StabilizeCorrection.h"
 #include "engine/StabilizeMotion.h"
 #include "engine/video/Reader.h"
@@ -14,7 +14,6 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-#include <Mlt.h>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
@@ -82,15 +81,6 @@ bool parseName(const QString& name, const QString& base, int* from, int* to)
     *from = parts[0].toInt(&ok1);
     *to = parts[1].toInt(&ok2);
     return ok1 && ok2 && *to > *from;
-}
-
-QString resourceOf(const Stabilizer::Request& r)
-{
-    if (r.speed == 1.0) return r.file;
-    // timewarp reads the number with atof in the current C locale (see TimelineBuilder::producerFor)
-    char num[32];
-    std::snprintf(num, sizeof num, "%.10g", r.speed);
-    return QString("timewarp:%1:%2").arg(QString::fromLatin1(num), r.file);
 }
 
 void collectMissing(const Timeline& tl, const ProjectFormat& format, QVector<Stabilizer::Request>& out, QSet<QString>& seen)
@@ -201,119 +191,7 @@ bool finish(const Stabilizer::Request& r, int from, int to, Motions& motions, QS
     return true;
 }
 
-// ---- The filter that applies the result (own MLT filter like ColorGrade) ----
-
 using StabilizeMotion::Outside;
-
-using ApplyState = StabilizeCorrection::Correction; // positions from the filter's in
-
-// Border "keep": the last output picture, its uncovered parts filled from it
-struct KeptPicture {
-    std::mutex mutex;
-    std::vector<uint8_t> data;
-    int width = 0, height = 0, pos = -2;
-    mlt_image_format format = mlt_image_none;
-};
-
-struct FilterData {
-    std::atomic<std::shared_ptr<const ApplyState>> state;
-    KeptPicture kept;
-};
-
-constexpr const char* kDataName = "_schneidi_stabilize";
-
-void destroyData(void* p) { delete static_cast<FilterData*>(p); }
-
-void warp(mlt_image_format format, const uint8_t* src, uint8_t* dst, int w, int h, const ApplyState& st,
-          const StabilizeMotion::Similarity& s, Outside outside)
-{
-    double m[6];
-    StabilizeMotion::pixelMap(s, w, h, st.aspect, m);
-    if (format == mlt_image_rgba) {
-        StabilizeMotion::warpRgba(src, w * 4, dst, w * 4, w, h, m, outside, 0xFF000000u); // opaque black
-    } else if (format == mlt_image_rgb) {
-        StabilizeMotion::warpRgb(src, w * 3, dst, w * 3, w, h, m, outside);
-    } else { // yuv420p: chroma planes at half size, the same map in their pixels
-        uint8_t* sp[4] = {};
-        uint8_t* dp[4] = {};
-        int ss[4] = {}, ds[4] = {};
-        mlt_image_format_planes(format, w, h, const_cast<uint8_t*>(src), sp, ss);
-        mlt_image_format_planes(format, w, h, dst, dp, ds);
-        StabilizeMotion::warpPlane(sp[0], ss[0], dp[0], ds[0], w, h, m, outside, 16);
-        const int cw = ss[1], ch = h / 2;
-        double mc[6];
-        const double sx = double(cw) / w, sy = double(ch) / h;
-        // chroma position = luma position * (sx, sy): conjugate the map
-        mc[0] = m[0];
-        mc[1] = m[1] * sx / sy;
-        mc[2] = m[2] * sx;
-        mc[3] = m[3] * sy / sx;
-        mc[4] = m[4];
-        mc[5] = m[5] * sy;
-        StabilizeMotion::warpPlane(sp[1], ss[1], dp[1], ds[1], cw, ch, mc, outside, 128);
-        StabilizeMotion::warpPlane(sp[2], ss[2], dp[2], ds[2], cw, ch, mc, outside, 128);
-    }
-}
-
-int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int)
-{
-    auto filter = static_cast<mlt_filter>(mlt_frame_pop_service(frame));
-    const int pos = mlt_frame_pop_service_int(frame);
-    auto* fd = static_cast<FilterData*>(mlt_properties_get_data(MLT_FILTER_PROPERTIES(filter), kDataName, nullptr));
-    const std::shared_ptr<const ApplyState> st = fd ? fd->state.load() : nullptr;
-    if (!st || pos < 0 || pos >= int(st->corrections.size()) || st->corrections[size_t(pos)].isIdentity())
-        return mlt_frame_get_image(frame, image, format, width, height, 0);
-    // Warped in the format the caller wants when it is one of ours (no conversion), else in RGBA
-    if (*format != mlt_image_yuv420p && *format != mlt_image_rgba && *format != mlt_image_rgb) *format = mlt_image_rgba;
-    const int err = mlt_frame_get_image(frame, image, format, width, height, 0);
-    if (err || !*image) return err;
-    if (*format != mlt_image_yuv420p && *format != mlt_image_rgba && *format != mlt_image_rgb) return 0;
-    const int w = *width, h = *height;
-    if (w < 2 || h < 2) return 0;
-    const int size = mlt_image_format_size(*format, w, h, nullptr);
-    auto* out = static_cast<uint8_t*>(mlt_pool_alloc(size));
-    if (!out) return 0;
-    const StabilizeMotion::Similarity& s = st->corrections[size_t(pos)];
-    Outside outside = st->border == StabilizeMotion::Border::Black ? Outside::Fill : Outside::Clamp;
-    if (st->border == StabilizeMotion::Border::Keep) {
-        KeptPicture& k = fd->kept;
-        std::lock_guard lock(k.mutex);
-        // only right after the previous frame (playback/export in order); otherwise edge pixels
-        if (k.format == *format && k.width == w && k.height == h && (k.pos == pos - 1 || k.pos == pos)
-            && int(k.data.size()) >= size) {
-            std::memcpy(out, k.data.data(), size_t(size));
-            outside = Outside::Keep;
-        }
-        warp(*format, *image, out, w, h, *st, s, outside);
-        k.data.assign(out, out + size);
-        k.width = w;
-        k.height = h;
-        k.format = *format;
-        k.pos = pos;
-    } else {
-        warp(*format, *image, out, w, h, *st, s, outside);
-    }
-    // A separate alpha plane moves with the picture
-    int alphaSize = 0;
-    if (uint8_t* alpha = mlt_frame_get_alpha_size(frame, &alphaSize); alpha && alphaSize == w * h) {
-        auto* a = static_cast<uint8_t*>(mlt_pool_alloc(alphaSize));
-        double m[6];
-        StabilizeMotion::pixelMap(s, w, h, st->aspect, m);
-        StabilizeMotion::warpPlane(alpha, w, a, w, w, h, m, outside == Outside::Keep ? Outside::Clamp : outside, 255);
-        mlt_frame_set_alpha(frame, a, alphaSize, mlt_pool_release);
-    }
-    mlt_frame_set_image(frame, out, size, mlt_pool_release);
-    *image = out;
-    return 0;
-}
-
-mlt_frame process(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_position(filter, frame)));
-    mlt_frame_push_service(frame, filter);
-    mlt_frame_push_get_image(frame, getImage);
-    return frame;
-}
 
 } // namespace
 
@@ -365,13 +243,6 @@ std::optional<Stabilizer::Request> Stabilizer::request(const Clip& c, const Proj
     return makeRequest(c, format.rate, format.height > 0 ? double(format.width) / format.height : 0.0);
 }
 
-std::optional<Stabilizer::Request> Stabilizer::request(const Clip& c, Mlt::Profile& profile)
-{
-    // display aspect: an export in another size (same aspect ratio) finds the same analysis
-    const double dar = profile.display_aspect_den() > 0 ? double(profile.display_aspect_num()) / profile.display_aspect_den() : 0.0;
-    return makeRequest(c, FrameRate{profile.frame_rate_num(), profile.frame_rate_den()}, dar);
-}
-
 Stabilizer::Result Stabilizer::find(const Request& r)
 {
     const QString base = r.base();
@@ -415,14 +286,12 @@ QVector<Stabilizer::Request> Stabilizer::missing(const Timeline& tl, const Proje
 
 bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<bool>* cancel, std::atomic<int>* progress)
 {
-    if (qEnvironmentVariable("SCHNEIDI_STABILIZE_ANALYSIS") == QLatin1String("mlt"))
-        return analyzeMlt(r, error, cancel, progress);
     auto fail = [&](const QString& msg) {
         if (error) *error = msg;
         return false;
     };
     if (!QFileInfo::exists(r.file)) return fail(T("Datei nicht gefunden: %1").arg(r.file));
-    // Own decoder, positions as the timeline counts them (Picture::Renderer, TimelineBuilder): project frames of the
+    // Own decoder, positions as the timeline counts them (Picture::Renderer): project frames of the
     // file, through MLT's timewarp arithmetic for a speed change
     Video::Reader::Options ro;
     ro.hardware = false; // in order through the whole range: the software decoder keeps up and leaves the card alone
@@ -485,49 +354,6 @@ bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<boo
     }
     sws_freeContext(sws);
     reader.reset();
-    return finish(r, from, to, motions, error, cancel, progress);
-}
-
-bool Stabilizer::analyzeMlt(const Request& r, QString* error, const std::atomic<bool>* cancel, std::atomic<int>* progress)
-{
-    auto fail = [&](const QString& msg) {
-        if (error) *error = msg;
-        return false;
-    };
-    if (!QFileInfo::exists(r.file)) return fail(T("Datei nicht gefunden: %1").arg(r.file));
-    ProjectFormat format;
-    format.width = r.width;
-    format.height = r.height;
-    format.rate = r.rate;
-    auto profile = makeProfile(format);
-    ProducerFactory factory(*profile);
-    std::unique_ptr<Mlt::Producer> p = factory.open(resourceOf(r));
-    if (!p || !p->is_valid()) return fail(T("Datei lässt sich nicht öffnen: %1").arg(r.file));
-    p->set("audio_index", -1);
-    // Frames beyond the end of the file (file shortened or replaced, rounded timewarp length) have no motion:
-    // the result still covers the whole request, or find() never accepts it (analyzed again and again)
-    const int from = std::max(0, r.from);
-    const int to = std::min(r.to, p->get_length() - 1);
-    if (r.to <= from) return fail(T("Der Clip ist zu kurz zum Stabilisieren."));
-
-    // Every frame in order: the motion from each one to the next
-    std::unique_ptr<StabilizeMotion::Estimator> estimator;
-    Motions motions;
-    motions.reserve(size_t(r.to - from + 1));
-    for (int pos = from; pos <= to; ++pos) {
-        if (cancel && cancel->load()) break;
-        p->seek(pos);
-        std::unique_ptr<Mlt::Frame> frame(p->get_frame());
-        if (!frame) break;
-        mlt_image_format fmt = mlt_image_yuv420p;
-        int w = r.width, h = r.height;
-        const uint8_t* img = frame->get_image(fmt, w, h);
-        if (!img || fmt != mlt_image_yuv420p || w < 16 || h < 16) break;
-        if (!estimator) estimator = std::make_unique<StabilizeMotion::Estimator>(w, h, r.shakiness, r.accuracy);
-        motions.push_back(estimator->push(img, w)); // luma = the first plane
-        if (progress) *progress = int(qint64(pos - from + 1) * 1000 / (to - from + 1));
-    }
-    p.reset();
     return finish(r, from, to, motions, error, cancel, progress);
 }
 
@@ -599,38 +425,6 @@ bool warpRgba(const Correction& c, int pos, const uint8_t* src, uint8_t* dst, in
 }
 
 } // namespace StabilizeCorrection
-
-bool Stabilizer::attach(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c)
-{
-    // display aspect: an export in another size (same aspect ratio) finds the same analysis
-    const double dar = profile.display_aspect_den() > 0 ? double(profile.display_aspect_num()) / profile.display_aspect_den() : 0.0;
-    std::shared_ptr<const ApplyState> st = StabilizeCorrection::of(c, FrameRate{profile.frame_rate_num(), profile.frame_rate_den()},
-                                                      profile.dar() > 0 ? profile.dar() : dar);
-    if (!st) return false;
-    const int resFrom = st->from, resTo = st->from + int(st->corrections.size()) - 1;
-    mlt_filter f = mlt_filter_new();
-    if (!f) return false;
-    f->process = process;
-    auto* fd = new FilterData;
-    fd->state.store(std::move(st));
-    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), kDataName, fd, 0, destroyData, nullptr);
-    Mlt::Filter filter(f); // holds its own reference
-    mlt_filter_close(f);
-    // positions count from the analyzed range (frames outside it, e.g. far handles, stay as they are)
-    filter.set_in_and_out(resFrom, resTo);
-    cut.attach(filter);
-    return true;
-}
-
-bool Stabilizer::transfer(mlt_filter live, mlt_filter fresh)
-{
-    if (live->process != process || fresh->process != process) return false;
-    auto* l = static_cast<FilterData*>(mlt_properties_get_data(MLT_FILTER_PROPERTIES(live), kDataName, nullptr));
-    auto* f = static_cast<FilterData*>(mlt_properties_get_data(MLT_FILTER_PROPERTIES(fresh), kDataName, nullptr));
-    if (!l || !f) return false;
-    l->state.store(f->state.load());
-    return true;
-}
 
 // ---- Background queue ----
 

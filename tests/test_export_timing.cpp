@@ -146,7 +146,7 @@ int main(int argc, char** argv)
                                 "-c:v", "ffv1", "-c:a", "pcm_s16le", "-color_range", "tv", "-colorspace", "bt709",
                                 "-color_primaries", "bt709", "-color_trc", "bt709"});
     if (!CHECK(!g_media.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     check("all", tmp.path(), 0, kFrames - 1, kFmt.rate);
     check("inout", tmp.path(), 10, 39, kFmt.rate);
     check("rate30", tmp.path(), 0, kFrames - 1, FrameRate{30, 1});

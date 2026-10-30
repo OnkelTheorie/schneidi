@@ -107,7 +107,7 @@ std::optional<double> motion(const ProjectFormat& f, const Timeline& renderTl, c
     const auto source = Snapshot::Source::timeline(f, renderTl);
     QVector<QImage> gray;
     for (int fr : frames) {
-        // Rendered larger and shrunk by averaging: MLT's scaling straight to a few pixels samples single pixels, so a
+        // Rendered larger and shrunk by averaging: scaling straight to a few pixels samples single pixels, so a
         // slow zoom over a fine texture flickers like motion
         const QImage img = source->frame(fr, 384);
         if (img.isNull()) return std::nullopt;

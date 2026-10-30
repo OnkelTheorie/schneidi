@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Test gradient wipes (TransitionType::Luma): bundled gradients (all producible, full value range),
-// own images from the Transitions folder, cache PNG for MLT (size, invert), drag data "luma:<image>",
-// project file (relative or found again in the own folder) and rendering via MLT (door horizontal: middle already B,
+// own images from the Transitions folder (size, invert), drag data "luma:<image>",
+// project file (relative or found again in the own folder) and rendering (door horizontal: middle already B,
 // edges still A; inverted the other way round; into nothing like Cross Dissolve).
 #include "check.h"
 
@@ -10,11 +10,9 @@
 #include "core/ProjectFormat.h"
 #include "core/TimelineOps.h"
 #include "engine/Lumas.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
 #include "ui/EffectsLibrary.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -104,17 +102,15 @@ void testFiles(const QString& dir)
     CHECK_EQ(EffectFolders::findUserTransition("links.png"), td.filePath("Kdenlive/links.png"));
     CHECK(EffectFolders::watchDirs().contains(td.filePath("Kdenlive")));
 
-    const QString png = Lumas::file(td.filePath("Kdenlive/links.png"), 320, 180, false);
-    if (CHECK(!png.isEmpty())) {
-        const QImage img(png);
+    const QImage img = Lumas::image(td.filePath("Kdenlive/links.png"), 320, 180, false);
+    if (CHECK(!img.isNull())) {
         CHECK_EQ(img.size(), QSize(320, 180));
         CHECK(img.pixelColor(2, 90).value() < 30 && img.pixelColor(317, 90).value() > 150);
-        CHECK_EQ(Lumas::file(td.filePath("Kdenlive/links.png"), 320, 180, false), png); // zwischengespeichert
     }
-    const QString inv = Lumas::file(td.filePath("Kdenlive/links.png"), 320, 180, true);
-    CHECK(!inv.isEmpty() && inv != png && QImage(inv).pixelColor(2, 90).value() > 200);
-    CHECK(!Lumas::file(":/lumas/uhr", 32, 18, false).isEmpty());
-    CHECK(Lumas::file(QDir(dir).filePath("fehlt.png"), 32, 18, false).isEmpty());
+    const QImage inv = Lumas::image(td.filePath("Kdenlive/links.png"), 320, 180, true);
+    CHECK(!inv.isNull() && inv.pixelColor(2, 90).value() > 200);
+    CHECK(!Lumas::image(":/lumas/uhr", 32, 18, false).isNull());
+    CHECK(Lumas::image(QDir(dir).filePath("fehlt.png"), 32, 18, false).isNull());
 
     // Drag data
     TrackKind kind = TrackKind::Audio;
@@ -177,18 +173,7 @@ void testProjectFile(const QString& dir)
 
 QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos)
 {
-    auto prof = makeProfile(fmt);
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl);
-    tr->seek(pos);
-    std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-    mlt_image_format ifmt = mlt_image_rgba;
-    int w = prof->width(), h = prof->height();
-    const uint8_t* d = f->get_image(ifmt, w, h);
-    if (!d) return {};
-    QImage img(w, h, QImage::Format_RGBA8888);
-    std::memcpy(img.bits(), d, size_t(w) * h * 4);
-    return img.copy();
+    return Check::renderFrame(tl, fmt, pos, {}, false, true);
 }
 
 bool reddish(const QColor& c) { return c.red() > 150 && c.blue() < 100; }
@@ -343,7 +328,7 @@ int main(int argc, char** argv)
     g_blue = Check::makeMedia(tmp.filePath("blau.mp4"), {"-f", "lavfi", "-i", "color=c=blue:size=320x180:rate=25:duration=4",
                                                          "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (CHECK(!g_red.isEmpty() && !g_blue.isEmpty())) {
-        Check::initMlt();
+        Check::initEngine();
         std::setlocale(LC_NUMERIC, "C");
         testRender();
     }

@@ -193,7 +193,6 @@ ExportSettings settings(const QString& path, const QString& codec = "libx264")
     s.crf = 18;
     s.audioCodec = "aac";
     s.smartRender = true;
-    s.writer = ExportSettings::Writer::Own;
     return s;
 }
 
@@ -306,7 +305,7 @@ void testExports(const QString& dir)
         s.to = 109;
         compare("inout", dir, cuts(a, b, false), s, 40, 70);
     }
-    // Unmarked SD source: MLT takes it for BT.601, the export follows it so it can copy (tagged 601)
+    // Unmarked SD source: the decoder takes it for BT.601, the export follows it so it can copy (tagged 601)
     compare("601", dir, cuts(sd, sd, false), settings(dir + "/x.mp4"), 100, 120);
     // Open GOP: key frames are no IDR, nothing can be cut there
     compare("opengop", dir, cuts(open, open, false), settings(dir + "/x.mp4"), 0, 0);
@@ -346,7 +345,7 @@ int main(int argc, char** argv)
     Check::initApp("smart_render");
     testSpans();
     if (!Check::haveFfmpeg()) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     QTemporaryDir tmp;
     if (qEnvironmentVariableIsSet("SMART_KEEP")) { // keep the files for a look

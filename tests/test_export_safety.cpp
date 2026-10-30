@@ -54,13 +54,12 @@ Timeline timeline()
     return tl;
 }
 
-ExportSettings settings(const QString& path, ExportSettings::Writer writer = ExportSettings::Writer::Own)
+ExportSettings settings(const QString& path)
 {
     ExportSettings s;
     s.path = path;
     s.format = kFmt;
     s.preset = "ultrafast";
-    s.writer = writer;
     return s;
 }
 
@@ -125,8 +124,8 @@ QJsonObject probeVideo(const QString& path)
 
 void testKeepsOlderFile(const QString& root)
 {
-    for (const auto writer : {ExportSettings::Writer::Own, ExportSettings::Writer::Mlt}) {
-        const QString dir = root + (writer == ExportSettings::Writer::Own ? "/keep-own" : "/keep-mlt");
+    {
+        const QString dir = root + "/keep-video";
         QDir().mkpath(dir);
         const QString target = dir + "/out.mp4", srt = dir + "/out.srt";
 
@@ -134,7 +133,7 @@ void testKeepsOlderFile(const QString& root)
         // nothing was written yet, the older file and SRT must stay untouched
         writeFile(target, kOld);
         writeFile(srt, kOld);
-        ExportSettings s = settings(target, writer);
+        ExportSettings s = settings(target);
         s.videoCodec = "h264_nvenc";
         s.subtitlePath = srt;
         Result r = run(s);
@@ -149,7 +148,7 @@ void testKeepsOlderFile(const QString& root)
         CHECK_EQ(entries(dir), QStringList({"out.mp4", "out.srt"}));
 
         // Canceled while rendering: the older files stay, the half-finished ones go
-        s = settings(target, writer);
+        s = settings(target);
         s.subtitlePath = srt;
         r = run(s, Stop::AtStart);
         CHECK(!r.ok);
@@ -165,12 +164,12 @@ void testKeepsOlderFile(const QString& root)
         CHECK_EQ(entries(dir), QStringList({"out.mp4", "out.srt"}));
     }
 
-    // Audio only (always MLT's consumer)
+    // Audio only
     const QString dir = root + "/keep-audio";
     QDir().mkpath(dir);
     const QString target = dir + "/out.wav";
     writeFile(target, kOld);
-    ExportSettings s = settings(target, ExportSettings::Writer::Default);
+    ExportSettings s = settings(target);
     s.videoCodec.clear();
     s.audioCodec = "pcm_s16le";
     Result r = run(s, Stop::AtStart);
@@ -187,14 +186,13 @@ void testKeepsOlderFile(const QString& root)
 void testWriteErrorMidway(const QString& root)
 {
 #ifdef Q_OS_UNIX
-    struct Case { const char* name; ExportSettings::Writer writer; bool audioOnly; };
-    for (const Case& c : {Case{"mlt.mp4", ExportSettings::Writer::Mlt, false}, Case{"own.mp4", ExportSettings::Writer::Own, false},
-                          Case{"audio.wav", ExportSettings::Writer::Default, true}}) {
+    struct Case { const char* name; bool audioOnly; };
+    for (const Case& c : {Case{"video.mp4", false}, Case{"audio.wav", true}}) {
         const QString dir = root + "/limit-" + c.name;
         QDir().mkpath(dir);
         const QString target = dir + "/" + c.name;
         writeFile(target, kOld);
-        ExportSettings s = settings(target, c.writer);
+        ExportSettings s = settings(target);
         s.crf = 1; // large frames: the limit is reached early
         if (c.audioOnly) {
             s.videoCodec.clear();
@@ -226,7 +224,7 @@ void testImageSequence(const QString& root)
     // An older, longer sequence and a file of the user in the same folder
     for (int i = 1; i <= 20; ++i) writeFile(frames + QString("/seq_%1.png").arg(i, 5, 10, QChar('0')), kOld);
     writeFile(frames + "/notes.txt", kOld);
-    ExportSettings s = settings(dir + "/seq.png", ExportSettings::Writer::Default);
+    ExportSettings s = settings(dir + "/seq.png");
     s.output = ExportSettings::Output::ImageSequence;
     s.videoCodec = "png";
     s.pixFmt = "rgb24";
@@ -274,9 +272,9 @@ void testImageSequence(const QString& root)
 void testOddSize(const QString& root)
 {
     const ProjectFormat odd{641, 361, {25, 1}};
-    for (const auto writer : {ExportSettings::Writer::Own, ExportSettings::Writer::Mlt}) {
-        const QString path = root + (writer == ExportSettings::Writer::Own ? "/odd-own.mp4" : "/odd-mlt.mp4");
-        ExportSettings s = settings(path, writer);
+    {
+        const QString path = root + "/odd.mp4";
+        ExportSettings s = settings(path);
         s.format = odd;
         s.to = 24;
         const Result r = run(s);
@@ -296,7 +294,7 @@ int main(int argc, char** argv)
     Check::initApp("export_safety");
     if (!Check::haveFfmpeg() || QStandardPaths::findExecutable("ffprobe").isEmpty())
         return Check::skip("ffmpeg/ffprobe nicht gefunden");
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();

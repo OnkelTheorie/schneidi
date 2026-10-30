@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Frame timing of media between the paths that read them: a proxy shows the same picture at frame k as the original
 // (a recording whose sound starts a frame before the picture, as OBS/phones/games write them), a source shorter than
-// the model expects does not move the clips after it in the preview graph, and the frame position of a timestamp
+// the model expects does not move the clips after it, and the frame position of a timestamp
 // counts from the container start in the stream's time base (reader and smart render alike).
 #include "check.h"
 
 #include "core/Types.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/ProxyManager.h"
-#include "engine/TimelineBuilder.h"
 #include "engine/video/Reader.h"
 
-#include <Mlt.h>
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QFile>
@@ -81,41 +79,21 @@ QString makeProxy(const QString& original)
     return pm.hasProxy(original) ? ProxyManager::proxyPath(original) : QString();
 }
 
-// Mean of the red and blue channel of the preview graph's picture at `pos`
-std::pair<double, double> redBlue(Mlt::Tractor& tr, Mlt::Profile& prof, int pos)
+// Mean of the red and blue channel of the rendered picture at `pos`
+std::pair<double, double> redBlue(const Timeline& tl, const ProjectFormat& fmt, int pos)
 {
-    tr.seek(pos);
-    std::unique_ptr<Mlt::Frame> f(tr.get_frame());
-    mlt_image_format ifmt = mlt_image_rgba;
-    int w = prof.width(), h = prof.height();
-    const uint8_t* d = f ? f->get_image(ifmt, w, h) : nullptr;
-    if (!d) return {-1, -1};
+    const QImage img = Check::renderFrame(tl, fmt, pos).convertToFormat(QImage::Format_RGBA8888);
+    if (img.isNull()) return {-1, -1};
     double r = 0, b = 0;
-    for (int i = 0; i < w * h; ++i) {
-        r += d[i * 4];
-        b += d[i * 4 + 2];
+    for (int y = 0; y < img.height(); ++y) {
+        const uchar* d = img.constScanLine(y);
+        for (int x = 0; x < img.width(); ++x) {
+            r += d[x * 4];
+            b += d[x * 4 + 2];
+        }
     }
-    return {r / (w * h), b / (w * h)};
-}
-
-// Tractors reachable from `p` (through cuts, playlists and tractor tracks)
-void tractorsIn(Mlt::Producer& p, std::set<mlt_producer>& out, int depth = 0)
-{
-    if (depth > 40 || !p.is_valid()) return;
-    if (p.is_cut()) {
-        tractorsIn(p.parent(), out, depth + 1);
-        return;
-    }
-    if (p.type() == mlt_service_tractor_type) {
-        if (!out.insert(p.get_producer()).second) return;
-        Mlt::Tractor t(p);
-        for (int i = 0; i < t.count(); ++i)
-            if (std::unique_ptr<Mlt::Producer> track(t.track(i)); track) tractorsIn(*track, out, depth + 1);
-    } else if (p.type() == mlt_service_playlist_type) {
-        Mlt::Playlist pl(p);
-        for (int i = 0; i < pl.count(); ++i)
-            if (std::unique_ptr<Mlt::Producer> clip(pl.get_clip(i)); clip) tractorsIn(*clip, out, depth + 1);
-    }
+    const double n = double(img.width()) * img.height();
+    return {r / n, b / n};
 }
 
 } // namespace
@@ -145,7 +123,7 @@ int main(int argc, char** argv)
     }
 
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
-    Check::initMlt();
+    Check::initEngine();
     QTemporaryDir dir;
 
     // --- Proxy of a recording whose picture starts one frame after its sound: proxy frame k = original frame k
@@ -172,8 +150,8 @@ int main(int argc, char** argv)
         }
     }
 
-    // --- A source shorter than the clip in the model (proxy a few frames short, relinked shorter file): MLT ends the
-    // cut at the file's end, the clip after it stays where the model has it (a gap fills the rest)
+    // --- A source shorter than the clip in the model (proxy a few frames short, relinked shorter file): the clip ends
+    // at the file's end, the clip after it stays where the model has it (a gap fills the rest)
     {
         const QString red = Check::makeMedia(dir.filePath("red.mp4"), {"-f", "lavfi", "-i", "color=c=red:size=320x180:rate=25:duration=1",
                                                                        "-c:v", "libx264", "-pix_fmt", "yuv420p"});
@@ -196,24 +174,20 @@ int main(int argc, char** argv)
             b.start = 40;
             b.out = 29;
             tl.video[0].clips << a << b;
-            auto prof = makeProfile(fmt);
-            TimelineBuilder builder(*prof);
-            auto tr = builder.build(tl);
-            if (CHECK(tr)) {
-                const auto [r10, b10] = redBlue(*tr, *prof, 10);
+            {
+                const auto [r10, b10] = redBlue(tl, fmt, 10);
                 CHECK(r10 > 150 && b10 < 60);
-                const auto [r30, b30] = redBlue(*tr, *prof, 30); // past the file's end: the gap, not the next clip
+                const auto [r30, b30] = redBlue(tl, fmt, 30); // past the file's end: the gap, not the next clip
                 Check::report(b30 < 60, "next clip not moved forward", __FILE__, __LINE__, QString("blue %1 at 30").arg(b30));
-                const auto [r45, b45] = redBlue(*tr, *prof, 45);
+                const auto [r45, b45] = redBlue(tl, fmt, 45);
                 CHECK(b45 > 150 && r45 < 60);
-                const auto [r69, b69] = redBlue(*tr, *prof, 69); // last frame of b
+                const auto [r69, b69] = redBlue(tl, fmt, 69); // last frame of b
                 CHECK(b69 > 150);
             }
         }
     }
 
-    // --- The same compound clip A on V1 and V2 (picture in picture), A holding another compound clip B: each A gets
-    // its own B (one tractor read at two positions per frame made its decoders jump back and forth)
+    // --- The same compound clip A on V1 and V2 (picture in picture), A holding another compound clip B: renders
     {
         const QString blue = dir.filePath("blue.mp4");
         if (CHECK(QFile::exists(blue))) {
@@ -248,25 +222,8 @@ int main(int argc, char** argv)
             fmt.width = 320;
             fmt.height = 180;
             fmt.rate = {25, 1};
-            auto prof = makeProfile(fmt);
-            TimelineBuilder builder(*prof);
-            auto tr = builder.build(tl);
-            if (CHECK(tr)) {
-                std::vector<std::set<mlt_producer>> perTrack;
-                for (int i = 0; i < tr->count(); ++i) {
-                    std::set<mlt_producer> s;
-                    if (std::unique_ptr<Mlt::Producer> track(tr->track(i)); track) tractorsIn(*track, s);
-                    if (!s.empty()) perTrack.push_back(std::move(s));
-                }
-                CHECK_EQ(int(perTrack.size()), 2); // V1 and V2, each with A and its B
-                for (size_t i = 0; i < perTrack.size(); ++i) {
-                    CHECK_EQ(int(perTrack[i].size()), 2);
-                    for (size_t j = i + 1; j < perTrack.size(); ++j)
-                        for (mlt_producer t : perTrack[i]) CHECK(!perTrack[j].count(t));
-                }
-                const auto [r20, b20] = redBlue(*tr, *prof, 20);
-                CHECK(b20 > 150);
-            }
+            const auto [r20, b20] = redBlue(tl, fmt, 20);
+            CHECK(b20 > 150);
         }
     }
     return Check::result();

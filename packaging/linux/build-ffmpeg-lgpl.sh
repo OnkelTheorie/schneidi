@@ -8,7 +8,7 @@
 # Also runs in MSYS2 UCRT64 (Windows program folder; D3D11VA/AMF instead of VAAPI, see packaging/windows).
 # Build packages (Debian 13): see packaging/linux/Dockerfile.ffmpeg-lgpl. Then:
 #   PKG_CONFIG_PATH=<prefix>/lib/pkgconfig LD_LIBRARY_PATH=<prefix>/lib …   (build-appimage.sh does it with SCHNEIDI_NO_GPL=1)
-# The version matches Debian 13's FFmpeg (same library sonames as the system MLT was built against).
+# The version matches Debian 13's FFmpeg (same library sonames as the system libraries).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

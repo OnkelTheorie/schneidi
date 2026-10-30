@@ -6,10 +6,7 @@
 #include "engine/picture/Renderer.h"
 #include "engine/video/Reader.h"
 
-#include <Mlt.h>
 #include <QFileInfo>
-#include <QSettings>
-#include <framework/mlt.h>
 
 #include <algorithm>
 #include <atomic>
@@ -37,40 +34,19 @@ extern "C" {
 
 namespace {
 
-// MLT image format the render workers deliver for an encoder pixel format (as MLT's consumer asks for it: the Exporter
-// sets yuv420p for 4:2:0, MLT itself picks yuv420p10/yuv444p10, everything else comes as packed yuv422) and whether
-// the image goes to the encoder as it is
-struct ImagePlan {
-    mlt_image_format mlt;
-    bool direct;
-};
-
-std::optional<ImagePlan> imagePlan(AVPixelFormat f)
-{
-    switch (f) {
-    case AV_PIX_FMT_YUV420P: return ImagePlan{mlt_image_yuv420p, true};
-    case AV_PIX_FMT_YUV420P10LE: return ImagePlan{mlt_image_yuv420p10, true};
-    case AV_PIX_FMT_YUV444P10LE: return ImagePlan{mlt_image_yuv444p10, true};
-    case AV_PIX_FMT_YUV422P:
-    case AV_PIX_FMT_YUV422P10LE: return ImagePlan{mlt_image_yuv422, false};
-    default: return std::nullopt;
-    }
-}
-
-// MLT sound format for an encoder sample format: always interleaved, the encode thread splits planar formats
-mlt_audio_format mltAudioFormat(AVSampleFormat f)
+// Sample formats the writer delivers: interleaved, the encode thread splits planar formats
+bool soundFormat(AVSampleFormat f)
 {
     switch (av_get_packed_sample_fmt(f)) {
-    case AV_SAMPLE_FMT_S16: return mlt_audio_s16;
-    case AV_SAMPLE_FMT_S32: return mlt_audio_s32le;
-    case AV_SAMPLE_FMT_FLT: return mlt_audio_f32le;
-    case AV_SAMPLE_FMT_U8: return mlt_audio_u8;
-    default: return mlt_audio_none;
+    case AV_SAMPLE_FMT_S16:
+    case AV_SAMPLE_FMT_S32:
+    case AV_SAMPLE_FMT_FLT:
+    case AV_SAMPLE_FMT_U8: return true;
+    default: return false;
     }
 }
 
-// Color tags of the file from the profile's MLT color standard, like MLT's consumer (color_trc_from_colorspace,
-// color_primaries_from_colorspace, add_video_stream)
+// Color tags of the file from its color standard (colorspace numbers 601 family, 240, 709, 2020)
 AVColorTransferCharacteristic transferOf(int colorspace)
 {
     switch (colorspace) {
@@ -113,16 +89,8 @@ AVColorSpace matrixOf(int colorspace, int height)
     }
 }
 
-// The matrix MLT's consumer converts with (mlt_set_luma_transfer): swscale only knows 601, 240 and 709, everything
-// else counts as its default (601). Frames differ from the output only when these differ (OutputColor converts the
-// usual cases in the workers already).
-int swscaleMatrix(int colorspace)
-{
-    return colorspace == 709 || colorspace == 240 ? colorspace : 601;
-}
-
-// An option like MLT's apply_properties: AVOption of the context or its codec (children first); "vb"/"ab" style names
-// also without their prefix. Unknown names are left out, as MLT does (consumer properties that are no option).
+// An option by name: AVOption of the context or its codec (children first); "vb"/"ab" style names also without their
+// prefix (the names of the export formats, from the time MLT's consumer read them). Unknown names are left out.
 void applyOption(void* ctx, const QByteArray& key, const QByteArray& value, int flags)
 {
     const char* name = key.constData();
@@ -146,37 +114,6 @@ bool isMainMuxer(const AVOutputFormat* f)
     for (const char* name : {"mp4", "mov", "matroska", "webm"})
         if (std::strcmp(f->name, name) == 0) return true;
     return false;
-}
-
-// Packed Y0 Cb Y1 Cr (MLT yuv422) -> planar 4:2:2, 8 or 10 bit (10 bit = code value * 4, like swscale's point
-// conversion)
-void unpack422(const uint8_t* src, AVFrame* dst, int width, int height)
-{
-    const bool ten = dst->format == AV_PIX_FMT_YUV422P10LE;
-    for (int y = 0; y < height; ++y) {
-        const uint8_t* s = src + size_t(y) * width * 2;
-        if (ten) {
-            auto* py = reinterpret_cast<uint16_t*>(dst->data[0] + size_t(y) * dst->linesize[0]);
-            auto* pu = reinterpret_cast<uint16_t*>(dst->data[1] + size_t(y) * dst->linesize[1]);
-            auto* pv = reinterpret_cast<uint16_t*>(dst->data[2] + size_t(y) * dst->linesize[2]);
-            for (int x = 0; x < width / 2; ++x, s += 4) {
-                py[2 * x] = uint16_t(s[0] << 2);
-                pu[x] = uint16_t(s[1] << 2);
-                py[2 * x + 1] = uint16_t(s[2] << 2);
-                pv[x] = uint16_t(s[3] << 2);
-            }
-        } else {
-            uint8_t* py = dst->data[0] + size_t(y) * dst->linesize[0];
-            uint8_t* pu = dst->data[1] + size_t(y) * dst->linesize[1];
-            uint8_t* pv = dst->data[2] + size_t(y) * dst->linesize[2];
-            for (int x = 0; x < width / 2; ++x, s += 4) {
-                py[2 * x] = s[0];
-                pu[x] = s[1];
-                py[2 * x + 1] = s[2];
-                pv[x] = s[3];
-            }
-        }
-    }
 }
 
 // Smart render: decode time = packet number - kDelay (frames). Copied GOPs may show a picture up to kDelay packets
@@ -216,37 +153,7 @@ void freePackets(std::vector<AVPacket*>& packets)
     packets.clear();
 }
 
-void releaseFrame(void* opaque, uint8_t*)
-{
-    mlt_frame_close(static_cast<mlt_frame>(opaque));
-}
-
 } // namespace
-
-bool ExportWriter::wanted()
-{
-    QString choice = qEnvironmentVariable("SCHNEIDI_EXPORT").trimmed().toLower();
-    if (choice.isEmpty()) choice = QSettings().value("render/writer").toString().trimmed().toLower();
-    return choice != QLatin1String("mlt");
-}
-
-void ExportWriter::setWanted(bool own)
-{
-    QSettings().setValue("render/writer", own ? "own" : "mlt");
-}
-
-bool ExportWriter::supports(const QString& path, const QString& videoCodec, const QString& pixFmt, const QString& audioCodec,
-                            const QString& sampleFormat)
-{
-    if (!isMainMuxer(av_guess_format(nullptr, path.toUtf8().constData(), nullptr))) return false;
-    const AVCodec* video = avcodec_find_encoder_by_name(videoCodec.toUtf8().constData());
-    if (!video || video->type != AVMEDIA_TYPE_VIDEO || !imagePlan(av_get_pix_fmt(pixFmt.toUtf8().constData())))
-        return false;
-    if (audioCodec.isEmpty()) return true;
-    const AVCodec* audio = avcodec_find_encoder_by_name(audioCodec.toUtf8().constData());
-    return audio && audio->type == AVMEDIA_TYPE_AUDIO
-           && mltAudioFormat(av_get_sample_fmt(sampleFormat.toUtf8().constData())) != mlt_audio_none;
-}
 
 bool ExportWriter::supportsOwn(const QString& path, const QString& muxer, const QString& videoCodec, const QString& pixFmt,
                                const QString& audioCodec, const QString& sampleFormat)
@@ -267,28 +174,21 @@ bool ExportWriter::supportsOwn(const QString& path, const QString& muxer, const 
     }
     if (audioCodec.isEmpty()) return true;
     const AVCodec* audio = avcodec_find_encoder_by_name(audioCodec.toUtf8().constData());
-    return audio && audio->type == AVMEDIA_TYPE_AUDIO
-           && mltAudioFormat(av_get_sample_fmt(sampleFormat.toUtf8().constData())) != mlt_audio_none;
+    return audio && audio->type == AVMEDIA_TYPE_AUDIO && soundFormat(av_get_sample_fmt(sampleFormat.toUtf8().constData()));
 }
 
 struct ExportWriter::Impl {
     Settings s;
-    mlt_consumer consumer = nullptr;
     int width = 0, height = 0, colorspace = 709;
     AVRational rate{25, 1}, aspect{1, 1};
     double fps = 25;
     AVPixelFormat pixFmt = AV_PIX_FMT_NONE;
-    ImagePlan plan{mlt_image_yuv420p, true};
     AVSampleFormat sampleFmt = AV_SAMPLE_FMT_NONE;
-    mlt_audio_format audioFmt = mlt_audio_none;
+    bool sound = false; // a sound stream in a format soundOwn() writes
     int sampleBytes = 0;
 
     // Smart render
     bool smart = false;
-    mlt_profile mltProfile = nullptr;
-    mlt_producer source = nullptr;      // pictures; seeked to every encoded piece
-    mlt_producer soundSource = nullptr; // sound of every output frame
-    mlt_consumer soundConsumer = nullptr;
     int soundNext = 0; // fetch thread: output frame whose sound comes next
     AVCodecID codecId = AV_CODEC_ID_NONE;
     std::atomic<int> copied{0};
@@ -323,7 +223,7 @@ struct ExportWriter::Impl {
     std::atomic<bool> encoderBroke{false};
     mutable std::mutex errorMutex;
     QString error;
-    bool started = false, consumerStarted = false;
+    bool started = false;
 
     // encode thread only
     AVFormatContext* oc = nullptr;
@@ -343,8 +243,7 @@ struct ExportWriter::Impl {
     bool pieceFed = false;            // the piece encoder has pictures
     int64_t videoPackets = 0;
 
-    // ---- Own picture engine (Own) ----
-    bool own = false;
+    // ---- Pictures and sound ----
     Own o;
     AVPixelFormat inputFmt = AV_PIX_FMT_NONE; // what the workers write (VAAPI: NV12, uploaded by the encode thread)
     OutputColor::Target target;               // inputFmt as OutputColor layout (planes filled per frame)
@@ -355,8 +254,8 @@ struct ExportWriter::Impl {
     AVBufferRef* hwFrames = nullptr;
     std::vector<float> mixL, mixR;            // fetch thread: the mix of one output frame
 
-    // Timeline frame shown at output frame i (frame rate conversion as engine/RateConverter: k * fps_tl / fps_out,
-    // rounded to nearest even like lrint)
+    // Timeline frame shown at output frame i (frame rate conversion: k * fps_tl / fps_out, rounded to nearest even
+    // like lrint)
     int64_t timelineFrame(int64_t i) const
     {
         if (o.rate == o.timelineRate) return o.from + i;
@@ -524,7 +423,7 @@ struct ExportWriter::Impl {
         if (o.rate == o.timelineRate) {
             a = mixer.frameStart(o.from + i);
             b = mixer.frameStart(o.from + i + 1);
-        } else { // the mixer's rounding on the output's frame grid (engine/MixedSound)
+        } else { // the mixer's rounding on the output's frame grid
             const int64_t base = mixer.frameStart(o.from);
             auto start = [&](int64_t k) {
                 const int64_t v = k * int64_t(mixer.rate()) * o.rate.den;
@@ -572,7 +471,7 @@ struct ExportWriter::Impl {
             }
     }
 
-    // Fetch thread, own path: output frames [a, b) in order (picture and sound); restart marks a's picture as the
+    // Fetch thread: output frames [a, b) in order (picture and sound); restart marks a's picture as the
     // first of an encoded piece (smart render)
     bool fetchOwn(int a, int b, bool restart)
     {
@@ -588,15 +487,11 @@ struct ExportWriter::Impl {
                 }
                 item.restart = restart && i == a;
             }
-            if (o.mixer && audioFmt != mlt_audio_none) soundOwn(i, item.pcm);
+            if (o.mixer && sound) soundOwn(i, item.pcm);
             if (!push(std::move(item))) return false;
         }
         return !stop;
     }
-
-    static int isStopped(mlt_consumer c) { return static_cast<Impl*>(c->child)->consumerStarted ? 0 : 1; }
-    // Consumers of the smart path (pieces, sound): running = property set after the start
-    static int pieceStopped(mlt_consumer c) { return mlt_properties_get_int(MLT_CONSUMER_PROPERTIES(c), "_running") ? 0 : 1; }
 
     void fail(const QString& message, bool encoderProblem = false)
     {
@@ -624,186 +519,10 @@ struct ExportWriter::Impl {
         return true;
     }
 
-    // The frame's image as an AVFrame for the encoder: the MLT buffer itself when it fits, else a converted copy
-    AVFrame* picture(mlt_frame frame, uint8_t* image)
-    {
-        mlt_properties fp = MLT_FRAME_PROPERTIES(frame);
-        const int from = mlt_properties_get_int(fp, "colorspace");
-        const bool fullRange = mlt_properties_get_int(fp, "full_range");
-        const bool otherMatrix = swscaleMatrix(from) != swscaleMatrix(colorspace);
-        AVFrame* f = av_frame_alloc();
-        if (!f) return nullptr;
-        f->format = pixFmt;
-        f->width = width;
-        f->height = height;
-        if (plan.direct && !otherMatrix && !fullRange) {
-            const int size = mlt_image_format_size(plan.mlt, width, height, nullptr);
-            mlt_properties_inc_ref(fp); // released with the buffer (by the encoder, possibly in its own threads)
-            f->buf[0] = av_buffer_create(image, size, releaseFrame, frame, AV_BUFFER_FLAG_READONLY);
-            if (!f->buf[0]) {
-                mlt_frame_close(frame);
-                av_frame_free(&f);
-                return nullptr;
-            }
-            int strides[4] = {};
-            mlt_image_format_planes(plan.mlt, width, height, image, f->data, strides);
-            for (int i = 0; i < 4; ++i) f->linesize[i] = strides[i];
-            return f;
-        }
-        // Rare: what MLT's encoder thread converted with swscale. Matrix and range on a copy in MLT's layout first.
-        std::vector<uint8_t> copy, converted;
-        const uint8_t* src = image;
-        if (otherMatrix || fullRange) {
-            const int size = mlt_image_format_size(plan.mlt, width, height, nullptr);
-            copy.assign(image, image + size);
-            if (fullRange) OutputColor::toLimitedRange(copy.data(), plan.mlt, width, height);
-            src = copy.data();
-            converted.resize(copy.size());
-            if (otherMatrix && OutputColor::convert(copy.data(), converted.data(), plan.mlt, width, height,
-                                                    swscaleMatrix(from), swscaleMatrix(colorspace)))
-                src = converted.data();
-        }
-        if (av_frame_get_buffer(f, 0) < 0) {
-            av_frame_free(&f);
-            return nullptr;
-        }
-        if (plan.mlt == mlt_image_yuv422) {
-            unpack422(src, f, width, height);
-        } else {
-            uint8_t* planes[4] = {};
-            int strides[4] = {};
-            mlt_image_format_planes(plan.mlt, width, height, const_cast<uint8_t*>(src), planes, strides);
-            const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(pixFmt);
-            for (int i = 0; i < 3; ++i) {
-                const int h = i == 0 ? height : AV_CEIL_RSHIFT(height, desc->log2_chroma_h);
-                av_image_copy_plane(f->data[i], f->linesize[i], planes[i], strides[i], strides[i], h);
-            }
-        }
-        return f;
-    }
-
-    // Render workers over a service: pictures (in the image format of the encoder) and/or sound, as MLT's consumer
-    mlt_consumer newConsumer(mlt_service service, bool pictures, bool sound, int realTime)
-    {
-        mlt_consumer c = mlt_consumer_new(mltProfile);
-        if (!c) return nullptr;
-        mlt_service_set_profile(MLT_CONSUMER_SERVICE(c), mltProfile);
-        mlt_properties p = MLT_CONSUMER_PROPERTIES(c);
-        mlt_properties_set_int(p, "real_time", realTime);
-        mlt_properties_set_int(p, "prefill", 1); // like MLT's avformat consumer
-        mlt_properties_set(p, "mlt_image_format", mlt_image_format_name(plan.mlt));
-        if (sound && audioFmt != mlt_audio_none) {
-            mlt_properties_set(p, "mlt_audio_format", mlt_audio_format_name(audioFmt));
-            mlt_properties_set_int(p, "frequency", s.audioRate);
-            mlt_properties_set_int(p, "channels", s.audioChannels);
-        } else {
-            mlt_properties_set_int(p, "audio_off", 1);
-        }
-        if (!pictures) mlt_properties_set_int(p, "video_off", 1);
-        // MLT's consumer sets these before the first frame; filters see them as consumer.color_trc
-        mlt_properties_set_int(p, "color_trc", transferOf(colorspace));
-        mlt_properties_set_int(p, "color_primaries", primariesOf(colorspace, height));
-        mlt_consumer_connect(c, service);
-        return c;
-    }
-
-    bool startPiece(mlt_consumer c)
-    {
-        c->is_stopped = pieceStopped;
-        if (mlt_consumer_start(c) != 0) return false;
-        mlt_properties_set_int(MLT_CONSUMER_PROPERTIES(c), "_running", 1);
-        return true;
-    }
-
-    static void stopPiece(mlt_consumer& c)
-    {
-        if (!c) return;
-        mlt_consumer_stop(c);
-        mlt_properties_set_int(MLT_CONSUMER_PROPERTIES(c), "_running", 0);
-        mlt_consumer_close(c);
-        c = nullptr;
-    }
-
-    // Output frame i's picture from the consumer as an AVFrame for the encoder; nullptr = failed (fail() called)
-    AVFrame* fetchPicture(mlt_consumer c, int i, mlt_frame* keep)
-    {
-        mlt_frame frame = mlt_consumer_rt_frame(c);
-        if (stop) {
-            if (frame) mlt_frame_close(frame);
-            return nullptr;
-        }
-        if (!frame) {
-            fail(QStringLiteral("no frame %1 from the timeline").arg(i));
-            return nullptr;
-        }
-        mlt_image_format format = plan.mlt;
-        int w = width, h = height;
-        uint8_t* image = nullptr;
-        if (mlt_frame_get_image(frame, &image, &format, &w, &h, 0) || !image || format != plan.mlt || w != width
-            || h != height) {
-            mlt_frame_close(frame);
-            fail(QStringLiteral("frame %1: no image in %2 %3x%4 (got %5 %6x%7)")
-                     .arg(i)
-                     .arg(mlt_image_format_name(plan.mlt))
-                     .arg(width)
-                     .arg(height)
-                     .arg(mlt_image_format_name(format))
-                     .arg(w)
-                     .arg(h));
-            return nullptr;
-        }
-        AVFrame* f = picture(frame, image);
-        if (!f) {
-            mlt_frame_close(frame);
-            fail(QStringLiteral("out of memory"));
-            return nullptr;
-        }
-        f->pts = i;
-        *keep = frame;
-        return f;
-    }
-
-    // Sound of output frame i from its MLT frame, appended to pcm
-    void soundOf(mlt_frame frame, int i, std::vector<uint8_t>& pcm, bool& warned)
-    {
-        // Same count as MLT's consumer and its workers (from the first exported frame): the sound is cached in
-        // the frame already when the workers fetched it ahead
-        int samples = mlt_audio_calculate_frame_samples(float(fps), s.audioRate, i);
-        int frequency = s.audioRate, channels = s.audioChannels;
-        mlt_audio_format af = audioFmt;
-        void* data = nullptr;
-        mlt_frame_get_audio(frame, &data, &af, &frequency, &channels, &samples);
-        // Like MLT's consumer: what the frame delivers (repeated frames of a frame rate conversion deliver
-        // none), silence when not at normal speed
-        if (!data || samples <= 0) return;
-        const size_t at = pcm.size(), bytes = size_t(samples) * s.audioChannels * sampleBytes;
-        pcm.resize(at + bytes, 0);
-        if (af != audioFmt || channels != s.audioChannels) {
-            if (!warned) qWarning("Export: frame %d delivered sound as format %d with %d channels, silence", i, int(af), channels);
-            warned = true;
-        } else if (mlt_properties_get_double(MLT_FRAME_PROPERTIES(frame), "_speed") == 1.0) {
-            std::memcpy(pcm.data() + at, data, bytes);
-        }
-    }
-
     void fetch()
     {
-        if (own && !smart) {
-            fetchOwn(0, s.length, false);
-        } else if (smart) {
-            fetchSmart();
-        } else {
-            bool warnedSound = false;
-            for (int i = 0; i < s.length && !stop; ++i) {
-                mlt_frame frame = nullptr;
-                Item item;
-                item.picture = fetchPicture(consumer, i, &frame);
-                if (!item.picture) break;
-                if (audioFmt != mlt_audio_none) soundOf(frame, i, item.pcm, warnedSound);
-                mlt_frame_close(frame); // the picture holds its own reference
-                if (!push(std::move(item))) break;
-            }
-        }
+        if (smart) fetchSmart();
+        else fetchOwn(0, s.length, false);
         Item end;
         end.end = true;
         push(std::move(end));
@@ -829,7 +548,7 @@ struct ExportWriter::Impl {
             av_bsf_free(&bsf);
             avformat_close_input(&fmt);
         }
-        // Stream frame position like engine/video/Reader (MLT's producer): from the first key frame, rounded
+        // Stream frame position like engine/video/Reader: from the first key frame, rounded
         int64_t position(const AVPacket* p) const
         {
             const int64_t pts = p->pts != AV_NOPTS_VALUE ? p->pts : p->dts;
@@ -893,7 +612,7 @@ struct ExportWriter::Impl {
 
     std::unique_ptr<Source> openSource(const QString& path)
     {
-        // What the render path makes of the file (frame rate guess, color, rotation like MLT): the copy must show
+        // What the render path makes of the file (frame rate guess, color, rotation): the copy must show
         // the same pictures
         Video::Info info;
         AVCodecID codec = AV_CODEC_ID_NONE;
@@ -950,7 +669,7 @@ struct ExportWriter::Impl {
                                                           [](AVCodecParameters* p) { avcodec_parameters_free(&p); });
         if (!src->params || avcodec_parameters_copy(src->params.get(), src->bsf->par_out) < 0) return nullptr;
         src->params->codec_tag = 0;
-        // MLT's find_first_pts (as the Reader): frame 0 is the first key frame
+        // As the Reader: frame 0 is the first key frame
         for (int n = 0; n < 500 && src->firstPts == AV_NOPTS_VALUE; ++n) {
             if (av_read_frame(src->fmt, src->pkt) < 0) break;
             if (src->pkt->stream_index == src->index && (src->pkt->flags & AV_PKT_FLAG_KEY))
@@ -966,28 +685,11 @@ struct ExportWriter::Impl {
     // Sound of output frame i (frames come in order) appended to pcm
     bool nextSound(int i, std::vector<uint8_t>& pcm)
     {
-        static thread_local bool warned = false;
-        if (own) {
-            if (i != soundNext) {
-                fail(QStringLiteral("sound of frame %1 asked, %2 is next").arg(i).arg(soundNext));
-                return false;
-            }
-            if (o.mixer && audioFmt != mlt_audio_none) soundOwn(i, pcm);
-            ++soundNext;
-            return true;
-        }
-        if (!soundConsumer) return true;
         if (i != soundNext) {
             fail(QStringLiteral("sound of frame %1 asked, %2 is next").arg(i).arg(soundNext));
             return false;
         }
-        mlt_frame frame = mlt_consumer_rt_frame(soundConsumer);
-        if (!frame) {
-            if (!stop) fail(QStringLiteral("no sound for frame %1").arg(i));
-            return false;
-        }
-        soundOf(frame, i, pcm, warned);
-        mlt_frame_close(frame);
+        if (o.mixer && sound) soundOwn(i, pcm);
         ++soundNext;
         return true;
     }
@@ -996,44 +698,19 @@ struct ExportWriter::Impl {
     bool encodePiece(int a, int b)
     {
         if (b <= a || stop) return !stop;
-        if (own) { // the pictures from the pump, the sound in order (nextSound)
-            pump->run(a, b);
-            for (int i = a; i < b && !stop; ++i) {
-                Item item;
-                item.picture = pump->take(i);
-                if (!item.picture) {
-                    if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
-                    return false;
-                }
-                item.restart = i == a;
-                if (!nextSound(i, item.pcm) || !push(std::move(item))) return false;
-            }
-            return !stop;
-        }
-        mlt_producer_seek(source, a); // position counts from the in point
-        // The last piece's workers may have read ahead up to the end, where the producer paused (speed 0)
-        mlt_producer_set_speed(source, 1);
-        mlt_consumer c = newConsumer(MLT_PRODUCER_SERVICE(source), true, false, s.realTime);
-        if (!c || !startPiece(c)) {
-            if (c) mlt_consumer_close(c);
-            fail(QStringLiteral("render workers cannot be started"));
-            return false;
-        }
-        bool ok = true;
-        for (int i = a; i < b && ok; ++i) {
-            mlt_frame frame = nullptr;
+        // The pictures from the pump, the sound in order (nextSound)
+        pump->run(a, b);
+        for (int i = a; i < b && !stop; ++i) {
             Item item;
-            item.picture = fetchPicture(c, i, &frame);
+            item.picture = pump->take(i);
             if (!item.picture) {
-                ok = false;
-                break;
+                if (!stop) fail(QStringLiteral("no frame %1 from the timeline").arg(i));
+                return false;
             }
-            mlt_frame_close(frame);
             item.restart = i == a;
-            ok = nextSound(i, item.pcm) && push(std::move(item));
+            if (!nextSound(i, item.pcm) || !push(std::move(item))) return false;
         }
-        stopPiece(c);
-        return ok;
+        return !stop;
     }
 
     // One GOP from the IDR packet `first` up to the next IDR (returned in `next`, nullptr at the end of the file)
@@ -1162,17 +839,6 @@ struct ExportWriter::Impl {
 
     void fetchSmart()
     {
-        if (audioFmt != mlt_audio_none && !own) {
-            mlt_producer_seek(soundSource, 0);
-            // A consumer that stopped (a writer before this one, e.g. a hardware encoder that failed) left it paused:
-            // its frames would carry silence
-            mlt_producer_set_speed(soundSource, 1);
-            soundConsumer = newConsumer(MLT_PRODUCER_SERVICE(soundSource), false, true, 1);
-            if (!soundConsumer || !startPiece(soundConsumer)) {
-                fail(QStringLiteral("sound workers cannot be started"));
-                return;
-            }
-        }
         int pos = 0;
         bool ok = true;
         for (const SmartRender::Span& span : s.copy) {
@@ -1183,7 +849,6 @@ struct ExportWriter::Impl {
             pos = to;
         }
         if (ok) encodePiece(pos, s.length);
-        stopPiece(soundConsumer);
         sources.clear();
     }
 
@@ -1203,7 +868,7 @@ struct ExportWriter::Impl {
         }
         // Video (smart render: one encoder per piece, the stream gets the first item's parameters)
         if (!s.videoCodec.isEmpty()) {
-            if (own && pixFmt == AV_PIX_FMT_VAAPI && !openHardware()) return false;
+            if (pixFmt == AV_PIX_FMT_VAAPI && !openHardware()) return false;
             vst = avformat_new_stream(oc, nullptr);
             if (!vst) {
                 fail(QStringLiteral("out of memory"));
@@ -1291,13 +956,13 @@ struct ExportWriter::Impl {
         venc->time_base = av_inv_q(rate);
         venc->framerate = rate;
         venc->pix_fmt = pixFmt;
-        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(own && hwFrames ? inputFmt : pixFmt);
+        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(hwFrames ? inputFmt : pixFmt);
         if (!desc || !(desc->flags & AV_PIX_FMT_FLAG_RGB)) {
             venc->colorspace = matrixOf(colorspace, height);
             venc->color_trc = transferOf(colorspace);
             venc->color_primaries = primariesOf(colorspace, height);
-            // MLT's consumer left it unspecified; it is limited range (JPEG formats: full)
-            venc->color_range = own && target.fullRange ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+            // Limited range (JPEG formats: full)
+            venc->color_range = target.fullRange ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
         }
         if (hwFrames) venc->hw_frames_ctx = av_buffer_ref(hwFrames);
         venc->sample_aspect_ratio = aspect;
@@ -1458,7 +1123,7 @@ struct ExportWriter::Impl {
             if (!encodeSound(audioFrameSize)) return false;
         if (!fifo.empty()) {
             const int rest = int(fifo.size() / (size_t(s.audioChannels) * sampleBytes));
-            // Codecs with a fixed frame size get the last frame filled with silence, as MLT's consumer did it
+            // Codecs with a fixed frame size get the last frame filled with silence
             const bool small = aenc->codec->capabilities & (AV_CODEC_CAP_SMALL_LAST_FRAME | AV_CODEC_CAP_VARIABLE_FRAME_SIZE);
             if (!encodeSound(small || aenc->frame_size <= 0 ? rest : audioFrameSize)) return false;
         }
@@ -1613,7 +1278,7 @@ struct ExportWriter::Impl {
 
     void closeEncoders()
     {
-        avcodec_free_context(&venc); // frees pictures still held by the encoder (MLT frames)
+        avcodec_free_context(&venc); // frees pictures still held by the encoder
         avcodec_free_context(&aenc);
         av_buffer_unref(&hwFrames);
         av_buffer_unref(&hwDevice);
@@ -1627,58 +1292,9 @@ struct ExportWriter::Impl {
     }
 };
 
-ExportWriter::ExportWriter(Mlt::Profile& profile, Mlt::Producer& source, const Settings& s, Mlt::Producer* sound)
-    : d(std::make_unique<Impl>())
-{
-    d->s = s;
-    d->width = profile.width();
-    d->height = profile.height();
-    d->colorspace = profile.colorspace();
-    d->rate = AVRational{profile.frame_rate_num(), std::max(1, profile.frame_rate_den())};
-    d->fps = std::max(1.0, profile.fps());
-    d->aspect = AVRational{std::max(1, profile.sample_aspect_num()), std::max(1, profile.sample_aspect_den())};
-    d->pixFmt = av_get_pix_fmt(s.pixFmt.toUtf8().constData());
-    if (const auto plan = imagePlan(d->pixFmt)) d->plan = *plan;
-    if (!s.audioCodec.isEmpty()) {
-        d->sampleFmt = av_get_sample_fmt(s.sampleFormat.toUtf8().constData());
-        d->audioFmt = mltAudioFormat(d->sampleFmt);
-        d->sampleBytes = av_get_bytes_per_sample(d->sampleFmt);
-    }
-    d->queueMax = size_t(std::clamp(std::abs(s.realTime), 2, 8));
-    if (const AVCodec* c = avcodec_find_encoder_by_name(s.videoCodec.toUtf8().constData())) d->codecId = c->id;
-    // Smart render: H.264/H.265 in 4:2:0, pictures as they come (no frame rate conversion)
-    d->smart = !s.copy.isEmpty() && sound && sound->is_valid() && s.realTime != 0
-               && (d->codecId == AV_CODEC_ID_H264 || d->codecId == AV_CODEC_ID_HEVC)
-               && (streamFormat(d->pixFmt) == AV_PIX_FMT_YUV420P || streamFormat(d->pixFmt) == AV_PIX_FMT_YUV420P10LE);
-    d->mltProfile = profile.get_profile();
-    d->source = source.get_producer();
-    if (d->smart) d->soundSource = sound->get_producer();
-
-    d->consumer = mlt_consumer_new(profile.get_profile());
-    mlt_service_set_profile(MLT_CONSUMER_SERVICE(d->consumer), profile.get_profile());
-    d->consumer->child = d.get();
-    d->consumer->is_stopped = Impl::isStopped; // mlt_consumer_start only starts a stopped consumer
-    mlt_properties p = MLT_CONSUMER_PROPERTIES(d->consumer);
-    mlt_properties_set_int(p, "real_time", s.realTime);
-    mlt_properties_set_int(p, "prefill", 1); // like MLT's avformat consumer
-    mlt_properties_set(p, "mlt_image_format", mlt_image_format_name(d->plan.mlt));
-    if (d->audioFmt != mlt_audio_none) {
-        mlt_properties_set(p, "mlt_audio_format", mlt_audio_format_name(d->audioFmt));
-        mlt_properties_set_int(p, "frequency", s.audioRate);
-        mlt_properties_set_int(p, "channels", s.audioChannels);
-    } else {
-        mlt_properties_set_int(p, "audio_off", 1);
-    }
-    // MLT's consumer sets these before the first frame; filters see them as consumer.color_trc
-    mlt_properties_set_int(p, "color_trc", transferOf(d->colorspace));
-    mlt_properties_set_int(p, "color_primaries", primariesOf(d->colorspace, d->height));
-    mlt_consumer_connect(d->consumer, MLT_PRODUCER_SERVICE(source.get_producer()));
-}
-
 ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl>())
 {
     d->s = s;
-    d->own = true;
     d->width = own.size.width();
     d->height = own.size.height();
     d->colorspace = own.colorspace;
@@ -1699,7 +1315,7 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
     }
     if (!s.audioCodec.isEmpty()) {
         d->sampleFmt = av_get_sample_fmt(s.sampleFormat.toUtf8().constData());
-        d->audioFmt = mltAudioFormat(d->sampleFmt);
+        d->sound = soundFormat(d->sampleFmt);
         d->sampleBytes = av_get_bytes_per_sample(d->sampleFmt);
     }
     const int parallel = std::max(1, d->o.parallel);
@@ -1720,36 +1336,17 @@ ExportWriter::~ExportWriter()
 {
     cancel();
     d->closeEncoders();
-    if (d->consumer) {
-        mlt_consumer_close(d->consumer);
-        d->consumer = nullptr;
-    }
 }
 
 void ExportWriter::start()
 {
     if (d->started) return;
     d->started = true;
-    if (d->own) {
-        if (d->o.renderer && (!d->framePool || d->frameBytes <= 0)) {
-            d->fail(QStringLiteral("pixel format %1 cannot be written").arg(d->s.pixFmt));
-            return;
-        }
-        if (d->pump) d->pump->startThreads(std::max(1, d->o.parallel));
-        d->encoder = std::thread([this] { d->encode(); });
-        d->fetcher = std::thread([this] { d->fetch(); });
+    if (d->o.renderer && (!d->framePool || d->frameBytes <= 0)) {
+        d->fail(QStringLiteral("pixel format %1 cannot be written").arg(d->s.pixFmt));
         return;
     }
-    if (d->smart) { // consumers per piece in the fetch thread
-        d->encoder = std::thread([this] { d->encode(); });
-        d->fetcher = std::thread([this] { d->fetch(); });
-        return;
-    }
-    if (mlt_consumer_start(d->consumer) != 0) {
-        d->fail(QStringLiteral("render workers cannot be started"));
-        return;
-    }
-    d->consumerStarted = true;
+    if (d->pump) d->pump->startThreads(std::max(1, d->o.parallel));
     d->encoder = std::thread([this] { d->encode(); });
     d->fetcher = std::thread([this] { d->fetch(); });
 }
@@ -1759,14 +1356,9 @@ void ExportWriter::cancel()
     if (d->state == State::Running) d->stop = true;
     d->cond.notify_all();
     if (d->pump) d->pump->wake();
-    // The fetch thread may wait in mlt_consumer_rt_frame for the frame being rendered: the workers still run and
-    // deliver it. Only then stop the workers (mlt_consumer_stop frees what the waiting thread uses).
+    // The fetch thread may wait for the frame being rendered: the workers still run and deliver it
     if (d->fetcher.joinable()) d->fetcher.join();
     if (d->pump) d->pump->stopThreads();
-    if (d->consumerStarted) {
-        mlt_consumer_stop(d->consumer);
-        d->consumerStarted = false;
-    }
     d->stop = true;
     d->cond.notify_all();
     if (d->encoder.joinable()) d->encoder.join();

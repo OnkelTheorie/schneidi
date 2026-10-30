@@ -4,7 +4,7 @@
 // 4x oversampling with the 48-tap polyphase FIR from the recommendation (4 phases of 12 taps), peak of the
 // magnitude of the interpolated values. The original samples count too (true peak >= sample peak).
 // The filter history is kept across calls (chunks = one continuous stream).
-// Pure C++ without MLT/Qt -> same on Linux and Windows, testable. Not thread-safe (caller locks).
+// Pure C++ without Qt -> same on Linux and Windows, testable. Not thread-safe (caller locks).
 
 #include <algorithm>
 #include <array>

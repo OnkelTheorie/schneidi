@@ -235,7 +235,7 @@ int main(int argc, char** argv)
     Check::initEnv();
     QApplication app(argc, argv);
     Check::initApp("speed");
-    Check::initMlt();
+    Check::initEngine();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg fehlt");
     QTemporaryDir tmp;
     const QString dir = tmp.path();

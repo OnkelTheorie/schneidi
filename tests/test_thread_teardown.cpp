@@ -275,7 +275,7 @@ int main(int argc, char** argv)
                                {"-f", "lavfi", "-i", "testsrc=size=320x180:rate=25:duration=2", "-c:v", "libx264",
                                 "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
     if (!CHECK(!g_clip.isEmpty() && !g_clip2.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
 
     testScrubFrames();

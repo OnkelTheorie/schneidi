@@ -7,7 +7,7 @@ FROM debian:trixie AS build
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build pkg-config git ca-certificates \
-        qt6-base-dev qt6-base-private-dev libmlt++-dev libmlt-dev \
+        qt6-base-dev qt6-base-private-dev \
         libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev libminiaudio-dev \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
@@ -20,11 +20,11 @@ RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 # ---------- Runtime ----------
 FROM debian:trixie-slim
 COPY --from=build /src/build/runtime-packages /tmp/runtime-packages
-# The libraries schneidi-cli links (found in the build stage), MLT's modules and data, ffmpeg (test clips, whisper
-# input), frei0r effects, a font for titles, tini (signals: `docker stop` ends the server cleanly)
+# The libraries schneidi-cli links (found in the build stage), ffmpeg (test clips, whisper input), a font for titles,
+# tini (signals: `docker stop` ends the server cleanly)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends $(cat /tmp/runtime-packages) \
-        libmlt7 libmlt-data ffmpeg frei0r-plugins fonts-dejavu-core fontconfig ca-certificates tini \
+        ffmpeg fonts-dejavu-core fontconfig ca-certificates tini \
  && rm -rf /var/lib/apt/lists/* /tmp/runtime-packages
 COPY --from=build /src/build/schneidi-cli /usr/local/bin/schneidi-cli
 

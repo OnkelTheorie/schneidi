@@ -84,7 +84,7 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     Check::initApp("analysis_scan");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg missing");
-    Check::initMlt();
+    Check::initEngine();
     QTemporaryDir dir;
     qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8());
 

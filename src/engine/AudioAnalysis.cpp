@@ -3,13 +3,10 @@
 
 #include "core/Loudness.h"
 #include "core/TimelineOps.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
 #include "engine/audio/Mixer.h"
-#include "engine/audio/Path.h"
 #include "engine/audio/Reader.h"
 
-#include <Mlt.h>
 #include <QFileInfo>
 
 #include <algorithm>
@@ -23,7 +20,7 @@ namespace {
 constexpr int kRate = 48000;
 
 using Progress = std::function<bool(double)>;
-// Planar float audio of one timeline frame; pcm == nullptr = the frame could not be decoded (MLT path)
+// Planar float audio of one timeline frame; pcm == nullptr = the frame could not be decoded
 using Sink = std::function<void(const float* pcm, int samples, int channels, int freq)>;
 
 // Own engine: the mixer's frames [from, to) one by one into sink (stereo). false = canceled.
@@ -65,7 +62,7 @@ bool decodeOwn(const ProjectFormat& format, const Clip& clip, const Progress& pr
     c.transIn = c.transOut = 0;
     c.effects.clear();
     c.enabled = true;
-    // Like the MLT source: up to the end of the material
+    // Up to the end of the material
     if (const int len = c.retimedLength(fileFrames); len > 0) c.out = std::min(c.out, len - 1);
     if (c.out < c.in) return false;
     Timeline tl;
@@ -80,91 +77,19 @@ bool decodeOwn(const ProjectFormat& format, const Clip& clip, const Progress& pr
     return renderFrames(mixer, 0, c.length(), progress, sink) && mixer.stats().missing == 0;
 }
 
-// MLT audio path (fallback until it goes): the clip's audio source frame by frame
-bool decodeMlt(const ProjectFormat& format, const Clip& clip, const Progress& progress, const Sink& sink)
-{
-    if (clip.isTitle() || clip.freeze || !QFileInfo::exists(clip.mediaPath)) return false;
-    auto profile = makeProfile(format);
-    TimelineBuilder builder(*profile);
-    Mlt::Producer* src = builder.clipAudioSource(clip);
-    if (!src || !src->is_valid()) return false;
-    const int last = std::min(clip.out, src->get_length() - 1);
-    if (last < clip.in) return false;
-    const double fps = profile->fps();
-    src->seek(clip.in);
-    bool anyAudio = false;
-    for (int pos = clip.in; pos <= last; ++pos) {
-        if (progress && (pos - clip.in) % 25 == 0 && !progress(double(pos - clip.in) / (last - clip.in + 1)))
-            return false;
-        std::unique_ptr<Mlt::Frame> f(src->get_frame());
-        if (!f) break;
-        mlt_audio_format fmt = mlt_audio_float; // planar float, not limited to ±1
-        int freq = kRate, channels = 2;
-        int samples = mlt_audio_calculate_frame_samples(float(fps), freq, pos);
-        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
-        if (!pcm || samples <= 0 || channels <= 0 || fmt != mlt_audio_float) {
-            sink(nullptr, 0, 0, freq); // keeps frame counting sinks in step
-            continue;
-        }
-        anyAudio = true;
-        sink(pcm, samples, channels, freq);
-    }
-    if (progress) progress(1.0);
-    return anyAudio;
-}
-
-// Pass the clip audio frame by frame to sink as planar float (48 kHz, stereo). false = no audio or canceled.
 bool decode(const ProjectFormat& format, const Clip& clip, const Progress& progress, const Sink& sink)
 {
-    return Audio::ownPath() ? decodeOwn(format, clip, progress, sink) : decodeMlt(format, clip, progress, sink);
-}
-
-// Only the sound: the video tracks' clips (with their transitions, effects, speed ramps) would be built and
-// processed by MLT for every frame although only the audio is read - minutes on a long edit with many effects
-Timeline soundOnly(const Timeline& timeline)
-{
-    Timeline tl = timeline;
-    for (Track& t : tl.video) t.clips.clear();
-    return tl;
-}
-
-// MLT audio path: the mix of frames [from, to) as it is exported
-bool mixMlt(Mlt::Profile& profile, TimelineBuilder& builder, const Timeline& timeline, int from, int to,
-            const Progress& progress, const Sink& sink)
-{
-    const std::unique_ptr<Mlt::Tractor> tractor = builder.build(soundOnly(timeline));
-    if (!tractor || !tractor->is_valid()) return false;
-    const double fps = profile.fps();
-    tractor->seek(from);
-    for (int pos = from; pos < to; ++pos) {
-        if (progress && (pos - from) % 25 == 0 && !progress(double(pos - from) / (to - from))) return false;
-        std::unique_ptr<Mlt::Frame> f(tractor->get_frame());
-        if (!f) break;
-        mlt_audio_format fmt = mlt_audio_float;
-        int freq = kRate, channels = 2;
-        int samples = mlt_audio_calculate_frame_samples(float(fps), freq, pos);
-        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
-        if (pcm && samples > 0 && channels > 0 && fmt == mlt_audio_float) sink(pcm, samples, channels, freq);
-        else sink(nullptr, 0, 0, freq);
-    }
-    if (progress) progress(1.0);
-    return true;
+    return decodeOwn(format, clip, progress, sink);
 }
 
 // The mix of timeline frames [from, to) as it is exported, frame by frame. false = could not mix or canceled.
 bool mix(const ProjectFormat& format, const Timeline& timeline, int from, int to, const Progress& progress,
          const Sink& sink)
 {
-    if (Audio::ownPath()) {
-        Audio::Mixer::Options o;
-        o.rate = kRate;
-        Audio::Mixer mixer(timeline, format.rate, o);
-        return renderFrames(mixer, from, to, progress, sink);
-    }
-    auto profile = makeProfile(format);
-    TimelineBuilder builder(*profile);
-    builder.setSubtitles(false);
-    return mixMlt(*profile, builder, timeline, from, to, progress, sink);
+    Audio::Mixer::Options o;
+    o.rate = kRate;
+    Audio::Mixer mixer(timeline, format.rate, o);
+    return renderFrames(mixer, from, to, progress, sink);
 }
 
 float framePeak(const float* pcm, int samples, int channels)
@@ -281,16 +206,7 @@ std::optional<Loudness> MixMeter::measure(const Timeline& timeline, int from, in
         m.add(pcm, samples, channels, freq);
         if (framePeaks) framePeaks->push_back(framePeak(pcm, samples, channels));
     };
-    if (Audio::ownPath()) {
-        if (!mix(m_format, timeline, from, to, progress, sink)) return std::nullopt;
-    } else {
-        if (!m_profile) {
-            m_profile = makeProfile(m_format);
-            m_builder = std::make_unique<TimelineBuilder>(*m_profile);
-            m_builder->setSubtitles(false);
-        }
-        if (!mixMlt(*m_profile, *m_builder, timeline, from, to, progress, sink)) return std::nullopt;
-    }
+    if (!mix(m_format, timeline, from, to, progress, sink)) return std::nullopt;
     return m.result();
 }
 

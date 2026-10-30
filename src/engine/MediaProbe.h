@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// What Engine::probe tells about a media file (length, picture, sound, audio streams), read with libavformat directly
-// instead of opening an MLT producer: Matroska/WebM, MP4/MOV, WAV, FLAC, MP3 and AVI from their header alone (~1 ms;
-// MLT took 0.1-0.5 s, a game recording with several sound streams the most, because it decodes the first frames of
-// every stream), other containers with libavformat's stream analysis (what MLT runs too, once instead of per
-// producer). Same results as the MLT producer (test_media_probe compares both on varied files).
-// Still pictures (the suffixes MLT's loader gives to its still producer) when Qt can read them: from the picture's
-// header (QImageReader::canRead), 5 seconds long.
-// Not decided here (nullopt, Engine::probe asks MLT): everything else MLT's loader does not hand to its avformat
-// producer (loader.dict: .mlt/.xml, titles, animations, …), unreadable pictures, files libavformat cannot open, an
-// unknown length, streams without a decoder. Thread-safe (the Media Pool probes several files at once).
+// What Engine::probe tells about a media file (length, picture, sound, audio streams), read with libavformat:
+// Matroska/WebM, MP4/MOV, WAV, FLAC, MP3 and AVI from their header alone (~1 ms), other containers with libavformat's
+// stream analysis. Still pictures when Qt can read them: from the picture's header (QImageReader::canRead), 5 seconds
+// long. Not readable (nullopt, Engine::probe reports no picture and no sound): project files of other editors,
+// titles, animations, unreadable pictures, files libavformat cannot open, an unknown length, streams without a
+// decoder. Thread-safe (the Media Pool probes several files at once).
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"

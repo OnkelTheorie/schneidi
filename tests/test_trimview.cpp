@@ -482,7 +482,7 @@ int main(int argc, char** argv)
     }
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     const QString ramp = makeRamp(tmp.path());
     if (!CHECK(!ramp.isEmpty())) return Check::result();
     testFetcher(ramp);

@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Giving memory back to the system while the app is idle. MLT keeps every image buffer it ever handed out in its pool
-// (mlt_pool) for reuse and never frees one; glibc keeps freed heap memory in the process. After playing 4K material,
-// an export or a long AI session the app held GBs that nothing used any more.
+// Giving memory back to the system while the app is idle. The picture engine keeps frame buffers for reuse
+// (Picture::releasePools); glibc keeps freed heap memory in the process. After playing 4K material, an export or a
+// long AI session the app held GBs that nothing used any more.
 //
-// release() empties MLT's pool of the buffers nobody holds (mlt_pool_purge locks each pool, so MLT threads may keep
-// running) and trims glibc's heap. IdleRelease does that once nothing renders: not while the preview plays, an export
-// runs or the render cache renders (purging then only makes MLT allocate the same buffers again).
+// release() empties the picture engine's pools and trims glibc's heap. IdleRelease does that once nothing renders:
+// not while the preview plays, an export runs or the render cache renders (the pools would only fill again).
 // What stays (tests/bench_memory): malloc_trim gives back free pages inside every arena, but the free top of a thread's
 // own arena only above glibc's trim threshold (raised up to 64 MB per arena): with many decoder/render threads a few
 // hundred MB (3 HD sources after an export: 1490 MB -> 596 MB, with GLIBC_TUNABLES=glibc.malloc.arena_max=2 -> 142 MB).
@@ -29,9 +28,9 @@ struct Activity {
 // The policy: memory is given back only while nothing renders
 bool allowed(const Activity& a);
 
-// MLT's unused pool buffers and glibc's free heap back to the system (no-op for MLT before Mlt::Factory::init)
+// The picture engine's unused buffers and glibc's free heap back to the system
 void release();
-// Only glibc's free heap (after tearing down decoders: their frames came from the heap, not from MLT's pool)
+// Only glibc's free heap (after tearing down decoders: their frames came from the heap)
 void trimHeap();
 // Resident memory of this process in bytes (Linux; -1 = unknown)
 qint64 residentBytes();

@@ -4,7 +4,7 @@
 // detector in the log domain with attack/release (smooth decoupled peak detector, Giannoulis/Massberg/Reiss 2012),
 // stereo-linked (one gain for all channels). No lookahead, no latency. Times are in ms, so the result does not depend
 // on the sample rate or on the block size. Works on float (levels above 0 dBFS are fine).
-// Plain C++ without MLT/Qt widgets -> same on Linux and Windows, testable. Not thread-safe; copyable (state snapshot).
+// Plain C++ without Qt widgets -> same on Linux and Windows, testable. Not thread-safe; copyable (state snapshot).
 
 #include "core/Types.h"
 

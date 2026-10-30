@@ -128,6 +128,40 @@ int main(int argc, char** argv)
         CHECK_EQ(ExportCheck::errors(issues), 1);
     }
 
+    // --- Effects this version does not have (frei0r plugins of old projects): a warning per effect id, the clip and
+    // its range; disabled effects and clips outside the range do not count; in compound clips for the whole video
+    {
+        Timeline tl;
+        tl.video.resize(1);
+        Clip a = clip(1, 0, 50);
+        a.effects << EffectInstance{"frei0r.gibtsnicht", {}, true} << EffectInstance{"color", {}, true};
+        Clip b = clip(2, 50, 50);
+        b.effects << EffectInstance{"frei0r.gibtsnicht", {}, true} << EffectInstance{"frei0r.aus", {}, false};
+        Clip far = clip(3, 300, 10);
+        far.effects << EffectInstance{"frei0r.weitweg", {}, true};
+        tl.video[0].clips << a << b << far;
+        auto issues = ExportCheck::timeline(tl, 0, 100, f);
+        CHECK_EQ(checks(issues), QStringList({"missing_effect"}));
+        if (const auto* m = find(issues, "missing_effect")) {
+            CHECK(m->severity == ExportCheck::Severity::Warning);
+            CHECK_EQ(m->clip, 1);
+            CHECK_EQ(m->from, 0);
+            CHECK_EQ(m->to, 50);
+            CHECK(m->message.contains("frei0r.gibtsnicht"));
+        }
+        CHECK_EQ(ExportCheck::errors(issues), 0);
+        Timeline inner;
+        inner.video.resize(1);
+        inner.video[0].clips << far;
+        tl.video[0].clips.removeLast();
+        auto nested = std::make_shared<NestedTimelines>();
+        nested->insert(9, inner);
+        tl.nested = nested;
+        issues = ExportCheck::timeline(tl, 0, 100, f);
+        CHECK_EQ(int(std::count_if(issues.begin(), issues.end(),
+                                   [](const ExportCheck::Issue& i) { return i.check == "missing_effect"; })), 2);
+    }
+
     // --- Subtitles: too short, too fast, past the end; disabled tracks are not exported
     {
         Timeline tl;
@@ -432,7 +466,7 @@ int main(int argc, char** argv)
 
     // --- The command on a project and on its render
     if (!Check::haveFfmpeg()) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     QTemporaryDir dir;
     qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8()); // backups of the test project
     const QString media = Check::makeMedia(dir.filePath("a.mp4"),

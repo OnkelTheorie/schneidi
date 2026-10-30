@@ -19,7 +19,7 @@ namespace Audio {
 
 namespace {
 
-// "DirectSound" == "directsound", "Core Audio" == "coreaudio" (the setting keeps SDL's names of the MLT path)
+// "DirectSound" == "directsound", "Core Audio" == "coreaudio" (the setting keeps SDL's names from before 0.10)
 QString plainName(const QString& name)
 {
     QString out;

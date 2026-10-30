@@ -63,7 +63,7 @@ constexpr Keys::ParamInfo kParams[] = {
     {AnimParam::GradeExposure, "gradeExposure", false, nullptr, 0, 0},
 };
 
-// Dynamic effect parameters (Keys::effectParam): interned per "fx:<effect>:<key>". Read from MLT threads too
+// Dynamic effect parameters (Keys::effectParam): interned per "fx:<effect>:<key>". Read from render threads too
 // (render filters call valueAt -> info), hence the lock; a deque keeps the ParamInfo addresses stable.
 struct DynamicParam {
     QString effectId, key;

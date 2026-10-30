@@ -4,13 +4,12 @@
 // Regression: the preview consumer's width/height went into the shared profile, so the preview took 960x540 for the
 // project size and drew all of these twice as large.
 #include "check.h"
+#include "engine/picture/Renderer.h"
 
 #include "core/EffectRegistry.h"
 #include "engine/Engine.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QEventLoop>
 #include <QImage>
@@ -35,16 +34,11 @@ Clip media(int id, const QString& path, int start, int len)
 // Export path: full project size, scaled down like the Viewer
 QImage exportFrame(const Timeline& tl, const ProjectFormat& f, int pos, QSize size)
 {
-    auto profile = makeProfile(f);
-    TimelineBuilder b(*profile);
-    auto tractor = b.build(tl);
-    tractor->seek(pos);
-    std::unique_ptr<Mlt::Frame> fr(tractor->get_frame());
-    mlt_image_format fmt = mlt_image_rgba;
-    int w = profile->width(), h = profile->height();
-    const uint8_t* d = fr->get_image(fmt, w, h);
-    QImage img(w, h, QImage::Format_RGBA8888);
-    std::memcpy(img.bits(), d, size_t(w) * h * 4);
+    Picture::Options o;
+    o.format = f;
+    o.mode = Picture::Mode::Export;
+    Picture::Renderer r(tl, o);
+    const QImage img = r.render(pos).toImage();
     return img.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 }
 
@@ -96,7 +90,7 @@ int main(int argc, char** argv)
 
     Engine engine;
     QString err;
-    if (!engine.init(&err)) return Check::skip("kein MLT-Consumer");
+    if (!engine.init(&err)) return Check::skip("keine Engine");
     ProjectFormat f;
     engine.setFormat(f);
 

@@ -12,10 +12,8 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -211,7 +209,7 @@ int main(int argc, char** argv)
     const double ref = ffmpegIntegrated(mix);
     CHECK(!std::isnan(ref));
 
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt; // 25 fps
     const auto l = AudioAnalysis::clipLoudness(fmt, mk(1, mix, 0, 0, 199));
@@ -227,39 +225,5 @@ int main(int argc, char** argv)
     int calls = 0;
     CHECK(!AudioAnalysis::clipLoudness(fmt, mk(1, mix, 0, 0, 199), [&](double) { return ++calls < 2; }));
 
-    // After normalizing (+x dB clip volume) the timeline measures the target: live measurement at the master level meter
-    // (like the loudness meter in the mixer), only when active
-    if (l) {
-        Timeline tl;
-        tl.video.resize(1);
-        tl.audio.resize(1);
-        Clip c = mk(1, mix, 0, 0, 199);
-        c.volumeDb = -14.0 - l->integrated;
-        tl.audio[0].clips << c;
-        auto prof = makeProfile(fmt);
-        TimelineBuilder b(*prof);
-        MixerHooks hooks;
-        auto tr = b.build(tl, &hooks);
-        SharedLoudness live;
-        CHECK(hooks.master.meter != nullptr);
-        if (hooks.master.meter) hooks.master.meter->set("_loudness", &live, 0);
-        auto pull = [&](int from, int to) {
-            tr->seek(from);
-            for (int pos = from; pos <= to; ++pos) {
-                std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-                mlt_audio_format afmt = mlt_audio_float;
-                int freq = 48000, channels = 2;
-                int samples = mlt_audio_calculate_frame_samples(float(prof->fps()), freq, pos);
-                f->get_audio(afmt, freq, channels, samples);
-            }
-        };
-        pull(0, 49); // not active: nothing measured
-        CHECK_EQ(live.meter.measuredSeconds(), 0.0);
-        live.active = true;
-        pull(0, 199);
-        if (!CHECK(near(live.meter.integrated(), -14.0, 0.3)))
-            std::printf("       live: %.2f LUFS\n", live.meter.integrated());
-        CHECK(near(live.meter.measuredSeconds(), 8.0, 0.15));
-    }
     return Check::result();
 }

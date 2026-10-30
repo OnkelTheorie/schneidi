@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/BlurFill.h"
 
-#include <Mlt.h>
-
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -265,83 +263,5 @@ void composite(uint8_t* rgba, int w, int h, const Background& bg)
         }
     }
 }
-
-namespace {
-
-constexpr const char* kFrameData = "_schneidi_blurfill";
-
-void deleteBackground(void* p) { delete static_cast<Background*>(p); }
-
-int captureGetImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int writable)
-{
-    auto filter = static_cast<mlt_filter>(mlt_frame_pop_service(frame));
-    const int pos = mlt_frame_pop_service_int(frame);
-    const int len = mlt_frame_pop_service_int(frame);
-    // qtblend asks for RGBA anyway; asking for it here too keeps the copy exact in its pass-through cases
-    *format = mlt_image_rgba;
-    const int err = mlt_frame_get_image(frame, image, format, width, height, writable);
-    if (err || !*image || *format != mlt_image_rgba) return err;
-    mlt_properties fp = MLT_FILTER_PROPERTIES(filter);
-    const mlt_rect r = mlt_properties_anim_get_rect(fp, "crop", pos, len);
-    const double crop[4] = {r.x, r.y, r.w, r.h};
-    auto* bg = new Background(makeBackground(*image, *width, *height, mlt_properties_get_double(fp, "picture_aspect"), crop,
-                                             mlt_properties_get_double(fp, "frame_aspect"),
-                                             mlt_properties_get_double(fp, "blur"), mlt_properties_get_double(fp, "dim")));
-    mlt_properties_set_data(MLT_FRAME_PROPERTIES(frame), kFrameData, bg, 0, deleteBackground, nullptr);
-    return 0;
-}
-
-mlt_frame captureProcess(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_length2(filter, frame)));
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_position(filter, frame)));
-    mlt_frame_push_service(frame, filter);
-    mlt_frame_push_get_image(frame, captureGetImage);
-    return frame;
-}
-
-int compositeGetImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int)
-{
-    mlt_frame_pop_service(frame);
-    *format = mlt_image_rgba;
-    const int err = mlt_frame_get_image(frame, image, format, width, height, 1);
-    if (err || !*image || *format != mlt_image_rgba) return err;
-    if (auto* bg = static_cast<Background*>(mlt_properties_get_data(MLT_FRAME_PROPERTIES(frame), kFrameData, nullptr)))
-        composite(*image, *width, *height, *bg);
-    return 0;
-}
-
-mlt_frame compositeProcess(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_service(frame, filter);
-    mlt_frame_push_get_image(frame, compositeGetImage);
-    return frame;
-}
-
-Mlt::Filter ownFilter(mlt_frame (*process)(mlt_filter, mlt_frame))
-{
-    mlt_filter f = mlt_filter_new();
-    if (!f) return Mlt::Filter();
-    f->process = process;
-    Mlt::Filter filter(f); // holds its own reference
-    mlt_filter_close(f);
-    return filter;
-}
-
-} // namespace
-
-Mlt::Filter captureFilter(Mlt::Profile& profile, double pictureAspect, double blurStrength, double dim)
-{
-    Mlt::Filter f = ownFilter(captureProcess);
-    if (!f.is_valid()) return f;
-    // Numbers as doubles (never text: MLT would read them with the system's number format)
-    f.set("picture_aspect", pictureAspect);
-    f.set("frame_aspect", double(profile.width()) / std::max(1, profile.height()));
-    f.set("blur", blurStrength);
-    f.set("dim", dim);
-    return f;
-}
-
-Mlt::Filter compositeFilter() { return ownFilter(compositeProcess); }
 
 } // namespace BlurFill

@@ -27,7 +27,7 @@
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
 #include "engine/MediaCache.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
 #include "ui/DeliverPanel.h"
@@ -384,10 +384,10 @@ bool MainWindow::applyLoaded(ProjectData data, const QString& path, bool ask)
             QMessageBox::information(this, T("Medien fehlen"), T("In diesem Ordner wurden keine der Dateien gefunden."));
     }
 
-    // Effects whose plugin is missing here (project from another computer): stay in the project, but do nothing
+    // Effects this version does not have (frei0r plugins of older projects): stay in the project, skipped
     if (const QStringList fx = ask ? ProjectFile::missingEffects(data) : QStringList{}; !fx.isEmpty()) {
         QMessageBox box(QMessageBox::Warning, T("Effekte fehlen"),
-                        T("%1 Effekt(e) sind auf diesem Rechner nicht installiert und wirken nicht:").arg(fx.size()),
+                        T("%1 Effekt(e) sind nicht verfügbar und werden übersprungen:").arg(fx.size()),
                         QMessageBox::Ok, this);
         box.setInformativeText(fx.mid(0, 15).join('\n') + (fx.size() > 15 ? "\n…" : "") + "\n\n"
                                + T("Sie bleiben mit ihren Werten im Projekt; der Inspector zeigt sie an."));

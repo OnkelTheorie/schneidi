@@ -8,12 +8,10 @@
 #include "core/EffectRegistry.h"
 #include "engine/Bundle.h"
 #include "engine/Exporter.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/Stabilizer.h"
-#include "engine/TimelineBuilder.h"
 #include "engine/Background.h"
 
-#include <Mlt.h>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -58,18 +56,6 @@ RenderCache::Mode modeFromId(const QString& id)
     if (id == "off") return RenderCache::Mode::Off;
     if (id == "smart") return RenderCache::Mode::Smart;
     return RenderCache::Mode::User;
-}
-
-// One image of the clip output at project size (RGBA)
-const uint8_t* frameImage(Mlt::Producer& p, int pos, int w, int h, std::unique_ptr<Mlt::Frame>& keep)
-{
-    p.seek(pos);
-    keep.reset(p.get_frame());
-    if (!keep) return nullptr;
-    mlt_image_format fmt = mlt_image_rgba;
-    int iw = w, ih = h;
-    const uint8_t* d = keep->get_image(fmt, iw, ih);
-    return d && iw == w && ih == h ? d : nullptr;
 }
 
 bool hasAlpha(const uint8_t* rgba, int w, int h)
@@ -423,37 +409,22 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
     const int len = c.length();
     if (len <= 0) return fail({});
 
-    // The clip's output alone on a transparent frame (frame 0 = clip start): own picture engine (default) or the
-    // MLT tractor (SCHNEIDI_PICTURE=mlt)
+    // The clip's output alone on a transparent frame (frame 0 = clip start)
     const int w = format.width, h = format.height;
-    std::unique_ptr<Picture::Renderer> renderer;
-    std::unique_ptr<Mlt::Profile> profile;
-    std::unique_ptr<TimelineBuilder> builder;
-    std::unique_ptr<Mlt::Tractor> tractor;
+    Timeline one;
+    one.video.resize(1);
+    one.video[0].clips << c;
+    Picture::Options o;
+    o.format = format;
+    o.mode = Picture::Mode::Export;
+    o.transparent = true;
+    o.subtitles = false;
+    Picture::Renderer renderer(one, o);
     Picture::Frame ownFrame;
-    std::unique_ptr<Mlt::Frame> mltFrame;
-    std::function<const uint8_t*(int)> frameAt;
-    if (Picture::ownPicture()) {
-        Timeline one;
-        one.video.resize(1);
-        one.video[0].clips << c;
-        Picture::Options o;
-        o.format = format;
-        o.mode = Picture::Mode::Export;
-        o.transparent = true;
-        o.subtitles = false;
-        renderer = std::make_unique<Picture::Renderer>(one, o);
-        frameAt = [&](int i) -> const uint8_t* {
-            ownFrame = renderer->render(i);
-            return ownFrame.isNull() || ownFrame.width() != w || ownFrame.height() != h ? nullptr : ownFrame.bits();
-        };
-    } else {
-        profile = makeProfile(format);
-        builder = std::make_unique<TimelineBuilder>(*profile);
-        tractor = builder->buildClipOutput(c);
-        if (!tractor || !tractor->is_valid()) return fail(T("Render-Cache: Clip konnte nicht geöffnet werden."));
-        frameAt = [&](int i) { return frameImage(*tractor, i, w, h, mltFrame); };
-    }
+    auto frameAt = [&](int i) -> const uint8_t* {
+        ownFrame = renderer.render(i);
+        return ownFrame.isNull() || ownFrame.width() != w || ownFrame.height() != h ? nullptr : ownFrame.bits();
+    };
     // Transparent? Cropping/opacity/transform for sure, otherwise samples (other aspect ratio, green screen …)
     bool alpha = Keys::hasCrop(c) || Keys::hasOpacity(c) || Keys::hasTransform(c);
     for (int pos : {0, len / 2, len - 1}) {
@@ -465,14 +436,14 @@ bool RenderCache::render(const Clip& clip, const ProjectFormat& format, const QS
     QString ffmpeg = Bundle::tool("ffmpeg");
     if (!QFileInfo(ffmpeg).isAbsolute()) return fail(T("ffmpeg wurde nicht gefunden. Bitte ffmpeg installieren."));
 
-    // Quickly decodable intra codec: ProRes 422 LT, with transparency ProRes 4444 (alpha). MLT delivers RGBA in the
-    // project profile (BT.709) -> tag and convert accordingly, then the preview reads back the same colors.
+    // Quickly decodable intra codec: ProRes 422 LT, with transparency ProRes 4444 (alpha). The renderer delivers RGBA
+    // (BT.709) -> tag and convert accordingly, then the preview reads back the same colors.
     const QString part = file + ".part.mov";
     const QStringList args{
         "-hide_banner", "-nostdin", "-v", "error", "-y",
         "-f", "rawvideo", "-pix_fmt", "rgba", "-s", QString("%1x%2").arg(w).arg(h),
         "-framerate", QString("%1/%2").arg(format.rate.num).arg(format.rate.den), "-i", "pipe:0",
-        // setparams: otherwise no color tag ends up in the file and MLT takes it (below 720 lines) for BT.601
+        // setparams: otherwise no color tag ends up in the file and a reader takes it (below 720 lines) for BT.601
         "-vf", "scale=out_color_matrix=bt709:out_range=tv,"
                "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv",
         "-c:v", "prores_ks", "-profile:v", alpha ? "4" : "1",

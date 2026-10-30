@@ -7,8 +7,8 @@
 // - every software video/audio encoder not covered elsewhere (H.265, AAC) writes a file of the right length
 // - audio packets with overlapping timestamps (the user's clip program writes some, e.g. 2026-10-11_19-17-02):
 //   the sound follows the timestamps like a player, not the raw packet order (that drifts by the overlaps)
-// - Matroska sources: every clip plays its source sample-exact after its start (MLT < 7.36 drops 48 samples after
-//   some seeks because of the 1 ms time base, a click 1-5 frames after the cut – known on the MLT fallback)
+// - Matroska sources: every clip plays its source sample-exact after its start (1 ms time base: a reader that compares
+//   rounded packet times after a seek drops 48 samples, a click 1-5 frames after the cut)
 // Already covered elsewhere: hardware encoders (test_hw_encoders), MP3/WAV/AIFF/ALAC/ProRes + frame rate conversion
 // (test_export_formats), per-stream volume/streams (test_audio_streams), seek click in the preview (test_audio).
 
@@ -16,7 +16,6 @@
 
 #include "core/RenderJob.h"
 #include "engine/Exporter.h"
-#include "engine/audio/Path.h"
 #include "engine/RenderQueue.h"
 
 #include <QApplication>
@@ -359,10 +358,6 @@ void testVariableFrameRate(const QString& dir)
     }
 }
 
-// MLT < 7.36 (producer_avformat decode_audio) compares the packet pts after a seek with the wanted position in the
-// stream's 1 ms ticks; the rounding error makes it drop 48 samples (dev/mlt.md). The own audio engine reads by
-// itself (docs/archiv/plan-0.10-ton.md): then this must hold on every MLT version.
-bool mltAudio() { return !Audio::ownPath(); }
 
 // Every clip plays its source sample-exact after its start; per container (MOV = control, always strict)
 void testContinuity(const QString& dir, const char* container)
@@ -401,15 +396,9 @@ void testContinuity(const QString& dir, const char* container)
             where += QString(" %1").arg(i + 1);
         }
     }
-    const bool known = mkv && mltAudio() && mlt_version_get_int() < ((7 << 16) | (36 << 8));
-    std::printf("       %s: %d von 12 Clips nicht sample-genau%s%s\n", container, broken,
-                broken ? qPrintable(QString(" (Clip%1)").arg(where)) : "", known ? " – bekannt bei MLT < 7.36" : "");
-    if (known) {
-        // The material must still show the bug, else this test no longer proves anything (or MLT got fixed here)
-        if (!CHECK(broken > 0)) std::printf("       MLT-Fehler nicht mehr da: Test auf die strenge Prüfung umstellen\n");
-    } else {
-        CHECK_EQ(broken, 0);
-    }
+    std::printf("       %s: %d von 12 Clips nicht sample-genau%s\n", container, broken,
+                broken ? qPrintable(QString(" (Clip%1)").arg(where)) : "");
+    CHECK_EQ(broken, 0);
 }
 
 int main(int argc, char** argv)
@@ -439,7 +428,7 @@ int main(int argc, char** argv)
          "aevalsrc=if(between(t\\,2\\,2.1)\\,0.5*sin(2*PI*1000*t)\\,0)|if(between(t\\,2\\,2.1)\\,0.5*sin(2*PI*1000*t)\\,0):s=48000:d=4",
          "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", "-shortest"});
     if (!CHECK(!g_sin.isEmpty() && !g_cos.isEmpty() && !g_sync.isEmpty())) return Check::result();
-    Check::initMlt(); // pins LC_NUMERIC to C itself (no setlocale here, so the de_DE run tests that)
+    Check::initEngine(); // pins LC_NUMERIC to C itself (no setlocale here, so the de_DE run tests that)
     testMainRender(tmp.path());
     testCut(tmp.path());
     testEncoders(tmp.path());

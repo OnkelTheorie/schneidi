@@ -46,7 +46,7 @@ jobs:
       - name: Check the image
         run: |
           set -e
-          # The command line: MLT, FFmpeg and the effects work in the image (new project, cut, render)
+          # The command line: FFmpeg and the effects work in the image (new project, cut, render)
           docker run --rm --entrypoint sh schneidi:test -c '
             set -e; cd /data
             ffmpeg -loglevel error -f lavfi -i testsrc2=size=320x180:rate=25:duration=2 -f lavfi -i sine=duration=2 \

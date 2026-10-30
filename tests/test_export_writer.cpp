@@ -1,22 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Own export path (engine/ExportWriter) against MLT's avformat consumer: the same timeline written both ways with a
-// lossless codec (FFV1 in MKV, PCM sound) must give the same decoded pictures and sound, frame count and color tags.
-// Cases: BT.709 and BT.601 sources, title over video (composited in RGBA), In/Out, another frame rate (frames in order),
-// packed 4:2:2 from MLT (8 and 10 bit), an output width that is no multiple of 16 (MLT buffer handed over as it is),
-// sound from MLT's graph instead of the own audio engine. Also: cancelling and destroying while it runs.
-// SCHNEIDI_BENCH_WRITER=<media>: frames per second of both paths (libx264 ultrafast) instead of the tests.
-//
-// 0.15: the own path renders with the own picture engine (Picture::Renderer) by default. Then the pictures are
-// compared by PSNR per frame (the engines differ in rounding: transitions, scaling), frame count, sound (sample-exact:
-// both take it from Audio::Mixer, so picture and sound stay in sync) and color tags exactly. Registered a second time
-// with SCHNEIDI_PICTURE=mlt (test_export_writer_mlt_picture): there the own writer takes MLT's pictures and every
-// picture must be bit-identical to MLT's consumer, as before.
+// Export writer (engine/ExportWriter): cancelling and destroying while it runs leaves no file and no running threads.
+// Until 0.15 the writer was also held against MLT's avformat consumer here (pictures, sound, color tags); the output
+// itself is checked by test_export_timing, test_export_formats, test_export_audio and test_export_safety.
+// SCHNEIDI_BENCH_WRITER=<media>: frames per second of the writer (libx264 ultrafast) instead of the tests.
 
 #include "check.h"
 
 #include "engine/Exporter.h"
-
-#include <framework/mlt_log.h>
 
 #include <QApplication>
 #include <QCryptographicHash>
@@ -41,8 +31,6 @@ namespace {
 
 const ProjectFormat kFmt{640, 360, {25, 1}};
 constexpr int kFrames = 75; // 3 s
-// Own picture engine vs MLT: the worst frame at least this close (dB, 8-bit YUV 4:4:4)
-constexpr double kMinPsnr = 38;
 QString g_709, g_601;
 
 Clip clipOf(int id, const QString& media, int start, int length)
@@ -105,190 +93,6 @@ bool render(const Timeline& tl, const ExportSettings& s, QString* used = nullptr
 }
 
 // Decoded stream as raw data: md5 and size (frames/samples follow from the size)
-struct Decoded {
-    QByteArray md5;
-    qint64 bytes = 0;
-    QByteArray data; // sound, or the pictures when asked for
-};
-
-bool exactPictures()
-{
-    return qgetenv("SCHNEIDI_PICTURE") == "mlt";
-}
-
-// Lowest PSNR (dB) over the frames of two raw streams of the same frame size; 99 = identical
-double minPsnr(const QByteArray& a, const QByteArray& b, int frames)
-{
-    if (frames <= 0 || a.size() != b.size() || a.size() % frames) return 0;
-    const qsizetype n = a.size() / frames;
-    double worst = 99;
-    for (int f = 0; f < frames; ++f) {
-        double sum = 0;
-        const auto* p = reinterpret_cast<const uint8_t*>(a.constData() + f * n);
-        const auto* q = reinterpret_cast<const uint8_t*>(b.constData() + f * n);
-        for (qsizetype i = 0; i < n; ++i) {
-            const double d = double(p[i]) - double(q[i]);
-            sum += d * d;
-        }
-        const double mse = sum / double(n);
-        if (mse > 0) worst = std::min(worst, 10 * std::log10(255.0 * 255.0 / mse));
-    }
-    return worst;
-}
-
-Decoded decode(const QString& path, bool video, const QString& pixFmt, bool keep = false)
-{
-    QProcess p;
-    QStringList args{"-v", "error", "-i", path, "-map", video ? "0:v:0" : "0:a:0"};
-    if (video) args << "-f" << "rawvideo" << "-pix_fmt" << pixFmt;
-    else args << "-f" << "s16le" << "-ac" << "2";
-    args << "-";
-    p.start("ffmpeg", args);
-    QCryptographicHash hash(QCryptographicHash::Md5);
-    Decoded d;
-    while (p.waitForReadyRead(30000) || p.bytesAvailable()) {
-        const QByteArray chunk = p.readAllStandardOutput();
-        if (chunk.isEmpty() && p.state() == QProcess::NotRunning) break;
-        hash.addData(chunk);
-        d.bytes += chunk.size();
-        if (!video || keep) d.data += chunk;
-    }
-    p.waitForFinished(30000);
-    d.md5 = hash.result().toHex();
-    return d;
-}
-
-QJsonObject videoStream(const QString& path)
-{
-    QProcess p;
-    p.start("ffprobe", {"-v", "error", "-select_streams", "v:0", "-show_streams", "-of", "json", path});
-    p.waitForFinished(30000);
-    return QJsonDocument::fromJson(p.readAllStandardOutput()).object().value("streams").toArray().first().toObject();
-}
-
-// Renders the case with both writers and compares
-void compare(const char* name, const QString& dir, const Timeline& tl, ExportSettings s, int frames,
-             double minPsnrWanted = kMinPsnr)
-{
-    const QString mlt = dir + "/" + name + "-mlt.mkv", own = dir + "/" + name + "-own.mkv";
-    s.path = mlt;
-    s.writer = ExportSettings::Writer::Mlt;
-    if (!CHECK(render(tl, s))) return;
-    s.path = own;
-    s.writer = ExportSettings::Writer::Own;
-    if (!CHECK(render(tl, s))) return;
-    const bool exact = exactPictures();
-    // 8 bit for the PSNR (10-bit formats compared at 8 bit)
-    const QString pf = exact ? s.pixFmt : QString("yuv444p");
-    const Decoded vm = decode(mlt, true, pf, !exact), vo = decode(own, true, pf, !exact);
-    if (exact) {
-        if (!CHECK_EQ(vo.bytes, vm.bytes) || !CHECK_EQ(vo.md5, vm.md5))
-            std::printf("       %s: picture differs (own %lld bytes, MLT %lld)\n", name, vo.bytes, vm.bytes);
-    } else if (CHECK_EQ(vo.bytes, vm.bytes)) {
-        const double psnr = minPsnr(vo.data, vm.data, frames);
-        std::printf("       %s: own picture engine vs MLT: lowest PSNR %.1f dB\n", name, psnr);
-        CHECK(psnr >= minPsnrWanted);
-    }
-    // frame count from the stream (both identical when the md5 is)
-    QProcess count;
-    count.start("ffprobe", {"-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
-                            "stream=nb_read_frames", "-of", "csv=p=0", own});
-    count.waitForFinished(30000);
-    if (!CHECK_EQ(count.readAllStandardOutput().trimmed().toInt(), frames)) std::printf("       %s: frame count\n", name);
-    if (!s.audioCodec.isEmpty()) {
-        // Exactly the length of the range (s16 stereo); MLT's consumer pads FLAC's last frame with silence (+0.07 s)
-        const Decoded am = decode(mlt, false, {}), ao = decode(own, false, {});
-        const double fps = s.rate.num > 0 ? s.rate.fps() : kFmt.rate.fps();
-        CHECK_EQ(ao.bytes, qint64(std::llround(frames / fps * 48000)) * 4);
-        if (!CHECK(am.bytes >= ao.bytes) || !CHECK(am.data.left(ao.data.size()) == ao.data))
-            std::printf("       %s: sound differs (own %lld bytes, MLT %lld)\n", name, ao.bytes, am.bytes);
-    }
-    const QJsonObject tm = videoStream(mlt), to = videoStream(own);
-    for (const char* key : {"color_space", "color_primaries", "color_transfer", "pix_fmt", "width", "height", "r_frame_rate"})
-        if (!CHECK_EQ(to.value(key).toVariant().toString(), tm.value(key).toVariant().toString()))
-            std::printf("       %s: %s\n", name, key);
-    CHECK_EQ(to.value("color_range").toString(), QString("tv")); // MLT left it unspecified
-}
-
-void testCompare(const QString& dir)
-{
-    compare("709", dir, timeline(), settings({}), kFrames);
-    compare("601", dir, timeline(g_601), settings({}), kFrames);
-    {
-        Timeline tl = timeline();
-        Clip t;
-        t.id = 10;
-        t.kind = ClipKind::Title;
-        t.start = 10;
-        t.out = 19; // up to the PiP (overlapping clips on one track show differently in the two engines)
-        t.title.text = "Titel";
-        t.title.size = 80;
-        t.title.outlineOn = true;
-        tl.video[1].clips << t;
-        Clip pip = clipOf(11, g_601, 30, 30);
-        pip.transform.zoomX = pip.transform.zoomY = 0.5;
-        pip.transform.posX = 100;
-        pip.transform.opacity = 70;
-        tl.video[1].clips << pip;
-        compare("composite", dir, tl, settings({}), kFrames);
-    }
-    {
-        ExportSettings s = settings({});
-        s.from = 20;
-        s.to = 49;
-        compare("inout", dir, timeline(), s, 30);
-    }
-    {
-        ExportSettings s = settings({});
-        s.rate = FrameRate{30, 1};
-        compare("rate30", dir, timeline(), s, 90);
-    }
-    for (const char* pixFmt : {"yuv422p", "yuv422p10le", "yuv444p10le"}) {
-        ExportSettings s = settings({});
-        s.pixFmt = pixFmt;
-        // MLT converts the 4:2:0 source to these straight in YUV, the own engine goes through RGB: the chroma at the
-        // test picture's hard colour edges differs (flat areas are equal)
-        compare(pixFmt, dir, timeline(g_601), s, kFrames, 32);
-    }
-    {
-        ExportSettings s = settings({});
-        s.size = QSize(650, 366); // rows of 650 bytes: the MLT buffer goes to the encoder with its own strides
-        compare("oddwidth", dir, timeline(), s, kFrames);
-    }
-    {
-        // Lower track covered for 40 frames, then visible (engine/DecodeOrder: released frames must not hold it up)
-        Timeline tl = timeline(g_601);
-        Clip top = clipOf(20, g_709, 0, 40);
-        top.transform.zoomX = top.transform.zoomY = 1.2;
-        tl.video[1].clips << top;
-        QElapsedTimer t;
-        t.start();
-        compare("covered", dir, tl, settings({}), kFrames);
-        CHECK(t.elapsed() < 20000);
-    }
-    {
-        ExportSettings s = settings({});
-        s.audioPath = ExportSettings::AudioPath::Mlt;
-        s.audioCodec = "flac";
-        compare("mltsound", dir, timeline(), s, kFrames);
-        s.rate = FrameRate{30, 1}; // repeated frames deliver no sound (RateConverter)
-        compare("mltsound30", dir, timeline(), s, 90);
-    }
-    if (avcodec_find_encoder_by_name("libx265")) {
-        // HEVC in MP4 as 'hvc1' on both ways: Apple players (QuickTime, Safari, iPhone) play no 'hev1'
-        for (const auto writer : {ExportSettings::Writer::Mlt, ExportSettings::Writer::Own}) {
-            ExportSettings s = settings(dir + (writer == ExportSettings::Writer::Own ? "/hevc-own.mp4" : "/hevc-mlt.mp4"));
-            s.writer = writer;
-            s.videoCodec = "libx265";
-            s.preset = "ultrafast";
-            s.crf = 28;
-            s.audioCodec = "aac";
-            if (CHECK(render(timeline(), s))) CHECK_EQ(videoStream(s.path).value("codec_tag_string").toString(), QString("hvc1"));
-        }
-    }
-}
-
-// Cancel while running, and destroy a running export: nothing left behind, no crash
 void testCancel(const QString& dir)
 {
     Timeline tl = timeline();
@@ -300,7 +104,6 @@ void testCancel(const QString& dir)
         tl.video[0].clips << v;
     }
     ExportSettings s = settings(dir + "/cancel.mkv");
-    s.writer = ExportSettings::Writer::Own;
     {
         Exporter ex;
         QEventLoop loop;
@@ -355,24 +158,19 @@ int bench(const QString& media)
     c.id = 2;
     tl.audio[0].clips << c;
     QTemporaryDir tmp;
-    const QString only = qEnvironmentVariable("SCHNEIDI_BENCH_ONLY"); // "own" or "mlt"
-    for (const auto writer : {ExportSettings::Writer::Mlt, ExportSettings::Writer::Own}) {
-        if (!only.isEmpty() && (only == "own") != (writer == ExportSettings::Writer::Own)) continue;
+    {
         ExportSettings s;
-        const QString keep = qEnvironmentVariable("SCHNEIDI_BENCH_KEEP"); // folder: keep the files
-        s.path = keep.isEmpty() ? tmp.filePath("bench.mp4")
-                                : keep + (writer == ExportSettings::Writer::Own ? "/own.mp4" : "/mlt.mp4");
+        const QString keep = qEnvironmentVariable("SCHNEIDI_BENCH_KEEP"); // folder: keep the file
+        s.path = keep.isEmpty() ? tmp.filePath("bench.mp4") : keep + "/bench.mp4";
         s.format = f;
         s.preset = qEnvironmentVariable("SCHNEIDI_BENCH_PRESET", "ultrafast");
-        s.writer = writer;
         if (qEnvironmentVariableIsSet("SCHNEIDI_BENCH_CODEC")) s.videoCodec = qEnvironmentVariable("SCHNEIDI_BENCH_CODEC");
         if (qEnvironmentVariableIsSet("SCHNEIDI_BENCH_NOAUDIO")) s.audioCodec.clear();
         if (qEnvironmentVariableIsSet("SCHNEIDI_BENCH_THREADS")) s.threads = qEnvironmentVariableIntValue("SCHNEIDI_BENCH_THREADS");
         QElapsedTimer t;
         t.start();
         const bool ok = render(tl, s);
-        std::printf("%s: %s, %d frames %.0f ms = %.1f fps\n", writer == ExportSettings::Writer::Own ? "own" : "mlt",
-                    ok ? "ok" : "FAILED", frames, double(t.elapsed()), frames * 1000.0 / std::max<qint64>(1, t.elapsed()));
+        std::printf("writer: %s, %d frames %.0f ms = %.1f fps\n", ok ? "ok" : "FAILED", frames, double(t.elapsed()), frames * 1000.0 / std::max<qint64>(1, t.elapsed()));
     }
     return 0;
 }
@@ -386,9 +184,8 @@ int main(int argc, char** argv)
     Check::initApp("export_writer");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     if (qEnvironmentVariableIsSet("SCHNEIDI_BENCH_WRITER")) {
-        Check::initMlt();
+        Check::initEngine();
         std::setlocale(LC_NUMERIC, "C");
-        if (qEnvironmentVariableIsSet("SCHNEIDI_BENCH_MLTDEBUG")) mlt_log_set_level(MLT_LOG_DEBUG);
         return bench(qEnvironmentVariable("SCHNEIDI_BENCH_WRITER"));
     }
     QTemporaryDir tmp;
@@ -403,17 +200,16 @@ int main(int argc, char** argv)
     g_709 = Check::makeMedia(tmp.filePath("709.mp4"),
                              QStringList(src) << "-colorspace" << "bt709" << "-color_primaries" << "bt709" << "-color_trc"
                                               << "bt709");
-    g_601 = Check::makeMedia(tmp.filePath("601.mp4"), src); // unmarked small picture: MLT takes it for BT.601
+    g_601 = Check::makeMedia(tmp.filePath("601.mp4"), src); // unmarked small picture: taken for BT.601
     if (!CHECK(!g_709.isEmpty() && !g_601.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     static bool waitedTooLong = false;
     qInstallMessageHandler([](QtMsgType type, const QMessageLogContext&, const QString& msg) {
         if (msg.contains("Decode order")) waitedTooLong = true;
         if (type != QtInfoMsg && type != QtDebugMsg) std::fprintf(stderr, "%s\n", qPrintable(msg));
     });
-    testCompare(tmp.path());
-    if (!CHECK(!waitedTooLong)) std::printf("       a frame waited for the decode order\n");
     testCancel(tmp.path());
+    if (!CHECK(!waitedTooLong)) std::printf("       a frame waited for the decode order\n");
     return Check::result();
 }

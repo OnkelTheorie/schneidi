@@ -10,11 +10,10 @@
 #include "core/ProjectFormat.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
-#include "engine/Profiles.h"
-#include "engine/RampProducer.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
+#include "engine/Engine.h"
+#include "engine/audio/Mixer.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QTemporaryDir>
 #include <QUndoStack>
@@ -191,26 +190,30 @@ void testProjectFile()
         CHECK_EQ(old.timeline.audio[0].clips[0].audioStream, 0);
 }
 
-// Zero crossings in the audio from frame `at` (over several frames, after settling) -> frequency in Hz
-double frequencyAt(Mlt::Producer& p, int at, double fps)
+// Zero crossings in the mix of `tl` from frame `at` (over several frames, after settling) -> frequency in Hz
+double frequencyAt(const Timeline& tl, int at, const ProjectFormat& fmt)
 {
-    p.seek(at);
-    int zc = 0, total = 0;
-    float prev = 0;
-    for (int n = 0; n < 8; ++n) {
-        std::unique_ptr<Mlt::Frame> f(p.get_frame());
-        if (!f) return 0;
-        mlt_audio_format fmt = mlt_audio_float;
-        int freq = 48000, ch = 1, samples = mlt_audio_calculate_frame_samples(float(fps), freq, at + n);
-        const auto* s = static_cast<const float*>(f->get_audio(fmt, freq, ch, samples));
-        if (!s || n < 3) continue; // settling after the jump
-        for (int i = 0; i < samples; ++i) {
-            if ((prev < 0) != (s[i] < 0)) ++zc;
-            prev = s[i];
-        }
-        total += samples;
-    }
-    return total ? zc / 2.0 * 48000.0 / total : 0;
+    Audio::Mixer::Options o;
+    o.rate = 48000;
+    Audio::Mixer mixer(tl, fmt.rate, o);
+    const int64_t a = mixer.frameStart(at + 3), b = mixer.frameStart(at + 8); // settled after the jump
+    const int count = int(b - a);
+    std::vector<float> l(static_cast<size_t>(count)), r(static_cast<size_t>(count));
+    float* planes[] = {l.data(), r.data()};
+    mixer.render(a, count, planes);
+    int zc = 0;
+    for (int i = 1; i < count; ++i)
+        if ((l[size_t(i - 1)] < 0) != (l[size_t(i)] < 0)) ++zc;
+    return count ? zc / 2.0 * 48000.0 / count : 0;
+}
+
+Timeline soundOf(const Clip& c)
+{
+    Timeline tl;
+    tl.masterLimiter = false;
+    tl.audio.resize(1);
+    tl.audio[0].clips << c;
+    return tl;
 }
 
 bool near(double hz, double want) { return std::abs(hz - want) < want * 0.1; }
@@ -225,15 +228,13 @@ int testRender(const QString& dir)
          "-map", "0", "-map", "1", "-map", "2", "-map", "3", "-c:v", "ffv1", "-c:a", "pcm_s16le", "-ac:a:2", "1",
          "-metadata:s:a:1", "title=Mikro", "-shortest"});
     if (!CHECK(!file.isEmpty())) return 1;
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt{64, 64, {25, 1}};
-    auto prof = makeProfile(fmt);
 
-    // Detect streams (like Engine::probe)
+    // Detect streams
     {
-        Mlt::Producer probe(*prof, file.toUtf8().constData());
-        const QVector<AudioStreamInfo> s = audioStreamsOf(probe);
+        const QVector<AudioStreamInfo> s = Engine::probe(fmt, file).audioStreams;
         if (CHECK_EQ(s.size(), 3)) {
             CHECK_EQ(s[0].title, QString());
             CHECK_EQ(s[1].title, QString("Mikro"));
@@ -242,26 +243,22 @@ int testRender(const QString& dir)
     }
 
     const double want[] = {440, 880, 220};
-    TimelineBuilder builder(*prof);
     for (int k = 0; k < 3; ++k) {
         Clip c;
         c.id = 1;
         c.mediaPath = file;
         c.out = 99;
         c.audioStream = k;
-        // normal speed, half speed with pitch (timewarp) and speed ramp (own producer)
-        if (Mlt::Producer* p = builder.clipAudioSource(c); CHECK(p))
-            CHECK(near(frequencyAt(*p, 20, fmt.rate.fps()), want[k]));
+        // normal speed, half speed without pitch correction and a speed ramp
+        CHECK(near(frequencyAt(soundOf(c), 20, fmt), want[k]));
         Clip slow = c;
         slow.speed = 0.5;
         slow.keepPitch = false;
         slow.out = 199;
-        if (Mlt::Producer* p = builder.clipAudioSource(slow); CHECK(p))
-            CHECK(near(frequencyAt(*p, 20, fmt.rate.fps()), want[k] / 2));
+        CHECK(near(frequencyAt(soundOf(slow), 20, fmt), want[k] / 2));
         Clip ramp = c;
         ramp.ramp = {SpeedPoint{50, 2.0, 0}};
-        auto rp = RampProducer::audio(*prof, file, ramp);
-        if (CHECK(rp && rp->is_valid())) CHECK(near(frequencyAt(*rp, 20, fmt.rate.fps()), want[k]));
+        CHECK(near(frequencyAt(soundOf(ramp), 20, fmt), want[k]));
     }
 
     // whole timeline: only the clip with stream 2 (880 Hz) sounds; two streams of the same file at the same time
@@ -274,12 +271,10 @@ int testRender(const QString& dir)
     a.out = 99;
     a.audioStream = 1;
     tl.audio[0].clips << a;
-    auto tractor = builder.build(tl);
-    if (CHECK(tractor)) CHECK(near(frequencyAt(*tractor, 20, fmt.rate.fps()), 880));
+    CHECK(near(frequencyAt(tl, 20, fmt), 880));
     // Stream missing (file replaced): silent instead of wrong audio
     tl.audio[0].clips[0].audioStream = 7;
-    tractor = builder.build(tl);
-    if (CHECK(tractor)) CHECK_EQ(frequencyAt(*tractor, 20, fmt.rate.fps()), 0.0);
+    CHECK_EQ(frequencyAt(tl, 20, fmt), 0.0);
     return 0;
 }
 

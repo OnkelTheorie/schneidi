@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/video/Compose.h"
 
-#include <Mlt.h>
 #include <QThread>
 #include <QThreadPool>
 #include <algorithm>
@@ -17,8 +16,6 @@
 namespace Compose {
 
 namespace {
-
-std::atomic<bool> g_qtReference{false};
 
 // ---- Rows over threads ----
 
@@ -159,9 +156,6 @@ void halve(const uint8_t* src, int sw, int sh, std::vector<uint8_t>& out, int& r
 void drawBilinear(uint8_t* dst, int dw, int dh, const uint8_t* src, int sw, int sh, const Affine& m, double opacity);
 
 } // namespace
-
-void setQtReference(bool on) { g_qtReference = on; }
-bool qtReference() { return g_qtReference; }
 
 void draw(uint8_t* dst, int dw, int dh, const uint8_t* src, int sw, int sh, const Affine& m, double opacity)
 {
@@ -360,38 +354,13 @@ void crop(uint8_t* rgba, int w, int h, double x0, double y0, double x1, double y
 
 namespace {
 
-// ---- MLT services ----
+// ---- Placement ----
 
 struct Place {
     double x, y, w, h; // rectangle in pixels of the requested size
     double angle;      // degrees, clockwise
     double opacity;
 };
-
-// The services' rectangle at pos (profile pixels, scaled to the requested size w x h)
-Place placeAt(mlt_properties p, int pos, int len, int pw, int ph, int w, int h)
-{
-    Place pl{0, 0, double(w), double(h), 0, 1};
-    if (mlt_properties_get(p, "rect")) {
-        const mlt_rect r = mlt_properties_anim_get_rect(p, "rect", pos, len);
-        const double sx = pw > 0 ? double(w) / pw : 1.0, sy = ph > 0 ? double(h) / ph : 1.0;
-        if (r.x != DBL_MIN) pl.x = r.x * sx;
-        if (r.y != DBL_MIN) pl.y = r.y * sy;
-        if (r.w != DBL_MIN) pl.w = r.w * sx;
-        if (r.h != DBL_MIN) pl.h = r.h * sy;
-        if (r.o != DBL_MIN) pl.opacity = std::clamp(r.o, 0.0, 1.0);
-    }
-    if (mlt_properties_get(p, "rotation")) pl.angle = mlt_properties_anim_get_double(p, "rotation", pos, len);
-    return pl;
-}
-
-bool fills(const Place& pl, int w, int h)
-{
-    constexpr double eps = 1e-3;
-    const double turn = std::fmod(pl.angle, 360.0);
-    return std::abs(pl.x) < eps && std::abs(pl.y) < eps && std::abs(pl.w - w) < eps && std::abs(pl.h - h) < eps
-           && std::abs(turn) < 1e-6 && pl.opacity >= 1.0;
-}
 
 // Source (sw x sh) onto the place: stretched (distort) or fitted keeping its aspect ratio, rotated around the
 // rectangle's center (rotateCenter) or its top left
@@ -420,322 +389,7 @@ Affine mapping(const Place& pl, int sw, int sh, bool distort, bool rotateCenter)
     return m;
 }
 
-uint8_t* canvas(int w, int h, int* size)
-{
-    *size = mlt_image_format_size(mlt_image_rgba, w, h, nullptr);
-    auto* out = static_cast<uint8_t*>(mlt_pool_alloc(*size));
-    if (out) std::memset(out, 0, size_t(*size));
-    return out;
-}
-
-// -- transform filter --
-
-int transformGetImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int writable)
-{
-    auto filter = static_cast<mlt_filter>(mlt_frame_pop_service(frame));
-    const int pos = mlt_frame_pop_service_int(frame);
-    const int len = mlt_frame_pop_service_int(frame);
-    mlt_properties fp = MLT_FILTER_PROPERTIES(filter);
-    mlt_properties props = MLT_FRAME_PROPERTIES(frame);
-    const mlt_profile profile = mlt_service_profile(MLT_FILTER_SERVICE(filter));
-    const int pw = profile ? profile->width : *width, ph = profile ? profile->height : *height;
-    if (*width <= 0 || *height <= 0) {
-        *width = pw;
-        *height = ph;
-    }
-    const int w = *width, h = *height;
-    const Place pl = placeAt(fp, pos, len, pw, ph, w, h);
-    const bool distort = mlt_properties_get_int(fp, "distort") != 0;
-    // The source at its own size (scaled when drawn); a frame without media size (color, titles) at project size:
-    // a title's outline is drawn at project size and scaled with the text (qtext did not scale it)
-    int sw = mlt_properties_get_int(props, "meta.media.width"), sh = mlt_properties_get_int(props, "meta.media.height");
-    const bool media = sw > 0 && sh > 0;
-    if (!media) {
-        sw = pw;
-        sh = ph;
-    }
-    if (distort) mlt_properties_set_int(props, "distort", 1); // no bars from MLT's resize: the rectangle is the shape
-    // The whole frame: the source as it comes, at the requested size and format (a video scales in its decoder's
-    // swscale pass; qtblend handed it on at media size in YUV, see attachRequestedSize)
-    if (fills(pl, w, h) && (media || (sw == w && sh == h)))
-        return mlt_frame_get_image(frame, image, format, width, height, writable);
-    mlt_image_format sf = mlt_image_rgba;
-    uint8_t* src = nullptr;
-    const int error = mlt_frame_get_image(frame, &src, &sf, &sw, &sh, 0);
-    if (error || !src || sf != mlt_image_rgba) return error ? error : 1;
-    int size = 0;
-    uint8_t* out = canvas(w, h, &size);
-    if (!out) return 1;
-    draw(out, w, h, src, sw, sh, mapping(pl, sw, sh, distort, mlt_properties_get_int(fp, "rotate_center") != 0),
-         pl.opacity);
-    mlt_frame_set_image(frame, out, size, mlt_pool_release);
-    mlt_frame_set_alpha(frame, nullptr, 0, nullptr);
-    *image = out;
-    *format = mlt_image_rgba;
-    *width = w;
-    *height = h;
-    return 0;
-}
-
-mlt_frame transformProcess(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_length2(filter, frame)));
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_position(filter, frame)));
-    mlt_frame_push_service(frame, filter);
-    mlt_frame_push_get_image(frame, transformGetImage);
-    return frame;
-}
-
-// -- blend transition --
-
-bool opaque(const uint8_t* alpha, size_t n, size_t step)
-{
-    for (size_t i = 0; i < n; ++i, alpha += step)
-        if (*alpha != 255) return false;
-    return true;
-}
-
-int blendGetImage(mlt_frame a, uint8_t** image, mlt_image_format* format, int* width, int* height, int writable)
-{
-    auto transition = static_cast<mlt_transition>(mlt_frame_pop_service(a));
-    mlt_frame b = mlt_frame_pop_frame(a);
-    const int pos = mlt_frame_pop_service_int(a);
-    const int len = mlt_frame_pop_service_int(a);
-    mlt_properties tp = MLT_TRANSITION_PROPERTIES(transition);
-    const mlt_profile profile = mlt_service_profile(MLT_TRANSITION_SERVICE(transition));
-    const int pw = profile ? profile->width : *width, ph = profile ? profile->height : *height;
-    if (*width <= 0 || *height <= 0) {
-        *width = pw;
-        *height = ph;
-    }
-    const int w = *width, h = *height;
-    if (!b || mlt_frame_is_test_card(b)) return mlt_frame_get_image(a, image, format, width, height, writable);
-    mlt_properties ap = MLT_FRAME_PROPERTIES(a), bp = MLT_FRAME_PROPERTIES(b);
-    // the consumer's wishes (scaler, deinterlacer …) reach the upper track's frame too
-    mlt_properties_copy(bp, ap, "consumer.");
-    mlt_properties_pass_list(bp, ap, "consumer_aspect_ratio,consumer_deinterlace,deinterlace_method");
-    const Place pl = placeAt(tp, pos, len, pw, ph, w, h);
-    // RGBA asked (preview), an RGBA source (pictures, titles) or one MLT's resizer will put bars around: b in RGBA
-    // right away (bars in YUV 4:2:0 came out with soft, shifted edges). Else b as it comes, no conversion: an opaque
-    // one is handed on as it is (export of a plain video: no conversion at all), a transparent one mixed in RGBA.
-    const auto bars = [&] {
-        const int fw = mlt_properties_get_int(bp, "width"), fh = mlt_properties_get_int(bp, "height");
-        double sar = mlt_properties_get_double(bp, "aspect_ratio");
-        if (sar <= 0) sar = 1.0;
-        if (fw <= 0 || fh <= 0 || !profile) return false;
-        const double own = fw * sar / fh, frame = mlt_profile_dar(profile);
-        return std::abs(own - frame) > 0.005 * frame;
-    };
-    mlt_image_format bf = *format == mlt_image_rgba || mlt_properties_get_int(bp, "format") == mlt_image_rgba || bars()
-                              ? mlt_image_rgba
-                              : mlt_image_none;
-    uint8_t* bi = nullptr;
-    int bw = w, bh = h;
-    // Writable when the caller wants to write: an opaque b is handed on as a's picture below, and a producer may share
-    // its cached picture with readers (a decoder's image cache): the next track's blend drew into that cache, a
-    // repeated frame got the overlay twice. A producer with a fresh buffer per frame (the own decoder) copies nothing.
-    int error = mlt_frame_get_image(b, &bi, &bf, &bw, &bh, writable);
-    if (error || !bi) return mlt_frame_get_image(a, image, format, width, height, writable);
-    if (fills(pl, w, h) && bw == w && bh == h) {
-        bool covers = false;
-        if (bf == mlt_image_rgba) {
-            covers = opaque(bi + 3, size_t(w) * h, 4);
-        } else {
-            int asize = 0;
-            const uint8_t* alpha = mlt_frame_get_alpha_size(b, &asize);
-            covers = !alpha || (size_t(asize) >= size_t(w) * h && opaque(alpha, size_t(w) * h, 1));
-        }
-        if (covers) { // the lower track is never asked for its picture
-            // In the format asked for, converted by b with its own standard (an RGBA picture of the transform in
-            // YUV export: b knows the source's standard, a does not)
-            if (*format != mlt_image_none && bf != *format) {
-                bf = *format;
-                if (mlt_frame_get_image(b, &bi, &bf, &bw, &bh, writable) || !bi)
-                    return mlt_frame_get_image(a, image, format, width, height, writable);
-            }
-            mlt_properties_inc_ref(bp);
-            mlt_properties_set_data(ap, "_schneidi_blend_b", b, 0, reinterpret_cast<mlt_destructor>(mlt_frame_close),
-                                    nullptr);
-            mlt_frame_set_image(a, bi, 0, nullptr); // lives with b, which a now holds (writable when asked, see above)
-            mlt_frame_set_alpha(a, nullptr, 0, nullptr);
-            mlt_properties_pass_list(ap, bp, "colorspace,full_range,color_trc,color_primaries,progressive,top_field_first");
-            *image = bi;
-            *format = bf;
-            return 0;
-        }
-    }
-    mlt_image_format af = mlt_image_rgba;
-    uint8_t* ai = nullptr;
-    int aw = w, ah = h;
-    error = mlt_frame_get_image(a, &ai, &af, &aw, &ah, 1);
-    if (error || !ai || af != mlt_image_rgba) return error ? error : 1;
-    if (bf != mlt_image_rgba) {
-        bf = mlt_image_rgba;
-        error = mlt_frame_get_image(b, &bi, &bf, &bw, &bh, 0);
-        if (error || !bi || bf != mlt_image_rgba) bi = nullptr;
-    }
-    if (bi) {
-        const Place on{pl.x * aw / w, pl.y * ah / h, pl.w * aw / w, pl.h * ah / h, pl.angle, pl.opacity};
-        if (bw == aw && bh == ah && std::abs(on.x) < 1e-3 && std::abs(on.y) < 1e-3 && std::abs(on.w - aw) < 1e-3
-            && std::abs(on.h - ah) < 1e-3 && std::abs(std::fmod(on.angle, 360.0)) < 1e-6)
-            over(ai, bi, aw, ah, on.opacity);
-        else
-            draw(ai, aw, ah, bi, bw, bh,
-                 mapping(on, bw, bh, mlt_properties_get_int(tp, "distort") != 0,
-                         mlt_properties_get_int(tp, "rotate_center") != 0),
-                 on.opacity);
-    }
-    *image = ai;
-    *format = mlt_image_rgba;
-    *width = aw;
-    *height = ah;
-    return 0;
-}
-
-mlt_frame blendProcess(mlt_transition transition, mlt_frame a, mlt_frame b)
-{
-    mlt_frame_push_service_int(a, int(mlt_transition_get_length(transition)));
-    mlt_frame_push_service_int(a, int(mlt_transition_get_position(transition, a)));
-    mlt_frame_push_frame(a, b);
-    mlt_frame_push_service(a, transition);
-    mlt_frame_push_get_image(a, blendGetImage);
-    return a;
-}
-
-// -- crop filter --
-
-int cropGetImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int)
-{
-    auto filter = static_cast<mlt_filter>(mlt_frame_pop_service(frame));
-    const int pos = mlt_frame_pop_service_int(frame);
-    const int len = mlt_frame_pop_service_int(frame);
-    mlt_properties fp = MLT_FILTER_PROPERTIES(filter);
-    if (!mlt_properties_get(fp, "rect")) return mlt_frame_get_image(frame, image, format, width, height, 0);
-    *format = mlt_image_rgba;
-    const int error = mlt_frame_get_image(frame, image, format, width, height, 1);
-    if (error || !*image || *format != mlt_image_rgba) return error;
-    const mlt_profile profile = mlt_service_profile(MLT_FILTER_SERVICE(filter));
-    const int w = *width, h = *height;
-    const double sx = profile && profile->width > 0 ? double(w) / profile->width : 1.0;
-    const double sy = profile && profile->height > 0 ? double(h) / profile->height : 1.0;
-    const mlt_rect r = mlt_properties_anim_get_rect(fp, "rect", pos, len);
-    uint8_t color[4] = {0, 0, 0, 0};
-    if (mlt_properties_get(fp, "color")) {
-        const mlt_color c = mlt_properties_anim_get_color(fp, "color", pos, len);
-        color[0] = c.r;
-        color[1] = c.g;
-        color[2] = c.b;
-        color[3] = c.a;
-    }
-    crop(*image, w, h, r.x * sx, r.y * sy, (r.x + r.w) * sx, (r.y + r.h) * sy, color);
-    mlt_frame_set_alpha(frame, nullptr, 0, nullptr);
-    return 0;
-}
-
-mlt_frame cropProcess(mlt_filter filter, mlt_frame frame)
-{
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_length2(filter, frame)));
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_position(filter, frame)));
-    mlt_frame_push_service(frame, filter);
-    mlt_frame_push_get_image(frame, cropGetImage);
-    return frame;
-}
-
-using Process = mlt_frame (*)(mlt_filter, mlt_frame);
-
-mlt_filter newFilter(mlt_profile profile, Process process, const char* service)
-{
-    mlt_filter f = mlt_filter_new();
-    if (!f) return nullptr;
-    f->process = process;
-    // read back by mlt_service_profile()
-    mlt_properties_set_data(MLT_FILTER_PROPERTIES(f), "_profile", profile, 0, nullptr, nullptr);
-    mlt_properties_set(MLT_FILTER_PROPERTIES(f), "mlt_service", service);
-    return f;
-}
-
-mlt_transition newTransition(mlt_profile profile, const char* service)
-{
-    mlt_transition t = mlt_transition_new();
-    if (!t) return nullptr;
-    t->process = blendProcess;
-    mlt_properties_set_data(MLT_TRANSITION_PROPERTIES(t), "_profile", profile, 0, nullptr, nullptr);
-    mlt_properties_set(MLT_TRANSITION_PROPERTIES(t), "mlt_service", service);
-    mlt_properties_set_int(MLT_TRANSITION_PROPERTIES(t), "_transition_type", 1); // video only
-    return t;
-}
-
-Mlt::Filter ownFilter(Mlt::Profile& profile, Process process, const char* service)
-{
-    mlt_filter f = newFilter(profile.get_profile(), process, service);
-    if (!f) return Mlt::Filter();
-    Mlt::Filter filter(f); // holds its own reference
-    mlt_filter_close(f);
-    return filter;
-}
-
-// Factory entries (MLT names the service by the id it was asked for)
-void* createTransform(mlt_profile profile, mlt_service_type, const char* id, const void*)
-{
-    return newFilter(profile, transformProcess, id);
-}
-void* createCrop(mlt_profile profile, mlt_service_type, const char* id, const void*)
-{
-    return newFilter(profile, cropProcess, id);
-}
-void* createBlend(mlt_profile profile, mlt_service_type, const char* id, const void*)
-{
-    return newTransition(profile, id);
-}
-
 } // namespace
-
-void registerServices()
-{
-    mlt_repository repo = mlt_factory_repository();
-    if (!repo) return;
-    mlt_repository_register(repo, mlt_service_filter_type, "schneidi_transform", createTransform);
-    mlt_repository_register(repo, mlt_service_filter_type, "schneidi_crop", createCrop);
-    mlt_repository_register(repo, mlt_service_transition_type, "schneidi_blend", createBlend);
-    // Without MLT's Qt module its names lead here (old graphs, Kdenlive/Shotcut presets, tests asking for them)
-    if (!mlt_properties_get_data(mlt_repository_filters(repo), "qtblend", nullptr))
-        mlt_repository_register(repo, mlt_service_filter_type, "qtblend", createTransform);
-    if (!mlt_properties_get_data(mlt_repository_filters(repo), "qtcrop", nullptr))
-        mlt_repository_register(repo, mlt_service_filter_type, "qtcrop", createCrop);
-    if (!mlt_properties_get_data(mlt_repository_transitions(repo), "qtblend", nullptr))
-        mlt_repository_register(repo, mlt_service_transition_type, "qtblend", createBlend);
-}
-
-Mlt::Filter cropFilter(Mlt::Profile& profile)
-{
-    if (g_qtReference) {
-        Mlt::Filter qt(profile, "qtcrop");
-        if (qt.is_valid()) return qt;
-    }
-    return ownFilter(profile, cropProcess, "schneidi_crop");
-}
-
-Mlt::Filter transformFilter(Mlt::Profile& profile)
-{
-    if (g_qtReference) {
-        Mlt::Filter qt(profile, "qtblend");
-        if (qt.is_valid()) return qt;
-    }
-    return ownFilter(profile, transformProcess, "schneidi_transform");
-}
-
-Mlt::Transition blendTransition(Mlt::Profile& profile)
-{
-    if (g_qtReference) {
-        Mlt::Transition qt(profile, "qtblend");
-        if (qt.is_valid()) return qt;
-    }
-    mlt_transition t = newTransition(profile.get_profile(), "schneidi_blend");
-    if (!t) return Mlt::Transition();
-    Mlt::Transition transition(t);
-    mlt_transition_close(t);
-    return transition;
-}
 
 Affine placement(double x, double y, double w, double h, double angle, int sw, int sh, bool distort, bool rotateCenter)
 {

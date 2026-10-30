@@ -54,7 +54,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "assoc"; Description: "{cm:AssocProjects}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [InstallDelete]
-; Alte Programmdateien vor einem Update entfernen (sonst bleiben DLLs/MLT-Module einer älteren Version liegen)
+; Remove old program files before an update (the MLT modules of versions before 0.15 lay in lib/ and share/)
 Type: filesandordirs; Name: "{app}\lib"
 Type: filesandordirs; Name: "{app}\share"
 

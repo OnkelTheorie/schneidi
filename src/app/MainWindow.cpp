@@ -32,7 +32,7 @@
 #include "engine/Engine.h"
 #include "engine/GradedThumbs.h"
 #include "engine/MediaCache.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
 #include "engine/Stabilizer.h"
@@ -139,12 +139,6 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_project, &Project::timelineChanged, this, [this] {
         if (m_engine->mixerOnlyPending()) m_engine->updateTimeline(m_project->renderTimeline());
         else if (!m_engineTimer.isActive()) m_engineTimer.start();
-    });
-    // Files open in a thread (MLT probes them: seconds on weak hardware): the window stays usable meanwhile
-    m_engine->setOpenInBackground(true);
-    connect(m_engine, &Engine::openingChanged, this, [this](bool opening) {
-        if (opening) statusBar()->showMessage(T("Medien werden geöffnet …"));
-        else if (statusBar()->currentMessage() == T("Medien werden geöffnet …")) statusBar()->clearMessage();
     });
     m_engine->updateTimeline(m_project->renderTimeline());
     // Proxy finished/deleted or "use proxy media" toggled -> rebuild the preview
@@ -542,7 +536,7 @@ void MainWindow::previewFile(const QString& path)
     m_engine->pause();
     m_engine->showSource(path, m_sourcePos.value(path, 0));
     if (cached != m_probeCache.cend()) return;
-    // Probing opens the file once more (mostly ~1 ms, still images and odd files through MLT: up to ~0.5 s): in the
+    // Probing opens the file once more (mostly ~1 ms, other containers up to ~0.5 s): in the
     // background, the window stays usable
     QThreadPool::globalInstance()->start([guard = QPointer<MainWindow>(this), format = m_project->format(), path] {
         const MediaInfo probed = Engine::probe(format, path);

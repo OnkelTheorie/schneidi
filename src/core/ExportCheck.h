@@ -26,7 +26,7 @@ struct Issue {
     QString check;   // stable id: "offline", "black", "subtitle_end", "subtitle_short", "subtitle_fast", "no_sound",
                      // "clipping", "true_peak", "loudness", "silence_end", "silence_start", "silence", "black_file",
                      // "frozen", "no_video", "no_audio", "under_music", "safe_area", "subtitle_safe_area",
-                     // "slow_hook", "stutter"
+                     // "slow_hook", "stutter", "missing_effect"
     QString message; // for people, in the UI language
     int from = -1;   // frames (exclusive end), -1 = whole video
     int to = -1;
@@ -55,8 +55,8 @@ struct Options {
     double hookS = 1.0, hookMinMotion = 1.8, hookMaxS = 180;
 };
 
-// Picture, media and subtitles of the range [from, to) without decoding: offline media, frames without any picture
-// (black), subtitles that are too short, too fast to read or run past the end
+// Picture, media and subtitles of the range [from, to) without decoding: offline media, effects this version does
+// not have (skipped), frames without any picture (black), subtitles that are too short, too fast to read or run past the end
 QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectFormat& f, const Options& o = {});
 
 // Sound of a video: per-frame peaks (linear, 0..1+) starting at frame `offset`, integrated loudness and true peak

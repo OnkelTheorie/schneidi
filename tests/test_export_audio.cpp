@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Own audio engine, step 3 (docs/archiv/plan-0.10-ton.md): the export takes its sound from Audio::Mixer (engine/MixedSound),
-// MLT only renders and encodes the picture.
+// The export takes its sound from Audio::Mixer (docs/archiv/plan-0.10-ton.md).
 // Generated source (always): the written file holds exactly the mixer's samples, rounded to the file's bit depth:
-// - WAV 24 bit (really 24 bit: the MLT path wrote 16-bit samples into it) and 16 bit, audio only
+// - WAV 24 bit (really 24 bit, not 16-bit samples in a 24-bit file) and 16 bit, audio only
 // - In/Out range: the samples of exactly that span of the timeline
 // - frame rate converted (25 -> 30 fps, ProRes with 24-bit PCM), also with In/Out: the same samples, the length of
 //   the span
 // - 16 kHz mono 16 bit (speech to text): the mixer at 16 kHz, L and R mixed
 // - H.264 + AAC: the sound sits on the picture (best correlation at lag 0), as long as the picture
-// - the MLT path still answers when chosen (fallback): its "24 bit" stays on the 16-bit grid
 // Against the sound references of step 0 (private docs folder; skipped without it): every project exported through
 // the own path = the mixer in exact mode, sample for sample at 24 bit, and the time of the export.
 
@@ -186,8 +184,7 @@ bool run(const Timeline& tl, ExportSettings s, qint64* ms = nullptr)
     return CHECK(ok) && CHECK(QFileInfo(s.path).size() > 0);
 }
 
-ExportSettings settings(const QString& path, const QString& format, int bits = 24,
-                        ExportSettings::AudioPath audioPath = ExportSettings::AudioPath::Own)
+ExportSettings settings(const QString& path, const QString& format, int bits = 24)
 {
     RenderJob j;
     j.id = 1;
@@ -195,9 +192,7 @@ ExportSettings settings(const QString& path, const QString& format, int bits = 2
     j.settings.format = format;
     j.settings.audioBits = bits;
     j.settings.encoder = VideoEncoder::Software;
-    ExportSettings s = RenderQueue::exportSettings(j, kFmt);
-    s.audioPath = audioPath;
-    return s;
+    return RenderQueue::exportSettings(j, kFmt);
 }
 
 void checkGenerated(const QString& dir)
@@ -279,15 +274,6 @@ void checkGenerated(const QString& dir)
         CHECK(std::abs(aDur - vDur) < 0.03); // AAC ends on whole 1024-sample packets
     }
 
-    // Fallback: the MLT path is still there and still delivers 16-bit samples
-    const QString mlt = dir + "/mlt.wav";
-    if (run(tl, settings(mlt, "wav", 24, ExportSettings::AudioPath::Mlt))) {
-        const std::vector<float> got = decode(mlt);
-        std::printf("  %-28s %8zu Samples, auf 16-bit-Raster: %s\n", "MLT-Weg (Rückfall)", got.size(),
-                    onGrid(got, 16) ? "ja" : "nein");
-        CHECK(got.size() == size_t(total) * 2);
-        CHECK(onGrid(got, 16));
-    }
 }
 
 void checkReferences(const QString& refDir, const QString& dir)
@@ -321,7 +307,6 @@ void checkReferences(const QString& refDir, const QString& dir)
         j.settings.format = "wav";
         j.settings.audioBits = 24;
         ExportSettings s = RenderQueue::exportSettings(j, project);
-        s.audioPath = ExportSettings::AudioPath::Own;
         qint64 exportMs = 0, mixMs = 0;
         if (!run(tl, s, &exportMs)) continue;
         QHash<QString, int> lengths;
@@ -348,7 +333,7 @@ int main(int argc, char** argv)
         tmp.setAutoRemove(false);
         std::printf("Dateien bleiben in %s\n", qPrintable(tmp.path()));
     }
-    Check::initMlt();
+    Check::initEngine();
 
     // 8 s picture + stereo noise (L and R different), PCM 24 bit: the source itself is exact
     g_src = Check::makeMedia(tmp.filePath("src.mov"),

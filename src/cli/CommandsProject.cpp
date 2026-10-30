@@ -24,7 +24,7 @@
 #include "engine/Engine.h"
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/ProxyCleanup.h"
 #include "engine/RenderQueue.h"
 #include "engine/Snapshot.h"
@@ -638,13 +638,10 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
     for (const EffectDescriptor& d : EffectRegistry::all()) {
         if (!only.isEmpty() && d.id != only) continue;
         QJsonObject o{{"effect", d.id}, {"name", d.name}, {"kind", d.video ? "video" : "audio"}};
-        if (!d.category.isEmpty()) o["category"] = d.category;
         if (d.id == "grade")
             o["note"] = "the Color page grade (lift/gamma/gain/offset, LUT); windows (shape masks) via the `window` op";
         if (d.id == "chromakey")
             o["note"] = "own keyer (chroma distance, soft edge, spill suppression); fixed stage after the grade";
-        else if (d.category == EffectRegistry::Frei0rCategory)
-            o["note"] = "frei0r plugin of this computer (offered when switched on in the app's settings); not thread-safe";
         if (d.id == Stabilizer::EffectId)
             o["note"] = "needs an analysis pass (background in the app, before encoding in `render`)";
         if (only.isEmpty()) {

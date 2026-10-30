@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Engine::probe reads media files with its own header reader (engine/MediaProbe) instead of an MLT producer. Per
-// generated file (containers, codecs, several titled sound streams, rotated phone video, variable frame rate, sound
-// only, odd size, interlaced, cover pictures, timecode track, broken files) and project frame rate: the result
-// equals the MLT producer's (Engine::probeMlt) in every field, and the own reader decides it itself where it should
-// (broken files stay with MLT). Times of both are printed (real material: bench_probe).
+// Engine::probe reads media files with its own header reader (engine/MediaProbe). Per generated file (containers,
+// codecs, several titled sound streams, rotated phone video, variable frame rate, sound only, odd size, interlaced,
+// cover pictures, timecode track, broken files) and project frame rate: the reader decides the files it should, and
+// broken or unplayable ones give an empty result (no picture, no sound). The values were held against MLT's producer
+// until 0.15; what the files really hold is checked below.
 
 #include "check.h"
 
@@ -24,7 +24,7 @@ namespace {
 struct Case {
     const char* file;
     QStringList args;   // ffmpeg arguments without output; empty = written by the test itself
-    bool own = true;    // decided by the own reader (else MLT)
+    bool own = true;    // decided by the reader (else unreadable: empty result)
 };
 
 QString describe(const MediaInfo& m)
@@ -60,7 +60,7 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     Check::initApp("media_probe");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
-    Check::initMlt();
+    Check::initEngine();
 
     QTemporaryDir dir;
     const auto in = [&](const char* name) { return dir.filePath(name); };
@@ -100,7 +100,7 @@ int main(int argc, char** argv)
                                + QStringList{"-c:a", "aac"}},
         {"frag.mp4", v + a + x264 + QStringList{"-c:a", "aac", "-movflags", "+frag_keyframe+empty_moov"}},
         {"sound.wav", a + QStringList{"-c:a", "pcm_s16le"}},
-        {"f64.wav", a + QStringList{"-c:a", "pcm_f64le"}, false}, // MLT plays no 64-bit samples: not opened
+        {"f64.wav", a + QStringList{"-c:a", "pcm_f64le"}, false}, // 64-bit samples are not played: not opened
         // 80.5 frames at 25 fps: how a half frame rounds
         {"half.wav", QStringList{"-f", "lavfi", "-i", "sine=sample_rate=48000:duration=3.22", "-c:a", "pcm_s16le"}},
         {"surround.wav", a + QStringList{"-af", "pan=5.1|c0=c0|c1=c0|c2=c0|c3=c0|c4=c0|c5=c0", "-c:a", "pcm_s16le"}},
@@ -121,7 +121,7 @@ int main(int argc, char** argv)
         {"empty.mp4", {}, false},
         {"broken.png", {}, false}, // not a picture: Qt cannot read it
         {"truncated.mp4", {}, false},
-        // Header lengths of 0 (mvhd/tkhd/mdhd, as an aborted recording can leave them): no length, left to MLT
+        // Header lengths of 0 (mvhd/tkhd/mdhd, as an aborted recording can leave them): no length: unreadable
         {"zero_length.mp4", {}, false},
     };
     for (const Case& c : cases) {
@@ -141,7 +141,7 @@ int main(int argc, char** argv)
     }
 
     const FrameRate rates[] = {{25, 1}, {30000, 1001}, {60, 1}, {24000, 1001}};
-    double ownTotal = 0, mltTotal = 0;
+    double total = 0;
     for (const Case& c : cases) {
         const QString path = in(c.file);
         if (!QFileInfo::exists(path)) continue;
@@ -151,27 +151,21 @@ int main(int argc, char** argv)
             QElapsedTimer t;
             t.start();
             const std::optional<MediaInfo> own = MediaProbe::read(path, rate);
-            const double ownMs = t.nsecsElapsed() / 1e6;
-            t.restart();
-            const MediaInfo mlt = Engine::probeMlt(format, path);
-            const double mltMs = t.nsecsElapsed() / 1e6;
+            total += t.nsecsElapsed() / 1e6;
             const MediaInfo probed = Engine::probe(format, path);
-            ownTotal += ownMs;
-            mltTotal += mltMs;
-            if (!Check::report(own.has_value() == c.own, "own reader decides", __FILE__, __LINE__,
+            if (!Check::report(own.has_value() == c.own, "reader decides", __FILE__, __LINE__,
                                QString("%1 @ %2: own=%3").arg(c.file, rate.label()).arg(own.has_value())))
                 continue;
-            const QString want = describe(mlt), got = describe(probed);
-            Check::report(got == want && probed.path == mlt.path && probed.name == mlt.name, "probe == MLT", __FILE__,
-                          __LINE__, QString("%1 @ %2\n       own: %3\n       MLT: %4").arg(c.file, rate.label(), got, want));
-            if (rate == rates[0])
-                std::printf("%-16s own %7.2f ms  MLT %7.2f ms  %s%s\n", c.file, ownMs, mltMs, qPrintable(want),
-                            own ? "" : "  (MLT)");
+            const QString want = own ? describe(*own) : describe(MediaInfo{}), got = describe(probed);
+            Check::report(got == want && probed.path == path && probed.name == QFileInfo(path).fileName(),
+                          "probe == reader", __FILE__, __LINE__,
+                          QString("%1 @ %2\n       probe: %3\n       want: %4").arg(c.file, rate.label(), got, want));
+            if (rate == rates[0]) std::printf("%-16s %s%s\n", c.file, qPrintable(got), own ? "" : "  (unreadable)");
         }
     }
-    std::printf("total: own %.1f ms, MLT %.1f ms\n", ownTotal, mltTotal);
+    std::printf("total: %.1f ms\n", total);
 
-    // What the files really hold (guards against both readers being wrong the same way)
+    // What the files really hold
     ProjectFormat format;
     const MediaInfo obs = Engine::probe(format, in("obs5.mkv"));
     CHECK(obs.length == 80 || obs.length == 81); // 3.2 s at 25 fps (Matroska: the sound's priming after it)

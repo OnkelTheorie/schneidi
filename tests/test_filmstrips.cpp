@@ -118,7 +118,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("filmstrips");
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
-    Check::initMlt();
+    Check::initEngine();
 
     QTemporaryDir dir;
     auto file = [&](const char* name) { return dir.filePath(name); };

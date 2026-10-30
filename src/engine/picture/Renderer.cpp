@@ -868,7 +868,15 @@ struct Renderer::Impl {
             if (f >= s.start && f < s.end) return false;
         const Clip* c = clipAt(track, f);
         if (!c || !c->enabled || c->isTitle() || c->isNested() || c->mediaPath.isEmpty()) return false;
-        if (Keys::hasTransform(*c) || Keys::hasCrop(*c) || Keys::hasOpacity(*c)) return false;
+        if (Keys::hasCrop(*c) || Keys::hasOpacity(*c)) return false;
+        // A fixed zoom/position without rotation still covers when the enlarged picture reaches past every edge
+        const bool transformed = Keys::hasTransform(*c);
+        if (transformed) {
+            const ClipTransform& t = c->transform;
+            if (t.rotation != 0 || t.hasBlurFill()) return false;
+            for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation})
+                if (Keys::animated(*c, p)) return false;
+        }
         if (TimelineOps::fadeRamp(*c, f - c->start) < 1.0) return false;
         for (const EffectInstance& e : c->effects)
             if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId)) return false;
@@ -880,7 +888,15 @@ struct Renderer::Impl {
             return false;
         }
         const QSizeF fit = MediaAspect::fit(nativeAspect(*c, lane), QSizeF(ctx.PW, ctx.PH));
-        return std::lround(fit.width() * ctx.W / ctx.PW) >= ctx.W && std::lround(fit.height() * ctx.H / ctx.PH) >= ctx.H;
+        if (!transformed)
+            return std::lround(fit.width() * ctx.W / ctx.PW) >= ctx.W && std::lround(fit.height() * ctx.H / ctx.PH) >= ctx.H;
+        // Rectangle in project pixels (centered, Y of the position upward), then in output pixels with a pixel to spare
+        const ClipTransform& t = c->transform;
+        const double w = fit.width() * t.zoomX, h = fit.height() * t.zoomY;
+        const double cx = ctx.PW / 2.0 + t.posX, cy = ctx.PH / 2.0 - t.posY;
+        const double sx = double(ctx.W) / ctx.PW, sy = double(ctx.H) / ctx.PH;
+        return (cx - w / 2) * sx <= -1 && (cx + w / 2) * sx >= ctx.W + 1 && (cy - h / 2) * sy <= -1
+               && (cy + h / 2) * sy >= ctx.H + 1;
     }
 
     // Draws the track's picture at f over canvas. bottom: the canvas holds nothing that shows (this track covers it)
@@ -1326,7 +1342,8 @@ QString unsupported(const Timeline& tl)
                 for (const EffectInstance& e : c.effects) {
                     if (!e.enabled) continue;
                     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
-                    if (!d || d->fixed || !d->video) continue;
+                    if (!d) return e.effectId; // not known here (frei0r plugin, newer version)
+                    if (d->fixed || !d->video) continue;
                     if (e.effectId == QLatin1String("color") || e.effectId == QLatin1String("blur")
                         || e.effectId == QLatin1String("chromakey") || VideoEffects::isOwn(e.effectId))
                         continue;
@@ -1339,12 +1356,6 @@ QString unsupported(const Timeline& tl)
         for (const Timeline& n : *tl.nested)
             if (why.isEmpty()) why = check(n);
     return why;
-}
-
-bool ownPicture()
-{
-    static const bool own = qgetenv("SCHNEIDI_PICTURE") != "mlt";
-    return own;
 }
 
 } // namespace Picture

@@ -13,11 +13,11 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Exporter.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/RenderCache.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/picture/MediaStills.h"
+#include "engine/picture/Renderer.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
@@ -55,27 +55,24 @@ Timeline one(const Clip& c)
     return tl;
 }
 
-QImage grab(Mlt::Producer& p, int pos, int w, int h)
+// Frame `pos` of a media file, RGBA with its transparency
+QImage grab(const QString& file, int pos)
 {
-    p.seek(pos);
-    std::unique_ptr<Mlt::Frame> f(p.get_frame());
-    if (!f) return {};
-    mlt_image_format fmt = mlt_image_rgba;
-    const uint8_t* d = f->get_image(fmt, w, h);
-    if (!d) return {};
-    QImage img(w, h, QImage::Format_RGBA8888);
-    std::memcpy(img.bits(), d, size_t(w) * h * 4);
-    return img.copy();
+    return Check::renderFrame(Picture::mediaTimeline(file), kFmt, pos, {}, true);
 }
 
-// Render timeline; cache: preview builder with render cache
-QImage render(const Timeline& tl, int pos, const TimelineBuilder::ClipCache& cache = {})
+// Render timeline; cache: preview renderer with render cache
+QImage render(const Timeline& tl, int pos, const std::function<QString(const Clip&)>& cache = {})
 {
-    auto prof = makeProfile(kFmt);
-    TimelineBuilder b(*prof);
-    if (cache) b.setClipCache(cache);
-    auto tr = b.build(tl);
-    return grab(*tr, pos, prof->width(), prof->height());
+    Picture::Options o;
+    o.format = kFmt;
+    o.mode = cache ? Picture::Mode::Preview : Picture::Mode::Export;
+    if (cache) {
+        o.renderCache = cache;
+        o.subtitles = false;
+    }
+    Picture::Renderer r(tl, o);
+    return r.render(pos).toImage();
 }
 
 // Mean deviation (0..255) of the RGB channels
@@ -285,13 +282,9 @@ void testRender(const QString& dir)
     CHECK(QFileInfo::exists(file));
     CHECK(!QFileInfo::exists(file + ".part.mov"));
 
-    auto prof = makeProfile(kFmt);
     {
-        Mlt::Producer p(*prof, file.toUtf8().constData());
-        CHECK(p.is_valid());
-        CHECK_EQ(p.get_length(), c.length());
-        CHECK_EQ(QByteArray(p.get("meta.media.0.codec.name")), QByteArray("prores"));
-        const QImage img = grab(p, 5, 640, 360);
+        CHECK_EQ(Check::mediaLength(file, kFmt), c.length());
+        const QImage img = grab(file, 5);
         CHECK(!img.isNull() && img.pixelColor(5, 5).alpha() == 255);
     }
     const Timeline tl = one(c);
@@ -309,8 +302,7 @@ void testRender(const QString& dir)
     const QString alphaFile = dir + "/alpha.mov";
     CHECK(RenderCache::render(z, kFmt, alphaFile, &error));
     {
-        Mlt::Producer p(*prof, alphaFile.toUtf8().constData());
-        const QImage img = grab(p, 3, 640, 360);
+        const QImage img = grab(alphaFile, 3);
         CHECK(!img.isNull() && img.pixelColor(5, 5).alpha() == 0);
         CHECK(!img.isNull() && img.pixelColor(320, 180).alpha() == 255);
     }
@@ -409,9 +401,7 @@ void testBuilderUsesCacheOnlyForPreview(const QString& red)
     loop.exec();
     CHECK(ok);
     CHECK(!Exporter::anyRunning());
-    auto prof = makeProfile(kFmt);
-    Mlt::Producer p(*prof, out.toUtf8().constData());
-    CHECK(p.is_valid() && !isRed(grab(p, 5, 640, 360)));
+    CHECK(!isRed(grab(out, 5)));
     rc.clear();
     CHECK(!QFileInfo::exists(rc.path(c)));
 }
@@ -510,13 +500,8 @@ int main(int argc, char** argv)
                                           "-c:v", "prores_ks", "-profile:v", "1"});
     if (!CHECK(!g_media.isEmpty() && !red.isEmpty())) return Check::result();
 
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
-    {
-        auto prof = makeProfile(kFmt);
-        Mlt::Transition qt(*prof, "qtblend");
-        if (!qt.is_valid()) return Check::skip("MLT-Qt-Modul nicht nutzbar (kein Display? z. B. xvfb-run -a ctest …)");
-    }
     testTrim(tmp.path());
     testKeys();
     testEditor();

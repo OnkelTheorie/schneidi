@@ -566,7 +566,7 @@ void MediaPool::importDialog()
 
 QStringList MediaPool::addFiles(const QStringList& paths, int bin)
 {
-    // Probing opens every file (~1 ms from the header, still images and odd files through MLT: up to ~0.5 s) – side
+    // Probing opens every file (~1 ms from the header, other containers up to ~0.5 s) – side
     // by side in threads, otherwise the window stood still for seconds when importing a dozen stills. Added in the
     // given order.
     QVector<MediaInfo> infos(paths.size());

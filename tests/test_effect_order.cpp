@@ -17,11 +17,9 @@
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
 #include "ui/Inspector.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QColor>
 #include <QDir>
@@ -440,22 +438,45 @@ void testInspector(QApplication& app)
     CHECK(!QApplication::overrideCursor());
 }
 
+// An effect this version does not have (frei0r plugin of an old project): listed in the Inspector with the hint that it
+// is skipped, kept in the clip
+void testInspectorMissing(QApplication& app)
+{
+    Project project;
+    Selection sel;
+    Editor editor(&project, &sel);
+    project.addMedia(MediaInfo{"/x/b.mp4", "b.mp4", 300, true, false, false});
+    Timeline tl;
+    tl.video.resize(1);
+    tl.audio.resize(1);
+    Clip c;
+    c.id = project.newClipId();
+    c.mediaPath = "/x/b.mp4";
+    c.out = 99;
+    c.effects << EffectInstance{"frei0r.gibtsnicht", {}, true};
+    tl.video[0].clips << c;
+    project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, c.id, 0});
+    Inspector insp(&editor);
+    insp.resize(380, 900);
+    sel.set({c.id});
+    insp.show();
+    app.processEvents();
+    bool hinted = false;
+    for (const QLabel* l : insp.findChildren<QLabel*>("MissingEffect"))
+        hinted = hinted || l->text().contains("übersprungen");
+    CHECK(hinted);
+    bool shown = false;
+    for (const QWidget* w : insp.findChildren<QWidget*>())
+        shown = shown || (w->toolTip() == T("Effekt „%1“ fehlt").arg("frei0r.gibtsnicht") && !w->isHidden()); // its tab may not be the current one
+    CHECK(shown);
+    CHECK_EQ(TimelineOps::findClip(project.timeline(), c.id)->effects.size(), 1);
+}
+
 // ---- Render ----
 
 QImage render(const Timeline& tl, const ProjectFormat& fmt, int pos)
 {
-    auto prof = makeProfile(fmt);
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl);
-    tr->seek(pos);
-    std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-    mlt_image_format ifmt = mlt_image_rgba;
-    int w = prof->width(), h = prof->height();
-    const uint8_t* d = f->get_image(ifmt, w, h);
-    if (!d) return {};
-    QImage img(w, h, QImage::Format_RGBA8888);
-    std::memcpy(img.bits(), d, size_t(w) * h * 4);
-    return img.copy();
+    return Check::renderFrame(tl, fmt, pos);
 }
 
 Timeline one(const QString& media, const QVector<EffectInstance>& fx)
@@ -480,18 +501,6 @@ double diff(const QImage& x, const QImage& y)
     for (int r = 0; r < a.height(); ++r)
         for (int i = 0; i < a.width() * 3; ++i) sum += std::abs(a.scanLine(r)[i] - b.scanLine(r)[i]);
     return sum / (a.width() * a.height() * 3.0);
-}
-
-// Hard steps between horizontal neighbours (any channel more than 40 apart), per row
-double hardSteps(const QImage& x)
-{
-    const QImage a = x.convertToFormat(QImage::Format_RGB888);
-    long n = 0;
-    for (int r = 0; r < a.height(); ++r) {
-        const uchar* p = a.scanLine(r);
-        for (int i = 3; i < a.width() * 3; ++i) n += std::abs(p[i] - p[i - 3]) > 40;
-    }
-    return double(n) / a.height();
 }
 
 // `first` rendered, saved as a still, `second` applied to the still: what first → second must look like
@@ -524,30 +533,6 @@ void testRender(const QString& dir)
         if (!CHECK(apart > 1.5 && okBc < apart / 3 && okCb < apart / 3))
             std::printf("       blur/color: apart %.2f, bc %.2f, cb %.2f\n", apart, okBc, okCb);
     }
-    // Blur and pixelate (frei0r): pixelate last = hard block edges, blur last = none
-    if (const EffectDescriptor* pix = EffectRegistry::find("frei0r.pixeliz0r")) {
-        EffectInstance pixel{pix->id, {}, true};
-        for (const EffectParam& p : pix->params) pixel.params[p.key] = p.type == EffectParam::Double ? 0.1 : p.defaultValue;
-        const QImage bp = render(one(media, {blur, pixel}), fmt, 10), pb = render(one(media, {pixel, blur}), fmt, 10);
-        const QImage wantBp = composed(media, blur, pixel, fmt, dir), wantPb = composed(media, pixel, blur, fmt, dir);
-        const double apart = diff(bp, pb), okBp = diff(bp, wantBp), okPb = diff(pb, wantPb);
-        if (!CHECK(apart > 3.0 && okBp < apart / 3 && okPb < apart / 3))
-            std::printf("       blur/pixelate: apart %.2f, bp %.2f, pb %.2f\n", apart, okBp, okPb);
-        const double stepsBp = hardSteps(bp), stepsPb = hardSteps(pb);
-        if (!CHECK(stepsBp > 4 && stepsPb < 0.5)) std::printf("       hard steps: bp %.2f, pb %.2f\n", stepsBp, stepsPb);
-        // Through the Editor: moving the effect changes the picture to the other order
-        Project project;
-        Selection sel;
-        Editor editor(&project, &sel);
-        project.load(ProjectData{fmt, 0, {}, {}, one(media, {blur, pixel}), 1, 0});
-        CHECK(diff(render(project.timeline(), fmt, 10), bp) < 0.5);
-        CHECK(editor.moveEffectBy({1}, pix->id, -1));
-        CHECK(diff(render(project.timeline(), fmt, 10), pb) < 0.5);
-        project.undoStack()->undo();
-        CHECK(diff(render(project.timeline(), fmt, 10), bp) < 0.5);
-    } else {
-        std::printf("Hinweis: frei0r.pixeliz0r fehlt, Blur/Pixelate übersprungen\n");
-    }
     // Green Screen: a fixed stage right after the grade, wherever it sits in the list
     if (EffectRegistry::find("chromakey")) {
         const EffectInstance key{"chromakey", {{"color", QColor(0, 191, 0)}, {"distance", 0.3}}, true};
@@ -572,21 +557,13 @@ int main(int argc, char** argv)
 
     testCore(tmp.path());
     testCli(tmp.path());
-    Check::initMlt(true); // frei0r plugins (opt-in) as well
+    Check::initEngine();
     testInspector(app);
+    testInspectorMissing(app);
 
     if (!Check::haveFfmpeg()) {
         std::printf("Hinweis: ffmpeg fehlt, Render-Teil übersprungen\n");
         return Check::result();
-    }
-    {
-        // The MLT Qt module refuses without a display in some builds: then no render part
-        auto prof = makeProfile(ProjectFormat{});
-        Mlt::Transition qt(*prof, "qtblend");
-        if (!qt.is_valid()) {
-            std::printf("Hinweis: MLT-Qt-Modul nicht nutzbar, Render-Teil übersprungen\n");
-            return Check::result();
-        }
     }
     testRender(tmp.path());
     return Check::result();

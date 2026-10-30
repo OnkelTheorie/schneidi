@@ -23,7 +23,7 @@
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
 #include "engine/Exporter.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/RenderQueue.h"
 #include "engine/Snapshot.h"
 #include "engine/Stabilizer.h"
@@ -991,7 +991,9 @@ const QVector<Command>& commands()
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"}},
          cmdLoudness},
         {"check", "Check before export or before handing a video over: what typically goes wrong. A project "
-                  "(before rendering): missing media files, frames without any picture (a gap = black), subtitles too "
+                  "(before rendering): missing media files, effects this version does not have (missing_effect: kept "
+                  "in the project, skipped when rendering - e.g. frei0r plugins of old projects; remove or replace "
+                  "them), frames without any picture (a gap = black), subtitles too "
                   "short/too fast to read or past the end, recordings with stutter in the range a clip uses "
                   "(stutter: jumps in the time stamps, see `probe` gaps), and the sound of the mix as exported: no "
                   "sound, clipping, true peak above -1 dBTP, loudness off the target, silence at the end, and "

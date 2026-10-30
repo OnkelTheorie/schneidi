@@ -2,7 +2,7 @@
 #pragma once
 // Single frames of media files through the own picture engine (0.15): thumbnails, trim view, Media Pool tiles, CLI
 // frames of a file. A file is shown as a timeline of one clip (mediaTimeline), fitted into the frame as on the
-// timeline at zoom 1 (black bars around another shape). No MLT here.
+// timeline at zoom 1 (black bars around another shape).
 
 #include "core/ProjectFormat.h"
 #include "core/Types.h"

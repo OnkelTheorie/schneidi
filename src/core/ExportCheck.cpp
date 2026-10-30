@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ExportCheck.h"
 
+#include "core/EffectRegistry.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Loudness.h"
@@ -216,6 +217,28 @@ QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectForma
                 out << issue(Severity::Error, "offline", T("Datei fehlt: %1").arg(c.mediaPath), std::max(from, c.start),
                              std::min(to, c.end()));
             }
+
+    // Effects this version does not have (frei0r plugins of older projects, ids of newer versions): kept in the
+    // project, skipped when rendering
+    QSet<QString> missing;
+    const auto effects = [&](const Timeline& t, bool top) {
+        for (const QVector<Track>* tracks : {&t.video, &t.audio})
+            for (const Track& track : *tracks)
+                for (const Clip& c : track.clips) {
+                    if (!c.enabled || (top && (c.end() <= from || c.start >= to))) continue;
+                    for (const EffectInstance& e : c.effects) {
+                        if (!e.enabled || EffectRegistry::find(e.effectId) || missing.contains(e.effectId)) continue;
+                        missing.insert(e.effectId);
+                        out << issue(Severity::Warning, "missing_effect",
+                                     T("Effekt „%1“ ist nicht verfügbar und wird übersprungen").arg(e.effectId),
+                                     top ? std::max(from, c.start) : -1, top ? std::min(to, c.end()) : -1,
+                                     top ? c.id : 0);
+                    }
+                }
+    };
+    effects(tl, true);
+    if (tl.nested)
+        for (const Timeline& n : *tl.nested) effects(n, false);
 
     // Frames without any picture: black in the video (a forgotten frame between two clips is the classic)
     const QVector<QPair<int, int>> covered = pictureCoverage(tl, from, to);

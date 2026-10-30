@@ -7,7 +7,7 @@
 
 #include "core/Multicam.h"
 #include "core/TimelineOps.h"
-#include "engine/Profiles.h"
+#include "engine/ClipFormat.h"
 #include "engine/SoundSync.h"
 
 #include <QFileInfo>

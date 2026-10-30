@@ -17,8 +17,7 @@ inline constexpr const char* LutPrefix = "lut:";
 
 QString root();   // effects folder
 QString lutDir(); // root/LUTs
-QString transitionDir(); // root/Transitions (ASCII name: MLT/FFmpeg on Windows)
-QString frei0rDir();     // root/frei0r: own frei0r plugins (engine/Frei0r, picked up after a restart)
+QString transitionDir(); // root/Transitions (ASCII name: FFmpeg on Windows)
 QString presetDir();     // root/Presets: Shotcut/Kdenlive presets (core/Presets)
 void ensure();    // create folders (and readme) if they are missing
 

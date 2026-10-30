@@ -18,12 +18,11 @@
 #include "core/Selection.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
+#include "engine/audio/Mixer.h"
 #include "ui/EqCurve.h"
 #include "ui/Mixer.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QCheckBox>
 #include <QJsonArray>
@@ -443,24 +442,22 @@ Timeline toneTimeline(const QString& file, int frames = 100)
     return tl;
 }
 
-std::vector<float> renderSound(const Timeline& tl, int from, int to, MixerHooks* hooks = nullptr,
-                               std::unique_ptr<Mlt::Tractor>* keep = nullptr)
+// Left channel of the mix of frames [from, to), as the export renders it
+std::vector<float> renderSound(Audio::Mixer& mixer, int from, int to)
 {
-    auto prof = makeProfile(ProjectFormat{});
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl, hooks);
-    std::vector<float> out;
-    tr->seek(0);
-    for (int pos = 0; pos < to; ++pos) {
-        std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-        mlt_audio_format fmt = mlt_audio_float;
-        int freq = 48000, channels = 2;
-        int samples = mlt_audio_calculate_frame_samples(float(prof->fps()), freq, pos);
-        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
-        if (pcm && pos >= from) out.insert(out.end(), pcm, pcm + samples);
-    }
-    if (keep) *keep = std::move(tr);
-    return out;
+    const int64_t a = mixer.frameStart(from), b = mixer.frameStart(to);
+    std::vector<float> l(static_cast<size_t>(b - a)), r(static_cast<size_t>(b - a));
+    float* planes[] = {l.data(), r.data()};
+    mixer.render(a, int(b - a), planes);
+    return l;
+}
+
+std::vector<float> renderSound(const Timeline& tl, int from, int to)
+{
+    Audio::Mixer mixer(tl, ProjectFormat{}.rate);
+    // from the start, like playback: the compressor's state comes from what played before
+    renderSound(mixer, 0, from);
+    return renderSound(mixer, from, to);
 }
 
 double peak(const std::vector<float>& x)
@@ -518,32 +515,19 @@ void testRenderEqChangesSpectrum()
 
 void testLiveChangeWithoutRebuild()
 {
-    // Preview: a changed compressor/EQ goes into the running tractor (like the faders), no rebuild
+    // Preview: a changed compressor/EQ goes into the running mixer (like the faders), no new mixer
     Timeline tl = toneTimeline(g_tone, 200);
-    MixerHooks hooks;
-    std::unique_ptr<Mlt::Tractor> tr;
-    auto prof = makeProfile(ProjectFormat{});
-    TimelineBuilder b(*prof);
-    tr = b.build(tl, &hooks);
+    Audio::Mixer mixer(tl, ProjectFormat{}.rate);
     auto level = [&](int from) {
-        std::vector<float> out;
-        tr->seek(from);
-        for (int pos = from; pos < from + 25; ++pos) {
-            std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-            mlt_audio_format fmt = mlt_audio_float;
-            int freq = 48000, channels = 2;
-            int samples = mlt_audio_calculate_frame_samples(25.f, freq, pos);
-            const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
-            if (pcm && pos >= from + 10) out.insert(out.end(), pcm, pcm + samples);
-        }
-        return peak(out);
+        renderSound(mixer, from, from + 10); // settling
+        return peak(renderSound(mixer, from + 10, from + 25));
     };
     CHECK(near(level(10), -6, 0.3));
     tl.audio[0].dynamics = comp(-20, 4, 0);
-    CHECK(TimelineBuilder::applyMixer(tl, hooks));
+    CHECK(mixer.updateMix(tl));
     CHECK(near(level(50), -16.5, 1.0));
     tl.audio[0].eq = eqWith(2, 1000, 6, 1);
-    CHECK(TimelineBuilder::applyMixer(tl, hooks));
+    CHECK(mixer.updateMix(tl));
     CHECK(near(level(100), -15, 1.0));
 }
 
@@ -738,7 +722,7 @@ int main(int argc, char** argv)
                                   "aevalsrc=0.25*sin(2*PI*100*t)+0.25*sin(2*PI*5000*t)|"
                                   "0.25*sin(2*PI*100*t)+0.25*sin(2*PI*5000*t):s=48000:d=10"});
     if (!CHECK(!g_tone.isEmpty() && !g_twoTone.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testRenderOrderEqCompressorFader();
     testRenderEqChangesSpectrum();

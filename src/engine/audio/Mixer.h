@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Own audio engine (docs/archiv/plan-0.10-ton.md), second block: mixes the sound of a timeline into samples. The same code
-// serves the export, the analyses and later the live output; it has no GUI or MLT dependency.
+// serves the export, the analyses and later the live output; it has no GUI dependency.
 //
 // Time is counted in samples of the output rate. Timeline frame f starts at sample frameStart(f); cuts, fades and
 // keyframes stay on whole frames, but gain curves run sample by sample between the frame boundaries (a fade reaches

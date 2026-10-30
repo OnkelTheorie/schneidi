@@ -4,7 +4,7 @@
 // Ripple/Roll/edge trim: two-up (left = Out frame of the outgoing clip, right = In frame of the incoming clip).
 // Slip: four-up (large = In/Out of the slipped clip, small above = neighbours' Out/In).
 // Slide: four-up (large = left neighbour's Out / right neighbour's In, small above = In/Out of the slid clip).
-// Pure model logic (no MLT, no widgets) so it can be tested; the viewer fetches the frames.
+// Pure model logic (no widgets) so it can be tested; the viewer fetches the frames.
 
 #include "core/TimelineOps.h"
 #include "core/Types.h"

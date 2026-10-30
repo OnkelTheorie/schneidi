@@ -10,10 +10,9 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
-#include "engine/Profiles.h"
-#include "engine/TimelineBuilder.h"
+#include "engine/ClipFormat.h"
+#include "engine/audio/Mixer.h"
 
-#include <Mlt.h>
 #include <QApplication>
 #include <QTemporaryDir>
 #include <QUndoStack>
@@ -36,49 +35,33 @@ Clip mk(int id, const QString& path, int start, int in, int out, int link = 0)
 
 bool near(double a, double b, double tol) { return std::abs(a - b) <= tol; }
 
-// Peak level (dBFS) of the mixed audio of the timeline over frames [from, to]; meterDb = value of the master level meter
-double renderPeak(const Timeline& tl, int from, int to, double* meterDb = nullptr)
+// Both channels of the mix of frames [from, to] as the export renders it
+std::pair<std::vector<float>, std::vector<float>> mix(const Timeline& tl, int from, int to)
 {
-    auto prof = makeProfile(ProjectFormat{});
-    TimelineBuilder b(*prof);
-    MixerHooks hooks;
-    auto tr = b.build(tl, meterDb ? &hooks : nullptr);
-    tr->seek(from);
+    Audio::Mixer mixer(tl, ProjectFormat{}.rate);
+    const int64_t a = mixer.frameStart(from), b = mixer.frameStart(to + 1);
+    std::vector<float> l(static_cast<size_t>(b - a)), r(static_cast<size_t>(b - a));
+    float* planes[] = {l.data(), r.data()};
+    mixer.render(a, int(b - a), planes);
+    return {l, r};
+}
+
+// Peak level (dBFS) of the mixed audio of the timeline over frames [from, to]
+double renderPeak(const Timeline& tl, int from, int to)
+{
+    const auto [l, r] = mix(tl, from, to);
     float peak = 0.f;
-    double meter = -200;
-    for (int pos = from; pos <= to; ++pos) {
-        std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-        mlt_audio_format fmt = mlt_audio_float;
-        int freq = 48000, channels = 2;
-        int samples = mlt_audio_calculate_frame_samples(float(prof->fps()), freq, pos);
-        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
-        if (!pcm || fmt != mlt_audio_float) continue;
-        for (int i = 0; i < samples * channels; ++i) peak = std::max(peak, std::abs(pcm[i]));
-        if (meterDb && hooks.master.meter) meter = std::max(meter, hooks.master.meter->get_double("_audio_level.0"));
-    }
-    if (meterDb) *meterDb = meter;
+    for (const auto* ch : {&l, &r})
+        for (const float v : *ch) peak = std::max(peak, std::abs(v));
     return peak > 1e-10f ? 20 * std::log10(peak) : -200;
 }
 
 // First sample (from frame 0) above 0.2 in the mixed audio, -1 = none
 long firstClick(const Timeline& tl, int frames)
 {
-    auto prof = makeProfile(ProjectFormat{});
-    TimelineBuilder b(*prof);
-    auto tr = b.build(tl, nullptr);
-    tr->seek(0);
-    long at = 0;
-    for (int pos = 0; pos < frames; ++pos) {
-        std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-        mlt_audio_format fmt = mlt_audio_float;
-        int freq = 48000, channels = 2;
-        int samples = mlt_audio_calculate_frame_samples(float(prof->fps()), freq, pos);
-        const auto* pcm = static_cast<const float*>(f->get_audio(fmt, freq, channels, samples));
-        if (pcm && fmt == mlt_audio_float)
-            for (int i = 0; i < samples; ++i)
-                if (std::abs(pcm[i]) > 0.2f) return at + i;
-        at += samples;
-    }
+    const auto [l, r] = mix(tl, 0, frames - 1);
+    for (size_t i = 0; i < l.size(); ++i)
+        if (std::abs(l[i]) > 0.2f) return long(i);
     return -1;
 }
 
@@ -212,7 +195,7 @@ int main(int argc, char** argv)
                                            "aevalsrc=if(lt(t\\,2)\\,0.1\\,0.5)*sin(2*PI*440*t)|if(lt(t\\,2)\\,0.1\\,0.5)*sin(2*PI*440*t):s=48000:d=4",
                                            "-c:a", "pcm_f32le"});
     if (!CHECK(!tone.isEmpty())) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     const ProjectFormat fmt; // 25 fps
 
@@ -233,30 +216,21 @@ int main(int argc, char** argv)
     int calls = 0; // cancel
     CHECK(!AudioAnalysis::clipPeakDb(fmt, mk(1, tone, 0, 0, 99), [&](double) { return ++calls < 2; }));
 
-    // Render: clip +12 dB on the loud part = about +6 dBFS -> level meter shows above 0 (not clipped at 0),
-    // limiter holds the ceiling, in the export (without hooks) as well
+    // Render: clip +12 dB on the loud part = about +6 dBFS (not clipped at 0), the limiter holds the ceiling
     {
-        auto prof = makeProfile(fmt);
-        Mlt::Transition qt(*prof, "qtblend");
-        if (!qt.is_valid()) {
-            std::printf("Hinweis: MLT-Qt-Modul ohne Display nicht nutzbar, Render-Prüfungen übersprungen\n");
-        } else {
+        {
             Timeline tl;
             tl.video.resize(1);
             tl.audio.resize(1);
             Clip c = mk(1, tone, 0, 50, 99);
             c.volumeDb = 12;
             tl.audio[0].clips << c;
-            double meter = -200;
-            const double open = renderPeak(tl, 10, 40, &meter);
+            const double open = renderPeak(tl, 10, 40);
             CHECK(near(open, loud + 12, 0.3));
-            CHECK(near(meter, loud + 12, 0.3));
             tl.masterLimiter = true;
             tl.masterLimiterDb = -1.0;
-            const double limited = renderPeak(tl, 10, 40, &meter);
+            const double limited = renderPeak(tl, 10, 40);
             if (!CHECK(limited <= -0.9 && limited > -3.0)) std::printf("       Limiter: %.2f dBFS\n", limited);
-            CHECK(meter <= -0.9);
-            CHECK(renderPeak(tl, 10, 40) <= -0.9); // export path
             // Quiet audio stays unchanged (limiter does not raise)
             tl.audio[0].clips[0].volumeDb = -10;
             CHECK(near(renderPeak(tl, 10, 40), loud - 10, 0.3));
@@ -284,77 +258,6 @@ int main(int argc, char** argv)
             const long faded = firstClick(tl, 30);
             if (!CHECK(faded - base == 960)) std::printf("       mit Einblenden: %ld (ohne %ld)\n", faded, base);
         }
-    }
-    // Seek while playing (SeekFade at the master meter): every chunk comes out 5 ms late (its end with the next
-    // chunk); at a jump in the positions the held-back old sound fades out and the new one fades in – a dip, no step
-    // in the wave (click); continuous playback stays sample-exact
-    {
-        Timeline tl;
-        tl.video.resize(1);
-        tl.audio.resize(1);
-        tl.audio[0].clips << mk(1, tone, 0, 0, 99);
-        auto prof = makeProfile(fmt);
-        TimelineBuilder b(*prof);
-        MixerHooks hooks;
-        auto tr = b.build(tl, &hooks);
-        SeekFade fade;
-        if (CHECK(hooks.master.meter)) hooks.master.meter->set("_seek_fade", &fade, 0);
-        const auto frameAudio = [&](int pos) {
-            tr->seek(pos);
-            std::unique_ptr<Mlt::Frame> f(tr->get_frame());
-            mlt_audio_format af = mlt_audio_float;
-            int freq = 48000, channels = 2;
-            int samples = mlt_audio_calculate_frame_samples(float(prof->fps()), freq, pos);
-            const auto* pcm = static_cast<const float*>(f->get_audio(af, freq, channels, samples));
-            return std::vector<float>(pcm, pcm + (pcm && af == mlt_audio_float ? samples : 0)); // channel 0 (planar)
-        };
-        const auto peakOf = [](const std::vector<float>& v, size_t from, size_t to) {
-            float p = 0.f;
-            for (size_t i = from; i < std::min(to, v.size()); ++i) p = std::max(p, std::abs(v[i]));
-            return p;
-        };
-        // largest step between neighbouring samples (a 440-Hz sine at 0.5 moves < 0.029 per sample)
-        const auto maxStep = [](const std::vector<float>& v) {
-            float m = 0.f;
-            for (size_t i = 1; i < v.size(); ++i) m = std::max(m, std::abs(v[i] - v[i - 1]));
-            return m;
-        };
-        const auto join = [](std::vector<float> a, const std::vector<float>& b) {
-            a.insert(a.end(), b.begin(), b.end());
-            return a;
-        };
-        fade.play(1.0); // playback starts at 60: silent 5 ms, then fade-in
-        const std::vector<float> start = frameAudio(60);
-        CHECK(start.size() == 1920 && peakOf(start, 0, 240) == 0.f && peakOf(start, 240, 245) < 0.01f
-              && peakOf(start, 720, 1920) > 0.45f);
-        const std::vector<float> a61 = frameAudio(61), a62 = frameAudio(62);
-        CHECK(peakOf(a61, 0, 1920) > 0.45f && peakOf(a62, 0, 1920) > 0.45f);
-        CHECK(maxStep(join(join(start, a61), a62)) < 0.04f); // continuous playback: no step
-        // Jump 62 -> 70: old sound fades out, new one fades in
-        const std::vector<float> in = frameAudio(70);
-        CHECK(in.size() == 1920 && peakOf(in, 0, 60) > 0.05f && peakOf(in, 236, 246) < 0.01f
-              && peakOf(in, 720, 1920) > 0.45f);
-        if (!CHECK(maxStep(join(a62, in)) < 0.04f)) std::printf("       Sprung: Stufe %.3f\n", maxStep(join(a62, in)));
-        CHECK(peakOf(frameAudio(71), 0, 1920) > 0.45f);
-        // A seek the positions do not show (race with the read-ahead): the engine's seek counter still fades
-        ++fade.seeks;
-        const std::vector<float> raced = frameAudio(72);
-        CHECK(peakOf(raced, 236, 246) < 0.01f && peakOf(raced, 720, 1920) > 0.45f);
-        // Dragging the playhead (seeks in quick succession): silent until release(), then the next sound fades in
-        fade.hold = true;
-        const std::vector<float> d90 = frameAudio(90);
-        CHECK(peakOf(d90, 0, 60) > 0.05f && peakOf(d90, 240, 1920) == 0.f && maxStep(d90) < 0.04f);
-        CHECK(peakOf(frameAudio(95), 0, 1920) == 0.f);
-        CHECK(peakOf(frameAudio(96), 0, 1920) == 0.f);
-        fade.release();
-        const std::vector<float> resumed = frameAudio(97);
-        CHECK(resumed.size() == 1920 && peakOf(resumed, 0, 245) < 0.01f && peakOf(resumed, 720, 1920) > 0.45f
-              && maxStep(resumed) < 0.04f);
-        CHECK(peakOf(frameAudio(98), 0, 1920) > 0.45f);
-        // Shuttling (other speed): untouched
-        fade.play(2.0);
-        const std::vector<float> fast = frameAudio(20);
-        CHECK(fast.size() == 1920 && peakOf(fast, 0, 60) > 0.05f);
     }
     return Check::result();
 }

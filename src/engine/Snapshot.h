@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-// Single frames without a preview (schneidi-cli: lets an AI look at the material). Own profile and producers,
+// Single frames without a preview (schneidi-cli: lets an AI look at the material). Own renderer (engine/picture),
 // blocking; transparent areas are black like in the viewer.
 
 #include "core/ProjectFormat.h"
@@ -13,12 +13,6 @@
 #include <functional>
 #include <memory>
 
-namespace Mlt {
-class Producer;
-class Profile;
-} // namespace Mlt
-class ProducerFactory;
-class TimelineBuilder;
 namespace Picture {
 class Renderer;
 }
@@ -38,11 +32,7 @@ public:
 private:
     Source();
     ProjectFormat m_format;
-    std::unique_ptr<Mlt::Profile> m_profile;
-    std::unique_ptr<ProducerFactory> m_factory;
-    std::unique_ptr<TimelineBuilder> m_builder;
-    std::unique_ptr<Mlt::Producer> m_producer;
-    std::unique_ptr<Picture::Renderer> m_picture; // own picture engine (default; SCHNEIDI_PICTURE=mlt: MLT)
+    std::unique_ptr<Picture::Renderer> m_picture;
     bool m_media = false; // a media file: nothing decoded = no picture (null image)
 };
 

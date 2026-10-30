@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): how much memory the preview engine keeps after playback, scrubbing, edits, an export,
-// thumbnails and stills, how much of it is MLT's frame pool (mlt_pool keeps every image buffer it ever handed out), and
-// what giving it back frees (mlt_pool_purge, then malloc_trim on glibc). Also the time from play() to the first new
-// picture, with a warm pool and right after a purge (giving memory back must not make playback start slower).
+// thumbnails and stills, and what giving it back frees (the picture engine's pools, then malloc_trim on glibc). Also
+// the time from play() to the first new picture, with warm pools and right after giving them back (giving memory back
+// must not make playback start slower).
 // Default: the engine's IdleRelease is held back, each step is measured by hand. --auto: the app's own behaviour
 // (IdleRelease after its delay), every phase measured after a few idle seconds.
-// Run: env SDL_AUDIODRIVER=dummy QT_QPA_PLATFORM=offscreen ./build/tests/bench_memory [--seconds N] [--edits N]
+// Run: env QT_QPA_PLATFORM=offscreen ./build/tests/bench_memory [--seconds N] [--edits N]
 //      [--format WxH@fps] [--no-export] [--auto] <video>...
 //      (the files go one after the other on V1/A1, the same again half a clip later on V2 at 60 % opacity, zoomed)
 #include "check.h"
@@ -16,7 +16,7 @@
 #include "engine/MemoryRelease.h"
 #include "engine/StillFetcher.h"
 
-#include <framework/mlt.h>
+#include "engine/picture/Renderer.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
@@ -53,41 +53,6 @@ double procMb(const char* key)
     return -1;
 }
 
-// mlt_pool_stat() only logs (verbose level): our log callback catches its summary line and passes everything else on
-// to stderr like MLT's own (it stays installed: MLT has no getter for the previous one)
-qint64 g_poolAllocated = -1, g_poolUsed = -1;
-bool g_catchPool = false;
-void poolLog(void*, int level, const char* fmt, va_list args)
-{
-    char buf[1024];
-    std::vsnprintf(buf, sizeof buf, fmt, args);
-    if (g_catchPool) {
-        long long allocated = 0, used = 0;
-        if (const char* at = std::strstr(buf, "allocated ");
-            at && std::sscanf(at, "allocated %lld bytes, used %lld bytes", &allocated, &used) == 2) {
-            g_poolAllocated = allocated;
-            g_poolUsed = used;
-        }
-        return;
-    }
-    if (level <= mlt_log_get_level()) std::fputs(buf, stderr);
-}
-
-void poolStat(double* allocatedMb, double* usedMb)
-{
-    *allocatedMb = *usedMb = 0;
-    if (!mlt_factory_repository()) return; // the pools exist only after Mlt::Factory::init (mlt_pool_stat crashes)
-    const int level = mlt_log_get_level();
-    mlt_log_set_callback(poolLog);
-    g_catchPool = true;
-    mlt_log_set_level(MLT_LOG_VERBOSE);
-    mlt_pool_stat();
-    mlt_log_set_level(level);
-    g_catchPool = false;
-    *allocatedMb = g_poolAllocated / 1048576.0;
-    *usedMb = g_poolUsed / 1048576.0;
-}
-
 // glibc's heap: in use by allocations and free but still held by the process (malloc_trim gives the latter back)
 void heapStat(double* usedMb, double* freeMb)
 {
@@ -107,11 +72,10 @@ constexpr int kAutoIdleMs = 6000;
 void snap(const char* label)
 {
     if (g_auto) wait(kAutoIdleMs);
-    double alloc = 0, used = 0, heapUsed = 0, heapFree = 0;
-    poolStat(&alloc, &used);
+    double heapUsed = 0, heapFree = 0;
     heapStat(&heapUsed, &heapFree);
-    std::printf("%-34s RSS %6.0f MB (peak %5.0f)  pool %4.0f MB (%2.0f in use)  heap %5.0f MB in use, %5.0f free\n", label,
-                procMb("VmRSS:"), procMb("VmHWM:"), alloc, used, heapUsed, heapFree);
+    std::printf("%-34s RSS %6.0f MB (peak %5.0f)  heap %5.0f MB in use, %5.0f free\n", label, procMb("VmRSS:"),
+                procMb("VmHWM:"), heapUsed, heapFree);
     std::fflush(stdout);
 }
 
@@ -159,7 +123,7 @@ void release(bool purge, bool trim, bool quiet)
 {
     QElapsedTimer t;
     t.start();
-    if (purge) mlt_pool_purge();
+    if (purge) Picture::releasePools();
 #ifdef __GLIBC__
     if (trim) malloc_trim(0);
 #else
@@ -277,7 +241,7 @@ int main(int argc, char** argv)
     snap("after edits");
 
     if (exportPhase) {
-        // Export of the whole timeline (own producers, own MLT graph) while the preview stands still
+        // Export of the whole timeline (own renderer and mixer) while the preview stands still
         QTemporaryDir out;
         ExportSettings es;
         es.path = out.filePath("bench.mp4");
@@ -346,7 +310,7 @@ int main(int argc, char** argv)
     release(false, true);
     snap("malloc_trim only");
     release(true, false);
-    snap("mlt_pool_purge");
+    snap("picture pools released");
     release(false, true);
     snap("+ malloc_trim");
 

@@ -999,7 +999,7 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
 
     // --- With real media (ffmpeg): loudness of a file and of the mix, normalize, mixer
     if (!Check::haveFfmpeg()) return Check::result();
-    Check::initMlt();
+    Check::initEngine();
     // Several audio streams (game recording: game, Discord …): ops for audio clips change only the given stream's
     // clip, the video clip stands for all of them, linked:true takes all partners too
     {

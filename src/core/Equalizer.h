@@ -3,7 +3,7 @@
 // Track EQ (Mixer "EQ", like Fairlight): 6 biquad bands (RBJ cookbook) in series, high/low pass 12 dB/oct.
 // Bells and shelves at 0 dB and bands that are off are skipped, so a flat EQ is exactly transparent.
 // responseDb() is the magnitude response of the same filters (EQ curve, tests).
-// Plain C++ without MLT/Qt widgets -> same on Linux and Windows, testable. Not thread-safe; copyable (state snapshot).
+// Plain C++ without Qt widgets -> same on Linux and Windows, testable. Not thread-safe; copyable (state snapshot).
 
 #include "core/Types.h"
 

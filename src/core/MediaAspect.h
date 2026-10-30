@@ -2,7 +2,7 @@
 #pragma once
 // Shape of a clip's picture for core code. Crop values are timeline pixels on the picture as it fits into the frame
 // at zoom 1 (ClipTransform), so converting them (older project files, a new timeline resolution) needs the aspect
-// ratio of the picture. Only the engine can open files: it installs the probe once MLT is up (Engine::initMlt; app
+// ratio of the picture. Only the engine can open files: it installs the probe at startup (Engine::initHeadless; app
 // and schneidi-cli). Without a probe, or for a file it cannot read, the aspect is unknown (0).
 
 #include "core/Types.h"

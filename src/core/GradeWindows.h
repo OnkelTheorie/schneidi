@@ -5,7 +5,7 @@
 // soft edge. Windows belong to the clip's grade (effect "grade"), like DaVinci windows belong to a node: copying,
 // resetting and switching off the grade includes them. Up to kMax per clip, parameters "w<n>.<key>" in the grade
 // effect ("w1.x", "w1.liftY"), animatable as dynamic effect parameters (Keys::effectParam("grade", "w1.x")).
-// Pure functions without MLT: the pixel work is in engine/ColorGrade.
+// Pure functions: the pixel work is in engine/ColorGrade.
 
 #include "core/EffectRegistry.h"
 #include "core/Types.h"
