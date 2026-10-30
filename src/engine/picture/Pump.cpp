@@ -34,6 +34,8 @@ constexpr double kJumpMargin = 1.2;
 // Idle workers: look for clips starting soon this often, drop unused decoders this often
 constexpr auto kPrepareEvery = std::chrono::milliseconds(250);
 constexpr auto kTrimEvery = std::chrono::seconds(10);
+// Recently shown frames: 192 MB = ~95 frames of the 960x540 preview, ~23 at full 1080p
+constexpr int64_t kRecentBudget = 192ll * 1024 * 1024;
 
 double seconds(SteadyClock::duration d) { return std::chrono::duration<double>(d).count(); }
 
@@ -58,8 +60,24 @@ struct Pump::Impl {
     double speed = 0;
     int64_t next = 0;        // next frame to show (stopped: the frame to show)
     bool pendingStill = false;
-    std::map<int64_t, QImage> frames; // rendered for `generation`
-    std::set<int64_t> inflight;       // being rendered for `generation`
+    struct Rendered {
+        QImage image;
+        bool exact = true; // false: a close picture (scrubbing), the exact one follows
+    };
+    std::map<int64_t, Rendered> frames; // rendered for `generation`
+    std::set<int64_t> inflight;         // being rendered for `generation`
+    // Still renders in flight that can be cancelled (Content::renderWant), by position
+    std::map<int64_t, std::shared_ptr<std::atomic<bool>>> cancels;
+    bool scrub = false; // stopped: the pending still may be a close picture first
+
+    // Recently shown frames of `generation` (LRU by stamp, within recentBudget bytes)
+    struct Recent {
+        QImage image;
+        uint64_t stamp = 0;
+    };
+    std::map<int64_t, Recent> recent;
+    int64_t recentBytes = 0, recentBudget = kRecentBudget;
+    uint64_t stamp = 0;
     bool preparing = false;
     SteadyClock::time_point lastPrepare, lastTrim = SteadyClock::now();
 
@@ -126,6 +144,7 @@ struct Pump::Impl {
     {
         std::unique_lock lock(m);
         while (!quit) {
+            if (takeRecent()) ready.notify_all();
             const int64_t p = pick();
             if (p < 0) {
                 const auto now = SteadyClock::now();
@@ -153,13 +172,30 @@ struct Pump::Impl {
             inflight.insert(p);
             const uint64_t gen = generation;
             std::shared_ptr<const Content> c = content;
+            std::shared_ptr<std::atomic<bool>> cancel;
+            Want want;
+            if (speed == 0 && c->renderWant) {
+                cancel = std::make_shared<std::atomic<bool>>(false);
+                cancels[p] = cancel;
+                want.nearest = scrub;
+                want.cancel = cancel.get();
+            }
             lock.unlock();
-            QImage img = c->render(p);
+            QImage img = cancel ? c->renderWant(p, want) : c->render(p);
             lock.lock();
             ++stats.rendered;
+            if (cancel) {
+                auto it = cancels.find(p);
+                if (it != cancels.end() && it->second == cancel) cancels.erase(it);
+            }
             if (gen != generation) continue; // content changed meanwhile
             inflight.erase(p);
-            frames[p] = std::move(img);
+            if (cancel && cancel->load()) { // the position moved on
+                ++stats.cancelled;
+                wake.notify_all(); // it may be wanted again meanwhile
+                continue;
+            }
+            frames[p] = {std::move(img), !cancel || want.exact};
             prune();
             ready.notify_all();
         }
@@ -227,10 +263,19 @@ struct Pump::Impl {
                     ready.wait(lock);
                     continue;
                 }
-                QImage img = std::move(it->second);
+                Rendered r = std::move(it->second);
                 frames.erase(it);
-                pendingStill = false;
-                deliver(lock, std::move(img), next, 0.0);
+                if (r.exact) {
+                    pendingStill = false;
+                } else {
+                    scrub = false; // the exact picture next (still pending)
+                    ++stats.nearest;
+                    wake.notify_all();
+                }
+                const int64_t at = next;
+                const uint64_t gen = generation;
+                QImage keep = r.exact ? r.image : QImage();
+                if (deliver(lock, std::move(r.image), at, 0.0)) remember(at, std::move(keep), gen);
                 continue;
             }
             const int dir = direction();
@@ -261,8 +306,10 @@ struct Pump::Impl {
                 continue;
             }
             const int64_t pos = next;
-            QImage img = std::move(it->second);
+            QImage img = std::move(it->second.image);
             frames.erase(it);
+            const uint64_t gen = generation;
+            QImage keep = img;
             if (jump.target >= 0 && dir * (pos - jump.target) >= 0) { // the jump arrived: what it cost
                 costs[measured++ % kCostHistory] = std::min(kMaxJumpCost, seconds(SteadyClock::now() - jump.start));
                 jump = {};
@@ -272,7 +319,9 @@ struct Pump::Impl {
             prune();
             wake.notify_all();
             const double s = speed;
-            if (deliver(lock, std::move(img), pos, s) && !std::isnan(now)) keepUp(pos, clock ? clock() : NAN);
+            const bool shown = deliver(lock, std::move(img), pos, s);
+            if (shown) remember(pos, std::move(keep), gen);
+            if (shown && !std::isnan(now)) keepUp(pos, clock ? clock() : NAN);
         }
     }
 
@@ -294,6 +343,59 @@ struct Pump::Impl {
         if (shown) ++stats.shown;
         else ++stats.skipped;
         return shown && serial == before;
+    }
+
+    // Under m: frames due soon that were shown recently go to `frames` without rendering; true if any did
+    bool takeRecent()
+    {
+        if (recent.empty() || !content) return false;
+        bool any = false;
+        auto take = [&](int64_t p) {
+            if (frames.count(p) || inflight.count(p)) return;
+            auto it = recent.find(p);
+            if (it == recent.end()) return;
+            frames[p] = {it->second.image, true};
+            it->second.stamp = ++stamp;
+            ++stats.recent;
+            any = true;
+        };
+        if (speed == 0) {
+            if (pendingStill && inside(next)) take(next);
+            return any;
+        }
+        const int64_t s = step() * direction();
+        for (int k = 0; k < ahead(); ++k) {
+            const int64_t p = next + k * s;
+            if (!inside(p)) break;
+            take(p);
+        }
+        return any;
+    }
+
+    // Under m: keeps a shown frame (rendered for generation gen) among the recent ones, the oldest go over budget
+    void remember(int64_t pos, QImage image, uint64_t gen)
+    {
+        if (image.isNull() || gen != generation || recentBudget <= 0) return;
+        auto [it, added] = recent.try_emplace(pos);
+        if (!added) recentBytes -= it->second.image.sizeInBytes();
+        it->second.image = std::move(image);
+        it->second.stamp = ++stamp;
+        recentBytes += it->second.image.sizeInBytes();
+        while (recentBytes > recentBudget && !recent.empty()) {
+            auto oldest = recent.begin();
+            for (auto i = recent.begin(); i != recent.end(); ++i)
+                if (i->second.stamp < oldest->second.stamp) oldest = i;
+            recentBytes -= oldest->second.image.sizeInBytes();
+            recent.erase(oldest);
+        }
+    }
+
+    // Under m: the content changed - recent frames and still renders in flight are of before
+    void forgetRendered()
+    {
+        recent.clear();
+        recentBytes = 0;
+        for (auto& [p, c] : cancels) c->store(true);
     }
 
     void resetKeepUp()
@@ -334,6 +436,8 @@ void Pump::setContent(std::shared_ptr<const Content> content, int64_t position, 
         d->content = std::move(content);
         ++d->generation;
         ++d->serial;
+        d->forgetRendered();
+        d->scrub = false;
         d->frames.clear();
         d->inflight.clear();
         d->speed = speed;
@@ -361,6 +465,7 @@ void Pump::setSpeed(double speed, int64_t position)
         if (!sameWay) {
             d->next = std::max<int64_t>(0, position);
             d->pendingStill = speed == 0;
+            d->scrub = false;
             d->resetKeepUp();
             ++d->serial;
         }
@@ -373,16 +478,20 @@ void Pump::setSpeed(double speed, int64_t position)
     d->ready.notify_all();
 }
 
-void Pump::seek(int64_t position)
+void Pump::seek(int64_t position, bool scrub)
 {
     {
         std::lock_guard showLock(d->showMutex);
         std::lock_guard lock(d->m);
         d->next = std::max<int64_t>(0, position);
         d->pendingStill = d->speed == 0;
+        d->scrub = scrub && d->speed == 0;
         d->resetKeepUp();
         ++d->serial;
+        for (auto& [p, c] : d->cancels) // the newest seek wins: renders for other positions stop early
+            if (p != d->next) c->store(true);
         d->prune();
+        if (d->takeRecent()) d->ready.notify_all();
     }
     d->wake.notify_all();
     d->ready.notify_all();
@@ -393,6 +502,7 @@ void Pump::refresh()
     {
         std::lock_guard lock(d->m);
         ++d->generation;
+        d->forgetRendered();
         d->frames.clear();
         d->inflight.clear();
         if (d->speed == 0) d->pendingStill = true;
@@ -408,7 +518,18 @@ Pump::Stats Pump::stats() const
     std::lock_guard lock(d->m);
     Stats s = d->stats;
     s.jumpCost = d->jumpCost();
+    s.recentBytes = d->recentBytes;
     return s;
+}
+
+void Pump::setRecentBudget(int64_t bytes)
+{
+    std::lock_guard lock(d->m);
+    d->recentBudget = bytes;
+    if (bytes <= 0) {
+        d->recent.clear();
+        d->recentBytes = 0;
+    }
 }
 
 } // namespace Picture
