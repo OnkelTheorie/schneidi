@@ -10,6 +10,7 @@
 #   full build.
 # - Export: every encoder/muxer of core/RenderJob.cpp (render formats), engine/HardwareEncoders.cpp (hardware and
 #   GPL-free replacements, proxy encoder), engine/RenderCache.cpp, engine/Transcriber.cpp, engine/Exporter.cpp (GIF).
+# - Devices: none, except the lavfi input of the hardware encoder test.
 # - Filters: only the bundled ffmpeg program uses them (proxies, render cache, GIF palette, hardware encoder test,
 #   SCHNEIDI_ANALYSIS=ffmpeg comparisons) plus those its command line inserts by itself (autorotate, format/rate
 #   conversion, -ss/-t). The program itself does not link libavfilter.
@@ -371,3 +372,7 @@ filter blackdetect
 filter freezedetect
 filter select
 filter metadata
+# hardware encoder test (engine/HardwareEncoders.cpp): -f lavfi -i color=black…
+filter color
+indev lavfi
+decoder wrapped_avframe

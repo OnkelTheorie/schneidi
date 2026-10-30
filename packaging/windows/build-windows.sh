@@ -21,6 +21,19 @@ FREI0R_SKIP=(facebl0r facedetect)
 
 [ "${MSYSTEM:-}" = "UCRT64" ] || { echo "!! Bitte in der MSYS2-Umgebung UCRT64 starten" >&2; exit 1; }
 
+# FFMPEG_PREFIX=<folder>: the slim GPL-free FFmpeg of packaging/linux/build-ffmpeg-lgpl.sh (components:
+# packaging/ffmpeg-components.txt; built into the folder when it has no ffmpeg.exe) instead of MSYS2's full one.
+# Its build packages: nasm and mingw-w64-ucrt-x86_64-{openh264,kvazaar,svt-av1,libvpx,dav1d,opus,lame,libvpl,ffnvcodec-headers}
+FFMPEG_PREFIX="${FFMPEG_PREFIX:-}"
+FFMPEG_BIN="$UCRT/bin"
+if [ -n "$FFMPEG_PREFIX" ]; then
+    FFMPEG_PREFIX="$(realpath -m "$FFMPEG_PREFIX")"
+    [ -x "$FFMPEG_PREFIX/bin/ffmpeg.exe" ] || "$ROOT/packaging/linux/build-ffmpeg-lgpl.sh" "$FFMPEG_PREFIX"
+    export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    export PATH="$FFMPEG_PREFIX/bin:$PATH" # its DLLs: found first by the build checks and by ntldd below
+    FFMPEG_BIN="$FFMPEG_PREFIX/bin"
+fi
+
 # --- Release-Build ---
 cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build "$BUILD"
@@ -30,7 +43,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT/lib/mlt-7" "$OUT/lib/frei0r-1" "$OUT/share"
 cp "$BUILD/schneidi.exe" "$BUILD/schneidi-cli.exe" "$OUT/"
 strip "$OUT/schneidi.exe" "$OUT/schneidi-cli.exe"
-cp "$UCRT/bin/ffmpeg.exe" "$UCRT/bin/ffprobe.exe" "$OUT/"
+cp "$FFMPEG_BIN/ffmpeg.exe" "$FFMPEG_BIN/ffprobe.exe" "$OUT/"
 
 for m in "${MODULES[@]}"; do
     dll="$UCRT/lib/mlt/libmlt$m.dll" # MSYS2: lib/mlt, im Paket lib/mlt-7 wie im AppImage
@@ -69,7 +82,7 @@ cp "$UCRT/share/qt6/plugins/platforms/qoffscreen.dll" "$OUT/platforms/"
 collect() {
     ntldd -R "$@" 2>/dev/null | tr '\\' '/' | sed -n 's|.*=> \(.*\.dll\) (0x.*|\1|p' | while read -r dll; do
         u="$(cygpath -u "$dll")"
-        case "$u" in "$UCRT"/bin/*) [ -f "$OUT/$(basename "$u")" ] || cp "$u" "$OUT/" ;; esac
+        case "$u" in "$UCRT"/bin/* | "$FFMPEG_BIN"/*) [ -f "$OUT/$(basename "$u")" ] || cp "$u" "$OUT/" ;; esac
     done
 }
 TARGETS=("$OUT"/*.exe "$OUT"/lib/mlt-7/*.dll "$OUT"/lib/frei0r-1/*.dll)

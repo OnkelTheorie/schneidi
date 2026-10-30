@@ -71,8 +71,8 @@ else OPTS+=(--enable-vaapi --enable-libdrm); fi
 if [ "$FULL" = 1 ]; then
     OPTS+=(--enable-libvorbis --enable-libwebp --extra-version=schneidi-lgpl-full)
 else
-    # --disable-everything, then one --enable-<type>=<name> per line of the list. Devices stay off (the library is
-    # still built: the ffmpeg program and MLT's avformat module link it).
+    # --disable-everything, then one --enable-<type>=<name> per line of the list (devices: only the lavfi input of the
+    # hardware encoder test)
     OPTS+=(--disable-everything --disable-autodetect --enable-pthreads --enable-cuda)
     [ "$WINDOWS" = 1 ] && OPTS+=(--enable-w32threads --disable-pthreads)
     known() { (cd "$SRC" && ./configure --list-"$1"s) | tr -s ' \t' '\n'; }
