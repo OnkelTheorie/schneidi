@@ -734,4 +734,9 @@ Mlt::Transition blendTransition(Mlt::Profile& profile)
     return transition;
 }
 
+Affine placement(double x, double y, double w, double h, double angle, int sw, int sh, bool distort, bool rotateCenter)
+{
+    return mapping(Place{x, y, w, h, angle, 1.0}, sw, sh, distort, rotateCenter);
+}
+
 } // namespace Compose

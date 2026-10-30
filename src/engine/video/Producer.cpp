@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/video/Producer.h"
 #include "engine/video/Reader.h"
+#include "engine/video/Convert.h"
 
 #include <Mlt.h>
 
@@ -427,6 +428,36 @@ int convert(const Picture& pic, uint8_t* buffer, mlt_image_format format, int wi
     }
     return result;
 }
+
+} // namespace
+
+bool toRgba(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, bool fast)
+{
+    if (!pic.frame || dw <= 0 || dh <= 0) return false;
+    const int w = pic.frame->width, h = pic.frame->height;
+    if (dw == w && dh == h) {
+        uint8_t* alpha = nullptr;
+        convert(pic, out, mlt_image_rgba, w, h, &alpha, info, 709, fast);
+        return true;
+    }
+    if (!pic.progressive) { // field-aware conversion at full size, then scaled like MLT's swscale filter
+        std::vector<uint8_t> full(size_t(w) * h * 4);
+        uint8_t* alpha = nullptr;
+        convert(pic, full.data(), mlt_image_rgba, w, h, &alpha, info, 709, fast);
+        SwsContext* ctx = cachedContext(w, h, AV_PIX_FMT_RGBA, AV_PIX_FMT_RGBA, scaleFlags("bilinear"), dw, dh, 1);
+        if (!ctx) return false;
+        const uint8_t* in[4] = {full.data()};
+        const int inStride[4] = {w * 4};
+        uint8_t* o[4] = {out};
+        const int oStride[4] = {dw * 4};
+        sws_scale(ctx, in, inStride, 0, h, o, oStride);
+        return true;
+    }
+    int colorspace = 0;
+    return convertScaled(pic, out, mlt_image_rgba, w, h, dw, dh, scaleFlags("bilinear"), info, 709, &colorspace, fast);
+}
+
+namespace {
 
 // ---- The producer ----
 

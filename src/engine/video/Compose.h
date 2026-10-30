@@ -42,6 +42,11 @@ struct Affine {
     double a = 1, b = 0, c = 0, d = 0, e = 1, f = 0;
 };
 
+// Where the transform filter puts a source of sw x sh: the rectangle (x, y, w, h) in pixels of the picture drawn on,
+// rotated clockwise by angle degrees around its center (rotateCenter) or top left; distort = stretched onto it, else
+// fitted keeping the aspect ratio
+Affine placement(double x, double y, double w, double h, double angle, int sw, int sh, bool distort, bool rotateCenter);
+
 // Source over: src (sw x sh) through m onto dst (dw x dh), both RGBA with straight alpha, opacity 0..1. Bilinear in
 // premultiplied alpha, shrinking by 2:1 or more averages 2x2 blocks of texels first (mip steps) (no skipped texels: fine
 // patterns do not flicker); outside the source counts as transparent (soft one-pixel edge).

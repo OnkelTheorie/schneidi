@@ -1,0 +1,826 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+#include "engine/picture/Renderer.h"
+
+#include "core/EffectRegistry.h"
+#include "core/Keyframes.h"
+#include "core/MediaAspect.h"
+#include "core/Multicam.h"
+#include "core/Retime.h"
+#include "core/TimelineOps.h"
+#include "engine/BlurFill.h"
+#include "engine/ColorGrade.h"
+#include "engine/Lumas.h"
+#include "engine/video/Compose.h"
+#include "engine/video/Convert.h"
+#include "engine/video/Reader.h"
+#include "engine/video/Text.h"
+
+extern "C" {
+#include <libavformat/avformat.h>
+}
+
+#include <QFileInfo>
+#include <QFontMetricsF>
+#include <QHash>
+#include <QImageReader>
+#include <QStringList>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstring>
+#include <map>
+#include <mutex>
+#include <shared_mutex>
+#include <vector>
+
+namespace Picture {
+
+// ---- Buffers ----
+
+class Buffer {
+public:
+    explicit Buffer(size_t bytes) : data(bytes) {}
+    std::vector<uint8_t> data;
+};
+
+namespace {
+
+// Free buffers by size; a frame's buffer goes back here when its last Frame is gone. Small: at most a few per size
+// (preview read-ahead + export workers), the rest is freed.
+struct Pool {
+    std::mutex mutex;
+    std::map<size_t, std::vector<std::unique_ptr<Buffer>>> free;
+    static constexpr size_t kKeep = 12;
+
+    std::shared_ptr<Buffer> take(size_t bytes)
+    {
+        std::unique_ptr<Buffer> b;
+        {
+            std::lock_guard lock(mutex);
+            auto& list = free[bytes];
+            if (!list.empty()) {
+                b = std::move(list.back());
+                list.pop_back();
+            }
+        }
+        if (!b) b = std::make_unique<Buffer>(bytes);
+        return std::shared_ptr<Buffer>(b.release(), [this](Buffer* p) { give(p); });
+    }
+    void give(Buffer* p)
+    {
+        std::lock_guard lock(mutex);
+        auto& list = free[p->data.size()];
+        if (list.size() < kKeep) list.emplace_back(p);
+        else delete p;
+    }
+};
+
+Pool& pool()
+{
+    static Pool* p = new Pool; // never destroyed: frames may outlive statics
+    return *p;
+}
+
+// An RGBA picture being worked on (layer, canvas)
+struct Image {
+    int w = 0, h = 0;
+    std::vector<uint8_t> px;
+    Image() = default;
+    Image(int width, int height) : w(width), h(height), px(size_t(width) * height * 4, 0) {}
+    bool empty() const { return w <= 0 || h <= 0; }
+    uint8_t* data() { return px.data(); }
+    const uint8_t* data() const { return px.data(); }
+};
+
+bool fullyOpaque(const uint8_t* rgba, size_t pixels)
+{
+    for (size_t i = 0; i < pixels; ++i)
+        if (rgba[4 * i + 3] != 255) return false;
+    return true;
+}
+
+// Alpha times k (brightness filter with level 1: MLT's fade)
+void scaleAlpha(Image& img, double k)
+{
+    if (k >= 1.0) return;
+    const int m = int(std::lround(std::clamp(k, 0.0, 1.0) * 256));
+    uint8_t* p = img.data();
+    for (size_t i = 0, n = size_t(img.w) * img.h; i < n; ++i) p[4 * i + 3] = uint8_t((p[4 * i + 3] * m) >> 8);
+}
+
+// Linear mix of two same-size pictures in premultiplied alpha: a*(1-t) + b*t
+void mix(Image& a, const Image& b, double t)
+{
+    const int k = int(std::lround(std::clamp(t, 0.0, 1.0) * 256)), j = 256 - k;
+    uint8_t* d = a.data();
+    const uint8_t* s = b.data();
+    for (size_t i = 0, n = size_t(a.w) * a.h; i < n; ++i, d += 4, s += 4) {
+        const int aa = d[3] * j, ba = s[3] * k;
+        const int alpha = aa + ba; // * 256
+        if (alpha <= 0) {
+            d[0] = d[1] = d[2] = d[3] = 0;
+            continue;
+        }
+        for (int c = 0; c < 3; ++c) d[c] = uint8_t(std::clamp((d[c] * aa + s[c] * ba + alpha / 2) / alpha, 0, 255));
+        d[3] = uint8_t((alpha + 128) >> 8);
+    }
+}
+
+void fill(Image& img, const QColor& c)
+{
+    uint8_t* p = img.data();
+    for (size_t i = 0, n = size_t(img.w) * img.h; i < n; ++i, p += 4) {
+        p[0] = uint8_t(c.red());
+        p[1] = uint8_t(c.green());
+        p[2] = uint8_t(c.blue());
+        p[3] = uint8_t(c.alpha());
+    }
+}
+
+// ---- Sources ----
+
+struct VideoSource {
+    std::unique_ptr<Video::Reader> reader;
+    Video::Info info;
+    double fps = 0;     // stream frame rate (positions count in it)
+    int length = 0;     // frames in the project rate (as MLT's producer length)
+};
+
+struct StillSource {
+    QImage image; // RGBA8888, straight alpha
+};
+
+struct Source {
+    std::shared_ptr<VideoSource> video;
+    std::shared_ptr<StillSource> still;
+    bool failed = false;
+    std::chrono::steady_clock::time_point used;
+};
+
+bool looksLikeStill(const QString& path)
+{
+    const QByteArray fmt = QImageReader::imageFormat(path);
+    return !fmt.isEmpty() && fmt != "gif"; // animated GIFs go through the decoder
+}
+
+QStringList wrapSubtitle(const QString& text, const QFontMetricsF& fm, double maxWidth)
+{
+    QStringList out;
+    for (const QString& para : text.split('\n')) {
+        QString line;
+        for (const QString& word : para.split(' ', Qt::SkipEmptyParts)) {
+            const QString candidate = line.isEmpty() ? word : line + ' ' + word;
+            if (!line.isEmpty() && fm.horizontalAdvance(candidate) > maxWidth) {
+                out << line;
+                line = word;
+            } else {
+                line = candidate;
+            }
+        }
+        out << line;
+    }
+    return out;
+}
+
+} // namespace
+
+// ---- Frame ----
+
+const uint8_t* Frame::bits() const { return m_buffer ? m_buffer->data.data() : nullptr; }
+uint8_t* Frame::bits() { return m_buffer ? m_buffer->data.data() : nullptr; }
+
+QImage Frame::view() const
+{
+    if (!m_buffer) return {};
+    return QImage(m_buffer->data.data(), m_width, m_height, m_width * 4, QImage::Format_RGBA8888);
+}
+
+QImage Frame::toImage() const { return view().copy(); }
+
+// ---- Renderer ----
+
+struct Renderer::Impl {
+    Options options;
+    mutable std::mutex snapMutex;
+    std::shared_ptr<const Timeline> snapshot;
+    QSize output;
+    std::atomic<int> direction{1};
+
+    std::mutex sourceMutex;
+    std::map<QString, Source> sources;
+
+    std::mutex lutMutex;
+    std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
+
+    std::atomic<int> framesRendered{0}, layersDecoded{0}, layersSkipped{0};
+
+    // What one render call works with
+    struct Ctx {
+        std::shared_ptr<const Timeline> root;
+        int W = 0, H = 0;   // output
+        double PW = 0, PH = 0; // project
+        double fps = 25;
+        bool preview = false;
+        bool bypassGrade = false;
+    };
+
+    Source source(const QString& path, const QString& lane)
+    {
+        const QString file = options.proxy ? options.proxy(path) : path;
+        const QString key = lane + '|' + file;
+        {
+            std::lock_guard lock(sourceMutex);
+            auto it = sources.find(key);
+            if (it != sources.end()) {
+                it->second.used = std::chrono::steady_clock::now();
+                return it->second;
+            }
+        }
+        Source s;
+        if (looksLikeStill(file)) {
+            QImageReader reader(file);
+            reader.setAutoTransform(true);
+            // As engine/video/Still: at most 4x the project's pixels
+            QSize size = reader.size();
+            if (reader.transformation() & QImageIOHandler::TransformationRotate90) size.transpose();
+            const double limit = 4.0 * options.format.width * options.format.height;
+            if (size.isValid() && double(size.width()) * size.height() > limit) {
+                const double k = std::sqrt(limit / (double(size.width()) * size.height()));
+                const QSize want(std::max(1, int(size.width() * k)), std::max(1, int(size.height() * k)));
+                reader.setScaledSize(reader.transformation() & QImageIOHandler::TransformationRotate90 ? want.transposed()
+                                                                                                       : want);
+            }
+            QImage img = reader.read();
+            if (!img.isNull()) {
+                s.still = std::make_shared<StillSource>();
+                s.still->image = img.convertToFormat(QImage::Format_RGBA8888);
+            }
+        }
+        if (!s.still) {
+            Video::Reader::Options ro;
+            ro.threads = options.decoderThreads;
+            ro.behind = std::max(4, options.parallelFrames);
+            ro.ahead = std::max(6, options.parallelFrames + 2);
+            if (auto r = Video::Reader::open(file, ro)) {
+                auto v = std::make_shared<VideoSource>();
+                r->setFrameRate(AVRational{options.format.rate.num, options.format.rate.den});
+                v->info = r->info();
+                v->fps = v->info.frameRate.num > 0 && v->info.frameRate.den > 0 ? av_q2d(v->info.frameRate)
+                                                                                 : options.format.rate.fps();
+                if (v->info.duration > 0)
+                    v->length = int(double(v->info.duration) / AV_TIME_BASE * options.format.rate.fps() + 0.5);
+                v->reader = std::move(r);
+                s.video = std::move(v);
+            }
+        }
+        s.failed = !s.video && !s.still;
+        s.used = std::chrono::steady_clock::now();
+        std::lock_guard lock(sourceMutex);
+        return sources.emplace(key, s).first->second;
+    }
+
+    // Source length in project frames for TimelineOps::transitions (0 = unlimited: stills, titles)
+    int sourceLength(const Clip& c, const Timeline& tl)
+    {
+        if (c.isNested()) {
+            if (!tl.nested) return 0;
+            const auto it = tl.nested->constFind(c.sequenceId);
+            return it == tl.nested->cend() ? 0 : TimelineOps::endFrame(*it);
+        }
+        if (c.isTitle() || c.mediaPath.isEmpty()) return 0;
+        const Source s = source(c.mediaPath, QStringLiteral("v"));
+        return s.video ? c.retimedLength(s.video->length) : 0;
+    }
+
+    std::shared_ptr<const ColorGrade::Lut> lut(const QString& path)
+    {
+        std::lock_guard lock(lutMutex);
+        auto it = luts.find(path);
+        if (it != luts.end()) return it->second;
+        auto l = ColorGrade::loadLut(path);
+        luts.emplace(path, l);
+        return l;
+    }
+
+    // Effects on the clip's picture (before crop/transform), clip frame t
+    void applyEffects(Image& img, const Clip& c, double t, const Ctx& ctx)
+    {
+        if (ColorGrade::active(c) && !ctx.bypassGrade) {
+            const ColorGrade::Params p = ColorGrade::at(c, t);
+            const QString lp = ColorGrade::lutPath(c);
+            const auto l = lp.isEmpty() ? nullptr : lut(lp);
+            if (!p.isNeutral() || l) ColorGrade::apply(img.data(), img.w, img.h, *ColorGrade::bake(p, l.get()), 1);
+            for (const ColorGrade::Window& w : ColorGrade::windowsAt(c, t)) ColorGrade::applyWindow(img.data(), img.w, img.h, w);
+        }
+        // TODO(package 1): chromakey, color, blur and the VideoEffects looks
+    }
+
+    // Source picture of a media clip at clip frame t, fetched at (dw x dh); empty = none
+    Image mediaPicture(const Clip& c, int t, const QString& lane, int dw, int dh, const Ctx& ctx, QSize* native)
+    {
+        const Source s = source(c.mediaPath, lane);
+        if (s.still) {
+            const QImage& img = s.still->image;
+            *native = img.size();
+            if (dw <= 0 || dh <= 0) return {};
+            Image out(dw, dh);
+            if (img.width() == dw && img.height() == dh) {
+                std::memcpy(out.data(), img.constBits(), out.px.size());
+            } else {
+                Compose::Affine m;
+                m.a = double(dw) / img.width();
+                m.e = double(dh) / img.height();
+                Compose::draw(out.data(), dw, dh, img.constBits(), img.width(), img.height(), m, 1.0);
+            }
+            return out;
+        }
+        if (!s.video) return {};
+        const VideoSource& v = *s.video;
+        // Material frame -> file frame (project rate) -> stream position (as the MLT producer)
+        const double m = c.freeze ? c.stillFrame() : c.in + t;
+        double file = m;
+        if (c.isRetimed()) {
+            if (c.freeze) {
+                const double at = c.stillFrame() * c.speed;
+                file = c.reverse ? v.length - 1 - at : at;
+            } else {
+                file = RetimeMap(c, v.length).fileFrameAt(m);
+            }
+            file = std::clamp(std::floor(file + 1e-6), 0.0, double(std::max(0, v.length - 1)));
+        }
+        if (file < 0) return {};
+        const int64_t request = int64_t(file / ctx.fps * v.fps + 0.5);
+        const auto pic = v.reader->picture(request);
+        if (!pic || !pic->frame) return {};
+        *native = QSize(pic->frame->width, pic->frame->height);
+        if (dw <= 0 || dh <= 0) return {};
+        Image out(dw, dh);
+        if (!Video::toRgba(*pic, v.info, out.data(), dw, dh, ctx.preview)) return {};
+        return out;
+    }
+
+    double nativeAspect(const Clip& c, const QString& lane)
+    {
+        const Source s = source(c.mediaPath, lane);
+        if (s.still) return double(s.still->image.width()) / std::max(1, s.still->image.height());
+        if (!s.video) return 0;
+        const Video::Info& i = s.video->info;
+        double w = i.width, h = i.height;
+        if (w <= 0 || h <= 0) return 0;
+        w *= i.sar.num > 0 && i.sar.den > 0 ? av_q2d(i.sar) : 1.0;
+        const bool sideways = std::lround(std::abs(i.rotation)) % 180 == 90;
+        return sideways ? h / w : w / h;
+    }
+
+    // Title text onto an output-size layer (clip frame t)
+    void drawTitle(Image& layer, const Clip& c, double t, const Ctx& ctx, double sizeOverride = 0)
+    {
+        const TitleStyle& st = c.title;
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        const double size = std::max(1.0, sizeOverride > 0 ? sizeOverride : st.size);
+        QFont font(st.fontFamily());
+        font.setPixelSize(std::max(1, int(std::lround(size))));
+        font.setBold(st.bold);
+        font.setItalic(st.italic);
+        const QFontMetricsF fm(font);
+        double w = 1;
+        for (const QString& line : st.text.split('\n')) w = std::max(w, fm.horizontalAdvance(line));
+        const bool outline = st.outlineOn && st.outlineWidth > 0;
+        auto layerOf = [&](bool outlineLayer) {
+            Text::Params p;
+            p.text = st.text;
+            const double x = (ctx.PW - w) / 2 + Keys::valueAt(c, AnimParam::TitlePosX, t);
+            const double y = -Keys::valueAt(c, AnimParam::TitlePosY, t);
+            p.area = QRectF(x * sx, y * sy, w * sx, ctx.PH * sy);
+            QFont f(st.fontFamily());
+            f.setPixelSize(std::max(1, int(std::lround(size * sy))));
+            f.setWeight(st.bold ? QFont::Bold : QFont::Normal);
+            f.setItalic(st.italic);
+            p.font = f;
+            p.halign = st.align == 0 ? 0 : st.align == 2 ? 2 : 1;
+            p.valign = 1;
+            p.fg = outlineLayer ? st.outlineColor
+                                : (Keys::animated(c, AnimParam::TitleColor)
+                                       ? Keys::toColor(Keys::valueAt(c, AnimParam::TitleColor, t))
+                                       : st.color);
+            const bool box = st.boxOn && (outlineLayer || !outline);
+            p.bg = box ? st.boxColor : QColor(Qt::transparent);
+            p.pad = (st.boxOn ? std::max(0.0, st.boxPad) : 0.0) * sy;
+            p.outlineColor = st.outlineColor;
+            p.outline = (outlineLayer ? 2 * st.outlineWidth : 0.0) * sy;
+            p.room = (outline ? 2 * st.outlineWidth : 0.0) * sy;
+            Text::draw(layer.data(), layer.w, layer.h, p);
+        };
+        if (outline) layerOf(true);
+        layerOf(false);
+    }
+
+    // One clip's picture at timeline frame f on a transparent output-size layer; empty = nothing visible
+    Image clipLayer(const Clip& c, int f, const QString& lane, const Ctx& ctx, const Timeline& tl, int depth)
+    {
+        if (!c.enabled) return {};
+        const int t = f - c.start;
+        const int W = ctx.W, H = ctx.H;
+        const double sx = W / ctx.PW, sy = H / ctx.PH;
+        const bool transform = Keys::hasTransform(c), crop = Keys::hasCrop(c);
+        Image layer;
+
+        // The source picture and where it goes at zoom 1 (project pixels)
+        Image src;
+        QSizeF fit(ctx.PW, ctx.PH);
+        if (c.isTitle()) {
+            double size = 0;
+            if (Keys::animated(c, AnimParam::TitleSize)) size = Keys::valueAt(c, AnimParam::TitleSize, t);
+            src = Image(W, H);
+            drawTitle(src, c, t, ctx, size);
+        } else if (c.isNested()) {
+            if (!tl.nested || depth > 16) return {};
+            const auto it = tl.nested->constFind(c.sequenceId);
+            if (it == tl.nested->cend()) return {};
+            const int in = c.in + t;
+            if (in < 0) return {};
+            Timeline content;
+            const Timeline* inner = &*it;
+            if (c.isMulticam()) {
+                const int angle = std::max(0, c.angle);
+                if (angle >= it->angles.size()) return {};
+                content = Multicam::angleTimeline(*it, it->angles[angle], TrackKind::Video);
+                content.nested = it->nested ? it->nested : tl.nested;
+                inner = &content;
+            }
+            src = Image(W, H);
+            Timeline withNested;
+            if (!inner->nested && tl.nested) {
+                withNested = *inner;
+                withNested.nested = tl.nested;
+                inner = &withNested;
+            }
+            renderTimeline(*inner, in, src, ctx, lane + QString("n%1/").arg(c.sequenceId), true, false, depth + 1);
+        } else {
+            if (c.mediaPath.isEmpty()) return {};
+            const double aspect = nativeAspect(c, lane);
+            fit = MediaAspect::fit(aspect, QSizeF(ctx.PW, ctx.PH));
+            QSize native;
+            if (!transform && !crop) {
+                // Fitted into the frame at its own shape, centred (letterbox bars stay transparent)
+                const int fw = std::max(1, int(std::lround(fit.width() * sx))), fh = std::max(1, int(std::lround(fit.height() * sy)));
+                src = mediaPicture(c, t, lane, fw, fh, ctx, &native);
+            } else {
+                // At its own size (capped to what the output needs at the clip's largest zoom), placed when drawn
+                Source s = source(c.mediaPath, lane);
+                int nw = 0, nh = 0;
+                if (s.still) {
+                    nw = s.still->image.width();
+                    nh = s.still->image.height();
+                } else if (s.video) {
+                    const bool sideways = std::lround(std::abs(s.video->info.rotation)) % 180 == 90;
+                    nw = sideways ? s.video->info.height : s.video->info.width;
+                    nh = sideways ? s.video->info.width : s.video->info.height;
+                }
+                if (nw <= 0 || nh <= 0) return {};
+                double zoom = 1;
+                for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY}) {
+                    zoom = std::max(zoom, std::abs(Keys::staticValue(c, p)));
+                    for (const Keyframe& k : c.keys.value(p)) zoom = std::max(zoom, std::abs(k.value));
+                }
+                const double scale = std::max(double(W) / nw, double(H) / nh) * zoom * 1.1;
+                const int dw = scale < 1.0 ? std::max(2, int(std::ceil(nw * scale))) : nw;
+                const int dh = scale < 1.0 ? std::max(2, int(std::ceil(nh * scale))) : nh;
+                src = mediaPicture(c, t, lane, dw, dh, ctx, &native);
+            }
+            if (src.empty()) return {};
+            layersDecoded.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (src.empty()) return {};
+        if (!c.isNested()) applyEffects(src, c, t, ctx);
+
+        auto val = [&](AnimParam p) { return Keys::valueAt(c, p, t); };
+        const double opacity = Keys::hasOpacity(c) ? std::clamp(val(AnimParam::Opacity) / 100.0, 0.0, 1.0) : 1.0;
+        if (!transform && !crop) {
+            if (src.w == W && src.h == H) {
+                layer = std::move(src);
+                scaleAlpha(layer, opacity);
+            } else {
+                layer = Image(W, H);
+                Compose::Affine m;
+                m.c = std::round((W - src.w) / 2.0);
+                m.f = std::round((H - src.h) / 2.0);
+                Compose::draw(layer.data(), W, H, src.data(), src.w, src.h, m, opacity);
+            }
+            return layer;
+        }
+        // Blurred fill from the uncropped picture
+        std::unique_ptr<BlurFill::Background> bg;
+        const bool blurFill = c.transform.hasBlurFill() && !c.isTitle() && !c.isNested();
+        double shares[4] = {0, 0, 0, 0};
+        if (crop)
+            shares[0] = val(AnimParam::CropLeft) / fit.width(), shares[1] = val(AnimParam::CropTop) / fit.height(),
+            shares[2] = val(AnimParam::CropRight) / fit.width(), shares[3] = val(AnimParam::CropBottom) / fit.height();
+        if (blurFill)
+            bg = std::make_unique<BlurFill::Background>(BlurFill::makeBackground(
+                src.data(), src.w, src.h, double(src.w) / src.h, shares, ctx.PW / ctx.PH, c.transform.fillBlur,
+                c.transform.fillDim));
+        if (crop) {
+            const uint8_t none[4] = {0, 0, 0, 0};
+            Compose::crop(src.data(), src.w, src.h, shares[0] * src.w, shares[1] * src.h, (1 - shares[2]) * src.w,
+                          (1 - shares[3]) * src.h, none);
+        }
+        const double zx = transform ? val(AnimParam::ZoomX) : 1.0, zy = transform ? val(AnimParam::ZoomY) : 1.0;
+        const double x = transform ? val(AnimParam::PosX) : 0.0, y = transform ? val(AnimParam::PosY) : 0.0;
+        const double w = fit.width() * zx, h = fit.height() * zy;
+        const double rx = (ctx.PW - w) / 2 + x, ry = (ctx.PH - h) / 2 - y;
+        const double angle = transform ? -val(AnimParam::Rotation) : 0.0;
+        layer = Image(W, H);
+        const Compose::Affine m = Compose::placement(rx * sx, ry * sy, w * sx, h * sy, angle, src.w, src.h, true, true);
+        Compose::draw(layer.data(), W, H, src.data(), src.w, src.h, m, blurFill ? 1.0 : opacity);
+        if (bg) {
+            BlurFill::composite(layer.data(), W, H, *bg);
+            scaleAlpha(layer, opacity);
+        }
+        return layer;
+    }
+
+    // Picture of a track at frame f (transitions included); empty = nothing on it
+    Image trackLayer(const Track& track, int trackIndex, int f, const Ctx& ctx, const Timeline& tl, const QString& prefix,
+                     int depth)
+    {
+        if (track.hidden) return {};
+        // Quick out: nothing on this track near f (spans only reach into clips' handles next to a cut)
+        bool near = false;
+        for (const Clip& c : track.clips)
+            if (f >= c.start - 1000 && f < c.end() + 1000) { // handles are short; a generous window
+                near = true;
+                break;
+            }
+        if (!near) return {};
+        const QVector<TimelineOps::TransitionSpan> spans =
+            TimelineOps::transitions(track, [&](const Clip& c) { return sourceLength(c, tl); });
+        auto byId = [&](int id) -> const Clip* {
+            for (const Clip& c : track.clips)
+                if (c.id == id) return &c;
+            return nullptr;
+        };
+        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        // Second lane for the right side of a dissolve between clips of the same file
+        auto laneOf = [&](const Clip& c, bool right) { return right ? lane + 'x' : lane; };
+        for (const auto& s : spans) {
+            if (f < s.start || f >= s.end) continue;
+            const Clip* a = s.leftId ? byId(s.leftId) : nullptr;
+            const Clip* b = s.rightId ? byId(s.rightId) : nullptr;
+            const bool sameFile = a && b && a->mediaPath == b->mediaPath;
+            Image ia = a ? clipLayer(*a, f, laneOf(*a, false), ctx, tl, depth) : Image();
+            Image ib = b ? clipLayer(*b, f, laneOf(*b, sameFile), ctx, tl, depth) : Image();
+            for (Image* img : {&ia, &ib})
+                if (!img->empty()) {
+                    const Clip* c = img == &ia ? a : b;
+                    scaleAlpha(*img, TimelineOps::fadeRamp(*c, f - c->start));
+                }
+            const int len = s.length(), i = f - s.start;
+            const double p = double(i) / len;
+            const TransitionStyle& st = s.style;
+            if (!ia.empty() && !ib.empty()) {
+                if (st.type == TransitionType::CrossDissolve) {
+                    mix(ia, ib, p);
+                } else if (st.type == TransitionType::DipToColor) {
+                    Image col(ia.w, ia.h);
+                    fill(col, st.color);
+                    if (p < 0.5) mix(ia, col, p * 2);
+                    else {
+                        mix(col, ib, p * 2 - 1);
+                        ia = std::move(col);
+                    }
+                } else {
+                    wipe(ia, ib, p, st, ctx);
+                }
+                return ia;
+            }
+            // One side: fade out/in through transparency
+            Image& one = ia.empty() ? ib : ia;
+            if (one.empty()) return {};
+            scaleAlpha(one, ia.empty() ? double(i) / len : double(len - 1 - i) / len);
+            return std::move(one);
+        }
+        for (const Clip& c : track.clips) {
+            if (f < c.start || f >= c.end()) continue;
+            // A clip following a dissolve partner of the same file reads from the second lane (as TimelineBuilder)
+            Image img = clipLayer(c, f, lane, ctx, tl, depth);
+            if (!img.empty()) scaleAlpha(img, TimelineOps::fadeRamp(c, t(c, f)));
+            return img;
+        }
+        return {};
+    }
+    static int t(const Clip& c, int f) { return f - c.start; }
+
+    // Wipes and gradient wipes: a pixel switches to b once the gradient there is below the progress
+    void wipe(Image& a, const Image& b, double p, const TransitionStyle& st, const Ctx& ctx)
+    {
+        QImage grad;
+        if (st.type == TransitionType::Luma) grad = Lumas::image(st.luma, a.w, a.h, st.invert);
+        const double soft = std::clamp(st.softness / 100.0, 0.0, 1.0);
+        const double edge = p * (1 + soft); // luma's softness: the edge runs over [edge - soft, edge]
+        uint8_t* d = a.data();
+        const uint8_t* s = b.data();
+        for (int y = 0; y < a.h; ++y) {
+            const uchar* gl = grad.isNull() ? nullptr : grad.constScanLine(y);
+            for (int x = 0; x < a.w; ++x, d += 4, s += 4) {
+                double g = 0;
+                switch (st.type) {
+                case TransitionType::WipeRight: g = double(x) / std::max(1, a.w - 1); break;
+                case TransitionType::WipeLeft: g = 1.0 - double(x) / std::max(1, a.w - 1); break;
+                case TransitionType::WipeDown: g = double(y) / std::max(1, a.h - 1); break;
+                case TransitionType::WipeUp: g = 1.0 - double(y) / std::max(1, a.h - 1); break;
+                default: g = gl ? gl[x] / 255.0 : 0.0; break;
+                }
+                double k = soft > 0 ? std::clamp((edge - g) / soft, 0.0, 1.0) : (g < p ? 1.0 : 0.0);
+                if (k <= 0) continue;
+                for (int c = 0; c < 4; ++c) d[c] = uint8_t(std::lround(d[c] + (s[c] - d[c]) * k));
+            }
+        }
+        (void)ctx;
+    }
+
+    void subtitleLayer(Image& canvas, const Timeline& tl, int f, const Ctx& ctx)
+    {
+        for (const SubtitleTrack& st : tl.subtitles) {
+            if (!st.enabled) continue;
+            for (const SubtitleCue& cue : st.cues) {
+                if (f < cue.start || f >= cue.end || cue.text.trimmed().isEmpty()) continue;
+                const TitleStyle& t = st.style;
+                const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+                QFont font(t.fontFamily());
+                font.setPixelSize(std::max(1, int(std::lround(t.size))));
+                font.setBold(t.bold);
+                font.setItalic(t.italic);
+                const QFontMetricsF fm(font);
+                const QStringList lines = wrapSubtitle(cue.text.trimmed(), fm, ctx.PW * 0.9);
+                double w = 1;
+                for (const QString& line : lines) w = std::max(w, fm.horizontalAdvance(line));
+                const double bottom = std::clamp(ctx.PH - t.posY, 1.0, ctx.PH);
+                const bool outline = t.outlineOn && t.outlineWidth > 0;
+                Image layer(ctx.W, ctx.H);
+                auto draw = [&](bool outlineLayer) {
+                    Text::Params p;
+                    p.text = lines.join('\n');
+                    p.area = QRectF(((ctx.PW - w) / 2 + t.posX) * sx, 0, w * sx, bottom * sy);
+                    QFont f2(t.fontFamily());
+                    f2.setPixelSize(std::max(1, int(std::lround(std::max(1.0, t.size) * sy))));
+                    f2.setWeight(t.bold ? QFont::Bold : QFont::Normal);
+                    f2.setItalic(t.italic);
+                    p.font = f2;
+                    p.halign = t.align == 0 ? 0 : t.align == 2 ? 2 : 1;
+                    p.valign = 2;
+                    p.fg = outlineLayer ? t.outlineColor : t.color;
+                    const bool box = t.boxOn && (outlineLayer || !outline);
+                    p.bg = box ? t.boxColor : QColor(Qt::transparent);
+                    p.pad = (t.boxOn ? std::max(0.0, t.boxPad) : 0.0) * sy;
+                    p.outlineColor = t.outlineColor;
+                    p.outline = (outlineLayer ? 2 * t.outlineWidth : 0.0) * sy;
+                    p.room = (outline ? 2 * t.outlineWidth : 0.0) * sy;
+                    Text::draw(layer.data(), layer.w, layer.h, p);
+                };
+                if (outline) draw(true);
+                draw(false);
+                Compose::over(canvas.data(), layer.data(), canvas.w, canvas.h, 1.0);
+                break;
+            }
+            break; // one subtitle track at a time is visible
+        }
+    }
+
+    // A timeline's picture at frame f onto canvas (black or transparent background already there)
+    void renderTimeline(const Timeline& tl, int f, Image& canvas, const Ctx& ctx, const QString& prefix, bool transparent,
+                        bool subtitles, int depth)
+    {
+        (void)transparent;
+        // Top down until a layer covers the whole frame: what lies below is never decoded (tests/test_occlusion)
+        std::vector<Image> layers;
+        bool covered = false;
+        for (int i = tl.video.size() - 1; i >= 0; --i) {
+            if (covered) {
+                if (!tl.video[i].hidden)
+                    for (const Clip& c : tl.video[i].clips)
+                        if (f >= c.start && f < c.end()) {
+                            layersSkipped.fetch_add(1, std::memory_order_relaxed);
+                            break;
+                        }
+                continue;
+            }
+            Image img = trackLayer(tl.video[i], i, f, ctx, tl, prefix, depth);
+            if (img.empty()) continue;
+            covered = fullyOpaque(img.data(), size_t(img.w) * img.h);
+            layers.push_back(std::move(img));
+        }
+        if (covered) {
+            canvas = std::move(layers.back());
+            layers.pop_back();
+        }
+        for (auto it = layers.rbegin(); it != layers.rend(); ++it)
+            Compose::over(canvas.data(), it->data(), canvas.w, canvas.h, 1.0);
+        if (subtitles) subtitleLayer(canvas, tl, f, ctx);
+    }
+};
+
+Renderer::Renderer(const Timeline& tl, const Options& options) : d(std::make_unique<Impl>())
+{
+    d->options = options;
+    d->snapshot = std::make_shared<const Timeline>(tl);
+    d->output = options.outputSize();
+}
+
+Renderer::~Renderer() = default;
+
+Frame Renderer::render(int64_t frame)
+{
+    Impl::Ctx ctx;
+    QSize out;
+    {
+        std::lock_guard lock(d->snapMutex);
+        ctx.root = d->snapshot;
+        out = d->output;
+    }
+    ctx.W = std::max(1, out.width());
+    ctx.H = std::max(1, out.height());
+    ctx.PW = d->options.format.width;
+    ctx.PH = d->options.format.height;
+    ctx.fps = d->options.format.rate.fps();
+    ctx.preview = d->options.mode == Mode::Preview;
+    ctx.bypassGrade = ctx.preview && d->options.gradeBypass && d->options.gradeBypass->load();
+
+    Image canvas(ctx.W, ctx.H);
+    if (!d->options.transparent) fill(canvas, Qt::black);
+    d->renderTimeline(*ctx.root, int(frame), canvas, ctx, QString(), d->options.transparent, d->options.subtitles, 0);
+
+    Frame f;
+    f.m_buffer = pool().take(canvas.px.size());
+    std::memcpy(f.m_buffer->data.data(), canvas.data(), canvas.px.size());
+    f.m_width = ctx.W;
+    f.m_height = ctx.H;
+    f.m_position = frame;
+    f.m_opaque = !d->options.transparent || fullyOpaque(canvas.data(), size_t(ctx.W) * ctx.H);
+    d->framesRendered.fetch_add(1, std::memory_order_relaxed);
+    return f;
+}
+
+void Renderer::update(const Timeline& tl)
+{
+    auto snap = std::make_shared<const Timeline>(tl);
+    std::lock_guard lock(d->snapMutex);
+    d->snapshot = std::move(snap);
+}
+
+void Renderer::setOutputSize(const QSize& size)
+{
+    std::lock_guard lock(d->snapMutex);
+    d->output = size.isEmpty() ? d->options.format.size() : size;
+}
+
+void Renderer::setDirection(int direction) { d->direction = direction; }
+
+void Renderer::prepare(int64_t frame)
+{
+    std::shared_ptr<const Timeline> tl;
+    {
+        std::lock_guard lock(d->snapMutex);
+        tl = d->snapshot;
+    }
+    for (int i = 0; i < tl->video.size(); ++i)
+        for (const Clip& c : tl->video[i].clips)
+            if (c.enabled && !c.mediaPath.isEmpty() && frame >= c.start - 50 && frame < c.end())
+                d->source(c.mediaPath, QString("v%1").arg(i));
+}
+
+void Renderer::trim()
+{
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard lock(d->sourceMutex);
+    for (auto it = d->sources.begin(); it != d->sources.end();)
+        it = now - it->second.used > std::chrono::seconds(30) ? d->sources.erase(it) : std::next(it);
+}
+
+int64_t Renderer::length() const
+{
+    std::lock_guard lock(d->snapMutex);
+    return TimelineOps::endFrame(*d->snapshot);
+}
+
+const Options& Renderer::options() const { return d->options; }
+
+Renderer::Stats Renderer::stats() const
+{
+    Stats s;
+    s.framesRendered = d->framesRendered;
+    s.layersDecoded = d->layersDecoded;
+    s.layersSkipped = d->layersSkipped;
+    std::lock_guard lock(d->sourceMutex);
+    s.sourcesOpen = int(d->sources.size());
+    return s;
+}
+
+bool ownPicture()
+{
+    static const bool own = qgetenv("SCHNEIDI_PICTURE") == "own";
+    return own;
+}
+
+} // namespace Picture
