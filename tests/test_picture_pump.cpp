@@ -6,11 +6,14 @@
 // (Video::Reader::setBehind): playing a long-GOP file backwards decodes each GOP once instead of once per frame.
 #include "check.h"
 
+#include "engine/Engine.h"
+#include "engine/picture/MediaStills.h"
 #include "engine/picture/Pump.h"
 #include "engine/video/Reader.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QTemporaryDir>
 
 #include <atomic>
@@ -274,6 +277,30 @@ void testReaderBackward(const QString& file)
     }
 }
 
+// Stills of media files through the own engine (thumbnails, trim view, Media Pool tiles)
+void testStills(const QString& wide, const QString& square, const QString& notVideo)
+{
+    const ProjectFormat f{640, 360, {25, 1}};
+    Picture::MediaStills stills(f);
+    const QImage a = stills.frame(wide, 30, QSize(320, 180));
+    CHECK(!a.isNull() && a.size() == QSize(320, 180));
+    CHECK(stills.frame(notVideo, 0, QSize(320, 180)).isNull());
+    // A square file in a 16:9 project: black bars left and right, the picture in the middle
+    const QImage b = stills.frame(square, 10, QSize(320, 180));
+    if (CHECK(!b.isNull())) {
+        CHECK_EQ(qGray(b.pixel(10, 90)), 0);
+        CHECK(qGray(b.pixel(160, 90)) > 0 || qRed(b.pixel(160, 90)) > 0 || qBlue(b.pixel(160, 90)) > 0);
+    }
+    // Engine::thumbnail: in the project's shape (bars) or in the file's own shape (fills a square tile)
+    const QImage t1 = Engine::thumbnail(f, square, 10, QSize(160, 160), false);
+    const QImage t2 = Engine::thumbnail(f, square, 10, QSize(160, 160), true);
+    if (CHECK(!t1.isNull() && !t2.isNull())) {
+        CHECK(t1.size() == QSize(160, 160) && t2.size() == QSize(160, 160));
+        CHECK_EQ(qGray(t1.pixel(80, 5)), 0); // 16:9 picture in a square: bars above
+        CHECK(qGray(t2.pixel(80, 5)) > 0 || qRed(t2.pixel(80, 5)) > 0 || qBlue(t2.pixel(80, 5)) > 0);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -289,6 +316,15 @@ int main(int argc, char** argv)
                                       "-preset", "ultrafast", "-g", "50", "-bf", "2", "-pix_fmt", "yuv420p"});
         std::printf("reader backward\n");
         if (CHECK(!file.isEmpty())) testReaderBackward(file);
+        const QString square = Check::makeMedia(
+            dir.filePath("square.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=320x320:rate=25:duration=2", "-c:v",
+                                         "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
+        const QString text = dir.filePath("note.txt");
+        QFile n(text);
+        if (n.open(QIODevice::WriteOnly)) n.write("no picture");
+        n.close();
+        std::printf("stills\n");
+        if (CHECK(!square.isEmpty())) testStills(file, square, text);
     }
     return Check::result();
 }

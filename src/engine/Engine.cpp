@@ -24,6 +24,7 @@
 #include "engine/TimelineBuilderDetail.h"
 #include "engine/audio/Path.h"
 #include "engine/audio/Player.h"
+#include "engine/picture/MediaStills.h"
 #include "engine/picture/Renderer.h"
 #include "engine/video/Reader.h"
 #include "engine/video/Still.h"
@@ -426,6 +427,24 @@ QImage Engine::thumbnail(const QString& path, int frame, const QSize& size)
 
 QImage Engine::thumbnail(const ProjectFormat& format, const QString& path, int frame, const QSize& size, bool ownShape)
 {
+    if (Picture::ownPicture()) {
+        // As a timeline shows the file (format's shape), or in its own shape: a format of that shape it fills
+        ProjectFormat shape = format;
+        QSize fit = format.size().scaled(size, Qt::KeepAspectRatio);
+        if (const double aspect = ownShape ? pictureAspect(path) : 0; aspect > 0) {
+            shape.width = std::max(2, int(std::lround(aspect * format.height)));
+            fit = QSizeF(aspect * size.height(), size.height()).scaled(QSizeF(size), Qt::KeepAspectRatio).toSize();
+        }
+        Picture::MediaStills stills(shape, &ProxyManager::decodeSource, 1); // proxy if present (4K: 0.2-0.7 s a frame)
+        const QImage img = stills.frame(path, frame, QSize(std::max(2, fit.width()), std::max(2, fit.height())));
+        if (img.isNull() || img.size() == size) return img;
+        QImage out(size, QImage::Format_RGBA8888);
+        out.fill(Qt::black);
+        QPainter painter(&out);
+        painter.drawImage(QPoint((size.width() - img.width()) / 2, (size.height() - img.height()) / 2), img);
+        painter.end();
+        return out;
+    }
     const auto profile = makeProfile(format);
     ProducerFactory factory(*profile);
     // Proxy if present: a 4K original takes ~0.2–0.7 s per exactly sought frame

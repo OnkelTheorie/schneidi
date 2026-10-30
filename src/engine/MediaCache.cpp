@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/MediaCache.h"
+#include "engine/picture/MediaStills.h"
 
 #include "engine/Profiles.h"
 #include "engine/ProxyManager.h"
@@ -237,6 +238,7 @@ void MediaCache::thumbLoop()
     int generation = -1;
     // Reuse open producers (opening a file is more expensive than seeking)
     QHash<QString, std::shared_ptr<Mlt::Producer>> producers;
+    std::unique_ptr<Picture::MediaStills> own; // own picture engine (default; SCHNEIDI_PICTURE=mlt: the producers)
 
     for (;;) {
         ThumbJob job;
@@ -255,13 +257,18 @@ void MediaCache::thumbLoop()
         if (gen != generation) { // new project format: producers hang on the old profile
             producers.clear();
             factory.reset();
-            profile = makeProfile(format);
-            factory = std::make_unique<ProducerFactory>(*profile);
+            own.reset();
+            if (Picture::ownPicture()) {
+                own = std::make_unique<Picture::MediaStills>(format, &ProxyManager::decodeSource, 8);
+            } else {
+                profile = makeProfile(format);
+                factory = std::make_unique<ProducerFactory>(*profile);
+            }
             generation = gen;
         }
 
-        std::shared_ptr<Mlt::Producer> prod = producers.value(job.path);
-        if (!prod) {
+        std::shared_ptr<Mlt::Producer> prod = own ? nullptr : producers.value(job.path);
+        if (!own && !prod) {
             if (producers.size() >= 8) producers.clear();
             prod = factory->open(ProxyManager::decodeSource(job.path));
             prod->set("audio_index", -1); // audio is never needed here
@@ -269,7 +276,10 @@ void MediaCache::thumbLoop()
         }
 
         QImage img;
-        if (prod->is_valid()) {
+        if (own) {
+            img = own->frame(job.path, job.frame, thumbSize(format));
+            if (!img.isNull()) img = img.convertToFormat(QImage::Format_RGB32); // faster to draw
+        } else if (prod->is_valid()) {
             prod->seek(job.frame);
             std::unique_ptr<Mlt::Frame> f(prod->get_frame());
             if (f) {

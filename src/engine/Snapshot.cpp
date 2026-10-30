@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Snapshot.h"
+#include "engine/picture/MediaStills.h"
 
 #include "core/ContactSheet.h"
 #include "core/Timecode.h"
@@ -58,6 +59,14 @@ std::unique_ptr<Source> Source::media(const ProjectFormat& format, const QString
 {
     std::unique_ptr<Source> s(new Source);
     s->m_format = format;
+    if (Picture::ownPicture()) {
+        Picture::Options o;
+        o.format = format;
+        o.mode = Picture::Mode::Still;
+        s->m_picture = std::make_unique<Picture::Renderer>(Picture::mediaTimeline(path), o);
+        s->m_media = true;
+        return s;
+    }
     s->m_profile = makeProfile(format);
     s->m_factory = std::make_unique<ProducerFactory>(*s->m_profile);
     s->m_producer = s->m_factory->open(path);
@@ -88,8 +97,10 @@ QImage Source::frame(int frame, int maxEdge)
 {
     if (m_picture) {
         m_picture->setOutputSize(grabSize(m_format, maxEdge));
+        const int decoded = m_picture->stats().layersDecoded;
         const Picture::Frame f = m_picture->render(frame);
-        return f.isNull() ? QImage() : f.view().convertToFormat(QImage::Format_RGB32);
+        if (f.isNull() || (m_media && m_picture->stats().layersDecoded == decoded)) return {};
+        return f.view().convertToFormat(QImage::Format_RGB32);
     }
     return m_producer ? grab(*m_producer, m_format, frame, maxEdge) : QImage();
 }
