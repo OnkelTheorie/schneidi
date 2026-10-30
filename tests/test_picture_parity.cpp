@@ -211,6 +211,20 @@ void testTitleStillSpeed()
     tl.video[1].clips[0].title.outlineOn = true;
     tl.video[1].clips[0].title.boxOn = true;
     parity("title-box", tl, 5, 1.0, 0.02);
+    {
+        // With transform the own engine draws the title only as large as its text (a part of the frame) and places that
+        Timeline moved = tl;
+        Clip& c = moved.video[1].clips[0];
+        c.transform.zoomX = c.transform.zoomY = 1.6;
+        c.transform.rotation = 12;
+        c.transform.posX = 90;
+        c.transform.posY = -40;
+        parity("title-transform", moved, 5, 1.0, 0.02);
+        c.transform.posX = 260; // partly out of the frame
+        c.transform.cropLeft = 30;
+        c.transform.cropTop = 20;
+        parity("title-transform-crop", moved, 5, 1.0, 0.02);
+    }
     parity("still", oneTrack({media(1, g_still, 0, 0, 49)}), 3, 2.0, 0.03);
     Clip s = media(1, g_pattern, 0, 0, 20);
     s.speed = 2.0;

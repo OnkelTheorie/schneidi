@@ -107,6 +107,27 @@ void* createService(mlt_profile profile, mlt_service_type, const char* id, const
 
 } // namespace
 
+QRectF bounds(const Params& tp)
+{
+    const QStringList lines = tp.text.split('\n');
+    const QFontMetricsF fm(tp.font);
+    double blockW = 0;
+    for (const QString& line : lines) blockW = std::max(blockW, fm.horizontalAdvance(line));
+    const double blockH = fm.lineSpacing() * (lines.size() - 1) + fm.height();
+    const double ext = tp.pad + tp.room / 2;
+    const double cw = blockW + 2 * ext, ch = blockH + 2 * ext;
+    double k = 1.0;
+    if (cw > 0 && tp.area.width() > 0) k = std::min(k, tp.area.width() / cw);
+    if (ch > 0 && tp.area.height() > 0) k = std::min(k, tp.area.height() / ch);
+    const double ox = tp.halign == 0 ? tp.area.left() : tp.area.left() + (tp.halign == 1 ? (tp.area.width() - cw * k) / 2
+                                                                                         : tp.area.width() - cw * k);
+    const double oy = tp.valign == 0 ? tp.area.top() : tp.area.top() + (tp.valign == 1 ? (tp.area.height() - ch * k) / 2
+                                                                                       : tp.area.height() - ch * k);
+    // Overhang of glyphs (italics, side bearings), the box centred on the ink and the outline's outer half
+    const double margin = (std::max(tp.outline, tp.room) + 0.5 * tp.font.pixelSize() + 2 * tp.pad) * k + 4;
+    return QRectF(ox, oy, cw * k, ch * k).adjusted(-margin, -margin, margin, margin);
+}
+
 void draw(uint8_t* rgba, int w, int h, const Params& tp)
 {
     const QString& text = tp.text;

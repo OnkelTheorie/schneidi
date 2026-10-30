@@ -36,6 +36,9 @@ struct Params {
 };
 // Draws onto an RGBA picture (straight alpha) of w x h
 void draw(uint8_t* rgba, int w, int h, const Params& p);
+// Where draw() can put pixels (box, outline and glyph overhang included, generously): draw only needs a picture that
+// large, shifted
+QRectF bounds(const Params& p);
 
 Mlt::Filter filter(Mlt::Profile& profile);
 // With MLT's factory: "schneidi_text", and as "qtext" where MLT's Qt module is not loaded

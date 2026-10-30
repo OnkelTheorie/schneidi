@@ -38,6 +38,7 @@ extern "C" {
 #include <map>
 #include <mutex>
 #include <shared_mutex>
+#include <utility>
 #include <vector>
 
 namespace Picture {
@@ -80,6 +81,11 @@ struct Pool {
         if (list.size() < kKeep) list.emplace_back(p);
         else delete p;
     }
+    void clear()
+    {
+        std::lock_guard lock(mutex);
+        free.clear();
+    }
 };
 
 Pool& pool()
@@ -88,12 +94,74 @@ Pool& pool()
     return *p;
 }
 
-// An RGBA picture being worked on (layer, canvas)
+// Storage of layers (Image) that went out of use, by size. Layers, transitions and transforms take a cleared
+// full-frame buffer per clip and frame; fresh allocations of that size come from mmap (page faults and zeroing by the
+// kernel each time) or, once glibc raised its mmap threshold, from per-thread arenas that grow and stay large with
+// several render threads (export peaks of GBs). Reusing them keeps memory at what the frames in flight need.
+struct LayerPool {
+    std::mutex mutex;
+    std::map<size_t, std::vector<std::vector<uint8_t>>> free;
+    size_t bytes = 0;
+    static constexpr size_t kMaxBytes = size_t(256) << 20; // what stays around between frames
+    static constexpr size_t kMinBytes = size_t(64) << 10;  // small pictures (titles, icons) are not worth it
+
+    std::vector<uint8_t> take(size_t n)
+    {
+        if (n >= kMinBytes) {
+            std::lock_guard lock(mutex);
+            auto it = free.find(n);
+            if (it != free.end() && !it->second.empty()) {
+                std::vector<uint8_t> v = std::move(it->second.back());
+                it->second.pop_back();
+                bytes -= v.capacity();
+                std::memset(v.data(), 0, n);
+                return v;
+            }
+        }
+        return std::vector<uint8_t>(n, 0);
+    }
+    void give(std::vector<uint8_t>&& v)
+    {
+        if (v.size() < kMinBytes || v.size() != v.capacity()) return;
+        std::lock_guard lock(mutex);
+        if (bytes + v.capacity() > kMaxBytes) return; // freed by the caller's vector
+        bytes += v.capacity();
+        free[v.size()].push_back(std::move(v));
+    }
+    void clear()
+    {
+        std::lock_guard lock(mutex);
+        free.clear();
+        bytes = 0;
+    }
+};
+
+LayerPool& layerPool()
+{
+    static LayerPool* p = new LayerPool; // never destroyed: images may outlive statics
+    return *p;
+}
+
+// An RGBA picture being worked on (layer, canvas). Its storage comes from and goes back to layerPool().
 struct Image {
     int w = 0, h = 0;
     std::vector<uint8_t> px;
     Image() = default;
-    Image(int width, int height) : w(width), h(height), px(size_t(width) * height * 4, 0) {}
+    Image(int width, int height) : w(width), h(height), px(layerPool().take(size_t(width) * height * 4)) {}
+    Image(const Image&) = default;
+    Image& operator=(const Image&) = default;
+    Image(Image&& o) noexcept : w(o.w), h(o.h), px(std::move(o.px)) { o.w = o.h = 0; }
+    Image& operator=(Image&& o) noexcept
+    {
+        if (this != &o) {
+            layerPool().give(std::move(px));
+            px = std::move(o.px);
+            w = std::exchange(o.w, 0);
+            h = std::exchange(o.h, 0);
+        }
+        return *this;
+    }
+    ~Image() { layerPool().give(std::move(px)); }
     bool empty() const { return w <= 0 || h <= 0; }
     uint8_t* data() { return px.data(); }
     const uint8_t* data() const { return px.data(); }
@@ -167,7 +235,11 @@ struct Source {
     std::shared_ptr<StillSource> still;
     bool failed = false;
     std::chrono::steady_clock::time_point used;
+    int64_t usedFrame = -1; // last output frame that asked for it (export: dropped once rendering went past it)
 };
+
+// Output frame the calling thread renders right now (Renderer::render)
+thread_local int64_t t_frame = -1;
 
 bool looksLikeStill(const QString& path)
 {
@@ -245,6 +317,7 @@ struct Renderer::Impl {
             auto it = sources.find(key);
             if (it != sources.end()) {
                 it->second.used = std::chrono::steady_clock::now();
+                it->second.usedFrame = std::max(it->second.usedFrame, t_frame);
                 return it->second;
             }
         }
@@ -275,9 +348,18 @@ struct Renderer::Impl {
             ro.threads = options.decoderThreads;
             ro.behind = std::max(4, options.parallelFrames);
             ro.ahead = std::max(6, options.parallelFrames + 2);
+            if (options.mode == Mode::Export) {
+                // Export asks in order (workers at most a few frames apart): the small default windows suffice.
+                // Measured 1080p, 3 tracks, 10 workers: peak 1.68 -> 1.35 GB at the same frame rate.
+                ro.behind = 4;
+                ro.ahead = 6;
+            }
             if (auto r = Video::Reader::open(file, ro)) {
                 auto v = std::make_shared<VideoSource>();
-                r->setFrameRate(AVRational{options.format.rate.num, options.format.rate.den});
+                // Only when the file states none (as engine/video/Producer): overriding it put two pictures of a
+                // variable-rate file on one position, the first one won (a flash frame of a phone video went missing)
+                if (r->info().frameRate.num <= 0 || r->info().frameRate.den <= 0)
+                    r->setFrameRate(AVRational{options.format.rate.num, options.format.rate.den});
                 v->info = r->info();
                 const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(v->info.format);
                 v->hasAlpha = !desc || (desc->flags & AV_PIX_FMT_FLAG_ALPHA);
@@ -291,6 +373,7 @@ struct Renderer::Impl {
         }
         s.failed = !s.video && !s.still;
         s.used = std::chrono::steady_clock::now();
+        s.usedFrame = t_frame;
         std::lock_guard lock(sourceMutex);
         return sources.emplace(key, s).first->second;
     }
@@ -471,7 +554,10 @@ struct Renderer::Impl {
     }
 
     // Title text onto an output-size layer (clip frame t)
-    void drawTitle(Image& layer, const Clip& c, double t, const Ctx& ctx, double sizeOverride = 0)
+    // Draws the title onto layer, whose top left is at (shift) of the output frame. bounds: instead of drawing, the
+    // part of the output frame it covers (whole pixels, inside the frame)
+    void drawTitle(Image& layer, const Clip& c, double t, const Ctx& ctx, double sizeOverride = 0, QPoint shift = {},
+                   QRect* bounds = nullptr)
     {
         const TitleStyle& st = c.title;
         const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
@@ -507,10 +593,17 @@ struct Renderer::Impl {
             p.outlineColor = st.outlineColor;
             p.outline = (outlineLayer ? 2 * st.outlineWidth : 0.0) * sy;
             p.room = (outline ? 2 * st.outlineWidth : 0.0) * sy;
+            if (bounds) {
+                *bounds |= Text::bounds(p).toAlignedRect();
+                return;
+            }
+            p.area.translate(-shift);
             Text::draw(layer.data(), layer.w, layer.h, p);
         };
+        if (bounds) *bounds = QRect();
         if (outline) layerOf(true);
         layerOf(false);
+        if (bounds) *bounds &= QRect(0, 0, ctx.W, ctx.H);
     }
 
     // One clip's picture at timeline frame f on a transparent output-size layer; empty = nothing visible
@@ -526,11 +619,28 @@ struct Renderer::Impl {
         // The source picture and where it goes at zoom 1 (project pixels)
         Image src;
         QSizeF fit(ctx.PW, ctx.PH);
+        // A title drawn only as large as its text: where that part sits in the full-frame picture it stands for
+        QPoint part;
+        bool partial = false;
         if (c.isTitle()) {
             double size = 0;
             if (Keys::animated(c, AnimParam::TitleSize)) size = Keys::valueAt(c, AnimParam::TitleSize, t);
-            src = Image(W, H);
-            drawTitle(src, c, t, ctx, size);
+            QRect box;
+            // Effects (blur, glow …) work on the whole picture: there it stays full size
+            if ((transform || crop) && c.effects.isEmpty() && !ColorGrade::active(c)) {
+                drawTitle(src, c, t, ctx, size, {}, &box);
+                // Even offset: the mip steps of Compose::draw average the same 2x2 blocks as on the full picture
+                box.setLeft(box.left() & ~1);
+                box.setTop(box.top() & ~1);
+                if (box.isEmpty()) return {};
+                partial = true;
+                part = box.topLeft();
+                src = Image(box.width(), box.height());
+                drawTitle(src, c, t, ctx, size, part);
+            } else {
+                src = Image(W, H);
+                drawTitle(src, c, t, ctx, size);
+            }
         } else if (c.isNested()) {
             if (!tl.nested || depth > 16) return {};
             const auto it = tl.nested->constFind(c.sequenceId);
@@ -625,10 +735,12 @@ struct Renderer::Impl {
             bg = std::make_unique<BlurFill::Background>(BlurFill::makeBackground(
                 src.data(), src.w, src.h, double(src.w) / src.h, shares, ctx.PW / ctx.PH, c.transform.fillBlur,
                 c.transform.fillDim));
+        // The full-frame picture the source stands for (a title drawn at text size is a part of it)
+        const int fullW = partial ? W : src.w, fullH = partial ? H : src.h;
         if (crop) {
             const uint8_t none[4] = {0, 0, 0, 0};
-            Compose::crop(src.data(), src.w, src.h, shares[0] * src.w, shares[1] * src.h, (1 - shares[2]) * src.w,
-                          (1 - shares[3]) * src.h, none);
+            Compose::crop(src.data(), src.w, src.h, shares[0] * fullW - part.x(), shares[1] * fullH - part.y(),
+                          (1 - shares[2]) * fullW - part.x(), (1 - shares[3]) * fullH - part.y(), none);
         }
         const double zx = transform ? val(AnimParam::ZoomX) : 1.0, zy = transform ? val(AnimParam::ZoomY) : 1.0;
         const double x = transform ? val(AnimParam::PosX) : 0.0, y = transform ? val(AnimParam::PosY) : 0.0;
@@ -636,7 +748,11 @@ struct Renderer::Impl {
         const double rx = (ctx.PW - w) / 2 + x, ry = (ctx.PH - h) / 2 - y;
         const double angle = transform ? -val(AnimParam::Rotation) : 0.0;
         layer = Image(W, H);
-        const Compose::Affine m = Compose::placement(rx * sx, ry * sy, w * sx, h * sy, angle, src.w, src.h, true, true);
+        Compose::Affine m = Compose::placement(rx * sx, ry * sy, w * sx, h * sy, angle, fullW, fullH, true, true);
+        if (partial) { // the part's pixel (0, 0) is the full picture's part.x(), part.y()
+            m.c += m.a * part.x() + m.b * part.y();
+            m.f += m.d * part.x() + m.e * part.y();
+        }
         Compose::draw(layer.data(), W, H, src.data(), src.w, src.h, m, blurFill ? 1.0 : opacity);
         if (bg) {
             BlurFill::composite(layer.data(), W, H, *bg);
@@ -981,6 +1097,9 @@ struct Renderer::Impl {
         }
     }
 
+    // Drops sources last used before output frame `frame` (export only: it renders forward)
+    void dropBefore(int64_t frame);
+
     // A timeline's picture at frame f onto canvas (black or transparent background already there)
     void renderTimeline(const Timeline& tl, int f, Image& canvas, const Ctx& ctx, const QString& prefix, bool subtitles,
                         int depth)
@@ -1002,6 +1121,19 @@ struct Renderer::Impl {
         if (subtitles) subtitleLayer(canvas, tl, f, ctx);
     }
 };
+
+void Renderer::Impl::dropBefore(int64_t frame)
+{
+    std::vector<Source> gone; // closed outside the lock
+    std::lock_guard lock(sourceMutex);
+    for (auto it = sources.begin(); it != sources.end();)
+        if (it->second.usedFrame >= 0 && it->second.usedFrame < frame) {
+            gone.push_back(std::move(it->second));
+            it = sources.erase(it);
+        } else {
+            ++it;
+        }
+}
 
 Renderer::Renderer(const Timeline& tl, const Options& options) : d(std::make_unique<Impl>())
 {
@@ -1028,6 +1160,12 @@ Frame Renderer::render(int64_t frame)
     ctx.fps = d->options.format.rate.fps();
     ctx.preview = d->options.mode == Mode::Preview;
     ctx.bypassGrade = ctx.preview && d->options.gradeBypass && d->options.gradeBypass->load();
+
+    // Export renders forward: decoders (and their cached pictures) of clips the export has passed go. A source asked
+    // for again later (the same file further on) is opened again.
+    if (d->options.mode == Mode::Export && frame % 16 == 0)
+        d->dropBefore(frame - std::max<int64_t>(int64_t(2 * ctx.fps), 4 * d->options.parallelFrames + 8));
+    t_frame = frame;
 
     // Rendered straight into a pooled buffer (its vector lent to the canvas)
     Frame f;
@@ -1101,6 +1239,35 @@ Renderer::Stats Renderer::stats() const
     std::lock_guard lock(d->sourceMutex);
     s.sourcesOpen = int(d->sources.size());
     return s;
+}
+
+void releasePools()
+{
+    layerPool().clear();
+    pool().clear();
+}
+
+QString unsupported(const Timeline& tl)
+{
+    auto check = [](const Timeline& t) -> QString {
+        for (const Track& track : t.video)
+            for (const Clip& c : track.clips)
+                for (const EffectInstance& e : c.effects) {
+                    if (!e.enabled) continue;
+                    const EffectDescriptor* d = EffectRegistry::find(e.effectId);
+                    if (!d || d->fixed || !d->video) continue;
+                    if (e.effectId == QLatin1String("color") || e.effectId == QLatin1String("blur")
+                        || e.effectId == QLatin1String("chromakey") || VideoEffects::isOwn(e.effectId))
+                        continue;
+                    return e.effectId;
+                }
+        return {};
+    };
+    QString why = check(tl);
+    if (why.isEmpty() && tl.nested)
+        for (const Timeline& n : *tl.nested)
+            if (why.isEmpty()) why = check(n);
+    return why;
 }
 
 bool ownPicture()

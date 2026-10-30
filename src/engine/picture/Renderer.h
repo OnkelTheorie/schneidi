@@ -141,6 +141,13 @@ private:
     std::unique_ptr<Impl> d;
 };
 
+// Gives back the buffers kept for reuse (frames, layers): after an export, when nothing renders for a while
+void releasePools();
+
+// Why this timeline cannot be rendered by this engine yet: the id of an effect it does not have (stabilize, frei0r
+// plugins …); empty = it can. Callers take the MLT path meanwhile.
+QString unsupported(const Timeline& tl);
+
 // SCHNEIDI_PICTURE=own|mlt (read once): which picture path the engine uses while both exist. Default "mlt" until
 // package 4/5 switch preview and export over.
 bool ownPicture();

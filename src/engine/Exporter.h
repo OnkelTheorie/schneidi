@@ -22,6 +22,12 @@ class Tractor;
 class Producer;
 class Filter;
 } // namespace Mlt
+namespace Picture {
+class Renderer;
+}
+namespace Audio {
+class Mixer;
+}
 class TimelineBuilder;
 class ExportWriter;
 class QSaveFile;
@@ -63,6 +69,8 @@ struct ExportSettings {
     QHash<QString, int> mediaLengths;
     // Who writes a video file: the own path (engine/ExportWriter: fetching and encoding in separate threads) or MLT's
     // avformat consumer. Default = ExportWriter::wanted(); formats the own path cannot write always go through MLT.
+    // Since 0.15 the own path renders with the own picture engine (Picture::Renderer) and writes every output; Mlt
+    // (like SCHNEIDI_PICTURE=mlt, AudioPath::Mlt or a timeline the engine cannot render yet) takes the old MLT graph.
     enum class Writer { Default, Mlt, Own };
     Writer writer = Writer::Default;
     // Smart render (engine/SmartRender): copy what shows a file unchanged instead of encoding it (own path, H.264/H.265,
@@ -147,6 +155,11 @@ private:
     void convertToGif();
     void finishGif(bool ok, const QString& log);
 
+    // Own picture engine and mixer instead of the MLT graph for this export? (settings, environment, timeline)
+    bool ownPathFor(const Timeline& tl, const ExportSettings& s, bool ownAudio, const QString& sampleFormat) const;
+    QSize outputSize() const; // of the file (both paths)
+    double outputFps() const;
+
     // Stabilization: missing analyses (engine/Stabilizer) run first in a thread, then start() again for real.
     // false = nothing to analyze
     bool runAnalyses(const Timeline& tl, const ExportSettings& s);
@@ -166,6 +179,10 @@ private:
         std::unique_ptr<Mlt::Producer> source;
         std::unique_ptr<Mlt::Filter> sound; // own audio engine on source (engine/MixedSound)
         std::unique_ptr<Mlt::Producer> soundSource; // smart render: carries `sound` instead of source
+        // Own path: nothing of the above
+        std::shared_ptr<Picture::Renderer> renderer;
+        std::shared_ptr<Audio::Mixer> mixer;
+        int colorspace = 709;
         int length = 0;
         QString error;
     };
@@ -204,6 +221,13 @@ private:
     std::unique_ptr<QSaveFile> m_subtitles; // SRT next to the file (ExportSettings::subtitlePath), committed at success
     ExportSettings m_settings;
     bool m_convertRate = false;
+    // Own path (Picture::Renderer + Audio::Mixer, engine/ExportWriter::Own); no MLT objects then
+    bool m_own = false;
+    std::shared_ptr<Picture::Renderer> m_renderer;
+    std::shared_ptr<Audio::Mixer> m_mixer;
+    QSize m_outSize;
+    FrameRate m_outRate;
+    int m_colorspace = 709;
     bool m_ownAudio = false;  // sound from engine/MixedSound
     QString m_sampleFormat;   // own audio: FFmpeg sample format of the audio encoder
     int m_threads = 0, m_frames = 1;
