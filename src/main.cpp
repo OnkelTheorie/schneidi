@@ -2,6 +2,7 @@
 #include "buildinfo.h"
 #include "app/CrashReport.h"
 #include "app/InputBindings.h"
+#include "app/LaunchArgs.h"
 #include "app/Log.h"
 #include "core/ProjectFile.h"
 #include "app/MainWindow.h"
@@ -153,17 +154,13 @@ int main(int argc, char* argv[])
     qInfo("Startzeit: Engine %lld ms, Fenster sichtbar nach %lld ms", afterEngine - beforeEngine, startTimer.elapsed());
 
     // Files from the command line directly into the Media Pool
-    QStringList files = app.arguments().mid(1);
-    files.removeAll("--verbose");
-    const bool demo = files.removeAll("--demo") > 0; // test helper: additionally place on the timeline
+    const QStringList args = app.arguments().mid(1);
+    QStringList files = LaunchArgs::files(args); // without options (also Qt's X11 ones such as -geometry)
+    const bool demo = args.contains("--demo"); // test helper: additionally place on the timeline
     // Test helper: --actions select_all,toggle_enabled triggers actions (IDs from keybindings.json) after startup
-    for (const char* opt : {"--screenshot", "--wait", "--lang", "--format", "--storage", "--design", "--size"})
-        if (const int i = files.indexOf(opt); i >= 0) files.remove(i, std::min<qsizetype>(2, files.size() - i));
     QStringList actions;
-    if (const int i = files.indexOf("--actions"); i >= 0 && i + 1 < files.size()) {
-        actions = files.at(i + 1).split(',', Qt::SkipEmptyParts);
-        files.remove(i, 2);
-    }
+    if (const int i = args.indexOf("--actions"); i >= 0 && i + 1 < args.size())
+        actions = args.at(i + 1).split(',', Qt::SkipEmptyParts);
     // .schneidi file as argument = open project (e.g. double-click in the file manager)
     QString projectFile;
     for (const QString& f : files)

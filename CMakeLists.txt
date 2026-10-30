@@ -196,6 +196,7 @@ add_library(schneidi_lib STATIC
     src/app/Theme.h               src/app/Theme.cpp
     src/app/InputBindings.h       src/app/InputBindings.cpp
     src/app/MainWindow.h          src/app/MainWindow.cpp
+    src/app/LaunchArgs.h          src/app/LaunchArgs.cpp
     src/app/MainWindowActions.cpp
     src/app/MainWindowLayout.cpp
     src/app/MainWindowProject.cpp src/app/MainWindowLive.cpp src/app/MainWindowSettings.cpp
