@@ -37,6 +37,7 @@ schneidi_test(test_effect_order)
 target_link_libraries(test_effect_order PRIVATE schneidi_cli_lib)
 schneidi_test(test_i18n)
 schneidi_test(test_effects_render)
+schneidi_test(test_output_color) # RGBA -> encoder formats (all layouts, 8/10 bit, NV12/P010, j formats) against the formula
 schneidi_test(test_preview_export)
 schneidi_test(test_audio)
 schneidi_test(test_preview_audio)
@@ -78,6 +79,8 @@ schneidi_test(test_smart_render)
 schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the own decoder: same pictures as the ffmpeg command
 schneidi_test(test_occlusion)
 schneidi_test(test_video_convert) # toRgba sets the colour matrix per conversion (BT.2020 after/before 601)
+schneidi_test(test_video_reader) # own decoder: jumps/threads/hardware = pictures in order, hibernation, rotation, file properties
+schneidi_test(test_picture_regression) # picture engine against independent references: timing, layers, transitions, outline, downscale, threads
 schneidi_test(test_crop)
 schneidi_test(test_picture_pump) # preview frame pump: sync under load, catch-up, seek, live change, backward
 schneidi_test(test_fast_seek) # seek window, scrubbing (close picture, then the exact one), recently shown frames

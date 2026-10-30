@@ -36,7 +36,7 @@ int64_t floorDiv(int64_t a, int64_t b)
 
 double dbToGain(double db)
 {
-    if (db <= kMinVolumeDb) return 1e-10; // -inf: MLT's -200 dB, practically silent
+    if (db <= kMinVolumeDb) return 1e-10; // -inf: -200 dB, practically silent
     return std::pow(10.0, std::min(db, kMaxGainDb) / 20.0);
 }
 
@@ -58,22 +58,16 @@ bool sameSound(const Timeline& a, const Timeline& b)
     return TimelineOps::sameNested(a, b);
 }
 
-// Gain of a curve value (fades, transitions): below 0.001 silent, as the MLT path sets -200 dB there
+// Gain of a curve value (fades, transitions): below 0.001 silent (-200 dB)
 double curveGain(double g) { return g > 0.001 ? g : 1e-10; }
 
-// Frame <-> sample. Exact: frame f starts at round(f * rate / fps) with the rational frame rate. MLT computes the same
-// with the frame rate as float (mlt_audio_calculate_samples_to_position), which drifts at 29.97 over long times.
+// Frame <-> sample: frame f starts at round(f * rate / fps) with the rational frame rate (no drift at 29.97)
 struct Clock {
     int rate = 48000;
     FrameRate fps;
-    bool mlt = false;
 
     int64_t start(int64_t f) const
     {
-        if (mlt) {
-            const double r = double(float(fps.fps()));
-            return int64_t(double(f) * rate / r + (f < 0 ? -0.5 : 0.5));
-        }
         const int64_t n = f * rate * fps.den;
         return floorDiv(2 * n + fps.num, 2 * int64_t(fps.num));
     }
@@ -84,24 +78,22 @@ struct Clock {
         while (start(f) > s) --f;
         return f;
     }
-    // Samples of a fraction of a frame (sub-frame offsets), like the MLT path rounds them
+    // Samples of a fraction of a frame (sub-frame offsets)
     int64_t fraction(double frames) const { return std::lround(frames * rate / fps.fps()); }
 };
 
-// One gain or pan curve over timeline frames [from, to) (in the MLT path: one volume/panner filter on one excerpt).
-// Exact: v holds the values at the frame boundaries from..to, a frame runs linearly from its start value to its end
-// value. MLT compatibility: v holds one value per frame, reached at the frame's end; the first frame is constant.
+// One gain or pan curve over timeline frames [from, to): v holds the values at the frame boundaries from..to, a frame
+// runs linearly from its start value to its end value.
 struct Stage {
     enum Kind { Gain, Pan } kind = Gain;
     int64_t from = 0, to = 0;
     std::vector<double> v; // one entry: constant
     // Value at the start and the end of frame k
-    std::pair<double, double> at(int64_t k, bool mlt) const
+    std::pair<double, double> at(int64_t k) const
     {
         if (v.size() == 1) return {v[0], v[0]};
         const size_t i = size_t(std::clamp<int64_t>(k - from, 0, int64_t(v.size()) - 1));
-        if (!mlt) return {v[i], v[std::min(i + 1, v.size() - 1)]};
-        return i == 0 ? std::pair{v[0], v[0]} : std::pair{v[i - 1], v[i]};
+        return {v[i], v[std::min(i + 1, v.size() - 1)]};
     }
 };
 
@@ -184,12 +176,12 @@ struct Mixer::Impl {
     bool metering = false;
     std::vector<float> peaks; // per track L, R of the last render (metering)
     int64_t expected = INT64_MIN; // next render position
-    int latency = 0;              // master (limiter), compensated in exact mode
+    int latency = 0;              // master (limiter), compensated
     std::vector<float> mix[kChannels], track[kChannels], voice[kChannels], scratch;
 
     Impl(const Options& o, FrameRate fps) : opt(o)
     {
-        clock = {o.rate, fps, o.mltCompat};
+        clock = {o.rate, fps};
     }
 
     int fileLength(const QString& path);
@@ -244,13 +236,10 @@ void Mixer::Impl::applyMixValues(const Timeline& tl)
     }
     masterGain = tl.masterVolumeDb == 0.0 ? 1.0 : dbToGain(tl.masterVolumeDb);
     limiterDb = std::clamp(tl.masterLimiterDb, -40.0, 0.0);
-    // The MLT path keeps the ceiling in milli-dB
-    if (opt.mltCompat) limiterDb = std::lround(limiterDb * 1000) / 1000.0;
 }
 
 void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
 {
-    const bool mlt = opt.mltCompat;
     const TimelineOps::SourceLength srcLen = [&](const Clip& c) {
         if (c.isNested()) {
             if (!nested) return 0;
@@ -261,7 +250,7 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
     };
     const QVector<TimelineOps::TransitionSpan> spans = TimelineOps::transitions(track, srcLen);
 
-    // Hard cuts get a short ramp against the click (like the MLT path's attachEdgeDeclick): clip edges without a fade
+    // Hard cuts get a short ramp against the click: clip edges without a fade
     // that do not continue seamlessly (split clip)
     auto continues = [](const Clip& a, const Clip& b) {
         return !a.mediaPath.isEmpty() && a.mediaPath == b.mediaPath && a.audioStream == b.audioStream && a.enabled
@@ -294,7 +283,7 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
             if (v.retimed) v.fileFrames = fileLength(c.mediaPath);
         }
 
-        // Excerpts as the MLT path cuts the clip: transition in, body, transition out
+        // Excerpts of the clip: transition in, body, transition out
         struct Excerpt { int from, to; const TimelineOps::TransitionSpan* span; };
         QVector<Excerpt> excerpts;
         int bodyStart = c.start, bodyEnd = c.end();
@@ -317,7 +306,7 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
         v.uEnd = clock.start(last);
         v.sourceOffset = clock.start(c.in + (first - c.start)) - v.uStart;
         v.shift = c.subframe > 0 ? clock.fraction(c.subframe / 100.0) : 0;
-        v.tEnd = mlt ? v.uEnd : v.uEnd + v.shift; // MLT drops what the offset pushes past the clip end
+        v.tEnd = v.uEnd + v.shift;
 
         const int length = c.length();
         const int fi = std::min(c.fadeIn, length), fo = std::min(c.fadeOut, length - fi);
@@ -327,8 +316,8 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
             s.kind = kind;
             s.from = from;
             s.to = to;
-            // exact: values at the boundaries from..to; MLT: values of the frames from..to-1
-            const int n = mlt ? to - from : to - from + 1;
+            // values at the boundaries from..to
+            const int n = to - from + 1;
             s.v.resize(size_t(n));
             for (int i = 0; i < n; ++i) s.v[size_t(i)] = value(from + i);
             v.stages.push_back(std::move(s));
@@ -336,18 +325,15 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
         auto addConstant = [&](Stage::Kind kind, int from, int to, double value) {
             v.stages.push_back(Stage{kind, from, to, {value}});
         };
-        // Fade handles. Exact: 0 at the clip edge, 1 at the end of the fade. The MLT path's curve (TimelineOps)
-        // is shifted by a frame for its frame-late gains: its fade out ends at the start of the last frame.
-        auto fadeGain = [&](int k) { // k: timeline frame (MLT) or boundary (exact)
+        // Fade handles: 0 at the clip edge, 1 at the end of the fade
+        auto fadeGain = [&](int k) { // k: frame boundary on the timeline
             const int t = k - c.start;
-            if (mlt) return curveGain(TimelineOps::audioFadeGain(c, t));
             double g = 1.0;
             if (fi > 0 && t < fi) g = std::min(g, double(t) / fi);
             if (fo > 0 && t > length - fo) g = std::min(g, double(length - t) / fo);
             return curveGain(std::sin(std::clamp(g, 0.0, 1.0) * M_PI / 2));
         };
         auto transitionGain = [&](const TimelineOps::TransitionSpan& s, int k) {
-            if (mlt) return curveGain(TimelineOps::audioTransitionGain(s, c.id, k));
             const int len = std::max(1, s.length());
             const double i = k - s.start;
             const double t = std::clamp(c.id == s.rightId ? i / len : (len - i) / len, 0.0, 1.0);
@@ -373,16 +359,9 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
             if (!((fi <= 0 || a >= fi) && (fo <= 0 || b <= length - fo))) addCurve(Stage::Gain, e.from, e.to, fadeGain);
             if (e.span) addCurve(Stage::Gain, e.from, e.to, [&](int k) { return transitionGain(*e.span, k); });
         }
-        // Declick: at a clip edge where no transition takes over. The MLT path ramps every excerpt that begins at
-        // the clip start / ends at the clip end, also the body before a transition that starts on the edit (the
-        // sound dips to silence for 4 ms in the middle of the dissolve)
+        // Declick: at a clip edge where no transition takes over
         const int64_t ramp = std::max(1, opt.rate / 250); // ~4 ms
         auto edge = [&](bool atStart) -> const Excerpt* {
-            if (mlt) {
-                for (const Excerpt& e : excerpts)
-                    if (atStart ? e.from == c.start : e.to == c.end()) return &e;
-                return nullptr;
-            }
             const Excerpt& e = atStart ? excerpts.first() : excerpts.last();
             return !e.span && (atStart ? e.from == c.start : e.to == c.end()) ? &e : nullptr;
         };
@@ -397,7 +376,7 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
                 v.declickOutLen = int(std::min(ramp, v.declickOut - clock.start(c.end() - 1)));
             }
         if (const EffectInstance* e = EffectRegistry::instance(c, Denoise::EffectId); e && e->enabled) {
-            // as the MLT filter stores them: hundredths
+            // in hundredths (as the project values are rounded)
             auto hundredths = [&](const char* key) {
                 return std::lround(EffectRegistry::value(c, Denoise::EffectId, key).toDouble() * 100.0) / 100.0;
             };
@@ -434,7 +413,7 @@ void Mixer::Impl::restart()
     peakLimiter = PeakLimiter{};
     peakLimiter.setCeilingDb(limiterDb);
     peakLimiter.prepare(kChannels, opt.rate);
-    latency = limiter && !opt.mltCompat ? peakLimiter.latency() : 0;
+    latency = limiter ? peakLimiter.latency() : 0;
     masterApplied = masterGain;
 }
 
@@ -488,8 +467,8 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
                 st.denoisers.back()->setParams(v.denoiseReduction, v.denoiseFloor, v.denoiseTrack);
             }
         }
-        // Exact: the processors run `latency` samples ahead, their output lines up with the timeline
-        const int lead = opt.mltCompat ? 0 : st.denoisers[0]->latency();
+        // The processors run `latency` samples ahead, their output lines up with the timeline
+        const int lead = st.denoisers[0]->latency();
         if (fresh && lead > 0) {
             scratch.resize(size_t(lead) * kChannels);
             float* pre[kChannels];
@@ -504,13 +483,12 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
     }
 
     // Curves frame by frame: a frame's value runs linearly over its samples
-    const bool mlt = opt.mltCompat;
     for (int64_t k = clock.frameAt(u), end = u + count; clock.start(k) < end; ++k) {
         const int64_t f0 = clock.start(k), f1 = clock.start(k + 1), n = f1 - f0;
         const int64_t a = std::max(f0, u), b = std::min(f1, end);
         for (const Stage& s : v.stages) {
             if (k < s.from || k >= s.to) continue;
-            const auto [g0, g1] = s.at(k, mlt);
+            const auto [g0, g1] = s.at(k);
             const double step = (g1 - g0) / double(n);
             float* l = out[0] + (a - u);
             float* r = out[1] + (a - u);
@@ -520,7 +498,7 @@ void Mixer::Impl::renderVoice(Voice& v, VoiceState& st, int64_t u, int count, fl
                     *l = float(*l * g);
                     *r = float(*r * g);
                 }
-            } else { // balance like MLT's panner: the far side is turned down linearly
+            } else { // balance: the far side is turned down linearly
                 for (int64_t i = a; i < b; ++i, ++l, ++r) {
                     const double w = g0 + step * double(i - f0);
                     *l = float(*l * (w < 0 ? 1.0 : std::max(0.0, 1.0 - w)));
@@ -548,7 +526,7 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
     for (size_t ti = 0; ti < tracks.size(); ++ti) {
         TrackPlan& tp = tracks[ti];
         TrackState& ts = trackStates[ti];
-        // Fader, then balance like MLT's panner; a changed value glides (updateMix)
+        // Fader, then balance; a changed value glides (updateMix)
         const double side[kChannels] = {tp.pan < 0 ? 1.0 : std::max(0.0, 1.0 - tp.pan),
                                         tp.pan < 0 ? std::max(0.0, tp.pan + 1.0) : 1.0};
         double target[kChannels];
@@ -577,7 +555,7 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
                 for (int64_t i = 0; i < b - a; ++i) track[c][size_t(a - pos + i)] += out[c][i];
             any = true;
         }
-        // EQ and compressor run on silence too (their tails), like the MLT path's track filter
+        // EQ and compressor run on silence too (their tails)
         if (!any && !tp.eq.on && !tp.dynamics.on) {
             std::copy(target, target + kChannels, ts.applied);
             continue;
@@ -590,7 +568,7 @@ void Mixer::Impl::renderMix(int64_t pos, int count)
             if (tp.dynamics.on) ts.comp.processPlanar(planar, count, kChannels, opt.rate);
             for (int c = 0; c < kChannels; ++c) std::copy(planar + size_t(c) * count, planar + size_t(c + 1) * count, track[c].begin());
         }
-        if (!glide) { // fader, then pan (each rounds to float, like MLT's filters)
+        if (!glide) { // fader, then pan (each rounds to float)
             for (int c = 0; c < kChannels; ++c)
                 for (int i = 0; i < count; ++i) {
                     float x = track[c][size_t(i)];
@@ -695,7 +673,7 @@ void Mixer::Impl::render(int64_t pos, int count, float* const* out)
         for (int c = 0; c < kChannels; ++c)
             std::copy(m.scratch.begin() + ptrdiff_t(c) * n, m.scratch.begin() + ptrdiff_t(c + 1) * n, m.mix[c].begin());
     };
-    // Exact: the limiter's delay is compensated by mixing that far ahead (primed on a fresh start)
+    // The limiter's delay is compensated by mixing that far ahead (primed on a fresh start)
     if (restarted && m.latency > 0) {
         m.renderMix(pos, m.latency);
         limit(m.latency);

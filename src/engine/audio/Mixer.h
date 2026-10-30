@@ -33,10 +33,6 @@ public:
         // Length of a media file in frames of the project rate (the length the project knows, needed for
         // transition handles and reversed clips); unset or <= 0 = taken from the file
         std::function<int(const QString& path)> fileLength;
-        // Behave like the MLT audio path, only to compare with references rendered through it (goes with that path):
-        // gain and pan curves reach a frame's value at its end and start constant in every excerpt, sub-frame clips
-        // are cut at the clip end, latency is not compensated, frame boundaries use MLT's float frame rate.
-        bool mltCompat = false;
         // Short ramps at hard cuts against clicks; off to measure the plain source of a clip (analyses)
         bool declick = true;
     };

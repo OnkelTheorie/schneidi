@@ -143,7 +143,7 @@ constexpr ParamAlias kParamAliases[] = {
     {"lenscorrection", "brightness", "4", true},
     {"pixeliz0r", "BlockSizeX", "0", true},
     {"pixeliz0r", "BlockSizeY", "1", true},
-    {"alpha0ps", "Shrink/grow amount", "4", false}, // older Kdenlive file of alpha0ps
+    {"alpha0ps_alpha0ps", "Shrink/grow amount", "4", false}, // older Kdenlive file of alpha0ps
 };
 
 QString frei0rPlugin(const QString& service)
@@ -367,6 +367,9 @@ const EffectDescriptor* descriptorFor(const QString& service)
     if (const EffectDescriptor* d = EffectRegistry::find(service)) return d;
     for (const EffectDescriptor& d : EffectRegistry::all())
         if (d.mltService == service) return &d;
+    // frei0r 1.7 split alpha0ps into alpha0ps_alpha0ps/_alphagrad/_alphaspot; older Kdenlive files and Shotcut's alpha
+    // filters name the old plugin
+    if (service == QLatin1String("frei0r.alpha0ps")) return descriptorFor(QStringLiteral("frei0r.alpha0ps_alpha0ps"));
     return nullptr;
 }
 
