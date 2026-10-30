@@ -672,41 +672,63 @@ const Entry* entry(const QString& id)
     return nullptr;
 }
 
-struct Ctx {
-    mlt_properties props;
-    int pos, len;
-    double num(const char* name, double def) const
-    {
-        if (!mlt_properties_get(props, name)) return def;
-        return mlt_properties_anim_get_double(props, name, pos, len);
-    }
-    bool flag(const char* name, bool def) const { return mlt_properties_get(props, name) ? num(name, 0) > 0.5 : def; }
-    QColor color(const char* name, const QColor& def) const
-    {
-        if (!mlt_properties_get(props, name)) return def;
-        const mlt_color c = mlt_properties_get_color(props, name);
-        return QColor(c.r, c.g, c.b);
-    }
-    QString text(const char* name, const char* def) const
-    {
-        const char* v = mlt_properties_get(props, name);
-        return QString::fromUtf8(v ? v : def);
-    }
-};
+// The MLT filter's properties as the effect's parameter values
+Params mltParams(mlt_properties props, int pos, int len)
+{
+    Params c;
+    c.has = [props](const char* name) { return mlt_properties_get(props, name) != nullptr; };
+    c.num = [props, pos, len](const char* name) { return mlt_properties_anim_get_double(props, name, pos, len); };
+    c.color = [props](const char* name) {
+        const mlt_color m = mlt_properties_get_color(props, name);
+        return QColor(m.r, m.g, m.b);
+    };
+    c.text = [props](const char* name) { return QString::fromUtf8(mlt_properties_get(props, name)); };
+    return c;
+}
 
 int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* width, int* height, int)
 {
     auto filter = static_cast<mlt_filter>(mlt_frame_pop_service(frame));
     const int pos = mlt_frame_pop_service_int(frame);
     const int len = mlt_frame_pop_service_int(frame);
-    const Kind kind = Kind(mlt_frame_pop_service_int(frame));
+    mlt_frame_pop_service_int(frame); // kind (apply() finds it by the effect id)
     *format = mlt_image_rgba;
     const int err = mlt_frame_get_image(frame, image, format, width, height, 1);
     if (err || !*image || *format != mlt_image_rgba) return err;
-    const Ctx c{MLT_FILTER_PROPERTIES(filter), pos, len};
-    uint8_t* img = *image;
-    const int w = *width, h = *height;
-    switch (kind) {
+    const char* id = mlt_properties_get(MLT_FILTER_PROPERTIES(filter), "_effect");
+    apply(QString::fromUtf8(id ? id : ""), *image, *width, *height, mltParams(MLT_FILTER_PROPERTIES(filter), pos, len),
+          mlt_frame_get_position(frame));
+    return 0;
+}
+
+mlt_frame process(mlt_filter filter, mlt_frame frame)
+{
+    const auto kind = mlt_properties_get_int(MLT_FILTER_PROPERTIES(filter), "_kind");
+    mlt_frame_push_service_int(frame, kind);
+    mlt_frame_push_service_int(frame, int(mlt_filter_get_length2(filter, frame)));
+    mlt_frame_push_service_int(frame, int(mlt_filter_get_position(filter, frame)));
+    mlt_frame_push_service(frame, filter);
+    mlt_frame_push_get_image(frame, getImage);
+    return frame;
+}
+
+} // namespace
+
+bool apply(const QString& effectId, uint8_t* img, int w, int h, const Params& params, int64_t frameNo)
+{
+    const Entry* e = entry(effectId);
+    if (!e) return false;
+    struct Get {
+        const Params& p;
+        double num(const char* name, double def) const { return p.has && p.has(name) ? p.num(name) : def; }
+        bool flag(const char* name, bool def) const { return p.has && p.has(name) ? p.num(name) > 0.5 : def; }
+        QColor color(const char* name, const QColor& def) const { return p.has && p.has(name) ? p.color(name) : def; }
+        QString text(const char* name, const char* def) const
+        {
+            return p.has && p.has(name) ? p.text(name) : QString::fromUtf8(def);
+        }
+    } c{params};
+    switch (e->kind) {
     case Kind::Key: {
         KeyParams p;
         p.color = c.color("0", p.color);
@@ -718,12 +740,10 @@ int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* wi
     }
     case Kind::Glow: glow(img, w, h, c.num("0", 0)); break;
     case Kind::Halftone: halftone(img, w, h, c.num("0", 0.4), c.num("1", 0.3), c.num("2", 0.45), c.num("3", 0.25)); break;
-    case Kind::Noise: {
+    case Kind::Noise:
         // a new pattern every frame, the same one for the same frame (preview = export)
-        const int64_t frameNo = mlt_frame_get_position(frame);
         noise(img, w, h, c.num("0", 0.2), mix(uint32_t(frameNo) * 0x9e3779b9U + 1));
         break;
-    }
     case Kind::Scanlines: scanlines(img, w, h); break;
     case Kind::NoSync: noSync(img, w, h, c.num("0", 0)); break;
     case Kind::Gradient: {
@@ -754,21 +774,10 @@ int getImage(mlt_frame frame, uint8_t** image, mlt_image_format* format, int* wi
         break;
     }
     }
-    return 0;
+    return true;
 }
 
-mlt_frame process(mlt_filter filter, mlt_frame frame)
-{
-    const auto kind = mlt_properties_get_int(MLT_FILTER_PROPERTIES(filter), "_kind");
-    mlt_frame_push_service_int(frame, kind);
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_length2(filter, frame)));
-    mlt_frame_push_service_int(frame, int(mlt_filter_get_position(filter, frame)));
-    mlt_frame_push_service(frame, filter);
-    mlt_frame_push_get_image(frame, getImage);
-    return frame;
-}
-
-} // namespace
+void gaussian(uint8_t* rgba, int w, int h, double sigma) { blur(rgba, w, h, 4, sigma); }
 
 bool isOwn(const QString& effectId) { return entry(effectId) != nullptr; }
 
@@ -782,6 +791,7 @@ mlt_filter create(const QString& effectId)
     mlt_properties p = MLT_FILTER_PROPERTIES(f);
     mlt_properties_set(p, "mlt_service", e->service);
     mlt_properties_set_int(p, "_kind", int(e->kind));
+    mlt_properties_set(p, "_effect", e->id);
     return f;
 }
 

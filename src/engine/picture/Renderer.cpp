@@ -10,6 +10,8 @@
 #include "engine/BlurFill.h"
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
+#include "engine/VideoEffects.h"
+#include "engine/picture/Effects.h"
 #include "engine/video/Compose.h"
 #include "engine/video/Convert.h"
 #include "engine/video/Reader.h"
@@ -20,6 +22,7 @@ extern "C" {
 #include <libavutil/pixdesc.h>
 }
 
+#include <QDebug>
 #include <QFileInfo>
 #include <QFontMetricsF>
 #include <QHash>
@@ -314,8 +317,37 @@ struct Renderer::Impl {
         return l;
     }
 
-    // Effects on the clip's picture (before crop/transform), clip frame t
-    void applyEffects(Image& img, const Clip& c, double t, const Ctx& ctx)
+    // An effect instance's values for VideoEffects::apply (by property name, keyframes at clip frame t)
+    static VideoEffects::Params effectParams(const Clip& c, const EffectInstance& inst, const EffectDescriptor& d, double t)
+    {
+        auto find = [&d](const char* name) -> const EffectParam* {
+            for (const EffectParam& p : d.params)
+                if (p.mltProperty == QLatin1String(name)) return &p;
+            return nullptr;
+        };
+        VideoEffects::Params out;
+        out.has = [find](const char* name) { return find(name) != nullptr; };
+        out.num = [&c, &inst, find, t](const char* name) {
+            const EffectParam* p = find(name);
+            if (p->anim != AnimParam::Count && Keys::animated(c, p->anim)) return Keys::valueAt(c, p->anim, t);
+            const QVariant v = inst.params.value(p->key, p->defaultValue);
+            return p->type == EffectParam::Bool ? (v.toBool() ? 1.0 : 0.0) : v.toDouble();
+        };
+        out.color = [&inst, find](const char* name) {
+            const EffectParam* p = find(name);
+            return inst.params.value(p->key, p->defaultValue).value<QColor>();
+        };
+        out.text = [&inst, find](const char* name) {
+            const EffectParam* p = find(name);
+            return inst.params.value(p->key, p->defaultValue).toString();
+        };
+        return out;
+    }
+
+    // Effects on the clip's picture (before crop/transform), clip frame t; order as TimelineBuilderDetail::applyEffects:
+    // the fixed stages first (grade, then the Green Screen key), then every other effect in the clip's order.
+    // frameHeight: the frame's height in pixels of img (blur strength is relative to it)
+    void applyEffects(Image& img, const Clip& c, double t, const Ctx& ctx, double frameHeight)
     {
         if (ColorGrade::active(c) && !ctx.bypassGrade) {
             const ColorGrade::Params p = ColorGrade::at(c, t);
@@ -324,7 +356,32 @@ struct Renderer::Impl {
             if (!p.isNeutral() || l) ColorGrade::apply(img.data(), img.w, img.h, *ColorGrade::bake(p, l.get()), 1);
             for (const ColorGrade::Window& w : ColorGrade::windowsAt(c, t)) ColorGrade::applyWindow(img.data(), img.w, img.h, w);
         }
-        // TODO(package 1): chromakey, color, blur and the VideoEffects looks
+        if (const EffectInstance* key = EffectRegistry::instance(c, "chromakey"); key && key->enabled)
+            if (const EffectDescriptor* d = EffectRegistry::find(key->effectId))
+                VideoEffects::apply(key->effectId, img.data(), img.w, img.h, effectParams(c, *key, *d, t), int64_t(c.in + t));
+        for (const EffectInstance& inst : c.effects) {
+            if (!inst.enabled) continue;
+            const EffectDescriptor* d = EffectRegistry::find(inst.effectId);
+            if (!d || d->fixed || !d->video) continue;
+            using P = AnimParam;
+            if (inst.effectId == QLatin1String("color")) {
+                const double temp = Keys::valueAt(c, P::FxTemp, t), tint = Keys::valueAt(c, P::FxTint, t);
+                const double sat = Keys::valueAt(c, P::FxSaturation, t);
+                if (temp != 0 || tint != 0 || sat != 0) applyMatrix(img.data(), img.w, img.h, colorMatrix(temp, tint, sat));
+                const double bright = Keys::valueAt(c, P::FxBrightness, t), contrast = Keys::valueAt(c, P::FxContrast, t);
+                if (bright != 0 || contrast != 0) applyLevels(img.data(), img.w, img.h, levels(bright, contrast));
+            } else if (inst.effectId == QLatin1String("blur")) {
+                // Strength 100 = 1/20 of the frame height
+                const double sigma = std::max(0.0, Keys::valueAt(c, P::FxBlur, t)) * frameHeight / 2000.0;
+                VideoEffects::gaussian(img.data(), img.w, img.h, sigma);
+            } else if (!VideoEffects::apply(inst.effectId, img.data(), img.w, img.h, effectParams(c, inst, *d, t),
+                                            int64_t(c.in + t))) {
+                static std::once_flag warned;
+                std::call_once(warned, [&] {
+                    qWarning("Picture engine: effect %s not supported yet (skipped)", qPrintable(inst.effectId));
+                });
+            }
+        }
     }
 
     // Source picture of a media clip at clip frame t, fetched at (dw x dh); empty = none
@@ -520,7 +577,11 @@ struct Renderer::Impl {
             layersDecoded.fetch_add(1, std::memory_order_relaxed);
         }
         if (src.empty()) return {};
-        if (!c.isNested()) applyEffects(src, c, t, ctx);
+        if (!c.isNested()) {
+            // the frame's height in the picture's pixels: the picture is fit.height() project pixels tall at zoom 1
+            const double frameHeight = c.isTitle() ? src.h : src.h * ctx.PH / std::max(1.0, fit.height());
+            applyEffects(src, c, t, ctx, frameHeight);
+        }
 
         auto val = [&](AnimParam p) { return Keys::valueAt(c, p, t); };
         const double opacity = Keys::hasOpacity(c) ? std::clamp(val(AnimParam::Opacity) / 100.0, 0.0, 1.0) : 1.0;

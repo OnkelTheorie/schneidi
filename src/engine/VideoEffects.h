@@ -12,6 +12,7 @@
 #include <QColor>
 #include <QString>
 #include <cstdint>
+#include <functional>
 
 #include <framework/mlt_types.h>
 
@@ -70,6 +71,19 @@ void alphaOps(uint8_t* rgba, int width, int height, const AlphaParams& p);
 
 // ---- MLT ----
 // Is the effect one of these (by effect id, e.g. "chromakey", "frei0r.glow")?
+// Parameter values of an own effect by property name ("0", "softness", … as in EffectRegistry's mltProperty): the MLT
+// filter reads its properties, the own picture engine (engine/picture) the clip's values. has() false = default.
+struct Params {
+    std::function<bool(const char*)> has;
+    std::function<double(const char*)> num;
+    std::function<QColor(const char*)> color;
+    std::function<QString(const char*)> text;
+};
+// Applies the own effect effectId (isOwn) to an RGBA picture; frameNo seeds per-frame patterns (noise). false = not own.
+bool apply(const QString& effectId, uint8_t* rgba, int width, int height, const Params& params, int64_t frameNo);
+// Gaussian blur (three box blurs) of an RGBA picture with straight alpha, sigma in pixels
+void gaussian(uint8_t* rgba, int width, int height, double sigma);
+
 bool isOwn(const QString& effectId);
 // New filter for the effect (nullptr = not an own effect). The parameters are set as properties named like the
 // effect's mltProperty ("0", "1" …); numbers may be animated (anim_set, positions from the filter's in point).

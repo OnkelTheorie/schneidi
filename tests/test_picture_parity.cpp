@@ -3,8 +3,8 @@
 // MLT tractor and through Picture::Renderer, compared pixel by pixel (RGBA, straight alpha). Each case states its
 // tolerance: mean absolute difference per channel and the share of pixels off by more than 24 steps. Intended
 // differences: a picture shown smaller than its size is converted small in one swscale pass (MLT converts it at full
-// size and shrinks it when drawing: edges of moved
-// pictures, text antialiasing, MLT's dissolve in YUV 4:2:2). Also checks that a covered track is not decoded.
+// size and shrinks it when drawing); MLT mixes dissolves and wipes in YUV 4:2:2 (soft chroma at sharp edges), the own
+// engine in RGBA. Also checks that a covered track is not decoded.
 // With SCHNEIDI_PICTURE_BENCH=1: ms per 1080p frame for a 3-track project, MLT vs own.
 
 #include "check.h"
@@ -228,6 +228,82 @@ void testSubtitles()
     parity("subtitle", tl, 5, 1.0, 0.02);
 }
 
+
+void testEffects()
+{
+    std::printf("effects\n");
+    auto with = [](EffectInstance e) {
+        Clip c = media(1, g_pattern, 0, 0, 49);
+        c.effects = {e};
+        return oneTrack({c});
+    };
+    parity("grade", with({"grade", {{"gainY", 1.3}, {"liftR", 0.1}, {"saturation", 70.0}}}), 5, 0.5, 0.005);
+    parity("color", with({"color", {{"brightness", 20.0}, {"saturation", -40.0}, {"temperature", 30.0}}}), 5, 1.0, 0.01);
+    parity("blur", with({"blur", {{"strength", 20.0}}}), 5, 2.0, 0.03);
+    parity("glow", with({"frei0r.glow", {}}), 5, 0.5, 0.005);
+    Timeline key = oneTrack({media(1, g_pattern, 0, 0, 49)});
+    key.video.resize(2);
+    Clip top = media(2, g_pattern2, 0, 0, 49);
+    top.effects = {{"chromakey", {{"color", QColor(0, 192, 0)}}}};
+    key.video[1].clips = {top};
+    parity("chromakey", key, 5, 0.5, 0.005);
+}
+
+void testMore()
+{
+    std::printf("keyframes/fill/nested/ramp\n");
+    Timeline tl = oneTrack({media(1, g_pattern2, 0, 0, 49)});
+    tl.video.resize(2);
+    Clip top = media(2, g_pattern, 0, 0, 49);
+    top.keys[AnimParam::ZoomX] = {{0, 1.0}, {40, 0.5}};
+    top.keys[AnimParam::ZoomY] = {{0, 1.0}, {40, 0.5}};
+    top.keys[AnimParam::PosX] = {{0, 0.0}, {40, 60.0}};
+    tl.video[1].clips = {top};
+    parity("keyframes", tl, 20, 1.5, 0.03);
+    Clip tall = media(1, g_tall, 0, 0, 49);
+    tall.transform.fill = FitFill::Blur;
+    parity("blur-fill", oneTrack({tall}), 5, 1.5, 0.03);
+
+    Timeline inner = oneTrack({media(1, g_pattern, 0, 0, 49)});
+    inner.video.resize(2);
+    Clip small = media(2, g_pattern2, 0, 0, 49);
+    small.transform.zoomX = small.transform.zoomY = 0.5;
+    inner.video[1].clips = {small};
+    auto nested = std::make_shared<NestedTimelines>();
+    nested->insert(7, inner);
+    Clip comp;
+    comp.id = 9;
+    comp.kind = ClipKind::Compound;
+    comp.sequenceId = 7;
+    comp.start = 0;
+    comp.in = 5;
+    comp.out = 40;
+    Timeline outer = oneTrack({comp});
+    outer.nested = nested;
+    parity("compound", outer, 3, 1.5, 0.03);
+
+    Timeline cams;
+    cams.video.resize(2);
+    cams.video[0].clips = {media(1, g_pattern, 0, 0, 49)};
+    cams.video[1].clips = {media(2, g_pattern2, 0, 0, 49)};
+    cams.angles = {{"A", 0, {}}, {"B", 1, {}}};
+    auto camNested = std::make_shared<NestedTimelines>();
+    camNested->insert(8, cams);
+    Clip mc = comp;
+    mc.kind = ClipKind::Multicam;
+    mc.sequenceId = 8;
+    for (int angle : {0, 1}) {
+        mc.angle = angle;
+        Timeline t2 = oneTrack({mc});
+        t2.nested = camNested;
+        parity(angle ? "multicam-b" : "multicam-a", t2, 3, 0.01, 0.0);
+    }
+
+    Clip ramp = media(1, g_pattern, 0, 0, 30);
+    ramp.ramp = {{10, 0.5, 0}};
+    for (int f : {5, 20}) parity("ramp", oneTrack({ramp}), f, 0.01, 0.0);
+}
+
 void testOcclusion()
 {
     std::printf("occlusion\n");
@@ -324,6 +400,8 @@ int main(int argc, char** argv)
     testFadesAndTransitions();
     testTitleStillSpeed();
     testSubtitles();
+    testEffects();
+    testMore();
     testOcclusion();
     bench(tmp.path());
     return Check::result();
