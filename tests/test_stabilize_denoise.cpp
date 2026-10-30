@@ -416,6 +416,38 @@ int main(int argc, char** argv)
         if (!CHECK(after > 0 && after < before * 0.6)) std::printf("       speed 50 %%: jitter %.2f -> %.2f\n", before, after);
     }
 
+    // The analysis reads with the own decoder: the same motions as through MLT (speed 1 and 50 %)
+    for (const double speed : {1.0, 0.5}) {
+        Clip k = mk(1, shaky, 0, 5, 60);
+        k.speed = speed;
+        EffectRegistry::add(k, "stabilize");
+        EffectRegistry::instance(k, "stabilize")->params["accuracy"] = 4.0;
+        const auto r = Stabilizer::request(k, fmt);
+        if (!CHECK(r)) continue;
+        const auto motions = [&](bool mlt) {
+            QFile::remove(Stabilizer::find(*r).path);
+            QString e;
+            CHECK(mlt ? Stabilizer::analyzeMlt(*r, &e) : Stabilizer::analyze(*r, &e));
+            QFile f(Stabilizer::find(*r).path);
+            QList<QByteArray> lines;
+            if (f.open(QIODevice::ReadOnly)) lines = f.readAll().split('\n').mid(2);
+            return lines;
+        };
+        const QList<QByteArray> mlt = motions(true), own = motions(false);
+        double worst = 0;
+        int count = 0;
+        for (qsizetype i = 0; i < std::min(mlt.size(), own.size()); ++i) {
+            const QList<QByteArray> a = mlt[i].split(' '), b = own[i].split(' ');
+            if (a.size() < 2 || b.size() < 2) continue;
+            // shift in picture widths: 0.001 = 1 pixel of 960
+            worst = std::max({worst, std::abs(a[0].toDouble() - b[0].toDouble()), std::abs(a[1].toDouble() - b[1].toDouble())});
+            ++count;
+        }
+        if (!CHECK(count > 50 && mlt.size() == own.size() && worst < 0.002))
+            std::printf("       speed %.1f: %d frames, largest difference %.4f\n", speed, count, worst);
+        std::printf("analysis own vs MLT, speed %.1f: largest shift difference %.5f picture widths\n", speed, worst);
+    }
+
     // Background queue: runs, reports, can be cancelled
     {
         Stabilizer* st = Stabilizer::instance();

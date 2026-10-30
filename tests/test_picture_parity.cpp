@@ -10,12 +10,15 @@
 #include "check.h"
 
 #include "core/ProjectFormat.h"
+#include "core/EffectRegistry.h"
 #include "engine/Profiles.h"
+#include "engine/Stabilizer.h"
 #include "engine/TimelineBuilder.h"
 #include "engine/picture/Renderer.h"
 
 #include <Mlt.h>
 #include <QApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QImage>
 #include <QTemporaryDir>
@@ -417,6 +420,36 @@ void bench(const QString& dir)
 
 } // namespace
 
+// Stabilization: the analysis result applied by the own engine (StabilizeCorrection::warpRgba) like the MLT filter
+void testStabilize(const QString& dir)
+{
+    std::printf("stabilize\n");
+    const QString still = Check::makeMedia(dir + "/stab-still.png", {"-f", "lavfi", "-i", "testsrc2=s=640x384:r=1:d=1", "-vf",
+                                                                    "gblur=sigma=2", "-frames:v", "1"});
+    const QString shaky = Check::makeMedia(dir + "/shaky.mp4", {"-loop", "1", "-framerate", "25", "-i", still, "-t", "2", "-vf",
+                                                                "crop=560:315:40+12*sin(n*1.7):34+9*cos(n*2.3),scale=320:180",
+                                                                "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0",
+                                                                "-pix_fmt", "yuv420p"});
+    if (!CHECK(!shaky.isEmpty())) return;
+    QDir(Stabilizer::cacheDir()).removeRecursively();
+    for (const char* border : {"auto", "black"}) {
+        Clip c = media(1, shaky, 0, 0, 40);
+        EffectRegistry::add(c, "stabilize");
+        EffectRegistry::instance(c, "stabilize")->params["border"] = QString(border);
+        const auto r = Stabilizer::request(c, kFormat);
+        QString error;
+        if (!CHECK(r && Stabilizer::analyze(*r, &error))) return;
+        for (int f : {5, 20}) parity(qPrintable(QString("stabilize-%1").arg(border)), oneTrack({c}), f, 2.0, 0.04);
+        // and it really moves the picture
+        Clip raw = c;
+        EffectRegistry::remove(raw, "stabilize");
+        const Diff moved = compare(renderOwn(oneTrack({raw}), kFormat, 20), renderOwn(oneTrack({c}), kFormat, 20));
+        const Diff movedMlt = compare(renderMlt(oneTrack({raw}), kFormat, 20), renderMlt(oneTrack({c}), kFormat, 20));
+        std::printf("  stabilized vs not: own %.2f, MLT %.2f\n", moved.mean, movedMlt.mean);
+        CHECK(moved.mean > 1.0 && movedMlt.mean > 1.0);
+    }
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -450,6 +483,7 @@ int main(int argc, char** argv)
     testMore();
     testThreads();
     testOcclusion();
+    testStabilize(tmp.path());
     bench(tmp.path());
     return Check::result();
 }

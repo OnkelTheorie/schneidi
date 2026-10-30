@@ -2,7 +2,7 @@
 #pragma once
 // Video stabilization (effect "stabilize") with schneidi's own analysis and warp (engine/StabilizeMotion).
 // An analysis pass measures the camera motion from frame to frame before anything can be applied. It runs in the
-// background (one at a time, own MLT producer, no preview involved); its result (.stab: one motion per frame) is
+// background (one at a time, own decoder, no preview involved); its result (.stab: one motion per frame) is
 // cached in QStandardPaths::CacheLocation/stabilize, named after everything that changes it (source file +
 // size/time, speed, frame rate, aspect ratio, shakiness/accuracy) plus the analyzed range. A cached range that covers
 // the clip is reused (trimming shorter, moving, splitting need no new analysis). Until the result exists the clip
@@ -71,8 +71,12 @@ public:
     // Requests of all enabled stabilizations in the timeline (and its nested sequences) without a result
     static QVector<Request> missing(const Timeline& tl, const ProjectFormat& format);
     // Analyze synchronously in the calling thread (any thread). progress: 0..1000
+    // Reads the file with the own decoder (engine/video/Reader); SCHNEIDI_STABILIZE_ANALYSIS=mlt: through an MLT
+    // producer as before 0.15 (analyzeMlt, comparison until MLT goes)
     static bool analyze(const Request& r, QString* error, const std::atomic<bool>* cancel = nullptr,
                         std::atomic<int>* progress = nullptr);
+    static bool analyzeMlt(const Request& r, QString* error, const std::atomic<bool>* cancel = nullptr,
+                           std::atomic<int>* progress = nullptr);
     // Timeline: the stabilizing filter on the cut of clip c (its first filter); false = no result (yet) or not possible
     static bool attach(Mlt::Profile& profile, Mlt::Producer& cut, const Clip& c);
     // Live update (LiveUpdate): takes over the fresh filter's values (smoothing, zoom, border, a new result) without a

@@ -1,14 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Profiles.h"
 #include "engine/Bundle.h"
+#include "engine/MediaProbe.h"
 #include "engine/audio/Path.h"
 #include "engine/video/Producer.h"
+#include "engine/video/Reader.h"
 #include "engine/video/Still.h"
 
 #include <Mlt.h>
 #include <QByteArray>
 #include <QFileInfo>
 #include <QProcess>
+
+extern "C" {
+#include <libavformat/avformat.h>
+}
+
+#include <cmath>
+#include <memory>
+#include <optional>
 #include <numeric>
 
 namespace {
@@ -111,60 +121,32 @@ std::unique_ptr<Mlt::Producer> ProducerFactory::open(const QString& resource)
     return p;
 }
 
-namespace {
-
-double parseRate(const QByteArray& s)
-{
-    const QList<QByteArray> parts = s.trimmed().split('/');
-    const double num = parts.value(0).toDouble();
-    const double den = parts.size() > 1 ? parts[1].toDouble() : 1.0;
-    return den > 0 ? num / den : 0.0;
-}
-
-// Average frame rate via ffprobe (MLT only knows r_frame_rate, i.e. the highest with variable frame rate).
-// Without ffprobe: 0 -> only the value from MLT counts.
-double averageFps(const QString& path)
-{
-    QProcess proc;
-    proc.start(Bundle::tool("ffprobe"), {"-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate",
-                           "-of", "default=noprint_wrappers=1:nokey=1", path});
-    if (!proc.waitForFinished(5000)) {
-        proc.kill();
-        proc.waitForFinished(500);
-        return 0;
-    }
-    return proc.exitCode() == 0 ? parseRate(proc.readAllStandardOutput()) : 0.0;
-}
-
-} // namespace
-
 ClipFormat detectClipFormat(const QString& path)
 {
     ClipFormat cf;
-    Mlt::Profile profile("atsc_1080p_25"); // only for opening
-    Mlt::Producer p(profile, path.toUtf8().constData());
-    if (!p.is_valid()) return cf;
-    const QByteArray svc = p.get("mlt_service");
-    if (Still::isStillService(svc.constData())) return cf; // still images have no format of their own
-    static const QStringList audioExt{"mp3", "wav", "flac", "ogg", "opus", "m4a", "aac", "wma", "aiff"};
-    const int vi = p.get_int("video_index");
-    if (vi < 0 || audioExt.contains(QFileInfo(path).suffix().toLower())) return cf;
-
-    // MLT only sets meta.media.* after the first frame
-    std::unique_ptr<Mlt::Frame> frame(p.get_frame());
-    int w = p.get_int("meta.media.width"), h = p.get_int("meta.media.height");
-    const double sar = p.get_double("aspect_ratio");
+    // Read with the own decoder (stream description only, nothing decoded) as the preview reads the file
+    if (const std::optional<MediaInfo> m = MediaProbe::read(path, FrameRate{25, 1}); m && m->isImage)
+        return cf; // still images have no format of their own
+    if (MediaProbe::isAudioFile(path)) return cf;
+    Video::Reader::Options options;
+    options.hardware = false;
+    const std::unique_ptr<Video::Reader> reader = Video::Reader::open(path, options);
+    if (!reader) return cf;
+    const Video::Info& in = reader->info();
+    int w = in.width, h = in.height;
+    const double sar = av_q2d(in.sar);
     if (sar > 0 && std::abs(sar - 1.0) > 0.01) w = int(std::lround(w * sar)); // anamorphic pixels
-    const int rotate = std::abs(p.get_int(QString("meta.media.%1.codec.rotate").arg(vi).toUtf8().constData())) % 180;
-    if (rotate == 90) std::swap(w, h); // phone portrait: file landscape, with rotation in the metadata
-    const int num = p.get_int("meta.media.frame_rate_num"), den = p.get_int("meta.media.frame_rate_den");
+    if (int(std::lround(in.rotation)) % 180 == 90) std::swap(w, h); // phone portrait: file landscape, rotation in the metadata
+    const int num = in.frameRate.num, den = in.frameRate.den;
     if (w <= 0 || h <= 0 || num <= 0 || den <= 0) return cf;
+    // The average frame rate (the stream's rate above is the highest one with variable frame rate)
+    const AVRational avg = reader->container()->streams[in.index]->avg_frame_rate;
 
     cf.ok = true;
     cf.width = w & ~1; // even dimensions (yuv420p)
     cf.height = h & ~1;
     cf.rate = {num, den};
-    cf.averageFps = averageFps(path);
+    cf.averageFps = avg.num > 0 && avg.den > 0 ? av_q2d(avg) : 0.0;
     // If the average differs noticeably the frame rate is variable (phones, game capture that skips frames).
     // The nominal rate is what the recording aimed for (DVR clips: nominal 60 or 120, average ~45) -> nearest
     // 24/25/30/50/60 of it; only a nominal rate that is a time base rather than a rate (mkv/webm 1000, 90000)

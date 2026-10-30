@@ -186,12 +186,14 @@ add_library(schneidi_lib STATIC
     src/engine/RenderCache.h      src/engine/RenderCache.cpp
     src/engine/Denoise.h          src/engine/Denoise.cpp
     src/engine/Stabilizer.h       src/engine/Stabilizer.cpp
+    src/engine/StabilizeCorrection.h
     src/engine/StabilizeMotion.h  src/engine/StabilizeMotion.cpp
     src/engine/Preroll.h          src/engine/Preroll.cpp
     src/engine/AudioAnalysis.h    src/engine/AudioAnalysis.cpp
     src/engine/CheckMeasure.h     src/engine/CheckMeasure.cpp
     src/engine/FrameGaps.h        src/engine/FrameGaps.cpp
     src/engine/MediaProbe.h       src/engine/MediaProbe.cpp
+    src/engine/MltLog.h           src/engine/MltLog.cpp
     src/engine/SoundSync.h        src/engine/SoundSync.cpp
     src/engine/ColorGrade.h       src/engine/ColorGrade.cpp
     src/engine/GradedThumbs.h     src/engine/GradedThumbs.cpp
@@ -211,6 +213,7 @@ add_library(schneidi_lib STATIC
     src/engine/audio/Volume.h     src/engine/audio/Volume.cpp
     src/engine/Licenses.h         src/engine/Licenses.cpp
     src/engine/video/Reader.h     src/engine/video/Reader.cpp
+    src/engine/video/Scan.h       src/engine/video/Scan.cpp
     src/engine/video/Producer.h   src/engine/video/Producer.cpp
     src/engine/video/Hardware.h   src/engine/video/Hardware.cpp
     src/engine/video/Thumbnails.h src/engine/video/Thumbnails.cpp
@@ -346,7 +349,20 @@ if(SCHNEIDI_RHI)
         find_package(Qt6 QUIET COMPONENTS GuiPrivate)
     endif()
     if(TARGET Qt6::GuiPrivate)
-        # Qt6::GuiPrivate exists even without the private headers (Debian): test whether rhi/qrhi.h is there
+        # Qt6::GuiPrivate exists even without the private headers (Debian), naming include folders that are not
+        # there - a test compile with it fails at configure time. Only test when they exist.
+        get_target_property(_gui_private_dirs Qt6::GuiPrivate INTERFACE_INCLUDE_DIRECTORIES)
+        set(_gui_private_ok ON)
+        foreach(_dir IN LISTS _gui_private_dirs)
+            # entries look like $<$<BOOL:...>:/usr/include/.../QtGui/6.8.2>: the path inside
+            string(REGEX REPLACE "^\\$<\\$<BOOL:.*>>:(.*)>$" "\\1" _path "${_dir}")
+            if(NOT _path STREQUAL "" AND NOT _path MATCHES "^\\$<" AND NOT EXISTS "${_path}")
+                set(_gui_private_ok OFF)
+            endif()
+        endforeach()
+    endif()
+    if(TARGET Qt6::GuiPrivate AND _gui_private_ok)
+        # Test whether rhi/qrhi.h is there
         include(CheckIncludeFileCXX)
         set(CMAKE_REQUIRED_LIBRARIES Qt6::GuiPrivate)
         set(CMAKE_REQUIRED_QUIET ON)
@@ -382,7 +398,7 @@ add_library(schneidi_cli_lib STATIC
     src/cli/CommandsWatch.cpp
     src/cli/EditOps.cpp src/cli/EditOpsTimelines.cpp src/cli/EditOpsLook.cpp
     src/cli/EditOpsAudio.cpp src/cli/EditOpsEdit.cpp src/cli/EditOpsMulticam.cpp
-    src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp
+    src/cli/AnalysisDetail.h src/cli/Analysis.cpp src/cli/AnalysisAudio.cpp src/cli/AnalysisVideo.cpp src/cli/AnalysisPicture.cpp
     src/cli/AnalysisHighlights.cpp src/cli/AnalysisCheck.cpp src/cli/AnalysisOverview.cpp src/cli/AnalysisBeats.cpp
     src/cli/Exchange.cpp
     src/cli/Mcp.h      src/cli/Mcp.cpp

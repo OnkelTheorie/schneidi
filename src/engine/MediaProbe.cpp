@@ -7,6 +7,7 @@ extern "C" {
 }
 
 #include <QFileInfo>
+#include <QImageReader>
 #include <QStringList>
 
 #include <algorithm>
@@ -37,6 +38,15 @@ bool headerSuffices(const AVInputFormat* f)
 {
     static const char* const names[] = {"matroska,webm", "mov,mp4,m4a,3gp,3g2,mj2", "wav", "flac", "mp3", "avi"};
     return std::any_of(std::begin(names), std::end(names), [f](const char* n) { return qstrcmp(f->name, n) == 0; });
+}
+
+// Suffixes MLT's loader opens as a still picture first (qimage, the own still producer registers under that name):
+// decided here when Qt can read the picture, like the still producer does
+bool stillSuffix(const QString& suffix)
+{
+    static const QStringList list{"avif", "bmp",  "dds",  "exr", "gif", "heic", "heif", "ico", "jfif", "jpg", "jpeg", "jxl",
+                                  "kra",  "pcx",  "png",  "psd", "svg", "svgz", "tga",  "tif", "tiff", "webp", "xcf"};
+    return list.contains(suffix);
 }
 
 // Single pictures and picture sequences (a still image with another extension): MLT treats them its own way
@@ -152,7 +162,20 @@ bool isAudioFile(const QString& path)
 std::optional<MediaInfo> read(const QString& path, FrameRate rate)
 {
     const QFileInfo fi(path);
-    if (!fi.isFile() || forOtherProducer(fi.suffix().toLower())) return std::nullopt;
+    if (!fi.isFile()) return std::nullopt;
+    const QString suffix = fi.suffix().toLower();
+    if (stillSuffix(suffix)) {
+        // Still picture: 5 seconds as a default length; QImageReader only reads the header here
+        if (!QImageReader(path).canRead()) return std::nullopt;
+        MediaInfo info;
+        info.path = path;
+        info.name = fi.fileName();
+        info.isImage = true;
+        info.hasVideo = true;
+        info.length = 5 * rate.timebase();
+        return info;
+    }
+    if (forOtherProducer(suffix)) return std::nullopt;
     AVFormatContext* raw = nullptr;
     if (avformat_open_input(&raw, path.toUtf8().constData(), nullptr, nullptr) < 0) return std::nullopt;
     const std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);

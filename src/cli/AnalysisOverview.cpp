@@ -6,11 +6,8 @@
 
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
-#include "engine/Bundle.h"
 
 #include <QJsonArray>
-#include <QProcess>
-#include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
@@ -91,46 +88,15 @@ Picture pictureOf(const MediaSource& m, Context& ctx, double progressFrom, doubl
     Picture out;
     out.score.assign(size_t(m.info.length), 0);
     out.luma.assign(size_t(m.info.length), -1);
-    QProcess ff;
-    ff.setProgram(Bundle::tool("ffmpeg"));
-    ff.setArguments({"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-i", m.info.path, "-map", "0:v:0",
-                     "-an", "-sn", "-vf",
-                     "setpts=PTS-STARTPTS,scale=160:-2,signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG,"
-                     "select='gte(scene\\,0)',metadata=mode=print:key=lavfi.scene_score",
-                     "-f", "null", "-", "-progress", "pipe:1"});
-    ff.start();
-    if (!ff.waitForStarted()) fail("TOOL_MISSING", "ffmpeg not found (needed to look at the picture)");
-    const double fps = m.format.rate.fps(), total = m.info.length / fps;
-    static const QRegularExpression timeRe("pts_time:([0-9.]+)"), lumaRe("signalstats\\.YAVG=([0-9.]+)"),
-        scoreRe("scene_score=([0-9.]+)");
-    int frame = 0;
-    QByteArray pending;
-    const auto parse = [&](const QByteArray& chunk) {
-        pending += chunk;
-        const qsizetype end = pending.lastIndexOf('\n');
-        if (end < 0) return;
-        for (const QByteArray& raw : pending.left(end).split('\n')) {
-            const QString line = QString::fromUtf8(raw);
-            if (const auto t = timeRe.match(line); t.hasMatch())
-                frame = std::clamp(int(std::lround(t.captured(1).toDouble() * fps)), 0, std::max(0, m.info.length - 1));
-            else if (const auto l = lumaRe.match(line); l.hasMatch() && frame < m.info.length)
-                out.luma[size_t(frame)] = l.captured(1).toDouble();
-            else if (const auto s = scoreRe.match(line); s.hasMatch() && frame < m.info.length)
-                out.score[size_t(frame)] = s.captured(1).toDouble();
-        }
-        pending.remove(0, end + 1);
-    };
-    while (ff.state() != QProcess::NotRunning) {
-        ff.waitForReadyRead(200);
-        parse(ff.readAllStandardError());
-        for (const QByteArray& line : ff.readAllStandardOutput().split('\n'))
-            if (line.startsWith("out_time_us=") && ctx.progress && total > 0)
-                ctx.progress(progressFrom
-                             + (progressTo - progressFrom) * std::clamp(line.mid(12).toDouble() / 1e6 / total, 0.0, 1.0));
+    const double fps = m.format.rate.fps();
+    for (const PictureScore& p : pictureScores(m, 160, [&](double p) {
+             if (ctx.progress) ctx.progress(progressFrom + (progressTo - progressFrom) * p);
+         })) {
+        const int frame = std::clamp(int(std::lround(p.seconds * fps)), 0, std::max(0, m.info.length - 1));
+        if (frame >= m.info.length) continue;
+        out.luma[size_t(frame)] = p.luma;
+        out.score[size_t(frame)] = p.score;
     }
-    parse(ff.readAllStandardError() + '\n');
-    if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0)
-        fail("DECODE_FAILED", "ffmpeg could not read the video of " + m.info.path);
     return out;
 }
 

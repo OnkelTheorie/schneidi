@@ -10,6 +10,7 @@
 #include "engine/BlurFill.h"
 #include "engine/ColorGrade.h"
 #include "engine/Lumas.h"
+#include "engine/StabilizeCorrection.h"
 #include "engine/VideoEffects.h"
 #include "engine/picture/Effects.h"
 #include "engine/video/Compose.h"
@@ -349,6 +350,13 @@ struct Renderer::Impl {
     // frameHeight: the frame's height in pixels of img (blur strength is relative to it)
     void applyEffects(Image& img, const Clip& c, double t, const Ctx& ctx, double frameHeight)
     {
+        // Stabilization first (it has to see the camera picture): the analyzed correction at the clip's material
+        // frame. Border "keep" has no previous output picture here: edge pixels (as a seek in the MLT filter).
+        if (const auto st = StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) {
+            Image warped(img.w, img.h);
+            if (StabilizeCorrection::warpRgba(*st, int(std::floor(c.in + t + 1e-6)), img.data(), warped.data(), img.w, img.h))
+                img = std::move(warped);
+        }
         if (ColorGrade::active(c) && !ctx.bypassGrade) {
             const ColorGrade::Params p = ColorGrade::at(c, t);
             const QString lp = ColorGrade::lutPath(c);

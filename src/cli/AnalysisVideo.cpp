@@ -4,7 +4,6 @@
 
 #include "core/ContactSheet.h"
 #include "core/TimelineOps.h"
-#include "engine/Bundle.h"
 #include "engine/Snapshot.h"
 #include "ui/Scopes.h"
 
@@ -13,13 +12,12 @@
 #include <QJsonArray>
 #include <QPainter>
 #include <QPainterPath>
-#include <QProcess>
-#include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -110,34 +108,31 @@ QJsonObject regionChanges(const MediaSource& m, const QJsonObject& a, Context& c
     const QRect r = cropRect(a["region"].toString(), full);
     constexpr int kRate = 10; // samples per second
     const int w = 128, h = std::clamp(int(std::lround(128.0 * r.height() / r.width())) & ~1, 8, 256);
-    QProcess ff;
-    ff.setProgram(Bundle::tool("ffmpeg"));
-    ff.setArguments({"-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-i", m.info.path, "-map", "0:v:0",
-                     "-an", "-sn", "-vf",
-                     QString("setpts=PTS-STARTPTS,fps=%1,crop=w=iw*%2:h=ih*%3:x=iw*%4:y=ih*%5,scale=%6:%7,format=rgb24")
-                         .arg(kRate)
-                         .arg(QString::number(double(r.width()) / full.width(), 'f', 5),
-                              QString::number(double(r.height()) / full.height(), 'f', 5),
-                              QString::number(double(r.x()) / full.width(), 'f', 5),
-                              QString::number(double(r.y()) / full.height(), 'f', 5))
-                         .arg(w)
-                         .arg(h),
-                     "-f", "rawvideo", "-"});
-    ff.start();
-    if (!ff.waitForStarted()) fail("TOOL_MISSING", "ffmpeg not found (needed for region events)");
+    const QRectF part(double(r.x()) / full.width(), double(r.y()) / full.height(), double(r.width()) / full.width(),
+                      double(r.height()) / full.height());
+    const QString filter = QString("crop=w=iw*%1:h=ih*%2:x=iw*%3:y=ih*%4,scale=%5:%6")
+                               .arg(QString::number(part.width(), 'f', 5), QString::number(part.height(), 'f', 5),
+                                    QString::number(part.x(), 'f', 5), QString::number(part.y(), 'f', 5))
+                               .arg(w)
+                               .arg(h);
     const qsizetype frameBytes = qsizetype(w) * h * 3;
-    const double total = m.info.length / f.rate.fps() * kRate;
-    QByteArray raw;
-    while (ff.state() != QProcess::NotRunning) {
-        ff.waitForReadyRead(200);
-        raw += ff.readAllStandardOutput();
-        if (ctx.progress && total > 0) ctx.progress(std::clamp(raw.size() / frameBytes / total, 0.0, 1.0));
-    }
-    raw += ff.readAllStandardOutput();
-    if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0)
-        fail("DECODE_FAILED", "ffmpeg could not read the video: " + QString::fromUtf8(ff.readAllStandardError().right(400)).trimmed());
-    const int n = int(raw.size() / frameBytes);
-    const auto px = [&](int frame, int i) { return reinterpret_cast<const uchar*>(raw.constData()) + frame * frameBytes + i * 3; };
+    std::vector<std::vector<uchar>> samples;
+    std::mutex mutex;
+    pictureSamples(
+        m, part, QSize(w, h), kRate, filter,
+        [&](int sample, const uchar* rgb) {
+            std::vector<uchar> copy(rgb, rgb + frameBytes);
+            std::lock_guard lock(mutex);
+            if (size_t(sample) >= samples.size()) samples.resize(size_t(sample) + 1);
+            samples[size_t(sample)] = std::move(copy);
+        },
+        [&ctx](double p) {
+            if (ctx.progress) ctx.progress(p);
+        });
+    // Samples in time order up to the first missing one (a read error inside the file)
+    int n = 0;
+    while (n < int(samples.size()) && !samples[size_t(n)].empty()) ++n;
+    const auto px = [&](int frame, int i) { return samples[size_t(frame)].data() + i * 3; };
     const auto diff = [](const uchar* x, const uchar* y) {
         return std::max({std::abs(x[0] - y[0]), std::abs(x[1] - y[1]), std::abs(x[2] - y[2])});
     };
@@ -257,23 +252,6 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
     constexpr int kRate = 15; // samples per second
     // Full resolution of the region: small marks (a 2 px frame) blur into the background when scaled down
     const int w = std::max(2, r.width() & ~1), h = std::max(2, r.height() & ~1);
-    QProcess ff;
-    ff.setProgram(Bundle::tool("ffmpeg"));
-    ff.setArguments({"-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-i", m.info.path, "-map", "0:v:0",
-                     "-an", "-sn", "-vf",
-                     QString("setpts=PTS-STARTPTS,fps=%1,scale=%2:%3,crop=%4:%5:%6:%7,format=rgb24")
-                         .arg(kRate)
-                         .arg(full.width())
-                         .arg(full.height())
-                         .arg(w)
-                         .arg(h)
-                         .arg(r.x())
-                         .arg(r.y()),
-                     "-f", "rawvideo", "-"});
-    ff.start();
-    if (!ff.waitForStarted()) fail("TOOL_MISSING", "ffmpeg not found (needed for region events)");
-    const qsizetype frameBytes = qsizetype(w) * h * 3;
-    const double total = m.info.length / f.rate.fps() * kRate;
     const double picture = double(full.width()) * full.height();
     const int cr = color.red(), cg = color.green(), cb = color.blue();
     std::vector<double> share; // per sample: part of the picture in the colour (inside the region)
@@ -290,10 +268,9 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
         return v;
     };
     std::vector<double> rise, fall;
-    // Where the colour is: pixels per row of the last kWindow samples (t-3 … t+4 around a moment t)
-    constexpr int kWindow = 8;
-    std::vector<int> rows(size_t(kWindow) * h, 0);
-    const auto rowsOf = [&](int sample) { return rows.data() + size_t(sample % kWindow) * h; };
+    // Where the colour is: pixels per row of every sample (counted in parallel as the samples come)
+    std::vector<std::vector<int>> rows;
+    const auto rowsOf = [&](int sample) { return rows[size_t(sample)].data(); };
     const int margin = std::max(2, int(std::lround(4.0 * full.height() / 1080))); // an outline edge (1-2 px) and more
     const double speck = minArea * picture / 2;
     // The colour that arrived (left) at t: what the samples after (before) it have outside the rows of the other side
@@ -306,43 +283,49 @@ ColorEvents colorEvents(const MediaSource& m, const QJsonObject& a, const std::f
             least = std::min(least, unexplainedColor(other, rowsOf(k), margin, speck));
         return least;
     };
-    QByteArray raw;
-    // Decoded samples are counted as they come (a long file would not fit in memory)
-    const auto consume = [&] {
-        qsizetype at = 0;
-        for (; raw.size() - at >= frameBytes; at += frameBytes) {
-            const uchar* p = reinterpret_cast<const uchar*>(raw.constData()) + at;
-            int* row = rowsOf(int(share.size()));
-            int hits = 0;
+    // Full resolution of the region: scaled to the picture's format, then cut out
+    const QRectF part(double(r.x()) / full.width(), double(r.y()) / full.height(), double(w) / full.width(),
+                      double(h) / full.height());
+    const QString filter = QString("scale=%1:%2,crop=%3:%4:%5:%6")
+                               .arg(full.width())
+                               .arg(full.height())
+                               .arg(w)
+                               .arg(h)
+                               .arg(r.x())
+                               .arg(r.y());
+    std::mutex mutex;
+    pictureSamples(
+        m, part, QSize(w, h), kRate, filter,
+        [&](int sample, const uchar* p) {
+            std::vector<int> row(size_t(h), 0);
             for (int y = 0; y < h; ++y) {
                 int count = 0;
                 for (int x = 0; x < w; ++x, p += 3)
                     count += std::abs(p[0] - cr) <= tolerance && std::abs(p[1] - cg) <= tolerance && std::abs(p[2] - cb) <= tolerance;
-                row[y] = count;
-                hits += count;
+                row[size_t(y)] = count;
             }
-            share.push_back(hits / picture);
-            // The window around t = this sample - 4 is complete: a step that counts needs colour in a new place
-            rise.push_back(0.0);
-            fall.push_back(0.0);
-            if (const int t = int(share.size()) - 5; t >= 3) {
-                const double up = lo(t + 2, t + 4) - hi(t - 3, t - 1), down = lo(t - 3, t - 1) - hi(t + 2, t + 4);
-                if (appears && up >= minArea && changed(t, true) >= speck) rise[size_t(t)] = up;
-                if (disappears && down >= minArea && changed(t, false) >= speck) fall[size_t(t)] = down;
-            }
+            std::lock_guard lock(mutex);
+            if (size_t(sample) >= rows.size()) rows.resize(size_t(sample) + 1);
+            rows[size_t(sample)] = std::move(row);
+        },
+        progress);
+    // In time order up to the first missing sample (a read error inside the file)
+    size_t samples = 0;
+    while (samples < rows.size() && !rows[samples].empty()) ++samples;
+    rows.resize(samples);
+    for (size_t s = 0; s < samples; ++s) {
+        int hits = 0;
+        for (const int c : rows[s]) hits += c;
+        share.push_back(hits / picture);
+        // The window around t = this sample - 4 is complete: a step that counts needs colour in a new place
+        rise.push_back(0.0);
+        fall.push_back(0.0);
+        if (const int t = int(share.size()) - 5; t >= 3) {
+            const double up = lo(t + 2, t + 4) - hi(t - 3, t - 1), down = lo(t - 3, t - 1) - hi(t + 2, t + 4);
+            if (appears && up >= minArea && changed(t, true) >= speck) rise[size_t(t)] = up;
+            if (disappears && down >= minArea && changed(t, false) >= speck) fall[size_t(t)] = down;
         }
-        raw.remove(0, at);
-    };
-    while (ff.state() != QProcess::NotRunning) {
-        ff.waitForReadyRead(200);
-        raw += ff.readAllStandardOutput();
-        consume();
-        if (progress && total > 0) progress(std::clamp(share.size() / total, 0.0, 1.0));
     }
-    raw += ff.readAllStandardOutput();
-    consume();
-    if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0)
-        fail("DECODE_FAILED", "ffmpeg could not read the video: " + QString::fromUtf8(ff.readAllStandardError().right(400)).trimmed());
 
     const int n = int(share.size());
     const int minGap = std::max(1, int(std::lround((a.contains("min") ? parseTime(a["min"], f, "min") / f.rate.fps() : 0.5) * kRate)));
@@ -433,39 +416,13 @@ QJsonObject scenesOne(const QJsonObject& a, Context& ctx)
     if (threshold <= 0 || threshold >= 1) fail("BAD_ARGUMENT", "threshold must be between 0 and 1 (default 0.3)");
     const int minLen = a.contains("min") ? parseTime(a["min"], f, "min") : int(std::lround(0.5 * f.rate.fps()));
 
-    // ffmpeg's scene score (0..1, difference to the previous frame) on a small copy of each frame; metadata=print
-    // logs time and score of every frame above the threshold. Times start at 0 like the frames in schneidi.
-    QProcess ff;
-    ff.setProgram(Bundle::tool("ffmpeg"));
-    ff.setArguments({"-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-i", m.info.path, "-map", "0:v:0",
-                     "-an", "-sn", "-vf",
-                     QString("setpts=PTS-STARTPTS,scale=320:-2,select='gt(scene,%1)',metadata=mode=print").arg(threshold),
-                     "-f", "null", "-", "-progress", "pipe:1"});
-    ff.start();
-    if (!ff.waitForStarted()) fail("TOOL_MISSING", "ffmpeg not found (needed for scene detection)");
-    const double total = m.info.length / f.rate.fps();
-    QByteArray log;
-    while (ff.state() != QProcess::NotRunning) {
-        ff.waitForReadyRead(200);
-        log += ff.readAllStandardError();
-        const QList<QByteArray> lines = ff.readAllStandardOutput().split('\n');
-        for (const QByteArray& line : lines)
-            if (line.startsWith("out_time_us=") && ctx.progress && total > 0)
-                ctx.progress(std::clamp(line.mid(12).toDouble() / 1e6 / total, 0.0, 1.0));
-    }
-    log += ff.readAllStandardError();
-    if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0)
-        fail("DECODE_FAILED", "ffmpeg could not read the video: " + QString::fromUtf8(log.right(400)).trimmed());
-
-    // "frame:12 pts:12 pts_time:0.48" followed by "lavfi.scene_score=0.62"
-    static const QRegularExpression timeRe("pts_time:([0-9.]+)"), scoreRe("lavfi\\.scene_score=([0-9.]+)");
+    // Scene score (0..1, difference to the previous frame) on a small copy of each frame; times start at 0 like the
+    // frames in schneidi
     QVector<QPair<int, double>> found;
-    for (const QString& line : QString::fromUtf8(log).split('\n')) {
-        if (const auto t = timeRe.match(line); t.hasMatch())
-            found.append({int(std::lround(t.captured(1).toDouble() * f.rate.fps())), 0.0});
-        else if (const auto sc = scoreRe.match(line); sc.hasMatch() && !found.isEmpty())
-            found.last().second = sc.captured(1).toDouble();
-    }
+    for (const PictureScore& p : pictureScores(m, 320, [&ctx](double p) {
+             if (ctx.progress) ctx.progress(p);
+         }))
+        if (p.score > threshold) found.append({int(std::lround(p.seconds * f.rate.fps())), p.score});
     // Cuts closer than minLen to the previous one (flashes, fast pans) are dropped; no cut at the very start
     QJsonArray cuts, scenes;
     int sceneStart = 0;
