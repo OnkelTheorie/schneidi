@@ -7,6 +7,7 @@
 #include "check.h"
 
 #include "engine/Engine.h"
+#include "engine/audio/Path.h"
 #include "engine/picture/Renderer.h"
 
 #include <QApplication>
@@ -113,7 +114,7 @@ int main(int argc, char** argv)
 
         // Opens in the background; a change meanwhile that needs one more file is built afterwards
         // Own picture engine: files open lazily in the render threads, nothing waits (opening() stays false)
-        const bool background = !Picture::ownPicture();
+        const bool background = !(Picture::ownPicture() && Audio::ownPath()); // own picture needs the own sound
         engine.updateTimeline(timeline({red}));
         CHECK(engine.opening() == background);
         engine.updateTimeline(timeline({red, blue}));
