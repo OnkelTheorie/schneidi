@@ -672,8 +672,29 @@ struct Renderer::Impl {
         if (bounds) *bounds &= QRect(0, 0, ctx.W, ctx.H);
     }
 
-    // One clip's picture at timeline frame f on a transparent output-size layer; empty = nothing visible
-    Image clipLayer(const Clip& c, int f, const QString& lane, const Ctx& ctx, const Timeline& tl, int depth)
+    // A clip's source picture (w x h, standing for the whole fitted picture) placed by its transform onto `onto`, with
+    // its opacity times `fade` (no crop, no blur fill: see clipLayer)
+    void drawPlaced(Image& onto, const Clip& c, int t, const Ctx& ctx, QSizeF fit, const uint8_t* px, int w, int h,
+                    double fade)
+    {
+        auto val = [&](AnimParam p) { return Keys::valueAt(c, p, t); };
+        const bool transform = Keys::hasTransform(c);
+        const double opacity = Keys::hasOpacity(c) ? std::clamp(val(AnimParam::Opacity) / 100.0, 0.0, 1.0) : 1.0;
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        const double zx = transform ? val(AnimParam::ZoomX) : 1.0, zy = transform ? val(AnimParam::ZoomY) : 1.0;
+        const double x = transform ? val(AnimParam::PosX) : 0.0, y = transform ? val(AnimParam::PosY) : 0.0;
+        const double fw = fit.width() * zx, fh = fit.height() * zy;
+        const double rx = (ctx.PW - fw) / 2 + x, ry = (ctx.PH - fh) / 2 - y;
+        const double angle = transform ? -val(AnimParam::Rotation) : 0.0;
+        const Compose::Affine m = Compose::placement(rx * sx, ry * sy, fw * sx, fh * sy, angle, w, h, true, true);
+        Compose::draw(onto.data(), onto.w, onto.h, px, w, h, m, opacity * fade);
+    }
+
+    // One clip's picture at timeline frame f on a transparent output-size layer; empty = nothing visible.
+    // onto: a media clip with a transform but no crop, effects or blur fill is drawn straight onto that picture
+    // (opacity times `fade`) instead - no layer of its own, a still not copied - and nothing is returned.
+    Image clipLayer(const Clip& c, int f, const QString& lane, const Ctx& ctx, const Timeline& tl, int depth,
+                    Image* onto = nullptr, double fade = 1.0)
     {
         if (!c.enabled) return {};
         const int t = f - c.start;
@@ -763,6 +784,13 @@ struct Renderer::Impl {
                 const double scale = std::max(double(W) / nw, double(H) / nh) * zoom * 1.1;
                 const int dw = scale < 1.0 ? std::max(2, int(std::ceil(nw * scale))) : nw;
                 const int dh = scale < 1.0 ? std::max(2, int(std::ceil(nh * scale))) : nh;
+                if (onto && s.still && dw == nw && dh == nh && !crop && !c.transform.hasBlurFill()) {
+                    // Straight from the kept still (no copy)
+                    const QImage& img = s.still->image;
+                    layersDecoded.fetch_add(1, std::memory_order_relaxed);
+                    drawPlaced(*onto, c, t, ctx, fit, img.constBits(), img.width(), img.height(), fade);
+                    return {};
+                }
                 src = mediaPicture(c, t, lane, dw, dh, ctx, &native);
             }
             if (src.empty()) return {};
@@ -813,6 +841,10 @@ struct Renderer::Impl {
         const double w = fit.width() * zx, h = fit.height() * zy;
         const double rx = (ctx.PW - w) / 2 + x, ry = (ctx.PH - h) / 2 - y;
         const double angle = transform ? -val(AnimParam::Rotation) : 0.0;
+        if (onto && !crop && !bg && !partial) {
+            drawPlaced(*onto, c, t, ctx, fit, src.data(), src.w, src.h, fade);
+            return {};
+        }
         layer = Image(W, H);
         Compose::Affine m = Compose::placement(rx * sx, ry * sy, w * sx, h * sy, angle, fullW, fullH, true, true);
         if (partial) { // the part's pixel (0, 0) is the full picture's part.x(), part.y()
@@ -1060,6 +1092,11 @@ struct Renderer::Impl {
         if (c->isTitle() && plain && opacity * fade >= 1.0 && c->effects.isEmpty()
             && !Keys::animated(*c, AnimParam::TitleSize)) {
             drawTitle(canvas, *c, t, ctx); // painted straight on: no full-frame layer
+            return;
+        }
+        if (Keys::hasTransform(*c) && !c->isTitle() && !c->isNested() && !c->mediaPath.isEmpty() && c->effects.isEmpty()
+            && !Keys::hasCrop(*c) && !c->transform.hasBlurFill()) {
+            clipLayer(*c, f, lane, ctx, tl, depth, &canvas, fade); // transformed: drawn straight onto the frame
             return;
         }
         Image layer = clipLayer(*c, f, lane, ctx, tl, depth);
