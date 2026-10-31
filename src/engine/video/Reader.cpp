@@ -887,10 +887,12 @@ struct Reader::Impl {
                 continue;
             }
             if (r && needsSeek(r->position)) {
-                const int64_t from = seekStart(r->position);
-                seekTarget = r->position;
+                // r lives on the caller's stack: seek() unlocks, a cancelled caller may be gone when it returns
+                const int64_t want = r->position;
+                const int64_t from = seekStart(want);
+                seekTarget = want;
                 seek(lock, from);
-                windowEnd = from < r->position ? r->position : -1;
+                windowEnd = from < want ? want : -1;
                 continue;
             }
             // Nothing asked, or the downloads lag behind: wait (the finisher wakes us). Long unused: close.
@@ -1189,12 +1191,12 @@ std::shared_ptr<const Picture> Reader::picture(int64_t position, const Fetch& fe
         Impl* impl = d.get();
         d->thread = std::thread([impl] { impl->run(); });
     }
+    if (fetch.cancel && fetch.cancel->load()) return nullptr; // before it moves the read-ahead's target
     // Read-ahead follows requests in order; out-of-order workers stay within a few frames
     d->sequential = d->high >= 0 && position >= d->high - 8 && position <= d->high + 2;
     if (!d->sequential || position > d->high) d->high = position;
     Impl::Request req{position, nullptr, false};
     req.nearest = fetch.nearest;
-    if (fetch.cancel && fetch.cancel->load()) return nullptr;
     if (!d->answer(req)) {
         d->pending.push_back(&req);
         d->work.notify_one();
