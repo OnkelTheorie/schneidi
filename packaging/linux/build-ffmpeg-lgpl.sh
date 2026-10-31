@@ -28,7 +28,7 @@ fetch() { # file url sha256
     local file="$WORK/download/$1"
     if [ ! -f "$file" ]; then
         echo ">> downloading $1"
-        curl -fL --retry 3 -o "$file.part" "$2"
+        curl -fL --retry 5 --retry-all-errors -o "$file.part" "$2"
         mv "$file.part" "$file"
     fi
     if [[ "$3" != @* ]]; then echo "$3  $file" | sha256sum -c - >/dev/null || { echo "!! checksum of $1 wrong" >&2; exit 1; }

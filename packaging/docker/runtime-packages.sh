@@ -1,8 +1,9 @@
 #!/bin/sh
 # Debian packages with the shared libraries a program needs (for the runtime image, so the list never falls behind
-# the build): packaging/docker/runtime-packages.sh build/schneidi-cli
+# the build): packaging/docker/runtime-packages.sh build/schneidi-cli [more programs …]
+# Libraries outside the system's packages (the own FFmpeg under /opt) are left out: the image copies them itself.
 set -eu
-libs=$(ldd "$1")
+libs=$(for f in "$@"; do ldd "$f"; done)
 # A library the build itself cannot find would be missing in the image too: stop here instead of an image that fails
 if echo "$libs" | grep -q 'not found'; then
     echo "$libs" | grep 'not found' >&2
