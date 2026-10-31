@@ -374,5 +374,7 @@ filter select
 filter metadata
 # hardware encoder test (engine/HardwareEncoders.cpp): -f lavfi -i color=black…
 filter color
+# test clips with sound (Docker image check in .github/workflows/docker.yml): -f lavfi -i sine=…
+filter sine
 indev lavfi
 decoder wrapped_avframe
