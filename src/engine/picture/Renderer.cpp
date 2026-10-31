@@ -880,15 +880,19 @@ struct Renderer::Impl {
             return nullptr;
         };
         const QString lane = prefix + QString("v%1").arg(trackIndex);
-        // Second lane for the right side of a dissolve between clips of the same file
-        auto laneOf = [&](bool right) { return right ? lane + 'x' : lane; };
+        // Each side on its clip's lane; the right side of a dissolve that would share the left side's decoder on a
+        // second one
+        auto laneOf = [&](const Clip& c, const Clip* left) {
+            const QString l = clipLane(track, c, lane);
+            return left && left->mediaPath == c.mediaPath && clipLane(track, *left, lane) == l ? l + 'x' : l;
+        };
         for (const auto& s : spans) {
             if (f < s.start || f >= s.end) continue;
             const Clip* a = s.leftId ? byId(s.leftId) : nullptr;
             const Clip* b = s.rightId ? byId(s.rightId) : nullptr;
             const bool sameFile = a && b && a->mediaPath == b->mediaPath;
-            Image ia = a ? clipLayer(*a, f, laneOf(false), ctx, tl, depth) : Image();
-            Image ib = b ? clipLayer(*b, f, laneOf(sameFile), ctx, tl, depth) : Image();
+            Image ia = a ? clipLayer(*a, f, laneOf(*a, nullptr), ctx, tl, depth) : Image();
+            Image ib = b ? clipLayer(*b, f, laneOf(*b, a), ctx, tl, depth) : Image();
             for (Image* img : {&ia, &ib})
                 if (!img->empty()) {
                     const Clip* c = img == &ia ? a : b;
@@ -930,6 +934,28 @@ struct Renderer::Impl {
         return f < it->end() ? &*it : nullptr;
     }
 
+    // Decoder lane of a clip. Preview: a clip that jumps to another part of a file used just before it on the track
+    // gets the lane's other decoder (suffix 'y'), so Renderer::prepare decodes its first picture while the clip
+    // before it still plays (one shared decoder had to seek at the cut: the picture stood ~40 ms at 60 fps). A clip
+    // that continues the one before it (a split without a jump) keeps its decoder.
+    QString clipLane(const Track& track, const Clip& c, const QString& lane) const
+    {
+        if (options.mode != Mode::Preview || c.mediaPath.isEmpty()) return lane;
+        bool second = false;
+        const Clip* prev = nullptr;
+        for (const Clip& o : track.clips) { // sorted by start
+            if (o.mediaPath != c.mediaPath) continue;
+            if (prev) {
+                const bool continues = o.start == prev->end() && o.in == prev->out + 1 && o.speed == prev->speed
+                                       && o.reverse == prev->reverse && !o.freeze && !prev->freeze;
+                if (!continues) second = !second;
+            }
+            if (o.id == c.id) return second ? lane + 'y' : lane;
+            prev = &o;
+        }
+        return lane;
+    }
+
     // The track's picture at f surely covers the whole frame opaquely (then nothing below is decoded). Conservative:
     // false when unsure.
     bool covers(const Track& track, int trackIndex, int f, const Ctx& ctx, const Timeline& tl, const QString& prefix)
@@ -951,7 +977,7 @@ struct Renderer::Impl {
         if (TimelineOps::fadeRamp(*c, f - c->start) < 1.0) return false;
         for (const EffectInstance& e : c->effects)
             if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId)) return false;
-        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        const QString lane = clipLane(track, *c, prefix + QString("v%1").arg(trackIndex));
         const Source s = source(c->mediaPath, lane);
         if (s.still) {
             if (!s.still->opaque) return false;
@@ -1041,7 +1067,7 @@ struct Renderer::Impl {
             }
         const Clip* c = clipAt(track, f);
         if (!c || !c->enabled) return;
-        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        const QString lane = clipLane(track, *c, prefix + QString("v%1").arg(trackIndex));
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
         // Render cache (preview, outer timeline): the clip's finished output (frame 0 = clip start) instead of the
@@ -1486,7 +1512,9 @@ struct Renderer::Impl {
         if (b && !b->enabled) b = nullptr;
         const QString lane = prefix + QString("v%1").arg(trackIndex);
         const bool sameFile = a && b && a->mediaPath == b->mediaPath;
-        const QString laneA = lane, laneB = sameFile ? lane + 'x' : lane;
+        const QString laneA = a ? clipLane(track, *a, lane) : lane;
+        QString laneB = b ? clipLane(track, *b, lane) : lane;
+        if (sameFile && laneB == laneA) laneB += 'x'; // the right side would share the left side's decoder
         const int len = s.length(), i = f - s.start;
         const TransitionStyle& st = s.style;
         const TransitionType type = st.type;
@@ -1571,7 +1599,7 @@ struct Renderer::Impl {
             }
         const Clip* c = clipAt(track, f);
         if (!c || !c->enabled) return;
-        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        const QString lane = clipLane(track, *c, prefix + QString("v%1").arg(trackIndex));
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
         if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
@@ -1967,17 +1995,19 @@ void Renderer::prepare(int64_t frame)
     ctx.PH = d->options.format.height;
     ctx.preview = d->options.mode == Mode::Preview;
     for (int i = 0; i < tl->video.size(); ++i) {
-        const QString lane = QString("v%1").arg(i);
-        const QVector<Clip>& clips = tl->video[i].clips;
+        const Track& track = tl->video[i];
+        const QVector<Clip>& clips = track.clips;
         for (const Clip& c : clips) {
             if (!c.enabled || c.mediaPath.isEmpty() || c.isTitle() || c.isNested()) continue;
+            const QString lane = d->clipLane(track, c, QString("v%1").arg(i));
             if (frame >= c.start - 50 && frame < c.end()) d->source(c.mediaPath, lane);
             // A clip starting soon: decode its first picture now (long-GOP material decodes up to seconds from the
             // keyframe before its in point; in the middle of playback the picture stood that long). Only when the
-            // lane's decoder of that file is not in use until then (a cut inside one recording shares it).
+            // clip's decoder is not in use until then (a split without a jump continues on it, see clipLane).
             if (c.start <= frame || c.start > soon) continue;
             const bool shared = std::any_of(clips.cbegin(), clips.cend(), [&](const Clip& o) {
-                return o.id != c.id && o.mediaPath == c.mediaPath && o.end() > frame && o.start < c.start;
+                return o.id != c.id && o.mediaPath == c.mediaPath && o.end() > frame && o.start < c.start
+                       && d->clipLane(track, o, QString("v%1").arg(i)) == lane;
             });
             if (shared) continue;
             QSize native;
