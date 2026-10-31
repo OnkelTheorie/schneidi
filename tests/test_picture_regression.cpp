@@ -200,6 +200,16 @@ void testTransitions()
     const QImage left = source(g_pattern, 25), right = render(oneTrack({media(2, g_pattern2, 0, 0, 49)}), 10);
     expect("dissolve middle = mean", compare(render(oneTrack({b, c}), 25), mean(left, right)), 1.5, 4);
     expect("dissolve before = A", compare(render(oneTrack({b, c}), 19), source(g_pattern, 19)), 0.0, 0);
+    // Only A is drawn before the dissolve: no decoder of its own for B (the transition asks for B's length; that
+    // used to open a decoder per file that stayed for good)
+    for (const Picture::Mode mode : {Picture::Mode::Preview, Picture::Mode::Export}) {
+        Picture::Options o;
+        o.format = kFormat;
+        o.mode = mode;
+        Picture::Renderer r(oneTrack({b, c}), o);
+        r.render(5);
+        CHECK_EQ(r.stats().sourcesOpen, 1);
+    }
     // Wipe to the right, half way: left half B, right half A
     b.transOutStyle.type = c.transInStyle.type = TransitionType::WipeRight;
     const QImage w = render(oneTrack({b, c}), 25);

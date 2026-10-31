@@ -301,6 +301,8 @@ struct Renderer::Impl {
 
     std::mutex sourceMutex;
     std::map<QString, Source> sources;
+    std::mutex lengthMutex;
+    std::map<QString, int> lengths; // file -> length in project frames (mediaLength)
 
     std::mutex lutMutex;
     std::map<QString, std::shared_ptr<const ColorGrade::Lut>> luts;
@@ -424,8 +426,42 @@ struct Renderer::Impl {
             return it == tl.nested->cend() ? 0 : TimelineOps::endFrame(*it);
         }
         if (c.isTitle() || c.mediaPath.isEmpty()) return 0;
-        const Source s = source(c.mediaPath, QStringLiteral("v"));
-        return s.video ? c.retimedLength(s.video->length) : 0;
+        const int length = mediaLength(c.mediaPath);
+        return length > 0 ? c.retimedLength(length) : 0;
+    }
+
+    // Length of a video file in project frames as its Source has it (0 = none: stills, unreadable), once per file.
+    // Asked for both clips of every transition on a track at every frame: a decoder of its own per file stayed open
+    // for good (never unused, so neither trim() nor the export's dropBefore() closed it) – 60 clips with dissolves
+    // opened 60 decoders before the first frame.
+    int mediaLength(const QString& path)
+    {
+        const QString file = options.proxy ? options.proxy(path) : path;
+        {
+            std::lock_guard lock(lengthMutex);
+            const auto it = lengths.find(file);
+            if (it != lengths.end()) return it->second;
+        }
+        int length = -1;
+        {
+            std::lock_guard lock(sourceMutex);
+            for (const auto& [key, src] : sources)
+                if (src.video && key.endsWith('|' + file)) {
+                    length = src.video->length;
+                    break;
+                }
+        }
+        if (length < 0) { // not drawn yet: the container's duration, the decoder closed again at once
+            length = 0;
+            Video::Reader::Options ro;
+            ro.threads = 1;
+            ro.hardware = false;
+            if (!looksLikeStill(file))
+                if (auto r = Video::Reader::open(file, ro); r && r->info().duration > 0)
+                    length = int(double(r->info().duration) / AV_TIME_BASE * options.format.rate.fps() + 0.5);
+        }
+        std::lock_guard lock(lengthMutex);
+        return lengths.emplace(file, length).first->second;
     }
 
     std::shared_ptr<const ColorGrade::Lut> lut(const QString& path)
