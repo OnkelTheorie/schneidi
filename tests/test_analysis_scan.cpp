@@ -2,8 +2,8 @@
 // The analyses read the picture in-process (engine/video/Scan, cli/AnalysisPicture.cpp) instead of an ffmpeg process:
 // same results as the ffmpeg way (SCHNEIDI_ANALYSIS=ffmpeg) on generated files long enough for several parallel time
 // ranges (cuts, B-frames, a rotated phone video, variable frame rate). scenes and overview: identical. Region and
-// colour events: identical with every picture decoded (SCHNEIDI_ANALYSIS=full); by default (non-reference pictures
-// skipped) the same events at most 3 frames apart. Times of both ways are printed.
+// colour events: identical with every picture decoded (region always, colour with SCHNEIDI_ANALYSIS=full); colour by
+// default (non-reference pictures skipped) the same events at most 3 frames apart. Times of both ways are printed.
 #include "cli/Commands.h"
 
 #include "check.h"
@@ -147,10 +147,27 @@ int main(int argc, char** argv)
             CHECK(o.size() >= (color ? 14 : 7));
             Check::report(same(full, f, turned ? 1 : 0), "region events (every picture) == ffmpeg", __FILE__, __LINE__,
                           QString("%1 %2\n       own: %3\n       ffmpeg: %4").arg(name, what, frames(full), frames(f)));
-            Check::report(near(f, o, 3), "region events (skipping) ~ ffmpeg", __FILE__, __LINE__,
+            // region: every picture always (B-frames skipped gave uneven samples); colour: skipping, close
+            Check::report(color ? near(f, o, 3) : same(o, f, turned ? 1 : 0), "region events (default) ~ ffmpeg",
+                          __FILE__, __LINE__,
                           QString("%1 %2\n       own: %3\n       ffmpeg: %4").arg(name, what, frames(o), frames(f)));
             std::printf("%-12s %s own %7.1f ms  ffmpeg %7.1f ms  events %s\n", qPrintable(name), what, ownMs, ffMs,
                         qPrintable(frames(o)));
+        }
+    }
+
+    // Region over moving content with B-frames: skipping them sampled unevenly, which looked like changes (12-18
+    // events instead of 8 on a zoom)
+    {
+        const QString zoom = Check::makeMedia(
+            dir.filePath("zoom.mp4"), {"-f", "lavfi", "-t", "12", "-i", "mandelbrot=s=320x180:r=30", "-c:v", "libx264",
+                                       "-preset", "ultrafast", "-bf", "3", "-pix_fmt", "yuv420p"});
+        if (CHECK(!zoom.isEmpty())) {
+            const QJsonObject a{{"file", zoom}, {"region", "0.1,0.1,0.3,0.3"}};
+            const QJsonArray o = run("scenes", a, nullptr)["changes"].toArray();
+            const QJsonArray f = run("scenes", a, "ffmpeg")["changes"].toArray();
+            Check::report(same(o, f, 0), "region events on moving B-frame video == ffmpeg", __FILE__, __LINE__,
+                          QString("\n       own: %1\n       ffmpeg: %2").arg(frames(o), frames(f)));
         }
     }
 

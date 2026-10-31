@@ -87,9 +87,11 @@ std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const s
 // Samples of `crop` (fractions of the upright picture) scaled to `size` as packed RGB24, `rate` per second from the
 // first picture (as ffmpeg's fps filter: the last picture at or before each sample). each(sample, pixels) is called
 // from several threads at once and must not throw. `ffmpegFilter`: the same as an ffmpeg filter chain after the
-// fps filter (crop and scale) for SCHNEIDI_ANALYSIS=ffmpeg. Throws when the video cannot be read.
+// fps filter (crop and scale) for SCHNEIDI_ANALYSIS=ffmpeg. `everyPicture`: decode B-frames too (exact sample spacing;
+// otherwise a sample may get the reference picture a frame or two earlier). Throws when the video cannot be read.
 void pictureSamples(const MediaSource& m, const QRectF& crop, QSize size, int rate, const QString& ffmpegFilter,
-                    const std::function<void(int, const uchar*)>& each, const std::function<void(double)>& progress);
+                    const std::function<void(int, const uchar*)>& each, const std::function<void(double)>& progress,
+                    bool everyPicture = false);
 
 // ---------- Picture (AnalysisVideo.cpp) ----------
 

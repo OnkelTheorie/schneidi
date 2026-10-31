@@ -128,7 +128,8 @@ QJsonObject regionChanges(const MediaSource& m, const QJsonObject& a, Context& c
         },
         [&ctx](double p) {
             if (ctx.progress) ctx.progress(p);
-        });
+        },
+        true); // every picture: uneven spacing (B-frames skipped) looked like changes in moving content
     // Samples in time order up to the first missing one (a read error inside the file)
     int n = 0;
     while (n < int(samples.size()) && !samples[size_t(n)].empty()) ++n;

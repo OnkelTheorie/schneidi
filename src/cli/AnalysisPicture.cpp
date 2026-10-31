@@ -139,7 +139,8 @@ std::vector<PictureScore> pictureScores(const MediaSource& m, int width, const s
 }
 
 void pictureSamples(const MediaSource& m, const QRectF& crop, QSize size, int rate, const QString& ffmpegFilter,
-                    const std::function<void(int, const uchar*)>& each, const std::function<void(double)>& progress)
+                    const std::function<void(int, const uchar*)>& each, const std::function<void(double)>& progress,
+                    bool everyPicture)
 {
     const ProjectFormat& f = m.format;
     const double total = m.info.length / f.rate.fps() * rate;
@@ -181,7 +182,7 @@ void pictureSamples(const MediaSource& m, const QRectF& crop, QSize size, int ra
     o.rate = rate;
     // Samples a fraction of a frame earlier than with every picture decoded: same events, at most a frame or two
     // apart (SCHNEIDI_ANALYSIS=full decodes all and matches the ffmpeg way exactly)
-    o.skipNonReference = qEnvironmentVariable("SCHNEIDI_ANALYSIS") != QLatin1String("full");
+    o.skipNonReference = !everyPicture && qEnvironmentVariable("SCHNEIDI_ANALYSIS") != QLatin1String("full");
     const Video::Scan::Result r = Video::Scan::run(
         m.info.path, o,
         [&](const Video::Scan::Frame& fr, const Video::Scan::Frame*) {
