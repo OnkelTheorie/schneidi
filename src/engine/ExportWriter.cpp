@@ -1307,6 +1307,8 @@ ExportWriter::ExportWriter(const Settings& s, Own own) : d(std::make_unique<Impl
     d->width = own.size.width();
     d->height = own.size.height();
     d->colorspace = own.colorspace;
+    // JPEG (JFIF) has no place for the matrix and every reader takes BT.601: written as 709 the colours shifted
+    if (s.videoCodec == QLatin1String("mjpeg")) d->colorspace = 601;
     d->rate = AVRational{own.rate.num, std::max(1, own.rate.den)};
     d->fps = std::max(1.0, own.rate.fps());
     d->aspect = AVRational{1, 1};

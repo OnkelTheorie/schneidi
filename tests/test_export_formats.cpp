@@ -379,6 +379,18 @@ void testImageSequence(const QString& dir)
         const QString first = firstOutputFile(k.path, k.settings);
         CHECK_EQ(probe(first, "video").value("codec_name").toString(), QString(codec));
         CHECK_EQ(QDir(imageSequenceDir(k.path)).entryList(QDir::Files).size(), qsizetype(10));
+        // Same colours as the PNG of that frame: JPEG readers take BT.601 (written as 709 green 0,255,1 came back
+        // as 21,255,8)
+        const QImage png(dir + "/seq/seq_00001.png"), img(first);
+        if (!CHECK(!png.isNull() && png.size() == img.size())) continue;
+        double diff = 0;
+        for (int y = 0; y < png.height(); y += 2)
+            for (int x = 0; x < png.width(); x += 2) {
+                const QRgb a = png.pixel(x, y), b = img.pixel(x, y);
+                diff += std::abs(qRed(a) - qRed(b)) + std::abs(qGreen(a) - qGreen(b)) + std::abs(qBlue(a) - qBlue(b));
+            }
+        diff /= 3.0 * ((png.height() + 1) / 2) * ((png.width() + 1) / 2);
+        if (!CHECK(diff < 2.5)) std::printf("       %s: mean difference to the PNG %.2f\n", file, diff);
     }
 }
 
