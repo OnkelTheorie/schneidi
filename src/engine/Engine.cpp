@@ -799,8 +799,14 @@ void Engine::setSpeed(double speed)
     // The pump goes on from the shown frame first (nothing from before is shown after this), then the sound
     const int at = std::max(0, m_position - m_offset);
     if (speed == 0.0) {
+        m_pump->setSpeed(0, at); // stay exactly on the shown frame; no frame of the playback is shown after this
         m_player->pause();
-        m_pump->setSpeed(0, at); // stay exactly on the shown frame
+        // A frame shown between reading `at` and the pump stopping moved the position one on: back to the still's
+        const int still = at + m_offset;
+        if (m_position.exchange(still) != still) {
+            ++m_seekEpoch;
+            emit positionChanged(still);
+        }
     } else if (wasPlaying && (before > 0) == (speed > 0)) {
         m_pump->setSpeed(speed, at);
         m_player->play(m_player->position(), speed); // faster/slower from where the sound is
