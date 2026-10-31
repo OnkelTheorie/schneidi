@@ -1846,7 +1846,7 @@ struct Renderer::Impl {
             keep.textures.push_back(std::move(canvas));
             ok = true;
         });
-        (void)ran; // shut down: ok stays false
+        (void)ran; // shut down or the frame refused: the job did not run, ok stays false
         if (!ok) {
             f.m_buffer.reset();
             return false;

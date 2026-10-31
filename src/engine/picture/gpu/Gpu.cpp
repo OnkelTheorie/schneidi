@@ -100,6 +100,7 @@ public:
     float yuv[16] = {};
     int mipLevels = 1;
     std::tuple<int, int, int, int, int> key; // pool key
+    uint64_t freedAt = 0;                    // pool frame it came back in (unused ones are dropped, see finish)
 };
 
 struct Lut3d {
@@ -188,7 +189,11 @@ struct Context::Impl {
     struct Pool {
         std::mutex lock;
         std::multimap<std::tuple<int, int, int, int, int>, std::unique_ptr<Texture>> free;
+        uint64_t frame = 0; // finish() calls
     };
+    // Free textures not taken again for this many frames are released: every title size, source resolution and
+    // readback size stayed on the card for the whole session (typing a title's text made a new size per key)
+    static constexpr uint64_t kUnusedFrames = 240, kSweepEvery = 120;
     std::shared_ptr<Pool> pool = std::make_shared<Pool>();
 
     // Pictures referenced by uploads until finish() (the GL backend reads them when the frame is submitted)
@@ -235,6 +240,7 @@ struct Context::Impl {
         return TexturePtr(t.release(), [weak](Texture* p) {
             if (auto pl = weak.lock()) {
                 std::lock_guard<std::mutex> g(pl->lock);
+                p->freedAt = pl->frame;
                 pl->free.emplace(p->key, std::unique_ptr<Texture>(p));
                 return;
             }
@@ -482,12 +488,13 @@ QRhi* Context::rhi() const { return d->rhi.get(); }
 const DeviceInfo& Context::info() const { return d->info; }
 std::shared_ptr<void>& Context::userData() { return d->userData; }
 
-void Context::begin()
+bool Context::begin()
 {
-    if (d->recording) return;
-    if (d->rhi->beginOffscreenFrame(&d->cb) != QRhi::FrameOpSuccess) return;
+    if (d->recording) return true;
+    if (d->rhi->beginOffscreenFrame(&d->cb) != QRhi::FrameOpSuccess) return false;
     d->recording = true;
     d->passes = 0;
+    return true;
 }
 
 void Context::finish()
@@ -505,6 +512,19 @@ void Context::finish()
     for (AVFrame* f : d->heldFrames) av_frame_free(&f);
     d->heldFrames.clear();
     d->heldData.clear();
+    std::vector<std::unique_ptr<Texture>> unused; // released here, on the context's thread, outside the lock
+    {
+        std::lock_guard<std::mutex> g(d->pool->lock);
+        const uint64_t now = ++d->pool->frame;
+        if (now % Impl::kSweepEvery == 0)
+            for (auto it = d->pool->free.begin(); it != d->pool->free.end();)
+                if (now - it->second->freedAt > Impl::kUnusedFrames) {
+                    unused.push_back(std::move(it->second));
+                    it = d->pool->free.erase(it);
+                } else {
+                    ++it;
+                }
+    }
 }
 
 TexturePtr Context::target(QSize size, const float clear[4])
@@ -861,6 +881,7 @@ struct Service::Impl {
     struct Job {
         const std::function<void(Context&)>* fn = nullptr; // nullptr = end the thread
         bool done = false;
+        bool ran = false; // false: the card refused the frame
         std::condition_variable doneCv;
     };
     std::deque<Job*> queue;
@@ -883,9 +904,12 @@ struct Service::Impl {
             }
             const bool quit = !jobs.back()->fn;
             const size_t work = jobs.size() - (quit ? 1 : 0);
-            if (work > 0) {
-                context->begin();
-                for (size_t i = 0; i < work; ++i) (*jobs[i]->fn)(*context);
+            // A frame the card refuses runs no job: their readbacks would stay unfilled and look like a result
+            if (work > 0 && context->begin()) {
+                for (size_t i = 0; i < work; ++i) {
+                    (*jobs[i]->fn)(*context);
+                    jobs[i]->ran = true;
+                }
                 context->finish();
             }
             if (quit) context.reset(); // on its own thread (GL context, textures)
@@ -1068,7 +1092,7 @@ bool Service::run(const std::function<void(Context&)>& job)
     d->queue.push_back(&j);
     d->wake.notify_one();
     j.doneCv.wait(lock, [&] { return j.done; });
-    return true;
+    return j.ran;
 }
 
 const DeviceInfo& Service::info() const { return d->info; }

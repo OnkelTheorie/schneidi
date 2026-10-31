@@ -480,6 +480,25 @@ int main(int argc, char** argv)
     }
 
     std::printf("passes last frame %d, pooled textures %d\n", gpu->stats().passes, gpu->stats().texturesPooled);
+
+    // Pool: textures of sizes nobody asks for any more are released after a while (each title size stayed for good)
+    {
+        for (int i = 0; i < 20; ++i) { // 20 sizes once (a title being typed)
+            gpu->begin();
+            Gpu::TexturePtr t = gpu->target(QSize(40 + i, 30));
+            gpu->finish();
+        }
+        const int before = gpu->stats().texturesPooled;
+        for (int i = 0; i < 400; ++i) { // then frames of one size only
+            gpu->begin();
+            Gpu::TexturePtr t = gpu->target(QSize(64, 36));
+            gpu->finish();
+        }
+        const int after = gpu->stats().texturesPooled;
+        std::printf("pool: %d textures after 20 sizes, %d after 400 frames of one size\n", before, after);
+        CHECK(before >= 20);
+        CHECK(after <= 3);
+    }
     gpu.reset();
     return Check::result();
 }

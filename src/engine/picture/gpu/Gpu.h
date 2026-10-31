@@ -95,7 +95,8 @@ public:
     // A slot for the caller's per-context caches (LUTs, stills kept on the card); released before the device
     std::shared_ptr<void>& userData();
 
-    void begin();
+    // false: the card refused the frame (context lost, driver reset): every operation would do nothing
+    bool begin();
     // Submits what was recorded, waits for the card, fills the readbacks
     void finish();
 
@@ -169,7 +170,7 @@ public:
     // Ends the GPU thread (its context released on it); after that run() refuses. Done on QCoreApplication::aboutToQuit
     static void shutdown();
     // Runs job(context) on the GPU thread inside begin()/finish() and waits for it (readbacks are filled on return);
-    // false = shut down, nothing ran
+    // false = shut down or the card refused the frame, nothing ran (the caller takes the CPU path)
     bool run(const std::function<void(Context&)>& job);
     const DeviceInfo& info() const;
 
