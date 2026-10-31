@@ -11,6 +11,7 @@
 #include "engine/picture/Pump.h"
 #include "engine/video/Reader.h"
 
+#include <QColor>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QFile>
@@ -257,6 +258,59 @@ void testPump()
 }
 
 // Playing a long-GOP file backwards: with the decoder keeping the GOP (setBehind), each GOP is decoded once
+// A scrub's close picture (the key frame before the position) that finishes only after playback started: it was
+// shown as the played frame and kept among the recent ones as exact, so a later still there showed it for good
+void testScrubThenPlay()
+{
+    std::mutex m;
+    std::vector<std::pair<int64_t, int>> shown; // position, red
+    std::atomic<bool> release{false};
+    Picture::Pump pump([] { return NAN; }, [&](const QImage& img, int64_t pos, double) {
+        std::lock_guard l(m);
+        shown.push_back({pos, img.isNull() ? -1 : qRed(img.pixel(0, 0))});
+    }, 2);
+    auto make = [](int red) {
+        QImage i(4, 4, QImage::Format_RGBA8888);
+        i.fill(QColor(red, 0, 0));
+        return i;
+    };
+    auto c = std::make_shared<Picture::Pump::Content>();
+    c->render = [&](int64_t) { return make(100); };
+    c->renderWant = [&](int64_t, Picture::Pump::Want& w) {
+        if (w.nearest) { // close picture = red 200, held back until playback started
+            while (!release.load()) std::this_thread::sleep_for(1ms);
+            w.exact = false;
+            return make(200);
+        }
+        w.exact = true;
+        return make(100);
+    };
+    c->last = [] { return int64_t(1000); };
+    c->fps = 25;
+    pump.setContent(c, 0, 0);
+    std::this_thread::sleep_for(100ms);
+    pump.seek(10, false);
+    std::this_thread::sleep_for(50ms);
+    pump.seek(20, true);
+    std::this_thread::sleep_for(50ms);
+    pump.setSpeed(1, 20);
+    release = true;
+    std::this_thread::sleep_for(300ms);
+    pump.setSpeed(0, 25);
+    std::this_thread::sleep_for(100ms);
+    {
+        std::lock_guard l(m);
+        shown.clear();
+    }
+    pump.seek(20, false);
+    CHECK(waitFor([&] {
+        std::lock_guard l(m);
+        return !shown.empty();
+    }, 1000));
+    std::lock_guard l(m);
+    CHECK(!shown.empty() && shown.back().first == 20 && shown.back().second == 100); // the exact picture
+}
+
 void testReaderBackward(const QString& file)
 {
     for (const bool keep : {false, true}) {
@@ -314,6 +368,8 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     std::printf("pump\n");
     testPump();
+    std::printf("scrub, then play\n");
+    testScrubThenPlay();
     if (Check::haveFfmpeg()) {
         QTemporaryDir dir;
         const QString file = Check::makeMedia(

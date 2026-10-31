@@ -195,6 +195,10 @@ struct Pump::Impl {
                 wake.notify_all(); // it may be wanted again meanwhile
                 continue;
             }
+            if (cancel && !want.exact && speed != 0) { // a scrub's close picture, finished after playback started
+                wake.notify_all();                      // the exact one is rendered for it
+                continue;
+            }
             frames[p] = {std::move(img), !cancel || want.exact};
             prune();
             ready.notify_all();
@@ -281,6 +285,11 @@ struct Pump::Impl {
             const int dir = direction();
             const double now = clock ? clock() : NAN;
             auto it = frames.find(next);
+            if (it != frames.end() && !it->second.exact) { // never played (nor kept as exact): render it again
+                frames.erase(it);
+                wake.notify_all();
+                it = frames.end();
+            }
             if (it == frames.end()) {
                 // Overdue while a later frame that is due already is there (workers finish out of order): skip
                 if (!std::isnan(now)) {
