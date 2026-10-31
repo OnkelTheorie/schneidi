@@ -133,8 +133,9 @@ struct RenderHints {
     bool nearest = false;
     // Set by the caller when the frame is not wanted any more: decoding for it stops, render() returns soon (null)
     const std::atomic<bool>* cancel = nullptr;
-    // Export: on the GPU path the encoder's planes are written straight into this target (8-bit 4:2:0 / NV12 only;
-    // Frame::yuvWritten() then), saving the RGBA readback and the conversion on the CPU. Must stay valid during render().
+    // Export: the encoder's planes are written straight into this target (8-bit 4:2:0 / NV12 only; Frame::yuvWritten()
+    // then): a frame that is just one plain video at output size in this layout gets the decoded planes as they are,
+    // the GPU path writes them itself (no RGBA readback, no conversion on the CPU). Must stay valid during render().
     const OutputColor::Target* yuv = nullptr;
 };
 

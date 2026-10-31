@@ -22,6 +22,7 @@
 
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavutil/imgutils.h>
 #include <libavutil/pixdesc.h>
 }
 
@@ -520,14 +521,22 @@ struct Renderer::Impl {
             const QImage& img = s.still->image;
             *native = img.size();
             if (dw <= 0 || dh <= 0) return {};
-            Image out(dw, dh);
+            Image out;
+            uint8_t* dst = into;
+            if (!dst) {
+                out = Image(dw, dh);
+                dst = out.data();
+            } else { // straight into the caller's picture (a layer that covers the frame): size only, as videoFrame
+                out.w = dw;
+                out.h = dh;
+            }
             if (img.width() == dw && img.height() == dh) {
-                std::memcpy(out.data(), img.constBits(), out.px.size());
+                std::memcpy(dst, img.constBits(), size_t(dw) * dh * 4);
             } else {
                 Compose::Affine m;
                 m.a = double(dw) / img.width();
                 m.e = double(dh) / img.height();
-                Compose::draw(out.data(), dw, dh, img.constBits(), img.width(), img.height(), m, 1.0);
+                Compose::draw(dst, dw, dh, img.constBits(), img.width(), img.height(), m, 1.0);
             }
             return out;
         }
@@ -927,6 +936,64 @@ struct Renderer::Impl {
         const double sx = double(ctx.W) / ctx.PW, sy = double(ctx.H) / ctx.PH;
         return (cx - w / 2) * sx <= -1 && (cx + w / 2) * sx >= ctx.W + 1 && (cy - h / 2) * sy <= -1
                && (cy + h / 2) * sy >= ctx.H + 1;
+    }
+
+    // Export: frame f shows just one plain opaque video at output size, decoded in the encoder's layout, range and
+    // matrix. Then its planes go to the encoder as they are (bit-exact, no YUV -> RGBA -> YUV round trip, like a
+    // plain FFmpeg transcode). false = render it normally.
+    bool passThrough(int f, const Ctx& ctx, const OutputColor::Target& t)
+    {
+        if (options.mode != Mode::Export || options.transparent || t.bits != 8
+            || (t.layout != OutputColor::Layout::Yuv420 && t.layout != OutputColor::Layout::Nv12))
+            return false;
+        const Timeline& tl = *ctx.root;
+        if (options.subtitles)
+            for (const SubtitleTrack& st : tl.subtitles)
+                if (st.enabled)
+                    for (const SubtitleCue& cue : st.cues)
+                        if (f >= cue.start && f < cue.end && !cue.text.trimmed().isEmpty()) return false;
+        // The top track with something at f must cover the frame (nothing below shows)
+        int index = -1;
+        for (int i = tl.video.size() - 1; i >= 0 && index < 0; --i) {
+            const Track& track = tl.video[i];
+            if (track.hidden) continue;
+            for (const auto& span : spansOf(track, tl))
+                if (f >= span.start && f < span.end) return false;
+            if (const Clip* c = clipAt(track, f); c && c->enabled) index = i;
+        }
+        if (index < 0 || !covers(tl.video[index], index, f, ctx, tl, QString())) return false;
+        const Clip& c = *clipAt(tl.video[index], f);
+        if (Keys::hasTransform(c) || !c.effects.isEmpty()) return false;
+        const QString lane = QStringLiteral("v%1").arg(index);
+        const QSizeF fit = MediaAspect::fit(nativeAspect(c, lane), QSizeF(ctx.PW, ctx.PH));
+        if (std::lround(fit.width() * ctx.W / ctx.PW) != ctx.W || std::lround(fit.height() * ctx.H / ctx.PH) != ctx.H)
+            return false;
+        const Source s = source(c.mediaPath, lane);
+        if (!s.video) return false;
+        const Video::Info& info = s.video->info;
+        auto family = [](int cs) { return cs == 170 || cs == 470 || cs == 624 ? 601 : cs == 2021 ? 2020 : cs; };
+        if (family(info.colorspace) != family(t.colorspace)) return false;
+        const double file = fileFrame(c, f - c.start, *s.video);
+        if (file < 0) return false;
+        const auto pic = fetchPicture(*s.video, file, ctx);
+        if (!pic) return false;
+        const AVFrame* fr = pic->frame;
+        const auto format = AVPixelFormat(fr->format);
+        const bool full = format == AV_PIX_FMT_YUVJ420P || info.fullRange;
+        if (fr->width != ctx.W || fr->height != ctx.H || full != t.fullRange) return false;
+        const int cw = (ctx.W + 1) / 2, ch = (ctx.H + 1) / 2;
+        if (t.layout == OutputColor::Layout::Yuv420 && (format == AV_PIX_FMT_YUV420P || format == AV_PIX_FMT_YUVJ420P)) {
+            av_image_copy_plane(t.planes[0], t.strides[0], fr->data[0], fr->linesize[0], ctx.W, ctx.H);
+            av_image_copy_plane(t.planes[1], t.strides[1], fr->data[1], fr->linesize[1], cw, ch);
+            av_image_copy_plane(t.planes[2], t.strides[2], fr->data[2], fr->linesize[2], cw, ch);
+        } else if (t.layout == OutputColor::Layout::Nv12 && format == AV_PIX_FMT_NV12) {
+            av_image_copy_plane(t.planes[0], t.strides[0], fr->data[0], fr->linesize[0], ctx.W, ctx.H);
+            av_image_copy_plane(t.planes[1], t.strides[1], fr->data[1], fr->linesize[1], 2 * cw, ch);
+        } else {
+            return false;
+        }
+        layersDecoded.fetch_add(1, std::memory_order_relaxed);
+        return true;
     }
 
     // Draws the track's picture at f over canvas. bottom: the canvas holds nothing that shows (this track covers it)
@@ -1768,6 +1835,20 @@ Frame Renderer::render(int64_t frame, const RenderHints& hints)
     t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
     t_exact = true;
 
+    if (hints.yuv && d->passThrough(int(frame), ctx, *hints.yuv)) {
+        t_hints = nullptr;
+        if (hints.cancel && hints.cancel->load()) return {};
+        Frame f;
+        f.m_yuvWritten = true;
+        f.m_exact = t_exact;
+        f.m_width = ctx.W;
+        f.m_height = ctx.H;
+        f.m_position = frame;
+        f.m_opaque = true;
+        d->framesRendered.fetch_add(1, std::memory_order_relaxed);
+        return f;
+    }
+    t_exact = true; // a fetch that did not pass through is fetched again
     if (Gpu::Service* gpu = d->gpuService()) {
         Frame f;
         if (d->renderGpu(*gpu, f, frame, ctx, hints)) {

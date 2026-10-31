@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Benchmark (not a CTest test): export of a real project or media file, like the Deliver page, next to plain FFmpeg.
-// Reports how long Exporter::start() blocks the GUI thread, the time to the first rendered frame, frames per second,
+// Reports how long Exporter::start() blocks the GUI thread, the time to the first frame handed to the encoder, frames per second,
 // CPU load and peak memory. With a single media file (or --ref) also FFmpeg alone with the same encoder settings:
 // shows what schneidi itself costs.
 // Run: QT_QPA_PLATFORM=offscreen ./build-tests/tests/bench_export <project.schneidi | media file> [options]
@@ -180,9 +180,18 @@ int main(int argc, char** argv)
         message = m;
         loop.quit();
     });
-    QObject::connect(&ex, &Exporter::progress, &loop, [&](int percent) {
-        if (percent > 0 && firstFrameMs < 0) firstFrameMs = clock.elapsed();
+    qint64 builtMs = -1;
+    QObject::connect(&ex, &Exporter::started, &loop, [&] { builtMs = clock.elapsed(); });
+    // The first frame handed to the encoder, polled finely (the export's own progress comes every 200 ms only)
+    QTimer firstFrame;
+    firstFrame.setInterval(2);
+    QObject::connect(&firstFrame, &QTimer::timeout, &loop, [&] {
+        if (ex.framesWritten() > 0) {
+            firstFrameMs = clock.elapsed();
+            firstFrame.stop();
+        }
     });
+    firstFrame.start();
     const double cpu0 = cpuSeconds();
     clock.start();
     QString error;
@@ -207,6 +216,7 @@ int main(int argc, char** argv)
                 ex.note().isEmpty() ? "" : qPrintable(" – " + ex.note()));
     std::printf("load       %6.0f ms (project file / probe)\n", loadMs);
     std::printf("start()    %6lld ms blocking the GUI thread\n", startMs);
+    std::printf("built      %6lld ms (sources open, analyses done)\n", builtMs);
     std::printf("1st frame  %6lld ms\n", firstFrameMs);
     std::printf("schneidi   %6.1f s = %6.1f fps (%.1fx real time), CPU %.1f cores, peak %.0f MB\n", totalMs / 1000.0,
                 outFrames * 1000.0 / totalMs, outFrames * 1000.0 / totalMs / (outRate > 0 ? outRate : fps), load, peakMb());

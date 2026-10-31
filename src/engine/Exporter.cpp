@@ -362,6 +362,11 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     return true;
 }
 
+int Exporter::framesWritten() const
+{
+    return m_writer ? m_writer->framesWritten() : 0;
+}
+
 bool Exporter::launch(QString* error)
 {
     const ExportSettings& s = m_settings;
