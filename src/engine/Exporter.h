@@ -96,6 +96,8 @@ public:
     int threads() const { return m_threads; }
     // After finished(): share of the frames copied by smart render (0 = everything encoded)
     int copiedPercent() const { return m_copiedPercent; }
+    // Frames handed to the encoder so far (0 before started())
+    int framesWritten() const;
 
 signals:
     void progress(int percent);

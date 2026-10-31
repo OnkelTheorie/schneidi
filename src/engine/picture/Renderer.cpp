@@ -22,6 +22,7 @@
 
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavutil/imgutils.h>
 #include <libavutil/pixdesc.h>
 }
 
@@ -520,14 +521,22 @@ struct Renderer::Impl {
             const QImage& img = s.still->image;
             *native = img.size();
             if (dw <= 0 || dh <= 0) return {};
-            Image out(dw, dh);
+            Image out;
+            uint8_t* dst = into;
+            if (!dst) {
+                out = Image(dw, dh);
+                dst = out.data();
+            } else { // straight into the caller's picture (a layer that covers the frame): size only, as videoFrame
+                out.w = dw;
+                out.h = dh;
+            }
             if (img.width() == dw && img.height() == dh) {
-                std::memcpy(out.data(), img.constBits(), out.px.size());
+                std::memcpy(dst, img.constBits(), size_t(dw) * dh * 4);
             } else {
                 Compose::Affine m;
                 m.a = double(dw) / img.width();
                 m.e = double(dh) / img.height();
-                Compose::draw(out.data(), dw, dh, img.constBits(), img.width(), img.height(), m, 1.0);
+                Compose::draw(dst, dw, dh, img.constBits(), img.width(), img.height(), m, 1.0);
             }
             return out;
         }
@@ -663,8 +672,29 @@ struct Renderer::Impl {
         if (bounds) *bounds &= QRect(0, 0, ctx.W, ctx.H);
     }
 
-    // One clip's picture at timeline frame f on a transparent output-size layer; empty = nothing visible
-    Image clipLayer(const Clip& c, int f, const QString& lane, const Ctx& ctx, const Timeline& tl, int depth)
+    // A clip's source picture (w x h, standing for the whole fitted picture) placed by its transform onto `onto`, with
+    // its opacity times `fade` (no crop, no blur fill: see clipLayer)
+    void drawPlaced(Image& onto, const Clip& c, int t, const Ctx& ctx, QSizeF fit, const uint8_t* px, int w, int h,
+                    double fade)
+    {
+        auto val = [&](AnimParam p) { return Keys::valueAt(c, p, t); };
+        const bool transform = Keys::hasTransform(c);
+        const double opacity = Keys::hasOpacity(c) ? std::clamp(val(AnimParam::Opacity) / 100.0, 0.0, 1.0) : 1.0;
+        const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
+        const double zx = transform ? val(AnimParam::ZoomX) : 1.0, zy = transform ? val(AnimParam::ZoomY) : 1.0;
+        const double x = transform ? val(AnimParam::PosX) : 0.0, y = transform ? val(AnimParam::PosY) : 0.0;
+        const double fw = fit.width() * zx, fh = fit.height() * zy;
+        const double rx = (ctx.PW - fw) / 2 + x, ry = (ctx.PH - fh) / 2 - y;
+        const double angle = transform ? -val(AnimParam::Rotation) : 0.0;
+        const Compose::Affine m = Compose::placement(rx * sx, ry * sy, fw * sx, fh * sy, angle, w, h, true, true);
+        Compose::draw(onto.data(), onto.w, onto.h, px, w, h, m, opacity * fade);
+    }
+
+    // One clip's picture at timeline frame f on a transparent output-size layer; empty = nothing visible.
+    // onto: a media clip with a transform but no crop, effects or blur fill is drawn straight onto that picture
+    // (opacity times `fade`) instead - no layer of its own, a still not copied - and nothing is returned.
+    Image clipLayer(const Clip& c, int f, const QString& lane, const Ctx& ctx, const Timeline& tl, int depth,
+                    Image* onto = nullptr, double fade = 1.0)
     {
         if (!c.enabled) return {};
         const int t = f - c.start;
@@ -754,6 +784,13 @@ struct Renderer::Impl {
                 const double scale = std::max(double(W) / nw, double(H) / nh) * zoom * 1.1;
                 const int dw = scale < 1.0 ? std::max(2, int(std::ceil(nw * scale))) : nw;
                 const int dh = scale < 1.0 ? std::max(2, int(std::ceil(nh * scale))) : nh;
+                if (onto && s.still && dw == nw && dh == nh && !crop && !c.transform.hasBlurFill()) {
+                    // Straight from the kept still (no copy)
+                    const QImage& img = s.still->image;
+                    layersDecoded.fetch_add(1, std::memory_order_relaxed);
+                    drawPlaced(*onto, c, t, ctx, fit, img.constBits(), img.width(), img.height(), fade);
+                    return {};
+                }
                 src = mediaPicture(c, t, lane, dw, dh, ctx, &native);
             }
             if (src.empty()) return {};
@@ -804,6 +841,10 @@ struct Renderer::Impl {
         const double w = fit.width() * zx, h = fit.height() * zy;
         const double rx = (ctx.PW - w) / 2 + x, ry = (ctx.PH - h) / 2 - y;
         const double angle = transform ? -val(AnimParam::Rotation) : 0.0;
+        if (onto && !crop && !bg && !partial) {
+            drawPlaced(*onto, c, t, ctx, fit, src.data(), src.w, src.h, fade);
+            return {};
+        }
         layer = Image(W, H);
         Compose::Affine m = Compose::placement(rx * sx, ry * sy, w * sx, h * sy, angle, fullW, fullH, true, true);
         if (partial) { // the part's pixel (0, 0) is the full picture's part.x(), part.y()
@@ -839,15 +880,19 @@ struct Renderer::Impl {
             return nullptr;
         };
         const QString lane = prefix + QString("v%1").arg(trackIndex);
-        // Second lane for the right side of a dissolve between clips of the same file
-        auto laneOf = [&](bool right) { return right ? lane + 'x' : lane; };
+        // Each side on its clip's lane; the right side of a dissolve that would share the left side's decoder on a
+        // second one
+        auto laneOf = [&](const Clip& c, const Clip* left) {
+            const QString l = clipLane(track, c, lane);
+            return left && left->mediaPath == c.mediaPath && clipLane(track, *left, lane) == l ? l + 'x' : l;
+        };
         for (const auto& s : spans) {
             if (f < s.start || f >= s.end) continue;
             const Clip* a = s.leftId ? byId(s.leftId) : nullptr;
             const Clip* b = s.rightId ? byId(s.rightId) : nullptr;
             const bool sameFile = a && b && a->mediaPath == b->mediaPath;
-            Image ia = a ? clipLayer(*a, f, laneOf(false), ctx, tl, depth) : Image();
-            Image ib = b ? clipLayer(*b, f, laneOf(sameFile), ctx, tl, depth) : Image();
+            Image ia = a ? clipLayer(*a, f, laneOf(*a, nullptr), ctx, tl, depth) : Image();
+            Image ib = b ? clipLayer(*b, f, laneOf(*b, a), ctx, tl, depth) : Image();
             for (Image* img : {&ia, &ib})
                 if (!img->empty()) {
                     const Clip* c = img == &ia ? a : b;
@@ -889,6 +934,28 @@ struct Renderer::Impl {
         return f < it->end() ? &*it : nullptr;
     }
 
+    // Decoder lane of a clip. Preview: a clip that jumps to another part of a file used just before it on the track
+    // gets the lane's other decoder (suffix 'y'), so Renderer::prepare decodes its first picture while the clip
+    // before it still plays (one shared decoder had to seek at the cut: the picture stood ~40 ms at 60 fps). A clip
+    // that continues the one before it (a split without a jump) keeps its decoder.
+    QString clipLane(const Track& track, const Clip& c, const QString& lane) const
+    {
+        if (options.mode != Mode::Preview || c.mediaPath.isEmpty()) return lane;
+        bool second = false;
+        const Clip* prev = nullptr;
+        for (const Clip& o : track.clips) { // sorted by start
+            if (o.mediaPath != c.mediaPath) continue;
+            if (prev) {
+                const bool continues = o.start == prev->end() && o.in == prev->out + 1 && o.speed == prev->speed
+                                       && o.reverse == prev->reverse && !o.freeze && !prev->freeze;
+                if (!continues) second = !second;
+            }
+            if (o.id == c.id) return second ? lane + 'y' : lane;
+            prev = &o;
+        }
+        return lane;
+    }
+
     // The track's picture at f surely covers the whole frame opaquely (then nothing below is decoded). Conservative:
     // false when unsure.
     bool covers(const Track& track, int trackIndex, int f, const Ctx& ctx, const Timeline& tl, const QString& prefix)
@@ -910,7 +977,7 @@ struct Renderer::Impl {
         if (TimelineOps::fadeRamp(*c, f - c->start) < 1.0) return false;
         for (const EffectInstance& e : c->effects)
             if (e.enabled && e.effectId != QLatin1String(ColorGrade::EffectId)) return false;
-        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        const QString lane = clipLane(track, *c, prefix + QString("v%1").arg(trackIndex));
         const Source s = source(c->mediaPath, lane);
         if (s.still) {
             if (!s.still->opaque) return false;
@@ -929,6 +996,64 @@ struct Renderer::Impl {
                && (cy + h / 2) * sy >= ctx.H + 1;
     }
 
+    // Export: frame f shows just one plain opaque video at output size, decoded in the encoder's layout, range and
+    // matrix. Then its planes go to the encoder as they are (bit-exact, no YUV -> RGBA -> YUV round trip, like a
+    // plain FFmpeg transcode). false = render it normally.
+    bool passThrough(int f, const Ctx& ctx, const OutputColor::Target& t)
+    {
+        if (options.mode != Mode::Export || options.transparent || t.bits != 8
+            || (t.layout != OutputColor::Layout::Yuv420 && t.layout != OutputColor::Layout::Nv12))
+            return false;
+        const Timeline& tl = *ctx.root;
+        if (options.subtitles)
+            for (const SubtitleTrack& st : tl.subtitles)
+                if (st.enabled)
+                    for (const SubtitleCue& cue : st.cues)
+                        if (f >= cue.start && f < cue.end && !cue.text.trimmed().isEmpty()) return false;
+        // The top track with something at f must cover the frame (nothing below shows)
+        int index = -1;
+        for (int i = tl.video.size() - 1; i >= 0 && index < 0; --i) {
+            const Track& track = tl.video[i];
+            if (track.hidden) continue;
+            for (const auto& span : spansOf(track, tl))
+                if (f >= span.start && f < span.end) return false;
+            if (const Clip* c = clipAt(track, f); c && c->enabled) index = i;
+        }
+        if (index < 0 || !covers(tl.video[index], index, f, ctx, tl, QString())) return false;
+        const Clip& c = *clipAt(tl.video[index], f);
+        if (Keys::hasTransform(c) || !c.effects.isEmpty()) return false;
+        const QString lane = QStringLiteral("v%1").arg(index);
+        const QSizeF fit = MediaAspect::fit(nativeAspect(c, lane), QSizeF(ctx.PW, ctx.PH));
+        if (std::lround(fit.width() * ctx.W / ctx.PW) != ctx.W || std::lround(fit.height() * ctx.H / ctx.PH) != ctx.H)
+            return false;
+        const Source s = source(c.mediaPath, lane);
+        if (!s.video) return false;
+        const Video::Info& info = s.video->info;
+        auto family = [](int cs) { return cs == 170 || cs == 470 || cs == 624 ? 601 : cs == 2021 ? 2020 : cs; };
+        if (family(info.colorspace) != family(t.colorspace)) return false;
+        const double file = fileFrame(c, f - c.start, *s.video);
+        if (file < 0) return false;
+        const auto pic = fetchPicture(*s.video, file, ctx);
+        if (!pic) return false;
+        const AVFrame* fr = pic->frame;
+        const auto format = AVPixelFormat(fr->format);
+        const bool full = format == AV_PIX_FMT_YUVJ420P || info.fullRange;
+        if (fr->width != ctx.W || fr->height != ctx.H || full != t.fullRange) return false;
+        const int cw = (ctx.W + 1) / 2, ch = (ctx.H + 1) / 2;
+        if (t.layout == OutputColor::Layout::Yuv420 && (format == AV_PIX_FMT_YUV420P || format == AV_PIX_FMT_YUVJ420P)) {
+            av_image_copy_plane(t.planes[0], t.strides[0], fr->data[0], fr->linesize[0], ctx.W, ctx.H);
+            av_image_copy_plane(t.planes[1], t.strides[1], fr->data[1], fr->linesize[1], cw, ch);
+            av_image_copy_plane(t.planes[2], t.strides[2], fr->data[2], fr->linesize[2], cw, ch);
+        } else if (t.layout == OutputColor::Layout::Nv12 && format == AV_PIX_FMT_NV12) {
+            av_image_copy_plane(t.planes[0], t.strides[0], fr->data[0], fr->linesize[0], ctx.W, ctx.H);
+            av_image_copy_plane(t.planes[1], t.strides[1], fr->data[1], fr->linesize[1], 2 * cw, ch);
+        } else {
+            return false;
+        }
+        layersDecoded.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
     // Draws the track's picture at f over canvas. bottom: the canvas holds nothing that shows (this track covers it)
     void drawTrack(Image& canvas, bool bottom, const Track& track, int trackIndex, int f, const Ctx& ctx,
                    const Timeline& tl, const QString& prefix, int depth)
@@ -942,7 +1067,7 @@ struct Renderer::Impl {
             }
         const Clip* c = clipAt(track, f);
         if (!c || !c->enabled) return;
-        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        const QString lane = clipLane(track, *c, prefix + QString("v%1").arg(trackIndex));
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
         // Render cache (preview, outer timeline): the clip's finished output (frame 0 = clip start) instead of the
@@ -993,6 +1118,11 @@ struct Renderer::Impl {
         if (c->isTitle() && plain && opacity * fade >= 1.0 && c->effects.isEmpty()
             && !Keys::animated(*c, AnimParam::TitleSize)) {
             drawTitle(canvas, *c, t, ctx); // painted straight on: no full-frame layer
+            return;
+        }
+        if (Keys::hasTransform(*c) && !c->isTitle() && !c->isNested() && !c->mediaPath.isEmpty() && c->effects.isEmpty()
+            && !Keys::hasCrop(*c) && !c->transform.hasBlurFill()) {
+            clipLayer(*c, f, lane, ctx, tl, depth, &canvas, fade); // transformed: drawn straight onto the frame
             return;
         }
         Image layer = clipLayer(*c, f, lane, ctx, tl, depth);
@@ -1382,7 +1512,9 @@ struct Renderer::Impl {
         if (b && !b->enabled) b = nullptr;
         const QString lane = prefix + QString("v%1").arg(trackIndex);
         const bool sameFile = a && b && a->mediaPath == b->mediaPath;
-        const QString laneA = lane, laneB = sameFile ? lane + 'x' : lane;
+        const QString laneA = a ? clipLane(track, *a, lane) : lane;
+        QString laneB = b ? clipLane(track, *b, lane) : lane;
+        if (sameFile && laneB == laneA) laneB += 'x'; // the right side would share the left side's decoder
         const int len = s.length(), i = f - s.start;
         const TransitionStyle& st = s.style;
         const TransitionType type = st.type;
@@ -1467,7 +1599,7 @@ struct Renderer::Impl {
             }
         const Clip* c = clipAt(track, f);
         if (!c || !c->enabled) return;
-        const QString lane = prefix + QString("v%1").arg(trackIndex);
+        const QString lane = clipLane(track, *c, prefix + QString("v%1").arg(trackIndex));
         const int t = f - c->start;
         const double fade = TimelineOps::fadeRamp(*c, t);
         if (ctx.preview && options.renderCache && depth == 0 && !c->isTitle() && !c->mediaPath.isEmpty()
@@ -1768,6 +1900,20 @@ Frame Renderer::render(int64_t frame, const RenderHints& hints)
     t_hints = hints.nearest || hints.cancel ? &hints : nullptr;
     t_exact = true;
 
+    if (hints.yuv && d->passThrough(int(frame), ctx, *hints.yuv)) {
+        t_hints = nullptr;
+        if (hints.cancel && hints.cancel->load()) return {};
+        Frame f;
+        f.m_yuvWritten = true;
+        f.m_exact = t_exact;
+        f.m_width = ctx.W;
+        f.m_height = ctx.H;
+        f.m_position = frame;
+        f.m_opaque = true;
+        d->framesRendered.fetch_add(1, std::memory_order_relaxed);
+        return f;
+    }
+    t_exact = true; // a fetch that did not pass through is fetched again
     if (Gpu::Service* gpu = d->gpuService()) {
         Frame f;
         if (d->renderGpu(*gpu, f, frame, ctx, hints)) {
@@ -1849,17 +1995,19 @@ void Renderer::prepare(int64_t frame)
     ctx.PH = d->options.format.height;
     ctx.preview = d->options.mode == Mode::Preview;
     for (int i = 0; i < tl->video.size(); ++i) {
-        const QString lane = QString("v%1").arg(i);
-        const QVector<Clip>& clips = tl->video[i].clips;
+        const Track& track = tl->video[i];
+        const QVector<Clip>& clips = track.clips;
         for (const Clip& c : clips) {
             if (!c.enabled || c.mediaPath.isEmpty() || c.isTitle() || c.isNested()) continue;
+            const QString lane = d->clipLane(track, c, QString("v%1").arg(i));
             if (frame >= c.start - 50 && frame < c.end()) d->source(c.mediaPath, lane);
             // A clip starting soon: decode its first picture now (long-GOP material decodes up to seconds from the
             // keyframe before its in point; in the middle of playback the picture stood that long). Only when the
-            // lane's decoder of that file is not in use until then (a cut inside one recording shares it).
+            // clip's decoder is not in use until then (a split without a jump continues on it, see clipLane).
             if (c.start <= frame || c.start > soon) continue;
             const bool shared = std::any_of(clips.cbegin(), clips.cend(), [&](const Clip& o) {
-                return o.id != c.id && o.mediaPath == c.mediaPath && o.end() > frame && o.start < c.start;
+                return o.id != c.id && o.mediaPath == c.mediaPath && o.end() > frame && o.start < c.start
+                       && d->clipLane(track, o, QString("v%1").arg(i)) == lane;
             });
             if (shared) continue;
             QSize native;

@@ -112,6 +112,7 @@ void IdleRelease::check()
     }
     // Freeing GBs (munmap of every buffer, trimming the heap) takes a moment: not on the GUI thread
     m_before = MemoryRelease::residentBytes();
+    emit releasing();
     m_worker = QThread::create([] { MemoryRelease::release(); });
     connect(m_worker, &QThread::finished, this, [this] {
         m_worker->wait();

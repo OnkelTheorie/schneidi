@@ -82,6 +82,7 @@ schneidi_test(test_export_timing)
 schneidi_test(test_smart_render)
 schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the own decoder: same pictures as the ffmpeg command
 schneidi_test(test_occlusion)
+schneidi_test(test_picture_passthrough) # export: a plain full-size video hands its decoded planes to the encoder; full-frame stills at the bottom
 schneidi_test(test_video_convert) # toRgba sets the colour matrix per conversion (BT.2020 after/before 601)
 schneidi_test(test_video_reader) # own decoder: jumps/threads/hardware = pictures in order, hibernation, rotation, file properties
 schneidi_test(test_picture_regression) # picture engine against independent references: timing, layers, transitions, outline, downscale, threads

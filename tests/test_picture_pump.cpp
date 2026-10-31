@@ -168,6 +168,11 @@ void testPump()
     s = seen.take();
     CHECK(!s.empty() && s.back().position == 255);
 
+    // Shown frames are kept for stepping back; memory given back while idle drops them
+    CHECK(pump.stats().recentBytes > 0);
+    pump.dropRecent();
+    CHECK_EQ(pump.stats().recentBytes, int64_t(0));
+
     // Playing under load (cost 15 ms, 2 workers, 25 fps): every frame, in time
     clock.play(255, 1);
     pump.setSpeed(1, 255);

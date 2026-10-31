@@ -522,6 +522,16 @@ Pump::Stats Pump::stats() const
     return s;
 }
 
+void Pump::dropRecent()
+{
+    std::map<int64_t, Impl::Recent> gone; // freed outside the lock
+    {
+        std::lock_guard lock(d->m);
+        gone.swap(d->recent);
+        d->recentBytes = 0;
+    }
+}
+
 void Pump::setRecentBudget(int64_t bytes)
 {
     std::lock_guard lock(d->m);
