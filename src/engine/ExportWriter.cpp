@@ -254,12 +254,13 @@ struct ExportWriter::Impl {
     AVBufferRef* hwFrames = nullptr;
     std::vector<float> mixL, mixR;            // fetch thread: the mix of one output frame
 
-    // Timeline frame shown at output frame i (frame rate conversion: k * fps_tl / fps_out, rounded to nearest even
-    // like lrint)
+    // Timeline frame shown at output frame i (frame rate conversion): the one showing at that time, floor(i * fps_tl /
+    // fps_out). Rounding to the nearest even (lrint, as RateConverter did) repeated and dropped frames unevenly (30 ->
+    // 60: 2,1,3,1,3 times) and could land one past the range: the last frame black, or the one after Out.
     int64_t timelineFrame(int64_t i) const
     {
         if (o.rate == o.timelineRate) return o.from + i;
-        return o.from + std::lrint(double(i) * o.timelineRate.fps() / o.rate.fps());
+        return o.from + int64_t(std::floor(double(i) * o.timelineRate.fps() / o.rate.fps() + 1e-9));
     }
 
     // Worker threads render output frames [a, b) and hand them over in order; at most `window` frames ahead of the

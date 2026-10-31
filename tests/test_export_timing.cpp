@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Export timing with the own picture engine (engine/ExportWriter::Own): every output frame shows the timeline frame it
-// should, also with In/Out and another output frame rate (frame k shows timeline frame from + round(k * 25 / 30), as
-// engine/RateConverter did), the file has exactly that many frames, and the sound stays in sync with the picture (a
-// click at timeline frame 20 is at 0.8 s in the file, whatever its frame rate). The source shows its frame number as
-// its brightness (frame n: luma 16 + 4 n), the click is a 40 ms tone.
+// should, also with In/Out and another output frame rate (frame k shows the timeline frame showing at its time,
+// from + floor(k * 25 / 30): an even cadence, never past the range), the file has exactly that many frames, and the
+// sound stays in sync with the picture (a click at timeline frame 20 is at 0.8 s in the file, whatever its frame
+// rate). The source shows its frame number as its brightness (frame n: luma 16 + 4 n), the click is a 40 ms tone.
 
 #include "check.h"
 
@@ -111,7 +111,7 @@ void check(const char* name, const QString& dir, int from, int to, FrameRate rat
     if (!CHECK_EQ(int(y.size()), expected)) std::printf("       %s: frame count\n", name);
     int wrong = 0;
     for (int k = 0; k < y.size(); ++k) {
-        const int shown = from + int(std::lrint(k * inFps / outFps));
+        const int shown = from + int(std::floor(k * inFps / outFps + 1e-9));
         const double want = 16 + 4 * shown;
         if (std::abs(y[k] - want) > 1.5) {
             if (wrong++ < 3) std::printf("       %s: frame %d luma %.1f, wanted %.1f (timeline frame %d)\n", name, k, y[k], want, shown);
@@ -153,5 +153,8 @@ int main(int argc, char** argv)
     check("rate30-inout", tmp.path(), 7, 33, FrameRate{30, 1});
     check("rate24", tmp.path(), 0, kFrames - 1, FrameRate{24, 1});
     check("rate60", tmp.path(), 5, 44, FrameRate{60, 1});
+    // Twice the rate with an even length: the last frame was one past the range (black at the end, the frame after Out)
+    check("rate50", tmp.path(), 0, 9, FrameRate{50, 1});
+    check("rate50-inout", tmp.path(), 10, 19, FrameRate{50, 1});
     return Check::result();
 }
