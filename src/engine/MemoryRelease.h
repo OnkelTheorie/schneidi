@@ -60,6 +60,8 @@ public:
     int delayMs() const { return m_timer.interval(); }
 
 signals:
+    // Idle now, right before the pools are emptied (this object's thread): drop what is kept only for speed
+    void releasing();
     void released(qint64 before, qint64 after); // resident bytes before/after (-1 = unknown)
 
 private:

@@ -128,6 +128,10 @@ Engine::Engine(QObject* parent)
         if (s == 0.0) m_idleRelease->request();
     });
     connect(m_renderCache, &RenderCache::cacheChanged, m_idleRelease, &IdleRelease::request);
+    // ... with the recently shown frames (up to 192 MB): stepping back after a pause renders again
+    connect(m_idleRelease, &IdleRelease::releasing, this, [this] {
+        if (m_pump) m_pump->dropRecent();
+    });
     m_seekRelease = new QTimer(this);
     m_seekRelease->setSingleShot(true);
     m_seekRelease->setInterval(120);

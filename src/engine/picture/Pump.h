@@ -90,6 +90,8 @@ public:
     };
     // Memory for recently shown frames (bytes; tests make it small)
     void setRecentBudget(int64_t bytes);
+    // Forgets the recently shown frames (memory given back while idle; they are rendered again when wanted)
+    void dropRecent();
     Stats stats() const;
 
 private:

@@ -56,8 +56,9 @@ void testIdleRelease()
     MemoryRelease::Activity now;
     IdleRelease idle([&] { return now; });
     idle.setDelayMs(60);
-    int signals_ = 0;
+    int signals_ = 0, releasing = 0;
     QObject::connect(&idle, &IdleRelease::released, [&] { ++signals_; });
+    QObject::connect(&idle, &IdleRelease::releasing, [&] { ++releasing; }); // the engine drops the pump's recent frames
 
     // Nothing asked: nothing happens
     const int start = MemoryRelease::releases();
@@ -77,6 +78,7 @@ void testIdleRelease()
     CHECK_EQ(MemoryRelease::releases(), start + 1);
     CHECK(!idle.pending());
     CHECK_EQ(signals_, 1);
+    CHECK_EQ(releasing, 1);
 
     // Export or render cache running: waits for them too
     for (bool MemoryRelease::Activity::*busy : {&MemoryRelease::Activity::exporting, &MemoryRelease::Activity::caching}) {
