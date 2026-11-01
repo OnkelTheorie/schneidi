@@ -229,6 +229,7 @@ struct Server {
     QString root;
     QByteArray token;
     QString session;
+    QList<QPair<QByteArray, QByteArray>> extra; // on every request (Host behind a proxy)
 
     bool start(const QString& rootDir, const QString& dataDir, const QStringList& extra, const QByteArray& tok,
                const QHash<QString, QString>& env = {})
@@ -271,7 +272,7 @@ struct Server {
                                                {"Accept", "application/json, text/event-stream"}};
         if (!token.isEmpty()) h << QPair<QByteArray, QByteArray>{"Authorization", "Bearer " + token};
         if (withSession && !session.isEmpty()) h << QPair<QByteArray, QByteArray>{"Mcp-Session-Id", session.toLatin1()};
-        return h;
+        return h + extra;
     }
     QNetworkReply* post(const QJsonObject& msg) const
     {
@@ -432,6 +433,18 @@ int main(int argc, char* argv[])
             CHECK_EQ(http("POST", proxied.base + "/mcp", R"({"jsonrpc":"2.0","id":1,"method":"ping"})",
                           proxied.headers() << QPair<QByteArray, QByteArray>{"Host", "edit.example"}).status, 401);
             CHECK_EQ(http("GET", proxied.base + "/files/clip.mp4").status, 401);
+        }
+    }
+    // ... and its clients are elsewhere although it listens on 127.0.0.1: `upload` must not fetch from this computer
+    // for them (the server itself, other local services)
+    {
+        Server proxied;
+        if (CHECK(proxied.start(root, tmp.filePath("s0b"), {"--public-url", "https://edit.example"}, kToken))) {
+            proxied.extra = {{"Host", "edit.example"}};
+            CHECK(proxied.initialize());
+            const QJsonObject a = proxied.call("upload", {{"url", proxied.base + "/files/clip.mp4"}, {"path", "self.mp4"}});
+            CHECK_EQ(errorCode(a), QString("BAD_URL"));
+            CHECK(!QFileInfo::exists(root + "/self.mp4"));
         }
     }
 
