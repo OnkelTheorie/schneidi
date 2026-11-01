@@ -1266,6 +1266,18 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                     }
             CHECK_EQ(marked, 3);
             CHECK(effects >= 3);
+            // Such an effect can be switched off (then nothing is skipped for it), not added or set
+            run("edit", {{"project", old}, {"ops", QString(R"([{"op":"effect","clips":[%1],"effect":"frei0r.retired",)"
+                                                           R"("enabled":false}])").arg(videoClip)}});
+            const QJsonArray after = run("render", {{"project", old}, {"out", dir.filePath("old2.mp4")}, {"height", 180},
+                                                    {"to", "1s"}})["skipped_effects"].toArray();
+            CHECK(after.size() == 1 && after[0]["effect"].toString() == "ladspa.1408");
+            CHECK_EQ(errorOf("edit", {{"project", old}, {"ops", QString(R"([{"op":"effect","clips":[%1],)"
+                                                                        R"("effect":"frei0r.retired","params":{"0":1}}])").arg(videoClip)}}),
+                     QString("NOT_FOUND"));
+            CHECK_EQ(errorOf("edit", {{"project", old}, {"ops", QString(R"([{"op":"effect","clips":[%1],)"
+                                                                        R"("effect":"frei0r.nowhere","enabled":false}])").arg(videoClip)}}),
+                     QString("NOT_FOUND"));
         }
         // Video encoder: the answer says which one wrote the file
         CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("x.mp4")}, {"encoder", "gpu"}}),
