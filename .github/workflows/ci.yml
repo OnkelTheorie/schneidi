@@ -33,3 +33,21 @@ jobs:
         env:
           LANG: de_DE.UTF-8
         run: xvfb-run -a ctest --test-dir build --output-on-failure -j2
+
+  # Without Qt RHI (no qt6-base-private-dev: some distributions, Windows without the private headers) the GPU parts
+  # compile to stubs; nothing else builds them, so a stub that drifts from its header went unnoticed (b8a99b2)
+  linux-no-rhi:
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config git ca-certificates qt6-base-dev \
+            libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev libminiaudio-dev
+      - uses: actions/checkout@v5
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DSCHNEIDI_RHI=OFF
+      - name: Build
+        run: cmake --build build

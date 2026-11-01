@@ -616,8 +616,8 @@ bool Engine::connected() const
 
 void Engine::showContent(std::shared_ptr<const Picture::Pump::Content> content, int position)
 {
-    ++m_seekEpoch;
     m_pump->setContent(std::move(content), std::max(0, position - m_offset), m_speed);
+    ++m_seekEpoch; // after the pump: a frame being shown during the call carried the new epoch (playhead jumped back)
     m_position = position;
     emit positionChanged(position);
     emit speedChanged(m_speed);
@@ -818,8 +818,8 @@ void Engine::setSpeed(double speed)
         m_pump->setSpeed(speed, at);
         m_player->play(m_player->position(), speed); // faster/slower from where the sound is
     } else {
-        if (wasPlaying) ++m_seekEpoch; // turning around: positions on their way lie the other way
         m_pump->setSpeed(speed, at);
+        if (wasPlaying) ++m_seekEpoch; // turning around: positions on their way lie the other way (after the pump)
         m_player->play(soundStart(at, speed), speed);
     }
     applyAudioState();
@@ -832,10 +832,10 @@ void Engine::seek(int frame)
     frame = std::max(0, frame);
     const int at = std::max(0, frame - m_offset); // frame of the producer (multicam grid: of the sequence)
     const bool playing = m_speed != 0.0;
-    ++m_seekEpoch;
     // Stopped and the last seek moments ago: scrubbing (dragging, a held arrow key)
     const bool scrub = !playing && m_lastSeek.isValid() && m_lastSeek.elapsed() < kScrubMs;
     m_pump->seek(at, scrub); // first: no frame from before the jump is shown after this
+    ++m_seekEpoch; // then: a frame shown while the pump was being told carries the old epoch and is dropped
     if (playing) {
         // The next seek within moments: the playhead is being dragged -> silent until it rests
         if (m_lastSeek.isValid() && m_lastSeek.elapsed() < 150) {
