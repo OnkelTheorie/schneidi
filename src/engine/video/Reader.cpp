@@ -259,13 +259,29 @@ AVFrame* turned(const AVFrame* src, int quarters)
             }
             continue;
         }
-        for (int r = 0; r < h; ++r) {
-            uint8_t* row = d + ptrdiff_t(r) * ds;
-            for (int c = 0; c < w; ++c) {
-                int sr, sc;
-                from(r, c, sr, sc);
-                std::memcpy(row + ptrdiff_t(c) * bpp, s + ptrdiff_t(sr) * ss + ptrdiff_t(sc) * bpp, bpp);
-            }
+        auto pixel = [&](int dr, int dc, int sr, int sc) {
+            std::memcpy(d + ptrdiff_t(dr) * ds + ptrdiff_t(dc) * bpp, s + ptrdiff_t(sr) * ss + ptrdiff_t(sc) * bpp, bpp);
+        };
+        if (sx != dx || sy != dy) { // 4:2:2 sideways -> 4:4:4
+            for (int r = 0; r < h; ++r)
+                for (int c = 0; c < w; ++c) {
+                    int sr, sc;
+                    from(r, c, sr, sc);
+                    pixel(r, c, sr, sc);
+                }
+            continue;
+        }
+        // The same subsampling (the usual case: 4:2:0 phone video): plane by plane, source plane size sw x sh
+        const int sw = AV_CEIL_RSHIFT(W, sx), sh = AV_CEIL_RSHIFT(H, sy);
+        if (quarters == 2) {
+            for (int r = 0; r < sh; ++r)
+                for (int c = 0; c < sw; ++c) pixel(r, c, sh - 1 - r, sw - 1 - c);
+        } else if (quarters == 1) { // clockwise: destination is sh wide, sw tall
+            for (int r = 0; r < sw; ++r)
+                for (int c = 0; c < sh; ++c) pixel(r, c, sh - 1 - c, r);
+        } else {
+            for (int r = 0; r < sw; ++r)
+                for (int c = 0; c < sh; ++c) pixel(r, c, c, sw - 1 - r);
         }
     }
     if (desc->flags & AV_PIX_FMT_FLAG_PAL) std::memcpy(dst->data[1], src->data[1], AVPALETTE_SIZE);
