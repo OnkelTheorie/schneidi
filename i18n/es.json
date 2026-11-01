@@ -434,6 +434,7 @@
  "Die Datei enthält %1 Sequenzen, die erste (%2) wurde importiert": "El archivo contiene %1 secuencias, se importó la primera (%2)",
  "Die Datei hat kein Bild (nur Ton)": "El archivo no tiene imagen (solo sonido)",
  "Die Datei hat keinen Ton": "El archivo no tiene sonido",
+ "Die Datei ist ein Standbild: kein Ton, nichts zu prüfen": "El archivo es una imagen fija: sin sonido, nada que comprobar",
  "Die Datei ist fehlerhaft: %1": "El archivo tiene errores: %1",
  "Die Datei konnte nicht gelesen werden:\n%1": "No se pudo leer el archivo:\n%1",
  "Die Datei ließ sich nicht löschen.": "No se pudo eliminar el archivo.",

@@ -434,6 +434,7 @@
  "Die Datei enthält %1 Sequenzen, die erste (%2) wurde importiert": "The file has %1 sequences, the first one (%2) was imported",
  "Die Datei hat kein Bild (nur Ton)": "The file has no picture (sound only)",
  "Die Datei hat keinen Ton": "The file has no sound",
+ "Die Datei ist ein Standbild: kein Ton, nichts zu prüfen": "The file is a still image: no sound, nothing to check",
  "Die Datei ist fehlerhaft: %1": "The file is broken: %1",
  "Die Datei konnte nicht gelesen werden:\n%1": "The file could not be read:\n%1",
  "Die Datei ließ sich nicht löschen.": "The file could not be deleted.",

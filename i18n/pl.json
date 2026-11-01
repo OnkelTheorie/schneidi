@@ -434,6 +434,7 @@
  "Die Datei enthält %1 Sequenzen, die erste (%2) wurde importiert": "Plik zawiera %1 sekwencji, zaimportowano pierwszą (%2)",
  "Die Datei hat kein Bild (nur Ton)": "Plik nie ma obrazu (tylko dźwięk)",
  "Die Datei hat keinen Ton": "Plik nie ma dźwięku",
+ "Die Datei ist ein Standbild: kein Ton, nichts zu prüfen": "Plik jest obrazem nieruchomym: bez dźwięku, nie ma czego sprawdzać",
  "Die Datei ist fehlerhaft: %1": "Plik jest błędny: %1",
  "Die Datei konnte nicht gelesen werden:\n%1": "Nie udało się odczytać pliku:\n%1",
  "Die Datei ließ sich nicht löschen.": "Nie udało się usunąć pliku.",
