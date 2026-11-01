@@ -32,7 +32,7 @@ constexpr const char* kSettingKey = "playback/renderCache";
 constexpr const char* kLimitKey = "playback/renderCacheLimit";
 constexpr int kIdleMs = 1500; // this long a rest after a change before rendering
 // Increase when the way of rendering changes (codec, color space …) -> old cache files no longer fit
-// rc2 (0.15): slow motion by the sound's time, windows and stabilization on letterboxed clips, premultiplied blur
+// rc2 (0.15): windows and stabilization on letterboxed clips, premultiplied blur
 constexpr const char* kVersion = "rc2";
 // Cropped clips render differently since project format 3 (crop measured on the fitted picture, letterbox bars stay
 // transparent): only their cache files are stale
