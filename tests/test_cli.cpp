@@ -1382,6 +1382,9 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(ctx2.images.size(), 1);
         CHECK_EQ(errorOf("frames", {{"source", clip}, {"at", QJsonArray{0}}, {"crop", "1,2,3"}, {"out", dir.path()}}),
                  QString("BAD_ARGUMENT"));
+        // Sound only: no picture to show (not a decoding error)
+        CHECK_EQ(errorOf("frames", {{"source", dir.filePath("noise.wav")}, {"at", QJsonArray{0}}, {"out", dir.path()}}),
+                 QString("NO_VIDEO"));
         // Contact sheet (0.10): fixed columns, tile width, a source with its own region and times
         Cli::Context ctx3;
         ctx3.mcp = true;
