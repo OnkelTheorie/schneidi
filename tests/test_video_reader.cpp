@@ -10,6 +10,8 @@
 
 #include "check.h"
 
+#include "engine/ClipFormat.h"
+#include "engine/MediaProbe.h"
 #include "engine/video/Reader.h"
 
 extern "C" {
@@ -347,6 +349,30 @@ int main(int argc, char** argv)
                                                 {"-display_rotation", "-90", "-i", plain, "-c", "copy"});
         if (!CHECK(!plain.isEmpty() && !turned.isEmpty())) continue;
         testRotation(plain, turned, 90, QString(t.name) + ": ");
+    }
+
+    // Video that starts late in the file (10 s of sound first, beyond what the stream analysis reads by default): its
+    // format, size and rate are found, every picture reads, and the probe and clip format agree
+    for (const char* name : {"start10.mkv", "start10.ts"}) {
+        const QString late = Check::makeMedia(file(name), {"-f", "lavfi", "-i", "sine=r=48000:d=13", "-itsoffset", "10",
+                                                            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:d=3",
+                                                            "-map", "1:v", "-map", "0:a", "-c:v", "libx264", "-c:a",
+                                                            "aac"});
+        if (!CHECK(!late.isEmpty())) continue;
+        QString error;
+        auto r = Video::Reader::open(late, Video::Reader::Options{}, &error);
+        if (!Check::report(bool(r), qPrintable(QString(name) + ": opens"), __FILE__, __LINE__, error)) continue;
+        CHECK(r->info().width == 320 && r->info().height == 240 && r->info().format == AV_PIX_FMT_YUV420P);
+        CHECK(av_cmp_q(r->info().frameRate, AVRational{25, 1}) == 0);
+        int read = 0;
+        for (int i : {0, 1, 40, 74, 20})
+            if (const auto p = r->picture(i); p && p->position == i) ++read;
+        Check::report(read == 5, qPrintable(QString(name) + ": pictures"), __FILE__, __LINE__,
+                      QString("%1 of 5").arg(read));
+        const ClipFormat cf = detectClipFormat(late);
+        CHECK(cf.ok && cf.width == 320 && cf.height == 240);
+        const auto probed = MediaProbe::read(late, FrameRate{25, 1});
+        CHECK(probed && probed->hasVideo && probed->hasAudio);
     }
 
     // Hardware decoding: 720p H.264 and 10-bit HEVC

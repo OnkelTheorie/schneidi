@@ -1203,32 +1203,50 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     Impl& d = *reader->d;
     d.path = path.toUtf8();
     d.opt = options;
-    if (const int r = avformat_open_input(&d.fmt, d.path.constData(), nullptr, nullptr); r < 0) {
-        if (error) *error = QString("cannot open %1: %2").arg(path, errorText(r));
-        return nullptr;
-    }
-    if (const int r = avformat_find_stream_info(d.fmt, nullptr); r < 0) {
-        if (error) *error = QString("no stream info in %1: %2").arg(path, errorText(r));
-        return nullptr;
-    }
-    // First video stream with a decoder that is no cover picture (MLT's find_default_streams)
-    for (unsigned i = 0; i < d.fmt->nb_streams; ++i) {
-        AVStream* st = d.fmt->streams[i];
-        if (st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO || !avcodec_find_decoder(st->codecpar->codec_id)) continue;
-        if (st->disposition & AV_DISPOSITION_ATTACHED_PIC) continue;
-        d.stream = st;
-        d.info.index = int(i);
-        break;
-    }
-    if (!d.stream) {
-        if (error) *error = QString("no video stream in %1").arg(path);
-        return nullptr;
-    }
-    const AVCodecParameters* par = d.stream->codecpar;
-    if (par->width <= 0 || par->height <= 0 || par->format == AV_PIX_FMT_NONE) {
+    // Opens the file and picks the first video stream with a decoder that is no cover picture (MLT's
+    // find_default_streams). analyze = seconds the stream analysis reads at most (0 = FFmpeg's default, 5 s).
+    auto openStream = [&](int analyze) {
+        avformat_close_input(&d.fmt);
+        d.stream = nullptr;
+        AVDictionary* o = nullptr;
+        if (analyze > 0) {
+            av_dict_set_int(&o, "analyzeduration", int64_t(analyze) * AV_TIME_BASE, 0);
+            av_dict_set_int(&o, "probesize", int64_t(analyze) * 2 * 1024 * 1024, 0);
+        }
+        const int opened = avformat_open_input(&d.fmt, d.path.constData(), nullptr, &o);
+        av_dict_free(&o);
+        if (opened < 0) {
+            if (error) *error = QString("cannot open %1: %2").arg(path, errorText(opened));
+            return false;
+        }
+        if (const int r = avformat_find_stream_info(d.fmt, nullptr); r < 0) {
+            if (error) *error = QString("no stream info in %1: %2").arg(path, errorText(r));
+            return false;
+        }
+        for (unsigned i = 0; i < d.fmt->nb_streams; ++i) {
+            AVStream* st = d.fmt->streams[i];
+            if (st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO || !avcodec_find_decoder(st->codecpar->codec_id)) continue;
+            if (st->disposition & AV_DISPOSITION_ATTACHED_PIC) continue;
+            d.stream = st;
+            d.info.index = int(i);
+            break;
+        }
+        if (!d.stream && error) *error = QString("no video stream in %1").arg(path);
+        return d.stream != nullptr;
+    };
+    auto described = [&] {
+        const AVCodecParameters* p = d.stream->codecpar;
+        return p->width > 0 && p->height > 0 && p->format != AV_PIX_FMT_NONE;
+    };
+    if (!openStream(0)) return nullptr;
+    // Video that starts late (a recording whose picture comes after seconds of sound): the analysis ended before its
+    // first frame. Once more, reading further (only such files pay for it).
+    if (!described() && !openStream(60)) return nullptr;
+    if (!described()) {
         if (error) *error = QString("unknown picture format in %1").arg(path);
         return nullptr;
     }
+    const AVCodecParameters* par = d.stream->codecpar;
     // VP8/VP9: libvpx (it decodes the alpha channel). MLT means to switch back to FFmpeg's own decoder without alpha,
     // but opens it on the already opened context, which keeps libvpx; same pictures here.
     d.codec = avcodec_find_decoder(par->codec_id);
