@@ -447,7 +447,7 @@ Result run(const QString& path, const Options& options, const Each& each, const 
     plan.timeBase = probe.stream->time_base;
     plan.firstPts = timestampOf(probe.frame);
     if (plan.firstPts == AV_NOPTS_VALUE) plan.firstPts = 0;
-    plan.quarters = int(std::lround(Video::streamRotation(probe.stream) / 90.0)) % 4;
+    plan.quarters = Video::quarterTurns(Video::streamRotation(probe.stream)); // as the reader (preview, export)
     const int srcW = probe.frame->width, srcH = probe.frame->height;
     const int uprightW = plan.quarters % 2 ? srcH : srcW, uprightH = plan.quarters % 2 ? srcW : srcH;
     // Crop in the upright picture -> in the decoded one

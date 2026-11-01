@@ -13,6 +13,7 @@
 #include "engine/ClipFormat.h"
 #include "engine/MediaProbe.h"
 #include "engine/video/Reader.h"
+#include "engine/video/Scan.h"
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -358,6 +359,36 @@ int main(int argc, char** argv)
                                                 {"-display_rotation", "-90", "-i", plain, "-c", "copy"});
         if (!CHECK(!plain.isEmpty() && !turned.isEmpty())) continue;
         testRotation(plain, turned, 90, QString(t.name) + ": ");
+    }
+
+    // A rotation that is no quarter turn (45 degrees) is not applied - by the reader, the analyses' scan and the clip
+    // format alike (the scan used to round it to a quarter turn)
+    if (const QString odd = Check::makeMedia(file("rot45.mp4"), {"-display_rotation", "-45", "-i", file("h264.mp4"),
+                                                                  "-c", "copy"});
+        CHECK(!odd.isEmpty())) {
+        auto r = Video::Reader::open(odd);
+        const auto p = r ? r->picture(3) : nullptr;
+        CHECK(r && std::abs(r->info().rotation - 45) < 0.5 && p && p->frame->width == 640 && p->frame->height == 360);
+        Video::Scan::Options so;
+        so.width = 0;
+        so.threads = 1;
+        std::atomic<int> scanW{0}, scanH{0};
+        const auto scanned = Video::Scan::run(odd, so, [&](const Video::Scan::Frame& f, const Video::Scan::Frame*) {
+            scanW = f.width;
+            scanH = f.height;
+        });
+        Check::report(scanned.ok && scanW == 640 && scanH == 360, "rotated 45: scan not turned", __FILE__, __LINE__,
+                      QString("%1x%2 %3").arg(scanW.load()).arg(scanH.load()).arg(scanned.error));
+        const ClipFormat cf = detectClipFormat(odd);
+        CHECK(cf.ok && cf.width == 640 && cf.height == 360);
+    }
+    // A 1x1 video still has a clip format (even sizes, at least 2x2)
+    if (const QString tiny = Check::makeMedia(file("tiny.mkv"), {"-f", "lavfi", "-i", "color=c=red:s=1x1:r=25", "-t",
+                                                                  "1", "-c:v", "ffv1"});
+        CHECK(!tiny.isEmpty())) {
+        const ClipFormat cf = detectClipFormat(tiny);
+        Check::report(cf.ok && cf.width == 2 && cf.height == 2, "1x1 video: clip format 2x2", __FILE__, __LINE__,
+                      QString("%1 %2x%3").arg(cf.ok).arg(cf.width).arg(cf.height));
     }
 
     // Video that starts late in the file (10 s of sound first, beyond what the stream analysis reads by default): its

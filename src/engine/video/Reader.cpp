@@ -140,15 +140,6 @@ double rotationOf(const AVStream* st)
     return theta;
 }
 
-// Quarter turns MLT applies (autorotate: transpose clock / hflip+vflip / transpose cclock), 0 = none
-int quarterTurns(double theta)
-{
-    if (std::abs(theta - 90) < 1.0) return 1;
-    if (std::abs(theta - 180) < 1.0) return 2;
-    if (std::abs(theta - 270) < 1.0) return 3;
-    return 0;
-}
-
 int mltColorspace(AVColorSpace cs, int width, int height)
 {
     switch (cs) {
@@ -1134,6 +1125,14 @@ struct Reader::Impl {
 double streamRotation(const AVStream* stream)
 {
     return rotationOf(stream);
+}
+
+int quarterTurns(double theta)
+{
+    if (std::abs(theta - 90) < 1.0) return 1;
+    if (std::abs(theta - 180) < 1.0) return 2;
+    if (std::abs(theta - 270) < 1.0) return 3;
+    return 0;
 }
 
 namespace {

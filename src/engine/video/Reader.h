@@ -61,6 +61,9 @@ struct Picture {
 
 // Degrees clockwise the stream's pictures are turned to show them upright (rotation tag or display matrix), in [0, 360)
 double streamRotation(const AVStream* stream);
+// Quarter turns clockwise the pictures of a rotation (streamRotation) are turned by, as MLT's autorotate (transpose
+// clock / hflip+vflip / transpose cclock): 0 for anything that is no quarter turn (45 degrees stays as it is)
+int quarterTurns(double degrees);
 
 // Stream frame position of timestamp `pts` (stream time base) as MLT's producer counts it: from `firstPts` (the first
 // key frame, stream time base), else from the container start `startTime` (AV_TIME_BASE units, AV_NOPTS_VALUE =
