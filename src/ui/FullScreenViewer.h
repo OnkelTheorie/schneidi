@@ -15,8 +15,12 @@ class QScreen;
 class FullScreenViewer : public QWidget {
     Q_OBJECT
 public:
-    // `picture`: the frame shown right now (while paused no new one comes until the playhead moves)
-    FullScreenViewer(Engine* engine, const QImage& picture, QWidget* parent = nullptr);
+    // `picture`: the frame shown right now (while paused no new one comes until the playhead moves).
+    // Without a parent on purpose: Qt fixes a window's surface (raster or GPU) when its native window object is made.
+    // Under a native main window that happens in QWidget's constructor already (the attribute is inherited), before
+    // the GPU picture (QRhiWidget) is a child - a raster surface, "No QRhi", the picture froze. The same with winId()
+    // before the first show. The owner deletes it.
+    FullScreenViewer(Engine* engine, const QImage& picture);
 
     // Full screen on `screen` (the one the main window is on), active, with the keyboard focus
     void showOn(QScreen* screen);

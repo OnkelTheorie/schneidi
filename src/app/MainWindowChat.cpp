@@ -9,6 +9,7 @@
 #include "app/McpClient.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "ui/FullScreenViewer.h"
 
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -45,6 +46,7 @@ MainWindow::~MainWindow()
     // emits indexChanged into our slots (chatUndoChanged …) on a half-destroyed window (UBSan "downcast", clang)
     m_project->undoStack()->blockSignals(true);
     m_project->blockSignals(true);
+    delete m_fullScreen; // a window without a parent (FullScreenViewer.h)
 }
 
 void MainWindow::buildChat()

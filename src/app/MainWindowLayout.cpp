@@ -474,7 +474,7 @@ void MainWindow::setViewerLarge(bool on)
 void MainWindow::setViewerFullScreen(bool on)
 {
     if (on && !m_fullScreen) {
-        m_fullScreen = new FullScreenViewer(m_engine, m_viewer->picture(), this);
+        m_fullScreen = new FullScreenViewer(m_engine, m_viewer->picture()); // no parent: see there; deleted here
         connect(m_fullScreen, &FullScreenViewer::exitRequested, this, [this] { setViewerFullScreen(false); });
         // The keys of these window actions work in the full-screen window too (an action's window shortcut counts in
         // every window it is added to)

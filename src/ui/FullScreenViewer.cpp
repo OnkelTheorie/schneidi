@@ -8,10 +8,9 @@
 #include <QKeyEvent>
 #include <QScreen>
 #include <QVBoxLayout>
-#include <QWindow>
 
-FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture, QWidget* parent)
-    : QWidget(parent, Qt::Window | Qt::FramelessWindowHint)
+FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture)
+    : QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint)
 {
     setObjectName("FullScreenViewer");
     setAttribute(Qt::WA_QuitOnClose, false);
@@ -38,8 +37,7 @@ FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture, QWidge
 void FullScreenViewer::showOn(QScreen* screen)
 {
     if (screen) {
-        winId(); // the native window exists: it can be put on the screen before it is shown
-        if (QWindow* w = windowHandle()) w->setScreen(screen);
+        setScreen(screen); // not winId() + windowHandle()->setScreen(): see the header (native window)
         setGeometry(screen->geometry()); // also without a window manager that knows full screen
     }
     showFullScreen();

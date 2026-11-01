@@ -43,10 +43,11 @@ bool equal(const A& a, const B& b, const char* expr, const char* file, int line)
     return report(false, expr, file, line, s);
 }
 
-// Before creating the QApplication: never visible windows, no sound
+// Before creating the QApplication: never visible windows, no sound. SCHNEIDI_TEST_QPA picks another platform by hand
+// (e.g. xcb on an Xvfb display with SCHNEIDI_VIEWER=gpu: the GPU viewer, which offscreen never takes)
 inline void initEnv()
 {
-    qputenv("QT_QPA_PLATFORM", "offscreen");
+    qputenv("QT_QPA_PLATFORM", qEnvironmentVariable("SCHNEIDI_TEST_QPA", "offscreen").toUtf8());
     // Own audio engine: never the sound card in tests (silence paced by a timer), unless a test chose a device
     if (!qEnvironmentVariableIsSet("SCHNEIDI_AUDIO_DEVICE")) qputenv("SCHNEIDI_AUDIO_DEVICE", "null");
 }

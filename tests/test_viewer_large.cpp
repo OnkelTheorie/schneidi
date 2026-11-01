@@ -20,6 +20,7 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "engine/Engine.h"
+#include "ui/FrameView.h"
 #include "ui/FullScreenViewer.h"
 #include "ui/Inspector.h"
 #include "ui/KeyPickWindow.h"
@@ -39,7 +40,9 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
+#include <QWindow>
 #include <clocale>
+#include <cstdio>
 
 namespace {
 
@@ -345,6 +348,17 @@ void testOtherPages(MainWindow& w)
     w.showPage(MainWindow::Page::Edit);
 }
 
+// The full-screen picture draws the way the viewer does: a GPU viewer whose full-screen window got a raster surface
+// had no QRhi there, fell back and the picture froze (2nd time; under a native main window always). Only meaningful
+// where the GPU viewer runs: SCHNEIDI_TEST_QPA=xcb SCHNEIDI_VIEWER=gpu on an X display
+void checkGpuSurface(Viewer* viewer, FullScreenViewer* fs, const char* what)
+{
+    auto* view = fs->findChild<FrameView*>();
+    if (!CHECK(view && viewer->screen())) return;
+    if (!CHECK_EQ(int(view->backend()), int(viewer->screen()->backend())))
+        std::fprintf(stderr, "  full screen %s: %s\n", what, qPrintable(view->backendInfo()));
+}
+
 void testFullScreen(MainWindow& w, Engine& engine)
 {
     QAction* full = InputBindings::instance().action("viewer_full_screen");
@@ -366,6 +380,7 @@ void testFullScreen(MainWindow& w, Engine& engine)
     CHECK(fs->isWindow() && fs->isVisible() && fs->isFullScreen());
     CHECK(fs->screen() == w.screen() && fs->geometry() == w.screen()->geometry());
     CHECK(QTest::qWaitForWindowActive(fs));
+    checkGpuSurface(viewer, fs, "first");
     CHECK(fs->picture().size() == shown.size() && !fs->picture().isNull());
     const QRectF r = fs->pictureRect();
     CHECK(r.width() >= fs->width() - 1 || r.height() >= fs->height() - 1); // as large as the screen allows
@@ -404,6 +419,7 @@ void testFullScreen(MainWindow& w, Engine& engine)
     settle();
     fs = w.fullScreenViewer();
     if (CHECK(fs && QTest::qWaitForWindowActive(fs))) {
+        checkGpuSurface(viewer, fs, "second");
         CHECK(engine.speed() != 0.0);
         QTest::keyClick(fs, Qt::Key_F, Qt::ControlModifier);
         QTest::qWait(50);
