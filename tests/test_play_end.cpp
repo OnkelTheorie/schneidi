@@ -10,6 +10,7 @@
 #include "engine/Engine.h"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -151,6 +152,31 @@ int main(int argc, char** argv)
     engine.setSpeed(-4);
     CHECK(stopsWithin(engine, 3000));
     CHECK_EQ(engine.position(), 0);
+
+    // 7 (before 6, it needs a long timeline). Faster in the same direction (L again): the picture goes on at once.
+    // The sound's restart held its clock for up to 0.3 s and nothing let it go: picture and sound stood still
+    engine.updateTimeline(timeline(media, 240));
+    wait(800);
+    engine.seek(0);
+    wait(300);
+    engine.play();
+    wait(600);
+    QElapsedTimer since;
+    qint64 lastShown = -1, worstGap = 0;
+    const auto conn = QObject::connect(&engine, &Engine::framePosition, &engine, [&](int, int) {
+        const qint64 now = since.elapsed();
+        if (lastShown >= 0) worstGap = std::max(worstGap, now - lastShown);
+        lastShown = now;
+    });
+    since.start();
+    engine.setSpeed(2);
+    wait(700);
+    QObject::disconnect(conn);
+    engine.pause();
+    std::printf("       L nochmal: längste Lücke %lld ms\n", (long long)worstGap);
+    CHECK(lastShown >= 0 && worstGap < 200);
+    engine.updateTimeline(timeline(media, 60));
+    wait(800);
 
     // 6. A click behind the end while playing stops (it played on over nothing, the button showing playing)
     engine.seek(0);
