@@ -11,6 +11,7 @@
 
 #include "check.h"
 
+#include "core/EffectRegistry.h"
 #include "core/ProjectFormat.h"
 #include "engine/picture/Renderer.h"
 #include "engine/video/Compose.h"
@@ -484,6 +485,37 @@ void testSubtitleTracks()
     }
 }
 
+// A white title with the blur effect stays white where its edge fades out (the blur works premultiplied: the
+// transparent background has no colour to pull in, it turned the soft edge dark gray); over a white clip no dark halo
+void testTitleBlur()
+{
+    std::printf("title blur\n");
+    Clip t;
+    t.id = 5;
+    t.kind = ClipKind::Title;
+    t.title.text = "HALLO";
+    t.title.size = 60;
+    t.title.color = Qt::white;
+    t.out = 49;
+    EffectRegistry::add(t, "blur");
+    Timeline tl;
+    tl.video.resize(1);
+    tl.video[0].clips = {t};
+    const QImage img = Check::renderFrame(tl, kFormat, 5, {}, true).convertToFormat(QImage::Format_ARGB32);
+    if (!CHECK(!img.isNull())) return;
+    int soft = 0, darkest = 255;
+    for (int y = 0; y < img.height(); ++y)
+        for (int x = 0; x < img.width(); ++x) {
+            const QRgb p = img.pixel(x, y);
+            if (qAlpha(p) < 24 || qAlpha(p) > 230) continue;
+            ++soft;
+            darkest = std::min(darkest, qGray(p));
+        }
+    std::printf("  soft edge: %d pixels, darkest %d\n", soft, darkest);
+    CHECK(soft > 100);
+    CHECK(darkest > 220);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -516,5 +548,6 @@ int main(int argc, char** argv)
     testThreads();
     testAlphaWebm(tmp.path());
     testSubtitleTracks();
+    testTitleBlur();
     return Check::result();
 }
