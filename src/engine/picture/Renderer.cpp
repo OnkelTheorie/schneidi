@@ -527,9 +527,11 @@ struct Renderer::Impl {
     {
         // Stabilization first (it has to see the camera picture): the analyzed correction at the clip's material
         // frame. Border "keep" has no previous output picture here: edge pixels (as a seek in the MLT filter).
+        // Analyzed on the whole frame (bars included): the fitted picture is warped in the frame's units.
         if (const auto st = StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) {
             Image warped(img.w, img.h);
-            if (StabilizeCorrection::warpRgba(*st, int(std::floor(c.in + t + 1e-6)), img.data(), warped.data(), img.w, img.h))
+            if (StabilizeCorrection::warpRgba(*st, int(std::floor(c.in + t + 1e-6)), img.data(), warped.data(), img.w,
+                                              img.h, nullptr, fit.width() / ctx.PW, fit.height() / ctx.PH))
                 img = std::move(warped);
         }
         if (ColorGrade::active(c) && !ctx.bypassGrade) {

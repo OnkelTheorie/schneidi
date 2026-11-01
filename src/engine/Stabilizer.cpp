@@ -407,19 +407,26 @@ std::shared_ptr<const Correction> of(const Clip& c, FrameRate rate, double aspec
 }
 
 bool warpRgba(const Correction& c, int pos, const uint8_t* src, uint8_t* dst, int w, int h,
-                          const uint8_t* previous)
+                          const uint8_t* previous, double widthShare, double heightShare)
 {
     const int i = pos - c.from;
     if (i < 0 || i >= int(c.corrections.size()) || w < 2 || h < 2) return false;
-    const StabilizeMotion::Similarity& s = c.corrections[size_t(i)];
+    StabilizeMotion::Similarity s = c.corrections[size_t(i)];
     if (s.isIdentity()) return false;
+    // Normalized coordinates of the frame (unit: its width) -> of the picture (unit: the picture's width), both
+    // centred: the shift grows, rotation and scale stay
+    double aspect = c.aspect;
+    if (widthShare > 0 && heightShare > 0 && (widthShare != 1.0 || heightShare != 1.0)) {
+        s.t /= widthShare;
+        aspect *= widthShare / heightShare;
+    }
     Outside outside = c.border == StabilizeMotion::Border::Black ? Outside::Fill : Outside::Clamp;
     if (c.border == StabilizeMotion::Border::Keep && previous) {
         std::memcpy(dst, previous, size_t(w) * size_t(h) * 4);
         outside = Outside::Keep;
     }
     double m[6];
-    StabilizeMotion::pixelMap(s, w, h, c.aspect, m);
+    StabilizeMotion::pixelMap(s, w, h, aspect, m);
     StabilizeMotion::warpRgba(src, w * 4, dst, w * 4, w, h, m, outside, 0xFF000000u); // opaque black
     return true;
 }

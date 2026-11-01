@@ -387,6 +387,54 @@ int main(int argc, char** argv)
         CHECK(Stabilizer::missing(videoTimeline(past), fmt).isEmpty());
     }
 
+    // Portrait clip between bars (no transform): analyzed on the frame with its bars, applied to the fitted picture
+    // - shift and turn in frame units there too (the picture shifted by a share of it was still shaking)
+    {
+        const QString still9 = Check::makeMedia(tmp.filePath("still9.png"), {"-f", "lavfi", "-i",
+                                                                              "testsrc2=size=768x1280:rate=1:duration=1",
+                                                                              "-vf", "gblur=sigma=3", "-frames:v", "1"});
+        const QString portrait = Check::makeMedia(
+            tmp.filePath("shaky9.mp4"),
+            {"-loop", "1", "-framerate", "25", "-i", still9, "-t", "3", "-vf",
+             "crop=630:1120:69+18*cos(n*2.3):80+25*sin(n*1.7),scale=540:960", "-c:v", "libx264", "-preset",
+             "ultrafast", "-qp", "0", "-pix_fmt", "yuv420p"});
+        if (CHECK(!still9.isEmpty() && !portrait.isEmpty())) {
+            Clip p = mk(1, portrait, 0, 0, 59);
+            EffectRegistry::add(p, "stabilize");
+            const auto r = Stabilizer::request(p, fmt);
+            CHECK(r && Stabilizer::analyze(*r, &error));
+            Clip pRaw = p;
+            EffectRegistry::remove(pRaw, "stabilize");
+            // The middle of the picture (x 219..421 of 640 x 360)
+            auto pictureJitter = [](const Timeline& tl) {
+                Picture::Options o;
+                o.format = ProjectFormat{};
+                o.output = QSize(640, 360);
+                o.mode = Picture::Mode::Export;
+                Picture::Renderer rr(tl, o);
+                QImage prev;
+                double sum = 0;
+                int n = 0;
+                for (int pos = 0; pos <= 40; ++pos) {
+                    const QImage img = rr.render(pos).toImage();
+                    if (!prev.isNull()) {
+                        double s = 0;
+                        int k = 0;
+                        for (int y = 100; y < 260; ++y)
+                            for (int x = 260; x < 380; ++x, ++k) s += std::abs(qGray(img.pixel(x, y)) - qGray(prev.pixel(x, y)));
+                        sum += s / k;
+                        ++n;
+                    }
+                    prev = img;
+                }
+                return n ? sum / n : -1;
+            };
+            const double before = pictureJitter(videoTimeline(pRaw)), after = pictureJitter(videoTimeline(p));
+            std::printf("stabilization, portrait between bars: frame difference %.2f -> %.2f\n", before, after);
+            CHECK(after > 0 && after < before * 0.5);
+        }
+    }
+
     // Speed change (timewarp): analyzed on the same producer the timeline reads
     {
         Clip slow = mk(1, shaky, 0, 0, 59);
