@@ -1133,7 +1133,7 @@ std::shared_ptr<void>& Context::userData()
     return none;
 }
 const DeviceInfo& Context::info() const { return d->info; }
-void Context::begin() {}
+bool Context::begin() { return false; }
 void Context::finish() {}
 TexturePtr Context::target(QSize, const float*) { return {}; }
 TexturePtr Context::uploadRgba(const uint8_t*, int, int, bool) { return {}; }
