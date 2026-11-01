@@ -40,6 +40,13 @@ constexpr int kKeepOpen = 4;
 // frames nothing refers to; with 32 software jumps on 1080p60 game footage looked slower)
 constexpr int kHardwareWindow = 12;
 constexpr int kSoftwareWindow = 16;
+// Going backwards without setBehind (a reversed clip played or exported forwards): after this many seeks in a row
+// that each land a little (up to kStepBack frames) before the decoded pictures, the reader keeps a window behind as
+// if playing backwards, of at most kBackwardBytes (as the renderer's for playing backwards). Else every few pictures
+// back decode from the key frame again: a long GOP quadratically.
+constexpr int kBackSteps = 2;
+constexpr int kStepBack = 64;
+constexpr double kBackwardBytes = 384.0 * 1024 * 1024;
 
 // SCHNEIDI_DECODER_IDLE_MS shortens it (tests)
 int64_t idleMs()
@@ -668,10 +675,35 @@ struct Reader::Impl {
     {
         constexpr int kWindowFrom = 16;
         const bool back = validFrom == kNothing || position < validFrom;
-        if (opt.behind <= kWindowFrom || !back) return position;
-        return std::max<int64_t>(0, position - (opt.behind - 2));
+        if (behind() <= kWindowFrom || !back) return position;
+        return std::max<int64_t>(0, position - (behind() - 2));
     }
     int64_t windowEnd = -1; // the request a backward window was started for (seekStart)
+
+    // Window behind found by going backwards (kBackSteps), 0 = none; decoder thread, under the lock
+    int autoBehind = 0;
+    int backSteps = 0;       // seeks in a row a little before the decoded pictures
+    int64_t backTarget = -1; // the request of the last one
+    int behind() const { return std::max(opt.behind, autoBehind); }
+
+    // Under the lock, before seeking for `want`: going backwards in small steps -> a window behind; else none
+    void noteSeek(int64_t want, bool nearest)
+    {
+        // Scrubbing back (close pictures will do) keeps its quick seeks
+        const bool stepBack = !nearest && validFrom != kNothing && want < validFrom && validFrom - want <= kStepBack;
+        backSteps = stepBack ? backSteps + 1 : 0;
+        if (!stepBack) {
+            autoBehind = 0;
+            return;
+        }
+        backTarget = want;
+        if (backSteps >= kBackSteps && autoBehind == 0) {
+            const int bytes = av_image_get_buffer_size(info.format, std::max(1, info.width), std::max(1, info.height), 1);
+            autoBehind = std::clamp(int(kBackwardBytes / std::max(1, bytes)), kKeepWindowMin, 250);
+            ++stats.backwardWindows;
+        }
+    }
+    static constexpr int kKeepWindowMin = 17; // more than seekStart's kWindowFrom: a window is decoded
 
     bool wantAhead() const
     {
@@ -695,7 +727,7 @@ struct Reader::Impl {
         // (playing on), the usual few
         const int window = seekWindow();
         const bool nearSeek = window > 0 && seekTarget >= 0 && high >= 0 && high - seekTarget < window;
-        const int limit = nearSeek ? std::max(opt.behind, window) : opt.behind;
+        const int limit = nearSeek ? std::max(behind(), window) : behind();
         while (before > limit && pics.size() > 1) {
             validFrom = std::max(validFrom, pics.front()->position + 1);
             pics.pop_front();
@@ -967,6 +999,8 @@ struct Reader::Impl {
             }
             fulfil();
             const Request* r = firstPending();
+            // Going forwards again (beyond the last step back): the usual few behind
+            if (autoBehind && high > backTarget + kSeekThreshold) autoBehind = 0;
             if (r && hibernating) {
                 wake(lock);
                 continue;
@@ -974,6 +1008,7 @@ struct Reader::Impl {
             if (r && needsSeek(r->position)) {
                 // r lives on the caller's stack: seek() unlocks, a cancelled caller may be gone when it returns
                 const int64_t want = r->position;
+                noteSeek(want, r->nearest);
                 const int64_t from = seekStart(want);
                 seekTarget = want;
                 seek(lock, from);

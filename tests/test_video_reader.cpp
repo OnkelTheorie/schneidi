@@ -22,6 +22,7 @@ extern "C" {
 }
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QThread>
 
@@ -181,6 +182,40 @@ void testHibernate(const QString& path)
     }
 }
 
+// A reversed clip in a forward export (or forward playback): the export's small windows (4 behind, 6 ahead), four
+// workers asking a little out of order, going backwards through a long GOP. Seeking from the key frame for every few
+// pictures decoded the GOP quadratically; after a few steps back the reader keeps a large window behind.
+void testBackwards(const Media& m, const QVector<QByteArray>& ref, int from, int count)
+{
+    Video::Reader::Options o;
+    o.hardware = false;
+    o.behind = 4;
+    o.ahead = 6;
+    auto r = Video::Reader::open(m.path, o);
+    if (!CHECK(r)) return;
+    QElapsedTimer t;
+    t.start();
+    std::atomic<int> next{0}, wrong{0};
+    auto work = [&] {
+        for (int i; (i = next++) < count;) {
+            const int pos = from - i;
+            const auto p = r->picture(pos);
+            if (!p || p->position != pos || bytesOf(p->frame) != ref.value(pos)) ++wrong;
+        }
+    };
+    std::vector<std::thread> threads;
+    for (int k = 0; k < 4; ++k) threads.emplace_back(work);
+    for (auto& th : threads) th.join();
+    // Two seeks from the key frame before the reader notices, then one window: three passes through the GOP at most
+    const Video::Reader::Stats st = r->stats();
+    std::printf("       %s backwards %d pictures: %lld ms, %d seeks, %d decoded\n", qPrintable(m.name), count,
+                static_cast<long long>(t.elapsed()), st.seeks, st.decoded);
+    CHECK_EQ(wrong.load(), 0);
+    Check::report(st.decoded <= 3 * (from + 1) && st.seeks <= 4,
+                  qPrintable(m.name + ": backwards without decoding the GOP again and again"),
+                  __FILE__, __LINE__, QString("%1 decoded for %2 pictures, %3 seeks").arg(st.decoded).arg(count).arg(st.seeks));
+}
+
 // One sample of a picture for comparing positions: the luma (8 or 16 bit), the palette colour, the bit (1-bit black
 // and white)
 uint32_t sampleAt(const AVFrame* f, int x, int y)
@@ -258,6 +293,10 @@ int main(int argc, char** argv)
                                                      "-bf", "3", "-pix_fmt", "yuv420p"}), 100);
     add("h264-30fps", Check::makeMedia(file("h264-30.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
                                                              "-t", "4", "-c:v", "libx264", "-g", "60", "-pix_fmt", "yuv420p"}), 120);
+    // One GOP of 8 s (screen recordings, some cameras): a reversed clip goes backwards through all of it
+    add("long-gop", Check::makeMedia(file("long-gop.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t",
+                                                            "8", "-c:v", "libx264", "-g", "200", "-pix_fmt", "yuv420p"}),
+        200);
     // Matroska with NTSC rate (1 ms timestamps)
     add("mkv-29.97", Check::makeMedia(file("ntsc.mkv"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30000/1001",
                                                          "-t", "4", "-c:v", "libx264", "-pix_fmt", "yuv420p"}), 120);
@@ -312,6 +351,7 @@ int main(int argc, char** argv)
             continue;
         testSeeks(m, ref);
         if (m.name == "h264" || m.name == "hevc-10bit" || m.name == "prores") testThreads(m, ref);
+        if (m.name == "long-gop") testBackwards(m, ref, m.frames - 1, 100);
     }
 
     // What the files state

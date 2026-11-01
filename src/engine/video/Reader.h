@@ -114,6 +114,8 @@ public:
     // Decoded pictures kept before the last request (Options::behind), changeable while reading. More than 16 = playing
     // backwards: a request before the decoded pictures decodes a window of that many pictures up to it (from the key
     // frame before), so the following requests going back are answered from it instead of seeking for each one
+    // (the reader also does so by itself after a few requests going back in small steps, e.g. a reversed clip in a
+    // forward export, until requests go forwards again)
     void setBehind(int pictures);
 
     // The picture for stream position `position`; nullptr if the file has none (read error before the first picture)
@@ -125,6 +127,7 @@ public:
     struct Stats {
         int seeks = 0;
         int reseeks = 0;          // seeks repeated further back (they landed past the target: files without an index)
+        int backwardWindows = 0;  // times a window behind was kept for requests going backwards (no setBehind)
         int decoded = 0;          // pictures out of the decoder
         bool hardware = false;    // decoding on the graphics card right now
         int hardwareFailures = 0; // fell back to software
