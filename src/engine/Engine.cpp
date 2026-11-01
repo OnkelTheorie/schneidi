@@ -134,7 +134,9 @@ Engine::Engine(QObject* parent)
     connect(Stabilizer::instance(), &Stabilizer::resultReady, this, [this] {
         if (!m_renderer) return;
         m_renderCache->sync(m_built);
-        if (m_mode == Mode::Timeline) refresh();
+        // Paused: the still again. Playing: newly drawn frames take the correction (a refresh drops the frames
+        // prepared ahead - a hitch for each analysis that finishes)
+        if (m_mode == Mode::Timeline && m_speed == 0.0) refresh();
     });
     // ... with the recently shown frames (up to 192 MB): stepping back after a pause renders again
     connect(m_idleRelease, &IdleRelease::releasing, this, [this] {

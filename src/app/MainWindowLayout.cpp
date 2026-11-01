@@ -49,6 +49,7 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QWindow>
 #include <QActionGroup>
 #include <QApplication>
 #include <QMouseEvent>
@@ -482,12 +483,19 @@ void MainWindow::setViewerFullScreen(bool on)
                                "second_prev", "second_next", "edit_prev", "edit_next", "go_start", "go_end", "mark_in",
                                "mark_out", "viewer_full_screen"})
             if (QAction* a = InputBindings::instance().action(id)) m_fullScreen->addAction(a);
+        m_focusBeforeFullScreen = QApplication::focusWidget();
         m_fullScreen->showOn(screen());
+        // Belongs to the main window for the window manager (no own taskbar entry, stays with it) - set after the
+        // first show, the parentless window's surface is fixed by then (FullScreenViewer.h)
+        if (QWindow* w = m_fullScreen->windowHandle()) w->setTransientParent(windowHandle());
     } else if (!on && m_fullScreen) {
         FullScreenViewer* fs = std::exchange(m_fullScreen, nullptr);
         fs->hide();
         fs->deleteLater();
+        raise();
         activateWindow();
+        // Without a parent nothing hands the focus back: the main window's focus widget stayed unfocused
+        if (m_focusBeforeFullScreen && m_focusBeforeFullScreen->window() == this) m_focusBeforeFullScreen->setFocus();
     }
     if (m_fullScreenAction) m_fullScreenAction->setChecked(m_fullScreen != nullptr);
 }

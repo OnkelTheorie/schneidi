@@ -13,6 +13,7 @@ FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture)
     : QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint)
 {
     setObjectName("FullScreenViewer");
+    setWindowTitle("schneidi");
     setAttribute(Qt::WA_QuitOnClose, false);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);

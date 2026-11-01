@@ -306,6 +306,7 @@ private:
     class QShortcut* m_largeEscape = nullptr; // Esc ends the large viewer (only enabled while it is on)
     QAction* m_fullScreenAction = nullptr;
     QPointer<class FullScreenViewer> m_fullScreen; // while the full-screen viewer is on
+    QPointer<QWidget> m_focusBeforeFullScreen;      // gets the keyboard focus back when it ends
 
     QHash<QString, MediaInfo> m_probeCache;
     QHash<QString, int> m_sourcePos; // source playhead per file (this session only)
