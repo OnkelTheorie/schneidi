@@ -3,6 +3,7 @@
 #include "core/ProjectFormat.h"
 #include "core/Types.h"
 #include "engine/SmartRender.h"
+#include "engine/picture/Renderer.h"
 
 #include <QByteArray>
 #include <QHash>
@@ -14,9 +15,6 @@
 #include <atomic>
 #include <memory>
 
-namespace Picture {
-class Renderer;
-}
 namespace Audio {
 class Mixer;
 }
@@ -92,6 +90,9 @@ public:
     // (e.g. the hardware encoder did not work and software was used; empty = nothing to say)
     QString usedCodec() const { return m_usedCodec; }
     QString note() const { return m_note; }
+    // After start(): effects the render leaves out because this version does not have them (frei0r/LADSPA plugins of
+    // older projects, ids of newer versions); only those of what is written (picture, sound)
+    const QVector<Picture::SkippedEffect>& skippedEffects() const { return m_skipped; }
     // After start(): processor threads the render uses (also caps the frames rendered at once)
     int threads() const { return m_threads; }
     // After finished(): share of the frames copied by smart render (0 = everything encoded)
@@ -135,7 +136,7 @@ private:
     void finishGif(bool ok, const QString& log);
 
     // Can the writer write this export? (output kind, encoders, formats)
-    bool writable(const Timeline& tl, const ExportSettings& s, const QString& sampleFormat, QString* why) const;
+    bool writable(const ExportSettings& s, const QString& sampleFormat, QString* why) const;
     QSize outputSize() const; // of the file
     double outputFps() const;
 
@@ -186,6 +187,7 @@ private:
     QString m_sampleFormat;   // FFmpeg sample format of the audio encoder
     int m_threads = 0, m_frames = 1;
     QString m_usedCodec, m_note;
+    QVector<Picture::SkippedEffect> m_skipped;
     QTimer m_timer;
     int m_length = 0;
     int m_from = 0;

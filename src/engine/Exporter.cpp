@@ -285,7 +285,15 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_note = s.encoderNote;
     m_usedCodec.clear();
     m_copiedPercent = 0;
-    if (QString why; !writable(scaled, s, sampleFormat, &why)) {
+    // Effects this engine does not have (frei0r/LADSPA plugins, ids of newer versions) stay in the project but are
+    // skipped: said in the log and to the caller (skippedEffects())
+    m_skipped.clear();
+    for (const Picture::SkippedEffect& e : Picture::skippedEffects(tl)) {
+        if (e.video ? s.videoCodec.isEmpty() : s.audioCodec.isEmpty()) continue; // no picture/sound written anyway
+        m_skipped << e;
+        qWarning("Export: effect %s of clip %d is not available here and is skipped", qPrintable(e.effect), e.clip);
+    }
+    if (QString why; !writable(s, sampleFormat, &why)) {
         if (error) *error = T("Export konnte nicht gestartet werden.") + " (" + why + ")";
         discardOutput();
         return false;
@@ -613,13 +621,8 @@ void Exporter::finishGif(bool ok, const QString& log)
     succeed();
 }
 
-bool Exporter::writable(const Timeline& tl, const ExportSettings& s, const QString& sampleFormat, QString* why) const
+bool Exporter::writable(const ExportSettings& s, const QString& sampleFormat, QString* why) const
 {
-    if (!s.videoCodec.isEmpty()) {
-        // Effects this engine does not have (frei0r plugins, ids of newer versions) stay in the project but are skipped
-        if (const QString why = Picture::unsupported(tl); !why.isEmpty())
-            qWarning("Export: effect %s is not available here and is skipped", qPrintable(why));
-    }
     const QString pixFmt = s.videoCodec.isEmpty() ? QString()
                            : HardwareEncoders::isHardwareCodec(s.videoCodec) ? HardwareEncoders::pixelFormat(s.videoCodec)
                                                                              : s.pixFmt;

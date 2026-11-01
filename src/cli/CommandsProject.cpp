@@ -642,6 +642,16 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         o["pattern"] = QFileInfo(imageSequencePattern(out)).fileName();
     }
     if (!ex.note().isEmpty()) o["encoder_note"] = ex.note();
+    if (!ex.skippedEffects().isEmpty()) {
+        // Not in this version: the clip renders without it (the project keeps it; info marks it "available": false)
+        QJsonArray skipped;
+        for (const Picture::SkippedEffect& e : ex.skippedEffects()) {
+            QJsonObject so{{"clip", e.clip}, {"effect", e.effect}, {"kind", e.video ? "video" : "audio"}};
+            if (e.sequence >= 0) so["sequence"] = e.sequence;
+            skipped << so;
+        }
+        o["skipped_effects"] = skipped;
+    }
     if (!job.settings.audioOnly()) {
         o["width"] = es.size.width();
         o["height"] = es.size.height();
