@@ -304,6 +304,12 @@ void FrameView::mousePressEvent(QMouseEvent* e)
     if (e->button() == Qt::LeftButton) m_pressPos = e->pos();
 }
 
+void FrameView::setIdleCursor(Qt::CursorShape shape)
+{
+    m_idleCursor = shape;
+    if (!m_panning) setCursor(shape);
+}
+
 void FrameView::mouseMoveEvent(QMouseEvent* e)
 {
     if (m_overlayDrag) {
@@ -316,7 +322,8 @@ void FrameView::mouseMoveEvent(QMouseEvent* e)
     }
     if (!(e->buttons() & Qt::LeftButton)) {
         const QRectF r = frameRect();
-        setCursor(m_overlay ? m_overlay->cursorAt(e->position(), r) : Qt::ArrowCursor);
+        const Qt::CursorShape shape = m_overlay ? m_overlay->cursorAt(e->position(), r) : Qt::ArrowCursor;
+        setCursor(shape == Qt::ArrowCursor ? m_idleCursor : shape);
         if (m_overlay) m_overlay->hover(e->position(), r);
     }
     if (!(e->buttons() & Qt::LeftButton) || m_pressPos.x() < 0 || !dragData) return;
@@ -339,7 +346,7 @@ void FrameView::mouseReleaseEvent(QMouseEvent* e)
     }
     if (m_panning) {
         m_panning = false;
-        unsetCursor();
+        setCursor(m_idleCursor);
     }
     m_pressPos = QPoint(-1, -1);
 }

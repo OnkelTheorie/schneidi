@@ -451,7 +451,7 @@ void Viewer::setSource(const QString& path, const QString& name)
     m_sourcePath = path;
     m_sourceName = name;
     updateModeText();
-    m_screen->setCursor(path.isEmpty() ? Qt::ArrowCursor : Qt::OpenHandCursor);
+    m_screen->setIdleCursor(path.isEmpty() ? Qt::ArrowCursor : Qt::OpenHandCursor);
     // Only a source can be dragged into the timeline; in the timeline view a left drag pans the zoomed picture
     if (path.isEmpty()) m_screen->dragData = nullptr;
     else m_screen->dragData = [this] { return dragData(); };

@@ -32,6 +32,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QPointer>
 #include <QScrollBar>
 #include <QSet>
@@ -41,6 +42,7 @@
 #include <QTest>
 #include <QToolButton>
 #include <QWindow>
+#include <algorithm>
 #include <clocale>
 #include <cstdio>
 
@@ -289,6 +291,11 @@ void testEditPage(MainWindow& w, Engine& engine)
             if (CHECK(window)) QTest::keyClick(window, Qt::Key_Escape);
             settle();
             CHECK(!pickWindow() && w.viewerLarge());
+            // The pipette's window made the whole main window native (winId() before show): every child got a
+            // native window of its own, and a later window under it a raster surface (the full-screen freeze)
+            const QList<QWidget*> natives = w.findChildren<QWidget*>(Qt::FindDirectChildrenOnly);
+            CHECK(std::none_of(natives.begin(), natives.end(),
+                               [](QWidget* c) { return !c->isWindow() && c->testAttribute(Qt::WA_NativeWindow); }));
             QTest::keyClick(&w, Qt::Key_Escape);
             settle();
             CHECK(!w.viewerLarge());
@@ -381,6 +388,23 @@ void testFullScreen(MainWindow& w, Engine& engine)
     CHECK(fs->screen() == w.screen() && fs->geometry() == w.screen()->geometry());
     CHECK(QTest::qWaitForWindowActive(fs));
     checkGpuSurface(viewer, fs, "first");
+    // The pointer goes away when the mouse rests - also over the picture, after it moved there (the picture's own
+    // pointer from hovering won over the window's blank one: it never hid)
+    if (auto* view = fs->findChild<FrameView*>(); CHECK(view)) {
+        const auto hover = [view](QPoint p) {
+            QMouseEvent move(QEvent::MouseMove, p, view->mapToGlobal(p), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(view, &move);
+        };
+        hover(view->rect().center());
+        hover(view->rect().center() + QPoint(5, 5));
+        settle();
+        CHECK(view->cursor().shape() != Qt::BlankCursor);
+        QTest::qWait(1700);
+        CHECK_EQ(int(view->cursor().shape()), int(Qt::BlankCursor));
+        hover(view->rect().center());
+        settle();
+        CHECK(view->cursor().shape() != Qt::BlankCursor);
+    }
     CHECK(fs->picture().size() == shown.size() && !fs->picture().isNull());
     const QRectF r = fs->pictureRect();
     CHECK(r.width() >= fs->width() - 1 || r.height() >= fs->height() - 1); // as large as the screen allows

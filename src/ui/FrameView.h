@@ -82,6 +82,9 @@ public:
 
     // Set = the picture can be dragged out (source viewer into the timeline)
     std::function<QMimeData*()> dragData;
+    // Pointer over the picture where the overlay has nothing to grab (open hand for a source, blank in full screen);
+    // hovering and the end of a pan come back to it
+    void setIdleCursor(Qt::CursorShape shape);
 
 signals:
     void zoomChanged(double zoom);
@@ -117,6 +120,7 @@ private:
     QPointer<ViewerOverlay> m_overlay;
     bool m_overlayDrag = false;
     bool m_panning = false;
+    Qt::CursorShape m_idleCursor = Qt::ArrowCursor;
     QPoint m_pressPos{-1, -1};
     QPointF m_panStart, m_panPressPos;
 };

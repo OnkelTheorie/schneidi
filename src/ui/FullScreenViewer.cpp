@@ -31,7 +31,11 @@ FullScreenViewer::FullScreenViewer(Engine* engine, const QImage& picture)
     });
     m_hideCursor.setSingleShot(true);
     m_hideCursor.setInterval(1500);
-    connect(&m_hideCursor, &QTimer::timeout, this, [this] { setCursor(Qt::BlankCursor); });
+    // On the picture: its own pointer (hover over the picture sets one) would win over the window's
+    connect(&m_hideCursor, &QTimer::timeout, this, [this] {
+        setCursor(Qt::BlankCursor);
+        m_view->setIdleCursor(Qt::BlankCursor);
+    });
 }
 
 void FullScreenViewer::showOn(QScreen* screen)
@@ -62,6 +66,7 @@ bool FullScreenViewer::eventFilter(QObject* watched, QEvent* event)
     if (watched == m_view) {
         if (event->type() == QEvent::MouseMove) {
             unsetCursor();
+            m_view->setIdleCursor(Qt::ArrowCursor);
             m_hideCursor.start();
         } else if (event->type() == QEvent::MouseButtonDblClick) {
             emit exitRequested();

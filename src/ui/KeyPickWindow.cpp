@@ -9,7 +9,6 @@
 #include <QPainter>
 #include <QScreen>
 #include <QWheelEvent>
-#include <QWindow>
 
 #include <algorithm>
 #include <cmath>
@@ -39,8 +38,9 @@ QSize KeyPickWindow::sizeFor(const QSize& picture, const QSize& available)
 void KeyPickWindow::showOn(QScreen* screen)
 {
     if (screen) {
-        winId(); // the native window exists: it can be put on the screen before it is shown
-        if (QWindow* w = windowHandle()) w->setScreen(screen);
+        // Not winId() + windowHandle()->setScreen(): a native child window makes Qt turn every child of the main
+        // window native (enforceNativeChildren) - a later window under it got a raster surface (FullScreenViewer.h)
+        setScreen(screen);
         const QRect area = screen->availableGeometry();
         QRect r(QPoint(), sizeFor(m_picture, area.size()));
         r.moveCenter(area.center());
