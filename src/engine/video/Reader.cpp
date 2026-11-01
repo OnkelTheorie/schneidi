@@ -353,6 +353,13 @@ struct Reader::Impl {
     int64_t lastFramePos = INT64_MIN;
     bool wantHardware = false; // decode on the card (until it fails once)
     bool hibernating = false;  // decoder closed after a long pause (see kIdleMs)
+    // Seeks that land past the target: files without an index (MPEG-TS/PS) seek by bytes and land on any packet, the
+    // decoder then drops everything up to the next key frame. The seek is repeated this much earlier (stream time
+    // base), doubled until it lands before the target; kept for the next seeks (learnt once per file).
+    int64_t preroll = 0;
+    int64_t seekTs = 0;              // where the last seek aimed
+    bool seekChecked = true;         // the first packet/picture after the last seek came at or before the target
+    int64_t firstPacketPos = INT64_MIN; // position of the first video packet read since the last seek
     std::atomic<int64_t> lastUse{0};
 
     // Shared, guarded by m
@@ -651,7 +658,10 @@ struct Reader::Impl {
         // (preseek), which decodes up to two more seconds per seek – on a weak computer every catch-up jump.
         if (mustDecode && dec->has_b_frames && av_q2d(info.timeBase) != 0 && fps > 0)
             ts -= int64_t((dec->has_b_frames + 2) / fps / av_q2d(info.timeBase));
-        ts = std::max<int64_t>(ts, 0);
+        ts = std::max<int64_t>(ts - preroll, 0);
+        seekTs = ts;
+        seekChecked = false;
+        firstPacketPos = INT64_MIN;
         // Pictures before the target are only a way there (no loop filter on frames nothing refers to) - except the
         // last ones the seek window keeps: they are decoded exactly (step())
         keeping = opt.keepBytes > 0 && mustDecode;
@@ -734,6 +744,7 @@ struct Reader::Impl {
             }
             if (pos != INT64_MIN && std::llabs(target - pos) > 999) pos = target; // wild timestamps (MLT)
             lastPacketPos = pos;
+            if (firstPacketPos == INT64_MIN) firstPacketPos = pos;
             // Intra-only codecs (ProRes, DNxHR, MJPEG): frames before the target need no decoding
             if (!mustDecode && pos < target) {
                 av_packet_unref(pkt);
@@ -950,6 +961,24 @@ struct Reader::Impl {
                 }
             }
             lock.lock();
+            if (gen == generation && !seekChecked && !hwFailed) {
+                // Intra-only codecs skip the packets before the target: the first packet tells; others: the first
+                // picture (the decoder drops what comes before a key frame)
+                const int64_t first = !mustDecode ? firstPacketPos : !fresh.empty() ? fresh.front().position : INT64_MIN;
+                if (first != INT64_MIN || reachedEnd) {
+                    // Past the target, or the end with nothing at all: earlier, unless the seek went to the start
+                    if ((first == INT64_MIN || first > target) && seekTs > 0) {
+                        for (Decoded& d : keep) av_frame_free(&d.frame);
+                        av_frame_free(&before.frame);
+                        const double second = av_q2d(info.timeBase) > 0 ? 1.0 / av_q2d(info.timeBase) : 0;
+                        preroll = std::max<int64_t>(preroll * 2, int64_t(second));
+                        ++stats.reseeks;
+                        seek(lock, target);
+                        continue;
+                    }
+                    seekChecked = true;
+                }
+            }
             if (gen == generation && keptFrom < validFrom) validFrom = keptFrom;
             if (nearPic && gen == generation) {
                 place(nearPic, true);

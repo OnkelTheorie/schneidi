@@ -60,6 +60,9 @@ QVector<int> positions(int frames)
     // decoded before the pictures shown ahead of it (the seek must not land on it)
     for (int k : {46, 47, 48, 49, 50, 51})
         if (k < frames - 1) out << frames - 1 << k;
+    // Into the middle of a GOP and into the last one, then backwards picture by picture (a reversed clip)
+    out << std::max(0, frames / 2 - 20) << std::max(0, frames - 15) << frames / 2 + 20;
+    for (int i = frames - 1; i >= frames - 12 && i >= 0; --i) out << i;
     return out.toList().toVector();
 }
 
@@ -97,6 +100,10 @@ void testSeeks(const Media& m, const QVector<QByteArray>& ref)
     }
     Check::report(wrong == 0, qPrintable(m.name + ": jumps = in order"), __FILE__, __LINE__,
                   QString("%1 wrong pictures (%2)").arg(wrong).arg(where.join(", ")));
+    // Files with an index land on a key frame before the target: never a second seek
+    if (!m.name.startsWith("mpeg"))
+        Check::report(r->stats().reseeks == 0, qPrintable(m.name + ": no repeated seeks"), __FILE__, __LINE__,
+                      QString("%1 of %2 seeks repeated").arg(r->stats().reseeks).arg(r->stats().seeks));
 }
 
 // Four threads on one reader, a little out of order
@@ -261,6 +268,12 @@ int main(int argc, char** argv)
     // RGBA (PNG in MOV) and VP9 with alpha
     add("png-rgba", Check::makeMedia(file("rgba.mov"), {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25,format=rgba",
                                                         "-t", "1", "-c:v", "png"}), 25);
+    // MPEG-TS (AVCHD camcorders, DVB) and MPEG-PS (DVD, MPEG-2): no index, seeks land where the bytes are, not on a
+    // key frame
+    add("mpeg-ts", Check::makeMedia(file("h264.ts"), {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t", "10",
+                                                      "-c:v", "libx264", "-g", "25", "-bf", "0"}), 250);
+    add("mpeg-ps", Check::makeMedia(file("mpeg2.mpg"), {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t", "10",
+                                                        "-c:v", "mpeg2video"}), 250);
     add("vp9-alpha", Check::makeMedia(file("alpha.webm"), {"-f", "lavfi", "-i",
                                                            "testsrc2=size=320x180:rate=25,format=yuva420p", "-t", "1",
                                                            "-c:v", "libvpx-vp9", "-auto-alt-ref", "0"}), 25);

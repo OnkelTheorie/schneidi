@@ -121,6 +121,7 @@ public:
     // Counters for tests and the log
     struct Stats {
         int seeks = 0;
+        int reseeks = 0;          // seeks repeated further back (they landed past the target: files without an index)
         int decoded = 0;          // pictures out of the decoder
         bool hardware = false;    // decoding on the graphics card right now
         int hardwareFailures = 0; // fell back to software
