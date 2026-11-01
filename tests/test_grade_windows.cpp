@@ -500,6 +500,52 @@ void testRender(const QString& media)
     CHECK(std::abs(qGray(off.pixel(right)) - qGray(ref.pixel(right))) <= 2);
 }
 
+// A portrait clip (180 x 240) in a 320 x 240 project sits between bars (picture x 70..250): the window's x/y/w/h are
+// % of the whole frame, bars included, as the overlay and the tracker see it (and as up to 0.14). A box at x 20 %,
+// w 20 % covers frame x 32..96; only its part on the picture (70..96) is filled, the bar stays black.
+void testLetterboxed(const QString& dir)
+{
+    const QString portrait = Check::makeMedia(dir + "/portrait.mp4", {"-f", "lavfi", "-i",
+                                                                       "color=c=blue:s=180x240:r=25:d=2", "-c:v",
+                                                                       "libx264", "-preset", "ultrafast", "-pix_fmt",
+                                                                       "yuv420p"});
+    if (!CHECK(!portrait.isEmpty())) return;
+    const ProjectFormat fmt{320, 240, {25, 1}};
+    Timeline tl;
+    tl.video.resize(1);
+    Clip c = videoClip(1, 0, 50);
+    c.mediaPath = portrait;
+    EffectRegistry::add(c, "grade");
+    GradeWindows::add(c, 1, Shape::Rectangle);
+    auto* g = EffectRegistry::instance(c, "grade");
+    g->params["w1.x"] = 20.0;
+    g->params["w1.y"] = 50.0;
+    g->params["w1.width"] = 20.0;
+    g->params["w1.height"] = 20.0;
+    g->params["w1.softness"] = 0.0;
+    g->params["w1.fill"] = "color";
+    g->params["w1.color"] = QColor(Qt::red);
+    tl.video[0].clips << c;
+    auto red = [](QRgb p) { return qRed(p) > 200 && qBlue(p) < 60; };
+    auto blue = [](QRgb p) { return qBlue(p) > 200 && qRed(p) < 60; };
+    // Moved 20 px right by the transform: the frame with its bars moves, the box with it (x 52..116, picture 90..270)
+    for (const double shift : {0.0, 20.0}) {
+        tl.video[0].clips[0].transform.posX = shift;
+        const QImage img = Check::renderFrame(tl, fmt, 5);
+        if (!CHECK(img.size() == QSize(320, 240))) return;
+        const int s = int(shift);
+        std::printf("letterboxed window (shift %d): x %d %06x, x %d %06x, x %d %06x, row 100 %06x\n", s, 60 + s,
+                    img.pixel(60 + s, 120) & 0xffffff, 80 + s, img.pixel(80 + s, 120) & 0xffffff, 104 + s,
+                    img.pixel(104 + s, 120) & 0xffffff, img.pixel(80 + s, 100) & 0xffffff);
+        CHECK(qGray(img.pixel(60 + s, 120)) < 10); // the bar
+        CHECK(red(img.pixel(72 + s, 120)));
+        CHECK(red(img.pixel(94 + s, 120)));
+        CHECK(blue(img.pixel(100 + s, 120)));     // right of the box
+        CHECK(red(img.pixel(80 + s, 100)));       // box height 48 px: y 96..144
+        CHECK(blue(img.pixel(80 + s, 90)));
+    }
+}
+
 // A red square moves over a test picture: the window follows it, forwards and backwards
 void testTrack(const QString& media)
 {
@@ -613,6 +659,7 @@ int main(int argc, char** argv)
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testRender(media);
+    testLetterboxed(tmp.path());
     const QString moving = Check::makeMedia(
         tmp.filePath("moving.mp4"),
         {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i",

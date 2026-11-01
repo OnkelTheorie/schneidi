@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
+#include <type_traits>
 #include <vector>
 
 namespace VideoEffects {
@@ -59,21 +61,29 @@ struct KeyGeometry {
     }
 };
 
-// ---- Blur (three box blurs in a row approximate a Gaussian) on interleaved 8-bit channels (ch bytes per pixel) ----
+// ---- Blur (three box blurs in a row approximate a Gaussian) on interleaved 8-bit channels (ch values per pixel;
+// 16-bit for a premultiplied picture, see gaussian) ----
+
+// Sums of 16-bit values times the 16-bit reciprocal need 64 bits
+template <typename T>
+using BoxSum = std::conditional_t<sizeof(T) == 1, uint32_t, uint64_t>;
 
 // Box blur of radius r along the rows; the edge pixel repeats
-void boxRows(const uint8_t* src, uint8_t* dst, int w, int h, int ch, int r)
+template <typename T>
+void boxRows(const T* src, T* dst, int w, int h, int ch, int r)
 {
+    using S = BoxSum<T>;
+    constexpr S top = std::numeric_limits<T>::max();
     const int div = 2 * r + 1;
-    const uint32_t inv = (65536u + uint32_t(div) / 2) / uint32_t(div);
+    const S inv = (65536u + S(div) / 2) / S(div);
     for (int y = 0; y < h; ++y) {
-        const uint8_t* s = src + size_t(y) * w * ch;
-        uint8_t* d = dst + size_t(y) * w * ch;
+        const T* s = src + size_t(y) * w * ch;
+        T* d = dst + size_t(y) * w * ch;
         for (int c = 0; c < ch; ++c) {
-            uint32_t sum = 0;
+            S sum = 0;
             for (int i = -r; i <= r; ++i) sum += s[std::clamp(i, 0, w - 1) * ch + c];
             for (int x = 0; x < w; ++x) {
-                d[x * ch + c] = uint8_t(std::min<uint32_t>(255, (sum * inv + 32768) >> 16));
+                d[x * ch + c] = T(std::min<S>(top, (sum * inv + 32768) >> 16));
                 sum += s[std::min(x + r + 1, w - 1) * ch + c];
                 sum -= s[std::max(x - r, 0) * ch + c];
             }
@@ -82,28 +92,32 @@ void boxRows(const uint8_t* src, uint8_t* dst, int w, int h, int ch, int r)
 }
 
 // Box blur of radius r along the columns: all columns of a row at once (contiguous memory, vectorizable)
-void boxCols(const uint8_t* src, uint8_t* dst, int w, int h, int ch, int r)
+template <typename T>
+void boxCols(const T* src, T* dst, int w, int h, int ch, int r)
 {
+    using S = BoxSum<T>;
+    constexpr S top = std::numeric_limits<T>::max();
     const int div = 2 * r + 1;
-    const uint32_t inv = (65536u + uint32_t(div) / 2) / uint32_t(div);
+    const S inv = (65536u + S(div) / 2) / S(div);
     const size_t line = size_t(w) * ch;
-    std::vector<uint32_t> sum(line, 0);
+    std::vector<S> sum(line, 0);
     auto row = [&](int y) { return src + size_t(std::clamp(y, 0, h - 1)) * line; };
     for (int k = -r; k <= r; ++k) {
-        const uint8_t* s = row(k);
+        const T* s = row(k);
         for (size_t i = 0; i < line; ++i) sum[i] += s[i];
     }
     for (int y = 0; y < h; ++y) {
-        uint8_t* d = dst + size_t(y) * line;
-        for (size_t i = 0; i < line; ++i) d[i] = uint8_t(std::min<uint32_t>(255, (sum[i] * inv + 32768) >> 16));
-        const uint8_t* add = row(y + r + 1);
-        const uint8_t* sub = row(y - r);
-        for (size_t i = 0; i < line; ++i) sum[i] += uint32_t(add[i]) - sub[i];
+        T* d = dst + size_t(y) * line;
+        for (size_t i = 0; i < line; ++i) d[i] = T(std::min<S>(top, (sum[i] * inv + 32768) >> 16));
+        const T* add = row(y + r + 1);
+        const T* sub = row(y - r);
+        for (size_t i = 0; i < line; ++i) sum[i] += S(add[i]) - sub[i];
     }
 }
 
 // Gaussian blur with sigma (pixels) on interleaved channels
-void blur(uint8_t* buf, int w, int h, int ch, double sigma)
+template <typename T>
+void blur(T* buf, int w, int h, int ch, double sigma)
 {
     if (sigma < 0.5 || w <= 0 || h <= 0) return;
     // Radii of three boxes with the same variance as the Gaussian (box of width 2r+1: variance r(r+1)/3)
@@ -116,7 +130,7 @@ void blur(uint8_t* buf, int w, int h, int ch, double sigma)
         if (sum >= target) break;
         ++radii[i];
     }
-    std::vector<uint8_t> tmp(size_t(w) * h * ch);
+    std::vector<T> tmp(size_t(w) * h * ch);
     for (int rad : radii) {
         boxRows(buf, tmp.data(), w, h, ch, std::min(rad, w));
         boxCols(tmp.data(), buf, w, h, ch, std::min(rad, h));
@@ -735,7 +749,35 @@ bool apply(const QString& effectId, uint8_t* img, int w, int h, const Params& pa
     return true;
 }
 
-void gaussian(uint8_t* rgba, int w, int h, double sigma) { blur(rgba, w, h, 4, sigma); }
+void gaussian(uint8_t* rgba, int w, int h, double sigma)
+{
+    if (sigma < 0.5 || w <= 0 || h <= 0) return;
+    const size_t n = size_t(w) * h;
+    bool opaque = true;
+    for (size_t i = 0; i < n && opaque; ++i) opaque = rgba[i * 4 + 3] == 255;
+    if (opaque) {
+        blur(rgba, w, h, 4, sigma);
+        return;
+    }
+    // With transparency: blurred premultiplied (16 bit, so faint edges keep their colour), then straight again.
+    // Straight, the colour of transparent pixels (black for a title's background) bled into the soft edge.
+    std::vector<uint16_t> pm(n * 4);
+    for (size_t i = 0; i < n; ++i) {
+        const uint8_t* p = rgba + i * 4;
+        const unsigned a = p[3];
+        for (int c = 0; c < 3; ++c) pm[i * 4 + c] = uint16_t((p[c] * a * 257 + 127) / 255);
+        pm[i * 4 + 3] = uint16_t(a * 257);
+    }
+    blur(pm.data(), w, h, 4, sigma);
+    for (size_t i = 0; i < n; ++i) {
+        uint8_t* p = rgba + i * 4;
+        const unsigned a = pm[i * 4 + 3];
+        const uint8_t a8 = uint8_t((a + 128) / 257);
+        for (int c = 0; c < 3; ++c)
+            p[c] = a8 ? uint8_t(std::min(255u, (pm[i * 4 + c] * 255u + a / 2) / std::max(1u, a))) : 0;
+        p[3] = a8;
+    }
+}
 
 bool isOwn(const QString& effectId) { return entry(effectId) != nullptr; }
 

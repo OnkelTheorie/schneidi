@@ -28,7 +28,9 @@ std::shared_ptr<const Correction> of(const Clip& c, FrameRate rate, double aspec
 // Pure warp of one RGBA picture (w x h, display aspect c.aspect) for producer frame `pos` (the clip's material frame:
 // in + clip frame) into dst; false = nothing to do there (dst untouched). Border "keep" takes the uncovered parts from
 // `previous` (the last output picture), without it the edge pixels.
+// widthShare/heightShare: the picture is only that share of the analyzed frame, centred in it (a source of another
+// aspect ratio fitted between bars): the correction keeps its size in frame units (shift, turn about the frame centre).
 bool warpRgba(const Correction& c, int pos, const uint8_t* src, uint8_t* dst, int w, int h,
-              const uint8_t* previous = nullptr);
+              const uint8_t* previous = nullptr, double widthShare = 1.0, double heightShare = 1.0);
 
 } // namespace StabilizeCorrection

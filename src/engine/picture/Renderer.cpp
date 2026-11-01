@@ -501,16 +501,37 @@ struct Renderer::Impl {
         return out;
     }
 
+    // A Color page window's geometry is in % of the whole frame, bars included (as the overlay and the tracker see
+    // it): onto a picture that stands for only the fitted part of the frame (fit, centred), in % of that picture.
+    // In pixels the shape stays the same (soft edge and fill strength relative to the frame height as well).
+    static ColorGrade::Window windowOnPicture(ColorGrade::Window w, QSizeF fit, const Ctx& ctx)
+    {
+        if (fit.width() <= 0 || fit.height() <= 0) return w;
+        const double kx = ctx.PW / fit.width(), ky = ctx.PH / fit.height();
+        if (std::abs(kx - 1) < 1e-9 && std::abs(ky - 1) < 1e-9) return w;
+        GradeWindows::Geometry& g = w.geometry;
+        g.x = 50 + (g.x - 50) * kx;
+        g.y = 50 + (g.y - 50) * ky;
+        g.width *= kx;
+        g.height *= ky;
+        g.softness *= ky;
+        w.fill.amount *= ky;
+        return w;
+    }
+
     // Effects on the clip's picture (before crop/transform), clip frame t; order as TimelineBuilderDetail::applyEffects:
     // the fixed stages first (grade, then the Green Screen key), then every other effect in the clip's order.
-    // frameHeight: the frame's height in pixels of img (blur strength is relative to it)
-    void applyEffects(Image& img, const Clip& c, double t, const Ctx& ctx, double frameHeight)
+    // frameHeight: the frame's height in pixels of img (blur strength is relative to it); fit: the size img stands for
+    // in project pixels (a source of another aspect ratio: the fitted picture without the bars, centred in the frame)
+    void applyEffects(Image& img, const Clip& c, double t, const Ctx& ctx, double frameHeight, QSizeF fit)
     {
         // Stabilization first (it has to see the camera picture): the analyzed correction at the clip's material
         // frame. Border "keep" has no previous output picture here: edge pixels (as a seek in the MLT filter).
+        // Analyzed on the whole frame (bars included): the fitted picture is warped in the frame's units.
         if (const auto st = StabilizeCorrection::of(c, options.format.rate, ctx.PH > 0 ? ctx.PW / ctx.PH : 0.0)) {
             Image warped(img.w, img.h);
-            if (StabilizeCorrection::warpRgba(*st, int(std::floor(c.in + t + 1e-6)), img.data(), warped.data(), img.w, img.h))
+            if (StabilizeCorrection::warpRgba(*st, int(std::floor(c.in + t + 1e-6)), img.data(), warped.data(), img.w,
+                                              img.h, nullptr, fit.width() / ctx.PW, fit.height() / ctx.PH))
                 img = std::move(warped);
         }
         if (ColorGrade::active(c) && !ctx.bypassGrade) {
@@ -518,7 +539,8 @@ struct Renderer::Impl {
             const QString lp = ColorGrade::lutPath(c);
             const auto l = lp.isEmpty() ? nullptr : lut(lp);
             if (!p.isNeutral() || l) ColorGrade::apply(img.data(), img.w, img.h, *ColorGrade::bake(p, l.get()), 1);
-            for (const ColorGrade::Window& w : ColorGrade::windowsAt(c, t)) ColorGrade::applyWindow(img.data(), img.w, img.h, w);
+            for (const ColorGrade::Window& w : ColorGrade::windowsAt(c, t))
+                ColorGrade::applyWindow(img.data(), img.w, img.h, windowOnPicture(w, fit, ctx));
         }
         if (const EffectInstance* key = EffectRegistry::instance(c, "chromakey"); key && key->enabled)
             if (const EffectDescriptor* d = EffectRegistry::find(key->effectId))
@@ -664,6 +686,9 @@ struct Renderer::Impl {
         const TitleStyle& st = c.title;
         const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
         const double size = std::max(1.0, sizeOverride > 0 ? sizeOverride : st.size);
+        // An animated size scales the whole title: outline and box margin with it
+        const double grow = st.size > 0 ? size / st.size : 1.0;
+        const double outlineWidth = st.outlineWidth * grow, boxPad = std::max(0.0, st.boxPad) * grow;
         QFont font(st.fontFamily());
         font.setPixelSize(std::max(1, int(std::lround(size))));
         font.setBold(st.bold);
@@ -671,7 +696,7 @@ struct Renderer::Impl {
         const QFontMetricsF fm(font);
         double w = 1;
         for (const QString& line : st.text.split('\n')) w = std::max(w, fm.horizontalAdvance(line));
-        const bool outline = st.outlineOn && st.outlineWidth > 0;
+        const bool outline = st.outlineOn && outlineWidth > 0;
         auto layerOf = [&](bool outlineLayer) {
             Text::Params p;
             p.text = st.text;
@@ -691,10 +716,10 @@ struct Renderer::Impl {
                                        : st.color);
             const bool box = st.boxOn && (outlineLayer || !outline);
             p.bg = box ? st.boxColor : QColor(Qt::transparent);
-            p.pad = (st.boxOn ? std::max(0.0, st.boxPad) : 0.0) * sy;
+            p.pad = (st.boxOn ? boxPad : 0.0) * sy;
             p.outlineColor = st.outlineColor;
-            p.outline = (outlineLayer ? 2 * st.outlineWidth : 0.0) * sy;
-            p.room = (outline ? 2 * st.outlineWidth : 0.0) * sy;
+            p.outline = (outlineLayer ? 2 * outlineWidth : 0.0) * sy;
+            p.room = (outline ? 2 * outlineWidth : 0.0) * sy;
             if (bounds) {
                 *bounds |= Text::bounds(p).toAlignedRect();
                 return;
@@ -836,7 +861,7 @@ struct Renderer::Impl {
         {
             // the frame's height in the picture's pixels: the picture is fit.height() project pixels tall at zoom 1
             const double frameHeight = src.h * ctx.PH / std::max(1.0, fit.height());
-            applyEffects(src, c, t, ctx, frameHeight);
+            applyEffects(src, c, t, ctx, frameHeight, fit);
         }
 
         auto val = [&](AnimParam p) { return Keys::valueAt(c, p, t); };
@@ -1288,6 +1313,7 @@ struct Renderer::Impl {
         Compose::over(img.data(), strip.data(), img.w, img.h, 1.0);
     }
 
+    // Every enabled subtitle track at once (e.g. two speakers), in track order
     void subtitleLayer(Image& canvas, const Timeline& tl, int f, const Ctx& ctx)
     {
         for (const SubtitleTrack& st : tl.subtitles) {
@@ -1330,9 +1356,8 @@ struct Renderer::Impl {
                 if (outline) draw(true);
                 draw(false);
                 Compose::over(canvas.data(), layer.data(), canvas.w, canvas.h, 1.0);
-                break;
+                break; // one cue per track
             }
-            break; // one subtitle track at a time is visible
         }
     }
 
@@ -1681,7 +1706,6 @@ struct Renderer::Impl {
             if (!st.enabled) continue;
             for (const SubtitleCue& cue : st.cues)
                 if (f >= cue.start && f < cue.end && !cue.text.trimmed().isEmpty()) return true;
-            return false; // one subtitle track at a time is visible
         }
         return false;
     }

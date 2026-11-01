@@ -11,6 +11,7 @@
 
 #include "check.h"
 
+#include "core/EffectRegistry.h"
 #include "core/ProjectFormat.h"
 #include "engine/picture/Renderer.h"
 #include "engine/video/Compose.h"
@@ -241,8 +242,10 @@ Box bounds(const QImage& img, const std::function<bool(QRgb)>& pass)
 }
 
 // White text, red outline T px, optional opaque blue box with margin pad, over nothing (transparent): the outline must
-// stick out T px beyond the letters on all four sides (also at the line ends), the box pad px around the outline
-void testOutline(const char* name, bool subtitle, double T, bool box, double pad)
+// stick out T px beyond the letters on all four sides (also at the line ends), the box pad px around the outline.
+// grow: the title's own size, outline and margin are 1/grow of that, its size animated (keyframe) to the full size:
+// outline and margin grow with it (the same picture as the plain title)
+void testOutline(const char* name, bool subtitle, double T, bool box, double pad, double grow = 1)
 {
     const ProjectFormat fmt{1280, 720, {25, 1}};
     TitleStyle t;
@@ -270,6 +273,12 @@ void testOutline(const char* name, bool subtitle, double T, bool box, double pad
         c.kind = ClipKind::Title;
         c.out = 9;
         c.title = t;
+        if (grow != 1) {
+            c.title.size = t.size / grow;
+            c.keys[AnimParam::TitleSize] = {Keyframe{0, t.size}};
+            c.title.outlineWidth = T / grow;
+            c.title.boxPad = pad / grow;
+        }
         tl.video[0].clips = {c};
     }
     const QImage img = Check::renderFrame(tl, fmt, 0, {}, true).convertToFormat(QImage::Format_ARGB32);
@@ -411,6 +420,110 @@ void testThreads()
     CHECK_EQ(parallel.stats().sourcesOpen, open);
 }
 
+// A VP9 WebM with alpha (the container says yuv420p, only libvpx gives yuva420p) over a white clip: where it is
+// transparent the white below shows (it was taken for opaque and covered the tracks below)
+void testAlphaWebm(const QString& dir)
+{
+    std::printf("alpha WebM\n");
+    const QString white = Check::makeMedia(dir + "/white.mp4", {"-f", "lavfi", "-i", "color=c=white:s=320x180:r=25:d=2",
+                                                                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
+                                                                "yuv420p"});
+    // Left half red and opaque, right half fully transparent
+    const QString alpha = Check::makeMedia(
+        dir + "/alpha.webm", {"-f", "lavfi", "-i",
+                              "color=c=red:s=320x180:r=25:d=2,format=rgba,geq=r=255:g=0:b=0:a='if(lt(X,160),255,0)'",
+                              "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p"});
+    if (!CHECK(!white.isEmpty() && !alpha.isEmpty())) return;
+    Timeline tl = oneTrack({media(1, white, 0, 0, 49)});
+    tl.video.resize(2);
+    tl.video[1].clips = {media(2, alpha, 0, 0, 49)};
+    QImage want(320, 180, QImage::Format_RGBA8888);
+    want.fill(Qt::white);
+    QPainter(&want).fillRect(0, 0, 160, 180, QColor(255, 0, 0));
+    for (const Picture::Mode mode : {Picture::Mode::Export, Picture::Mode::Preview}) {
+        Picture::Options o;
+        o.format = kFormat;
+        o.mode = mode;
+        Picture::Renderer r(tl, o);
+        const QImage img = r.render(10).toImage();
+        const char* m = mode == Picture::Mode::Export ? "export" : "preview";
+        expect(qPrintable(QString("%1: right half = white below").arg(m)), compare(img, want, QRect(170, 0, 150, 180)), 1.0, 6);
+        expect(qPrintable(QString("%1: left half = red").arg(m)), compare(img, want, QRect(0, 0, 150, 180)), 3.0);
+    }
+}
+
+// Several enabled subtitle tracks are all drawn (two speakers): one low, one high; a hidden one is not
+void testSubtitleTracks()
+{
+    std::printf("subtitle tracks\n");
+    auto track = [](const QString& text, double posY, QColor color, bool enabled) {
+        SubtitleTrack st;
+        st.style.size = 24;
+        st.style.color = color;
+        st.style.posY = posY;
+        st.enabled = enabled;
+        st.cues = {{1, 0, 10, text}};
+        return st;
+    };
+    Timeline tl;
+    tl.video.resize(1);
+    tl.subtitles = {track("UNTEN", 10, Qt::white, true), track("OBEN", 120, Qt::white, true),
+                    track("AUS", 70, Qt::white, false)};
+    auto inkIn = [](const QImage& img, int y0, int y1) {
+        int n = 0;
+        for (int y = y0; y < y1; ++y)
+            for (int x = 0; x < img.width(); ++x) n += qAlpha(img.pixel(x, y)) > 128 && qRed(img.pixel(x, y)) > 128;
+        return n;
+    };
+    for (const Picture::Mode mode : {Picture::Mode::Export, Picture::Mode::Preview}) {
+        Picture::Options o;
+        o.format = kFormat;
+        o.mode = mode;
+        o.transparent = true;
+        Picture::Renderer r(tl, o);
+        const QImage img = r.render(3).toImage().convertToFormat(QImage::Format_ARGB32);
+        // posY = the text's bottom above the frame's bottom edge: 10 -> rows up to 170, 120 -> rows up to 60,
+        // the hidden one would end at row 110
+        const int low = inkIn(img, 130, 172), high = inkIn(img, 20, 62), hidden = inkIn(img, 75, 112);
+        std::printf("  %s: ink low %d, high %d, hidden track %d\n", mode == Picture::Mode::Export ? "export" : "preview",
+                    low, high, hidden);
+        CHECK(low > 50);
+        CHECK(high > 50);
+        CHECK_EQ(hidden, 0);
+    }
+}
+
+// A white title with the blur effect stays white where its edge fades out (the blur works premultiplied: the
+// transparent background has no colour to pull in, it turned the soft edge dark gray); over a white clip no dark halo
+void testTitleBlur()
+{
+    std::printf("title blur\n");
+    Clip t;
+    t.id = 5;
+    t.kind = ClipKind::Title;
+    t.title.text = "HALLO";
+    t.title.size = 60;
+    t.title.color = Qt::white;
+    t.out = 49;
+    EffectRegistry::add(t, "blur");
+    Timeline tl;
+    tl.video.resize(1);
+    tl.video[0].clips = {t};
+    const QImage img = Check::renderFrame(tl, kFormat, 5, {}, true).convertToFormat(QImage::Format_ARGB32);
+    if (!CHECK(!img.isNull())) return;
+    int soft = 0, darkest = 255;
+    for (int y = 0; y < img.height(); ++y)
+        for (int x = 0; x < img.width(); ++x) {
+            const QRgb p = img.pixel(x, y);
+            if (qAlpha(p) < 24 || qAlpha(p) > 230) continue;
+            ++soft;
+            darkest = std::min(darkest, qGray(p));
+        }
+    std::printf("  soft edge: %d pixels, darkest %d\n", soft, darkest);
+    CHECK(soft > 100);
+    CHECK(darkest > 220);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -436,10 +549,14 @@ int main(int argc, char** argv)
     std::printf("outline\n");
     testOutline("title, outline 8", false, 8, false, 0);
     testOutline("title, outline 4 + box 20", false, 4, true, 20);
+    testOutline("title size animated x2", false, 4, true, 20, 2);
     testOutline("subtitle, outline 6", true, 6, false, 0);
     testOutline("subtitle, outline 6 + box 10", true, 6, true, 10);
     testTitleTransform();
     testDownscale();
     testThreads();
+    testAlphaWebm(tmp.path());
+    testSubtitleTracks();
+    testTitleBlur();
     return Check::result();
 }
