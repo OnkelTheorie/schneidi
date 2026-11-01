@@ -210,15 +210,15 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 
 What we are working on next. Plans can still change; the order within a version is not fixed.
 
-### 0.14.x – bug fixes
-Only fixes for problems found in 0.14.0 – new features wait for the next version.
+### 0.15.x – bug fixes
+Only fixes for problems found in 0.15.0 – new features wait for the next version.
 
-### 0.15 – Speed Update
-schneidi's own picture engine on the graphics card – mixing, transitions, titles and effects there, the preview looks
-exactly like the export, faster start and analyses.
+### 0.16 – Shorts Update
+A 16:9 cut and a 9:16 short side by side in one project, auto-reframe between them, word-by-word captions, one word per
+beat, presets for Shorts/Reels/TikTok, voiceover recording, text to speech, smooth slow motion, a sound library for hits
+and cuts, player names blurred automatically.
 
 ### Later
-- **0.16 – Shorts Update:** auto-reframe between 16:9 and 9:16, word-by-word captions, one word per beat, presets for Shorts/Reels/TikTok, voiceover recording, text to speech, smooth slow motion, a sound library for hits and cuts, player names blurred automatically
 - **0.17 – AI Director Update:** the AI understands the material (searchable index: shots, sounds, quality), builds a story (hook, build-up, payoff) and checks it, shows its cut plan before cutting, measures the pace, J/L cuts, songs cut to length
 - **0.18 – Template Update:** templates with placeholders filled from a list, brand kit
 - **0.19 – Fusion Light:** light node compositing on the new picture engine – layers, masks, keyer and tracking as nodes, textured and 3D-edged text

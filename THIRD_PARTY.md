@@ -4,7 +4,7 @@ schneidi itself is AGPL-3.0 (see [LICENSE](LICENSE)). The packages bundle these 
 All are linked dynamically (shared libraries / DLLs next to the program), so they can be replaced.
 The running program lists what it really loaded: `schneidi-cli --licenses` (AppImage: `schneidi-….AppImage cli --licenses`).
 
-## GPL-free packages (`SCHNEIDI_NO_GPL=1 packaging/linux/build-appimage.sh`)
+## GPL-free packages (`SCHNEIDI_NO_GPL=1 packaging/linux/build-appimage.sh`, Docker image)
 
 | Part | License | What for |
 |---|---|---|
@@ -31,7 +31,7 @@ whisper.cpp (speech recognition, MIT) is not bundled: schneidi downloads it as a
 royalties only for its own prebuilt binary downloaded from Cisco; a self-built or bundled OpenH264 is not covered.
 Hardware encoders (the graphics card's driver) are the alternative.
 
-## Regular packages (AppImage without `SCHNEIDI_NO_GPL`, Windows, Debian package, Docker)
+## Regular packages (AppImage without `SCHNEIDI_NO_GPL`, Windows, Debian package)
 
 As above, but with the FFmpeg of Debian 13 / MSYS2, which is built with `--enable-gpl` (x264, x265, Rubber Band,
-vid.stab, frei0r, …) and is therefore GPL-2.0+ as a whole. The Debian package and the Docker image use these libraries from the system.
+vid.stab, frei0r, …) and is therefore GPL-2.0+ as a whole. The Debian package uses these libraries from the system.
