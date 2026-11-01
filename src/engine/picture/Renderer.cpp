@@ -381,6 +381,7 @@ struct Renderer::Impl {
                 ro.ahead = 6;
             }
             if (options.mode == Mode::Preview) ro.keepBytes = kSeekWindowBytes;
+            ro.autoBackward = options.mode != Mode::Still;
             if (auto r = Video::Reader::open(file, ro)) {
                 auto v = std::make_shared<VideoSource>();
                 // Only when the file states none (as engine/video/Producer): overriding it put two pictures of a

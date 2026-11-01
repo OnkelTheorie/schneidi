@@ -707,7 +707,10 @@ struct Reader::Impl {
     void noteSeek(int64_t want, bool nearest)
     {
         // Scrubbing back (close pictures will do) keeps its quick seeks
-        const bool stepBack = !nearest && validFrom != kNothing && want < validFrom && validFrom - want <= kStepBack;
+        // ... and the steps must keep falling: a late export worker a few frames back now and then is no reversed
+        // clip (two of them anywhere in an export opened a ~400 MB window per file)
+        const bool stepBack = opt.autoBackward && !nearest && validFrom != kNothing && want < validFrom
+                              && validFrom - want <= kStepBack && (backSteps == 0 || want < backTarget);
         backSteps = stepBack ? backSteps + 1 : 0;
         if (!stepBack) {
             autoBehind = 0;
@@ -1017,7 +1020,7 @@ struct Reader::Impl {
             fulfil();
             const Request* r = firstPending();
             // Going forwards again (beyond the last step back): the usual few behind
-            if (autoBehind && high > backTarget + kSeekThreshold) autoBehind = 0;
+            if (high > backTarget + kSeekThreshold) autoBehind = backSteps = 0;
             if (r && hibernating) {
                 wake(lock);
                 continue;

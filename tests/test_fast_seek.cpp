@@ -89,6 +89,23 @@ void testSeekWindow(const QString& file)
     for (int k = 119; k >= 110; --k) fresh->picture(k);
     CHECK(fresh->stats().seeks >= 3 && fresh->stats().seeks <= 4);
     CHECK_EQ(fresh->stats().backwardWindows, 1);
+    // Forwards with a late worker now and then (a step back of a few frames, far apart): no backward window (two
+    // such stragglers anywhere opened one, ~400 MB per file at 1080p); single pictures newest first neither
+    auto forward = Video::Reader::open(file, software(0));
+    if (CHECK(forward != nullptr)) {
+        for (int k = 0; k <= 60; ++k) forward->picture(k);
+        forward->picture(50);
+        for (int k = 61; k <= 120; ++k) forward->picture(k);
+        forward->picture(110);
+        for (int k = 121; k <= 130; ++k) forward->picture(k);
+        CHECK_EQ(forward->stats().backwardWindows, 0);
+    }
+    Video::Reader::Options stills = software(0);
+    stills.autoBackward = false;
+    if (auto thumbs = Video::Reader::open(file, stills); CHECK(thumbs != nullptr)) {
+        for (int k = 140; k >= 20; k -= 20) thumbs->picture(k);
+        CHECK_EQ(thumbs->stats().backwardWindows, 0);
+    }
 
     // Memory bound: a window of 5 pictures holds the 5 before the last request, the 10th step back seeks again
     auto small = Video::Reader::open(file, software(5 * kPicture + 1000));
