@@ -5,8 +5,11 @@
 #include "cli/Mcp.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 #include <QTimer>
 
 #include <algorithm>
@@ -136,6 +139,29 @@ void Worker::onGone()
     emit gone(this, started);
 }
 
+namespace {
+
+// A render stopped mid-way (its worker killed) leaves what the Exporter writes under a temporary name next to the
+// target until it renames it at the end: "<name>.<8 hex>.part.<ext>" (an image sequence: the folder
+// "<name>.<8 hex>.part"). Those of this job (made since it started) go; an older file of the target's name stays.
+void removeRenderParts(const QString& out, const QDateTime& since)
+{
+    if (out.isEmpty()) return;
+    const QFileInfo target(out);
+    const QRegularExpression part("^" + QRegularExpression::escape(target.completeBaseName())
+                                  + "\\.[0-9a-f]{8}\\.part(\\.[^.]+)?$");
+    const QDir dir = target.dir();
+    for (const QFileInfo& fi : dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
+        if (!part.match(fi.fileName()).hasMatch()) continue;
+        const QDateTime made = fi.birthTime().isValid() ? fi.birthTime() : fi.lastModified();
+        if (made < since.addSecs(-1)) continue; // another, older render's
+        if (fi.isDir()) QDir(fi.absoluteFilePath()).removeRecursively();
+        else QFile::remove(fi.absoluteFilePath());
+    }
+}
+
+} // namespace
+
 // ---------- Jobs ----------
 
 Jobs::Jobs(const QStringList& workerArgs, const QString& workerDir, int maxWorkers, QObject* parent)
@@ -210,9 +236,15 @@ void Jobs::cancel(Job* job)
         if (job->cancelHere) {
             job->cancelHere();
         } else {
-            // The worker stops right there (a half written output file stays); a new one starts when needed
+            // The worker stops right there; a new one starts when needed. What a render wrote so far goes once the
+            // process is gone (its files are closed then, also on Windows)
             for (Worker* w : std::as_const(m_workers))
-                if (w->job() == job) w->kill();
+                if (w->job() == job) {
+                    if (job->tool == "render")
+                        connect(w, &Worker::gone, this,
+                                [out = job->args["out"].toString(), since = job->started] { removeRenderParts(out, since); });
+                    w->kill();
+                }
         }
         if (!job->writes.isEmpty()) m_writing.remove(job->writes);
     }
