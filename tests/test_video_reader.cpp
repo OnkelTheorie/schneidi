@@ -10,7 +10,10 @@
 
 #include "check.h"
 
+#include "engine/ClipFormat.h"
+#include "engine/MediaProbe.h"
 #include "engine/video/Reader.h"
+#include "engine/video/Scan.h"
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -19,6 +22,7 @@ extern "C" {
 }
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QThread>
 
@@ -60,6 +64,9 @@ QVector<int> positions(int frames)
     // decoded before the pictures shown ahead of it (the seek must not land on it)
     for (int k : {46, 47, 48, 49, 50, 51})
         if (k < frames - 1) out << frames - 1 << k;
+    // Into the middle of a GOP and into the last one, then backwards picture by picture (a reversed clip)
+    out << std::max(0, frames / 2 - 20) << std::max(0, frames - 15) << frames / 2 + 20;
+    for (int i = frames - 1; i >= frames - 12 && i >= 0; --i) out << i;
     return out.toList().toVector();
 }
 
@@ -97,6 +104,10 @@ void testSeeks(const Media& m, const QVector<QByteArray>& ref)
     }
     Check::report(wrong == 0, qPrintable(m.name + ": jumps = in order"), __FILE__, __LINE__,
                   QString("%1 wrong pictures (%2)").arg(wrong).arg(where.join(", ")));
+    // Files with an index land on a key frame before the target: never a second seek
+    if (!m.name.startsWith("mpeg"))
+        Check::report(r->stats().reseeks == 0, qPrintable(m.name + ": no repeated seeks"), __FILE__, __LINE__,
+                      QString("%1 of %2 seeks repeated").arg(r->stats().reseeks).arg(r->stats().seeks));
 }
 
 // Four threads on one reader, a little out of order
@@ -171,37 +182,91 @@ void testHibernate(const QString& path)
     }
 }
 
-// The luma plane of a picture as rows (8 bit)
-QVector<QByteArray> luma(const AVFrame* f)
+// A reversed clip in a forward export (or forward playback): the export's small windows (4 behind, 6 ahead), four
+// workers asking a little out of order, going backwards through a long GOP. Seeking from the key frame for every few
+// pictures decoded the GOP quadratically; after a few steps back the reader keeps a large window behind.
+void testBackwards(const Media& m, const QVector<QByteArray>& ref, int from, int count)
 {
-    QVector<QByteArray> rows;
-    for (int y = 0; y < f->height; ++y) rows << QByteArray(reinterpret_cast<const char*>(f->data[0] + y * f->linesize[0]), f->width);
-    return rows;
+    Video::Reader::Options o;
+    o.hardware = false;
+    o.behind = 4;
+    o.ahead = 6;
+    auto r = Video::Reader::open(m.path, o);
+    if (!CHECK(r)) return;
+    QElapsedTimer t;
+    t.start();
+    std::atomic<int> next{0}, wrong{0};
+    auto work = [&] {
+        for (int i; (i = next++) < count;) {
+            const int pos = from - i;
+            const auto p = r->picture(pos);
+            if (!p || p->position != pos || bytesOf(p->frame) != ref.value(pos)) ++wrong;
+        }
+    };
+    std::vector<std::thread> threads;
+    for (int k = 0; k < 4; ++k) threads.emplace_back(work);
+    for (auto& th : threads) th.join();
+    // Two seeks from the key frame before the reader notices, then one window: three passes through the GOP at most
+    const Video::Reader::Stats st = r->stats();
+    std::printf("       %s backwards %d pictures: %lld ms, %d seeks, %d decoded\n", qPrintable(m.name), count,
+                static_cast<long long>(t.elapsed()), st.seeks, st.decoded);
+    CHECK_EQ(wrong.load(), 0);
+    Check::report(st.decoded <= 3 * (from + 1) && st.seeks <= 4,
+                  qPrintable(m.name + ": backwards without decoding the GOP again and again"),
+                  __FILE__, __LINE__, QString("%1 decoded for %2 pictures, %3 seeks").arg(st.decoded).arg(count).arg(st.seeks));
+}
+
+// One sample of a picture for comparing positions: the luma (8 or 16 bit), the palette colour, the bit (1-bit black
+// and white)
+uint32_t sampleAt(const AVFrame* f, int x, int y)
+{
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(AVPixelFormat(f->format));
+    const uint8_t* row = f->data[0] + ptrdiff_t(y) * f->linesize[0];
+    if (desc->flags & AV_PIX_FMT_FLAG_PAL) return reinterpret_cast<const uint32_t*>(f->data[1])[row[x]];
+    if (desc->flags & AV_PIX_FMT_FLAG_BITSTREAM) return (row[x / 8] >> (7 - x % 8)) & 1;
+    if (desc->comp[0].depth > 8) return reinterpret_cast<const uint16_t*>(row)[x];
+    return row[x * desc->comp[0].step];
 }
 
 // A file with a rotation tag comes upright: the plain file's picture turned by a quarter (the tag's direction)
-void testRotation(const QString& plain, const QString& rotated, double degrees)
+void testRotation(const QString& plain, const QString& rotated, double degrees, const QString& name = {})
 {
     auto a = Video::Reader::open(plain), b = Video::Reader::open(rotated);
     if (!CHECK(a && b)) return;
     CHECK(std::abs(b->info().rotation - degrees) < 0.5);
     const auto pa = a->picture(12), pb = b->picture(12);
     if (!CHECK(pa && pb)) return;
-    const auto la = luma(pa->frame), lb = luma(pb->frame);
+    // The picture's format is the one the reader states (turned sideways, 4:2:2 comes as 4:4:4)
+    CHECK_EQ(pb->frame->format, int(b->info().format));
     const int w = pa->frame->width, h = pa->frame->height;
     if (degrees == 180) {
         bool same = pb->frame->width == w && pb->frame->height == h;
         for (int y = 0; same && y < h; ++y)
-            for (int x = 0; x < w && same; ++x) same = la[y][x] == lb[h - 1 - y][w - 1 - x];
-        Check::report(same, "rotated 180: upside down", __FILE__, __LINE__);
+            for (int x = 0; x < w && same; ++x) same = sampleAt(pa->frame, x, y) == sampleAt(pb->frame, w - 1 - x, h - 1 - y);
+        Check::report(same, qPrintable(name + "rotated 180: upside down"), __FILE__, __LINE__);
         return;
     }
-    if (!CHECK(pb->frame->width == h && pb->frame->height == w)) return;
+    if (!Check::report(pb->frame->width == h && pb->frame->height == w, qPrintable(name + "rotated: sideways"), __FILE__,
+                       __LINE__, QString("%1x%2").arg(pb->frame->width).arg(pb->frame->height)))
+        return;
     // 90 clockwise: source (x, y) -> (h - 1 - y, x)
     bool same = true;
     for (int y = 0; same && y < h; ++y)
-        for (int x = 0; x < w && same; ++x) same = la[y][x] == lb[x][h - 1 - y];
-    Check::report(same, qPrintable(QString("rotated %1: turned clockwise").arg(degrees)), __FILE__, __LINE__);
+        for (int x = 0; x < w && same; ++x) same = sampleAt(pa->frame, x, y) == sampleAt(pb->frame, h - 1 - y, x);
+    // The colour (first chroma plane of YUV) goes along, also where the subsampling changes (4:2:2 -> 4:4:4)
+    const AVPixFmtDescriptor* da = av_pix_fmt_desc_get(AVPixelFormat(pa->frame->format));
+    const AVPixFmtDescriptor* db = av_pix_fmt_desc_get(AVPixelFormat(pb->frame->format));
+    if (da->nb_components >= 3 && !(da->flags & (AV_PIX_FMT_FLAG_RGB | AV_PIX_FMT_FLAG_PAL)) && da->comp[1].plane == 1
+        && db->comp[1].plane == 1) {
+        const int bytes = da->comp[1].depth > 8 ? 2 : 1;
+        auto at = [&](const AVFrame* f, const AVPixFmtDescriptor* d, int x, int y) {
+            const uint8_t* row = f->data[1] + ptrdiff_t(y >> d->log2_chroma_h) * f->linesize[1];
+            return bytes == 2 ? reinterpret_cast<const uint16_t*>(row)[x >> d->log2_chroma_w] : row[x >> d->log2_chroma_w];
+        };
+        for (int y = 0; same && y < h; ++y)
+            for (int x = 0; x < w && same; ++x) same = at(pa->frame, da, x, y) == at(pb->frame, db, h - 1 - y, x);
+    }
+    Check::report(same, qPrintable(QString("%1rotated %2: turned clockwise").arg(name).arg(degrees)), __FILE__, __LINE__);
 }
 
 } // namespace
@@ -228,6 +293,10 @@ int main(int argc, char** argv)
                                                      "-bf", "3", "-pix_fmt", "yuv420p"}), 100);
     add("h264-30fps", Check::makeMedia(file("h264-30.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
                                                              "-t", "4", "-c:v", "libx264", "-g", "60", "-pix_fmt", "yuv420p"}), 120);
+    // One GOP of 8 s (screen recordings, some cameras): a reversed clip goes backwards through all of it
+    add("long-gop", Check::makeMedia(file("long-gop.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t",
+                                                            "8", "-c:v", "libx264", "-g", "200", "-pix_fmt", "yuv420p"}),
+        200);
     // Matroska with NTSC rate (1 ms timestamps)
     add("mkv-29.97", Check::makeMedia(file("ntsc.mkv"), {"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30000/1001",
                                                          "-t", "4", "-c:v", "libx264", "-pix_fmt", "yuv420p"}), 120);
@@ -261,6 +330,16 @@ int main(int argc, char** argv)
     // RGBA (PNG in MOV) and VP9 with alpha
     add("png-rgba", Check::makeMedia(file("rgba.mov"), {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25,format=rgba",
                                                         "-t", "1", "-c:v", "png"}), 25);
+    // MPEG-TS (AVCHD camcorders, DVB) and MPEG-PS (DVD, MPEG-2): no index, seeks land where the bytes are, not on a
+    // key frame
+    add("mpeg-ts", Check::makeMedia(file("h264.ts"), {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t", "10",
+                                                      "-c:v", "libx264", "-g", "25", "-bf", "0"}), 250);
+    add("mpeg-ps", Check::makeMedia(file("mpeg2.mpg"), {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t", "10",
+                                                        "-c:v", "mpeg2video"}), 250);
+    add("vp9", Check::makeMedia(file("plain.webm"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "libvpx-vp9",
+                                                     "-deadline", "realtime", "-cpu-used", "8"}), 50);
+    add("vp8", Check::makeMedia(file("plain-vp8.webm"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "libvpx",
+                                                         "-deadline", "realtime", "-cpu-used", "8"}), 50);
     add("vp9-alpha", Check::makeMedia(file("alpha.webm"), {"-f", "lavfi", "-i",
                                                            "testsrc2=size=320x180:rate=25,format=yuva420p", "-t", "1",
                                                            "-c:v", "libvpx-vp9", "-auto-alt-ref", "0"}), 25);
@@ -272,6 +351,7 @@ int main(int argc, char** argv)
             continue;
         testSeeks(m, ref);
         if (m.name == "h264" || m.name == "hevc-10bit" || m.name == "prores") testThreads(m, ref);
+        if (m.name == "long-gop") testBackwards(m, ref, m.frames - 1, 100);
     }
 
     // What the files state
@@ -286,6 +366,11 @@ int main(int argc, char** argv)
     CHECK_EQ(info("prores.mov").format, AV_PIX_FMT_YUV422P10LE);
     CHECK(av_pix_fmt_desc_get(info("rgba.mov").format)->flags & AV_PIX_FMT_FLAG_ALPHA);
     CHECK(info("h264.mp4").hasBFrames);
+    // VP8/VP9: libvpx only for alpha (FFmpeg's own decoders drop it); else FFmpeg's (recovers after damage, hardware)
+    CHECK_EQ(info("plain.webm").codec, QString("vp9"));
+    CHECK_EQ(info("plain-vp8.webm").codec, QString("vp8"));
+    CHECK_EQ(info("alpha.webm").codec, QString("libvpx-vp9"));
+    CHECK_EQ(info("alpha.webm").format, AV_PIX_FMT_YUVA420P);
     if (auto r = Video::Reader::open(file("interlaced.mp4"))) {
         const auto p = r->picture(3);
         CHECK(p && !p->progressive && p->topFieldFirst);
@@ -295,6 +380,80 @@ int main(int argc, char** argv)
         CHECK(p && p->progressive);
     }
     testRotation(file("h264.mp4"), file("rotated.mp4"), 90);
+    // Formats a quarter turn cannot keep: 4:2:2 (camera files, iPhone ProRes 422 shot in portrait), palette, 1 bit
+    struct Turn {
+        const char* name;
+        QStringList encode;
+    };
+    const Turn turns[] = {
+        {"yuv422p.mp4", {"-pix_fmt", "yuv422p", "-c:v", "libx264"}},
+        {"prores422.mov", {"-c:v", "prores_ks", "-profile:v", "2"}},
+        {"pal8.mov", {"-pix_fmt", "pal8", "-c:v", "png"}},
+        {"monob.mov", {"-pix_fmt", "monob", "-c:v", "png"}},
+    };
+    for (const Turn& t : turns) {
+        const QString plain = Check::makeMedia(file(t.name), QStringList{"-f", "lavfi", "-i",
+                                                                          "testsrc2=size=320x180:rate=25", "-t", "1"}
+                                                                 + t.encode);
+        const QString turned = Check::makeMedia(dir.filePath(QString("rot-") + t.name),
+                                                {"-display_rotation", "-90", "-i", plain, "-c", "copy"});
+        if (!CHECK(!plain.isEmpty() && !turned.isEmpty())) continue;
+        testRotation(plain, turned, 90, QString(t.name) + ": ");
+    }
+
+    // A rotation that is no quarter turn (45 degrees) is not applied - by the reader, the analyses' scan and the clip
+    // format alike (the scan used to round it to a quarter turn)
+    if (const QString odd = Check::makeMedia(file("rot45.mp4"), {"-display_rotation", "-45", "-i", file("h264.mp4"),
+                                                                  "-c", "copy"});
+        CHECK(!odd.isEmpty())) {
+        auto r = Video::Reader::open(odd);
+        const auto p = r ? r->picture(3) : nullptr;
+        CHECK(r && std::abs(r->info().rotation - 45) < 0.5 && p && p->frame->width == 640 && p->frame->height == 360);
+        Video::Scan::Options so;
+        so.width = 0;
+        so.threads = 1;
+        std::atomic<int> scanW{0}, scanH{0};
+        const auto scanned = Video::Scan::run(odd, so, [&](const Video::Scan::Frame& f, const Video::Scan::Frame*) {
+            scanW = f.width;
+            scanH = f.height;
+        });
+        Check::report(scanned.ok && scanW == 640 && scanH == 360, "rotated 45: scan not turned", __FILE__, __LINE__,
+                      QString("%1x%2 %3").arg(scanW.load()).arg(scanH.load()).arg(scanned.error));
+        const ClipFormat cf = detectClipFormat(odd);
+        CHECK(cf.ok && cf.width == 640 && cf.height == 360);
+    }
+    // A 1x1 video still has a clip format (even sizes, at least 2x2)
+    if (const QString tiny = Check::makeMedia(file("tiny.mkv"), {"-f", "lavfi", "-i", "color=c=red:s=1x1:r=25", "-t",
+                                                                  "1", "-c:v", "ffv1"});
+        CHECK(!tiny.isEmpty())) {
+        const ClipFormat cf = detectClipFormat(tiny);
+        Check::report(cf.ok && cf.width == 2 && cf.height == 2, "1x1 video: clip format 2x2", __FILE__, __LINE__,
+                      QString("%1 %2x%3").arg(cf.ok).arg(cf.width).arg(cf.height));
+    }
+
+    // Video that starts late in the file (10 s of sound first, beyond what the stream analysis reads by default): its
+    // format, size and rate are found, every picture reads, and the probe and clip format agree
+    for (const char* name : {"start10.mkv", "start10.ts"}) {
+        const QString late = Check::makeMedia(file(name), {"-f", "lavfi", "-i", "sine=r=48000:d=13", "-itsoffset", "10",
+                                                            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:d=3",
+                                                            "-map", "1:v", "-map", "0:a", "-c:v", "libx264", "-c:a",
+                                                            "aac"});
+        if (!CHECK(!late.isEmpty())) continue;
+        QString error;
+        auto r = Video::Reader::open(late, Video::Reader::Options{}, &error);
+        if (!Check::report(bool(r), qPrintable(QString(name) + ": opens"), __FILE__, __LINE__, error)) continue;
+        CHECK(r->info().width == 320 && r->info().height == 240 && r->info().format == AV_PIX_FMT_YUV420P);
+        CHECK(av_cmp_q(r->info().frameRate, AVRational{25, 1}) == 0);
+        int read = 0;
+        for (int i : {0, 1, 40, 74, 20})
+            if (const auto p = r->picture(i); p && p->position == i) ++read;
+        Check::report(read == 5, qPrintable(QString(name) + ": pictures"), __FILE__, __LINE__,
+                      QString("%1 of 5").arg(read));
+        const ClipFormat cf = detectClipFormat(late);
+        CHECK(cf.ok && cf.width == 320 && cf.height == 240);
+        const auto probed = MediaProbe::read(late, FrameRate{25, 1});
+        CHECK(probed && probed->hasVideo && probed->hasAudio);
+    }
 
     // Hardware decoding: 720p H.264 and 10-bit HEVC
     const QString hd = Check::makeMedia(file("hd.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-t",

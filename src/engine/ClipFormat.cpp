@@ -7,6 +7,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -26,15 +27,15 @@ ClipFormat detectClipFormat(const QString& path)
     int w = in.width, h = in.height;
     const double sar = av_q2d(in.sar);
     if (sar > 0 && std::abs(sar - 1.0) > 0.01) w = int(std::lround(w * sar)); // anamorphic pixels
-    if (int(std::lround(in.rotation)) % 180 == 90) std::swap(w, h); // phone portrait: file landscape, rotation in the metadata
+    if (Video::quarterTurns(in.rotation) % 2) std::swap(w, h); // phone portrait: file landscape, rotation in the metadata
     const int num = in.frameRate.num, den = in.frameRate.den;
     if (w <= 0 || h <= 0 || num <= 0 || den <= 0) return cf;
     // The average frame rate (the stream's rate above is the highest one with variable frame rate)
     const AVRational avg = reader->container()->streams[in.index]->avg_frame_rate;
 
     cf.ok = true;
-    cf.width = w & ~1; // even dimensions (yuv420p)
-    cf.height = h & ~1;
+    cf.width = std::max(2, w & ~1); // even dimensions (yuv420p), a 1x1 video too
+    cf.height = std::max(2, h & ~1);
     cf.rate = {num, den};
     cf.averageFps = avg.num > 0 && avg.den > 0 ? av_q2d(avg) : 0.0;
     // If the average differs noticeably the frame rate is variable (phones, game capture that skips frames).

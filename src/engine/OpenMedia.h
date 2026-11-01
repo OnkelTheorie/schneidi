@@ -6,12 +6,14 @@
 // by content whatever the file is called: a server's work folder (cli/Sandbox) would read anything through one.
 // schneidi never needs them for media; image sequences (image2) and single files open as before.
 
+struct AVDictionary;
 struct AVFormatContext;
 
 namespace OpenMedia {
 
-// avformat_open_input(fmt, path, nullptr, nullptr) with the limits; a refused demuxer fails it (AVERROR(EINVAL))
-int input(AVFormatContext** fmt, const char* path);
+// avformat_open_input(fmt, path, nullptr, options) with the limits; a refused demuxer fails it (AVERROR(EINVAL)).
+// `options`: further demuxer options (analyzeduration, probesize …), not changed
+int input(AVFormatContext** fmt, const char* path, const AVDictionary* options = nullptr);
 // Would input() refuse this demuxer? ("hls", "imf": yes; "mov,mp4,m4a,3gp,3g2,mj2": no)
 bool refused(const char* demuxerName);
 

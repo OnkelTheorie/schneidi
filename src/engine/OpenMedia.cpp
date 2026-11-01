@@ -52,9 +52,10 @@ bool refused(const char* demuxerName)
     return false;
 }
 
-int input(AVFormatContext** fmt, const char* path)
+int input(AVFormatContext** fmt, const char* path, const AVDictionary* extra)
 {
     AVDictionary* options = nullptr;
+    if (extra) av_dict_copy(&options, extra, 0);
     av_dict_set(&options, "protocol_whitelist", "file", 0);
     av_dict_set(&options, "format_whitelist", allowed().constData(), 0);
     const int r = avformat_open_input(fmt, path, nullptr, &options);

@@ -84,10 +84,11 @@ void testSeekWindow(const QString& file)
     CHECK_EQ(differ, 0);
     CHECK_EQ(st.seeks, 1);
     CHECK(st.decoded - decoded <= 8); // read-ahead only
-    // Without the window every step back seeks
+    // Without the window the first steps back seek, then the reader keeps a window behind (going backwards)
     fresh->picture(120);
     for (int k = 119; k >= 110; --k) fresh->picture(k);
-    CHECK(fresh->stats().seeks >= 5);
+    CHECK(fresh->stats().seeks >= 3 && fresh->stats().seeks <= 4);
+    CHECK_EQ(fresh->stats().backwardWindows, 1);
 
     // Memory bound: a window of 5 pictures holds the 5 before the last request, the 10th step back seeks again
     auto small = Video::Reader::open(file, software(5 * kPicture + 1000));
