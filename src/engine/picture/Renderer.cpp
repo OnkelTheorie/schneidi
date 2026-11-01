@@ -1288,6 +1288,7 @@ struct Renderer::Impl {
         Compose::over(img.data(), strip.data(), img.w, img.h, 1.0);
     }
 
+    // Every enabled subtitle track at once (e.g. two speakers), in track order
     void subtitleLayer(Image& canvas, const Timeline& tl, int f, const Ctx& ctx)
     {
         for (const SubtitleTrack& st : tl.subtitles) {
@@ -1330,9 +1331,8 @@ struct Renderer::Impl {
                 if (outline) draw(true);
                 draw(false);
                 Compose::over(canvas.data(), layer.data(), canvas.w, canvas.h, 1.0);
-                break;
+                break; // one cue per track
             }
-            break; // one subtitle track at a time is visible
         }
     }
 
@@ -1681,7 +1681,6 @@ struct Renderer::Impl {
             if (!st.enabled) continue;
             for (const SubtitleCue& cue : st.cues)
                 if (f >= cue.start && f < cue.end && !cue.text.trimmed().isEmpty()) return true;
-            return false; // one subtitle track at a time is visible
         }
         return false;
     }

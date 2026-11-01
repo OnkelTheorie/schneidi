@@ -555,7 +555,7 @@ QJsonObject timelineJson(const Project& p)
                                 {"end_tc", tc(c.end, f)}, {"text", c.text}};
         QJsonObject so{{"track", QString("ST%1").arg(i + 1)}, {"cues", cues}};
         if (!st.name.isEmpty()) so["name"] = st.name;
-        if (!st.enabled) so["enabled"] = false; // not shown/burnt in (one subtitle track at a time)
+        if (!st.enabled) so["enabled"] = false; // not shown/burnt in (every enabled track is)
         if (st.locked) so["locked"] = true;
         if (const QJsonObject style = titleStyleJson(st.style, subtitleBaseStyle()); !style.isEmpty()) so["style"] = style;
         subtitles << so;

@@ -443,6 +443,47 @@ void testAlphaWebm(const QString& dir)
     }
 }
 
+// Several enabled subtitle tracks are all drawn (two speakers): one low, one high; a hidden one is not
+void testSubtitleTracks()
+{
+    std::printf("subtitle tracks\n");
+    auto track = [](const QString& text, double posY, QColor color, bool enabled) {
+        SubtitleTrack st;
+        st.style.size = 24;
+        st.style.color = color;
+        st.style.posY = posY;
+        st.enabled = enabled;
+        st.cues = {{1, 0, 10, text}};
+        return st;
+    };
+    Timeline tl;
+    tl.video.resize(1);
+    tl.subtitles = {track("UNTEN", 10, Qt::white, true), track("OBEN", 120, Qt::white, true),
+                    track("AUS", 70, Qt::white, false)};
+    auto inkIn = [](const QImage& img, int y0, int y1) {
+        int n = 0;
+        for (int y = y0; y < y1; ++y)
+            for (int x = 0; x < img.width(); ++x) n += qAlpha(img.pixel(x, y)) > 128 && qRed(img.pixel(x, y)) > 128;
+        return n;
+    };
+    for (const Picture::Mode mode : {Picture::Mode::Export, Picture::Mode::Preview}) {
+        Picture::Options o;
+        o.format = kFormat;
+        o.mode = mode;
+        o.transparent = true;
+        Picture::Renderer r(tl, o);
+        const QImage img = r.render(3).toImage().convertToFormat(QImage::Format_ARGB32);
+        // posY = the text's bottom above the frame's bottom edge: 10 -> rows up to 170, 120 -> rows up to 60,
+        // the hidden one would end at row 110
+        const int low = inkIn(img, 130, 172), high = inkIn(img, 20, 62), hidden = inkIn(img, 75, 112);
+        std::printf("  %s: ink low %d, high %d, hidden track %d\n", mode == Picture::Mode::Export ? "export" : "preview",
+                    low, high, hidden);
+        CHECK(low > 50);
+        CHECK(high > 50);
+        CHECK_EQ(hidden, 0);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -474,5 +515,6 @@ int main(int argc, char** argv)
     testDownscale();
     testThreads();
     testAlphaWebm(tmp.path());
+    testSubtitleTracks();
     return Check::result();
 }
