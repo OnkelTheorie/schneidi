@@ -388,6 +388,15 @@ void testFullScreen(MainWindow& w, Engine& engine)
     CHECK(fs->screen() == w.screen() && fs->geometry() == w.screen()->geometry());
     CHECK(QTest::qWaitForWindowActive(fs));
     checkGpuSurface(viewer, fs, "first");
+    // Picture as large as the screen: preview frames at the project size where the screen has more pixels than the
+    // scaled-down preview, and when zoomed in (Ctrl+wheel); back to the viewer's wish afterwards
+    CHECK_EQ(engine.previewFullSize(), fs->wantsFullSize());
+    if (auto* view = fs->findChild<FrameView*>(); CHECK(view)) {
+        view->setZoom(2.0);
+        CHECK(engine.previewFullSize());
+        view->setZoom(FrameView::kFit);
+        CHECK_EQ(engine.previewFullSize(), fs->wantsFullSize());
+    }
     // The pointer goes away when the mouse rests - also over the picture, after it moved there (the picture's own
     // pointer from hovering won over the window's blank one: it never hid)
     if (auto* view = fs->findChild<FrameView*>(); CHECK(view)) {
@@ -405,7 +414,9 @@ void testFullScreen(MainWindow& w, Engine& engine)
         settle();
         CHECK(view->cursor().shape() != Qt::BlankCursor);
     }
-    CHECK(fs->picture().size() == shown.size() && !fs->picture().isNull());
+    // the viewer's picture, or already the one at the project size (a screen larger than the preview)
+    CHECK(!fs->picture().isNull()
+          && (fs->picture().size() == shown.size() || fs->picture().size() == engine.frameSize()));
     const QRectF r = fs->pictureRect();
     CHECK(r.width() >= fs->width() - 1 || r.height() >= fs->height() - 1); // as large as the screen allows
     if (!dumpDir().isEmpty()) fs->grab().save(dumpDir() + "/full-screen.png");
@@ -431,6 +442,7 @@ void testFullScreen(MainWindow& w, Engine& engine)
     QTest::keyClick(fs, Qt::Key_Escape);
     QTest::qWait(50);
     CHECK(!w.fullScreenViewer() && !full->isChecked() && !button->isChecked());
+    CHECK(!engine.previewFullSize()); // the viewer fits the picture
     CHECK(engine.speed() > 0.0);
     engine.pause();
     settle();
