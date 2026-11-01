@@ -411,6 +411,38 @@ void testThreads()
     CHECK_EQ(parallel.stats().sourcesOpen, open);
 }
 
+// A VP9 WebM with alpha (the container says yuv420p, only libvpx gives yuva420p) over a white clip: where it is
+// transparent the white below shows (it was taken for opaque and covered the tracks below)
+void testAlphaWebm(const QString& dir)
+{
+    std::printf("alpha WebM\n");
+    const QString white = Check::makeMedia(dir + "/white.mp4", {"-f", "lavfi", "-i", "color=c=white:s=320x180:r=25:d=2",
+                                                                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
+                                                                "yuv420p"});
+    // Left half red and opaque, right half fully transparent
+    const QString alpha = Check::makeMedia(
+        dir + "/alpha.webm", {"-f", "lavfi", "-i",
+                              "color=c=red:s=320x180:r=25:d=2,format=rgba,geq=r=255:g=0:b=0:a='if(lt(X,160),255,0)'",
+                              "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p"});
+    if (!CHECK(!white.isEmpty() && !alpha.isEmpty())) return;
+    Timeline tl = oneTrack({media(1, white, 0, 0, 49)});
+    tl.video.resize(2);
+    tl.video[1].clips = {media(2, alpha, 0, 0, 49)};
+    QImage want(320, 180, QImage::Format_RGBA8888);
+    want.fill(Qt::white);
+    QPainter(&want).fillRect(0, 0, 160, 180, QColor(255, 0, 0));
+    for (const Picture::Mode mode : {Picture::Mode::Export, Picture::Mode::Preview}) {
+        Picture::Options o;
+        o.format = kFormat;
+        o.mode = mode;
+        Picture::Renderer r(tl, o);
+        const QImage img = r.render(10).toImage();
+        const char* m = mode == Picture::Mode::Export ? "export" : "preview";
+        expect(qPrintable(QString("%1: right half = white below").arg(m)), compare(img, want, QRect(170, 0, 150, 180)), 1.0, 6);
+        expect(qPrintable(QString("%1: left half = red").arg(m)), compare(img, want, QRect(0, 0, 150, 180)), 3.0);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -441,5 +473,6 @@ int main(int argc, char** argv)
     testTitleTransform();
     testDownscale();
     testThreads();
+    testAlphaWebm(tmp.path());
     return Check::result();
 }

@@ -1120,12 +1120,25 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     // VP8/VP9: libvpx (it decodes the alpha channel). MLT means to switch back to FFmpeg's own decoder without alpha,
     // but opens it on the already opened context, which keeps libvpx; same pictures here.
     d.codec = avcodec_find_decoder(par->codec_id);
+    bool libvpx = false;
     if (par->codec_id == AV_CODEC_ID_VP9) {
-        if (const AVCodec* c = avcodec_find_decoder_by_name("libvpx-vp9")) d.codec = c;
+        if (const AVCodec* c = avcodec_find_decoder_by_name("libvpx-vp9")) {
+            d.codec = c;
+            libvpx = true;
+        }
     } else if (par->codec_id == AV_CODEC_ID_VP8) {
-        if (const AVCodec* c = avcodec_find_decoder_by_name("libvpx")) d.codec = c;
+        if (const AVCodec* c = avcodec_find_decoder_by_name("libvpx")) {
+            d.codec = c;
+            libvpx = true;
+        }
     }
-    d.wantHardware = options.hardware && hardwareFriendly(par);
+    // A WebM with alpha: the container states yuv420p (the alpha is a side stream, tagged alpha_mode=1), libvpx gives
+    // yuva420p pictures. The format says so, else the picture counted as opaque (covering the tracks below, uploaded
+    // to the card without alpha); no hardware decoder, it drops the alpha.
+    const AVDictionaryEntry* alphaMode = av_dict_get(d.stream->metadata, "alpha_mode", nullptr, 0);
+    const bool alpha = libvpx && alphaMode && std::strcmp(alphaMode->value, "1") == 0
+                       && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P;
+    d.wantHardware = options.hardware && !alpha && hardwareFriendly(par);
     if (!d.openDecoder(d.wantHardware, error)) return nullptr;
     d.pkt = av_packet_alloc();
     d.frame = av_frame_alloc();
@@ -1133,7 +1146,7 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     Info& in = d.info;
     in.width = d.dec->width;
     in.height = d.dec->height;
-    in.format = AVPixelFormat(par->format);
+    in.format = alpha ? AV_PIX_FMT_YUVA420P : AVPixelFormat(par->format);
     in.frameRate = guessFrameRate(d.fmt, d.stream);
     in.timeBase = d.stream->time_base;
     AVRational sar = d.stream->sample_aspect_ratio;
