@@ -1010,11 +1010,16 @@ Service* Service::instance()
         // The context is made on the GPU thread (a QRhi belongs to its thread); it refuses a software rasterizer
         // unless SCHNEIDI_GPU=1
         std::promise<bool> made;
-        d->thread = std::thread([d, &made] {
+        // Without a screen (schneidi-cli, a server, offscreen tests) no GPU is the normal case and the CPU path renders
+        // the same: a note, not a warning on every call - unless SCHNEIDI_GPU=1 asked for it
+        const bool headless = QGuiApplication::platformName() == QLatin1String("offscreen")
+                              || QGuiApplication::platformName() == QLatin1String("minimal");
+        d->thread = std::thread([d, &made, headless] {
             QString why;
             d->context = Context::create(d->surface.get(), &why, envSwitch() == 1);
             if (!d->context) {
-                if (envSwitch() == 1 || !why.startsWith(QLatin1String("software")))
+                if (envSwitch() != 1 && headless) qInfo("GPU picture engine off: %s", qPrintable(why));
+                else if (envSwitch() == 1 || !why.startsWith(QLatin1String("software")))
                     qWarning("GPU picture engine off: %s", qPrintable(why));
                 made.set_value(false);
                 return;
