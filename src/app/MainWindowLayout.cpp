@@ -43,7 +43,6 @@
 #include "ui/Mixer.h"
 #include "ui/MediaPool.h"
 #include "ui/MulticamView.h"
-#include "ui/FrameView.h"
 #include "ui/FullScreenViewer.h"
 #include "ui/Viewer.h"
 #include "ui/timeline/TimelinePanel.h"
@@ -484,15 +483,10 @@ void MainWindow::setViewerFullScreen(bool on)
                                "mark_out", "viewer_full_screen"})
             if (QAction* a = InputBindings::instance().action(id)) m_fullScreen->addAction(a);
         m_fullScreen->showOn(screen());
-        // The picture as large as the screen (the viewer's small preview enlarged looked soft)
-        m_engine->setPreviewFullSize(m_fullScreen->wantsFullSize());
-        connect(m_fullScreen, &FullScreenViewer::fullSizeWanted, m_engine, &Engine::setPreviewFullSize);
     } else if (!on && m_fullScreen) {
         FullScreenViewer* fs = std::exchange(m_fullScreen, nullptr);
         fs->hide();
         fs->deleteLater();
-        const double z = m_viewer->zoom(); // back to what the viewer wants (Viewer::fullSizeWanted)
-        m_engine->setPreviewFullSize(z != FrameView::kFit && z >= 1.0);
         activateWindow();
     }
     if (m_fullScreenAction) m_fullScreenAction->setChecked(m_fullScreen != nullptr);

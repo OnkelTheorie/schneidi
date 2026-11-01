@@ -27,12 +27,8 @@ public:
     const QImage& picture() const;
     QRectF pictureRect() const; // where the picture is drawn (empty without one)
 
-    // Preview frames at the project size wanted: the screen is larger than the scaled-down preview, or zoomed in
-    bool wantsFullSize() const;
-
 signals:
     void exitRequested();
-    void fullSizeWanted(bool full); // the zoom changed (Ctrl+wheel): see wantsFullSize()
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
