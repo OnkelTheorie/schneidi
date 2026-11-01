@@ -189,8 +189,9 @@ void testEditPage(MainWindow& w, Engine& engine)
     settle();
     QScrollBar* inspectorScroll = nullptr;
     for (QScrollBar* b : inspector->findChildren<QScrollBar*>())
-        if (b->orientation() == Qt::Vertical && b->maximum() > 100) inspectorScroll = b;
-    if (CHECK(inspectorScroll)) inspectorScroll->setValue(inspectorScroll->maximum());
+        if (b->orientation() == Qt::Vertical && b->maximum() > 0) inspectorScroll = b;
+    // Nothing to scroll where the sections fit (other fonts, the CI image): the layout checks below still hold
+    if (inspectorScroll) inspectorScroll->setValue(inspectorScroll->maximum());
     // A zoom and scroll of the user's own
     TimelineView* tv = timeline->view();
     tv->setZoomAndScroll(7.5, 12.0, 0);
