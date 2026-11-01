@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/video/Reader.h"
+#include "engine/OpenMedia.h"
 #include "engine/video/Hardware.h"
 
 extern "C" {
@@ -1053,7 +1054,7 @@ int64_t frameTimestamp(int64_t position, int64_t firstPts, int64_t startTime, AV
 std::optional<double> zeroOffset(const QString& path)
 {
     AVFormatContext* fmt = nullptr;
-    if (avformat_open_input(&fmt, path.toUtf8().constData(), nullptr, nullptr) < 0) return std::nullopt;
+    if (OpenMedia::input(&fmt, path.toUtf8().constData()) < 0) return std::nullopt;
     const std::unique_ptr<AVFormatContext, void (*)(AVFormatContext*)> guard(fmt, [](AVFormatContext* f) {
         avformat_close_input(&f);
     });
@@ -1091,7 +1092,7 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     Impl& d = *reader->d;
     d.path = path.toUtf8();
     d.opt = options;
-    if (const int r = avformat_open_input(&d.fmt, d.path.constData(), nullptr, nullptr); r < 0) {
+    if (const int r = OpenMedia::input(&d.fmt, d.path.constData()); r < 0) {
         if (error) *error = QString("cannot open %1: %2").arg(path, errorText(r));
         return nullptr;
     }

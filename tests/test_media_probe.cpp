@@ -9,9 +9,12 @@
 
 #include "engine/Engine.h"
 #include "engine/MediaProbe.h"
+#include "engine/OpenMedia.h"
+#include "engine/video/Reader.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 
@@ -204,5 +207,48 @@ int main(int argc, char** argv)
     }
     const MediaInfo surround = Engine::probe(format, in("surround.wav"));
     CHECK(surround.audioStreams.size() == 1 && surround.audioStreams[0].channels == 6);
+
+    // Files that name other files (FFmpeg picks the demuxer by content, whatever the name): never opened, so a server's
+    // work folder cannot read a file outside through one. An IMF composition (needs a full FFmpeg build) whose asset
+    // map points at an MXF elsewhere, a concat list next to a clip
+    {
+        QDir(dir.path()).mkpath("elsewhere");
+        QDir(dir.path()).mkpath("work");
+        const QString mxf = Check::makeMedia(in("elsewhere/secret.mxf"), {"-f", "lavfi", "-i",
+                                                                          "testsrc2=size=64x48:rate=24:duration=1",
+                                                                          "-c:v", "mpeg2video"});
+        const auto write = [&](const char* name, const QByteArray& data) {
+            QFile f(in(name));
+            CHECK(f.open(QIODevice::WriteOnly));
+            f.write(data);
+        };
+        const QByteArray uuid = "urn:uuid:8713c020-2489-45f5-a9f7-87be539e20";
+        write("work/composition.mp4",
+              "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CompositionPlaylist xmlns=\"http://www.smpte-ra.org/schemas/"
+              "2067-3/2016\" xmlns:cc=\"http://www.smpte-ra.org/schemas/2067-2/2016\" xmlns:xsi=\"http://www.w3.org/2001/"
+              "XMLSchema-instance\"><Id>" + uuid + "b5</Id><ContentTitle>x</ContentTitle><EditRate>24 1</EditRate>"
+              "<SegmentList><Segment><Id>" + uuid + "b6</Id><SequenceList><cc:MainImageSequence><Id>" + uuid + "b7</Id>"
+              "<TrackId>" + uuid + "b8</TrackId><ResourceList><Resource xsi:type=\"TrackFileResourceType\"><Id>" + uuid
+              + "b9</Id><EditRate>24 1</EditRate><IntrinsicDuration>24</IntrinsicDuration><EntryPoint>0</EntryPoint>"
+              "<SourceDuration>24</SourceDuration><TrackFileId>" + uuid + "ba</TrackFileId></Resource></ResourceList>"
+              "</cc:MainImageSequence></SequenceList></Segment></SegmentList></CompositionPlaylist>\n");
+        write("work/ASSETMAP.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<AssetMap xmlns=\"http://www.smpte-ra.org/"
+                                   "schemas/429-9/2007/AM\"><Id>" + uuid + "bb</Id><AssetList><Asset><Id>" + uuid
+                                   + "ba</Id><ChunkList><Chunk><Path>" + mxf.toUtf8()
+                                   + "</Path></Chunk></ChunkList></Asset></AssetList></AssetMap>\n");
+        QFile::copy(in("h264_aac.mp4"), in("work/clip.mp4"));
+        write("work/list.mp4", "ffconcat version 1.0\nfile clip.mp4\n");
+        for (const char* name : {"work/composition.mp4", "work/list.mp4"}) {
+            const MediaInfo m = Engine::probe(format, in(name));
+            CHECK(!m.hasVideo && !m.hasAudio);
+            QString error;
+            CHECK(!Video::Reader::open(in(name), {}, &error));
+        }
+        CHECK(OpenMedia::refused("imf") && OpenMedia::refused("hls") && OpenMedia::refused("concat"));
+        CHECK(!OpenMedia::refused("mov,mp4,m4a,3gp,3g2,mj2") && !OpenMedia::refused("image2"));
+        // Plain files still open
+        CHECK(Engine::probe(format, in("work/clip.mp4")).hasVideo);
+        CHECK(Video::Reader::open(in("work/clip.mp4"), {}));
+    }
     return Check::result();
 }

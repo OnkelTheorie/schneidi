@@ -10,6 +10,7 @@
 #include "engine/Bundle.h"
 #include "engine/Exporter.h"
 #include "engine/MediaProbe.h"
+#include "engine/OpenMedia.h"
 #include "engine/MemoryRelease.h"
 #include "engine/ProxyManager.h"
 #include "engine/RenderCache.h"
@@ -242,7 +243,7 @@ MediaInfo Engine::probe(const ProjectFormat& format, const QString& path)
 QString Engine::startTimecode(const QString& path)
 {
     AVFormatContext* fmt = nullptr;
-    if (avformat_open_input(&fmt, path.toUtf8().constData(), nullptr, nullptr) < 0) return {};
+    if (OpenMedia::input(&fmt, path.toUtf8().constData()) < 0) return {};
     // The container's tag, else the one of the (first) video stream, else of any stream (QuickTime: a timecode
     // track, shown on the stream)
     const auto tag = [](const AVDictionary* d) {

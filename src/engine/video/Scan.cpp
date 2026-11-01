@@ -2,6 +2,7 @@
 #include "engine/video/Scan.h"
 
 #include "engine/Background.h"
+#include "engine/OpenMedia.h"
 #include "engine/video/Reader.h"
 
 extern "C" {
@@ -57,7 +58,7 @@ struct Input {
 
     bool open(const QByteArray& path, int threads, bool skipNonReference, QString* error)
     {
-        if (const int r = avformat_open_input(&fmt, path.constData(), nullptr, nullptr); r < 0) {
+        if (const int r = OpenMedia::input(&fmt, path.constData()); r < 0) {
             *error = QString("cannot open %1: %2").arg(QString::fromUtf8(path), errorText(r));
             return false;
         }

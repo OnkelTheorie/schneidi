@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/FrameGaps.h"
+#include "engine/OpenMedia.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -89,7 +90,7 @@ void saveDisk(const QString& key, const std::optional<Stutter::Scan>& s)
 std::optional<Stutter::Scan> read(const QString& path)
 {
     AVFormatContext* raw = nullptr;
-    if (avformat_open_input(&raw, path.toUtf8().constData(), nullptr, nullptr) < 0) return std::nullopt;
+    if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) return std::nullopt;
     const std::unique_ptr<AVFormatContext, void (*)(AVFormatContext*)> fmt(raw, [](AVFormatContext* f) {
         avformat_close_input(&f);
     });

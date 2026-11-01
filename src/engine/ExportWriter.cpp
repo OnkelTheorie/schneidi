@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/ExportWriter.h"
 
+#include "engine/OpenMedia.h"
 #include "engine/OutputColor.h"
 #include "engine/audio/Mixer.h"
 #include "engine/picture/Renderer.h"
@@ -662,7 +663,7 @@ struct ExportWriter::Impl {
             qInfo("Export: smart render encodes %s (%s)", qPrintable(QFileInfo(path).fileName()), what);
             return nullptr;
         };
-        if (avformat_open_input(&src->fmt, file.constData(), nullptr, nullptr) < 0
+        if (OpenMedia::input(&src->fmt, file.constData()) < 0
             || avformat_find_stream_info(src->fmt, nullptr) < 0 || info.index >= int(src->fmt->nb_streams))
             return cannot("cannot be opened");
         src->index = info.index;

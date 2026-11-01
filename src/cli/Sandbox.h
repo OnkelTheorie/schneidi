@@ -38,7 +38,8 @@ QString relative(const QString& absolutePath);
 bool hidden(const QString& absolutePath);
 // With a root: an existing file that makes MLT or FFmpeg read other files or addresses when opened as media (MLT XML,
 // .kdenlive, m3u/HLS playlists, ffconcat, SDP, DASH manifests), by name or content; a path inside the root would
-// otherwise read anything. checkMedia() throws BAD_MEDIA for one.
+// otherwise read anything. checkMedia() throws BAD_MEDIA for one. Only a clear early answer for the known kinds: the
+// engine itself never opens a demuxer that follows names in the file, whatever it is called (engine/OpenMedia.h).
 bool namesOtherFiles(const QString& absolutePath);
 void checkMedia(const QString& absolutePath);
 // Answers: paths of this computer back to the client's (reverse of the maps); strings in objects/arrays too

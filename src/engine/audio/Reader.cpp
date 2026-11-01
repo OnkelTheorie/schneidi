@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/audio/Reader.h"
+#include "engine/OpenMedia.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -552,7 +553,7 @@ struct Reader::Impl {
     {
         ++stats.reopens;
         avformat_close_input(&fmt);
-        if (avformat_open_input(&fmt, path.constData(), nullptr, nullptr) < 0) return false;
+        if (OpenMedia::input(&fmt, path.constData()) < 0) return false;
         if ((streamInfo && avformat_find_stream_info(fmt, nullptr) < 0) || index >= int(fmt->nb_streams)) {
             avformat_close_input(&fmt);
             return false;
@@ -694,7 +695,7 @@ struct Reader::Impl {
     long double lastPacketEnd() const
     {
         AVFormatContext* f = nullptr;
-        if (avformat_open_input(&f, path.constData(), nullptr, nullptr) < 0) return NAN;
+        if (OpenMedia::input(&f, path.constData()) < 0) return NAN;
         long double end = NAN;
         AVPacket* p = av_packet_alloc();
         if (p && index < int(f->nb_streams)) {
@@ -744,7 +745,7 @@ std::unique_ptr<Reader> Reader::open(const QString& path, int stream, const Opti
     Impl& d = *r->d;
     d.outRate = options.rate > 0 ? options.rate : 48000;
     d.outChannels = options.channels;
-    int e = avformat_open_input(&d.fmt, path.toUtf8().constData(), nullptr, nullptr);
+    int e = OpenMedia::input(&d.fmt, path.toUtf8().constData());
     if (e < 0) return fail(errorText(e));
 
     auto audioStreams = [&] {
