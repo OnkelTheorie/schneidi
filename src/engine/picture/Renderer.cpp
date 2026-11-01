@@ -617,12 +617,11 @@ struct Renderer::Impl {
             } else if (c.hasRamp()) {
                 file = std::floor(RetimeMap(c, v.length).fileFrameAt(m) + 1e-6);
             } else {
-                // By the same time as the sound (Audio::Retimer): clip frame m starts at file time m * speed - the
-                // frame that holds it; reversed the file time counts back from the end (length - m * speed), the
-                // frame just below it. (MLT's timewarp rounded to the nearest frame: the picture lay half a file
-                // frame off the sound, 33 ms at 50 % on 30 fps.)
-                const double at = m * c.speed;
-                file = c.reverse ? std::ceil(v.length - at - 1e-6) - 1 : std::floor(at + 1e-6);
+                // MLT's timewarp: the converted material is int(length / speed) frames long, frame p shows
+                // p * speed, reversed (length' - 1 - p) * speed; a position between two frames rounds to the
+                // nearest (slow motion: every other frame)
+                const int warped = std::max(1, int(v.length / c.speed));
+                file = std::floor((c.reverse ? warped - 1 - m : m) * c.speed + 0.5);
             }
             file = std::clamp(file, 0.0, double(std::max(0, v.length - 1)));
         }
