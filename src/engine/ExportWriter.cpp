@@ -181,6 +181,21 @@ bool ExportWriter::containerTakes(const QString& path, const QString& muxer, con
     return true;
 }
 
+bool ExportWriter::containerSurelyTakes(const QString& path, const QString& videoCodec, const QString& audioCodec,
+                                        bool soundOnly)
+{
+    const AVOutputFormat* f = av_guess_format(nullptr, path.toUtf8().constData(), nullptr);
+    if (!f || (soundOnly && f->video_codec != AV_CODEC_ID_NONE)) return false;
+    for (const QString& name : {videoCodec, audioCodec}) {
+        if (name.isEmpty()) continue;
+        const AVCodec* c = avcodec_find_encoder_by_name(name.toUtf8().constData());
+        if (!c) return false;
+        const AVCodecID fallback = c->type == AVMEDIA_TYPE_VIDEO ? f->video_codec : f->audio_codec;
+        if (avformat_query_codec(f, c->id, FF_COMPLIANCE_NORMAL) != 1 && fallback != c->id) return false;
+    }
+    return true;
+}
+
 bool ExportWriter::supportsOwn(const QString& path, const QString& muxer, const QString& videoCodec, const QString& pixFmt,
                                const QString& audioCodec, const QString& sampleFormat, QString* why)
 {

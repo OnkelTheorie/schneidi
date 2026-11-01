@@ -474,7 +474,9 @@ QStringList fittingExtensions(const RenderFormatInfo& f)
     static const QStringList audio{"m4a", "mp3", "opus", "ogg", "wav", "aiff", "aif", "flac", "mka"};
     QStringList out{f.extension};
     for (const QString& ext : f.kind == RenderKind::Audio ? audio : video)
-        if (!out.contains(ext) && ExportWriter::containerTakes("x." + ext, {}, f.videoCodec, f.audioCodec)) out << ext;
+        if (!out.contains(ext)
+            && ExportWriter::containerSurelyTakes("x." + ext, f.videoCodec, f.audioCodec, f.kind == RenderKind::Audio))
+            out << ext;
     return out;
 }
 
@@ -486,7 +488,12 @@ void checkExtension(const QString& out, const QString& formatId)
     if (f.kind != RenderKind::Video && f.kind != RenderKind::Audio) return; // GIF, image sequences: named by the format
     const QString ext = QFileInfo(out).suffix().toLower();
     const QStringList fits = fittingExtensions(f);
-    if (fits.contains(ext)) return;
+    // The common ones, or any other whose container surely takes the codecs (.m4v, .avi, .mxf, .aac …); for video
+    // also one that does not refuse them (MPEG-TS takes H.264 without saying so). Sound stays strict: ogg/flac/opus
+    // say nothing and refuse AAC at the header
+    const bool sound = f.kind == RenderKind::Audio; // a sound format into .mp4/.mov: an odd file, refused
+    if (fits.contains(ext) || ExportWriter::containerSurelyTakes(out, f.videoCodec, f.audioCodec, sound)) return;
+    if (f.kind == RenderKind::Video && ExportWriter::containerTakes(out, {}, f.videoCodec, f.audioCodec)) return;
     QStringList formats; // formats that write this extension themselves
     for (const RenderFormatInfo& i : renderFormats())
         if (ext == QLatin1String(i.extension) && HardwareEncoders::formatAvailable(i.id)) formats << i.id;

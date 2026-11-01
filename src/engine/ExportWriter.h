@@ -76,6 +76,11 @@ public:
     // Does the container of `path` (by its extension, or `muxer`) take these encoders' streams? Empty = none of that kind
     static bool containerTakes(const QString& path, const QString& muxer, const QString& videoCodec,
                                const QString& audioCodec, QString* why = nullptr);
+    // As containerTakes, but only where FFmpeg knows it: the muxer lists the codec, or it is its default codec (a
+    // muxer that does not say - ogg, flac - counts as no). For suggesting and accepting file extensions.
+    // soundOnly: and the container is one for sound (no video by default: .aac yes, .mp4 no)
+    static bool containerSurelyTakes(const QString& path, const QString& videoCodec, const QString& audioCodec,
+                                     bool soundOnly = false);
 
     // Smart render (s.copy): the mixer delivers the sound of every output frame
     ExportWriter(const Settings& s, Own own);
