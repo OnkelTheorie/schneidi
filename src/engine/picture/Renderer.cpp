@@ -686,6 +686,9 @@ struct Renderer::Impl {
         const TitleStyle& st = c.title;
         const double sx = ctx.W / ctx.PW, sy = ctx.H / ctx.PH;
         const double size = std::max(1.0, sizeOverride > 0 ? sizeOverride : st.size);
+        // An animated size scales the whole title: outline and box margin with it
+        const double grow = st.size > 0 ? size / st.size : 1.0;
+        const double outlineWidth = st.outlineWidth * grow, boxPad = std::max(0.0, st.boxPad) * grow;
         QFont font(st.fontFamily());
         font.setPixelSize(std::max(1, int(std::lround(size))));
         font.setBold(st.bold);
@@ -693,7 +696,7 @@ struct Renderer::Impl {
         const QFontMetricsF fm(font);
         double w = 1;
         for (const QString& line : st.text.split('\n')) w = std::max(w, fm.horizontalAdvance(line));
-        const bool outline = st.outlineOn && st.outlineWidth > 0;
+        const bool outline = st.outlineOn && outlineWidth > 0;
         auto layerOf = [&](bool outlineLayer) {
             Text::Params p;
             p.text = st.text;
@@ -713,10 +716,10 @@ struct Renderer::Impl {
                                        : st.color);
             const bool box = st.boxOn && (outlineLayer || !outline);
             p.bg = box ? st.boxColor : QColor(Qt::transparent);
-            p.pad = (st.boxOn ? std::max(0.0, st.boxPad) : 0.0) * sy;
+            p.pad = (st.boxOn ? boxPad : 0.0) * sy;
             p.outlineColor = st.outlineColor;
-            p.outline = (outlineLayer ? 2 * st.outlineWidth : 0.0) * sy;
-            p.room = (outline ? 2 * st.outlineWidth : 0.0) * sy;
+            p.outline = (outlineLayer ? 2 * outlineWidth : 0.0) * sy;
+            p.room = (outline ? 2 * outlineWidth : 0.0) * sy;
             if (bounds) {
                 *bounds |= Text::bounds(p).toAlignedRect();
                 return;

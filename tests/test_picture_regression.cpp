@@ -242,8 +242,10 @@ Box bounds(const QImage& img, const std::function<bool(QRgb)>& pass)
 }
 
 // White text, red outline T px, optional opaque blue box with margin pad, over nothing (transparent): the outline must
-// stick out T px beyond the letters on all four sides (also at the line ends), the box pad px around the outline
-void testOutline(const char* name, bool subtitle, double T, bool box, double pad)
+// stick out T px beyond the letters on all four sides (also at the line ends), the box pad px around the outline.
+// grow: the title's own size, outline and margin are 1/grow of that, its size animated (keyframe) to the full size:
+// outline and margin grow with it (the same picture as the plain title)
+void testOutline(const char* name, bool subtitle, double T, bool box, double pad, double grow = 1)
 {
     const ProjectFormat fmt{1280, 720, {25, 1}};
     TitleStyle t;
@@ -271,6 +273,12 @@ void testOutline(const char* name, bool subtitle, double T, bool box, double pad
         c.kind = ClipKind::Title;
         c.out = 9;
         c.title = t;
+        if (grow != 1) {
+            c.title.size = t.size / grow;
+            c.keys[AnimParam::TitleSize] = {Keyframe{0, t.size}};
+            c.title.outlineWidth = T / grow;
+            c.title.boxPad = pad / grow;
+        }
         tl.video[0].clips = {c};
     }
     const QImage img = Check::renderFrame(tl, fmt, 0, {}, true).convertToFormat(QImage::Format_ARGB32);
@@ -541,6 +549,7 @@ int main(int argc, char** argv)
     std::printf("outline\n");
     testOutline("title, outline 8", false, 8, false, 0);
     testOutline("title, outline 4 + box 20", false, 4, true, 20);
+    testOutline("title size animated x2", false, 4, true, 20, 2);
     testOutline("subtitle, outline 6", true, 6, false, 0);
     testOutline("subtitle, outline 6 + box 10", true, 6, true, 10);
     testTitleTransform();
