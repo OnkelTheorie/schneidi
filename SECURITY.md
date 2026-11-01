@@ -24,5 +24,5 @@ schneidi is a desktop editor, but some parts talk to other programs or the netwo
   did not choose.
 - **Update check:** at most once a day a request to the GitHub API for the latest release (can be switched off).
 
-Problems in the libraries schneidi uses (Qt, MLT, FFmpeg, frei0r, whisper.cpp) are best reported to those projects;
+Problems in the libraries schneidi uses (Qt, FFmpeg, miniaudio, whisper.cpp) are best reported to those projects;
 tell us too if schneidi should update or work around them.

@@ -85,9 +85,22 @@ export EXTRA_QT_MODULES="svg"
 VERSION="$(sed -n 's/^project(schneidi VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
 export LINUXDEPLOY_OUTPUT_VERSION="${VERSION:-0.1.0}"
 
+# OpenGL under Wayland needs Qt's EGL client integration (the GPU viewer and picture engine); the Qt plugin of
+# linuxdeploy brings the Wayland platform but not this one: copied here, its libraries collected below
+QT_PLUGINS="$("$QMAKE_BIN" -query QT_INSTALL_PLUGINS)"
+WAYLAND_EGL="$QT_PLUGINS/wayland-graphics-integration-client/libqt-plugin-wayland-egl.so"
+DEPLOY_EXTRA=()
+if [ -f "$WAYLAND_EGL" ]; then
+    mkdir -p "$APPDIR/usr/plugins/wayland-graphics-integration-client"
+    cp -L "$WAYLAND_EGL" "$APPDIR/usr/plugins/wayland-graphics-integration-client/"
+    DEPLOY_EXTRA+=(--deploy-deps-only "$APPDIR/usr/plugins/wayland-graphics-integration-client")
+else
+    echo "!! $WAYLAND_EGL not found (qt6-wayland): no OpenGL under Wayland" >&2
+fi
+
 mkdir -p "$DIST"
 cd "$DIST"
-"$TOOLS/linuxdeploy-$ARCH.AppImage" --appdir "$APPDIR" \
+"$TOOLS/linuxdeploy-$ARCH.AppImage" --appdir "$APPDIR" "${DEPLOY_EXTRA[@]}" \
     --executable "$APPDIR/usr/bin/schneidi-cli" \
     --executable "$APPDIR/usr/bin/ffmpeg" --executable "$APPDIR/usr/bin/ffprobe" \
     --custom-apprun "$ROOT/packaging/linux/AppRun" \
