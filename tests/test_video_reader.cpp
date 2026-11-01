@@ -296,6 +296,10 @@ int main(int argc, char** argv)
                                                       "-c:v", "libx264", "-g", "25", "-bf", "0"}), 250);
     add("mpeg-ps", Check::makeMedia(file("mpeg2.mpg"), {"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t", "10",
                                                         "-c:v", "mpeg2video"}), 250);
+    add("vp9", Check::makeMedia(file("plain.webm"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "libvpx-vp9",
+                                                     "-deadline", "realtime", "-cpu-used", "8"}), 50);
+    add("vp8", Check::makeMedia(file("plain-vp8.webm"), {"-f", "lavfi", "-i", src2, "-t", "2", "-c:v", "libvpx",
+                                                         "-deadline", "realtime", "-cpu-used", "8"}), 50);
     add("vp9-alpha", Check::makeMedia(file("alpha.webm"), {"-f", "lavfi", "-i",
                                                            "testsrc2=size=320x180:rate=25,format=yuva420p", "-t", "1",
                                                            "-c:v", "libvpx-vp9", "-auto-alt-ref", "0"}), 25);
@@ -321,6 +325,11 @@ int main(int argc, char** argv)
     CHECK_EQ(info("prores.mov").format, AV_PIX_FMT_YUV422P10LE);
     CHECK(av_pix_fmt_desc_get(info("rgba.mov").format)->flags & AV_PIX_FMT_FLAG_ALPHA);
     CHECK(info("h264.mp4").hasBFrames);
+    // VP8/VP9: libvpx only for alpha (FFmpeg's own decoders drop it); else FFmpeg's (recovers after damage, hardware)
+    CHECK_EQ(info("plain.webm").codec, QString("vp9"));
+    CHECK_EQ(info("plain-vp8.webm").codec, QString("vp8"));
+    CHECK_EQ(info("alpha.webm").codec, QString("libvpx-vp9"));
+    CHECK_EQ(info("alpha.webm").format, AV_PIX_FMT_YUVA420P);
     if (auto r = Video::Reader::open(file("interlaced.mp4"))) {
         const auto p = r->picture(3);
         CHECK(p && !p->progressive && p->topFieldFirst);

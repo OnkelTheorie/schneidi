@@ -1247,27 +1247,21 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
         return nullptr;
     }
     const AVCodecParameters* par = d.stream->codecpar;
-    // VP8/VP9: libvpx (it decodes the alpha channel). MLT means to switch back to FFmpeg's own decoder without alpha,
-    // but opens it on the already opened context, which keeps libvpx; same pictures here.
+    // A WebM with alpha: the container states yuv420p (the alpha is a side stream, tagged alpha_mode=1), only libvpx
+    // decodes it (yuva420p pictures). The format says so, else the picture counted as opaque (covering the tracks
+    // below, uploaded to the card without alpha); no hardware decoder, it drops the alpha. Without alpha FFmpeg's own
+    // decoders: they recover after a damaged key frame (libvpx gives nothing until the next one) and can decode on the
+    // card.
     d.codec = avcodec_find_decoder(par->codec_id);
-    bool libvpx = false;
-    if (par->codec_id == AV_CODEC_ID_VP9) {
-        if (const AVCodec* c = avcodec_find_decoder_by_name("libvpx-vp9")) {
+    const AVDictionaryEntry* alphaMode = av_dict_get(d.stream->metadata, "alpha_mode", nullptr, 0);
+    bool alpha = false;
+    if ((par->codec_id == AV_CODEC_ID_VP9 || par->codec_id == AV_CODEC_ID_VP8) && alphaMode
+        && std::strcmp(alphaMode->value, "1") == 0 && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P) {
+        if (const AVCodec* c = avcodec_find_decoder_by_name(par->codec_id == AV_CODEC_ID_VP9 ? "libvpx-vp9" : "libvpx")) {
             d.codec = c;
-            libvpx = true;
-        }
-    } else if (par->codec_id == AV_CODEC_ID_VP8) {
-        if (const AVCodec* c = avcodec_find_decoder_by_name("libvpx")) {
-            d.codec = c;
-            libvpx = true;
+            alpha = true;
         }
     }
-    // A WebM with alpha: the container states yuv420p (the alpha is a side stream, tagged alpha_mode=1), libvpx gives
-    // yuva420p pictures. The format says so, else the picture counted as opaque (covering the tracks below, uploaded
-    // to the card without alpha); no hardware decoder, it drops the alpha.
-    const AVDictionaryEntry* alphaMode = av_dict_get(d.stream->metadata, "alpha_mode", nullptr, 0);
-    const bool alpha = libvpx && alphaMode && std::strcmp(alphaMode->value, "1") == 0
-                       && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P;
     d.wantHardware = options.hardware && !alpha && hardwareFriendly(par);
     if (!d.openDecoder(d.wantHardware, error)) return nullptr;
     d.pkt = av_packet_alloc();
