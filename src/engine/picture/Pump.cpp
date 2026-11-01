@@ -325,6 +325,9 @@ struct Pump::Impl {
                 behind = false;
             }
             next = pos + dir * step();
+            // Faster than 1x the step may jump over the end: the end frame is shown (the engine stops there)
+            if (const int64_t end = last(); dir > 0 && end >= 0 && pos < end && next > end) next = end;
+            if (dir < 0 && pos > 0 && next < 0) next = 0;
             prune();
             wake.notify_all();
             const double s = speed;

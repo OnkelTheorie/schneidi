@@ -362,6 +362,41 @@ void testStills(const QString& wide, const QString& square, const QString& notVi
 
 } // namespace
 
+// Shuttle faster than 1x towards an end that is not on its step: the last frame (resp. frame 0) is still shown, so the
+// engine sees the end and stops (it stood one step before it, "playing" for good)
+void testShuttleReachesEnd()
+{
+    TestClock clock;
+    Seen seen;
+    std::atomic<int> cost{2}, color{10};
+    Picture::Pump pump([&] { return clock.now(); },
+                       [&](const QImage& img, int64_t pos, double) { seen.add(img, pos, clock.now()); }, 2);
+    pump.setContent(content(&cost, &color, 30), 0, 0);
+    CHECK(waitFor([&] { return seen.count() == 1; }, 1000));
+    seen.take();
+    clock.play(0, 4);
+    pump.setSpeed(4, 0); // 0, 4 … 28, then 30 (not on the step)
+    const bool end = waitFor([&] {
+        std::lock_guard lock(seen.m);
+        return !seen.shown.empty() && seen.shown.back().position == 30;
+    }, 2000);
+    CHECK(end);
+    if (!end) {
+        std::lock_guard lock(seen.m);
+        std::printf("       4x vorwärts endet bei %lld\n", seen.shown.empty() ? -1LL : (long long)seen.shown.back().position);
+    }
+    clock.stop();
+    pump.setSpeed(0, 29);
+    std::this_thread::sleep_for(100ms);
+    seen.take();
+    clock.play(30, -4);
+    pump.setSpeed(-4, 29); // 29, 25 … 1, then 0
+    CHECK(waitFor([&] {
+        std::lock_guard lock(seen.m);
+        return !seen.shown.empty() && seen.shown.back().position == 0;
+    }, 2000));
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -370,6 +405,8 @@ int main(int argc, char** argv)
     testPump();
     std::printf("scrub, then play\n");
     testScrubThenPlay();
+    std::printf("shuttle to the end\n");
+    testShuttleReachesEnd();
     if (Check::haveFfmpeg()) {
         QTemporaryDir dir;
         const QString file = Check::makeMedia(

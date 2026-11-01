@@ -3,7 +3,8 @@
 // playback, then a new import – playback went on by itself). The engine kept its speed when the producer paused at
 // its end, so the next rebuild of the timeline started it again. Played: to the end; then deleted while playing
 // (the playhead lies behind the new end); then something new on the timeline: nothing may play. Shortened while
-// playing: plays on to the new end. Play at the end: from the front.
+// playing: plays on to the new end. Play at the end: from the front. Shuttle 4x stops at the end it steps over, a
+// click behind the end while playing stops.
 #include "check.h"
 
 #include "engine/Engine.h"
@@ -136,6 +137,28 @@ int main(int argc, char** argv)
     std::printf("       Play am Ende: Position %d\n", engine.position());
     CHECK(engine.position() < 30);
     engine.pause();
+
+    // 5. Shuttle 4x towards an end off its step (59 from 2: 2, 6 … 58): stops at the end, not one step before it
+    engine.seek(2);
+    wait(300);
+    engine.setSpeed(4);
+    CHECK(stopsWithin(engine, 3000));
+    std::printf("       4x: Ende bei %d\n", engine.position());
+    CHECK_EQ(engine.position(), 59);
+    // backwards from 57 at 4x: 57, 53 … 1, then 0
+    engine.seek(57);
+    wait(300);
+    engine.setSpeed(-4);
+    CHECK(stopsWithin(engine, 3000));
+    CHECK_EQ(engine.position(), 0);
+
+    // 6. A click behind the end while playing stops (it played on over nothing, the button showing playing)
+    engine.seek(0);
+    wait(300);
+    engine.play();
+    wait(300);
+    engine.seek(100);
+    CHECK(stopsWithin(engine, 1000));
 
     return Check::result();
 }
