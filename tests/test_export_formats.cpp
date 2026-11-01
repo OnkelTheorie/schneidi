@@ -17,6 +17,7 @@
 #include <QStandardPaths>
 #include <QEventLoop>
 #include <QJsonDocument>
+#include <QImageReader>
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -382,6 +383,8 @@ void testImageSequence(const QString& dir)
         // Same colours as the PNG of that frame: JPEG readers take BT.601 (written as 709 green 0,255,1 came back
         // as 21,255,8)
         const QImage png(dir + "/seq/seq_00001.png"), img(first);
+        // Qt reads TIFF only with its image format plugins (not installed on the CI image): nothing to compare there
+        if (img.isNull() && !QImageReader::supportedImageFormats().contains(QFileInfo(first).suffix().toLatin1())) continue;
         if (!CHECK(!png.isNull() && png.size() == img.size())) continue;
         double diff = 0;
         for (int y = 0; y < png.height(); y += 2)
