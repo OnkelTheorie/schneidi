@@ -103,6 +103,7 @@ void testSpans()
 struct Result {
     bool ok = false;
     int copiedPercent = 0;
+    QString codec; // what wrote the picture
 };
 
 Result render(const Timeline& tl, const ExportSettings& s, bool cancelEarly = false)
@@ -129,6 +130,7 @@ Result render(const Timeline& tl, const ExportSettings& s, bool cancelEarly = fa
     QTimer::singleShot(120000, &loop, &QEventLoop::quit);
     loop.exec();
     r.copiedPercent = ex.copiedPercent();
+    r.codec = ex.usedCodec();
     return r;
 }
 
@@ -298,6 +300,17 @@ void testExports(const QString& dir)
         const Result high = render(cuts(a, b, false), s);
         CHECK(high.ok);
         CHECK(high.copiedPercent > 50);
+        CHECK_EQ(high.codec, QString("libx264")); // partly encoded
+    }
+    // Whole GOPs only (0..119 of a): everything copied, no encoder wrote a frame
+    {
+        Timeline tl;
+        tl.video.resize(1);
+        tl.video[0].clips << clipOf(1, a, 0, 0, 120);
+        const Result all = render(tl, settings(dir + "/all-copied.mp4"));
+        CHECK(all.ok);
+        CHECK_EQ(all.copiedPercent, 100);
+        CHECK_EQ(all.codec, QString("copy"));
     }
     {
         ExportSettings s = settings(dir + "/x.mp4");

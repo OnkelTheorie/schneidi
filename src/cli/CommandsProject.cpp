@@ -636,7 +636,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
     QJsonObject o{{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10}};
     o["threads"] = ex.threads();
-    if (!ex.usedCodec().isEmpty()) o["encoder"] = ex.usedCodec(); // video codec that wrote the file, e.g. h264_nvenc
+    if (!ex.usedCodec().isEmpty()) o["encoder"] = ex.usedCodec(); // video codec that wrote the file, e.g. h264_nvenc ("copy": smart render)
     if (job.settings.kind() == RenderKind::ImageSequence) {
         o["frames_dir"] = imageSequenceDir(out);
         o["pattern"] = QFileInfo(imageSequencePattern(out)).fileName();

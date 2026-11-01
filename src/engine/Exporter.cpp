@@ -542,6 +542,7 @@ void Exporter::pollWriter()
             qInfo("Export: smart render copied %d of %d frames", copied, m_length);
             const QString smart = T("Smart Render: %1 % kopiert, %2 % kodiert").arg(m_copiedPercent).arg(100 - m_copiedPercent);
             m_note = m_note.isEmpty() ? smart : m_note + " · " + smart;
+            if (copied >= m_length) m_usedCodec = "copy"; // the encoder wrote no frame
         }
         if (!wroteOutput()) {
             fail(T("Export fehlgeschlagen: %1").arg(m_target));

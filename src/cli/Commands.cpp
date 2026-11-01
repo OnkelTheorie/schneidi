@@ -825,7 +825,8 @@ const QVector<Command>& commands()
           {"encoder", T::String, "H.264/H.265 video encoder: auto (default: a hardware encoder of the graphics card when "
                                  "one works here, else software), software, nvenc (NVIDIA), vaapi (AMD/Intel on Linux), "
                                  "qsv (Intel Quick Sync). A hardware encoder that does not work falls back to software; "
-                                 "the answer's 'encoder' is the codec actually used"},
+                                 "the answer's 'encoder' is the codec actually used ('copy' when smart render "
+                                 "copied every frame of the source)"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
           {"subtitles", T::String, "none (default), burn (into the picture) or srt (file next to the video)"},
           {"from", T::Time, "start of the range (default: timeline start)"},

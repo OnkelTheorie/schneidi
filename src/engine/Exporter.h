@@ -86,7 +86,8 @@ public:
     static bool sameFile(const QString& a, const QString& b);
     bool start(const Timeline& tl, const ExportSettings& settings, QString* error);
     void cancel();
-    // After finished(): FFmpeg video codec that wrote the file (empty for audio only) and a note for the user
+    // After finished(): FFmpeg video codec that wrote the file (empty for audio only, "copy" when smart render copied
+    // every frame) and a note for the user
     // (e.g. the hardware encoder did not work and software was used; empty = nothing to say)
     QString usedCodec() const { return m_usedCodec; }
     QString note() const { return m_note; }
