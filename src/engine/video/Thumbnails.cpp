@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/video/Thumbnails.h"
+#include "engine/OpenMedia.h"
 #include "engine/video/Reader.h"
 
 extern "C" {
@@ -43,7 +44,7 @@ struct Source {
     bool open(const QString& path, int threads, bool keysOnly)
     {
         const QByteArray file = path.toUtf8();
-        if (avformat_open_input(&fmt, file.constData(), nullptr, nullptr) < 0) return false;
+        if (OpenMedia::input(&fmt, file.constData()) < 0) return false;
         if (avformat_find_stream_info(fmt, nullptr) < 0) return false;
         // First video stream with a decoder that is no cover picture (as the preview's reader picks it)
         for (unsigned i = 0; i < fmt->nb_streams; ++i) {

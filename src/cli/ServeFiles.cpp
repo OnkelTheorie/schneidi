@@ -134,10 +134,14 @@ void Server::startUpload(const QString& id)
 }
 
 // A server others reach must not fetch from itself or its own network's link-local services (cloud metadata …) for
-// them; on 127.0.0.1 the client is on this computer anyway
+// them; on 127.0.0.1 the client is on this computer anyway - unless a reverse proxy (--public-url) or web pages of
+// other sites (--allow-origin) bring clients from elsewhere.
+// Left open: QNetworkAccessManager resolves the name again when it connects, so a name that answers differently the
+// second time (DNS rebinding) gets past this check. Connecting to the checked address would need the name for TLS
+// (SNI, certificate) by hand, which QNetworkAccessManager does not offer.
 void Server::checkHost(const QUrl& url, const std::function<void(const QString& error)>& then)
 {
-    if (m_opt.listen.isLoopback()) {
+    if (m_opt.listen.isLoopback() && m_opt.publicUrl.isEmpty() && m_opt.origins.isEmpty()) {
         then({});
         return;
     }

@@ -2112,28 +2112,42 @@ void releasePools()
     pool().clear();
 }
 
-QString unsupported(const Timeline& tl)
+QVector<SkippedEffect> skippedEffects(const Timeline& tl)
 {
-    auto check = [](const Timeline& t) -> QString {
+    QVector<SkippedEffect> out;
+    QList<int> seen; // nested sequences looked at (`nested` holds all of them, the open one too: only those clips show)
+    std::function<void(const Timeline&, int)> check = [&](const Timeline& t, int sequence) {
         for (const Track& track : t.video)
             for (const Clip& c : track.clips)
                 for (const EffectInstance& e : c.effects) {
+                    if (track.hidden) break; // a hidden track draws nothing
                     if (!e.enabled) continue;
                     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
-                    if (!d) return e.effectId; // not known here (frei0r plugin, newer version)
-                    if (d->fixed || !d->video) continue;
-                    if (e.effectId == QLatin1String("color") || e.effectId == QLatin1String("blur")
-                        || e.effectId == QLatin1String("chromakey") || VideoEffects::isOwn(e.effectId))
+                    if (d && (d->fixed || !d->video || e.effectId == QLatin1String("color")
+                              || e.effectId == QLatin1String("blur") || e.effectId == QLatin1String("chromakey")
+                              || VideoEffects::isOwn(e.effectId)))
                         continue;
-                    return e.effectId;
+                    out << SkippedEffect{c.id, e.effectId, true, sequence}; // not known here or not drawn by this engine
                 }
-        return {};
+        // Sound: the mixer plays the effects it knows; an unknown id (LADSPA plugin, newer version) is left out
+        for (const Track& track : t.audio)
+            for (const Clip& c : track.clips)
+                for (const EffectInstance& e : c.effects)
+                    if (e.enabled && !EffectRegistry::find(e.effectId))
+                        out << SkippedEffect{c.id, e.effectId, false, sequence};
+        if (!tl.nested) return;
+        for (const QVector<Track>* tracks : {&t.video, &t.audio})
+            for (const Track& track : *tracks)
+                for (const Clip& c : track.clips) {
+                    if ((c.kind != ClipKind::Compound && c.kind != ClipKind::Multicam) || seen.contains(c.sequenceId))
+                        continue;
+                    seen << c.sequenceId;
+                    if (const auto it = tl.nested->constFind(c.sequenceId); it != tl.nested->constEnd())
+                        check(it.value(), it.key());
+                }
     };
-    QString why = check(tl);
-    if (why.isEmpty() && tl.nested)
-        for (const Timeline& n : *tl.nested)
-            if (why.isEmpty()) why = check(n);
-    return why;
+    check(tl, -1);
+    return out;
 }
 
 } // namespace Picture

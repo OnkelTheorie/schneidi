@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/MediaProbe.h"
+#include "engine/OpenMedia.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -176,7 +177,7 @@ std::optional<MediaInfo> read(const QString& path, FrameRate rate)
     }
     if (forOtherProducer(suffix)) return std::nullopt;
     AVFormatContext* raw = nullptr;
-    if (avformat_open_input(&raw, path.toUtf8().constData(), nullptr, nullptr) < 0) return std::nullopt;
+    if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) return std::nullopt;
     const std::unique_ptr<AVFormatContext, CloseInput> fmt(raw);
     if (pictureDemuxer(fmt->iformat)) {
         // A still picture with another extension: as a still when Qt reads it

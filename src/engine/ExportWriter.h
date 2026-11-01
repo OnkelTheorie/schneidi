@@ -69,9 +69,13 @@ public:
         int audioBits = 0;       // integer sample formats: rounded to this many bits (0 = the full format)
         int parallel = 1;        // frames rendered at once
     };
-    // Can the writer write this? videoCodec empty = audio only, pixFmt "vaapi" = upload to the card
+    // Can the writer write this? videoCodec empty = audio only, pixFmt "vaapi" = upload to the card. why: what does not
+    // fit, for the user ("the .webm container cannot hold libx264 video")
     static bool supportsOwn(const QString& path, const QString& muxer, const QString& videoCodec, const QString& pixFmt,
-                            const QString& audioCodec, const QString& sampleFormat);
+                            const QString& audioCodec, const QString& sampleFormat, QString* why = nullptr);
+    // Does the container of `path` (by its extension, or `muxer`) take these encoders' streams? Empty = none of that kind
+    static bool containerTakes(const QString& path, const QString& muxer, const QString& videoCodec,
+                               const QString& audioCodec, QString* why = nullptr);
 
     // Smart render (s.copy): the mixer delivers the sound of every output frame
     ExportWriter(const Settings& s, Own own);

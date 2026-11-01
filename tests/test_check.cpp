@@ -547,6 +547,10 @@ int main(int argc, char** argv)
                                             "-c:v", "libx264", "-pix_fmt", "yuv420p"});
     r = run("check", {{"source", black}});
     CHECK_EQ(checksOf(r), QStringList({"no_audio", "black_file"}));
+    // A still image: said so, not "no picture (sound only)" and "no sound"
+    const QString still = Check::makeMedia(dir.filePath("still.png"),
+                                           {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=1", "-frames:v", "1"});
+    CHECK_EQ(checksOf(run("check", {{"source", still}})), QStringList({"still_image"}));
     if (const QJsonArray list = r["issues"].toArray(); list.size() == 2) {
         CHECK(std::abs(list[1]["from"].toInt() - 50) <= 1);
         CHECK(std::abs(list[1]["to"].toInt() - 100) <= 1);

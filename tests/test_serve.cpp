@@ -229,6 +229,7 @@ struct Server {
     QString root;
     QByteArray token;
     QString session;
+    QList<QPair<QByteArray, QByteArray>> extra; // on every request (Host behind a proxy)
 
     bool start(const QString& rootDir, const QString& dataDir, const QStringList& extra, const QByteArray& tok,
                const QHash<QString, QString>& env = {})
@@ -271,7 +272,7 @@ struct Server {
                                                {"Accept", "application/json, text/event-stream"}};
         if (!token.isEmpty()) h << QPair<QByteArray, QByteArray>{"Authorization", "Bearer " + token};
         if (withSession && !session.isEmpty()) h << QPair<QByteArray, QByteArray>{"Mcp-Session-Id", session.toLatin1()};
-        return h;
+        return h + extra;
     }
     QNetworkReply* post(const QJsonObject& msg) const
     {
@@ -327,6 +328,18 @@ QStringList jobStates(const Server& s, const QStringList& tools)
         for (const QJsonValue& j : jobs)
             if (j["tool"].toString() == t && (j["state"] == "running" || j["state"] == "queued")) out << j["state"].toString();
     return out;
+}
+
+void writeFile(const QString& path, const QByteArray& data)
+{
+    QFile f(path);
+    if (f.open(QIODevice::WriteOnly)) f.write(data);
+}
+
+QByteArray readFile(const QString& path)
+{
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
 }
 
 void waitMs(int ms)
@@ -432,6 +445,18 @@ int main(int argc, char* argv[])
             CHECK_EQ(http("POST", proxied.base + "/mcp", R"({"jsonrpc":"2.0","id":1,"method":"ping"})",
                           proxied.headers() << QPair<QByteArray, QByteArray>{"Host", "edit.example"}).status, 401);
             CHECK_EQ(http("GET", proxied.base + "/files/clip.mp4").status, 401);
+        }
+    }
+    // ... and its clients are elsewhere although it listens on 127.0.0.1: `upload` must not fetch from this computer
+    // for them (the server itself, other local services)
+    {
+        Server proxied;
+        if (CHECK(proxied.start(root, tmp.filePath("s0b"), {"--public-url", "https://edit.example"}, kToken))) {
+            proxied.extra = {{"Host", "edit.example"}};
+            CHECK(proxied.initialize());
+            const QJsonObject a = proxied.call("upload", {{"url", proxied.base + "/files/clip.mp4"}, {"path", "self.mp4"}});
+            CHECK_EQ(errorCode(a), QString("BAD_URL"));
+            CHECK(!QFileInfo::exists(root + "/self.mp4"));
         }
     }
 
@@ -740,6 +765,39 @@ int main(int argc, char* argv[])
         a = s.call("jobs", {});
         CHECK(a["jobs"].toArray().size() >= 3);
         CHECK_EQ(a["workers"].toObject()["max"].toInt(), 1);
+    }
+
+    // ---------- Server 4: a render cancelled while it writes leaves no half written file ----------
+    {
+        Server s;
+        const QString root4 = tmp.filePath("root4");
+        QDir().mkpath(root4 + "/out");
+        QFile::copy(clip, root4 + "/clip.mp4");
+        if (!CHECK(s.start(root4, tmp.filePath("s4"), {"--workers", "1", "--job-wait", "1"}, kToken)))
+            return Check::result();
+        CHECK(s.initialize());
+        CHECK_EQ(errorCode(s.call("new", {{"project", "long.schneidi"}, {"media", QJsonArray{"clip.mp4"}}})), QString("ok"));
+        QJsonArray ops;
+        for (int i = 0; i < 60; ++i) ops << QJsonObject{{"op", "append"}, {"media", "clip.mp4"}};
+        CHECK_EQ(errorCode(s.call("edit", {{"project", "long.schneidi"}, {"ops", ops}})), QString("ok"));
+        writeFile(root4 + "/out/long.mp4", "an older render");
+        const auto parts = [&] {
+            QStringList l = QDir(root4 + "/out").entryList(QDir::AllEntries | QDir::NoDotAndDotDot);
+            l.removeAll("long.mp4");
+            return l;
+        };
+        const QString job = s.call("render", {{"project", "long.schneidi"}, {"out", "out/long.mp4"}, {"overwrite", true},
+                                              {"encoder", "software"}, {"threads", 1}})["job"].toString();
+        QElapsedTimer t;
+        t.start();
+        while (parts().isEmpty() && !t.hasExpired(60000)) waitMs(100); // writing started
+        if (CHECK(!job.isEmpty() && !parts().isEmpty())) {
+            CHECK_EQ(s.call("jobs", {{"job", job}, {"cancel", true}})["state"].toString(), QString("cancelled"));
+            t.restart();
+            while (!parts().isEmpty() && !t.hasExpired(10000)) waitMs(100);
+            if (!CHECK(parts().isEmpty())) std::printf("       left: %s\n", qPrintable(parts().join(", ")));
+            CHECK_EQ(readFile(root4 + "/out/long.mp4"), QByteArray("an older render"));
+        }
     }
     return Check::result();
 }

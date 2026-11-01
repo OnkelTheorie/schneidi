@@ -1195,8 +1195,89 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             const double lufs = run("loudness", {{"source", silent["out"].toString()}})["loudness"]["integrated_lufs"].toDouble();
             CHECK(lufs < -100);
             CHECK(mix() > -100); // the project's A1 still plays
-            CHECK(messageOf("render", {{"project", proj}, {"out", dir.filePath("x.wav")}, {"mute_tracks", QJsonArray{"A9"}}})
+            CHECK(messageOf("render", {{"project", proj}, {"out", dir.filePath("x.wav")}, {"format", "wav"},
+                                       {"mute_tracks", QJsonArray{"A9"}}})
                       .contains("there is no A9"));
+        }
+        // The extension must fit the format (it decides the container): refused at once, naming the ones that fit
+        {
+            const QString webm = messageOf("render", {{"project", proj}, {"out", dir.filePath("x.webm")}});
+            CHECK(webm.contains("'.webm' does not fit format h264") && webm.contains(".mp4") && webm.contains(".mov")
+                  && webm.contains("format vp9"));
+            CHECK(messageOf("render", {{"project", proj}, {"out", dir.filePath("x.wav")}}).contains("format wav"));
+            CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("x.txt")}}), QString("BAD_ARGUMENT"));
+            const QString mp4 = messageOf("render", {{"project", proj}, {"out", dir.filePath("x.mp4")}, {"format", "wav"}});
+            CHECK(mp4.contains("does not fit format wav: use .wav"));
+            CHECK(!mp4.contains(".mp4,") && !mp4.contains(".mov"));
+            CHECK(!QFileInfo::exists(dir.filePath("x.webm")) && !QFileInfo::exists(dir.filePath("x.txt")));
+            // Other containers of the format are fine
+            CHECK(QFileInfo(run("render", {{"project", proj}, {"out", dir.filePath("x.mkv")}, {"height", 180},
+                                           {"to", "1s"}})["out"].toString()).size() > 1000);
+        }
+        // Effects this version does not have (frei0r/LADSPA plugins of a project from before 0.15): render without them
+        // and say so (clip, effect, picture or sound); info marks them like the inspector's "not available"
+        {
+            const QString old = dir.filePath("old-plugins.schneidi");
+            run("new", {{"project", old}, {"media", QJsonArray{dir.filePath("x.mkv")}}});
+            run("edit", {{"project", old}, {"ops", QString(R"([{"op":"append","media":"%1"}])").arg(dir.filePath("x.mkv"))}});
+            ProjectData d;
+            QString error;
+            CHECK(ProjectFile::load(old, &d, &error));
+            Timeline& tl = d.timeline; // the open timeline
+            int videoClip = 0, audioClip = 0;
+            const auto first = [](QVector<Track>& tracks) -> Clip* {
+                for (Track& t : tracks)
+                    if (!t.clips.isEmpty()) return &t.clips[0];
+                return nullptr;
+            };
+            if (CHECK(first(tl.video) && first(tl.audio))) {
+                Clip& v = *first(tl.video);
+                Clip& au = *first(tl.audio);
+                v.effects << EffectInstance{"frei0r.retired", {{"0", 0.5}}, true};
+                au.effects << EffectInstance{"ladspa.1408", {}, true};
+                au.effects << EffectInstance{"ladspa.off", {}, false}; // switched off: nothing to skip
+                videoClip = v.id;
+                audioClip = au.id;
+            }
+            CHECK(ProjectFile::save(d, old, &error));
+            const QJsonObject r = run("render", {{"project", old}, {"out", dir.filePath("old.mp4")}, {"height", 180},
+                                                 {"to", "1s"}});
+            const QJsonArray skipped = r["skipped_effects"].toArray();
+            if (!CHECK_EQ(skipped.size(), qsizetype(2))) std::printf("       %s\n", QJsonDocument(skipped).toJson().constData());
+            else {
+                CHECK_EQ(skipped[0].toObject(), (QJsonObject{{"clip", videoClip}, {"effect", "frei0r.retired"}, {"kind", "video"}}));
+                CHECK_EQ(skipped[1].toObject(), (QJsonObject{{"clip", audioClip}, {"effect", "ladspa.1408"}, {"kind", "audio"}}));
+            }
+            // Only sound written: only the sound's effects
+            const QJsonArray soundOnly = run("render", {{"project", old}, {"out", dir.filePath("old.wav")},
+                                                        {"format", "wav"}, {"to", "1s"}})["skipped_effects"].toArray();
+            CHECK(soundOnly.size() == 1 && soundOnly[0]["effect"].toString() == "ladspa.1408");
+            CHECK(!run("render", {{"project", proj}, {"out", dir.filePath("new.wav")}, {"format", "wav"}, {"to", "1s"}})
+                       .contains("skipped_effects"));
+            int marked = 0, effects = 0;
+            for (const QJsonValue& t : run("info", {{"project", old}})["timeline"]["tracks"].toArray())
+                for (const QJsonValue& c : t["clips"].toArray())
+                    for (const QJsonValue& e : c["effects"].toArray()) {
+                        ++effects;
+                        if (e.toObject().contains("available")) {
+                            ++marked;
+                            CHECK(e["effect"].toString().contains('.') && e["available"] == false);
+                        }
+                    }
+            CHECK_EQ(marked, 3);
+            CHECK(effects >= 3);
+            // Such an effect can be switched off (then nothing is skipped for it), not added or set
+            run("edit", {{"project", old}, {"ops", QString(R"([{"op":"effect","clips":[%1],"effect":"frei0r.retired",)"
+                                                           R"("enabled":false}])").arg(videoClip)}});
+            const QJsonArray after = run("render", {{"project", old}, {"out", dir.filePath("old2.mp4")}, {"height", 180},
+                                                    {"to", "1s"}})["skipped_effects"].toArray();
+            CHECK(after.size() == 1 && after[0]["effect"].toString() == "ladspa.1408");
+            CHECK_EQ(errorOf("edit", {{"project", old}, {"ops", QString(R"([{"op":"effect","clips":[%1],)"
+                                                                        R"("effect":"frei0r.retired","params":{"0":1}}])").arg(videoClip)}}),
+                     QString("NOT_FOUND"));
+            CHECK_EQ(errorOf("edit", {{"project", old}, {"ops", QString(R"([{"op":"effect","clips":[%1],)"
+                                                                        R"("effect":"frei0r.nowhere","enabled":false}])").arg(videoClip)}}),
+                     QString("NOT_FOUND"));
         }
         // Video encoder: the answer says which one wrote the file
         CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("x.mp4")}, {"encoder", "gpu"}}),
@@ -1301,6 +1382,9 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(ctx2.images.size(), 1);
         CHECK_EQ(errorOf("frames", {{"source", clip}, {"at", QJsonArray{0}}, {"crop", "1,2,3"}, {"out", dir.path()}}),
                  QString("BAD_ARGUMENT"));
+        // Sound only: no picture to show (not a decoding error)
+        CHECK_EQ(errorOf("frames", {{"source", dir.filePath("noise.wav")}, {"at", QJsonArray{0}}, {"out", dir.path()}}),
+                 QString("NO_VIDEO"));
         // Contact sheet (0.10): fixed columns, tile width, a source with its own region and times
         Cli::Context ctx3;
         ctx3.mcp = true;

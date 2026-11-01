@@ -47,6 +47,7 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
         QJsonObject ma{{"file", src}};
         if (a.contains("project")) ma["project"] = a["project"];
         media = openMedia(ma);
+        if (!media.info.hasVideo) fail("NO_VIDEO", "the file has no picture (sound only): " + media.info.path);
         f = pictureFormat(media);
         length = media.info.length;
     }

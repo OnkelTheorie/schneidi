@@ -96,7 +96,8 @@ const QVector<Command>& serverTools(int jobWaitS)
              .arg(jobWaitS),
          {{"job", T::String, "job id from a call's answer", false, true},
           {"wait", T::Number, QString("seconds to wait for the end (max %1)").arg(jobWaitS)},
-          {"cancel", T::Boolean, "stop the job (a render leaves a half written file)"}},
+          {"cancel", T::Boolean, "stop the job (a render removes what it wrote so far; an older file of that name "
+                                 "stays)"}},
          nullptr},
         {"files", "What is in the work folder of this server: files and folders with type (video, audio, image, project, "
                   "folder, file), size, modified time and a download url. The paths are relative to the work folder "

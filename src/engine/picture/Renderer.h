@@ -184,8 +184,14 @@ private:
 // Gives back the buffers kept for reuse (frames, layers): after an export, when nothing renders for a while
 void releasePools();
 
-// An enabled effect of this timeline (nested sequences too) the engine does not have: its id (frei0r plugins of
-// projects from before 0.15, ids of newer versions); empty = none. Such effects stay in the project and are skipped.
-QString unsupported(const Timeline& tl);
+// The enabled effects of this timeline (nested sequences too) the engine does not have (frei0r/LADSPA plugins of
+// projects from before 0.15, ids of newer versions): such effects stay in the project and are skipped when rendering
+struct SkippedEffect {
+    int clip = 0;        // clip id (in a nested sequence: of that sequence)
+    QString effect;      // effect id
+    bool video = true;   // on a video track (else audio)
+    int sequence = -1;   // nested sequence id, -1 = the timeline itself
+};
+QVector<SkippedEffect> skippedEffects(const Timeline& tl);
 
 } // namespace Picture

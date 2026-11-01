@@ -434,6 +434,7 @@
  "Die Datei enthält %1 Sequenzen, die erste (%2) wurde importiert": "В файле %1 секвенций, импортирована первая (%2)",
  "Die Datei hat kein Bild (nur Ton)": "В файле нет изображения (только звук)",
  "Die Datei hat keinen Ton": "В файле нет звука",
+ "Die Datei ist ein Standbild: kein Ton, nichts zu prüfen": "Файл — неподвижное изображение: звука нет, проверять нечего",
  "Die Datei ist fehlerhaft: %1": "Файл содержит ошибки: %1",
  "Die Datei konnte nicht gelesen werden:\n%1": "Не удалось прочитать файл:\n%1",
  "Die Datei ließ sich nicht löschen.": "Не удалось удалить файл.",

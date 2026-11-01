@@ -616,6 +616,22 @@ void opEffect(Session& s, const QJsonObject& op)
                               effectId);
         return;
     }
+    if (!d && op.contains("enabled") && !op.contains("params")) {
+        // Plugin missing here (an older project's frei0r/LADSPA effect): switching it off or on is fine on the clips that
+        // have it (it stays skipped while rendering); adding it or setting values is not
+        const Timeline& tl = s.project.timeline();
+        QVector<int> having;
+        for (int id : clipIds(s, op))
+            if (const Clip* c = TimelineOps::findClip(tl, id); c && EffectRegistry::has(*c, effectId)) having << id;
+        if (having.isEmpty())
+            fail("NOT_FOUND", QString("no effect '%1' (see the `effects` command), and none of the clips has it")
+                                  .arg(effectId));
+        const bool enabled = op.value("enabled").toBool();
+        s.editor.modifyClips(having, effectId, [&](Clip& c) {
+            if (EffectInstance* e = EffectRegistry::instance(c, effectId)) e->enabled = enabled;
+        });
+        return;
+    }
     if (!d) fail("NOT_FOUND", QString("no effect '%1' (see the `effects` command)").arg(effectId));
     // video effects on video clips, audio effects (kind "audio" in `effects`) on audio clips
     const QVector<int> targets = clipsOn(s, op, d->video ? TrackKind::Video : TrackKind::Audio,
@@ -787,6 +803,8 @@ QVector<OpDef> makeOps()
          "fringe near the edge (1 = fully). No effect blurs faces by itself: a `window` with fill 'blur', "
          "`track_window` makes it follow the face. "
          "Video effects go on video clips, audio effects (kind 'audio' in `effects`, e.g. denoise) on audio clips. "
+         "An effect `info` marks \"available\": false (a plugin of an older project) can still be switched with "
+         "enabled, moved or removed on the clips that have it, but not added or set. "
          "stabilize needs an analysis pass of the clip: the app runs it in the background (the clip plays "
          "unstabilized until then), `render` runs missing analyses before it encodes. Changing shakiness/accuracy "
          "means a new analysis; smoothing, zoom and border do not. Not possible for speed ramps, freeze frames, "

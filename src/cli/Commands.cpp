@@ -490,6 +490,8 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
                 eo["windows"] = list;
             }
             if (!e.enabled) eo["enabled"] = false;
+            // Not in this version (a frei0r/LADSPA plugin of an older project, an id of a newer one): kept, but skipped
+            if (!EffectRegistry::find(e.effectId)) eo["available"] = false;
             fx << eo;
         }
         o["effects"] = fx;
@@ -711,7 +713,9 @@ const QVector<Command>& commands()
                  "source ranges). Each track shows its header and mixer state when not default: name, color, muted, "
                  "solo, hidden, locked; audio tracks volume_db, pan, compressor, eq. 'master': volume_db, limiter "
                  "(on/off), limiter_db (ceiling). To check such settings after an edit, summary:true is enough. 'watch': "
-                 "watched folders and the revision of the newest file they brought in (see `watch`).",
+                 "watched folders and the revision of the newest file they brought in (see `watch`). A clip effect with "
+                 "\"available\": false is not in this version (a plugin of an older project): it stays in the "
+                 "project but renders as if switched off.",
          {{"project", T::Path, "project file", true, true},
           {"summary", T::Boolean, "short form: length, counts of clips/tracks/markers, no clip list (track states and "
                                   "master stay)"},
@@ -801,9 +805,13 @@ const QVector<Command>& commands()
                                   "network folders)"},
           {"follow", T::Boolean, "command line only: keep running, one JSON line per new file (stop with Ctrl+C)"}},
          cmdWatch},
-        {"render", "Render the project timeline to a video, animated GIF, image sequence or audio file.",
+        {"render", "Render the project timeline to a video, animated GIF, image sequence or audio file. Effects "
+                   "this version does not have are left out and listed in the answer's skipped_effects (clip, "
+                   "effect, kind).",
          {{"project", T::Path, "project file", true, true},
-          {"out", T::Path, "output file (extension added if missing)", true},
+          {"out", T::Path, "output file (extension added if missing). The format decides the codecs, the extension "
+                           "the container, so it must fit: h264/h265 .mp4, .mov, .mkv; vp9 .webm, .mkv; wav .wav; "
+                           "the error names the ones that fit", true},
           {"preset", T::String, presetHelp()},
           {"format", T::String,
            "h264 (default), h265, av1, vp9 (WebM); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
@@ -817,7 +825,8 @@ const QVector<Command>& commands()
           {"encoder", T::String, "H.264/H.265 video encoder: auto (default: a hardware encoder of the graphics card when "
                                  "one works here, else software), software, nvenc (NVIDIA), vaapi (AMD/Intel on Linux), "
                                  "qsv (Intel Quick Sync). A hardware encoder that does not work falls back to software; "
-                                 "the answer's 'encoder' is the codec actually used"},
+                                 "the answer's 'encoder' is the codec actually used ('copy' when smart render "
+                                 "copied every frame of the source)"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
           {"subtitles", T::String, "none (default), burn (into the picture) or srt (file next to the video)"},
           {"from", T::Time, "start of the range (default: timeline start)"},

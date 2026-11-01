@@ -276,13 +276,18 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         const MediaSource m = openMedia(QJsonObject{{"file", src}});
         f = m.format;
         result["frames"] = m.info.length;
-        if (m.info.hasVideo && !m.info.isImage) {
+        if (m.info.isImage) {
+            // A still has neither motion nor sound to check: say what it is instead of "no picture" and "no sound"
+            issues << ExportCheck::Issue{ExportCheck::Severity::Info, "still_image",
+                                         T("Die Datei ist ein Standbild: kein Ton, nichts zu prüfen")};
+        } else if (m.info.hasVideo) {
             issues += pictureOfFile(m, ctx, 0, withSound && m.info.hasAudio ? 0.5 : 1);
         } else {
             issues << ExportCheck::Issue{ExportCheck::Severity::Info, "no_video", T("Die Datei hat kein Bild (nur Ton)")};
         }
         if (!m.info.hasAudio) {
-            issues << ExportCheck::Issue{ExportCheck::Severity::Warning, "no_audio", T("Die Datei hat keinen Ton")};
+            if (!m.info.isImage)
+                issues << ExportCheck::Issue{ExportCheck::Severity::Warning, "no_audio", T("Die Datei hat keinen Ton")};
         } else if (withSound) {
             Clip c;
             c.mediaPath = m.info.path;

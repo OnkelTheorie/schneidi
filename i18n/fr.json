@@ -434,6 +434,7 @@
  "Die Datei enthält %1 Sequenzen, die erste (%2) wurde importiert": "Le fichier contient %1 séquences, la première (%2) a été importée",
  "Die Datei hat kein Bild (nur Ton)": "Le fichier n'a pas d'image (son uniquement)",
  "Die Datei hat keinen Ton": "Le fichier n'a pas de son",
+ "Die Datei ist ein Standbild: kein Ton, nichts zu prüfen": "Le fichier est une image fixe : pas de son, rien à vérifier",
  "Die Datei ist fehlerhaft: %1": "Le fichier est incorrect : %1",
  "Die Datei konnte nicht gelesen werden:\n%1": "Le fichier n'a pas pu être lu :\n%1",
  "Die Datei ließ sich nicht löschen.": "Impossible de supprimer le fichier.",

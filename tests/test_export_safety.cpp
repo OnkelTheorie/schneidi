@@ -208,12 +208,29 @@ void testWriteErrorMidway(const QString& root)
         setrlimit(RLIMIT_FSIZE, &old);
         std::signal(SIGXFSZ, SIG_DFL);
         if (!CHECK(!r.ok)) std::printf("       %s reported as finished: %s\n", c.name, qPrintable(r.message));
+        // The writer's cause in the message, not only "failed"
+        if (!CHECK(r.message.contains(" (") && r.message.endsWith(")"))) std::printf("       %s\n", qPrintable(r.message));
         CHECK_EQ(content(target), kOld);
         CHECK_EQ(entries(dir), QStringList({c.name}));
     }
 #else
     Q_UNUSED(root);
 #endif
+}
+
+// A container that cannot hold the codecs (H.264 in WebM, video in WAV): refused at the start, saying why
+void testWrongContainer(const QString& root)
+{
+    const QString dir = root + "/container";
+    QDir().mkpath(dir);
+    Result r = run(settings(dir + "/out.webm"));
+    CHECK(!r.started && !r.ok);
+    if (!CHECK(r.message.contains("the .webm container cannot hold libx264 video"))) std::printf("       %s\n", qPrintable(r.message));
+    r = run(settings(dir + "/out.wav"));
+    CHECK(!r.started && r.message.contains("the .wav container cannot hold libx264 video"));
+    r = run(settings(dir + "/out.txt"));
+    CHECK(!r.started && r.message.contains("no container for .txt files"));
+    CHECK_EQ(entries(dir), QStringList());
 }
 
 void testImageSequence(const QString& root)
@@ -308,6 +325,7 @@ int main(int argc, char** argv)
     if (!CHECK(!g_media.isEmpty())) return Check::result();
     testKeepsOlderFile(tmp.path());
     testWriteErrorMidway(tmp.path());
+    testWrongContainer(tmp.path());
     testImageSequence(tmp.path());
     testOddSize(tmp.path());
     return Check::result();
