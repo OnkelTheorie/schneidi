@@ -70,11 +70,16 @@ FrameSet framesOf(const QString& src, const QJsonObject& a, Context& ctx, int ma
     }
     if (at.isEmpty()) fail("BAD_ARGUMENT", "give 'at' (times), 'every' (interval) or 'count' (evenly spread)");
     if (at.size() > 100) fail("BAD_ARGUMENT", QString("too many frames (%1, max 100)").arg(at.size()));
-    // Crop: decode the full picture, cut the region out, scale it down only if it is larger than maxEdge
+    // Crop: decode the picture only as large as the region needs to come out at maxEdge (at most the full size and
+    // 8192: a file with an extreme pixel aspect stated 21844x16384 and took 3 GB), cut the region out, scale it down
+    // only if it is larger than maxEdge
     const bool crop = a.contains("crop");
     const QSize full = f.size();
     const QRect region = crop ? cropRect(a["crop"].toString(), full) : QRect();
-    const int decodeEdge = crop ? std::max(full.width(), full.height()) : maxEdge;
+    const int fullEdge = std::max(full.width(), full.height());
+    const int regionEdge = std::max(1, std::max(region.width(), region.height()));
+    const int decodeEdge = crop ? std::min({fullEdge, 8192, int(std::ceil(double(maxEdge) * fullEdge / regionEdge))})
+                                : maxEdge;
 
     const auto snap = session ? Snapshot::Source::timeline(f, session->project.renderTimeline())
                               : Snapshot::Source::media(f, media.info.path);
