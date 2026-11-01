@@ -22,6 +22,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Engine.h"
+#include "engine/ExportWriter.h"
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/ClipFormat.h"
@@ -463,6 +464,39 @@ QJsonObject cmdRestore(const QJsonObject& a, Context&)
     return o;
 }
 
+namespace {
+
+// File extensions a render format can write: of the usual ones for its kind, those whose container takes its codecs
+// (the format's own first)
+QStringList fittingExtensions(const RenderFormatInfo& f)
+{
+    static const QStringList video{"mp4", "mov", "mkv", "webm"};
+    static const QStringList audio{"m4a", "mp3", "opus", "ogg", "wav", "aiff", "aif", "flac", "mka"};
+    QStringList out{f.extension};
+    for (const QString& ext : f.kind == RenderKind::Audio ? audio : video)
+        if (!out.contains(ext) && ExportWriter::containerTakes("x." + ext, {}, f.videoCodec, f.audioCodec)) out << ext;
+    return out;
+}
+
+// The output file's extension must fit the format (the format decides the codecs, the extension the container):
+// "out.webm" with the default h264 or "out.mp4" with wav would fail late or write an odd file
+void checkExtension(const QString& out, const QString& formatId)
+{
+    const RenderFormatInfo& f = renderFormat(formatId);
+    if (f.kind != RenderKind::Video && f.kind != RenderKind::Audio) return; // GIF, image sequences: named by the format
+    const QString ext = QFileInfo(out).suffix().toLower();
+    const QStringList fits = fittingExtensions(f);
+    if (fits.contains(ext)) return;
+    QStringList formats; // formats that write this extension themselves
+    for (const RenderFormatInfo& i : renderFormats())
+        if (ext == QLatin1String(i.extension) && HardwareEncoders::formatAvailable(i.id)) formats << i.id;
+    QString message = QString("'.%1' does not fit format %2: use .%3").arg(ext, formatId, fits.join(", ."));
+    if (!formats.isEmpty()) message += QString(" - or format %1 for .%2").arg(formats.join(" / "), ext);
+    fail("BAD_ARGUMENT", message);
+}
+
+} // namespace
+
 QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
 {
     Session s(a["project"].toString());
@@ -500,6 +534,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     }
     QString out = absolute(a["out"].toString());
     if (QFileInfo(out).suffix().isEmpty()) out += "." + QString(srtOnly ? "srt" : renderFormat(formatId).extension);
+    if (!srtOnly) checkExtension(out, formatId);
     RenderSettings target = job.settings;
     if (!srtOnly) target.format = formatId;
     if (QFileInfo::exists(firstOutputFile(out, target)) && !a["overwrite"].toBool())

@@ -156,26 +156,57 @@ void freePackets(std::vector<AVPacket*>& packets)
 
 } // namespace
 
-bool ExportWriter::supportsOwn(const QString& path, const QString& muxer, const QString& videoCodec, const QString& pixFmt,
-                               const QString& audioCodec, const QString& sampleFormat)
+bool ExportWriter::containerTakes(const QString& path, const QString& muxer, const QString& videoCodec,
+                                  const QString& audioCodec, QString* why)
 {
+    const auto no = [why](const QString& text) {
+        if (why) *why = text;
+        return false;
+    };
     const AVOutputFormat* f = muxer.isEmpty() ? av_guess_format(nullptr, path.toUtf8().constData(), nullptr)
                                               : av_guess_format(muxer.toUtf8().constData(), nullptr, nullptr);
-    if (!f) return false;
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (!f) return no(suffix.isEmpty() ? QString("no file extension to choose the container by")
+                                       : QString("no container for .%1 files").arg(suffix));
+    const QString container = muxer.isEmpty() ? "." + suffix : muxer;
+    for (const QString& name : {videoCodec, audioCodec}) {
+        if (name.isEmpty()) continue;
+        const AVCodec* c = avcodec_find_encoder_by_name(name.toUtf8().constData());
+        if (!c) return no("no encoder " + name);
+        // 0 = the muxer knows its codecs and this is none of them (negative: it does not say, try it)
+        if (avformat_query_codec(f, c->id, FF_COMPLIANCE_NORMAL) == 0)
+            return no(QString("the %1 container cannot hold %2 %3").arg(container, name,
+                                                                         c->type == AVMEDIA_TYPE_VIDEO ? "video" : "sound"));
+    }
+    return true;
+}
+
+bool ExportWriter::supportsOwn(const QString& path, const QString& muxer, const QString& videoCodec, const QString& pixFmt,
+                               const QString& audioCodec, const QString& sampleFormat, QString* why)
+{
+    const auto no = [why](const QString& text) {
+        if (why) *why = text;
+        return false;
+    };
+    if (!containerTakes(path, muxer, videoCodec, audioCodec, why)) return false;
     if (!videoCodec.isEmpty()) {
         const AVCodec* video = avcodec_find_encoder_by_name(videoCodec.toUtf8().constData());
-        if (!video || video->type != AVMEDIA_TYPE_VIDEO) return false;
+        if (!video || video->type != AVMEDIA_TYPE_VIDEO) return no(videoCodec + " is no video encoder");
         const AVPixelFormat pf = av_get_pix_fmt(pixFmt.toUtf8().constData());
-        if (pf == AV_PIX_FMT_NONE) return false;
+        if (pf == AV_PIX_FMT_NONE) return no("unknown pixel format " + pixFmt);
         // Converted by OutputColor, uploaded (VAAPI) or by swscale from RGBA
         OutputColor::Target t;
-        if (pf != AV_PIX_FMT_VAAPI && !OutputColor::targetOf(pf, t) && !sws_isSupportedOutput(pf)) return false;
+        if (pf != AV_PIX_FMT_VAAPI && !OutputColor::targetOf(pf, t) && !sws_isSupportedOutput(pf))
+            return no("pixel format " + pixFmt + " cannot be written");
     } else if (audioCodec.isEmpty()) {
-        return false;
+        return no("neither picture nor sound to write");
     }
     if (audioCodec.isEmpty()) return true;
     const AVCodec* audio = avcodec_find_encoder_by_name(audioCodec.toUtf8().constData());
-    return audio && audio->type == AVMEDIA_TYPE_AUDIO && soundFormat(av_get_sample_fmt(sampleFormat.toUtf8().constData()));
+    if (!audio || audio->type != AVMEDIA_TYPE_AUDIO) return no(audioCodec + " is no audio encoder");
+    if (!soundFormat(av_get_sample_fmt(sampleFormat.toUtf8().constData())))
+        return no("sample format " + sampleFormat + " cannot be written");
+    return true;
 }
 
 struct ExportWriter::Impl {

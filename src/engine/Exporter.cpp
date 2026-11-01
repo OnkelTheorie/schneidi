@@ -285,8 +285,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_note = s.encoderNote;
     m_usedCodec.clear();
     m_copiedPercent = 0;
-    if (!writable(scaled, s, sampleFormat)) {
-        if (error) *error = T("Export konnte nicht gestartet werden.");
+    if (QString why; !writable(scaled, s, sampleFormat, &why)) {
+        if (error) *error = T("Export konnte nicht gestartet werden.") + " (" + why + ")";
         discardOutput();
         return false;
     }
@@ -489,7 +489,7 @@ bool Exporter::startWriter(const QString& codec, QString* error)
             QFile::remove(m_path);
             return fallBackToSoftware(error);
         }
-        if (error) *error = T("Export konnte nicht gestartet werden.");
+        if (error) *error = T("Export konnte nicht gestartet werden.") + " (" + m_writer->error() + ")";
         m_writer.reset();
         return false;
     }
@@ -525,7 +525,7 @@ void Exporter::pollWriter()
             fail(error);
             return;
         }
-        fail(T("Export fehlgeschlagen: %1").arg(m_target));
+        fail(T("Export fehlgeschlagen: %1").arg(m_target) + " (" + message + ")");
         return;
     }
     case ExportWriter::State::Done: {
@@ -605,14 +605,15 @@ void Exporter::finishGif(bool ok, const QString& log)
     --g_running;
     if (!ok) {
         if (!log.isEmpty()) qWarning("Export: GIF conversion failed: %s", qPrintable(log));
-        fail(T("Export fehlgeschlagen: %1").arg(m_target));
+        fail(T("Export fehlgeschlagen: %1").arg(m_target)
+             + (log.isEmpty() ? QString() : " (GIF conversion: " + log.section('\n', -1).trimmed() + ")"));
         return;
     }
     m_usedCodec = "gif"; // what wrote the file (not the intermediate)
     succeed();
 }
 
-bool Exporter::writable(const Timeline& tl, const ExportSettings& s, const QString& sampleFormat) const
+bool Exporter::writable(const Timeline& tl, const ExportSettings& s, const QString& sampleFormat, QString* why) const
 {
     if (!s.videoCodec.isEmpty()) {
         // Effects this engine does not have (frei0r plugins, ids of newer versions) stay in the project but are skipped
@@ -623,7 +624,7 @@ bool Exporter::writable(const Timeline& tl, const ExportSettings& s, const QStri
                            : HardwareEncoders::isHardwareCodec(s.videoCodec) ? HardwareEncoders::pixelFormat(s.videoCodec)
                                                                              : s.pixFmt;
     return ExportWriter::supportsOwn(m_path, s.output == ExportSettings::Output::ImageSequence ? "image2" : QString(),
-                                     s.videoCodec, pixFmt, s.audioCodec, sampleFormat);
+                                     s.videoCodec, pixFmt, s.audioCodec, sampleFormat, why);
 }
 
 QSize Exporter::outputSize() const

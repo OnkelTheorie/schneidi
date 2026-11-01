@@ -135,7 +135,7 @@ private:
     void finishGif(bool ok, const QString& log);
 
     // Can the writer write this export? (output kind, encoders, formats)
-    bool writable(const Timeline& tl, const ExportSettings& s, const QString& sampleFormat) const;
+    bool writable(const Timeline& tl, const ExportSettings& s, const QString& sampleFormat, QString* why) const;
     QSize outputSize() const; // of the file
     double outputFps() const;
 

@@ -1195,8 +1195,24 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             const double lufs = run("loudness", {{"source", silent["out"].toString()}})["loudness"]["integrated_lufs"].toDouble();
             CHECK(lufs < -100);
             CHECK(mix() > -100); // the project's A1 still plays
-            CHECK(messageOf("render", {{"project", proj}, {"out", dir.filePath("x.wav")}, {"mute_tracks", QJsonArray{"A9"}}})
+            CHECK(messageOf("render", {{"project", proj}, {"out", dir.filePath("x.wav")}, {"format", "wav"},
+                                       {"mute_tracks", QJsonArray{"A9"}}})
                       .contains("there is no A9"));
+        }
+        // The extension must fit the format (it decides the container): refused at once, naming the ones that fit
+        {
+            const QString webm = messageOf("render", {{"project", proj}, {"out", dir.filePath("x.webm")}});
+            CHECK(webm.contains("'.webm' does not fit format h264") && webm.contains(".mp4") && webm.contains(".mov")
+                  && webm.contains("format vp9"));
+            CHECK(messageOf("render", {{"project", proj}, {"out", dir.filePath("x.wav")}}).contains("format wav"));
+            CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("x.txt")}}), QString("BAD_ARGUMENT"));
+            const QString mp4 = messageOf("render", {{"project", proj}, {"out", dir.filePath("x.mp4")}, {"format", "wav"}});
+            CHECK(mp4.contains("does not fit format wav: use .wav"));
+            CHECK(!mp4.contains(".mp4,") && !mp4.contains(".mov"));
+            CHECK(!QFileInfo::exists(dir.filePath("x.webm")) && !QFileInfo::exists(dir.filePath("x.txt")));
+            // Other containers of the format are fine
+            CHECK(QFileInfo(run("render", {{"project", proj}, {"out", dir.filePath("x.mkv")}, {"height", 180},
+                                           {"to", "1s"}})["out"].toString()).size() > 1000);
         }
         // Video encoder: the answer says which one wrote the file
         CHECK_EQ(errorOf("render", {{"project", proj}, {"out", dir.filePath("x.mp4")}, {"encoder", "gpu"}}),

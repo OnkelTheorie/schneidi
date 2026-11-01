@@ -803,7 +803,9 @@ const QVector<Command>& commands()
          cmdWatch},
         {"render", "Render the project timeline to a video, animated GIF, image sequence or audio file.",
          {{"project", T::Path, "project file", true, true},
-          {"out", T::Path, "output file (extension added if missing)", true},
+          {"out", T::Path, "output file (extension added if missing). The format decides the codecs, the extension "
+                           "the container, so it must fit: h264/h265 .mp4, .mov, .mkv; vp9 .webm, .mkv; wav .wav; "
+                           "the error names the ones that fit", true},
           {"preset", T::String, presetHelp()},
           {"format", T::String,
            "h264 (default), h265, av1, vp9 (WebM); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
