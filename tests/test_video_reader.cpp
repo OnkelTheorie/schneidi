@@ -178,37 +178,57 @@ void testHibernate(const QString& path)
     }
 }
 
-// The luma plane of a picture as rows (8 bit)
-QVector<QByteArray> luma(const AVFrame* f)
+// One sample of a picture for comparing positions: the luma (8 or 16 bit), the palette colour, the bit (1-bit black
+// and white)
+uint32_t sampleAt(const AVFrame* f, int x, int y)
 {
-    QVector<QByteArray> rows;
-    for (int y = 0; y < f->height; ++y) rows << QByteArray(reinterpret_cast<const char*>(f->data[0] + y * f->linesize[0]), f->width);
-    return rows;
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(AVPixelFormat(f->format));
+    const uint8_t* row = f->data[0] + ptrdiff_t(y) * f->linesize[0];
+    if (desc->flags & AV_PIX_FMT_FLAG_PAL) return reinterpret_cast<const uint32_t*>(f->data[1])[row[x]];
+    if (desc->flags & AV_PIX_FMT_FLAG_BITSTREAM) return (row[x / 8] >> (7 - x % 8)) & 1;
+    if (desc->comp[0].depth > 8) return reinterpret_cast<const uint16_t*>(row)[x];
+    return row[x * desc->comp[0].step];
 }
 
 // A file with a rotation tag comes upright: the plain file's picture turned by a quarter (the tag's direction)
-void testRotation(const QString& plain, const QString& rotated, double degrees)
+void testRotation(const QString& plain, const QString& rotated, double degrees, const QString& name = {})
 {
     auto a = Video::Reader::open(plain), b = Video::Reader::open(rotated);
     if (!CHECK(a && b)) return;
     CHECK(std::abs(b->info().rotation - degrees) < 0.5);
     const auto pa = a->picture(12), pb = b->picture(12);
     if (!CHECK(pa && pb)) return;
-    const auto la = luma(pa->frame), lb = luma(pb->frame);
+    // The picture's format is the one the reader states (turned sideways, 4:2:2 comes as 4:4:4)
+    CHECK_EQ(pb->frame->format, int(b->info().format));
     const int w = pa->frame->width, h = pa->frame->height;
     if (degrees == 180) {
         bool same = pb->frame->width == w && pb->frame->height == h;
         for (int y = 0; same && y < h; ++y)
-            for (int x = 0; x < w && same; ++x) same = la[y][x] == lb[h - 1 - y][w - 1 - x];
-        Check::report(same, "rotated 180: upside down", __FILE__, __LINE__);
+            for (int x = 0; x < w && same; ++x) same = sampleAt(pa->frame, x, y) == sampleAt(pb->frame, w - 1 - x, h - 1 - y);
+        Check::report(same, qPrintable(name + "rotated 180: upside down"), __FILE__, __LINE__);
         return;
     }
-    if (!CHECK(pb->frame->width == h && pb->frame->height == w)) return;
+    if (!Check::report(pb->frame->width == h && pb->frame->height == w, qPrintable(name + "rotated: sideways"), __FILE__,
+                       __LINE__, QString("%1x%2").arg(pb->frame->width).arg(pb->frame->height)))
+        return;
     // 90 clockwise: source (x, y) -> (h - 1 - y, x)
     bool same = true;
     for (int y = 0; same && y < h; ++y)
-        for (int x = 0; x < w && same; ++x) same = la[y][x] == lb[x][h - 1 - y];
-    Check::report(same, qPrintable(QString("rotated %1: turned clockwise").arg(degrees)), __FILE__, __LINE__);
+        for (int x = 0; x < w && same; ++x) same = sampleAt(pa->frame, x, y) == sampleAt(pb->frame, h - 1 - y, x);
+    // The colour (first chroma plane of YUV) goes along, also where the subsampling changes (4:2:2 -> 4:4:4)
+    const AVPixFmtDescriptor* da = av_pix_fmt_desc_get(AVPixelFormat(pa->frame->format));
+    const AVPixFmtDescriptor* db = av_pix_fmt_desc_get(AVPixelFormat(pb->frame->format));
+    if (da->nb_components >= 3 && !(da->flags & (AV_PIX_FMT_FLAG_RGB | AV_PIX_FMT_FLAG_PAL)) && da->comp[1].plane == 1
+        && db->comp[1].plane == 1) {
+        const int bytes = da->comp[1].depth > 8 ? 2 : 1;
+        auto at = [&](const AVFrame* f, const AVPixFmtDescriptor* d, int x, int y) {
+            const uint8_t* row = f->data[1] + ptrdiff_t(y >> d->log2_chroma_h) * f->linesize[1];
+            return bytes == 2 ? reinterpret_cast<const uint16_t*>(row)[x >> d->log2_chroma_w] : row[x >> d->log2_chroma_w];
+        };
+        for (int y = 0; same && y < h; ++y)
+            for (int x = 0; x < w && same; ++x) same = at(pa->frame, da, x, y) == at(pb->frame, db, h - 1 - y, x);
+    }
+    Check::report(same, qPrintable(QString("%1rotated %2: turned clockwise").arg(name).arg(degrees)), __FILE__, __LINE__);
 }
 
 } // namespace
@@ -308,6 +328,26 @@ int main(int argc, char** argv)
         CHECK(p && p->progressive);
     }
     testRotation(file("h264.mp4"), file("rotated.mp4"), 90);
+    // Formats a quarter turn cannot keep: 4:2:2 (camera files, iPhone ProRes 422 shot in portrait), palette, 1 bit
+    struct Turn {
+        const char* name;
+        QStringList encode;
+    };
+    const Turn turns[] = {
+        {"yuv422p.mp4", {"-pix_fmt", "yuv422p", "-c:v", "libx264"}},
+        {"prores422.mov", {"-c:v", "prores_ks", "-profile:v", "2"}},
+        {"pal8.mov", {"-pix_fmt", "pal8", "-c:v", "png"}},
+        {"monob.mov", {"-pix_fmt", "monob", "-c:v", "png"}},
+    };
+    for (const Turn& t : turns) {
+        const QString plain = Check::makeMedia(file(t.name), QStringList{"-f", "lavfi", "-i",
+                                                                          "testsrc2=size=320x180:rate=25", "-t", "1"}
+                                                                 + t.encode);
+        const QString turned = Check::makeMedia(dir.filePath(QString("rot-") + t.name),
+                                                {"-display_rotation", "-90", "-i", plain, "-c", "copy"});
+        if (!CHECK(!plain.isEmpty() && !turned.isEmpty())) continue;
+        testRotation(plain, turned, 90, QString(t.name) + ": ");
+    }
 
     // Hardware decoding: 720p H.264 and 10-bit HEVC
     const QString hd = Check::makeMedia(file("hd.mp4"), {"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-t",

@@ -8,6 +8,7 @@ extern "C" {
 #include <libavutil/display.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/pixdesc.h>
+#include <libswscale/swscale.h>
 }
 
 #include <algorithm>
@@ -172,17 +173,42 @@ int mltPrimaries(AVColorPrimaries p)
     }
 }
 
-// The same picture turned by quarter turns (per plane, as FFmpeg's transpose/hflip/vflip)
+// The format of a picture turned by quarter turns: the same, except sideways with chroma subsampled unevenly (4:2:2,
+// 4:1:1, 4:4:0: turned it would need the transposed subsampling): its 4:4:4 counterpart (same depth, layout, range and
+// alpha). AV_PIX_FMT_NONE = turned() cannot turn it (it is converted to RGBA first).
+AVPixelFormat turnedFormat(AVPixelFormat fmt, int quarters)
+{
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(fmt);
+    if (!desc || (desc->flags & AV_PIX_FMT_FLAG_HWACCEL)) return AV_PIX_FMT_NONE;
+    if ((desc->flags & AV_PIX_FMT_FLAG_BITSTREAM) && (desc->nb_components != 1 || 8 % desc->comp[0].step != 0))
+        return AV_PIX_FMT_NONE; // packed bits other than 1-bit black and white: rare
+    if (quarters % 2 == 0 || desc->log2_chroma_w == desc->log2_chroma_h) return fmt;
+    for (const AVPixFmtDescriptor* c = av_pix_fmt_desc_next(nullptr); c; c = av_pix_fmt_desc_next(c)) {
+        if (c->log2_chroma_w || c->log2_chroma_h || c->flags != desc->flags || c->nb_components != desc->nb_components)
+            continue;
+        bool same = true;
+        for (int i = 0; i < desc->nb_components && same; ++i) {
+            const AVComponentDescriptor &x = c->comp[i], &y = desc->comp[i];
+            same = x.plane == y.plane && x.step == y.step && x.offset == y.offset && x.shift == y.shift
+                   && x.depth == y.depth;
+        }
+        if (same) return av_pix_fmt_desc_get_id(c);
+    }
+    return AV_PIX_FMT_NONE;
+}
+
+// The same picture turned by quarter turns (per plane, as FFmpeg's transpose/hflip/vflip), in turnedFormat() (4:2:2
+// sideways: each chroma sample taken for both pixels it covers). Palette pictures keep their palette, 1-bit pictures
+// are turned bit by bit. nullptr if turnedFormat() has none.
 AVFrame* turned(const AVFrame* src, int quarters)
 {
     const auto fmt = AVPixelFormat(src->format);
+    const auto outFmt = turnedFormat(fmt, quarters);
+    if (outFmt == AV_PIX_FMT_NONE) return nullptr;
     const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(fmt);
-    if (!desc || (desc->flags & (AV_PIX_FMT_FLAG_BITSTREAM | AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_HWACCEL)))
-        return nullptr;
-    // Turned sideways, 4:2:2 chroma would need 4:4:0 (FFmpeg's transpose refuses such formats too)
-    if (quarters != 2 && desc->log2_chroma_w != desc->log2_chroma_h) return nullptr;
+    const AVPixFmtDescriptor* outDesc = av_pix_fmt_desc_get(outFmt);
     AVFrame* dst = av_frame_alloc();
-    dst->format = fmt;
+    dst->format = outFmt;
     dst->width = quarters == 2 ? src->width : src->height;
     dst->height = quarters == 2 ? src->height : src->width;
     if (av_frame_get_buffer(dst, 0) < 0) {
@@ -190,30 +216,80 @@ AVFrame* turned(const AVFrame* src, int quarters)
         return nullptr;
     }
     av_frame_copy_props(dst, src);
+    const int W = src->width, H = src->height;
     const int planes = av_pix_fmt_count_planes(fmt);
     const bool chroma = desc->nb_components >= 3 && !(desc->flags & AV_PIX_FMT_FLAG_RGB);
+    const bool bits = desc->flags & AV_PIX_FMT_FLAG_BITSTREAM;
     for (int p = 0; p < planes; ++p) {
         const bool sub = chroma && (p == 1 || p == 2);
-        const int w = sub ? AV_CEIL_RSHIFT(src->width, desc->log2_chroma_w) : src->width;
-        const int h = sub ? AV_CEIL_RSHIFT(src->height, desc->log2_chroma_h) : src->height;
-        const int bpp = av_image_get_linesize(fmt, src->width, p) / std::max(1, w);
+        // Subsampling of this plane in the source and in the result (shifts)
+        const int sx = sub ? desc->log2_chroma_w : 0, sy = sub ? desc->log2_chroma_h : 0;
+        const int dx = sub ? outDesc->log2_chroma_w : 0, dy = sub ? outDesc->log2_chroma_h : 0;
+        const int w = AV_CEIL_RSHIFT(dst->width, dx), h = AV_CEIL_RSHIFT(dst->height, dy); // result plane
+        const int bpp = bits ? 0 : av_image_get_linesize(fmt, W, p) / std::max(1, AV_CEIL_RSHIFT(W, sx));
         const uint8_t* s = src->data[p];
         uint8_t* d = dst->data[p];
         const int ss = src->linesize[p], ds = dst->linesize[p];
-        auto pixel = [&](int dr, int dc, int sr, int sc) {
-            std::memcpy(d + ptrdiff_t(dr) * ds + ptrdiff_t(dc) * bpp, s + ptrdiff_t(sr) * ss + ptrdiff_t(sc) * bpp, bpp);
+        // Result plane (r, c) -> its full-size pixel -> the source's full-size pixel -> the source plane's sample
+        auto from = [&](int r, int c, int& sr, int& sc) {
+            const int R = r << dy, C = c << dx;
+            if (quarters == 2) {
+                sr = H - 1 - R;
+                sc = W - 1 - C;
+            } else if (quarters == 1) { // clockwise: the result is H wide, W tall
+                sr = H - 1 - C;
+                sc = R;
+            } else {
+                sr = C;
+                sc = W - 1 - R;
+            }
+            sr >>= sy;
+            sc >>= sx;
         };
-        if (quarters == 2) {
-            for (int r = 0; r < h; ++r)
-                for (int c = 0; c < w; ++c) pixel(r, c, h - 1 - r, w - 1 - c);
-        } else if (quarters == 1) { // clockwise: destination is h wide, w tall
-            for (int r = 0; r < w; ++r)
-                for (int c = 0; c < h; ++c) pixel(r, c, h - 1 - c, r);
-        } else {
-            for (int r = 0; r < w; ++r)
-                for (int c = 0; c < h; ++c) pixel(r, c, c, w - 1 - r);
+        if (bits) {
+            const int n = desc->comp[0].step, mask = (1 << n) - 1; // bits per pixel, most significant first
+            for (int r = 0; r < h; ++r) {
+                uint8_t* row = d + ptrdiff_t(r) * ds;
+                std::memset(row, 0, ds);
+                for (int c = 0; c < w; ++c) {
+                    int sr, sc;
+                    from(r, c, sr, sc);
+                    const int sb = sc * n, db = c * n;
+                    const int v = (s[ptrdiff_t(sr) * ss + sb / 8] >> (8 - n - sb % 8)) & mask;
+                    row[db / 8] |= uint8_t(v << (8 - n - db % 8));
+                }
+            }
+            continue;
+        }
+        for (int r = 0; r < h; ++r) {
+            uint8_t* row = d + ptrdiff_t(r) * ds;
+            for (int c = 0; c < w; ++c) {
+                int sr, sc;
+                from(r, c, sr, sc);
+                std::memcpy(row + ptrdiff_t(c) * bpp, s + ptrdiff_t(sr) * ss + ptrdiff_t(sc) * bpp, bpp);
+            }
         }
     }
+    if (desc->flags & AV_PIX_FMT_FLAG_PAL) std::memcpy(dst->data[1], src->data[1], AVPALETTE_SIZE);
+    return dst;
+}
+
+// The picture in RGBA (formats turned() cannot turn); nullptr on failure
+AVFrame* rgba(const AVFrame* src)
+{
+    SwsContext* sws = sws_getContext(src->width, src->height, AVPixelFormat(src->format), src->width, src->height,
+                                     AV_PIX_FMT_RGBA, SWS_POINT, nullptr, nullptr, nullptr);
+    if (!sws) return nullptr;
+    AVFrame* dst = av_frame_alloc();
+    dst->format = AV_PIX_FMT_RGBA;
+    dst->width = src->width;
+    dst->height = src->height;
+    if (av_frame_get_buffer(dst, 0) < 0
+        || sws_scale(sws, src->data, src->linesize, 0, src->height, dst->data, dst->linesize) <= 0)
+        av_frame_free(&dst);
+    else
+        av_frame_copy_props(dst, src);
+    sws_freeContext(sws);
     return dst;
 }
 
@@ -696,10 +772,17 @@ struct Reader::Impl {
             sw = out;
         }
         if (turns) {
-            if (AVFrame* t = turned(sw, turns)) {
+            // Never the picture unturned (squeezed into the upright size): what turned() cannot turn in RGBA
+            if (turnedFormat(AVPixelFormat(sw->format), turns) == AV_PIX_FMT_NONE) {
+                AVFrame* c = rgba(sw);
                 av_frame_free(&sw);
-                sw = t;
+                if (!c) return nullptr;
+                sw = c;
             }
+            AVFrame* t = turned(sw, turns);
+            av_frame_free(&sw);
+            if (!t) return nullptr;
+            sw = t;
         }
         auto pic = std::make_shared<Picture>();
         pic->frame = sw;
@@ -1194,6 +1277,11 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     const AVCodecDescriptor* desc = avcodec_descriptor_get(par->codec_id);
     d.mustDecode = !desc || !(desc->props & AV_CODEC_PROP_INTRA_ONLY);
     d.planarFormat = in.format;
+    // Turned pictures can come in another format (4:2:2 sideways as 4:4:4; RGBA what cannot be turned as it is)
+    if (d.turns) {
+        const AVPixelFormat t = turnedFormat(in.format, d.turns);
+        in.format = t != AV_PIX_FMT_NONE ? t : turnedFormat(AV_PIX_FMT_RGBA, d.turns);
+    }
     return reader;
 }
 
