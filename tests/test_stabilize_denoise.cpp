@@ -13,6 +13,7 @@
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 #include "engine/Denoise.h"
+#include "engine/Engine.h"
 #include "engine/Exporter.h"
 #include "engine/ClipFormat.h"
 #include "engine/Stabilizer.h"
@@ -442,6 +443,26 @@ int main(int argc, char** argv)
         st->sync({});
         st->sync({*r3});
         CHECK(waitFor([&] { return st->state(*r3) == Stabilizer::State::Done; }, 60000));
+    }
+
+    // The preview takes a finished analysis: the still shown while it ran is drawn again (it stayed unstabilized)
+    {
+        Clip v = c;
+        EffectRegistry::instance(v, "stabilize")->params["accuracy"] = 3.0;
+        const auto r = Stabilizer::request(v, fmt);
+        Engine engine;
+        if (CHECK(r && engine.init(nullptr))) {
+            engine.setFormat(ProjectFormat{640, 360, {25, 1}});
+            int frames = 0;
+            QObject::connect(&engine, &Engine::frameReady, &app, [&](const QImage&) { ++frames; });
+            int atResult = -1; // frames shown when the result came (connected after the engine: runs after its slot)
+            QObject::connect(Stabilizer::instance(), &Stabilizer::resultReady, &engine, [&] { atResult = frames; });
+            engine.updateTimeline(videoTimeline(v)); // starts the analysis
+            engine.showTimeline(20);
+            CHECK(waitFor([&] { return atResult >= 0; }, 60000));
+            CHECK(waitFor([&] { return frames > atResult; }, 3000));
+            std::printf("       Analyse fertig: %d Bilder davor, %d danach\n", atResult, frames);
+        }
     }
 
     // Export runs a missing analysis first (never exports unstabilized)

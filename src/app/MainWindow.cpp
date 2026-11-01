@@ -164,11 +164,8 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
         updateRenderCacheBar();
     });
     connect(renderCache, &RenderCache::progressChanged, this, &MainWindow::updateRenderCacheBar);
-    // Stabilization analysis done -> build the preview again (now stabilized); also lets the render cache start
-    connect(Stabilizer::instance(), &Stabilizer::resultReady, this, [this, proxiesChanged] {
-        proxiesChanged();
-        updateRenderCacheBar();
-    });
+    // Stabilization analysis done: the engine draws the preview again and lets the render cache start (Engine.cpp)
+    connect(Stabilizer::instance(), &Stabilizer::resultReady, this, &MainWindow::updateRenderCacheBar);
     connect(renderCache, &RenderCache::failed, this,
             [this](const QString& msg) { QMessageBox::warning(this, T("Render-Cache"), msg); });
 

@@ -128,6 +128,13 @@ Engine::Engine(QObject* parent)
         if (s == 0.0) m_idleRelease->request();
     });
     connect(m_renderCache, &RenderCache::cacheChanged, m_idleRelease, &IdleRelease::request);
+    // A stabilization analysis finished: its correction is read while drawing, but the still shown (and the frames
+    // kept for stepping back) were drawn without it, and the render cache left such clips out until it was there
+    connect(Stabilizer::instance(), &Stabilizer::resultReady, this, [this] {
+        if (!m_renderer) return;
+        m_renderCache->sync(m_built);
+        if (m_mode == Mode::Timeline) refresh();
+    });
     // ... with the recently shown frames (up to 192 MB): stepping back after a pause renders again
     connect(m_idleRelease, &IdleRelease::releasing, this, [this] {
         if (m_pump) m_pump->dropRecent();
