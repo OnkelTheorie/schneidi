@@ -1092,16 +1092,21 @@ struct Reader::Impl {
                 // picture (the decoder drops what comes before a key frame)
                 const int64_t first = !mustDecode ? firstPacketPos : !fresh.empty() ? fresh.front().position : INT64_MIN;
                 if (first != INT64_MIN || reachedEnd) {
-                    // Past the target, or the end with nothing at all: earlier, unless the seek went to the start
-                    if ((first == INT64_MIN || first > target) && seekTs > 0) {
+                    // Past the target, or the end with nothing at all: earlier, unless the seek went to the start -
+                    // at most 8 s earlier (no key frame within that, or no video there at all: a request behind the
+                    // video's end read the file's tail again for every doubling, and the grown pre-roll made every
+                    // later seek of the file decode minutes): then it takes what came and forgets the pre-roll
+                    const double second = av_q2d(info.timeBase) > 0 ? 1.0 / av_q2d(info.timeBase) : 0;
+                    const int64_t most = int64_t(8 * second);
+                    if ((first == INT64_MIN || first > target) && seekTs > 0 && preroll < most) {
                         for (Decoded& d : keep) av_frame_free(&d.frame);
                         av_frame_free(&before.frame);
-                        const double second = av_q2d(info.timeBase) > 0 ? 1.0 / av_q2d(info.timeBase) : 0;
-                        preroll = std::max<int64_t>(preroll * 2, int64_t(second));
+                        preroll = std::min(std::max<int64_t>(preroll * 2, int64_t(second)), most);
                         ++stats.reseeks;
                         seek(lock, target);
                         continue;
                     }
+                    if ((first == INT64_MIN || first > target) && seekTs > 0) preroll = 0; // gave up: not kept
                     seekChecked = true;
                 }
             }
