@@ -1588,6 +1588,7 @@
  "Untertitel zu kurz zum Lesen (%1 s): „%2“": "Subtítulo demasiado corto para leerlo (%1 s): «%2»",
  "Untertitel zu schnell (%1 Zeichen/s, höchstens %2): „%3“": "Subtítulo demasiado rápido (%1 caracteres/s, como máximo %2): «%3»",
  "Untertitel-Zeiten": "Tiempos de subtítulos",
+ "Die weiteren Untertitelspuren ersetzen diese Dateien:\n%1": "Las demás pistas de subtítulos sustituyen estos archivos:\n%1",
  "Untertiteldatei kann nicht geschrieben werden: %1": "No se puede escribir el archivo de subtítulos: %1",
  "Untertitelspur ausblenden": "Ocultar pista de subtítulos",
  "Untertitelspur einblenden": "Mostrar pista de subtítulos",

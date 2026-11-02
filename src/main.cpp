@@ -107,7 +107,7 @@ int main(int argc, char* argv[])
 #endif
     I18n::prepareEnvironment(langOverride);
     QApplication app(argc, argv);
-    QApplication::setApplicationVersion(QString("%1 (%2)").arg(QString::fromUtf8(SCHNEIDI_VERSION_LABEL), SCHNEIDI_BUILD)); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
+    QApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString())); // version from CMakeLists, Git state, see cmake/BuildInfo.cmake
     Log::install();
     CrashReport::install(); // after the log: attaches the previous run's log to its crash report
     // Test aid: --lang <code> (en, de, fr, …) only applies to this run (the setting stays unchanged)

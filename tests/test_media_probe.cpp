@@ -8,6 +8,7 @@
 #include "check.h"
 
 #include "engine/Engine.h"
+#include "engine/FfmpegLog.h"
 #include "engine/MediaProbe.h"
 #include "engine/OpenMedia.h"
 #include "engine/video/Reader.h"
@@ -54,6 +55,8 @@ QByteArray zeroLengths(const QString& source)
     }
     return data;
 }
+
+QStringList g_avLog; // FFmpeg's messages (FfmpegLog)
 
 } // namespace
 
@@ -238,12 +241,17 @@ int main(int argc, char** argv)
                                    + "</Path></Chunk></ChunkList></Asset></AssetList></AssetMap>\n");
         QFile::copy(in("h264_aac.mp4"), in("work/clip.mp4"));
         write("work/list.mp4", "ffconcat version 1.0\nfile clip.mp4\n");
+        FfmpegLog::install([](bool, const QString& text) { g_avLog << text; });
         for (const char* name : {"work/composition.mp4", "work/list.mp4"}) {
             const MediaInfo m = Engine::probe(format, in(name));
             CHECK(!m.hasVideo && !m.hasAudio);
             QString error;
             CHECK(!Video::Reader::open(in(name), {}, &error));
         }
+        // The refusal says so in one short line, not with FFmpeg's whole list of allowed demuxers (~3 KB)
+        CHECK(!g_avLog.isEmpty());
+        for (const QString& line : std::as_const(g_avLog))
+            if (!CHECK(line.size() < 300)) std::printf("       long FFmpeg line: %s...\n", qPrintable(line.left(120)));
         CHECK(OpenMedia::refused("imf") && OpenMedia::refused("hls") && OpenMedia::refused("concat"));
         CHECK(!OpenMedia::refused("mov,mp4,m4a,3gp,3g2,mj2") && !OpenMedia::refused("image2"));
         // Plain files still open

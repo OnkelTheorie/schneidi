@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Subtitles.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QSet>
 #include <QStringDecoder>
@@ -67,6 +69,31 @@ QString stripFormatting(QString text)
 }
 
 } // namespace
+
+QVector<SrtFile> srtFiles(const Timeline& tl, const QString& path)
+{
+    int main = -1;
+    for (int i = 0; i < tl.subtitles.size(); ++i)
+        if (tl.subtitles[i].enabled && !tl.subtitles[i].cues.isEmpty()) main = i;
+    for (int i = 0; i < tl.subtitles.size() && main < 0; ++i)
+        if (!tl.subtitles[i].cues.isEmpty()) main = i;
+    if (main < 0) return {};
+    QVector<SrtFile> out{{path, main}};
+    const QFileInfo fi(path);
+    const QString suffix = fi.suffix().isEmpty() ? QString("srt") : fi.suffix();
+    QSet<QString> taken; // lower case: Windows and macOS do not tell "En" from "en"
+    static const QRegularExpression bad(R"([\\/:*?"<>|\x00-\x1f])");
+    for (int i = 0; i < tl.subtitles.size(); ++i) {
+        if (i == main || tl.subtitles[i].cues.isEmpty()) continue;
+        QString name = QString(tl.subtitles[i].name).replace(bad, "_").trimmed();
+        while (name.endsWith('.')) name.chop(1); // Windows drops trailing dots
+        // a clash with another name (also a track named like a number): the track number, then counted up
+        for (int n = i + 1; name.isEmpty() || taken.contains(name.toLower()); ++n) name = QString::number(n);
+        taken.insert(name.toLower());
+        out << SrtFile{fi.dir().filePath(QString("%1.%2.%3").arg(fi.completeBaseName(), name, suffix)), i};
+    }
+    return out;
+}
 
 QString srtTime(qint64 ms)
 {

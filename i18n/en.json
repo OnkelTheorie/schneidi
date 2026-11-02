@@ -1588,6 +1588,7 @@
  "Untertitel zu kurz zum Lesen (%1 s): „%2“": "Subtitle too short to read (%1 s): “%2”",
  "Untertitel zu schnell (%1 Zeichen/s, höchstens %2): „%3“": "Subtitle too fast (%1 characters/s, at most %2): “%3”",
  "Untertitel-Zeiten": "Subtitle Timing",
+ "Die weiteren Untertitelspuren ersetzen diese Dateien:\n%1": "The other subtitle tracks replace these files:\n%1",
  "Untertiteldatei kann nicht geschrieben werden: %1": "Cannot write subtitle file: %1",
  "Untertitelspur ausblenden": "Hide Subtitle Track",
  "Untertitelspur einblenden": "Show Subtitle Track",

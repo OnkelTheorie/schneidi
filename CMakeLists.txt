@@ -70,10 +70,11 @@ find_package(Threads REQUIRED)
 
 # Git state for the log and the splash screen (buildinfo.h, refreshed on every build)
 find_package(Git QUIET)
+set(SCHNEIDI_BUILD_ID "" CACHE STRING "Build id shown next to the version (empty = the Git commit, see cmake/BuildInfo.cmake)")
 set(SCHNEIDI_BUILDINFO ${CMAKE_BINARY_DIR}/generated/buildinfo.h)
 add_custom_target(schneidi_buildinfo
     COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR} -DOUT=${SCHNEIDI_BUILDINFO} -DGIT=${GIT_EXECUTABLE} -DVERSION=${PROJECT_VERSION}
-            -DNEXT=${SCHNEIDI_NEXT_VERSION}
+            -DNEXT=${SCHNEIDI_NEXT_VERSION} -DBUILD_ID=${SCHNEIDI_BUILD_ID}
             -P ${PROJECT_SOURCE_DIR}/cmake/BuildInfo.cmake
     BYPRODUCTS ${SCHNEIDI_BUILDINFO}
     COMMENT "Build id")

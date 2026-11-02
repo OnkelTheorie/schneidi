@@ -1588,6 +1588,7 @@
  "Untertitel zu kurz zum Lesen (%1 s): „%2“": "Napis za krótki do przeczytania (%1 s): „%2”",
  "Untertitel zu schnell (%1 Zeichen/s, höchstens %2): „%3“": "Napis za szybki (%1 znaków/s, najwyżej %2): „%3”",
  "Untertitel-Zeiten": "Czasy napisów",
+ "Die weiteren Untertitelspuren ersetzen diese Dateien:\n%1": "Pozostałe ścieżki napisów zastąpią te pliki:\n%1",
  "Untertiteldatei kann nicht geschrieben werden: %1": "Nie można zapisać pliku napisów: %1",
  "Untertitelspur ausblenden": "Ukryj ścieżkę napisów",
  "Untertitelspur einblenden": "Pokaż ścieżkę napisów",

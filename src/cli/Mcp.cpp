@@ -191,6 +191,7 @@ QJsonObject callTool(const QJsonObject& params, const Options& opt, const Send& 
         return toolError("NOT_FOUND", unknownTool(name, params["arguments"].toObject(), opt));
     Context ctx;
     ctx.mcp = true;
+    ctx.partId = params["_meta"].toObject().value("schneidi/partId").toString();
     // Long jobs (render, transcribe, loudness …) report progress when the client asked for it
     const QJsonValue token = params["_meta"].toObject().value("progressToken");
     if (!token.isUndefined() && !token.isNull() && notify) {

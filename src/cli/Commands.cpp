@@ -818,7 +818,8 @@ const QVector<Command>& commands()
            "h264 (default), h265, av1, vp9 (WebM); prores (422 HQ), prores422, proreslt, proresproxy, prores4444, "
            "dnxhr-sq, dnxhr-hq, dnxhr-hqx (MOV); gif (animated, no sound; e.g. height 480, fps 15); png, tiff, jpeg = "
            "image sequence (out 'x.png' writes x/x_00001.png …); audio only: aac, mp3, opus, wav, aiff, flac, alac; "
-           "srt = only the subtitle file"},
+           "srt = only the subtitle files (the visible track into out, every other track with entries next to it as "
+           "<name>.<track name>.srt, listed in srt_more)"},
           {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small, 3 = web: high with a bit rate cap like YouTube recommends (H.264/H.265 only; the YouTube and phone presets use it). ProRes, DNxHR, GIF and images have a fixed quality"},
           {"height", T::Integer, "shorter image edge, e.g. 720 (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
@@ -829,7 +830,8 @@ const QVector<Command>& commands()
                                  "the answer's 'encoder' is the codec actually used ('copy' when smart render "
                                  "copied every frame of the source)"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
-          {"subtitles", T::String, "none (default), burn (into the picture) or srt (file next to the video)"},
+          {"subtitles", T::String, "none (default), burn (into the picture) or srt (files next to the video: the visible "
+                                  "track as <name>.srt, other tracks with entries as <name>.<track name>.srt)"},
           {"from", T::Time, "start of the range (default: timeline start)"},
           {"to", T::Time, "end of the range, exclusive (default: timeline end)"},
           {"timeline", T::String, "timeline to render (id or name; default: the open one)"},

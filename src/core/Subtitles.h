@@ -22,6 +22,15 @@ QVector<SubtitleCue> parseSrt(const QByteArray& data, double fps, int* skipped =
 QByteArray toSrt(const QVector<SubtitleCue>& cues, double fps, int offset = 0, int until = -1);
 QString srtTime(qint64 ms); // "HH:MM:SS,mmm"
 
+// The SRT files a subtitle export writes, one per track with entries: the visible track (otherwise the first with
+// entries) into `path`, every other one next to it as "<name>.<track name>.srt" (players offer such files as further
+// subtitles; an unnamed or clashing track gets its number). Main file first; empty = no track has entries.
+struct SrtFile {
+    QString path;
+    int track = 0; // index in Timeline::subtitles
+};
+QVector<SrtFile> srtFiles(const Timeline& tl, const QString& path);
+
 // Default style for a project format (sizes relative to the picture height, basis 1080 pixels)
 TitleStyle defaultStyle(QSize format);
 

@@ -106,7 +106,7 @@ int main(int argc, char* argv[])
 #ifdef Q_OS_WIN
     QGuiApplication::setOrganizationName("schneidi");
 #endif
-    QGuiApplication::setApplicationVersion(QString("%1 (%2)").arg(QString::fromUtf8(SCHNEIDI_VERSION_LABEL), SCHNEIDI_BUILD));
+    QGuiApplication::setApplicationVersion(QString::fromUtf8(SCHNEIDI_VERSION_LABEL) + (*SCHNEIDI_BUILD ? QString(" (%1)").arg(SCHNEIDI_BUILD) : QString()));
     I18n::install("en");
     std::setlocale(LC_NUMERIC, "C"); // C libraries (FFmpeg option parsing) read numbers with a dot
 

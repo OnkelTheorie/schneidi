@@ -1,2 +1,4 @@
 # Shell-Skripte immer mit LF (sonst bricht bash in MSYS2 bei core.autocrlf=true)
 *.sh text eol=lf
+# git archive writes the commit into it: the build id of a build without a Git checkout (cmake/BuildInfo.cmake)
+cmake/archive-commit.txt export-subst

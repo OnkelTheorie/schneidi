@@ -37,25 +37,26 @@ extern "C" {
 namespace {
 std::atomic<int> g_running{0}; // running exports (m_timer runs exactly then)
 
-// Visible subtitle track (otherwise the first one with entries) in the range [from, to) as SRT, times from the start of the range.
-// Not committed yet: an existing file of that name is replaced only when the export worked (nullptr = error set)
-std::unique_ptr<QSaveFile> writeSubtitleFile(const Timeline& tl, double fps, int from, int to, const QString& path, QString* error)
+// The subtitle tracks with entries in the range [from, to) as SRT files (Subtitles::srtFiles: the visible one into path,
+// the others next to it), times from the start of the range. Not committed yet: an existing file of a name is replaced
+// only when the export worked (false = error set)
+bool writeSubtitleFiles(const Timeline& tl, double fps, int from, int to, const QString& path,
+                        std::vector<std::unique_ptr<QSaveFile>>& files, QString* error)
 {
-    const SubtitleTrack* track = nullptr;
-    for (const SubtitleTrack& t : tl.subtitles)
-        if (t.enabled && !t.cues.isEmpty()) track = &t;
-    for (const SubtitleTrack& t : tl.subtitles)
-        if (!track && !t.cues.isEmpty()) track = &t;
-    if (!track) {
+    const QVector<Subtitles::SrtFile> list = Subtitles::srtFiles(tl, path);
+    if (list.isEmpty()) {
         if (error) *error = T("Die Timeline enthält keine Untertitel.");
-        return nullptr;
+        return false;
     }
-    auto f = std::make_unique<QSaveFile>(path);
-    if (!f->open(QIODevice::WriteOnly) || f->write(Subtitles::toSrt(track->cues, fps, from, to)) < 0) {
-        if (error) *error = T("Untertiteldatei kann nicht geschrieben werden: %1").arg(path);
-        return nullptr;
+    for (const Subtitles::SrtFile& srt : list) {
+        auto f = std::make_unique<QSaveFile>(srt.path);
+        if (!f->open(QIODevice::WriteOnly) || f->write(Subtitles::toSrt(tl.subtitles[srt.track].cues, fps, from, to)) < 0) {
+            if (error) *error = T("Untertiteldatei kann nicht geschrieben werden: %1").arg(srt.path);
+            return false;
+        }
+        files.push_back(std::move(f));
     }
-    return f;
+    return true;
 }
 
 // Temporary name next to a target file, with its extension (the muxer is picked by it): "clip.1a2b3c4d.part.mp4"
@@ -189,6 +190,11 @@ Exporter::Exporter(QObject* parent) : QObject(parent)
     connect(&m_timer, &QTimer::timeout, this, &Exporter::poll);
 }
 
+QString Exporter::gifIntermediate(const QString& partId)
+{
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath(QString("schneidi-gif-%1.mov").arg(partId));
+}
+
 Exporter::~Exporter()
 {
     if (m_build) stopBuild();
@@ -207,7 +213,10 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         if (error) *error = end <= 0 ? T("Die Timeline ist leer.") : T("Der In/Out-Bereich enthält nichts.");
         return false;
     }
-    for (const QString& target : {s.path, s.subtitlePath})
+    QStringList targets{s.path};
+    if (!s.subtitlePath.isEmpty())
+        for (const Subtitles::SrtFile& srt : Subtitles::srtFiles(tl, s.subtitlePath)) targets << srt.path;
+    for (const QString& target : std::as_const(targets))
         if (!target.isEmpty() && readsFile(tl, target)) {
             if (error) *error = T("%1 wird in der Timeline verwendet und kann nicht überschrieben werden.")
                                     .arg(QFileInfo(target).fileName());
@@ -252,9 +261,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         if (t.hidden) t.clips.clear();
 
     QDir().mkpath(QFileInfo(s.path).absolutePath());
-    std::unique_ptr<QSaveFile> subtitles;
+    std::vector<std::unique_ptr<QSaveFile>> subtitles;
     if (!s.subtitlePath.isEmpty()
-        && !(subtitles = writeSubtitleFile(tl, s.format.rate.fps(), m_from, m_from + m_length, s.subtitlePath, error)))
+        && !writeSubtitleFiles(tl, s.format.rate.fps(), m_from, m_from + m_length, s.subtitlePath, subtitles, error))
         return false;
     // Different frame rate: the writer picks the timeline frame of every output frame
     const FrameRate rate = s.rate.num > 0 && s.rate.den > 0 ? s.rate : s.format.rate;
@@ -268,7 +277,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_target = s.path;
     m_subtitles = std::move(subtitles);
     // Written under a temporary name next to the target, renamed onto it at the end (see m_part)
-    const QString partId = QUuid::createUuid().toString(QUuid::Id128).left(8);
+    static const QRegularExpression ownId("^[0-9a-f]{8}$");
+    const QString partId = ownId.match(s.partId).hasMatch() ? s.partId : QUuid::createUuid().toString(QUuid::Id128).left(8);
     switch (s.output) {
     case ExportSettings::Output::File: m_path = m_part = partPath(s.path, partId); break;
     case ExportSettings::Output::ImageSequence:
@@ -277,8 +287,7 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
         m_path = QDir(m_part).filePath(QFileInfo(imageSequencePattern(s.path)).fileName());
         break;
     case ExportSettings::Output::Gif:
-        m_path = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
-                     .filePath(QString("schneidi-gif-%1.mov").arg(QUuid::createUuid().toString(QUuid::Id128)));
+        m_path = gifIntermediate(partId);
         m_part = partPath(s.path, partId);
         break;
     }
@@ -760,11 +769,12 @@ bool Exporter::commitOutput(QString* error)
         if (error) *error = T("Export fehlgeschlagen: %1").arg(m_target);
         return false;
     }
-    if (m_subtitles && !m_subtitles->commit()) {
-        if (error) *error = T("Untertiteldatei kann nicht geschrieben werden: %1").arg(m_subtitles->fileName());
-        return false;
-    }
-    m_subtitles.reset();
+    for (const auto& srt : m_subtitles)
+        if (!srt->commit()) {
+            if (error) *error = T("Untertiteldatei kann nicht geschrieben werden: %1").arg(srt->fileName());
+            return false;
+        }
+    m_subtitles.clear();
     discardOutput(); // only the intermediates are left (GIF, the empty folder of an image sequence)
     return true;
 }
@@ -778,7 +788,7 @@ void Exporter::fail(const QString& message)
 
 void Exporter::discardOutput()
 {
-    m_subtitles.reset(); // not committed: its temporary file goes, an existing SRT stays
+    m_subtitles.clear(); // not committed: their temporary files go, existing SRTs stay
     if (!m_part.isEmpty()) {
         if (m_settings.output == ExportSettings::Output::ImageSequence) QDir(m_part).removeRecursively();
         else QFile::remove(m_part);

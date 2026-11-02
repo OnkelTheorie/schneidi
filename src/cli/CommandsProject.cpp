@@ -604,19 +604,23 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         if (job.to < job.from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
     }
     if (srtOnly) {
-        // Only the subtitle file (visible subtitle track, times from the range start)
-        const SubtitleTrack* track = nullptr;
-        for (const SubtitleTrack& t : tl.subtitles)
-            if (t.enabled && !t.cues.isEmpty()) track = &t;
-        for (const SubtitleTrack& t : tl.subtitles)
-            if (!track && !t.cues.isEmpty()) track = &t;
-        if (!track) fail("EMPTY", "the timeline has no subtitles");
+        // Only the subtitle files (the visible track into out, every other one with entries next to it), times from
+        // the range start
+        const QVector<Subtitles::SrtFile> files = Subtitles::srtFiles(tl, out);
+        if (files.isEmpty()) fail("EMPTY", "the timeline has no subtitles");
         QDir().mkpath(QFileInfo(out).absolutePath());
-        QFile f(out);
-        if (!f.open(QIODevice::WriteOnly)
-            || f.write(Subtitles::toSrt(track->cues, s.project.frameRate(), job.inOut ? job.from : 0, job.inOut ? job.to + 1 : -1)) < 0)
-            fail("WRITE_FAILED", "cannot write " + out);
-        return {{"out", out}, {"format", "srt"}, {"cues", int(track->cues.size())}};
+        QJsonArray more;
+        for (const Subtitles::SrtFile& srt : files) {
+            const SubtitleTrack& track = tl.subtitles[srt.track];
+            QFile f(srt.path);
+            if (!f.open(QIODevice::WriteOnly)
+                || f.write(Subtitles::toSrt(track.cues, s.project.frameRate(), job.inOut ? job.from : 0, job.inOut ? job.to + 1 : -1)) < 0)
+                fail("WRITE_FAILED", "cannot write " + srt.path);
+            if (srt.path != out) more << srt.path;
+        }
+        QJsonObject o{{"out", out}, {"format", "srt"}, {"cues", int(tl.subtitles[files[0].track].cues.size())}};
+        if (!more.isEmpty()) o["srt_more"] = more; // the other subtitle tracks, next to out
+        return o;
     }
     if (Exporter::readsFile(tl, out)) fail("BAD_ARGUMENT", "the output would overwrite a source file of the project");
     QDir().mkpath(QFileInfo(out).absolutePath());
@@ -638,6 +642,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     QString error;
     ExportSettings es = RenderQueue::exportSettings(job, s.project);
     if (threads > 0) es.threads = threads;
+    es.partId = ctx.partId;
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
@@ -664,7 +669,15 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         o["height"] = es.size.height();
     }
     if (!job.preset.isEmpty()) o["preset"] = job.preset;
-    if (!es.subtitlePath.isEmpty()) o["srt"] = es.subtitlePath;
+    if (!es.subtitlePath.isEmpty()) {
+        o["srt"] = es.subtitlePath;
+        const QVector<Subtitles::SrtFile> files = Subtitles::srtFiles(tl, es.subtitlePath);
+        if (files.size() > 1) { // the other subtitle tracks, next to it
+            QJsonArray more;
+            for (qsizetype i = 1; i < files.size(); ++i) more << files[i].path;
+            o["srt_more"] = more;
+        }
+    }
     return o;
 }
 
