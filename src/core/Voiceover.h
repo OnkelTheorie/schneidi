@@ -6,10 +6,9 @@
 // the clip goes (Editor::placeRecording places it as one undo step).
 //
 // Lining up: the recording starts a moment before the timeline sound is heard (the player waits for the picture)
-// and arrives late by the input's buffer. While recording, the app pairs "frames the input delivered" with "timeline
-// time heard now" (the player's clock already counts the output's buffer); the smallest difference is the most
-// exact pair (taken right after an input block arrived). Input latency and a user offset (sound cards that report
-// too little) are subtracted on top.
+// and arrives in blocks. While recording, the app pairs "frames the input delivered" with "timeline time heard now"
+// (the player's clock already counts the output's buffer); the smallest difference is the most exact pair (taken
+// right after an input block arrived). A user offset (what the hardware adds unreported) is subtracted on top.
 
 #include <QDateTime>
 #include <QString>
@@ -52,7 +51,7 @@ public:
     // Pairs only count while the clock moves (heardSeconds larger than at the call before)
     void add(long long capturedFrames, double heardSeconds, int rate);
     bool empty() const { return !m_best; }
-    // Timeline seconds at file sample 0: best pair minus input latency (samples) and the user offset
+    // Timeline seconds at file sample 0: best pair minus an input delay (samples) and the user offset
     std::optional<double> fileStartSeconds(int inputLatency, int rate, int offsetMs) const;
 
 private:

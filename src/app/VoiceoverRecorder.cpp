@@ -123,9 +123,15 @@ bool VoiceoverRecorder::stop(QString* error)
     const double fps = m_project->frameRate();
     // Where file sample 0 lies in the timeline: from the pairs taken while playing; nothing played along (past the
     // end, stopped at once): where playback started
+    // The input's buffer size is not its delay: a block reaches the callback as soon as it is full, its newest sample
+    // only a moment old. Taking the buffer off put the take 2048 samples (43 ms) early (measured: timeline played into
+    // a PipeWire sink, its monitor recorded, take cross-correlated with the timeline sound: +45 ms with, +2.4 to +4 ms
+    // without). What the hardware adds before the system sees the sound (converter, USB) is not reported by
+    // miniaudio: the user's offset (Settings::offsetMs) takes that.
+    constexpr int inputDelay = 0;
     double fileStart = m_playFrom;
-    if (const auto s = m_alignment.fileStartSeconds(inputLatency, rate, m_settings.offsetMs)) fileStart = *s * fps;
-    else fileStart -= (double(inputLatency) / rate + m_settings.offsetMs / 1000.0) * fps;
+    if (const auto s = m_alignment.fileStartSeconds(inputDelay, rate, m_settings.offsetMs)) fileStart = *s * fps;
+    else fileStart -= m_settings.offsetMs / 1000.0 * fps;
 
     qInfo("Voiceover: %lld Samples, Datei beginnt bei Frame %.3f (Eingang %d Samples, Versatz %d ms, Start %d)",
           frames, fileStart, inputLatency, m_settings.offsetMs, m_from);
