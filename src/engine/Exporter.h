@@ -14,6 +14,7 @@
 #include <QTimer>
 #include <atomic>
 #include <memory>
+#include <vector>
 
 namespace Audio {
 class Mixer;
@@ -47,7 +48,9 @@ struct ExportSettings {
     int audioRate = 0, audioChannels = 0; // 0 = 48 kHz stereo (speech to text wants 16 kHz mono)
     FrameRate rate{0, 1};      // frame rate of the file; num 0 = like the timeline (format.rate)
     bool burnSubtitles = false; // burn the visible subtitle track into the image
-    QString subtitlePath;       // additionally write the visible subtitle track as SRT here (empty = not)
+    // Additionally write the visible subtitle track as SRT here, the other tracks with entries next to it
+    // (Subtitles::srtFiles); empty = not
+    QString subtitlePath;
     int from = 0, to = -1; // range (frames, inclusive); to < 0 = until the end of the timeline
     int threads = 0;       // threads (logical processors) for rendering (images in parallel, decoder, encoder); 0 = all
     // Length of each media file in frames of the project rate (Project::media()), for the audio mixer: reversed
@@ -177,7 +180,8 @@ private:
     // canceled export keeps an older file of that name): File = m_path, GIF = the converted file, image sequence = the
     // folder m_path writes into
     QString m_part;
-    std::unique_ptr<QSaveFile> m_subtitles; // SRT next to the file (ExportSettings::subtitlePath), committed at success
+    // SRT files next to the file (ExportSettings::subtitlePath and one per further track), committed at success
+    std::vector<std::unique_ptr<QSaveFile>> m_subtitles;
     ExportSettings m_settings;
     bool m_convertRate = false;
     std::shared_ptr<Picture::Renderer> m_renderer;

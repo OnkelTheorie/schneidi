@@ -913,27 +913,29 @@ void MainWindow::transcribeDialog()
 
 void MainWindow::exportSubtitlesDialog()
 {
-    // Visible subtitle track (like DaVinci "Export Subtitle"), otherwise the first one with entries
+    // The visible subtitle track (otherwise the first one with entries) into the chosen file, every other track with
+    // entries next to it as "<name>.<track name>.srt" (Subtitles::srtFiles)
     const Timeline& tl = m_project->timeline();
-    int index = -1;
-    for (int i = 0; i < tl.subtitles.size(); ++i)
-        if (tl.subtitles[i].enabled && !tl.subtitles[i].cues.isEmpty()) index = i;
-    for (int i = 0; i < tl.subtitles.size() && index < 0; ++i)
-        if (!tl.subtitles[i].cues.isEmpty()) index = i;
-    if (index < 0) {
+    const QVector<Subtitles::SrtFile> preview = Subtitles::srtFiles(tl, "x.srt");
+    if (preview.isEmpty()) {
         QMessageBox::information(this, T("Untertitel exportieren"), T("Die Timeline enthält keine Untertitel."));
         return;
     }
-    const SubtitleTrack& t = tl.subtitles[index];
+    const SubtitleTrack& t = tl.subtitles[preview[0].track];
     const QString base = m_projectPath.isEmpty() ? QString() : QFileInfo(m_projectPath).absolutePath();
     const QString name = (t.name.isEmpty() ? (m_projectPath.isEmpty() ? QString("untertitel") : QFileInfo(m_projectPath).completeBaseName()) : t.name) + ".srt";
     QString path = QFileDialog::getSaveFileName(this, T("Untertitel exportieren"), base.isEmpty() ? name : base + "/" + name,
                                                 T("Untertitel (*.srt)"));
     if (path.isEmpty()) return;
     if (QFileInfo(path).suffix().isEmpty()) path += ".srt";
-    QSaveFile f(path);
-    if (!f.open(QIODevice::WriteOnly) || f.write(Subtitles::toSrt(t.cues, m_project->frameRate())) < 0 || !f.commit())
-        QMessageBox::warning(this, T("Untertitel exportieren"), T("Untertiteldatei kann nicht geschrieben werden: %1").arg(path));
+    for (const Subtitles::SrtFile& srt : Subtitles::srtFiles(tl, path)) {
+        QSaveFile f(srt.path);
+        if (!f.open(QIODevice::WriteOnly) || f.write(Subtitles::toSrt(tl.subtitles[srt.track].cues, m_project->frameRate())) < 0
+            || !f.commit()) {
+            QMessageBox::warning(this, T("Untertitel exportieren"), T("Untertiteldatei kann nicht geschrieben werden: %1").arg(srt.path));
+            return;
+        }
+    }
 }
 
 void MainWindow::setupProxyHint()

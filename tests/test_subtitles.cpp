@@ -19,6 +19,7 @@
 #include <QApplication>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QMouseEvent>
 #include <QTemporaryDir>
@@ -92,6 +93,29 @@ void testSrt()
     CHECK_EQ(cues(c), QString("25-50:C"));
     CHECK_EQ(skipped, 2);
     CHECK_EQ(Subtitles::srtTime(3723004), QString("01:02:03,004"));
+
+    // Export: one file per track with entries, the visible one into the chosen file, the others next to it
+    {
+        Timeline tl;
+        const auto track = [&](const QString& name, bool enabled, bool withCues) {
+            SubtitleTrack t;
+            t.name = name;
+            t.enabled = enabled;
+            if (withCues) t.cues = {{1, 0, 25, "x"}};
+            tl.subtitles << t;
+        };
+        CHECK(Subtitles::srtFiles(tl, "/a/film.srt").isEmpty());
+        track("English", false, true);
+        track("Deutsch", true, true);
+        track("leer", false, false);
+        track("", false, true);
+        track("english", false, true); // clashes with "English" on Windows/macOS
+        track("a/b:c.", false, true);
+        const QVector<Subtitles::SrtFile> files = Subtitles::srtFiles(tl, "/a/film.srt");
+        QStringList got;
+        for (const Subtitles::SrtFile& f : files) got << QString("%1=%2").arg(f.track).arg(QFileInfo(f.path).fileName());
+        CHECK_EQ(got.join(' '), QString("1=film.srt 0=film.English.srt 3=film.4.srt 4=film.5.srt 5=film.a_b_c.srt"));
+    }
 
     // Timecode input in the Inspector (like DaVinci)
     CHECK_EQ(Timecode::parse("00:00:10:05", 25), 255);
