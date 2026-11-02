@@ -8,6 +8,7 @@
 // monitor of a test sink), VOICEOVER_E2E_OUTPUT=<that sink> and VOICEOVER_E2E_MEDIA=<file with sound> play the file
 // into the sink and record its monitor; the placement is printed for comparing the take with the file (the take
 // must sit exactly on the timeline's own sound). SCHNEIDI_AUDIO_DEVICE and SCHNEIDI_AUDIO_INPUT must be set empty.
+// VOICEOVER_DUMP=<png>: picture of the Mixer and the viewer while recording.
 
 #include "check.h"
 
@@ -17,6 +18,7 @@
 #include "core/Voiceover.h"
 #include "engine/Engine.h"
 #include "engine/audio/Device.h"
+#include "ui/Mixer.h"
 #include "ui/Viewer.h"
 
 #include <QSettings>
@@ -91,6 +93,11 @@ int main(int argc, char** argv)
     CHECK(record->isChecked());
     CHECK(viewer->recording());
     CHECK(engine.speed() == 1.0); // the timeline plays along
+    if (const QString dump = qEnvironmentVariable("VOICEOVER_DUMP"); !dump.isEmpty()) {
+        if (auto* mixer = w.findChild<Mixer*>()) mixer->show();
+        wait(800);
+        w.grab().save(dump);
+    }
     wait(e2e ? 4000 : 1500);
     engine.pause(); // Space/K: stopping playback ends the take
     wait(50);

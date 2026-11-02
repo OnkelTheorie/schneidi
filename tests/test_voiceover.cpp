@@ -20,6 +20,7 @@
 #include <QtEndian>
 
 #include <cmath>
+#include <numbers>
 
 namespace {
 
@@ -95,7 +96,7 @@ int main(int argc, char** argv)
             // No frame lost or doubled: the tone continues sample by sample over the block edges
             double worst = 0;
             for (int i = 0; i < w.samples.size(); ++i)
-                worst = std::max(worst, std::abs(w.samples[i] - 0.25 * std::sin(2 * M_PI * 1000.0 * i / 48000)));
+                worst = std::max(worst, std::abs(w.samples[i] - 0.25 * std::sin(2 * std::numbers::pi * 1000.0 * i / 48000)));
             CHECK(worst < 1e-5);
             // The file reads as audio in the project's frame rate
             const MediaInfo m = Engine::probe(ProjectFormat{}, path);

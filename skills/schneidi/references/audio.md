@@ -25,6 +25,13 @@ made with `new` `template` "game" mutes the Mix by itself (its own import preset
 look at `info` after placing such a file: if "Mix" and its parts are all enabled, switch off one side with `enable`
 (usually the Mix, so the voice and game stay separately adjustable) and confirm with `loudness`.
 
+## Voice-over
+You cannot speak: a voice-over comes from a file the user gives (`import`, then place it on its own audio track like
+any clip) or the user records it in the app - Mixer: "R" arms a track, "● Voiceover" (or Shift+R) plays the timeline
+from the playhead and records; the take lands on the armed track at the playhead. Takes are WAV files named
+`voiceover-<date>-<time>.wav` in the folder `<project name>-voiceover` next to the project; in `info` they are plain
+audio clips. Treat them like speech: `normalize`, `denoise`, `duck` the music under that track.
+
 ## Check
 `loudness` on the rendered file: integrated within ±1 LU of the target, true peak ≤ -1 dBTP. If the music drowns
 speech, lower it or duck harder (`amount_db` -15 to -20).
