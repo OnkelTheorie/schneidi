@@ -215,8 +215,9 @@ void testProgram(const QString& dir, const QString& clip, const QString& other)
     CHECK_EQ(code(r), QString("ok"));
     CHECK_EQ(r["format"].toObject()["width"].toInt(), 320);
     CHECK_EQ(r["format"].toObject()["height"].toInt(), 240);
-    CHECK_EQ(r["timeline"].toObject()["video"].toArray().value(0).toObject()["clips"].toArray().size(), 1);
-    if (r["timeline"].toObject().isEmpty()) std::printf("       info: %s\n", QJsonDocument(r).toJson().constData());
+    CHECK_EQ(r["format"].toObject()["fps"].toDouble(), 30.0);
+    const QJsonArray tracks = r["timeline"].toObject()["tracks"].toArray();
+    CHECK_EQ(tracks.isEmpty() ? -1 : int(tracks.at(0).toObject()["clips"].toArray().size()), 1); // V1
 
     QProcess second;
     second.setProcessEnvironment(env);
