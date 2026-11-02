@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <future>
+#include <thread>
 #include <vector>
 
 namespace TextRegions {
@@ -243,22 +245,30 @@ Result analyze(const ProjectFormat& format, const Clip& c, const std::atomic<boo
     tl.video[0].clips << plain;
     auto source = Snapshot::Source::timeline(format, tl);
     const int length = c.length();
-    for (int f = 0; f < length; f += step) {
+    // Decoding is sequential, the detection runs on a batch of pictures at once (it costs more than decoding)
+    const int batch = int(std::clamp(std::thread::hardware_concurrency(), 2u, 8u));
+    for (int f = 0; f < length;) {
         if (cancel && cancel->load()) {
             res.canceled = true;
             res.samples.clear();
             return res;
         }
-        const QImage img = source->frame(f, kSide);
-        if (img.isNull()) {
-            if (f == 0) {
-                res.error = T("Kein Bild vom Clip");
-                return res;
+        QVector<int> frames;
+        std::vector<std::future<QVector<QRectF>>> found;
+        for (; f < length && int(frames.size()) < batch; f += step) {
+            QImage img = source->frame(f, kSide);
+            if (img.isNull()) {
+                if (f == 0) {
+                    res.error = T("Kein Bild vom Clip");
+                    return res;
+                }
+                continue;
             }
-            continue;
+            frames << f;
+            found.push_back(std::async(std::launch::async, [img = std::move(img)] { return detect(img); }));
         }
-        res.samples << NameBlur::Sample{f, detect(img)};
-        if (progress) progress->store(int(qint64(f + 1) * 1000 / length));
+        for (int k = 0; k < frames.size(); ++k) res.samples << NameBlur::Sample{frames[k], found[size_t(k)].get()};
+        if (progress) progress->store(int(qint64(std::min(f, length)) * 1000 / length));
     }
     if (cacheable) {
         QDir().mkpath(cacheDir());

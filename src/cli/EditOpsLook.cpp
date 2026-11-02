@@ -310,7 +310,7 @@ void opBlurNames(Session& s, const QJsonObject& op)
         for (int w : added.value(id)) numbers << QString::number(w);
         if (!numbers.isEmpty()) n += ", windows " + numbers.join(", ");
     }
-    s.notes << notes;
+    for (const QString& n : notes) s.notes << n;
 }
 
 // ---------- reframe ----------
