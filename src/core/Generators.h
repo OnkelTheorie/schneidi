@@ -29,9 +29,10 @@ NumberStyle numberStyleOfLanguage();
 // The widest text the counter shows (its first or last value): the block keeps this size while the number grows
 QString counterWidest(const TitleStyle& s, const QFontMetricsF& fm);
 
-// Progress bar: how full it is (0..1) at timeline frame f for a clip `c` in a timeline whose content ends at
-// `timelineEnd` (exclusive): Timeline span = from frame 0 to the last frame, Clip span = over the clip
-double progress(const TitleStyle& s, const Clip& c, int f, int timelineEnd);
+// Progress bar: how full it is (0..1) at timeline frame f for a clip `c` in a video running from `begin` to `end`
+// (exclusive; the whole timeline, or the exported range: the bar fills over what the viewer gets): Timeline span =
+// from its first to its last frame, Clip span = over the clip
+double progress(const TitleStyle& s, const Clip& c, int f, int begin, int end);
 // The track (whole bar) and its filled part in project pixels of a W x H picture
 QRectF progressTrack(const TitleStyle& s, double W, double H);
 QRectF progressFill(const TitleStyle& s, double W, double H, double fraction);

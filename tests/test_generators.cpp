@@ -355,6 +355,19 @@ void testProgress()
     const QImage at75 = render(tl, 75);
     CHECK(near(at75.pixel(300, 5), Qt::black));
     CHECK(near(at75.pixel(300, 20), kBlue));
+    // Export of a range (frames 50..99): the bar fills over the exported video, from empty to full
+    {
+        Picture::Options o;
+        o.format = kFormat;
+        o.mode = Picture::Mode::Export;
+        o.rangeStart = 50;
+        o.rangeEnd = 99;
+        Picture::Renderer r(tl, o);
+        CHECK_EQ(barWidth(r.render(50).toImage(), 5), 0);
+        const int mid = barWidth(r.render(75).toImage(), 5); // 25 / 49 = 163.3 px
+        CHECK(mid >= 163 && mid <= 164);
+        CHECK_EQ(barWidth(r.render(99).toImage(), 5), 320);
+    }
     // Clip span: over the title's 50 frames
     tl.video[1].clips[0].title.span = ProgressSpan::Clip;
     CHECK_EQ(barWidth(render(tl, 50), 5), 0);

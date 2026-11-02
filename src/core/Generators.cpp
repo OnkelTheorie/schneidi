@@ -70,10 +70,10 @@ QString counterWidest(const TitleStyle& s, const QFontMetricsF& fm)
     return fm.horizontalAdvance(a) >= fm.horizontalAdvance(b) ? a : b;
 }
 
-double progress(const TitleStyle& s, const Clip& c, int f, int timelineEnd)
+double progress(const TitleStyle& s, const Clip& c, int f, int begin, int end)
 {
     if (s.span == ProgressSpan::Clip) return c.length() > 1 ? std::clamp(double(f - c.start) / (c.length() - 1), 0.0, 1.0) : 1.0;
-    return timelineEnd > 1 ? std::clamp(double(f) / (timelineEnd - 1), 0.0, 1.0) : 1.0;
+    return end - begin > 1 ? std::clamp(double(f - begin) / (end - 1 - begin), 0.0, 1.0) : 1.0;
 }
 
 QRectF progressTrack(const TitleStyle& s, double W, double H)

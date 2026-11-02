@@ -335,7 +335,9 @@ struct Renderer::Impl {
         double fps = 25;
         bool preview = false;
         bool bypassGrade = false;
-        int end = 0; // end of the timeline being rendered (TimelineOps::endFrame; progress bars)
+        // The video being made (progress bars fill over it): the timeline being rendered (TimelineOps::endFrame), in
+        // an export of a range only that range
+        int begin = 0, end = 0;
     };
 
     Source source(const QString& path, const QString& lane)
@@ -727,7 +729,7 @@ struct Renderer::Impl {
             *bounds = out.toAlignedRect() & QRect(0, 0, ctx.W, ctx.H);
             return;
         }
-        const double fraction = Generators::progress(st, c, c.start + int(std::lround(t)), ctx.end);
+        const double fraction = Generators::progress(st, c, c.start + int(std::lround(t)), ctx.begin, ctx.end);
         QImage img(layer.data(), layer.w, layer.h, layer.w * 4, QImage::Format_RGBA8888);
         QPainter p(&img);
         p.setRenderHint(QPainter::Antialiasing);
@@ -830,6 +832,7 @@ struct Renderer::Impl {
             if (!own.isEmpty() && (own.width() != ctx.PW || own.height() != ctx.PH)) {
                 fit = MediaAspect::fit(double(own.width()) / own.height(), QSizeF(ctx.PW, ctx.PH));
                 Ctx sub = ctx;
+                sub.begin = 0;
                 sub.end = TimelineOps::endFrame(*inner);
                 sub.PW = own.width();
                 sub.PH = own.height();
@@ -840,6 +843,7 @@ struct Renderer::Impl {
             } else {
                 src = Image(W, H);
                 Ctx sub = ctx;
+                sub.begin = 0;
                 sub.end = TimelineOps::endFrame(*inner);
                 renderTimeline(*inner, in, src, sub, lane + QString("n%1/").arg(c.sequenceId), false, depth + 1);
             }
@@ -2117,6 +2121,10 @@ Frame Renderer::render(int64_t frame, const RenderHints& hints)
     ctx.PH = d->options.format.height;
     ctx.fps = d->options.format.rate.fps();
     ctx.end = ctx.root ? TimelineOps::endFrame(*ctx.root) : 0;
+    if (d->options.rangeEnd >= 0) { // export of a range: the bar fills over the exported video
+        ctx.begin = int(d->options.rangeStart);
+        ctx.end = int(d->options.rangeEnd) + 1;
+    }
     ctx.preview = d->options.mode == Mode::Preview;
     ctx.bypassGrade = ctx.preview && d->options.gradeBypass && d->options.gradeBypass->load();
 
@@ -2220,6 +2228,10 @@ void Renderer::prepare(int64_t frame)
     ctx.root = tl;
     ctx.fps = fps;
     ctx.end = tl ? TimelineOps::endFrame(*tl) : 0;
+    if (d->options.rangeEnd >= 0) {
+        ctx.begin = int(d->options.rangeStart);
+        ctx.end = int(d->options.rangeEnd) + 1;
+    }
     ctx.PW = d->options.format.width;
     ctx.PH = d->options.format.height;
     ctx.preview = d->options.mode == Mode::Preview;
