@@ -6,6 +6,7 @@
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
 
+#include "core/GameHud.h"
 #include "core/I18n.h"
 #include "core/ProjectFile.h"
 #include "core/RenderJob.h"
@@ -22,37 +23,6 @@
 namespace Cli::detail {
 
 namespace {
-
-// Kill feed settings per game as the highlights guide documents them
-struct GameHint {
-    const char* id;
-    const char* region;
-    const char* color;
-    int tolerance; // 0 = default
-};
-constexpr GameHint kGames[] = {
-    {"cs2", "0.72,0.04,0.28,0.2", "#d8444a", 40},
-    {"valorant", "0.70,0.04,0.22,0.23", "#e7e371", 0},
-};
-
-const GameHint* gameHint(const QString& id)
-{
-    for (const GameHint& g : kGames)
-        if (id.compare(QLatin1String(g.id), Qt::CaseInsensitive) == 0) return &g;
-    return nullptr;
-}
-
-// The game from the folder (a clip tool's "cs2/") or the file name ("cs2_clip_…", "valorant-…")
-const GameHint* guessGame(const QString& file)
-{
-    const QFileInfo fi(file);
-    const QString dir = fi.absoluteDir().dirName().toLower(), name = fi.fileName().toLower();
-    for (const GameHint& g : kGames) {
-        const QString id = QLatin1String(g.id);
-        if (dir == id || name.startsWith(id + "_") || name.startsWith(id + "-") || name.startsWith(id + " ")) return &g;
-    }
-    return nullptr;
-}
 
 // "<base>-short.mp4" next to `beside`, numbered when it exists ("-short-2.mp4")
 QString freeName(const QString& dir, const QString& base, const QString& suffix)
@@ -119,16 +89,16 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     if (!platform) fail("BAD_ARGUMENT", "for must be shorts, reels or tiktok (the platform)");
     if (platform->maxSeconds < pick.maxS) pick.maxS = platform->maxSeconds;
     pick.minS = std::min(pick.minS, pick.maxS);
-    const GameHint* game = nullptr;
-    if (a.contains("game")) {
-        const QString g = a["game"].toString().trimmed();
-        if (g.compare("none", Qt::CaseInsensitive) != 0 && !(game = gameHint(g))) {
+    const GameHud::Game* game = nullptr;
+    const bool noGame = a.contains("game") && a["game"].toString().trimmed().compare("none", Qt::CaseInsensitive) == 0;
+    if (a.contains("game") && !noGame) {
+        if (!(game = GameHud::find(a["game"].toString()))) {
             QStringList ids{"none"};
-            for (const GameHint& h : kGames) ids << h.id;
+            for (const GameHud::Game& h : GameHud::games()) ids << h.id;
             fail("BAD_ARGUMENT", "game must be " + ids.join(", ") + " (or leave it out: from the folder or file name)");
         }
-    } else if (!files.isEmpty()) {
-        game = guessGame(files.first());
+    } else if (!files.isEmpty() && !noGame) {
+        game = GameHud::guess(files.first());
     }
 
     // Where the video goes: given (not replaced unless overwrite), else next to the first recording / the project
@@ -179,11 +149,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         QVector<ShortPick::Moment> candidates;
         for (int i = 0; i < files.size(); ++i) {
             QJsonObject h{{"file", files[i]}, {"project", project}};
-            if (game) {
-                h["region"] = QString::fromLatin1(game->region);
-                h["color"] = QString::fromLatin1(game->color);
-                if (game->tolerance > 0) h["tolerance"] = game->tolerance;
-            }
+            h["game"] = game ? game->id : QString("none");
             const double f0 = 0.02 + 0.28 * i / files.size(), f1 = 0.02 + 0.28 * (i + 1) / files.size();
             const QJsonObject hl = run("highlights", h, step(f0, f1));
             for (const QJsonValue& c : hl["candidates"].toArray())
@@ -236,12 +202,16 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     // 5. The vertical copy, every clip following its subject
     const QJsonObject now = run("info", {{"project", project}, {"summary", true}}, step(0.32, 0.32));
     const QString shortTimeline = uniqueTimelineName(now["timelines"].toArray(), T("Short"));
-    run("edit",
-        {{"project", project},
-         {"ops", QJsonArray{QJsonObject{{"op", "new_timeline"}, {"name", shortTimeline}, {"from", cutTimeline},
-                                        {"aspect", aspect}, {"reframe", reframe}, {"open", false}}}}},
-        step(0.32, 0.4));
-    done << QString("timeline '%1' %2, reframe %3").arg(shortTimeline, aspect, reframe);
+    // Game footage keeps its kill feed readable at the top (reframe keep:'auto'; the game given here counts)
+    QJsonObject copy{{"op", "new_timeline"}, {"name", shortTimeline}, {"from", cutTimeline},
+                     {"aspect", aspect}, {"reframe", reframe}, {"open", false}};
+    if (game) copy["game"] = game->id;
+    if (noGame) copy["keep"] = "none";
+    const QJsonObject made = run("edit", {{"project", project}, {"ops", QJsonArray{copy}}}, step(0.32, 0.4));
+    const QJsonArray madeNotes = made["notes"].toArray();
+    const bool keptFeed = std::any_of(madeNotes.begin(), madeNotes.end(),
+                                      [](const QJsonValue& n) { return n.toString().startsWith("kept readable"); });
+    done << QString("timeline '%1' %2, reframe %3%4").arg(shortTimeline, aspect, reframe, keptFeed ? ", kill feed kept at the top" : "");
 
     // 6. Word captions from the speech, when whisper is there (never installed from here)
     bool burn = false;

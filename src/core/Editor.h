@@ -464,10 +464,19 @@ public:
     // fitted in with a blurred copy behind (Mode::Fit). Titles, compound/multicam clips and locked tracks are left out.
     // contents: per file the part of the picture between black bars (engine/BarDetect; missing = whole picture):
     // those bars are cropped and the content fills the frame. One undo step; returns the number of clips changed.
+    // keeps (given): per clip the regions kept readable above it (Reframe::keepCopy, a copy on a free track above,
+    // in the same undo step); the clip's earlier kept-region copies are replaced (an empty list removes them).
+    // Not given: they stay as they are.
     int reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHash<int, QVector<Reframe::Key>>& paths = {},
-                     const QHash<QString, QRectF>& contents = {});
+                     const QHash<QString, QRectF>& contents = {},
+                     const QHash<int, QVector<Reframe::Keep>>* keeps = nullptr);
     // The video clips reframeClips would change
     QVector<int> reframeTargets(const QVector<int>& ids) const;
+    // The regions to keep per clip (ids as reframeClips' targets) for `choice` in the open timeline's shape;
+    // `noGame` gets the clips without a known game when the choice asks for a kill feed
+    QHash<int, QVector<Reframe::Keep>> reframeKeeps(const QVector<int>& ids, Reframe::Mode mode,
+                                                    const QHash<QString, QRectF>& contents,
+                                                    const Reframe::KeepChoice& choice, QVector<int>* noGame = nullptr) const;
     // Crops the black bars of the clips among `ids` (video clips; empty = every one of the open timeline) to their
     // content (per file, engine/BarDetect). One undo step; returns the number of clips changed.
     int cropBars(const QVector<int>& ids, const QHash<QString, QRectF>& contents);

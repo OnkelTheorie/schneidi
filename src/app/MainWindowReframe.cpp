@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // MainWindow: Auto-Reframe (core/Reframe.h, engine/ReframeAnalysis.h) - the clip/timeline menu entry and the Media
 // Pool's "copy as 9:16 timeline". The measuring runs in a thread behind a progress dialog; the change is one undo step.
+// Game footage keeps its kill feed readable at the top (Reframe::KeepChoice::Auto) unless switched off in the menu.
 #include "app/MainWindow.h"
 
 #include "core/Editor.h"
@@ -16,11 +17,13 @@
 #include <QEventLoop>
 #include <QMessageBox>
 #include <QProgressDialog>
+#include <QSettings>
 #include <QStatusBar>
 #include <QThread>
 #include <QTimer>
 #include <QUndoStack>
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 
@@ -112,8 +115,12 @@ void MainWindow::autoReframe()
         statusBar()->showMessage(T("Auto-Reframe abgebrochen: die Timeline hat sich während der Analyse geändert"), 6000);
         return;
     }
-    const int n = m_editor->reframeClips(ids, Reframe::Mode::Auto, paths, contents);
-    statusBar()->showMessage(T("Auto-Reframe: %1 Clips folgen ihrem Motiv").arg(n), 5000);
+    const auto keeps = m_editor->reframeKeeps(ids, Reframe::Mode::Auto, contents, reframeKeepChoice());
+    const int n = m_editor->reframeClips(ids, Reframe::Mode::Auto, paths, contents, &keeps);
+    const bool kept = std::any_of(keeps.begin(), keeps.end(), [](const QVector<Reframe::Keep>& k) { return !k.isEmpty(); });
+    statusBar()->showMessage(kept ? T("Auto-Reframe: %1 Clips folgen ihrem Motiv, der Killfeed bleibt oben lesbar").arg(n)
+                                  : T("Auto-Reframe: %1 Clips folgen ihrem Motiv").arg(n),
+                             5000);
 }
 
 void MainWindow::reframedCopy(int sequenceId)
@@ -153,9 +160,18 @@ void MainWindow::reframedCopy(int sequenceId)
             for (int i = 0; i < source.video[t].clips.size() && i < now.video[t].clips.size(); ++i)
                 if (paths.contains(source.video[t].clips[i].id))
                     mapped.insert(now.video[t].clips[i].id, paths.value(source.video[t].clips[i].id));
-        m_editor->reframeClips({}, Reframe::Mode::Auto, mapped, contents);
+        const auto keeps = m_editor->reframeKeeps(m_editor->reframeTargets({}), Reframe::Mode::Auto, contents,
+                                                  reframeKeepChoice());
+        m_editor->reframeClips({}, Reframe::Mode::Auto, mapped, contents, &keeps);
     }
     undo->endMacro();
+}
+
+Reframe::KeepChoice MainWindow::reframeKeepChoice() const
+{
+    Reframe::KeepChoice c;
+    if (!QSettings().value(QStringLiteral("reframe/keepKillFeed"), true).toBool()) c.kind = Reframe::KeepChoice::None;
+    return c;
 }
 
 void MainWindow::cropBlackBars()

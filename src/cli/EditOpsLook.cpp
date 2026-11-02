@@ -5,6 +5,7 @@
 
 #include "core/Accents.h"
 #include "core/EffectRegistry.h"
+#include "core/GameHud.h"
 #include "core/GradeWindows.h"
 #include "core/Keyframes.h"
 #include "core/Reframe.h"
@@ -16,6 +17,7 @@
 
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QLocale>
 #include <QSet>
 
 #include <algorithm>
@@ -684,6 +686,46 @@ QJsonObject keyframesJson(const Clip& c)
     return o;
 }
 
+// keep / game of a reframe op: what stays readable above the reframed picture
+static Reframe::KeepChoice keepChoice(const QJsonObject& op)
+{
+    Reframe::KeepChoice c;
+    if (op.contains("game")) {
+        c.game = op.value("game").toString().trimmed().toLower();
+        if (!GameHud::find(c.game)) {
+            QStringList ids;
+            for (const GameHud::Game& g : GameHud::games()) ids << g.id;
+            fail("BAD_ARGUMENT", "game must be " + ids.join(", ") + " (or leave it out: from the folder or file name)");
+        }
+    }
+    const QJsonValue v = op.value("keep");
+    if (v.isUndefined() || v.isNull()) return c;
+    if (v.isBool()) {
+        c.kind = v.toBool() ? Reframe::KeepChoice::KillFeed : Reframe::KeepChoice::None;
+        return c;
+    }
+    const QString k = v.toString().trimmed().toLower();
+    if (k == "auto") return c;
+    if (k == "none" || k == "off") c.kind = Reframe::KeepChoice::None;
+    else if (k == "killfeed" || k == "kill_feed") c.kind = Reframe::KeepChoice::KillFeed;
+    else {
+        QVector<double> n;
+        for (const QString& part : k.split(',')) {
+            bool ok = false;
+            n << QLocale::c().toDouble(part.trimmed(), &ok);
+            if (!ok) n.clear();
+            if (n.isEmpty()) break;
+        }
+        if (n.size() != 4 || std::any_of(n.begin(), n.end(), [](double x) { return x < 0 || x > 1; }) || n[2] < 0.01
+            || n[3] < 0.01 || n[0] + n[2] > 1.0001 || n[1] + n[3] > 1.0001)
+            fail("BAD_ARGUMENT", "keep must be auto, killfeed, none or a region \"x,y,w,h\" (fractions 0..1 of the "
+                                 "picture, e.g. \"0.7,0.05,0.3,0.2\")");
+        c.kind = Reframe::KeepChoice::Custom;
+        c.region = QRectF(n[0], n[1], n[2], n[3]);
+    }
+    return c;
+}
+
 void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
 {
     Reframe::Mode mode = Reframe::Mode::Auto;
@@ -708,7 +750,25 @@ void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
     } else if (bars) {
         contents = barContents(clips);
     }
-    s.editor.reframeClips(targets, mode, paths, contents);
+    const Reframe::KeepChoice choice = keepChoice(op);
+    QVector<int> noGame;
+    const QHash<int, QVector<Reframe::Keep>> keeps = s.editor.reframeKeeps(targets, mode, contents, choice, &noGame);
+    if (!noGame.isEmpty()) {
+        QStringList clips, games;
+        for (int id : noGame) clips << QString::number(id);
+        for (const GameHud::Game& g : GameHud::games()) games << g.id;
+        fail("BAD_ARGUMENT", QString("keep:'killfeed' needs the game (clips %1: not known from the folder or file name); "
+                                     "give game (%2) or a region \"x,y,w,h\"")
+                                 .arg(clips.join(", "), games.join(", ")));
+    }
+    s.editor.reframeClips(targets, mode, paths, contents, &keeps);
+    QStringList kept;
+    for (int id : targets)
+        for (const Reframe::Keep& k : keeps.value(id))
+            kept << QString("%1: %2 (%3)").arg(id).arg(k.id, GameHud::regionText(k.region));
+    if (!kept.isEmpty())
+        s.notes << "kept readable at the top of the frame (a cropped copy of the clip on a track above, info "
+                   "keep_region): " + kept.join(", ");
     QStringList cropped;
     for (auto it = contents.cbegin(); it != contents.cend(); ++it)
         if (BarDetect::hasBars(*it)) cropped << QFileInfo(it.key()).fileName() + " (" + contentText(*it) + ")";
@@ -836,7 +896,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "Inspector section off (its values and keyframes stay but do not apply, e.g. to compare), true on "
                  "again; `info` shows them when off.",
                  opTransform, kClipKeys}
-        << OpDef{"reframe", "{op:'reframe', clips?, track?, mode?:'auto', smoothness?:0.5, bars?:true}",
+        << OpDef{"reframe", "{op:'reframe', clips?, track?, mode?:'auto', smoothness?:0.5, bars?:true, keep?:'auto', game?}",
                  "Auto-Reframe: clips fill this timeline's shape (16:9 footage in a 9:16 short) and follow their subject",
                  "Without clips/track: every video clip of the timeline (titles, compound and multicam clips are left "
                  "out). mode auto (default) = zoom to fill + x/y keyframes that keep the subject in view: measures the "
@@ -851,7 +911,14 @@ void addLookOps(QVector<OpDef>& ops)
                  "reframed short; false = the whole picture as it is. Replaces "
                  "the clips' zoom/x/y and their keyframes (rotation, other keyframes stay; the crop too unless bars "
                  "were found); fine-tune with "
-                 "'transform'/'keyframe' and look with `frames`. For a whole short in one call: new_timeline with "
+                 "'transform'/'keyframe' and look with `frames`. keep: what stays readable above the reframed "
+                 "picture, as a copy of the clip cropped to that region on a free track above, centred near the top "
+                 "of the frame (below the platforms' buttons; picture in picture, same undo step). 'auto' (default) = "
+                 "the kill feed of game footage when the reframe cuts the sides away (the game from game, or from the "
+                 "folder or file name: cs2, valorant - as `highlights` knows them); 'killfeed' = that kill feed "
+                 "always; a region \"x,y,w,h\" (fractions 0..1 of the whole picture) = that part; 'none' = nothing. "
+                 "Reframing a clip again replaces its earlier copies (none removes them); `info` shows them with "
+                 "keep_region. A 4:3 game between black bars: the game's region is taken inside the bars. For a whole short in one call: new_timeline with "
                  "from, aspect:'9:16' and reframe:'auto'.",
                  opReframe, kClipKeys}
         << OpDef{"crop_bars", "{op:'crop_bars', clips?, track?}",

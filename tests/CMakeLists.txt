@@ -189,6 +189,8 @@ target_link_libraries(test_ducking PRIVATE schneidi_cli_lib)
 schneidi_test(test_blur_fill) # blurred fill around the fitted picture (op 'transform' fit:'blur')
 target_link_libraries(test_blur_fill PRIVATE schneidi_cli_lib)
 schneidi_test(test_reframe) # Auto-Reframe: camera path, fill geometry, Editor op + undo, subject measurement, CLI ops
+schneidi_test(test_reframe_keep) # Auto-Reframe keeps the kill feed (picture in picture at the top), game kill feed regions in highlights
+target_link_libraries(test_reframe_keep PRIVATE schneidi_cli_lib)
 schneidi_test(test_game43) # 4:3 game footage: black bar detection, reframe inside the content, crop_bars, stretched 4:3 (picture aspect), CLI ops
 target_link_libraries(test_game43 PRIVATE schneidi_cli_lib)
 target_link_libraries(test_reframe PRIVATE schneidi_cli_lib)
@@ -214,7 +216,7 @@ schneidi_test(test_thread_teardown)
 foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_order test_cli test_export_formats test_audio
              test_audio_regression test_color test_loudness test_dynamics_eq test_audio_sync test_multicam_render
              test_multicam_viewer test_multicam_cli
-             test_ducking test_crop test_blur_fill test_reframe test_game43 test_generators)
+             test_ducking test_crop test_blur_fill test_reframe test_reframe_keep test_game43 test_generators)
     add_test(NAME ${name}_de_DE COMMAND ${name})
     set_tests_properties(${name}_de_DE PROPERTIES
         SKIP_RETURN_CODE 77

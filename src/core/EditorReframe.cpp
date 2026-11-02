@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Editor: Auto-Reframe (core/Reframe.h)
 #include "core/Editor.h"
+#include "core/GameHud.h"
 #include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/MediaAspect.h"
@@ -25,18 +26,74 @@ QVector<int> Editor::reframeTargets(const QVector<int>& ids) const
 }
 
 int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHash<int, QVector<Reframe::Key>>& paths,
-                         const QHash<QString, QRectF>& contents)
+                         const QHash<QString, QRectF>& contents, const QHash<int, QVector<Reframe::Keep>>* keeps)
 {
     const QVector<int> targets = reframeTargets(ids);
     if (targets.isEmpty()) return 0;
     const QSizeF frame = m_project->timelineFormat().size();
+    Project* p = m_project;
     m_project->edit(T("Auto-Reframe"), [&](Timeline& tl) {
         for (int id : targets)
             if (Clip* c = TimelineOps::findClip(tl, id))
                 Reframe::apply(*c, mode, paths.value(id), MediaAspect::ofClip(*c), frame,
                                contents.value(c->mediaPath, QRectF(0, 0, 1, 1)));
+        if (!keeps) return;
+        for (int id : targets) {
+            TrackRef ref;
+            const Clip* found = TimelineOps::findClip(tl, id, &ref);
+            if (!found) continue;
+            const Clip base = *found;
+            // The earlier copies of this clip go (a new reframe brings its own)
+            for (Track& t : tl.video)
+                if (!t.locked)
+                    t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(),
+                                                 [&](const Clip& x) { return Reframe::isKeepOf(x, base); }),
+                                  t.clips.end());
+            for (const Reframe::Keep& k : keeps->value(id)) {
+                Clip copy = Reframe::keepCopy(base, k, MediaAspect::ofClip(base), frame);
+                copy.id = p->newClipId();
+                // The first unlocked track above the clip that is free over its range (a missing one is added)
+                int track = ref.index + 1;
+                const auto busy = [&](int i) {
+                    if (i >= tl.video.size()) return false;
+                    if (tl.video[i].locked) return true;
+                    return std::any_of(tl.video[i].clips.begin(), tl.video[i].clips.end(),
+                                       [&](const Clip& x) { return x.start < copy.end() && x.end() > copy.start; });
+                };
+                while (busy(track)) ++track;
+                TimelineOps::ensureTracks(tl, TrackKind::Video, track + 1);
+                TimelineOps::placeClip(tl.video[track], copy, [p] { return p->newClipId(); });
+            }
+        }
     });
     return int(targets.size());
+}
+
+QHash<int, QVector<Reframe::Keep>> Editor::reframeKeeps(const QVector<int>& ids, Reframe::Mode mode,
+                                                         const QHash<QString, QRectF>& contents,
+                                                         const Reframe::KeepChoice& choice, QVector<int>* noGame) const
+{
+    QHash<int, QVector<Reframe::Keep>> out;
+    const QSizeF frame = m_project->timelineFormat().size();
+    for (int id : ids) {
+        const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+        if (!c) continue;
+        QVector<Reframe::Keep>& list = out[id];
+        if (choice.kind == Reframe::KeepChoice::None) continue;
+        if (choice.kind == Reframe::KeepChoice::Custom) {
+            list << Reframe::Keep{QStringLiteral("custom"), choice.region};
+            continue;
+        }
+        const GameHud::Game* game = choice.game.isEmpty() ? GameHud::guess(c->mediaPath) : GameHud::find(choice.game);
+        const QRectF content = contents.value(c->mediaPath, QRectF(0, 0, 1, 1));
+        if (!game) {
+            if (choice.kind == Reframe::KeepChoice::KillFeed && noGame) *noGame << id;
+            continue;
+        }
+        if (choice.kind == Reframe::KeepChoice::KillFeed || Reframe::cropsSides(mode, MediaAspect::ofClip(*c), frame, content))
+            list << Reframe::Keep{QStringLiteral("killfeed"), Reframe::inContent(game->feed, content)};
+    }
+    return out;
 }
 
 int Editor::cropBars(const QVector<int>& ids, const QHash<QString, QRectF>& contents)

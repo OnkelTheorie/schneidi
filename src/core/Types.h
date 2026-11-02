@@ -408,6 +408,10 @@ struct Clip {
     // Width / height the picture is shown at instead of the file's (0 = the file's): a 4:3 game image stretched to
     // 16:9 by the recorder gets its true shape back with 4/3. Video and still clips only.
     double pictureAspect = 0;
+    // A part of the picture kept readable above a reframed copy of the same clip (core/Reframe.h keepCopy): what it
+    // keeps ("killfeed", "custom"); empty = an ordinary clip. Not reframed itself; reframing its clip again with
+    // keep settings replaces it.
+    QString keepRegion;
 
     bool isRetimed() const { return speed != 1.0 || reverse || freeze || !ramp.isEmpty(); }
     bool hasRamp() const { return !ramp.isEmpty() && !freeze; }

@@ -310,6 +310,60 @@ void apply(Clip& c, Mode mode, const QVector<Key>& keys, double mediaAspect, QSi
     if (py.size() > 1 && moves(py)) c.keys[AnimParam::PosY] = py;
 }
 
-bool canReframe(const Clip& c) { return c.kind == ClipKind::Media && !c.mediaPath.isEmpty(); }
+bool canReframe(const Clip& c) { return c.kind == ClipKind::Media && !c.mediaPath.isEmpty() && c.keepRegion.isEmpty(); }
+
+Clip keepCopy(const Clip& base, const Keep& k, double mediaAspect, QSizeF frame, const KeepPlace& place)
+{
+    Clip c = base;
+    c.id = 0;
+    c.linkId = 0;
+    c.renderCache = false;
+    c.keepRegion = k.id.isEmpty() ? QStringLiteral("custom") : k.id;
+    for (AnimParam a : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY, AnimParam::Rotation,
+                        AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom})
+        c.keys.remove(a);
+    const QRectF r = valid(k.region);
+    if (mediaAspect <= 0 && !frame.isEmpty()) mediaAspect = frame.width() / frame.height();
+    const QSizeF fitted = MediaAspect::fit(mediaAspect, frame);
+    ClipTransform t; // opacity and fades stay as the base's: the copy appears and goes with it
+    t.opacity = base.transform.opacity;
+    t.compositeOn = base.transform.compositeOn;
+    t.cropLeft = r.left() * fitted.width();
+    t.cropRight = (1 - r.right()) * fitted.width();
+    t.cropTop = r.top() * fitted.height();
+    t.cropBottom = (1 - r.bottom()) * fitted.height();
+    for (double* v : {&t.cropLeft, &t.cropRight, &t.cropTop, &t.cropBottom})
+        if (std::abs(*v) < 1e-6) *v = 0;
+    const double w = r.width() * fitted.width(), h = r.height() * fitted.height();
+    if (w > 0 && h > 0 && !frame.isEmpty()) {
+        const double z = std::min(place.width * frame.width() / w, place.maxHeight * frame.height() / h);
+        t.zoomX = t.zoomY = z;
+        // Zoom and position act on the whole picture around its centre: move the region's centre to the place
+        const double dx = (r.center().x() - 0.5) * fitted.width(), dy = (r.center().y() - 0.5) * fitted.height();
+        t.posX = -z * dx;
+        t.posY = frame.height() / 2 - place.top * frame.height() - z * h / 2 + z * dy;
+        if (std::abs(t.posX) < 1e-6) t.posX = 0;
+    }
+    c.transform = t;
+    return c;
+}
+
+bool isKeepOf(const Clip& c, const Clip& base)
+{
+    return !c.keepRegion.isEmpty() && c.mediaPath == base.mediaPath && c.start == base.start && c.in == base.in
+           && c.out == base.out && c.speed == base.speed && c.reverse == base.reverse && c.ramp == base.ramp;
+}
+
+QRectF inContent(const QRectF& region, const QRectF& content)
+{
+    const QRectF in = valid(content);
+    return QRectF(in.x() + region.x() * in.width(), in.y() + region.y() * in.height(), region.width() * in.width(),
+                  region.height() * in.height());
+}
+
+bool cropsSides(Mode mode, double mediaAspect, QSizeF frame, const QRectF& content)
+{
+    return mode != Mode::Fit && fill(mediaAspect, frame, content).windowW < 0.95;
+}
 
 } // namespace Reframe
