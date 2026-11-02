@@ -248,7 +248,8 @@ QString probe(const QString& path, const QString& entries)
 // A real export with libx264 in a separate program: the distribution's ffmpeg stands in for the extension
 void testExport(const QString& dir)
 {
-    const QString ffmpeg = QStandardPaths::findExecutable("ffmpeg");
+    // SCHNEIDI_TEST_ENCODER_FFMPEG: the real extension's program (e.g. after `extensions --install x264`)
+    const QString ffmpeg = qEnvironmentVariable("SCHNEIDI_TEST_ENCODER_FFMPEG", QStandardPaths::findExecutable("ffmpeg"));
     QProcess p;
     p.start(ffmpeg, {"-hide_banner", "-encoders"});
     p.waitForFinished(20000);
