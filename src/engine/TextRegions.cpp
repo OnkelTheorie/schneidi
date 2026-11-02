@@ -39,10 +39,11 @@ struct Segment {
     int x0, y0, x1, y1; // inclusive
 };
 
-QString cacheName(const Clip& c, int step)
+// The clip's frames count in the project's rate: the same in/out at 25 and 30 fps are other moments of the file
+QString cacheName(const Clip& c, int step, FrameRate rate)
 {
     const QFileInfo fi(c.mediaPath);
-    const QString id = QString("%1|%2|%3|%4|%5|%6|%7|%8")
+    const QString id = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9/%10")
                            .arg(kVersion)
                            .arg(fi.absoluteFilePath())
                            .arg(fi.size())
@@ -50,7 +51,9 @@ QString cacheName(const Clip& c, int step)
                            .arg(c.in)
                            .arg(c.out)
                            .arg(step)
-                           .arg(c.pictureAspect);
+                           .arg(c.pictureAspect)
+                           .arg(rate.num)
+                           .arg(rate.den);
     return QString::fromLatin1(QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex()) + ".json";
 }
 
@@ -272,7 +275,7 @@ Result analyze(const ProjectFormat& format, const Clip& c, const std::atomic<boo
     };
     // Retimed clips are not cached: the key would have to hold the whole speed curve
     const bool cacheable = !c.isRetimed();
-    const QString file = QDir(cacheDir()).filePath(cacheName(c, step));
+    const QString file = QDir(cacheDir()).filePath(cacheName(c, step, format.rate));
     if (cacheable) {
         QFile f(file);
         if (f.open(QIODevice::ReadOnly) && read(f.readAll(), &res.samples)) {
