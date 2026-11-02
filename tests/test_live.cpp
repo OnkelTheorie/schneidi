@@ -21,6 +21,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalSocket>
@@ -367,6 +368,44 @@ int main(int argc, char* argv[])
         fake.path = own;
     }
     CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
+
+    // `short` into the app's project: the cut and the 9:16 timeline are made there (the cut is opened to rework it,
+    // the short not), the video is rendered from the app's (unsaved) state, the file is not touched
+    if (Check::haveFfmpeg()) {
+        const QString rec = Check::makeMedia(
+            tmp.path() + "/rec.mp4",
+            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=12", "-f", "lavfi", "-i",
+             "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,5,5.5),0.9*sin(2*PI*440*t),0)':d=12:s=48000", "-c:v",
+             "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        if (CHECK(!rec.isEmpty())) {
+            const int undo = fake.project.undoStack()->index();
+            const int open = fake.project.currentSequence();
+            const int timelines = fake.project.sequences().size();
+            const qsizetype media = fake.project.media().size();
+            const QString out = tmp.path() + "/app-short.mp4";
+            r = cli({"short", rec, "--project", "@app", "--out", out, "--captions", "off", "--game", "none",
+                     "--min_s", "3", "--max_s", "4"});
+            if (!CHECK_EQ(code(r), QString("ok"))) std::printf("       %s\n", QJsonDocument(r).toJson().constData());
+            const QJsonObject s = r["result"].isObject() ? r["result"].toObject() : r;
+            CHECK(QFileInfo::exists(out));
+            CHECK_EQ(s["project"].toString(), QString("@app"));
+            CHECK_EQ(s["height"].toInt(), 1920);
+            CHECK(s["length_s"].toDouble() >= 2.9 && s["length_s"].toDouble() <= 4.1);
+            CHECK_EQ(fake.project.sequences().size(), timelines + 2); // cut + short
+            QStringList names;
+            for (const Sequence& q : fake.project.sequences()) names << q.name;
+            CHECK(names.contains(s["timeline"].toString()) && names.contains(s["cut_timeline"].toString()));
+            if (const Sequence* cur = fake.project.sequence(fake.project.currentSequence()))
+                CHECK_EQ(cur->name, s["cut_timeline"].toString());
+            CHECK(fake.project.undoStack()->index() > undo);
+            CHECK_EQ(fileVideoClips(fake.path), 2); // the file as saved before
+            // Back to the state before (the steps undone, the recording out of the pool again)
+            fake.project.undoStack()->setIndex(undo);
+            fake.project.setCurrentSequence(open);
+            if (fake.project.media().size() > media) fake.project.replaceMedia(fake.project.media().mid(0, media));
+            CHECK_EQ(fake.project.sequences().size(), timelines);
+        }
+    }
 
     // A new resolution in the app while another timeline holds clips: refused until the user said yes (confirm)
     {
