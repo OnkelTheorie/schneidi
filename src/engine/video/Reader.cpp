@@ -1441,7 +1441,9 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     // Without the tag (written by other muxers, lost in a remux): the alpha travels in each block's BlockAdditional
     // (id 1) - the first packet tells. Only untagged VP8/VP9 pay for it: one packet the stream analysis already read,
     // then back to the start (findFirstPts reads from there).
-    if (vpx && !alphaMode && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P) {
+    // Matroska/WebM only: other containers have no BlockAdditional (a VP9 MP4 would pay for nothing)
+    const bool matroska = d.fmt->iformat && std::strstr(d.fmt->iformat->name, "matroska");
+    if (vpx && !alphaMode && matroska && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P) {
         if (AVPacket* probe = av_packet_alloc()) {
             for (int n = 0; n < 16 && av_read_frame(d.fmt, probe) >= 0; ++n) {
                 const bool ours = probe->stream_index == d.info.index;

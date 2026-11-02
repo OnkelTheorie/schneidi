@@ -24,8 +24,10 @@ extern "C" {
 #include <QStandardPaths>
 #include <QThread>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace {
 
@@ -50,6 +52,31 @@ struct ProxyJob {
     double durationUs = 0;
 };
 
+// Whether a decoded picture really has see-through pixels. Alpha formats are also written fully opaque (ProRes 4444
+// from many editors, screen recordings in bgra, palette video): those keep the fast H.264 proxy (VP9 with alpha
+// encodes ~2.5x and decodes ~3x slower). Every 8th row is enough for a picture with transparent parts.
+bool seeThrough(const AVFrame* f)
+{
+    const AVPixFmtDescriptor* d = f ? av_pix_fmt_desc_get(AVPixelFormat(f->format)) : nullptr;
+    if (!d || !(d->flags & AV_PIX_FMT_FLAG_ALPHA) || f->width <= 0 || f->height <= 0) return false;
+    if (d->flags & AV_PIX_FMT_FLAG_PAL) { // palette entries are ARGB words: any used one below 255
+        const auto* pal = reinterpret_cast<const uint32_t*>(f->data[1]);
+        for (int y = 0; y < f->height; y += 8)
+            for (int x = 0; x < f->width; ++x)
+                if ((pal[f->data[0][size_t(y) * f->linesize[0] + x]] >> 24) != 0xff) return true;
+        return false;
+    }
+    const int c = d->nb_components - 1; // the alpha component comes last (yuva, rgba/argb/bgra, gbrap, ya)
+    const uint32_t opaque = (1u << d->comp[c].depth) - 1;
+    std::vector<uint32_t> row(size_t(f->width));
+    for (int y = 0; y < f->height; y += 8) {
+        av_read_image_line2(row.data(), const_cast<const uint8_t**>(f->data), f->linesize, d, 0, y, c, f->width, 0, 4);
+        for (uint32_t a : row)
+            if (a < opaque) return true;
+    }
+    return false;
+}
+
 SourceInfo probeSource(const QString& path)
 {
     SourceInfo s;
@@ -69,7 +96,11 @@ SourceInfo probeSource(const QString& path)
     s.colorspace = in.colorspace; // a guess by picture size already when the file states none
     s.fullRange = in.fullRange;
     const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(in.format);
-    s.alpha = desc && (desc->flags & AV_PIX_FMT_FLAG_ALPHA);
+    // Alpha only when the first picture shows it (an alpha format alone says little, see seeThrough)
+    if (desc && (desc->flags & AV_PIX_FMT_FLAG_ALPHA)) {
+        const std::shared_ptr<const Video::Picture> first = reader->picture(0);
+        s.alpha = first && seeThrough(first->frame);
+    }
     s.decoder = in.codec;
     if (media) s.seconds = media->length / 25.0;
     else if (in.duration > 0) s.seconds = double(in.duration) / 1e6; // AV_TIME_BASE units

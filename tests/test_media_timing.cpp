@@ -172,6 +172,21 @@ int main(int argc, char** argv)
         }
     }
 
+    // --- An alpha format with only opaque pixels (QuickTime Animation / ProRes 4444 from many editors, screen
+    // recordings in bgra) keeps the fast H.264 proxy: VP9 with alpha encodes and decodes several times slower
+    {
+        const QString opaque = Check::makeMedia(dir.filePath("opaque-alpha.mov"),
+                                                {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=1", "-pix_fmt",
+                                                 "argb", "-c:v", "qtrle"});
+        if (CHECK(!opaque.isEmpty())) {
+            const QString proxy = makeProxy(opaque);
+            Video::Reader::Options o;
+            o.hardware = false;
+            const auto r = proxy.isEmpty() ? nullptr : Video::Reader::open(proxy, o);
+            if (CHECK(r != nullptr)) CHECK(r->info().codec == "h264" && r->info().format != AV_PIX_FMT_YUVA420P);
+        }
+    }
+
     // --- A source shorter than the clip in the model (proxy a few frames short, relinked shorter file): the clip ends
     // at the file's end, the clip after it stays where the model has it (a gap fills the rest)
     {
