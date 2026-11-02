@@ -533,25 +533,6 @@ void opLink(Session& s, const QJsonObject& op, bool link)
 
 // ---------- speed ----------
 
-// interpolate: what fills the time between two source frames where the clip plays slower than its source. Without
-// it a strong slowdown gets a hint (the clip keeps repeating frames: the user's choice, never switched on silently)
-static void applyInterpolate(Session& s, const QJsonObject& op, const QVector<int>& ids, double slowest)
-{
-    if (op.contains("interpolate")) {
-        FrameInterp mode = FrameInterp::Repeat;
-        if (!frameInterpFromId(op.value("interpolate").toString(), &mode))
-            fail("BAD_ARGUMENT", "interpolate is 'repeat' (repeat frames), 'blend' (cross-fade the neighbouring frames) "
-                                 "or 'flow' (compute the motion: smooth slow motion)");
-        s.editor.setFrameInterpolation(ids, mode);
-        return;
-    }
-    const Clip* c = ids.isEmpty() ? nullptr : TimelineOps::findClip(s.project.timeline(), ids.first());
-    if (c && slowest < 0.6 && c->interpolate == FrameInterp::Repeat && !c->freeze)
-        s.notes << QString("slowed to %1 %: each source frame is shown repeatedly (can stutter); interpolate:'flow' "
-                           "computes in-between pictures (smooth slow motion, e.g. game clips), 'blend' cross-fades them")
-                       .arg(std::lround(slowest * 100));
-}
-
 void opSpeed(Session& s, const QJsonObject& op)
 {
     const QVector<int> ids = clipIds(s, op);
@@ -788,6 +769,25 @@ void opSourceEdit(Session& s, const QJsonObject& op, Editor::SourceEditMode mode
 } // namespace
 
 void captionsOp(Session& s, const QJsonObject& op) { opCaptions(s, op); }
+
+// interpolate: what fills the time between two source frames where the clip plays slower than its source. Without
+// it a strong slowdown gets a hint (the clip keeps repeating frames: the user's choice, never switched on silently)
+void applyInterpolate(Session& s, const QJsonObject& op, const QVector<int>& ids, double slowest)
+{
+    if (op.contains("interpolate")) {
+        FrameInterp mode = FrameInterp::Repeat;
+        if (!frameInterpFromId(op.value("interpolate").toString(), &mode))
+            fail("BAD_ARGUMENT", "interpolate is 'repeat' (repeat frames), 'blend' (cross-fade the neighbouring frames) "
+                                 "or 'flow' (compute the motion: smooth slow motion)");
+        s.editor.setFrameInterpolation(ids, mode);
+        return;
+    }
+    const Clip* c = ids.isEmpty() ? nullptr : TimelineOps::findClip(s.project.timeline(), ids.first());
+    if (c && slowest < 0.6 && c->interpolate == FrameInterp::Repeat && !c->freeze)
+        s.notes << QString("slowed to %1 %: each source frame is shown repeatedly (can stutter); interpolate:'flow' "
+                           "computes in-between pictures (smooth slow motion, e.g. game clips), 'blend' cross-fades them")
+                       .arg(std::lround(slowest * 100));
+}
 
 QJsonObject transitionStyleJson(const TransitionStyle& st)
 {

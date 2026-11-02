@@ -858,6 +858,15 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
                  QString("BAD_ARGUMENT"));
         ed(QString(R"([{"op":"speed","clips":[%1],"interpolate":"repeat"}])").arg(v));
         CHECK(!clipsOf(0)[0].toObject().contains("interpolate"));
+        // place/keep take interpolate too, and give the hint without it
+        ed(R"([{"op":"clear"},{"op":"place","media":"/x/a.mp4","at":0,"in":10,"out":30,"speed":0.25,"interpolate":"blend"}])");
+        CHECK_EQ(clipsOf(0)[0].toObject()["interpolate"].toString(), QString("blend"));
+        hinted = ed(R"([{"op":"clear"},{"op":"keep","media":"/x/a.mp4","ranges":[[0,10],{"from":20,"to":30,"speed":0.3}]}])");
+        CHECK(hinted["notes"][0].toString().contains("interpolate:'flow'"));
+        ed(R"([{"op":"clear"},{"op":"keep","media":"/x/a.mp4","ranges":[[0,10],{"from":20,"to":30,"speed":0.3}],"interpolate":"flow"}])");
+        CHECK_EQ(clipsOf(0)[1].toObject()["interpolate"].toString(), QString("flow"));
+        CHECK_EQ(errorOf("edit", {{"project", g_path}, {"ops", R"([{"op":"append","media":"/x/a.mp4","speed":0.5,"interpolate":"smooth"}])"}}),
+                 QString("BAD_ARGUMENT"));
         // Picture and sound both named: the speed applies once (TikTok agent: 63 -> 5 frames)
         ed(R"([{"op":"clear"},{"op":"place","media":"/x/a.mp4","at":0,"in":0,"out":40}])");
         v = clipsOf(0)[0].toObject()["id"].toInt();

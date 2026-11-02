@@ -144,6 +144,9 @@ QString syncMethodName(Multicam::SyncMethod m);
 // Live: the sound sync of 'multicam' ops measured here in schneidi-cli and handed to the op (private field), so the
 // app does not decode recordings for minutes while the user waits
 QJsonObject withSoundSync(const QJsonObject& editArgs, Context& ctx);
+// The op's 'interpolate' (in-between pictures for slow motion) onto the clips (EditOpsEdit.cpp); without it a hint when
+// slowest (the slowest speed the op set) stutters
+void applyInterpolate(Session& s, const QJsonObject& op, const QVector<int>& ids, double slowest);
 // The edit op 'captions' (EditOpsEdit.cpp), for ops that make word captions of their own (speak)
 void captionsOp(Session& s, const QJsonObject& op);
 // Live: the speech of the 'speak' ops is made here in schneidi-cli (piper, whisper), the app finds the files ready;

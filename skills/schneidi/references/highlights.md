@@ -75,9 +75,9 @@ also read [social.md](social.md).
   a clip ran out of material. Slow motion right in the cut: `speed` on `place`/`keep` (`{"from":…,"to":…,
   "speed":0.5}` as a range).
 - Slow motion of game clips (a kill at 25-50 %): give the slowed clips `interpolate:"flow"` (`{"op":"speed",
-  "clips":[…],"interpolate":"flow"}`, also on `speed_ramp`) - it computes in-between pictures, so the slow part is
-  smooth instead of repeating each frame (stutter); the HUD stays sharp and nothing is blended across a cut.
-  `"blend"` (cross-fade of neighbouring frames) is cheaper but looks soft on fast camera turns.
+  "clips":[…],"interpolate":"flow"}`, also on `speed_ramp`, `place`, `append` and `keep`) - it computes in-between
+  pictures, so the slow part is smooth instead of repeating each frame (stutter); the HUD stays sharp and nothing is
+  blended across a cut. `"blend"` (cross-fade of neighbouring frames) is cheaper but looks soft on fast camera turns.
 - Put the music on its own audio track (`place` with `track` `"A2"` at 0, or a new track), cut it to the video
   length, `fade` out the last 1-2 s.
 - Keep the game/event sound - it carries the action: shots and kills must stay audible. Measure first: `loudness`

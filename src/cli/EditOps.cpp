@@ -294,6 +294,17 @@ void noteDoubledMix(Session& s, const MediaInfo& m, int from, int to)
                         QString::fromUtf8(QJsonDocument(mixClips).toJson(QJsonDocument::Compact)));
 }
 
+// interpolate on the video clips of `m` an op just placed in [from, to) (slowest = its slowest speed)
+void placedInterpolate(Session& s, const QJsonObject& op, const MediaInfo& m, int from, int to, double slowest)
+{
+    if (!op.contains("interpolate") && slowest >= 1) return;
+    QVector<int> ids;
+    for (const Track& t : s.project.timeline().video)
+        for (const Clip& c : t.clips)
+            if (c.mediaPath == m.path && c.start >= from && c.start < to) ids << c.id;
+    if (!ids.isEmpty()) applyInterpolate(s, op, ids, slowest);
+}
+
 void opPlace(Session& s, const QJsonObject& op, bool append)
 {
     const PresetsScope presets(s, op);
@@ -304,6 +315,7 @@ void opPlace(Session& s, const QJsonObject& op, bool append)
     const double speed = op.contains("speed") ? numberOf(op, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
     const int len = s.editor.placeSourceRange(m.path, in, out - 1, at, parseTrack(op.value("track")), speed);
     noteDoubledMix(s, m, at, at + len);
+    placedInterpolate(s, op, m, at, at + len, speed);
 }
 
 void opKeep(Session& s, const QJsonObject& op)
@@ -313,6 +325,7 @@ void opKeep(Session& s, const QJsonObject& op)
     int at = timeOf(s, op, "at", endOf(s));
     const int start = at;
     const int track = parseTrack(op.value("track"));
+    double slowest = 1;
     QJsonArray ranges = op.value("ranges").toArray();
     // One range written another way (small models): a flat pair, 'range', or from/to on the op itself
     const auto pair = [](const QJsonArray& a) { return a.size() == 2 && !a[0].isArray() && !a[0].isObject(); };
@@ -342,8 +355,10 @@ void opKeep(Session& s, const QJsonObject& op)
         const QJsonObject sp = o.contains("speed") ? o : op;
         const double speed = sp.contains("speed") ? numberOf(sp, "speed", Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
         at += s.editor.placeSourceRange(m.path, in, out - 1, at, track, speed);
+        slowest = std::min(slowest, speed);
     }
     noteDoubledMix(s, m, start, at);
+    placedInterpolate(s, op, m, start, at, slowest);
 }
 
 // Events (kills) onto the beat: each clip's content slips until its event lies on the nearest target (a beat, a bar
@@ -707,7 +722,9 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
 const char* const kPresetsDetails =
     "in/out are source times (out exclusive, default: the whole file), duration = out - in. speed (0.01..100, "
     "default 1): that source range retimed in one go, 0.5 = slow motion twice as long (keep: per range "
-    "{from, to, speed} or for all; the next range follows the retimed length). A still image takes any length (out:'20s' or duration:'20s'; default 5 s). "
+    "{from, to, speed} or for all; the next range follows the retimed length). interpolate (with speed below 1): what "
+    "fills the time between two source frames, 'repeat' (default), 'blend' or 'flow' (smooth slow motion; as in "
+    "op 'speed'). A still image takes any length (out:'20s' or duration:'20s'; default 5 s). "
     "track: V2 puts the picture on V2 and the sound from A2 on. Files with several audio streams (OBS) get one "
     "track per stream, named after it, and follow the user's import presets from the app (by default every stream "
     "plays; users can e.g. mute the Mix stream when its single streams are there, or set rules per stream title; "
@@ -720,12 +737,12 @@ const char* const kPresetsDetails =
 QVector<OpDef> makeOps()
 {
     QVector<OpDef> ops{
-        {"append", "{op:'append', media, in?, out?|duration?, speed?, track?, presets?}", "put a source range at the end of the timeline",
+        {"append", "{op:'append', media, in?, out?|duration?, speed?, interpolate?, track?, presets?}", "put a source range at the end of the timeline",
          kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, true); }, {"at"}},
-        {"place", "{op:'place', media, at, in?, out?|duration?, speed?, track?, presets?}", "overwrite at a position", kPresetsDetails,
+        {"place", "{op:'place', media, at, in?, out?|duration?, speed?, interpolate?, track?, presets?}", "overwrite at a position", kPresetsDetails,
          [](Session& s, const QJsonObject& op) { opPlace(s, op, false); }},
-        {"keep", "{op:'keep', media, ranges:[[from,to]|{from,to,speed?},...], at?, speed?, track?, presets?}",
+        {"keep", "{op:'keep', media, ranges:[[from,to]|{from,to,speed?},...], at?, speed?, interpolate?, track?, presets?}",
          "put several source ranges one after another (e.g. the 'sound' ranges of `silence`)", kPresetsDetails, opKeep,
          {"range", "from", "to"}}, // one range written another way (small models)
         {"align", "{op:'align', events:[times], to:[times]|{first, every}, max_shift?, accent?, strength?}",
