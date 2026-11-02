@@ -400,8 +400,9 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     for (auto it = picked.begin(); it != picked.end(); ++it) out[it.key()] = it.value();
     if (const QString heard = t.detectedLanguage(); !heard.isEmpty() && heard != r.language) {
         out["detected_language"] = heard;
-        // Short or mixed speech is detected unsure: only a clear other language is worth a word
-        if (t.detectedProbability() >= 0.5)
+        // Only a clear other language is worth a word: German gamer talk with English bits was "en" at 55 %
+        // (detection hears only the first 30 s), a really wrong choice 100 %
+        if (t.detectedProbability() >= 0.8)
             notes << QString("whisper hears '%1' (%2 %), not the chosen '%3': check the language or use language:\"auto\"")
                          .arg(heard)
                          .arg(int(std::lround(t.detectedProbability() * 100)))
