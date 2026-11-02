@@ -165,12 +165,14 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
             const QFileInfo o(out);
             project = freeName(o.absolutePath(), o.completeBaseName(), "." + QString(ProjectFile::Extension));
         }
+        bool created = false;
         if (project != QLatin1String(Live::AppProject) && !QFileInfo::exists(project)) {
             // game: the Mix stream of a multi-stream recording comes in muted (nothing plays twice), master limiter
             QJsonObject n{{"project", project}, {"media", QJsonArray::fromStringList(files)},
                           {"template", game || streams ? "game" : "neutral"}};
             if (fps > 0) n["fps"] = fps;
             run("new", n, step(0.01, 0.02));
+            created = true;
             done << QString("new project %1 (template %2)").arg(project, n["template"].toString());
         }
         // 3. The best moments of every recording
@@ -199,7 +201,9 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         // 4. A cut of them in the recordings' shape (the user can rework it), one keep per recording
         const QJsonObject before = run("info", {{"project", project}, {"summary", true}}, step(0.3, 0.3));
         cutTimeline = uniqueTimelineName(before["timelines"].toArray(), T("Short-Schnitt"));
-        QJsonArray ops{QJsonObject{{"op", "new_timeline"}, {"name", cutTimeline}}};
+        // A new project's empty first timeline becomes the cut (nothing empty left over)
+        QJsonArray ops{created ? QJsonObject{{"op", "rename_timeline"}, {"name", cutTimeline}}
+                               : QJsonObject{{"op", "new_timeline"}, {"name", cutTimeline}}};
         for (int i = 0; i < files.size(); ++i) {
             QJsonArray ranges;
             for (const ShortPick::Moment& m : picked) {
