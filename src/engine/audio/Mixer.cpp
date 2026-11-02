@@ -396,6 +396,7 @@ void Mixer::Impl::planTrack(const Track& track, TrackPlan& out)
             v.cleanParams.gate = value("gate").toBool();
             v.cleanParams.clicks = value("clicks").toBool();
             v.cleanParams.shape = value("shape").toBool();
+            v.cleanParams.roomDb = std::lround(value("room").toDouble() * 10.0) / 10.0;
         }
         ++stats->voices;
         out.voices.push_back(std::move(v));

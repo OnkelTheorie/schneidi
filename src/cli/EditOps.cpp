@@ -811,7 +811,7 @@ QVector<OpDef> makeOps()
          "titles and compound clips. denoise (noise reduction for voice recordings, ~11 ms delay): reduction = how far "
          "the noise is lowered in dB (default 12), track = measure the noise in the recording (default true), floor "
          "= fixed noise level in dBFS used when track is false. voiceclean (\"Stimme säubern\", ~57 ms delay, compensated): "
-         "see the op clean_voice for its parameters amount, gate, clicks, shape.",
+         "see the op clean_voice for its parameters amount, gate, clicks, shape, room.",
          opEffect, kClipKeys},
         {"add_track", "{op:'add_track', kind:'video'|'audio', at?}", "new track (default: above/below the others)",
          {}, opAddTrack},

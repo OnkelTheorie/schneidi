@@ -10,7 +10,9 @@
 2. **Clean the voice** if needed: `clean_voice` on the voice track (`{"op":"clean_voice","track":"A2"}`) or on clips
    - neural noise suppression, pauses lowered, bumps/clicks dampened, voice evened out (compressor, limiter) in one
    call; use it for voice-overs, TTS and voice chat. `gate:false` where game sound or music on the same clip should
-   stay between the words, `amount` (0-100) for less suppression, `shape:false` to keep the level as it is. Lighter
+   stay between the words, `amount` (0-100) for less suppression, `shape:false` to keep the level as it is, `room` (dBFS, default -60) for
+   how much room sound stays under the voice (pauses never go dead silent). Speech only - it removes ambience and
+   music without a voice as noise. Lighter
    tools: `denoise` effect (steady hiss/fans only), `mixer` EQ (band 1 high pass ~80 Hz against rumble), `mixer`
    `compressor` for uneven speakers or shouting in games.
 3. **Music under speech**: music on its own track, then `duck` (music = `track`/`clips`, `under` = the voice

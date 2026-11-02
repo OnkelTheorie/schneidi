@@ -2017,6 +2017,8 @@
  "Senkt alles zwischen den Wörtern ab (erkennt Sprache und lernt den Pegel der Stimme)": "Приглушает всё между словами (распознаёт речь и запоминает уровень голоса)",
  "Klicks und Stöße dämpfen": "Подавлять щелчки и удары",
  "Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht": "Подавляет удары по микрофону и щелчки клавиатуры и мыши, когда никто не говорит",
+ "Raumklang": "Звук помещения",
+ "Wie laut der Klang des Raums unter der Stimme bleibt (dBFS), damit Pausen nicht tot still klingen; immer mindestens 12 dB leiser als im Original": "Насколько громко звук помещения остаётся под голосом (дБFS), чтобы паузы не звучали мёртвой тишиной; всегда как минимум на 12 дБ тише, чем в оригинале",
  "Stimme formen": "Обработать голос",
  "Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme": "Фильтр высоких частот, присутствие, компрессор, де-эссер и лимитер для ровного, разборчивого голоса",
  "Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Очищает речь одним щелчком: убирает шум и посторонние звуки, приглушает паузы и обрабатывает голос",

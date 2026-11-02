@@ -2,8 +2,9 @@
 // Voice cleaning ("Stimme säubern", effect "voiceclean", engine/VoiceClean with RNNoise): the processor keeps the sound
 // in sync at 48/44.1/32/22.05 kHz (dry path = input delayed by exactly latency()), lowers the noise of a speech-like
 // signal while the voice stays, stereo (same channels stay the same, different ones both cleaned), any block size
-// gives the same output, CPU cost; the mixer compensates the latency (preview from the middle = export), the editor
-// adds it in one undo step on audio clips only, project file round trip, CLI op clean_voice and `effects`.
+// gives the same output, pauses keep a room sound (never exactly silent), compressed voice keeps its peaks, CPU cost;
+// the mixer compensates the latency (preview from the middle = export), the editor adds it in one undo step on audio
+// clips only, project file round trip, CLI op clean_voice (room) and `effects`.
 #include "check.h"
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
@@ -277,8 +278,16 @@ int main(int argc, char** argv)
                     voiceB, voiceB - voiceIn);
         CHECK(noiseIn - noiseA > 10);
         CHECK(std::abs(voiceA - voiceIn) < 4);
-        CHECK(noiseIn - noiseB > 20);
+        // Defaults leave the room sound at about -60 dBFS (20 dB under this noise)
+        CHECK(noiseB > -66 && noiseB < -55);
         CHECK(std::abs(voiceB - voiceIn) < 8);
+        VoiceClean::Params quietRoom;
+        quietRoom.roomDb = -80;
+        const std::vector<float> c = run(rate, quietRoom, noisy, noisy, 4800);
+        const double noiseC = partDb(c, rate, L, true);
+        std::printf("%d Hz: room -80 dBFS: noise %.1f dB\n", rate, noiseC);
+        CHECK(noiseC < noiseB - 12);
+        CHECK(noiseIn - noiseC > 30);
         // The voice stays in sync after the full chain too
         std::vector<float> vb(b.begin() + L, b.end()), vref(v.begin(), v.end() - L);
         CHECK(std::abs(bestLag(vref, vb, rate / 100)) <= rate / 1000);
@@ -306,6 +315,56 @@ int main(int argc, char** argv)
             const std::vector<float> w = voice(rate2, 2.0);
             CHECK(run(rate2, VoiceClean::Params{}, w, w, 7) == run(rate2, VoiceClean::Params{}, w, w, 4096));
         }
+    }
+
+    // Pauses never go silent: with the gate (defaults) they keep the room sound - lowered to about -60 dBFS under a
+    // noisy recording, by 12 dB under an already clean one (-73 dBFS, like a voice chat track through a microphone
+    // filter) - and no sample run in them is exactly zero
+    {
+        const int rate = 48000, L = VoiceClean::latencyFor(rate);
+        const std::vector<float> v = voice(rate, 12.0);
+        for (double floorDb : {-40.0, -73.0}) {
+            std::vector<float> in = noise(v.size(), floorDb, 21);
+            for (size_t i = 0; i < v.size(); ++i) in[i] += v[i];
+            const std::vector<float> out = run(rate, VoiceClean::Params{}, in, in, 4800);
+            const double pause = partDb(out, rate, L, true);
+            size_t zeros = 0, longest = 0;
+            for (size_t i = size_t(2 * kPeriod * rate), run0 = 0; i < out.size(); ++i) {
+                run0 = out[i] == 0.f ? run0 + 1 : 0;
+                zeros += out[i] == 0.f;
+                longest = std::max(longest, run0);
+            }
+            std::printf("noise %.0f dBFS: pauses at %.1f dBFS, %zu exact zeros (longest run %zu)\n", floorDb, pause,
+                        zeros, longest);
+            CHECK(longest < 8);
+            if (floorDb > -60) CHECK(pause > -66 && pause < -55);
+            else CHECK(pause > floorDb - 20 && pause < floorDb - 4); // already quiet: lowered by 12 dB (+6 shaping)
+        }
+    }
+
+    // Already compressed voice (soft-clipped, peaks at -9.5 dBFS, like a voice chat track through a microphone filter):
+    // the shaping evens it out without lifting the peaks (the compressor's attack catches the syllable onsets)
+    {
+        const int rate = 48000, L = VoiceClean::latencyFor(rate);
+        std::vector<float> in = voice(rate, 12.0);
+        for (float& x : in) x = std::tanh(4.f * x);
+        float peak = 0;
+        for (float x : in) peak = std::max(peak, std::abs(x));
+        const float scale = float(std::pow(10.0, -9.5 / 20.0)) / peak;
+        const std::vector<float> hiss = noise(in.size(), -73, 23);
+        for (size_t i = 0; i < in.size(); ++i) in[i] = in[i] * scale + hiss[i];
+        const std::vector<float> out = run(rate, VoiceClean::Params{}, in, in, 4800);
+        auto peakDb = [](const std::vector<float>& x, size_t from, size_t to) {
+            float p = 0;
+            for (size_t i = from; i < to; ++i) p = std::max(p, std::abs(x[i]));
+            return 20 * std::log10(double(p) + 1e-12);
+        };
+        const size_t from = size_t(2 * kPeriod * rate);
+        const double pIn = peakDb(in, from, in.size() - size_t(L)), pOut = peakDb(out, from + size_t(L), out.size());
+        const double vIn = partDb(in, rate, 0, false), vOut = partDb(out, rate, L, false);
+        std::printf("compressed voice: peak %.1f -> %.1f dBFS, speech %.1f -> %.1f dB\n", pIn, pOut, vIn, vOut);
+        CHECK(pOut < pIn + 1.0);
+        CHECK(std::abs(vOut - vIn) < 4);
     }
 
     // CPU: seconds of processing per second of stereo sound
@@ -360,7 +419,7 @@ int main(int argc, char** argv)
         const std::vector<float> clean = mix(tl, rate, 0, n);
         std::vector<float> ref(v.begin(), v.begin() + n);
         CHECK(std::abs(bestLag(ref, clean, rate / 100)) <= rate / 1000);
-        CHECK(partDb(noisy, rate, 0, true) - partDb(clean, rate, 0, true) > 20);
+        CHECK(partDb(noisy, rate, 0, true) - partDb(clean, rate, 0, true) > 15); // room sound at -60 dBFS stays
         // Playback starting inside the clip sounds like the export after the warm-up
         const std::vector<float> from3 = mix(tl, rate, rate * 3, rate);
         double diff = 0;
@@ -450,6 +509,11 @@ int main(int argc, char** argv)
         err.clear();
         edit(R"([{"op":"clean_voice","track":"A1","amount":150}])", &err);
         CHECK_EQ(err, QString("BAD_ARGUMENT"));
+        err.clear();
+        edit(R"([{"op":"clean_voice","track":"A1","room":-20}])", &err);
+        CHECK_EQ(err, QString("BAD_ARGUMENT"));
+        edit(R"([{"op":"clean_voice","track":"A1","room":-70}])");
+        CHECK_EQ(EffectRegistry::value(*TimelineOps::findClip(loaded(), audio), "voiceclean", "room").toDouble(), -70.0);
         edit(R"([{"op":"clean_voice","track":"A1","remove":true}])");
         CHECK(!EffectRegistry::has(*TimelineOps::findClip(loaded(), audio), "voiceclean"));
         // The generic effect op works as well

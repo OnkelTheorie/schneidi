@@ -2017,6 +2017,8 @@
  "Senkt alles zwischen den Wörtern ab (erkennt Sprache und lernt den Pegel der Stimme)": "Wycisza wszystko między słowami (rozpoznaje mowę i uczy się poziomu głosu)",
  "Klicks und Stöße dämpfen": "Tłum kliknięcia i stuki",
  "Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht": "Tłumi stuknięcia w mikrofon oraz kliknięcia klawiatury i myszy, gdy nikt nie mówi",
+ "Raumklang": "Dźwięk pomieszczenia",
+ "Wie laut der Klang des Raums unter der Stimme bleibt (dBFS), damit Pausen nicht tot still klingen; immer mindestens 12 dB leiser als im Original": "Jak głośno dźwięk pomieszczenia pozostaje pod głosem (dBFS), aby pauzy nie brzmiały martwą ciszą; zawsze co najmniej 12 dB ciszej niż w oryginale",
  "Stimme formen": "Kształtuj głos",
  "Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme": "Filtr górnoprzepustowy, prezencja, kompresor, de-esser i limiter dla równego, wyraźnego głosu",
  "Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Czyści mowę jednym kliknięciem: usuwa szum i odgłosy, wycisza pauzy i kształtuje głos",

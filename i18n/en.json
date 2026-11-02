@@ -2017,6 +2017,8 @@
  "Senkt alles zwischen den Wörtern ab (erkennt Sprache und lernt den Pegel der Stimme)": "Lowers everything between the words (detects speech and learns the voice's level)",
  "Klicks und Stöße dämpfen": "Dampen clicks and bumps",
  "Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht": "Dampens bumps against the microphone and keyboard and mouse clicks while nobody is speaking",
+ "Raumklang": "Room sound",
+ "Wie laut der Klang des Raums unter der Stimme bleibt (dBFS), damit Pausen nicht tot still klingen; immer mindestens 12 dB leiser als im Original": "How loud the sound of the room stays under the voice (dBFS), so pauses do not sound dead silent; always at least 12 dB quieter than in the original",
  "Stimme formen": "Shape voice",
  "Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme": "High pass, presence, compressor, de-esser and limiter for an even, clear voice",
  "Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Cleans speech in one click: removes noise and background sounds, lowers pauses and shapes the voice",

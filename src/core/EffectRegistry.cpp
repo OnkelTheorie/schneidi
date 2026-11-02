@@ -183,6 +183,9 @@ QVector<EffectDescriptor>& registry()
               T("Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht")},
              {"shape", T("Stimme formen"), {}, EffectParam::Bool, true, 0, 0, AnimParam::Count, 1, 2, {},
               T("Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme")},
+             {"room", T("Raumklang"), {}, EffectParam::Double, -60.0, -80, -40, AnimParam::Count, 0.1, 0, {},
+              T("Wie laut der Klang des Raums unter der Stimme bleibt (dBFS), damit Pausen nicht tot still klingen; "
+                "immer mindestens 12 dB leiser als im Original")},
          },
          true, T("Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme"),
          true},

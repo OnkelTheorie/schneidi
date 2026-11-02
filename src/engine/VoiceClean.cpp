@@ -57,6 +57,8 @@ constexpr int kChainDelay = kThumpLook + kRnnDelay + kLookDelay + (kLimLook - 1)
 const float kGateAttack = coef(1.f);
 const float kGateRelease = coef(80.f);
 const float kGateEnvRelease = coef(50.f);
+// The closed gate lowers by this much, never to silence (the room tone lies under it anyway)
+const float kGateFloor = dbToLin(-30.f);
 const int kGateHoldSamples = kRate * 150 / 1000;
 // The level gate learns only speech at most this much below the voice so far (voices in the background do not pull
 // the threshold down); quieter speech the gate lets through lowers the learned level by 1 dB/s
@@ -73,7 +75,9 @@ const float kClickRelease = coef(15.f);
 const float kClickFloor = dbToLin(-30.f);
 const float kClickMinLevel = dbToLin(-60.f);
 const int kClickHoldSamples = kClickLook + kRate * 30 / 1000;
-const float kCompAttack = coef(5.f);
+// Fast attack: with mici's 5 ms the makeup gain lifted the first milliseconds of every syllable, peaks of already
+// compressed voice rose by ~5 dB (before the limiter) while the loudness stayed
+const float kCompAttack = coef(1.f);
 const float kCompRelease = coef(120.f);
 constexpr float kCompKneeDb = 6.f;
 const float kDeessAttack = coef(1.f);
@@ -94,6 +98,14 @@ const int kThumpMinSamples = kRate * 120 / 1000;
 const float kThumpBassRatio = dbToLin(10.f);   // bass this much above the highs = the arm still rings
 const int kThumpQuietSamples = kRate * 25 / 1000;
 const int kThumpMaxSamples = kRate * 3;
+// Room tone: the original's noise floor is the quietest 10 ms frame of the last 2 s (minimum statistics; digital
+// silence does not count), the residual is set so that floor lands at the room level
+constexpr int kRoomBlocks = 10, kRoomBlockFrames = 20;
+constexpr float kRoomSilentDb = -90.f;
+constexpr float kRoomGlide = 0.2f; // per frame: the residual follows a new floor within ~50 ms
+// At most this share of the original: the noise always goes down by 12 dB or more (a clean recording keeps its pauses
+// 12 dB quieter than they were instead of getting its noise back)
+const float kRoomMaxGain = dbToLin(-12.f);
 
 // Second-order section (transposed direct form II), RBJ cookbook coefficients at 48 kHz
 struct Biquad {
@@ -194,6 +206,12 @@ public:
         m_thumpGain = 1.f;
         std::memset(m_dry, 0, sizeof m_dry);
         m_dryPos = 0;
+        std::fill(std::begin(m_roomBlockMin), std::end(m_roomBlockMin), 0.f); // unknown = loud: little residual
+        m_roomBlockPos = m_roomBlockFill = 0;
+        m_roomCurMin = 0.f;
+        m_roomGain = -1.f; // set on the first frame
+        std::memset(m_room, 0, sizeof m_room);
+        std::memset(m_lookRoom, 0, sizeof m_lookRoom);
         m_mix = float(std::clamp(m_p.amount, 0.0, 1.0));
         std::memset(m_look, 0, sizeof m_look);
         m_lookPos = 0;
@@ -309,22 +327,55 @@ private:
         if (same) std::memcpy(wet[1], wet[0], sizeof wet[0]);
         const float target = float(std::clamp(m_p.amount, 0.0, 1.0));
         const float step = (target - m_mix) / kFrame;
+        const float room = roomGain();
+        const float roomStep = (room - m_roomGain) / kFrame;
         for (int c = 0; c < kCh; ++c) {
             float* dry = m_dry[c] + m_dryPos * kFrame; // the frame of two calls ago
-            float mix = m_mix;
+            float mix = m_mix, k = m_roomGain;
             for (int i = 0; i < kFrame; ++i) {
                 const float d = dry[i];
                 dry[i] = b[c][i];
                 mix += step;
-                b[c][i] = mix * wet[c][i] / 32768.f + (1.f - mix) * d;
+                k += roomStep;
+                // The residual takes the place of that share of the suppressed sound: the voice keeps its level
+                b[c][i] = mix * (1.f - k) * wet[c][i] / 32768.f + (1.f - mix) * d;
+                m_room[c][i] = mix * k * d;
             }
         }
         m_mix = target;
+        m_roomGain = room;
         m_dryPos ^= 1;
         return vad;
     }
 
-    // Look-ahead delay with the click damper, the level gate (threshold learned below the voice) and the voice gate
+    // Room tone residual for the dry frame going out now (m_dry at m_dryPos, before suppress() overwrites it): the
+    // original's noise floor (minimum statistics) lowered to the room level, always at least 12 dB down
+    float roomGain()
+    {
+        double s = 0;
+        for (int c = 0; c < kCh; ++c) {
+            const float* dry = m_dry[c] + m_dryPos * kFrame;
+            for (int i = 0; i < kFrame; ++i) s += double(dry[i]) * dry[i];
+        }
+        const float lvl = float(10.0 * std::log10(s / (kCh * kFrame) + 1e-30));
+        if (lvl > kRoomSilentDb) m_roomCurMin = std::min(m_roomCurMin, lvl);
+        if (++m_roomBlockFill == kRoomBlockFrames) {
+            m_roomBlockMin[m_roomBlockPos] = m_roomCurMin;
+            m_roomBlockPos = (m_roomBlockPos + 1) % kRoomBlocks;
+            m_roomBlockFill = 0;
+            m_roomCurMin = 0.f;
+        }
+        float floorDb = m_roomCurMin;
+        for (float v : m_roomBlockMin) floorDb = std::min(floorDb, v);
+        // Below the compressor's threshold the shaping adds its makeup gain: the residual leaves room for it
+        const float roomDb = float(std::clamp(m_p.roomDb, kRoomMinDb, kRoomMaxDb)) - (m_p.shape ? kCompMakeupDb : 0.f);
+        const float target = std::min(kRoomMaxGain, dbToLin(roomDb - floorDb));
+        if (m_roomGain < 0) m_roomGain = target;
+        return m_roomGain + (target - m_roomGain) * kRoomGlide;
+    }
+
+    // Look-ahead delay with the click damper, the level gate (threshold learned below the voice) and the voice gate;
+    // the room tone (m_room) runs through the same delay and click damper but not through the gates
     void gate(float* const* b, float vad)
     {
         const bool gateOn = m_p.gate, clickOn = m_p.clicks;
@@ -356,10 +407,12 @@ private:
         float framePk = 0.f;
         constexpr int mask = kRing - 1;
         for (int i = 0; i < kFrame; ++i) {
-            float y[kCh];
+            float y[kCh], room[kCh];
             for (int c = 0; c < kCh; ++c) {
                 m_look[c][m_lookPos] = b[c][i];
                 y[c] = m_look[c][(m_lookPos - kLookDelay) & mask];
+                m_lookRoom[c][m_lookPos] = m_room[c][i];
+                room[c] = m_lookRoom[c][(m_lookPos - kLookDelay) & mask];
             }
             if (clickOn) {
                 const int ahead = (m_lookPos - kLookDelay + kClickLook) & mask;
@@ -371,7 +424,10 @@ private:
                 const float target = m_clickHold > 0 ? kClickFloor : 1.f;
                 if (m_clickHold > 0) --m_clickHold;
                 m_clickGain = target + (m_clickGain - target) * (target < m_clickGain ? kClickAttack : kClickRelease);
-                for (float& v : y) v *= m_clickGain;
+                for (int c = 0; c < kCh; ++c) {
+                    y[c] *= m_clickGain;
+                    room[c] *= m_clickGain;
+                }
             } else {
                 m_clickHp.clear();
                 m_clickFast = m_clickSlow = 0;
@@ -391,12 +447,12 @@ private:
                     if (m_gateHold > 0) --m_gateHold;
                     else m_gateOpen = false;
                 }
-                const float target = m_gateOpen ? 1.f : 0.f;
+                const float target = m_gateOpen ? 1.f : kGateFloor;
                 m_gateGain = target + (m_gateGain - target) * (target > m_gateGain ? kGateAttack : kGateRelease);
             }
             m_vadGain = vadTarget + (m_vadGain - vadTarget) * (vadTarget > m_vadGain ? kVadAttack : kVadRelease);
             const float g = (gateOn ? m_gateGain : 1.f) * m_vadGain;
-            for (int c = 0; c < kCh; ++c) b[c][i] = y[c] * g;
+            for (int c = 0; c < kCh; ++c) b[c][i] = y[c] * g + room[c];
         }
         if (!gateOn) {
             m_vadGain = 1.f;
@@ -485,6 +541,11 @@ private:
     float m_dry[kCh][2 * kFrame] = {};
     int m_dryPos = 0;
     float m_mix = 1.f;
+    float m_roomBlockMin[kRoomBlocks] = {};
+    int m_roomBlockPos = 0, m_roomBlockFill = 0;
+    float m_roomCurMin = 0.f, m_roomGain = -1.f;
+    float m_room[kCh][kFrame] = {};
+    float m_lookRoom[kCh][kRing] = {};
 
     float m_look[kCh][kRing] = {};
     int m_lookPos = 0;

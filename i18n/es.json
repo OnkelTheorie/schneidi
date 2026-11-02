@@ -2017,6 +2017,8 @@
  "Senkt alles zwischen den Wörtern ab (erkennt Sprache und lernt den Pegel der Stimme)": "Baja todo lo que hay entre las palabras (detecta la voz y aprende su nivel)",
  "Klicks und Stöße dämpfen": "Atenuar clics y golpes",
  "Dämpft Stöße gegen das Mikrofon und Klicks von Tastatur und Maus, wenn gerade niemand spricht": "Atenúa los golpes contra el micrófono y los clics de teclado y ratón mientras nadie habla",
+ "Raumklang": "Sonido de sala",
+ "Wie laut der Klang des Raums unter der Stimme bleibt (dBFS), damit Pausen nicht tot still klingen; immer mindestens 12 dB leiser als im Original": "Qué tan alto queda el sonido de la sala bajo la voz (dBFS), para que las pausas no suenen en silencio absoluto; siempre al menos 12 dB más bajo que en el original",
  "Stimme formen": "Moldear la voz",
  "Hochpass, Präsenz, Kompressor, De-Esser und Limiter für eine gleichmäßig verständliche Stimme": "Paso alto, presencia, compresor, de-esser y limitador para una voz uniforme y clara",
  "Säubert Sprache mit einem Klick: entfernt Rauschen und Geräusche, senkt Pausen ab und formt die Stimme": "Limpia la voz con un clic: elimina ruido y sonidos de fondo, baja las pausas y moldea la voz",
