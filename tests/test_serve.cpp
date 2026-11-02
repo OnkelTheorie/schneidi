@@ -784,6 +784,7 @@ int main(int argc, char* argv[])
         const auto parts = [&] {
             QStringList l = QDir(root4 + "/out").entryList(QDir::AllEntries | QDir::NoDotAndDotDot);
             l.removeAll("long.mp4");
+            l.removeAll("long.0badf00d.part.mp4");
             return l;
         };
         const QString job = s.call("render", {{"project", "long.schneidi"}, {"out", "out/long.mp4"}, {"overwrite", true},
@@ -792,11 +793,14 @@ int main(int argc, char* argv[])
         t.start();
         while (parts().isEmpty() && !t.hasExpired(60000)) waitMs(100); // writing started
         if (CHECK(!job.isEmpty() && !parts().isEmpty())) {
+            // Another job writing to the same target meanwhile (made after this one started): its file stays
+            writeFile(root4 + "/out/long.0badf00d.part.mp4", "another job's render");
             CHECK_EQ(s.call("jobs", {{"job", job}, {"cancel", true}})["state"].toString(), QString("cancelled"));
             t.restart();
             while (!parts().isEmpty() && !t.hasExpired(10000)) waitMs(100);
             if (!CHECK(parts().isEmpty())) std::printf("       left: %s\n", qPrintable(parts().join(", ")));
             CHECK_EQ(readFile(root4 + "/out/long.mp4"), QByteArray("an older render"));
+            CHECK_EQ(readFile(root4 + "/out/long.0badf00d.part.mp4"), QByteArray("another job's render"));
         }
     }
     return Check::result();

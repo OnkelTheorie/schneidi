@@ -642,6 +642,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     QString error;
     ExportSettings es = RenderQueue::exportSettings(job, s.project);
     if (threads > 0) es.threads = threads;
+    es.partId = ctx.partId;
     if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
     loop.exec();
     if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);

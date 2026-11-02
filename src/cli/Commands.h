@@ -49,6 +49,9 @@ struct Context {
     std::function<void(double)> progress; // 0..1, may be empty
     // Command line only (empty in MCP): results printed as they come, one JSON line each (`watch` follow)
     std::function<void(const QJsonObject&)> line;
+    // `serve` worker only: name part of a render's temporary files (ExportSettings::partId), so cancelling a job
+    // removes its own files and not those of another job with the same target
+    QString partId;
 };
 
 struct Command {

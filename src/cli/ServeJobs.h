@@ -33,6 +33,7 @@ struct Job {
     QJsonObject result;     // MCP tool result once ended (content, isError)
     QDateTime created, started, ended;
     QString baseUrl;        // for download links in the result
+    QString partId;         // render: name part of its temporary files (8 hex, ExportSettings::partId)
     // A tool of the server itself (upload): runs in this process, ends through Jobs::end()
     std::function<void(Job*)> runHere;
     std::function<void()> cancelHere;

@@ -77,9 +77,10 @@ void Worker::run(Job* job)
     m_job = job;
     m_state = State::Busy;
     ++m_calls;
+    QJsonObject meta{{"progressToken", job->id}};
+    if (!job->partId.isEmpty()) meta["schneidi/partId"] = job->partId;
     send({{"jsonrpc", "2.0"}, {"id", ++m_callId}, {"method", "tools/call"},
-          {"params", QJsonObject{{"name", job->tool}, {"arguments", job->args},
-                                 {"_meta", QJsonObject{{"progressToken", job->id}}}}}});
+          {"params", QJsonObject{{"name", job->tool}, {"arguments", job->args}, {"_meta", meta}}}});
 }
 
 void Worker::kill()
@@ -142,19 +143,18 @@ void Worker::onGone()
 namespace {
 
 // A render stopped mid-way (its worker killed) leaves what the Exporter writes under a temporary name next to the
-// target until it renames it at the end: "<name>.<8 hex>.part.<ext>" (an image sequence: the folder
-// "<name>.<8 hex>.part"). Those of this job (made since it started) go; an older file of the target's name stays.
-void removeRenderParts(const QString& out, const QDateTime& since)
+// target until it renames it at the end: "<name>.<part id>.part.<ext>" (an image sequence: the folder
+// "<name>.<part id>.part"). Only this job's files go (the part id it gave the worker): another job rendering to the
+// same target keeps its own, an older file of the name stays.
+void removeRenderParts(const QString& out, const QString& partId)
 {
-    if (out.isEmpty()) return;
+    if (out.isEmpty() || partId.isEmpty()) return;
     const QFileInfo target(out);
-    const QRegularExpression part("^" + QRegularExpression::escape(target.completeBaseName())
-                                  + "\\.[0-9a-f]{8}\\.part(\\.[^.]+)?$");
+    const QRegularExpression part("^" + QRegularExpression::escape(target.completeBaseName() + "." + partId + ".part")
+                                  + "(\\.[^.]+)?$");
     const QDir dir = target.dir();
     for (const QFileInfo& fi : dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
         if (!part.match(fi.fileName()).hasMatch()) continue;
-        const QDateTime made = fi.birthTime().isValid() ? fi.birthTime() : fi.lastModified();
-        if (made < since.addSecs(-1)) continue; // another, older render's
         if (fi.isDir()) QDir(fi.absoluteFilePath()).removeRecursively();
         else QFile::remove(fi.absoluteFilePath());
     }
@@ -189,6 +189,8 @@ Job* Jobs::submit(std::unique_ptr<Job> job)
     job->id = QString("job%1-%2").arg(m_next++).arg(m_tag);
     job->state = Job::State::Queued;
     job->created = QDateTime::currentDateTime();
+    if (job->tool == "render")
+        job->partId = QString::number(QRandomGenerator::system()->generate(), 16).rightJustified(8, '0');
     Job* j = job.get();
     m_jobs[j->id] = std::move(job);
     // Also jobs that run here (upload): through the queue, one call at a time per file like the others
@@ -242,7 +244,7 @@ void Jobs::cancel(Job* job)
                 if (w->job() == job) {
                     if (job->tool == "render")
                         connect(w, &Worker::gone, this,
-                                [out = job->args["out"].toString(), since = job->started] { removeRenderParts(out, since); });
+                                [out = job->args["out"].toString(), id = job->partId] { removeRenderParts(out, id); });
                     w->kill();
                 }
         }

@@ -272,7 +272,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_target = s.path;
     m_subtitles = std::move(subtitles);
     // Written under a temporary name next to the target, renamed onto it at the end (see m_part)
-    const QString partId = QUuid::createUuid().toString(QUuid::Id128).left(8);
+    static const QRegularExpression ownId("^[0-9a-f]{8}$");
+    const QString partId = ownId.match(s.partId).hasMatch() ? s.partId : QUuid::createUuid().toString(QUuid::Id128).left(8);
     switch (s.output) {
     case ExportSettings::Output::File: m_path = m_part = partPath(s.path, partId); break;
     case ExportSettings::Output::ImageSequence:

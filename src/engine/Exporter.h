@@ -59,6 +59,9 @@ struct ExportSettings {
     // Smart render (engine/SmartRender): copy what shows a file unchanged instead of encoding it (H.264/H.265,
     // timeline size and frame rate). Falls back to encoding by itself.
     bool smartRender = false;
+    // Name part of the temporary files (8 hex digits: "<name>.<id>.part.<ext>");
+    // empty = a random one. `serve` gives its own to remove exactly this render's files after killing its worker.
+    QString partId;
 };
 
 // Renders the timeline into a file (engine/ExportWriter with its own renderer and mixer, so that preview and export
