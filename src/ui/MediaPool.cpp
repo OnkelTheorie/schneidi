@@ -1166,7 +1166,10 @@ void MediaPool::editSequenceFormat(int id)
     if (!q) return;
     TimelineFormatDialog dlg(q->name, q->hasOwnSize() ? QSize(q->width, q->height) : QSize(),
                              m_project->format().size(), this);
-    if (dlg.exec() == QDialog::Accepted) m_project->setSequenceSize(id, dlg.size());
+    if (dlg.exec() != QDialog::Accepted) return;
+    // The project's own size means "follow the project" (as in the CLI), not a fixed size that writes file version 5
+    const QSize size = dlg.size();
+    m_project->setSequenceSize(id, size == m_project->format().size() ? QSize() : size);
 }
 
 void MediaPool::removeSelected()
