@@ -2117,10 +2117,17 @@ QVector<SkippedEffect> skippedEffects(const Timeline& tl)
     QVector<SkippedEffect> out;
     QList<int> seen; // nested sequences looked at (`nested` holds all of them, the open one too: only those clips show)
     std::function<void(const Timeline&, int)> check = [&](const Timeline& t, int sequence) {
+        // Only what the render really uses: a hidden video track draws nothing, a muted audio track (or one silent
+        // because another is solo, like the mixer) plays nothing, a disabled clip neither
+        const bool anySolo = std::any_of(t.audio.begin(), t.audio.end(), [](const Track& a) { return a.solo; });
+        const auto used = [&](const Track& track, const Clip& c, bool video) {
+            if (!c.enabled) return false;
+            return video ? !track.hidden : !track.muted && (!anySolo || track.solo);
+        };
         for (const Track& track : t.video)
-            for (const Clip& c : track.clips)
+            for (const Clip& c : track.clips) {
+                if (!used(track, c, true)) continue;
                 for (const EffectInstance& e : c.effects) {
-                    if (track.hidden) break; // a hidden track draws nothing
                     if (!e.enabled) continue;
                     const EffectDescriptor* d = EffectRegistry::find(e.effectId);
                     if (d && (d->fixed || !d->video || e.effectId == QLatin1String("color")
@@ -2129,17 +2136,20 @@ QVector<SkippedEffect> skippedEffects(const Timeline& tl)
                         continue;
                     out << SkippedEffect{c.id, e.effectId, true, sequence}; // not known here or not drawn by this engine
                 }
+            }
         // Sound: the mixer plays the effects it knows; an unknown id (LADSPA plugin, newer version) is left out
         for (const Track& track : t.audio)
             for (const Clip& c : track.clips)
-                for (const EffectInstance& e : c.effects)
-                    if (e.enabled && !EffectRegistry::find(e.effectId))
-                        out << SkippedEffect{c.id, e.effectId, false, sequence};
+                if (used(track, c, false))
+                    for (const EffectInstance& e : c.effects)
+                        if (e.enabled && !EffectRegistry::find(e.effectId))
+                            out << SkippedEffect{c.id, e.effectId, false, sequence};
         if (!tl.nested) return;
         for (const QVector<Track>* tracks : {&t.video, &t.audio})
             for (const Track& track : *tracks)
                 for (const Clip& c : track.clips) {
-                    if ((c.kind != ClipKind::Compound && c.kind != ClipKind::Multicam) || seen.contains(c.sequenceId))
+                    if ((c.kind != ClipKind::Compound && c.kind != ClipKind::Multicam) || seen.contains(c.sequenceId)
+                        || !used(track, c, tracks == &t.video))
                         continue;
                     seen << c.sequenceId;
                     if (const auto it = tl.nested->constFind(c.sequenceId); it != tl.nested->constEnd())
