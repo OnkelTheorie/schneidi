@@ -103,7 +103,7 @@ int main(int argc, char** argv)
                             "Микрофон", "Kommentar", "Headset Mic", "Narration"})
         if (!CHECK(Transcript::isVoiceName(QString::fromUtf8(yes)))) std::printf("       %s\n", yes);
     for (const char* no : {"Mix", "Music", "Spotify", "Discord", "System Output", "Desktop Audio", "Comic Sans",
-                           "Mikser", "Game", "", "Spur 3"})
+                           "Mikser", "Game", "", "Spur 3", "System + Mikrofon", "Mix (Mic)", "Game & Voice"})
         if (!CHECK(!Transcript::isVoiceName(QString::fromUtf8(no)))) std::printf("       %s\n", no);
 
     // --- Streams of a file: the voice ones, else the first
@@ -115,6 +115,8 @@ int main(int argc, char** argv)
         CHECK(Transcript::defaultStreams(m) == QVector<int>{4});
         m.audioStreams = {{2, "Mix"}, {1, "Mic 1"}, {1, "Mic 2"}};
         CHECK((Transcript::defaultStreams(m) == QVector<int>{1, 2})); // a podcast: both voices
+        m.audioStreams = {{2, "System + Mikrofon"}, {2, "System"}, {1, "Mikrofon"}}; // Clipi's Discord clips
+        CHECK(Transcript::defaultStreams(m) == QVector<int>{2});
         m.audioStreams = {{2, "Game"}, {2, "Music"}};
         CHECK(Transcript::defaultStreams(m) == QVector<int>{0});
         m.audioStreams = {{1, "Mikrofon"}}; // the only stream: nothing to choose

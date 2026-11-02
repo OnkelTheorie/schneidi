@@ -268,7 +268,11 @@ bool isVoiceName(const QString& name)
                                           "głos",   "голос", "speech", "sprach", "narrat", "comment", "kommentar",
                                           "headset"};
     static const QRegularExpression split("[^\\p{L}]+");
-    for (const QString& word : name.toLower().split(split, Qt::SkipEmptyParts))
+    // A mix that has the voice in it ("System + Mikrofon", Clipi's mix stream) brings the rest along
+    if (name.contains('+') || name.contains('&') || name.contains(',')) return false;
+    const QStringList words = name.toLower().split(split, Qt::SkipEmptyParts);
+    if (words.contains("mix")) return false;
+    for (const QString& word : words)
         for (const char* start : kStarts)
             if (word.startsWith(QString::fromUtf8(start))) return true;
     return false;

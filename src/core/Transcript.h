@@ -59,7 +59,8 @@ void startAtSound(QVector<SubtitleCue>& cues, const Levels& levels, double fps, 
 
 // Which sound to transcribe when the user chose none. Game recordings (OBS, Clipi) keep game, voice chat, music and
 // the microphone in streams of their own; whisper on the mix writes song lyrics into the captions.
-// A stream or track name that says "own voice": microphone, voice, narration … ("Mikrofon", "Mic/Aux", "Voice")
+// A stream or track name that says "own voice": microphone, voice, narration … ("Mikrofon", "Mic/Aux", "Voice");
+// not a mix with it ("System + Mikrofon", "Mix (Mic)")
 bool isVoiceName(const QString& name);
 // Audio streams of a media file to transcribe: its voice-named streams (mixed if several), else {0} (the mix or the
 // only stream)
