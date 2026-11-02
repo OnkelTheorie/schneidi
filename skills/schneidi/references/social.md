@@ -50,7 +50,25 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
 - **Subtitles burned in** - most people watch muted ([subtitles.md](subtitles.md)): short lines (`max_chars` ~20-28),
   big font, outline or box. Word-by-word captions (karaoke or one word at a time) hold attention best: `transcribe`
   with `apply` true and `captions` `"karaoke"`.
+- **Narration without a recording** (no voice in the material, a story over gameplay, a product short): `edit` op
+  `speak` with the text turns it into a spoken voice clip (offline, Piper), e.g.
+  `{"op":"speak","text":"Drei Kills in fünf Sekunden.","at":"0.5s","captions":"karaoke"}` - `captions` makes the word
+  captions of it in the same step. Needs the extension once: `extensions` `install` `"piper,de_DE-ramona"`
+  (English: `en_US-ljspeech`; ask the user first, about 90 MB). Keep lines short, one thought per `speak`; duck the
+  game sound under it ([audio.md](audio.md)).
 - Loud enough: about -14 LUFS ([audio.md](audio.md)).
+- **Motion that keeps people watching** (use a few, not all):
+  - A **progress bar** shows how much is left: `{"op":"title","kind":"progress"}` spans the whole timeline at the
+    top edge (yellow bar on a dark track; `color`, `box_color`, `thickness`, `margin`, `rounded`). Keep it at the
+    top: at the bottom the apps draw their own bar, caption and buttons (`check` warns). `span` `"clip"` fills over
+    the title's own length instead (a countdown for one part).
+  - An **animated counter** for numbers worth showing: `{"op":"title","kind":"counter","from":0,"to":1000,
+    "suffix":" kills","at":"2s","duration":"1.5s","size":160}` counts up over its length (`ease` out by default,
+    `decimals`, `prefix` like "$", `separators` `"comma_point"` 1,000 / `"point_comma"` 1.000 / `"space_comma"`;
+    a new counter takes the UI language's and keeps them). Same style fields as a text title.
+  - **Pushes and whip pans** between shots instead of dissolves: `transition` with `type` `push_left`/`push_up` …
+    (the new shot pushes the old one out) or `whip_left` … (a fast push with motion blur; `blur` 0-100), 0.2-0.4 s
+    on the beat. `ease` (`in_out` is the default for whips) shapes the speed; wipes (`wipe_*`, `softness`) work too.
 
 ## Render
 `render` with `preset` `"Phone / Vertical 9:16"` (H.264, web quality), `subtitles` `"burn"` if the subtitles are on

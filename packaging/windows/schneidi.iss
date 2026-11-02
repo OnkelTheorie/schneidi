@@ -1,4 +1,4 @@
-; Installer für schneidi (Inno Setup 6). Nimmt denselben Programmordner wie die ZIP (build-win/schneidi).
+﻿; Installer für schneidi (Inno Setup 6). Nimmt denselben Programmordner wie die ZIP (build-win/schneidi).
 ; Wird von build-windows.sh aufgerufen:  ISCC.exe /DVersion=<version> /DSourceDir=<Programmordner> /DOutputDir=<dist> schneidi.iss
 ; Installation nur für den eigenen Benutzer (keine Administratorrechte), Nutzerdaten in %APPDATA%\schneidi bleiben beim
 ; Deinstallieren erhalten.
@@ -69,6 +69,12 @@ Name: "x264"; Description: "{cm:EncoderExtension}"; GroupDescription: "{cm:Extra
 ; Remove old program files before an update (the MLT modules of versions before 0.15 lay in lib/ and share/)
 Type: filesandordirs; Name: "{app}\lib"
 Type: filesandordirs; Name: "{app}\share"
+
+[UninstallDelete]
+; Downloaded extensions (x264/x265, Whisper and its models: engine/Extensions, %APPDATA%\schneidi\schneidi\extensions)
+; are program parts that can be downloaded again, often hundreds of MB: they go with the program. Settings, backups
+; and logs (user data) stay.
+Type: filesandordirs; Name: "{userappdata}\schneidi\schneidi\extensions"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

@@ -57,6 +57,8 @@ QString collapseKey(const QTreeWidgetItem* it)
     return QString::number(it->data(0, Qt::UserRole).toInt()) + ':' + it->data(0, kGroupRole).toString();
 }
 constexpr const char* kTitleData = "title";
+constexpr const char* kCounterData = "title:counter";
+constexpr const char* kProgressData = "title:progress";
 constexpr const char* kEffectPrefix = "fx:"; // List entry of a filter: "fx:<effect ID>"
 
 class EffectList : public QListWidget {
@@ -70,6 +72,8 @@ protected:
         if (items.isEmpty()) return data;
         const QString d = items.first()->data(Qt::UserRole).toString();
         if (d == kTitleData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::TitleItem)); // like "Text" in the pool
+        else if (d == kCounterData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::CounterItem));
+        else if (d == kProgressData) data->setData(MediaPool::MimeType, QByteArray(MediaPool::ProgressItem));
         else if (d.startsWith(kEffectPrefix)) data->setData(EffectsLibrary::EffectMimeType, d.mid(3).toUtf8());
         else if (d.startsWith(EffectFolders::LutPrefix) || d.startsWith(Presets::Prefix))
             data->setData(EffectsLibrary::EffectMimeType, d.toUtf8());
@@ -123,6 +127,37 @@ QPixmap transitionIcon(TransitionType type)
         wipe(QRect(0, cy, w, h - cy), QPolygon({{cx - 5, cy + 4}, {cx + 5, cy + 4}, {cx, cy - 4}}));
         break;
     case TransitionType::Luma: break; // listed per image with its own preview (Lumas::preview)
+    default: { // push/whip: B pushes A out (both halves), a whip with speed lines
+        const int dir = TransitionStyle{type}.direction();
+        const bool horizontal = dir < 2, forward = dir == 0 || dir == 2;
+        p.fillRect(r, kA);
+        p.fillRect(horizontal ? (forward ? QRect(0, 0, cx, h) : QRect(cx, 0, w - cx, h))
+                              : (forward ? QRect(0, 0, w, cy) : QRect(0, cy, w, h - cy)),
+                   kB);
+        p.setRenderHint(QPainter::Antialiasing);
+        if (TransitionStyle{type}.isWhip()) {
+            p.setPen(QPen(QColor(0xf0, 0xf0, 0xf0, 150), 1));
+            for (int k = -1; k <= 1; ++k) {
+                if (horizontal) p.drawLine(4, cy + 6 * k, w - 4, cy + 6 * k);
+                else p.drawLine(cx + 6 * k, 4, cx + 6 * k, h - 4);
+            }
+        }
+        // Double arrow: both pictures move
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0xf0, 0xf0, 0xf0));
+        for (int off : {-5, 4}) {
+            QPolygon arrow;
+            if (horizontal) {
+                const int x = cx + off, s = forward ? 1 : -1;
+                arrow = QPolygon({{x - 3 * s, cy - 5}, {x + 3 * s, cy}, {x - 3 * s, cy + 5}});
+            } else {
+                const int y = cy + off, s = forward ? 1 : -1;
+                arrow = QPolygon({{cx - 5, y - 3 * s}, {cx + 5, y - 3 * s}, {cx, y + 3 * s}});
+            }
+            p.drawPolygon(arrow);
+        }
+        break;
+    }
     }
     p.setPen(QColor(0, 0, 0, 120));
     p.setBrush(Qt::NoBrush);
@@ -146,17 +181,27 @@ QPixmap audioIcon()
     return pm;
 }
 
-QPixmap titleIcon()
+QPixmap titleIcon(TitleKind kind = TitleKind::Text)
 {
     QPixmap pm(kIcon);
     pm.fill(Theme::titleClip.darker(135));
     QPainter p(&pm);
+    if (kind == TitleKind::Progress) {
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        const QRectF bar(4, 5, pm.width() - 8, 5);
+        p.setBrush(QColor(0, 0, 0, 110));
+        p.drawRoundedRect(bar, 2.5, 2.5);
+        p.setBrush(QColor(255, 214, 0));
+        p.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * 0.6, bar.height()), 2.5, 2.5);
+        return pm;
+    }
     QFont f = p.font();
-    f.setPixelSize(17);
+    f.setPixelSize(kind == TitleKind::Counter ? 13 : 17);
     f.setBold(true);
     p.setFont(f);
     p.setPen(QColor(0xf0, 0xf0, 0xf0));
-    p.drawText(pm.rect(), Qt::AlignCenter, "T");
+    p.drawText(pm.rect(), Qt::AlignCenter, kind == TitleKind::Counter ? "123" : "T");
     return pm;
 }
 
@@ -413,8 +458,9 @@ EffectsLibrary::EffectsLibrary(QWidget* parent) : QWidget(parent)
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         const QString d = it->data(Qt::UserRole).toString();
         if (d.isEmpty()) return;
-        if (d == kTitleData) {
-            emit titleRequested();
+        if (d == kTitleData || d == kCounterData || d == kProgressData) {
+            emit titleRequested(int(d == kCounterData ? TitleKind::Counter
+                                    : d == kProgressData ? TitleKind::Progress : TitleKind::Text));
             return;
         }
         if (d.startsWith(kEffectPrefix)) {
@@ -607,7 +653,12 @@ void EffectsLibrary::rebuild()
         }
         return out;
     };
-    const QVector<Entry> titles{Entry{T("Text"), kTitleData, titleIcon()}};
+    const QVector<Entry> titles{Entry{T("Text"), kTitleData, titleIcon()},
+                                Entry{T("Zähler"), kCounterData, titleIcon(TitleKind::Counter),
+                                      T("Zahl, die über die Länge des Clips hochzählt (z. B. 0 → 1000 Kills)")},
+                                Entry{T("Fortschrittsbalken"), kProgressData, titleIcon(TitleKind::Progress),
+                                      T("Balken am Bildrand, der zeigt, wie viel vom Video noch kommt (über die "
+                                        "ganze Timeline)")}};
 
     switch (shown) {
     case All: // Toolbox: all groups with header like in DaVinci

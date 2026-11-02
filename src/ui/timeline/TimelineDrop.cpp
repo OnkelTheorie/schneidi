@@ -161,8 +161,12 @@ void TimelineView::dragEnterEvent(QDragEnterEvent* e)
     if (paths.isEmpty()) return;
     m_dropItems.clear();
     for (const QString& path : paths) {
-        if (path == MediaPool::TitleItem) { // Title from the Media Pool: 5 s, video only
-            m_dropItems << DropItem{5 * m_editor->project()->fps(), true, 0};
+        if (MediaPool::isTitleItem(path)) { // Title from the Media Pool/Effects Library: 5 s, video only
+            int length = 5 * m_editor->project()->fps();
+            // A progress bar spans the whole timeline (Editor::addTitle)
+            if (path == MediaPool::ProgressItem)
+                if (const int end = TimelineOps::endFrame(m_editor->project()->timeline()); end > 0) length = end;
+            m_dropItems << DropItem{length, true, 0};
             continue;
         }
         if (const int seq = MediaPool::sequenceOfItem(path)) { // Timeline/compound clip from the Media Pool

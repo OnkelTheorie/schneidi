@@ -87,6 +87,50 @@ struct ClipTransform {
     bool operator==(const ClipTransform&) const = default;
 };
 
+// Speed curve of a motion over its length (transitions, counters): Linear = constant, In = starts slowly,
+// Out = arrives slowly, InOut = both (core/Generators.h ease())
+enum class MotionEase { Linear, In, Out, InOut };
+struct MotionEaseInfo { MotionEase ease; const char* id; const char* name; };
+inline constexpr MotionEaseInfo kMotionEases[] = {
+    {MotionEase::Linear, "linear", N_("Linear")},
+    {MotionEase::In, "in", N_("Ease In")},
+    {MotionEase::Out, "out", N_("Ease Out")},
+    {MotionEase::InOut, "in_out", N_("Ease In and Out")},
+};
+inline const MotionEaseInfo& motionEaseInfo(MotionEase e)
+{
+    for (const auto& i : kMotionEases)
+        if (i.ease == e) return i;
+    return kMotionEases[0];
+}
+
+// What a title clip draws: its text, a number counting from one value to another over the clip (animated counter,
+// "0 -> 1000 kills") or a progress bar along an edge of the picture (how much of the video is left, typical for shorts)
+enum class TitleKind { Text, Counter, Progress };
+struct TitleKindInfo { TitleKind kind; const char* id; const char* name; };
+inline constexpr TitleKindInfo kTitleKinds[] = {
+    {TitleKind::Text, "text", N_("Text")},
+    {TitleKind::Counter, "counter", N_("Zähler")},
+    {TitleKind::Progress, "progress", N_("Fortschrittsbalken")},
+};
+// How a counter writes its number: thousands separator and decimal point. Stored with the title (default: the UI
+// language's way when it is made), so a project renders the same on every machine whatever its language.
+enum class NumberStyle { CommaPoint, PointComma, SpaceComma }; // 1,234.5 | 1.234,5 | 1 234,5 (no-break space)
+struct NumberStyleInfo { NumberStyle style; const char* id; char16_t group, point; };
+inline constexpr NumberStyleInfo kNumberStyles[] = {
+    {NumberStyle::CommaPoint, "comma_point", u',', u'.'},
+    {NumberStyle::PointComma, "point_comma", u'.', u','},
+    {NumberStyle::SpaceComma, "space_comma", u'\u00a0', u','},
+};
+inline const NumberStyleInfo& numberStyleInfo(NumberStyle n)
+{
+    for (const auto& i : kNumberStyles)
+        if (i.style == n) return i;
+    return kNumberStyles[0];
+}
+// Progress bar: filled from the timeline's start to its end wherever the clip sits, or over the clip's own length
+enum class ProgressSpan { Timeline, Clip };
+
 // Title (text generator as in DaVinci): values in pixels of the project format
 struct TitleStyle {
     QString text = QStringLiteral("Titel");
@@ -102,7 +146,25 @@ struct TitleStyle {
     bool boxOn = false;        // background box behind the text
     QColor boxColor{0, 0, 0, 160};
     double boxPad = 20;
+    // What the clip draws (Text: the fields above). Counter: the number in the text's font/colour/outline/box, from
+    // countFrom to countTo over the clip with `decimals` places, separators as `numbers` says.
+    // Progress: a bar `barThickness` high at the top or bottom edge (barMargin from it), filled in `color`; the box
+    // switch/colour is the track behind it.
+    TitleKind kind = TitleKind::Text;
+    double countFrom = 0, countTo = 100;
+    int decimals = 0;               // 0..6
+    QString prefix, suffix;         // around the number ("$", " kills", "%")
+    bool grouping = true;           // thousands separator
+    NumberStyle numbers = NumberStyle::CommaPoint; // separators (Editor::addTitle: the UI language's)
+    MotionEase countEase = MotionEase::Out;
+    ProgressSpan span = ProgressSpan::Timeline;
+    bool barTop = true;             // top edge (phone apps cover the bottom of a vertical video)
+    double barThickness = 12;       // pixels
+    double barMargin = 0;           // distance from the edge (pixels)
+    bool barRound = true;           // rounded ends
 
+    bool isCounter() const { return kind == TitleKind::Counter; }
+    bool isProgress() const { return kind == TitleKind::Progress; }
     bool operator==(const TitleStyle&) const = default;
 
     // Font for drawing: "Sans" (default, also stored that way in projects) does not exist on Windows
@@ -116,6 +178,11 @@ struct TitleStyle {
 
     QString firstLine() const
     {
+        if (isProgress()) return T("Fortschrittsbalken");
+        if (isCounter()) {
+            const auto num = [](double v) { return QString::number(v, 'g', 12).replace('.', I18n::decimalPoint()); };
+            return QString("%1%2 → %3%4").arg(prefix, num(countFrom), num(countTo), suffix).trimmed();
+        }
         const QString line = text.section('\n', 0, 0).trimmed();
         return line.isEmpty() ? QStringLiteral("Text") : line;
     }
@@ -123,7 +190,12 @@ struct TitleStyle {
 
 // Transition style (video only; audio is always a crossfade) and position relative to the cut as in the DaVinci Inspector
 // Luma = gradient wipe with grayscale image (bundled or from the effects folder, TransitionStyle::luma)
-enum class TransitionType { CrossDissolve, DipToColor, WipeRight, WipeLeft, WipeDown, WipeUp, Luma };
+// Push = the new shot pushes the old one out in the direction (both move); Whip = a fast push with motion blur along
+// the direction (whip pan)
+enum class TransitionType {
+    CrossDissolve, DipToColor, WipeRight, WipeLeft, WipeDown, WipeUp, Luma,
+    PushRight, PushLeft, PushDown, PushUp, WhipRight, WhipLeft, WhipDown, WhipUp
+};
 enum class TransitionAlign { Center, Start, End }; // Center on Edit / Start on Edit / End on Edit
 // Audio transition like DaVinci: level curve of both sides (in the middle -3 / -6 / -9 dB per side)
 enum class AudioCurve { Plus3dB, Zero, Minus3dB };
@@ -137,8 +209,21 @@ struct TransitionStyle {
     AudioCurve audio = AudioCurve::Plus3dB; // audio tracks only
     QString luma;                   // gradient wipe: image (file or bundled ":/lumas/<id>")
     bool invert = false;            // gradient wipe: bright areas first
+    MotionEase ease = MotionEase::Linear; // wipe/push/whip: speed over the transition
+    double blur = 50;               // whip: motion blur strength (0..100)
 
     bool isWipe() const { return type >= TransitionType::WipeRight && type <= TransitionType::WipeUp; }
+    bool isPush() const { return type >= TransitionType::PushRight && type <= TransitionType::PushUp; }
+    bool isWhip() const { return type >= TransitionType::WhipRight && type <= TransitionType::WhipUp; }
+    bool isSlide() const { return isPush() || isWhip(); } // both pictures move
+    // Direction of a wipe/push/whip: 0 right, 1 left, 2 down, 3 up (-1 = none)
+    int direction() const
+    {
+        if (isWipe()) return int(type) - int(TransitionType::WipeRight);
+        if (isPush()) return int(type) - int(TransitionType::PushRight);
+        if (isWhip()) return int(type) - int(TransitionType::WhipRight);
+        return -1;
+    }
     bool isLuma() const { return type == TransitionType::Luma; }
     bool operator==(const TransitionStyle&) const = default;
 };
@@ -152,6 +237,14 @@ inline constexpr TransitionTypeInfo kTransitionTypes[] = {
     {TransitionType::WipeDown, "wipe_down", N_("Wischblende nach unten")},
     {TransitionType::WipeUp, "wipe_up", N_("Wischblende nach oben")},
     {TransitionType::Luma, "luma", N_("Verlaufsblende")},
+    {TransitionType::PushRight, "push_right", N_("Schieben nach rechts")},
+    {TransitionType::PushLeft, "push_left", N_("Schieben nach links")},
+    {TransitionType::PushDown, "push_down", N_("Schieben nach unten")},
+    {TransitionType::PushUp, "push_up", N_("Schieben nach oben")},
+    {TransitionType::WhipRight, "whip_right", N_("Reißschwenk nach rechts")},
+    {TransitionType::WhipLeft, "whip_left", N_("Reißschwenk nach links")},
+    {TransitionType::WhipDown, "whip_down", N_("Reißschwenk nach unten")},
+    {TransitionType::WhipUp, "whip_up", N_("Reißschwenk nach oben")},
 };
 // Audio transition styles (names as in the DaVinci Inspector, English in the German DaVinci too)
 struct AudioCurveInfo { AudioCurve curve; const char* id; const char* name; };

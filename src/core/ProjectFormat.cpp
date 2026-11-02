@@ -96,6 +96,8 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                 ti.size *= s;
                 ti.outlineWidth *= s;
                 ti.boxPad *= s;
+                ti.barThickness *= sy;
+                ti.barMargin *= sy;
                 c.transInStyle.border *= s;
                 c.transOutStyle.border *= s;
                 // Convert keyframe values in pixels likewise

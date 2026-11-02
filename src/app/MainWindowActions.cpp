@@ -448,6 +448,8 @@ void MainWindow::buildActions()
     timeline->addSeparator();
     makeAction(timeline, "lock_tracks", T("Spuren sperren/entsperren (Auswahl, sonst Zielspuren)"), QKeySequence(),
                [this] { m_editor->toggleSelectionTracksLock(); });
+    // Text to speech (engine/Tts): a spoken voice clip at the playhead
+    makeAction(timeline, "speech", T("Sprechertext…"), QKeySequence(), [this] { speechDialog(); });
 
     QMenu* play = menuBar()->addMenu(T("&Wiedergabe"));
     makeAction(play, "play_pause", T("Play/Pause"), QKeySequence(Qt::Key_Space), [this] { m_engine->togglePlay(); });

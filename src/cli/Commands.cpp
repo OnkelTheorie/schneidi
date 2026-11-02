@@ -375,6 +375,25 @@ QJsonObject titleStyleJson(const TitleStyle& t, const TitleStyle& def)
     flag("box", t.boxOn, def.boxOn);
     color("box_color", t.boxColor, t.boxOn ? QColor() : def.boxColor);
     num("box_padding", t.boxPad, t.boxOn ? -1 : def.boxPad);
+    // Counter/progress bar: what it is and all its settings (their defaults are not obvious)
+    if (t.isCounter()) {
+        o["kind"] = "counter";
+        o["from"] = t.countFrom;
+        o["to"] = t.countTo;
+        o["decimals"] = t.decimals;
+        if (!t.prefix.isEmpty()) o["prefix"] = t.prefix;
+        if (!t.suffix.isEmpty()) o["suffix"] = t.suffix;
+        o["grouping"] = t.grouping;
+        o["separators"] = numberStyleInfo(t.numbers).id;
+        o["ease"] = motionEaseInfo(t.countEase).id;
+    } else if (t.isProgress()) {
+        o["kind"] = "progress";
+        o["span"] = t.span == ProgressSpan::Clip ? "clip" : "timeline";
+        o["edge"] = t.barTop ? "top" : "bottom";
+        o["thickness"] = t.barThickness;
+        o["margin"] = t.barMargin;
+        o["rounded"] = t.barRound;
+    }
     return o;
 }
 
@@ -1063,12 +1082,14 @@ const QVector<Command>& commands()
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"}},
          cmdScopes},
-        {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models, and x264 "
+        {"extensions", "Optional downloads (not part of schneidi): whisper speech recognition and its models, x264 "
                        "(an ffmpeg program with x264/x265 for better H.264/H.265 export quality when no graphics card "
-                       "encoder works; GPL, runs as its own program). Without arguments: list with sizes and what is "
-                       "installed.",
+                       "encoder works; GPL, runs as its own program), and piper text to speech with its voices (edit "
+                       "op 'speak'). Without arguments: list with sizes and what is installed.",
          {{"install", T::String, "ids to download and install, e.g. whisper,small (model sizes: turbo 574 MB, "
-                                 "small 190 MB, base 60 MB, tiny 32 MB) or x264 (72 MB, Windows 90 MB)"},
+                                 "small 190 MB, base 60 MB, tiny 32 MB), x264 (72 MB, Windows 90 MB) or "
+                                 "piper,de_DE-ramona (piper 26 MB, each voice 63 MB; en_US-ljspeech = English, "
+                                 "de_DE-thorsten = clearer German voice, see its licence note)"},
           {"remove", T::String, "ids to delete again"},
           {"reinstall", T::Boolean, "download again even if installed"}},
          cmdExtensions},
@@ -1129,6 +1150,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
         if (Live::Connection* c = Live::connectionFor(args["project"].toString())) {
             if (cmd.name == "edit") args = withSoundSync(args, ctx); // decode here, not in the app
             if (cmd.name == "edit") prepareReframe(args, ctx);
+            if (cmd.name == "edit") args = prepareSpeech(args, ctx); // piper/whisper here, not in the app
             QJsonObject result = Live::run(c, cmd.name, args);
             result["live"] = true;
             return result;

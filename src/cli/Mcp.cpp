@@ -56,7 +56,7 @@ QString instructions(const Options& opt)
                 "and loud moments for a highlight video, `beats` gives a song's tempo, bars, phrases, breaks and "
                 "drops), `edit` changes a "
                 "timeline (see its 'ops' description, `help` with command 'edit' and op '<name>' has details "
-                "per op; `effects` lists effects, LUTs, transitions and accents), `info` shows the "
+                "per op; op 'speak' turns text into a spoken voice clip; `effects` lists effects, LUTs, transitions and accents), `info` shows the "
                 "result (a project can have several timelines, each may have its own resolution: a 9:16 short "
                 "next to a 16:9 edit), `check` finds what typically goes wrong before "
                 "rendering (gaps, sound, game sound buried under the music, stutter in recordings, text a phone app "
