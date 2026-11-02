@@ -148,7 +148,12 @@ QString RenderSettings::audioSampleFormat() const
 
 FrameRate RenderSettings::outputRate(FrameRate timeline) const
 {
-    if (rateNum <= 0 || rateDen <= 0 || audioOnly()) return timeline;
+    if (audioOnly()) return timeline;
+    if (rateNum <= 0 || rateDen <= 0) {
+        if (maxFps <= 0 || timeline.fps() <= maxFps + 0.01) return timeline;
+        const int divide = int(std::ceil(timeline.fps() / maxFps - 0.01));
+        return {timeline.num, timeline.den * divide};
+    }
     return {rateNum, rateDen};
 }
 
@@ -245,6 +250,7 @@ QJsonObject RenderSettings::toJson() const
     if (shortSide > 0) o["shortSide"] = shortSide;
     if (audioBits != 24) o["audioBits"] = audioBits;
     if (rateNum > 0) o["rate"] = QString("%1/%2").arg(rateNum).arg(rateDen);
+    if (maxFps > 0) o["maxFps"] = maxFps;
     if (subtitles == BurnSubtitles) o["subtitles"] = "burn";
     if (subtitles == SrtFile) o["subtitles"] = "srt";
     if (subtitles == VttFile) o["subtitles"] = "vtt";
@@ -271,6 +277,7 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
         s.rateNum = rate[0].toInt();
         s.rateDen = rate[1].toInt();
     }
+    s.maxFps = std::max(0, o.value("maxFps").toInt());
     const int w = o.value("width").toInt(), h = o.value("height").toInt();
     if (w > 0 && h > 0) s.size = QSize(w, h);
     const QString sub = o.value("subtitles").toString();
@@ -293,17 +300,46 @@ bool RenderSettings::operator==(const RenderSettings& o) const
     return format == o.format && shortSide == o.shortSide && normSize(size) == normSize(o.size)
            && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles
            && embedSubtitles == o.embedSubtitles
-           && audioBits == o.audioBits && encoder == o.encoder && smartRender == o.smartRender && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
+           && audioBits == o.audioBits && encoder == o.encoder && smartRender == o.smartRender && maxFps == o.maxFps && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
 }
 
 // --- Presets
+
+const QVector<ShortPlatform>& shortPlatforms()
+{
+    // Longest upload that still counts as a short: YouTube Shorts 3 min (since October 2024), Instagram Reels 3 min
+    // (since January 2025), TikTok 10 min in the app (longer only as a regular upload)
+    static const QVector<ShortPlatform> list{
+        {"youtube-shorts", "YouTube Shorts", "shorts", 180},
+        {"instagram-reels", "Instagram Reels", "reels", 180},
+        {"tiktok", "TikTok", "tiktok", 600},
+    };
+    return list;
+}
+
+const ShortPlatform* shortPlatform(const QString& idOrName)
+{
+    QString key;
+    for (const QChar c : idOrName)
+        if (c.isLetterOrNumber()) key += c.toLower();
+    for (const ShortPlatform& p : shortPlatforms())
+        for (const char* s : {p.id, p.name, p.alias}) {
+            QString k;
+            for (const QChar c : QString::fromLatin1(s))
+                if (c.isLetterOrNumber()) k += c.toLower();
+            if (k == key) return &p;
+        }
+    return nullptr;
+}
 
 namespace RenderPresets {
 
 QVector<RenderPreset> builtins()
 {
-    auto make = [](const QString& name, const QString& format, int shortSide, int quality, QSize size = {}) {
+    auto make = [](const QString& id, const QString& name, const QString& format, int shortSide, int quality,
+                   QSize size = {}) {
         RenderPreset p;
+        p.id = id;
         p.name = name;
         p.builtin = true;
         p.settings.format = format;
@@ -313,24 +349,33 @@ QVector<RenderPreset> builtins()
         return p;
     };
     // GIF: small and at 15 fps, otherwise the file gets huge
-    RenderPreset gif = make(T("Animiertes GIF (480p, 15 fps)"), "gif", 480, 0);
+    RenderPreset gif = make("gif", T("Animiertes GIF (480p, 15 fps)"), "gif", 480, 0);
     gif.settings.rateNum = 15;
     gif.settings.rateDen = 1;
-    return {
-        make("YouTube 1080p", "h264", 1080, RenderSettings::kQualityWeb),
-        make("YouTube 4K", "h264", 2160, RenderSettings::kQualityWeb),
-        make(T("Handy / Hochformat 9:16"), "h264", 0, RenderSettings::kQualityWeb, QSize(1080, 1920)),
-        make(T("Klein (zum Verschicken)"), "h264", 720, 2),
-        make(T("H.265 (kleine Datei, hohe Qualität)"), "h265", 0, 0),
-        make(T("AV1 (sehr kleine Datei)"), "av1", 0, 0),
-        make(T("Hohe Qualität / Archiv (ProRes 422 HQ)"), "prores", 0, 0),
-        make(T("Schnitt-Austausch (DNxHR HQ)"), "dnxhr-hq", 0, 0),
-        gif,
-        make(T("Nur Audio (WAV)"), "wav", 0, 0),
-        make(T("Nur Audio (FLAC, verlustfrei)"), "flac", 0, 0),
-        make(T("Nur Audio (AAC)"), "aac", 0, 0),
-        make(T("Nur Audio (MP3)"), "mp3", 0, 0),
+    QVector<RenderPreset> list{
+        make("youtube-1080p", "YouTube 1080p", "h264", 1080, RenderSettings::kQualityWeb),
+        make("youtube-4k", "YouTube 4K", "h264", 2160, RenderSettings::kQualityWeb),
+        make("phone", T("Handy / Hochformat 9:16"), "h264", 0, RenderSettings::kQualityWeb, QSize(1080, 1920)),
     };
+    // Shorts, Reels, TikTok: 1080 x 1920 H.264 (web quality: about 10 Mbit/s at 30 fps, 15 at 60), AAC 48 kHz
+    // 320 kbit/s, the timeline's frame rate up to 60 (they play no more)
+    for (const ShortPlatform& sp : shortPlatforms()) {
+        RenderPreset p = make(sp.id, sp.name, "h264", 0, RenderSettings::kQualityWeb, QSize(1080, 1920));
+        p.settings.maxFps = 60;
+        p.hint = T("1080 × 1920, H.264, bis 60 fps, AAC 48 kHz; bis %1 min lang, Lautheit etwa %2 LUFS (vorher prüfen)")
+                     .arg(int(sp.maxSeconds / 60))
+                     .arg(int(sp.targetLufs));
+        list << p;
+    }
+    list << make("small", T("Klein (zum Verschicken)"), "h264", 720, 2)
+         << make("h265", T("H.265 (kleine Datei, hohe Qualität)"), "h265", 0, 0)
+         << make("av1", T("AV1 (sehr kleine Datei)"), "av1", 0, 0)
+         << make("prores", T("Hohe Qualität / Archiv (ProRes 422 HQ)"), "prores", 0, 0)
+         << make("dnxhr", T("Schnitt-Austausch (DNxHR HQ)"), "dnxhr-hq", 0, 0) << gif
+         << make("wav", T("Nur Audio (WAV)"), "wav", 0, 0)
+         << make("flac", T("Nur Audio (FLAC, verlustfrei)"), "flac", 0, 0)
+         << make("aac", T("Nur Audio (AAC)"), "aac", 0, 0) << make("mp3", T("Nur Audio (MP3)"), "mp3", 0, 0);
+    return list;
 }
 
 QString userFile()
@@ -369,6 +414,29 @@ bool saveUser(const QVector<RenderPreset>& presets)
 QVector<RenderPreset> all()
 {
     return builtins() + loadUser();
+}
+
+namespace {
+// "YouTube Shorts" -> "youtubeshorts", "Phone / Vertical 9:16" -> "phonevertical916"
+QString squeezed(const QString& s)
+{
+    QString out;
+    for (const QChar c : s)
+        if (c.isLetterOrNumber()) out += c.toLower();
+    return out;
+}
+} // namespace
+
+std::optional<RenderPreset> find(const QString& nameOrId)
+{
+    const QString key = squeezed(nameOrId);
+    if (key.isEmpty()) return std::nullopt;
+    const ShortPlatform* platform = shortPlatform(nameOrId);
+    for (const RenderPreset& p : all())
+        if (squeezed(p.name) == key || (!p.id.isEmpty() && squeezed(p.id) == key)
+            || (platform && p.id == QLatin1String(platform->id)))
+            return p;
+    return std::nullopt;
 }
 
 } // namespace RenderPresets

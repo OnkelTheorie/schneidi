@@ -239,11 +239,23 @@ const char* severityId(Severity s)
     return "info";
 }
 
+QVector<Issue> length(int from, int to, const ProjectFormat& f, const Options& o)
+{
+    // Longer than the platform takes as a short (Options::platform)
+    const double seconds = (to - from) / f.rate.fps();
+    if (o.maxLengthS <= 0 || seconds <= o.maxLengthS + 0.5 / f.rate.fps()) return {};
+    return {issue(Severity::Warning, "too_long",
+                  T("Zu lang für %1: %2 s, höchstens %3 s").arg(o.platform, num(seconds), num(o.maxLengthS, 0)), from,
+                  to)};
+}
+
 QVector<Issue> timeline(const Timeline& tl, int from, int to, const ProjectFormat& f, const Options& o)
 {
     QVector<Issue> out;
     if (to <= from) return out;
     const double fps = f.rate.fps();
+
+    out += length(from, to, f, o);
 
     // Media that are not where the project says (moved, deleted, other computer): renders as a placeholder
     QSet<QString> seen;
@@ -352,8 +364,13 @@ SoundFix soundFix(const QVector<Issue>& sound, double integratedLufs, const Time
         return std::any_of(sound.begin(), sound.end(), [check](const Issue& i) { return i.check == check; });
     };
     SoundFix fix;
-    fix.ceiling = std::min(tl.masterLimiterDb, o.maxTruePeakDb);
-    const bool limiterOn = tl.masterLimiter && tl.masterLimiterDb <= o.maxTruePeakDb;
+    // A little under the allowed true peak (kDefaultLimiterDb): a ceiling right at it ends at -1.0 dBTP after the
+    // encoder, which is on the edge of the check
+    constexpr double margin = 0.2;
+    fix.ceiling = std::min(tl.masterLimiterDb, std::round((o.maxTruePeakDb - margin) * 10) / 10);
+    // On at the allowed peak or below; a peak above it although the limiter is on: its ceiling goes down a little
+    const bool limiterOn = tl.masterLimiter && tl.masterLimiterDb <= o.maxTruePeakDb
+                           && !(has("true_peak") && tl.masterLimiterDb > fix.ceiling + 0.01);
     // Loudness: the master fader by the difference to the target (as far as it goes); up = the limiter catches the
     // peaks that grow with it
     double volume = tl.masterVolumeDb;

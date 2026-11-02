@@ -5,6 +5,7 @@
 
 #include "core/ExportCheck.h"
 #include "core/I18n.h"
+#include "core/RenderJob.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Bundle.h"
@@ -30,6 +31,18 @@ QString num1(double v) { return QString::number(v, 'f', 1).replace('.', I18n::de
 ExportCheck::Options options(const QJsonObject& a)
 {
     ExportCheck::Options o;
+    if (a.contains("platform")) {
+        const ShortPlatform* p = shortPlatform(a["platform"].toString());
+        if (!p) {
+            QStringList ids;
+            for (const ShortPlatform& sp : shortPlatforms()) ids << sp.alias;
+            fail("BAD_ARGUMENT", "platform must be " + ids.join(", "));
+        }
+        o.maxLengthS = p->maxSeconds;
+        o.platform = QString::fromLatin1(p->name);
+        o.targetLufs = p->targetLufs;
+        o.maxTruePeakDb = p->maxTruePeakDb;
+    }
     if (a.contains("target_lufs")) o.targetLufs = a["target_lufs"].toDouble();
     return o;
 }
@@ -281,6 +294,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
         const MediaSource m = openMedia(QJsonObject{{"file", src}});
         f = m.format;
         result["frames"] = m.info.length;
+        issues += ExportCheck::length(0, m.info.length, f, opt);
         if (m.info.isImage) {
             // A still has neither motion nor sound to check: say what it is instead of "no picture" and "no sound"
             issues << ExportCheck::Issue{ExportCheck::Severity::Info, "still_image",

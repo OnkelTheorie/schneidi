@@ -539,6 +539,10 @@ int Project::addTimeline(const QString& name, int binId, QSize size)
     }
     const int id = newSequenceId();
     Sequence seq{id, n, false, binId, emptyTimeline()};
+    // The master's settings stay those of the project (a start template's limiter): the timeline being edited
+    // passes them on. The fader is left at 0 dB, it belongs to the mix of the other timeline
+    seq.timeline.masterLimiter = current().timeline.masterLimiter;
+    seq.timeline.masterLimiterDb = current().timeline.masterLimiterDb;
     if (!size.isEmpty() && size != m_format.size()) {
         const ProjectFormat f = withinLimits({size.width(), size.height(), m_format.rate});
         seq.width = f.width & ~1;

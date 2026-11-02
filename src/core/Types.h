@@ -32,7 +32,9 @@ struct EffectInstance {
 
 constexpr double kMinVolumeDb = -60.0; // very bottom = -inf (muted)
 constexpr double kMaxVolumeDb = 12.0;
-constexpr double kDefaultLimiterDb = -1.0; // ceiling of the master limiter (dBFS)
+// Ceiling of the master limiter (dBTP): a little under the -1 dBTP that `check` and the platforms ask for, so a
+// limited render still passes after the AAC encoder's small overshoot
+constexpr double kDefaultLimiterDb = -1.2;
 
 // Display as in DaVinci: "+1.5 dB", "0.0 dB", "-inf dB"
 inline QString formatVolumeDb(double db)

@@ -104,6 +104,7 @@ private:
     QWidget* m_betterRow = nullptr;
     QLabel* m_betterText = nullptr;
     VideoEncoder m_wantedEncoder = VideoEncoder::Auto; // from the preset/last choice (kept across format changes)
+    int m_maxFps = 0; // from the preset (Shorts/Reels/TikTok: up to 60 fps) while the frame rate follows the timeline
     QComboBox* m_audioBitrate;
     QComboBox* m_audioBits;
     QComboBox* m_threads; // threads for rendering (data: count, 0 = all)
