@@ -55,6 +55,8 @@ Every command then works on what the app shows, unsaved changes included; `info`
 - **The result belongs in the open project**, not in a project file beside it that the user never sees: a new
   version (another format, a short from a long edit) goes into a new timeline with its own resolution
   (`new_timeline` with `aspect` `"9:16"`, or `format` with `timeline`): the 16:9 edit next to it stays as it is.
+  A 9:16 copy of an edit with every clip following its subject: `new_timeline` with `from`, `aspect` `"9:16"` and
+  `reframe` `"auto"` ([social.md](references/social.md)).
   `format` without `timeline` changes the project's resolution and with it every timeline that has none of its own:
   before that while other timelines hold clips, ask in one sentence. In the app `format` refuses such a change until
   you send `confirm:true` - only after the user said yes.

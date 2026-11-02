@@ -1890,5 +1890,11 @@
  "Projekteinstellungen verwenden (%1)": "Użyj ustawień projektu (%1)",
  "Timeline-Auflösung…": "Rozdzielczość osi czasu…",
  "Eigene Auflösung: %1": "Własna rozdzielczość: %1",
- "Auflösung: %1 (Projekteinstellungen)": "Rozdzielczość: %1 (ustawienia projektu)"
+ "Auflösung: %1 (Projekteinstellungen)": "Rozdzielczość: %1 (ustawienia projektu)",
+ "Als Hochformat-Timeline kopieren (9:16)": "Kopiuj jako pionową oś czasu (9:16)",
+ "Auto-Reframe": "Automatyczne kadrowanie",
+ "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Automatyczne kadrowanie: %1 klipów podąża za obiektem",
+ "Auto-Reframe: Bild wird analysiert …": "Automatyczne kadrowanie: analiza obrazu …",
+ "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Automatyczne kadrowanie: brak klipów wideo (napisy, klipy złożone i wielokamerowe pozostają bez zmian)",
+ "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Nie wszystkie klipy udało się przeanalizować, pozostają wyśrodkowane:\n%1"
 }

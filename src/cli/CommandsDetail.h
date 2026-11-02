@@ -166,6 +166,9 @@ QVector<int> clipsOn(Session& s, const QJsonObject& op, TrackKind kind, const ch
 int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback = -1);
 double numberOf(const QJsonObject& op, const char* key, double lo, double hi);
 QColor colorOf(const QJsonValue& v, const QString& what);
+// Auto-Reframe (EditOpsLook.cpp): the video clips among ids (empty = all) fill the edited timeline's shape, following
+// their subject (mode auto measures the pictures, blocking) - one undo step, a note per clip
+void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op);
 
 // ---------- Commands on projects and the app (CommandsProject.cpp) ----------
 

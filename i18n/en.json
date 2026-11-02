@@ -1890,5 +1890,11 @@
  "Projekteinstellungen verwenden (%1)": "Use project settings (%1)",
  "Timeline-Auflösung…": "Timeline resolution…",
  "Eigene Auflösung: %1": "Own resolution: %1",
- "Auflösung: %1 (Projekteinstellungen)": "Resolution: %1 (project settings)"
+ "Auflösung: %1 (Projekteinstellungen)": "Resolution: %1 (project settings)",
+ "Als Hochformat-Timeline kopieren (9:16)": "Copy as vertical timeline (9:16)",
+ "Auto-Reframe": "Auto reframe",
+ "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Auto reframe: %1 clips follow their subject",
+ "Auto-Reframe: Bild wird analysiert …": "Auto reframe: analyzing the picture …",
+ "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Auto reframe: no video clips (titles, compound and multicam clips stay as they are)",
+ "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Not all clips could be analyzed, they stay centered:\n%1"
 }

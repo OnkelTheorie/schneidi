@@ -205,6 +205,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_engine, &Engine::frameReady, m_scopes, &ScopesPanel::setFrame);
     connect(m_mediaPool, &MediaPool::sourceRequested, this, &MainWindow::showSource);
     connect(m_mediaPool, &MediaPool::sequenceOpenRequested, m_timeline, &TimelinePanel::openSequence);
+    connect(m_mediaPool, &MediaPool::reframedCopyRequested, this, &MainWindow::reframedCopy);
     // Another timeline opened: selection gone, playhead and zoom/scroll as last in this timeline (like DaVinci)
     m_shownSequence = m_project->currentSequence();
     connect(m_project, &Project::currentSequenceChanged, this, [this, tv] {
@@ -257,7 +258,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             }));
             k->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); }));
         }
-        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "accents",
+        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "accents", "auto_reframe",
                                "normalize_audio", "audio_ducking", "stream_presets_learn", "",
                                "toggle_enabled", "link_clips",
                                "render_cache_clip", "save_effect_preset", "", "compound_create", "compound_open", "compound_decompose", "",

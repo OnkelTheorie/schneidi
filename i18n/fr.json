@@ -1890,5 +1890,11 @@
  "Projekteinstellungen verwenden (%1)": "Utiliser les réglages du projet (%1)",
  "Timeline-Auflösung…": "Résolution de la timeline…",
  "Eigene Auflösung: %1": "Résolution propre : %1",
- "Auflösung: %1 (Projekteinstellungen)": "Résolution : %1 (paramètres du projet)"
+ "Auflösung: %1 (Projekteinstellungen)": "Résolution : %1 (paramètres du projet)",
+ "Als Hochformat-Timeline kopieren (9:16)": "Copier en timeline verticale (9:16)",
+ "Auto-Reframe": "Recadrage automatique",
+ "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Recadrage automatique : %1 clips suivent leur sujet",
+ "Auto-Reframe: Bild wird analysiert …": "Recadrage automatique : analyse de l’image …",
+ "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Recadrage automatique : aucun clip vidéo (les titres, clips composés et multicaméras restent tels quels)",
+ "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "Tous les clips n’ont pas pu être analysés, ils restent centrés :\n%1"
 }

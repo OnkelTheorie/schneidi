@@ -1890,5 +1890,11 @@
  "Projekteinstellungen verwenden (%1)": "Usar los ajustes del proyecto (%1)",
  "Timeline-Auflösung…": "Resolución de la línea de tiempo…",
  "Eigene Auflösung: %1": "Resolución propia: %1",
- "Auflösung: %1 (Projekteinstellungen)": "Resolución: %1 (ajustes del proyecto)"
+ "Auflösung: %1 (Projekteinstellungen)": "Resolución: %1 (ajustes del proyecto)",
+ "Als Hochformat-Timeline kopieren (9:16)": "Copiar como línea de tiempo vertical (9:16)",
+ "Auto-Reframe": "Reencuadre automático",
+ "Auto-Reframe: %1 Clips folgen ihrem Motiv": "Reencuadre automático: %1 clips siguen a su sujeto",
+ "Auto-Reframe: Bild wird analysiert …": "Reencuadre automático: analizando la imagen …",
+ "Auto-Reframe: keine Video-Clips (Titel, Compound- und Multicam-Clips bleiben, wie sie sind)": "Reencuadre automático: no hay clips de vídeo (los títulos, clips compuestos y multicámara se quedan como están)",
+ "Nicht alle Clips ließen sich analysieren, sie bleiben mittig:\n%1": "No se pudieron analizar todos los clips; se quedan centrados:\n%1"
 }

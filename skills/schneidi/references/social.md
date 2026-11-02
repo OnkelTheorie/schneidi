@@ -11,9 +11,19 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
   timeline placed into the short (`place_timeline`) is fitted like a 16:9 clip. Game recordings with a
   Mix stream next to the single streams: `template` "game" with `width` 1080, `height` 1920 mutes the Mix (else
   everything plays twice).
+- **The short of an existing 16:9 edit in one call**: `{"op":"new_timeline","from":"<edit>","aspect":"9:16",
+  "reframe":"auto"}` copies the edit (clips, titles, sound) into a new 9:16 timeline and reframes every video clip.
+  Clips already in a 9:16 timeline: `{"op":"reframe"}` (all) or with `clips`/`track`.
 - A 16:9 clip in a 9:16 project is fitted: full width, black above and below. Choose per clip:
-  - **Fill and reframe** (people, one subject): `transform` `zoom` ≈ 3.16 fills the height; `x` moves the visible
-    window left/right (pixels from the center, about ±1160 at that zoom). Look with `frames` where the subject is.
+  - **Auto-Reframe** (people, one subject, most footage): `{"op":"reframe","clips":[…]}` zooms to fill and writes
+    x/y keyframes that keep the subject in view - it measures motion, detail and faces, holds still while the
+    subject stays inside a dead zone, moves eased (no overshoot) and jumps only at scene cuts; a game's busy picture
+    stays near the middle (crosshair). `smoothness` 0..1 (default 0.5; lower = follows closer, higher = calmer).
+    `mode` `"center"` = fill without keyframes, `"fit"` = the blurred-background build below (also for 9:16 footage
+    in a 16:9 timeline). Check the result with `frames` (a few times per clip) and fine-tune single moments with
+    `keyframe` param `x`.
+  - **Fill and reframe by hand**: `transform` `zoom` ≈ 3.16 fills the height; `x` moves the visible window
+    left/right (pixels from the center, about ±1160 at that zoom). Look with `frames` where the subject is.
   - **Fit with blurred background** (gameplay, wide shots, HUD that must stay visible): one track, one clip per
     scene, and `transform` with `fit` `"blur"` on all of them in one op
     (`{"op":"transform","clips":[…],"fit":"blur","zoom":1.3}`): the bars above and below are filled with a blurred,

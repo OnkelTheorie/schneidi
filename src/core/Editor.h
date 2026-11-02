@@ -4,6 +4,7 @@
 #include "core/GradeWindows.h"
 #include "core/Multicam.h"
 #include "core/ProjectFormat.h"
+#include "core/Reframe.h"
 #include "core/StreamPresets.h"
 #include "core/TimelineOps.h"
 #include "core/Types.h"
@@ -435,6 +436,15 @@ public:
     int addMulticamAngle(int sequenceId, const Multicam::Angle& angle);
     // Is the opened timeline a multicam clip (its tracks can't be removed or reordered)?
     bool inMulticamSequence() const;
+
+    // ---- Auto-Reframe (core/Reframe.h) ----
+    // The video clips among `ids` (empty = every clip of the open timeline) fill the open timeline's shape: zoom to fill
+    // plus the position (keyframes for Mode::Auto from `paths`, clip frames; a clip without a path stays centered), or
+    // fitted in with a blurred copy behind (Mode::Fit). Titles, compound/multicam clips and locked tracks are left out.
+    // One undo step; returns the number of clips changed.
+    int reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHash<int, QVector<Reframe::Key>>& paths = {});
+    // The video clips reframeClips would change
+    QVector<int> reframeTargets(const QVector<int>& ids) const;
 
 signals:
     void targetTracksChanged(); // target tracks (redraw track header marking)
