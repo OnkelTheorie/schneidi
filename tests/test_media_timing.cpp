@@ -150,6 +150,28 @@ int main(int argc, char** argv)
         }
     }
 
+    // --- Proxy of a video with alpha keeps the alpha (an H.264 proxy played opaque, covering the tracks below)
+    {
+        const QString alpha = Check::makeMedia(
+            dir.filePath("alpha.webm"), {"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=2,format=yuva420p,"
+                                                              "geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(X,160),0,255)'",
+                                         "-c:v", "libvpx-vp9", "-auto-alt-ref", "0", "-deadline", "realtime"});
+        if (CHECK(!alpha.isEmpty())) {
+            const QString proxy = makeProxy(alpha);
+            Video::Reader::Options o;
+            o.hardware = false;
+            const auto r = proxy.isEmpty() ? nullptr : Video::Reader::open(proxy, o);
+            if (CHECK(r != nullptr)) {
+                CHECK_EQ(r->info().format, AV_PIX_FMT_YUVA420P);
+                const auto p = r->picture(10);
+                if (CHECK(p && p->frame->data[3])) {
+                    const uint8_t* row = p->frame->data[3] + size_t(90) * p->frame->linesize[3];
+                    CHECK(row[40] < 20 && row[280] > 235); // left half transparent, right half opaque
+                }
+            }
+        }
+    }
+
     // --- A source shorter than the clip in the model (proxy a few frames short, relinked shorter file): the clip ends
     // at the file's end, the clip after it stays where the model has it (a gap fills the rest)
     {

@@ -9,6 +9,11 @@
 #include "engine/ProxyCleanup.h"
 #include "engine/video/Reader.h"
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavutil/pixdesc.h>
+}
+
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -34,6 +39,8 @@ struct SourceInfo {
     int rateNum = 0, rateDen = 0;
     int colorspace = 709; // 601/709/240/2020/2021
     bool fullRange = false;
+    bool alpha = false; // transparent pixels (VP8/VP9 with alpha, ProRes 4444, PNG/QuickTime RLE in MOV)
+    QString decoder;    // the reader's (libvpx-vp9 for VP9 with alpha)
     double seconds = 0;
 };
 
@@ -61,6 +68,9 @@ SourceInfo probeSource(const QString& path)
     s.rateDen = in.frameRate.den;
     s.colorspace = in.colorspace; // a guess by picture size already when the file states none
     s.fullRange = in.fullRange;
+    const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(in.format);
+    s.alpha = desc && (desc->flags & AV_PIX_FMT_FLAG_ALPHA);
+    s.decoder = in.codec;
     if (media) s.seconds = media->length / 25.0;
     else if (in.duration > 0) s.seconds = double(in.duration) / 1e6; // AV_TIME_BASE units
     return s;
@@ -109,14 +119,32 @@ ProxyJob prepareJob(const QString& original, const QString& part)
         scale.prepend(QString("setpts=PTS-(%1)/TB,").arg(QString::number(*zero, 'f', 6)));
     const char* primaries = info.colorspace == 601 ? "smpte170m" : info.colorspace == 2020 ? "bt2020" : "bt709";
     const char* trc = info.colorspace == 601 ? "smpte170m" : "bt709";
+    // A source with alpha keeps it: H.264 has none (the proxy played opaque, covering the tracks below). VP9 with
+    // alpha in WebM, which the reader decodes with libvpx - written under the usual <hash>.mp4 name (cleanup, lookup;
+    // the reader goes by the content, not the name).
+    if (info.alpha && !avcodec_find_encoder_by_name("libvpx-vp9")) {
+        job.error = T("Für Video mit Transparenz lässt sich kein Proxy erzeugen (VP9-Encoder fehlt).");
+        return job;
+    }
     QStringList args{"-hide_banner", "-nostdin", "-y", "-i", original,
                      "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-map_metadata", "-1",
                      "-vf", scale,
                      // short GOP without B-frames: jumping/scrubbing in the preview stays fast
-                     "-g", "10", "-bf", "0", "-pix_fmt", "yuv420p",
+                     "-g", "10", "-bf", "0", "-pix_fmt", info.alpha ? "yuva420p" : "yuv420p",
                      "-colorspace", cs, "-color_primaries", primaries, "-color_trc", trc, "-color_range", "tv"};
-    // x264, or OpenH264 in the GPL-free build
-    args << HardwareEncoders::proxyVideoArguments();
+    // x264, or OpenH264 in the GPL-free build; with alpha VP9 (fast settings, no hidden alt-ref frames: alpha needs
+    // them off)
+    if (info.alpha)
+        args << "-c:v" << "libvpx-vp9" << "-deadline" << "realtime" << "-cpu-used" << "8" << "-row-mt" << "1"
+             << "-b:v" << "0" << "-crf" << "30" << "-auto-alt-ref" << "0";
+    else
+        args << HardwareEncoders::proxyVideoArguments();
+    // VP8/VP9 alpha: ffmpeg's own decoders drop it, libvpx reads it (as the reader does)
+    if (info.alpha && info.decoder.startsWith("libvpx")) {
+        const qsizetype input = args.indexOf("-i");
+        args.insert(input, info.decoder);
+        args.insert(input, "-c:v");
+    }
     // Constant frame rate equal to the source (phone clips with variable frame rate -> CFR)
     if (info.rateNum > 0 && info.rateDen > 0)
         args << "-r" << QString("%1/%2").arg(info.rateNum).arg(info.rateDen);
@@ -128,10 +156,14 @@ ProxyJob prepareJob(const QString& original, const QString& part)
         args.insert(input, "-threads");
         args << "-threads" << n << "-filter_threads" << n;
     }
-    args << "-fps_mode" << "cfr"
-         << "-c:a" << "aac" << "-b:a" << "192k"
-         << "-movflags" << "+faststart" << "-f" << "mp4"
-         << "-progress" << "pipe:1" << "-nostats" << part;
+    args << "-fps_mode" << "cfr";
+    if (!info.alpha)
+        args << "-c:a" << "aac" << "-b:a" << "192k" << "-movflags" << "+faststart" << "-f" << "mp4";
+    else if (avcodec_find_encoder_by_name("libopus"))
+        args << "-c:a" << "libopus" << "-b:a" << "160k" << "-f" << "webm";
+    else
+        args << "-c:a" << "libvorbis" << "-f" << "webm";
+    args << "-progress" << "pipe:1" << "-nostats" << part;
 
     job.args = args;
     return job;
