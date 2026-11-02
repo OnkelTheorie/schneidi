@@ -354,6 +354,15 @@ bool isKeepOf(const Clip& c, const Clip& base)
            && c.out == base.out && c.speed == base.speed && c.reverse == base.reverse && c.ramp == base.ramp;
 }
 
+bool isKeepAlong(const Clip& c, const Clip& base)
+{
+    if (isKeepOf(c, base)) return true;
+    // Trimmed, moved or bladed since (the copy is not linked to it): the same file in sync where they overlap
+    return !c.keepRegion.isEmpty() && base.keepRegion.isEmpty() && c.mediaPath == base.mediaPath && !c.isRetimed()
+           && !base.isRetimed() && !c.freeze && !base.freeze && c.start - c.in == base.start - base.in
+           && c.start < base.end() && c.end() > base.start;
+}
+
 QRectF inContent(const QRectF& region, const QRectF& content)
 {
     const QRectF in = valid(content);
