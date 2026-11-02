@@ -19,6 +19,8 @@ using Probe = std::function<double(const QString& path)>;
 void setProbe(Probe probe);
 // Cached per file (path, size, modification time): each file is opened once per process
 double of(const QString& path);
+// The shape a clip shows its file at: its own (Clip::pictureAspect, a stretched 4:3 recording put right) or the file's
+double ofClip(const Clip& c);
 
 // A picture of `aspect` fitted into `frame` keeping its shape, as the engine places it at zoom 1 (a portrait clip in
 // a landscape frame gets room at the sides); aspect <= 0 = it fills the frame (titles, compound clips)

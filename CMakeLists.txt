@@ -187,6 +187,7 @@ add_library(schneidi_lib STATIC
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
     src/engine/ReframeAnalysis.h  src/engine/ReframeAnalysis.cpp
+    src/engine/BarDetect.h        src/engine/BarDetect.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
     src/engine/Snapshot.h         src/engine/Snapshot.cpp

@@ -377,6 +377,9 @@ struct Clip {
     // file was offline, so the picture's shape was unknown. Converted as soon as the file can be read (opening the
     // project, relinking it).
     bool cropOnFrame = false;
+    // Width / height the picture is shown at instead of the file's (0 = the file's): a 4:3 game image stretched to
+    // 16:9 by the recorder gets its true shape back with 4/3. Video and still clips only.
+    double pictureAspect = 0;
 
     bool isRetimed() const { return speed != 1.0 || reverse || freeze || !ramp.isEmpty(); }
     bool hasRamp() const { return !ramp.isEmpty() && !freeze; }

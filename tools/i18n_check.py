@@ -36,7 +36,17 @@ def sources():
 
 def check(lang, used, update):
     path = os.path.join(ROOT, 'i18n', lang + '.json')
-    d = json.load(open(path, encoding='utf-8')) if os.path.exists(path) else {}
+    pairs = json.load(open(path, encoding='utf-8'), object_pairs_hook=list) if os.path.exists(path) else []
+    d = dict(pairs)
+    # A key twice: the last value wins and the first meaning is lost (one German word for two things - give one
+    # of them its own key)
+    seen, twice = set(), []
+    for k, _ in pairs:
+        if k in seen:
+            twice.append(k)
+        seen.add(k)
+    for k in twice:
+        print(f'{lang} doppelt:', repr(k))
     missing = sorted(used - d.keys())
     unused = sorted(d.keys() - used)
     empty = sorted(k for k in used & d.keys() if not d[k])
@@ -56,7 +66,7 @@ def check(lang, used, update):
         print(f'{lang} unbenutzt:', repr(k))
     for k in empty:
         print(f'{lang} unübersetzt:', repr(k))
-    return not missing and not empty
+    return not missing and not empty and not twice
 
 
 def main():

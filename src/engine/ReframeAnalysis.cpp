@@ -4,6 +4,7 @@
 #include "core/I18n.h"
 #include "core/MediaAspect.h"
 #include "core/Retime.h"
+#include "engine/BarDetect.h"
 #include "engine/video/Reader.h"
 
 extern "C" {
@@ -37,14 +38,17 @@ constexpr int kSide = 128;          // longer side of the analysis picture
 constexpr int kCell = 4;            // cell size in analysis pixels
 constexpr double kSamplesPerSecond = 8;
 
-QString base(const QString& file)
+QString base(const QString& file, const QRectF& content)
 {
     const QFileInfo fi(file);
-    const QString id = QString("%1|%2|%3|%4")
-                           .arg(kVersion)
-                           .arg(fi.absoluteFilePath())
-                           .arg(fi.size())
-                           .arg(fi.lastModified().toMSecsSinceEpoch());
+    QString id = QString("%1|%2|%3|%4")
+                     .arg(kVersion)
+                     .arg(fi.absoluteFilePath())
+                     .arg(fi.size())
+                     .arg(fi.lastModified().toMSecsSinceEpoch());
+    if (BarDetect::hasBars(content))
+        id += QString("|%1 %2 %3 %4").arg(content.x(), 0, 'f', 4).arg(content.y(), 0, 'f', 4).arg(content.width(), 0, 'f', 4)
+                  .arg(content.height(), 0, 'f', 4);
     return QString::fromLatin1(QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex());
 }
 
@@ -216,7 +220,7 @@ std::optional<Need> need(const Clip& c, FrameRate rate, int fileLength)
 
 std::optional<Samples> cached(const Need& n)
 {
-    const QString b = base(n.file);
+    const QString b = base(n.file, n.content);
     const QDir dir(cacheDir());
     const qint64 from = qint64(std::llround(n.from * 1000)), to = qint64(std::llround(n.to * 1000));
     QString best;
@@ -253,8 +257,10 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
     const double srcFps = info.frameRate.num > 0 && info.frameRate.den > 0 ? av_q2d(info.frameRate) : 25.0;
     const bool sideways = std::lround(std::abs(info.rotation)) % 180 == 90;
     const double sar = info.sar.num > 0 && info.sar.den > 0 ? av_q2d(info.sar) : 1.0;
-    const double dar = info.height > 0 ? (sideways ? double(info.height) / (info.width * sar) : info.width * sar / info.height)
-                                       : 16.0 / 9.0;
+    const QRectF content = BarDetect::hasBars(n.content) ? n.content : QRectF(0, 0, 1, 1);
+    const double dar = (info.height > 0 ? (sideways ? double(info.height) / (info.width * sar) : info.width * sar / info.height)
+                                        : 16.0 / 9.0)
+                       * content.width() / std::max(0.01, content.height());
     // Analysis picture: whole cells, even sides
     int aw = kSide, ah = kSide;
     if (dar >= 1) ah = std::max(kCell * 2, int(std::lround(kSide / dar / kCell)) * kCell);
@@ -283,6 +289,16 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
         if (pic->position < pos) break; // past the end: the last picture again
         pos = pic->position;             // positions the file skips
         const AVFrame* f = pic->frame;
+        // Only the content (bars cut off): a cropped reference of the picture
+        AVFrame* cropped = nullptr;
+        if (BarDetect::hasBars(content) && (cropped = av_frame_clone(f))) {
+            cropped->crop_left = size_t(std::lround(content.left() * f->width));
+            cropped->crop_right = size_t(std::max(0L, std::lround((1 - content.right()) * f->width)));
+            cropped->crop_top = size_t(std::lround(content.top() * f->height));
+            cropped->crop_bottom = size_t(std::max(0L, std::lround((1 - content.bottom()) * f->height)));
+            if (av_frame_apply_cropping(cropped, AV_FRAME_CROP_UNALIGNED) >= 0) f = cropped;
+        }
+        const std::unique_ptr<AVFrame, void (*)(AVFrame*)> keep(cropped, [](AVFrame* x) { av_frame_free(&x); });
         sws = sws_getCachedContext(sws, f->width, f->height, AVPixelFormat(f->format), aw, ah, AV_PIX_FMT_YUV420P,
                                    SWS_AREA, nullptr, nullptr, nullptr);
         if (!sws) break;
@@ -386,7 +402,7 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
 
     QDir().mkpath(cacheDir());
     const QString target = QDir(cacheDir()).filePath(QString("%1_%2_%3%4")
-                                                         .arg(base(n.file))
+                                                         .arg(base(n.file, n.content))
                                                          .arg(qint64(std::llround(n.from * 1000)))
                                                          .arg(qint64(std::llround(n.to * 1000)))
                                                          .arg(kSuffix));
@@ -455,7 +471,8 @@ QVector<Reframe::Target> targets(const Clip& c, FrameRate rate, int fileLength, 
 
 QHash<int, QVector<Reframe::Key>> paths(const QVector<Clip>& clips, const ProjectFormat& format, double smoothness,
                                         const std::function<int(const QString&)>& lengthOf, QStringList* errors,
-                                        const std::atomic<bool>* cancel, std::atomic<int>* progress)
+                                        const std::atomic<bool>* cancel, std::atomic<int>* progress,
+                                        QHash<QString, QRectF>* contents)
 {
     QHash<int, QVector<Reframe::Key>> out;
     // Progress: every clip counts by its length
@@ -464,8 +481,17 @@ QHash<int, QVector<Reframe::Key>> paths(const QVector<Clip>& clips, const Projec
     for (const Clip& c : clips) {
         if (cancel && cancel->load()) return {};
         const int length = lengthOf ? lengthOf(c.mediaPath) : 0;
-        const auto n = need(c, format.rate, length);
+        auto n = need(c, format.rate, length);
         if (!n) continue;
+        if (contents) {
+            if (!contents->contains(c.mediaPath)) {
+                QString barError;
+                const auto r = BarDetect::content(c.mediaPath, &barError, cancel);
+                if (cancel && cancel->load()) return {};
+                contents->insert(c.mediaPath, r.value_or(QRectF(0, 0, 1, 1)));
+            }
+            n->content = contents->value(c.mediaPath);
+        }
         QString error;
         const qint64 before = done, weight = std::max(1, c.length());
         const std::optional<Samples> samples = measure(*n, &error, cancel, [&](int permille) {
@@ -480,7 +506,7 @@ QHash<int, QVector<Reframe::Key>> paths(const QVector<Clip>& clips, const Projec
         Reframe::PathParams pp;
         pp.smoothness = smoothness;
         pp.fps = format.rate.fps();
-        const Reframe::Fill f = Reframe::fill(MediaAspect::of(c.mediaPath), QSizeF(format.size()));
+        const Reframe::Fill f = Reframe::fill(MediaAspect::ofClip(c), QSizeF(format.size()), n->content);
         pp.windowW = f.windowW;
         pp.windowH = f.windowH;
         out.insert(c.id, Reframe::path(targets(c, format.rate, length, *samples), pp));

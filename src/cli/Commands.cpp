@@ -483,6 +483,7 @@ QJsonObject clipJson(const Project& p, const Clip& c, TrackRef ref)
     }
     if (c.speed != 1.0) o["speed"] = c.speed;
     if (c.reverse) o["reverse"] = true;
+    if (c.pictureAspect > 0) o["picture_aspect"] = std::round(c.pictureAspect * 10000) / 10000; // op picture_aspect
     if (!c.effects.isEmpty()) {
         QJsonArray fx;
         const auto json = [](const QVariant& v) {
@@ -885,7 +886,11 @@ const QVector<Command>& commands()
           {"gaps", T::Boolean, "also find jumps in the picture's time stamps longer than 2 frame durations: 'jumps' "
                                "(at_s, length_s, missing_frames; from/to = frames that repeat the old picture) and "
                                "'stutter' (jumps less than 0.5 s apart as one stretch, from/to). Fast (reads the "
-                               "packets, no decoding), cached. Cut stutter stretches out of the ranges you use"}},
+                               "packets, no decoding), cached. Cut stutter stretches out of the ranges you use"},
+          {"bars", T::Boolean, "also look for black bars baked into the picture (a 4:3 game in a 16:9 recording, "
+                               "letterbox): 'content' = {x, y, w, h} of the picture between them in % (decodes about "
+                               "a dozen pictures, cached; once known it is shown without bars:true too). reframe and "
+                               "crop_bars use it"}},
          cmdProbe},
         {"silence", "Find pauses in the audio of a media file or a project's timeline. Returns 'silence' and "
                     "'sound' ranges [from, to); for a project they are timeline frames and 'sound' fits the 'keep' "
@@ -1047,7 +1052,9 @@ const QVector<Command>& commands()
                   "in the project, skipped when rendering - e.g. frei0r plugins of old projects; remove or replace "
                   "them), frames without any picture (a gap = black), subtitles too "
                   "short/too fast to read or past the end, recordings with stutter in the range a clip uses "
-                  "(stutter: jumps in the time stamps, see `probe` gaps), and the sound of the mix as exported: no "
+                  "(stutter: jumps in the time stamps, see `probe` gaps), black_bars (black bars baked into a "
+                  "recording - a 4:3 game in a 16:9 video - that show in a timeline of another shape or a zoomed "
+                  "clip; fix: edit op crop_bars, or reframe), and the sound of the mix as exported: no "
                   "sound, clipping, true peak above -1 dBTP, loudness off the target, silence at the end, and "
                   "under_music: a track with events more than 15 LU under the music while its events play (music = "
                   "a track named music/song/BGM, or one of sound files only that plays without pauses; events = the "

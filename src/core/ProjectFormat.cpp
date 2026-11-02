@@ -79,7 +79,7 @@ void scaleTimeline(Timeline& tl, QSize from, QSize to)
                     })) {
                     double kx = sx, ky = sy;
                     if (std::abs(sx - sy) > 1e-9 && c.kind == ClipKind::Media && !c.cropOnFrame) { // else on the frame
-                        double aspect = MediaAspect::of(c.mediaPath);
+                        double aspect = MediaAspect::ofClip(c);
                         if (aspect <= 0) aspect = before.width() / before.height();
                         const QSizeF a = MediaAspect::fit(aspect, before), b = MediaAspect::fit(aspect, after);
                         kx = b.width() / a.width();

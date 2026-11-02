@@ -790,6 +790,7 @@ bool DeliverPanel::runCheck()
             issues += *st;
         canceled = progress.wasCanceled();
         if (!canceled) issues += CheckMeasure::hook(f, render, from, to);
+        if (!canceled) issues += CheckMeasure::bars(f, tl, from, to);
     }
     if (job.settings.hasAudio() && !canceled) {
         progress.setLabelText(T("Ton wird gemessen…"));

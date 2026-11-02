@@ -117,6 +117,8 @@ signals:
     void watchFolderRequested(int bin);
     // Right-click "Clean up proxy media…": the main window asks and deletes (app/ProxyCleanupDialog)
     void proxyCleanupRequested();
+    // Right-click "Stretched 4:3": the clips of these files in the open timeline at 4:3 (on) or their file's shape
+    void stretchedRequested(const QStringList& paths, bool on);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* e) override;

@@ -643,6 +643,7 @@ struct Renderer::Impl {
 
     double nativeAspect(const Clip& c, const QString& lane)
     {
+        if (c.pictureAspect > 0 && c.kind == ClipKind::Media) return c.pictureAspect; // a stretched recording put right
         const Source s = source(c.mediaPath, lane);
         if (s.still) return double(s.still->image.width()) / std::max(1, s.still->image.height());
         if (!s.video) return 0;

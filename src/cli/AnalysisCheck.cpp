@@ -260,6 +260,7 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
                 f, tl, from, to, [&](const QString& p) { return media(p) ? media(p)->length : 0; }, progress(0, scanned)))
             issues += *st;
         issues += CheckMeasure::hook(f, render, from, to, opt);
+        issues += CheckMeasure::bars(f, tl, from, to);
         // H.264 export without a graphics card encoder and without x264: the free encoder needs twice the bit rate
         if (HardwareEncoders::needsBetterEncoder("h264"))
             issues << ExportCheck::Issue{ExportCheck::Severity::Info, "encoder_quality",

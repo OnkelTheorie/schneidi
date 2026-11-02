@@ -9,6 +9,7 @@
 #include "core/Keyframes.h"
 #include "core/Reframe.h"
 #include "core/TimelineOps.h"
+#include "engine/BarDetect.h"
 #include "engine/ColorGrade.h"
 #include "engine/ReframeAnalysis.h"
 #include "engine/Tracker.h"
@@ -257,6 +258,23 @@ void opTrack(Session& s, const QJsonObject& op)
 
 // ---------- reframe ----------
 
+// Per file of the clips the picture between black bars (engine/BarDetect; the whole picture if unreadable)
+QHash<QString, QRectF> barContents(const QVector<Clip>& clips)
+{
+    QHash<QString, QRectF> out;
+    for (const Clip& c : clips)
+        if (Reframe::canReframe(c) && !out.contains(c.mediaPath))
+            out.insert(c.mediaPath, BarDetect::content(c.mediaPath).value_or(QRectF(0, 0, 1, 1)));
+    return out;
+}
+
+QString contentText(const QRectF& r)
+{
+    const auto pct = [](double v) { return QString::number(std::round(v * 1000) / 10) + "%"; };
+    return QString("content x %1 y %2 w %3 h %4").arg(pct(r.x()), pct(r.y()), pct(r.width()), pct(r.height()));
+}
+
+
 void opReframe(Session& s, const QJsonObject& op)
 {
     QVector<int> ids;
@@ -271,6 +289,65 @@ void opReframe(Session& s, const QJsonObject& op)
         if (ids.isEmpty()) fail("NOT_FOUND", "that track has no clips");
     }
     reframeClips(s, ids, op);
+}
+
+// The video clips of clips/clip/track, or all of the timeline (empty)
+QVector<int> videoClipsOf(Session& s, const QJsonObject& op, const char* what)
+{
+    QVector<int> ids;
+    if (op.contains("clips") || op.contains("clip")) {
+        ids = clipsOn(s, op, TrackKind::Video, what);
+    } else if (op.contains("track")) {
+        TrackKind kind = TrackKind::Video;
+        const int index = parseTrack(op.value("track"), &kind);
+        const Timeline& tl = s.project.timeline();
+        if (kind != TrackKind::Video || index >= tl.video.size()) fail("BAD_ARGUMENT", "track must be a video track (V1, V2 …)");
+        for (const Clip& c : tl.video[index].clips) ids << c.id;
+        if (ids.isEmpty()) fail("NOT_FOUND", "that track has no clips");
+    }
+    return ids;
+}
+
+void opCropBars(Session& s, const QJsonObject& op)
+{
+    const QVector<int> targets = s.editor.reframeTargets(videoClipsOf(s, op, "cropping"));
+    if (targets.isEmpty()) fail("NOT_FOUND", "no video clip (titles, compound and multicam clips are left out)");
+    QVector<Clip> clips;
+    for (int id : targets) clips << *TimelineOps::findClip(s.project.timeline(), id);
+    const QHash<QString, QRectF> contents = barContents(clips);
+    const int n = s.editor.cropBars(targets, contents);
+    QStringList found;
+    for (auto it = contents.cbegin(); it != contents.cend(); ++it)
+        found << QFileInfo(it.key()).fileName() + ": "
+                     + (BarDetect::hasBars(*it) ? contentText(*it) : QStringLiteral("no black bars"));
+    s.notes << QString("cropped the black bars of %1 of %2 clip(s); %3").arg(n).arg(targets.size()).arg(found.join("; "));
+}
+
+void opPictureAspect(Session& s, const QJsonObject& op)
+{
+    const QVector<int> targets = s.editor.reframeTargets(videoClipsOf(s, op, "picture aspect"));
+    if (targets.isEmpty()) fail("NOT_FOUND", "no video clip (titles, compound and multicam clips are left out)");
+    double aspect = 0;
+    const QJsonValue v = op.value("aspect");
+    if (v.isDouble()) {
+        aspect = v.toDouble();
+        if (aspect < 0.1 || aspect > 10) fail("BAD_ARGUMENT", "aspect must be between 0.1 and 10 (width / height)");
+    } else {
+        const QString a = v.toString().trimmed().toLower();
+        if (a == "file" || a == "auto" || a == "none") {
+            aspect = 0;
+        } else {
+            const QStringList wh = a.split(':');
+            bool ok1 = false, ok2 = false;
+            const double w = wh.size() == 2 ? wh[0].toDouble(&ok1) : 0, h = wh.size() == 2 ? wh[1].toDouble(&ok2) : 0;
+            if (!ok1 || !ok2 || w <= 0 || h <= 0 || w / h < 0.1 || w / h > 10)
+                fail("BAD_ARGUMENT", "aspect must be like '4:3', a number (width / height) or 'file' (the file's own shape)");
+            aspect = w / h;
+        }
+    }
+    const int n = s.editor.setPictureAspect(targets, aspect);
+    s.notes << (aspect > 0 ? QString("%1 clip(s) now show their picture at %2:1").arg(n).arg(std::round(aspect * 1000) / 1000)
+                           : QString("%1 clip(s) show their file's own shape again").arg(n));
 }
 
 // ---------- transform ----------
@@ -613,21 +690,29 @@ void reframeClips(Session& s, const QVector<int>& ids, const QJsonObject& op)
     if (op.contains("mode") && !Reframe::modeFromId(op.value("mode").toString(), &mode))
         fail("BAD_ARGUMENT", "mode must be auto, center or fit");
     const double smoothness = op.contains("smoothness") ? numberOf(op, "smoothness", 0, 1) : 0.5;
+    const bool bars = op.value("bars").toBool(true);
     const QVector<int> targets = s.editor.reframeTargets(ids);
     if (targets.isEmpty()) fail("NOT_FOUND", "no video clip to reframe (titles, compound and multicam clips are left out)");
     const ProjectFormat f = s.format();
     QHash<int, QVector<Reframe::Key>> paths;
+    QVector<Clip> clips;
+    for (int id : targets) clips << *TimelineOps::findClip(s.project.timeline(), id);
+    QHash<QString, QRectF> contents;
     if (mode == Reframe::Mode::Auto) {
-        QVector<Clip> clips;
-        for (int id : targets) clips << *TimelineOps::findClip(s.project.timeline(), id);
         QStringList errors;
         paths = ReframeAnalysis::paths(clips, f, smoothness, [&s](const QString& path) {
             const MediaInfo* m = s.project.mediaInfo(path);
             return m ? m->length : 0;
-        }, &errors);
+        }, &errors, nullptr, nullptr, bars ? &contents : nullptr);
         for (const QString& e : errors) s.notes << "not measured, stays centered: " + e;
+    } else if (bars) {
+        contents = barContents(clips);
     }
-    s.editor.reframeClips(targets, mode, paths);
+    s.editor.reframeClips(targets, mode, paths, contents);
+    QStringList cropped;
+    for (auto it = contents.cbegin(); it != contents.cend(); ++it)
+        if (BarDetect::hasBars(*it)) cropped << QFileInfo(it.key()).fileName() + " (" + contentText(*it) + ")";
+    if (!cropped.isEmpty()) s.notes << "black bars cropped, the picture between them fills the frame: " + cropped.join(", ");
     QStringList moves;
     for (int id : targets) {
         const Clip* c = TimelineOps::findClip(s.project.timeline(), id);
@@ -669,7 +754,10 @@ void prepareReframe(const QJsonObject& editArgs, Context& ctx)
         const FrameRate rate = s.project.format().rate;
         for (int i = 0; i < clips.size(); ++i) {
             const MediaInfo* m = s.project.mediaInfo(clips[i].mediaPath);
-            if (const auto n = ReframeAnalysis::need(clips[i], rate, m ? m->length : 0)) ReframeAnalysis::analyze(*n);
+            if (auto n = ReframeAnalysis::need(clips[i], rate, m ? m->length : 0)) {
+                if (const auto r = BarDetect::content(clips[i].mediaPath)) n->content = *r; // as reframe:bars (default)
+                ReframeAnalysis::analyze(*n);
+            }
             if (ctx.progress) ctx.progress(double(i + 1) / clips.size());
         }
     } catch (const Error&) {
@@ -748,7 +836,7 @@ void addLookOps(QVector<OpDef>& ops)
                  "Inspector section off (its values and keyframes stay but do not apply, e.g. to compare), true on "
                  "again; `info` shows them when off.",
                  opTransform, kClipKeys}
-        << OpDef{"reframe", "{op:'reframe', clips?, track?, mode?:'auto', smoothness?:0.5}",
+        << OpDef{"reframe", "{op:'reframe', clips?, track?, mode?:'auto', smoothness?:0.5, bars?:true}",
                  "Auto-Reframe: clips fill this timeline's shape (16:9 footage in a 9:16 short) and follow their subject",
                  "Without clips/track: every video clip of the timeline (titles, compound and multicam clips are left "
                  "out). mode auto (default) = zoom to fill + x/y keyframes that keep the subject in view: measures the "
@@ -757,11 +845,32 @@ void addLookOps(QVector<OpDef>& ops)
                  "jumps only at scene cuts. Measuring takes roughly 5-10 s per minute of 1080p footage the first time "
                  "(cached per file). mode center = zoom to fill, middle of the picture, no keyframes; mode fit = the whole picture "
                  "fitted in with a blurred copy behind (fit:'blur'; also 9:16 footage in a 16:9 timeline). "
-                 "smoothness 0..1 (default 0.5): 0 follows closely, 1 calm (bigger dead zone, slower moves). Replaces "
-                 "the clips' zoom/x/y and their keyframes (rotation, crop, other keyframes stay); fine-tune with "
+                 "smoothness 0..1 (default 0.5): 0 follows closely, 1 calm (bigger dead zone, slower moves). bars "
+                 "(default true): black bars baked into the recording (a 4:3 game in a 16:9 video) are found, cropped, "
+                 "and only the picture between them is measured and fills the frame - bars are never wanted in a "
+                 "reframed short; false = the whole picture as it is. Replaces "
+                 "the clips' zoom/x/y and their keyframes (rotation, other keyframes stay; the crop too unless bars "
+                 "were found); fine-tune with "
                  "'transform'/'keyframe' and look with `frames`. For a whole short in one call: new_timeline with "
                  "from, aspect:'9:16' and reframe:'auto'.",
                  opReframe, kClipKeys}
+        << OpDef{"crop_bars", "{op:'crop_bars', clips?, track?}",
+                 "crop the black bars baked into recordings (a 4:3 game in a 16:9 video, a letterboxed film)",
+                 "Without clips/track: every video clip of the timeline. Finds the bars per file (a dozen pictures "
+                 "spread over it; a dark scene or a HUD does not count as a bar; cached) and sets the clips' crop to "
+                 "the picture between them (crop keyframes removed); zoom and position stay - in a 4:3 timeline add "
+                 "transform zoom, for a short use 'reframe' (it crops the bars itself). Files without bars are left "
+                 "alone. `probe` shows what was found (content).",
+                 opCropBars, kClipKeys}
+        << OpDef{"picture_aspect", "{op:'picture_aspect', clips?, track?, aspect}",
+                 "show a stretched recording at its true shape (4:3 game footage stretched to 16:9)",
+                 "aspect: '4:3', a number (width / height) or 'file' (the file's own shape again, default of every "
+                 "clip). Many players record a 4:3 game stretched to 16:9 (wide heads, oval circles); aspect:'4:3' "
+                 "shows it in its true proportions in preview, export and reframe (in a 16:9 "
+                 "timeline with room left and right, fill it with transform fit:'blur' or use a 4:3 timeline: "
+                 "new_timeline aspect:'4:3'). Crop values keep their share of the picture. There is no reliable "
+                 "automatic detection: set it when the footage looks stretched (`frames`).",
+                 opPictureAspect, kClipKeys}
         << OpDef{"keyframe", "{op:'keyframe', clips, param, at, value?, ease?, remove?, move_to?} or {op:'keyframe', "
                              "clips, param, keys:[{at, value?, ease?, remove?, move_to?}, …]} or {op:'keyframe', clips, "
                              "param, clear:true}",

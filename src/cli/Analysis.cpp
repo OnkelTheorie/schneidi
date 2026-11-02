@@ -5,6 +5,7 @@
 #include "cli/Live.h"
 
 #include "core/I18n.h"
+#include "engine/BarDetect.h"
 #include "engine/Background.h"
 #include "engine/Engine.h"
 #include "engine/Extensions.h"
@@ -260,6 +261,14 @@ QJsonObject probeOne(const QJsonObject& a)
         o["audio_streams"] = streams;
     }
     if (a["gaps"].toBool() && m.info.hasVideo && !m.info.isImage) o["gaps"] = gapsJson(m.info.path, m.format);
+    if (m.info.hasVideo) {
+        const std::optional<QRectF> r = a["bars"].toBool() ? BarDetect::content(m.info.path) : BarDetect::cached(m.info.path);
+        if (r) {
+            const auto pct = [](double v) { return std::round(v * 1000) / 10; };
+            o["content"] = QJsonObject{{"x", pct(r->x())}, {"y", pct(r->y())}, {"w", pct(r->width())}, {"h", pct(r->height())}};
+            o["black_bars"] = BarDetect::hasBars(*r);
+        }
+    }
     return o;
 }
 

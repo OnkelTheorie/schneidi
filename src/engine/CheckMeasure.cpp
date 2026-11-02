@@ -2,7 +2,11 @@
 #include "engine/CheckMeasure.h"
 
 #include "core/Loudness.h"
+#include "core/I18n.h"
+#include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "engine/AudioAnalysis.h"
+#include "engine/BarDetect.h"
 #include "engine/FrameGaps.h"
 #include "engine/Snapshot.h"
 
@@ -171,6 +175,49 @@ std::optional<QVector<ExportCheck::Issue>> stutter(const ProjectFormat& f, const
     }
     if (progress) progress(1.0);
     return ExportCheck::stutter(tl, from, to, f, [&](const QString& p) { return scans.value(p); }, fileLength);
+}
+
+QVector<ExportCheck::Issue> bars(const ProjectFormat& f, const Timeline& tl, int from, int to)
+{
+    QVector<ExportCheck::Issue> out;
+    const QSizeF frame(f.size());
+    if (frame.isEmpty()) return out;
+    QHash<QString, QRectF> contents;
+    for (const Track& t : tl.video) {
+        if (t.hidden) continue;
+        for (const Clip& c : t.clips) {
+            if (!c.enabled || c.kind != ClipKind::Media || c.mediaPath.isEmpty() || c.end() <= from || c.start >= to) continue;
+            const double aspect = MediaAspect::ofClip(c);
+            if (aspect <= 0) continue;
+            const double zoom = Keys::staticValue(c, AnimParam::ZoomX);
+            const bool zoomed = c.transform.transformOn && (zoom > 1.01 || c.keys.contains(AnimParam::ZoomX));
+            const bool otherShape = std::abs(aspect / (frame.width() / frame.height()) - 1) > 0.02;
+            if (!zoomed && !otherShape) continue;
+            if (!contents.contains(c.mediaPath))
+                contents.insert(c.mediaPath, BarDetect::content(c.mediaPath).value_or(QRectF(0, 0, 1, 1)));
+            const QRectF content = contents.value(c.mediaPath);
+            if (!BarDetect::hasBars(content)) continue;
+            // Cropped (most of each bar): fine
+            const QSizeF fit = MediaAspect::fit(aspect, frame);
+            const bool cropOn = c.transform.cropOn;
+            const auto cropped = [&](AnimParam p, double bar) {
+                return bar < 1 || (cropOn && Keys::staticValue(c, p) >= 0.8 * bar);
+            };
+            if (cropped(AnimParam::CropLeft, content.left() * fit.width())
+                && cropped(AnimParam::CropRight, (1 - content.right()) * fit.width())
+                && cropped(AnimParam::CropTop, content.top() * fit.height())
+                && cropped(AnimParam::CropBottom, (1 - content.bottom()) * fit.height()))
+                continue;
+            ExportCheck::Issue i{ExportCheck::Severity::Warning, "black_bars",
+                                 T("Die Aufnahme hat schwarze Balken, die im Bild zu sehen sind (4:3-Spiel in 16:9?): "
+                                   "„Schwarze Balken wegschneiden“ im Clip-Menü oder Auto-Reframe schneidet sie weg")};
+            i.from = std::max(from, c.start);
+            i.to = std::min(to, c.end());
+            i.clip = c.id;
+            out << i;
+        }
+    }
+    return out;
 }
 
 } // namespace CheckMeasure

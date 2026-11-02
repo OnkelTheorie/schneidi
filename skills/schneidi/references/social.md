@@ -38,6 +38,15 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
     `{"op":"transform","clips":[…],"crop_left":810,"crop_bottom":405,"zoom":4,"x":-1620,"y":-810}` (270 px left
     * zoom 4 = 1080). On a track above the gameplay this is the usual facecam-on-top layout.
   - Material that is already vertical needs nothing.
+- **4:3 game footage** (many CS2/Valorant players play in 4:3): two kinds in a 16:9 recording.
+  - **Black bars left and right** (pillarbox): `reframe` finds and crops them by itself (`bars` default true) and
+    only the game picture fills the short; `probe` with `bars:true` shows `content` (the picture between the bars,
+    in %). Outside a reframe: `{"op":"crop_bars"}` crops them on every clip (one step; then `transform` zoom).
+  - **Stretched to 16:9** (wide heads, oval circles - looks like a normal 16:9 picture without bars): there is no
+    reliable automatic detection; when the footage looks stretched (`frames`), `{"op":"picture_aspect",
+    "aspect":"4:3"}` shows it at its true shape in preview, export and reframe (`"file"` undoes it). In a 16:9
+    edit it then has room left and right (`fit:"blur"` fills it), a 4:3 timeline (`aspect:"4:3"`, 1440x1080)
+    fits it exactly. Do it before `reframe` (the zoom depends on the shape).
 - Keep text and faces inside the safe area: platforms cover roughly the bottom 20 % (caption, buttons), a strip
   on the right and a bar at the top. Titles and subtitles about 25-35 % up from the bottom, or in the upper third.
   `check` on the project lists text in those zones (`safe_area`, `subtitle_safe_area`).
