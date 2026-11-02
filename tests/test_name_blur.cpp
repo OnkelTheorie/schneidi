@@ -209,7 +209,7 @@ void testPlan()
     }
     NameBlur::Options every2;
     every2.samplesPerSecond = 15;
-    QVector<NameBlur::Mask> m = NameBlur::plan(s, NameBlur::Template::Cs2, 50, every2);
+    QVector<NameBlur::Mask> m = NameBlur::plan(s, NameBlur::Template::Valorant, 50, every2);
     if (!CHECK_EQ(m.size(), 1)) return;
     CHECK(!m[0].moving);
     CHECK(NameBlur::rectAt(m[0], 0).isEmpty());
@@ -221,7 +221,10 @@ void testPlan()
     CHECK(m[0].keys.size() <= 6); // standing still: no key per sample
     // A single flicker in the kill feed zone is not text
     QVector<NameBlur::Sample> one{{0, {}}, {2, {QRectF(0.8, 0.2, 0.1, 0.02)}}, {4, {}}, {6, {}}};
-    CHECK(NameBlur::plan(one, NameBlur::Template::Cs2, 8, every2).isEmpty());
+    CHECK(NameBlur::plan(one, NameBlur::Template::Valorant, 8, every2).isEmpty());
+    // CS2: the player name bottom left of the avatar is hidden over the whole clip, found or not
+    const QVector<NameBlur::Mask> cs = NameBlur::plan(one, NameBlur::Template::Cs2, 8, every2);
+    CHECK(cs.size() == 1 && cs[0].zone == "player" && NameBlur::rectAt(cs[0], 7).contains(QPointF(0.42, 0.96)));
     // Two tags one after the other share a window; three at once with one window: the longest stays
     QVector<NameBlur::Sample> tags;
     for (int f = 0; f < 60; ++f) {

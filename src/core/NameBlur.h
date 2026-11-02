@@ -24,6 +24,7 @@ struct Zone {
     const char* name; // id for notes ("killfeed", "chat", "view")
     QRectF area;
     bool moving;      // text there moves (name tags above heads): tracked; else one window for the zone
+    bool always = false; // hidden over the whole clip, found or not (a name the detection misses on its plate)
 };
 struct Layout {
     QVector<Zone> include;   // text whose center lies in one of these counts (first match)

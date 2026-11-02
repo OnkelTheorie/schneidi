@@ -135,7 +135,8 @@ Layout layout(Template t)
         l.include = {{"team", area(0.32, 0, 0.36, 0.025), false},
                      {"killfeed", area(0.6, 0.04, 0.4, 0.31), false},
                      {"chat", area(0, 0.6, 0.42, 0.3), false},
-                     {"player", area(0.38, 0.93, 0.09, 0.06), false}, // the name left of the avatar
+                     // the own/spectated name left of the avatar: pink on a pink plate is often missed, it is always there
+                     {"player", area(0.385, 0.94, 0.085, 0.045), false, true},
                      {"items", area(0.8, 0.66, 0.2, 0.24), false},
                      {"view", area(0, 0.03, 1, 0.87), true}};
         break;
@@ -183,6 +184,14 @@ QVector<Mask> plan(const QVector<Sample>& samples, Template t, int length, const
     for (int z = 0; z < l.include.size(); ++z) {
         const Zone& zone = l.include[z];
         const auto& per = inZone[z];
+        if (zone.always) {
+            if (n == 0) continue;
+            Mask m;
+            m.zone = zone.name;
+            m.keys = {Key{0, true, zone.area}};
+            out << m;
+            continue;
+        }
         if (!zone.moving) {
             // Kept when it stands at the same place on most samples around it (HUD text; the 3D picture behind moves)
             const int half = std::max(1, int(std::lround(o.samplesPerSecond / 2)));
