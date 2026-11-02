@@ -9,6 +9,7 @@
 #include "cli/CommandsDetail.h"
 #include "core/Transcript.h"
 #include "engine/Extensions.h"
+#include "engine/Transcriber.h"
 
 #include "check.h"
 
@@ -18,6 +19,7 @@
 #include <QEventLoop>
 #include <QPushButton>
 #include <QSettings>
+#include <QThread>
 #include <QTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -32,7 +34,8 @@ namespace {
 
 // --- The fake whisper-cli ---------------------------------------------------------------------------------------
 // Reads the 16-bit mono WAV of -f, writes -of + ".json" with one word "f<pitch rounded to 100 Hz>"; -dl prints a
-// detected "en" like whisper's log line. The language of -l (auto: "de") is the result's language.
+// detected "en" like whisper's log line. The language of -l (auto: "de") is the result's language. FAKE_WHISPER_MS:
+// works that long first, without a progress line (like whisper on a short clip).
 int fakeWhisper(int argc, char** argv)
 {
     QString wav, out, lang = "de";
@@ -49,6 +52,7 @@ int fakeWhisper(int argc, char** argv)
         std::fprintf(stderr, "whisper_full_with_state: auto-detected language: en (p = 0.930000)\n");
         return 0;
     }
+    QThread::msleep(qEnvironmentVariableIntValue("FAKE_WHISPER_MS"));
     QFile f(wav);
     if (!f.open(QIODevice::ReadOnly)) return 2;
     const QByteArray d = f.readAll();
@@ -295,6 +299,7 @@ int main(int argc, char** argv)
         const Extensions::Item* tiny = Extensions::find("whisper-model-tiny");
         const QString installed = QDir(Extensions::rootDir()).filePath("whisper/models/" + tiny->fileName);
         QDir().mkpath(QFileInfo(installed).absolutePath());
+        QFile::remove(installed); // from an earlier run (test settings and data stay)
         CHECK(QFile::copy(model, installed));
         Timeline tl;
         tl.audio.resize(1);
@@ -328,6 +333,64 @@ int main(int argc, char** argv)
         CHECK(hintFor("en", &cues).isEmpty());
         CHECK(hintFor("auto", &cues).isEmpty());
         CHECK_EQ(cues, 1);
+    }
+    {
+        // Progress while whisper says nothing: estimated from the time against the expected run time, rising,
+        // never 100 % before it is done; the run's speed is remembered for the next estimate
+        CHECK_EQ(Transcriber::heartbeat(0, 10), 0.0);
+        CHECK_EQ(Transcriber::heartbeat(5, 10), 0.5);
+        CHECK_EQ(Transcriber::heartbeat(3, 0), 0.0);
+        double before = 0;
+        bool rising = true;
+        for (double t = 0.5; t < 60; t += 0.5) { // six times as long as expected
+            const double h = Transcriber::heartbeat(t, 10);
+            rising = rising && h > before && h < 1;
+            before = h;
+        }
+        CHECK(rising);
+        CHECK(before > 0.98);
+        // Expected: the remembered speed times the sound, at least one 30 s window
+        QSettings().setValue("transcribe/speed/ggml-test.bin", 0.05);
+        CHECK(std::abs(Transcriber::whisperSeconds(model, 2) - 1.5) < 1e-9);
+        CHECK(std::abs(Transcriber::whisperSeconds(model, 60) - 3) < 1e-9);
+        CHECK(Transcriber::whisperSeconds(dir.filePath("none.bin"), 30) > 0); // a guess without a measurement
+        // The fake works 2 s without a word (expected 1.5 s): several steps in between, below 100 % until done
+        qputenv("FAKE_WHISPER_MS", "2000");
+        Transcriber t;
+        QVector<double> seen;
+        bool finished = false, ok = false;
+        QObject::connect(&t, &Transcriber::progress, [&](double p) {
+            if (!finished) seen << p;
+        });
+        QEventLoop loop;
+        QObject::connect(&t, &Transcriber::finished, [&](bool good, const QString&) {
+            ok = good;
+            finished = true;
+            loop.quit();
+        });
+        TranscribeRequest req;
+        req.media = rec;
+        req.audioStream = 2;
+        req.model = model;
+        QString error;
+        if (CHECK(t.start(req, &error))) {
+            QTimer::singleShot(30000, &loop, &QEventLoop::quit);
+            loop.exec();
+        }
+        qunsetenv("FAKE_WHISPER_MS");
+        CHECK(ok);
+        int between = 0;
+        bool forward = true;
+        for (int i = 0; i < seen.size(); ++i) {
+            between += seen[i] > 0.15 && seen[i] < 0.95;
+            forward = forward && (i == 0 || seen[i] >= seen[i - 1]);
+        }
+        CHECK(between >= 4);
+        CHECK(forward);
+        CHECK(seen.size() >= 2 && seen[seen.size() - 2] < 1.0 && seen.last() == 1.0);
+        // Measured: ~2 s for one 30 s window = 0.067 per second, mixed with the 0.05 before
+        const double speed = QSettings().value("transcribe/speed/ggml-test.bin").toDouble();
+        CHECK(speed > 0.055 && speed < 0.075);
     }
     return Check::result();
 }

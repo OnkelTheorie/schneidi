@@ -7,8 +7,10 @@
 #include "core/Transcript.h"
 #include "core/Types.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QProcess>
+#include <QTimer>
 #include <QTemporaryDir>
 
 #include <memory>
@@ -56,6 +58,17 @@ public:
     }
     static int defaultThreads();
 
+    // Progress between whisper's own updates (a 30 s clip jumped from 10 % to 100 % after a minute): estimated from
+    // the time whisper has run against what it is expected to take (whisperSeconds). Follows the time up to 90 % of
+    // it, then creeps on more and more slowly; never 1.
+    static double heartbeat(double elapsed, double expected);
+    // What whisper is expected to take for `audioSeconds` of sound with `model`: the speed measured on this computer
+    // in earlier runs (settings, per model file), else a guess from the model's size. Short sounds cost as much as
+    // 30 s (whisper works in 30 s windows).
+    static double whisperSeconds(const QString& model, double audioSeconds);
+    // A run took `seconds` for `audioSeconds`: remembered for whisperSeconds (mixed with the earlier measurements)
+    static void measured(const QString& model, double audioSeconds, double seconds);
+
 signals:
     void progress(double fraction); // 0..1
     void finished(bool ok, const QString& error); // ok: result() holds the words (times from the start of the source)
@@ -64,6 +77,7 @@ private:
     void runWhisper();
     void runDetection();
     void done(bool ok, const QString& error);
+    void beat();
 
     TranscribeRequest m_request;
     std::unique_ptr<QTemporaryDir> m_tmp;
@@ -76,4 +90,8 @@ private:
     Transcript::Result m_result;
     QString m_detected;
     double m_detectedP = 0;
+    // Stage 1: whisper's own progress (0..1), what was shown, the time it runs and is expected to take
+    QTimer m_beat;
+    QElapsedTimer m_clock;
+    double m_whisper = 0, m_shown = 0, m_audioSeconds = 0, m_expected = 0;
 };

@@ -9,13 +9,17 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QThread>
 
 #include <algorithm>
+#include <cmath>
 
 namespace {
 constexpr double kAudioShare = 0.1; // progress: preparing the audio, then whisper
+constexpr double kWindow = 30;      // seconds whisper works on at once: a shorter sound costs as much
 
 // Loudness of a 16-bit PCM WAV (ffmpeg or the Exporter wrote it), channels mixed; empty if unreadable
 Transcript::Levels wavLevels(const QString& path)
@@ -68,10 +72,12 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         auto it = re.globalMatch(QString::fromUtf8(data));
         int percent = -1;
         while (it.hasNext()) percent = it.next().captured(1).toInt();
-        // The language check after it gets the last bit
-        const double end = m_request.checkLanguage ? 0.95 : 1.0;
-        if (percent >= 0) emit progress(kAudioShare + (end - kAudioShare) * percent / 100.0);
+        if (percent < 0) return;
+        m_whisper = std::max(m_whisper, percent / 100.0);
+        beat();
     });
+    m_beat.setInterval(250);
+    connect(&m_beat, &QTimer::timeout, this, &Transcriber::beat);
     connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
         if (!m_running) return;
         if (m_cancelled) return done(false, T("Abgebrochen"));
@@ -90,6 +96,8 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
                                             : T("Whisper ist fehlgeschlagen: %1").arg(tail));
         }
         if (m_stage == 0) return runWhisper();
+        m_beat.stop();
+        if (m_clock.isValid() && m_audioSeconds > 0) measured(m_request.model, m_audioSeconds, m_clock.elapsed() / 1000.0);
         QFile json(m_tmp->filePath("out.json"));
         if (!json.open(QIODevice::ReadOnly)) return done(false, T("Whisper hat kein Ergebnis geschrieben: %1").arg(tail));
         QString error;
@@ -189,6 +197,12 @@ void Transcriber::runWhisper()
 {
     m_stage = 1;
     emit progress(kAudioShare);
+    // 16 kHz mono 16 bit: 32000 bytes a second after the 44-byte header
+    m_audioSeconds = std::max<qint64>(0, QFileInfo(m_tmp->filePath("audio.wav")).size() - 44) / 32000.0;
+    m_expected = whisperSeconds(m_request.model, m_audioSeconds);
+    m_whisper = m_shown = 0;
+    m_clock.start();
+    m_beat.start();
     const int threads = m_request.threads > 0 ? m_request.threads : defaultThreads();
     // One word per segment (-ml 1 -sow): word times for cutting; Transcript::toCues builds subtitle lines from them
     QStringList args{"-m", m_request.model, "-f", m_tmp->filePath("audio.wav"), "-t", QString::number(threads), "-l",
@@ -213,6 +227,44 @@ void Transcriber::runDetection()
                                                     QString::number(threads), "-l", "auto", "-dl"});
 }
 
+// Whisper's own progress or the estimate from the time, whichever is further; never backwards
+void Transcriber::beat()
+{
+    if (m_stage != 1) return;
+    m_shown = std::max({m_shown, m_whisper, heartbeat(m_clock.elapsed() / 1000.0, m_expected)});
+    // The language check after it gets the last bit
+    const double end = m_request.checkLanguage ? 0.95 : 1.0;
+    emit progress(kAudioShare + (end - kAudioShare) * m_shown);
+}
+
+double Transcriber::heartbeat(double elapsed, double expected)
+{
+    if (expected <= 0 || elapsed <= 0) return 0;
+    const double r = elapsed / expected;
+    if (r <= 0.9) return r;
+    return 0.9 + 0.09 * (1 - std::exp(-(r - 0.9) / 0.5)); // slower than expected: up to 99 %
+}
+
+namespace {
+QString speedKey(const QString& model) { return "transcribe/speed/" + QFileInfo(model).fileName(); }
+}
+
+double Transcriber::whisperSeconds(const QString& model, double audioSeconds)
+{
+    double perSecond = QSettings().value(speedKey(model)).toDouble();
+    // Guess from the model file: tiny ~0.7, small ~1.8, large-v3-turbo ~4.3 s per second of sound
+    if (perSecond <= 0) perSecond = 0.5 + QFileInfo(model).size() / (150.0 * 1024 * 1024);
+    return perSecond * std::max(audioSeconds, kWindow);
+}
+
+void Transcriber::measured(const QString& model, double audioSeconds, double seconds)
+{
+    if (audioSeconds <= 0 || seconds <= 0) return;
+    QSettings settings;
+    const double now = seconds / std::max(audioSeconds, kWindow), before = settings.value(speedKey(model)).toDouble();
+    settings.setValue(speedKey(model), before > 0 ? (before + now) / 2 : now);
+}
+
 void Transcriber::cancel()
 {
     if (!m_running) return;
@@ -224,6 +276,7 @@ void Transcriber::cancel()
 void Transcriber::done(bool ok, const QString& error)
 {
     m_running = false;
+    m_beat.stop();
     if (m_exporter) m_exporter.release()->deleteLater(); // may be inside its own signal
     if (ok) emit progress(1.0);
     emit finished(ok, error);
