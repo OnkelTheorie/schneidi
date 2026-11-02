@@ -21,6 +21,7 @@
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 
 #include <cmath>
@@ -168,6 +169,40 @@ void testOrder(const QString& dir)
     qunsetenv("SCHNEIDI_IGNORE_BUILTIN");
     HardwareEncoders::resetForTests();
 }
+
+#ifdef Q_OS_UNIX
+// The extension's encoder list is asked by the background hardware probe (not later on the GUI thread), once
+void testListInProbe(const QString& dir)
+{
+    const QString log = QDir(dir).filePath("asked.log");
+    const QString path = QDir(dir).filePath("fake-ffmpeg-counting");
+    QFile f(path);
+    if (!CHECK(f.open(QIODevice::WriteOnly))) return;
+    f.write(QString("#!/bin/sh\n"
+                    "echo \"$3\" >> '%1'\n"
+                    "echo ' V....D libx264              libx264 H.264 / AVC'\n").arg(log).toUtf8());
+    f.close();
+    f.setPermissions(f.permissions() | QFile::ExeOwner);
+    qputenv("SCHNEIDI_IGNORE_BUILTIN", "libx264,libx265");
+    qputenv("SCHNEIDI_ENCODER_FFMPEG", path.toUtf8());
+    HardwareEncoders::resetForTests();
+    HardwareEncoders::probeInBackground();
+    for (int i = 0; i < 600 && !HardwareEncoders::probed(); ++i) QThread::msleep(50);
+    CHECK(HardwareEncoders::probed());
+    QFile asked(log);
+    CHECK(asked.open(QIODevice::ReadOnly));
+    CHECK_EQ(asked.readAll().count("-encoders"), qsizetype(1));
+    asked.close();
+    // Cached: the GUI's later questions do not start the program again
+    CHECK_EQ(HardwareEncoders::softwareCodec("h264"), QString("libx264"));
+    CHECK(!HardwareEncoders::needsBetterEncoder("h264"));
+    CHECK(asked.open(QIODevice::ReadOnly));
+    CHECK_EQ(asked.readAll().count("-encoders"), qsizetype(1));
+    qunsetenv("SCHNEIDI_ENCODER_FFMPEG");
+    qunsetenv("SCHNEIDI_IGNORE_BUILTIN");
+    HardwareEncoders::resetForTests();
+}
+#endif
 
 void testArguments()
 {
@@ -421,6 +456,9 @@ int main(int argc, char** argv)
     testCatalog();
     testInstallPaths();
     testOrder(tmp.path());
+#ifdef Q_OS_UNIX
+    testListInProbe(tmp.path());
+#endif
     testArguments();
     if (Check::haveFfmpeg()) testColors(tmp.path());
     if (Check::haveFfmpeg()) testExport(tmp.path());

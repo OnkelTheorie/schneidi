@@ -110,6 +110,9 @@ QVector<bool> runTests(const QVector<QStringList>& argLists)
 
 void runProbe()
 {
+    // The x264/x265 extension's encoder list too (asks its program once, up to a quarter second from a cold disk):
+    // the Deliver panel asks for it only after the probe, so not on the GUI thread
+    externalProgram("libx264");
     State& st = state();
     // NVENC and Quick Sync: both formats at once
     QVector<QString> codecs;
@@ -268,7 +271,7 @@ bool needsBetterEncoder(const QString& format)
 {
     const RenderFormatInfo& f = renderFormat(format);
     if (!f.hardware || QLatin1String(f.id) != format) return false;
-    return isFreeReplacement(softwareCodec(format)) && available(format).isEmpty();
+    return available(format).isEmpty() && isFreeReplacement(softwareCodec(format));
 }
 
 QString softwareCodec(const QString& format)
@@ -284,7 +287,10 @@ bool formatAvailable(const QString& format)
     const RenderFormatInfo& f = renderFormat(format);
     if (QLatin1String(f.id) != format) return false;
     if (*f.audioCodec && !builtIn(renderFormat(format).audioCodec)) return false;
-    if (!*f.videoCodec || !softwareCodec(format).isEmpty()) return true;
+    // (the extension last: asking its program takes a moment, and the panel's format list asks at start)
+    if (!*f.videoCodec || builtIn(f.videoCodec) || !freeReplacement(f.videoCodec).isEmpty()
+        || !externalProgram(f.videoCodec).isEmpty())
+        return true;
     return f.hardware && probed() && !available(format).isEmpty();
 }
 
