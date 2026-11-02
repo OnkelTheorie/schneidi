@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Subtitles.h"
 
+#include "core/Captions.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -176,6 +178,63 @@ QByteArray toSrt(const QVector<SubtitleCue>& cues, double fps, int offset, int u
     return out.toUtf8();
 }
 
+namespace {
+// The cues of [offset, until) with their lines (blank lines left out: a blank line ends an entry in SRT and VTT)
+template<typename Fn>
+void forCues(const QVector<SubtitleCue>& cues, int offset, int until, Fn fn)
+{
+    for (const SubtitleCue& c : cues) {
+        int start = c.start, end = c.end;
+        if (until >= 0) end = std::min(end, until);
+        start = std::max(start, offset);
+        if (end <= start) continue;
+        QStringList lines = c.text.trimmed().split('\n');
+        lines.removeIf([](const QString& line) { return line.trimmed().isEmpty(); });
+        if (lines.isEmpty()) continue;
+        fn(start - offset, end - offset, lines);
+    }
+}
+} // namespace
+
+QByteArray toVtt(const QVector<SubtitleCue>& cues, double fps, int offset, int until)
+{
+    QString out = QStringLiteral("WEBVTT\n\n");
+    forCues(cues, offset, until, [&](int from, int to, const QStringList& lines) {
+        out += srtTime(frameToMs(from, fps)).replace(',', '.') + " --> " + srtTime(frameToMs(to, fps)).replace(',', '.') + '\n';
+        // "-->" would end the cue's timing line; '<' and '&' start tags/entities in VTT
+        for (QString line : lines) {
+            line.replace('&', QLatin1String("&amp;")).replace('<', QLatin1String("&lt;")).replace("-->", QLatin1String("--&gt;"));
+            out += line + '\n';
+        }
+        out += '\n';
+    });
+    return out.toUtf8();
+}
+
+QByteArray toFile(const QString& path, const QVector<SubtitleCue>& cues, double fps, int offset, int until)
+{
+    return QFileInfo(path).suffix().compare(QLatin1String("vtt"), Qt::CaseInsensitive) == 0
+               ? toVtt(cues, fps, offset, until)
+               : toSrt(cues, fps, offset, until);
+}
+
+QVector<TextTrack> textTracks(const Timeline& tl, double fps, int offset, int until)
+{
+    QVector<TextTrack> out;
+    const QVector<SrtFile> files = srtFiles(tl, QStringLiteral("x.srt"));
+    for (int i = 0; i < files.size(); ++i) {
+        const SubtitleTrack& st = tl.subtitles[files[i].track];
+        TextTrack t;
+        t.name = st.name;
+        t.main = i == 0;
+        forCues(st.cues, offset, until, [&](int from, int to, const QStringList& lines) {
+            t.cues << TextCue{frameToMs(from, fps), frameToMs(to, fps), lines.join('\n')};
+        });
+        if (!t.cues.isEmpty()) out << t;
+    }
+    return out;
+}
+
 TitleStyle defaultStyle(QSize format)
 {
     TitleStyle s = subtitleBaseStyle();
@@ -201,12 +260,12 @@ void place(SubtitleTrack& track, const SubtitleCue& cue)
         }
         if (o.start < cue.start) { // partly covered on the left
             SubtitleCue left = o;
-            left.end = cue.start;
+            Captions::crop(left, o.start, cue.start);
             out << left;
         }
         if (o.end > cue.end) { // partly covered on the right
             SubtitleCue right = o;
-            right.start = cue.end;
+            Captions::crop(right, cue.end, o.end);
             if (o.start < cue.start) right.id = 0; // split: right part needs a new id (the editor assigns it)
             out << right;
         }
@@ -288,10 +347,11 @@ int splitAt(SubtitleTrack& track, int frame, const std::function<int()>& newId)
     for (int i = 0; i < track.cues.size(); ++i) {
         SubtitleCue& c = track.cues[i];
         if (c.start >= frame || c.end <= frame) continue;
+        // Word captions: the words go to the part they are spoken in (plain cues keep the text on both sides)
         SubtitleCue right = c;
         right.id = newId();
-        right.start = frame;
-        c.end = frame;
+        Captions::crop(right, frame, c.end);
+        Captions::crop(c, c.start, frame);
         track.cues.insert(i + 1, right);
         return right.id;
     }
@@ -317,8 +377,8 @@ bool ripple(SubtitleTrack& track, const QVector<QPair<int, int>>& shifts)
         const int s = pos(c.start, c.start), e = pos(c.end, c.start);
         changed |= s != c.start || e != c.end;
         if (e <= s) continue; // entirely in removed time
-        c.start = s;
-        c.end = e;
+        const int cueStart = c.start;
+        Captions::remap(c, [&](int t) { return pos(t, cueStart); }, s, e);
         moved << c;
     }
     if (!changed) return false;

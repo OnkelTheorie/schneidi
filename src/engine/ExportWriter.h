@@ -19,6 +19,7 @@
 // end the export with smartFailed() (the Exporter renders again without).
 
 #include "core/ProjectFormat.h"
+#include "core/Subtitles.h"
 #include "engine/SmartRender.h"
 
 #include <QByteArray>
@@ -56,6 +57,9 @@ public:
         // Muxer by name (image sequences: "image2"); empty = from the file name
         QString muxer;
         QString hwDevice; // VAAPI encoder: the render device (/dev/dri/renderD128)
+        // Text streams (times from the file start): MP4/MOV mov_text, MKV SubRip, WebM WebVTT; other containers
+        // get none
+        QVector<Subtitles::TextTrack> subtitles;
     };
     // Picture engine and audio mixer
     struct Own {

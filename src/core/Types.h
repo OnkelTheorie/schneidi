@@ -385,13 +385,41 @@ struct Track {
 
 // Subtitles like DaVinci: own subtitle tracks (ST1, ST2 ...) above the video tracks. One entry = text from
 // start to end (exclusive, timeline frames); font/color/position apply to the whole track (DaVinci "Track Style").
+struct CueWord {
+    int from = 0, to = 0; // frames from the cue's start, [from, to)
+    bool operator==(const CueWord&) const = default;
+};
 struct SubtitleCue {
     int id = 0; // from the same counter as clip IDs (so the selection can tell clips and subtitles apart)
     int start = 0;
     int end = 0; // exclusive
     QString text;
+    // Word captions: when each word of `text` is spoken (Captions::words splits it at white space; frames from
+    // `start`). Empty or not one per word (text edited) = the words share the cue's time by their length.
+    QVector<CueWord> words;
     int length() const { return end - start; }
     bool operator==(const SubtitleCue&) const = default;
+};
+
+// How a subtitle track shows its text (core/Captions.h): Lines = the whole text (classic subtitles); Karaoke = the
+// whole cue with the word being spoken in the highlight colour; Word = one word at a time that pops in (short
+// shorts/reels style). Word styles are drawn into the picture only; the text track of an export is plain text.
+enum class CaptionMode { Lines, Karaoke, Word };
+struct CaptionModeInfo { CaptionMode mode; const char* id; const char* name; };
+inline constexpr CaptionModeInfo kCaptionModes[] = {
+    {CaptionMode::Lines, "lines", N_("Zeilen")},
+    {CaptionMode::Karaoke, "karaoke", N_("Karaoke (Wort hervorheben)")},
+    {CaptionMode::Word, "word", N_("Wort für Wort")},
+};
+struct CaptionStyle {
+    CaptionMode mode = CaptionMode::Lines;
+    QColor highlight{255, 214, 0}; // karaoke: colour of the word being spoken
+    double highlightScale = 1.15;  // karaoke: size of the word being spoken (1 = like the others)
+    int maxWordsPerLine = 0;       // line break after so many words (0 = only by width)
+    int popMs = 120;               // word: length of the pop-in (grows and fades in; 0 = none)
+    bool uppercase = false;
+    bool shadow = false;           // word styles: soft drop shadow under the text
+    bool operator==(const CaptionStyle&) const = default;
 };
 
 // Style of a subtitle track: like a title, but posY = distance of the text's bottom edge from the bottom of the picture
@@ -415,6 +443,7 @@ struct SubtitleTrack {
     bool enabled = true;   // visible in the viewer/when burning in; like DaVinci only one track at a time
     bool locked = false;
     TitleStyle style = subtitleBaseStyle();
+    CaptionStyle captions;     // word-by-word display (default: plain lines)
     QVector<SubtitleCue> cues; // sorted by start, without overlap
     bool operator==(const SubtitleTrack&) const = default;
 };

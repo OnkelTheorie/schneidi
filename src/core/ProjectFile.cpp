@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/ProjectFile.h"
 
+#include "core/Captions.h"
 #include "core/Dynamics.h"
 #include "core/EffectFolders.h"
 #include "core/EffectRegistry.h"
@@ -658,14 +659,22 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
         QJsonArray subtitles; // subtitle tracks (optional, absent in old files)
         for (const SubtitleTrack& t : timeline.subtitles) {
             QJsonArray cues;
-            for (const SubtitleCue& c : t.cues)
-                cues << QJsonObject{{"id", c.id}, {"start", c.start}, {"end", c.end}, {"text", c.text}};
+            for (const SubtitleCue& c : t.cues) {
+                QJsonObject co{{"id", c.id}, {"start", c.start}, {"end", c.end}, {"text", c.text}};
+                if (!c.words.isEmpty()) { // word captions: compact as [from, to] per word
+                    QJsonArray words;
+                    for (const CueWord& w : c.words) words << QJsonArray{w.from, w.to};
+                    co["words"] = words;
+                }
+                cues << co;
+            }
             QJsonObject style = titleToJson(t.style);
             style.remove("text");
             QJsonObject o{{"style", style}, {"cues", cues}};
             if (!t.name.isEmpty()) o["label"] = t.name;
             if (!t.enabled) o["enabled"] = false;
             if (t.locked) o["locked"] = true;
+            if (const QJsonObject captions = Captions::toJson(t.captions); !captions.isEmpty()) o["captions"] = captions;
             subtitles << o;
         }
         QJsonArray markers;
@@ -868,6 +877,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.name = o.value("label").toString();
             t.enabled = o.value("enabled").toBool(true);
             t.locked = o.value("locked").toBool();
+            t.captions = Captions::fromJson(o.value("captions").toObject());
             if (o.contains("style")) {
                 QJsonObject style = o.value("style").toObject();
                 style["text"] = QString(); // style without text
@@ -883,6 +893,11 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
                 SubtitleCue cue{intOf(c.value("id")), intOf(c.value("start")), intOf(c.value("end")),
                                 c.value("text").toString()};
                 if (cue.end <= cue.start) continue;
+                for (const QJsonValue& wv : c.value("words").toArray()) {
+                    const QJsonArray w = wv.toArray();
+                    const int from = std::max(0, intOf(w.at(0)));
+                    cue.words << CueWord{from, std::max(from + 1, intOf(w.at(1)))};
+                }
                 t.cues << cue;
             }
             std::sort(t.cues.begin(), t.cues.end(), [](const SubtitleCue& a, const SubtitleCue& b) { return a.start < b.start; });

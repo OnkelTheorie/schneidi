@@ -526,7 +526,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     }
     const QString formatId = a.contains("format") ? a["format"].toString() : job.settings.format;
     const auto& formats = renderFormats();
-    const bool srtOnly = formatId == "srt";
+    const bool srtOnly = formatId == "srt" || formatId == "vtt"; // only the subtitle files (SRT or WebVTT)
     if (!srtOnly && std::none_of(formats.begin(), formats.end(), [&](const RenderFormatInfo& i) { return formatId == i.id; })) {
         QStringList ids;
         for (const RenderFormatInfo& i : formats) ids << i.id;
@@ -540,7 +540,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
                                   + ", srt)");
     }
     QString out = absolute(a["out"].toString());
-    if (QFileInfo(out).suffix().isEmpty()) out += "." + QString(srtOnly ? "srt" : renderFormat(formatId).extension);
+    if (QFileInfo(out).suffix().isEmpty()) out += "." + QString(srtOnly ? formatId : renderFormat(formatId).extension);
     if (!srtOnly) checkExtension(out, formatId);
     RenderSettings target = job.settings;
     if (!srtOnly) target.format = formatId;
@@ -578,9 +578,15 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     }
     if (a.contains("audio_bitrate")) job.settings.audioBitrateK = std::clamp(a["audio_bitrate"].toInt(), 32, 512);
     if (a.contains("subtitles")) {
-        const int i = QStringList{"none", "burn", "srt"}.indexOf(a["subtitles"].toString());
-        if (i < 0) fail("BAD_ARGUMENT", "subtitles must be none, burn (into the picture) or srt (file next to the video)");
+        const int i = QStringList{"none", "burn", "srt", "vtt"}.indexOf(a["subtitles"].toString());
+        if (i < 0)
+            fail("BAD_ARGUMENT", "subtitles must be none, burn (into the picture), srt or vtt (file next to the video)");
         job.settings.subtitles = i;
+    }
+    if (a.contains("embed_subtitles")) {
+        job.settings.embedSubtitles = a["embed_subtitles"].toBool();
+        if (job.settings.embedSubtitles && !job.settings.canEmbedSubtitles())
+            fail("BAD_ARGUMENT", "embed_subtitles needs a video file (not audio only, GIF or images)");
     }
     job.size = job.settings.outputSize(s.format().size());
     Timeline tl = s.project.renderTimeline();
@@ -614,11 +620,11 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
             const SubtitleTrack& track = tl.subtitles[srt.track];
             QFile f(srt.path);
             if (!f.open(QIODevice::WriteOnly)
-                || f.write(Subtitles::toSrt(track.cues, s.project.frameRate(), job.inOut ? job.from : 0, job.inOut ? job.to + 1 : -1)) < 0)
+                || f.write(Subtitles::toFile(srt.path, track.cues, s.project.frameRate(), job.inOut ? job.from : 0, job.inOut ? job.to + 1 : -1)) < 0)
                 fail("WRITE_FAILED", "cannot write " + srt.path);
             if (srt.path != out) more << srt.path;
         }
-        QJsonObject o{{"out", out}, {"format", "srt"}, {"cues", int(tl.subtitles[files[0].track].cues.size())}};
+        QJsonObject o{{"out", out}, {"format", formatId}, {"cues", int(tl.subtitles[files[0].track].cues.size())}};
         if (!more.isEmpty()) o["srt_more"] = more; // the other subtitle tracks, next to out
         return o;
     }

@@ -2,6 +2,7 @@
 // Editor: subtitle tracks (part of Editor, own file for overview)
 #include "core/Editor.h"
 
+#include "core/Captions.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/Selection.h"
@@ -169,8 +170,9 @@ void Editor::setSubtitleTiming(int id, int start, int end)
     if (start == c->start && end == c->end) return;
     m_project->edit(T("Untertitel-Zeiten"), [&](Timeline& tl) {
         if (SubtitleCue* cue = Subtitles::find(tl, id)) {
-            cue->start = start;
-            cue->end = end;
+            // Moved as a whole: the words go along; otherwise an edge moved and the words stay where they are spoken
+            if (end - start == cue->end - cue->start) cue->start = start, cue->end = end;
+            else Captions::crop(*cue, start, end);
         }
     });
 }
@@ -236,7 +238,11 @@ void Editor::trimSubtitle(int id, TimelineOps::Edge edge, int delta)
     delta = clampSubtitleTrim(id, edge, delta);
     if (delta == 0) return;
     m_project->edit(T("Untertitel trimmen"), [&](Timeline& tl) {
-        if (SubtitleCue* cue = Subtitles::find(tl, id)) (edge == TimelineOps::Edge::Start ? cue->start : cue->end) += delta;
+        if (SubtitleCue* cue = Subtitles::find(tl, id)) {
+            // The words stay where they are spoken; trimmed-off words leave the text
+            if (edge == TimelineOps::Edge::Start) Captions::crop(*cue, cue->start + delta, cue->end);
+            else Captions::crop(*cue, cue->start, cue->end + delta);
+        }
     });
 }
 
@@ -262,4 +268,33 @@ int Editor::importSubtitles(const QVector<SubtitleCue>& cues, const QString& nam
         tl.subtitles << t;
     });
     return index;
+}
+
+int Editor::addCaptions(const QVector<SubtitleCue>& cues, const QString& name, const CaptionStyle& captions)
+{
+    if (cues.isEmpty()) return -1;
+    const int index = m_project->timeline().subtitles.size();
+    Project* p = m_project;
+    m_project->edit(T("Wort-Untertitel"), [&](Timeline& tl) {
+        SubtitleTrack t;
+        t.name = name.simplified();
+        t.style = Captions::defaultStyle(p->format().size());
+        t.captions = captions;
+        for (SubtitleTrack& other : tl.subtitles) other.enabled = false; // one visible track
+        for (SubtitleCue c : cues) {
+            c.id = p->newClipId();
+            Subtitles::place(t, c);
+        }
+        for (SubtitleCue& c : t.cues)
+            if (c.id == 0) c.id = p->newClipId();
+        tl.subtitles << t;
+    });
+    return index;
+}
+
+void Editor::setSubtitleCaptions(int index, const CaptionStyle& captions, const QString& mergeKey)
+{
+    const Timeline& cur = m_project->timeline();
+    if (!validTrack(cur, index) || cur.subtitles[index].captions == captions) return;
+    m_project->edit(T("Wort-Untertitel"), [&](Timeline& tl) { tl.subtitles[index].captions = captions; }, mergeKey);
 }

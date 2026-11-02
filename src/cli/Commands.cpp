@@ -6,6 +6,7 @@
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
 
+#include "core/Captions.h"
 #include "core/Editor.h"
 #include "core/StreamPresets.h"
 #include "core/EffectFolders.h"
@@ -561,6 +562,7 @@ QJsonObject timelineJson(const Project& p)
         if (!st.enabled) so["enabled"] = false; // not shown/burnt in (every enabled track is)
         if (st.locked) so["locked"] = true;
         if (const QJsonObject style = titleStyleJson(st.style, subtitleBaseStyle()); !style.isEmpty()) so["style"] = style;
+        if (const QJsonObject captions = Captions::toJson(st.captions); !captions.isEmpty()) so["captions"] = captions;
         subtitles << so;
     }
     if (!subtitles.isEmpty()) o["subtitles"] = subtitles;
@@ -819,7 +821,7 @@ const QVector<Command>& commands()
            "dnxhr-sq, dnxhr-hq, dnxhr-hqx (MOV); gif (animated, no sound; e.g. height 480, fps 15); png, tiff, jpeg = "
            "image sequence (out 'x.png' writes x/x_00001.png …); audio only: aac, mp3, opus, wav, aiff, flac, alac; "
            "srt = only the subtitle files (the visible track into out, every other track with entries next to it as "
-           "<name>.<track name>.srt, listed in srt_more)"},
+           "<name>.<track name>.srt, listed in srt_more); vtt = the same as WebVTT"},
           {"quality", T::Integer, "0 = high (default), 1 = medium, 2 = small, 3 = web: high with a bit rate cap like YouTube recommends (H.264/H.265 only; the YouTube and phone presets use it). ProRes, DNxHR, GIF and images have a fixed quality"},
           {"height", T::Integer, "shorter image edge, e.g. 720 (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
@@ -830,8 +832,12 @@ const QVector<Command>& commands()
                                  "the answer's 'encoder' is the codec actually used ('copy' when smart render "
                                  "copied every frame of the source)"},
           {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
-          {"subtitles", T::String, "none (default), burn (into the picture) or srt (files next to the video: the visible "
-                                  "track as <name>.srt, other tracks with entries as <name>.<track name>.srt)"},
+          {"subtitles", T::String, "none (default), burn (into the picture), srt or vtt (files next to the video: the "
+                                  "visible track as <name>.srt, other tracks with entries as <name>.<track name>.srt; "
+                                  "vtt = WebVTT for web players)"},
+          {"embed_subtitles", T::Boolean, "also put every subtitle track with entries into the file as a text stream "
+                                          "players can switch on (MP4/MOV: mov_text, MKV: SRT, WebM: WebVTT; plain "
+                                          "text, word caption styles only burned in). Combines with burn"},
           {"from", T::Time, "start of the range (default: timeline start)"},
           {"to", T::Time, "end of the range, exclusive (default: timeline end)"},
           {"timeline", T::String, "timeline to render (id or name; default: the open one)"},
@@ -989,6 +995,13 @@ const QVector<Command>& commands()
           {"apply", T::Boolean, "for a project: also put the segments onto the timeline as a new subtitle track "
                                 "(live in the app: one undo step)"},
           {"name", T::String, "apply: name of the new subtitle track"},
+          {"captions", T::String, "apply: word-by-word captions instead of plain subtitles (edit op 'captions'): "
+                                  "karaoke (the spoken word lights up), word (one word at a time, popping in) or beat "
+                                  "(word by word on the beats; needs beats or bpm)"},
+          {"max_words", T::Integer, "captions: words per caption (default 4, word/beat 3)"},
+          {"beats", T::Times, "captions 'beat': beat times (from `beats` with beats:true)"},
+          {"bpm", T::Number, "captions 'beat': tempo of a regular beat grid instead of beats"},
+          {"first_beat", T::Time, "captions 'beat' with bpm: time of the first beat (default 0)"},
           {"threads", T::Integer, "processor threads (default: the app setting Performance, else half of them)"}},
          cmdTranscribe},
         {"loudness", "Measure loudness like the Mixer's meter (EBU R128 / BS.1770): integrated LUFS, loudness range, "

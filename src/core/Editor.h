@@ -391,6 +391,11 @@ public:
     // Imported entries (SRT) as a new track; name = track name (e.g. file name). Returns the track index, -1 = empty.
     // stack >= 0: always visible, `stack` lines above the default position (several speakers at once)
     int importSubtitles(const QVector<SubtitleCue>& cues, const QString& name, int stack = -1);
+    // Word captions (core/Captions.h) as a new track that becomes the visible one: `captions` = how the words show,
+    // the text style the format's default for word captions. Returns the track index, -1 = empty.
+    int addCaptions(const QVector<SubtitleCue>& cues, const QString& name, const CaptionStyle& captions);
+    // How a subtitle track shows its words (lines, karaoke, word by word); same mergeKey = one undo step
+    void setSubtitleCaptions(int index, const CaptionStyle& captions, const QString& mergeKey = {});
 
     // ---- Compound clips and nested timelines (core/EditorCompound.cpp) ----
     // Combine selected clips (with partners) into a compound clip (DaVinci "New Compound Clip"): new

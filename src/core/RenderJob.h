@@ -52,9 +52,12 @@ struct RenderSettings {
     int audioBitrateK = 320; // AAC/MP3 only
     int audioBits = 24;      // bit depth for PCM (16, 24, 32 = float) and Apple Lossless (16, 24)
     int rateNum = 0, rateDen = 1; // frame rate of the output, 0 = like the timeline
-    // Export subtitles like DaVinci (visible subtitle track): none, burn into the picture, as an SRT file alongside
-    enum Subtitles { NoSubtitles = 0, BurnSubtitles = 1, SrtFile = 2 };
+    // Export subtitles (visible subtitle track): none, burn into the picture, as an SRT or WebVTT file alongside
+    enum Subtitles { NoSubtitles = 0, BurnSubtitles = 1, SrtFile = 2, VttFile = 3 };
     int subtitles = NoSubtitles;
+    // Every subtitle track with entries also as a text stream in the file (MP4/MOV mov_text, MKV SRT, WebM WebVTT)
+    bool embedSubtitles = false;
+    bool canEmbedSubtitles() const; // a video file (not audio only, GIF, images)
     // New settings default to Auto; saved settings without "encoder" (older versions) stay Software (fromJson)
     VideoEncoder encoder = VideoEncoder::Auto;
     // Smart render (H.264/H.265): copy unchanged stretches of the source instead of encoding them (engine/SmartRender)

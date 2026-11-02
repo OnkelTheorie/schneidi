@@ -9,6 +9,7 @@
 #include <QFont>
 #include <QRectF>
 #include <QString>
+#include <QVector>
 
 #include <cstdint>
 
@@ -30,6 +31,26 @@ void draw(uint8_t* rgba, int w, int h, const Params& p);
 // Where draw() can put pixels (box, outline and glyph overhang included, generously): draw only needs a picture that
 // large, shifted
 QRectF bounds(const Params& p);
+
+// Word captions: lines of words, each word with its own colour, size and opacity (karaoke highlight, pop-in). The
+// layout uses the words at their normal size (a growing word does not push its neighbours), a word grows around its
+// own centre. Lines one below the other, each aligned like Params::halign; the block is aligned in `area` and shrunk
+// to fit it when larger.
+struct Word {
+    QString text;
+    QColor fg = Qt::white;
+    double scale = 1.0, opacity = 1.0;
+};
+struct WordParams {
+    QVector<QVector<Word>> lines;
+    QRectF area;
+    QFont font; // pixel size set
+    int halign = 1, valign = 2;
+    QColor outlineColor = Qt::black, bg = Qt::transparent;
+    double outline = 0, pad = 0; // outline: pen width
+    QColor shadow = Qt::transparent; // drop shadow (offset by a tenth of the font size down and right)
+};
+void drawWords(uint8_t* rgba, int w, int h, const WordParams& p);
 
 
 } // namespace Text

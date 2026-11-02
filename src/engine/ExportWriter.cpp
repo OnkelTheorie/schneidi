@@ -278,6 +278,7 @@ struct ExportWriter::Impl {
     AVCodecContext* aenc = nullptr;
     AVStream* vst = nullptr;
     AVStream* ast = nullptr;
+    std::vector<std::pair<AVStream*, AVCodecContext*>> textStreams; // Settings::subtitles, in their order
     AVPacket* packet = nullptr;
     std::vector<uint8_t> fifo; // sound waiting for a full encoder frame (interleaved)
     int64_t audioPts = 0;
@@ -961,7 +962,103 @@ struct ExportWriter::Impl {
             avcodec_parameters_from_context(ast->codecpar, aenc);
             audioFrameSize = aenc->frame_size > 0 ? aenc->frame_size : 1024; // PCM takes any size
         }
+        if (!openTextStreams()) return false;
         return smart || writeHeader();
+    }
+
+    // Subtitle text streams: the codec the container takes for plain text (none: left out, the export goes on)
+    bool openTextStreams()
+    {
+        if (s.subtitles.isEmpty()) return true;
+        const char* name = oc->oformat->name;
+        AVCodecID id = AV_CODEC_ID_NONE;
+        if (std::strcmp(name, "mp4") == 0 || std::strcmp(name, "mov") == 0 || std::strcmp(name, "ipod") == 0)
+            id = AV_CODEC_ID_MOV_TEXT;
+        else if (std::strcmp(name, "webm") == 0) id = AV_CODEC_ID_WEBVTT;
+        else if (std::strcmp(name, "matroska") == 0) id = AV_CODEC_ID_SUBRIP;
+        const AVCodec* codec = id != AV_CODEC_ID_NONE ? avcodec_find_encoder(id) : nullptr;
+        if (!codec) {
+            qInfo("Export: %s takes no subtitle stream, left out", name);
+            return true;
+        }
+        // The text encoders read styles from an ASS header; one plain default style (ASS v4+ format)
+        static const char kAssHeader[] =
+            "[Script Info]\r\nScriptType: v4.00+\r\nPlayResX: 384\r\nPlayResY: 288\r\n\r\n"
+            "[V4+ Styles]\r\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+            "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+            "MarginL, MarginR, MarginV, Encoding\r\n"
+            "Style: Default,Arial,16,&Hffffff,&Hffffff,&H0,&H0,0,0,0,0,100,100,0,0,1,1,0,2,10,10,10,0\r\n\r\n"
+            "[Events]\r\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\r\n";
+        for (const Subtitles::TextTrack& t : s.subtitles) {
+            AVCodecContext* enc = avcodec_alloc_context3(codec);
+            AVStream* st = enc ? avformat_new_stream(oc, nullptr) : nullptr;
+            if (!st) {
+                avcodec_free_context(&enc);
+                fail(QStringLiteral("out of memory"));
+                return false;
+            }
+            enc->time_base = AVRational{1, 1000};
+            enc->subtitle_header = static_cast<uint8_t*>(av_mallocz(sizeof(kAssHeader)));
+            std::memcpy(enc->subtitle_header, kAssHeader, sizeof(kAssHeader));
+            enc->subtitle_header_size = int(sizeof(kAssHeader) - 1);
+            textStreams.emplace_back(st, enc);
+            if (const int r = avcodec_open2(enc, codec, nullptr); r < 0) {
+                fail(QStringLiteral("subtitle encoder %1 cannot be opened: %2").arg(codec->name, avError(r)));
+                return false;
+            }
+            avcodec_parameters_from_context(st->codecpar, enc);
+            st->time_base = enc->time_base;
+            if (!t.name.isEmpty()) av_dict_set(&st->metadata, "title", t.name.toUtf8().constData(), 0);
+            st->disposition = t.main ? AV_DISPOSITION_DEFAULT : 0;
+        }
+        // Subtitles are sparse: after the last one the muxer would hold the other streams back up to 10 s
+        oc->max_interleave_delta = 1000000;
+        return true;
+    }
+
+    // All subtitle packets right after the header: the muxer interleaves them by time with the pictures and sound
+    bool writeTextStreams()
+    {
+        std::vector<uint8_t> buffer(1 << 16);
+        for (size_t i = 0; i < textStreams.size(); ++i) {
+            auto [st, enc] = textStreams[i];
+            for (const Subtitles::TextCue& c : s.subtitles[int(i)].cues) {
+                // ASS event without times ("ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text"), line
+                // breaks as \N; braces would start override tags
+                QString text = c.text;
+                text.replace('{', QLatin1String("(")).replace('}', QLatin1String(")")).replace('\n', QLatin1String("\\N"));
+                QByteArray ass = "0,0,Default,,0,0,0,," + text.toUtf8();
+                AVSubtitleRect rect{};
+                rect.type = SUBTITLE_ASS;
+                rect.ass = ass.data();
+                AVSubtitleRect* rects[1] = {&rect};
+                AVSubtitle sub{};
+                sub.num_rects = 1;
+                sub.rects = rects;
+                sub.end_display_time = uint32_t(c.toMs - c.fromMs);
+                sub.pts = av_rescale_q(c.fromMs, AVRational{1, 1000}, AV_TIME_BASE_Q);
+                const int n = avcodec_encode_subtitle(enc, buffer.data(), int(buffer.size()), &sub);
+                if (n <= 0) continue;
+                AVPacket* p = av_packet_alloc();
+                if (!p || av_new_packet(p, n) < 0) {
+                    av_packet_free(&p);
+                    fail(QStringLiteral("out of memory"));
+                    return false;
+                }
+                std::memcpy(p->data, buffer.data(), size_t(n));
+                p->pts = p->dts = c.fromMs;
+                p->duration = c.toMs - c.fromMs;
+                p->stream_index = st->index;
+                av_packet_rescale_ts(p, AVRational{1, 1000}, st->time_base);
+                const int r = av_interleaved_write_frame(oc, p);
+                av_packet_free(&p);
+                if (r < 0) {
+                    fail(QStringLiteral("cannot write a subtitle: %1").arg(avError(r)));
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     bool writeHeader()
@@ -991,7 +1088,7 @@ struct ExportWriter::Impl {
             return false;
         }
         headerWritten = true;
-        return true;
+        return writeTextStreams();
     }
 
     // The video encoder as the settings want it. Smart render: no B-frames (decode order = picture order, see
@@ -1336,6 +1433,8 @@ struct ExportWriter::Impl {
     {
         avcodec_free_context(&venc); // frees pictures still held by the encoder
         avcodec_free_context(&aenc);
+        for (auto& [st, enc] : textStreams) avcodec_free_context(&enc);
+        textStreams.clear();
         av_buffer_unref(&hwFrames);
         av_buffer_unref(&hwDevice);
         av_buffer_pool_uninit(&framePool); // freed once the last picture is back

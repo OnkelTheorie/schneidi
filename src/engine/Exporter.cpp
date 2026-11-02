@@ -50,7 +50,7 @@ bool writeSubtitleFiles(const Timeline& tl, double fps, int from, int to, const 
     }
     for (const Subtitles::SrtFile& srt : list) {
         auto f = std::make_unique<QSaveFile>(srt.path);
-        if (!f->open(QIODevice::WriteOnly) || f->write(Subtitles::toSrt(tl.subtitles[srt.track].cues, fps, from, to)) < 0) {
+        if (!f->open(QIODevice::WriteOnly) || f->write(Subtitles::toFile(srt.path, tl.subtitles[srt.track].cues, fps, from, to)) < 0) {
             if (error) *error = T("Untertiteldatei kann nicht geschrieben werden: %1").arg(srt.path);
             return false;
         }
@@ -276,6 +276,9 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_frames = parallelFrames(scaled, threads); // effects on left-out tracks do not count
     m_target = s.path;
     m_subtitles = std::move(subtitles);
+    m_textTracks.clear();
+    if (s.embedSubtitles && s.output == ExportSettings::Output::File && !s.videoCodec.isEmpty())
+        m_textTracks = Subtitles::textTracks(tl, s.format.rate.fps(), m_from, m_from + m_length);
     // Written under a temporary name next to the target, renamed onto it at the end (see m_part)
     static const QRegularExpression ownId("^[0-9a-f]{8}$");
     const QString partId = ownId.match(s.partId).hasMatch() ? s.partId : QUuid::createUuid().toString(QUuid::Id128).left(8);
@@ -475,6 +478,7 @@ bool Exporter::startWriter(const QString& codec, QString* error)
     w.length = m_length;
     w.copy = m_copy;
     w.maxBitrateK = s.maxBitrateK;
+    w.subtitles = m_textTracks;
     m_usedCodec = s.videoCodec.isEmpty() ? QString() : codec;
     {
         if (s.output == ExportSettings::Output::ImageSequence) w.muxer = "image2";
