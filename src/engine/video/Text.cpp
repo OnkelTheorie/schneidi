@@ -128,7 +128,13 @@ void drawWords(uint8_t* rgba, int w, int h, const WordParams& tp)
     for (int l = 0; l < tp.lines.size(); ++l) {
         const double baseline = ext + fm.ascent() + l * fm.lineSpacing();
         double x = ext + (tp.halign == 0 ? 0.0 : tp.halign == 1 ? (blockW - lineW[l]) / 2 : blockW - lineW[l]);
-        for (const Word& word : tp.lines[l]) {
+        // Right-to-left text (Arabic, Hebrew): the first word on the right (each word's letters are shaped by Qt)
+        const QVector<Word>& line = tp.lines[l];
+        QString joined;
+        for (const Word& word : line) joined += word.text + ' ';
+        const bool rtl = joined.isRightToLeft();
+        for (int i = 0; i < line.size(); ++i) {
+            const Word& word = line[rtl ? line.size() - 1 - i : i];
             const double adv = fm.horizontalAdvance(word.text), slot = slotOf(word);
             QPainterPath path;
             path.addText(QPointF(x + (slot - adv) / 2, baseline), font, word.text);

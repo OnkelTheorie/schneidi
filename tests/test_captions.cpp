@@ -431,6 +431,52 @@ void testWordLayout()
         }
 }
 
+// Right-to-left text: the first word stands on the right; scripts without spaces, emoji and a word wider than the
+// area are drawn (shrunk into the area, nothing outside it)
+void testWordScripts()
+{
+    QFont font(QStringLiteral("DejaVu Sans"));
+    font.setPixelSize(60);
+    const auto draw = [&](const QStringList& list, int active, QRectF area = QRectF(0, 0, 800, 200)) {
+        Text::WordParams p;
+        p.font = font;
+        p.area = area;
+        p.outline = 6;
+        p.lines = {{}};
+        for (int i = 0; i < list.size(); ++i)
+            p.lines[0] << Text::Word{list[i], i == active ? QColor(255, 214, 0) : QColor(Qt::white), i == active ? 1.2 : 1.0};
+        QImage img(800, 200, QImage::Format_RGBA8888);
+        img.fill(Qt::transparent);
+        Text::drawWords(img.bits(), img.width(), img.height(), p);
+        return img;
+    };
+    // Mean x of the highlight colour
+    const auto yellowX = [](const QImage& img) {
+        double sum = 0;
+        int n = 0;
+        for (int y = 0; y < img.height(); ++y)
+            for (int x = 0; x < img.width(); ++x) {
+                const QColor c = img.pixelColor(x, y);
+                if (c.alpha() > 200 && c.red() > 200 && c.green() > 160 && c.blue() < 80) sum += x, ++n;
+            }
+        return n ? sum / n : -1.0;
+    };
+    const QStringList hebrew{QStringLiteral("\u05E9\u05DC\u05D5\u05DD"), QStringLiteral("\u05E2\u05D5\u05DC\u05DD"),
+                             QStringLiteral("\u05D8\u05D5\u05D1")};
+    CHECK(yellowX(draw(hebrew, 0)) > 400); // first word right
+    CHECK(yellowX(draw(hebrew, 2)) < 400);
+    const QStringList latin{"one", "two", "three"};
+    CHECK(yellowX(draw(latin, 0)) < 400);
+    // No spaces, emoji, one very long word: something is drawn and it stays inside the area
+    for (const QString& text : {QStringLiteral("\u4ECA\u65E5\u306F\u3044\u3044\u5929\u6C17\u3067\u3059\u306D"),
+                                QStringLiteral("GG \U0001F525\U0001F525 wow"), QString(200, QChar('W'))}) {
+        const QImage img = draw(Captions::words(text), 0, QRectF(100, 0, 600, 200));
+        const Ink in = ink(img);
+        CHECK(in.first >= 99 && in.last <= 701);
+        CHECK(in.last > in.first);
+    }
+}
+
 int white(const QImage& img)
 {
     int n = 0;
@@ -600,6 +646,7 @@ int main(int argc, char** argv)
     testVtt();
     testProjectFile();
     testWordLayout();
+    testWordScripts();
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     testCliOp(tmp.path());
