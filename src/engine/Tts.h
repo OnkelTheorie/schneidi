@@ -33,7 +33,9 @@ struct Result {
     bool cached = false;    // it was there already
     qint64 durationMs = 0;
     QVector<TranscriptWord> words; // ms from the file start (Request::words)
-    QString wordSource;            // "whisper" (measured) or "estimate" (from the text)
+    // "whisper" (measured), "whisper-span" (whisper heard other words: its start and end of speech, the words spread
+    // between) or "estimate" (from the text and the sound's level)
+    QString wordSource;
     QString voice;                 // the voice used (id or path)
 };
 

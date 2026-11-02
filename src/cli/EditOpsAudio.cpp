@@ -465,8 +465,10 @@ void opSpeak(Session& s, const QJsonObject& op)
     for (const char* key : {"max_words", "name"})
         if (op.contains(key)) c[key] = op.value(key);
     captionsOp(s, c);
-    s.notes << (speech.wordSource == "whisper"
-                    ? QString("caption word times measured by whisper")
+    s.notes << (speech.wordSource == "whisper" ? QString("caption word times measured by whisper")
+                : speech.wordSource == "whisper-span"
+                    ? QString("caption word times estimated between the start and end of speech whisper measured (it "
+                              "heard other words than the text: numbers, names)")
                     : QString("caption word times estimated from the text (install whisper and a model for measured "
                               "times: `extensions` install:'whisper,small')"));
 }

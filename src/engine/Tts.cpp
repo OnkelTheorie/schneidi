@@ -274,7 +274,7 @@ void Speaker::wordsDone(const QVector<TranscriptWord>& measured, const QString& 
     } else if (!measured.isEmpty()) {
         // Other words heard (numbers, names): its start and end of speech, the words spread between
         m_result.words = Speech::estimateWords(m_request.text, measured.first().from, measured.last().to, pauseMs);
-        m_result.wordSource = "estimate";
+        m_result.wordSource = "whisper-span";
     } else {
         const std::optional<WavInfo> info = readWav(m_result.path);
         m_result.words = Speech::estimateWords(m_request.text, info ? info->speechFromMs : 0,
