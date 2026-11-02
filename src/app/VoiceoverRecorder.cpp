@@ -69,6 +69,9 @@ bool VoiceoverRecorder::start(QString* error)
     config.input = m_settings.input;
     config.buffer = Engine::audioBuffer();
     QString why;
+    // Pausing below emits speedChanged(0): with m_playing still true from the take before, that ended this take
+    // at once (every second take recorded nothing and left the red sign on)
+    m_playing = false;
     m_capture = Audio::Capture::start(config, Voiceover::uniquePath(dir, QDateTime::currentDateTime()), &why);
     if (!m_capture) {
         if (error) *error = T("Kein Eingang: %1").arg(why);

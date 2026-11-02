@@ -127,6 +127,23 @@ int main(int argc, char** argv)
     project->undoStack()->undo();
     CHECK(project->timeline().audio.size() < 2 || project->timeline().audio[1].clips.isEmpty());
 
+    // A second take (the timeline already playing): pausing for the start must not end it at once
+    engine.seek(25);
+    engine.play();
+    wait(200);
+    record->click();
+    wait(50);
+    CHECK(recorder->recording());
+    CHECK(viewer->recording());
+    wait(500);
+    engine.pause();
+    wait(50);
+    CHECK(!recorder->recording());
+    CHECK(!viewer->recording());
+    CHECK(project->timeline().audio.size() >= 2 && project->timeline().audio[1].clips.size() == 1);
+    CHECK_EQ(project->undoStack()->index(), undoBefore + 1);
+    project->undoStack()->undo();
+
     // A locked track does not record
     recorder->setArmedTrack(0);
     project->edit("lock", [](Timeline& t) { t.audio[0].locked = true; });
