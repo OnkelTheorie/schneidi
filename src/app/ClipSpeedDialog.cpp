@@ -3,6 +3,7 @@
 #include "core/I18n.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -33,6 +34,15 @@ ClipSpeedDialog::ClipSpeedDialog(const Editor::Retime& current, int clipLength, 
     m_duration = new QLabel;
     form->addRow(T("Dauer"), m_duration);
 
+    // Slow motion: what fills the time between two source frames (only matters below 100 %)
+    m_interp = new QComboBox;
+    m_interp->setObjectName("FrameInterp");
+    for (const FrameInterpInfo& f : kFrameInterps) m_interp->addItem(T(f.name), int(f.mode));
+    m_interp->setCurrentIndex(m_interp->findData(int(current.interpolate.value_or(FrameInterp::Repeat))));
+    m_interp->setToolTip(T("Langsamer als das Material: Bilder wiederholen, benachbarte Bilder überblenden oder die "
+                           "Bewegung dazwischen berechnen (flüssige Zeitlupe, z. B. für Spiel-Clips)"));
+    form->addRow(T("Zwischenbilder"), m_interp);
+
     m_reverse = new QCheckBox(T("Rückwärts"));
     m_reverse->setChecked(current.reverse);
     m_freeze = new QCheckBox(T("Standbild"));
@@ -57,7 +67,8 @@ ClipSpeedDialog::ClipSpeedDialog(const Editor::Retime& current, int clipLength, 
     // Still image: speed does not matter (grayed out like DaVinci)
     connect(m_freeze, &QCheckBox::toggled, this, [this](bool on) {
         for (QWidget* w : {static_cast<QWidget*>(m_percent), static_cast<QWidget*>(m_fps),
-                           static_cast<QWidget*>(m_reverse), static_cast<QWidget*>(m_pitch)})
+                           static_cast<QWidget*>(m_reverse), static_cast<QWidget*>(m_pitch),
+                           static_cast<QWidget*>(m_interp)})
             w->setEnabled(!on);
         updateDuration();
     });
@@ -95,7 +106,8 @@ void ClipSpeedDialog::updateDuration()
 
 Editor::Retime ClipSpeedDialog::retime() const
 {
-    return {m_percent->value() / 100, m_reverse->isChecked(), m_freeze->isChecked(), m_pitch->isChecked()};
+    return {m_percent->value() / 100, m_reverse->isChecked(), m_freeze->isChecked(), m_pitch->isChecked(),
+            FrameInterp(m_interp->currentData().toInt())};
 }
 
 bool ClipSpeedDialog::ripple() const { return m_ripple->isChecked(); }

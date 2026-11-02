@@ -736,7 +736,7 @@ void MainWindow::clipSpeedDialog()
             && (!first || c->start < first->start))
             first = c;
     if (!first) return;
-    const Editor::Retime cur{first->speed, first->reverse, first->freeze, first->keepPitch};
+    const Editor::Retime cur{first->speed, first->reverse, first->freeze, first->keepPitch, first->interpolate};
     ClipSpeedDialog dlg(cur, first->length(), m_project->format().rate.fps(), this);
     if (dlg.exec() == QDialog::Accepted)
         m_editor->setClipSpeed(m_editor->selection()->ids().values().toVector(), dlg.retime(), dlg.ripple());

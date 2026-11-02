@@ -101,6 +101,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                     c.freeze = r.freeze;
                     c.freezeFrame = r.freeze ? newIn : -1; // frame at the clip start (stays when splitting/trimming)
                     c.keepPitch = r.keepPitch;
+                    if (r.interpolate) c.interpolate = *r.interpolate;
                     c.ramp.clear();
                     c.fadeIn = std::min(c.fadeIn, newLen);
                     c.fadeOut = std::min(c.fadeOut, newLen);

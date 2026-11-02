@@ -223,6 +223,7 @@ public:
     struct Retime {
         double speed = 1.0;
         bool reverse = false, freeze = false, keepPitch = true;
+        std::optional<FrameInterp> interpolate; // in-between pictures for slow motion; unset = keep the clip's
     };
     void setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple);
 

@@ -233,6 +233,21 @@ void testSpeed()
     for (int t = 0; t < 100; ++t)
         worst = std::max(worst, std::abs(Keys::valueAt(rev, AnimParam::PosX, 99 - t) - Keys::valueAt(c, AnimParam::PosX, t)));
     CHECK(worst < 1e-6);
+    CHECK(rev.interpolate == FrameInterp::Repeat); // unset in Retime: stays as it was
+    project.undoStack()->undo();
+
+    // The speed dialog (Ctrl+R) sets speed and in-between pictures together: one undo step
+    const int undo0 = project.undoStack()->index();
+    editor.setClipSpeed({1}, Editor::Retime{0.25, false, false, true, FrameInterp::Flow}, true);
+    CHECK_EQ(project.undoStack()->index(), undo0 + 1);
+    CHECK(now().interpolate == FrameInterp::Flow);
+    CHECK_EQ(now().length(), 400);
+    editor.setClipSpeed({1}, Editor::Retime{0.5, false, false, true}, true);
+    CHECK(now().interpolate == FrameInterp::Flow);
+    project.undoStack()->undo();
+    project.undoStack()->undo();
+    CHECK(now().interpolate == FrameInterp::Repeat);
+    CHECK_EQ(now().length(), 100);
 }
 
 void mouse(QWidget& w, QEvent::Type type, QPoint pt, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = {})
