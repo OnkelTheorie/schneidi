@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // In-between pictures for slow motion (engine/picture/Interpolate.h, Clip::interpolate): a moving textured square
 // lands within a pixel of its ideal in-between position, a static HUD over a panning background stays identical,
-// blending is the exact average, a cut gives no ghost; through the renderer: blend at 25 % equals the average of
+// blending is the exact average, a cut (also one to the same brightness in other colours, or to other content in
+// the same colours) gives no ghost; through the renderer: blend at 25 % equals the average of
 // the two source frames, a freeze frame and the parts of a ramp at full speed stay as before. Prints the time per
 // 1080p in-between picture.
 
@@ -167,6 +168,37 @@ void algorithmChecks()
         CHECK(out == a);
         flow(*m, a.data(), dark.data(), out.data(), w, h, 0.75);
         CHECK(out == dark);
+    }
+
+    // A cut to a shot of the same brightness in other colours (a map change in a game; a luma histogram saw no cut):
+    // detected, no blended ghost in blend nor flow
+    {
+        Pic grey(a.size());
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) { // the luma of `a`'s background, but grey and another texture
+                const uint8_t g = uint8_t(texture(x, y, 5) * 0.495 + 46);
+                put(grey, w, x, y, g, g, g);
+            }
+        CHECK(isCut(a.data(), grey.data(), w, h));
+        const auto m = estimate(a.data(), grey.data(), w, h);
+        CHECK(cut(*m));
+        flow(*m, a.data(), grey.data(), out.data(), w, h, 0.4);
+        CHECK(out == a);
+        flow(*m, a.data(), grey.data(), out.data(), w, h, 0.6);
+        CHECK(out == grey);
+    }
+
+    // Same colours, other content (another part of the same map): the motion explains nothing -> a cut
+    {
+        Pic other(a.size());
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const uint8_t v = texture(x, y, 9);
+                put(other, w, x, y, v, uint8_t(v / 2 + 40), uint8_t(255 - v));
+            }
+        const Pic plain = scene(w, h, 0, 0, -side, -side, side, false); // background only
+        const auto m = estimate(plain.data(), other.data(), w, h);
+        if (!CHECK(cut(*m))) std::printf("       unreliable share %.2f\n", unreliable(*m));
     }
 
     // Time per 1080p in-between picture (motion once per pair, then the picture per t)

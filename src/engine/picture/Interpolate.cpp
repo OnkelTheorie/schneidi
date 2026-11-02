@@ -240,7 +240,7 @@ std::vector<Plane> pyramid(const Plane& base)
 
 // How differently the colours of a and b are distributed: per channel the share of pixels that would have to change
 // their 16-step bin, the largest of the three (0 = same, 1 = nothing in common). A CS2 cut between two maps: 0.33;
-// fast camera turns of the same shot: up to 0.09 (a luma histogram alone saw the cut as 0.2)
+// fast camera turns of the same shot: up to 0.14 (a luma histogram alone saw the cut as 0.2)
 double colourDistance(const uint8_t* a, const uint8_t* b, int w, int h)
 {
     const int step = std::max(1, std::min(w, h) / 180); // a thinned-out picture is enough for histograms
@@ -321,11 +321,13 @@ std::shared_ptr<const Motion> estimate(const uint8_t* a, const uint8_t* b, int w
     };
     m->bad = check(m->fwd, m->bwd, m->okF);
     check(m->bwd, m->fwd, m->okB);
-    // A cut the colours did not give away: the motion explains neither the picture nor itself
+    // A cut the colours did not give away: the motion explains neither the picture nor itself. CS2 cut between two
+    // desert maps: 94 % unreliable blocks, mean match cost 15; same shot with fast turns (4 clips, 330 frame pairs):
+    // at most 37 % and 8.5
     double cost = 0;
     for (float c : m->fwd.cost) cost += c;
     cost /= std::max<size_t>(1, m->fwd.cost.size());
-    if (m->bad > 0.6 && cost > 25) m->cut = true;
+    if (m->bad > 0.75 && cost > 10) m->cut = true;
     return m;
 }
 

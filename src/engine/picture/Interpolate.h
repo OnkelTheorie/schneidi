@@ -25,7 +25,8 @@ namespace Picture::Interp {
 // Weighted average, rounded: t = 0.5 gives (a + b + 1) / 2
 void blend(const uint8_t* a, const uint8_t* b, uint8_t* out, int w, int h, double t);
 
-// a and b belong to different shots (a hard cut): their brightness histograms differ too much
+// a and b belong to different shots (a hard cut): their colour histograms differ too much. estimate() also calls a
+// pair a cut when the motion explains neither the picture nor itself (same colours, other content)
 bool isCut(const uint8_t* a, const uint8_t* b, int w, int h);
 
 // Motion between a and b (expensive part, cache it per frame pair; independent of t)
