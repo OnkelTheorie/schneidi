@@ -280,6 +280,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     QJsonObject r{{"project", project}, {"timeline", shortTimeline}, {"out", out},
                   {"preset", QString::fromLatin1(platform->id)}, {"overwrite", a["overwrite"].toBool()}};
     if (burn) r["subtitles"] = "burn";
+    if (aspect != QLatin1String("9:16")) r["size"] = aspect == QLatin1String("1:1") ? "1080x1080" : "1080x1350";
     for (const char* k : {"threads", "encoder"})
         if (a.contains(k)) r[k] = a[k];
     const QJsonObject rendered = run("render", r, step(0.7, 1));

@@ -13,8 +13,9 @@ schneidi is a video editor whose every function also works without a window. You
 - **MCP tools** (preferred when they are there): `new`, `info`, `edit`, `render`, `probe`, `frames`, … The tool names
   may carry a prefix such as `mcp__schneidi__`.
 - **`schneidi-cli`** in a terminal when the tools are missing: `schneidi-cli <command> [positional] --param value`.
-  Lists and objects are passed as JSON (`--ops '[{"op":"split","at":"4s"}]'`). It may print progress lines first; the
-  last line is the JSON result (exit code 0 ok, 1 error, 2 usage error).
+  Lists and objects are passed as JSON (`--ops '[{"op":"split","at":"4s"}]'`). Progress of long commands goes to
+  **stderr** as lines like `{"progress":42}`; **stdout** carries only the JSON answer, and its **last line** is the
+  result (exit code 0 ok, 1 error with `{"error":…}`, 2 usage error). Read the answer from stdout's last line.
 
 Both take the same parameters. When you are unsure how a command or edit op works, ask schneidi instead of guessing:
 `help` (command `edit`, op `title`) or `schneidi-cli help edit --op title`. `effects` lists effect ids, LUTs and
@@ -99,7 +100,7 @@ Read the guide that fits the task (several if it combines them):
 |---|---|
 | Highlight reel from game, sports or event footage | [references/highlights.md](references/highlights.md) |
 | Interview, podcast, vlog, talking head: remove pauses and slips | [references/talking.md](references/talking.md) |
-| Short / Reel / TikTok, 9:16, vertical | [references/social.md](references/social.md) |
+| Short / Reel / TikTok, 9:16, vertical (one call: `short`) | [references/social.md](references/social.md) |
 | Ad, product or marketing clip, fixed length, several formats | [references/ad.md](references/ad.md) |
 | Subtitles and captions | [references/subtitles.md](references/subtitles.md) |
 | Color: correct, match shots, LUTs | [references/color.md](references/color.md) |

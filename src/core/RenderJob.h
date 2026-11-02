@@ -106,10 +106,10 @@ QSize sizeForShortSide(QSize timeline, int shortSide);
 
 struct RenderPreset {
     QString name;
-    QString id;   // built-in ones: stable ASCII id for the CLI ("youtube-1080p", "tiktok"); empty for own presets
-    QString hint; // built-in ones: what it is for, shown as tooltip (UI language)
     RenderSettings settings;
     bool builtin = false;
+    QString id;   // built-in ones: stable ASCII id for the CLI ("youtube-1080p", "tiktok"); empty for own presets
+    QString hint; // built-in ones: what it is for, shown as tooltip (UI language)
 };
 
 // Short-video platforms (YouTube Shorts, Instagram Reels, TikTok): their upload recommendations as render presets

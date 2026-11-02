@@ -29,6 +29,8 @@ and every new recording becomes a cut without anyone clicking - e.g. "new clip â
   reach it; `--follow` does not keep the app busy between passes.
 
 ## Per new file (e.g. a highlight short)
+A short per new recording in one call: `short` with `files` = the new file ([social.md](social.md), "One call") -
+it finds the moments, reframes, captions, checks and renders. The steps by hand, for more control:
 1. `highlights` on the file (with `region` + `color` for a game's kill feed, else loud moments), `project` passed
    ([highlights.md](highlights.md)). Nothing good in it: skip the file, don't force a video out of it (`edit` op
    `remove_media` takes it out of the media pool, not from disk; the watch does not bring it back).
@@ -37,7 +39,8 @@ and every new recording becomes a cut without anyone clicking - e.g. "new clip â
    [social.md](social.md)); `keep` with the best candidates' ranges. A project file keeps opening the timeline the
    user had open: give `check`, `frames`, `loudness` and `render` the new one as `timeline` (id or name from the
    `edit` answer).
-3. `check` the project, `render` with a new name per clip (preset "Phone / Vertical 9:16" for a short).
+3. `check` the project (`platform` `shorts`, `reels` or `tiktok` for a short), `render` with a new name per clip
+   (preset `"shorts"`, `"reels"` or `"tiktok"`).
 4. Look at the result (`check` on the rendered file) before anything is uploaded; report what you made.
 
 Keep the project small: one project for the watch folder, one timeline (or project) per output. Several files that

@@ -203,11 +203,11 @@ int main(int argc, char** argv)
         issues = ExportCheck::sound(normal, 0, -14, -0.5, f, {}, true);
         CHECK(issues[0].message.size() < advice.size());
         // The fix (Fix button, `check`'s "fix"). Too quiet with peaks near 0 (a colleague's Valorant clip: -17.1 LUFS,
-        // -0.1 dBTP): fader up by the difference and the limiter at -1; peaks only: the limiter; too loud with the
+        // -0.1 dBTP): fader up by the difference and the limiter at -1.2 (under the -1 limit); peaks only: the limiter; too loud with the
         // limiter already on: the fader down only; nothing off: no fix
         Timeline mix;
         auto fix = ExportCheck::soundFix(ExportCheck::sound(normal, 0, -17.1, -0.1, f), -17.1, mix);
-        CHECK(fix.limiter && fix.ceiling == -1 && fix.level);
+        CHECK(fix.limiter && fix.ceiling == -1.2 && fix.level);
         CHECK(std::abs(fix.volumeDb - 3.1) < 1e-9 && std::abs(fix.change - 3.1) < 1e-9);
         fix = ExportCheck::soundFix(ExportCheck::sound(normal, 0, -14, -0.5, f), -14, mix);
         CHECK(fix.limiter && !fix.level);

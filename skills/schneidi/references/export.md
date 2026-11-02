@@ -1,10 +1,10 @@
 # Export: formats, presets, exchange
 
 ## Presets (`render` `preset`)
-`YouTube 1080p`, `YouTube 4K`, `Phone / Vertical 9:16`, `Small (for sharing)`, `H.265 (small file, high quality)`,
-`AV1 (very small file)`, `High Quality / Archive (ProRes 422 HQ)`, `Editing Exchange (DNxHR HQ)`, `Animated GIF
-(480p, 15 fps)`, audio only (WAV, FLAC, AAC, MP3). Other parameters override the preset. `help` `render` lists the
-current set.
+By id or name: `youtube-1080p`, `youtube-4k`, `phone` (Phone / Vertical 9:16), `youtube-shorts` / `shorts`,
+`instagram-reels` / `reels`, `tiktok` (1080x1920, up to 60 fps, AAC 48 kHz; `check` with the same `platform` first),
+`small`, `h265`, `av1`, `prores`, `dnxhr`, `gif`, audio only `wav`, `flac`, `aac`, `mp3`. Other parameters override
+the preset. `help` `render` lists the current set with the user's own presets.
 
 ## Choosing
 - Upload anywhere / play anywhere: H.264 MP4 (default), `quality` 3 = web (bit rate like YouTube recommends).
