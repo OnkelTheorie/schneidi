@@ -376,7 +376,7 @@ void Inspector::addStabilizeRow(Section& s)
     ++s.rows;
     auto current = [this]() -> std::optional<Stabilizer::Request> {
         const Clip* c = primary(TrackKind::Video, false, Stabilizer::EffectId);
-        return c ? Stabilizer::request(*c, m_editor->project()->format()) : std::nullopt;
+        return c ? Stabilizer::request(*c, m_editor->project()->timelineFormat()) : std::nullopt;
     };
     connect(button, &QPushButton::clicked, this, [current] {
         const auto r = current();

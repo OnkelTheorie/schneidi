@@ -445,7 +445,10 @@ void MainWindow::onDrop(const QStringList& paths, int frame, int track)
 void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
 {
     if (m_project->frameRateLocked()) return; // only in an empty timeline
-    if (m_project->fixedResolution() && m_project->fixedFrameRate()) return; // start template / Project Settings
+    // A timeline of its own resolution (a 9:16 short) keeps it like a fixed one: only the frame rate is offered
+    const Sequence* open = m_project->sequence(m_project->currentSequence());
+    const bool fixedSize = m_project->fixedResolution() || (open && open->hasOwnSize());
+    if (fixedSize && m_project->fixedFrameRate()) return; // start template / Project Settings
     // The first clip with video decides (still images and audio have no format of their own)
     for (const QString& path : paths) {
         const MediaInfo* info = m_project->mediaInfo(path);
@@ -455,8 +458,8 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
         const ProjectFormat cur = m_project->format();
         // A fixed resolution or frame rate (start template, Project Settings) stays as it is
         ProjectFormat want;
-        want.width = m_project->fixedResolution() ? cur.width : cf.width;
-        want.height = m_project->fixedResolution() ? cur.height : cf.height;
+        want.width = fixedSize ? cur.width : cf.width;
+        want.height = fixedSize ? cur.height : cf.height;
         want.rate = m_project->fixedFrameRate() ? cur.rate : cf.suggested;
         if (want == cur) return;
         if (ask) {
