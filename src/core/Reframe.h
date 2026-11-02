@@ -9,6 +9,7 @@
 
 #include "core/Types.h"
 
+#include <QRectF>
 #include <QSizeF>
 #include <QString>
 #include <QVector>
@@ -52,21 +53,29 @@ struct PathParams {
 // cropped stay at 0.5.
 QVector<Key> path(const QVector<Target>& targets, const PathParams& p);
 
-// Geometry of a picture with aspect `mediaAspect` (width / height as displayed) zoomed to fill `frame`
+// Geometry of a picture with aspect `mediaAspect` (width / height as displayed) zoomed so that its `content` (the
+// part between black bars, fractions of the picture; engine/BarDetect) fills `frame`
 struct Fill {
     double zoom = 1;   // ClipTransform zoom (1 = fitted in)
-    QSizeF picture;    // the zoomed picture in frame pixels
-    double windowW = 1, windowH = 1; // the visible part as a fraction of the picture
+    QSizeF picture;    // the whole zoomed picture in frame pixels
+    QRectF content{0, 0, 1, 1};
+    double windowW = 1, windowH = 1; // the visible part as a fraction of the content
 };
-Fill fill(double mediaAspect, QSizeF frame);
-// ClipTransform position (pixels, y up) that puts window centre (x, y) into the middle of the frame, kept inside
-// the picture
+Fill fill(double mediaAspect, QSizeF frame, const QRectF& content = QRectF(0, 0, 1, 1));
+// ClipTransform position (pixels, y up) that puts window centre (x, y; fractions of the content) into the middle of
+// the frame, kept inside the content
 QPointF position(const Fill& f, QSizeF frame, double x, double y);
 
 // The clip's transform for the mode: zoom, position (keyframes for Auto, from `keys` in clip frames), fill. Other
-// transform values (rotation, crop, opacity) and other keyframes stay. mediaAspect <= 0 = unknown (treated as the
-// frame's shape: nothing to crop).
-void apply(Clip& c, Mode mode, const QVector<Key>& keys, double mediaAspect, QSizeF frame);
+// transform values (rotation, opacity) and other keyframes stay; the crop too, unless `content` is less than the whole
+// picture: then the bars around it are cropped (cropBars) and Fit fits the content. mediaAspect <= 0 = unknown
+// (treated as the frame's shape: nothing to crop).
+void apply(Clip& c, Mode mode, const QVector<Key>& keys, double mediaAspect, QSizeF frame,
+           const QRectF& content = QRectF(0, 0, 1, 1));
+
+// Crops what is outside `content` (fractions of the picture of aspect mediaAspect as fitted into `frame`): static
+// crop values, crop keyframes removed. A whole-picture content leaves the crop alone. False = nothing to do.
+bool cropBars(Clip& c, const QRectF& content, double mediaAspect, QSizeF frame);
 
 // Can the clip be reframed (a video or still clip; not titles, audio, compound or multicam clips)?
 bool canReframe(const Clip& c);

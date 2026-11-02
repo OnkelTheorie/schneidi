@@ -43,6 +43,12 @@ double of(const QString& path)
     return aspect;
 }
 
+double ofClip(const Clip& c)
+{
+    if (c.kind != ClipKind::Media) return 0;
+    return c.pictureAspect > 0 ? c.pictureAspect : of(c.mediaPath);
+}
+
 QSizeF fit(double aspect, QSizeF frame)
 {
     if (aspect <= 0 || frame.isEmpty()) return frame;

@@ -2,10 +2,14 @@
 // Editor: Auto-Reframe (core/Reframe.h)
 #include "core/Editor.h"
 #include "core/I18n.h"
+#include "core/Keyframes.h"
 #include "core/MediaAspect.h"
 #include "core/Project.h"
 
 #include <QSet>
+
+#include <algorithm>
+#include <cmath>
 
 QVector<int> Editor::reframeTargets(const QVector<int>& ids) const
 {
@@ -20,7 +24,8 @@ QVector<int> Editor::reframeTargets(const QVector<int>& ids) const
     return out;
 }
 
-int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHash<int, QVector<Reframe::Key>>& paths)
+int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHash<int, QVector<Reframe::Key>>& paths,
+                         const QHash<QString, QRectF>& contents)
 {
     const QVector<int> targets = reframeTargets(ids);
     if (targets.isEmpty()) return 0;
@@ -28,7 +33,56 @@ int Editor::reframeClips(const QVector<int>& ids, Reframe::Mode mode, const QHas
     m_project->edit(T("Auto-Reframe"), [&](Timeline& tl) {
         for (int id : targets)
             if (Clip* c = TimelineOps::findClip(tl, id))
-                Reframe::apply(*c, mode, paths.value(id), MediaAspect::of(c->mediaPath), frame);
+                Reframe::apply(*c, mode, paths.value(id), MediaAspect::ofClip(*c), frame,
+                               contents.value(c->mediaPath, QRectF(0, 0, 1, 1)));
     });
     return int(targets.size());
+}
+
+int Editor::cropBars(const QVector<int>& ids, const QHash<QString, QRectF>& contents)
+{
+    const QSizeF frame = m_project->timelineFormat().size();
+    QVector<int> changed;
+    {
+        Timeline probe = m_project->timeline();
+        for (int id : reframeTargets(ids))
+            if (Clip* c = TimelineOps::findClip(probe, id); c && contents.contains(c->mediaPath)
+                && Reframe::cropBars(*c, contents.value(c->mediaPath), MediaAspect::ofClip(*c), frame))
+                changed << id;
+    }
+    if (changed.isEmpty()) return 0;
+    m_project->edit(T("Schwarze Balken wegschneiden"), [&](Timeline& tl) {
+        for (int id : changed)
+            if (Clip* c = TimelineOps::findClip(tl, id))
+                Reframe::cropBars(*c, contents.value(c->mediaPath), MediaAspect::ofClip(*c), frame);
+    });
+    return int(changed.size());
+}
+
+int Editor::setPictureAspect(const QVector<int>& ids, double aspect)
+{
+    aspect = aspect > 0 ? std::clamp(aspect, 0.1, 10.0) : 0;
+    QVector<int> changed;
+    for (int id : reframeTargets(ids))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id); c && std::abs(c->pictureAspect - aspect) > 1e-9)
+            changed << id;
+    if (changed.isEmpty()) return 0;
+    const QSizeF frame = m_project->timelineFormat().size();
+    m_project->edit(aspect > 0 ? T("Seitenverhältnis entzerren") : T("Seitenverhältnis der Datei"), [&](Timeline& tl) {
+        for (int id : changed)
+            if (Clip* c = TimelineOps::findClip(tl, id)) {
+                // Crop values are pixels on the fitted picture: keep their share of it
+                const QSizeF a = MediaAspect::fit(MediaAspect::ofClip(*c), frame);
+                c->pictureAspect = aspect;
+                const QSizeF b = MediaAspect::fit(MediaAspect::ofClip(*c), frame);
+                if (a.width() > 0 && a.height() > 0 && a != b) {
+                    const double kx = b.width() / a.width(), ky = b.height() / a.height();
+                    for (AnimParam p : {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom}) {
+                        const double k = p == AnimParam::CropLeft || p == AnimParam::CropRight ? kx : ky;
+                        Keys::convert(*c, p, [k](double v) { return v * k; }, k);
+                    }
+                }
+            }
+    });
+    return int(changed.size());
 }
