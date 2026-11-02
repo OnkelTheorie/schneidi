@@ -174,6 +174,11 @@ void Editor::addTitle(int frame, int track, int length, TitleKind kind)
             frame = 0;
             const int end = TimelineOps::endFrame(cur);
             length = end > 0 ? end : 5 * p->fps(); // empty timeline: like a text title
+            // Dropped onto a track with clips: spanning the whole timeline there would overwrite all of them – it
+            // goes onto a free track above instead
+            if (track >= 0 && track < cur.video.size())
+                for (const Clip& x : cur.video[track].clips)
+                    if (x.start < length && x.end() > 0) track = -1;
         }
     }
     c.start = std::max(0, frame);
