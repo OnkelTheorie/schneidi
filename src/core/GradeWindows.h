@@ -17,7 +17,7 @@
 
 namespace GradeWindows {
 
-inline constexpr int kMax = 4; // windows per clip, numbered 1..kMax
+inline constexpr int kMax = 8; // windows per clip, numbered 1..kMax
 
 enum class Shape { Rectangle, Ellipse };
 enum class Fill { None, Blur, Pixelate, Color };

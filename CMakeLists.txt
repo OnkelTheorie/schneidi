@@ -90,6 +90,7 @@ add_library(schneidi_lib STATIC
     src/core/Accents.h            src/core/Accents.cpp
     src/core/MediaAspect.h        src/core/MediaAspect.cpp
     src/core/GradeWindows.h       src/core/GradeWindows.cpp
+    src/core/NameBlur.h           src/core/NameBlur.cpp
     src/core/Retime.h             src/core/Retime.cpp
     src/core/ProjectFormat.h      src/core/ProjectFormat.cpp
     src/core/Project.h            src/core/Project.cpp
@@ -186,6 +187,7 @@ add_library(schneidi_lib STATIC
     src/engine/picture/gpu/Gpu.h  src/engine/picture/gpu/Gpu.cpp
     src/engine/video/Text.h       src/engine/video/Text.cpp
     src/engine/Tracker.h          src/engine/Tracker.cpp
+    src/engine/TextRegions.h      src/engine/TextRegions.cpp
     src/engine/ReframeAnalysis.h  src/engine/ReframeAnalysis.cpp
     src/engine/Lumas.h            src/engine/Lumas.cpp
     src/engine/RenderQueue.h      src/engine/RenderQueue.cpp
