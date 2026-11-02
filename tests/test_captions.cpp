@@ -266,6 +266,11 @@ void testProjectFile()
         CHECK(back.timeline.subtitles[0].cues == t.cues);
         CHECK(back.timeline.subtitles[1].captions == CaptionStyle{});
     }
+    // Another frame rate: the word times follow (25 -> 50 fps)
+    Timeline rt;
+    rt.subtitles = {t};
+    retimeTimeline(rt, {25, 1}, {50, 1});
+    CHECK_EQ(wordsOf(rt.subtitles[0].cues[0]), QString("20-80:a@0-10 b@10-60"));
     // Unknown (newer) mode: plain lines
     CHECK(Captions::fromJson(QJsonObject{{"mode", "sparkle"}}).mode == CaptionMode::Lines);
     CHECK(Captions::toJson(CaptionStyle{}).isEmpty());
