@@ -292,8 +292,12 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     req.language = a.contains("language") ? a["language"].toString() : "auto";
     req.threads = a["threads"].toInt();
     req.music = a["music"].toBool();
+    // A chosen language is checked against whisper's own detection afterwards (a wrong one gives made-up words)
+    req.checkLanguage = req.language != QLatin1String("auto") && !req.music;
     ProjectFormat f;
     int offset = 0, length = 0;
+    QJsonArray notes;
+    QJsonObject picked; // which sound was heard (stream or tracks), for the answer
     if (isProjectFile(src)) {
         // The timeline's sound as it is mixed for the export; times are timeline frames
         Session s(src);
@@ -306,7 +310,30 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         req.from = a.contains("from") ? parseTime(a["from"], f, "from") : 0;
         req.to = a.contains("to") ? std::min(end, parseTime(a["to"], f, "to")) : end;
         if (req.to <= req.from) fail("BAD_ARGUMENT", "'to' must be after 'from'");
-        req.audioTracks = audioTracksOf(s.project, req.timeline, a["tracks"]);
+        const QString tracks = a["tracks"].toString().trimmed();
+        if (tracks.compare("all", Qt::CaseInsensitive) == 0) {
+            // as heard
+        } else if (!tracks.isEmpty()) {
+            req.audioTracks = audioTracksOf(s.project, req.timeline, a["tracks"]);
+        } else {
+            // Not chosen: the voice tracks ("Mikrofon") when there is more to hear (game, music: lyrics in the captions)
+            req.audioTracks = Transcript::voiceTracks(req.timeline, [&s](const Clip& c) {
+                const MediaInfo* m = c.mediaPath.isEmpty() ? nullptr : s.project.mediaInfo(c.mediaPath);
+                return m && m->audioStreamCount() > 1 ? m->audioStreamName(c.audioStream) : QString();
+            });
+            if (!req.audioTracks.isEmpty()) {
+                QStringList names;
+                for (int i : req.audioTracks) names << trackLabel(s.project, req.timeline, i);
+                notes << QString("heard only the voice track(s) %1 (music and game sound left out); tracks:\"all\" "
+                                 "for everything audible, or name the tracks")
+                             .arg(names.join(", "));
+            }
+        }
+        if (!req.audioTracks.isEmpty()) {
+            QJsonArray list;
+            for (int i : req.audioTracks) list << trackLabel(s.project, req.timeline, i);
+            picked["tracks"] = list;
+        }
         offset = req.from;
         length = req.to - req.from;
     } else {
@@ -316,7 +343,26 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
         if (!m.info.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.info.path);
         f = m.format;
         req.media = m.info.path;
-        req.audioStream = std::clamp(a["audio_stream"].toInt(), 0, std::max(0, m.info.audioStreamCount() - 1));
+        const QString spec = a["audio_stream"].toString().trimmed();
+        const bool automatic = spec.isEmpty() || spec.compare("auto", Qt::CaseInsensitive) == 0;
+        req.audioStreams = automatic ? Transcript::defaultStreams(m.info) : audioStreamsOf(m.info, spec);
+        req.audioStream = req.audioStreams.first();
+        QStringList names;
+        for (int i : req.audioStreams) names << m.info.audioStreamName(i);
+        if (m.info.audioStreamCount() > 1) {
+            QJsonArray list;
+            for (int i : req.audioStreams) list << i;
+            picked["audio_stream"] = list.size() == 1 ? list.first() : QJsonValue(list);
+            picked["audio_stream_name"] = names.join(", ");
+            if (automatic) {
+                QStringList all;
+                for (int i = 0; i < m.info.audioStreamCount(); ++i) all << QString("%1 = %2").arg(i).arg(m.info.audioStreamName(i));
+                notes << QString("%1 of %2 audio streams heard: %3 (%4); audio_stream chooses others by number or name")
+                             .arg(req.audioStreams.size())
+                             .arg(m.info.audioStreamCount())
+                             .arg(names.join(", "), all.join(", "));
+            }
+        }
         length = m.info.length;
     }
 
@@ -351,8 +397,20 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     }
     QJsonObject out{{"source", absolute(src)}, {"language", r.language}, {"fps", formatJson(f)["fps"]},
                     {"model", QFileInfo(req.model).fileName()}, {"segments", segments}};
+    for (auto it = picked.begin(); it != picked.end(); ++it) out[it.key()] = it.value();
+    if (const QString heard = t.detectedLanguage(); !heard.isEmpty() && heard != r.language) {
+        out["detected_language"] = heard;
+        // Only a clear other language is worth a word: German gamer talk with English bits was "en" at 55 %
+        // (detection hears only the first 30 s), a really wrong choice 100 %
+        if (t.detectedProbability() >= 0.8)
+            notes << QString("whisper hears '%1' (%2 %), not the chosen '%3': check the language or use language:\"auto\"")
+                         .arg(heard)
+                         .arg(int(std::lround(t.detectedProbability() * 100)))
+                         .arg(r.language);
+    }
     if (segments.isEmpty() && !req.music)
-        out["notes"] = QJsonArray{"no speech found; singing or shouts in music: try again with music:true"};
+        notes << "no speech found; singing or shouts in music: try again with music:true";
+    if (!notes.isEmpty()) out["notes"] = notes;
     if (a["words"].toBool()) {
         // Word times for cutting: `to` is where the word is spoken to (pauses after it are left out)
         QJsonArray words;

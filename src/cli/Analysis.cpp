@@ -104,6 +104,46 @@ QVector<int> audioTracksOf(const Project& p, const Timeline& tl, const QJsonValu
     return out;
 }
 
+QString trackLabel(const Project& p, const Timeline& tl, int audioTrack)
+{
+    QStringList names;
+    const Track& t = tl.audio[audioTrack];
+    if (!t.name.isEmpty()) names << t.name;
+    else
+        for (const Clip& c : t.clips)
+            if (const MediaInfo* m = c.mediaPath.isEmpty() ? nullptr : p.mediaInfo(c.mediaPath);
+                m && m->audioStreamCount() > 1 && !names.contains(m->audioStreamName(c.audioStream)))
+                names << m->audioStreamName(c.audioStream);
+    const QString ref = QString("A%1").arg(audioTrack + 1);
+    return names.isEmpty() ? ref : ref + " " + names.join("/");
+}
+
+QVector<int> audioStreamsOf(const MediaInfo& info, const QString& list)
+{
+    static const QRegularExpression number("^\\d+$");
+    const int count = info.audioStreamCount();
+    QVector<int> out;
+    for (QString s : list.split(',', Qt::SkipEmptyParts)) {
+        s = s.trimmed();
+        int index = -1;
+        if (number.match(s).hasMatch()) {
+            index = s.toInt();
+            if (index >= count) index = -1;
+        } else {
+            for (int i = 0; i < count && index < 0; ++i)
+                if (info.audioStreamName(i).compare(s, Qt::CaseInsensitive) == 0) index = i;
+        }
+        if (index < 0) {
+            QStringList all;
+            for (int i = 0; i < count; ++i) all << QString("%1 = %2").arg(i).arg(info.audioStreamName(i));
+            fail("BAD_ARGUMENT", QString("no audio stream '%1' in %2 (streams: %3)").arg(s, info.path, all.join(", ")));
+        }
+        if (!out.contains(index)) out << index;
+    }
+    if (out.isEmpty()) fail("BAD_ARGUMENT", "audio_stream is empty");
+    return out;
+}
+
 // "x,y,w,h" in pixels of the full picture, or fractions of it when all four are <= 1 ("0.75,0,0.25,0.3")
 QRect cropRect(const QString& spec, QSize full)
 {

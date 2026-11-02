@@ -14,7 +14,8 @@ schneidi is a video editor whose every function also works without a window. You
   may carry a prefix such as `mcp__schneidi__`.
 - **`schneidi-cli`** in a terminal when the tools are missing: `schneidi-cli <command> [positional] --param value`.
   Lists and objects are passed as JSON (`--ops '[{"op":"split","at":"4s"}]'`). Progress of long commands goes to
-  **stderr** as lines like `{"progress":42}`; **stdout** carries only the JSON answer, and its **last line** is the
+  **stderr** as lines like `{"progress":42,"stage":"transcribe","eta_s":30}` (step running now, rough seconds left);
+  **stdout** carries only the JSON answer, and its **last line** is the
   result (exit code 0 ok, 1 error with `{"error":…}`, 2 usage error). Read the answer from stdout's last line.
 
 Both take the same parameters. When you are unsure how a command or edit op works, ask schneidi instead of guessing:

@@ -55,6 +55,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         Context sub;
         sub.mcp = ctx.mcp;
         sub.partId = ctx.partId;
+        sub.stage = ctx.stage; // each step names itself (execute)
         if (ctx.progress) sub.progress = [&ctx, from, to](double p) { ctx.progress(from + (to - from) * std::clamp(p, 0.0, 1.0)); };
         return sub;
     };

@@ -1058,19 +1058,25 @@ const QVector<Command>& commands()
                        "Source: a media file or a project (its timeline sound, times in timeline frames).",
          {{"source", T::Path, "media file or project (.schneidi)", true, true},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
-          {"language", T::String, "spoken language: de, en, fr, … (default auto = detect)"},
+          {"language", T::String, "spoken language: de, en, fr, … (default auto = detect; a chosen one is checked "
+                                  "against whisper's detection: detected_language + a note when it hears another)"},
           {"model", T::String, "turbo, small, base, tiny or a model file (default: best installed)"},
           {"words", T::Boolean, "also return every word with its time"},
           {"music", T::Boolean, "sung words and shouts in music (a song, a chant): without voice detection, which "
                                 "hears no speech there; slower, may hear words a bit wrong (\"cracker\" for \"Kraken\")"},
           {"srt", T::Path, "also write the segments as an SRT file"},
           {"max_chars", T::Integer, "longest segment in characters (default 42, one subtitle line)"},
-          {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"},
+          {"audio_stream", T::String, "for a media file: which audio stream(s), by number from 0 or by name as "
+                                      "`probe` lists them (\"Mikrofon\", \"Discord,Mikrofon\" = mixed). Default auto: "
+                                      "the streams named like a microphone/voice (game recordings: no song lyrics "
+                                      "from the music stream), else the first (the mix)"},
           {"from", T::Time, "for a project: start of the range"},
           {"to", T::Time, "for a project: end of the range"},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A3\", \"A2,A3\" or by name \"Discord,Mikrofon\" "
-                                "(track or audio stream name; the voice without music; muted ones too; default: what is audible)"},
+                                "(track or audio stream name; muted ones too). Default: the audible tracks named like "
+                                "a microphone/voice if there are others too (music, game), else all audible; "
+                                "\"all\" = everything audible"},
           {"apply", T::Boolean, "for a project: also put the segments onto the timeline as a new subtitle track "
                                 "(live in the app: one undo step)"},
           {"name", T::String, "apply: name of the new subtitle track"},
@@ -1212,6 +1218,7 @@ QJsonObject execute(const Command& cmd, const QJsonObject& args0, Context& ctx)
             result["live"] = true;
             return result;
         }
+    if (ctx.stage) ctx.stage(cmd.name);
     // Analyses, render … while an AI is connected to the app: the app shows that it works (cli/Live.h)
     Live::Activity activity(cmd.name, args, ctx);
     try {
@@ -1496,7 +1503,9 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
     o["usage"] = "schneidi-cli <command> [positional…] [--param value]; output is JSON on stdout, exit code 0 = ok, 1 = "
                  "error, 2 = usage error. `schneidi-cli mcp` runs an MCP server on stdio, `schneidi-cli serve` one over "
                  "HTTP (see 'servers'); `schneidi-cli setup claude` connects Claude Code and Claude Desktop to it. "
-                 "--verbose: progress notes and engine messages on stderr.";
+                 "Long commands (render, transcribe, highlights, short …) write progress lines on stderr: "
+                 "{\"progress\":45,\"stage\":\"transcribe\",\"eta_s\":30} (percent, the step running now, "
+                 "estimated seconds left). --verbose: also progress notes and engine messages on stderr.";
     o["servers"] = servers;
     return o;
 }

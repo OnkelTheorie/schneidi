@@ -185,11 +185,21 @@ int main(int argc, char** argv)
         TranscribeDialog dlg(tl, ProjectFormat{}, 0, 100, {"A1 mix", "A2 Audio 2 – System", "A3 Audio 3 – Mikrofon"});
         QStringList ticked;
         for (QCheckBox* b : dlg.findChildren<QCheckBox*>()) ticked << QString("%1:%2").arg(b->text()).arg(b->isChecked());
-        CHECK_EQ(ticked.join(' '), QString("A1 mix:0 A2 Audio 2 – System:1 A3 Audio 3 – Mikrofon:1 Eine Untertitelspur pro Tonspur:1"));
+        // The microphone alone when there is more to hear (the game sound would bring its music's lyrics along)
+        CHECK_EQ(ticked.join(' '), QString("A1 mix:0 A2 Audio 2 – System:0 A3 Audio 3 – Mikrofon:1 Eine Untertitelspur pro Tonspur:1"));
+        bool told = false;
+        for (QLabel* l : dlg.findChildren<QLabel*>()) told = told || l->text().startsWith("Nur die Stimme ist angehakt");
+        CHECK(told);
         dlg.show();
         if (const QString dump = qEnvironmentVariable("TRANSCRIBE_DUMP"); !dump.isEmpty()) dlg.grab().save(dump);
         TranscribeDialog one(tl, ProjectFormat{}, 0, 100, {"A1 mix", "", ""});
         CHECK(one.findChildren<QCheckBox*>().isEmpty());
+        // No voice track named: as heard, no hint
+        TranscribeDialog plain(tl, ProjectFormat{}, 0, 100, {"A1 mix", "A2 Audio 2", "A3 Audio 3"});
+        ticked.clear();
+        for (QCheckBox* b : plain.findChildren<QCheckBox*>()) ticked << QString("%1:%2").arg(b->text()).arg(b->isChecked());
+        CHECK_EQ(ticked.join(' '), QString("A1 mix:0 A2 Audio 2:1 A3 Audio 3:1 Eine Untertitelspur pro Tonspur:1"));
+        for (QLabel* l : plain.findChildren<QLabel*>()) CHECK(!l->text().startsWith("Nur die Stimme"));
     }
 
     // Catalog: every download pinned; whisper brings the voice detection, models need the program

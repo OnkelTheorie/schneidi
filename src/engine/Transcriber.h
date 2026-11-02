@@ -19,6 +19,7 @@ struct TranscribeRequest {
     // Source: a media file (audioStream = index of its audio streams) or, if media is empty, the timeline [from, to)
     QString media;
     int audioStream = 0;
+    QVector<int> audioStreams; // several streams of the media file mixed (e.g. two microphones); empty = audioStream
     Timeline timeline;
     ProjectFormat format;
     int from = 0, to = -1; // timeline frames; to < 0 = until the end
@@ -27,6 +28,9 @@ struct TranscribeRequest {
     QString language = "auto";   // "de", "en", … or "auto"
     bool music = false;          // sung words and shouts in a song (no voice detection, see runWhisper)
     int threads = 0;             // 0 = Background::threads (setting, else half of the logical processors)
+    // With a chosen language: afterwards let whisper detect the language too (one more short pass over the first
+    // 30 s), so a wrong choice can be told (Transcriber::detectedLanguage)
+    bool checkLanguage = false;
 };
 
 class Transcriber : public QObject {
@@ -38,6 +42,9 @@ public:
     void cancel();
     bool isRunning() const { return m_running; }
     const Transcript::Result& result() const { return m_result; }
+    // checkLanguage: what whisper detects ("en") and how sure it is (0..1); empty = not checked or not readable
+    QString detectedLanguage() const { return m_detected; }
+    double detectedProbability() const { return m_detectedP; }
     static int defaultThreads();
 
 signals:
@@ -46,6 +53,7 @@ signals:
 
 private:
     void runWhisper();
+    void runDetection();
     void done(bool ok, const QString& error);
 
     TranscribeRequest m_request;
@@ -55,6 +63,8 @@ private:
     QByteArray m_log;
     bool m_running = false;
     bool m_cancelled = false;
-    int m_stage = 0; // 0 = audio, 1 = whisper
+    int m_stage = 0; // 0 = audio, 1 = whisper, 2 = language detection
     Transcript::Result m_result;
+    QString m_detected;
+    double m_detectedP = 0;
 };
