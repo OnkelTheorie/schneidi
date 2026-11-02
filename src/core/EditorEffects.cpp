@@ -369,6 +369,44 @@ void Editor::setGradeWindowPath(int clipId, int n, int from, const QVector<Grade
     });
 }
 
+QHash<int, QVector<int>> Editor::blurNames(const QHash<int, QVector<NameBlur::Mask>>& masks, const QString& fill,
+                                          double amount)
+{
+    QHash<int, QVector<int>> added;
+    GradeWindows::Fill f = GradeWindows::Fill::Blur;
+    if (!GradeWindows::fillFromId(fill, &f) || (f != GradeWindows::Fill::Blur && f != GradeWindows::Fill::Pixelate))
+        return added;
+    QVector<int> targets;
+    for (int id : videoOnly(m_project->timeline(), masks.keys().toVector()))
+        if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id);
+            c && !masks.value(id).isEmpty() && GradeWindows::freeNumber(*c))
+            targets << id;
+    std::sort(targets.begin(), targets.end());
+    modifyClips(targets, T("Namen verwischen"), [&](Clip& c) {
+        EffectRegistry::add(c, kGrade);
+        for (const NameBlur::Mask& m : masks.value(c.id)) {
+            const int n = GradeWindows::freeNumber(c);
+            if (!n || m.keys.isEmpty()) break;
+            GradeWindows::add(c, n, GradeWindows::Shape::Rectangle);
+            EffectInstance* e = EffectRegistry::instance(c, kGrade);
+            e->params[GradeWindows::key(n, "fill")] = QString(GradeWindows::fillId(f));
+            e->params[GradeWindows::key(n, "softness")] = 0.5; // the padding covers the text, a short soft edge
+            const AnimParam px = GradeWindows::param(n, "x"), py = GradeWindows::param(n, "y");
+            const AnimParam pw = GradeWindows::param(n, "width"), ph = GradeWindows::param(n, "height");
+            const AnimParam pa = GradeWindows::param(n, "amount");
+            for (const NameBlur::Key& k : m.keys) {
+                Keys::setKey(c, px, k.frame, k.rect.center().x() * 100);
+                Keys::setKey(c, py, k.frame, k.rect.center().y() * 100);
+                Keys::setKey(c, pw, k.frame, k.on ? k.rect.width() * 100 : 0);
+                Keys::setKey(c, ph, k.frame, k.on ? k.rect.height() * 100 : 0);
+                Keys::setKey(c, pa, k.frame, k.on ? amount : 0);
+            }
+            added[c.id] << n;
+        }
+    });
+    return added;
+}
+
 void Editor::setGradeWindowOption(const QVector<int>& ids, int n, const QString& key, const QVariant& value)
 {
     QVector<int> targets;

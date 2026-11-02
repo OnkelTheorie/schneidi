@@ -199,6 +199,8 @@ schneidi_test(test_reframe) # Auto-Reframe: camera path, fill geometry, Editor o
 schneidi_test(test_game43) # 4:3 game footage: black bar detection, reframe inside the content, crop_bars, stretched 4:3 (picture aspect), CLI ops
 target_link_libraries(test_game43 PRIVATE schneidi_cli_lib)
 target_link_libraries(test_reframe PRIVATE schneidi_cli_lib)
+schneidi_test(test_name_blur) # hide player names: text regions, templates, masks over time, Editor op, CLI op blur_names
+target_link_libraries(test_name_blur PRIVATE schneidi_cli_lib)
 schneidi_test(test_accents) # zoom punch / flash / shake as keyframes (op 'accent', clip menu), param zoom
 target_link_libraries(test_accents PRIVATE schneidi_cli_lib)
 # Speed brake: alone (parallel tests would distort the times), baseline per machine in data/speed-baseline.json

@@ -286,7 +286,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
             }));
             k->setChecked(std::any_of(ids.begin(), ids.end(), [tv](int id) { return tv->curveEditorShown(id); }));
         }
-        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "accents", "auto_reframe", "crop_bars", "stretched_43",
+        for (const char* id : {"clip_speed", "retime_controls", "clip_speed_reset", "curve_editor", "accents", "auto_reframe", "crop_bars", "stretched_43", "blur_names",
                                "normalize_audio", "audio_ducking", "stream_presets_learn", "",
                                "toggle_enabled", "link_clips",
                                "render_cache_clip", "save_effect_preset", "", "compound_create", "compound_open", "compound_decompose", "",

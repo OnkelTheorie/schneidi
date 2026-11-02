@@ -2,6 +2,7 @@
 #pragma once
 #include "core/Ducking.h"
 #include "core/GradeWindows.h"
+#include "core/NameBlur.h"
 #include "core/Multicam.h"
 #include "core/ProjectFormat.h"
 #include "core/Reframe.h"
@@ -334,7 +335,7 @@ public:
     void setGradeLut(const QVector<int>& ids, const QString& path); // empty = remove LUT
     void setGradeEnabled(const QVector<int>& ids, bool on);
     // Keyframe for the whole correction (like a DaVinci node): set or remove all values at the frame.
-    // window = 0: the grade's own values, 1..4: that window's correction, shape and fill amount
+    // window = 0: the grade's own values, 1..GradeWindows::kMax: that window's correction, shape and fill amount
     void setGradeKeyframe(const QVector<int>& ids, int frame, bool on, int window = 0);
     // Windows of the grade (shape masks, core/GradeWindows): add window n (shape "rectangle"/"ellipse", creates the
     // grade if needed; clips that already have window n keep it), remove it, set a fixed property
@@ -345,6 +346,11 @@ public:
     // Tracking result: window n of the clip follows the points (keyframes for x/y on every point; keyframes there and
     // between `from` and the last point are replaced, `from` keeps its position as a keyframe). One undo step.
     void setGradeWindowPath(int clipId, int n, int from, const QVector<GradeWindows::PathPoint>& points);
+    // Hide names (core/NameBlur): every clip's masks become new rectangle windows with fill "blur" or "pixelate" of
+    // strength `amount`, their place and size keyed along the mask (off = size 0 and amount 0). Free window numbers
+    // only; masks beyond them are left out. One undo step. Returns the new window numbers per clip.
+    QHash<int, QVector<int>> blurNames(const QHash<int, QVector<NameBlur::Mask>>& masks, const QString& fill,
+                                       double amount);
 
     // Clipboard (Ctrl+C/X/V): paste at the playhead on the same tracks, overwrites
     void copySelection();

@@ -6,12 +6,14 @@
 #include "core/Accents.h"
 #include "core/EffectRegistry.h"
 #include "core/GradeWindows.h"
+#include "core/NameBlur.h"
 #include "core/Keyframes.h"
 #include "core/Reframe.h"
 #include "core/TimelineOps.h"
 #include "engine/BarDetect.h"
 #include "engine/ColorGrade.h"
 #include "engine/ReframeAnalysis.h"
+#include "engine/TextRegions.h"
 #include "engine/Tracker.h"
 
 #include <QFileInfo>
@@ -184,7 +186,7 @@ void opWindow(Session& s, const QJsonObject& op)
     int n = 0;
     if (op.contains("window")) {
         n = op.value("window").toInt();
-        if (n < 1 || n > GradeWindows::kMax) fail("BAD_ARGUMENT", "window is a number 1..4");
+        if (n < 1 || n > GradeWindows::kMax) fail("BAD_ARGUMENT", QString("window is a number 1..%1").arg(GradeWindows::kMax));
     }
     if (op.contains("add")) {
         const QString shape = op.value("add").toString();
@@ -192,11 +194,11 @@ void opWindow(Session& s, const QJsonObject& op)
         if (!GradeWindows::shapeFromId(shape, &sh)) fail("BAD_ARGUMENT", "add is \"rectangle\" or \"ellipse\"");
         for (int k = 1; k <= GradeWindows::kMax && !n; ++k) // first number free on all clips
             if (std::none_of(ids.begin(), ids.end(), [&](int id) { return GradeWindows::exists(*clip(id), k); })) n = k;
-        if (!n) fail("BAD_ARGUMENT", "no free window on these clips (at most 4 per clip)");
+        if (!n) fail("BAD_ARGUMENT", QString("no free window on these clips (at most %1 per clip)").arg(GradeWindows::kMax));
         ed.addGradeWindow(ids, n, shape);
         s.notes << QString("window %1 added").arg(n);
     }
-    if (!n) fail("BAD_ARGUMENT", "window (1..4) is missing; add a new one with add:'ellipse' or add:'rectangle'");
+    if (!n) fail("BAD_ARGUMENT", QString("window (1..%1) is missing; add").arg(GradeWindows::kMax) + " a new one with add:'ellipse' or add:'rectangle'");
     QVector<int> with;
     for (int id : ids)
         if (GradeWindows::exists(*clip(id), n)) with << id;
@@ -237,7 +239,7 @@ void opTrack(Session& s, const QJsonObject& op)
 {
     const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "tracking");
     const int n = op.value("window").toInt();
-    if (n < 1 || n > GradeWindows::kMax) fail("BAD_ARGUMENT", "window is a number 1..4");
+    if (n < 1 || n > GradeWindows::kMax) fail("BAD_ARGUMENT", QString("window is a number 1..%1").arg(GradeWindows::kMax));
     for (int id : ids) {
         const Clip c = *TimelineOps::findClip(s.project.timeline(), id);
         if (!GradeWindows::exists(c, n)) fail("NOT_FOUND", QString("clip %1 has no window %2").arg(id).arg(n));
@@ -254,6 +256,70 @@ void opTrack(Session& s, const QJsonObject& op)
                             "there)").arg(tc(c.start + r.lostAt, s.format()));
         s.notes << note;
     }
+}
+
+// ---------- hide names ----------
+
+void opBlurNames(Session& s, const QJsonObject& op)
+{
+    QVector<int> ids;
+    const Timeline& tl = s.project.timeline();
+    if (op.contains("clips") || op.contains("clip")) {
+        ids = clipsOn(s, op, TrackKind::Video, "hiding names");
+    } else {
+        int only = -1;
+        if (op.contains("track")) {
+            TrackKind kind = TrackKind::Video;
+            only = parseTrack(op.value("track"), &kind);
+            if (kind != TrackKind::Video || only >= tl.video.size()) fail("BAD_ARGUMENT", "track must be a video track (V1, V2 …)");
+        }
+        for (int t = 0; t < tl.video.size(); ++t)
+            if (only < 0 || t == only)
+                for (const Clip& c : tl.video[t].clips)
+                    if (!c.isTitle() && !c.isNested()) ids << c.id;
+        if (ids.isEmpty()) fail("NOT_FOUND", "no video clips to look at");
+    }
+    NameBlur::Template tpl = NameBlur::Template::All;
+    if (op.contains("template") && !NameBlur::templateFromId(op.value("template").toString(), &tpl))
+        fail("BAD_ARGUMENT", "template is " + NameBlur::templateIds().join(", "));
+    const QString style = op.value("style").toString("blur");
+    if (style != "blur" && style != "pixelate") fail("BAD_ARGUMENT", "style is \"blur\" or \"pixelate\"");
+    const double strength = op.contains("strength") ? numberOf(op, "strength", 1, 100) : (style == "blur" ? 60 : 100);
+    QHash<int, QVector<NameBlur::Mask>> masks;
+    QStringList notes;
+    for (int id : ids) {
+        const Clip c = *TimelineOps::findClip(tl, id);
+        const TextRegions::Result r = TextRegions::analyze(s.format(), c);
+        if (!r.error.isEmpty()) fail("BAD_ARGUMENT", QString("clip %1: %2").arg(id).arg(r.error));
+        NameBlur::Options o;
+        o.maxMasks = GradeWindows::kMax - GradeWindows::list(c).size();
+        o.samplesPerSecond = s.format().rate.fps() / TextRegions::sampleStep(s.format().rate);
+        o.screen = TextRegions::screenOf(s.format(), c);
+        int dropped = 0;
+        const QVector<NameBlur::Mask> m = NameBlur::plan(r.samples, tpl, c.length(), o, &dropped);
+        masks[id] = m;
+        QStringList zones;
+        for (const NameBlur::Mask& x : m) zones << x.zone;
+        QString note = QString("clip %1: %2 mask(s)").arg(id).arg(m.size());
+        if (!m.isEmpty()) note += " (" + zones.join(", ") + ")";
+        if (dropped) note += QString(", %1 moving text(s) left out: no free window").arg(dropped);
+        if (!o.screen.isDefault())
+            note += QString(", HUD of a %1:1 game screen at x %2-%3 %, y %4-%5 % of the frame")
+                        .arg(o.screen.aspect, 0, 'f', 2)
+                        .arg(o.screen.content.left() * 100, 0, 'f', 1)
+                        .arg(o.screen.content.right() * 100, 0, 'f', 1)
+                        .arg(o.screen.content.top() * 100, 0, 'f', 1)
+                        .arg(o.screen.content.bottom() * 100, 0, 'f', 1);
+        notes << note;
+    }
+    const QHash<int, QVector<int>> added = s.editor.blurNames(masks, style, strength);
+    for (QString& n : notes) {
+        const int id = n.section(' ', 1, 1).chopped(1).toInt();
+        QStringList numbers;
+        for (int w : added.value(id)) numbers << QString::number(w);
+        if (!numbers.isEmpty()) n += ", windows " + numbers.join(", ");
+    }
+    for (const QString& n : notes) s.notes << n;
 }
 
 // ---------- reframe ----------
@@ -786,7 +852,7 @@ void addLookOps(QVector<OpDef>& ops)
                            "softness?, invert?, fill?, amount?, color?, lift?, gamma?, gain?, offset?, contrast?, pivot?, "
                            "saturation?, temperature?, tint?, exposure?, at?, keyframe?}",
                  "Color page window (shape mask like DaVinci): grade or hide part of the picture",
-                 "Up to 4 windows per clip, part of its grade (copied, reset and switched off with it). add:'ellipse' "
+                 "Up to 8 windows per clip, part of its grade (copied, reset and switched off with it). add:'ellipse' "
                  "or 'rectangle' makes a new one (number = first free one, see notes; default centered, 40 x 40 %). "
                  "x/y = center in % of the picture width/height from the top left (50/50 = middle), width/height in % "
                  "of the picture width/height, rotation in degrees (counterclockwise), softness = soft edge outside the "
@@ -808,6 +874,23 @@ void addLookOps(QVector<OpDef>& ops)
                  "Stops where the picture no longer matches (see notes); move the window there and track again. Works "
                  "on the clip's picture before transform, speed changes included. Slow: ~10–40 frames per second.",
                  opTrack, kClipKeys}
+        << OpDef{"blur_names", "{op:'blur_names', clips?, track?, template?:'all', style?:'blur', strength?}",
+                 "hide player names: finds text in the picture and blurs/pixelates it over time (kill feed, chat, name tags)",
+                 "Without clips/track: every video clip of the timeline. Finds text-like regions a few dozen times a second "
+                 "(no OCR: what the text says is unknown) and makes rectangle windows (op 'window', fill blur or "
+                 "pixelate) that grow, shrink and move with it; text that moves (name tags above heads) is followed. "
+                 "template decides which text counts: cs2 (default CS2 HUD: names above the team avatars, kill feed, "
+                 "chat, spectated player, weapons dropped by others, name tags in the view; not radar, money, health, ammo, "
+                 "timer, round messages, crosshair, weapon list), valorant (kill feed, chat, name tags; not minimap, score "
+                 "bar, abilities, ammo) or all (any text, default; also ammo and timers). The templates follow the game's "
+                 "screen: black bars in the file (4:3 between bars) and a stretched 4:3 clip (picture_aspect) move the "
+                 "HUD zones with it (notes say so). "
+                 "style blur (default) or pixelate, strength 1..100 (blur default 60, pixelate 100 = 1/50 of the "
+                 "picture height per block). Uses free windows of the clip (8 per clip; the notes say which); text that "
+                 "found no free window is left out (see notes). Look with `frames` and remove false ones with "
+                 "{op:'window', clips, window, remove:true}. Measuring takes about as long as playing the clip "
+                 "(cached per file).",
+                 opBlurNames, kClipKeys}
         << OpDef{"transform", "{op:'transform', clips, zoom?, zoom_x?, zoom_y?, x?, y?, rotation?, crop_left?, "
                               "crop_right?, crop_top?, crop_bottom?, opacity?, fit?, fit_blur?, fit_dim?, transform_on?, "
                               "crop_on?, opacity_on?, reset?, at?}",

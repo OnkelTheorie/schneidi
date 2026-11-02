@@ -364,6 +364,7 @@ void MainWindow::buildActions()
         cacheClip->setChecked(state == 1);
     });
     makeAction(clipMenu, "auto_reframe", T("Auto-Reframe"), QKeySequence(), [this] { autoReframe(); });
+    makeAction(clipMenu, "blur_names", T("Namen verwischen…"), QKeySequence(), [this] { blurNames(); });
     makeAction(clipMenu, "crop_bars", T("Schwarze Balken wegschneiden"), QKeySequence(), [this] { cropBlackBars(); });
     QAction* stretched = makeAction(clipMenu, "stretched_43", T("Gestrecktes 4:3 entzerren"), QKeySequence(), [] {});
     stretched->setCheckable(true);

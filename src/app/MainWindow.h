@@ -264,6 +264,9 @@ private:
     // Clip menu: crop the black bars baked into the selected clips (engine/BarDetect), show them as stretched 4:3
     void cropBlackBars();
     void setStretched43(bool on);
+    // Hide player names (MainWindowNameBlur.cpp): the selected video clips (none = the whole timeline) get windows
+    // that blur or pixelate the text found in them
+    void blurNames();
 
     Engine* m_engine;
     Project* m_project;
