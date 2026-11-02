@@ -991,6 +991,16 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         run("edit", {{"project", shorts}, {"ops", R"([{"op":"format","width":1280,"height":720}])"}});
         CHECK_EQ(run("info", {{"project", shorts}})["format"]["width"].toInt(), 1280);
         CHECK_EQ(listed("Short")["width"].toInt(), 1080);
+        // Only one side (as `format` always took it): the other stays
+        run("edit", {{"project", shorts}, {"ops", R"([{"op":"format","height":800}])"}});
+        const QJsonObject only = run("info", {{"project", shorts}})["format"].toObject();
+        CHECK_EQ(only["width"].toInt(), 1280);
+        CHECK_EQ(only["height"].toInt(), 800);
+        run("edit", {{"project", shorts}, {"ops", R"([{"op":"format","timeline":"Short","width":1200}])"}});
+        CHECK_EQ(listed("Short")["width"].toInt(), 1200);
+        CHECK_EQ(listed("Short")["height"].toInt(), 1920);
+        CHECK_EQ(errorOf("edit", {{"project", shorts}, {"ops", R"([{"op":"new_timeline","name":"Half","width":1200}])"}}),
+                 QString("BAD_ARGUMENT"));
         CHECK_EQ(errorOf("edit", {{"project", shorts}, {"ops", R"([{"op":"format","timeline":"Short","fps":30}])"}}),
                  QString("BAD_ARGUMENT"));
         CHECK_EQ(errorOf("edit", {{"project", shorts}, {"ops", R"([{"op":"format","timeline":"Short","aspect":"3:1"}])"}}),

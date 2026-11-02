@@ -20,8 +20,9 @@ int targetSequence(Session& s, const QJsonObject& op)
 }
 
 // Resolution of a timeline: {w, h} from width/height or an aspect preset ("9:16" = 1080 x 1920 ...); empty = none given.
-// "project" = back to the project's resolution (returns {0, 0} and sets *useProject).
-QSize sizeOf(const QJsonObject& op, bool* useProject = nullptr)
+// "project" = back to the project's resolution (returns {0, 0} and sets *useProject). Only width or only height:
+// the other one from `base` (as `format` always took it).
+QSize sizeOf(const QJsonObject& op, bool* useProject = nullptr, QSize base = {})
 {
     if (op.contains("aspect")) {
         const QString a = op.value("aspect").toString().trimmed().toLower();
@@ -37,8 +38,10 @@ QSize sizeOf(const QJsonObject& op, bool* useProject = nullptr)
         fail("BAD_ARGUMENT", "aspect must be 16:9, 9:16, 1:1, 4:5, 4:3 or project (= the project's resolution)");
     }
     if (!op.contains("width") && !op.contains("height")) return {};
-    if (!op.contains("width") || !op.contains("height")) fail("BAD_ARGUMENT", "give width and height together");
-    const QSize size(int(numberOf(op, "width", 16, 8192)), int(numberOf(op, "height", 16, 8192)));
+    if ((!op.contains("width") || !op.contains("height")) && base.isEmpty())
+        fail("BAD_ARGUMENT", "give width and height together");
+    const QSize size(op.contains("width") ? int(numberOf(op, "width", 16, 8192)) : base.width(),
+                     op.contains("height") ? int(numberOf(op, "height", 16, 8192)) : base.height());
     if (size.width() % 2 || size.height() % 2) fail("BAD_ARGUMENT", "width and height must be even");
     return size;
 }
@@ -120,7 +123,7 @@ void opFormat(Session& s, const QJsonObject& op)
         if (op.contains("fps")) fail("BAD_ARGUMENT", "the frame rate belongs to the project: leave out 'timeline' for fps");
         const int id = s.sequenceOf(op.value("timeline"));
         bool useProject = false;
-        const QSize size = sizeOf(op, &useProject);
+        const QSize size = sizeOf(op, &useProject, s.project.sequenceFormat(id).size());
         if (size.isEmpty() && !useProject) fail("BAD_ARGUMENT", "give width and height, or aspect");
         s.project.setSequenceSize(id, size == s.project.format().size() ? QSize() : size);
         return;
@@ -128,7 +131,7 @@ void opFormat(Session& s, const QJsonObject& op)
     ProjectFormat f = s.project.format();
     if (op.value("aspect").toString().trimmed().toLower() == "project")
         fail("BAD_ARGUMENT", "aspect:'project' needs 'timeline' (which timeline goes back to the project's resolution)");
-    if (const QSize size = sizeOf(op); !size.isEmpty()) f.width = size.width(), f.height = size.height();
+    if (const QSize size = sizeOf(op, nullptr, f.size()); !size.isEmpty()) f.width = size.width(), f.height = size.height();
     if (op.contains("fps")) {
         const FrameRate rate = nearestFrameRate(numberOf(op, "fps", 1, 120));
         if (rate != f.rate && s.project.frameRateLocked())
