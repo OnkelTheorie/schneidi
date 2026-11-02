@@ -2,6 +2,7 @@
 // EDL (CMX3600): one video track and audio channels, cuts and dissolves. Source timecodes are the file's own
 // (Item::mediaStart, 00:00:00:00 without one), the timeline starts at 01:00:00:00 (like DaVinci). Comment lines carry the clip name and the file
 // ("* FROM CLIP NAME:", "* SOURCE FILE:"), which Premiere and DaVinci read when conforming.
+#include "core/Retime.h"
 #include "core/Interchange.h"
 
 #include "core/I18n.h"
@@ -72,7 +73,7 @@ QByteArray writeEdl(Sequence& seq)
             else if (tr.left >= 0) outOf.insert(tr.left, &tr);
         }
         const auto src = [](const Item& it, int recFrame) { // source timecode at a timeline frame
-            return it.mediaStart + int(std::lround((it.in + (recFrame - it.start)) * it.speed));
+            return it.mediaStart + int(std::floor((it.in + (recFrame - it.start)) * it.speed + 1e-6)); // its picture
         };
         for (int i = 0; i < td->items.size(); ++i) {
             const Item& it = td->items[i];
@@ -245,7 +246,7 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
             it.length = recOut - recIn;
             it.speed = e.speed;
             it.reverse = e.reverse;
-            it.in = int(std::lround(e.srcIn / e.speed));
+            it.in = RetimeMap::materialForPicture(e.srcIn, e.speed); // the first frame showing srcIn
             it.link = targets.size() > 1 ? link : 0;
             const int added = int(td.items.size());
             td.items << it;

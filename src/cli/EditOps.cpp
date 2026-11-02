@@ -74,7 +74,7 @@ int timelineAtSource(const Session& s, const Clip& c, int source)
 {
     const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
     const RetimeMap map(c, m ? m->length : 0);
-    const int t = c.start + int(std::lround(map.materialAtFile(source))) - c.in; // first frame showing it
+    const int t = c.start + map.materialForPicture(source) - c.in; // first frame showing it
     return t >= c.start && t < c.end() ? t : -1;
 }
 
@@ -82,8 +82,8 @@ QString sourceSpan(const Session& s, const Clip& c)
 {
     const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
     const RetimeMap map(c, m ? m->length : 0);
-    const double a = map.fileFrameAt(c.in), b = map.fileFrameAt(c.out);
-    return QString("clip %1 plays source %2..%3").arg(c.id).arg(tc(int(std::min(a, b)), s.format()), tc(int(std::max(a, b)) + 1, s.format()));
+    const int a = map.pictureFrame(c.in), b = map.pictureFrame(c.out);
+    return QString("clip %1 plays source %2..%3").arg(c.id).arg(tc(std::min(a, b), s.format()), tc(std::max(a, b) + 1, s.format()));
 }
 
 // A time given relative to a clip or to the source material instead of the timeline:

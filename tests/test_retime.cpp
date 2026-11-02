@@ -434,6 +434,75 @@ int testRender(const QString& dir)
     return 0;
 }
 
+// The one picture mapping (RetimeMap::pictureFrame) and its inverse: by the sound's time, no frame before the cut
+void testPictureFrame()
+{
+    Clip c;
+    c.speed = 0.5;
+    {
+        const RetimeMap m(c, 50);
+        // material frame m starts at file time m / 2: frames 6 and 7 both show file frame 3
+        CHECK_EQ(m.pictureFrame(6), 3);
+        CHECK_EQ(m.pictureFrame(7), 3);
+        CHECK_EQ(m.pictureFrame(8), 4);
+        CHECK_EQ(m.pictureFrame(500), 49); // clamped to the file
+        // first material frame showing file frame 3, and it really shows 3 (rounding gave 2 at times: a flash)
+        CHECK_EQ(m.materialForPicture(3), 6);
+        for (int f = 0; f < 50; ++f) CHECK_EQ(m.pictureFrame(m.materialForPicture(f)), f);
+    }
+    c.reverse = true;
+    {
+        const RetimeMap m(c, 50);
+        CHECK_EQ(m.pictureFrame(0), 49);
+        CHECK_EQ(m.pictureFrame(7), 46); // file time 50 - 3.5 = 46.5
+        for (int f = 0; f < 50; ++f) CHECK_EQ(m.pictureFrame(m.materialForPicture(f)), f);
+    }
+    c.reverse = false;
+    c.speed = 2.0;
+    {
+        const RetimeMap m(c, 50);
+        CHECK_EQ(m.pictureFrame(7), 14);
+        CHECK_EQ(m.materialForPicture(15), 8); // skipped: the next frame shows 16
+    }
+    // speeds that are not exact in binary: still no frame before
+    for (double speed : {0.3, 0.7, 1.0 / 3, 0.9}) {
+        c.speed = speed;
+        const RetimeMap m(c, 300);
+        for (int f = 0; f < 300; ++f) CHECK_EQ(m.pictureFrame(m.materialForPicture(f)), f);
+        CHECK_EQ(RetimeMap::materialForPicture(120, speed), m.materialForPicture(120));
+    }
+    // freeze frame: the still frame through the same mapping
+    c.speed = 0.5;
+    c.freeze = true;
+    c.freezeFrame = 7;
+    CHECK_EQ(RetimeMap(c, 50).pictureFrame(c.stillFrame()), 3);
+}
+
+// Changing a clip's speed keeps the picture at its start (it could show the frame before: a flash at the cut)
+void testSpeedChangeKeepsFirstPicture()
+{
+    for (double speed : {0.5, 0.3, 0.7, 0.25, 2.0}) {
+        Project p;
+        Selection sel;
+        Editor ed(&p, &sel);
+        p.addMedia(media("/x/a.mp4", 300));
+        ed.addMediaAt({"/x/a.mp4"}, 0);
+        const int v = clipOn(p.timeline(), TrackKind::Video, 0, 0)->id;
+        ed.trimClip(v, TimelineOps::Edge::Start, 37); // starts at file frame 37
+        const Clip* before = clipOn(p.timeline(), TrackKind::Video, 0, 0);
+        CHECK_EQ(before->in, 37);
+        Editor::Retime r;
+        r.speed = speed;
+        ed.setClipSpeed({v}, r, true);
+        const Clip* c = TimelineOps::findClip(p.timeline(), v);
+        if (!CHECK(c)) continue;
+        // faster than 1: frame 37 may be skipped, then the next shown one (never the one before)
+        const int first = RetimeMap(*c, 300).pictureFrame(c->in);
+        if (speed <= 1) CHECK_EQ(first, 37);
+        else CHECK(first >= 37 && first < 37 + speed);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -442,6 +511,8 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     Check::initApp("retime");
     testMap();
+    testPictureFrame();
+    testSpeedChangeKeepsFirstPicture();
     testEditor();
     testProjectFile();
     if (!Check::haveFfmpeg()) {

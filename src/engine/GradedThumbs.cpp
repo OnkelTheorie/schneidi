@@ -311,8 +311,7 @@ TimelinePosters::Source TimelinePosters::sourceOf(const Project& project, const 
     s.path = best->mediaPath;
     if (m->isImage) s.frame = 0;
     else if (best->isRetimed() && m->length > 0)
-        s.frame = std::clamp(int(RetimeMap(*best, m->length).fileFrameAt(best->freeze ? best->stillFrame() : best->in)), 0,
-                             m->length - 1);
+        s.frame = RetimeMap(*best, m->length).pictureFrame(best->freeze ? best->stillFrame() : best->in);
     else s.frame = best->in;
     s.grade = GradedThumbs::specAt(*best, 0);
     return s;

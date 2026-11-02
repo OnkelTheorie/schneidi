@@ -110,6 +110,19 @@ double RetimeMap::materialAtFile(double f) const
     return materialAt(m_reverse ? m_fileLength - 1 - f : f);
 }
 
+int RetimeMap::pictureFrame(double m) const
+{
+    const double s = sourceAt(m);
+    int f = m_reverse ? int(std::ceil(m_fileLength - s - 1e-6)) - 1 : int(std::floor(s + 1e-6));
+    if (m_fileLength > 0) f = std::clamp(f, 0, m_fileLength - 1);
+    return std::max(0, f);
+}
+
+int RetimeMap::materialForPicture(double f) const
+{
+    return std::max(0, int(std::ceil(materialAtFile(f) - 1e-6)));
+}
+
 int RetimeMap::length() const
 {
     if (m_fileLength <= 0) return 0;

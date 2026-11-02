@@ -3,6 +3,9 @@
 
 #include "core/Types.h"
 
+#include <algorithm>
+#include <cmath>
+
 // Time course of a clip (speed, reverse, speed ramp): material frame m (clip in/out and
 // the keyframes count in it) <-> source position s in file frames, counted in playback direction (reversed: s = 0 at the file end).
 // Hard speed points: s(m) piecewise linear. Soft transition: the speed runs linearly over `smooth` frames from the old
@@ -26,6 +29,15 @@ public:
     // File frame (with direction) <-> material
     double fileFrameAt(double m) const;
     double materialAtFile(double f) const;
+    // The one frame mapping of the picture (renderer, stills, thumbnails, stabilizer, trim, edits): material frame m
+    // shows the file frame its playback time starts in (by the sound's time); reversed the frame just below that
+    // time. Clamped to the file when its length is known.
+    int pictureFrame(double m) const;
+    // First material frame showing file frame f (the inverse of pictureFrame; at speed <= 1 exact, faster speeds may
+    // skip f and show the next one)
+    int materialForPicture(double f) const;
+    // The same for a constant forward speed (no file length needed)
+    static int materialForPicture(double f, double speed) { return std::max(0, int(std::ceil(f / speed - 1e-6))); }
     // Material length up to the end of the file (0 = unlimited/unknown)
     int length() const;
     // Hard change points of the speed points in material frames (index like Clip::ramp)

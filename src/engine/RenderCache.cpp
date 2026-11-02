@@ -42,6 +42,9 @@ constexpr const char* kCropVersion = "crop2";
 constexpr const char* kKeyVersion = "key2";
 // Since 0.14 stabilization is schneidi's own (before: vid.stab): only cache files of stabilized clips are stale
 constexpr const char* kStabilizeVersion = "stab2";
+// Since 0.15.1 retimed clips show their frames by the sound's time (RetimeMap::pictureFrame; before rounded like MLT):
+// only cache files of retimed clips are stale
+constexpr const char* kRetimeVersion = "time2";
 
 QString modeId(RenderCache::Mode m)
 {
@@ -171,6 +174,7 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
     const QByteArray crop = Keys::hasCrop(c) ? QByteArray(kCropVersion) : QByteArray();
     const QByteArray key = EffectRegistry::has(c, "chromakey") ? QByteArray(kKeyVersion) : QByteArray();
     const QByteArray stab = EffectRegistry::has(c, Stabilizer::EffectId) ? QByteArray(kStabilizeVersion) : QByteArray();
+    const QByteArray retime = c.isRetimed() ? QByteArray(kRetimeVersion) : QByteArray();
     // Files the effects read (a LUT): edited or replaced under the same name, the cached render is stale. The clip
     // JSON has only their paths. Nothing added without such files: other keys stay as they were
     QString files;
@@ -182,7 +186,7 @@ QString RenderCache::key(const Clip& c, const ProjectFormat& f)
                 const QFileInfo f(path);
                 files += QString("%1|%2|").arg(f.size()).arg(f.lastModified().toMSecsSinceEpoch());
             }
-    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + files.toUtf8() + clip, QCryptographicHash::Sha1)
+    return QCryptographicHash::hash(id.toUtf8() + crop + key + stab + retime + files.toUtf8() + clip, QCryptographicHash::Sha1)
         .toHex();
 }
 

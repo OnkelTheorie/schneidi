@@ -608,24 +608,11 @@ struct Renderer::Impl {
     // Frame of the file (project rate) a video clip shows at clip frame t; < 0 = none
     static double fileFrame(const Clip& c, int t, const VideoSource& v)
     {
-        // Material frame -> file frame (project rate) -> stream position (as the MLT producer)
+        // Material frame -> file frame (project rate) -> stream position
         const double m = c.freeze ? c.stillFrame() : c.in + t;
         double file = m;
-        if (c.isRetimed()) {
-            if (c.freeze) {
-                const double at = c.stillFrame() * c.speed;
-                file = std::floor(c.reverse ? v.length - 1 - at + 1e-6 : at + 1e-6);
-            } else if (c.hasRamp()) {
-                file = std::floor(RetimeMap(c, v.length).fileFrameAt(m) + 1e-6);
-            } else {
-                // MLT's timewarp: the converted material is int(length / speed) frames long, frame p shows
-                // p * speed, reversed (length' - 1 - p) * speed; a position between two frames rounds to the
-                // nearest (slow motion: every other frame)
-                const int warped = std::max(1, int(v.length / c.speed));
-                file = std::floor((c.reverse ? warped - 1 - m : m) * c.speed + 0.5);
-            }
-            file = std::clamp(file, 0.0, double(std::max(0, v.length - 1)));
-        }
+        // Speed, reverse, ramp and freeze frame: the one mapping of RetimeMap (by the sound's time)
+        if (c.isRetimed()) file = RetimeMap(c, v.length).pictureFrame(m);
         return file;
     }
 

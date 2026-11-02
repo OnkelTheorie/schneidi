@@ -3,6 +3,7 @@
 // Tracks hold clips and gaps back to back; a transition sits between two of them and overlaps both (in_offset
 // before the cut, out_offset after it). Volume, opacity, the audio stream and links have no standard field: they go
 // into the clip's metadata under "schneidi" (other programs ignore them).
+#include "core/Retime.h"
 #include "core/Interchange.h"
 
 #include "core/I18n.h"
@@ -266,7 +267,7 @@ Sequence readOtio(const QByteArray& data)
                 }
             }
             const int fileStart = std::max(0, frames(range["start_time"], rate) - it.mediaStart);
-            it.in = int(std::lround(fileStart / it.speed));
+            it.in = RetimeMap::materialForPicture(fileStart, it.speed);
             const QJsonObject meta = cv["metadata"]["schneidi"].toObject();
             it.volumeDb = meta["volume_db"].toDouble(0);
             it.opacity = meta["opacity"].toDouble(100);

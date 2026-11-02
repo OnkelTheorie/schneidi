@@ -128,15 +128,21 @@ void testPlainAndTime()
     s.speed = 2.0;
     expect("speed 2: frame 7 = source 14", compare(render(oneTrack({s}), 7), source(g_pattern, 14)), 0.0, 0);
     s.reverse = true;
-    // reversed: source positions count from the file end (50 frames: in 0 = file frame 49); at speed 2 frame f covers
-    // the file frames [48 - 2f, 50 - 2f) and shows the first of them, as forward
-    expect("speed 2 reversed: frame 0 = file 48", compare(render(oneTrack({s}), 0), source(g_pattern, 48)), 0.0, 0);
-    expect("speed 2 reversed: frame 5 = file 38", compare(render(oneTrack({s}), 5), source(g_pattern, 38)), 0.0, 0);
+    // reversed: source positions count from the file end (50 frames: in 0 = file frame 49); at speed 2 frame f plays
+    // the file time from 50 - 2f down to 48 - 2f (as the sound does) and shows the frame where it starts, 49 - 2f
+    expect("speed 2 reversed: frame 0 = file 49", compare(render(oneTrack({s}), 0), source(g_pattern, 49)), 0.0, 0);
+    expect("speed 2 reversed: frame 5 = file 39", compare(render(oneTrack({s}), 5), source(g_pattern, 39)), 0.0, 0);
     s.speed = 1.0;
     expect("reversed: frame 3 = file 46", compare(render(oneTrack({s}), 3), source(g_pattern, 46)), 0.0, 0);
     s.reverse = false;
     s.speed = 0.5;
+    // slow motion by the sound's time: frame f starts at file time f / 2 - frame 7 still shows file frame 3 (it
+    // showed 4, half a file frame ahead of the sound)
     expect("speed 0.5: frame 6 = source 3", compare(render(oneTrack({s}), 6), source(g_pattern, 3)), 0.0, 0);
+    expect("speed 0.5: frame 7 = source 3", compare(render(oneTrack({s}), 7), source(g_pattern, 3)), 0.0, 0);
+    s.reverse = true; // from the end: frame 7 starts at file time 50 - 3.5 = 46.5 -> frame 46
+    expect("speed 0.5 reversed: frame 7 = file 46", compare(render(oneTrack({s}), 7), source(g_pattern, 46)), 0.0, 0);
+    s.reverse = false;
     s.speed = 1.0;
     s.freeze = true;
     s.freezeFrame = 12;

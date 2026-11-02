@@ -49,13 +49,15 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                     n.ramp.clear();
                     const RetimeMap oldMap(c, L), newMap(n, L);
                     // Section in file frames (a = start of the clip, b = end, a > b when reversed)
-                    const double a = oldMap.fileFrameAt(c.in);
-                    const double b = oldMap.fileFrameAt(c.out);
+                    const int a = oldMap.pictureFrame(c.in);
+                    const int b = oldMap.pictureFrame(c.out);
                     const bool flip = r.reverse != c.reverse;
                     // New start: same file frame; on direction change the same piece reversed
-                    const double startFile = flip ? b : a;
+                    const int startFile = flip ? b : a;
                     const int avail = std::max(1, int(L / r.speed));
-                    const int newIn = std::clamp(int(std::lround(newMap.materialAtFile(startFile))), 0, avail - 1);
+                    // The first material frame whose picture is that file frame (rounding could land one before it:
+                    // a flash of the previous frame at the cut)
+                    const int newIn = std::clamp(newMap.materialForPicture(startFile), 0, avail - 1);
                     const int oldLen = c.length();
                     int newLen = oldLen;
                     if (ripple && !r.freeze && !c.freeze) {

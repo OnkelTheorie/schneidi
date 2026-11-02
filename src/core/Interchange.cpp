@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "core/Retime.h"
 #include "core/Interchange.h"
 
 #include "core/Keyframes.h"
@@ -324,7 +325,8 @@ void applyStartTimecodes(Sequence& seq, const std::function<QString(const QStrin
         const QString tc = timecode ? timecode(path) : QString();
         startOf.insert(path, tc.isEmpty() ? -1 : std::max(-1, Timecode::parse(tc, fps)));
     }
-    const auto fileFrame = [](const Item& it) { return int(std::lround(it.in * it.speed)); };
+    // The file frame the clip's first picture shows (RetimeMap::pictureFrame, forward)
+    const auto fileFrame = [](const Item& it) { return int(std::floor(it.in * it.speed + 1e-6)); };
     if (seq.inIsTimecode && length) {
         // No timecode, every clip beyond the end of the file: the full hours of the source timecodes are taken off
         QHash<QString, int> first;
@@ -344,7 +346,7 @@ void applyStartTimecodes(Sequence& seq, const std::function<QString(const QStrin
         for (TrackData& td : *tracks)
             for (Item& it : td.items) {
                 const int start = std::max(0, startOf.value(it.path, -1));
-                if (seq.inIsTimecode) it.in = int(std::lround(std::max(0, fileFrame(it) - start) / it.speed));
+                if (seq.inIsTimecode) it.in = RetimeMap::materialForPicture(std::max(0, fileFrame(it) - start), it.speed);
                 it.mediaStart = start;
             }
     seq.inIsTimecode = false;

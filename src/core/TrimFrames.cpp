@@ -76,9 +76,9 @@ Pane pane(const Clip& c, bool out, const MediaLookup& media, const ClipName& nam
     }
     const int material = c.freeze ? c.stillFrame() : p.sourceFrame;
     const int length = m ? m->length : 0;
-    double file = material;
-    if (c.isRetimed() && length > 0) file = RetimeMap(c, length).fileFrameAt(material);
-    p.fileFrame = std::max(0, int(file));
+    int file = material;
+    if (c.isRetimed() && length > 0) file = RetimeMap(c, length).pictureFrame(material);
+    p.fileFrame = std::max(0, file);
     if (length > 0) p.fileFrame = std::min(p.fileFrame, length - 1);
     return p;
 }

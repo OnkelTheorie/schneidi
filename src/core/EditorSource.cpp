@@ -302,7 +302,7 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         // in/out count in the converted material (Clip::speed)
         const int avail = std::max(1, int(m.length / speed));
         if (avail < target) return -1;
-        sIn = std::clamp(int(std::lround(sIn / speed)), 0, avail - target);
+        sIn = std::clamp(RetimeMap::materialForPicture(sIn, speed), 0, avail - target);
         len = target;
         start = tIn;
         usedTimelineMarks = true;
@@ -391,7 +391,7 @@ int Editor::placeSourceRange(const QString& path, int in, int out, int frame, in
     if (!m2.hasVideo && !m2.hasAudio) return 0;
     // Retimed: in and length in material frames (file frame / speed, see Clip::speed); a still has no speed
     if (m.isImage || speed <= 0) speed = 1.0;
-    const int sIn = int(std::lround(in / speed));
+    const int sIn = RetimeMap::materialForPicture(in, speed);
     const int len = std::max(1, int(std::lround((out - in + 1) / speed)));
     m_project->edit(T("Clip überschreiben: %1").arg(m.name), [&](Timeline& tl) {
         placeSource(tl, m2, sIn, len, std::max(0, frame), track, track, speed);

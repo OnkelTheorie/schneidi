@@ -2,6 +2,7 @@
 #include "engine/Stabilizer.h"
 
 #include "core/EffectRegistry.h"
+#include "core/Retime.h"
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/ClipFormat.h"
@@ -199,7 +200,9 @@ QString Stabilizer::Request::base() const
 {
     const QFileInfo fi(file);
     char num[32];
-    std::snprintf(num, sizeof num, "%.10g", speed);
+    // "t": a retimed clip's frames by the sound's time (RetimeMap::pictureFrame, since 0.15.1; before rounded like
+    // MLT) - analyzed again
+    std::snprintf(num, sizeof num, speed != 1.0 ? "%.10gt" : "%.10g", speed);
     const QString id = QString("%1|%2|%3|%4|%5|%6/%7|%8x%9|%10|%11")
                            .arg(kVersion)
                            .arg(fi.absoluteFilePath())
@@ -292,7 +295,7 @@ bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<boo
     };
     if (!QFileInfo::exists(r.file)) return fail(T("Datei nicht gefunden: %1").arg(r.file));
     // Own decoder, positions as the timeline counts them (Picture::Renderer): project frames of the
-    // file, through MLT's timewarp arithmetic for a speed change
+    // file, for a speed change the frames RetimeMap::pictureFrame picks
     Video::Reader::Options ro;
     ro.hardware = false; // in order through the whole range: the software decoder keeps up and leaves the card alone
     std::unique_ptr<Video::Reader> reader = Video::Reader::open(r.file, ro);
@@ -304,6 +307,10 @@ bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<boo
     const int fileLength = info.duration > 0 ? int(double(info.duration) / 1e6 * fps + 0.5) : 0;
     const double speed = std::abs(r.speed);
     const bool reverse = r.speed < 0;
+    Clip timing;
+    timing.speed = speed;
+    timing.reverse = reverse;
+    const RetimeMap map(timing, fileLength);
     const int warped = speed != 1.0 || reverse ? std::max(1, int(fileLength / speed)) : fileLength;
     const int from = std::max(0, r.from);
     const int to = std::min(r.to, warped - 1);
@@ -334,10 +341,7 @@ bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<boo
     for (int pos = from; pos <= to; ++pos) {
         if (cancel && cancel->load()) break;
         double file = pos;
-        if (warped != fileLength || reverse) file = (reverse ? warped - 1 - pos : pos) * speed;
-        // Not floored: MLT's timewarp hands the fractional position to the file's producer, which rounds it to the
-        // nearest stream frame (speed 50 %: frame p shows round(p / 2), test_stabilize_denoise compares both)
-        file = std::clamp(file, 0.0, double(std::max(0, fileLength - 1)));
+        if (warped != fileLength || reverse) file = map.pictureFrame(pos); // as Picture::Renderer shows it
         const auto pic = reader->picture(int64_t(file / fps * srcFps + 0.5));
         if (!pic || !pic->frame) break;
         const AVFrame* f = pic->frame;
