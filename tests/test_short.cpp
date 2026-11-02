@@ -160,7 +160,7 @@ int main(int argc, char** argv)
         run("edit", {{"project", proj}, {"ops", R"([{"op":"new_timeline","name":"Cut"}])"}});
         run("edit", {{"project", proj}, {"ops", R"([{"op":"new_timeline","name":"Tall","from":"Cut","aspect":"9:16"}])"}});
         for (const char* t : {"Cut", "Tall"}) {
-            const QJsonObject master = run("info", {{"project", proj}, {"timeline", QString(t)}, {"summary", true}})["timeline"]["master"].toObject();
+            const QJsonObject master = run("info", {{"project", proj}, {"timeline", QString(t)}, {"summary", true}}).value("timeline").toObject().value("master").toObject();
             if (!CHECK(master["limiter"].toBool())) std::printf("       timeline %s without the limiter\n", t);
             CHECK(near(master["limiter_db"].toDouble(), -1.2, 1e-9));
         }
