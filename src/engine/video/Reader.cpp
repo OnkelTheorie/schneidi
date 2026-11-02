@@ -9,6 +9,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/display.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/intreadwrite.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
@@ -1329,8 +1330,28 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     d.codec = avcodec_find_decoder(par->codec_id);
     const AVDictionaryEntry* alphaMode = av_dict_get(d.stream->metadata, "alpha_mode", nullptr, 0);
     bool alpha = false;
-    if ((par->codec_id == AV_CODEC_ID_VP9 || par->codec_id == AV_CODEC_ID_VP8) && alphaMode
-        && std::strcmp(alphaMode->value, "1") == 0 && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P) {
+    const bool vpx = par->codec_id == AV_CODEC_ID_VP9 || par->codec_id == AV_CODEC_ID_VP8;
+    bool alphaStated = alphaMode && std::strcmp(alphaMode->value, "1") == 0;
+    // Without the tag (written by other muxers, lost in a remux): the alpha travels in each block's BlockAdditional
+    // (id 1) - the first packet tells. Only untagged VP8/VP9 pay for it: one packet the stream analysis already read,
+    // then back to the start (findFirstPts reads from there).
+    if (vpx && !alphaMode && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P) {
+        if (AVPacket* probe = av_packet_alloc()) {
+            for (int n = 0; n < 16 && av_read_frame(d.fmt, probe) >= 0; ++n) {
+                const bool ours = probe->stream_index == d.info.index;
+                if (ours) {
+                    size_t size = 0;
+                    const uint8_t* add = av_packet_get_side_data(probe, AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL, &size);
+                    alphaStated = add && size > 8 && AV_RB64(add) == 1;
+                }
+                av_packet_unref(probe);
+                if (ours) break;
+            }
+            av_packet_free(&probe);
+            av_seek_frame(d.fmt, -1, 0, AVSEEK_FLAG_BACKWARD);
+        }
+    }
+    if (vpx && alphaStated && AVPixelFormat(par->format) == AV_PIX_FMT_YUV420P) {
         if (const AVCodec* c = avcodec_find_decoder_by_name(par->codec_id == AV_CODEC_ID_VP9 ? "libvpx-vp9" : "libvpx")) {
             d.codec = c;
             alpha = true;

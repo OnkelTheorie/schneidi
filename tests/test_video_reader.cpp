@@ -343,6 +343,9 @@ int main(int argc, char** argv)
     add("vp9-alpha", Check::makeMedia(file("alpha.webm"), {"-f", "lavfi", "-i",
                                                            "testsrc2=size=320x180:rate=25,format=yuva420p", "-t", "1",
                                                            "-c:v", "libvpx-vp9", "-auto-alt-ref", "0"}), 25);
+    // The same without the alpha_mode tag (another muxer, a remux): the alpha is in the blocks' BlockAdditional
+    add("vp9-alpha-untagged", Check::makeMedia(file("alpha-untagged.webm"), {"-i", file("alpha.webm"), "-c", "copy",
+                                                                             "-metadata:s:v:0", "alpha_mode="}), 25);
 
     for (const Media& m : media) {
         const QVector<QByteArray> ref = reference(m);
@@ -371,6 +374,8 @@ int main(int argc, char** argv)
     CHECK_EQ(info("plain-vp8.webm").codec, QString("vp8"));
     CHECK_EQ(info("alpha.webm").codec, QString("libvpx-vp9"));
     CHECK_EQ(info("alpha.webm").format, AV_PIX_FMT_YUVA420P);
+    CHECK_EQ(info("alpha-untagged.webm").codec, QString("libvpx-vp9"));
+    CHECK_EQ(info("alpha-untagged.webm").format, AV_PIX_FMT_YUVA420P);
     if (auto r = Video::Reader::open(file("interlaced.mp4"))) {
         const auto p = r->picture(3);
         CHECK(p && !p->progressive && p->topFieldFirst);
