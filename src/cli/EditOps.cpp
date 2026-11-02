@@ -797,7 +797,7 @@ QVector<OpDef> makeOps()
          "earlier, 'down' one later, 'first'/'last', or a number = its place among the clip's movable effects (1 = "
          "rendered first). It works per clip on every given clip that has the effect. Fixed stages cannot move and "
          "always render before the others: stabilize, then grade (Color page), then chromakey (Green Screen, so "
-         "effects work on the keyed picture); denoise is per audio clip. "
+         "effects work on the keyed picture); denoise and voiceclean are per audio clip. "
          "chromakey (Green Screen): color = the background's color, distance = tolerance 0..1 (how far from it still "
          "becomes transparent; gray is at ~0.6, skin ~0.75), softness = soft edge, spill = removes the key color's "
          "fringe near the edge (1 = fully). No effect blurs faces by itself: a `window` with fill 'blur', "
@@ -810,7 +810,8 @@ QVector<OpDef> makeOps()
          "means a new analysis; smoothing, zoom and border do not. Not possible for speed ramps, freeze frames, "
          "titles and compound clips. denoise (noise reduction for voice recordings, ~11 ms delay): reduction = how far "
          "the noise is lowered in dB (default 12), track = measure the noise in the recording (default true), floor "
-         "= fixed noise level in dBFS used when track is false.",
+         "= fixed noise level in dBFS used when track is false. voiceclean (\"Stimme säubern\", ~57 ms delay, compensated): "
+         "see the op clean_voice for its parameters amount, gate, clicks, shape.",
          opEffect, kClipKeys},
         {"add_track", "{op:'add_track', kind:'video'|'audio', at?}", "new track (default: above/below the others)",
          {}, opAddTrack},

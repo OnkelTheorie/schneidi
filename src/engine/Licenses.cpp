@@ -111,6 +111,8 @@ QVector<Part> report()
         << ffmpegPart("libavutil", avutil_version(), avutil_license())
         << ffmpegPart("libswscale", swscale_version(), swscale_license())
         << ffmpegPart("libswresample", swresample_version(), swresample_license());
+    // Compiled in (third_party/rnnoise): the noise suppression of the voice cleaning (engine/VoiceClean)
+    out << Part{"RNNoise 0.2 (built in)", "BSD-3-Clause", false, {}};
 
     // Loaded libraries: GPL ones by name
     for (const QString& path : loadedLibraries()) {

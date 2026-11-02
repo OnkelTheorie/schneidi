@@ -28,7 +28,7 @@ Goal: same content, no dead air, no slips - but still natural, not robotic.
 - For a false start ("We went - we drove to …") cut the first try, keep the clean one.
 
 ## Sound
-Speech is the product: see [audio.md](audio.md) - `denoise` for noisy rooms, EQ high pass ~80 Hz, `normalize`
+Speech is the product: see [audio.md](audio.md) - `clean_voice` on the voice track (noise, pauses, even level; `denoise` for light hiss only), EQ high pass ~80 Hz, `normalize`
 (lufs) so all parts sound equally loud, about -14 LUFS for the web, -16 for podcasts is also common.
 
 ## Check

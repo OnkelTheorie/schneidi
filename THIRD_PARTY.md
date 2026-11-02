@@ -1,7 +1,8 @@
 # Third-party software in the schneidi packages
 
 schneidi itself is AGPL-3.0 (see [LICENSE](LICENSE)). The packages bundle these libraries; each keeps its own license.
-All are linked dynamically (shared libraries / DLLs next to the program), so they can be replaced.
+All are linked dynamically (shared libraries / DLLs next to the program), so they can be replaced, except RNNoise,
+which is compiled into schneidi from `third_party/rnnoise` (its license text: `third_party/rnnoise/COPYING`).
 The running program lists what it really loaded: `schneidi-cli --licenses` (AppImage: `schneidi-….AppImage cli --licenses`).
 
 ## GPL-free packages (AppImage `packaging/linux/build-appimage.sh`, Docker image)
@@ -19,6 +20,7 @@ The running program lists what it really loaded: `schneidi-cli --licenses` (AppI
 | [LAME](https://lame.sourceforge.io) | LGPL-2.0+ | MP3 encoder |
 | [libva](https://github.com/intel/libva), [libdrm](https://gitlab.freedesktop.org/mesa/drm), [oneVPL](https://github.com/intel/libvpl), [nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers) | MIT | hardware encoders (VAAPI, Quick Sync, NVENC) |
 | [miniaudio](https://miniaud.io) | MIT-0 / public domain | sound output |
+| [RNNoise](https://gitlab.xiph.org/xiph/rnnoise) v0.2 with its model `0b50c45` (Xiph.Org, Mozilla, Amazon, Jean-Marc Valin; sources in `third_party/rnnoise`, built into the program) | BSD-3-Clause | noise suppression of the effect "Stimme säubern" |
 | libglvnd (EGL/OpenGL dispatch, fallback only) | MIT-style | systems without a desktop |
 | System libraries pulled in by the above (glib, ICU, fontconfig, FreeType, HarfBuzz, libpng, zlib, zstd, libjpeg-turbo, PCRE2, X11/XCB/xkbcommon, Wayland, D-Bus, double-conversion, brotli, md4c …) | LGPL-2.1+, MIT, BSD, Zlib, IJG, Unicode, FTL, AFL-2.1 (D-Bus, dual-licensed) | as used by Qt |
 
